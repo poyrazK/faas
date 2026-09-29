@@ -54,6 +54,7 @@ type testScenario struct {
 	WaitFor          testWaitFor            `yaml:"wait_for"`
 	Timeout          string                 `yaml:"timeout"`
 	Load             *testLoadSpec          `yaml:"load"`
+	Local            *testLocalAppSpec      `yaml:"local"`
 }
 
 type testService struct {
@@ -193,6 +194,7 @@ type testRunReceipt struct {
 	Diagnostics  map[string]testWorkloadDiagnostics `json:"diagnostics,omitempty"`
 	Requests     []testHTTPRequestEvidence          `json:"requests,omitempty"`
 	Load         *testLoadEvidence                  `json:"load,omitempty"`
+	LocalApp     *testLocalAppEvidence              `json:"local_app,omitempty"`
 }
 
 func cmdTest(args []string) int {
@@ -207,7 +209,7 @@ func cmdTest(args []string) int {
 	validateOnly := fs.Bool("validate", false, "validate scenario sources without platform access")
 	preflightOnly := fs.Bool("preflight", false, "check account capacity before provisioning")
 	engine := fs.String("engine", "real-vm", "real-vm, local, or simulated")
-	baseURL := fs.String("base-url", "", "HTTP loopback origin for the local engine")
+	baseURL := fs.String("base-url", "", "HTTP loopback origin (optional with local.command)")
 	dataPath := fs.String("data", "", "JSON or CSV case data for the local engine")
 	load := fs.Bool("load", false, "run native HTTP journeys concurrently with the local engine")
 	vus := fs.Int("vus", 0, "concurrent users for --load (1..50, default 1)")
@@ -280,7 +282,7 @@ func cmdTest(args []string) int {
 			if *maxWorkloadMinutes > 0 {
 				return printErr("Invalid local test options", errors.New("--max-workload-minutes applies only to real-vm tests"))
 			}
-			if *baseURL != "" || (!*validateOnly && !*preflightOnly) {
+			if *baseURL != "" {
 				resolvedURL, err := validateLocalTestURL(*baseURL)
 				if err != nil {
 					return printErr("Invalid local test URL", err)
@@ -356,8 +358,11 @@ func cmdTest(args []string) int {
 		if err := validateLocalTestScenario(scenario); err != nil {
 			return printErr("Invalid local scenario", err)
 		}
+		if *baseURL == "" && scenario.Local == nil {
+			return printErr("Invalid local test URL", errors.New("--engine local requires --base-url or a local.command in the scenario"))
+		}
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), testTerminationSignals()...)
 	defer stop()
 	results := make([]testRunReceipt, 0, (len(profiles)+len(cases))*(*repeat))
 	failed := false
@@ -530,6 +535,9 @@ func readTestManifestForScenario(path, selected string, dataFields []string) (ma
 			return nil, "", fmt.Errorf("scenario %q: %w", name, err)
 		}
 		if err := validateTestLoadStepThresholds(scenario); err != nil {
+			return nil, "", fmt.Errorf("scenario %q: %w", name, err)
+		}
+		if err := validateTestLocalAppSpec(scenario.Local); err != nil {
 			return nil, "", fmt.Errorf("scenario %q: %w", name, err)
 		}
 		if len(scenario.Simulation) > 0 && scenario.Simulation[0] == "" {

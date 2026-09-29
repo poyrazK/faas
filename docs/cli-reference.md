@@ -1681,7 +1681,7 @@ Run application scenarios and bounded local HTTP load tests
 | `--validate` | validate local scenario sources without a platform login |  |
 | `--preflight` | check account entitlements and developer app capacity |  |
 | `--engine <ENGINE>` | execution engine (default real-vm) | one of `real-vm` · `local` · `simulated` |
-| `--base-url <URL>` | HTTP loopback origin for the local engine |  |
+| `--base-url <URL>` | HTTP loopback origin (optional with local.command) |  |
 | `--data <PATH>` | JSON or CSV case data for the local engine |  |
 | `--load` | repeat native HTTP journeys concurrently with the local engine |  |
 | `--vus <N>` | concurrent users for --load (1..50, default 1) |  |
@@ -1704,6 +1704,7 @@ gregale test import --from collection.json --project my-api
 gregale test --validate
 gregale test --scenario customer-export --preflight
 gregale test --scenario customer-export --profile restored --repeat 3 --max-workload-minutes 135 --report test-results.json --junit test-results.xml
+gregale test --scenario api-smoke --engine local
 gregale test --scenario customer-export --engine local --base-url http://localhost:3000 --data cases.json
 gregale test --scenario api-smoke --engine local --base-url http://localhost:3000 --load --vus 5 --duration 30s --pacing 100ms --progress
 gregale test --scenario customer-export --engine simulated

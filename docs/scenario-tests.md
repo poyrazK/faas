@@ -151,7 +151,8 @@ gregale test --scenario customer-export --engine local --base-url http://localho
   --data cases.json --repeat 2 --report results.json --junit results.xml
 ```
 
-The `local` engine sends real HTTP requests to an already running local app.
+The `local` engine sends real HTTP requests to a local app. It can start the app
+from the manifest, or use an already running app with `--base-url`.
 It requires no platform login and provisions no Gregale resources. `--base-url`
 must be an HTTP origin on `localhost` or a loopback IP address, with no path,
 credentials, query, or fragment. Redirects are not followed. Execution order is
@@ -173,6 +174,78 @@ for queue, invocation, delivery, object, and lifecycle evidence. `--profile`,
 label local runs with `engine: local` and `profile: local` and contain no VM wake
 evidence. A local HTTP test and a simulated test do not establish that an app
 behaves correctly after being parked and restored.
+
+### Start and stop the app with the test
+
+Declare the foreground app command in `local` to run everything with one command:
+
+```yaml
+version: 1
+scenarios:
+  api-smoke:
+    project: my-api
+    source: .
+    local:
+      command: [node, server.js]
+      readiness:
+        path: /health
+        status: 200
+        timeout: 30s
+      shutdown_timeout: 5s
+    checks:
+      - name: health
+        method: GET
+        path: /health
+        expect: {status: 200}
+```
+
+```sh
+gregale test --scenario api-smoke --engine local
+gregale test --scenario api-smoke --engine local --load --vus 5 --duration 30s \
+  --progress --report results.json --junit results.xml
+```
+
+Gregale chooses an available loopback port. The app and fixture commands receive
+`HOST`, `PORT`, `GREGALE_TEST_HOST`, `GREGALE_TEST_PORT`, and `GREGALE_TEST_URL`,
+along with the usual run identity and case data. Inherited `HOST` and `PORT` are
+replaced for this run. Configure your app to bind these values; for example,
+Node's HTTP server can use `server.listen(Number(process.env.PORT), process.env.HOST)`.
+Commands run in `source` and do not implicitly use a shell. An executable can also
+take `${local.host}`, `${local.port}`, or `${local.url}` in its argument list:
+
+```yaml
+local:
+  command: [python3, -m, http.server, '${local.port}', --bind, '${local.host}']
+```
+
+When `local.command` is declared, `--base-url http://localhost:3000` selects port
+3000 for the managed app. An occupied port fails before startup; Gregale does not
+attach to or stop the existing server. `localhost` resolves to `127.0.0.1` in this
+mode. The port reservation is released immediately before launching the command,
+so the app must bind it itself. Without `local.command`, `--base-url` continues to
+target an app you started separately.
+
+Execution is `startup` and readiness, `setup`, `trigger`, `requests`, `checks`,
+assertion `command`, `cleanup`, then `shutdown`. With `--load`, the concurrent
+journeys replace the individual requests and checks. Each data row and repeat
+starts a fresh app process. Cleanup can still call the app after failed checks,
+Ctrl-C, or SIGTERM. An app that exits before shutdown fails the run, even with exit
+code zero. The command must stay in the foreground; it must not detach or daemonize.
+
+Readiness sends unauthenticated GET requests every 100 ms without redirects or
+proxies. Defaults are `/`, status `200`, and `30s`; timeout is limited to `1s..5m`
+and also respects the overall scenario timeout. The path cannot contain a query,
+fragment, or template. Setup does not run until readiness succeeds. Put any setup
+needed to start the server in the app command itself.
+
+Shutdown sends SIGTERM to the app's process group, waits up to
+`shutdown_timeout` (`1s..30s`, default `5s`), and uses SIGKILL for remaining
+processes when necessary. Forced shutdown is recorded and does not by itself
+fail the test. JSON and JUnit include `local_app` readiness and shutdown evidence
+and the `startup` and `shutdown` phases. App output is held in a bounded 64 KiB
+tail and printed to stderr only after a failed run; it is omitted from reports
+and JSON stdout. Managed startup is supported on Unix platforms, including Linux
+and macOS. The `local` block is used only by `--engine local`.
 
 ### Run the same scenario for JSON or CSV rows
 

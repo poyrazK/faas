@@ -40,7 +40,7 @@ func validateLocalTestScenario(scenario testScenario) error {
 	if scenario.WaitFor.QueueIdle || len(scenario.WaitFor.Invocations) > 0 || len(scenario.WaitFor.Objects) > 0 || len(scenario.WaitFor.Deliveries) > 0 {
 		return errors.New("--engine local cannot evaluate platform wait_for conditions; use real-vm for those checks")
 	}
-	return nil
+	return validateTestLocalAppSpec(scenario.Local)
 }
 
 func localTestConsumerEnv(scenario testScenario) ([]string, error) {
@@ -75,17 +75,24 @@ func runLocalTestWithLoad(parent context.Context, name string, scenario testScen
 	if load != nil {
 		receipt.Load = newTestLoadEvidence(load)
 	}
-	phases := newTestPhaseRecorder("setup")
+	firstPhase := "setup"
+	if scenario.Local != nil {
+		firstPhase = "startup"
+		receipt.LocalApp = &testLocalAppEvidence{Shutdown: "not_started"}
+	}
+	phases := newTestPhaseRecorder(firstPhase)
 	defer func() {
 		receipt.Phases = phases.finish(receipt.Status)
 		receipt.FinishedAt = time.Now().UTC()
 		receipt.DurationMS = receipt.FinishedAt.Sub(receipt.StartedAt).Milliseconds()
 	}()
 	var err error
-	baseURL, err = validateLocalTestURL(baseURL)
-	if err != nil {
-		receipt.Error = err.Error()
-		return
+	if scenario.Local == nil {
+		baseURL, err = validateLocalTestURL(baseURL)
+		if err != nil {
+			receipt.Error = err.Error()
+			return
+		}
 	}
 	if err := validateLocalTestScenario(scenario); err != nil {
 		receipt.Error = err.Error()
@@ -117,6 +124,8 @@ func runLocalTestWithLoad(parent context.Context, name string, scenario testScen
 	}
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
+	ctx, appCancel := context.WithCancelCause(ctx)
+	defer appCancel(nil)
 	caseValues := data.Values
 	if caseValues == nil {
 		caseValues = map[string]any{}
@@ -125,6 +134,16 @@ func runLocalTestWithLoad(parent context.Context, name string, scenario testScen
 	if err != nil {
 		receipt.Error = fmt.Sprintf("encode case data: %v", err)
 		return
+	}
+	var reservation net.Listener
+	var host, port string
+	if scenario.Local != nil {
+		reservation, baseURL, host, port, err = reserveLocalAppEndpoint(baseURL)
+		if err != nil {
+			receipt.Error = err.Error()
+			return
+		}
+		defer func() { _ = reservation.Close() }()
 	}
 	env := append(testCommandBaseEnv(), consumerEnv...)
 	env = append(env,
@@ -147,7 +166,16 @@ func runLocalTestWithLoad(parent context.Context, name string, scenario testScen
 			"GREGALE_TEST_LOAD_PACING="+load.Pacing.String(),
 		)
 	}
+	if scenario.Local != nil {
+		env = localAppCommandEnv(env, host, port)
+	}
+	var app *managedLocalApp
 	defer func() {
+		if app != nil {
+			if err := app.failure(); err != nil {
+				receipt.Error, receipt.Status = err.Error(), "failed"
+			}
+		}
 		phases.advance("cleanup", receipt.Status)
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 45*time.Second)
 		defer cleanupCancel()
@@ -156,7 +184,31 @@ func runLocalTestWithLoad(parent context.Context, name string, scenario testScen
 				receipt.addCleanupError(fmt.Sprintf("local fixture cleanup: %v", err))
 			}
 		}
+		if app != nil {
+			phases.advance("shutdown", receipt.Status)
+			if err := app.stop(scenario.Local.shutdownTimeout(), receipt.LocalApp); err != nil {
+				receipt.addCleanupError(err.Error())
+			}
+			if err := app.failure(); err != nil {
+				receipt.Error, receipt.Status = err.Error(), "failed"
+			}
+			if receipt.Status != "passed" {
+				printLocalAppFailureLog(app)
+			}
+		}
 	}()
+	if scenario.Local != nil {
+		app, err = startManagedLocalApp(ctx, appCancel, scenario.Local, sourceDir, env, baseURL, host, port, reservation)
+		if err != nil {
+			receipt.Error = err.Error()
+			return
+		}
+		if err := app.waitReady(ctx, baseURL, scenario.Local, receipt.LocalApp); err != nil {
+			receipt.Error = err.Error()
+			return
+		}
+		phases.advance("setup", "passed")
+	}
 	for _, command := range scenario.Setup {
 		if err := runTestCommand(ctx, sourceDir, env, command); err != nil {
 			receipt.Error = fmt.Sprintf("local fixture setup: %v", err)
