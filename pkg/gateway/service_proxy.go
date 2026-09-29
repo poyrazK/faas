@@ -1338,7 +1338,10 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 		p.metrics.IncRetryExhausted(RetrySkipBodyNotReplay)
 	}
 	if maxAttempts > 1 {
-		p.retryBudget.ObserveOriginal(request.Context(), appID)
+		if !p.retryBudget.ObserveOriginal(request.Context(), appID) {
+			maxAttempts = 1
+			p.metrics.IncRetryExhausted(RetrySkipAggregate)
+		}
 	}
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		endpoint, ok := p.pick(appID, endpoints)

@@ -9,11 +9,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/redis/go-redis/v9"
 )
 
 const (
-	defaultRetryBudgetWindow = 10 * time.Second
+	defaultRetryBudgetWindow = api.TrafficRetryBudgetWindow
 	maxRetryBudgetScopes     = 10_000
 )
 
@@ -26,8 +27,26 @@ type RetryBudget struct {
 	now       func() time.Time
 	buckets   map[string]retryBudgetBucket
 	remote    redis.UniversalClient
+	shared    SharedRetryBudgetBackend
 	backendID string
 	observer  retryBudgetObserver
+}
+
+// SharedRetryBudgetBackend owns atomic observations and retry spends across
+// processes. The backend's clock owns expiry; gateway clocks cannot reset it.
+type SharedRetryBudgetBackend interface {
+	ObserveOriginal(context.Context, string, time.Duration) error
+	AllowRetry(context.Context, string, int, int) (bool, error)
+	BackendID() string
+}
+
+func NewSharedRetryBudget(backend SharedRetryBudgetBackend) (*RetryBudget, error) {
+	if backend == nil {
+		return nil, errors.New("shared retry budget requires a backend")
+	}
+	b := NewRetryBudget(0, nil)
+	b.shared, b.backendID = backend, backend.BackendID()
+	return b, nil
 }
 
 type retryBudgetObserver interface {
@@ -55,8 +74,8 @@ type retryBudgetBucket struct {
 	retries   int
 }
 
-// NewRetryBudget creates an app-scoped aggregate retry budget. A nil clock
-// and non-positive window select production defaults.
+// NewRetryBudget creates an explicitly process-local app retry budget. A nil
+// clock and non-positive window select the default clock and window duration.
 func NewRetryBudget(window time.Duration, now func() time.Time) *RetryBudget {
 	if window <= 0 {
 		window = defaultRetryBudgetWindow
@@ -68,29 +87,41 @@ func NewRetryBudget(window time.Duration, now func() time.Time) *RetryBudget {
 }
 
 // ObserveOriginal records one request admitted under a retry policy.
-func (b *RetryBudget) ObserveOriginal(parent context.Context, scope string) {
+func (b *RetryBudget) ObserveOriginal(parent context.Context, scope string) bool {
 	if b == nil || scope == "" {
-		return
+		return b == nil
+	}
+	if b.shared != nil {
+		ctx, cancel := context.WithTimeout(parent, api.TrafficCounterOperationTimeout)
+		defer cancel()
+		if err := b.shared.ObserveOriginal(ctx, scope, b.window); err != nil {
+			b.recordOperation("observe", "error")
+			return false
+		}
+		b.recordOperation("observe", "ok")
+		return true
 	}
 	if b.remote != nil {
-		ctx, cancel := context.WithTimeout(parent, 100*time.Millisecond)
+		ctx, cancel := context.WithTimeout(parent, api.TrafficCounterOperationTimeout)
 		defer cancel()
 		if err := retryBudgetObserveScript.Run(ctx, b.remote, []string{retryBudgetRemoteKey(scope)}, b.window.Milliseconds()).Err(); err != nil {
 			b.recordOperation("observe", "error")
+			return false
 		} else {
 			b.recordOperation("observe", "ok")
 		}
-		return
+		return true
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	now := b.now()
 	bucket, ok := b.bucketLocked(scope, now)
 	if !ok {
-		return
+		return false
 	}
 	bucket.originals++
 	b.buckets[scope] = bucket
+	return true
 }
 
 // AllowRetry atomically spends one retry token. The allowance is the larger
@@ -109,8 +140,23 @@ func (b *RetryBudget) AllowRetry(parent context.Context, scope string, percent, 
 	if minRetries < 0 {
 		minRetries = 0
 	}
+	if b.shared != nil {
+		ctx, cancel := context.WithTimeout(parent, api.TrafficCounterOperationTimeout)
+		defer cancel()
+		allowed, err := b.shared.AllowRetry(ctx, scope, percent, minRetries)
+		if err != nil {
+			b.recordOperation("admit", "error")
+			return false
+		}
+		result := "denied"
+		if allowed {
+			result = "allowed"
+		}
+		b.recordOperation("admit", result)
+		return allowed
+	}
 	if b.remote != nil {
-		ctx, cancel := context.WithTimeout(parent, 100*time.Millisecond)
+		ctx, cancel := context.WithTimeout(parent, api.TrafficCounterOperationTimeout)
 		defer cancel()
 		admitted, err := retryBudgetAdmitScript.Run(ctx, b.remote, []string{retryBudgetRemoteKey(scope)}, percent, minRetries).Int()
 		// A shared-backend failure must never silently restore a per-process

@@ -58,8 +58,21 @@ the field, and the Node SDK build and Python model round-trip passed. Nested
 managed-service deadline transport and complete-path acceptance remain
 required before checking off the deadline deliverable.
 
-Fleet-accounting work has started with refusal on central-store errors and
-logical charging before cache lookup; the full gateway suite passed.
-Production default/shared retry wiring, real multi-process store/outage/restart
-tests and latency evidence remain. The node admission, full policy snapshot
-and release evidence deliverables remain outstanding.
+Fleet counters now default to shared Postgres, with explicit local mode and
+the existing Redis override. Central errors refuse admission; eligible public
+requests charge before cache lookup. Retry observation failures refuse replay
+while the original can run once. The full gateway suite and focused daemon
+configuration/startup suites passed. Separate processes against real Postgres
+verified aggregate burst/retry caps, replacement, expiry, store recovery and
+bounded row-lock waits. Two HTTP gateway processes admitted four of sixteen
+requests from one shared burst and preserved debt on replacement/recovery;
+local fixture p95 was 8 ms. Narrow vet passed for the acceptance package.
+
+The daemon-level Postgres/Redis service canaries compiled but could not boot
+on Darwin: the mandatory capability check requires `/proc/self/status`. They
+remain pending on Linux. The repository-pinned linter passed for gateway,
+gatewayd-internal and the acceptance package; the deadline ingress refactor
+and upgrade tests passed, and the operational verification script passed its
+shell syntax check. Deployment evidence remains required. The node admission,
+full policy snapshot and release
+evidence deliverables remain outstanding.

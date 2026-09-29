@@ -266,6 +266,28 @@ func (q *Queries) AccountsByIDs(ctx context.Context, db DBTX, dollar_1 []pgtype.
 	return items, nil
 }
 
+const admitTrafficRetry = `-- name: AdmitTrafficRetry :one
+UPDATE traffic_retry_counters SET retries = retries + 1
+WHERE app_id = $1::uuid
+    AND expires_at > clock_timestamp()
+    AND retries < GREATEST($2::bigint,
+        CEIL(originals::numeric * $3::bigint / 100))
+RETURNING retries
+`
+
+type AdmitTrafficRetryParams struct {
+	AppID      pgtype.UUID
+	MinRetries int64
+	Percent    int64
+}
+
+func (q *Queries) AdmitTrafficRetry(ctx context.Context, db DBTX, arg AdmitTrafficRetryParams) (int64, error) {
+	row := db.QueryRow(ctx, admitTrafficRetry, arg.AppID, arg.MinRetries, arg.Percent)
+	var retries int64
+	err := row.Scan(&retries)
+	return retries, err
+}
+
 const appByID = `-- name: AppByID :one
 select id, account_id, slug, type, coalesce(runtime, ''), ram_mb, coalesce(idle_timeout_s, 0),
        max_concurrency, status, manifest, created_at
@@ -906,6 +928,52 @@ UPDATE upload_sessions
 func (q *Queries) ClearUploadSessionPartPath(ctx context.Context, db DBTX, id string) error {
 	_, err := db.Exec(ctx, clearUploadSessionPartPath, id)
 	return err
+}
+
+const consumeTrafficRateToken = `-- name: ConsumeTrafficRateToken :one
+INSERT INTO pg_ratelimit_counters (scope, subject_id, plan, tokens, last_refill)
+VALUES ($1::text, $2::uuid, $3::text,
+    GREATEST(0, FLOOR($4::double precision)::bigint - 1), now())
+ON CONFLICT (scope, subject_id, plan) DO UPDATE
+SET tokens = LEAST(FLOOR($4::double precision)::bigint,
+    pg_ratelimit_counters.tokens + FLOOR(GREATEST(0,
+        EXTRACT(EPOCH FROM (now() - pg_ratelimit_counters.last_refill)))
+        * $5::double precision)::bigint) - 1,
+    last_refill = CASE
+        WHEN pg_ratelimit_counters.tokens + FLOOR(GREATEST(0,
+            EXTRACT(EPOCH FROM (now() - pg_ratelimit_counters.last_refill)))
+            * $5::double precision)::bigint >= FLOOR($4::double precision)::bigint
+        THEN GREATEST(now(), pg_ratelimit_counters.last_refill)
+        ELSE pg_ratelimit_counters.last_refill + (FLOOR(GREATEST(0,
+            EXTRACT(EPOCH FROM (now() - pg_ratelimit_counters.last_refill)))
+            * $5::double precision) / $5::double precision) * interval '1 second'
+    END
+WHERE LEAST(FLOOR($4::double precision)::bigint,
+    pg_ratelimit_counters.tokens + FLOOR(GREATEST(0,
+        EXTRACT(EPOCH FROM (now() - pg_ratelimit_counters.last_refill)))
+        * $5::double precision)::bigint) >= 1
+RETURNING tokens
+`
+
+type ConsumeTrafficRateTokenParams struct {
+	Scope     string
+	SubjectID pgtype.UUID
+	Plan      string
+	Burst     float64
+	Rps       float64
+}
+
+func (q *Queries) ConsumeTrafficRateToken(ctx context.Context, db DBTX, arg ConsumeTrafficRateTokenParams) (int64, error) {
+	row := db.QueryRow(ctx, consumeTrafficRateToken,
+		arg.Scope,
+		arg.SubjectID,
+		arg.Plan,
+		arg.Burst,
+		arg.Rps,
+	)
+	var tokens int64
+	err := row.Scan(&tokens)
+	return tokens, err
 }
 
 const countDeployedApps = `-- name: CountDeployedApps :one
@@ -11433,6 +11501,30 @@ func (q *Queries) ObjectUsageReports(ctx context.Context, db DBTX, arg ObjectUsa
 	return items, nil
 }
 
+const observeTrafficRetryOriginal = `-- name: ObserveTrafficRetryOriginal :exec
+INSERT INTO traffic_retry_counters (app_id, originals, retries, expires_at)
+VALUES ($1::uuid, 1, 0,
+    statement_timestamp() + $2::bigint * interval '1 millisecond')
+ON CONFLICT (app_id) DO UPDATE SET
+    originals = CASE WHEN traffic_retry_counters.expires_at <= statement_timestamp()
+        THEN 1 ELSE traffic_retry_counters.originals + 1 END,
+    retries = CASE WHEN traffic_retry_counters.expires_at <= statement_timestamp()
+        THEN 0 ELSE traffic_retry_counters.retries END,
+    expires_at = CASE WHEN traffic_retry_counters.expires_at <= statement_timestamp()
+        THEN statement_timestamp() + $2::bigint * interval '1 millisecond'
+        ELSE traffic_retry_counters.expires_at END
+`
+
+type ObserveTrafficRetryOriginalParams struct {
+	AppID    pgtype.UUID
+	WindowMs int64
+}
+
+func (q *Queries) ObserveTrafficRetryOriginal(ctx context.Context, db DBTX, arg ObserveTrafficRetryOriginalParams) error {
+	_, err := db.Exec(ctx, observeTrafficRetryOriginal, arg.AppID, arg.WindowMs)
+	return err
+}
+
 const orgByID = `-- name: OrgByID :one
 select
     id, slug, name, personal_org,
@@ -11740,6 +11832,23 @@ DELETE FROM data_upstream_probes WHERE sampled_at < $1
 func (q *Queries) PruneDataUpstreamProbesOlderThan(ctx context.Context, db DBTX, sampledAt pgtype.Timestamptz) error {
 	_, err := db.Exec(ctx, pruneDataUpstreamProbesOlderThan, sampledAt)
 	return err
+}
+
+const pruneTrafficRetryCounters = `-- name: PruneTrafficRetryCounters :execrows
+WITH stale AS (
+    SELECT app_id FROM traffic_retry_counters
+    WHERE expires_at <= clock_timestamp()
+    ORDER BY expires_at LIMIT 1000 FOR UPDATE SKIP LOCKED
+)
+DELETE FROM traffic_retry_counters WHERE app_id IN (SELECT app_id FROM stale)
+`
+
+func (q *Queries) PruneTrafficRetryCounters(ctx context.Context, db DBTX) (int64, error) {
+	result, err := db.Exec(ctx, pruneTrafficRetryCounters)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const putAppEgressCircuits = `-- name: PutAppEgressCircuits :one

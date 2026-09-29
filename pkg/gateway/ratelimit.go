@@ -25,7 +25,7 @@ import (
 const LimiterEvictScan = 32
 
 // centralConsultTimeout bounds the authoritative central-mode token consume
-// before falling back to the local bucket during a Postgres outage. Central
+// before refusing admission during a Postgres outage. Central
 // mode performs this operation for every request so replicas share one burst.
 const centralConsultTimeout = 250 * time.Millisecond
 
@@ -89,12 +89,12 @@ type Limiter struct {
 	// noopCentralBackend{} — every existing constructor sets it,
 	// so behaviour is unchanged for callers that don't thread the
 	// new NewLimiterWithCentral constructor. Central mode consumes from the
-	// shared counter on every request; local state is a degraded fallback and
+	// shared counter on every request; local state is a response-header mirror and
 	// supplies response-header state.
 	central CentralBackend
 	// centralErrorObserver is called whenever an authoritative central consume
-	// fails and the limiter falls back to its process-local decision. The
-	// callback is installed by Handler.WithCentralBackend so the fallback is
+	// fails and the limiter refuses unverified admission. The
+	// callback is installed by Handler.WithCentralBackend so the outage is
 	// visible without coupling this token-bucket primitive to Prometheus,
 	// logging, or the gateway audit sink.
 	centralErrorObserver func(context.Context, string, error)
@@ -216,9 +216,9 @@ func (l *Limiter) AllowWithCentralConsumerKey(
 	remaining, admitted, err := l.central.ConsumeToken(ctx, scope, centralSubjectID, plan, rps, burst)
 	if err != nil {
 		l.observeCentralError(ctx, scope, err)
-		return localAllowed
+		return false
 	}
-	// Keep headers and the degraded fallback aligned with the authoritative
+	// Keep headers aligned with the authoritative
 	// balance of the deterministic central shard.
 	l.mu.Lock()
 	if current := l.buckets[bucketKey]; current != nil {
@@ -438,8 +438,7 @@ func NewLimiterWithClock(now func() time.Time) *Limiter {
 // (cmd/gatewayd-internal/config.go) keep today's byte-for-byte
 // behaviour. Production wiring lives in cmd/gatewayd-internal/run.go.
 //
-// The in-process decision remains available only as a bounded degraded-mode
-// fallback if the central store cannot be reached.
+// Central-store errors refuse admission. Selecting local mode is explicit.
 func NewLimiterWithCentral(central CentralBackend) *Limiter {
 	l := NewLimiter()
 	if central != nil {
@@ -618,7 +617,7 @@ func (l *Limiter) allowToken(ctx context.Context, id string, rps, burst float64)
 // allowTokenWithCentralKey is the central-aware variant of
 // allowToken. When centralKey is empty, the local bucket is the only source
 // of truth. When it is set, the central counter is authoritative and the local
-// result is used only if the central backend returns an error.
+// result is used only when central mode is explicitly disabled.
 func (l *Limiter) allowTokenWithCentralKey(ctx context.Context, id string, rps, burst float64, centralKey string) bool {
 	l.mu.Lock()
 	now := l.now()
@@ -661,8 +660,7 @@ func (l *Limiter) allowTokenWithCentralKey(ctx context.Context, id string, rps, 
 	l.mu.Unlock()
 
 	// Central mode makes the shared counter authoritative for every request.
-	// The local decision is retained only as a bounded fallback if Postgres is
-	// temporarily unavailable. This prevents one full burst per gateway replica.
+	// A Postgres error rejects unverified admission. This prevents one full burst per gateway replica.
 	if centralKey == "" || l.isNoopBackend() {
 		return localAllowed
 	}
@@ -675,9 +673,9 @@ func (l *Limiter) allowTokenWithCentralKey(ctx context.Context, id string, rps, 
 	remaining, admitted, err := l.central.ConsumeToken(ctx, scope, subjectID, plan, rps, burst)
 	if err != nil {
 		l.observeCentralError(ctx, scope, err)
-		return localAllowed
+		return false
 	}
-	// Keep response headers and degraded fallback aligned with the latest
+	// Keep response headers aligned with the latest
 	// authoritative balance. Remaining==0 is a valid final-token admit.
 	l.mu.Lock()
 	if current := l.buckets[id]; current != nil {
@@ -689,7 +687,11 @@ func (l *Limiter) allowTokenWithCentralKey(ctx context.Context, id string, rps, 
 }
 
 func (l *Limiter) observeCentralError(ctx context.Context, scope string, err error) {
-	if l == nil || l.centralErrorObserver == nil || err == nil {
+	if err == nil {
+		return
+	}
+	markRateAdmissionUnavailable(ctx)
+	if l == nil || l.centralErrorObserver == nil {
 		return
 	}
 	l.centralErrorObserver(ctx, scope, err)

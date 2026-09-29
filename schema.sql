@@ -10843,3 +10843,20 @@ ALTER TABLE ONLY public.app_egress_circuits
 
 ALTER TABLE ONLY public.app_egress_circuits
     ADD CONSTRAINT app_egress_circuits_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+-- ADR-375 additive blocks from the migrated schema dump; preserve unrelated snapshot.
+CREATE TABLE public.traffic_retry_counters (
+    app_id uuid NOT NULL,
+    originals bigint NOT NULL,
+    retries bigint DEFAULT 0 NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT traffic_retry_counters_expires_at_check CHECK (isfinite(expires_at)),
+    CONSTRAINT traffic_retry_counters_originals_check CHECK ((originals > 0)),
+    CONSTRAINT traffic_retry_counters_retries_check CHECK ((retries >= 0))
+);
+
+ALTER TABLE ONLY public.traffic_retry_counters
+    ADD CONSTRAINT traffic_retry_counters_pkey PRIMARY KEY (app_id);
+
+ALTER TABLE ONLY public.traffic_retry_counters
+    ADD CONSTRAINT traffic_retry_counters_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;

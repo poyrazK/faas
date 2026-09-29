@@ -1488,6 +1488,9 @@ func (h *Handler) WithCentralBackend(central CentralBackend) *Handler {
 		limiter.central = central
 		limiter.centralErrorObserver = h.observeCentralRateLimitDegraded
 	}
+	if h.metrics != nil && h.metrics.rateLimitShared != nil && !h.limiter.isNoopBackend() {
+		h.metrics.rateLimitShared.Set(1)
+	}
 	return h
 }
 
@@ -1500,8 +1503,8 @@ func (h *Handler) WithPreAuthCentralBackend(central CentralBackend) *Handler {
 	return h
 }
 
-// observeCentralRateLimitDegraded makes the limiter's local-fallback posture
-// explicit. Metrics count every fallback. Logs and audit rows are rate-limited
+// observeCentralRateLimitDegraded makes refused shared admission visible.
+// Metrics count every store error. Logs and audit rows are rate-limited
 // per closed scope so a Postgres outage does not create an additional write
 // storm. The audit attempt gets its own short context because the failed
 // central consume may have exhausted or cancelled the request's child context.
@@ -1532,7 +1535,7 @@ func (h *Handler) observeCentralRateLimitDegraded(ctx context.Context, scope str
 	h.centralRateLimitDegradedMu.Unlock()
 
 	if h.log != nil {
-		h.log.Warn("gateway rate limiter fell back to process-local counters",
+		h.log.Warn("gateway shared rate admission unavailable",
 			"scope", scope, "error", err)
 	}
 	var audit RequireAuthnAuditor
@@ -4425,6 +4428,9 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 		)
 	}
 	if !allowed {
+		if writeRateAdmissionUnavailable(w, r) {
+			return true
+		}
 		w.Header().Set("Retry-After", "1")
 		// `route` is a new scope value alongside `account` + `app`
 		// (established by per-account / per-app 429 paths
@@ -5696,6 +5702,7 @@ haveApp:
 	// could otherwise shadow this app's own gates.
 	//nolint:contextcheck // same request context, extended with the owner.
 	r = r.WithContext(WithEdgeRuleOwner(r.Context(), app.AccountID))
+	r = r.WithContext(withRateAdmissionEvidence(r.Context()))
 	if h.applyTotalDeadline(w, r, app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
@@ -6269,6 +6276,9 @@ haveApp:
 			r = r.WithContext(withVersionAffinityDeployment(r.Context(), clientRevisionID))
 		}
 	}
+	if !h.enforceTrafficRates(w, r, rec, app, deploymentSmoke) {
+		return
+	}
 	if served, rule := h.applyEdgeRuleCacheUnlessAsync(w, r, app, rec, asyncRule); served {
 		return
 	} else if isNonUserTriggerClass(triggerClass) && normalizeCrawlerPolicy(app.CrawlerPolicy) == "cached" {
@@ -6388,69 +6398,6 @@ haveApp:
 	// runtime values, but the inner class set is bounded; the sync.Map
 	// dedupes so the hot path stays allocation-free after first sight.
 	h.preInstantiateApp(app.ID)
-
-	// Per-account rate limit (ADR-040 / issue #292). Runs BEFORE the
-	// per-app limit so a botnet rotating across many apps within an
-	// account cannot evade the throttle by keeping per-app rps low.
-	// Empty AccountID is only reachable from fakeBackend unit tests
-	// (production joins always populate it via pgRouter.toApp) — pass
-	// through unmetered and log once per process so the test suite
-	// keeps working without flooding logs.
-	if deploymentSmoke {
-		// The verifier is authenticated with a short-lived app-and-deployment
-		// challenge. Customer rate buckets must not make a healthy deployment
-		// fail promotion, and platform verification must not consume customer
-		// quota.
-	} else if app.AccountID == "" {
-		h.warnEmptyAccountOnce()
-	} else if !h.accountLimiter.AllowAccount(r.Context(), app.AccountID, app.Plan) { //nolint:contextcheck // r.Context() is the inherited per-request ctx in ServeHTTP
-		w.Header().Set("Retry-After", "1")
-		w.Header().Set("x-faas-rate-limit-scope", "account")
-		// Per-account 429 still surfaces the per-account bucket state
-		// so a customer debugging a 429 storm can see which throttle
-		// tripped. Distinct X-AccountRateLimit-* header family so
-		// generic tooling that auto-parses X-RateLimit-* doesn't
-		// conflate per-app and per-account values (Finding 6).
-		h.writeAccountRateLimitHeaders(w, app.AccountID, app.Plan)
-		api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, "rate_limited",
-			"Rate limit exceeded", "slow down and retry"))
-		if h.metrics != nil {
-			h.metrics.ObserveAccountRateLimit(app.AccountID, string(app.Plan))
-		}
-		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
-		return
-	}
-
-	// Per-app rate limit (spec §4.1). Over-limit → 429.
-	if !deploymentSmoke && !h.limiter.AllowAppWithLimits(r.Context(), app.ID, app.Plan, app.RequestRateLimitRPS, app.RequestRateLimitBurst) { //nolint:contextcheck // r.Context() is the inherited per-request ctx in ServeHTTP
-		w.Header().Set("Retry-After", "1")
-		w.Header().Set("x-faas-rate-limit-scope", "app")
-		// 429 path: write the post-decrement bucket snapshot so
-		// clients can compute Retry-After locally without parsing the
-		// problem+json body. The header set runs before the
-		// api.WriteProblem below so the body has time to read them.
-		h.writeAppRateLimitHeaders(w, app.ID, app.Plan)
-		api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, "rate_limited",
-			"Rate limit exceeded", "slow down and retry"))
-		if h.metrics != nil {
-			h.metrics.ObserveRateLimit(app.ID, string(app.Plan))
-		}
-		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
-		return
-	}
-
-	// Success path: stamp the per-app headers BEFORE the proxy runs so
-	// they reach the wire regardless of what the upstream does (a
-	// committed upstream response body would otherwise overwrite the
-	// headers we set here). Allow already consumed one token above; the
-	// Peek snapshot therefore reflects "tokens left after this
-	// request" which is the standard X-RateLimit-Remaining contract.
-	if !deploymentSmoke {
-		h.writeAppRateLimitHeaders(w, app.ID, app.Plan)
-	}
-	if !h.enforceTenantRequestBudget(w, r, rec, app, deploymentSmoke) {
-		return
-	}
 
 	// Receive and bound the complete request body before wake admission. The
 	// upload has a plan-sized deadline and spills large bodies to disk. An

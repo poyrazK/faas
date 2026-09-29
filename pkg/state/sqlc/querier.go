@@ -31,6 +31,7 @@ type Querier interface {
 	// subject behavior.
 	AccountIDByGitHubOIDCRepositoryIdentity(ctx context.Context, db DBTX, arg AccountIDByGitHubOIDCRepositoryIdentityParams) (pgtype.UUID, error)
 	AccountsByIDs(ctx context.Context, db DBTX, dollar_1 []pgtype.UUID) ([]AccountsByIDsRow, error)
+	AdmitTrafficRetry(ctx context.Context, db DBTX, arg AdmitTrafficRetryParams) (int64, error)
 	AppByID(ctx context.Context, db DBTX, id pgtype.UUID) (AppByIDRow, error)
 	AppBySlug(ctx context.Context, db DBTX, slug string) (AppBySlugRow, error)
 	AppendAccountCreditLedgerEntry(ctx context.Context, db DBTX, arg AppendAccountCreditLedgerEntryParams) error
@@ -105,6 +106,7 @@ type Querier interface {
 	// required so an out-of-order cleanup call cannot hide the path of
 	// an open session that a concurrent PATCH still needs.
 	ClearUploadSessionPartPath(ctx context.Context, db DBTX, id string) error
+	ConsumeTrafficRateToken(ctx context.Context, db DBTX, arg ConsumeTrafficRateTokenParams) (int64, error)
 	CountDeployedApps(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	// Per-(account_id, app_slug) open-session cap check at the top of
 	// POST /v1/uploads. Returns the current count; the handler
@@ -944,6 +946,7 @@ type Querier interface {
 	ObjectUsageReportHead(ctx context.Context, db DBTX, arg ObjectUsageReportHeadParams) error
 	ObjectUsageReportInsert(ctx context.Context, db DBTX, arg ObjectUsageReportInsertParams) error
 	ObjectUsageReports(ctx context.Context, db DBTX, arg ObjectUsageReportsParams) ([]ObjectStorageUsageReport, error)
+	ObserveTrafficRetryOriginal(ctx context.Context, db DBTX, arg ObserveTrafficRetryOriginalParams) error
 	OrgByID(ctx context.Context, db DBTX, id pgtype.UUID) (OrgByIDRow, error)
 	OrgByPersonalAccount(ctx context.Context, db DBTX, personalOwnerAccountID pgtype.UUID) (OrgByPersonalAccountRow, error)
 	OrgBySlug(ctx context.Context, db DBTX, lower string) (OrgBySlugRow, error)
@@ -975,6 +978,7 @@ type Querier interface {
 	// partition tail (rows in the default partition or
 	// the current month that are older than cutoff).
 	PruneDataUpstreamProbesOlderThan(ctx context.Context, db DBTX, sampledAt pgtype.Timestamptz) error
+	PruneTrafficRetryCounters(ctx context.Context, db DBTX) (int64, error)
 	PutAppEgressCircuits(ctx context.Context, db DBTX, arg PutAppEgressCircuitsParams) (PutAppEgressCircuitsRow, error)
 	// An unqualified legacy row blocks the whole key; guessing could double-debit.
 	ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg ReadAccountCreditConsumptionParams) (ReadAccountCreditConsumptionRow, error)

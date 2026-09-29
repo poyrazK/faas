@@ -240,7 +240,13 @@ func runWithRetry(
 		owner := r.Body
 		defer func() { _ = owner.Close() }()
 	}
-	admission.budget.ObserveOriginal(r.Context(), admission.scope)
+	if !admission.budget.ObserveOriginal(r.Context(), admission.scope) {
+		if obs != nil {
+			obs.IncRetryExhausted(RetrySkipAggregate)
+		}
+		attempt(w, r, target)
+		return
+	}
 	runAttempts(w, r, target, policy, onStale, attempt, repick, obs, admission)
 }
 

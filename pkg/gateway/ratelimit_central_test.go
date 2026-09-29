@@ -113,7 +113,7 @@ func TestLimiter_RealBackend_MirrorsAuthoritativeRemainingForHeaders(t *testing.
 	}
 }
 
-func TestLimiter_RealBackend_PGErrorDegradesSoft(t *testing.T) {
+func TestLimiter_RealBackend_PGErrorFailsClosed(t *testing.T) {
 	// Postgres unreachable: ConsumeToken returns an error, so the limiter
 	// returns false (preserves local reject decision) without panicking.
 	fake := newFakeCentral()
@@ -137,7 +137,9 @@ func TestLimiter_RealBackend_PGErrorDegradesSoft(t *testing.T) {
 	const rps, burst = 1500.0, 3000.0
 	const centralKey = "app:00000000-0000-0000-0000-000000000002:scale"
 	for i := 0; i < 3000; i++ {
-		l.AllowWithCentralParams(context.Background(), "appid", rps, burst, centralKey)
+		if l.AllowWithCentralParams(context.Background(), "appid", rps, burst, centralKey) {
+			t.Fatal("shared-store outage admitted a local token")
+		}
 	}
 	if l.AllowWithCentralParams(context.Background(), "appid", rps, burst, centralKey) {
 		t.Error("scale admit accepted despite PG error (degraded posture must preserve local reject)")
@@ -161,8 +163,8 @@ func TestHandler_CentralFallbackIsObservableAndAuditCooledDown(t *testing.T) {
 		WithCentralBackend(fake)
 	const centralKey = "app:00000000-0000-0000-0000-000000000002:hobby"
 	for i := 0; i < 2; i++ {
-		if !h.limiter.AllowWithCentralParams(t.Context(), "app-1", 10, 10, centralKey) {
-			t.Fatalf("local fallback rejected request %d", i+1)
+		if h.limiter.AllowWithCentralParams(t.Context(), "app-1", 10, 10, centralKey) {
+			t.Fatalf("shared-store outage admitted request %d", i+1)
 		}
 	}
 
@@ -171,7 +173,7 @@ func TestHandler_CentralFallbackIsObservableAndAuditCooledDown(t *testing.T) {
 	if want := `gateway_ratelimit_degraded_total{scope="app"} 2`; !strings.Contains(rec.Body.String(), want) {
 		t.Fatalf("metrics missing %q:\n%s", want, rec.Body.String())
 	}
-	if got := strings.Count(logs.String(), "gateway rate limiter fell back"); got != 1 {
+	if got := strings.Count(logs.String(), "gateway shared rate admission unavailable"); got != 1 {
 		t.Errorf("degraded warning count=%d, want 1 within cooldown; logs=%s", got, logs.String())
 	}
 	audit.mu.Lock()

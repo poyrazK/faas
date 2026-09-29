@@ -4742,3 +4742,56 @@ RETURNING revision, targets;
 
 -- name: ListAppEgressCircuitAppIDs :many
 SELECT app_id FROM app_egress_circuits ORDER BY app_id;
+
+-- name: ObserveTrafficRetryOriginal :exec
+INSERT INTO traffic_retry_counters (app_id, originals, retries, expires_at)
+VALUES (sqlc.arg(app_id)::uuid, 1, 0,
+    statement_timestamp() + sqlc.arg(window_ms)::bigint * interval '1 millisecond')
+ON CONFLICT (app_id) DO UPDATE SET
+    originals = CASE WHEN traffic_retry_counters.expires_at <= statement_timestamp()
+        THEN 1 ELSE traffic_retry_counters.originals + 1 END,
+    retries = CASE WHEN traffic_retry_counters.expires_at <= statement_timestamp()
+        THEN 0 ELSE traffic_retry_counters.retries END,
+    expires_at = CASE WHEN traffic_retry_counters.expires_at <= statement_timestamp()
+        THEN statement_timestamp() + sqlc.arg(window_ms)::bigint * interval '1 millisecond'
+        ELSE traffic_retry_counters.expires_at END;
+
+-- name: AdmitTrafficRetry :one
+UPDATE traffic_retry_counters SET retries = retries + 1
+WHERE app_id = sqlc.arg(app_id)::uuid
+    AND expires_at > clock_timestamp()
+    AND retries < GREATEST(sqlc.arg(min_retries)::bigint,
+        CEIL(originals::numeric * sqlc.arg(percent)::bigint / 100))
+RETURNING retries;
+
+-- name: PruneTrafficRetryCounters :execrows
+WITH stale AS (
+    SELECT app_id FROM traffic_retry_counters
+    WHERE expires_at <= clock_timestamp()
+    ORDER BY expires_at LIMIT 1000 FOR UPDATE SKIP LOCKED
+)
+DELETE FROM traffic_retry_counters WHERE app_id IN (SELECT app_id FROM stale);
+
+-- name: ConsumeTrafficRateToken :one
+INSERT INTO pg_ratelimit_counters (scope, subject_id, plan, tokens, last_refill)
+VALUES (sqlc.arg(scope)::text, sqlc.arg(subject_id)::uuid, sqlc.arg(plan)::text,
+    GREATEST(0, FLOOR(sqlc.arg(burst)::double precision)::bigint - 1), now())
+ON CONFLICT (scope, subject_id, plan) DO UPDATE
+SET tokens = LEAST(FLOOR(sqlc.arg(burst)::double precision)::bigint,
+    pg_ratelimit_counters.tokens + FLOOR(GREATEST(0,
+        EXTRACT(EPOCH FROM (now() - pg_ratelimit_counters.last_refill)))
+        * sqlc.arg(rps)::double precision)::bigint) - 1,
+    last_refill = CASE
+        WHEN pg_ratelimit_counters.tokens + FLOOR(GREATEST(0,
+            EXTRACT(EPOCH FROM (now() - pg_ratelimit_counters.last_refill)))
+            * sqlc.arg(rps)::double precision)::bigint >= FLOOR(sqlc.arg(burst)::double precision)::bigint
+        THEN GREATEST(now(), pg_ratelimit_counters.last_refill)
+        ELSE pg_ratelimit_counters.last_refill + (FLOOR(GREATEST(0,
+            EXTRACT(EPOCH FROM (now() - pg_ratelimit_counters.last_refill)))
+            * sqlc.arg(rps)::double precision) / sqlc.arg(rps)::double precision) * interval '1 second'
+    END
+WHERE LEAST(FLOOR(sqlc.arg(burst)::double precision)::bigint,
+    pg_ratelimit_counters.tokens + FLOOR(GREATEST(0,
+        EXTRACT(EPOCH FROM (now() - pg_ratelimit_counters.last_refill)))
+        * sqlc.arg(rps)::double precision)::bigint) >= 1
+RETURNING tokens;

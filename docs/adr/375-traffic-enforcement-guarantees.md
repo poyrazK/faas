@@ -80,6 +80,29 @@ Detached jobs and arbitrary unmediated guest sockets are excluded. Trusted
 remaining-deadline transport for nested managed service calls is a required
 follow-up before the complete deadline guarantee is accepted.
 
+## Shared traffic accounting
+
+`[ratelimit] mode = "central"` is the daemon default and requires its Postgres
+pool. `local` remains an explicit operator/development exception; unknown
+values refuse startup. Central app/account/rule consumes are atomic. Store
+errors refuse unverified admission with `rate_limit_unavailable`/503 and do
+not substitute a private bucket. Exhaustion still returns 429. Account and
+app allowances charge eligible authenticated ordinary public requests before
+cache lookup, once per logical request. Sequential scope checks are not a
+multi-scope transaction: an account debit can precede an app refusal, and
+ambiguous store timeouts are not refunded.
+
+The default aggregate retry counter uses the same Postgres pool. Atomic
+observations and spends share one ten-second database window per target app,
+including the public and declared service-proxy retry loops. Cache responses,
+ineligible requests and additional attempts do not inflate the original
+denominator. A failed original observation or spend refuses replay while the
+original request can run once. Expired counters require a new observation;
+replacement processes cannot mint a fresh minimum. Expired rows are pruned in
+bounded batches, and app deletion removes them. Existing explicit Redis
+credentials still select the Redis backend and its startup/runtime posture
+from ADR-288. This supersedes ADR-288's implicit process-local default.
+
 ## Delivery and verification
 
 The implementation tracker is `docs/traffic_platform_implementation.md`.

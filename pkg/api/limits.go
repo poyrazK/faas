@@ -20,6 +20,12 @@ import (
 	"time"
 )
 
+// Shared traffic counters bound each admission round trip and aggregate replay.
+const (
+	TrafficCounterOperationTimeout = 100 * time.Millisecond
+	TrafficRetryBudgetWindow       = 10 * time.Second
+)
+
 // A restore hook is on the wake critical path. Keep its customer timeout
 // below the host's five-second resume deadline, including transport overhead.
 const (

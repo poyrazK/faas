@@ -2399,20 +2399,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// harness path); production traffic terminates TLS at gatewayd-public
 	// and proxies to the unix socket bound in cmd/gatewayd-internal/.
 
-	retryBudget := gateway.NewRetryBudget(0, nil)
-	budgetURL, budgetConfigErr := retryBudgetRedisURL(osGetenv)
-	if budgetConfigErr != nil {
-		return fmt.Errorf("gatewayd-internal: %w", budgetConfigErr)
-	}
-	if budgetURL != "" {
-		sharedBudget, budgetErr := gateway.NewRedisRetryBudget(ctx, budgetURL, 0)
-		if budgetErr != nil {
-			return fmt.Errorf("gatewayd-internal: connect shared retry budget: %w", budgetErr)
-		}
-		retryBudget = sharedBudget
-		deps.metrics.SetRetryBudgetShared(true)
-		deps.metrics.SetRetryBudgetBackendID(sharedBudget.BackendID())
-		log.Info("gatewayd-internal: shared retry budget enabled")
+	counterCtx, stopCounters := context.WithCancel(ctx)
+	defer stopCounters()
+	retryBudget, budgetErr := buildTrafficRetryBudget(counterCtx, deps.config, deps.pool, deps.metrics, log)
+	if budgetErr != nil {
+		return budgetErr
 	}
 	retryBudget.WithObserver(deps.metrics)
 	defer func() { _ = retryBudget.Close() }()
@@ -2450,21 +2441,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if deps.declaredRoutesMatcher != nil && deps.pool != nil {
 		go watchDeclaredRouteInvalidations(ctx, deps.pool, deps.declaredRoutesMatcher, log)
 	}
-	// ADR-104 amendment 5 / issue #881 Phase 4 C3: opt-in
-	// central-mode rate-limit counter (the [ratelimit] mode TOML
-	// knob added in C2). mode = "local" (default) leaves every
-	// Limiter on its noop backend — behaviour unchanged from
-	// pre-Phase-4. mode = "central" wires the production
-	// PGRateLimitBackend + the LISTEN-side invalidator (C4).
-	if deps.config != nil && deps.config.RateLimit.Mode == "central" {
+	mode, modeErr := trafficCounterMode(deps.config)
+	if modeErr != nil {
+		return modeErr
+	}
+	if mode == "central" {
 		backend, rps := buildCentralRateLimitBackend(deps.pool, log)
-		if backend != nil {
-			handler.WithCentralBackend(backend)
-			log.Info("gatewayd-internal: rate-limit central mode armed",
-				"rps_resolver", rpsKind(rps))
-		} else {
-			return fmt.Errorf("gatewayd-internal: [ratelimit] mode = \"central\" requires a Postgres pool")
+		if backend == nil {
+			return errors.New("gatewayd-internal: ratelimit.mode central requires a Postgres pool")
 		}
+		handler.WithCentralBackend(backend)
+		log.Info("gatewayd-internal: shared rate counters enabled", "rps_resolver", rpsKind(rps))
+	} else {
+		log.Warn("gatewayd-internal: explicit local traffic counters; fleet caps unavailable")
 	}
 	// Exact pre-auth routes opt into a shared source budget independently of
 	// the app/account limiter mode. The handler consults this backend only for
@@ -4134,20 +4123,8 @@ func (a mirrorRulesStoreAdapter) ListMirrorRules(ctx context.Context, appID stri
 	return out, nil
 }
 
-// buildCentralRateLimitBackend wires the production
-// CentralBackend iff deps.pool is non-nil (Postgres reachable)
-// (ADR-104 amendment 5, issue #881 Phase 4 C3). Returns
-// (nil, nil) when the pool is missing — runWithDeps logs a
-// warning and falls back to the noop backend (degraded posture,
-// single-box dev with no Postgres still works).
-//
-// The rps closure looks up the per-plan refill rate via
-// api.LimitsFor; an unknown plan (defensive — e.g. a future
-// plan addition that hasn't shipped everywhere) degrades to
-// (0, false) which the backend treats as "infinite tokens"
-// (admit-soft). The closure avoids an explicit pkg/api import
-// in this file (state.PGRateLimitBackend accepts the closure
-// directly).
+// buildCentralRateLimitBackend shares the daemon's Postgres pool. The caller
+// refuses central-mode startup when the pool is absent (ADR-375).
 func buildCentralRateLimitBackend(pool *pgxpool.Pool, log *slog.Logger) (*state.PGRateLimitBackend, func(plan string) (float64, bool)) {
 	if pool == nil {
 		return nil, nil

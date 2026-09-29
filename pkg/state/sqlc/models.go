@@ -2327,6 +2327,13 @@ type TenantSurface struct {
 	PlatformTenantManaged bool
 }
 
+type TrafficRetryCounter struct {
+	AppID     pgtype.UUID
+	Originals int64
+	Retries   int64
+	ExpiresAt pgtype.Timestamptz
+}
+
 type Trigger struct {
 	ID                   pgtype.UUID
 	AccountID            pgtype.UUID

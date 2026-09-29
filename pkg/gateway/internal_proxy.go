@@ -358,7 +358,10 @@ func dialWithTimeout(ctx context.Context, dialer InternalDialer, dialTimeout tim
 // On dial failure: 502 Bad Gateway. On upstream error: propagated
 // unchanged.
 func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	r = r.WithContext(WithStartTime(r.Context(), time.Now()))
+	p.serveHTTP(w, r.WithContext(WithStartTime(r.Context(), time.Now())))
+}
+
+func (p *InternalReverseProxy) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	// Drain tracker (issue #587 / PR-A): a request that's
 	// handed off to the proxy is "in flight" from the daemon's
 	// perspective until this ServeHTTP returns.

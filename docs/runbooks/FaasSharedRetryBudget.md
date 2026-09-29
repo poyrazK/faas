@@ -12,16 +12,18 @@ Severity: warn. Family: `retry_safety`.
 ## Symptom
 
 `FaasRetryBudgetMixedModes` means the gateway fleet has both process-local
-and Redis-backed retry allowances. The fleet-wide cap does not hold until
-every serving gateway uses the same Redis endpoint.
+and shared retry allowances. The fleet-wide cap requires every serving
+gateway to use the same shared backend. Central mode defaults to Postgres
+(ADR-375); explicit Redis credentials override that selection.
 
-`FaasRetryBudgetBackendErrors` means Redis commands are failing after
-startup. A gateway declines retries on those errors; original requests
-continue through their ordinary path.
+`FaasRetryBudgetBackendErrors` means shared store operations are failing. A
+gateway declines retries, including when the original observation failed.
+Original requests still run if their independent admission checks succeed;
+a failure of Postgres rate admission returns 503.
 
-`FaasRetryBudgetBackendMismatch` means gateways reached different Redis
-transport endpoints or logical databases. The `backend_id` is a short hash
-of address, DB, and TLS mode; it contains no Redis password.
+`FaasRetryBudgetBackendMismatch` means gateways selected different shared
+backends or endpoints/databases. The `backend_id` is a short credential-free
+endpoint hash.
 
 ## Verify
 
@@ -35,9 +37,9 @@ sum by (instance, operation, result) (rate(gateway_retry_budget_backend_operatio
 ```
 
 The two counts must match, and the first count must cover every serving
-gateway. The endpoint identity count must be 1. Check the configured URL at
-the source (the shared Ansible Vault
-variable) rather than printing the credential on a host or into a ticket.
+gateway. The endpoint identity count must be 1. Check ratelimit.mode and the
+Postgres database or configured Redis override. For Redis, check the shared
+Ansible Vault variable without printing the credential into a ticket.
 The role renders that value to a root-only systemd credential. Direct URL
 environment configuration is supported for older deployments, but it must
 not coexist with the credential path.
@@ -52,8 +54,8 @@ deploy/scripts/verify-shared-retry-budget.sh
 ```
 
 It fails unless every expected target is up, every target reports shared mode,
-every target exports a backend identity, all gateways report one common Redis
-identity, and no Redis operation errors occurred in the last ten minutes.
+every target exports a backend identity, all gateways report one common shared
+identity, and no shared-backend operation errors occurred in the last ten minutes.
 `production-release-acceptance.sh` runs this gate when
 `SHARED_RETRY_BUDGET_REQUIRED=true`; it defaults the expected gateway count to
 `ACTIVE_NODE_COUNT` and requires `PROMETHEUS_URL` in that mode.
@@ -62,20 +64,23 @@ CI also runs the two-process canary through the real `gatewayd-internal`
 service path. To run it locally with the E2E PostgreSQL fixture available:
 
 ```sh
-go test -p 1 -vet=off ./cmd/e2e -run '^TestE2E_ServiceRetryBudget_TwoGatewayCanary$' -count=1
+go test -p 1 -vet=off ./cmd/e2e -run '^TestE2E_ServiceRetryBudget_' -count=1
 ```
 
-The canary proves that two originals across independent gateways admit one
+The canaries cover the Postgres default and the explicit Redis override.
+They require Linux for daemon capability checks and use a VMMD fixture.
+Each proves that two originals across independent gateways admit one
 shared replay, checks that both processes expose the same backend identity,
-then shuts Redis down and proves both original calls still run while neither
-gateway retries.
+then makes the selected retry store unavailable and checks that both original
+calls run once while neither gateway retries. These are pending locally on
+Linux; they do not replace native VM or leak acceptance.
 
 ## Recover
 
-1. Confirm the Redis endpoint and private network are healthy. Inspect
-   `journalctl -u faas-gatewayd-internal` and the Redis service without
-   displaying the URL or password.
-2. Confirm `gatewayd_retry_budget_required=true` and one common
+1. Confirm the selected Postgres or Redis endpoint and private network are
+   healthy. Inspect `journalctl -u faas-gatewayd-internal` without displaying
+   connection credentials.
+2. For an explicit Redis selection, confirm `gatewayd_retry_budget_required=true` and one common
    `gatewayd_retry_budget_redis_url` in the fleet inventory or Vault. Reapply
    `deploy/ansible/bootstrap.yml` to gateway nodes. The role rejects a
    missing URL when shared mode is required.
@@ -83,7 +88,10 @@ gateway retries.
    backend errors to stop. Run the automated rollout gate and two-gateway
    canary above before marking production acceptance complete.
 
-For a deliberate rollback, set `gatewayd_retry_budget_required=false` and
-clear `gatewayd_retry_budget_redis_url` for all gateways, then converge and
-verify that every mode gauge reads 0. This restores per-process budgets;
-the fleet-wide cap no longer applies.
+Removing the Redis override in central mode switches to Postgres; it does
+not select local counters. A backend switch starts a different budget window.
+Drain traffic or disable retries across all gateways for at least the ten-second
+window, converge all gateways to one backend, then restore retries and verify
+the gate. An explicit switch to local mode removes the fleet cap and must be
+reported as such. See `docs/ops/shared-traffic-counters.md` for accounting and
+local evidence; native and deployed rollout acceptance remain separate.
