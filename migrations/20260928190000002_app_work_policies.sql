@@ -1,6 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
-create table app_work_policies (
+create table if not exists app_work_policies (
   app_id uuid not null references apps(id) on delete cascade,
   account_id uuid not null references accounts(id) on delete cascade,
   name text not null check (name ~ '^[a-z][a-z0-9-]{0,62}$'),
@@ -14,11 +14,17 @@ create table app_work_policies (
   primary key (app_id, name)
 );
 
-alter table invocations add column work_policy_revision bigint
+alter table invocations add column if not exists work_policy_revision bigint
   check (work_policy_revision is null or work_policy_revision > 0);
 
-alter table event_subscriptions add constraint event_subscriptions_id_app_uniq unique (id, app_id);
-create table event_subscription_work_bindings (
+do $$ begin
+  if not exists (select 1 from pg_constraint
+      where conname = 'event_subscriptions_id_app_uniq'
+        and conrelid = 'event_subscriptions'::regclass) then
+    alter table event_subscriptions add constraint event_subscriptions_id_app_uniq unique (id, app_id);
+  end if;
+end $$;
+create table if not exists event_subscription_work_bindings (
   subscription_id uuid primary key,
   app_id uuid not null,
   policy_name text not null,

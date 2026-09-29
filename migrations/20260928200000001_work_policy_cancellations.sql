@@ -1,6 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
-create table invocation_work_cancellations (
+create table if not exists invocation_work_cancellations (
   id uuid primary key,
   app_id uuid not null references apps(id) on delete cascade,
   policy_name text not null check (policy_name ~ '^[a-z][a-z0-9-]{0,62}$'),
@@ -9,7 +9,7 @@ create table invocation_work_cancellations (
   created_at timestamptz not null default now()
 );
 
-create index invocation_work_cancellations_app_created_idx
+create index if not exists invocation_work_cancellations_app_created_idx
   on invocation_work_cancellations (app_id, created_at);
 -- +goose StatementEnd
 
