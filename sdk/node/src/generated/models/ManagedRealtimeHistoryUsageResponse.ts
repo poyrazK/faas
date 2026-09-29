@@ -12,11 +12,11 @@ export type ManagedRealtimeHistoryUsageResponse = {
    */
   endpoint_count: number;
   /**
-   * Retained channel heads
+   * Retained channel heads, including empty heads.
    */
   channel_count: number;
   /**
-   * Message rows still physically present
+   * Message rows still physically present, including expired rows awaiting cleanup.
    */
   stored_message_count: number;
   /**
