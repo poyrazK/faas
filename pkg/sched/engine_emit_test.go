@@ -233,7 +233,7 @@ func TestEnginePark_EmitsStartedCompleted(t *testing.T) {
 	}
 }
 
-// adr: 343 — a terminal capture error closes the customer park timeline.
+// adr: 351 — a terminal capture error closes the customer park timeline.
 func TestEnginePark_EmitsFailedWithClosedReason(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
