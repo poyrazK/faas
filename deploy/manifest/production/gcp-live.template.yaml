@@ -119,7 +119,9 @@ daemons:
 
 overlay:
   provider: static
-  cidr: 10.156.0.0/20
+  # gregale-prod VPC subnet gregale-us-east1 (us-east1). The previous
+  # europe-west3 project used 10.156.0.0/20.
+  cidr: 10.10.0.0/20
 
 # The GCP VPC is RFC1918. These exceptions are intentionally explicit and
 # limited to the VPC overlay used by this fleet; do not copy this block to a
@@ -127,7 +129,7 @@ overlay:
 egress:
   danger_accept_rfc1918_lateral_movement: true
   overlay_exceptions:
-    - 10.156.0.0/20
+    - 10.10.0.0/20
 
 dns:
   apps_domain: gregale.dev
