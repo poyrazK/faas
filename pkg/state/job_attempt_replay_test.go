@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -59,7 +60,7 @@ func TestMemStoreJobAttemptsReplayAndSnapshot(t *testing.T) {
 	legacy := st.jobRuns[run.ID]
 	legacy.ImageResolvedDigestSnapshot = ""
 	st.jobRuns[run.ID] = legacy
-	if _, _, err := st.JobRunReplayFailed(ctx, run.ID, job.AccountID); err != ErrConflict {
+	if _, _, err := st.JobRunReplayFailed(ctx, run.ID, job.AccountID); !errors.Is(err, ErrConflict) {
 		t.Fatalf("legacy run without digest replay error = %v, want conflict", err)
 	}
 }

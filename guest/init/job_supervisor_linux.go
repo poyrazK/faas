@@ -380,14 +380,14 @@ func jobExitPayloadFromWait(waitResult jobWaitResult, reason jobTerminationReaso
 }
 
 func readGuestJobOutputManifest(path string) (json.RawMessage, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:forbidigo // This platform-owned guest path is read only for the job result manifest.
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(f, jobresult.MaxBytes+1))
 	if err != nil {
 		return nil, err

@@ -3,6 +3,7 @@ package state_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -52,7 +53,7 @@ func TestPgJobsAttemptJournalAndReplay(t *testing.T) {
 	if _, err := pool.Exec(ctx, `update job_runs set image_resolved_digest_snapshot = null where id = $1::uuid`, run.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := st.JobRunReplayFailed(ctx, run.ID, job.AccountID); err != state.ErrConflict {
+	if _, _, err := st.JobRunReplayFailed(ctx, run.ID, job.AccountID); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("legacy run without digest replay error = %v, want conflict", err)
 	}
 }

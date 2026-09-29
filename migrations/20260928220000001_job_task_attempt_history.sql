@@ -1,7 +1,7 @@
 -- +goose Up
 -- A task row is the dispatch projection. This journal retains each completed
 -- attempt before the projection is reused for a retry.
-CREATE TABLE job_task_attempts (
+CREATE TABLE IF NOT EXISTS job_task_attempts (
     run_id uuid NOT NULL,
     task_index int NOT NULL,
     attempt int NOT NULL CHECK (attempt >= 1),
@@ -21,7 +21,7 @@ CREATE TABLE job_task_attempts (
 );
 
 -- +goose StatementBegin
-CREATE FUNCTION record_job_task_attempt() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION record_job_task_attempt() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF NEW.attempt > OLD.attempt THEN
         -- A claimed VM may fail before a terminal task row is written. Its
@@ -64,6 +64,7 @@ END;
 $$;
 -- +goose StatementEnd
 
+DROP TRIGGER IF EXISTS job_task_attempt_journal ON job_tasks;
 CREATE TRIGGER job_task_attempt_journal AFTER UPDATE ON job_tasks
     FOR EACH ROW EXECUTE FUNCTION record_job_task_attempt();
 
@@ -75,7 +76,8 @@ SELECT run_id, task_index, attempt, status, instance_id, error_class,
        error_message, exit_code, started_at, COALESCE(finished_at, created_at),
        log_content, log_truncated, output_manifest
   FROM job_tasks
- WHERE status IN ('succeeded', 'failed', 'timeout', 'cancelled', 'oom');
+ WHERE status IN ('succeeded', 'failed', 'timeout', 'cancelled', 'oom')
+ON CONFLICT (run_id, task_index, attempt) DO NOTHING;
 
 -- +goose Down
 DROP TRIGGER job_task_attempt_journal ON job_tasks;

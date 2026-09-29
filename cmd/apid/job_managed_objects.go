@@ -98,7 +98,7 @@ func readJobInputManifest(ctx context.Context, reader objectstorage.ObjectReader
 	if err != nil {
 		return nil, err
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 	data, err := io.ReadAll(io.LimitReader(stream, api.JobInputManifestMaxBytes+1))
 	if err != nil {
 		return nil, err
@@ -113,7 +113,7 @@ func readJobInputManifest(ctx context.Context, reader objectstorage.ObjectReader
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&inputs); err != nil {
-		return nil, fmt.Errorf("%w: invalid JSON: %v", errJobInputManifestInvalid, err)
+		return nil, fmt.Errorf("%w: invalid JSON: %w", errJobInputManifestInvalid, err)
 	}
 	var extra any
 	if err := decoder.Decode(&extra); err != io.EOF {

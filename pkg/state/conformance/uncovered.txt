@@ -256,14 +256,12 @@ JobListByAccount
 JobRunIncrementDeadLetter
 JobRunListByAccount
 JobRunListByJob
-JobRunRecompute
 JobRunReopenDeadLetter
 JobSoftDelete
 JobTaskCancel
 JobTaskClaimBatch
 JobTaskFindStuck
 JobTaskList
-JobTaskMarkTerminal
 JobTaskRequeue
 JobTaskRetry
 JobUpdate

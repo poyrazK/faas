@@ -1,13 +1,13 @@
 -- +goose Up
 ALTER TABLE usage_minutes
-    ADD COLUMN job_run_id uuid,
-    ADD COLUMN job_execution_class text;
+    ADD COLUMN IF NOT EXISTS job_run_id uuid,
+    ADD COLUMN IF NOT EXISTS job_execution_class text;
 
 UPDATE usage_minutes u SET
     job_run_id = r.id,
     job_execution_class = r.execution_class
 FROM job_tasks t JOIN job_runs r ON r.id = t.run_id
-WHERE u.meter_kind = 'job' AND t.instance_id = u.instance_id;
+WHERE u.meter_kind = 'job' AND t.instance_id = u.instance_id AND u.job_run_id IS NULL;
 
 UPDATE usage_minutes u SET
     job_run_id = r.id,
@@ -20,11 +20,17 @@ WHERE u.meter_kind = 'job' AND u.job_run_id IS NULL AND a.instance_id = u.instan
 UPDATE usage_minutes SET job_execution_class = 'standard'
 WHERE meter_kind = 'job' AND job_execution_class IS NULL;
 
-ALTER TABLE usage_minutes ADD CONSTRAINT usage_minutes_job_execution_class_check CHECK (
-    (meter_kind = 'app' AND job_execution_class IS NULL AND job_run_id IS NULL) OR
-    (meter_kind = 'job' AND job_execution_class IN ('standard', 'flexible')));
+-- +goose StatementBegin
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'usage_minutes'::regclass AND conname = 'usage_minutes_job_execution_class_check') THEN
+        ALTER TABLE usage_minutes ADD CONSTRAINT usage_minutes_job_execution_class_check CHECK (
+            (meter_kind = 'app' AND job_execution_class IS NULL AND job_run_id IS NULL) OR
+            (meter_kind = 'job' AND job_execution_class IN ('standard', 'flexible')));
+    END IF;
+END $$;
+-- +goose StatementEnd
 
-CREATE INDEX usage_minutes_job_class_window_idx
+CREATE INDEX IF NOT EXISTS usage_minutes_job_class_window_idx
     ON usage_minutes (account_id, job_execution_class, minute DESC)
     WHERE meter_kind = 'job';
 

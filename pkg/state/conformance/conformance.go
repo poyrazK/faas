@@ -151,6 +151,7 @@ func Run(t *testing.T, open Open) {
 		{"job_boot_failures_obey_retry_budget_and_fence_late_exits", testJobBootFailureBudget},
 		{"stale_job_task_reap_is_fenced_and_obeys_retry_budget", testJobTaskReapClaimed},
 		{"queued_job_capacity_deferral_preserves_retry", testJobTaskDeferQueued},
+		{"job_attempt_replay_and_flexible_expiry_are_durable", testJobAttemptReplayAndFlexibleExpiry},
 		{"scheduled_command_cron_cursor_and_run_history_are_consistent", testScheduledCommandCronLifecycle},
 		{"node_admission_ceiling_is_enforced_at_insert", testNodeAdmissionCeiling},
 		{"node_admission_ceiling_is_enforced_on_migration", testNodeAdmissionCeilingOnMigration},
@@ -1562,6 +1563,69 @@ func testJobTaskDeferQueued(t *testing.T, fx *Fixture) {
 	}
 	if err := fx.Store.JobTaskDeferQueued(fx.Ctx, run.ID, 0, 2, time.Now().Add(time.Second)); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("stale attempt = %v, want ErrNotFound", err)
+	}
+}
+
+// adr: 346 — completed attempts retain input identity, failed inputs can be
+// replayed, and an unstarted flexible task expires after its admission window.
+func testJobAttemptReplayAndFlexibleExpiry(t *testing.T, fx *Fixture) {
+	job, err := fx.Store.JobCreate(fx.Ctx, fx.Account.ID, "replay-"+uuid.NewString()[:8], "batch",
+		"ghcr.io/onebox-faas/conformance:latest", []string{"/bin/true"}, 128, 60, 2, 0, nil)
+	if err != nil {
+		t.Fatalf("JobCreate: %v", err)
+	}
+	materializer, ok := fx.Store.(interface {
+		JobSetImageMaterialization(context.Context, string, string, string, string, string, string) (state.Job, error)
+	})
+	if !ok {
+		t.Fatal("store does not implement job image materialization")
+	}
+	if _, err := materializer.JobSetImageMaterialization(fx.Ctx, job.ID, job.ImageRef, "ready",
+		"sha256:"+strings.Repeat("a", 64), "jobs/conformance.ext4", ""); err != nil {
+		t.Fatalf("JobSetImageMaterialization: %v", err)
+	}
+	run, tasks, err := fx.Store.JobRunCreate(fx.Ctx, job.ID, fx.Account.ID, "manual", nil, nil, nil, nil, 2,
+		state.JobRunOptions{Inputs: []state.JobInput{{ID: "first", Ref: "obj-first"}, {ID: "second", Ref: "obj-second"}}})
+	if err != nil || len(tasks) != 2 {
+		t.Fatalf("JobRunCreate: tasks=%+v err=%v", tasks, err)
+	}
+	if err := fx.Store.JobTaskMarkTerminal(fx.Ctx, run.ID, 0, "failed", 1, "user_error", "bad input", time.Now()); err != nil {
+		t.Fatalf("failed task: %v", err)
+	}
+	if err := fx.Store.JobTaskMarkTerminal(fx.Ctx, run.ID, 1, "succeeded", 0, "", "", time.Now()); err != nil {
+		t.Fatalf("succeeded task: %v", err)
+	}
+	if _, err := fx.Store.JobRunRecompute(fx.Ctx, run.ID); err != nil {
+		t.Fatalf("JobRunRecompute: %v", err)
+	}
+	attempts, err := fx.Store.JobTaskAttemptList(fx.Ctx, run.ID, 0, 10, 0)
+	if err != nil || len(attempts) != 1 || attempts[0].Attempt != 1 || attempts[0].InputID != "first" || attempts[0].Status != "failed" {
+		t.Fatalf("JobTaskAttemptList: attempts=%+v err=%v", attempts, err)
+	}
+	replay, replayTasks, err := fx.Store.JobRunReplayFailed(fx.Ctx, run.ID, fx.Account.ID)
+	if err != nil || replay.SourceRunID == nil || *replay.SourceRunID != run.ID || len(replayTasks) != 1 ||
+		replayTasks[0].InputID != "first" || replayTasks[0].SourceTaskIndex == nil || *replayTasks[0].SourceTaskIndex != 0 {
+		t.Fatalf("JobRunReplayFailed: replay=%+v tasks=%+v err=%v", replay, replayTasks, err)
+	}
+	if _, _, err := fx.Store.JobRunReplayFailed(fx.Ctx, run.ID, uuid.NewString()); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("cross-account replay: %v, want ErrNotFound", err)
+	}
+	eligible, latest := time.Now().UTC().Add(-time.Minute), time.Now().UTC().Add(time.Minute)
+	flexible, _, err := fx.Store.JobRunCreate(fx.Ctx, job.ID, fx.Account.ID, "manual", nil, nil, nil, nil, 1,
+		state.JobRunOptions{ExecutionClass: "flexible", EligibleAt: &eligible, LatestStartAt: &latest})
+	if err != nil {
+		t.Fatalf("flexible JobRunCreate: %v", err)
+	}
+	expired, err := fx.Store.JobTaskExpireUnstarted(fx.Ctx, latest.Add(time.Second))
+	if err != nil || len(expired) != 1 || expired[0] != flexible.ID {
+		t.Fatalf("JobTaskExpireUnstarted: runs=%+v err=%v", expired, err)
+	}
+	task, err := fx.Store.JobTaskGet(fx.Ctx, flexible.ID, 0)
+	if err != nil || task.Status != "cancelled" || task.FinishedAt == nil {
+		t.Fatalf("expired task: %+v err=%v", task, err)
+	}
+	if again, err := fx.Store.JobTaskExpireUnstarted(fx.Ctx, latest.Add(time.Minute)); err != nil || len(again) != 0 {
+		t.Fatalf("second expiry: runs=%+v err=%v", again, err)
 	}
 }
 

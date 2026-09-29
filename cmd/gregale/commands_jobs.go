@@ -612,7 +612,9 @@ func cmdJobsAttempts(args []string) int {
 		return jsonOut(writeJSONSingle(out))
 	}
 	for _, attempt := range out.Attempts {
-		fmt.Fprintf(osStdout, "%d\t%s\t%s\t%s\n", attempt.Attempt, attempt.Status, attempt.InputID, attempt.ErrorMessage)
+		if _, err := fmt.Fprintf(osStdout, "%d\t%s\t%s\t%s\n", attempt.Attempt, attempt.Status, attempt.InputID, attempt.ErrorMessage); err != nil {
+			return printErr("Output failed", err)
+		}
 	}
 	return 0
 }
@@ -661,7 +663,9 @@ func cmdJobsArtifactURL(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSONSingle(out))
 	}
-	fmt.Fprintf(osStdout, "%s\n%s  %d bytes\n", out.Download.URL, out.SHA256, out.SizeBytes)
+	if _, err := fmt.Fprintf(osStdout, "%s\n%s  %d bytes\n", out.Download.URL, out.SHA256, out.SizeBytes); err != nil {
+		return printErr("Output failed", err)
+	}
 	return 0
 }
 
