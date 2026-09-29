@@ -32,6 +32,8 @@ const circuitBreakerScope = "Circuit-breaker rule traces report effective per-in
 
 const asyncRouteScope = "Async-route traces show effective retry/deadline policy, plan and workload gates, and supplied-body size/JSON eligibility without outputting body contents or idempotency-key values. Authentication, rate-limit admission, durable enqueue/version resolution, idempotency conflicts, queue capacity, dispatch, and callbacks are runtime-only; a candidate does not imply HTTP 202 or duplicate handling."
 
+const jwtPolicyScope = "JWT-rule traces report bearer-token presence and a value-redacted policy summary. They never output the token, issuer, audience, JWKS URL, or required-claim values; JWKS retrieval, signature/claim verification, and earlier app authentication remain runtime-only. A missing bearer token is shown as a conditional 401 only if earlier gates let the request reach the JWT rule."
+
 const redactedHeaderValue = "[REDACTED]"
 
 var traceOutputRedactor = redact.New(1 << 20)
@@ -181,6 +183,7 @@ type SimulationStep struct {
 	RetryPolicy          *RetryPolicyPreview          `json:"retry_policy,omitempty"`
 	CircuitBreakerPolicy *CircuitBreakerPolicyPreview `json:"circuit_breaker_policy,omitempty"`
 	AsyncPolicy          *AsyncPolicyPreview          `json:"async_policy,omitempty"`
+	JWTPolicy            *JWTPolicyPreview            `json:"jwt_policy,omitempty"`
 	Reason               string                       `json:"reason"`
 }
 
@@ -220,6 +223,19 @@ type ActionPreview struct {
 	RetryPolicy          *RetryPolicyPreview          `json:"retry_policy,omitempty"`
 	CircuitBreakerPolicy *CircuitBreakerPolicyPreview `json:"circuit_breaker_policy,omitempty"`
 	AsyncPolicy          *AsyncPolicyPreview          `json:"async_policy,omitempty"`
+	JWTPolicy            *JWTPolicyPreview            `json:"jwt_policy,omitempty"`
+}
+
+// JWTPolicyPreview exposes only safe, non-value policy metadata. It never
+// includes bearer-token or configured issuer/audience/JWKS/claim values.
+type JWTPolicyPreview struct {
+	BearerTokenPresent                       bool     `json:"bearer_token_present"`
+	IssuerConfigured                         bool     `json:"issuer_configured"`
+	JWKSConfigured                           bool     `json:"jwks_configured"`
+	AudienceCount                            int      `json:"audience_count"`
+	Algorithms                               []string `json:"algorithms,omitempty"`
+	RequiredClaimNames                       []string `json:"required_claim_names,omitempty"`
+	PlatformTenantExternalRefClaimConfigured bool     `json:"platform_tenant_external_ref_claim_configured"`
 }
 
 // CachePolicyPreview contains the deterministic request-side cache policy
@@ -542,7 +558,7 @@ func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
 		App: input.App, Host: input.Host, Path: input.Path, Method: input.Method,
 		ClientIP: input.ClientIP, Country: input.Country,
 		BodyProvided: input.BodyProvided, BodyBytes: len(input.Body),
-		Headers: headerSnapshot(input.Headers), Scope: Scope + " " + circuitBreakerScope + " " + asyncRouteScope,
+		Headers: headerSnapshot(input.Headers), Scope: Scope + " " + circuitBreakerScope + " " + asyncRouteScope + " " + jwtPolicyScope,
 		Rules: make([]RuleRow, 0, len(sorted)),
 	}
 	firstByKind := make(map[string]int)
@@ -773,6 +789,9 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 				asyncPolicy := *preview.AsyncPolicy
 				step.AsyncPolicy = &asyncPolicy
 			}
+			if preview.JWTPolicy != nil {
+				step.JWTPolicy = cloneJWTPolicyPreview(preview.JWTPolicy)
+			}
 		}
 		if phase == "async" && step.AsyncPolicy != nil && outcome != "unavailable" {
 			step.PathAfter = requestPath
@@ -858,6 +877,28 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 				return simulation
 			case "needs_cors_preset", "invalid_cors_preset_policy":
 				return stop("incomplete", outcome, phase, reason, rule)
+			default:
+				return stop("incomplete", outcome, phase, reason, rule)
+			}
+		case "jwt":
+			switch outcome {
+			case "missing_bearer_token":
+				simulation.Status, simulation.Outcome = "incomplete", outcome
+				simulation.StatusCode, simulation.ProblemCode = http.StatusUnauthorized, api.CodeUnauthorized
+				simulation.StoppedAt = phase
+				simulation.Reason = "if earlier app authentication and runtime gates let the request reach this matching JWT rule, the gateway would return HTTP 401 because no non-empty Bearer token is present"
+				step.StatusCode, step.ProblemCode, step.Reason = http.StatusUnauthorized, api.CodeUnauthorized, simulation.Reason
+				simulation.Steps = append(simulation.Steps, step)
+				simulation.FinalPath, simulation.RequestHeaders = requestPath, headerSnapshot(workingHeaders)
+				return simulation
+			case "jwt_verification_candidate":
+				simulation.Status, simulation.Outcome = "incomplete", "needs_jwt_runtime_context"
+				simulation.StoppedAt = phase
+				simulation.Reason = "a non-empty Bearer token is present, but live JWKS retrieval and cryptographic/claim verification are not performed; no authentication outcome is inferred"
+				step.Reason = simulation.Reason
+				simulation.Steps = append(simulation.Steps, step)
+				simulation.FinalPath, simulation.RequestHeaders = requestPath, headerSnapshot(workingHeaders)
+				return simulation
 			default:
 				return stop("incomplete", outcome, phase, reason, rule)
 			}
@@ -1233,6 +1274,8 @@ func previewAction(rule api.EdgeRuleResponse, row RuleRow, input Input, requestP
 		return "headers", fmt.Sprintf("would apply %d request-header and %d response-header operation(s)", len(action.RequestHeaders), len(action.ResponseHeaders)), preview
 	case "cors":
 		return previewCORSRule(rule, input)
+	case "jwt":
+		return previewJWTRule(rule, input)
 	case "maintenance":
 		action, ok := decodeAction[api.EdgeRuleMaintenanceAction](rule.Action, "maintenance")
 		if !ok {
@@ -1721,6 +1764,48 @@ func circuitBreakerPolicyReason(policy CircuitBreakerPolicyPreview) string {
 
 func circuitBreakerRuntimeReason(_ CircuitBreakerPolicyPreview) string {
 	return "the matched circuit-breaker policy is shown, but the operator feature gate, live per-instance failure window, open/half-open state, and probe result are unavailable; target selection and request outcome are not predicted"
+}
+
+func previewJWTRule(rule api.EdgeRuleResponse, input Input) (string, string, *ActionPreview) {
+	action, ok := decodeAction[api.EdgeRuleJWTAction](rule.Action, "jwt")
+	if !ok || action.Validate() != nil {
+		return "unavailable", "JWT action is missing or invalid; gateway compilation may reject this rule", nil
+	}
+	policy := &JWTPolicyPreview{
+		BearerTokenPresent:                       jwtBearerTokenPresent(input.Headers.Get("Authorization")),
+		IssuerConfigured:                         strings.TrimSpace(action.Issuer) != "",
+		JWKSConfigured:                           strings.TrimSpace(action.JWKSURL) != "",
+		AudienceCount:                            len(action.Audience),
+		Algorithms:                               append([]string(nil), action.Algorithms...),
+		PlatformTenantExternalRefClaimConfigured: action.PlatformTenantExternalRefClaim != "",
+	}
+	for name := range action.RequiredClaims {
+		policy.RequiredClaimNames = append(policy.RequiredClaimNames, name)
+	}
+	sort.Strings(policy.Algorithms)
+	sort.Strings(policy.RequiredClaimNames)
+	if !policy.BearerTokenPresent {
+		return "missing_bearer_token", "Authorization does not contain a non-empty Bearer token; if this matching rule is reached, the gateway rejects the request before live verification", &ActionPreview{Type: "jwt", JWTPolicy: policy}
+	}
+	return "jwt_verification_candidate", "a non-empty Bearer token is present; the live JWKS, signature, issuer, audience, and required-claim checks are not evaluated", &ActionPreview{Type: "jwt", JWTPolicy: policy}
+}
+
+func jwtBearerTokenPresent(header string) bool {
+	const prefix = "Bearer "
+	if len(header) < len(prefix) || !strings.EqualFold(header[:len(prefix)], prefix) {
+		return false
+	}
+	return strings.TrimSpace(header[len(prefix):]) != ""
+}
+
+func cloneJWTPolicyPreview(policy *JWTPolicyPreview) *JWTPolicyPreview {
+	if policy == nil {
+		return nil
+	}
+	cloned := *policy
+	cloned.Algorithms = append([]string(nil), policy.Algorithms...)
+	cloned.RequiredClaimNames = append([]string(nil), policy.RequiredClaimNames...)
+	return &cloned
 }
 
 func hasAppRequestBudget(input Input) bool {

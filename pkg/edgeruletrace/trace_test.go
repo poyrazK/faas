@@ -1403,6 +1403,72 @@ func TestSimulateCircuitBreakerRuleReportsPolicyWithoutPredictingState(t *testin
 	}
 }
 
+func TestSimulateJWTRuleReportsRedactedPolicyWithoutPredictingAuthentication(t *testing.T) {
+	rule := api.EdgeRuleResponse{
+		ID: "jwt-rule", Enabled: true, Kind: "jwt", MatchHost: "example.com", MatchPath: "/private/*",
+		Action: json.RawMessage(`{"jwt":{"issuer":"https://issuer.example/private-issuer","audience":["private-audience"],"jwks_url":"https://keys.example/jwks?access_token=private-jwks-token","algorithms":["RS256","ES256"],"required_claims":{"tenant_id":"private-tenant"},"platform_tenant_external_ref_claim":"platform_ref"}}`),
+	}
+	input := edgeruletrace.Input{
+		App: "demo", Host: "example.com", Path: "/private/report", Method: http.MethodGet, AppMaintenanceLoaded: true,
+		Headers: http.Header{"Authorization": []string{"Bearer secret-token-value"}},
+	}
+	result, err := edgeruletrace.Simulate(input, []api.EdgeRuleResponse{rule})
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	if result.Simulation.Status != "incomplete" || result.Simulation.Outcome != "needs_jwt_runtime_context" || result.Simulation.StoppedAt != "jwt" {
+		t.Fatalf("simulation = %#v; a present bearer token must not imply successful authentication", result.Simulation)
+	}
+	if len(result.Simulation.Steps) != 1 || result.Simulation.Steps[0].Outcome != "jwt_verification_candidate" {
+		t.Fatalf("JWT step = %#v", result.Simulation.Steps)
+	}
+	policy := result.Simulation.Steps[0].JWTPolicy
+	if policy == nil || !policy.BearerTokenPresent || !policy.IssuerConfigured || !policy.JWKSConfigured || policy.AudienceCount != 1 || !policy.PlatformTenantExternalRefClaimConfigured {
+		t.Fatalf("JWT policy summary = %#v", policy)
+	}
+	if strings.Join(policy.Algorithms, ",") != "ES256,RS256" || strings.Join(policy.RequiredClaimNames, ",") != "tenant_id" {
+		t.Fatalf("stable JWT policy summary = %#v", policy)
+	}
+	if result.Rules[0].ActionPreview == nil || result.Rules[0].ActionPreview.JWTPolicy == nil {
+		t.Fatalf("per-rule JWT preview = %#v", result.Rules[0])
+	}
+	if !strings.Contains(result.Scope, "signature/claim verification") {
+		t.Fatalf("scope omits the JWT verification limitation: %q", result.Scope)
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	for _, secret := range []string{"secret-token-value", "private-issuer", "private-audience", "private-jwks-token", "private-tenant"} {
+		if strings.Contains(string(encoded), secret) {
+			t.Errorf("trace leaked sensitive JWT input/config value %q: %s", secret, encoded)
+		}
+	}
+}
+
+func TestSimulateJWTMissingBearerShowsConditionalUnauthorized(t *testing.T) {
+	rule := api.EdgeRuleResponse{
+		ID: "jwt-rule", Enabled: true, Kind: "jwt", MatchHost: "example.com", MatchPath: "*",
+		Action: json.RawMessage(`{"jwt":{"issuer":"https://issuer.example","jwks_url":"https://keys.example/jwks","algorithms":["RS256"]}}`),
+	}
+	result, err := edgeruletrace.Simulate(edgeruletrace.Input{
+		App: "demo", Host: "example.com", Path: "/private", Method: http.MethodGet, AppMaintenanceLoaded: true,
+		Headers: http.Header{"Authorization": []string{"Basic opaque-credential"}},
+	}, []api.EdgeRuleResponse{rule})
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	if result.Simulation.Status != "incomplete" || result.Simulation.Outcome != "missing_bearer_token" || result.Simulation.StoppedAt != "jwt" || result.Simulation.StatusCode != http.StatusUnauthorized || result.Simulation.ProblemCode != api.CodeUnauthorized {
+		t.Fatalf("simulation = %#v; missing bearer must be shown as a conditional 401", result.Simulation)
+	}
+	if policy := result.Simulation.Steps[0].JWTPolicy; policy == nil || policy.BearerTokenPresent {
+		t.Fatalf("JWT bearer summary = %#v", policy)
+	}
+	if strings.Contains(result.Simulation.Reason, "Basic opaque-credential") {
+		t.Fatalf("trace leaked Authorization value: %q", result.Simulation.Reason)
+	}
+}
+
 func TestSimulateCircuitBreakerRuleUsesGatewayDefaultsAndCeilingFallback(t *testing.T) {
 	rule := api.EdgeRuleResponse{
 		ID: "breaker-defaults", Enabled: true, Kind: "circuit_breaker", MatchHost: "example.com", MatchPath: "*",

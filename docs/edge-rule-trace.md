@@ -132,6 +132,16 @@ empty body to model the gateway's empty-object payload, or a JSON body to check
 its size and syntax. The trace evaluates body bytes but never returns the
 payload.
 
+For a matching `kind=jwt` rule, the trace reports whether the supplied
+`Authorization` header contains a non-empty Bearer token and summarizes the
+configured algorithms and required-claim names. It never returns the token,
+issuer, audience, JWKS URL, claim values, or signature material. When no Bearer
+token is present, the trace shows the rule's conditional HTTP 401 only if
+earlier authentication and runtime gates allow the request to reach it. A
+present token remains `incomplete`: fetching JWKS, checking its signature,
+issuer, audience, and claims are runtime operations, so the trace never claims
+that the token is valid or predicts an authentication result.
+
 ```json
 {
   "version": 1,
