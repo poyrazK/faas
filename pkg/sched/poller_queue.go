@@ -249,12 +249,20 @@ func (q *queuePoller) Ack(ctx context.Context, t sqlc.Trigger, ids []string) err
 // trigger_records retry FSM remains the source of the exact next-fire time;
 // the invocation due_at is a short wake guard to avoid a hot poll loop.
 func (q *queuePoller) Nack(ctx context.Context, t sqlc.Trigger, ids []string, reason string) error {
+	return q.NackWithDetails(ctx, t, ids, reason, nil)
+}
+
+// NackWithDetails preserves per-invocation dispatch errors while requeueing
+// or dead-lettering queue-backed trigger records. The generic reason still
+// controls the state transition; details are surfaced as last_error for
+// operators inspecting the invocation or queue DLQ.
+func (q *queuePoller) NackWithDetails(ctx context.Context, t sqlc.Trigger, ids []string, reason string, details map[string]string) error {
 	terminal := reason == triggerReasonPoisonRecord || reason == triggerReasonMaxAttempts || reason == triggerReasonPayloadTooLarge || reason == triggerReasonRateLimited
 	if terminal {
-		if err := q.finishInvocations(ctx, t, ids, "dead_letter", "dead_letter", "dead_letter", reason, `{"trigger_dispatch":"dead_letter"}`); err != nil {
+		if err := q.finishInvocationsWithDetails(ctx, t, ids, "dead_letter", "dead_letter", "dead_letter", reason, `{"trigger_dispatch":"dead_letter"}`, details); err != nil {
 			return err
 		}
-	} else if err := q.retryInvocations(ctx, t, ids, reason); err != nil {
+	} else if err := q.retryInvocationsWithDetails(ctx, t, ids, reason, details); err != nil {
 		return err
 	}
 	q.mu.Lock()
@@ -274,32 +282,40 @@ func (q *queuePoller) NackTerminal(ctx context.Context, t sqlc.Trigger, ids []st
 }
 
 func (q *queuePoller) finishInvocations(ctx context.Context, t sqlc.Trigger, ids []string, invocationState, recordState, outcome, lastError, result string) error {
+	return q.finishInvocationsWithDetails(ctx, t, ids, invocationState, recordState, outcome, lastError, result, nil)
+}
+
+func (q *queuePoller) finishInvocationsWithDetails(ctx context.Context, t sqlc.Trigger, ids []string, invocationState, recordState, outcome, lastError, result string, details map[string]string) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	_, err := q.pool.Exec(ctx, `
+	detailsJSON, err := json.Marshal(details)
+	if err != nil {
+		return fmt.Errorf("poller_queue: encode error details: %w", err)
+	}
+	_, err = q.pool.Exec(ctx, `
 		with finalized_records as (
 			update trigger_records
 			   set state = $1,
 			       attempts = attempts + case when $1 = 'dead_letter' and state <> 'dead_letter' then 1 else 0 end,
-			       last_error = case when $1 = 'dead_letter' then nullif($9, '') else last_error end,
+			       last_error = case when $1 = 'dead_letter' then coalesce(nullif($9::jsonb ->> item_identifier, ''), nullif($10, '')) else last_error end,
 			       last_dispatched_at = now()
 			 where trigger_id = $2
 			   and item_identifier = any($3::text[])
 			   and state <> $1
 			 returning id
 		)
-		update invocations
+		update invocations i
 		   set state = $4,
 		       outcome = $5,
 		       result = $6::jsonb,
 		       completed_at = now(),
 		       lease_expires_at = null,
-		       last_error = $9
-		 where id::text = any($3::text[])
-		   and app_id = $7
-		   and source = $8
-		   and state = 'dispatching'`, recordState, t.ID, ids, invocationState, outcome, result, t.AppID, q.source, lastError)
+		       last_error = coalesce(nullif($9::jsonb ->> i.id::text, ''), $10)
+		 where i.id::text = any($3::text[])
+		   and i.app_id = $7
+		   and i.source = $8
+		   and i.state = 'dispatching'`, recordState, t.ID, ids, invocationState, outcome, result, t.AppID, q.source, string(detailsJSON), lastError)
 	if err != nil {
 		return fmt.Errorf("poller_queue: finish invocations: %w", err)
 	}
@@ -307,10 +323,18 @@ func (q *queuePoller) finishInvocations(ctx context.Context, t sqlc.Trigger, ids
 }
 
 func (q *queuePoller) retryInvocations(ctx context.Context, t sqlc.Trigger, ids []string, reason string) error {
+	return q.retryInvocationsWithDetails(ctx, t, ids, reason, nil)
+}
+
+func (q *queuePoller) retryInvocationsWithDetails(ctx context.Context, t sqlc.Trigger, ids []string, reason string, details map[string]string) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	_, err := q.pool.Exec(ctx, `
+	detailsJSON, err := json.Marshal(details)
+	if err != nil {
+		return fmt.Errorf("poller_queue: encode retry error details: %w", err)
+	}
+	_, err = q.pool.Exec(ctx, `
 		update invocations i
 		   set state = 'pending',
 		       outcome = null,
@@ -322,11 +346,11 @@ func (q *queuePoller) retryInvocations(ctx context.Context, t sqlc.Trigger, ids 
 		              and tr.item_identifier = i.id::text
 		       ), now() + interval '1 second'),
 		       lease_expires_at = null,
-		       last_error = $4
+		       last_error = coalesce(nullif($6::jsonb ->> i.id::text, ''), $4)
 		 where i.id::text = any($2::text[])
 		   and i.app_id = $3
 		   and i.source = $5
-		   and i.state = 'dispatching'`, t.ID, ids, t.AppID, reason, q.source)
+		   and i.state = 'dispatching'`, t.ID, ids, t.AppID, reason, q.source, string(detailsJSON))
 	if err != nil {
 		return fmt.Errorf("poller_queue: retry invocations: %w", err)
 	}
