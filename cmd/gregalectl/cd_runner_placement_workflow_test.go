@@ -193,3 +193,24 @@ func TestCDComputePutsThePinnedCosignOnPath(t *testing.T) {
 		t.Error("cd-compute installs a pinned cosign but does not put it on PATH for the join")
 	}
 }
+
+// A GCS-only fleet has no FAAS_OCI_* registry credentials: storage uses the
+// VM identity. cd-controlplane's credential-source check required them
+// unconditionally, so the first production-us rollout failed after a
+// successful activation. The assertions must be gated on OCI being in use.
+func TestCDControlPlaneCredentialCheckAllowsGCSOnlyStorage(t *testing.T) {
+	workflow := readWorkflow(t, "cd-controlplane.yml")
+	gate := strings.Index(workflow, `if grep -Eq '^FAAS_STORAGE_(FALLBACK_)?BACKEND=oci$' /etc/faas/storage.env; then`)
+	if gate < 0 {
+		t.Fatal("cd-controlplane checks registry credentials without asking whether OCI is in use")
+	}
+	for _, call := range []string{
+		"assert_process_credential faas-apid /etc/faas/apid-storage.env",
+		"assert_process_credential faas-schedd /etc/faas/storage.env",
+	} {
+		i := strings.Index(workflow, "            "+call)
+		if i < 0 || i < gate {
+			t.Errorf("%q is not inside the OCI-in-use branch", call)
+		}
+	}
+}

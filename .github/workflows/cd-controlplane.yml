@@ -866,8 +866,15 @@ jobs:
               exit 1
             }
           }
-          assert_process_credential faas-apid /etc/faas/apid-storage.env
-          assert_process_credential faas-schedd /etc/faas/storage.env
+          # Registry credentials exist only when OCI is the backend or the
+          # migration fallback. A GCS-only fleet authenticates with the VM
+          # identity (ADC) and has no FAAS_OCI_* values to compare.
+          if grep -Eq '^FAAS_STORAGE_(FALLBACK_)?BACKEND=oci$' /etc/faas/storage.env; then
+            assert_process_credential faas-apid /etc/faas/apid-storage.env
+            assert_process_credential faas-schedd /etc/faas/storage.env
+          else
+            echo "storage.env selects GCS without an OCI fallback; no registry credentials to verify"
+          fi
           sudo -u faas-apid /opt/faas/current/bin/gregalectl artifact lifecycle-check \
             --env-file /etc/faas/storage.env \
             --lifecycle-env-file /etc/faas/apid-storage.env \
