@@ -156,8 +156,9 @@ func TestWaitForMigrationsApplied_NoOpIfAlreadyCurrent(t *testing.T) {
 // a daemon in shutdown is the worst-case resource leak.
 //
 // We assert wall-clock: cancel fires, helper returns within 1s.
-// The notify-driven arm doesn't fire (we never insert); the
-// ticker arm is 5s. ctx.Done() is the arm that wins.
+// A database-level notification may arrive from another isolated
+// schema in a concurrently running package. Cancellation must win
+// without a recheck turning into an unrelated database error.
 func TestWaitForMigrationsApplied_RespectsContextCancel(t *testing.T) {
 	pool := pgtest.Open(t)
 
@@ -188,6 +189,12 @@ func TestWaitForMigrationsApplied_RespectsContextCancel(t *testing.T) {
 
 	// Let the waiter reach the select{}.
 	time.Sleep(100 * time.Millisecond)
+	// Notifications are database-wide; another test schema may publish
+	// this same channel while CI runs packages against one Postgres service.
+	if _, err := pool.Exec(ctx,
+		`SELECT pg_notify($1, 'another isolated schema')`, db.NotifyMigrationsApplied); err != nil {
+		t.Fatalf("send unrelated notification: %v", err)
+	}
 
 	cancelAt := time.Now()
 	cancel()
