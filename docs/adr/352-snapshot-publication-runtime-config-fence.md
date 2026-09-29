@@ -1,4 +1,4 @@
-# ADR-344 · Fence snapshot publication against runtime configuration changes
+# ADR-352 · Fence snapshot publication against runtime configuration changes
 
 - **Status:** accepted
 - **Date:** 2026-09-28
