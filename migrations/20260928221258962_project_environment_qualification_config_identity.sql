@@ -5,6 +5,7 @@ ALTER TABLE project_environment_qualifications
     ADD COLUMN IF NOT EXISTS configuration_version bigint NOT NULL DEFAULT -1,
     ADD COLUMN IF NOT EXISTS configuration_hash text NOT NULL DEFAULT '';
 
+-- +goose StatementBegin
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -20,6 +21,7 @@ BEGIN
             );
     END IF;
 END $$;
+-- +goose StatementEnd
 
 -- +goose Down
 ALTER TABLE project_environment_qualifications
