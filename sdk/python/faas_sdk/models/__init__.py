@@ -699,6 +699,8 @@ from .edge_rule_validate_action_schema import EdgeRuleValidateActionSchema
 from .edge_rule_validate_action_validate_mode import EdgeRuleValidateActionValidateMode
 from .egress_circuit_breaker_policy import EgressCircuitBreakerPolicy
 from .egress_circuit_breaker_policy_state import EgressCircuitBreakerPolicyState
+from .egress_flow_log_entry import EgressFlowLogEntry
+from .egress_flow_log_response import EgressFlowLogResponse
 from .enable_alert_preset_request import EnableAlertPresetRequest
 from .enable_alert_preset_request_action import EnableAlertPresetRequestAction
 from .env_diff_cell import EnvDiffCell
@@ -2568,6 +2570,8 @@ __all__ = (
     "EdgeRuleValidateActionValidateMode",
     "EgressCircuitBreakerPolicy",
     "EgressCircuitBreakerPolicyState",
+    "EgressFlowLogEntry",
+    "EgressFlowLogResponse",
     "EnableAlertPresetRequest",
     "EnableAlertPresetRequestAction",
     "EnvDiffCell",
