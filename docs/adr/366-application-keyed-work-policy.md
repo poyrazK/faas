@@ -1,4 +1,4 @@
-# ADR-348 · Application-keyed background work policies
+# ADR-366 · Application-keyed background work policies
 
 - **Status:** accepted; invocation, event, and internal queue producers implemented; broker and job adapters pending
 - **Date:** 2026-09-28
