@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -65,5 +66,50 @@ func TestManagedRealtimeRetainedMessagesPersistAndReportGap(t *testing.T) {
 	}
 	if history.OldestSequence != 2 || history.LatestSequence != 1025 || !history.HasMore || len(history.Messages) != 2 || history.Messages[0].Sequence != 2 {
 		t.Fatalf("history = %+v", history)
+	}
+}
+
+func TestManagedRealtimeHistoryUsagePreview(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	path := "/v1/account/realtime-history-usage"
+	if response := e.do(t, http.MethodGet, path, nil, nil); response.Code != http.StatusNotFound {
+		t.Fatalf("preview disabled = %d %s", response.Code, response.Body)
+	}
+	e.s.WithRealtimeHistoryPreviewEnabled(true)
+	endpointID := createRealtimeEndpointForTest(t, e)
+	if _, err := e.store.AppendManagedRealtimeChannelMessage(t.Context(), endpointID, "updates", []byte("payload"), false, ""); err != nil {
+		t.Fatal(err)
+	}
+	response := e.do(t, http.MethodGet, path, nil, nil)
+	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("usage = %d %s headers=%v", response.Code, response.Body, response.Header())
+	}
+	var usage api.ManagedRealtimeHistoryUsageResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &usage); err != nil {
+		t.Fatal(err)
+	}
+	if usage.ObservedAt == "" || usage.EndpointCount != 1 || usage.ChannelCount != 1 ||
+		usage.StoredMessageCount != 1 || usage.StoredPayloadBytes != 7 ||
+		usage.ReplayableMessageCount != 1 || usage.ReplayablePayloadBytes != 7 {
+		t.Fatalf("usage = %+v", usage)
+	}
+	for _, tc := range []struct {
+		scope string
+		want  int
+	}{{api.ScopeUsageRead, http.StatusOK}, {api.ScopeAppsRead, http.StatusForbidden}} {
+		key, hash, err := api.GenerateAPIKey()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.store.CreateAPIKey(t.Context(), e.acct.ID, hash, "realtime-usage-test", []string{tc.scope}); err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Authorization", "Bearer "+key)
+		rec := httptest.NewRecorder()
+		e.h.ServeHTTP(rec, req)
+		if rec.Code != tc.want {
+			t.Fatalf("scope %s: got %d, want %d: %s", tc.scope, rec.Code, tc.want, rec.Body)
+		}
 	}
 }

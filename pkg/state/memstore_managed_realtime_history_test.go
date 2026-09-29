@@ -56,6 +56,54 @@ func TestMemStoreManagedRealtimeHistoryRetainsAndReportsGap(t *testing.T) {
 	}
 }
 
+func TestMemStoreManagedRealtimeHistoryUsageScopesAccountAndReplayFloor(t *testing.T) {
+	m, ctx, acct, app := realtimeFixture(t)
+	endpoint, err := m.CreateManagedRealtimeEndpointIfUnderQuota(ctx, ManagedRealtimeEndpoint{
+		AccountID: acct.ID, AppID: app.ID, Enabled: true,
+	}, 2, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, data := range []string{"a", "bb", "ccc"} {
+		if _, err := m.AppendManagedRealtimeChannelMessage(ctx, endpoint.ID, "updates", []byte(data), false, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := m.AppendManagedRealtimeChannelMessage(ctx, endpoint.ID, "empty-later", []byte("x"), false, ""); err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	// Expiring sequence 2 hides the otherwise fresh sequence 1, while the
+	// expired row remains in the stored-row snapshot until prune runs.
+	key := managedRealtimeHistoryKey{endpointID: endpoint.ID, channel: "updates"}
+	m.managedRealtimeHistory[key].messages[1].CreatedAt = time.Now().Add(-ManagedRealtimeHistoryRetention - time.Minute)
+	otherID := "another-account-endpoint"
+	m.managedRealtimeEndpoints[otherID] = ManagedRealtimeEndpoint{ID: otherID, AccountID: "other-account"}
+	m.mu.Unlock()
+	if _, err := m.AppendManagedRealtimeChannelMessage(ctx, otherID, "private", []byte("secret"), false, ""); err != nil {
+		t.Fatal(err)
+	}
+	usage, err := m.ReadManagedRealtimeHistoryUsage(ctx, acct.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if usage.EndpointCount != 1 || usage.ChannelCount != 2 || usage.StoredMessageCount != 4 || usage.StoredPayloadBytes != 7 ||
+		usage.ReplayableMessageCount != 2 || usage.ReplayablePayloadBytes != 4 || usage.ObservedAt.IsZero() {
+		t.Fatalf("account usage = %+v", usage)
+	}
+	other, err := m.ReadManagedRealtimeHistoryUsage(ctx, "other-account")
+	if err != nil || other.EndpointCount != 1 || other.ChannelCount != 1 || other.StoredMessageCount != 1 || other.StoredPayloadBytes != 6 {
+		t.Fatalf("other account usage = (%+v, %v)", other, err)
+	}
+	if err := m.DeleteManagedRealtimeEndpoint(ctx, endpoint.ID); err != nil {
+		t.Fatal(err)
+	}
+	usage, err = m.ReadManagedRealtimeHistoryUsage(ctx, acct.ID)
+	if err != nil || usage.EndpointCount != 0 || usage.ChannelCount != 0 || usage.StoredMessageCount != 0 {
+		t.Fatalf("deleted account usage = (%+v, %v)", usage, err)
+	}
+}
+
 func TestMemStoreManagedRealtimeHistoryExpiresBeforeCleanup(t *testing.T) {
 	m, ctx, acct, app := realtimeFixture(t)
 	endpoint, err := m.CreateManagedRealtimeEndpointIfUnderQuota(ctx, ManagedRealtimeEndpoint{

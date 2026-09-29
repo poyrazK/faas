@@ -276,6 +276,15 @@ sum(rate(apid_realtime_history_pruned_messages_total[5m]))
 
 These are physical capacity measurements, not per-account billable usage.
 
+`GET /v1/account/realtime-history-usage` is available with the retained
+history preview enabled and the `usage:read` scope. It returns one account's
+current channel-head count, message-row count, and decoded payload bytes.
+`stored_*` includes expired rows until the reaper removes them;
+`replayable_*` applies the same contiguous expiry floor used by subscription
+resume. This snapshot excludes row and index overhead and is not a billable
+byte-hour meter. Use the global relation metric above to watch actual database
+allocation; the account view is for tenant attribution and preview evaluation.
+
 The private `RealtimeHistory.ReadChannelHistory` RPC lets realtimed fetch the
 same bounded page from apid. On a single box it shares
 `/run/faas/request_telemetry.sock`; split-box apid registers it on the private

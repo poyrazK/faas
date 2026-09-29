@@ -165,6 +165,18 @@ type ManagedRealtimeRetainedHistoryResponse struct {
 	HasMore        bool                                     `json:"has_more"`
 }
 
+// ManagedRealtimeHistoryUsageResponse is an account-scoped snapshot of
+// retained payloads. It is informational and does not define billed usage.
+type ManagedRealtimeHistoryUsageResponse struct {
+	ObservedAt             string `json:"observed_at"`
+	EndpointCount          int64  `json:"endpoint_count"`
+	ChannelCount           int64  `json:"channel_count"`
+	StoredMessageCount     int64  `json:"stored_message_count"`
+	StoredPayloadBytes     int64  `json:"stored_payload_bytes"`
+	ReplayableMessageCount int64  `json:"replayable_message_count"`
+	ReplayablePayloadBytes int64  `json:"replayable_payload_bytes"`
+}
+
 // ManagedRealtimeConnectionResponse is the safe control-plane projection of
 // a live socket. It intentionally excludes socket handles and credentials.
 type ManagedRealtimeConnectionResponse struct {

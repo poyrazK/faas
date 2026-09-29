@@ -27,6 +27,57 @@ func (s *PgStore) ObserveManagedRealtimeHistoryStorage(ctx context.Context) (Man
 	return stats, nil
 }
 
+// ReadManagedRealtimeHistoryUsage aggregates only endpoints owned by accountID.
+// A repeatable-read snapshot keeps counts coherent during append and prune.
+func (s *PgStore) ReadManagedRealtimeHistoryUsage(ctx context.Context, accountID string) (ManagedRealtimeHistoryUsage, error) {
+	if accountID == "" {
+		return ManagedRealtimeHistoryUsage{}, ErrManagedRealtimeHistoryInvalid
+	}
+	usage := ManagedRealtimeHistoryUsage{ObservedAt: time.Now().UTC()}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return ManagedRealtimeHistoryUsage{}, fmt.Errorf("state: begin realtime history usage read: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	err = tx.QueryRow(ctx, `
+		with scoped_heads as (
+			select h.endpoint_id, h.channel, h.oldest_sequence
+			from managed_realtime_channel_heads h
+			join managed_realtime_endpoints e on e.id = h.endpoint_id
+			where e.account_id = $1
+		), channel_usage as (
+			select h.endpoint_id, h.channel,
+			       count(m.sequence) as stored_messages,
+			       coalesce(sum(octet_length(m.data)), 0) as stored_bytes,
+			       count(m.sequence) filter (where m.sequence >= expiry.visible_floor) as replayable_messages,
+			       coalesce(sum(octet_length(m.data)) filter (where m.sequence >= expiry.visible_floor), 0) as replayable_bytes
+			from scoped_heads h
+			cross join lateral (
+				select greatest(h.oldest_sequence, coalesce(max(sequence) + 1, h.oldest_sequence)) as visible_floor
+				from managed_realtime_channel_messages
+				where endpoint_id = h.endpoint_id and channel = h.channel and created_at < $2
+			) expiry
+			left join managed_realtime_channel_messages m
+			  on m.endpoint_id = h.endpoint_id and m.channel = h.channel
+			group by h.endpoint_id, h.channel, expiry.visible_floor
+		)
+		select count(distinct endpoint_id), count(*),
+		       coalesce(sum(stored_messages), 0), coalesce(sum(stored_bytes), 0),
+		       coalesce(sum(replayable_messages), 0), coalesce(sum(replayable_bytes), 0)
+		from channel_usage
+	`, accountID, usage.ObservedAt.Add(-ManagedRealtimeHistoryRetention)).Scan(
+		&usage.EndpointCount, &usage.ChannelCount, &usage.StoredMessageCount,
+		&usage.StoredPayloadBytes, &usage.ReplayableMessageCount, &usage.ReplayablePayloadBytes,
+	)
+	if err != nil {
+		return ManagedRealtimeHistoryUsage{}, fmt.Errorf("state: read realtime history usage: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ManagedRealtimeHistoryUsage{}, fmt.Errorf("state: commit realtime history usage read: %w", err)
+	}
+	return usage, nil
+}
+
 // AppendManagedRealtimeChannelMessage allocates the sequence and persists the
 // message in one transaction. The channel head row is the cross-replica
 // serialization point; rolled-back attempts cannot leave sequence holes.

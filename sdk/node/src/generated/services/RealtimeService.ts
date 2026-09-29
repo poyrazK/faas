@@ -9,11 +9,13 @@ import type { ManagedRealtimeConnectionListResponse } from '../models/ManagedRea
 import type { ManagedRealtimeDrainRequest } from '../models/ManagedRealtimeDrainRequest.js';
 import type { ManagedRealtimeDrainResponse } from '../models/ManagedRealtimeDrainResponse.js';
 import type { ManagedRealtimeEndpointResponse } from '../models/ManagedRealtimeEndpointResponse.js';
+import type { ManagedRealtimeHistoryUsageResponse } from '../models/ManagedRealtimeHistoryUsageResponse.js';
 import type { ManagedRealtimeMessageRequest } from '../models/ManagedRealtimeMessageRequest.js';
 import type { ManagedRealtimePublishResponse } from '../models/ManagedRealtimePublishResponse.js';
 import type { ManagedRealtimeRetainedHistoryResponse } from '../models/ManagedRealtimeRetainedHistoryResponse.js';
 import type { ManagedRealtimeRetainedMessageRequest } from '../models/ManagedRealtimeRetainedMessageRequest.js';
 import type { ManagedRealtimeRetainedMessageResponse } from '../models/ManagedRealtimeRetainedMessageResponse.js';
+import type { Problem } from '../models/Problem.js';
 import type { RotateManagedRealtimeAuthRequest } from '../models/RotateManagedRealtimeAuthRequest.js';
 import type { RotateManagedRealtimeAuthResponse } from '../models/RotateManagedRealtimeAuthResponse.js';
 import type { UpdateManagedRealtimeEndpointRequest } from '../models/UpdateManagedRealtimeEndpointRequest.js';
@@ -21,6 +23,24 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class RealtimeService {
+  /**
+   * Read the account's retained realtime history snapshot
+   * Preview only; requires usage read scope and MFA for interactive sessions.
+   * Counts current retained message rows and payload bytes for this account,
+   * including expired rows awaiting cleanup. Replayable counts apply the
+   * channel's contiguous retention floor. These values are informational
+   * snapshots, not billed usage or physical database allocation.
+   *
+   * @returns ManagedRealtimeHistoryUsageResponse Account-scoped retained history snapshot; Cache-Control no-store
+   * @returns Problem Authentication or history usage error
+   * @throws ApiError
+   */
+  public static getManagedRealtimeHistoryUsage(): CancelablePromise<ManagedRealtimeHistoryUsageResponse | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/realtime-history-usage',
+    });
+  }
   /**
    * List managed realtime endpoints for this app.
    * @returns ManagedRealtimeEndpointResponse The configured managed realtime endpoints.

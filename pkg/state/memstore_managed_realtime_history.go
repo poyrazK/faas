@@ -17,6 +17,44 @@ type managedRealtimeHistoryState struct {
 	messages []ManagedRealtimeChannelMessage
 }
 
+func (m *MemStore) ReadManagedRealtimeHistoryUsage(ctx context.Context, accountID string) (ManagedRealtimeHistoryUsage, error) {
+	if accountID == "" {
+		return ManagedRealtimeHistoryUsage{}, ErrManagedRealtimeHistoryInvalid
+	}
+	if err := ctx.Err(); err != nil {
+		return ManagedRealtimeHistoryUsage{}, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	usage := ManagedRealtimeHistoryUsage{ObservedAt: time.Now().UTC()}
+	cutoff := usage.ObservedAt.Add(-ManagedRealtimeHistoryRetention)
+	endpoints := make(map[string]struct{})
+	for key, channel := range m.managedRealtimeHistory {
+		endpoint, exists := m.managedRealtimeEndpoints[key.endpointID]
+		if !exists || endpoint.AccountID != accountID {
+			continue
+		}
+		endpoints[key.endpointID] = struct{}{}
+		usage.ChannelCount++
+		floor := channel.oldest
+		for _, message := range channel.messages {
+			if message.CreatedAt.Before(cutoff) && message.Sequence >= floor {
+				floor = message.Sequence + 1
+			}
+		}
+		for _, message := range channel.messages {
+			usage.StoredMessageCount++
+			usage.StoredPayloadBytes += int64(len(message.Data))
+			if message.Sequence >= floor {
+				usage.ReplayableMessageCount++
+				usage.ReplayablePayloadBytes += int64(len(message.Data))
+			}
+		}
+	}
+	usage.EndpointCount = int64(len(endpoints))
+	return usage, nil
+}
+
 func (m *MemStore) AppendManagedRealtimeChannelMessage(_ context.Context, endpointID, channel string, data []byte, binary bool, idempotencyKey string) (ManagedRealtimeChannelMessage, error) {
 	if err := validateManagedRealtimeHistoryAppend(endpointID, channel, data, idempotencyKey); err != nil {
 		return ManagedRealtimeChannelMessage{}, err

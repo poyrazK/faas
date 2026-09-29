@@ -953,6 +953,7 @@ from .managed_realtime_endpoint_response_auth_token_masked import ManagedRealtim
 from .managed_realtime_endpoint_response_callback_auth_token_masked import (
     ManagedRealtimeEndpointResponseCallbackAuthTokenMasked,
 )
+from .managed_realtime_history_usage_response import ManagedRealtimeHistoryUsageResponse
 from .managed_realtime_message_request import ManagedRealtimeMessageRequest
 from .managed_realtime_publish_response import ManagedRealtimePublishResponse
 from .managed_realtime_retained_history_response import ManagedRealtimeRetainedHistoryResponse
@@ -2799,6 +2800,7 @@ __all__ = (
     "ManagedRealtimeEndpointResponseAuthRequiredClaims",
     "ManagedRealtimeEndpointResponseAuthTokenMasked",
     "ManagedRealtimeEndpointResponseCallbackAuthTokenMasked",
+    "ManagedRealtimeHistoryUsageResponse",
     "ManagedRealtimeMessageRequest",
     "ManagedRealtimePublishResponse",
     "ManagedRealtimeRetainedHistoryResponse",

@@ -69,12 +69,32 @@ type ManagedRealtimeHistoryStorageObserver interface {
 	ObserveManagedRealtimeHistoryStorage(context.Context) (ManagedRealtimeHistoryStorageStats, error)
 }
 
+// ManagedRealtimeHistoryUsage is an account-scoped point-in-time count of
+// retained rows and payload bytes. Stored includes expired rows awaiting
+// cleanup; Replayable applies the same contiguous expiry floor as history
+// reads. Bytes exclude row and index overhead and are not billing meters.
+type ManagedRealtimeHistoryUsage struct {
+	ObservedAt             time.Time
+	EndpointCount          int64
+	ChannelCount           int64
+	StoredMessageCount     int64
+	StoredPayloadBytes     int64
+	ReplayableMessageCount int64
+	ReplayablePayloadBytes int64
+}
+
+type ManagedRealtimeHistoryUsageReader interface {
+	ReadManagedRealtimeHistoryUsage(context.Context, string) (ManagedRealtimeHistoryUsage, error)
+}
+
 var (
 	_ ManagedRealtimeHistoryStore           = (*PgStore)(nil)
 	_ ManagedRealtimeHistoryStore           = (*MemStore)(nil)
 	_ ManagedRealtimeHistoryReaper          = (*PgStore)(nil)
 	_ ManagedRealtimeHistoryReaper          = (*MemStore)(nil)
 	_ ManagedRealtimeHistoryStorageObserver = (*PgStore)(nil)
+	_ ManagedRealtimeHistoryUsageReader     = (*PgStore)(nil)
+	_ ManagedRealtimeHistoryUsageReader     = (*MemStore)(nil)
 )
 
 func validateManagedRealtimeHistoryRequest(endpointID, channel string) error {

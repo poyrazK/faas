@@ -90,6 +90,54 @@ func TestPgStoreManagedRealtimeHistoryStorageObservation(t *testing.T) {
 	}
 }
 
+func TestPgStoreManagedRealtimeHistoryUsageScopesAccountAndReplayFloor(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	accountID, appID, _ := seedLiveDeploy(t, s, ctx, "-realtime-usage-a", "realtime-usage-a")
+	endpoint, err := s.CreateManagedRealtimeEndpointIfUnderQuota(ctx, pgManagedRealtimeEndpoint(accountID, appID), 10, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, data := range []string{"a", "bb", "ccc"} {
+		if _, err := s.AppendManagedRealtimeChannelMessage(ctx, endpoint.ID, "updates", []byte(data), false, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.AppendManagedRealtimeChannelMessage(ctx, endpoint.ID, "empty-later", []byte("x"), false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `update managed_realtime_channel_messages set created_at = $4 where endpoint_id = $1 and channel = $2 and sequence = $3`,
+		endpoint.ID, "updates", 2, time.Now().Add(-state.ManagedRealtimeHistoryRetention-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	otherAccountID, otherAppID, _ := seedLiveDeploy(t, s, ctx, "-realtime-usage-b", "realtime-usage-b")
+	otherEndpoint, err := s.CreateManagedRealtimeEndpointIfUnderQuota(ctx, pgManagedRealtimeEndpoint(otherAccountID, otherAppID), 10, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AppendManagedRealtimeChannelMessage(ctx, otherEndpoint.ID, "private", []byte("secret"), false, ""); err != nil {
+		t.Fatal(err)
+	}
+	usage, err := s.ReadManagedRealtimeHistoryUsage(ctx, accountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if usage.EndpointCount != 1 || usage.ChannelCount != 2 || usage.StoredMessageCount != 4 || usage.StoredPayloadBytes != 7 ||
+		usage.ReplayableMessageCount != 2 || usage.ReplayablePayloadBytes != 4 || usage.ObservedAt.IsZero() {
+		t.Fatalf("account usage = %+v", usage)
+	}
+	other, err := s.ReadManagedRealtimeHistoryUsage(ctx, otherAccountID)
+	if err != nil || other.EndpointCount != 1 || other.ChannelCount != 1 || other.StoredMessageCount != 1 || other.StoredPayloadBytes != 6 {
+		t.Fatalf("other account usage = (%+v, %v)", other, err)
+	}
+	if err := s.DeleteManagedRealtimeEndpoint(ctx, endpoint.ID); err != nil {
+		t.Fatal(err)
+	}
+	usage, err = s.ReadManagedRealtimeHistoryUsage(ctx, accountID)
+	if err != nil || usage.EndpointCount != 0 || usage.ChannelCount != 0 || usage.StoredMessageCount != 0 {
+		t.Fatalf("deleted account usage = (%+v, %v)", usage, err)
+	}
+}
+
 func TestPgStoreManagedRealtimeHistoryExpiryAndKeyReuse(t *testing.T) {
 	s, pool, ctx := pgStoreWithPool(t)
 	accountID, appID, _ := seedLiveDeploy(t, s, ctx, "-realtime-expiry", "realtime-expiry")

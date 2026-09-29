@@ -488,6 +488,7 @@ export type { ManagedRealtimeDrainRequest } from './ManagedRealtimeDrainRequest.
 export type { ManagedRealtimeDrainResponse } from './ManagedRealtimeDrainResponse.js';
 export type { ManagedRealtimeDrainResult } from './ManagedRealtimeDrainResult.js';
 export type { ManagedRealtimeEndpointResponse } from './ManagedRealtimeEndpointResponse.js';
+export type { ManagedRealtimeHistoryUsageResponse } from './ManagedRealtimeHistoryUsageResponse.js';
 export type { ManagedRealtimeMessageRequest } from './ManagedRealtimeMessageRequest.js';
 export type { ManagedRealtimePublishResponse } from './ManagedRealtimePublishResponse.js';
 export type { ManagedRealtimeRetainedHistoryResponse } from './ManagedRealtimeRetainedHistoryResponse.js';

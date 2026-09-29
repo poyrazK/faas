@@ -995,6 +995,29 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/account/realtime-history-usage:
+    get:
+      operationId: getManagedRealtimeHistoryUsage
+      summary: Read the account's retained realtime history snapshot
+      description: |
+        Preview only; requires usage read scope and MFA for interactive sessions.
+        Counts current retained message rows and payload bytes for this account,
+        including expired rows awaiting cleanup. Replayable counts apply the
+        channel's contiguous retention floor. These values are informational
+        snapshots, not billed usage or physical database allocation.
+      tags: [realtime]
+      responses:
+        '200':
+          description: Account-scoped retained history snapshot; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedRealtimeHistoryUsageResponse' }
+        default:
+          description: Authentication or history usage error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/account/usage:
     get:
       operationId: getAccountUsage
@@ -41345,6 +41368,19 @@ components:
         oldest_sequence: { type: integer, format: int64, minimum: 1 }
         latest_sequence: { type: integer, format: int64, minimum: 0 }
         has_more: { type: boolean }
+
+    ManagedRealtimeHistoryUsageResponse:
+      type: object
+      description: Account-scoped point-in-time retained history payload counts; not billing meters.
+      required: [observed_at, endpoint_count, channel_count, stored_message_count, stored_payload_bytes, replayable_message_count, replayable_payload_bytes]
+      properties:
+        observed_at: { type: string, format: date-time }
+        endpoint_count: { type: integer, format: int64, minimum: 0, description: 'Endpoints with a retained channel head.' }
+        channel_count: { type: integer, format: int64, minimum: 0, description: 'Retained channel heads, including empty heads.' }
+        stored_message_count: { type: integer, format: int64, minimum: 0, description: 'Message rows still physically present, including expired rows awaiting cleanup.' }
+        stored_payload_bytes: { type: integer, format: int64, minimum: 0, description: 'Decoded payload bytes in physically present rows; excludes database overhead.' }
+        replayable_message_count: { type: integer, format: int64, minimum: 0, description: "Rows at or above each channel's current contiguous retention floor." }
+        replayable_payload_bytes: { type: integer, format: int64, minimum: 0, description: 'Decoded payload bytes eligible for replay.' }
 
     AppLogDrainResponse:
       type: object

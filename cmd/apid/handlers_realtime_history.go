@@ -1,15 +1,44 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+func (s *server) getManagedRealtimeHistoryUsage(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !s.realtimeHistoryPreviewEnabled {
+		s.notFound(w, "managed realtime history usage unavailable")
+		return
+	}
+	reader, ok := s.store.(state.ManagedRealtimeHistoryUsageReader)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("managed realtime history usage unavailable"))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	usage, err := reader.ReadManagedRealtimeHistoryUsage(ctx, acct.ID)
+	if err != nil {
+		s.log.ErrorContext(r.Context(), "managed realtime history usage read failed", "err", err)
+		api.WriteProblem(w, api.ErrCapacity("managed realtime history usage unavailable"))
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, api.ManagedRealtimeHistoryUsageResponse{
+		ObservedAt:    usage.ObservedAt.Format(time.RFC3339Nano),
+		EndpointCount: usage.EndpointCount, ChannelCount: usage.ChannelCount,
+		StoredMessageCount: usage.StoredMessageCount, StoredPayloadBytes: usage.StoredPayloadBytes,
+		ReplayableMessageCount: usage.ReplayableMessageCount, ReplayablePayloadBytes: usage.ReplayablePayloadBytes,
+	})
+}
 
 func (s *server) managedRealtimeHistoryStore(w http.ResponseWriter) (state.ManagedRealtimeHistoryStore, bool) {
 	store, ok := s.store.(state.ManagedRealtimeHistoryStore)
