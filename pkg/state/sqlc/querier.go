@@ -278,6 +278,7 @@ type Querier interface {
 	ExpireUploadSession(ctx context.Context, db DBTX, id string) error
 	// Two matches mean an invoice ID collides with another invoice's charge ID.
 	FindInvoiceIDsByProviderKey(ctx context.Context, db DBTX, arg FindInvoiceIDsByProviderKeyParams) ([]pgtype.UUID, error)
+	GetAppEgressCircuits(ctx context.Context, db DBTX, appID pgtype.UUID) (GetAppEgressCircuitsRow, error)
 	// Single oldest request row for one fingerprint, used by the
 	// UI's "what does this look like" preview. Returns
 	// headers_sample + redactions for the wire-side "we redacted
@@ -551,6 +552,7 @@ type Querier interface {
 	// the handler so the handler can pass an empty string for "no
 	// subject filter" without a NULL literal.
 	ListAllEventsPaged(ctx context.Context, db DBTX, arg ListAllEventsPagedParams) ([]ListAllEventsPagedRow, error)
+	ListAppEgressCircuitAppIDs(ctx context.Context, db DBTX) ([]pgtype.UUID, error)
 	// Nightly retention purge read path (cmd/apid/app_errors_purge.go).
 	// Returns IDs of app_errors rows for an account older than
 	// `cutoff`. Capped at 10000 per call so the DELETE loop can
@@ -670,31 +672,9 @@ type Querier interface {
 	ListDeploymentsForCompare(ctx context.Context, db DBTX, arg ListDeploymentsForCompareParams) ([]ListDeploymentsForCompareRow, error)
 	ListDomainsForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListDomainsForAccountRow, error)
 	ListDomainsForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListDomainsForAppRow, error)
-	// schedd's egress circuit-breaker feed (ADR-201 §3). Returns every
-	// opted-in upstream joined to its NEWEST probe verdict, which is the
-	// complete input the breaker loop needs for one reconcile pass.
-	//
-	// Only circuit_breaker_enabled rows are considered, so the scan is
-	// served by data_upstreams_circuit_enabled_idx (a partial index) and
-	// stays proportional to the opt-in count rather than to the whole
-	// data_upstreams table, which grows with every captured env var on
-	// every app.
-	//
-	// LEFT JOIN, not INNER: an opted-in upstream that has never been
-	// probed must still appear, carrying a NULL sampled_at. Dropping it
-	// here would make "never probed" indistinguishable from "row gone",
-	// and the loop needs the difference — it skips unprobed upstreams but
-	// must still count them as live candidates so their dedupe state is
-	// not retired out from under them.
-	//
-	// DISTINCT ON picks one row per upstream: the probe table holds one
-	// sample per 30s per (host, region), so without it a single upstream
-	// would fan out to every sample in the retention window.
-	//
-	// host is projected because schedd resolves it locally to write the
-	// nftables element. It never reaches a metric label, a log line, or
-	// the customer-facing API — those carry host_redacted_hash only
-	// (ADR-098 §11).
+	// ADR-375: replay actual recent probe history after restart. Keep unprobed
+	// opted-in upstreams as NULL samples so retirement differs from no evidence.
+	// Collapse region verdicts sharing one probe timestamp conservatively.
 	ListEgressCircuitCandidates(ctx context.Context, db DBTX, sampledAt pgtype.Timestamptz) ([]ListEgressCircuitCandidatesRow, error)
 	ListEnabledCrons(ctx context.Context, db DBTX) ([]ListEnabledCronsRow, error)
 	ListEnabledEventSubscriptionsForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]EventSubscription, error)
@@ -995,6 +975,7 @@ type Querier interface {
 	// partition tail (rows in the default partition or
 	// the current month that are older than cutoff).
 	PruneDataUpstreamProbesOlderThan(ctx context.Context, db DBTX, sampledAt pgtype.Timestamptz) error
+	PutAppEgressCircuits(ctx context.Context, db DBTX, arg PutAppEgressCircuitsParams) (PutAppEgressCircuitsRow, error)
 	// An unqualified legacy row blocks the whole key; guessing could double-debit.
 	ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg ReadAccountCreditConsumptionParams) (ReadAccountCreditConsumptionRow, error)
 	// A single statement reads the pointer and its complete membership together.

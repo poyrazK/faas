@@ -1220,6 +1220,7 @@ func (s *Server) Stats(ctx context.Context, _ *vmmdpb.StatsRequest) (*vmmdpb.Sta
 			}
 		}
 		row.OpenConns = openConns[inst]
+		row.EgressCircuitEnforcement = s.egressCircuitEnforcement(inst)
 		row.FlowSummaries = flowSummariesToProto(flowTelemetry.summaries[inst])
 		resp.Instances = append(resp.Instances, row)
 	}

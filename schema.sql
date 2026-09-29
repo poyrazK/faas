@@ -10826,3 +10826,20 @@ CREATE INDEX IF NOT EXISTS request_id_journal_app_request_received_idx
     ON request_id_journal (app_id, request_id, received_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS request_id_journal_expires_idx
     ON request_id_journal (expires_at);
+
+-- ADR-375: blocks from the migrated schema-dump; existing snapshot retained.
+
+CREATE TABLE public.app_egress_circuits (
+    app_id uuid NOT NULL,
+    revision bigint DEFAULT 1 NOT NULL,
+    targets jsonb DEFAULT '[]'::jsonb NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_egress_circuits_revision_check CHECK ((revision > 0)),
+    CONSTRAINT app_egress_circuits_targets_check CHECK (((jsonb_typeof(targets) = 'array'::text) AND (jsonb_array_length(targets) <= 3200)))
+);
+
+ALTER TABLE ONLY public.app_egress_circuits
+    ADD CONSTRAINT app_egress_circuits_pkey PRIMARY KEY (app_id);
+
+ALTER TABLE ONLY public.app_egress_circuits
+    ADD CONSTRAINT app_egress_circuits_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;

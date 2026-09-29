@@ -749,6 +749,14 @@ type Manager struct {
 	// egress_resolved set: a restored snapshot may reconnect to addresses
 	// its guest resolved before the snapshot.
 	appResolved map[string]map[netip.Addr]time.Time
+	// ADR-375: serialize circuit updates and pending-network registration so
+	// a wake cannot miss a policy change before it enters the live map.
+	egressCircuitMu           sync.Mutex
+	egressCircuitEnabled      bool
+	appEgressCircuits         map[string][]netns.EgressCircuitTarget
+	appEgressCircuitRevisions map[string]int64
+	egressCircuitSource       func(context.Context, string) (netns.EgressCircuitSnapshot, error)
+	egressCircuitNetworks     map[string]egressCircuitNetwork
 	// dnsGatingOff is the operator's emergency switch for ADR-373 DNS-gated
 	// egress on this node (FAAS_EGRESS_DNS_GATING=off). Gating is on by
 	// default; turning it off keeps every other egress control.
@@ -3937,6 +3945,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	if !req.ExecutionOnly {
 		applyTenantEgressPolicy(&nc, req.Plan, req.EgressPorts)
 		nc.DNSGated = nc.DNSGated && !m.dnsGatingOff
+		nc.EgressCircuitEnabled = m.egressCircuitEnabled && req.AppID != ""
 	}
 	// ADR-031 + ADR-032 — translate the wire-level CIDR strings into
 	// netip.Prefix once, here, so the nft renderer never touches
@@ -4120,6 +4129,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	var networkErr error
 	if !req.ExecutionOnly {
 		preparedHit, networkErr = m.setupWakeNetwork(ctx, nc, preparedNetwork)
+		if networkErr == nil {
+			networkErr = m.registerEgressCircuitNetwork(ctx, req.AppID, nc)
+		}
 	}
 	err = networkErr
 	if err != nil {
@@ -7090,6 +7102,7 @@ func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, wor
 		m.log.Warn("cleanup: kill vm", "instance", lease.Instance, "err", err)
 	}
 	if !lease.Networkless {
+		m.unregisterEgressCircuitNetwork(lease.Instance)
 		for _, argv := range nc.TeardownCommands() {
 			if err := m.run.Run(ctx, argv); err != nil {
 				// Teardown commands are expected to fail if the resource was never

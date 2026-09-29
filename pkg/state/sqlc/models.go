@@ -298,6 +298,13 @@ type AppCustomMetric struct {
 	ObservedAt pgtype.Timestamptz
 }
 
+type AppEgressCircuit struct {
+	AppID     pgtype.UUID
+	Revision  int64
+	Targets   []byte
+	UpdatedAt pgtype.Timestamptz
+}
+
 type AppEgressPolicyNodeStatus struct {
 	AppID             pgtype.UUID
 	NodeID            pgtype.UUID

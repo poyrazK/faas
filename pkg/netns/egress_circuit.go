@@ -25,7 +25,10 @@ package netns
 import (
 	"fmt"
 	"net/netip"
+	"sort"
 	"strconv"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 const (
@@ -42,12 +45,18 @@ const (
 // port whose connections must fail fast.
 //
 // The address is resolved, not a hostname, because nftables matches packets.
-// A DNS change while the circuit is open is picked up at the next half-open
-// probe, which re-resolves — that staleness window is bounded by the probe
-// interval and is the reason half-open exists.
+// DNS answers are refreshed on every reconciliation tick while the circuit
+// is open, independently of whether a new probe sample arrived.
 type EgressCircuitTarget struct {
 	Addr netip.Addr
 	Port int
+}
+
+// EgressCircuitSnapshot is schedd's durable whole-app desired policy. Revision
+// fences delayed RPCs and wake-time reads against newer policy changes.
+type EgressCircuitSnapshot struct {
+	Revision int64
+	Targets  []EgressCircuitTarget
 }
 
 // Valid reports whether the target can be rendered into a set element. IPv6
@@ -55,7 +64,34 @@ type EgressCircuitTarget struct {
 // out-of-range port renders nothing rather than emitting a malformed rule
 // that would fail the whole nft batch.
 func (t EgressCircuitTarget) Valid() bool {
-	return t.Addr.IsValid() && t.Port > 0 && t.Port <= 65535
+	return t.Addr.IsValid() && t.Addr.Zone() == "" && t.Port > 0 && t.Port <= 65535
+}
+
+// CanonicalEgressCircuitTargets validates the entire replacement before any
+// mutation and returns a copied, normalized, stable set for revision equality.
+func CanonicalEgressCircuitTargets(in []EgressCircuitTarget) ([]EgressCircuitTarget, error) {
+	if len(in) > api.EgressCircuitMaxTargets {
+		return nil, fmt.Errorf("egress circuit target limit exceeded")
+	}
+	out := make([]EgressCircuitTarget, 0, len(in))
+	seen := make(map[EgressCircuitTarget]bool, len(in))
+	for _, target := range in {
+		target.Addr = target.Addr.Unmap()
+		if !target.Valid() {
+			return nil, fmt.Errorf("invalid egress circuit target")
+		}
+		if !seen[target] {
+			seen[target] = true
+			out = append(out, target)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Addr != out[j].Addr {
+			return out[i].Addr.Less(out[j].Addr)
+		}
+		return out[i].Port < out[j].Port
+	})
+	return out, nil
 }
 
 // element renders the set element form, e.g. "10.1.2.3 . 5432".

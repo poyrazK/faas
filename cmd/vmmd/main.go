@@ -943,6 +943,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Wake RPC contexts are canceled when the request returns and
 	// must not own either background activity.
 	mgr.WithLifecycleContext(ctx)
+	egressCircuitEnabled, err := api.EgressCircuitBreakerEnabled(os.Getenv("FAAS_EGRESS_CIRCUIT_BREAKER"))
+	if err != nil {
+		return err
+	}
+	mgr.WithEgressCircuitBreaker(egressCircuitEnabled)
+	if egressCircuitEnabled {
+		if store == nil {
+			return fmt.Errorf("vmmd: FAAS_EGRESS_CIRCUIT_BREAKER requires a compute-node database configuration for durable policy")
+		}
+		mgr.WithEgressCircuitSource(store.GetAppEgressCircuits)
+	}
 	// ADR-373: DNS-gated egress is on unless the operator turns it off for
 	// this node, e.g. while the node's resolver hook is unavailable.
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("FAAS_EGRESS_DNS_GATING")), "off") {

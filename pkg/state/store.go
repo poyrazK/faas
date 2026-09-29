@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
@@ -6518,6 +6519,9 @@ type Store interface {
 	// distinguishable to the loop. Postgres-only — MemStore returns the
 	// ADR-098 sentinel.
 	ListEgressCircuitCandidates(ctx context.Context, since time.Time) ([]EgressCircuitCandidate, error)
+	PutAppEgressCircuits(context.Context, string, []netns.EgressCircuitTarget) (netns.EgressCircuitSnapshot, error)
+	GetAppEgressCircuits(context.Context, string) (netns.EgressCircuitSnapshot, error)
+	ListAppEgressCircuitAppIDs(context.Context) ([]string, error)
 
 	// UpdateDataUpstreamCircuitBreaker (ADR-201 §3) applies a partial
 	// per-upstream egress-breaker policy update. Scoped by (id, app_id) so

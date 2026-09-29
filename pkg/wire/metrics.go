@@ -289,7 +289,8 @@ type OpsMetrics struct {
 	// (≤50 per app), so {app_id, upstream_hash} is safe. upstream_hash is
 	// the §11-redacted identifier — the plaintext host must never reach a
 	// label.
-	egressCircuitState *prometheus.GaugeVec
+	egressCircuitState     *prometheus.GaugeVec
+	egressCircuitReconcile *prometheus.GaugeVec
 	// wakeSnapshotTier (issue #470 / PR C / ADR-074) — closed-set
 	// counter for the warm-vs-init-vs-cold-boot choice Engine.usableSnapshotForWake
 	// makes on every wake. Labels ∈ {warm, init, cold_boot_fallback}.
@@ -4424,10 +4425,14 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// upstream cannot leave a stale gauge asserting a dependency is broken.
 	egressCircuitState := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prefix + "_egress_circuit_state",
-		Help: "ADR-201 §3 egress circuit state per declared upstream: 0=closed, 1=half_open, 2=open. While 2, the app's NEW connections to that upstream are rejected with a TCP reset instead of hanging. Labelled by {app_id, upstream_hash}; upstream_hash is the §11-redacted host identifier and the plaintext host never appears. Bounded by Limits.EgressCircuitBreakersPerApp (≤50/app).",
+		Help: "ADR-201 §3 egress circuit state per declared upstream: 0=closed, 1=half_open, 2=open. Logical probe state only; actual nft completion is reported separately by vmmd Stats.egress_circuit_enforcement. Labelled by {app_id, upstream_hash}; upstream_hash is the §11-redacted host identifier and the plaintext host never appears. Bounded by Limits.EgressCircuitBreakersPerApp (≤50/app).",
 	}, []string{"app_id", "upstream_hash"})
+	egressCircuitReconcile := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prefix + "_egress_circuit_reconcile_success",
+		Help: "ADR-375: latest whole-app desired-policy reconciliation completed DNS resolution, durable commit and all applicable node acknowledgments (1), or remains pending (0). Distinct from logical probe state.",
+	}, []string{"app_id"})
 	commonCollectors = append(commonCollectors, gatewayDrainWaitSeconds, gatewayInflightRequests,
-		egressCircuitState)
+		egressCircuitState, egressCircuitReconcile)
 	// Issue #757 / ADR-118 commit 9: ESM metric collectors. All
 	// three are pre-instantiated at boot from the closed sets
 	// below so the rows surface in /metrics from process start —
@@ -5209,6 +5214,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		gatewayDrainWaitSeconds:                    gatewayDrainWaitSeconds,
 		gatewayInflightRequests:                    gatewayInflightRequests,
 		egressCircuitState:                         egressCircuitState,
+		egressCircuitReconcile:                     egressCircuitReconcile,
 		wakeSnapshotTier:                           wakeSnapshotTier,
 		wakeColdReason:                             wakeColdReason,
 		executionActive:                            executionActive,
@@ -5498,6 +5504,17 @@ func (m *OpsMetrics) SetEgressCircuitState(appID, upstreamHash string, state flo
 		return
 	}
 	m.egressCircuitState.WithLabelValues(appID, upstreamHash).Set(state)
+}
+
+func (m *OpsMetrics) SetEgressCircuitReconcile(appID string, success bool) {
+	if m == nil || m.egressCircuitReconcile == nil {
+		return
+	}
+	value := float64(0)
+	if success {
+		value = 1
+	}
+	m.egressCircuitReconcile.WithLabelValues(appID).Set(value)
 }
 
 // ClearEgressCircuitState drops the series for a retired upstream, so a

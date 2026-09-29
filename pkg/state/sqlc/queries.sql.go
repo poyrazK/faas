@@ -3679,6 +3679,22 @@ func (q *Queries) FindInvoiceIDsByProviderKey(ctx context.Context, db DBTX, arg 
 	return items, nil
 }
 
+const getAppEgressCircuits = `-- name: GetAppEgressCircuits :one
+SELECT revision, targets FROM app_egress_circuits WHERE app_id = $1
+`
+
+type GetAppEgressCircuitsRow struct {
+	Revision int64
+	Targets  []byte
+}
+
+func (q *Queries) GetAppEgressCircuits(ctx context.Context, db DBTX, appID pgtype.UUID) (GetAppEgressCircuitsRow, error) {
+	row := db.QueryRow(ctx, getAppEgressCircuits, appID)
+	var i GetAppEgressCircuitsRow
+	err := row.Scan(&i.Revision, &i.Targets)
+	return i, err
+}
+
 const getAppErrorSample = `-- name: GetAppErrorSample :one
 SELECT
     id, request_id, received_at, route, http_status,
@@ -5411,6 +5427,30 @@ func (q *Queries) ListAllEventsPaged(ctx context.Context, db DBTX, arg ListAllEv
 	return items, nil
 }
 
+const listAppEgressCircuitAppIDs = `-- name: ListAppEgressCircuitAppIDs :many
+SELECT app_id FROM app_egress_circuits ORDER BY app_id
+`
+
+func (q *Queries) ListAppEgressCircuitAppIDs(ctx context.Context, db DBTX) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, listAppEgressCircuitAppIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var app_id pgtype.UUID
+		if err := rows.Scan(&app_id); err != nil {
+			return nil, err
+		}
+		items = append(items, app_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAppErrorFingerprintsForPurge = `-- name: ListAppErrorFingerprintsForPurge :many
 SELECT id FROM app_errors
 WHERE account_id = $1
@@ -6483,7 +6523,7 @@ func (q *Queries) ListDomainsForApp(ctx context.Context, db DBTX, appID pgtype.U
 }
 
 const listEgressCircuitCandidates = `-- name: ListEgressCircuitCandidates :many
-SELECT DISTINCT ON (u.app_id, u.host_redacted_hash, u.port)
+SELECT
     u.app_id,
     u.host_redacted_hash,
     u.host,
@@ -6491,14 +6531,17 @@ SELECT DISTINCT ON (u.app_id, u.host_redacted_hash, u.port)
     u.circuit_breaker_failure_threshold,
     u.circuit_breaker_min_samples,
     u.circuit_breaker_open_seconds,
-    p.ok,
+    COALESCE(bool_and(p.ok), false)::boolean AS ok,
     p.sampled_at
 FROM data_upstreams u
 LEFT JOIN data_upstream_probes p
     ON p.host_redacted_hash = u.host_redacted_hash
    AND p.sampled_at >= $1
 WHERE u.circuit_breaker_enabled
-ORDER BY u.app_id, u.host_redacted_hash, u.port, p.sampled_at DESC NULLS LAST
+GROUP BY u.app_id, u.host_redacted_hash, u.host, u.port,
+    u.circuit_breaker_failure_threshold, u.circuit_breaker_min_samples,
+    u.circuit_breaker_open_seconds, p.sampled_at
+ORDER BY u.app_id, u.host_redacted_hash, u.port, p.sampled_at ASC NULLS LAST
 `
 
 type ListEgressCircuitCandidatesRow struct {
@@ -6509,35 +6552,13 @@ type ListEgressCircuitCandidatesRow struct {
 	CircuitBreakerFailureThreshold pgtype.Float8
 	CircuitBreakerMinSamples       pgtype.Int4
 	CircuitBreakerOpenSeconds      pgtype.Int4
-	Ok                             pgtype.Bool
+	Ok                             bool
 	SampledAt                      pgtype.Timestamptz
 }
 
-// schedd's egress circuit-breaker feed (ADR-201 §3). Returns every
-// opted-in upstream joined to its NEWEST probe verdict, which is the
-// complete input the breaker loop needs for one reconcile pass.
-//
-// Only circuit_breaker_enabled rows are considered, so the scan is
-// served by data_upstreams_circuit_enabled_idx (a partial index) and
-// stays proportional to the opt-in count rather than to the whole
-// data_upstreams table, which grows with every captured env var on
-// every app.
-//
-// LEFT JOIN, not INNER: an opted-in upstream that has never been
-// probed must still appear, carrying a NULL sampled_at. Dropping it
-// here would make "never probed" indistinguishable from "row gone",
-// and the loop needs the difference — it skips unprobed upstreams but
-// must still count them as live candidates so their dedupe state is
-// not retired out from under them.
-//
-// DISTINCT ON picks one row per upstream: the probe table holds one
-// sample per 30s per (host, region), so without it a single upstream
-// would fan out to every sample in the retention window.
-//
-// host is projected because schedd resolves it locally to write the
-// nftables element. It never reaches a metric label, a log line, or
-// the customer-facing API — those carry host_redacted_hash only
-// (ADR-098 §11).
+// ADR-375: replay actual recent probe history after restart. Keep unprobed
+// opted-in upstreams as NULL samples so retirement differs from no evidence.
+// Collapse region verdicts sharing one probe timestamp conservatively.
 func (q *Queries) ListEgressCircuitCandidates(ctx context.Context, db DBTX, sampledAt pgtype.Timestamptz) ([]ListEgressCircuitCandidatesRow, error) {
 	rows, err := db.Query(ctx, listEgressCircuitCandidates, sampledAt)
 	if err != nil {
@@ -11719,6 +11740,32 @@ DELETE FROM data_upstream_probes WHERE sampled_at < $1
 func (q *Queries) PruneDataUpstreamProbesOlderThan(ctx context.Context, db DBTX, sampledAt pgtype.Timestamptz) error {
 	_, err := db.Exec(ctx, pruneDataUpstreamProbesOlderThan, sampledAt)
 	return err
+}
+
+const putAppEgressCircuits = `-- name: PutAppEgressCircuits :one
+INSERT INTO app_egress_circuits (app_id, targets) VALUES ($1, $2)
+ON CONFLICT (app_id) DO UPDATE
+SET targets = EXCLUDED.targets,
+    revision = app_egress_circuits.revision + CASE WHEN app_egress_circuits.targets IS DISTINCT FROM EXCLUDED.targets THEN 1 ELSE 0 END,
+    updated_at = now()
+RETURNING revision, targets
+`
+
+type PutAppEgressCircuitsParams struct {
+	AppID   pgtype.UUID
+	Targets []byte
+}
+
+type PutAppEgressCircuitsRow struct {
+	Revision int64
+	Targets  []byte
+}
+
+func (q *Queries) PutAppEgressCircuits(ctx context.Context, db DBTX, arg PutAppEgressCircuitsParams) (PutAppEgressCircuitsRow, error) {
+	row := db.QueryRow(ctx, putAppEgressCircuits, arg.AppID, arg.Targets)
+	var i PutAppEgressCircuitsRow
+	err := row.Scan(&i.Revision, &i.Targets)
+	return i, err
 }
 
 const readAccountCreditConsumption = `-- name: ReadAccountCreditConsumption :one

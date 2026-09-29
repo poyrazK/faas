@@ -473,11 +473,15 @@ const (
 	// mirrors CodeCapacity / CodeBuildXXX — the failure is transient
 	// and the customer's CLI/CI will retry on the backoff.
 	CodeSourceRefUnavailable = "source_ref_unavailable"
-	CodeSourceRefStale       = "source_ref_stale"
-	CodeAppLayerTooBig       = "app_layer_too_large"
-	CodeBuildUndetected      = "build_undetected"
-	CodeBuildOOM             = "build_oom"
-	CodeBuildTimeout         = "build_timeout"
+	// ADR-375: connection-circuit enforcement availability and revision errors.
+	CodeEgressCircuitUnavailable = "egress_circuit_unavailable"
+	CodeEgressCircuitDisabled    = "egress_circuit_disabled"
+	CodeEgressCircuitRevision    = "egress_circuit_revision"
+	CodeSourceRefStale           = "source_ref_stale"
+	CodeAppLayerTooBig           = "app_layer_too_large"
+	CodeBuildUndetected          = "build_undetected"
+	CodeBuildOOM                 = "build_oom"
+	CodeBuildTimeout             = "build_timeout"
 	// CodeStage* (ADR-117 §Production-ready follow-on): per-stage
 	// RFC 7807 stable codes for the closed-6 deploy stage vocabulary.
 	// Distinct from CodeBuildXXX (which mark the whole build VM's
@@ -1869,7 +1873,7 @@ func StatusForCode(code string) int {
 		return http.StatusNotImplemented
 	case CodeWorkflowCallbackExpired:
 		return http.StatusGone
-	case CodeCapacity, CodeSafeReleaseUnavailable, CodeConcurrencyQueueTimeout, CodeDebugRegressionUnavailable, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
+	case CodeEgressCircuitUnavailable, CodeEgressCircuitDisabled, CodeCapacity, CodeSafeReleaseUnavailable, CodeConcurrencyQueueTimeout, CodeDebugRegressionUnavailable, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
 		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeAppHealthUnavailable, CodeAppUnavailable, CodeMirrorSlotAtCapacity, CodeTenantSurfacesNotEnabled,
 		CodePrivateNetworkNotEnabled, CodePublicAuthConfigInvalid, CodeRealtimeUnavailable, CodeAppLogsUnavailable, CodeLogArchiveUnavailable:
 		return http.StatusServiceUnavailable
@@ -1922,7 +1926,7 @@ func StatusForCode(code string) int {
 		// alongside the existing row set", not "your plan forbids
 		// this".
 		return http.StatusConflict
-	case CodeDeployFailed, CodeBeforeCheckpointFailed, CodeSecurityScanBlocked, CodeInvalidAppCPU, CodeInvalidAppRAM, CodeInvalidCPURAMPair, CodeInvalidResourceProfile, CodeAPIContractBreakingChange:
+	case CodeEgressCircuitRevision, CodeDeployFailed, CodeBeforeCheckpointFailed, CodeSecurityScanBlocked, CodeInvalidAppCPU, CodeInvalidAppRAM, CodeInvalidCPURAMPair, CodeInvalidResourceProfile, CodeAPIContractBreakingChange:
 		return http.StatusUnprocessableEntity
 	case CodeDeploySignatureInvalid, CodeSecurityPostureBlocked:
 		// 403 — the deploy is REJECTED at accept time, distinct from

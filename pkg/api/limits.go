@@ -1789,6 +1789,13 @@ func (l Limits) EphemeralDiskMaxBytes() int64 {
 // on the Limits struct) per ADR-098 §263.
 const UpstreamProbeMaxConcurrent = 64
 
+// ADR-375: bounds for resolved TCP circuit sets. Reject an oversized DNS
+// response rather than claiming protection for only a subset of its answers.
+const (
+	EgressCircuitMaxResolvedAddresses = 64
+	EgressCircuitMaxTargets           = 50 * EgressCircuitMaxResolvedAddresses // Scale's upstream cap.
+)
+
 // UpstreamFitMinDeltaMs (ADR-098 §D3) is the global threshold below
 // which schedd's chooser bias is suppressed (the legacy
 // RAM/vCPU/region tie-break wins). Defends against flapping: a

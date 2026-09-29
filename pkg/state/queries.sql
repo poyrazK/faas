@@ -4522,32 +4522,10 @@ SET state = 'retired', retired_at = sqlc.arg(retired_at)
 WHERE catalog_key = sqlc.arg(catalog_key) AND state = 'ready';
 
 -- name: ListEgressCircuitCandidates :many
--- schedd's egress circuit-breaker feed (ADR-201 §3). Returns every
--- opted-in upstream joined to its NEWEST probe verdict, which is the
--- complete input the breaker loop needs for one reconcile pass.
---
--- Only circuit_breaker_enabled rows are considered, so the scan is
--- served by data_upstreams_circuit_enabled_idx (a partial index) and
--- stays proportional to the opt-in count rather than to the whole
--- data_upstreams table, which grows with every captured env var on
--- every app.
---
--- LEFT JOIN, not INNER: an opted-in upstream that has never been
--- probed must still appear, carrying a NULL sampled_at. Dropping it
--- here would make "never probed" indistinguishable from "row gone",
--- and the loop needs the difference — it skips unprobed upstreams but
--- must still count them as live candidates so their dedupe state is
--- not retired out from under them.
---
--- DISTINCT ON picks one row per upstream: the probe table holds one
--- sample per 30s per (host, region), so without it a single upstream
--- would fan out to every sample in the retention window.
---
--- host is projected because schedd resolves it locally to write the
--- nftables element. It never reaches a metric label, a log line, or
--- the customer-facing API — those carry host_redacted_hash only
--- (ADR-098 §11).
-SELECT DISTINCT ON (u.app_id, u.host_redacted_hash, u.port)
+-- ADR-375: replay actual recent probe history after restart. Keep unprobed
+-- opted-in upstreams as NULL samples so retirement differs from no evidence.
+-- Collapse region verdicts sharing one probe timestamp conservatively.
+SELECT
     u.app_id,
     u.host_redacted_hash,
     u.host,
@@ -4555,14 +4533,17 @@ SELECT DISTINCT ON (u.app_id, u.host_redacted_hash, u.port)
     u.circuit_breaker_failure_threshold,
     u.circuit_breaker_min_samples,
     u.circuit_breaker_open_seconds,
-    p.ok,
+    COALESCE(bool_and(p.ok), false)::boolean AS ok,
     p.sampled_at
 FROM data_upstreams u
 LEFT JOIN data_upstream_probes p
     ON p.host_redacted_hash = u.host_redacted_hash
    AND p.sampled_at >= $1
 WHERE u.circuit_breaker_enabled
-ORDER BY u.app_id, u.host_redacted_hash, u.port, p.sampled_at DESC NULLS LAST;
+GROUP BY u.app_id, u.host_redacted_hash, u.host, u.port,
+    u.circuit_breaker_failure_threshold, u.circuit_breaker_min_samples,
+    u.circuit_breaker_open_seconds, p.sampled_at
+ORDER BY u.app_id, u.host_redacted_hash, u.port, p.sampled_at ASC NULLS LAST;
 
 -- name: ListDeploymentAliases :many
 -- Stable per-app revision names. Join deployments for the human-readable
@@ -4747,3 +4728,17 @@ SELECT id, request_id, trace_id, received_at, expires_at
    AND expires_at > sqlc.arg(now_at)::timestamptz
  ORDER BY received_at DESC, id DESC
  LIMIT 1;
+
+-- name: GetAppEgressCircuits :one
+SELECT revision, targets FROM app_egress_circuits WHERE app_id = $1;
+
+-- name: PutAppEgressCircuits :one
+INSERT INTO app_egress_circuits (app_id, targets) VALUES ($1, $2)
+ON CONFLICT (app_id) DO UPDATE
+SET targets = EXCLUDED.targets,
+    revision = app_egress_circuits.revision + CASE WHEN app_egress_circuits.targets IS DISTINCT FROM EXCLUDED.targets THEN 1 ELSE 0 END,
+    updated_at = now()
+RETURNING revision, targets;
+
+-- name: ListAppEgressCircuitAppIDs :many
+SELECT app_id FROM app_egress_circuits ORDER BY app_id;

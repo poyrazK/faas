@@ -50,7 +50,7 @@ func (f *fakeApplier) opened() int {
 }
 
 func staticResolver(addr string) EgressResolver {
-	return func(context.Context, string) (string, error) { return addr, nil }
+	return func(context.Context, string) ([]string, error) { return []string{addr}, nil }
 }
 
 func testUpstream() EgressUpstream {
@@ -159,8 +159,8 @@ func TestEgressBreakerDoesNotReinstallWhileOpen(t *testing.T) {
 // worse than the hang the feature exists to prevent.
 func TestEgressBreakerDoesNotEnforceWhenResolveFails(t *testing.T) {
 	applier := &fakeApplier{}
-	resolver := func(context.Context, string) (string, error) {
-		return "", errors.New("nxdomain")
+	resolver := func(context.Context, string) ([]string, error) {
+		return nil, errors.New("nxdomain")
 	}
 	b := NewEgressCircuitBreaker(applier, resolver, nil)
 	up := testUpstream()

@@ -238,6 +238,7 @@ func (p *preparedNetworkPool) fill() {
 		nc.EgressConnRate, nc.EgressConnBurst = policy.egressConnRate, policy.egressConnBurst
 		nc.EgressDestConnRate, nc.EgressDestConnBurst = policy.egressDestConnRate, policy.egressDestConnBurst
 		nc.DNSGated = !p.m.dnsGatingOff // every prepared namespace serves a tenant (ADR-373)
+		nc.EgressCircuitEnabled = p.m.egressCircuitEnabled
 		e := preparedNetworkEntry{lease: lease, config: nc, policy: policy}
 		ctx, cancel := context.WithTimeout(p.ctx, preparedNetworkTimeout)
 		err = p.m.setupNetwork(ctx, nc)
