@@ -87,8 +87,15 @@ table inet faas {
 {% for cidr in overlay_cidrs -%}
 {{ '    ' }}ip saddr {{ cidr }} accept
 {% endfor -%}
-{% endif -%}{{ '    ' }}iifname "br-tenants" oifname "{{ public_iface }}" accept
-  }
+{% endif -%}
+{% if tenant_egress_iface is defined and tenant_egress_iface -%}
+{{ '    ' }}iifname "br-tenants" oifname "{{ tenant_egress_iface }}" tcp flags syn tcp option maxseg size set rt mtu
+{{ '    ' }}iifname "br-tenants" ip saddr {{ masquerade_cidr }} oifname "{{ tenant_egress_iface }}" accept
+{{ '    ' }}iifname "br-tenants" ip saddr != {{ masquerade_cidr }} oifname "{{ public_iface }}" accept
+{% else -%}
+{{ '    ' }}iifname "br-tenants" oifname "{{ public_iface }}" accept
+{% endif -%}
+{{ '  ' }}}
 
   chain output {
     type filter hook output priority 0; policy accept;
@@ -96,13 +103,13 @@ table inet faas {
 
   chain postrouting {
     type nat hook postrouting priority srcnat; policy accept;
-    ip saddr {{ masquerade_cidr }} oifname "{{ public_iface }}" masquerade
+    ip saddr {{ masquerade_cidr }} oifname "{{ tenant_egress_iface if (tenant_egress_iface is defined and tenant_egress_iface) else public_iface }}" masquerade
 {% if overlay_cidrs is defined and overlay_cidrs -%}
 {% for cidr in overlay_cidrs -%}
 {{ '    ' }}ip saddr {{ cidr }} oifname "{{ public_iface }}" masquerade
 {% endfor -%}
 {% endif -%}
-{% if masquerade_cidr_v6 is defined and masquerade_cidr_v6 -%}
+{% if masquerade_cidr_v6 is defined and masquerade_cidr_v6 and not (tenant_egress_iface is defined and tenant_egress_iface) -%}
 {{ '    ' }}ip6 saddr {{ masquerade_cidr_v6 }} oifname "{{ public_iface }}" masquerade
 {% endif -%}{{ '  ' }}}
 }

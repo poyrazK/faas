@@ -1,0 +1,11 @@
+---
+# ADR-372: the egress gateway half. The manifest generator sets these on
+# the tenant_egress_gateway inventory host when egress.tenant_gateway is
+# declared.
+faas_tenant_egress_iface: wg-tenant
+faas_tenant_egress_gateway_public_key: ''
+faas_tenant_egress_tunnel_cidr: ''
+faas_tenant_egress_listen_port: 51820
+# NIC the gateway masquerades tenant traffic out of.
+faas_tenant_egress_gateway_public_iface: "{{ ansible_default_ipv4.interface | default('eth0') }}"
+faas_tenant_egress_mtu: 1420

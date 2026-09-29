@@ -1,0 +1,48 @@
+#!/usr/sbin/nft -f
+# {{ ansible_managed }}
+# ADR-372 tenant egress gateway policy. A private table so the gateway's
+# own firewall stays the operator's; re-applying replaces only this table.
+# The compute node already enforced the tenant's per-VM policy; this is the
+# second, independent layer for the shared egress address.
+table inet faas_tenant_gw
+delete table inet faas_tenant_gw
+
+table inet faas_tenant_gw {
+  counter faas_gw_input_drop {}
+  counter faas_gw_deny_private {}
+  counter faas_gw_deny_smtp {}
+  counter faas_gw_forwarded {}
+
+  chain input {
+    type filter hook input priority -10; policy accept;
+    # Tenants reach the internet through the gateway, never the gateway.
+    iifname "{{ faas_tenant_egress_iface }}" ct state established,related accept
+    iifname "{{ faas_tenant_egress_iface }}" icmp type echo-request accept
+    iifname "{{ faas_tenant_egress_iface }}" counter name "faas_gw_input_drop" drop
+  }
+
+  # The compute node clamps the tenant's SYN; this clamps the server's
+  # SYN-ACK on its way into the tunnel. It runs before the filter chain,
+  # which accepts the SYN-ACK as established.
+  chain clamp {
+    type filter hook forward priority mangle; policy accept;
+    oifname "{{ faas_tenant_egress_iface }}" tcp flags syn tcp option maxseg size set rt mtu
+  }
+
+  chain forward {
+    type filter hook forward priority -10; policy accept;
+    ct state established,related accept
+    iifname "{{ faas_tenant_egress_iface }}" oifname "{{ faas_tenant_egress_iface }}" drop
+    iifname "{{ faas_tenant_egress_iface }}" ip daddr { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.0.0.0/24, 192.168.0.0/16, 198.18.0.0/15, 224.0.0.0/3 } counter name "faas_gw_deny_private" drop
+    iifname "{{ faas_tenant_egress_iface }}" tcp dport { 25, 465, 587 } counter name "faas_gw_deny_smtp" drop
+    iifname "{{ faas_tenant_egress_iface }}" meta l4proto != { tcp, udp, icmp } drop
+    iifname "{{ faas_tenant_egress_iface }}" oifname "{{ faas_tenant_egress_gateway_public_iface }}" counter name "faas_gw_forwarded" accept
+    iifname "{{ faas_tenant_egress_iface }}" drop
+    oifname "{{ faas_tenant_egress_iface }}" drop
+  }
+
+  chain postrouting {
+    type nat hook postrouting priority srcnat; policy accept;
+    ip saddr {{ faas_tenant_egress_tunnel_cidr }} oifname "{{ faas_tenant_egress_gateway_public_iface }}" masquerade
+  }
+}

@@ -35,9 +35,11 @@ render_go() {
   local cidr="$2"
   local overlay="$3"
   local v6="$4"
+  local tenant="${5:-}"
   local out
   out=$(cd "$SRC_ROOT" && FAAS_PUBLIC_IFACE="$iface" FAAS_MASQUERADE_CIDR="$cidr" \
         FAAS_OVERLAY_CIDRS="$overlay" FAAS_MASQUERADE_CIDR_V6="$v6" \
+        FAAS_TENANT_EGRESS_IFACE="$tenant" \
         go run ./cmd/faas-nft-render 2>/dev/null)
   # Normalize trailing newline so the per-row diff is whitespace-
   # insensitive (Go's pkg/netns.Render emits a final \n; the python
@@ -54,6 +56,7 @@ render_jinja() {
   local cidr="$2"
   local overlay="$3"
   local v6="$4"
+  local tenant="${5:-}"
   python3 -c "
 from jinja2 import Template
 overlay = '$overlay'
@@ -63,6 +66,7 @@ print(Template(open('$JINJA2').read()).render(
     masquerade_cidr='$cidr',
     overlay_cidrs=o_list,
     masquerade_cidr_v6='$v6',
+    tenant_egress_iface='$tenant',
 ), end='')
 " 2>/dev/null | python3 -c "import sys; sys.stdout.write(sys.stdin.read().rstrip('\n') + '\n')"
 }
@@ -147,6 +151,9 @@ main() {
         # Stress: multi-CIDR overlay (the spec's "two boxes share a
         # /24" future case). Both CIDRs are public-range.
         "multi-overlay|eth0|10.100.0.0/16|203.0.113.0/25,203.0.113.128/25|fc00::/7"
+        # ADR-372: tenant egress through the WireGuard gateway; the v6
+        # masquerade is withheld because the gateway is IPv4-only.
+        "tenant-gateway|eth0|10.100.0.0/16|203.0.113.0/24|fc00::/7|wg-tenant"
       )
       ;;
     *)
@@ -155,10 +162,10 @@ main() {
       ;;
   esac
   for row in "${rows[@]}"; do
-    IFS='|' read -r label iface cidr overlay v6 <<< "$row"
+    IFS='|' read -r label iface cidr overlay v6 tenant <<< "$row"
     local go_out jinja_out
-    go_out=$(render_go "$iface" "$cidr" "$overlay" "$v6")
-    jinja_out=$(render_jinja "$iface" "$cidr" "$overlay" "$v6")
+    go_out=$(render_go "$iface" "$cidr" "$overlay" "$v6" "$tenant")
+    jinja_out=$(render_jinja "$iface" "$cidr" "$overlay" "$v6" "$tenant")
     if ! compare "$label" "$go_out" "$jinja_out"; then
       status=1
     fi

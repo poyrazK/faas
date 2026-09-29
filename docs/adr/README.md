@@ -54,6 +54,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 372 | [Tenant egress through a dedicated WireGuard gateway](372-tenant-egress-gateway.md) | accepted | Opt-in manifest gateway; bridged tenant IPv4 leaves from the gateway's address, fails closed, and gets a second deny layer there |
 | 370 | [GitHub Actions immutable OIDC subject bootstrap](370-github-actions-immutable-oidc-subjects.md) | accepted | Resolve immutable GitHub repository IDs for binding lookup while pinning the complete subject in the OIDC trust policy |
 | 348 | [Customer after-restore readiness hook](348-customer-after-restore-hook.md) | accepted | Opt-in, loopback HTTP callback after entropy and clock repair and before restore readiness; failure cold-boots |
 | 354 | [Confirmed platform-tenant reconciliation apply](354-platform-tenant-confirmed-reconciliation-apply.md) | accepted | Apply only a current ownership-aware plan atomically; detach managed links, remove managed declared hostnames, preserve unmanaged resources |

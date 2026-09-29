@@ -5,3 +5,7 @@ Environment="FAAS_PUBLIC_IFACE={{ public_iface | default(ansible_default_ipv4.in
 Environment="FAAS_HOST_BRIDGE_CIDR={{ masquerade_cidr | default('10.100.0.0/16', true) }}"
 Environment="FAAS_PRIVATE_INGRESS_CIDRS={{ faas_control_plane_allowed_cidrs | default([]) | join(',') }}"
 Environment="FAAS_PRIVATE_INGRESS_TCP_PORTS={{ faas_control_plane_allowed_ports | default([]) | join(',') }}"
+{% if faas_tenant_egress_iface | default('') %}
+# ADR-372: wake-time host policy routes tenant egress through the gateway tunnel.
+Environment="FAAS_TENANT_EGRESS_IFACE={{ faas_tenant_egress_iface }}"
+{% endif %}

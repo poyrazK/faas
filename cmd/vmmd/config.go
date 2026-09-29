@@ -268,6 +268,11 @@ type ComputeNodeConfig struct {
 	// Ansible fact/host variable that renders /etc/nftables.conf, so wake-time
 	// policy rebuilds cannot drift back to the compiled eth0 default.
 	PublicIface string `toml:"public_iface"`
+	// TenantEgressIface (ADR-372) sends tenant egress through the egress
+	// gateway tunnel instead of PublicIface. Ansible sets
+	// FAAS_TENANT_EGRESS_IFACE from the same host variable that renders
+	// /etc/nftables.conf, so runtime policy rebuilds keep the tunnel path.
+	TenantEgressIface string `toml:"tenant_egress_iface"`
 	// PrivateIngressCIDRs and PrivateIngressTCPPorts preserve the
 	// deployment-owned control-plane ingress rules across runtime nftables
 	// rebuilds. Both are supplied by the vmmd systemd egress drop-in.
@@ -573,6 +578,9 @@ func LoadConfig(path string) (*Config, error) {
 	if v := os.Getenv("FAAS_PUBLIC_IFACE"); v != "" {
 		c.ComputeNode.PublicIface = v
 	}
+	if v := os.Getenv("FAAS_TENANT_EGRESS_IFACE"); v != "" {
+		c.ComputeNode.TenantEgressIface = v
+	}
 	if v := os.Getenv("FAAS_PRIVATE_INGRESS_CIDRS"); v != "" {
 		c.ComputeNode.PrivateIngressCIDRs = splitNonEmpty(v)
 	}
@@ -736,6 +744,12 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		c.ComputeNode.PublicIface = iface
 	}
+	if iface := strings.TrimSpace(c.ComputeNode.TenantEgressIface); iface != "" {
+		if err := validatePublicIface(iface); err != nil {
+			return nil, fmt.Errorf("vmmd: [compute_node].tenant_egress_iface %q invalid: %w", iface, err)
+		}
+		c.ComputeNode.TenantEgressIface = iface
+	}
 	if iface := strings.TrimSpace(c.ComputeNode.PrivateNetworkTransportInterface); iface != "" {
 		if err := validatePublicIface(iface); err != nil {
 			return nil, fmt.Errorf("vmmd: [compute_node].private_network_transport_interface %q invalid: %w", iface, err)
@@ -825,6 +839,7 @@ func runtimeHostPolicy(cfg ComputeNodeConfig, bridge netip.Prefix) netns.HostPol
 	if iface := strings.TrimSpace(cfg.PublicIface); iface != "" {
 		policy.PublicIface = iface
 	}
+	policy.TenantEgressIface = strings.TrimSpace(cfg.TenantEgressIface)
 	policy.MasqueradeCIDR = bridge.Masked().String()
 	for _, raw := range cfg.PrivateIngressCIDRs {
 		prefix, err := netip.ParsePrefix(raw)

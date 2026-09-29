@@ -29,6 +29,10 @@ public_iface: "{{ ansible_default_ipv4.interface | default('eth0') }}"
 masquerade_cidr: 10.100.0.0/16
 overlay_cidrs: []
 masquerade_cidr_v6: ''
+# ADR-372: when the manifest declares a tenant egress gateway, bridged tenant
+# IPv4 leaves through this WireGuard interface and tenant IPv6 egress stops.
+# Mirrors HostPolicy.TenantEgressIface / FAAS_TENANT_EGRESS_IFACE.
+tenant_egress_iface: "{{ faas_tenant_egress_iface | default('') }}"
 # Split-box PostgreSQL ingress. The manifest generator sets these only on
 # the control-plane host; an empty list preserves the single-box firewall.
 faas_postgres_allowed_cidrs: []

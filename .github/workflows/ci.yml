@@ -1222,6 +1222,8 @@ jobs:
           ansible-playbook --syntax-check verify.yml
           # Internal mTLS renewal is a scheduled production entrypoint.
           ansible-playbook --syntax-check pki_renew.yml
+          # ADR-372: the tenant egress gateway converge entrypoint.
+          ansible-playbook --syntax-check tenant_egress_gateway.yml
           # Gate-F: the opt-in acceptance playbooks. Neither was parsed by any
           # job, so a syntax error in them would only surface when an operator
           # ran one by hand against a real host.

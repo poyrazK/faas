@@ -163,6 +163,9 @@
     - role: otlp_exporter
     - role: nftables
     - role: overlay
+    # ADR-372: after the overlay so its routes exist before the tenant
+    # policy rules exempt them from the gateway tunnel.
+    - role: tenant_egress_client
     - role: node_exporter
     - role: gcp_ops_agent
     - role: internal_pki_renewal
