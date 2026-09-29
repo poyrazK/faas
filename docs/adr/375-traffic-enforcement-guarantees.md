@@ -88,6 +88,26 @@ Detached jobs and arbitrary unmediated guest sockets are excluded. Trusted
 remaining-deadline transport for nested managed service calls is a required
 follow-up before the complete deadline guarantee is accepted.
 
+Managed HTTP chains carry `X-Gregale-Request-Deadline`, an opaque HMAC-SHA256
+token containing an absolute UTC deadline, issue time, chain ID and receiving
+app/account. The MAC key is purpose-derived from the existing shared
+`FAAS_SESSION_KEY`; ephemeral development session keys are never used. Public
+claims are stripped. The MAC is verified before source-instance lookup so
+that lookup is bounded too; the resolved caller app and its authorized
+account must match the token before wake. Each authorized hop signs the same or an earlier absolute
+deadline for its target. Missing verification material, a different key, an
+invalid claim or apparent future issue time refuses propagation. The token's
+lifetime is capped by the existing managed dependency timeout ceiling.
+
+Node/Python request-context helpers propagate the opaque carrier only to
+managed service hosts. Applications must use these helpers or deliberately
+forward their request's carrier; concurrent requests cannot safely be inferred
+from a VM's active calls. Omission is an unlinked call, never described as
+protected by a parent deadline. Long-lived sessions omit the ordinary chain
+carrier. Keys must be shared across participating gateways, clocks must be
+synchronized, and coordinated key rotation may refuse old in-flight tokens.
+Cross-node clock and key-rollover acceptance remains required.
+
 ## Shared traffic accounting
 
 `[ratelimit] mode = "central"` is the daemon default and requires its Postgres

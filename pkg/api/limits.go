@@ -7271,6 +7271,9 @@ const (
 	// MaxServiceReliabilityTimeoutMS bounds a declared dependency's complete
 	// call, including a cold wake and all retries. The default remains unset.
 	MaxServiceReliabilityTimeoutMS = 300_000
+	// MaxTrafficDeadlineTokenBytes bounds the private managed-request carrier
+	// before decoding or authenticating any customer-supplied bytes (ADR-375).
+	MaxTrafficDeadlineTokenBytes = 2048
 
 	// AppErrorsDedupeWindowSeconds (ADR-096) is the platform-wide
 	// dedupe window for the IncrementAppError INSERT. NOT a
