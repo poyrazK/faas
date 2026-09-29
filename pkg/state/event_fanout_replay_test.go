@@ -157,6 +157,10 @@ func TestMemStoreReplayRetryablePublishedEventRecipientsIsBoundedAndAppScoped(t 
 	if err != nil {
 		t.Fatal(err)
 	}
+	third, _, err := store.UpsertEventSubscription(ctx, accountID, app.ID, "orders.us", "*", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	permanent, _, err := store.UpsertEventSubscription(ctx, accountID, app.ID, "*", "*", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -182,8 +186,9 @@ func TestMemStoreReplayRetryablePublishedEventRecipientsIsBoundedAndAppScoped(t 
 	}{
 		{first, oldest, EventFanoutFailureCodeInvocationEnqueueFailed, true},
 		{second, oldest.Add(time.Second), EventFanoutFailureCodeTargetLookupFailed, true},
-		{permanent, oldest.Add(2 * time.Second), EventFanoutFailureCodeTargetUnavailable, false},
-		{foreignRecipient, oldest.Add(3 * time.Second), EventFanoutFailureCodeInvocationEnqueueFailed, true},
+		{third, oldest.Add(2 * time.Second), EventFanoutFailureCodeInvocationEnqueueFailed, true},
+		{permanent, oldest.Add(3 * time.Second), EventFanoutFailureCodeTargetUnavailable, false},
+		{foreignRecipient, oldest.Add(4 * time.Second), EventFanoutFailureCodeInvocationEnqueueFailed, true},
 	} {
 		if err := store.RecordPublishedEventRecipientProgress(ctx, work.ID, work.ClaimToken, outcome.subscription.ID,
 			PublishedEventRecipientProgress{State: PublishedEventRecipientFailed, Attempts: 12,
@@ -199,6 +204,10 @@ func TestMemStoreReplayRetryablePublishedEventRecipientsIsBoundedAndAppScoped(t 
 	if err != nil || batch.Replayed != 1 || !batch.HasMore {
 		t.Fatalf("first batch = %+v, %v; want one replay and has_more", batch, err)
 	}
+	batch, err = store.ReplayRetryablePublishedEventRecipientsForApp(ctx, accountID, app.ID, "", "", 1)
+	if err != nil || batch.Replayed != 1 || !batch.HasMore {
+		t.Fatalf("second batch before fanout settles = %+v, %v; want one replay and has_more", batch, err)
+	}
 	work, err = store.ClaimDuePublishedEvent(ctx, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
@@ -206,8 +215,11 @@ func TestMemStoreReplayRetryablePublishedEventRecipientsIsBoundedAndAppScoped(t 
 	if got := work.RecipientProgress[first.ID]; got.State != PublishedEventRecipientPending || got.FailureCode != "" || got.Retryable {
 		t.Fatalf("oldest retryable progress = %+v, want cleared pending", got)
 	}
-	if got := work.RecipientProgress[second.ID]; got.State != PublishedEventRecipientFailed || !got.Retryable {
-		t.Fatalf("second retryable progress = %+v, want unchanged failed", got)
+	if got := work.RecipientProgress[second.ID]; got.State != PublishedEventRecipientPending || got.FailureCode != "" || got.Retryable {
+		t.Fatalf("second retryable progress = %+v, want cleared pending", got)
+	}
+	if got := work.RecipientProgress[third.ID]; got.State != PublishedEventRecipientFailed || !got.Retryable {
+		t.Fatalf("third retryable progress = %+v, want unchanged failed", got)
 	}
 	if got := work.RecipientProgress[permanent.ID]; got.State != PublishedEventRecipientFailed || got.Retryable {
 		t.Fatalf("non-retryable progress = %+v, want unchanged failed", got)
@@ -215,23 +227,27 @@ func TestMemStoreReplayRetryablePublishedEventRecipientsIsBoundedAndAppScoped(t 
 	if got := work.RecipientProgress[foreignRecipient.ID]; got.State != PublishedEventRecipientFailed || !got.Retryable {
 		t.Fatalf("other app progress = %+v, want unchanged failed", got)
 	}
+	batch, err = store.ReplayRetryablePublishedEventRecipientsForApp(ctx, accountID, app.ID, "", "", 1)
+	if err != nil || batch.Replayed != 0 || !batch.HasMore {
+		t.Fatalf("batch during fanout = %+v, %v; want no replay while processing and has_more", batch, err)
+	}
 	if err := store.FinishPublishedEvent(ctx, work.ID, work.ClaimToken, nil); err != nil {
 		t.Fatal(err)
 	}
 
 	batch, err = store.ReplayRetryablePublishedEventRecipientsForApp(ctx, accountID, app.ID, "orders.us", "evt-replay-batch", 100)
 	if err != nil || batch.Replayed != 1 || batch.HasMore {
-		t.Fatalf("second batch = %+v, %v; want one replay and no more", batch, err)
+		t.Fatalf("third batch after fanout settles = %+v, %v; want one replay and no more", batch, err)
 	}
 	work, err = store.ClaimDuePublishedEvent(ctx, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := work.RecipientProgress[second.ID]; got.State != PublishedEventRecipientPending || got.FailureCode != "" || got.Retryable {
-		t.Fatalf("second retryable progress = %+v, want cleared pending", got)
+	if got := work.RecipientProgress[third.ID]; got.State != PublishedEventRecipientPending || got.FailureCode != "" || got.Retryable {
+		t.Fatalf("third retryable progress = %+v, want cleared pending", got)
 	}
 	if err := store.FinishPublishedEvent(ctx, work.ID, work.ClaimToken, nil); err != nil {
-		t.Fatalf("settle second replay: %v", err)
+		t.Fatalf("settle third replay: %v", err)
 	}
 	if err := store.AppendEvent(ctx, "apid", "event.published", &accountID,
 		[]byte(`{"id":"evt-replay-batch","source":"orders.eu","type":"order.created","data":{}}`)); err != nil {

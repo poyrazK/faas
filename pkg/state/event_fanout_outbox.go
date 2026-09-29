@@ -80,7 +80,8 @@ type EventFanoutFailureCursor struct {
 }
 
 // EventFanoutReplayBatch reports a bounded operator replay. HasMore means
-// additional retryable terminal recipients remain eligible for a later call.
+// retryable terminal recipients remain and may become eligible after an
+// in-progress event fanout settles.
 type EventFanoutReplayBatch struct {
 	Replayed int
 	HasMore  bool
@@ -358,7 +359,8 @@ func (s *PgStore) ReplayFailedPublishedEventRecipientForApp(ctx context.Context,
 
 // ReplayRetryablePublishedEventRecipientsForApp requeues the oldest bounded
 // set of retryable terminal recipients. Candidates are tied to the app's
-// immutable recipient snapshot, and only settled outbox receipts are selected.
+// immutable recipient snapshot. Pending receipts can accept additional replay
+// requests; processing receipts remain untouched until their claim settles.
 func (s *PgStore) ReplayRetryablePublishedEventRecipientsForApp(ctx context.Context, accountID, appID, eventSource, eventID string, limit int) (EventFanoutReplayBatch, error) {
 	limit = normalizeEventFanoutReplayLimit(limit)
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
@@ -372,13 +374,13 @@ func (s *PgStore) ReplayRetryablePublishedEventRecipientsForApp(ctx context.Cont
 		JOIN apps AS a ON a.id = $2::uuid AND a.account_id = o.account_id
 		CROSS JOIN LATERAL jsonb_array_elements(COALESCE(o.recipient_snapshot, '[]'::jsonb)) AS r(recipient)
 		CROSS JOIN LATERAL jsonb_each(COALESCE(o.recipient_progress, '{}'::jsonb)) AS p(key, outcome)
-		WHERE o.account_id = $1::uuid AND o.state = 'delivered'
+		WHERE o.account_id = $1::uuid AND o.state IN ('delivered', 'pending')
 		  AND r.recipient->>'app_id' = a.id::text AND r.recipient->>'id' = p.key
 		  AND p.outcome->>'state' = 'failed'
 		  AND COALESCE(NULLIF(p.outcome->>'retryable', '')::boolean, false)
 		  AND (($3 = '' AND $4 = '') OR (o.source = $3 AND o.event_id = $4))
 		ORDER BY COALESCE(NULLIF(p.outcome->>'updated_at', '')::timestamptz, o.created_at), o.id, p.key
-		LIMIT $5 FOR UPDATE OF o SKIP LOCKED`, accountID, appID, eventSource, eventID, limit+1)
+		LIMIT $5 FOR UPDATE OF o SKIP LOCKED`, accountID, appID, eventSource, eventID, limit)
 	if err != nil {
 		return EventFanoutReplayBatch{}, fmt.Errorf("list retryable event fanout failures: %w", err)
 	}
@@ -386,7 +388,7 @@ func (s *PgStore) ReplayRetryablePublishedEventRecipientsForApp(ctx context.Cont
 		outboxID       int64
 		subscriptionID string
 	}
-	candidates := make([]candidate, 0, limit+1)
+	candidates := make([]candidate, 0, limit)
 	for rows.Next() {
 		var item candidate
 		if err := rows.Scan(&item.outboxID, &item.subscriptionID); err != nil {
@@ -400,10 +402,6 @@ func (s *PgStore) ReplayRetryablePublishedEventRecipientsForApp(ctx context.Cont
 		return EventFanoutReplayBatch{}, fmt.Errorf("read retryable event fanout failures: %w", err)
 	}
 	result := EventFanoutReplayBatch{}
-	if len(candidates) > limit {
-		result.HasMore = true
-		candidates = candidates[:limit]
-	}
 	now := time.Now().UTC()
 	for _, item := range candidates {
 		_, err := tx.Exec(ctx, `UPDATE event_fanout_outbox AS o
@@ -425,6 +423,20 @@ func (s *PgStore) ReplayRetryablePublishedEventRecipientsForApp(ctx context.Cont
 			return EventFanoutReplayBatch{}, fmt.Errorf("requeue retryable event recipient %s: %w", item.subscriptionID, err)
 		}
 		result.Replayed++
+	}
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (
+		SELECT 1
+		FROM event_fanout_outbox AS o
+		JOIN apps AS a ON a.id = $2::uuid AND a.account_id = o.account_id
+		CROSS JOIN LATERAL jsonb_array_elements(COALESCE(o.recipient_snapshot, '[]'::jsonb)) AS r(recipient)
+		CROSS JOIN LATERAL jsonb_each(COALESCE(o.recipient_progress, '{}'::jsonb)) AS p(key, outcome)
+		WHERE o.account_id = $1::uuid AND o.state IN ('delivered', 'pending', 'processing')
+		  AND r.recipient->>'app_id' = a.id::text AND r.recipient->>'id' = p.key
+		  AND p.outcome->>'state' = 'failed'
+		  AND COALESCE(NULLIF(p.outcome->>'retryable', '')::boolean, false)
+		  AND (($3 = '' AND $4 = '') OR (o.source = $3 AND o.event_id = $4))
+	)`, accountID, appID, eventSource, eventID).Scan(&result.HasMore); err != nil {
+		return EventFanoutReplayBatch{}, fmt.Errorf("check remaining retryable event fanout failures: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return EventFanoutReplayBatch{}, fmt.Errorf("commit event fanout replay batch: %w", err)
@@ -726,7 +738,7 @@ func (m *MemStore) ReplayRetryablePublishedEventRecipientsForApp(_ context.Conte
 	defer m.mu.Unlock()
 	candidates := make([]candidate, 0)
 	for _, work := range m.eventFanout {
-		if !work.Delivered {
+		if !work.Delivered && work.ClaimToken != "" {
 			continue
 		}
 		var event publishedEventIdentity
@@ -754,10 +766,10 @@ func (m *MemStore) ReplayRetryablePublishedEventRecipientsForApp(_ context.Conte
 		}
 		return candidates[i].subscriptionID < candidates[j].subscriptionID
 	})
-	result := EventFanoutReplayBatch{HasMore: len(candidates) > limit}
 	if len(candidates) > limit {
 		candidates = candidates[:limit]
 	}
+	result := EventFanoutReplayBatch{}
 	now := time.Now().UTC()
 	for _, item := range candidates {
 		progress := item.work.RecipientProgress[item.subscriptionID]
@@ -773,6 +785,26 @@ func (m *MemStore) ReplayRetryablePublishedEventRecipientsForApp(_ context.Conte
 		item.work.ClaimToken = ""
 		item.work.LeaseUntil = time.Time{}
 		result.Replayed++
+	}
+	for _, work := range m.eventFanout {
+		var event publishedEventIdentity
+		if json.Unmarshal(work.Payload, &event) != nil ||
+			((eventSource != "" || eventID != "") && (event.Source != eventSource || event.ID != eventID)) {
+			continue
+		}
+		for _, recipient := range work.RecipientSnapshot {
+			if !sameMemUUID(recipient.AccountID, accountID) || !sameMemUUID(recipient.AppID, appID) {
+				continue
+			}
+			progress, ok := work.RecipientProgress[recipient.ID]
+			if ok && progress.State == PublishedEventRecipientFailed && progress.Retryable {
+				result.HasMore = true
+				break
+			}
+		}
+		if result.HasMore {
+			break
+		}
 	}
 	return result, nil
 }

@@ -27,6 +27,10 @@ func TestPgStoreReplayRetryablePublishedEventRecipientsIsBoundedAndAppScoped(t *
 	if err != nil {
 		t.Fatalf("create second subscription: %v", err)
 	}
+	third, _, err := s.UpsertEventSubscription(ctx, accountID, appID, "orders.us", "*", nil)
+	if err != nil {
+		t.Fatalf("create third subscription: %v", err)
+	}
 	permanent, _, err := s.UpsertEventSubscription(ctx, accountID, appID, "*", "*", nil)
 	if err != nil {
 		t.Fatalf("create permanent subscription: %v", err)
@@ -52,8 +56,9 @@ func TestPgStoreReplayRetryablePublishedEventRecipientsIsBoundedAndAppScoped(t *
 	}{
 		{first, oldest, state.EventFanoutFailureCodeInvocationEnqueueFailed, true},
 		{second, oldest.Add(time.Second), state.EventFanoutFailureCodeTargetLookupFailed, true},
-		{permanent, oldest.Add(2 * time.Second), state.EventFanoutFailureCodeTargetUnavailable, false},
-		{other, oldest.Add(3 * time.Second), state.EventFanoutFailureCodeInvocationEnqueueFailed, true},
+		{third, oldest.Add(2 * time.Second), state.EventFanoutFailureCodeInvocationEnqueueFailed, true},
+		{permanent, oldest.Add(3 * time.Second), state.EventFanoutFailureCodeTargetUnavailable, false},
+		{other, oldest.Add(4 * time.Second), state.EventFanoutFailureCodeInvocationEnqueueFailed, true},
 	} {
 		if err := s.RecordPublishedEventRecipientProgress(ctx, work.ID, work.ClaimToken, outcome.subscription.ID,
 			state.PublishedEventRecipientProgress{State: state.PublishedEventRecipientFailed, Attempts: 12,
@@ -69,6 +74,10 @@ func TestPgStoreReplayRetryablePublishedEventRecipientsIsBoundedAndAppScoped(t *
 	if err != nil || batch.Replayed != 1 || !batch.HasMore {
 		t.Fatalf("first batch = %+v, %v; want one replay and has_more", batch, err)
 	}
+	batch, err = s.ReplayRetryablePublishedEventRecipientsForApp(ctx, accountID, appID, "", "", 1)
+	if err != nil || batch.Replayed != 1 || !batch.HasMore {
+		t.Fatalf("second batch before fanout settles = %+v, %v; want one replay and has_more", batch, err)
+	}
 	work, err = s.ClaimDuePublishedEvent(ctx, time.Now().UTC())
 	if err != nil {
 		t.Fatalf("claim first replay: %v", err)
@@ -76,8 +85,11 @@ func TestPgStoreReplayRetryablePublishedEventRecipientsIsBoundedAndAppScoped(t *
 	if got := work.RecipientProgress[first.ID]; got.State != state.PublishedEventRecipientPending || got.FailureCode != "" || got.Retryable {
 		t.Fatalf("oldest retryable progress = %+v, want cleared pending", got)
 	}
-	if got := work.RecipientProgress[second.ID]; got.State != state.PublishedEventRecipientFailed || !got.Retryable {
-		t.Fatalf("second retryable progress = %+v, want unchanged failed", got)
+	if got := work.RecipientProgress[second.ID]; got.State != state.PublishedEventRecipientPending || got.FailureCode != "" || got.Retryable {
+		t.Fatalf("second retryable progress = %+v, want cleared pending", got)
+	}
+	if got := work.RecipientProgress[third.ID]; got.State != state.PublishedEventRecipientFailed || !got.Retryable {
+		t.Fatalf("third retryable progress = %+v, want unchanged failed", got)
 	}
 	if got := work.RecipientProgress[permanent.ID]; got.State != state.PublishedEventRecipientFailed || got.Retryable {
 		t.Fatalf("non-retryable progress = %+v, want unchanged failed", got)
@@ -85,23 +97,27 @@ func TestPgStoreReplayRetryablePublishedEventRecipientsIsBoundedAndAppScoped(t *
 	if got := work.RecipientProgress[other.ID]; got.State != state.PublishedEventRecipientFailed || !got.Retryable {
 		t.Fatalf("other app progress = %+v, want unchanged failed", got)
 	}
+	batch, err = s.ReplayRetryablePublishedEventRecipientsForApp(ctx, accountID, appID, "", "", 1)
+	if err != nil || batch.Replayed != 0 || !batch.HasMore {
+		t.Fatalf("batch during fanout = %+v, %v; want no replay while processing and has_more", batch, err)
+	}
 	if err := s.FinishPublishedEvent(ctx, work.ID, work.ClaimToken, nil); err != nil {
 		t.Fatalf("settle first replay: %v", err)
 	}
 
 	batch, err = s.ReplayRetryablePublishedEventRecipientsForApp(ctx, accountID, appID, "orders.us", "evt-pg-replay-batch", 100)
 	if err != nil || batch.Replayed != 1 || batch.HasMore {
-		t.Fatalf("second batch = %+v, %v; want one replay and no more", batch, err)
+		t.Fatalf("third batch after fanout settles = %+v, %v; want one replay and no more", batch, err)
 	}
 	work, err = s.ClaimDuePublishedEvent(ctx, time.Now().UTC())
 	if err != nil {
 		t.Fatalf("claim second replay: %v", err)
 	}
-	if got := work.RecipientProgress[second.ID]; got.State != state.PublishedEventRecipientPending || got.FailureCode != "" || got.Retryable {
-		t.Fatalf("second retryable progress = %+v, want cleared pending", got)
+	if got := work.RecipientProgress[third.ID]; got.State != state.PublishedEventRecipientPending || got.FailureCode != "" || got.Retryable {
+		t.Fatalf("third retryable progress = %+v, want cleared pending", got)
 	}
 	if err := s.FinishPublishedEvent(ctx, work.ID, work.ClaimToken, nil); err != nil {
-		t.Fatalf("settle second replay: %v", err)
+		t.Fatalf("settle third replay: %v", err)
 	}
 	if err := s.AppendEvent(ctx, "apid", "event.published", &accountID,
 		json.RawMessage(`{"id":"evt-pg-replay-batch","source":"orders.eu","type":"order.created","data":{}}`)); err != nil {

@@ -650,7 +650,10 @@ gregale events replay-retryable APP --limit 100 --yes
 This command requeues only terminal failures classified as retryable, oldest
 first, and never more than 100 recipients per call. Add both `--event-source`
 and `--event-id` to scope it to one published event. `--yes` confirms the
-batch; repeat the command when the response reports `has_more: true`.
+batch; repeat the command when the response reports `has_more: true`. A queued
+event can accept additional replay batches while pending. If its worker is
+already processing it, the command leaves that event alone and continues to
+report more failures; repeat after the event settles.
 Configuration failures such as an invalid
 subscription or unavailable target remain untouched for explicit repair and
 single-recipient replay.
