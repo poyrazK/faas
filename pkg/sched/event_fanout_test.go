@@ -287,6 +287,128 @@ func TestEventFanoutDoesNotBackfillNewSubscription(t *testing.T) {
 	}
 }
 
+func TestEventFanoutUsesSubscriptionAtAcceptance(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "event-snapshot@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accountID := mustCanonicalEventAccountID(t, account.ID)
+	app, err := store.CreateApp(ctx, state.App{ID: uuid.NewString(), AccountID: accountID, Slug: "event-snapshot"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldSubscription, _, err := store.UpsertEventSubscription(ctx, accountID, app.ID,
+		"orders.*", "created", json.RawMessage(`{"data":{"amount":{"$gt":100}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := events.Envelope{SpecVersion: "1.0", ID: uuid.NewString(), Source: "orders.api", Type: "created",
+		Time: time.Now().UTC(), DataContentType: "application/json", Data: json.RawMessage(`{"amount":150}`), AccountID: accountID}
+	payload, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendEvent(ctx, "apid", "event.published", &accountID, payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteEventSubscription(ctx, oldSubscription.ID, accountID, app.ID); err != nil {
+		t.Fatal(err)
+	}
+	newSubscription, _, err := store.UpsertEventSubscription(ctx, accountID, app.ID,
+		"orders.*", "created", json.RawMessage(`{"data":{"amount":{"$gt":200}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Retrying the same event after changing subscriptions must keep the
+	// original candidate set rather than replacing the existing receipt.
+	if err := store.AppendEvent(ctx, "apid", "event.published", &accountID, payload); err != nil {
+		t.Fatal(err)
+	}
+	loop := &Loop{engine: &Engine{store: store}}
+	loop.runEventFanoutSweep(ctx)
+	invocations, err := store.ListInvocationsForApp(ctx, app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(invocations) != 1 {
+		t.Fatalf("invocations = %d, want one accepted recipient", len(invocations))
+	}
+	var headers map[string]string
+	if err := json.Unmarshal(invocations[0].Headers, &headers); err != nil {
+		t.Fatal(err)
+	}
+	if headers["x-gregale-event-subscription-id"] != oldSubscription.ID || headers["x-gregale-event-subscription-id"] == newSubscription.ID {
+		t.Fatalf("routed to subscription %q, want accepted subscription %q", headers["x-gregale-event-subscription-id"], oldSubscription.ID)
+	}
+}
+
+// A pre-migration receipt has no snapshot and keeps the prior routing rule.
+type legacyEventReceiptStore struct {
+	state.Store
+	mem *state.MemStore
+}
+
+func (s legacyEventReceiptStore) ClaimDuePublishedEvent(ctx context.Context, now time.Time) (*state.PublishedEventWork, error) {
+	work, err := s.mem.ClaimDuePublishedEvent(ctx, now)
+	if err == nil {
+		work.SnapshotCaptured = false
+		work.RecipientSnapshot = nil
+	}
+	return work, err
+}
+
+func (s legacyEventReceiptStore) FinishPublishedEvent(ctx context.Context, id int64, token string, routeErr error) error {
+	return s.mem.FinishPublishedEvent(ctx, id, token, routeErr)
+}
+
+func (s legacyEventReceiptStore) ListMatchingEventSubscriptionsForAccount(ctx context.Context, accountID, source, typ string, cursor state.EventSubscriptionCursor, limit int) ([]state.EventSubscription, error) {
+	return s.mem.ListMatchingEventSubscriptionsForAccount(ctx, accountID, source, typ, cursor, limit)
+}
+
+func TestEventFanoutLegacyReceiptKeepsCurrentSubscriptionRouting(t *testing.T) {
+	ctx := context.Background()
+	mem := state.NewMemStore()
+	account, err := mem.CreateAccount(ctx, "event-legacy-snapshot@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accountID := mustCanonicalEventAccountID(t, account.ID)
+	app, err := mem.CreateApp(ctx, state.App{ID: uuid.NewString(), AccountID: accountID, Slug: "event-legacy-snapshot"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	subscription, _, err := mem.UpsertEventSubscription(ctx, accountID, app.ID, "orders", "created", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := events.Envelope{SpecVersion: "1.0", ID: uuid.NewString(), Source: "orders", Type: "created",
+		Time: time.Now().UTC(), DataContentType: "application/json", Data: json.RawMessage(`{}`), AccountID: accountID}
+	payload, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.AppendEvent(ctx, "apid", "event.published", &accountID, payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.DeleteEventSubscription(ctx, subscription.ID, accountID, app.ID); err != nil {
+		t.Fatal(err)
+	}
+	loop := &Loop{engine: &Engine{store: legacyEventReceiptStore{Store: mem, mem: mem}}}
+	loop.runEventFanoutSweep(ctx)
+	invocations, err := mem.ListInvocationsForApp(ctx, app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(invocations) != 0 {
+		t.Fatalf("pre-migration receipt delivered to removed subscription: %d invocations", len(invocations))
+	}
+	if _, err := mem.ClaimDuePublishedEvent(ctx, time.Now().UTC()); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("legacy receipt was not acknowledged: %v", err)
+	}
+}
+
 func mustCanonicalEventAccountID(t *testing.T, id string) string {
 	t.Helper()
 	parsed, err := uuid.Parse(id)

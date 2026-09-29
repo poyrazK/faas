@@ -37,6 +37,7 @@ import type { DebugTelemetryRequestItem } from '../models/DebugTelemetryRequestI
 import type { DeployTokenResponse } from '../models/DeployTokenResponse.js';
 import type { DiscoveredRoutesResponse } from '../models/DiscoveredRoutesResponse.js';
 import type { ListDeployTokensResponse } from '../models/ListDeployTokensResponse.js';
+import type { PreAuthObservationsResponse } from '../models/PreAuthObservationsResponse.js';
 import type { PrewarmIntentResponse } from '../models/PrewarmIntentResponse.js';
 import type { PrewarmRequest } from '../models/PrewarmRequest.js';
 import type { RenameAppRequest } from '../models/RenameAppRequest.js';
@@ -685,6 +686,51 @@ export class AppsService {
         'name': name,
       },
       errors: {
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Observe-mode decisions for each configured pre-auth policy.
+   * Read-only security telemetry, available on every app plan. Each policy
+   * reports how often observe mode would have blocked a request and the
+   * final response class of those requests. A 2xx response is a possible
+   * false-positive signal, not proof that the requester was legitimate.
+   * Route policy IDs are bounded slots (route_0..route_15 and
+   * failures_0..failures_15). Reordering or replacing routes within the
+   * requested range can mix counts from different configurations;
+   * use a window after the last policy edit. Empty counts may mean no
+   * traffic. On Prometheus failure,
+   * source starts with `degraded:` and counts are zero.
+   *
+   * @returns PreAuthObservationsResponse Per-policy shadow decisions and final response classes.
+   * @throws ApiError
+   */
+  public static getAppPreAuthObservations({
+    slug,
+    range = '5m',
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Time window for the returned policy observations. Defaults to five minutes.
+     */
+    range?: '5m' | '15m' | '1h' | '6h' | '24h' | '7d' | '15d',
+  }): CancelablePromise<PreAuthObservationsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/pre-auth-observations',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'range': range,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
         404: `code: not_found`,
       },
     });
@@ -2671,6 +2717,11 @@ export class AppsService {
    * also include `data.proxy_latency_ms` for the final bridge hop. Rows
    * written before this contract correction contain the former
    * proxy-only value in `latency_ms` and omit `proxy_latency_ms`.
+   * Gateway rows may also include `data.gateway_phases_ms`, a per-wake
+   * map of integer-millisecond durations for `pre_admission`,
+   * `scheduler_wake`, `target_publication`, `post_publication`, and
+   * `internal_proxy`. This keeps phase attribution joinable to one
+   * `wake_id` without adding wake IDs as metric labels.
    *
    * The endpoint is a sub-resource of `/v1/apps/{slug}`;
    * auth and rate-limit share the §12 per-app budget with

@@ -766,6 +766,10 @@ type ProxyFirstByte struct {
 	// separate name; LatencyMs remains the documented acceptance-to-first-byte
 	// contract.
 	ProxyLatencyMs int64
+	// GatewayPhasesMs is the request-local gateway phase trace carried by the
+	// first-byte event. It is optional for legacy callers and ties target-cache
+	// publication and internal-proxy time to this wake without metric labels.
+	GatewayPhasesMs map[string]int64
 }
 
 // PageServed records that a browser received the short-lived wake page before
@@ -796,7 +800,7 @@ func (e ProxyFirstByte) Kind() string     { return WakeProxyFirstByte }
 func (e ProxyFirstByte) At() time.Time    { return e.EmitAt }
 func (e ProxyFirstByte) Subject() *string { return nil }
 func (e ProxyFirstByte) Payload() map[string]any {
-	return map[string]any{
+	p := map[string]any{
 		"wake_id":          e.WakeID,
 		"app_id":           e.AppID,
 		"request_id":       e.RequestID,
@@ -805,6 +809,10 @@ func (e ProxyFirstByte) Payload() map[string]any {
 		"latency_ms":       e.LatencyMs,
 		"proxy_latency_ms": e.ProxyLatencyMs,
 	}
+	if len(e.GatewayPhasesMs) > 0 {
+		p["gateway_phases_ms"] = e.GatewayPhasesMs
+	}
+	return p
 }
 
 // ParkStarted — schedd transitioning the instance to

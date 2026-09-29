@@ -617,6 +617,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/account/platform-tenants":                                                    "ListPlatformTenants",
 	"POST /v1/account/platform-tenants":                                                   "CreatePlatformTenant",
 	"POST /v1/account/platform-tenants/apply":                                             "ApplyPlatformTenant",
+	"POST /v1/account/platform-tenants/{id}/reconciliation-plan":                          "PlanPlatformTenantReconciliation",
 	"GET /v1/account/platform-tenants/{id}":                                               "GetPlatformTenant",
 	"GET /v1/account/platform-tenants/{id}/activation":                                    "GetPlatformTenantActivation",
 	"GET /v1/account/platform-tenants/{id}/request-budget":                                "GetPlatformTenantRequestBudget",
@@ -886,11 +887,12 @@ var methodRouteMap = map[string]string{
 	// would produce GetAppsSlugMetrics (Swagger-style); the SDK
 	// names it GetAppMetrics to match the existing per-app methods
 	// (GetApp, ListApps) — drop the slug placeholder from the verb.
-	"GET /v1/apps/{slug}/metrics":            "GetAppMetrics",
-	"GET /v1/apps/{slug}/debug/dependencies": "GetAppDebugDependencyLatency",
-	"POST /v1/apps/{slug}/prewarm":           "CreatePrewarm",
-	"GET /v1/apps/{slug}/prewarms":           "ListPrewarms",
-	"DELETE /v1/apps/{slug}/prewarms/{id}":   "CancelPrewarm",
+	"GET /v1/apps/{slug}/metrics":               "GetAppMetrics",
+	"GET /v1/apps/{slug}/pre-auth-observations": "GetAppPreAuthObservations",
+	"GET /v1/apps/{slug}/debug/dependencies":    "GetAppDebugDependencyLatency",
+	"POST /v1/apps/{slug}/prewarm":              "CreatePrewarm",
+	"GET /v1/apps/{slug}/prewarms":              "ListPrewarms",
+	"DELETE /v1/apps/{slug}/prewarms/{id}":      "CancelPrewarm",
 
 	// Per-app observability backend PR series (PR #1097). The
 	// wake-timeline path uses a literal hyphen (matching the

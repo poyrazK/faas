@@ -39,6 +39,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// restorePressureHighWatermark leaves two local restore slots for vmmd before
+// ordinary snapshot wakes start spreading to a fitting peer. Placement falls
+// back to the existing rules when no peer fits.
+const restorePressureHighWatermark = 2
+
 // Placement is the chosen compute node for one admit. Carries the dial
 // target so the wake loop doesn't need a second lookup against the
 // compute_nodes table.
@@ -210,13 +215,16 @@ func choosePlacementWithCPU(nodes []state.ComputeNode, usedMB map[string]int64, 
 			snapshotF = append(snapshotF, n)
 		}
 	}
+	scoreRequest := r
+	scoreRequest.restorePressureAware = restorePressureActive(candidates, r)
 
-	// CPU headroom outranks sticky locality. Preserve the warm fast path
-	// only while the preferred node is tied for the most physical CPU
-	// headroom; otherwise affinity would pack a single host until it was
-	// saturated while an idle peer existed.
-	if warmFit != nil && (r.PrioritizeSnapshotLocality || r.CPUMillicores <= 0 ||
-		cpuHeadroomMillicores(*warmFit, usedCPUMillicores[warmFit.ID]) >= maxCPUHeadroomMillicores(candidates, usedCPUMillicores)) {
+	// CPU headroom outranks sticky locality. Preserve the warm fast path only
+	// while the preferred node is tied for the most physical CPU headroom. When
+	// restore pressure is high, sticky affinity must also be among the least
+	// pressured fitting nodes so it cannot keep piling restores onto one vmmd.
+	if warmFit != nil && restorePressureCanSelect(*warmFit, candidates, scoreRequest) &&
+		(r.PrioritizeSnapshotLocality || r.CPUMillicores <= 0 ||
+			cpuHeadroomMillicores(*warmFit, usedCPUMillicores[warmFit.ID]) >= maxCPUHeadroomMillicores(candidates, usedCPUMillicores)) {
 		return Placement{
 			NodeID:              warmFit.ID,
 			Name:                warmFit.Name,
@@ -236,12 +244,13 @@ func choosePlacementWithCPU(nodes []state.ComputeNode, usedMB map[string]int64, 
 	if len(snapshotF) > 0 {
 		best := snapshotF[0]
 		for _, n := range snapshotF[1:] {
-			if betterCandidate(n, usedMB[n.ID], usedVCPU[n.ID], usedCPUMillicores[n.ID], best, usedMB[best.ID], usedVCPU[best.ID], usedCPUMillicores[best.ID], r) {
+			if betterCandidate(n, usedMB[n.ID], usedVCPU[n.ID], usedCPUMillicores[n.ID], best, usedMB[best.ID], usedVCPU[best.ID], usedCPUMillicores[best.ID], scoreRequest) {
 				best = n
 			}
 		}
-		if r.PrioritizeSnapshotLocality || r.CPUMillicores <= 0 ||
-			cpuHeadroomMillicores(best, usedCPUMillicores[best.ID]) >= maxCPUHeadroomMillicores(candidates, usedCPUMillicores) {
+		if restorePressureCanSelect(best, candidates, scoreRequest) &&
+			(r.PrioritizeSnapshotLocality || r.CPUMillicores <= 0 ||
+				cpuHeadroomMillicores(best, usedCPUMillicores[best.ID]) >= maxCPUHeadroomMillicores(candidates, usedCPUMillicores)) {
 			return placementForNode(best, usedMB[best.ID]), nil
 		}
 	}
@@ -274,11 +283,36 @@ func choosePlacementWithCPU(nodes []state.ComputeNode, usedMB map[string]int64, 
 	// node is well under its RAM ceiling).
 	best := candidates[0]
 	for _, n := range candidates[1:] {
-		if betterCandidate(n, usedMB[n.ID], usedVCPU[n.ID], usedCPUMillicores[n.ID], best, usedMB[best.ID], usedVCPU[best.ID], usedCPUMillicores[best.ID], r) {
+		if betterCandidate(n, usedMB[n.ID], usedVCPU[n.ID], usedCPUMillicores[n.ID], best, usedMB[best.ID], usedVCPU[best.ID], usedCPUMillicores[best.ID], scoreRequest) {
 			best = n
 		}
 	}
 	return placementForNode(best, usedMB[best.ID]), nil
+}
+
+func restorePressureActive(candidates []state.ComputeNode, r Request) bool {
+	if !r.restorePressureAware || r.PrioritizeSnapshotLocality || len(candidates) < 2 {
+		return false
+	}
+	for _, n := range candidates {
+		if r.restorePressureByNode[n.ID] >= restorePressureHighWatermark {
+			return true
+		}
+	}
+	return false
+}
+
+func restorePressureCanSelect(n state.ComputeNode, candidates []state.ComputeNode, r Request) bool {
+	if !r.restorePressureAware {
+		return true
+	}
+	min := int(^uint(0) >> 1)
+	for _, candidate := range candidates {
+		if pressure := r.restorePressureByNode[candidate.ID]; pressure < min {
+			min = pressure
+		}
+	}
+	return r.restorePressureByNode[n.ID] == min
 }
 
 func placementForNode(n state.ComputeNode, usedMB int64) Placement {
@@ -360,10 +394,22 @@ func containsNodeID(ids []string, want string) bool {
 // Changing this function changes where hot apps land; never edit without
 // reading the test cases.
 //
-// For a CPU-aware request, physical millicore headroom is primary. RAM and
-// guest-vCPU preserve their prior order below it. A legacy request with
-// CPUMillicores=0 skips the new comparison bit-for-bit.
+// For an ordinary CPU-aware request, physical millicore headroom is primary.
+// A restore burst can temporarily put in-flight restore count first; RAM and
+// guest-vCPU preserve their prior order below those signals. A legacy request
+// with CPUMillicores=0 skips CPU comparison bit-for-bit.
 func betterCandidate(n state.ComputeNode, nUsed, nVCPUUsed, nCPUUsed int64, best state.ComputeNode, bestUsed, bestVCPUUsed, bestCPUUsed int64, r Request) bool {
+	// Once a fitting node reaches the restore watermark, in-flight snapshot
+	// restores become the primary short-lived pressure signal. Deployment
+	// smokes keep their stronger artifact-locality contract; capacity checks
+	// have already filtered every candidate.
+	if r.restorePressureAware {
+		nPressure := r.restorePressureByNode[n.ID]
+		bestPressure := r.restorePressureByNode[best.ID]
+		if nPressure != bestPressure {
+			return nPressure < bestPressure
+		}
+	}
 	// Sustained host CPU headroom is the first placement signal once a
 	// request carries its real cgroup quota. This spreads work before RAM
 	// and guest-topology tie-breakers can pack one node.

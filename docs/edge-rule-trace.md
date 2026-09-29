@@ -103,6 +103,35 @@ budget are runtime state, so no retry or response outcome is inferred. The
 gateway retries transport failures only; it does not replay an application
 HTTP error status.
 
+For a matching `kind=circuit_breaker` rule, the trace reports the effective
+failure-ratio threshold, minimum observations, rolling window, and initial/max
+open intervals after applying the gateway's defensive defaults. This rule
+tunes the per-app instance breaker; it does not enable the breaker. The trace
+does not know whether the operator feature gate is enabled or inspect live
+per-instance counters, open/half-open state, or probe results, so target
+selection and a breaker outcome remain incomplete rather than inferred.
+
+For a matching `kind=async` rule, the trace shows the account-plan gate and
+payload/deadline/attempt ceilings when available, whether the app workload can
+accept request invocations, and whether the supplied payload is valid JSON and
+within the async payload cap. It reports effective attempts from the rule
+override, app retry default, or plan default, and the deadline after the plan
+clamp. Callback destinations are represented only as configured/not
+configured; neither their IDs nor request-body contents are emitted. An
+`Idempotency-Key` is represented only by a presence bit, never its value.
+
+The async phase follows fixed-response rules and precedes cache and guest
+budget evaluation, matching the gateway path: a matched async route bypasses
+response-cache lookup and does not reach guest execution. A likely enqueue is
+still `incomplete`, not a predicted 202, because authentication and live rate
+limits run first, and durable enqueue/version resolution, duplicate-key
+conflicts, and queue availability require runtime state. Known plan, workload,
+or payload blocks are also conditional on those earlier gates passing. If no body was
+supplied to the trace, body eligibility remains unknown; supply an explicit
+empty body to model the gateway's empty-object payload, or a JSON body to check
+its size and syntax. The trace evaluates body bytes but never returns the
+payload.
+
 ```json
 {
   "version": 1,

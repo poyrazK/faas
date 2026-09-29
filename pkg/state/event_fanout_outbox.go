@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -15,15 +16,30 @@ import (
 // PublishedEventWork is one durable fanout receipt. A claim token prevents a
 // worker whose lease expired from acknowledging another worker's claim.
 type PublishedEventWork struct {
-	ID          int64
-	Payload     []byte
-	ClaimToken  string
-	Attempts    int
-	AvailableAt time.Time
-	CreatedAt   time.Time
-	LeaseUntil  time.Time
-	Delivered   bool
-	DeliveredAt time.Time
+	ID      int64
+	Payload []byte
+	// A nil database snapshot marks a receipt accepted before the snapshot
+	// migration. SnapshotCaptured distinguishes it from an empty recipient set.
+	RecipientSnapshot []PublishedEventRecipient
+	SnapshotCaptured  bool
+	ClaimToken        string
+	Attempts          int
+	AvailableAt       time.Time
+	CreatedAt         time.Time
+	LeaseUntil        time.Time
+	Delivered         bool
+	DeliveredAt       time.Time
+}
+
+// PublishedEventRecipient is an immutable source/type candidate captured when
+// the event was accepted. The data filter is evaluated by the scheduler.
+type PublishedEventRecipient struct {
+	ID        string          `json:"id"`
+	AccountID string          `json:"account_id"`
+	AppID     string          `json:"app_id"`
+	Source    string          `json:"source"`
+	Type      string          `json:"type"`
+	Filter    json.RawMessage `json:"filter"`
 }
 
 type PublishedEventWorkStore interface {
@@ -41,6 +57,7 @@ type PublishedEventRetentionStore interface {
 func (s *PgStore) ClaimDuePublishedEvent(ctx context.Context, now time.Time) (*PublishedEventWork, error) {
 	var work PublishedEventWork
 	var payload []byte
+	var snapshot []byte
 	err := s.pool.QueryRow(ctx, `WITH candidate AS (
 		SELECT id FROM event_fanout_outbox
 		WHERE (state = 'pending' AND available_at <= $1)
@@ -50,8 +67,8 @@ func (s *PgStore) ClaimDuePublishedEvent(ctx context.Context, now time.Time) (*P
 	SET state = 'processing', claim_token = gen_random_uuid(),
 	    lease_until = $1 + interval '5 minutes', attempts = attempts + 1
 	FROM candidate WHERE o.id = candidate.id
-	RETURNING o.id, o.payload, o.claim_token::text, o.attempts, o.lease_until, o.created_at`, now.UTC()).Scan(
-		&work.ID, &payload, &work.ClaimToken, &work.Attempts, &work.LeaseUntil, &work.CreatedAt)
+	RETURNING o.id, o.payload, o.recipient_snapshot, o.claim_token::text, o.attempts, o.lease_until, o.created_at`, now.UTC()).Scan(
+		&work.ID, &payload, &snapshot, &work.ClaimToken, &work.Attempts, &work.LeaseUntil, &work.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -59,6 +76,12 @@ func (s *PgStore) ClaimDuePublishedEvent(ctx context.Context, now time.Time) (*P
 		return nil, fmt.Errorf("claim published event: %w", err)
 	}
 	work.Payload = payload
+	if snapshot != nil {
+		work.SnapshotCaptured = true
+		if err := json.Unmarshal(snapshot, &work.RecipientSnapshot); err != nil {
+			return nil, fmt.Errorf("decode published event recipient snapshot: %w", err)
+		}
+	}
 	return &work, nil
 }
 
@@ -133,8 +156,30 @@ func (m *MemStore) enqueuePublishedEventLocked(subject *uuid.UUID, payload []byt
 	if m.eventFanout == nil {
 		m.eventFanout = make(map[string]*PublishedEventWork)
 	}
+	candidates := make([]EventSubscription, 0)
+	for _, subscription := range m.eventSubscriptions {
+		app, exists := m.eventSubscriptionAppLocked(subscription.AppID)
+		if !sameMemUUID(subscription.AccountID, subject.String()) || !subscription.Enabled || !exists || app.Status == AppDeleted {
+			continue
+		}
+		if eventSubscriptionPatternMatches(subscription.Source, event.Source) && eventSubscriptionPatternMatches(subscription.Type, event.Type) {
+			candidates = append(candidates, subscription)
+		}
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].CreatedAt.Equal(candidates[j].CreatedAt) {
+			return candidates[i].ID < candidates[j].ID
+		}
+		return candidates[i].CreatedAt.Before(candidates[j].CreatedAt)
+	})
+	recipients := make([]PublishedEventRecipient, 0, len(candidates))
+	for _, row := range candidates {
+		recipients = append(recipients, PublishedEventRecipient{ID: row.ID, AccountID: row.AccountID,
+			AppID: row.AppID, Source: row.Source, Type: row.Type, Filter: bytes.Clone(row.Filter)})
+	}
 	m.eventFanoutNextID++
-	m.eventFanout[key] = &PublishedEventWork{ID: m.eventFanoutNextID, Payload: bytes.Clone(payload), AvailableAt: now, CreatedAt: time.Now().UTC()}
+	m.eventFanout[key] = &PublishedEventWork{ID: m.eventFanoutNextID, Payload: bytes.Clone(payload), RecipientSnapshot: recipients,
+		SnapshotCaptured: true, AvailableAt: now, CreatedAt: time.Now().UTC()}
 	return nil
 }
 
@@ -172,6 +217,11 @@ func (m *MemStore) ClaimDuePublishedEvent(_ context.Context, now time.Time) (*Pu
 	chosen.Attempts++
 	copy := *chosen
 	copy.Payload = bytes.Clone(chosen.Payload)
+	copy.RecipientSnapshot = make([]PublishedEventRecipient, len(chosen.RecipientSnapshot))
+	for i, recipient := range chosen.RecipientSnapshot {
+		copy.RecipientSnapshot[i] = recipient
+		copy.RecipientSnapshot[i].Filter = bytes.Clone(recipient.Filter)
+	}
 	return &copy, nil
 }
 

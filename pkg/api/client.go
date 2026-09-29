@@ -4147,6 +4147,19 @@ func (c *Client) GetAppMetrics(ctx context.Context, slug, rng string) (AppMetric
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// GetAppPreAuthObservations returns observe-mode decisions for each configured
+// pre-auth policy. An empty range uses the server's five-minute default.
+func (c *Client) GetAppPreAuthObservations(ctx context.Context, slug, rng string) (PreAuthObservationsResponse, error) {
+	var out PreAuthObservationsResponse
+	path := "/v1/apps/" + slug + "/pre-auth-observations"
+	if rng != "" {
+		q := url.Values{}
+		q.Set("range", rng)
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // AppWakeTimelineOptions controls the optional query params for
 // GetAppWakeTimeline. Since and Until are RFC3339Nano strings (NOT
 // time.Time — the wire form is the canonical string so caller-side

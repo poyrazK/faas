@@ -116,6 +116,11 @@ def sync_detailed(
     also include `data.proxy_latency_ms` for the final bridge hop. Rows
     written before this contract correction contain the former
     proxy-only value in `latency_ms` and omit `proxy_latency_ms`.
+    Gateway rows may also include `data.gateway_phases_ms`, a per-wake
+    map of integer-millisecond durations for `pre_admission`,
+    `scheduler_wake`, `target_publication`, `post_publication`, and
+    `internal_proxy`. This keeps phase attribution joinable to one
+    `wake_id` without adding wake IDs as metric labels.
 
     The endpoint is a sub-resource of `/v1/apps/{slug}`;
     auth and rate-limit share the §12 per-app budget with
@@ -176,6 +181,11 @@ def sync(
     also include `data.proxy_latency_ms` for the final bridge hop. Rows
     written before this contract correction contain the former
     proxy-only value in `latency_ms` and omit `proxy_latency_ms`.
+    Gateway rows may also include `data.gateway_phases_ms`, a per-wake
+    map of integer-millisecond durations for `pre_admission`,
+    `scheduler_wake`, `target_publication`, `post_publication`, and
+    `internal_proxy`. This keeps phase attribution joinable to one
+    `wake_id` without adding wake IDs as metric labels.
 
     The endpoint is a sub-resource of `/v1/apps/{slug}`;
     auth and rate-limit share the §12 per-app budget with
@@ -231,6 +241,11 @@ async def asyncio_detailed(
     also include `data.proxy_latency_ms` for the final bridge hop. Rows
     written before this contract correction contain the former
     proxy-only value in `latency_ms` and omit `proxy_latency_ms`.
+    Gateway rows may also include `data.gateway_phases_ms`, a per-wake
+    map of integer-millisecond durations for `pre_admission`,
+    `scheduler_wake`, `target_publication`, `post_publication`, and
+    `internal_proxy`. This keeps phase attribution joinable to one
+    `wake_id` without adding wake IDs as metric labels.
 
     The endpoint is a sub-resource of `/v1/apps/{slug}`;
     auth and rate-limit share the §12 per-app budget with
@@ -289,6 +304,11 @@ async def asyncio(
     also include `data.proxy_latency_ms` for the final bridge hop. Rows
     written before this contract correction contain the former
     proxy-only value in `latency_ms` and omit `proxy_latency_ms`.
+    Gateway rows may also include `data.gateway_phases_ms`, a per-wake
+    map of integer-millisecond durations for `pre_admission`,
+    `scheduler_wake`, `target_publication`, `post_publication`, and
+    `internal_proxy`. This keeps phase attribution joinable to one
+    `wake_id` without adding wake IDs as metric labels.
 
     The endpoint is a sub-resource of `/v1/apps/{slug}`;
     auth and rate-limit share the §12 per-app budget with

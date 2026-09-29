@@ -226,6 +226,15 @@ type Request struct {
 	// preferred region with no headroom falls through to the
 	// least-loaded path (ADR-005 cold-boot invariant).
 	PreferredRegion string
+	// restorePressureAware marks snapshot restores whose placement may account
+	// for other in-flight restore RPCs on each node. The Engine sets this only
+	// for real snapshot restores; cold boots and deployment smokes keep their
+	// existing placement rules.
+	restorePressureAware bool
+	// restorePressureByNode is a point-in-time count captured atomically with
+	// restore placement reservation. It is a short-lived I/O-pressure hint, not
+	// durable capacity accounting.
+	restorePressureByNode map[string]int
 	// NodeCeilingMB is the per-node RAM admission ceiling from
 	// compute_nodes.admission_ceiling_mb for the chosen node. The
 	// chooser already verified the request fits; the ledger uses this

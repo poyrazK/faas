@@ -4078,6 +4078,35 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
 
+  /v1/account/platform-tenants/{id}/reconciliation-plan:
+    post:
+      tags: [platform-tenants]
+      operationId: planPlatformTenantReconciliation
+      summary: Preview desired platform-tenant resource changes without applying them.
+      description: Validates a desired bundle and returns deterministic create, link, keep, removal-candidate, and unmanaged-retention entries. This endpoint is read-only; omitted managed resources are only candidates and are never detached, revoked, or deleted.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Existing tenant UUID whose desired resource bundle is being previewed.
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PlanPlatformTenantReconciliationRequest' }
+      responses:
+        '200':
+          description: Stable, read-only reconciliation plan for this tenant's desired consumer and surface bundle.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlatformTenantReconciliationPlanResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
   /v1/account/platform-tenants/{id}:
     parameters:
       - name: id
@@ -6076,6 +6105,42 @@ paths:
       responses:
         '204':
           description: "Deleted. Also returned when the metric did not exist: the caller's intent is already satisfied, and a 404 would make a retry of a successful delete look like a failure."
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/apps/{slug}/pre-auth-observations:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getAppPreAuthObservations
+      summary: Observe-mode decisions for each configured pre-auth policy.
+      description: |
+        Read-only security telemetry, available on every app plan. Each policy
+        reports how often observe mode would have blocked a request and the
+        final response class of those requests. A 2xx response is a possible
+        false-positive signal, not proof that the requester was legitimate.
+        Route policy IDs are bounded slots (route_0..route_15 and
+        failures_0..failures_15). Reordering or replacing routes within the
+        requested range can mix counts from different configurations;
+        use a window after the last policy edit. Empty counts may mean no
+        traffic. On Prometheus failure,
+        source starts with `degraded:` and counts are zero.
+      parameters:
+        - name: range
+          in: query
+          description: Time window for the returned policy observations. Defaults to five minutes.
+          schema:
+            type: string
+            enum: [5m, 15m, 1h, 6h, 24h, 7d, 15d]
+            default: 5m
+      responses:
+        '200':
+          description: Per-policy shadow decisions and final response classes.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreAuthObservationsResponse'
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
   /v1/apps/{slug}/metrics:
     parameters:
@@ -18763,6 +18828,11 @@ paths:
         also include `data.proxy_latency_ms` for the final bridge hop. Rows
         written before this contract correction contain the former
         proxy-only value in `latency_ms` and omit `proxy_latency_ms`.
+        Gateway rows may also include `data.gateway_phases_ms`, a per-wake
+        map of integer-millisecond durations for `pre_admission`,
+        `scheduler_wake`, `target_publication`, `post_publication`, and
+        `internal_proxy`. This keeps phase attribution joinable to one
+        `wake_id` without adding wake IDs as metric labels.
 
         The endpoint is a sub-resource of `/v1/apps/{slug}`;
         auth and rate-limit share the §12 per-app budget with
@@ -18812,7 +18882,7 @@ paths:
                   - at: "2026-07-25T13:25:01.220Z"
                     kind: wake.proxy_first_byte
                     actor: egress
-                    data: { wake_id: "abcdef01-2345-6789-abcd-ef0123456789", app_id: "0123456789abcdef0123456789abcdef", request_id: "r-1", instance_id: "inst-1", node_id: "node-1", latency_ms: 1097, proxy_latency_ms: 40 }
+                    data: { wake_id: "abcdef01-2345-6789-abcd-ef0123456789", app_id: "0123456789abcdef0123456789abcdef", request_id: "r-1", instance_id: "inst-1", node_id: "node-1", latency_ms: 1097, proxy_latency_ms: 40, gateway_phases_ms: {pre_admission: 3, scheduler_wake: 14, target_publication: 2, post_publication: 1, internal_proxy: 40} }
         '400':
           description: Malformed query parameter on the wake-timeline read — `since` not RFC 3339 or `limit` out of range.
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
@@ -24004,6 +24074,45 @@ components:
           type: array
           items: { $ref: '#/components/schemas/ApplyPlatformTenantSurfaceRequest' }
 
+    PlanPlatformTenantReconciliationRequest:
+      description: Complete desired consumer and surface bundle for one existing platform tenant. Omitted managed resources appear as removal candidates; omitted unmanaged resources are explicitly retained.
+      type: object
+      properties:
+        consumers:
+          type: array
+          items: { $ref: '#/components/schemas/ApplyPlatformTenantConsumerRequest' }
+        surface_ids:
+          type: array
+          items: { type: string, format: uuid }
+        surfaces:
+          type: array
+          items: { $ref: '#/components/schemas/ApplyPlatformTenantSurfaceRequest' }
+
+    PlatformTenantReconciliationPlanChange:
+      description: One deterministic plan entry. remove_candidate is informational only; no resource is detached, revoked, or deleted by planning.
+      type: object
+      required: [resource_type, action]
+      properties:
+        resource_type: { type: string, enum: [consumer, surface, hostname] }
+        action: { type: string, enum: [create, link, keep, remove_candidate, retain_unmanaged] }
+        id: { type: string, format: uuid, description: Existing resource ID; absent for a resource that would be created. }
+        app_id: { type: string, format: uuid }
+        external_ref: { type: string, description: Present for consumer entries. }
+        name: { type: string, description: Present for consumer and surface entries. }
+        surface_id: { type: string, format: uuid, description: Present for hostname entries on an existing surface. }
+        hostname: { type: string, description: Present for hostname entries. }
+        managed_by_platform_tenant: { type: boolean, description: Existing provenance flag; omitted when the plan describes a resource that does not exist yet. }
+
+    PlatformTenantReconciliationPlanResponse:
+      description: A deterministic, read-only plan. Applying or approving a plan is a separate future operation.
+      type: object
+      required: [tenant_id, changes]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        changes:
+          type: array
+          items: { $ref: '#/components/schemas/PlatformTenantReconciliationPlanChange' }
+
     ApplyPlatformTenantSurfaceRequest:
       description: App-local surface to create or reuse by account-level name, with an additive set of hostnames.
       type: object
@@ -25125,6 +25234,37 @@ components:
             type: integer
             minimum: 400
             maximum: 499
+
+    PreAuthObservationsResponse:
+      description: Observe-mode decisions and final response classes for an app's configured pre-auth policies.
+      type: object
+      required: [app_id, range, source, as_of, policies]
+      properties:
+        app_id: { type: string }
+        range: { type: string, enum: [5m, 15m, 1h, 6h, 24h, 7d, 15d] }
+        source: { type: string, description: "prometheus or degraded: <reason>." }
+        as_of: { type: string, format: date-time }
+        policies:
+          type: array
+          maxItems: 33
+          items:
+            $ref: '#/components/schemas/PreAuthPolicyObservation'
+
+    PreAuthPolicyObservation:
+      description: Counts for one bounded app, route, or failed-response policy slot.
+      type: object
+      required: [policy_id, kind, would_block, result_2xx, result_3xx, result_4xx, result_5xx, result_unknown]
+      properties:
+        policy_id: { type: string, description: "Bounded app, route_<index>, or failures_<index> policy identifier. Index is the route's current array position." }
+        kind: { type: string, enum: [app, route, failures] }
+        method: { type: string, description: "Configured public method; omitted for the app policy." }
+        path: { type: string, description: "Configured public path; omitted for the app policy." }
+        would_block: { type: integer, format: int64, minimum: 0 }
+        result_2xx: { type: integer, format: int64, minimum: 0 }
+        result_3xx: { type: integer, format: int64, minimum: 0 }
+        result_4xx: { type: integer, format: int64, minimum: 0 }
+        result_5xx: { type: integer, format: int64, minimum: 0 }
+        result_unknown: { type: integer, format: int64, minimum: 0 }
 
     CreateAppRequest:
       description: "App creation payload: slug, type (app|function), runtime (only for function), RAM MB, max concurrency, idle timeout, and optional manifest."

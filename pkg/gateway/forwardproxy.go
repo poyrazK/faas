@@ -576,15 +576,21 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			// otherwise shadows the package).
 			if evs := events; evs != nil && t.WakeID != "" {
 				started := proxyStartFromContext(r.Context())
+				emitAt := time.Now().UTC()
+				var gatewayPhasesMS map[string]int64
+				if trace := wakePhaseTraceFrom(r.Context()); trace != nil {
+					gatewayPhasesMS = trace.gatewayPhasesMS(emitAt)
+				}
 				evs.EmitAsync(r.Context(), evts.ProxyFirstByte{
-					EmitAt:         time.Now().UTC(),
-					WakeID:         t.WakeID,
-					AppID:          t.AppID,
-					RequestID:      requestIDFrom(r),
-					InstanceID:     t.InstanceID,
-					NodeID:         t.NodeID,
-					LatencyMs:      time.Since(wakeTimelineStart(r)).Milliseconds(),
-					ProxyLatencyMs: time.Since(started).Milliseconds(),
+					EmitAt:          emitAt,
+					WakeID:          t.WakeID,
+					AppID:           t.AppID,
+					RequestID:       requestIDFrom(r),
+					InstanceID:      t.InstanceID,
+					NodeID:          t.NodeID,
+					LatencyMs:       time.Since(wakeTimelineStart(r)).Milliseconds(),
+					ProxyLatencyMs:  time.Since(started).Milliseconds(),
+					GatewayPhasesMs: gatewayPhasesMS,
 				})
 			}
 			continue
@@ -919,15 +925,21 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			// the test corpus).
 			if evs := events; evs != nil && t.WakeID != "" {
 				started := proxyStartFromContext(r.Context())
+				emitAt := time.Now().UTC()
+				var gatewayPhasesMS map[string]int64
+				if trace := wakePhaseTraceFrom(r.Context()); trace != nil {
+					gatewayPhasesMS = trace.gatewayPhasesMS(emitAt)
+				}
 				evs.EmitAsync(r.Context(), evts.ProxyFirstByte{
-					EmitAt:         time.Now().UTC(),
-					WakeID:         t.WakeID,
-					AppID:          t.AppID,
-					RequestID:      requestIDFrom(r),
-					InstanceID:     t.InstanceID,
-					NodeID:         t.NodeID,
-					LatencyMs:      time.Since(wakeTimelineStart(r)).Milliseconds(),
-					ProxyLatencyMs: time.Since(started).Milliseconds(),
+					EmitAt:          emitAt,
+					WakeID:          t.WakeID,
+					AppID:           t.AppID,
+					RequestID:       requestIDFrom(r),
+					InstanceID:      t.InstanceID,
+					NodeID:          t.NodeID,
+					LatencyMs:       time.Since(wakeTimelineStart(r)).Milliseconds(),
+					ProxyLatencyMs:  time.Since(started).Milliseconds(),
+					GatewayPhasesMs: gatewayPhasesMS,
 				})
 			}
 			// If the init carries an error string (the bridge

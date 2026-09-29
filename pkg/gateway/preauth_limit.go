@@ -51,6 +51,22 @@ type preAuthBucket struct {
 }
 
 type preAuthFailureContextKey struct{}
+type preAuthShadowContextKey struct{}
+
+// At most the app, one exact route, and that route's failure budget can
+// shadow-block a request. Only fixed, bounded policy slots enter metrics.
+type preAuthShadowContext struct {
+	appID    string
+	policies [3]string
+	n        int
+}
+
+func (s *preAuthShadowContext) add(policy string) {
+	if s.n < len(s.policies) {
+		s.policies[s.n] = policy
+		s.n++
+	}
+}
 
 type preAuthFailureContext struct {
 	appID    string
@@ -233,7 +249,9 @@ func (h *Handler) applyPreAuthRateLimit(w http.ResponseWriter, r *http.Request, 
 		return true
 	}
 	source := preAuthSourceKey(ip)
+	shadow := preAuthShadowContext{appID: app.ID}
 	var matched *api.PreAuthRouteLimit
+	matchedIndex := -1
 	if len(config.Routes) > 0 {
 		// Match the decoded public path before edge rewrites. Cleaning covers
 		// common router normalization, so /login/../login cannot bypass an
@@ -243,6 +261,7 @@ func (h *Handler) applyPreAuthRateLimit(w http.ResponseWriter, r *http.Request, 
 			route := &config.Routes[i]
 			if route.Method == r.Method && route.Path == publicPath {
 				matched = route
+				matchedIndex = i
 				break
 			}
 		}
@@ -260,6 +279,11 @@ func (h *Handler) applyPreAuthRateLimit(w http.ResponseWriter, r *http.Request, 
 		// can spend this budget after the request completes.
 		*r = *r.WithContext(context.WithValue(r.Context(), preAuthFailureContextKey{}, failure))
 		if available, retryAfter := h.preAuthLimiter.AvailableRate(failure.policyID, source, failure.rps, failure.burst); !available {
+			if config.Mode == api.PreAuthRateLimitObserve {
+				policy := "failures_" + strconv.Itoa(matchedIndex)
+				shadow.add(policy)
+				h.metrics.ObservePreAuthPolicyShadow(app.ID, policy, "would_block")
+			}
 			if h.metrics != nil {
 				outcome := "failure_blocked"
 				if config.Mode == api.PreAuthRateLimitObserve {
@@ -279,22 +303,37 @@ func (h *Handler) applyPreAuthRateLimit(w http.ResponseWriter, r *http.Request, 
 	}
 	allowed := h.preAuthLimiter.Allow(app.ID, source, rps, burst)
 	scope := "pre-auth"
-	if allowed && matched != nil {
+	routeAllowed := true
+	if matched != nil && (allowed || config.Mode == api.PreAuthRateLimitObserve) {
 		policyID := app.ID + "\x00" + matched.Method + " " + matched.Path
-		allowed = h.preAuthLimiter.Allow(policyID, source, min(matched.RequestsPerSecond, rps), min(matched.Burst, burst))
-		scope = "pre-auth-route"
-	}
-	if allowed {
-		return false
+		routeAllowed = h.preAuthLimiter.Allow(policyID, source, min(matched.RequestsPerSecond, rps), min(matched.Burst, burst))
+		if allowed {
+			scope = "pre-auth-route"
+		}
 	}
 	if config.Mode == api.PreAuthRateLimitObserve {
-		if h.metrics != nil {
+		if !allowed {
+			shadow.add("app")
+			h.metrics.ObservePreAuthPolicyShadow(app.ID, "app", "would_block")
+		}
+		if !routeAllowed {
+			policy := "route_" + strconv.Itoa(matchedIndex)
+			shadow.add(policy)
+			h.metrics.ObservePreAuthPolicyShadow(app.ID, policy, "would_block")
+		}
+		if shadow.n > 0 {
+			*r = *r.WithContext(context.WithValue(r.Context(), preAuthShadowContextKey{}, shadow))
+		}
+		if h.metrics != nil && (!allowed || !routeAllowed) {
 			outcome := "would_block"
-			if scope == "pre-auth-route" {
+			if !routeAllowed && allowed {
 				outcome = "route_would_block"
 			}
 			h.metrics.ObservePreAuthRateLimit(app.ID, outcome)
 		}
+		return false
+	}
+	if allowed && routeAllowed {
 		return false
 	}
 	w.Header().Set("Retry-After", "1")
@@ -310,6 +349,25 @@ func (h *Handler) applyPreAuthRateLimit(w http.ResponseWriter, r *http.Request, 
 	}
 	h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 	return true
+}
+
+// recordPreAuthShadowResult completes each observe-mode would-block decision
+// with the final gateway response class, including auth and wake errors.
+func (h *Handler) recordPreAuthShadowResult(r *http.Request, status int) {
+	if h == nil || h.metrics == nil || r == nil {
+		return
+	}
+	shadow, ok := r.Context().Value(preAuthShadowContextKey{}).(preAuthShadowContext)
+	if !ok {
+		return
+	}
+	outcome := "result_unknown"
+	if status >= 200 && status <= 599 {
+		outcome = "result_" + strconv.Itoa(status/100) + "xx"
+	}
+	for _, policy := range shadow.policies[:shadow.n] {
+		h.metrics.ObservePreAuthPolicyShadow(shadow.appID, policy, outcome)
+	}
 }
 
 // recordPreAuthFailedResponse is called only after an application proxy leg.

@@ -64,6 +64,32 @@ func TestQueueAccepted_Shape(t *testing.T) {
 	}
 }
 
+func TestProxyFirstByte_IncludesOptionalGatewayPhases(t *testing.T) {
+	phases := map[string]int64{
+		"target_publication": 7,
+		"internal_proxy":     12,
+	}
+	event := ProxyFirstByte{
+		WakeID: "wake-1", AppID: "app-1", RequestID: "request-1",
+		GatewayPhasesMs: phases,
+	}
+	payload := event.Payload()
+	got, ok := payload["gateway_phases_ms"].(map[string]int64)
+	if !ok {
+		t.Fatalf("gateway_phases_ms payload type = %T, want map[string]int64", payload["gateway_phases_ms"])
+	}
+	for phase, wantMS := range phases {
+		if got[phase] != wantMS {
+			t.Errorf("gateway phase %q = %d ms, want %d ms", phase, got[phase], wantMS)
+		}
+	}
+
+	legacyPayload := (ProxyFirstByte{WakeID: "wake-legacy"}).Payload()
+	if _, ok := legacyPayload["gateway_phases_ms"]; ok {
+		t.Fatalf("legacy payload unexpectedly contains gateway phases: %#v", legacyPayload["gateway_phases_ms"])
+	}
+}
+
 // TestRestoreBreakdown_Shape pins the detailed restore timing contract. The
 // timeline endpoint intentionally keeps data generic, so these keys are the
 // compatibility surface consumed by the CLI and dashboard.

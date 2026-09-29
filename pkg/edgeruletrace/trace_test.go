@@ -1200,6 +1200,133 @@ func TestSimulateThrottleRuleShowsGatewayDefensiveClamps(t *testing.T) {
 	}
 }
 
+func TestSimulateAsyncRouteShowsEffectivePolicyAndStopsBeforeCache(t *testing.T) {
+	rule := api.EdgeRuleResponse{
+		ID: "async-route", Enabled: true, Kind: "async", MatchHost: "example.com", MatchPath: "/events/*", Priority: 3,
+		Action: json.RawMessage(`{"async":{"on_success":"hook-success","retry_policy":{"max_attempts":25,"base_seconds":2,"max_seconds":30,"jitter_seconds":0.2},"max_age_seconds":7200}}`),
+	}
+	input := edgeruletrace.Input{
+		App: "demo", Host: "example.com", Path: "/events/new", Method: http.MethodPost,
+		Headers: http.Header{"Idempotency-Key": []string{"private-idempotency-key"}},
+		Body:    []byte(`{"token":"private-payload"}`), BodyProvided: true, AppMaintenanceLoaded: true,
+		AsyncPlanLimitsLoaded: true, AsyncPlan: api.PlanHobby, AsyncInvokeAllowed: true,
+		AsyncMaxPayloadBytes: 64 * 1024, AsyncMaxQueueAttempts: 3, AsyncMaxDeadlineSeconds: 3600,
+		AsyncWorkloadContextLoaded: true, AsyncRequestInvocationsEnabled: true,
+		AsyncAppRetryPolicyLoaded: true,
+	}
+	cache := api.EdgeRuleResponse{
+		ID: "cache-rule", Enabled: true, Kind: "cache", MatchHost: "example.com", MatchPath: "/events/*", Priority: 4,
+		Action: json.RawMessage(`{"cache":{"max_age_seconds":30}}`),
+	}
+	budget := api.EdgeRuleResponse{
+		ID: "budget-rule", Enabled: true, Kind: "budget", MatchHost: "example.com", MatchPath: "/events/*", Priority: 5,
+		Action: json.RawMessage(`{"budget":{"budget_ms":1000}}`),
+	}
+	result, err := edgeruletrace.Simulate(input, []api.EdgeRuleResponse{rule, cache, budget})
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	if result.Simulation.Status != "incomplete" || result.Simulation.Outcome != "needs_async_runtime_context" || result.Simulation.StoppedAt != "async" || len(result.Simulation.Steps) != 1 {
+		t.Fatalf("simulation = %#v; async candidate should stop before cache/budget and not claim enqueue", result.Simulation)
+	}
+	policy := result.Simulation.Steps[0].AsyncPolicy
+	if policy == nil || policy.RequestGate != "enqueue_candidate" || policy.PlanGate != "allowed" || policy.WorkloadGate != "allowed" || policy.PayloadStatus != "valid_json" {
+		t.Fatalf("async request policy = %#v", policy)
+	}
+	if policy.EffectiveMaxAttempts != 3 || policy.MaxReplays != 2 || policy.MaxAttemptsStatus != "effective" || policy.PlanMaxAttempts != 3 || policy.RetryPolicySource != "rule" {
+		t.Fatalf("effective retry policy = %#v", policy)
+	}
+	if policy.EffectiveMaxAgeSeconds != 3600 || policy.MaxAgeSource != "plan_clamp" || policy.PlanMaxAgeSeconds != 3600 || !policy.IdempotencyKeyPresent || !policy.OnSuccessConfigured || policy.OnFailureConfigured {
+		t.Fatalf("deadline/idempotency/callback policy = %#v", policy)
+	}
+	if len(result.Rules) != 3 || result.Rules[0].ActionPreview == nil || result.Rules[0].ActionPreview.AsyncPolicy == nil {
+		t.Fatalf("per-rule async preview = %#v", result.Rules)
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if strings.Contains(string(encoded), "private-payload") || strings.Contains(string(encoded), "private-idempotency-key") || strings.Contains(string(encoded), "hook-success") {
+		t.Fatalf("async trace leaked request or destination values: %s", encoded)
+	}
+	if !strings.Contains(result.Simulation.Reason, "durable enqueue") {
+		t.Fatalf("candidate reason overclaims acceptance: %q", result.Simulation.Reason)
+	}
+}
+
+func TestSimulateAsyncRouteReportsDeterministicGatesAndMissingContext(t *testing.T) {
+	rule := api.EdgeRuleResponse{
+		ID: "async-route", Enabled: true, Kind: "async", MatchHost: "example.com", MatchPath: "/events/*",
+		Action: json.RawMessage(`{"async":{"max_age_seconds":60}}`),
+	}
+	base := edgeruletrace.Input{
+		App: "demo", Host: "example.com", Path: "/events/new", Method: http.MethodPost,
+		Body: []byte(`{"ok":true}`), BodyProvided: true, AppMaintenanceLoaded: true,
+		AsyncPlanLimitsLoaded: true, AsyncPlan: api.PlanHobby, AsyncInvokeAllowed: true,
+		AsyncMaxPayloadBytes: 64 * 1024, AsyncMaxQueueAttempts: 3, AsyncMaxDeadlineSeconds: 3600,
+		AsyncWorkloadContextLoaded: true, AsyncRequestInvocationsEnabled: true, AsyncAppRetryPolicyLoaded: true,
+	}
+	tests := []struct {
+		name            string
+		mutate          func(*edgeruletrace.Input)
+		wantStepOutcome string
+		wantGate        string
+	}{
+		{name: "plan gated", mutate: func(input *edgeruletrace.Input) { input.AsyncPlan = api.PlanFree; input.AsyncInvokeAllowed = false }, wantStepOutcome: "async_blocked_plan", wantGate: "plan_gated"},
+		{name: "workload unsupported", mutate: func(input *edgeruletrace.Input) { input.AsyncRequestInvocationsEnabled = false }, wantStepOutcome: "async_blocked_workload", wantGate: "workload_unsupported"},
+		{name: "payload too large", mutate: func(input *edgeruletrace.Input) { input.AsyncMaxPayloadBytes = 2 }, wantStepOutcome: "async_payload_too_large", wantGate: "payload_too_large"},
+		{name: "invalid json", mutate: func(input *edgeruletrace.Input) { input.Body = []byte(`not-json`) }, wantStepOutcome: "async_invalid_json", wantGate: "invalid_json"},
+		{name: "missing plan", mutate: func(input *edgeruletrace.Input) { input.AsyncPlanLimitsLoaded = false }, wantStepOutcome: "needs_async_context", wantGate: "needs_plan_context"},
+		{name: "missing body context", mutate: func(input *edgeruletrace.Input) { input.BodyProvided = false; input.Body = nil }, wantStepOutcome: "needs_async_context", wantGate: "needs_request_body_context"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			input := base
+			tc.mutate(&input)
+			result, err := edgeruletrace.Simulate(input, []api.EdgeRuleResponse{rule})
+			if err != nil {
+				t.Fatalf("Simulate: %v", err)
+			}
+			if result.Simulation.Outcome != "needs_async_runtime_context" || result.Simulation.Status != "incomplete" || result.Simulation.StatusCode != 0 {
+				t.Fatalf("simulation = %#v", result.Simulation)
+			}
+			policy := result.Simulation.Steps[0].AsyncPolicy
+			if policy == nil || policy.RequestGate != tc.wantGate || result.Simulation.Steps[0].Outcome != tc.wantStepOutcome {
+				t.Fatalf("async policy = %#v, step outcome=%q; want request_gate=%q, outcome=%q", policy, result.Simulation.Steps[0].Outcome, tc.wantGate, tc.wantStepOutcome)
+			}
+		})
+	}
+}
+
+func TestSimulateAsyncRouteInheritsAppRetryPolicyAndEmptyBody(t *testing.T) {
+	rule := api.EdgeRuleResponse{
+		ID: "async-defaults", Enabled: true, Kind: "async", MatchHost: "example.com", MatchPath: "/events/*",
+		Action: json.RawMessage(`{"async":{}}`),
+	}
+	result, err := edgeruletrace.Simulate(edgeruletrace.Input{
+		App: "demo", Host: "example.com", Path: "/events/new", Method: http.MethodPost,
+		Body: []byte{}, BodyProvided: true, AppMaintenanceLoaded: true,
+		AsyncPlanLimitsLoaded: true, AsyncPlan: api.PlanPro, AsyncInvokeAllowed: true,
+		AsyncMaxPayloadBytes: 256 * 1024, AsyncMaxQueueAttempts: 10, AsyncMaxDeadlineSeconds: 21600,
+		AsyncWorkloadContextLoaded: true, AsyncRequestInvocationsEnabled: true,
+		AsyncAppRetryPolicyLoaded: true,
+		AsyncAppRetryPolicy:       &api.RetryPolicyDTO{MaxAttempts: 5, BaseSeconds: 2, MaxSeconds: 30, JitterSeconds: 0.1},
+	}, []api.EdgeRuleResponse{rule})
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	policy := result.Simulation.Steps[0].AsyncPolicy
+	if policy == nil || policy.RequestGate != "enqueue_candidate" || policy.PayloadStatus != "empty_defaults_to_object" {
+		t.Fatalf("empty payload policy = %#v", policy)
+	}
+	if policy.RetryPolicySource != "app" || policy.ConfiguredMaxAttempts != 5 || policy.EffectiveMaxAttempts != 5 || policy.MaxReplays != 4 || policy.RetryBaseSeconds != 2 || policy.RetryMaxSeconds != 30 || policy.RetryJitterSeconds != 0.1 {
+		t.Fatalf("inherited retry policy = %#v", policy)
+	}
+	if policy.MaxAgeSource != "plan_default" || policy.EffectiveMaxAgeSeconds != 21600 {
+		t.Fatalf("inherited deadline = %#v", policy)
+	}
+}
+
 func TestSimulateRetryRuleReportsPolicyWithoutPredictingReplay(t *testing.T) {
 	rule := api.EdgeRuleResponse{
 		ID: "retry-rule", Enabled: true, Kind: "retry", MatchHost: "example.com", MatchPath: "/orders/*", Priority: 4,
@@ -1238,6 +1365,61 @@ func TestSimulateRetryRuleReportsPolicyWithoutPredictingReplay(t *testing.T) {
 	}
 	if strings.Contains(string(encoded), "opaque-request-key") {
 		t.Fatalf("trace leaked the Idempotency-Key value: %s", encoded)
+	}
+}
+
+func TestSimulateCircuitBreakerRuleReportsPolicyWithoutPredictingState(t *testing.T) {
+	rule := api.EdgeRuleResponse{
+		ID: "breaker-rule", Enabled: true, Kind: "circuit_breaker", MatchHost: "example.com", MatchPath: "/orders/*", Priority: 4,
+		Action: json.RawMessage(`{"circuit_breaker":{"failure_threshold":0.25,"min_requests":20,"window_seconds":30,"open_seconds":10,"max_open_seconds":120}}`),
+	}
+	result, err := edgeruletrace.Simulate(edgeruletrace.Input{
+		App: "demo", Host: "example.com", Path: "/orders/42", Method: http.MethodPost, AppMaintenanceLoaded: true,
+	}, []api.EdgeRuleResponse{rule})
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	if result.Simulation.Status != "incomplete" || result.Simulation.Outcome != "needs_circuit_breaker_runtime_context" || result.Simulation.StoppedAt != "circuit_breaker" {
+		t.Fatalf("simulation = %#v; a configured breaker must not imply a live state", result.Simulation)
+	}
+	if len(result.Simulation.Steps) != 1 || result.Simulation.Steps[0].Outcome != "circuit_breaker_policy_candidate" || result.Simulation.Steps[0].RuleID != "breaker-rule" {
+		t.Fatalf("circuit-breaker step = %#v", result.Simulation.Steps)
+	}
+	policy := result.Simulation.Steps[0].CircuitBreakerPolicy
+	if policy == nil || policy.FailureThreshold != 0.25 || policy.MinRequests != 20 || policy.WindowSeconds != 30 || policy.OpenSeconds != 10 || policy.MaxOpenSeconds != 120 {
+		t.Fatalf("effective circuit-breaker policy = %#v", policy)
+	}
+	if !strings.Contains(result.Simulation.Reason, "operator feature gate") || !strings.Contains(result.Simulation.Reason, "open/half-open state") || !strings.Contains(result.Simulation.Reason, "target selection") {
+		t.Fatalf("circuit-breaker runtime caveat = %q", result.Simulation.Reason)
+	}
+	if result.Rules[0].Outcome != "circuit_breaker_policy_candidate" || result.Rules[0].ActionPreview == nil || result.Rules[0].ActionPreview.CircuitBreakerPolicy == nil {
+		t.Fatalf("per-rule circuit-breaker preview = %#v", result.Rules[0])
+	}
+	if !strings.Contains(result.Rules[0].OutcomeReason, "25% failure-ratio threshold") {
+		t.Fatalf("threshold explanation = %q", result.Rules[0].OutcomeReason)
+	}
+	if !strings.Contains(result.Scope, "half-open probe outcomes are not predicted") {
+		t.Fatalf("scope omits the circuit-breaker limitation: %q", result.Scope)
+	}
+}
+
+func TestSimulateCircuitBreakerRuleUsesGatewayDefaultsAndCeilingFallback(t *testing.T) {
+	rule := api.EdgeRuleResponse{
+		ID: "breaker-defaults", Enabled: true, Kind: "circuit_breaker", MatchHost: "example.com", MatchPath: "*",
+		Action: json.RawMessage(`{"circuit_breaker":{"failure_threshold":0,"min_requests":0,"window_seconds":0,"open_seconds":15,"max_open_seconds":0}}`),
+	}
+	result, err := edgeruletrace.Simulate(edgeruletrace.Input{
+		App: "demo", Host: "example.com", Path: "/orders", Method: http.MethodGet, AppMaintenanceLoaded: true,
+	}, []api.EdgeRuleResponse{rule})
+	if err != nil {
+		t.Fatalf("Simulate: %v", err)
+	}
+	policy := result.Simulation.Steps[0].CircuitBreakerPolicy
+	if policy == nil || policy.FailureThreshold != api.EdgeRuleCircuitDefaultFailureThreshold || policy.MinRequests != api.EdgeRuleCircuitDefaultMinRequests || policy.WindowSeconds != api.EdgeRuleCircuitDefaultWindowSeconds || policy.OpenSeconds != 15 || policy.MaxOpenSeconds != 15 {
+		t.Fatalf("effective default/fallback policy = %#v", policy)
+	}
+	if !strings.Contains(result.Rules[0].OutcomeReason, "rolling 10-second window") || !strings.Contains(result.Rules[0].OutcomeReason, "backoff capped at 15 seconds") {
+		t.Fatalf("effective policy explanation = %q", result.Rules[0].OutcomeReason)
 	}
 }
 

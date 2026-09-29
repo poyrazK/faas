@@ -27,6 +27,10 @@ from ..models.app_secret_response_last_runtime_reload_signal import (
     AppSecretResponseLastRuntimeReloadSignal,
     check_app_secret_response_last_runtime_reload_signal,
 )
+from ..models.app_secret_response_secret_class import (
+    AppSecretResponseSecretClass,
+    check_app_secret_response_secret_class,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -45,6 +49,8 @@ class AppSecretResponse:
 
     key: str
     scope: str
+    secret_class: AppSecretResponseSecretClass
+    """Storage policy for this row: ephemeral values prevent future VM snapshots in the row's scope."""
     created_at: datetime.datetime
     updated_at: datetime.datetime
     delivery_version: int
@@ -93,6 +99,8 @@ class AppSecretResponse:
         key = self.key
 
         scope = self.scope
+
+        secret_class: str = self.secret_class
 
         created_at = self.created_at.isoformat()
 
@@ -159,6 +167,7 @@ class AppSecretResponse:
             {
                 "key": key,
                 "scope": scope,
+                "secret_class": secret_class,
                 "created_at": created_at,
                 "updated_at": updated_at,
                 "delivery_version": delivery_version,
@@ -208,6 +217,8 @@ class AppSecretResponse:
         key = d.pop("key")
 
         scope = d.pop("scope")
+
+        secret_class = check_app_secret_response_secret_class(d.pop("secret_class"))
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
@@ -302,6 +313,7 @@ class AppSecretResponse:
         app_secret_response = cls(
             key=key,
             scope=scope,
+            secret_class=secret_class,
             created_at=created_at,
             updated_at=updated_at,
             delivery_version=delivery_version,

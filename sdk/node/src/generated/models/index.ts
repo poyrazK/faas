@@ -554,6 +554,7 @@ export type { PlanCron } from './PlanCron.js';
 export type { PlanDetectedBy } from './PlanDetectedBy.js';
 export type { PlanDetectionWarning } from './PlanDetectionWarning.js';
 export type { PlanManaged } from './PlanManaged.js';
+export type { PlanPlatformTenantReconciliationRequest } from './PlanPlatformTenantReconciliationRequest.js';
 export type { PlanResponse } from './PlanResponse.js';
 export type { PlanWorkload } from './PlanWorkload.js';
 export type { PlatformTenantAccessTokenListResponse } from './PlatformTenantAccessTokenListResponse.js';
@@ -576,6 +577,8 @@ export type { PlatformTenantHostnameVerifiedWebhookPayload } from './PlatformTen
 export type { PlatformTenantListResponse } from './PlatformTenantListResponse.js';
 export type { PlatformTenantRateCardListResponse } from './PlatformTenantRateCardListResponse.js';
 export type { PlatformTenantRateCardResponse } from './PlatformTenantRateCardResponse.js';
+export type { PlatformTenantReconciliationPlanChange } from './PlatformTenantReconciliationPlanChange.js';
+export type { PlatformTenantReconciliationPlanResponse } from './PlatformTenantReconciliationPlanResponse.js';
 export type { PlatformTenantRequestBudgetResponse } from './PlatformTenantRequestBudgetResponse.js';
 export type { PlatformTenantResponse } from './PlatformTenantResponse.js';
 export type { PlatformTenantSelfActivationHostnameResponse } from './PlatformTenantSelfActivationHostnameResponse.js';
@@ -602,6 +605,8 @@ export type { PlatformTenantUsageResponse } from './PlatformTenantUsageResponse.
 export type { PlatformTenantWebhookListResponse } from './PlatformTenantWebhookListResponse.js';
 export type { PlatformTenantWebhookResponse } from './PlatformTenantWebhookResponse.js';
 export type { PreAuthFailedResponseLimit } from './PreAuthFailedResponseLimit.js';
+export type { PreAuthObservationsResponse } from './PreAuthObservationsResponse.js';
+export type { PreAuthPolicyObservation } from './PreAuthPolicyObservation.js';
 export type { PreAuthRateLimitConfig } from './PreAuthRateLimitConfig.js';
 export type { PreAuthRouteLimit } from './PreAuthRouteLimit.js';
 export type { PreflightFinding } from './PreflightFinding.js';

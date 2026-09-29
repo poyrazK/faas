@@ -660,12 +660,13 @@ func TestE2E_NormalPath_PublicRequestIDJournalWithoutDetailedTelemetry(t *testin
 }
 
 // adr: 127 pins exact public-ID durability and the fail-closed write boundary.
-// TestE2E_NormalPath_RequestIDJournalSurvivesAPIDRestartAndBackpressure pins
-// the failure boundary for the synchronous exact-ID journal. An ID accepted
-// before an apid restart must remain queryable, and a slow journal commit must
-// fail closed before the guest is reached; once the database recovers, retrying
-// the same public ID must be served and remain queryable.
-func TestE2E_NormalPath_RequestIDJournalSurvivesAPIDRestartAndBackpressure(t *testing.T) {
+// TestE2E_NormalPath_RequestIDJournalSurvivesLoadRestartAndBackpressure pins
+// the failure boundary for the synchronous exact-ID journal. A bounded
+// concurrent request burst must preserve every public ID through an apid
+// restart, and a slow journal commit must fail closed before the guest is
+// reached; once the database recovers, retrying the same public ID must be
+// served and remain queryable.
+func TestE2E_NormalPath_RequestIDJournalSurvivesLoadRestartAndBackpressure(t *testing.T) {
 	f := newNormalPathDebuggerFixtureWithTelemetry(t, "normal-request-id-restart", false)
 	if f == nil {
 		return
@@ -688,6 +689,67 @@ func TestE2E_NormalPath_RequestIDJournalSurvivesAPIDRestartAndBackpressure(t *te
 		t.Fatalf("pre-restart public request ID=%q, want %q", got, durableRequestID)
 	}
 
+	// Send a bounded concurrent burst through the real gateway → apid →
+	// Postgres journal path. Detailed telemetry is disabled for this fixture,
+	// so later lookups can only succeed through the exact-ID journal.
+	const concurrentRequestCount = 24
+	type requestResult struct {
+		requestID  string
+		responseID string
+		body       []byte
+		statusCode int
+		err        error
+	}
+	start := make(chan struct{})
+	results := make(chan requestResult, concurrentRequestCount)
+	client := *f.h.HTTPClient()
+	loadRequestIDs := make([]string, concurrentRequestCount)
+	for i := range loadRequestIDs {
+		requestID := fmt.Sprintf("customer-request-load-%02d", i)
+		loadRequestIDs[i] = requestID
+		go func(requestID string) {
+			<-start
+			ctx, cancel := context.WithTimeout(f.ctx, 10*time.Second)
+			defer cancel()
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, f.h.EdgeURL()+"/request-id-load", nil)
+			if err != nil {
+				results <- requestResult{requestID: requestID, err: err}
+				return
+			}
+			req.Host = f.host
+			req.Header.Set("Authorization", "Bearer "+f.key)
+			req.Header.Set(api.RequestIDHeader, requestID)
+			resp, err := client.Do(req)
+			if err != nil {
+				results <- requestResult{requestID: requestID, err: err}
+				return
+			}
+			responseBody, readErr := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if readErr != nil {
+				results <- requestResult{requestID: requestID, err: readErr}
+				return
+			}
+			results <- requestResult{
+				requestID: requestID, responseID: resp.Header.Get(api.RequestIDHeader),
+				body: responseBody, statusCode: resp.StatusCode,
+			}
+		}(requestID)
+	}
+	close(start)
+	for i := 0; i < concurrentRequestCount; i++ {
+		result := <-results
+		if result.err != nil {
+			t.Fatalf("concurrent request %s: %v", result.requestID, result.err)
+		}
+		if result.statusCode != http.StatusOK || string(result.body) != "normal-path:request-id-restart-source\n" {
+			t.Fatalf("concurrent request %s: status=%d body=%q", result.requestID, result.statusCode, result.body)
+		}
+		if result.responseID != result.requestID {
+			t.Fatalf("concurrent response request ID=%q, want %q", result.responseID, result.requestID)
+		}
+	}
+
 	if err := f.h.RestartAPID(); err != nil {
 		t.Fatalf("restart apid: %v", err)
 	}
@@ -702,6 +764,19 @@ func TestE2E_NormalPath_RequestIDJournalSurvivesAPIDRestartAndBackpressure(t *te
 	}
 	if detail.RequestID != durableRequestID || detail.EvidenceStatus != "request_id_only" || detail.ID != "" {
 		t.Fatalf("post-restart request-ID detail = %+v, want exact journal-only mapping", detail)
+	}
+	for _, requestID := range loadRequestIDs {
+		lookup := "/v1/apps/normal-request-id-restart/debug/requests/" + url.PathEscape(requestID)
+		body, statusCode = doReq(t, f.h, f.key, http.MethodGet, lookup, nil)
+		if statusCode != http.StatusOK {
+			t.Fatalf("post-restart concurrent request-ID lookup %s: status=%d body=%s", requestID, statusCode, body)
+		}
+		if err := json.Unmarshal(body, &detail); err != nil {
+			t.Fatalf("decode post-restart concurrent request-ID lookup %s: %v body=%s", requestID, err, body)
+		}
+		if detail.RequestID != requestID || detail.EvidenceStatus != "request_id_only" || detail.ID != "" {
+			t.Fatalf("post-restart concurrent request-ID detail = %+v, want exact journal-only mapping for %s", detail, requestID)
+		}
 	}
 	// Exercise the gateway's existing gRPC client after the apid listener has
 	// been recreated, not just the restarted HTTP debugger read path.

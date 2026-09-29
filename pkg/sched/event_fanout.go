@@ -65,60 +65,11 @@ func (l *Loop) routePublishedEventAt(ctx context.Context, payload string, accept
 				// cannot have subscribed before this event either.
 				return errors.Join(routeErrs...)
 			}
-			matched, matchErr := (events.Subscription{
-				ID:        row.ID,
-				AccountID: row.AccountID,
-				Source:    row.Source,
-				Type:      row.Type,
-				Filter:    row.Filter,
-			}).Match(envelope)
-			if matchErr != nil {
-				routeErrs = append(routeErrs, fmt.Errorf("subscription %s: %w", row.ID, matchErr))
-				continue
-			}
-			if !matched {
-				continue
-			}
-			identity, _ := json.Marshal([4]string{envelope.AccountID, envelope.Source, envelope.ID, row.ID})
-			invocationID := uuid.NewSHA1(uuid.NameSpaceURL, identity).String()
-			producerHeaders := map[string]string{
-				"traceparent": envelope.Traceparent,
-				"tracestate":  envelope.Tracestate,
-				"baggage":     envelope.Baggage,
-			}
-			headers, marshalErr := json.Marshal(pkgtrace.MergeHeaderMap(
-				pkgtrace.ExtractHeaders(ctx, producerHeaders),
-				map[string]string{
-					"x-gregale-event-id":              envelope.ID,
-					"x-gregale-event-source":          envelope.Source,
-					"x-gregale-event-type":            envelope.Type,
-					"x-gregale-event-subscription-id": row.ID,
-				},
-			))
-			if marshalErr != nil {
-				routeErrs = append(routeErrs, marshalErr)
-				continue
-			}
-			_, enqueueErr := l.engine.store.EnqueueInvocation(ctx, state.Invocation{
-				ID:        invocationID,
-				AppID:     row.AppID,
-				AccountID: row.AccountID,
-				Source:    state.InvocationAsyncInvoke,
-				State:     state.InvocationPending,
-				Method:    eventInvocationMethod,
-				Path:      eventInvocationPath,
-				Payload:   eventPayload,
-				Headers:   headers,
-				DueAt:     now,
-				CreatedAt: now,
-			})
-			if enqueueErr != nil && !errors.Is(enqueueErr, state.ErrConflict) {
-				routeErrs = append(routeErrs, fmt.Errorf("subscription %s: enqueue invocation: %w", row.ID, enqueueErr))
-				continue
-			}
-			if enqueueErr == nil && l.pool != nil {
-				_ = db.Notify(ctx, l.pool, db.NotifyInvocationDue,
-					fmt.Sprintf(`{"invocation_id":"%s","app_id":"%s","source":"%s"}`, invocationID, row.AppID, state.InvocationAsyncInvoke))
+			if err := l.routeSubscription(ctx, envelope, eventPayload, state.PublishedEventRecipient{
+				ID: row.ID, AccountID: row.AccountID, AppID: row.AppID,
+				Source: row.Source, Type: row.Type, Filter: row.Filter,
+			}, now); err != nil {
+				routeErrs = append(routeErrs, err)
 			}
 		}
 		if len(subscriptions) < eventFanoutSubscriptionBatch {
@@ -130,6 +81,72 @@ func (l *Loop) routePublishedEventAt(ctx context.Context, payload string, accept
 	return errors.Join(routeErrs...)
 }
 
+func (l *Loop) routePublishedEventSnapshot(ctx context.Context, payload []byte, recipients []state.PublishedEventRecipient) error {
+	var envelope events.Envelope
+	if err := json.Unmarshal(payload, &envelope); err != nil {
+		return fmt.Errorf("sched: decode event.published payload: %w", err)
+	}
+	if err := envelope.Validate(); err != nil {
+		return fmt.Errorf("sched: validate event.published payload: %w", err)
+	}
+	eventPayload, err := json.Marshal(envelope)
+	if err != nil {
+		return fmt.Errorf("sched: encode event invocation payload: %w", err)
+	}
+	now := time.Now().UTC()
+	var routeErrs []error
+	for _, recipient := range recipients {
+		if err := l.routeSubscription(ctx, envelope, eventPayload, recipient, now); err != nil {
+			routeErrs = append(routeErrs, err)
+		}
+	}
+	return errors.Join(routeErrs...)
+}
+
+func (l *Loop) routeSubscription(ctx context.Context, envelope events.Envelope, eventPayload []byte, row state.PublishedEventRecipient, now time.Time) error {
+	matched, err := (events.Subscription{ID: row.ID, AccountID: row.AccountID, Source: row.Source,
+		Type: row.Type, Filter: row.Filter}).Match(envelope)
+	if err != nil {
+		return fmt.Errorf("subscription %s: %w", row.ID, err)
+	}
+	if !matched {
+		return nil
+	}
+	identity, _ := json.Marshal([4]string{envelope.AccountID, envelope.Source, envelope.ID, row.ID})
+	invocationID := uuid.NewSHA1(uuid.NameSpaceURL, identity).String()
+	producerHeaders := map[string]string{
+		"traceparent": envelope.Traceparent,
+		"tracestate":  envelope.Tracestate,
+		"baggage":     envelope.Baggage,
+	}
+	headers, err := json.Marshal(pkgtrace.MergeHeaderMap(
+		pkgtrace.ExtractHeaders(ctx, producerHeaders),
+		map[string]string{
+			"x-gregale-event-id":              envelope.ID,
+			"x-gregale-event-source":          envelope.Source,
+			"x-gregale-event-type":            envelope.Type,
+			"x-gregale-event-subscription-id": row.ID,
+		},
+	))
+	if err != nil {
+		return fmt.Errorf("subscription %s: encode invocation headers: %w", row.ID, err)
+	}
+	_, err = l.engine.store.EnqueueInvocation(ctx, state.Invocation{
+		ID: invocationID, AppID: row.AppID, AccountID: row.AccountID,
+		Source: state.InvocationAsyncInvoke, State: state.InvocationPending,
+		Method: eventInvocationMethod, Path: eventInvocationPath,
+		Payload: eventPayload, Headers: headers, DueAt: now, CreatedAt: now,
+	})
+	if err != nil && !errors.Is(err, state.ErrConflict) {
+		return fmt.Errorf("subscription %s: enqueue invocation: %w", row.ID, err)
+	}
+	if err == nil && l.pool != nil {
+		_ = db.Notify(ctx, l.pool, db.NotifyInvocationDue,
+			fmt.Sprintf(`{"invocation_id":"%s","app_id":"%s","source":"%s"}`, invocationID, row.AppID, state.InvocationAsyncInvoke))
+	}
+	return nil
+}
+
 // runEventFanoutSweep drains durable claims in bounded batches. The outbox is
 // populated in the same transaction as each event.published ledger row, so a
 // restart or an arbitrarily long LISTEN gap cannot strand accepted events.
@@ -139,12 +156,6 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 	}
 	store, ok := l.engine.store.(state.PublishedEventWorkStore)
 	if !ok {
-		return
-	}
-	// A mixed-version store may expose durable receipts before it exposes
-	// subscription matching. Leave those receipts pending for a compatible
-	// scheduler instead of acknowledging them without routing.
-	if _, ok := l.engine.store.(state.EventSubscriptionMatcherStore); !ok {
 		return
 	}
 	now := time.Now().UTC()
@@ -177,7 +188,16 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 			}
 			return
 		}
-		routeErr := l.routePublishedEventAt(ctx, string(work.Payload), work.CreatedAt)
+		var routeErr error
+		if work.SnapshotCaptured {
+			routeErr = l.routePublishedEventSnapshot(ctx, work.Payload, work.RecipientSnapshot)
+		} else if _, ok := l.engine.store.(state.EventSubscriptionMatcherStore); ok {
+			// Receipts accepted before the snapshot migration retain their
+			// existing current-subscription routing behavior.
+			routeErr = l.routePublishedEventAt(ctx, string(work.Payload), work.CreatedAt)
+		} else {
+			routeErr = errors.New("sched: legacy event receipt requires subscription matcher")
+		}
 		if routeErr != nil && l.log != nil {
 			l.log.Warn("sched: event fanout failed", "outbox_id", work.ID, "err", routeErr)
 		}

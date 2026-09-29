@@ -25,6 +25,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -199,6 +200,98 @@ func TestTierB_SecretsListAll_AgeFilterKeepsPagination(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "OLD") || strings.Contains(stdout.String(), "RECENT") || !strings.Contains(stderr.String(), "next page: --before demo|RECENT") {
 		t.Errorf("age-filtered page should show only old rows and retain cursor; stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+}
+
+func TestTierB_SecretsAuditPaginatesAndRedactsCiphertext(t *testing.T) {
+	resetJSONOut(t)
+	wasJSON := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = wasJSON })
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("FAAS_TOKEN", "test-token")
+	now := time.Now().UTC()
+	oldAt := now.Add(-120 * 24 * time.Hour).Format(time.RFC3339)
+	recentAt := now.Add(-24 * time.Hour).Format(time.RFC3339)
+	var cursors []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/secrets" {
+			t.Errorf("request = %s %s, want GET /v1/secrets", r.Method, r.URL.Path)
+		}
+		if got := r.URL.Query().Get("limit"); got != "200" {
+			t.Errorf("limit = %q, want 200", got)
+		}
+		before := r.URL.Query().Get("before")
+		cursors = append(cursors, before)
+		var page api.ListSecretsForAccountResponse
+		switch before {
+		case "":
+			page = api.ListSecretsForAccountResponse{
+				Secrets: []api.AccountAppSecretResponse{
+					{AppSlug: "demo", Scope: "prod", Key: "OLD", SecretClass: api.SecretClassEphemeral, Ciphertext: "DO_NOT_OUTPUT_CIPHERTEXT", UpdatedAt: oldAt},
+					{AppSlug: "demo", Scope: "prod", Key: "RECENT", Ciphertext: "DO_NOT_OUTPUT_CIPHERTEXT", UpdatedAt: recentAt},
+				},
+				NextBefore: "demo|RECENT",
+			}
+		case "demo|RECENT":
+			page = api.ListSecretsForAccountResponse{Secrets: []api.AccountAppSecretResponse{
+				{AppSlug: "worker", Scope: "staging", Key: "OLD_TOKEN", Ciphertext: "DO_NOT_OUTPUT_CIPHERTEXT", UpdatedAt: oldAt},
+				{AppSlug: "worker", Scope: "staging", Key: "UNKNOWN"},
+			}}
+		default:
+			t.Errorf("unexpected cursor %q", before)
+		}
+		_ = json.NewEncoder(w).Encode(page)
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+
+	var stdout bytes.Buffer
+	oldOut := osStdout
+	osStdout = &stdout
+	t.Cleanup(func() { osStdout = oldOut })
+	if code := cmdSecrets([]string{"audit", "--older-than", "90d", "--fail-on-stale"}); code != 1 {
+		t.Fatalf("secrets audit exit = %d, want 1 when stale secrets are found", code)
+	}
+	if len(cursors) != 2 || cursors[0] != "" || cursors[1] != "demo|RECENT" {
+		t.Fatalf("page cursors = %q, want empty then demo|RECENT", cursors)
+	}
+	var report secretAuditReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("decode audit report: %v; output=%q", err, stdout.String())
+	}
+	if report.AuditedAt == "" || report.Scanned != 4 || report.UnknownUpdatedAtCount != 1 || report.StaleCount != 2 || len(report.StaleSecrets) != 2 || report.OlderThan != "90d" {
+		t.Fatalf("audit report = %+v", report)
+	}
+	for _, secret := range []string{"DO_NOT_OUTPUT_CIPHERTEXT", "ciphertext", "UNKNOWN", "RECENT"} {
+		if strings.Contains(stdout.String(), secret) {
+			t.Errorf("audit output unexpectedly contains %q: %s", secret, stdout.String())
+		}
+	}
+}
+
+func TestTierB_SecretsAuditRequiresAgeThreshold(t *testing.T) {
+	resetJSONOut(t)
+	api := authedFakeAPI(t, `{"secrets":[],"next_before":""}`, http.StatusOK)
+	if code := secretsAudit(nil); code != 1 {
+		t.Fatalf("secretsAudit without threshold = %d, want 1", code)
+	}
+	if api.sawMethod != "" {
+		t.Fatalf("audit without threshold made an API request: %s %s", api.sawMethod, api.sawPath)
+	}
+}
+
+func TestCollectSecretAuditRejectsRepeatedCursor(t *testing.T) {
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		_ = json.NewEncoder(w).Encode(api.ListSecretsForAccountResponse{NextBefore: "demo|KEY"})
+	}))
+	defer srv.Close()
+	_, err := collectSecretAudit(context.Background(), NewClient(srv.URL, "test-token"), time.Hour, time.Now().UTC())
+	if err == nil || requests != 2 {
+		t.Fatalf("collectSecretAudit() = %v after %d requests; want repeated-cursor error after 2 requests", err, requests)
 	}
 }
 

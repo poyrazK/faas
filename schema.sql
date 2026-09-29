@@ -2085,6 +2085,20 @@ CREATE TABLE public.compute_nodes (
     CONSTRAINT compute_nodes_vpcpus_check CHECK ((vpcpus > 0))
 );
 
+-- Fleet-wide in-flight snapshot restore reservations. Expired rows are
+-- removed during pressure reads and cannot affect placement decisions.
+CREATE TABLE public.snapshot_restore_pressure_leases (
+    lease_id uuid NOT NULL,
+    node_id uuid NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT snapshot_restore_pressure_leases_pkey PRIMARY KEY (lease_id),
+    CONSTRAINT snapshot_restore_pressure_leases_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE
+);
+CREATE INDEX snapshot_restore_pressure_leases_node_expiry_idx
+    ON public.snapshot_restore_pressure_leases USING btree (node_id, expires_at);
+CREATE INDEX snapshot_restore_pressure_leases_expiry_idx
+    ON public.snapshot_restore_pressure_leases USING btree (expires_at);
+
 
 --
 -- Name: COLUMN compute_nodes.region; Type: COMMENT; Schema: public; Owner: -

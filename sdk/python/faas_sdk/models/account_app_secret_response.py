@@ -7,6 +7,10 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.account_app_secret_response_secret_class import (
+    AccountAppSecretResponseSecretClass,
+    check_account_app_secret_response_secret_class,
+)
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="AccountAppSecretResponse")
@@ -28,6 +32,9 @@ class AccountAppSecretResponse:
     app_slug: str
     key: str
     scope: str
+    secret_class: AccountAppSecretResponseSecretClass
+    """Retention treatment for this envelope: persistent values may be present in VM state, while ephemeral values
+    prohibit init and warm snapshot publication for the app scope."""
     ciphertext: str
     """base64 age-sealed envelope. Plaintext NEVER appears on this wire."""
     created_at: datetime.datetime
@@ -46,6 +53,8 @@ class AccountAppSecretResponse:
 
         scope = self.scope
 
+        secret_class: str = self.secret_class
+
         ciphertext = self.ciphertext
 
         created_at = self.created_at.isoformat()
@@ -62,6 +71,7 @@ class AccountAppSecretResponse:
                 "app_slug": app_slug,
                 "key": key,
                 "scope": scope,
+                "secret_class": secret_class,
                 "ciphertext": ciphertext,
                 "created_at": created_at,
                 "updated_at": updated_at,
@@ -83,6 +93,8 @@ class AccountAppSecretResponse:
 
         scope = d.pop("scope")
 
+        secret_class = check_account_app_secret_response_secret_class(d.pop("secret_class"))
+
         ciphertext = d.pop("ciphertext")
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
@@ -96,6 +108,7 @@ class AccountAppSecretResponse:
             app_slug=app_slug,
             key=key,
             scope=scope,
+            secret_class=secret_class,
             ciphertext=ciphertext,
             created_at=created_at,
             updated_at=updated_at,

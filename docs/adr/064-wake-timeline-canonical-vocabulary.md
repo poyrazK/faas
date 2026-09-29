@@ -121,7 +121,7 @@ Rejected: `kind string + data map[string]any` (mirrors
 | `wake.boot_completed` | `{wake_id, app_id, instance_id, node_id, method, started_at, completed_at}` | schedd post-`RecordRuntime` |
 | `wake.boot_failed` | `{wake_id, app_id, instance_id, node_id, method, reason, failed_at}` | schedd boot path alongside `wake_boot_error` audit row |
 | `wake.readiness_200` | `{wake_id, app_id, instance_id, node_id, healthcheck_path, probe_count, elapsed_ms}` | vmmd `pkg/fcvm/vmm.go::waitReady` on the first 2xx probe |
-| `wake.proxy_first_byte` | `{wake_id, app_id, request_id, instance_id, node_id, latency_ms}` | gatewayd `pkg/gateway/forwardproxy.go` Response Init frame `WriteHeader` |
+| `wake.proxy_first_byte` | `{wake_id, app_id, request_id, instance_id, node_id, latency_ms, proxy_latency_ms, gateway_phases_ms}` | gatewayd `pkg/gateway/forwardproxy.go` Response Init frame `WriteHeader`; `gateway_phases_ms` is an optional map of request-local phase durations |
 | `wake.park_started` | `{wake_id, app_id, instance_id, node_id, started_at}` | schedd Snapshotting transition |
 | `wake.park_completed` | `{wake_id, app_id, instance_id, node_id, started_at, completed_at, snapshot_id}` | schedd Snapshot success path |
 | `wake.stalled` | `{wake_id, app_id, instance_id, node_id, reason}` | schedd watchdog path |

@@ -90,6 +90,25 @@ The budget is local to each gateway replica, and a source shared by many
 legitimate users still shares it. Observe mode records would-block decisions
 while continuing to serve the route.
 
+Before switching to `enforce`, read
+`GET /v1/apps/{slug}/pre-auth-observations?range=1h` (available on every
+plan). It returns one app policy, each configured route policy, and each
+configured failure budget. `would_block` counts observe-mode requests that
+crossed that policy's threshold; `result_2xx`, `result_3xx`, `result_4xx`,
+`result_5xx`, and `result_unknown` classify those same requests' final gateway
+responses. A `2xx` result is a possible false-positive signal, not proof of a
+legitimate user. An app and its route can both register one request as a
+would-block, so do not sum policy rows as unique requests. Route policy IDs
+use fixed slots (`route_0` through `route_15`, with matching `failures_` IDs),
+so if routes are reordered or replaced during the requested time range, older
+counts can refer to a previous configuration. Use a window after the last
+policy edit. The response maps slots to the current configured paths; the Prometheus metric
+`gateway_pre_auth_policy_shadow_total{app,policy,outcome}` uses only bounded
+policy IDs, never client IPs or paths. Prometheus unavailability returns
+`source: "degraded: ..."` and zero counts; these are unavailable data, not a
+clean result. As with the limiter, measurements come from all gateway
+replicas scraped by Prometheus, while enforcement remains replica-local.
+
 The source is the client IP verified by the public gateway, which replaces
 incoming `X-Forwarded-For` before passing the request to the internal gateway.
 An enforce-mode app returns `403` when this trusted address is missing or

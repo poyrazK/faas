@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
-const oidcPermissivePoliciesPrevious int64 = 20260928173653293
+const oidcPermissivePoliciesPrevious int64 = 20260928193449782
 
 // Legacy first-use trust policies (empty subject_pattern / audience)
 // admitted any token from the issuer; the migration removes them and keeps

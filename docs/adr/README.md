@@ -55,6 +55,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | ADR | Title | Status | Source |
 |---|---|---|---|
 | 340 | [Platform-tenant managed resource provenance](340-platform-tenant-managed-resource-provenance.md) | accepted | Mark only resources created by the owner bundle apply as managed; links never imply ownership |
+| 341 | [Ownership-aware platform-tenant reconciliation plan](341-platform-tenant-reconciliation-plan.md) | accepted | Add a deterministic read-only desired-state diff with managed removal candidates and unmanaged retention |
 | 339 | [Runtime revocation of delivered secrets](339-runtime-secret-revocation.md) | accepted | Remove deleted keys from opted-in workloads' runtime projections and signal the authorized workload; extends ADR-338 |
 | 338 | [Sidecar runtime secret reload](338-sidecar-runtime-secret-reload.md) | accepted | Workload-scoped refresh, signal, and application acknowledgement for explicitly granted sidecar secrets; extends ADR-280 |
 | 336 | [Tenant-scoped self-service multi-app onboarding](336-platform-tenant-self-service-multi-app-onboarding.md) | accepted | All-or-nothing, previewable creation or replay of one app-local customer identity per selected linked surface, under owner policy and a tenant-wide cap |
@@ -343,6 +344,7 @@ note instead of the banner.
 - [ADR-190: daemon durability primitives](190-daemon-durability-primitives.md) — default gRPC deadlines, liveness-gated systemd watchdog, last-known-good route tier, one LISTEN connection per daemon
 - [ADR-191: scheduler divergence reconciliation and bounded loop dispatch](191-scheduler-divergence-and-bounded-dispatch.md) — repair rows the owning vmmd is not reporting (report-only first), and move every long-running notification handler onto one bounded pool
 - [ADR-345: durable event fanout and workflow leases](345-durable-event-fanout-and-workflow-leases.md) — persistent event claims, per-step workflow recovery, and versioned event schemas
+- [ADR-346: event fanout recipient snapshots](346-event-fanout-recipient-snapshots.md) — capture eligible subscription candidates when an event is accepted
 
 Note: two ADRs carry the number 190 (`190-production-buildkit-cache.md` merged
 first; `190-daemon-durability-primitives.md` picked the same number

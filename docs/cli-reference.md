@@ -75,7 +75,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`rollback`](#rollback) | Re-promote the previous deployment |
 | [`projects`](#projects) | Inspect and recover repository projects |
 | [`scan`](#scan) | Decomposition dry-run (--tarball \| --path \| --repo OWNER/NAME) |
-| [`secrets`](#secrets) | Manage env secrets (secrets list\|set\|unset\|list-all\|rotate) |
+| [`secrets`](#secrets) | Manage env secrets (secrets list\|set\|unset\|list-all\|audit\|rotate) |
 | [`slo`](#slo) | Per-app SLO panel (gregale slo &lt;slug&gt; [--window 24h]; slug defaults to linked context) |
 | [`status`](#status) | Personal SLO numbers (availability, wake p95, build success) |
 | [`tail`](#tail) | Live tail of the unified event stream (app defaults to linked context) |
@@ -1761,7 +1761,7 @@ List edge rules
 
 ### edge-rules trace
 
-Simulate composed edge-rule outcomes; --config loads reusable JSON scenarios (see edge-rule-trace docs)
+Simulate composed edge-rule outcomes and budget, throttle, retry, circuit-breaker, and async-route policy; --config loads reusable JSON scenarios (see edge-rule-trace docs)
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2864,7 +2864,7 @@ Decomposition dry-run (--tarball | --path | --repo OWNER/NAME)
 
 ## secrets
 
-Manage env secrets (secrets list|set|unset|list-all|rotate)
+Manage env secrets (secrets list|set|unset|list-all|audit|rotate)
 
 `gregale secrets [<subcommand>]`
 
@@ -2948,6 +2948,22 @@ Examples:
 ```sh
 gregale secrets list-all --class ephemeral
 gregale secrets list-all --older-than 90d
+```
+
+### secrets audit
+
+Audit secret update age and report unknown timestamps without exposing values
+
+| Flag | Meaning | |
+|---|---|---|
+| `--older-than <DURATION>` | required threshold based on when Gregale last updated the value, not provider rotation time (for example 90d or 2160h) | required |
+| `--fail-on-stale` | exit non-zero when any secret exceeds the age threshold |  |
+
+Examples:
+
+```sh
+gregale secrets audit --older-than 90d
+gregale secrets audit --older-than 90d --fail-on-stale --json
 ```
 
 ### secrets rotate

@@ -59,6 +59,37 @@ type ApplyPlatformTenantSurfaceRequest struct {
 	Hostnames []string `json:"hostnames"`
 }
 
+// PlanPlatformTenantReconciliationRequest describes the complete desired
+// resource bundle for an existing platform tenant. Planning is always
+// read-only; resources omitted from this request are reported, never changed.
+type PlanPlatformTenantReconciliationRequest struct {
+	Consumers  []ApplyPlatformTenantConsumerRequest `json:"consumers,omitempty"`
+	SurfaceIDs []string                             `json:"surface_ids,omitempty"`
+	Surfaces   []ApplyPlatformTenantSurfaceRequest  `json:"surfaces,omitempty"`
+}
+
+// PlatformTenantReconciliationPlanChange is one proposed or retained resource
+// in a read-only platform-tenant reconciliation plan. ManagedByPlatformTenant
+// describes existing resources; it is nil for resources that would be created.
+type PlatformTenantReconciliationPlanChange struct {
+	ResourceType            string `json:"resource_type"`
+	Action                  string `json:"action"`
+	ID                      string `json:"id,omitempty"`
+	AppID                   string `json:"app_id,omitempty"`
+	ExternalRef             string `json:"external_ref,omitempty"`
+	Name                    string `json:"name,omitempty"`
+	SurfaceID               string `json:"surface_id,omitempty"`
+	Hostname                string `json:"hostname,omitempty"`
+	ManagedByPlatformTenant *bool  `json:"managed_by_platform_tenant,omitempty"`
+}
+
+// PlatformTenantReconciliationPlanResponse reports the complete dry-run
+// result. remove_candidate entries are advisory only and are never applied.
+type PlatformTenantReconciliationPlanResponse struct {
+	TenantID string                                   `json:"tenant_id"`
+	Changes  []PlatformTenantReconciliationPlanChange `json:"changes"`
+}
+
 type ApplyPlatformTenantConsumerRequest struct {
 	AppID       string `json:"app_id"`
 	ExternalRef string `json:"external_ref"`

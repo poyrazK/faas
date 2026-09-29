@@ -103,6 +103,9 @@ func TestPreAuthRateLimitObserveAndUntrustedSource(t *testing.T) {
 	if got := testutil.ToFloat64(h.metrics.preAuthRateLimited.WithLabelValues("app-1", "would_block")); got != 1 {
 		t.Fatalf("would-block metric = %v, want 1", got)
 	}
+	if got := testutil.ToFloat64(h.metrics.preAuthPolicyShadow.WithLabelValues("app-1", "app", "result_2xx")); got != 1 {
+		t.Fatalf("app shadow result_2xx = %v, want 1", got)
+	}
 	for _, xff := range []string{"", "192.0.2.1, 192.0.2.2", "garbage"} {
 		if rec := request(xff); rec.Code != http.StatusOK {
 			t.Fatalf("observe mode blocked untrusted XFF %q: %d", xff, rec.Code)
@@ -266,6 +269,38 @@ func TestPreAuthRouteLimitObserve(t *testing.T) {
 	if got := testutil.ToFloat64(h.metrics.preAuthRateLimited.WithLabelValues("app-1", "route_would_block")); got != 1 {
 		t.Fatalf("route observe metric = %v, want 1", got)
 	}
+	policy := "route_0"
+	for _, outcome := range []string{"would_block", "result_2xx"} {
+		if got := testutil.ToFloat64(h.metrics.preAuthPolicyShadow.WithLabelValues("app-1", policy, outcome)); got != 1 {
+			t.Fatalf("route shadow %s = %v, want 1", outcome, got)
+		}
+	}
+}
+
+func TestPreAuthShadowCountsAllPoliciesAndGatewayResponse(t *testing.T) {
+	h, b, _ := newTestHandler(t)
+	b.app.ConsumerAuthMode = api.ConsumerAuthModeRequired
+	b.app.PreAuthRateLimit = &api.PreAuthRateLimitConfig{
+		Mode: api.PreAuthRateLimitObserve, RequestsPerSecond: 1, Burst: 1,
+		Routes: []api.PreAuthRouteLimit{{Method: "POST", Path: "/login", RequestsPerSecond: 1, Burst: 1}},
+	}
+	h.preAuthLimiter.now = func() time.Time { return time.Unix(100, 0) }
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodPost, "http://jane-api.apps.dom/login", nil)
+		req.Header.Set("X-Forwarded-For", "192.0.2.1")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("gateway auth response %d = %d: %s", i, rec.Code, rec.Body.String())
+		}
+	}
+	for _, policy := range []string{"app", "route_0"} {
+		for _, outcome := range []string{"would_block", "result_4xx"} {
+			if got := testutil.ToFloat64(h.metrics.preAuthPolicyShadow.WithLabelValues("app-1", policy, outcome)); got != 1 {
+				t.Fatalf("%s %s = %v, want 1", policy, outcome, got)
+			}
+		}
+	}
 }
 
 // A subscriber is usually delegated a whole IPv6 /64; keying the pre-auth
@@ -419,6 +454,12 @@ func TestPreAuthFailedResponsesObserveConfiguredStatus(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(h.metrics.preAuthRateLimited.WithLabelValues("app-1", "failure_would_block")); got != 1 {
 		t.Fatalf("would-block metric = %v, want 1", got)
+	}
+	policy := "failures_0"
+	for _, outcome := range []string{"would_block", "result_4xx"} {
+		if got := testutil.ToFloat64(h.metrics.preAuthPolicyShadow.WithLabelValues("app-1", policy, outcome)); got != 1 {
+			t.Fatalf("failure shadow %s = %v, want 1", outcome, got)
+		}
 	}
 }
 

@@ -62,7 +62,7 @@ const secretsCmdScopeFlag = "scope"
 func cmdSecrets(args []string) int {
 	parent, _ := lookupCliCommand("secrets")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale secrets <list|set|unset|list-all> --app <slug> [args]", "secrets")
+		PrintUsage(os.Stderr, "usage: gregale secrets <list|set|unset|list-all|audit> [args]", "secrets")
 		return 1
 	}
 	switch args[0] {
@@ -74,6 +74,8 @@ func cmdSecrets(args []string) int {
 		return secretsUnset(args[1:])
 	case "list-all":
 		return secretsListAll(args[1:])
+	case "audit":
+		return secretsAudit(args[1:])
 	case subRotate:
 		return secretsRotate(args[1:])
 	}
@@ -235,11 +237,16 @@ func parseSecretAge(raw string) (time.Duration, error) {
 }
 
 func secretUpdatedBefore(updatedAt string, cutoff time.Time) bool {
+	updated, ok := parseSecretUpdatedAt(updatedAt)
+	return ok && !updated.After(cutoff)
+}
+
+func parseSecretUpdatedAt(updatedAt string) (time.Time, bool) {
 	if updatedAt == "" {
-		return false
+		return time.Time{}, false
 	}
 	updated, err := time.Parse(time.RFC3339Nano, updatedAt)
-	return err == nil && !updated.After(cutoff)
+	return updated, err == nil
 }
 
 func filterAppSecretListByAge(resp *api.AppSecretListResponse, cutoff time.Time) {
@@ -959,4 +966,111 @@ func secretsListAll(args []string) int {
 		_, _ = fmt.Fprintf(osStderr, "next page: --before %s\n", resp.NextBefore)
 	}
 	return 0
+}
+
+type secretAuditFinding struct {
+	AppSlug   string `json:"app_slug"`
+	Scope     string `json:"scope"`
+	Key       string `json:"key"`
+	Class     string `json:"secret_class"`
+	UpdatedAt string `json:"updated_at"`
+	Age       string `json:"age"`
+}
+
+type secretAuditReport struct {
+	AuditedAt             string               `json:"audited_at"`
+	OlderThan             string               `json:"older_than"`
+	Scanned               int                  `json:"scanned"`
+	UnknownUpdatedAtCount int                  `json:"unknown_updated_at_count"`
+	StaleCount            int                  `json:"stale_count"`
+	StaleSecrets          []secretAuditFinding `json:"stale_secrets"`
+}
+
+func secretsAudit(args []string) int {
+	fs := newFlagSet("secrets audit", flag.ContinueOnError)
+	olderThan := fs.String("older-than", "", "required age threshold (for example 90d or 2160h)")
+	failOnStale := fs.Bool("fail-on-stale", false, "exit non-zero when any secret exceeds the age threshold")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
+	age, err := parseSecretAge(*olderThan)
+	if err != nil {
+		return printErr("Invalid --older-than", err)
+	}
+	if age == 0 {
+		return printErr("Invalid --older-than", fmt.Errorf("required; provide a positive duration such as 90d"))
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	report, err := collectSecretAudit(context.Background(), client, age, time.Now().UTC())
+	if err != nil {
+		return printErr("Audit failed", err)
+	}
+	report.OlderThan = *olderThan
+	if jsonOutput {
+		if code := jsonOut(writeJSON(report)); code != 0 {
+			return code
+		}
+	} else {
+		renderSecretAudit(osStdout, report)
+	}
+	if *failOnStale && report.StaleCount > 0 {
+		return printErr("Stale secrets found", fmt.Errorf("%d secret(s) have not been updated within %s", report.StaleCount, *olderThan))
+	}
+	return 0
+}
+
+func collectSecretAudit(ctx context.Context, client *api.Client, age time.Duration, now time.Time) (secretAuditReport, error) {
+	report := secretAuditReport{AuditedAt: now.Format(time.RFC3339Nano), StaleSecrets: make([]secretAuditFinding, 0)}
+	cutoff := now.Add(-age)
+	seenCursors := make(map[string]struct{})
+	before := ""
+	for {
+		page, err := client.GetSecrets(ctx, before, 200)
+		if err != nil {
+			return secretAuditReport{}, err
+		}
+		report.Scanned += len(page.Secrets)
+		for _, secret := range page.Secrets {
+			updated, ok := parseSecretUpdatedAt(secret.UpdatedAt)
+			if !ok {
+				report.UnknownUpdatedAtCount++
+				continue
+			}
+			if updated.After(cutoff) {
+				continue
+			}
+			secretAge := now.Sub(updated)
+			report.StaleSecrets = append(report.StaleSecrets, secretAuditFinding{
+				AppSlug: secret.AppSlug, Scope: scopeOrDefault(secret.Scope), Key: secret.Key,
+				Class: secretClassLabel(secret.SecretClass), UpdatedAt: secret.UpdatedAt, Age: secretAge.String(),
+			})
+		}
+		if page.NextBefore == "" {
+			break
+		}
+		if _, exists := seenCursors[page.NextBefore]; exists {
+			return secretAuditReport{}, fmt.Errorf("account secret pagination repeated a cursor")
+		}
+		seenCursors[page.NextBefore] = struct{}{}
+		before = page.NextBefore
+	}
+	report.StaleCount = len(report.StaleSecrets)
+	return report, nil
+}
+
+func renderSecretAudit(w io.Writer, report secretAuditReport) {
+	if report.StaleCount == 0 {
+		_, _ = fmt.Fprintf(w, "No known timestamps exceed %s (scanned %d; %d unknown updated_at value(s) not classified).\n", report.OlderThan, report.Scanned, report.UnknownUpdatedAtCount)
+		return
+	}
+	_, _ = fmt.Fprintf(w, "%d secret(s) have remained unchanged in Gregale for at least %s (scanned %d; %d unknown updated_at value(s) not classified):\n", report.StaleCount, report.OlderThan, report.Scanned, report.UnknownUpdatedAtCount)
+	for _, finding := range report.StaleSecrets {
+		_, _ = fmt.Fprintf(w, "  %s/%s/%s · %s · age %s · updated %s\n", finding.AppSlug, finding.Scope, finding.Key, finding.Class, finding.Age, finding.UpdatedAt)
+	}
 }

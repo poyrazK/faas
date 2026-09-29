@@ -141,6 +141,11 @@ type MemStore struct {
 	revisionPins                map[string]time.Time
 	deploymentActivationMu      sync.Mutex
 	deploymentActivationLocks   map[string]*deploymentActivationLock
+	// Snapshot restore reservations are separate from mu so the coordinator
+	// can serialize only its short lease/count critical section.
+	snapshotRestorePressureMu sync.Mutex
+	snapshotRestoreLeaseMu    sync.Mutex
+	snapshotRestoreLeases     map[string]snapshotRestorePressureLease
 	// runtimeConfigChangedAt mirrors app_runtime_config_changes (issue #3360).
 	runtimeConfigChangedAt map[string]time.Time
 	// serviceCallerKeys mirrors service_caller_keys: one published

@@ -2225,6 +2225,12 @@ type SnapshotReplicaCursor struct {
 	UpdatedAt   pgtype.Timestamptz
 }
 
+type SnapshotRestorePressureLease struct {
+	LeaseID   pgtype.UUID
+	NodeID    pgtype.UUID
+	ExpiresAt pgtype.Timestamptz
+}
+
 // Per-(account, app, day) byte totals from snapshots.mem_bytes + disk_bytes + overlay staging. Source: pkg/meter/storage.go cron tick. ADR-049 §B.3. Informational only — not billed today; the future "Pro plan 1 GB included" PR consumes this surface.
 type SnapshotStorageDaily struct {
 	AccountID pgtype.UUID

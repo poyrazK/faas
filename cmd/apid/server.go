@@ -1417,6 +1417,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/account/platform-tenants", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listPlatformTenants))))
 	mux.HandleFunc("POST /v1/account/platform-tenants", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createPlatformTenant)))))
 	mux.HandleFunc("POST /v1/account/platform-tenants/apply", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.applyPlatformTenant)))))
+	mux.HandleFunc("POST /v1/account/platform-tenants/{id}/reconciliation-plan", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.planPlatformTenantReconciliation))))
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getPlatformTenant))))
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/activation", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getPlatformTenantActivation))))
 	mux.HandleFunc("GET /v1/account/platform-tenants/{id}/hostname-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getPlatformTenantHostnamePolicy))))
@@ -1496,6 +1497,9 @@ func (s *server) handler() http.Handler {
 	// cross-account slug is a 404, not a 200 with another tenant's
 	// data.
 	mux.HandleFunc("GET /v1/apps/{slug}/metrics", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppMetrics)))
+	// Security policy observations are available on every plan where the
+	// optional pre-auth guard can be configured, including Free.
+	mux.HandleFunc("GET /v1/apps/{slug}/pre-auth-observations", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppPreAuthObservations)))
 	// Per-app dashboard JSON mirror — wire-friendly emission of the
 	// same shape the dashboard HTML page renders (cmd/apid/
 	// handlers_dashboard.go:2548 renderAppWakeTimeline). Auth chain

@@ -107,6 +107,10 @@ func cmdEdgeRulesTrace(args []string) int {
 	}
 	input.AppMaintenanceLoaded = true
 	input.AppMaintenanceMode = app.MaintenanceMode
+	input.AsyncWorkloadContextLoaded = true
+	input.AsyncRequestInvocationsEnabled = app.WorkloadClass != "worker" && app.WorkloadClass != "job" && app.Manifest.ExecutionMode != api.ExecutionModeWorker && app.Manifest.ExecutionMode != api.ExecutionModeJob
+	input.AsyncAppRetryPolicyLoaded = true
+	input.AsyncAppRetryPolicy = app.RetryPolicy
 	input.AppRequestBudgetLoaded = app.EffectiveLimits.RequestBudgetMS > 0 && app.EffectiveLimits.RequestBudgetMaxMS > 0
 	input.RequestBudgetMS = app.EffectiveLimits.RequestBudgetMS
 	input.RequestBudgetMaxMS = app.EffectiveLimits.RequestBudgetMaxMS
@@ -166,16 +170,26 @@ func cmdEdgeRulesTrace(args []string) int {
 	if err != nil {
 		return printErr("List failed", err)
 	}
-	if edgeRuleTraceHasEnabledKind(rules, "throttle") {
-		// The app response carries effective app/account ceilings; the
-		// account profile supplies the plan needed to show the per-route
-		// throttle validation ceiling. If it is temporarily unavailable,
-		// keep the trace useful and mark that ceiling as unavailable.
+	if edgeRuleTraceHasEnabledKind(rules, "throttle") || edgeRuleTraceHasEnabledKind(rules, "async") {
+		// The app response carries effective app/account ceilings, but the
+		// account profile supplies plan-only throttle and async limits. If it
+		// is temporarily unavailable, keep the trace useful and mark those
+		// ceilings unavailable instead of guessing.
 		if account, accountErr := client.Whoami(context.Background()); accountErr == nil {
 			if limits, ok := api.LimitsFor(api.Plan(account.Plan)); ok {
-				input.ThrottlePlanLimitsLoaded = limits.RateLimitRPS > 0 && limits.RateLimitBurst > 0
-				input.ThrottlePlanMaxRPS = limits.RateLimitRPS
-				input.ThrottlePlanMaxBurst = limits.RateLimitBurst
+				if edgeRuleTraceHasEnabledKind(rules, "throttle") {
+					input.ThrottlePlanLimitsLoaded = limits.RateLimitRPS > 0 && limits.RateLimitBurst > 0
+					input.ThrottlePlanMaxRPS = limits.RateLimitRPS
+					input.ThrottlePlanMaxBurst = limits.RateLimitBurst
+				}
+				if edgeRuleTraceHasEnabledKind(rules, "async") {
+					input.AsyncPlanLimitsLoaded = true
+					input.AsyncPlan = api.Plan(account.Plan)
+					input.AsyncInvokeAllowed = limits.AsyncInvokeAllowed
+					input.AsyncMaxPayloadBytes = limits.MaxSourceBytesPerInvocation
+					input.AsyncMaxQueueAttempts = limits.MaxQueueAttempts
+					input.AsyncMaxDeadlineSeconds = limits.MaxAsyncInvocationDeadlineSeconds
+				}
 			}
 		}
 	}
@@ -267,6 +281,22 @@ func renderEdgeRuleTrace(result edgeruletrace.Result) {
 				policy.MaxAttempts, policy.MaxReplays, policy.MaxAttemptsSource, policy.MinRemainingMS, policy.BackoffMS,
 				policy.BudgetPercent, policy.BudgetMinRetries, policy.AllowNonIdempotent, policy.MethodEligibility, policy.IdempotencyKeyPresent)
 		}
+		if step.AsyncPolicy != nil {
+			policy := step.AsyncPolicy
+			deadline := "unresolved"
+			if policy.MaxAgeSource == "no_deadline" {
+				deadline = "none"
+			} else if policy.EffectiveMaxAgeSeconds > 0 {
+				deadline = fmt.Sprintf("%d s (%s)", policy.EffectiveMaxAgeSeconds, policy.MaxAgeSource)
+			}
+			_, _ = fmt.Fprintf(osStdout, "    async route: request gate=%s; plan=%s; workload=%s; payload=%s; deadline=%s; retry=%s (%s attempts, %s); idempotency_key_present=%t; callbacks success=%t failure=%t\n",
+				policy.RequestGate, policy.PlanGate, policy.WorkloadGate, policy.PayloadStatus, deadline,
+				policy.RetryPolicySource, asyncTraceAttempts(policy), policy.MaxAttemptsStatus,
+				policy.IdempotencyKeyPresent, policy.OnSuccessConfigured, policy.OnFailureConfigured)
+			if policy.MaxPayloadBytes > 0 {
+				_, _ = fmt.Fprintf(osStdout, "      plan payload limit: %d bytes\n", policy.MaxPayloadBytes)
+			}
+		}
 	}
 	if result.Simulation.StatusCode != 0 {
 		_, _ = fmt.Fprintf(osStdout, "  response: status=%d", result.Simulation.StatusCode)
@@ -302,6 +332,13 @@ func renderEdgeRuleTrace(result edgeruletrace.Result) {
 		_, _ = fmt.Fprintf(osStdout, "  simulation stopped at %s: %s\n", result.Simulation.StoppedAt, result.Simulation.Reason)
 	}
 	_, _ = fmt.Fprintln(osStdout, result.Scope)
+}
+
+func asyncTraceAttempts(policy *edgeruletrace.AsyncPolicyPreview) string {
+	if policy.MaxAttemptsStatus != "effective" {
+		return "unresolved"
+	}
+	return fmt.Sprintf("%d total (%d replay(s))", policy.EffectiveMaxAttempts, policy.MaxReplays)
 }
 
 func readEdgeRuleTraceBody(path string) ([]byte, error) {

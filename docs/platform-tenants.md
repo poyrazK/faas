@@ -38,7 +38,19 @@ Content-Type: application/json
 
 The response reports `create`, `link`, or `unchanged` for each resource, including hostnames. New hostnames return a TXT record name (`_faas-verify.<hostname>`) and challenge token to publish in DNS. A dry run checks ownership, quota, names, and conflicts without writes; a token for a planned hostname is withheld because it is not yet durable. Remove `dry_run` (or set it to `false`) to apply the entire local database bundle atomically; replaying it returns the same IDs and tokens with `unchanged` actions. A different name, revoked consumer, hostname already claimed by another surface, or resource owned by another tenant returns 409 without partial writes. Missing or cross-account app/surface IDs return 404. Omitted resources are **not** detached or revoked, and a suspended tenant is not silently resumed. Surface declarations require the tenant-surfaces feature flag and a plan that includes surfaces; this flow currently supports `per_host_san` certificates.
 
-Resources created by this account-owner bundle operation are marked `managed_by_platform_tenant` in responses and tenant inventory. Existing consumers or surfaces that are only linked are not adopted, and existing database rows default to unmanaged. Hostnames created by this bundle on an existing surface are marked managed individually. The field is omitted for unmanaged resources; a dry run may show `action: create` without the marker because nothing has been persisted yet. This provenance is informational in this release; it does not delete or detach anything. It is the safe ownership boundary for a future declarative reconciliation workflow.
+Resources created by this account-owner bundle operation are marked `managed_by_platform_tenant` in responses and tenant inventory. Existing consumers or surfaces that are only linked are not adopted, and existing database rows default to unmanaged. Hostnames created by this bundle on an existing surface are marked managed individually. The field is omitted for unmanaged resources; a dry run may show `action: create` without the marker because nothing has been persisted yet. The provenance is used by the read-only preview below to classify removal candidates; it does not delete or detach anything.
+
+For an existing tenant, preview the complete desired bundle with `POST /v1/account/platform-tenants/{id}/reconciliation-plan`:
+
+```json
+{
+  "consumers": [{"app_id":"<api-app-uuid>","external_ref":"customer-42","name":"Customer 42"}],
+  "surfaces": [{"app_id":"<api-app-uuid>","name":"Customer 42 web","hostnames":["customer42.example.com"]}],
+  "surface_ids": ["<optional-existing-surface-uuid>"]
+}
+```
+
+The read-only response is sorted deterministically and reports `create`, `link`, or `keep` for desired resources. Omitted resources created by a platform-tenant bundle appear as `remove_candidate`; omitted resources without that provenance appear as `retain_unmanaged`. Hostnames are compared only for surfaces declared in `surfaces`; a `surface_ids` entry links a surface without declaring its hostname set. A removal candidate is informational only: this endpoint never detaches, revokes, or deletes a resource. Conflicts and invalid bundles fail without writes. Review the plan before using the existing additive apply endpoint; safe application of removals is a separate future operation.
 
 Platform owners can configure the domain boundary for downstream hostname self-service:
 

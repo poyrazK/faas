@@ -560,6 +560,7 @@ export type { PlanCron } from './models/PlanCron.js';
 export type { PlanDetectedBy } from './models/PlanDetectedBy.js';
 export type { PlanDetectionWarning } from './models/PlanDetectionWarning.js';
 export type { PlanManaged } from './models/PlanManaged.js';
+export type { PlanPlatformTenantReconciliationRequest } from './models/PlanPlatformTenantReconciliationRequest.js';
 export type { PlanResponse } from './models/PlanResponse.js';
 export type { PlanWorkload } from './models/PlanWorkload.js';
 export type { PlatformTenantAccessTokenListResponse } from './models/PlatformTenantAccessTokenListResponse.js';
@@ -582,6 +583,8 @@ export type { PlatformTenantHostnameVerifiedWebhookPayload } from './models/Plat
 export type { PlatformTenantListResponse } from './models/PlatformTenantListResponse.js';
 export type { PlatformTenantRateCardListResponse } from './models/PlatformTenantRateCardListResponse.js';
 export type { PlatformTenantRateCardResponse } from './models/PlatformTenantRateCardResponse.js';
+export type { PlatformTenantReconciliationPlanChange } from './models/PlatformTenantReconciliationPlanChange.js';
+export type { PlatformTenantReconciliationPlanResponse } from './models/PlatformTenantReconciliationPlanResponse.js';
 export type { PlatformTenantRequestBudgetResponse } from './models/PlatformTenantRequestBudgetResponse.js';
 export type { PlatformTenantResponse } from './models/PlatformTenantResponse.js';
 export type { PlatformTenantSelfActivationHostnameResponse } from './models/PlatformTenantSelfActivationHostnameResponse.js';
@@ -608,6 +611,8 @@ export type { PlatformTenantUsageResponse } from './models/PlatformTenantUsageRe
 export type { PlatformTenantWebhookListResponse } from './models/PlatformTenantWebhookListResponse.js';
 export type { PlatformTenantWebhookResponse } from './models/PlatformTenantWebhookResponse.js';
 export type { PreAuthFailedResponseLimit } from './models/PreAuthFailedResponseLimit.js';
+export type { PreAuthObservationsResponse } from './models/PreAuthObservationsResponse.js';
+export type { PreAuthPolicyObservation } from './models/PreAuthPolicyObservation.js';
 export type { PreAuthRateLimitConfig } from './models/PreAuthRateLimitConfig.js';
 export type { PreAuthRouteLimit } from './models/PreAuthRouteLimit.js';
 export type { PreflightFinding } from './models/PreflightFinding.js';
