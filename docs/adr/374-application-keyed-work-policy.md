@@ -1,4 +1,4 @@
-# ADR-368 · Application-keyed background work policies
+# ADR-374 · Application-keyed background work policies
 
 - **Status:** accepted; invocation, event, queue, and external broker producers implemented; deployment-attached app tasks pending
 - **Date:** 2026-09-28

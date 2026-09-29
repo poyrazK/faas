@@ -665,7 +665,7 @@ func TestRateLimitDeny_AcksBrokerOffset(t *testing.T) {
 	}
 }
 
-// adr: 368 — a Kafka commit must not pass work with no durable receipt.
+// adr: 374 — a Kafka commit must not pass work with no durable receipt.
 func TestRateLimitDenyDoesNotCommitPastMissingKafkaReceipt(t *testing.T) {
 	const triggerID = "11111111-1111-1111-1111-111111111111"
 	poller := &ackRecordingPoller{}
