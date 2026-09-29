@@ -16,6 +16,9 @@ export type { APIConsumerUsageStatementListResponse } from './APIConsumerUsageSt
 export type { APIConsumerUsageStatementResponse } from './APIConsumerUsageStatementResponse.js';
 export type { APIKeyExportResponse } from './APIKeyExportResponse.js';
 export type { APIKeyResponse } from './APIKeyResponse.js';
+export type { AccountAbuseHold } from './AccountAbuseHold.js';
+export type { AccountAbuseHoldAction } from './AccountAbuseHoldAction.js';
+export type { AccountAbuseHoldActionResponse } from './AccountAbuseHoldActionResponse.js';
 export type { AccountAppSecretResponse } from './AccountAppSecretResponse.js';
 export type { AccountCreditResponse } from './AccountCreditResponse.js';
 export type { AccountDeadLetterEventsResponse } from './AccountDeadLetterEventsResponse.js';

@@ -7,6 +7,9 @@ export { CancelablePromise, CancelError } from './core/CancelablePromise.js';
 export { OpenAPI } from './core/OpenAPI.js';
 export type { OpenAPIConfig } from './core/OpenAPI.js';
 
+export type { AccountAbuseHold } from './models/AccountAbuseHold.js';
+export type { AccountAbuseHoldAction } from './models/AccountAbuseHoldAction.js';
+export type { AccountAbuseHoldActionResponse } from './models/AccountAbuseHoldActionResponse.js';
 export type { AccountAppSecretResponse } from './models/AccountAppSecretResponse.js';
 export type { AccountCreditResponse } from './models/AccountCreditResponse.js';
 export type { AccountDeadLetterEventsResponse } from './models/AccountDeadLetterEventsResponse.js';

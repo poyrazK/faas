@@ -2,6 +2,8 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AccountAbuseHoldAction } from '../models/AccountAbuseHoldAction.js';
+import type { AccountAbuseHoldActionResponse } from '../models/AccountAbuseHoldActionResponse.js';
 import type { AccountCreditResponse } from '../models/AccountCreditResponse.js';
 import type { AdminRefundResponse } from '../models/AdminRefundResponse.js';
 import type { AdminSetGithubWebhookSecretRequest } from '../models/AdminSetGithubWebhookSecretRequest.js';
@@ -327,6 +329,68 @@ export class AdminService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
+      },
+    });
+  }
+  /**
+   * Place an abuse hold on an account (operator-only).
+   * @returns AccountAbuseHoldActionResponse The account's hold after the action. `changed` is false when a hold was already in place.
+   * @throws ApiError
+   */
+  public static placeAccountAbuseHold({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Account UUID whose abuse hold changes.
+     */
+    id: string,
+    requestBody: AccountAbuseHoldAction,
+  }): CancelablePromise<AccountAbuseHoldActionResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/admin/accounts/{id}/abuse-hold',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: admin_required — placing a hold needs an operator session with MFA and recent step-up.`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Release an account's abuse hold (operator-only).
+   * @returns AccountAbuseHoldActionResponse The account's hold after the action. `changed` is false when no hold was set.
+   * @throws ApiError
+   */
+  public static releaseAccountAbuseHold({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Account UUID whose abuse hold changes.
+     */
+    id: string,
+    requestBody: AccountAbuseHoldAction,
+  }): CancelablePromise<AccountAbuseHoldActionResponse> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/admin/accounts/{id}/abuse-hold',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: admin_required — releasing a hold needs an operator session with MFA and recent step-up.`,
+        404: `code: not_found`,
       },
     });
   }
