@@ -39,21 +39,21 @@ func TestTriggerWorkBindingAPIRequiresFreshDisabledTrigger(t *testing.T) {
 	}
 	activeID := create("active", true)
 	binding := api.TriggerWorkBinding{PolicyName: "orders", Key: "order_id"}
-	put := func(id string, value api.TriggerWorkBinding) *http.Response {
+	put := func(id string, value api.TriggerWorkBinding) int {
 		t.Helper()
 		rec := e.do(t, http.MethodPut, "/v1/triggers/"+id+"/work-binding", value,
 			map[string]string{"Idempotency-Key": uuid.NewString()})
-		return rec.Result()
+		return rec.Code
 	}
-	if resp := put(activeID, binding); resp.StatusCode != http.StatusConflict {
-		t.Fatalf("binding enabled trigger = %d", resp.StatusCode)
+	if status := put(activeID, binding); status != http.StatusConflict {
+		t.Fatalf("binding enabled trigger = %d", status)
 	}
 	id := create("disabled", false)
-	if resp := put(id, api.TriggerWorkBinding{PolicyName: "orders", Key: "order_id.*"}); resp.StatusCode != http.StatusUnprocessableEntity {
-		t.Fatalf("invalid selector = %d", resp.StatusCode)
+	if status := put(id, api.TriggerWorkBinding{PolicyName: "orders", Key: "order_id.*"}); status != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid selector = %d", status)
 	}
-	if resp := put(id, binding); resp.StatusCode != http.StatusOK {
-		t.Fatalf("binding disabled trigger = %d", resp.StatusCode)
+	if status := put(id, binding); status != http.StatusOK {
+		t.Fatalf("binding disabled trigger = %d", status)
 	}
 	got := e.do(t, http.MethodGet, "/v1/triggers/"+id+"/work-binding", nil, nil)
 	if got.Code != http.StatusOK {

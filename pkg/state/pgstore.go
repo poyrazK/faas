@@ -30041,28 +30041,6 @@ func triggerEnabledRowToTrigger(r sqlc.ListEnabledTriggersRow) sqlc.Trigger {
 	}
 }
 
-// claimTriggerRecordRowToTriggerRecord converts a ClaimTriggerRecordsRow
-// back to the model type. Same sqlc v1.31 dedicated-Row pattern as the
-// trigger row helpers above.
-func claimTriggerRecordRowToTriggerRecord(r sqlc.ClaimTriggerRecordsRow) sqlc.TriggerRecord {
-	return sqlc.TriggerRecord{
-		ID:               r.ID,
-		TriggerID:        r.TriggerID,
-		ItemIdentifier:   r.ItemIdentifier,
-		Payload:          r.Payload,
-		Headers:          r.Headers,
-		Metadata:         r.Metadata,
-		State:            r.State,
-		Attempts:         r.Attempts,
-		NextFireAt:       r.NextFireAt,
-		ReceivedAt:       r.ReceivedAt,
-		LastError:        r.LastError,
-		LastDispatchedAt: r.LastDispatchedAt,
-		ClaimGeneration:  r.ClaimGeneration,
-		ClaimExpiresAt:   r.ClaimExpiresAt,
-	}
-}
-
 // listTriggerRecordRowToTriggerRecord converts a ListTriggerRecordsForTriggerRow
 // back to the model type.
 func listTriggerRecordRowToTriggerRecord(r sqlc.ListTriggerRecordsForTriggerRow) sqlc.TriggerRecord {

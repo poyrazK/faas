@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -116,7 +117,7 @@ func (s *PgStore) ClaimTriggerRecordsByItems(ctx context.Context, triggerID stri
 	}
 	for _, item := range keyed {
 		record, err := s.claimKeyedTriggerRecord(ctx, triggerID, item)
-		if err == ErrConflict || err == ErrNotFound {
+		if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) {
 			continue
 		}
 		if err != nil {
@@ -141,7 +142,7 @@ func (s *PgStore) claimKeyedTriggerRecord(ctx context.Context, triggerID, item s
 		from trigger_records r join triggers t on t.id=r.trigger_id
 		where r.trigger_id=$1 and r.item_identifier=$2 and r.work_policy_name is not null`,
 		triggerID, item).Scan(&id, &appID, &policyName, &digest, &fairnessDigest, &fairnessLimit)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return sqlc.TriggerRecord{}, ErrNotFound
 	}
 	if err != nil {
@@ -171,7 +172,7 @@ func (s *PgStore) claimKeyedTriggerRecord(ctx context.Context, triggerID, item s
 		&record.Attempts, &record.NextFireAt, &record.ReceivedAt,
 		&record.LastError, &record.LastDispatchedAt, &record.ClaimGeneration,
 		&record.ClaimExpiresAt)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return sqlc.TriggerRecord{}, ErrConflict
 	}
 	if err != nil {
