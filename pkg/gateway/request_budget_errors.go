@@ -47,7 +47,7 @@ func writeRequestBudgetExceededForRequest(w http.ResponseWriter, r *http.Request
 	api.WriteProblem(w, api.NewProblem(http.StatusGatewayTimeout,
 		api.CodeRequestBudgetExceeded,
 		"Request budget exceeded",
-		"the request exceeded its wall-clock budget while capacity was becoming ready"))
+		"the request exceeded its configured wall-clock budget"))
 }
 
 // writeBurstCapacityError maps an admission wait failure without confusing a

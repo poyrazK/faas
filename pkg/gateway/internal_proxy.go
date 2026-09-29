@@ -358,6 +358,7 @@ func dialWithTimeout(ctx context.Context, dialer InternalDialer, dialTimeout tim
 // On dial failure: 502 Bad Gateway. On upstream error: propagated
 // unchanged.
 func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	r = r.WithContext(WithStartTime(r.Context(), time.Now()))
 	// Drain tracker (issue #587 / PR-A): a request that's
 	// handed off to the proxy is "in flight" from the daemon's
 	// perspective until this ServeHTTP returns.
@@ -418,6 +419,7 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	// Upgrade traffic branched above; plain HTTP must not forward hop-by-hop
 	// headers from an untrusted client.
 	stripHopByHopInPlace(outReq.Header)
+	stampTrafficStart(outReq)
 	// This transport is intentionally custom rather than otelhttp.Transport,
 	// so propagate the active public-edge span explicitly. The internal
 	// gateway extracts it before starting gateway.request, keeping the edge,

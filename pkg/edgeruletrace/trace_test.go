@@ -1556,7 +1556,7 @@ func TestSimulateRetryRuleRequiresEffectiveAttemptCount(t *testing.T) {
 
 func TestSimulateBudgetRuleReportsHeaderOverrideAndPlanClamp(t *testing.T) {
 	rule := budgetTraceRule(t, "budget-rule", api.EdgeRuleBudgetAction{
-		BudgetMs: 4000, AllowOverrideHeader: "X-Tenant-Budget",
+		BudgetMs: 4000, TotalDeadlineMs: 3000, AllowOverrideHeader: "X-Tenant-Budget",
 	})
 	input := budgetTraceInput()
 	input.RequestBudgetMaxMS = 5000
@@ -1573,7 +1573,7 @@ func TestSimulateBudgetRuleReportsHeaderOverrideAndPlanClamp(t *testing.T) {
 		t.Fatalf("budget step = %#v", step)
 	}
 	policy := step.BudgetPolicy
-	if policy == nil || policy.ConfiguredMS != 4000 || policy.BudgetMS != 5000 || policy.PlanMaxMS != 5000 || policy.Source != "ceiling_clamp" || policy.OverrideHeader != "X-Tenant-Budget" || policy.OverrideStatus != "applied_clamped" {
+	if policy == nil || policy.TotalDeadlineMS != 3000 || policy.ConfiguredMS != 4000 || policy.BudgetMS != 5000 || policy.PlanMaxMS != 5000 || policy.Source != "ceiling_clamp" || policy.OverrideHeader != "X-Tenant-Budget" || policy.OverrideStatus != "applied_clamped" {
 		t.Fatalf("effective budget policy = %#v", policy)
 	}
 	if result.Rules[0].ActionPreview == nil || result.Rules[0].ActionPreview.BudgetPolicy == nil || result.Rules[0].ActionPreview.BudgetPolicy.BudgetMS != 5000 {

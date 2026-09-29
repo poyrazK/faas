@@ -3172,7 +3172,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		)
 	}
 
-	apidHandler := newApidProxyWithGate(apidTarget, handler, logsHandler, writeGate, log)
+	apidHandler := newApidProxyWithGate(apidTarget, gateway.TrustedTrafficIngress(handler), logsHandler, writeGate, log)
 
 	// Slice 7: githubd webhook HMAC-verify at the edge, then proxy
 	// to githubd's loopback listener (ADR-012, §11 single-public-

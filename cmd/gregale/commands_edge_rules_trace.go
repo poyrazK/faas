@@ -262,6 +262,9 @@ func renderEdgeRuleTrace(result edgeruletrace.Result) {
 			policy := step.BudgetPolicy
 			_, _ = fmt.Fprintf(osStdout, "    request budget: %d ms effective (configured %d ms; plan ceiling %d ms; source %s; override %s)\n",
 				policy.BudgetMS, policy.ConfiguredMS, policy.PlanMaxMS, policy.Source, policy.OverrideStatus)
+			if policy.TotalDeadlineMS > 0 {
+				_, _ = fmt.Fprintf(osStdout, "    total deadline: %d ms from public ingress (includes upload/wake/queue; execution overrides cannot increase it)\n", policy.TotalDeadlineMS)
+			}
 		}
 		if step.ThrottlePolicy != nil {
 			policy := step.ThrottlePolicy

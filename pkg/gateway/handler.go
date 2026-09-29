@@ -5590,6 +5590,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// has a real elapsed to record and the slog latency_ms field stops
 	// being effectively zero).
 	start := time.Now()
+	if accepted, ok := StartTimeFromContext(r.Context()); ok && accepted.Before(start) {
+		start = accepted
+	}
 	r = r.WithContext(WithStartTime(r.Context(), start)) //nolint:contextcheck // request ctx is the canonical inbound ctx at the HTTP handler boundary.
 	// Keep a request-local sink for platform-owned runner execution markers.
 	// The forwarder consumes and redacts the headers; observe persists the
@@ -5693,6 +5696,10 @@ haveApp:
 	// could otherwise shadow this app's own gates.
 	//nolint:contextcheck // same request context, extended with the owner.
 	r = r.WithContext(WithEdgeRuleOwner(r.Context(), app.AccountID))
+	if h.applyTotalDeadline(w, r, app) {
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
+	}
 	if app.AccountAbuseHeld {
 		api.WriteProblem(w, api.ErrAccountAbuseHold())
 		h.observe(r, rec.status, app.ID, "", false, Target{})
@@ -6446,9 +6453,8 @@ haveApp:
 	}
 
 	// Receive and bound the complete request body before wake admission. The
-	// upload has a plan-sized deadline and spills large bodies to disk; it does
-	// not consume the guest's execution budget or hold a VM while the client is
-	// still sending bytes.
+	// upload has a plan-sized deadline and spills large bodies to disk. An
+	// explicit total deadline bounds it too; the execution budget starts later.
 	if admitRequestBody(w, r, app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
@@ -6555,7 +6561,7 @@ haveApp:
 				if admitErr == nil {
 					admitErr = api.ErrAppConcurrencyReachedAt(limits, maxInstances, backendCapacityCount(h.backend, app.ID))
 				}
-				writeWakeError(w, admitErr)
+				writeBurstCapacityError(w, r, admitErr)
 				h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 				return
 			}
@@ -6646,6 +6652,11 @@ haveApp:
 				h.noteWakePageServed(r.Context(), app.ID, app.AccountID, requestIDFrom(r), time.Now())
 				w.Header().Set(wire.WakeHeader, wire.ColdWakeValue)
 				writeWakePage(w, r.Header.Get("x-faas-wake-id"))
+				h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+				return
+			}
+			if requestBudgetExpired(r.Context()) {
+				writeRequestBudgetExceededForRequest(w, r)
 				h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 				return
 			}
@@ -6764,7 +6775,7 @@ haveApp:
 		// shows 0 vs the cap (was 1+ microseconds ago).
 		wakeErr := api.ErrAppConcurrencyReachedAt(limits, effectiveAppConcurrencyLimit(app, limits.MaxConcurrency), backendCapacityCount(h.backend, app.ID))
 		h.markHealthFailure(app.ID, wakeErr)
-		writeWakeError(w, wakeErr)
+		writeBurstCapacityError(w, r, wakeErr)
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}

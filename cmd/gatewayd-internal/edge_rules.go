@@ -1798,6 +1798,11 @@ func compileBudgetRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleBudgetRe
 		// compileLimitRules silently dropping malformed caps).
 		budgetMs := r.Action.Budget.BudgetMs
 		maxBudgetMs := int(api.RequestBudgetMax.Milliseconds())
+		totalDeadlineMs := r.Action.Budget.TotalDeadlineMs
+		if totalDeadlineMs < 0 || totalDeadlineMs > maxBudgetMs {
+			parseErrs = append(parseErrs, gateway.PathGlobError{RuleID: r.ID, Glob: r.MatchPath, Err: errors.New("invalid total deadline")})
+			continue
+		}
 		if budgetMs <= 0 || budgetMs > maxBudgetMs {
 			budgetMs = maxBudgetMs
 		}
@@ -1810,6 +1815,7 @@ func compileBudgetRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleBudgetRe
 			Methods:             buildMethodsMap(r.MatchMethods),
 			MatchHeaders:        buildMatchHeadersMap(r.MatchHeaders),
 			BudgetMs:            budgetMs,
+			TotalDeadlineMs:     totalDeadlineMs,
 			AllowOverrideHeader: r.Action.Budget.AllowOverrideHeader,
 		})
 	}

@@ -7402,6 +7402,7 @@ type EdgeRuleGeoAction struct {
 // apid-Validate.
 type EdgeRuleBudgetAction struct {
 	BudgetMs            int    `json:"budget_ms"`
+	TotalDeadlineMs     int    `json:"total_deadline_ms,omitempty"`
 	AllowOverrideHeader string `json:"allow_override_header,omitempty"`
 }
 

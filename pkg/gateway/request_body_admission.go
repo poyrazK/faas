@@ -147,6 +147,10 @@ func admitRequestBodyWithin(w http.ResponseWriter, r *http.Request, limit int64,
 			return true
 		}
 		var netErr net.Error
+		if requestBudgetExpired(r.Context()) {
+			writeRequestBudgetExceededForRequest(w, r)
+			return true
+		}
 		if errors.Is(uploadCtx.Err(), context.DeadlineExceeded) || (errors.As(readErr, &netErr) && netErr.Timeout()) {
 			api.WriteProblem(w, api.ErrRequestUploadTimeout(allowance))
 			return true

@@ -44,6 +44,7 @@ type EdgeRuleBudgetResolved struct {
 	Methods             map[string]bool // nil = any method
 	MatchHeaders        map[string]string
 	BudgetMs            int    // always > 0 post-compile
+	TotalDeadlineMs     int    // optional, measured from trusted public ingress
 	AllowOverrideHeader string // "" = platform default x-faas-budget-ms
 }
 

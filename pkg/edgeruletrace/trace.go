@@ -255,12 +255,13 @@ type CachePolicyPreview struct {
 // duration. The runtime starts this deadline only after upload, wake, routing,
 // and per-VM admission have completed.
 type BudgetPolicyPreview struct {
-	ConfiguredMS   int64  `json:"configured_ms"`
-	BudgetMS       int64  `json:"budget_ms"`
-	PlanMaxMS      int64  `json:"plan_max_ms"`
-	Source         string `json:"source"`
-	OverrideHeader string `json:"override_header,omitempty"`
-	OverrideStatus string `json:"override_status"`
+	TotalDeadlineMS int64  `json:"total_deadline_ms,omitempty"`
+	ConfiguredMS    int64  `json:"configured_ms"`
+	BudgetMS        int64  `json:"budget_ms"`
+	PlanMaxMS       int64  `json:"plan_max_ms"`
+	Source          string `json:"source"`
+	OverrideHeader  string `json:"override_header,omitempty"`
+	OverrideStatus  string `json:"override_status"`
 }
 
 // ThrottlePolicyPreview reports configured per-route throttle behavior and
@@ -1563,7 +1564,8 @@ func previewBudgetRule(rule api.EdgeRuleResponse, input Input) (string, string, 
 			headerName = api.RequestBudgetDefaultOverrideHeader
 		}
 		policy := &BudgetPolicyPreview{
-			ConfiguredMS: int64(action.BudgetMs), OverrideHeader: headerName,
+			TotalDeadlineMS: int64(action.TotalDeadlineMs),
+			ConfiguredMS:    int64(action.BudgetMs), OverrideHeader: headerName,
 			OverrideStatus: "unresolved", Source: "unavailable",
 		}
 		return "needs_app_request_budget", "a matching budget rule is configured, but the app's effective request budget and plan ceiling were not loaded", &ActionPreview{Type: "budget", BudgetPolicy: policy}
@@ -1828,6 +1830,7 @@ func resolveBudgetPolicy(input Input, rule *api.EdgeRuleResponse, headers http.H
 			return BudgetPolicyPreview{PlanMaxMS: input.RequestBudgetMaxMS, Source: "unavailable", OverrideStatus: "unavailable"}
 		}
 		configuredMS = int64(action.BudgetMs)
+		policy.TotalDeadlineMS = min(int64(action.TotalDeadlineMs), input.RequestBudgetMaxMS)
 		candidateMS, source = configuredMS, "rule"
 		policy.OverrideHeader = action.AllowOverrideHeader
 		if policy.OverrideHeader == "" {

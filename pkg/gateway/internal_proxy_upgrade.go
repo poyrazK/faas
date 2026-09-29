@@ -36,6 +36,7 @@ func (p *InternalReverseProxy) serveUpgrade(w http.ResponseWriter, r *http.Reque
 			pr.Out.URL.Scheme = p.Target.Scheme
 			pr.Out.URL.Host = p.Target.Host
 			pr.Out.Host = pr.In.Host // app lookup uses the customer hostname
+			stampTrafficStart(pr.Out)
 			clientIP, proto := p.forwardingContext(pr.In)
 			if clientIP != "" {
 				pr.Out.Header.Set("X-Forwarded-For", clientIP)

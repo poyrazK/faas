@@ -9094,13 +9094,19 @@ func validateThrottleMaxKeys(maxKeys, planMax int) *Problem {
 // The hot-path applier is
 // pkg/gateway.(*Handler).applyEdgeRuleBudget (§4.1.2.8d).
 type EdgeRuleBudgetAction struct {
-	BudgetMs            int    `json:"budget_ms"`
+	BudgetMs int `json:"budget_ms"`
+	// TotalDeadlineMs includes upload/wake/admission from trusted public ingress.
+	// Zero leaves the existing execution-only budget unchanged (ADR-375).
+	TotalDeadlineMs     int    `json:"total_deadline_ms,omitempty"`
 	AllowOverrideHeader string `json:"allow_override_header,omitempty"`
 }
 
 func (a *EdgeRuleBudgetAction) Validate() *Problem {
 	if a == nil {
 		return ErrValidation("budget action is required")
+	}
+	if a.TotalDeadlineMs < 0 || a.TotalDeadlineMs > int(RequestBudgetMax.Milliseconds()) {
+		return ErrValidation("budget action: total_deadline_ms must be zero (unset) or within the platform request budget ceiling")
 	}
 	if a.BudgetMs <= 0 {
 		return ErrValidation(fmt.Sprintf(

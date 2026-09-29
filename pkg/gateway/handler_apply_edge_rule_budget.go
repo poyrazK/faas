@@ -74,7 +74,12 @@ func (h *Handler) applyEdgeRuleBudget(w http.ResponseWriter, r *http.Request, ap
 		return false
 	}
 	limits, _ := api.LimitsFor(app.Plan)
-	rule := h.edgeRules.MatchBudget(r.Context(), hostname(r.Host), r.URL.Path, r.Method)
+	var rule *EdgeRuleBudgetResolved
+	if pinned, ok := r.Context().Value(totalDeadlineBudgetKey{}).(EdgeRuleBudgetResolved); ok {
+		rule = &pinned
+	} else {
+		rule = h.edgeRules.MatchBudget(r.Context(), hostname(r.Host), r.URL.Path, r.Method)
+	}
 	if rule == nil {
 		if h.metrics != nil {
 			h.metrics.ObserveEdgeRuleMatch("budget", "miss")
@@ -188,10 +193,7 @@ func (h *Handler) stampRequestBudget(w http.ResponseWriter, r *http.Request, app
 	route := "forward"
 	endpoint := r.Method + ":" + r.URL.Path
 	ctx, cancel, _ := reqbudget.WithRemaining(r.Context(), total, ceiling, route, endpoint)
-	if cancel != nil {
-		ctx = context.WithValue(ctx, requestBudgetCancelKey{}, cancel)
-	}
-	*r = *r.WithContext(ctx)
+	rememberBudgetCancel(r, ctx, cancel)
 	if h.log != nil {
 		h.log.Debug("budget_stamped",
 			"app_id", app.ID,
