@@ -56,13 +56,29 @@ func cleanupProjectEnvironmentBindingClone(ctx context.Context, cleanup []func(c
 	return cleanupErr
 }
 
-func (s *server) planProjectEnvironmentBindingClones(ctx context.Context, acct state.Account, project state.Project, source string, shareResources bool) ([]projectEnvironmentBindingClone, error) {
+func (s *server) captureProjectEnvironmentValueScopes(ctx context.Context, acct state.Account, project state.Project, source string) ([]state.App, map[string]string, error) {
 	apps, err := s.store.AppsForProject(ctx, acct.ID, project.ID)
 	if err != nil {
-		return nil, fmt.Errorf("list project workloads for resource clone: %w", err)
+		return nil, nil, fmt.Errorf("list project workloads for resource clone: %w", err)
 	}
+	scopes := make(map[string]string, len(apps))
+	for _, app := range apps {
+		scope, err := state.ProjectEnvironmentCloneValueScope(ctx, s.store, acct.ID, app.ID, source)
+		if err != nil {
+			return nil, nil, fmt.Errorf("resolve source value scope for workload %q: %w", app.Slug, err)
+		}
+		scopes[app.ID] = scope
+	}
+	return apps, scopes, nil
+}
+
+func (s *server) planProjectEnvironmentBindingClones(ctx context.Context, acct state.Account, apps []state.App, sourceScopes map[string]string, shareResources bool) ([]projectEnvironmentBindingClone, error) {
 	plans := make([]projectEnvironmentBindingClone, 0)
 	for _, app := range apps {
+		source := sourceScopes[app.ID]
+		if source == "" {
+			return nil, state.ErrConflict
+		}
 		secrets, err := s.store.ListAppSecretsInScope(ctx, acct.ID, app.ID, source)
 		if err != nil {
 			return nil, fmt.Errorf("inspect source resource bindings for workload %q: %w", app.Slug, err)

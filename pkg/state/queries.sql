@@ -1,3 +1,35 @@
+-- name: LockProjectEnvironmentCloneApps :many
+SELECT id::text AS app_id FROM apps
+WHERE account_id = sqlc.arg(account_id)::uuid
+  AND project_id = sqlc.arg(project_id)::uuid
+  AND status <> 'deleted' AND preview_of_slug IS NULL
+ORDER BY id FOR UPDATE;
+
+-- name: ReadProjectEnvironmentCloneProductionValueScope :one
+-- Empty scope means that an active graph has an invalid or missing member.
+SELECT coalesce((CASE
+  WHEN EXISTS (SELECT 1 FROM project_release_sets rs
+      WHERE rs.project_id = sqlc.arg(project_id)::uuid
+        AND rs.environment_slug = 'production' AND rs.active) THEN
+    (SELECT d.scope FROM project_release_sets rs
+       JOIN project_release_members rm ON rm.release_id = rs.id
+         AND rm.app_id = sqlc.arg(app_id)::uuid
+       JOIN deployments d ON d.id = rm.deployment_id AND d.app_id = sqlc.arg(app_id)::uuid
+     WHERE rs.project_id = sqlc.arg(project_id)::uuid
+       AND rs.environment_slug = 'production' AND rs.active
+       AND d.status = 'live' AND d.scope = 'production')
+  ELSE coalesce(
+    (SELECT d.scope FROM deployments d
+      WHERE d.app_id = sqlc.arg(app_id)::uuid AND d.status = 'live'
+        AND d.scope IN ('production', 'default') AND d.traffic_percent > 0
+      ORDER BY (d.scope = 'production') DESC, d.created_at DESC, d.id DESC LIMIT 1),
+    CASE WHEN EXISTS (SELECT 1 FROM app_envs e
+                       WHERE e.app_id = sqlc.arg(app_id)::uuid AND e.scope = 'production')
+           OR EXISTS (SELECT 1 FROM app_secrets s
+                       WHERE s.app_id = sqlc.arg(app_id)::uuid AND s.scope = 'production')
+         THEN 'production' ELSE 'default' END)
+END)::text, '')::text AS source_scope;
+
 -- name: ReadAccountCreditConsumption :one
 -- An unqualified legacy row blocks the whole key; guessing could double-debit.
 SELECT coalesce(sum(-delta_cents) FILTER (WHERE provider = sqlc.arg(provider)::text), 0)::bigint AS consumed_cents,

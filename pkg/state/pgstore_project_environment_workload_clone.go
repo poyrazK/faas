@@ -13,7 +13,7 @@ import (
 // UpdateApp and deployment creation while materializing configuration.
 func copyProjectEnvironmentWorkloadSpecs(ctx context.Context, tx pgx.Tx, clone ProjectEnvironmentClone, target ProjectEnvironment) error {
 	rows, err := tx.Query(ctx, `select `+appsSelectColumns+` from apps
-  where account_id = $1 and project_id = $2 and status <> 'deleted'
+  where account_id = $1 and project_id = $2 and status <> 'deleted' and preview_of_slug is null
   order by id for update`, clone.AccountID, clone.ProjectID)
 	if err != nil {
 		return mapErr(err)

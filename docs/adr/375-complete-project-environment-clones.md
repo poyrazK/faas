@@ -220,3 +220,21 @@ publication. Scheduler fake lifecycle checks cover cross-scope running-instance
 reuse, pinned stage execution mode, existing wake behavior, and warm pools.
 Scope-specific admission ledgers, pool counts, reaper floors, and reconciliation
 remain unfinished. These local checks do not replace native VM acceptance.
+
+### Effective production values during cloning (2026-09-29)
+
+Cloning production now selects variables, customer secrets, and managed bindings
+from the namespace of the deployment actually serving each workload. An active
+production graph takes precedence; otherwise named production traffic wins over
+legacy default traffic. Undeployed workloads preserve explicitly configured
+production values, falling back to default only when production has no values.
+The two namespaces are never merged by key, and preview apps are excluded from
+the logical project workload roster.
+
+The API captures the workload/scope roster once and uses it for managed binding
+preparation. Both stores recheck that roster before committing target state, so
+a scope cutover or roster change rejects the clone. Focused MemStore and real
+PostgreSQL contracts cover legacy/named/undeployed values, secrets, previews, and
+cutover rejection. API contracts cover legacy managed bindings and binding-plan
+scope reuse. This fence does not freeze same-scope edits or resource versions;
+the complete mode still requires the durable source capture and barrier above.

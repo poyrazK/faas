@@ -378,7 +378,11 @@ func (s *server) persistProjectEnvironment(r *http.Request, acct state.Account, 
 	} else if !errors.Is(err, state.ErrNotFound) {
 		return state.ProjectEnvironment{}, state.ProjectEnvironmentCloneResult{}, err
 	}
-	bindingPlans, err := s.planProjectEnvironmentBindingClones(ctx, acct, project, req.FromEnvironment, req.ShareResources)
+	apps, valueScopes, err := s.captureProjectEnvironmentValueScopes(ctx, acct, project, req.FromEnvironment)
+	if err != nil {
+		return state.ProjectEnvironment{}, state.ProjectEnvironmentCloneResult{}, err
+	}
+	bindingPlans, err := s.planProjectEnvironmentBindingClones(ctx, acct, apps, valueScopes, req.ShareResources)
 	if err != nil {
 		return state.ProjectEnvironment{}, state.ProjectEnvironmentCloneResult{}, err
 	}
@@ -396,6 +400,7 @@ func (s *server) persistProjectEnvironment(r *http.Request, acct state.Account, 
 		TargetSlug: req.Slug, TargetProtected: protected, ShareResources: req.ShareResources,
 		ManagedBindingsPrepared:   len(preparedBindingIDs) > 0,
 		PreparedManagedBindingIDs: preparedBindingIDs, PreparedManagedSecretCount: preparedSecretCount,
+		ExpectedSourceValueScopes: valueScopes,
 	}
 	environment, result, err := cloner.CloneProjectEnvironment(ctx, clone, api.MustLimitsFor(acct.Plan))
 	if err != nil {
