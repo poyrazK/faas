@@ -1228,7 +1228,14 @@ var cliCommands = []cliCommand{
 		Name:     "test",
 		DocSlug:  "test",
 		Short:    "Run an application scenario with real VMs or a local simulation",
-		Examples: []string{"gregale test --validate", "gregale test --scenario customer-export --preflight", "gregale test --scenario customer-export --profile restored --repeat 3 --max-workload-minutes 135 --report test-results.json --junit test-results.xml", "gregale test --scenario customer-export --engine simulated"},
+		Examples: []string{"gregale test init --from openapi.yaml --project my-api", "gregale test --validate", "gregale test --scenario customer-export --preflight", "gregale test --scenario customer-export --profile restored --repeat 3 --max-workload-minutes 135 --report test-results.json --junit test-results.xml", "gregale test --scenario customer-export --engine simulated"},
+		Subcommands: []cliSub{{Name: "init", Short: "Create public GET smoke checks from a local OpenAPI document", Examples: []string{"gregale test init --from openapi.yaml --project my-api --source ."}, Flags: []cliFlag{
+			{Name: "from", Short: "local OpenAPI 3.0 or 3.1 document", Value: "PATH", Req: true},
+			{Name: "project", Short: "Gregale project slug", Value: "SLUG", Req: true},
+			{Name: "source", Short: "application source directory", Value: "DIR"},
+			{Name: "scenario", Short: "scenario name", Value: "NAME"},
+			{Name: "output", Short: "new manifest path", Value: "PATH"},
+		}}},
 		Flags: []cliFlag{
 			{Name: "scenario", Short: "scenario declared in gregale-test.yaml", Value: "NAME"},
 			{Name: "validate", Short: "validate local scenario sources without a platform login"},

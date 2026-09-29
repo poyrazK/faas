@@ -28,8 +28,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Scenario files keep application assertions in the customer's own test
-// command. Gregale owns the expiring environment and lifecycle evidence.
+// Scenario files may declare HTTP checks or run application-owned commands.
+// Gregale owns the expiring environment and lifecycle evidence.
 type testManifest struct {
 	Version   int                     `yaml:"version"`
 	Scenarios map[string]testScenario `yaml:"scenarios"`
@@ -45,6 +45,8 @@ type testScenario struct {
 	Services         map[string]testService `yaml:"services"`
 	Trigger          []string               `yaml:"trigger"`
 	Command          []string               `yaml:"command"`
+	Requests         []testHTTPRequest      `yaml:"requests"`
+	Checks           []testHTTPRequest      `yaml:"checks"`
 	Setup            [][]string             `yaml:"setup"`
 	Cleanup          [][]string             `yaml:"cleanup"`
 	Postgres         bool                   `yaml:"postgres"`
@@ -187,9 +189,13 @@ type testRunReceipt struct {
 	Deliveries   []testDeliveryEvidence             `json:"deliveries,omitempty"`
 	QueueIdle    bool                               `json:"queue_idle,omitempty"`
 	Diagnostics  map[string]testWorkloadDiagnostics `json:"diagnostics,omitempty"`
+	Requests     []testHTTPRequestEvidence          `json:"requests,omitempty"`
 }
 
 func cmdTest(args []string) int {
+	if len(args) > 0 && args[0] == "init" {
+		return cmdTestInit(args[1:])
+	}
 	fs := newFlagSet("test", flag.ContinueOnError)
 	scenarioName := fs.String("scenario", "", "scenario name from the manifest")
 	validateOnly := fs.Bool("validate", false, "validate scenario sources without platform access")
@@ -385,8 +391,14 @@ func readTestManifest(path string) (map[string]testScenario, string, error) {
 		if len(name) < 3 || len(name) > 80 || !api.ValidAppSlug(scenario.Project) {
 			return nil, "", fmt.Errorf("scenario %q needs a valid project slug", name)
 		}
-		if len(scenario.Command) == 0 || scenario.Command[0] == "" {
-			return nil, "", fmt.Errorf("scenario %q needs a command", name)
+		if len(scenario.Command) == 0 && len(scenario.Requests) == 0 && len(scenario.Checks) == 0 {
+			return nil, "", fmt.Errorf("scenario %q needs a command, requests, or checks", name)
+		}
+		if len(scenario.Command) > 0 && scenario.Command[0] == "" {
+			return nil, "", fmt.Errorf("scenario %q has an empty assertion command", name)
+		}
+		if err := validateTestHTTPRequests(scenario); err != nil {
+			return nil, "", fmt.Errorf("scenario %q: %w", name, err)
 		}
 		if len(scenario.Simulation) > 0 && scenario.Simulation[0] == "" {
 			return nil, "", fmt.Errorf("scenario %q has an empty simulation command", name)
@@ -441,8 +453,8 @@ func readTestManifest(path string) (map[string]testScenario, string, error) {
 		if len(scenario.Trigger) > 0 && scenario.Trigger[0] == "" {
 			return nil, "", fmt.Errorf("scenario %q has an empty trigger command", name)
 		}
-		if (scenario.WaitFor.QueueIdle || len(scenario.WaitFor.Invocations) > 0 || len(scenario.WaitFor.Objects) > 0 || len(scenario.WaitFor.Deliveries) > 0) && len(scenario.Trigger) == 0 {
-			return nil, "", fmt.Errorf("scenario %q needs trigger when wait_for is set", name)
+		if (scenario.WaitFor.QueueIdle || len(scenario.WaitFor.Invocations) > 0 || len(scenario.WaitFor.Objects) > 0 || len(scenario.WaitFor.Deliveries) > 0) && len(scenario.Trigger) == 0 && len(scenario.Requests) == 0 {
+			return nil, "", fmt.Errorf("scenario %q needs trigger or requests when wait_for is set", name)
 		}
 		seenTriggerKeys := map[string]bool{}
 		for _, invocation := range scenario.WaitFor.Invocations {
@@ -1058,9 +1070,10 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 	}
 	recorder.reset()
 	advancePhase("trigger")
-	if len(scenario.Trigger) > 0 {
+	captures := make(map[string]string)
+	if len(scenario.Trigger) > 0 || len(scenario.Requests) > 0 {
 		triggerOutputPath := ""
-		if len(scenario.WaitFor.Invocations) > 0 {
+		if len(scenario.Trigger) > 0 && len(scenario.WaitFor.Invocations) > 0 {
 			output, err := os.CreateTemp("", "gregale-test-trigger-*.json")
 			if err != nil {
 				receipt.Error = fmt.Sprintf("create trigger output: %v", err)
@@ -1071,27 +1084,46 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 			defer func() { _ = os.Remove(triggerOutputPath) }()
 			env = append(env, "GREGALE_TEST_TRIGGER_OUTPUT="+triggerOutputPath)
 		}
-		if err := runTestCommand(ctx, sourceDir, env, scenario.Trigger); err != nil {
-			receipt.Error = fmt.Sprintf("application trigger command: %v", err)
+		if len(scenario.Trigger) > 0 {
+			if err := runTestCommand(ctx, sourceDir, env, scenario.Trigger); err != nil {
+				receipt.Error = fmt.Sprintf("application trigger command: %v", err)
+				receipt.captureWakeEvidence(recorder)
+				return
+			}
+		}
+		var requestEvidence []testHTTPRequestEvidence
+		requestEvidence, err = runTestHTTPRequests(ctx, proxy.URL, receipt.RunID, consumerEnv, scenario.Requests, captures)
+		receipt.Requests = append(receipt.Requests, requestEvidence...)
+		if err != nil {
+			receipt.Error = fmt.Sprintf("application request: %v", err)
 			receipt.captureWakeEvidence(recorder)
 			return
 		}
 		advancePhase("completion")
+		triggerValues := make(map[string]string)
 		if triggerOutputPath != "" {
-			triggerValues, err := readTestTriggerOutput(triggerOutputPath)
+			triggerValues, err = readTestTriggerOutput(triggerOutputPath)
 			if err != nil {
 				receipt.Error = fmt.Sprintf("read application trigger output: %v", err)
 				receipt.captureWakeEvidence(recorder)
 				return
 			}
-			for _, condition := range scenario.WaitFor.Invocations {
-				evidence, err := waitForTestInvocation(ctx, client, condition, serviceAppIDs[condition.Service], triggerValues[condition.TriggerKey])
-				receipt.Invocations = append(receipt.Invocations, evidence)
-				if err != nil {
-					receipt.Error = fmt.Sprintf("wait for invocation from %s: %v", condition.Service, err)
-					receipt.captureWakeEvidence(recorder)
-					return
-				}
+		}
+		for key, value := range captures {
+			if _, exists := triggerValues[key]; exists {
+				receipt.Error = fmt.Sprintf("trigger output and HTTP capture both define %s", key)
+				receipt.captureWakeEvidence(recorder)
+				return
+			}
+			triggerValues[key] = value
+		}
+		for _, condition := range scenario.WaitFor.Invocations {
+			evidence, err := waitForTestInvocation(ctx, client, condition, serviceAppIDs[condition.Service], triggerValues[condition.TriggerKey])
+			receipt.Invocations = append(receipt.Invocations, evidence)
+			if err != nil {
+				receipt.Error = fmt.Sprintf("wait for invocation from %s: %v", condition.Service, err)
+				receipt.captureWakeEvidence(recorder)
+				return
 			}
 		}
 		slugs := make([]string, 0, len(workloads))
@@ -1120,8 +1152,14 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		}
 	}
 	advancePhase("assertions")
-	if err := runTestCommand(ctx, sourceDir, env, scenario.Command); err != nil {
-		receipt.Error = fmt.Sprintf("application assertion command: %v", err)
+	requestEvidence, err := runTestHTTPRequests(ctx, proxy.URL, receipt.RunID, consumerEnv, scenario.Checks, captures)
+	receipt.Requests = append(receipt.Requests, requestEvidence...)
+	if err != nil {
+		receipt.Error = fmt.Sprintf("application check: %v", err)
+	} else if len(scenario.Command) > 0 {
+		if err := runTestCommand(ctx, sourceDir, env, scenario.Command); err != nil {
+			receipt.Error = fmt.Sprintf("application assertion command: %v", err)
+		}
 	}
 	receipt.captureWakeEvidence(recorder)
 	advancePhase("lifecycle_evidence")

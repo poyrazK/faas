@@ -8,6 +8,20 @@ import (
 	"testing"
 )
 
+// fleetRunner selects the trusted runner label for the target environment.
+// Each fleet has its own label so a runner inside one fleet's network never
+// picks up another fleet's rollout.
+const fleetRunner = `fromJSON(inputs.deploy_environment == 'production-us' && '["self-hosted","linux","faas-fleet-us"]' || '["self-hosted","linux","faas-fleet"]')`
+
+func readWorkflow(t *testing.T, name string) string {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(body)
+}
+
 // jobRunsOn returns the runs-on line of a top-level job in a workflow.
 func jobRunsOn(t *testing.T, workflow, job string) string {
 	t.Helper()
@@ -32,13 +46,7 @@ func jobRunsOn(t *testing.T, workflow, job string) string {
 // five of them in sequence. Hosted runners stay available as an explicit
 // escape hatch; node rollouts always need the fleet runner's private network.
 func TestCDCoordinationJobsDefaultToFleetRunner(t *testing.T) {
-	read := func(name string) string {
-		body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", name))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return string(body)
-	}
+	read := func(name string) string { return readWorkflow(t, name) }
 	for _, tc := range []struct {
 		file, input string
 		jobs        []string
@@ -48,7 +56,7 @@ func TestCDCoordinationJobsDefaultToFleetRunner(t *testing.T) {
 		{"cd-compute.yml", "hosted_runner", []string{"preflight"}},
 	} {
 		workflow := read(tc.file)
-		want := fmt.Sprintf(`runs-on: ${{ inputs.%s && 'ubuntu-latest' || fromJSON('["self-hosted","linux","faas-fleet"]') }}`, tc.input)
+		want := fmt.Sprintf(`runs-on: ${{ inputs.%s && 'ubuntu-latest' || %s }}`, tc.input, fleetRunner)
 		for _, job := range tc.jobs {
 			if got := jobRunsOn(t, workflow, job); got != want {
 				t.Errorf("%s %s: %s, want %s", tc.file, job, got, want)
@@ -58,7 +66,7 @@ func TestCDCoordinationJobsDefaultToFleetRunner(t *testing.T) {
 			t.Errorf("%s does not declare the %s escape hatch", tc.file, tc.input)
 		}
 	}
-	if got := jobRunsOn(t, read("cd-compute.yml"), "deploy"); got != "runs-on: [self-hosted, linux, faas-fleet]" {
+	if got := jobRunsOn(t, read("cd-compute.yml"), "deploy"); got != "runs-on: ${{ "+fleetRunner+" }}" {
 		t.Errorf("cd-compute node rollout must always use the fleet runner: %s", got)
 	}
 	platform := read("cd-platform.yml")
@@ -68,5 +76,48 @@ func TestCDCoordinationJobsDefaultToFleetRunner(t *testing.T) {
 	}
 	if strings.Contains(read("cd-controlplane.yml"), "gh api") {
 		t.Error("cd-controlplane uses the gh CLI, which the fleet runner does not install")
+	}
+}
+
+// The rollout stages read the target fleet's secrets from the GitHub
+// environment named by deploy_environment and run on that fleet's runner
+// label. A stage that hard-codes `production`, or a cd-platform call that
+// drops the input, would deploy one fleet's release with the other fleet's
+// hosts, keys and database.
+func TestCDStagesTargetTheSelectedEnvironment(t *testing.T) {
+	platform := readWorkflow(t, "cd-platform.yml")
+	calls := strings.Count(platform, "uses: ./.github/workflows/cd-")
+	if passed := strings.Count(platform, "deploy_environment: ${{ inputs.deploy_environment }}"); passed != calls {
+		t.Errorf("cd-platform passes deploy_environment to %d of %d stage calls", passed, calls)
+	}
+	for _, name := range []string{"cd-platform.yml", "cd-controlplane.yml", "cd-compute.yml"} {
+		workflow := readWorkflow(t, name)
+		if !strings.Contains(workflow, "      deploy_environment:\n") {
+			t.Errorf("%s does not declare deploy_environment", name)
+		}
+		envs := 0
+		for _, line := range strings.Split(workflow, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if !strings.HasPrefix(trimmed, "environment:") {
+				continue
+			}
+			envs++
+			if trimmed != "environment: ${{ inputs.deploy_environment }}" {
+				t.Errorf("%s: %q does not follow deploy_environment", name, trimmed)
+			}
+		}
+		if envs == 0 {
+			t.Errorf("%s has no environment-scoped job", name)
+		}
+		for _, line := range strings.Split(workflow, "\n") {
+			if strings.Contains(line, "faas-fleet") && strings.Contains(line, "runs-on") && !strings.Contains(line, fleetRunner) {
+				t.Errorf("%s: runner label not derived from deploy_environment: %s", name, strings.TrimSpace(line))
+			}
+		}
+	}
+	compute := readWorkflow(t, "cd-compute.yml")
+	if !strings.Contains(compute, "FLEET_RUNNER_LABEL: ${{ inputs.deploy_environment == 'production-us' && 'faas-fleet-us' || 'faas-fleet' }}") ||
+		!strings.Contains(compute, `index($label)`) {
+		t.Error("cd-compute's online-runner probe does not look for the selected fleet's label")
 	}
 }

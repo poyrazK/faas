@@ -9,7 +9,7 @@
 #
 # The runner must be a trusted self-hosted runner with private fleet DNS/SSH
 # reachability. A control-plane host is a valid runner when it is registered
-# with the `faas-fleet` label. GitHub-hosted runners cannot reach the private
+# with the fleet's label (`faas-fleet`, or `faas-fleet-us` for production-us). GitHub-hosted runners cannot reach the private
 # database and mesh used by the join pipeline.
 
 name: cd-compute
@@ -18,6 +18,15 @@ run-name: Compute ${{ inputs.node || 'fleet' }} ${{ inputs.fleet_bundle_sha256 |
 on:
   workflow_call:
     inputs:
+      deploy_environment:
+        description: >-
+          GitHub environment holding the target fleet's secrets. Each
+          environment has its own trusted runner label: production uses
+          faas-fleet, production-us (gregale-prod, us-east1) uses
+          faas-fleet-us, so one fleet's runner never deploys the other.
+        required: false
+        default: production
+        type: string
       release_tag:
         description: "Existing signed pre-1.0 release tag"
         required: true
@@ -106,6 +115,18 @@ on:
         type: string
   workflow_dispatch:
     inputs:
+      deploy_environment:
+        description: >-
+          GitHub environment holding the target fleet's secrets. Each
+          environment has its own trusted runner label: production uses
+          faas-fleet, production-us (gregale-prod, us-east1) uses
+          faas-fleet-us, so one fleet's runner never deploys the other.
+        required: false
+        default: production
+        type: choice
+        options:
+          - production
+          - production-us
       release_tag:
         description: "Existing signed pre-1.0 release tag (for example v0.1.18-rc.5)"
         required: true
@@ -201,7 +222,7 @@ on:
           - live-node
 
 concurrency:
-  group: cd-compute-${{ inputs.node || inputs.claim_file || inputs.fleet_bundle_url || 'fleet' }}
+  group: cd-compute-${{ inputs.deploy_environment }}-${{ inputs.node || inputs.claim_file || inputs.fleet_bundle_url || 'fleet' }}
   cancel-in-progress: false
 
 permissions:
@@ -217,8 +238,8 @@ env:
 jobs:
   preflight:
     name: Validate compute deployment prerequisites
-    runs-on: ${{ inputs.hosted_runner && 'ubuntu-latest' || fromJSON('["self-hosted","linux","faas-fleet"]') }}
-    environment: production
+    runs-on: ${{ inputs.hosted_runner && 'ubuntu-latest' || fromJSON(inputs.deploy_environment == 'production-us' && '["self-hosted","linux","faas-fleet-us"]' || '["self-hosted","linux","faas-fleet"]') }}
+    environment: ${{ inputs.deploy_environment }}
     timeout-minutes: 5
     outputs:
       node: ${{ steps.resolve_batch.outputs.node || steps.resolve_bundle.outputs.node || steps.resolve_claim.outputs.node || steps.resolve_legacy.outputs.node }}
@@ -593,6 +614,7 @@ jobs:
       - name: Require an online trusted fleet runner
         env:
           GH_TOKEN: ${{ github.token }}
+          FLEET_RUNNER_LABEL: ${{ inputs.deploy_environment == 'production-us' && 'faas-fleet-us' || 'faas-fleet' }}
         run: |
           set -euo pipefail
           # The repository GITHUB_TOKEN may not have permission to enumerate
@@ -612,9 +634,9 @@ jobs:
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runners?per_page=100")"
           case "$http_status" in
             200)
-              count="$(jq '[.runners[] | select(.status == "online") | select((.labels | map(.name) | index("faas-fleet")) != null)] | length' "$response_file")"
+              count="$(jq --arg label "$FLEET_RUNNER_LABEL" '[.runners[] | select(.status == "online") | select((.labels | map(.name) | index($label)) != null)] | length' "$response_file")"
               if (( count < 1 )); then
-                echo "::error::no online self-hosted runner has the faas-fleet label" >&2
+                echo "::error::no online self-hosted runner has the ${FLEET_RUNNER_LABEL} label" >&2
                 echo "::error::bootstrap one with deploy/ansible/fleet_runner.yml before retrying" >&2
                 exit 1
               fi
@@ -633,8 +655,8 @@ jobs:
     name: Join or roll compute node ${{ needs.preflight.outputs.node }}
     needs: preflight
     if: needs.preflight.result == 'success'
-    environment: production
-    runs-on: [self-hosted, linux, faas-fleet]
+    environment: ${{ inputs.deploy_environment }}
+    runs-on: ${{ fromJSON(inputs.deploy_environment == 'production-us' && '["self-hosted","linux","faas-fleet-us"]' || '["self-hosted","linux","faas-fleet"]') }}
     timeout-minutes: 45
     env:
       RELEASE_TAG: ${{ inputs.release_tag }}

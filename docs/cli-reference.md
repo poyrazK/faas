@@ -1677,7 +1677,7 @@ Compare two named environments in the linked project
 
 Run an application scenario with real VMs or a local simulation
 
-`gregale test [--scenario <NAME>] [--validate] [--preflight] [--engine <ENGINE>] [--profile <PROFILE>] [--repeat <N>] [--max-workload-minutes <N>] [--manifest <PATH>] [--report <PATH>] [--junit <PATH>]`
+`gregale test [<subcommand>] [--scenario <NAME>] [--validate] [--preflight] [--engine <ENGINE>] [--profile <PROFILE>] [--repeat <N>] [--max-workload-minutes <N>] [--manifest <PATH>] [--report <PATH>] [--junit <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1695,10 +1695,29 @@ Run an application scenario with real VMs or a local simulation
 Examples:
 
 ```sh
+gregale test init --from openapi.yaml --project my-api
 gregale test --validate
 gregale test --scenario customer-export --preflight
 gregale test --scenario customer-export --profile restored --repeat 3 --max-workload-minutes 135 --report test-results.json --junit test-results.xml
 gregale test --scenario customer-export --engine simulated
+```
+
+### test init
+
+Create public GET smoke checks from a local OpenAPI document
+
+| Flag | Meaning | |
+|---|---|---|
+| `--from <PATH>` | local OpenAPI 3.0 or 3.1 document | required |
+| `--project <SLUG>` | Gregale project slug | required |
+| `--source <DIR>` | application source directory |  |
+| `--scenario <NAME>` | scenario name |  |
+| `--output <PATH>` | new manifest path |  |
+
+Examples:
+
+```sh
+gregale test init --from openapi.yaml --project my-api --source .
 ```
 
 

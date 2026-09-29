@@ -1,7 +1,8 @@
 # Application scenario tests
 
-`gregale test` deploys source into expiring developer sessions and runs the
-repository's own assertions through its public Gregale URL. Each lifecycle
+`gregale test` deploys source into expiring developer sessions and runs
+declarative HTTP checks or repository-owned assertion commands through its
+public Gregale URL. Each lifecycle
 profile gets a distinct run and, when requested, isolated managed PostgreSQL
 databases. The CLI destroys the sessions after the test, including after an
 assertion failure. The server lease is a backstop if the CLI process disappears.
@@ -70,6 +71,74 @@ scenarios:
     cleanup:
       - [node, test/fixtures/cleanup.mjs]
 ```
+
+## Native HTTP workflows
+
+For common API tests, declare requests directly. `requests` run after the
+lifecycle profile is prepared and before `wait_for`; `checks` run after
+`wait_for`. Steps in each list run in order. An assertion `command` remains
+optional for application-specific checks. A `trigger` command may also be used
+alongside native requests; it runs first.
+
+```yaml
+version: 1
+scenarios:
+  customer-export:
+    project: export-api
+    source: ./gateway
+    consumer_auth_mode: required
+    consumers:
+      - name: customer-a
+      - name: customer-b
+    requests:
+      - name: submit
+        as: customer-a
+        method: POST
+        path: /exports
+        json: {format: csv, run: '${run.id}'}
+        expect:
+          status: 202
+          content_type: application/json
+          json: {'/owner': customer-a}
+        capture: {export_id: '/id'}
+    checks:
+      - name: forbidden-read
+        as: customer-b
+        method: GET
+        path: /exports/${steps.submit.export_id}
+        expect: {status: 403}
+```
+
+`as` uses a short-lived Gregale consumer key declared under `consumers`.
+Application-owned identity still needs the application's own headers or
+fixtures. `expect.json` and `capture` use JSON Pointers such as `/result/id`;
+the latter accepts string, number, and boolean values. Captures can be used
+in later paths, headers, JSON bodies, and expectations. `${run.id}` supplies
+the isolated run ID. Captured values in paths and queries are URL escaped.
+The JSON report lists each request's name, method, path without query, status,
+duration, and result; it does not include response bodies or credentials.
+Native requests stay on the isolated app URL and do not follow redirects.
+Request and inspected response JSON are limited to 1 MiB each. Each request
+has a 30-second timeout within the scenario timeout.
+
+An asynchronous request may capture an invocation ID under the name used by
+`wait_for.invocations[].trigger_key`. The existing object, delivery, and queue
+wait conditions then run before `checks`. Native request steps run only with
+the `real-vm` engine; a local `--engine simulated` run still needs its own
+`simulation` command.
+
+To create a small starting manifest from an OpenAPI document:
+
+```sh
+gregale test init --from openapi.yaml --project export-api --source ./gateway
+gregale test --validate
+```
+
+The generator selects public GET routes with no path or required query
+parameters and a declared 2xx response. It adds status and JSON content-type
+checks where applicable, skips other operations, and never overwrites an
+existing manifest. Review the generated requests, then add authentication,
+fixtures, ownership, idempotency, and business assertions explicitly.
 
 Run all three profiles, or select one:
 

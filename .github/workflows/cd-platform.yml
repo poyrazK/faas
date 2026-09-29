@@ -9,6 +9,18 @@ name: cd-platform
 on:
   workflow_dispatch:
     inputs:
+      deploy_environment:
+        description: >-
+          GitHub environment holding the target fleet's secrets. Each
+          environment has its own trusted runner label: production uses
+          faas-fleet, production-us (gregale-prod, us-east1) uses
+          faas-fleet-us, so one fleet's runner never deploys the other.
+        required: false
+        default: production
+        type: choice
+        options:
+          - production
+          - production-us
       rollback_on_gate_failure:
         description: >-
           Roll the control plane back to the previous release when a
@@ -120,9 +132,9 @@ on:
         type: boolean
 
 concurrency:
-  # Keep this key release-independent. Two tags must never mutate the single
-  # production control plane or fleet at the same time.
-  group: production-platform-rollout
+  # Keep this key release-independent. Two tags must never mutate the same
+  # fleet at the same time; separate fleets (environments) are independent.
+  group: ${{ inputs.deploy_environment }}-platform-rollout
   cancel-in-progress: false
 
 permissions:
@@ -137,7 +149,7 @@ permissions:
 jobs:
   plan:
     name: Validate compute rollout targets
-    runs-on: ${{ inputs.hosted_runners && 'ubuntu-latest' || fromJSON('["self-hosted","linux","faas-fleet"]') }}
+    runs-on: ${{ inputs.hosted_runners && 'ubuntu-latest' || fromJSON(inputs.deploy_environment == 'production-us' && '["self-hosted","linux","faas-fleet-us"]' || '["self-hosted","linux","faas-fleet"]') }}
     outputs:
       targets: ${{ steps.matrix.outputs.targets }}
       batch_prepare: ${{ steps.matrix.outputs.batch_prepare }}
@@ -237,6 +249,7 @@ jobs:
     name: Control-plane stage
     uses: ./.github/workflows/cd-controlplane.yml
     with:
+      deploy_environment: ${{ inputs.deploy_environment }}
       hosted_runner: ${{ inputs.hosted_runners }}
       release_tag: ${{ inputs.release_tag }}
       maintenance_mode: ${{ inputs.maintenance_mode }}
@@ -248,6 +261,7 @@ jobs:
     if: inputs.compute_rollout_mode == 'phased' && needs.plan.outputs.batch_prepare == 'true'
     uses: ./.github/workflows/cd-compute.yml
     with:
+      deploy_environment: ${{ inputs.deploy_environment }}
       hosted_runner: ${{ inputs.hosted_runners }}
       release_tag: ${{ inputs.release_tag }}
       compute_targets: ${{ needs.plan.outputs.targets }}
@@ -271,6 +285,7 @@ jobs:
         target: ${{ fromJSON(needs.plan.outputs.targets) }}
     uses: ./.github/workflows/cd-compute.yml
     with:
+      deploy_environment: ${{ inputs.deploy_environment }}
       hosted_runner: ${{ inputs.hosted_runners }}
       release_tag: ${{ inputs.release_tag }}
       pki_source: ${{ inputs.compute_pki_source }}
@@ -302,6 +317,7 @@ jobs:
         target: ${{ fromJSON(needs.plan.outputs.targets) }}
     uses: ./.github/workflows/cd-compute.yml
     with:
+      deploy_environment: ${{ inputs.deploy_environment }}
       hosted_runner: ${{ inputs.hosted_runners }}
       release_tag: ${{ inputs.release_tag }}
       pki_source: ${{ inputs.compute_pki_source }}
@@ -324,8 +340,8 @@ jobs:
     name: Report fleet release convergence
     if: always()
     needs: [control, compute-prepare, compute-prepare-compat, compute, plan]
-    runs-on: ${{ inputs.hosted_runners && 'ubuntu-latest' || fromJSON('["self-hosted","linux","faas-fleet"]') }}
-    environment: production
+    runs-on: ${{ inputs.hosted_runners && 'ubuntu-latest' || fromJSON(inputs.deploy_environment == 'production-us' && '["self-hosted","linux","faas-fleet-us"]' || '["self-hosted","linux","faas-fleet"]') }}
+    environment: ${{ inputs.deploy_environment }}
     # Initial parallel deploys, bounded serial coverage follow-ups, and the
     # zero-downtime redeploy can exceed 45 minutes without any gate failing.
     timeout-minutes: 90

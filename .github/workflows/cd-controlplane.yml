@@ -26,6 +26,15 @@ name: cd-controlplane
 on:
   workflow_call:
     inputs:
+      deploy_environment:
+        description: >-
+          GitHub environment holding the target fleet's secrets. Each
+          environment has its own trusted runner label: production uses
+          faas-fleet, production-us (gregale-prod, us-east1) uses
+          faas-fleet-us, so one fleet's runner never deploys the other.
+        required: false
+        default: production
+        type: string
       release_tag:
         description: "Existing pre-1.0 release tag published by release.yml"
         required: true
@@ -43,6 +52,18 @@ on:
         default: false
   workflow_dispatch:  # manual trigger for deliberate deployment
     inputs:
+      deploy_environment:
+        description: >-
+          GitHub environment holding the target fleet's secrets. Each
+          environment has its own trusted runner label: production uses
+          faas-fleet, production-us (gregale-prod, us-east1) uses
+          faas-fleet-us, so one fleet's runner never deploys the other.
+        required: false
+        default: production
+        type: choice
+        options:
+          - production
+          - production-us
       release_tag:
         description: "Existing pre-1.0 release tag published by release.yml (for example v0.1.18-rc.1)"
         required: true
@@ -60,7 +81,7 @@ on:
         default: false
 
 concurrency:
-  group: cd-cp-${{ inputs.release_tag }}
+  group: cd-cp-${{ inputs.deploy_environment }}-${{ inputs.release_tag }}
   # A production deployment must finish or fail visibly; cancelling it
   # midway can leave binaries, migrations, and systemd state out of sync.
   cancel-in-progress: false
@@ -71,10 +92,10 @@ permissions:
 jobs:
   deploy:
     name: Deploy to Control Plane Host
-    environment: production
+    environment: ${{ inputs.deploy_environment }}
     # The dedicated fleet runner does not queue behind repository CI the way
     # GitHub-hosted runners do (a busy CI day added 8-14 min per hosted job).
-    runs-on: ${{ inputs.hosted_runner && 'ubuntu-latest' || fromJSON('["self-hosted","linux","faas-fleet"]') }}
+    runs-on: ${{ inputs.hosted_runner && 'ubuntu-latest' || fromJSON(inputs.deploy_environment == 'production-us' && '["self-hosted","linux","faas-fleet-us"]' || '["self-hosted","linux","faas-fleet"]') }}
     env:
       CP_HOST: ${{ secrets.CP_HOST || secrets.DO_HOST }}
       CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
