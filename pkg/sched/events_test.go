@@ -1,6 +1,6 @@
 package sched
 
-// adr: 343 — a rejected before_checkpoint callback has a closed park reason.
+// adr: 351 — a rejected before_checkpoint callback has a closed park reason.
 
 import (
 	"context"
