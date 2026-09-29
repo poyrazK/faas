@@ -127,3 +127,29 @@ The final full gateway suite passed in 52.420 seconds. The API/gateway lint
 invocation hit temporary local disk exhaustion while compiling the API test
 dependency; this is recorded separately from code verification.
 The narrowed gateway lint run then passed with zero findings.
+
+Managed ordinary HTTP deadline transport is implemented with a target-bound,
+purpose-derived MAC carrier and the existing shared session master key. MAC
+verification precedes source-instance lookup so identity, discovery,
+authorization and wake all inherit its deadline. Resolved app/account checks
+still precede wake; child binding timeouts and retries cannot extend the
+absolute parent deadline. Missing material refuses configured protection,
+and no ephemeral or unsigned fallback is used. Public claims are stripped.
+Node and Python helpers capture isolated request context, propagate it to
+managed service hosts/aliases, and remove it on external hops. Node signed
+calls return redirects; HTTPX guards each redirect. The loader no longer
+logs credential-file contents.
+
+The real local A-to-B-to-C HTTP fixture passed with a 300 ms root budget and
+longer child timeouts, including leaf cancellation. Retry, identity lookup,
+discovery, authorization, wake, invalid/ambiguous/audience/account refusal and
+missing-key tests passed. Source-instance resolution and VM ownership were
+fixtures. The full gateway suite passed in 52.950 seconds; focused gateway
+and token suites passed after moving authentication ahead of identity lookup.
+The full internal-gateway command suite passed in 4.693 seconds. Node build
+and six context tests passed; Python's six context/redirect tests and Ruff
+passed. The pinned Go linter passed for gateway, token and internal-gateway
+code with zero findings. Cross-node clocks, key rotation, blocked downstream
+write coverage, native VM/network/leak, full policy revocation/preview and
+customer release/rollout evidence remain pending. All six guarantees remain
+unchecked.

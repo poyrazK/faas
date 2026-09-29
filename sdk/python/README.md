@@ -153,7 +153,7 @@ set its result on the 401 response using your framework.
 
 For app-to-app calls, wrap the ASGI application in
 `GregaleReleaseMiddleware` and use a release-aware HTTPX transport for calls
-to managed services. The transport forwards only `X-Gregale-Release` and
+to managed services. The transport forwards `X-Gregale-Release` and
 strips the caller-scoped `X-Gregale-Revision` header on those hops:
 
 ```python
@@ -170,6 +170,17 @@ async def call_billing():
 The middleware scopes context to each HTTP or WebSocket request. The proxy
 still verifies release membership from the caller deployment's network
 identity; the header is context, not authorization.
+
+For ordinary HTTP requests, the middleware also captures the signed
+`X-Gregale-Request-Deadline`. Managed `.svc.gregale` and declared `.internal`
+calls carry that request's deadline; a downstream override cannot replace it.
+The gateway verifies the carrier before wake and preserves its absolute
+deadline across retries. External calls, including redirected requests, have
+the private carrier removed. A synchronous handler can use
+`with_gregale_request_context(dict(request.headers))` with
+`GregaleReleaseTransport`. Calls without context propagation are unlinked to
+the parent deadline. Complete-path acceptance remains pending; see
+[the deadline contract](../../docs/ops/traffic-total-deadline.md).
 
 ## Advanced customizations
 

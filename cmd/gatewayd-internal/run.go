@@ -79,6 +79,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/trace"
+	"github.com/onebox-faas/faas/pkg/trafficdeadline"
 	"github.com/onebox-faas/faas/pkg/usageoutbox"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -976,7 +977,8 @@ type runDeps struct {
 	// session cookie. cmd/apid shares the same construct; the two
 	// daemons are independent processes so the AEAD keys are loaded
 	// separately per daemon. nil in tests.
-	sessions *session.Manager
+	sessions         *session.Manager
+	trafficDeadlines *trafficdeadline.Signer
 	// hostKeyDir (issue #477 / ADR-079) is the directory
 	// secretbox.LoadHostKeys reads from to build the
 	// multi-identity rotation-overlap slice for the basic-auth
@@ -2003,6 +2005,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("gatewayd: session manager init failed")
 	}
 	deps.sessions = sessions
+	deps.trafficDeadlines, err = loadTrafficDeadlineSigner(osGetenv)
+	if err != nil {
+		return fmt.Errorf("gatewayd: traffic deadline signer init: %w", err)
+	}
 	deps.apiAuthLimiter = middleware.NewLimiter(middleware.AuthLimitConfig{Log: log})
 	deps.audit = audit.New(pgStore, log, nil, "gatewayd")
 	deps.authMw = authmw.New(
@@ -2407,7 +2413,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	retryBudget.WithObserver(deps.metrics)
 	defer func() { _ = retryBudget.Close() }()
-	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log).WithRetryBudget(retryBudget)
+	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log).WithRetryBudget(retryBudget).WithTrafficDeadlines(deps.trafficDeadlines)
 	if strings.EqualFold(strings.TrimSpace(osGetenv("FAAS_REQUEST_AUDIT_ENABLED")), streamingFlagTrue) {
 		handler.WithRequestAudit(true)
 	}
@@ -3459,12 +3465,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		pgStore := deps.pgStore
 		guestServiceAliasAllowed = newServiceAliasAllowed(pgStore)
 		serviceProxyConfig := gateway.ServiceProxyConfig{
-			Provider:   serviceEndpointProvider,
-			Resolve:    newServiceProxyResolver(pgStore),
-			Authorize:  newServiceProxyAuthorizer(pgStore),
-			AllowAlias: guestServiceAliasAllowed,
-			Forward:    deps.nodeCache.Forwarding(),
-			RawForward: deps.nodeCache.RawForwarding(),
+			TrafficDeadlines: deps.trafficDeadlines,
+			Provider:         serviceEndpointProvider,
+			Resolve:          newServiceProxyResolver(pgStore),
+			Authorize:        newServiceProxyAuthorizer(pgStore),
+			AllowAlias:       guestServiceAliasAllowed,
+			Forward:          deps.nodeCache.Forwarding(),
+			RawForward:       deps.nodeCache.RawForwarding(),
 			// ADR-196: a call to a parked internal service must hold and
 			// wake exactly like a public request does. Without this seam a
 			// scale-to-zero internal service 503s on every cold call, which

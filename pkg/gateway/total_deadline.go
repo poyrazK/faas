@@ -9,6 +9,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
+	"github.com/onebox-faas/faas/pkg/trafficdeadline"
 )
 
 // This header exists only on the protected public-to-internal transport.
@@ -24,6 +25,7 @@ func stampTrafficStart(r *http.Request) {
 		started = time.Now()
 	}
 	r.Header.Set(trafficStartedHeader, strconv.FormatInt(started.UnixNano(), 10))
+	r.Header.Del(trafficdeadline.Header)
 }
 
 // TrustedTrafficIngress belongs exclusively on the private compute listener.
@@ -73,6 +75,10 @@ func (h *Handler) applyTotalDeadline(w http.ResponseWriter, r *http.Request, app
 	if rule == nil || rule.AccountID != app.AccountID || rule.TotalDeadlineMs <= 0 {
 		return false
 	}
+	if h.trafficDeadlines == nil {
+		writeTrafficDeadlineError(w, r, trafficdeadline.ErrUnavailable)
+		return true
+	}
 	pinned := *rule
 	ctx := context.WithValue(r.Context(), totalDeadlineBudgetKey{}, pinned)
 	started, _ := StartTimeFromContext(ctx)
@@ -80,6 +86,7 @@ func (h *Handler) applyTotalDeadline(w http.ResponseWriter, r *http.Request, app
 	ctx, cancel, _ := reqbudget.WithStarted(ctx, started, time.Duration(rule.TotalDeadlineMs)*time.Millisecond,
 		limits.RequestBudgetMaxDuration(), "forward", r.Method+":"+r.URL.Path)
 	rememberBudgetCancel(r, ctx, cancel)
+	*r = *r.WithContext(newManagedDeadlineChain(r.Context(), app.AccountID))
 	if requestBudgetExpired(r.Context()) {
 		writeRequestBudgetExceededForRequest(w, r)
 		return true

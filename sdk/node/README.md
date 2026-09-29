@@ -262,8 +262,8 @@ lookup value after either an unknown account or an incorrect credential.
 ## Project release context
 
 Capture the release selected for an inbound Gregale request and use the
-wrapped fetch for outbound managed service calls. The helper forwards only
-`X-Gregale-Release` to `*.svc.gregale` and removes the caller-scoped
+wrapped fetch for outbound managed service calls. The helper forwards
+`X-Gregale-Release` to `*.svc.gregale` and declared `*.internal` aliases, and removes the caller-scoped
 `X-Gregale-Revision` header on that hop:
 
 ```ts
@@ -281,6 +281,17 @@ async function checkout(request: Request) {
 The async context is isolated between concurrent handlers. Use it only around
 work caused by that inbound request; detached background jobs should capture
 the release explicitly when they are enqueued.
+
+The same request helper captures Gregale's signed `X-Gregale-Request-Deadline`
+for participating ordinary HTTP chains. Managed calls carry the current
+request's deadline even if a downstream header tries to override it. The
+gateway verifies it before wake and preserves the absolute deadline across
+retries. External calls have this private carrier removed. Signed managed
+calls return redirects for you to follow explicitly through `serviceFetch`;
+they never automatically forward the carrier to a redirect destination.
+Omitting the helper or carrier makes a call unlinked to the parent deadline.
+The platform's complete-path acceptance is still pending; see
+[the deadline contract](../../docs/ops/traffic-total-deadline.md).
 
 ### Browser SPA release pinning
 

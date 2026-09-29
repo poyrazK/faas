@@ -15,9 +15,15 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/trafficdeadline"
 )
 
 func setTotalBudget(h *Handler, app App, ms int) {
+	signer, err := trafficdeadline.New(bytes.Repeat([]byte{42}, 32), nil)
+	if err != nil {
+		panic(err)
+	}
+	h.WithTrafficDeadlines(signer)
 	h.WithEdgeRules(uploadBudgetMatcher{rule: &EdgeRuleBudgetResolved{
 		ID: "total", AccountID: app.AccountID, AppID: app.ID, BudgetMs: 1000, TotalDeadlineMs: ms,
 	}}, nil, nil)

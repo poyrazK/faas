@@ -26,6 +26,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/circuit"
 	"github.com/onebox-faas/faas/pkg/dependencytrace"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
+	"github.com/onebox-faas/faas/pkg/trafficdeadline"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
@@ -268,7 +269,8 @@ type ServiceProxyConfig struct {
 	RetryPolicy RetryPolicy
 	// RetryBudget may be shared with the public handler so all platform-
 	// generated retries for an app draw from the same aggregate allowance.
-	RetryBudget *RetryBudget
+	RetryBudget      *RetryBudget
+	TrafficDeadlines *trafficdeadline.Signer
 }
 
 // ServiceProxy is an HTTP service-name router backed by the gateway's live
@@ -295,9 +297,10 @@ type ServiceProxy struct {
 	now                   func() time.Time
 	log                   *slog.Logger
 
-	breaker     *circuit.Group
-	retryPolicy RetryPolicy
-	retryBudget *RetryBudget
+	breaker          *circuit.Group
+	retryPolicy      RetryPolicy
+	retryBudget      *RetryBudget
+	trafficDeadlines *trafficdeadline.Signer
 
 	mu        sync.Mutex
 	snapshots map[string]serviceProxySnapshot
@@ -393,6 +396,7 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		breaker:               breaker,
 		retryPolicy:           retryPolicy,
 		retryBudget:           retryBudget,
+		trafficDeadlines:      cfg.TrafficDeadlines,
 		snapshots:             make(map[string]serviceProxySnapshot),
 		next:                  make(map[string]uint64),
 		nextSeen:              make(map[string]time.Time),
@@ -404,6 +408,7 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 // <service>.internal alias. The service segment is resolved to an app; the
 // remaining path is forwarded unchanged.
 func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	defer func() { cancelStampedRequestBudget(r.Context()) }() //nolint:contextcheck // release every timer on the final rebound request context.
 	dependencyStarted := p.now()
 	service, targetPath, alias, ok := parseServiceProxyRequest(r)
 	if !ok {
@@ -481,6 +486,10 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		dependencySpan.End()
 	}()
 	r = r.WithContext(dependencyCtx)
+	if p.consumeManagedDeadline(dispatchWriter, r) {
+		return
+	}
+	dependencyCtx = r.Context()
 	caller := strings.TrimSpace(r.Header.Get(ServiceProxyCallerAppHeader))
 	callerDeploymentID := ""
 	if p.resolveCallerIdentity != nil || p.resolveCaller != nil {
@@ -492,6 +501,9 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			resolved, err = p.resolveCaller(dependencyCtx, r.RemoteAddr)
 		}
 		if err != nil {
+			if handleForwardRequestCancellation(dispatchWriter, r, true) {
+				return
+			}
 			p.metrics.IncServiceCall(ServiceCallUnauthenticated)
 			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "caller identity is unavailable")
 			return
@@ -513,6 +525,9 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		serviceProxyProblem(dispatchWriter, http.StatusUnauthorized, "caller identity is required")
 		return
 	}
+	if validateManagedDeadlineCaller(dispatchWriter, r, caller) {
+		return
+	}
 	setProbeStage("binding")
 	if alias {
 		if p.allowAlias == nil {
@@ -521,6 +536,9 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		allowed, err := p.allowAlias(dependencyCtx, caller, service)
 		if err != nil {
+			if handleForwardRequestCancellation(dispatchWriter, r, true) {
+				return
+			}
 			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service alias authorization is unavailable")
 			return
 		}
@@ -533,6 +551,9 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	setProbeStage("discovery")
 	target, err := p.resolveTarget(dependencyCtx, caller, service)
 	if err != nil {
+		if handleForwardRequestCancellation(dispatchWriter, r, true) {
+			return
+		}
 		if errors.Is(err, ErrServiceProxyNotFound) {
 			p.metrics.IncServiceCall(ServiceCallNotFound)
 			serviceProxyProblem(dispatchWriter, http.StatusNotFound, "service is not registered")
@@ -550,6 +571,9 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	dependencySpan.SetAttributes(attribute.String("gregale.service.target_app_id", target.AppID))
 	callerInfo, err := p.authorize(dependencyCtx, caller, target.AppID)
 	if err != nil {
+		if handleForwardRequestCancellation(dispatchWriter, r, true) {
+			return
+		}
 		if errors.Is(err, ErrServiceProxyPreviewProductionDenied) {
 			p.metrics.IncServiceCall(ServiceCallPreviewDenied)
 			api.WriteProblem(dispatchWriter, api.NewProblem(
@@ -589,17 +613,26 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		callerInfo.DeploymentID = callerDeploymentID
 	}
 	dependencyHealthCaller = callerInfo
+	if validateManagedDeadlineAccount(dispatchWriter, r, callerInfo.AccountID) {
+		return
+	}
 	if callerInfo.AppID != "" {
 		// This identity is sourced from the tenant authorizer and stamped only
 		// after authorization, so trace search cannot trust a guest header.
 		dependencySpan.SetAttributes(attribute.String("gregale.service.caller_app_id", callerInfo.AppID))
 	}
 	if callerInfo.Reliability != nil && callerInfo.Reliability.TimeoutMS > 0 {
+		if p.trafficDeadlines == nil || callerInfo.AccountID == "" {
+			writeTrafficDeadlineError(dispatchWriter, r, trafficdeadline.ErrUnavailable)
+			return
+		}
 		callTimeout := time.Duration(callerInfo.Reliability.TimeoutMS) * time.Millisecond
+		callTimeout = min(callTimeout, time.Duration(api.MaxServiceReliabilityTimeoutMS)*time.Millisecond)
 		boundedCtx, cancel, _ := reqbudget.WithRemaining(dependencyCtx, callTimeout, callTimeout, "service_proxy", target.AppID)
 		defer cancel()
 		dependencyCtx = boundedCtx
-		r = r.WithContext(boundedCtx)
+		r = r.WithContext(newManagedDeadlineChain(boundedCtx, callerInfo.AccountID))
+		dependencyCtx = r.Context()
 	}
 	// Only the authorizer can establish the tenant identity. Stamp it after a
 	// successful authorization so the in-process retained-span exporter can
@@ -1020,8 +1053,14 @@ func (p *ServiceProxy) pruneIdle(now time.Time) {
 // itself and reports served=false when nothing is routable, so ServeHTTP
 // stays within the handler-length convention.
 func (p *ServiceProxy) routableEndpoints(w http.ResponseWriter, r *http.Request, appID, deploymentID string) (_ []ServiceEndpoint, woken, served bool) {
+	if handleForwardRequestCancellation(w, r, true) {
+		return nil, false, false
+	}
 	endpoints, err := p.endpoints(r.Context(), appID)
 	if err != nil {
+		if handleForwardRequestCancellation(w, r, true) {
+			return nil, false, false
+		}
 		p.metrics.IncServiceCall(ServiceCallRegistryUnavailable)
 		serviceProxyProblem(w, http.StatusServiceUnavailable, "service endpoint registry is unavailable")
 		return nil, false, false
@@ -1032,6 +1071,9 @@ func (p *ServiceProxy) routableEndpoints(w http.ResponseWriter, r *http.Request,
 	}
 	endpoints, err = p.wakeAndRefresh(r.Context(), appID, deploymentID)
 	if err != nil {
+		if handleForwardRequestCancellation(w, r, true) {
+			return nil, false, false
+		}
 		p.writeWakeFailure(w, appID, err)
 		return nil, false, false
 	}
@@ -1161,6 +1203,7 @@ func (p *ServiceProxy) guestRequest(r *http.Request, targetPath string, target S
 	request.RequestURI = ""
 	request.Header = r.Header.Clone()
 	request.Header.Del("x-faas-stream")
+	request.Header.Del(trafficdeadline.Header)
 	request.Header.Del(ServiceProxyCallerAppHeader)
 	// An override applies only to this resolved binding. Forwarding it would
 	// unintentionally pin a later service hop to this app's deployment ID.
@@ -1309,6 +1352,9 @@ func (w *serviceProxyUpgradeProbeWriter) Unwrap() http.ResponseWriter { return w
 func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, endpoints []ServiceEndpoint) {
 	appID := target.AppID
 	request := p.guestRequest(r, targetPath, target, caller)
+	if serviceGuestProtocol(target) != "grpc" && stampManagedDeadline(w, request, p.trafficDeadlines, target.AppID, caller.AccountID) {
+		return
+	}
 	policy := p.retryPolicy
 	if override := caller.Reliability; override != nil {
 		if override.MaxAttempts > 0 {

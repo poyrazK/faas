@@ -36,6 +36,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/sched"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
+	"github.com/onebox-faas/faas/pkg/trafficdeadline"
 	"github.com/onebox-faas/faas/pkg/usageoutbox"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -1116,7 +1117,8 @@ type Handler struct {
 	retryObs retryObserver
 	// retryBudget caps aggregate replay amplification per app. It is shared
 	// with internal service forwarding in production.
-	retryBudget *RetryBudget
+	retryBudget      *RetryBudget
+	trafficDeadlines *trafficdeadline.Signer
 	// streamingWarned is the once-per-process log dedup for the
 	// buffered-fallback deprecation. Keyed on (appID, content-type) so
 	// the first instance of an SSE-emitting app under the flag-off
@@ -5549,6 +5551,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// detachable response and escape its deadline.
 	r.Header.Del("x-faas-stream")
 	r.Header.Del("x-faas-protocol")
+	r.Header.Del(trafficdeadline.Header)
 	// Managed realtime is a separate connection owner. Route it before the
 	// normal request bookkeeping and drain tracker so a quiet socket does not
 	// hold an application request slot or wake/parking lease for its lifetime.
@@ -6841,6 +6844,11 @@ haveApp:
 	// routing, and per-VM capacity admission have completed. From this point it
 	// bounds the guest forward path and all propagated downstream calls.
 	h.applyEdgeRuleBudget(w, r, app)
+	r.Header.Del(trafficdeadline.Header)
+	if !isUpgradeRequest(r) && decideProtocol(app) != "grpc" && !streamingFor(h, r, app) && stampManagedDeadline(w, r, h.trafficDeadlines, app.ID, app.AccountID) {
+		h.observe(r, rec.status, app.ID, string(app.Plan), cold, target)
+		return
+	}
 
 	// Stamp the per-instance identity on the request BEFORE proxying so
 	// the per-node vmmd forwarder (issue #98 / ADR-028) can attribute
