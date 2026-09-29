@@ -23,7 +23,9 @@ lookup time is charged once the rule is resolved; lookup still has the existing
 platform envelope and store timeouts before the customer policy is known.
 
 Before response commitment, expiry returns 504 with
-`code: request_budget_exceeded`. Expiry during upload closes the original body,
+`code: request_budget_exceeded`. Its best-effort socket write has a separate
+100 ms allowance after expiry; a client that cannot receive it may see a
+transport error. Expiry during upload closes the original body,
 removes any spool file and prevents wake admission. Shared wake work may remain
 bounded for other waiters. Ordinary responses abort on expiry after commitment;
 the client sees a transport error for a truncated body rather than a clean
@@ -36,6 +38,22 @@ cancellation bounds its handshake. Client cancellation remains effective.
 Public and managed-service callers cannot author the internal streaming
 control: the gateway clears caller flags and selects from the app protocol
 and its streaming policy.
+
+The protected compute response carries its absolute deadline and successful
+session decision to the public proxy. The proxy takes the earlier of its own
+deadline and the compute deadline and removes both private response controls.
+Guest headers, edge header actions, content types and trailers cannot opt an
+ordinary response into detachment. Invalid or ambiguous deadline metadata
+refuses the response before commitment.
+
+Socket/HTTP2-stream write deadlines and context cancellation release a copier
+blocked on a client that has stopped reading, as well as one blocked reading
+the guest. Cleanup joins the copier before releasing handler ownership.
+Non-101 Upgrade refusals use the same ordinary response controls.
+
+Roll out the compute gateway before the public gateway: the new public proxy
+requires the compute-authored private session decision to detach a streaming
+or gRPC handshake. An older compute gateway cannot supply that decision.
 
 ## Managed HTTP chains
 
@@ -84,7 +102,11 @@ used. The token proves a bounded deadline, not service authorization.
 
 Clocks must be synchronized. An apparent future issue time is refused, and
 coordinated master-key rotation can refuse old in-flight tokens. Cross-node
-clock/transport/key-rotation acceptance, blocked downstream write coverage,
-overload/complete-path integration and rollout evidence remain required.
+clock/transport/key-rotation acceptance, overload/complete-path integration
+and rollout evidence remain required. Local real HTTP/1, HTTP/2 and gRPC
+slow-reader checks passed, including the public production wrapper chain,
+rejected Upgrade, cancellation without a deadline, source close and request/RPC
+cleanup while the stalled client connection remained open. These fixtures do
+not establish native VM/network or deployed acceptance.
 Detached work, arbitrary guest sockets and background computation after a
 disconnect are outside this request deadline.

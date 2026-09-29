@@ -544,11 +544,14 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		}
 		if init := frame.GetInit(); init != nil && !wroteHeader {
 			recordForwardedFirstByte(r.Context())
+			if !isLongLivedForward(r) || init.GetStatus() >= http.StatusBadRequest {
+				defer guardResponseWrites(ctx, w)()
+			}
 			for _, h := range init.GetHeaders() {
 				forwardedResponseHeader(r.Context(), w.Header(), h.GetName(), h.GetValue())
 			}
 			for _, trailer := range init.GetTrailers() {
-				if name := strings.TrimSpace(trailer.GetName()); name != "" {
+				if name := strings.TrimSpace(trailer.GetName()); name != "" && !isTrafficResponseControlHeader(name) {
 					w.Header().Add("Trailer", name)
 				}
 			}
@@ -619,6 +622,9 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 					"node", t.NodeID, "err", werr.Error())
 				cancel()
 				<-bodyErrCh
+				if !budgetDetached && requestBudgetExpired(r.Context()) {
+					panic(http.ErrAbortHandler)
+				}
 				return
 			}
 		}
@@ -923,6 +929,9 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		}
 		if init := frame.GetInit(); init != nil && !wroteHeader {
 			recordForwardedFirstByte(r.Context())
+			if init.GetStatus() != http.StatusSwitchingProtocols {
+				defer guardResponseWrites(ctx, w)()
+			}
 			for _, h := range init.GetHeaders() {
 				forwardedResponseHeaderWithUpgrade(r.Context(), w.Header(), h.GetName(), h.GetValue(), init.GetStatus() == http.StatusSwitchingProtocols)
 			}

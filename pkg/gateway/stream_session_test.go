@@ -95,6 +95,9 @@ func TestIsLongLivedResponse(t *testing.T) {
 	} {
 		h := make(http.Header)
 		h.Set(api.StreamingStatusHeader, tc.status)
+		if tc.status == string(api.StreamingStatusStreaming) || tc.status == string(api.StreamingStatusUpgradeBypass) {
+			h.Set(trafficResponseSessionHeader, "long-lived")
+		}
 		if got := isLongLivedResponse(tc.statusCode, h); got != tc.want {
 			t.Errorf("status %q: isLongLivedResponse = %v, want %v", tc.status, got, tc.want)
 		}

@@ -7367,6 +7367,9 @@ const (
 	// 300 s stdlib WriteTimeout as the request budget. Per-plan max
 	// lives on Limits.RequestBudgetMaxMs; 0 falls back here.
 	RequestBudgetMax = 30 * time.Second
+	// RequestBudgetErrorWriteTimeout bounds best-effort delivery of a 504
+	// generated after a request deadline, before any response was committed.
+	RequestBudgetErrorWriteTimeout = 100 * time.Millisecond
 	// RequestBudgetApidDefault is the apid-side default budget.
 	// apid serves dashboards + admin + sync-invoke long-polls that
 	// are already capped at 910 s upstream (fwdStream) so 5 s is

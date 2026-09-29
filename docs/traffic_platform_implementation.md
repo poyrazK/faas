@@ -107,6 +107,26 @@ policy coverage, simulator agreement, nested deadline transport and customer
 release/acceptance evidence remain outstanding; all six guarantees are still
 unchecked.
 
+Blocked response writes are now bounded at compute and public HTTP hops. A
+protected compute response carries the earlier deadline and successful session
+decision; public ingress consumes these controls without exposing them. Guest
+headers, edge header actions, Content-Type and late trailers cannot detach an
+ordinary response. Invalid/ambiguous compute metadata refuses before response
+commitment. Socket/HTTP2-stream deadlines and joined cancellation callbacks
+release downstream writers as well as upstream reads. A pre-commit 504 has a
+100 ms best-effort error-write allowance; a committed body is aborted.
+
+Real HTTP/1 and HTTP/2 slow-reader fixtures passed through public production
+wrappers, the actual routing handler, compute transport and real gRPC forwarding;
+a rejected Upgrade and cancellation without a deadline also released ownership
+while the unread client connection stayed open. Forgery and late-trailer,
+invalid-metadata and deadline-containment checks passed. The full gateway suite
+passed in 55.213 seconds, subsequent focused tests passed, and the full internal
+gateway command suite passed in 4.703 seconds. The pinned gateway linter reported
+zero findings. Compute must roll out before public for the new
+private session decision. Native/deployed, cross-node clock/key-rotation, policy
+revocation/preview and customer-release evidence remain pending.
+
 The Linux bridge parent-death/process-group sources and their tests compiled
 as an isolated, source-identical Linux amd64 test binary. That was a compile
 check only; neither the tests nor native acceptance ran. The request snapshot

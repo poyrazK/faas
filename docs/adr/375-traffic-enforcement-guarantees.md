@@ -81,6 +81,23 @@ partial success body cannot appear complete. A detachable session exposes its
 independent ceiling to gRPC, while its context cancellation bounds the handshake.
 This prevents gRPC's remote timeout from retaining a detached handshake deadline.
 
+The protected compute response carries its absolute deadline in
+`X-Faas-Traffic-Response-Deadline` and its successful long-lived decision in
+`X-Faas-Traffic-Response-Session`. These are platform-owned transport metadata:
+guest headers and trailers cannot author them, and the public proxy consumes
+and removes them. The public proxy takes the earlier of its own deadline and
+the compute deadline. An invalid or ambiguous deadline refuses the response
+before commitment. Only a successful platform-authored session may detach the
+handshake budget; a guest Content-Type cannot enable detachment.
+
+Both HTTP hops install a socket/HTTP2-stream write deadline before committing
+an ordinary response and interrupt a blocked write when its context is canceled.
+Body-copy cleanup waits for the writer to exit after interrupting both source
+reads and destination writes. An expiry before commitment may send the canonical
+504 using a bounded 100 ms best-effort error-write allowance; a committed body
+is aborted without appending a problem document. Standard Go HTTP/1 and HTTP/2
+server writers, including the production wrapper chains, support these controls.
+
 Streaming/upgrade handshake time is bounded until successful response
 commitment, after which the established idle/session contract applies. An
 expired waiter may leave bounded shared wake work running for other waiters.

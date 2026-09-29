@@ -78,7 +78,7 @@ func (s *deadlineForwardServer) ForwardRawStream(stream grpc.BidiStreamingServer
 	}
 }
 
-func newDeadlineForwardClient(t *testing.T, fixture *deadlineForwardServer) vmmdpb.VmmdClient {
+func newDeadlineForwardClient(t *testing.T, fixture vmmdpb.VmmdServer) vmmdpb.VmmdClient {
 	t.Helper()
 	listener := bufconn.Listen(1024 * 1024)
 	server := grpc.NewServer()
@@ -94,6 +94,8 @@ func newDeadlineForwardClient(t *testing.T, fixture *deadlineForwardServer) vmmd
 }
 
 type flushDeadlineWriter struct{ http.ResponseWriter }
+
+func (w flushDeadlineWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 func (w flushDeadlineWriter) Write(p []byte) (int, error) {
 	n, err := w.ResponseWriter.Write(p)

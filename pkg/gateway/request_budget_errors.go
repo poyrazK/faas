@@ -34,6 +34,9 @@ func requestBudgetExpired(ctx context.Context) bool {
 // body: a Cloudflare Worker can preserve/reconstruct the body while
 // distinguishing this platform-owned timeout from a genuine CDN failure.
 func writeRequestBudgetExceededForRequest(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(context.Background(), api.RequestBudgetErrorWriteTimeout)
+	defer cancel()
+	defer guardResponseWrites(ctx, w)() //nolint:contextcheck // best-effort error delivery has its own bounded allowance after the request has expired.
 	// Avoid Header.Add here. gatewayd-internal stamps the request id before
 	// this path and duplicate correlation headers make clients disagree about
 	// which value to log.

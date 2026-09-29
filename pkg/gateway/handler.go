@@ -5261,6 +5261,8 @@ func (c *capWriter) ProblemHTMLRequest() *http.Request {
 	return nil
 }
 
+func (c *capWriter) Unwrap() http.ResponseWriter { return c.ResponseWriter }
+
 func (c *capWriter) Write(b []byte) (int, error) {
 	if c.disabled.Load() {
 		return 0, http.ErrHandlerTimeout
@@ -5578,6 +5580,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Status-class capture (used for metrics + slog). Doesn't buffer the body
 	// or alter the headers — strictly observability.
 	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK, request: r}
+	rec.trafficResponseContext = func() context.Context { return r.Context() }
+	rec.trafficResponseLongLived = func(code int) bool {
+		return (code == http.StatusSwitchingProtocols && isUpgradeRequest(r)) ||
+			(code >= http.StatusOK && code < http.StatusBadRequest && isLongLivedForward(r))
+	}
+	defer rec.stopTrafficResponse()
 	w = rec
 	// Semantic request span. The public listener already creates an inbound
 	// otelhttp span, but gatewayd-internal also serves the handler directly in
@@ -7044,6 +7052,7 @@ haveApp:
 	// doesn't go in the header — that's surfaced via the SDK
 	// probe at GET /v1/apps/{slug}/streaming-cap (D6).
 	w.Header().Set(api.StreamingStatusHeader, string(decision.Status))
+	rec.trafficStreamingStatus = decision.Status
 
 	// Advisory header (ADR-102 D3). One-cycle hint for pinned-SDK
 	// customers whose Accept defaults to application/json. The
@@ -8089,12 +8098,17 @@ func (h *Handler) preInstantiateAppRoute(appID, routeLabel string) {
 // streaming path).
 type statusRecorder struct {
 	http.ResponseWriter
-	status                int
-	wroteHeader           bool
-	request               *http.Request
-	Bytes                 int64
-	ContentType           string
-	trafficPolicyRevision string
+	status                   int
+	wroteHeader              bool
+	request                  *http.Request
+	Bytes                    int64
+	ContentType              string
+	trafficPolicyRevision    string
+	trafficStreamingStatus   api.StreamingStatus
+	trafficResponseContext   func() context.Context
+	trafficResponseLongLived func(int) bool
+	trafficResponseStop      func()
+	trafficResponseCancel    context.CancelFunc
 
 	// headerOps (ADR-089 / issue #561 PR 4) is the per-request
 	// list of EdgeRuleHeaderOp mutations a kind=headers rule
@@ -8207,6 +8221,7 @@ func (s *statusRecorder) WriteHeader(code int) {
 		} else {
 			s.Header().Del(TrafficPolicyRevisionHeader)
 		}
+		s.commitTrafficResponse(code)
 	}
 	s.ResponseWriter.WriteHeader(code)
 }
@@ -8248,10 +8263,7 @@ func (s *statusRecorder) installHeaderOps(ops []EdgeRuleHeaderOp) {
 func (s *statusRecorder) Write(b []byte) (int, error) {
 	if !s.wroteHeader {
 		// First Write with no explicit WriteHeader → 200.
-		s.status = http.StatusOK
-		s.wroteHeader = true
-		s.mirrorSourceCapture.writeHeader(http.StatusOK)
-		s.capturePreAuthTargetHeader()
+		s.WriteHeader(http.StatusOK)
 	}
 
 	// lgtm[go/reflected-xss] false-positive: statusRecorder is a pass-through; every caller writes application/json, application/problem+json (api.WriteProblem at :326/:335/:366/:384/:906/:911/:914) or proxies to a Firecracker guest rendered via html/template. See statusRecorder doc-comment.

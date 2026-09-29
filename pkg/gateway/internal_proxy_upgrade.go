@@ -29,6 +29,12 @@ func (p *InternalReverseProxy) serveUpgrade(w http.ResponseWriter, r *http.Reque
 	transport := newInternalProxyTransport(p.Dialer, p.DialTimeout)
 	transport.DisableKeepAlives = true
 	defer transport.CloseIdleConnections()
+	stopResponse := func() {}
+	defer func() {
+		if stopResponse != nil {
+			stopResponse()
+		}
+	}()
 
 	proxy := &httputil.ReverseProxy{
 		Transport: transport,
@@ -45,6 +51,11 @@ func (p *InternalReverseProxy) serveUpgrade(w http.ResponseWriter, r *http.Reque
 			propagation.TraceContext{}.Inject(pr.In.Context(), propagation.HeaderCarrier(pr.Out.Header))
 		},
 		ModifyResponse: func(resp *http.Response) error {
+			var err error
+			stopResponse, err = protectUpgradeResponse(w, streamCtx, r.Context(), resp)
+			if err != nil {
+				return err
+			}
 			// The outer public-edge middleware owns static policy and trace
 			// headers, including for 101 (which httputil writes by hijacking).
 			for name := range resp.Header {

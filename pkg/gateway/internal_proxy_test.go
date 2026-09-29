@@ -505,6 +505,7 @@ func TestInternalReverseProxy_PublicEdgeOwnsStaticSecurityHeaders(t *testing.T) 
 func TestInternalReverseProxy_LongLivedResponseDetachesBudget(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set(api.StreamingStatusHeader, string(api.StreamingStatusStreaming))
+		w.Header().Set(trafficResponseSessionHeader, "long-lived")
 		w.WriteHeader(http.StatusOK)
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()

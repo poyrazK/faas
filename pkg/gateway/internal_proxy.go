@@ -530,6 +530,22 @@ func (p *InternalReverseProxy) serveHTTP(w http.ResponseWriter, r *http.Request)
 	}
 	// copyResponseBody owns Body.Close (issue #687: closes it on
 	// ctx cancel to release the H2C stream window).
+	longLived := isLongLivedResponse(resp.StatusCode, resp.Header)
+	publicBudget := r.Context()
+	if longLived {
+		detachBudget()
+		touch()
+		publicBudget = streamCtx
+	}
+	bodyCtx, cancelBody, err := responseBodyContext(streamCtx, publicBudget, resp)
+	resp.Header.Del(trafficResponseSessionHeader)
+	if err != nil {
+		_ = resp.Body.Close()
+		p.logger().Error("invalid compute response policy", "err", err)
+		writeForwarderProblem(w, http.StatusBadGateway)
+		return
+	}
+	defer cancelBody()
 	// Copy headers + body to the inbound writer. Strip hop-by-hop
 	// in place on the response (RFC 7230 §6.1) — the internal
 	// daemon may have set Connection: close and we don't want to
@@ -609,7 +625,7 @@ func (p *InternalReverseProxy) serveHTTP(w http.ResponseWriter, r *http.Request)
 	announced := make(map[string]bool, len(resp.Trailer)+1)
 	announce := func(name string) {
 		key := textproto.CanonicalMIMEHeaderKey(name)
-		if key == "" || announced[key] {
+		if key == "" || announced[key] || isTrafficResponseControlHeader(key) {
 			return
 		}
 		announced[key] = true
@@ -644,14 +660,11 @@ func (p *InternalReverseProxy) serveHTTP(w http.ResponseWriter, r *http.Request)
 		w.Header().Set(edgeOriginalStatusHeader, "504")
 		responseStatus = edgeOrigin504TransportStatus
 	}
+	defer guardResponseWrites(bodyCtx, w)()
 	w.WriteHeader(responseStatus)
 	// Body copy bound to ctx — a hung upstream pins only the
 	// in-flight goroutine, not the listener.
-	if isLongLivedResponse(resp.StatusCode, resp.Header) {
-		detachBudget()
-		touch()
-	}
-	if _, err := copyResponseBodyWithActivity(streamCtx, w, resp.Body, touch); err != nil && !errors.Is(err, context.Canceled) {
+	if _, err := copyResponseBodyWithActivity(bodyCtx, w, resp.Body, touch); err != nil && !errors.Is(err, context.Canceled) {
 		p.logger().Warn("internal body copy failed",
 			"target", p.Target.String(),
 			"err", err)
@@ -679,6 +692,9 @@ func (p *InternalReverseProxy) serveHTTP(w http.ResponseWriter, r *http.Request)
 	// matters: adding an already-announced key under the prefix as well would
 	// send it twice.
 	for name, values := range resp.Trailer {
+		if isTrafficResponseControlHeader(name) {
+			continue
+		}
 		key := name
 		if !announced[textproto.CanonicalMIMEHeaderKey(name)] {
 			key = http.TrailerPrefix + name
@@ -737,6 +753,14 @@ func copyResponseBody(ctx context.Context, dst io.Writer, src io.ReadCloser) (in
 }
 
 func copyResponseBodyWithActivity(ctx context.Context, dst io.Writer, src io.ReadCloser, activity func()) (int64, error) {
+	if w, ok := dst.(http.ResponseWriter); ok {
+		stop, err := armResponseWriteContext(ctx, w)
+		if err != nil {
+			_ = src.Close()
+			return 0, err
+		}
+		defer stop()
+	}
 	flusher, _ := dst.(http.Flusher) // ok if dst isn't an http.ResponseWriter
 	type result struct {
 		n   int64
@@ -841,10 +865,9 @@ func copyResponseBodyWithActivity(ctx context.Context, dst io.Writer, src io.Rea
 	case r := <-done:
 		return r.n, r.err
 	case <-ctx.Done():
-		// Close src so the goroutine's Read returns; the upstream
-		// unix socket sees the FIN and the H2C stream window is
-		// released. The second <-done makes the goroutine-exit
-		// assertion in tests deterministic.
+		// Interrupt both ends: Close releases an upstream Read; the write
+		// context guard releases a downstream Write/Flush. Join the copier
+		// before returning so no writer survives response ownership.
 		_ = src.Close()
 		<-done
 		return 0, ctx.Err()
@@ -868,12 +891,8 @@ func isLongLivedResponse(statusCode int, h http.Header) bool {
 	if statusCode != http.StatusSwitchingProtocols && (statusCode < http.StatusOK || statusCode >= http.StatusBadRequest) {
 		return false
 	}
-	switch strings.ToLower(strings.TrimSpace(h.Get(api.StreamingStatusHeader))) {
-	case string(api.StreamingStatusStreaming), string(api.StreamingStatusUpgradeBypass):
-		return true
-	default:
-		return false
-	}
+	values := h.Values(trafficResponseSessionHeader)
+	return len(values) == 1 && values[0] == "long-lived"
 }
 
 func (p *InternalReverseProxy) logger() *slog.Logger {
