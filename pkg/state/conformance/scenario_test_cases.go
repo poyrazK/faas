@@ -46,7 +46,7 @@ func testScenarioTestNamespace(t *testing.T, fx *Fixture) {
 	if got, err := s.ScenarioTestAppByWorkload(ctx, accountID, runID, "worker"); err != nil || got.ID != app.ID {
 		t.Fatalf("ScenarioTestAppByWorkload = (%+v, %v)", got, err)
 	}
-	for _, scope := range [][2]string{{"other-account", runID}, {accountID, strings.Repeat("b", 32)}} {
+	for _, scope := range [][2]string{{uuid.NewString(), runID}, {accountID, strings.Repeat("b", 32)}} {
 		if _, err := s.ScenarioTestAppByWorkload(ctx, scope[0], scope[1], "worker"); !errors.Is(err, state.ErrNotFound) {
 			t.Fatalf("cross-scope lookup %v = %v, want ErrNotFound", scope, err)
 		}
