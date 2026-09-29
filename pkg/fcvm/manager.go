@@ -3614,6 +3614,16 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	// (ADR-009, identical inner network world).
 	nc := netns.NewConfig(lease.Instance, lease.Netns, lease.VethHost, lease.VethPeer, lease.HostIP)
 	nc.TapUID = lease.UID
+	// Job VMs run tenant code with the same network policy as app
+	// instances: the plan's bandwidth cap, the conntrack cap and the
+	// ADR-361 egress policy. Without the policy the always-declared
+	// egress_ports set stays empty and fails closed, so a job could open
+	// no outbound TCP at all.
+	if lim, ok := api.LimitsFor(req.Plan); ok {
+		nc.EgressMbit = lim.EgressMbit
+	}
+	nc.ConntrackCap = m.conntrackCap
+	applyTenantEgressPolicy(&nc, req.Plan, nil)
 	if err = m.setupNetwork(bootCtx, nc); err != nil {
 		return nil, fmt.Errorf("manager: BootJob %s: network setup: %w", req.Instance, err)
 	}

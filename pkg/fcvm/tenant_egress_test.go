@@ -4,6 +4,7 @@ package fcvm
 
 import (
 	"context"
+	"fmt"
 	"net/netip"
 	"reflect"
 	"strings"
@@ -196,5 +197,27 @@ func TestManagerEgressFanoutCarriesPlanCeiling(t *testing.T) {
 	}
 	if _, ok := m.EgressFanout("gone"); ok {
 		t.Fatal("a sample for an unknown instance must be dropped")
+	}
+}
+
+// adr: 361 — job VMs run tenant code and get the same network policy as app
+// instances. Without it the always-declared egress_ports set stays empty and
+// the job can open no outbound TCP.
+func TestBootJobAppliesTenantEgressPolicy(t *testing.T) {
+	run := &fakeRunner{}
+	m := newTestManager(run, &fakeVMM{})
+	t.Cleanup(func() { _ = m.Destroy(context.Background(), "job-egress") })
+	if _, err := m.BootJob(t.Context(), testJobBootRequest("job-egress")); err != nil {
+		t.Fatalf("BootJob: %v", err)
+	}
+	hobby, _ := api.LimitsFor(api.PlanHobby)
+	for _, want := range []string{
+		"add element ip faas egress_ports { 80,443 }",
+		"add element ip6 faas egress_ports { 80,443 }",
+		fmt.Sprintf("limit rate over %d/second", hobby.EgressNewConnPerSecond),
+	} {
+		if !run.ran(want) {
+			t.Errorf("job VM network did not render %q", want)
+		}
 	}
 }
