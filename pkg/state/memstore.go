@@ -3729,6 +3729,9 @@ func (m *MemStore) ApplyProjectReconcile(
 				tombstone.WorkloadClass = app.WorkloadClass
 				tombstone.StartCommand = app.StartCommand
 				tombstone.Manifest = mergeProjectManagedManifest(tombstone.Manifest, app.Manifest)
+				if mutation.SetPlatformTenantRequired {
+					tombstone.PlatformTenantRequired = app.PlatformTenantRequired
+				}
 				tombstone.Status = AppActive
 				tombstone.DeletedAt = nil
 				tombstone.DeleteGraceUntil = nil
@@ -3767,6 +3770,9 @@ func (m *MemStore) ApplyProjectReconcile(
 			app.WorkloadClass = mutation.App.WorkloadClass
 			app.StartCommand = mutation.App.StartCommand
 			app.Manifest = mutation.App.Manifest
+			if mutation.SetPlatformTenantRequired {
+				app.PlatformTenantRequired = mutation.App.PlatformTenantRequired
+			}
 			m.apps[app.ID] = app
 			out.Changed = append(out.Changed, app)
 		case "remove":

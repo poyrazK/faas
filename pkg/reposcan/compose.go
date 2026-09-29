@@ -45,6 +45,7 @@ type composeCandidate struct {
 	PreviewServiceCallsPolicy string                                  `yaml:"x-gregale-preview-calls"`
 	AllowedServiceCallers     *[]string                               `yaml:"x-gregale-allow-callers"`
 	AllowedServiceCallScopes  *api.ServiceCallerScopes                `yaml:"x-gregale-allow-call-scopes"`
+	PlatformTenantRequired    *bool                                   `yaml:"x-gregale-platform-tenant-required"`
 }
 
 // buildFromAny returns (context, dockerfile, present) from any
@@ -218,6 +219,9 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		if !hasBuild && allowedCallScopes != nil {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-allow-call-scopes requires a build workload", src, name)
 		}
+		if !hasBuild && s.PlatformTenantRequired != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-platform-tenant-required requires a build workload", src, name)
+		}
 		command, commandShell := commandSpec(s.Command)
 		if hasBuild {
 			if (ctx != "" && !fs.ValidPath(ctx)) || strings.HasPrefix(ctx, "../") ||
@@ -274,6 +278,7 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 			previewServiceCallsPolicy: previewServiceCallsPolicy,
 			allowedServiceCallers:     allowedCallers,
 			allowedServiceCallScopes:  allowedCallScopes,
+			platformTenantRequired:    s.PlatformTenantRequired,
 
 			ports:   parsePorts(s.Ports),
 			envKeys: envKeys(s.Environment),

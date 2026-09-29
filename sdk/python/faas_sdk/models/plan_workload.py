@@ -33,6 +33,9 @@ class PlanWorkload:
     remain available outside this directory."""
     command: list[str]
     ports: list[int]
+    platform_tenant_required: bool | Unset = UNSET
+    """Requested customer identity policy from Compose x-gregale-platform-tenant-required or the request override.
+    Omitted preserves existing app policy; new apps default to false."""
     dockerfile: str | Unset = UNSET
     depends_on: list[str] | Unset = UNSET
     """Compose service dependencies. The apply path validates the graph, deploys in dependency order, and injects
@@ -87,6 +90,8 @@ class PlanWorkload:
         command = self.command
 
         ports = self.ports
+
+        platform_tenant_required = self.platform_tenant_required
 
         dockerfile = self.dockerfile
 
@@ -154,6 +159,8 @@ class PlanWorkload:
                 "ports": ports,
             }
         )
+        if platform_tenant_required is not UNSET:
+            field_dict["platform_tenant_required"] = platform_tenant_required
         if dockerfile is not UNSET:
             field_dict["dockerfile"] = dockerfile
         if depends_on is not UNSET:
@@ -203,6 +210,8 @@ class PlanWorkload:
         command = cast(list[str], d.pop("command"))
 
         ports = cast(list[int], d.pop("ports"))
+
+        platform_tenant_required = d.pop("platform_tenant_required", UNSET)
 
         dockerfile = d.pop("dockerfile", UNSET)
 
@@ -286,6 +295,7 @@ class PlanWorkload:
             root_dir=root_dir,
             command=command,
             ports=ports,
+            platform_tenant_required=platform_tenant_required,
             dockerfile=dockerfile,
             depends_on=depends_on,
             service_binding_policy=service_binding_policy,

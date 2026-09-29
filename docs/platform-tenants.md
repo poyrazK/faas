@@ -290,4 +290,34 @@ The equivalent API request is `PATCH /v1/apps/my-api` with `{"platform_tenant_re
 
 The CLI provides the same lifecycle with `gregale platform-tenants add|apply|list|info|activation|link-consumer|link-surface|usage|suspend|resume`.
 
+### Repository and project deploys
+
+Source-reference deploys accept the same policy and authentication flags:
+
+```sh
+gregale deploy --repo owner/repo --ref main --name my-api --platform-tenant-required --no-require-authn
+```
+
+For a project, declare the policy on each customer-facing Compose workload so it also applies to later GitHub push reconciliations and newly added workloads:
+
+```yaml
+services:
+  my-api:
+    build: ./api
+    x-gregale-platform-tenant-required: true
+  worker:
+    build: ./worker
+```
+
+Use `false` to explicitly disable the policy. Omission preserves an existing app's setting and defaults to disabled for a new app. Managed image services cannot declare this app policy.
+
+```sh
+gregale deploy --path . --project --project-slug my-platform --dry-run --platform-tenant-required
+gregale deploy --path . --project --project-slug my-platform --platform-tenant-required
+```
+
+The project flag overrides the Compose declaration for the workloads selected by `--only` and `--exclude` in that deploy. It persists on those apps, but does not establish a default for workloads added on a later push; use the Compose declaration for that. Scan shows the requested policy and binds the override into its plan token. API clients must repeat the same optional `platform_tenant_required` multipart field on scan and apply. A changed or omitted override requires a new scan.
+
+The tenant policy adds a gate to existing authentication settings. Project deploys retain the plan's operator-authentication defaults; configure the separate app gate with `gregale app my-api --no-require-authn` when customers should authenticate using their linked keys, hostnames, or JWTs. The project deploy command does not accept `--no-require-authn`.
+
 Suspension does not block anonymous traffic on unlinked app domains, independent JWT authentication on those domains, or credentials not linked to the tenant. Configure those separately if you need a complete customer access ban. Account-scoped platform-tenant management requires the same MFA-gated account scopes as API consumer management; tenant-self read tokens are separate and remain limited to the tenant's own usage and finalized statements. Free plans do not expose the feature.

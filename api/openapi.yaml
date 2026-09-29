@@ -31983,6 +31983,9 @@ components:
           type: boolean
           default: false
           description: "Leave trigger and async-route declarations and existing project trigger/route state unchanged for this scan/apply pair."
+        platform_tenant_required:
+          type: boolean
+          description: "Override the customer identity policy for selected workloads in this scan/apply pair (Hobby and above). Omitted uses Compose declarations and preserves existing app policy. Apply must repeat the same override as scan."
 
     ProjectSummaryResponse:
       description: Stable account-scoped project list item.
@@ -33226,6 +33229,9 @@ components:
           type: boolean
           default: false
           description: "Leave trigger and async-route declarations and existing project trigger/route state unchanged for this apply."
+        platform_tenant_required:
+          type: boolean
+          description: "Override the customer identity policy for selected workloads (Hobby and above). Must match the scan override. Omitted uses Compose declarations and preserves existing app policy."
 
     PlanWorkload:
       description: "One discovered unit of work. Mirrors reposcan.Workload."
@@ -33233,6 +33239,9 @@ components:
       required: [name, root_dir, command, ports]
       properties:
         name: { type: string, example: api }
+        platform_tenant_required:
+          type: boolean
+          description: "Requested customer identity policy from Compose x-gregale-platform-tenant-required or the request override. Omitted preserves existing app policy; new apps default to false."
         root_dir:
           type: string
           example: ""

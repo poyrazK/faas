@@ -6343,14 +6343,15 @@ const (
 // schema-parity AST gate can assert field-for-field equivalence with
 // the OpenAPI spec.
 type ProjectScanRequest struct {
-	Source           string `json:"source"`                // tar.gz binary blob
-	ProjectSlug      string `json:"project_slug"`          // kebab slug
-	RepoFullName     string `json:"repo_full_name"`        // GitHub owner/name binding
-	ProductionBranch string `json:"production_branch"`     // default "main"
-	InstallID        int64  `json:"install_id"`            // GitHub install id (--repo); 0 for unbound
-	Only             string `json:"only"`                  // CSV of workload names
-	Environment      string `json:"environment,omitempty"` // registered project environment
-	NoTriggers       bool   `json:"no_triggers"`           // leave declared and existing triggers unchanged
+	Source                 string `json:"source"`                // tar.gz binary blob
+	ProjectSlug            string `json:"project_slug"`          // kebab slug
+	RepoFullName           string `json:"repo_full_name"`        // GitHub owner/name binding
+	ProductionBranch       string `json:"production_branch"`     // default "main"
+	InstallID              int64  `json:"install_id"`            // GitHub install id (--repo); 0 for unbound
+	Only                   string `json:"only"`                  // CSV of workload names
+	Environment            string `json:"environment,omitempty"` // registered project environment
+	NoTriggers             bool   `json:"no_triggers"`           // leave declared and existing triggers unchanged
+	PlatformTenantRequired *bool  `json:"platform_tenant_required,omitempty"`
 }
 
 // ProjectSourceRefScanRequest asks the control plane to fetch a connected
@@ -6374,15 +6375,16 @@ type ProjectSourceRefScanRequest struct {
 // Shape mirrors ProjectScanRequest — the handler re-runs the scan
 // and re-checks the plan token internally.
 type ProjectApplyRequest struct {
-	Source           string `json:"source"`
-	ProjectSlug      string `json:"project_slug"`
-	RepoFullName     string `json:"repo_full_name"`
-	ProductionBranch string `json:"production_branch"`
-	InstallID        int64  `json:"install_id"`
-	Only             string `json:"only"`
-	Environment      string `json:"environment,omitempty"`
-	ApprovalToken    string `json:"approval_token,omitempty"`
-	NoTriggers       bool   `json:"no_triggers"`
+	Source                 string `json:"source"`
+	ProjectSlug            string `json:"project_slug"`
+	RepoFullName           string `json:"repo_full_name"`
+	ProductionBranch       string `json:"production_branch"`
+	InstallID              int64  `json:"install_id"`
+	Only                   string `json:"only"`
+	Environment            string `json:"environment,omitempty"`
+	ApprovalToken          string `json:"approval_token,omitempty"`
+	NoTriggers             bool   `json:"no_triggers"`
+	PlatformTenantRequired *bool  `json:"platform_tenant_required,omitempty"`
 }
 
 // SourceRefDeployRequest is the JSON body for
@@ -6483,6 +6485,7 @@ type PlanWorkload struct {
 	PreviewServiceCallsPolicy PreviewServiceCallsPolicy           `json:"preview_service_calls_policy,omitempty"`
 	AllowedServiceCallers     *[]string                           `json:"allowed_service_callers,omitempty"`
 	AllowedServiceCallScopes  *ServiceCallerScopes                `json:"allowed_service_call_scopes,omitempty"`
+	PlatformTenantRequired    *bool                               `json:"platform_tenant_required,omitempty"`
 
 	Class         string   `json:"class,omitempty"`
 	Schedule      string   `json:"schedule,omitempty"`

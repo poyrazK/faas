@@ -14,6 +14,10 @@ import type { ServiceReliabilityPolicies } from './ServiceReliabilityPolicies.js
 export type PlanWorkload = {
   name: string;
   /**
+   * Requested customer identity policy from Compose x-gregale-platform-tenant-required or the request override. Omitted preserves existing app policy; new apps default to false.
+   */
+  platform_tenant_required?: boolean;
+  /**
    * Effective build context inside the uploaded repository archive. Workspace manifests and sibling packages remain available outside this directory.
    */
   root_dir: string;

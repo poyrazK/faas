@@ -140,6 +140,9 @@ type Workload struct {
 	// AllowedServiceCallScopes optionally narrows callers to per-app HTTP
 	// method and path-prefix grants. A non-nil empty map denies all callers.
 	AllowedServiceCallScopes *api.ServiceCallerScopes
+	// PlatformTenantRequired is an explicit ingress policy declaration.
+	// Nil preserves an existing app's policy during reconciliation.
+	PlatformTenantRequired *bool
 
 	Class    Class  // http|graphql|grpc|job|worker|server|unknown
 	Schedule string // primary cron expression retained for the existing plan wire

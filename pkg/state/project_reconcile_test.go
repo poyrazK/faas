@@ -8,6 +8,47 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+func TestMemStoreProjectTenantPolicyPreservation(t *testing.T) {
+	for _, op := range []string{"update", "restore"} {
+		for _, explicit := range []bool{false, true} {
+			t.Run(op+map[bool]string{false: "/omitted", true: "/disable"}[explicit], func(t *testing.T) {
+				ctx := context.Background()
+				store := NewMemStore()
+				acct, err := store.CreateAccount(ctx, "policy@example.com", api.PlanHobby)
+				if err != nil {
+					t.Fatal(err)
+				}
+				project, err := store.CreateProject(ctx, Project{AccountID: acct.ID, Slug: "platform", ScanSource: ProjectScanSourceCompose})
+				if err != nil {
+					t.Fatal(err)
+				}
+				app, err := store.CreateApp(ctx, App{AccountID: acct.ID, ProjectID: project.ID, Slug: "customer-api", WorkloadName: "customer-api", PlatformTenantRequired: true})
+				if err != nil {
+					t.Fatal(err)
+				}
+				mutation := ProjectReconcileMutation{Op: "update", App: App{ID: app.ID, Slug: app.Slug, WorkloadName: app.WorkloadName}, SetPlatformTenantRequired: explicit}
+				if op == "restore" {
+					if _, err := store.SoftDeleteAppCascade(ctx, app.ID); err != nil {
+						t.Fatal(err)
+					}
+					mutation.Op = "create"
+					mutation.App.ID = ""
+				}
+				if _, err := store.ApplyProjectReconcile(ctx, project, []ProjectReconcileMutation{mutation}, nil, ProjectScanSourceCompose, api.MustLimitsFor(api.PlanHobby)); err != nil {
+					t.Fatal(err)
+				}
+				got, err := store.AppByID(ctx, app.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got.PlatformTenantRequired != !explicit || got.Status != AppActive {
+					t.Fatalf("policy/status after %s: %+v", op, got)
+				}
+			})
+		}
+	}
+}
+
 func TestMemStoreApplyProjectReconcileRollsBackOnCronResolutionError(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemStore()

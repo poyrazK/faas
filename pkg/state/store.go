@@ -886,8 +886,9 @@ type WebhookDeliveryReleaser interface {
 // and update, App carries the desired identity fields; for remove, App.ID
 // identifies the existing row.
 type ProjectReconcileMutation struct {
-	Op  string
-	App App
+	Op                        string
+	App                       App
+	SetPlatformTenantRequired bool
 }
 
 // ProjectReconcileCron is the desired cron attached to a scanned workload.

@@ -41,6 +41,7 @@ func TestDeployInvalidIntentFailsBeforeNetwork(t *testing.T) {
 		{"stages without custom", []string{"--name", "valid-app", "--canary-stages", "100@0s", "--image", validDeployTestImage()}},
 		{"invalid image", []string{"--name", "valid-app", "--image", "registry.example/app:latest"}},
 		{"invalid slug", []string{"--name", "Invalid_App", "--image", validDeployTestImage()}},
+		{"conflicting tenant policy flags", []string{"--name", "valid-app", "--platform-tenant-required=false", "--no-platform-tenant-required=false", "--image", validDeployTestImage()}},
 		{"create only deployment flags", []string{"--create-only", "--name", "valid-app", "--app", "--no-wait", "--reason", "release"}},
 	}
 	for _, tc := range cases {

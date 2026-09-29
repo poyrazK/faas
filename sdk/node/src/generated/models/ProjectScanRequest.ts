@@ -35,5 +35,9 @@ export type ProjectScanRequest = {
    * Leave trigger and async-route declarations and existing project trigger/route state unchanged for this scan/apply pair.
    */
   no_triggers?: boolean;
+  /**
+   * Override the customer identity policy for selected workloads in this scan/apply pair (Hobby and above). Omitted uses Compose declarations and preserves existing app policy. Apply must repeat the same override as scan.
+   */
+  platform_tenant_required?: boolean;
 };
 

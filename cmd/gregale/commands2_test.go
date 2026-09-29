@@ -321,6 +321,8 @@ func TestCmdAppPlatformTenantRequiredFlags(t *testing.T) {
 	}{
 		{"--platform-tenant-required", true},
 		{"--no-platform-tenant-required", false},
+		{"--platform-tenant-required=false", false},
+		{"--no-platform-tenant-required=false", true},
 	} {
 		seen = api.UpdateAppRequest{}
 		if code := cmdApp([]string{constSlug, tc.flag}); code != 0 {

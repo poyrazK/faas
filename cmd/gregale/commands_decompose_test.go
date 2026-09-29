@@ -783,6 +783,58 @@ func TestCmdDeployTarball_ProjectFlagDefaultsSlug(t *testing.T) {
 	}
 }
 
+func TestCmdDeployProjectTenantPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name, flag, want string
+		preview          bool
+	}{
+		{name: "enable", flag: "--platform-tenant-required", want: "true"},
+		{name: "disable", flag: "--no-platform-tenant-required", want: "false"},
+		{name: "explicit false", flag: "--platform-tenant-required=false", want: "false"},
+		{name: "negative false", flag: "--no-platform-tenant-required=false", want: "true"},
+		{name: "preview", flag: "--platform-tenant-required", want: "true", preview: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sink := &decomposeSink{scanStatus: http.StatusOK, scanBody: goldenPlan, applyStatus: http.StatusOK, applyBody: goldenApply}
+			srv := httptest.NewServer(sink)
+			defer srv.Close()
+			t.Setenv("FAAS_API", srv.URL)
+			t.Setenv("FAAS_TOKEN", "fp_live_x")
+			_, restore := captureStdout(t)
+			defer restore()
+			args := []string{"--tarball", writeTarball(t), "--project", "--yes", tc.flag}
+			if tc.preview {
+				args = append(args, "--dry-run")
+			}
+			if code := cmdDeployTarball(args); code != 0 {
+				t.Fatalf("exit=%d", code)
+			}
+			if got := multipartField(sink.capturedScanMultipart, sink.scanContentType, "platform_tenant_required"); got != tc.want {
+				t.Fatalf("scan policy=%q, want %q", got, tc.want)
+			}
+			if tc.preview {
+				if sink.applyCalls != 0 {
+					t.Fatal("preview applied")
+				}
+			} else if got := multipartField(sink.capturedApplyMultipart, sink.applyContentType, "platform_tenant_required"); got != tc.want {
+				t.Fatalf("apply policy=%q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPrintProjectTenantPolicy(t *testing.T) {
+	for _, required := range []bool{false, true} {
+		var out bytes.Buffer
+		plan := api.PlanResponse{CanApply: true, Workloads: []api.PlanWorkload{{Name: "customer-api", PlatformTenantRequired: &required}}}
+		printPlanText(&out, plan, nil, false)
+		want := "platform_tenant_required=" + map[bool]string{false: "false", true: "true"}[required]
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("preview missing %q: %s", want, out.String())
+		}
+	}
+}
+
 // TestCmdDeployTarball_ProjectScopeFlagsRouteToPlanner pins the implicit
 // project mode for each scope-only control. These flags must never fall
 // through to a single-app deployment where they would be silently ignored.

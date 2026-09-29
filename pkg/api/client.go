@@ -1472,11 +1472,15 @@ func (c *Client) ScanProjectWithBindingEnvironment(
 	source io.Reader, sourceName, projectSlug, repoFullName, productionBranch string,
 	installID int64, only, exclude []string, persistExclude, noTriggers bool,
 	environment string,
+	platformTenantRequired ...*bool,
 ) (PlanResponse, error) {
 	var b bytes.Buffer
 	w := multipart.NewWriter(&b)
 	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, repoFullName, productionBranch, installID, only, exclude, persistExclude, noTriggers, environment); err != nil {
 		return PlanResponse{}, fmt.Errorf("build multipart: %w", err)
+	}
+	if err := writeProjectTenantPolicy(w, platformTenantRequired); err != nil {
+		return PlanResponse{}, fmt.Errorf("build tenant policy field: %w", err)
 	}
 	if err := w.Close(); err != nil {
 		return PlanResponse{}, fmt.Errorf("close multipart writer: %w", err)
@@ -1547,11 +1551,15 @@ func (c *Client) ApplyProjectPlanWithBindingEnvironmentApproval(
 	source io.Reader, sourceName, projectSlug, repoFullName, productionBranch string,
 	installID int64, only, exclude []string, persistExclude, noTriggers bool,
 	environment, approvalToken string,
+	platformTenantRequired ...*bool,
 ) (ApplyResponse, error) {
 	var b bytes.Buffer
 	w := multipart.NewWriter(&b)
 	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, repoFullName, productionBranch, installID, only, exclude, persistExclude, noTriggers, environment, approvalToken); err != nil {
 		return ApplyResponse{}, fmt.Errorf("build multipart: %w", err)
+	}
+	if err := writeProjectTenantPolicy(w, platformTenantRequired); err != nil {
+		return ApplyResponse{}, fmt.Errorf("build tenant policy field: %w", err)
 	}
 	if err := w.Close(); err != nil {
 		return ApplyResponse{}, fmt.Errorf("close multipart writer: %w", err)
@@ -1912,6 +1920,13 @@ func (c *Client) PreviewDeleteProject(ctx context.Context, slug string) (Project
 // DeleteProject removes the project row and detaches its live workloads.
 func (c *Client) DeleteProject(ctx context.Context, slug string) error {
 	return c.do(ctx, http.MethodDelete, "/v1/projects/"+url.PathEscape(slug), nil, nil)
+}
+
+func writeProjectTenantPolicy(w *multipart.Writer, policy []*bool) error {
+	if len(policy) == 0 || policy[0] == nil {
+		return nil
+	}
+	return w.WriteField("platform_tenant_required", fmt.Sprintf("%t", *policy[0]))
 }
 
 // writeProjectMultipartFields serializes the multipart body shared
