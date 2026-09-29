@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -296,12 +297,13 @@ func runOneTestHTTPRequest(ctx context.Context, client *http.Client, baseURL str
 	}
 	response, err := client.Do(request)
 	if err != nil {
-		if urlError, ok := err.(*url.Error); ok {
+		var urlError *url.Error
+		if errors.As(err, &urlError) {
 			err = urlError.Err
 		}
 		return fmt.Errorf("send request: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	evidence.Status = response.StatusCode
 	if response.StatusCode != step.Expect.Status {
 		return fmt.Errorf("expected status %d, received %d", step.Expect.Status, response.StatusCode)
