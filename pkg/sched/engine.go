@@ -745,12 +745,12 @@ type Engine struct {
 	// to fast-forward the CapacityFreshness budget without sleeping.
 	now func() time.Time
 
-	// egressFanoutRecycles is each account's recent ADR-361 fan-out
-	// recycle times, for the escalation to the account abuse hold. It is
-	// per schedd and in memory: a restart forgets it, which costs at most
-	// one more recycle before the hold.
-	egressFanoutMu       sync.Mutex
-	egressFanoutRecycles map[string][]time.Time
+	// egressAbuseRecycles is each account's recent ADR-361 egress abuse
+	// recycle times (fan-out or flood), for the escalation to the account
+	// abuse hold. It is per schedd and in memory: a restart forgets it,
+	// which costs at most one more recycle before the hold.
+	egressAbuseMu       sync.Mutex
+	egressAbuseRecycles map[string][]time.Time
 
 	// nodeKeys is the in-memory (key_id → *ecdsa.PublicKey)
 	// registry the ReportCapacity handler consults to verify
@@ -6703,28 +6703,29 @@ func (e *Engine) RecycleForDiskPressure(ctx context.Context, instanceID string, 
 	return nil
 }
 
-// RecycleForEgressFanout (ADR-361 decision 6) destroys a running instance
-// whose guest contacted at least its plan's ceiling of new destinations in
-// one minute: the signature of scanning or spraying from the platform's
-// shared egress address. The warm snapshot is marked stale because it was
+// RecycleForEgressAbuse (ADR-361 decisions 6 and 9) destroys a running
+// instance whose guest reached an egress abuse ceiling: at least its plan's
+// ceiling of new destinations in one minute (fan-out: scanning or spraying)
+// or of flows dropped against single destinations (flood). Both come from
+// the platform's shared egress address. The warm snapshot is marked stale because it was
 // captured after serving traffic and may carry the compromised process; the
 // init snapshot predates traffic and is kept. The next request cold-starts
 // or restores a clean instance, which is recycled again if the behaviour
 // comes from the app itself.
 //
 // A repeat on the same account within the hold window escalates to the
-// account abuse hold (see escalateEgressFanout).
-func (e *Engine) RecycleForEgressFanout(ctx context.Context, instanceID string, perMinute, limit int64) error {
-	appID, err := e.recycleForEgressFanout(ctx, instanceID, perMinute, limit)
+// account abuse hold (see escalateEgressAbuse).
+func (e *Engine) RecycleForEgressAbuse(ctx context.Context, instanceID string, reason EgressAbuseReason, observed, limit int64) error {
+	appID, err := e.recycleForEgressAbuse(ctx, instanceID, reason, observed, limit)
 	if err != nil || appID == "" {
 		return err
 	}
 	// The app lock is released: a hold parks every app of the account,
 	// including this one.
-	return e.escalateEgressFanout(ctx, appID, perMinute, limit)
+	return e.escalateEgressAbuse(ctx, appID, reason, observed, limit)
 }
 
-func (e *Engine) recycleForEgressFanout(ctx context.Context, instanceID string, perMinute, limit int64) (string, error) {
+func (e *Engine) recycleForEgressAbuse(ctx context.Context, instanceID string, reason EgressAbuseReason, observed, limit int64) (string, error) {
 	ins, err := e.lockedRunning(ctx, instanceID)
 	if err != nil || ins == nil {
 		return "", err
@@ -6733,21 +6734,22 @@ func (e *Engine) recycleForEgressFanout(ctx context.Context, instanceID string, 
 
 	if snap, snapErr := e.store.LatestSnapshotForTier(ctx, ins.DeploymentID, state.SnapshotTierWarm); snapErr == nil && snap.ID != "" {
 		if markErr := e.store.MarkSnapshotStale(ctx, snap.ID); markErr != nil {
-			e.log.Warn("egress fan-out: mark warm snapshot stale", "instance", instanceID, "snap_id", snap.ID, "err", markErr)
+			e.log.Warn("egress abuse: mark warm snapshot stale", "instance", instanceID, "snap_id", snap.ID, "err", markErr)
 		}
 	}
 
 	e.ledger.Release(instanceID)
 	if err := e.timedDestroy(context.WithoutCancel(ctx), ins.NodeID, instanceID, DestroyTimeout); err != nil {
-		return "", fmt.Errorf("sched: egress fan-out: destroy %s: %w", instanceID, err)
+		return "", fmt.Errorf("sched: egress abuse: destroy %s: %w", instanceID, err)
 	}
-	e.log.Warn("egress fan-out: recycled instance", "instance", instanceID, "app", ins.AppID, "node", ins.NodeID,
-		"new_destinations_per_min", perMinute, "limit", limit)
+	e.log.Warn("egress abuse: recycled instance", "instance", instanceID, "app", ins.AppID, "node", ins.NodeID,
+		"signal", reason, "observed_per_min", observed, "limit", limit)
 	if e.ops != nil {
-		e.ops.EgressFanoutRecycled(ins.AppID).Inc()
+		e.ops.EgressAbuseRecycled(ins.AppID, string(reason)).Inc()
 	}
-	reason := fmt.Sprintf("egress_fanout new_destinations_per_min=%d limit=%d", perMinute, limit)
-	e.transitionWithKind(ctx, instanceID, ins.AppID, state.StateStopped, "egress_fanout", reason)
+	kind := "egress_" + string(reason)
+	e.transitionWithKind(ctx, instanceID, ins.AppID, state.StateStopped, kind,
+		fmt.Sprintf("%s observed_per_min=%d limit=%d", kind, observed, limit))
 	if ins.Mode == string(state.InstanceModeWorker) {
 		e.scheduleWorkerReconcile(ctx, ins.DeploymentID)
 	}

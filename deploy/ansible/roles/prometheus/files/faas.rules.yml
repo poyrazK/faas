@@ -1728,22 +1728,24 @@ groups:
           description: "Customer {{ $labels.account_id }} sustained > 500 rps on apid for 10m. Cross-check gateway_top_tenant_rps for the L7 view, then follow docs/runbooks/tenant-abuse.md §Recover (rate-limit → notify → suspend deployment)."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/tenant-abuse.md"
 
-      # ADR-361 decision 6: schedd destroyed an instance whose guest reached
-      # its plan's new-destination ceiling in one minute. Scanning or spraying
-      # from the platform's shared egress address is what got the production
-      # project suspended on 2026-09-24, so a single recycle pages.
-      - alert: FaasTenantEgressFanout
-        expr: sum by (app) (increase(schedd_egress_fanout_recycles_total{app!=""}[15m])) > 0
+      # ADR-361 decisions 6 and 9: schedd destroyed an instance whose guest
+      # reached an egress abuse ceiling in one minute: too many new
+      # destinations (fanout: scanning, spraying) or too many flows dropped
+      # against single destinations (flood). Abuse from the platform's shared
+      # egress address is what got the production project suspended on
+      # 2026-09-24, so a single recycle pages.
+      - alert: FaasTenantEgressAbuse
+        expr: sum by (app, reason) (increase(schedd_egress_abuse_recycles_total{app!=""}[15m])) > 0
         labels:
           severity: page
           component: schedd
           family: tenant_abuse
         annotations:
-          summary: "App {{ $labels.app }} recycled for egress fan-out"
-          description: "schedd destroyed {{ $value }} instance(s) of app {{ $labels.app }} in the last 15m because the guest contacted at least its plan's EgressNewDestinationsPerMinute new destinations in one minute. Treat it as a likely scan or abuse from the node's egress address until reviewed."
-          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTenantEgressFanout.md"
+          summary: "App {{ $labels.app }} recycled for egress {{ $labels.reason }}"
+          description: "schedd destroyed {{ $value }} instance(s) of app {{ $labels.app }} in the last 15m for egress {{ $labels.reason }}: fanout means at least the plan's EgressNewDestinationsPerMinute new destinations in one minute, flood means at least EgressFloodDropsPerMinute new flows dropped against single destinations. Treat it as a likely scan, flood or other abuse from the node's egress address until reviewed."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTenantEgressAbuse.md"
 
-      # ADR-361: schedd held an account after repeated egress fan-out. The
+      # ADR-361: schedd held an account after repeated egress abuse. The
       # account runs nothing until an operator reviews and releases it.
       - alert: FaasAccountAbuseHold
         expr: sum by (reason) (increase(schedd_account_abuse_holds_total[15m])) > 0
@@ -1754,7 +1756,7 @@ groups:
         annotations:
           summary: "Account abuse hold placed ({{ $labels.reason }})"
           description: "schedd placed {{ $value }} account abuse hold(s) in the last 15m. Every workload of the held account is stopped and refused until an operator releases the hold. Review the account's egress before releasing it."
-          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTenantEgressFanout.md"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTenantEgressAbuse.md"
 
       # ─────────────────────────────────────────────────────────────────
       # Daemon liveness — every scrape target should be up.

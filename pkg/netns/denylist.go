@@ -65,6 +65,9 @@ const (
 	// flows over the per-VM rate.
 	EgressDenyClassPortPolicy EgressDenyClass = "port_policy"
 	EgressDenyClassRateLimit  EgressDenyClass = "rate_limit"
+	// EgressDenyClassFlood is new flows over the per-destination rate
+	// (ADR-361 decision 9).
+	EgressDenyClassFlood EgressDenyClass = "flood"
 
 	// Named counters used by the aggregate rules. Per-CIDR counters keep
 	// their existing drop_* names and are rolled up by Class.

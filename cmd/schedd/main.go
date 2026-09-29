@@ -1549,8 +1549,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithDiskPressureHandler(func(ctx context.Context, row instancestats.InstanceStat, _ fcvm.DiskPressure) error {
 			return engine.RecycleForDiskPressure(ctx, row.InstanceID, row.DiskUsedBytes, row.DiskCapacityBytes)
 		}).
-		WithEgressFanoutHandler(func(ctx context.Context, row instancestats.InstanceStat) error {
-			return engine.RecycleForEgressFanout(ctx, row.InstanceID, row.EgressNewDstPerMin, row.EgressNewDstLimitPerMin)
+		WithEgressAbuseHandler(func(ctx context.Context, row instancestats.InstanceStat, reason sched.EgressAbuseReason, observed, limit int64) error {
+			return engine.RecycleForEgressAbuse(ctx, row.InstanceID, reason, observed, limit)
 		})
 	// The local Reader above deliberately contains only instances physically
 	// resident on this node: scheddgrpc.ListInstanceStats and meterd rely on

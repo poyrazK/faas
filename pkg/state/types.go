@@ -549,6 +549,7 @@ type Account struct {
 // CHECK accepts exactly these.
 const (
 	AccountAbuseHoldEgressFanout = "egress_fanout"
+	AccountAbuseHoldEgressFlood  = "egress_flood"
 	AccountAbuseHoldOperator     = "operator"
 )
 

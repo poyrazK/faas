@@ -179,6 +179,12 @@ type InstanceStat struct {
 	EgressNewDstPerMin      int64
 	EgressNewDstLimitPerMin int64
 	EgressFanoutValid       bool
+	// EgressFloodDropsPerMin / EgressFloodDropsLimitPerMin are the ADR-361
+	// decision 9 per-destination flood drops and ceiling. EgressFloodValid
+	// is false until vmmd has observed a window.
+	EgressFloodDropsPerMin      int64
+	EgressFloodDropsLimitPerMin int64
+	EgressFloodValid            bool
 	// SidecarMBs (issue #463 / ADR-070 §Decision 6 / PR-C) is
 	// the per-sidecar RAM slice sourced from the deployment's
 	// `sidecars jsonb` column at Tick time. Nil/empty = legacy

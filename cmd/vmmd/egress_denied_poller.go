@@ -49,10 +49,12 @@ func runEgressDeniedPoll(
 	}
 }
 
-// egressFanoutSink receives each instance's per-minute fan-out sample.
-// *fcvm.Manager implements it; Stats serves the stored value to schedd.
+// egressFanoutSink receives each instance's per-minute egress abuse
+// samples: new destinations (fan-out) and per-destination flood drops.
+// *fcvm.Manager implements it; Stats serves the stored values to schedd.
 type egressFanoutSink interface {
 	RecordEgressFanout(instance string, perMinute int64)
+	RecordEgressFlood(instance string, dropsPerMinute int64)
 }
 
 type fanoutSample struct {
@@ -70,6 +72,7 @@ type egressNetnsPoller struct {
 	catalog  []netns.DenyEntry
 	lastSeen map[string]map[string]uint64
 	fanout   map[string][]fanoutSample
+	flood    map[string][]fanoutSample
 }
 
 func newEgressNetnsPoller(sink egressFanoutSink, ops *wire.OpsMetrics, pop popInstanceCountersFunc, log *slog.Logger) *egressNetnsPoller {
@@ -87,6 +90,7 @@ func newEgressNetnsPoller(sink egressFanoutSink, ops *wire.OpsMetrics, pop popIn
 		catalog:  netns.NewDefaultDenySet().Entries,
 		lastSeen: make(map[string]map[string]uint64),
 		fanout:   make(map[string][]fanoutSample),
+		flood:    make(map[string][]fanoutSample),
 	}
 }
 
@@ -97,6 +101,7 @@ var aggregateDenyCounters = []struct {
 	class netns.EgressDenyClass
 }{
 	{netns.EgressDenyCounterSMTP, netns.EgressDenyClassSMTP},
+	{netns.EgressFloodCounter, netns.EgressDenyClassFlood},
 	{netns.EgressDenyCounterAllowlist, netns.EgressDenyClassAllowlist},
 	{netns.EgressDenyCounterPolicy, netns.EgressDenyClassPortPolicy},
 	{netns.EgressDenyCounterRate, netns.EgressDenyClassRateLimit},
@@ -141,12 +146,14 @@ func (p *egressNetnsPoller) tick(ctx context.Context, now time.Time, live map[st
 		if newDst > 0 {
 			p.ops.EgressNewDestinations(meta.AppID).Add(float64(newDst))
 		}
-		p.sink.RecordEgressFanout(instance, p.observeFanout(instance, now, newDst))
+		p.sink.RecordEgressFanout(instance, observeWindow(p.fanout, instance, now, newDst))
+		p.sink.RecordEgressFlood(instance, observeWindow(p.flood, instance, now, deltas[netns.EgressDenyClassFlood]))
 	}
 	for instance := range p.lastSeen {
 		if _, ok := live[instance]; !ok {
 			delete(p.lastSeen, instance)
 			delete(p.fanout, instance)
+			delete(p.flood, instance)
 		}
 	}
 }
@@ -163,10 +170,10 @@ func (p *egressNetnsPoller) baseline(values map[string]uint64) map[string]uint64
 	return baseline
 }
 
-// observeFanout appends one tick's new destinations and returns the sum over
-// the trailing egressFanoutWindow.
-func (p *egressNetnsPoller) observeFanout(instance string, now time.Time, newDst uint64) int64 {
-	samples := append(p.fanout[instance], fanoutSample{at: now, new: newDst})
+// observeWindow appends one tick's count for instance and returns the sum
+// over the trailing egressFanoutWindow.
+func observeWindow(windows map[string][]fanoutSample, instance string, now time.Time, n uint64) int64 {
+	samples := append(windows[instance], fanoutSample{at: now, new: n})
 	cutoff := now.Add(-egressFanoutWindow)
 	kept := samples[:0]
 	var sum uint64
@@ -176,7 +183,7 @@ func (p *egressNetnsPoller) observeFanout(instance string, now time.Time, newDst
 			sum += s.new
 		}
 	}
-	p.fanout[instance] = kept
+	windows[instance] = kept
 	return int64(min(sum, uint64(1<<62)))
 }
 

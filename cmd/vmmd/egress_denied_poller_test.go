@@ -12,10 +12,20 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
-type recordedFanout map[string][]int64
+type recordedEgress struct {
+	fanout, flood map[string][]int64
+}
 
-func (r recordedFanout) RecordEgressFanout(instance string, perMinute int64) {
-	r[instance] = append(r[instance], perMinute)
+func newRecordedEgress() *recordedEgress {
+	return &recordedEgress{fanout: map[string][]int64{}, flood: map[string][]int64{}}
+}
+
+func (r *recordedEgress) RecordEgressFanout(instance string, perMinute int64) {
+	r.fanout[instance] = append(r.fanout[instance], perMinute)
+}
+
+func (r *recordedEgress) RecordEgressFlood(instance string, perMinute int64) {
+	r.flood[instance] = append(r.flood[instance], perMinute)
 }
 
 // adr: 361 — the per-namespace poll rolls the ADR-361 policy counters into
@@ -32,7 +42,7 @@ func TestEgressNetnsPollerFanoutAndClasses(t *testing.T) {
 	}
 	tick := 0
 	pop := func(context.Context, string) (map[string]uint64, error) { return readings[tick], nil }
-	sink := recordedFanout{}
+	sink := newRecordedEgress()
 	ops := wire.NewOpsMetrics("vmmd")
 	p := newEgressNetnsPoller(sink, ops, pop, nil)
 	live := map[string]fcvm.LiveEgressInstance{"i-1": {AppID: "app-1", Netns: "fc-i-1"}}
@@ -44,7 +54,7 @@ func TestEgressNetnsPollerFanoutAndClasses(t *testing.T) {
 	// t=45s 120, t=60s 121; at t=75s the reset adds nothing and the t=15s
 	// sample ages out, leaving 81.
 	want := []int64{40, 120, 120, 121, 81}
-	got := sink["i-1"]
+	got := sink.fanout["i-1"]
 	if len(got) != len(want) {
 		t.Fatalf("fan-out samples = %v, want %v", got, want)
 	}
@@ -67,5 +77,31 @@ func TestEgressNetnsPollerFanoutAndClasses(t *testing.T) {
 	p.tick(context.Background(), start.Add(2*time.Minute), map[string]fcvm.LiveEgressInstance{})
 	if len(p.lastSeen) != 0 || len(p.fanout) != 0 {
 		t.Fatalf("state kept for a gone instance: lastSeen=%v fanout=%v", p.lastSeen, p.fanout)
+	}
+}
+
+// adr: 361 — per-destination flood drops roll up into the flood class and a
+// trailing one-minute window per instance.
+func TestEgressNetnsPollerFloodWindow(t *testing.T) {
+	readings := []map[string]uint64{
+		{netns.EgressFloodCounter: 10}, // baseline
+		{netns.EgressFloodCounter: 110},
+		{netns.EgressFloodCounter: 160},
+	}
+	tick := 0
+	pop := func(context.Context, string) (map[string]uint64, error) { return readings[tick], nil }
+	sink := newRecordedEgress()
+	ops := wire.NewOpsMetrics("vmmd")
+	p := newEgressNetnsPoller(sink, ops, pop, nil)
+	live := map[string]fcvm.LiveEgressInstance{"i-1": {AppID: "app-1", Netns: "fc-i-1"}}
+	start := time.Unix(1_700_000_000, 0)
+	for tick = range readings {
+		p.tick(context.Background(), start.Add(time.Duration(tick)*15*time.Second), live)
+	}
+	if got := sink.flood["i-1"]; len(got) != 2 || got[0] != 100 || got[1] != 150 {
+		t.Fatalf("flood window = %v, want [100 150]", got)
+	}
+	if n := testutil.ToFloat64(ops.EgressDenied("app-1", string(netns.EgressDenyClassFlood))); n != 150 {
+		t.Fatalf("flood drops = %v, want 150", n)
 	}
 }

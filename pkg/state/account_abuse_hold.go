@@ -50,7 +50,7 @@ func (s *PgStore) ReleaseAccountAbuseHold(ctx context.Context, accountID string)
 
 // SetAccountAbuseHold implements AccountAbuseHoldStore.
 func (m *MemStore) SetAccountAbuseHold(_ context.Context, accountID, reason string, at time.Time) (bool, error) {
-	if reason != AccountAbuseHoldEgressFanout && reason != AccountAbuseHoldOperator {
+	if reason != AccountAbuseHoldEgressFanout && reason != AccountAbuseHoldEgressFlood && reason != AccountAbuseHoldOperator {
 		return false, fmt.Errorf("state: set account abuse hold %s: invalid reason %q", accountID, reason)
 	}
 	m.mu.Lock()

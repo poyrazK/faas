@@ -23510,7 +23510,7 @@ components:
       type: object
       required: [reason, held_at]
       properties:
-        reason: { type: string, enum: [egress_fanout, operator] }
+        reason: { type: string, enum: [egress_fanout, egress_flood, operator] }
         held_at: { type: string, format: date-time }
 
     AccountAbuseHoldAction:

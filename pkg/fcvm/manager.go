@@ -607,6 +607,10 @@ type Instance struct {
 	// first window has been observed.
 	EgressNewDstPerMin int64
 	EgressFanoutValid  bool
+	// EgressFloodDropsPerMin is the new flows dropped in the last minute for
+	// exceeding the per-destination rate (ADR-361 decision 9). It is
+	// recorded in the same poll tick as the fan-out sample.
+	EgressFloodDropsPerMin int64
 	// TailCount (issue #667 / ADR-078) is the in-memory
 	// mirror of the per-instance `tail_count` SQL column.
 	// Incremented by the runner's WaitGroup each time a
@@ -2358,11 +2362,28 @@ func (m *Manager) DiskUsage(instance string) (DiskUsage, bool) {
 	}, true
 }
 
-// EgressFanout is one instance's destination fan-out and the plan ceiling
-// schedd enforces (ADR-361 decision 6). Limit 0 means no ceiling applies.
+// EgressFanout is one instance's egress abuse signals and the plan ceilings
+// schedd enforces: destination fan-out (ADR-361 decision 6) and
+// per-destination flood drops (decision 9). A zero limit means no ceiling
+// applies.
 type EgressFanout struct {
 	NewDestinationsPerMinute int64
 	Limit                    int64
+	FloodDropsPerMinute      int64
+	FloodLimit               int64
+}
+
+// RecordEgressFlood stores the latest per-minute flood drops for a live
+// instance. Unknown instances are ignored.
+func (m *Manager) RecordEgressFlood(instance string, dropsPerMinute int64) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if inst, ok := m.live[instance]; ok {
+		inst.EgressFloodDropsPerMin = dropsPerMinute
+	}
 }
 
 // RecordEgressFanout stores the latest per-minute fan-out for a live
@@ -2390,9 +2411,10 @@ func (m *Manager) EgressFanout(instance string) (EgressFanout, bool) {
 	if !ok || !inst.EgressFanoutValid {
 		return EgressFanout{}, false
 	}
-	out := EgressFanout{NewDestinationsPerMinute: inst.EgressNewDstPerMin}
+	out := EgressFanout{NewDestinationsPerMinute: inst.EgressNewDstPerMin, FloodDropsPerMinute: inst.EgressFloodDropsPerMin}
 	if lim, known := api.LimitsFor(inst.Plan); known {
 		out.Limit = int64(lim.EgressNewDestinationsPerMinute)
+		out.FloodLimit = int64(lim.EgressFloodDropsPerMinute)
 	}
 	return out, true
 }

@@ -198,6 +198,12 @@ type Config struct {
 	// the limit.
 	EgressConnRate  int
 	EgressConnBurst int
+	// EgressDestConnRate / EgressDestConnBurst cap the new flows a guest may
+	// open to any single destination address per second (ADR-361 decision
+	// 9). Excess flows are dropped and counted in faas_egress_flood. Zero
+	// disables the limit.
+	EgressDestConnRate  int
+	EgressDestConnBurst int
 }
 
 // NewConfig fills the constant fields (tap name, /16) around the allocated names
@@ -635,6 +641,7 @@ func (c Config) NftCommands() [][]string {
 	// new flows over the plan's rate and anything that is not TCP, before
 	// any accept below.
 	cmds = append(cmds, c.egressFanoutRule(nft, "ip"))
+	cmds = append(cmds, c.egressFloodRule(nft, "ip")...)
 	cmds = append(cmds, c.egressRateRule(nft, "ip")...)
 	cmds = append(cmds, c.egressNonTCPRule(nft, "ip"))
 	// ADR-031 + ADR-032 per-app egress allowlist. Placed AFTER the
@@ -729,6 +736,7 @@ func (c Config) NftCommands() [][]string {
 	// chain-policy drop (because forwardChainPolicy flips when the
 	// single field is non-empty), with no per-chain accept rule.
 	cmds = append(cmds, c.egressFanoutRule(nft, "ip6"))
+	cmds = append(cmds, c.egressFloodRule(nft, "ip6")...)
 	cmds = append(cmds, c.egressRateRule(nft, "ip6")...)
 	cmds = append(cmds, c.egressNonTCPRule(nft, "ip6"))
 	if rule := c.ForwardAllowlistRule6(nft); rule != nil {
@@ -760,6 +768,14 @@ const (
 	// full set stops remembering new addresses, so every further new
 	// destination keeps counting: the signal saturates upward, never down.
 	egressDstSetSize = 65535
+
+	// EgressFloodCounter counts guest-originated new flows dropped because
+	// one destination address received more than EgressDestConnRate per
+	// second (ADR-361 decision 9). EgressDstRateSet holds one per-address
+	// token bucket; idle entries expire after egressDstRateTimeout.
+	EgressFloodCounter   = "faas_egress_flood"
+	EgressDstRateSet     = "egress_dst_rate"
+	egressDstRateTimeout = "1m"
 )
 
 // egressPolicyObjects declares the policy counters and the egress_ports set
@@ -779,6 +795,12 @@ func (c Config) egressPolicyObjects(nft func(...string) []string, family string)
 	}
 	if c.EgressConnRate > 0 {
 		cmds = append(cmds, nft("add", "counter", family, "faas", EgressDenyCounterRate, "{}"))
+	}
+	if c.EgressDestConnRate > 0 {
+		cmds = append(cmds,
+			nft("add", "counter", family, "faas", EgressFloodCounter, "{}"),
+			nft("add", "set", family, "faas", EgressDstRateSet, "{", "type", addrType, ";", "flags", "dynamic,timeout", ";",
+				"timeout", egressDstRateTimeout, ";", "size", strconv.Itoa(egressDstSetSize), ";", "}"))
 	}
 	if elems := c.EgressPortElements(); elems != "" {
 		cmds = append(cmds, nft("add", "element", family, "faas", EgressPortsSet, "{", elems, "}"))
@@ -832,6 +854,21 @@ func (c Config) egressFanoutRule(nft func(...string) []string, family string) []
 	return nft("add", "rule", family, "faas", "forward", "iifname", c.Tap, "ct", "state", "new",
 		family, "daddr", "!=", "@"+EgressDstSet, "counter", "name", EgressNewDstCounter,
 		"add", "@"+EgressDstSet, "{", family, "daddr", "}")
+}
+
+// egressFloodRule drops guest-originated new flows to one destination
+// address beyond EgressDestConnRate per second. Each address gets its own
+// token bucket in egress_dst_rate. It runs before the per-VM rate limit so
+// a single-target flood is attributed to faas_egress_flood.
+func (c Config) egressFloodRule(nft func(...string) []string, family string) [][]string {
+	if c.EgressDestConnRate <= 0 {
+		return nil
+	}
+	burst := max(c.EgressDestConnBurst, c.EgressDestConnRate)
+	return [][]string{nft("add", "rule", family, "faas", "forward", "iifname", c.Tap, "ct", "state", "new",
+		"update", "@"+EgressDstRateSet, "{", family, "daddr", "limit", "rate", "over",
+		fmt.Sprintf("%d/second", c.EgressDestConnRate), "burst", strconv.Itoa(burst), "packets", "}",
+		"counter", "name", EgressFloodCounter, "drop")}
 }
 
 // egressRateRule drops guest-originated new flows over EgressConnRate.

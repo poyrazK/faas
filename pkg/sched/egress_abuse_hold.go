@@ -10,39 +10,60 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// escalateEgressFanout records a fan-out recycle against the app's account
-// and places the ADR-361 account abuse hold on the
-// api.EgressFanoutHoldRecycles-th recycle within the hold window.
-func (e *Engine) escalateEgressFanout(ctx context.Context, appID string, perMinute, limit int64) error {
-	app, err := e.store.AppByID(ctx, appID)
-	if err != nil {
-		return fmt.Errorf("sched: egress fan-out: load app %s: %w", appID, err)
+// EgressAbuseReason names the ADR-361 egress abuse signal an instance was
+// recycled for.
+type EgressAbuseReason string
+
+const (
+	// EgressAbuseFanout: too many new destination addresses per minute
+	// (decision 6).
+	EgressAbuseFanout EgressAbuseReason = "fanout"
+	// EgressAbuseFlood: too many new flows dropped against single
+	// destinations per minute (decision 9).
+	EgressAbuseFlood EgressAbuseReason = "flood"
+)
+
+// holdReason is the account abuse hold reason a recycle escalates to.
+func (r EgressAbuseReason) holdReason() string {
+	if r == EgressAbuseFlood {
+		return state.AccountAbuseHoldEgressFlood
 	}
-	if !e.noteEgressFanoutRecycle(app.AccountID, e.clock()) {
-		return nil
-	}
-	detail := map[string]any{"app": appID, "new_destinations_per_min": perMinute, "limit": limit,
-		"recycles": api.EgressFanoutHoldRecycles, "window_seconds": api.EgressFanoutHoldWindowSeconds}
-	return e.HoldAccountForAbuse(ctx, app.AccountID, state.AccountAbuseHoldEgressFanout, detail)
+	return state.AccountAbuseHoldEgressFanout
 }
 
-// noteEgressFanoutRecycle appends a recycle at now and reports whether the
+// escalateEgressAbuse records an egress abuse recycle against the app's
+// account and places the ADR-361 account abuse hold on the
+// api.EgressFanoutHoldRecycles-th recycle (any reason) within the window.
+func (e *Engine) escalateEgressAbuse(ctx context.Context, appID string, reason EgressAbuseReason, observed, limit int64) error {
+	app, err := e.store.AppByID(ctx, appID)
+	if err != nil {
+		return fmt.Errorf("sched: egress abuse: load app %s: %w", appID, err)
+	}
+	if !e.noteEgressAbuseRecycle(app.AccountID, e.clock()) {
+		return nil
+	}
+	detail := map[string]any{"app": appID, "signal": string(reason), "observed_per_min": observed, "limit": limit,
+		"recycles": api.EgressFanoutHoldRecycles, "window_seconds": api.EgressFanoutHoldWindowSeconds}
+	return e.HoldAccountForAbuse(ctx, app.AccountID, reason.holdReason(), detail)
+}
+
+// noteEgressAbuseRecycle appends a recycle at now and reports whether the
 // account has reached the hold threshold within the window.
-func (e *Engine) noteEgressFanoutRecycle(accountID string, now time.Time) bool {
-	e.egressFanoutMu.Lock()
-	defer e.egressFanoutMu.Unlock()
-	if e.egressFanoutRecycles == nil {
-		e.egressFanoutRecycles = make(map[string][]time.Time)
+func (e *Engine) noteEgressAbuseRecycle(accountID string, now time.Time) bool {
+	e.egressAbuseMu.Lock()
+	defer e.egressAbuseMu.Unlock()
+	if e.egressAbuseRecycles == nil {
+		e.egressAbuseRecycles = make(map[string][]time.Time)
 	}
 	cutoff := now.Add(-time.Duration(api.EgressFanoutHoldWindowSeconds) * time.Second)
-	kept := e.egressFanoutRecycles[accountID][:0]
-	for _, at := range e.egressFanoutRecycles[accountID] {
+	kept := e.egressAbuseRecycles[accountID][:0]
+	for _, at := range e.egressAbuseRecycles[accountID] {
 		if at.After(cutoff) {
 			kept = append(kept, at)
 		}
 	}
 	kept = append(kept, now)
-	e.egressFanoutRecycles[accountID] = kept
+	e.egressAbuseRecycles[accountID] = kept
 	return len(kept) >= api.EgressFanoutHoldRecycles
 }
 

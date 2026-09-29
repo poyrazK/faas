@@ -251,3 +251,32 @@ func TestMetalTenantEgressFanoutCounted(t *testing.T) {
 		t.Fatalf("%s = %d, want 3 distinct destinations", EgressNewDstCounter, n)
 	}
 }
+
+// TestMetalTenantEgressFloodLimited sends a parallel burst at one
+// destination: the per-destination bucket drops the excess (ADR-361
+// decision 9) and counts it, while a second destination stays reachable.
+func TestMetalTenantEgressFloodLimited(t *testing.T) {
+	topo := newEgressTopology(t, "fld", func(c *Config) {
+		c.EgressConnRate, c.EgressConnBurst = 1000, 1000
+		c.EgressDestConnRate, c.EgressDestConnBurst = 1, 2
+	})
+	runIn(t, "ip", "-n", topo.outside, "addr", "add", "198.51.100.11/32", "dev", topo.cfg.VethHost)
+	reply, _ := topo.try("burst", "198.51.100.10", 443)
+	connected, err := strconv.Atoi(reply)
+	if err != nil {
+		t.Fatalf("burst client output %q: %v", reply, err)
+	}
+	if connected >= 20 {
+		t.Fatal("20 parallel connections to one address at 1/s burst 2 all succeeded; the per-destination limit is not enforced")
+	}
+	if n := topo.counter(EgressFloodCounter); n == 0 {
+		t.Fatalf("%s did not count the dropped flows (%d of 20 connected)", EgressFloodCounter, connected)
+	}
+	// A different destination has its own bucket.
+	if _, ok := topo.try("tcp", "198.51.100.11", 443); !ok {
+		// Refused (no listener) still proves the SYN left; a timeout does not.
+		if out := runIn(t, "ip", "netns", "exec", topo.inst, "nft", "list", "set", "ip", "faas", EgressDstRateSet); !strings.Contains(out, "198.51.100.11") {
+			t.Fatalf("second destination never reached its own bucket:\n%s", out)
+		}
+	}
+}

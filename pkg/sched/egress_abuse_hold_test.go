@@ -27,7 +27,7 @@ func TestEgressFanoutRepeatHoldsAccount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Wake: %v", err)
 	}
-	if err := e.RecycleForEgressFanout(ctx, first.InstanceID, 1500, 1200); err != nil {
+	if err := e.RecycleForEgressAbuse(ctx, first.InstanceID, EgressAbuseFanout, 1500, 1200); err != nil {
 		t.Fatalf("first recycle: %v", err)
 	}
 	if got, _ := store.AccountByID(ctx, acct.ID); got.AbuseHeld() {
@@ -49,7 +49,7 @@ func TestEgressFanoutRepeatHoldsAccount(t *testing.T) {
 		t.Fatalf("sibling wake reused %s; the test needs two running instances", second.InstanceID)
 	}
 	snapshotsBefore := vmm.snapshots
-	if err := e.RecycleForEgressFanout(ctx, second.InstanceID, 1500, 1200); err != nil {
+	if err := e.RecycleForEgressAbuse(ctx, second.InstanceID, EgressAbuseFanout, 1500, 1200); err != nil {
 		t.Fatalf("second recycle: %v", err)
 	}
 	held, _ := store.AccountByID(ctx, acct.ID)
@@ -75,16 +75,44 @@ func TestEgressFanoutRecyclesOutsideWindowDoNotHold(t *testing.T) {
 	e := &Engine{}
 	start := time.Unix(1_700_000_000, 0)
 	window := time.Duration(api.EgressFanoutHoldWindowSeconds) * time.Second
-	if e.noteEgressFanoutRecycle("acct", start) {
+	if e.noteEgressAbuseRecycle("acct", start) {
 		t.Fatal("first recycle reached the threshold")
 	}
-	if e.noteEgressFanoutRecycle("acct", start.Add(window+time.Second)) {
+	if e.noteEgressAbuseRecycle("acct", start.Add(window+time.Second)) {
 		t.Fatal("recycles a window apart reached the threshold")
 	}
-	if !e.noteEgressFanoutRecycle("acct", start.Add(window+2*time.Second)) {
+	if !e.noteEgressAbuseRecycle("acct", start.Add(window+2*time.Second)) {
 		t.Fatal("two recycles a second apart did not reach the threshold")
 	}
-	if e.noteEgressFanoutRecycle("other", start) {
+	if e.noteEgressAbuseRecycle("other", start) {
 		t.Fatal("recycles leaked across accounts")
+	}
+}
+
+// adr: 361 — flood recycles count toward the same escalation as fan-out; the
+// hold records the signal of the recycle that tipped it over.
+func TestEgressFloodAfterFanoutHoldsWithFloodReason(t *testing.T) {
+	store := state.NewMemStore()
+	acct, app, _ := seedApp(t, store, api.PlanPro, 512, 5)
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	ctx := context.Background()
+	first, err := e.Wake(ctx, app.ID, "", "", "")
+	if err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	if err := e.RecycleForEgressAbuse(ctx, first.InstanceID, EgressAbuseFanout, 1300, 1200); err != nil {
+		t.Fatalf("fan-out recycle: %v", err)
+	}
+	second, err := e.Wake(ctx, app.ID, "", "", "")
+	if err != nil {
+		t.Fatalf("second Wake: %v", err)
+	}
+	if err := e.RecycleForEgressAbuse(ctx, second.InstanceID, EgressAbuseFlood, 900, 600); err != nil {
+		t.Fatalf("flood recycle: %v", err)
+	}
+	held, _ := store.AccountByID(ctx, acct.ID)
+	if !held.AbuseHeld() || held.AbuseHoldReason != state.AccountAbuseHoldEgressFlood {
+		t.Fatalf("hold = %v %q, want egress_flood", held.AbuseHeld(), held.AbuseHoldReason)
 	}
 }

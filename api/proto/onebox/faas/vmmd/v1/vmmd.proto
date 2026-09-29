@@ -1244,6 +1244,10 @@ message InstanceStats {
   google.protobuf.Int64Value egress_new_destinations_per_min = 17;
   // The instance plan's fan-out ceiling; 0 when none applies.
   int64 egress_new_destinations_limit_per_min = 18;
+  // ADR-361 decision 9: new flows dropped in the last minute for exceeding
+  // the per-destination rate, and the plan's flood ceiling (0 = none).
+  google.protobuf.Int64Value egress_flood_drops_per_min = 19;
+  int64 egress_flood_drops_limit_per_min = 20;
 }
 
 // PingRequest is intentionally empty. Ping is a liveness probe; the

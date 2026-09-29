@@ -2727,8 +2727,8 @@ func TestEngineRecycleForEgressFanout_DestroysAndDropsWarmSnapshot(t *testing.T)
 			t.Fatalf("CreateSnapshot(%s): %v", tier, err)
 		}
 	}
-	if err := e.RecycleForEgressFanout(context.Background(), res.InstanceID, 1500, 1200); err != nil {
-		t.Fatalf("RecycleForEgressFanout: %v", err)
+	if err := e.RecycleForEgressAbuse(context.Background(), res.InstanceID, EgressAbuseFanout, 1500, 1200); err != nil {
+		t.Fatalf("RecycleForEgressAbuse: %v", err)
 	}
 	if vmm.destroys != 1 {
 		t.Errorf("destroys = %d, want 1", vmm.destroys)
@@ -2747,7 +2747,7 @@ func TestEngineRecycleForEgressFanout_DestroysAndDropsWarmSnapshot(t *testing.T)
 		t.Errorf("init snapshot after recycle = %v, want kept", err)
 	}
 	// A second report for the same, now stopped, instance is a no-op.
-	if err := e.RecycleForEgressFanout(context.Background(), res.InstanceID, 1500, 1200); err != nil || vmm.destroys != 1 {
+	if err := e.RecycleForEgressAbuse(context.Background(), res.InstanceID, EgressAbuseFanout, 1500, 1200); err != nil || vmm.destroys != 1 {
 		t.Fatalf("repeat recycle: err=%v destroys=%d, want no-op", err, vmm.destroys)
 	}
 }
