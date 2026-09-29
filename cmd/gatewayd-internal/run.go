@@ -1351,32 +1351,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 				}
 				return gateway.App{}, false, err
 			}
-			acct, err := pgStore.AccountByID(ctx, app.AccountID)
-			if err != nil {
-				return gateway.App{}, false, err
-			}
-			liveDeployments, err := pgStore.LiveDeployments(ctx, app.ID)
-			if err != nil && !errors.Is(err, state.ErrNotFound) {
-				return gateway.App{}, false, err
-			}
-			companionRoutes, primaryIngressPort, err := gatewayCompanionRoutes(liveDeployments)
-			if err != nil {
-				return gateway.App{}, false, err
-			}
-			favicon, robotsTxt, headWakes, crawlerPolicy, healthPath, healthPathWakes := edgeAnswersFromManifest(app.Manifest)
-			concurrencyOverflow := ""
-			maxQueueWaitMS := 0
-			maxQueueDepth := 0
-			wakeMaxQueueDepth := 0
-			wakeMaxQueueWaitSeconds := 0
-			if app.ScalingPolicy != nil {
-				concurrencyOverflow = app.ScalingPolicy.ConcurrencyOverflow
-				maxQueueWaitMS = app.ScalingPolicy.MaxQueueWaitMS
-				maxQueueDepth = app.ScalingPolicy.MaxQueueDepth
-				wakeMaxQueueDepth = app.ScalingPolicy.WakeMaxQueueDepth
-				wakeMaxQueueWaitSeconds = app.ScalingPolicy.WakeMaxQueueWaitSeconds
-			}
-			return gateway.App{ID: app.ID, AccountID: acct.ID, AccountStatus: string(acct.Status), Type: gateway.AppType(app.Type), Plan: acct.Plan, RequestInvocationsEnabled: app.AcceptsRequestInvocations(), MaxConcurrency: app.MaxConcurrency, ConcurrencyOverflow: concurrencyOverflow, MaxQueueWaitMS: maxQueueWaitMS, MaxQueueDepth: maxQueueDepth, WakeMaxQueueDepth: wakeMaxQueueDepth, WakeMaxQueueWaitSeconds: wakeMaxQueueWaitSeconds, AutoscaleTargetRPS: app.AutoscaleTargetRPS, IdleTimeoutS: app.IdleTimeoutS, RequestTimeoutS: app.Manifest.RequestTimeoutS, Slug: app.Slug, ProjectID: app.ProjectID, StreamingEnabled: app.StreamingEnabled, SessionAffinity: app.Manifest.SessionAffinity, VersionAffinityCookie: app.Manifest.VersionAffinityCookie, VersionAffinityManagedCookie: app.Manifest.VersionAffinityManagedCookie, RevisionPinTTLSeconds: app.Manifest.RevisionPinTTLSeconds, NodeID: app.NodeID, Ports: gateway.PublicPortsFromWorkloadPorts(app.Manifest.Ports), Sidecars: companionRoutes, PrimaryIngressPort: primaryIngressPort, RequireAuthn: app.RequireAuthn, ConsumerAuthMode: string(app.ConsumerAuthMode), CORSDefaultEnabled: app.CORSDefaultEnabled, CORSDefaultOrigins: app.CORSDefaultOrigins, Favicon: favicon, RobotsTxt: robotsTxt, HeadWakes: headWakes, CrawlerPolicy: crawlerPolicy, PreAuthRateLimit: app.Manifest.PreAuthRateLimit, HealthPath: healthPath, HealthPathWakes: healthPathWakes, PublicAuth: gateway.PublicAuthConfig{Mode: app.PublicAuthMode, BasicSealed: app.PublicAuthBasicSealed, IPAllowlist: app.PublicAuthIPAllowlist}, RouteMetricsEnabled: app.RouteMetricsEnabled, MaintenanceMode: app.MaintenanceMode, OnlyAllowDeclaredRoutes: app.OnlyAllowDeclaredRoutes, DeclaredRoutes: gatewayDeclaredRoutes(app.DeclaredRoutes)}, true, nil
+			return router.toApp(ctx, app)
 		}).
 		WithLiveTargetLoader(func(ctx context.Context, appID string) ([]gateway.Target, error) {
 			// An instances row can outlive its deployment. Restrict the
@@ -4085,11 +4060,11 @@ func installComputeMetricsRoute(mux *http.ServeMux, boxRole role.Role, control h
 // pkg/state import already exists. It translates state.Deployment to
 // gateway.DeploymentWeightsRow (only fields the picker reads).
 type weightsStoreAdapter struct {
-	store *state.PgStore
+	store liveDeploymentStore
 }
 
 func (a weightsStoreAdapter) LiveDeployments(ctx context.Context, appID string) ([]gateway.DeploymentWeightsRow, error) {
-	deps, err := a.store.LiveDeployments(ctx, appID)
+	deps, err := productionLiveDeployments(ctx, a.store, appID)
 	if err != nil {
 		return nil, err
 	}

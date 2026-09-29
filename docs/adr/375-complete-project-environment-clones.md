@@ -133,8 +133,8 @@ barrier, connecting the PostgreSQL and object copy workers to one durable clone,
 cloning and publishing the active deployment graph, environment ownership of
 the remaining policies/triggers/integrations, scope-specific capacity and
 reconciliation, source-manifest/reconcile writes, and qualification plus atomic
-promotion/rollback of the complete effective state. Production ingress must
-also exclude other scopes from ordinary weighted routing. Native x86_64 KVM
+promotion/rollback of the complete effective state. Production ingress still
+needs request-specific settings for retained release/revision selections. Native x86_64 KVM
 acceptance remains required; the current local checks use store integration
 tests and scheduler/gateway fakes on macOS.
 
@@ -183,3 +183,20 @@ package binary exceeded local disk capacity during concurrent unrelated builds;
 its existing stage test files were also run unchanged through a small temporary
 harness against the real stores. This is focused evidence, not full-suite or native
 VM acceptance. Remaining full-clone gaps listed above still apply.
+
+### Production routing isolation (2026-09-29)
+
+Ordinary ingress weights, quarantine checks, and companion routes now select
+only named production or legacy default deployments. Serving legacy default
+traffic survives dark preparation in named production; named production takes
+precedence once it serves traffic. Stage deployments remain available in exact
+deployment target sets, but cannot acquire implicit default weights on cache
+hydration. An authoritative empty production set stays empty, and first ordinary
+host lookup hydrates stored weights before it can route.
+
+Exact deployment routes retain their own settings without replacing the app-ID
+production cache. Their companion routes also work for zero-traffic candidates.
+Focused gateway and daemon contracts cover stage-only apps, preparation and
+cutover, out-of-band stage wakes, cache eviction and failed-read retry, quarantine,
+sidecars, and interleaved production/preview settings. Default scheduler selection
+and request-specific retained-release settings still require separate work.

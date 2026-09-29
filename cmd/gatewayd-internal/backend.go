@@ -547,19 +547,30 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 		// must come from that release even when production differs.
 		liveDeployments = []state.Deployment{*exact}
 	} else {
-		deps, depErr := r.store.LiveDeployments(ctx, app.ID)
+		deps, depErr := productionLiveDeployments(ctx, r.store, app.ID)
 		if depErr != nil && !errors.Is(depErr, state.ErrNotFound) {
 			return gateway.App{}, false, depErr
 		}
 		liveDeployments = deps
 	}
 	for _, dep := range liveDeployments {
+		if exact == nil && dep.TrafficPercent <= 0 {
+			continue
+		}
 		if dep.ParkedReason == string(state.ParkReasonSecurityScanRegressed) {
 			securityQuarantined = true
 			break
 		}
 	}
-	companionRoutes, primaryIngressPort, err := gatewayCompanionRoutes(liveDeployments)
+	companionDeployments := liveDeployments
+	if exact != nil {
+		// Preview and retained-release routes explicitly select a deployment,
+		// including dark candidates. Its sidecars do not depend on weights.
+		selected := *exact
+		selected.TrafficPercent = 100
+		companionDeployments = []state.Deployment{selected}
+	}
+	companionRoutes, primaryIngressPort, err := gatewayCompanionRoutes(companionDeployments)
 	if err != nil {
 		return gateway.App{}, false, err
 	}
