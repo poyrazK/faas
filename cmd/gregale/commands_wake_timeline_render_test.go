@@ -1,4 +1,4 @@
-// adr: 342 — the CLI explains the closed application fallback reason.
+// adr: 350 — the CLI explains the closed application fallback reason.
 package main
 
 import (

@@ -108,7 +108,7 @@ func TestWakeRestoreFailureFallsBackToColdBoot(t *testing.T) {
 	}
 }
 
-// adr: 342 — only an application hook failure receives a customer reason.
+// adr: 350 — only an application hook failure receives a customer reason.
 func TestWakeRestoreFallbackReasonOnlyForApplicationHook(t *testing.T) {
 	tests := []struct {
 		name       string

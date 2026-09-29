@@ -1,4 +1,4 @@
-// adr: 342 — the optional fallback reason reaches the customer API.
+// adr: 350 — the optional fallback reason reaches the customer API.
 // handlers_wake_timeline_test.go — issue #517 / PR-C / ADR-064 —
 // whitebox for GET /v1/apps/{slug}/wakes/{wake_id}/timeline.
 //

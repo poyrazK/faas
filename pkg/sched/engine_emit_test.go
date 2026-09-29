@@ -36,7 +36,7 @@ func wakeEngineWithEvents(t *testing.T, store state.Store, vmm RoutedVMM, notif 
 	return e
 }
 
-// adr: 342 — the customer event carries the safe reason for hook fallbacks.
+// adr: 350 — the customer event carries the safe reason for hook fallbacks.
 func TestEngineWake_EmitsApplicationRestoreFallbackReason(t *testing.T) {
 	for _, tt := range []struct {
 		name       string

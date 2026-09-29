@@ -341,7 +341,7 @@ func TestWakeResponseFromInstance_BadIP(t *testing.T) {
 	}
 }
 
-// adr: 342 — the wire exposes the closed reason on a real fallback only.
+// adr: 350 — the wire exposes the closed reason on a real fallback only.
 func TestWakeResponseFromInstance_OnlyApplicationFallbackReason(t *testing.T) {
 	for _, tt := range []struct {
 		name      string
