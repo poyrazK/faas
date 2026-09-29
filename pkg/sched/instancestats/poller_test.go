@@ -610,6 +610,56 @@ func TestPoller_DiskPressureHandlerRunsOncePerFullTransition(t *testing.T) {
 	}
 }
 
+// TestPoller_EgressFanoutHandlerRunsOncePerCrossing pins ADR-361 decision 6:
+// a sample at the plan ceiling invokes the handler once, a failed handler is
+// retried, repeated samples over the ceiling do not repeat the recycle, and
+// dropping back under the ceiling re-arms it. Rows without a ceiling or
+// without a sample never trigger.
+func TestPoller_EgressFanoutHandlerRunsOncePerCrossing(t *testing.T) {
+	store := state.NewMemStore()
+	_, node := seedTwoNodes(t, store)
+	ins := seedInstance(t, store, "app1", node.ID)
+	sample := func(perMin *int64, limit int64) *sched.StatsSnapshot {
+		return &sched.StatsSnapshot{Instances: []sched.VMInstanceStat{{
+			InstanceID: ins.ID, EgressNewDestinationsPerMin: perMin, EgressNewDestinationsLimitPerMin: limit,
+		}}}
+	}
+	dialer := &statsFakeDialer{stats: map[string]*sched.StatsSnapshot{node.TargetURL: sample(ptrI64(120), 120)}}
+	var calls []InstanceStat
+	fail := true
+	p := NewPoller(store, dialer, nil, NewReader(), nil, nilLogger()).
+		WithEgressFanoutHandler(func(_ context.Context, row InstanceStat) error {
+			calls = append(calls, row)
+			if fail {
+				fail = false
+				return errors.New("vmmd unavailable")
+			}
+			return nil
+		})
+	tick := func(snap *sched.StatsSnapshot) {
+		t.Helper()
+		dialer.mu.Lock()
+		dialer.stats[node.TargetURL] = snap
+		dialer.mu.Unlock()
+		if err := p.Tick(context.Background()); err != nil {
+			t.Fatalf("Tick: %v", err)
+		}
+	}
+	tick(sample(ptrI64(120), 120)) // crossing, handler fails
+	tick(sample(ptrI64(300), 120)) // retried, succeeds
+	tick(sample(ptrI64(300), 120)) // still over: no repeat
+	if len(calls) != 2 || calls[1].EgressNewDstPerMin != 300 || calls[1].EgressNewDstLimitPerMin != 120 {
+		t.Fatalf("handler calls = %+v, want a failed call then one success at 300/120", calls)
+	}
+	tick(sample(ptrI64(5000), 0)) // no ceiling
+	tick(sample(nil, 120))        // no sample yet
+	tick(sample(ptrI64(10), 120)) // back under: re-armed
+	tick(sample(ptrI64(121), 120))
+	if len(calls) != 3 {
+		t.Fatalf("handler calls = %d, want 3 after re-arm", len(calls))
+	}
+}
+
 // TestPoller_FirstSampleCPUUnknown pins the cgroup "first sample"
 // invariant: the cumulative CPU counter needs a prior reading to
 // produce a rate. The poller stamps CPU=Unknown on the very first

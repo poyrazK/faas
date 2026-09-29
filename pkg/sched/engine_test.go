@@ -2707,6 +2707,51 @@ func TestEngineRecycleForDiskPressure_DestroysAndInvalidatesSnapshot(t *testing.
 	}
 }
 
+// adr: 361 — a fan-out recycle destroys the instance and drops the warm
+// snapshot (captured after traffic, possibly compromised) but keeps the
+// pre-traffic init snapshot.
+func TestEngineRecycleForEgressFanout_DestroysAndDropsWarmSnapshot(t *testing.T) {
+	store := state.NewMemStore()
+	_, app, dep := seedApp(t, store, api.PlanPro, 512, 5)
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	res, err := e.Wake(context.Background(), app.ID, "", "", "")
+	if err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	// Seed both tiers after the wake so only the recycle can retire them.
+	for _, tier := range []string{state.SnapshotTierWarm, state.SnapshotTierInit} {
+		if _, err := store.CreateSnapshot(context.Background(), state.Snapshot{
+			DeploymentID: dep.ID, Tier: tier, FCVersion: "1.10.0", StorageKey: "snap/" + tier + "/" + dep.ID,
+		}); err != nil {
+			t.Fatalf("CreateSnapshot(%s): %v", tier, err)
+		}
+	}
+	if err := e.RecycleForEgressFanout(context.Background(), res.InstanceID, 1500, 1200); err != nil {
+		t.Fatalf("RecycleForEgressFanout: %v", err)
+	}
+	if vmm.destroys != 1 {
+		t.Errorf("destroys = %d, want 1", vmm.destroys)
+	}
+	ins, _ := store.InstanceByID(context.Background(), res.InstanceID)
+	if ins.State != string(state.StateStopped) {
+		t.Errorf("state = %q, want stopped", ins.State)
+	}
+	if got := e.Ledger().ResidentRAM(); got != 0 {
+		t.Errorf("resident = %d, want 0 after fan-out recycle", got)
+	}
+	if _, err := store.LatestSnapshotForTier(context.Background(), dep.ID, state.SnapshotTierWarm); !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("warm snapshot after recycle = %v, want ErrNotFound", err)
+	}
+	if _, err := store.LatestSnapshotForTier(context.Background(), dep.ID, state.SnapshotTierInit); err != nil {
+		t.Errorf("init snapshot after recycle = %v, want kept", err)
+	}
+	// A second report for the same, now stopped, instance is a no-op.
+	if err := e.RecycleForEgressFanout(context.Background(), res.InstanceID, 1500, 1200); err != nil || vmm.destroys != 1 {
+		t.Fatalf("repeat recycle: err=%v destroys=%d, want no-op", err, vmm.destroys)
+	}
+}
+
 // TestEngineParkAppSnapshotsRunningInstance pins the app-level park contract:
 // once apid has changed the app to evicted_cold, schedd must perform the
 // instance lifecycle work instead of leaving a RUNNING row behind. The

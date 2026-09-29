@@ -276,6 +276,9 @@ func TestReportCapacity_BatchedTelemetryReachesCacheSink(t *testing.T) {
 			DiskUsedBytes:     wrapperspb.Int64(80),
 			DiskCapacityBytes: wrapperspb.Int64(100),
 			OpenConns:         2,
+
+			EgressNewDestinationsPerMin:      wrapperspb.Int64(42),
+			EgressNewDestinationsLimitPerMin: 120,
 			FlowSummaries: []*scheddpb.FlowSummary{{
 				Protocol: "tcp", RemoteIp: "203.0.113.10", RemotePort: 443,
 				State: "ESTABLISHED", Direction: "outbound", Count: 2,
@@ -299,6 +302,9 @@ func TestReportCapacity_BatchedTelemetryReachesCacheSink(t *testing.T) {
 	}
 	if len(row.FlowSummaries) != 1 || row.FlowSummaries[0].RemoteIP != "203.0.113.10" || row.FlowSummaries[0].Count != 2 {
 		t.Fatalf("flow summaries = %#v, want one endpoint summary", row.FlowSummaries)
+	}
+	if row.EgressNewDestinationsPerMin == nil || *row.EgressNewDestinationsPerMin != 42 || row.EgressNewDestinationsLimitPerMin != 120 {
+		t.Fatalf("egress fan-out = %v/%d, want 42/120", row.EgressNewDestinationsPerMin, row.EgressNewDestinationsLimitPerMin)
 	}
 }
 

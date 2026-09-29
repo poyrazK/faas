@@ -1728,6 +1728,21 @@ groups:
           description: "Customer {{ $labels.account_id }} sustained > 500 rps on apid for 10m. Cross-check gateway_top_tenant_rps for the L7 view, then follow docs/runbooks/tenant-abuse.md §Recover (rate-limit → notify → suspend deployment)."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/tenant-abuse.md"
 
+      # ADR-361 decision 6: schedd destroyed an instance whose guest reached
+      # its plan's new-destination ceiling in one minute. Scanning or spraying
+      # from the platform's shared egress address is what got the production
+      # project suspended on 2026-09-24, so a single recycle pages.
+      - alert: FaasTenantEgressFanout
+        expr: sum by (app) (increase(schedd_egress_fanout_recycles_total{app!=""}[15m])) > 0
+        labels:
+          severity: page
+          component: schedd
+          family: tenant_abuse
+        annotations:
+          summary: "App {{ $labels.app }} recycled for egress fan-out"
+          description: "schedd destroyed {{ $value }} instance(s) of app {{ $labels.app }} in the last 15m because the guest contacted at least its plan's EgressNewDestinationsPerMinute new destinations in one minute. Treat it as a likely scan or abuse from the node's egress address until reviewed."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTenantEgressFanout.md"
+
       # ─────────────────────────────────────────────────────────────────
       # Daemon liveness — every scrape target should be up.
       # 2m is tight: a single scrape miss (15s) does not trip it; a

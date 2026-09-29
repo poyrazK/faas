@@ -503,6 +503,12 @@ type Limits struct {
 	// faas_egress_rate. Bounds scanning on the permitted web ports.
 	EgressNewConnPerSecond int
 	EgressNewConnBurst     int
+	// EgressNewDestinationsPerMinute is the fan-out ceiling (ADR-361
+	// decision 6): distinct destination addresses an instance first contacts
+	// within one minute, counted by faas_egress_new_dst. schedd recycles an
+	// instance that reaches it. It sits below 60 × EgressNewConnPerSecond so
+	// a sweep trips it before the rate limit alone would absorb it.
+	EgressNewDestinationsPerMinute int
 	// EgressExtraPortsMax caps the extra TCP destination ports an app may
 	// declare on top of TenantEgressBasePorts (ADR-361). 0 = the plan
 	// cannot declare any (Free/Hobby).
@@ -1805,23 +1811,24 @@ var planLimits = map[Plan]Limits{
 		// layer build ... Free 256 MB") and the limits table both read 256
 		// (PR #241 spec-drift audit, 2026-07-26). This is a no-op
 		// alignment comment; the value was 256 before this audit too.
-		AppLayerMaxMB:          256,
-		SourceTarballMaxMB:     100,
-		VCPU:                   2,
-		IdleTimeoutS:           60,
-		CertExpiryWarningDays:  30,
-		IncludedGBHours:        5,
-		PriceMillicents:        0,
-		RateLimitRPS:           5,
-		RateLimitBurst:         20,
-		EgressMbit:             10,
-		EgressNewConnPerSecond: 10,
-		EgressNewConnBurst:     40,
-		EgressExtraPortsMax:    0,
-		SecretCountMax:         8,
-		SecretValueMaxBytes:    4 * 1024,
-		EnvVarsMax:             16,
-		EnvValueMaxBytes:       4 * 1024,
+		AppLayerMaxMB:                  256,
+		SourceTarballMaxMB:             100,
+		VCPU:                           2,
+		IdleTimeoutS:                   60,
+		CertExpiryWarningDays:          30,
+		IncludedGBHours:                5,
+		PriceMillicents:                0,
+		RateLimitRPS:                   5,
+		RateLimitBurst:                 20,
+		EgressMbit:                     10,
+		EgressNewConnPerSecond:         10,
+		EgressNewConnBurst:             40,
+		EgressNewDestinationsPerMinute: 120,
+		EgressExtraPortsMax:            0,
+		SecretCountMax:                 8,
+		SecretValueMaxBytes:            4 * 1024,
+		EnvVarsMax:                     16,
+		EnvValueMaxBytes:               4 * 1024,
 		// TrustedSignerCountMax: Free keeps the open-deploy posture;
 		// signature enforcement is a regulated-workload feature that
 		// Free never needs (issue #472 / ADR-054).
@@ -2191,17 +2198,18 @@ var planLimits = map[Plan]Limits{
 		PriceMillicents:       900_000, // €9.00
 		// ConcurrencyPerVMBound (issue #559): Hobby = 5 — smallest
 		// paid tier, matches Cloud Run's framing. Spec §4.9.1.
-		ConcurrencyPerVMBound:  5,
-		RateLimitRPS:           20,
-		RateLimitBurst:         100,
-		EgressMbit:             25,
-		EgressNewConnPerSecond: 20,
-		EgressNewConnBurst:     80,
-		EgressExtraPortsMax:    0,
-		SecretCountMax:         25,
-		SecretValueMaxBytes:    8 * 1024,
-		EnvVarsMax:             32,
-		EnvValueMaxBytes:       8 * 1024,
+		ConcurrencyPerVMBound:          5,
+		RateLimitRPS:                   20,
+		RateLimitBurst:                 100,
+		EgressMbit:                     25,
+		EgressNewConnPerSecond:         20,
+		EgressNewConnBurst:             80,
+		EgressNewDestinationsPerMinute: 240,
+		EgressExtraPortsMax:            0,
+		SecretCountMax:                 25,
+		SecretValueMaxBytes:            8 * 1024,
+		EnvVarsMax:                     32,
+		EnvValueMaxBytes:               8 * 1024,
 		// TrustedSignerCountMax: Hobby is the lowest paid tier; the
 		// 4-publisher cap covers a hobbyist running a single CI
 		// (GitHub Actions) + a backup CI (Codeberg) + a personal
@@ -2596,17 +2604,18 @@ var planLimits = map[Plan]Limits{
 		// 25 concurrent in-flight requests per VM. Matches the
 		// typical SaaS-tier workload envelope (one Node/Python
 		// service handling fan-out from a single client request).
-		ConcurrencyPerVMBound:  25,
-		RateLimitRPS:           100,
-		RateLimitBurst:         500,
-		EgressMbit:             100,
-		EgressNewConnPerSecond: 50,
-		EgressNewConnBurst:     200,
-		EgressExtraPortsMax:    8,
-		SecretCountMax:         50,
-		SecretValueMaxBytes:    16 * 1024,
-		EnvVarsMax:             64,
-		EnvValueMaxBytes:       16 * 1024,
+		ConcurrencyPerVMBound:          25,
+		RateLimitRPS:                   100,
+		RateLimitBurst:                 500,
+		EgressMbit:                     100,
+		EgressNewConnPerSecond:         50,
+		EgressNewConnBurst:             200,
+		EgressNewDestinationsPerMinute: 1200,
+		EgressExtraPortsMax:            8,
+		SecretCountMax:                 50,
+		SecretValueMaxBytes:            16 * 1024,
+		EnvVarsMax:                     64,
+		EnvValueMaxBytes:               16 * 1024,
 		// Issue #461: Pro = 5 — multi-region + CI shapes.
 		RegistryCredentialMax: 5,
 		MinInstancesAllowed:   true,
@@ -2963,17 +2972,18 @@ var planLimits = map[Plan]Limits{
 		// per VM is comfortably reachable at Scale's 1024 MB RAM
 		// for a typical Node.js / Go service; a sync-subprocess
 		// Python customer would saturate before hitting this cap.
-		ConcurrencyPerVMBound:  80,
-		RateLimitRPS:           500,
-		RateLimitBurst:         2000,
-		EgressMbit:             250,
-		EgressNewConnPerSecond: 100,
-		EgressNewConnBurst:     400,
-		EgressExtraPortsMax:    32,
-		SecretCountMax:         100,
-		SecretValueMaxBytes:    32 * 1024,
-		EnvVarsMax:             256,
-		EnvValueMaxBytes:       32 * 1024,
+		ConcurrencyPerVMBound:          80,
+		RateLimitRPS:                   500,
+		RateLimitBurst:                 2000,
+		EgressMbit:                     250,
+		EgressNewConnPerSecond:         100,
+		EgressNewConnBurst:             400,
+		EgressNewDestinationsPerMinute: 3000,
+		EgressExtraPortsMax:            32,
+		SecretCountMax:                 100,
+		SecretValueMaxBytes:            32 * 1024,
+		EnvVarsMax:                     256,
+		EnvValueMaxBytes:               32 * 1024,
 		// Issue #461: Scale = 20 — broad fan-out for SaaS-scale apps.
 		RegistryCredentialMax: 20,
 		MinInstancesAllowed:   true,

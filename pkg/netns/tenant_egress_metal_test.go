@@ -231,3 +231,23 @@ func TestMetalTenantEgressRateLimit(t *testing.T) {
 	}
 	t.Logf("connected under the rate limit: %d of 20", connected)
 }
+
+// TestMetalTenantEgressFanoutCounted drives distinct and repeated
+// destinations through the fan-out rule (ADR-361 decision 6): each new
+// destination address counts once whether the flow is accepted, refused or
+// dropped, and pinned DNS never counts.
+func TestMetalTenantEgressFanoutCounted(t *testing.T) {
+	topo := newEgressTopology(t, "fan", nil)
+	for _, ip := range []string{"198.51.100.11", "198.51.100.12"} {
+		runIn(t, "ip", "-n", topo.outside, "addr", "add", ip+"/32", "dev", topo.cfg.VethHost)
+	}
+	topo.try("tcp", "198.51.100.10", 443) // accepted
+	topo.try("tcp", "198.51.100.10", 443) // same destination
+	topo.try("tcp", "198.51.100.11", 443) // refused (no listener), still a new flow
+	topo.try("tcp", "198.51.100.12", 8080)
+	topo.try("udp", "198.51.100.12", 9999) // dropped, destination already seen
+	topo.try("udp", "8.8.8.8", 53)         // pinned to the bridge resolver
+	if n := topo.counter(EgressNewDstCounter); n != 3 {
+		t.Fatalf("%s = %d, want 3 distinct destinations", EgressNewDstCounter, n)
+	}
+}

@@ -61,6 +61,10 @@ const (
 	EgressDenyClassRFC1918   EgressDenyClass = "rfc1918"
 	EgressDenyClassMetadata  EgressDenyClass = "metadata"
 	EgressDenyClassAllowlist EgressDenyClass = "allowlist"
+	// ADR-361: TCP to an undeclared port or non-TCP guest traffic, and new
+	// flows over the per-VM rate.
+	EgressDenyClassPortPolicy EgressDenyClass = "port_policy"
+	EgressDenyClassRateLimit  EgressDenyClass = "rate_limit"
 
 	// Named counters used by the aggregate rules. Per-CIDR counters keep
 	// their existing drop_* names and are rolled up by Class.

@@ -1238,6 +1238,11 @@ message InstanceStats {
   // Bounded conntrack endpoint summaries. Empty on older nodes or when the
   // optional flow snapshotter is unavailable.
   repeated FlowSummary flow_summaries = 16;
+  // ADR-361 decision 6: distinct destination addresses the guest first
+  // contacted in the last minute. Absent until vmmd has observed a window.
+  google.protobuf.Int64Value egress_new_destinations_per_min = 17;
+  // The instance plan's fan-out ceiling; 0 when none applies.
+  int64 egress_new_destinations_limit_per_min = 18;
 }
 
 // PingRequest is intentionally empty. Ping is a liveness probe; the

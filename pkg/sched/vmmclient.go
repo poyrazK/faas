@@ -322,7 +322,12 @@ type VMInstanceStat struct {
 	ResidentBytes     *int64
 	DiskUsedBytes     *int64
 	DiskCapacityBytes *int64
-	CPUPct            *float64
+	// EgressNewDestinationsPerMin / EgressNewDestinationsLimitPerMin are the
+	// ADR-361 fan-out sample (nil until vmmd observed a window) and the
+	// instance plan's ceiling (0 = none).
+	EgressNewDestinationsPerMin      *int64
+	EgressNewDestinationsLimitPerMin int64
+	CPUPct                           *float64
 	// CPUSeconds is the cumulative CPU-seconds reading from
 	// vmmd's cpustats cache (issue #279 / PR-B). nil on the
 	// wire when the cache has no baseline for the instance
@@ -1360,6 +1365,11 @@ func vmInstanceStatFromProto(in *vmmdpb.InstanceStats) VMInstanceStat {
 		b := v.GetValue()
 		row.DiskCapacityBytes = &b
 	}
+	if v := in.GetEgressNewDestinationsPerMin(); v != nil {
+		b := v.GetValue()
+		row.EgressNewDestinationsPerMin = &b
+	}
+	row.EgressNewDestinationsLimitPerMin = in.GetEgressNewDestinationsLimitPerMin()
 	if v := in.GetCpuPct(); v != nil {
 		c := v.GetValue()
 		row.CPUPct = &c

@@ -1014,6 +1014,10 @@ message InstanceTelemetry {
   // Bounded conntrack endpoint summaries transported with the persistent
   // capacity stream. Empty on older nodes or when unavailable.
   repeated FlowSummary flow_summaries = 14;
+  // ADR-361 decision 6: distinct destinations first contacted in the last
+  // minute, and the plan ceiling (0 = none). Mirrors vmmd InstanceStats.
+  google.protobuf.Int64Value egress_new_destinations_per_min = 15;
+  int64 egress_new_destinations_limit_per_min = 16;
 }
 
 // ReportCapacityAck is the typed "I consumed all your messages"

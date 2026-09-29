@@ -631,8 +631,10 @@ func (c Config) NftCommands() [][]string {
 			"iifname", c.Tap, "ip", "daddr", e.Prefix.String(),
 			"counter", "name", e.CounterName, "drop")
 	}
-	// ADR-361: guest-originated new flows over the plan's rate drop, and
-	// anything that is not TCP drops, before any accept below.
+	// ADR-361: count new destinations (fan-out), then drop guest-originated
+	// new flows over the plan's rate and anything that is not TCP, before
+	// any accept below.
+	cmds = append(cmds, c.egressFanoutRule(nft, "ip"))
 	cmds = append(cmds, c.egressRateRule(nft, "ip")...)
 	cmds = append(cmds, c.egressNonTCPRule(nft, "ip"))
 	// ADR-031 + ADR-032 per-app egress allowlist. Placed AFTER the
@@ -726,6 +728,7 @@ func (c Config) NftCommands() [][]string {
 	// a v4-only allowlist returns nil here — v6 stays at
 	// chain-policy drop (because forwardChainPolicy flips when the
 	// single field is non-empty), with no per-chain accept rule.
+	cmds = append(cmds, c.egressFanoutRule(nft, "ip6"))
 	cmds = append(cmds, c.egressRateRule(nft, "ip6")...)
 	cmds = append(cmds, c.egressNonTCPRule(nft, "ip6"))
 	if rule := c.ForwardAllowlistRule6(nft); rule != nil {
@@ -745,15 +748,34 @@ const (
 	EgressDenyCounterRate   = "faas_egress_rate"
 	EgressPortsSet          = "egress_ports"
 	guestDNSChain           = "guest_dns"
+
+	// EgressNewDstCounter counts guest-originated new flows to a destination
+	// address the guest has not contacted within EgressDstTimeout. vmmd turns
+	// it into distinct new destinations per minute, the fan-out signal that
+	// catches scanning and spraying (ADR-361 decision 6).
+	EgressNewDstCounter = "faas_egress_new_dst"
+	EgressDstSet        = "egress_dsts"
+	EgressDstTimeout    = "10m"
+	// egressDstSetSize bounds the kernel memory of the destination set. A
+	// full set stops remembering new addresses, so every further new
+	// destination keeps counting: the signal saturates upward, never down.
+	egressDstSetSize = 65535
 )
 
 // egressPolicyObjects declares the policy counters and the egress_ports set
 // (with its elements) in one family's faas table. Counters must exist
 // before the rules that name them.
 func (c Config) egressPolicyObjects(nft func(...string) []string, family string) [][]string {
+	addrType := "ipv4_addr"
+	if family == "ip6" {
+		addrType = "ipv6_addr"
+	}
 	cmds := [][]string{
 		nft("add", "counter", family, "faas", EgressDenyCounterPolicy, "{}"),
 		nft("add", "set", family, "faas", EgressPortsSet, "{", "type", "inet_service", ";", "}"),
+		nft("add", "counter", family, "faas", EgressNewDstCounter, "{}"),
+		nft("add", "set", family, "faas", EgressDstSet, "{", "type", addrType, ";", "flags", "dynamic,timeout", ";",
+			"timeout", EgressDstTimeout, ";", "size", strconv.Itoa(egressDstSetSize), ";", "}"),
 	}
 	if c.EgressConnRate > 0 {
 		cmds = append(cmds, nft("add", "counter", family, "faas", EgressDenyCounterRate, "{}"))
@@ -801,6 +823,15 @@ func (c Config) EgressPortsUpdateCommands() [][]string {
 		}
 	}
 	return cmds
+}
+
+// egressFanoutRule counts a guest-originated new flow whose destination is
+// not in egress_dsts, then remembers the destination. It only counts, so it
+// runs first: blocked and rate-limited attempts are part of the signal.
+func (c Config) egressFanoutRule(nft func(...string) []string, family string) []string {
+	return nft("add", "rule", family, "faas", "forward", "iifname", c.Tap, "ct", "state", "new",
+		family, "daddr", "!=", "@"+EgressDstSet, "counter", "name", EgressNewDstCounter,
+		"add", "@"+EgressDstSet, "{", family, "daddr", "}")
 }
 
 // egressRateRule drops guest-originated new flows over EgressConnRate.

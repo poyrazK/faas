@@ -1519,8 +1519,15 @@ type OpsMetrics struct {
 	// panels surface even on an idle box.
 	egressDeny *prometheus.CounterVec
 	// egressDenied is the C1 per-app roll-up of the per-namespace nft
-	// counters. Class is closed to smtp, rfc1918, metadata, allowlist.
+	// counters. Class is closed to smtp, rfc1918, metadata, allowlist,
+	// port_policy and rate_limit (ADR-361).
 	egressDenied *prometheus.CounterVec
+	// egressNewDestinations is the ADR-361 fan-out counter: destination
+	// addresses guests first contacted, per app.
+	egressNewDestinations *prometheus.CounterVec
+	// egressFanoutRecycles counts schedd recycling an instance for
+	// exceeding its plan's fan-out ceiling (ADR-361 decision 6).
+	egressFanoutRecycles *prometheus.CounterVec
 	// ociEgressDeny: PR-E sister collector to egressDeny for the
 	// user-space OCI dialer. Registered ONLY on the imaged OpsMetrics
 	// (prefix = "imaged") so the metric surfaces as
@@ -3531,8 +3538,16 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}, []string{"cidr", "family"})
 	egressDenied := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_egress_denied_total",
-		Help: "Per-app tenant egress drops rolled up from per-instance nftables counters (C1). class is one of smtp, rfc1918, metadata, or allowlist; app is the app id.",
+		Help: "Per-app tenant egress drops rolled up from per-instance nftables counters (C1). class is one of smtp, rfc1918, metadata, allowlist, port_policy (undeclared TCP port or non-TCP, ADR-361) or rate_limit (new flows over the per-VM rate, ADR-361); app is the app id.",
 	}, []string{"app", "class"})
+	egressNewDestinations := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_egress_new_destinations_total",
+		Help: "Destination addresses tenant guests contacted that they had not contacted in the previous 10 minutes, per app (ADR-361 decision 6). Read from each instance's faas_egress_new_dst nft counter every 15s; the per-instance rate drives schedd's fan-out recycle.",
+	}, []string{"app"})
+	egressFanoutRecycles := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_egress_fanout_recycles_total",
+		Help: "Instances schedd destroyed because their guest contacted at least the plan's EgressNewDestinationsPerMinute new destinations in one minute (ADR-361 decision 6), per app. Any increase is a potential abuse report against the platform's egress address and pages the operator.",
+	}, []string{"app"})
 	// Issue #300: per-tenant RPS gauge. Sampled 5s by the daemon's
 	// topNSampler goroutine (cmd/apid/topn.go). Bounded at
 	// topAccountSetCap (1000) + "other" via topAccountSet — see
@@ -3769,7 +3784,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		sidecarHealthTransitionsTotal,
 		scaleUpDecisions, scaleUpWinningSignal, scheduledFloorActive, scaleDownDecisions, scaleUpAdmitRPS, sseClients,
 		appOwnershipChecks,
-		egressDeny, egressDenied,
+		egressDeny, egressDenied, egressNewDestinations, egressFanoutRecycles,
 		failedLoginTotal, failedLoginDropped,
 		failedLoginAuditWriteFailures,
 		auditEventsDeletedTotal,
@@ -4992,9 +5007,11 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	for _, e := range netns.NewDefaultDenySet().Entries {
 		egressDeny.WithLabelValues(e.CounterName, e.Family.String())
 	}
-	for _, class := range []string{"smtp", "rfc1918", "metadata", "allowlist"} {
+	for _, class := range []string{"smtp", "rfc1918", "metadata", "allowlist", "port_policy", "rate_limit"} {
 		egressDenied.WithLabelValues("", class)
 	}
+	egressNewDestinations.WithLabelValues("")
+	egressFanoutRecycles.WithLabelValues("")
 	// PR-E: pre-instantiate the imaged-side mirror counter
 	// (oci_egress_deny_total) with the catalog entries. The OCI-only
 	// extras (loopback / 0.0.0.0/8 / IETF-assigned / benchmarking /
@@ -5302,6 +5319,8 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		sseClients:                                            sseClients,
 		egressDeny:                                            egressDeny,
 		egressDenied:                                          egressDenied,
+		egressNewDestinations:                                 egressNewDestinations,
+		egressFanoutRecycles:                                  egressFanoutRecycles,
 		ociEgressDeny:                                         ociEgressDeny,
 		ownershipClamp:                                        ownershipClamp,
 		layerEntrySkipped:                                     layerEntrySkipped,
@@ -7421,6 +7440,22 @@ func (m *OpsMetrics) EgressDenied(app, class string) prometheus.Counter {
 		return nil
 	}
 	return m.egressDenied.WithLabelValues(app, class)
+}
+
+// EgressNewDestinations returns the per-app ADR-361 fan-out counter.
+func (m *OpsMetrics) EgressNewDestinations(app string) prometheus.Counter {
+	if m == nil || m.egressNewDestinations == nil {
+		return nil
+	}
+	return m.egressNewDestinations.WithLabelValues(app)
+}
+
+// EgressFanoutRecycled returns the per-app ADR-361 fan-out recycle counter.
+func (m *OpsMetrics) EgressFanoutRecycled(app string) prometheus.Counter {
+	if m == nil || m.egressFanoutRecycles == nil {
+		return nil
+	}
+	return m.egressFanoutRecycles.WithLabelValues(app)
 }
 
 // EgressDeniedSeries returns the aggregate C1 series for diagnostics.

@@ -140,3 +140,24 @@ func TestRetargetAppPortLeavesGuestDNSPin(t *testing.T) {
 		}
 	}
 }
+
+// ADR-361 decision 6: every guest-originated new flow to a destination not
+// seen in the last 10 minutes is counted, in both families, after the
+// lateral-movement deny and before any drop, so blocked and rate-limited
+// attempts still count.
+func TestTenantEgressFanoutCounter(t *testing.T) {
+	lines := renderedLines(egressTestConfig())
+	for _, tc := range []struct{ family, addrType, lateral string }{
+		{"ip", "ipv4_addr", "ip daddr 10.0.0.0/8"},
+		{"ip6", "ipv6_addr", "ip6 daddr fc00::/7"},
+	} {
+		lineIndex(t, lines, "add counter "+tc.family+" faas faas_egress_new_dst")
+		lineIndex(t, lines, "add set "+tc.family+" faas egress_dsts { type "+tc.addrType+" ; flags dynamic,timeout ; timeout 10m ; size 65535 ; }")
+		lateral := lineIndex(t, lines, "rule "+tc.family+" faas forward iifname tap0 "+tc.lateral)
+		fanout := lineIndex(t, lines, "rule "+tc.family+" faas forward iifname tap0 ct state new "+tc.family+" daddr != @egress_dsts counter name faas_egress_new_dst add @egress_dsts { "+tc.family+" daddr }")
+		rate := lineIndex(t, lines, "rule "+tc.family+" faas forward iifname tap0 ct state new limit rate over")
+		if lateral >= fanout || fanout >= rate {
+			t.Fatalf("%s: fan-out rule at line %d must sit between the lateral deny (%d) and the rate limit (%d)", tc.family, fanout, lateral, rate)
+		}
+	}
+}

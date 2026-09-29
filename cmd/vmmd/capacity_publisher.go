@@ -434,6 +434,9 @@ func buildCapacityReport(
 				DiskUsedBytes:       in.GetDiskUsedBytes(),
 				DiskCapacityBytes:   in.GetDiskCapacityBytes(),
 				FlowSummaries:       flowSummariesForCapacity(in.GetFlowSummaries()),
+
+				EgressNewDestinationsPerMin:      in.GetEgressNewDestinationsPerMin(),
+				EgressNewDestinationsLimitPerMin: in.GetEgressNewDestinationsLimitPerMin(),
 			}
 			report.Instances = append(report.Instances, row)
 		}

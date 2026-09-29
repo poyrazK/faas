@@ -6678,6 +6678,44 @@ func (e *Engine) RecycleForDiskPressure(ctx context.Context, instanceID string, 
 	return nil
 }
 
+// RecycleForEgressFanout (ADR-361 decision 6) destroys a running instance
+// whose guest contacted at least its plan's ceiling of new destinations in
+// one minute: the signature of scanning or spraying from the platform's
+// shared egress address. The warm snapshot is marked stale because it was
+// captured after serving traffic and may carry the compromised process; the
+// init snapshot predates traffic and is kept. The next request cold-starts
+// or restores a clean instance, which is recycled again if the behaviour
+// comes from the app itself.
+func (e *Engine) RecycleForEgressFanout(ctx context.Context, instanceID string, perMinute, limit int64) error {
+	ins, err := e.lockedRunning(ctx, instanceID)
+	if err != nil || ins == nil {
+		return err
+	}
+	defer e.unlockApp(ins.AppID)
+
+	if snap, snapErr := e.store.LatestSnapshotForTier(ctx, ins.DeploymentID, state.SnapshotTierWarm); snapErr == nil && snap.ID != "" {
+		if markErr := e.store.MarkSnapshotStale(ctx, snap.ID); markErr != nil {
+			e.log.Warn("egress fan-out: mark warm snapshot stale", "instance", instanceID, "snap_id", snap.ID, "err", markErr)
+		}
+	}
+
+	e.ledger.Release(instanceID)
+	if err := e.timedDestroy(context.WithoutCancel(ctx), ins.NodeID, instanceID, DestroyTimeout); err != nil {
+		return fmt.Errorf("sched: egress fan-out: destroy %s: %w", instanceID, err)
+	}
+	e.log.Warn("egress fan-out: recycled instance", "instance", instanceID, "app", ins.AppID, "node", ins.NodeID,
+		"new_destinations_per_min", perMinute, "limit", limit)
+	if e.ops != nil {
+		e.ops.EgressFanoutRecycled(ins.AppID).Inc()
+	}
+	reason := fmt.Sprintf("egress_fanout new_destinations_per_min=%d limit=%d", perMinute, limit)
+	e.transitionWithKind(ctx, instanceID, ins.AppID, state.StateStopped, "egress_fanout", reason)
+	if ins.Mode == string(state.InstanceModeWorker) {
+		e.scheduleWorkerReconcile(ctx, ins.DeploymentID)
+	}
+	return nil
+}
+
 // StopInstance (M-2 / ADR-138 §Decision 1) is the engine-side
 // graceful stop sequence. Distinct from Park (snapshot+park,
 // preserves snapshot cache) and Evict (hard destroy, RAM

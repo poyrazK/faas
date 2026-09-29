@@ -1417,6 +1417,12 @@ func nodeTelemetryFromProto(in []*scheddpb.InstanceTelemetry) []sched.NodeTeleme
 			InflightRequests: row.GetInflightRequests(),
 			OpenConns:        row.GetOpenConns(),
 			FlowSummaries:    flowSummariesFromProto(row.GetInstanceId(), row.GetFlowSummaries()),
+
+			EgressNewDestinationsLimitPerMin: row.GetEgressNewDestinationsLimitPerMin(),
+		}
+		if value := row.GetEgressNewDestinationsPerMin(); value != nil {
+			v := value.GetValue()
+			item.EgressNewDestinationsPerMin = &v
 		}
 		if value := row.GetRequestCountTotal(); value != nil {
 			v := value.GetValue()

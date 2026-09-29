@@ -172,6 +172,13 @@ type InstanceStat struct {
 	// DiskPressure is the bounded enforcement signal derived from the latest
 	// valid writable-filesystem sample. Unknown means no valid sample exists.
 	DiskPressure fcvm.DiskPressure
+	// EgressNewDstPerMin is the ADR-361 fan-out sample: distinct destinations
+	// the guest first contacted in the last minute. EgressNewDstLimitPerMin is
+	// the plan ceiling vmmd reported (0 = none). EgressFanoutValid is false
+	// until vmmd has observed a window.
+	EgressNewDstPerMin      int64
+	EgressNewDstLimitPerMin int64
+	EgressFanoutValid       bool
 	// SidecarMBs (issue #463 / ADR-070 §Decision 6 / PR-C) is
 	// the per-sidecar RAM slice sourced from the deployment's
 	// `sidecars jsonb` column at Tick time. Nil/empty = legacy

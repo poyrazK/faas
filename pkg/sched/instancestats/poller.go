@@ -61,6 +61,12 @@ type StatsRouter interface {
 // unacknowledged so the next sample retries it.
 type DiskPressureHandler func(context.Context, InstanceStat, fcvm.DiskPressure) error
 
+// EgressFanoutHandler is called once when an instance's destination fan-out
+// reaches its plan ceiling (ADR-361 decision 6). The handler owns the
+// lifecycle action; returning an error leaves the crossing unacknowledged
+// so the next sample retries it.
+type EgressFanoutHandler func(context.Context, InstanceStat) error
+
 // Poller is the periodic instance-stats worker. Mirrors
 // pkg/sched.Heartbeat in shape: Tick does one full sweep; Run
 // loops Tick on a fixed interval until ctx is done. Per-instance
@@ -97,6 +103,11 @@ type Poller struct {
 	DiskPressureHandler DiskPressureHandler
 	diskPressureMu      sync.Mutex
 	diskPressureSeen    map[string]fcvm.DiskPressure
+	// EgressFanoutHandler turns a destination fan-out over the plan ceiling
+	// into a lifecycle action. Nil keeps the poller observation-only.
+	EgressFanoutHandler EgressFanoutHandler
+	egressFanoutMu      sync.Mutex
+	egressFanoutActed   map[string]struct{}
 }
 
 // WithTelemetry switches the poller to the persistent node telemetry stream.
@@ -141,6 +152,16 @@ func (p *Poller) WithFleetStats(router StatsRouter, ownerNodeID string) *Poller 
 func (p *Poller) WithDiskPressureHandler(handler DiskPressureHandler) *Poller {
 	if p != nil {
 		p.DiskPressureHandler = handler
+	}
+	return p
+}
+
+// WithEgressFanoutHandler enables fan-out enforcement (ADR-361 decision 6).
+// Like the disk-pressure handler it runs outside snapshot publication and is
+// retried when it returns an error.
+func (p *Poller) WithEgressFanoutHandler(handler EgressFanoutHandler) *Poller {
+	if p != nil {
+		p.EgressFanoutHandler = handler
 	}
 	return p
 }
@@ -304,6 +325,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 		}
 		p.Reader.Replace(rows)
 		p.enforceDiskPressure(ctx, rows)
+		p.enforceEgressFanout(ctx, rows)
 		if p.Metrics != nil {
 			p.Metrics.ReplaceInstanceStats(rolled, p.now().Sub(started))
 		}
@@ -320,6 +342,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 	// or the next, never a torn mix.
 	p.Reader.Replace(rows)
 	p.enforceDiskPressure(ctx, rows)
+	p.enforceEgressFanout(ctx, rows)
 	// Metrics rollup: max CPU / sum RSS / sum inflight per
 	// (app, node). The wire side collapses NaN for absent
 	// values; instancestats passes NaN through so the rollup
@@ -375,6 +398,61 @@ func (p *Poller) enforceDiskPressure(ctx context.Context, rows []InstanceStat) {
 		p.diskPressureMu.Lock()
 		p.diskPressureSeen[row.InstanceID] = fcvm.DiskPressureFull
 		p.diskPressureMu.Unlock()
+	}
+}
+
+// EgressFanoutExceeded reports whether a row's fan-out sample has reached its
+// plan ceiling. A row without a ceiling never exceeds.
+func EgressFanoutExceeded(row InstanceStat) bool {
+	return row.EgressFanoutValid && row.EgressNewDstLimitPerMin > 0 &&
+		row.EgressNewDstPerMin >= row.EgressNewDstLimitPerMin
+}
+
+// enforceEgressFanout calls EgressFanoutHandler once per instance that
+// crosses its fan-out ceiling. An instance is re-armed when it drops back
+// under the ceiling or leaves the snapshot.
+func (p *Poller) enforceEgressFanout(ctx context.Context, rows []InstanceStat) {
+	if p == nil || p.EgressFanoutHandler == nil {
+		return
+	}
+	p.egressFanoutMu.Lock()
+	if p.egressFanoutActed == nil {
+		p.egressFanoutActed = make(map[string]struct{})
+	}
+	seen := make(map[string]struct{}, len(rows))
+	var actions []InstanceStat
+	for _, row := range rows {
+		if row.InstanceID == "" {
+			continue
+		}
+		seen[row.InstanceID] = struct{}{}
+		_, acted := p.egressFanoutActed[row.InstanceID]
+		switch {
+		case !EgressFanoutExceeded(row):
+			if row.EgressFanoutValid {
+				delete(p.egressFanoutActed, row.InstanceID)
+			}
+		case !acted:
+			actions = append(actions, row)
+		}
+	}
+	for instanceID := range p.egressFanoutActed {
+		if _, ok := seen[instanceID]; !ok {
+			delete(p.egressFanoutActed, instanceID)
+		}
+	}
+	p.egressFanoutMu.Unlock()
+	for _, row := range actions {
+		if err := p.EgressFanoutHandler(ctx, row); err != nil {
+			if p.Log != nil {
+				p.Log.Warn("instance stats: egress fan-out handler failed", "instance_id", row.InstanceID, "app_id", row.AppID,
+					"new_destinations_per_min", row.EgressNewDstPerMin, "limit", row.EgressNewDstLimitPerMin, "err", err)
+			}
+			continue
+		}
+		p.egressFanoutMu.Lock()
+		p.egressFanoutActed[row.InstanceID] = struct{}{}
+		p.egressFanoutMu.Unlock()
 	}
 }
 
@@ -455,6 +533,11 @@ func (p *Poller) decodeTelemetrySnapshot(
 			row.DiskCapacityBytes = *in.DiskCapacityBytes
 			row.DiskValid = true
 			row.DiskPressure = fcvm.ClassifyDiskPressure(row.DiskUsedBytes, row.DiskCapacityBytes)
+		}
+		if in.EgressNewDestinationsPerMin != nil && *in.EgressNewDestinationsPerMin >= 0 {
+			row.EgressNewDstPerMin = *in.EgressNewDestinationsPerMin
+			row.EgressNewDstLimitPerMin = in.EgressNewDestinationsLimitPerMin
+			row.EgressFanoutValid = true
 		}
 		if in.ResidentBytes != nil {
 			mib := float64(*in.ResidentBytes) / float64(1024*1024)
@@ -720,6 +803,11 @@ func (p *Poller) decodeStatsSnapshot(
 			row.DiskCapacityBytes = *in.DiskCapacityBytes
 			row.DiskValid = true
 			row.DiskPressure = fcvm.ClassifyDiskPressure(row.DiskUsedBytes, row.DiskCapacityBytes)
+		}
+		if in.EgressNewDestinationsPerMin != nil && *in.EgressNewDestinationsPerMin >= 0 {
+			row.EgressNewDstPerMin = *in.EgressNewDestinationsPerMin
+			row.EgressNewDstLimitPerMin = in.EgressNewDestinationsLimitPerMin
+			row.EgressFanoutValid = true
 		}
 		// RSS: wire sends *int64. nil → Unknown; non-nil →
 		// convert bytes → MiB.

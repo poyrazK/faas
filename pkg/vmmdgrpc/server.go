@@ -1208,6 +1208,14 @@ func (s *Server) Stats(ctx context.Context, _ *vmmdpb.StatsRequest) (*vmmdpb.Sta
 				row.DiskCapacityBytes = wrapperspb.Int64(usage.CapacityBytes)
 			}
 		}
+		if provider, ok := s.vmm.(interface {
+			EgressFanout(string) (fcvm.EgressFanout, bool)
+		}); ok {
+			if fanout, present := provider.EgressFanout(inst); present {
+				row.EgressNewDestinationsPerMin = wrapperspb.Int64(fanout.NewDestinationsPerMinute)
+				row.EgressNewDestinationsLimitPerMin = fanout.Limit
+			}
+		}
 		row.OpenConns = openConns[inst]
 		row.FlowSummaries = flowSummariesToProto(flowTelemetry.summaries[inst])
 		resp.Instances = append(resp.Instances, row)

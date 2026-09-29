@@ -172,3 +172,29 @@ func TestPreparedNetworkRetargetCoversEgressPorts(t *testing.T) {
 		})
 	}
 }
+
+// adr: 361 — vmmd reports an instance's fan-out with its plan's ceiling;
+// nothing is reported before the first window or for a gone instance.
+func TestManagerEgressFanoutCarriesPlanCeiling(t *testing.T) {
+	m := newTestManager(&fakeRunner{}, &fakeVMM{})
+	t.Cleanup(func() { _ = m.Destroy(context.Background(), "egress-fanout") })
+	if _, err := m.Wake(t.Context(), WakeRequest{
+		Instance: "egress-fanout", AppID: "app-fanout", BaseKey: "/base.ext4", LayerKey: "/layer.ext4",
+		VcpuCount: 1, MemSizeMiB: 512, Plan: api.PlanHobby, EgressMbit: 100, Snapshot: usableSnapshot(),
+	}); err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	if _, ok := m.EgressFanout("egress-fanout"); ok {
+		t.Fatal("fan-out reported before any window was observed")
+	}
+	m.RecordEgressFanout("egress-fanout", 37)
+	m.RecordEgressFanout("gone", 99)
+	got, ok := m.EgressFanout("egress-fanout")
+	hobby, _ := api.LimitsFor(api.PlanHobby)
+	if !ok || got.NewDestinationsPerMinute != 37 || got.Limit != int64(hobby.EgressNewDestinationsPerMinute) {
+		t.Fatalf("EgressFanout = %+v, %v; want 37 with the Hobby ceiling %d", got, ok, hobby.EgressNewDestinationsPerMinute)
+	}
+	if _, ok := m.EgressFanout("gone"); ok {
+		t.Fatal("a sample for an unknown instance must be dropped")
+	}
+}

@@ -601,6 +601,12 @@ type Instance struct {
 	DiskCapacityBytes int64
 	DiskPressure      DiskPressure
 	DiskSampledAt     time.Time
+	// EgressNewDstPerMin is the distinct destinations this instance first
+	// contacted in the last minute (ADR-361 decision 6), set by vmmd's
+	// per-namespace counter poll. EgressFanoutValid is false until the
+	// first window has been observed.
+	EgressNewDstPerMin int64
+	EgressFanoutValid  bool
 	// TailCount (issue #667 / ADR-078) is the in-memory
 	// mirror of the per-instance `tail_count` SQL column.
 	// Incremented by the runner's WaitGroup each time a
@@ -2350,6 +2356,45 @@ func (m *Manager) DiskUsage(instance string) (DiskUsage, bool) {
 		Pressure:      inst.DiskPressure,
 		SampledAt:     inst.DiskSampledAt,
 	}, true
+}
+
+// EgressFanout is one instance's destination fan-out and the plan ceiling
+// schedd enforces (ADR-361 decision 6). Limit 0 means no ceiling applies.
+type EgressFanout struct {
+	NewDestinationsPerMinute int64
+	Limit                    int64
+}
+
+// RecordEgressFanout stores the latest per-minute fan-out for a live
+// instance. Unknown instances are ignored: the poll raced a teardown.
+func (m *Manager) RecordEgressFanout(instance string, perMinute int64) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if inst, ok := m.live[instance]; ok {
+		inst.EgressNewDstPerMin, inst.EgressFanoutValid = perMinute, true
+	}
+}
+
+// EgressFanout returns the instance's latest fan-out sample and its plan's
+// ceiling. ok is false until a window has been observed.
+func (m *Manager) EgressFanout(instance string) (EgressFanout, bool) {
+	if m == nil {
+		return EgressFanout{}, false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inst, ok := m.live[instance]
+	if !ok || !inst.EgressFanoutValid {
+		return EgressFanout{}, false
+	}
+	out := EgressFanout{NewDestinationsPerMinute: inst.EgressNewDstPerMin}
+	if lim, known := api.LimitsFor(inst.Plan); known {
+		out.Limit = int64(lim.EgressNewDestinationsPerMinute)
+	}
+	return out, true
 }
 
 // MarkInstanceTailTerminal (issue #667 / ADR-078) decrements the
