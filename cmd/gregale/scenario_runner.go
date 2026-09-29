@@ -269,6 +269,9 @@ func cmdTest(args []string) int {
 	}
 	var client *Client
 	if *engine == "real-vm" {
+		if _, err := collectTestValidation(scenarios, sourceDir, *scenarioName); err != nil {
+			return printErr("Invalid scenario source", err)
+		}
 		client, err = authedClient()
 		if err != nil {
 			return printErr("Not logged in", err)
