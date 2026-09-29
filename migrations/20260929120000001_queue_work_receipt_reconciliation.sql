@@ -20,7 +20,7 @@ BEGIN
        AND t.app_id = NEW.app_id
        AND t.kind = 'queue'
        AND tr.item_identifier = NEW.id::text
-       AND tr.state IN ('pending', 'retry');
+       AND tr.state IN ('pending', 'retry', 'claimed');
     RETURN NEW;
 END;
 $$;
@@ -45,7 +45,7 @@ UPDATE trigger_records tr
    AND i.source = 'queue'
    AND tr.item_identifier = i.id::text
    AND i.state IN ('superseded', 'cancelled', 'expired')
-   AND tr.state IN ('pending', 'retry');
+   AND tr.state IN ('pending', 'retry', 'claimed');
 -- +goose StatementEnd
 
 -- +goose Down

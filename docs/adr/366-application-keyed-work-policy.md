@@ -124,10 +124,10 @@ forming a trigger batch. The binding concurrency cap still applies. Queue
 acknowledgements and retries are fenced by the invocation claim attempt.
 The invocation state is authoritative for pending replacement, cancellation,
 and expiry. A trigger receipt from an earlier failed delivery may retain its
-`retry` state while its invocation is pending. The database now reconciles
-that receipt in the same transaction when the invocation becomes superseded,
-cancelled, or expired. Operator retry cannot revive a policy-terminal queue
-receipt without its invocation.
+`retry` state, or a `claimed` state after invocation lease recovery. The
+database reconciles that receipt in the same transaction when the invocation
+becomes superseded, cancelled, or expired. Operator retry cannot revive a
+policy-terminal queue receipt without its invocation.
 
 External broker records need a shared work-item claim ledger before policy
 fields can be exposed on those producers.

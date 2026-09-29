@@ -476,14 +476,24 @@ func TestNamedQueueReceiptFollowsPendingWorkPolicyTerminalState(t *testing.T) {
 			if err != nil || len(claimed) != 1 {
 				t.Fatalf("claim receipt = %+v, err=%v", claimed, err)
 			}
-			if err := store.RetryClaimedTriggerRecord(ctx, recordID, claimed[0].ClaimGeneration,
-				"retry", time.Now().Add(time.Hour)); err != nil {
-				t.Fatal(err)
+			if terminal == "cancelled" {
+				// The invocation lease may be recovered before the receipt's
+				// separate claim lease. The stale claimed receipt must be fenced.
+				_, err = pool.Exec(ctx, `update invocations set state='pending', lease_expires_at=null where id=$1`, old.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				assertQueueLinkedStates(t, ctx, pool, old.ID, recordID, "pending", "claimed", "")
+			} else {
+				if err := store.RetryClaimedTriggerRecord(ctx, recordID, claimed[0].ClaimGeneration,
+					"retry", time.Now().Add(time.Hour)); err != nil {
+					t.Fatal(err)
+				}
+				if err := poller.Nack(ctx, trigger, []string{old.ID}, triggerReasonBrokerError); err != nil {
+					t.Fatal(err)
+				}
+				assertQueueLinkedStates(t, ctx, pool, old.ID, recordID, "pending", "retry", "")
 			}
-			if err := poller.Nack(ctx, trigger, []string{old.ID}, triggerReasonBrokerError); err != nil {
-				t.Fatal(err)
-			}
-			assertQueueLinkedStates(t, ctx, pool, old.ID, recordID, "pending", "retry", "")
 
 			switch terminal {
 			case "superseded":
@@ -507,6 +517,11 @@ func TestNamedQueueReceiptFollowsPendingWorkPolicyTerminalState(t *testing.T) {
 				outcome = ""
 			}
 			assertQueueLinkedStates(t, ctx, pool, old.ID, recordID, terminal, terminal, outcome)
+			if terminal == "cancelled" {
+				if err := store.CompleteClaimedTriggerRecord(ctx, recordID, claimed[0].ClaimGeneration); !errors.Is(err, state.ErrNotFound) {
+					t.Fatalf("stale receipt claim completed cancelled work: %v", err)
+				}
+			}
 			if err := store.RetryTriggerRecordByOperator(ctx, recordID); !errors.Is(err, state.ErrNotFound) {
 				t.Fatalf("operator revived policy-terminal receipt: %v", err)
 			}
