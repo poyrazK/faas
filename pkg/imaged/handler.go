@@ -22,6 +22,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onebox-faas/faas/pkg/abusescan"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 	"github.com/onebox-faas/faas/pkg/audit"
@@ -250,6 +251,9 @@ type Handler struct {
 	// design (ADR-075 AC #4); the secret path is intentionally NOT
 	// — secrets are a security boundary, not metadata.
 	secretScanRun func(ctx context.Context, dir, layer string) ([]secretscan.Finding, error)
+	// abuseScanRun is the ADR-368 abuse signature scan over the same
+	// staged app layer. nil = abusescan.ScanTree. Tests inject a stub.
+	abuseScanRun func(ctx context.Context, dir string) ([]abusescan.Finding, abusescan.Stats, error)
 	// vmmClient (ADR-053) is the imaged-side gRPC client to vmmd
 	// used by the parent-ref staging branch of EnsureBaseExt4. vmmd
 	// owns the loopback mount; imaged is not root (User=faas-imaged
@@ -760,6 +764,19 @@ func (h *Handler) WithSecretScanRun(fn func(ctx context.Context, dir, layer stri
 	return h
 }
 
+// WithAbuseScanRun injects the ADR-368 abuse signature scanner.
+func (h *Handler) WithAbuseScanRun(fn func(ctx context.Context, dir string) ([]abusescan.Finding, abusescan.Stats, error)) *Handler {
+	h.abuseScanRun = fn
+	return h
+}
+
+func (h *Handler) runAbuseScan(ctx context.Context, dir string) ([]abusescan.Finding, abusescan.Stats, error) {
+	if h.abuseScanRun != nil {
+		return h.abuseScanRun(ctx, dir)
+	}
+	return abusescan.ScanTree(ctx, dir)
+}
+
 // runSecretScan dispatches to the wired secretScanRun callback
 // when present, else falls back to the package-level default
 // walker. Mirrors runGrype above (handler.go:579-584). The
@@ -1117,6 +1134,50 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 // required.
 var errImageSecretDetected = errors.New("imaged: secret-shaped values detected in image layer")
 
+// errImageAbuseDetected fails a deploy whose image carries abuse tooling
+// matched by a blocking ADR-368 rule (miners, mass scanners, flood tools).
+var errImageAbuseDetected = errors.New("imaged: abuse tooling detected in image")
+
+// handleAbuseFindings records ADR-368 abuse scan findings and fails the
+// deploy when any of them blocks. Every finding is audited and counted;
+// flag-only findings leave the deploy running for operator review.
+func (h *Handler) handleAbuseFindings(ctx context.Context, app state.App, dep state.Deployment, findings []abusescan.Finding) error {
+	if len(findings) == 0 {
+		return nil
+	}
+	blocking := abusescan.Blocking(findings)
+	if h.ops != nil {
+		for _, f := range findings {
+			h.ops.AbuseScanFinding(string(f.Category), string(f.Action)).Inc()
+		}
+	}
+	if payload, err := json.Marshal(map[string]any{
+		"app": app.ID, "account": app.AccountID, "deployment": dep.ID, "image_digest": dep.ImageDigest,
+		"blocking": blocking, "findings": findings,
+	}); err == nil {
+		subject := dep.ID
+		if auditErr := h.store.AppendEvent(ctx, "imaged", "deployment.abuse_scan", &subject, payload); auditErr != nil {
+			h.log.Warn("imaged: abuse scan audit write failed", "deployment", dep.ID, "err", auditErr)
+		}
+	}
+	h.log.Warn("imaged: abuse scan findings", "deployment", dep.ID, "app", app.Slug, "account", app.AccountID,
+		"blocking", blocking, "findings", findings)
+	if !blocking {
+		return nil
+	}
+	rules := make([]string, 0, len(findings))
+	for _, f := range findings {
+		if f.Action == abusescan.ActionBlock {
+			rules = append(rules, f.RuleID+" in "+f.Path)
+		}
+	}
+	detail := fmt.Errorf("%w: %s", errImageAbuseDetected, strings.Join(rules, ", "))
+	if markErr := h.markDeployFailed(ctx, dep.ID, detail, "abuse tooling detected"); markErr != nil {
+		h.log.Warn("imaged: mark deploy failed on abuse scan", "deployment", dep.ID, "app", app.Slug, "err", markErr)
+	}
+	return errImageAbuseDetected
+}
+
 // runDeployLayerSecretScan runs the post-build secretscan walker
 // against the per-deploy ext4 for ONE layer and returns the typed
 // findings WITHOUT writing the audit row or failing the deploy.
@@ -1170,27 +1231,49 @@ var errImageSecretDetected = errors.New("imaged: secret-shaped values detected i
 // deploy fails loudly so the customer's next attempt sees a clean
 // state.
 func (h *Handler) runDeployLayerSecretScan(ctx context.Context, app state.App, dep state.Deployment, layer string) ([]secretscan.Finding, error) {
+	findings, _, err := h.runDeployLayerScans(ctx, app, dep, layer, false)
+	return findings, err
+}
+
+// runDeployLayerScans stages the app layer once and runs the secret scan and,
+// when withAbuse is set, the ADR-368 abuse signature scan over it. An abuse
+// walk error is logged and leaves the abuse findings empty: like the secret
+// walk, only pattern-level findings fail a deploy.
+func (h *Handler) runDeployLayerScans(ctx context.Context, app state.App, dep state.Deployment, layer string, withAbuse bool) ([]secretscan.Finding, []abusescan.Finding, error) {
 	if h.store == nil || h.log == nil {
 		// Defensive: tests that build a Handler without wiring
 		// store/log skip the scan entirely (no row to write, no
 		// log channel). Production wires both at cmd/imaged wiring
 		// so the nil branches are unreachable in prod.
-		return nil, nil
+		return nil, nil, nil
 	}
 	start := time.Now()
 	be, err := h.storageFor()
 	if err != nil {
 		h.log.Warn("imaged: layer secret scan skipped, storageFor",
 			"deployment", dep.ID, "app", app.Slug, "layer", layer, "err", err)
-		return nil, err
+		return nil, nil, err
 	}
 	scanDir, cleanup, err := h.stageScanExt4(ctx, be, app, dep)
 	if err != nil {
 		h.log.Warn("imaged: layer secret scan skipped, stage",
 			"deployment", dep.ID, "app", app.Slug, "layer", layer, "err", err)
-		return nil, err
+		return nil, nil, err
 	}
 	defer cleanup()
+	var abuse []abusescan.Finding
+	if withAbuse {
+		abuseStart := time.Now()
+		found, stats, abuseErr := h.runAbuseScan(ctx, scanDir)
+		if abuseErr != nil {
+			h.log.Warn("imaged: abuse scan walk failed", "deployment", dep.ID, "app", app.Slug, "err", abuseErr)
+		} else {
+			abuse = found
+			h.log.Info("imaged: abuse scan", "deployment", dep.ID, "app", app.Slug, "files", stats.Files,
+				"bytes", stats.Bytes, "skipped", stats.Skipped, "truncated", stats.Truncated,
+				"findings", len(found), "elapsed", time.Since(abuseStart))
+		}
+	}
 	findings, walkErr := h.runSecretScan(ctx, scanDir, layer)
 	if walkErr != nil {
 		// Walk-level error: log + return. The build itself is
@@ -1201,14 +1284,14 @@ func (h *Handler) runDeployLayerSecretScan(ctx context.Context, app state.App, d
 		h.log.Warn("imaged: layer secret scan walk failed",
 			"deployment", dep.ID, "app", app.Slug, "layer", layer,
 			"err", walkErr, "elapsed", time.Since(start))
-		return nil, walkErr
+		return nil, abuse, walkErr
 	}
 	if len(findings) == 0 {
 		h.log.Info("imaged: layer secret scan clean",
 			"deployment", dep.ID, "app", app.Slug, "layer", layer,
 			"elapsed", time.Since(start))
 	}
-	return findings, nil
+	return findings, abuse, nil
 }
 
 // storageFor returns the wired StorageBackend, building a default
@@ -2372,10 +2455,13 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 	// end with all main+sidecar findings accumulated.
 	// Function deploys are out of scope — buildFunctionLayer
 	// is the only path that doesn't run this scan.
-	mainFindings, walkErr := h.runDeployLayerSecretScan(ctx, app, dep, "app")
+	mainFindings, abuseFindings, walkErr := h.runDeployLayerScans(ctx, app, dep, "app", true)
 	if walkErr != nil {
 		h.log.Warn("imaged: layer secret scan walk failed (main, non-fatal)",
 			"deployment", dep.ID, "app", app.Slug, "err", walkErr)
+	}
+	if err := h.handleAbuseFindings(ctx, app, dep, abuseFindings); err != nil {
+		return err
 	}
 	allFindings := append(mainFindings, scFindings...)
 	if len(allFindings) == 0 {
@@ -3908,6 +3994,9 @@ func (h *Handler) markDeployFailed(ctx context.Context, depID string, err error,
 	code, _ := oci.SentinelToCode(err)
 	if errors.Is(err, errSecurityScanBlocked) {
 		code = api.CodeSecurityScanBlocked
+	}
+	if errors.Is(err, errImageAbuseDetected) {
+		code = api.CodeImageAbuseDetected
 	}
 	detail := err.Error()
 	if prefix != "" {
