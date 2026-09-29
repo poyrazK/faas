@@ -62,8 +62,8 @@ func TestMigrationOIDCEnvironmentPreflightCapability(t *testing.T) {
 	expiresAt := time.Now().UTC().Add(5 * time.Minute)
 	var defaultScopes []string
 	if err := pool.QueryRow(t.Context(), `
-		insert into oidc_exchanged_tokens (account_id, token_hash, expires_at, issuer_url, subject, audience)
-		values ($1::uuid, $2, $3, 'https://idp.example.test', 'repo:test/project', ARRAY['gregale']::text[])
+		insert into oidc_exchanged_tokens (id, account_id, token_hash, expires_at, issuer_url, subject, audience)
+		values (gen_random_uuid(), $1::uuid, $2, $3, 'https://idp.example.test', 'repo:test/project', ARRAY['gregale']::text[])
 		returning scopes`, accountID, []byte("legacy-token-hash"), expiresAt).Scan(&defaultScopes); err != nil {
 		t.Fatalf("insert legacy-shape OIDC token: %v", err)
 	}
@@ -73,8 +73,8 @@ func TestMigrationOIDCEnvironmentPreflightCapability(t *testing.T) {
 	preflightScopes := []string{"project_environments:read", "project_environments:qualify"}
 	var storedScopes []string
 	if err := pool.QueryRow(t.Context(), `
-		insert into oidc_exchanged_tokens (account_id, token_hash, expires_at, issuer_url, subject, audience, scopes)
-		values ($1::uuid, $2, $3, 'https://idp.example.test', 'repo:test/project', ARRAY['gregale']::text[], $4)
+		insert into oidc_exchanged_tokens (id, account_id, token_hash, expires_at, issuer_url, subject, audience, scopes)
+		values (gen_random_uuid(), $1::uuid, $2, $3, 'https://idp.example.test', 'repo:test/project', ARRAY['gregale']::text[], $4)
 		returning scopes`, accountID, []byte("preflight-token-hash"), expiresAt, preflightScopes).Scan(&storedScopes); err != nil {
 		t.Fatalf("insert preflight OIDC token: %v", err)
 	}
@@ -82,8 +82,8 @@ func TestMigrationOIDCEnvironmentPreflightCapability(t *testing.T) {
 		t.Fatalf("preflight OIDC token scopes = %v, want %v", storedScopes, preflightScopes)
 	}
 	if _, err := pool.Exec(t.Context(), `
-		insert into oidc_exchanged_tokens (account_id, token_hash, expires_at, issuer_url, subject, audience, scopes)
-		values ($1::uuid, $2, $3, 'https://idp.example.test', 'repo:test/project', ARRAY['gregale']::text[], ARRAY['secrets:read']::text[])`,
+		insert into oidc_exchanged_tokens (id, account_id, token_hash, expires_at, issuer_url, subject, audience, scopes)
+		values (gen_random_uuid(), $1::uuid, $2, $3, 'https://idp.example.test', 'repo:test/project', ARRAY['gregale']::text[], ARRAY['secrets:read']::text[])`,
 		accountID, []byte("invalid-token-hash"), expiresAt); err == nil {
 		t.Fatal("OIDC scope constraint accepted secrets:read")
 	}
