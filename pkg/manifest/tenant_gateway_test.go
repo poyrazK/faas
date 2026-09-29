@@ -52,7 +52,7 @@ func TestTenantTunnelAddress(t *testing.T) {
 			t.Errorf("TenantTunnelAddress(%s, %s) = %v, %v; want %s", tc.cidr, tc.node, got, err, tc.want)
 		}
 	}
-	for _, bad := range [][2]string{{"10.66.0.0/29", "fsn-6"}, {"10.66.0.0/24", "gateway"}, {"10.66.0.0/24", "fsn-0"}, {"fd00::/64", "fsn-1"}} {
+	for _, bad := range [][2]string{{"10.66.0.0/29", "fsn-6"}, {"10.66.0.0/24", "gateway"}, {"10.66.0.0/24", "fsn-0"}, {"fd00::/64", "fsn-1"}, {"10.66.0.0/16", "fsn-4294967295"}, {"10.66.0.0/16", "fsn-99999999999999999999"}} {
 		if _, err := TenantTunnelAddress(bad[0], bad[1]); err == nil {
 			t.Errorf("TenantTunnelAddress(%s, %s) accepted", bad[0], bad[1])
 		}

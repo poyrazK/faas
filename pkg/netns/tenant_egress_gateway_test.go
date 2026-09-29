@@ -22,7 +22,7 @@ func TestHostPolicyTenantEgressGateway(t *testing.T) {
 		}
 	}
 	for _, forbidden := range []string{
-		`iifname "br-tenants" oifname "eth0" accept`,     // tenant v4 must not reach the public NIC
+		`iifname "br-tenants" oifname "eth0" accept`,       // tenant v4 must not reach the public NIC
 		`ip saddr 10.100.0.0/16 oifname "eth0" masquerade`, // nor be masqueraded to the node address
 		`ip6 saddr fc00::/7`,                               // the IPv4 gateway has no v6 path
 	} {

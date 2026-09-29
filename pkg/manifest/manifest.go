@@ -296,15 +296,14 @@ func TenantTunnelAddress(tunnelCIDR, nodeName string) (netip.Prefix, error) {
 	if m == nil {
 		return netip.Prefix{}, fmt.Errorf("node name %q does not end in -<number>", nodeName)
 	}
-	n, _ := strconv.Atoi(m[1])
-	base := tunnel.Masked().Addr().As4()
-	v := uint32(base[0])<<24 | uint32(base[1])<<16 | uint32(base[2])<<8 | uint32(base[3])
-	size := uint32(1) << (32 - tunnel.Bits())
-	offset := uint32(n) + 1
-	if n < 1 || offset >= size-1 {
+	size := uint64(1) << (32 - tunnel.Bits())
+	n, err := strconv.ParseUint(m[1], 10, 32)
+	if err != nil || n < 1 || n+1 >= size-1 {
 		return netip.Prefix{}, fmt.Errorf("node %q does not fit in tenant tunnel %s", nodeName, tunnelCIDR)
 	}
-	v += offset
+	base := tunnel.Masked().Addr().As4()
+	v := uint32(base[0])<<24 | uint32(base[1])<<16 | uint32(base[2])<<8 | uint32(base[3])
+	v += uint32(n + 1) // n+1 < size <= 2^32, checked above
 	addr := netip.AddrFrom4([4]byte{byte(v >> 24), byte(v >> 16), byte(v >> 8), byte(v)})
 	return netip.PrefixFrom(addr, tunnel.Bits()), nil
 }
