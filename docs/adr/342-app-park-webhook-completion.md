@@ -2,7 +2,7 @@
 
 - **Status:** accepted
 - **Date:** 2026-09-28
-- **Extends:** ADR-076, ADR-341
+- **Extends:** ADR-076, ADR-344
 
 ## Decision
 

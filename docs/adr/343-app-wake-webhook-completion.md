@@ -2,7 +2,7 @@
 
 - **Status:** accepted
 - **Date:** 2026-09-28
-- **Extends:** ADR-076, ADR-341, ADR-342
+- **Extends:** ADR-076, ADR-342, ADR-344
 
 ## Decision
 
@@ -22,7 +22,7 @@ supersede their transition. A park request supersedes a pending wake under the
 app row lock, so a later park prevents a stale `app.woken` event.
 
 At completion, the event snapshots enabled matching app subscriptions and
-enters ADR-341's durable outbox. Schedd then relays it to one delivery per
+enters ADR-344's durable outbox. Schedd then relays it to one delivery per
 snapshotted subscription. The completed transition remains stored after relay,
 so retrying a wake cannot enqueue a duplicate.
 
