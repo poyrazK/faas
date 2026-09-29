@@ -1,4 +1,4 @@
-# ADR-345 · Platform-tenant offboarding plan
+# ADR-364 · Platform-tenant offboarding plan
 
 - **Status:** accepted
 - **Date:** 2026-09-28

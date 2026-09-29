@@ -72,7 +72,7 @@ Before ending a platform customer's relationship, request a read-only impact sum
 POST /v1/account/platform-tenants/{id}/offboarding-plan
 ```
 
-The response includes a stable `plan_hash` and counts for active consumer keys and tenant-bound access tokens to revoke, managed consumers and surfaces to detach, managed hostnames to remove, and unmanaged resources to retain. It also shows which delegated policies would be disabled. The preview does not mutate state or return credential material. Offboarding preserves usage, finalized billing statements, reconciliation history, and webhook subscriptions; tenant and app-local customer records are not hard-deleted. The follow-up apply operation uses the hash to reject a preview that became stale. This owner operation requires deploy-write scope and recent MFA. See [ADR-345](adr/345-platform-tenant-offboarding-plan.md).
+The response includes a stable `plan_hash` and counts for active consumer keys and tenant-bound access tokens to revoke, managed consumers and surfaces to detach, managed hostnames to remove, and unmanaged resources to retain. It also shows which delegated policies would be disabled. The preview does not mutate state or return credential material. Offboarding preserves usage, finalized billing statements, reconciliation history, and webhook subscriptions; tenant and app-local customer records are not hard-deleted. The follow-up apply operation uses the hash to reject a preview that became stale. This owner operation requires deploy-write scope and recent MFA. See [ADR-364](adr/364-platform-tenant-offboarding-plan.md).
 
 Platform owners can configure the domain boundary for downstream hostname self-service:
 
