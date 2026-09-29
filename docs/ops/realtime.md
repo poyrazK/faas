@@ -252,7 +252,7 @@ an expired cursor returns `410 history_unavailable` so a caller can rebuild its
 state. Retained writes reach only opt-in v2 WebSocket subscriptions when the
 resume preview is enabled; existing raw-frame clients and `:publish` remain
 live-only. Do not use the preview as a production reconnect contract until
-plan entitlements, usage metrics, and fleet qualification are complete.
+plan entitlements, billing rules, and fleet qualification are complete.
 The storage window is capped at 1,024 messages of 4 KiB each per channel and
 32 channels per endpoint. Messages remain available for up to 24 hours; idempotency keys
 only deduplicate while their messages remain retained.
@@ -284,6 +284,22 @@ current channel-head count, message-row count, and decoded payload bytes.
 resume. This snapshot excludes row and index overhead and is not a billable
 byte-hour meter. Use the global relation metric above to watch actual database
 allocation; the account view is for tenant attribution and preview evaluation.
+
+With `DATABASE_URL` pointed at a throwaway PostgreSQL database, run the local
+continuity check:
+
+```sh
+go test ./pkg/realtime -run '^TestResumePostgresContinuityAcrossOwnersAndRestart$' -count=1
+```
+
+It runs separate realtime owners against one retained log and verifies replay
+after disconnect and owner restart, delivery of later commits, channel grants,
+and `resync_required` for an expired cursor. It does not exercise the deployed
+private RPC or real network failures. Before enabling the preview on a fleet,
+repeat the flow through two deployed nodes and apid's private history reader;
+then test apid unavailability, endpoint revocation, retention pruning, and a
+slow client. Confirm that failures close the subscription or return an explicit
+resynchronization response without silently skipping a sequence.
 
 The private `RealtimeHistory.ReadChannelHistory` RPC lets realtimed fetch the
 same bounded page from apid. On a single box it shares
