@@ -135,7 +135,12 @@ The trigger path now persists a claim generation and a ten-minute lease on
 `trigger_records`; retry, completion, and dead-letter transitions for broker
 records reject an expired or superseded claim. Queue polling can recover an
 expired record claim, and the scheduler claims only records present in its
-polled broker batch. These are claim safety prerequisites, not a work-key
+polled broker batch. After a committed `succeeded` or policy-terminal receipt,
+a broker redelivery can be acknowledged without another gateway dispatch.
+Kafka defers that acknowledgement when the same batch contains live offsets,
+so a high-offset commit cannot skip work still awaiting its result.
+Dead-letter receipts retain their broker poison strategy. These are claim
+safety prerequisites, not a work-key
 reservation: broker handles are still acknowledged outside the invocation
 transaction. The adapter must resolve keys at durable record
 admission, reserve lane and fairness slots across both ledgers, carry a claim

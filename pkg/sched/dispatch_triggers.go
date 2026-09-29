@@ -72,6 +72,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -501,6 +502,18 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 				"item_identifier", rec.ItemIdentifier,
 				"err", err)
 		}
+	}
+	// A prior dispatch may have committed its terminal receipt and then lost
+	// the broker Ack. A redelivery must acknowledge that receipt without
+	// invoking the app again. This also handles policy-terminal broker work
+	// once those records are admitted into the shared work ledger.
+	var terminalErr error
+	batch, terminalErr = ackTerminalTriggerRedeliveries(ctx, store, poller, t, batch)
+	if terminalErr != nil {
+		return terminalErr
+	}
+	if len(batch) == 0 {
+		return nil
 	}
 
 	// 5. Rate-limit gate. Deny → dead_letter(reason='rate_limited').
@@ -1271,6 +1284,49 @@ func (l *Loop) computeTransportRetryBackoff(ctx context.Context, t sqlc.Trigger,
 func retryExhausted(nextAttempt, maxAttempts int32) bool {
 	effective := api.EffectiveRetryMaxAttempts(int(maxAttempts), api.DurableRetryMaxAttempts)
 	return nextAttempt >= int32(effective)
+}
+
+// ackTerminalTriggerRedeliveries removes durable terminal receipts from the
+// batch before rate limiting and claim. Ack follows the committed DB state.
+func ackTerminalTriggerRedeliveries(ctx context.Context, store storeLike, poller triggerSource, t sqlc.Trigger, batch []SourceRecord) ([]SourceRecord, error) {
+	reader, ok := store.(state.TriggerTerminalRecordReader)
+	if !ok || len(batch) == 0 {
+		return batch, nil
+	}
+	terminal, err := reader.ListTerminalTriggerRecordItems(ctx, t.ID.String(), batchItemIDs(batch))
+	if err != nil {
+		return nil, errors.Join(fmt.Errorf("dispatch trigger terminal receipt lookup: %w", err),
+			poller.Nack(ctx, t, batchItemIDs(batch), triggerReasonBrokerError))
+	}
+	if len(terminal) == 0 {
+		return batch, nil
+	}
+	terminalSet := make(map[string]bool, len(terminal))
+	for _, id := range terminal {
+		terminalSet[id] = true
+	}
+	remaining := make([]SourceRecord, 0, len(batch)-len(terminal))
+	for _, record := range batch {
+		if !terminalSet[record.ItemIdentifier] {
+			remaining = append(remaining, record)
+		}
+	}
+	// Kafka commits the highest offset per partition. A terminal item later
+	// in this batch must not commit past an earlier item that still needs its
+	// application result. Rewind the terminal handles and process the live
+	// subset first; the next poll can Ack terminal redeliveries on their own.
+	if poller.Kind() == "kafka" && len(remaining) > 0 {
+		if err := poller.Nack(ctx, t, terminal, triggerReasonBrokerError); err != nil {
+			return nil, errors.Join(fmt.Errorf("dispatch trigger defer terminal Kafka receipt: %w", err),
+				poller.Nack(ctx, t, batchItemIDs(remaining), triggerReasonBrokerError))
+		}
+		return remaining, nil
+	}
+	if err := poller.Ack(ctx, t, terminal); err != nil {
+		return nil, errors.Join(fmt.Errorf("dispatch trigger terminal receipt acknowledgement: %w", err),
+			poller.Nack(ctx, t, batchItemIDs(remaining), triggerReasonBrokerError))
+	}
+	return remaining, nil
 }
 
 // batchItemIDs walks the batch and returns the item identifiers

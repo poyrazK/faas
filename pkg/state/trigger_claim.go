@@ -26,6 +26,51 @@ type TriggerBatchClaimer interface {
 	ClaimTriggerRecordsByItems(context.Context, string, []string) ([]sqlc.TriggerRecord, error)
 }
 
+// TriggerTerminalRecordReader lets the dispatcher acknowledge a broker
+// redelivery whose durable receipt was already completed or ended by a work
+// policy. It never returns dead-letter rows, whose broker poison strategy may
+// intentionally seek and await an operator retry.
+type TriggerTerminalRecordReader interface {
+	ListTerminalTriggerRecordItems(context.Context, string, []string) ([]string, error)
+}
+
+func (s *PgStore) ListTerminalTriggerRecordItems(ctx context.Context, triggerID string, items []string) ([]string, error) {
+	if len(items) == 0 {
+		return nil, nil
+	}
+	terminal, err := s.triggerQueries().ListTerminalTriggerRecordItems(ctx, s.pool,
+		sqlc.ListTerminalTriggerRecordItemsParams{
+			TriggerID: mustPgUUID(triggerID), ItemIdentifiers: items,
+		})
+	if err != nil {
+		return nil, fmt.Errorf("state: list terminal trigger records: %w", err)
+	}
+	return terminal, nil
+}
+
+func (m *MemStore) ListTerminalTriggerRecordItems(_ context.Context, triggerID string, items []string) ([]string, error) {
+	if len(items) == 0 {
+		return nil, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	allowed := make(map[string]bool, len(items))
+	for _, item := range items {
+		allowed[item] = true
+	}
+	var terminal []string
+	for _, record := range m.records {
+		if record.TriggerID.String() != triggerID || !allowed[record.ItemIdentifier] {
+			continue
+		}
+		switch record.State {
+		case "succeeded", "superseded", "cancelled", "expired":
+			terminal = append(terminal, record.ItemIdentifier)
+		}
+	}
+	return terminal, nil
+}
+
 func (s *PgStore) ClaimTriggerRecordsByItems(ctx context.Context, triggerID string, items []string) ([]sqlc.TriggerRecord, error) {
 	if len(items) == 0 {
 		return nil, nil

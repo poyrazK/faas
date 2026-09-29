@@ -1789,6 +1789,15 @@ WITH due AS MATERIALIZED (
 )
 SELECT * FROM claimed ORDER BY next_fire_at, id;
 
+-- name: ListTerminalTriggerRecordItems :many
+-- A broker may redeliver after Gregale commits a terminal receipt but before
+-- the broker acknowledges it. The current delivery handle can be Acked
+-- without dispatching the application again.
+SELECT item_identifier FROM trigger_records
+WHERE trigger_id = $1
+  AND item_identifier = ANY(sqlc.arg(item_identifiers)::text[])
+  AND state IN ('succeeded', 'superseded', 'cancelled', 'expired');
+
 -- name: MarkClaimedTriggerRecordSucceeded :execrows
 UPDATE trigger_records
    SET state = 'succeeded', last_dispatched_at = now(), claim_expires_at = NULL

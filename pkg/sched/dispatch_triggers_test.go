@@ -556,10 +556,69 @@ func TestFilterBatch_MalformedJSONTreeIsFatal(t *testing.T) {
 // rate-limit deny. It mirrors fakePollerForFilter but is named
 // distinctly so the new test reads cleanly.
 type ackRecordingPoller struct {
-	ackCalls []string
+	ackCalls  []string
+	nackCalls []string
+	kind      string
 }
 
-func (f *ackRecordingPoller) Kind() string { return "kafka" }
+type terminalReceiptStore struct {
+	*fakeDeadLetterStore
+	terminal []string
+}
+
+func (s *terminalReceiptStore) ListTerminalTriggerRecordItems(_ context.Context, _ string, _ []string) ([]string, error) {
+	return s.terminal, nil
+}
+
+func TestTerminalBrokerRedeliveryAcknowledgedBeforeDispatch(t *testing.T) {
+	store := &terminalReceiptStore{
+		fakeDeadLetterStore: &fakeDeadLetterStore{},
+		terminal:            []string{"already-succeeded", "superseded"},
+	}
+	poller := &ackRecordingPoller{kind: "nats"}
+	batch := []SourceRecord{
+		{ItemIdentifier: "already-succeeded"},
+		{ItemIdentifier: "new"},
+		{ItemIdentifier: "superseded"},
+	}
+	remaining, err := ackTerminalTriggerRedeliveries(context.Background(), store, poller,
+		sqlc.Trigger{}, batch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !equalSlices(poller.ackCalls, []string{"already-succeeded", "superseded"}) ||
+		len(remaining) != 1 || remaining[0].ItemIdentifier != "new" {
+		t.Fatalf("terminal acknowledgement=%v remaining=%v", poller.ackCalls, batchItemIDs(remaining))
+	}
+}
+
+func TestTerminalKafkaRedeliveryDoesNotCommitPastLiveWork(t *testing.T) {
+	store := &terminalReceiptStore{
+		fakeDeadLetterStore: &fakeDeadLetterStore{},
+		terminal:            []string{"partition-0-offset-42"},
+	}
+	poller := &ackRecordingPoller{}
+	remaining, err := ackTerminalTriggerRedeliveries(context.Background(), store, poller,
+		sqlc.Trigger{}, []SourceRecord{
+			{ItemIdentifier: "partition-0-offset-41"},
+			{ItemIdentifier: "partition-0-offset-42"},
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(poller.ackCalls) != 0 || !equalSlices(poller.nackCalls, []string{"partition-0-offset-42"}) ||
+		len(remaining) != 1 || remaining[0].ItemIdentifier != "partition-0-offset-41" {
+		t.Fatalf("Kafka commit crossed live offset: ack=%v nack=%v remaining=%v",
+			poller.ackCalls, poller.nackCalls, batchItemIDs(remaining))
+	}
+}
+
+func (f *ackRecordingPoller) Kind() string {
+	if f.kind != "" {
+		return f.kind
+	}
+	return "kafka"
+}
 func (f *ackRecordingPoller) Poll(_ context.Context, _ sqlc.Trigger) PollResult {
 	return PollResult{}
 }
@@ -567,7 +626,8 @@ func (f *ackRecordingPoller) Ack(_ context.Context, _ sqlc.Trigger, ids []string
 	f.ackCalls = append(f.ackCalls, ids...)
 	return nil
 }
-func (f *ackRecordingPoller) Nack(_ context.Context, _ sqlc.Trigger, _ []string, _ string) error {
+func (f *ackRecordingPoller) Nack(_ context.Context, _ sqlc.Trigger, ids []string, _ string) error {
+	f.nackCalls = append(f.nackCalls, ids...)
 	return nil
 }
 func (f *ackRecordingPoller) Close() error { return nil }

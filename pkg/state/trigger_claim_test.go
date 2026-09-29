@@ -45,6 +45,41 @@ func TestPgTriggerRecordClaimLease(t *testing.T) {
 	}
 }
 
+func TestPgTerminalTriggerRecordItems(t *testing.T) {
+	store, pool, ctx := pgStoreWithPool(t)
+	_, appID, _ := seedLiveDeploy(t, store, ctx)
+	trigger, err := store.CreateTriggerIfUnderQuota(ctx, appID, "queue", "terminal-items", true,
+		[]byte(`{"mode":"queue"}`), "queue", 10, 1000, 3, 1<<20, "commit", api.MustLimitsFor(api.PlanPro))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for item, recordState := range map[string]string{
+		"done": "succeeded", "replaced": "superseded", "cancelled": "cancelled",
+		"expired": "expired", "poison": "dead_letter", "retry": "retry",
+	} {
+		id, err := store.InsertTriggerRecord(ctx, trigger.ID.String(), item, []byte(`{}`), nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `update trigger_records set state=$2 where id=$1`, id, recordState); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reader := state.TriggerTerminalRecordReader(store)
+	items, err := reader.ListTerminalTriggerRecordItems(ctx, trigger.ID.String(),
+		[]string{"done", "replaced", "cancelled", "expired", "poison", "retry", "missing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make(map[string]bool, len(items))
+	for _, item := range items {
+		got[item] = true
+	}
+	if len(got) != 4 || !got["done"] || !got["replaced"] || !got["cancelled"] || !got["expired"] {
+		t.Fatalf("terminal receipt items = %v", items)
+	}
+}
+
 func assertTriggerRecordClaimLease(t *testing.T, ctx context.Context, store state.Store, appID string) (string, string) {
 	t.Helper()
 	trigger, err := store.CreateTriggerIfUnderQuota(ctx, appID, "queue", "claim", true,

@@ -7903,6 +7903,41 @@ func (q *Queries) ListSessions(ctx context.Context, db DBTX, accountID pgtype.UU
 	return items, nil
 }
 
+const listTerminalTriggerRecordItems = `-- name: ListTerminalTriggerRecordItems :many
+SELECT item_identifier FROM trigger_records
+WHERE trigger_id = $1
+  AND item_identifier = ANY($2::text[])
+  AND state IN ('succeeded', 'superseded', 'cancelled', 'expired')
+`
+
+type ListTerminalTriggerRecordItemsParams struct {
+	TriggerID       pgtype.UUID
+	ItemIdentifiers []string
+}
+
+// A broker may redeliver after Gregale commits a terminal receipt but before
+// the broker acknowledges it. The current delivery handle can be Acked
+// without dispatching the application again.
+func (q *Queries) ListTerminalTriggerRecordItems(ctx context.Context, db DBTX, arg ListTerminalTriggerRecordItemsParams) ([]string, error) {
+	rows, err := db.Query(ctx, listTerminalTriggerRecordItems, arg.TriggerID, arg.ItemIdentifiers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var item_identifier string
+		if err := rows.Scan(&item_identifier); err != nil {
+			return nil, err
+		}
+		items = append(items, item_identifier)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTriggerDeadLetter = `-- name: ListTriggerDeadLetter :many
 select record_id, trigger_id, reason, routed_to, detail, created_at
 from trigger_dead_letter
