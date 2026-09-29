@@ -56,10 +56,20 @@ func TestPgEventWorkBindingSnapshotSurvivesConfigurationChange(t *testing.T) {
 	}
 	if len(recipients) != 1 || !recipients[0].WorkSnapshotCaptured || recipients[0].Work == nil ||
 		recipients[0].Work.KeySelector != "data.document_id" ||
-		recipients[0].Work.FairnessSelector != "data.tenant_id" {
+		recipients[0].Work.FairnessSelector != "data.tenant_id" ||
+		recipients[0].Work.Policy == nil || recipients[0].Work.Policy.Revision != 1 ||
+		recipients[0].Work.Policy.MaxRunningPerFairnessKey != 2 {
 		t.Fatalf("captured event work binding = %s", before)
 	}
-	if _, err := store.SetEventWorkBinding(ctx, app.ID, subscription.ID, policy.Name, "data.changed"); err != nil {
+	changed := policy
+	changed.MaxRunningPerFairnessKey = 1
+	if _, err := store.UpsertAppWorkPolicy(ctx, account.ID, app.ID, changed); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetEventWorkBinding(ctx, app.ID, subscription.ID, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteAppWorkPolicy(ctx, account.ID, app.ID, policy.Name); err != nil {
 		t.Fatal(err)
 	}
 	var after []byte

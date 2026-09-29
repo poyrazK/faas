@@ -69,10 +69,11 @@ event_triggers:
     work_action: cancel_pending
 ```
 
-An event captures its subscription work selector and action when it is
-published. Updating the binding later affects new events; accepted events
-keep their original routing. The policy revision is recorded when the
-resulting invocation is admitted.
+An event captures its subscription work selector, action, and effective
+policy settings when it is published. Updating or deleting the binding or
+policy later affects new events; accepted events keep their original routing
+and policy revision. Receipts accepted before policy snapshots use the live
+policy for compatibility.
 
 The same operation is available at
 `POST /v1/apps/{slug}/work-policies/{name}/cancel-pending` with a JSON `key`.

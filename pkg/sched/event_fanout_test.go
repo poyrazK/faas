@@ -733,18 +733,36 @@ func TestEventFanoutKeepsWorkBindingAtAcceptance(t *testing.T) {
 	if _, err := store.SetEventWorkBinding(ctx, app.ID, late.ID, policy.Name, "data.document_id"); err != nil {
 		t.Fatal(err)
 	}
+	changed := policy
+	changed.MaxRunningPerFairnessKey = 1
+	changed.Debounce = 3 * time.Second
+	if _, err := store.UpsertAppWorkPolicy(ctx, accountID, app.ID, changed); err != nil {
+		t.Fatal(err)
+	}
+	for _, subscription := range []state.EventSubscription{bound, late} {
+		if _, err := store.SetEventWorkBinding(ctx, app.ID, subscription.ID, "", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.DeleteAppWorkPolicy(ctx, accountID, app.ID, policy.Name); err != nil {
+		t.Fatal(err)
+	}
 	(&Loop{engine: &Engine{store: store}}).runEventFanoutSweep(ctx)
 	invocationID := func(subscriptionID string) string {
 		identity, _ := json.Marshal([4]string{accountID, envelope.Source, envelope.ID, subscriptionID})
 		return uuid.NewSHA1(uuid.NameSpaceURL, identity).String()
 	}
 	keyed, err := store.InvocationByID(ctx, invocationID(bound.ID))
-	if err != nil || keyed.WorkPolicyName != policy.Name || keyed.WorkFairnessLimit != 2 {
+	if err != nil || keyed.WorkPolicyName != policy.Name || keyed.WorkFairnessLimit != 2 ||
+		keyed.WorkPolicyRevision != 1 || keyed.DueAt.After(time.Now().Add(time.Second)) {
 		t.Fatalf("accepted binding invocation = %+v, err=%v", keyed, err)
 	}
 	unbound, err := store.InvocationByID(ctx, invocationID(late.ID))
 	if err != nil || unbound.WorkPolicyName != "" {
 		t.Fatalf("late binding invocation = %+v, err=%v", unbound, err)
+	}
+	if _, err := store.UpsertAppWorkPolicy(ctx, accountID, app.ID, policy); err != nil {
+		t.Fatal(err)
 	}
 	cancellation, _, err := store.UpsertEventSubscription(ctx, accountID, app.ID, "documents", "completed", nil)
 	if err != nil {

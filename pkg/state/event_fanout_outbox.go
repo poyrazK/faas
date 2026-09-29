@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // PublishedEventWork is one durable fanout receipt. A claim token prevents a
@@ -53,6 +54,46 @@ type PublishedEventWorkBindingSnapshot struct {
 	KeySelector      string `json:"key_selector"`
 	FairnessSelector string `json:"fairness_selector,omitempty"`
 	Action           string `json:"action"`
+	// Nil on receipts accepted before policy snapshots were introduced.
+	Policy *PublishedEventWorkPolicySnapshot `json:"policy,omitempty"`
+}
+
+// PublishedEventWorkPolicySnapshot preserves the admission settings of an
+// accepted event even if the named policy changes or is removed before fanout.
+type PublishedEventWorkPolicySnapshot struct {
+	Revision                 int64                     `json:"revision"`
+	MaxRunningPerKey         int                       `json:"max_running_per_key"`
+	MaxRunningPerFairnessKey int                       `json:"max_running_per_fairness_key"`
+	PendingUpdates           workpolicy.PendingUpdates `json:"pending_updates"`
+	DebounceMS               int64                     `json:"debounce_ms"`
+	ExpiresAfterMS           int64                     `json:"expires_after_ms"`
+}
+
+func snapshotPublishedEventWorkPolicy(record AppWorkPolicy) *PublishedEventWorkPolicySnapshot {
+	return &PublishedEventWorkPolicySnapshot{
+		Revision: record.Revision, MaxRunningPerKey: record.Policy.MaxRunningPerKey,
+		MaxRunningPerFairnessKey: record.Policy.MaxRunningPerFairnessKey,
+		PendingUpdates:           record.Policy.PendingUpdates,
+		DebounceMS:               record.Policy.Debounce.Milliseconds(),
+		ExpiresAfterMS:           record.Policy.ExpiresAfter.Milliseconds(),
+	}
+}
+
+func (snapshot PublishedEventWorkPolicySnapshot) EffectivePolicy(name string) (workpolicy.Policy, error) {
+	policy := workpolicy.Policy{
+		Name: name, MaxRunningPerKey: snapshot.MaxRunningPerKey,
+		MaxRunningPerFairnessKey: snapshot.MaxRunningPerFairnessKey,
+		PendingUpdates:           snapshot.PendingUpdates,
+		Debounce:                 time.Duration(snapshot.DebounceMS) * time.Millisecond,
+		ExpiresAfter:             time.Duration(snapshot.ExpiresAfterMS) * time.Millisecond,
+	}
+	if snapshot.Revision < 1 {
+		return workpolicy.Policy{}, fmt.Errorf("event work policy snapshot has invalid revision")
+	}
+	if err := policy.Validate(); err != nil {
+		return workpolicy.Policy{}, err
+	}
+	return policy, nil
 }
 
 // PublishedEventRecipientProgress records scheduler-side fanout progress for
@@ -715,6 +756,9 @@ func (m *MemStore) enqueuePublishedEventLocked(subject *uuid.UUID, payload []byt
 				PolicyName: binding.PolicyName, KeySelector: binding.KeySelector,
 				FairnessSelector: binding.FairnessSelector, Action: binding.Action,
 			}
+			if policy, exists := m.workPolicies[memWorkPolicyKey(row.AppID, binding.PolicyName)]; exists {
+				recipient.Work.Policy = snapshotPublishedEventWorkPolicy(policy)
+			}
 		}
 		recipients = append(recipients, recipient)
 	}
@@ -765,6 +809,10 @@ func (m *MemStore) ClaimDuePublishedEvent(_ context.Context, now time.Time) (*Pu
 		copy.RecipientSnapshot[i].Filter = bytes.Clone(recipient.Filter)
 		if recipient.Work != nil {
 			binding := *recipient.Work
+			if recipient.Work.Policy != nil {
+				policy := *recipient.Work.Policy
+				binding.Policy = &policy
+			}
 			copy.RecipientSnapshot[i].Work = &binding
 		}
 	}

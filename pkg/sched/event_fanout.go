@@ -313,15 +313,27 @@ func (l *Loop) routeBoundEventWork(ctx context.Context, row state.PublishedEvent
 		}
 		return true, nil
 	}
-	policies, ok := l.engine.store.(state.AppWorkPolicyStore)
-	if !ok {
-		return true, eventWorkRouteError(row.ID, "work policy store unavailable", errors.New("store capability unavailable"), true)
+	var policy workpolicy.Policy
+	if useSnapshot && binding.Policy != nil {
+		policy, err = binding.Policy.EffectivePolicy(binding.PolicyName)
+		if err != nil {
+			return true, eventWorkRouteError(row.ID, "decode accepted work policy", err, false)
+		}
+		invocation.WorkPolicyRevision = binding.Policy.Revision
+	} else {
+		// Receipts accepted before policy snapshots still resolve the live
+		// policy, matching their original routing contract.
+		policies, ok := l.engine.store.(state.AppWorkPolicyStore)
+		if !ok {
+			return true, eventWorkRouteError(row.ID, "work policy store unavailable", errors.New("store capability unavailable"), true)
+		}
+		record, lookupErr := policies.AppWorkPolicyByName(ctx, row.AppID, binding.PolicyName)
+		if lookupErr != nil {
+			return true, eventWorkRouteError(row.ID, "load work policy", lookupErr, !errors.Is(lookupErr, state.ErrNotFound))
+		}
+		policy = record.Policy
+		invocation.WorkPolicyRevision = record.Revision
 	}
-	record, err := policies.AppWorkPolicyByName(ctx, row.AppID, binding.PolicyName)
-	if err != nil {
-		return true, eventWorkRouteError(row.ID, "load work policy", err, !errors.Is(err, state.ErrNotFound))
-	}
-	invocation.WorkPolicyRevision = record.Revision
 	var fairness []string
 	if binding.FairnessSelector != "" {
 		selector, parseErr := workpolicy.ParseSelector(binding.FairnessSelector)
@@ -334,7 +346,7 @@ func (l *Loop) routeBoundEventWork(ctx context.Context, row state.PublishedEvent
 		}
 		fairness = append(fairness, fairnessKey)
 	}
-	if _, err := l.engine.store.EnqueueKeyedInvocation(ctx, invocation, record.Policy, key, fairness...); err != nil {
+	if _, err := l.engine.store.EnqueueKeyedInvocation(ctx, invocation, policy, key, fairness...); err != nil {
 		if errors.Is(err, state.ErrConflict) {
 			return true, nil
 		}
