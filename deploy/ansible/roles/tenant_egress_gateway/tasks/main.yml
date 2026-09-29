@@ -1,0 +1,144 @@
+---
+# ADR-372: converge the operator-provisioned tenant egress gateway. Compute
+# nodes register themselves through peer files (tenant_egress_client); this
+# role owns the interface, the key check, forwarding and the gateway's own
+# deny layer.
+
+- name: tenant_egress_gateway — require the manifest gateway contract
+  ansible.builtin.assert:
+    that:
+      - faas_tenant_egress_gateway_public_key | length > 0
+      - faas_tenant_egress_tunnel_cidr | length > 0
+      - faas_tenant_egress_gateway_address | default('') | length > 0
+    fail_msg: >-
+      The gateway host needs the manifest-generated host_vars. Declare
+      egress.tenant_gateway in the manifest and run `make manifest-ansible`.
+
+- name: tenant_egress_gateway — install wireguard-tools and nftables
+  ansible.builtin.apt:
+    name:
+      - wireguard-tools
+      - nftables
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: tenant_egress_gateway — enable IPv4 forwarding
+  ansible.posix.sysctl:
+    name: net.ipv4.ip_forward
+    value: "1"
+    sysctl_file: /etc/sysctl.d/60-faas-tenant-egress.conf
+    state: present
+    reload: true
+
+- name: tenant_egress_gateway — mint the gateway key once
+  ansible.builtin.shell: |
+    set -eu
+    umask 077
+    wg genkey > /etc/wireguard/{{ faas_tenant_egress_iface }}.key
+  args:
+    creates: /etc/wireguard/{{ faas_tenant_egress_iface }}.key
+    executable: /bin/bash
+
+- name: tenant_egress_gateway — derive the gateway public key
+  ansible.builtin.shell: |
+    set -eu
+    wg pubkey < /etc/wireguard/{{ faas_tenant_egress_iface }}.key
+  args:
+    executable: /bin/bash
+  register: faas_tenant_egress_gateway_derived_key
+  changed_when: false
+
+- name: tenant_egress_gateway — the manifest must pin this gateway's key
+  ansible.builtin.assert:
+    that:
+      - faas_tenant_egress_gateway_derived_key.stdout | trim == faas_tenant_egress_gateway_public_key
+    fail_msg: >-
+      The gateway's WireGuard public key is
+      {{ faas_tenant_egress_gateway_derived_key.stdout | trim }} but the manifest
+      pins {{ faas_tenant_egress_gateway_public_key }}. Set
+      egress.tenant_gateway.public_key to the gateway's key, regenerate host_vars
+      and re-run; compute nodes would otherwise reject the tunnel.
+
+- name: tenant_egress_gateway — create the config directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  loop:
+    - /etc/faas/tenant-egress
+    - /etc/faas/tenant-egress/peers
+
+- name: tenant_egress_gateway — render the interface stanza
+  ansible.builtin.template:
+    src: interface.conf.j2
+    dest: /etc/faas/tenant-egress/interface.conf
+    owner: root
+    group: root
+    mode: "0600"
+  notify: sync faas tenant egress peers
+
+- name: tenant_egress_gateway — install the peer sync helper
+  ansible.builtin.template:
+    src: faas-tenant-egress-sync.j2
+    dest: /usr/local/sbin/faas-tenant-egress-sync
+    owner: root
+    group: root
+    mode: "0755"
+  notify: sync faas tenant egress peers
+
+# groups[] ignores --limit, so a limited run never prunes a live node.
+- name: tenant_egress_gateway — list registered peers
+  ansible.builtin.find:
+    paths: /etc/faas/tenant-egress/peers
+    patterns: "*.conf"
+  register: faas_tenant_egress_peer_files
+
+- name: tenant_egress_gateway — drop peers for nodes no longer in the fleet
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ faas_tenant_egress_peer_files.files }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+  when: (item.path | basename | regex_replace('\\.conf$', '')) not in groups['compute_nodes'] | default([])
+  notify: sync faas tenant egress peers
+
+- name: tenant_egress_gateway — render the gateway firewall
+  ansible.builtin.template:
+    src: tenant-egress-gw.nft.j2
+    dest: /etc/faas/tenant-egress/tenant-egress-gw.nft
+    owner: root
+    group: root
+    mode: "0600"
+    validate: /usr/sbin/nft -c -f %s
+  notify: reload faas tenant egress firewall
+
+- name: tenant_egress_gateway — install the firewall unit
+  ansible.builtin.template:
+    src: faas-tenant-egress-firewall.service.j2
+    dest: /etc/systemd/system/faas-tenant-egress-firewall.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: reload faas tenant egress firewall
+
+- name: tenant_egress_gateway — start the firewall before the tunnel
+  ansible.builtin.systemd:
+    name: faas-tenant-egress-firewall
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: tenant_egress_gateway — assemble the tunnel config
+  ansible.builtin.command: /usr/local/sbin/faas-tenant-egress-sync
+  args:
+    creates: /etc/wireguard/{{ faas_tenant_egress_iface }}.conf
+
+- name: tenant_egress_gateway — start the tunnel
+  ansible.builtin.systemd:
+    name: wg-quick@{{ faas_tenant_egress_iface }}
+    enabled: true
+    state: started

@@ -995,6 +995,29 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/account/realtime-history-usage:
+    get:
+      operationId: getManagedRealtimeHistoryUsage
+      summary: Read the account's retained realtime history snapshot
+      description: |
+        Preview only; requires usage read scope and MFA for interactive sessions.
+        Counts current retained message rows and payload bytes for this account,
+        including expired rows awaiting cleanup. Replayable counts apply the
+        channel's contiguous retention floor. These values are informational
+        snapshots, not billed usage or physical database allocation.
+      tags: [realtime]
+      responses:
+        '200':
+          description: Account-scoped retained history snapshot; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedRealtimeHistoryUsageResponse' }
+        default:
+          description: Authentication or history usage error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/account/usage:
     get:
       operationId: getAccountUsage
@@ -17659,6 +17682,67 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+      - name: channel
+        in: path
+        required: true
+        schema: { type: string, minLength: 1, maxLength: 256 }
+        description: Endpoint-scoped channel.
+    post:
+      tags: [realtime]
+      operationId: appendManagedRealtimeRetainedMessage
+      summary: Append one ordered message to retained channel history.
+      description: Disabled by default; an operator must set FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on apid. Retained writes reach only opt-in v2 WebSocket subscribers when the separate realtimed resume preview is enabled. The sequence is committed before the response; idempotency applies while the message remains retained. At most 32 channels and 1024 messages per channel are retained per endpoint, for up to 24 hours.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ManagedRealtimeRetainedMessageRequest' }
+      responses:
+        '201':
+          description: Message committed to the channel log.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedRealtimeRetainedMessageResponse' }
+        '400': { $ref: '#/components/responses/RealtimeInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanRealtimeNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    get:
+      tags: [realtime]
+      operationId: readManagedRealtimeRetainedMessages
+      summary: Read a page of retained channel history after a sequence.
+      description: Disabled by default; an operator must set FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on apid. A cursor older than retained history returns 410 with code history_unavailable. This management API is not a WebSocket resume protocol.
+      parameters:
+        - name: after
+          in: query
+          required: true
+          schema: { type: integer, format: int64, minimum: 0 }
+          description: Last processed sequence; zero starts at the first retained message.
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+          description: Maximum number of retained messages to return.
+      responses:
+        '200':
+          description: A consistent page of retained messages.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedRealtimeRetainedHistoryResponse' }
+        '400': { $ref: '#/components/responses/RealtimeInvalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanRealtimeNotAllowed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '410': { $ref: '#/components/responses/Gone' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   # ─── Customer runtime log drains (issue #1398 O4) ─────────────────────────
   /v1/apps/{slug}/log-drains:
     parameters:
@@ -23683,7 +23767,7 @@ components:
       type: object
       required: [reason, held_at]
       properties:
-        reason: { type: string, enum: [egress_fanout, operator] }
+        reason: { type: string, enum: [egress_fanout, egress_flood, operator] }
         held_at: { type: string, format: date-time }
 
     AccountAbuseHoldAction:
@@ -41472,6 +41556,50 @@ components:
         partial: { type: boolean, description: Whether one or more active realtime nodes did not accept the publish. }
         nodes_queried: { type: integer, minimum: 0, description: Active realtime nodes that accepted the publish request. }
         nodes_unavailable: { type: integer, minimum: 0, description: Active realtime nodes that did not accept the publish request. }
+
+    ManagedRealtimeRetainedMessageRequest:
+      type: object
+      description: Binary-safe payload to append to retained channel history.
+      required: [data_base64]
+      properties:
+        data_base64: { type: string, format: byte, maxLength: 5464, description: Standard base64 for at most 4096 decoded bytes. }
+        binary: { type: boolean, default: false }
+        idempotency_key: { type: string, maxLength: 128, description: Deduplicates identical writes while retained. }
+
+    ManagedRealtimeRetainedMessageResponse:
+      type: object
+      description: A committed message and its channel-scoped sequence.
+      required: [sequence, data_base64, binary, created_at]
+      properties:
+        sequence: { type: integer, format: int64, minimum: 1 }
+        data_base64: { type: string, format: byte }
+        binary: { type: boolean }
+        created_at: { type: string, format: date-time }
+
+    ManagedRealtimeRetainedHistoryResponse:
+      type: object
+      description: A consistent page of retained channel messages and retention bounds.
+      required: [messages, oldest_sequence, latest_sequence, has_more]
+      properties:
+        messages:
+          type: array
+          items: { $ref: '#/components/schemas/ManagedRealtimeRetainedMessageResponse' }
+        oldest_sequence: { type: integer, format: int64, minimum: 1 }
+        latest_sequence: { type: integer, format: int64, minimum: 0 }
+        has_more: { type: boolean }
+
+    ManagedRealtimeHistoryUsageResponse:
+      type: object
+      description: Account-scoped point-in-time retained history payload counts; not billing meters.
+      required: [observed_at, endpoint_count, channel_count, stored_message_count, stored_payload_bytes, replayable_message_count, replayable_payload_bytes]
+      properties:
+        observed_at: { type: string, format: date-time }
+        endpoint_count: { type: integer, format: int64, minimum: 0, description: 'Endpoints with a retained channel head.' }
+        channel_count: { type: integer, format: int64, minimum: 0, description: 'Retained channel heads, including empty heads.' }
+        stored_message_count: { type: integer, format: int64, minimum: 0, description: 'Message rows still physically present, including expired rows awaiting cleanup.' }
+        stored_payload_bytes: { type: integer, format: int64, minimum: 0, description: 'Decoded payload bytes in physically present rows; excludes database overhead.' }
+        replayable_message_count: { type: integer, format: int64, minimum: 0, description: "Rows at or above each channel's current contiguous retention floor." }
+        replayable_payload_bytes: { type: integer, format: int64, minimum: 0, description: 'Decoded payload bytes eligible for replay.' }
 
     AppLogDrainResponse:
       type: object

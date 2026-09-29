@@ -483,8 +483,12 @@ export type { ManagedRealtimeDrainRequest } from './models/ManagedRealtimeDrainR
 export type { ManagedRealtimeDrainResponse } from './models/ManagedRealtimeDrainResponse.js';
 export type { ManagedRealtimeDrainResult } from './models/ManagedRealtimeDrainResult.js';
 export type { ManagedRealtimeEndpointResponse } from './models/ManagedRealtimeEndpointResponse.js';
+export type { ManagedRealtimeHistoryUsageResponse } from './models/ManagedRealtimeHistoryUsageResponse.js';
 export type { ManagedRealtimeMessageRequest } from './models/ManagedRealtimeMessageRequest.js';
 export type { ManagedRealtimePublishResponse } from './models/ManagedRealtimePublishResponse.js';
+export type { ManagedRealtimeRetainedHistoryResponse } from './models/ManagedRealtimeRetainedHistoryResponse.js';
+export type { ManagedRealtimeRetainedMessageRequest } from './models/ManagedRealtimeRetainedMessageRequest.js';
+export type { ManagedRealtimeRetainedMessageResponse } from './models/ManagedRealtimeRetainedMessageResponse.js';
 export type { MemberListResponse } from './models/MemberListResponse.js';
 export type { MFAConfirmRequest } from './models/MFAConfirmRequest.js';
 export type { MFAConfirmResponse } from './models/MFAConfirmResponse.js';

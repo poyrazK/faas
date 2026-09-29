@@ -9,3 +9,19 @@ export {
   type GregaleBrowserFetchClient,
   type GregaleBrowserFetchOptions,
 } from './browser-release.js';
+
+export {
+  consumeRealtimeChannel,
+  REALTIME_RESUME_SUBPROTOCOL,
+  RealtimeProtocolError,
+  RealtimeResyncRequiredError,
+  type ConsumeRealtimeChannelOptions,
+  type RealtimeCursorStore,
+  type RealtimeMessage,
+  type RealtimeSocket,
+} from './realtime-resume.js';
+export {
+  createBrowserRealtimeSocketFactory,
+  REALTIME_RESUME_BEARER_SUBPROTOCOL_PREFIX,
+  type BrowserRealtimeSocketFactory,
+} from './browser-realtime.js';

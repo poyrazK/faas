@@ -30,6 +30,9 @@ type preparedNetworkPolicy struct {
 	// granularity as egressMbit.
 	egressConnRate  int
 	egressConnBurst int
+	// ADR-361 decision 9 per-destination new-connection limit.
+	egressDestConnRate  int
+	egressDestConnBurst int
 }
 
 type preparedNetworkEntry struct {
@@ -116,7 +119,8 @@ func (m *Manager) preparedPolicy(req WakeRequest) (preparedNetworkPolicy, bool) 
 	var egress netns.Config
 	applyTenantEgressPolicy(&egress, req.Plan, nil)
 	return preparedNetworkPolicy{egressMbit: req.EgressMbit, conntrackCap: m.conntrackCap, baseIP: hostIPForSlot(0),
-		egressConnRate: egress.EgressConnRate, egressConnBurst: egress.EgressConnBurst}, true
+		egressConnRate: egress.EgressConnRate, egressConnBurst: egress.EgressConnBurst,
+		egressDestConnRate: egress.EgressDestConnRate, egressDestConnBurst: egress.EgressDestConnBurst}, true
 }
 
 func (p *preparedNetworkPool) observe(policy preparedNetworkPolicy) {
@@ -232,6 +236,8 @@ func (p *preparedNetworkPool) fill() {
 		nc.TapUID, nc.EgressMbit, nc.ConntrackCap = lease.UID, policy.egressMbit, policy.conntrackCap
 		nc.EgressPorts = api.TenantEgressBasePorts()
 		nc.EgressConnRate, nc.EgressConnBurst = policy.egressConnRate, policy.egressConnBurst
+		nc.EgressDestConnRate, nc.EgressDestConnBurst = policy.egressDestConnRate, policy.egressDestConnBurst
+		nc.DNSGated = !p.m.dnsGatingOff // every prepared namespace serves a tenant (ADR-373)
 		e := preparedNetworkEntry{lease: lease, config: nc, policy: policy}
 		ctx, cancel := context.WithTimeout(p.ctx, preparedNetworkTimeout)
 		err = p.m.setupNetwork(ctx, nc)
@@ -349,8 +355,10 @@ func preparedNetworkDiffersOnlyInPort(prepared, requested netns.Config) bool {
 // Wake rejects invalid plans before this.
 func applyTenantEgressPolicy(nc *netns.Config, plan api.Plan, extra []uint16) {
 	nc.EgressPorts = tenantEgressPorts(plan, extra)
+	nc.DNSGated = true
 	if lim, ok := api.LimitsFor(plan); ok {
 		nc.EgressConnRate, nc.EgressConnBurst = lim.EgressNewConnPerSecond, lim.EgressNewConnBurst
+		nc.EgressDestConnRate, nc.EgressDestConnBurst = lim.EgressNewConnPerDestPerSecond, lim.EgressNewConnPerDestBurst
 	}
 }
 

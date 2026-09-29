@@ -242,6 +242,118 @@ when some nodes did not accept it. `queued` counts in-memory output queues,
 not client acknowledgements; retrying a partial publish may duplicate a
 message on nodes that already accepted it.
 
+The retained-message management API is an early storage surface for resumable
+channels. It is disabled by default; set `FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1`
+on apid to exercise it in a controlled environment. It has no finalized plan
+entitlement or storage pricing. `POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages`
+commits a payload and returns its channel sequence. `GET` on the same path
+with `after=<last sequence>` returns a page and the current retention bounds;
+an expired cursor returns `410 history_unavailable` so a caller can rebuild its
+state. Retained writes reach only opt-in v2 WebSocket subscriptions when the
+resume preview is enabled; existing raw-frame clients and `:publish` remain
+live-only. Do not use the preview as a production reconnect contract until
+plan entitlements, billing rules, and fleet qualification are complete.
+The storage window is capped at 1,024 messages of 4 KiB each per channel and
+32 channels per endpoint. Messages remain available for up to 24 hours; idempotency keys
+only deduplicate while their messages remain retained.
+
+Apid samples the physical PostgreSQL storage allocated to the history head
+and message relations after each one-minute expiry pass. The
+`apid_realtime_history_relation_bytes{relation="heads|messages"}` gauges include
+indexes and space awaiting vacuum. `apid_realtime_history_sample_success` and
+`apid_realtime_history_last_sample_timestamp_seconds` identify stale samples;
+`apid_realtime_history_pruned_messages_total` and
+`apid_realtime_history_prune_failures_total` show cleanup activity. Every apid
+replica observes the same database, so use `max by (relation)` for relation
+bytes across replicas rather than summing them:
+
+```promql
+max by (relation) (apid_realtime_history_relation_bytes)
+min(apid_realtime_history_sample_success)
+time() - min(apid_realtime_history_last_sample_timestamp_seconds)
+sum(rate(apid_realtime_history_pruned_messages_total[5m]))
+```
+
+These are physical capacity measurements, not per-account billable usage.
+
+`GET /v1/account/realtime-history-usage` is available with the retained
+history preview enabled and the `usage:read` scope. It returns one account's
+current channel-head count, message-row count, and decoded payload bytes.
+`stored_*` includes expired rows until the reaper removes them;
+`replayable_*` applies the same contiguous expiry floor used by subscription
+resume. This snapshot excludes row and index overhead and is not a billable
+byte-hour meter. Use the global relation metric above to watch actual database
+allocation; the account view is for tenant attribution and preview evaluation.
+
+With `DATABASE_URL` pointed at a throwaway PostgreSQL database, run the local
+continuity check:
+
+```sh
+go test ./pkg/realtime -run '^TestResumePostgresContinuityAcrossOwnersAndRestart$' -count=1
+```
+
+It runs separate realtime owners against one retained log and verifies replay
+after disconnect and owner restart, delivery of later commits, channel grants,
+and `resync_required` for an expired cursor. It does not exercise the deployed
+private RPC or real network failures. Before enabling the preview on a fleet,
+repeat the flow through two deployed nodes and apid's private history reader;
+then test apid unavailability, endpoint revocation, retention pruning, and a
+slow client. Confirm that failures close the subscription or return an explicit
+resynchronization response without silently skipping a sequence.
+
+The private `RealtimeHistory.ReadChannelHistory` RPC lets realtimed fetch the
+same bounded page from apid. On a single box it shares
+`/run/faas/request_telemetry.sock`; split-box apid registers it on the private
+AppErrors mTLS listener. It is not exposed by the public gateway.
+
+For a controlled v2 preview, enable `FAAS_REALTIME_RESUME_PREVIEW_ENABLED=1` on
+realtimed and point `FAAS_REALTIME_HISTORY_TARGET` at apid's private listener.
+Single-box defaults to the Unix socket above. A split-box `tcp://` or `dns://`
+target requires `FAAS_REALTIME_HISTORY_TLS_CERT_PATH`, `_KEY_PATH`, and
+`_CA_PATH`. The endpoint must use `oidc_jwt` authentication. Its application
+must implement `POST <callback_url>/realtime/authorize-channel`: Gregale sends
+`realtime.authorize_channel` with the verified principal, endpoint, channel,
+and `permission: "read"`, using the configured callback bearer credential.
+Any 2xx grants that channel for this connection; all other responses and
+callback failures deny it. To revoke a grant already in use, close the
+matching connection through the management API.
+
+A v2 client requests the `gregale.realtime.v2` WebSocket subprotocol and sends
+JSON text frames:
+
+```json
+{"type":"subscribe","channel":"updates","after":812}
+{"type":"ack","channel":"updates","sequence":820}
+{"type":"unsubscribe","channel":"updates"}
+```
+
+After the channel callback grants access, Gregale returns `subscribed`, then
+ordered `message` frames with `channel`, `sequence`, `message_id`,
+`data_base64`, and `binary`. An `acknowledged` frame confirms an ack for a
+sequence sent on this connection. The client must persist its last processed
+cursor and include it as `after` on reconnect. A lost acknowledgement can
+cause redelivery; processing is at least once, not exactly once. An expired
+cursor returns `resync_required` with `oldest_sequence` and `latest_sequence`
+and leaves the channel unsubscribed. While connected, realtimed polls the
+durable log every five seconds; retained writes may therefore arrive with
+that delay. The preview caps a node at 256 v2 subscriptions and a connection
+at eight. If retention advances past a connected subscriber, realtimed sends
+`resync_required` and removes that channel subscription. A history-reader
+failure closes the v2 connection with a retryable reason. If its output queue
+fills before it can send a control frame, realtimed closes the connection so
+the client can reconnect from its saved cursor.
+The [SDK consumer](../../sdk/node/README.md#resumable-managed-realtime-preview)
+persists a processed cursor, acknowledges in order, and reconnects from that
+cursor. Server-side sockets add an OIDC bearer header. Browser sockets use
+`gregale.realtime.bearer.<signed-JWT>` as a second requested subprotocol because
+native WebSockets cannot set that header. Browser credentials are accepted only
+for v2 endpoints with a matching non-empty `allowed_origins` policy and a
+present `Origin` header. The credential is capped at 3,072 bytes, is verified
+through the same endpoint OIDC policy, and is removed before hooks and
+subprotocol negotiation. The response selects only `gregale.realtime.v2`.
+Configure ingress and proxy access logs to redact `Sec-WebSocket-Protocol` for
+this route, since the request header carries the short-lived JWT.
+
 Apid records bounded-cardinality publish outcomes in its standard
 operations metrics: `managed_realtime_publish` uses `ok`, `partial`,
 `no_subscribers`, `unavailable`, and `canceled`;

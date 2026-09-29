@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // egressTopology wires three namespaces around one rendered instance
@@ -249,5 +250,57 @@ func TestMetalTenantEgressFanoutCounted(t *testing.T) {
 	topo.try("udp", "8.8.8.8", 53)         // pinned to the bridge resolver
 	if n := topo.counter(EgressNewDstCounter); n != 3 {
 		t.Fatalf("%s = %d, want 3 distinct destinations", EgressNewDstCounter, n)
+	}
+}
+
+// TestMetalTenantEgressFloodLimited sends a parallel burst at one
+// destination: the per-destination bucket drops the excess (ADR-361
+// decision 9) and counts it, while a second destination stays reachable.
+func TestMetalTenantEgressFloodLimited(t *testing.T) {
+	topo := newEgressTopology(t, "fld", func(c *Config) {
+		c.EgressConnRate, c.EgressConnBurst = 1000, 1000
+		c.EgressDestConnRate, c.EgressDestConnBurst = 1, 2
+	})
+	runIn(t, "ip", "-n", topo.outside, "addr", "add", "198.51.100.11/32", "dev", topo.cfg.VethHost)
+	reply, _ := topo.try("burst", "198.51.100.10", 443)
+	connected, err := strconv.Atoi(reply)
+	if err != nil {
+		t.Fatalf("burst client output %q: %v", reply, err)
+	}
+	if connected >= 20 {
+		t.Fatal("20 parallel connections to one address at 1/s burst 2 all succeeded; the per-destination limit is not enforced")
+	}
+	if n := topo.counter(EgressFloodCounter); n == 0 {
+		t.Fatalf("%s did not count the dropped flows (%d of 20 connected)", EgressFloodCounter, connected)
+	}
+	// A different destination has its own bucket.
+	if _, ok := topo.try("tcp", "198.51.100.11", 443); !ok {
+		// Refused (no listener) still proves the SYN left; a timeout does not.
+		if out := runIn(t, "ip", "netns", "exec", topo.inst, "nft", "list", "set", "ip", "faas", EgressDstRateSet); !strings.Contains(out, "198.51.100.11") {
+			t.Fatalf("second destination never reached its own bucket:\n%s", out)
+		}
+	}
+}
+
+// TestMetalTenantEgressDNSGated: with DNS gating, TCP to an address the
+// guest never resolved is dropped and counted; once vmmd adds it to
+// egress_resolved the same connection succeeds, and pinned DNS keeps
+// working throughout (ADR-373).
+func TestMetalTenantEgressDNSGated(t *testing.T) {
+	topo := newEgressTopology(t, "dng", func(c *Config) { c.DNSGated = true })
+	if reply, ok := topo.try("tcp", "198.51.100.10", 443); ok {
+		t.Fatalf("TCP to an unresolved address must be dropped, got %q", reply)
+	}
+	if n := topo.counter(EgressUnresolvedCounter); n == 0 {
+		t.Fatalf("%s did not count the dropped flow", EgressUnresolvedCounter)
+	}
+	if reply, ok := topo.try("udp", "8.8.8.8", 53); !ok || reply != "dns:q" {
+		t.Fatalf("pinned DNS must work under DNS gating: ok=%v reply=%q", ok, reply)
+	}
+	for _, argv := range topo.cfg.ResolvedEgressAddCommands([]netip.Addr{netip.MustParseAddr("198.51.100.10")}, 10*time.Minute) {
+		runIn(t, argv...)
+	}
+	if reply, ok := topo.try("tcp", "198.51.100.10", 443); !ok || reply != "ok" {
+		t.Fatalf("TCP to a resolved address must pass: ok=%v reply=%q", ok, reply)
 	}
 }

@@ -43,6 +43,26 @@ func TestLoadConfigPublicIfaceEnvConfiguresRuntimePolicy(t *testing.T) {
 	}
 }
 
+// adr: 372 — the tenant egress gateway interface reaches the runtime host
+// policy, so wake-time rebuilds keep tenant egress on the tunnel.
+func TestLoadConfigTenantEgressIfaceConfiguresRuntimePolicy(t *testing.T) {
+	t.Setenv("FAAS_TENANT_EGRESS_IFACE", "wg-tenant")
+	t.Setenv("FAAS_HOST_BRIDGE_CIDR", "10.100.0.0/16")
+	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	bridge := netip.MustParsePrefix(cfg.ComputeNode.HostBridgeCIDR)
+	rendered := runtimeHostPolicy(cfg.ComputeNode, bridge).Render()
+	if !strings.Contains(rendered, `oifname "wg-tenant" masquerade`) || strings.Contains(rendered, `iifname "br-tenants" oifname "eth0" accept`) {
+		t.Fatalf("runtime policy did not route tenant egress through wg-tenant:\n%s", rendered)
+	}
+	t.Setenv("FAAS_TENANT_EGRESS_IFACE", `wg"; flush ruleset`)
+	if _, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml")); err == nil || !strings.Contains(err.Error(), "tenant_egress_iface") {
+		t.Fatalf("LoadConfig error = %v, want tenant_egress_iface validation error", err)
+	}
+}
+
 func TestLoadConfigRejectsInvalidPublicIface(t *testing.T) {
 	t.Setenv("FAAS_PUBLIC_IFACE", `ens4"; flush ruleset`)
 	_, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))

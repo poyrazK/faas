@@ -377,3 +377,64 @@ func TestCmdManifestAnsible_NonexistentManifest(t *testing.T) {
 		t.Errorf("stderr missing load diagnostic: %q", buf.String())
 	}
 }
+
+// adr: 372 — a declared tenant egress gateway gives every compute host the
+// tunnel contract with a name-derived address; the control plane gets none.
+func TestRenderManifestAnsibleFiles_TenantEgressGateway(t *testing.T) {
+	yaml := strings.Replace(validManifestYAML,
+		"    - name: fsn-1\n      role: control-plane\n",
+		"    - name: fsn-1\n      role: control-plane\n      address: fsn-1.gregale.dev:7100\n    - name: fsn-2\n      role: compute-only\n      address: fsn-2.gregale.dev:50051\n", 1)
+	yaml += "egress:\n  tenant_gateway:\n    endpoint: egress-gw.gregale.dev:51820\n    public_key: " +
+		"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n    tunnel_cidr: 10.43.0.0/24\n"
+	m, err := manifest.Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("manifest.Parse: %v", err)
+	}
+	if errs := m.Validate(); errs != nil {
+		t.Fatalf("manifest.Validate: %v", errs)
+	}
+	files, err := renderManifestAnsibleFiles(m, t.TempDir())
+	if err != nil {
+		t.Fatalf("renderManifestAnsibleFiles: %v", err)
+	}
+	var cpVars, computeVars, gatewayVars, inventory string
+	for _, file := range files {
+		switch {
+		case strings.HasSuffix(file.Path, "hosts.ini"):
+			inventory = string(file.Body)
+		case strings.HasSuffix(file.Path, "tenant-egress-gateway.yml"):
+			gatewayVars = string(file.Body)
+		case strings.HasSuffix(file.Path, "fsn-1.yml"):
+			cpVars = string(file.Body)
+		case strings.HasSuffix(file.Path, "fsn-2.yml"):
+			computeVars = string(file.Body)
+		}
+	}
+	for _, want := range []string{
+		`faas_tenant_egress_iface: "wg-tenant"`,
+		`faas_tenant_egress_gateway_endpoint: "egress-gw.gregale.dev:51820"`,
+		`faas_tenant_egress_gateway_public_key: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="`,
+		`faas_tenant_egress_tunnel_cidr: "10.43.0.0/24"`,
+		`faas_tenant_egress_tunnel_address: "10.43.0.3/24"`,
+	} {
+		if !strings.Contains(computeVars, want) {
+			t.Errorf("compute host vars missing %s:\n%s", want, computeVars)
+		}
+	}
+	if strings.Contains(cpVars, "faas_tenant_egress_") {
+		t.Errorf("control-plane host received tenant egress vars:\n%s", cpVars)
+	}
+	if !strings.Contains(inventory, "[tenant_egress_gateway]\ntenant-egress-gateway\n") {
+		t.Errorf("inventory has no gateway group:\n%s", inventory)
+	}
+	for _, want := range []string{
+		`ansible_host: "egress-gw.gregale.dev"`,
+		`faas_tenant_egress_gateway_address: "10.43.0.1/24"`,
+		`faas_tenant_egress_listen_port: 51820`,
+		`faas_tenant_egress_tunnel_cidr: "10.43.0.0/24"`,
+	} {
+		if !strings.Contains(gatewayVars, want) {
+			t.Errorf("gateway host vars missing %s:\n%s", want, gatewayVars)
+		}
+	}
+}

@@ -181,3 +181,31 @@ curl -fsS --data-urlencode "query=sum(rate(apid_request_total{account_id=\"${ACC
 A sustained recovery (no further `FaasTenantAbuse` fires for
 24h) closes the incident; the silence expires on its own and
 the gauge surfaces the customer at their normal rps position.
+
+## Blocked guest DNS lookups (FaasGuestDNSBlocked)
+
+The bridge resolver refused a lookup of a blocklisted name (ADR-373). Find the
+calling app in the gatewayd-internal journal:
+
+```
+journalctl -u faas-gatewayd-internal | grep 'guest DNS lookup blocked'
+```
+
+A `miner` hit is a mining pool: the app is trying to mine. An operator-feed hit
+carries the feed's category. Review the app and, for mining or C2, hold the
+account (`gregale admin abuse-hold place`).
+
+## Unresolved-address drops (DNS-gated egress)
+
+`vmmd_egress_denied_total{class="unresolved"}` counts TCP a guest opened to an
+address it never resolved through the bridge resolver (ADR-373). Steady drops
+from one app usually mean it connects to a hard-coded IP address; the customer
+should add it to the egress allowlist. A burst across many addresses is
+scanning.
+
+If every app on a node suddenly shows unresolved drops, the node's resolver
+cannot reach vmmd. Look for `guest DNS answer not registered for egress` in the
+gatewayd-internal journal. As an emergency measure, set
+`FAAS_EGRESS_DNS_GATING=off` in vmmd's environment on that node and restart it.
+New VMs are then created ungated; every other egress control stays in place.
+Revert once the hook is fixed.

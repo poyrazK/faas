@@ -81,6 +81,87 @@ parsed RFC 7807 `Problem` envelope, the HTTP status, and the daemon's
 
 ## Supported surface
 
+### Resumable managed realtime preview
+
+`consumeRealtimeChannel` processes one v2 channel and reconnects with the last
+saved cursor. Supply a durable cursor store and a WebSocket factory that adds
+the endpoint's OIDC bearer token. For example, with the separate `ws` package
+(`npm install ws` and `npm install -D @types/ws` for TypeScript):
+
+```ts
+import WebSocket from 'ws';
+import { consumeRealtimeChannel, RealtimeResyncRequiredError } from '@gregale/sdk-node';
+
+try {
+  await consumeRealtimeChannel({
+    url: 'wss://app.example.com/__gregale/realtime/ENDPOINT_ID',
+    channel: 'notifications',
+    cursorStore: {
+      load: async () => Number(await cursorDB.get('notifications') ?? 0),
+      save: async (sequence) => { await cursorDB.set('notifications', sequence); },
+    },
+    onMessage: async ({ sequence, data }) => {
+      await processNotification(sequence, data); // make this idempotent by sequence
+    },
+    webSocketFactory: async (url, protocols) => new WebSocket(url, protocols, {
+      headers: { Authorization: `Bearer ${await getFreshOidcToken()}` },
+    }),
+  });
+} catch (error) {
+  if (error instanceof RealtimeResyncRequiredError) {
+    // Rebuild application state, then save a new cursor before consuming again.
+    console.log(error.oldestSequence, error.latestSequence);
+  } else {
+    throw error;
+  }
+}
+```
+
+The helper calls `onMessage`, saves its cursor, then sends the ack. If
+processing or saving fails it stops without advancing. A crash between the
+application side effect and cursor save can cause redelivery, so deduplicate
+using the channel and sequence. When possible, store that deduplication key
+with the application side effect in one transaction.
+An expired cursor raises `RealtimeResyncRequiredError`; the helper never skips
+missing history. Cancel with an `AbortSignal` to stop reconnecting. This preview
+requires both server preview flags and the endpoint's channel authorization
+callback described in [managed realtime operations](../../docs/ops/realtime.md).
+
+Browser clients import from the browser subpath. The server accepts a bounded
+OIDC JWT in a reserved WebSocket subprotocol when the endpoint has an explicit
+`allowed_origins` entry matching the page's origin:
+
+```ts
+import {
+  consumeRealtimeChannel,
+  createBrowserRealtimeSocketFactory,
+} from '@gregale/sdk-node/browser';
+
+const cursorKey = `realtime:ENDPOINT_ID:${currentUser.id}:notifications`;
+await consumeRealtimeChannel({
+  url: 'wss://app.example.com/__gregale/realtime/ENDPOINT_ID',
+  channel: 'notifications',
+  cursorStore: {
+    load: () => Number(localStorage.getItem(cursorKey) ?? 0),
+    save: (sequence) => { localStorage.setItem(cursorKey, String(sequence)); },
+  },
+  onMessage: async ({ sequence, data }) => {
+    await processNotification(sequence, data); // deduplicate by channel and sequence
+  },
+  webSocketFactory: createBrowserRealtimeSocketFactory(getFreshOidcToken),
+});
+```
+
+The factory fetches a fresh JWT on every reconnect. For project release
+pinning, pass `createGregaleBrowserFetch(...).webSocket` as its second argument.
+The browser cursor is scoped to the current user; if browser storage is cleared
+or evicted, the application may need to rebuild state and save a fresh cursor.
+The JWT travels in the `Sec-WebSocket-Protocol` request header during the
+handshake. Keep it short lived and redact that header from proxy access logs.
+The server verifies the JWT, requires an exact allowed origin, removes the
+credential before application authorization hooks run, and selects only
+`gregale.realtime.v2` as the response subprotocol.
+
 Server-side Node services can also use the hand-written
 `createServiceCallerVerifier` helper to verify Gregale's incoming internal
 service-call assertions. It uses the platform public JWKS endpoint and Node's

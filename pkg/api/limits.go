@@ -32,6 +32,17 @@ const (
 // below are at or below this value. See ADR-257.
 const MaxOutboundRequestsPerDay int64 = 100_000_000
 
+// Operator-only managed realtime resume preview safety bounds. These are not
+// plan entitlements or a billing allowance; product limits are decided before
+// the preview is promoted.
+const (
+	RealtimeResumeSubscriptionsPerNode       = 256
+	RealtimeResumeSubscriptionsPerConnection = 8
+	RealtimeResumeClientFrameMaxBytes        = 4096
+	RealtimeResumeServerFrameMaxBytes        = 8 << 10
+	RealtimeResumeBearerTokenMaxBytes        = 3072
+)
+
 // Operator-configurable object-storage preview safeguards, not plan allowances
 // or billable storage entitlements. Metering/pricing need a separate decision.
 const (
@@ -511,6 +522,18 @@ type Limits struct {
 	// instance that reaches it. It sits below 60 × EgressNewConnPerSecond so
 	// a sweep trips it before the rate limit alone would absorb it.
 	EgressNewDestinationsPerMinute int
+	// EgressNewConnPerDestPerSecond / EgressNewConnPerDestBurst cap the new
+	// outbound flows an instance may open to any single destination address
+	// (ADR-361 decision 9). Excess flows are dropped and counted in
+	// faas_egress_flood; this bounds an HTTP or SYN flood against one target,
+	// which fan-out detection does not see. Below EgressNewConnPerSecond.
+	EgressNewConnPerDestPerSecond int
+	EgressNewConnPerDestBurst     int
+	// EgressFloodDropsPerMinute is the flood ceiling: per-destination drops
+	// in one minute at which schedd recycles the instance, like the fan-out
+	// ceiling. Legitimate clients with connection reuse and backoff stay far
+	// below it.
+	EgressFloodDropsPerMinute int
 	// EgressExtraPortsMax caps the extra TCP destination ports an app may
 	// declare on top of TenantEgressBasePorts (ADR-361). 0 = the plan
 	// cannot declare any (Free/Hobby).
@@ -1826,6 +1849,9 @@ var planLimits = map[Plan]Limits{
 		EgressNewConnPerSecond:         10,
 		EgressNewConnBurst:             40,
 		EgressNewDestinationsPerMinute: 120,
+		EgressNewConnPerDestPerSecond:  5,
+		EgressNewConnPerDestBurst:      20,
+		EgressFloodDropsPerMinute:      120,
 		EgressExtraPortsMax:            0,
 		SecretCountMax:                 8,
 		SecretValueMaxBytes:            4 * 1024,
@@ -2207,6 +2233,9 @@ var planLimits = map[Plan]Limits{
 		EgressNewConnPerSecond:         20,
 		EgressNewConnBurst:             80,
 		EgressNewDestinationsPerMinute: 240,
+		EgressNewConnPerDestPerSecond:  10,
+		EgressNewConnPerDestBurst:      40,
+		EgressFloodDropsPerMinute:      240,
 		EgressExtraPortsMax:            0,
 		SecretCountMax:                 25,
 		SecretValueMaxBytes:            8 * 1024,
@@ -2613,6 +2642,9 @@ var planLimits = map[Plan]Limits{
 		EgressNewConnPerSecond:         50,
 		EgressNewConnBurst:             200,
 		EgressNewDestinationsPerMinute: 1200,
+		EgressNewConnPerDestPerSecond:  25,
+		EgressNewConnPerDestBurst:      100,
+		EgressFloodDropsPerMinute:      600,
 		EgressExtraPortsMax:            8,
 		SecretCountMax:                 50,
 		SecretValueMaxBytes:            16 * 1024,
@@ -2981,6 +3013,9 @@ var planLimits = map[Plan]Limits{
 		EgressNewConnPerSecond:         100,
 		EgressNewConnBurst:             400,
 		EgressNewDestinationsPerMinute: 3000,
+		EgressNewConnPerDestPerSecond:  50,
+		EgressNewConnPerDestBurst:      200,
+		EgressFloodDropsPerMinute:      1200,
 		EgressExtraPortsMax:            32,
 		SecretCountMax:                 100,
 		SecretValueMaxBytes:            32 * 1024,
@@ -4197,6 +4232,16 @@ const (
 	// that a clean restart fixes; a repeat means the account's own code.
 	EgressFanoutHoldRecycles      = 2
 	EgressFanoutHoldWindowSeconds = 3600
+	// ADR-373 DNS-gated egress: a resolved address stays reachable for its
+	// DNS TTL clamped to [DNSGatedEgressMinTTLSeconds,
+	// DNSGatedEgressMaxTTLSeconds]. The floor covers clients that cache
+	// answers past their TTL (the JVM, connection pools); the ceiling
+	// bounds how long a stale address stays open.
+	DNSGatedEgressMinTTLSeconds = 600
+	DNSGatedEgressMaxTTLSeconds = 3600
+	// DNSGatedEgressAppSeedMax caps the recently resolved addresses vmmd
+	// keeps per app to seed new instances of that app.
+	DNSGatedEgressAppSeedMax = 4096
 	// ScaleUpMaxBurstPerTick bounds the number of additional instances a
 	// signal-driven scale-up decision may request in one scheduler tick. The
 	// desired-capacity calculation can ask for more when a large burst arrives,

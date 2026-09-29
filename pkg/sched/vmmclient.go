@@ -328,7 +328,11 @@ type VMInstanceStat struct {
 	// instance plan's ceiling (0 = none).
 	EgressNewDestinationsPerMin      *int64
 	EgressNewDestinationsLimitPerMin int64
-	CPUPct                           *float64
+	// EgressFloodDropsPerMin / EgressFloodDropsLimitPerMin are the ADR-361
+	// decision 9 flood sample and ceiling.
+	EgressFloodDropsPerMin      *int64
+	EgressFloodDropsLimitPerMin int64
+	CPUPct                      *float64
 	// CPUSeconds is the cumulative CPU-seconds reading from
 	// vmmd's cpustats cache (issue #279 / PR-B). nil on the
 	// wire when the cache has no baseline for the instance
@@ -1372,6 +1376,11 @@ func vmInstanceStatFromProto(in *vmmdpb.InstanceStats) VMInstanceStat {
 		row.EgressNewDestinationsPerMin = &b
 	}
 	row.EgressNewDestinationsLimitPerMin = in.GetEgressNewDestinationsLimitPerMin()
+	if v := in.GetEgressFloodDropsPerMin(); v != nil {
+		b := v.GetValue()
+		row.EgressFloodDropsPerMin = &b
+	}
+	row.EgressFloodDropsLimitPerMin = in.GetEgressFloodDropsLimitPerMin()
 	if v := in.GetCpuPct(); v != nil {
 		c := v.GetValue()
 		row.CPUPct = &c

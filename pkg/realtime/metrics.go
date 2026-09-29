@@ -37,6 +37,7 @@ type StatsCollector struct {
 	manager *Manager
 
 	currentConnections              *prometheus.Desc
+	currentResumeSubscriptions      *prometheus.Desc
 	acceptedConnections             *prometheus.Desc
 	rejectedConnections             *prometheus.Desc
 	receivedMessages                *prometheus.Desc
@@ -101,6 +102,7 @@ func NewStatsCollector(manager *Manager) prometheus.Collector {
 	return &StatsCollector{
 		manager:                         manager,
 		currentConnections:              prometheus.NewDesc(subsystem+"_current_connections", "Current managed realtime connections.", nil, nil),
+		currentResumeSubscriptions:      prometheus.NewDesc(subsystem+"_current_resume_subscriptions", "Current v2 retained-channel subscriptions on this realtime node.", nil, nil),
 		acceptedConnections:             prometheus.NewDesc(subsystem+"_accepted_connections_total", "Managed realtime connections accepted since process start.", nil, nil),
 		rejectedConnections:             prometheus.NewDesc(subsystem+"_rejected_connections_total", "Managed realtime connections rejected since process start.", nil, nil),
 		receivedMessages:                prometheus.NewDesc(subsystem+"_received_messages_total", "Realtime messages received since process start.", nil, nil),
@@ -146,6 +148,7 @@ func (c *StatsCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 	stats := c.manager.Stats()
 	ch <- prometheus.MustNewConstMetric(c.currentConnections, prometheus.GaugeValue, float64(stats.CurrentConnections))
+	ch <- prometheus.MustNewConstMetric(c.currentResumeSubscriptions, prometheus.GaugeValue, float64(stats.CurrentResumeSubscriptions))
 	ch <- prometheus.MustNewConstMetric(c.acceptedConnections, prometheus.CounterValue, float64(stats.AcceptedConnections))
 	ch <- prometheus.MustNewConstMetric(c.rejectedConnections, prometheus.CounterValue, float64(stats.RejectedConnections))
 	ch <- prometheus.MustNewConstMetric(c.receivedMessages, prometheus.CounterValue, float64(stats.ReceivedMessages))
@@ -181,6 +184,7 @@ func (c *StatsCollector) Collect(ch chan<- prometheus.Metric) {
 func (c *StatsCollector) descs() []*prometheus.Desc {
 	return []*prometheus.Desc{
 		c.currentConnections,
+		c.currentResumeSubscriptions,
 		c.acceptedConnections,
 		c.rejectedConnections,
 		c.receivedMessages,

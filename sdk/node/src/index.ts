@@ -85,6 +85,17 @@ export {
   type WatchExecutionOptions,
 } from './executions.js';
 
+export {
+  consumeRealtimeChannel,
+  REALTIME_RESUME_SUBPROTOCOL,
+  RealtimeProtocolError,
+  RealtimeResyncRequiredError,
+  type ConsumeRealtimeChannelOptions,
+  type RealtimeCursorStore,
+  type RealtimeMessage,
+  type RealtimeSocket,
+} from './realtime-resume.js';
+
 // Request-scoped release propagation for app-to-app calls.
 export {
   createGregaleFetch,

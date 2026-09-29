@@ -54,6 +54,47 @@ func TestHTTPHooksSendsCallbackAuthAndOmitsSecretsFromEvent(t *testing.T) {
 	}
 }
 
+func TestHTTPHooksAuthorizeChannelFailsClosedAndScopesRequest(t *testing.T) {
+	var received Event
+	var path, authorization string
+	allowed := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path, authorization = r.URL.Path, r.Header.Get("Authorization")
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Errorf("decode authorization request: %v", err)
+		}
+		if !allowed {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	event := Event{
+		ID: "evt_authorize", Type: EventAuthorizeChannel,
+		EndpointID: "ep-1", AccountID: "acct-1", AppID: "app-1",
+		ConnectionID: "rt-1", Principal: "user-123", Channel: "tenant-7",
+		CallbackURL: server.URL, CallbackAuthToken: "callback-secret",
+	}
+	hooks := HTTPHooks{Client: server.Client(), MaxAttempts: 1}
+	if ok, err := hooks.AuthorizeChannel(context.Background(), event); ok || err != nil {
+		t.Fatalf("denied channel = (%v, %v)", ok, err)
+	}
+	if path != "/realtime/authorize-channel" || authorization != "Bearer callback-secret" ||
+		received.Type != EventAuthorizeChannel || received.Principal != "user-123" ||
+		received.Channel != "tenant-7" || received.Permission != "read" {
+		t.Fatalf("authorization callback = (%q, %q, %+v)", path, authorization, received)
+	}
+	allowed = true
+	if ok, err := hooks.AuthorizeChannel(context.Background(), event); !ok || err != nil {
+		t.Fatalf("allowed channel = (%v, %v)", ok, err)
+	}
+	event.CallbackURL = ""
+	if ok, err := hooks.AuthorizeChannel(context.Background(), event); ok || err != nil {
+		t.Fatalf("missing callback = (%v, %v)", ok, err)
+	}
+}
+
 func TestHTTPHooksUsesRotatedTokenForNewDurableCallback(t *testing.T) {
 	var authorization string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

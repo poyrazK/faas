@@ -1018,6 +1018,9 @@ message InstanceTelemetry {
   // minute, and the plan ceiling (0 = none). Mirrors vmmd InstanceStats.
   google.protobuf.Int64Value egress_new_destinations_per_min = 15;
   int64 egress_new_destinations_limit_per_min = 16;
+  // ADR-361 decision 9 flood drops and ceiling. Mirrors vmmd InstanceStats.
+  google.protobuf.Int64Value egress_flood_drops_per_min = 17;
+  int64 egress_flood_drops_limit_per_min = 18;
 }
 
 // ReportCapacityAck is the typed "I consumed all your messages"

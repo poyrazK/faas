@@ -484,6 +484,10 @@ func (f *fakeVmmdClient) Ping(context.Context, *vmmdpb.PingRequest, ...grpc.Call
 // doesn't drive the in-place patch. Panics so a future test
 // that actually exercises this RPC from the gateway side fails
 // loudly (rather than silently returning a stubbed success).
+func (f *fakeVmmdClient) AllowResolvedEgress(context.Context, *vmmdpb.AllowResolvedEgressRequest, ...grpc.CallOption) (*vmmdpb.AllowResolvedEgressAck, error) {
+	return &vmmdpb.AllowResolvedEgressAck{}, nil
+}
+
 func (f *fakeVmmdClient) UpdateEgressAllowlist(context.Context, *vmmdpb.UpdateEgressAllowlistRequest, ...grpc.CallOption) (*vmmdpb.UpdateEgressAllowlistAck, error) {
 	panic("UpdateEgressAllowlist: not stubbed")
 }

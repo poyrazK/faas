@@ -1,0 +1,8 @@
+# {{ ansible_managed }}
+# ADR-372 tenant egress gateway. Peers are appended by
+# faas-tenant-egress-sync from /etc/faas/tenant-egress/peers/*.conf; the
+# private key is read from /etc/wireguard/{{ faas_tenant_egress_iface }}.key at sync time.
+[Interface]
+Address = {{ faas_tenant_egress_gateway_address }}
+ListenPort = {{ faas_tenant_egress_listen_port }}
+MTU = {{ faas_tenant_egress_mtu }}

@@ -1419,10 +1419,15 @@ func nodeTelemetryFromProto(in []*scheddpb.InstanceTelemetry) []sched.NodeTeleme
 			FlowSummaries:    flowSummariesFromProto(row.GetInstanceId(), row.GetFlowSummaries()),
 
 			EgressNewDestinationsLimitPerMin: row.GetEgressNewDestinationsLimitPerMin(),
+			EgressFloodDropsLimitPerMin:      row.GetEgressFloodDropsLimitPerMin(),
 		}
 		if value := row.GetEgressNewDestinationsPerMin(); value != nil {
 			v := value.GetValue()
 			item.EgressNewDestinationsPerMin = &v
+		}
+		if value := row.GetEgressFloodDropsPerMin(); value != nil {
+			v := value.GetValue()
+			item.EgressFloodDropsPerMin = &v
 		}
 		if value := row.GetRequestCountTotal(); value != nil {
 			v := value.GetValue()

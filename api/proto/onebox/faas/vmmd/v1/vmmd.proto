@@ -210,6 +210,11 @@ service Vmmd {
   // uses pg_notify as the delivery mechanism (cmd/schedd egress
   // drift subscriber, pkg/sched/egress_drift.go).
   rpc UpdateEgressAllowlist(UpdateEgressAllowlistRequest) returns (UpdateEgressAllowlistAck);
+  // AllowResolvedEgress (ADR-373): the node's bridge resolver reports the
+  // addresses a guest just resolved; vmmd lets that guest open TCP to them
+  // for the answer's TTL before the resolver replies. source_ip is the
+  // query's source, the instance's host-side address.
+  rpc AllowResolvedEgress(AllowResolvedEgressRequest) returns (AllowResolvedEgressAck);
 
   // UpdateAppCPULimit changes the host cgroup CPU ceiling for every live VM
   // belonging to an app. CPU quota is a cgroup policy and can be changed
@@ -1244,6 +1249,10 @@ message InstanceStats {
   google.protobuf.Int64Value egress_new_destinations_per_min = 17;
   // The instance plan's fan-out ceiling; 0 when none applies.
   int64 egress_new_destinations_limit_per_min = 18;
+  // ADR-361 decision 9: new flows dropped in the last minute for exceeding
+  // the per-destination rate, and the plan's flood ceiling (0 = none).
+  google.protobuf.Int64Value egress_flood_drops_per_min = 19;
+  int64 egress_flood_drops_limit_per_min = 20;
 }
 
 // PingRequest is intentionally empty. Ping is a liveness probe; the
@@ -2205,4 +2214,15 @@ message ExecuteAppTaskOutputChunk {
   // stream is one of "stdout" or "stderr".
   string stream = 1;
   bytes chunk = 2;
+}
+
+message AllowResolvedEgressRequest {
+  string source_ip = 1;
+  repeated string addresses = 2;
+  uint32 ttl_seconds = 3;
+}
+
+message AllowResolvedEgressAck {
+  // matched is false when no live instance owns source_ip.
+  bool matched = 1;
 }

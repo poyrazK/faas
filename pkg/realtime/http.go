@@ -119,6 +119,23 @@ func (h HTTPHooks) Connect(ctx context.Context, event Event) (bool, error) {
 	return response.statusCode >= http.StatusOK && response.statusCode < http.StatusMultipleChoices, nil
 }
 
+// AuthorizeChannel asks the application before realtimed reads retained
+// history or admits a versioned live subscription. The fixed path avoids
+// changing endpoint rows during the preview; applications implement this
+// callback explicitly and may return any 2xx to grant read permission.
+func (h HTTPHooks) AuthorizeChannel(ctx context.Context, event Event) (bool, error) {
+	if event.CallbackURL == "" || event.Principal == "" || event.Channel == "" || event.Type != EventAuthorizeChannel {
+		return false, nil
+	}
+	event.CallbackPath = "/realtime/authorize-channel"
+	event.Permission = "read"
+	response, err := h.deliver(ctx, event)
+	if err != nil {
+		return false, err
+	}
+	return response.statusCode >= http.StatusOK && response.statusCode < http.StatusMultipleChoices, nil
+}
+
 func (h HTTPHooks) Message(ctx context.Context, event Event) error {
 	if event.CallbackURL == "" || event.CallbackPath == "" {
 		return nil

@@ -1215,6 +1215,8 @@ func (s *Server) Stats(ctx context.Context, _ *vmmdpb.StatsRequest) (*vmmdpb.Sta
 			if fanout, present := provider.EgressFanout(inst); present {
 				row.EgressNewDestinationsPerMin = wrapperspb.Int64(fanout.NewDestinationsPerMinute)
 				row.EgressNewDestinationsLimitPerMin = fanout.Limit
+				row.EgressFloodDropsPerMin = wrapperspb.Int64(fanout.FloodDropsPerMinute)
+				row.EgressFloodDropsLimitPerMin = fanout.FloodLimit
 			}
 		}
 		row.OpenConns = openConns[inst]
