@@ -1,4 +1,4 @@
-# ADR-341 — Resumable managed realtime channels
+# ADR-366 — Resumable managed realtime channels
 
 - **Status:** proposed
 - **Date:** 2026-09-28

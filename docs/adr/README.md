@@ -55,6 +55,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | ADR | Title | Status | Source |
 |---|---|---|---|
 | 370 | [GitHub Actions immutable OIDC subject bootstrap](370-github-actions-immutable-oidc-subjects.md) | accepted | Resolve immutable GitHub repository IDs for binding lookup while pinning the complete subject in the OIDC trust policy |
+| 366 | [Resumable managed realtime channels](366-resumable-managed-realtime-channels.md) | proposed | Ordered outbound channel log, retention floor, versioned client replay, acknowledgements, and channel grants |
 | 348 | [Customer after-restore readiness hook](348-customer-after-restore-hook.md) | accepted | Opt-in, loopback HTTP callback after entropy and clock repair and before restore readiness; failure cold-boots |
 | 354 | [Confirmed platform-tenant reconciliation apply](354-platform-tenant-confirmed-reconciliation-apply.md) | accepted | Apply only a current ownership-aware plan atomically; detach managed links, remove managed declared hostnames, preserve unmanaged resources |
 | 362 | [Durable platform-tenant reconciliation receipts](362-platform-tenant-reconciliation-receipts.md) | accepted | Persist secret-free, immutable outcomes atomically and expose tenant-scoped recovery and audit reads |
@@ -66,7 +67,6 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 349 | [Distinguish application restore-hook failures](349-after-restore-failure-signal.md) | accepted | Typed ACK 13 classification and bounded `after_restore_failed` wake-failure signal |
 | 350 | [Show application restore-hook fallback in wake timelines](350-customer-restore-fallback-reason.md) | accepted | Customer-visible reason when a restore hook causes cold-boot fallback |
 | 351 | [Customer callback before terminal init capture](351-customer-before-checkpoint-hook.md) | accepted | Required loopback callback for new init snapshots; warm capture is skipped |
-| 341 | [Resumable managed realtime channels](341-resumable-managed-realtime-channels.md) | proposed | Ordered outbound channel log, retention floor, versioned client replay, acknowledgements, and channel grants |
 | 340 | [Platform-tenant managed resource provenance](340-platform-tenant-managed-resource-provenance.md) | accepted | Mark only resources created by the owner bundle apply as managed; links never imply ownership |
 | 341 | [Ownership-aware platform-tenant reconciliation plan](341-platform-tenant-reconciliation-plan.md) | accepted | Add a deterministic read-only desired-state diff with managed removal candidates and unmanaged retention |
 | 363 | [Platform-tenant reconciliation applied webhook](363-platform-tenant-reconciliation-applied-webhook.md) | accepted | Enqueue a safe receipt-pointer notification in the apply transaction for retryable delivery |
