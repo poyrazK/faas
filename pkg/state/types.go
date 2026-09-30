@@ -1572,6 +1572,7 @@ type ProjectEnvironmentEdgePolicy struct {
 }
 
 type ProjectEnvironmentEdgeRule struct {
+	Name         string            `json:"name,omitempty"`
 	Kind         EdgeRuleKind      `json:"kind"`
 	MatchPath    string            `json:"match_path"`
 	MatchMethods []string          `json:"match_methods,omitempty"`

@@ -1529,6 +1529,120 @@ type EmailVerificationToken struct {
 	CreatedAt  pgtype.Timestamptz
 }
 
+type EnvironmentDesiredRevision struct {
+	ID               pgtype.UUID
+	SourceID         pgtype.UUID
+	CommitSha        string
+	DefinitionDigest string
+	Definition       []byte
+	ApprovedBy       string
+	ApprovedAt       pgtype.Timestamptz
+}
+
+type EnvironmentGitSource struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	ProjectID          pgtype.UUID
+	EnvironmentID      pgtype.UUID
+	RepositoryID       int64
+	InstallationID     int64
+	Repository         string
+	SourceRef          string
+	ManifestPath       string
+	Mode               string
+	ApprovalPolicy     string
+	Prune              bool
+	Suspended          bool
+	Generation         int64
+	IntentVersion      int64
+	ApprovedRevisionID pgtype.UUID
+	AppliedRevisionID  pgtype.UUID
+	SourceCheckedAt    pgtype.Timestamptz
+	SourceErrorCode    string
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+}
+
+type EnvironmentGitopsEffect struct {
+	ID                pgtype.UUID
+	SourceID          pgtype.UUID
+	RevisionID        pgtype.UUID
+	Generation        int64
+	IntentVersion     int64
+	PlanHash          string
+	AppID             pgtype.UUID
+	Kind              string
+	GatewayGeneration int64
+	MatchHosts        []string
+	ExpectedNodes     []string
+	AcknowledgedNodes []string
+	CreatedAt         pgtype.Timestamptz
+	CompletedAt       pgtype.Timestamptz
+}
+
+type EnvironmentGitopsEvent struct {
+	ID        pgtype.UUID
+	SourceID  pgtype.UUID
+	Actor     string
+	Kind      string
+	Details   []byte
+	CreatedAt pgtype.Timestamptz
+}
+
+type EnvironmentGitopsJob struct {
+	SourceID          pgtype.UUID
+	DesiredGeneration int64
+	ClaimedGeneration int64
+	NextAttemptAt     pgtype.Timestamptz
+	LeaseToken        string
+	LeaseUntil        pgtype.Timestamptz
+	AttemptCount      int32
+}
+
+type EnvironmentGitopsResource struct {
+	SourceID        pgtype.UUID
+	LogicalName     string
+	AppID           pgtype.UUID
+	CreatedBySource bool
+	CreatedAt       pgtype.Timestamptz
+}
+
+type EnvironmentGitopsRun struct {
+	ID          pgtype.UUID
+	SourceID    pgtype.UUID
+	RevisionID  pgtype.UUID
+	Generation  int64
+	LeaseToken  string
+	Status      string
+	Plan        []byte
+	Steps       []byte
+	ErrorCode   string
+	StartedAt   pgtype.Timestamptz
+	CompletedAt pgtype.Timestamptz
+}
+
+type EnvironmentManagedField struct {
+	EnvironmentID pgtype.UUID
+	Resource      string
+	FieldPath     string
+	ManagerKind   string
+	ManagerID     string
+	SourceID      pgtype.UUID
+	DesiredValue  []byte
+	UpdatedAt     pgtype.Timestamptz
+}
+
+type EnvironmentManagementOverride struct {
+	ID            pgtype.UUID
+	EnvironmentID pgtype.UUID
+	Resource      string
+	FieldPath     string
+	AuthorizedBy  string
+	Reason        string
+	ExpiresAt     pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
+}
+
 type Event struct {
 	ID             int64
 	At             pgtype.Timestamptz
@@ -3483,43 +3597,6 @@ type RequestTelemetry struct {
 	FlagEvidence                []byte
 }
 
-type RequestTelemetry202609 struct {
-	ID                          pgtype.UUID
-	AccountID                   pgtype.UUID
-	AppID                       pgtype.UUID
-	DeploymentID                pgtype.UUID
-	Route                       string
-	Method                      string
-	Status                      int32
-	LatencyMs                   int32
-	ColdBoot                    bool
-	TraceID                     pgtype.Text
-	SpansSummary                []byte
-	ReceivedAt                  pgtype.Timestamptz
-	Count                       int32
-	UaFamily                    string
-	ReferrerHost                string
-	Country                     string
-	WakeID                      pgtype.Text
-	InstanceID                  pgtype.Text
-	GuestDurationMs             int32
-	GuestRuntime                string
-	GuestOutcome                string
-	GuestErrorClass             string
-	ConsumerID                  pgtype.UUID
-	NodeID                      string
-	Region                      string
-	CommitSha                   string
-	DeploymentTag               string
-	DeploymentCreatedAt         string
-	ImageDigest                 string
-	PlatformTenantID            pgtype.UUID
-	GuestCpuTimeMs              int32
-	GuestPeakRssMb              int32
-	GuestResourceUsageAvailable bool
-	FlagEvidence                []byte
-}
-
 type RequestTelemetry202610 struct {
 	ID                          pgtype.UUID
 	AccountID                   pgtype.UUID
@@ -3558,6 +3635,43 @@ type RequestTelemetry202610 struct {
 }
 
 type RequestTelemetry202611 struct {
+	ID                          pgtype.UUID
+	AccountID                   pgtype.UUID
+	AppID                       pgtype.UUID
+	DeploymentID                pgtype.UUID
+	Route                       string
+	Method                      string
+	Status                      int32
+	LatencyMs                   int32
+	ColdBoot                    bool
+	TraceID                     pgtype.Text
+	SpansSummary                []byte
+	ReceivedAt                  pgtype.Timestamptz
+	Count                       int32
+	UaFamily                    string
+	ReferrerHost                string
+	Country                     string
+	WakeID                      pgtype.Text
+	InstanceID                  pgtype.Text
+	GuestDurationMs             int32
+	GuestRuntime                string
+	GuestOutcome                string
+	GuestErrorClass             string
+	ConsumerID                  pgtype.UUID
+	NodeID                      string
+	Region                      string
+	CommitSha                   string
+	DeploymentTag               string
+	DeploymentCreatedAt         string
+	ImageDigest                 string
+	PlatformTenantID            pgtype.UUID
+	GuestCpuTimeMs              int32
+	GuestPeakRssMb              int32
+	GuestResourceUsageAvailable bool
+	FlagEvidence                []byte
+}
+
+type RequestTelemetry202612 struct {
 	ID                          pgtype.UUID
 	AccountID                   pgtype.UUID
 	AppID                       pgtype.UUID

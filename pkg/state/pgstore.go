@@ -24063,7 +24063,7 @@ func (s *PgStore) UpsertAppEnvInScope(ctx context.Context, accountID, appID, sco
 		   set value = excluded.value,
 		       updated_at = now()`,
 		accountID, appID, scope, key, value)
-	return err
+	return mapErr(err)
 }
 
 // DeleteAppEnvInScope is the scope-aware sibling of DeleteAppEnv.
@@ -24074,7 +24074,7 @@ func (s *PgStore) DeleteAppEnvInScope(ctx context.Context, accountID, appID, sco
 		`delete from app_envs where account_id = $1 and app_id = $2 and scope = $3 and key = $4`,
 		accountID, appID, scope, key)
 	if err != nil {
-		return err
+		return mapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -25434,6 +25434,9 @@ func mapErr(err error) error {
 		case pgerrcode.UniqueViolation:
 			return fmt.Errorf("%w: %s", ErrConflict, pgErr.ConstraintName)
 		case pgerrcode.CheckViolation:
+			if pgErr.ConstraintName == "environment_gitops_field_owned" {
+				return ErrEnvironmentGitManaged
+			}
 			if pgErr.ConstraintName == "invocation_platform_tenant_active" {
 				return ErrPlatformTenantSuspended
 			}

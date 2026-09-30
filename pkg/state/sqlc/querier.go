@@ -31,6 +31,7 @@ type Querier interface {
 	// subject behavior.
 	AccountIDByGitHubOIDCRepositoryIdentity(ctx context.Context, db DBTX, arg AccountIDByGitHubOIDCRepositoryIdentityParams) (pgtype.UUID, error)
 	AccountsByIDs(ctx context.Context, db DBTX, dollar_1 []pgtype.UUID) ([]AccountsByIDsRow, error)
+	AcknowledgeEnvironmentGitOpsEffect(ctx context.Context, db DBTX, arg AcknowledgeEnvironmentGitOpsEffectParams) (int64, error)
 	AppByID(ctx context.Context, db DBTX, id pgtype.UUID) (AppByIDRow, error)
 	AppBySlug(ctx context.Context, db DBTX, slug string) (AppBySlugRow, error)
 	AppendAccountCreditLedgerEntry(ctx context.Context, db DBTX, arg AppendAccountCreditLedgerEntryParams) error
@@ -75,6 +76,7 @@ type Querier interface {
 	// non-active observation starts a new detection lifecycle so the transition
 	// webhook gets its own stable id.
 	ApplyRegressionAction(ctx context.Context, db DBTX, arg ApplyRegressionActionParams) (DebugRegressionObservation, error)
+	BindEnvironmentGitOpsResource(ctx context.Context, db DBTX, arg BindEnvironmentGitOpsResourceParams) (int64, error)
 	BuildByDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (BuildByDeploymentRow, error)
 	BuildByID(ctx context.Context, db DBTX, id pgtype.UUID) (BuildByIDRow, error)
 	// issue #667 / ADR-078 — atomically apply delta to the instance's
@@ -94,6 +96,7 @@ type Querier interface {
 	// commit-after-cancel hits 0 rows and the handler returns 409
 	// upload_session_already_cancelled.
 	CancelUploadSession(ctx context.Context, db DBTX, arg CancelUploadSessionParams) error
+	ClaimEnvironmentGitOpsJob(ctx context.Context, db DBTX, arg ClaimEnvironmentGitOpsJobParams) (EnvironmentGitopsJob, error)
 	// Persist ownership before returning. SKIP LOCKED alone would release the
 	// claim at statement end and let another scheduler deliver the same row.
 	// A lost dispatcher becomes eligible again after the ten-minute lease.
@@ -105,6 +108,7 @@ type Querier interface {
 	// required so an out-of-order cleanup call cannot hide the path of
 	// an open session that a concurrent PATCH still needs.
 	ClearUploadSessionPartPath(ctx context.Context, db DBTX, id string) error
+	CompleteEnvironmentGitOpsEffect(ctx context.Context, db DBTX, arg CompleteEnvironmentGitOpsEffectParams) (int64, error)
 	CountDeployedApps(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	// Per-(account_id, app_slug) open-session cap check at the top of
 	// POST /v1/uploads. Returns the current count; the handler
@@ -126,6 +130,7 @@ type Querier interface {
 	CreateDeployment(ctx context.Context, db DBTX, arg CreateDeploymentParams) (CreateDeploymentRow, error)
 	CreateDevBridge(ctx context.Context, db DBTX, arg CreateDevBridgeParams) (int64, error)
 	CreateDevBridgeWebhookReplay(ctx context.Context, db DBTX, arg CreateDevBridgeWebhookReplayParams) (int64, error)
+	CreateEnvironmentGitSource(ctx context.Context, db DBTX, arg CreateEnvironmentGitSourceParams) (EnvironmentGitSource, error)
 	CreateInstance(ctx context.Context, db DBTX, arg CreateInstanceParams) (CreateInstanceRow, error)
 	// --- Organizations (ADR-061, IAM-6, PR 2) -------------------------------
 	//
@@ -204,6 +209,10 @@ type Querier interface {
 	// apps → data_upstreams).
 	DeleteDataUpstreamByID(ctx context.Context, db DBTX, id pgtype.UUID) error
 	DeleteDeploymentAlias(ctx context.Context, db DBTX, arg DeleteDeploymentAliasParams) (int64, error)
+	DeleteEnvironmentGitOpsOverride(ctx context.Context, db DBTX, arg DeleteEnvironmentGitOpsOverrideParams) (int64, error)
+	DeleteEnvironmentGitOpsPolicies(ctx context.Context, db DBTX, arg DeleteEnvironmentGitOpsPoliciesParams) error
+	DeleteEnvironmentGitOpsRoutes(ctx context.Context, db DBTX, arg DeleteEnvironmentGitOpsRoutesParams) error
+	DeleteEnvironmentGitOpsVariable(ctx context.Context, db DBTX, arg DeleteEnvironmentGitOpsVariableParams) error
 	DeleteEventSubscription(ctx context.Context, db DBTX, arg DeleteEventSubscriptionParams) error
 	// Operator-driven revoke path (PR-C). Returns 0 rows on miss;
 	// the caller maps that to ErrNotFound. The 5-min TTL is the
@@ -239,6 +248,7 @@ type Querier interface {
 	DevBridgeWebhookReplayByID(ctx context.Context, db DBTX, arg DevBridgeWebhookReplayByIDParams) (DevBridgeWebhookReplay, error)
 	DevBridgeWebhookReplayByKey(ctx context.Context, db DBTX, arg DevBridgeWebhookReplayByKeyParams) (DevBridgeWebhookReplay, error)
 	DomainByName(ctx context.Context, db DBTX, domain interface{}) (DomainByNameRow, error)
+	EnqueueEnvironmentGitOps(ctx context.Context, db DBTX, arg EnqueueEnvironmentGitOpsParams) error
 	ExecutionClaimNext(ctx context.Context, db DBTX, arg ExecutionClaimNextParams) (Execution, error)
 	ExecutionClaimNextForAccount(ctx context.Context, db DBTX, arg ExecutionClaimNextForAccountParams) (Execution, error)
 	ExecutionCountActive(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
@@ -281,10 +291,12 @@ type Querier interface {
 	// for now; future multi-replica deployment needs SELECT ... FOR
 	// UPDATE SKIP LOCKED).
 	ExpireUploadSession(ctx context.Context, db DBTX, id string) error
+	ExtendEnvironmentGitOpsEffectTargets(ctx context.Context, db DBTX, arg ExtendEnvironmentGitOpsEffectTargetsParams) (EnvironmentGitopsEffect, error)
 	FeatureFlagCustomerOwned(ctx context.Context, db DBTX, arg FeatureFlagCustomerOwnedParams) (bool, error)
 	// Two matches mean an invoice ID collides with another invoice's charge ID.
 	FindInvoiceIDsByProviderKey(ctx context.Context, db DBTX, arg FindInvoiceIDsByProviderKeyParams) ([]pgtype.UUID, error)
 	FinishDevBridgeWebhookReplay(ctx context.Context, db DBTX, arg FinishDevBridgeWebhookReplayParams) (int64, error)
+	FinishEnvironmentGitOpsRun(ctx context.Context, db DBTX, arg FinishEnvironmentGitOpsRunParams) (int64, error)
 	// Single oldest request row for one fingerprint, used by the
 	// UI's "what does this look like" preview. Returns
 	// headers_sample + redactions for the wire-side "we redacted
@@ -298,6 +310,10 @@ type Querier interface {
 	// column (issue #954) so the typed DataUpstream.DeploymentScope
 	// in pkg/state/types.go round-trips through sqlc.
 	GetDataUpstreamByID(ctx context.Context, db DBTX, id pgtype.UUID) (GetDataUpstreamByIDRow, error)
+	GetEnvironmentDesiredRevision(ctx context.Context, db DBTX, arg GetEnvironmentDesiredRevisionParams) (EnvironmentDesiredRevision, error)
+	GetEnvironmentGitOpsScope(ctx context.Context, db DBTX, sourceID pgtype.UUID) (GetEnvironmentGitOpsScopeRow, error)
+	GetEnvironmentGitSource(ctx context.Context, db DBTX, arg GetEnvironmentGitSourceParams) (EnvironmentGitSource, error)
+	GetEnvironmentGitSourceByID(ctx context.Context, db DBTX, sourceID pgtype.UUID) (EnvironmentGitSource, error)
 	GetFeatureFlagVersion(ctx context.Context, db DBTX, arg GetFeatureFlagVersionParams) (FeatureFlagVersion, error)
 	// Returns the bytea secret for the given installation_id. The
 	// daemon-side resolver treats pgx.ErrNoRows as fail-closed (the
@@ -359,6 +375,7 @@ type Querier interface {
 	// future work needs a transactional read-modify-write (e.g., admin
 	// force-close), add a separate GetUploadSessionForUpdate :one.
 	GetUploadSession(ctx context.Context, db DBTX, id string) (UploadSession, error)
+	HasPendingEnvironmentGitOpsEffects(ctx context.Context, db DBTX, sourceID pgtype.UUID) (bool, error)
 	// ---------------------------------------------------------------------------
 	// ADR-096 customer-facing automatic error grouping.
 	// Tables live in migrations/00222_app_errors.sql. gatewayd-internal
@@ -438,6 +455,10 @@ type Querier interface {
 	// path; the partition creator (PR-C) drops old
 	// partitions wholesale.
 	InsertDataUpstreamProbe(ctx context.Context, db DBTX, arg InsertDataUpstreamProbeParams) error
+	InsertEnvironmentDesiredRevision(ctx context.Context, db DBTX, arg InsertEnvironmentDesiredRevisionParams) (EnvironmentDesiredRevision, error)
+	InsertEnvironmentGitOpsConfig(ctx context.Context, db DBTX, arg InsertEnvironmentGitOpsConfigParams) error
+	InsertEnvironmentGitOpsEffect(ctx context.Context, db DBTX, arg InsertEnvironmentGitOpsEffectParams) error
+	InsertEnvironmentGitOpsRun(ctx context.Context, db DBTX, arg InsertEnvironmentGitOpsRunParams) (EnvironmentGitopsRun, error)
 	InsertFeatureFlagVersion(ctx context.Context, db DBTX, arg InsertFeatureFlagVersionParams) (FeatureFlagVersion, error)
 	// Fresh-token insert. The id is server-minted by sqlc (gen_random_uuid).
 	// Returns the full row (with created_at server-stamped).
@@ -514,6 +535,7 @@ type Querier interface {
 	// via the existing app/deployment joins if needed by downstream
 	// code, but the per-tick hot loop doesn't pay for it here.
 	InstanceListByNodeForRecovery(ctx context.Context, db DBTX, nodeID pgtype.UUID) ([]InstanceListByNodeForRecoveryRow, error)
+	InvalidateEnvironmentGitOpsRuntimeConfig(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	// Returns true if any active suppression matches the address.
 	// "Active" means expires_at IS NULL OR expires_at > now(); the
 	// partial index mail_suppressions_active_email_idx keeps expired
@@ -716,6 +738,7 @@ type Querier interface {
 	// tick can evaluate per-record predicates without a second round-trip
 	// (the column is JSONB; empty/null means "no filter").
 	ListEnabledTriggers(ctx context.Context, db DBTX) ([]ListEnabledTriggersRow, error)
+	ListEnvironmentGitOpsRuns(ctx context.Context, db DBTX, arg ListEnvironmentGitOpsRunsParams) ([]EnvironmentGitopsRun, error)
 	// EPIC #1278 / Workstream B — durable internal event subscriptions.
 	// A subscription is app-owned but keeps account_id denormalized so scheduler
 	// fan-out can enforce tenant isolation without joining apps.
@@ -808,6 +831,9 @@ type Querier interface {
 	LockCreditConsumption(ctx context.Context, db DBTX, providerInvoiceID string) error
 	LockDevBridgeAccount(ctx context.Context, db DBTX, id pgtype.UUID) (string, error)
 	LockDevBridgeReplaySession(ctx context.Context, db DBTX, arg LockDevBridgeReplaySessionParams) (string, error)
+	LockEnvironmentGitOpsLease(ctx context.Context, db DBTX, arg LockEnvironmentGitOpsLeaseParams) (EnvironmentGitopsJob, error)
+	LockEnvironmentGitSource(ctx context.Context, db DBTX, arg LockEnvironmentGitSourceParams) (EnvironmentGitSource, error)
+	LockEnvironmentGitSourceForScope(ctx context.Context, db DBTX, arg LockEnvironmentGitSourceForScopeParams) ([]pgtype.UUID, error)
 	LockFeatureFlagEnvironment(ctx context.Context, db DBTX, arg LockFeatureFlagEnvironmentParams) (pgtype.UUID, error)
 	LockInvoiceForRefund(ctx context.Context, db DBTX, id pgtype.UUID) (LockInvoiceForRefundRow, error)
 	MarkClaimedTriggerRecordDeadLetter(ctx context.Context, db DBTX, arg MarkClaimedTriggerRecordDeadLetterParams) (int64, error)
@@ -978,11 +1004,14 @@ type Querier interface {
 	ObjectUsageReportHead(ctx context.Context, db DBTX, arg ObjectUsageReportHeadParams) error
 	ObjectUsageReportInsert(ctx context.Context, db DBTX, arg ObjectUsageReportInsertParams) error
 	ObjectUsageReports(ctx context.Context, db DBTX, arg ObjectUsageReportsParams) ([]ObjectStorageUsageReport, error)
+	ObserveEnvironmentGitOpsIntent(ctx context.Context, db DBTX, arg ObserveEnvironmentGitOpsIntentParams) ([]byte, error)
 	OrgByID(ctx context.Context, db DBTX, id pgtype.UUID) (OrgByIDRow, error)
 	OrgByPersonalAccount(ctx context.Context, db DBTX, personalOwnerAccountID pgtype.UUID) (OrgByPersonalAccountRow, error)
 	OrgBySlug(ctx context.Context, db DBTX, lower string) (OrgBySlugRow, error)
 	OrgInvitationByTokenHash(ctx context.Context, db DBTX, tokenHash []byte) (OrgInvitationByTokenHashRow, error)
 	OrgMemberByAccount(ctx context.Context, db DBTX, arg OrgMemberByAccountParams) (OrgMemberByAccountRow, error)
+	OwnEnvironmentGitOpsField(ctx context.Context, db DBTX, arg OwnEnvironmentGitOpsFieldParams) (int64, error)
+	PendingEnvironmentGitOpsEffects(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]EnvironmentGitopsEffect, error)
 	// ADR-091 §3.5 — operator observability backend (PR #2) durable view.
 	// Aggregates `events` rows of kind='auth.rate_limited' over a rolling
 	// window, grouped by subject (account_id, NULL for anonymous actors).
@@ -1010,6 +1039,10 @@ type Querier interface {
 	// the current month that are older than cutoff).
 	PruneDataUpstreamProbesOlderThan(ctx context.Context, db DBTX, sampledAt pgtype.Timestamptz) error
 	PruneDevBridgeSessions(ctx context.Context, db DBTX, arg PruneDevBridgeSessionsParams) error
+	PutEnvironmentGitOpsOverride(ctx context.Context, db DBTX, arg PutEnvironmentGitOpsOverrideParams) (int64, error)
+	PutEnvironmentGitOpsPolicies(ctx context.Context, db DBTX, arg PutEnvironmentGitOpsPoliciesParams) error
+	PutEnvironmentGitOpsRoutes(ctx context.Context, db DBTX, arg PutEnvironmentGitOpsRoutesParams) error
+	PutEnvironmentGitOpsVariable(ctx context.Context, db DBTX, arg PutEnvironmentGitOpsVariableParams) error
 	// An unqualified legacy row blocks the whole key; guessing could double-debit.
 	ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg ReadAccountCreditConsumptionParams) (ReadAccountCreditConsumptionRow, error)
 	// A single statement reads the pointer and its complete membership together.
@@ -1054,6 +1087,7 @@ type Querier interface {
 	// migration slot 533.
 	ReapStaleUploadPartFiles(ctx context.Context, db DBTX) ([]ReapStaleUploadPartFilesRow, error)
 	RecordAppSecretRevocationAck(ctx context.Context, db DBTX, arg RecordAppSecretRevocationAckParams) (int64, error)
+	RecordEnvironmentGitOpsEvent(ctx context.Context, db DBTX, arg RecordEnvironmentGitOpsEventParams) error
 	// ---------------------------------------------------------------------------
 	// Issue #246 acceptance item 7 — hard-bounce + complaint suppression list
 	// (ADR-115 §D.3, RFC 8058 follow-on). One row per (source,
@@ -1095,6 +1129,10 @@ type Querier interface {
 	// DO UPDATE) is correct: the original row is canonical.
 	RecordUploadCommitOutcome(ctx context.Context, db DBTX, arg RecordUploadCommitOutcomeParams) (UploadCommitOutcome, error)
 	RegisterGatewayUsageEvent(ctx context.Context, db DBTX, arg RegisterGatewayUsageEventParams) (bool, error)
+	ReleaseEdgeRuleMutationLock(ctx context.Context, db DBTX, appID string) (bool, error)
+	ReleaseEnvironmentGitOpsField(ctx context.Context, db DBTX, arg ReleaseEnvironmentGitOpsFieldParams) error
+	ReleaseEnvironmentGitOpsLease(ctx context.Context, db DBTX, arg ReleaseEnvironmentGitOpsLeaseParams) (int64, error)
+	RenewEnvironmentGitOpsLease(ctx context.Context, db DBTX, arg RenewEnvironmentGitOpsLeaseParams) (int64, error)
 	// Bounded deployment cost allocation for the customer request analytics
 	// window. Request counts are weighted by the publisher's collapsed `count`.
 	// The window total is computed before LIMIT so the handler can allocate the
@@ -1185,6 +1223,7 @@ type Querier interface {
 	RuntimeSnapshotInsert(ctx context.Context, db DBTX, arg RuntimeSnapshotInsertParams) (RuntimeSnapshot, error)
 	RuntimeSnapshotRetire(ctx context.Context, db DBTX, arg RuntimeSnapshotRetireParams) (int64, error)
 	SafeReleaseWorkerLeaseReady(ctx context.Context, db DBTX) (bool, error)
+	SaveEnvironmentGitOpsProgress(ctx context.Context, db DBTX, arg SaveEnvironmentGitOpsProgressParams) (int64, error)
 	SetAppManifest(ctx context.Context, db DBTX, arg SetAppManifestParams) error
 	// ADR-021 (G1, image digest enforcement hardening): durable
 	// carrier for the RFC 7807 failure code that imaged writes when a
@@ -1203,6 +1242,9 @@ type Querier interface {
 	// imaged persists the validated image opt-in on each newly built deployment;
 	// the state query keeps legacy NULL rows distinct from explicit opt-outs.
 	SetDeploymentSecretReloadSignal(ctx context.Context, db DBTX, arg SetDeploymentSecretReloadSignalParams) (int64, error)
+	SetEnvironmentAppliedRevision(ctx context.Context, db DBTX, arg SetEnvironmentAppliedRevisionParams) (int64, error)
+	SetEnvironmentApprovedRevision(ctx context.Context, db DBTX, arg SetEnvironmentApprovedRevisionParams) (EnvironmentGitSource, error)
+	SetEnvironmentGitOpsLeaseContext(ctx context.Context, db DBTX, leaseToken string) (string, error)
 	SnapshotLocalityNodes(ctx context.Context, db DBTX, dollar_1 pgtype.UUID) ([]SnapshotLocalityNodesRow, error)
 	SnapshotStorageKeys(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]string, error)
 	SoftDeleteOrg(ctx context.Context, db DBTX, id pgtype.UUID) error
@@ -1215,7 +1257,9 @@ type Querier interface {
 	// the budget. Hits upload_sessions_account_open_idx for the
 	// (account_id) predicate; the SUM is over the partial index.
 	SumOpenUploadSessionBytesByAccount(ctx context.Context, db DBTX, dollar_1 pgtype.UUID) (int64, error)
+	SupersedeEnvironmentGitOpsRuns(ctx context.Context, db DBTX, arg SupersedeEnvironmentGitOpsRunsParams) error
 	SweepCountedMirrorResults(ctx context.Context, db DBTX, cutoff pgtype.Timestamptz) (int64, error)
+	TouchEnvironmentGitOpsIntent(ctx context.Context, db DBTX, sourceID pgtype.UUID) error
 	TouchKeyLastUsed(ctx context.Context, db DBTX, id pgtype.UUID) error
 	// Best-effort, fire-and-forget. Allowed on revoked rows (observability
 	// signal only; not authorization). pgx interface returns nothing.
@@ -1293,6 +1337,7 @@ type Querier interface {
 	// as "skip the dead_letter insert; leave the record in
 	// poller.inFlight for the next tick to retry".
 	TriggerRecordIDByItemIdentifier(ctx context.Context, db DBTX, arg TriggerRecordIDByItemIdentifierParams) (pgtype.UUID, error)
+	TryEdgeRuleMutationLock(ctx context.Context, db DBTX, appID string) (bool, error)
 	UpdateAccountPlan(ctx context.Context, db DBTX, arg UpdateAccountPlanParams) error
 	UpdateAccountStatus(ctx context.Context, db DBTX, arg UpdateAccountStatusParams) error
 	UpdateApp(ctx context.Context, db DBTX, arg UpdateAppParams) (UpdateAppRow, error)
@@ -1308,6 +1353,7 @@ type Querier interface {
 	// their tuning, and re-enabling should restore what they configured.
 	UpdateDataUpstreamCircuitBreaker(ctx context.Context, db DBTX, arg UpdateDataUpstreamCircuitBreakerParams) error
 	UpdateDeploymentStatus(ctx context.Context, db DBTX, arg UpdateDeploymentStatusParams) error
+	UpdateEnvironmentGitSourceControl(ctx context.Context, db DBTX, arg UpdateEnvironmentGitSourceControlParams) (EnvironmentGitSource, error)
 	UpdateInstanceState(ctx context.Context, db DBTX, arg UpdateInstanceStateParams) error
 	UpdateOrgPlan(ctx context.Context, db DBTX, arg UpdateOrgPlanParams) error
 	UpdateOrgStatus(ctx context.Context, db DBTX, arg UpdateOrgStatusParams) error

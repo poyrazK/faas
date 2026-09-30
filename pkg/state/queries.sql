@@ -4836,3 +4836,300 @@ WHERE (d.scope = sqlc.arg(environment_slug)::text OR (d.scope = 'default' AND sq
  AND flag_evidence @> sqlc.arg(evidence_filter)::jsonb
  AND (sqlc.narg(cursor_at)::timestamptz IS NULL OR (t.received_at,t.id) < (sqlc.narg(cursor_at)::timestamptz,sqlc.narg(cursor_id)::uuid))
 ORDER BY t.received_at DESC, t.id DESC LIMIT 101;
+-- name: CreateEnvironmentGitSource :one
+INSERT INTO environment_git_sources
+    (account_id, project_id, environment_id, repository_id, installation_id,
+     repository, source_ref, manifest_path, mode, approval_policy, prune)
+SELECT p.account_id, p.id, e.id, sqlc.arg(repository_id)::bigint,
+       sqlc.arg(installation_id)::bigint, sqlc.arg(repository)::text,
+       sqlc.arg(source_ref)::text, sqlc.arg(manifest_path)::text,
+       sqlc.arg(mode)::text, sqlc.arg(approval_policy)::text, sqlc.arg(prune)::boolean
+FROM projects p JOIN project_environments e ON e.project_id = p.id AND e.account_id = p.account_id
+WHERE p.account_id = sqlc.arg(account_id)::uuid AND p.id = sqlc.arg(project_id)::uuid
+  AND e.slug = sqlc.arg(environment_slug)::text
+  AND p.repo_full_name = sqlc.arg(repository)::text AND p.install_id = sqlc.arg(installation_id)::bigint
+RETURNING *;
+
+-- name: GetEnvironmentGitSource :one
+SELECT s.* FROM environment_git_sources s
+JOIN project_environments e ON e.id = s.environment_id
+WHERE s.account_id = sqlc.arg(account_id)::uuid AND s.project_id = sqlc.arg(project_id)::uuid
+  AND e.slug = sqlc.arg(environment_slug)::text;
+
+-- name: LockEnvironmentGitSource :one
+SELECT s.* FROM environment_git_sources s
+WHERE s.account_id = sqlc.arg(account_id)::uuid AND s.id = sqlc.arg(source_id)::uuid
+FOR UPDATE;
+
+-- name: GetEnvironmentGitOpsScope :one
+SELECT p.slug AS project_slug, e.slug AS environment_slug
+FROM environment_git_sources s
+JOIN projects p ON p.id = s.project_id AND p.account_id = s.account_id
+JOIN project_environments e ON e.id = s.environment_id AND e.account_id = s.account_id
+WHERE s.id = sqlc.arg(source_id)::uuid;
+
+-- name: InsertEnvironmentDesiredRevision :one
+INSERT INTO environment_desired_revisions
+    (source_id, commit_sha, definition_digest, definition, approved_by)
+VALUES (sqlc.arg(source_id)::uuid, sqlc.arg(commit_sha)::text,
+        sqlc.arg(definition_digest)::text, sqlc.arg(definition)::jsonb, sqlc.arg(approved_by)::text)
+ON CONFLICT (source_id, commit_sha, definition_digest) DO UPDATE
+    SET source_id = excluded.source_id
+RETURNING *;
+
+-- name: SetEnvironmentApprovedRevision :one
+UPDATE environment_git_sources
+SET approved_revision_id = sqlc.arg(revision_id)::uuid,
+    generation = generation + 1, updated_at = now()
+WHERE id = sqlc.arg(source_id)::uuid AND generation = sqlc.arg(expected_generation)::bigint
+RETURNING *;
+
+-- name: EnqueueEnvironmentGitOps :exec
+INSERT INTO environment_gitops_jobs (source_id, desired_generation, next_attempt_at)
+VALUES (sqlc.arg(source_id)::uuid, sqlc.arg(generation)::bigint, sqlc.arg(next_attempt_at)::timestamptz)
+ON CONFLICT (source_id) DO UPDATE
+SET desired_generation = excluded.desired_generation,
+    next_attempt_at = least(environment_gitops_jobs.next_attempt_at, excluded.next_attempt_at);
+
+-- name: ClaimEnvironmentGitOpsJob :one
+WITH candidate AS (
+    SELECT j.source_id FROM environment_gitops_jobs j
+    JOIN environment_git_sources s ON s.id = j.source_id
+    WHERE NOT s.suspended AND s.approved_revision_id IS NOT NULL
+      AND s.generation = j.desired_generation AND j.next_attempt_at <= sqlc.arg(now_at)::timestamptz
+      AND (j.lease_until IS NULL OR j.lease_until <= sqlc.arg(now_at)::timestamptz
+           OR j.claimed_generation <> j.desired_generation)
+    ORDER BY j.next_attempt_at, j.source_id
+    FOR UPDATE OF s SKIP LOCKED LIMIT 1
+)
+UPDATE environment_gitops_jobs j
+SET claimed_generation = j.desired_generation,
+    lease_token = sqlc.arg(lease_token)::text,
+    lease_until = sqlc.arg(lease_until)::timestamptz,
+    attempt_count = j.attempt_count + 1
+FROM candidate c WHERE j.source_id = c.source_id
+RETURNING j.*;
+
+-- name: GetEnvironmentGitSourceByID :one
+SELECT * FROM environment_git_sources WHERE id = sqlc.arg(source_id)::uuid;
+
+-- name: GetEnvironmentDesiredRevision :one
+SELECT * FROM environment_desired_revisions
+WHERE source_id = sqlc.arg(source_id)::uuid AND id = sqlc.arg(revision_id)::uuid;
+
+-- name: SupersedeEnvironmentGitOpsRuns :exec
+UPDATE environment_gitops_runs SET status = 'superseded', completed_at = sqlc.arg(now_at)::timestamptz
+WHERE source_id = sqlc.arg(source_id)::uuid AND completed_at IS NULL;
+
+-- name: InsertEnvironmentGitOpsRun :one
+INSERT INTO environment_gitops_runs (source_id, revision_id, generation, lease_token, status, started_at)
+VALUES (sqlc.arg(source_id)::uuid, sqlc.arg(revision_id)::uuid, sqlc.arg(generation)::bigint,
+        sqlc.arg(lease_token)::text, 'planning', sqlc.arg(now_at)::timestamptz)
+RETURNING *;
+
+-- name: LockEnvironmentGitOpsLease :one
+SELECT j.* FROM environment_gitops_jobs j
+JOIN environment_git_sources s ON s.id = j.source_id
+WHERE j.source_id = sqlc.arg(source_id)::uuid AND j.lease_token = sqlc.arg(lease_token)::text
+  AND j.claimed_generation = sqlc.arg(generation)::bigint AND s.generation = j.claimed_generation
+  AND j.desired_generation = j.claimed_generation AND NOT s.suspended
+  AND j.lease_until > sqlc.arg(now_at)::timestamptz
+FOR UPDATE OF j;
+
+-- name: RenewEnvironmentGitOpsLease :execrows
+UPDATE environment_gitops_jobs
+SET lease_until = sqlc.arg(lease_until)::timestamptz
+WHERE source_id = sqlc.arg(source_id)::uuid AND lease_token = sqlc.arg(lease_token)::text;
+
+-- name: FinishEnvironmentGitOpsRun :execrows
+UPDATE environment_gitops_runs
+SET status = sqlc.arg(status)::text, plan = sqlc.arg(plan)::jsonb,
+    steps = CASE WHEN jsonb_array_length(sqlc.arg(steps)::jsonb) = 0 AND jsonb_array_length(steps) > 0
+        THEN steps ELSE sqlc.arg(steps)::jsonb END,
+    error_code = sqlc.arg(error_code)::text, completed_at = sqlc.arg(now_at)::timestamptz
+WHERE id = sqlc.arg(run_id)::uuid AND source_id = sqlc.arg(source_id)::uuid
+  AND generation = sqlc.arg(generation)::bigint AND lease_token = sqlc.arg(lease_token)::text
+  AND completed_at IS NULL;
+
+-- name: SetEnvironmentAppliedRevision :execrows
+UPDATE environment_git_sources SET applied_revision_id = approved_revision_id, updated_at = now()
+WHERE id = sqlc.arg(source_id)::uuid AND generation = sqlc.arg(generation)::bigint;
+
+-- name: ReleaseEnvironmentGitOpsLease :execrows
+UPDATE environment_gitops_jobs
+SET lease_token = '', lease_until = NULL, next_attempt_at = sqlc.arg(next_attempt_at)::timestamptz
+WHERE source_id = sqlc.arg(source_id)::uuid AND lease_token = sqlc.arg(lease_token)::text;
+
+-- name: ListEnvironmentGitOpsRuns :many
+SELECT r.* FROM environment_gitops_runs r
+JOIN environment_git_sources s ON s.id = r.source_id
+WHERE s.account_id = sqlc.arg(account_id)::uuid AND s.id = sqlc.arg(source_id)::uuid
+ORDER BY r.started_at DESC, r.id DESC LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: ObserveEnvironmentGitOpsIntent :one
+SELECT jsonb_build_object(
+    'version', s.intent_version, 'project', p.slug, 'environment', e.slug, 'plan', acct.plan, 'source_id', s.id, 'prune', s.prune,
+    'configuration', coalesce((SELECT config_json FROM project_environment_config_versions c
+        WHERE c.project_id = s.project_id AND c.environment_slug = e.slug ORDER BY version DESC LIMIT 1), '{}'::jsonb),
+    'resources', coalesce((SELECT jsonb_agg(jsonb_build_object('resource', r.logical_name, 'app_id', r.app_id))
+        FROM environment_gitops_resources r WHERE r.source_id = s.id), '[]'::jsonb),
+    'apps', coalesce((SELECT jsonb_agg(jsonb_build_object(
+        'id', a.id, 'slug', a.slug, 'variable_count', (SELECT count(*) FROM app_envs v WHERE v.app_id = a.id AND v.account_id = s.account_id),
+        'variables', coalesce((SELECT jsonb_object_agg(v.key, v.value) FROM app_envs v
+            WHERE v.app_id = a.id AND v.account_id = s.account_id AND v.scope = e.slug), '{}'::jsonb),
+        'routes', (SELECT jsonb_build_object('only_allow_declared_routes', r.only_allow_declared_routes, 'declared_routes', r.declared_routes)
+            FROM project_environment_route_policies r WHERE r.app_id = a.id AND r.environment_slug = e.slug),
+        'policies', (SELECT rules FROM project_environment_edge_policies r WHERE r.app_id = a.id AND r.environment_slug = e.slug)
+        )) FROM apps a WHERE a.project_id = s.project_id AND a.account_id = s.account_id AND a.status <> 'deleted'), '[]'::jsonb),
+    'owners', coalesce((SELECT jsonb_agg(jsonb_build_object('resource', f.resource, 'path', f.field_path,
+        'value', f.desired_value, 'manager', f.manager_id)) FROM environment_managed_fields f
+        WHERE f.environment_id = s.environment_id), '[]'::jsonb),
+    'overrides', coalesce((SELECT jsonb_agg(jsonb_build_object('resource', o.resource, 'path', o.field_path, 'expires_at', o.expires_at))
+        FROM environment_management_overrides o WHERE o.environment_id = s.environment_id), '[]'::jsonb)
+)::jsonb AS observation
+FROM environment_git_sources s JOIN project_environments e ON e.id = s.environment_id
+JOIN projects p ON p.id = s.project_id
+JOIN accounts acct ON acct.id = s.account_id
+WHERE s.id = sqlc.arg(source_id)::uuid AND s.account_id = sqlc.arg(account_id)::uuid;
+
+-- name: BindEnvironmentGitOpsResource :execrows
+INSERT INTO environment_gitops_resources(source_id, logical_name, app_id)
+SELECT s.id, sqlc.arg(resource)::text, a.id FROM environment_git_sources s
+JOIN apps a ON a.account_id = s.account_id AND a.project_id = s.project_id AND a.status <> 'deleted'
+WHERE s.id = sqlc.arg(source_id)::uuid AND a.id = sqlc.arg(app_id)::uuid
+ON CONFLICT (source_id, logical_name) DO UPDATE SET app_id = excluded.app_id
+WHERE environment_gitops_resources.app_id = excluded.app_id;
+
+-- name: OwnEnvironmentGitOpsField :execrows
+INSERT INTO environment_managed_fields(environment_id, resource, field_path, manager_kind, manager_id, source_id, desired_value)
+SELECT environment_id, sqlc.arg(resource)::text, sqlc.arg(field_path)::text, 'git', id::text, id, sqlc.arg(value)::jsonb
+FROM environment_git_sources WHERE id = sqlc.arg(source_id)::uuid
+ON CONFLICT (environment_id, resource, field_path) DO UPDATE
+SET desired_value = excluded.desired_value, updated_at = now()
+WHERE environment_managed_fields.source_id = excluded.source_id;
+
+-- name: ReleaseEnvironmentGitOpsField :exec
+DELETE FROM environment_managed_fields WHERE source_id = sqlc.arg(source_id)::uuid
+AND resource = sqlc.arg(resource)::text AND field_path = sqlc.arg(field_path)::text;
+
+-- name: SetEnvironmentGitOpsLeaseContext :one
+SELECT set_config('gregale.gitops_lease', sqlc.arg(lease_token)::text, true)::text;
+
+-- name: TouchEnvironmentGitOpsIntent :exec
+UPDATE environment_git_sources SET intent_version = intent_version + 1, updated_at = now()
+WHERE id = sqlc.arg(source_id)::uuid;
+
+-- name: PutEnvironmentGitOpsVariable :exec
+INSERT INTO app_envs(account_id, app_id, scope, key, value)
+VALUES (sqlc.arg(account_id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(scope)::text, sqlc.arg(key)::text, sqlc.arg(value)::text)
+ON CONFLICT (app_id, scope, key) DO UPDATE SET value = excluded.value, updated_at = now();
+
+-- name: DeleteEnvironmentGitOpsVariable :exec
+DELETE FROM app_envs WHERE account_id = sqlc.arg(account_id)::uuid AND app_id = sqlc.arg(app_id)::uuid
+AND scope = sqlc.arg(scope)::text AND key = sqlc.arg(key)::text;
+
+-- name: PutEnvironmentGitOpsRoutes :exec
+INSERT INTO project_environment_route_policies(account_id, project_id, app_id, environment_slug, only_allow_declared_routes, declared_routes)
+VALUES (sqlc.arg(account_id)::uuid, sqlc.arg(project_id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(environment)::text,
+    sqlc.arg(enforced)::boolean, sqlc.arg(routes)::jsonb)
+ON CONFLICT (app_id, environment_slug) DO UPDATE SET only_allow_declared_routes = excluded.only_allow_declared_routes,
+    declared_routes = excluded.declared_routes, updated_at = now();
+
+-- name: DeleteEnvironmentGitOpsRoutes :exec
+DELETE FROM project_environment_route_policies WHERE account_id = sqlc.arg(account_id)::uuid
+AND app_id = sqlc.arg(app_id)::uuid AND environment_slug = sqlc.arg(environment)::text;
+
+-- name: PutEnvironmentGitOpsPolicies :exec
+INSERT INTO project_environment_edge_policies(account_id, project_id, app_id, environment_slug, rules)
+VALUES (sqlc.arg(account_id)::uuid, sqlc.arg(project_id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(environment)::text, sqlc.arg(rules)::jsonb)
+ON CONFLICT (app_id, environment_slug) DO UPDATE SET rules = excluded.rules, updated_at = now();
+
+-- name: DeleteEnvironmentGitOpsPolicies :exec
+DELETE FROM project_environment_edge_policies WHERE account_id = sqlc.arg(account_id)::uuid
+AND app_id = sqlc.arg(app_id)::uuid AND environment_slug = sqlc.arg(environment)::text;
+
+-- name: InsertEnvironmentGitOpsConfig :exec
+INSERT INTO project_environment_config_versions(account_id, project_id, environment_slug, version, config_hash, config_json)
+SELECT sqlc.arg(account_id)::uuid, sqlc.arg(project_id)::uuid, sqlc.arg(environment)::text,
+    coalesce(max(version), 0) + 1, sqlc.arg(hash)::text, sqlc.arg(values)::jsonb
+FROM project_environment_config_versions WHERE project_id = sqlc.arg(project_id)::uuid AND environment_slug = sqlc.arg(environment)::text;
+
+-- name: SaveEnvironmentGitOpsProgress :execrows
+UPDATE environment_gitops_runs SET status = 'applying', plan = sqlc.arg(plan)::jsonb, steps = sqlc.arg(steps)::jsonb
+WHERE id = sqlc.arg(run_id)::uuid AND source_id = sqlc.arg(source_id)::uuid
+AND lease_token = sqlc.arg(lease_token)::text AND completed_at IS NULL;
+
+-- name: LockEnvironmentGitSourceForScope :many
+SELECT s.id FROM environment_git_sources s JOIN project_environments e ON e.id = s.environment_id
+WHERE s.account_id = sqlc.arg(account_id)::uuid AND s.project_id = sqlc.arg(project_id)::uuid
+AND e.slug = sqlc.arg(environment)::text FOR UPDATE OF s;
+
+-- name: UpdateEnvironmentGitSourceControl :one
+UPDATE environment_git_sources SET mode = sqlc.arg(mode)::text, prune = sqlc.arg(prune)::boolean,
+    suspended = sqlc.arg(suspended)::boolean, generation = generation + 1, intent_version = intent_version + 1, updated_at = now()
+WHERE id = sqlc.arg(source_id)::uuid AND generation = sqlc.arg(expected_generation)::bigint RETURNING *;
+
+-- name: PutEnvironmentGitOpsOverride :execrows
+INSERT INTO environment_management_overrides(environment_id, resource, field_path, authorized_by, reason, expires_at)
+SELECT f.environment_id, f.resource, f.field_path, sqlc.arg(actor)::text, sqlc.arg(reason)::text, sqlc.arg(expires_at)::timestamptz
+FROM environment_managed_fields f WHERE f.source_id = sqlc.arg(source_id)::uuid
+AND f.resource = sqlc.arg(resource)::text AND f.field_path = sqlc.arg(field_path)::text
+ON CONFLICT (environment_id, resource, field_path) DO UPDATE SET authorized_by = excluded.authorized_by,
+    reason = excluded.reason, expires_at = excluded.expires_at, created_at = now();
+
+-- name: DeleteEnvironmentGitOpsOverride :execrows
+DELETE FROM environment_management_overrides o USING environment_git_sources s
+WHERE o.environment_id = s.environment_id AND s.id = sqlc.arg(source_id)::uuid
+AND o.resource = sqlc.arg(resource)::text AND o.field_path = sqlc.arg(field_path)::text;
+
+-- name: RecordEnvironmentGitOpsEvent :exec
+INSERT INTO environment_gitops_events(source_id, actor, kind, details)
+VALUES (sqlc.arg(source_id)::uuid, sqlc.arg(actor)::text, sqlc.arg(kind)::text, sqlc.arg(details)::jsonb);
+
+-- name: InvalidateEnvironmentGitOpsRuntimeConfig :exec
+WITH stamped AS (
+    INSERT INTO app_runtime_config_changes(app_id, changed_at)
+    VALUES (sqlc.arg(app_id)::uuid, clock_timestamp())
+    ON CONFLICT (app_id) DO UPDATE SET changed_at = excluded.changed_at RETURNING app_id
+)
+UPDATE snapshots SET stale = true FROM deployments d, stamped
+WHERE snapshots.deployment_id = d.id AND d.app_id = stamped.app_id AND NOT snapshots.stale;
+
+-- name: InsertEnvironmentGitOpsEffect :exec
+INSERT INTO environment_gitops_effects(source_id, revision_id, generation, intent_version, plan_hash,
+    app_id, kind, gateway_generation, match_hosts, expected_nodes)
+SELECT s.id, sqlc.arg(revision_id)::uuid, s.generation, s.intent_version, sqlc.arg(plan_hash)::text,
+    sqlc.arg(app_id)::uuid, sqlc.arg(kind)::text, sqlc.arg(gateway_generation)::bigint,
+    sqlc.arg(match_hosts)::text[], sqlc.arg(expected_nodes)::text[]
+FROM environment_git_sources s WHERE s.id = sqlc.arg(source_id)::uuid;
+
+-- name: PendingEnvironmentGitOpsEffects :many
+SELECT * FROM environment_gitops_effects WHERE source_id = sqlc.arg(source_id)::uuid AND completed_at IS NULL
+ORDER BY gateway_generation, id;
+
+-- name: ExtendEnvironmentGitOpsEffectTargets :one
+UPDATE environment_gitops_effects
+SET expected_nodes = ARRAY(SELECT DISTINCT v FROM unnest(expected_nodes || sqlc.arg(nodes)::text[]) AS v ORDER BY v)
+WHERE source_id = sqlc.arg(source_id)::uuid AND id = sqlc.arg(effect_id)::uuid AND completed_at IS NULL
+RETURNING *;
+
+-- name: AcknowledgeEnvironmentGitOpsEffect :execrows
+UPDATE environment_gitops_effects
+SET acknowledged_nodes = ARRAY(SELECT DISTINCT v FROM unnest(acknowledged_nodes || ARRAY[sqlc.arg(node)::text]) AS v ORDER BY v)
+WHERE source_id = sqlc.arg(source_id)::uuid AND id = sqlc.arg(effect_id)::uuid
+AND gateway_generation = sqlc.arg(gateway_generation)::bigint AND sqlc.arg(node)::text = ANY(expected_nodes)
+AND completed_at IS NULL;
+
+-- name: CompleteEnvironmentGitOpsEffect :execrows
+UPDATE environment_gitops_effects SET completed_at = now()
+WHERE source_id = sqlc.arg(source_id)::uuid AND id = sqlc.arg(effect_id)::uuid
+AND completed_at IS NULL AND expected_nodes <@ acknowledged_nodes;
+
+-- name: HasPendingEnvironmentGitOpsEffects :one
+SELECT EXISTS(SELECT 1 FROM environment_gitops_effects WHERE source_id = sqlc.arg(source_id)::uuid AND completed_at IS NULL) AS pending;
+
+-- name: TryEdgeRuleMutationLock :one
+SELECT pg_try_advisory_lock(hashtextextended(sqlc.arg(app_id)::text, 0))::boolean AS locked;
+
+-- name: ReleaseEdgeRuleMutationLock :one
+SELECT pg_advisory_unlock(hashtextextended(sqlc.arg(app_id)::text, 0))::boolean AS unlocked;

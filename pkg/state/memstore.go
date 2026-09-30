@@ -135,6 +135,7 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	environmentGitOps           map[string]*environmentGitOpsMemory
 	devBridgeSessions           map[string]devbridge.Session
 	devBridgeWebhookReplays     map[string]devbridge.WebhookReplay
 	featureFlagVersions         map[string][]FeatureFlagVersion
@@ -3060,6 +3061,11 @@ func (m *MemStore) DeleteProject(_ context.Context, projectID string) error {
 		return ErrNotFound
 	}
 	delete(m.projects, projectID)
+	for sourceID, memory := range m.environmentGitOps {
+		if memory.source.ProjectID == projectID {
+			delete(m.environmentGitOps, sourceID)
+		}
+	}
 	// Drop the by-account+slug entry. The map is keyed by
 	// accountID → slug → projectID; nil-ing out the slug
 	// entry is enough.
@@ -3287,6 +3293,11 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 		}
 	}
 	delete(m.projectEnvironments, environmentID)
+	for sourceID, memory := range m.environmentGitOps {
+		if memory.source.EnvironmentID == environmentID {
+			delete(m.environmentGitOps, sourceID)
+		}
+	}
 	delete(m.projectEnvironmentConfigs, projectEnvironmentConfigKey(projectID, slug))
 	for key, policy := range m.projectEnvironmentRoutePolicies {
 		if policy.ProjectID == projectID && policy.EnvironmentSlug == slug {
@@ -6365,6 +6376,10 @@ func (m *MemStore) SoftDeleteAppCascade(_ context.Context, id string) (App, erro
 	if !ok {
 		return App{}, ErrNotFound
 	}
+	sources, err := m.gitOpsGuardAppRemovalLocked(id)
+	if err != nil {
+		return App{}, err
+	}
 	for _, b := range m.objectBuckets {
 		if b.AppID == id && b.State != "deleted" {
 			return App{}, ErrConflict
@@ -6380,6 +6395,9 @@ func (m *MemStore) SoftDeleteAppCascade(_ context.Context, id string) (App, erro
 		a.DeleteGraceUntil = &deadline
 	}
 	m.apps[id] = a
+	for _, memory := range sources {
+		touchGitOpsMemoryIntent(memory)
+	}
 	m.cancelAppTasksForAppLocked(id, now)
 	for cronID, cron := range m.crons {
 		if cron.AppID == id {
@@ -20053,24 +20071,8 @@ func (m *MemStore) MarkAppRegistryCredentialUsed(_ context.Context, accountID, a
 //
 // ADR-090 PR-A: hardcodes scope='default' at the map key site. Use
 // UpsertAppEnvInScope for non-default scopes.
-func (m *MemStore) UpsertAppEnv(_ context.Context, accountID, appID, key, value string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	scope := "default"
-	k := envKey{AppID: appID, Scope: scope, Key: key}
-	existing, ok := m.envs[k]
-	now := time.Now()
-	if !ok {
-		m.envs[k] = AppEnv{AccountID: accountID, AppID: appID, Scope: scope, Key: key, Value: value, CreatedAt: now, UpdatedAt: now}
-		return nil
-	}
-	if existing.AccountID != accountID {
-		return ErrNotFound
-	}
-	existing.Value = value
-	existing.UpdatedAt = now
-	m.envs[k] = existing
-	return nil
+func (m *MemStore) UpsertAppEnv(ctx context.Context, accountID, appID, key, value string) error {
+	return m.UpsertAppEnvInScope(ctx, accountID, appID, "default", key, value)
 }
 
 // DeleteAppEnv removes the (account_id, app_id, scope='default', key)
@@ -20078,16 +20080,8 @@ func (m *MemStore) UpsertAppEnv(_ context.Context, accountID, appID, key, value 
 // PgStore so the handler renders 400 CodeEnvVarNotFound.
 //
 // ADR-090 PR-A: hardcodes scope='default' (see UpsertAppEnv).
-func (m *MemStore) DeleteAppEnv(_ context.Context, accountID, appID, key string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	k := envKey{AppID: appID, Scope: "default", Key: key}
-	row, ok := m.envs[k]
-	if !ok || row.AccountID != accountID {
-		return ErrNotFound
-	}
-	delete(m.envs, k)
-	return nil
+func (m *MemStore) DeleteAppEnv(ctx context.Context, accountID, appID, key string) error {
+	return m.DeleteAppEnvInScope(ctx, accountID, appID, "default", key)
 }
 
 // ListAppEnv returns every env row on the app where scope='default',
@@ -20134,11 +20128,16 @@ func (m *MemStore) CountAppEnv(_ context.Context, accountID, appID string) (int,
 func (m *MemStore) UpsertAppEnvInScope(_ context.Context, accountID, appID, scope, key, value string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	memory, err := m.gitOpsGuardScopedWriteLocked(accountID, appID, scope, []string{"variables/" + key})
+	if err != nil {
+		return err
+	}
 	k := envKey{AppID: appID, Scope: scope, Key: key}
 	existing, ok := m.envs[k]
 	now := time.Now()
 	if !ok {
 		m.envs[k] = AppEnv{AccountID: accountID, AppID: appID, Scope: scope, Key: key, Value: value, CreatedAt: now, UpdatedAt: now}
+		touchGitOpsMemoryIntent(memory)
 		return nil
 	}
 	if existing.AccountID != accountID {
@@ -20147,6 +20146,7 @@ func (m *MemStore) UpsertAppEnvInScope(_ context.Context, accountID, appID, scop
 	existing.Value = value
 	existing.UpdatedAt = now
 	m.envs[k] = existing
+	touchGitOpsMemoryIntent(memory)
 	return nil
 }
 
@@ -20159,7 +20159,12 @@ func (m *MemStore) DeleteAppEnvInScope(_ context.Context, accountID, appID, scop
 	if !ok || row.AccountID != accountID {
 		return ErrNotFound
 	}
+	memory, err := m.gitOpsGuardScopedWriteLocked(accountID, appID, scope, []string{"variables/" + key})
+	if err != nil {
+		return err
+	}
 	delete(m.envs, k)
+	touchGitOpsMemoryIntent(memory)
 	return nil
 }
 

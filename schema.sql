@@ -1724,6 +1724,150 @@ $$;
 
 
 --
+-- Name: environment_gitops_guard_app_presence(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_gitops_guard_app_presence() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE src environment_git_sources%ROWTYPE;
+BEGIN
+    IF pg_trigger_depth() > 1 THEN
+        IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+    END IF;
+    IF TG_OP = 'UPDATE' AND (NEW.status = 'deleted') = (OLD.status = 'deleted') THEN RETURN NEW; END IF;
+    FOR src IN SELECT s.* FROM environment_git_sources s
+        JOIN environment_gitops_resources r ON r.source_id = s.id
+        WHERE r.app_id = OLD.id ORDER BY s.id FOR UPDATE OF s
+    LOOP
+        IF (TG_OP = 'DELETE' OR NEW.status = 'deleted') AND src.mode = 'enforce' AND EXISTS (
+            SELECT 1 FROM environment_managed_fields f JOIN environment_gitops_resources r
+            ON r.source_id = f.source_id AND r.logical_name = f.resource
+            WHERE f.source_id = src.id AND r.app_id = OLD.id AND f.field_path = 'presence'
+              AND NOT EXISTS (SELECT 1 FROM environment_management_overrides o
+                  WHERE o.environment_id = f.environment_id AND o.resource = f.resource AND o.field_path = 'presence'
+                    AND o.expires_at > clock_timestamp())) THEN
+            RAISE EXCEPTION 'workload membership is managed by the environment Git source'
+                USING ERRCODE = '23514', CONSTRAINT = 'environment_gitops_field_owned';
+        END IF;
+        UPDATE environment_git_sources SET intent_version = intent_version + 1, updated_at = now() WHERE id = src.id;
+        IF src.generation > 0 THEN
+            INSERT INTO environment_gitops_jobs(source_id, desired_generation, next_attempt_at)
+            VALUES (src.id, src.generation, now()) ON CONFLICT (source_id) DO UPDATE
+            SET next_attempt_at = least(environment_gitops_jobs.next_attempt_at, excluded.next_attempt_at);
+        END IF;
+    END LOOP;
+    IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+END $$;
+
+
+--
+-- Name: environment_gitops_guard_config_history(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_gitops_guard_config_history() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF pg_trigger_depth() <= 1 AND EXISTS (
+        SELECT 1 FROM environment_git_sources s JOIN project_environments e ON e.id = s.environment_id
+        WHERE s.project_id = OLD.project_id AND s.account_id = OLD.account_id AND e.slug = OLD.environment_slug) THEN
+        RAISE EXCEPTION 'managed configuration history is append-only'
+            USING ERRCODE = '23514', CONSTRAINT = 'environment_gitops_field_owned';
+    END IF;
+    IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+END $$;
+
+
+--
+-- Name: environment_gitops_guard_identity(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_gitops_guard_identity() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF (to_jsonb(NEW) - ARRAY['value', 'updated_at', 'only_allow_declared_routes', 'declared_routes', 'rules'])
+       IS DISTINCT FROM (to_jsonb(OLD) - ARRAY['value', 'updated_at', 'only_allow_declared_routes', 'declared_routes', 'rules'])
+       AND EXISTS (SELECT 1 FROM environment_gitops_resources r JOIN environment_git_sources s ON s.id = r.source_id
+           JOIN project_environments e ON e.id = s.environment_id
+           WHERE r.app_id = OLD.app_id AND s.account_id = OLD.account_id
+           AND e.slug = coalesce(to_jsonb(OLD)->>'scope', to_jsonb(OLD)->>'environment_slug')) THEN
+        RAISE EXCEPTION 'environment resource identity cannot be moved'
+            USING ERRCODE = '23514', CONSTRAINT = 'environment_gitops_field_owned';
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
+-- Name: environment_gitops_guard_intent(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_gitops_guard_intent() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    row_value jsonb;
+    src environment_git_sources%ROWTYPE;
+    resource_name text;
+    paths text[];
+    prior_config jsonb;
+    controller boolean;
+BEGIN
+    IF TG_OP = 'DELETE' THEN row_value := to_jsonb(OLD); ELSE row_value := to_jsonb(NEW); END IF;
+    IF TG_TABLE_NAME = 'project_environment_config_versions' THEN
+        SELECT s.* INTO src FROM environment_git_sources s JOIN project_environments e ON e.id = s.environment_id
+        WHERE s.account_id = (row_value->>'account_id')::uuid AND s.project_id = (row_value->>'project_id')::uuid
+          AND e.slug = row_value->>'environment_slug' FOR UPDATE OF s;
+        resource_name := 'environment';
+        SELECT config_json INTO prior_config FROM project_environment_config_versions
+        WHERE project_id = (row_value->>'project_id')::uuid AND environment_slug = row_value->>'environment_slug'
+        ORDER BY version DESC LIMIT 1;
+        SELECT array_agg('configuration/' || k) INTO paths FROM (
+            SELECT key AS k FROM jsonb_each(coalesce(prior_config, '{}'))
+            UNION SELECT key FROM jsonb_each(coalesce(row_value->'config_json', '{}'))
+        ) keys WHERE (prior_config->k) IS DISTINCT FROM (row_value->'config_json'->k);
+    ELSE
+        SELECT s.* INTO src
+        FROM environment_git_sources s JOIN project_environments e ON e.id = s.environment_id
+        JOIN environment_gitops_resources r ON r.source_id = s.id
+        WHERE s.account_id = (row_value->>'account_id')::uuid AND r.app_id = (row_value->>'app_id')::uuid
+          AND e.slug = coalesce(row_value->>'scope', row_value->>'environment_slug') FOR UPDATE OF s;
+        SELECT logical_name INTO resource_name FROM environment_gitops_resources
+        WHERE source_id = src.id AND app_id = (row_value->>'app_id')::uuid;
+        IF TG_TABLE_NAME = 'app_envs' THEN paths := ARRAY['variables/' || (row_value->>'key')];
+        ELSIF TG_TABLE_NAME = 'project_environment_route_policies' THEN paths := ARRAY['routes'];
+        ELSE paths := ARRAY['policies']; END IF;
+    END IF;
+    IF src.id IS NOT NULL THEN
+        controller := EXISTS (SELECT 1 FROM environment_gitops_jobs j
+            WHERE j.source_id = src.id AND j.desired_generation = src.generation AND j.claimed_generation = src.generation
+              AND j.lease_until > clock_timestamp() AND j.lease_token <> ''
+              AND j.lease_token = current_setting('gregale.gitops_lease', true)
+              AND src.approved_revision_id IS NOT NULL AND NOT src.suspended);
+        IF src.mode = 'enforce' AND NOT controller AND EXISTS (
+            SELECT 1 FROM environment_managed_fields f
+            WHERE f.environment_id = src.environment_id AND f.resource = resource_name AND f.field_path = ANY(paths)
+              AND f.source_id = src.id AND NOT EXISTS (
+                  SELECT 1 FROM environment_management_overrides o
+                  WHERE o.environment_id = f.environment_id AND o.resource = f.resource AND o.field_path = f.field_path
+                    AND o.expires_at > clock_timestamp())) THEN
+            RAISE EXCEPTION 'setting is managed by the environment Git source'
+                USING ERRCODE = '23514', CONSTRAINT = 'environment_gitops_field_owned';
+        END IF;
+        UPDATE environment_git_sources SET intent_version = intent_version + 1, updated_at = now() WHERE id = src.id;
+        IF src.generation > 0 THEN
+            INSERT INTO environment_gitops_jobs(source_id, desired_generation, next_attempt_at)
+            VALUES (src.id, src.generation, now()) ON CONFLICT (source_id) DO UPDATE
+            SET next_attempt_at = least(environment_gitops_jobs.next_attempt_at, excluded.next_attempt_at);
+        END IF;
+    END IF;
+    IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+END $$;
+
+
+--
 -- Name: event_fanout_pattern_matches(text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5795,6 +5939,209 @@ CREATE TABLE public.email_verification_tokens (
 
 
 --
+-- Name: environment_desired_revisions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_desired_revisions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    source_id uuid NOT NULL,
+    commit_sha text NOT NULL,
+    definition_digest text NOT NULL,
+    definition jsonb NOT NULL,
+    approved_by text NOT NULL,
+    approved_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT environment_desired_revisions_approved_by_check CHECK ((approved_by <> ''::text)),
+    CONSTRAINT environment_desired_revisions_commit_sha_check CHECK ((commit_sha ~ '^([a-f0-9]{40}|[a-f0-9]{64})$'::text)),
+    CONSTRAINT environment_desired_revisions_definition_check CHECK ((jsonb_typeof(definition) = 'object'::text)),
+    CONSTRAINT environment_desired_revisions_definition_digest_check CHECK ((definition_digest ~ '^[a-f0-9]{64}$'::text))
+);
+
+
+--
+-- Name: environment_git_sources; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_git_sources (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    repository_id bigint NOT NULL,
+    installation_id bigint NOT NULL,
+    repository text NOT NULL,
+    source_ref text NOT NULL,
+    manifest_path text NOT NULL,
+    mode text NOT NULL,
+    approval_policy text NOT NULL,
+    prune boolean DEFAULT false NOT NULL,
+    suspended boolean DEFAULT false NOT NULL,
+    generation bigint DEFAULT 0 NOT NULL,
+    intent_version bigint DEFAULT 0 NOT NULL,
+    approved_revision_id uuid,
+    applied_revision_id uuid,
+    source_checked_at timestamp with time zone,
+    source_error_code text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT environment_git_sources_approval_policy_check CHECK ((approval_policy = ANY (ARRAY['manual'::text, 'protected_branch'::text]))),
+    CONSTRAINT environment_git_sources_generation_check CHECK ((generation >= 0)),
+    CONSTRAINT environment_git_sources_installation_id_check CHECK ((installation_id > 0)),
+    CONSTRAINT environment_git_sources_intent_version_check CHECK ((intent_version >= 0)),
+    CONSTRAINT environment_git_sources_manifest_path_check CHECK (((manifest_path <> ''::text) AND (manifest_path !~ '^/'::text) AND (manifest_path !~ '(^|/)\.\.(/|$)'::text) AND (POSITION((chr(92)) IN (manifest_path)) = 0))),
+    CONSTRAINT environment_git_sources_mode_check CHECK ((mode = ANY (ARRAY['report'::text, 'enforce'::text]))),
+    CONSTRAINT environment_git_sources_repository_check CHECK ((repository ~ '^[^/[:space:]]+/[^/[:space:]]+$'::text)),
+    CONSTRAINT environment_git_sources_repository_id_check CHECK ((repository_id > 0)),
+    CONSTRAINT environment_git_sources_source_ref_check CHECK (((source_ref <> ''::text) AND (source_ref !~ '[[:space:]]'::text)))
+);
+
+
+--
+-- Name: environment_gitops_effects; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_gitops_effects (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    source_id uuid NOT NULL,
+    revision_id uuid NOT NULL,
+    generation bigint NOT NULL,
+    intent_version bigint NOT NULL,
+    plan_hash text NOT NULL,
+    app_id uuid NOT NULL,
+    kind text NOT NULL,
+    gateway_generation bigint NOT NULL,
+    match_hosts text[] NOT NULL,
+    expected_nodes text[] NOT NULL,
+    acknowledged_nodes text[] DEFAULT '{}'::text[] NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    completed_at timestamp with time zone,
+    CONSTRAINT environment_gitops_effects_acknowledged_nodes_check CHECK ((array_position(acknowledged_nodes, NULL::text) IS NULL)),
+    CONSTRAINT environment_gitops_effects_check CHECK ((acknowledged_nodes <@ expected_nodes)),
+    CONSTRAINT environment_gitops_effects_check1 CHECK (((completed_at IS NULL) OR (expected_nodes <@ acknowledged_nodes))),
+    CONSTRAINT environment_gitops_effects_expected_nodes_check CHECK ((array_position(expected_nodes, NULL::text) IS NULL)),
+    CONSTRAINT environment_gitops_effects_gateway_generation_check CHECK ((gateway_generation > 0)),
+    CONSTRAINT environment_gitops_effects_generation_check CHECK ((generation > 0)),
+    CONSTRAINT environment_gitops_effects_intent_version_check CHECK ((intent_version >= 0)),
+    CONSTRAINT environment_gitops_effects_kind_check CHECK ((kind = 'edge_policy'::text)),
+    CONSTRAINT environment_gitops_effects_match_hosts_check CHECK (((cardinality(match_hosts) > 0) AND (array_position(match_hosts, NULL::text) IS NULL))),
+    CONSTRAINT environment_gitops_effects_plan_hash_check CHECK ((plan_hash ~ '^[a-f0-9]{64}$'::text))
+);
+
+
+--
+-- Name: environment_gitops_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_gitops_events (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    source_id uuid NOT NULL,
+    actor text NOT NULL,
+    kind text NOT NULL,
+    details jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT environment_gitops_events_actor_check CHECK ((actor <> ''::text)),
+    CONSTRAINT environment_gitops_events_details_check CHECK ((jsonb_typeof(details) = 'object'::text)),
+    CONSTRAINT environment_gitops_events_kind_check CHECK ((kind = ANY (ARRAY['adopt'::text, 'control'::text, 'override_created'::text, 'override_removed'::text])))
+);
+
+
+--
+-- Name: environment_gitops_jobs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_gitops_jobs (
+    source_id uuid NOT NULL,
+    desired_generation bigint NOT NULL,
+    claimed_generation bigint DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone DEFAULT now() NOT NULL,
+    lease_token text DEFAULT ''::text NOT NULL,
+    lease_until timestamp with time zone,
+    attempt_count integer DEFAULT 0 NOT NULL,
+    CONSTRAINT environment_gitops_jobs_attempt_count_check CHECK ((attempt_count >= 0)),
+    CONSTRAINT environment_gitops_jobs_check CHECK ((((lease_token = ''::text) AND (lease_until IS NULL)) OR ((lease_token <> ''::text) AND (lease_until IS NOT NULL)))),
+    CONSTRAINT environment_gitops_jobs_claimed_generation_check CHECK ((claimed_generation >= 0)),
+    CONSTRAINT environment_gitops_jobs_desired_generation_check CHECK ((desired_generation > 0))
+);
+
+
+--
+-- Name: environment_gitops_resources; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_gitops_resources (
+    source_id uuid NOT NULL,
+    logical_name text NOT NULL,
+    app_id uuid,
+    created_by_source boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT environment_gitops_resources_logical_name_check CHECK ((logical_name ~ '^workload/[a-z0-9][a-z0-9-]*$'::text))
+);
+
+
+--
+-- Name: environment_gitops_runs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_gitops_runs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    source_id uuid NOT NULL,
+    revision_id uuid NOT NULL,
+    generation bigint NOT NULL,
+    lease_token text NOT NULL,
+    status text NOT NULL,
+    plan jsonb DEFAULT '{}'::jsonb NOT NULL,
+    steps jsonb DEFAULT '[]'::jsonb NOT NULL,
+    error_code text DEFAULT ''::text NOT NULL,
+    started_at timestamp with time zone DEFAULT now() NOT NULL,
+    completed_at timestamp with time zone,
+    CONSTRAINT environment_gitops_runs_generation_check CHECK ((generation > 0)),
+    CONSTRAINT environment_gitops_runs_lease_token_check CHECK ((lease_token <> ''::text)),
+    CONSTRAINT environment_gitops_runs_plan_check CHECK ((jsonb_typeof(plan) = 'object'::text)),
+    CONSTRAINT environment_gitops_runs_status_check CHECK ((status = ANY (ARRAY['planning'::text, 'drifted'::text, 'blocked'::text, 'applying'::text, 'partial'::text, 'overridden'::text, 'converged'::text, 'superseded'::text, 'failed'::text]))),
+    CONSTRAINT environment_gitops_runs_steps_check CHECK ((jsonb_typeof(steps) = 'array'::text))
+);
+
+
+--
+-- Name: environment_managed_fields; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_managed_fields (
+    environment_id uuid NOT NULL,
+    resource text NOT NULL,
+    field_path text NOT NULL,
+    manager_kind text NOT NULL,
+    manager_id text NOT NULL,
+    source_id uuid,
+    desired_value jsonb NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT environment_managed_fields_check CHECK ((((manager_kind = 'git'::text) AND (source_id IS NOT NULL) AND (manager_id = (source_id)::text)) OR ((manager_kind <> 'git'::text) AND (source_id IS NULL)))),
+    CONSTRAINT environment_managed_fields_field_path_check CHECK (((field_path <> ''::text) AND (POSITION(('#'::text) IN (field_path)) = 0))),
+    CONSTRAINT environment_managed_fields_manager_id_check CHECK ((manager_id <> ''::text)),
+    CONSTRAINT environment_managed_fields_manager_kind_check CHECK ((manager_kind = ANY (ARRAY['git'::text, 'terraform'::text, 'operator'::text]))),
+    CONSTRAINT environment_managed_fields_resource_check CHECK (((resource = 'environment'::text) OR (resource ~ '^workload/[a-z0-9][a-z0-9-]*$'::text)))
+);
+
+
+--
+-- Name: environment_management_overrides; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_management_overrides (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    environment_id uuid NOT NULL,
+    resource text NOT NULL,
+    field_path text NOT NULL,
+    authorized_by text NOT NULL,
+    reason text NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT environment_management_overrides_authorized_by_check CHECK ((authorized_by <> ''::text)),
+    CONSTRAINT environment_management_overrides_check CHECK ((expires_at > created_at)),
+    CONSTRAINT environment_management_overrides_reason_check CHECK ((reason <> ''::text))
+);
+
+
+--
 -- Name: event_fanout_attempt_history; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -9237,64 +9584,6 @@ PARTITION BY RANGE (received_at);
 
 
 --
--- Name: request_telemetry_202609; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.request_telemetry_202609 (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    account_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    deployment_id uuid NOT NULL,
-    route text NOT NULL,
-    method text NOT NULL,
-    status integer NOT NULL,
-    latency_ms integer NOT NULL,
-    cold_boot boolean DEFAULT false NOT NULL,
-    trace_id text,
-    spans_summary jsonb,
-    received_at timestamp with time zone DEFAULT now() NOT NULL,
-    count integer DEFAULT 1 NOT NULL,
-    ua_family text DEFAULT '__unknown__'::text NOT NULL,
-    referrer_host text DEFAULT '__none__'::text NOT NULL,
-    country text DEFAULT '__unknown__'::text NOT NULL,
-    wake_id text,
-    instance_id text,
-    guest_duration_ms integer DEFAULT 0 NOT NULL,
-    guest_runtime text DEFAULT '__unknown__'::text NOT NULL,
-    guest_outcome text DEFAULT 'missing'::text NOT NULL,
-    guest_error_class text DEFAULT ''::text NOT NULL,
-    consumer_id uuid,
-    node_id text DEFAULT ''::text NOT NULL,
-    region text DEFAULT ''::text NOT NULL,
-    commit_sha text DEFAULT ''::text NOT NULL,
-    deployment_tag text DEFAULT ''::text NOT NULL,
-    deployment_created_at text DEFAULT ''::text NOT NULL,
-    image_digest text DEFAULT ''::text NOT NULL,
-    platform_tenant_id uuid,
-    guest_cpu_time_ms integer DEFAULT 0 NOT NULL,
-    guest_peak_rss_mb integer DEFAULT 0 NOT NULL,
-    guest_resource_usage_available boolean DEFAULT false NOT NULL,
-    flag_evidence jsonb DEFAULT '[]'::jsonb NOT NULL,
-    CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
-    CONSTRAINT request_telemetry_country_check CHECK (((country = '__unknown__'::text) OR (country ~ '^[A-Z]{2}$'::text))),
-    CONSTRAINT request_telemetry_flag_evidence_check CHECK ((jsonb_typeof(flag_evidence) = 'array'::text)),
-    CONSTRAINT request_telemetry_guest_cpu_time_ms_check CHECK (((guest_cpu_time_ms >= 0) AND (guest_cpu_time_ms <= 86400000))),
-    CONSTRAINT request_telemetry_guest_duration_ms_check CHECK (((guest_duration_ms >= 0) AND (guest_duration_ms <= 86400000))),
-    CONSTRAINT request_telemetry_guest_error_class_check CHECK ((guest_error_class = ANY (ARRAY[''::text, 'http_5xx'::text, 'handler_exec'::text, 'handler_protocol'::text, 'timeout'::text, 'canceled'::text]))),
-    CONSTRAINT request_telemetry_guest_outcome_check CHECK ((guest_outcome = ANY (ARRAY['ok'::text, 'http_error'::text, 'handler_error'::text, 'timeout'::text, 'canceled'::text, 'missing'::text]))),
-    CONSTRAINT request_telemetry_guest_peak_rss_mb_check CHECK (((guest_peak_rss_mb >= 0) AND (guest_peak_rss_mb <= 65536))),
-    CONSTRAINT request_telemetry_guest_runtime_check CHECK ((guest_runtime = ANY (ARRAY['node22'::text, 'node24'::text, 'python312'::text, 'python313'::text, 'go124'::text, '__unknown__'::text]))),
-    CONSTRAINT request_telemetry_latency_ms_check CHECK ((latency_ms >= 0)),
-    CONSTRAINT request_telemetry_method_check CHECK ((method = ANY (ARRAY['GET'::text, 'POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text, 'HEAD'::text, 'OPTIONS'::text]))),
-    CONSTRAINT request_telemetry_referrer_host_check CHECK ((((length(referrer_host) >= 1) AND (length(referrer_host) <= 253)) AND (referrer_host = lower(referrer_host)) AND (referrer_host !~ '[/?#[:space:]]'::text))),
-    CONSTRAINT request_telemetry_route_check CHECK (((length(route) >= 1) AND (length(route) <= 256))),
-    CONSTRAINT request_telemetry_status_check CHECK (((status >= 100) AND (status <= 599))),
-    CONSTRAINT request_telemetry_trace_id_check CHECK (((trace_id IS NULL) OR (trace_id ~ '^[0-9a-f]{32}$'::text))),
-    CONSTRAINT request_telemetry_ua_family_check CHECK ((ua_family = ANY (ARRAY['chrome'::text, 'edge'::text, 'firefox'::text, 'safari'::text, 'opera'::text, 'curl'::text, 'wget'::text, 'python'::text, 'go'::text, 'java'::text, 'bot'::text, 'other'::text, '__unknown__'::text])))
-);
-
-
---
 -- Name: request_telemetry_202610; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -9357,6 +9646,64 @@ CREATE TABLE public.request_telemetry_202610 (
 --
 
 CREATE TABLE public.request_telemetry_202611 (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    route text NOT NULL,
+    method text NOT NULL,
+    status integer NOT NULL,
+    latency_ms integer NOT NULL,
+    cold_boot boolean DEFAULT false NOT NULL,
+    trace_id text,
+    spans_summary jsonb,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    count integer DEFAULT 1 NOT NULL,
+    ua_family text DEFAULT '__unknown__'::text NOT NULL,
+    referrer_host text DEFAULT '__none__'::text NOT NULL,
+    country text DEFAULT '__unknown__'::text NOT NULL,
+    wake_id text,
+    instance_id text,
+    guest_duration_ms integer DEFAULT 0 NOT NULL,
+    guest_runtime text DEFAULT '__unknown__'::text NOT NULL,
+    guest_outcome text DEFAULT 'missing'::text NOT NULL,
+    guest_error_class text DEFAULT ''::text NOT NULL,
+    consumer_id uuid,
+    node_id text DEFAULT ''::text NOT NULL,
+    region text DEFAULT ''::text NOT NULL,
+    commit_sha text DEFAULT ''::text NOT NULL,
+    deployment_tag text DEFAULT ''::text NOT NULL,
+    deployment_created_at text DEFAULT ''::text NOT NULL,
+    image_digest text DEFAULT ''::text NOT NULL,
+    platform_tenant_id uuid,
+    guest_cpu_time_ms integer DEFAULT 0 NOT NULL,
+    guest_peak_rss_mb integer DEFAULT 0 NOT NULL,
+    guest_resource_usage_available boolean DEFAULT false NOT NULL,
+    flag_evidence jsonb DEFAULT '[]'::jsonb NOT NULL,
+    CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
+    CONSTRAINT request_telemetry_country_check CHECK (((country = '__unknown__'::text) OR (country ~ '^[A-Z]{2}$'::text))),
+    CONSTRAINT request_telemetry_flag_evidence_check CHECK ((jsonb_typeof(flag_evidence) = 'array'::text)),
+    CONSTRAINT request_telemetry_guest_cpu_time_ms_check CHECK (((guest_cpu_time_ms >= 0) AND (guest_cpu_time_ms <= 86400000))),
+    CONSTRAINT request_telemetry_guest_duration_ms_check CHECK (((guest_duration_ms >= 0) AND (guest_duration_ms <= 86400000))),
+    CONSTRAINT request_telemetry_guest_error_class_check CHECK ((guest_error_class = ANY (ARRAY[''::text, 'http_5xx'::text, 'handler_exec'::text, 'handler_protocol'::text, 'timeout'::text, 'canceled'::text]))),
+    CONSTRAINT request_telemetry_guest_outcome_check CHECK ((guest_outcome = ANY (ARRAY['ok'::text, 'http_error'::text, 'handler_error'::text, 'timeout'::text, 'canceled'::text, 'missing'::text]))),
+    CONSTRAINT request_telemetry_guest_peak_rss_mb_check CHECK (((guest_peak_rss_mb >= 0) AND (guest_peak_rss_mb <= 65536))),
+    CONSTRAINT request_telemetry_guest_runtime_check CHECK ((guest_runtime = ANY (ARRAY['node22'::text, 'node24'::text, 'python312'::text, 'python313'::text, 'go124'::text, '__unknown__'::text]))),
+    CONSTRAINT request_telemetry_latency_ms_check CHECK ((latency_ms >= 0)),
+    CONSTRAINT request_telemetry_method_check CHECK ((method = ANY (ARRAY['GET'::text, 'POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text, 'HEAD'::text, 'OPTIONS'::text]))),
+    CONSTRAINT request_telemetry_referrer_host_check CHECK ((((length(referrer_host) >= 1) AND (length(referrer_host) <= 253)) AND (referrer_host = lower(referrer_host)) AND (referrer_host !~ '[/?#[:space:]]'::text))),
+    CONSTRAINT request_telemetry_route_check CHECK (((length(route) >= 1) AND (length(route) <= 256))),
+    CONSTRAINT request_telemetry_status_check CHECK (((status >= 100) AND (status <= 599))),
+    CONSTRAINT request_telemetry_trace_id_check CHECK (((trace_id IS NULL) OR (trace_id ~ '^[0-9a-f]{32}$'::text))),
+    CONSTRAINT request_telemetry_ua_family_check CHECK ((ua_family = ANY (ARRAY['chrome'::text, 'edge'::text, 'firefox'::text, 'safari'::text, 'opera'::text, 'curl'::text, 'wget'::text, 'python'::text, 'go'::text, 'java'::text, 'bot'::text, 'other'::text, '__unknown__'::text])))
+);
+
+
+--
+-- Name: request_telemetry_202612; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.request_telemetry_202612 (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     account_id uuid NOT NULL,
     app_id uuid NOT NULL,
@@ -10553,13 +10900,6 @@ ALTER TABLE ONLY public.log_events ATTACH PARTITION public.log_events_default DE
 
 
 --
--- Name: request_telemetry_202609; Type: TABLE ATTACH; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202609 FOR VALUES FROM ('2026-09-01 00:00:00+03') TO ('2026-10-01 00:00:00+03');
-
-
---
 -- Name: request_telemetry_202610; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
@@ -10571,6 +10911,13 @@ ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_teleme
 --
 
 ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202611 FOR VALUES FROM ('2026-11-01 00:00:00+03') TO ('2026-12-01 00:00:00+03');
+
+
+--
+-- Name: request_telemetry_202612; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202612 FOR VALUES FROM ('2026-12-01 00:00:00+03') TO ('2027-01-01 00:00:00+03');
 
 
 --
@@ -11611,6 +11958,142 @@ ALTER TABLE ONLY public.egress_policy
 
 ALTER TABLE ONLY public.email_verification_tokens
     ADD CONSTRAINT email_verification_tokens_pkey PRIMARY KEY (token_hash);
+
+
+--
+-- Name: environment_desired_revisions environment_desired_revisions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_desired_revisions
+    ADD CONSTRAINT environment_desired_revisions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: environment_desired_revisions environment_desired_revisions_source_id_commit_sha_definiti_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_desired_revisions
+    ADD CONSTRAINT environment_desired_revisions_source_id_commit_sha_definiti_key UNIQUE (source_id, commit_sha, definition_digest);
+
+
+--
+-- Name: environment_desired_revisions environment_desired_revisions_source_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_desired_revisions
+    ADD CONSTRAINT environment_desired_revisions_source_id_id_key UNIQUE (source_id, id);
+
+
+--
+-- Name: environment_git_sources environment_git_sources_environment_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_git_sources
+    ADD CONSTRAINT environment_git_sources_environment_id_key UNIQUE (environment_id);
+
+
+--
+-- Name: environment_git_sources environment_git_sources_id_environment_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_git_sources
+    ADD CONSTRAINT environment_git_sources_id_environment_id_key UNIQUE (id, environment_id);
+
+
+--
+-- Name: environment_git_sources environment_git_sources_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_git_sources
+    ADD CONSTRAINT environment_git_sources_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: environment_gitops_effects environment_gitops_effects_gateway_generation_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_gitops_effects
+    ADD CONSTRAINT environment_gitops_effects_gateway_generation_key UNIQUE (gateway_generation);
+
+
+--
+-- Name: environment_gitops_effects environment_gitops_effects_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_gitops_effects
+    ADD CONSTRAINT environment_gitops_effects_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: environment_gitops_effects environment_gitops_effects_source_id_generation_plan_hash_a_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_gitops_effects
+    ADD CONSTRAINT environment_gitops_effects_source_id_generation_plan_hash_a_key UNIQUE (source_id, generation, plan_hash, app_id, kind);
+
+
+--
+-- Name: environment_gitops_events environment_gitops_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_gitops_events
+    ADD CONSTRAINT environment_gitops_events_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: environment_gitops_jobs environment_gitops_jobs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_gitops_jobs
+    ADD CONSTRAINT environment_gitops_jobs_pkey PRIMARY KEY (source_id);
+
+
+--
+-- Name: environment_gitops_resources environment_gitops_resources_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_gitops_resources
+    ADD CONSTRAINT environment_gitops_resources_pkey PRIMARY KEY (source_id, logical_name);
+
+
+--
+-- Name: environment_gitops_resources environment_gitops_resources_source_id_app_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_gitops_resources
+    ADD CONSTRAINT environment_gitops_resources_source_id_app_id_key UNIQUE (source_id, app_id);
+
+
+--
+-- Name: environment_gitops_runs environment_gitops_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_gitops_runs
+    ADD CONSTRAINT environment_gitops_runs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: environment_managed_fields environment_managed_fields_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_managed_fields
+    ADD CONSTRAINT environment_managed_fields_pkey PRIMARY KEY (environment_id, resource, field_path);
+
+
+--
+-- Name: environment_management_overrides environment_management_overri_environment_id_resource_field_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_management_overrides
+    ADD CONSTRAINT environment_management_overri_environment_id_resource_field_key UNIQUE (environment_id, resource, field_path);
+
+
+--
+-- Name: environment_management_overrides environment_management_overrides_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_management_overrides
+    ADD CONSTRAINT environment_management_overrides_pkey PRIMARY KEY (id);
 
 
 --
@@ -12974,6 +13457,14 @@ ALTER TABLE ONLY public.project_environment_route_policies
 
 
 --
+-- Name: project_environments project_environments_gitops_scope_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environments
+    ADD CONSTRAINT project_environments_gitops_scope_uniq UNIQUE (account_id, project_id, id);
+
+
+--
 -- Name: project_environments project_environments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -13078,14 +13569,6 @@ ALTER TABLE ONLY public.request_telemetry
 
 
 --
--- Name: request_telemetry_202609 request_telemetry_202609_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.request_telemetry_202609
-    ADD CONSTRAINT request_telemetry_202609_pkey PRIMARY KEY (id, received_at);
-
-
---
 -- Name: request_telemetry_202610 request_telemetry_202610_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -13099,6 +13582,14 @@ ALTER TABLE ONLY public.request_telemetry_202610
 
 ALTER TABLE ONLY public.request_telemetry_202611
     ADD CONSTRAINT request_telemetry_202611_pkey PRIMARY KEY (id, received_at);
+
+
+--
+-- Name: request_telemetry_202612 request_telemetry_202612_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.request_telemetry_202612
+    ADD CONSTRAINT request_telemetry_202612_pkey PRIMARY KEY (id, received_at);
 
 
 --
@@ -15113,6 +15604,41 @@ CREATE INDEX email_verification_tokens_account_idx ON public.email_verification_
 
 
 --
+-- Name: environment_gitops_effects_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX environment_gitops_effects_pending_idx ON public.environment_gitops_effects USING btree (source_id, gateway_generation) WHERE (completed_at IS NULL);
+
+
+--
+-- Name: environment_gitops_events_history; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX environment_gitops_events_history ON public.environment_gitops_events USING btree (source_id, created_at DESC, id DESC);
+
+
+--
+-- Name: environment_gitops_jobs_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX environment_gitops_jobs_due_idx ON public.environment_gitops_jobs USING btree (next_attempt_at);
+
+
+--
+-- Name: environment_gitops_runs_source_history_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX environment_gitops_runs_source_history_idx ON public.environment_gitops_runs USING btree (source_id, started_at DESC, id DESC);
+
+
+--
+-- Name: environment_gitops_runs_source_lease_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX environment_gitops_runs_source_lease_uniq ON public.environment_gitops_runs USING btree (source_id, lease_token);
+
+
+--
 -- Name: event_fanout_attempt_history_app_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -17101,10 +17627,10 @@ CREATE INDEX request_telemetry_platform_tenant_received_idx ON ONLY public.reque
 
 
 --
--- Name: request_telemetry_202609_account_id_platform_tenant_id_rece_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: request_telemetry_202610_account_id_platform_tenant_id_rece_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX request_telemetry_202609_account_id_platform_tenant_id_rece_idx ON public.request_telemetry_202609 USING btree (account_id, platform_tenant_id, received_at DESC, id DESC) WHERE (platform_tenant_id IS NOT NULL);
+CREATE INDEX request_telemetry_202610_account_id_platform_tenant_id_rece_idx ON public.request_telemetry_202610 USING btree (account_id, platform_tenant_id, received_at DESC, id DESC) WHERE (platform_tenant_id IS NOT NULL);
 
 
 --
@@ -17115,10 +17641,10 @@ CREATE INDEX request_telemetry_app_consumer_received_idx ON ONLY public.request_
 
 
 --
--- Name: request_telemetry_202609_app_id_consumer_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: request_telemetry_202610_app_id_consumer_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX request_telemetry_202609_app_id_consumer_id_received_at_idx ON public.request_telemetry_202609 USING btree (app_id, consumer_id, received_at DESC) WHERE (consumer_id IS NOT NULL);
+CREATE INDEX request_telemetry_202610_app_id_consumer_id_received_at_idx ON public.request_telemetry_202610 USING btree (app_id, consumer_id, received_at DESC) WHERE (consumer_id IS NOT NULL);
 
 
 --
@@ -17129,10 +17655,10 @@ CREATE INDEX request_telemetry_app_dep_received_idx ON ONLY public.request_telem
 
 
 --
--- Name: request_telemetry_202609_app_id_deployment_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: request_telemetry_202610_app_id_deployment_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX request_telemetry_202609_app_id_deployment_id_received_at_idx ON public.request_telemetry_202609 USING btree (app_id, deployment_id, received_at DESC);
+CREATE INDEX request_telemetry_202610_app_id_deployment_id_received_at_idx ON public.request_telemetry_202610 USING btree (app_id, deployment_id, received_at DESC);
 
 
 --
@@ -17143,10 +17669,10 @@ CREATE INDEX request_telemetry_app_received_idx ON ONLY public.request_telemetry
 
 
 --
--- Name: request_telemetry_202609_app_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: request_telemetry_202610_app_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX request_telemetry_202609_app_id_received_at_idx ON public.request_telemetry_202609 USING btree (app_id, received_at DESC);
+CREATE INDEX request_telemetry_202610_app_id_received_at_idx ON public.request_telemetry_202610 USING btree (app_id, received_at DESC);
 
 
 --
@@ -17157,10 +17683,10 @@ CREATE INDEX request_telemetry_app_wake_received_idx ON ONLY public.request_tele
 
 
 --
--- Name: request_telemetry_202609_app_id_wake_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: request_telemetry_202610_app_id_wake_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX request_telemetry_202609_app_id_wake_id_received_at_idx ON public.request_telemetry_202609 USING btree (app_id, wake_id, received_at DESC) WHERE (wake_id IS NOT NULL);
+CREATE INDEX request_telemetry_202610_app_id_wake_id_received_at_idx ON public.request_telemetry_202610 USING btree (app_id, wake_id, received_at DESC) WHERE (wake_id IS NOT NULL);
 
 
 --
@@ -17168,48 +17694,6 @@ CREATE INDEX request_telemetry_202609_app_id_wake_id_received_at_idx ON public.r
 --
 
 CREATE INDEX request_telemetry_trace_idx ON ONLY public.request_telemetry USING btree (trace_id) WHERE (trace_id IS NOT NULL);
-
-
---
--- Name: request_telemetry_202609_trace_id_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX request_telemetry_202609_trace_id_idx ON public.request_telemetry_202609 USING btree (trace_id) WHERE (trace_id IS NOT NULL);
-
-
---
--- Name: request_telemetry_202610_account_id_platform_tenant_id_rece_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX request_telemetry_202610_account_id_platform_tenant_id_rece_idx ON public.request_telemetry_202610 USING btree (account_id, platform_tenant_id, received_at DESC, id DESC) WHERE (platform_tenant_id IS NOT NULL);
-
-
---
--- Name: request_telemetry_202610_app_id_consumer_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX request_telemetry_202610_app_id_consumer_id_received_at_idx ON public.request_telemetry_202610 USING btree (app_id, consumer_id, received_at DESC) WHERE (consumer_id IS NOT NULL);
-
-
---
--- Name: request_telemetry_202610_app_id_deployment_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX request_telemetry_202610_app_id_deployment_id_received_at_idx ON public.request_telemetry_202610 USING btree (app_id, deployment_id, received_at DESC);
-
-
---
--- Name: request_telemetry_202610_app_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX request_telemetry_202610_app_id_received_at_idx ON public.request_telemetry_202610 USING btree (app_id, received_at DESC);
-
-
---
--- Name: request_telemetry_202610_app_id_wake_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX request_telemetry_202610_app_id_wake_id_received_at_idx ON public.request_telemetry_202610 USING btree (app_id, wake_id, received_at DESC) WHERE (wake_id IS NOT NULL);
 
 
 --
@@ -17259,6 +17743,48 @@ CREATE INDEX request_telemetry_202611_app_id_wake_id_received_at_idx ON public.r
 --
 
 CREATE INDEX request_telemetry_202611_trace_id_idx ON public.request_telemetry_202611 USING btree (trace_id) WHERE (trace_id IS NOT NULL);
+
+
+--
+-- Name: request_telemetry_202612_account_id_platform_tenant_id_rece_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_telemetry_202612_account_id_platform_tenant_id_rece_idx ON public.request_telemetry_202612 USING btree (account_id, platform_tenant_id, received_at DESC, id DESC) WHERE (platform_tenant_id IS NOT NULL);
+
+
+--
+-- Name: request_telemetry_202612_app_id_consumer_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_telemetry_202612_app_id_consumer_id_received_at_idx ON public.request_telemetry_202612 USING btree (app_id, consumer_id, received_at DESC) WHERE (consumer_id IS NOT NULL);
+
+
+--
+-- Name: request_telemetry_202612_app_id_deployment_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_telemetry_202612_app_id_deployment_id_received_at_idx ON public.request_telemetry_202612 USING btree (app_id, deployment_id, received_at DESC);
+
+
+--
+-- Name: request_telemetry_202612_app_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_telemetry_202612_app_id_received_at_idx ON public.request_telemetry_202612 USING btree (app_id, received_at DESC);
+
+
+--
+-- Name: request_telemetry_202612_app_id_wake_id_received_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_telemetry_202612_app_id_wake_id_received_at_idx ON public.request_telemetry_202612 USING btree (app_id, wake_id, received_at DESC) WHERE (wake_id IS NOT NULL);
+
+
+--
+-- Name: request_telemetry_202612_trace_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX request_telemetry_202612_trace_id_idx ON public.request_telemetry_202612 USING btree (trace_id) WHERE (trace_id IS NOT NULL);
 
 
 --
@@ -18060,55 +18586,6 @@ ALTER INDEX public.log_events_pkey ATTACH PARTITION public.log_events_default_pk
 
 
 --
--- Name: request_telemetry_202609_account_id_platform_tenant_id_rece_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.request_telemetry_platform_tenant_received_idx ATTACH PARTITION public.request_telemetry_202609_account_id_platform_tenant_id_rece_idx;
-
-
---
--- Name: request_telemetry_202609_app_id_consumer_id_received_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.request_telemetry_app_consumer_received_idx ATTACH PARTITION public.request_telemetry_202609_app_id_consumer_id_received_at_idx;
-
-
---
--- Name: request_telemetry_202609_app_id_deployment_id_received_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.request_telemetry_app_dep_received_idx ATTACH PARTITION public.request_telemetry_202609_app_id_deployment_id_received_at_idx;
-
-
---
--- Name: request_telemetry_202609_app_id_received_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.request_telemetry_app_received_idx ATTACH PARTITION public.request_telemetry_202609_app_id_received_at_idx;
-
-
---
--- Name: request_telemetry_202609_app_id_wake_id_received_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.request_telemetry_app_wake_received_idx ATTACH PARTITION public.request_telemetry_202609_app_id_wake_id_received_at_idx;
-
-
---
--- Name: request_telemetry_202609_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.request_telemetry_pkey ATTACH PARTITION public.request_telemetry_202609_pkey;
-
-
---
--- Name: request_telemetry_202609_trace_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.request_telemetry_trace_idx ATTACH PARTITION public.request_telemetry_202609_trace_id_idx;
-
-
---
 -- Name: request_telemetry_202610_account_id_platform_tenant_id_rece_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
@@ -18204,6 +18681,55 @@ ALTER INDEX public.request_telemetry_pkey ATTACH PARTITION public.request_teleme
 --
 
 ALTER INDEX public.request_telemetry_trace_idx ATTACH PARTITION public.request_telemetry_202611_trace_id_idx;
+
+
+--
+-- Name: request_telemetry_202612_account_id_platform_tenant_id_rece_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.request_telemetry_platform_tenant_received_idx ATTACH PARTITION public.request_telemetry_202612_account_id_platform_tenant_id_rece_idx;
+
+
+--
+-- Name: request_telemetry_202612_app_id_consumer_id_received_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.request_telemetry_app_consumer_received_idx ATTACH PARTITION public.request_telemetry_202612_app_id_consumer_id_received_at_idx;
+
+
+--
+-- Name: request_telemetry_202612_app_id_deployment_id_received_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.request_telemetry_app_dep_received_idx ATTACH PARTITION public.request_telemetry_202612_app_id_deployment_id_received_at_idx;
+
+
+--
+-- Name: request_telemetry_202612_app_id_received_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.request_telemetry_app_received_idx ATTACH PARTITION public.request_telemetry_202612_app_id_received_at_idx;
+
+
+--
+-- Name: request_telemetry_202612_app_id_wake_id_received_at_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.request_telemetry_app_wake_received_idx ATTACH PARTITION public.request_telemetry_202612_app_id_wake_id_received_at_idx;
+
+
+--
+-- Name: request_telemetry_202612_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.request_telemetry_pkey ATTACH PARTITION public.request_telemetry_202612_pkey;
+
+
+--
+-- Name: request_telemetry_202612_trace_id_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.request_telemetry_trace_idx ATTACH PARTITION public.request_telemetry_202612_trace_id_idx;
 
 
 --
@@ -18610,6 +19136,69 @@ CREATE TRIGGER edge_rules_set_updated_at_trg BEFORE UPDATE ON public.edge_rules 
 --
 
 CREATE TRIGGER egress_policy_changed_trg AFTER INSERT OR UPDATE ON public.egress_policy FOR EACH ROW EXECUTE FUNCTION public.egress_policy_notify();
+
+
+--
+-- Name: apps environment_gitops_guard_app_presence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_gitops_guard_app_presence BEFORE DELETE OR UPDATE OF status ON public.apps FOR EACH ROW EXECUTE FUNCTION public.environment_gitops_guard_app_presence();
+
+
+--
+-- Name: project_environment_config_versions environment_gitops_guard_config; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_gitops_guard_config BEFORE INSERT ON public.project_environment_config_versions FOR EACH ROW EXECUTE FUNCTION public.environment_gitops_guard_intent();
+
+
+--
+-- Name: project_environment_config_versions environment_gitops_guard_config_history; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_gitops_guard_config_history BEFORE DELETE OR UPDATE ON public.project_environment_config_versions FOR EACH ROW EXECUTE FUNCTION public.environment_gitops_guard_config_history();
+
+
+--
+-- Name: app_envs environment_gitops_guard_env; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_gitops_guard_env BEFORE INSERT OR DELETE OR UPDATE ON public.app_envs FOR EACH ROW EXECUTE FUNCTION public.environment_gitops_guard_intent();
+
+
+--
+-- Name: app_envs environment_gitops_guard_identity_env; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_gitops_guard_identity_env BEFORE UPDATE ON public.app_envs FOR EACH ROW EXECUTE FUNCTION public.environment_gitops_guard_identity();
+
+
+--
+-- Name: project_environment_edge_policies environment_gitops_guard_identity_policies; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_gitops_guard_identity_policies BEFORE UPDATE ON public.project_environment_edge_policies FOR EACH ROW EXECUTE FUNCTION public.environment_gitops_guard_identity();
+
+
+--
+-- Name: project_environment_route_policies environment_gitops_guard_identity_routes; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_gitops_guard_identity_routes BEFORE UPDATE ON public.project_environment_route_policies FOR EACH ROW EXECUTE FUNCTION public.environment_gitops_guard_identity();
+
+
+--
+-- Name: project_environment_edge_policies environment_gitops_guard_policies; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_gitops_guard_policies BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_edge_policies FOR EACH ROW EXECUTE FUNCTION public.environment_gitops_guard_intent();
+
+
+--
+-- Name: project_environment_route_policies environment_gitops_guard_routes; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_gitops_guard_routes BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_route_policies FOR EACH ROW EXECUTE FUNCTION public.environment_gitops_guard_intent();
 
 
 --
@@ -20404,6 +20993,134 @@ ALTER TABLE ONLY public.edge_rules
 
 ALTER TABLE ONLY public.email_verification_tokens
     ADD CONSTRAINT email_verification_tokens_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_desired_revisions environment_desired_revisions_source_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_desired_revisions
+    ADD CONSTRAINT environment_desired_revisions_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.environment_git_sources(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_git_sources environment_git_sources_account_id_project_id_environment__fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_git_sources
+    ADD CONSTRAINT environment_git_sources_account_id_project_id_environment__fkey FOREIGN KEY (account_id, project_id, environment_id) REFERENCES public.project_environments(account_id, project_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_git_sources environment_git_sources_applied_revision_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_git_sources
+    ADD CONSTRAINT environment_git_sources_applied_revision_fk FOREIGN KEY (id, applied_revision_id) REFERENCES public.environment_desired_revisions(source_id, id) DEFERRABLE INITIALLY DEFERRED;
+
+
+--
+-- Name: environment_git_sources environment_git_sources_approved_revision_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_git_sources
+    ADD CONSTRAINT environment_git_sources_approved_revision_fk FOREIGN KEY (id, approved_revision_id) REFERENCES public.environment_desired_revisions(source_id, id) DEFERRABLE INITIALLY DEFERRED;
+
+
+--
+-- Name: environment_gitops_effects environment_gitops_effects_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_gitops_effects
+    ADD CONSTRAINT environment_gitops_effects_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_gitops_effects environment_gitops_effects_source_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_gitops_effects
+    ADD CONSTRAINT environment_gitops_effects_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.environment_git_sources(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_gitops_effects environment_gitops_effects_source_id_revision_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_gitops_effects
+    ADD CONSTRAINT environment_gitops_effects_source_id_revision_id_fkey FOREIGN KEY (source_id, revision_id) REFERENCES public.environment_desired_revisions(source_id, id);
+
+
+--
+-- Name: environment_gitops_events environment_gitops_events_source_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_gitops_events
+    ADD CONSTRAINT environment_gitops_events_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.environment_git_sources(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_gitops_jobs environment_gitops_jobs_source_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_gitops_jobs
+    ADD CONSTRAINT environment_gitops_jobs_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.environment_git_sources(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_gitops_resources environment_gitops_resources_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_gitops_resources
+    ADD CONSTRAINT environment_gitops_resources_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE SET NULL;
+
+
+--
+-- Name: environment_gitops_resources environment_gitops_resources_source_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_gitops_resources
+    ADD CONSTRAINT environment_gitops_resources_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.environment_git_sources(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_gitops_runs environment_gitops_runs_source_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_gitops_runs
+    ADD CONSTRAINT environment_gitops_runs_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.environment_git_sources(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_gitops_runs environment_gitops_runs_source_id_revision_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_gitops_runs
+    ADD CONSTRAINT environment_gitops_runs_source_id_revision_id_fkey FOREIGN KEY (source_id, revision_id) REFERENCES public.environment_desired_revisions(source_id, id);
+
+
+--
+-- Name: environment_managed_fields environment_managed_fields_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_managed_fields
+    ADD CONSTRAINT environment_managed_fields_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_managed_fields environment_managed_fields_source_id_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_managed_fields
+    ADD CONSTRAINT environment_managed_fields_source_id_environment_id_fkey FOREIGN KEY (source_id, environment_id) REFERENCES public.environment_git_sources(id, environment_id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_management_overrides environment_management_overri_environment_id_resource_fiel_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_management_overrides
+    ADD CONSTRAINT environment_management_overri_environment_id_resource_fiel_fkey FOREIGN KEY (environment_id, resource, field_path) REFERENCES public.environment_managed_fields(environment_id, resource, field_path) ON DELETE CASCADE;
 
 
 --
