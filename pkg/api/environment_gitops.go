@@ -71,21 +71,24 @@ type EnvironmentGitSourceSpec struct {
 }
 
 type EnvironmentGitSource struct {
-	ID                 string                   `json:"id"`
-	AccountID          string                   `json:"account_id"`
-	ProjectID          string                   `json:"project_id"`
-	EnvironmentID      string                   `json:"environment_id"`
-	EnvironmentSlug    string                   `json:"environment"`
-	Spec               EnvironmentGitSourceSpec `json:"source"`
-	Suspended          bool                     `json:"suspended"`
-	Generation         int64                    `json:"generation"`
-	IntentVersion      int64                    `json:"intent_version"`
-	ApprovedRevisionID string                   `json:"approved_revision_id,omitempty"`
-	AppliedRevisionID  string                   `json:"applied_revision_id,omitempty"`
-	SourceCheckedAt    *time.Time               `json:"source_checked_at,omitempty"`
-	SourceErrorCode    string                   `json:"source_error_code,omitempty"`
-	CreatedAt          time.Time                `json:"created_at"`
-	UpdatedAt          time.Time                `json:"updated_at"`
+	ID                     string                   `json:"id"`
+	AccountID              string                   `json:"account_id"`
+	ProjectID              string                   `json:"project_id"`
+	EnvironmentID          string                   `json:"environment_id"`
+	EnvironmentSlug        string                   `json:"environment"`
+	Spec                   EnvironmentGitSourceSpec `json:"source"`
+	Suspended              bool                     `json:"suspended"`
+	Generation             int64                    `json:"generation"`
+	IntentVersion          int64                    `json:"intent_version"`
+	ApprovedRevisionID     string                   `json:"approved_revision_id,omitempty"`
+	AppliedRevisionID      string                   `json:"applied_revision_id,omitempty"`
+	SourceCheckedAt        *time.Time               `json:"source_checked_at,omitempty"`
+	SourceErrorCode        string                   `json:"source_error_code,omitempty"`
+	SourceCommitSHA        string                   `json:"source_commit_sha,omitempty"`
+	SourceDefinitionDigest string                   `json:"source_definition_digest,omitempty"`
+	SourceVerifiedAt       *time.Time               `json:"source_verified_at,omitempty"`
+	CreatedAt              time.Time                `json:"created_at"`
+	UpdatedAt              time.Time                `json:"updated_at"`
 }
 
 type EnvironmentDesiredRevision struct {

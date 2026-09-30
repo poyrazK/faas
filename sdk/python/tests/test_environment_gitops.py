@@ -12,6 +12,7 @@ from faas_sdk.api.projects import (
 )
 from faas_sdk.models import (
     ApproveEnvironmentGitRevisionRequest,
+    ApproveEnvironmentGitRevisionResponse,
     PreviewEnvironmentGitRevisionRequest,
     PreviewEnvironmentGitRevisionResponse,
     RemoveEnvironmentGitOpsOverrideRequest,
@@ -29,6 +30,8 @@ def test_reviewed_authority_and_override_identity() -> None:
         "id": "source", "account_id": "account", "project_id": "project", "environment_id": "environment",
         "environment": "production", "suspended": False, "generation": 8, "intent_version": 1,
         "created_at": "2026-09-30T00:00:00Z", "updated_at": "2026-09-30T00:00:00Z",
+        "approved_revision_id": "approved", "source_commit_sha": "c" * 40, "source_definition_digest": digest,
+        "source_verified_at": "2026-10-01T00:00:00Z", "source_error_code": "environment_git_source_unavailable",
         "source": {
             "repository_id": 123, "installation_id": 42, "repository": "example/shop", "ref": "refs/heads/main",
             "manifest_path": "environment.yaml", "mode": "report", "approval_policy": "manual", "prune": False,
@@ -55,6 +58,13 @@ def test_reviewed_authority_and_override_identity() -> None:
             body=ApproveEnvironmentGitRevisionRequest(commit_sha=review.commit_sha,
                 definition_digest=review.definition_digest, expected_generation=review.generation))
         assert approved.status_code == 202
+        assert isinstance(approved.parsed, ApproveEnvironmentGitRevisionResponse)
+        assert approved.parsed.source.source_commit_sha == "c" * 40
+        assert approved.parsed.source.source_definition_digest == digest
+        assert approved.parsed.source.source_verified_at.isoformat() == "2026-10-01T00:00:00+00:00"
+        assert approved.parsed.source.source_error_code == "environment_git_source_unavailable"
+        assert approved.parsed.source.approved_revision_id == "approved"
+        assert approved.parsed.source.to_dict()["source_commit_sha"] == "c" * 40
         removed = remove_environment_git_ops_override.sync_detailed("my project", "production", client=client.inner,
             body=RemoveEnvironmentGitOpsOverrideRequest(resource="workload/api", path="variables/MODE"))
         assert removed.status_code == 204

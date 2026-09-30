@@ -1296,6 +1296,20 @@ $$;
 
 
 --
+-- Name: enqueue_environment_git_source_poll(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enqueue_environment_git_source_poll() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    INSERT INTO environment_git_source_polls(source_id) VALUES (NEW.id);
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: enqueue_event_fanout(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -6003,6 +6017,19 @@ CREATE TABLE public.environment_desired_revisions (
 
 
 --
+-- Name: environment_git_source_polls; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_git_source_polls (
+    source_id uuid NOT NULL,
+    next_poll_at timestamp with time zone DEFAULT now() NOT NULL,
+    lease_token uuid,
+    lease_until timestamp with time zone,
+    CONSTRAINT environment_git_source_polls_check CHECK (((lease_token IS NULL) = (lease_until IS NULL)))
+);
+
+
+--
 -- Name: environment_git_sources; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -6028,6 +6055,11 @@ CREATE TABLE public.environment_git_sources (
     source_error_code text DEFAULT ''::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    source_commit_sha text DEFAULT ''::text NOT NULL,
+    source_definition_digest text DEFAULT ''::text NOT NULL,
+    source_verified_at timestamp with time zone,
+    CONSTRAINT environment_git_source_candidate_complete CHECK ((((source_commit_sha = ''::text) AND (source_definition_digest = ''::text) AND (source_verified_at IS NULL)) OR ((source_commit_sha <> ''::text) AND (source_definition_digest <> ''::text) AND (source_verified_at IS NOT NULL)))),
+    CONSTRAINT environment_git_source_poll_error_code CHECK ((source_error_code = ANY (ARRAY[''::text, 'environment_git_source_unavailable'::text, 'environment_git_definition_invalid'::text, 'environment_git_scope_mismatch'::text, 'environment_git_repository_unavailable'::text]))),
     CONSTRAINT environment_git_sources_approval_policy_check CHECK ((approval_policy = ANY (ARRAY['manual'::text, 'protected_branch'::text]))),
     CONSTRAINT environment_git_sources_generation_check CHECK ((generation >= 0)),
     CONSTRAINT environment_git_sources_installation_id_check CHECK ((installation_id > 0)),
@@ -6036,6 +6068,8 @@ CREATE TABLE public.environment_git_sources (
     CONSTRAINT environment_git_sources_mode_check CHECK ((mode = ANY (ARRAY['report'::text, 'enforce'::text]))),
     CONSTRAINT environment_git_sources_repository_check CHECK ((repository ~ '^[^/[:space:]]+/[^/[:space:]]+$'::text)),
     CONSTRAINT environment_git_sources_repository_id_check CHECK ((repository_id > 0)),
+    CONSTRAINT environment_git_sources_source_commit_sha_check CHECK (((source_commit_sha = ''::text) OR (source_commit_sha ~ '^([a-f0-9]{40}|[a-f0-9]{64})$'::text))),
+    CONSTRAINT environment_git_sources_source_definition_digest_check CHECK (((source_definition_digest = ''::text) OR (source_definition_digest ~ '^[a-f0-9]{64}$'::text))),
     CONSTRAINT environment_git_sources_source_ref_check CHECK (((source_ref <> ''::text) AND (source_ref !~ '[[:space:]]'::text)))
 );
 
@@ -12244,6 +12278,14 @@ ALTER TABLE ONLY public.environment_desired_revisions
 
 
 --
+-- Name: environment_git_source_polls environment_git_source_polls_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_git_source_polls
+    ADD CONSTRAINT environment_git_source_polls_pkey PRIMARY KEY (source_id);
+
+
+--
 -- Name: environment_git_sources environment_git_sources_environment_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -15942,6 +15984,13 @@ CREATE INDEX email_verification_tokens_account_idx ON public.email_verification_
 
 
 --
+-- Name: environment_git_source_polls_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX environment_git_source_polls_due_idx ON public.environment_git_source_polls USING btree (next_poll_at, source_id);
+
+
+--
 -- Name: environment_gitops_effects_pending_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -19526,6 +19575,13 @@ CREATE TRIGGER egress_policy_changed_trg AFTER INSERT OR UPDATE ON public.egress
 
 
 --
+-- Name: environment_git_sources environment_git_source_poll_created; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_git_source_poll_created AFTER INSERT ON public.environment_git_sources FOR EACH ROW EXECUTE FUNCTION public.enqueue_environment_git_source_poll();
+
+
+--
 -- Name: apps environment_gitops_guard_app_presence; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -21420,6 +21476,14 @@ ALTER TABLE ONLY public.email_verification_tokens
 
 ALTER TABLE ONLY public.environment_desired_revisions
     ADD CONSTRAINT environment_desired_revisions_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.environment_git_sources(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_git_source_polls environment_git_source_polls_source_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_git_source_polls
+    ADD CONSTRAINT environment_git_source_polls_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.environment_git_sources(id) ON DELETE CASCADE;
 
 
 --

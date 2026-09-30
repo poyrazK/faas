@@ -31,10 +31,15 @@ func environmentGitSourceFromSQL(row sqlc.EnvironmentGitSource, environment stri
 		Suspended: row.Suspended, Generation: row.Generation, IntentVersion: row.IntentVersion,
 		ApprovedRevisionID: pgUUIDString(row.ApprovedRevisionID), AppliedRevisionID: pgUUIDString(row.AppliedRevisionID),
 		SourceErrorCode: row.SourceErrorCode, CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time,
+		SourceCommitSHA: row.SourceCommitSha, SourceDefinitionDigest: row.SourceDefinitionDigest,
 	}
 	if row.SourceCheckedAt.Valid {
 		checked := row.SourceCheckedAt.Time
 		out.SourceCheckedAt = &checked
+	}
+	if row.SourceVerifiedAt.Valid {
+		verified := row.SourceVerifiedAt.Time
+		out.SourceVerifiedAt = &verified
 	}
 	return out
 }

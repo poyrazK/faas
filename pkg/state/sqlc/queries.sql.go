@@ -875,6 +875,35 @@ func (q *Queries) ClaimEnvironmentGitOpsJob(ctx context.Context, db DBTX, arg Cl
 	return i, err
 }
 
+const claimEnvironmentGitSourcePoll = `-- name: ClaimEnvironmentGitSourcePoll :one
+WITH candidate AS (
+    SELECT p.source_id FROM environment_git_source_polls p JOIN environment_git_sources s ON s.id = p.source_id
+    WHERE NOT s.suspended AND p.next_poll_at <= $3::timestamptz
+      AND (p.lease_until IS NULL OR p.lease_until <= $3::timestamptz)
+    ORDER BY p.next_poll_at, p.source_id FOR UPDATE OF p SKIP LOCKED LIMIT 1
+)
+UPDATE environment_git_source_polls p SET lease_token = $1::uuid, lease_until = $2::timestamptz
+FROM candidate WHERE p.source_id = candidate.source_id RETURNING p.source_id, p.next_poll_at, p.lease_token, p.lease_until
+`
+
+type ClaimEnvironmentGitSourcePollParams struct {
+	LeaseToken pgtype.UUID
+	LeaseUntil pgtype.Timestamptz
+	NowAt      pgtype.Timestamptz
+}
+
+func (q *Queries) ClaimEnvironmentGitSourcePoll(ctx context.Context, db DBTX, arg ClaimEnvironmentGitSourcePollParams) (EnvironmentGitSourcePoll, error) {
+	row := db.QueryRow(ctx, claimEnvironmentGitSourcePoll, arg.LeaseToken, arg.LeaseUntil, arg.NowAt)
+	var i EnvironmentGitSourcePoll
+	err := row.Scan(
+		&i.SourceID,
+		&i.NextPollAt,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+	)
+	return i, err
+}
+
 const claimTriggerRecords = `-- name: ClaimTriggerRecords :many
 WITH due AS MATERIALIZED (
     SELECT candidate.id FROM trigger_records candidate
@@ -1657,7 +1686,7 @@ FROM projects p JOIN project_environments e ON e.project_id = p.id AND e.account
 WHERE p.account_id = $9::uuid AND p.id = $10::uuid
   AND e.slug = $11::text
   AND p.repo_full_name = $3::text AND p.install_id = $2::bigint
-RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at
+RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at
 `
 
 type CreateEnvironmentGitSourceParams struct {
@@ -1711,6 +1740,9 @@ func (q *Queries) CreateEnvironmentGitSource(ctx context.Context, db DBTX, arg C
 		&i.SourceErrorCode,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SourceCommitSha,
+		&i.SourceDefinitionDigest,
+		&i.SourceVerifiedAt,
 	)
 	return i, err
 }
@@ -4411,6 +4443,31 @@ func (q *Queries) FinishEnvironmentGitOpsRun(ctx context.Context, db DBTX, arg F
 	return result.RowsAffected(), nil
 }
 
+const finishEnvironmentGitSourcePoll = `-- name: FinishEnvironmentGitSourcePoll :execrows
+UPDATE environment_git_source_polls SET lease_token = NULL, lease_until = NULL, next_poll_at = $1::timestamptz
+WHERE source_id = $2::uuid AND lease_token = $3::uuid AND lease_until > $4::timestamptz
+`
+
+type FinishEnvironmentGitSourcePollParams struct {
+	NextPollAt pgtype.Timestamptz
+	SourceID   pgtype.UUID
+	LeaseToken pgtype.UUID
+	NowAt      pgtype.Timestamptz
+}
+
+func (q *Queries) FinishEnvironmentGitSourcePoll(ctx context.Context, db DBTX, arg FinishEnvironmentGitSourcePollParams) (int64, error) {
+	result, err := db.Exec(ctx, finishEnvironmentGitSourcePoll,
+		arg.NextPollAt,
+		arg.SourceID,
+		arg.LeaseToken,
+		arg.NowAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getAppErrorSample = `-- name: GetAppErrorSample :one
 SELECT
     id, request_id, received_at, route, http_status,
@@ -4660,7 +4717,7 @@ func (q *Queries) GetEnvironmentGitOpsScope(ctx context.Context, db DBTX, source
 }
 
 const getEnvironmentGitSource = `-- name: GetEnvironmentGitSource :one
-SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at FROM environment_git_sources s
+SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at FROM environment_git_sources s
 JOIN project_environments e ON e.id = s.environment_id
 WHERE s.account_id = $1::uuid AND s.project_id = $2::uuid
   AND e.slug = $3::text
@@ -4697,12 +4754,15 @@ func (q *Queries) GetEnvironmentGitSource(ctx context.Context, db DBTX, arg GetE
 		&i.SourceErrorCode,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SourceCommitSha,
+		&i.SourceDefinitionDigest,
+		&i.SourceVerifiedAt,
 	)
 	return i, err
 }
 
 const getEnvironmentGitSourceByID = `-- name: GetEnvironmentGitSourceByID :one
-SELECT id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at FROM environment_git_sources WHERE id = $1::uuid
+SELECT id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at FROM environment_git_sources WHERE id = $1::uuid
 `
 
 func (q *Queries) GetEnvironmentGitSourceByID(ctx context.Context, db DBTX, sourceID pgtype.UUID) (EnvironmentGitSource, error) {
@@ -4730,6 +4790,9 @@ func (q *Queries) GetEnvironmentGitSourceByID(ctx context.Context, db DBTX, sour
 		&i.SourceErrorCode,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SourceCommitSha,
+		&i.SourceDefinitionDigest,
+		&i.SourceVerifiedAt,
 	)
 	return i, err
 }
@@ -10913,7 +10976,7 @@ func (q *Queries) LockEnvironmentGitOpsRuntimeEffect(ctx context.Context, db DBT
 }
 
 const lockEnvironmentGitSource = `-- name: LockEnvironmentGitSource :one
-SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at FROM environment_git_sources s
+SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at FROM environment_git_sources s
 WHERE s.account_id = $1::uuid AND s.id = $2::uuid
 FOR UPDATE
 `
@@ -10948,6 +11011,9 @@ func (q *Queries) LockEnvironmentGitSource(ctx context.Context, db DBTX, arg Loc
 		&i.SourceErrorCode,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SourceCommitSha,
+		&i.SourceDefinitionDigest,
+		&i.SourceVerifiedAt,
 	)
 	return i, err
 }
@@ -15152,6 +15218,34 @@ func (q *Queries) RecordEnvironmentGitOpsEvent(ctx context.Context, db DBTX, arg
 	return err
 }
 
+const recordEnvironmentGitSourcePoll = `-- name: RecordEnvironmentGitSourcePoll :exec
+UPDATE environment_git_sources SET source_checked_at = $1::timestamptz,
+    source_error_code = $2::text,
+    source_commit_sha = CASE WHEN $2::text = '' THEN $3::text ELSE source_commit_sha END,
+    source_definition_digest = CASE WHEN $2::text = '' THEN $4::text ELSE source_definition_digest END,
+    source_verified_at = CASE WHEN $2::text = '' THEN $1::timestamptz ELSE source_verified_at END
+WHERE id = $5::uuid
+`
+
+type RecordEnvironmentGitSourcePollParams struct {
+	CheckedAt        pgtype.Timestamptz
+	ErrorCode        string
+	CommitSha        string
+	DefinitionDigest string
+	SourceID         pgtype.UUID
+}
+
+func (q *Queries) RecordEnvironmentGitSourcePoll(ctx context.Context, db DBTX, arg RecordEnvironmentGitSourcePollParams) error {
+	_, err := db.Exec(ctx, recordEnvironmentGitSourcePoll,
+		arg.CheckedAt,
+		arg.ErrorCode,
+		arg.CommitSha,
+		arg.DefinitionDigest,
+		arg.SourceID,
+	)
+	return err
+}
+
 const recordMailSuppression = `-- name: RecordMailSuppression :one
 
 INSERT INTO mail_suppressions (
@@ -17380,7 +17474,7 @@ UPDATE environment_git_sources
 SET approved_revision_id = $1::uuid,
     generation = generation + 1, updated_at = now()
 WHERE id = $2::uuid AND generation = $3::bigint
-RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at
+RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at
 `
 
 type SetEnvironmentApprovedRevisionParams struct {
@@ -17414,6 +17508,9 @@ func (q *Queries) SetEnvironmentApprovedRevision(ctx context.Context, db DBTX, a
 		&i.SourceErrorCode,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SourceCommitSha,
+		&i.SourceDefinitionDigest,
+		&i.SourceVerifiedAt,
 	)
 	return i, err
 }
@@ -18234,7 +18331,7 @@ func (q *Queries) UpdateDeploymentStatus(ctx context.Context, db DBTX, arg Updat
 const updateEnvironmentGitSourceControl = `-- name: UpdateEnvironmentGitSourceControl :one
 UPDATE environment_git_sources SET mode = $1::text, prune = $2::boolean,
     suspended = $3::boolean, generation = generation + 1, intent_version = intent_version + 1, updated_at = now()
-WHERE id = $4::uuid AND generation = $5::bigint RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at
+WHERE id = $4::uuid AND generation = $5::bigint RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at
 `
 
 type UpdateEnvironmentGitSourceControlParams struct {
@@ -18276,6 +18373,9 @@ func (q *Queries) UpdateEnvironmentGitSourceControl(ctx context.Context, db DBTX
 		&i.SourceErrorCode,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SourceCommitSha,
+		&i.SourceDefinitionDigest,
+		&i.SourceVerifiedAt,
 	)
 	return i, err
 }

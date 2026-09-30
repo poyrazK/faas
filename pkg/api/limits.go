@@ -35,6 +35,16 @@ const EnvironmentGitOpsMaxPolicies = 20
 const EnvironmentGitOpsRuntimeRefreshRetry = 30 * time.Second
 const EnvironmentGitOpsMaxDeclaredRoutes = 50
 
+// Candidate discovery is separate from approval and approved-intent sweeps.
+// One bounded remote read completes inside a fenced durable poll lease.
+const (
+	EnvironmentGitSourcePollLeaseDuration = 2 * time.Minute
+	EnvironmentGitSourcePollReadTimeout   = 45 * time.Second
+	EnvironmentGitSourcePollCheckInterval = 5 * time.Minute
+	EnvironmentGitSourcePollRetryInterval = 30 * time.Second
+	EnvironmentGitSourcePollIdleInterval  = 5 * time.Second
+)
+
 // A restore hook is on the wake critical path. Keep its customer timeout
 // below the host's five-second resume deadline, including transport overhead.
 const (

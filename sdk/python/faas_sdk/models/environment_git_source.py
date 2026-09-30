@@ -36,6 +36,9 @@ class EnvironmentGitSource:
     applied_revision_id: str | Unset = UNSET
     source_checked_at: datetime.datetime | Unset = UNSET
     source_error_code: str | Unset = UNSET
+    source_commit_sha: str | Unset = UNSET
+    source_definition_digest: str | Unset = UNSET
+    source_verified_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -70,6 +73,11 @@ class EnvironmentGitSource:
             source_checked_at = self.source_checked_at.isoformat()
 
         source_error_code = self.source_error_code
+        source_commit_sha = self.source_commit_sha
+        source_definition_digest = self.source_definition_digest
+        source_verified_at: str | Unset = UNSET
+        if not isinstance(self.source_verified_at, Unset):
+            source_verified_at = self.source_verified_at.isoformat()
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -96,6 +104,12 @@ class EnvironmentGitSource:
             field_dict["source_checked_at"] = source_checked_at
         if source_error_code is not UNSET:
             field_dict["source_error_code"] = source_error_code
+        if source_commit_sha is not UNSET:
+            field_dict["source_commit_sha"] = source_commit_sha
+        if source_definition_digest is not UNSET:
+            field_dict["source_definition_digest"] = source_definition_digest
+        if source_verified_at is not UNSET:
+            field_dict["source_verified_at"] = source_verified_at
 
         return field_dict
 
@@ -138,6 +152,14 @@ class EnvironmentGitSource:
             source_checked_at = datetime.datetime.fromisoformat(_source_checked_at)
 
         source_error_code = d.pop("source_error_code", UNSET)
+        source_commit_sha = d.pop("source_commit_sha", UNSET)
+        source_definition_digest = d.pop("source_definition_digest", UNSET)
+        _source_verified_at = d.pop("source_verified_at", UNSET)
+        source_verified_at: datetime.datetime | Unset
+        if isinstance(_source_verified_at, Unset):
+            source_verified_at = UNSET
+        else:
+            source_verified_at = datetime.datetime.fromisoformat(_source_verified_at)
 
         environment_git_source = cls(
             id=id,
@@ -155,6 +177,9 @@ class EnvironmentGitSource:
             applied_revision_id=applied_revision_id,
             source_checked_at=source_checked_at,
             source_error_code=source_error_code,
+            source_commit_sha=source_commit_sha,
+            source_definition_digest=source_definition_digest,
+            source_verified_at=source_verified_at,
         )
 
         environment_git_source.additional_properties = d

@@ -15,6 +15,10 @@ test('GitOps services preserve reviewed authority and override identity', async 
           definition: { api_version: 'gregale.dev/environment/v1', project: 'shop', environment: 'production', workloads: { api: { app: 'shop-api' } } } });
       }
       if (url.endsWith('/approve')) return Response.json({}, { status: 202 });
+      if (url.endsWith('/gitops')) return Response.json({ source: {
+        approved_revision_id: 'approved', source_commit_sha: sha, source_definition_digest: digest,
+        source_verified_at: '2026-10-01T00:00:00Z', source_error_code: 'environment_git_source_unavailable',
+      }, runs: [] });
       return new Response(null, { status: 204 });
     },
   });
@@ -24,7 +28,13 @@ test('GitOps services preserve reviewed authority and override identity', async 
       commit_sha: review.commit_sha, definition_digest: review.definition_digest, expected_generation: review.generation,
     } });
     await ProjectsService.removeEnvironmentGitOpsOverride({ slug: 'my project', environment: 'production', requestBody: { resource: 'workload/api', path: 'variables/MODE' } });
-    assert.equal(calls.length, 3);
+    const status = await ProjectsService.getEnvironmentGitOps({ slug: 'my project', environment: 'production' });
+    assert.equal(status.source.source_commit_sha, sha);
+    assert.equal(status.source.source_definition_digest, digest);
+    assert.equal(status.source.source_verified_at, '2026-10-01T00:00:00Z');
+    assert.equal(status.source.source_error_code, 'environment_git_source_unavailable');
+    assert.equal(status.source.approved_revision_id, 'approved');
+    assert.equal(calls.length, 4);
     assert.ok(calls[0]?.url.includes('/projects/my%20project/environments/production/gitops/revisions/preview'));
     assert.deepEqual(calls[1]?.body, { commit_sha: sha, definition_digest: digest, expected_generation: 7 });
     assert.equal(calls[2]?.method, 'DELETE');

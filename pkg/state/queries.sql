@@ -5332,6 +5332,28 @@ SELECT max(boundary.changed_at)::timestamptz AS changed_at FROM (
 SELECT a.id AS app_id, d.scope FROM apps a JOIN deployments d ON d.app_id = a.id
 WHERE d.id = sqlc.arg(deployment_id)::uuid FOR UPDATE OF a;
 
+-- name: ClaimEnvironmentGitSourcePoll :one
+WITH candidate AS (
+    SELECT p.source_id FROM environment_git_source_polls p JOIN environment_git_sources s ON s.id = p.source_id
+    WHERE NOT s.suspended AND p.next_poll_at <= sqlc.arg(now_at)::timestamptz
+      AND (p.lease_until IS NULL OR p.lease_until <= sqlc.arg(now_at)::timestamptz)
+    ORDER BY p.next_poll_at, p.source_id FOR UPDATE OF p SKIP LOCKED LIMIT 1
+)
+UPDATE environment_git_source_polls p SET lease_token = sqlc.arg(lease_token)::uuid, lease_until = sqlc.arg(lease_until)::timestamptz
+FROM candidate WHERE p.source_id = candidate.source_id RETURNING p.*;
+
+-- name: FinishEnvironmentGitSourcePoll :execrows
+UPDATE environment_git_source_polls SET lease_token = NULL, lease_until = NULL, next_poll_at = sqlc.arg(next_poll_at)::timestamptz
+WHERE source_id = sqlc.arg(source_id)::uuid AND lease_token = sqlc.arg(lease_token)::uuid AND lease_until > sqlc.arg(now_at)::timestamptz;
+
+-- name: RecordEnvironmentGitSourcePoll :exec
+UPDATE environment_git_sources SET source_checked_at = sqlc.arg(checked_at)::timestamptz,
+    source_error_code = sqlc.arg(error_code)::text,
+    source_commit_sha = CASE WHEN sqlc.arg(error_code)::text = '' THEN sqlc.arg(commit_sha)::text ELSE source_commit_sha END,
+    source_definition_digest = CASE WHEN sqlc.arg(error_code)::text = '' THEN sqlc.arg(definition_digest)::text ELSE source_definition_digest END,
+    source_verified_at = CASE WHEN sqlc.arg(error_code)::text = '' THEN sqlc.arg(checked_at)::timestamptz ELSE source_verified_at END
+WHERE id = sqlc.arg(source_id)::uuid;
+
 -- name: RequestEnvironmentGitOpsRuntimeRefresh :exec
 UPDATE environment_gitops_runtime_effects SET requested_at = now(), next_request_at = sqlc.arg(next_request_at)::timestamptz
 WHERE source_id = sqlc.arg(source_id)::uuid AND id = sqlc.arg(effect_id)::uuid AND completed_at IS NULL;

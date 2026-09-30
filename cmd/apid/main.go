@@ -2331,6 +2331,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// The customer-facing /readyz remains the richer dependency probe;
 	// reaching this point means the HTTP listener and its dependencies are
 	// fully constructed.
+	srv.startEnvironmentGitSourcePolling(ctx, deps.getenv)
 	notifyStop := daemonunit.NotifyReadyWhen(ctx, apidProbe.ReadyFunc())
 	defer notifyStop()
 	defer wire.StartWatchdog(ctx, wire.NewLiveness(), ops, log)()

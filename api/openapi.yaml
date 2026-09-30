@@ -23543,6 +23543,17 @@ components:
           format: date-time
         source_error_code:
           type: string
+        source_commit_sha:
+          type: string
+          description: Last verified candidate at the bound ref; discovery does not grant approval.
+          pattern: ^([a-f0-9]{40}|[a-f0-9]{64})$
+        source_definition_digest:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        source_verified_at:
+          type: string
+          format: date-time
+          description: Last successful candidate verification, preserved when a later poll fails.
         created_at:
           type: string
           format: date-time

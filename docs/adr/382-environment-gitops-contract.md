@@ -91,6 +91,23 @@ action. The session-authenticated dashboard presents the definition and adoption
 plan before submission and protects every form with account-bound CSRF.
 Go, Node, and Python clients preserve the digest, generation, and field identity.
 
+Apid now starts durable Git candidate discovery independently of the intent
+executor. Each environment has a leased polling row; replicas claim due rows
+exclusively and recover expired claims. Poll results check source generation,
+lease identity, expiry, and suspension before publishing availability. The
+reader verifies installation/repository identity, resolves the bound branch or
+tag to an immutable archive, validates the complete stream, and checks the
+definition's project/environment. Candidate commit, digest, and last successful
+verification time are separate from the last check and its stable error code.
+Failures retain candidate evidence and the approved definition. Discovery does
+not change approval, generation, ownership, or reconcile work. PostgreSQL tests
+cover competing replicas, stale claims, suspension, and approved-definition
+recovery during a source outage; startup and dashboard tests cover the real
+apid poller path through a Git transport fixture. CLI and typed SDK status
+preserve the same distinction. Polling defaults on and can be disabled with
+`FAAS_ENVIRONMENT_GIT_SOURCE_POLLING_ENABLED=false`; successful checks recur
+every five minutes and source failures retry after thirty seconds.
+
 `make test-environment-gitops-controls` runs the strict PostgreSQL core gate,
 authenticated HTTP and dashboard review/adoption/override workflows, contract
 parity, and SDK transport tests. The Git transport is a fixture; the API routing,
@@ -155,13 +172,14 @@ the committed boot inputs and carry that evidence through snapshot publication
 and restore; native tests must prove the guest used those inputs. Start times
 and scheduler notification success alone are insufficient evidence.
 
-The remaining full feature gates include source polling and protected-branch
+The remaining full feature gates include protected-branch
 approval evidence; environment-scoped workload creation, source/runtime,
 secret-reference and queue/service-binding adapters; staged graph qualification
-and release activation; native serving-fleet and guest runtime evidence; source freshness and
-operational status integration; and native runtime acceptance.
-Unsupported resource fields currently block the complete plan. The source
-worker is not started from apid until these integration contracts are wired.
+and release activation; native serving-fleet and guest runtime evidence;
+source freshness alerting and operational status integration; and native runtime acceptance.
+Unsupported resource fields currently block the complete plan. The approved-intent
+worker is not started from apid until these integration contracts are wired;
+candidate discovery is running independently.
 
 ## Review and control workflow
 

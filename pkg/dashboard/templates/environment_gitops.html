@@ -37,10 +37,12 @@
             <dt>Mode</dt><dd>{{$source.Spec.Mode}}{{if $source.Suspended}} · suspended{{end}}</dd>
             <dt>Approved revision</dt><dd>{{if $source.ApprovedRevisionID}}<code>{{$source.ApprovedRevisionID}}</code>{{else}}No approved revision{{end}}</dd>
             <dt>Fully applied revision</dt><dd>{{if $source.AppliedRevisionID}}<code>{{$source.AppliedRevisionID}}</code>{{else}}No fully applied revision{{end}}</dd>
+            <dt>Git availability</dt><dd>{{if $source.SourceCheckedAt}}{{if $source.SourceErrorCode}}The Git definition could not be verified. The last approved definition remains authoritative.{{else}}Git definition verified.{{end}} Last checked {{$source.SourceCheckedAt.Format "2006-01-02 15:04:05 MST"}}.{{else}}Waiting for the first Git check.{{end}}</dd>
+            {{if $source.SourceCommitSHA}}<dt>Last verified candidate</dt><dd><code>{{$source.SourceCommitSHA}}</code>{{if $source.SourceVerifiedAt}} · {{$source.SourceVerifiedAt.Format "2006-01-02 15:04:05 MST"}}{{end}}. Review this commit before approval.</dd>{{end}}
           </dl>
           <form method="POST" action="{{$target}}/review">
             <input type="hidden" name="csrf_token" value="{{$csrf}}">
-            <label>Commit to review <input type="text" name="commit_sha" pattern="[a-f0-9]{40}" minlength="40" maxlength="40" required placeholder="Full immutable commit SHA"></label>
+            <label>Commit to review <input type="text" name="commit_sha" pattern="[a-f0-9]{40}" minlength="40" maxlength="40" required placeholder="Full immutable commit SHA" value="{{$source.SourceCommitSHA}}"></label>
             <button type="submit">Review Git definition</button>
           </form>
         </section>

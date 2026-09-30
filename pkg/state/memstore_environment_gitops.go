@@ -22,6 +22,7 @@ type environmentGitOpsMemory struct {
 	overrides map[string]environmentsync.Override
 	effects   map[string]EnvironmentGitOpsEffect
 	runtime   map[string]EnvironmentGitOpsRuntimeEffect
+	poll      environmentGitSourcePoll
 }
 
 var _ EnvironmentGitOpsStore = (*MemStore)(nil)
@@ -81,7 +82,7 @@ func (m *MemStore) EnvironmentGitSource(_ context.Context, accountID, projectID,
 			if _, err := m.projectEnvironmentBySlugLocked(projectID, environment); err != nil {
 				return EnvironmentGitSource{}, err
 			}
-			return memory.source, nil
+			return cloneEnvironmentGitSource(memory.source), nil
 		}
 	}
 	return EnvironmentGitSource{}, ErrNotFound

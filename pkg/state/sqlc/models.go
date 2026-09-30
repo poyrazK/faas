@@ -1566,27 +1566,37 @@ type EnvironmentDesiredRevision struct {
 }
 
 type EnvironmentGitSource struct {
-	ID                 pgtype.UUID
-	AccountID          pgtype.UUID
-	ProjectID          pgtype.UUID
-	EnvironmentID      pgtype.UUID
-	RepositoryID       int64
-	InstallationID     int64
-	Repository         string
-	SourceRef          string
-	ManifestPath       string
-	Mode               string
-	ApprovalPolicy     string
-	Prune              bool
-	Suspended          bool
-	Generation         int64
-	IntentVersion      int64
-	ApprovedRevisionID pgtype.UUID
-	AppliedRevisionID  pgtype.UUID
-	SourceCheckedAt    pgtype.Timestamptz
-	SourceErrorCode    string
-	CreatedAt          pgtype.Timestamptz
-	UpdatedAt          pgtype.Timestamptz
+	ID                     pgtype.UUID
+	AccountID              pgtype.UUID
+	ProjectID              pgtype.UUID
+	EnvironmentID          pgtype.UUID
+	RepositoryID           int64
+	InstallationID         int64
+	Repository             string
+	SourceRef              string
+	ManifestPath           string
+	Mode                   string
+	ApprovalPolicy         string
+	Prune                  bool
+	Suspended              bool
+	Generation             int64
+	IntentVersion          int64
+	ApprovedRevisionID     pgtype.UUID
+	AppliedRevisionID      pgtype.UUID
+	SourceCheckedAt        pgtype.Timestamptz
+	SourceErrorCode        string
+	CreatedAt              pgtype.Timestamptz
+	UpdatedAt              pgtype.Timestamptz
+	SourceCommitSha        string
+	SourceDefinitionDigest string
+	SourceVerifiedAt       pgtype.Timestamptz
+}
+
+type EnvironmentGitSourcePoll struct {
+	SourceID   pgtype.UUID
+	NextPollAt pgtype.Timestamptz
+	LeaseToken pgtype.UUID
+	LeaseUntil pgtype.Timestamptz
 }
 
 type EnvironmentGitopsEffect struct {
