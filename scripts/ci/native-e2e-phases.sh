@@ -60,11 +60,12 @@ native_e2e_phase_files() {
       source_deploy_wake_metal_test.go \
       secrets_image_deploy_e2e_test.go \
       tcp_ingress_metal_test.go ;;
-    # Wake scheduling: timeline emission, cross-schedd dedup, CPU fairness.
+    # Wake scheduling and native Flags cache refresh after VM restore.
     wake) printf '%s\n' \
       wake_timeline_metal_test.go \
       wake_burst_metal_test.go \
       after_restore_metal_test.go \
+      feature_flags_native_restore_metal_test.go \
       before_checkpoint_metal_test.go \
       fleet_wake_dedup_e2e_test.go \
       cpu_fairness_test.go ;;

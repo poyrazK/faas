@@ -1723,7 +1723,7 @@ Compare two named environments in the linked project
 
 Run scenario suites and bounded local HTTP load tests
 
-`gregale test [<subcommand>] [--scenario <NAME>] [--suite <NAME>] [--fail-fast] [--validate] [--preflight] [--engine <ENGINE>] [--base-url <URL>] [--data <PATH>] [--load] [--vus <N>] [--rate <N>] [--iterations <N>] [--duration <DURATION>] [--pacing <DURATION>] [--progress] [--baseline <PATH>] [--profile <PROFILE>] [--repeat <N>] [--max-workload-minutes <N>] [--manifest <PATH>] [--report <PATH>] [--junit <PATH>]`
+`gregale test [<subcommand>] [--scenario <NAME>] [--suite <NAME>] [--fail-fast] [--validate] [--preflight] [--engine <ENGINE>] [--base-url <URL>] [--data <PATH>] [--load] [--vus <N>] [--rate <N>] [--iterations <N>] [--duration <DURATION>] [--pacing <DURATION>] [--progress] [--baseline <PATH>] [--profile <PROFILE>] [--repeat <N>] [--max-workload-minutes <N>] [--manifest <PATH>] [--report <PATH>] [--junit <PATH>] [--html <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1749,6 +1749,7 @@ Run scenario suites and bounded local HTTP load tests
 | `--manifest <PATH>` | scenario manifest path |  |
 | `--report <PATH>` | write a JSON report |  |
 | `--junit <PATH>` | write a JUnit XML report |  |
+| `--html <PATH>` | write a standalone HTML report |  |
 
 Examples:
 
@@ -1757,6 +1758,8 @@ gregale test init --from openapi.yaml --project my-api
 gregale test import --from collection.json --project my-api
 gregale test --validate
 gregale test --suite smoke --engine local --fail-fast --junit test-results.xml
+gregale test --suite smoke --engine local --report test-results.json --junit test-results.xml --html test-results.html
+gregale test compare baseline.json current.json --html comparison.html
 gregale test --suite regression --validate
 gregale test --scenario customer-export --preflight
 gregale test --scenario customer-export --profile restored --repeat 3 --max-workload-minutes 135 --report test-results.json --junit test-results.xml
@@ -1784,6 +1787,23 @@ Examples:
 
 ```sh
 gregale test init --from openapi.yaml --project my-api --source .
+```
+
+### test compare
+
+Compare two saved JSON run reports without rerunning scenarios
+
+`gregale test compare <before.json> <after.json> [--html <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--html <PATH>` | write a standalone HTML comparison report |  |
+
+Examples:
+
+```sh
+gregale test compare baseline.json current.json
+gregale test compare baseline.json current.json --html comparison.html
 ```
 
 ### test import

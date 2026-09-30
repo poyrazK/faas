@@ -1,0 +1,42 @@
+name: Gregale scenario tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  scenarios:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # Demo-only credentials for the local example API.
+      GREGALE_TEST_CONSUMER_CUSTOMER_A_KEY: example-customer-a
+      GREGALE_TEST_CONSUMER_CUSTOMER_B_KEY: example-customer-b
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Install Gregale CLI
+        run: curl -fsSL https://get.gregale.dev | sh -s -- --dir "$RUNNER_TEMP/gregale"
+      - name: Run scenario suite
+        run: |
+          "$RUNNER_TEMP/gregale/gregale" test \
+            --manifest examples/scenario-tests/gregale-test.yaml \
+            --suite smoke \
+            --report "$RUNNER_TEMP/scenario-results.json" \
+            --junit "$RUNNER_TEMP/scenario-results.xml" \
+            --html "$RUNNER_TEMP/scenario-results.html"
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: gregale-scenario-reports
+          path: |
+            ${{ runner.temp }}/scenario-results.json
+            ${{ runner.temp }}/scenario-results.xml
+            ${{ runner.temp }}/scenario-results.html
+          if-no-files-found: ignore

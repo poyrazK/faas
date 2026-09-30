@@ -74,7 +74,7 @@ func validateTestSuites(manifest testManifest) error {
 	return nil
 }
 
-func cmdTestSuite(path, name string, options testSuiteOptions, failFast bool, reportPath, junitPath string) int {
+func cmdTestSuite(path, name string, options testSuiteOptions, failFast bool, reportPath, junitPath, htmlPath string) int {
 	scenarios, err := prepareTestSuite(path, name, options)
 	if err != nil {
 		// Preparation only reads local inputs. Filesystem errors must not be
@@ -94,7 +94,7 @@ func cmdTestSuite(path, name string, options testSuiteOptions, failFast bool, re
 	if options.Preflight {
 		return runTestSuitePreflight(context.Background(), client, scenarios, options.Repeat)
 	}
-	return executePreparedTests(client, name, scenarios, options.Repeat, failFast, reportPath, junitPath, options.BaselinePath)
+	return executePreparedTests(client, name, scenarios, options.Repeat, failFast, reportPath, junitPath, htmlPath, options.BaselinePath)
 }
 
 func prepareTestSuite(path, name string, options testSuiteOptions) ([]testPreparedScenario, error) {
