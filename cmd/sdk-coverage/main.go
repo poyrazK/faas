@@ -295,6 +295,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/projects/{slug}/environments/{environment}/flags/rollback":      "RollbackProjectFlags",
 	"POST /v1/projects/{slug}/environments/{environment}/flags/{key}/inspect": "InspectProjectFlag",
 	"GET /v1/projects/{slug}/environments/{environment}/flags/{key}/requests": "ProjectFlagRequests",
+	"GET /v1/projects/{slug}/environments/{environment}/flags/{key}/outcomes": "ProjectFlagOutcomes",
 	"GET /v1/runtime/flags":                                                   "RuntimeFlags",
 
 	"GET /v1/apps/{slug}/work-policies":                          "ListAppWorkPolicies",
