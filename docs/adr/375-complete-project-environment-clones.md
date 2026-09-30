@@ -447,3 +447,39 @@ publication checks and mutation fencing across all intent/reconciliation
 writers, host-key resealing and captured-key retention still require integration
 before enabling the complete command. Binding/policy payload capture, coordinated
 provider data capture and artifact retention remain required as described above.
+
+### Immutable workload layer retention (2026-09-30)
+
+Captured rootfs and sidecar keys now acquire durable pins in the capture
+transaction. Existing private captures are backfilled by the migration. A full
+capture requires a backend storage key; a host filesystem path alone cannot
+establish an immutable shared artifact identity. Prepared deployments, serving
+deployments, usable snapshots, resident instances, aliases, and active or
+unexpired release graphs retain their layers. Captured and retained references
+remain in deduplicated physical layer accounting after source soft deletion.
+
+Cleanup records a durable request even when a consumer currently holds the
+layer. Once unreferenced, it commits a deletion identity before touching the
+backend. Publication and consumer guards serialize against that identity, and
+a claimed/deleted key cannot acquire another consumer. Backend errors keep the
+claim pending; a fresh imaged daemon retries both failed deletions and previously
+held cleanup requests without requiring the original snapshot rows. Cleanup
+resolves recorded main and sidecar keys as well as the canonical legacy key.
+Permanent backend refusals remain pending and observable as errors; they are
+not recorded as successful deletion.
+
+MemStore and real PostgreSQL contracts cover captured source retirement,
+prepared targets, deduplicated capacity, concurrent cleanup/publication,
+snapshot/instance/alias/release retention, retired-key rejection, stable deletion
+identities, cleanup-request persistence and migration backfill. Imaged contracts
+cover backend failure followed by daemon reconstruction, held stage layers,
+sidecars and reclamation after the last reference disappears. Earlier focused
+checks passed in the normal state package; the expanded contracts use a
+temporary runner with narrow fixture interfaces because local disk capacity
+prevented linking the full state test binary. This is store/backend evidence,
+not native VM acceptance.
+
+Physical existence verification and shared base/kernel/runtime artifact
+lifetimes still require audit. The complete command, coordinated provider data
+capture, complete configuration/binding coverage and native KVM lifecycle gates
+remain required before this feature can be advertised as fully copyable stages.

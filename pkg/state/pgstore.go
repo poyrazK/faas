@@ -8508,7 +8508,7 @@ func (s *PgStore) UpdateDeploymentStatus(ctx context.Context, id string, status 
 		update deployments set status = $2, error = $3
 		 where id = $1 and (status <> 'cancelled' or $2 = 'cancelled')`, id, string(status), nullString(errMsg))
 	if err != nil {
-		return err
+		return mapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
 		var current DeploymentStatus
@@ -9133,6 +9133,9 @@ func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceGitDri
 	}
 	if dep.Status == DeployCancelled {
 		return ErrInvalidStateTransition
+	}
+	if err := requireDeploymentLayerArtifactsTx(ctx, tx, dep.ID); err != nil {
+		return err
 	}
 	if fenceGitDriven {
 		if (dep.Kind != DeploymentKindGitHub && dep.Kind != DeploymentKindPreview) || dep.Revision <= 0 {
@@ -10523,7 +10526,7 @@ func (s *PgStore) SetDeploymentRootfs(ctx context.Context, id, path, key string,
 		  where id = $1`,
 		id, nullString(path), nullString(key), bytes)
 	if err != nil {
-		return err
+		return mapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -10543,7 +10546,7 @@ func (s *PgStore) SetDeploymentRootfsIfActive(ctx context.Context, id, path, key
 		    and status in ('pending', 'building', 'imaging', 'snapshotting')`,
 		id, nullString(path), nullString(key), bytes)
 	if err != nil {
-		return err
+		return mapErr(err)
 	}
 	if tag.RowsAffected() == 1 {
 		return nil
@@ -11300,16 +11303,16 @@ func (s *PgStore) SetDeploymentSidecarLayer(ctx context.Context, l DeploymentSid
 	// caller gets a clean ErrNotFound before Postgres raises 23503
 	// on the INSERT. The FK CASCADE handles delete-orphaning; this
 	// check is for read-then-write paths in imaged.
-	var exists string
-	if err := s.pool.QueryRow(ctx,
-		`select id from deployments where id = $1`, l.DeploymentID,
-	).Scan(&exists); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return DeploymentSidecarLayer{}, ErrNotFound
-		}
-		return DeploymentSidecarLayer{}, fmt.Errorf("state: sidecar layer parent check: %w", err)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return DeploymentSidecarLayer{}, err
 	}
-	row := s.pool.QueryRow(ctx, `
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	// Reserve the parent before a sidecar row/key, matching live publication.
+	if _, err := new(sqlc.Queries).LockLayerArtifactDeployment(ctx, tx, mustPgUUID(l.DeploymentID)); err != nil {
+		return DeploymentSidecarLayer{}, mapErr(err)
+	}
+	row := tx.QueryRow(ctx, `
 		insert into deployment_sidecar_layers
 		    (deployment_id, sidecar_name, storage_key, bytes, content_digest)
 		values ($1, $2, $3, $4, $5)
@@ -11323,7 +11326,10 @@ func (s *PgStore) SetDeploymentSidecarLayer(ctx context.Context, l DeploymentSid
 	var got DeploymentSidecarLayer
 	if err := row.Scan(&got.DeploymentID, &got.SidecarName, &got.StorageKey,
 		&got.Bytes, &got.ContentDigest, &got.CreatedAt, &got.UpdatedAt); err != nil {
-		return DeploymentSidecarLayer{}, fmt.Errorf("state: sidecar layer upsert: %w", err)
+		return DeploymentSidecarLayer{}, fmt.Errorf("state: sidecar layer upsert: %w", mapErr(err))
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return DeploymentSidecarLayer{}, err
 	}
 	return got, nil
 }
@@ -16597,7 +16603,7 @@ func scanCreatedInstance(row pgx.Row, wakeID, appID string) (Instance, error) {
 				ErrConcurrentWake, wakeID, appID,
 			)
 		}
-		return Instance{}, fmt.Errorf("state: create instance %q (app=%s): %w", wakeID, appID, err)
+		return Instance{}, fmt.Errorf("state: create instance %q (app=%s): %w", wakeID, appID, mapErr(err))
 	}
 	return inst, nil
 }
@@ -16924,7 +16930,7 @@ func (s *PgStore) ListLatestInstancePerApp(ctx context.Context, accountID string
 func (s *PgStore) UpdateInstanceState(ctx context.Context, id, state string) error {
 	tag, err := s.pool.Exec(ctx, `update instances set state = $2 where id = $1`, id, state)
 	if err != nil {
-		return err
+		return mapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -16946,7 +16952,7 @@ func (s *PgStore) UpdateInstanceStateIf(ctx context.Context, id, expectedState, 
 		  where id = $1
 		    and state = $2`, id, expectedState, nextState)
 	if err != nil {
-		return err
+		return mapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrConflict
@@ -16964,7 +16970,7 @@ func (s *PgStore) UpdateInstanceStateWithTimestamp(ctx context.Context, id, stat
 		`update instances set state = $2, parked_at = $3 where id = $1`,
 		id, state, parkedAt)
 	if err != nil {
-		return err
+		return mapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -16983,7 +16989,7 @@ func (s *PgStore) UpdateInstanceStateToTerminal(ctx context.Context, id, state s
 		`update instances set state = $2, terminal_at = $3 where id = $1`,
 		id, state, terminalAt)
 	if err != nil {
-		return err
+		return mapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -17620,7 +17626,7 @@ func createSnapshotWithQuerier(ctx context.Context, q snapshotQuerier, snap Snap
 		if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UniqueViolation {
 			return Snapshot{}, ErrConflict
 		}
-		return Snapshot{}, err
+		return Snapshot{}, mapErr(err)
 	}
 	return out, nil
 }
@@ -22154,38 +22160,8 @@ func (s *PgStore) LatestSnapshotBytes(ctx context.Context, appID string) (int64,
 // references the same object from charging capacity twice. Sidecar layers are
 // part of the same retained footprint.
 func (s *PgStore) RetainedLayerBytes(ctx context.Context, appID string) (int64, error) {
-	var total int64
-	err := s.pool.QueryRow(ctx, `
-		select coalesce(sum(retained.bytes), 0)::bigint
-		from (
-			select storage_key, max(bytes)::bigint as bytes
-			from (
-				select coalesce(nullif(d.rootfs_key, ''), nullif(d.rootfs_path, '')) as storage_key,
-				       greatest(coalesce(d.rootfs_bytes, 0), 0)::bigint as bytes
-				from deployments d
-				join apps a on a.id = d.app_id
-				where d.app_id = $1
-				  and a.status <> 'deleted'
-				  and d.deleted_at is null
-				  and coalesce(d.rootfs_bytes, 0) > 0
-				  and coalesce(nullif(d.rootfs_key, ''), nullif(d.rootfs_path, '')) is not null
-				union all
-				select l.storage_key, greatest(l.bytes, 0)::bigint
-				from deployment_sidecar_layers l
-				join deployments d on d.id = l.deployment_id
-				join apps a on a.id = d.app_id
-				where d.app_id = $1
-				  and a.status <> 'deleted'
-				  and d.deleted_at is null
-				  and l.storage_key <> ''
-				  and l.bytes > 0
-			) artifacts
-			group by storage_key
-		) retained`, appID).Scan(&total)
-	if err != nil {
-		return 0, err
-	}
-	return total, nil
+	total, err := new(sqlc.Queries).RetainedLayerBytesWithClonePins(ctx, s.pool, mustPgUUID(appID))
+	return total, mapErr(err)
 }
 
 // StorageUsage returns the per-(account, app, day) storage rollup
@@ -25535,6 +25511,10 @@ func mapErr(err error) error {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
 		switch pgErr.Code {
+		case "55000":
+			if pgErr.ConstraintName == "layer_artifact_retention_reference_fence" {
+				return ErrLayerArtifactRetired
+			}
 		case pgerrcode.UniqueViolation:
 			return fmt.Errorf("%w: %s", ErrConflict, pgErr.ConstraintName)
 		case pgerrcode.CheckViolation:

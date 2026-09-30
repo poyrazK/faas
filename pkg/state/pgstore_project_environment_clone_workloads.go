@@ -127,6 +127,9 @@ func (s *PgStore) CaptureProjectEnvironmentCloneWorkloads(ctx context.Context, a
 		}
 		records = append(records, record)
 	}
+	if err := pinCloneLayerArtifactsTx(ctx, tx, records); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, mapProjectCloneSnapshotErr(err)
 	}

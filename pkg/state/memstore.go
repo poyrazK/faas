@@ -812,6 +812,7 @@ type MemStore struct {
 	projectEnvironmentCloneOperations         map[string]ProjectEnvironmentCloneOperation
 	projectEnvironmentCloneWorkerLeases       map[string]projectEnvironmentCloneLeaseState
 	projectEnvironmentCloneWorkloads          map[string]map[string]projectCloneWorkloadRecord
+	layerArtifactRetention                    map[string]layerArtifactRetentionRecord
 	projectEnvironmentCloneObjectManifests    map[string]ProjectEnvironmentCloneObjectManifest
 	projectEnvironmentApprovals               map[string]ProjectEnvironmentApproval
 	projectEnvironmentConfigs                 map[string][]ProjectEnvironmentConfig
@@ -1320,6 +1321,7 @@ func NewMemStore() *MemStore {
 		projectEnvironmentCloneOperations:         map[string]ProjectEnvironmentCloneOperation{},
 		projectEnvironmentCloneWorkerLeases:       map[string]projectEnvironmentCloneLeaseState{},
 		projectEnvironmentCloneWorkloads:          map[string]map[string]projectCloneWorkloadRecord{},
+		layerArtifactRetention:                    map[string]layerArtifactRetentionRecord{},
 		projectEnvironmentCloneObjectManifests:    map[string]ProjectEnvironmentCloneObjectManifest{},
 		projectEnvironmentApprovals:               map[string]ProjectEnvironmentApproval{},
 		projectEnvironmentConfigs:                 map[string][]ProjectEnvironmentConfig{},
@@ -6562,6 +6564,11 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity, promoti
 	if d.ID == "" {
 		d.ID = newID()
 	}
+	if d.RootfsKey != "" {
+		if err := m.requireLayerArtifactsRetainedLocked([]string{d.RootfsKey}); err != nil {
+			return Deployment{}, 0, err
+		}
+	}
 	if activity != nil {
 		deploymentID, err := uuid.Parse(d.ID)
 		if err != nil {
@@ -7865,6 +7872,11 @@ func (m *MemStore) UpdateDeploymentStatus(_ context.Context, id string, status D
 	if d.Status == DeployCancelled && status != DeployCancelled {
 		return ErrInvalidStateTransition
 	}
+	if !status.IsTerminal() {
+		if err := m.requireLayerArtifactsRetainedLocked(m.deploymentLayerKeysLocked(d)); err != nil {
+			return err
+		}
+	}
 	previousStatus := d.Status
 	if status == DeployFailed {
 		m.failDeploymentLocked(d, errMsg)
@@ -7999,6 +8011,9 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 	}()
 	if d.Status == DeployCancelled {
 		return ErrInvalidStateTransition
+	}
+	if err := m.requireLayerArtifactsRetainedLocked(m.deploymentLayerKeysLocked(d)); err != nil {
+		return err
 	}
 	if fenceGitDriven {
 		if (d.Kind != DeploymentKindGitHub && d.Kind != DeploymentKindPreview) || d.Revision <= 0 {
@@ -8762,6 +8777,9 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 		// No rollback target — succeed as a no-op (mirrors PG path).
 		return "", nil
 	}
+	if err := m.requireLayerArtifactsRetainedLocked(m.deploymentLayerKeysLocked(m.deployments[targetID])); err != nil {
+		return "", err
+	}
 	now := time.Now().UTC()
 	for id, d := range m.deployments {
 		if d.AppID != appID || normalizedDeploymentScope(d.Scope) != normalizedDeploymentScope(cur.Scope) || d.Status != DeployLive {
@@ -8869,6 +8887,11 @@ func (m *MemStore) SetDeploymentRootfs(_ context.Context, id, path, key string, 
 	// Issue #96 / ADR-025 axis 2 (PR #116): mirror PgStore — both
 	// rootfs_path and rootfs_key are stamped on the same mutation so
 	// the in-memory store tracks Postgres' column-pair contract.
+	if key != "" {
+		if err := m.requireLayerArtifactsRetainedLocked([]string{key}); err != nil {
+			return err
+		}
+	}
 	d.RootfsPath = path
 	d.RootfsKey = key
 	d.RootfsBytes = bytes
@@ -8889,6 +8912,11 @@ func (m *MemStore) SetDeploymentRootfsIfActive(_ context.Context, id, path, key 
 	}
 	if d.Status.IsTerminal() || d.Status == DeployLive {
 		return ErrInvalidStateTransition
+	}
+	if key != "" {
+		if err := m.requireLayerArtifactsRetainedLocked([]string{key}); err != nil {
+			return err
+		}
 	}
 	d.RootfsPath = path
 	d.RootfsKey = key
@@ -9659,6 +9687,11 @@ func (m *MemStore) SetDeploymentSidecarLayer(_ context.Context, l DeploymentSide
 	defer m.mu.Unlock()
 	if _, ok := m.deployments[l.DeploymentID]; !ok {
 		return DeploymentSidecarLayer{}, ErrNotFound
+	}
+	if l.StorageKey != "" {
+		if err := m.requireLayerArtifactsRetainedLocked([]string{l.StorageKey}); err != nil {
+			return DeploymentSidecarLayer{}, err
+		}
 	}
 	key := l.DeploymentID + "\x00" + l.SidecarName
 	now := time.Now()
@@ -12961,6 +12994,9 @@ func (m *MemStore) CreateInstance(_ context.Context, appID, deploymentID, state 
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.requireInstanceLayerArtifactsLocked(deploymentID, state); err != nil {
+		return Instance{}, err
+	}
 	// Stamp started_at on creation for every state (commit 3, mirrors
 	// the Postgres trigger in migration 00015). The MemStore previously
 	// only stamped it on "running" rows, which left watchdog tests
@@ -13033,6 +13069,9 @@ func (m *MemStore) CreateInstanceWithMode(_ context.Context, appID, deploymentID
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.requireInstanceLayerArtifactsLocked(deploymentID, state); err != nil {
+		return Instance{}, err
+	}
 	// ADR-193: mirror of the PgStore per-node reservation. m.mu is held
 	// across check and insert, which is what the advisory lock buys PgStore.
 	if err := m.checkNodeReservationLocked(nodeID, state, ramMB); err != nil {
@@ -13515,6 +13554,9 @@ func (m *MemStore) UpdateInstanceState(_ context.Context, id, state string) erro
 	if !ok {
 		return ErrNotFound
 	}
+	if err := m.requireInstanceLayerArtifactsLocked(ins.DeploymentID, state); err != nil {
+		return err
+	}
 	ins.State = state
 	m.instances[id] = ins
 	return nil
@@ -13533,6 +13575,9 @@ func (m *MemStore) UpdateInstanceStateIf(_ context.Context, id, expectedState, n
 	ins, ok := m.instances[id]
 	if !ok || ins.State != expectedState {
 		return ErrConflict
+	}
+	if err := m.requireInstanceLayerArtifactsLocked(ins.DeploymentID, nextState); err != nil {
+		return err
 	}
 	ins.State = nextState
 	if State(nextState) == StateParked {
@@ -13574,6 +13619,9 @@ func (m *MemStore) UpdateInstanceStateWithTimestamp(_ context.Context, id, state
 	if !ok {
 		return ErrNotFound
 	}
+	if err := m.requireInstanceLayerArtifactsLocked(ins.DeploymentID, state); err != nil {
+		return err
+	}
 	ins.State = state
 	ins.ParkedAt = parkedAt
 	m.instances[id] = ins
@@ -13593,6 +13641,9 @@ func (m *MemStore) UpdateInstanceStateToTerminal(_ context.Context, id, state st
 	ins, ok := m.instances[id]
 	if !ok {
 		return ErrNotFound
+	}
+	if err := m.requireInstanceLayerArtifactsLocked(ins.DeploymentID, state); err != nil {
+		return err
 	}
 	ins.State = state
 	ts := terminalAt
@@ -14031,6 +14082,11 @@ func (m *MemStore) createSnapshotLocked(snap Snapshot) (Snapshot, error) {
 		// same deployment are allowed (warm + init coexist).
 		if existing.DeploymentID == snap.DeploymentID && existing.Tier == snap.Tier && !existing.Stale {
 			return Snapshot{}, ErrConflict
+		}
+	}
+	if !snap.Stale {
+		if err := m.requireLayerArtifactsRetainedLocked(m.deploymentLayerKeysLocked(m.deployments[snap.DeploymentID])); err != nil {
+			return Snapshot{}, err
 		}
 	}
 	m.snapshots = append(m.snapshots, snap)
@@ -17707,7 +17763,7 @@ func (m *MemStore) RetainedLayerBytes(_ context.Context, appID string) (int64, e
 	artifacts := make(map[string]int64)
 	retainedDeployments := make(map[string]struct{})
 	for _, deployment := range m.deployments {
-		if deployment.AppID != appID || deployment.DeletedAt != nil {
+		if deployment.AppID != appID || deployment.DeletedAt != nil && !m.deploymentLayerArtifactReferencedLocked(deployment) {
 			continue
 		}
 		retainedDeployments[deployment.ID] = struct{}{}
@@ -17725,6 +17781,16 @@ func (m *MemStore) RetainedLayerBytes(_ context.Context, appID string) (int64, e
 		}
 		if layer.Bytes > artifacts[layer.StorageKey] {
 			artifacts[layer.StorageKey] = layer.Bytes
+		}
+	}
+	for operationID, records := range m.projectEnvironmentCloneWorkloads {
+		if !cloneNeedsLayerPins(m.projectEnvironmentCloneOperations[operationID]) {
+			continue
+		}
+		if record, ok := records[appID]; ok {
+			for key, bytes := range cloneLayerArtifacts(record) {
+				artifacts[key] = max(artifacts[key], bytes)
+			}
 		}
 	}
 	var total int64

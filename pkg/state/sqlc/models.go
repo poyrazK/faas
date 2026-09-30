@@ -1427,6 +1427,14 @@ type JobTask struct {
 	LastLeaseNode  pgtype.Text
 }
 
+type LayerArtifactRetention struct {
+	StorageKey        string
+	State             string
+	DeletionID        pgtype.UUID
+	DeletedAt         pgtype.Timestamptz
+	DeleteRequestedAt pgtype.Timestamptz
+}
+
 type LoginToken struct {
 	TokenHash  []byte
 	AccountID  pgtype.UUID
@@ -1919,6 +1927,13 @@ type ProjectEnvironmentCleanupJob struct {
 	LeaseToken      string
 	LeaseUntil      pgtype.Timestamptz
 	CreatedAt       pgtype.Timestamptz
+}
+
+type ProjectEnvironmentCloneLayerPin struct {
+	OperationID pgtype.UUID
+	AppID       pgtype.UUID
+	StorageKey  string
+	Bytes       int64
 }
 
 type ProjectEnvironmentCloneObjectEntry struct {

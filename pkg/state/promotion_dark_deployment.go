@@ -50,6 +50,9 @@ func (s *PgStore) MarkDeploymentLiveDark(ctx context.Context, id string) error {
 		dep.TrafficPercent != 0 || !dep.TrafficPercentExplicit {
 		return ErrInvalidStateTransition
 	}
+	if err := requireDeploymentLayerArtifactsTx(ctx, tx, dep.ID); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx, `update crons set suspended_reason = '' where app_id = $1 and suspended_reason <> ''`, appID); err != nil {
 		return fmt.Errorf("state: reactivate dark deployment crons: %w", err)
 	}
@@ -78,6 +81,9 @@ func (m *MemStore) MarkDeploymentLiveDark(ctx context.Context, id string) (err e
 	dep, ok := m.deployments[id]
 	if !ok {
 		return ErrNotFound
+	}
+	if err := m.requireLayerArtifactsRetainedLocked(m.deploymentLayerKeysLocked(dep)); err != nil {
+		return err
 	}
 	before := dep
 	previousStatus := dep.Status

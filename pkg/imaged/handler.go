@@ -4367,9 +4367,8 @@ func (h *Handler) cleanupDeploymentFiles(ctx context.Context, deploymentID strin
 		h.log.Warn("imaged: cleanup storageFor", "deployment", dep.ID, "err", err)
 		return err
 	}
-	appsKey := sched.AppLayerKey(app.Slug, dep.ID)
-	if err := be.Delete(ctx, appsKey); err != nil {
-		h.log.Warn("imaged: cleanup ext4", "key", appsKey, "err", err)
+	if err := h.deleteDeploymentLayers(ctx, be, dep, app.Slug); err != nil {
+		h.log.Warn("imaged: cleanup layers", "deployment", dep.ID, "err", err)
 	}
 	if !keepSnap {
 		h.cleanupSnapshotCaptures(ctx, be, dep.ID)
@@ -4386,7 +4385,7 @@ func (h *Handler) cleanupDeploymentFiles(ctx context.Context, deploymentID strin
 }
 
 // cleanupAppFiles walks every deployment for the app, drops the per-app ext4
-// AND the snap blobs for each, then unlinks the per-app directory entirely.
+// and snapshot blobs for each through the storage backend.
 //
 // A missing app row is treated as a silent no-op (logs at Info level when
 // the store surfaces ErrNotFound). app_changed notifications can fire on
@@ -4414,29 +4413,8 @@ func (h *Handler) cleanupAppFiles(ctx context.Context, appID string) error {
 		return fmt.Errorf("imaged: app cleanup storageFor: %w", err)
 	}
 	for _, d := range deps {
-		appsKey := sched.AppLayerKey(app.Slug, d.ID)
-		if err := be.Delete(ctx, appsKey); err != nil {
-			h.log.Warn("imaged: app cleanup ext4", "key", appsKey, "err", err)
-		}
-		// Issue #463 / ADR-069 / PR-B: walk the deployment's
-		// per-workload sidecar ext4 set and delete each. The
-		// store-side FK CASCADE on `deployment_sidecar_layers`
-		// keeps the row consistent; this loop removes the
-		// storage artifact that the row used to reference.
-		// We swallow List errors as Warn (the FK-side cascade
-		// means the row goes with the deployment even if the
-		// storage sweep fails, and a future rebuild would
-		// generate fresh keys).
-		if layers, listErr := h.store.ListDeploymentSidecarLayers(ctx, d.ID); listErr == nil {
-			for _, l := range layers {
-				if delErr := be.Delete(ctx, l.StorageKey); delErr != nil {
-					h.log.Warn("imaged: app cleanup sidecar ext4",
-						"key", l.StorageKey, "sidecar", l.SidecarName, "err", delErr)
-				}
-			}
-		} else {
-			h.log.Warn("imaged: app cleanup list sidecar layers",
-				"deployment", d.ID, "err", listErr)
+		if err := h.deleteDeploymentLayers(ctx, be, d, app.Slug); err != nil {
+			h.log.Warn("imaged: app cleanup layers", "deployment", d.ID, "err", err)
 		}
 		h.cleanupSnapshotCaptures(ctx, be, d.ID)
 		memKey := state.SnapMemKey(d.ID)

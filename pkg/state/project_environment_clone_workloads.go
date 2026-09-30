@@ -136,7 +136,7 @@ func encodeCloneWorkloadSnapshot(snapshot projectCloneWorkloadSnapshot) ([]byte,
 		snapshot.ProjectConfig = &config
 	}
 	if snapshot.Artifact.ID == "" || snapshot.Artifact.AppID == "" || snapshot.WorkloadSlug == "" ||
-		(snapshot.Artifact.RootfsKey == "" && snapshot.Artifact.RootfsPath == "") || snapshot.Artifact.RootfsBytes <= 0 {
+		snapshot.Artifact.RootfsKey == "" || snapshot.Artifact.RootfsBytes <= 0 {
 		return nil, "", ErrConflict
 	}
 	if _, err := WorkloadSettingsHash(snapshot.Settings); err != nil {

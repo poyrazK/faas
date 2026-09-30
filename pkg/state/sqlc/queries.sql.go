@@ -791,6 +791,24 @@ func (q *Queries) CancelUploadSession(ctx context.Context, db DBTX, arg CancelUp
 	return err
 }
 
+const claimLayerArtifactDeletion = `-- name: ClaimLayerArtifactDeletion :execrows
+UPDATE layer_artifact_retention SET state = 'deleting', deletion_id = $1::uuid
+WHERE storage_key = $2::text AND state = 'retained'
+`
+
+type ClaimLayerArtifactDeletionParams struct {
+	DeletionID pgtype.UUID
+	StorageKey string
+}
+
+func (q *Queries) ClaimLayerArtifactDeletion(ctx context.Context, db DBTX, arg ClaimLayerArtifactDeletionParams) (int64, error) {
+	result, err := db.Exec(ctx, claimLayerArtifactDeletion, arg.DeletionID, arg.StorageKey)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const claimProjectEnvironmentCloneInProject = `-- name: ClaimProjectEnvironmentCloneInProject :one
 WITH candidate AS (
     SELECT id FROM project_environment_clone_operations
@@ -1011,6 +1029,25 @@ UPDATE upload_sessions
 func (q *Queries) ClearUploadSessionPartPath(ctx context.Context, db DBTX, id string) error {
 	_, err := db.Exec(ctx, clearUploadSessionPartPath, id)
 	return err
+}
+
+const completeLayerArtifactDeletion = `-- name: CompleteLayerArtifactDeletion :execrows
+UPDATE layer_artifact_retention SET state = 'deleted', deleted_at = coalesce(deleted_at, clock_timestamp())
+WHERE storage_key = $1::text AND deletion_id = $2::uuid
+  AND state IN ('deleting', 'deleted')
+`
+
+type CompleteLayerArtifactDeletionParams struct {
+	StorageKey string
+	DeletionID pgtype.UUID
+}
+
+func (q *Queries) CompleteLayerArtifactDeletion(ctx context.Context, db DBTX, arg CompleteLayerArtifactDeletionParams) (int64, error) {
+	result, err := db.Exec(ctx, completeLayerArtifactDeletion, arg.StorageKey, arg.DeletionID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const completeProjectEnvironmentClonePublication = `-- name: CompleteProjectEnvironmentClonePublication :execrows
@@ -4875,6 +4912,29 @@ func (q *Queries) InsertProjectEnvironmentCloneCapturedVariable(ctx context.Cont
 	return err
 }
 
+const insertProjectEnvironmentCloneLayerPin = `-- name: InsertProjectEnvironmentCloneLayerPin :exec
+INSERT INTO project_environment_clone_layer_pins(operation_id, app_id, storage_key, bytes)
+VALUES ($1::uuid, $2::uuid, $3::text, $4::bigint)
+ON CONFLICT (operation_id, app_id, storage_key) DO NOTHING
+`
+
+type InsertProjectEnvironmentCloneLayerPinParams struct {
+	OperationID pgtype.UUID
+	AppID       pgtype.UUID
+	StorageKey  string
+	Bytes       int64
+}
+
+func (q *Queries) InsertProjectEnvironmentCloneLayerPin(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneLayerPinParams) error {
+	_, err := db.Exec(ctx, insertProjectEnvironmentCloneLayerPin,
+		arg.OperationID,
+		arg.AppID,
+		arg.StorageKey,
+		arg.Bytes,
+	)
+	return err
+}
+
 const insertProjectEnvironmentCloneProjectConfiguration = `-- name: InsertProjectEnvironmentCloneProjectConfiguration :execrows
 INSERT INTO project_environment_config_versions (account_id, project_id, environment_slug, version, config_hash, config_json)
 VALUES ($1::uuid, $2::uuid, $3::text,
@@ -5488,6 +5548,36 @@ func (q *Queries) LatestSupersededDeployment(ctx context.Context, db DBTX, appID
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const layerArtifactHasReferences = `-- name: LayerArtifactHasReferences :one
+SELECT EXISTS (
+    SELECT 1 FROM deployments d JOIN apps a ON a.id = d.app_id
+    WHERE a.status <> 'deleted'
+      AND ((d.deleted_at IS NULL AND d.status IN ('pending', 'building', 'imaging', 'snapshotting', 'live'))
+           OR EXISTS (SELECT 1 FROM snapshots sn WHERE sn.deployment_id = d.id AND NOT sn.stale)
+           OR EXISTS (SELECT 1 FROM instances i WHERE i.deployment_id = d.id AND i.state IN ('pending', 'waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'draining'))
+           OR EXISTS (SELECT 1 FROM deployment_aliases al WHERE al.deployment_id = d.id)
+           OR EXISTS (SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id = rm.release_id
+                      WHERE rm.deployment_id = d.id AND (rs.active OR rs.expires_at > clock_timestamp())))
+      AND (d.rootfs_key = $1::text
+           OR $1::text = 'apps/' || a.slug || '/' || d.id::text || '.ext4'
+           OR left($1::text, length('apps/' || a.slug || '/' || d.id::text || '/')) = 'apps/' || a.slug || '/' || d.id::text || '/'
+           OR EXISTS (SELECT 1 FROM deployment_sidecar_layers l WHERE l.deployment_id = d.id AND l.storage_key = $1::text))
+) OR EXISTS (
+    SELECT 1 FROM project_environment_clone_layer_pins p
+    JOIN project_environment_clone_operations op ON op.id = p.operation_id
+    JOIN apps a ON a.id = p.app_id
+    WHERE p.storage_key = $1::text AND a.status <> 'deleted'
+      AND op.status NOT IN ('ready', 'compensated')
+) AS referenced
+`
+
+func (q *Queries) LayerArtifactHasReferences(ctx context.Context, db DBTX, storageKey string) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, layerArtifactHasReferences, storageKey)
+	var referenced pgtype.Bool
+	err := row.Scan(&referenced)
+	return referenced, err
 }
 
 const listAPIKeys = `-- name: ListAPIKeys :many
@@ -8465,6 +8555,46 @@ func (q *Queries) LockInvoiceForRefund(ctx context.Context, db DBTX, id pgtype.U
 		&i.AmountRefundPendingCents,
 		&i.CreditsAppliedCents,
 	)
+	return i, err
+}
+
+const lockLayerArtifactApp = `-- name: LockLayerArtifactApp :one
+SELECT id::text FROM apps WHERE id = $1::uuid AND status <> 'deleted' FOR UPDATE
+`
+
+func (q *Queries) LockLayerArtifactApp(ctx context.Context, db DBTX, appID pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, lockLayerArtifactApp, appID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockLayerArtifactDeployment = `-- name: LockLayerArtifactDeployment :one
+SELECT id::text FROM deployments WHERE id = $1::uuid FOR UPDATE
+`
+
+func (q *Queries) LockLayerArtifactDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, lockLayerArtifactDeployment, deploymentID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockLayerArtifactRetention = `-- name: LockLayerArtifactRetention :one
+SELECT storage_key, state, coalesce(deletion_id::text, '')::text AS deletion_id
+FROM layer_artifact_retention WHERE storage_key = $1::text FOR UPDATE
+`
+
+type LockLayerArtifactRetentionRow struct {
+	StorageKey string
+	State      string
+	DeletionID string
+}
+
+func (q *Queries) LockLayerArtifactRetention(ctx context.Context, db DBTX, storageKey string) (LockLayerArtifactRetentionRow, error) {
+	row := db.QueryRow(ctx, lockLayerArtifactRetention, storageKey)
+	var i LockLayerArtifactRetentionRow
+	err := row.Scan(&i.StorageKey, &i.State, &i.DeletionID)
 	return i, err
 }
 
@@ -12165,6 +12295,37 @@ func (q *Queries) OrgMemberByAccount(ctx context.Context, db DBTX, arg OrgMember
 	return i, err
 }
 
+const pendingLayerArtifactDeletions = `-- name: PendingLayerArtifactDeletions :many
+SELECT storage_key, state, coalesce(deletion_id::text, '')::text AS deletion_id FROM layer_artifact_retention
+WHERE state = 'deleting' OR (state = 'retained' AND delete_requested_at IS NOT NULL) ORDER BY storage_key
+`
+
+type PendingLayerArtifactDeletionsRow struct {
+	StorageKey string
+	State      string
+	DeletionID string
+}
+
+func (q *Queries) PendingLayerArtifactDeletions(ctx context.Context, db DBTX) ([]PendingLayerArtifactDeletionsRow, error) {
+	rows, err := db.Query(ctx, pendingLayerArtifactDeletions)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PendingLayerArtifactDeletionsRow{}
+	for rows.Next() {
+		var i PendingLayerArtifactDeletionsRow
+		if err := rows.Scan(&i.StorageKey, &i.State, &i.DeletionID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const perAccountRateLimitAggregate = `-- name: PerAccountRateLimitAggregate :many
 select coalesce(subject, '00000000-0000-0000-0000-000000000000'::uuid) as account_id,
        count(*)::int as hits,
@@ -12269,6 +12430,33 @@ func (q *Queries) ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg
 	var i ReadAccountCreditConsumptionRow
 	err := row.Scan(&i.ConsumedCents, &i.HasPrior, &i.HasUnqualified)
 	return i, err
+}
+
+const readDeploymentLayerArtifactKeys = `-- name: ReadDeploymentLayerArtifactKeys :many
+SELECT key FROM (
+    SELECT d.rootfs_key::text AS key FROM deployments d WHERE d.id = $1::uuid
+    UNION SELECT l.storage_key::text FROM deployment_sidecar_layers l WHERE l.deployment_id = $1::uuid
+) keys WHERE coalesce(key, '') <> '' ORDER BY key
+`
+
+func (q *Queries) ReadDeploymentLayerArtifactKeys(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]string, error) {
+	rows, err := db.Query(ctx, readDeploymentLayerArtifactKeys, deploymentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, err
+		}
+		items = append(items, key)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const readProjectEnvironmentCloneDeployedSettings = `-- name: ReadProjectEnvironmentCloneDeployedSettings :one
@@ -13238,6 +13426,15 @@ func (q *Queries) RegisterGatewayUsageEvent(ctx context.Context, db DBTX, arg Re
 	return inserted, err
 }
 
+const registerLayerArtifactRetention = `-- name: RegisterLayerArtifactRetention :exec
+INSERT INTO layer_artifact_retention(storage_key) VALUES ($1::text) ON CONFLICT DO NOTHING
+`
+
+func (q *Queries) RegisterLayerArtifactRetention(ctx context.Context, db DBTX, storageKey string) error {
+	_, err := db.Exec(ctx, registerLayerArtifactRetention, storageKey)
+	return err
+}
+
 const releaseProjectEnvironmentCloneWorkerLease = `-- name: ReleaseProjectEnvironmentCloneWorkerLease :execrows
 UPDATE project_environment_clone_operations
 SET lease_token = NULL, lease_until = NULL, revision = revision + 1, updated_at = clock_timestamp(),
@@ -13312,6 +13509,16 @@ func (q *Queries) RenewProjectEnvironmentCloneWorkerLease(ctx context.Context, d
 	var i RenewProjectEnvironmentCloneWorkerLeaseRow
 	err := row.Scan(&i.LeaseUntil, &i.AttemptCount)
 	return i, err
+}
+
+const requestLayerArtifactDeletion = `-- name: RequestLayerArtifactDeletion :exec
+UPDATE layer_artifact_retention SET delete_requested_at = coalesce(delete_requested_at, clock_timestamp())
+WHERE storage_key = $1::text
+`
+
+func (q *Queries) RequestLayerArtifactDeletion(ctx context.Context, db DBTX, storageKey string) error {
+	_, err := db.Exec(ctx, requestLayerArtifactDeletion, storageKey)
+	return err
 }
 
 const requestTelemetryAnalyticsByDeployment = `-- name: RequestTelemetryAnalyticsByDeployment :many
@@ -14785,6 +14992,40 @@ func (q *Queries) ResolveStaleRegressionObservations(ctx context.Context, db DBT
 		return nil, err
 	}
 	return items, nil
+}
+
+const retainedLayerBytesWithClonePins = `-- name: RetainedLayerBytesWithClonePins :one
+WITH retained_deployments AS (
+    SELECT d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_root, d.source_bytes, d.source_sha256, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.secret_reload_signal, d.override_readiness_probe, d.override_main_depends_on, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.disable_startup_cpu_boost, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.api_hosting_receipt, d.inferred_profile, d.revision FROM deployments d JOIN apps a ON a.id = d.app_id
+    WHERE d.app_id = $1::uuid AND a.status <> 'deleted'
+      AND (d.deleted_at IS NULL
+           OR EXISTS (SELECT 1 FROM snapshots sn WHERE sn.deployment_id = d.id AND NOT sn.stale)
+           OR EXISTS (SELECT 1 FROM instances i WHERE i.deployment_id = d.id AND i.state IN ('pending', 'waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'draining'))
+           OR EXISTS (SELECT 1 FROM deployment_aliases al WHERE al.deployment_id = d.id)
+           OR EXISTS (SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id = rm.release_id
+                      WHERE rm.deployment_id = d.id AND (rs.active OR rs.expires_at > clock_timestamp())))
+)
+SELECT coalesce(sum(retained.bytes), 0)::bigint AS retained_bytes FROM (
+    SELECT storage_key, max(bytes)::bigint AS bytes FROM (
+        SELECT coalesce(nullif(d.rootfs_key, ''), nullif(d.rootfs_path, ''))::text AS storage_key,
+               greatest(coalesce(d.rootfs_bytes, 0), 0)::bigint AS bytes
+        FROM retained_deployments d WHERE coalesce(d.rootfs_bytes, 0) > 0
+        UNION ALL
+        SELECT l.storage_key::text, greatest(l.bytes, 0)::bigint
+        FROM deployment_sidecar_layers l JOIN retained_deployments d ON d.id = l.deployment_id WHERE l.bytes > 0
+        UNION ALL
+        SELECT p.storage_key::text, p.bytes FROM project_environment_clone_layer_pins p
+        JOIN project_environment_clone_operations op ON op.id = p.operation_id JOIN apps a ON a.id = p.app_id
+        WHERE p.app_id = $1::uuid AND a.status <> 'deleted' AND op.status NOT IN ('ready', 'compensated')
+    ) layers WHERE coalesce(storage_key, '') <> '' GROUP BY storage_key
+) retained
+`
+
+func (q *Queries) RetainedLayerBytesWithClonePins(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, retainedLayerBytesWithClonePins, appID)
+	var retained_bytes int64
+	err := row.Scan(&retained_bytes)
+	return retained_bytes, err
 }
 
 const reverseAccountInvoiceCreditConsumption = `-- name: ReverseAccountInvoiceCreditConsumption :execrows

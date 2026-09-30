@@ -456,6 +456,11 @@ func (l *Loop) dispatchNotification(ctx context.Context, n db.Notification) erro
 // cleanup. When lv-fc usage is at or above the alarm threshold, also walks
 // biggest accounts first until pressure is relieved.
 func (l *Loop) runGCTick(ctx context.Context, now time.Time) {
+	if l.handler != nil {
+		if err := l.handler.retryLayerArtifactDeletions(ctx); err != nil {
+			l.log.Warn("imaged: retry layer artifact deletion", "err", err)
+		}
+	}
 	l.gcMu.Lock()
 	defer l.gcMu.Unlock()
 
@@ -895,8 +900,16 @@ func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) e
 				"deployment", deploymentID, "layer", sched.AppLayerKey(t.AppSlug, deploymentID))
 			continue
 		}
-		if err := be.Delete(ctx, sched.AppLayerKey(t.AppSlug, deploymentID)); err != nil {
-			l.log.Warn("imaged: gc remove ext4", "deployment", deploymentID, "err", err)
+		deployment, err := l.store.DeploymentByID(ctx, deploymentID)
+		if errors.Is(err, state.ErrNotFound) {
+			deployment = state.Deployment{ID: deploymentID}
+		} else if err != nil {
+			deleteErrors = append(deleteErrors, err)
+			continue
+		}
+		if err := l.handler.deleteDeploymentLayers(ctx, be, deployment, t.AppSlug); err != nil {
+			l.log.Warn("imaged: gc remove layers", "deployment", deploymentID, "err", err)
+			deleteErrors = append(deleteErrors, err)
 		}
 	}
 	// Best-effort: if the backend supports LocalArtifactLister (it does

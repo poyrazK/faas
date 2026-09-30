@@ -97,6 +97,15 @@ func (m *MemStore) CaptureProjectEnvironmentCloneWorkloads(_ context.Context, ac
 		}
 		records[appID] = record
 	}
+	var keys []string
+	for _, record := range records {
+		for key := range cloneLayerArtifacts(record) {
+			keys = append(keys, key)
+		}
+	}
+	if err := m.requireLayerArtifactsRetainedLocked(keys); err != nil {
+		return nil, err
+	}
 	m.projectEnvironmentCloneWorkloads[operationID] = records
 	return cloneWorkloadViews(records), nil
 }
@@ -156,6 +165,13 @@ func (m *MemStore) prepareCloneDeploymentLocked(input projectEnvironmentCloneDep
 	}
 	captured, err := copyCloneWorkloadRecord(record)
 	if err != nil {
+		return Deployment{}, record, err
+	}
+	var keys []string
+	for key := range cloneLayerArtifacts(captured) {
+		keys = append(keys, key)
+	}
+	if err := m.requireLayerArtifactsRetainedLocked(keys); err != nil {
 		return Deployment{}, record, err
 	}
 	return captured.snapshot.Artifact.deployment(op.ID, op.TargetEnvironment, settings), record, nil

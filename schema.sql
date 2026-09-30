@@ -11023,3 +11023,25 @@ CREATE TABLE IF NOT EXISTS project_environment_config_versions (
 
 CREATE INDEX IF NOT EXISTS project_environment_config_latest_idx
     ON project_environment_config_versions (project_id, environment_slug, version DESC);
+
+-- ADR-375 layer retention (migration 20260930000000003).
+CREATE TABLE layer_artifact_retention (
+    storage_key text PRIMARY KEY CHECK (storage_key <> '' AND length(storage_key) <= 4096),
+    state text NOT NULL DEFAULT 'retained' CHECK (state IN ('retained', 'deleting', 'deleted')),
+    deletion_id uuid,
+    deleted_at timestamptz,
+    delete_requested_at timestamptz,
+    CHECK (state = 'retained' OR delete_requested_at IS NOT NULL),
+    CHECK ((state = 'retained' AND deletion_id IS NULL AND deleted_at IS NULL) OR
+           (state = 'deleting' AND deletion_id IS NOT NULL AND deleted_at IS NULL) OR
+           (state = 'deleted' AND deletion_id IS NOT NULL AND deleted_at IS NOT NULL))
+);
+CREATE TABLE project_environment_clone_layer_pins (
+    operation_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    storage_key text NOT NULL REFERENCES layer_artifact_retention(storage_key),
+    bytes bigint NOT NULL CHECK (bytes > 0),
+    PRIMARY KEY (operation_id, app_id, storage_key),
+    FOREIGN KEY (operation_id, app_id) REFERENCES project_environment_clone_workloads(operation_id, app_id) ON DELETE CASCADE
+);
+CREATE INDEX project_environment_clone_layer_pins_key_idx ON project_environment_clone_layer_pins(storage_key);

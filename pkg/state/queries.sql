@@ -18,6 +18,95 @@ WHERE m.operation_id = sqlc.arg(operation_id)::uuid
 GROUP BY m.source_bucket_id, m.target_bucket_id, m.manifest_hash, m.captured_at_exact, m.object_count
 ORDER BY m.source_bucket_id;
 
+-- name: RegisterLayerArtifactRetention :exec
+INSERT INTO layer_artifact_retention(storage_key) VALUES (sqlc.arg(storage_key)::text) ON CONFLICT DO NOTHING;
+
+-- name: LockLayerArtifactRetention :one
+SELECT storage_key, state, coalesce(deletion_id::text, '')::text AS deletion_id
+FROM layer_artifact_retention WHERE storage_key = sqlc.arg(storage_key)::text FOR UPDATE;
+
+-- name: ClaimLayerArtifactDeletion :execrows
+UPDATE layer_artifact_retention SET state = 'deleting', deletion_id = sqlc.arg(deletion_id)::uuid
+WHERE storage_key = sqlc.arg(storage_key)::text AND state = 'retained';
+
+-- name: RequestLayerArtifactDeletion :exec
+UPDATE layer_artifact_retention SET delete_requested_at = coalesce(delete_requested_at, clock_timestamp())
+WHERE storage_key = sqlc.arg(storage_key)::text;
+
+-- name: CompleteLayerArtifactDeletion :execrows
+UPDATE layer_artifact_retention SET state = 'deleted', deleted_at = coalesce(deleted_at, clock_timestamp())
+WHERE storage_key = sqlc.arg(storage_key)::text AND deletion_id = sqlc.arg(deletion_id)::uuid
+  AND state IN ('deleting', 'deleted');
+
+-- name: PendingLayerArtifactDeletions :many
+SELECT storage_key, state, coalesce(deletion_id::text, '')::text AS deletion_id FROM layer_artifact_retention
+WHERE state = 'deleting' OR (state = 'retained' AND delete_requested_at IS NOT NULL) ORDER BY storage_key;
+
+-- name: InsertProjectEnvironmentCloneLayerPin :exec
+INSERT INTO project_environment_clone_layer_pins(operation_id, app_id, storage_key, bytes)
+VALUES (sqlc.arg(operation_id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(storage_key)::text, sqlc.arg(bytes)::bigint)
+ON CONFLICT (operation_id, app_id, storage_key) DO NOTHING;
+
+-- name: ReadDeploymentLayerArtifactKeys :many
+SELECT key FROM (
+    SELECT d.rootfs_key::text AS key FROM deployments d WHERE d.id = sqlc.arg(deployment_id)::uuid
+    UNION SELECT l.storage_key::text FROM deployment_sidecar_layers l WHERE l.deployment_id = sqlc.arg(deployment_id)::uuid
+) keys WHERE coalesce(key, '') <> '' ORDER BY key;
+
+-- name: LayerArtifactHasReferences :one
+SELECT EXISTS (
+    SELECT 1 FROM deployments d JOIN apps a ON a.id = d.app_id
+    WHERE a.status <> 'deleted'
+      AND ((d.deleted_at IS NULL AND d.status IN ('pending', 'building', 'imaging', 'snapshotting', 'live'))
+           OR EXISTS (SELECT 1 FROM snapshots sn WHERE sn.deployment_id = d.id AND NOT sn.stale)
+           OR EXISTS (SELECT 1 FROM instances i WHERE i.deployment_id = d.id AND i.state IN ('pending', 'waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'draining'))
+           OR EXISTS (SELECT 1 FROM deployment_aliases al WHERE al.deployment_id = d.id)
+           OR EXISTS (SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id = rm.release_id
+                      WHERE rm.deployment_id = d.id AND (rs.active OR rs.expires_at > clock_timestamp())))
+      AND (d.rootfs_key = sqlc.arg(storage_key)::text
+           OR sqlc.arg(storage_key)::text = 'apps/' || a.slug || '/' || d.id::text || '.ext4'
+           OR left(sqlc.arg(storage_key)::text, length('apps/' || a.slug || '/' || d.id::text || '/')) = 'apps/' || a.slug || '/' || d.id::text || '/'
+           OR EXISTS (SELECT 1 FROM deployment_sidecar_layers l WHERE l.deployment_id = d.id AND l.storage_key = sqlc.arg(storage_key)::text))
+) OR EXISTS (
+    SELECT 1 FROM project_environment_clone_layer_pins p
+    JOIN project_environment_clone_operations op ON op.id = p.operation_id
+    JOIN apps a ON a.id = p.app_id
+    WHERE p.storage_key = sqlc.arg(storage_key)::text AND a.status <> 'deleted'
+      AND op.status NOT IN ('ready', 'compensated')
+) AS referenced;
+
+-- name: RetainedLayerBytesWithClonePins :one
+WITH retained_deployments AS (
+    SELECT d.* FROM deployments d JOIN apps a ON a.id = d.app_id
+    WHERE d.app_id = sqlc.arg(app_id)::uuid AND a.status <> 'deleted'
+      AND (d.deleted_at IS NULL
+           OR EXISTS (SELECT 1 FROM snapshots sn WHERE sn.deployment_id = d.id AND NOT sn.stale)
+           OR EXISTS (SELECT 1 FROM instances i WHERE i.deployment_id = d.id AND i.state IN ('pending', 'waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'draining'))
+           OR EXISTS (SELECT 1 FROM deployment_aliases al WHERE al.deployment_id = d.id)
+           OR EXISTS (SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id = rm.release_id
+                      WHERE rm.deployment_id = d.id AND (rs.active OR rs.expires_at > clock_timestamp())))
+)
+SELECT coalesce(sum(retained.bytes), 0)::bigint AS retained_bytes FROM (
+    SELECT storage_key, max(bytes)::bigint AS bytes FROM (
+        SELECT coalesce(nullif(d.rootfs_key, ''), nullif(d.rootfs_path, ''))::text AS storage_key,
+               greatest(coalesce(d.rootfs_bytes, 0), 0)::bigint AS bytes
+        FROM retained_deployments d WHERE coalesce(d.rootfs_bytes, 0) > 0
+        UNION ALL
+        SELECT l.storage_key::text, greatest(l.bytes, 0)::bigint
+        FROM deployment_sidecar_layers l JOIN retained_deployments d ON d.id = l.deployment_id WHERE l.bytes > 0
+        UNION ALL
+        SELECT p.storage_key::text, p.bytes FROM project_environment_clone_layer_pins p
+        JOIN project_environment_clone_operations op ON op.id = p.operation_id JOIN apps a ON a.id = p.app_id
+        WHERE p.app_id = sqlc.arg(app_id)::uuid AND a.status <> 'deleted' AND op.status NOT IN ('ready', 'compensated')
+    ) layers WHERE coalesce(storage_key, '') <> '' GROUP BY storage_key
+) retained;
+
+-- name: LockLayerArtifactDeployment :one
+SELECT id::text FROM deployments WHERE id = sqlc.arg(deployment_id)::uuid FOR UPDATE;
+
+-- name: LockLayerArtifactApp :one
+SELECT id::text FROM apps WHERE id = sqlc.arg(app_id)::uuid AND status <> 'deleted' FOR UPDATE;
+
 -- name: ReadProjectEnvironmentCloneVariables :many
 SELECT e.app_id::text AS app_id, e.scope, e.key, e.value
 FROM app_envs e JOIN apps a ON a.id = e.app_id
