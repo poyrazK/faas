@@ -23,7 +23,10 @@ T = TypeVar("T", bound="PlatformTenantStatementResponse")
 
 @_attrs_define
 class PlatformTenantStatementResponse:
-    """One immutable initial or additive adjustment revision for a cross-app customer period."""
+    """One immutable initial or additive adjustment revision for a cross-app customer period, with compact invoice lines
+    and private minute-level adjustment coverage.
+
+    """
 
     id: UUID
     tenant_id: UUID

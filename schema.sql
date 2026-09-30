@@ -3854,6 +3854,38 @@ CREATE TABLE public.app_errors (
 
 
 --
+-- Name: app_issues; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_issues (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    environment text NOT NULL,
+    fingerprint text NOT NULL,
+    grouping_version integer NOT NULL,
+    title text NOT NULL,
+    state text DEFAULT 'open'::text NOT NULL,
+    assignee_account_id uuid,
+    first_seen_at timestamp with time zone NOT NULL,
+    last_seen_at timestamp with time zone NOT NULL,
+    event_count bigint DEFAULT 0 NOT NULL,
+    regression_count bigint DEFAULT 0 NOT NULL,
+    resolved_at timestamp with time zone,
+    fixed_deployment_id uuid,
+    fixed_deployment_created_at timestamp with time zone,
+    ignored_until timestamp with time zone,
+    CONSTRAINT app_issues_environment_check CHECK ((environment ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text)),
+    CONSTRAINT app_issues_event_count_check CHECK ((event_count >= 0)),
+    CONSTRAINT app_issues_fingerprint_check CHECK ((fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT app_issues_grouping_version_check CHECK ((grouping_version > 0)),
+    CONSTRAINT app_issues_regression_count_check CHECK ((regression_count >= 0)),
+    CONSTRAINT app_issues_state_check CHECK ((state = ANY (ARRAY['open'::text, 'resolved'::text, 'ignored'::text]))),
+    CONSTRAINT app_issues_title_check CHECK ((octet_length(title) <= 2048))
+);
+
+
+--
 -- Name: app_log_drain_delivery_analytics; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4362,7 +4394,7 @@ CREATE TABLE public.app_webhook_event_outbox (
     payload jsonb NOT NULL,
     recipient_webhook_ids uuid[] NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text]))),
+    CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text]))),
     CONSTRAINT app_webhook_event_outbox_payload_chk CHECK ((jsonb_typeof(payload) = 'object'::text)),
     CONSTRAINT app_webhook_event_outbox_recipients_chk CHECK ((cardinality(recipient_webhook_ids) > 0))
 );
@@ -7161,6 +7193,94 @@ CREATE TABLE public.invoices (
 
 
 --
+-- Name: issue_activity; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_activity (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    issue_id uuid NOT NULL,
+    action text NOT NULL,
+    actor_account_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    details jsonb DEFAULT '{}'::jsonb NOT NULL,
+    CONSTRAINT issue_activity_action_check CHECK ((action = ANY (ARRAY['created'::text, 'assigned'::text, 'resolved'::text, 'reopened'::text, 'ignored'::text, 'regressed'::text]))),
+    CONSTRAINT issue_activity_details_check CHECK ((jsonb_typeof(details) = 'object'::text))
+);
+
+
+--
+-- Name: issue_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_events (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    event_id uuid NOT NULL,
+    issue_id uuid NOT NULL,
+    payload_hash text NOT NULL,
+    payload jsonb NOT NULL,
+    occurred_at timestamp with time zone NOT NULL,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    attribution_checked_at timestamp with time zone DEFAULT now() NOT NULL,
+    verified_consumer_id uuid,
+    verified_platform_tenant_id uuid,
+    CONSTRAINT issue_events_payload_check CHECK (((jsonb_typeof(payload) = 'object'::text) AND (octet_length((payload)::text) <= 65536))),
+    CONSTRAINT issue_events_payload_hash_check CHECK ((payload_hash ~ '^[a-f0-9]{64}$'::text))
+);
+
+
+--
+-- Name: issue_ingest_tokens; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_ingest_tokens (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    environment text NOT NULL,
+    name text NOT NULL,
+    token_hash bytea NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    revoked_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT issue_ingest_tokens_environment_check CHECK ((environment ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text)),
+    CONSTRAINT issue_ingest_tokens_name_check CHECK (((length(name) >= 1) AND (length(name) <= 64))),
+    CONSTRAINT issue_ingest_tokens_token_hash_check CHECK ((octet_length(token_hash) = 32))
+);
+
+
+--
+-- Name: issue_releases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_releases (
+    issue_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    commit_sha text NOT NULL,
+    image_digest text NOT NULL,
+    event_count bigint NOT NULL,
+    first_seen_at timestamp with time zone NOT NULL,
+    last_seen_at timestamp with time zone NOT NULL,
+    CONSTRAINT issue_releases_event_count_check CHECK ((event_count > 0))
+);
+
+
+--
+-- Name: issue_resolutions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_resolutions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    issue_id uuid NOT NULL,
+    fixed_deployment_id uuid NOT NULL,
+    resolved_at timestamp with time zone NOT NULL,
+    actor_account_id uuid NOT NULL
+);
+
+
+--
 -- Name: job_registry_credentials; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -9102,16 +9222,32 @@ CREATE TABLE public.platform_tenant_statements (
     as_of timestamp with time zone NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     finalized_at timestamp with time zone,
+    coverage jsonb NOT NULL,
     CONSTRAINT platform_tenant_statements_amount_millicents_check CHECK ((amount_millicents >= 0)),
     CONSTRAINT platform_tenant_statements_billable_units_check CHECK ((billable_units >= 0)),
     CONSTRAINT platform_tenant_statements_check CHECK (((period_start = date_trunc('minute'::text, period_start)) AND (period_end = date_trunc('minute'::text, period_end)) AND (period_end > period_start))),
     CONSTRAINT platform_tenant_statements_check1 CHECK ((((status = ANY (ARRAY['draft'::text, 'superseded'::text])) AND (finalized_at IS NULL)) OR ((status = 'finalized'::text) AND (finalized_at IS NOT NULL)))),
+    CONSTRAINT platform_tenant_statements_coverage_array CHECK ((jsonb_typeof(coverage) = 'array'::text)),
     CONSTRAINT platform_tenant_statements_currency_check CHECK (((currency = ''::text) OR (currency ~ '^[A-Z]{3}$'::text))),
     CONSTRAINT platform_tenant_statements_lines_check CHECK ((jsonb_typeof(lines) = 'array'::text)),
     CONSTRAINT platform_tenant_statements_revision_check CHECK ((revision > 0)),
     CONSTRAINT platform_tenant_statements_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'finalized'::text, 'superseded'::text]))),
     CONSTRAINT platform_tenant_statements_unpriced_units_check CHECK ((unpriced_units >= 0))
 );
+
+
+--
+-- Name: COLUMN platform_tenant_statements.lines; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.platform_tenant_statements.lines IS 'Compact immutable invoice lines grouped by app, source, and effective price source.';
+
+
+--
+-- Name: COLUMN platform_tenant_statements.coverage; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.platform_tenant_statements.coverage IS 'Private immutable minute-level billable-unit evidence used to calculate additive statement revisions.';
 
 
 --
@@ -11325,6 +11461,22 @@ ALTER TABLE ONLY public.app_errors
 
 
 --
+-- Name: app_issues app_issues_app_id_environment_grouping_version_fingerprint_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_issues
+    ADD CONSTRAINT app_issues_app_id_environment_grouping_version_fingerprint_key UNIQUE (app_id, environment, grouping_version, fingerprint);
+
+
+--
+-- Name: app_issues app_issues_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_issues
+    ADD CONSTRAINT app_issues_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: app_log_drain_delivery_analytics app_log_drain_delivery_analytics_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -12546,6 +12698,62 @@ ALTER TABLE ONLY public.invoices
 
 ALTER TABLE ONLY public.invoices
     ADD CONSTRAINT invoices_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: issue_activity issue_activity_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_activity
+    ADD CONSTRAINT issue_activity_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: issue_events issue_events_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_events
+    ADD CONSTRAINT issue_events_id_key UNIQUE (id);
+
+
+--
+-- Name: issue_events issue_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_events
+    ADD CONSTRAINT issue_events_pkey PRIMARY KEY (app_id, deployment_id, event_id);
+
+
+--
+-- Name: issue_ingest_tokens issue_ingest_tokens_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_ingest_tokens
+    ADD CONSTRAINT issue_ingest_tokens_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: issue_ingest_tokens issue_ingest_tokens_token_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_ingest_tokens
+    ADD CONSTRAINT issue_ingest_tokens_token_hash_key UNIQUE (token_hash);
+
+
+--
+-- Name: issue_releases issue_releases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_releases
+    ADD CONSTRAINT issue_releases_pkey PRIMARY KEY (issue_id, deployment_id);
+
+
+--
+-- Name: issue_resolutions issue_resolutions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_resolutions
+    ADD CONSTRAINT issue_resolutions_pkey PRIMARY KEY (id);
 
 
 --
@@ -14413,6 +14621,13 @@ CREATE INDEX app_errors_account_app_last_seen_idx ON public.app_errors USING btr
 --
 
 CREATE UNIQUE INDEX app_errors_dedupe_uniq ON public.app_errors USING btree (account_id, app_id, fingerprint);
+
+
+--
+-- Name: app_issues_list_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_issues_list_idx ON public.app_issues USING btree (app_id, last_seen_at DESC, id DESC);
 
 
 --
@@ -16457,6 +16672,41 @@ CREATE INDEX invoices_org_id_idx ON public.invoices USING btree (org_id) WHERE (
 --
 
 CREATE UNIQUE INDEX invoices_provider_charge_idx ON public.invoices USING btree (provider, provider_charge_id) WHERE (provider_charge_id <> ''::text);
+
+
+--
+-- Name: issue_activity_list_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_activity_list_idx ON public.issue_activity USING btree (issue_id, created_at DESC, id DESC);
+
+
+--
+-- Name: issue_events_attribution_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_events_attribution_idx ON public.issue_events USING btree (attribution_checked_at) WHERE ((verified_consumer_id IS NULL) AND (verified_platform_tenant_id IS NULL));
+
+
+--
+-- Name: issue_events_list_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_events_list_idx ON public.issue_events USING btree (issue_id, occurred_at DESC, id DESC);
+
+
+--
+-- Name: issue_events_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_events_retention_idx ON public.issue_events USING btree (app_id, received_at);
+
+
+--
+-- Name: issue_ingest_tokens_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_ingest_tokens_app_idx ON public.issue_ingest_tokens USING btree (app_id, expires_at);
 
 
 --
@@ -20175,6 +20425,30 @@ ALTER TABLE ONLY public.app_errors
 
 
 --
+-- Name: app_issues app_issues_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_issues
+    ADD CONSTRAINT app_issues_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_issues app_issues_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_issues
+    ADD CONSTRAINT app_issues_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_issues app_issues_assignee_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_issues
+    ADD CONSTRAINT app_issues_assignee_account_id_fkey FOREIGN KEY (assignee_account_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
 -- Name: app_log_drain_delivery_analytics app_log_drain_delivery_analytics_drain_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -21652,6 +21926,70 @@ ALTER TABLE ONLY public.invoices
 
 ALTER TABLE ONLY public.invoices
     ADD CONSTRAINT invoices_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: issue_activity issue_activity_issue_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_activity
+    ADD CONSTRAINT issue_activity_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.app_issues(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_events issue_events_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_events
+    ADD CONSTRAINT issue_events_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_events issue_events_issue_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_events
+    ADD CONSTRAINT issue_events_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.app_issues(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_ingest_tokens issue_ingest_tokens_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_ingest_tokens
+    ADD CONSTRAINT issue_ingest_tokens_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_ingest_tokens issue_ingest_tokens_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_ingest_tokens
+    ADD CONSTRAINT issue_ingest_tokens_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_ingest_tokens issue_ingest_tokens_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_ingest_tokens
+    ADD CONSTRAINT issue_ingest_tokens_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_releases issue_releases_issue_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_releases
+    ADD CONSTRAINT issue_releases_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.app_issues(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_resolutions issue_resolutions_issue_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_resolutions
+    ADD CONSTRAINT issue_resolutions_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.app_issues(id) ON DELETE CASCADE;
 
 
 --

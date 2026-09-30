@@ -23,12 +23,14 @@ func TestFeatureFlagsSpecContracts(t *testing.T) {
 	}
 	for name, value := range map[string]any{
 		"FlagRule": flags.Rule{}, "FeatureFlag": flags.Flag{}, "FlagsConfig": flags.Config{},
+		"FlagVariant": flags.FlagVariant{},
 		"FlagsBundle": flags.Bundle{}, "FeatureFlagVersion": state.FeatureFlagVersion{},
 		"FlagDecision": flags.Decision{}, "FlagEvidence": flags.Evidence{},
 		"UpdateFeatureFlagsRequest":   updateFeatureFlagsRequest{},
 		"RollbackFeatureFlagsRequest": rollbackFeatureFlagsRequest{},
 		"InspectFeatureFlagRequest":   inspectFeatureFlagRequest{},
 		"FlagRequestEvidence":         featureFlagRequestEvidence{}, "FlagEvidencePage": featureFlagEvidencePage{},
+		"FlagOutcome": featureFlagOutcome{}, "FlagOutcomesResponse": featureFlagOutcomesResponse{},
 	} {
 		t.Run(name, func(t *testing.T) {
 			fields := flagJSONFields(reflect.TypeOf(value))

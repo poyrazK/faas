@@ -34,9 +34,13 @@ func (c *Client) ProjectFlagVersions(ctx context.Context, project, environment s
 	err := c.do(ctx, http.MethodGet, p, nil, &out)
 	return out, err
 }
-func (c *Client) InspectProjectFlag(ctx context.Context, project, environment, key, customer string, version int64) (json.RawMessage, error) {
+func (c *Client) InspectProjectFlag(ctx context.Context, project, environment, key, customer string, version int64, fallbackVariants ...string) (json.RawMessage, error) {
 	var out json.RawMessage
-	err := c.do(ctx, http.MethodPost, flagsPath(project, environment)+"/"+url.PathEscape(key)+"/inspect", map[string]any{"customer_id": customer, "version": version, "fallback": false}, &out)
+	var fallbackVariant string
+	if len(fallbackVariants) > 0 {
+		fallbackVariant = fallbackVariants[0]
+	}
+	err := c.do(ctx, http.MethodPost, flagsPath(project, environment)+"/"+url.PathEscape(key)+"/inspect", map[string]any{"customer_id": customer, "version": version, "fallback": false, "fallback_variant": fallbackVariant}, &out)
 	return out, err
 }
 func (c *Client) RollbackProjectFlags(ctx context.Context, project, environment string, expected, version int64) (json.RawMessage, error) {
@@ -47,6 +51,13 @@ func (c *Client) RollbackProjectFlags(ctx context.Context, project, environment 
 func (c *Client) ProjectFlagRequests(ctx context.Context, project, environment, key string, query url.Values) (json.RawMessage, error) {
 	var out json.RawMessage
 	err := c.do(ctx, http.MethodGet, flagsPath(project, environment)+"/"+url.PathEscape(key)+"/requests?"+query.Encode(), nil, &out)
+	return out, err
+}
+
+// ProjectFlagOutcomes returns request-weighted operational outcomes grouped by decision value.
+func (c *Client) ProjectFlagOutcomes(ctx context.Context, project, environment, key string, query url.Values) (json.RawMessage, error) {
+	var out json.RawMessage
+	err := c.do(ctx, http.MethodGet, flagsPath(project, environment)+"/"+url.PathEscape(key)+"/outcomes?"+query.Encode(), nil, &out)
 	return out, err
 }
 

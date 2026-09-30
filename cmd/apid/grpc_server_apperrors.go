@@ -260,6 +260,11 @@ func (a *appErrorsReceiver) handleOne(ctx context.Context, req *apidpb.Increment
 		return out
 	}
 
+	if err := recordHTTPIssue(ctx, a.store, req); err != nil {
+		// Preserve legacy publication and record a separate issue-ingest failure.
+		a.ops.ObserveIssueEvent("db_error")
+	}
+
 	a.observe("ok")
 	if inserted {
 		out.Outcome = outcomeInserted

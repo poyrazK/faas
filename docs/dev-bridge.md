@@ -6,7 +6,38 @@ capability under [ADR-378](adr/378-development-bridge.md). The implementation is
 ready for a controlled development trial; native fleet acceptance and a public
 product rollout have not been performed.
 
+[ADR-379](adr/379-development-bridge-workflow.md) extends that capability with
+supervised execution, Node/Python propagation, inventory and dashboard activity.
+The [native acceptance fixture](../tests/dev-bridge-acceptance/README.md) provides
+a guarded run and evidence report for a designated split-box deployment. Its
+implementation and local contract tests do not replace the pending native run.
+
 ## Use the bridge
+
+Launch payments and wire its remote inventory URL with one command:
+
+```sh
+gregale dev bridge payments --environment development --local-port 8080 \
+  --entrypoint frontend --inspect --ready-path /health \
+  --bind-env INVENTORY_URL=inventory -- node app/server.js
+```
+
+Everything after `--` is an explicit local command. The bridge creates loopback
+dependency proxies first, then supplies `HOST=127.0.0.1`, `PORT`,
+`GREGALE_DEV_SESSION_URL`, and `GREGALE_SERVICE_<NAME>_URL` for each dependency.
+`--bind-env` also supplies the URL under the application's configured name.
+Keys must be environment identifiers; `HOST`, `PORT`, `FAAS_TOKEN` and
+`GREGALE_*` are reserved. Ambiguous normalized dependency names are rejected.
+The child inherits ordinary app configuration, but platform API tokens and
+bridge authority are removed. Request authority is received on incoming scoped
+requests, not injected into the child's environment.
+
+The CLI waits up to 30 seconds for the TCP listener, or for a 2xx response at
+`--ready-path`, before attaching. Readiness redirects are rejected. A child that
+exits stops the bridge and preserves its exit code; a premature successful exit
+fails startup. Ctrl-C/SIGTERM stops the process group, closes local proxies and
+revokes the session. Shutdown escalates to a forced kill after five seconds.
+Cleanup errors are reported; the lease still has its original one-hour expiry.
 
 Start payments in your IDE on port 8080, then run:
 
@@ -193,6 +224,35 @@ are pruned transactionally; inactive accounts retain their last metadata until
 further activity or account deletion. Replay inspection is available after
 revocation while the metadata remains retained.
 
+## Inventory and diagnostics
+
+```sh
+gregale dev bridge list
+gregale dev bridge status SESSION_ID --json
+gregale dev bridge revoke SESSION_ID
+gregale dev bridge doctor payments --environment development --local-port 8080
+```
+
+`doctor` creates a temporary scoped session, probes admission, the relay endpoint
+and the local listener, then revokes it. It requires available session capacity
+and does not attach a laptop or send application traffic. Its failures identify
+the admission, relay or local-listener stage.
+
+The dashboard's **Dev Bridge** page lists your account's active sessions,
+developer, service, environment, connection status and expiry. Select **Inspect**
+for recent request metadata and an authenticated revoke action. The CLI's JSON
+status exposes the same activity. This is a bounded, temporary observation at
+the API proxy; a relay failure can appear here before a request reaches the
+laptop. Connection status describes the observed WebSocket upgrade, while
+successful application traffic still depends on local readiness. `unknown`
+means the API restarted or evicted its activity window. Durable revocation and
+expiry override the observed connection state. Refresh the page to update it.
+
+Inventory returns at most 100 active leases; the API keeps activity for up to
+512 recently observed sessions, with 100 request records each. These bounds,
+the 30-second readiness deadline and five-second local stop grace period live in
+`pkg/api/limits.go`.
+
 ## Acceptance evidence
 
 The local application scenario uses real HTTP servers, the gateway/service proxy,
@@ -207,5 +267,4 @@ private environment admission, preserved
 application authentication, account/environment isolation, MemStore/PostgreSQL
 quota parity, concurrent replay deduplication, original webhook preservation and
 credential redaction. Native split-box installation, edge WebSocket lifetime and
-real VM identity checks remain rollout acceptance gates. The complete repository
-suite has not been run as part of this feature check.
+real VM identity checks remain rollout acceptance gates.

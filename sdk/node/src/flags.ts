@@ -2,13 +2,26 @@ import { createHash } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 export interface FlagRule { id: string; customers?: string[]; group?: string; rollout?: number; value: boolean }
-export interface FeatureFlag { key: string; description?: string; enabled: boolean; default: boolean; seed: string; rules: FlagRule[] }
-export interface FlagsBundle { environment_id: string; version: number; flags: FeatureFlag[]; groups: Record<string, string[]> }
+export interface VariantFlagRule { id: string; customers?: string[]; group?: string; rollout?: number; value?: string }
+export interface WeightedVariant { key: string; weight: number }
+export interface FeatureFlag { key: string; description?: string; type?: 'boolean'; enabled: boolean; default: boolean; seed: string; rules: FlagRule[]; variants?: never }
+export type BooleanFeatureFlag = FeatureFlag;
+export interface VariantFeatureFlag { key: string; description?: string; type: 'variant'; enabled: boolean; default: string; seed: string; rules: VariantFlagRule[]; variants: WeightedVariant[] }
+export type FlagDefinition = FeatureFlag | VariantFeatureFlag;
+export interface FlagsBundle { environment_id: string; version: number; flags: FlagDefinition[]; groups: Record<string, string[]> }
 export interface FlagDecision {
   flag: string; value: boolean; config_version: number; rule_id?: string;
   reason: string; bucket?: number; source: 'configuration' | 'fallback';
 }
+export interface VariantFlagDecision {
+  flag: string; type: 'variant'; value: string; config_version: number; rule_id?: string;
+  reason: string; bucket?: number; rollout_bucket?: number; source: 'configuration' | 'fallback';
+}
+export type BooleanFlagDecision = FlagDecision;
+export interface VariantFlagEvidence extends VariantFlagDecision { used: boolean }
 export interface FlagEvidence extends FlagDecision { used: boolean }
+export type AnyFlagDecision = FlagDecision | VariantFlagDecision;
+export type AnyFlagEvidence = FlagEvidence | VariantFlagEvidence;
 export type FlagRequestHeaders = HeadersInit | Record<string, string | string[] | undefined>;
 export const GREGALE_FLAG_EVIDENCE_HEADER = 'X-Faas-Flag-Evidence';
 export const GREGALE_FLAG_CONTEXT_HEADER = 'X-Faas-Platform-Tenant-Id';
@@ -17,11 +30,15 @@ const CUSTOMER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 export function flagBucket(seed: string, key: string, customer: string): number {
   return createHash('sha256').update(`${seed}\0${key}\0${customer}`).digest().readUInt32BE(0) % 10000;
 }
+export function flagVariantBucket(seed: string, key: string, customer: string): number {
+  return createHash('sha256').update(`${seed}\0${key}\0variant\0${customer}`).digest().readUInt32BE(0) % 10000;
+}
 /** Pure evaluator. customer must come from trusted server-side middleware. */
 export function evaluateFlag(bundle: FlagsBundle, key: string, customer: string | undefined, fallback: boolean): FlagDecision {
   const d: FlagDecision = { flag: key, value: fallback, config_version: bundle.version, reason: 'flag_missing', source: 'fallback' };
   const f = bundle.flags.find(flag => flag.key === key);
   if (!f) return d;
+  if (f.type === 'variant') return { ...d, reason: 'type_mismatch' };
   d.value = f.default; d.source = 'configuration'; d.reason = 'default';
   if (!f.enabled) return { ...d, reason: 'disabled' };
   if (!customer) return { ...d, reason: 'customer_missing' };
@@ -37,6 +54,36 @@ export function evaluateFlag(bundle: FlagsBundle, key: string, customer: string 
   }
   return d;
 }
+/** Pure named-variant evaluator with deterministic weighted allocation. */
+export function evaluateVariant(bundle: FlagsBundle, key: string, customer: string | undefined, fallback: string): VariantFlagDecision {
+  const d: VariantFlagDecision = { flag: key, type: 'variant', value: fallback, config_version: bundle.version, reason: 'flag_missing', source: 'fallback' };
+  const f = bundle.flags.find(flag => flag.key === key);
+  if (!f) return d;
+  if (f.type !== 'variant') return { ...d, reason: 'type_mismatch' };
+  d.value = f.default; d.source = 'configuration'; d.reason = 'default';
+  if (!f.enabled) return { ...d, reason: 'disabled' };
+  if (!customer) return { ...d, reason: 'customer_missing' };
+  for (const rule of f.rules) {
+    if (rule.customers?.length && !rule.customers.includes(customer)) continue;
+    if (rule.group && !bundle.groups[rule.group]?.includes(customer)) continue;
+    let rolloutBucket: number | undefined;
+    if (rule.rollout !== undefined) {
+      rolloutBucket = flagBucket(f.seed, f.key, customer);
+      if (rolloutBucket >= rule.rollout) continue;
+    }
+    if (rule.value !== undefined) return { ...d, value: rule.value, rule_id: rule.id, reason: 'rule_match', ...(rolloutBucket === undefined ? {} : { rollout_bucket: rolloutBucket }) };
+    const bucket = flagVariantBucket(f.seed, f.key, customer);
+    return { ...d, value: chooseVariant(f.variants, bucket), rule_id: rule.id, reason: 'rule_match', bucket, ...(rolloutBucket === undefined ? {} : { rollout_bucket: rolloutBucket }) };
+  }
+  return d;
+}
+function chooseVariant(variants: WeightedVariant[], bucket: number): string {
+  for (const variant of variants) {
+    if (bucket < variant.weight) return variant.key;
+    bucket -= variant.weight;
+  }
+  return '';
+}
 
 export interface GregaleFlagsOptions {
   /** Public apid base URL, e.g. https://api.gregale.dev. HTTPS required. */
@@ -50,7 +97,7 @@ export interface GregaleFlagsOptions {
   timeoutMs?: number;
   now?: () => number;
 }
-type RequestFlags = { customer?: string; bundle?: FlagsBundle; fresh: boolean; evidence: Map<string, FlagEvidence> };
+type RequestFlags = { customer?: string; bundle?: FlagsBundle; fresh: boolean; evidence: Map<string, AnyFlagEvidence> };
 
 /** Server-only client. Refresh is asynchronous; all checks in a request share one snapshot. */
 export class GregaleFlags {
@@ -121,8 +168,17 @@ export class GregaleFlags {
     const r = this.requests.getStore();
     if (!r) throw new Error('Flag checks require runRequest');
     const prior = r.evidence.get(key);
-    if (prior) return { ...prior };
-    const d = r.fresh && r.bundle ? evaluateFlag(r.bundle, key, r.customer, fallback) : { flag: key, value: fallback, config_version: r.bundle?.version ?? 0, reason: 'configuration_stale', source: 'fallback' as const };
+    if (prior) return typeof prior.value === 'boolean' ? { ...prior } : { flag: key, value: fallback, config_version: prior.config_version, reason: 'type_mismatch', source: 'fallback' };
+    const d: FlagDecision = r.fresh && r.bundle ? evaluateFlag(r.bundle, key, r.customer, fallback) : { flag: key, value: fallback, config_version: r.bundle?.version ?? 0, reason: 'configuration_stale', source: 'fallback' };
+    if (r.evidence.size < 32) r.evidence.set(key, { ...d, used: false });
+    return d;
+  }
+  variant(key: string, fallback: string): VariantFlagDecision {
+    const r = this.requests.getStore();
+    if (!r) throw new Error('Flag checks require runRequest');
+    const prior = r.evidence.get(key);
+    if (prior) return typeof prior.value === 'string' ? { ...prior, type: 'variant' } : { flag: key, type: 'variant', value: fallback, config_version: prior.config_version, reason: 'type_mismatch', source: 'fallback' };
+    const d: VariantFlagDecision = r.fresh && r.bundle ? evaluateVariant(r.bundle, key, r.customer, fallback) : { flag: key, type: 'variant', value: fallback, config_version: r.bundle?.version ?? 0, reason: 'configuration_stale', source: 'fallback' };
     if (r.evidence.size < 32) r.evidence.set(key, { ...d, used: false });
     return d;
   }
@@ -135,7 +191,7 @@ export class GregaleFlags {
     if (!d) throw new Error('Flag must be evaluated before marking exposure');
     d.used = true;
   }
-  evidence(): FlagEvidence[] { return [...(this.requests.getStore()?.evidence.values() ?? [])].map(d => ({ ...d })); }
+  evidence(): AnyFlagEvidence[] { return [...(this.requests.getStore()?.evidence.values() ?? [])].map(d => ({ ...d })); }
   /** Put on the app response before headers are sent; the gateway consumes and removes it. */
   responseEvidence(): string { return Buffer.from(JSON.stringify(this.evidence())).toString('base64url'); }
 }
@@ -156,10 +212,22 @@ function validateBundle(raw: unknown): FlagsBundle {
   for (const [name, members] of Object.entries(b.groups)) if (!key(name) || !ids(members)) throw new Error('Invalid Flags group');
   const keys = new Set<string>();
   for (const f of b.flags) {
-    if (!key(f.key) || keys.has(f.key) || typeof f.enabled !== 'boolean' || typeof f.default !== 'boolean' || typeof f.seed !== 'string' || !f.seed || f.seed.length > 128 || f.seed.includes('\0') || !Array.isArray(f.rules) || f.rules.length > 32) throw new Error('Invalid Flags definition');
+    const isVariant = f.type === 'variant';
+    if (!key(f.key) || keys.has(f.key) || (f.type !== undefined && f.type !== 'boolean' && !isVariant) || typeof f.enabled !== 'boolean' || (isVariant ? typeof f.default !== 'string' : typeof f.default !== 'boolean') || typeof f.seed !== 'string' || !f.seed || f.seed.length > 128 || f.seed.includes('\0') || !Array.isArray(f.rules) || f.rules.length > 32) throw new Error('Invalid Flags definition');
     keys.add(f.key); const rules = new Set<string>();
+    const variantKeys = new Set<string>();
+    if (isVariant) {
+      if (!Array.isArray(f.variants) || f.variants.length < 2 || f.variants.length > 16) throw new Error('Invalid Flags variants');
+      let totalWeight = 0;
+      for (const variant of f.variants) {
+        if (!key(variant.key) || variantKeys.has(variant.key) || !Number.isInteger(variant.weight) || variant.weight < 0 || variant.weight > 10000) throw new Error('Invalid Flags variant');
+        variantKeys.add(variant.key); totalWeight += variant.weight;
+      }
+      if (totalWeight !== 10000 || !variantKeys.has(f.default)) throw new Error('Invalid Flags variant weights or default');
+    } else if ('variants' in f) throw new Error('Boolean flag cannot define variants');
     for (const r of f.rules) {
-      if (!key(r.id) || rules.has(r.id) || typeof r.value !== 'boolean' || (r.customers !== undefined && !ids(r.customers)) || (r.group !== undefined && (!key(r.group) || !Object.hasOwn(b.groups, r.group))) || (r.rollout !== undefined && (!Number.isInteger(r.rollout) || r.rollout < 0 || r.rollout > 10000)) || (!r.customers?.length && !r.group && r.rollout === undefined)) throw new Error('Invalid Flags rule');
+      const validRuleValue = isVariant ? (r.value === undefined || (typeof r.value === 'string' && variantKeys.has(r.value))) : typeof r.value === 'boolean';
+      if (!key(r.id) || rules.has(r.id) || !validRuleValue || (r.customers !== undefined && !ids(r.customers)) || (r.group !== undefined && (!key(r.group) || !Object.hasOwn(b.groups, r.group))) || (r.rollout !== undefined && (!Number.isInteger(r.rollout) || r.rollout < 0 || r.rollout > 10000)) || (!r.customers?.length && !r.group && r.rollout === undefined)) throw new Error('Invalid Flags rule');
       rules.add(r.id);
     }
   }

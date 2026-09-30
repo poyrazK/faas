@@ -259,6 +259,38 @@ removes it before returning the response to the client. See
 identifiers and key rotation. Call `failedLoginResponse` with the normalized
 lookup value after either an unknown account or an incorrect credential.
 
+## Dev Bridge request context
+
+Opt a remote HTTP service into preserving a developer's routing context across
+managed service calls. In an Express service, install `devBridgeMiddleware` before
+handlers and use `createDevBridgeFetch` for outbound HTTP:
+
+```ts
+import { devBridgeMiddleware, createDevBridgeFetch } from '@gregale/sdk-node';
+
+app.use(devBridgeMiddleware);
+const serviceFetch = createDevBridgeFetch();
+const paymentsURL = process.env.GREGALE_SERVICE_PAYMENTS_URL;
+if (!paymentsURL) throw new Error('Declare the payments service binding');
+app.get('/charge', async (_request, response) => {
+  const result = await serviceFetch(paymentsURL + '/charge');
+  response.status(result.status).send(await result.text());
+});
+```
+
+For a framework using Fetch headers, wrap its handler with
+`withDevBridgeRequestContext(request.headers, handler)`. AsyncLocalStorage keeps
+concurrent developer and ordinary requests separate. The wrapper removes explicit
+bridge credentials on every destination and propagates request context only to
+single-label `NAME.svc.gregale` or `NAME.internal` discovery names. Gregale still
+authorizes the lease at each hop. Application `Authorization` is preserved.
+
+Scoped managed requests use manual redirects: inspect `Location` and call the
+wrapper again if the application chooses to follow it. Do not hand the scoped
+request to an unwrapped fetch that automatically follows redirects. The helpers
+are Node-only; the browser subpath does not expose laptop/session authority.
+See [the Dev Bridge guide](../../docs/dev-bridge.md) for local execution.
+
 ## Project release context
 
 Capture the release selected for an inbound Gregale request and use the

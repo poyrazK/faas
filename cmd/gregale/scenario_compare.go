@@ -1,9 +1,11 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -14,6 +16,7 @@ type testReportComparison struct {
 	After   string                    `json:"after"`
 	Summary testReportComparisonStats `json:"summary"`
 	Runs    []testRunComparison       `json:"runs"`
+	Gate    *testComparisonGate       `json:"gate,omitempty"`
 }
 
 type testReportComparisonStats struct {
@@ -75,45 +78,102 @@ type testComparisonKey struct {
 
 func cmdTestCompare(args []string) int {
 	parseArgs := make([]string, 0, len(args))
-	var htmlArgs []string
-	htmlSeen := false
-	for index := 0; index < len(args); index++ {
-		argument := args[index]
-		if argument == "--html" || strings.HasPrefix(argument, "--html=") {
-			if htmlSeen {
-				return printErr("Invalid comparison report options", fmt.Errorf("--html may be supplied once"))
+	var pathFlagArgs []string
+	pathFlagsSeen := make(map[string]bool)
+	pendingPathFlag := ""
+	for _, argument := range args {
+		if pendingPathFlag != "" {
+			if strings.HasPrefix(argument, "--") {
+				return printErr("Invalid comparison options", fmt.Errorf("--%s needs a path", pendingPathFlag))
 			}
-			htmlSeen = true
-			htmlArgs = append(htmlArgs, argument)
-			if argument == "--html" {
-				index++
-				if index == len(args) {
-					return printErr("Invalid comparison report options", fmt.Errorf("--html needs a path"))
-				}
-				htmlArgs = append(htmlArgs, args[index])
+			pathFlagArgs = append(pathFlagArgs, argument)
+			pendingPathFlag = ""
+			continue
+		}
+		matchedPathFlag := false
+		for _, name := range []string{"html", "budget", "markdown"} {
+			flagName := "--" + name
+			if argument != flagName && !strings.HasPrefix(argument, flagName+"=") {
+				continue
 			}
+			if pathFlagsSeen[name] {
+				return printErr("Invalid comparison options", fmt.Errorf("--%s may be supplied once", name))
+			}
+			pathFlagsSeen[name] = true
+			pathFlagArgs = append(pathFlagArgs, argument)
+			if argument == flagName {
+				pendingPathFlag = name
+			}
+			matchedPathFlag = true
+			break
+		}
+		if argument == "--github-summary" || strings.HasPrefix(argument, "--github-summary=") {
+			if pathFlagsSeen["github-summary"] {
+				return printErr("Invalid comparison options", errors.New("--github-summary may be supplied once"))
+			}
+			pathFlagsSeen["github-summary"] = true
+			pathFlagArgs = append(pathFlagArgs, argument)
+			matchedPathFlag = true
+		}
+		if matchedPathFlag {
 			continue
 		}
 		parseArgs = append(parseArgs, argument)
 	}
+	if pendingPathFlag != "" {
+		return printErr("Invalid comparison options", fmt.Errorf("--%s needs a path", pendingPathFlag))
+	}
 	fs := newFlagSet("test compare", flag.ContinueOnError)
 	htmlPath := fs.String("html", "", "write a standalone HTML comparison report")
-	if err := fs.Parse(append(htmlArgs, parseArgs...)); err != nil {
+	budgetPath := fs.String("budget", "", "apply comparison budgets from a YAML file")
+	markdownPath := fs.String("markdown", "", "write a Markdown comparison summary")
+	githubSummary := fs.Bool("github-summary", false, "append the comparison summary to GITHUB_STEP_SUMMARY")
+	if err := fs.Parse(append(pathFlagArgs, parseArgs...)); err != nil {
 		return 1
 	}
+	if pathFlagsSeen["html"] && *htmlPath == "" {
+		return printErr("Invalid comparison report path", fmt.Errorf("--html needs a non-empty path"))
+	}
+	if pathFlagsSeen["budget"] && *budgetPath == "" {
+		return printErr("Invalid comparison budget path", fmt.Errorf("--budget needs a non-empty path"))
+	}
+	if pathFlagsSeen["markdown"] && *markdownPath == "" {
+		return printErr("Invalid comparison Markdown path", fmt.Errorf("--markdown needs a non-empty path"))
+	}
+	summaryPath := ""
+	if *githubSummary {
+		summaryPath = strings.TrimSpace(os.Getenv("GITHUB_STEP_SUMMARY"))
+		if summaryPath == "" {
+			return printErr("Invalid GitHub Actions summary", fmt.Errorf("--github-summary requires GITHUB_STEP_SUMMARY to be set"))
+		}
+	}
 	if fs.NArg() != 2 {
-		PrintUsage(osStderr, "usage: gregale test compare <before.json> <after.json> [--html PATH]", "test")
+		PrintUsage(osStderr, "usage: gregale test compare <before.json> <after.json> [--budget PATH] [--html PATH] [--markdown PATH] [--github-summary]", "test")
 		return 1
 	}
 	beforePath, afterPath := fs.Arg(0), fs.Arg(1)
-	if *htmlPath != "" {
-		for _, input := range []string{beforePath, afterPath} {
-			aliases, err := testReportPathAliases(*htmlPath, input)
+	outputs := []struct{ name, path string }{
+		{"HTML", *htmlPath}, {"Markdown", *markdownPath}, {"GitHub Actions summary", summaryPath},
+	}
+	outputPaths := make([]string, 0, len(outputs))
+	for _, output := range outputs {
+		outputPaths = append(outputPaths, output.path)
+	}
+	if err := validateDistinctTestReportPaths(outputPaths...); err != nil {
+		return printErr("Invalid comparison output path", err)
+	}
+	inputs := []string{beforePath, afterPath}
+	if *budgetPath != "" {
+		inputs = append(inputs, *budgetPath)
+	}
+	for _, output := range outputs {
+		for _, input := range inputs {
+			aliases, err := testReportPathAliases(output.path, input)
 			if err != nil {
-				return printErr("Invalid comparison report path", err)
+				return printErr("Invalid comparison output path", err)
 			}
 			if aliases {
-				return printErr("Invalid comparison report path", fmt.Errorf("HTML output %q must not overwrite input report %q", *htmlPath, input))
+				return printErr("Invalid comparison output path", fmt.Errorf("%s output %q must not overwrite input file %q", output.name, output.path, input))
 			}
 		}
 	}
@@ -129,9 +189,30 @@ func cmdTestCompare(args []string) int {
 	if err != nil {
 		return printErr("Could not compare test reports", &exitErr{msg: err.Error(), code: 1})
 	}
+	if *budgetPath != "" {
+		budget, err := readTestComparisonBudget(*budgetPath)
+		if err != nil {
+			return printErr("Invalid comparison budget", err)
+		}
+		gate, err := evaluateTestComparisonBudget(comparison, before, after, budget)
+		if err != nil {
+			return printErr("Could not evaluate comparison budget", err)
+		}
+		comparison.Gate = &gate
+	}
 	if *htmlPath != "" {
 		if err := writeTestComparisonHTML(*htmlPath, comparison); err != nil {
 			return printErr("Could not save HTML comparison", err)
+		}
+	}
+	if *markdownPath != "" {
+		if err := writeTestComparisonMarkdown(*markdownPath, comparison); err != nil {
+			return printErr("Could not save Markdown comparison", err)
+		}
+	}
+	if summaryPath != "" {
+		if err := appendTestComparisonGitHubSummary(summaryPath, comparison); err != nil {
+			return printErr("Could not update GitHub Actions summary", err)
 		}
 	}
 	if jsonOutput {
@@ -143,6 +224,15 @@ func cmdTestCompare(args []string) int {
 		if *htmlPath != "" {
 			_, _ = fmt.Fprintf(osStdout, "HTML report: %s\n", *htmlPath)
 		}
+		if *markdownPath != "" {
+			_, _ = fmt.Fprintf(osStdout, "Markdown summary: %s\n", *markdownPath)
+		}
+		if summaryPath != "" {
+			_, _ = fmt.Fprintln(osStdout, "GitHub Actions job summary updated")
+		}
+	}
+	if comparison.Gate != nil && comparison.Gate.Status != "passed" {
+		return 1
 	}
 	return 0
 }
@@ -487,7 +577,32 @@ func printTestReportComparison(out io.Writer, comparison testReportComparison) {
 	_, _ = fmt.Fprintf(out, "Compare %s → %s\n", comparison.Before, comparison.After)
 	_, _ = fmt.Fprintf(out, "%d matched · %d added · %d removed · %d status changes\n",
 		comparison.Summary.Matched, comparison.Summary.Added, comparison.Summary.Removed, comparison.Summary.StatusChanged)
-	_, _ = fmt.Fprintln(out, "This is a report diff; it does not apply performance budgets or fail on metric changes.")
+	if comparison.Gate == nil {
+		_, _ = fmt.Fprintln(out, "This is a report diff; metric changes are informational.")
+	} else {
+		_, _ = fmt.Fprintf(out, "Regression budget gate: %s (%d passed, %d failed, %d inconclusive)\n",
+			strings.ToUpper(comparison.Gate.Status), comparison.Gate.Passed, comparison.Gate.Failed, comparison.Gate.Inconclusive)
+		for _, check := range comparison.Gate.Checks {
+			line := fmt.Sprintf("  %-13s %-40s %-28s", strings.ToUpper(check.Status), check.Run, check.Metric)
+			if check.Before != nil && check.After != nil {
+				line += fmt.Sprintf(" %.3f → %.3f %s", *check.Before, *check.After, check.Unit)
+				if check.Limit != nil {
+					line += fmt.Sprintf(" (limit %.3f)", *check.Limit)
+				}
+			}
+			if check.BeforeRuns > 0 || check.AfterRuns > 0 {
+				line += fmt.Sprintf(" (%d → %d runs", check.BeforeRuns, check.AfterRuns)
+				if check.BeforeSpread != nil && check.AfterSpread != nil {
+					line += fmt.Sprintf("; spread %.2f → %.2f %s", *check.BeforeSpread, *check.AfterSpread, check.SpreadUnit)
+				}
+				line += ")"
+			}
+			if check.Reason != "" {
+				line += " · " + check.Reason
+			}
+			_, _ = fmt.Fprintln(out, line)
+		}
+	}
 	for _, run := range comparison.Runs {
 		beforeStatus, afterStatus := run.BeforeStatus, run.AfterStatus
 		if beforeStatus == "" {
@@ -544,7 +659,9 @@ const testHTMLComparisonTemplate = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Gregale test comparison</title><style>{{styles}}</style></head>
 <body><main><h1>Gregale test comparison</h1>
 <div class="muted">{{.Before}} → {{.After}} · generated {{.Generated}}</div>
-<p class="panel">Offline report diff. Metric changes are informational; this command does not apply regression budgets or fail on performance changes.</p>
+{{if .Gate}}<p class="panel">Regression budget gate: <strong>{{.Gate.Status}}</strong> · {{.Gate.Passed}} passed · {{.Gate.Failed}} failed · {{.Gate.Inconclusive}} inconclusive</p>
+<h2>Budget checks</h2><table><thead><tr><th>Run</th><th>Metric</th><th>Status</th><th>Earlier</th><th>Later</th><th>Limit</th><th>Earlier spread</th><th>Later spread</th><th>Reason</th></tr></thead><tbody>{{range .Gate.Checks}}<tr><td>{{.Run}}</td><td>{{.Metric}}</td><td>{{.Status}}</td><td>{{comparisonValue .Before .Unit}}</td><td>{{comparisonValue .After .Unit}}</td><td>{{comparisonValue .Limit .Unit}}</td><td>{{if .BeforeSpread}}{{comparisonValue .BeforeSpread .SpreadUnit}} ({{.BeforeRuns}} runs){{end}}</td><td>{{if .AfterSpread}}{{comparisonValue .AfterSpread .SpreadUnit}} ({{.AfterRuns}} runs){{end}}</td><td>{{.Reason}}</td></tr>{{end}}</tbody></table>
+{{else}}<p class="panel">Offline report diff. Metric changes are informational; pass <code>--budget</code> to enforce regression limits.</p>{{end}}
 <section class="summary"><div class="stat"><strong>{{.Summary.Matched}}</strong><span class="label">Matched runs</span></div><div class="stat"><strong>{{.Summary.Added}}</strong><span class="label">Added</span></div><div class="stat"><strong>{{.Summary.Removed}}</strong><span class="label">Removed</span></div><div class="stat"><strong>{{.Summary.StatusChanged}}</strong><span class="label">Status changes</span></div></section>
 <h2>Run changes</h2><table><thead><tr><th>Run</th><th>Change</th><th>Earlier</th><th>Later</th><th>Duration</th></tr></thead><tbody>
 {{range .Runs}}<tr><td>{{.Key}}</td><td>{{.Change}}</td><td>{{if .BeforeStatus}}{{.BeforeStatus}}{{else}}—{{end}}{{if .BeforeBaselineStatus}} · baseline {{.BeforeBaselineStatus}}{{end}}</td><td>{{if .AfterStatus}}{{.AfterStatus}}{{else}}—{{end}}{{if .AfterBaselineStatus}} · baseline {{.AfterBaselineStatus}}{{end}}</td><td>{{range .Metrics}}{{if eq .Name "duration_ms"}}{{delta .}}{{end}}{{end}}</td></tr>{{end}}

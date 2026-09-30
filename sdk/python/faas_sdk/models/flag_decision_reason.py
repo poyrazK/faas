@@ -1,7 +1,7 @@
 from typing import Literal
 
 FlagDecisionReason = Literal[
-    "configuration_stale", "customer_missing", "default", "disabled", "flag_missing", "rule_match"
+    "configuration_stale", "customer_missing", "default", "disabled", "flag_missing", "rule_match", "type_mismatch"
 ]
 
 FLAG_DECISION_REASON_VALUES: set[FlagDecisionReason] = {
@@ -11,6 +11,7 @@ FLAG_DECISION_REASON_VALUES: set[FlagDecisionReason] = {
     "disabled",
     "flag_missing",
     "rule_match",
+    "type_mismatch",
 }
 
 

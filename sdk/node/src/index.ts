@@ -136,7 +136,19 @@ export {
 // Opaque login-target signal for opt-in pre-auth abuse observation.
 export { preAuthTargetDigest, PRE_AUTH_TARGET_HEADER } from './pre-auth-target.js';
 
-export { GregaleFlags, evaluateFlag, flagBucket, GREGALE_FLAG_EVIDENCE_HEADER, GREGALE_FLAG_CONTEXT_HEADER } from './flags.js';
-export type { FlagsBundle, FlagRule, FeatureFlag, FlagDecision, FlagEvidence, FlagRequestHeaders, GregaleFlagsOptions } from './flags.js';
+export { createIssueReporter, type IssueContext, type IssueReporterOptions } from './issues.js';
+
+export { GregaleFlags, evaluateFlag, evaluateVariant, flagBucket, flagVariantBucket, GREGALE_FLAG_EVIDENCE_HEADER, GREGALE_FLAG_CONTEXT_HEADER } from './flags.js';
+export type { FlagsBundle, FlagRule, VariantFlagRule, FeatureFlag, FlagDefinition, BooleanFeatureFlag, VariantFeatureFlag, WeightedVariant, BooleanFlagDecision, VariantFlagDecision, AnyFlagDecision, FlagDecision, FlagEvidence, VariantFlagEvidence, AnyFlagEvidence, FlagRequestHeaders, GregaleFlagsOptions } from './flags.js';
 
 export { FlagsService } from './generated/services/FlagsService.js';
+
+export { DevService } from './generated/services/DevService.js';
+export {
+  DEV_BRIDGE_CONTEXT_HEADER,
+  createDevBridgeFetch,
+  currentDevBridgeContext,
+  devBridgeMiddleware,
+  withDevBridgeContext,
+  withDevBridgeRequestContext,
+} from './dev-bridge.js';

@@ -11,7 +11,7 @@ import (
 )
 
 // RequestRecord deliberately excludes query strings, headers and bodies.
-// Inspection lives in bounded laptop memory and disappears when the CLI exits.
+// Inspection lives in bounded process memory and disappears on exit/restart.
 type RequestRecord struct {
 	ID            uint64    `json:"id"`
 	StartedAt     time.Time `json:"started_at"`
@@ -77,8 +77,12 @@ func (i *Inspector) finish(id uint64, status int, bytes int64, failed bool) {
 }
 
 func (i *Inspector) Transport(base http.RoundTripper) http.RoundTripper {
+	return i.transport(base, func(r *http.Request) *http.Request { return r })
+}
+
+func (i *Inspector) transport(base http.RoundTripper, view func(*http.Request) *http.Request) http.RoundTripper {
 	return roundTripperFunc(func(r *http.Request) (*http.Response, error) {
-		id := i.begin(r)
+		id := i.begin(view(r))
 		response, err := base.RoundTrip(r)
 		if err != nil {
 			i.finish(id, 0, 0, true)

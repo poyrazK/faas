@@ -210,6 +210,9 @@ func cmdTest(args []string) int {
 	if len(args) > 0 && args[0] == "compare" {
 		return cmdTestCompare(args[1:])
 	}
+	if len(args) > 0 && args[0] == "ci" {
+		return cmdTestCI(args[1:])
+	}
 	fs := newFlagSet("test", flag.ContinueOnError)
 	scenarioName := fs.String("scenario", "", "scenario name from the manifest")
 	suiteName := fs.String("suite", "", "named suite from the manifest (runs members in declaration order)")

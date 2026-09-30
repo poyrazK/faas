@@ -277,3 +277,20 @@ const (
 	ExecutionEventTerminal = api.ExecutionEventTerminal
 	ExecutionEventError    = api.ExecutionEventError
 )
+
+// Issue reporting and lifecycle.
+type (
+	IssueEvent                    = api.IssueEvent
+	IssueFrame                    = api.IssueFrame
+	Issue                         = api.Issue
+	IssueOccurrence               = api.IssueOccurrence
+	IssueRelease                  = api.IssueRelease
+	IssueActivity                 = api.IssueActivity
+	IssueImpact                   = api.IssueImpact
+	IssueDetail                   = api.IssueDetail
+	ListIssuesResponse            = api.ListIssuesResponse
+	IssueEventResponse            = api.IssueEventResponse
+	IssueActionRequest            = api.IssueActionRequest
+	CreateIssueIngestTokenRequest = api.CreateIssueIngestTokenRequest
+	IssueIngestToken              = api.IssueIngestToken
+)

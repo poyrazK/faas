@@ -47,6 +47,25 @@ type featureFlagEvidencePage struct {
 	WindowEnd   time.Time                    `json:"window_end"`
 }
 
+type featureFlagOutcome struct {
+	Type             string  `json:"type"`
+	Value            string  `json:"value"`
+	RequestCount     int64   `json:"request_count"`
+	UsedCount        int64   `json:"used_count"`
+	HTTP5xxCount     int64   `json:"http_5xx_count"`
+	HTTP5xxRate      float64 `json:"http_5xx_rate"`
+	P50LatencyMS     int32   `json:"p50_latency_ms"`
+	P95LatencyMS     int32   `json:"p95_latency_ms"`
+	LatencyQuantized bool    `json:"latency_quantized"`
+}
+
+type featureFlagOutcomesResponse struct {
+	Outcomes    []featureFlagOutcome `json:"outcomes"`
+	Truncated   bool                 `json:"truncated"`
+	WindowStart time.Time            `json:"window_start"`
+	WindowEnd   time.Time            `json:"window_end"`
+}
+
 func flagEvidenceQuery(r *http.Request, scope state.FeatureFlagScope, retention time.Duration) (sqlc.ListFeatureFlagRequestEvidenceParams, featureFlagEvidenceCursor, error) {
 	filter := map[string]any{"flag": r.PathValue("key")}
 	if !flags.ValidKey(r.PathValue("key")) {
@@ -60,6 +79,13 @@ func flagEvidenceQuery(r *http.Request, scope state.FeatureFlagScope, retention 
 			}
 			filter[k] = v
 		}
+	}
+	if raw := r.URL.Query().Get("variant"); raw != "" {
+		if !flags.ValidKey(raw) || r.URL.Query().Get("value") != "" {
+			return sqlc.ListFeatureFlagRequestEvidenceParams{}, featureFlagEvidenceCursor{}, state.ErrInvalidArgument
+		}
+		filter["type"] = "variant"
+		filter["value"] = raw
 	}
 	raw, _ := json.Marshal([]any{filter})
 	now := time.Now().UTC()
@@ -144,6 +170,106 @@ func (s *server) listFeatureFlagEvidence(w http.ResponseWriter, r *http.Request,
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, makeFeatureFlagEvidencePage(rows, c))
+}
+
+func featureFlagOutcomeQuery(r *http.Request, scope state.FeatureFlagScope, retention time.Duration) (sqlc.FeatureFlagRequestOutcomesParams, time.Time, time.Time, error) {
+	if !flags.ValidKey(r.PathValue("key")) {
+		return sqlc.FeatureFlagRequestOutcomesParams{}, time.Time{}, time.Time{}, state.ErrInvalidArgument
+	}
+	lookback := 24 * time.Hour
+	if raw := r.URL.Query().Get("since"); raw != "" {
+		value, err := time.ParseDuration(raw)
+		if err != nil || value <= 0 {
+			return sqlc.FeatureFlagRequestOutcomesParams{}, time.Time{}, time.Time{}, state.ErrInvalidArgument
+		}
+		lookback = value
+	}
+	if retention <= 0 {
+		return sqlc.FeatureFlagRequestOutcomesParams{}, time.Time{}, time.Time{}, state.ErrInvalidArgument
+	}
+	if lookback > retention {
+		lookback = retention
+	}
+	now := time.Now().UTC()
+	start, end := now.Add(-lookback), now
+	customerID := r.URL.Query().Get("customer_id")
+	if customerID != "" {
+		id, err := uuid.Parse(customerID)
+		if err != nil {
+			return sqlc.FeatureFlagRequestOutcomesParams{}, start, end, state.ErrInvalidArgument
+		}
+		customerID = id.String()
+	}
+	params := sqlc.FeatureFlagRequestOutcomesParams{
+		EnvironmentSlug: r.PathValue("environment"),
+		AccountID:       stringToPgUUID(scope.AccountID),
+		CustomerID:      customerID,
+		FlagKey:         r.PathValue("key"),
+		ReceivedFrom:    pgtype.Timestamptz{Time: start, Valid: true},
+		ReceivedUntil:   pgtype.Timestamptz{Time: end, Valid: true},
+	}
+	return params, start, end, nil
+}
+
+func (s *server) listFeatureFlagOutcomes(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	scope, _, ok := s.featureFlagScope(w, r, acct)
+	if !ok {
+		return
+	}
+	limits := api.MustLimitsFor(acct.Plan)
+	if !limits.DebugTelemetryEnabled {
+		api.WriteProblem(w, api.ErrPlanFeatureGated("debugger", acct.Plan))
+		return
+	}
+	params, start, end, err := featureFlagOutcomeQuery(r, scope, time.Duration(limits.DebugTelemetryRetentionDays)*24*time.Hour)
+	if err != nil {
+		writeFeatureFlagError(w, err)
+		return
+	}
+	apps, err := s.store.AppsForProject(r.Context(), acct.ID, scope.ProjectID)
+	if err != nil {
+		writeFeatureFlagError(w, err)
+		return
+	}
+	for _, app := range apps {
+		if app.PreviewOfSlug == "" {
+			params.AppIds = append(params.AppIds, stringToPgUUID(app.ID))
+		}
+	}
+	store, ok := s.store.(state.FeatureFlagEvidenceStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrInternal("request evidence requires Postgres"))
+		return
+	}
+	rows, err := store.FeatureFlagRequestOutcomes(r.Context(), params)
+	if err != nil {
+		writeFeatureFlagError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, makeFeatureFlagOutcomesResponse(rows, start, end))
+}
+
+func makeFeatureFlagOutcomesResponse(rows []sqlc.FeatureFlagRequestOutcomesRow, start, end time.Time) featureFlagOutcomesResponse {
+	response := featureFlagOutcomesResponse{Outcomes: make([]featureFlagOutcome, 0, len(rows)), WindowStart: start, WindowEnd: end}
+	if len(rows) > api.FlagsMaxOutcomeGroups {
+		response.Truncated = true
+		rows = rows[:api.FlagsMaxOutcomeGroups]
+	}
+	for _, row := range rows {
+		rate := float64(0)
+		if row.RequestCount > 0 {
+			rate = float64(row.ErrorCount) / float64(row.RequestCount)
+		}
+		response.Outcomes = append(response.Outcomes, featureFlagOutcome{
+			Type: row.DecisionType, Value: row.DecisionValue,
+			RequestCount: row.RequestCount, UsedCount: row.UsedCount,
+			HTTP5xxCount: row.ErrorCount, HTTP5xxRate: rate,
+			P50LatencyMS: row.P50LatencyMs, P95LatencyMS: row.P95LatencyMs,
+			LatencyQuantized: true,
+		})
+	}
+	return response
 }
 
 func makeFeatureFlagEvidencePage(rows []sqlc.ListFeatureFlagRequestEvidenceRow, c featureFlagEvidenceCursor) featureFlagEvidencePage {

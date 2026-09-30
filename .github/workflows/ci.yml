@@ -265,8 +265,8 @@ jobs:
           ./bin/gregale test --manifest tests/scenario-acceptance/gregale-test.yaml --validate
           ./bin/gregale test --manifest tests/scenario-acceptance/gregale-test.yaml --suite simulation --report scenario-results.json --junit scenario-results.xml
 
-      # Run the copyable customer example with the CLI built from this commit.
-      # Two reports exercise both standalone HTML rendering and offline diffing.
+      # Run the copyable functional and load suites with this commit's CLI.
+      # Saved runs exercise HTML reporting and the offline regression gate.
       - name: scenario reports example
         env:
           GREGALE_TEST_CONSUMER_CUSTOMER_A_KEY: example-customer-a
@@ -278,7 +278,15 @@ jobs:
           ./bin/gregale test --manifest examples/scenario-tests/gregale-test.yaml --suite smoke \
             --report "$RUNNER_TEMP/scenario-after.json" --html "$RUNNER_TEMP/scenario-after.html"
           ./bin/gregale test compare "$RUNNER_TEMP/scenario-before.json" "$RUNNER_TEMP/scenario-after.json" \
+            --budget examples/scenario-tests/ci/run-budget.yaml \
             --html "$RUNNER_TEMP/scenario-comparison.html"
+          ./bin/gregale test --manifest examples/scenario-tests/gregale-test.yaml --suite performance --load --repeat 3 \
+            --report "$RUNNER_TEMP/scenario-load-before.json" --html "$RUNNER_TEMP/scenario-load-before.html"
+          ./bin/gregale test --manifest examples/scenario-tests/gregale-test.yaml --suite performance --load --repeat 3 \
+            --report "$RUNNER_TEMP/scenario-load-after.json" --html "$RUNNER_TEMP/scenario-load-after.html"
+          ./bin/gregale test compare "$RUNNER_TEMP/scenario-load-before.json" "$RUNNER_TEMP/scenario-load-after.json" \
+            --budget examples/scenario-tests/ci/test-budget.yaml \
+            --html "$RUNNER_TEMP/scenario-load-comparison.html"
 
       # Provider-created machines hand their one-time connection details to
       # the provider-neutral adoption pipeline through ComputeNodeClaim files.

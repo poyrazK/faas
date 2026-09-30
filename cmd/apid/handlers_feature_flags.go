@@ -26,9 +26,10 @@ type rollbackFeatureFlagsRequest struct {
 	Version         int64  `json:"version"`
 }
 type inspectFeatureFlagRequest struct {
-	CustomerID string `json:"customer_id"`
-	Version    int64  `json:"version,omitempty"`
-	Fallback   bool   `json:"fallback"`
+	CustomerID      string `json:"customer_id"`
+	Version         int64  `json:"version,omitempty"`
+	Fallback        bool   `json:"fallback"`
+	FallbackVariant string `json:"fallback_variant,omitempty"`
 }
 
 func (s *server) featureFlagScope(w http.ResponseWriter, r *http.Request, acct state.Account) (state.FeatureFlagScope, state.FeatureFlagStore, bool) {
@@ -161,7 +162,7 @@ func (s *server) inspectFeatureFlag(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 	var req inspectFeatureFlagRequest
-	if err := decodeJSON(r, &req); err != nil || req.Version < 0 || !flags.ValidKey(r.PathValue("key")) {
+	if err := decodeJSON(r, &req); err != nil || req.Version < 0 || !flags.ValidKey(r.PathValue("key")) || req.FallbackVariant != "" && !flags.ValidKey(req.FallbackVariant) {
 		api.WriteProblem(w, api.ErrValidation("invalid decision context"))
 		return
 	}
@@ -187,7 +188,18 @@ func (s *server) inspectFeatureFlag(w http.ResponseWriter, r *http.Request, acct
 		writeFeatureFlagError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, flags.Evaluate(v.Bundle, r.PathValue("key"), req.CustomerID, req.Fallback))
+	key := r.PathValue("key")
+	for _, definition := range v.Flags {
+		if definition.Key == key && definition.Type == "variant" {
+			writeJSON(w, http.StatusOK, flags.EvaluateVariant(v.Bundle, key, req.CustomerID, req.FallbackVariant))
+			return
+		}
+	}
+	if req.FallbackVariant != "" {
+		writeJSON(w, http.StatusOK, flags.EvaluateVariant(v.Bundle, key, req.CustomerID, req.FallbackVariant))
+		return
+	}
+	writeJSON(w, http.StatusOK, flags.Evaluate(v.Bundle, key, req.CustomerID, req.Fallback))
 }
 func (s *server) runtimeFeatureFlagScope(r *http.Request) (state.FeatureFlagScope, error) {
 	raw := r.Header.Get("Authorization")

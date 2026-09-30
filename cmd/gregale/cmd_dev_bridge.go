@@ -22,11 +22,27 @@ import (
 	"github.com/onebox-faas/faas/pkg/devbridge"
 )
 
-func cmdDevBridge(args []string) int {
+func cmdDevBridge(args []string) (exit int) {
+	if len(args) > 0 {
+		switch args[0] {
+		case "list", "status", "revoke", "doctor":
+			return cmdDevBridgeControl(args)
+		}
+	}
 	if len(args) == 0 {
 		return printErr("Missing service", errors.New("usage: gregale dev bridge APP --environment development --local-port 8080"))
 	}
 	app := args[0]
+	var command []string
+	for i, argument := range args {
+		if argument == "--" {
+			command, args = args[i+1:], args[:i]
+			if len(command) == 0 {
+				return printErr("Missing local command", errors.New("provide a command after --"))
+			}
+			break
+		}
+	}
 	fs := newFlagSet("dev bridge", flag.ContinueOnError)
 	environment := fs.String("environment", "development", "named development environment")
 	port := fs.Int("local-port", 8080, "local HTTP service port")
@@ -34,11 +50,27 @@ func cmdDevBridge(args []string) int {
 	entrypoint := fs.String("entrypoint", "", "remote frontend for the session URL (default: intercepted service)")
 	inspect := fs.Bool("inspect", false, "open a local request inspection endpoint")
 	replayWebhook := fs.String("replay-webhook", "", "copy one provider-verified webhook receipt to the local service")
+	readyPath := fs.String("ready-path", "", "local HTTP readiness path (default: check TCP listener)")
+	bindings := make(map[string]string)
+	fs.Func("bind-env", "map ENV_KEY=dependency to its loopback URL; repeatable with a local command", func(value string) error {
+		key, dependency, ok := strings.Cut(value, "=")
+		if !ok || !bridgeEnvKey(key) || dependency == "" {
+			return errors.New("bind-env requires ENV_KEY=dependency")
+		}
+		if _, exists := bindings[key]; exists {
+			return errors.New("duplicate bind-env key")
+		}
+		bindings[key] = dependency
+		return nil
+	})
 	if err := fs.Parse(args[1:]); err != nil {
 		return 1
 	}
 	if fs.NArg() != 0 || *port < 1 || *port > 65535 {
 		return printErr("Invalid bridge options", errors.New("local-port must be 1–65535"))
+	}
+	if (*readyPath != "" && (!strings.HasPrefix(*readyPath, "/") || strings.HasPrefix(*readyPath, "//"))) || (len(bindings) > 0 && len(command) == 0) {
+		return printErr("Invalid bridge options", errors.New("ready-path must be absolute; bind-env requires a command after --"))
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -64,7 +96,7 @@ func cmdDevBridge(args []string) int {
 			names = append(names, strings.TrimSpace(name))
 		}
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), testTerminationSignals()...)
 	defer stop()
 	createCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	session, err := client.CreateDevBridge(createCtx, api.CreateDevBridgeRequest{App: app, Environment: *environment, DeveloperID: developer, Dependencies: names, Entrypoint: *entrypoint})
@@ -77,6 +109,9 @@ func cmdDevBridge(args []string) int {
 		defer cancel()
 		if err := client.RevokeDevBridge(cleanup, session.Session.ID); err != nil {
 			_, _ = fmt.Fprintln(osStderr, "Bridge cleanup failed; the session will expire automatically.")
+			if exit == 0 {
+				exit = 1
+			}
 		}
 	}()
 	ctx, cancel = context.WithDeadline(ctx, session.Session.ExpiresAt)
@@ -106,6 +141,7 @@ func cmdDevBridge(args []string) int {
 	sessionServer := &http.Server{Handler: localProxy, ReadHeaderTimeout: 10 * time.Second}
 	defer func() { _ = sessionServer.Close() }()
 	go func() { _ = sessionServer.Serve(listener) }()
+	dependencyURLs := make(map[string]string)
 	for _, dependency := range session.Dependencies {
 		dependencyListener, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
@@ -114,6 +150,7 @@ func cmdDevBridge(args []string) int {
 		dependencyServer := &http.Server{Handler: bridgeLocalProxy(base, session.Session, session.Credentials.AttachmentToken, "dependencies/"+url.PathEscape(dependency.AppID)+"/", requestContext), ReadHeaderTimeout: 10 * time.Second}
 		defer func() { _ = dependencyServer.Close() }()
 		go func() { _ = dependencyServer.Serve(dependencyListener) }()
+		dependencyURLs[dependency.Name] = "http://" + dependencyListener.Addr().String()
 		_, _ = fmt.Fprintf(osStdout, "Dependency %s: http://%s\n", dependency.Name, dependencyListener.Addr())
 	}
 	_, _ = fmt.Fprintf(osStdout, "Bridge: %s (%s) → 127.0.0.1:%d\nSession: %s\nSession URL: http://%s\nExpires: %s\n", app, *environment, *port, session.Session.ID, listener.Addr(), session.Session.ExpiresAt.Format(time.RFC3339))
@@ -128,6 +165,36 @@ func cmdDevBridge(args []string) int {
 		defer func() { _ = inspectionServer.Close() }()
 		go func() { _ = inspectionServer.Serve(inspectionListener) }()
 		_, _ = fmt.Fprintf(osStdout, "Inspection URL: http://%s\n", inspectionListener.Addr())
+	}
+	var process *bridgeProcess
+	if len(command) > 0 {
+		environment, err := bridgeProcessEnvironment(os.Environ(), *port, session.Session.ID, "http://"+listener.Addr().String(), dependencyURLs, bindings)
+		if err != nil {
+			return printErr("Invalid local dependency configuration", err)
+		}
+		process, err = startBridgeProcess(command, environment)
+		if err != nil {
+			return printErr("Could not start local command", err)
+		}
+		defer func() {
+			if err := process.stop(); err != nil {
+				_, _ = fmt.Fprintln(osStderr, "Local command cleanup failed:", err)
+				if exit == 0 {
+					exit = 1
+				}
+			}
+		}()
+		if err := bridgeWaitLocalReady(ctx, net.JoinHostPort("127.0.0.1", fmt.Sprint(*port)), *readyPath, process); err != nil {
+			select {
+			case <-process.done:
+				if code := process.exitCode(); code != 0 {
+					return code
+				}
+				return printErr("Local command exited before becoming ready", err)
+			default:
+				return printErr("Local service is not ready", err)
+			}
+		}
 	}
 	target, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", *port))
 	dial := func(ctx context.Context) (net.Conn, error) {
@@ -157,11 +224,27 @@ func cmdDevBridge(args []string) int {
 				replayOnce.Do(func() { go bridgeReplaySelectedWebhook(ctx, client, base, session, *replayWebhook) })
 			}
 		} else {
-			_, _ = fmt.Fprintln(osStderr, "Bridge disconnected; reconnecting within the session lease.")
+			_, _ = fmt.Fprintln(osStderr, "Bridge disconnected; reconnecting within the session lease. Run gregale dev bridge doctor for connection diagnostics.")
 		}
+	}
+	if process != nil {
+		go func() {
+			select {
+			case <-process.done:
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
 	}
 	if err := devbridge.RunReconnecting(ctx, dial, serve, state); err != nil && ctx.Err() == nil {
 		return printErr("Development bridge disconnected", err)
+	}
+	if process != nil {
+		select {
+		case <-process.done:
+			return process.exitCode()
+		default:
+		}
 	}
 	return 0
 }

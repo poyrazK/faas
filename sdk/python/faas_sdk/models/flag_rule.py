@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -13,20 +13,21 @@ T = TypeVar("T", bound="FlagRule")
 
 @_attrs_define
 class FlagRule:
-    """Ordered customer targeting rule; supplied constraints combine with AND."""
+    """Ordered customer targeting rule; supplied constraints combine with AND. Boolean flags require a boolean value;
+    variant flags may omit value to use weighted assignment.
+
+    """
 
     id: str
-    value: bool
     customers: list[UUID] | Unset = UNSET
     group: str | Unset = UNSET
     """Owner-managed customer group key."""
     rollout: int | Unset = UNSET
     """Basis points of eligible customers; omitted means all eligible customers."""
+    value: bool | str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         id = self.id
-
-        value = self.value
 
         customers: list[str] | Unset = UNSET
         if not isinstance(self.customers, Unset):
@@ -39,12 +40,17 @@ class FlagRule:
 
         rollout = self.rollout
 
+        value: bool | str | Unset
+        if isinstance(self.value, Unset):
+            value = UNSET
+        else:
+            value = self.value
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
             {
                 "id": id,
-                "value": value,
             }
         )
         if customers is not UNSET:
@@ -53,6 +59,8 @@ class FlagRule:
             field_dict["group"] = group
         if rollout is not UNSET:
             field_dict["rollout"] = rollout
+        if value is not UNSET:
+            field_dict["value"] = value
 
         return field_dict
 
@@ -60,8 +68,6 @@ class FlagRule:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
         id = d.pop("id")
-
-        value = d.pop("value")
 
         _customers = d.pop("customers", UNSET)
         customers: list[UUID] | Unset = UNSET
@@ -76,12 +82,19 @@ class FlagRule:
 
         rollout = d.pop("rollout", UNSET)
 
+        def _parse_value(data: object) -> bool | str | Unset:
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | str | Unset, data)
+
+        value = _parse_value(d.pop("value", UNSET))
+
         flag_rule = cls(
             id=id,
-            value=value,
             customers=customers,
             group=group,
             rollout=rollout,
+            value=value,
         )
 
         return flag_rule
