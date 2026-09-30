@@ -108,6 +108,11 @@ func (m *MemStore) createObjectS3ComputeBindingLocked(req ObjectS3ComputeBinding
 		secret.DeliveryVersion, secret.DeliveryStatus = 1, SecretDeliveryPending
 		m.secrets[secretKey{AppID: secret.AppID, Scope: secret.Scope, Key: secret.Key}] = secret
 	}
+	// A private clone has no running target yet. Publishing its release is the
+	// visibility boundary; preparation must not invalidate production snapshots.
+	if cloneAuthorized {
+		return cloneObjectS3Credential(c), nil
+	}
 	if m.runtimeConfigChangedAt == nil {
 		m.runtimeConfigChangedAt = map[string]time.Time{}
 	}

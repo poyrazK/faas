@@ -81,14 +81,14 @@ func (s *PgStore) CreateObjectS3ComputeBinding(ctx context.Context, req ObjectS3
 	if _, err := q.ObjectS3BindingLockApp(ctx, tx, sqlc.ObjectS3BindingLockAppParams{AppID: mustPgUUID(c.ManagedAppID), AccountID: mustPgUUID(c.AccountID), BucketID: mustPgUUID(c.BucketID)}); err != nil {
 		return ObjectS3Credential{}, mapErr(err)
 	}
-	created, err := insertObjectS3ComputeBindingTx(ctx, tx, req)
+	created, err := insertObjectS3ComputeBindingTx(ctx, tx, req, true)
 	if err != nil {
 		return ObjectS3Credential{}, err
 	}
 	return created, mapErr(tx.Commit(ctx))
 }
 
-func insertObjectS3ComputeBindingTx(ctx context.Context, tx pgx.Tx, req ObjectS3ComputeBindingCreateRequest) (ObjectS3Credential, error) {
+func insertObjectS3ComputeBindingTx(ctx context.Context, tx pgx.Tx, req ObjectS3ComputeBindingCreateRequest, invalidateRuntime bool) (ObjectS3Credential, error) {
 	q, c := sqlc.New(), req.Credential
 	credentialCount, err := q.ObjectS3CredentialCount(ctx, tx, mustPgUUID(c.BucketID))
 	if err != nil {
@@ -122,11 +122,13 @@ func insertObjectS3ComputeBindingTx(ctx context.Context, tx pgx.Tx, req ObjectS3
 			return ObjectS3Credential{}, mapErr(err)
 		}
 	}
-	if err := q.ObjectS3BindingStampRuntime(ctx, tx, mustPgUUID(c.ManagedAppID)); err != nil {
-		return ObjectS3Credential{}, mapErr(err)
-	}
-	if err := q.ObjectS3BindingStaleSnapshots(ctx, tx, mustPgUUID(c.ManagedAppID)); err != nil {
-		return ObjectS3Credential{}, mapErr(err)
+	if invalidateRuntime {
+		if err := q.ObjectS3BindingStampRuntime(ctx, tx, mustPgUUID(c.ManagedAppID)); err != nil {
+			return ObjectS3Credential{}, mapErr(err)
+		}
+		if err := q.ObjectS3BindingStaleSnapshots(ctx, tx, mustPgUUID(c.ManagedAppID)); err != nil {
+			return ObjectS3Credential{}, mapErr(err)
+		}
 	}
 	return objectS3CredentialFromSQL(row), nil
 }

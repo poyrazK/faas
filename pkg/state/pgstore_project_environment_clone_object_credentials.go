@@ -134,7 +134,7 @@ func (s *PgStore) PrepareProjectEnvironmentCloneObjectCredential(ctx context.Con
 	if request.Target.Credential.ManagedAppID == "" {
 		_, err = insertObjectS3CredentialTx(ctx, tx, request.Target.Credential, request.Target.MaxCredentialsPerBucket)
 	} else {
-		_, err = insertObjectS3ComputeBindingTx(ctx, tx, request.Target)
+		_, err = insertObjectS3ComputeBindingTx(ctx, tx, request.Target, false)
 	}
 	if err != nil {
 		return ProjectEnvironmentCloneObjectCredentialPreparation{}, err

@@ -752,3 +752,30 @@ The worker still needs to generate/seal credentials and consume these receipts,
 and the complete publication proof must authenticate every resource, grant and
 managed value. These preparations do not open full admission or substitute for
 coordinated provider capture, physical write fencing and native acceptance.
+
+### Object credential worker and source runtime isolation (2026-09-30)
+
+The copying phase now consumes the private credential preparations. It requires
+every captured bucket's copy receipt to be ready before preparing credentials,
+renews the worker lease before each preparation, and reads the durable receipt
+before generating keys. New target credentials retain captured labels,
+permissions and binding prefixes, receive independent signing keys, and seal
+the six compute values for the target bucket/scope. Only compute credentials
+contribute the IDs and secret count required by environment materialization.
+Standalone customer credentials are recreated without application envelopes.
+
+A completed replay uses the persisted identities and sealed values without
+requiring the current endpoint configuration or host encryption keys. It neither
+regenerates keys nor changes operation progress. Private preparation skips the
+generic app-wide runtime stamp and snapshot invalidation: the target has no
+running release, and preparing it must not invalidate production snapshots.
+Normal customer binding creation retains its existing invalidation behavior.
+
+The MemStore and real PostgreSQL worker contracts inject failure after a
+credential commit but before its acknowledgement. They remove production
+credentials before preparation, decrypt target values with an independent test
+identity, verify exact target mappings and permissions, materialize the prepared
+stage, and resume under replacement ownership without additional credential
+writes. Store contracts also verify production runtime stamps and snapshots
+remain intact during private preparation. Full admission remains closed pending
+the complete publication and operational isolation proofs described above.

@@ -22,6 +22,10 @@ type cloneCredentialPreparationTestStore interface {
 	PutManagedObjectStorageSecret(context.Context, state.AppSecret) error
 	DeleteManagedObjectStorageSecrets(context.Context, string) error
 	GetAppSecretInScope(context.Context, string, string, string, string) (*state.AppSecret, error)
+	LiveDeploymentForScope(context.Context, string, string) (state.Deployment, error)
+	CreateSnapshot(context.Context, state.Snapshot) (state.Snapshot, error)
+	LatestSnapshot(context.Context, string) (state.Snapshot, error)
+	AppRuntimeConfigChangedAt(context.Context, string) (time.Time, bool, error)
 }
 
 func TestMemCloneObjectCredentialPreparationIsAtomicAndRecoverable(t *testing.T) {
@@ -180,6 +184,19 @@ func cloneObjectCredentialPreparationContract(t *testing.T, s cloneCredentialPre
 	if err := s.FinishObjectBucket(ctx, source.ID, "delete-source", "deleted"); err != nil {
 		t.Fatal(err)
 	}
+	stamp, stamped, err := s.AppRuntimeConfigChangedAt(ctx, app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployment, err := s.LiveDeploymentForScope(ctx, app.ID, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := s.CreateSnapshot(ctx, state.Snapshot{DeploymentID: deployment.ID, FCVersion: "fc-test", MemBytes: 1024,
+		DiskBytes: 512, StorageKey: "clone-credential/" + deployment.ID, Tier: state.SnapshotTierInit})
+	if err != nil {
+		t.Fatal(err)
+	}
 	prepared, err := s.PrepareProjectEnvironmentCloneObjectCredential(ctx, lease, request)
 	if err != nil || prepared.Credential.ID != newID || len(prepared.Secrets) != 6 || len(prepared.Hash) != 64 {
 		t.Fatalf("prepare fresh binding: %v", err)
@@ -201,6 +218,12 @@ func cloneObjectCredentialPreparationContract(t *testing.T, s cloneCredentialPre
 	standalone.Target.Secrets = nil
 	if receipt, err := s.PrepareProjectEnvironmentCloneObjectCredential(ctx, lease, standalone); err != nil || len(receipt.Secrets) != 0 {
 		t.Fatalf("prepare customer credential: %v", err)
+	}
+	if after, ok, err := s.AppRuntimeConfigChangedAt(ctx, app.ID); err != nil || ok != stamped || !after.Equal(stamp) {
+		t.Fatalf("private preparation changed production runtime stamp: %v", err)
+	}
+	if actual, err := s.LatestSnapshot(ctx, deployment.ID); err != nil || actual.ID != snapshot.ID {
+		t.Fatalf("private preparation invalidated production snapshot: %v", err)
 	}
 	if _, _, err := s.ResolveObjectS3Credential(ctx, request.Target.Credential.AccessKeyID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("used prepared credential before publication: %v", err)
