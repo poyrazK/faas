@@ -1,4 +1,4 @@
-# ADR-381 · Customer operations above execution ledgers
+# ADR-384 · Customer operations above execution ledgers
 
 - **Status:** accepted for implementation; not launched
 - **Date:** 2026-09-30

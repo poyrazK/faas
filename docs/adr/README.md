@@ -391,3 +391,7 @@ concurrently). The log above already contains several such pairs (157, 158, 167,
 - [ADR-148: nonblocking resume hardware entropy](148-nonblocking-resume-hardware-entropy.md)
 - [ADR-149: prepared unused network cache](149-prepared-unused-network-cache.md)
 - [ADR-150: firecracker tsc restore order canary](150-firecracker-tsc-restore-order-canary.md)
+
+## Customer operation decisions
+
+- [ADR-384: customer operations above execution ledgers](384-customer-operations.md) — typed application contracts, customer ownership, separate business and delivery outcomes, and controlled recovery

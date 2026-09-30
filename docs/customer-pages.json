@@ -40,6 +40,7 @@
     {"path": "managed-postgres", "source": "docs/managed-postgres.md"},
     {"path": "networking", "source": "docs/networking.md"},
     {"path": "object-storage", "source": "docs/object-storage.md"},
+    {"path": "operations", "source": "docs/operations.md"},
     {"path": "orgs", "source": "docs/account.md"},
     {"path": "plans", "source": "docs/plans.md"},
     {"path": "postgres", "source": "docs/managed-postgres.md"},
