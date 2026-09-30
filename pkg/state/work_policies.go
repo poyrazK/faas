@@ -23,7 +23,7 @@ func sameWorkPolicy[T any](a, b *T) bool { return reflect.DeepEqual(a, b) }
 func validateCronWorkPolicies(opts CronOptions) error {
 	if opts.SchedulePolicy != nil {
 		if err := opts.SchedulePolicy.Validate(); err != nil {
-			return fmt.Errorf("%w: %v", ErrInvalidArgument, err)
+			return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
 		}
 		if opts.SchedulePolicy.StartDeadlineSeconds > 30*24*60*60 {
 			return fmt.Errorf("%w: schedule start deadline exceeds 30 days", ErrInvalidArgument)
@@ -31,7 +31,7 @@ func validateCronWorkPolicies(opts CronOptions) error {
 	}
 	if opts.FailureRules != nil {
 		if err := opts.FailureRules.Validate(); err != nil {
-			return fmt.Errorf("%w: %v", ErrInvalidArgument, err)
+			return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
 		}
 		encoded, err := json.Marshal(opts.FailureRules)
 		if err != nil || len(encoded) > 16*1024 || len(opts.FailureRules.Rules) > 64 {
