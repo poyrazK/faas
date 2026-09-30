@@ -15,6 +15,7 @@ import (
 // Only proposed rows differ from the store. Callers hold m.mu until the
 // verdict and publication, including related intent and activity bookkeeping.
 type memTrafficPolicyChange struct {
+	GlobalRoutes bool
 	Rules        map[string]EdgeRule
 	Presets      map[string]CorsPreset
 	Apps         map[string]App
@@ -52,7 +53,7 @@ func (m *MemStore) readMemTrafficHostAnalysisLocked(ctx context.Context, account
 	var view trafficHostAnalysis
 	groups := make(map[trafficHostGroup]trafficHostGroup)
 	addRule := func(rule EdgeRule, environment string) error {
-		if rule.AccountID != account || !rule.Enabled {
+		if !rule.Enabled || (!change.GlobalRoutes && rule.AccountID != account) || (change.GlobalRoutes && rule.Kind != EdgeRuleKindRoute) {
 			return nil
 		}
 		key := trafficHostGroup{App: rule.AppID, Pattern: rule.MatchHost, Kind: string(rule.Kind), Environment: environment}
@@ -84,7 +85,7 @@ func (m *MemStore) readMemTrafficHostAnalysisLocked(ctx context.Context, account
 	}
 	environments := make(map[string][]ProjectEnvironment)
 	if err := visitMemTrafficRows(ctx, m.projectEnvironments, change.Environments, func(environment ProjectEnvironment) error {
-		if environment.AccountID == account {
+		if !change.GlobalRoutes && environment.AccountID == account {
 			environments[environment.ProjectID] = append(environments[environment.ProjectID], environment)
 		}
 		return nil
@@ -92,7 +93,7 @@ func (m *MemStore) readMemTrafficHostAnalysisLocked(ctx context.Context, account
 		return view, err
 	}
 	err := visitMemTrafficRows(ctx, m.apps, change.Apps, func(app App) error {
-		if app.AccountID != account || app.Status == AppDeleted || api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
+		if change.GlobalRoutes || app.AccountID != account || app.Status == AppDeleted || api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
 			return nil
 		}
 		for _, environment := range environments[app.ProjectID] {
@@ -205,7 +206,29 @@ func (m *MemStore) validateMemTrafficPolicyChangeLocked(ctx context.Context, acc
 	if err != nil {
 		return err
 	}
-	return m.checkMemTrafficPolicyChangeLocked(ctx, account, before, change)
+	if err := m.checkMemTrafficPolicyChangeLocked(ctx, account, before, change); err != nil {
+		return err
+	}
+	for _, rule := range change.Rules {
+		if rule.Kind == EdgeRuleKindRoute {
+			return m.validateMemGlobalTrafficChangeLocked(ctx, change)
+		}
+	}
+	return nil
+}
+
+func (m *MemStore) validateMemGlobalTrafficChangeLocked(ctx context.Context, change memTrafficPolicyChange) error {
+	var before trafficHostAnalysis
+	err := boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
+		var err error
+		before, err = m.readMemTrafficHostAnalysisLocked(bounded, "", memTrafficPolicyChange{GlobalRoutes: true})
+		return err
+	})
+	if err != nil {
+		return globalTrafficPolicyError(err)
+	}
+	change.GlobalRoutes = true
+	return globalTrafficPolicyError(m.checkMemTrafficPolicyChangeLocked(ctx, "", before, change))
 }
 
 func (m *MemStore) validateMemAppTrafficChangeLocked(ctx context.Context, app App) error {

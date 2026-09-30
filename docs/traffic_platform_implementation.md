@@ -943,3 +943,75 @@ daemon/load/recovery and customer/staging rollout evidence still need
 completion. No native Linux x86_64 KVM host is currently available; native
 VM/restore, nft connection/source-IP, process-death and leak checks remain
 pending. All six release guarantees remain unchecked.
+
+### Global route aggregate mutation guard, 2026-09-30
+
+Route creates and updates now validate enabled route-only discovery across
+accounts, after the existing owned verdict and before intent/change-ledger
+commit. The bounded scalar projection reuses the exact-or-SQL-LIKE host
+analyzer, canonical count/byte bounds and conservative Go compiler estimate.
+Disjoint hosts retain separate allowances, including when a small wildcard
+connects their selector graph; this is not a flat global byte quota. Other rule
+kinds, presets and environment overlays do not enter global route discovery.
+MemStore runs the equivalent global verdict under its existing mutex.
+Global refusals retain the structured 422 codes with `global_route_` scopes.
+Unsupported legacy route action shapes refuse global writes until repaired;
+non-route mutations in other accounts retain their owned scope.
+
+Positive traffic mutations now acquire their account session lock before
+starting the repeatable-read transaction and taking its account row lock.
+Route mutations first acquire the global route session lock. This ordering
+prevents a snapshot from predating the previous serialized writer's commit.
+The stable before/after view also prevents a concurrent deletion/cascade from
+subsidizing a growth write against legacy overload. Contenders release locks
+and the direct-pool connection before retrying. Commit/rollback release the
+session locks; uncertain lock grants or failed unlocks close the session.
+The hub-enabled apid direct sibling reserves three connections for the hub,
+outer convergence lock and guard transaction. The API process mutex admits
+one outer edge mutation lock. An explicitly pooled control plane must include
+that sibling pool in its operator capacity budget; the deployed compute
+pooler topology keeps the existing ordinary control-plane pools.
+
+Successful selected verification, with no failures/skips in these runs:
+
+- 12 new Postgres cases in 12.594 s: cross-account quota race, disjoint and
+  connected selectors, retarget rollback, deletion-credit refusal and fresh
+  repair retry, pool/app-lock waiters, scalar/runtime projection agreement,
+  serialization before the snapshot, canceled rollback, failed unlock and the
+  actual API direct pool with hub/outer-lock connections already occupied.
+- 24 existing external Postgres cases in 14.408 s: mutation lock order, account
+  preset quota, pool waiters, edge/preset/environment projection recovery,
+  canonical boundaries, legacy/event rollback and clone atomicity.
+- 211 no_pg state cases in 3.064 s: MemStore conformance, shared host analyzer,
+  global/owned overlap and rollback, activation/environment/clone recovery,
+  runtime selector agreement and actual Go compiler boundary fixtures.
+- 56 database/API/HTTP cases: db 1.501 s, API 0.700 s, apid 1.590 s. Global
+  count, byte and analysis refusals exercise real create/update handlers and
+  verify preserved intent, structured fields and aborted convergence.
+- Pinned golangci-lint v2.4.0 reported zero issues for state/db production
+  with tests=false (unused disabled for the pre-existing test-only helper),
+  and db/API/apid with tests enabled. Fresh sqlc v1.31.1 generation matched
+  db.go, models.go, querier.go and queries.sql.go exactly. Whitespace checks
+  passed. No schema or migration changes are required.
+
+The state verification uses temporary Go overlays outside the repository to
+omit unrelated external state tests. All production and internal test sources
+are retained. The external regression retains fourteen original fixture/test
+files; the no_pg profile retains the original conformance and two common
+projection test files. These runs do not establish the full package/make-test
+or daemon acceptance gate. A broader internal run passed 131 named cases but
+failed the new direct-pool fixture because pgx ConnString retained the source
+DSN after the clone harness changed Config. The fixture now carries the actual
+database/search path and passes in the final new-Postgres run. Earlier full
+builds and broader reruns failed from local disk exhaustion during linking or
+Postgres clone creation; those attempts are excluded from passing evidence.
+
+This first global guard conservatively checks the complete route-selector
+language. Actual claimed/reserved-host exclusions and newly unclaimed scope
+transitions still need integration with the hostname binding projection.
+Primary-hostname and alias/domain activation, bounded decision evidence,
+preview/runtime and complete synthetic-path agreement, full daemon/load/
+recovery and customer/staging rollout evidence remain pending. The user
+confirmed no native Linux x86_64 KVM acceptance host is available. VM/restore,
+nft connection/source-IP, process-death and leak checks remain pending. All
+six release guarantees remain unchecked.

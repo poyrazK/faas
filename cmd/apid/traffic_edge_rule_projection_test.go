@@ -45,6 +45,9 @@ func TestTrafficRuleProjectionHTTPRefusalRetainsIntentAndAbortsConvergence(t *te
 		{"aggregate-bytes", api.CodeTrafficPolicyTooLarge, &state.TrafficPolicyAggregateError{Scope: "host_rule_projection", Unit: "bytes", Limit: api.TrafficPolicyMaxHostBytes, Observed: api.TrafficPolicyMaxHostBytes + 1}, true, api.TrafficPolicyMaxHostBytes},
 		{"aggregate-count", api.CodeTrafficPolicyTooLarge, &state.TrafficPolicyAggregateError{Scope: "host_rule_count", Unit: "rules", Limit: api.TrafficPolicyMaxHostRules, Observed: api.TrafficPolicyMaxHostRules + 1}, false, api.TrafficPolicyMaxHostRules},
 		{"analysis", api.CodeTrafficPolicyTooComplex, &state.TrafficPolicyAnalysisError{Scope: "states", Unit: "states", Limit: api.TrafficPolicyMaxAnalysisStates, Observed: api.TrafficPolicyMaxAnalysisStates + 1}, false, api.TrafficPolicyMaxAnalysisStates},
+		{"global-bytes", api.CodeTrafficPolicyTooLarge, &state.TrafficPolicyAggregateError{Scope: "global_route_rule_projection", Unit: "bytes", Limit: api.TrafficPolicyMaxHostBytes, Observed: api.TrafficPolicyMaxHostBytes + 1}, true, api.TrafficPolicyMaxHostBytes},
+		{"global-count", api.CodeTrafficPolicyTooLarge, &state.TrafficPolicyAggregateError{Scope: "global_route_rule_count", Unit: "rules", Limit: api.TrafficPolicyMaxHostRules, Observed: api.TrafficPolicyMaxHostRules + 1}, false, api.TrafficPolicyMaxHostRules},
+		{"global-analysis", api.CodeTrafficPolicyTooComplex, &state.TrafficPolicyAnalysisError{Scope: "global_route_database_time", Unit: "milliseconds", Limit: api.TrafficPolicyAnalysisSQLTimeout.Milliseconds(), Observed: api.TrafficPolicyAnalysisSQLTimeout.Milliseconds() + 1}, false, api.TrafficPolicyAnalysisSQLTimeout.Milliseconds()},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
 			for _, operation := range []string{"create", "update"} {

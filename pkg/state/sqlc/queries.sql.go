@@ -12109,14 +12109,19 @@ func (q *Queries) ReadBoundedTrafficEdgeRule(ctx context.Context, db DBTX, arg R
 }
 
 const readEdgeRuleTrafficAccount = `-- name: ReadEdgeRuleTrafficAccount :one
-SELECT account_id FROM edge_rules WHERE id = $1::uuid
+SELECT account_id,kind FROM edge_rules WHERE id = $1::uuid
 `
 
-func (q *Queries) ReadEdgeRuleTrafficAccount(ctx context.Context, db DBTX, ruleID pgtype.UUID) (pgtype.UUID, error) {
+type ReadEdgeRuleTrafficAccountRow struct {
+	AccountID pgtype.UUID
+	Kind      string
+}
+
+func (q *Queries) ReadEdgeRuleTrafficAccount(ctx context.Context, db DBTX, ruleID pgtype.UUID) (ReadEdgeRuleTrafficAccountRow, error) {
 	row := db.QueryRow(ctx, readEdgeRuleTrafficAccount, ruleID)
-	var account_id pgtype.UUID
-	err := row.Scan(&account_id)
-	return account_id, err
+	var i ReadEdgeRuleTrafficAccountRow
+	err := row.Scan(&i.AccountID, &i.Kind)
+	return i, err
 }
 
 const readOpenAPIImportQuota = `-- name: ReadOpenAPIImportQuota :one
@@ -13188,7 +13193,8 @@ WITH environment_policies AS MATERIALIZED (
             'Kind', kind, 'Action', action, 'CorsPresetID', cors_preset_id,
             'ValidateMode', validate_mode, 'CreatedAt', created_at, 'UpdatedAt', updated_at,
             'ManifestKey', manifest_key)::jsonb AS data
-    FROM edge_rules WHERE account_id = $3::uuid AND enabled
+    FROM edge_rules WHERE enabled AND (account_id = $3::uuid
+        OR ($3::uuid IS NULL AND kind='route'))
     UNION ALL
     SELECT p.app_id, ''::text, coalesce(rule.value->>'kind',''), NULL::uuid,
         coalesce(rule.value->'action','{}'::jsonb), p.environment_id,
@@ -16135,6 +16141,29 @@ func (q *Queries) TriggerRecordIDByItemIdentifier(ctx context.Context, db DBTX, 
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const tryLockTrafficPolicySession = `-- name: TryLockTrafficPolicySession :one
+SELECT pg_try_advisory_lock(hashtextextended($1::text,0))::boolean
+`
+
+// Acquire on the direct connection before starting the repeatable-read view.
+func (q *Queries) TryLockTrafficPolicySession(ctx context.Context, db DBTX, lockKey string) (bool, error) {
+	row := db.QueryRow(ctx, tryLockTrafficPolicySession, lockKey)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const unlockTrafficPolicySession = `-- name: UnlockTrafficPolicySession :one
+SELECT pg_advisory_unlock(hashtextextended($1::text,0))::boolean
+`
+
+func (q *Queries) UnlockTrafficPolicySession(ctx context.Context, db DBTX, lockKey string) (bool, error) {
+	row := db.QueryRow(ctx, unlockTrafficPolicySession, lockKey)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const updateAccountPlan = `-- name: UpdateAccountPlan :exec

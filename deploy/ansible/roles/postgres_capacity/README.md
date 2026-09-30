@@ -59,6 +59,14 @@ running any daemon with the hub disabled needs materially more direct
 connections than the table above; re-derive before enabling that mode on more
 than one node.
 
+ADR-375 reserves three direct connections for hub-enabled apid when a separate
+`FAAS_DATABASE_URL_DIRECT` is configured: the notification hub, outer edge
+mutation convergence lock and guarded policy transaction. The deployed pooler
+role targets compute nodes, so the control plane keeps the ordinary direct
+pool budget above. If the control plane is explicitly given a separate session
+pool, include that sibling pool in `faas_postgres_control_plane_pool_budget`;
+the default 40 assumes the existing control-plane pool topology.
+
 The per-daemon maxima come from `pkg/db.DaemonMaxConnections`, which applies
 while the ADR-190 notify hub is active — the supported configuration. Setting
 `FAAS_DB_NOTIFY_HUB=0` selects `DaemonMaxConnectionsNotifyHubDisabled`

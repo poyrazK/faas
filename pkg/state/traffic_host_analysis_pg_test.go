@@ -348,8 +348,15 @@ func TestPgTrafficHostNoncanonicalLegacyShapeRefusesAndRepairs(t *testing.T) {
 		if !errors.As(err, &analysis) || analysis.Scope != "stored_action_shape" {
 			t.Fatalf("unverified decoded shape accepted: %v", err)
 		}
-		if _, err := store.CreateEdgeRule(t.Context(), trafficHostRule(other, peer, fmt.Sprintf("independent-%d.example.test", index))); err != nil {
-			t.Fatalf("another account's legacy shape blocked an owned host: %v", err)
+		independent := trafficHostRule(other, peer, fmt.Sprintf("independent-%d.example.test", index))
+		_, err = store.CreateEdgeRule(t.Context(), independent)
+		if !errors.As(err, &analysis) || analysis.Scope != "global_route_stored_action_shape" {
+			t.Fatalf("unverified global route shape accepted: %v", err)
+		}
+		independent.Kind = EdgeRuleKindHeaders
+		independent.Action = EdgeRuleAction{Kind: EdgeRuleKindHeaders, Headers: &EdgeRuleHeadersAction{}}
+		if _, err := store.CreateEdgeRule(t.Context(), independent); err != nil {
+			t.Fatalf("another account's legacy route shape blocked an owned non-route host: %v", err)
 		}
 		if _, err := store.UpdateEdgeRule(t.Context(), rule.ID, UpdateEdgeRuleParams{Action: &rule.Action}); err != nil {
 			t.Fatalf("supported replacement repair: %v", err)

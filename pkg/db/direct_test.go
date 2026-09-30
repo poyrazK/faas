@@ -171,11 +171,12 @@ func TestSameDSNSessionPoolPreservesJSONBEncoding(t *testing.T) {
 // client, and nothing fails loudly — so a new pinned Acquire has to be a
 // deliberate decision rather than something a reviewer has to notice.
 var sessionScopedAcquire = map[string]string{
-	"pkg/db/notify_hub.go":       "LISTEN: the hub parks one connection per daemon",
-	"pkg/db/notify.go":           "LISTEN: legacy per-subscriber path",
-	"pkg/db/wait_for.go":         "LISTEN: short-lived per-request wait",
-	"pkg/db/migrate_advisory.go": "session pg_advisory_lock held across statements",
-	"pkg/state/pgstore.go":       "session pg_advisory_lock for the edge-rule mutation fence",
+	"pkg/db/notify_hub.go":                "LISTEN: the hub parks one connection per daemon",
+	"pkg/db/notify.go":                    "LISTEN: legacy per-subscriber path",
+	"pkg/db/wait_for.go":                  "LISTEN: short-lived per-request wait",
+	"pkg/db/migrate_advisory.go":          "session pg_advisory_lock held across statements",
+	"pkg/state/pgstore.go":                "session pg_advisory_lock for the edge-rule mutation fence",
+	"pkg/state/traffic_policy_session.go": "session locks precede the guarded repeatable-read transaction",
 }
 
 // pooledAcquireOK records Acquires that are deliberately on the ordinary
@@ -329,6 +330,8 @@ func TestDirectMaxConnsFollowsNotifyHubMode(t *testing.T) {
 	}{
 		{"hub on is the small pooled budget", "", "faas-schedd", directHubOnMaxConns},
 		{"hub on, unprefixed", "1", "gatewayd-internal", directHubOnMaxConns},
+		{"hub on reserves apid's nested guard", "", "faas-apid", directAPIDHubOnMaxConns},
+		{"hub on reserves apid's nested guard, unprefixed", "1", "apid", directAPIDHubOnMaxConns},
 		// Hub off: LISTEN moves onto the direct pool wholesale, so the direct
 		// pool needs the pre-hub per-subscriber sizing.
 		{"hub off uses the legacy per-subscriber budget", "0", "faas-schedd",

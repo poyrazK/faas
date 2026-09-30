@@ -5181,8 +5181,15 @@ SELECT octet_length(sqlc.arg(payload)::jsonb::text)::bigint;
 -- Acquire before app/FK locks so different apps and shared presets serialize.
 SELECT id FROM accounts WHERE id = sqlc.arg(account_id)::uuid FOR UPDATE NOWAIT;
 
+-- name: TryLockTrafficPolicySession :one
+-- Acquire on the direct connection before starting the repeatable-read view.
+SELECT pg_try_advisory_lock(hashtextextended(sqlc.arg(lock_key)::text,0))::boolean;
+
+-- name: UnlockTrafficPolicySession :one
+SELECT pg_advisory_unlock(hashtextextended(sqlc.arg(lock_key)::text,0))::boolean;
+
 -- name: ReadEdgeRuleTrafficAccount :one
-SELECT account_id FROM edge_rules WHERE id = sqlc.arg(rule_id)::uuid;
+SELECT account_id,kind FROM edge_rules WHERE id = sqlc.arg(rule_id)::uuid;
 
 -- name: MeasureEdgeRuleTrafficProjection :one
 -- Match the full ReadPublicHostEdgeRules projection, including its array.
@@ -5234,7 +5241,7 @@ WITH environment_policies AS MATERIALIZED (
         AND p.account_id=a.account_id AND p.project_id=a.project_id
     -- Runtime owner eligibility uses status; a status-only reactivation can
     -- retain a historical deleted_at stamp and must still be analyzed.
-    WHERE a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted' AND a.visibility<>'internal'
+    WHERE a.account_id=sqlc.narg(account_id)::uuid AND a.status<>'deleted' AND a.visibility<>'internal'
 ), raw_source AS (
     SELECT app_id, match_host, kind, cors_preset_id, action, NULL::uuid AS environment_id,
         jsonb_build_object('ID', id, 'AccountID', account_id, 'AppID', app_id,
@@ -5243,11 +5250,12 @@ WITH environment_policies AS MATERIALIZED (
             'Kind', kind, 'Action', action, 'CorsPresetID', cors_preset_id,
             'ValidateMode', validate_mode, 'CreatedAt', created_at, 'UpdatedAt', updated_at,
             'ManifestKey', manifest_key)::jsonb AS data
-    FROM edge_rules WHERE account_id = sqlc.arg(account_id)::uuid AND enabled
+    FROM edge_rules WHERE enabled AND (account_id = sqlc.narg(account_id)::uuid
+        OR (sqlc.narg(account_id)::uuid IS NULL AND kind='route'))
     UNION ALL
     SELECT p.app_id, ''::text, coalesce(rule.value->>'kind',''), NULL::uuid,
         coalesce(rule.value->'action','{}'::jsonb), p.environment_id,
-        jsonb_build_object('ID','00000000-0000-0000-0000-000000000000','AccountID',sqlc.arg(account_id)::uuid,
+        jsonb_build_object('ID','00000000-0000-0000-0000-000000000000','AccountID',sqlc.narg(account_id)::uuid,
             'AppID',p.app_id,'MatchHost',repeat('x',sqlc.arg(environment_host_bytes)::integer),
             'ManifestKey','','MatchPath',coalesce(rule.value->>'match_path',''),
             'MatchMethods',coalesce(rule.value->'match_methods','null'::jsonb),
@@ -5315,7 +5323,7 @@ WITH environment_policies AS MATERIALIZED (
         'AllowHeaders',allow_headers,'ExposeHeaders',expose_headers,'AllowCredentials',allow_credentials,
         'MaxAgeSeconds',max_age_seconds,'CreatedAt','0001-01-01T00:00:00Z',
         'UpdatedAt','0001-01-01T00:00:00Z')::text AS data
-    FROM cors_presets WHERE account_id = sqlc.arg(account_id)::uuid
+    FROM cors_presets WHERE account_id = sqlc.narg(account_id)::uuid
       AND id::text IN (SELECT preset FROM rules WHERE preset IS NOT NULL)
 ), assets AS (
     SELECT jsonb_build_object('ID',id,'Compiled',octet_length(replace(replace(replace(replace(replace(data,

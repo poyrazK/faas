@@ -61,9 +61,20 @@ remain available. This single-row check does not establish the combined host
 rule and referenced-preset bound.
 
 Rule and preset creates/updates, environment edge overlays, new environment
-registration and environment clones share an account row lock, acquired before app/FK/policy-row locks and
-retained through commit. Contenders retry without holding a pool connection;
-their request context bounds the wait. Different accounts use different locks.
+registration and environment clones share account serialization. A session
+advisory lock on a pinned direct-pool connection precedes the repeatable-read
+transaction; its account row lock then precedes app/FK/policy-row locks and is
+retained through commit. Route creates/updates first take the shared global
+route session lock. Contenders release acquired locks and the connection before
+retrying; their request context bounds the wait. Other rule kinds retain
+separate account locks. Commit/rollback release session locks; uncertain lock
+grants or failed unlocks close the session rather than returning it to the pool.
+With a separate direct DSN, apid's hub-enabled session pool reserves three
+connections for the hub, outer convergence lock and guarded transaction. The
+API process mutex admits one outer mutation lock. An explicitly pooled control
+plane must include this sibling pool in its database capacity budget. The
+deployed compute-pooler topology keeps control-plane queries on their existing
+ordinary direct pools.
 This also serializes the existing account preset quota across different apps.
 Ordinary owned host overlap validation uses that transaction boundary;
 there is no account-wide policy byte quota.
@@ -110,8 +121,20 @@ inside that transaction. Refusal also rolls back activity, cron, project and
 preview-set changes. Eligibility follows runtime status and public visibility;
 a historical deletion timestamp alone does not exclude a reactivated app.
 Removing a registered URL does not expose its former fallback. Ordinary
-primary-hostname, alias/domain activation and global synthetic route discovery
-across accounts remain pending.
+primary-hostname and alias/domain activation remain pending.
+
+Route creates/updates also check enabled route-only discovery across accounts
+using the same per-host language and resource ceilings. Disjoint hosts retain
+separate allowances; a connecting wildcard does not turn their union into a
+flat global quota. Both owned and global before/after reads use the stable
+transaction view, so concurrent deletion cannot hide an increase above a
+legacy overload. Global refusals use `global_route_` scopes and the same
+structured 422 codes. Unsupported legacy route shapes refuse global route
+writes until replaced, disabled or deleted; non-route writes in other accounts
+retain their owned scope. No action bodies are transferred for this analysis.
+This initial guard includes the full selector language conservatively. Actual
+claimed/reserved-host exclusions and newly unclaimed scope transitions still
+need integration with hostname binding projection.
 
 Individual CORS preset creates/replacements, environment overlay replacements,
 scoped route replacements and imported documents validate the complete runtime
@@ -156,9 +179,10 @@ compiler bytes measure actual Go JSON and distinct referenced presets. Compact
 RawMessage numbers are not expanded for the Go compiler. Rejected changes
 preserve related project, cron, preview-set and activity intent.
 
-Primary-hostname and alias/domain activation, global aggregate
-validation and complete recovery acceptance remain rollout requirements. These write checks do not establish
-release acceptance.
+MemStore also checks route-only global aggregates under that mutex.
+Primary-hostname and alias/domain activation, complete global binding/synthetic
+path agreement and recovery acceptance remain rollout requirements. These
+write checks do not establish release acceptance.
 
 Before dispatch, the public routing transaction re-resolves the host projection
 and compares its private content fingerprint. Changed settings, alias/domain

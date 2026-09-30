@@ -13538,7 +13538,7 @@ func scanEdgeRuleCols(scan func(...any) error) (EdgeRule, error) {
 // CreateEdgeRule is the un-capped insert path used by tests. The
 // customer-facing handler always calls CreateEdgeRuleIfUnderQuota.
 func (s *PgStore) CreateEdgeRule(ctx context.Context, in CreateEdgeRuleParams) (EdgeRule, error) {
-	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(in.AccountID))
+	tx, err := s.beginRuleTrafficPolicyMutation(ctx, uuidToPgtype(in.AccountID), in.Kind)
 	if err != nil {
 		return EdgeRule{}, err
 	}
@@ -13609,7 +13609,7 @@ func (s *PgStore) CreateEdgeRule(ctx context.Context, in CreateEdgeRuleParams) (
 // count, so a burst of N parallel inserts can't race past the cap
 // by N-1.
 func (s *PgStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeRuleParams, limits api.Limits) (EdgeRule, error) {
-	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(in.AccountID))
+	tx, err := s.beginRuleTrafficPolicyMutation(ctx, uuidToPgtype(in.AccountID), in.Kind)
 	if err != nil {
 		return EdgeRule{}, fmt.Errorf("state: begin tx: %w", err)
 	}

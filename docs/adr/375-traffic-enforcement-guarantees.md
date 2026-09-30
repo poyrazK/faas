@@ -348,9 +348,9 @@ bound. Failed writes retain the previous policy and return a stable 422 problem
 with byte limit, observed size and recovery guidance. A smaller replacement or
 an empty overlay remains available for repairing an existing oversized row.
 This individual-object guard is paired with the ordinary owned host aggregate
-check below. Combined scoped/global validation and its in-memory mirror remain
-delivery work; an account-wide byte quota must not silently replace the
-per-host runtime bound.
+check below. Complete scoped/global host binding projection and runtime/preview
+agreement remain delivery work; an account-wide byte quota must not silently
+replace the per-host runtime bound.
 
 Edge-rule creates and updates also validate the complete canonical saved row
 against the host projection's 64 MiB ceiling before committing. The guard
@@ -388,6 +388,42 @@ precedes the phase context timeout and the prior setting is restored on
 success, so a blocked query releases transaction locks before its refusal.
 Exhausted analysis refuses the mutation with a distinct error rather than
 accepting unverified policy.
+
+Route creates and replacements also check the enabled route-only discovery
+projection across accounts. Positive traffic writers acquire a session advisory
+lock for their account on a pinned direct-pool connection; route writers first
+acquire the shared global-route session lock. Both locks precede the start of
+the repeatable-read transaction and its account row lock. A first-statement
+transaction advisory lock would freeze the snapshot before acquiring the lock
+and could miss the previous writer's commit. Contenders release any acquired
+locks and the connection before retrying; ordinary non-route mutations retain
+account isolation. Commit/rollback release the session locks, and an uncertain
+lock grant or failed unlock closes the session rather than returning it to the
+pool. When apid uses a separate direct DSN, its hub-enabled direct pool
+reserves three connections: one for the notification hub, one for the outer
+edge-mutation convergence lock (the API process mutex admits one), and one for
+the guarded transaction. Other daemons retain their existing direct budget.
+An explicitly pooled control plane must include this separate API pool in its
+operator capacity budget; the deployed compute-pooler topology leaves control
+plane queries on their existing ordinary direct pools.
+Both projections use repeatable-read transaction views so a concurrent
+shrinking write or cascade cannot subsidize an increase between the before/after reads. Snapshot conflicts
+while acquiring the account lock retry before intent is written; later database
+conflicts roll back normally. The existing owned verdict precedes the global
+verdict, preserving its refusal scope. Global aggregate/analysis refusals have
+explicit global-route scopes and retain the existing structured API codes.
+The global projection transfers scalar rule measurements only and uses the same
+per-host language, compiler/default estimates and resource ceilings. Presets,
+overlays and other rule kinds do not enter route-only discovery. MemStore runs
+the global check under its existing mutex after the owned check. This first
+global guard conservatively bounds the complete route-selector language;
+claimed/reserved hostname exclusions and newly unclaimed scope transitions
+still require integration with the actual hostname binding projection. It is
+not release acceptance for the complete synthetic route path. Unsupported
+legacy route action shapes refuse global route writes until replaced, disabled
+or deleted; non-route writes in other accounts retain their owned scope.
+Snapshot ordering follows the [PostgreSQL consistency-check rules](https://www.postgresql.org/docs/16/applevel-consistency.html).
+
 Named environment aggregates distinguish the account-owned canonical read
 from the app-owned compiled result. The first retains every matching rule
 because the gateway bounds that read before applying the environment filter.
@@ -416,8 +452,8 @@ their former app filter. Existing create conflict/quota, restore grace/claim
 and compare-and-set predicates remain in force. This registered-URL eligibility
 uses runtime status and public visibility, including status-only reactivation
 with a retained historical deletion timestamp. Primary-hostname and alias/domain
-activation and global synthetic route discovery still require their own
-integration and evidence. The in-memory aggregate mirror uses the same host
+activation and complete global discovery/binding agreement still require their
+own integration and evidence. The in-memory aggregate mirror uses the same host
 analyzer under its existing mutex. Proposed rule, preset, overlay, environment,
 clone and app activation inputs are projected before publication; project
 reconcile keeps its existing rollback maps through the verdict. Canonical reads

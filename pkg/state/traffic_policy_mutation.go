@@ -16,31 +16,43 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-// Account first, then app/FK/policy rows. A shared preset can contribute to
-// policies belonging to several apps, so an app lock alone is insufficient.
+// Session locks precede the repeatable-read snapshot, then the account row
+// lock precedes app/FK/policy rows. Shared presets can affect several apps.
 func (s *PgStore) beginTrafficPolicyMutation(ctx context.Context, account pgtype.UUID) (pgx.Tx, error) {
+	return s.beginTrafficPolicyMutationWithRoutes(ctx, account, false)
+}
+
+func (s *PgStore) beginRuleTrafficPolicyMutation(ctx context.Context, account pgtype.UUID, kind EdgeRuleKind) (pgx.Tx, error) {
+	return s.beginTrafficPolicyMutationWithRoutes(ctx, account, kind == EdgeRuleKindRoute)
+}
+
+func (s *PgStore) beginTrafficPolicyMutationWithRoutes(ctx context.Context, account pgtype.UUID, globalRoutes bool) (pgx.Tx, error) {
 	for {
-		tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+		conn, release, busy, err := s.tryAcquireTrafficPolicySession(ctx, account, globalRoutes)
 		if err != nil {
-			return nil, fmt.Errorf("state: begin traffic policy mutation: %w", err)
+			return nil, err
 		}
-		_, err = sqlc.New().LockTrafficPolicyAccount(ctx, tx, account)
-		if err == nil {
-			guarded := &trafficPolicyMutationTx{Tx: tx, account: account}
-			err = boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
-				guarded.before, err = readTrafficHostAnalysis(bounded, tx, account)
-				return err
-			})
-			if err != nil {
-				_ = tx.Rollback(context.WithoutCancel(ctx))
-				return nil, err
+		if !busy {
+			tx, beginErr := conn.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
+			if beginErr != nil {
+				release(ctx)
+				return nil, fmt.Errorf("state: begin traffic policy mutation: %w", beginErr)
 			}
-			return guarded, nil
-		}
-		_ = tx.Rollback(context.WithoutCancel(ctx))
-		var pgErr *pgconn.PgError
-		if !errors.As(err, &pgErr) || pgErr.Code != pgerrcode.LockNotAvailable {
-			return nil, fmt.Errorf("state: lock traffic policy account: %w", mapErr(err))
+			_, err = sqlc.New().LockTrafficPolicyAccount(ctx, tx, account)
+			if err == nil {
+				guarded := &trafficPolicyMutationTx{Tx: tx, account: account, globalRoutes: globalRoutes, release: release}
+				if err := guarded.readBefore(ctx); err != nil {
+					_ = guarded.Rollback(context.WithoutCancel(ctx))
+					return nil, err
+				}
+				return guarded, nil
+			}
+			_ = tx.Rollback(context.WithoutCancel(ctx))
+			release(ctx)
+			var pgErr *pgconn.PgError
+			if !errors.As(err, &pgErr) || pgErr.Code != pgerrcode.LockNotAvailable && pgErr.Code != pgerrcode.SerializationFailure {
+				return nil, fmt.Errorf("state: lock traffic policy account: %w", mapErr(err))
+			}
 		}
 		// The holder may need ordinary pool reads; wait without a connection.
 		timer := time.NewTimer(api.TrafficPolicyMutationLockRetry)
@@ -57,8 +69,29 @@ func (s *PgStore) beginTrafficPolicyMutation(ctx context.Context, account pgtype
 // caller already rolls back on a failed Commit, including its change ledger.
 type trafficPolicyMutationTx struct {
 	pgx.Tx
-	account pgtype.UUID
-	before  trafficHostAnalysis
+	account      pgtype.UUID
+	before       trafficHostAnalysis
+	globalRoutes bool
+	globalBefore trafficHostAnalysis
+	release      func(context.Context)
+}
+
+func (tx *trafficPolicyMutationTx) readBefore(ctx context.Context) error {
+	if err := boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
+		var err error
+		tx.before, err = readTrafficHostAnalysis(bounded, tx.Tx, tx.account)
+		return err
+	}); err != nil {
+		return err
+	}
+	if tx.globalRoutes {
+		return globalTrafficPolicyError(boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
+			var err error
+			tx.globalBefore, err = readTrafficHostAnalysis(bounded, tx.Tx, pgtype.UUID{})
+			return err
+		}))
+	}
+	return nil
 }
 
 func (tx *trafficPolicyMutationTx) Commit(ctx context.Context) error {
@@ -71,7 +104,24 @@ func (tx *trafficPolicyMutationTx) Commit(ctx context.Context) error {
 	}); err != nil {
 		return err
 	}
+	if tx.globalRoutes {
+		if err := globalTrafficPolicyError(boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
+			after, err := readTrafficHostAnalysis(bounded, tx.Tx, pgtype.UUID{})
+			if err != nil {
+				return err
+			}
+			return checkTrafficHostAnalysis(bounded, tx.globalBefore, after)
+		})); err != nil {
+			return err
+		}
+	}
+	defer tx.release(ctx)
 	return tx.Tx.Commit(ctx)
+}
+
+func (tx *trafficPolicyMutationTx) Rollback(ctx context.Context) error {
+	defer tx.release(ctx)
+	return tx.Tx.Rollback(ctx)
 }
 
 func boundedTrafficPolicyAnalysis(ctx context.Context, analyze func(context.Context) error) error {
@@ -90,11 +140,11 @@ func boundedTrafficPolicyAnalysis(ctx context.Context, analyze func(context.Cont
 }
 
 func (s *PgStore) beginEdgeRuleTrafficMutation(ctx context.Context, id string) (pgx.Tx, error) {
-	account, err := sqlc.New().ReadEdgeRuleTrafficAccount(ctx, s.pool, uuidToPgtype(id))
+	owner, err := sqlc.New().ReadEdgeRuleTrafficAccount(ctx, s.pool, uuidToPgtype(id))
 	if err != nil {
 		return nil, fmt.Errorf("state: read traffic policy owner: %w", mapErr(err))
 	}
-	return s.beginTrafficPolicyMutation(ctx, account)
+	return s.beginRuleTrafficPolicyMutation(ctx, owner.AccountID, EdgeRuleKind(owner.Kind))
 }
 
 func (s *PgStore) beginAppTrafficMutation(ctx context.Context, id string) (pgx.Tx, error) {

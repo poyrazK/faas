@@ -15,8 +15,8 @@
 //   - LISTEN. The ADR-190 notify hub, the legacy Subscribe path, and
 //     WaitFor all hold a connection open to receive pg_notify. A pooled
 //     connection would be handed to another client between notifications.
-//   - Session advisory locks. PgStore's edge-rule mutation lock and
-//     MigrateUp's migration lock both take pg_advisory_lock (NOT the
+//   - Session advisory locks. PgStore's edge-rule mutation fence and traffic
+//     policy guards, and MigrateUp's migration lock take pg_advisory_lock (NOT the
 //     _xact_ variant) on a pinned connection and hold it across statements.
 //     Under transaction pooling the lock would be released — or worse,
 //     leak to whichever client got that server connection next.
@@ -72,6 +72,10 @@ const DirectDSNEnv = "FAAS_DATABASE_URL_DIRECT"
 // across every node.
 const directHubOnMaxConns int32 = 2
 
+// ADR-375: apid holds its outer edge mutation lock while the traffic guard
+// uses a second pinned connection. Its process mutex admits one outer lock.
+const directAPIDHubOnMaxConns int32 = directHubOnMaxConns + 1
+
 // directMaxConns resolves the session-scoped pool budget for the notify mode
 // this process runs in.
 //
@@ -83,10 +87,13 @@ const directHubOnMaxConns int32 = 2
 // the same coupling the ordinary pool has, so it takes the same table: the
 // kill switch stays a rollback rather than becoming a second outage.
 func directMaxConns(appName string) int32 {
+	name := strings.TrimPrefix(strings.TrimSpace(appName), "faas-")
 	if notifyHubEnabled() {
+		if name == "apid" {
+			return directAPIDHubOnMaxConns
+		}
 		return directHubOnMaxConns
 	}
-	name := strings.TrimPrefix(strings.TrimSpace(appName), "faas-")
 	if limit, ok := DaemonMaxConnectionsNotifyHubDisabled[name]; ok {
 		return limit
 	}
