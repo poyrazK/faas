@@ -3,14 +3,17 @@
 ADR-375 pins a public request's compiled host rules before route substitution.
 The resolved app flags and plan table join that snapshot after owner lookup.
 External CORS presets and named-environment headers/CORS are included as
-resolved actions. Upload, wake and retries retain those inputs even when the
-shared caches refresh. App slices and maps are copied before guest work.
+resolved actions. Imported OpenAPI method/path declarations and environment
+route-contract overlays are pinned before the app snapshot is sealed. Route
+enforcement and observed route labels use that same contract. Upload, wake and
+retries retain those inputs even when shared caches refresh. App slices and
+maps are copied before guest work.
 
 ## Runtime evidence
 
 Ordinary responses expose `X-Gregale-Traffic-Policy: traffic-v1:<sha256>`.
-The gateway owns this response header at commitment; application responses and
-edge header actions cannot overwrite it. The request span carries
+The gateway owns this response header at commitment; application responses,
+edge header actions, and declared or late trailers cannot overwrite it. The request span carries
 `gregale.traffic.policy_revision`, and request logs carry
 `traffic_policy_revision`. Raw Upgrade response bytes do not expose this HTTP
 response header; the request span/log still records the snapshot.
@@ -37,15 +40,18 @@ fences new requests; previously admitted requests retain their inputs.
 Account/app/deployment emergency cancellation now uses the separate durable
 generation fence described in [HTTP security revocation](traffic-security-revocation.md).
 Its local gateway and Postgres checks do not establish full path or deployed
-acceptance. Imported declared-route document pinning, simulator/runtime
-agreement and managed-service policy fingerprints remain required work.
+acceptance. Imported document cache entries are owner scoped. An invalidation
+during a pending document load refuses its unpublished snapshot, while an
+already pinned request retains its contract. The configured total deadline is
+armed before loading that document or scoped contract; expiry returns 504.
+Simulator/runtime agreement and managed-service policy fingerprints remain required work.
 Native lifecycle and deployment acceptance remain pending.
 
 ## Covered paths
 
 | Path | Snapshot and evidence |
 | --- | --- |
-| Ordinary public HTTP, including cache and edge responses | Compiled host rules, resolved app flags and plan; response/span/log fingerprint |
+| Ordinary public HTTP, including cache and edge responses | Compiled host rules, imported/scoped route contract, resolved app flags and plan; response/span/log fingerprint |
 | Named environment, verified domain, listener selector | Effective host rules; selector and base host use one cache generation |
 | Public streaming and raw Upgrade | Pinned rules/app inputs; span/log evidence; ordinary HTTP header only where normal response commitment is used |
 | Managed service proxy | Binding authorization and reliability lookup remain separate; full snapshot/fingerprint pending |

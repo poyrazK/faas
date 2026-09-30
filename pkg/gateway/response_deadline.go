@@ -29,6 +29,7 @@ func isTrafficResponseControlHeader(name string) bool {
 	}
 	return strings.EqualFold(name, trafficResponseDeadlineHeader) ||
 		strings.EqualFold(name, trafficResponseSessionHeader) ||
+		strings.EqualFold(name, TrafficPolicyRevisionHeader) ||
 		strings.EqualFold(name, api.StreamingStatusHeader)
 }
 

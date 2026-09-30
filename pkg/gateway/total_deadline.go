@@ -68,6 +68,13 @@ func rememberBudgetCancel(r *http.Request, ctx context.Context, cancel context.C
 // applyTotalDeadline runs immediately after owner resolution, before auth,
 // cache, upload and wake. Pin its rule for the later execution budget too.
 func (h *Handler) applyTotalDeadline(w http.ResponseWriter, r *http.Request, app App) bool {
+	if _, pinned := r.Context().Value(totalDeadlineBudgetKey{}).(EdgeRuleBudgetResolved); pinned {
+		if requestBudgetExpired(r.Context()) {
+			writeRequestBudgetExceededForRequest(w, r)
+			return true
+		}
+		return false
+	}
 	if h.edgeRules == nil {
 		return false
 	}

@@ -338,16 +338,57 @@ func TestInternalReverseProxyInvalidComputeDeadlineRefusesBeforeCommit(t *testin
 func TestLegacyResponseStripsLateTrafficControlTrailers(t *testing.T) {
 	resp := &http.Response{Header: make(http.Header), Body: io.NopCloser(strings.NewReader("body"))}
 	defer resp.Body.Close()
-	resp.Header.Set("Trailer", trafficResponseSessionHeader+", grpc-status")
+	resp.Header.Set("Trailer", trafficResponseSessionHeader+", "+TrafficPolicyRevisionHeader+", grpc-status")
 	stripGuestEvidenceResponseHeaders(resp)
 	// H2 allocates/populates the trailer map after the initial headers. The
 	// filter must inspect the response's current map when body reading ends.
-	resp.Trailer = http.Header{trafficResponseSessionHeader: []string{"long-lived"}, "Grpc-Status": []string{"0"}}
+	resp.Trailer = http.Header{trafficResponseSessionHeader: []string{"long-lived"}, TrafficPolicyRevisionHeader: []string{"forged"}, "Grpc-Status": []string{"0"}}
 	if _, err := io.ReadAll(resp.Body); err != nil {
 		t.Fatal(err)
 	}
-	if resp.Trailer.Get(trafficResponseSessionHeader) != "" || resp.Header.Get("Trailer") != "grpc-status" || resp.Trailer.Get("Grpc-Status") != "0" {
+	if resp.Trailer.Get(trafficResponseSessionHeader) != "" || resp.Trailer.Get(TrafficPolicyRevisionHeader) != "" || resp.Header.Get("Trailer") != "grpc-status" || resp.Trailer.Get("Grpc-Status") != "0" {
 		t.Fatalf("control trailer leaked or gRPC trailer lost: %v / %v", resp.Header, resp.Trailer)
+	}
+}
+
+func TestPublicResponseRetainsPolicyHeaderButRejectsPolicyTrailer(t *testing.T) {
+	for _, h2 := range []bool{false, true} {
+		for _, announced := range []bool{false, true} {
+			t.Run("h2="+strconv.FormatBool(h2)+"/announced="+strconv.FormatBool(announced), func(t *testing.T) {
+				compute := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set(TrafficPolicyRevisionHeader, "traffic-v1:trusted")
+					w.Header().Set("Trailer", "grpc-status")
+					if announced {
+						w.Header().Add("Trailer", TrafficPolicyRevisionHeader)
+					}
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte("body"))
+					name := http.TrailerPrefix + TrafficPolicyRevisionHeader
+					if announced {
+						name = TrafficPolicyRevisionHeader
+					}
+					w.Header().Set(name, "forged-trailer")
+					w.Header().Set("Grpc-Status", "0")
+				}))
+				compute.Config.Protocols = new(http.Protocols)
+				compute.Config.Protocols.SetHTTP1(true)
+				compute.Config.Protocols.SetUnencryptedHTTP2(true)
+				compute.Start()
+				defer compute.Close()
+				proxy := NewInternalReverseProxy(&stubDialer{server: compute}, &url.URL{Scheme: "http", Host: "compute"}, slog.New(slog.NewTextHandler(io.Discard, nil)), h2)
+				public := httptest.NewServer(proxy)
+				defer public.Close()
+				resp, err := public.Client().Get(public.URL)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer resp.Body.Close()
+				body, err := io.ReadAll(resp.Body)
+				if err != nil || string(body) != "body" || resp.Header.Get(TrafficPolicyRevisionHeader) != "traffic-v1:trusted" || resp.Trailer.Get(TrafficPolicyRevisionHeader) != "" || resp.Trailer.Get("Grpc-Status") != "0" {
+					t.Fatalf("policy evidence header/trailer=%v/%v body=%q err=%v", resp.Header, resp.Trailer, body, err)
+				}
+			})
+		}
 	}
 }
 
@@ -359,12 +400,13 @@ func TestResponseSessionAndDeadlineControlsArePlatformOwned(t *testing.T) {
 				defer cancel()
 				rec := httptest.NewRecorder()
 				writer := &statusRecorder{ResponseWriter: rec,
+					trafficPolicyRevision:    "verified",
 					trafficResponseContext:   func() context.Context { return ctx },
 					trafficResponseLongLived: func(int) bool { return longLived },
 					trafficStreamingStatus:   api.StreamingStatusFlagDisabled,
 				}
 				defer writer.stopTrafficResponse()
-				for _, name := range []string{trafficResponseDeadlineHeader, trafficResponseSessionHeader, api.StreamingStatusHeader} {
+				for _, name := range []string{trafficResponseDeadlineHeader, trafficResponseSessionHeader, api.StreamingStatusHeader, TrafficPolicyRevisionHeader} {
 					writer.Header().Set(name, "guest forgery")
 					writer.installHeaderOps([]EdgeRuleHeaderOp{{Name: name, Value: "rule forgery", Action: "set"}})
 				}
@@ -375,6 +417,9 @@ func TestResponseSessionAndDeadlineControlsArePlatformOwned(t *testing.T) {
 				}
 				if isLongLivedResponse(rec.Code, rec.Header()) != longLived || rec.Header().Get(api.StreamingStatusHeader) != string(api.StreamingStatusFlagDisabled) {
 					t.Fatal("application or rule changed the platform's response session")
+				}
+				if rec.Header().Get(TrafficPolicyRevisionHeader) != "verified" {
+					t.Fatal("source/rule replaced effective policy proof")
 				}
 				deadline, _ := ctx.Deadline()
 				want := ""

@@ -23,6 +23,13 @@ type edgePolicySnapshot struct {
 
 type pinnedEdgePoliciesKey struct{}
 type effectiveTrafficPolicyKey struct{}
+type declaredRoutePolicyRevisionKey struct{}
+
+// DeclaredRoutePolicySnapshotter freezes imported/scoped route inputs before
+// app sealing. Later matching and observation must use the returned context.
+type DeclaredRoutePolicySnapshotter interface {
+	PinDeclaredRoutePolicy(context.Context, App) (context.Context, App, string, error)
+}
 
 // EdgePolicySnapshotter is implemented by the production matcher. A verified
 // empty policy is valid; a failed load must not become an unchecked rule miss.
@@ -144,10 +151,11 @@ func freezeTrafficApp(ctx context.Context, app App) (App, string, error) {
 	}
 	limits, _ := api.LimitsFor(app.Plan)
 	effective, err := json.Marshal(struct {
-		App    json.RawMessage
-		Hosts  map[string]string
-		Limits api.Limits
-	}{encoded, hosts, limits})
+		App            json.RawMessage
+		Hosts          map[string]string
+		Limits         api.Limits
+		DeclaredRoutes string `json:",omitempty"`
+	}{encoded, hosts, limits, declaredRoutePolicyRevision(ctx)})
 	if err != nil {
 		return App{}, "", fmt.Errorf("encode effective policy: %w", err)
 	}
@@ -161,6 +169,23 @@ func (h *Handler) pinAppTrafficPolicy(w http.ResponseWriter, r *http.Request, ap
 	if err := ValidatePinnedHostPolicies(r.Context(), app.AccountID); err != nil {
 		h.writeTrafficPolicyUnavailable(w)
 		return true
+	}
+	*r = *r.WithContext(WithEdgeRuleOwner(r.Context(), app.AccountID))
+	if h.applyTotalDeadline(w, r, *app) {
+		return true
+	}
+	if loader, ok := h.declaredRoutes.(DeclaredRoutePolicySnapshotter); ok {
+		ctx, resolved, revision, err := loader.PinDeclaredRoutePolicy(r.Context(), *app)
+		if err != nil || ctx == nil || revision == "" || resolved.ID != app.ID || resolved.AccountID != app.AccountID {
+			if requestBudgetExpired(r.Context()) {
+				writeRequestBudgetExceededForRequest(w, r)
+				return true
+			}
+			h.writeTrafficPolicyUnavailable(w)
+			return true
+		}
+		*app = resolved
+		*r = *r.WithContext(context.WithValue(ctx, declaredRoutePolicyRevisionKey{}, revision))
 	}
 	frozen, revision, err := freezeTrafficApp(r.Context(), *app)
 	if err != nil {
@@ -181,5 +206,10 @@ func (h *Handler) writeTrafficPolicyUnavailable(w http.ResponseWriter) {
 
 func TrafficPolicyRevision(ctx context.Context) string {
 	revision, _ := ctx.Value(effectiveTrafficPolicyKey{}).(string)
+	return revision
+}
+
+func declaredRoutePolicyRevision(ctx context.Context) string {
+	revision, _ := ctx.Value(declaredRoutePolicyRevisionKey{}).(string)
 	return revision
 }

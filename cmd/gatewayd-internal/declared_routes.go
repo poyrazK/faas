@@ -63,6 +63,9 @@ type declaredRouteDocStore interface {
 // application-wide contract. An absent scoped row is a backwards-compatible
 // fallback; a storage error fails closed at the handler boundary.
 func (m *declaredRoutesMatcher) ResolveScopedRoutePolicy(ctx context.Context, app gateway.App) (gateway.App, error) {
+	if pinned, ok := pinnedDeclaredRoutePolicy(ctx, app); ok {
+		return pinned.app, nil
+	}
 	if app.PinnedDeploymentScope == "" || m == nil || m.store == nil {
 		return app, nil
 	}
@@ -91,9 +94,16 @@ type compiledDeclaredRoute struct {
 }
 
 type declaredRoutePolicy struct {
-	routes  []compiledDeclaredRoute
-	expires time.Time
-	missing bool
+	routes   []compiledDeclaredRoute
+	expires  time.Time
+	missing  bool
+	revision string
+}
+
+type declaredRouteCacheKey struct{ appID, accountID string }
+type declaredRouteLoad struct {
+	key         declaredRouteCacheKey
+	invalidated bool
 }
 
 // declaredRoutesMatcher compiles an app's imported OpenAPI document once and
@@ -107,7 +117,8 @@ type declaredRoutesMatcher struct {
 	now   func() time.Time
 
 	mu      sync.RWMutex
-	entries map[string]declaredRoutePolicy
+	entries map[declaredRouteCacheKey]declaredRoutePolicy
+	pending map[*declaredRouteLoad]struct{}
 }
 
 func newDeclaredRoutesMatcher(store declaredRouteDocStore) *declaredRoutesMatcher {
@@ -115,7 +126,8 @@ func newDeclaredRoutesMatcher(store declaredRouteDocStore) *declaredRoutesMatche
 		store:   store,
 		ttl:     5 * time.Minute,
 		now:     time.Now,
-		entries: make(map[string]declaredRoutePolicy),
+		entries: make(map[declaredRouteCacheKey]declaredRoutePolicy),
+		pending: make(map[*declaredRouteLoad]struct{}),
 	}
 }
 
@@ -147,6 +159,9 @@ func (m *declaredRoutesMatcher) ResolveObservedRoute(ctx context.Context, app ga
 }
 
 func (m *declaredRoutesMatcher) loadPolicy(ctx context.Context, app gateway.App) (declaredRoutePolicy, error) {
+	if pinned, ok := pinnedDeclaredRoutePolicy(ctx, app); ok {
+		return pinned.policy, nil
+	}
 	if len(app.DeclaredRoutes) > 0 {
 		return compileDeclaredRoutes(app.DeclaredRoutes)
 	}
@@ -155,20 +170,25 @@ func (m *declaredRoutesMatcher) loadPolicy(ctx context.Context, app gateway.App)
 	}
 
 	now := m.now()
-	m.mu.RLock()
-	entry, ok := m.entries[app.ID]
-	m.mu.RUnlock()
+	key := declaredRouteCacheKey{app.ID, app.AccountID}
+	m.mu.Lock()
+	entry, ok := m.entries[key]
 	if ok && now.Before(entry.expires) {
+		m.mu.Unlock()
 		return entry, nil
 	}
+	load := &declaredRouteLoad{key: key}
+	m.pending[load] = struct{}{}
+	m.mu.Unlock()
+	defer m.finishDeclaredRouteLoad(load)
 
 	doc, _, err := m.store.GetAppOpenAPIDoc(ctx, app.ID, app.AccountID)
 	if errors.Is(err, state.ErrNotFound) {
 		policy := declaredRoutePolicy{expires: now.Add(m.ttl), missing: true}
-		m.mu.Lock()
-		m.entries[app.ID] = policy
-		m.mu.Unlock()
-		return policy, nil
+		if err := sealDeclaredRoutePolicy(&policy); err != nil {
+			return declaredRoutePolicy{}, err
+		}
+		return m.publishDeclaredRoutePolicy(load, policy)
 	}
 	if err != nil {
 		return declaredRoutePolicy{}, fmt.Errorf("load OpenAPI document for app %s: %w", app.ID, err)
@@ -178,10 +198,7 @@ func (m *declaredRoutesMatcher) loadPolicy(ctx context.Context, app gateway.App)
 		return declaredRoutePolicy{}, err
 	}
 	policy.expires = now.Add(m.ttl)
-	m.mu.Lock()
-	m.entries[app.ID] = policy
-	m.mu.Unlock()
-	return policy, nil
+	return m.publishDeclaredRoutePolicy(load, policy)
 }
 
 func (m *declaredRoutesMatcher) Invalidate(appID string) {
@@ -189,7 +206,16 @@ func (m *declaredRoutesMatcher) Invalidate(appID string) {
 		return
 	}
 	m.mu.Lock()
-	delete(m.entries, appID)
+	for key := range m.entries {
+		if key.appID == appID {
+			delete(m.entries, key)
+		}
+	}
+	for load := range m.pending {
+		if load.key.appID == appID {
+			load.invalidated = true
+		}
+	}
 	m.mu.Unlock()
 }
 
@@ -238,7 +264,11 @@ func compileDeclaredRoutes(routes []gateway.DeclaredRoute) (declaredRoutePolicy,
 		}
 		compiled = append(compiled, compiledDeclaredRoute{path: path, methods: methods, staticSegments: staticSegments})
 	}
-	return declaredRoutePolicy{routes: compiled}, nil
+	policy := declaredRoutePolicy{routes: compiled}
+	if err := sealDeclaredRoutePolicy(&policy); err != nil {
+		return declaredRoutePolicy{}, err
+	}
+	return policy, nil
 }
 
 func normalizeDeclaredPath(path string) string {

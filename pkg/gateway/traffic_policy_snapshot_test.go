@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -46,6 +47,79 @@ func TestTrafficPolicySealIsIndependentAndAppDigestIncludesEffectiveInputs(t *te
 		if _, after, err := freezeTrafficApp(ctx, changed); err != nil || after == before {
 			t.Fatalf("changed app policy kept digest: %s %v", after, err)
 		}
+	}
+}
+
+type routeSnapshotMatcherStub struct {
+	declaredRouteMatcherStub
+	revision string
+	fail     bool
+	slow     bool
+}
+
+func (m *routeSnapshotMatcherStub) PinDeclaredRoutePolicy(ctx context.Context, app App) (context.Context, App, string, error) {
+	if m.slow {
+		<-ctx.Done()
+		return nil, App{}, "", ctx.Err()
+	}
+	if m.fail {
+		return nil, App{}, "", errors.New("contract unavailable")
+	}
+	app.OnlyAllowDeclaredRoutes = true
+	app.DeclaredRoutes = []DeclaredRoute{{Path: "/allowed", Methods: []string{"GET"}}}
+	return ctx, app, m.revision, nil
+}
+
+func TestTrafficPolicyIncludesPinnedDeclaredContractBeforeGuestWork(t *testing.T) {
+	h, backend, _ := newTestHandler(t)
+	backend.setLegacyHot()
+	entry := &HostEntry{Host: backend.host}
+	if err := entry.SealPolicy(); err != nil {
+		t.Fatal(err)
+	}
+	h.WithEdgeRules(snapshotTestMatcher{entry: entry}, nil, nil)
+	matcher := &routeSnapshotMatcherStub{declaredRouteMatcherStub: declaredRouteMatcherStub{allowed: true}, revision: "contract-old"}
+	h.WithDeclaredRouteMatcher(matcher)
+	forwarded := 0
+	h.WithForwarding(func(Target) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { forwarded++; w.WriteHeader(http.StatusNoContent) })
+	})
+	request := func() *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://"+backend.host+"/allowed", nil))
+		return rec
+	}
+	first := request()
+	if first.Code != http.StatusNoContent || matcher.called.Load() != 1 {
+		t.Fatalf("scoped declaration was not applied before guest: %d/%d", first.Code, matcher.called.Load())
+	}
+	matcher.revision = "contract-new"
+	second := request()
+	if first.Header().Get(TrafficPolicyRevisionHeader) == second.Header().Get(TrafficPolicyRevisionHeader) {
+		t.Fatal("changed imported contract missing from effective fingerprint")
+	}
+	matcher.fail = true
+	refused := request()
+	if refused.Code != http.StatusServiceUnavailable || !strings.Contains(refused.Body.String(), api.CodeTrafficPolicyUnavailable) || forwarded != 2 {
+		t.Fatalf("unverified contract reached guest: %d/%s forwards=%d", refused.Code, refused.Body, forwarded)
+	}
+}
+
+func TestTotalDeadlineBoundsDeclaredRouteSnapshotLoad(t *testing.T) {
+	h, backend, _ := newTestHandler(t)
+	setTotalBudget(h, backend.app, 50)
+	entry := &HostEntry{Host: backend.host, Budget: []EdgeRuleBudgetResolved{{ID: "total", AccountID: backend.app.AccountID, AppID: backend.app.ID, BudgetMs: 1000, TotalDeadlineMs: 50}}}
+	if err := entry.SealPolicy(); err != nil {
+		t.Fatal(err)
+	}
+	h.WithEdgeRules(snapshotTestMatcher{entry: entry}, nil, nil)
+	h.WithDeclaredRouteMatcher(&routeSnapshotMatcherStub{slow: true})
+	rec := httptest.NewRecorder()
+	started := time.Now()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://"+backend.host+"/", nil))
+	assertTotalTimeout(t, rec)
+	if time.Since(started) > 200*time.Millisecond || backend.admits != 0 {
+		t.Fatal("document pin escaped total deadline or reached wake")
 	}
 }
 

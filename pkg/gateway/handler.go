@@ -8231,12 +8231,12 @@ func (s *statusRecorder) WriteHeader(code int) {
 			applyHeaderOp(s.Header(), op)
 		}
 		s.Header().Del(preAuthTargetHeader)
+		s.commitTrafficResponse(code)
 		if s.trafficPolicyRevision != "" {
 			s.Header().Set(TrafficPolicyRevisionHeader, s.trafficPolicyRevision)
 		} else {
 			s.Header().Del(TrafficPolicyRevisionHeader)
 		}
-		s.commitTrafficResponse(code)
 	}
 	s.ResponseWriter.WriteHeader(code)
 }

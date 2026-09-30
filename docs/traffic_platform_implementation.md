@@ -230,3 +230,17 @@ rollout gates are in `docs/ops/traffic-security-revocation.md`.
 Imported document/service snapshots, bounded decision evidence, preview/path
 agreement, all public-hop long-stream behavior, native VM/network/leak,
 complete daemon/load/recovery and deployment acceptance remain pending.
+
+Declared-route snapshots now include the imported OpenAPI contract and scoped
+route override before guest work. Enforcement and route observation retain the
+same immutable compiled view during document changes or store outages; fresh
+requests fail closed on an unverified document. Cache keys include the owner,
+and invalidation fences in-flight loads from republishing an old contract.
+The configured total deadline also bounds this lookup. The protected policy
+fingerprint cannot be replaced through guest headers or late response trailers.
+Local document-change, owner-isolation, scoped-override, load/invalidation race,
+deadline and real public HTTP/1/HTTP/2 trailer tests passed. The full gateway
+suite passed in 55.912 seconds and internal-gateway suite in 4.676 seconds;
+the pinned linter passed both with zero findings. Service snapshots, decision
+evidence, preview/path agreement and the remaining acceptance gates above are
+still pending. No native Linux x86_64 KVM acceptance host is currently available.
