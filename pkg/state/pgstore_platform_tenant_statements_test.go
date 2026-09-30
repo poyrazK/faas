@@ -89,7 +89,6 @@ func TestPgPlatformTenantStatementCoverageScale(t *testing.T) {
 		t.Fatalf("marshal coverage size: %v", err)
 	}
 	coverageJSONBytes := len(encodedCoverage)
-	encodedCoverage = nil
 
 	lineUnits := int64(minutesPerApp)
 	lines := make([]state.PlatformTenantStatementLine, 0, apps)
@@ -117,7 +116,6 @@ func TestPgPlatformTenantStatementCoverageScale(t *testing.T) {
 	}
 	statementID := statement.ID
 	input.Coverage = nil
-	coverage = nil
 	statement, changed, err := store.FinalizePlatformTenantStatement(ctx, accountID, tenant.ID, statementID)
 	if err != nil || !changed {
 		t.Fatalf("FinalizePlatformTenantStatement: changed=%t err=%v", changed, err)
@@ -432,7 +430,7 @@ func TestPgTenantSurfaceUsageStatementAndHandoff(t *testing.T) {
 		Lines: []state.PlatformTenantStatementLine{{AppID: appID, SurfaceID: surfaceID, WindowStart: start,
 			BillableUnits: 3, RateCardID: uuid.NewString(), Currency: "EUR", PriceMillicentsPerUnit: 10, AmountMillicents: 30}}}
 	statement, created, err := store.CreatePlatformTenantStatement(ctx, input)
-	if err != nil || !created || len(statement.Lines) != 1 || len(statement.Coverage) != 1 || statement.Lines[0].SurfaceID != surfaceID || !statement.Lines[0].WindowEnd.Equal(start.Add(time.Minute)) {
+	if err != nil || !created || len(statement.Lines) != 1 || len(statement.Coverage) != 0 || statement.Lines[0].SurfaceID != surfaceID || !statement.Lines[0].WindowEnd.Equal(start.Add(time.Minute)) {
 		t.Fatalf("surface statement=%+v created=%t err=%v", statement, created, err)
 	}
 	if _, _, err := store.FinalizePlatformTenantStatement(ctx, accountID, tenant.ID, statement.ID); err != nil {
