@@ -72,6 +72,8 @@ func cmdProjectsEnvironments(args []string) int {
 		return cmdProjectsEnvironmentRoutes(args[1:])
 	case "policies":
 		return cmdProjectsEnvironmentPolicies(args[1:])
+	case "gitops":
+		return cmdProjectsEnvironmentGitOps(args[1:])
 	case "diff":
 		return cmdProjectsEnvironmentConfigDiff(args[1:])
 	case "preview", "promotion-preview":

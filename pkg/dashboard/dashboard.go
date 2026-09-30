@@ -122,8 +122,25 @@ type ProjectsData struct {
 	Projects      []api.ProjectSummaryResponse
 	Project       *api.ProjectResponse
 	DeletePreview *api.ProjectDeletePreviewResponse
+	Environments  []string
 	CSRFToken     string
 	Flash         string
+}
+
+type EnvironmentGitOpsData struct {
+	Project     string
+	Environment string
+	CSRFToken   string
+	Status      *api.EnvironmentGitOpsStatusResponse
+	Review      *api.PreviewEnvironmentGitRevisionResponse
+	Definition  string
+	Adoption    *api.EnvironmentGitOpsPlan
+	Runs        []EnvironmentGitOpsRunView
+}
+
+type EnvironmentGitOpsRunView struct {
+	Run  api.EnvironmentGitOpsRun
+	Plan *api.EnvironmentGitOpsPlan
 }
 
 // AppListItem is one row on /dashboard/apps.

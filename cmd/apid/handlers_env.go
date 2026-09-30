@@ -309,6 +309,9 @@ func (s *server) setEnv(w http.ResponseWriter, r *http.Request, acct state.Accou
 		persistErr = s.store.UpsertAppEnvInScope(r.Context(), acct.ID, app.ID, scope, key, req.Value)
 	}
 	if persistErr != nil {
+		if writeEnvironmentGitOpsOwnershipProblem(w, persistErr) {
+			return
+		}
 		api.WriteProblem(w, api.ErrCapacity("could not persist env var"))
 		return
 	}
@@ -524,6 +527,9 @@ func (s *server) deleteEnv(w http.ResponseWriter, r *http.Request, acct state.Ac
 		deleteErr = s.store.DeleteAppEnvInScope(r.Context(), acct.ID, app.ID, scope, key)
 	}
 	if deleteErr != nil {
+		if writeEnvironmentGitOpsOwnershipProblem(w, deleteErr) {
+			return
+		}
 		if errors.Is(deleteErr, state.ErrNotFound) {
 			api.WriteProblem(w, api.ErrEnvVarNotFound(key))
 			return

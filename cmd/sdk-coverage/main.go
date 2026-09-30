@@ -273,6 +273,15 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
+	"GET /v1/projects/{slug}/environments/{environment}/gitops":                    "GetEnvironmentGitOps",
+	"POST /v1/projects/{slug}/environments/{environment}/gitops/source":            "CreateEnvironmentGitSource",
+	"PATCH /v1/projects/{slug}/environments/{environment}/gitops/source":           "UpdateEnvironmentGitSource",
+	"POST /v1/projects/{slug}/environments/{environment}/gitops/revisions/preview": "PreviewEnvironmentGitRevision",
+	"POST /v1/projects/{slug}/environments/{environment}/gitops/revisions/approve": "ApproveEnvironmentGitRevision",
+	"GET /v1/projects/{slug}/environments/{environment}/gitops/adoption-preview":   "PreviewEnvironmentGitOpsAdoption",
+	"POST /v1/projects/{slug}/environments/{environment}/gitops/adopt":             "AdoptEnvironmentGitOps",
+	"POST /v1/projects/{slug}/environments/{environment}/gitops/overrides":         "CreateEnvironmentGitOpsOverride",
+	"DELETE /v1/projects/{slug}/environments/{environment}/gitops/overrides":       "RemoveEnvironmentGitOpsOverride",
 	"POST /v1/dev/bridges":                                                    "CreateDevBridge",
 	"GET /v1/dev/bridges/{id}":                                                "GetDevBridge",
 	"DELETE /v1/dev/bridges/{id}":                                             "RevokeDevBridge",

@@ -2013,6 +2013,22 @@ var cliCommands = []cliCommand{
 				{Name: "config", Short: "Manage environment configuration"},
 				{Name: "routes", Short: "Manage environment routes"},
 				{Name: "policies", Short: "Manage environment policies"},
+				{Name: "gitops", Short: "Review Git definitions, adopt owned fields, and inspect reconciliation (JSON output)", Subcommands: []cliSub{
+					{Name: "status", Short: "Inspect the source and recent reconciliation attempts"},
+					{Name: "bind", Short: "Bind the verified project repository to a definition", Flags: []cliFlag{
+						{Name: "manifest-path", Value: "PATH", Short: "Environment definition path in Git"},
+						{Name: "ref", Value: "REF", Short: "Git ref selecting revision candidates"},
+						{Name: "mode", Value: "MODE", Short: "report (default) or enforce"},
+						{Name: "prune", Short: "Allow removal of previously owned fields"},
+					}},
+					{Name: "review", Short: "Fetch an immutable commit and output a review receipt", Flags: []cliFlag{{Name: "commit", Value: "SHA", Short: "Exact lowercase GitHub commit SHA"}}},
+					{Name: "approve", Short: "Approve the digest and generation in a reviewed receipt", Flags: []cliFlag{{Name: "file", Value: "PATH", Short: "Saved revision review JSON"}, {Name: "yes", Short: "Confirm approval of the reviewed bytes"}}},
+					{Name: "adoption-preview", Short: "Inspect ownership transfer without changing values"},
+					{Name: "adopt", Short: "Transfer ownership from a reviewed adoption plan", Flags: []cliFlag{{Name: "file", Value: "PATH", Short: "Saved adoption plan JSON"}, {Name: "yes", Short: "Confirm the reviewed ownership transfer"}}},
+					{Name: "controls", Short: "Update fenced report/enforce, pruning, or suspension controls", Flags: []cliFlag{{Name: "generation", Value: "N", Short: "Current source generation"}, {Name: "mode", Value: "MODE", Short: "report or enforce"}, {Name: "prune", Short: "Set pruning (accepts =false)"}, {Name: "suspended", Short: "Set suspension (accepts =false)"}}},
+					{Name: "override", Short: "Permit an expiring edit to an owned field", Flags: []cliFlag{{Name: "resource", Value: "RESOURCE", Short: "Logical resource"}, {Name: "path", Value: "PATH", Short: "Owned field path"}, {Name: "reason", Value: "REASON", Short: "Reason for the temporary edit"}, {Name: "expires", Value: "RFC3339", Short: "Expiry within twenty-four hours"}}},
+					{Name: "remove-override", Short: "Revoke a field override", Flags: []cliFlag{{Name: "resource", Value: "RESOURCE", Short: "Logical resource"}, {Name: "path", Value: "PATH", Short: "Owned field path"}}},
+				}},
 				{Name: "diff", Short: "Compare environments"},
 				{Name: "preview", Short: "Plan a promotion", Flags: []cliFlag{
 					{Name: "from", Short: "source environment", Value: "ENV", Req: true},

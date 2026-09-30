@@ -2150,6 +2150,15 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/release-sets/{release}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectReleaseSet))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/release-sets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.publishProjectReleaseSet))))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/state", s.authLimited(s.requireMFA(s.requireScope(api.ScopesProjectEnvironmentReadSurface...)(s.getProjectEnvironmentState))))
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/gitops", s.authLimited(s.requireMFA(s.requireScope(api.ScopesProjectEnvironmentReadSurface...)(s.getEnvironmentGitOps))))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/gitops/source", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createEnvironmentGitSource))))))
+	mux.HandleFunc("PATCH /v1/projects/{slug}/environments/{environment}/gitops/source", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.updateEnvironmentGitSource))))))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/gitops/revisions/preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesProjectEnvironmentReadSurface...)(s.previewEnvironmentGitRevision))))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/gitops/revisions/approve", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.approveEnvironmentGitRevision))))))
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/gitops/adoption-preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesProjectEnvironmentReadSurface...)(s.previewEnvironmentGitOpsAdoption))))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/gitops/adopt", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.adoptEnvironmentGitOps))))))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/gitops/overrides", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createEnvironmentGitOpsOverride))))))
+	mux.HandleFunc("DELETE /v1/projects/{slug}/environments/{environment}/gitops/overrides", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.removeEnvironmentGitOpsOverride))))))
 	mux.HandleFunc("PUT /v1/projects/{slug}/environments/{environment}/workloads/{workload}/routes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.updateProjectEnvironmentRoutes)))))
 	mux.HandleFunc("PUT /v1/projects/{slug}/environments/{environment}/workloads/{workload}/policies", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.updateProjectEnvironmentPolicies)))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/diff", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.diffProjectEnvironment))))
@@ -3406,6 +3415,8 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/projects/{slug}/preview/apply", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.applyProjectPreviewDispatch))))
 	mux.Handle("POST /dashboard/projects/{slug}/update", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardUpdateProject))))
 	mux.Handle("POST /dashboard/projects/{slug}/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDeleteProject))))
+	mux.Handle("GET /dashboard/projects/{slug}/environments/{environment}/gitops", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardEnvironmentGitOps))))
+	mux.Handle("POST /dashboard/projects/{slug}/environments/{environment}/gitops/{action}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardEnvironmentGitOpsMutation))))
 
 	// Status page (spec §12 public status page). Unauthenticated by
 	// design — prospects read it before sign-up, customers during

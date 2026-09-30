@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — Gregale</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0 auto; padding: 0 1.5rem; max-width: 1080px; }
+    header { display: flex; justify-content: space-between; padding: 1rem 0; border-bottom: 1px solid #bbb; }
+    nav a { margin-left: 1rem; } main { padding: 1rem 0; }
+    section { border: 1px solid #bbb; border-radius: 6px; padding: 1rem; margin: 1rem 0; }
+    h2 { margin-top: 0; } label { display: block; margin: .8rem 0; }
+    input[type=text], select { display: block; padding: .4rem; width: min(100%, 38rem); box-sizing: border-box; }
+    button { padding: .5rem 1rem; cursor: pointer; } code, pre { font-family: ui-monospace, Menlo, monospace; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: .7rem; border: 1px solid #bbb; }
+    table { width: 100%; border-collapse: collapse; } td, th { text-align: left; padding: .5rem; border-bottom: 1px solid #bbb; vertical-align: top; overflow-wrap: anywhere; }
+    .muted { color: #777; } .blocked { border-color: #c77; } dd { margin-bottom: .7rem; overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+  <header><strong>Gregale</strong><nav><a href="/dashboard/projects">Projects</a><a href="/dashboard/apps">Apps</a><a href="/dashboard/account">Account</a></nav></header>
+  <main>
+    {{template "email-verification-banner" .}}
+    <h1>{{.Title}}</h1>
+    {{with .Data}}
+      {{$target := printf "/dashboard/projects/%s/environments/%s/gitops" .Project .Environment}}
+      {{$csrf := .CSRFToken}}
+      <p><a href="/dashboard/projects/{{.Project}}">← Project</a></p>
+      {{if .Status}}
+        {{$source := .Status.Source}}
+        <section>
+          <h2>Git source</h2>
+          <dl>
+            <dt>Repository and ref</dt><dd><code>{{$source.Spec.Repository}} · {{$source.Spec.Ref}}</code></dd>
+            <dt>Definition</dt><dd><code>{{$source.Spec.ManifestPath}}</code></dd>
+            <dt>Mode</dt><dd>{{$source.Spec.Mode}}{{if $source.Suspended}} · suspended{{end}}</dd>
+            <dt>Approved revision</dt><dd>{{if $source.ApprovedRevisionID}}<code>{{$source.ApprovedRevisionID}}</code>{{else}}No approved revision{{end}}</dd>
+            <dt>Fully applied revision</dt><dd>{{if $source.AppliedRevisionID}}<code>{{$source.AppliedRevisionID}}</code>{{else}}No fully applied revision{{end}}</dd>
+          </dl>
+          <form method="POST" action="{{$target}}/review">
+            <input type="hidden" name="csrf_token" value="{{$csrf}}">
+            <label>Commit to review <input type="text" name="commit_sha" pattern="[a-f0-9]{40}" minlength="40" maxlength="40" required placeholder="Full immutable commit SHA"></label>
+            <button type="submit">Review Git definition</button>
+          </form>
+        </section>
+        {{if .Review}}
+          {{$review := .Review}}
+          <section>
+            <h2>Review before approval</h2>
+            <p>Commit <code>{{$review.CommitSHA}}</code></p>
+            <pre>{{.Definition}}</pre>
+            <p class="muted">Approval pins these bytes. Unsupported fields and ownership conflicts will block reconciliation.</p>
+            <form method="POST" action="{{$target}}/approve">
+              <input type="hidden" name="csrf_token" value="{{$csrf}}">
+              <input type="hidden" name="commit_sha" value="{{$review.CommitSHA}}">
+              <input type="hidden" name="definition_digest" value="{{$review.DefinitionDigest}}">
+              <input type="hidden" name="expected_generation" value="{{$review.Generation}}">
+              <button type="submit">Approve this definition</button>
+            </form>
+          </section>
+        {{end}}
+        {{with .Adoption}}
+          <section class="{{if .BlockingReasons}}blocked{{end}}">
+            <h2>Adoption plan</h2>
+            <p>Adoption keeps existing values and transfers ownership of the reviewed fields.</p>
+            {{if .BlockingReasons}}<ul>{{range .BlockingReasons}}<li>{{.}}</li>{{end}}</ul>{{end}}
+            <table><thead><tr><th>Resource</th><th>Field</th><th>Action</th><th>Reason</th></tr></thead><tbody>
+              {{range .Changes}}<tr><td><code>{{.Resource}}</code></td><td><code>{{.Path}}</code></td><td>{{.Action}}</td><td>{{.Reason}}</td></tr>{{end}}
+            </tbody></table>
+            {{if .CanApply}}<form method="POST" action="{{$target}}/adopt">
+              <input type="hidden" name="csrf_token" value="{{$csrf}}">
+              <input type="hidden" name="plan_hash" value="{{.Hash}}">
+              <button type="submit">Adopt the reviewed fields</button>
+            </form>{{end}}
+          </section>
+        {{end}}
+        <section>
+          <h2>Reconciliation controls</h2>
+          <p>Report mode records drift and allows edits. Enforce mode reserves Git-owned fields for the approved definition and temporary overrides.</p>
+          <form method="POST" action="{{$target}}/controls">
+            <input type="hidden" name="csrf_token" value="{{$csrf}}">
+            <input type="hidden" name="expected_generation" value="{{$source.Generation}}">
+            <label>Mode <select name="mode"><option value="report" {{if eq $source.Spec.Mode "report"}}selected{{end}}>Report</option><option value="enforce" {{if eq $source.Spec.Mode "enforce"}}selected{{end}}>Enforce</option></select></label>
+            <label><input type="checkbox" name="prune" value="true" {{if $source.Spec.Prune}}checked{{end}}> Allow removal of previously owned fields omitted from Git</label>
+            <label><input type="checkbox" name="suspended" value="true" {{if $source.Suspended}}checked{{end}}> Suspend reconciliation and retain ownership</label>
+            <button type="submit">Update controls</button>
+          </form>
+        </section>
+        <section>
+          <h2>Temporary field override</h2>
+          <p>An override permits an edit until its expiry. The environment remains visibly overridden until Git intent is restored.</p>
+          <form method="POST" action="{{$target}}/override">
+            <input type="hidden" name="csrf_token" value="{{$csrf}}">
+            <label>Resource <input type="text" name="resource" placeholder="workload/api" required></label>
+            <label>Field <input type="text" name="path" placeholder="variables/MODE" required></label>
+            <label>Reason <input type="text" name="reason" maxlength="1024" required></label>
+            <label>Expiry within 24 hours <input type="text" name="expires_at" placeholder="2026-10-01T09:00:00+03:00" required></label>
+            <button type="submit">Permit temporary edit</button>
+          </form>
+          <details><summary>Revoke an override early</summary><form method="POST" action="{{$target}}/remove-override">
+            <input type="hidden" name="csrf_token" value="{{$csrf}}">
+            <label>Resource <input type="text" name="resource" required></label>
+            <label>Field <input type="text" name="path" required></label>
+            <button type="submit">Revoke override</button>
+          </form></details>
+        </section>
+        <section>
+          <h2>Reconciliation history</h2>
+          {{if .Runs}}{{range .Runs}}
+            <details><summary>{{.Run.Status}} · {{.Run.StartedAt.Format "2006-01-02 15:04:05 MST"}}{{if .Run.ErrorCode}} · {{.Run.ErrorCode}}{{end}}</summary>
+              {{with .Plan}}
+                <p>Commit <code>{{.CommitSHA}}</code></p>
+                {{if .BlockingReasons}}<ul>{{range .BlockingReasons}}<li>{{.}}</li>{{end}}</ul>{{end}}
+                <table><thead><tr><th>Resource</th><th>Field</th><th>Action</th><th>Reason</th></tr></thead><tbody>
+                  {{range .Changes}}<tr><td><code>{{.Resource}}</code></td><td><code>{{.Path}}</code></td><td>{{.Action}}</td><td>{{.Reason}}</td></tr>{{end}}
+                </tbody></table>
+              {{end}}
+            </details>
+          {{end}}{{else}}<p>No reconciliation attempts recorded.</p>{{end}}
+        </section>
+      {{else}}
+        <section>
+          <h2>Connect an environment definition</h2>
+          <p>The source uses this project's verified GitHub repository. Start in report mode, review an immutable commit, then adopt existing fields before enabling enforcement.</p>
+          <form method="POST" action="{{$target}}/bind">
+            <input type="hidden" name="csrf_token" value="{{$csrf}}">
+            <label>Definition path in Git <input type="text" name="manifest_path" placeholder="environments/{{.Environment}}.yaml" required></label>
+            <label>Git ref <input type="text" name="ref" placeholder="Defaults to the project production branch"></label>
+            <button type="submit">Connect in report mode</button>
+          </form>
+        </section>
+      {{end}}
+    {{end}}
+  </main>
+</body>
+</html>

@@ -1846,16 +1846,22 @@ func (s *server) deleteApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			return
 		}
 	}
-	// Move 2: GC pending invocations for this app BEFORE the row goes
-	// away. Without this, a delayed_task can fire after deleteApp and
-	// the drain is forced to log a permanent-wake error on a row the
-	// customer has already given up on. CancelInvocation is a no-op on
-	// terminal rows (returns state.ErrNotFound) so dispatching /
-	// completed rows are untouched.
+	// Read pending work before scheduling deletion, but cancel it only after
+	// the intent transaction accepts the delete. A Git ownership rejection
+	// must preserve the live app and its queued work.
 	pending, err := s.store.ListInvocationsForApp(r.Context(), app.ID,
 		state.InvocationPending, state.InvocationDispatching)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("list-inv"))
+		return
+	}
+	graceUntil := time.Now().UTC().Add(state.AppDeleteGraceDuration())
+	parked, err := s.scheduleAppDeletionWithActivity(r.Context(), r, acct, app, graceUntil)
+	if err != nil {
+		if writeEnvironmentGitOpsOwnershipProblem(w, err) {
+			return
+		}
+		api.WriteProblem(w, api.ErrCapacity("could not delete app"))
 		return
 	}
 	for _, inv := range pending {
@@ -1867,12 +1873,6 @@ func (s *server) deleteApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			s.log.Warn("deleteApp: cancel invocation",
 				"inv", inv.ID, "app", app.ID, "err", err)
 		}
-	}
-	graceUntil := time.Now().UTC().Add(state.AppDeleteGraceDuration())
-	parked, err := s.scheduleAppDeletionWithActivity(r.Context(), r, acct, app, graceUntil)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not delete app"))
-		return
 	}
 	// NotifyAppDelete is the lifecycle cleanup signal consumed by schedd.
 	// AppChanged is for app metadata/routing changes and is not subscribed

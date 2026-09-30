@@ -223,22 +223,24 @@ var routeExclude = map[string]bool{
 	// parallel to the cron fire-now + retry entries. The /preview POST
 	// re-renders the preview; /preview/apply commits. Both share the
 	// multipart envelope + CSRF posture of the cron/retry handlers.
-	"POST /dashboard/projects/{slug}/preview":       true, // ADR-124 HTML form, preview re-render
-	"POST /dashboard/projects/{slug}/preview/apply": true, // ADR-124 HTML form, apply-with-exclude
-	"POST /dashboard/projects/{slug}/update":        true, // issue #2201 HTML project recovery form
-	"POST /dashboard/projects/{slug}/delete":        true, // issue #2201 HTML project deletion form
-	"POST /v1/cli-auth/code":                        true, // CLI device-code mint
-	"POST /v1/cli-auth/exchange":                    true, // CLI device-code exchange
-	"GET /cli-auth":                                 true, // dashboard claim form
-	"POST /cli-auth":                                true, // dashboard claim form submit
-	"GET /docs":                                     true, // anonymous Swagger UI metadata page; no SDK method
-	"GET /docs/":                                    true, // slash alias of the documented /docs route
-	"GET /status":                                   true, // public HTML status page
-	"GET /status/slo.json":                          true, // public status JSON
-	"GET /healthz":                                  true, // loopback infra probe
-	"GET /readyz":                                   true, // loopback dependency-aware readiness probe (PR #1038 pre-release-readiness-gates)
-	"GET /v1/orgs/me":                               true, // PR-4 LoadOrg seam (issue #190 / IAM-6 / ADR-061); documented in PR 5 alongside the rest of /v1/orgs/{slug}
-	"GET /v1/traces/{trace_id}":                     true, // issue #555: gatewayd-public trace endpoint (mounted via bare /v1/traces/ prefix; the scanner doesn't match it)
+	"POST /dashboard/projects/{slug}/preview":                                    true, // ADR-124 HTML form, preview re-render
+	"POST /dashboard/projects/{slug}/preview/apply":                              true, // ADR-124 HTML form, apply-with-exclude
+	"POST /dashboard/projects/{slug}/update":                                     true, // issue #2201 HTML project recovery form
+	"POST /dashboard/projects/{slug}/delete":                                     true, // issue #2201 HTML project deletion form
+	"GET /dashboard/projects/{slug}/environments/{environment}/gitops":           true, // ADR-379 session-authenticated HTML review
+	"POST /dashboard/projects/{slug}/environments/{environment}/gitops/{action}": true, // ADR-379 CSRF-protected HTML controls
+	"POST /v1/cli-auth/code":                                                     true, // CLI device-code mint
+	"POST /v1/cli-auth/exchange":                                                 true, // CLI device-code exchange
+	"GET /cli-auth":                                                              true, // dashboard claim form
+	"POST /cli-auth":                                                             true, // dashboard claim form submit
+	"GET /docs":                                                                  true, // anonymous Swagger UI metadata page; no SDK method
+	"GET /docs/":                                                                 true, // slash alias of the documented /docs route
+	"GET /status":                                                                true, // public HTML status page
+	"GET /status/slo.json":                                                       true, // public status JSON
+	"GET /healthz":                                                               true, // loopback infra probe
+	"GET /readyz":                                                                true, // loopback dependency-aware readiness probe (PR #1038 pre-release-readiness-gates)
+	"GET /v1/orgs/me":                                                            true, // PR-4 LoadOrg seam (issue #190 / IAM-6 / ADR-061); documented in PR 5 alongside the rest of /v1/orgs/{slug}
+	"GET /v1/traces/{trace_id}":                                                  true, // issue #555: gatewayd-public trace endpoint (mounted via bare /v1/traces/ prefix; the scanner doesn't match it)
 
 	// Issue #961 / Mega-B PR-3 / ADR-116. The dashboard's
 	// /dashboard/apps/new wizard renders GET /v1/templates as the
@@ -966,6 +968,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	t.Helper()
 
 	files := []string{
+		filepath.Join(root, "pkg", "api", "environment_gitops.go"),
+		filepath.Join(root, "pkg", "api", "environment_definition.go"),
 		filepath.Join(root, "pkg", "api", dtoFile),
 		filepath.Join(root, "pkg", "api", "service_bindings.go"),
 		filepath.Join(root, "pkg", "api", "object_storage.go"),

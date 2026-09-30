@@ -14759,6 +14759,326 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments/{environment}/gitops:
+    parameters:
+    - $ref: '#/components/parameters/EnvironmentGitOpsProjectSlug'
+    - $ref: '#/components/parameters/EnvironmentGitOpsEnvironment'
+    get:
+      tags:
+      - projects
+      operationId: getEnvironmentGitOps
+      summary: Inspect Git source authority and reconciliation history.
+      responses:
+        '200':
+          description: Inspect Git source authority and reconciliation history. result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvironmentGitOpsStatusResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/projects/{slug}/environments/{environment}/gitops/source:
+    parameters:
+    - $ref: '#/components/parameters/EnvironmentGitOpsProjectSlug'
+    - $ref: '#/components/parameters/EnvironmentGitOpsEnvironment'
+    post:
+      tags:
+      - projects
+      operationId: createEnvironmentGitSource
+      summary: Bind a verified project repository to an environment definition.
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        description: Bind a verified project repository to an environment definition. request.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEnvironmentGitSourceRequest'
+      responses:
+        '201':
+          description: Bind a verified project repository to an environment definition. result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvironmentGitSource'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    patch:
+      tags:
+      - projects
+      operationId: updateEnvironmentGitSource
+      summary: Update report, enforce, pruning, and suspension controls.
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        description: Update report, enforce, pruning, and suspension controls. request.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnvironmentGitSourceUpdate'
+      responses:
+        '200':
+          description: Update report, enforce, pruning, and suspension controls. result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvironmentGitSource'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/projects/{slug}/environments/{environment}/gitops/revisions/preview:
+    parameters:
+    - $ref: '#/components/parameters/EnvironmentGitOpsProjectSlug'
+    - $ref: '#/components/parameters/EnvironmentGitOpsEnvironment'
+    post:
+      tags:
+      - projects
+      operationId: previewEnvironmentGitRevision
+      summary: Fetch an immutable commit and review its definition digest.
+      requestBody:
+        required: true
+        description: Fetch an immutable commit and review its definition digest. request.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PreviewEnvironmentGitRevisionRequest'
+      responses:
+        '200':
+          description: Fetch an immutable commit and review its definition digest. result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreviewEnvironmentGitRevisionResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/projects/{slug}/environments/{environment}/gitops/revisions/approve:
+    parameters:
+    - $ref: '#/components/parameters/EnvironmentGitOpsProjectSlug'
+    - $ref: '#/components/parameters/EnvironmentGitOpsEnvironment'
+    post:
+      tags:
+      - projects
+      operationId: approveEnvironmentGitRevision
+      summary: Approve reviewed Git bytes and enqueue durable reconciliation.
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        description: Approve reviewed Git bytes and enqueue durable reconciliation. request.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApproveEnvironmentGitRevisionRequest'
+      responses:
+        '202':
+          description: Approve reviewed Git bytes and enqueue durable reconciliation. result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApproveEnvironmentGitRevisionResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/projects/{slug}/environments/{environment}/gitops/adoption-preview:
+    parameters:
+    - $ref: '#/components/parameters/EnvironmentGitOpsProjectSlug'
+    - $ref: '#/components/parameters/EnvironmentGitOpsEnvironment'
+    get:
+      tags:
+      - projects
+      operationId: previewEnvironmentGitOpsAdoption
+      summary: Preview adoption without changing ownership or resource values.
+      responses:
+        '200':
+          description: Preview adoption without changing ownership or resource values. result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvironmentGitOpsPlan'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/projects/{slug}/environments/{environment}/gitops/adopt:
+    parameters:
+    - $ref: '#/components/parameters/EnvironmentGitOpsProjectSlug'
+    - $ref: '#/components/parameters/EnvironmentGitOpsEnvironment'
+    post:
+      tags:
+      - projects
+      operationId: adoptEnvironmentGitOps
+      summary: Adopt fields from a current reviewed plan while preserving their values.
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        description: Adopt fields from a current reviewed plan while preserving their values. request.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdoptEnvironmentGitOpsRequest'
+      responses:
+        '202':
+          description: Adopt fields from a current reviewed plan while preserving their values. result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdoptEnvironmentGitOpsResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/projects/{slug}/environments/{environment}/gitops/overrides:
+    parameters:
+    - $ref: '#/components/parameters/EnvironmentGitOpsProjectSlug'
+    - $ref: '#/components/parameters/EnvironmentGitOpsEnvironment'
+    post:
+      tags:
+      - projects
+      operationId: createEnvironmentGitOpsOverride
+      summary: Permit a temporary edit to one Git-owned field.
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        description: Permit a temporary edit to one Git-owned field. request.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnvironmentGitOpsOverrideRequest'
+      responses:
+        '201':
+          description: Permit a temporary edit to one Git-owned field. result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvironmentGitOpsOverrideRequest'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    delete:
+      tags:
+      - projects
+      operationId: removeEnvironmentGitOpsOverride
+      summary: Revoke a temporary field override and enqueue reconciliation.
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        description: Revoke a temporary field override and enqueue reconciliation. request.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RemoveEnvironmentGitOpsOverrideRequest'
+      responses:
+        '204':
+          description: Revoke a temporary field override and enqueue reconciliation. result.
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
   /v1/projects/{slug}/environments/{environment}/config:
     parameters:
       - name: slug
@@ -22511,6 +22831,21 @@ components:
         example: '</v1/uploads>; rel="successor-version", <https://github.com/poyrazK/faas/blob/main/docs/adr/115-local-tarball-deploy-trust-root.md>; rel="deprecation"'
 
   parameters:
+    EnvironmentGitOpsProjectSlug:
+      name: slug
+      in: path
+      required: true
+      description: Project owning the environment Git authority.
+      schema:
+        type: string
+    EnvironmentGitOpsEnvironment:
+      name: environment
+      in: path
+      required: true
+      description: Registered environment selected for Git intent management.
+      schema:
+        type: string
+
     FlagsProjectSlug:
       name: slug
       in: path
@@ -22673,6 +23008,584 @@ components:
       description: "Cursor — the last id from the previous page (omit for the first page)."
 
   schemas:
+    CreateEnvironmentGitSourceRequest:
+      type: object
+      description: Select a Git definition in the project repository; repository identities are verified by
+        the server.
+      properties:
+        ref:
+          type: string
+          description: Git ref selecting candidates; defaults to the project production branch.
+        manifest_path:
+          type: string
+          minLength: 1
+        mode:
+          type: string
+          enum:
+          - report
+          - enforce
+          default: report
+        approval_policy:
+          type: string
+          enum:
+          - manual
+          default: manual
+        prune:
+          type: boolean
+          default: false
+      required:
+      - manifest_path
+      additionalProperties: false
+    PreviewEnvironmentGitRevisionRequest:
+      type: object
+      description: An exact GitHub commit to fetch and review.
+      properties:
+        commit_sha:
+          type: string
+          pattern: ^[a-f0-9]{40}$
+      required:
+      - commit_sha
+      additionalProperties: false
+    PreviewEnvironmentGitRevisionResponse:
+      type: object
+      description: Verified Git bytes with the digest and source generation needed for approval.
+      properties:
+        commit_sha:
+          type: string
+          pattern: ^[a-f0-9]{40}$
+        definition_digest:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        definition:
+          $ref: '#/components/schemas/EnvironmentDefinition'
+        generation:
+          type: integer
+          format: int64
+          minimum: 0
+      required:
+      - commit_sha
+      - definition_digest
+      - definition
+      - generation
+    ApproveEnvironmentGitRevisionRequest:
+      type: object
+      description: Approve the reviewed digest for an immutable commit using the current source generation.
+      properties:
+        commit_sha:
+          type: string
+          pattern: ^[a-f0-9]{40}$
+        definition_digest:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        expected_generation:
+          type: integer
+          format: int64
+          minimum: 0
+      required:
+      - commit_sha
+      - definition_digest
+      - expected_generation
+      additionalProperties: false
+    ApproveEnvironmentGitRevisionResponse:
+      type: object
+      description: Durable approved revision and the updated management source.
+      properties:
+        source:
+          $ref: '#/components/schemas/EnvironmentGitSource'
+        revision:
+          $ref: '#/components/schemas/EnvironmentDesiredRevision'
+      required:
+      - source
+      - revision
+    EnvironmentGitOpsStatusResponse:
+      type: object
+      description: Source authority and the twenty most recent durable reconciliation attempts.
+      properties:
+        source:
+          $ref: '#/components/schemas/EnvironmentGitSource'
+        runs:
+          type: array
+          items:
+            $ref: '#/components/schemas/EnvironmentGitOpsRun'
+      required:
+      - source
+      - runs
+    AdoptEnvironmentGitOpsRequest:
+      type: object
+      description: Hash of the reviewed adoption plan; stale observations are rejected.
+      properties:
+        plan_hash:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+      required:
+      - plan_hash
+      additionalProperties: false
+    AdoptEnvironmentGitOpsResponse:
+      type: object
+      description: Ownership transfer result; adoption itself preserves resource values.
+      properties:
+        status:
+          type: string
+          enum:
+          - adopted
+      required:
+      - status
+    RemoveEnvironmentGitOpsOverrideRequest:
+      type: object
+      description: Owned field whose temporary override should be revoked.
+      properties:
+        resource:
+          type: string
+        path:
+          type: string
+      required:
+      - resource
+      - path
+      additionalProperties: false
+    EnvironmentGitSourceSpec:
+      type: object
+      description: Pinned repository identity and source-of-truth controls for one environment.
+      properties:
+        repository_id:
+          type: integer
+          format: int64
+          minimum: 0
+        installation_id:
+          type: integer
+          format: int64
+          minimum: 0
+        repository:
+          type: string
+        ref:
+          type: string
+        manifest_path:
+          type: string
+        mode:
+          type: string
+          enum:
+          - report
+          - enforce
+        approval_policy:
+          type: string
+          enum:
+          - manual
+          - protected_branch
+        prune:
+          type: boolean
+      required:
+      - repository_id
+      - installation_id
+      - repository
+      - ref
+      - manifest_path
+      - mode
+      - approval_policy
+      - prune
+    EnvironmentGitSource:
+      type: object
+      description: Durable environment authority with separate approved and fully applied revision pointers.
+      properties:
+        id:
+          type: string
+        account_id:
+          type: string
+        project_id:
+          type: string
+        environment_id:
+          type: string
+        environment:
+          type: string
+        source:
+          $ref: '#/components/schemas/EnvironmentGitSourceSpec'
+        suspended:
+          type: boolean
+        generation:
+          type: integer
+          format: int64
+          minimum: 0
+        intent_version:
+          type: integer
+          format: int64
+          minimum: 0
+        approved_revision_id:
+          type: string
+        applied_revision_id:
+          type: string
+        source_checked_at:
+          type: string
+          format: date-time
+        source_error_code:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+      - id
+      - account_id
+      - project_id
+      - environment_id
+      - environment
+      - source
+      - suspended
+      - generation
+      - intent_version
+      - created_at
+      - updated_at
+    EnvironmentDesiredRevision:
+      type: object
+      description: Immutable approved definition retained for reconciliation during Git outages.
+      properties:
+        id:
+          type: string
+        source_id:
+          type: string
+        commit_sha:
+          type: string
+          pattern: ^[a-f0-9]{40}$
+        definition_digest:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        definition:
+          $ref: '#/components/schemas/EnvironmentDefinition'
+        approved_by:
+          type: string
+        approved_at:
+          type: string
+          format: date-time
+      required:
+      - id
+      - source_id
+      - commit_sha
+      - definition_digest
+      - definition
+      - approved_by
+      - approved_at
+    EnvironmentGitOpsRun:
+      type: object
+      description: Fenced reconciliation attempt with its observed plan and resource-step journal.
+      properties:
+        id:
+          type: string
+        source_id:
+          type: string
+        revision_id:
+          type: string
+        generation:
+          type: integer
+          format: int64
+          minimum: 0
+        status:
+          type: string
+          enum:
+          - running
+          - converged
+          - drifted
+          - overridden
+          - blocked
+          - partial
+          - failed
+          - superseded
+        plan:
+          oneOf:
+          - $ref: '#/components/schemas/EnvironmentGitOpsPlan'
+          - type: 'null'
+        steps:
+          oneOf:
+          - type: array
+            items:
+              type: object
+              additionalProperties: true
+          - type: 'null'
+        error_code:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+      required:
+      - id
+      - source_id
+      - revision_id
+      - generation
+      - status
+      - plan
+      - steps
+      - started_at
+    EnvironmentGitSourceUpdate:
+      type: object
+      description: Change controls with a generation fence; suspended sources keep ownership.
+      properties:
+        expected_generation:
+          type: integer
+          format: int64
+          minimum: 0
+        mode:
+          type: string
+          enum:
+          - report
+          - enforce
+        prune:
+          type: boolean
+        suspended:
+          type: boolean
+      required:
+      - expected_generation
+      additionalProperties: false
+    EnvironmentGitOpsOverrideRequest:
+      type: object
+      description: Temporary permission to edit one Git-owned field, bounded to twenty-four hours.
+      properties:
+        resource:
+          type: string
+          minLength: 1
+        path:
+          type: string
+          minLength: 1
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 1024
+        expires_at:
+          type: string
+          format: date-time
+      required:
+      - resource
+      - path
+      - reason
+      - expires_at
+      additionalProperties: false
+    EnvironmentGitOpsChange:
+      type: object
+      description: One ownership or intent difference in the deterministic plan.
+      properties:
+        resource:
+          type: string
+        path:
+          type: string
+        action:
+          type: string
+        before: {}
+        after: {}
+        reason:
+          type: string
+      required:
+      - resource
+      - path
+      - action
+    EnvironmentGitOpsPlan:
+      type: object
+      description: Observation-bound plan; blocking reasons prevent mutation and overrides prevent convergence.
+      properties:
+        manager:
+          type: string
+        revision:
+          type: string
+        commit_sha:
+          type: string
+          pattern: ^[a-f0-9]{40}$
+        generation:
+          type: integer
+          format: int64
+          minimum: 0
+        desired_digest:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        observed_version:
+          type: integer
+          format: int64
+          minimum: 0
+        plan_hash:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        changes:
+          type: array
+          items:
+            $ref: '#/components/schemas/EnvironmentGitOpsChange'
+        blocking_reasons:
+          type: array
+          items:
+            type: string
+      required:
+      - manager
+      - revision
+      - generation
+      - desired_digest
+      - observed_version
+      - plan_hash
+      - changes
+      - blocking_reasons
+    EnvironmentDefinition:
+      type: object
+      description: Versioned Git intent; omitted fields are unmanaged and removal requires explicit pruning.
+      properties:
+        api_version:
+          type: string
+          enum:
+          - gregale.dev/environment/v1
+        project:
+          type: string
+        environment:
+          type: string
+        configuration:
+          type: object
+          additionalProperties: {}
+        workloads:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/EnvironmentWorkload'
+      required:
+      - api_version
+      - project
+      - environment
+      - workloads
+      additionalProperties: false
+    EnvironmentWorkload:
+      type: object
+      description: Logical workload intent; unsupported adapters are reported as blocking reasons.
+      properties:
+        app:
+          type: string
+        source:
+          $ref: '#/components/schemas/EnvironmentWorkloadSource'
+        runtime:
+          $ref: '#/components/schemas/AppManifest'
+        variables:
+          type: object
+          additionalProperties:
+            type: string
+        secret_refs:
+          type: object
+          additionalProperties:
+            type: string
+        routes:
+          $ref: '#/components/schemas/EnvironmentRouteContract'
+        policies:
+          type: array
+          items:
+            $ref: '#/components/schemas/EnvironmentPolicy'
+        queue_bindings:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/EnvironmentQueueBinding'
+        service_bindings:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/EnvironmentServiceBinding'
+      additionalProperties: false
+    EnvironmentWorkloadSource:
+      type: object
+      description: Build source within the approved Git tree or an immutable OCI digest.
+      properties:
+        kind:
+          type: string
+          enum:
+          - source
+          - dockerfile
+          - image
+        directory:
+          type: string
+        dockerfile:
+          type: string
+        image:
+          type: string
+      required:
+      - kind
+      additionalProperties: false
+    EnvironmentRouteContract:
+      type: object
+      description: Atomic environment-scoped declared-route collection.
+      properties:
+        only_allow_declared_routes:
+          type: boolean
+        declared_routes:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeclaredRoute'
+          maxItems: 50
+      required:
+      - only_allow_declared_routes
+      - declared_routes
+      additionalProperties: false
+    EnvironmentPolicy:
+      type: object
+      description: Named environment-scoped headers or CORS rule.
+      properties:
+        name:
+          type: string
+        kind:
+          type: string
+          enum:
+          - headers
+          - cors
+        match_path:
+          type: string
+        match_methods:
+          type: array
+          items:
+            type: string
+        match_headers:
+          type: object
+          additionalProperties:
+            type: string
+        priority:
+          type: integer
+          minimum: 0
+          maximum: 10000
+        enabled:
+          type: boolean
+        action:
+          oneOf:
+          - $ref: '#/components/schemas/EdgeRuleHeadersAction'
+          - $ref: '#/components/schemas/EdgeRuleCORSAction'
+      required:
+      - name
+      - kind
+      - match_path
+      - priority
+      - action
+      additionalProperties: false
+    EnvironmentQueueBinding:
+      type: object
+      description: Logical queue consumer intent for a workload.
+      properties:
+        queue_name:
+          type: string
+        mode:
+          type: string
+          enum:
+          - pull
+          - push
+        workload_class:
+          type: string
+        enabled:
+          type: boolean
+        max_concurrency:
+          type: integer
+          minimum: 1
+        retry_policy:
+          $ref: '#/components/schemas/RetryPolicyDTO'
+      required:
+      - queue_name
+      - workload_class
+      additionalProperties: false
+    EnvironmentServiceBinding:
+      type: object
+      description: Reference to another logical workload in the same environment.
+      properties:
+        workload:
+          type: string
+        env_key:
+          type: string
+      required:
+      - workload
+      - env_key
+      additionalProperties: false
+
     CreateDevBridgeRequest:
       type: object
       description: Owned app and explicit development graph for local execution.

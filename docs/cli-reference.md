@@ -3090,6 +3090,12 @@ Manage environment policies
 
 `gregale projects environments policies`
 
+#### projects environments gitops
+
+Review Git definitions, adopt owned fields, and inspect reconciliation (JSON output)
+
+`gregale projects environments gitops`
+
 #### projects environments diff
 
 Compare environments
