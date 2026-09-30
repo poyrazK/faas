@@ -1,4 +1,4 @@
-# ADR-382: Curated dependency profiles for stateless executions
+# ADR-383: Curated dependency profiles for stateless executions
 
 - **Status:** accepted
 - **Date:** 2026-09-30

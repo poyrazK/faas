@@ -67,7 +67,7 @@ func (f *artifactExecutionVMM) ExecuteExecutionWithOutput(ctx context.Context, i
 }
 
 func TestVMMClientExecutionArtifactsSurviveUnaryAndStreamingTransport(t *testing.T) {
-	// adr:381 — selection, bundle and bounded outputs cross both real gRPC paths.
+	// adr:382 — selection, bundle and bounded outputs cross both real gRPC paths.
 	c := newClient(t, &artifactExecutionVMM{fakeVMM: &fakeVMM{}})
 	req := executionproto.Request{Version: executionproto.ArtifactVersion, ExecutionID: "exports", Runtime: api.ExecutionRuntimeNode24, Entrypoint: "main.mjs", Files: []api.ExecutionFile{{Path: "main.mjs", Content: []byte("export default () => null")}}, OutputFiles: []string{"report.bin"}, Input: json.RawMessage("null"), TimeoutMS: 1000, MaxOutput: api.ExecutionOutputHardMaxBytes, NetworkMode: api.ExecutionNetworkNone}
 	for _, stream := range []bool{false, true} {

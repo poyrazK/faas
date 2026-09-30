@@ -136,7 +136,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_EXECUTION_` | schedd | `default` |  |  | `` | prefix for release-pinned execution runtime metadata; only consulted when FAAS_EXECUTION_DISPATCH=1 |
 | `FAAS_EXECUTION_API_ENABLED` | apid | `unit` |  |  | `` | explicit 0 until the restore/execute/destroy isolation path is enabled; set to 1 only after the ADR-171 metal suite passes |
 | `FAAS_EXECUTION_DISPATCH` | schedd | `default` |  |  | `` | exact opt-in for disposable execution dispatch; remains disabled until the authenticated payload decoder is wired |
-| `FAAS_EXECUTION_PYTHON_DATA_V1_BASE_REF` | imaged, shared | `default` |  |  | `` | optional digest-pinned linux/amd64 OCI manifest for the shared python-data-v1 execution base; unset stages no profile image; enable only after ADR-382 native acceptance |
+| `FAAS_EXECUTION_PYTHON_DATA_V1_BASE_REF` | imaged, shared | `default` |  |  | `` | optional digest-pinned linux/amd64 OCI manifest for the shared python-data-v1 execution base; unset stages no profile image; enable only after ADR-383 native acceptance |
 | `FAAS_EXTENSION_SOCKET` | guest | `guest` |  | /run/guest/extension.sock | `` | optional per-guest extension lifecycle endpoint; vmmd may deliver an override in the guest boot environment |
 | `FAAS_FLAGS_ENABLED` | apid | `default` |  |  | `int` | optional override for flags_enabled TOML; 1 enables operator qualification, unset preserves the disabled default |
 | `FAAS_FLAGS_WORKLOAD_ISSUER` | apid | `default` |  |  | `url` | optional override for the trusted Flags workload issuer; TOML is the primary deployment setting |

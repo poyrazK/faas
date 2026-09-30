@@ -1,6 +1,6 @@
 package sched
 
-// adr:382 — profiles never share a snapshot or silently select a standard image.
+// adr:383 — profiles never share a snapshot or silently select a standard image.
 
 import (
 	"context"

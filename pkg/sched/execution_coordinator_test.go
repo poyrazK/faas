@@ -184,7 +184,7 @@ func TestExecutionCoordinatorFairClaimsAcrossAccounts(t *testing.T) {
 }
 
 func TestExecutionCoordinatorDispatchFenceAndTeardownBeforeCompletion(t *testing.T) {
-	// adr:381 — inline artifacts commit only after the disposable VM is destroyed.
+	// adr:382 — inline artifacts commit only after the disposable VM is destroyed.
 	content := []byte("patch")
 	digest := sha256.Sum256(content)
 	artifacts := []api.ExecutionArtifact{{Name: "patch.diff", Content: content, SizeBytes: len(content), SHA256: "sha256:" + hex.EncodeToString(digest[:])}}

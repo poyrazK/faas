@@ -1,4 +1,4 @@
-# ADR-381: Bounded inline output artifacts for stateless executions
+# ADR-382: Bounded inline output artifacts for stateless executions
 
 - **Status:** accepted
 - **Date:** 2026-09-30

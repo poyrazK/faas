@@ -112,7 +112,7 @@ The scheduler reads all eight artifact fields from
 `FC_VERSION`. Digests are lowercase SHA-256 hex without the `sha256:` prefix.
 This namespace never falls back to plain `FAAS_EXECUTION_PYTHON313_*` values.
 Dependency profiles require guest protocol v3 and native KVM/leak acceptance;
-see [ADR-382](adr/382-curated-stateless-execution-profiles.md) for rollout.
+see [ADR-383](adr/383-curated-stateless-execution-profiles.md) for rollout.
 
 ## Usage accounting
 
