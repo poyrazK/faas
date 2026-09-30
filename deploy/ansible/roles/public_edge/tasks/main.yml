@@ -1,0 +1,107 @@
+---
+# public_edge installs the control plane's public TLS edge. Before this role
+# the edge was hand-built, so a control plane rebuilt from scratch had nothing
+# listening on 443 and Cloudflare returned 521 for api.<domain>.
+
+- name: public_edge — inspect the operator-provisioned Origin CA material
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ faas_public_edge_cert }}"
+    - "{{ faas_public_edge_key }}"
+  register: faas_public_edge_tls_stat
+  when: faas_public_edge_enabled | bool
+
+- name: public_edge — require the Origin CA certificate and key
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.isreg
+      - item.stat.size > 0
+    fail_msg: >-
+      {{ item.item }} is missing. Create a Cloudflare Origin CA certificate for
+      {{ faas_public_edge_domain }} and *.{{ faas_public_edge_domain }} and install
+      the certificate and key there (key 0440 root:caddy) before enabling the
+      public edge.
+  loop: "{{ faas_public_edge_tls_stat.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: faas_public_edge_enabled | bool
+
+- name: public_edge — install Caddy
+  ansible.builtin.apt:
+    name: caddy
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: faas_public_edge_enabled | bool
+
+- name: public_edge — keep the Origin CA key readable by caddy only
+  ansible.builtin.file:
+    path: "{{ faas_public_edge_key }}"
+    owner: root
+    group: caddy
+    mode: "0440"
+  when: faas_public_edge_enabled | bool
+
+- name: public_edge — load the pinned Cloudflare ranges trusted for client IPs
+  ansible.builtin.set_fact:
+    faas_public_edge_trusted_proxies: >-
+      {{ (lookup('ansible.builtin.file', role_path ~ '/../nftables/files/cloudflare-ips-v4.txt').splitlines()
+          + lookup('ansible.builtin.file', role_path ~ '/../nftables/files/cloudflare-ips-v6.txt').splitlines())
+         | map('trim') | select | list }}
+  when: faas_public_edge_enabled | bool
+
+# The distro package ships a :80 file-server welcome site. Remove it once so
+# the managed public hosts own ports 80 and 443.
+- name: public_edge — read the current Caddyfile
+  ansible.builtin.slurp:
+    src: "{{ faas_public_edge_caddyfile }}"
+  register: faas_public_edge_current_caddyfile
+  failed_when: false
+  when: faas_public_edge_enabled | bool
+
+- name: public_edge — drop the distro welcome site
+  ansible.builtin.copy:
+    dest: "{{ faas_public_edge_caddyfile }}"
+    content: ""
+    owner: root
+    group: root
+    mode: "0644"
+  when:
+    - faas_public_edge_enabled | bool
+    - faas_public_edge_current_caddyfile.content is defined
+    - "'root * /usr/share/caddy' in (faas_public_edge_current_caddyfile.content | b64decode)"
+
+# Global options must be the first block, so this block is inserted at the top
+# of the file; other roles (s3_gateway_service) append their own site blocks.
+- name: public_edge — manage the public edge Caddy block
+  ansible.builtin.blockinfile:
+    path: "{{ faas_public_edge_caddyfile }}"
+    marker: "# {mark} ANSIBLE MANAGED Gregale public edge"
+    insertbefore: BOF
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+    block: |
+      {
+          servers {
+              trusted_proxies static {{ faas_public_edge_trusted_proxies | join(' ') }}
+          }
+      }
+
+      {{ faas_public_edge_domain }}, *.{{ faas_public_edge_domain }} {
+          tls {{ faas_public_edge_cert }} {{ faas_public_edge_key }}
+          reverse_proxy {{ faas_public_edge_upstream }}
+      }
+    validate: "{{ faas_public_edge_caddy_binary }} validate --adapter caddyfile --config %s"
+  when: faas_public_edge_enabled | bool
+  notify: reload caddy for public edge
+
+- name: public_edge — enable and start Caddy
+  ansible.builtin.systemd_service:
+    name: caddy.service
+    enabled: true
+    state: started
+  when: faas_public_edge_enabled | bool
