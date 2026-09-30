@@ -930,6 +930,23 @@ func (q *Queries) ClearUploadSessionPartPath(ctx context.Context, db DBTX, id st
 	return err
 }
 
+const configureTrafficPolicyAnalysisTimeout = `-- name: ConfigureTrafficPolicyAnalysisTimeout :one
+WITH prior AS MATERIALIZED (SELECT current_setting('statement_timeout')::text AS value)
+SELECT prior.value::text AS prior, set_config('statement_timeout', $1::text, true)::text AS configured FROM prior
+`
+
+type ConfigureTrafficPolicyAnalysisTimeoutRow struct {
+	Prior      string
+	Configured string
+}
+
+func (q *Queries) ConfigureTrafficPolicyAnalysisTimeout(ctx context.Context, db DBTX, timeout string) (ConfigureTrafficPolicyAnalysisTimeoutRow, error) {
+	row := db.QueryRow(ctx, configureTrafficPolicyAnalysisTimeout, timeout)
+	var i ConfigureTrafficPolicyAnalysisTimeoutRow
+	err := row.Scan(&i.Prior, &i.Configured)
+	return i, err
+}
+
 const consumeTrafficRateToken = `-- name: ConsumeTrafficRateToken :one
 INSERT INTO pg_ratelimit_counters (scope, subject_id, plan, tokens, last_refill)
 VALUES ($1::text, $2::uuid, $3::text,
@@ -13086,6 +13103,112 @@ func (q *Queries) ReadServicePolicyTestMember(ctx context.Context, db DBTX, appI
 	return i, err
 }
 
+const readTrafficHostAnalysis = `-- name: ReadTrafficHostAnalysis :one
+WITH source AS MATERIALIZED (
+    SELECT app_id, match_host, kind, cors_preset_id, action,
+        (SELECT count(*) FROM jsonb_object_keys(action) AS field(key)
+            WHERE key <> replace(replace(lower(key),chr(383),'s'),chr(8490),'k')
+              AND ($3::jsonb->'Action') ? replace(replace(lower(key),chr(383),'s'),chr(8490),'k')) +
+        (SELECT count(*) FROM jsonb_object_keys(CASE WHEN jsonb_typeof(action->'cors')='object' THEN action->'cors' ELSE '{}'::jsonb END) AS field(key)
+            WHERE key <> 'cors_preset_id' AND replace(replace(lower(key),chr(383),'s'),chr(8490),'k')='cors_preset_id') +
+        (SELECT count(*) FROM jsonb_object_keys(CASE WHEN jsonb_typeof(action->'headers')='object' THEN action->'headers' ELSE '{}'::jsonb END) AS field(key)
+            WHERE key <> replace(replace(lower(key),chr(383),'s'),chr(8490),'k')
+              AND replace(replace(lower(key),chr(383),'s'),chr(8490),'k') IN ('request_headers','response_headers')) AS unsupported,
+        CASE WHEN kind = 'cors' AND jsonb_typeof(action->'cors') = 'object'
+            THEN coalesce(cors_preset_id::text, action#>>'{cors,cors_preset_id}') ELSE NULL END AS preset,
+        jsonb_build_object('ID', id, 'AccountID', account_id, 'AppID', app_id,
+            'MatchHost', match_host, 'MatchPath', match_path, 'MatchMethods', match_methods,
+            'MatchHeaders', match_headers, 'Priority', priority, 'Enabled', enabled,
+            'Kind', kind, 'Action', action, 'CorsPresetID', cors_preset_id,
+            'ValidateMode', validate_mode, 'CreatedAt', created_at, 'UpdatedAt', updated_at,
+            'ManifestKey', manifest_key)::jsonb AS data
+    FROM edge_rules WHERE account_id = $4::uuid AND enabled
+), decoded AS (
+    SELECT source.app_id, source.match_host, source.kind, source.cors_preset_id, source.action, source.unsupported, source.preset, source.data,
+        jsonb_build_object('kind','') || coalesce((SELECT jsonb_object_agg(member.key,
+            CASE WHEN jsonb_typeof(member.value) = 'object'
+                THEN coalesce($3::jsonb->'Action'->member.key,'{}'::jsonb) ||
+                    CASE WHEN member.key = 'headers' THEN coalesce((SELECT jsonb_object_agg(header.key,
+                        CASE WHEN header.key IN ('request_headers','response_headers') AND jsonb_typeof(header.value) = 'array'
+                            THEN (SELECT coalesce(jsonb_agg(CASE WHEN jsonb_typeof(operation.value) = 'object'
+                                THEN $3::jsonb->'HeaderOp' || operation.value
+                                WHEN operation.value = 'null'::jsonb THEN $3::jsonb->'HeaderOp'
+                                ELSE operation.value END), '[]'::jsonb)
+                                FROM jsonb_array_elements(header.value) AS operation(value))
+                            ELSE header.value END) FROM jsonb_each(member.value) AS header(key,value)), '{}'::jsonb)
+                        ELSE member.value END
+                ELSE member.value END) FROM jsonb_each(action) AS member(key,value)), '{}'::jsonb) AS decoded_action
+    FROM source
+), rules AS MATERIALIZED (
+    SELECT app_id, match_host, kind, preset, unsupported, octet_length(formatted.data)+2 AS canonical,
+        CASE WHEN strpos(compiled_data,'<')>0 OR strpos(compiled_data,'&')>0 OR strpos(compiled_data,'>')>0
+            OR strpos(compiled_data,chr(8232))>0 OR strpos(compiled_data,chr(8233))>0
+            THEN octet_length(replace(replace(replace(replace(replace(compiled_data,
+                '<','______'),'&','______'),'>','______'),chr(8232),'______'),chr(8233),'______'))
+            ELSE octet_length(compiled_data) END +16+2+
+            (SELECT count(*) FROM jsonb_path_query($3::jsonb,'$.Action.** ? (@ == false)')) AS compiled
+    FROM decoded CROSS JOIN LATERAL (
+        -- OFFSET is an evaluation barrier: format each row only once, then
+        -- materialize scalar measurements rather than large formatted bodies.
+        SELECT decoded.data::text AS data,
+            jsonb_set(decoded.data,'{Action}',CASE WHEN cors_preset_id IS NOT NULL AND jsonb_typeof(decoded_action->'cors') = 'object'
+                THEN jsonb_set(decoded_action,'{cors,cors_preset_id}',to_jsonb(cors_preset_id::text))
+                ELSE decoded_action END)::text AS compiled_data OFFSET 0
+    ) AS formatted
+), groups AS (
+    SELECT jsonb_build_object('App',app_id,'Pattern',match_host,'Kind',kind,'Preset',coalesce(preset,''),
+        'Rows',count(*), 'Unsupported',sum(unsupported), 'Canonical',sum(canonical), 'Compiled',sum(compiled)) AS data
+    FROM rules GROUP BY app_id,match_host,kind,preset
+    ORDER BY app_id,match_host,kind,preset LIMIT ($1::integer+1)
+), presets AS (
+    SELECT id, jsonb_build_object('ID',id,'AccountID',account_id,'AppID',coalesce(app_id::text,''),
+        'Name','','Description','','AllowOrigins',allow_origins,'AllowMethods',allow_methods,
+        'AllowHeaders',allow_headers,'ExposeHeaders',expose_headers,'AllowCredentials',allow_credentials,
+        'MaxAgeSeconds',max_age_seconds,'CreatedAt','0001-01-01T00:00:00Z',
+        'UpdatedAt','0001-01-01T00:00:00Z')::text AS data
+    FROM cors_presets WHERE account_id = $4::uuid
+      AND id::text IN (SELECT preset FROM rules WHERE preset IS NOT NULL)
+), assets AS (
+    SELECT jsonb_build_object('ID',id,'Compiled',octet_length(replace(replace(replace(replace(replace(data,
+        '<','______'),'&','______'),'>','______'),chr(8232),'______'),chr(8233),'______'))) AS data
+    FROM presets ORDER BY id LIMIT ($1::integer+1)
+), bounds AS (
+    SELECT (SELECT count(*) FROM groups)+(SELECT count(*) FROM assets) AS inputs,
+        (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM groups)+
+        (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM assets)+32 AS bytes
+)
+SELECT CASE WHEN inputs <= $1::integer AND bytes <= $2::bigint
+    THEN jsonb_build_object('Groups',(SELECT coalesce(jsonb_agg(data),'[]') FROM groups),
+        'Assets',(SELECT coalesce(jsonb_agg(data),'[]') FROM assets)) ELSE NULL::jsonb END::jsonb AS data,
+    inputs::bigint, bytes::bigint FROM bounds
+`
+
+type ReadTrafficHostAnalysisParams struct {
+	MaxInputs int32
+	MaxBytes  int64
+	Defaults  []byte
+	AccountID pgtype.UUID
+}
+
+type ReadTrafficHostAnalysisRow struct {
+	Data   []byte
+	Inputs int64
+	Bytes  int64
+}
+
+// Only selectors, counts, sizes and referenced IDs leave the database.
+func (q *Queries) ReadTrafficHostAnalysis(ctx context.Context, db DBTX, arg ReadTrafficHostAnalysisParams) (ReadTrafficHostAnalysisRow, error) {
+	row := db.QueryRow(ctx, readTrafficHostAnalysis,
+		arg.MaxInputs,
+		arg.MaxBytes,
+		arg.Defaults,
+		arg.AccountID,
+	)
+	var i ReadTrafficHostAnalysisRow
+	err := row.Scan(&i.Data, &i.Inputs, &i.Bytes)
+	return i, err
+}
+
 const readTrafficSecurityEpochs = `-- name: ReadTrafficSecurityEpochs :many
 WITH requested AS (
     SELECT unnest($1::text[]) AS scope_kind,
@@ -14936,6 +15059,17 @@ func (q *Queries) ResolveStaleRegressionObservations(ctx context.Context, db DBT
 		return nil, err
 	}
 	return items, nil
+}
+
+const restoreTrafficPolicyStatementTimeout = `-- name: RestoreTrafficPolicyStatementTimeout :one
+SELECT set_config('statement_timeout', $1::text, true)::text
+`
+
+func (q *Queries) RestoreTrafficPolicyStatementTimeout(ctx context.Context, db DBTX, timeout string) (string, error) {
+	row := db.QueryRow(ctx, restoreTrafficPolicyStatementTimeout, timeout)
+	var column_1 string
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const reverseAccountInvoiceCreditConsumption = `-- name: ReverseAccountInvoiceCreditConsumption :execrows

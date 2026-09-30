@@ -65,8 +65,39 @@ clones share an account row lock, acquired before app/FK/policy-row locks and
 retained through commit. Contenders retry without holding a pool connection;
 their request context bounds the wait. Different accounts use different locks.
 This also serializes the existing account preset quota across different apps.
-Aggregate overlap validation still needs to use that transaction boundary;
+Ordinary owned host overlap validation uses that transaction boundary;
 there is no account-wide policy byte quota.
+
+Before commit, Postgres returns selector groups, counts, measured sizes and
+referenced preset IDs for the account. Action bodies remain in the database.
+A bounded automaton checks the same exact-or-LIKE host language used by the
+runtime query, including percent, underscore, star, question mark and escaped
+characters. Disjoint hosts can each use their own allowance. A referenced
+preset contributes once per host, even when several matching rules share it.
+The 50,020-rule and 64 MiB canonical projection caps are checked independently
+from a conservative 64 MiB bound for the compiler's escaped JSON input. The
+estimate includes Go defaults added during decoding, the mirrored preset ID,
+HTML/Unicode escapes and timestamp spelling allowance. It can refuse a policy
+close to the byte ceiling before the exact compiler size reaches that ceiling.
+
+Each before/after analysis phase has a two-second allowance. Its SQL read uses
+a local 1,750 ms server timeout so cancellation does not depend on client
+connection cleanup; the previous statement timeout is restored on success.
+Analysis also limits inputs to 100,000 groups/assets, metadata to 64 MiB,
+automaton nodes to 1,000,000, states to 100,000, retained state buffers/overhead
+to 64 MiB and transitions to 2,000,000. A proved overload returns
+`traffic_policy_too_large`/422. An exhausted analysis returns the distinct
+`traffic_policy_too_complex`/422, with no saved mutation or change event.
+Legacy action aliases whose decoding cannot be verified by this projection
+also refuse analysis; replace the affected rule through the supported API
+shape or disable/delete it to repair that graph. Caller cancellation still
+ends its transaction and releases the account lock.
+
+A legacy oversized host can be repaired incrementally when analysis finishes
+and none of its over-limit dimensions increases. A proposed overload at a
+different host still refuses. Scoped environment overlay totals, global
+synthetic route discovery across accounts and the in-memory aggregate mirror
+remain pending; this guard covers ordinary owned rules and their presets.
 
 Individual CORS preset creates/replacements, environment overlay replacements,
 scoped route replacements and imported documents validate the complete runtime
@@ -93,7 +124,8 @@ source policy already at the bound exceed it after copying. Provider-managed
 binding creation and compensation retain their existing separate contract.
 
 An oversized write returns `traffic_policy_too_large`/422 with `limit`,
-`observed`, `limit_bytes`, `observed_bytes` and `docs_url`. The existing policy
+`observed` and `docs_url`; byte limits also include `limit_bytes` and
+`observed_bytes`. The existing policy
 is retained. Reduce the values and replace the policy; an empty environment
 overlay, a disabled empty scoped route policy, or preset deletion is also
 available. Existing oversized rows can be repaired by a smaller replacement;
@@ -104,9 +136,9 @@ serving-policy repair.
 The in-memory store uses a conservative bound and may reject a near-limit
 object whose extra JSON string escapes are smaller in Postgres.
 
-Atomic aggregate per-host validation across concurrent rule/preset mutations
-and complete recovery acceptance remain rollout requirements. These individual
-write checks do not establish release acceptance.
+Combined environment/global/memory aggregate validation and complete recovery
+acceptance remain rollout requirements. These write checks do not establish
+release acceptance.
 
 Before dispatch, the public routing transaction re-resolves the host projection
 and compares its private content fingerprint. Changed settings, alias/domain

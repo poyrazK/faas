@@ -347,10 +347,10 @@ and JSONB whitespace; the in-memory store uses a conservative serialization
 bound. Failed writes retain the previous policy and return a stable 422 problem
 with byte limit, observed size and recovery guidance. A smaller replacement or
 an empty overlay remains available for repairing an existing oversized row.
-This individual-object guard does not establish the aggregate per-host rule
-and referenced-preset bound. Atomic checks across concurrent contributing
-mutations remain delivery work; an account-wide byte
-quota must not silently replace the per-host runtime bound.
+This individual-object guard is paired with the ordinary owned host aggregate
+check below. Combined scoped/global validation and its in-memory mirror remain
+delivery work; an account-wide byte quota must not silently replace the
+per-host runtime bound.
 
 Edge-rule creates and updates also validate the complete canonical saved row
 against the host projection's 64 MiB ceiling before committing. The guard
@@ -364,8 +364,32 @@ before any app or policy-row lock, then retain it through validation and
 commit. Contenders use NOWAIT and roll back before a context-bounded retry,
 so they do not reserve pool connections while waiting. This is the
 serialization boundary for aggregate validation, not an
-account-wide byte quota. Per-host overlap analysis still requires implementation
-before that aggregate guard is complete.
+account-wide byte quota. The ordinary owned host check uses this boundary.
+
+Owned host aggregates are validated in the same account-locked transaction as
+the mutation. The store compares skinny before/after projections of enabled
+rule groups and referenced presets, without transferring their action bodies.
+It uses the SQL selector language (exact selector or its PostgreSQL LIKE
+translation), including existing percent/underscore/escape semantics. A
+bounded automaton explores shared host languages and deduplicates referenced
+presets at each accepted hostname. A flat account byte quota cannot replace
+this check. Canonical SQL bytes/counts and a conservative bound for the Go
+compiler's escaped JSON are checked separately. The estimate fills mandatory
+decoded Go fields and the preset FK mirror, retains SQL whitespace and
+reserves timestamp/escape expansion. Unsupported legacy case aliases refuse
+after-analysis until their rule is replaced, disabled or deleted; an
+undercounted decoded shape cannot authorize a write. A legacy oversized host
+may be repaired incrementally when analysis finishes and none of its over-limit
+dimensions increases. New overload and increased legacy overload refuse
+before commit, rolling back
+intent and change events. Metadata, automaton nodes/states/bytes, transitions
+and analysis time have explicit resource ceilings. A server-side SQL timeout
+precedes the phase context timeout and the prior setting is restored on
+success, so a blocked query releases transaction locks before its refusal.
+Exhausted analysis refuses the mutation with a distinct error rather than
+accepting unverified policy.
+Scoped environment overlay totals, global synthetic route discovery and the
+in-memory aggregate mirror still require their own integration and evidence.
 
 Imported documents also validate canonical runtime bytes before replacement;
 the existing import-body cap alone cannot bound JSONB numeric expansion.
@@ -375,8 +399,9 @@ The quota decision remains serialized by the account lock. Environment cloning
 validates copied target projections in its transaction before commit, including
 app-wide fallback routes and the target slug's bytes. Failure rolls back the
 entire target configuration. The in-memory clone preflights all projections
-under its existing mutex before creating target state. Aggregate per-host
-mutation validation and complete-path recovery acceptance remain pending.
+under its existing mutex before creating target state. Combined scoped/global
+aggregate validation, its in-memory mirror and complete-path recovery
+acceptance remain pending.
 
 Public declared-route inputs join the fresh hostname/app view. An exact
 environment's route overlay is read before deciding whether an imported

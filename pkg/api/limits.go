@@ -7280,7 +7280,16 @@ const (
 	TrafficPublicRoutingReadTimeout = 250 * time.Millisecond
 	TrafficPublicHostReadTimeout    = 250 * time.Millisecond
 	// Contended policy writers return pool connections between lock attempts.
-	TrafficPolicyMutationLockRetry = 25 * time.Millisecond
+	TrafficPolicyMutationLockRetry        = 25 * time.Millisecond
+	TrafficPolicyAnalysisTimeout          = 2 * time.Second
+	TrafficPolicyAnalysisSQLTimeout       = 1750 * time.Millisecond
+	TrafficPolicyMaxAnalysisInputs        = 100_000
+	TrafficPolicyMaxAnalysisMetadataBytes = 64 * 1024 * 1024
+	TrafficPolicyMaxAnalysisNodes         = 1_000_000
+	TrafficPolicyMaxAnalysisStates        = 100_000
+	TrafficPolicyMaxAnalysisStateBytes    = 64 * 1024 * 1024
+	TrafficPolicyAnalysisStateOverhead    = 128 // state slice and visited-map allowance
+	TrafficPolicyMaxAnalysisTransitions   = 2_000_000
 	// Every positive traffic share consumes at least one percentage point.
 	// Bound a verified routing roster even if corrupted rows exceed that sum.
 	TrafficPolicyMaxDeployments = 100

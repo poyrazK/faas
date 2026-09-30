@@ -42,6 +42,67 @@ Claimed source apps retain emergency cancellation ownership through cleanup.
 
 ## Evidence log
 
+### Ordinary owned host aggregate mutation guard, 2026-09-30
+
+The shared account-locked transaction now compares before/after enabled rule
+groups and referenced presets before committing a rule or preset mutation.
+Only selectors, IDs, counts and byte measurements leave Postgres. A bounded
+automaton uses the runtime's exact-or-LIKE host language, including existing
+percent/underscore, star/question-mark and escape behavior. Every matching
+rule contributes, and a referenced preset contributes once per host. Disjoint
+hosts retain independent allowances; connected overlap groups are not treated
+as one account quota.
+
+Counts and canonical SQL bytes are checked separately from a conservative
+bound for escaped compiler inputs. The latter fills mandatory Go defaults,
+mirrors the preset FK, accounts for HTML/Unicode escaping and reserves timestamp
+spelling differences. Unsupported legacy aliases refuse analysis until repaired
+through a supported replacement, disabling or deletion. Size-reducing repairs
+to a legacy overload remain possible when analysis completes and none of the
+over-limit dimensions increases. New or increased overload refuses with 422,
+rolling back saved intent and transactional change events. Analysis exhaustion
+has its own `traffic_policy_too_complex` code and generic limit/observed fields;
+byte bounds additionally retain the explicit byte fields.
+
+Metadata, nodes, states, retained state buffers/overhead, transitions and phase
+time are bounded centrally. A local 1,750 ms SQL timeout precedes each two-second
+analysis context, and the previous statement timeout is restored on success.
+A blocked analysis releases its account lock before returning its server
+timeout refusal. Formatting is evaluated once per row and only scalar measures
+are materialized, avoiding repeated formatting and temporary storage of large
+numeric-expanded bodies.
+
+All 53 selected state tests passed in 36.788 s with no skips. They include real
+Postgres comparisons for 154 selector/hostname pairs, decoded-runtime estimate
+checks for sparse actions, header null entries, escaping and the preset mirror,
+metadata refusal without body transfer, and statement-timeout restoration.
+Two different apps competing for the final host budget admit one reference and
+refuse the other without an extra change event. Preset growth is rejected
+without changing saved intent or its ledger; a partial legacy repair and an
+unrelated host remain writable. Canonical numeric expansions totaling over
+64 MiB are accepted on disjoint hosts, refused when overlapping or retargeted,
+and repaired by disabling a contributor. Store-lock timeout/retry, legacy shape
+repair, account isolation, account waiters, quotas and existing rule/preset/
+environment/clone behavior also passed.
+
+All 152 selected apid/API tests passed without skips: apid 2.635 s and API
+0.846 s. Injected row/aggregate-byte/aggregate-count/analysis refusals exercise
+both HTTP rule write paths, preserve saved intent, abort convergence and emit
+no activation request. Count/analysis errors retain generic limit/observed
+fields without incorrectly labeling them as bytes; status mapping and docs
+links are checked. Real store enforcement is tested by the Postgres fixtures
+above. Fresh sqlc v1.31.1 generation matched all four generated Go files; the
+new queries use existing schema and require no migration. Pinned lint v2.4.0
+reported zero issues for apid/API with tests and state production code; state
+used tests=false/unused disabled for the existing test-only helper. Whitespace
+checks passed. Earlier disk-exhausted builds and failed intermediate behavior
+checks are excluded from these final pass counts.
+
+Scoped environment overlay totals, global synthetic route discovery across
+accounts, the in-memory aggregate mirror, full daemon/load/customer rollout
+and native VM/firewall/leak acceptance remain pending. No Linux x86_64 KVM host
+is available. All six release guarantees remain unaccepted.
+
 ### Rule write bounds and account mutation serialization, 2026-09-30
 
 Both edge-rule create methods and complete merged updates validate the saved

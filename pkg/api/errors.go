@@ -1597,6 +1597,7 @@ const (
 	CodeHTTPAdmissionUnavailable = "http_admission_unavailable"
 	CodeTrafficPolicyUnavailable = "traffic_policy_unavailable"
 	CodeTrafficPolicyTooLarge    = "traffic_policy_too_large"
+	CodeTrafficPolicyTooComplex  = "traffic_policy_too_complex"
 	// Warm saturation queue outcomes are distinct from cold-wake and fleet
 	// capacity failures so clients can make safe retry decisions.
 	CodeConcurrencyQueueFull    = "concurrency_queue_full"
@@ -1871,7 +1872,7 @@ func StatusForCode(code string) int {
 		return http.StatusBadRequest
 	case CodeRequestUploadTimeout:
 		return http.StatusRequestTimeout
-	case CodeTrafficPolicyTooLarge:
+	case CodeTrafficPolicyTooLarge, CodeTrafficPolicyTooComplex:
 		return http.StatusUnprocessableEntity
 	case CodeWorkflowDefinitionNotFound, CodeWorkflowRunNotFound, CodeWorkflowStepNotFound,
 		CodeWorkflowEventNotFound:
@@ -2748,6 +2749,36 @@ func ErrTrafficPolicyTooLarge(scope string, limit, observed int64) *Problem {
 		WithByteLimit(limit, observed).
 		WithDocs(docsBase + "/plans#edge-rules").
 		WithHint("Reduce policy values and replace the policy. Clear an environment overlay or disable and clear its scoped route contract to recover it.")
+}
+
+// ErrTrafficPolicyAggregateTooLarge reports the combined policy selected by
+// an overlapping host language, including distinct referenced CORS presets.
+func ErrTrafficPolicyAggregateTooLarge(scope, unit string, limit, observed int64) *Problem {
+	problem := NewProblem(http.StatusUnprocessableEntity, CodeTrafficPolicyTooLarge,
+		"Traffic policy too large",
+		fmt.Sprintf("%s host aggregate is %d %s, above the %d cap; no policy was changed", scope, observed, unit, limit)).
+		WithLimit(limit, observed).
+		WithDocs(docsBase + "/plans#edge-rules").
+		WithHint("Reduce rules or preset values that match the same host. Size-reducing repairs to an existing oversized host remain allowed.")
+	if unit == "bytes" {
+		problem = problem.WithByteLimit(limit, observed)
+	}
+	return problem
+}
+
+// ErrTrafficPolicyTooComplex distinguishes an unfinished bounded analysis
+// from a proved oversized policy. The mutation has not been saved.
+func ErrTrafficPolicyTooComplex(scope, unit string, limit, observed int64) *Problem {
+	problem := NewProblem(http.StatusUnprocessableEntity, CodeTrafficPolicyTooComplex,
+		"Traffic policy analysis limit reached",
+		fmt.Sprintf("%s analysis reached %d %s, above the %d cap; no policy was changed", scope, observed, unit, limit)).
+		WithLimit(limit, observed).
+		WithDocs(docsBase + "/plans#edge-rules").
+		WithHint("Simplify host selectors, replace legacy rules with the supported API shape, or remove unused rules, then retry. Analysis could not verify the proposed policy within its limits.")
+	if unit == "bytes" {
+		problem = problem.WithByteLimit(limit, observed)
+	}
+	return problem
 }
 
 // ErrRequestUploadTimeout reports a stalled or too-slow inbound upload. The

@@ -26,7 +26,16 @@ func (s *PgStore) beginTrafficPolicyMutation(ctx context.Context, account pgtype
 		}
 		_, err = sqlc.New().LockTrafficPolicyAccount(ctx, tx, account)
 		if err == nil {
-			return tx, nil
+			guarded := &trafficPolicyMutationTx{Tx: tx, account: account}
+			err = boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
+				guarded.before, err = readTrafficHostAnalysis(bounded, tx, account)
+				return err
+			})
+			if err != nil {
+				_ = tx.Rollback(context.WithoutCancel(ctx))
+				return nil, err
+			}
+			return guarded, nil
 		}
 		_ = tx.Rollback(context.WithoutCancel(ctx))
 		var pgErr *pgconn.PgError
@@ -42,6 +51,42 @@ func (s *PgStore) beginTrafficPolicyMutation(ctx context.Context, account pgtype
 		case <-timer.C:
 		}
 	}
+}
+
+// Keep the verdict and the saved intent inside the same account lock. Every
+// caller already rolls back on a failed Commit, including its change ledger.
+type trafficPolicyMutationTx struct {
+	pgx.Tx
+	account pgtype.UUID
+	before  trafficHostAnalysis
+}
+
+func (tx *trafficPolicyMutationTx) Commit(ctx context.Context) error {
+	if err := boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
+		after, err := readTrafficHostAnalysis(bounded, tx.Tx, tx.account)
+		if err != nil {
+			return err
+		}
+		return checkTrafficHostAnalysis(bounded, tx.before, after)
+	}); err != nil {
+		return err
+	}
+	return tx.Tx.Commit(ctx)
+}
+
+func boundedTrafficPolicyAnalysis(ctx context.Context, analyze func(context.Context) error) error {
+	start := time.Now()
+	bounded, cancel := context.WithTimeout(ctx, api.TrafficPolicyAnalysisTimeout)
+	defer cancel()
+	err := analyze(bounded)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if errors.Is(bounded.Err(), context.DeadlineExceeded) {
+		limit := api.TrafficPolicyAnalysisTimeout.Milliseconds()
+		return analysisLimit("time", "milliseconds", limit, max(limit+1, time.Since(start).Milliseconds()))
+	}
+	return err
 }
 
 func (s *PgStore) beginEdgeRuleTrafficMutation(ctx context.Context, id string) (pgx.Tx, error) {
