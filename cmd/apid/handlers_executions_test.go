@@ -16,6 +16,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/executionpayload"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func enableExecutionAPIForTest(t *testing.T, e *testEnv) *age.X25519Identity {
@@ -29,6 +30,52 @@ func enableExecutionAPIForTest(t *testing.T, e *testEnv) *age.X25519Identity {
 	t.Cleanup(func() { setSecretRecipient = previous })
 	e.s.WithExecutionAPIEnabled(true)
 	return identity
+}
+
+func TestExecutionDataProfileAdmissionAndReceiptProvenance(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	identity := enableExecutionAPIForTest(t, &e)
+	req := api.CreateExecutionRequest{Runtime: api.ExecutionRuntimePython313, Profile: api.ExecutionProfilePythonDataV1, Source: "def main(input, context): return input"}
+	rec := e.do(t, http.MethodPost, "/v1/executions", req, nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("admission=%d: %s", rec.Code, rec.Body.String())
+	}
+	var response api.ExecutionResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Profile != req.Profile || response.Packages["numpy"] == "" || response.Packages["pandas"] == "" || response.RuntimeImageDigest != "" {
+		t.Fatalf("queued provenance=%+v", response)
+	}
+	ctx := context.Background()
+	claim, err := e.store.ClaimExecution(ctx, "profile", time.Now().UTC(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := executionpayload.DecodeRequest(ctx, []*age.X25519Identity{identity}, claim.SealedPayload, claim.PayloadKID)
+	if err != nil || decoded.Profile != req.Profile {
+		t.Fatalf("sealed profile=%q, %v", decoded.Profile, err)
+	}
+	digest := "sha256:" + strings.Repeat("a", 64)
+	if _, err := e.store.PinExecutionRuntime(ctx, claim.ID, *claim.LeaseToken, digest, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.MarkExecutionRunning(ctx, claim.ID, *claim.LeaseToken, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.CompleteExecution(ctx, state.CompleteExecutionParams{ID: claim.ID, LeaseToken: *claim.LeaseToken, Status: api.ExecutionStatusSucceeded, Result: json.RawMessage("null"), FinishedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	rec = e.do(t, http.MethodGet, "/v1/executions/"+claim.ID, nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatal(rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.RuntimeImageDigest != digest || response.Profile != req.Profile || response.Packages["pandas"] == "" {
+		t.Fatalf("terminal provenance=%+v", response)
+	}
 }
 
 func executionRequest() api.CreateExecutionRequest {

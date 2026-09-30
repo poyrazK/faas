@@ -710,16 +710,20 @@ func (c *VMMClient) ExecuteExecution(ctx context.Context, instance string, req e
 	fields, _ := wire.FromContext(ctx)
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
 	resp, err := c.cli.ExecuteExecution(ctx, &vmmdpb.ExecuteExecutionRequest{
+		Profile:        string(req.Profile),
 		Instance:       instance,
 		Version:        uint32(req.Version),
 		ExecutionId:    req.ExecutionID,
 		Runtime:        string(req.Runtime),
 		Source:         req.Source,
+		Entrypoint:     req.Entrypoint,
+		Files:          executionFilesToProto(req.Files),
+		OutputFiles:    append([]string(nil), req.OutputFiles...),
 		Input:          append([]byte(nil), req.Input...),
 		TimeoutMs:      int32(req.TimeoutMS),
 		MaxOutputBytes: int32(req.MaxOutput),
 		NetworkMode:    string(req.NetworkMode),
-	})
+	}, grpc.MaxCallRecvMsgSize(executionproto.MaxFrameBytes))
 	if err != nil {
 		return zero, liftErr(err)
 	}
@@ -738,16 +742,20 @@ func (c *VMMClient) ExecuteExecutionWithOutput(ctx context.Context, instance str
 	fields, _ := wire.FromContext(ctx)
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
 	stream, err := c.cli.ExecuteExecutionStream(ctx, &vmmdpb.ExecuteExecutionRequest{
+		Profile:        string(req.Profile),
 		Instance:       instance,
 		Version:        uint32(req.Version),
 		ExecutionId:    req.ExecutionID,
 		Runtime:        string(req.Runtime),
 		Source:         req.Source,
+		Entrypoint:     req.Entrypoint,
+		Files:          executionFilesToProto(req.Files),
+		OutputFiles:    append([]string(nil), req.OutputFiles...),
 		Input:          append([]byte(nil), req.Input...),
 		TimeoutMs:      int32(req.TimeoutMS),
 		MaxOutputBytes: int32(req.MaxOutput),
 		NetworkMode:    string(req.NetworkMode),
-	})
+	}, grpc.MaxCallRecvMsgSize(executionproto.MaxFrameBytes))
 	if err != nil {
 		return zero, liftErr(err)
 	}
@@ -801,6 +809,9 @@ func executionResultFromResponse(resp *vmmdpb.ExecuteExecutionResponse) executio
 
 func mergeExecutionResponse(result executionproto.Result, resp *vmmdpb.ExecuteExecutionResponse) executionproto.Result {
 	result.Status = api.ExecutionStatus(resp.GetStatus())
+	for _, artifact := range resp.GetArtifacts() {
+		result.Artifacts = append(result.Artifacts, api.ExecutionArtifact{Name: artifact.GetName(), SizeBytes: int(artifact.GetSizeBytes()), SHA256: artifact.GetSha256(), Content: append([]byte{}, artifact.GetContent()...)})
+	}
 	result.Result = append([]byte(nil), resp.GetResult()...)
 	result.OutputTruncated = resp.GetOutputTruncated()
 	result.FailureCode = resp.GetFailureCode()
@@ -1680,4 +1691,12 @@ func egressPortsToWire(ports []int) []uint32 {
 		}
 	}
 	return out
+}
+
+func executionFilesToProto(files []api.ExecutionFile) []*vmmdpb.ExecutionSourceFile {
+	result := make([]*vmmdpb.ExecutionSourceFile, 0, len(files))
+	for _, file := range files {
+		result = append(result, &vmmdpb.ExecutionSourceFile{Path: file.Path, Content: append([]byte{}, file.Content...)})
+	}
+	return result
 }

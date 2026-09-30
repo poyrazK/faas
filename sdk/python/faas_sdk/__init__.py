@@ -51,7 +51,7 @@ from .dev_bridge import (
     current_dev_bridge_context,
     with_dev_bridge_context,
 )
-from .executions import ExecutionEvent, ExecutionID, awatch_execution, watch_execution
+from .executions import ExecutionEvent, ExecutionID, awatch_execution, decode_execution_artifact, watch_execution
 from .idempotency import (
     IdempotencyKey,
     current_idempotency_key,
@@ -128,6 +128,7 @@ __all__ = (
     "ExecutionID",
     "watch_execution",
     "awatch_execution",
+    "decode_execution_artifact",
     "__version__",
     "DEV_BRIDGE_CONTEXT_HEADER",
     "AsyncDevBridgeTransport",

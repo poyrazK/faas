@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -16,6 +17,7 @@ import (
 // a caller can choose a runtime and machine shape, but never an artifact key,
 // digest, or compute-node identity.
 type ExecutionRuntimeArtifacts struct {
+	Profile             api.ExecutionProfile
 	Architecture        string
 	KernelDigest        string
 	GuestExecutorDigest string
@@ -112,7 +114,7 @@ func (r *ExecutionClaimResolver) ResolveExecutionClaim(ctx context.Context, clai
 	}
 
 	shape := api.ExecutionSnapshotShape{
-		Runtime: claim.Runtime, MemoryMB: claim.Limits.MemoryMB, EphemeralDiskMB: claim.Limits.EphemeralDiskMB,
+		Profile: claim.Profile.Normalized(), Runtime: claim.Runtime, MemoryMB: claim.Limits.MemoryMB, EphemeralDiskMB: claim.Limits.EphemeralDiskMB,
 	}
 	artifacts, err := r.artifacts.ResolveExecutionArtifacts(ctx, claim.Runtime, shape)
 	if err != nil {
@@ -120,6 +122,18 @@ func (r *ExecutionClaimResolver) ResolveExecutionClaim(ctx context.Context, clai
 	}
 	if err := artifacts.validate(claim.Runtime, shape); err != nil {
 		return ExecutionRestoreRequest{}, err
+	}
+	if claim.RuntimeImageDigest != "" && claim.RuntimeImageDigest != "sha256:"+artifacts.BaseImageDigest {
+		return ExecutionRestoreRequest{}, ErrExecutionRuntimeArtifactsUnavailable
+	}
+	if shape.Profile != api.ExecutionProfileStandard {
+		pins, ok := r.accounts.(state.ExecutionRuntimeSelectionStore)
+		if !ok || claim.LeaseToken == nil {
+			return ExecutionRestoreRequest{}, state.ErrExecutionRuntimeUnpinned
+		}
+		if _, err := pins.PinExecutionRuntime(ctx, claim.ID, *claim.LeaseToken, "sha256:"+artifacts.BaseImageDigest, time.Now().UTC()); err != nil {
+			return ExecutionRestoreRequest{}, fmt.Errorf("sched: pin execution runtime: %w", err)
+		}
 	}
 	plan, err := r.catalog.Resolve(ctx, RuntimeSnapshotRequest{
 		Shape: shape, Architecture: artifacts.Architecture,
@@ -131,7 +145,8 @@ func (r *ExecutionClaimResolver) ResolveExecutionClaim(ctx context.Context, clai
 	}
 
 	request := ExecutionRestoreRequest{
-		ID: claim.ID, AccountID: claim.AccountID, NodeID: r.nodeID,
+		Profile: shape.Profile,
+		ID:      claim.ID, AccountID: claim.AccountID, NodeID: r.nodeID,
 		Plan: account.Plan, Runtime: claim.Runtime, NetworkMode: claim.NetworkMode,
 		Limits: claim.Limits, DeadlineAt: claim.DeadlineAt,
 		KernelKey: artifacts.KernelKey, BaseKey: artifacts.BaseKey, LayerKey: artifacts.LayerKey,
@@ -180,11 +195,17 @@ func validateExecutionClaimLimits(limits api.ResolvedExecutionLimits, plan api.E
 }
 
 func (a ExecutionRuntimeArtifacts) validate(runtime api.ExecutionRuntime, shape api.ExecutionSnapshotShape) error {
+	if err := shape.Profile.Validate(runtime); err != nil || a.Profile.Normalized() != shape.Profile.Normalized() {
+		return fmt.Errorf("%w: profile identity mismatch", ErrExecutionClaimInvalid)
+	}
 	if !runtime.Valid() || shape.Runtime != runtime {
 		return fmt.Errorf("%w: runtime identity mismatch", ErrExecutionClaimInvalid)
 	}
 	if a.Architecture != archAMD64 && a.Architecture != archARM64 {
 		return fmt.Errorf("%w: unsupported execution architecture %q", ErrExecutionClaimInvalid, a.Architecture)
+	}
+	if shape.Profile.Normalized() == api.ExecutionProfilePythonDataV1 && a.Architecture != archAMD64 {
+		return fmt.Errorf("%w: python-data-v1 image requires amd64", ErrExecutionRuntimeArtifactsUnavailable)
 	}
 	identity := RuntimeSnapshotRequest{
 		Shape: shape, Architecture: a.Architecture, KernelDigest: a.KernelDigest,

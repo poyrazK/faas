@@ -3570,6 +3570,8 @@ type Store interface {
 	// PgStore uses the cron_fire_now_requests table.
 	InsertFireNowRequest(ctx context.Context, cronID, accountID string) (string, error)
 	ClaimPendingFireNowRequest(ctx context.Context) (FireNowRequest, error)
+	ClaimPendingFireNowRequestForNode(ctx context.Context, nodeID string) (FireNowRequest, error)
+	RequeueFireNowRequest(ctx context.Context, requestID string) error
 	MarkFireNowRequestSucceeded(ctx context.Context, requestID, invocationID string) error
 	MarkFireNowRequestFailed(ctx context.Context, requestID, errMsg string) error
 	GetFireNowRequest(ctx context.Context, requestID string) (FireNowRequest, error)

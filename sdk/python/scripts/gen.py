@@ -640,7 +640,7 @@ from ._rfc7807 import (
     raise_for_problem,
 )
 from ._sse import SseEvent, aiter_sse, iter_sse
-from .executions import ExecutionEvent, ExecutionID, awatch_execution, watch_execution
+from .executions import ExecutionEvent, ExecutionID, awatch_execution, decode_execution_artifact, watch_execution
 from .dev_bridge import (
     DEV_BRIDGE_CONTEXT_HEADER,
     AsyncDevBridgeTransport,
@@ -728,6 +728,7 @@ __all__ = (
     "ExecutionID",
     "watch_execution",
     "awatch_execution",
+    "decode_execution_artifact",
     "__version__",
     "DEV_BRIDGE_CONTEXT_HEADER",
     "AsyncDevBridgeTransport",

@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +17,13 @@ import (
 // execution. The guest has no persistent customer disk; files are staged into
 // an ephemeral scratch filesystem for the lifetime of the run only.
 type ExecutionRuntime string
+
+type ExecutionProfile string
+
+const (
+	ExecutionProfileStandard     ExecutionProfile = "standard"
+	ExecutionProfilePythonDataV1 ExecutionProfile = "python-data-v1"
+)
 
 const (
 	ExecutionRuntimeNode22    ExecutionRuntime = "node22"
@@ -50,17 +59,27 @@ type ExecutionFile struct {
 	Content []byte `json:"content"`
 }
 
+// ExecutionArtifact is an explicitly exported output file; Content is base64 in JSON.
+type ExecutionArtifact struct {
+	Name      string `json:"name"`
+	SizeBytes int    `json:"size_bytes"`
+	SHA256    string `json:"sha256"`
+	Content   []byte `json:"content"`
+}
+
 // CreateExecutionRequest is the caller-authored one-shot execution contract.
 // Set either Source or Entrypoint + Files; source and input are never echoed
 // by the execution read APIs.
 type CreateExecutionRequest struct {
-	Runtime    ExecutionRuntime        `json:"runtime"`
-	Source     string                  `json:"source,omitempty"`
-	Entrypoint string                  `json:"entrypoint,omitempty"`
-	Files      []ExecutionFile         `json:"files,omitempty"`
-	Input      json.RawMessage         `json:"input,omitempty"`
-	Limits     *ExecutionLimitRequest  `json:"limits,omitempty"`
-	Network    *ExecutionNetworkPolicy `json:"network,omitempty"`
+	Profile     ExecutionProfile        `json:"profile,omitempty"`
+	Runtime     ExecutionRuntime        `json:"runtime"`
+	Source      string                  `json:"source,omitempty"`
+	Entrypoint  string                  `json:"entrypoint,omitempty"`
+	Files       []ExecutionFile         `json:"files,omitempty"`
+	OutputFiles []string                `json:"output_files,omitempty"`
+	Input       json.RawMessage         `json:"input,omitempty"`
+	Limits      *ExecutionLimitRequest  `json:"limits,omitempty"`
+	Network     *ExecutionNetworkPolicy `json:"network,omitempty"`
 }
 
 // ResolvedExecutionLimits are the immutable limits admitted for one run.
@@ -115,20 +134,24 @@ func (s ExecutionStatus) Terminal() bool {
 // are intentionally absent. A terminal receipt is persisted only after the
 // disposable VM has been destroyed.
 type ExecutionResponse struct {
-	ID              string                  `json:"id"`
-	Status          ExecutionStatus         `json:"status"`
-	Runtime         ExecutionRuntime        `json:"runtime"`
-	Limits          ResolvedExecutionLimits `json:"limits"`
-	Result          json.RawMessage         `json:"result,omitempty"`
-	Stdout          string                  `json:"stdout,omitempty"`
-	Stderr          string                  `json:"stderr,omitempty"`
-	OutputTruncated bool                    `json:"output_truncated"`
-	ExitCode        *int                    `json:"exit_code,omitempty"`
-	Usage           *ExecutionUsage         `json:"usage,omitempty"`
-	Failure         *ExecutionFailure       `json:"failure,omitempty"`
-	CreatedAt       string                  `json:"created_at"`
-	StartedAt       *string                 `json:"started_at,omitempty"`
-	FinishedAt      *string                 `json:"finished_at,omitempty"`
+	Profile            ExecutionProfile        `json:"profile"`
+	RuntimeImageDigest string                  `json:"runtime_image_digest,omitempty"`
+	Packages           map[string]string       `json:"packages,omitempty"`
+	ID                 string                  `json:"id"`
+	Status             ExecutionStatus         `json:"status"`
+	Runtime            ExecutionRuntime        `json:"runtime"`
+	Limits             ResolvedExecutionLimits `json:"limits"`
+	Artifacts          []ExecutionArtifact     `json:"artifacts,omitempty"`
+	Result             json.RawMessage         `json:"result,omitempty"`
+	Stdout             string                  `json:"stdout,omitempty"`
+	Stderr             string                  `json:"stderr,omitempty"`
+	OutputTruncated    bool                    `json:"output_truncated"`
+	ExitCode           *int                    `json:"exit_code,omitempty"`
+	Usage              *ExecutionUsage         `json:"usage,omitempty"`
+	Failure            *ExecutionFailure       `json:"failure,omitempty"`
+	CreatedAt          string                  `json:"created_at"`
+	StartedAt          *string                 `json:"started_at,omitempty"`
+	FinishedAt         *string                 `json:"finished_at,omitempty"`
 }
 
 // ExecutionListResponse is one account-scoped page of execution receipts.
@@ -524,4 +547,13 @@ func (c *Client) Run(ctx context.Context, req CreateExecutionRequest, opts RunOp
 		}
 	}
 	return c.GetExecution(ctx, receipt.ID)
+}
+
+// Bytes validates an inline artifact and returns an independent content copy.
+func (a ExecutionArtifact) Bytes() ([]byte, error) {
+	hash := sha256.Sum256(a.Content)
+	if a.SizeBytes != len(a.Content) || a.SHA256 != "sha256:"+hex.EncodeToString(hash[:]) {
+		return nil, fmt.Errorf("execution artifact content failed integrity verification")
+	}
+	return append([]byte{}, a.Content...), nil
 }

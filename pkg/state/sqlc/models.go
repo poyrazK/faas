@@ -1627,39 +1627,42 @@ type EventSubscriptionWorkBinding struct {
 }
 
 type Execution struct {
-	ID                pgtype.UUID
-	AccountID         pgtype.UUID
-	Runtime           string
-	Status            string
-	NetworkMode       string
-	TimeoutMs         int32
-	MemoryMb          int32
-	CpuMillicores     int32
-	EphemeralDiskMb   int32
-	MaxOutputBytes    int32
-	PidsMax           int32
-	SourceBytes       int32
-	InputBytes        int32
-	DeadlineAt        pgtype.Timestamptz
-	LeaseToken        pgtype.UUID
-	LeaseOwner        pgtype.Text
-	LeaseExpiresAt    pgtype.Timestamptz
-	CancelRequestedAt pgtype.Timestamptz
-	Result            []byte
-	ResultBytes       int32
-	Stdout            string
-	Stderr            string
-	OutputTruncated   bool
-	ExitCode          pgtype.Int4
-	FailureCode       pgtype.Text
-	FailureMessage    pgtype.Text
-	WallTimeMs        int64
-	CpuTimeMs         int64
-	PeakMemoryMb      int32
-	StartedAt         pgtype.Timestamptz
-	FinishedAt        pgtype.Timestamptz
-	CreatedAt         pgtype.Timestamptz
-	UpdatedAt         pgtype.Timestamptz
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	Runtime            string
+	Status             string
+	NetworkMode        string
+	TimeoutMs          int32
+	MemoryMb           int32
+	CpuMillicores      int32
+	EphemeralDiskMb    int32
+	MaxOutputBytes     int32
+	PidsMax            int32
+	SourceBytes        int32
+	InputBytes         int32
+	DeadlineAt         pgtype.Timestamptz
+	LeaseToken         pgtype.UUID
+	LeaseOwner         pgtype.Text
+	LeaseExpiresAt     pgtype.Timestamptz
+	CancelRequestedAt  pgtype.Timestamptz
+	Result             []byte
+	ResultBytes        int32
+	Stdout             string
+	Stderr             string
+	OutputTruncated    bool
+	ExitCode           pgtype.Int4
+	FailureCode        pgtype.Text
+	FailureMessage     pgtype.Text
+	WallTimeMs         int64
+	CpuTimeMs          int64
+	PeakMemoryMb       int32
+	StartedAt          pgtype.Timestamptz
+	FinishedAt         pgtype.Timestamptz
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+	Artifacts          []byte
+	Profile            string
+	RuntimeImageDigest pgtype.Text
 }
 
 type ExecutionEvent struct {
@@ -3814,6 +3817,7 @@ type RuntimeSnapshot struct {
 	CreatedAt           pgtype.Timestamptz
 	PublishedAt         pgtype.Timestamptz
 	RetiredAt           pgtype.Timestamptz
+	Profile             string
 }
 
 type SafeReleaseWorkerLease struct {
