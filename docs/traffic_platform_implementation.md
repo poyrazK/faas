@@ -12,6 +12,11 @@ revoke/release pair during the handoff must refuse the old exchange. Protected
 metadata is bounded, consumed privately and cannot be authored by a guest.
 Managed realtime retains its separate, explicitly excluded owner.
 
+Public HTTP dispatch must pin scoped deployment weights and release/revision
+eligibility in one committed view before cache or wake. One deployment must
+remain selected through capacity waiting and retries, including when the
+original selected cohort is cold. Instance/session affinity cannot cross it.
+
 - [ ] Outbound circuit: startup wiring, IPv4/IPv6 rules, atomic updates,
   current desired state before new/restore execution, parked/restart recovery,
   all supported DNS answers, retry/reconciliation, opt-out cleanup, actual
@@ -334,3 +339,47 @@ routing snapshot completeness, bounded decision evidence, preview agreement,
 customer status/capability delivery and native/daemon/load/deployment acceptance
 remain pending. No Linux x86_64 KVM host is currently available, and no release
 guarantee is marked accepted.
+
+Public HTTP dispatch now pins owner identity, scoped positive weights,
+release resolution/expiry, revision eligibility and host-pinned deployment
+availability in one read-only repeatable-read Postgres view, bounded to 250 ms.
+The selected deployment stays fixed through cold wake, capacity wait, retries
+and detached cache refresh. Cache partitions include the deployment for ordinary
+and keyed requests. Valid instance affinity stays in the verified positive roster
+and respects readiness; version affinity takes precedence. Pure edge answers
+do not read unused dispatch inputs. Policy proof includes routing verdicts and
+weights, while choice and reason are separate request span attributes.
+
+Cold requests retain one app queue across cohorts and one total wait allowance,
+plus the gateway-wide admission queue and browser retry page. Ordinary burst
+expansion retains one app worker and pins every scheduler batch member and
+continuation to the admitted deployment. Steady app/plan limits are retained;
+the existing bounded rollout overlap applies to a cold second positive cohort
+beside a routable cohort and explicit verification. The scheduler owns that
+capacity decision. Store failures, missing verdicts, malformed/oversized rosters
+and unavailable cohorts refuse before wake rather than falling back to live
+picker weights or a warm sibling. Existing pin validation and 410/503 release
+refusal contracts remain.
+
+Real Postgres tests passed for a cutover committed between owner and routing
+reads, retained/expired release graphs and direct pins, scoped weights,
+missing/foreign ownership, incomplete graphs, the 100-row refusal bound and
+transaction cleanup. Full gateway, scheduler RPC and internal-gateway suites
+passed in 61.393, 1.070 and 9.919 seconds. Final focused gateway/RPC checks
+passed in 2.900/0.663 seconds after the cold-overlap refinement. Local checks
+cover immutable wake/retry routing, total-deadline consumption, cache partition
+and refresh, instance readiness/affinity, shared queue limits, bounded
+cross-cohort waiting, generation cleanup, browser detached wake and coherent
+burst RPC continuation. Full-path and native acceptance remain pending.
+
+Pinned lint passed gateway, scheduler RPC and internal-gateway code with zero
+findings. State production lint passed with tests=false/unused disabled for the
+existing test-only helper. Direct sqlc v1.31.1 regeneration matched all four
+generated Go files. The new reads use existing schema; no migration was added.
+
+Atomic host/alias/environment binding with earlier resolved app settings,
+cross-process exact-wake coalescing, complete synthetic admission/security
+ownership, bounded decision evidence, preview agreement, customer status and
+capability delivery, and remaining native/daemon/load/deployment acceptance
+still require work. No Linux x86_64 KVM acceptance host is available; all six
+release guarantees remain unaccepted.

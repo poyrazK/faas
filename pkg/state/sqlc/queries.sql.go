@@ -11939,6 +11939,155 @@ func (q *Queries) ReadProjectReleaseSet(ctx context.Context, db DBTX, arg ReadPr
 	return release, err
 }
 
+const readPublicRoutingHostPin = `-- name: ReadPublicRoutingHostPin :one
+SELECT EXISTS (
+    SELECT 1 FROM deployments WHERE id = $1::uuid AND app_id = $2::uuid
+      AND scope = $3::text AND status IN ('ready', 'snapshot_ready', 'live')
+)::boolean AS allowed
+`
+
+type ReadPublicRoutingHostPinParams struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	Scope        string
+}
+
+func (q *Queries) ReadPublicRoutingHostPin(ctx context.Context, db DBTX, arg ReadPublicRoutingHostPinParams) (bool, error) {
+	row := db.QueryRow(ctx, readPublicRoutingHostPin, arg.DeploymentID, arg.AppID, arg.Scope)
+	var allowed bool
+	err := row.Scan(&allowed)
+	return allowed, err
+}
+
+const readPublicRoutingOwner = `-- name: ReadPublicRoutingOwner :one
+SELECT EXISTS (
+    SELECT 1 FROM apps WHERE id = $1::uuid AND account_id = $2::uuid
+      AND project_id IS NOT DISTINCT FROM $3::uuid AND status <> 'deleted'
+)::boolean AS verified
+`
+
+type ReadPublicRoutingOwnerParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	ProjectID pgtype.UUID
+}
+
+func (q *Queries) ReadPublicRoutingOwner(ctx context.Context, db DBTX, arg ReadPublicRoutingOwnerParams) (bool, error) {
+	row := db.QueryRow(ctx, readPublicRoutingOwner, arg.AppID, arg.AccountID, arg.ProjectID)
+	var verified bool
+	err := row.Scan(&verified)
+	return verified, err
+}
+
+const readPublicRoutingRelease = `-- name: ReadPublicRoutingRelease :many
+SELECT rs.id, member.deployment_id,
+       EXISTS (
+           SELECT 1 FROM deployments d WHERE d.id = member.deployment_id AND d.app_id = member.app_id
+             AND d.scope = $1::text AND d.status = 'live'
+             AND (d.traffic_percent > 0 OR EXISTS (SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id = d.id AND p.expires_at > now())
+                  OR EXISTS (SELECT 1 FROM project_release_members retained JOIN project_release_sets retained_set ON retained_set.id = retained.release_id
+                             WHERE retained.deployment_id = d.id AND retained.app_id = d.app_id AND (retained_set.active OR retained_set.expires_at > now())))
+       )::boolean AS target_live
+FROM apps a JOIN project_release_sets rs ON rs.project_id = a.project_id AND rs.account_id = a.account_id
+LEFT JOIN project_release_members member ON member.release_id = rs.id AND member.app_id = a.id
+WHERE a.id = $2::uuid AND a.status <> 'deleted' AND rs.environment_slug = $1::text
+  AND (($3::uuid IS NULL AND rs.active)
+       OR (rs.id = $3::uuid AND (rs.active OR rs.expires_at > now())))
+ORDER BY rs.created_at DESC LIMIT 2
+`
+
+type ReadPublicRoutingReleaseParams struct {
+	Scope              string
+	AppID              pgtype.UUID
+	RequestedReleaseID pgtype.UUID
+}
+
+type ReadPublicRoutingReleaseRow struct {
+	ID           pgtype.UUID
+	DeploymentID pgtype.UUID
+	TargetLive   bool
+}
+
+func (q *Queries) ReadPublicRoutingRelease(ctx context.Context, db DBTX, arg ReadPublicRoutingReleaseParams) ([]ReadPublicRoutingReleaseRow, error) {
+	rows, err := db.Query(ctx, readPublicRoutingRelease, arg.Scope, arg.AppID, arg.RequestedReleaseID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadPublicRoutingReleaseRow{}
+	for rows.Next() {
+		var i ReadPublicRoutingReleaseRow
+		if err := rows.Scan(&i.ID, &i.DeploymentID, &i.TargetLive); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readPublicRoutingRevision = `-- name: ReadPublicRoutingRevision :one
+SELECT EXISTS (
+    SELECT 1 FROM deployments d JOIN apps a ON a.id = d.app_id
+    WHERE d.id = $1::uuid AND d.app_id = $2::uuid
+      AND d.scope = $3::text AND d.status = 'live' AND a.status <> 'deleted'
+      AND coalesce((a.manifest->>'revision_pin_ttl_seconds')::integer, 0) > 0
+      AND (d.traffic_percent > 0 OR EXISTS (SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id = d.id AND p.expires_at > now()))
+)::boolean AS allowed
+`
+
+type ReadPublicRoutingRevisionParams struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	Scope        string
+}
+
+func (q *Queries) ReadPublicRoutingRevision(ctx context.Context, db DBTX, arg ReadPublicRoutingRevisionParams) (bool, error) {
+	row := db.QueryRow(ctx, readPublicRoutingRevision, arg.DeploymentID, arg.AppID, arg.Scope)
+	var allowed bool
+	err := row.Scan(&allowed)
+	return allowed, err
+}
+
+const readPublicRoutingWeights = `-- name: ReadPublicRoutingWeights :many
+SELECT id, traffic_percent FROM deployments
+WHERE app_id = $1::uuid AND scope = $2::text AND status = 'live' AND traffic_percent > 0
+ORDER BY id LIMIT $3::integer
+`
+
+type ReadPublicRoutingWeightsParams struct {
+	AppID    pgtype.UUID
+	Scope    string
+	RowLimit int32
+}
+
+type ReadPublicRoutingWeightsRow struct {
+	ID             pgtype.UUID
+	TrafficPercent int32
+}
+
+func (q *Queries) ReadPublicRoutingWeights(ctx context.Context, db DBTX, arg ReadPublicRoutingWeightsParams) ([]ReadPublicRoutingWeightsRow, error) {
+	rows, err := db.Query(ctx, readPublicRoutingWeights, arg.AppID, arg.Scope, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadPublicRoutingWeightsRow{}
+	for rows.Next() {
+		var i ReadPublicRoutingWeightsRow
+		if err := rows.Scan(&i.ID, &i.TrafficPercent); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const readServicePolicyActiveRelease = `-- name: ReadServicePolicyActiveRelease :one
 SELECT EXISTS (
     SELECT 1 FROM apps caller JOIN apps target ON target.project_id = caller.project_id

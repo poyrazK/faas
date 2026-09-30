@@ -4906,3 +4906,45 @@ SELECT EXISTS (
 SELECT id, traffic_percent FROM deployments
 WHERE app_id = sqlc.arg(app_id)::uuid AND status = 'live' AND traffic_percent > 0
 ORDER BY id LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: ReadPublicRoutingOwner :one
+SELECT EXISTS (
+    SELECT 1 FROM apps WHERE id = sqlc.arg(app_id)::uuid AND account_id = sqlc.arg(account_id)::uuid
+      AND project_id IS NOT DISTINCT FROM sqlc.narg(project_id)::uuid AND status <> 'deleted'
+)::boolean AS verified;
+
+-- name: ReadPublicRoutingWeights :many
+SELECT id, traffic_percent FROM deployments
+WHERE app_id = sqlc.arg(app_id)::uuid AND scope = sqlc.arg(scope)::text AND status = 'live' AND traffic_percent > 0
+ORDER BY id LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: ReadPublicRoutingRelease :many
+SELECT rs.id, member.deployment_id,
+       EXISTS (
+           SELECT 1 FROM deployments d WHERE d.id = member.deployment_id AND d.app_id = member.app_id
+             AND d.scope = sqlc.arg(scope)::text AND d.status = 'live'
+             AND (d.traffic_percent > 0 OR EXISTS (SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id = d.id AND p.expires_at > now())
+                  OR EXISTS (SELECT 1 FROM project_release_members retained JOIN project_release_sets retained_set ON retained_set.id = retained.release_id
+                             WHERE retained.deployment_id = d.id AND retained.app_id = d.app_id AND (retained_set.active OR retained_set.expires_at > now())))
+       )::boolean AS target_live
+FROM apps a JOIN project_release_sets rs ON rs.project_id = a.project_id AND rs.account_id = a.account_id
+LEFT JOIN project_release_members member ON member.release_id = rs.id AND member.app_id = a.id
+WHERE a.id = sqlc.arg(app_id)::uuid AND a.status <> 'deleted' AND rs.environment_slug = sqlc.arg(scope)::text
+  AND ((sqlc.narg(requested_release_id)::uuid IS NULL AND rs.active)
+       OR (rs.id = sqlc.narg(requested_release_id)::uuid AND (rs.active OR rs.expires_at > now())))
+ORDER BY rs.created_at DESC LIMIT 2;
+
+-- name: ReadPublicRoutingRevision :one
+SELECT EXISTS (
+    SELECT 1 FROM deployments d JOIN apps a ON a.id = d.app_id
+    WHERE d.id = sqlc.arg(deployment_id)::uuid AND d.app_id = sqlc.arg(app_id)::uuid
+      AND d.scope = sqlc.arg(scope)::text AND d.status = 'live' AND a.status <> 'deleted'
+      AND coalesce((a.manifest->>'revision_pin_ttl_seconds')::integer, 0) > 0
+      AND (d.traffic_percent > 0 OR EXISTS (SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id = d.id AND p.expires_at > now()))
+)::boolean AS allowed;
+
+-- name: ReadPublicRoutingHostPin :one
+SELECT EXISTS (
+    SELECT 1 FROM deployments WHERE id = sqlc.arg(deployment_id)::uuid AND app_id = sqlc.arg(app_id)::uuid
+      AND scope = sqlc.arg(scope)::text AND status IN ('ready', 'snapshot_ready', 'live')
+)::boolean AS allowed;

@@ -485,8 +485,14 @@ func (h *Handler) proxyAttempt(
 		forward(w, r, target)
 		return
 	}
+	routing, hasRouting := publicRoutingSnapshot(r.Context())
 	repick := func() (Target, bool) {
-		pick := h.backend.Pick(app.ID)
+		var pick PickResult
+		if hasRouting {
+			pick = pickPublicDeployment(h.backend, app.ID, routing.SelectedDeploymentID, "")
+		} else {
+			pick = h.backend.Pick(app.ID)
+		}
 		if !pick.OK {
 			return Target{}, false
 		}

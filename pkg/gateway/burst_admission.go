@@ -212,6 +212,10 @@ func (h *Handler) maybeBurstCapacity(ctx context.Context, app App, maxInstances,
 	if !ok {
 		return waited, nil
 	}
+	return h.maybeBurstCapacityWithAdmitter(ctx, app, maxInstances, perVM, admitter)
+}
+
+func (h *Handler) maybeBurstCapacityWithAdmitter(ctx context.Context, app App, maxInstances, perVM int, admitter burstCapacityAdmitter) (waited bool, err error) {
 	state := h.burstPressure.state(app.ID)
 	if state == nil {
 		return waited, nil
@@ -333,6 +337,21 @@ func (h *Handler) runBurstCapacity(ctx context.Context, app App, maxInstances, p
 // fall back to concurrent single admissions. The schedd ledger remains the
 // authoritative source for per-app and per-node limits.
 func (b *PGBackend) AdmitBurst(ctx context.Context, appID, scope, trigger string, maxConcurrency, count int) (int, error) {
+	return b.admitBurst(ctx, appID, "", scope, trigger, maxConcurrency, count)
+}
+
+func (b *PGBackend) AdmitDeploymentBurst(ctx context.Context, appID, deploymentID, scope, trigger string, maxConcurrency, count int) (int, error) {
+	if deploymentID == "" {
+		return 0, errors.New("gateway: deployment burst requires a deployment")
+	}
+	return b.admitBurst(ctx, appID, deploymentID, scope, trigger, maxConcurrency, count)
+}
+
+type deploymentBurstIdentityScheduler interface {
+	AdmitDeploymentInstancesWithIdentity(context.Context, string, string, string, string, int, func(string, string, string, string, int32, bool, int, api.PlatformIdentity, error)) error
+}
+
+func (b *PGBackend) admitBurst(ctx context.Context, appID, requestedDeployment, scope, trigger string, maxConcurrency, count int) (int, error) {
 	if b == nil || appID == "" || maxConcurrency <= 0 || count <= 0 {
 		return 0, nil
 	}
@@ -344,15 +363,27 @@ func (b *PGBackend) AdmitBurst(ctx context.Context, appID, scope, trigger string
 	// Engine.AdmitInstances contract: the first admission passes the
 	// ordinary gates, while its siblings do not get rejected by the
 	// same app's scale-out cooldown.
-	if sched, err := b.resolveSched(ctx, appID); err != nil {
+	scheduler, err := b.resolveSched(ctx, appID)
+	if err != nil {
 		return 0, err
-	} else if burst, ok := sched.(burstIdentityScheduler); ok {
+	}
+	var burstCall func(context.Context, string, string, string, int, func(string, string, string, string, int32, bool, int, api.PlatformIdentity, error)) error
+	if requestedDeployment != "" {
+		if burst, ok := scheduler.(deploymentBurstIdentityScheduler); ok {
+			burstCall = func(ctx context.Context, app, scope, trigger string, count int, report func(string, string, string, string, int32, bool, int, api.PlatformIdentity, error)) error {
+				return burst.AdmitDeploymentInstancesWithIdentity(ctx, app, requestedDeployment, scope, trigger, count, report)
+			}
+		}
+	} else if burst, ok := scheduler.(burstIdentityScheduler); ok {
+		burstCall = burst.AdmitInstancesWithIdentity
+	}
+	if burstCall != nil {
 		var (
 			mu       sync.Mutex
 			admitted int
 			firstErr error
 		)
-		err := burst.AdmitInstancesWithIdentity(ctx, appID, scope, trigger, count,
+		err := burstCall(ctx, appID, scope, trigger, count,
 			func(instanceID, nodeID, deploymentID, wakeID string, method int32, atCapacity bool, port int, identity api.PlatformIdentity, admitErr error) {
 				if admitErr != nil {
 					mu.Lock()
@@ -362,7 +393,19 @@ func (b *PGBackend) AdmitBurst(ctx context.Context, appID, scope, trigger string
 					mu.Unlock()
 					return
 				}
-				_, _, atCap, recordErr := b.recordAdmissionWithIdentity(ctx, appID, deploymentID, instanceID, nodeID, deploymentID, wakeID, method, atCapacity, port, identity)
+				requested := requestedDeployment
+				if requested == "" {
+					requested = deploymentID
+				}
+				if requestedDeployment != "" && (deploymentID != "" && deploymentID != requestedDeployment || identity.DeploymentID != "" && identity.DeploymentID != requestedDeployment) {
+					mu.Lock()
+					if firstErr == nil {
+						firstErr = errors.New("gateway: burst admission changed deployment")
+					}
+					mu.Unlock()
+					return
+				}
+				_, _, atCap, recordErr := b.recordAdmissionWithIdentity(ctx, appID, requested, instanceID, nodeID, deploymentID, wakeID, method, atCapacity, port, identity)
 				mu.Lock()
 				defer mu.Unlock()
 				if recordErr != nil {
@@ -381,7 +424,7 @@ func (b *PGBackend) AdmitBurst(ctx context.Context, appID, scope, trigger string
 			return admitted, firstErr
 		}
 		return admitted, err
-	} else if burst, ok := sched.(burstScheduler); ok {
+	} else if burst, ok := scheduler.(burstScheduler); ok && requestedDeployment == "" {
 		var (
 			mu       sync.Mutex
 			admitted int
@@ -428,7 +471,7 @@ func (b *PGBackend) AdmitBurst(ctx context.Context, appID, scope, trigger string
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			wakeID, _, atCapacity, err := b.Admit(ctx, appID, "", scope, trigger, maxConcurrency)
+			wakeID, _, atCapacity, err := b.Admit(ctx, appID, requestedDeployment, scope, trigger, maxConcurrency)
 			results <- result{admitted: err == nil && !atCapacity && wakeID != "", err: err}
 		}()
 	}

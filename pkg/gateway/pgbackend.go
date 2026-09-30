@@ -1292,7 +1292,7 @@ func pickDeploymentLocked(picker *appPicker, chosen, warmHint, preferredInstance
 	}
 	if preferredInstanceID != "" {
 		for _, target := range set.entries {
-			if target.InstanceID == preferredInstanceID {
+			if target.InstanceID == preferredInstanceID && target.routeReady() {
 				target.DeploymentID = chosen
 				return PickResult{Target: target, OK: true, Picked: chosen}
 			}
@@ -1310,6 +1310,11 @@ func pickDeploymentLocked(picker *appPicker, chosen, warmHint, preferredInstance
 // It is intentionally separate from the weighted customer picker: an
 // authenticated promotion smoke must never verify a stable sibling by chance.
 func (b *PGBackend) PickForDeployment(appID, deploymentID string) PickResult {
+	return b.PickForDeploymentInstance(appID, deploymentID, "")
+}
+
+// A session hint is valid only inside the already selected deployment.
+func (b *PGBackend) PickForDeploymentInstance(appID, deploymentID, preferredInstanceID string) PickResult {
 	if b == nil || appID == "" || deploymentID == "" {
 		return PickResult{}
 	}
@@ -1323,6 +1328,15 @@ func (b *PGBackend) PickForDeployment(appID, deploymentID string) PickResult {
 	if set == nil {
 		b.tgtMu.RUnlock()
 		return PickResult{Picked: deploymentID, ColdBucket: deploymentID}
+	}
+	if preferredInstanceID != "" {
+		for _, target := range set.entries {
+			if target.InstanceID == preferredInstanceID && target.routeReady() {
+				b.tgtMu.RUnlock()
+				target.DeploymentID = deploymentID
+				return PickResult{Target: target, OK: true, Picked: deploymentID}
+			}
+		}
 	}
 	target, ok := set.pick("")
 	b.tgtMu.RUnlock()

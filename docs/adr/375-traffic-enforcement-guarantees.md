@@ -203,6 +203,31 @@ Another account's broken free-form host match cannot block this tenant.
 Empty verified policies remain
 valid snapshots. Runtime response/span evidence records the digest.
 
+Before public HTTP cache lookup or dispatch, release resolution, revision-pin
+eligibility, host-pinned deployment availability and scoped positive weights
+join one bounded read-only repeatable-read view. Owner identity is verified in
+that view. Selection uses exact host/smoke pins, then release/revision pins,
+followed by the effective version key or local weighted entropy. The selected deployment is
+held through wake, capacity waiting and retries. Session affinity and instance
+rotation operate only within that deployment. A cold cohort is woken exactly;
+there is no warm sibling fallback. Cache partitions follow the selected
+deployment. Routing verdicts and weights join the request fingerprint; entropy
+and the individual weighted choice remain separate decision evidence. Pure
+edge responses do not acquire unused dispatch policy. Async queueing retains
+its separate dispatch owner and still needs complete synthetic-path evidence.
+
+Exact public wakes retain one local app queue across cohorts, one total wait
+allowance and the gateway-wide admission queue. A different cohort waits for
+the current generation, then retries only its own deployment. Browser wake
+pages retain bounded detached work. Ordinary burst expansion keeps the app's
+single worker and sends the admitted deployment on the first scheduler call
+and every bounded continuation. It retains steady app/plan ceilings and
+readiness filtering. A cold second positive cohort beside a routable cohort
+may use the existing bounded rollout overlap; explicit rollout verification
+retains its existing scheduler-controlled allowance. Detached cache refresh
+uses the same admitted deployment. Cross-process exact-wake coalescing and atomic host/alias/environment
+binding with the earlier resolved app settings still require follow-up.
+
 Managed service discovery, alias access, binding/target authorization,
 preview/test namespace, method/path grant, reliability and transport posture
 are read from one bounded read-only repeatable-read transaction. The transaction

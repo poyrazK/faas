@@ -27,7 +27,7 @@ state are decisions made against the snapshot, not frozen counter values.
 
 ## Failure and update behavior
 
-A warm verified cache can supply a snapshot during a store outage. A cold or
+A warm verified compiled-policy cache can supply its inputs during a store outage. A cold or
 expired cache cannot: it returns `traffic_policy_unavailable`/503 with
 `Retry-After: 1` before authentication, wake or guest execution. A compiled
 policy with reported rule errors also refuses an unverified owner snapshot.
@@ -47,6 +47,48 @@ armed before loading that document or scoped contract; expiry returns 504.
 Managed service calls now pin the policy inputs described below. Simulator/runtime
 agreement and complete service-path acceptance still require verification.
 Native lifecycle and deployment acceptance remain pending.
+
+## Public deployment routing
+
+Before cache access or dispatch, production public HTTP routing reads app
+ownership, scoped positive deployment weights and any release/revision/host pin
+eligibility in one read-only repeatable-read Postgres transaction. The read has
+a 250 ms bound and consumes the request's total deadline. This routing read is
+required even with warm compiled host rules and cached VM targets: failure
+returns `traffic_policy_unavailable`/503 before wake; total deadline expiry
+returns 504. Invalid pin headers retain the existing 400/422 validation contract.
+
+One deployment is selected for the request. Exact host/smoke pins take
+precedence, followed by a verified project release, an eligible revision, then
+version affinity or a valid instance preference within the positive roster.
+Ordinary requests without a usable preference use weighted selection. A cold
+selected deployment is woken directly. Instance rotation, capacity waits,
+retries and detached cache refresh stay inside it. Fresh requests read changed
+weights or release graphs. Cache keys include the selected deployment for both
+keyed and ordinary traffic; old app-only entries are no longer used by this path.
+
+The app retains one local cold-wake queue across cohorts. A request behind a
+different cohort retries its own admission after that generation finishes;
+its original total queue allowance spans both generations. The gateway-wide
+admission queue still bounds scheduler work. Browser navigation retains its
+retry page while the bounded detached wake continues. Ordinary burst expansion
+retains one capacity worker per app and carries the admitted deployment on
+every scheduler batch member. Every admission still passes scheduler capacity
+and placement gates. Ordinary traffic uses the steady app/plan ceiling. A cold
+second positive cohort beside a routable cohort may use the existing bounded
+rollout overlap; explicit rollout verification retains its existing allowance.
+The scheduler remains authoritative for whether that overlap is allowed.
+
+The fingerprint includes the verified routing roster and pin verdicts. Selection
+entropy and the chosen deployment are excluded. Request spans separately carry
+`gregale.traffic.selected_deployment_id` and `gregale.traffic.deployment_selection`.
+Expired release/revision pins retain 410; an incomplete public release retains
+503. More than 100 positive deployments refuses verification without truncation.
+
+These routing reads verify the resolved host's app and pinned deployment.
+Atomic host/alias/environment binding with the earlier resolved app settings,
+cross-process exact-wake coalescing, complete synthetic admission/security
+ownership, bounded decision evidence and preview agreement remain pending.
 
 ## Managed service calls
 
@@ -90,7 +132,8 @@ policy; emergency generation fences still apply.
 
 | Path | Snapshot and evidence |
 | --- | --- |
-| Ordinary public HTTP, including cache and edge responses | Compiled host rules, imported/scoped route contract, resolved app flags and plan; response/span/log fingerprint |
+| Ordinary public HTTP dispatch and response cache | Compiled host rules, imported/scoped route contract, resolved app flags/plan and atomic scoped deployment routing; one deployment through wake/retry/refresh; response/span/log fingerprint |
+| Public edge answers without guest dispatch | Compiled host rules, imported/scoped route contract, resolved app flags and plan; unused deployment routing is excluded |
 | Named environment, verified domain, listener selector | Effective host rules; selector and base host use one cache generation |
 | Public streaming and raw Upgrade | Pinned rules/app inputs; span/log evidence; ordinary HTTP header only where normal response commitment is used |
 | Managed service proxy | Atomic access/namespace/reliability/transport/release/override/weight snapshot; one deployment across wake/retry; response/span fingerprint |

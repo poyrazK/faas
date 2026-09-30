@@ -2461,6 +2461,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// invalidates the exact cache serving customer traffic.
 	handler.WithResponseCache(deps.responseCache)
 	handler.WithDeclaredRouteMatcher(deps.declaredRoutesMatcher)
+	if deps.pool != nil {
+		routingStore := deps.pgStore
+		if routingStore == nil {
+			routingStore = state.NewPgStore(deps.pool)
+		}
+		handler.WithPublicRoutingPolicy(newPublicRoutingPinner(routingStore))
+	}
 	if deps.declaredRoutesMatcher != nil && deps.pool != nil {
 		go watchDeclaredRouteInvalidations(ctx, deps.pool, deps.declaredRoutesMatcher, log)
 	}

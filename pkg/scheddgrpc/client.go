@@ -304,13 +304,26 @@ func (c *Client) AdmitInstances(ctx context.Context, appID, scope, trigger strin
 // AdmitInstances. It mirrors the same bounded first-admit plus continuation
 // protocol while exposing the identity attached to every wire response.
 func (c *Client) AdmitInstancesWithIdentity(ctx context.Context, appID, scope, trigger string, count int, report func(instanceID, nodeID, deploymentID, wakeID string, method int32, atCapacity bool, port int, identity api.PlatformIdentity, err error)) error {
+	return c.admitDeploymentInstancesWithIdentity(ctx, appID, "", scope, trigger, count, report)
+}
+
+// AdmitDeploymentInstancesWithIdentity keeps every member of a bounded burst
+// inside the deployment admitted by the request's routing snapshot.
+func (c *Client) AdmitDeploymentInstancesWithIdentity(ctx context.Context, appID, deploymentID, scope, trigger string, count int, report func(instanceID, nodeID, deploymentID, wakeID string, method int32, atCapacity bool, port int, identity api.PlatformIdentity, err error)) error {
+	if deploymentID == "" {
+		return errors.New("schedd: deployment burst requires a deployment")
+	}
+	return c.admitDeploymentInstancesWithIdentity(ctx, appID, deploymentID, scope, trigger, count, report)
+}
+
+func (c *Client) admitDeploymentInstancesWithIdentity(ctx context.Context, appID, deploymentID, scope, trigger string, count int, report func(instanceID, nodeID, deploymentID, wakeID string, method int32, atCapacity bool, port int, identity api.PlatformIdentity, err error)) error {
 	if count <= 0 {
 		return nil
 	}
 	if count > api.ScaleUpMaxBurstPerTick {
 		count = api.ScaleUpMaxBurstPerTick
 	}
-	firstID, firstNode, firstDeployment, firstWake, firstMethod, firstAtCapacity, firstPort, firstIdentity, err := c.AdmitInstanceWithIdentity(ctx, appID, "", scope, trigger)
+	firstID, firstNode, firstDeployment, firstWake, firstMethod, firstAtCapacity, firstPort, firstIdentity, err := c.AdmitInstanceWithIdentity(ctx, appID, deploymentID, scope, trigger)
 	if report != nil {
 		report(firstID, firstNode, firstDeployment, firstWake, firstMethod, firstAtCapacity, firstPort, firstIdentity, err)
 	}
@@ -330,6 +343,7 @@ func (c *Client) AdmitInstancesWithIdentity(ctx context.Context, appID, scope, t
 			callCtx := withWakeCorrelation(ctx, trigger)
 			resp, callErr := c.cli.AdmitInstance(callCtx, &scheddpb.AdmitInstanceRequest{
 				AppId:             appID,
+				DeploymentId:      deploymentID,
 				Scope:             scope,
 				Trigger:           trigger,
 				BurstContinuation: true,

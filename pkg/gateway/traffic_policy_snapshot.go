@@ -163,7 +163,7 @@ func freezeTrafficApp(ctx context.Context, app App) (App, string, error) {
 }
 
 func (h *Handler) pinAppTrafficPolicy(w http.ResponseWriter, r *http.Request, app *App) bool {
-	if _, productionSnapshot := h.edgeRules.(EdgePolicySnapshotter); !productionSnapshot {
+	if _, productionSnapshot := h.edgeRules.(EdgePolicySnapshotter); !productionSnapshot && h.publicRoutingPolicy == nil {
 		return false
 	}
 	if err := ValidatePinnedHostPolicies(r.Context(), app.AccountID); err != nil {

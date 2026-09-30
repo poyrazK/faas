@@ -173,7 +173,14 @@ func (h *Handler) startCacheRefresh(r *http.Request, app App, rule *EdgeRuleCach
 		_, _, _ = h.cacheRefresh.Do(key.String(), func() (any, error) {
 			ctx, cancel := context.WithTimeout(ctx, time.Duration(api.WakeQueueTTLSeconds)*time.Second)
 			defer cancel()
-			if h.backend.HealthyCount(app.ID) == 0 {
+			if routing, pinned := publicRoutingSnapshot(ctx); pinned {
+				if !pickPublicDeployment(h.backend, app.ID, routing.SelectedDeploymentID, "").OK {
+					maximum := h.publicRoutingWakeMaximum(app, routing)
+					if _, _, _, err := h.wakePublicDeployment(ctx, app, routing.SelectedDeploymentID, routing.Scope, sched.TriggerGateway, maximum); err != nil {
+						return nil, err
+					}
+				}
+			} else if h.backend.HealthyCount(app.ID) == 0 {
 				limits, _ := api.LimitsFor(app.Plan)
 				if _, _, _, err := h.ensureCapacity(ctx, app.ID, app.AccountID, app.Scope, limits.MaxConcurrency, app.Plan, app.AutoscaleTargetRPS, sched.TriggerGateway, concurrencyConfigForApp(app)); err != nil {
 					return nil, err
@@ -189,11 +196,17 @@ func (h *Handler) refreshCacheFromWarmTarget(ctx context.Context, r *http.Reques
 	if h == nil || h.backend == nil || h.responseCache == nil || rule == nil {
 		return
 	}
-	pick := h.backend.Pick(app.ID)
-	if versionKey, outcome := versionAffinityKeyFromRequest(r); outcome == versionAffinityKeyValid {
+	var pick PickResult
+	if routing, pinned := publicRoutingSnapshot(ctx); pinned {
+		pick = pickPublicDeployment(h.backend, app.ID, routing.SelectedDeploymentID, "")
+	} else if versionKey, outcome := versionAffinityKeyFromRequest(r); outcome == versionAffinityKeyValid {
 		if picker, ok := h.backend.(versionAffinityPicker); ok {
 			pick = picker.PickForVersionKey(app.ID, versionKey, "")
+		} else {
+			pick = h.backend.Pick(app.ID)
 		}
+	} else {
+		pick = h.backend.Pick(app.ID)
 	}
 	// Never cache a sibling deployment's fallback response under the selected
 	// cohort. The foreground path can wake the exact cold bucket; a detached
@@ -208,6 +221,9 @@ func (h *Handler) refreshCacheFromWarmTarget(ctx context.Context, r *http.Reques
 		return
 	}
 	target := pick.Target
+	if key.DeploymentID != "" && key.DeploymentID != target.DeploymentID {
+		return
+	}
 	base := httptest.NewRecorder()
 	rec := &statusRecorder{ResponseWriter: base, status: http.StatusOK}
 	cw := newCacheWriter(rec, rec, rule, ResponseCachePerEntryMaxBytes)

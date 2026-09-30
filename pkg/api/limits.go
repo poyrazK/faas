@@ -7277,9 +7277,11 @@ const (
 	// TrafficServicePolicyReadTimeout bounds the complete read-only discovery
 	// and authorization snapshot; no transaction is retained during wake.
 	TrafficServicePolicyReadTimeout = 250 * time.Millisecond
+	TrafficPublicRoutingReadTimeout = 250 * time.Millisecond
 	// Every positive traffic share consumes at least one percentage point.
 	// Bound a verified routing roster even if corrupted rows exceed that sum.
 	TrafficPolicyMaxDeployments = 100
+	TrafficPolicyMaxWeight      = 100
 
 	// AppErrorsDedupeWindowSeconds (ADR-096) is the platform-wide
 	// dedupe window for the IncrementAppError INSERT. NOT a

@@ -899,11 +899,12 @@ type warmEnsurer interface {
 // Handler is gatewayd-internal's HTTP entrypoint: route → rate-limit → (wake-block if
 // parked) → proxy (spec §4.1, §2). It is the only public listener on the box.
 type Handler struct {
-	backend        Backend
-	declaredRoutes DeclaredRouteMatcher
-	limiter        *Limiter
-	preAuthLimiter *preAuthSourceLimiter
-	preAuthCentral CentralBackend
+	publicRoutingPolicy PublicRoutingPinner
+	backend             Backend
+	declaredRoutes      DeclaredRouteMatcher
+	limiter             *Limiter
+	preAuthLimiter      *preAuthSourceLimiter
+	preAuthCentral      CentralBackend
 	// routeLimiter is the per-rule token-bucket throttle (ADR-091
 	// D20.5 amendment, issue #881). Same underlying *Limiter type as
 	// limiter + accountLimiter but constructed with NewLimiterWithLRU
@@ -5954,12 +5955,12 @@ haveApp:
 		h.metrics.ObserveVersionAffinityKey(versionAffinitySurfacePublic, versionKeyOutcome)
 	}
 	versionDeploymentID := ""
-	if !deploymentSmoke {
+	if !deploymentSmoke && h.publicRoutingPolicy == nil {
 		versionDeploymentID = versionAffinityDeploymentForRequest(h.backend, app.ID, r)
 		if versionDeploymentID != "" {
 			r = r.WithContext(withVersionAffinityDeployment(r.Context(), versionDeploymentID))
 		}
-	} else {
+	} else if deploymentSmoke {
 		// Authenticated smoke traffic is explicitly pinned by deployment id;
 		// a customer rollout key must not participate in its picker retries.
 		versionKey = ""
@@ -6179,6 +6180,20 @@ haveApp:
 	if !deploymentSmoke {
 		asyncRule = h.matchAsyncRoute(r, sidecarName)
 	}
+	if h.pinPublicRoutingPolicy(w, r, app, publicRoutingInputs(r, app, versionKey, smokeDeploymentID, asyncRule != nil)) {
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
+	}
+	if routing, ok := publicRoutingSnapshot(r.Context()); ok {
+		versionDeploymentID = routing.SelectedDeploymentID
+		if versionDeploymentID != "" {
+			r = r.WithContext(withVersionAffinityDeployment(r.Context(), versionDeploymentID))
+		}
+		rec.trafficPolicyRevision = TrafficPolicyRevision(r.Context())
+		requestSpan.SetAttributes(attribute.String("gregale.traffic.policy_revision", rec.trafficPolicyRevision),
+			attribute.String("gregale.traffic.selected_deployment_id", routing.SelectedDeploymentID),
+			attribute.String("gregale.traffic.deployment_selection", routing.SelectionReason))
+	}
 	if !deploymentSmoke {
 		_, revisionPresent := r.Header[http.CanonicalHeaderKey(api.RevisionHeader)]
 		_, releasePresent := r.Header[http.CanonicalHeaderKey(api.ReleaseHeader)]
@@ -6246,13 +6261,13 @@ haveApp:
 				return
 			}
 			if app.PinnedDeploymentID == "" && !app.IsPreview {
-				resolver, ok := h.backend.(projectReleaseResolver)
-				if !ok {
+				_, ok := h.backend.(projectReleaseResolver)
+				if !ok && h.publicRoutingPolicy == nil {
 					api.WriteProblem(w, api.ErrCapacity("project release resolution is unavailable"))
 					return
 				}
 				var releaseErr error
-				projectReleaseID, projectReleaseDeploymentID, releaseErr = resolver.ResolveProjectRelease(r.Context(), app.ID, projectReleaseScope, requested)
+				projectReleaseID, projectReleaseDeploymentID, releaseErr = h.resolvePublicProjectRelease(r.Context(), app.ID, projectReleaseScope, requested)
 				if releaseErr != nil {
 					status := http.StatusServiceUnavailable
 					if errors.Is(releaseErr, ErrReleaseGone) {
@@ -6291,13 +6306,13 @@ haveApp:
 					"Revision pin unavailable", "this app or hostname does not permit revision pins"))
 				return
 			}
-			resolver, ok := h.backend.(revisionPinResolver)
-			if !ok {
+			_, ok := h.backend.(revisionPinResolver)
+			if !ok && h.publicRoutingPolicy == nil {
 				api.WriteProblem(w, api.ErrCapacity("revision pin validation is unavailable"))
 				return
 			}
 			clientRevisionID = parsed.String()
-			valid, resolveErr := resolver.ResolveRevisionPin(r.Context(), app.ID, projectReleaseScope, clientRevisionID)
+			valid, resolveErr := h.resolvePublicRevisionPin(r.Context(), app.ID, projectReleaseScope, clientRevisionID)
 			if resolveErr != nil {
 				api.WriteProblem(w, api.ErrCapacity("revision pin validation failed"))
 				return
@@ -6504,17 +6519,21 @@ haveApp:
 		exactUnavailableTitle = "Project release unavailable"
 		exactUnavailableDetail = "the selected release member has no routable target"
 	}
+	if routing, ok := publicRoutingSnapshot(r.Context()); ok && exactDeploymentID == "" {
+		exactDeploymentID, exactDeploymentScope, exactDeploymentTrigger = routing.SelectedDeploymentID, routing.Scope, sched.TriggerGateway
+		exactUnavailableTitle, exactUnavailableDetail = "Traffic policy deployment unavailable", "the admitted deployment has no routable target"
+	}
 	exactDeployment := exactDeploymentID != ""
 	var pick PickResult
 	if exactDeployment {
-		picker, ok := h.backend.(deploymentTargetPicker)
+		_, ok := h.backend.(deploymentTargetPicker)
 		if !ok {
 			api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
 				exactUnavailableTitle, "the gateway cannot select a deployment directly"))
 			h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 			return
 		}
-		pick = picker.PickForDeployment(app.ID, exactDeploymentID)
+		pick = pickPublicDeployment(h.backend, app.ID, exactDeploymentID, preferredInstanceID)
 		if !pick.OK && deploymentSmoke {
 			if resolver, ok := h.backend.(deploymentSmokeTargetResolver); ok {
 				target, found, resolveErr := resolver.ResolveDeploymentSmokeTarget(r.Context(), app.ID, smokeDeploymentID)
@@ -6535,10 +6554,37 @@ haveApp:
 			// instance; schedd remains authoritative for the bounded rollout
 			// overlap and node RAM/vCPU limits.
 			maxInstances := effectiveAppConcurrencyLimit(app, limits.MaxConcurrency)
-			admittedWakeID, method, atCapacity, admitErr := h.backend.Admit(
-				r.Context(), app.ID, exactDeploymentID, exactDeploymentScope,
-				exactDeploymentTrigger, maxInstances+api.RolloutConcurrencyGrant,
-			)
+			var admittedWakeID string
+			var method WakeMethod
+			var atCapacity bool
+			var admitErr error
+			if routing, pinned := publicRoutingSnapshot(r.Context()); pinned {
+				platformWakeStart = time.Now()
+				platformWakeTrace = newWakePhaseTrace(platformWakeStart)
+				wakeCtx := withWakePhaseTrace(r.Context(), platformWakeTrace)
+				if acceptsWakePage(r) {
+					var cancel context.CancelFunc
+					wakeCtx, cancel = context.WithTimeout(wakeCtx, time.Duration(api.WakePageAfterMs)*time.Millisecond)
+					defer cancel()
+				}
+				maximum := h.publicRoutingWakeMaximum(app, routing)
+				wakeCtx, wakeSpan := pkgtrace.StartSpan(wakeCtx, "gateway.wake",
+					attribute.String("app_id", app.ID), attribute.String("app_plan", string(app.Plan)),
+					attribute.String("deployment_id", exactDeploymentID), attribute.Int("desired_instances", maximum))
+				admittedWakeID, method, atCapacity, admitErr = h.wakePublicDeployment(wakeCtx, app, exactDeploymentID, exactDeploymentScope, exactDeploymentTrigger, maximum)
+				wakeSpan.SetAttributes(attribute.Bool("cold", admittedWakeID != ""), attribute.String("wake_id", admittedWakeID), attribute.String("wake_method", method.String()))
+				if admitErr != nil {
+					wakeSpan.RecordError(admitErr)
+				}
+				wakeSpan.End()
+				r = r.WithContext(withWakePhaseTrace(r.Context(), platformWakeTrace))
+				if admitErr != nil {
+					h.writePublicRoutingWakeError(w, r, app, rec, errors.Is(wakeCtx.Err(), context.DeadlineExceeded), admitErr)
+					return
+				}
+			} else {
+				admittedWakeID, method, atCapacity, admitErr = h.backend.Admit(r.Context(), app.ID, exactDeploymentID, exactDeploymentScope, exactDeploymentTrigger, maxInstances+api.RolloutConcurrencyGrant)
+			}
 			if admitErr != nil || atCapacity {
 				if admitErr == nil {
 					admitErr = api.ErrAppConcurrencyReachedAt(limits, maxInstances, backendCapacityCount(h.backend, app.ID))
@@ -6548,7 +6594,7 @@ haveApp:
 				return
 			}
 			cold, wakeID, wakeMethod = true, admittedWakeID, method
-			pick = picker.PickForDeployment(app.ID, exactDeploymentID)
+			pick = pickPublicDeployment(h.backend, app.ID, exactDeploymentID, preferredInstanceID)
 			if !pick.OK {
 				api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
 					exactUnavailableTitle, "the requested deployment became unavailable after admission"))
@@ -6686,19 +6732,21 @@ haveApp:
 			return
 		}
 	}
-	// The first ordinary request above guarantees one routable target.
-	// Reconcile pressure accumulated by that app-level burst. Exact-deployment
-	// URLs deliberately skip this step: burst admission uses the weighted app
-	// picker and could wake or select a sibling deployment instead of the
-	// immutable revision named by the hostname.
+	// Reconcile pressure accumulated by the app-level burst. Public snapshots
+	// use deployment-scoped admissions; explicit pin URLs skip expansion.
 	perVMConcurrency := effectiveVMConcurrencyLimit(app, limits.ConcurrencyPerVMBound)
 	waitedForBurst := false
-	if !exactDeployment {
+	routing, hasPublicRouting := publicRoutingSnapshot(r.Context())
+	if !exactDeployment || hasPublicRouting {
 		//nolint:contextcheck // request ctx at handler boundary.
 		burstWaitCtx, cancelBurstWait := context.WithTimeout(r.Context(), ConcurrencyAdmissionPolicyForApp(app.Plan, app.ConcurrencyOverflow, app.MaxQueueWaitMS, app.MaxQueueDepth).MaxWait)
 		defer cancelBurstWait()
 		var burstErr error
-		waitedForBurst, burstErr = h.maybeBurstCapacity(burstWaitCtx, app, limits.MaxConcurrency, perVMConcurrency)
+		if hasPublicRouting {
+			waitedForBurst, burstErr = h.maybePublicRoutingBurst(burstWaitCtx, app, limits.MaxConcurrency, perVMConcurrency, routing)
+		} else {
+			waitedForBurst, burstErr = h.maybeBurstCapacity(burstWaitCtx, app, limits.MaxConcurrency, perVMConcurrency)
+		}
 		if burstErr != nil {
 			// A burst that cannot become routable within its admission policy is
 			// a controlled timeout, not an upstream 502. Client disconnects

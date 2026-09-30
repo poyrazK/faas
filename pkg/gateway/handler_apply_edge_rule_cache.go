@@ -94,9 +94,9 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 		h.metricsIncCacheOutcome(app.ID, "bypass_authed")
 		return false, nil
 	}
-	// Keyed rollout traffic is partitioned by the deployment cohort before
-	// the wake/picker path. Unkeyed traffic retains the existing empty
-	// deployment dimension and its cursor-based behavior.
+	// Snapshot routing partitions every request by its admitted deployment
+	// before cache access. Legacy adapters without a routing snapshot retain
+	// the empty dimension for requests that have no version pin.
 	key := CacheKey{
 		AppID:          app.ID,
 		DeploymentID:   versionAffinityDeploymentForRequest(h.backend, app.ID, r),
