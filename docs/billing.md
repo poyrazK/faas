@@ -68,6 +68,10 @@ UTC RFC 3339 with a `Z` suffix; amounts are exact decimal strings, never floats.
 | `InvoiceIssueDate`, `PaymentDueDate`, `PaymentTerms` | Empty because those provider fields are not stored. `PaymentTerms` is a required non-null field in FOCUS: this is an explicit conformance gap. |
 
 Zero-cost issued invoices retain one non-tax row; zero tax rows are omitted.
+`Usage` is the projection's non-tax aggregate classification. Provider line-item
+classifications are not stored, so the export cannot distinguish a pure plan
+purchase from a mix of usage, purchases, and credits. This semantic gap is also
+declared in metadata; strict charge categorization needs provider line items.
 Malformed currencies, unsupported currency precision (for example JPY or KWD),
 inconsistent amounts, missing identifiers, and unrepresentable dates fail the
 entire download with HTTP 409. No amounts or timestamps are guessed.

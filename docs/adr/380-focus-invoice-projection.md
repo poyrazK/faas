@@ -27,8 +27,10 @@ do not modify the original invoice total a second time. Provider document IDs
 identify original invoices; detail IDs identify local aggregate components.
 Draft and void invoices are excluded with metadata counts. Unknown statuses,
 unsupported minor-unit precision, malformed source data, and invalid dates
-fail the entire artifact. A `Usage` category describes mixed non-tax aggregates
-under the Invoice Detail charge-category rule, not a metered usage assertion.
+fail the entire artifact. `Usage` is the projection's default non-tax aggregate
+classification, not a metered usage assertion. Provider classifications are
+unavailable, so a pure plan purchase cannot be distinguished from mixed
+usage/purchase/credit charges. Metadata declares that semantic conformance gap.
 
 The export publishes all 18 mandatory columns. PaymentTerms is empty and
 explicitly declared as a non-null conformance gap. Nullable issue/due dates are

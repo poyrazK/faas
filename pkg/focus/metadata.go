@@ -86,6 +86,7 @@ func buildMetadata(accountID string, month, generatedAt time.Time, csv []byte, c
 			Limitations: []string{
 				"Payment terms are not persisted; PaymentTerms is empty and full FOCUS conformance is not claimed.",
 				"Invoice-level non-tax and tax aggregates, not provider line-item or per-resource cost allocation.",
+				"Non-tax ChargeCategory defaults to Usage for the aggregate projection; provider purchase/usage/credit classifications are unavailable.",
 				"Issue and due dates are not persisted; InvoiceIssueDate and PaymentDueDate are empty.",
 				"Conditional payment-currency and purchase-order data are unavailable; those columns are omitted.",
 				"Refunds and credit notes are not separate invoice documents in this projection; amounts remain original invoice totals.",
