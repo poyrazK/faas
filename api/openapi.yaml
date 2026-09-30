@@ -4771,7 +4771,7 @@ paths:
       tags: [platform-tenants]
       operationId: createPlatformTenantStatement
       summary: Snapshot tenant-attributed usage across apps or create a late-usage adjustment.
-      description: For each usage minute, an effective tenant-wide rate card takes precedence over the app's rate card; before the tenant's first effective card, app pricing remains the fallback. A draft replays unchanged. After finalization, new units create the next revision; no new units replay the latest revision. Mixed effective currencies are rejected.
+      description: For each usage minute, an effective tenant-wide rate card takes precedence over the app's rate card; before the tenant's first effective card, app pricing remains the fallback. Public invoice lines are grouped by app, attributed source, and effective price source, while exact minute coverage remains private for additive revisions. A draft replays unchanged. After finalization, new units create the next revision; no new units replay the latest revision. Mixed effective currencies are rejected.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -27070,15 +27070,16 @@ components:
           items: { $ref: '#/components/schemas/PlatformTenantActivityItem' }
 
     PlatformTenantStatementLineResponse:
-      description: Immutable tenant-attributed UTC minute priced with either an app rate-card version or a tenant-wide rate-card version. Exactly one of consumer_id, surface_id, or jwt_authorization_rule_id is present.
+      description: Compact immutable invoice line grouped by app, tenant-attributed consumer, surface, or JWT rule, and effective price source. window_start is the earliest included UTC minute; window_end is the exclusive end after the latest included minute and may span gaps. Exact minute coverage remains internal for additive revisions. Exactly one of consumer_id, surface_id, or jwt_authorization_rule_id is present.
       type: object
-      required: [app_id, window_start, billable_units, amount_millicents]
+      required: [app_id, window_start, window_end, billable_units, amount_millicents]
       properties:
         app_id: { type: string, format: uuid }
         consumer_id: { type: string, format: uuid }
         surface_id: { type: string, format: uuid }
         jwt_authorization_rule_id: { type: string, format: uuid }
         window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time, description: Exclusive end after the latest included UTC minute; gaps inside the interval may have no usage. }
         billable_units: { type: integer, format: int64, minimum: 0 }
         rate_card_id: { type: string, format: uuid }
         platform_tenant_rate_card_id: { type: string, format: uuid, description: Tenant-wide price source; mutually exclusive with rate_card_id. }
@@ -27087,7 +27088,7 @@ components:
         amount_millicents: { type: integer, format: int64, minimum: 0 }
 
     PlatformTenantStatementResponse:
-      description: One immutable initial or additive adjustment revision for a cross-app customer period.
+      description: One immutable initial or additive adjustment revision for a cross-app customer period, with compact invoice lines and private minute-level adjustment coverage.
       type: object
       required: [id, tenant_id, period_start, period_end, revision, status, billable_units, unpriced_units, amount_millicents, lines, as_of, created_at]
       properties:

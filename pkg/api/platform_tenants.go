@@ -497,6 +497,7 @@ type PlatformTenantStatementLineResponse struct {
 	SurfaceID                string    `json:"surface_id,omitempty"`
 	JWTAuthorizationRuleID   string    `json:"jwt_authorization_rule_id,omitempty"`
 	WindowStart              time.Time `json:"window_start"`
+	WindowEnd                time.Time `json:"window_end"`
 	BillableUnits            int64     `json:"billable_units"`
 	RateCardID               string    `json:"rate_card_id,omitempty"`
 	PlatformTenantRateCardID string    `json:"platform_tenant_rate_card_id,omitempty"`
