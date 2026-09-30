@@ -1056,7 +1056,7 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 		b.stale.Delete(host)
 		return App{}, false
 	}
-	if app.DynamicRoute || app.PinnedDeploymentID != "" {
+	if app.DynamicRoute || app.PinnedDeploymentID != "" || app.EnvironmentNotReady {
 		// Exact routes carry deployment-specific settings. Caching that App
 		// by app ID would replace production's settings with a stage's.
 		return app, true

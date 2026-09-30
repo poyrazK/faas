@@ -23,12 +23,32 @@ func copyProjectEnvironmentWorkloadSpecs(ctx context.Context, tx pgx.Tx, clone P
 	if err != nil {
 		return mapErr(err)
 	}
+	captures := map[string]projectCloneWorkloadRecord{}
+	if clone.CloneOperationID != "" {
+		records, err := cloneWorkloadRecordsDB(ctx, tx, clone.AccountID, clone.ProjectID, clone.CloneOperationID)
+		if err != nil {
+			return err
+		}
+		if len(records) != len(apps) {
+			return ErrConflict
+		}
+		for _, record := range records {
+			captures[record.AppID] = record
+		}
+	}
 	for _, app := range apps {
 		source, err := scanWorkloadSpec(tx.QueryRow(ctx, workloadSpecSelect+`
    join project_environment_workload_heads h on h.spec_id = s.id
    where e.account_id = $1 and e.project_id = $2 and e.slug = $3 and s.app_id = $4`,
 			clone.AccountID, clone.ProjectID, clone.SourceSlug, app.ID))
 		settings := source.Settings
+		if clone.CloneOperationID != "" {
+			capture, ok := captures[app.ID]
+			if !ok {
+				return ErrConflict
+			}
+			settings, err = cloneWorkloadSettings(capture.snapshot.Settings)
+		}
 		if errors.Is(err, ErrNotFound) {
 			settings, err = WorkloadSettingsFromApp(app)
 			if err != nil {

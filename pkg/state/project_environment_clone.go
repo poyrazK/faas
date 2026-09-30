@@ -172,9 +172,21 @@ func (m *MemStore) CloneProjectEnvironment(_ context.Context, clone ProjectEnvir
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
 	}
 	settings := make(map[string]ProjectEnvironmentWorkloadSettings, len(apps))
+	if clone.CloneOperationID != "" && len(m.projectEnvironmentCloneWorkloads[clone.CloneOperationID]) != len(apps) {
+		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrConflict
+	}
 	for appID := range apps {
 		var captured ProjectEnvironmentWorkloadSettings
-		if specID := m.projectEnvironmentWorkloadHeads[workloadSpecHeadKey(source.ID, appID)]; specID != "" {
+		if clone.CloneOperationID != "" {
+			record, ok := m.projectEnvironmentCloneWorkloads[clone.CloneOperationID][appID]
+			if !ok {
+				return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrConflict
+			}
+			record, err = copyCloneWorkloadRecord(record)
+			if err == nil {
+				captured, err = cloneWorkloadSettings(record.snapshot.Settings)
+			}
+		} else if specID := m.projectEnvironmentWorkloadHeads[workloadSpecHeadKey(source.ID, appID)]; specID != "" {
 			spec := m.projectEnvironmentWorkloadSpecs[specID]
 			hash, hashErr := WorkloadSettingsHash(spec.Settings)
 			if hashErr != nil || hash != spec.Hash {

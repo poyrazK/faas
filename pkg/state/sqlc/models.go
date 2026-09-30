@@ -1957,6 +1957,17 @@ type ProjectEnvironmentCloneOperation struct {
 	ErrorCode          string
 	CreatedAt          pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
+	TargetReleaseSetID pgtype.UUID
+}
+
+type ProjectEnvironmentCloneWorkload struct {
+	OperationID        pgtype.UUID
+	AppID              pgtype.UUID
+	SourceDeploymentID pgtype.UUID
+	SourceHash         string
+	Snapshot           []byte
+	TargetDeploymentID pgtype.UUID
+	TargetSettingsHash string
 }
 
 type ProjectEnvironmentQualification struct {
@@ -1972,6 +1983,38 @@ type ProjectEnvironmentQualification struct {
 	Checks               []byte
 	CreatedAt            pgtype.Timestamptz
 	ExpiresAt            pgtype.Timestamptz
+}
+
+type ProjectEnvironmentRoutePolicy struct {
+	AccountID               pgtype.UUID
+	ProjectID               pgtype.UUID
+	AppID                   pgtype.UUID
+	EnvironmentSlug         string
+	OnlyAllowDeclaredRoutes bool
+	DeclaredRoutes          []byte
+	CreatedAt               pgtype.Timestamptz
+	UpdatedAt               pgtype.Timestamptz
+}
+
+type ProjectEnvironmentWorkloadDeploymentSpec struct {
+	DeploymentID pgtype.UUID
+	SpecID       pgtype.UUID
+}
+
+type ProjectEnvironmentWorkloadHead struct {
+	EnvironmentID pgtype.UUID
+	AppID         pgtype.UUID
+	SpecID        pgtype.UUID
+}
+
+type ProjectEnvironmentWorkloadSpec struct {
+	ID            pgtype.UUID
+	EnvironmentID pgtype.UUID
+	AppID         pgtype.UUID
+	Revision      int64
+	ConfigHash    string
+	Settings      []byte
+	CreatedAt     pgtype.Timestamptz
 }
 
 type ProjectReleaseMember struct {

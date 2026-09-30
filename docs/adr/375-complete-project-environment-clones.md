@@ -130,7 +130,7 @@ and ordinary App edits advance an existing production desired head.
 
 Remaining work includes a complete source inventory and consistent capture
 barrier, connecting the PostgreSQL and object copy workers to one durable clone,
-cloning and publishing the active deployment graph, environment ownership of
+connecting captured deployments to the durable clone worker, environment ownership of
 the remaining policies/triggers/integrations, scope-specific capacity and
 reconciliation, source-manifest/reconcile writes, and qualification plus atomic
 promotion/rollback of the complete effective state. Production ingress still
@@ -330,3 +330,39 @@ or compensation. Shared-resource requests cannot use the full-clone owner path.
 Focused MemStore and PostgreSQL contracts cover stale workers, unauthorized
 creation, owner materialization and idempotent replay, plus concurrent creation
 versus reservation races. These store contracts do not establish VM acceptance.
+
+### Captured workload artifacts and atomic publication (2026-09-30)
+
+The operation can now persist an immutable workload roster, selected source
+artifacts, deployed settings, sidecar layers, and main/sidecar secret reload
+opt-ins before provider copying. Capture retries adopt the stored revision;
+later desired edits or source rollouts do not replace it. Configuration
+materialization for an owning operation uses these captured deployed settings.
+Nested JSON numbers retain their exact representation through persistence.
+Source variable/secret and project-policy capture remain separate work.
+
+Target deployment creation atomically attaches a fresh, zero-traffic deployment,
+its configuration pin, cold-bootable rootfs and sidecar artifacts to the capture.
+A retry reuses the original target. An internal API worker step submits durable
+prime notifications to schedd and waits for every target to become live; it does
+not rebuild source artifacts or copy production memory snapshots. This step is
+not yet connected to a claim loop or public full-create API/CLI.
+
+Publication verifies every workload receipt against its captured source and
+attached target, live state, unchanged artifacts, desired head and deployment
+pin, in addition to verified object-copy receipts. It atomically publishes the
+target release graph and completes the operation. Generic operation updates
+cannot advertise workloads ready without that graph. Stable environment hosts
+return 503 during preparation, including before an edge route substitution;
+preparation state cannot contaminate the shared production app cache. Exact
+deployment preview routes remain available for readiness checks.
+
+Focused MemStore and real PostgreSQL contracts verify source rollout isolation,
+retry identities, sidecars/reload signals, pending/altered target rejection,
+configuration races, atomic publication and replay. API handoff/retry and gateway
+routing, cache and readiness contracts pass locally. sqlc regeneration is
+consistent. The state contracts run through the existing temporary focused
+runner because the full state test binary exceeded local disk capacity.
+Native KVM acceptance remains outstanding. Full resource coverage, coordinated
+data capture, artifact retention during long captures, physical setting remaps,
+per-environment capacity and the one-command integration are still required.

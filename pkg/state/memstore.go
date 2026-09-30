@@ -810,6 +810,7 @@ type MemStore struct {
 	projectEnvironmentWorkloadDeploymentSpecs map[string]string
 	projectEnvironmentCleanupJobs             map[string]ProjectEnvironmentCleanupJob
 	projectEnvironmentCloneOperations         map[string]ProjectEnvironmentCloneOperation
+	projectEnvironmentCloneWorkloads          map[string]map[string]projectCloneWorkloadRecord
 	projectEnvironmentCloneObjectManifests    map[string]ProjectEnvironmentCloneObjectManifest
 	projectEnvironmentApprovals               map[string]ProjectEnvironmentApproval
 	projectEnvironmentConfigs                 map[string][]ProjectEnvironmentConfig
@@ -1316,6 +1317,7 @@ func NewMemStore() *MemStore {
 		activeProjectReleaseSets:                  map[string]string{},
 		projectEnvironmentCleanupJobs:             map[string]ProjectEnvironmentCleanupJob{},
 		projectEnvironmentCloneOperations:         map[string]ProjectEnvironmentCloneOperation{},
+		projectEnvironmentCloneWorkloads:          map[string]map[string]projectCloneWorkloadRecord{},
 		projectEnvironmentCloneObjectManifests:    map[string]ProjectEnvironmentCloneObjectManifest{},
 		projectEnvironmentApprovals:               map[string]ProjectEnvironmentApproval{},
 		projectEnvironmentConfigs:                 map[string][]ProjectEnvironmentConfig{},
@@ -6503,7 +6505,7 @@ func (m *MemStore) CreateDeploymentWithActivity(_ context.Context, d Deployment,
 	return m.createDeployment(d, &activity, nil)
 }
 
-func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity, promotionInput *ProjectEnvironmentPromotionWorkloadSpecInput) (Deployment, int64, error) {
+func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity, promotionInput *ProjectEnvironmentPromotionWorkloadSpecInput, cloneInputs ...*projectEnvironmentCloneDeploymentInput) (Deployment, int64, error) {
 	if err := validateDeploymentReleaseCommand(d.ReleaseCommand, d.ReleaseCommandShell); err != nil {
 		return Deployment{}, 0, err
 	}
@@ -6512,6 +6514,20 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity, promoti
 	app, ok := m.apps[d.AppID]
 	if !ok || app.Status == AppDeleted {
 		return Deployment{}, 0, ErrNotFound
+	}
+	var cloneRecord projectCloneWorkloadRecord
+	if len(cloneInputs) > 0 {
+		if len(cloneInputs) != 1 || cloneInputs[0] == nil || promotionInput != nil || activity != nil {
+			return Deployment{}, 0, ErrInvalidArgument
+		}
+		var err error
+		d, cloneRecord, err = m.prepareCloneDeploymentLocked(*cloneInputs[0])
+		if err != nil {
+			return Deployment{}, 0, err
+		}
+		if cloneRecord.TargetDeploymentID != "" {
+			return d, 0, nil
+		}
 	}
 	var prepared ProjectEnvironmentWorkloadSpec
 	var capture ProjectEnvironmentPromotionWorkloadSpec
@@ -6658,6 +6674,9 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity, promoti
 		d.Revision = m.nextDeploymentRevisionLocked(d.AppID)
 	}
 	m.deployments[d.ID] = d
+	if len(cloneInputs) > 0 {
+		m.attachCloneDeploymentLocked(*cloneInputs[0], cloneRecord, d)
+	}
 	if app.ProjectID != "" {
 		if env, err := m.workloadSpecEnvironmentLocked(app.AccountID, app.ProjectID, workloadEnvironmentSlug(d.Scope), app.ID); err == nil {
 			if specID := m.projectEnvironmentWorkloadHeads[workloadSpecHeadKey(env.ID, app.ID)]; specID != "" {

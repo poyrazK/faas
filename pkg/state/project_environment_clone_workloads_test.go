@@ -1,0 +1,265 @@
+package state_test
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
+)
+
+type cloneWorkloadTestStore interface {
+	cloneReservationStore
+	state.ProjectEnvironmentCloneWorkloadStore
+	state.ProjectEnvironmentWorkloadSpecStore
+	state.ProjectEnvironmentClonePublicationStore
+	state.ProjectPromotionDeploymentStore
+	ProjectEnvironmentWorkloadSpecForDeployment(context.Context, string, string, string) (state.ProjectEnvironmentWorkloadSpec, error)
+	DeploymentSidecarSecretReloadSignal(context.Context, string, string) (string, error)
+}
+
+// ADR-375: a clone reuses the selected immutable artifacts and actual deployed
+// settings. It must survive a source head edit and a later production rollout.
+func TestMemProjectEnvironmentCloneCapturesAndPreparesWorkloads(t *testing.T) {
+	projectEnvironmentCloneCapturesAndPreparesWorkloads(t, state.NewMemStore())
+}
+
+func projectEnvironmentCloneCapturesAndPreparesWorkloads(t *testing.T, s cloneWorkloadTestStore) {
+	t.Helper()
+	ctx := context.Background()
+	a, err := s.CreateAccount(ctx, "workload-clone@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := s.CreateProject(ctx, state.Project{AccountID: a.ID, Slug: "captured"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var apps []state.App
+	var sources []state.Deployment
+	for i, scope := range []string{"production", "default"} {
+		app, err := s.CreateApp(ctx, state.App{AccountID: a.ID, ProjectID: p.ID, Slug: fmt.Sprintf("service-%d", i), WorkloadName: fmt.Sprintf("service-%d", i), Type: state.AppTypeApp,
+			RAMMB: 256, MaxConcurrency: 1, Manifest: state.AppManifest{RevisionPinTTLSeconds: 1800}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		settings, err := state.WorkloadSettingsFromApp(app)
+		if err != nil {
+			t.Fatal(err)
+		}
+		settings.RAMMB, settings.StartCommand = 256, "serve captured"
+		settings.RetryPolicyJSON = json.RawMessage(`{"max_attempts":2,"backoff_multiplier":1e0}`)
+		settings.PublicAuthBasicSealed = []byte("sealed-basic")
+		if i == 0 {
+			if _, err := s.PutProjectEnvironmentWorkloadSpec(ctx, a.ID, p.ID, "production", app.ID, 0, settings); err != nil {
+				t.Fatal(err)
+			}
+		}
+		source, err := s.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: scope, Kind: state.DeploymentKindImage, ImageDigest: "sha256:captured",
+			OverrideEnv: json.RawMessage(`{"Z":"last","A":"first","EXACT":9007199254740993}`), OverridePort: 8080,
+			Sidecars: json.RawMessage(`[{"name":"metrics","type":"sidecar","image":"metrics@sha256:captured"}]`)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.SetDeploymentRootfs(ctx, source.ID, "/immutable/source.ext4", "layers/source.ext4", 4096); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.SetDeploymentSidecarLayer(ctx, state.DeploymentSidecarLayer{DeploymentID: source.ID, SidecarName: "metrics", StorageKey: "layers/metrics.ext4", Bytes: 2048, ContentDigest: "sha256:metrics"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.SetDeploymentSecretReloadSignal(ctx, source.ID, "SIGUSR1"); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.SetDeploymentSidecarSecretReloadSignal(ctx, source.ID, "metrics", "SIGHUP"); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.MarkDeploymentLive(ctx, source.ID); err != nil {
+			t.Fatal(err)
+		}
+		apps, sources = append(apps, app), append(sources, source)
+	}
+	op, err := s.CreateProjectEnvironmentCloneOperation(ctx, state.ProjectEnvironmentCloneOperation{AccountID: a.ID, ProjectID: p.ID,
+		SourceEnvironment: "production", TargetEnvironment: "stage", IdempotencyKey: "capture", SourceRevisionHash: strings.Repeat("a", 64)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	op, err = s.AdvanceProjectEnvironmentCloneOperation(ctx, a.ID, p.ID, op.ID, op.Status, state.CloneOperationCapturing, op.Revision, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	views, err := s.CaptureProjectEnvironmentCloneWorkloads(ctx, a.ID, p.ID, op.ID, op.Revision)
+	if err != nil || len(views) != 2 {
+		t.Fatalf("capture = %+v, %v", views, err)
+	}
+	byApp := map[string]state.ProjectEnvironmentCloneWorkload{}
+	for _, view := range views {
+		byApp[view.AppID] = view
+	}
+	for i, app := range apps {
+		if byApp[app.ID].SourceDeploymentID != sources[i].ID {
+			t.Fatalf("wrong artifact: %+v", byApp[app.ID])
+		}
+	}
+	// Edit the desired source without rebuilding; the deployed pin is truth.
+	current, err := s.ProjectEnvironmentWorkloadSpec(ctx, a.ID, p.ID, "production", apps[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current.Settings.RAMMB, current.Settings.StartCommand = 512, "serve newer"
+	if _, err := s.PutProjectEnvironmentWorkloadSpec(ctx, a.ID, p.ID, "production", apps[0].ID, current.Revision, current.Settings); err != nil {
+		t.Fatal(err)
+	}
+	newer, err := s.CreateDeployment(ctx, state.Deployment{AppID: apps[0].ID, Scope: "production", Kind: state.DeploymentKindImage, ImageDigest: "sha256:newer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetDeploymentRootfs(ctx, newer.ID, "/newer.ext4", "layers/newer.ext4", 4096); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkDeploymentLive(ctx, newer.ID); err != nil {
+		t.Fatal(err)
+	}
+	if replay, err := s.CaptureProjectEnvironmentCloneWorkloads(ctx, a.ID, p.ID, op.ID, op.Revision); err != nil || len(replay) != 2 || replay[0].SourceHash != views[0].SourceHash || replay[1].SourceHash != views[1].SourceHash {
+		t.Fatalf("recaptured changed source: %+v, %v", replay, err)
+	}
+	if _, err := s.CaptureProjectEnvironmentCloneWorkloads(ctx, a.ID, p.ID, op.ID, op.Revision-1); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("stale capture = %v", err)
+	}
+	resources := []state.ProjectEnvironmentCloneResource{{Kind: "source_revision", Name: "production", SourceVersion: op.SourceRevisionHash, Status: "ready"}}
+	for _, view := range views {
+		resources = append(resources, state.ProjectEnvironmentCloneResource{Kind: "workload", Name: view.WorkloadSlug, SourceID: view.SourceDeploymentID, SourceVersion: view.SourceHash, Status: "captured"})
+	}
+	op, err = s.AdvanceProjectEnvironmentCloneOperation(ctx, a.ID, p.ID, op.ID, op.Status, state.CloneOperationCopying, op.Revision, resources, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = s.CloneProjectEnvironment(ctx, state.ProjectEnvironmentClone{AccountID: a.ID, ProjectID: p.ID, SourceSlug: "production", TargetSlug: "stage", CloneOperationID: op.ID, CloneOperationRevision: op.Revision}, api.MustLimitsFor(a.Plan))
+	if err != nil {
+		t.Fatal(err)
+	}
+	targets := map[string]state.Deployment{}
+	for _, app := range apps {
+		spec, err := s.ProjectEnvironmentWorkloadSpec(ctx, a.ID, p.ID, "stage", app.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if spec.Settings.RAMMB != 256 || (app.ID == apps[0].ID && spec.Settings.StartCommand != "serve captured") {
+			t.Fatalf("copied desired source instead of capture: %+v", spec.Settings)
+		}
+		if _, err := s.CreateDeploymentForEnvironmentClone(ctx, a.ID, p.ID, op.ID, op.Revision-1, app.ID, spec.Hash); !errors.Is(err, state.ErrConflict) {
+			t.Fatalf("stale preparation = %v", err)
+		}
+		if _, err := s.CreateDeploymentForEnvironmentClone(ctx, a.ID, p.ID, op.ID, op.Revision, app.ID, strings.Repeat("f", 64)); !errors.Is(err, state.ErrConflict) {
+			t.Fatalf("wrong target settings = %v", err)
+		}
+		target, err := s.CreateDeploymentForEnvironmentClone(ctx, a.ID, p.ID, op.ID, op.Revision, app.ID, spec.Hash)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if target.ID == byApp[app.ID].SourceDeploymentID || target.ImageDigest != "sha256:captured" || target.RootfsKey != "layers/source.ext4" || target.Status != state.DeployPending ||
+			target.TrafficPercent != 0 || !target.TrafficPercentExplicit || target.SourcePath != "" || target.BuildID != "" || target.GitHubSourceRef != "" || target.CanaryTotalSteps != 0 {
+			t.Fatalf("target not isolated/captured/dark: %+v", target)
+		}
+		if !strings.Contains(string(target.OverrideEnv), "9007199254740993") {
+			t.Fatalf("numeric config changed: %s", target.OverrideEnv)
+		}
+		pin, err := s.ProjectEnvironmentWorkloadSpecForDeployment(ctx, a.ID, p.ID, target.ID)
+		if err != nil || pin.Hash != spec.Hash {
+			t.Fatalf("target pin = %+v, %v", pin, err)
+		}
+		layers, err := s.ListDeploymentSidecarLayers(ctx, target.ID)
+		if err != nil || len(layers) != 1 || layers[0].StorageKey != "layers/metrics.ext4" {
+			t.Fatalf("layers = %+v, %v", layers, err)
+		}
+		if signal, err := s.DeploymentSidecarSecretReloadSignal(ctx, target.ID, "metrics"); err != nil || signal != "SIGHUP" {
+			t.Fatalf("sidecar signal = %q, %v", signal, err)
+		}
+		if target.SecretReloadSignal != "SIGUSR1" || !target.SecretReloadSignalKnown {
+			t.Fatalf("main signal missing: %+v", target)
+		}
+		replay, err := s.CreateDeploymentForEnvironmentClone(ctx, a.ID, p.ID, op.ID, op.Revision, app.ID, spec.Hash)
+		if err != nil || replay.ID != target.ID {
+			t.Fatalf("duplicate preparation = %+v, %v", replay, err)
+		}
+		targets[app.ID] = target
+	}
+	for i := range resources {
+		for _, app := range apps {
+			if resources[i].Kind == "workload" && resources[i].Name == app.Slug {
+				resources[i].TargetID, resources[i].Status = targets[app.ID].ID, "ready"
+			}
+		}
+	}
+	if _, err := s.AdvanceProjectEnvironmentCloneOperation(ctx, a.ID, p.ID, op.ID, op.Status, state.CloneOperationPublishing, op.Revision, resources, ""); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("pending workloads published: %v", err)
+	}
+	for _, d := range targets {
+		if err := s.MarkDeploymentLiveDark(ctx, d.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	changed := targets[apps[0].ID]
+	if err := s.SetDeploymentRootfs(ctx, changed.ID, "/other.ext4", "layers/other.ext4", 4096); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AdvanceProjectEnvironmentCloneOperation(ctx, a.ID, p.ID, op.ID, op.Status, state.CloneOperationPublishing, op.Revision, resources, ""); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("altered artifact published: %v", err)
+	}
+	if err := s.SetDeploymentRootfs(ctx, changed.ID, "/immutable/source.ext4", "layers/source.ext4", 4096); err != nil {
+		t.Fatal(err)
+	}
+	op, err = s.AdvanceProjectEnvironmentCloneOperation(ctx, a.ID, p.ID, op.ID, op.Status, state.CloneOperationPublishing, op.Revision, resources, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AdvanceProjectEnvironmentCloneOperation(ctx, a.ID, p.ID, op.ID, op.Status, state.CloneOperationReady, op.Revision, resources, ""); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("ready without atomic graph publication: %v", err)
+	}
+	if _, err := s.PublishProjectEnvironmentCloneReleaseSet(ctx, a.ID, p.ID, op.ID, op.Revision-1, 1800); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("stale publication = %v", err)
+	}
+	// The final transaction rechecks head changes after the earlier proof.
+	head, err := s.ProjectEnvironmentWorkloadSpec(ctx, a.ID, p.ID, "stage", apps[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := head.Settings
+	head.Settings.RAMMB = 512
+	edited, err := s.PutProjectEnvironmentWorkloadSpec(ctx, a.ID, p.ID, "stage", apps[0].ID, head.Revision, head.Settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PublishProjectEnvironmentCloneReleaseSet(ctx, a.ID, p.ID, op.ID, op.Revision, 1800); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("edited head published: %v", err)
+	}
+	if _, err := s.PutProjectEnvironmentWorkloadSpec(ctx, a.ID, p.ID, "stage", apps[0].ID, edited.Revision, original); err != nil {
+		t.Fatal(err)
+	}
+	release, err := s.PublishProjectEnvironmentCloneReleaseSet(ctx, a.ID, p.ID, op.ID, op.Revision, 1800)
+	if err != nil || len(release.Members) != len(apps) || !release.Active {
+		t.Fatalf("publish = %+v, %v", release, err)
+	}
+	finished, err := s.ProjectEnvironmentCloneOperationByID(ctx, a.ID, p.ID, op.ID)
+	if err != nil || finished.Status != state.CloneOperationReady || finished.TargetReleaseSetID != release.ID || finished.Revision != op.Revision+1 {
+		t.Fatalf("non-atomic completion = %+v, %v", finished, err)
+	}
+	if replay, err := s.PublishProjectEnvironmentCloneReleaseSet(ctx, a.ID, p.ID, op.ID, op.Revision, 1800); err != nil || replay.ID != release.ID {
+		t.Fatalf("publication replay = %+v, %v", replay, err)
+	}
+	production, err := state.ResolveProductionDeployment(ctx, s, apps[0].ID)
+	if err != nil || production.ID != newer.ID {
+		t.Fatalf("production changed = %+v, %v", production, err)
+	}
+	// Other accounts cannot read even non-secret clone metadata.
+	other, err := s.CreateAccount(ctx, "other-clone@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ProjectEnvironmentCloneWorkloads(ctx, other.ID, p.ID, op.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("cross account capture read = %v", err)
+	}
+}

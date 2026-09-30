@@ -20,6 +20,7 @@ type ProjectEnvironmentCloneOperation struct {
 	IdempotencyKey     string
 	SourceRevisionHash string
 	SourceReleaseSetID string
+	TargetReleaseSetID string
 	Status             string
 	Revision           int64
 	Resources          []ProjectEnvironmentCloneResource
@@ -58,7 +59,7 @@ func validateProjectEnvironmentCloneOperation(op ProjectEnvironmentCloneOperatio
 	if op.AccountID == "" || op.ProjectID == "" || op.SourceEnvironment == "" || op.TargetEnvironment == "" ||
 		op.SourceEnvironment == op.TargetEnvironment || len(op.IdempotencyKey) == 0 || len(op.IdempotencyKey) > 255 ||
 		len(op.SourceRevisionHash) != 64 || strings.ToLower(op.SourceRevisionHash) != op.SourceRevisionHash ||
-		op.Revision != 0 || len(op.Resources) != 0 || op.ErrorCode != "" {
+		op.Revision != 0 || len(op.Resources) != 0 || op.ErrorCode != "" || op.TargetReleaseSetID != "" {
 		return ErrInvalidProjectEnvironmentCloneOperation
 	}
 	if hash, err := hex.DecodeString(op.SourceRevisionHash); err != nil || len(hash) != 32 {

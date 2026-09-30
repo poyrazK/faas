@@ -37,6 +37,8 @@ type pgRouter struct {
 	tenantSurfacesEnabled func() bool
 }
 
+var errProjectEnvironmentCloneNotReady = errors.New("project environment clone is not ready")
+
 var errPlatformTenantSuspended = errors.New("platform tenant suspended")
 
 var _ gateway.Router = pgRouter{}
@@ -185,6 +187,17 @@ func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID stri
 		return gateway.App{}, false, err
 	}
 	deployment, found, err := r.environmentDeployment(ctx, app, environment)
+	if errors.Is(err, errProjectEnvironmentCloneNotReady) {
+		acct, acctErr := r.store.AccountByID(ctx, app.AccountID)
+		if acctErr != nil {
+			return gateway.App{}, false, acctErr
+		}
+		if app.Status == state.AppDeleted || api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
+			return gateway.App{}, false, nil
+		}
+		return gateway.App{ID: app.ID, AccountID: acct.ID, Plan: acct.Plan, AccountStatus: string(acct.Status),
+			AccountAbuseHeld: acct.AbuseHeld(), EnvironmentNotReady: true, DynamicRoute: true}, true, nil
+	}
 	if err != nil || !found {
 		return gateway.App{}, found, err
 	}
@@ -201,6 +214,17 @@ func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID stri
 }
 
 func (r pgRouter) environmentDeployment(ctx context.Context, app state.App, environment state.ProjectEnvironment) (state.Deployment, bool, error) {
+	if clones, ok := r.store.(interface {
+		ProjectEnvironmentCloneTargetOperation(context.Context, string, string, string) (state.ProjectEnvironmentCloneOperation, error)
+	}); ok {
+		op, err := clones.ProjectEnvironmentCloneTargetOperation(ctx, environment.AccountID, environment.ProjectID, environment.Slug)
+		if err != nil && !errors.Is(err, state.ErrNotFound) {
+			return state.Deployment{}, false, err
+		}
+		if err == nil && op.Status != state.CloneOperationReady {
+			return state.Deployment{}, false, errProjectEnvironmentCloneNotReady
+		}
+	}
 	if reader, ok := r.store.(state.ProjectReleaseSetReader); ok {
 		release, err := reader.ActiveProjectReleaseSet(ctx, environment.AccountID, environment.ProjectID, environment.Slug)
 		if err == nil {

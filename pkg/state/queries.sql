@@ -4815,6 +4815,122 @@ SELECT id::text FROM projects
 WHERE id = sqlc.arg(project_id)::uuid AND account_id = sqlc.arg(account_id)::uuid
 FOR UPDATE;
 
+-- name: ReadProjectEnvironmentCloneWorkloads :many
+SELECT w.app_id::text AS app_id, w.source_deployment_id::text AS source_deployment_id, w.source_hash, w.snapshot,
+       coalesce(w.target_deployment_id::text, '')::text AS target_deployment_id, w.target_settings_hash
+FROM project_environment_clone_workloads w
+JOIN project_environment_clone_operations o ON o.id = w.operation_id
+WHERE o.id = sqlc.arg(operation_id)::uuid AND o.account_id = sqlc.arg(account_id)::uuid
+  AND o.project_id = sqlc.arg(project_id)::uuid ORDER BY w.app_id;
+
+-- name: InsertProjectEnvironmentCloneWorkload :exec
+INSERT INTO project_environment_clone_workloads (operation_id, app_id, source_deployment_id, source_hash, snapshot)
+VALUES (sqlc.arg(operation_id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(source_deployment_id)::uuid,
+        sqlc.arg(source_hash)::text, sqlc.arg(snapshot)::json);
+
+-- name: AttachProjectEnvironmentCloneDeployment :execrows
+UPDATE project_environment_clone_workloads SET target_deployment_id = sqlc.arg(deployment_id)::uuid,
+       target_settings_hash = sqlc.arg(settings_hash)::text
+WHERE operation_id = sqlc.arg(operation_id)::uuid AND app_id = sqlc.arg(app_id)::uuid AND target_deployment_id IS NULL;
+
+-- name: ReadProjectEnvironmentCloneSelectedArtifact :one
+SELECT (to_jsonb(d) || jsonb_build_object('secret_reload_signal_known', d.secret_reload_signal IS NOT NULL))::jsonb AS artifact
+FROM deployments d
+WHERE d.app_id = sqlc.arg(app_id)::uuid AND d.status = 'live'
+  AND (CASE WHEN sqlc.arg(release_id)::text <> '' THEN d.id =
+       (SELECT deployment_id FROM project_release_members WHERE release_id = nullif(sqlc.arg(release_id)::text, '')::uuid AND app_id = d.app_id)
+       ELSE d.scope = sqlc.arg(source_scope)::text AND d.traffic_percent > 0 END)
+ORDER BY d.created_at DESC, d.id DESC LIMIT 1;
+
+-- name: ReadProjectEnvironmentCloneTargetArtifact :one
+SELECT (to_jsonb(d) || jsonb_build_object('secret_reload_signal_known', d.secret_reload_signal IS NOT NULL))::jsonb AS artifact
+FROM deployments d WHERE d.id = sqlc.arg(deployment_id)::uuid;
+
+-- name: ReadProjectEnvironmentCloneDeployedSettings :one
+SELECT s.settings, s.config_hash FROM project_environment_workload_specs s
+JOIN project_environment_workload_deployment_specs p ON p.spec_id = s.id
+WHERE p.deployment_id = sqlc.arg(deployment_id)::uuid;
+
+-- name: ReadProjectEnvironmentCloneLegacySettings :one
+SELECT (to_jsonb(a) || jsonb_build_object('public_auth_basic_sealed', encode(a.public_auth_basic, 'base64'),
+       'only_allow_declared_routes', a.only_declared_routes, 'retry_policy_json', a.retry_policy))::jsonb AS app, coalesce(to_jsonb(r), '{}'::jsonb)::jsonb AS route
+FROM apps a LEFT JOIN project_environment_route_policies r ON r.app_id = a.id AND r.environment_slug = sqlc.arg(environment)::text
+WHERE a.id = sqlc.arg(app_id)::uuid;
+
+-- name: ReadProjectEnvironmentCloneSourceRelease :one
+SELECT coalesce((SELECT id::text FROM project_release_sets WHERE project_id = sqlc.arg(project_id)::uuid
+       AND environment_slug = sqlc.arg(environment)::text AND active), '')::text AS release_id;
+
+-- name: ReadProjectEnvironmentCloneSidecarLayers :many
+SELECT to_jsonb(l)::jsonb AS layer FROM deployment_sidecar_layers l
+WHERE deployment_id = sqlc.arg(deployment_id)::uuid ORDER BY sidecar_name;
+
+-- name: ReadProjectEnvironmentCloneSidecarSignals :many
+SELECT sidecar_name, signal FROM deployment_sidecar_secret_reload_signals
+WHERE deployment_id = sqlc.arg(deployment_id)::uuid ORDER BY sidecar_name;
+
+-- name: SetProjectEnvironmentCloneDeploymentArtifact :exec
+UPDATE deployments SET rootfs_path = nullif(sqlc.arg(rootfs_path)::text, ''), rootfs_key = nullif(sqlc.arg(rootfs_key)::text, ''),
+       rootfs_bytes = sqlc.arg(rootfs_bytes)::bigint,
+       secret_reload_signal = CASE WHEN sqlc.arg(signal_known)::boolean THEN sqlc.arg(signal)::text ELSE NULL END
+WHERE id = sqlc.arg(deployment_id)::uuid;
+
+-- name: InsertProjectEnvironmentCloneSidecarLayer :exec
+INSERT INTO deployment_sidecar_layers (deployment_id, sidecar_name, storage_key, bytes, content_digest)
+VALUES (sqlc.arg(deployment_id)::uuid, sqlc.arg(sidecar_name)::text, sqlc.arg(storage_key)::text,
+        sqlc.arg(bytes)::bigint, sqlc.arg(content_digest)::text);
+
+-- name: InsertProjectEnvironmentCloneSidecarSignal :exec
+INSERT INTO deployment_sidecar_secret_reload_signals (deployment_id, sidecar_name, signal)
+VALUES (sqlc.arg(deployment_id)::uuid, sqlc.arg(sidecar_name)::text, sqlc.arg(signal)::text);
+
+-- name: LockProjectEnvironmentCloneWorkloadOperation :one
+SELECT source_environment, target_environment, source_revision_hash,
+       coalesce(source_release_set_id::text, '')::text AS source_release_set_id, status, revision,
+       resources, error_code, coalesce(target_release_set_id::text, '')::text AS target_release_set_id
+FROM project_environment_clone_operations
+WHERE id = sqlc.arg(operation_id)::uuid AND account_id = sqlc.arg(account_id)::uuid AND project_id = sqlc.arg(project_id)::uuid
+FOR UPDATE;
+
+-- name: ReadProjectEnvironmentCloneTargetOperationID :one
+SELECT id::text FROM project_environment_clone_operations
+WHERE account_id = sqlc.arg(account_id)::uuid AND project_id = sqlc.arg(project_id)::uuid
+  AND target_environment = sqlc.arg(environment)::text AND status <> 'compensated'
+ORDER BY created_at DESC, id DESC LIMIT 1;
+
+-- name: LockProjectEnvironmentCloneTargetDeployments :many
+SELECT d.id::text FROM deployments d JOIN project_environment_clone_workloads w ON w.target_deployment_id = d.id
+WHERE w.operation_id = sqlc.arg(operation_id)::uuid ORDER BY d.id FOR UPDATE OF d;
+
+-- name: CompleteProjectEnvironmentClonePublication :execrows
+UPDATE project_environment_clone_operations
+SET status = 'ready', revision = revision + 1, target_release_set_id = sqlc.arg(release_id)::uuid, updated_at = now()
+WHERE id = sqlc.arg(operation_id)::uuid AND status = 'publishing' AND revision = sqlc.arg(revision)::bigint;
+
+-- name: LockProjectEnvironmentCloneTargetSidecarLayers :many
+SELECT l.sidecar_name FROM deployment_sidecar_layers l
+JOIN project_environment_clone_workloads w ON w.target_deployment_id = l.deployment_id
+WHERE w.operation_id = sqlc.arg(operation_id)::uuid ORDER BY l.deployment_id, l.sidecar_name FOR UPDATE OF l;
+
+-- name: LockProjectEnvironmentCloneTargetSidecarSignals :many
+SELECT s.sidecar_name FROM deployment_sidecar_secret_reload_signals s
+JOIN project_environment_clone_workloads w ON w.target_deployment_id = s.deployment_id
+WHERE w.operation_id = sqlc.arg(operation_id)::uuid ORDER BY s.deployment_id, s.sidecar_name FOR UPDATE OF s;
+
+-- name: ReadProjectEnvironmentCloneTargetSettings :one
+SELECT s.settings, s.config_hash FROM project_environment_workload_specs s
+JOIN project_environment_workload_heads h ON h.spec_id = s.id
+JOIN project_environments e ON e.id = h.environment_id
+JOIN apps a ON a.id = h.app_id AND a.account_id = e.account_id AND a.project_id = e.project_id
+WHERE e.account_id = sqlc.arg(account_id)::uuid AND e.project_id = sqlc.arg(project_id)::uuid
+  AND e.slug = sqlc.arg(environment)::text AND a.id = sqlc.arg(app_id)::uuid
+  AND a.status <> 'deleted' AND a.preview_of_slug IS NULL;
+
+-- name: ReadProjectEnvironmentCloneOwnedApp :one
+SELECT id::text FROM apps
+WHERE id = sqlc.arg(app_id)::uuid AND account_id = sqlc.arg(account_id)::uuid AND project_id = sqlc.arg(project_id)::uuid
+  AND status <> 'deleted' AND preview_of_slug IS NULL;
+
 -- name: ReadProjectEnvironmentCloneEnvironmentPresence :one
 SELECT EXISTS(SELECT 1 FROM project_environments
               WHERE project_id = sqlc.arg(project_id)::uuid

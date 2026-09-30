@@ -95,22 +95,12 @@ func (m *MemStore) AdvanceProjectEnvironmentCloneOperation(_ context.Context, ac
 		return ProjectEnvironmentCloneOperation{}, err
 	}
 	if nextStatus == CloneOperationPublishing || nextStatus == CloneOperationReady {
-		var proofs []projectCloneObjectCopyProof
-		for _, manifest := range m.projectEnvironmentCloneObjectManifests {
-			if manifest.OperationID != op.ID {
-				continue
-			}
-			proof := projectCloneObjectCopyProof{sourceID: manifest.SourceBucketID, targetID: manifest.TargetBucketID,
-				hash: manifest.Hash, capture: manifest.CapturedAt.UTC().Format(time.RFC3339Nano), objectCount: len(manifest.Objects), entryCount: len(manifest.Objects)}
-			for _, object := range manifest.Objects {
-				if object.CopiedAt != nil && object.TargetETag != "" && validCloneObjectSHA256(object.VerifiedSHA256) {
-					proof.verifiedCount++
-				}
-			}
-			proofs = append(proofs, proof)
-		}
-		if err := validateCloneObjectCopyProofs(resources, proofs); err != nil {
+		if err := m.verifyClonePublicationLocked(op, resources); err != nil {
 			return ProjectEnvironmentCloneOperation{}, err
+		}
+		if nextStatus == CloneOperationReady && len(m.projectEnvironmentCloneWorkloads[id]) > 0 &&
+			(op.TargetReleaseSetID == "" || m.activeProjectReleaseSets[releaseKey(projectID, op.TargetEnvironment)] != op.TargetReleaseSetID) {
+			return ProjectEnvironmentCloneOperation{}, ErrConflict
 		}
 	}
 	op.Status = nextStatus

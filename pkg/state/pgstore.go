@@ -6748,7 +6748,7 @@ func (s *PgStore) CreateDeploymentWithActivity(ctx context.Context, d Deployment
 	return s.createDeployment(ctx, d, &activity, nil)
 }
 
-func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *OrgActivity, promotionInput *ProjectEnvironmentPromotionWorkloadSpecInput) (Deployment, int64, error) {
+func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *OrgActivity, promotionInput *ProjectEnvironmentPromotionWorkloadSpecInput, cloneInputs ...*projectEnvironmentCloneDeploymentInput) (Deployment, int64, error) {
 	if err := validateDeploymentReleaseCommand(d.ReleaseCommand, d.ReleaseCommandShell); err != nil {
 		return Deployment{}, 0, err
 	}
@@ -6758,6 +6758,18 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 		return Deployment{}, 0, fmt.Errorf("state: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	var cloneOperation ProjectEnvironmentCloneOperation
+	var cloneRecord projectCloneWorkloadRecord
+	if len(cloneInputs) > 0 {
+		if len(cloneInputs) != 1 || cloneInputs[0] == nil || promotionInput != nil || activity != nil {
+			return Deployment{}, 0, ErrInvalidArgument
+		}
+		input := cloneInputs[0]
+		cloneOperation, err = lockCloneWorkloadOperationTx(ctx, tx, input.AccountID, input.ProjectID, input.OperationID)
+		if err != nil {
+			return Deployment{}, 0, err
+		}
+	}
 	if promotionInput != nil {
 		if err := lockPromotionWorkloadEnvironmentsTx(ctx, tx, promotionInput.PromotionID); err != nil {
 			return Deployment{}, 0, err
@@ -6784,6 +6796,18 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 			return Deployment{}, 0, ErrNotFound
 		}
 		return Deployment{}, 0, fmt.Errorf("state: lock app %s: %w", d.AppID, err)
+	}
+	if len(cloneInputs) > 0 {
+		d, cloneRecord, err = prepareCloneDeploymentTx(ctx, tx, *cloneInputs[0], cloneOperation)
+		if err != nil {
+			return Deployment{}, 0, err
+		}
+		if cloneRecord.TargetDeploymentID != "" {
+			return d, 0, nil
+		}
+		if err := validateDeploymentReleaseCommand(d.ReleaseCommand, d.ReleaseCommandShell); err != nil {
+			return Deployment{}, 0, err
+		}
 	}
 	if promotionInput != nil {
 		capture, err := scanPromotionWorkloadSpec(tx.QueryRow(ctx, promotionWorkloadSpecSelect+`
@@ -6998,6 +7022,13 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 	if err != nil {
 		return Deployment{}, 0, err
 	}
+	if len(cloneInputs) > 0 {
+		if err := attachCloneDeploymentTx(ctx, tx, *cloneInputs[0], cloneRecord, created); err != nil {
+			return Deployment{}, 0, err
+		}
+		created.RootfsPath, created.RootfsKey, created.RootfsBytes = d.RootfsPath, d.RootfsKey, d.RootfsBytes
+		created.SecretReloadSignal, created.SecretReloadSignalKnown = d.SecretReloadSignal, d.SecretReloadSignalKnown
+	}
 	if promotionInput != nil {
 		if err := preparePromotionWorkloadSpecTx(ctx, tx, created, *promotionInput); err != nil {
 			return Deployment{}, 0, err
@@ -7044,7 +7075,11 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 }
 
 func (s *PgStore) DeploymentByID(ctx context.Context, id string) (Deployment, error) {
-	row := s.pool.QueryRow(ctx,
+	return deploymentByIDDB(ctx, s.pool, id)
+}
+
+func deploymentByIDDB(ctx context.Context, db sqlc.DBTX, id string) (Deployment, error) {
+	row := db.QueryRow(ctx,
 		`select `+deploymentSelectColumnsWithRootfs+`
 		 from deployments where id = $1`, id)
 	return scanDeploymentWithRootfs(row)

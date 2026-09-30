@@ -12,7 +12,7 @@ import (
 
 const projectEnvironmentCloneOperationColumns = `id, account_id, project_id, source_environment, target_environment,
 	idempotency_key, source_revision_hash, coalesce(source_release_set_id::text, ''),
-	status, revision, resources, error_code, created_at, updated_at`
+	status, revision, resources, error_code, created_at, updated_at, coalesce(target_release_set_id::text, '')`
 
 func scanProjectEnvironmentCloneOperation(row pgx.Row) (ProjectEnvironmentCloneOperation, error) {
 	var op ProjectEnvironmentCloneOperation
@@ -20,7 +20,7 @@ func scanProjectEnvironmentCloneOperation(row pgx.Row) (ProjectEnvironmentCloneO
 	if err := row.Scan(&op.ID, &op.AccountID, &op.ProjectID, &op.SourceEnvironment,
 		&op.TargetEnvironment, &op.IdempotencyKey, &op.SourceRevisionHash,
 		&op.SourceReleaseSetID, &op.Status, &op.Revision, &raw, &op.ErrorCode,
-		&op.CreatedAt, &op.UpdatedAt); err != nil {
+		&op.CreatedAt, &op.UpdatedAt, &op.TargetReleaseSetID); err != nil {
 		return ProjectEnvironmentCloneOperation{}, mapErr(err)
 	}
 	if err := json.Unmarshal(raw, &op.Resources); err != nil {
@@ -105,7 +105,12 @@ func (s *PgStore) AdvanceProjectEnvironmentCloneOperation(ctx context.Context, a
 	if expectedRevision < 1 || !validCloneOperationTransition(expectedStatus, nextStatus) || !validCloneOperationErrorCode(errorCode) {
 		return ProjectEnvironmentCloneOperation{}, ErrInvalidProjectEnvironmentCloneOperation
 	}
-	current, err := s.ProjectEnvironmentCloneOperationByID(ctx, accountID, projectID, id)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return ProjectEnvironmentCloneOperation{}, mapErr(err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	current, err := lockCloneWorkloadOperationTx(ctx, tx, accountID, projectID, id)
 	if err != nil {
 		return ProjectEnvironmentCloneOperation{}, err
 	}
@@ -116,17 +121,15 @@ func (s *PgStore) AdvanceProjectEnvironmentCloneOperation(ctx context.Context, a
 		return ProjectEnvironmentCloneOperation{}, err
 	}
 	if nextStatus == CloneOperationPublishing || nextStatus == CloneOperationReady {
-		rows, err := new(sqlc.Queries).ReadProjectEnvironmentCloneObjectCopyProofs(ctx, s.pool, mustPgUUID(id))
-		if err != nil {
-			return ProjectEnvironmentCloneOperation{}, mapErr(err)
-		}
-		proofs := make([]projectCloneObjectCopyProof, len(rows))
-		for i, row := range rows {
-			proofs[i] = projectCloneObjectCopyProof{sourceID: row.SourceBucketID, targetID: row.TargetBucketID, hash: row.ManifestHash,
-				capture: row.CapturedAtExact, objectCount: int(row.ObjectCount), entryCount: int(row.EntryCount), verifiedCount: int(row.VerifiedCount)}
-		}
-		if err := validateCloneObjectCopyProofs(resources, proofs); err != nil {
+		if err := verifyClonePublicationTx(ctx, tx, current, resources); err != nil {
 			return ProjectEnvironmentCloneOperation{}, err
+		}
+		if nextStatus == CloneOperationReady {
+			for _, resource := range resources {
+				if resource.Kind == "workload" && current.TargetReleaseSetID == "" {
+					return ProjectEnvironmentCloneOperation{}, ErrConflict
+				}
+			}
 		}
 	}
 	if resources == nil {
@@ -136,7 +139,7 @@ func (s *PgStore) AdvanceProjectEnvironmentCloneOperation(ctx context.Context, a
 	if err != nil {
 		return ProjectEnvironmentCloneOperation{}, fmt.Errorf("state: encode project environment clone resources: %w", err)
 	}
-	updated, err := scanProjectEnvironmentCloneOperation(s.pool.QueryRow(ctx, `
+	updated, err := scanProjectEnvironmentCloneOperation(tx.QueryRow(ctx, `
 		update project_environment_clone_operations
 		   set status = $5, revision = revision + 1, resources = $7::jsonb, error_code = $8, updated_at = now()
 		 where id = $1 and account_id = $2 and project_id = $3 and status = $4 and revision = $6
@@ -149,5 +152,11 @@ func (s *PgStore) AdvanceProjectEnvironmentCloneOperation(ctx context.Context, a
 			return ProjectEnvironmentCloneOperation{}, lookupErr
 		}
 	}
-	return updated, err
+	if err != nil {
+		return ProjectEnvironmentCloneOperation{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ProjectEnvironmentCloneOperation{}, mapErr(err)
+	}
+	return updated, nil
 }
