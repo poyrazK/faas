@@ -60,14 +60,22 @@ func cloneObjectCredentialPreparationContract(t *testing.T, s cloneCredentialPre
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := s.UpsertAppEnvInScope(ctx, account.ID, app.ID, "production", "CUSTOMER_CONFIG", "captured-config"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertAppSecretWithClassInScope(ctx, account.ID, app.ID, "production", "CUSTOMER_TOKEN", "customer-kid", "1111111111111111", state.SecretClassPersistent, []byte("captured-token")); err != nil {
+		t.Fatal(err)
+	}
 	lease, err := s.ClaimNextProjectEnvironmentClone(ctx, uuid.NewString(), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
 	op = lease.Operation
-	if _, err := s.CaptureProjectEnvironmentCloneWorkloads(ctx, account.ID, project.ID, op.ID, op.Revision); err != nil {
+	views, err := s.CaptureProjectEnvironmentCloneWorkloads(ctx, account.ID, project.ID, op.ID, op.Revision)
+	if err != nil || len(views) != 1 {
 		t.Fatal(err)
 	}
+	view := views[0]
 	target, _, err := s.ReserveProjectEnvironmentCloneObjectBucket(ctx, lease, app.ID, source.ID, 10)
 	if err != nil {
 		t.Fatal(err)
@@ -88,6 +96,13 @@ func cloneObjectCredentialPreparationContract(t *testing.T, s cloneCredentialPre
 		t.Fatal(err)
 	}
 	resources := []state.ProjectEnvironmentCloneResource{{Kind: "object_storage", Name: source.ID, SourceID: source.ID, TargetID: target.ID, SourceVersion: hash, CapturePoint: point.Format(time.RFC3339Nano), Status: "captured"}}
+	resources = append(resources,
+		state.ProjectEnvironmentCloneResource{Kind: "source_revision", Name: "production", SourceVersion: op.SourceRevisionHash, Status: "ready"},
+		state.ProjectEnvironmentCloneResource{Kind: "project_config", Name: "production", SourceVersion: view.SourceProjectConfigHash, Status: "ready"},
+		state.ProjectEnvironmentCloneResource{Kind: "workload", Name: view.WorkloadSlug, SourceID: view.SourceDeploymentID, SourceVersion: view.SourceHash, Status: "captured"})
+	for _, kind := range []string{"variables", "secrets"} {
+		resources = append(resources, state.ProjectEnvironmentCloneResource{Kind: kind, Name: view.WorkloadSlug, SourceID: app.ID, TargetID: app.ID, SourceVersion: view.SourceValuesHash, Status: "ready"})
+	}
 	op, err = s.AdvanceProjectEnvironmentCloneOperation(ctx, account.ID, project.ID, op.ID, op.Status, state.CloneOperationCopying, op.Revision, resources, "")
 	if err != nil {
 		t.Fatal(err)
@@ -267,6 +282,24 @@ func cloneObjectCredentialPreparationContract(t *testing.T, s cloneCredentialPre
 	if _, _, err := s.CloneProjectEnvironment(ctx, clone, api.MustLimitsFor(account.Plan)); err != nil {
 		t.Fatalf("materialize prepared target: %v", err)
 	}
+	spec, err := s.ProjectEnvironmentWorkloadSpec(ctx, account.ID, project.ID, op.TargetEnvironment, app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stageDeployment, err := s.CreateDeploymentForEnvironmentClone(ctx, account.ID, project.ID, op.ID, op.Revision, app.ID, spec.Hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkDeploymentLiveDark(ctx, stageDeployment.ID); err != nil {
+		t.Fatal(err)
+	}
+	resources[3].TargetID, resources[3].Status = stageDeployment.ID, "ready"
+	if _, err := s.AdvanceProjectEnvironmentCloneOperation(ctx, account.ID, project.ID, op.ID, op.Status, state.CloneOperationPublishing, op.Revision, resources, ""); !errors.Is(err, state.ErrProjectEnvironmentCloneResourcePublicationProof) {
+		t.Fatalf("authentic object envelopes did not reach independent resource publication guard: %v", err)
+	}
+	if _, err := s.ActiveProjectReleaseSet(ctx, account.ID, project.ID, op.TargetEnvironment); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("incomplete object isolation acquired a serving release: %v", err)
+	}
 	old := lease
 	if err := s.ReleaseProjectEnvironmentCloneLease(ctx, lease, 0); err != nil {
 		t.Fatal(err)
@@ -288,5 +321,8 @@ func cloneObjectCredentialPreparationContract(t *testing.T, s cloneCredentialPre
 	}
 	if _, err := s.ProjectEnvironmentCloneObjectCredentialForLease(ctx, lease, managed.ID); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("accepted changed target envelope: %v", err)
+	}
+	if _, err := s.AdvanceProjectEnvironmentCloneOperation(ctx, account.ID, project.ID, op.ID, lease.Operation.Status, state.CloneOperationPublishing, lease.Operation.Revision, resources, ""); !errors.Is(err, state.ErrProjectEnvironmentCloneManagedValueProof) {
+		t.Fatalf("altered object envelope reached resource publication validation: %v", err)
 	}
 }

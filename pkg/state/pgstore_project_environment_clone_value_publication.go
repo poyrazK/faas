@@ -38,5 +38,13 @@ func verifyCloneValuePublicationTx(ctx context.Context, tx pgx.Tx, op ProjectEnv
 		target.Secrets = append(target.Secrets, value)
 		targets[value.AppID] = target
 	}
-	return validateCloneValuePublication(op, resources, records, targets)
+	captured, err := capturedCloneValues(records)
+	if err != nil {
+		return err
+	}
+	objects, err := capturedCloneObjectPreparationsTx(ctx, tx, op, records, captured)
+	if err != nil {
+		return err
+	}
+	return validateCloneValuePublication(op, resources, records, targets, objects)
 }

@@ -6,9 +6,9 @@ import (
 	"sort"
 )
 
-func capturedCloneManagedObjectCredentials(clone ProjectEnvironmentClone) []string {
+func capturedCloneManagedObjectCredentials(captured map[string]projectCloneWorkloadValues) []string {
 	ids := map[string]bool{}
-	for _, values := range clone.capturedValues {
+	for _, values := range captured {
 		for _, secret := range values.Secrets {
 			if secret.ManagedObjectStorageCredentialID != "" {
 				ids[secret.ManagedObjectStorageCredentialID] = true
@@ -45,7 +45,7 @@ func cloneObjectPreparationProofError(sourceID string, cause ...error) error {
 }
 
 func (m *MemStore) checkCapturedCloneObjectPreparationsLocked(clone ProjectEnvironmentClone) error {
-	ids := capturedCloneManagedObjectCredentials(clone)
+	ids := capturedCloneManagedObjectCredentials(clone.capturedValues)
 	if len(ids) == 0 {
 		return nil
 	}
@@ -54,25 +54,45 @@ func (m *MemStore) checkCapturedCloneObjectPreparationsLocked(clone ProjectEnvir
 	for _, record := range m.projectEnvironmentCloneWorkloads[op.ID] {
 		records = append(records, record)
 	}
-	views, err := cloneBindingViews(records)
+	preparations, err := m.capturedCloneObjectPreparationsLocked(op, records, clone.capturedValues)
 	if err != nil {
 		return err
 	}
 	for _, sourceID := range ids {
-		prepared, exists := m.projectEnvironmentCloneObjectCredentials[cloneObjectManifestKey(op.ID, sourceID)]
-		if !exists || validateClonePreparedObjectIdentity(clone, sourceID, prepared) != nil {
-			return cloneObjectPreparationProofError(sourceID)
-		}
-		request := cloneObjectCredentialReplayRequest(prepared)
-		if err := validateCloneObjectCredentialRequest(op, views, request); err != nil {
-			return cloneObjectPreparationProofError(sourceID)
-		}
-		if err := m.validateCloneCredentialBucketLocked(op, views, request); err != nil {
-			return cloneObjectPreparationProofError(sourceID)
-		}
-		if _, err := m.verifyPreparedCloneObjectCredentialLocked(prepared); err != nil {
+		if validateClonePreparedObjectIdentity(clone, sourceID, preparations[sourceID]) != nil {
 			return cloneObjectPreparationProofError(sourceID)
 		}
 	}
 	return nil
+}
+
+func (m *MemStore) capturedCloneObjectPreparationsLocked(op ProjectEnvironmentCloneOperation, records []projectCloneWorkloadRecord, captured map[string]projectCloneWorkloadValues) (map[string]ProjectEnvironmentCloneObjectCredentialPreparation, error) {
+	result := map[string]ProjectEnvironmentCloneObjectCredentialPreparation{}
+	ids := capturedCloneManagedObjectCredentials(captured)
+	if len(ids) == 0 {
+		return result, nil
+	}
+	views, err := cloneBindingViews(records)
+	if err != nil {
+		return nil, err
+	}
+	for _, sourceID := range ids {
+		prepared, exists := m.projectEnvironmentCloneObjectCredentials[cloneObjectManifestKey(op.ID, sourceID)]
+		if !exists {
+			return nil, cloneObjectPreparationProofError(sourceID)
+		}
+		request := cloneObjectCredentialReplayRequest(prepared)
+		if err := validateCloneObjectCredentialRequest(op, views, request); err != nil {
+			return nil, cloneObjectPreparationProofError(sourceID)
+		}
+		if err := m.validateCloneCredentialBucketLocked(op, views, request); err != nil {
+			return nil, cloneObjectPreparationProofError(sourceID)
+		}
+		prepared, err = m.verifyPreparedCloneObjectCredentialLocked(prepared)
+		if err != nil {
+			return nil, cloneObjectPreparationProofError(sourceID)
+		}
+		result[sourceID] = prepared
+	}
+	return result, nil
 }

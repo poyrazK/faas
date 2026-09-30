@@ -809,3 +809,27 @@ change, and verifies no environment was created. The worker's real-crypto
 materialization/retry contract continues to pass. Independent sqlc regeneration
 matches. This establishes the object preparation portion of materialization;
 complete resource/managed-value publication and full admission remain gated.
+
+### Managed object value publication proof (2026-09-30)
+
+Publication now builds its expected managed object values from authenticated
+target preparations, using the same catalogue, independent placement and copied
+data checks as materialization. It verifies the original captured value hash
+first, copies customer variables/secrets into the target address, and substitutes
+each managed object envelope with its fresh target owner, ciphertext, key
+identity, class and initial version. The complete actual target value set must
+match that expected configuration; extra, missing, mis-scoped or changed values
+cannot be justified by a generic ready receipt. Managed PostgreSQL values still
+require their own preparation proof.
+
+Store contracts exercise a workload containing both customer values and six
+managed object secrets. The authentic preparation passes the value check and
+reaches the independent resource-publication guard. An altered preparation is
+rejected before that guard, and no serving release is created. Existing
+customer-value, missing-receipt, scoped-policy, PostgreSQL managed-value and
+concurrent-intent publication contracts pass against MemStore and PostgreSQL.
+
+The resource publication guard remains closed for captured databases/buckets:
+the value proof does not establish every credential/grant/public-policy mapping,
+provider write fencing, cross-provider checkpoint consistency or retention.
+Full-copy API admission remains closed and this work is not native acceptance.

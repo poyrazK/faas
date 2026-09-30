@@ -93,7 +93,15 @@ func (m *MemStore) verifyClonePublicationLocked(op ProjectEnvironmentCloneOperat
 		variables, secrets := m.projectCloneValuesLocked(map[string]string{record.AppID: op.TargetEnvironment})
 		targets[record.AppID] = projectCloneWorkloadValues{Variables: variables, Secrets: secrets}
 	}
-	if err := validateCloneValuePublication(op, resources, records, targets); err != nil {
+	captured, err := capturedCloneValues(records)
+	if err != nil {
+		return err
+	}
+	objects, err := m.capturedCloneObjectPreparationsLocked(op, records, captured)
+	if err != nil {
+		return err
+	}
+	if err := validateCloneValuePublication(op, resources, records, targets, objects); err != nil {
 		return err
 	}
 	if err := m.verifyCloneScopedPolicyPublicationLocked(op, records); err != nil {
