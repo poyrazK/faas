@@ -23,6 +23,7 @@ type ProjectEnvironmentCloneWorkload struct {
 	SourceHash              string
 	SourceSettingsHash      string
 	SourceProjectConfigHash string
+	SourceValuesHash        string
 	TargetDeploymentID      string
 	TargetSettingsHash      string
 }
@@ -110,6 +111,7 @@ type projectCloneWorkloadSnapshot struct {
 	Layers         []DeploymentSidecarLayer           `json:"layers"`
 	SidecarSignals map[string]string                  `json:"sidecar_signals"`
 	ProjectConfig  *projectCloneProjectConfig         `json:"project_config,omitempty"`
+	Values         *projectCloneWorkloadValues        `json:"values,omitempty"`
 }
 
 type projectCloneWorkloadRecord struct {
@@ -119,6 +121,13 @@ type projectCloneWorkloadRecord struct {
 
 func encodeCloneWorkloadSnapshot(snapshot projectCloneWorkloadSnapshot) ([]byte, string, error) {
 	snapshot.Artifact = normalizeProjectCloneArtifact(snapshot.Artifact)
+	if snapshot.Values != nil {
+		values, err := normalizeCloneWorkloadValues(snapshot.Artifact.AppID, snapshot.Artifact.Scope, *snapshot.Values)
+		if err != nil {
+			return nil, "", err
+		}
+		snapshot.Values = &values
+	}
 	if snapshot.ProjectConfig != nil {
 		config, err := normalizeCloneProjectConfig(*snapshot.ProjectConfig)
 		if err != nil {
@@ -241,8 +250,12 @@ func decodeCloneWorkloadRecord(operationID, appID, sourceID, sourceHash, targetI
 	if snapshot.ProjectConfig != nil {
 		projectHash = snapshot.ProjectConfig.Hash
 	}
+	valuesHash := ""
+	if snapshot.Values != nil {
+		valuesHash, _ = projectCloneValuesHash(map[string]string{appID: snapshot.Artifact.Scope}, snapshot.Values.Variables, snapshot.Values.Secrets)
+	}
 	return projectCloneWorkloadRecord{ProjectEnvironmentCloneWorkload: ProjectEnvironmentCloneWorkload{
 		OperationID: operationID, AppID: appID, WorkloadSlug: snapshot.WorkloadSlug, SourceDeploymentID: sourceID,
-		SourceScope: snapshot.Artifact.Scope, SourceHash: hash, SourceSettingsHash: settingsHash, SourceProjectConfigHash: projectHash,
+		SourceScope: snapshot.Artifact.Scope, SourceHash: hash, SourceSettingsHash: settingsHash, SourceProjectConfigHash: projectHash, SourceValuesHash: valuesHash,
 		TargetDeploymentID: targetID, TargetSettingsHash: targetHash}, snapshot: snapshot}, nil
 }

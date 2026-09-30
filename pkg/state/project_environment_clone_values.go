@@ -99,6 +99,11 @@ func (m *MemStore) CaptureProjectEnvironmentCloneValues(_ context.Context, accou
 }
 
 func (m *MemStore) projectCloneValuesHashLocked(scopes map[string]string) (string, error) {
+	variables, secrets := m.projectCloneValuesLocked(scopes)
+	return projectCloneValuesHash(scopes, variables, secrets)
+}
+
+func (m *MemStore) projectCloneValuesLocked(scopes map[string]string) ([]projectCloneVariable, []projectCloneSecret) {
 	var variables []projectCloneVariable
 	var secrets []projectCloneSecret
 	for _, value := range m.envs {
@@ -117,5 +122,5 @@ func (m *MemStore) projectCloneValuesHashLocked(scopes map[string]string) (strin
 			ManagedCredentialGeneration: secret.ManagedCredentialGeneration, ManagedObjectStorageCredentialID: secret.ManagedObjectStorageCredentialID,
 		})
 	}
-	return projectCloneValuesHash(scopes, variables, secrets)
+	return variables, secrets
 }

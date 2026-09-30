@@ -1452,6 +1452,8 @@ CREATE TABLE public.app_secrets (
     kid text,
     scope text DEFAULT 'default'::text NOT NULL,
     value_hash text,
+	-- Existing migration 20260925020000001; included for generated clone writes.
+    secret_version bigint,
     secret_class text DEFAULT 'persistent'::text NOT NULL,
     managed_object_storage_credential_id uuid,
     CONSTRAINT app_secrets_key_shape CHECK (((key ~ '^[A-Z][A-Z0-9_]*$'::text) AND (length(key) <= 128))),

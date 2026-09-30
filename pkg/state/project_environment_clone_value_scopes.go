@@ -51,6 +51,18 @@ func validateCloneValueScopes(actual, expected map[string]string) error {
 
 func (m *MemStore) projectCloneValueScopesLocked(apps map[string]string, clone ProjectEnvironmentClone) (map[string]string, error) {
 	scopes := make(map[string]string, len(apps))
+	if clone.capturedValues != nil {
+		if len(clone.capturedValues) != len(apps) {
+			return nil, ErrConflict
+		}
+		for appID := range apps {
+			if clone.capturedValueScopes[appID] == "" {
+				return nil, ErrConflict
+			}
+			scopes[appID] = clone.capturedValueScopes[appID]
+		}
+		return scopes, validateCloneValueScopes(scopes, clone.ExpectedSourceValueScopes)
+	}
 	for appID := range apps {
 		scope := clone.SourceSlug
 		if scope == "production" {

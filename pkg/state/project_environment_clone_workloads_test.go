@@ -20,6 +20,7 @@ type cloneWorkloadTestStore interface {
 	state.ProjectEnvironmentWorkloadSpecStore
 	state.ProjectEnvironmentClonePublicationStore
 	state.ProjectEnvironmentCloneWorkerLeaseStore
+	state.ProjectEnvironmentCloneValuesStore
 	state.ProjectReleaseSetReader
 	state.ProjectPromotionDeploymentStore
 	ProjectEnvironmentWorkloadSpecForDeployment(context.Context, string, string, string) (state.ProjectEnvironmentWorkloadSpec, error)
@@ -91,6 +92,15 @@ func projectEnvironmentCloneCapturesAndPreparesWorkloads(t *testing.T, s cloneWo
 		if err := s.MarkDeploymentLive(ctx, source.ID); err != nil {
 			t.Fatal(err)
 		}
+		if err := s.UpsertAppEnvInScope(ctx, a.ID, app.ID, scope, "CAPTURED", "source-variable-at-capture"); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.UpsertAppSecretWithClassInScope(ctx, a.ID, app.ID, scope, "TOKEN", "age1-captured", "1111111111111111", state.SecretClassEphemeral, []byte("sealed-before-capture")); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.UpsertAppSecretWithClassInScope(ctx, a.ID, app.ID, scope, "TOKEN", "age1-captured", "2222222222222222", state.SecretClassEphemeral, []byte("sealed-at-capture")); err != nil {
+			t.Fatal(err)
+		}
 		apps, sources = append(apps, app), append(sources, source)
 	}
 	configValues, configHash, err := api.NormalizeProjectEnvironmentConfig([]byte(`{"feature":"captured","large":9007199254740993123,"factor":1e0}`))
@@ -100,6 +110,10 @@ func projectEnvironmentCloneCapturesAndPreparesWorkloads(t *testing.T, s cloneWo
 	config, err := s.CreateProjectEnvironmentConfigVersion(ctx, state.ProjectEnvironmentConfig{
 		AccountID: a.ID, ProjectID: p.ID, EnvironmentSlug: "production", ConfigHash: configHash, Values: configValues,
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	valuesSnapshot, err := s.CaptureProjectEnvironmentCloneValues(ctx, a.ID, p.ID, "production")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,6 +138,9 @@ func projectEnvironmentCloneCapturesAndPreparesWorkloads(t *testing.T, s cloneWo
 	byApp := map[string]state.ProjectEnvironmentCloneWorkload{}
 	for _, view := range views {
 		byApp[view.AppID] = view
+		if view.SourceValuesHash == "" {
+			t.Fatal("capture omitted scoped variable and sealed-secret identity")
+		}
 		if view.SourceProjectConfigHash != configHash {
 			t.Fatal("capture omitted the selected project configuration identity")
 		}
@@ -132,6 +149,10 @@ func projectEnvironmentCloneCapturesAndPreparesWorkloads(t *testing.T, s cloneWo
 		if byApp[app.ID].SourceDeploymentID != sources[i].ID {
 			t.Fatalf("wrong artifact: %+v", byApp[app.ID])
 		}
+	}
+	public, _ := json.Marshal(views)
+	if strings.Contains(string(public), "source-variable-at-capture") || strings.Contains(string(public), "sealed-at-capture") || strings.Contains(string(public), "age1-captured") {
+		t.Fatal("public clone capture metadata exposed source values")
 	}
 	// Edit the desired source without rebuilding; the deployed pin is truth.
 	current, err := s.ProjectEnvironmentWorkloadSpec(ctx, a.ID, p.ID, "production", apps[0].ID)
@@ -150,6 +171,29 @@ func projectEnvironmentCloneCapturesAndPreparesWorkloads(t *testing.T, s cloneWo
 		t.Fatal(err)
 	}
 	if err := s.MarkDeploymentLive(ctx, newer.ID); err != nil {
+		t.Fatal(err)
+	}
+	for i, app := range apps {
+		if err := s.UpsertAppEnvInScope(ctx, a.ID, app.ID, sources[i].Scope, "CAPTURED", "source-variable-after-capture"); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.DeleteAppSecretInScope(ctx, a.ID, app.ID, sources[i].Scope, "TOKEN"); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.UpsertAppSecretWithClassInScope(ctx, a.ID, app.ID, sources[i].Scope, "NEW_TOKEN", "age1-newer", "3333333333333333", state.SecretClassPersistent, []byte("sealed-after-capture")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// ADR-375: a named-production rollout cannot replace the captured legacy
+	// default value scope used by the second workload.
+	newNamed, err := s.CreateDeployment(ctx, state.Deployment{AppID: apps[1].ID, Scope: "production", Kind: state.DeploymentKindImage, ImageDigest: "sha256:newer-named"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkDeploymentLive(ctx, newNamed.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertAppEnvInScope(ctx, a.ID, apps[1].ID, "production", "DECOY", "new-serving-scope"); err != nil {
 		t.Fatal(err)
 	}
 	newConfigValues, newConfigHash, err := api.NormalizeProjectEnvironmentConfig([]byte(`{"feature":"newer"}`))
@@ -178,9 +222,34 @@ func projectEnvironmentCloneCapturesAndPreparesWorkloads(t *testing.T, s cloneWo
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = s.CloneProjectEnvironment(ctx, state.ProjectEnvironmentClone{AccountID: a.ID, ProjectID: p.ID, SourceSlug: "production", TargetSlug: "stage", CloneOperationID: op.ID, CloneOperationRevision: op.Revision}, api.MustLimitsFor(a.Plan))
+	clone := state.ProjectEnvironmentClone{AccountID: a.ID, ProjectID: p.ID, SourceSlug: "production", TargetSlug: "stage", CloneOperationID: op.ID, CloneOperationRevision: op.Revision,
+		ExpectedSourceValueScopes: valuesSnapshot.ValueScopes, ExpectedSourceValuesHash: valuesSnapshot.Hash}
+	limits := api.MustLimitsFor(a.Plan)
+	limits.EnvVarsMax = 1
+	if _, _, err := s.CloneProjectEnvironment(ctx, clone, limits); !errors.Is(err, state.ErrProjectEnvironmentCloneQuota) {
+		t.Fatalf("captured values exceeded quota without rejection: %v", err)
+	}
+	if _, err := s.ProjectEnvironmentBySlug(ctx, a.ID, p.ID, "stage"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("failed frozen-value preflight materialized the target: %v", err)
+	}
+	_, result, err := s.CloneProjectEnvironment(ctx, clone, api.MustLimitsFor(a.Plan))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if result.VariablesCopied != 2 || result.SecretsCopied != 2 {
+		t.Fatalf("frozen scoped value counts: %+v", result)
+	}
+	for _, app := range apps {
+		variables, err := s.ListAppEnvInScope(ctx, a.ID, app.ID, "stage")
+		if err != nil || len(variables) != 1 || variables[0].Key != "CAPTURED" || variables[0].Value != "source-variable-at-capture" {
+			t.Fatalf("target variables did not use the capture: count=%d, err=%v", len(variables), err)
+		}
+		secrets, err := s.ListAppSecretsInScope(ctx, a.ID, app.ID, "stage")
+		if err != nil || len(secrets) != 1 || secrets[0].Key != "TOKEN" || string(secrets[0].Ciphertext) != "sealed-at-capture" ||
+			secrets[0].Kid != "age1-captured" || secrets[0].ValueHash != "2222222222222222" || secrets[0].SecretVersion != 2 || secrets[0].SecretClass != state.SecretClassEphemeral ||
+			secrets[0].DeliveryVersion != 1 || secrets[0].DeliveredVersion != 0 || secrets[0].DeliveryStatus != state.SecretDeliveryPending {
+			t.Fatalf("target sealed secret did not retain its captured revision with independent delivery: count=%d, err=%v", len(secrets), err)
+		}
 	}
 	targetConfig, err := s.ProjectEnvironmentConfigLatest(ctx, a.ID, p.ID, "stage")
 	if err != nil {

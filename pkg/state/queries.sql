@@ -26,6 +26,28 @@ WHERE a.account_id = sqlc.arg(account_id)::uuid AND a.project_id = sqlc.arg(proj
   AND e.scope = (sqlc.arg(value_scopes)::jsonb ->> a.id::text)
 ORDER BY e.app_id, e.key;
 
+-- name: ReadProjectEnvironmentCloneValueQuota :many
+SELECT a.id::text AS app_id, a.slug,
+       (SELECT count(*) FROM app_secrets s WHERE s.app_id = a.id)::bigint AS secret_count,
+       (SELECT count(*) FROM app_envs e WHERE e.app_id = a.id)::bigint AS variable_count
+FROM apps a
+WHERE a.account_id = sqlc.arg(account_id)::uuid AND a.project_id = sqlc.arg(project_id)::uuid
+  AND a.status <> 'deleted' AND a.preview_of_slug IS NULL
+ORDER BY a.id;
+
+-- name: InsertProjectEnvironmentCloneCapturedVariable :exec
+INSERT INTO app_envs (account_id, app_id, scope, key, value)
+VALUES (sqlc.arg(account_id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(target_scope)::text,
+        sqlc.arg(key)::text, sqlc.arg(value)::text);
+
+-- name: InsertProjectEnvironmentCloneCapturedSecret :exec
+-- Managed ownership columns are deliberately absent: provider credentials
+-- must be recreated against isolated target bindings by their owner.
+INSERT INTO app_secrets (account_id, app_id, scope, key, ciphertext, kid, value_hash, secret_version, secret_class)
+VALUES (sqlc.arg(account_id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(target_scope)::text,
+        sqlc.arg(key)::text, sqlc.arg(ciphertext)::bytea, nullif(sqlc.arg(kid)::text, ''),
+        nullif(sqlc.arg(value_hash)::text, ''), nullif(sqlc.arg(secret_version)::bigint, 0), sqlc.arg(secret_class)::text);
+
 -- name: ReadProjectEnvironmentCloneSecrets :many
 -- Decode the explicit configuration fields in Go; delivery observations do
 -- not enter the fingerprint. No encrypted content leaves the store boundary.

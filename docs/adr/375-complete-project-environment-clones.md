@@ -416,3 +416,34 @@ Source-layer cleanup currently remains based on deployment/snapshot retention.
 Reused artifacts require durable retention throughout capture and for every
 prepared/serving clone reference before enabling the complete command. The
 existing macOS store/fake-readiness checks do not establish that lifecycle.
+
+### Durable scoped value capture (2026-09-30)
+
+The private workload snapshot now persists scoped variables and encrypted secret
+configuration in the same database snapshot as its artifact and deployed
+settings. Public metadata adds only a source-values hash. Owning target
+materialization uses the frozen payload and source scope, so a later rollout,
+variable edit or customer-secret deletion cannot redirect or alter the copy.
+The preparation hash and quota checks use the captured rows. Missing value
+payloads in an older capture are rejected instead of falling back to live rows.
+
+Copied customer-secret rows retain their captured version and lifecycle class,
+with independent pending delivery in the new scope. Managed ownership metadata
+is captured for resource planning; those envelopes are excluded from customer
+secret insertion. Prepared managed-secret accounting remains separate.
+
+Focused contracts pass in the normal state package against MemStore and the
+isolated local PostgreSQL fixture. They cover source edits/deletion after
+capture, a legacy-to-named-production rollout, replay, independent target secret
+delivery, preflight quota rollback and hidden values in metadata. A MemStore
+contract proves that removing a source managed credential cannot bypass its
+captured preparation requirement or overwrite an independently prepared target.
+API handoff retry and gateway publication/readiness checks also pass. Earlier
+disk-space failures were superseded by these successful focused runs; these are
+not full-suite or native VM acceptance results.
+
+This is durable capture and configuration materialization. Target-value
+publication checks and mutation fencing across all intent/reconciliation
+writers, host-key resealing and captured-key retention still require integration
+before enabling the complete command. Binding/policy payload capture, coordinated
+provider data capture and artifact retention remain required as described above.

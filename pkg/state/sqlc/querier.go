@@ -437,6 +437,10 @@ type Querier interface {
 	// Fresh-token insert. The id is server-minted by sqlc (gen_random_uuid).
 	// Returns the full row (with created_at server-stamped).
 	InsertOIDCExchangedToken(ctx context.Context, db DBTX, arg InsertOIDCExchangedTokenParams) (InsertOIDCExchangedTokenRow, error)
+	// Managed ownership columns are deliberately absent: provider credentials
+	// must be recreated against isolated target bindings by their owner.
+	InsertProjectEnvironmentCloneCapturedSecret(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneCapturedSecretParams) error
+	InsertProjectEnvironmentCloneCapturedVariable(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneCapturedVariableParams) error
 	InsertProjectEnvironmentCloneProjectConfiguration(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneProjectConfigurationParams) (int64, error)
 	InsertProjectEnvironmentCloneSidecarLayer(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneSidecarLayerParams) error
 	InsertProjectEnvironmentCloneSidecarSignal(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneSidecarSignalParams) error
@@ -1033,6 +1037,7 @@ type Querier interface {
 	ReadProjectEnvironmentCloneTargetArtifact(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]byte, error)
 	ReadProjectEnvironmentCloneTargetOperationID(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneTargetOperationIDParams) (string, error)
 	ReadProjectEnvironmentCloneTargetSettings(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneTargetSettingsParams) (ReadProjectEnvironmentCloneTargetSettingsRow, error)
+	ReadProjectEnvironmentCloneValueQuota(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneValueQuotaParams) ([]ReadProjectEnvironmentCloneValueQuotaRow, error)
 	ReadProjectEnvironmentCloneVariables(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneVariablesParams) ([]ReadProjectEnvironmentCloneVariablesRow, error)
 	ReadProjectEnvironmentCloneWorkerOperation(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneWorkerOperationParams) (ReadProjectEnvironmentCloneWorkerOperationRow, error)
 	ReadProjectEnvironmentCloneWorkloads(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneWorkloadsParams) ([]ReadProjectEnvironmentCloneWorkloadsRow, error)

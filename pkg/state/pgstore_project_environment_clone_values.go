@@ -34,34 +34,42 @@ func (s *PgStore) CaptureProjectEnvironmentCloneValues(ctx context.Context, acco
 }
 
 func projectCloneValuesHashTx(ctx context.Context, tx pgx.Tx, clone ProjectEnvironmentClone) (string, error) {
-	queries := new(sqlc.Queries)
-	rows, err := queries.ReadProjectEnvironmentCloneVariables(ctx, tx, sqlc.ReadProjectEnvironmentCloneVariablesParams{
-		AccountID: mustPgUUID(clone.AccountID), ProjectID: mustPgUUID(clone.ProjectID), ValueScopes: clone.sourceValueScopesJSON,
-	})
+	variables, secrets, err := projectCloneValuesDB(ctx, tx, clone)
 	if err != nil {
-		return "", mapProjectCloneSnapshotErr(err)
-	}
-	variables := make([]projectCloneVariable, len(rows))
-	for i, row := range rows {
-		variables[i] = projectCloneVariable{AppID: row.AppID, Scope: row.Scope, Key: row.Key, Value: row.Value}
-	}
-	sealed, err := queries.ReadProjectEnvironmentCloneSecrets(ctx, tx, sqlc.ReadProjectEnvironmentCloneSecretsParams{
-		AccountID: mustPgUUID(clone.AccountID), ProjectID: mustPgUUID(clone.ProjectID), ValueScopes: clone.sourceValueScopesJSON,
-	})
-	if err != nil {
-		return "", mapProjectCloneSnapshotErr(err)
-	}
-	secrets := make([]projectCloneSecret, len(sealed))
-	for i, row := range sealed {
-		if err := json.Unmarshal(row, &secrets[i]); err != nil {
-			return "", fmt.Errorf("decode sealed clone source metadata: %w", err)
-		}
+		return "", err
 	}
 	var scopes map[string]string
 	if err := json.Unmarshal(clone.sourceValueScopesJSON, &scopes); err != nil {
 		return "", err
 	}
 	return projectCloneValuesHash(scopes, variables, secrets)
+}
+
+func projectCloneValuesDB(ctx context.Context, db sqlc.DBTX, clone ProjectEnvironmentClone) ([]projectCloneVariable, []projectCloneSecret, error) {
+	queries := new(sqlc.Queries)
+	rows, err := queries.ReadProjectEnvironmentCloneVariables(ctx, db, sqlc.ReadProjectEnvironmentCloneVariablesParams{
+		AccountID: mustPgUUID(clone.AccountID), ProjectID: mustPgUUID(clone.ProjectID), ValueScopes: clone.sourceValueScopesJSON,
+	})
+	if err != nil {
+		return nil, nil, mapProjectCloneSnapshotErr(err)
+	}
+	variables := make([]projectCloneVariable, len(rows))
+	for i, row := range rows {
+		variables[i] = projectCloneVariable{AppID: row.AppID, Scope: row.Scope, Key: row.Key, Value: row.Value}
+	}
+	sealed, err := queries.ReadProjectEnvironmentCloneSecrets(ctx, db, sqlc.ReadProjectEnvironmentCloneSecretsParams{
+		AccountID: mustPgUUID(clone.AccountID), ProjectID: mustPgUUID(clone.ProjectID), ValueScopes: clone.sourceValueScopesJSON,
+	})
+	if err != nil {
+		return nil, nil, mapProjectCloneSnapshotErr(err)
+	}
+	secrets := make([]projectCloneSecret, len(sealed))
+	for i, row := range sealed {
+		if err := json.Unmarshal(row, &secrets[i]); err != nil {
+			return nil, nil, fmt.Errorf("decode sealed clone source metadata: %w", err)
+		}
+	}
+	return variables, secrets, nil
 }
 
 func mapProjectCloneSnapshotErr(err error) error {

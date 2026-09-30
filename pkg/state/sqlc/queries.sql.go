@@ -4814,6 +4814,67 @@ func (q *Queries) InsertOIDCExchangedToken(ctx context.Context, db DBTX, arg Ins
 	return i, err
 }
 
+const insertProjectEnvironmentCloneCapturedSecret = `-- name: InsertProjectEnvironmentCloneCapturedSecret :exec
+INSERT INTO app_secrets (account_id, app_id, scope, key, ciphertext, kid, value_hash, secret_version, secret_class)
+VALUES ($1::uuid, $2::uuid, $3::text,
+        $4::text, $5::bytea, nullif($6::text, ''),
+        nullif($7::text, ''), nullif($8::bigint, 0), $9::text)
+`
+
+type InsertProjectEnvironmentCloneCapturedSecretParams struct {
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	TargetScope   string
+	Key           string
+	Ciphertext    []byte
+	Kid           string
+	ValueHash     string
+	SecretVersion int64
+	SecretClass   string
+}
+
+// Managed ownership columns are deliberately absent: provider credentials
+// must be recreated against isolated target bindings by their owner.
+func (q *Queries) InsertProjectEnvironmentCloneCapturedSecret(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneCapturedSecretParams) error {
+	_, err := db.Exec(ctx, insertProjectEnvironmentCloneCapturedSecret,
+		arg.AccountID,
+		arg.AppID,
+		arg.TargetScope,
+		arg.Key,
+		arg.Ciphertext,
+		arg.Kid,
+		arg.ValueHash,
+		arg.SecretVersion,
+		arg.SecretClass,
+	)
+	return err
+}
+
+const insertProjectEnvironmentCloneCapturedVariable = `-- name: InsertProjectEnvironmentCloneCapturedVariable :exec
+INSERT INTO app_envs (account_id, app_id, scope, key, value)
+VALUES ($1::uuid, $2::uuid, $3::text,
+        $4::text, $5::text)
+`
+
+type InsertProjectEnvironmentCloneCapturedVariableParams struct {
+	AccountID   pgtype.UUID
+	AppID       pgtype.UUID
+	TargetScope string
+	Key         string
+	Value       string
+}
+
+func (q *Queries) InsertProjectEnvironmentCloneCapturedVariable(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneCapturedVariableParams) error {
+	_, err := db.Exec(ctx, insertProjectEnvironmentCloneCapturedVariable,
+		arg.AccountID,
+		arg.AppID,
+		arg.TargetScope,
+		arg.Key,
+		arg.Value,
+	)
+	return err
+}
+
 const insertProjectEnvironmentCloneProjectConfiguration = `-- name: InsertProjectEnvironmentCloneProjectConfiguration :execrows
 INSERT INTO project_environment_config_versions (account_id, project_id, environment_slug, version, config_hash, config_json)
 VALUES ($1::uuid, $2::uuid, $3::text,
@@ -12609,6 +12670,53 @@ func (q *Queries) ReadProjectEnvironmentCloneTargetSettings(ctx context.Context,
 	var i ReadProjectEnvironmentCloneTargetSettingsRow
 	err := row.Scan(&i.Settings, &i.ConfigHash)
 	return i, err
+}
+
+const readProjectEnvironmentCloneValueQuota = `-- name: ReadProjectEnvironmentCloneValueQuota :many
+SELECT a.id::text AS app_id, a.slug,
+       (SELECT count(*) FROM app_secrets s WHERE s.app_id = a.id)::bigint AS secret_count,
+       (SELECT count(*) FROM app_envs e WHERE e.app_id = a.id)::bigint AS variable_count
+FROM apps a
+WHERE a.account_id = $1::uuid AND a.project_id = $2::uuid
+  AND a.status <> 'deleted' AND a.preview_of_slug IS NULL
+ORDER BY a.id
+`
+
+type ReadProjectEnvironmentCloneValueQuotaParams struct {
+	AccountID pgtype.UUID
+	ProjectID pgtype.UUID
+}
+
+type ReadProjectEnvironmentCloneValueQuotaRow struct {
+	AppID         string
+	Slug          string
+	SecretCount   int64
+	VariableCount int64
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneValueQuota(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneValueQuotaParams) ([]ReadProjectEnvironmentCloneValueQuotaRow, error) {
+	rows, err := db.Query(ctx, readProjectEnvironmentCloneValueQuota, arg.AccountID, arg.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadProjectEnvironmentCloneValueQuotaRow{}
+	for rows.Next() {
+		var i ReadProjectEnvironmentCloneValueQuotaRow
+		if err := rows.Scan(
+			&i.AppID,
+			&i.Slug,
+			&i.SecretCount,
+			&i.VariableCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const readProjectEnvironmentCloneVariables = `-- name: ReadProjectEnvironmentCloneVariables :many

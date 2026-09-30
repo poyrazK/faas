@@ -17,9 +17,17 @@ func projectCloneValueScopesTx(ctx context.Context, tx pgx.Tx, clone ProjectEnvi
 		return nil, mapErr(err)
 	}
 	scopes := make(map[string]string, len(appIDs))
+	if clone.capturedValues != nil && len(clone.capturedValues) != len(appIDs) {
+		return nil, ErrConflict
+	}
 	for _, appID := range appIDs {
 		scope := clone.SourceSlug
-		if scope == "production" {
+		if clone.capturedValues != nil {
+			scope = clone.capturedValueScopes[appID]
+			if scope == "" {
+				return nil, ErrConflict
+			}
+		} else if scope == "production" {
 			selected, err := queries.ReadProjectEnvironmentCloneProductionValueScope(ctx, tx, sqlc.ReadProjectEnvironmentCloneProductionValueScopeParams{
 				AppID: mustPgUUID(appID), ProjectID: mustPgUUID(clone.ProjectID),
 			})
