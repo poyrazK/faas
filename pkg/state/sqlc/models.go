@@ -1989,6 +1989,13 @@ type ProjectEnvironmentCleanupJob struct {
 	CreatedAt       pgtype.Timestamptz
 }
 
+type ProjectEnvironmentCloneConfigurationCapture struct {
+	OperationID       pgtype.UUID
+	Version           int32
+	ConfigurationHash string
+	Configuration     []byte
+}
+
 type ProjectEnvironmentCloneLayerPin struct {
 	OperationID pgtype.UUID
 	AppID       pgtype.UUID
@@ -2027,25 +2034,26 @@ type ProjectEnvironmentCloneObjectManifest struct {
 }
 
 type ProjectEnvironmentCloneOperation struct {
-	ID                 pgtype.UUID
-	AccountID          pgtype.UUID
-	ProjectID          pgtype.UUID
-	SourceEnvironment  string
-	TargetEnvironment  string
-	IdempotencyKey     string
-	SourceRevisionHash string
-	SourceReleaseSetID pgtype.UUID
-	Status             string
-	Revision           int64
-	Resources          []byte
-	ErrorCode          string
-	CreatedAt          pgtype.Timestamptz
-	UpdatedAt          pgtype.Timestamptz
-	TargetReleaseSetID pgtype.UUID
-	LeaseToken         pgtype.UUID
-	LeaseUntil         pgtype.Timestamptz
-	AttemptCount       int32
-	NextAttemptAt      pgtype.Timestamptz
+	ID                          pgtype.UUID
+	AccountID                   pgtype.UUID
+	ProjectID                   pgtype.UUID
+	SourceEnvironment           string
+	TargetEnvironment           string
+	IdempotencyKey              string
+	SourceRevisionHash          string
+	SourceReleaseSetID          pgtype.UUID
+	Status                      string
+	Revision                    int64
+	Resources                   []byte
+	ErrorCode                   string
+	CreatedAt                   pgtype.Timestamptz
+	UpdatedAt                   pgtype.Timestamptz
+	TargetReleaseSetID          pgtype.UUID
+	LeaseToken                  pgtype.UUID
+	LeaseUntil                  pgtype.Timestamptz
+	AttemptCount                int32
+	NextAttemptAt               pgtype.Timestamptz
+	ConfigurationCaptureVersion int32
 }
 
 type ProjectEnvironmentClonePostgresBinding struct {

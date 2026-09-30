@@ -5440,3 +5440,22 @@ WHERE (b.state='deleting' OR (sqlc.arg(include_provisioning)::boolean AND b.stat
       AND EXISTS(SELECT 1 FROM jsonb_array_elements(o.resources) r WHERE r->>'kind' IN ('postgres','managed_postgres')
           AND r->>'source_id'=d.restore_source_database_id::text AND r->>'target_id'=d.id::text AND r->>'status'='ready')))
 ORDER BY b.retry_at,b.id LIMIT sqlc.arg(batch_limit)::int;
+
+-- name: ReadProjectEnvironmentCloneOperationIDByKey :one
+SELECT id FROM project_environment_clone_operations WHERE account_id=$1 AND project_id=$2 AND idempotency_key=$3;
+
+-- name: CreateCapturedProjectEnvironmentCloneOperation :exec
+INSERT INTO project_environment_clone_operations(id,account_id,project_id,source_environment,target_environment,idempotency_key,source_revision_hash,source_release_set_id,configuration_capture_version)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,1);
+
+-- name: InsertProjectEnvironmentCloneConfigurationCapture :exec
+INSERT INTO project_environment_clone_configuration_captures(operation_id,version,configuration_hash,configuration) VALUES($1,1,$2,$3);
+
+-- name: ReadProjectEnvironmentCloneConfigurationCaptureIdentity :one
+SELECT o.configuration_capture_version,o.source_revision_hash,o.source_environment,coalesce(o.source_release_set_id::text,'')::text AS source_release_set_id,
+    EXISTS(SELECT 1 FROM project_environment_clone_configuration_captures c WHERE c.operation_id=o.id)::boolean AS has_capture
+FROM project_environment_clone_operations o
+WHERE o.account_id=sqlc.arg(account_id)::uuid AND o.project_id=sqlc.arg(project_id)::uuid AND o.id=sqlc.arg(operation_id)::uuid;
+
+-- name: LockProjectEnvironmentCloneConfigurationCapture :one
+SELECT * FROM project_environment_clone_configuration_captures WHERE operation_id=$1 FOR UPDATE;

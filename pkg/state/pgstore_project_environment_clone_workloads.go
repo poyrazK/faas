@@ -44,6 +44,9 @@ func cloneWorkloadRecordsDB(ctx context.Context, db sqlc.DBTX, accountID, projec
 			return nil, err
 		}
 	}
+	if _, err := verifyCloneConfigurationCaptureDB(ctx, db, accountID, projectID, operationID, records); err != nil {
+		return nil, err
+	}
 	return records, nil
 }
 

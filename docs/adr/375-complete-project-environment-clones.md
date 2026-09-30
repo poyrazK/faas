@@ -970,3 +970,44 @@ These checks establish PostgreSQL managed-value preparation evidence. Complete
 resource, grant and public-policy publication, coordinated retained data capture,
 physical provider write fencing, compensation, the persistent full clone loop
 and native acceptance remain required. Full-copy admission stays closed.
+
+### Atomic configuration capture and derived source revision (2026-10-01)
+
+A new internal PostgreSQL creation path accepts source/target names and an
+idempotency key without a caller-supplied revision or release. In one repeatable
+read transaction it locks the project/source and workload roster, selects the
+actual source release and effective value scopes, freezes the existing typed
+workload catalogue, derives its canonical root, reserves the operation, stores
+the captures and pins their layer artifacts. The operation's source revision is
+the derived root hash. A failure, including retired artifact detection after
+row insertion, rolls back the reservation and catalogue together.
+
+The versioned root binds account/project/source/release identity, the project
+configuration version and normalized content hash, and the sorted workload
+roster with artifact/snapshot, settings, values, bindings and policy hashes.
+Operation IDs, target names and target preparation progress do not change the
+source revision. Its stored definition contains identities and hashes; values
+and sealed material remain in the private workload captures.
+
+A durable marker distinguishes this path from legacy operations. Every
+PostgreSQL workload-catalogue read verifies a marked root against the operation,
+its stored bytes and the reconstructed frozen catalogue before workers,
+materialization or publication consume it. A missing root or workload cannot
+downgrade to legacy behavior or trigger recapture from current production.
+Leased root reads check authority before and after verification. Retrying the
+creation request authenticates and returns its committed capture without
+re-reading the live source; a legacy operation cannot be adopted as a marked
+capture through an idempotency collision.
+
+Real PostgreSQL contracts cover effective production/default scopes, equal
+source revisions across different target identities, source edits/new captures,
+lost-response-style creation replay, wrong/stale ownership, altered/missing
+roots, incomplete rosters, artifact-pin rollback and an undeployed workload
+failure without partial reservation. State clone/object/value-publication and
+APId clone/binding regressions pass; independent sqlc generation matches.
+
+This root authenticates the currently implemented configuration catalogue. It
+does not assert coverage of all related policies, triggers and integrations,
+capture empty projects, coordinate or retain provider data checkpoints, or
+enable full-copy admission. The resource coverage registry and capture barrier
+must extend this path before the complete command can use it.

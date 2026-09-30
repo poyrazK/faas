@@ -1408,6 +1408,36 @@ func (q *Queries) CreateBuild(ctx context.Context, db DBTX, arg CreateBuildParam
 	return i, err
 }
 
+const createCapturedProjectEnvironmentCloneOperation = `-- name: CreateCapturedProjectEnvironmentCloneOperation :exec
+INSERT INTO project_environment_clone_operations(id,account_id,project_id,source_environment,target_environment,idempotency_key,source_revision_hash,source_release_set_id,configuration_capture_version)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,1)
+`
+
+type CreateCapturedProjectEnvironmentCloneOperationParams struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	ProjectID          pgtype.UUID
+	SourceEnvironment  string
+	TargetEnvironment  string
+	IdempotencyKey     string
+	SourceRevisionHash string
+	SourceReleaseSetID pgtype.UUID
+}
+
+func (q *Queries) CreateCapturedProjectEnvironmentCloneOperation(ctx context.Context, db DBTX, arg CreateCapturedProjectEnvironmentCloneOperationParams) error {
+	_, err := db.Exec(ctx, createCapturedProjectEnvironmentCloneOperation,
+		arg.ID,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.SourceEnvironment,
+		arg.TargetEnvironment,
+		arg.IdempotencyKey,
+		arg.SourceRevisionHash,
+		arg.SourceReleaseSetID,
+	)
+	return err
+}
+
 const createCron = `-- name: CreateCron :one
 insert into crons (id, app_id, schedule, path, enabled, timezone, skip_if_running)
 values (gen_random_uuid(), $1, $2, $3, $4, $5, $6)
@@ -5075,6 +5105,21 @@ func (q *Queries) InsertProjectEnvironmentCloneCapturedVariable(ctx context.Cont
 		arg.Key,
 		arg.Value,
 	)
+	return err
+}
+
+const insertProjectEnvironmentCloneConfigurationCapture = `-- name: InsertProjectEnvironmentCloneConfigurationCapture :exec
+INSERT INTO project_environment_clone_configuration_captures(operation_id,version,configuration_hash,configuration) VALUES($1,1,$2,$3)
+`
+
+type InsertProjectEnvironmentCloneConfigurationCaptureParams struct {
+	OperationID       pgtype.UUID
+	ConfigurationHash string
+	Configuration     []byte
+}
+
+func (q *Queries) InsertProjectEnvironmentCloneConfigurationCapture(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneConfigurationCaptureParams) error {
+	_, err := db.Exec(ctx, insertProjectEnvironmentCloneConfigurationCapture, arg.OperationID, arg.ConfigurationHash, arg.Configuration)
 	return err
 }
 
@@ -9172,6 +9217,22 @@ func (q *Queries) LockProjectEnvironmentCloneApps(ctx context.Context, db DBTX, 
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockProjectEnvironmentCloneConfigurationCapture = `-- name: LockProjectEnvironmentCloneConfigurationCapture :one
+SELECT operation_id, version, configuration_hash, configuration FROM project_environment_clone_configuration_captures WHERE operation_id=$1 FOR UPDATE
+`
+
+func (q *Queries) LockProjectEnvironmentCloneConfigurationCapture(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneConfigurationCapture, error) {
+	row := db.QueryRow(ctx, lockProjectEnvironmentCloneConfigurationCapture, operationID)
+	var i ProjectEnvironmentCloneConfigurationCapture
+	err := row.Scan(
+		&i.OperationID,
+		&i.Version,
+		&i.ConfigurationHash,
+		&i.Configuration,
+	)
+	return i, err
 }
 
 const lockProjectEnvironmentCloneCredentialBucket = `-- name: LockProjectEnvironmentCloneCredentialBucket :one
@@ -13317,6 +13378,40 @@ func (q *Queries) ReadDeploymentLayerArtifactKeys(ctx context.Context, db DBTX, 
 	return items, nil
 }
 
+const readProjectEnvironmentCloneConfigurationCaptureIdentity = `-- name: ReadProjectEnvironmentCloneConfigurationCaptureIdentity :one
+SELECT o.configuration_capture_version,o.source_revision_hash,o.source_environment,coalesce(o.source_release_set_id::text,'')::text AS source_release_set_id,
+    EXISTS(SELECT 1 FROM project_environment_clone_configuration_captures c WHERE c.operation_id=o.id)::boolean AS has_capture
+FROM project_environment_clone_operations o
+WHERE o.account_id=$1::uuid AND o.project_id=$2::uuid AND o.id=$3::uuid
+`
+
+type ReadProjectEnvironmentCloneConfigurationCaptureIdentityParams struct {
+	AccountID   pgtype.UUID
+	ProjectID   pgtype.UUID
+	OperationID pgtype.UUID
+}
+
+type ReadProjectEnvironmentCloneConfigurationCaptureIdentityRow struct {
+	ConfigurationCaptureVersion int32
+	SourceRevisionHash          string
+	SourceEnvironment           string
+	SourceReleaseSetID          string
+	HasCapture                  bool
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneConfigurationCaptureIdentity(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneConfigurationCaptureIdentityParams) (ReadProjectEnvironmentCloneConfigurationCaptureIdentityRow, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentCloneConfigurationCaptureIdentity, arg.AccountID, arg.ProjectID, arg.OperationID)
+	var i ReadProjectEnvironmentCloneConfigurationCaptureIdentityRow
+	err := row.Scan(
+		&i.ConfigurationCaptureVersion,
+		&i.SourceRevisionHash,
+		&i.SourceEnvironment,
+		&i.SourceReleaseSetID,
+		&i.HasCapture,
+	)
+	return i, err
+}
+
 const readProjectEnvironmentCloneDatabaseByName = `-- name: ReadProjectEnvironmentCloneDatabaseByName :one
 SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.environment_clone_operation_id FROM managed_postgres_databases d WHERE d.account_id=$1 AND d.name=$2 ORDER BY d.created_at,d.id LIMIT 1 FOR UPDATE OF d
 `
@@ -13915,6 +14010,23 @@ func (q *Queries) ReadProjectEnvironmentCloneObjectMutationAuthority(ctx context
 	var i ReadProjectEnvironmentCloneObjectMutationAuthorityRow
 	err := row.Scan(&i.LegacyAllowed, &i.WorkerAllowed)
 	return i, err
+}
+
+const readProjectEnvironmentCloneOperationIDByKey = `-- name: ReadProjectEnvironmentCloneOperationIDByKey :one
+SELECT id FROM project_environment_clone_operations WHERE account_id=$1 AND project_id=$2 AND idempotency_key=$3
+`
+
+type ReadProjectEnvironmentCloneOperationIDByKeyParams struct {
+	AccountID      pgtype.UUID
+	ProjectID      pgtype.UUID
+	IdempotencyKey string
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneOperationIDByKey(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneOperationIDByKeyParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentCloneOperationIDByKey, arg.AccountID, arg.ProjectID, arg.IdempotencyKey)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const readProjectEnvironmentCloneOwnedApp = `-- name: ReadProjectEnvironmentCloneOwnedApp :one
