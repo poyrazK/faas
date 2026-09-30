@@ -42,6 +42,52 @@ Claimed source apps retain emergency cancellation ownership through cleanup.
 
 ## Evidence log
 
+### Initial public route graph ownership, 2026-09-30
+
+The production matcher now uses the public router's namespace configuration
+to resolve hostname ownership and read route rules in the same readonly
+transaction. Claimed hosts apply the existing row/byte bounds after filtering
+by verified account. Global lookup remains available for genuinely unclaimed,
+substitutable hosts. Reserved misses and immutable deployment URLs skip the
+unused route query. Missing production resolver configuration refuses with
+503. The legacy in-memory matcher keeps its existing path.
+
+A private root claim baseline survives replacement with the compiled owner
+policy. Compilation and dispatch verification recheck all pinned claims with
+independent projection readers sharing the new transaction. Account/domain
+ownership, authoritative misses/reservations, root metadata and namespace
+configuration must agree before an edge response or dispatch. Startup wiring
+supplies the same router configuration as the actual public backend.
+
+All 34 selected public-policy tests passed against local Postgres in 30.464 s,
+with no skips. Fixtures exceed the actual global 50,020-row and 64 MiB bounds
+while the claimed owner's graph and dispatch remain available. Root settings,
+new app claims, new reservations, domain retargeting to another account and
+namespace feature changes refuse an earlier graph; fresh requests recover.
+An exclusive edge-table lock proves reserved/immutable initial graphs skip
+the unused query while a substitutable claimed host still requires it. Real
+HTTP/1 and HTTP/2 listeners refuse a plan cutover between initial graph pinning
+and a pure edge response, then return the verified redirect on a fresh request.
+Existing owned-preset/overlay/imported-contract, routing, outage and cleanup
+checks passed in the same selection. Nine legacy matcher, owner-carrier and
+source-security regressions passed without skips: internal package 1.812 s,
+gateway package 1.176 s. Pinned golangci-lint v2.4.0 reported zero issues for
+gatewayd-internal, including tests. Whitespace checks passed. No new SQL,
+schema change or migration was needed.
+
+The first run exposed fixture namespace and SQL parameter-type errors; both
+were corrected. A subsequent overload fixture filled the disk and interrupted
+Postgres, so that run is excluded. After reclaiming obsolete task-owned build
+archives and inactive test databases, Postgres recovered and the recorded
+runs passed. Builds used CGO_ENABLED=0, one package worker, disabled DWARF and
+stripped linker output. Lint used matching compiler flags, two runtime workers
+and GOGC=50.
+
+Atomic aggregate per-host write validation, decision/path evidence, preview
+agreement and full daemon/load/customer/staging acceptance remain pending.
+Native KVM/network/process-death/leak acceptance remains pending because no
+host is available. All six release requirements remain unchecked.
+
 ### Clone and imported-contract write bounds, 2026-09-30
 
 Imported documents now validate canonical runtime bytes in both store write
@@ -84,8 +130,7 @@ test helper and zero issues. Whitespace checks passed.
 Fresh sqlc v1.31.1 generation matched all four committed Go files; the queries
 use existing schema and require no migration.
 
-Atomic aggregate per-host validation, filtering a claimed host's initial route
-graph by its verified owner before applying global read bounds, decision/path
+Atomic aggregate per-host validation, decision/path
 evidence, preview agreement and full daemon/load/customer/staging acceptance
 remain pending. Native KVM/network/process-death/leak checks remain pending
 because no acceptance host is available. All six release requirements remain

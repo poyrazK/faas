@@ -20,6 +20,13 @@ type publicRouteGraphs struct {
 	owner      *gatewaydEdgeRules
 	generation uint64
 	hosts      map[string]*gateway.HostEntry
+	claims     map[string]gateway.PublicRouteSourcePolicy
+}
+
+// Configure once during wiring, before publishing the matcher to handlers.
+func (g *gatewaydEdgeRules) withPublicHostRouter(router pgRouter) *gatewaydEdgeRules {
+	g.publicHostSource = func(host string) *gateway.PublicAppPolicySource { return router.policySource(host, "") }
+	return g
 }
 
 func (g *gatewaydEdgeRules) RequiresOwnerPolicySnapshot() bool {
@@ -31,6 +38,9 @@ func (g *gatewaydEdgeRules) RequiresOwnerPolicySnapshot() bool {
 }
 
 func (g *gatewaydEdgeRules) pinPublicRouteGraph(ctx context.Context, host string) (context.Context, error) {
+	if g.publicHostSource == nil {
+		return nil, errors.New("public route ownership resolver is unavailable")
+	}
 	generation := g.cache.Generation()
 	prior, pinned := ctx.Value(publicRouteGraphsKey{}).(publicRouteGraphs)
 	if g.Converging(host) || pinned && (prior.owner != g || prior.generation != generation) {
@@ -39,10 +49,22 @@ func (g *gatewaydEdgeRules) pinPublicRouteGraph(ctx context.Context, host string
 	bounded, cancel := context.WithTimeout(ctx, api.TrafficPublicHostReadTimeout)
 	defer cancel()
 	var entry *gateway.HostEntry
+	var claim gateway.PublicRouteSourcePolicy
 	err := g.store.(state.PublicHostPolicySnapshotStore).WithPublicHostPolicySnapshot(bounded, func(reader state.PublicHostPolicyReader) error {
-		rules, err := reader.PublicHostEdgeRules(bounded, host, "", true)
+		app, found, err := resolvePublicPolicyIdentity(bounded, reader.NewProjectionReader(), g.publicHostSource(host))
 		if err != nil {
 			return err
+		}
+		claim = gateway.PublicRouteSourcePolicy{Source: app.PublicPolicySource, AppID: app.ID, AccountID: app.AccountID, Found: found}
+		if err := validatePublicRouteClaim(host, claim); err != nil {
+			return err
+		}
+		var rules []state.EdgeRule
+		if claim.Source.CanSubstitute {
+			rules, err = reader.PublicHostEdgeRules(bounded, host, claim.AccountID, true)
+			if err != nil {
+				return err
+			}
 		}
 		entry, err = g.compileHostRules(bounded, host, rules)
 		return err
@@ -60,11 +82,17 @@ func (g *gatewaydEdgeRules) pinPublicRouteGraph(ctx context.Context, host string
 		return nil, err
 	}
 	hosts := make(map[string]*gateway.HostEntry, len(prior.hosts)+1)
+	claims := make(map[string]gateway.PublicRouteSourcePolicy, len(prior.claims)+1)
 	for key, value := range prior.hosts {
 		hosts[key] = value
+		claims[key] = prior.claims[key]
+	}
+	if previous, exists := claims[host]; exists && !samePublicRouteClaim(previous, claim) {
+		return nil, errors.New("public route ownership changed during resolution")
 	}
 	hosts[host] = entry
-	ctx = context.WithValue(ctx, publicRouteGraphsKey{}, publicRouteGraphs{g, generation, hosts})
+	claims[host] = claim
+	ctx = context.WithValue(ctx, publicRouteGraphsKey{}, publicRouteGraphs{owner: g, generation: generation, hosts: hosts, claims: claims})
 	return gateway.WithPinnedHostPolicy(ctx, host, entry)
 }
 
@@ -78,12 +106,19 @@ func resolvePublicCompiledPolicy(ctx context.Context, reader state.PublicHostPol
 		hosts = append(hosts, host)
 	}
 	sort.Strings(hosts)
+	if err := verifyPublicRouteClaims(ctx, reader, graphs, hosts, app, found, source); err != nil {
+		return err
+	}
 	if !found {
 		if !source.CanSubstitute {
 			return nil
 		}
 		for _, host := range hosts {
-			rules, err := reader.PublicHostEdgeRules(ctx, host, "", true)
+			claim := graphs.claims[host]
+			if !claim.Source.CanSubstitute {
+				continue
+			}
+			rules, err := reader.PublicHostEdgeRules(ctx, host, claim.AccountID, true)
 			if err != nil {
 				return err
 			}
@@ -91,7 +126,7 @@ func resolvePublicCompiledPolicy(ctx context.Context, reader state.PublicHostPol
 			if err != nil {
 				return err
 			}
-			if err := verifyPublicRouteGraph(graphs.hosts[host], entry, ""); err != nil {
+			if err := verifyPublicRouteGraph(graphs.hosts[host], entry, claim.AccountID); err != nil {
 				return err
 			}
 		}
@@ -112,6 +147,53 @@ func resolvePublicCompiledPolicy(ctx context.Context, reader state.PublicHostPol
 			}
 		}
 		app.PublicCompiledPolicies[host] = entry
+	}
+	return nil
+}
+
+func validatePublicRouteClaim(host string, claim gateway.PublicRouteSourcePolicy) error {
+	if claim.Source == nil || claim.Source.Host != host || claim.Source.Slug != "" || claim.Source.Revision == "" ||
+		claim.Found && (claim.AppID == "" || claim.AccountID == "") ||
+		!claim.Found && (claim.AppID != "" || claim.AccountID != "") {
+		return errors.New("public route ownership claim is invalid")
+	}
+	return nil
+}
+
+func samePublicRouteNamespace(a, b *gateway.PublicAppPolicySource) bool {
+	return a != nil && b != nil && a.AppsSuffix == b.AppsSuffix && a.DeploySuffix == b.DeploySuffix && a.TenantSurfaces == b.TenantSurfaces
+}
+
+func samePublicRouteClaim(a, b gateway.PublicRouteSourcePolicy) bool {
+	return a.Found == b.Found && a.AppID == b.AppID && a.AccountID == b.AccountID &&
+		samePublicRouteNamespace(a.Source, b.Source) && a.Source.Host == b.Source.Host &&
+		a.Source.Revision == b.Source.Revision && a.Source.CanSubstitute == b.Source.CanSubstitute
+}
+
+func verifyPublicRouteClaims(ctx context.Context, reader state.PublicHostPolicyReader, graphs publicRouteGraphs, hosts []string, app *gateway.App, found bool, source *gateway.PublicAppPolicySource) error {
+	if graphs.owner == nil || len(graphs.claims) != len(hosts) {
+		return errors.New("public route ownership claims are unavailable")
+	}
+	for _, host := range hosts {
+		claim := graphs.claims[host]
+		if err := validatePublicRouteClaim(host, claim); err != nil {
+			return err
+		}
+		if graphs.owner.publicHostSource == nil || !samePublicRouteNamespace(claim.Source, graphs.owner.publicHostSource(host)) {
+			return errors.New("public route namespace changed before owner admission")
+		}
+		resolved, exists, err := resolvePublicPolicyIdentity(ctx, reader.NewProjectionReader(), claim.Source)
+		if err != nil {
+			return err
+		}
+		fresh := gateway.PublicRouteSourcePolicy{Source: resolved.PublicPolicySource, AppID: resolved.ID, AccountID: resolved.AccountID, Found: exists}
+		if !samePublicRouteClaim(claim, fresh) || found && claim.Found && claim.AccountID != app.AccountID {
+			return errors.New("public route ownership changed before owner admission")
+		}
+		if source.Host == host && (!samePublicRouteNamespace(claim.Source, source) || claim.Found != found ||
+			claim.AppID != app.ID || claim.AccountID != app.AccountID || claim.Source.CanSubstitute != source.CanSubstitute) {
+			return errors.New("public route namespace changed before owner admission")
+		}
 	}
 	return nil
 }

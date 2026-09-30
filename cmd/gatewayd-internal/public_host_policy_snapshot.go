@@ -68,7 +68,9 @@ func (r pgRouter) resolvePublicAppSlug(ctx context.Context, slug string) (gatewa
 	return app, found && err == nil, err
 }
 
-func resolvePublicPolicySource(ctx context.Context, reader state.PublicHostPolicyReader, source *gateway.PublicAppPolicySource) (gateway.App, bool, error) {
+// The initial route graph needs ownership, never the graph it is about to pin.
+// Keep this projection independent of declared contracts and compiled rules.
+func resolvePublicPolicyIdentity(ctx context.Context, reader state.PublicHostPolicyReader, source *gateway.PublicAppPolicySource) (gateway.App, bool, error) {
 	if source == nil || (source.Host == "") == (source.Slug == "") {
 		return gateway.App{}, false, errors.New("public host policy source is invalid")
 	}
@@ -78,6 +80,7 @@ func resolvePublicPolicySource(ctx context.Context, reader state.PublicHostPolic
 	var found bool
 	var err error
 	projection := *source
+	projection.CanSubstitute = false
 	if projection.Slug != "" {
 		app, found, err = router.appBySlug(ctx, projection.Slug)
 	} else {
@@ -86,15 +89,27 @@ func resolvePublicPolicySource(ctx context.Context, reader state.PublicHostPolic
 			projection.CanSubstitute, err = router.publicHostSubstitutionAllowed(ctx, reader, projection.Host, app, found)
 		}
 	}
-	if err == nil && found {
-		err = resolvePublicDeclaredRoutePolicy(ctx, reader, &app)
-	}
-	if err == nil {
-		err = resolvePublicCompiledPolicy(ctx, reader, &app, found, &projection)
-	}
 	if err == nil {
 		projection.Revision = reader.PublicHostPolicyRevision()
 		app.PublicPolicySource = &projection
+	}
+	return app, found, err
+}
+
+func resolvePublicPolicySource(ctx context.Context, reader state.PublicHostPolicyReader, source *gateway.PublicAppPolicySource) (gateway.App, bool, error) {
+	app, found, err := resolvePublicPolicyIdentity(ctx, reader, source)
+	if err != nil {
+		return app, found, err
+	}
+	projection := app.PublicPolicySource
+	if found {
+		err = resolvePublicDeclaredRoutePolicy(ctx, reader, &app)
+	}
+	if err == nil {
+		err = resolvePublicCompiledPolicy(ctx, reader, &app, found, projection)
+	}
+	if err == nil {
+		projection.Revision = reader.PublicHostPolicyRevision()
 		if _, pinned := ctx.Value(publicRouteGraphsKey{}).(publicRouteGraphs); pinned && projection.Slug != "" && found {
 			app.PublicRouteSource = gateway.PublicRouteSourceClaim(ctx)
 			err = verifyPublicRouteSourceClaim(ctx, reader.NewProjectionReader(), app)

@@ -329,7 +329,7 @@ func TestPublicDeclaredContractPostgresTwoHTTPGatewaysRepairWithoutNotify(t *tes
 		handler.SetWakeGateHook()
 		handler.WithDeclaredRouteMatcher(newDeclaredRoutesMatcher(f.store)).
 			WithPublicRoutingPolicy(newPublicRoutingPinner(f.store)).
-			WithEdgeRules(newGatewaydEdgeRules(f.store, nil, nil, nil), nil, nil)
+			WithEdgeRules(newGatewaydEdgeRules(f.store, nil, nil, nil).withPublicHostRouter(router), nil, nil)
 		forwards := &atomic.Int32{}
 		handler.WithForwarding(func(target gateway.Target) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

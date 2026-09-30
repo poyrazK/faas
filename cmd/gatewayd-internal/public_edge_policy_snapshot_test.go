@@ -45,11 +45,14 @@ func (f publicRoutingPGFixture) corsPreset(t *testing.T, origins ...string) stat
 
 func (f publicRoutingPGFixture) compiledApp(t *testing.T, g *gatewaydEdgeRules, host string) (context.Context, gateway.App) {
 	t.Helper()
+	router := pgRouter{store: f.store, appsSuffix: ".apps.gregale.dev", deploySuffix: ".gregale.dev", tenantSurfacesEnabled: func() bool { return false }}
+	if g.publicHostSource == nil {
+		g.withPublicHostRouter(router)
+	}
 	ctx, err := g.PinHostPolicy(t.Context(), host)
 	if err != nil {
 		t.Fatal(err)
 	}
-	router := pgRouter{store: f.store, appsSuffix: ".apps.gregale.dev", deploySuffix: ".gregale.dev", tenantSurfacesEnabled: func() bool { return false }}
 	app, found, err := router.ResolveHost(ctx, host)
 	if err != nil || !found || len(app.PublicCompiledPolicies) != 1 {
 		t.Fatalf("compiled app: found=%v policies=%d err=%v", found, len(app.PublicCompiledPolicies), err)
@@ -123,7 +126,7 @@ func TestPublicEdgePolicyPostgresAppRulesAndPresetsShareView(t *testing.T) {
 		if _, err := f.store.UpdateCorsPreset(t.Context(), f.app.AccountID, preset.ID, preset); err != nil {
 			t.Fatal(err)
 		}
-	}}, appsSuffix: ".apps.gregale.dev", tenantSurfacesEnabled: func() bool { return false }}
+	}}, appsSuffix: ".apps.gregale.dev", deploySuffix: ".gregale.dev", tenantSurfacesEnabled: func() bool { return false }}
 	during, found, err := router.ResolveHost(ctx, host)
 	if err != nil || !found || during.PublicPolicySource.Revision != before.PublicPolicySource.Revision || during.MaintenanceMode {
 		t.Fatalf("app/rule/preset mixed views: found=%v err=%v", found, err)
@@ -176,7 +179,7 @@ func TestPublicEdgePolicyPostgresForeignPresetDoesNotBlockOwner(t *testing.T) {
 	f.compiledApp(t, g, host)
 	// Owner policy must refuse the same failure when the preset is referenced.
 	f.edgeRule(t, host, state.EdgeRuleAction{Kind: state.EdgeRuleKindCORSA, CORS: &state.EdgeRuleCORSAction{CorsPresetID: &preset.ID}})
-	if _, _, err := (pgRouter{store: f.store, appsSuffix: ".apps.gregale.dev"}).ResolveHost(ctx, host); !errors.Is(err, state.ErrNotFound) {
+	if _, _, err := (pgRouter{store: f.store, appsSuffix: ".apps.gregale.dev", deploySuffix: ".gregale.dev", tenantSurfacesEnabled: func() bool { return false }}).ResolveHost(ctx, host); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("cross-owner preset was accepted: %v", err)
 	}
 }
@@ -199,7 +202,7 @@ func TestPublicEdgePolicyPostgresTwoHTTPGatewaysRepairWithoutNotify(t *testing.T
 		scheduler := gateway.NewFakeScheduler("node").WithInstanceID(uuid.NewString()).WithDeploymentID(deployment.ID)
 		handler := gateway.NewHandlerWith(gateway.NewPGBackend(router, scheduler, nil), nil, nil)
 		handler.SetWakeGateHook()
-		handler.WithPublicRoutingPolicy(newPublicRoutingPinner(f.store)).WithEdgeRules(newGatewaydEdgeRules(f.store, nil, nil, nil), nil, nil).WithEdgeTargetPolicyLoader(
+		handler.WithPublicRoutingPolicy(newPublicRoutingPinner(f.store)).WithEdgeRules(newGatewaydEdgeRules(f.store, nil, nil, nil).withPublicHostRouter(router), nil, nil).WithEdgeTargetPolicyLoader(
 			func(ctx context.Context, slug string) (gateway.App, bool, error) {
 				return router.resolvePublicAppSlug(ctx, slug)
 			})
@@ -275,12 +278,12 @@ func TestPublicEdgePolicyPostgresRouteGraphCannotChangeOwner(t *testing.T) {
 	f.deployment(t, "production", "sha256:edge-routes")
 	const host = "synthetic.example.test"
 	old := f.edgeRule(t, host, state.EdgeRuleAction{Kind: state.EdgeRuleKindRoute, Route: &state.EdgeRuleRouteAction{TargetAppSlug: f.app.Slug}})
-	g := newGatewaydEdgeRules(f.store, nil, nil, nil)
+	router := pgRouter{store: f.store, appsSuffix: ".apps.gregale.dev", tenantSurfacesEnabled: func() bool { return false }}
+	g := newGatewaydEdgeRules(f.store, nil, nil, nil).withPublicHostRouter(router)
 	ctx, err := g.PinHostPolicy(t.Context(), host)
 	if err != nil {
 		t.Fatal(err)
 	}
-	router := pgRouter{store: f.store, appsSuffix: ".apps.gregale.dev", tenantSurfacesEnabled: func() bool { return false }}
 	if _, found, err := router.ResolveHost(ctx, host); err != nil || found {
 		t.Fatalf("initial synthetic graph: %v/%v", found, err)
 	}
@@ -324,7 +327,7 @@ func TestPublicEdgePolicyPostgresSourceTargetAgreementBeforePureEdgeResponse(t *
 			f.edgeRule(t, host, state.EdgeRuleAction{Kind: state.EdgeRuleKindRedirect, Redirect: &state.EdgeRuleRedirectAction{StatusCode: http.StatusTemporaryRedirect, To: "/accepted"}})
 			router := pgRouter{store: f.store, appsSuffix: ".apps.gregale.dev", tenantSurfacesEnabled: func() bool { return false }}
 			handler := gateway.NewHandlerWith(gateway.NewPGBackend(router, gateway.NewFakeScheduler("node"), nil), nil, nil)
-			handler.WithEdgeRules(newGatewaydEdgeRules(f.store, nil, nil, nil), nil, nil).WithEdgeTargetPolicyLoader(func(ctx context.Context, slug string) (gateway.App, bool, error) {
+			handler.WithEdgeRules(newGatewaydEdgeRules(f.store, nil, nil, nil).withPublicHostRouter(router), nil, nil).WithEdgeTargetPolicyLoader(func(ctx context.Context, slug string) (gateway.App, bool, error) {
 				switch failure {
 				case "source-cutover":
 					if _, err := f.pool.Exec(ctx, `UPDATE apps SET maintenance_mode=true WHERE id=$1`, source.ID); err != nil {

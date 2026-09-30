@@ -1,7 +1,15 @@
 # Request traffic policy snapshots
 
-ADR-375 pins a fresh route-only graph before public route substitution. The
-hostname/app transaction then reads the verified owner's complete host rules,
+ADR-375 resolves hostname ownership and pins the corresponding route-only
+graph in one fresh readonly transaction before public route substitution.
+Claimed hosts read only their owner's routes before applying projection bounds.
+Genuinely unclaimed, substitutable hosts retain global route discovery; reserved
+misses and immutable deployment URLs skip that unused lookup. The matcher uses
+the public router's namespace configuration and refuses requests if production
+ownership resolution is not configured. The private root claim is rechecked
+before compiling the full owner policy, including namespace feature changes.
+An intervening ownership or root-metadata change returns 503; a fresh request
+can resolve the current claim. The hostname/app transaction then reads the verified owner's complete host rules,
 referenced presets and stable environment URL overlay alongside app flags.
 Compiler-cache reuse requires the same freshly read content baseline; missed
 notifications cannot keep a stale policy active for a fresh request. The plan
@@ -39,7 +47,8 @@ Edge projections use sqlc and deterministic priority/creation/ID ordering.
 SQL refuses over 50,020 matching rules or 64 MiB of canonical row JSON before
 transferring the aggregate. Referenced presets count toward the compiled
 input byte bound; each preset and environment overlay is limited to 512 KiB
-before transfer. Unrelated tenants' non-route rules and presets are not loaded.
+before transfer. Claimed hosts do not load unrelated tenants' routes, other
+rule kinds or presets, so foreign policy cannot exhaust their projection bound.
 The compiled cache preserves the existing 10,000-host entry ceiling.
 An oversized projection refuses with `traffic_policy_unavailable`/503.
 Individual CORS preset creates/replacements, environment overlay replacements,
@@ -187,8 +196,7 @@ Expired release/revision pins retain 410; an incomplete public release retains
 503. More than 100 positive deployments refuses verification without truncation.
 
 These routing reads verify the resolved host's app and pinned deployment.
-Atomic host/alias/environment binding with the earlier resolved app settings,
-cross-process exact-wake coalescing, complete synthetic admission/security
+Cross-process exact-wake coalescing, complete synthetic admission/security
 ownership, bounded decision evidence and preview agreement remain pending.
 
 ## Managed service calls

@@ -314,8 +314,16 @@ verified projection and selected deployment during wake and retries.
 Compiled edge-policy agreement and complete path evidence remain required
 before the policy guarantee is accepted.
 
-Public edge policy resolution has two phases. A bounded fresh route-only
-graph selects the owner/target without loading unrelated tenants' presets.
+Public edge policy resolution has two phases. The initial readonly transaction
+resolves hostname ownership and reads that owner's bounded route-only graph.
+Global route lookup is limited to genuinely unclaimed, substitutable hosts;
+reserved misses and immutable deployment URLs skip that unused graph. The
+matcher uses the same namespace configuration as the public router and refuses
+production resolution if that configuration is unavailable. A private root
+claim baseline survives owner compilation and is rechecked in its transaction
+before an edge response or dispatch. Changed ownership, namespace configuration
+or root metadata refuses reuse; a fresh request can resolve the new claim.
+The graph selects the owner/target without loading unrelated tenants' presets.
 The hostname/app transaction then reads the verified owner's complete rule
 set, referenced CORS presets and the stable environment URL's overlay. It verifies the
 earlier route graph, compiles the owned inputs, and supplies sealed host
@@ -341,7 +349,7 @@ with byte limit, observed size and recovery guidance. A smaller replacement or
 an empty overlay remains available for repairing an existing oversized row.
 This individual-object guard does not establish the aggregate per-host rule
 and referenced-preset bound. Atomic checks across concurrent contributing
-mutations and environment cloning remain delivery work; an account-wide byte
+mutations remain delivery work; an account-wide byte
 quota must not silently replace the per-host runtime bound.
 
 Imported documents also validate canonical runtime bytes before replacement;

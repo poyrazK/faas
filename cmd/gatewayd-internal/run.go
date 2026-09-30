@@ -2049,7 +2049,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// reads state.EdgeRule via the store; reset on
 	// db.NotifyEdgeRuleChanged is wired via PGBackend.WithEdgeRules
 	// below.
-	deps.edgeRulesMatcher = newGatewaydEdgeRules(pgStore, log, deps.edgeValidateAdapter, deps.metrics)
+	deps.edgeRulesMatcher = newGatewaydEdgeRules(pgStore, log, deps.edgeValidateAdapter, deps.metrics).withPublicHostRouter(router)
 	// The backend is constructed before the production matcher so the
 	// dependency graph can be assembled in one pass. Re-attach the concrete
 	// matcher here (rather than leaving a typed-nil interface in PGBackend),

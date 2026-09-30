@@ -88,6 +88,7 @@ type gatewaydEdgeRules struct {
 	log              *slog.Logger
 	validate         validateCompiler
 	metrics          *gateway.Metrics
+	publicHostSource func(string) *gateway.PublicAppPolicySource
 	loadedGeneration atomic.Int64
 }
 
