@@ -141,6 +141,7 @@ type MemStore struct {
 	applicationStandardPublishers      map[string]api.ApplicationStandardPublisher
 	applicationStandardAssignments     map[string]applicationStandardAssignmentRecord
 	applicationStandardEnrollments     map[string]ApplicationStandardEnrollment
+	applicationStandardReviewPlans     map[string]ApplicationStandardReviewPlan
 	devBridgeSessions                  map[string]devbridge.Session
 	devBridgeWebhookReplays            map[string]devbridge.WebhookReplay
 	featureFlagVersions                map[string][]FeatureFlagVersion

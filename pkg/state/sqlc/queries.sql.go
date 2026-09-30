@@ -4188,6 +4188,34 @@ func (q *Queries) GetApplicationStandardPublisher(ctx context.Context, db DBTX, 
 	return i, err
 }
 
+const getApplicationStandardReviewPlan = `-- name: GetApplicationStandardReviewPlan :one
+SELECT id, org_id, created_by, request, approval_inputs, approval_hash, applications, blockers, created_at, expires_at FROM application_standard_review_plans
+WHERE org_id = $1::uuid AND id = $2::uuid
+`
+
+type GetApplicationStandardReviewPlanParams struct {
+	OrgID  pgtype.UUID
+	PlanID pgtype.UUID
+}
+
+func (q *Queries) GetApplicationStandardReviewPlan(ctx context.Context, db DBTX, arg GetApplicationStandardReviewPlanParams) (ApplicationStandardReviewPlan, error) {
+	row := db.QueryRow(ctx, getApplicationStandardReviewPlan, arg.OrgID, arg.PlanID)
+	var i ApplicationStandardReviewPlan
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.CreatedBy,
+		&i.Request,
+		&i.ApprovalInputs,
+		&i.ApprovalHash,
+		&i.Applications,
+		&i.Blockers,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
 const getApplicationStandardVersion = `-- name: GetApplicationStandardVersion :one
 SELECT s.id::text AS standard_id, s.org_id::text AS org_id, s.slug, v.version,
        v.definition, v.definition_hash, v.description, v.created_by::text AS created_by, v.created_at
@@ -4938,6 +4966,43 @@ func (q *Queries) InsertAppErrorRequest(ctx context.Context, db DBTX, arg Insert
 		arg.DeploymentTag,
 		arg.DeploymentCreatedAt,
 		arg.ImageDigest,
+	)
+	return err
+}
+
+const insertApplicationStandardReviewPlan = `-- name: InsertApplicationStandardReviewPlan :exec
+INSERT INTO application_standard_review_plans
+(id, org_id, created_by, request, approval_inputs, approval_hash, applications, blockers, created_at, expires_at)
+VALUES ($1::uuid, $2::uuid, $3::uuid,
+        $4::jsonb, $5::jsonb, $6::text,
+        $7::jsonb, $8::jsonb, $9::timestamptz, $10::timestamptz)
+`
+
+type InsertApplicationStandardReviewPlanParams struct {
+	ID             pgtype.UUID
+	OrgID          pgtype.UUID
+	CreatedBy      pgtype.UUID
+	Request        []byte
+	ApprovalInputs []byte
+	ApprovalHash   string
+	Applications   []byte
+	Blockers       []byte
+	CreatedAt      pgtype.Timestamptz
+	ExpiresAt      pgtype.Timestamptz
+}
+
+func (q *Queries) InsertApplicationStandardReviewPlan(ctx context.Context, db DBTX, arg InsertApplicationStandardReviewPlanParams) error {
+	_, err := db.Exec(ctx, insertApplicationStandardReviewPlan,
+		arg.ID,
+		arg.OrgID,
+		arg.CreatedBy,
+		arg.Request,
+		arg.ApprovalInputs,
+		arg.ApprovalHash,
+		arg.Applications,
+		arg.Blockers,
+		arg.CreatedAt,
+		arg.ExpiresAt,
 	)
 	return err
 }
@@ -9042,6 +9107,52 @@ func (q *Queries) LockApplicationStandardOrg(ctx context.Context, db DBTX, arg L
 	return id, err
 }
 
+const lockApplicationStandardReviewPlan = `-- name: LockApplicationStandardReviewPlan :one
+SELECT id, org_id, created_by, request, approval_inputs, approval_hash, applications, blockers, created_at, expires_at FROM application_standard_review_plans
+WHERE org_id = $1::uuid AND id = $2::uuid FOR UPDATE
+`
+
+type LockApplicationStandardReviewPlanParams struct {
+	OrgID  pgtype.UUID
+	PlanID pgtype.UUID
+}
+
+func (q *Queries) LockApplicationStandardReviewPlan(ctx context.Context, db DBTX, arg LockApplicationStandardReviewPlanParams) (ApplicationStandardReviewPlan, error) {
+	row := db.QueryRow(ctx, lockApplicationStandardReviewPlan, arg.OrgID, arg.PlanID)
+	var i ApplicationStandardReviewPlan
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.CreatedBy,
+		&i.Request,
+		&i.ApprovalInputs,
+		&i.ApprovalHash,
+		&i.Applications,
+		&i.Blockers,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
+const lockApplicationStandardReviewScope = `-- name: LockApplicationStandardReviewScope :one
+SELECT p.id FROM projects p
+WHERE p.id = $1::uuid AND $2::text = 'project'
+FOR UPDATE
+`
+
+type LockApplicationStandardReviewScopeParams struct {
+	ScopeID pgtype.UUID
+	Scope   string
+}
+
+func (q *Queries) LockApplicationStandardReviewScope(ctx context.Context, db DBTX, arg LockApplicationStandardReviewScopeParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockApplicationStandardReviewScope, arg.ScopeID, arg.Scope)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockCreditConsumption = `-- name: LockCreditConsumption :exec
 SELECT pg_advisory_xact_lock(hashtextextended('consume-account-credit:' || $1::text, 0))
 `
@@ -12709,6 +12820,102 @@ func (q *Queries) ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg
 	var i ReadAccountCreditConsumptionRow
 	err := row.Scan(&i.ConsumedCents, &i.HasPrior, &i.HasUnqualified)
 	return i, err
+}
+
+const readApplicationStandardReviewSnapshot = `-- name: ReadApplicationStandardReviewSnapshot :one
+SELECT jsonb_build_object(
+    'org_id', o.id::text,
+    'org_plan', o.plan,
+    'org_status', o.status,
+    'deleted_pending', o.deleted_pending,
+    'scope_owner_id', coalesce((SELECT p.account_id::text FROM projects p
+        WHERE $1::text = 'project' AND p.id = $2::uuid), ''),
+    'actor_authorized', EXISTS (SELECT 1 FROM accounts a JOIN org_memberships m ON m.account_id = a.id
+        WHERE a.id = $3::uuid AND a.status = 'active'
+          AND m.org_id = o.id AND m.removed_at IS NULL AND m.role IN ('owner', 'admin')),
+    'scope_owned', CASE $1::text
+      WHEN 'organization' THEN $2::uuid = o.id
+      WHEN 'application' THEN EXISTS (SELECT 1 FROM apps a WHERE a.id = $2::uuid AND a.org_id = o.id AND a.status <> 'deleted')
+      WHEN 'project' THEN EXISTS (SELECT 1 FROM projects p WHERE p.id = $2::uuid
+        AND (p.account_id = o.personal_owner_account_id OR EXISTS (SELECT 1 FROM org_memberships m
+          WHERE m.org_id = o.id AND m.account_id = p.account_id AND m.removed_at IS NULL)))
+        AND NOT EXISTS (SELECT 1 FROM apps a WHERE a.project_id = $2::uuid AND a.status <> 'deleted' AND a.org_id <> o.id)
+      ELSE false END,
+    'assignments', coalesce((SELECT jsonb_agg(jsonb_build_object(
+        'id', a.id::text, 'org_id', a.org_id::text, 'scope', a.scope, 'scope_id', a.scope_id::text,
+        'standard_id', a.standard_id::text, 'admission_version', a.admission_version,
+        'revision', a.revision, 'active', a.active) ORDER BY a.id)
+        FROM application_standard_assignments a WHERE a.org_id = o.id), '[]'::jsonb),
+    'versions', coalesce((SELECT jsonb_agg(jsonb_build_object(
+        'standard_id', v.standard_id::text, 'version', v.version, 'definition', v.definition,
+        'definition_hash', v.definition_hash) ORDER BY v.standard_id, v.version)
+        FROM application_standard_versions v WHERE v.org_id = o.id AND
+          (v.standard_id = $4::uuid OR EXISTS (SELECT 1 FROM application_standard_assignments a
+             WHERE a.org_id = o.id AND a.standard_id = v.standard_id))), '[]'::jsonb),
+    'destinations', coalesce((SELECT jsonb_agg(jsonb_build_object(
+        'id', d.id::text, 'config_hash', d.config_hash, 'kind', d.kind) ORDER BY d.id)
+        FROM application_standard_log_destinations d WHERE d.org_id = o.id), '[]'::jsonb),
+    'publishers', coalesce((SELECT jsonb_agg(jsonb_build_object(
+        'id', p.id::text, 'fingerprint', p.fingerprint) ORDER BY p.id)
+        FROM application_standard_publishers p WHERE p.org_id = o.id), '[]'::jsonb),
+    'applications', coalesce((SELECT jsonb_agg(jsonb_build_object(
+        'app_id', a.id::text, 'org_id', a.org_id::text, 'project_id', coalesce(a.project_id::text, ''),
+        'account_id', a.account_id::text, 'slug', a.slug, 'status', a.status, 'type', a.type,
+        'workload_class', a.workload_class, 'account_plan', acct.plan, 'account_status', acct.status,
+        'account_drain_count', (SELECT count(*) FROM app_log_drains d JOIN apps owner ON owner.id = d.app_id
+            WHERE owner.account_id = a.account_id AND owner.status <> 'deleted'),
+        'settings', jsonb_build_object('require_signed', a.require_signed, 'security_policy', a.security_policy,
+            'egress_cidrs', coalesce(to_jsonb(a.egress_allowlist::text[]), '[]'::jsonb), 'egress_extra_ports', coalesce(to_jsonb(a.egress_ports), '[]'::jsonb)),
+        'has_enrollment', e.app_id IS NOT NULL,
+        'enrollment', jsonb_build_object('org_id', e.org_id::text, 'project_id', coalesce(e.project_id::text, ''), 'base_settings', e.base_settings, 'local_settings', e.local_settings,
+            'additional_log_destinations', to_jsonb(e.additional_log_destinations::text[]), 'adoptions', e.adoptions,
+            'desired_revision', e.desired_revision, 'effective', e.effective, 'effective_hash', e.effective_hash),
+        'drains', coalesce((SELECT jsonb_agg(jsonb_build_object('id', d.id::text, 'kind', d.kind,
+            'target_hash', encode(sha256(convert_to(d.target_url, 'UTF8')), 'hex'),
+            'auth_hash', encode(sha256(coalesce(d.auth_header_sealed, ''::bytea)), 'hex'), 'enabled', d.enabled) ORDER BY d.id)
+            FROM app_log_drains d WHERE d.app_id = a.id), '[]'::jsonb),
+        'signers', coalesce((SELECT jsonb_agg(jsonb_build_object('name', s.signer_name,
+            'fingerprint', encode(sha256(s.cosign_public_key), 'hex')) ORDER BY s.signer_name)
+            FROM app_trusted_signers s WHERE s.app_id = a.id), '[]'::jsonb),
+        'artifacts', coalesce((SELECT jsonb_agg(jsonb_build_object('id', d.id::text, 'scope', d.scope,
+            'kind', d.kind, 'status', d.status, 'image_digest', coalesce(d.image_digest, ''),
+            'rootfs_key', coalesce(d.rootfs_key, ''), 'parked_reason', coalesce(d.parked_reason, ''),
+            'rootfs_bytes', coalesce(d.rootfs_bytes, 0), 'source_sha256', coalesce(d.source_sha256, ''),
+            'scan_status', d.scan_status, 'scan_result_hash', encode(sha256(convert_to(coalesce(d.scan_result::text, ''), 'UTF8')), 'hex'),
+            'sidecar_hash', encode(sha256(convert_to(coalesce((SELECT jsonb_agg(jsonb_build_object('sidecar_name', layer.sidecar_name,
+                'storage_key', layer.storage_key, 'bytes', layer.bytes, 'content_digest', layer.content_digest) ORDER BY layer.sidecar_name)::text
+                FROM deployment_sidecar_layers layer WHERE layer.deployment_id = d.id), ''), 'UTF8')), 'hex')) ORDER BY d.id)
+            FROM deployments d WHERE d.app_id = a.id AND (d.status NOT IN ('failed', 'superseded', 'cancelled')
+                OR EXISTS (SELECT 1 FROM instances i WHERE i.deployment_id = d.id AND i.terminal_at IS NULL
+                    AND i.state NOT IN ('STOPPED', 'FAILED')))), '[]'::jsonb)) ORDER BY a.id)
+        FROM apps a JOIN accounts acct ON acct.id = a.account_id LEFT JOIN app_application_standards e ON e.app_id = a.id
+        WHERE a.org_id = o.id AND a.status <> 'deleted'
+          AND (($1::text = 'organization' AND $2::uuid = o.id)
+            OR ($1::text = 'project' AND a.project_id = $2::uuid)
+            OR ($1::text = 'application' AND a.id = $2::uuid))), '[]'::jsonb)
+)::jsonb AS snapshot
+FROM orgs o WHERE o.id = $5::uuid
+`
+
+type ReadApplicationStandardReviewSnapshotParams struct {
+	Scope      string
+	ScopeID    pgtype.UUID
+	ActorID    pgtype.UUID
+	StandardID pgtype.UUID
+	OrgID      pgtype.UUID
+}
+
+func (q *Queries) ReadApplicationStandardReviewSnapshot(ctx context.Context, db DBTX, arg ReadApplicationStandardReviewSnapshotParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readApplicationStandardReviewSnapshot,
+		arg.Scope,
+		arg.ScopeID,
+		arg.ActorID,
+		arg.StandardID,
+		arg.OrgID,
+	)
+	var snapshot []byte
+	err := row.Scan(&snapshot)
+	return snapshot, err
 }
 
 const readProjectReleaseSet = `-- name: ReadProjectReleaseSet :one

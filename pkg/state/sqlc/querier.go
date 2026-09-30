@@ -297,6 +297,7 @@ type Querier interface {
 	GetApplicationStandardEnrollment(ctx context.Context, db DBTX, arg GetApplicationStandardEnrollmentParams) (GetApplicationStandardEnrollmentRow, error)
 	GetApplicationStandardLogDestination(ctx context.Context, db DBTX, arg GetApplicationStandardLogDestinationParams) (ApplicationStandardLogDestination, error)
 	GetApplicationStandardPublisher(ctx context.Context, db DBTX, arg GetApplicationStandardPublisherParams) (ApplicationStandardPublisher, error)
+	GetApplicationStandardReviewPlan(ctx context.Context, db DBTX, arg GetApplicationStandardReviewPlanParams) (ApplicationStandardReviewPlan, error)
 	GetApplicationStandardVersion(ctx context.Context, db DBTX, arg GetApplicationStandardVersionParams) (GetApplicationStandardVersionRow, error)
 	GetCustomerAppSecretForDeletion(ctx context.Context, db DBTX, arg GetCustomerAppSecretForDeletionParams) (GetCustomerAppSecretForDeletionRow, error)
 	// Single-row read for the dashboard's "edit upstream"
@@ -396,6 +397,7 @@ type Querier interface {
 	// on app_errors is bumped on the paired IncrementAppError
 	// call; the read path derives the joined total at query time.
 	InsertAppErrorRequest(ctx context.Context, db DBTX, arg InsertAppErrorRequestParams) error
+	InsertApplicationStandardReviewPlan(ctx context.Context, db DBTX, arg InsertApplicationStandardReviewPlanParams) error
 	InsertApplicationStandardVersion(ctx context.Context, db DBTX, arg InsertApplicationStandardVersionParams) error
 	// CP-1 (operator observability): append one row to the heartbeat
 	// history. The schedd Heartbeat.Tick goroutine is the only writer.
@@ -817,6 +819,8 @@ type Querier interface {
 	// type. (commit 6 of the issue #757 mega-PR.)
 	ListTriggersForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListTriggersForAppRow, error)
 	LockApplicationStandardOrg(ctx context.Context, db DBTX, arg LockApplicationStandardOrgParams) (pgtype.UUID, error)
+	LockApplicationStandardReviewPlan(ctx context.Context, db DBTX, arg LockApplicationStandardReviewPlanParams) (ApplicationStandardReviewPlan, error)
+	LockApplicationStandardReviewScope(ctx context.Context, db DBTX, arg LockApplicationStandardReviewScopeParams) (pgtype.UUID, error)
 	// Keep the historical broad lock key, also shared with refund compensation.
 	LockCreditConsumption(ctx context.Context, db DBTX, providerInvoiceID string) error
 	LockDevBridgeAccount(ctx context.Context, db DBTX, id pgtype.UUID) (string, error)
@@ -1025,6 +1029,7 @@ type Querier interface {
 	PruneDevBridgeSessions(ctx context.Context, db DBTX, arg PruneDevBridgeSessionsParams) error
 	// An unqualified legacy row blocks the whole key; guessing could double-debit.
 	ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg ReadAccountCreditConsumptionParams) (ReadAccountCreditConsumptionRow, error)
+	ReadApplicationStandardReviewSnapshot(ctx context.Context, db DBTX, arg ReadApplicationStandardReviewSnapshotParams) ([]byte, error)
 	// A single statement reads the pointer and its complete membership together.
 	ReadProjectReleaseSet(ctx context.Context, db DBTX, arg ReadProjectReleaseSetParams) ([]byte, error)
 	// The reaper's scan query (cmd/apid/upload_session_reaper.go).

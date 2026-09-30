@@ -27,8 +27,10 @@ Versions are immutable and hash canonical definitions. Assignments select an
 explicit admission version; publishing a version never silently activates it.
 Apps inherit through persisted organization/project/app ownership. Scope
 selection is not based on caller-controlled labels or the active API-key org.
-The shared selector uses assignment identities, explicit admission versions and
-per-app adoption pins. UUID spelling changes between legacy memory fixtures and
+The shared selectors distinguish admission from existing adoption. New services
+use explicit admission versions; existing services resolve only their saved
+adoption pins. A retained assignment disabled for admission can still govern an
+existing service during its controlled removal. UUID spelling changes between legacy memory fixtures and
 PostgreSQL cannot reset an adoption. Selected definitions are checked against
 their canonical hashes and owning organization before the resolver receives them.
 Creating apps, project reconciliation, GitHub deployment and clones share the
@@ -98,7 +100,16 @@ deletion is fenced except through owning-organization erasure. Tests cover both
 orderings of the project membership race, foreign tombstone restore, transaction
 rollback, immutable adoption reads and candidate publication without activation.
 
-Assignment review/activation, the projection worker and consumer observation
+Private persisted assignment reviews now bind affected service inputs, scoped
+membership, local values, resources, account entitlements and artifact metadata
+to an approval digest. Freshness probes reread storage; they cannot be used as
+authority for an unlocked later write. Reviews validate admission combinations
+for future services and empty projects, preserve explicit defaults/logging extras,
+and reject aggregate quota or unverified artifact changes. Tests exercise
+PostgreSQL/MemStore parity, input mutation, cross-organization scope denial,
+immutable operation history and account/organization erasure boundaries.
+
+Public review/activation, the projection worker and consumer observation
 are still pending. The enrollment gate currently covers deployment admission;
 restore/wake and existing-runtime behavior remain part of the runtime acceptance
 work before public activation is enabled.

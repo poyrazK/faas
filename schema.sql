@@ -357,6 +357,84 @@ $$;
 
 
 --
+-- Name: application_standard_operation_intent_immutable(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_operation_intent_immutable() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        IF pg_trigger_depth() > 1 AND NOT EXISTS (SELECT 1 FROM orgs WHERE id = OLD.org_id) THEN
+            RETURN OLD;
+        END IF;
+        RAISE EXCEPTION 'application standard operation history is retained'
+            USING ERRCODE = '23514', CONSTRAINT = 'application_standard_operation_intent_immutable';
+    END IF;
+    IF NEW.lease_generation < OLD.lease_generation THEN
+        RAISE EXCEPTION 'application standard worker generation regressed'
+            USING ERRCODE = '23514', CONSTRAINT = 'application_standard_operation_generation';
+    END IF;
+    IF NEW.id IS DISTINCT FROM OLD.id OR NEW.org_id IS DISTINCT FROM OLD.org_id
+       OR NEW.plan_id IS DISTINCT FROM OLD.plan_id OR NEW.assignment_id IS DISTINCT FROM OLD.assignment_id
+       OR NEW.approval_hash IS DISTINCT FROM OLD.approval_hash OR NEW.approved_by IS DISTINCT FROM OLD.approved_by
+       OR NEW.batch_size IS DISTINCT FROM OLD.batch_size OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+        RAISE EXCEPTION 'application standard operation intent is immutable'
+            USING ERRCODE = '23514', CONSTRAINT = 'application_standard_operation_intent_immutable';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_review_immutable(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_review_immutable() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'DELETE' AND pg_trigger_depth() > 1
+       AND NOT EXISTS (SELECT 1 FROM orgs WHERE id = OLD.org_id) THEN
+        RETURN OLD;
+    END IF;
+    IF TG_OP = 'DELETE' AND OLD.expires_at < now()
+       AND NOT EXISTS (SELECT 1 FROM application_standard_operations WHERE plan_id = OLD.id) THEN
+        RETURN OLD;
+    END IF;
+    RAISE EXCEPTION 'application standard review plans are immutable'
+        USING ERRCODE = '23514', CONSTRAINT = 'application_standard_review_immutable';
+END;
+$$;
+
+
+--
+-- Name: application_standard_target_intent_immutable(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_target_intent_immutable() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        IF pg_trigger_depth() > 1 AND NOT EXISTS (SELECT 1 FROM application_standard_operations WHERE id = OLD.operation_id) THEN
+            RETURN OLD;
+        END IF;
+        RAISE EXCEPTION 'application standard target history is retained'
+            USING ERRCODE = '23514', CONSTRAINT = 'application_standard_target_intent_immutable';
+    END IF;
+    IF NEW.operation_id IS DISTINCT FROM OLD.operation_id OR NEW.app_id IS DISTINCT FROM OLD.app_id
+       OR NEW.position IS DISTINCT FROM OLD.position OR NEW.approved_app IS DISTINCT FROM OLD.approved_app THEN
+        RAISE EXCEPTION 'application standard target intent is immutable'
+            USING ERRCODE = '23514', CONSTRAINT = 'application_standard_target_intent_immutable';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: application_standard_version_immutable(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3757,6 +3835,9 @@ CREATE TABLE public.app_application_standards (
     state text DEFAULT 'unmanaged'::text NOT NULL,
     error_code text DEFAULT ''::text NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    lease_owner text DEFAULT ''::text NOT NULL,
+    lease_generation bigint DEFAULT 0 NOT NULL,
+    lease_until timestamp with time zone,
     CONSTRAINT app_application_standards_adoptions_check CHECK ((jsonb_typeof(adoptions) = 'array'::text)),
     CONSTRAINT app_application_standards_base_settings_check CHECK ((jsonb_typeof(base_settings) = 'object'::text)),
     CONSTRAINT app_application_standards_check CHECK (((persisted_revision >= 0) AND (persisted_revision <= desired_revision))),
@@ -3765,6 +3846,9 @@ CREATE TABLE public.app_application_standards (
     CONSTRAINT app_application_standards_effective_check CHECK ((jsonb_typeof(effective) = 'object'::text)),
     CONSTRAINT app_application_standards_effective_hash_check CHECK (((effective_hash = ''::text) OR (effective_hash ~ '^[a-f0-9]{64}$'::text))),
     CONSTRAINT app_application_standards_error_code_check CHECK ((error_code ~ '^[a-z0-9_]{0,128}$'::text)),
+    CONSTRAINT app_application_standards_lease_check CHECK (((lease_owner = ''::text) = (lease_until IS NULL))),
+    CONSTRAINT app_application_standards_lease_generation_check CHECK ((lease_generation >= 0)),
+    CONSTRAINT app_application_standards_lease_owner_check CHECK ((octet_length(lease_owner) <= 128)),
     CONSTRAINT app_application_standards_local_settings_check CHECK ((jsonb_typeof(local_settings) = 'object'::text)),
     CONSTRAINT app_application_standards_state_check CHECK ((state = ANY (ARRAY['unmanaged'::text, 'pending'::text, 'applying'::text, 'persisted'::text, 'observed'::text, 'blocked'::text])))
 );
@@ -4527,6 +4611,56 @@ CREATE TABLE public.application_standard_log_destinations (
 
 
 --
+-- Name: application_standard_operation_targets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.application_standard_operation_targets (
+    operation_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    "position" integer NOT NULL,
+    approved_app jsonb NOT NULL,
+    state text DEFAULT 'queued'::text NOT NULL,
+    desired_revision bigint DEFAULT 0 NOT NULL,
+    error_code text DEFAULT ''::text NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT application_standard_operation_targets_approved_app_check CHECK ((jsonb_typeof(approved_app) = 'object'::text)),
+    CONSTRAINT application_standard_operation_targets_desired_revision_check CHECK ((desired_revision >= 0)),
+    CONSTRAINT application_standard_operation_targets_error_code_check CHECK ((error_code ~ '^[a-z0-9_]{0,128}$'::text)),
+    CONSTRAINT application_standard_operation_targets_position_check CHECK (("position" >= 0)),
+    CONSTRAINT application_standard_operation_targets_state_check CHECK ((state = ANY (ARRAY['queued'::text, 'applying'::text, 'persisted'::text, 'observed'::text, 'blocked'::text, 'skipped'::text, 'rolled_back'::text])))
+);
+
+
+--
+-- Name: application_standard_operations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.application_standard_operations (
+    id uuid NOT NULL,
+    org_id uuid NOT NULL,
+    plan_id uuid NOT NULL,
+    assignment_id uuid NOT NULL,
+    approval_hash text NOT NULL,
+    approved_by uuid NOT NULL,
+    batch_size integer NOT NULL,
+    state text DEFAULT 'queued'::text NOT NULL,
+    lease_owner text DEFAULT ''::text NOT NULL,
+    lease_generation bigint DEFAULT 0 NOT NULL,
+    lease_until timestamp with time zone,
+    error_code text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT application_standard_operations_approval_hash_check CHECK ((approval_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT application_standard_operations_batch_size_check CHECK (((batch_size >= 1) AND (batch_size <= 100))),
+    CONSTRAINT application_standard_operations_check CHECK (((lease_owner = ''::text) = (lease_until IS NULL))),
+    CONSTRAINT application_standard_operations_error_code_check CHECK ((error_code ~ '^[a-z0-9_]{0,128}$'::text)),
+    CONSTRAINT application_standard_operations_lease_generation_check CHECK ((lease_generation >= 0)),
+    CONSTRAINT application_standard_operations_lease_owner_check CHECK ((octet_length(lease_owner) <= 128)),
+    CONSTRAINT application_standard_operations_state_check CHECK ((state = ANY (ARRAY['queued'::text, 'running'::text, 'waiting'::text, 'paused'::text, 'completed'::text, 'failed'::text, 'rolled_back'::text, 'superseded'::text])))
+);
+
+
+--
 -- Name: application_standard_publishers; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4541,6 +4675,30 @@ CREATE TABLE public.application_standard_publishers (
     CONSTRAINT application_standard_publishers_fingerprint_check CHECK ((fingerprint ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT application_standard_publishers_name_check CHECK (((octet_length(name) >= 1) AND (octet_length(name) <= 128))),
     CONSTRAINT application_standard_publishers_public_key_der_check CHECK (((octet_length(public_key_der) >= 64) AND (octet_length(public_key_der) <= 1024)))
+);
+
+
+--
+-- Name: application_standard_review_plans; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.application_standard_review_plans (
+    id uuid NOT NULL,
+    org_id uuid NOT NULL,
+    created_by uuid NOT NULL,
+    request jsonb NOT NULL,
+    approval_inputs jsonb NOT NULL,
+    approval_hash text NOT NULL,
+    applications jsonb NOT NULL,
+    blockers jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT application_standard_review_plans_applications_check CHECK ((jsonb_typeof(applications) = 'array'::text)),
+    CONSTRAINT application_standard_review_plans_approval_hash_check CHECK ((approval_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT application_standard_review_plans_approval_inputs_check CHECK ((jsonb_typeof(approval_inputs) = 'object'::text)),
+    CONSTRAINT application_standard_review_plans_blockers_check CHECK ((jsonb_typeof(blockers) = 'array'::text)),
+    CONSTRAINT application_standard_review_plans_check CHECK ((expires_at > created_at)),
+    CONSTRAINT application_standard_review_plans_request_check CHECK ((jsonb_typeof(request) = 'object'::text))
 );
 
 
@@ -10836,14 +10994,14 @@ ALTER TABLE ONLY public.data_upstream_probes ATTACH PARTITION public.data_upstre
 -- Name: log_events_202609; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.log_events ATTACH PARTITION public.log_events_202609 FOR VALUES FROM ('2026-09-01 03:00:00+03') TO ('2026-10-01 03:00:00+03');
+ALTER TABLE ONLY public.log_events ATTACH PARTITION public.log_events_202609 FOR VALUES FROM ('2026-09-01 00:00:00+00') TO ('2026-10-01 00:00:00+00');
 
 
 --
 -- Name: log_events_202610; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.log_events ATTACH PARTITION public.log_events_202610 FOR VALUES FROM ('2026-10-01 03:00:00+03') TO ('2026-11-01 03:00:00+03');
+ALTER TABLE ONLY public.log_events ATTACH PARTITION public.log_events_202610 FOR VALUES FROM ('2026-10-01 00:00:00+00') TO ('2026-11-01 00:00:00+00');
 
 
 --
@@ -10857,21 +11015,21 @@ ALTER TABLE ONLY public.log_events ATTACH PARTITION public.log_events_default DE
 -- Name: request_telemetry_202609; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202609 FOR VALUES FROM ('2026-09-01 00:00:00+03') TO ('2026-10-01 00:00:00+03');
+ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202609 FOR VALUES FROM ('2026-09-01 00:00:00+00') TO ('2026-10-01 00:00:00+00');
 
 
 --
 -- Name: request_telemetry_202610; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202610 FOR VALUES FROM ('2026-10-01 00:00:00+03') TO ('2026-11-01 00:00:00+03');
+ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202610 FOR VALUES FROM ('2026-10-01 00:00:00+00') TO ('2026-11-01 00:00:00+00');
 
 
 --
 -- Name: request_telemetry_202611; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202611 FOR VALUES FROM ('2026-11-01 00:00:00+03') TO ('2026-12-01 00:00:00+03');
+ALTER TABLE ONLY public.request_telemetry ATTACH PARTITION public.request_telemetry_202611 FOR VALUES FROM ('2026-11-01 00:00:00+00') TO ('2026-12-01 00:00:00+00');
 
 
 --
@@ -11459,6 +11617,46 @@ ALTER TABLE ONLY public.application_standard_log_destinations
 
 
 --
+-- Name: application_standard_operation_targets application_standard_operation_target_operation_id_position_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_operation_targets
+    ADD CONSTRAINT application_standard_operation_target_operation_id_position_key UNIQUE (operation_id, "position");
+
+
+--
+-- Name: application_standard_operation_targets application_standard_operation_targets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_operation_targets
+    ADD CONSTRAINT application_standard_operation_targets_pkey PRIMARY KEY (operation_id, app_id);
+
+
+--
+-- Name: application_standard_operations application_standard_operations_org_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_operations
+    ADD CONSTRAINT application_standard_operations_org_id_id_key UNIQUE (org_id, id);
+
+
+--
+-- Name: application_standard_operations application_standard_operations_org_id_plan_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_operations
+    ADD CONSTRAINT application_standard_operations_org_id_plan_id_key UNIQUE (org_id, plan_id);
+
+
+--
+-- Name: application_standard_operations application_standard_operations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_operations
+    ADD CONSTRAINT application_standard_operations_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: application_standard_publishers application_standard_publishers_org_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -11472,6 +11670,22 @@ ALTER TABLE ONLY public.application_standard_publishers
 
 ALTER TABLE ONLY public.application_standard_publishers
     ADD CONSTRAINT application_standard_publishers_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: application_standard_review_plans application_standard_review_plans_org_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_review_plans
+    ADD CONSTRAINT application_standard_review_plans_org_id_id_key UNIQUE (org_id, id);
+
+
+--
+-- Name: application_standard_review_plans application_standard_review_plans_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_review_plans
+    ADD CONSTRAINT application_standard_review_plans_pkey PRIMARY KEY (id);
 
 
 --
@@ -14622,10 +14836,31 @@ CREATE INDEX application_standard_log_destinations_org_idx ON public.application
 
 
 --
+-- Name: application_standard_operation_active_assignment_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX application_standard_operation_active_assignment_idx ON public.application_standard_operations USING btree (assignment_id) WHERE (state = ANY (ARRAY['queued'::text, 'running'::text, 'waiting'::text, 'paused'::text]));
+
+
+--
+-- Name: application_standard_operation_claim_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX application_standard_operation_claim_idx ON public.application_standard_operations USING btree (created_at, id) WHERE (state = ANY (ARRAY['queued'::text, 'running'::text, 'waiting'::text]));
+
+
+--
 -- Name: application_standard_publishers_org_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX application_standard_publishers_org_idx ON public.application_standard_publishers USING btree (org_id, id);
+
+
+--
+-- Name: application_standard_review_plans_org_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX application_standard_review_plans_org_idx ON public.application_standard_review_plans USING btree (org_id, created_at DESC, id);
 
 
 --
@@ -18843,6 +19078,13 @@ CREATE TRIGGER application_standard_log_destination_immutable BEFORE DELETE OR U
 
 
 --
+-- Name: application_standard_operations application_standard_operation_intent_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_operation_intent_immutable BEFORE DELETE OR UPDATE ON public.application_standard_operations FOR EACH ROW EXECUTE FUNCTION public.application_standard_operation_intent_immutable();
+
+
+--
 -- Name: application_standard_publishers application_standard_publisher_immutable; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -18854,6 +19096,20 @@ CREATE TRIGGER application_standard_publisher_immutable BEFORE DELETE OR UPDATE 
 --
 
 CREATE TRIGGER application_standard_reenroll_app AFTER UPDATE OF org_id, project_id, status ON public.apps FOR EACH ROW WHEN (((old.org_id IS DISTINCT FROM new.org_id) OR (old.project_id IS DISTINCT FROM new.project_id) OR ((old.status = 'deleted'::text) AND (new.status <> 'deleted'::text)))) EXECUTE FUNCTION public.application_standard_enroll_app();
+
+
+--
+-- Name: application_standard_review_plans application_standard_review_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_review_immutable BEFORE DELETE OR UPDATE ON public.application_standard_review_plans FOR EACH ROW EXECUTE FUNCTION public.application_standard_review_immutable();
+
+
+--
+-- Name: application_standard_operation_targets application_standard_target_intent_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_target_intent_immutable BEFORE DELETE OR UPDATE ON public.application_standard_operation_targets FOR EACH ROW EXECUTE FUNCTION public.application_standard_target_intent_immutable();
 
 
 --
@@ -20380,11 +20636,51 @@ ALTER TABLE ONLY public.application_standard_log_destinations
 
 
 --
+-- Name: application_standard_operation_targets application_standard_operation_targets_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_operation_targets
+    ADD CONSTRAINT application_standard_operation_targets_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.application_standard_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_operations application_standard_operations_org_id_assignment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_operations
+    ADD CONSTRAINT application_standard_operations_org_id_assignment_id_fkey FOREIGN KEY (org_id, assignment_id) REFERENCES public.application_standard_assignments(org_id, id);
+
+
+--
+-- Name: application_standard_operations application_standard_operations_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_operations
+    ADD CONSTRAINT application_standard_operations_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_operations application_standard_operations_org_id_plan_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_operations
+    ADD CONSTRAINT application_standard_operations_org_id_plan_id_fkey FOREIGN KEY (org_id, plan_id) REFERENCES public.application_standard_review_plans(org_id, id);
+
+
+--
 -- Name: application_standard_publishers application_standard_publishers_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.application_standard_publishers
     ADD CONSTRAINT application_standard_publishers_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_review_plans application_standard_review_plans_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_review_plans
+    ADD CONSTRAINT application_standard_review_plans_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
 
 
 --

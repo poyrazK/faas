@@ -32,6 +32,8 @@ const (
 	ApplicationStandardMaxDescriptionBytes            = 512
 	ApplicationStandardMaxExceptionTTL                = 30 * 24 * time.Hour
 	ApplicationStandardMaxRolloutBatch                = 100
+	ApplicationStandardReviewTTL                      = 30 * time.Minute
+	ApplicationStandardWorkerLease                    = 30 * time.Second
 	ApplicationStandardMaxListPage                    = 100
 	ApplicationStandardMaxVersion               int64 = 9007199254740991
 )

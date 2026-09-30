@@ -6,7 +6,8 @@ their publishing identity. Publishing creates a candidate; it does not activate
 the version or change applications.
 
 The implementation is in progress. Candidate version and resource management,
-plus the durable automatic enrollment boundary, are implemented. Reviewed
+plus the durable automatic enrollment boundary and private persisted review
+store, are implemented. Reviewed
 assignment activation, control materialization, runtime enforcement and controlled rollout
 must pass the acceptance checklist in [ADR-379](adr/379-inherited-application-standards.md)
 before this feature is declared available.
@@ -34,6 +35,43 @@ on membership changes serialize that check against activation, including
 cross-organization insert/restore races. An assignment retains its identity;
 updates advance its revision, and direct deletion is reserved for organization
 erasure.
+
+## Reviewed changes under development
+
+The private review store records organization, project or application assignment
+changes, affected services, current controls, proposed controls, field provenance
+and blockers. Reviews expire after 30 minutes. Their approval digest binds the
+server-issued review identity, creator, assignment revision, admission version,
+batch size, target membership, adoption pins, local intent, immutable resource
+hashes, account entitlements and current artifact metadata. An unrelated candidate
+publication or unused resource does not invalidate the reviewed version.
+
+Freshness checks reread storage and reject changed inputs, expired reviews and
+blockers. They also check inheritance for future services, including empty
+projects. Existing services resolve their saved adoptions separately from the
+versions offered to new services. An assignment disabled for new admissions can
+remain adopted while its controlled removal proceeds.
+
+An initial default preserves explicit existing settings. A logging requirement
+that permits extra destinations preserves those extras separately, so replacing
+the company's required destination does not turn the old destination into a
+permanent extra. Quota review counts the entire proposed batch and existing
+account-wide drains, including disabled destinations. Security changes to
+existing artifacts require verification evidence; setting an enforcement flag
+alone does not satisfy that gate.
+
+Review records contain no destination URLs or credentials. Current destination
+and credential inputs are represented by hashes. The schema also retains
+immutable approved operation intent and target identities through service
+deletion, with private fenced lease fields for subsequent worker integration.
+Company attribution survives account erasure; owning organization erasure
+removes its review and operation history.
+
+These review methods are internal storage interfaces. Public review/approval
+endpoints, projection workers, consumer verification, exceptions, and rollback
+are still being implemented. A successful read-only freshness check does not
+authorize an unlocked mutation: activation must repeat the same reads under its
+mutation locks and commit the approved operation atomically.
 
 ## Publish and inspect candidates
 

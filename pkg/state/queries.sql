@@ -1,3 +1,97 @@
+-- name: LockApplicationStandardReviewScope :one
+SELECT p.id FROM projects p
+WHERE p.id = sqlc.arg(scope_id)::uuid AND sqlc.arg(scope)::text = 'project'
+FOR UPDATE;
+
+-- name: ReadApplicationStandardReviewSnapshot :one
+SELECT jsonb_build_object(
+    'org_id', o.id::text,
+    'org_plan', o.plan,
+    'org_status', o.status,
+    'deleted_pending', o.deleted_pending,
+    'scope_owner_id', coalesce((SELECT p.account_id::text FROM projects p
+        WHERE sqlc.arg(scope)::text = 'project' AND p.id = sqlc.arg(scope_id)::uuid), ''),
+    'actor_authorized', EXISTS (SELECT 1 FROM accounts a JOIN org_memberships m ON m.account_id = a.id
+        WHERE a.id = sqlc.arg(actor_id)::uuid AND a.status = 'active'
+          AND m.org_id = o.id AND m.removed_at IS NULL AND m.role IN ('owner', 'admin')),
+    'scope_owned', CASE sqlc.arg(scope)::text
+      WHEN 'organization' THEN sqlc.arg(scope_id)::uuid = o.id
+      WHEN 'application' THEN EXISTS (SELECT 1 FROM apps a WHERE a.id = sqlc.arg(scope_id)::uuid AND a.org_id = o.id AND a.status <> 'deleted')
+      WHEN 'project' THEN EXISTS (SELECT 1 FROM projects p WHERE p.id = sqlc.arg(scope_id)::uuid
+        AND (p.account_id = o.personal_owner_account_id OR EXISTS (SELECT 1 FROM org_memberships m
+          WHERE m.org_id = o.id AND m.account_id = p.account_id AND m.removed_at IS NULL)))
+        AND NOT EXISTS (SELECT 1 FROM apps a WHERE a.project_id = sqlc.arg(scope_id)::uuid AND a.status <> 'deleted' AND a.org_id <> o.id)
+      ELSE false END,
+    'assignments', coalesce((SELECT jsonb_agg(jsonb_build_object(
+        'id', a.id::text, 'org_id', a.org_id::text, 'scope', a.scope, 'scope_id', a.scope_id::text,
+        'standard_id', a.standard_id::text, 'admission_version', a.admission_version,
+        'revision', a.revision, 'active', a.active) ORDER BY a.id)
+        FROM application_standard_assignments a WHERE a.org_id = o.id), '[]'::jsonb),
+    'versions', coalesce((SELECT jsonb_agg(jsonb_build_object(
+        'standard_id', v.standard_id::text, 'version', v.version, 'definition', v.definition,
+        'definition_hash', v.definition_hash) ORDER BY v.standard_id, v.version)
+        FROM application_standard_versions v WHERE v.org_id = o.id AND
+          (v.standard_id = sqlc.arg(standard_id)::uuid OR EXISTS (SELECT 1 FROM application_standard_assignments a
+             WHERE a.org_id = o.id AND a.standard_id = v.standard_id))), '[]'::jsonb),
+    'destinations', coalesce((SELECT jsonb_agg(jsonb_build_object(
+        'id', d.id::text, 'config_hash', d.config_hash, 'kind', d.kind) ORDER BY d.id)
+        FROM application_standard_log_destinations d WHERE d.org_id = o.id), '[]'::jsonb),
+    'publishers', coalesce((SELECT jsonb_agg(jsonb_build_object(
+        'id', p.id::text, 'fingerprint', p.fingerprint) ORDER BY p.id)
+        FROM application_standard_publishers p WHERE p.org_id = o.id), '[]'::jsonb),
+    'applications', coalesce((SELECT jsonb_agg(jsonb_build_object(
+        'app_id', a.id::text, 'org_id', a.org_id::text, 'project_id', coalesce(a.project_id::text, ''),
+        'account_id', a.account_id::text, 'slug', a.slug, 'status', a.status, 'type', a.type,
+        'workload_class', a.workload_class, 'account_plan', acct.plan, 'account_status', acct.status,
+        'account_drain_count', (SELECT count(*) FROM app_log_drains d JOIN apps owner ON owner.id = d.app_id
+            WHERE owner.account_id = a.account_id AND owner.status <> 'deleted'),
+        'settings', jsonb_build_object('require_signed', a.require_signed, 'security_policy', a.security_policy,
+            'egress_cidrs', coalesce(to_jsonb(a.egress_allowlist::text[]), '[]'::jsonb), 'egress_extra_ports', coalesce(to_jsonb(a.egress_ports), '[]'::jsonb)),
+        'has_enrollment', e.app_id IS NOT NULL,
+        'enrollment', jsonb_build_object('org_id', e.org_id::text, 'project_id', coalesce(e.project_id::text, ''), 'base_settings', e.base_settings, 'local_settings', e.local_settings,
+            'additional_log_destinations', to_jsonb(e.additional_log_destinations::text[]), 'adoptions', e.adoptions,
+            'desired_revision', e.desired_revision, 'effective', e.effective, 'effective_hash', e.effective_hash),
+        'drains', coalesce((SELECT jsonb_agg(jsonb_build_object('id', d.id::text, 'kind', d.kind,
+            'target_hash', encode(sha256(convert_to(d.target_url, 'UTF8')), 'hex'),
+            'auth_hash', encode(sha256(coalesce(d.auth_header_sealed, ''::bytea)), 'hex'), 'enabled', d.enabled) ORDER BY d.id)
+            FROM app_log_drains d WHERE d.app_id = a.id), '[]'::jsonb),
+        'signers', coalesce((SELECT jsonb_agg(jsonb_build_object('name', s.signer_name,
+            'fingerprint', encode(sha256(s.cosign_public_key), 'hex')) ORDER BY s.signer_name)
+            FROM app_trusted_signers s WHERE s.app_id = a.id), '[]'::jsonb),
+        'artifacts', coalesce((SELECT jsonb_agg(jsonb_build_object('id', d.id::text, 'scope', d.scope,
+            'kind', d.kind, 'status', d.status, 'image_digest', coalesce(d.image_digest, ''),
+            'rootfs_key', coalesce(d.rootfs_key, ''), 'parked_reason', coalesce(d.parked_reason, ''),
+            'rootfs_bytes', coalesce(d.rootfs_bytes, 0), 'source_sha256', coalesce(d.source_sha256, ''),
+            'scan_status', d.scan_status, 'scan_result_hash', encode(sha256(convert_to(coalesce(d.scan_result::text, ''), 'UTF8')), 'hex'),
+            'sidecar_hash', encode(sha256(convert_to(coalesce((SELECT jsonb_agg(jsonb_build_object('sidecar_name', layer.sidecar_name,
+                'storage_key', layer.storage_key, 'bytes', layer.bytes, 'content_digest', layer.content_digest) ORDER BY layer.sidecar_name)::text
+                FROM deployment_sidecar_layers layer WHERE layer.deployment_id = d.id), ''), 'UTF8')), 'hex')) ORDER BY d.id)
+            FROM deployments d WHERE d.app_id = a.id AND (d.status NOT IN ('failed', 'superseded', 'cancelled')
+                OR EXISTS (SELECT 1 FROM instances i WHERE i.deployment_id = d.id AND i.terminal_at IS NULL
+                    AND i.state NOT IN ('STOPPED', 'FAILED')))), '[]'::jsonb)) ORDER BY a.id)
+        FROM apps a JOIN accounts acct ON acct.id = a.account_id LEFT JOIN app_application_standards e ON e.app_id = a.id
+        WHERE a.org_id = o.id AND a.status <> 'deleted'
+          AND ((sqlc.arg(scope)::text = 'organization' AND sqlc.arg(scope_id)::uuid = o.id)
+            OR (sqlc.arg(scope)::text = 'project' AND a.project_id = sqlc.arg(scope_id)::uuid)
+            OR (sqlc.arg(scope)::text = 'application' AND a.id = sqlc.arg(scope_id)::uuid))), '[]'::jsonb)
+)::jsonb AS snapshot
+FROM orgs o WHERE o.id = sqlc.arg(org_id)::uuid;
+
+-- name: InsertApplicationStandardReviewPlan :exec
+INSERT INTO application_standard_review_plans
+(id, org_id, created_by, request, approval_inputs, approval_hash, applications, blockers, created_at, expires_at)
+VALUES (sqlc.arg(id)::uuid, sqlc.arg(org_id)::uuid, sqlc.arg(created_by)::uuid,
+        sqlc.arg(request)::jsonb, sqlc.arg(approval_inputs)::jsonb, sqlc.arg(approval_hash)::text,
+        sqlc.arg(applications)::jsonb, sqlc.arg(blockers)::jsonb, sqlc.arg(created_at)::timestamptz, sqlc.arg(expires_at)::timestamptz);
+
+-- name: GetApplicationStandardReviewPlan :one
+SELECT * FROM application_standard_review_plans
+WHERE org_id = sqlc.arg(org_id)::uuid AND id = sqlc.arg(plan_id)::uuid;
+
+-- name: LockApplicationStandardReviewPlan :one
+SELECT * FROM application_standard_review_plans
+WHERE org_id = sqlc.arg(org_id)::uuid AND id = sqlc.arg(plan_id)::uuid FOR UPDATE;
+
 -- name: GetApplicationStandardEnrollment :one
 SELECT app_id::text, org_id::text, coalesce(project_id::text, '')::text AS project_id,
        base_settings, local_settings, additional_log_destinations::text[] AS additional_log_destinations,

@@ -400,6 +400,9 @@ type AppApplicationStandard struct {
 	State                     string
 	ErrorCode                 string
 	UpdatedAt                 pgtype.Timestamptz
+	LeaseOwner                string
+	LeaseGeneration           int64
+	LeaseUntil                pgtype.Timestamptz
 }
 
 type AppCpuPolicyNodeStatus struct {
@@ -863,6 +866,34 @@ type ApplicationStandardLogDestination struct {
 	CreatedAt        pgtype.Timestamptz
 }
 
+type ApplicationStandardOperation struct {
+	ID              pgtype.UUID
+	OrgID           pgtype.UUID
+	PlanID          pgtype.UUID
+	AssignmentID    pgtype.UUID
+	ApprovalHash    string
+	ApprovedBy      pgtype.UUID
+	BatchSize       int32
+	State           string
+	LeaseOwner      string
+	LeaseGeneration int64
+	LeaseUntil      pgtype.Timestamptz
+	ErrorCode       string
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
+type ApplicationStandardOperationTarget struct {
+	OperationID     pgtype.UUID
+	AppID           pgtype.UUID
+	Position        int32
+	ApprovedApp     []byte
+	State           string
+	DesiredRevision int64
+	ErrorCode       string
+	UpdatedAt       pgtype.Timestamptz
+}
+
 type ApplicationStandardPublisher struct {
 	ID           pgtype.UUID
 	OrgID        pgtype.UUID
@@ -871,6 +902,19 @@ type ApplicationStandardPublisher struct {
 	Fingerprint  string
 	CreatedBy    pgtype.UUID
 	CreatedAt    pgtype.Timestamptz
+}
+
+type ApplicationStandardReviewPlan struct {
+	ID             pgtype.UUID
+	OrgID          pgtype.UUID
+	CreatedBy      pgtype.UUID
+	Request        []byte
+	ApprovalInputs []byte
+	ApprovalHash   string
+	Applications   []byte
+	Blockers       []byte
+	CreatedAt      pgtype.Timestamptz
+	ExpiresAt      pgtype.Timestamptz
 }
 
 type ApplicationStandardVersion struct {
