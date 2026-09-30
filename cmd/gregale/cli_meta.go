@@ -1247,16 +1247,32 @@ var cliCommands = []cliCommand{
 		Name:     "test",
 		DocSlug:  "test",
 		Short:    "Run scenario suites and bounded local HTTP load tests",
-		Examples: []string{"gregale test init --from openapi.yaml --project my-api", "gregale test import --from collection.json --project my-api", "gregale test --validate", "gregale test --suite smoke --engine local --fail-fast --junit test-results.xml", "gregale test --suite smoke --engine local --report test-results.json --junit test-results.xml --html test-results.html", "gregale test compare baseline.json current.json --html comparison.html", "gregale test --suite regression --validate", "gregale test --scenario customer-export --preflight", "gregale test --scenario customer-export --profile restored --repeat 3 --max-workload-minutes 135 --report test-results.json --junit test-results.xml", "gregale test --scenario api-smoke --engine local", "gregale test --scenario api-smoke --engine local --load --baseline baseline.json --report current.json --junit current.xml", "gregale test --scenario customer-export --engine local --base-url http://localhost:3000 --data cases.json", "gregale test --scenario api-smoke --engine local --base-url http://localhost:3000 --load --vus 5 --duration 30s --pacing 100ms --progress", "gregale test --scenario api-smoke --engine local --load --rate 20 --duration 30s --vus 10 --progress", "gregale test --scenario customer-export --engine simulated"},
+		Examples: []string{"gregale test init --from openapi.yaml --project my-api", "gregale test import --from collection.json --project my-api", "gregale test --validate", "gregale test --suite smoke --engine local --fail-fast --junit test-results.xml", "gregale test --suite smoke --engine local --report test-results.json --junit test-results.xml --html test-results.html", "gregale test compare baseline.json current.json --budget test-budget.yaml --html comparison.html", "gregale test --suite regression --validate", "gregale test --scenario customer-export --preflight", "gregale test --scenario customer-export --profile restored --repeat 3 --max-workload-minutes 135 --report test-results.json --junit test-results.xml", "gregale test --scenario api-smoke --engine local", "gregale test --scenario api-smoke --engine local --load --baseline baseline.json --report current.json --junit current.xml", "gregale test --scenario customer-export --engine local --base-url http://localhost:3000 --data cases.json", "gregale test --scenario api-smoke --engine local --base-url http://localhost:3000 --load --vus 5 --duration 30s --pacing 100ms --progress", "gregale test --scenario api-smoke --engine local --load --rate 20 --duration 30s --vus 10 --progress", "gregale test --scenario customer-export --engine simulated"},
 		Subcommands: []cliSub{{Name: "init", Short: "Create public GET smoke checks from a local OpenAPI document", Examples: []string{"gregale test init --from openapi.yaml --project my-api --source ."}, Flags: []cliFlag{
 			{Name: "from", Short: "local OpenAPI 3.0 or 3.1 document", Value: "PATH", Req: true},
 			{Name: "project", Short: "Gregale project slug", Value: "SLUG", Req: true},
 			{Name: "source", Short: "application source directory", Value: "DIR"},
 			{Name: "scenario", Short: "scenario name", Value: "NAME"},
 			{Name: "output", Short: "new manifest path", Value: "PATH"},
-		}}, {Name: "compare", Short: "Compare two saved JSON run reports without rerunning scenarios", Positionals: []string{"<before.json>", "<after.json>"}, Examples: []string{"gregale test compare baseline.json current.json", "gregale test compare baseline.json current.json --html comparison.html"}, Flags: []cliFlag{
+		}}, {Name: "compare", Short: "Compare saved JSON run reports, enforce budgets, and write summaries", Positionals: []string{"<before.json>", "<after.json>"}, Examples: []string{"gregale test compare baseline.json current.json", "gregale test compare baseline.json current.json --budget test-budget.yaml --markdown comparison.md", "gregale test compare baseline.json current.json --budget test-budget.yaml --github-summary"}, Flags: []cliFlag{
+			{Name: "budget", Short: "apply comparison budgets from a YAML file; fail if a check fails or is inconclusive", Value: "PATH"},
 			{Name: "html", Short: "write a standalone HTML comparison report", Value: "PATH"},
-		}}, {Name: "import", Short: "Create draft native requests from a local Postman Collection v2.1 export", Examples: []string{"gregale test import --from collection.json --project my-api", "gregale test import --from collection.json --project my-api --requests-only --status 202"}, Flags: []cliFlag{
+			{Name: "markdown", Short: "write a Markdown comparison summary", Value: "PATH"},
+			{Name: "github-summary", Short: "append a Markdown summary to GITHUB_STEP_SUMMARY"},
+		}}, {Name: "ci", Short: "Set up GitHub Actions for scenario tests", Subcommands: []cliSub{{Name: "init", Short: "Generate GitHub Actions for local, simulated, or real-VM scenario tests", Examples: []string{"gregale test ci init --manifest gregale-test.yaml --suite smoke", "gregale test ci init --manifest gregale-test.yaml --suite smoke --baseline-max-age-days 14", "gregale test ci init --manifest tests/scenario-acceptance/gregale-test.yaml --suite real-vm --engine real-vm --profiles warm,cold,restored --max-workload-minutes 135"}, Flags: []cliFlag{
+			{Name: "manifest", Short: "scenario manifest path", Value: "PATH"},
+			{Name: "suite", Short: "suite from the manifest (inferred when exactly one exists)", Value: "NAME"},
+			{Name: "engine", Short: "override suite engine for CI", Value: "ENGINE", ClosedSet: []string{"local", "simulated", "real-vm"}},
+			{Name: "load", Short: "include local HTTP load execution"},
+			{Name: "repeat", Short: "runs per scenario (default 1; default 3 with --load)", Value: "N"},
+			{Name: "profiles", Short: "real-VM lifecycle profiles (all or comma-separated)", Value: "LIST"},
+			{Name: "max-workload-minutes", Short: "required real-VM workload-minute limit per profile job", Value: "N"},
+			{Name: "environment", Short: "GitHub environment containing real-VM credentials", Value: "NAME"},
+			{Name: "branch", Short: "baseline branch for local and simulated workflows", Value: "NAME"},
+			{Name: "baseline-max-age-days", Short: "maximum baseline artifact age (default 30; 0 disables age check)", Value: "N"},
+			{Name: "workflow", Short: "new GitHub Actions workflow path", Value: "PATH"},
+			{Name: "budget", Short: "comparison budget path for local and simulated workflows", Value: "PATH"},
+		}}}}, {Name: "import", Short: "Create draft native requests from a local Postman Collection v2.1 export", Examples: []string{"gregale test import --from collection.json --project my-api", "gregale test import --from collection.json --project my-api --requests-only --status 202"}, Flags: []cliFlag{
 			{Name: "from", Short: "local Postman Collection v2.1 JSON export", Value: "PATH", Req: true},
 			{Name: "project", Short: "Gregale project slug", Value: "SLUG", Req: true},
 			{Name: "source", Short: "command working directory", Value: "DIR"},

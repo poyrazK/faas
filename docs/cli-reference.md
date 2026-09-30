@@ -1760,7 +1760,7 @@ gregale test import --from collection.json --project my-api
 gregale test --validate
 gregale test --suite smoke --engine local --fail-fast --junit test-results.xml
 gregale test --suite smoke --engine local --report test-results.json --junit test-results.xml --html test-results.html
-gregale test compare baseline.json current.json --html comparison.html
+gregale test compare baseline.json current.json --budget test-budget.yaml --html comparison.html
 gregale test --suite regression --validate
 gregale test --scenario customer-export --preflight
 gregale test --scenario customer-export --profile restored --repeat 3 --max-workload-minutes 135 --report test-results.json --junit test-results.xml
@@ -1792,19 +1792,56 @@ gregale test init --from openapi.yaml --project my-api --source .
 
 ### test compare
 
-Compare two saved JSON run reports without rerunning scenarios
+Compare saved JSON run reports, enforce budgets, and write summaries
 
-`gregale test compare <before.json> <after.json> [--html <PATH>]`
+`gregale test compare <before.json> <after.json> [--budget <PATH>] [--html <PATH>] [--markdown <PATH>] [--github-summary]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--budget <PATH>` | apply comparison budgets from a YAML file; fail if a check fails or is inconclusive |  |
 | `--html <PATH>` | write a standalone HTML comparison report |  |
+| `--markdown <PATH>` | write a Markdown comparison summary |  |
+| `--github-summary` | append a Markdown summary to GITHUB_STEP_SUMMARY |  |
 
 Examples:
 
 ```sh
 gregale test compare baseline.json current.json
-gregale test compare baseline.json current.json --html comparison.html
+gregale test compare baseline.json current.json --budget test-budget.yaml --markdown comparison.md
+gregale test compare baseline.json current.json --budget test-budget.yaml --github-summary
+```
+
+### test ci
+
+Set up GitHub Actions for scenario tests
+
+#### test ci init
+
+Generate GitHub Actions for local, simulated, or real-VM scenario tests
+
+`gregale test ci init [--manifest <PATH>] [--suite <NAME>] [--engine <ENGINE>] [--load] [--repeat <N>] [--profiles <LIST>] [--max-workload-minutes <N>] [--environment <NAME>] [--branch <NAME>] [--baseline-max-age-days <N>] [--workflow <PATH>] [--budget <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--manifest <PATH>` | scenario manifest path |  |
+| `--suite <NAME>` | suite from the manifest (inferred when exactly one exists) |  |
+| `--engine <ENGINE>` | override suite engine for CI | one of `local` · `simulated` · `real-vm` |
+| `--load` | include local HTTP load execution |  |
+| `--repeat <N>` | runs per scenario (default 1; default 3 with --load) |  |
+| `--profiles <LIST>` | real-VM lifecycle profiles (all or comma-separated) |  |
+| `--max-workload-minutes <N>` | required real-VM workload-minute limit per profile job |  |
+| `--environment <NAME>` | GitHub environment containing real-VM credentials |  |
+| `--branch <NAME>` | baseline branch for local and simulated workflows |  |
+| `--baseline-max-age-days <N>` | maximum baseline artifact age (default 30; 0 disables age check) |  |
+| `--workflow <PATH>` | new GitHub Actions workflow path |  |
+| `--budget <PATH>` | comparison budget path for local and simulated workflows |  |
+
+Examples:
+
+```sh
+gregale test ci init --manifest gregale-test.yaml --suite smoke
+gregale test ci init --manifest gregale-test.yaml --suite smoke --baseline-max-age-days 14
+gregale test ci init --manifest tests/scenario-acceptance/gregale-test.yaml --suite real-vm --engine real-vm --profiles warm,cold,restored --max-workload-minutes 135
 ```
 
 ### test import

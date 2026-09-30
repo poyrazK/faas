@@ -159,6 +159,74 @@ steps, load percentiles, baseline checks, and platform evidence. Expand a run to
 inspect its evidence or the complete JSON receipt. Values are HTML-escaped, and
 the report omits dataset values and credentials just like the JSON report.
 
+### Generate a GitHub Actions workflow
+
+Create a starter workflow and comparison budget from a declared suite:
+
+```sh
+gregale test ci init --manifest gregale-test.yaml --suite smoke
+```
+
+When the manifest has exactly one suite, `--suite` can be omitted. The command
+validates the suite and creates `.github/workflows/gregale-test.yml` plus
+`gregale-test-budget.yaml`. It refuses to overwrite either file. The starter
+workflow runs on pushes and pull requests for the selected `--branch` (default
+`main`), and can also be started manually with **Run workflow**. Successful
+pushes and manual runs on the baseline branch publish a 30-day baseline
+artifact. Pull requests compare against the latest successful baseline and add
+Markdown results to the GitHub job summary. A pull request can run before the
+first baseline exists; comparison is skipped with a job-summary note only while
+no successful baseline run exists. Once one exists, the workflow fails if its
+artifact is missing or expired, or if its run is older than the configured
+baseline age. To create or refresh the baseline without a code change, run the
+workflow manually on the baseline branch.
+
+By default, the baseline run can be at most 30 days old, matching the artifact's
+retention period. Set `--baseline-max-age-days N` to a value from 0 to 30 when
+generating the workflow to choose a shorter age limit. Set it to `0` to disable
+the age check; a missing or expired artifact still fails the comparison. This
+option applies to local and simulated workflows, which publish and compare
+baseline reports. Baseline lookup considers successful pushes and successful
+manual workflow runs on the selected branch.
+
+The starter budget checks run outcomes and matching run identities. Add load,
+HTTP, or repeat-spread limits to make performance changes gate CI. The workflow
+supports local and simulated suites. Local suites must declare `local.command`;
+the generator supplies throwaway consumer keys and configures Node.js when it
+detects a Node command. Add other runtime and dependency installation steps to
+the generated workflow as needed. These workflows use read-only `contents` and
+`actions` permissions.
+
+For real-VM suites, generate a manual profile matrix with an explicit workload
+limit:
+
+```sh
+gregale test ci init --manifest gregale-test.yaml --suite acceptance \
+  --engine real-vm --profiles warm,cold,restored --max-workload-minutes 135
+```
+
+The generated workflow is started with **Run workflow** in GitHub Actions. Its
+profile input runs every configured profile by default, or one selected profile;
+each profile gets a separate, serial job and evidence artifact. The repeat input
+allows one to three independent attempts. The CLI checks `--max-workload-minutes`
+for each profile job using the selected repeat count, and each job performs a
+capacity preflight before execution. The command requires this limit so a
+credentialed workflow cannot be generated without a cost guard. Gregale cleans
+up each test environment after its profile; the workflow also retains reports
+for 14 days.
+
+The generated job uses the `gregale-test` GitHub environment by default. Create
+that environment (or pass `--environment NAME`), add the Gregale API URL as the
+`GREGALE_TEST_API_URL` variable, and add an API token as the
+`GREGALE_TEST_TOKEN` secret. Environment protection rules can require approval
+before the workflow receives credentials. Real-VM workflows are manual-only so
+pull request code cannot receive those credentials automatically. The API
+credentials are scoped to the credential check and Gregale CLI steps. The
+workflow sets up Node.js when a scenario's trigger, assertion, setup, or cleanup
+command uses a Node executable; add dependency installation and other runtimes
+to the generated workflow when needed. Real-VM workflows store per-profile
+evidence and do not create a comparison budget.
+
 ### Compare two saved reports offline
 
 Compare JSON reports from separate runs without starting the application or
@@ -167,6 +235,7 @@ contacting Gregale:
 ```sh
 gregale test compare before.json after.json
 gregale test compare before.json after.json --html comparison.html
+gregale test compare before.json after.json --markdown comparison.md
 gregale test compare before.json after.json --json
 ```
 
@@ -175,10 +244,66 @@ added and removed runs, status changes, duration and phase changes, HTTP step
 timings, and aggregate, per-step, and arrival-rate load metrics when available.
 It also marks a changed load workload signature or label so those metric deltas
 are easy to spot.
-The comparison is informational and does not apply regression budgets or fail
-because a metric changed. Use `--baseline` during a load run when the comparison
-must enforce the configured performance limits. Inputs are local JSON
-report arrays written by `--report` or JSON stdout, capped at 64 MiB each.
+Without `--budget`, the comparison is informational. Pass a versioned YAML
+budget file to enforce run outcomes and optional performance limits:
+
+```sh
+gregale test compare before.json after.json \
+  --budget ci/test-budget.yaml --html comparison.html
+```
+
+```yaml
+version: 1
+runs:
+  require_passing: true       # default: every later run must pass
+  require_same_runs: true     # fail if the report adds or removes a run
+  max_duration_increase_percent: 20
+http:
+  max_duration_increase_percent: 25
+load:
+  max_p95_increase_percent: 10
+  max_p99_increase_percent: 15
+  max_error_rate_increase_percentage_points: 0.5
+  min_samples: 50
+repeat:
+  min_runs: 3
+  max_spread_percent: 25
+  max_error_rate_spread_percentage_points: 1
+```
+
+Run duration and each HTTP request duration use the configured percentage
+limit. HTTP steps must keep the same name, method, and path. Load limits apply
+to aggregate and per-step percentiles; error-rate increases are absolute
+percentage points (`0.5` allows an increase of half a point). Load budgets
+require matching versioned workload signatures and labels, valid reports, and
+at least 20 samples in each report by default. A workload change, missing
+comparison step, or too few samples is reported as inconclusive and fails the
+gate so changed traffic cannot silently pass. A zero latency baseline permits
+no increase.
+
+Add `repeat` to compare repeated attempts as a group. Performance checks use the
+median of each attempt's reported metric; Gregale does not average percentiles
+or combine samples from separate runs. The default maximum spread limits are
+25% for latency metrics and 1 percentage point for error rates. Latency spread
+is reported as `100 * (maximum - minimum) / median`; error-rate spread is the
+range in percentage points.
+A group below `min_runs`, an undefined zero-median spread, or a group over
+either spread limit is inconclusive. `runs.require_passing` still checks
+each later attempt, and `runs.require_same_runs` still requires matching
+attempt identities.
+
+When a budget fails or is inconclusive, the command returns a nonzero exit code
+after writing the requested JSON, HTML, or Markdown comparison report. The
+Markdown summary shows the gate, metric medians and spreads, run changes, and
+inconclusive reasons; it lists up to 100 checks and runs. In GitHub Actions,
+`--github-summary` appends the summary to the file named by
+`GITHUB_STEP_SUMMARY`. Unknown YAML fields and unsupported budget versions are
+rejected. The checked-in
+[`scenario test workflow example`](../examples/scenario-tests/README.md#github-actions)
+shows how to compare each pull request with a saved `main` artifact and upload
+the comparison for review. Use `--baseline` during a load run when you want its
+in-run regression limits to gate that execution directly. Inputs are local
+JSON report arrays written by `--report` or JSON stdout, capped at 64 MiB each.
 
 ## Native HTTP workflows
 

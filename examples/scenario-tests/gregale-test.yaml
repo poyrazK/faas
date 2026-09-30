@@ -5,8 +5,37 @@ suites:
     scenarios:
       - scenario: customer-export
         engine: local
+  performance:
+    scenarios:
+      - scenario: api-health-load
+        engine: local
 
 scenarios:
+  api-health-load:
+    project: scenario-tests-health
+    source: ./app
+    timeout: 1m
+    local:
+      command: [node, server.js]
+      readiness:
+        path: /health
+        status: 200
+    requests:
+      - name: health
+        method: GET
+        path: /health
+        expect:
+          status: 200
+          content_type: application/json
+          json:
+            /status: ok
+    load:
+      workload: scenario-health-v1
+      vus: 2
+      iterations: 1000
+      thresholds:
+        p95: 250ms
+        error_rate: 0.01
   customer-export:
     project: scenario-tests-example
     source: ./app

@@ -58,3 +58,18 @@ environments and records one JUnit case for each attempt. The manual
 three repeats. It requires the `scenario-acceptance` environment, a live
 `GREGALE_ACCEPTANCE_API_URL` variable, and a Pro or higher
 `GREGALE_ACCEPTANCE_TOKEN` secret.
+
+To generate a profile-matrix workflow for this manifest, run:
+
+```sh
+gregale test ci init \
+  --manifest tests/scenario-acceptance/gregale-test.yaml \
+  --suite real-vm --engine real-vm \
+  --profiles warm,cold,restored --max-workload-minutes 135 \
+  --environment scenario-acceptance
+```
+
+This workflow runs only when manually dispatched, executes profile jobs one at
+a time, and uploads separate reports. Configure the selected GitHub environment
+with `GREGALE_TEST_API_URL` and `GREGALE_TEST_TOKEN`; generated workflows use
+the generic names described in the scenario testing guide.
