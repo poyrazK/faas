@@ -994,12 +994,26 @@ const RouteCacheCap = 10_000
 // FAAS_GATEWAY_ROUTE_STALE_TTL, so a Postgres outage does not take down
 // routes that were invalidated or evicted; without a stale entry it is a
 // 404 as before.
+func (b *PGBackend) LookupHostPolicy(ctx context.Context, host string) (App, bool, error) {
+	if b.requiresFreshHostPolicy() {
+		return b.router.ResolveHost(ctx, host)
+	}
+	app, found := b.Lookup(ctx, host)
+	return app, found, nil
+}
+
+func (b *PGBackend) requiresFreshHostPolicy() bool {
+	router, ok := b.router.(FreshHostPolicyRouter)
+	return ok && router.RequiresFreshHostPolicy()
+}
+
 func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
-	if matcher, ok := b.router.(DynamicRouteHostMatcher); ok && matcher.IsDynamicRouteHost(host) {
+	matcher, dynamic := b.router.(DynamicRouteHostMatcher)
+	if b.requiresFreshHostPolicy() || dynamic && matcher.IsDynamicRouteHost(host) {
 		app, found, err := b.router.ResolveHost(ctx, host)
 		if err != nil {
 			if b.log != nil {
-				b.log.Warn("gateway: dynamic environment route lookup failed", "host", host, "err", err)
+				b.log.Warn("gateway: authoritative host policy lookup failed", "host", host, "err", err)
 			}
 			return App{}, false
 		}

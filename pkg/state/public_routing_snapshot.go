@@ -27,9 +27,17 @@ func (s *PgStore) WithPublicRoutingSnapshot(ctx context.Context, read func(Publi
 		return ErrInvalidArgument
 	}
 	return s.WithServicePolicySnapshot(ctx, func(reader ServicePolicyReader) error {
-		return read(reader.(PublicRoutingPolicyReader))
+		service := reader.(servicePolicyReader)
+		return read(publicRoutingPolicyReader{servicePolicyReader: service, host: newPublicHostPolicyReader(service.tx)})
 	})
 }
+
+type publicRoutingPolicyReader struct {
+	servicePolicyReader
+	host PublicHostPolicyReader
+}
+
+func (s publicRoutingPolicyReader) HostPolicyReader() PublicHostPolicyReader { return s.host }
 
 func (s servicePolicyReader) VerifyPublicRoutingOwner(ctx context.Context, app, account, project string) error {
 	verified, err := sqlc.New().ReadPublicRoutingOwner(ctx, s.tx, sqlc.ReadPublicRoutingOwnerParams{

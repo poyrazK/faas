@@ -4451,6 +4451,7 @@ CREATE TABLE public.tenant_surfaces (
     cert_last_error text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    platform_tenant_id uuid,
     platform_tenant_managed boolean DEFAULT false NOT NULL,
     CONSTRAINT tenant_surfaces_app_or_not_chk CHECK ((app_id IS NOT NULL)),
     CONSTRAINT tenant_surfaces_cert_kind_check CHECK ((cert_kind = ANY (ARRAY['per_host_san'::text, 'shared_wildcard'::text, 'per_host'::text]))),
@@ -10950,3 +10951,73 @@ ALTER TABLE ONLY public.deployment_revision_pins
 
 ALTER TABLE ONLY public.deployment_revision_pins
     ADD CONSTRAINT deployment_revision_pins_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+-- Current migrated table projection for public host policy reads.
+CREATE TABLE public.project_environment_edge_policies (
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    environment_slug text NOT NULL,
+    rules jsonb DEFAULT '[]'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT project_environment_edge_policies_rules_chk CHECK (((jsonb_typeof(rules) = 'array'::text) AND (jsonb_array_length(rules) <= 20)))
+);
+
+
+-- Current migrated table projection for public host policy reads.
+CREATE TABLE public.platform_tenants (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    external_ref text NOT NULL,
+    name text NOT NULL,
+    status text DEFAULT 'active'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT platform_tenants_external_ref_check CHECK (((char_length(external_ref) >= 1) AND (char_length(external_ref) <= 256))),
+    CONSTRAINT platform_tenants_name_check CHECK (((char_length(name) >= 1) AND (char_length(name) <= 128))),
+    CONSTRAINT platform_tenants_status_check CHECK ((status = ANY (ARRAY['active'::text, 'suspended'::text])))
+);
+
+
+ALTER TABLE ONLY public.platform_tenants
+    ADD CONSTRAINT platform_tenants_account_id_external_ref_key UNIQUE (account_id, external_ref);
+
+
+ALTER TABLE ONLY public.platform_tenants
+    ADD CONSTRAINT platform_tenants_account_id_id_key UNIQUE (account_id, id);
+
+
+ALTER TABLE ONLY public.platform_tenants
+    ADD CONSTRAINT platform_tenants_pkey PRIMARY KEY (id);
+
+
+ALTER TABLE ONLY public.project_environment_edge_policies
+    ADD CONSTRAINT project_environment_edge_policies_pkey PRIMARY KEY (app_id, environment_slug);
+
+
+CREATE INDEX platform_tenants_account_created_id_idx ON public.platform_tenants USING btree (account_id, created_at DESC, id DESC);
+
+
+CREATE INDEX project_environment_edge_policies_project_idx ON public.project_environment_edge_policies USING btree (account_id, project_id, environment_slug);
+
+
+ALTER TABLE ONLY public.platform_tenants
+    ADD CONSTRAINT platform_tenants_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+ALTER TABLE ONLY public.project_environment_edge_policies
+    ADD CONSTRAINT project_environment_edge_polic_project_id_environment_slug_fkey FOREIGN KEY (project_id, environment_slug) REFERENCES public.project_environments(project_id, slug) ON DELETE CASCADE;
+
+
+ALTER TABLE ONLY public.project_environment_edge_policies
+    ADD CONSTRAINT project_environment_edge_policies_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+ALTER TABLE ONLY public.project_environment_edge_policies
+    ADD CONSTRAINT project_environment_edge_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+ALTER TABLE ONLY public.tenant_surfaces
+    ADD CONSTRAINT tenant_surfaces_platform_tenant_fkey FOREIGN KEY (account_id, platform_tenant_id) REFERENCES public.platform_tenants(account_id, id) ON DELETE SET NULL (platform_tenant_id);

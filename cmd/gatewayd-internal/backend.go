@@ -22,7 +22,7 @@ import (
 // to its routing app. gatewayd only ever READS these tables — apid owns apps and
 // domains, schedd owns instances (CLAUDE.md §Component ownership).
 type pgRouter struct {
-	store state.Store
+	store publicHostAppStore
 	// appsSuffix is the configured public suffix in leading-dot form. A host
 	// under it is a platform subdomain whose label is the app slug; anything
 	// else is a custom domain resolved through the domains table.
@@ -90,6 +90,13 @@ func (r pgRouter) ResolvePlatformTenantHost(ctx context.Context, host string) (g
 // ResolveHost implements gateway.Router. A missing/unverified/deleted route is a
 // clean ok=false (404); only an actual store failure returns a non-nil error.
 func (r pgRouter) ResolveHost(ctx context.Context, host string) (gateway.App, bool, error) {
+	if snapshot, ok := r.store.(state.PublicHostPolicySnapshotStore); ok {
+		return r.resolveHostSnapshot(ctx, snapshot, host)
+	}
+	return r.resolveHost(ctx, host)
+}
+
+func (r pgRouter) resolveHost(ctx context.Context, host string) (gateway.App, bool, error) {
 	if environmentID, appID, matched := gateway.EnvironmentIDsFromHost(r.deploySuffix, host); matched {
 		return r.environmentHost(ctx, environmentID, appID)
 	}
@@ -132,6 +139,11 @@ func (r pgRouter) ResolveHost(ctx context.Context, host string) (gateway.App, bo
 func (r pgRouter) IsDynamicRouteHost(host string) bool {
 	_, _, matched := gateway.EnvironmentIDsFromHost(r.deploySuffix, host)
 	return matched
+}
+
+func (r pgRouter) RequiresFreshHostPolicy() bool {
+	_, authoritative := r.store.(state.PublicHostPolicySnapshotStore)
+	return authoritative
 }
 
 func (r pgRouter) CachedCustomDomainRouteActive(ctx context.Context, host, appID string) (bool, error) {
@@ -199,7 +211,9 @@ func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID stri
 }
 
 func (r pgRouter) environmentDeployment(ctx context.Context, app state.App, environment state.ProjectEnvironment) (state.Deployment, bool, error) {
-	if reader, ok := r.store.(state.ProjectReleaseSetReader); ok {
+	if reader, ok := r.store.(interface {
+		ActiveProjectReleaseSet(context.Context, string, string, string) (state.ProjectReleaseSet, error)
+	}); ok {
 		release, err := reader.ActiveProjectReleaseSet(ctx, environment.AccountID, environment.ProjectID, environment.Slug)
 		if err == nil {
 			for _, member := range release.Members {
@@ -213,7 +227,7 @@ func (r pgRouter) environmentDeployment(ctx context.Context, app state.App, envi
 				if loadErr != nil {
 					return state.Deployment{}, false, loadErr
 				}
-				if deployment.AppID != app.ID || deployment.Scope != environment.Slug || deployment.Status != state.DeployLive {
+				if deployment.AppID != app.ID || deployment.Scope != environment.Slug || deployment.Status != state.DeployLive || deployment.DeletedAt != nil {
 					return state.Deployment{}, false, nil
 				}
 				return deployment, true, nil
@@ -277,7 +291,7 @@ func (r pgRouter) deploymentAliasByHostLabel(ctx context.Context, hostLabel stri
 	if deployment.AppID != app.ID || deployment.DeletedAt != nil || !deployment.DeploymentAliasActive() {
 		return gateway.App{}, false, nil
 	}
-	resolved, found, err := r.toApp(ctx, app)
+	resolved, found, err := r.toAppWithDeployment(ctx, app, &deployment)
 	if err != nil || !found {
 		return resolved, found, err
 	}
@@ -310,10 +324,10 @@ func (r pgRouter) deploymentPreview(ctx context.Context, slug string, revision i
 	if err != nil {
 		return gateway.App{}, false, err
 	}
-	if deployment.AppID != app.ID || !deployment.DeploymentPreviewActive() {
+	if deployment.AppID != app.ID || deployment.DeletedAt != nil || !deployment.DeploymentPreviewActive() {
 		return gateway.App{}, false, nil
 	}
-	resolved, ok, err := r.toApp(ctx, app)
+	resolved, ok, err := r.toAppWithDeployment(ctx, app, &deployment)
 	if err != nil || !ok {
 		return gateway.App{}, ok, err
 	}
@@ -536,9 +550,13 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 		// An environment URL serves one release, not the application's
 		// cross-environment live set. Sidecar ingress and quarantine state
 		// must come from that release even when production differs.
-		liveDeployments = []state.Deployment{*exact}
+		projected := *exact
+		// Exact URLs can keep serving a zero-weight retained revision.
+		// Its own ingress contract still applies to that URL.
+		projected.TrafficPercent = api.TrafficPolicyMaxWeight
+		liveDeployments = []state.Deployment{projected}
 	} else {
-		deps, depErr := r.store.LiveDeployments(ctx, app.ID)
+		deps, depErr := r.livePublicRoutingDeployments(ctx, app)
 		if depErr != nil && !errors.Is(depErr, state.ErrNotFound) {
 			return gateway.App{}, false, depErr
 		}

@@ -4910,26 +4910,26 @@ ORDER BY id LIMIT sqlc.arg(row_limit)::integer;
 -- name: ReadPublicRoutingOwner :one
 SELECT EXISTS (
     SELECT 1 FROM apps WHERE id = sqlc.arg(app_id)::uuid AND account_id = sqlc.arg(account_id)::uuid
-      AND project_id IS NOT DISTINCT FROM sqlc.narg(project_id)::uuid AND status <> 'deleted'
+      AND project_id IS NOT DISTINCT FROM sqlc.narg(project_id)::uuid AND status <> 'deleted' AND deleted_at IS NULL
 )::boolean AS verified;
 
 -- name: ReadPublicRoutingWeights :many
 SELECT id, traffic_percent FROM deployments
-WHERE app_id = sqlc.arg(app_id)::uuid AND scope = sqlc.arg(scope)::text AND status = 'live' AND traffic_percent > 0
+WHERE app_id = sqlc.arg(app_id)::uuid AND scope = sqlc.arg(scope)::text AND status = 'live' AND deleted_at IS NULL AND traffic_percent > 0
 ORDER BY id LIMIT sqlc.arg(row_limit)::integer;
 
 -- name: ReadPublicRoutingRelease :many
 SELECT rs.id, member.deployment_id,
        EXISTS (
            SELECT 1 FROM deployments d WHERE d.id = member.deployment_id AND d.app_id = member.app_id
-             AND d.scope = sqlc.arg(scope)::text AND d.status = 'live'
+             AND d.scope = sqlc.arg(scope)::text AND d.status = 'live' AND d.deleted_at IS NULL
              AND (d.traffic_percent > 0 OR EXISTS (SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id = d.id AND p.expires_at > now())
                   OR EXISTS (SELECT 1 FROM project_release_members retained JOIN project_release_sets retained_set ON retained_set.id = retained.release_id
                              WHERE retained.deployment_id = d.id AND retained.app_id = d.app_id AND (retained_set.active OR retained_set.expires_at > now())))
        )::boolean AS target_live
 FROM apps a JOIN project_release_sets rs ON rs.project_id = a.project_id AND rs.account_id = a.account_id
 LEFT JOIN project_release_members member ON member.release_id = rs.id AND member.app_id = a.id
-WHERE a.id = sqlc.arg(app_id)::uuid AND a.status <> 'deleted' AND rs.environment_slug = sqlc.arg(scope)::text
+WHERE a.id = sqlc.arg(app_id)::uuid AND a.status <> 'deleted' AND a.deleted_at IS NULL AND rs.environment_slug = sqlc.arg(scope)::text
   AND ((sqlc.narg(requested_release_id)::uuid IS NULL AND rs.active)
        OR (rs.id = sqlc.narg(requested_release_id)::uuid AND (rs.active OR rs.expires_at > now())))
 ORDER BY rs.created_at DESC LIMIT 2;
@@ -4938,7 +4938,7 @@ ORDER BY rs.created_at DESC LIMIT 2;
 SELECT EXISTS (
     SELECT 1 FROM deployments d JOIN apps a ON a.id = d.app_id
     WHERE d.id = sqlc.arg(deployment_id)::uuid AND d.app_id = sqlc.arg(app_id)::uuid
-      AND d.scope = sqlc.arg(scope)::text AND d.status = 'live' AND a.status <> 'deleted'
+      AND d.scope = sqlc.arg(scope)::text AND d.status = 'live' AND d.deleted_at IS NULL AND a.status <> 'deleted' AND a.deleted_at IS NULL
       AND coalesce((a.manifest->>'revision_pin_ttl_seconds')::integer, 0) > 0
       AND (d.traffic_percent > 0 OR EXISTS (SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id = d.id AND p.expires_at > now()))
 )::boolean AS allowed;
@@ -4946,5 +4946,152 @@ SELECT EXISTS (
 -- name: ReadPublicRoutingHostPin :one
 SELECT EXISTS (
     SELECT 1 FROM deployments WHERE id = sqlc.arg(deployment_id)::uuid AND app_id = sqlc.arg(app_id)::uuid
-      AND scope = sqlc.arg(scope)::text AND status IN ('ready', 'snapshot_ready', 'live')
+      AND scope = sqlc.arg(scope)::text AND status IN ('ready', 'snapshot_ready', 'live') AND deleted_at IS NULL
 )::boolean AS allowed;
+
+-- ADR-375: public host policy reads are credential-minimal and transaction-scoped.
+-- name: ReadPublicHostApp :one
+SELECT (jsonb_build_object(
+    'ID', a.id,
+    'AccountID', a.account_id,
+    'Slug', a.slug,
+    'Type', a.type,
+    'Status', a.status,
+    'Visibility', a.visibility,
+    'WorkloadClass', a.workload_class,
+    'IdleTimeoutS', a.idle_timeout_s,
+    'MaxConcurrency', a.max_concurrency,
+    'AutoscaleTargetRPS', a.autoscale_target_rps,
+    'RequestRateLimitRPS', a.request_rate_limit_rps,
+    'RequestRateLimitBurst', a.request_rate_limit_burst,
+    'ProjectID', a.project_id,
+    'NodeID', a.node_id,
+    'PreviewOfSlug', a.preview_of_slug,
+    'StreamingEnabled', a.streaming_enabled,
+    'ScalingPolicy', a.scaling_policy,
+    'WebSocketEnabled', a.websocket_enabled,
+    'RouteMetricsEnabled', a.route_metrics_enabled,
+    'OnlyAllowDeclaredRoutes', a.only_declared_routes,
+    'DeclaredRoutes', a.declared_routes,
+    'MaintenanceMode', a.maintenance_mode,
+    'RequireAuthn', a.require_authn,
+    'ConsumerAuthMode', a.consumer_auth_mode,
+    'AppProtocol', a.app_protocol,
+    'CORSDefaultEnabled', a.cors_default_enabled,
+    'CORSDefaultOrigins', a.cors_default_origins,
+    'PublicAuthMode', a.public_auth_mode,
+    'PublicAuthBasicSealed', encode(a.public_auth_basic, 'base64'),
+    'PublicAuthIPAllowlist', a.public_auth_ip_allowlist
+) || jsonb_build_object('Manifest', jsonb_strip_nulls(jsonb_build_object(
+    'execution_mode', a.manifest -> 'execution_mode',
+    'ports', a.manifest -> 'ports',
+    'request_timeout_s', a.manifest -> 'request_timeout_s',
+    'session_affinity', a.manifest -> 'session_affinity',
+    'version_affinity_cookie', a.manifest -> 'version_affinity_cookie',
+    'version_affinity_managed_cookie', a.manifest -> 'version_affinity_managed_cookie',
+    'revision_pin_ttl_seconds', a.manifest -> 'revision_pin_ttl_seconds',
+    'favicon', a.manifest -> 'favicon',
+    'robots_txt', a.manifest -> 'robots_txt',
+    'head_wakes', a.manifest -> 'head_wakes',
+    'crawler_policy', a.manifest -> 'crawler_policy',
+    'pre_auth_rate_limit', a.manifest -> 'pre_auth_rate_limit',
+    'health_path', a.manifest -> 'health_path',
+    'health_path_wakes', a.manifest -> 'health_path_wakes',
+    'healthz', a.manifest -> 'healthz'
+))))::jsonb AS data FROM apps a
+WHERE (a.id = sqlc.narg(app_id)::uuid OR a.slug = nullif(sqlc.arg(slug)::text, ''))
+  AND a.status <> 'deleted' AND a.deleted_at IS NULL;
+
+-- name: ReadPublicHostAccount :one
+SELECT jsonb_build_object(
+    'ID', id,
+    'Plan', plan,
+    'Status', status,
+    'AbuseHoldAt', abuse_hold_at
+)::jsonb AS data FROM accounts WHERE id = sqlc.arg(account_id)::uuid;
+
+-- name: ReadPublicHostDeployment :many
+SELECT jsonb_build_object(
+    'ID', d.id,
+    'AppID', d.app_id,
+    'Scope', d.scope,
+    'Status', d.status,
+    'Revision', d.revision,
+    'traffic_percent', d.traffic_percent,
+    'Sidecars', d.sidecars,
+    'parked_reason', d.parked_reason,
+    'DeletedAt', d.deleted_at
+)::jsonb AS data
+FROM deployments d
+WHERE d.id = sqlc.narg(deployment_id)::uuid
+   OR (d.app_id = sqlc.narg(app_id)::uuid AND d.revision = sqlc.arg(revision)::integer AND sqlc.arg(revision) > 0)
+   OR (d.app_id = sqlc.narg(app_id)::uuid AND sqlc.arg(revision) = 0
+       AND d.scope = sqlc.arg(scope)::text AND d.status = 'live' AND d.deleted_at IS NULL AND d.traffic_percent > 0)
+ORDER BY (d.traffic_percent > 0) DESC, d.created_at DESC, d.id DESC
+LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: ReadPublicHostEnvironment :one
+SELECT jsonb_build_object(
+    'ID', id,
+    'AccountID', account_id,
+    'ProjectID', project_id,
+    'Slug', slug
+)::jsonb AS data FROM project_environments WHERE id = sqlc.arg(environment_id)::uuid;
+
+-- name: ReadPublicHostEnvironmentPolicy :one
+SELECT jsonb_build_object(
+    'AccountID', p.account_id,
+    'ProjectID', p.project_id,
+    'AppID', p.app_id,
+    'EnvironmentSlug', p.environment_slug,
+    'Rules', p.rules
+)::jsonb AS data
+FROM project_environment_edge_policies p
+JOIN apps a ON a.id = p.app_id AND a.account_id = p.account_id AND a.project_id = p.project_id
+WHERE p.account_id = sqlc.arg(account_id)::uuid AND p.app_id = sqlc.arg(app_id)::uuid
+  AND p.environment_slug = sqlc.arg(scope)::text AND a.status <> 'deleted' AND a.deleted_at IS NULL;
+
+-- name: ReadPublicHostDomain :one
+SELECT jsonb_build_object(
+    'Domain', domain,
+    'AppID', app_id,
+    'EnvironmentID', environment_id,
+    'VerifiedAt', verified_at
+)::jsonb AS data FROM custom_domains
+WHERE (NOT sqlc.arg(wildcard)::boolean AND domain = sqlc.arg(host)::text)
+   OR (sqlc.arg(wildcard) AND domain LIKE '*.%' AND lower(sqlc.arg(host)) LIKE '%' || lower(substr(domain, 2))
+       AND lower(sqlc.arg(host)) <> lower(substr(domain, 3)))
+ORDER BY length(domain) DESC LIMIT 1;
+
+-- name: ReadPublicHostTenantSurface :one
+SELECT jsonb_build_object(
+    'ID', s.id,
+    'AppID', s.app_id,
+    'AccountID', s.account_id,
+    'Status', s.status
+)::jsonb AS data
+FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id = h.surface_id
+WHERE h.hostname = sqlc.arg(host)::text AND s.status <> 'deleted';
+
+-- name: ReadPublicHostTenantHostname :one
+SELECT jsonb_build_object(
+    'SurfaceID', h.surface_id,
+    'Hostname', h.hostname,
+    'VerifiedAt', h.verified_at
+)::jsonb AS data
+FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id = h.surface_id
+WHERE h.hostname = sqlc.arg(host)::text AND s.status <> 'deleted';
+
+-- name: ReadPublicHostTenantBinding :one
+SELECT jsonb_build_object(
+    'SurfaceID', s.id,
+    'AppID', s.app_id,
+    'AccountID', s.account_id,
+    'TenantID', s.platform_tenant_id,
+    'Active', s.status = 'active',
+    'Verified', h.verified_at IS NOT NULL,
+    'Suspended', coalesce(t.status = 'suspended', false)
+)::jsonb AS data
+FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id = h.surface_id
+LEFT JOIN platform_tenants t ON t.id = s.platform_tenant_id
+WHERE h.hostname = sqlc.arg(host)::text AND s.status <> 'deleted';

@@ -39,6 +39,44 @@ original selected cohort is cold. Instance/session affinity cannot cross it.
 
 ## Evidence log
 
+### Public host policy verification, 2026-09-30
+
+Public host resolution now uses a fresh bounded read-only repeatable-read
+Postgres view for hostname binding, app flags, account plan, environment policy
+and deployment ingress. Ordinary project app hosts use production; standalone
+hosts use the default scope. Immutable and alias hosts project their exact
+deployment, including a retained live zero-weight revision. The dispatch
+transaction verifies the private host-content baseline before reading routing
+eligibility and weights; a changed baseline or missing verifier refuses.
+Transactions end before wake. Fresh reads bypass route caches, so missed
+notifications cannot preserve an old alias or domain/environment binding.
+An unavailable source-owner read refuses synthetic route substitution.
+The managed service deployment waker also projects exact ingress and refuses
+another app's deployment. Soft-deleted targets and overflowing immutable
+revision numbers refuse resolution.
+
+Real Postgres fixtures passed for changes committed between app/account/ingress
+reads, refusal between host resolution and dispatch, exact/scoped ingress,
+zero-weight alias projection, retargeting without notifications, named
+environments, changed environment policy, domain retargeting, tenant suspension
+without legacy-domain fallback, minimal credential projection and transaction
+cleanup. HTTP handler checks passed for unavailable and expired host reads and
+source-owner failure before wake/forwarding. Full internal-gateway (10.381 s)
+and gateway (61.565 s) suites passed; final focused checks after the tenant-guard
+refinement passed in 7.116 s and 2.802 s. Pinned lint passed gateway, internal
+gateway and state production code with zero findings; state excluded tests and
+the pre-existing test-only unused helper. All four sqlc v1.31.1 generated files matched a
+fresh regeneration; the three affected schema table projections matched the
+migrated Postgres definitions. No migration was added.
+
+All six guarantees remain unchecked. Imported/compiled edge-policy and
+source-host agreement, bounded decision evidence, preview/runtime agreement,
+synthetic-path coverage, complete daemon/load/recovery tests and customer/staging
+release evidence remain required. Fresh host lookup must be measured within
+the configured total request deadline in full-path acceptance. Native Linux
+x86_64 KVM, nft connection/source-IP, process-death and leak acceptance remain
+pending; the user confirmed no host is currently available.
+
 Implementation started from a clean new worktree after fetching origin/main.
 The audit snapshot remains unchanged. No guarantee is marked accepted yet.
 Native metal/leak, real fleet tests and rollout remain required; unavailable

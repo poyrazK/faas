@@ -296,6 +296,25 @@ remain required delivery work.
 
 ## Delivery and verification
 
+Public host resolution reads hostname ownership, app settings, account plan,
+environment/release membership and deployment ingress through a narrow,
+read-only repeatable-read view. New requests require this view even if the
+route cache is warm or notifications are lost. An unavailable view refuses
+admission. Ordinary project app hosts use production deployments; standalone
+hosts use the default scope. Revision and alias hosts project ingress from
+their exact deployment, including a retained zero-weight alias revision.
+Other environments cannot alter the primary ingress or companion roster.
+
+The host projection has a private content fingerprint. The later public
+routing transaction re-resolves that projection before reading eligibility
+and weights. If settings or hostname bindings changed between the two reads,
+the request refuses dispatch instead of combining generations. Both
+transactions end before wake; an admitted request retains its complete
+verified projection and selected deployment during wake and retries.
+Imported edge policies and their source-host ownership still need their
+separate agreement and acceptance evidence before the policy guarantee is
+accepted.
+
 The implementation tracker is `docs/traffic_platform_implementation.md`.
 Each guarantee needs configuration-to-runtime tests, cancellation/recovery
 tests and customer documentation. VM lifecycle changes require native x86_64

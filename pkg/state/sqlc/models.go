@@ -1910,6 +1910,16 @@ type PgRatelimitCounter struct {
 	LastRefill pgtype.Timestamptz
 }
 
+type PlatformTenant struct {
+	ID          pgtype.UUID
+	AccountID   pgtype.UUID
+	ExternalRef string
+	Name        string
+	Status      string
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
 type Project struct {
 	ID               pgtype.UUID
 	AccountID        pgtype.UUID
@@ -1944,6 +1954,16 @@ type ProjectEnvironmentCleanupJob struct {
 	LeaseToken      string
 	LeaseUntil      pgtype.Timestamptz
 	CreatedAt       pgtype.Timestamptz
+}
+
+type ProjectEnvironmentEdgePolicy struct {
+	AccountID       pgtype.UUID
+	ProjectID       pgtype.UUID
+	AppID           pgtype.UUID
+	EnvironmentSlug string
+	Rules           []byte
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
 }
 
 type ProjectEnvironmentQualification struct {
@@ -2350,6 +2370,7 @@ type TenantSurface struct {
 	CertLastError         pgtype.Text
 	CreatedAt             pgtype.Timestamptz
 	UpdatedAt             pgtype.Timestamptz
+	PlatformTenantID      pgtype.UUID
 	PlatformTenantManaged bool
 }
 

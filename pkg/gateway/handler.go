@@ -89,6 +89,8 @@ func wakeResponseValue(cold bool, method WakeMethod) string {
 type App struct {
 	ID        string
 	AccountID string // joined in pgRouter.toApp; empty only in fakeBackend unit tests (ADR-040)
+	// Private verifier inputs; only the effective fingerprint leaves the gateway.
+	PublicPolicySource *PublicAppPolicySource `json:",omitempty"`
 	// Host-specific tenant surface binding. Never store these in the shared
 	// app cache: one app can serve several independent customer hostnames.
 	RoutedSurfaceID  string
@@ -2238,7 +2240,11 @@ func (h *Handler) routeRuleForHost(r *http.Request, appHost string) (rule *EdgeR
 	if rule == nil {
 		return nil, false
 	}
-	hostApp, found := h.backend.Lookup(r.Context(), appHost)
+	hostApp, found, err := h.lookupAppPolicy(r, appHost)
+	if err != nil {
+		*r = *r.WithContext(context.WithValue(r.Context(), hostPolicyLookupFailureKey{}, err))
+		return nil, true
+	}
 	if !found || hostApp.AccountID == rule.AccountID {
 		return rule, false
 	}
@@ -5703,6 +5709,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		app       App
 		lookedApp App
 		ok        bool
+		lookupErr error
 	)
 	if h.pinHostTrafficPolicy(w, r, host, appHost) {
 		h.observe(r, rec.status, "", "", false, Target{})
@@ -5712,7 +5719,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		goto haveApp
 	}
 	//nolint:contextcheck // request ctx is the canonical inbound ctx at the HTTP handler boundary.
-	lookedApp, ok = h.backend.Lookup(r.Context(), appHost)
+	lookedApp, ok, lookupErr = h.lookupAppPolicy(r, appHost)
+	if lookupErr != nil {
+		if !handleForwardRequestCancellation(w, r, true) {
+			h.writeTrafficPolicyUnavailable(w)
+		}
+		h.observe(r, rec.status, "", "", false, Target{})
+		return
+	}
 	if !ok {
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
 			"No such app", fmt.Sprintf("no app is routed to %q", appHost)))

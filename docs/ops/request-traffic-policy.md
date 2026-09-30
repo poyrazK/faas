@@ -9,6 +9,27 @@ enforcement and observed route labels use that same contract. Upload, wake and
 retries retain those inputs even when shared caches refresh. App slices and
 maps are copied before guest work.
 
+Public hostname ownership and app/account settings now require a fresh,
+read-only repeatable-read Postgres view, bounded to 250 ms. A warm route or VM
+cache cannot replace that read. The projection excludes application env and
+unrelated account credentials. Custom domains, wildcard reservations, tenant
+bindings, aliases and named-environment membership are resolved through that
+view. Ordinary project app hosts project production ingress; standalone hosts
+project the default scope. Revision and alias hosts use their exact
+deployment's ingress, including a retained live revision with zero ordinary
+traffic. A different environment cannot change the primary ingress or sidecar
+roster of that URL.
+
+Before dispatch, the public routing transaction re-resolves the host projection
+and compares its private content fingerprint. Changed settings, alias/domain
+retargeting, environment policy changes, deleted targets or a changed tenant
+binding refuse dispatch with `traffic_policy_unavailable`/503. A policy read
+failure cannot turn an owned hostname into a synthetic edge-rule host.
+Both transactions finish before wake. Admitted requests retain their verified
+settings and selected deployment during wake and retry. Compiled/imported
+matcher revisions still have their separate verification; source-host ownership
+agreement, preview/runtime agreement and full acceptance remain required.
+
 ## Runtime evidence
 
 Ordinary responses expose `X-Gregale-Traffic-Policy: traffic-v1:<sha256>`.

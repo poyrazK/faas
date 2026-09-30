@@ -7278,6 +7278,7 @@ const (
 	// and authorization snapshot; no transaction is retained during wake.
 	TrafficServicePolicyReadTimeout = 250 * time.Millisecond
 	TrafficPublicRoutingReadTimeout = 250 * time.Millisecond
+	TrafficPublicHostReadTimeout    = 250 * time.Millisecond
 	// Every positive traffic share consumes at least one percentage point.
 	// Bound a verified routing roster even if corrupted rows exceed that sum.
 	TrafficPolicyMaxDeployments = 100

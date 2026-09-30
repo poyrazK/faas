@@ -21,6 +21,9 @@ func newPublicRoutingPinner(store state.PublicRoutingSnapshotStore) gateway.Publ
 			if err := reader.VerifyPublicRoutingOwner(ctx, app.ID, app.AccountID, app.ProjectID); err != nil {
 				return err
 			}
+			if err := verifyPublicHostPolicy(ctx, reader, app); err != nil {
+				return err
+			}
 			if inputs.HostDeploymentID != "" {
 				result.HostChecked = true
 				var err error

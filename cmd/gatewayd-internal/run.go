@@ -2578,32 +2578,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// audited so a dashboard operator can distinguish a noisy
 	// transient from a sustained backend failure.
 	handler.WithEdgeRules(deps.edgeRulesMatcher, func(ctx context.Context, slug string) (gateway.App, bool) {
-		app, err := deps.pgStore.AppBySlug(ctx, slug)
-		if err != nil {
-			if !errors.Is(err, state.ErrNotFound) {
-				if log != nil {
-					log.Warn("edge rule target AppBySlug failed", "slug", slug, "err", err)
-				}
-				if deps.edgeRulesAudit != nil {
-					subject := slug
-					deps.edgeRulesAudit.Emit(ctx, "edge_rule.route_loader_error", &subject, map[string]any{
-						"slug": slug,
-						"err":  err.Error(),
-					})
-				}
-			}
-			return gateway.App{}, false
-		}
-		resolved, ok, err := (pgRouter{store: deps.pgStore}).toApp(ctx, app)
+		resolved, ok, err := (pgRouter{store: deps.pgStore}).resolvePublicAppSlug(ctx, slug)
 		if err != nil {
 			if log != nil {
-				log.Warn("edge rule target account lookup failed", "slug", slug, "err", err)
+				log.Warn("edge rule target policy lookup failed", "slug", slug, "err", err)
 			}
 			if deps.edgeRulesAudit != nil {
 				subject := slug
 				deps.edgeRulesAudit.Emit(ctx, "edge_rule.route_loader_error", &subject, map[string]any{
-					"slug": slug,
-					"err":  err.Error(),
+					"slug": slug, "err": err.Error(),
 				})
 			}
 			return gateway.App{}, false

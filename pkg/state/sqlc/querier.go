@@ -984,6 +984,16 @@ type Querier interface {
 	ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg ReadAccountCreditConsumptionParams) (ReadAccountCreditConsumptionRow, error)
 	// A single statement reads the pointer and its complete membership together.
 	ReadProjectReleaseSet(ctx context.Context, db DBTX, arg ReadProjectReleaseSetParams) ([]byte, error)
+	ReadPublicHostAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]byte, error)
+	// ADR-375: public host policy reads are credential-minimal and transaction-scoped.
+	ReadPublicHostApp(ctx context.Context, db DBTX, arg ReadPublicHostAppParams) ([]byte, error)
+	ReadPublicHostDeployment(ctx context.Context, db DBTX, arg ReadPublicHostDeploymentParams) ([][]byte, error)
+	ReadPublicHostDomain(ctx context.Context, db DBTX, arg ReadPublicHostDomainParams) ([]byte, error)
+	ReadPublicHostEnvironment(ctx context.Context, db DBTX, environmentID pgtype.UUID) ([]byte, error)
+	ReadPublicHostEnvironmentPolicy(ctx context.Context, db DBTX, arg ReadPublicHostEnvironmentPolicyParams) ([]byte, error)
+	ReadPublicHostTenantBinding(ctx context.Context, db DBTX, host string) ([]byte, error)
+	ReadPublicHostTenantHostname(ctx context.Context, db DBTX, host string) ([]byte, error)
+	ReadPublicHostTenantSurface(ctx context.Context, db DBTX, host string) ([]byte, error)
 	ReadPublicRoutingHostPin(ctx context.Context, db DBTX, arg ReadPublicRoutingHostPinParams) (bool, error)
 	ReadPublicRoutingOwner(ctx context.Context, db DBTX, arg ReadPublicRoutingOwnerParams) (bool, error)
 	ReadPublicRoutingRelease(ctx context.Context, db DBTX, arg ReadPublicRoutingReleaseParams) ([]ReadPublicRoutingReleaseRow, error)

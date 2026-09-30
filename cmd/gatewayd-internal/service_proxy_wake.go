@@ -47,7 +47,14 @@ func newServiceProxyDeploymentWaker(store state.Store, ensure func(context.Conte
 		if err != nil {
 			return fmt.Errorf("service deployment wake: load app %q: %w", appID, err)
 		}
-		resolved, ok, err := (pgRouter{store: store}).toApp(ctx, app)
+		deployment, err := store.DeploymentByID(ctx, deploymentID)
+		if err != nil {
+			return fmt.Errorf("service deployment wake: load deployment %q: %w", deploymentID, err)
+		}
+		if deployment.AppID != app.ID || deployment.DeletedAt != nil {
+			return fmt.Errorf("service deployment wake: deployment %q is unavailable for app %q: %w", deploymentID, appID, state.ErrNotFound)
+		}
+		resolved, ok, err := (pgRouter{store: store}).toAppWithDeployment(ctx, app, &deployment)
 		if err != nil {
 			return fmt.Errorf("service deployment wake: project app %q: %w", appID, err)
 		}
