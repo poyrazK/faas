@@ -149,6 +149,8 @@ Do not use this mechanism for an instantaneous security revocation.
 gregale flags requests --project exports --key new-export --value true --used true --since 24h
 gregale flags requests --project exports --key export-pipeline --variant new --used true --since 24h
 gregale flags requests --project exports --key new-export --customer-id 11111111-1111-4111-8111-111111111111
+gregale flags outcomes --project exports --key export-pipeline --since 24h
+gregale flags outcomes --project exports --key new-export --customer-id 11111111-1111-4111-8111-111111111111
 gregale flags history --project exports
 gregale flags inspect --project exports --key new-export --customer-id 11111111-1111-4111-8111-111111111111 --version 1
 gregale flags inspect --project exports --key future-export --fallback-variant legacy
@@ -171,6 +173,18 @@ Request pages contain up to 100 rows and a `next_cursor`; pass it with the same
 filters using `--cursor`. The debugger's plan entitlement, rate caps and retention
 apply. Inspecting cohorts provides operational evidence, not a causal experiment.
 Customer-level IDs and flag combinations are not added as Prometheus labels.
+
+`flags outcomes` summarizes the selected flag's retained requests by boolean
+value or named variant. Each cohort reports its request count, application-reported
+`used` count, HTTP 5xx count and rate, and request-weighted p50/p95 latency over
+the requested window. Latency percentiles use the conservative upper bounds of
+the stored telemetry buckets. At most 100 groups are returned; if historical
+configuration changes produce more groups, the response keeps the highest-volume
+ones and sets `truncated: true`. Filter to one verified customer with
+`--customer-id` when investigating a specific account. This view is read-only;
+it does not advance a rollout or establish that a flag caused an outcome. When
+configuration or targeting rules changed during the window, rows for the same
+value may include decisions from more than one configuration version.
 
 The SDK does not add flags to cache keys automatically. Avoid shared caches for
 customer-dependent behavior unless their keys include the relevant customer and

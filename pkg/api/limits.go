@@ -64,6 +64,7 @@ const (
 	FlagsMaxActorBytes         = 256
 	FlagsMaxHistoryPage        = 100
 	FlagsMaxRequestPage        = 100
+	FlagsMaxOutcomeGroups      = 100
 	FlagsMaxCursorBytes        = 2048
 	FlagsMaxConfigVersion      = int64(9007199254740991)
 )

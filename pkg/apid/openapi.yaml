@@ -22737,6 +22737,31 @@ paths:
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments/{environment}/flags/{key}/outcomes:
+    parameters:
+      - { $ref: '#/components/parameters/FlagsProjectSlug' }
+      - { $ref: '#/components/parameters/FlagsEnvironment' }
+      - { $ref: '#/components/parameters/FlagsKey' }
+    get:
+      tags: [flags]
+      operationId: getProjectFlagOutcomes
+      summary: Compare retained request outcomes by evaluated flag value.
+      description: Debugger entitlement and retention apply. Counts weight collapsed telemetry rows; used is application-reported. HTTP 5xx rates and request-weighted latency percentiles are operational observations, not causal experiment results. Latencies use conservative bucket upper bounds.
+      parameters:
+        - { name: customer_id, in: query, description: Restrict the rollup to one gateway-attributed customer UUID., schema: { type: string, format: uuid } }
+        - { name: since, in: query, description: Aggregation duration capped by the account's debugger retention., schema: { type: string, default: 24h } }
+      responses:
+        '200':
+          description: Bounded retained request outcomes grouped by decision type and value.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlagOutcomesResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/runtime/flags:
     get:
       tags: [flags]
@@ -23232,6 +23257,29 @@ components:
         next_cursor: { type: string }
         window_start: { type: string, format: date-time }
         window_end: { type: string, format: date-time }
+    FlagOutcomesResponse:
+      description: Operational outcomes grouped by evaluated flag type and value over one bounded window.
+      type: object
+      required: [outcomes, truncated, window_start, window_end]
+      properties:
+        outcomes: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/FlagOutcome' } }
+        truncated: { type: boolean, description: True when additional low-volume cohorts were omitted after retaining the 100 highest-volume groups. }
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+    FlagOutcome:
+      description: Request-weighted observations for one boolean value or named variant. Boolean values are encoded as the strings "true" and "false".
+      type: object
+      required: [type, value, request_count, used_count, http_5xx_count, http_5xx_rate, p50_latency_ms, p95_latency_ms, latency_quantized]
+      properties:
+        type: { type: string, enum: [boolean, variant] }
+        value: { type: string, description: Boolean value "true"/"false" or the selected variant key. }
+        request_count: { type: integer, format: int64, minimum: 1 }
+        used_count: { type: integer, format: int64, minimum: 0, description: Application-reported requests where the decision was marked used. }
+        http_5xx_count: { type: integer, format: int64, minimum: 0 }
+        http_5xx_rate: { type: number, minimum: 0, maximum: 1, description: HTTP 5xx request count divided by request_count. }
+        p50_latency_ms: { type: integer, minimum: 0, description: Request-weighted nearest-rank p50 from stored latency bucket upper bounds. }
+        p95_latency_ms: { type: integer, minimum: 0, description: Request-weighted nearest-rank p95 from stored latency bucket upper bounds. }
+        latency_quantized: { type: boolean, enum: [true], description: Latency values are conservative bucket upper bounds. }
     OutboundIntegrationOffer:
       type: object
       description: Account-owned managed integration metadata; never contains a provider key or gateway token.

@@ -533,6 +533,7 @@ var schemaSpecOnly = map[string]bool{
 	"FlagDecision": true, "FlagEvidence": true,
 	"UpdateFeatureFlagsRequest": true, "RollbackFeatureFlagsRequest": true,
 	"InspectFeatureFlagRequest": true, "FlagRequestEvidence": true, "FlagEvidencePage": true,
+	"FlagOutcome": true, "FlagOutcomesResponse": true,
 	// Migration preflight verdict level is a typed string, not a struct, so
 	// the DTO scanner does not surface it. Same pattern as TriggerKind and
 	// ResourceProfile below.

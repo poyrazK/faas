@@ -401,6 +401,8 @@ export type { FireCronResponse } from './FireCronResponse.js';
 export type { FlagDecision } from './FlagDecision.js';
 export type { FlagEvidence } from './FlagEvidence.js';
 export type { FlagEvidencePage } from './FlagEvidencePage.js';
+export type { FlagOutcome } from './FlagOutcome.js';
+export type { FlagOutcomesResponse } from './FlagOutcomesResponse.js';
 export type { FlagRequestEvidence } from './FlagRequestEvidence.js';
 export type { FlagRule } from './FlagRule.js';
 export type { FlagVariant } from './FlagVariant.js';

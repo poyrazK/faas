@@ -777,6 +777,9 @@ from .flag_decision_source import FlagDecisionSource
 from .flag_decision_type import FlagDecisionType
 from .flag_evidence import FlagEvidence
 from .flag_evidence_page import FlagEvidencePage
+from .flag_outcome import FlagOutcome
+from .flag_outcome_type import FlagOutcomeType
+from .flag_outcomes_response import FlagOutcomesResponse
 from .flag_request_evidence import FlagRequestEvidence
 from .flag_rule import FlagRule
 from .flag_variant import FlagVariant
@@ -2704,6 +2707,9 @@ __all__ = (
     "FlagDecisionType",
     "FlagEvidence",
     "FlagEvidencePage",
+    "FlagOutcome",
+    "FlagOutcomesResponse",
+    "FlagOutcomeType",
     "FlagRequestEvidence",
     "FlagRule",
     "FlagsBundle",

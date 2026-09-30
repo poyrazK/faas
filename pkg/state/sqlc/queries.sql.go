@@ -3821,6 +3821,111 @@ func (q *Queries) FeatureFlagCustomerOwned(ctx context.Context, db DBTX, arg Fea
 	return owned, err
 }
 
+const featureFlagRequestOutcomes = `-- name: FeatureFlagRequestOutcomes :many
+WITH evidence AS MATERIALIZED (
+ SELECT
+  COALESCE(e->>'type', 'boolean')::text AS decision_type,
+  (e->>'value')::text AS decision_value,
+  e->>'used' = 'true' AS used,
+  t.status,
+  t.latency_ms,
+  t.count::bigint AS request_count
+ FROM request_telemetry t
+ JOIN deployments d ON d.id = t.deployment_id
+ CROSS JOIN LATERAL jsonb_array_elements(t.flag_evidence) AS decision(e)
+ WHERE (d.scope = $1::text OR (d.scope = 'default' AND $1::text = 'production'))
+  AND t.account_id = $2::uuid
+  AND t.app_id = ANY($3::uuid[])
+  AND t.received_at >= $4::timestamptz
+  AND t.received_at < $5::timestamptz
+  AND ($6::text = '' OR t.platform_tenant_id::text = $6::text)
+  AND e->>'flag' = $7::text
+  AND jsonb_typeof(e->'value') IN ('boolean', 'string')
+  AND COALESCE(e->>'type', 'boolean') IN ('boolean', 'variant')
+), totals AS (
+ SELECT decision_type, decision_value,
+  sum(request_count)::bigint AS request_count,
+  COALESCE(sum(request_count) FILTER (WHERE used), 0)::bigint AS used_count,
+  COALESCE(sum(request_count) FILTER (WHERE status >= 500), 0)::bigint AS error_count
+ FROM evidence
+ GROUP BY decision_type, decision_value
+), latency_counts AS (
+ SELECT decision_type, decision_value, latency_ms, sum(request_count)::bigint AS latency_count
+ FROM evidence
+ GROUP BY decision_type, decision_value, latency_ms
+), latency_ranked AS (
+ SELECT decision_type, decision_value, latency_ms,
+  sum(latency_count) OVER (PARTITION BY decision_type, decision_value ORDER BY latency_ms) AS cumulative_count
+ FROM latency_counts
+)
+SELECT totals.decision_type, totals.decision_value, totals.request_count, totals.used_count, totals.error_count,
+ min(latency_ranked.latency_ms) FILTER (WHERE latency_ranked.cumulative_count >= ceil(totals.request_count * 0.50))::int AS p50_latency_ms,
+ min(latency_ranked.latency_ms) FILTER (WHERE latency_ranked.cumulative_count >= ceil(totals.request_count * 0.95))::int AS p95_latency_ms
+FROM totals
+LEFT JOIN latency_ranked USING (decision_type, decision_value)
+GROUP BY totals.decision_type, totals.decision_value, totals.request_count, totals.used_count, totals.error_count
+ORDER BY totals.request_count DESC, totals.decision_type, totals.decision_value
+LIMIT 101
+`
+
+type FeatureFlagRequestOutcomesParams struct {
+	EnvironmentSlug string
+	AccountID       pgtype.UUID
+	AppIds          []pgtype.UUID
+	ReceivedFrom    pgtype.Timestamptz
+	ReceivedUntil   pgtype.Timestamptz
+	CustomerID      string
+	FlagKey         string
+}
+
+type FeatureFlagRequestOutcomesRow struct {
+	DecisionType  string
+	DecisionValue string
+	RequestCount  int64
+	UsedCount     int64
+	ErrorCount    int64
+	P50LatencyMs  int32
+	P95LatencyMs  int32
+}
+
+// Keep a sentinel row so the API can report when a busy flag has more than
+// the bounded response can display. Most flags have at most 16 live variants.
+func (q *Queries) FeatureFlagRequestOutcomes(ctx context.Context, db DBTX, arg FeatureFlagRequestOutcomesParams) ([]FeatureFlagRequestOutcomesRow, error) {
+	rows, err := db.Query(ctx, featureFlagRequestOutcomes,
+		arg.EnvironmentSlug,
+		arg.AccountID,
+		arg.AppIds,
+		arg.ReceivedFrom,
+		arg.ReceivedUntil,
+		arg.CustomerID,
+		arg.FlagKey,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FeatureFlagRequestOutcomesRow{}
+	for rows.Next() {
+		var i FeatureFlagRequestOutcomesRow
+		if err := rows.Scan(
+			&i.DecisionType,
+			&i.DecisionValue,
+			&i.RequestCount,
+			&i.UsedCount,
+			&i.ErrorCount,
+			&i.P50LatencyMs,
+			&i.P95LatencyMs,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const findInvoiceIDsByProviderKey = `-- name: FindInvoiceIDsByProviderKey :many
 SELECT id FROM invoices
 WHERE account_id = $1::uuid

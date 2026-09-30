@@ -54,6 +54,13 @@ func (c *Client) ProjectFlagRequests(ctx context.Context, project, environment, 
 	return out, err
 }
 
+// ProjectFlagOutcomes returns request-weighted operational outcomes grouped by decision value.
+func (c *Client) ProjectFlagOutcomes(ctx context.Context, project, environment, key string, query url.Values) (json.RawMessage, error) {
+	var out json.RawMessage
+	err := c.do(ctx, http.MethodGet, flagsPath(project, environment)+"/"+url.PathEscape(key)+"/outcomes?"+query.Encode(), nil, &out)
+	return out, err
+}
+
 // RuntimeFlags requires a Client constructed with a workload JWT for gregale:flags.
 // Account API keys cannot read this endpoint.
 func (c *Client) RuntimeFlags(ctx context.Context) (json.RawMessage, error) {

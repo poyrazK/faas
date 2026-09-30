@@ -5,6 +5,7 @@
 import type { FeatureFlagVersion } from '../models/FeatureFlagVersion.js';
 import type { FlagDecision } from '../models/FlagDecision.js';
 import type { FlagEvidencePage } from '../models/FlagEvidencePage.js';
+import type { FlagOutcomesResponse } from '../models/FlagOutcomesResponse.js';
 import type { FlagsBundle } from '../models/FlagsBundle.js';
 import type { InspectFeatureFlagRequest } from '../models/InspectFeatureFlagRequest.js';
 import type { RollbackFeatureFlagsRequest } from '../models/RollbackFeatureFlagsRequest.js';
@@ -308,6 +309,64 @@ export class FlagsService {
         'used': used,
         'since': since,
         'cursor': cursor,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Compare retained request outcomes by evaluated flag value.
+   * Debugger entitlement and retention apply. Counts weight collapsed telemetry rows; used is application-reported. HTTP 5xx rates and request-weighted latency percentiles are operational observations, not causal experiment results. Latencies use conservative bucket upper bounds.
+   * @returns FlagOutcomesResponse Bounded retained request outcomes grouped by decision type and value.
+   * @throws ApiError
+   */
+  public static getProjectFlagOutcomes({
+    slug,
+    environment,
+    key,
+    customerId,
+    since = '24h',
+  }: {
+    /**
+     * Project that owns this environment flag configuration.
+     */
+    slug: string,
+    /**
+     * Named environment whose flag configuration is selected.
+     */
+    environment: string,
+    /**
+     * Application flag key to evaluate or filter retained evidence.
+     */
+    key: string,
+    /**
+     * Restrict the rollup to one gateway-attributed customer UUID.
+     */
+    customerId?: string,
+    /**
+     * Aggregation duration capped by the account's debugger retention.
+     */
+    since?: string,
+  }): CancelablePromise<FlagOutcomesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/flags/{key}/outcomes',
+      path: {
+        'slug': slug,
+        'environment': environment,
+        'key': key,
+      },
+      query: {
+        'customer_id': customerId,
+        'since': since,
       },
       errors: {
         401: `code: unauthorized`,

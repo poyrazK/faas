@@ -30,6 +30,7 @@ func TestFeatureFlagsSpecContracts(t *testing.T) {
 		"RollbackFeatureFlagsRequest": rollbackFeatureFlagsRequest{},
 		"InspectFeatureFlagRequest":   inspectFeatureFlagRequest{},
 		"FlagRequestEvidence":         featureFlagRequestEvidence{}, "FlagEvidencePage": featureFlagEvidencePage{},
+		"FlagOutcome": featureFlagOutcome{}, "FlagOutcomesResponse": featureFlagOutcomesResponse{},
 	} {
 		t.Run(name, func(t *testing.T) {
 			fields := flagJSONFields(reflect.TypeOf(value))

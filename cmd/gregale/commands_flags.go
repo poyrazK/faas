@@ -14,7 +14,7 @@ import (
 
 func cmdFlags(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale flags <get|apply|history|inspect|rollback|requests> --project SLUG [flags]", "flags")
+		PrintUsage(os.Stderr, "usage: gregale flags <get|apply|history|inspect|rollback|requests|outcomes> --project SLUG [flags]", "flags")
 		return 1
 	}
 	fs := newFlagSet("flags-"+args[0], flag.ContinueOnError)
@@ -49,6 +49,8 @@ func cmdFlags(args []string) int {
 		valid = *key != ""
 	case "requests":
 		valid = *key != "" && (*variant == "" || *value == "")
+	case "outcomes":
+		valid = *key != ""
 	case "rollback":
 		valid = *version > 0 && *expected >= 0
 	}
@@ -79,6 +81,8 @@ func cmdFlags(args []string) int {
 		out, err = client.RollbackProjectFlags(ctx, *project, *environment, *expected, *version)
 	case "requests":
 		out, err = client.ProjectFlagRequests(ctx, *project, *environment, *key, url.Values{"customer_id": {*customer}, "value": {*value}, "variant": {*variant}, "used": {*used}, "since": {*since}, "cursor": {*cursor}})
+	case "outcomes":
+		out, err = client.ProjectFlagOutcomes(ctx, *project, *environment, *key, url.Values{"customer_id": {*customer}, "since": {*since}})
 	}
 	if err != nil {
 		return printErr("Flags operation failed", err)

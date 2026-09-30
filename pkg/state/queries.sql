@@ -4971,3 +4971,51 @@ WHERE (d.scope = sqlc.arg(environment_slug)::text OR (d.scope = 'default' AND sq
  AND flag_evidence @> sqlc.arg(evidence_filter)::jsonb
  AND (sqlc.narg(cursor_at)::timestamptz IS NULL OR (t.received_at,t.id) < (sqlc.narg(cursor_at)::timestamptz,sqlc.narg(cursor_id)::uuid))
 ORDER BY t.received_at DESC, t.id DESC LIMIT 101;
+
+-- name: FeatureFlagRequestOutcomes :many
+WITH evidence AS MATERIALIZED (
+ SELECT
+  COALESCE(e->>'type', 'boolean')::text AS decision_type,
+  (e->>'value')::text AS decision_value,
+  e->>'used' = 'true' AS used,
+  t.status,
+  t.latency_ms,
+  t.count::bigint AS request_count
+ FROM request_telemetry t
+ JOIN deployments d ON d.id = t.deployment_id
+ CROSS JOIN LATERAL jsonb_array_elements(t.flag_evidence) AS decision(e)
+ WHERE (d.scope = sqlc.arg(environment_slug)::text OR (d.scope = 'default' AND sqlc.arg(environment_slug)::text = 'production'))
+  AND t.account_id = sqlc.arg(account_id)::uuid
+  AND t.app_id = ANY(sqlc.arg(app_ids)::uuid[])
+  AND t.received_at >= sqlc.arg(received_from)::timestamptz
+  AND t.received_at < sqlc.arg(received_until)::timestamptz
+  AND (sqlc.arg(customer_id)::text = '' OR t.platform_tenant_id::text = sqlc.arg(customer_id)::text)
+  AND e->>'flag' = sqlc.arg(flag_key)::text
+  AND jsonb_typeof(e->'value') IN ('boolean', 'string')
+  AND COALESCE(e->>'type', 'boolean') IN ('boolean', 'variant')
+), totals AS (
+ SELECT decision_type, decision_value,
+  sum(request_count)::bigint AS request_count,
+  COALESCE(sum(request_count) FILTER (WHERE used), 0)::bigint AS used_count,
+  COALESCE(sum(request_count) FILTER (WHERE status >= 500), 0)::bigint AS error_count
+ FROM evidence
+ GROUP BY decision_type, decision_value
+), latency_counts AS (
+ SELECT decision_type, decision_value, latency_ms, sum(request_count)::bigint AS latency_count
+ FROM evidence
+ GROUP BY decision_type, decision_value, latency_ms
+), latency_ranked AS (
+ SELECT decision_type, decision_value, latency_ms,
+  sum(latency_count) OVER (PARTITION BY decision_type, decision_value ORDER BY latency_ms) AS cumulative_count
+ FROM latency_counts
+)
+SELECT totals.decision_type, totals.decision_value, totals.request_count, totals.used_count, totals.error_count,
+ min(latency_ranked.latency_ms) FILTER (WHERE latency_ranked.cumulative_count >= ceil(totals.request_count * 0.50))::int AS p50_latency_ms,
+ min(latency_ranked.latency_ms) FILTER (WHERE latency_ranked.cumulative_count >= ceil(totals.request_count * 0.95))::int AS p95_latency_ms
+FROM totals
+LEFT JOIN latency_ranked USING (decision_type, decision_value)
+GROUP BY totals.decision_type, totals.decision_value, totals.request_count, totals.used_count, totals.error_count
+-- Keep a sentinel row so the API can report when a busy flag has more than
+-- the bounded response can display. Most flags have at most 16 live variants.
+ORDER BY totals.request_count DESC, totals.decision_type, totals.decision_value
+LIMIT 101;

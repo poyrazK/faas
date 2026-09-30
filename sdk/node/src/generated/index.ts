@@ -407,6 +407,8 @@ export type { FireCronResponse } from './models/FireCronResponse.js';
 export type { FlagDecision } from './models/FlagDecision.js';
 export type { FlagEvidence } from './models/FlagEvidence.js';
 export type { FlagEvidencePage } from './models/FlagEvidencePage.js';
+export type { FlagOutcome } from './models/FlagOutcome.js';
+export type { FlagOutcomesResponse } from './models/FlagOutcomesResponse.js';
 export type { FlagRequestEvidence } from './models/FlagRequestEvidence.js';
 export type { FlagRule } from './models/FlagRule.js';
 export type { FlagsBundle } from './models/FlagsBundle.js';
