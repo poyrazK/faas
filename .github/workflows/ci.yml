@@ -1393,6 +1393,44 @@ jobs:
         working-directory: sdk/node
         run: npm run test:unit
 
+  # ADR-377: exercise the actual runtime SDK, control plane, gateway and
+  # telemetry persistence together; the small fakeapid fixture cannot prove
+  # verified customer targeting or refresh after inactivity.
+  flags-acceptance:
+    name: flags (customer release + request evidence)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:15
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_PASSWORD: faas
+          POSTGRES_DB: faas
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U faas -d faas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.10.0'
+          cache: 'npm'
+          cache-dependency-path: sdk/node/package-lock.json
+      - name: customer-aware feature flag acceptance
+        run: make test-flags
+
   # Python SDK gate: gen-check + fakeapid fixture build + smoke + unit tests
   sdk-python:
     name: sdk-python (gen-check + smoke + unit)
