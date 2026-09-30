@@ -14,4 +14,6 @@ COPY tests/dev-bridge-acceptance/app/server.mjs ./tests/dev-bridge-acceptance/ap
 ENV PORT=8080
 EXPOSE 8080
 USER node
-CMD ["node", "tests/dev-bridge-acceptance/app/server.mjs"]
+# The shared image can answer characterization probes before its per-workload
+# Compose command selects frontend, payments or inventory.
+CMD ["node", "tests/dev-bridge-acceptance/app/server.mjs", "inventory"]

@@ -61,9 +61,9 @@ project and app slugs:
 export FAAS_API=https://acceptance.example.com
 export FAAS_BRIDGE_PROJECT=bridge-acceptance
 export FAAS_BRIDGE_ENVIRONMENT=development
-export FAAS_BRIDGE_FRONTEND=bridge-acceptance-frontend
-export FAAS_BRIDGE_PAYMENTS=bridge-acceptance-payments
-export FAAS_BRIDGE_INVENTORY=bridge-acceptance-inventory
+export FAAS_BRIDGE_FRONTEND=frontend
+export FAAS_BRIDGE_PAYMENTS=payments
+export FAAS_BRIDGE_INVENTORY=inventory
 export FAAS_BRIDGE_IDLE_FOR=2m
 export FAAS_BRIDGE_EVIDENCE=/tmp/dev-bridge-native-evidence.json
 make native-dev-bridge-acceptance
