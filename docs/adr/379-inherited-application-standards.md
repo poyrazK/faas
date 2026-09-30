@@ -27,6 +27,10 @@ Versions are immutable and hash canonical definitions. Assignments select an
 explicit admission version; publishing a version never silently activates it.
 Apps inherit through persisted organization/project/app ownership. Scope
 selection is not based on caller-controlled labels or the active API-key org.
+The shared selector uses assignment identities, explicit admission versions and
+per-app adoption pins. UUID spelling changes between legacy memory fixtures and
+PostgreSQL cannot reset an adoption. Selected definitions are checked against
+their canonical hashes and owning organization before the resolver receives them.
 Creating apps, project reconciliation, GitHub deployment and clones share the
 same enrollment boundary. Local intent is retained separately from the effective
 projection. Mutations of managed settings pass the shared resolver.

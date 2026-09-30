@@ -72,7 +72,7 @@ func resolveLayer(result *Effective, constraints map[Field][]constraint, layer L
 		return err
 	}
 	for field, rule := range definition {
-		source := Source{StandardID: layer.StandardID, Version: layer.Version, Scope: layer.Scope, Mode: rule.Mode, Override: rule.Override}
+		source := Source{AssignmentID: layer.AssignmentID, ScopeID: layer.ScopeID, StandardID: layer.StandardID, Version: layer.Version, Scope: layer.Scope, Mode: rule.Mode, Override: rule.Override}
 		if err := applyException(field, layer, &rule, &source, exceptions, now, limits); err != nil {
 			return err
 		}

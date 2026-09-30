@@ -51,10 +51,12 @@ type Limits struct {
 }
 
 type Layer struct {
-	StandardID string     `json:"standard_id"`
-	Version    int64      `json:"version"`
-	Scope      string     `json:"scope"`
-	Definition Definition `json:"definition"`
+	AssignmentID string     `json:"assignment_id,omitempty"`
+	ScopeID      string     `json:"scope_id,omitempty"`
+	StandardID   string     `json:"standard_id"`
+	Version      int64      `json:"version"`
+	Scope        string     `json:"scope"`
+	Definition   Definition `json:"definition"`
 }
 
 // Exceptions replace one requirement in one immutable standard version.
@@ -70,12 +72,14 @@ type Exception struct {
 }
 
 type Source struct {
-	StandardID  string   `json:"standard_id"`
-	Version     int64    `json:"version"`
-	Scope       string   `json:"scope"`
-	Mode        Mode     `json:"mode"`
-	Override    Override `json:"override"`
-	ExceptionID string   `json:"exception_id,omitempty"`
+	AssignmentID string   `json:"assignment_id,omitempty"`
+	ScopeID      string   `json:"scope_id,omitempty"`
+	StandardID   string   `json:"standard_id"`
+	Version      int64    `json:"version"`
+	Scope        string   `json:"scope"`
+	Mode         Mode     `json:"mode"`
+	Override     Override `json:"override"`
+	ExceptionID  string   `json:"exception_id,omitempty"`
 }
 
 type Violation struct {
