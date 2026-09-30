@@ -7283,6 +7283,9 @@ const (
 	// Bound a verified routing roster even if corrupted rows exceed that sum.
 	TrafficPolicyMaxDeployments = 100
 	TrafficPolicyMaxWeight      = 100
+	// Canonical JSONB text can be larger than a valid 256 KiB OpenAPI import.
+	// Bound route-contract projections before transferring them to a gateway.
+	TrafficPolicyMaxContractBytes = 512 * 1024
 
 	// AppErrorsDedupeWindowSeconds (ADR-096) is the platform-wide
 	// dedupe window for the IncrementAppError INSERT. NOT a

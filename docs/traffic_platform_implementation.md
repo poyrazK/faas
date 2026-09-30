@@ -42,6 +42,46 @@ Claimed source apps retain emergency cancellation ownership through cleanup.
 
 ## Evidence log
 
+### Imported and scoped route-contract agreement, 2026-09-30
+
+Public hostname resolution now includes the exact environment's route-contract
+overlay and any needed owner-scoped imported OpenAPI document in the same
+read-only repeatable-read app/account/host view. Explicit routes keep precedence
+and skip unused document reads. Missing documents are fingerprinted too.
+The later routing transaction rechecks these inputs before eligibility and
+weights. Changed imports or scoped fallback cannot combine with an old dispatch
+baseline. Matching and route observation compile the admitted private carrier;
+compilation cache reuse requires its content digest. Document bytes are copied
+before sealing and excluded from serialized app/request evidence.
+
+Both SQL projections bound canonical contract payloads to 512 KiB before
+transfer. The new table projection exactly matches the migrated database;
+the schema update adds no migration. All four sqlc v1.31.1 generated files
+matched a fresh regeneration.
+
+Real Postgres fixtures verify a document/app change committed between reads,
+refusal between resolution and dispatch, creation/deletion without
+notifications, preserved admitted matching/observation, scoped precedence and
+deletion fallback, owner isolation, transaction closure, store outage/recovery
+and oversized document/scoped-contract refusal before payload transfer.
+Two real HTTP gateway handlers (HTTP/1 and HTTP/2) against Postgres repair warmed
+contracts without notifications: old routes refuse before forwarding, fresh
+routes run and policy fingerprints change. They run in one test process;
+scheduler and guest forwarding are fixtures. Full internal-gateway and gateway
+suites passed in 19.734 s and 61.668 s; the full API suite passed in 1.321 s.
+Final focused Postgres/HTTP checks after tightening the entire scoped payload
+bound passed in 5.890 s. Pinned lint passed gateway, internal gateway, API and
+state production code with zero findings; state excluded tests and the
+pre-existing test-only unused helper. Diff whitespace checks passed.
+
+All six guarantees remain unchecked. Compiled edge-rule/preset agreement,
+bounded decision evidence, preview/runtime and complete synthetic-path coverage,
+full daemon/load/recovery and customer/staging release evidence remain required.
+The initial fresh hostname/contract read must be measured against total
+request-deadline semantics in complete-path acceptance. Native Linux x86_64
+KVM, nft connection/source-IP, process-death and leak acceptance remain pending;
+no acceptance host is currently available.
+
 ### Source-host agreement and reservation protection, 2026-09-30
 
 Edge route substitutions now carry the source hostname's authoritative claim

@@ -11021,3 +11021,18 @@ ALTER TABLE ONLY public.project_environment_edge_policies
 
 ALTER TABLE ONLY public.tenant_surfaces
     ADD CONSTRAINT tenant_surfaces_platform_tenant_fkey FOREIGN KEY (account_id, platform_tenant_id) REFERENCES public.platform_tenants(account_id, id) ON DELETE SET NULL (platform_tenant_id);
+
+
+-- Current migrated table projection for public route-contract reads.
+CREATE TABLE public.project_environment_route_policies (
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    environment_slug text NOT NULL,
+    only_allow_declared_routes boolean DEFAULT false NOT NULL,
+    declared_routes jsonb DEFAULT '[]'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT project_environment_route_policies_explicit_chk CHECK (((NOT only_allow_declared_routes) OR (jsonb_array_length(declared_routes) > 0))),
+    CONSTRAINT project_environment_route_policies_routes_array_chk CHECK (((jsonb_typeof(declared_routes) = 'array'::text) AND (jsonb_array_length(declared_routes) <= 50)))
+);

@@ -32,6 +32,9 @@ func (m *declaredRoutesMatcher) PinDeclaredRoutePolicy(ctx context.Context, app 
 	if pinned, ok := pinnedDeclaredRoutePolicy(ctx, app); ok {
 		return ctx, pinned.app, pinned.policy.revision, nil
 	}
+	if app.PublicPolicySource != nil && app.ImportedRoutePolicy == nil {
+		return nil, gateway.App{}, "", fmt.Errorf("public route contract projection is unavailable")
+	}
 	resolved, err := m.ResolveScopedRoutePolicy(ctx, app)
 	if err != nil {
 		return nil, gateway.App{}, "", fmt.Errorf("pin scoped route contract: %w", err)
@@ -45,6 +48,11 @@ func (m *declaredRoutesMatcher) PinDeclaredRoutePolicy(ctx context.Context, app 
 	resolved.DeclaredRoutes = slices.Clone(resolved.DeclaredRoutes)
 	for index := range resolved.DeclaredRoutes {
 		resolved.DeclaredRoutes[index].Methods = slices.Clone(resolved.DeclaredRoutes[index].Methods)
+	}
+	if resolved.ImportedRoutePolicy != nil {
+		contract := *resolved.ImportedRoutePolicy
+		contract.Document = slices.Clone(contract.Document)
+		resolved.ImportedRoutePolicy = &contract
 	}
 	ctx = context.WithValue(ctx, declaredRouteSnapshotKey{}, declaredRouteSnapshot{app: resolved, policy: policy})
 	return ctx, resolved, policy.revision, nil

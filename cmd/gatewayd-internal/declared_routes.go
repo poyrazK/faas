@@ -66,6 +66,9 @@ func (m *declaredRoutesMatcher) ResolveScopedRoutePolicy(ctx context.Context, ap
 	if pinned, ok := pinnedDeclaredRoutePolicy(ctx, app); ok {
 		return pinned.app, nil
 	}
+	if app.ImportedRoutePolicy != nil {
+		return app, nil // The authoritative hostname view already applied the overlay.
+	}
 	if app.PinnedDeploymentScope == "" || m == nil || m.store == nil {
 		return app, nil
 	}
@@ -94,10 +97,11 @@ type compiledDeclaredRoute struct {
 }
 
 type declaredRoutePolicy struct {
-	routes   []compiledDeclaredRoute
-	expires  time.Time
-	missing  bool
-	revision string
+	routes           []compiledDeclaredRoute
+	expires          time.Time
+	missing          bool
+	revision         string
+	documentRevision string
 }
 
 type declaredRouteCacheKey struct{ appID, accountID string }
@@ -164,6 +168,9 @@ func (m *declaredRoutesMatcher) loadPolicy(ctx context.Context, app gateway.App)
 	}
 	if len(app.DeclaredRoutes) > 0 {
 		return compileDeclaredRoutes(app.DeclaredRoutes)
+	}
+	if app.ImportedRoutePolicy != nil {
+		return m.loadImportedSnapshotPolicy(app)
 	}
 	if m == nil || m.store == nil {
 		return declaredRoutePolicy{}, fmt.Errorf("declared route document store is not configured")

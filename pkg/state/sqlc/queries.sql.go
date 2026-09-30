@@ -12144,6 +12144,32 @@ func (q *Queries) ReadPublicHostEnvironmentPolicy(ctx context.Context, db DBTX, 
 	return data, err
 }
 
+const readPublicHostOpenAPIDoc = `-- name: ReadPublicHostOpenAPIDoc :one
+SELECT CASE WHEN octet_length(doc::text) <= $1::integer THEN doc
+    ELSE NULL::jsonb END::jsonb AS doc,
+    (octet_length(doc::text) > $1::integer)::boolean AS oversized
+FROM app_openapi_docs
+WHERE app_id = $2::uuid AND account_id = $3::uuid
+`
+
+type ReadPublicHostOpenAPIDocParams struct {
+	MaxBytes  int32
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+type ReadPublicHostOpenAPIDocRow struct {
+	Doc       []byte
+	Oversized bool
+}
+
+func (q *Queries) ReadPublicHostOpenAPIDoc(ctx context.Context, db DBTX, arg ReadPublicHostOpenAPIDocParams) (ReadPublicHostOpenAPIDocRow, error) {
+	row := db.QueryRow(ctx, readPublicHostOpenAPIDoc, arg.MaxBytes, arg.AppID, arg.AccountID)
+	var i ReadPublicHostOpenAPIDocRow
+	err := row.Scan(&i.Doc, &i.Oversized)
+	return i, err
+}
+
 const readPublicHostReservation = `-- name: ReadPublicHostReservation :one
 SELECT (
     EXISTS (SELECT 1 FROM apps WHERE slug = nullif($1::text, ''))
@@ -12169,6 +12195,47 @@ func (q *Queries) ReadPublicHostReservation(ctx context.Context, db DBTX, arg Re
 	var reserved bool
 	err := row.Scan(&reserved)
 	return reserved, err
+}
+
+const readPublicHostRoutePolicy = `-- name: ReadPublicHostRoutePolicy :one
+WITH policy AS (
+    SELECT jsonb_build_object('AccountID', p.account_id, 'ProjectID', p.project_id,
+        'AppID', p.app_id, 'EnvironmentSlug', p.environment_slug,
+        'OnlyAllowDeclaredRoutes', p.only_allow_declared_routes,
+        'DeclaredRoutes', p.declared_routes)::jsonb AS data
+    FROM project_environment_route_policies p
+    JOIN apps a ON a.id = p.app_id AND a.account_id = p.account_id AND a.project_id = p.project_id
+    WHERE p.account_id = $2::uuid AND p.app_id = $3::uuid
+      AND p.environment_slug = $4::text AND a.status <> 'deleted' AND a.deleted_at IS NULL
+)
+SELECT CASE WHEN octet_length(data::text) <= $1::integer THEN data
+    ELSE NULL::jsonb END::jsonb AS data,
+    (octet_length(data::text) > $1::integer)::boolean AS oversized
+FROM policy
+`
+
+type ReadPublicHostRoutePolicyParams struct {
+	MaxBytes  int32
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	Scope     string
+}
+
+type ReadPublicHostRoutePolicyRow struct {
+	Data      []byte
+	Oversized bool
+}
+
+func (q *Queries) ReadPublicHostRoutePolicy(ctx context.Context, db DBTX, arg ReadPublicHostRoutePolicyParams) (ReadPublicHostRoutePolicyRow, error) {
+	row := db.QueryRow(ctx, readPublicHostRoutePolicy,
+		arg.MaxBytes,
+		arg.AccountID,
+		arg.AppID,
+		arg.Scope,
+	)
+	var i ReadPublicHostRoutePolicyRow
+	err := row.Scan(&i.Data, &i.Oversized)
+	return i, err
 }
 
 const readPublicHostTenantBinding = `-- name: ReadPublicHostTenantBinding :one

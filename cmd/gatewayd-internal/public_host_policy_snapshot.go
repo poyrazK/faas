@@ -86,6 +86,9 @@ func resolvePublicPolicySource(ctx context.Context, reader state.PublicHostPolic
 			projection.CanSubstitute, err = router.publicHostSubstitutionAllowed(ctx, reader, projection.Host, app, found)
 		}
 	}
+	if err == nil && found {
+		err = resolvePublicDeclaredRoutePolicy(ctx, reader, &app)
+	}
 	if err == nil {
 		projection.Revision = reader.PublicHostPolicyRevision()
 		app.PublicPolicySource = &projection

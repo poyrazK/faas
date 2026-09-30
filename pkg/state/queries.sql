@@ -5109,3 +5109,26 @@ SELECT (
                           AND lower(sqlc.arg(host)) <> lower(substr(domain, 3)))))
     OR EXISTS (SELECT 1 FROM tenant_hostnames WHERE hostname = nullif(sqlc.arg(host)::text, ''))
 )::boolean AS reserved;
+
+-- name: ReadPublicHostRoutePolicy :one
+WITH policy AS (
+    SELECT jsonb_build_object('AccountID', p.account_id, 'ProjectID', p.project_id,
+        'AppID', p.app_id, 'EnvironmentSlug', p.environment_slug,
+        'OnlyAllowDeclaredRoutes', p.only_allow_declared_routes,
+        'DeclaredRoutes', p.declared_routes)::jsonb AS data
+    FROM project_environment_route_policies p
+    JOIN apps a ON a.id = p.app_id AND a.account_id = p.account_id AND a.project_id = p.project_id
+    WHERE p.account_id = sqlc.arg(account_id)::uuid AND p.app_id = sqlc.arg(app_id)::uuid
+      AND p.environment_slug = sqlc.arg(scope)::text AND a.status <> 'deleted' AND a.deleted_at IS NULL
+)
+SELECT CASE WHEN octet_length(data::text) <= sqlc.arg(max_bytes)::integer THEN data
+    ELSE NULL::jsonb END::jsonb AS data,
+    (octet_length(data::text) > sqlc.arg(max_bytes)::integer)::boolean AS oversized
+FROM policy;
+
+-- name: ReadPublicHostOpenAPIDoc :one
+SELECT CASE WHEN octet_length(doc::text) <= sqlc.arg(max_bytes)::integer THEN doc
+    ELSE NULL::jsonb END::jsonb AS doc,
+    (octet_length(doc::text) > sqlc.arg(max_bytes)::integer)::boolean AS oversized
+FROM app_openapi_docs
+WHERE app_id = sqlc.arg(app_id)::uuid AND account_id = sqlc.arg(account_id)::uuid;

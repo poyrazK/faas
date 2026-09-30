@@ -36,6 +36,8 @@ type PublicHostPolicyReader interface {
 	GetTenantHostnameByName(context.Context, string) (TenantHostname, error)
 	PlatformTenantHostBinding(context.Context, string) (PlatformTenantHostBinding, error)
 	PublicHostReserved(context.Context, string, string) (bool, error)
+	PublicHostRoutePolicy(context.Context, string, string, string) (ProjectEnvironmentRoutePolicy, error)
+	PublicHostOpenAPIDoc(context.Context, string, string) ([]byte, error)
 	PublicHostPolicyRevision() string
 }
 
@@ -242,4 +244,26 @@ func (s *publicHostPolicyReader) PublicHostReserved(ctx context.Context, slug, h
 	key, _ := json.Marshal([]string{slug, host})
 	s.record("host-reservation:"+string(key), data, err)
 	return reserved, err
+}
+
+func (s *publicHostPolicyReader) PublicHostRoutePolicy(ctx context.Context, account, app, scope string) (ProjectEnvironmentRoutePolicy, error) {
+	row, err := sqlc.New().ReadPublicHostRoutePolicy(ctx, s.tx, sqlc.ReadPublicHostRoutePolicyParams{
+		AccountID: uuidToPgtype(account), AppID: uuidToPgtype(app), Scope: scope, MaxBytes: api.TrafficPolicyMaxContractBytes})
+	if err == nil && row.Oversized {
+		return ProjectEnvironmentRoutePolicy{}, errors.New("public route contract exceeds the projection limit")
+	}
+	key, _ := json.Marshal([]string{account, app, scope})
+	s.record("route-contract:"+string(key), row.Data, err)
+	return decodePublicHostJSON[ProjectEnvironmentRoutePolicy](row.Data, err)
+}
+
+func (s *publicHostPolicyReader) PublicHostOpenAPIDoc(ctx context.Context, app, account string) ([]byte, error) {
+	row, err := sqlc.New().ReadPublicHostOpenAPIDoc(ctx, s.tx, sqlc.ReadPublicHostOpenAPIDocParams{
+		AppID: uuidToPgtype(app), AccountID: uuidToPgtype(account), MaxBytes: api.TrafficPolicyMaxContractBytes})
+	if err == nil && row.Oversized {
+		return nil, errors.New("public OpenAPI contract exceeds the projection limit")
+	}
+	key, _ := json.Marshal([]string{account, app})
+	s.record("openapi-contract:"+string(key), row.Doc, err)
+	return row.Doc, mapErr(err)
 }

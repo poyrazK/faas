@@ -25,6 +25,16 @@ type pinnedEdgePoliciesKey struct{}
 type effectiveTrafficPolicyKey struct{}
 type declaredRoutePolicyRevisionKey struct{}
 
+// ImportedRoutePolicy is private, trusted hostname-resolver metadata. Its
+// presence means scoped/explicit routes and this document were read together.
+// Only a digest leaves the gateway; client/guest headers cannot supply it.
+type ImportedRoutePolicy struct {
+	// Compile before app sealing. The hostname fingerprint covers these bytes;
+	// the compiled contract is pinned in context, so app JSON needs no raw doc.
+	Document []byte `json:"-"`
+	Found    bool
+}
+
 // DeclaredRoutePolicySnapshotter freezes imported/scoped route inputs before
 // app sealing. Later matching and observation must use the returned context.
 type DeclaredRoutePolicySnapshotter interface {

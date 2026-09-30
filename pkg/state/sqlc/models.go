@@ -1981,6 +1981,17 @@ type ProjectEnvironmentQualification struct {
 	ExpiresAt            pgtype.Timestamptz
 }
 
+type ProjectEnvironmentRoutePolicy struct {
+	AccountID               pgtype.UUID
+	ProjectID               pgtype.UUID
+	AppID                   pgtype.UUID
+	EnvironmentSlug         string
+	OnlyAllowDeclaredRoutes bool
+	DeclaredRoutes          []byte
+	CreatedAt               pgtype.Timestamptz
+	UpdatedAt               pgtype.Timestamptz
+}
+
 type ProjectReleaseMember struct {
 	ReleaseID    pgtype.UUID
 	AppID        pgtype.UUID

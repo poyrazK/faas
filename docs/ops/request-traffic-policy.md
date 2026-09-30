@@ -20,11 +20,24 @@ deployment's ingress, including a retained live revision with zero ordinary
 traffic. A different environment cannot change the primary ingress or sidecar
 roster of that URL.
 
+The same view reads an exact environment's declared-route overlay and, when
+no explicit route list applies, the owner-scoped imported OpenAPI document.
+A missing document is an authoritative result. Matching and observation
+compile this private carrier rather than loading another store/cache
+generation. Compilation cache hits require the same document content digest;
+missed notifications cannot preserve an old contract for a fresh request.
+Explicit routes keep precedence and do not read an unused imported document.
+Canonical JSONB contract payloads are bounded to 512 KiB before transfer,
+covering the existing 256 KiB import allowance plus formatting expansion.
+Raw documents are excluded from serialized app and response/trace evidence.
+
 Before dispatch, the public routing transaction re-resolves the host projection
 and compares its private content fingerprint. Changed settings, alias/domain
 retargeting, environment policy changes, deleted targets or a changed tenant
 binding refuse dispatch with `traffic_policy_unavailable`/503. A policy read
 failure cannot turn an owned hostname into a synthetic edge-rule host.
+Changed imported documents or scoped route contracts also refuse an old
+dispatch baseline; admitted requests retain their compiled contract.
 Both transactions finish before wake. Admitted requests retain their verified
 settings and selected deployment during wake and retry.
 
@@ -38,7 +51,7 @@ the first lookup and dispatch refuses the old negative claim. Releasing the
 domain reservation lets a fresh request resolve again. The alias namespace
 remains protected after removal of an alias binding. Both baselines join the sealed
 effective fingerprint, and source app deletion can revoke the admitted target
-exchange. Compiled/imported policy agreement, preview/runtime agreement and
+exchange. Compiled edge-policy agreement, preview/runtime agreement and
 full acceptance remain required.
 
 ## Runtime evidence

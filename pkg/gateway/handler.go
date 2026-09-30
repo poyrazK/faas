@@ -90,8 +90,9 @@ type App struct {
 	ID        string
 	AccountID string // joined in pgRouter.toApp; empty only in fakeBackend unit tests (ADR-040)
 	// Private verifier inputs; only the effective fingerprint leaves the gateway.
-	PublicPolicySource *PublicAppPolicySource   `json:",omitempty"`
-	PublicRouteSource  *PublicRouteSourcePolicy `json:",omitempty"`
+	PublicPolicySource  *PublicAppPolicySource   `json:",omitempty"`
+	PublicRouteSource   *PublicRouteSourcePolicy `json:",omitempty"`
+	ImportedRoutePolicy *ImportedRoutePolicy     `json:",omitempty"`
 	// Host-specific tenant surface binding. Never store these in the shared
 	// app cache: one app can serve several independent customer hostnames.
 	RoutedSurfaceID  string

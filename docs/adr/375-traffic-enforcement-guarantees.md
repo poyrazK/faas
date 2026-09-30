@@ -311,9 +311,21 @@ and weights. If settings or hostname bindings changed between the two reads,
 the request refuses dispatch instead of combining generations. Both
 transactions end before wake; an admitted request retains its complete
 verified projection and selected deployment during wake and retries.
-Compiled/imported edge-policy agreement and complete path evidence remain
-required before the policy guarantee is
-accepted.
+Compiled edge-policy agreement and complete path evidence remain required
+before the policy guarantee is accepted.
+
+Public declared-route inputs join the fresh hostname/app view. An exact
+environment's route overlay is read before deciding whether an imported
+OpenAPI document is needed; explicit routes keep precedence. The readonly
+projection includes an authoritative missing document and is owner scoped.
+Canonical contract payloads are bounded to 512 KiB before transfer, allowing
+the existing 256 KiB import limit plus JSONB formatting expansion. The private
+document carrier is copied before app sealing; raw bytes are excluded from
+serialized app and request evidence. Matching and observation compile that carrier, rather than loading
+another cache/store generation. The later dispatch transaction rechecks its
+content with the hostname baseline before eligibility and weights. A contract
+change before dispatch refuses; admitted wake/retry requests retain their
+contract. Compilation cache hits require the same document content digest.
 
 An edge route substitution retains both the source hostname claim and the
 target app projection. An authoritative unclaimed hostname is a verified
