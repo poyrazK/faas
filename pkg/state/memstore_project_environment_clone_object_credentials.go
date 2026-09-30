@@ -47,13 +47,16 @@ func (m *MemStore) verifyPreparedCloneObjectCredentialLocked(prepared ProjectEnv
 	actual := prepared
 	credential, exists := m.objectS3Credentials[prepared.Credential.ID]
 	if !exists {
-		return prepared, ErrNotFound
+		return prepared, ErrConflict
 	}
 	actual.Credential, actual.Secrets = credential, nil
 	for _, secret := range m.secrets {
 		if secret.ManagedObjectStorageCredentialID == credential.ID {
 			actual.Secrets = append(actual.Secrets, secret)
 		}
+	}
+	if !cloneObjectPreparationSecretsHaveOneOwner(actual) {
+		return prepared, ErrConflict
 	}
 	normalized, _, err := normalizeCloneObjectCredentialPreparation(actual)
 	if err != nil || normalized.Hash != prepared.Hash {

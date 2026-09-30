@@ -177,6 +177,11 @@ func (m *MemStore) CloneProjectEnvironment(_ context.Context, clone ProjectEnvir
 		if len(sourceBindings) != len(preparedBindings) {
 			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrConflict
 		}
+		if clone.CloneOperationID != "" {
+			if err := m.checkCapturedCloneObjectPreparationsLocked(clone); err != nil {
+				return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+			}
+		}
 	}
 	preparedSecrets := 0
 	preparedSecretBindings := map[string]struct{}{}

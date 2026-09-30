@@ -779,3 +779,33 @@ stage, and resume under replacement ownership without additional credential
 writes. Store contracts also verify production runtime stamps and snapshots
 remain intact during private preparation. Full admission remains closed pending
 the complete publication and operational isolation proofs described above.
+
+### Object preparation proofs before materialization (2026-09-30)
+
+Durable environment materialization now authenticates every captured managed
+object credential against this operation's private preparation ledger. Matching
+binding IDs and secret counts alone cannot establish isolation. The check
+requires the mapped target ID to be one of the caller's prepared bindings,
+revalidates captured permissions/prefix, operation-owned private placement and
+the byte-verified copy receipt, and compares actual signing material and all
+runtime envelopes to the immutable preparation hash before writing an
+environment. Mixed PostgreSQL/object secret ownership is rejected explicitly.
+Legacy configuration clones keep their existing preparation contract.
+
+The PostgreSQL verifier locks the app/bucket and then the actual signing and
+envelope rows in the materialization transaction. The ledger's separate target
+identity must agree with its authenticated payload. A concurrent host rekey
+cannot leave materialization using a stale equality result: it waits for the
+signing row and rejects a serialization conflict or changed prepared content.
+Missing content behind an existing receipt is a conflict, rather than an
+invitation to generate replacement keys. Infrastructure errors retain their
+original classification for retry handling.
+
+MemStore and real PostgreSQL contracts reject forged prepared bindings with
+matching counts, reject altered envelopes before environment creation, and
+accept the authentic preparation after restoration. The PostgreSQL contract
+observes an actual lock wait behind an in-flight signing rekey, commits that
+change, and verifies no environment was created. The worker's real-crypto
+materialization/retry contract continues to pass. Independent sqlc regeneration
+matches. This establishes the object preparation portion of materialization;
+complete resource/managed-value publication and full admission remain gated.

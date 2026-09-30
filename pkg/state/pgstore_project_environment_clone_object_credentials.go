@@ -56,7 +56,7 @@ func validateCloneCredentialBucketTx(ctx context.Context, tx pgx.Tx, op ProjectE
 	return validateCloneObjectCredentialCopy(op, source.ID, bucket.ID, manifest)
 }
 
-func cloneObjectCredentialPreparationDB(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, sourceCredentialID string) (ProjectEnvironmentCloneObjectCredentialPreparation, error) {
+func cloneObjectCredentialReceiptDB(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, sourceCredentialID string) (ProjectEnvironmentCloneObjectCredentialPreparation, error) {
 	q := new(sqlc.Queries)
 	row, err := q.ReadProjectEnvironmentCloneObjectCredentialPreparation(ctx, tx, sqlc.ReadProjectEnvironmentCloneObjectCredentialPreparationParams{
 		AccountID: mustPgUUID(op.AccountID), ProjectID: mustPgUUID(op.ProjectID), ID: mustPgUUID(op.ID), SourceCredentialID: mustPgUUID(sourceCredentialID),
@@ -69,10 +69,31 @@ func cloneObjectCredentialPreparationDB(ctx context.Context, tx pgx.Tx, op Proje
 		return prepared, ErrConflict
 	}
 	prepared, _, err = normalizeCloneObjectCredentialPreparation(prepared)
-	if err != nil || prepared.Hash != row.PreparationHash || prepared.OperationID != op.ID || prepared.SourceCredentialID != sourceCredentialID || prepared.Credential.AccountID != op.AccountID {
+	if err != nil || prepared.Hash != row.PreparationHash || prepared.OperationID != op.ID || prepared.SourceCredentialID != sourceCredentialID ||
+		prepared.Credential.AccountID != op.AccountID || prepared.Credential.ID != uuidString(row.TargetCredentialID) {
 		return prepared, ErrConflict
 	}
-	credential, err := q.ObjectS3CredentialGet(ctx, tx, sqlc.ObjectS3CredentialGetParams{ID: mustPgUUID(prepared.Credential.ID), AccountID: mustPgUUID(op.AccountID), BucketID: mustPgUUID(prepared.Credential.BucketID)})
+	for _, id := range []string{prepared.AppID, prepared.SourceBucketID, prepared.Credential.ID, prepared.Credential.BucketID} {
+		if !validCloneCredentialSourceID(id) {
+			return prepared, ErrConflict
+		}
+	}
+	return prepared, nil
+}
+
+// Callers hold project/operation, app and bucket locks before verifying the
+// actual rows. Row locks keep a concurrent rotation or revocation from changing
+// the authenticated content before the enclosing materialization commits.
+func cloneObjectCredentialPreparationDB(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, sourceCredentialID string) (ProjectEnvironmentCloneObjectCredentialPreparation, error) {
+	prepared, err := cloneObjectCredentialReceiptDB(ctx, tx, op, sourceCredentialID)
+	if err != nil {
+		return prepared, err
+	}
+	q := new(sqlc.Queries)
+	credential, err := q.LockProjectEnvironmentClonePreparedObjectCredential(ctx, tx, sqlc.LockProjectEnvironmentClonePreparedObjectCredentialParams{ID: mustPgUUID(prepared.Credential.ID), AccountID: mustPgUUID(op.AccountID), BucketID: mustPgUUID(prepared.Credential.BucketID)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return prepared, ErrConflict
+	}
 	if err != nil {
 		return prepared, mapErr(err)
 	}
@@ -86,7 +107,11 @@ func cloneObjectCredentialPreparationDB(ctx context.Context, tx pgx.Tx, op Proje
 	}
 	for _, secret := range secrets {
 		actual.Secrets = append(actual.Secrets, AppSecret{AccountID: secret.AccountID, AppID: secret.AppID, Scope: secret.Scope, Key: secret.Key, Ciphertext: secret.Ciphertext,
-			Kid: secret.Kid, ValueHash: secret.ValueHash, SecretClass: secret.SecretClass, SecretVersion: secret.SecretVersion.Int64, ManagedObjectStorageCredentialID: secret.ManagedObjectStorageCredentialID})
+			Kid: secret.Kid, ValueHash: secret.ValueHash, SecretClass: secret.SecretClass, SecretVersion: secret.SecretVersion.Int64, ManagedObjectStorageCredentialID: secret.ManagedObjectStorageCredentialID,
+			ManagedPostgresBindingID: secret.ManagedPostgresBindingID, ManagedCredentialRef: secret.ManagedCredentialRef, ManagedCredentialGeneration: secret.ManagedCredentialGeneration})
+	}
+	if !cloneObjectPreparationSecretsHaveOneOwner(actual) {
+		return prepared, ErrConflict
 	}
 	actual, _, err = normalizeCloneObjectCredentialPreparation(actual)
 	if err != nil || actual.Hash != prepared.Hash {
@@ -166,7 +191,7 @@ func (s *PgStore) ProjectEnvironmentCloneObjectCredentialForLease(ctx context.Co
 	if err != nil {
 		return ProjectEnvironmentCloneObjectCredentialPreparation{}, err
 	}
-	prepared, err := cloneObjectCredentialPreparationDB(ctx, tx, op, sourceCredentialID)
+	prepared, err := cloneObjectCredentialReceiptDB(ctx, tx, op, sourceCredentialID)
 	if err != nil {
 		return prepared, err
 	}
@@ -175,6 +200,10 @@ func (s *PgStore) ProjectEnvironmentCloneObjectCredentialForLease(ctx context.Co
 		return prepared, err
 	}
 	if err := validateCloneCredentialBucketTx(ctx, tx, op, views, request); err != nil {
+		return prepared, err
+	}
+	prepared, err = cloneObjectCredentialPreparationDB(ctx, tx, op, sourceCredentialID)
+	if err != nil {
 		return prepared, err
 	}
 	return prepared, tx.Commit(ctx)

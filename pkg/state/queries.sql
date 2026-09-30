@@ -5296,7 +5296,7 @@ WHERE account_id = $1 AND app_id = $2 AND id = $3
   AND environment_clone_operation_id = $4 AND state <> 'deleted';
 
 -- name: ReadProjectEnvironmentCloneObjectCredentialPreparation :one
-SELECT p.preparation_hash, p.preparation
+SELECT p.target_credential_id, p.preparation_hash, p.preparation
 FROM project_environment_clone_object_credentials p
 JOIN project_environment_clone_operations o ON o.id = p.operation_id
 WHERE o.account_id = $1 AND o.project_id = $2 AND o.id = $3 AND p.source_credential_id = $4;
@@ -5309,10 +5309,18 @@ VALUES ($1, $2, $3, $4, $5);
 -- name: ReadProjectEnvironmentCloneObjectCredentialSecrets :many
 SELECT account_id::text, app_id::text, scope, key, ciphertext, coalesce(kid, '')::text AS kid,
        coalesce(value_hash, '')::text AS value_hash, secret_class, secret_version,
-       managed_object_storage_credential_id::text
+       managed_object_storage_credential_id::text,
+       coalesce(managed_postgres_binding_id::text, '')::text AS managed_postgres_binding_id,
+       coalesce(managed_credential_ref, '')::text AS managed_credential_ref,
+       coalesce(managed_credential_generation, 0)::bigint AS managed_credential_generation
 FROM app_secrets
 WHERE account_id = $1 AND app_id = $2 AND scope = $3 AND managed_object_storage_credential_id = $4
-ORDER BY key;
+ORDER BY key FOR UPDATE;
+
+-- name: LockProjectEnvironmentClonePreparedObjectCredential :one
+SELECT * FROM object_storage_s3_credentials
+WHERE id = $1 AND account_id = $2 AND bucket_id = $3 AND rotation_parent_id IS NULL
+FOR UPDATE;
 
 -- name: LockProjectEnvironmentCloneCredentialBucket :one
 SELECT b.* FROM object_buckets b

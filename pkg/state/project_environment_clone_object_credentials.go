@@ -140,5 +140,15 @@ func newCloneObjectCredentialPreparation(op ProjectEnvironmentCloneOperation, re
 	})
 }
 
+func cloneObjectPreparationSecretsHaveOneOwner(prepared ProjectEnvironmentCloneObjectCredentialPreparation) bool {
+	for _, secret := range prepared.Secrets {
+		if secret.ManagedObjectStorageCredentialID != prepared.Credential.ID || secret.ManagedPostgresBindingID != "" ||
+			secret.ManagedCredentialRef != "" || secret.ManagedCredentialGeneration != 0 {
+			return false
+		}
+	}
+	return true
+}
+
 var _ ProjectEnvironmentCloneObjectCredentialStore = (*MemStore)(nil)
 var _ ProjectEnvironmentCloneObjectCredentialStore = (*PgStore)(nil)

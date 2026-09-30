@@ -825,6 +825,7 @@ type Querier interface {
 	LockNextProjectEnvironmentCloneWorkerProject(ctx context.Context, db DBTX) (LockNextProjectEnvironmentCloneWorkerProjectRow, error)
 	LockProjectEnvironmentCloneApps(ctx context.Context, db DBTX, arg LockProjectEnvironmentCloneAppsParams) ([]string, error)
 	LockProjectEnvironmentCloneCredentialBucket(ctx context.Context, db DBTX, arg LockProjectEnvironmentCloneCredentialBucketParams) (ObjectBucket, error)
+	LockProjectEnvironmentClonePreparedObjectCredential(ctx context.Context, db DBTX, arg LockProjectEnvironmentClonePreparedObjectCredentialParams) (ObjectStorageS3Credential, error)
 	LockProjectEnvironmentCloneProject(ctx context.Context, db DBTX, arg LockProjectEnvironmentCloneProjectParams) (string, error)
 	LockProjectEnvironmentCloneTargetDeployments(ctx context.Context, db DBTX, operationID pgtype.UUID) ([]string, error)
 	LockProjectEnvironmentCloneTargetReservation(ctx context.Context, db DBTX, arg LockProjectEnvironmentCloneTargetReservationParams) (LockProjectEnvironmentCloneTargetReservationRow, error)

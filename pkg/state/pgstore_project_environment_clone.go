@@ -60,7 +60,7 @@ func (s *PgStore) CloneProjectEnvironment(ctx context.Context, clone ProjectEnvi
 	}
 	if clone.ManagedBindingsPrepared {
 		if err := checkPreparedProjectEnvironmentBindings(ctx, tx, clone); err != nil {
-			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, mapProjectCloneSnapshotErr(err)
 		}
 	}
 	if err := checkProjectEnvironmentCloneTargetScope(ctx, tx, clone); err != nil {
@@ -121,6 +121,9 @@ func checkPreparedProjectEnvironmentBindings(ctx context.Context, tx pgx.Tx, clo
 	}
 	if bindingCount != len(unique) {
 		return ErrConflict
+	}
+	if clone.CloneOperationID != "" {
+		return checkCapturedCloneObjectPreparationsTx(ctx, tx, clone)
 	}
 	return nil
 }

@@ -8833,6 +8833,44 @@ func (q *Queries) LockProjectEnvironmentCloneCredentialBucket(ctx context.Contex
 	return i, err
 }
 
+const lockProjectEnvironmentClonePreparedObjectCredential = `-- name: LockProjectEnvironmentClonePreparedObjectCredential :one
+SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at FROM object_storage_s3_credentials
+WHERE id = $1 AND account_id = $2 AND bucket_id = $3 AND rotation_parent_id IS NULL
+FOR UPDATE
+`
+
+type LockProjectEnvironmentClonePreparedObjectCredentialParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	BucketID  pgtype.UUID
+}
+
+func (q *Queries) LockProjectEnvironmentClonePreparedObjectCredential(ctx context.Context, db DBTX, arg LockProjectEnvironmentClonePreparedObjectCredentialParams) (ObjectStorageS3Credential, error) {
+	row := db.QueryRow(ctx, lockProjectEnvironmentClonePreparedObjectCredential, arg.ID, arg.AccountID, arg.BucketID)
+	var i ObjectStorageS3Credential
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.BucketID,
+		&i.AccessKeyID,
+		&i.SecretSealed,
+		&i.Kid,
+		&i.Label,
+		&i.Permission,
+		&i.Status,
+		&i.CreatedAt,
+		&i.LastUsedAt,
+		&i.RevokedAt,
+		&i.ManagedAppID,
+		&i.ManagedScope,
+		&i.ManagedPrefix,
+		&i.RotationParentID,
+		&i.RotationWakeID,
+		&i.RotationStampedAt,
+	)
+	return i, err
+}
+
 const lockProjectEnvironmentCloneProject = `-- name: LockProjectEnvironmentCloneProject :one
 SELECT id::text FROM projects
 WHERE id = $1::uuid AND account_id = $2::uuid
@@ -12952,7 +12990,7 @@ func (q *Queries) ReadProjectEnvironmentCloneObjectCopyProofs(ctx context.Contex
 }
 
 const readProjectEnvironmentCloneObjectCredentialPreparation = `-- name: ReadProjectEnvironmentCloneObjectCredentialPreparation :one
-SELECT p.preparation_hash, p.preparation
+SELECT p.target_credential_id, p.preparation_hash, p.preparation
 FROM project_environment_clone_object_credentials p
 JOIN project_environment_clone_operations o ON o.id = p.operation_id
 WHERE o.account_id = $1 AND o.project_id = $2 AND o.id = $3 AND p.source_credential_id = $4
@@ -12966,8 +13004,9 @@ type ReadProjectEnvironmentCloneObjectCredentialPreparationParams struct {
 }
 
 type ReadProjectEnvironmentCloneObjectCredentialPreparationRow struct {
-	PreparationHash string
-	Preparation     []byte
+	TargetCredentialID pgtype.UUID
+	PreparationHash    string
+	Preparation        []byte
 }
 
 func (q *Queries) ReadProjectEnvironmentCloneObjectCredentialPreparation(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneObjectCredentialPreparationParams) (ReadProjectEnvironmentCloneObjectCredentialPreparationRow, error) {
@@ -12978,17 +13017,20 @@ func (q *Queries) ReadProjectEnvironmentCloneObjectCredentialPreparation(ctx con
 		arg.SourceCredentialID,
 	)
 	var i ReadProjectEnvironmentCloneObjectCredentialPreparationRow
-	err := row.Scan(&i.PreparationHash, &i.Preparation)
+	err := row.Scan(&i.TargetCredentialID, &i.PreparationHash, &i.Preparation)
 	return i, err
 }
 
 const readProjectEnvironmentCloneObjectCredentialSecrets = `-- name: ReadProjectEnvironmentCloneObjectCredentialSecrets :many
 SELECT account_id::text, app_id::text, scope, key, ciphertext, coalesce(kid, '')::text AS kid,
        coalesce(value_hash, '')::text AS value_hash, secret_class, secret_version,
-       managed_object_storage_credential_id::text
+       managed_object_storage_credential_id::text,
+       coalesce(managed_postgres_binding_id::text, '')::text AS managed_postgres_binding_id,
+       coalesce(managed_credential_ref, '')::text AS managed_credential_ref,
+       coalesce(managed_credential_generation, 0)::bigint AS managed_credential_generation
 FROM app_secrets
 WHERE account_id = $1 AND app_id = $2 AND scope = $3 AND managed_object_storage_credential_id = $4
-ORDER BY key
+ORDER BY key FOR UPDATE
 `
 
 type ReadProjectEnvironmentCloneObjectCredentialSecretsParams struct {
@@ -13009,6 +13051,9 @@ type ReadProjectEnvironmentCloneObjectCredentialSecretsRow struct {
 	SecretClass                      string
 	SecretVersion                    pgtype.Int8
 	ManagedObjectStorageCredentialID string
+	ManagedPostgresBindingID         string
+	ManagedCredentialRef             string
+	ManagedCredentialGeneration      int64
 }
 
 func (q *Queries) ReadProjectEnvironmentCloneObjectCredentialSecrets(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneObjectCredentialSecretsParams) ([]ReadProjectEnvironmentCloneObjectCredentialSecretsRow, error) {
@@ -13036,6 +13081,9 @@ func (q *Queries) ReadProjectEnvironmentCloneObjectCredentialSecrets(ctx context
 			&i.SecretClass,
 			&i.SecretVersion,
 			&i.ManagedObjectStorageCredentialID,
+			&i.ManagedPostgresBindingID,
+			&i.ManagedCredentialRef,
+			&i.ManagedCredentialGeneration,
 		); err != nil {
 			return nil, err
 		}

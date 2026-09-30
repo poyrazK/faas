@@ -42,7 +42,7 @@ func cloneCredentialSecrets(accountID, appID, scope, credentialID, prefix, marke
 	return secrets
 }
 
-func cloneObjectCredentialPreparationContract(t *testing.T, s cloneCredentialPreparationTestStore) {
+func cloneObjectCredentialPreparationContract(t *testing.T, s cloneCredentialPreparationTestStore, beforeMaterialization ...func(state.ProjectEnvironmentClone, state.ObjectS3ComputeBindingCreateRequest)) {
 	t.Helper()
 	ctx := context.Background()
 	account, project, app, op := cloneBindingFixture(t, s)
@@ -108,6 +108,24 @@ func cloneObjectCredentialPreparationContract(t *testing.T, s cloneCredentialPre
 		t.Fatal(err)
 	}
 	lease.Operation = op
+	clone := state.ProjectEnvironmentClone{AccountID: account.ID, ProjectID: project.ID, SourceSlug: "production", TargetSlug: op.TargetEnvironment,
+		CloneOperationID: op.ID, CloneOperationRevision: op.Revision, ManagedBindingsPrepared: true, PreparedManagedBindingIDs: []string{customer.ID}, PreparedManagedSecretCount: 6}
+	// Matching target counts and managed ownership markers do not establish an
+	// independent preparation. These envelopes have no operation receipt.
+	for _, forged := range cloneCredentialSecrets(account.ID, app.ID, op.TargetEnvironment, customer.ID, "FILES", "forged") {
+		if err := s.PutManagedObjectStorageSecret(ctx, forged); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, err := s.CloneProjectEnvironment(ctx, clone, api.MustLimitsFor(account.Plan)); !errors.Is(err, state.ErrProjectEnvironmentCloneManagedValueProof) {
+		t.Fatalf("materialized forged managed preparation with matching counts: %v", err)
+	}
+	if _, err := s.ProjectEnvironmentBySlug(ctx, account.ID, project.ID, op.TargetEnvironment); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("forged preparation created an environment: %v", err)
+	}
+	if err := s.DeleteManagedObjectStorageSecrets(ctx, customer.ID); err != nil {
+		t.Fatal(err)
+	}
 	for _, fault := range []string{"token", "revision", "source", "target", "permission", "prefix", "scope", "incomplete_envelopes", "credential_quota", "secret_quota", "mixed_secret_owner", "ephemeral"} {
 		badLease, bad := lease, request
 		bad.Target.Secrets = append([]state.AppSecret(nil), request.Target.Secrets...)
@@ -231,8 +249,22 @@ func cloneObjectCredentialPreparationContract(t *testing.T, s cloneCredentialPre
 	if _, _, err := s.ResolveObjectS3Credential(ctx, standalone.Target.Credential.AccessKeyID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("used customer credential before publication: %v", err)
 	}
-	if _, _, err := s.CloneProjectEnvironment(ctx, state.ProjectEnvironmentClone{AccountID: account.ID, ProjectID: project.ID, SourceSlug: "production", TargetSlug: op.TargetEnvironment,
-		CloneOperationID: op.ID, CloneOperationRevision: op.Revision, ManagedBindingsPrepared: true, PreparedManagedBindingIDs: []string{newID}, PreparedManagedSecretCount: 6}, api.MustLimitsFor(account.Plan)); err != nil {
+	clone.PreparedManagedBindingIDs = []string{newID}
+	changed := request.Target.Secrets[0]
+	changed.Ciphertext = []byte("changed-before-materialization")
+	if err := s.PutManagedObjectStorageSecret(ctx, changed); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.CloneProjectEnvironment(ctx, clone, api.MustLimitsFor(account.Plan)); !errors.Is(err, state.ErrProjectEnvironmentCloneManagedValueProof) {
+		t.Fatalf("materialized changed prepared envelope: %v", err)
+	}
+	if err := s.PutManagedObjectStorageSecret(ctx, request.Target.Secrets[0]); err != nil {
+		t.Fatal(err)
+	}
+	for _, verify := range beforeMaterialization {
+		verify(clone, request.Target)
+	}
+	if _, _, err := s.CloneProjectEnvironment(ctx, clone, api.MustLimitsFor(account.Plan)); err != nil {
 		t.Fatalf("materialize prepared target: %v", err)
 	}
 	old := lease
@@ -249,7 +281,7 @@ func cloneObjectCredentialPreparationContract(t *testing.T, s cloneCredentialPre
 	if got, err := s.ProjectEnvironmentCloneObjectCredentialForLease(ctx, lease, managed.ID); err != nil || got.Hash != recovered.Hash {
 		t.Fatalf("takeover lost preparation: %v", err)
 	}
-	changed := request.Target.Secrets[0]
+	changed = request.Target.Secrets[0]
 	changed.Ciphertext = []byte("changed-after-preparation")
 	if err := s.PutManagedObjectStorageSecret(ctx, changed); err != nil {
 		t.Fatal(err)
