@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/onebox-faas/faas/pkg/jobresult"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -74,6 +75,7 @@ type AppTaskOutcome struct {
 	StderrTail      string
 	OutputTruncated bool
 	ExitCode        *int
+	OutcomeCode     string
 	FailureCode     string
 	FailureMessage  string
 }
@@ -400,13 +402,14 @@ func appTaskCompletionParams(task state.AppTask, outcome AppTaskOutcome, finishe
 		StdoutTail: outcome.StdoutTail, StderrTail: outcome.StderrTail,
 		OutputTruncated: outcome.OutputTruncated, ExitCode: outcome.ExitCode,
 		FailureCode: failureCode, FailureMessage: failureMessage, FinishedAt: finishedAt,
+		OutcomeCode: outcome.OutcomeCode,
 	}
 }
 
 func normalizeAppTaskOutcome(outcome AppTaskOutcome, maxOutputBytes int) AppTaskOutcome {
 	validStatus := outcome.Status == state.AppTaskSucceeded || outcome.Status == state.AppTaskFailed || outcome.Status == state.AppTaskTimedOut
 	validExit := outcome.ExitCode == nil || (*outcome.ExitCode >= 0 && *outcome.ExitCode <= 255)
-	if !validStatus || !validExit {
+	if !validStatus || !validExit || jobresult.ValidateOutcomeCode(outcome.OutcomeCode) != nil {
 		return appTaskFailure(state.AppTaskFailed, "guest_protocol_error", "app task guest returned an invalid result")
 	}
 	if outcome.Status == state.AppTaskSucceeded {

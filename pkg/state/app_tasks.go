@@ -2,12 +2,15 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/jobresult"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // AppTaskKind identifies why a deployment-attached command was admitted.
@@ -51,6 +54,11 @@ func (s AppTaskStatus) Terminal() bool {
 // to an immutable deployment artifact. Environment and secret values are
 // resolved only by the scheduler immediately before the fresh VM boots.
 type AppTask struct {
+	WorkDecision        *workpolicy.Decision
+	OutcomeCode         string
+	FailureRules        *workpolicy.FailureRules
+	OccurrenceID        string
+	StartDeadlineAt     *time.Time
 	ID                  string
 	AccountID           string
 	AppID               string
@@ -97,6 +105,9 @@ const (
 // CreateAppTaskParams is already-resolved app-task intent. Scope, artifact
 // key, and image digest are copied atomically from DeploymentID by the store.
 type CreateAppTaskParams struct {
+	FailureRules        *workpolicy.FailureRules
+	OccurrenceID        string
+	StartDeadlineAt     *time.Time
 	AccountID           string
 	AppID               string
 	DeploymentID        string
@@ -125,6 +136,7 @@ type CompleteAppTaskParams struct {
 	ExitCode        *int
 	FailureCode     *string
 	FailureMessage  *string
+	OutcomeCode     string
 	FinishedAt      time.Time
 }
 
@@ -172,12 +184,27 @@ type AppTaskStore interface {
 	ListCronAppTaskRuns(ctx context.Context, cronID string, limit int, before string) ([]AppTask, error)
 }
 
+// ScheduledCronOccurrenceStore creates one command-cron occurrence and its
+// durable task atomically, or records an explained skip without a task.
+type ScheduledCronOccurrenceStore interface {
+	CreateScheduledCronAppTaskOccurrence(ctx context.Context, cronID string, expectedLastFiredAt *time.Time, evaluatedAt time.Time, options CronScheduledOccurrenceOptions) (AppTask, ScheduleOccurrence, bool, error)
+}
+
 func resolveCreateAppTask(params CreateAppTaskParams) (CreateAppTaskParams, error) {
 	if params.AccountID == "" || params.AppID == "" || params.DeploymentID == "" {
 		return CreateAppTaskParams{}, fmt.Errorf("%w: account, app, and deployment are required", ErrAppTaskInvalid)
 	}
 	if !params.Kind.Valid() {
 		return CreateAppTaskParams{}, fmt.Errorf("%w: unsupported kind %q", ErrAppTaskInvalid, params.Kind)
+	}
+	if params.FailureRules != nil {
+		if err := params.FailureRules.Validate(); err != nil {
+			return CreateAppTaskParams{}, fmt.Errorf("%w: %v", ErrAppTaskInvalid, err)
+		}
+		encoded, err := json.Marshal(params.FailureRules)
+		if err != nil || len(encoded) > 16*1024 {
+			return CreateAppTaskParams{}, fmt.Errorf("%w: failure rules exceed the size limit", ErrAppTaskInvalid)
+		}
 	}
 	if (params.Kind == AppTaskKindCron) != (params.CronID != "") ||
 		(params.ScheduledFor != nil && params.Kind != AppTaskKindCron) {
@@ -219,6 +246,8 @@ func resolveCreateAppTask(params CreateAppTaskParams) (CreateAppTaskParams, erro
 		params.CreatedAt = params.CreatedAt.UTC()
 	}
 	params.Command = append([]string(nil), params.Command...)
+	params.FailureRules = workpolicy.Clone(params.FailureRules)
+	params.StartDeadlineAt = cloneAppTaskTimePtr(params.StartDeadlineAt)
 	return params, nil
 }
 
@@ -274,6 +303,9 @@ func validateCompleteAppTask(params CompleteAppTaskParams, maxOutputBytes int) e
 	if params.ExitCode != nil && (*params.ExitCode < 0 || *params.ExitCode > 255) {
 		return fmt.Errorf("%w: exit code must be between 0 and 255", ErrAppTaskInvalid)
 	}
+	if err := jobresult.ValidateOutcomeCode(params.OutcomeCode); err != nil {
+		return fmt.Errorf("%w: %v", ErrAppTaskInvalid, err)
+	}
 	failurePresent := params.FailureCode != nil || params.FailureMessage != nil
 	if (params.FailureCode == nil) != (params.FailureMessage == nil) {
 		return fmt.Errorf("%w: failure code and message must be supplied together", ErrAppTaskInvalid)
@@ -298,6 +330,9 @@ func validateCompleteAppTask(params CompleteAppTaskParams, maxOutputBytes int) e
 // attempt. RetryMax counts additional attempts after the initial execution;
 // only execution attempts (not restore-only failures) consume that budget.
 func cronAppTaskRetryAt(task AppTask, currentStatus, resultStatus AppTaskStatus, finishedAt time.Time) *time.Time {
+	if task.WorkDecision != nil && task.WorkDecision.Action != "retry" {
+		return nil
+	}
 	if task.Kind != AppTaskKindCron || currentStatus != AppTaskRunning ||
 		task.AttemptCount < 1 || task.AttemptCount > task.RetryMax ||
 		(resultStatus != AppTaskFailed && resultStatus != AppTaskTimedOut) {
@@ -346,6 +381,9 @@ func normalizeAppTaskPage(limit, offset int) (int, int) {
 }
 
 func cloneAppTask(task AppTask) AppTask {
+	task.FailureRules = workpolicy.Clone(task.FailureRules)
+	task.WorkDecision = workpolicy.Clone(task.WorkDecision)
+	task.StartDeadlineAt = cloneAppTaskTimePtr(task.StartDeadlineAt)
 	task.Command = append([]string(nil), task.Command...)
 	task.ScheduledFor = cloneAppTaskTimePtr(task.ScheduledFor)
 	task.RetryAt = cloneAppTaskTimePtr(task.RetryAt)

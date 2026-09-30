@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 var _ AppTaskStore = (*MemStore)(nil)
@@ -44,6 +45,9 @@ func (m *MemStore) CreateAppTask(_ context.Context, params CreateAppTaskParams) 
 
 	now := resolved.CreatedAt
 	task := AppTask{
+		FailureRules:        workpolicy.Clone(resolved.FailureRules),
+		OccurrenceID:        resolved.OccurrenceID,
+		StartDeadlineAt:     cloneAppTaskTimePtr(resolved.StartDeadlineAt),
 		ID:                  uuid.NewString(),
 		AccountID:           resolved.AccountID,
 		AppID:               resolved.AppID,
@@ -104,7 +108,12 @@ func (m *MemStore) CreateScheduledCronAppTask(_ context.Context, cronID string, 
 	}
 	cron.LastFiredAt = firedAt
 	m.crons[cronID] = cron
+	var deadline *time.Time
+	if cron.SchedulePolicy != nil {
+		deadline = cron.SchedulePolicy.Deadline(firedAt)
+	}
 	task := AppTask{
+		FailureRules: workpolicy.Clone(cron.FailureRules), StartDeadlineAt: deadline,
 		ID: uuid.NewString(), AccountID: app.AccountID, AppID: app.ID, DeploymentID: deployment.ID,
 		CronID: cronID, ScheduledFor: cloneAppTaskTimePtr(&firedAt), Kind: AppTaskKindCron,
 		Command: append([]string(nil), cron.Command...), CommandShell: cron.CommandShell,
@@ -116,6 +125,105 @@ func (m *MemStore) CreateScheduledCronAppTask(_ context.Context, cronID string, 
 	}
 	m.appTasks[task.ID] = task
 	return cloneAppTask(task), true, nil
+}
+
+// CreateScheduledCronAppTaskOccurrence atomically records the policy decision,
+// advances the cron cursor, and queues the command task when the occurrence is
+// admitted. A replace disposition waits until the previous task is confirmed
+// stopped; it never advances the cursor while that task remains active.
+func (m *MemStore) CreateScheduledCronAppTaskOccurrence(_ context.Context, cronID string, expectedLastFiredAt *time.Time, evaluatedAt time.Time, options CronScheduledOccurrenceOptions) (AppTask, ScheduleOccurrence, bool, error) {
+	if cronID == "" || evaluatedAt.IsZero() {
+		return AppTask{}, ScheduleOccurrence{}, false, ErrAppTaskInvalid
+	}
+	evaluatedAt = evaluatedAt.UTC()
+	scheduledFor := options.ScheduledFor.UTC()
+	if options.ScheduledFor.IsZero() {
+		scheduledFor = evaluatedAt
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ensureAppTasksLocked()
+	cron, ok := m.crons[cronID]
+	if !ok || !cron.Enabled || cron.SuspendedReason != "" || len(cron.Command) == 0 ||
+		!sameTimePointer(nonZeroTimePtr(cron.LastFiredAt), expectedLastFiredAt) ||
+		(options.ScheduleRevision > 0 && cron.ScheduleRevision != options.ScheduleRevision) {
+		return AppTask{}, ScheduleOccurrence{}, false, nil
+	}
+	app, ok := m.apps[cron.AppID]
+	if !ok || app.Status == AppDeleted {
+		return AppTask{}, ScheduleOccurrence{}, false, ErrAppTaskDeploymentUnavailable
+	}
+	if expectedLastFiredAt != nil && !scheduledFor.After(*expectedLastFiredAt) {
+		return AppTask{}, ScheduleOccurrence{}, false, nil
+	}
+	policy := effectiveCronSchedulePolicy(cron)
+	deadline := policy.Deadline(scheduledFor)
+	status, reason, blocker := "queued", "", ""
+	if options.Disposition != "" {
+		if options.Disposition != "coalesced" && options.Disposition != "missed_deadline" {
+			return AppTask{}, ScheduleOccurrence{}, false, ErrInvalidArgument
+		}
+		status, reason = options.Disposition, options.Reason
+	} else if workpolicy.DeadlineMissed(deadline, evaluatedAt) {
+		status, reason = "missed_deadline", "start deadline expired before the scheduler could dispatch the occurrence"
+	}
+	if status == "queued" && policy.Overlap != "allow" {
+		for _, active := range m.appTasks {
+			if active.CronID != cronID || active.Status.Terminal() {
+				continue
+			}
+			blocker = active.OccurrenceID
+			if policy.Overlap == "replace" {
+				return AppTask{}, ScheduleOccurrence{}, false, nil
+			}
+			status, reason = "skipped_overlap", "an earlier task for this cron is still active"
+			break
+		}
+	}
+	var deployment Deployment
+	if status == "queued" {
+		for _, candidate := range m.deployments {
+			if candidate.AppID != app.ID || candidate.Status != DeployLive || candidate.RootfsKey == "" || candidate.ImageDigest == "" {
+				continue
+			}
+			if deployment.ID == "" || (candidate.TrafficPercent > 0 && deployment.TrafficPercent == 0) ||
+				((candidate.TrafficPercent > 0) == (deployment.TrafficPercent > 0) && candidate.CreatedAt.After(deployment.CreatedAt)) {
+				deployment = candidate
+			}
+		}
+		if deployment.ID == "" {
+			return AppTask{}, ScheduleOccurrence{}, false, ErrAppTaskDeploymentUnavailable
+		}
+	}
+	cron.LastFiredAt = scheduledFor
+	m.crons[cronID] = cron
+	occurrence := ScheduleOccurrence{
+		ID: newUUIDString(), AccountID: app.AccountID, CronID: cronID,
+		ScheduleRevision: cron.ScheduleRevision, ScheduledFor: scheduledFor,
+		StartDeadlineAt: deadline, SchedulePolicy: *workpolicy.Clone(policy),
+		Status: status, Reason: reason, BlockingOccurrenceID: blocker,
+		CreatedAt: evaluatedAt, UpdatedAt: evaluatedAt,
+	}
+	if status != "queued" {
+		m.scheduleOccurrences[occurrence.ID] = occurrence
+		return AppTask{}, cloneScheduleOccurrence(occurrence), false, nil
+	}
+	task := AppTask{
+		FailureRules: workpolicy.Clone(cron.FailureRules), OccurrenceID: occurrence.ID,
+		StartDeadlineAt: cloneAppTaskTimePtr(deadline),
+		ID:              newUUIDString(), AccountID: app.AccountID, AppID: app.ID, DeploymentID: deployment.ID,
+		CronID: cronID, ScheduledFor: cloneAppTaskTimePtr(&scheduledFor), Kind: AppTaskKindCron,
+		Command: append([]string(nil), cron.Command...), CommandShell: cron.CommandShell,
+		DeploymentScope: normalizedDeploymentScope(deployment.Scope), ArtifactKey: deployment.RootfsKey,
+		ImageDigest: deployment.ImageDigest, Status: AppTaskQueued,
+		TimeoutSeconds: cron.CommandTimeoutSeconds, MaxOutputBytes: cron.CommandMaxOutputBytes,
+		RetryMax: cron.RetryMax, RetryBackoffSeconds: cron.RetryBackoffSeconds,
+		CreatedAt: evaluatedAt, UpdatedAt: evaluatedAt,
+	}
+	occurrence.AppTaskID = task.ID
+	m.scheduleOccurrences[occurrence.ID] = occurrence
+	m.appTasks[task.ID] = task
+	return cloneAppTask(task), cloneScheduleOccurrence(occurrence), true, nil
 }
 
 // CreateManualCronAppTaskForFireNow queues a command cron without changing
@@ -319,6 +427,15 @@ func (m *MemStore) ClaimNextAppTask(_ context.Context, owner string, claimedAt t
 			(candidate.RetryAt != nil && candidate.RetryAt.After(claimedAt)) {
 			continue
 		}
+		if workpolicy.DeadlineMissed(candidate.StartDeadlineAt, claimedAt) && !m.appTaskOccurrenceStartedLocked(candidate) {
+			candidate.Status = AppTaskCancelled
+			candidate.FinishedAt = appTaskTimePtr(claimedAt)
+			candidate.RetryAt = nil
+			candidate.UpdatedAt = claimedAt
+			m.appTasks[id] = candidate
+			m.syncAppTaskOccurrenceLocked(candidate, claimedAt)
+			continue
+		}
 		priority := candidate.CreatedAt
 		if candidate.RetryAt != nil {
 			priority = *candidate.RetryAt
@@ -351,6 +468,7 @@ func (m *MemStore) ClaimNextAppTask(_ context.Context, owner string, claimedAt t
 	selected.FailureMessage = nil
 	selected.UpdatedAt = claimedAt
 	m.appTasks[selected.ID] = *selected
+	m.syncAppTaskOccurrenceLocked(*selected, claimedAt)
 	return cloneAppTask(*selected), nil
 }
 
@@ -369,6 +487,18 @@ func (m *MemStore) MarkAppTaskRunning(_ context.Context, taskID, leaseToken stri
 	if startedAt.Before(task.CreatedAt) {
 		return AppTask{}, ErrAppTaskInvalid
 	}
+	if workpolicy.DeadlineMissed(task.StartDeadlineAt, startedAt) && !m.appTaskOccurrenceStartedLocked(task) {
+		task.Status = AppTaskCancelled
+		task.FinishedAt = appTaskTimePtr(startedAt)
+		task.RetryAt = nil
+		task.LeaseToken = nil
+		task.LeaseOwner = nil
+		task.LeaseExpiresAt = nil
+		task.UpdatedAt = startedAt
+		m.appTasks[task.ID] = task
+		m.syncAppTaskOccurrenceLocked(task, startedAt)
+		return AppTask{}, ErrAppTaskLeaseLost
+	}
 	task.Status = AppTaskRunning
 	task.StartedAt = appTaskTimePtr(startedAt)
 	task.AttemptCount++
@@ -381,6 +511,7 @@ func (m *MemStore) MarkAppTaskRunning(_ context.Context, taskID, leaseToken stri
 	task.FailureMessage = nil
 	task.UpdatedAt = startedAt
 	m.appTasks[task.ID] = task
+	m.syncAppTaskOccurrenceLocked(task, startedAt)
 	return cloneAppTask(task), nil
 }
 
@@ -433,6 +564,7 @@ func (m *MemStore) RequestAppTaskCancellation(_ context.Context, accountID, appI
 	}
 	task.UpdatedAt = requestedAt
 	m.appTasks[task.ID] = task
+	m.syncAppTaskOccurrenceLocked(task, requestedAt)
 	return cloneAppTask(task), nil
 }
 
@@ -454,10 +586,20 @@ func (m *MemStore) CompleteAppTask(_ context.Context, params CompleteAppTaskPara
 	if params.Status == AppTaskSucceeded && task.Status != AppTaskRunning {
 		return AppTask{}, fmt.Errorf("%w: a task must be running before it can succeed", ErrAppTaskInvalid)
 	}
+	decision := workpolicy.Evaluate(task.FailureRules, workpolicy.Evidence{
+		Succeeded: params.Status == AppTaskSucceeded, Cancelled: params.Status == AppTaskCancelled,
+		Infra: task.Status == AppTaskRestoring, ExitCode: params.ExitCode, OutcomeCode: params.OutcomeCode,
+	})
+	if decision.Reason == "outcome_code_matched" && params.Status == AppTaskSucceeded {
+		params.Status = AppTaskFailed
+		code, message := "classified_outcome", "command reported an application outcome classified by policy"
+		params.FailureCode, params.FailureMessage = &code, &message
+	}
 	finishedAt := params.FinishedAt.UTC()
 	if finishedAt.Before(task.CreatedAt) {
 		return AppTask{}, ErrAppTaskInvalid
 	}
+	task.WorkDecision, task.OutcomeCode = &decision, params.OutcomeCode
 	retryAt := cronAppTaskRetryAt(task, task.Status, params.Status, finishedAt)
 	task.Status = params.Status
 	if retryAt != nil {
@@ -470,6 +612,8 @@ func (m *MemStore) CompleteAppTask(_ context.Context, params CompleteAppTaskPara
 	task.ExitCode = cloneAppTaskIntPtr(params.ExitCode)
 	task.FailureCode = cloneAppTaskStringPtr(params.FailureCode)
 	task.FailureMessage = cloneAppTaskStringPtr(params.FailureMessage)
+	task.WorkDecision = &decision
+	task.OutcomeCode = params.OutcomeCode
 	if retryAt == nil {
 		task.FinishedAt = appTaskTimePtr(finishedAt)
 	} else {
@@ -481,6 +625,7 @@ func (m *MemStore) CompleteAppTask(_ context.Context, params CompleteAppTaskPara
 	task.LeaseOwner = nil
 	task.LeaseExpiresAt = nil
 	m.appTasks[task.ID] = task
+	m.syncAppTaskOccurrenceLocked(task, finishedAt)
 	return cloneAppTask(task), nil
 }
 
@@ -512,12 +657,32 @@ func (m *MemStore) SweepExpiredAppTasks(_ context.Context, at time.Time) (AppTas
 				result.Cancelled++
 			} else {
 				code, message := "lease_expired", "the app task worker lease expired after dispatch; the command was not replayed"
+				var decision *workpolicy.Decision
+				if task.FailureRules != nil {
+					evaluated := workpolicy.Evaluate(task.FailureRules, workpolicy.Evidence{Uncertain: true})
+					decision = &evaluated
+					message = "completion receipt missing; the command outcome is uncertain"
+				}
 				task.Status = AppTaskFailed
 				task.FailureCode = &code
 				task.FailureMessage = &message
-				result.FailedRuns++
+				task.WorkDecision = workpolicy.Clone(decision)
+				if decision != nil && decision.Action == "retry" {
+					retryAt := cronAppTaskRetryAt(task, AppTaskRunning, AppTaskFailed, at)
+					if retryAt != nil {
+						task.Status = AppTaskQueued
+						task.RetryAt = retryAt
+						task.FinishedAt = nil
+						task.StartedAt = nil
+					}
+				}
+				if task.Status == AppTaskFailed {
+					result.FailedRuns++
+				}
 			}
-			task.FinishedAt = appTaskTimePtr(at)
+			if task.Status == AppTaskFailed || task.Status == AppTaskCancelled {
+				task.FinishedAt = appTaskTimePtr(at)
+			}
 		default:
 			continue
 		}
@@ -526,6 +691,7 @@ func (m *MemStore) SweepExpiredAppTasks(_ context.Context, at time.Time) (AppTas
 		task.LeaseExpiresAt = nil
 		task.UpdatedAt = at
 		m.appTasks[id] = task
+		m.syncAppTaskOccurrenceLocked(task, at)
 	}
 	return result, nil
 }
@@ -546,7 +712,60 @@ func (m *MemStore) cancelAppTasksForAppLocked(appID string, at time.Time) {
 		}
 		task.UpdatedAt = at
 		m.appTasks[id] = task
+		m.syncAppTaskOccurrenceLocked(task, at)
 	}
+}
+
+func (m *MemStore) appTaskOccurrenceStartedLocked(task AppTask) bool {
+	if task.OccurrenceID == "" {
+		return task.StartedAt != nil
+	}
+	occurrence, ok := m.scheduleOccurrences[task.OccurrenceID]
+	return ok && occurrence.StartedAt != nil
+}
+
+func (m *MemStore) syncAppTaskOccurrenceLocked(task AppTask, now time.Time) {
+	if task.OccurrenceID == "" {
+		return
+	}
+	occurrence, ok := m.scheduleOccurrences[task.OccurrenceID]
+	if !ok {
+		return
+	}
+	switch task.Status {
+	case AppTaskQueued:
+		if occurrence.StartedAt != nil {
+			occurrence.Status = "running"
+		} else {
+			occurrence.Status = "queued"
+		}
+	case AppTaskRestoring, AppTaskRunning:
+		occurrence.Status = "running"
+	case AppTaskSucceeded:
+		occurrence.Status = "succeeded"
+	case AppTaskFailed, AppTaskTimedOut:
+		occurrence.Status = "failed"
+	case AppTaskCancelled:
+		occurrence.Status = "cancelled"
+	default:
+		return
+	}
+	if task.StartedAt != nil && occurrence.StartedAt == nil {
+		occurrence.StartedAt = cloneTimePtr(task.StartedAt)
+	}
+	terminal := task.Status.Terminal()
+	if terminal && occurrence.StartedAt == nil && workpolicy.DeadlineMissed(occurrence.StartDeadlineAt, now) {
+		occurrence.Status = "missed_deadline"
+		occurrence.Reason = "command task did not start before the occurrence start deadline"
+	}
+	if terminal || occurrence.Status == "missed_deadline" {
+		finished := now.UTC()
+		occurrence.FinishedAt = &finished
+	} else {
+		occurrence.FinishedAt = nil
+	}
+	occurrence.UpdatedAt = now.UTC()
+	m.scheduleOccurrences[occurrence.ID] = occurrence
 }
 
 func appTaskTimePtr(value time.Time) *time.Time {

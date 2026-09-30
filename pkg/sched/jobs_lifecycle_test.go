@@ -13,6 +13,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 type recordingJobVMM struct {
@@ -311,6 +312,50 @@ func TestHandleJobExitPersistsCombinedTaskOutputBeforeCleanup(t *testing.T) {
 	}
 	if task.Status != "succeeded" || task.LogContent != "beta-job\nwarning\n" || task.LogTruncated || string(task.OutputManifest) != string(output) {
 		t.Fatalf("terminal task = %+v, want persisted complete output", task)
+	}
+}
+
+// adr: 385 — classified outcomes settle or retry only the matching partition.
+func TestHandleJobExitClassifiesStructuredOutcomeAndRetainsAttempt(t *testing.T) {
+	for _, tc := range []struct {
+		name, outcomeCode, action, wantStatus string
+	}{
+		{name: "permanent record rejection", outcomeCode: "invalid_record", action: "fail_partition", wantStatus: "failed"},
+		{name: "retryable upstream error", outcomeCode: "upstream_unavailable", action: "retry", wantStatus: "queued"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := state.NewMemStore()
+			acct, job, _ := seedJobRun(t, store, json.RawMessage(`{}`), json.RawMessage(`{}`))
+			retryMax := 1
+			rules := &workpolicy.FailureRules{
+				Version: workpolicy.Version,
+				Rules: []workpolicy.FailureRule{{OutcomeCodes: []string{tc.outcomeCode}, Action: tc.action}},
+				UnmatchedFailure: "retry", UncertainOutcome: "hold",
+			}
+			run, _, err := store.JobRunCreate(context.Background(), job.ID, acct.ID, "manual", nil, &retryMax, nil, nil, 1,
+				state.JobRunOptions{FailureRules: rules})
+			if err != nil {
+				t.Fatalf("JobRunCreate: %v", err)
+			}
+			const instanceID = "job-outcome-instance"
+			const leaseToken = "job-outcome-lease"
+			if err := store.JobTaskMarkClaimed(context.Background(), run.ID, 0, instanceID, leaseToken, time.Now().Add(time.Minute), state.DefaultLocalNodeName); err != nil {
+				t.Fatalf("JobTaskMarkClaimed: %v", err)
+			}
+			e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+			manifest := json.RawMessage(`{"version":1,"artifacts":[],"outcome_code":"` + tc.outcomeCode + `"}`)
+			if err := e.HandleJobExit(context.Background(), acct.ID, run.ID, 0, 0, "succeeded", leaseToken, manifest); err != nil {
+				t.Fatalf("HandleJobExit: %v", err)
+			}
+			task, err := store.JobTaskGet(context.Background(), run.ID, 0)
+			if err != nil || task.Status != tc.wantStatus {
+				t.Fatalf("task = %+v, err %v; want status %s", task, err, tc.wantStatus)
+			}
+			attempts, err := store.JobTaskAttemptList(context.Background(), run.ID, 0, 10, 0)
+			if err != nil || len(attempts) != 1 || attempts[0].OutcomeCode != tc.outcomeCode || attempts[0].WorkDecision == nil || attempts[0].WorkDecision.Action != tc.action {
+				t.Fatalf("attempts = %+v, err %v; want the confirmed structured result retained", attempts, err)
+			}
+		})
 	}
 }
 

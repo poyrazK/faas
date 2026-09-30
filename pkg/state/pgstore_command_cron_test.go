@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // adr: 099 — the cron cursor guards scheduled command task creation.
@@ -46,6 +47,140 @@ func TestPgScheduledCommandCronCreatesCursorGuardedTask(t *testing.T) {
 	runs, err := store.ListCronAppTaskRuns(ctx, cron.ID, 10, "")
 	if err != nil || len(runs) != 1 || runs[0].ID != task.ID {
 		t.Fatalf("ListCronAppTaskRuns = %+v, %v; want the created task", runs, err)
+	}
+}
+
+func TestPgScheduledCommandCronOccurrencePersistsPolicyDecisions(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	_, appID, deploymentID := seedLiveDeploy(t, store, ctx, "command-cron-occurrence-"+uuid.NewString(), "command-occurrence-"+uuid.NewString()[:8])
+	if err := store.SetDeploymentRootfs(ctx, deploymentID, "/tmp/cron-occurrence.ext4", "apps/cron/occurrence.ext4", 4096); err != nil {
+		t.Fatalf("SetDeploymentRootfs: %v", err)
+	}
+	cron, err := store.CreateCronWithOptions(ctx, appID, "* * * * *", "", true, state.CronOptions{
+		Command: []string{"bin/maintenance"},
+		SchedulePolicy: &workpolicy.SchedulePolicy{
+			Version: workpolicy.Version, Overlap: "skip", StartDeadlineSeconds: 60, MissedRuns: "skip",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateCronWithOptions: %v", err)
+	}
+	firstAt := time.Now().UTC().Truncate(time.Minute)
+	first, firstOccurrence, created, err := store.CreateScheduledCronAppTaskOccurrence(ctx, cron.ID, nil, firstAt,
+		state.CronScheduledOccurrenceOptions{ScheduledFor: firstAt, ScheduleRevision: cron.ScheduleRevision})
+	if err != nil || !created || first.OccurrenceID != firstOccurrence.ID || firstOccurrence.Status != "queued" {
+		t.Fatalf("first occurrence = %+v / %+v, created=%t, err=%v", first, firstOccurrence, created, err)
+	}
+	secondAt := firstAt.Add(time.Minute)
+	_, overlap, created, err := store.CreateScheduledCronAppTaskOccurrence(ctx, cron.ID, &firstAt, secondAt,
+		state.CronScheduledOccurrenceOptions{ScheduledFor: secondAt, ScheduleRevision: cron.ScheduleRevision})
+	if err != nil || created || overlap.Status != "skipped_overlap" || overlap.BlockingOccurrenceID != firstOccurrence.ID {
+		t.Fatalf("overlap occurrence = %+v, created=%t, err=%v", overlap, created, err)
+	}
+	thirdAt := secondAt.Add(time.Minute)
+	_, late, created, err := store.CreateScheduledCronAppTaskOccurrence(ctx, cron.ID, &secondAt, thirdAt.Add(2*time.Minute),
+		state.CronScheduledOccurrenceOptions{ScheduledFor: thirdAt, ScheduleRevision: cron.ScheduleRevision})
+	if err != nil || created || late.Status != "missed_deadline" {
+		t.Fatalf("late occurrence = %+v, created=%t, err=%v", late, created, err)
+	}
+	history, err := store.ScheduleOccurrenceListByCron(ctx, cron.ID, 10, "")
+	if err != nil || len(history) != 3 || history[0].Status != "missed_deadline" || history[1].Status != "skipped_overlap" || history[2].Status != "queued" {
+		t.Fatalf("occurrence history = %+v, %v", history, err)
+	}
+}
+
+func TestPgCommandCronClassifiesStructuredOutcomeFromSuccessfulExit(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	_, appID, deploymentID := seedLiveDeploy(t, store, ctx, "classified-command-cron-"+uuid.NewString(), "classified-cron-"+uuid.NewString()[:8])
+	if err := store.SetDeploymentRootfs(ctx, deploymentID, "/tmp/classified-cron.ext4", "apps/classified/rootfs.ext4", 4096); err != nil {
+		t.Fatalf("SetDeploymentRootfs: %v", err)
+	}
+	cron, err := store.CreateCronWithOptions(ctx, appID, "* * * * *", "", true, state.CronOptions{
+		Command: []string{"bin/synchronize"}, RetryMax: 2, RetryBackoffSeconds: 1,
+		FailureRules: &workpolicy.FailureRules{
+			Version: workpolicy.Version,
+			Rules: []workpolicy.FailureRule{{OutcomeCodes: []string{"invalid_record"}, Action: "fail_partition"}},
+			UnmatchedFailure: "retry", UncertainOutcome: "hold",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateCronWithOptions: %v", err)
+	}
+	firedAt := time.Now().UTC().Truncate(time.Minute)
+	task, created, err := store.CreateScheduledCronAppTask(ctx, cron.ID, nil, firedAt)
+	if err != nil || !created {
+		t.Fatalf("CreateScheduledCronAppTask = %+v, created=%t, err=%v", task, created, err)
+	}
+	claimed, err := store.ClaimNextAppTask(ctx, "classified-cron-worker", firedAt.Add(time.Second), time.Minute)
+	if err != nil || claimed.ID != task.ID {
+		t.Fatalf("ClaimNextAppTask = %+v, err %v", claimed, err)
+	}
+	running, err := store.MarkAppTaskRunning(ctx, task.ID, *claimed.LeaseToken, firedAt.Add(2*time.Second))
+	if err != nil {
+		t.Fatalf("MarkAppTaskRunning: %v", err)
+	}
+	exitCode := 0
+	completed, err := store.CompleteAppTask(ctx, state.CompleteAppTaskParams{
+		ID: task.ID, LeaseToken: *running.LeaseToken, Status: state.AppTaskSucceeded,
+		ExitCode: &exitCode, OutcomeCode: "invalid_record", FinishedAt: firedAt.Add(3 * time.Second),
+	})
+	if err != nil {
+		t.Fatalf("CompleteAppTask: %v", err)
+	}
+	if completed.Status != state.AppTaskFailed || completed.RetryAt != nil || completed.OutcomeCode != "invalid_record" ||
+		completed.FailureCode == nil || *completed.FailureCode != "classified_outcome" || completed.WorkDecision == nil ||
+		completed.WorkDecision.Classification != "permanent" || completed.WorkDecision.Action != "fail_partition" {
+		t.Fatalf("classified command outcome = %+v; want stored terminal permanent failure", completed)
+	}
+}
+
+func TestPgCommandCronReaperHonorsUncertainOutcomePolicy(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	_, appID, deploymentID := seedLiveDeploy(t, store, ctx, "uncertain-command-cron-"+uuid.NewString(), "uncertain-cron-"+uuid.NewString()[:8])
+	if err := store.SetDeploymentRootfs(ctx, deploymentID, "/tmp/uncertain-cron.ext4", "apps/cron/uncertain.ext4", 4096); err != nil {
+		t.Fatalf("SetDeploymentRootfs: %v", err)
+	}
+	base := time.Now().UTC().Add(-5 * time.Minute).Truncate(time.Minute)
+	for i, uncertainOutcome := range []string{"hold", "retry"} {
+		cron, err := store.CreateCronWithOptions(ctx, appID, "* * * * *", "", true, state.CronOptions{
+			// The app/schedule/path/command tuple is unique; make the two
+			// policy fixtures distinct while exercising the same behavior.
+			Command: []string{"bin/synchronize", uncertainOutcome}, RetryMax: 1, RetryBackoffSeconds: 1,
+			FailureRules: &workpolicy.FailureRules{
+				Version: workpolicy.Version, UnmatchedFailure: "retry", UncertainOutcome: uncertainOutcome,
+			},
+		})
+		if err != nil {
+			t.Fatalf("CreateCronWithOptions(%s): %v", uncertainOutcome, err)
+		}
+		firedAt := base.Add(time.Duration(i) * time.Minute)
+		task, _, created, err := store.CreateScheduledCronAppTaskOccurrence(ctx, cron.ID, nil, firedAt,
+			state.CronScheduledOccurrenceOptions{ScheduledFor: firedAt, ScheduleRevision: cron.ScheduleRevision})
+		if err != nil || !created {
+			t.Fatalf("CreateScheduledCronAppTaskOccurrence(%s) = %+v, %t, %v", uncertainOutcome, task, created, err)
+		}
+		claimedAt := firedAt.Add(time.Second)
+		claimed, err := store.ClaimNextAppTask(ctx, "cron-worker-"+uncertainOutcome, claimedAt, time.Second)
+		if err != nil || claimed.ID != task.ID {
+			t.Fatalf("ClaimNextAppTask(%s) = %+v, %v", uncertainOutcome, claimed, err)
+		}
+		if _, err := store.MarkAppTaskRunning(ctx, task.ID, *claimed.LeaseToken, claimedAt.Add(100*time.Millisecond)); err != nil {
+			t.Fatalf("MarkAppTaskRunning(%s): %v", uncertainOutcome, err)
+		}
+		sweep, err := store.SweepExpiredAppTasks(ctx, claimedAt.Add(2*time.Second))
+		if err != nil {
+			t.Fatalf("SweepExpiredAppTasks(%s): %v", uncertainOutcome, err)
+		}
+		recovered, err := store.AppTaskByID(ctx, task.AccountID, appID, task.ID)
+		if err != nil || recovered.WorkDecision == nil || recovered.WorkDecision.Classification != "uncertain" || recovered.WorkDecision.Action != uncertainOutcome {
+			t.Fatalf("expired task(%s) = %+v, %v; want recorded uncertain decision", uncertainOutcome, recovered, err)
+		}
+		if uncertainOutcome == "hold" && (recovered.Status != state.AppTaskFailed || sweep.FailedRuns != 1) {
+			t.Fatalf("hold result = task %+v, sweep %+v; want terminal failed run", recovered, sweep)
+		}
+		if uncertainOutcome == "retry" && (recovered.Status != state.AppTaskQueued || recovered.RetryAt == nil || sweep.FailedRuns != 0) {
+			t.Fatalf("retry result = task %+v, sweep %+v; want bounded retry queued", recovered, sweep)
+		}
 	}
 }
 
