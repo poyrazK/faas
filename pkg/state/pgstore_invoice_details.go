@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"strings"
 	"time"
@@ -76,6 +77,12 @@ func invoiceFromSnapshot(row sqlc.GetInvoiceSnapshotRow) (Invoice, error) {
 			return Invoice{}, err
 		}
 	}
+	if string(row.DetailLifecycle) != "{}" {
+		inv.Lifecycle = new(InvoiceLifecycle)
+		if err := json.Unmarshal(row.DetailLifecycle, inv.Lifecycle); err != nil {
+			return Invoice{}, fmt.Errorf("decode invoice lifecycle: %w", err)
+		}
+	}
 	return inv, nil
 }
 
@@ -109,11 +116,49 @@ func (s *PgStore) UpsertInvoice(ctx context.Context, inv Invoice) error {
 	if !inv.Plan.Valid() {
 		inv.Plan = api.PlanFree
 	}
-	return sqlc.New().UpsertInvoiceSnapshot(ctx, s.pool, sqlc.UpsertInvoiceSnapshotParams{
+	initialLifecycle, err := json.Marshal(newInvoiceLifecycle(time.Now().UTC()))
+	if err != nil {
+		return err
+	}
+	params := sqlc.UpsertInvoiceSnapshotParams{
 		AccountID: accountID, Provider: inv.Provider, ProviderInvoiceID: inv.ProviderInvoiceID, ProviderChargeID: inv.ProviderChargeID,
 		Number: inv.Number, Status: inv.Status, PeriodStart: pgtype.Timestamptz{Time: inv.PeriodStart.UTC(), Valid: true},
 		PeriodEnd: pgtype.Timestamptz{Time: inv.PeriodEnd.UTC(), Valid: true}, SubtotalCents: inv.SubtotalCents,
 		TaxCents: inv.TaxCents, TotalCents: inv.TotalCents, AmountPaidCents: inv.AmountPaidCents,
 		Plan: string(inv.Plan), Currency: strings.ToLower(inv.Currency), PdfAvailable: inv.PDFAvailable, Details: details,
-	})
+		DetailLifecycle: initialLifecycle,
+	}
+	return s.upsertInvoiceWithLifecycle(ctx, params)
+}
+
+func (s *PgStore) upsertInvoiceWithLifecycle(ctx context.Context, params sqlc.UpsertInvoiceSnapshotParams) error {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin invoice upsert: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := sqlc.New()
+	row, err := q.UpsertInvoiceSnapshot(ctx, tx, params)
+	if err != nil {
+		return fmt.Errorf("upsert invoice: %w", err)
+	}
+	inv, err := invoiceFromSnapshot(sqlc.GetInvoiceSnapshotRow(row))
+	if err != nil {
+		return err
+	}
+	lifecycle, err := advanceInvoiceLifecycle(inv, inv.UpdatedAt)
+	if err != nil {
+		return err
+	}
+	encoded, err := json.Marshal(lifecycle)
+	if err != nil {
+		return err
+	}
+	if err := q.SetInvoiceDetailLifecycle(ctx, tx, sqlc.SetInvoiceDetailLifecycleParams{ID: row.ID, DetailLifecycle: encoded}); err != nil {
+		return fmt.Errorf("persist invoice lifecycle: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit invoice upsert: %w", err)
+	}
+	return nil
 }

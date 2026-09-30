@@ -55,6 +55,11 @@ func TestFOCUSSignedInvoiceIngestion(t *testing.T) {
 	if stored.Details.Lines.Items[0] != first.Details.Lines.Items[0] {
 		t.Fatal("delivery replay mutated line history")
 	}
+	for id, history := range first.Lifecycle.Records {
+		if stored.Lifecycle.Records[id] != history {
+			t.Fatal("delivery replay mutated export record history")
+		}
+	}
 	key, hash, _ := api.GenerateAPIKey()
 	if _, err := e.store.CreateAPIKey(context.Background(), e.acct.ID, hash, "focus-export", api.ScopesUsageReadSurface); err != nil {
 		t.Fatal(err)
@@ -74,10 +79,19 @@ func TestFOCUSSignedInvoiceIngestion(t *testing.T) {
 	if rows[1][13] != "Gregale invoice business" || rows[1][16] != "Due by 2026-10-30T00:00:00Z" {
 		t.Fatal("invoice terms or issuer missing")
 	}
+	for _, row := range rows[1:] {
+		history, ok := stored.Lifecycle.Records[row[9]]
+		if !ok || row[6] != history.CreatedAt || row[10] != history.UpdatedAt {
+			t.Fatal("download did not use persisted record timestamps")
+		}
+	}
 	rec = e.do(t, http.MethodGet, "/v1/billing/focus?month=2026-09&format=metadata", nil, nil)
 	var m focus.Metadata
 	if json.Unmarshal(rec.Body.Bytes(), &m) != nil || m.Projection.SourceCoverage.DetailedInvoices != 1 || len(m.Projection.MissingRequiredFields) != 0 {
 		t.Fatalf("metadata=%s", rec.Body)
+	}
+	if m.Projection.SourceCoverage.UntrackedLifecycleRecords != 0 || m.Projection.SourceCoverage.LegacyLifecycleRecords != 0 {
+		t.Fatal("new signed invoice has a false lifecycle coverage gap")
 	}
 }
 

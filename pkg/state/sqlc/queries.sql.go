@@ -4379,7 +4379,7 @@ const getInvoiceSnapshot = `-- name: GetInvoiceSnapshot :one
 SELECT id, account_id, provider, provider_invoice_id, provider_charge_id, number, status,
        period_start, period_end, subtotal_cents, tax_cents, total_cents, amount_paid_cents,
        plan, amount_refunded_cents, amount_refund_pending_cents, credits_applied_cents,
-       currency, pdf_available, created_at, updated_at, details FROM invoices WHERE id = $1
+       currency, pdf_available, created_at, updated_at, details, detail_lifecycle FROM invoices WHERE id = $1
 `
 
 type GetInvoiceSnapshotRow struct {
@@ -4405,6 +4405,7 @@ type GetInvoiceSnapshotRow struct {
 	CreatedAt                pgtype.Timestamptz
 	UpdatedAt                pgtype.Timestamptz
 	Details                  []byte
+	DetailLifecycle          []byte
 }
 
 func (q *Queries) GetInvoiceSnapshot(ctx context.Context, db DBTX, id pgtype.UUID) (GetInvoiceSnapshotRow, error) {
@@ -4433,6 +4434,7 @@ func (q *Queries) GetInvoiceSnapshot(ctx context.Context, db DBTX, id pgtype.UUI
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Details,
+		&i.DetailLifecycle,
 	)
 	return i, err
 }
@@ -8967,7 +8969,7 @@ const listInvoiceSnapshots = `-- name: ListInvoiceSnapshots :many
 SELECT id, account_id, provider, provider_invoice_id, provider_charge_id, number, status,
        period_start, period_end, subtotal_cents, tax_cents, total_cents, amount_paid_cents,
        plan, amount_refunded_cents, amount_refund_pending_cents, credits_applied_cents,
-       currency, pdf_available, created_at, updated_at, details FROM invoices
+       currency, pdf_available, created_at, updated_at, details, detail_lifecycle FROM invoices
 WHERE account_id = $1::uuid
   AND ($2::timestamptz IS NULL OR period_end >= $2)
   AND ($3::timestamptz IS NULL OR period_end < $3)
@@ -9007,6 +9009,7 @@ type ListInvoiceSnapshotsRow struct {
 	CreatedAt                pgtype.Timestamptz
 	UpdatedAt                pgtype.Timestamptz
 	Details                  []byte
+	DetailLifecycle          []byte
 }
 
 func (q *Queries) ListInvoiceSnapshots(ctx context.Context, db DBTX, arg ListInvoiceSnapshotsParams) ([]ListInvoiceSnapshotsRow, error) {
@@ -9047,6 +9050,7 @@ func (q *Queries) ListInvoiceSnapshots(ctx context.Context, db DBTX, arg ListInv
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.Details,
+			&i.DetailLifecycle,
 		); err != nil {
 			return nil, err
 		}
@@ -16231,6 +16235,21 @@ func (q *Queries) SetDeploymentSecretReloadSignal(ctx context.Context, db DBTX, 
 	return result.RowsAffected(), nil
 }
 
+const setInvoiceDetailLifecycle = `-- name: SetInvoiceDetailLifecycle :exec
+UPDATE invoices SET detail_lifecycle = $2 WHERE id = $1
+`
+
+type SetInvoiceDetailLifecycleParams struct {
+	ID              pgtype.UUID
+	DetailLifecycle []byte
+}
+
+// The caller retains the natural-key upsert's row lock in the same transaction.
+func (q *Queries) SetInvoiceDetailLifecycle(ctx context.Context, db DBTX, arg SetInvoiceDetailLifecycleParams) error {
+	_, err := db.Exec(ctx, setInvoiceDetailLifecycle, arg.ID, arg.DetailLifecycle)
+	return err
+}
+
 const snapshotLocalityNodes = `-- name: SnapshotLocalityNodes :many
 SELECT node_id::text AS node_id, true AS is_origin
 FROM snapshot_origins
@@ -17352,12 +17371,12 @@ func (q *Queries) UpsertGithubWebhookSecret(ctx context.Context, db DBTX, arg Up
 	return result.RowsAffected(), nil
 }
 
-const upsertInvoiceSnapshot = `-- name: UpsertInvoiceSnapshot :exec
+const upsertInvoiceSnapshot = `-- name: UpsertInvoiceSnapshot :one
 INSERT INTO invoices (
   account_id, provider, provider_invoice_id, provider_charge_id, number, status,
   period_start, period_end, subtotal_cents, tax_cents, total_cents,
-  amount_paid_cents, plan, currency, pdf_available, details, updated_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, now())
+  amount_paid_cents, plan, currency, pdf_available, details, detail_lifecycle, updated_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, clock_timestamp())
 ON CONFLICT (account_id, provider, provider_invoice_id) DO UPDATE SET
   provider_charge_id = coalesce(nullif(excluded.provider_charge_id, ''), invoices.provider_charge_id),
   number = excluded.number, status = excluded.status,
@@ -17379,7 +17398,11 @@ ON CONFLICT (account_id, provider, provider_invoice_id) DO UPDATE SET
     ), '[]'::jsonb))
   ELSE excluded.details END || CASE WHEN excluded.details ? 'lines' THEN
     jsonb_build_object('line_first_seen', coalesce(excluded.details->'line_first_seen', '{}'::jsonb) || coalesce(invoices.details->'line_first_seen', '{}'::jsonb))
-  ELSE '{}'::jsonb END, updated_at = now()
+  ELSE '{}'::jsonb END, updated_at = clock_timestamp()
+RETURNING id, account_id, provider, provider_invoice_id, provider_charge_id, number, status,
+          period_start, period_end, subtotal_cents, tax_cents, total_cents, amount_paid_cents,
+          plan, amount_refunded_cents, amount_refund_pending_cents, credits_applied_cents,
+          currency, pdf_available, created_at, updated_at, details, detail_lifecycle
 `
 
 type UpsertInvoiceSnapshotParams struct {
@@ -17399,10 +17422,37 @@ type UpsertInvoiceSnapshotParams struct {
 	Currency          string
 	PdfAvailable      bool
 	Details           []byte
+	DetailLifecycle   []byte
 }
 
-func (q *Queries) UpsertInvoiceSnapshot(ctx context.Context, db DBTX, arg UpsertInvoiceSnapshotParams) error {
-	_, err := db.Exec(ctx, upsertInvoiceSnapshot,
+type UpsertInvoiceSnapshotRow struct {
+	ID                       pgtype.UUID
+	AccountID                pgtype.UUID
+	Provider                 string
+	ProviderInvoiceID        string
+	ProviderChargeID         string
+	Number                   string
+	Status                   string
+	PeriodStart              pgtype.Timestamptz
+	PeriodEnd                pgtype.Timestamptz
+	SubtotalCents            int64
+	TaxCents                 int64
+	TotalCents               int64
+	AmountPaidCents          int64
+	Plan                     string
+	AmountRefundedCents      int64
+	AmountRefundPendingCents int64
+	CreditsAppliedCents      int64
+	Currency                 string
+	PdfAvailable             bool
+	CreatedAt                pgtype.Timestamptz
+	UpdatedAt                pgtype.Timestamptz
+	Details                  []byte
+	DetailLifecycle          []byte
+}
+
+func (q *Queries) UpsertInvoiceSnapshot(ctx context.Context, db DBTX, arg UpsertInvoiceSnapshotParams) (UpsertInvoiceSnapshotRow, error) {
+	row := db.QueryRow(ctx, upsertInvoiceSnapshot,
 		arg.AccountID,
 		arg.Provider,
 		arg.ProviderInvoiceID,
@@ -17419,8 +17469,35 @@ func (q *Queries) UpsertInvoiceSnapshot(ctx context.Context, db DBTX, arg Upsert
 		arg.Currency,
 		arg.PdfAvailable,
 		arg.Details,
+		arg.DetailLifecycle,
 	)
-	return err
+	var i UpsertInvoiceSnapshotRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Provider,
+		&i.ProviderInvoiceID,
+		&i.ProviderChargeID,
+		&i.Number,
+		&i.Status,
+		&i.PeriodStart,
+		&i.PeriodEnd,
+		&i.SubtotalCents,
+		&i.TaxCents,
+		&i.TotalCents,
+		&i.AmountPaidCents,
+		&i.Plan,
+		&i.AmountRefundedCents,
+		&i.AmountRefundPendingCents,
+		&i.CreditsAppliedCents,
+		&i.Currency,
+		&i.PdfAvailable,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Details,
+		&i.DetailLifecycle,
+	)
+	return i, err
 }
 
 const upsertOIDCTrustPolicy = `-- name: UpsertOIDCTrustPolicy :one

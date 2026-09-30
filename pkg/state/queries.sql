@@ -229,7 +229,7 @@ LIMIT 2;
 SELECT id, account_id, provider, provider_invoice_id, provider_charge_id, number, status,
        period_start, period_end, subtotal_cents, tax_cents, total_cents, amount_paid_cents,
        plan, amount_refunded_cents, amount_refund_pending_cents, credits_applied_cents,
-       currency, pdf_available, created_at, updated_at, details FROM invoices
+       currency, pdf_available, created_at, updated_at, details, detail_lifecycle FROM invoices
 WHERE account_id = sqlc.arg(account_id)::uuid
   AND (sqlc.narg(month_start)::timestamptz IS NULL OR period_end >= sqlc.narg(month_start))
   AND (sqlc.narg(month_end)::timestamptz IS NULL OR period_end < sqlc.narg(month_end))
@@ -241,14 +241,14 @@ LIMIT sqlc.arg(row_limit);
 SELECT id, account_id, provider, provider_invoice_id, provider_charge_id, number, status,
        period_start, period_end, subtotal_cents, tax_cents, total_cents, amount_paid_cents,
        plan, amount_refunded_cents, amount_refund_pending_cents, credits_applied_cents,
-       currency, pdf_available, created_at, updated_at, details FROM invoices WHERE id = $1;
+       currency, pdf_available, created_at, updated_at, details, detail_lifecycle FROM invoices WHERE id = $1;
 
--- name: UpsertInvoiceSnapshot :exec
+-- name: UpsertInvoiceSnapshot :one
 INSERT INTO invoices (
   account_id, provider, provider_invoice_id, provider_charge_id, number, status,
   period_start, period_end, subtotal_cents, tax_cents, total_cents,
-  amount_paid_cents, plan, currency, pdf_available, details, updated_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, now())
+  amount_paid_cents, plan, currency, pdf_available, details, detail_lifecycle, updated_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, clock_timestamp())
 ON CONFLICT (account_id, provider, provider_invoice_id) DO UPDATE SET
   provider_charge_id = coalesce(nullif(excluded.provider_charge_id, ''), invoices.provider_charge_id),
   number = excluded.number, status = excluded.status,
@@ -270,7 +270,15 @@ ON CONFLICT (account_id, provider, provider_invoice_id) DO UPDATE SET
     ), '[]'::jsonb))
   ELSE excluded.details END || CASE WHEN excluded.details ? 'lines' THEN
     jsonb_build_object('line_first_seen', coalesce(excluded.details->'line_first_seen', '{}'::jsonb) || coalesce(invoices.details->'line_first_seen', '{}'::jsonb))
-  ELSE '{}'::jsonb END, updated_at = now();
+  ELSE '{}'::jsonb END, updated_at = clock_timestamp()
+RETURNING id, account_id, provider, provider_invoice_id, provider_charge_id, number, status,
+          period_start, period_end, subtotal_cents, tax_cents, total_cents, amount_paid_cents,
+          plan, amount_refunded_cents, amount_refund_pending_cents, credits_applied_cents,
+          currency, pdf_available, created_at, updated_at, details, detail_lifecycle;
+
+-- name: SetInvoiceDetailLifecycle :exec
+-- The caller retains the natural-key upsert's row lock in the same transaction.
+UPDATE invoices SET detail_lifecycle = $2 WHERE id = $1;
 
 -- name: RollupMirrorResults :execrows
 -- ADR-221: claiming and counting share one statement/transaction. SKIP LOCKED

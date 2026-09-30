@@ -5,7 +5,6 @@ package focus
 import (
 	"bytes"
 	"encoding/csv"
-	"encoding/json"
 	"fmt"
 	"math/big"
 	"sort"
@@ -14,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/focus/invoicedetail"
 	"github.com/onebox-faas/faas/pkg/state"
 	"golang.org/x/text/currency"
 )
@@ -92,11 +92,11 @@ func invoiceRows(accountID string, month time.Time, invoices []state.Invoice) ([
 			excluded[inv.Status]++
 			continue
 		}
-		issuer, code, err := validateInvoice(inv)
+		_, code, err := validateInvoice(inv)
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		projected, err := projectInvoiceRows(inv, issuer, code)
+		projected, err := projectInvoiceRows(inv)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -118,6 +118,9 @@ func invoiceRows(accountID string, month time.Time, invoices []state.Invoice) ([
 
 func validateInvoice(inv state.Invoice) (issuer, code string, err error) {
 	if err := state.ValidateInvoiceDetails(inv.Details); err != nil {
+		return "", "", err
+	}
+	if err := state.ValidateInvoiceLifecycle(inv.Lifecycle); err != nil {
 		return "", "", err
 	}
 	if inv.Status != "open" && inv.Status != "paid" && inv.Status != "uncollectible" {
@@ -158,31 +161,8 @@ func validateInvoice(inv state.Invoice) (issuer, code string, err error) {
 	return issuer, u.String(), nil
 }
 
-func invoiceRow(inv state.Invoice, issuer, code, category string, cents int64) []string {
-	component, description := "charges", "Aggregated invoice charges excluding tax"
-	if category == "Tax" {
-		component, description = "tax", "Aggregated invoice tax"
-	}
-	grain, _ := json.Marshal(map[string]string{"x_GregaleAggregation": component})
-	return []string{
-		decimalCents(big.NewInt(cents)), inv.AccountID, code,
-		date(inv.PeriodEnd), date(inv.PeriodStart), category,
-		date(inv.CreatedAt), description, string(grain), inv.ID + ":" + component,
-		date(inv.UpdatedAt), inv.ProviderInvoiceID,
-		"", issuer, "Issued", // Actual invoice facts are applied when available.
-		"", "", // Never substitute first-seen time or invent settlement terms.
-		inv.ProviderInvoiceID, // Original invoices reference themselves, per FOCUS 1.4.
-	}
-}
-
 func decimalCents(cents *big.Int) string {
-	if cents.Sign() < 0 {
-		return "-" + decimalCents(new(big.Int).Abs(cents))
-	}
-	// Arbitrary precision keeps multi-invoice totals exact even past int64.
-	whole, fraction := new(big.Int), new(big.Int)
-	whole.QuoRem(cents, big.NewInt(100), fraction)
-	return whole.String() + "." + fmt.Sprintf("%02d", fraction.Int64())
+	return invoicedetail.DecimalCents(cents)
 }
 
 func validField(s string) bool {
@@ -204,11 +184,7 @@ func headers() []string {
 // Keep the schema and CSV in the same order. Conditional payment-currency
 // and purchase-order columns are omitted because their source data is absent.
 func columns() []ColumnDefinition {
-	names := []string{
-		"BilledCost", "BillingAccountId", "BillingCurrency", "BillingPeriodEnd", "BillingPeriodStart", "ChargeCategory",
-		"InvoiceDetailCreated", "InvoiceDetailDescription", "InvoiceDetailGrain", "InvoiceDetailId", "InvoiceDetailLastUpdated",
-		"InvoiceId", "InvoiceIssueDate", "InvoiceIssuerName", "InvoiceIssueStatus", "PaymentDueDate", "PaymentTerms", "ReferenceInvoiceId",
-	}
+	names := invoicedetail.ColumnNames()
 	cols := make([]ColumnDefinition, len(names))
 	for i, name := range names {
 		cols[i] = ColumnDefinition{ColumnName: name, DataType: "STRING", StringMaxLength: api.MaxFOCUSExportFieldBytes + len(":charges"), StringEncoding: "UTF-8"}

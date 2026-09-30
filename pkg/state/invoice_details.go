@@ -141,6 +141,7 @@ func InvoiceLineGap(inv Invoice) string {
 
 func cloneInvoice(inv Invoice) Invoice {
 	inv.Details = mergeInvoiceDetails(nil, inv.Details)
+	inv.Lifecycle = cloneInvoiceLifecycle(inv.Lifecycle)
 	return inv
 }
 

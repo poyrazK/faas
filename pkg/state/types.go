@@ -5469,6 +5469,7 @@ type StorageUsage struct {
 // the customer via this API.
 type Invoice struct {
 	Details           *InvoiceDetails
+	Lifecycle         *InvoiceLifecycle
 	ID                string
 	AccountID         string
 	Provider          string // "stripe" | "paddle" | "polar"

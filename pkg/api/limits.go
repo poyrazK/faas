@@ -151,6 +151,8 @@ const (
 	MaxInvoiceLineItems       = 1000
 	MaxInvoiceSeenLineIDs     = 10000
 	MaxInvoiceDetailTextBytes = 4096
+	// Independent charge/tax records plus both aggregate fallback records.
+	MaxInvoiceLifecycleRecords = 2*MaxInvoiceSeenLineIDs + 2
 	// Keep artifacts below the Go SDK's 4 MiB response-body bound.
 	MaxFOCUSExportBytes = 3 << 20
 )

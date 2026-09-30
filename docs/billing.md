@@ -31,7 +31,9 @@ dataset instance and exact column schema, plus `x_GregaleProjection` with the
 CSV SHA-256, row count, totals by currency, excluded invoice counts, and known
 gaps. `SourceCoverage` counts detailed invoices, missing invoice facts, and
 aggregate fallback reasons (`unavailable`, `incomplete`, `empty`, `unclassified`,
-`totals_mismatch`, or `tax_in_non_tax_lines`). Use ZIP when CSV and metadata must
+`totals_mismatch`, or `tax_in_non_tax_lines`). `UntrackedLifecycleRecords` counts
+rows with no persisted export history; `LegacyLifecycleRecords` counts tracked
+rows whose original creation time is uncertain. Use ZIP when CSV and metadata must
 match: independent downloads can see newer billing webhooks. Files are created
 with owner-only permissions; existing
 files are preserved. CSV and metadata can go to stdout; ZIP requires an explicit
@@ -50,7 +52,10 @@ stored invoices are accepted per month, including drafts and voids, and each
 artifact is at most 3 MiB. Each invoice can retain at most 1,000 items; exports
 contain at most 10,000 rows. Descriptive fields are bounded to 4,096 bytes and
 identifiers to 256 bytes. Each invoice retains at most 10,000 historical line IDs
-to preserve creation dates after removal. Exceeding invoice, row, or artifact bounds returns 422
+to preserve creation dates after removal. Export lifecycle history retains at
+most 20,002 records per invoice (two components per historical line plus two
+aggregate rows); a delivery exceeding this bound fails atomically. Exceeding
+invoice, row, or artifact bounds returns 422
 with the limit and observed count, without producing a truncated export.
 
 ### Mapping
@@ -70,7 +75,7 @@ UTC RFC 3339 with a `Z` suffix; amounts are exact decimal strings, never floats.
 | `InvoiceDetailDescription` | Provider item description, or the aggregate description on fallback. |
 | `InvoiceIssuerName` | Provider invoice business name when supplied (Stripe `account_name`); otherwise `Polar`, `Paddle`, or `Gregale` merchant brands. Exact legal identity is not guaranteed. |
 | `InvoiceIssueStatus` | Stored `open`, `paid`, and `uncollectible` invoices are `Issued`. Payment state does not imply a draft invoice. Draft and void invoices are excluded and counted in metadata. |
-| `InvoiceDetailCreated`, `InvoiceDetailLastUpdated` | Detailed rows use local first-ingestion/last-fact-change timestamps per provider line. Aggregate rows use local invoice timestamps. These never substitute for issue dates. |
+| `InvoiceDetailCreated`, `InvoiceDetailLastUpdated` | Each exported charge/tax or aggregate record has its own persisted local creation and last-update timestamps. Changes to any exported column advance the affected record; replay, sparse deliveries, and identical reappearance preserve dates. These never substitute for issue dates. |
 | `InvoiceIssueDate`, `PaymentDueDate`, `PaymentTerms` | Supplied invoice facts, with nullable dates empty when unavailable. `PaymentTerms` is required and is listed in metadata `MissingRequiredFields` when any delivered invoice lacks it. |
 
 Zero-cost issued invoices retain a non-tax row; zero tax rows are omitted.
@@ -102,13 +107,15 @@ need their own financial documents and original-invoice links before they can
 be exported as separate adjustments. Conditional payment-currency conversion
 and purchase-order data also need provider ingestion.
 
-Detail timestamps track local provider-line facts. Changes to shared invoice
-fields and the first appearance of a separate tax component still need
-independent lifecycle tracking; metadata declares this gap.
+Lifecycle tracking starts with local ingestion. Existing invoices cannot recover
+unknown historical record creation times. Their available local observations
+are retained and flagged; exports count both untracked and legacy records and
+declare this historical gap when present. Facts and lifecycle history are
+updated in one transaction so downloads cannot see mismatched snapshots.
 
 The next invoice steps are authenticated provider backfill/enrichment, missing
 price classifications and legal issuer coverage, and correction-document
-lineage and complete detail lifecycle tracking. A historical cost ledger with
+lineage. A historical cost ledger with
 service/resource identifiers, quantities, units, and price snapshots is then
 needed for the **Cost and Usage** dataset. Current plan prices
 cannot reliably reconstruct past list, contracted, or effective costs.

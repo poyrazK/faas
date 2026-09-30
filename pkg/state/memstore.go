@@ -17063,6 +17063,12 @@ func (m *MemStore) UpsertInvoice(_ context.Context, inv Invoice) error {
 				inv.CreatedAt = time.Now().UTC()
 			}
 			inv.UpdatedAt = time.Now().UTC()
+			inv.Lifecycle = existing.Lifecycle
+			var err error
+			inv.Lifecycle, err = advanceInvoiceLifecycle(inv, inv.UpdatedAt)
+			if err != nil {
+				return err
+			}
 			m.invoices[id] = inv
 			return nil
 		}
@@ -17078,6 +17084,13 @@ func (m *MemStore) UpsertInvoice(_ context.Context, inv Invoice) error {
 	}
 	inv.Details = stampInvoiceLines(nil, inv.Details, time.Now().UTC())
 	if err := ValidateInvoiceDetails(inv.Details); err != nil {
+		return err
+	}
+	observed := time.Now().UTC()
+	inv.Lifecycle = newInvoiceLifecycle(observed)
+	var err error
+	inv.Lifecycle, err = advanceInvoiceLifecycle(inv, observed)
+	if err != nil {
 		return err
 	}
 	m.invoices[inv.ID] = cloneInvoice(inv)

@@ -57,6 +57,8 @@ work. No provider API calls occur during export.
 Detail timestamps currently track local provider-line facts. Shared invoice
 field changes and the later creation of a separate tax component do not have
 independent detail timestamps; metadata declares this lifecycle coverage gap.
+[ADR-382](382-invoice-detail-lifecycle.md) supersedes this timestamp mapping
+with per-export-record history; historical creation uncertainty remains explicit.
 
 Limits live in `pkg/api/limits.go`: 1,000 invoices, 1,000 items per invoice,
 10,000 exported rows, 10,000 retained line IDs per invoice, 256-byte identifiers,

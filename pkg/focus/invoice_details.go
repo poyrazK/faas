@@ -1,12 +1,9 @@
 package focus
 
 import (
-	"encoding/json"
 	"fmt"
-	"sort"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -20,75 +17,41 @@ func (e *LimitError) Error() string {
 	return fmt.Sprintf("FOCUS export exceeds %d %s", e.Limit, e.Kind)
 }
 
-func projectInvoiceRows(inv state.Invoice, issuer, code string) ([][]string, error) {
-	if state.InvoiceLineGap(inv) != "" {
-		rows := [][]string{invoiceRow(inv, issuer, code, "Usage", inv.TotalCents-inv.TaxCents)}
-		if inv.TaxCents != 0 {
-			rows = append(rows, invoiceRow(inv, issuer, code, "Tax", inv.TaxCents))
+func projectInvoiceRows(inv state.Invoice) ([][]string, error) {
+	records := state.InvoiceExportRecords(inv)
+	rows := make([][]string, 0, len(records))
+	for _, record := range records {
+		if inv.Lifecycle != nil {
+			if history, ok := inv.Lifecycle.Records[record.ID()]; ok {
+				if history.Fingerprint != record.Fingerprint() {
+					return nil, fmt.Errorf("invoice record lifecycle is stale")
+				}
+				record = record.WithLifecycle(history.CreatedAt, history.UpdatedAt)
+			}
 		}
-		for _, row := range rows {
-			applyInvoiceFacts(row, inv.Details)
-		}
-		return rows, nil
-	}
-	items := append([]state.InvoiceLineItem(nil), inv.Details.Lines.Items...)
-	sort.Slice(items, func(i, j int) bool { return items[i].ID < items[j].ID })
-	rows := make([][]string, 0, len(items)*2)
-	for _, item := range items {
-		created, err := time.Parse(time.RFC3339Nano, item.CreatedAt)
+		created, err := time.Parse(time.RFC3339Nano, record.CreatedAt())
 		if err != nil || !validDate(created) {
-			return nil, fmt.Errorf("invalid invoice line creation date")
+			return nil, fmt.Errorf("invalid invoice record creation date")
 		}
-		updated, err := time.Parse(time.RFC3339Nano, item.UpdatedAt)
+		updated, err := time.Parse(time.RFC3339Nano, record.UpdatedAt())
 		if err != nil || !validDate(updated) || updated.Before(created) {
-			return nil, fmt.Errorf("invalid invoice line update date")
+			return nil, fmt.Errorf("invalid invoice record update date")
 		}
-		row := providerLineRow(inv, issuer, code, item, "charges", item.ChargeCategory, item.NetCents)
-		rows = append(rows, row)
-		if item.TaxCents != 0 {
-			rows = append(rows, providerLineRow(inv, issuer, code, item, "tax", "Tax", item.TaxCents))
-		}
+		rows = append(rows, record.WithLifecycle(date(created), date(updated)).Values())
 	}
 	return rows, nil
 }
 
-func providerLineRow(inv state.Invoice, issuer, code string, item state.InvoiceLineItem, component, category string, cents int64) []string {
-	row := invoiceRow(inv, issuer, code, category, cents)
-	row[6], row[10] = canonicalDate(item.CreatedAt), canonicalDate(item.UpdatedAt)
-	row[7] = item.Description
-	if row[7] == "" {
-		row[7] = "Provider invoice line item"
-	}
-	grain, _ := json.Marshal(map[string]string{"x_GregaleProviderLineId": item.ID, "x_GregaleComponent": component})
-	row[8] = string(grain)
-	row[9] = uuid.NewSHA1(uuid.NameSpaceURL, []byte("gregale:invoice-detail:"+inv.ID+":"+item.ID+":"+component)).String()
-	applyInvoiceFacts(row, inv.Details)
-	return row
-}
-
-func applyInvoiceFacts(row []string, d *state.InvoiceDetails) {
-	if d == nil {
-		return
-	}
-	row[12], row[15], row[16] = canonicalDate(d.IssuedAt), canonicalDate(d.DueAt), d.PaymentTerms
-}
-
-func canonicalDate(value string) string {
-	if value == "" {
-		return ""
-	}
-	t, _ := time.Parse(time.RFC3339Nano, value) // state validation precedes projection
-	return date(t)
-}
-
 type SourceCoverage struct {
-	IssuedInvoices           int            `json:"IssuedInvoices"`
-	DetailedInvoices         int            `json:"DetailedInvoices"`
-	AggregateFallbackReasons map[string]int `json:"AggregateFallbackReasons"`
-	MissingPaymentTerms      int            `json:"MissingPaymentTerms"`
-	MissingIssuerName        int            `json:"MissingIssuerName"`
-	MissingIssueDate         int            `json:"MissingIssueDate"`
-	MissingDueDate           int            `json:"MissingDueDate"`
+	IssuedInvoices            int            `json:"IssuedInvoices"`
+	DetailedInvoices          int            `json:"DetailedInvoices"`
+	AggregateFallbackReasons  map[string]int `json:"AggregateFallbackReasons"`
+	MissingPaymentTerms       int            `json:"MissingPaymentTerms"`
+	MissingIssuerName         int            `json:"MissingIssuerName"`
+	MissingIssueDate          int            `json:"MissingIssueDate"`
+	MissingDueDate            int            `json:"MissingDueDate"`
+	UntrackedLifecycleRecords int            `json:"UntrackedLifecycleRecords"`
+	LegacyLifecycleRecords    int            `json:"LegacyLifecycleRecords"`
 }
 
 func invoiceCoverage(invoices []state.Invoice) SourceCoverage {
@@ -98,6 +61,15 @@ func invoiceCoverage(invoices []state.Invoice) SourceCoverage {
 			continue
 		}
 		c.IssuedInvoices++
+		for _, record := range state.InvoiceExportRecords(inv) {
+			if inv.Lifecycle == nil {
+				c.UntrackedLifecycleRecords++
+			} else if history, ok := inv.Lifecycle.Records[record.ID()]; !ok {
+				c.UntrackedLifecycleRecords++
+			} else if history.LegacyCreated {
+				c.LegacyLifecycleRecords++
+			}
+		}
 		if reason := state.InvoiceLineGap(inv); reason == "" {
 			c.DetailedInvoices++
 		} else {
@@ -129,7 +101,9 @@ func coverageLimitations(c SourceCoverage) []string {
 		"Refunds and credit notes are not separate invoice documents; amounts reconcile to stored invoice totals, which providers may adjust.",
 		"Only locally persisted invoices are included; this is not a provider reconciliation or completeness guarantee.",
 		"Full FOCUS conformance is not claimed; per-resource cost allocation and correction-document lineage remain unavailable.",
-		"Detail timestamps track local provider-line ingestion and changes; shared invoice-field changes and separate tax-component creation are not independently tracked.",
+	}
+	if c.UntrackedLifecycleRecords > 0 || c.LegacyLifecycleRecords > 0 {
+		limits = append(limits, "Historical record creation times cannot be recovered for untracked or legacy records; local observations and lifecycle coverage counts describe this gap.")
 	}
 	if c.MissingPaymentTerms > 0 {
 		limits = append(limits, "PaymentTerms is empty where corresponding invoice terms are unavailable.")
