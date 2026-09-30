@@ -41,6 +41,8 @@ func (m *MemStore) GetApplicationStandardLogDestination(_ context.Context, orgID
 	if !validStandardResourceRead(orgID, id) {
 		return ApplicationStandardLogDestination{}, ErrInvalidArgument
 	}
+	parsedID, _ := uuid.Parse(id)
+	id = parsedID.String()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	row, exists := m.applicationStandardLogDestinations[id]
@@ -53,6 +55,10 @@ func (m *MemStore) GetApplicationStandardLogDestination(_ context.Context, orgID
 func (m *MemStore) ListApplicationStandardLogDestinations(_ context.Context, orgID, after string, limit int) ([]ApplicationStandardLogDestination, error) {
 	if !validStandardResourcePage(orgID, after, limit) {
 		return nil, ErrInvalidArgument
+	}
+	if after != "" {
+		parsedID, _ := uuid.Parse(after)
+		after = parsedID.String()
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -91,6 +97,8 @@ func (m *MemStore) GetApplicationStandardPublisher(_ context.Context, orgID, id 
 	if !validStandardResourceRead(orgID, id) {
 		return api.ApplicationStandardPublisher{}, ErrInvalidArgument
 	}
+	parsedID, _ := uuid.Parse(id)
+	id = parsedID.String()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	row, exists := m.applicationStandardPublishers[id]
@@ -103,6 +111,10 @@ func (m *MemStore) GetApplicationStandardPublisher(_ context.Context, orgID, id 
 func (m *MemStore) ListApplicationStandardPublishers(_ context.Context, orgID, after string, limit int) ([]api.ApplicationStandardPublisher, error) {
 	if !validStandardResourcePage(orgID, after, limit) {
 		return nil, ErrInvalidArgument
+	}
+	if after != "" {
+		parsedID, _ := uuid.Parse(after)
+		after = parsedID.String()
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -72,6 +72,14 @@ func standardResourceLifecycle(t *testing.T, store standardResourceTestStore) {
 	if err != nil || len(next) != 1 || next[0].ID == page[0].ID {
 		t.Fatalf("next page: %+v %v", next, err)
 	}
+	aliasNext, err := store.ListApplicationStandardLogDestinations(ctx, org.ID, strings.ReplaceAll(strings.ToUpper(page[0].ID), "-", ""), 1)
+	if err != nil || len(aliasNext) != 1 || aliasNext[0].ID != next[0].ID {
+		t.Fatalf("UUID cursor alias changed pagination: %+v %v", aliasNext, err)
+	}
+	aliasRead, err := store.GetApplicationStandardLogDestination(ctx, org.ID, strings.ToUpper(destination.ID))
+	if err != nil || aliasRead.ID != destination.ID {
+		t.Fatalf("UUID read alias: %+v %v", aliasRead, err)
+	}
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
