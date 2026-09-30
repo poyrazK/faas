@@ -9,7 +9,7 @@ type storeOptions struct{ trafficAppsDomain string }
 type StoreOption func(*storeOptions)
 
 // WithTrafficAppsDomain supplies the same apps_domain as the public router.
-// Empty disables primary app URL analysis; deployment URLs remain separate.
+// Empty disables primary/alias app URL analysis; revision URLs remain separate.
 func WithTrafficAppsDomain(domain string) StoreOption {
 	return func(options *storeOptions) { options.trafficAppsDomain = domain }
 }

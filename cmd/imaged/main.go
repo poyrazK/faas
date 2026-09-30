@@ -227,7 +227,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 
-	store := state.NewPgStore(pool)
+	store := state.NewPgStore(pool, state.WithTrafficAppsDomain(imgCfg.GetAppsDomain(getenv)))
 	// Register the same canonical OpenAPI projector as apid. imaged owns the
 	// snapshot_written → live transition, so the capture and the contract gate
 	// must be wired in this process too.

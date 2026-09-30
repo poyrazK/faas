@@ -288,6 +288,15 @@
     group: root
     mode: "0644"
 
+- name: control_plane_service — install traffic apps-domain drop-in for schedd
+  notify: restart faas-schedd
+  ansible.builtin.template:
+    src: ../../_shared/templates/99-faas-apps-domain.conf.j2
+    dest: /etc/systemd/system/faas-schedd.service.d/99-faas-apps-domain.conf
+    owner: root
+    group: root
+    mode: "0644"
+
 # faas_apid_app_errors_listen (apid, the LISTENER) and
 # faas_gatewayd_app_errors_target (gatewayd-internal, the CLIENT) are a pair.
 # Setting only the client is silent and permanent: gatewayd-internal dials a

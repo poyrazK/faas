@@ -998,6 +998,7 @@ type Querier interface {
 	// Ownership is immutable; discover it before acquiring the account/app locks.
 	ReadAppTrafficAccount(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.UUID, error)
 	ReadBoundedTrafficEdgeRule(ctx context.Context, db DBTX, arg ReadBoundedTrafficEdgeRuleParams) (ReadBoundedTrafficEdgeRuleRow, error)
+	ReadDeploymentTrafficAccount(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (pgtype.UUID, error)
 	ReadEdgeRuleTrafficAccount(ctx context.Context, db DBTX, ruleID pgtype.UUID) (ReadEdgeRuleTrafficAccountRow, error)
 	ReadOpenAPIImportQuota(ctx context.Context, db DBTX, arg ReadOpenAPIImportQuotaParams) (ReadOpenAPIImportQuotaRow, error)
 	// A single statement reads the pointer and its complete membership together.
@@ -1038,6 +1039,7 @@ type Querier interface {
 	ReadServicePolicyTestMember(ctx context.Context, db DBTX, appID pgtype.UUID) (ScenarioTestMember, error)
 	// Existing slug reservations, including tombstones/internal apps, keep their key.
 	ReadTrafficAliasHostnameConflict(ctx context.Context, db DBTX, hostLabel string) (bool, error)
+	ReadTrafficDeploymentStatus(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (string, error)
 	// Only selectors, counts, sizes and referenced IDs leave the database.
 	ReadTrafficHostAnalysis(ctx context.Context, db DBTX, arg ReadTrafficHostAnalysisParams) (ReadTrafficHostAnalysisRow, error)
 	ReadTrafficSecurityEpochs(ctx context.Context, db DBTX, arg ReadTrafficSecurityEpochsParams) ([]ReadTrafficSecurityEpochsRow, error)
@@ -1367,6 +1369,8 @@ type Querier interface {
 	// selectivity; the residual account_id check is a post-fetch
 	// row-level filter (one row, microseconds).
 	UpdateSpansSummary(ctx context.Context, db DBTX, arg UpdateSpansSummaryParams) error
+	// Keep cancelled terminal while allowing an eligible target to revive an alias.
+	UpdateTrafficDeploymentStatus(ctx context.Context, db DBTX, arg UpdateTrafficDeploymentStatusParams) (int64, error)
 	// Review finding MED-1 (PR #993): the inline SQL at
 	// pkg/state/pgstore.go::UpdateTrigger is the source of truth
 	// (sqlc-generated UpdateTrigger stub is bypassed because sqlc

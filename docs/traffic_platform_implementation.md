@@ -1153,3 +1153,87 @@ staging release acceptance remain pending. The user confirmed no native Linux
 x86_64 KVM acceptance host is available. VM/restore, nft connection/source-IP,
 process-death and leak checks remain pending. All six release guarantees
 remain unchecked.
+
+### Deployment alias revival guard and writer DNS wiring, 2026-09-30
+
+Generic writes to an alias-eligible deployment status now share account
+serialization and the stable before/after policy transaction. Cancelled rows
+retain their terminal fence. Mark-live, including its Git-driven variant,
+takes that account guard before the existing app/deployment locks. Cutover,
+cron reactivation, OpenAPI snapshot and outcome activity writes remain inside
+that transaction. A failed target cannot revive an attached alias against an
+old oversized selector. Existing eligible targets retain the incremental
+repair baseline. MemStore validates a proposed target status before saving
+any associated intent or enqueueing webhooks and applies the same bounded
+analysis to positive status writes.
+
+The writer audit found that dark promotion requires pending/live targets,
+while rollback preparation, automatic rollback, canary/service transitions
+and build allocation only move already eligible targets among alias-eligible
+statuses. They do not newly expose this alias scope. Immutable revision URL
+activation and exact legacy shadow/fallback binding still require their own
+complete projection.
+
+Builderd, imaged and schedd now receive the configured apps domain through
+TOML and its environment overlay, using the existing shared default. Their
+store wiring passes that immutable value. The manifest catalog/renderer
+includes it in all three writer configs. A shared systemd drop-in carries the
+operator DNS value to builderd, compute imaged/schedd and control-plane
+schedd. The generated environment contract records the additional owners.
+
+Final evidence (full source sets, no Go source overlays):
+
+- Selected PostgreSQL traffic/deployment regressions: 326 named cases pass,
+  no failures or skips, 128.385 s.
+  `/tmp/gregale-alias-revival-broad-final-pg-20260930.jsonl`.
+  Covers all six positive statuses, stable/manual/service/canary mark-live
+  revival rollback, unchanged serving URLs, dark promotion, cancelled target
+  refusal, canceled analysis/fresh retry, account-lock cancellation and retry,
+  and existing snapshot, promotion-fence, service/canary and traffic behavior.
+  Refused revival preserves deployment, alias, cron, snapshot, activity and
+  webhook delivery intent; supported policy repair and retry succeeds.
+- Full `pkg/state -tags no_pg` suite: 1,896 named cases pass, 772 existing
+  guarded integration skips, no failures, 4.983 s.
+  `/tmp/gregale-alias-revival-full-final-no-pg-20260930.jsonl`.
+- Writer config, renderer, manifest, environment contract and Ansible profile:
+  74 named cases pass, no failures/skips. Builderd 0.876 s, imaged 0.808 s,
+  schedd 0.778 s, renderer 0.344 s, manifest 0.367 s, unit specs 1.536 s.
+  `/tmp/gregale-alias-revival-config-final-20260930.jsonl`.
+  Custom/default/disabled config and environment precedence are exercised.
+- Full local image/build library and imaged/builderd/schedd command suites:
+  1,203 named cases pass, 24 existing guarded skips, no failures.
+  Image library 7.518 s, builder library 7.111 s, imaged 0.865 s,
+  builderd 1.594 s, schedd 1.019 s.
+  `/tmp/gregale-alias-revival-pipeline-final-20260930.jsonl`.
+  These verify the local consumers of positive deployment status writes;
+  they do not establish native or deployed daemon acceptance.
+- Pinned production lint passes for state, all three writer commands,
+  renderer, manifest and unit specs; state uses tests=false and disables the
+  existing test-only unused helper. Writer/config packages also pass lint
+  with tests enabled. The final state parity change passes production lint.
+  `/tmp/gregale-alias-revival-production-lint-20260930.log`,
+  `/tmp/gregale-alias-revival-state-final-lint-20260930.log`,
+  `/tmp/gregale-alias-revival-tests-lint-20260930.log`.
+- Fresh SQLC v1.31.1 output matches all four generated files. The three changed
+  Ansible task files parse as YAML; their resolved shared Jinja template
+  renders custom/default/empty domains. Generated environment docs are in
+  sync; whitespace checks pass. No schema or migration changes.
+
+The earlier alias metadata fixture supplied status to CreateDeployment, which
+Postgres always initializes as pending. It now explicitly transitions and
+reads back each of all eight actual statuses before comparing projection to
+runtime eligibility. The earlier named status cases do not establish those
+individual status branches; the final profile above does. The mark-live
+fixture likewise explicitly promotes its base before allocating a candidate.
+Initial fixture-interface, manual-base, imaged config-name and stale generated
+contract failures, plus disk-exhausted builds, are excluded from passing
+verification. The final profiles above pass after those corrections.
+
+Exact legacy alias shadowing, alias removal/fallback transitions, immutable
+revision activation, custom-domain binding, operator namespace changes and
+global claimed/reserved exclusions/newly unclaimed scopes remain pending.
+Bounded decision evidence, preview/runtime/full synthetic-path agreement,
+full daemon/load/recovery and customer/staging release acceptance remain
+pending. No native Linux x86_64 KVM acceptance host is available; VM/restore,
+nft connection/source-IP, process-death and leak checks remain pending. All
+six release guarantees remain unchecked.

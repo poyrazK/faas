@@ -12108,6 +12108,18 @@ func (q *Queries) ReadBoundedTrafficEdgeRule(ctx context.Context, db DBTX, arg R
 	return i, err
 }
 
+const readDeploymentTrafficAccount = `-- name: ReadDeploymentTrafficAccount :one
+SELECT a.account_id FROM deployments d JOIN apps a ON a.id=d.app_id
+WHERE d.id=$1::uuid
+`
+
+func (q *Queries) ReadDeploymentTrafficAccount(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, readDeploymentTrafficAccount, deploymentID)
+	var account_id pgtype.UUID
+	err := row.Scan(&account_id)
+	return account_id, err
+}
+
 const readEdgeRuleTrafficAccount = `-- name: ReadEdgeRuleTrafficAccount :one
 SELECT account_id,kind FROM edge_rules WHERE id = $1::uuid
 `
@@ -13177,6 +13189,17 @@ func (q *Queries) ReadTrafficAliasHostnameConflict(ctx context.Context, db DBTX,
 	var conflict bool
 	err := row.Scan(&conflict)
 	return conflict, err
+}
+
+const readTrafficDeploymentStatus = `-- name: ReadTrafficDeploymentStatus :one
+SELECT status FROM deployments WHERE id=$1::uuid
+`
+
+func (q *Queries) ReadTrafficDeploymentStatus(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, readTrafficDeploymentStatus, deploymentID)
+	var status string
+	err := row.Scan(&status)
+	return status, err
 }
 
 const readTrafficHostAnalysis = `-- name: ReadTrafficHostAnalysis :one
@@ -16540,6 +16563,27 @@ type UpdateSpansSummaryParams struct {
 func (q *Queries) UpdateSpansSummary(ctx context.Context, db DBTX, arg UpdateSpansSummaryParams) error {
 	_, err := db.Exec(ctx, updateSpansSummary, arg.TraceID, arg.Column2, arg.Column3)
 	return err
+}
+
+const updateTrafficDeploymentStatus = `-- name: UpdateTrafficDeploymentStatus :execrows
+UPDATE deployments SET status=$1::text, error=$2::text
+WHERE id=$3::uuid
+  AND (status<>'cancelled' OR $1::text='cancelled')
+`
+
+type UpdateTrafficDeploymentStatusParams struct {
+	Status       string
+	Error        pgtype.Text
+	DeploymentID pgtype.UUID
+}
+
+// Keep cancelled terminal while allowing an eligible target to revive an alias.
+func (q *Queries) UpdateTrafficDeploymentStatus(ctx context.Context, db DBTX, arg UpdateTrafficDeploymentStatusParams) (int64, error) {
+	result, err := db.Exec(ctx, updateTrafficDeploymentStatus, arg.Status, arg.Error, arg.DeploymentID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const updateTrigger = `-- name: UpdateTrigger :one

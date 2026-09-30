@@ -44,6 +44,15 @@ func TestPgTrafficAliasMetadataMatchesRuntimeStatuses(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			// CreateDeployment allocates a pending row in PostgreSQL, even
+			// when a fixture supplies another status. Exercise real states.
+			if err := store.UpdateDeploymentStatus(t.Context(), deployment.ID, status, ""); err != nil {
+				t.Fatal(err)
+			}
+			deployment, err = store.DeploymentByID(t.Context(), deployment.ID)
+			if err != nil || deployment.Status != status {
+				t.Fatalf("status fixture=%s want=%s err=%v", deployment.Status, status, err)
+			}
 			name := string(status)
 			if _, err := pool.Exec(t.Context(), `INSERT INTO deployment_aliases(app_id,name,deployment_id) VALUES($1,$2,$3)`, app.ID, name, deployment.ID); err != nil {
 				t.Fatal(err)

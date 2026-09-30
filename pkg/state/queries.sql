@@ -5414,3 +5414,16 @@ ORDER BY observed DESC, scope LIMIT 1;
 -- name: ReadTrafficAliasHostnameConflict :one
 -- Existing slug reservations, including tombstones/internal apps, keep their key.
 SELECT EXISTS(SELECT 1 FROM apps WHERE slug=sqlc.arg(host_label)::text)::boolean AS conflict;
+
+-- name: ReadDeploymentTrafficAccount :one
+SELECT a.account_id FROM deployments d JOIN apps a ON a.id=d.app_id
+WHERE d.id=sqlc.arg(deployment_id)::uuid;
+
+-- name: UpdateTrafficDeploymentStatus :execrows
+-- Keep cancelled terminal while allowing an eligible target to revive an alias.
+UPDATE deployments SET status=sqlc.arg(status)::text, error=sqlc.narg(error)::text
+WHERE id=sqlc.arg(deployment_id)::uuid
+  AND (status<>'cancelled' OR sqlc.arg(status)::text='cancelled');
+
+-- name: ReadTrafficDeploymentStatus :one
+SELECT status FROM deployments WHERE id=sqlc.arg(deployment_id)::uuid;

@@ -541,9 +541,22 @@ starts with no baseline even when its selector was already oversized. The
 alias row and its verdict share one transaction; app publication/restore also
 sees existing aliases in that projection. Alias hostname collision lookup is
 inside the same transaction. MemStore projects proposed alias rows under its
-mutex. This publication integration does not complete legacy alias shadowing,
-deletion/fallback transitions or deployment-status resurrection; those still
-need the complete binding transition projection and all relevant writers.
+mutex. This publication integration does not complete legacy alias shadowing
+or deletion/fallback transitions; those still need the complete binding
+transition projection and all relevant writers.
+
+Deployment status writes that can revive an attached alias also use account
+serialization and the alias before/after projection. The mark-live transaction
+keeps its existing app/deployment cutover, cron, snapshot and activity writes
+inside that guard. Generic positive status writes preserve the cancelled-state
+fence. MemStore checks a proposed target status before publishing any associated
+intent or webhooks. Already eligible target transitions retain the incremental
+repair baseline; failed-to-eligible transitions must fit the newly serving URL.
+This does not add immutable revision URL projection or complete legacy alias
+shadowing/removal, custom-domain or global binding transitions.
+Builder, image and scheduler writers receive the same immutable apps-domain
+configuration through TOML, its environment overlay and the manifest renderer.
+Managed host roles supply that DNS value to their systemd units as well.
 
 The implementation tracker is `docs/traffic_platform_implementation.md`.
 Each guarantee needs configuration-to-runtime tests, cancellation/recovery

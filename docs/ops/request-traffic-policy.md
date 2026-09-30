@@ -61,7 +61,8 @@ remain available. This single-row check does not establish the combined host
 rule and referenced-preset bound.
 
 Rule and preset creates/updates, environment edge overlays, new environment
-registration, environment clones and alias publication share account serialization. A session
+registration, environment clones, alias publication and positive deployment
+status writes share account serialization. A session
 advisory lock on a pinned direct-pool connection precedes the repeatable-read
 transaction; its account row lock then precedes app/FK/policy-row locks and is
 retained through commit. Route creates/updates first take the shared global
@@ -136,10 +137,18 @@ and an undeleted target in a routing-eligible status, including superseded
 revisions. Ordinary alias URLs retain all matched account rules and presets.
 Refusals preserve the alias row and return the structured 422 errors below.
 An explicit empty apps domain disables alias publication scope as well.
+Generic positive deployment status updates and mark-live also validate alias
+revival. Their verdict shares the transaction with the status change and any
+existing cutover, cron, contract snapshot or outcome activity writes. Cancelled
+targets retain their terminal-state fence. In-memory writers check the proposed
+status before saving intent or enqueueing webhooks. Already eligible targets
+retain their repair baseline. Builderd, imaged and schedd receive `apps_domain`
+through TOML, `FAAS_APPS_DOMAIN` and the manifest renderer. Managed host roles
+supply the same configured DNS value to their units.
 
 This initial projection includes potential legacy tag-prefixed primary URLs
 conservatively. Exact legacy alias shadowing, deletion/fallback transitions,
-deployment-status resurrection, custom-domain transitions and operator
+immutable revision URL activation, custom-domain transitions and operator
 namespace changes still need the complete binding projection and acceptance.
 
 Route creates/updates also check enabled route-only discovery across accounts

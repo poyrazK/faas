@@ -59,9 +59,7 @@ func TestRenderTOML_Schedd(t *testing.T) {
 	if strings.Contains(string(body), "[compute_node]") {
 		t.Errorf("schedd body unexpectedly contains [compute_node]\nbody:\n%s", body)
 	}
-	// schedd's PrivateKeys do not include apps_domain (per the
-	// HostKeys catalog); an AppsDomain value flows through but
-	// writeTOMLKV skips it because schedd doesn't declare it.
+	// This fixture supplies no domain, so the key remains omitted.
 	if strings.Contains(string(body), "apps_domain") {
 		t.Errorf("schedd body unexpectedly contains apps_domain\nbody:\n%s", body)
 	}
@@ -479,11 +477,10 @@ func TestRenderTOML_ComputeMetricsBindPrivateHost(t *testing.T) {
 }
 
 // TestRenderTOML_AppsDomainFlowsThrough pins that the manifest's
-// DNS.AppsDomain flows into apid, githubd and gatewayd-internal TOMLs (the
-// daemons whose HostKeys declare apps_domain). An empty AppsDomain
+// DNS.AppsDomain flows into the router and guarded writer TOMLs. An empty AppsDomain
 // omits the key, matching the daemon's env-var fallback.
 func TestRenderTOML_AppsDomainFlowsThrough(t *testing.T) {
-	for _, d := range []string{"apid", "githubd", "gatewayd-internal"} {
+	for _, d := range []string{"apid", "githubd", "gatewayd-internal", "builderd", "imaged", "schedd"} {
 		body, _, err := renderTOML(tomlRenderCtx{
 			Daemon:     d,
 			DC:         fixtureTOML(d),

@@ -444,7 +444,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("schedd: load vmmd TLS: %w", err)
 	}
 	vmmRotator.Set(vmmTLS)
-	store := state.NewPgStore(pool)
+	store := state.NewPgStore(pool, state.WithTrafficAppsDomain(cfg.GetAppsDomain(os.Getenv)))
 
 	// Phase 2 / Gate A: resolve this schedd's owner node id at
 	// startup. Empty cfg.NodeName → empty owner (legacy

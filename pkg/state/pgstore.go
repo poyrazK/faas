@@ -8434,6 +8434,9 @@ func (s *PgStore) UpdateDeploymentStatus(ctx context.Context, id string, status 
 		}
 		return tx.Commit(ctx)
 	}
+	if (Deployment{Status: status}).DeploymentAliasActive() {
+		return s.updateTrafficDeploymentStatus(ctx, id, status, errMsg)
+	}
 	tag, err := s.pool.Exec(ctx, `
 		update deployments set status = $2, error = $3
 		 where id = $1 and (status <> 'cancelled' or $2 = 'cancelled')`, id, string(status), nullString(errMsg))
@@ -9028,11 +9031,11 @@ func (s *PgStore) MarkGitDrivenDeploymentLiveIfLatest(ctx context.Context, id st
 }
 
 func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceGitDriven bool) error {
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginDeploymentTrafficMutation(ctx, id)
 	if err != nil {
 		return fmt.Errorf("state: mark deployment live begin: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 
 	// CreateDeployment takes the app lock before touching deployment rows.
 	// Use the same order here so two ready candidates cannot race through

@@ -22,6 +22,7 @@ type memTrafficPolicyChange struct {
 	Environments map[string]ProjectEnvironment
 	Policies     map[string]ProjectEnvironmentEdgePolicy
 	Aliases      map[string]DeploymentAlias
+	Deployments  map[string]Deployment
 }
 
 func visitMemTrafficRows[T any](ctx context.Context, rows, proposed map[string]T, visit func(T) error) error {
@@ -151,7 +152,10 @@ func (m *MemStore) readMemTrafficHostAnalysisLocked(ctx context.Context, account
 		if !found || app.AccountID != account || app.Status == AppDeleted || app.DeletedAt != nil || api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
 			return nil
 		}
-		deployment, found := m.deployments[alias.DeploymentID]
+		deployment, found := change.Deployments[alias.DeploymentID]
+		if !found {
+			deployment, found = m.deployments[alias.DeploymentID]
+		}
 		if !found || deployment.AppID != alias.AppID || deployment.DeletedAt != nil || !deployment.DeploymentAliasActive() {
 			return nil
 		}

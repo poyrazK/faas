@@ -8106,7 +8106,7 @@ func (m *MemStore) ListDeploymentsForAccountPage(_ context.Context, accountID st
 	return all, nil
 }
 
-func (m *MemStore) UpdateDeploymentStatus(_ context.Context, id string, status DeploymentStatus, errMsg string) error {
+func (m *MemStore) UpdateDeploymentStatus(ctx context.Context, id string, status DeploymentStatus, errMsg string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, ok := m.deployments[id]
@@ -8122,6 +8122,9 @@ func (m *MemStore) UpdateDeploymentStatus(_ context.Context, id string, status D
 	} else {
 		d.Status = status
 		d.Error = errMsg
+		if err := m.checkMemTrafficDeploymentChangeLocked(ctx, d); err != nil {
+			return err
+		}
 		m.deployments[id] = d
 		if status == DeployLive && previousStatus != DeployLive {
 			m.enqueueDeploymentLifecycleWebhooksLocked(d)
@@ -8271,6 +8274,12 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 				}
 			}
 		}
+	}
+
+	next := d
+	next.Status = DeployLive
+	if err := m.checkMemTrafficDeploymentChangeLocked(ctx, next); err != nil {
+		return err
 	}
 
 	// Build the post-transition rows locally first. The callback can fail

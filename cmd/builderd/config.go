@@ -11,6 +11,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/onebox-faas/faas/pkg/api"
 	builderdpkg "github.com/onebox-faas/faas/pkg/builderd"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -19,6 +20,8 @@ import (
 // field has a working default so a missing or partial file still yields a
 // runnable daemon.
 type Config struct {
+	// AppsDomain matches public routing for deployment alias activation checks.
+	AppsDomain string `toml:"apps_domain"`
 	// VMMDSocket is the vmmd gRPC socket builderd dials to spawn builder VMs
 	// when VMMTarget is empty. Defaults to /run/faas/vmmd.sock — the same
 	// socket schedd uses (ADR-014/015).
@@ -200,6 +203,13 @@ func (c *Config) ResolveVMMTarget() string {
 	return "unix://" + c.VMMDSocket
 }
 
+func (c *Config) GetAppsDomain(env func(string) string) string {
+	if value := env("FAAS_APPS_DOMAIN"); value != "" {
+		return value
+	}
+	return c.AppsDomain
+}
+
 // LoadVMMTLS returns the client mTLS config builderd uses to dial vmmd.
 // Empty cluster returns (nil, nil); partial cluster is rejected.
 func (c *Config) LoadVMMTLS() (*tls.Config, error) {
@@ -285,6 +295,7 @@ func (c *Config) applyEnvironmentOverrides() {
 // file is not an error — the defaults produce a working daemon.
 func LoadConfig(path string) (*Config, error) {
 	c := &Config{
+		AppsDomain:               hostidentity.DefaultAppsDomain,
 		VMMDSocket:               "/run/faas/vmmd.sock",
 		CacheDir:                 "/var/cache/faas/builds",
 		SourceSpoolDir:           envOr("FAAS_SPOOL_ROOT", "/var/spool/faas/builds"),

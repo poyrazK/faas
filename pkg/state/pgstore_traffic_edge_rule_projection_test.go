@@ -147,6 +147,12 @@ func TestPgTrafficPolicyMutationsShareAccountLockBeforeAppLock(t *testing.T) {
 			_, err := store.SetDeploymentAlias(ctx, other.ID, "candidate", deployment.ID)
 			return err
 		}},
+		{"deployment-status", func(ctx context.Context) error {
+			return store.UpdateDeploymentStatus(ctx, deployment.ID, state.DeployImaging, "")
+		}},
+		{"deployment-mark-live", func(ctx context.Context) error {
+			return store.MarkDeploymentLive(ctx, deployment.ID)
+		}},
 	} {
 		t.Run(mutation.name, func(t *testing.T) {
 			bounded, cancel := context.WithTimeout(ctx, 75*time.Millisecond)
@@ -164,6 +170,10 @@ func TestPgTrafficPolicyMutationsShareAccountLockBeforeAppLock(t *testing.T) {
 	if err != nil || len(aliases) != 0 {
 		t.Fatalf("canceled alias publication changed intent: %+v err=%v", aliases, err)
 	}
+	current, err := store.DeploymentByID(ctx, deployment.ID)
+	if err != nil || current.Status != deployment.Status {
+		t.Fatalf("canceled deployment writer changed status: %s err=%v", current.Status, err)
+	}
 	independent, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
 	if _, err := store.CreateEdgeRule(independent, pgSampleEdgeRuleParams(peerAccount.ID, peer.ID, "independent-policy.example.test")); err != nil {
@@ -177,6 +187,12 @@ func TestPgTrafficPolicyMutationsShareAccountLockBeforeAppLock(t *testing.T) {
 	}
 	if _, err := store.SetDeploymentAlias(ctx, other.ID, "candidate", deployment.ID); err != nil {
 		t.Fatalf("alias publication after canceled waiter: %v", err)
+	}
+	if err := store.UpdateDeploymentStatus(ctx, deployment.ID, state.DeployImaging, ""); err != nil {
+		t.Fatalf("deployment status after canceled waiter: %v", err)
+	}
+	if err := store.MarkDeploymentLive(ctx, deployment.ID); err != nil {
+		t.Fatalf("mark live after canceled waiter: %v", err)
 	}
 }
 

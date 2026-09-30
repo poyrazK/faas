@@ -225,7 +225,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		defer func() { _ = c.Close() }()
 	}
 
-	store := state.NewPgStore(pool)
+	store := state.NewPgStore(pool, state.WithTrafficAppsDomain(cfg.GetAppsDomain(os.Getenv)))
 	notif := dbNotifier{pool: pool}
 	resid := deps.newResidentProbe(ctx, cfg.ScheddMetricsURL)
 	// Single OpsMetrics for the daemon: builderd both records build
