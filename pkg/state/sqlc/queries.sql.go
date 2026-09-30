@@ -791,6 +791,49 @@ func (q *Queries) CancelUploadSession(ctx context.Context, db DBTX, arg CancelUp
 	return err
 }
 
+const captureProjectEnvironmentCloneWorkPolicies = `-- name: CaptureProjectEnvironmentCloneWorkPolicies :one
+SELECT jsonb_build_object(
+    'version',1,'app_id',a.id::text,'source_scope',$1::text,
+    'policies',coalesce((SELECT jsonb_agg(jsonb_build_object(
+        'name',p.name,'revision',p.revision,'max_running_per_key',p.max_running_per_key,
+        'max_running_per_fairness_key',p.max_running_per_fairness_key,'pending_updates',p.pending_updates,
+        'debounce_ms',p.debounce_ms,'expires_after_ms',p.expires_after_ms) ORDER BY p.name)
+        FROM app_work_policies p WHERE p.app_id=a.id),'[]'::jsonb),
+    'event_bindings',coalesce((SELECT jsonb_agg(jsonb_build_object(
+        'subscription_id',b.subscription_id::text,'policy_name',b.policy_name,'key_selector',b.key_selector,
+        'fairness_selector',b.fairness_key_selector,'action',b.action) ORDER BY b.subscription_id)
+        FROM event_subscription_work_bindings b WHERE b.app_id=a.id),'[]'::jsonb),
+    'trigger_bindings',coalesce((SELECT jsonb_agg(jsonb_build_object(
+        'trigger_id',b.trigger_id::text,'policy_name',b.policy_name,'key_selector',b.key_selector,
+        'fairness_selector',b.fairness_key_selector) ORDER BY b.trigger_id)
+        FROM trigger_work_bindings b WHERE b.app_id=a.id),'[]'::jsonb)
+)::jsonb AS definitions,
+    ((SELECT count(*) FROM app_work_policies p WHERE p.app_id=a.id AND p.account_id<>a.account_id)
+    +(SELECT count(*) FROM event_subscription_work_bindings b LEFT JOIN event_subscriptions s ON s.id=b.subscription_id
+        WHERE b.app_id=a.id AND (s.id IS NULL OR s.app_id<>a.id OR s.account_id<>a.account_id))
+    +(SELECT count(*) FROM trigger_work_bindings b LEFT JOIN triggers t ON t.id=b.trigger_id
+        WHERE b.app_id=a.id AND (t.id IS NULL OR t.app_id<>a.id OR t.account_id<>a.account_id)))::bigint AS ownership_violations
+FROM apps a WHERE a.id=$2::uuid AND a.account_id=$3::uuid AND a.status<>'deleted'
+`
+
+type CaptureProjectEnvironmentCloneWorkPoliciesParams struct {
+	SourceScope string
+	AppID       pgtype.UUID
+	AccountID   pgtype.UUID
+}
+
+type CaptureProjectEnvironmentCloneWorkPoliciesRow struct {
+	Definitions         []byte
+	OwnershipViolations int64
+}
+
+func (q *Queries) CaptureProjectEnvironmentCloneWorkPolicies(ctx context.Context, db DBTX, arg CaptureProjectEnvironmentCloneWorkPoliciesParams) (CaptureProjectEnvironmentCloneWorkPoliciesRow, error) {
+	row := db.QueryRow(ctx, captureProjectEnvironmentCloneWorkPolicies, arg.SourceScope, arg.AppID, arg.AccountID)
+	var i CaptureProjectEnvironmentCloneWorkPoliciesRow
+	err := row.Scan(&i.Definitions, &i.OwnershipViolations)
+	return i, err
+}
+
 const claimLayerArtifactDeletion = `-- name: ClaimLayerArtifactDeletion :execrows
 UPDATE layer_artifact_retention SET state = 'deleting', deletion_id = $1::uuid
 WHERE storage_key = $2::text AND state = 'retained'

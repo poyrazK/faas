@@ -147,7 +147,10 @@ func encodeCloneWorkloadSnapshot(snapshot projectCloneWorkloadSnapshot) ([]byte,
 		if err != nil {
 			return nil, "", err
 		}
-		settingsRoutes := projectCloneScopedPolicies{OnlyAllowDeclaredRoutes: snapshot.Settings.OnlyAllowDeclaredRoutes, DeclaredRoutes: snapshot.Settings.DeclaredRoutes, EdgePresent: policies.EdgePresent, EdgeRules: policies.EdgeRules}
+		if policies.Work != nil && (policies.Work.AppID != snapshot.Artifact.AppID || policies.Work.SourceScope != snapshot.Artifact.Scope) {
+			return nil, "", ErrConflict
+		}
+		settingsRoutes := projectCloneScopedPolicies{OnlyAllowDeclaredRoutes: snapshot.Settings.OnlyAllowDeclaredRoutes, DeclaredRoutes: snapshot.Settings.DeclaredRoutes, EdgePresent: policies.EdgePresent, EdgeRules: policies.EdgeRules, Work: policies.Work}
 		settingsHash, _ := cloneScopedPoliciesHash(settingsRoutes)
 		policiesHash, _ := cloneScopedPoliciesHash(policies)
 		if settingsHash != policiesHash {

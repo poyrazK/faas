@@ -11,10 +11,11 @@ import (
 var ErrProjectEnvironmentClonePolicyCaptureUnavailable = fmt.Errorf("clone scoped policy capture is unavailable: %w", ErrConflict)
 
 type projectCloneScopedPolicies struct {
-	OnlyAllowDeclaredRoutes bool                         `json:"only_allow_declared_routes"`
-	DeclaredRoutes          []DeclaredRoute              `json:"declared_routes"`
-	EdgePresent             bool                         `json:"edge_present"`
-	EdgeRules               []ProjectEnvironmentEdgeRule `json:"edge_rules"`
+	OnlyAllowDeclaredRoutes bool                                          `json:"only_allow_declared_routes"`
+	DeclaredRoutes          []DeclaredRoute                               `json:"declared_routes"`
+	EdgePresent             bool                                          `json:"edge_present"`
+	EdgeRules               []ProjectEnvironmentEdgeRule                  `json:"edge_rules"`
+	Work                    *ProjectEnvironmentCloneWorkPolicyDefinitions `json:"work,omitempty"`
 }
 
 func normalizeCloneScopedPolicies(policies projectCloneScopedPolicies) (projectCloneScopedPolicies, error) {
@@ -23,6 +24,13 @@ func normalizeCloneScopedPolicies(policies projectCloneScopedPolicies) (projectC
 	}
 	policies.DeclaredRoutes = cloneDeclaredRoutes(policies.DeclaredRoutes)
 	policies.EdgeRules = cloneProjectEnvironmentEdgeRules(policies.EdgeRules)
+	if policies.Work != nil {
+		work, err := normalizeCloneWorkPolicyDefinitions(*policies.Work)
+		if err != nil {
+			return policies, err
+		}
+		policies.Work = &work
+	}
 	return policies, nil
 }
 
@@ -57,6 +65,12 @@ func capturedCloneScopedPolicies(records []projectCloneWorkloadRecord) (map[stri
 func validateCloneScopedPolicyPublication(record projectCloneWorkloadRecord, actual projectCloneScopedPolicies, routePresent bool) error {
 	if record.snapshot.Policies == nil {
 		return ErrProjectEnvironmentClonePolicyCaptureUnavailable
+	}
+	// A matching policy list alone cannot prove scoped admission, independent
+	// producer identities or runtime lanes. Keep this guard until those durable
+	// proofs exist, including for an explicitly empty captured collection.
+	if record.snapshot.Policies.Work != nil {
+		return fmt.Errorf("clone workload %q work policies: %w", record.WorkloadSlug, ErrProjectEnvironmentCloneWorkPolicyIsolationUnavailable)
 	}
 	actualHash, err := cloneScopedPoliciesHash(actual)
 	if err != nil || !routePresent || actualHash != record.SourcePoliciesHash {

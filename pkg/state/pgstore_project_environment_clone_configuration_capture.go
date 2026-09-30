@@ -159,6 +159,14 @@ func captureCloneConfigurationWorkloadsTx(ctx context.Context, tx pgx.Tx, op Pro
 		if err != nil {
 			return nil, fmt.Errorf("capture clone workload %q: %w", appID, err)
 		}
+		work, err := captureCloneWorkPoliciesTx(ctx, tx, op, appID, scope)
+		if err != nil {
+			return nil, err
+		}
+		if snapshot.Policies == nil {
+			return nil, ErrProjectEnvironmentClonePolicyCaptureUnavailable
+		}
+		snapshot.Policies.Work = &work
 		raw, hash, err := encodeCloneWorkloadSnapshot(snapshot)
 		if err != nil {
 			return nil, err

@@ -1065,3 +1065,64 @@ their actual source instances and content, extending the configuration root,
 coordinating retained data checkpoints, proving publication and promotion,
 worker orchestration and native acceptance remain required. Full-copy admission
 stays closed.
+
+### Frozen work-policy definitions and producer bindings (2026-10-01)
+
+Atomic configuration creation now captures the application work-policy
+catalogue and its event/trigger bindings in the same repeatable-read transaction
+as workloads, values, managed bindings and scoped route/edge policies. The
+versioned private definition contains the effective source app/scope, the
+complete policy roster with policy revisions, replacement/debounce/expiry and
+fairness settings, and every event/trigger work binding with its source identity,
+selectors and action. Unbound policies are part of the roster. Creation/update
+timestamps, runtime lanes, invocation/trigger work queues and cancellation
+receipts are excluded from this configuration catalogue.
+
+The current work-policy and producer APIs are application-wide. This capture
+freezes that actual shared effective configuration; it does not assert that the
+source or target already has independently scoped policy ownership. The source
+query includes every policy/binding row for the app and counts invalid policy
+or producer-parent ownership separately, so an ownership mismatch cannot become
+a silently omitted row. Normalization validates policy revisions, bounded
+durations before duration conversion, modes, identities, selectors, duplicate
+rosters and binding-to-policy references, then sorts each roster. Empty
+collections are explicitly versioned captures.
+
+The definitions are private workload-snapshot material. They contribute to the
+workload policy hash, snapshot hash and derived configuration-root revision.
+The root remains an identity/hash-only document. Timestamps cannot cause a
+configuration change through these definitions. Existing snapshots without
+this extension retain their serialized/hash contract; new atomic captures do
+not regenerate policy definitions on idempotent replay.
+
+A leased internal reader authenticates the operation's marked configuration
+root and frozen workload roster, checks its live authority before and after
+reading, and returns defensive typed definitions with a canonical catalogue
+hash. Missing, changed or invalid material fails; the reader never falls back
+to live production policies, and legacy operations cannot supply the marked
+capture contract.
+
+Publication of a capture with this catalogue is explicitly blocked pending
+durable work-policy isolation evidence. Matching values or counts cannot prove
+environment-scoped admission, independent producer identities or work lanes.
+The guard applies to empty catalogues as well, because a later production
+policy must not appear in an already copied empty stage.
+
+Contracts cover policy/producer field coverage, canonical ordering, invalid
+graphs and overflowing durations, caller mutation isolation, explicit empty
+capture, immutable replay after live policy/binding edits, changed source
+revision on a new capture, wrong lease ownership, tampered/missing frozen
+catalogues, and invalid policy ownership without a partial operation. The sqlc
+schema snapshot now includes these three pre-existing tables; no new live
+tables or migration are introduced by this capture extension.
+State clone/object/value-publication, schema/capture and work-policy/binding
+regressions pass, as do the APId clone, binding and work-policy regressions.
+Independent sqlc regeneration matches.
+
+Runtime integration still requires scoped policy definitions and edits, scoped
+producer configuration, admission and retained-release routing that select the
+requested environment, independent replacement/fairness/cancellation lanes,
+and complete qualification/promotion/rollback proofs. The current invocation
+version resolver selects production for project apps; work lanes are currently
+keyed by app/policy/key and do not establish stage isolation. Full-copy admission
+remains closed while these and the previously listed requirements are completed.

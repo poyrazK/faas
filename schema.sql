@@ -11197,3 +11197,40 @@ CREATE TABLE project_environment_clone_configuration_captures (
     configuration_hash text NOT NULL CHECK (configuration_hash ~ '^[a-f0-9]{64}$'),
     configuration json NOT NULL CHECK (json_typeof(configuration)='object')
 );
+
+-- Existing application work-policy catalogue (ADR-375 capture coverage).
+CREATE TABLE app_work_policies (
+    app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    name text NOT NULL CHECK (name ~ '^[a-z][a-z0-9-]{0,62}$'),
+    revision bigint NOT NULL DEFAULT 1 CHECK (revision > 0),
+    max_running_per_key integer NOT NULL CHECK (max_running_per_key=1),
+    pending_updates text NOT NULL CHECK (pending_updates IN ('all','keep_latest')),
+    debounce_ms bigint NOT NULL CHECK (debounce_ms BETWEEN 0 AND 86400000),
+    expires_after_ms bigint NOT NULL CHECK (expires_after_ms BETWEEN 0 AND 2592000000),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    max_running_per_fairness_key integer NOT NULL DEFAULT 0 CHECK (max_running_per_fairness_key BETWEEN 0 AND 1000),
+    PRIMARY KEY (app_id,name)
+);
+
+CREATE TABLE event_subscription_work_bindings (
+    subscription_id uuid PRIMARY KEY,
+    app_id uuid NOT NULL,
+    policy_name text NOT NULL,
+    key_selector text NOT NULL CHECK (length(key_selector) BETWEEN 1 AND 256),
+    action text NOT NULL DEFAULT 'invoke' CHECK (action IN ('invoke','cancel_pending')),
+    fairness_key_selector text NOT NULL DEFAULT '',
+    FOREIGN KEY (subscription_id,app_id) REFERENCES event_subscriptions(id,app_id) ON DELETE CASCADE,
+    FOREIGN KEY (app_id,policy_name) REFERENCES app_work_policies(app_id,name)
+);
+
+CREATE TABLE trigger_work_bindings (
+    trigger_id uuid PRIMARY KEY,
+    app_id uuid NOT NULL,
+    policy_name text NOT NULL,
+    key_selector text NOT NULL CHECK (length(key_selector) BETWEEN 1 AND 256),
+    fairness_key_selector text NOT NULL DEFAULT '' CHECK (length(fairness_key_selector)<=256),
+    FOREIGN KEY (trigger_id,app_id) REFERENCES triggers(id,app_id) ON DELETE CASCADE,
+    FOREIGN KEY (app_id,policy_name) REFERENCES app_work_policies(app_id,name)
+);

@@ -568,6 +568,20 @@ type AppWebhookDeliveryAttempt struct {
 	NextAttemptAt    pgtype.Timestamptz
 }
 
+type AppWorkPolicy struct {
+	AppID                    pgtype.UUID
+	AccountID                pgtype.UUID
+	Name                     string
+	Revision                 int64
+	MaxRunningPerKey         int32
+	PendingUpdates           string
+	DebounceMs               int64
+	ExpiresAfterMs           int64
+	CreatedAt                pgtype.Timestamptz
+	UpdatedAt                pgtype.Timestamptz
+	MaxRunningPerFairnessKey int32
+}
+
 type AuditLog struct {
 	ID           pgtype.UUID
 	Kind         string
@@ -1139,6 +1153,15 @@ type EventSubscription struct {
 	Enabled   bool
 	CreatedAt pgtype.Timestamptz
 	UpdatedAt pgtype.Timestamptz
+}
+
+type EventSubscriptionWorkBinding struct {
+	SubscriptionID      pgtype.UUID
+	AppID               pgtype.UUID
+	PolicyName          string
+	KeySelector         string
+	Action              string
+	FairnessKeySelector string
 }
 
 type Execution struct {
@@ -2575,6 +2598,14 @@ type TriggerRecord struct {
 	ResultRetentionUntil pgtype.Timestamptz
 	ClaimGeneration      int64
 	ClaimExpiresAt       pgtype.Timestamptz
+}
+
+type TriggerWorkBinding struct {
+	TriggerID           pgtype.UUID
+	AppID               pgtype.UUID
+	PolicyName          string
+	KeySelector         string
+	FairnessKeySelector string
 }
 
 type UploadCommitOutcome struct {
