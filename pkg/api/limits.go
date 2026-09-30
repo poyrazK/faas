@@ -20,6 +20,17 @@ import (
 	"time"
 )
 
+// EnvironmentGitOpsMaxDefinitionBytes bounds one complete environment graph,
+// independently of the smaller non-secret configuration object it may contain.
+const EnvironmentGitOpsMaxDefinitionBytes = 1 << 20
+
+// Overrides expire without operator intervention; renewal requires a new reason.
+const EnvironmentGitOpsMaxOverrideDuration = 24 * time.Hour
+const EnvironmentGitOpsMaxOverrideReasonBytes = 1024
+const EnvironmentGitOpsMaxExpandedArchiveBytes int64 = 512 << 20
+const EnvironmentGitOpsMaxPolicies = 20
+const EnvironmentGitOpsMaxDeclaredRoutes = 50
+
 // A restore hook is on the wake critical path. Keep its customer timeout
 // below the host's five-second resume deadline, including transport overhead.
 const (
