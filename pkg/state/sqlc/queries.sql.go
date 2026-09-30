@@ -1662,6 +1662,32 @@ func (q *Queries) CreateSession(ctx context.Context, db DBTX, arg CreateSessionP
 	return i, err
 }
 
+const createTrafficProjectEnvironment = `-- name: CreateTrafficProjectEnvironment :one
+INSERT INTO project_environments (account_id,project_id,slug,protected)
+VALUES ($1::uuid,$2::uuid,$3::text,$4::boolean)
+RETURNING jsonb_build_object('ID',id,'AccountID',account_id,'ProjectID',project_id,'Slug',slug,
+    'Protected',protected,'CreatedAt',created_at,'UpdatedAt',updated_at)::jsonb AS data
+`
+
+type CreateTrafficProjectEnvironmentParams struct {
+	AccountID pgtype.UUID
+	ProjectID pgtype.UUID
+	Slug      string
+	Protected bool
+}
+
+func (q *Queries) CreateTrafficProjectEnvironment(ctx context.Context, db DBTX, arg CreateTrafficProjectEnvironmentParams) ([]byte, error) {
+	row := db.QueryRow(ctx, createTrafficProjectEnvironment,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.Slug,
+		arg.Protected,
+	)
+	var data []byte
+	err := row.Scan(&data)
+	return data, err
+}
+
 const createTrigger = `-- name: CreateTrigger :one
 
 insert into triggers (account_id, app_id, kind, slug, enabled, config,
@@ -13104,11 +13130,49 @@ func (q *Queries) ReadServicePolicyTestMember(ctx context.Context, db DBTX, appI
 }
 
 const readTrafficHostAnalysis = `-- name: ReadTrafficHostAnalysis :one
-WITH source AS MATERIALIZED (
+WITH environment_policies AS MATERIALIZED (
+    SELECT e.id AS environment_id, a.id AS app_id, e.slug,
+        p.app_id IS NOT NULL AS present, coalesce(p.rules,'[]'::jsonb) AS rules,
+        CASE WHEN p.app_id IS NULL THEN 0 ELSE octet_length(jsonb_build_object(
+            'AccountID',p.account_id,'ProjectID',p.project_id,'AppID',p.app_id,
+            'EnvironmentSlug',p.environment_slug,'Rules',p.rules)::text) END AS contract_bytes,
+        (SELECT count(*) FROM jsonb_array_elements(coalesce(p.rules,'[]'::jsonb)) AS rule(value)
+            CROSS JOIN LATERAL jsonb_object_keys(rule.value) AS field(key)
+            WHERE key <> replace(replace(lower(key),chr(383),'s'),chr(8490),'k')
+              AND replace(replace(lower(key),chr(383),'s'),chr(8490),'k') IN
+                  ('kind','match_path','match_methods','match_headers','priority','enabled','action')) AS unsupported
+    FROM apps a JOIN project_environments e ON e.project_id=a.project_id AND e.account_id=a.account_id
+    LEFT JOIN project_environment_edge_policies p ON p.app_id=a.id AND p.environment_slug=e.slug
+        AND p.account_id=a.account_id AND p.project_id=a.project_id
+    WHERE a.account_id=$3::uuid AND a.status<>'deleted' AND a.deleted_at IS NULL
+), raw_source AS (
+    SELECT app_id, match_host, kind, cors_preset_id, action, NULL::uuid AS environment_id,
+        jsonb_build_object('ID', id, 'AccountID', account_id, 'AppID', app_id,
+            'MatchHost', match_host, 'MatchPath', match_path, 'MatchMethods', match_methods,
+            'MatchHeaders', match_headers, 'Priority', priority, 'Enabled', enabled,
+            'Kind', kind, 'Action', action, 'CorsPresetID', cors_preset_id,
+            'ValidateMode', validate_mode, 'CreatedAt', created_at, 'UpdatedAt', updated_at,
+            'ManifestKey', manifest_key)::jsonb AS data
+    FROM edge_rules WHERE account_id = $3::uuid AND enabled
+    UNION ALL
+    SELECT p.app_id, ''::text, coalesce(rule.value->>'kind',''), NULL::uuid,
+        coalesce(rule.value->'action','{}'::jsonb), p.environment_id,
+        jsonb_build_object('ID','00000000-0000-0000-0000-000000000000','AccountID',$3::uuid,
+            'AppID',p.app_id,'MatchHost',repeat('x',$4::integer),
+            'ManifestKey','','MatchPath',coalesce(rule.value->>'match_path',''),
+            'MatchMethods',coalesce(rule.value->'match_methods','null'::jsonb),
+            'MatchHeaders',coalesce(rule.value->'match_headers','null'::jsonb),
+            'Priority',coalesce(rule.value->'priority','0'::jsonb),'Enabled',true,
+            'Kind',coalesce(rule.value->>'kind',''),'Action',coalesce(rule.value->'action','{}'::jsonb),
+            'CorsPresetID',NULL,'ValidateMode','','CreatedAt','0001-01-01T00:00:00Z',
+            'UpdatedAt','0001-01-01T00:00:00Z')::jsonb
+    FROM environment_policies p CROSS JOIN LATERAL jsonb_array_elements(p.rules) AS rule(value)
+    WHERE rule.value->'enabled'='true'::jsonb
+), source AS MATERIALIZED (
     SELECT app_id, match_host, kind, cors_preset_id, action,
         (SELECT count(*) FROM jsonb_object_keys(action) AS field(key)
             WHERE key <> replace(replace(lower(key),chr(383),'s'),chr(8490),'k')
-              AND ($3::jsonb->'Action') ? replace(replace(lower(key),chr(383),'s'),chr(8490),'k')) +
+              AND ($5::jsonb->'Action') ? replace(replace(lower(key),chr(383),'s'),chr(8490),'k')) +
         (SELECT count(*) FROM jsonb_object_keys(CASE WHEN jsonb_typeof(action->'cors')='object' THEN action->'cors' ELSE '{}'::jsonb END) AS field(key)
             WHERE key <> 'cors_preset_id' AND replace(replace(lower(key),chr(383),'s'),chr(8490),'k')='cors_preset_id') +
         (SELECT count(*) FROM jsonb_object_keys(CASE WHEN jsonb_typeof(action->'headers')='object' THEN action->'headers' ELSE '{}'::jsonb END) AS field(key)
@@ -13116,23 +13180,18 @@ WITH source AS MATERIALIZED (
               AND replace(replace(lower(key),chr(383),'s'),chr(8490),'k') IN ('request_headers','response_headers')) AS unsupported,
         CASE WHEN kind = 'cors' AND jsonb_typeof(action->'cors') = 'object'
             THEN coalesce(cors_preset_id::text, action#>>'{cors,cors_preset_id}') ELSE NULL END AS preset,
-        jsonb_build_object('ID', id, 'AccountID', account_id, 'AppID', app_id,
-            'MatchHost', match_host, 'MatchPath', match_path, 'MatchMethods', match_methods,
-            'MatchHeaders', match_headers, 'Priority', priority, 'Enabled', enabled,
-            'Kind', kind, 'Action', action, 'CorsPresetID', cors_preset_id,
-            'ValidateMode', validate_mode, 'CreatedAt', created_at, 'UpdatedAt', updated_at,
-            'ManifestKey', manifest_key)::jsonb AS data
-    FROM edge_rules WHERE account_id = $4::uuid AND enabled
+        data, environment_id
+    FROM raw_source
 ), decoded AS (
-    SELECT source.app_id, source.match_host, source.kind, source.cors_preset_id, source.action, source.unsupported, source.preset, source.data,
+    SELECT source.app_id, source.match_host, source.kind, source.cors_preset_id, source.action, source.unsupported, source.preset, source.data, source.environment_id,
         jsonb_build_object('kind','') || coalesce((SELECT jsonb_object_agg(member.key,
             CASE WHEN jsonb_typeof(member.value) = 'object'
-                THEN coalesce($3::jsonb->'Action'->member.key,'{}'::jsonb) ||
+                THEN coalesce($5::jsonb->'Action'->member.key,'{}'::jsonb) ||
                     CASE WHEN member.key = 'headers' THEN coalesce((SELECT jsonb_object_agg(header.key,
                         CASE WHEN header.key IN ('request_headers','response_headers') AND jsonb_typeof(header.value) = 'array'
                             THEN (SELECT coalesce(jsonb_agg(CASE WHEN jsonb_typeof(operation.value) = 'object'
-                                THEN $3::jsonb->'HeaderOp' || operation.value
-                                WHEN operation.value = 'null'::jsonb THEN $3::jsonb->'HeaderOp'
+                                THEN $5::jsonb->'HeaderOp' || operation.value
+                                WHEN operation.value = 'null'::jsonb THEN $5::jsonb->'HeaderOp'
                                 ELSE operation.value END), '[]'::jsonb)
                                 FROM jsonb_array_elements(header.value) AS operation(value))
                             ELSE header.value END) FROM jsonb_each(member.value) AS header(key,value)), '{}'::jsonb)
@@ -13140,13 +13199,13 @@ WITH source AS MATERIALIZED (
                 ELSE member.value END) FROM jsonb_each(action) AS member(key,value)), '{}'::jsonb) AS decoded_action
     FROM source
 ), rules AS MATERIALIZED (
-    SELECT app_id, match_host, kind, preset, unsupported, octet_length(formatted.data)+2 AS canonical,
+    SELECT app_id, match_host, kind, preset, unsupported, environment_id, octet_length(formatted.data)+2 AS canonical,
         CASE WHEN strpos(compiled_data,'<')>0 OR strpos(compiled_data,'&')>0 OR strpos(compiled_data,'>')>0
             OR strpos(compiled_data,chr(8232))>0 OR strpos(compiled_data,chr(8233))>0
             THEN octet_length(replace(replace(replace(replace(replace(compiled_data,
                 '<','______'),'&','______'),'>','______'),chr(8232),'______'),chr(8233),'______'))
             ELSE octet_length(compiled_data) END +16+2+
-            (SELECT count(*) FROM jsonb_path_query($3::jsonb,'$.Action.** ? (@ == false)')) AS compiled
+            (SELECT count(*) FROM jsonb_path_query($5::jsonb,'$.Action.** ? (@ == false)')) AS compiled
     FROM decoded CROSS JOIN LATERAL (
         -- OFFSET is an evaluation barrier: format each row only once, then
         -- materialize scalar measurements rather than large formatted bodies.
@@ -13157,37 +13216,44 @@ WITH source AS MATERIALIZED (
     ) AS formatted
 ), groups AS (
     SELECT jsonb_build_object('App',app_id,'Pattern',match_host,'Kind',kind,'Preset',coalesce(preset,''),
-        'Rows',count(*), 'Unsupported',sum(unsupported), 'Canonical',sum(canonical), 'Compiled',sum(compiled)) AS data
-    FROM rules GROUP BY app_id,match_host,kind,preset
-    ORDER BY app_id,match_host,kind,preset LIMIT ($1::integer+1)
+        'Environment',coalesce(environment_id::text,''),'Rows',count(*), 'Unsupported',sum(unsupported), 'Canonical',sum(canonical), 'Compiled',sum(compiled)) AS data
+    FROM rules GROUP BY app_id,match_host,kind,preset,environment_id
+    ORDER BY app_id,match_host,kind,preset,environment_id LIMIT ($1::integer+1)
 ), presets AS (
     SELECT id, jsonb_build_object('ID',id,'AccountID',account_id,'AppID',coalesce(app_id::text,''),
         'Name','','Description','','AllowOrigins',allow_origins,'AllowMethods',allow_methods,
         'AllowHeaders',allow_headers,'ExposeHeaders',expose_headers,'AllowCredentials',allow_credentials,
         'MaxAgeSeconds',max_age_seconds,'CreatedAt','0001-01-01T00:00:00Z',
         'UpdatedAt','0001-01-01T00:00:00Z')::text AS data
-    FROM cors_presets WHERE account_id = $4::uuid
+    FROM cors_presets WHERE account_id = $3::uuid
       AND id::text IN (SELECT preset FROM rules WHERE preset IS NOT NULL)
 ), assets AS (
     SELECT jsonb_build_object('ID',id,'Compiled',octet_length(replace(replace(replace(replace(replace(data,
         '<','______'),'&','______'),'>','______'),chr(8232),'______'),chr(8233),'______'))) AS data
     FROM presets ORDER BY id LIMIT ($1::integer+1)
+), environments AS (
+    SELECT jsonb_build_object('ID',environment_id,'App',app_id,'Present',present,
+        'ContractBytes',contract_bytes,'Unsupported',unsupported) AS data
+    FROM environment_policies ORDER BY environment_id,app_id LIMIT ($1::integer+1)
 ), bounds AS (
-    SELECT (SELECT count(*) FROM groups)+(SELECT count(*) FROM assets) AS inputs,
+    SELECT (SELECT count(*) FROM groups)+(SELECT count(*) FROM assets)+(SELECT count(*) FROM environments) AS inputs,
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM groups)+
-        (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM assets)+32 AS bytes
+        (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM assets)+
+        (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM environments)+64 AS bytes
 )
 SELECT CASE WHEN inputs <= $1::integer AND bytes <= $2::bigint
     THEN jsonb_build_object('Groups',(SELECT coalesce(jsonb_agg(data),'[]') FROM groups),
-        'Assets',(SELECT coalesce(jsonb_agg(data),'[]') FROM assets)) ELSE NULL::jsonb END::jsonb AS data,
+        'Assets',(SELECT coalesce(jsonb_agg(data),'[]') FROM assets),
+        'Environments',(SELECT coalesce(jsonb_agg(data),'[]') FROM environments)) ELSE NULL::jsonb END::jsonb AS data,
     inputs::bigint, bytes::bigint FROM bounds
 `
 
 type ReadTrafficHostAnalysisParams struct {
-	MaxInputs int32
-	MaxBytes  int64
-	Defaults  []byte
-	AccountID pgtype.UUID
+	MaxInputs            int32
+	MaxBytes             int64
+	AccountID            pgtype.UUID
+	EnvironmentHostBytes int32
+	Defaults             []byte
 }
 
 type ReadTrafficHostAnalysisRow struct {
@@ -13201,8 +13267,9 @@ func (q *Queries) ReadTrafficHostAnalysis(ctx context.Context, db DBTX, arg Read
 	row := db.QueryRow(ctx, readTrafficHostAnalysis,
 		arg.MaxInputs,
 		arg.MaxBytes,
-		arg.Defaults,
 		arg.AccountID,
+		arg.EnvironmentHostBytes,
+		arg.Defaults,
 	)
 	var i ReadTrafficHostAnalysisRow
 	err := row.Scan(&i.Data, &i.Inputs, &i.Bytes)

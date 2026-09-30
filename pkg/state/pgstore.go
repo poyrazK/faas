@@ -5182,14 +5182,22 @@ func (s *PgStore) CreateProjectEnvironment(ctx context.Context, env ProjectEnvir
 	if err != nil || project.AccountID != env.AccountID {
 		return ProjectEnvironment{}, ErrNotFound
 	}
-	row := s.pool.QueryRow(ctx, `
-		insert into project_environments (account_id, project_id, slug, protected)
-		values ($1, $2, $3, $4)
-		returning id, account_id, project_id, slug, protected, created_at, updated_at
-	`, env.AccountID, env.ProjectID, env.Slug, env.Protected)
-	created, err := scanProjectEnvironment(row)
+	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(env.AccountID))
+	if err != nil {
+		return ProjectEnvironment{}, err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	data, err := sqlc.New().CreateTrafficProjectEnvironment(ctx, tx, sqlc.CreateTrafficProjectEnvironmentParams{
+		AccountID: uuidToPgtype(env.AccountID), ProjectID: uuidToPgtype(env.ProjectID), Slug: env.Slug, Protected: env.Protected})
 	if err != nil {
 		return ProjectEnvironment{}, mapErr(err)
+	}
+	var created ProjectEnvironment
+	if err := json.Unmarshal(data, &created); err != nil {
+		return ProjectEnvironment{}, fmt.Errorf("state: decode created environment: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ProjectEnvironment{}, fmt.Errorf("state: commit environment registration: %w", err)
 	}
 	return created, nil
 }

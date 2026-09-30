@@ -5218,7 +5218,45 @@ FROM app_openapi_docs WHERE account_id = sqlc.arg(account_id)::uuid;
 
 -- name: ReadTrafficHostAnalysis :one
 -- Only selectors, counts, sizes and referenced IDs leave the database.
-WITH source AS MATERIALIZED (
+WITH environment_policies AS MATERIALIZED (
+    SELECT e.id AS environment_id, a.id AS app_id, e.slug,
+        p.app_id IS NOT NULL AS present, coalesce(p.rules,'[]'::jsonb) AS rules,
+        CASE WHEN p.app_id IS NULL THEN 0 ELSE octet_length(jsonb_build_object(
+            'AccountID',p.account_id,'ProjectID',p.project_id,'AppID',p.app_id,
+            'EnvironmentSlug',p.environment_slug,'Rules',p.rules)::text) END AS contract_bytes,
+        (SELECT count(*) FROM jsonb_array_elements(coalesce(p.rules,'[]'::jsonb)) AS rule(value)
+            CROSS JOIN LATERAL jsonb_object_keys(rule.value) AS field(key)
+            WHERE key <> replace(replace(lower(key),chr(383),'s'),chr(8490),'k')
+              AND replace(replace(lower(key),chr(383),'s'),chr(8490),'k') IN
+                  ('kind','match_path','match_methods','match_headers','priority','enabled','action')) AS unsupported
+    FROM apps a JOIN project_environments e ON e.project_id=a.project_id AND e.account_id=a.account_id
+    LEFT JOIN project_environment_edge_policies p ON p.app_id=a.id AND p.environment_slug=e.slug
+        AND p.account_id=a.account_id AND p.project_id=a.project_id
+    WHERE a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted' AND a.deleted_at IS NULL
+), raw_source AS (
+    SELECT app_id, match_host, kind, cors_preset_id, action, NULL::uuid AS environment_id,
+        jsonb_build_object('ID', id, 'AccountID', account_id, 'AppID', app_id,
+            'MatchHost', match_host, 'MatchPath', match_path, 'MatchMethods', match_methods,
+            'MatchHeaders', match_headers, 'Priority', priority, 'Enabled', enabled,
+            'Kind', kind, 'Action', action, 'CorsPresetID', cors_preset_id,
+            'ValidateMode', validate_mode, 'CreatedAt', created_at, 'UpdatedAt', updated_at,
+            'ManifestKey', manifest_key)::jsonb AS data
+    FROM edge_rules WHERE account_id = sqlc.arg(account_id)::uuid AND enabled
+    UNION ALL
+    SELECT p.app_id, ''::text, coalesce(rule.value->>'kind',''), NULL::uuid,
+        coalesce(rule.value->'action','{}'::jsonb), p.environment_id,
+        jsonb_build_object('ID','00000000-0000-0000-0000-000000000000','AccountID',sqlc.arg(account_id)::uuid,
+            'AppID',p.app_id,'MatchHost',repeat('x',sqlc.arg(environment_host_bytes)::integer),
+            'ManifestKey','','MatchPath',coalesce(rule.value->>'match_path',''),
+            'MatchMethods',coalesce(rule.value->'match_methods','null'::jsonb),
+            'MatchHeaders',coalesce(rule.value->'match_headers','null'::jsonb),
+            'Priority',coalesce(rule.value->'priority','0'::jsonb),'Enabled',true,
+            'Kind',coalesce(rule.value->>'kind',''),'Action',coalesce(rule.value->'action','{}'::jsonb),
+            'CorsPresetID',NULL,'ValidateMode','','CreatedAt','0001-01-01T00:00:00Z',
+            'UpdatedAt','0001-01-01T00:00:00Z')::jsonb
+    FROM environment_policies p CROSS JOIN LATERAL jsonb_array_elements(p.rules) AS rule(value)
+    WHERE rule.value->'enabled'='true'::jsonb
+), source AS MATERIALIZED (
     SELECT app_id, match_host, kind, cors_preset_id, action,
         (SELECT count(*) FROM jsonb_object_keys(action) AS field(key)
             WHERE key <> replace(replace(lower(key),chr(383),'s'),chr(8490),'k')
@@ -5230,13 +5268,8 @@ WITH source AS MATERIALIZED (
               AND replace(replace(lower(key),chr(383),'s'),chr(8490),'k') IN ('request_headers','response_headers')) AS unsupported,
         CASE WHEN kind = 'cors' AND jsonb_typeof(action->'cors') = 'object'
             THEN coalesce(cors_preset_id::text, action#>>'{cors,cors_preset_id}') ELSE NULL END AS preset,
-        jsonb_build_object('ID', id, 'AccountID', account_id, 'AppID', app_id,
-            'MatchHost', match_host, 'MatchPath', match_path, 'MatchMethods', match_methods,
-            'MatchHeaders', match_headers, 'Priority', priority, 'Enabled', enabled,
-            'Kind', kind, 'Action', action, 'CorsPresetID', cors_preset_id,
-            'ValidateMode', validate_mode, 'CreatedAt', created_at, 'UpdatedAt', updated_at,
-            'ManifestKey', manifest_key)::jsonb AS data
-    FROM edge_rules WHERE account_id = sqlc.arg(account_id)::uuid AND enabled
+        data, environment_id
+    FROM raw_source
 ), decoded AS (
     SELECT source.*,
         jsonb_build_object('kind','') || coalesce((SELECT jsonb_object_agg(member.key,
@@ -5254,7 +5287,7 @@ WITH source AS MATERIALIZED (
                 ELSE member.value END) FROM jsonb_each(action) AS member(key,value)), '{}'::jsonb) AS decoded_action
     FROM source
 ), rules AS MATERIALIZED (
-    SELECT app_id, match_host, kind, preset, unsupported, octet_length(formatted.data)+2 AS canonical,
+    SELECT app_id, match_host, kind, preset, unsupported, environment_id, octet_length(formatted.data)+2 AS canonical,
         CASE WHEN strpos(compiled_data,'<')>0 OR strpos(compiled_data,'&')>0 OR strpos(compiled_data,'>')>0
             OR strpos(compiled_data,chr(8232))>0 OR strpos(compiled_data,chr(8233))>0
             THEN octet_length(replace(replace(replace(replace(replace(compiled_data,
@@ -5271,9 +5304,9 @@ WITH source AS MATERIALIZED (
     ) AS formatted
 ), groups AS (
     SELECT jsonb_build_object('App',app_id,'Pattern',match_host,'Kind',kind,'Preset',coalesce(preset,''),
-        'Rows',count(*), 'Unsupported',sum(unsupported), 'Canonical',sum(canonical), 'Compiled',sum(compiled)) AS data
-    FROM rules GROUP BY app_id,match_host,kind,preset
-    ORDER BY app_id,match_host,kind,preset LIMIT (sqlc.arg(max_inputs)::integer+1)
+        'Environment',coalesce(environment_id::text,''),'Rows',count(*), 'Unsupported',sum(unsupported), 'Canonical',sum(canonical), 'Compiled',sum(compiled)) AS data
+    FROM rules GROUP BY app_id,match_host,kind,preset,environment_id
+    ORDER BY app_id,match_host,kind,preset,environment_id LIMIT (sqlc.arg(max_inputs)::integer+1)
 ), presets AS (
     SELECT id, jsonb_build_object('ID',id,'AccountID',account_id,'AppID',coalesce(app_id::text,''),
         'Name','','Description','','AllowOrigins',allow_origins,'AllowMethods',allow_methods,
@@ -5286,19 +5319,31 @@ WITH source AS MATERIALIZED (
     SELECT jsonb_build_object('ID',id,'Compiled',octet_length(replace(replace(replace(replace(replace(data,
         '<','______'),'&','______'),'>','______'),chr(8232),'______'),chr(8233),'______'))) AS data
     FROM presets ORDER BY id LIMIT (sqlc.arg(max_inputs)::integer+1)
+), environments AS (
+    SELECT jsonb_build_object('ID',environment_id,'App',app_id,'Present',present,
+        'ContractBytes',contract_bytes,'Unsupported',unsupported) AS data
+    FROM environment_policies ORDER BY environment_id,app_id LIMIT (sqlc.arg(max_inputs)::integer+1)
 ), bounds AS (
-    SELECT (SELECT count(*) FROM groups)+(SELECT count(*) FROM assets) AS inputs,
+    SELECT (SELECT count(*) FROM groups)+(SELECT count(*) FROM assets)+(SELECT count(*) FROM environments) AS inputs,
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM groups)+
-        (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM assets)+32 AS bytes
+        (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM assets)+
+        (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM environments)+64 AS bytes
 )
 SELECT CASE WHEN inputs <= sqlc.arg(max_inputs)::integer AND bytes <= sqlc.arg(max_bytes)::bigint
     THEN jsonb_build_object('Groups',(SELECT coalesce(jsonb_agg(data),'[]') FROM groups),
-        'Assets',(SELECT coalesce(jsonb_agg(data),'[]') FROM assets)) ELSE NULL::jsonb END::jsonb AS data,
+        'Assets',(SELECT coalesce(jsonb_agg(data),'[]') FROM assets),
+        'Environments',(SELECT coalesce(jsonb_agg(data),'[]') FROM environments)) ELSE NULL::jsonb END::jsonb AS data,
     inputs::bigint, bytes::bigint FROM bounds;
 
 -- name: ConfigureTrafficPolicyAnalysisTimeout :one
 WITH prior AS MATERIALIZED (SELECT current_setting('statement_timeout')::text AS value)
 SELECT prior.value::text AS prior, set_config('statement_timeout', sqlc.arg(timeout)::text, true)::text AS configured FROM prior;
+
+-- name: CreateTrafficProjectEnvironment :one
+INSERT INTO project_environments (account_id,project_id,slug,protected)
+VALUES (sqlc.arg(account_id)::uuid,sqlc.arg(project_id)::uuid,sqlc.arg(slug)::text,sqlc.arg(protected)::boolean)
+RETURNING jsonb_build_object('ID',id,'AccountID',account_id,'ProjectID',project_id,'Slug',slug,
+    'Protected',protected,'CreatedAt',created_at,'UpdatedAt',updated_at)::jsonb AS data;
 
 -- name: RestoreTrafficPolicyStatementTimeout :one
 SELECT set_config('statement_timeout', sqlc.arg(timeout)::text, true)::text;

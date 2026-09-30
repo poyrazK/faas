@@ -28,13 +28,10 @@ import (
 	"net/http"
 	"path"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
@@ -429,41 +426,14 @@ func (g *gatewaydEdgeRules) environmentEdgeRules(ctx context.Context, host strin
 	if app.AccountID != environment.AccountID || app.ProjectID != environment.ProjectID || app.Status == state.AppDeleted {
 		return nil, state.ErrNotFound
 	}
-	// A stable environment host encodes one workload. The generic host
-	// matcher may also return wildcard rules owned by other applications;
-	// never let those rules act on this workload's environment URL.
-	scoped := make([]state.EdgeRule, 0, len(global))
-	for _, rule := range global {
-		if rule.AppID == app.ID {
-			scoped = append(scoped, rule)
-		}
-	}
 	policy, err := lookup.GetProjectEnvironmentEdgePolicy(ctx, environment.AccountID, app.ID, environment.Slug)
 	if errors.Is(err, state.ErrNotFound) {
-		return scoped, nil
+		return state.ProjectEnvironmentPolicyRules(host, environment, app, global, nil), nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	out := make([]state.EdgeRule, 0, len(scoped))
-	for _, rule := range scoped {
-		if rule.Kind != state.EdgeRuleKindHeaders && rule.Kind != state.EdgeRuleKindCORSA {
-			out = append(out, rule)
-		}
-	}
-	for i, rule := range policy.Rules {
-		if !rule.Enabled {
-			continue
-		}
-		id := uuid.NewSHA1(uuid.NameSpaceURL, []byte(environment.ID+"/"+app.ID+"/"+strconv.Itoa(i)))
-		out = append(out, state.EdgeRule{
-			ID: id.String(), AccountID: app.AccountID, AppID: app.ID, MatchHost: host,
-			MatchPath: rule.MatchPath, MatchMethods: rule.MatchMethods, MatchHeaders: rule.MatchHeaders,
-			Priority: rule.Priority, Enabled: true, Kind: rule.Kind, Action: rule.Action,
-			CreatedAt: policy.CreatedAt, UpdatedAt: policy.UpdatedAt,
-		})
-	}
-	return out, nil
+	return state.ProjectEnvironmentPolicyRules(host, environment, app, global, &policy), nil
 }
 
 // MatchRoute returns the highest-priority `kind=route` rule whose

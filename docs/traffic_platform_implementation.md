@@ -811,3 +811,49 @@ ownership, bounded decision evidence, preview agreement, customer status and
 capability delivery, and remaining native/daemon/load/deployment acceptance
 still require work. No Linux x86_64 KVM acceptance host is available; all six
 release guarantees remain unaccepted.
+
+
+### Named environment aggregate mutation guard, 2026-09-30
+
+The account-locked Postgres projection now includes registered environment/app
+identities and scalar measurements of their edge overlays. Exact stable URL
+markers split the host-selector analysis. Runtime and management share the
+pure host identity encoder and the app-filter/headers/CORS replacement helper.
+Missing overlays keep fallback rules; explicit empty overlays suppress them.
+Synthetic rules retain runtime identity/default fields. Referenced presets are
+deduplicated after replacement. Original account read counts/canonical bytes,
+post-filter compiler counts/escaped bytes and overlay contract bytes have
+separate bounds. Unused siblings and replaced presets do not consume compiler
+capacity, while all original matching rules still count toward the SQL read.
+Action bodies stay in Postgres during analysis.
+
+Overlay replacement, rule/preset changes, new environment registration and
+clones use the same before/after transaction. Newly registered URLs start with
+no serving-policy baseline, so an old oversized wildcard cannot authorize a
+new oversized scope. Refusal rolls back the environment and copied scoped
+configuration. Existing over-limit scopes retain non-increasing repair when
+the bounded analysis finishes.
+
+Focused state regression passed 80 cases with no failures/skips in 35.022 s.
+Real Postgres fixtures compare analysis sizes/counts to the production runtime
+projection for fallback, replacement and explicit empty overlays; verify
+original account-read bounds and scalar-only metadata; race an overlay and a
+rule for the last compiler allowance; check rejected intent/change-ledger
+rollback; refuse new URL/clone exposure of legacy overload; and clone after
+repair. Gateway/environment checks passed 18 cases with no failures/skips
+(gateway 1.754 s, wire 1.066 s, internal gateway 9.414 s). These include existing
+HTTP ownership, missed-notification and immutable-admission fixtures. Fresh
+sqlc v1.31.1 generation matched all four generated files. The CLI docs-domain
+tripwire passed in 2.224 s. Pinned lint passed with zero findings for state
+production code (tests and the pre-existing test-only unused helper excluded)
+and for hostidentity, gateway, wire and internal gateway with tests enabled.
+Diff whitespace checks passed. Disk-exhausted build attempts are excluded
+from this evidence.
+
+App membership/reactivation writer integration, global synthetic route
+aggregate validation and the MemStore aggregate mirror remain pending. Bounded
+decision evidence, preview/runtime and complete synthetic-path agreement,
+complete daemon/load/recovery and customer/staging rollout evidence still need
+completion. No native Linux x86_64 KVM acceptance host is available; VM/restore,
+nft connection/source-IP, process-death and leak checks remain pending. All six
+release guarantees remain unchecked.

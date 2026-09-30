@@ -60,8 +60,8 @@ rolls back the intent and transactional change event and returns the existing
 remain available. This single-row check does not establish the combined host
 rule and referenced-preset bound.
 
-Rule and preset creates/updates, environment edge overlays and environment
-clones share an account row lock, acquired before app/FK/policy-row locks and
+Rule and preset creates/updates, environment edge overlays, new environment
+registration and environment clones share an account row lock, acquired before app/FK/policy-row locks and
 retained through commit. Contenders retry without holding a pool connection;
 their request context bounds the wait. Different accounts use different locks.
 This also serializes the existing account preset quota across different apps.
@@ -83,7 +83,7 @@ close to the byte ceiling before the exact compiler size reaches that ceiling.
 Each before/after analysis phase has a two-second allowance. Its SQL read uses
 a local 1,750 ms server timeout so cancellation does not depend on client
 connection cleanup; the previous statement timeout is restored on success.
-Analysis also limits inputs to 100,000 groups/assets, metadata to 64 MiB,
+Analysis also limits inputs to 100,000 groups/assets/environment identities, metadata to 64 MiB,
 automaton nodes to 1,000,000, states to 100,000, retained state buffers/overhead
 to 64 MiB and transitions to 2,000,000. A proved overload returns
 `traffic_policy_too_large`/422. An exhausted analysis returns the distinct
@@ -95,9 +95,17 @@ ends its transaction and releases the account lock.
 
 A legacy oversized host can be repaired incrementally when analysis finishes
 and none of its over-limit dimensions increases. A proposed overload at a
-different host still refuses. Scoped environment overlay totals, global
+different host still refuses. Named environment URLs also check the combined
+app rules and overlay after replacement, including a separate post-filter rule
+count. A missing overlay keeps app headers/CORS; an explicit empty overlay
+suppresses them. Other apps and replaced presets are excluded from compiler
+bytes while every matching account rule still counts toward the original
+canonical read bound. Registered environment/workload identities split the
+selector analysis at their actual stable URLs. New environment registration
+and clones must fit their newly exposed URLs; legacy unknown-host overload
+cannot serve as their baseline. App membership/reactivation writers, global
 synthetic route discovery across accounts and the in-memory aggregate mirror
-remain pending; this guard covers ordinary owned rules and their presets.
+remain pending.
 
 Individual CORS preset creates/replacements, environment overlay replacements,
 scoped route replacements and imported documents validate the complete runtime
@@ -136,8 +144,8 @@ serving-policy repair.
 The in-memory store uses a conservative bound and may reject a near-limit
 object whose extra JSON string escapes are smaller in Postgres.
 
-Combined environment/global/memory aggregate validation and complete recovery
-acceptance remain rollout requirements. These write checks do not establish
+Global and memory aggregate validation, app membership/reactivation writer
+integration and complete recovery acceptance remain rollout requirements. These write checks do not establish
 release acceptance.
 
 Before dispatch, the public routing transaction re-resolves the host projection

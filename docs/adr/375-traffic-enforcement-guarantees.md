@@ -388,8 +388,25 @@ precedes the phase context timeout and the prior setting is restored on
 success, so a blocked query releases transaction locks before its refusal.
 Exhausted analysis refuses the mutation with a distinct error rather than
 accepting unverified policy.
-Scoped environment overlay totals, global synthetic route discovery and the
-in-memory aggregate mirror still require their own integration and evidence.
+Named environment aggregates distinguish the account-owned canonical read
+from the app-owned compiled result. The first retains every matching rule
+because the gateway bounds that read before applying the environment filter.
+The compiler then keeps only the named app, replacing its headers/CORS when
+an overlay row exists, including an explicit empty row. Overlay rules receive
+the same synthetic identity/default fields as runtime. Compiled counts/bytes
+and distinct presets are checked independently from the original read; an
+unused sibling app or replaced preset cannot consume compiler capacity.
+Registered environment/app identities join the bounded management projection,
+and exact host markers split the selector automaton at those URLs. Runtime
+and management share the pure environment-host encoder/decoder and deployment
+suffix contract. Overlay payloads remain in SQL; only scalar measurements and
+identity metadata cross the management store boundary. Overlay writes, new
+environment registration and clones use the same before/after account
+transaction as rule/preset changes. A newly registered URL starts with no
+serving-policy baseline; an old oversized wildcard cannot authorize exposing
+a new oversized scope. App membership/reactivation writers, global synthetic
+route discovery and the in-memory aggregate mirror still require their own
+integration and evidence.
 
 Imported documents also validate canonical runtime bytes before replacement;
 the existing import-body cap alone cannot bound JSONB numeric expansion.
@@ -399,9 +416,9 @@ The quota decision remains serialized by the account lock. Environment cloning
 validates copied target projections in its transaction before commit, including
 app-wide fallback routes and the target slug's bytes. Failure rolls back the
 entire target configuration. The in-memory clone preflights all projections
-under its existing mutex before creating target state. Combined scoped/global
-aggregate validation, its in-memory mirror and complete-path recovery
-acceptance remain pending.
+under its existing mutex before creating target state. Global aggregate
+validation, its in-memory mirror, app membership/reactivation integration and
+complete-path recovery acceptance remain pending.
 
 Public declared-route inputs join the fresh hostname/app view. An exact
 environment's route overlay is read before deciding whether an imported

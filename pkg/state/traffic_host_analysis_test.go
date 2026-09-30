@@ -6,11 +6,81 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func analysisGroup(pattern string, size int64) trafficHostGroup {
 	return trafficHostGroup{Pattern: pattern, Rows: 1, Canonical: size, Compiled: size}
+}
+
+func TestTrafficHostAnalysisEnvironmentReplacementAndReadBounds(t *testing.T) {
+	environment := trafficHostEnvironment{ID: uuid.NewString(), App: uuid.NewString(), Present: true}
+	base := trafficHostAnalysis{Environments: []trafficHostEnvironment{environment}}
+	if err := prepareTrafficEnvironmentHosts(&base); err != nil {
+		t.Fatal(err)
+	}
+	host := base.Environments[0].Host
+	capBytes := int64(api.TrafficPolicyMaxHostBytes)
+	for _, test := range []struct {
+		name    string
+		groups  []trafficHostGroup
+		present bool
+		scope   string
+	}{
+		{"explicit-empty-replaces", []trafficHostGroup{{App: environment.App, Pattern: host, Kind: string(EdgeRuleKindCORSA), Rows: 1, Canonical: 10, Compiled: capBytes}}, true, ""},
+		{"absent-fallback", []trafficHostGroup{{App: environment.App, Pattern: host, Kind: string(EdgeRuleKindCORSA), Rows: 1, Canonical: 10, Compiled: capBytes}}, false, "host_compiled_projection_estimate"},
+		{"sibling-compiler-excluded", []trafficHostGroup{{App: "sibling", Pattern: host, Kind: string(EdgeRuleKindRoute), Rows: 1, Canonical: 10, Compiled: capBytes}}, true, ""},
+		{"sibling-read-still-bounded", []trafficHostGroup{{App: "sibling", Pattern: host, Kind: string(EdgeRuleKindRoute), Rows: 1, Canonical: capBytes, Compiled: 10}}, true, "host_rule_projection"},
+		{"overlay-adds-to-route", []trafficHostGroup{{App: environment.App, Pattern: host, Kind: string(EdgeRuleKindRoute), Rows: 1, Canonical: 10, Compiled: capBytes - 100},
+			{App: environment.App, Environment: environment.ID, Rows: 1, Kind: string(EdgeRuleKindHeaders), Canonical: 200, Compiled: 200}}, true, "host_compiled_projection_estimate"},
+		{"post-filter-count", []trafficHostGroup{{App: environment.App, Pattern: host, Kind: string(EdgeRuleKindRoute), Rows: api.TrafficPolicyMaxHostRules, Canonical: 10, Compiled: 10},
+			{App: environment.App, Environment: environment.ID, Rows: 1, Kind: string(EdgeRuleKindHeaders), Canonical: 10, Compiled: 10}}, true, "host_compiled_rule_count"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			view := trafficHostAnalysis{Groups: test.groups, Environments: []trafficHostEnvironment{environment}}
+			view.Environments[0].Present = test.present
+			if err := prepareTrafficEnvironmentHosts(&view); err != nil {
+				t.Fatal(err)
+			}
+			err := checkTrafficHostAnalysis(t.Context(), trafficHostAnalysis{}, view)
+			if test.scope == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			var aggregate *TrafficPolicyAggregateError
+			if !errors.As(err, &aggregate) || aggregate.Scope != test.scope {
+				t.Fatalf("expected %s: %v", test.scope, err)
+			}
+		})
+	}
+}
+
+func TestTrafficHostAnalysisEnvironmentPresetsAndScopeIsolation(t *testing.T) {
+	first, second := trafficHostEnvironment{ID: uuid.NewString(), App: uuid.NewString(), Present: true}, trafficHostEnvironment{ID: uuid.NewString(), App: uuid.NewString(), Present: true}
+	view := trafficHostAnalysis{Environments: []trafficHostEnvironment{first, second}, Assets: []trafficHostAsset{{ID: "replaced", Compiled: api.TrafficPolicyMaxHostBytes}},
+		Groups: []trafficHostGroup{{App: first.App, Environment: first.ID, Rows: 1, Compiled: api.TrafficPolicyMaxHostBytes/2 + 100},
+			{App: second.App, Environment: second.ID, Rows: 1, Compiled: api.TrafficPolicyMaxHostBytes/2 + 100}}}
+	if err := prepareTrafficEnvironmentHosts(&view); err != nil {
+		t.Fatal(err)
+	}
+	view.Groups = append(view.Groups, trafficHostGroup{App: first.App, Pattern: view.Environments[0].Host, Kind: string(EdgeRuleKindCORSA), Rows: 1, Compiled: 10, Preset: "replaced"})
+	if err := checkTrafficHostAnalysis(t.Context(), trafficHostAnalysis{}, view); err != nil {
+		t.Fatalf("disjoint overlays or replaced preset became account quota: %v", err)
+	}
+	bad := view
+	bad.Environments = append([]trafficHostEnvironment(nil), view.Environments...)
+	bad.Environments[0].ContractBytes = api.TrafficPolicyMaxContractBytes + 1
+	var aggregate *TrafficPolicyAggregateError
+	if err := checkTrafficHostAnalysis(t.Context(), view, bad); !errors.As(err, &aggregate) || aggregate.Scope != "environment_edge_policy" {
+		t.Fatalf("overlay contract bound: %v", err)
+	}
+	view.Environments[0].ContractBytes = api.TrafficPolicyMaxContractBytes + 100
+	if err := checkTrafficHostAnalysis(t.Context(), view, bad); err != nil {
+		t.Fatalf("incremental contract repair: %v", err)
+	}
 }
 
 func TestTrafficHostAnalysisOverlapAndLegacyRepair(t *testing.T) {

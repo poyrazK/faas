@@ -143,6 +143,7 @@ type Querier interface {
 	// value). issued_ip is an inet ('' cast to NULL means "RemoteAddr
 	// unparseable" — surfaced as "" on read by coalesce(host(...))).
 	CreateSession(ctx context.Context, db DBTX, arg CreateSessionParams) (CreateSessionRow, error)
+	CreateTrafficProjectEnvironment(ctx context.Context, db DBTX, arg CreateTrafficProjectEnvironmentParams) ([]byte, error)
 	// Issue #757 / ADR-0NN — Trigger primitive (event-source mappings).
 	// Mirrors the cron `CreateCron` / `UpdateCron` / `DeleteCron` /
 	// `CronByID` / `ListCronsForApp` shape so the apid handler can stay

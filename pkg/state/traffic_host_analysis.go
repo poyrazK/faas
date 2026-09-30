@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -42,6 +43,7 @@ func (e *TrafficPolicyAnalysisError) Error() string {
 
 type trafficHostGroup struct {
 	App, Pattern, Kind, Preset string
+	Environment                string
 	Rows, Canonical, Compiled  int64
 	Unsupported                int64
 }
@@ -52,8 +54,15 @@ type trafficHostAsset struct {
 }
 
 type trafficHostAnalysis struct {
-	Groups []trafficHostGroup
-	Assets []trafficHostAsset
+	Groups       []trafficHostGroup
+	Assets       []trafficHostAsset
+	Environments []trafficHostEnvironment
+}
+
+type trafficHostEnvironment struct {
+	ID, App, Host              string
+	Present                    bool
+	ContractBytes, Unsupported int64
 }
 
 func readTrafficHostAnalysis(ctx context.Context, tx pgx.Tx, account pgtype.UUID) (trafficHostAnalysis, error) {
@@ -69,7 +78,8 @@ func readTrafficHostAnalysis(ctx context.Context, tx pgx.Tx, account pgtype.UUID
 	start := time.Now()
 	row, err := queries.ReadTrafficHostAnalysis(ctx, tx, sqlc.ReadTrafficHostAnalysisParams{
 		AccountID: account, MaxInputs: api.TrafficPolicyMaxAnalysisInputs, MaxBytes: api.TrafficPolicyMaxAnalysisMetadataBytes,
-		Defaults: defaults})
+		Defaults: defaults, EnvironmentHostBytes: int32(len(hostidentity.BuildEnvironmentHost(hostidentity.DeployWildcardSuffix,
+			"00000000-0000-0000-0000-000000000000", "00000000-0000-0000-0000-000000000000")))})
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.QueryCanceled {
@@ -91,7 +101,30 @@ func readTrafficHostAnalysis(ctx context.Context, tx pgx.Tx, account pgtype.UUID
 	if err := json.Unmarshal(row.Data, &result); err != nil {
 		return result, fmt.Errorf("state: decode traffic host analysis: %w", err)
 	}
-	return result, nil
+	return result, prepareTrafficEnvironmentHosts(&result)
+}
+
+func prepareTrafficEnvironmentHosts(view *trafficHostAnalysis) error {
+	hosts := make(map[string]string, len(view.Environments))
+	for i := range view.Environments {
+		environment := &view.Environments[i]
+		environment.Host = hostidentity.BuildEnvironmentHost(hostidentity.DeployWildcardSuffix, environment.ID, environment.App)
+		if environment.Host == "" {
+			return analysisLimit("environment_identity", "bindings", 0, 1)
+		}
+		hosts[environment.ID+"\x00"+environment.App] = environment.Host
+	}
+	for i := range view.Groups {
+		group := &view.Groups[i]
+		if group.Environment == "" {
+			continue
+		}
+		group.Pattern = hosts[group.Environment+"\x00"+group.App]
+		if group.Pattern == "" {
+			return analysisLimit("environment_identity", "bindings", 0, 1)
+		}
+	}
+	return nil
 }
 
 // SQL fills missing mandatory fields using the Go model's own zero values.
@@ -115,10 +148,11 @@ func analysisLimit(scope, unit string, limit, observed int64) error {
 	return &TrafficPolicyAnalysisError{Scope: scope, Unit: unit, Limit: limit, Observed: observed}
 }
 
-type trafficHostTotals struct{ rows, canonical, compiled int64 }
+type trafficHostTotals struct{ rows, compiledRows, canonical, compiled, contractBytes int64 }
 
 func (v trafficHostTotals) exceeds() bool {
-	return v.rows > api.TrafficPolicyMaxHostRules || v.canonical > api.TrafficPolicyMaxHostBytes || v.compiled > api.TrafficPolicyMaxHostBytes
+	return v.rows > api.TrafficPolicyMaxHostRules || v.compiledRows > api.TrafficPolicyMaxHostRules ||
+		v.canonical > api.TrafficPolicyMaxHostBytes || v.compiled > api.TrafficPolicyMaxHostBytes || v.contractBytes > api.TrafficPolicyMaxContractBytes
 }
 
 type hostAnalysisRef struct{ side, group int }
@@ -303,6 +337,7 @@ func hostTotals(view trafficHostAnalysis, accepted map[int]bool) trafficHostTota
 	for index := range accepted {
 		group := view.Groups[index]
 		totals.rows += group.Rows
+		totals.compiledRows += group.Rows
 		totals.canonical += group.Canonical
 		totals.compiled += group.Compiled
 		if group.Preset != "" {
@@ -315,6 +350,30 @@ func hostTotals(view trafficHostAnalysis, accepted map[int]bool) trafficHostTota
 		}
 	}
 	return totals
+}
+
+func environmentHostTotals(view trafficHostAnalysis, accepted map[int]bool, environment *trafficHostEnvironment) trafficHostTotals {
+	raw := make(map[int]bool)
+	compiled := make(map[int]bool)
+	for index := range accepted {
+		group := view.Groups[index]
+		if group.Environment == "" {
+			raw[index] = true
+			if environment == nil || group.App == environment.App && (!environment.Present ||
+				group.Kind != string(EdgeRuleKindHeaders) && group.Kind != string(EdgeRuleKindCORSA)) {
+				compiled[index] = true
+			}
+		} else if environment != nil && group.App == environment.App && group.Environment == environment.ID {
+			compiled[index] = true
+		}
+	}
+	beforeFilter := hostTotals(view, raw)
+	result := hostTotals(view, compiled)
+	result.rows, result.canonical = beforeFilter.rows, beforeFilter.canonical
+	if environment != nil {
+		result.contractBytes = environment.ContractBytes
+	}
+	return result
 }
 
 type hostAnalysisState struct {
@@ -341,8 +400,10 @@ func checkHostTotals(before, after trafficHostTotals, host string) *TrafficPolic
 		prior, next, limit int64
 	}{
 		{"host_rule_count", "rules", before.rows, after.rows, api.TrafficPolicyMaxHostRules},
+		{"host_compiled_rule_count", "rules", before.compiledRows, after.compiledRows, api.TrafficPolicyMaxHostRules},
 		{"host_rule_projection", "bytes", before.canonical, after.canonical, api.TrafficPolicyMaxHostBytes},
 		{"host_compiled_projection_estimate", "bytes", before.compiled, after.compiled, api.TrafficPolicyMaxHostBytes},
+		{"environment_edge_policy", "bytes", before.contractBytes, after.contractBytes, api.TrafficPolicyMaxContractBytes},
 	} {
 		if bound.next > bound.limit && bound.next > bound.prior {
 			return &TrafficPolicyAggregateError{Scope: bound.scope, Unit: bound.unit, Host: host, Limit: bound.limit, Observed: bound.next}
@@ -364,6 +425,11 @@ func checkTrafficHostAnalysisWithBudgets(ctx context.Context, before, after traf
 			return analysisLimit("stored_action_shape", "fields", 0, group.Unsupported)
 		}
 	}
+	for _, environment := range after.Environments {
+		if environment.Unsupported > 0 {
+			return analysisLimit("stored_environment_shape", "fields", 0, environment.Unsupported)
+		}
+	}
 	if reflect.DeepEqual(before, after) {
 		return nil
 	}
@@ -371,7 +437,11 @@ func checkTrafficHostAnalysisWithBudgets(ctx context.Context, before, after traf
 	for i := range after.Groups {
 		all[i] = true
 	}
-	if !hostTotals(after, all).exceeds() {
+	union := hostTotals(after, all)
+	for _, environment := range after.Environments {
+		union.contractBytes = max(union.contractBytes, environment.ContractBytes)
+	}
+	if !union.exceeds() {
 		return nil // Even the union of all groups fits, so every host fits.
 	}
 	views := [2]trafficHostAnalysis{before, after}
@@ -382,6 +452,14 @@ func checkTrafficHostAnalysisWithBudgets(ctx context.Context, before, after traf
 				return err
 			}
 			if err := machine.add(group.Pattern, hostAnalysisRef{side: side, group: i}); err != nil {
+				return err
+			}
+		}
+		for i, environment := range view.Environments {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if err := machine.add(environment.Host, hostAnalysisRef{side: side, group: -1 - i}); err != nil {
 				return err
 			}
 		}
@@ -400,12 +478,23 @@ func checkTrafficHostAnalysisWithBudgets(ctx context.Context, before, after traf
 		}
 		positions := states[index].positions
 		accepted := [2]map[int]bool{make(map[int]bool), make(map[int]bool)}
+		var environments [2]*trafficHostEnvironment
 		for _, position := range positions {
 			for _, ref := range machine.nodes[position].accepted {
-				accepted[ref.side][ref.group] = true
+				if ref.group < 0 {
+					environments[ref.side] = &views[ref.side].Environments[-1-ref.group]
+				} else {
+					accepted[ref.side][ref.group] = true
+				}
 			}
 		}
-		if err := checkHostTotals(hostTotals(before, accepted[0]), hostTotals(after, accepted[1]), ""); err != nil {
+		prior := environmentHostTotals(before, accepted[0], environments[0])
+		if environments[0] == nil && environments[1] != nil {
+			// A new registered workload URL must fit its limits. An old
+			// over-limit selector language is not a serving-policy baseline.
+			prior = trafficHostTotals{}
+		}
+		if err := checkHostTotals(prior, environmentHostTotals(after, accepted[1], environments[1]), ""); err != nil {
 			err.Host = hostWitness(states, index)
 			return err
 		}
