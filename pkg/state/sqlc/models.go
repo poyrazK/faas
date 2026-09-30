@@ -1159,6 +1159,81 @@ type CustomDomain struct {
 	EnvironmentID                 pgtype.UUID
 }
 
+type CustomerOperation struct {
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	AppID               pgtype.UUID
+	PlatformTenantID    pgtype.UUID
+	DefinitionID        pgtype.UUID
+	CurrentInvocationID pgtype.UUID
+	State               string
+	Record              []byte
+	ExpiresAt           pgtype.Timestamptz
+	CreatedAt           pgtype.Timestamptz
+}
+
+type CustomerOperationDefinition struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	Scope        string
+	Name         string
+	Revision     string
+	DeploymentID pgtype.UUID
+	ReleaseID    string
+	Spec         []byte
+	CreatedAt    pgtype.Timestamptz
+}
+
+type CustomerOperationEvent struct {
+	OperationID pgtype.UUID
+	Sequence    int64
+	EventType   string
+	ExecutionID pgtype.UUID
+	Attempt     int32
+	Data        []byte
+	CreatedAt   pgtype.Timestamptz
+}
+
+type CustomerOperationExecution struct {
+	OperationID  pgtype.UUID
+	Generation   int32
+	InvocationID pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
+}
+
+type CustomerOperationIdempotency struct {
+	ScopeDigest string
+	AccountID   pgtype.UUID
+	AppID       pgtype.UUID
+	OperationID pgtype.UUID
+	Fingerprint string
+	ExpiresAt   pgtype.Timestamptz
+}
+
+type CustomerOperationRecovery struct {
+	OperationID pgtype.UUID
+	RecoveryID  string
+	Fingerprint string
+	Request     []byte
+	CreatedAt   pgtype.Timestamptz
+}
+
+type CustomerOperationReport struct {
+	OperationID pgtype.UUID
+	ExecutionID pgtype.UUID
+	Attempt     int32
+	ReportID    string
+	Fingerprint string
+}
+
+type CustomerOperationStreamLease struct {
+	ID          pgtype.UUID
+	AccountID   pgtype.UUID
+	OperationID pgtype.UUID
+	ExpiresAt   pgtype.Timestamptz
+}
+
 type DataUpstream struct {
 	ID                             pgtype.UUID
 	AccountID                      pgtype.UUID
@@ -1947,6 +2022,7 @@ type Invocation struct {
 	WorkFairnessDigest       []byte
 	WorkFairnessLimit        pgtype.Int4
 	PlatformTenantID         pgtype.UUID
+	OperationID              pgtype.UUID
 }
 
 type InvocationWorkCancellation struct {
@@ -3171,10 +3247,13 @@ type PlatformTenantStatement struct {
 	BillableUnits    int64
 	UnpricedUnits    int64
 	AmountMillicents int64
-	Lines            []byte
-	AsOf             pgtype.Timestamptz
-	CreatedAt        pgtype.Timestamptz
-	FinalizedAt      pgtype.Timestamptz
+	// Compact immutable invoice lines grouped by app, source, and effective price source.
+	Lines       []byte
+	AsOf        pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
+	FinalizedAt pgtype.Timestamptz
+	// Private immutable minute-level billable-unit evidence used to calculate additive statement revisions.
+	Coverage []byte
 }
 
 type PlatformTenantStatementConsumer struct {
