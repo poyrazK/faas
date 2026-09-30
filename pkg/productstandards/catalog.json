@@ -93,6 +93,40 @@
       ]
     },
     {
+      "id": "focus-1-4",
+      "name": "FinOps Open Cost and Usage Specification (FOCUS)",
+      "version": "1.4",
+      "category": "billing",
+      "surface": "account invoice export",
+      "status": "partial",
+      "scope": "GET /v1/billing/focus and gregale billing export project locally persisted issued invoices into the 18 mandatory Invoice Detail columns. Exact non-tax and tax aggregates reconcile to stored invoice totals; ZIP contains CSV and matching FOCUS metadata with explicit source gaps, per-currency totals, and a CSV checksum.",
+      "limitations": "This is not a fully conformant FOCUS dataset: required PaymentTerms is unavailable. Provider line items, legal issuer identity, issue/due dates, conditional payment-currency and purchase-order fields, complete provider history, and separate credit/refund documents require ingestion work. Cost and Usage resource allocation and historical list/contracted/effective prices are not implemented.",
+      "docs_url": "https://focus.finops.org/docs/specification/v1-4/datasets/invoice-detail/",
+      "evidence": "pkg/focus; pkg/focus/testdata/specification/manifest.json (pinned official FOCUS 1.4 columns); cmd/apid/handlers_billing_focus.go; docs/billing.md; docs/adr/380-focus-invoice-projection.md",
+      "conformance": [
+        {
+          "fixture": "focus-invoice-column-contract",
+          "tier": "unit",
+          "target": "pkg/focus/invoice_test.go::TestFOCUSOfficialColumnContract"
+        },
+        {
+          "fixture": "focus-invoice-reconciliation",
+          "tier": "unit",
+          "target": "pkg/focus/invoice_test.go::TestFOCUSInvoiceDetailReconciliation"
+        },
+        {
+          "fixture": "focus-invoice-ownership",
+          "tier": "unit",
+          "target": "cmd/apid/handlers_billing_focus_test.go::TestFOCUSExportAccountAndMonthIsolation"
+        },
+        {
+          "fixture": "focus-invoice-cli-download",
+          "tier": "unit",
+          "target": "cmd/gregale/commands_billing_focus_test.go::TestFOCUSCLIExportsAndPreservesExistingFiles"
+        }
+      ]
+    },
+    {
       "id": "gdpr-art-28",
       "name": "General Data Protection Regulation",
       "version": "Article 28 DPA",

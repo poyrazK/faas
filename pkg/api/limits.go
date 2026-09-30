@@ -144,6 +144,11 @@ const (
 	MaxDelayedTaskDelaySeconds = 365 * 24 * 60 * 60
 	// MaxWorkPoliciesPerApp bounds durable named policy configuration.
 	MaxWorkPoliciesPerApp = 64
+	// FOCUS invoice exports are complete snapshots, never truncated pages.
+	MaxFOCUSExportInvoices   = 1000
+	MaxFOCUSExportFieldBytes = 256
+	// Keep artifacts below the Go SDK's 4 MiB response-body bound.
+	MaxFOCUSExportBytes = 3 << 20
 )
 
 // App CPU is expressed as sustained millicores enforced by cgroup v2 cpu.max.

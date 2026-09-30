@@ -11,6 +11,66 @@ import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class BillingService {
   /**
+   * Download a partial FOCUS 1.4 Invoice Detail projection.
+   * Requires usage:read and the same session MFA gate as invoice history.
+   * Includes only the authenticated account's locally persisted invoices
+   * whose period_end falls in the requested UTC month. Draft and void
+   * invoices are excluded and counted in metadata. The default ZIP binds
+   * CSV and metadata to one store snapshot; separate downloads may see
+   * newer webhooks. Amounts use exact two-decimal ISO currencies and split
+   * non-tax charges from tax. No current plan prices are substituted.
+   *
+   * This projection is partial: required PaymentTerms is empty because
+   * provider payment terms are not persisted. It does not claim complete
+   * FOCUS conformance or expose the Cost and Usage dataset. Issue and due
+   * dates, payment-currency conversions, purchase orders, provider line
+   * items, and separate credit/refund documents are unavailable. See
+   * /docs/billing#focus-invoice-export and the metadata limitations.
+   *
+   * At most 1000 stored invoices are read per month (including excluded
+   * invoices); a larger set returns 422 without a truncated artifact.
+   * Invalid stored amounts, currencies, identifiers, or dates return 409
+   * before any artifact bytes are sent. Each artifact is at most 3 MiB.
+   *
+   * @returns binary Complete local invoice projection for the requested account and month; partial FOCUS support.
+   * @throws ApiError
+   */
+  public static exportFocusInvoices({
+    month,
+    format = 'zip',
+  }: {
+    /**
+     * Required YYYY-MM; selects by invoice period_end, not issue date or usage month.
+     */
+    month: string,
+    /**
+     * ZIP contains CSV plus metadata.json; metadata returns the metadata JSON file independently.
+     */
+    format?: 'zip' | 'csv' | 'metadata',
+  }): CancelablePromise<Blob> {
+    return __request(OpenAPI, {
+      responseType: 'blob',
+      method: 'GET',
+      url: '/v1/billing/focus',
+      query: {
+        'month': month,
+        'format': format,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
+      },
+    });
+  }
+  /**
    * Get the authenticated customer's billing status.
    * Returns a provider-independent deployment and account billing
    * projection. This customer endpoint requires usage:read and never

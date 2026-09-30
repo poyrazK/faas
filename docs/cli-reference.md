@@ -635,6 +635,13 @@ Manage billing (portal, invoices, subscription, card on file)
 
 `gregale billing [<subcommand>]`
 
+Examples:
+
+```sh
+gregale billing export --month 2026-09 --out invoices.zip
+gregale billing export --month 2026-09 --format csv --out invoices.csv
+```
+
 ### billing portal
 
 Open the active billing provider&#39;s portal
@@ -654,6 +661,16 @@ Show the card on file
 ### billing status
 
 Show subscription status
+
+### billing export
+
+Export a partial FOCUS 1.4 invoice projection
+
+| Flag | Meaning | |
+|---|---|---|
+| `--month <YYYY-MM>` | invoice period-end month (required) |  |
+| `--format <FORMAT>` | export encoding (default zip with CSV and metadata) | one of `zip` · `csv` · `metadata` |
+| `--out <PATH>` | new output file (required for zip); - writes stdout |  |
 
 
 ## canary

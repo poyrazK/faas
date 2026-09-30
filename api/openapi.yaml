@@ -20661,6 +20661,72 @@ paths:
   # dashboard's billing page both render from the same round-trip.
   # Field is omitempty — operator boxes without a configured payment
   # method still return 200 with payment_method absent.
+  /v1/billing/focus:
+    get:
+      tags: [billing]
+      operationId: exportFOCUSInvoices
+      summary: Download a partial FOCUS 1.4 Invoice Detail projection.
+      description: |
+        Requires usage:read and the same session MFA gate as invoice history.
+        Includes only the authenticated account's locally persisted invoices
+        whose period_end falls in the requested UTC month. Draft and void
+        invoices are excluded and counted in metadata. The default ZIP binds
+        CSV and metadata to one store snapshot; separate downloads may see
+        newer webhooks. Amounts use exact two-decimal ISO currencies and split
+        non-tax charges from tax. No current plan prices are substituted.
+
+        This projection is partial: required PaymentTerms is empty because
+        provider payment terms are not persisted. It does not claim complete
+        FOCUS conformance or expose the Cost and Usage dataset. Issue and due
+        dates, payment-currency conversions, purchase orders, provider line
+        items, and separate credit/refund documents are unavailable. See
+        /docs/billing#focus-invoice-export and the metadata limitations.
+
+        At most 1000 stored invoices are read per month (including excluded
+        invoices); a larger set returns 422 without a truncated artifact.
+        Invalid stored amounts, currencies, identifiers, or dates return 409
+        before any artifact bytes are sent. Each artifact is at most 3 MiB.
+      parameters:
+        - name: month
+          in: query
+          required: true
+          schema: { type: string, pattern: '^\d{4}-(0[1-9]|1[0-2])$' }
+          description: Required YYYY-MM; selects by invoice period_end, not issue date or usage month.
+        - name: format
+          in: query
+          schema: { type: string, enum: [zip, csv, metadata], default: zip }
+          description: ZIP contains CSV plus metadata.json; metadata returns the metadata JSON file independently.
+      responses:
+        '200':
+          description: Complete local invoice projection for the requested account and month; partial FOCUS support.
+          headers:
+            Content-Disposition:
+              schema: { type: string }
+              description: Attachment filename derived only from the validated month and format.
+            Cache-Control:
+              schema: { type: string, const: 'private, no-store' }
+            X-Gregale-FOCUS-Conformance:
+              schema: { type: string, enum: [partial] }
+            X-Gregale-FOCUS-Version:
+              schema: { type: string, enum: ['1.4'] }
+          content:
+            application/zip:
+              schema: { type: string, format: binary }
+            text/csv:
+              schema: { type: string, format: binary }
+            application/json:
+              schema:
+                type: string
+                format: binary
+                description: Metadata file downloaded as bytes, with DataGenerator, DatasetInstance, Schema, and x_GregaleProjection sections.
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/billing/status:
     get:
       tags: [billing]

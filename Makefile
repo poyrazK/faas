@@ -1163,6 +1163,10 @@ standards-conformance: ## Validate AsyncAPI and verify standards evidence refere
 standards-contract-check: ## Run official-schema and SDK interoperability checks for event/trace contracts
 	@$(GO) test -count=1 -run 'Test(AsyncAPI|OTLPHTTPConformance|CloudEvents|Webhook_Dispatch_CloudEventsStructured)' ./pkg/productstandards ./pkg/gateway ./pkg/events ./pkg/webhookout
 
+.PHONY: focus-contract-check
+focus-contract-check: ## Check the FOCUS invoice projection, reconciliation, ownership, and CLI downloads
+	@$(GO) test -count=1 -run '^TestFOCUS|^TestInactiveAccount_CanStillPay$$' ./pkg/focus ./pkg/api ./cmd/apid ./cmd/gregale
+
 .PHONY: pricing-md
 pricing-md: ## Regenerate customer plan/pricing page from api limits
 	@$(GO) run ./cmd/pricing-md > docs/plans.md
