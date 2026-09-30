@@ -216,7 +216,8 @@ func cmdTest(args []string) int {
 	baseURL := fs.String("base-url", "", "HTTP loopback origin (optional with local.command)")
 	dataPath := fs.String("data", "", "JSON or CSV case data for the local engine")
 	load := fs.Bool("load", false, "run native HTTP journeys concurrently with the local engine")
-	vus := fs.Int("vus", 0, "concurrent users for --load (1..50, default 1)")
+	vus := fs.Int("vus", 0, "concurrent users or arrival-rate concurrency cap (1..50, default 1)")
+	rate := fs.Int("rate", 0, "target journeys per second with --load and duration (1..1000)")
 	iterations := fs.Int("iterations", 0, "total journeys for --load (1..10000, default 100)")
 	duration := fs.String("duration", "", "schedule journeys for this duration with --load (1s..5m)")
 	pacing := fs.String("pacing", "", "pause between each user's load journeys (0s..1m)")
@@ -231,24 +232,26 @@ func cmdTest(args []string) int {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) || fs.NArg() != 0 {
-		PrintUsage(osStderr, "usage: gregale test [--validate|--preflight] [--scenario NAME|--suite NAME] [--fail-fast] [--engine real-vm|local|simulated] [--base-url URL] [--data PATH] [--load [--vus N] [--iterations N|--duration D] [--pacing D] [--progress]] [--profile warm|cold|restored|all] [--repeat N] [--max-workload-minutes N] [--manifest PATH] [--report PATH] [--junit PATH]", "test")
+		PrintUsage(osStderr, "usage: gregale test [--validate|--preflight] [--scenario NAME|--suite NAME] [--fail-fast] [--engine real-vm|local|simulated] [--base-url URL] [--data PATH] [--load [--vus N] [--iterations N|--duration D [--rate N]] [--pacing D] [--progress]] [--profile warm|cold|restored|all] [--repeat N] [--max-workload-minutes N] [--manifest PATH] [--report PATH] [--junit PATH]", "test")
 		return 1
 	}
-	loadOverrides := testLoadOverrides{VUs: *vus, Iterations: *iterations, Duration: *duration, Pacing: *pacing}
+	loadOverrides := testLoadOverrides{VUs: *vus, Iterations: *iterations, Rate: *rate, Duration: *duration, Pacing: *pacing}
 	fs.Visit(func(selected *flag.Flag) {
 		switch selected.Name {
 		case "vus":
 			loadOverrides.VUsSet = true
 		case "iterations":
 			loadOverrides.IterationsSet = true
+		case "rate":
+			loadOverrides.RateSet = true
 		case "duration":
 			loadOverrides.DurationSet = true
 		case "pacing":
 			loadOverrides.PacingSet = true
 		}
 	})
-	if !*load && (loadOverrides.VUsSet || loadOverrides.IterationsSet || loadOverrides.DurationSet || loadOverrides.PacingSet || *progress) {
-		return printErr("Invalid load options", errors.New("--vus, --iterations, --duration, --pacing, and --progress require --load"))
+	if !*load && (loadOverrides.VUsSet || loadOverrides.IterationsSet || loadOverrides.RateSet || loadOverrides.DurationSet || loadOverrides.PacingSet || *progress) {
+		return printErr("Invalid load options", errors.New("--vus, --iterations, --rate, --duration, --pacing, and --progress require --load"))
 	}
 	if *repeat < 1 || *repeat > 20 {
 		return printErr("Invalid repeat count", errors.New("--repeat must be between 1 and 20"))

@@ -107,6 +107,9 @@ func printTestRunStart(plan testRunPlan, repeat int) {
 	if cfg.Duration > 0 {
 		budget = cfg.Duration.String()
 	}
+	if cfg.Rate > 0 {
+		budget += fmt.Sprintf(", %d journeys/s, up to %d active", cfg.Rate, cfg.maxVUs())
+	}
 	if len(cfg.Stages) > 0 {
 		budget += fmt.Sprintf(", %d stages, max %d VUs", len(cfg.Stages), cfg.maxVUs())
 	}

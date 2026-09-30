@@ -1677,7 +1677,7 @@ Compare two named environments in the linked project
 
 Run scenario suites and bounded local HTTP load tests
 
-`gregale test [<subcommand>] [--scenario <NAME>] [--suite <NAME>] [--fail-fast] [--validate] [--preflight] [--engine <ENGINE>] [--base-url <URL>] [--data <PATH>] [--load] [--vus <N>] [--iterations <N>] [--duration <DURATION>] [--pacing <DURATION>] [--progress] [--profile <PROFILE>] [--repeat <N>] [--max-workload-minutes <N>] [--manifest <PATH>] [--report <PATH>] [--junit <PATH>]`
+`gregale test [<subcommand>] [--scenario <NAME>] [--suite <NAME>] [--fail-fast] [--validate] [--preflight] [--engine <ENGINE>] [--base-url <URL>] [--data <PATH>] [--load] [--vus <N>] [--rate <N>] [--iterations <N>] [--duration <DURATION>] [--pacing <DURATION>] [--progress] [--profile <PROFILE>] [--repeat <N>] [--max-workload-minutes <N>] [--manifest <PATH>] [--report <PATH>] [--junit <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1690,7 +1690,8 @@ Run scenario suites and bounded local HTTP load tests
 | `--base-url <URL>` | HTTP loopback origin (optional with local.command) |  |
 | `--data <PATH>` | JSON or CSV case data for the local engine |  |
 | `--load` | repeat native HTTP journeys concurrently with the local engine |  |
-| `--vus <N>` | concurrent users for --load (1..50, default 1) |  |
+| `--vus <N>` | concurrent users or arrival-rate concurrency cap (1..50, default 1) |  |
+| `--rate <N>` | target journeys per second with --load and duration (1..1000) |  |
 | `--iterations <N>` | total journeys for --load (1..10000, default 100) |  |
 | `--duration <DURATION>` | schedule journeys for this duration with --load (1s..5m) |  |
 | `--pacing <DURATION>` | pause between each user&#39;s load journeys (0s..1m) |  |
@@ -1715,6 +1716,7 @@ gregale test --scenario customer-export --profile restored --repeat 3 --max-work
 gregale test --scenario api-smoke --engine local
 gregale test --scenario customer-export --engine local --base-url http://localhost:3000 --data cases.json
 gregale test --scenario api-smoke --engine local --base-url http://localhost:3000 --load --vus 5 --duration 30s --pacing 100ms --progress
+gregale test --scenario api-smoke --engine local --load --rate 20 --duration 30s --vus 10 --progress
 gregale test --scenario customer-export --engine simulated
 ```
 

@@ -410,8 +410,9 @@ gregale test --scenario api-smoke --engine local --base-url http://localhost:300
 Each user runs a journey consisting of `requests` followed by `checks`, in order,
 then immediately starts the next journey. Users share the total iteration budget;
 `--iterations 100 --vus 5` runs 100 journeys in total. This is a closed concurrency
-model: throughput depends on the app's response speed. It does not promise a
-fixed arrival rate. Captures start empty for every journey. `${run.id}` becomes
+model: throughput depends on the app's response speed. Add `rate` and `duration`
+to choose the fixed arrival schedule described below. Captures start empty for
+every journey. `${run.id}` becomes
 `<run-ID>-<iteration-number>` so requests can create distinct resources. Cleanup
 commands receive the parent `GREGALE_TEST_RUN_ID` and can remove resources by
 that prefix.
@@ -441,9 +442,9 @@ step name, and failed budgets fail the JUnit case and command.
 This optional block configures `--load`; it does not enable load for a normal
 test. Replace `iterations` with `duration: 30s` to choose a timed run. CLI flags
 override the manifest; selecting `--duration` clears its iteration setting and
-stages, and selecting `--iterations` clears its duration and stages. Without
+stages, and selecting `--iterations` clears its duration, stages, and rate. Without
 configuration, `--load`
-uses one user and 100 journeys. `--vus`, `--iterations`, and `--duration` require
+uses one user and 100 journeys. `--vus`, `--iterations`, `--rate`, and `--duration` require
 `--load`. Validate the configuration without contacting the app:
 
 ```sh
@@ -458,6 +459,70 @@ runs. Commands receive `GREGALE_TEST_LOAD=1`, `GREGALE_TEST_LOAD_MODE`,
 `GREGALE_TEST_LOAD_VUS`, `GREGALE_TEST_LOAD_ITERATIONS`, and
 `GREGALE_TEST_LOAD_DURATION`. After load, assertions and cleanup can also inspect
 aggregate evidence in `GREGALE_TEST_LOAD_JSON`.
+
+### Schedule a fixed arrival rate
+
+Use `--rate` to schedule journeys independently of response speed. A journey is
+the complete ordered workflow, so 20 journeys per second can produce more than
+20 HTTP requests per second:
+
+```sh
+gregale test --scenario api-smoke --engine local --base-url http://localhost:3000 \
+  --load --rate 20 --duration 30s --vus 10 --progress \
+  --report arrival-load.json --junit arrival-load.xml
+```
+
+Keep the same settings in the manifest to reuse them from a named suite:
+
+```yaml
+load:
+  rate: 20
+  duration: 30s
+  vus: 10
+  thresholds:
+    error_rate: 0
+    steps:
+      submit: {p95: 200ms}
+      read: {p95: 100ms}
+```
+
+`vus` caps active journeys in this mode. The CLI starts one arrival at the
+beginning of the scheduling window and then spaces arrivals at `1 / rate`
+seconds, ending before `duration`. The schedule contains `ceil(rate * duration
+in seconds)` arrivals. A busy pool drops the arrival immediately rather than
+queuing it. If the generator misses multiple deadlines, it counts the missed
+arrivals as late and admits at most the most recent due arrival. It never replays
+a backlog in a burst or starts arrivals after the scheduling window ends.
+Admitted journeys finish their entire workflow during the 30-second drain
+allowance. Their run identity uses the arrival's schedule number; dropped
+arrivals can leave gaps in those numbers.
+
+**Any dropped arrival fails the run**, even when HTTP error and latency budgets
+pass. This indicates that the requested traffic was not delivered; increase the
+VU cap or reduce the rate, and check generator capacity. Drops are reported
+separately from failed HTTP steps. The HTTP error-rate metric remains failed
+steps divided by attempted steps.
+
+The JSON `load.arrival` object records the target journeys/second, planned and
+scheduled arrivals, drops at the VU limit, late drops, total drops, scheduling
+duration, and achieved journey starts/second. `scheduled` counts starts plus
+drops; a canceled or resource-limited run can leave planned arrivals unscheduled.
+Achieved start rate uses the scheduling phase, while HTTP-step throughput uses
+the whole load phase including drain. Human summaries and progress also show
+the target rate and drops. JUnit embeds the same evidence and marks a dropped
+run as failed. A skipped suite member retains its arrival plan as not started.
+Commands receive `GREGALE_TEST_LOAD_MODE=arrival-rate` and
+`GREGALE_TEST_LOAD_RATE` in addition to the other load variables.
+
+Rates are whole journeys/second from 1 to 1,000. Duration is required, from 1
+second to 5 minutes, and concurrency remains capped at 50 VUs. The CLI rejects
+schedules whose planned complete journeys would exceed 100,000 HTTP steps.
+Arrival-rate load cannot use iteration counts, VU stages, or nonzero pacing.
+Explicit `--rate` selects this mode and clears manifest iteration counts,
+stages, and pacing; an accompanying positive `--pacing` remains an error.
+`--duration` can override an existing arrival duration, while `--iterations`
+selects the concurrency model and clears the manifest rate. Passing both
+`--rate` and `--iterations` is an error. `--rate` requires `--load`.
 
 ### Ramp traffic, pace users, and follow progress
 
@@ -497,11 +562,10 @@ and target user counts, and journeys started in that stage. Journeys are assigne
 to the stage in which they start, even if they finish in a later stage.
 
 `pacing` pauses each user after a journey finishes before starting its next one,
-including after a failed journey. It applies to all load modes and defaults to
+including after a failed journey. It applies to concurrency load modes and defaults to
 zero. It adds no pause after the final journey and does not count toward HTTP
 step latency. The allowed range is 0 seconds to 1 minute; `--pacing 0s` disables
-manifest pacing. This remains a concurrency model, not a fixed arrival-rate
-promise.
+manifest pacing. Stages and pacing use the concurrency model.
 
 ```sh
 gregale test --scenario customer-export --engine local --base-url http://localhost:3000 \
