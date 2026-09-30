@@ -48,6 +48,8 @@ func (r *testPhaseRecorder) finishCurrent(status string) {
 }
 
 type testValidationResult struct {
+	Suite               string `json:"suite,omitempty"`
+	Engine              string `json:"engine,omitempty"`
 	Scenario            string `json:"scenario"`
 	Project             string `json:"project"`
 	Workloads           int    `json:"workloads"`
@@ -153,6 +155,7 @@ type testJUnitSuite struct {
 	Name     string          `xml:"name,attr"`
 	Tests    int             `xml:"tests,attr"`
 	Failures int             `xml:"failures,attr"`
+	Skipped  int             `xml:"skipped,attr"`
 	Time     string          `xml:"time,attr"`
 	Cases    []testJUnitCase `xml:"testcase"`
 }
@@ -162,6 +165,7 @@ type testJUnitCase struct {
 	ClassName string            `xml:"classname,attr"`
 	Time      string            `xml:"time,attr"`
 	Failure   *testJUnitFailure `xml:"failure,omitempty"`
+	Skipped   *testJUnitSkipped `xml:"skipped,omitempty"`
 	SystemOut string            `xml:"system-out"`
 }
 
@@ -170,8 +174,15 @@ type testJUnitFailure struct {
 	Body    string `xml:",chardata"`
 }
 
+type testJUnitSkipped struct {
+	Message string `xml:"message,attr"`
+}
+
 func writeTestJUnit(path string, receipts []testRunReceipt) error {
 	suite := testJUnitSuite{Name: "gregale scenarios", Tests: len(receipts), Cases: make([]testJUnitCase, 0, len(receipts))}
+	if len(receipts) > 0 && receipts[0].Suite != "" {
+		suite.Name = "gregale suite " + receipts[0].Suite
+	}
 	var totalMS int64
 	for _, receipt := range receipts {
 		body, err := json.MarshalIndent(receipt, "", "  ")
@@ -192,7 +203,10 @@ func writeTestJUnit(path string, receipts []testRunReceipt) error {
 			Time:      fmt.Sprintf("%.3f", float64(receipt.DurationMS)/1000),
 			SystemOut: string(body),
 		}
-		if receipt.Status != "passed" {
+		if receipt.Status == "skipped" {
+			suite.Skipped++
+			caseResult.Skipped = &testJUnitSkipped{Message: receipt.SkipReason}
+		} else if receipt.Status != "passed" {
 			suite.Failures++
 			if failureText == "" {
 				failureText = "scenario did not pass"

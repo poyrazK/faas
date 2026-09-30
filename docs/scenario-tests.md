@@ -72,6 +72,81 @@ scenarios:
       - [node, test/fixtures/cleanup.mjs]
 ```
 
+## Named suites
+
+Declare suites alongside `scenarios` to run a smoke or regression selection in
+one command. Members execute sequentially in declaration order. Each member can
+choose an engine, a real-VM profile, and a local JSON/CSV dataset:
+
+```yaml
+suites:
+  smoke:
+    scenarios:
+      - scenario: api-health
+        engine: local
+      - scenario: customer-export
+        engine: local
+        data: test/export-cases.json
+  regression:
+    scenarios:
+      - scenario: customer-export
+        engine: real-vm
+        profile: all
+      - scenario: delivery-retry
+        engine: real-vm
+        profile: restored
+```
+
+These names must also be declared under `scenarios`. A suite contains 1..100
+unique scenario names; use `--repeat` or `profile: all` for repeated runs.
+Dataset paths resolve relative to the manifest directory. Data remains local
+only; use separate suites for local data cases and real-VM lifecycle checks.
+
+```sh
+# Validate every selected member and dataset without starting apps or logging in.
+gregale test --suite smoke --validate
+
+# With local.command on each member, the CLI manages app startup and shutdown.
+gregale test --suite smoke --report results.json --junit results.xml
+
+# Stop after the first failed run and cleanup.
+gregale test --suite smoke --fail-fast --junit results.xml
+
+# Override all member engines for a local development run.
+gregale test --suite regression --engine local --base-url http://localhost:3000
+
+# Preflight all real-VM members and guard the total estimated VM usage.
+gregale test --suite regression --preflight
+gregale test --suite regression --max-workload-minutes 180
+```
+
+Without a member `engine`, the default is `real-vm`. Explicit `--engine` overrides
+every member's engine. Explicit `--profile` overrides the real-VM members'
+profiles; local and simulated runs retain their own engine labels and do not
+claim lifecycle evidence. `--profile` requires at least one real-VM member.
+`--repeat` applies to every member: all attempts and cases/profiles finish before
+the next member starts. `--scenario` and `--suite` are mutually exclusive, and
+suite datasets must be declared on members rather than passed through `--data`.
+
+The CLI checks every selected member's source, engine requirements, data fields,
+and load configuration before starting the suite. `--load` requires all members
+to use the local engine and applies each scenario's load settings plus CLI
+overrides. `--base-url` supplies the origin for local members. Each managed local
+run starts a fresh app; fixtures finish and the app stops before the next run.
+The VM workload-minute guard adds all real-VM members, profiles, and repeats,
+rather than granting each member a separate budget. `--preflight` requires all
+members to use real VMs and checks capacity for each sequential member.
+
+By default, assertion or cleanup failures do not stop subsequent runs. The
+command exits unsuccessfully if any run fails. `--fail-fast` also works with a
+single `--scenario`: after the first failure and cleanup, remaining runs are
+reported as `skipped`, with a reason. Interruption likewise records remaining
+planned runs as skipped. JSON stdout and `--report` contain one combined array,
+with a `suite` field on each suite receipt. JUnit contains one suite with distinct
+scenario/profile/case/attempt names, failures, and `<skipped>` entries. A partial
+suite never exits successfully. Human output ends with passed/failed/skipped
+counts. Reports continue to omit dataset values and credentials.
+
 ## Native HTTP workflows
 
 For common API tests, declare requests directly. `requests` run after the
@@ -305,8 +380,9 @@ gregale test --validate --engine local --data cases.json
 ```
 
 Each row runs the whole scenario with a fresh run ID and capture map. Cases run
-in file order; `--repeat N` repeats all rows N times. All rows use the same
-running local app, so use run IDs or fixture cleanup to avoid shared state.
+in file order; `--repeat N` repeats all rows N times. With a manually supplied
+`--base-url`, rows share the running app, so use run IDs or fixture cleanup to
+avoid shared state. With `local.command`, each row/attempt starts a fresh app.
 An assertion failure is reported for its row; remaining rows continue, and the
 command exits unsuccessfully if any row fails. Interruption stops new rows.
 Commands receive `GREGALE_TEST_CASE` (`row-1`, `row-2`, etc.) and
@@ -460,8 +536,9 @@ in-flight work. Receipts contain aggregate evidence rather than one entry per
 journey. JUnit names contain `/local/load/` to distinguish load cases; response
 bodies, request headers, data values, and captures are not added to reports.
 
-Load currently requires `--engine local` and an already running HTTP app on
-loopback. It uses native Go HTTP requests, with no k6 or Postman runtime download.
+Load currently requires `--engine local` and either `local.command` or an already
+running HTTP app on loopback. It uses native Go HTTP requests, with no k6 or
+Postman runtime download.
 Limits are 50 users, 10,000 journeys for an iteration run, 5 minutes of scheduling,
 and 100,000 HTTP-step attempts per case/run. Iteration configurations that could
 exceed the HTTP-step budget are rejected before execution. Timed runs fail if

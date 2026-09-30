@@ -1227,8 +1227,8 @@ var cliCommands = []cliCommand{
 	{
 		Name:     "test",
 		DocSlug:  "test",
-		Short:    "Run application scenarios and bounded local HTTP load tests",
-		Examples: []string{"gregale test init --from openapi.yaml --project my-api", "gregale test import --from collection.json --project my-api", "gregale test --validate", "gregale test --scenario customer-export --preflight", "gregale test --scenario customer-export --profile restored --repeat 3 --max-workload-minutes 135 --report test-results.json --junit test-results.xml", "gregale test --scenario api-smoke --engine local", "gregale test --scenario customer-export --engine local --base-url http://localhost:3000 --data cases.json", "gregale test --scenario api-smoke --engine local --base-url http://localhost:3000 --load --vus 5 --duration 30s --pacing 100ms --progress", "gregale test --scenario customer-export --engine simulated"},
+		Short:    "Run scenario suites and bounded local HTTP load tests",
+		Examples: []string{"gregale test init --from openapi.yaml --project my-api", "gregale test import --from collection.json --project my-api", "gregale test --validate", "gregale test --suite smoke --engine local --fail-fast --junit test-results.xml", "gregale test --suite regression --validate", "gregale test --scenario customer-export --preflight", "gregale test --scenario customer-export --profile restored --repeat 3 --max-workload-minutes 135 --report test-results.json --junit test-results.xml", "gregale test --scenario api-smoke --engine local", "gregale test --scenario customer-export --engine local --base-url http://localhost:3000 --data cases.json", "gregale test --scenario api-smoke --engine local --base-url http://localhost:3000 --load --vus 5 --duration 30s --pacing 100ms --progress", "gregale test --scenario customer-export --engine simulated"},
 		Subcommands: []cliSub{{Name: "init", Short: "Create public GET smoke checks from a local OpenAPI document", Examples: []string{"gregale test init --from openapi.yaml --project my-api --source ."}, Flags: []cliFlag{
 			{Name: "from", Short: "local OpenAPI 3.0 or 3.1 document", Value: "PATH", Req: true},
 			{Name: "project", Short: "Gregale project slug", Value: "SLUG", Req: true},
@@ -1246,6 +1246,8 @@ var cliCommands = []cliCommand{
 		}}},
 		Flags: []cliFlag{
 			{Name: "scenario", Short: "scenario declared in gregale-test.yaml", Value: "NAME"},
+			{Name: "suite", Short: "named suite; run members sequentially in declaration order", Value: "NAME"},
+			{Name: "fail-fast", Short: "stop after the first failed run and cleanup; report remaining runs as skipped"},
 			{Name: "validate", Short: "validate local scenario sources without a platform login"},
 			{Name: "preflight", Short: "check account entitlements and developer app capacity"},
 			{Name: "engine", Short: "execution engine (default real-vm)", Value: "ENGINE", ClosedSet: []string{"real-vm", "local", "simulated"}},

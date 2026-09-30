@@ -258,12 +258,12 @@ jobs:
 
       # Keep the credential-free CLI scenario path executable on every PR.
       # The simulation starts the app and sink over local HTTP, including a
-      # planned failed delivery and retry.
+      # planned failed delivery and retry. Run both scenarios through the suite
+      # command so selection, sequential execution, and reporting stay covered.
       - name: scenario simulation fixture
         run: |
           ./bin/gregale test --manifest tests/scenario-acceptance/gregale-test.yaml --validate
-          ./bin/gregale test --manifest tests/scenario-acceptance/gregale-test.yaml --scenario delivery-smoke --engine simulated
-          ./bin/gregale test --manifest tests/scenario-acceptance/gregale-test.yaml --scenario customer-export --engine simulated
+          ./bin/gregale test --manifest tests/scenario-acceptance/gregale-test.yaml --suite simulation --report scenario-results.json --junit scenario-results.xml
 
       # Provider-created machines hand their one-time connection details to
       # the provider-neutral adoption pipeline through ComputeNodeClaim files.

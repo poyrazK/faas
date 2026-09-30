@@ -1,4 +1,11 @@
 version: 1
+suites:
+  simulation:
+    scenarios:
+      - scenario: delivery-smoke
+        engine: simulated
+      - scenario: customer-export
+        engine: simulated
 scenarios:
   delivery-smoke:
     project: scenario-acceptance

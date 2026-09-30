@@ -36,7 +36,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`domains`](#domains) | Manage custom domains |
 | [`dev`](#dev) | Sync local changes to a developer environment |
 | [`diff`](#diff) | Compare two named environments in the linked project |
-| [`test`](#test) | Run application scenarios and bounded local HTTP load tests |
+| [`test`](#test) | Run scenario suites and bounded local HTTP load tests |
 | [`preview`](#preview) | Manage preview environments for pull requests |
 | [`platform-tenants`](#platform-tenants) | Manage one customer across app consumers and tenant hostnames |
 | [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|trace\|create\|get\|update\|rm --app &lt;slug&gt;) |
@@ -1675,13 +1675,15 @@ Compare two named environments in the linked project
 
 ## test
 
-Run application scenarios and bounded local HTTP load tests
+Run scenario suites and bounded local HTTP load tests
 
-`gregale test [<subcommand>] [--scenario <NAME>] [--validate] [--preflight] [--engine <ENGINE>] [--base-url <URL>] [--data <PATH>] [--load] [--vus <N>] [--iterations <N>] [--duration <DURATION>] [--pacing <DURATION>] [--progress] [--profile <PROFILE>] [--repeat <N>] [--max-workload-minutes <N>] [--manifest <PATH>] [--report <PATH>] [--junit <PATH>]`
+`gregale test [<subcommand>] [--scenario <NAME>] [--suite <NAME>] [--fail-fast] [--validate] [--preflight] [--engine <ENGINE>] [--base-url <URL>] [--data <PATH>] [--load] [--vus <N>] [--iterations <N>] [--duration <DURATION>] [--pacing <DURATION>] [--progress] [--profile <PROFILE>] [--repeat <N>] [--max-workload-minutes <N>] [--manifest <PATH>] [--report <PATH>] [--junit <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--scenario <NAME>` | scenario declared in gregale-test.yaml |  |
+| `--suite <NAME>` | named suite; run members sequentially in declaration order |  |
+| `--fail-fast` | stop after the first failed run and cleanup; report remaining runs as skipped |  |
 | `--validate` | validate local scenario sources without a platform login |  |
 | `--preflight` | check account entitlements and developer app capacity |  |
 | `--engine <ENGINE>` | execution engine (default real-vm) | one of `real-vm` · `local` · `simulated` |
@@ -1706,6 +1708,8 @@ Examples:
 gregale test init --from openapi.yaml --project my-api
 gregale test import --from collection.json --project my-api
 gregale test --validate
+gregale test --suite smoke --engine local --fail-fast --junit test-results.xml
+gregale test --suite regression --validate
 gregale test --scenario customer-export --preflight
 gregale test --scenario customer-export --profile restored --repeat 3 --max-workload-minutes 135 --report test-results.json --junit test-results.xml
 gregale test --scenario api-smoke --engine local
