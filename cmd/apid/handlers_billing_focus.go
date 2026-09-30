@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -51,6 +52,10 @@ func (s *server) exportFOCUSInvoices(w http.ResponseWriter, r *http.Request, acc
 }
 
 func focusExportProblem(err error) *api.Problem {
+	var limit *focus.LimitError
+	if errors.As(err, &limit) {
+		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invoice export limit exceeded", err.Error()).WithLimit(limit.Limit, limit.Observed).WithDocs(wire.DocsBaseURL + "/billing#focus-invoice-export")
+	}
 	return api.NewProblem(http.StatusConflict, api.CodeConflict, "Invoice export unavailable", err.Error()).WithDocs(wire.DocsBaseURL + "/billing#focus-invoice-export")
 }
 

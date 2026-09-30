@@ -15,9 +15,9 @@ Free accounts have a zero monthly charge and are subject to the published limits
 ## FOCUS invoice export
 
 Gregale provides a **partial FOCUS 1.4 Invoice Detail projection** for financial
-reconciliation. It is not a fully conformant FOCUS dataset: required payment
-terms are not yet stored. The export metadata and HTTP
-`X-Gregale-FOCUS-Conformance: partial` header declare this limitation.
+reconciliation. Signed billing webhooks retain provider line items and invoice
+terms/dates where available. The export remains partial; its metadata and
+`X-Gregale-FOCUS-Conformance: partial` header describe source coverage and gaps.
 
 ```bash
 gregale billing export --month 2026-09 --out invoices.zip
@@ -29,8 +29,11 @@ The default ZIP contains `gregale-invoice-detail-2026-09.csv` and `metadata.json
 from the same invoice snapshot. Metadata contains the FOCUS data generator,
 dataset instance and exact column schema, plus `x_GregaleProjection` with the
 CSV SHA-256, row count, totals by currency, excluded invoice counts, and known
-gaps. Use ZIP when CSV and metadata must match: independent downloads can see
-newer billing webhooks. Files are created with owner-only permissions; existing
+gaps. `SourceCoverage` counts detailed invoices, missing invoice facts, and
+aggregate fallback reasons (`unavailable`, `incomplete`, `empty`, `unclassified`,
+`totals_mismatch`, or `tax_in_non_tax_lines`). Use ZIP when CSV and metadata must
+match: independent downloads can see newer billing webhooks. Files are created
+with owner-only permissions; existing
 files are preserved. CSV and metadata can go to stdout; ZIP requires an explicit
 `--out PATH` or `--out -`.
 
@@ -44,7 +47,10 @@ The required month selects invoices by **period end in the UTC month**, matching
 `GET /v1/invoices`; it does not select by issue date or prorate usage. An invoice
 ending at `2026-10-01T00:00:00Z` belongs to the October export. At most 1,000
 stored invoices are accepted per month, including drafts and voids, and each
-artifact is at most 3 MiB. Exceeding the invoice limit returns a problem response
+artifact is at most 3 MiB. Each invoice can retain at most 1,000 items; exports
+contain at most 10,000 rows. Descriptive fields are bounded to 4,096 bytes and
+identifiers to 256 bytes. Each invoice retains at most 10,000 historical line IDs
+to preserve creation dates after removal. Exceeding invoice, row, or artifact bounds returns 422
 with the limit and observed count, without producing a truncated export.
 
 ### Mapping
@@ -56,22 +62,34 @@ UTC RFC 3339 with a `Z` suffix; amounts are exact decimal strings, never floats.
 
 | FOCUS field | Gregale mapping |
 |---|---|
-| `BilledCost`, `ChargeCategory` | One `Usage` aggregate of `total_cents - tax_cents`; a separate `Tax` row when tax is nonzero. Their sum equals the stored invoice total. Subtotal, paid amounts, refunds, and credits are not subtracted again. |
+| `BilledCost`, `ChargeCategory` | Complete, classified line snapshots produce separate charge and nonzero tax rows. Net line costs and taxes must exactly reconcile to stored invoice totals. Otherwise one `Usage` aggregate of `total_cents - tax_cents` and a separate nonzero `Tax` row are used. Subtotal, paid amounts, refunds, and credits are not subtracted again. |
 | `BillingAccountId`, `BillingCurrency` | Authenticated Gregale account ID and uppercase ISO 4217 billing currency. Only two-decimal currencies are supported by this cents-based projection. |
 | `BillingPeriodStart`, `BillingPeriodEnd` | Stored invoice period boundaries. |
 | `InvoiceId`, `ReferenceInvoiceId` | Provider invoice/order document ID. Original invoices reference themselves; payment/charge handles are not used. |
-| `InvoiceDetailId`, `InvoiceDetailGrain` | Stable local invoice ID plus `:charges` or `:tax`; JSON grain contains `x_GregaleAggregation` identifying that component. These are aggregates, not provider line-item IDs. |
-| `InvoiceDetailDescription` | Description of the non-tax or tax aggregate. |
-| `InvoiceIssuerName` | `Polar` or `Paddle` for those merchants of record; `Gregale` for Stripe processing. Issuer brand normalization does not recover an invoice's legal entity name. |
+| `InvoiceDetailId`, `InvoiceDetailGrain` | Detailed rows use stable UUIDs from the local invoice ID, provider line ID, and charge/tax component; grain contains `x_GregaleProviderLineId` and `x_GregaleComponent`. Fallback IDs/grain retain the aggregate mapping (`:charges`/`:tax`, `x_GregaleAggregation`). |
+| `InvoiceDetailDescription` | Provider item description, or the aggregate description on fallback. |
+| `InvoiceIssuerName` | Provider invoice business name when supplied (Stripe `account_name`); otherwise `Polar`, `Paddle`, or `Gregale` merchant brands. Exact legal identity is not guaranteed. |
 | `InvoiceIssueStatus` | Stored `open`, `paid`, and `uncollectible` invoices are `Issued`. Payment state does not imply a draft invoice. Draft and void invoices are excluded and counted in metadata. |
-| `InvoiceDetailCreated`, `InvoiceDetailLastUpdated` | Creation and update timestamps of the local invoice projection. These are not provider issue dates. |
-| `InvoiceIssueDate`, `PaymentDueDate`, `PaymentTerms` | Empty because those provider fields are not stored. `PaymentTerms` is a required non-null field in FOCUS: this is an explicit conformance gap. |
+| `InvoiceDetailCreated`, `InvoiceDetailLastUpdated` | Detailed rows use local first-ingestion/last-fact-change timestamps per provider line. Aggregate rows use local invoice timestamps. These never substitute for issue dates. |
+| `InvoiceIssueDate`, `PaymentDueDate`, `PaymentTerms` | Supplied invoice facts, with nullable dates empty when unavailable. `PaymentTerms` is required and is listed in metadata `MissingRequiredFields` when any delivered invoice lacks it. |
 
-Zero-cost issued invoices retain one non-tax row; zero tax rows are omitted.
-`Usage` is the projection's non-tax aggregate classification. Provider line-item
-classifications are not stored, so the export cannot distinguish a pure plan
-purchase from a mix of usage, purchases, and credits. This semantic gap is also
-declared in metadata; strict charge categorization needs provider line items.
+Zero-cost issued invoices retain a non-tax row; zero tax rows are omitted.
+Negative lines retain their sign and category. Detail lists must be complete,
+nonempty, classified, and reconcile exactly; no provider pagination is fetched
+at export time. Fallback non-tax aggregates retain `Usage` and a declared
+classification gap. A sparse webhook preserves prior scalar facts/omitted
+lines; a supplied line list replaces the snapshot, including its completeness.
+
+| Provider | Captured facts and classification |
+|---|---|
+| Stripe | Public invoice business name, effective/finalized issue date, due date, and terms expressed as `Due by <actual due date>`. Expanded recurring prices identify licensed purchases or metered usage; modern opaque price IDs remain unclassified. Both tax shapes, inclusive tax, and discounts are supported. `has_more` must explicitly be false. |
+| Paddle | Actual structured payment terms and `billed_at`; calculated line total minus tax gives net cost after discounts. Gregale's provisioned monthly/overage descriptions identify Purchase/Usage. Exact issuer and due date are not supplied by this transaction payload. Duplicate price IDs mark the list incomplete; original lines may not reconcile to adjusted totals. |
+| Polar | Order items and their amounts/taxes. Legacy expanded price types distinguish fixed purchases from metered usage; current payloads without price facts remain unclassified. Invoice terms, actual issue/due dates, and issuer identity remain unavailable. Buyer billing names and order creation dates are never substituted. Unallocated order discounts can require aggregate fallback. |
+
+Historical invoices stay aggregate until enriched by provider deliveries; this
+change does not backfill provider history. The export remains partial even
+when every invoice in a particular month has payment terms.
+
 Malformed currencies, unsupported currency precision (for example JPY or KWD),
 inconsistent amounts, missing identifiers, and unrepresentable dates fail the
 entire download with HTTP 409. No amounts or timestamps are guessed.
@@ -84,10 +102,15 @@ need their own financial documents and original-invoice links before they can
 be exported as separate adjustments. Conditional payment-currency conversion
 and purchase-order data also need provider ingestion.
 
-The next step is to persist invoice payment terms, issue/due dates, legal issuer
-identity, and provider line items, including correction lineage. A historical
-cost ledger with service/resource identifiers, quantities, units, and price
-snapshots is then needed for the **Cost and Usage** dataset. Current plan prices
+Detail timestamps track local provider-line facts. Changes to shared invoice
+fields and the first appearance of a separate tax component still need
+independent lifecycle tracking; metadata declares this gap.
+
+The next invoice steps are authenticated provider backfill/enrichment, missing
+price classifications and legal issuer coverage, and correction-document
+lineage and complete detail lifecycle tracking. A historical cost ledger with
+service/resource identifiers, quantities, units, and price snapshots is then
+needed for the **Cost and Usage** dataset. Current plan prices
 cannot reliably reconstruct past list, contracted, or effective costs.
 
 The mapping is based on the official

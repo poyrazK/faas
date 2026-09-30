@@ -99,10 +99,10 @@
       "category": "billing",
       "surface": "account invoice export",
       "status": "partial",
-      "scope": "GET /v1/billing/focus and gregale billing export project locally persisted issued invoices into the 18 mandatory Invoice Detail columns. Exact non-tax and tax aggregates reconcile to stored invoice totals; ZIP contains CSV and matching FOCUS metadata with explicit source gaps, per-currency totals, and a CSV checksum.",
-      "limitations": "This is not a fully conformant FOCUS dataset: required PaymentTerms is unavailable. Provider line items, legal issuer identity, issue/due dates, conditional payment-currency and purchase-order fields, complete provider history, and separate credit/refund documents require ingestion work. Cost and Usage resource allocation and historical list/contracted/effective prices are not implemented.",
+      "scope": "Account-scoped FOCUS 1.4 Invoice Detail exports use durable provider facts and exactly reconciled, classified line snapshots when available. Aggregate fallbacks and missing facts are counted in metadata; ZIP binds CSV and metadata with a checksum.",
+      "limitations": "Conformance remains partial. PaymentTerms, legal issuer and date coverage depend on provider payloads; opaque price IDs, partial lists, unallocated discounts, and adjusted totals can require aggregate fallback. Detail timestamps track line facts rather than independent tax-component creation or shared invoice-field changes. Provider history backfill, conditional FX/PO fields, correction links, separate credit/refund documents, and Cost and Usage allocation/historical prices remain unimplemented.",
       "docs_url": "https://focus.finops.org/docs/specification/v1-4/datasets/invoice-detail/",
-      "evidence": "pkg/focus; pkg/focus/testdata/specification/manifest.json (pinned official FOCUS 1.4 columns); cmd/apid/handlers_billing_focus.go; docs/billing.md; docs/adr/380-focus-invoice-projection.md",
+      "evidence": "pkg/focus; pkg/focus/testdata/specification/manifest.json (pinned official FOCUS 1.4 columns); cmd/apid/handlers_billing_focus.go; docs/billing.md; docs/adr/380-focus-invoice-projection.md; docs/adr/381-provider-invoice-facts.md; pkg/billing/testdata/invoices",
       "conformance": [
         {
           "fixture": "focus-invoice-column-contract",
@@ -123,6 +123,21 @@
           "fixture": "focus-invoice-cli-download",
           "tier": "unit",
           "target": "cmd/gregale/commands_billing_focus_test.go::TestFOCUSCLIExportsAndPreservesExistingFiles"
+        },
+        {
+          "fixture": "focus-provider-details",
+          "tier": "unit",
+          "target": "pkg/focus/invoice_details_test.go::TestFOCUSProviderDetailsReconciliation"
+        },
+        {
+          "fixture": "focus-invoice-ingestion",
+          "tier": "unit",
+          "target": "cmd/apid/handlers_billing_invoice_details_test.go::TestFOCUSSignedInvoiceIngestion"
+        },
+        {
+          "fixture": "focus-invoice-persistence",
+          "tier": "unit",
+          "target": "pkg/state/invoice_details_test.go::TestMemInvoiceDetailsPersistence"
         }
       ]
     },

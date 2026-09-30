@@ -5468,6 +5468,7 @@ type StorageUsage struct {
 // invoice URLs and PDF URLs are session-scoped; we never hand them to
 // the customer via this API.
 type Invoice struct {
+	Details           *InvoiceDetails
 	ID                string
 	AccountID         string
 	Provider          string // "stripe" | "paddle" | "polar"

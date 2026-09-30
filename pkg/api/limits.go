@@ -145,8 +145,12 @@ const (
 	// MaxWorkPoliciesPerApp bounds durable named policy configuration.
 	MaxWorkPoliciesPerApp = 64
 	// FOCUS invoice exports are complete snapshots, never truncated pages.
-	MaxFOCUSExportInvoices   = 1000
-	MaxFOCUSExportFieldBytes = 256
+	MaxFOCUSExportInvoices    = 1000
+	MaxFOCUSExportFieldBytes  = 256
+	MaxFOCUSExportRows        = 10000
+	MaxInvoiceLineItems       = 1000
+	MaxInvoiceSeenLineIDs     = 10000
+	MaxInvoiceDetailTextBytes = 4096
 	// Keep artifacts below the Go SDK's 4 MiB response-body bound.
 	MaxFOCUSExportBytes = 3 << 20
 )

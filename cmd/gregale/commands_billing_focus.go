@@ -36,7 +36,7 @@ func cmdBillingExport(args []string) int {
 	if err != nil {
 		return printErr("Could not write billing export", err)
 	}
-	_, _ = fmt.Fprintln(os.Stderr, "FOCUS 1.4 Invoice Detail projection is partial: payment terms and provider line-item history are unavailable. See billing docs and export metadata.")
+	_, _ = fmt.Fprintln(os.Stderr, "FOCUS 1.4 Invoice Detail projection is partial. See billing docs and export metadata for invoice source coverage and remaining gaps.")
 	return 0
 }
 

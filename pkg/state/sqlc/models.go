@@ -2005,6 +2005,7 @@ type Invoice struct {
 	AmountRefundedCents      int64
 	CreditsAppliedCents      int64
 	AmountRefundPendingCents int64
+	Details                  []byte
 }
 
 type InvoiceRefund struct {

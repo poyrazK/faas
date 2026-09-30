@@ -1166,6 +1166,7 @@ standards-contract-check: ## Run official-schema and SDK interoperability checks
 .PHONY: focus-contract-check
 focus-contract-check: ## Check the FOCUS invoice projection, reconciliation, ownership, and CLI downloads
 	@$(GO) test -count=1 -run '^TestFOCUS|^TestInactiveAccount_CanStillPay$$' ./pkg/focus ./pkg/api ./cmd/apid ./cmd/gregale
+	@$(GO) test -count=1 -run '^TestInvoiceSnapshot|^TestMemInvoiceDetails|^TestInvoiceDetailsValidation' ./pkg/billing/stripe ./pkg/billing/paddle ./pkg/billing/polar ./pkg/state
 
 .PHONY: pricing-md
 pricing-md: ## Regenerate customer plan/pricing page from api limits

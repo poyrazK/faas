@@ -20,17 +20,20 @@ export class BillingService {
    * newer webhooks. Amounts use exact two-decimal ISO currencies and split
    * non-tax charges from tax. No current plan prices are substituted.
    *
-   * This projection is partial: required PaymentTerms is empty because
-   * provider payment terms are not persisted. It does not claim complete
-   * FOCUS conformance or expose the Cost and Usage dataset. Issue and due
-   * dates, payment-currency conversions, purchase orders, provider line
-   * items, and separate credit/refund documents are unavailable. See
+   * This projection remains partial. Stored provider line items are used
+   * only when complete, classified, and exactly reconciled to invoice totals;
+   * other invoices retain aggregate rows with metadata fallback reasons.
+   * Supplied payment terms, issue/due dates, and issuer names are exported.
+   * MissingRequiredFields and SourceCoverage describe missing facts. Complete
+   * provider history, correction/credit/refund documents, conditional FX/PO
+   * fields, and the Cost and Usage dataset remain unavailable. See
    * /docs/billing#focus-invoice-export and the metadata limitations.
    *
    * At most 1000 stored invoices are read per month (including excluded
-   * invoices); a larger set returns 422 without a truncated artifact.
-   * Invalid stored amounts, currencies, identifiers, or dates return 409
-   * before any artifact bytes are sent. Each artifact is at most 3 MiB.
+   * invoices), with at most 10000 output rows and 3 MiB per artifact.
+   * Exceeding any bound returns 422 without a truncated artifact. Invalid
+   * stored amounts, currencies, identifiers, or dates return 409 before
+   * any artifact bytes are sent.
    *
    * @returns binary Complete local invoice projection for the requested account and month; partial FOCUS support.
    * @throws ApiError

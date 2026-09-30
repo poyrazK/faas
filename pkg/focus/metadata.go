@@ -52,6 +52,7 @@ type Schema struct {
 }
 
 type Projection struct {
+	SourceCoverage        SourceCoverage    `json:"SourceCoverage"`
 	Status                string            `json:"ConformanceStatus"`
 	MissingRequiredFields []string          `json:"MissingRequiredFields"`
 	Limitations           []string          `json:"Limitations"`
@@ -66,7 +67,7 @@ type Projection struct {
 	ExcludedInvoices      map[string]int    `json:"ExcludedInvoices"`
 }
 
-func buildMetadata(accountID string, month, generatedAt time.Time, csv []byte, count int, totals map[string]string, excluded map[string]int) ([]byte, error) {
+func buildMetadata(accountID string, month, generatedAt time.Time, csv []byte, count int, totals map[string]string, excluded map[string]int, coverage SourceCoverage) ([]byte, error) {
 	instanceID := uuid.NewSHA1(uuid.NameSpaceURL, []byte("gregale:focus:invoice-detail:"+accountID+":"+month.Format("2006-01"))).String()
 	definitions, err := json.Marshal(columns())
 	if err != nil {
@@ -77,22 +78,17 @@ func buildMetadata(accountID string, month, generatedAt time.Time, csv []byte, c
 	// on an existing SchemaId. Definitions participate in the identity too.
 	schemaID := uuid.NewSHA1(uuid.NameSpaceURL, append([]byte(instanceID+":"+Version+":"+date(generatedAt)+":"), definitions...)).String()
 	digest := sha256.Sum256(csv)
+	missing := make([]string, 0)
+	if coverage.MissingPaymentTerms > 0 {
+		missing = append(missing, "PaymentTerms")
+	}
 	m := Metadata{
 		DataGenerator:   DataGenerator{Name: "Gregale"},
 		DatasetInstance: []DatasetInstance{{ID: instanceID, Name: "Gregale invoice detail " + month.Format("2006-01"), Kind: "InvoiceDetail"}},
 		Schema:          []Schema{{ID: schemaID, FocusVersion: Version, CreationDate: date(generatedAt), DatasetInstanceID: instanceID, ColumnDefinition: columns()}},
 		Projection: Projection{
-			Status: "partial", MissingRequiredFields: []string{"PaymentTerms"},
-			Limitations: []string{
-				"Payment terms are not persisted; PaymentTerms is empty and full FOCUS conformance is not claimed.",
-				"Invoice-level non-tax and tax aggregates, not provider line-item or per-resource cost allocation.",
-				"Non-tax ChargeCategory defaults to Usage for the aggregate projection; provider purchase/usage/credit classifications are unavailable.",
-				"Issue and due dates are not persisted; InvoiceIssueDate and PaymentDueDate are empty.",
-				"Conditional payment-currency and purchase-order data are unavailable; those columns are omitted.",
-				"Refunds and credit notes are not separate invoice documents in this projection; amounts remain original invoice totals.",
-				"Only locally persisted invoices are included; this is not a provider reconciliation or completeness guarantee.",
-				"Issuer names use normalized merchant brands; exact invoice legal issuer identities are not persisted.",
-			},
+			Status: "partial", MissingRequiredFields: missing,
+			SourceCoverage: coverage, Limitations: coverageLimitations(coverage),
 			BillingAccountID: accountID, Month: month.Format("2006-01"), MonthFilter: "PeriodEnd in UTC month (half-open)",
 			GeneratedAt: date(generatedAt), CSVFilename: csvFilename(month), CSVSHA256: hex.EncodeToString(digest[:]),
 			RowCount: count, BilledCostByCurrency: totals, ExcludedInvoices: excluded,
@@ -145,7 +141,7 @@ func (d Dataset) archive(month time.Time) ([]byte, error) {
 		return nil, fmt.Errorf("finish FOCUS ZIP: %w", err)
 	}
 	if buf.Len() > api.MaxFOCUSExportBytes {
-		return nil, fmt.Errorf("FOCUS ZIP exceeds %d bytes", api.MaxFOCUSExportBytes)
+		return nil, &LimitError{Kind: "bytes", Limit: api.MaxFOCUSExportBytes, Observed: int64(buf.Len())}
 	}
 	return buf.Bytes(), nil
 }

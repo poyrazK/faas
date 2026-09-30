@@ -1,7 +1,5 @@
-// Package focus projects Gregale's stored invoices into the FOCUS 1.4
-// Invoice Detail vocabulary. This is a partial implementation: payment terms
-// and provider line-item history are not persisted. Every artifact declares
-// these gaps; it must not be advertised as a conformant Cost and Usage dataset.
+// Package focus projects stored invoices into a partial FOCUS 1.4 Invoice
+// Detail dataset. Artifacts report source coverage and remaining gaps.
 package focus
 
 import (
@@ -41,13 +39,19 @@ func BuildInvoiceDetail(accountID string, month, generatedAt time.Time, invoices
 	}
 	var buf bytes.Buffer
 	w := csv.NewWriter(&buf)
-	if err := w.WriteAll(rows); err != nil {
-		return Dataset{}, fmt.Errorf("encode FOCUS CSV: %w", err)
+	for _, row := range rows {
+		if err := w.Write(row); err != nil {
+			return Dataset{}, fmt.Errorf("encode FOCUS CSV: %w", err)
+		}
+		w.Flush()
+		if err := w.Error(); err != nil {
+			return Dataset{}, fmt.Errorf("encode FOCUS CSV: %w", err)
+		}
+		if buf.Len() > api.MaxFOCUSExportBytes {
+			return Dataset{}, &LimitError{Kind: "bytes", Limit: api.MaxFOCUSExportBytes, Observed: int64(buf.Len())}
+		}
 	}
-	if buf.Len() > api.MaxFOCUSExportBytes {
-		return Dataset{}, fmt.Errorf("FOCUS CSV exceeds %d bytes", api.MaxFOCUSExportBytes)
-	}
-	metadata, err := buildMetadata(accountID, month, generatedAt, buf.Bytes(), len(rows)-1, totals, excluded)
+	metadata, err := buildMetadata(accountID, month, generatedAt, buf.Bytes(), len(rows)-1, totals, excluded, invoiceCoverage(invoices))
 	if err != nil {
 		return Dataset{}, err
 	}
@@ -92,10 +96,14 @@ func invoiceRows(accountID string, month time.Time, invoices []state.Invoice) ([
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		rows = append(rows, invoiceRow(inv, issuer, code, "Usage", inv.TotalCents-inv.TaxCents))
-		if inv.TaxCents != 0 {
-			rows = append(rows, invoiceRow(inv, issuer, code, "Tax", inv.TaxCents))
+		projected, err := projectInvoiceRows(inv, issuer, code)
+		if err != nil {
+			return nil, nil, nil, err
 		}
+		if len(rows)-1+len(projected) > api.MaxFOCUSExportRows {
+			return nil, nil, nil, &LimitError{Kind: "rows", Limit: api.MaxFOCUSExportRows, Observed: int64(len(rows) - 1 + len(projected))}
+		}
+		rows = append(rows, projected...)
 		if totals[code] == nil {
 			totals[code] = new(big.Int)
 		}
@@ -109,6 +117,9 @@ func invoiceRows(accountID string, month time.Time, invoices []state.Invoice) ([
 }
 
 func validateInvoice(inv state.Invoice) (issuer, code string, err error) {
+	if err := state.ValidateInvoiceDetails(inv.Details); err != nil {
+		return "", "", err
+	}
 	if inv.Status != "open" && inv.Status != "paid" && inv.Status != "uncollectible" {
 		return "", "", fmt.Errorf("unsupported invoice status")
 	}
@@ -141,6 +152,9 @@ func validateInvoice(inv state.Invoice) (issuer, code string, err error) {
 	default:
 		return "", "", fmt.Errorf("unsupported invoice issuer")
 	}
+	if inv.Details != nil && inv.Details.IssuerName != "" {
+		issuer = inv.Details.IssuerName
+	}
 	return issuer, u.String(), nil
 }
 
@@ -155,13 +169,16 @@ func invoiceRow(inv state.Invoice, issuer, code, category string, cents int64) [
 		date(inv.PeriodEnd), date(inv.PeriodStart), category,
 		date(inv.CreatedAt), description, string(grain), inv.ID + ":" + component,
 		date(inv.UpdatedAt), inv.ProviderInvoiceID,
-		"", issuer, "Issued", // Actual issue date is not stored; never use first-seen time.
-		"", "", // Due date and required PaymentTerms are unavailable (metadata declares the gap).
+		"", issuer, "Issued", // Actual invoice facts are applied when available.
+		"", "", // Never substitute first-seen time or invent settlement terms.
 		inv.ProviderInvoiceID, // Original invoices reference themselves, per FOCUS 1.4.
 	}
 }
 
 func decimalCents(cents *big.Int) string {
+	if cents.Sign() < 0 {
+		return "-" + decimalCents(new(big.Int).Abs(cents))
+	}
 	// Arbitrary precision keeps multi-invoice totals exact even past int64.
 	whole, fraction := new(big.Int), new(big.Int)
 	whole.QuoRem(cents, big.NewInt(100), fraction)
@@ -196,6 +213,8 @@ func columns() []ColumnDefinition {
 	for i, name := range names {
 		cols[i] = ColumnDefinition{ColumnName: name, DataType: "STRING", StringMaxLength: api.MaxFOCUSExportFieldBytes + len(":charges"), StringEncoding: "UTF-8"}
 		switch name {
+		case "InvoiceDetailDescription", "InvoiceIssuerName", "PaymentTerms":
+			cols[i].StringMaxLength = api.MaxInvoiceDetailTextBytes
 		case "BilledCost":
 			cols[i] = ColumnDefinition{ColumnName: name, DataType: "DECIMAL", NumericPrecision: 19, NumberScale: 2}
 		case "BillingPeriodEnd", "BillingPeriodStart", "InvoiceDetailCreated", "InvoiceDetailLastUpdated", "InvoiceIssueDate", "PaymentDueDate":
