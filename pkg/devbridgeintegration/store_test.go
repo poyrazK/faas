@@ -168,15 +168,25 @@ func TestDevBridgeRelayDatabaseIsReadOnly(t *testing.T) {
 	}
 	cfg := pool.Config().ConnConfig
 	dsn := cfg.ConnString()
+	searchPath := cfg.RuntimeParams["search_path"]
 	if u, err := url.Parse(dsn); err == nil && (u.Scheme == "postgres" || u.Scheme == "postgresql") {
 		u.Path = "/" + cfg.Database
 		query := u.Query()
-		query.Set("search_path", cfg.RuntimeParams["search_path"])
+		if searchPath != "" {
+			query.Set("search_path", searchPath)
+		} else {
+			// Template clones use PostgreSQL's default path; an empty value
+			// would hide their public schema from the read-only connection.
+			query.Del("search_path")
+		}
 		u.RawQuery = query.Encode()
 		dsn = u.String()
 	} else {
 		quote := strings.NewReplacer(`\`, `\\`, `'`, `\'`)
-		dsn += " dbname='" + quote.Replace(cfg.Database) + "' search_path='" + quote.Replace(cfg.RuntimeParams["search_path"]) + "'"
+		dsn += " dbname='" + quote.Replace(cfg.Database) + "'"
+		if searchPath != "" {
+			dsn += " search_path='" + quote.Replace(searchPath) + "'"
+		}
 	}
 	readonly, err := db.OpenReadOnlyWithAppName(t.Context(), dsn, "bridged")
 	if err != nil {
