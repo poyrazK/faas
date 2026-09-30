@@ -8355,6 +8355,17 @@ func (q *Queries) LockCreditConsumption(ctx context.Context, db DBTX, providerIn
 	return err
 }
 
+const lockCustomDomainQuotaAccount = `-- name: LockCustomDomainQuotaAccount :one
+SELECT id FROM accounts WHERE id=$1::uuid FOR UPDATE
+`
+
+func (q *Queries) LockCustomDomainQuotaAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockCustomDomainQuotaAccount, accountID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockInvoiceForRefund = `-- name: LockInvoiceForRefund :one
 SELECT account_id, provider, provider_invoice_id, amount_paid_cents,
        total_cents, amount_refunded_cents, amount_refund_pending_cents, credits_applied_cents
@@ -8495,6 +8506,33 @@ update custom_domains set verified_at = now() where domain = $1
 func (q *Queries) MarkDomainVerified(ctx context.Context, db DBTX, domain interface{}) error {
 	_, err := db.Exec(ctx, markDomainVerified, domain)
 	return err
+}
+
+const markTrafficDomainVerified = `-- name: MarkTrafficDomainVerified :execrows
+UPDATE custom_domains SET verified_at=now()
+WHERE domain=$1::text AND app_id=$2::uuid
+  AND (NOT $3::boolean OR
+    (challenge_token=$4::text AND verified_at IS NULL AND verification_expires_at>clock_timestamp()))
+`
+
+type MarkTrafficDomainVerifiedParams struct {
+	Domain         string
+	AppID          pgtype.UUID
+	ChallengeBound bool
+	Token          string
+}
+
+func (q *Queries) MarkTrafficDomainVerified(ctx context.Context, db DBTX, arg MarkTrafficDomainVerifiedParams) (int64, error) {
+	result, err := db.Exec(ctx, markTrafficDomainVerified,
+		arg.Domain,
+		arg.AppID,
+		arg.ChallengeBound,
+		arg.Token,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const markTriggerRecordDeadLetter = `-- name: MarkTriggerRecordDeadLetter :exec
@@ -12120,6 +12158,30 @@ func (q *Queries) ReadDeploymentTrafficAccount(ctx context.Context, db DBTX, dep
 	return account_id, err
 }
 
+const readDomainTrafficVerificationOwner = `-- name: ReadDomainTrafficVerificationOwner :one
+SELECT a.account_id, d.app_id FROM custom_domains d JOIN apps a ON a.id=d.app_id
+WHERE d.domain=$1::text AND (NOT $2::boolean OR
+    (d.challenge_token=$3::text AND d.verified_at IS NULL AND d.verification_expires_at>now()))
+`
+
+type ReadDomainTrafficVerificationOwnerParams struct {
+	Domain         string
+	ChallengeBound bool
+	Token          string
+}
+
+type ReadDomainTrafficVerificationOwnerRow struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) ReadDomainTrafficVerificationOwner(ctx context.Context, db DBTX, arg ReadDomainTrafficVerificationOwnerParams) (ReadDomainTrafficVerificationOwnerRow, error) {
+	row := db.QueryRow(ctx, readDomainTrafficVerificationOwner, arg.Domain, arg.ChallengeBound, arg.Token)
+	var i ReadDomainTrafficVerificationOwnerRow
+	err := row.Scan(&i.AccountID, &i.AppID)
+	return i, err
+}
+
 const readEdgeRuleTrafficAccount = `-- name: ReadEdgeRuleTrafficAccount :one
 SELECT account_id,kind FROM edge_rules WHERE id = $1::uuid
 `
@@ -13276,8 +13338,14 @@ WITH environment_policies AS MATERIALIZED (
     FROM source
 ), rules AS MATERIALIZED (
     SELECT app_id, match_host, kind, preset, unsupported, environment_id, octet_length(formatted.data)+2 AS canonical,
-        CASE WHEN strpos(compiled_data,'<')>0 OR strpos(compiled_data,'&')>0 OR strpos(compiled_data,'>')>0
-            OR strpos(compiled_data,chr(8232))>0 OR strpos(compiled_data,chr(8233))>0
+        -- JSON string escaping expands by at most six. Larger amplification
+        -- is numeric formatting; inspect compact strings/keys in that case.
+        -- Model defaults and mirrored preset UUIDs introduce only ASCII.
+        CASE WHEN CASE WHEN octet_length(formatted.data)::bigint>6::bigint*pg_column_size(decoded.data)
+            THEN jsonb_path_exists(decoded.data,'$.** ? (@.type() == "string" && @ like_regex "[<&>\u2028\u2029]")') OR
+                 jsonb_path_exists(decoded.data,'$.** ? (@.type() == "object").keyvalue().key ? (@ like_regex "[<&>\u2028\u2029]")')
+            ELSE strpos(compiled_data,'<')>0 OR strpos(compiled_data,'&')>0 OR strpos(compiled_data,'>')>0 OR
+                 strpos(compiled_data,chr(8232))>0 OR strpos(compiled_data,chr(8233))>0 END
             THEN octet_length(replace(replace(replace(replace(replace(compiled_data,
                 '<','______'),'&','______'),'>','______'),chr(8232),'______'),chr(8233),'______'))
             ELSE octet_length(compiled_data) END +16+2+
@@ -13325,22 +13393,30 @@ WITH environment_policies AS MATERIALIZED (
       AND d.status IN ('pending','building','imaging','snapshotting','live','superseded')
       AND $6::text<>''
     ORDER BY a.id,z.name LIMIT ($1::integer+1)
+), domain_hosts AS (
+    SELECT jsonb_build_object('Domain',d.domain,'App',a.id) AS data
+    FROM custom_domains d JOIN apps a ON a.id=d.app_id
+    WHERE a.account_id=$3::uuid AND a.status<>'deleted' AND a.visibility<>'internal'
+      AND d.verified_at IS NOT NULL AND d.environment_id IS NULL
+    ORDER BY d.domain LIMIT ($1::integer+1)
 ), bounds AS (
-    SELECT (SELECT count(*) FROM groups)+(SELECT count(*) FROM assets)+(SELECT count(*) FROM environments)+(SELECT count(*) FROM primary_hosts)+(SELECT count(*) FROM alias_hosts) AS inputs,
+    SELECT (SELECT count(*) FROM groups)+(SELECT count(*) FROM assets)+(SELECT count(*) FROM environments)+(SELECT count(*) FROM primary_hosts)+(SELECT count(*) FROM alias_hosts)+(SELECT count(*) FROM domain_hosts) AS inputs,
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM groups)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM assets)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM environments)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM primary_hosts)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM alias_hosts)+
+        (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM domain_hosts)+
         octet_length(jsonb_build_object('Groups','[]'::jsonb,'Assets','[]'::jsonb,
-            'Environments','[]'::jsonb,'PrimaryHosts','[]'::jsonb,'AliasHosts','[]'::jsonb)::text) AS bytes
+            'Environments','[]'::jsonb,'PrimaryHosts','[]'::jsonb,'AliasHosts','[]'::jsonb,'Domains','[]'::jsonb)::text) AS bytes
 )
 SELECT CASE WHEN inputs <= $1::integer AND bytes <= $2::bigint
     THEN jsonb_build_object('Groups',(SELECT coalesce(jsonb_agg(data),'[]') FROM groups),
         'Assets',(SELECT coalesce(jsonb_agg(data),'[]') FROM assets),
         'Environments',(SELECT coalesce(jsonb_agg(data),'[]') FROM environments),
         'PrimaryHosts',(SELECT coalesce(jsonb_agg(data),'[]') FROM primary_hosts),
-        'AliasHosts',(SELECT coalesce(jsonb_agg(data),'[]') FROM alias_hosts)) ELSE NULL::jsonb END::jsonb AS data,
+        'AliasHosts',(SELECT coalesce(jsonb_agg(data),'[]') FROM alias_hosts),
+        'Domains',(SELECT coalesce(jsonb_agg(data),'[]') FROM domain_hosts)) ELSE NULL::jsonb END::jsonb AS data,
     inputs::bigint, bytes::bigint FROM bounds
 `
 

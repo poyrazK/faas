@@ -23,6 +23,7 @@ type memTrafficPolicyChange struct {
 	Policies     map[string]ProjectEnvironmentEdgePolicy
 	Aliases      map[string]DeploymentAlias
 	Deployments  map[string]Deployment
+	Domains      map[string]CustomDomain
 }
 
 func visitMemTrafficRows[T any](ctx context.Context, rows, proposed map[string]T, visit func(T) error) error {
@@ -78,7 +79,7 @@ func (m *MemStore) readMemTrafficHostAnalysisLocked(ctx context.Context, account
 		group.Canonical += canonical + 16
 		group.Compiled += int64(len(compiled)) + 2
 		groups[key] = group
-		return checkMemTrafficAnalysisInputs(len(groups) + len(view.Environments) + len(view.PrimaryHosts) + len(view.AliasHosts))
+		return checkMemTrafficAnalysisInputs(len(groups) + len(view.Environments) + len(view.PrimaryHosts) + len(view.AliasHosts) + len(view.Domains))
 	}
 	if err := visitMemTrafficRows(ctx, m.edgeRules, change.Rules, func(rule EdgeRule) error {
 		return addRule(rule, "")
@@ -172,6 +173,22 @@ func (m *MemStore) readMemTrafficHostAnalysisLocked(ctx context.Context, account
 		return view, err
 	}
 	referenced := make(map[string]bool)
+	if err := visitMemTrafficRows(ctx, m.domains, change.Domains, func(domain CustomDomain) error {
+		if change.GlobalRoutes || !domain.Verified() || domain.EnvironmentID != "" {
+			return nil
+		}
+		app, found := change.Apps[domain.AppID]
+		if !found {
+			app, found = m.apps[domain.AppID]
+		}
+		if !found || app.AccountID != account || app.Status == AppDeleted || api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
+			return nil
+		}
+		view.Domains = append(view.Domains, trafficHostDomain{Domain: domain.Domain, App: domain.AppID})
+		return checkMemTrafficAnalysisInputs(len(groups) + len(view.Environments) + len(view.PrimaryHosts) + len(view.AliasHosts) + len(view.Domains))
+	}); err != nil {
+		return view, err
+	}
 	for _, group := range groups {
 		view.Groups = append(view.Groups, group)
 		if group.Preset != "" {
@@ -187,7 +204,7 @@ func (m *MemStore) readMemTrafficHostAnalysisLocked(ctx context.Context, account
 			return fmt.Errorf("state: encode in-memory traffic preset: %w", err)
 		}
 		view.Assets = append(view.Assets, trafficHostAsset{ID: preset.ID, Compiled: int64(len(encoded))})
-		return checkMemTrafficAnalysisInputs(len(view.Groups) + len(view.Environments) + len(view.PrimaryHosts) + len(view.AliasHosts) + len(view.Assets))
+		return checkMemTrafficAnalysisInputs(len(view.Groups) + len(view.Environments) + len(view.PrimaryHosts) + len(view.AliasHosts) + len(view.Domains) + len(view.Assets))
 	})
 	if err != nil {
 		return view, err
@@ -204,6 +221,7 @@ func (m *MemStore) readMemTrafficHostAnalysisLocked(ctx context.Context, account
 	})
 	sort.Strings(view.PrimaryHosts)
 	sort.Strings(view.AliasHosts)
+	sort.Slice(view.Domains, func(i, j int) bool { return view.Domains[i].Domain < view.Domains[j].Domain })
 	metadata, err := json.Marshal(view)
 	if err != nil {
 		return view, fmt.Errorf("state: encode in-memory traffic metadata: %w", err)

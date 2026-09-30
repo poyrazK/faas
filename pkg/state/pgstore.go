@@ -12348,14 +12348,8 @@ func (s *PgStore) ListUnverifiedCustomDomains(ctx context.Context) ([]CustomDoma
 }
 
 func (s *PgStore) MarkDomainVerified(ctx context.Context, domain string) error {
-	tag, err := s.pool.Exec(ctx, `update custom_domains set verified_at = now() where domain = $1`, domain)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+	_, err := s.markTrafficDomainVerified(ctx, domain, "", false)
+	return err
 }
 
 // MarkDomainVerifiedIfChallenge is the ownership-safe verification write.
@@ -12363,17 +12357,7 @@ func (s *PgStore) MarkDomainVerified(ctx context.Context, domain string) error {
 // lookup started for an old claim cannot verify a row after another account
 // has atomically reclaimed the domain with a new challenge.
 func (s *PgStore) MarkDomainVerifiedIfChallenge(ctx context.Context, domain, token string) (bool, error) {
-	tag, err := s.pool.Exec(ctx, `
-		update custom_domains
-		   set verified_at = now()
-		 where domain = $1
-		   and challenge_token = $2
-		   and verified_at is null
-		   and verification_expires_at > now()`, domain, token)
-	if err != nil {
-		return false, err
-	}
-	return tag.RowsAffected() == 1, nil
+	return s.markTrafficDomainVerified(ctx, domain, token, true)
 }
 
 func (s *PgStore) UpdateCustomDomainCertStatus(ctx context.Context, domain string, status CustomDomainCertStatus, expiresAt time.Time, lastError string, dnsCheckedAt time.Time) error {

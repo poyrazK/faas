@@ -59,7 +59,12 @@ type trafficHostAnalysis struct {
 	Environments []trafficHostEnvironment
 	PrimaryHosts []string
 	AliasHosts   []string
+	Domains      []trafficHostDomain
 }
+
+// Ordinary domains retain all matching account rules and distinct presets.
+// App identity makes a newly published binding independent of old selectors.
+type trafficHostDomain struct{ Domain, App string }
 
 type trafficHostEnvironment struct {
 	ID, App, Host              string
@@ -172,14 +177,17 @@ func (v trafficHostTotals) exceeds() bool {
 type hostAnalysisRef struct {
 	side, group int
 	ordinary    bool
+	domain      bool
 }
 
 type hostAnalysisNode struct {
-	literal  map[rune]int
-	any      int
-	star     int
-	repeat   bool
-	accepted []hostAnalysisRef
+	literal      map[rune]int
+	any          int
+	star         int
+	repeat       bool
+	domainStar   int
+	domainRepeat bool
+	accepted     []hostAnalysisRef
 }
 
 type hostAnalysisMachine struct {
@@ -198,7 +206,7 @@ func trafficHostAnalysisBudgets() hostAnalysisBudgets {
 }
 
 func newHostAnalysisNode() hostAnalysisNode {
-	return hostAnalysisNode{literal: make(map[rune]int), any: -1, star: -1}
+	return hostAnalysisNode{literal: make(map[rune]int), any: -1, star: -1, domainStar: -1}
 }
 
 func (m *hostAnalysisMachine) child(parent int, token rune) (int, error) {
@@ -209,6 +217,8 @@ func (m *hostAnalysisMachine) child(parent int, token rune) (int, error) {
 		next = node.star
 	case -2:
 		next = node.any
+	case -3:
+		next = node.domainStar
 	default:
 		if child, exists := node.literal[token]; exists {
 			next = child
@@ -226,11 +236,14 @@ func (m *hostAnalysisMachine) child(parent int, token rune) (int, error) {
 		node.star = next
 	case -2:
 		node.any = next
+	case -3:
+		node.domainStar = next
 	default:
 		node.literal[token] = next
 	}
 	child := newHostAnalysisNode()
 	child.repeat = token == -1
+	child.domainRepeat = token == -3
 	m.nodes = append(m.nodes, child)
 	return next, nil
 }
@@ -297,6 +310,9 @@ func (m *hostAnalysisMachine) closure(positions []int) []int {
 		if star := m.nodes[position].star; star >= 0 {
 			positions = append(positions, star)
 		}
+		if star := m.nodes[position].domainStar; star >= 0 {
+			positions = append(positions, star)
+		}
 	}
 	result := make([]int, 0, len(seen))
 	for position := range seen {
@@ -310,7 +326,7 @@ func (m *hostAnalysisMachine) step(positions []int, character rune) []int {
 	next := make([]int, 0, len(positions))
 	for _, position := range positions {
 		node := m.nodes[position]
-		if node.repeat {
+		if node.repeat || node.domainRepeat && character != '*' {
 			next = append(next, position)
 		}
 		if node.any >= 0 {
@@ -334,6 +350,9 @@ func analysisStateKey(positions []int) string {
 func (m *hostAnalysisMachine) alphabet(positions []int) []rune {
 	literals := make(map[rune]bool)
 	for _, position := range positions {
+		if m.nodes[position].domainRepeat {
+			literals['*'] = true // This character has a distinct transition.
+		}
 		for literal := range m.nodes[position].literal {
 			literals[literal] = true
 		}
@@ -469,6 +488,10 @@ func checkTrafficHostAnalysisWithBudgets(ctx context.Context, before, after traf
 		return nil // Even the union of all groups fits, so every host fits.
 	}
 	views := [2]trafficHostAnalysis{before, after}
+	oldDomains := make(map[trafficHostDomain]bool, len(before.Domains))
+	for _, domain := range before.Domains {
+		oldDomains[domain] = true
+	}
 	machine := hostAnalysisMachine{nodes: []hostAnalysisNode{newHostAnalysisNode()}, maxNodes: budgets.nodes}
 	for side, view := range views {
 		for i, group := range view.Groups {
@@ -495,6 +518,17 @@ func checkTrafficHostAnalysisWithBudgets(ctx context.Context, before, after traf
 				return err
 			}
 		}
+		for i, domain := range view.Domains {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			tokens := trafficDomainHostTokens(domain.Domain)
+			if tokens != nil {
+				if err := machine.addTokens(tokens, hostAnalysisRef{side: side, group: i, domain: true}); err != nil {
+					return err
+				}
+			}
+		}
 	}
 	initial := machine.closure([]int{0})
 	states := []hostAnalysisState{{positions: initial, parent: -1}}
@@ -512,9 +546,13 @@ func checkTrafficHostAnalysisWithBudgets(ctx context.Context, before, after traf
 		accepted := [2]map[int]bool{make(map[int]bool), make(map[int]bool)}
 		var environments [2]*trafficHostEnvironment
 		var ordinary [2]bool
+		introducedDomain := false
 		for _, position := range positions {
 			for _, ref := range machine.nodes[position].accepted {
-				if ref.ordinary {
+				if ref.domain {
+					ordinary[ref.side] = true
+					introducedDomain = introducedDomain || ref.side == 1 && !oldDomains[after.Domains[ref.group]]
+				} else if ref.ordinary {
 					ordinary[ref.side] = true
 				} else if ref.group < 0 {
 					environments[ref.side] = &views[ref.side].Environments[-1-ref.group]
@@ -524,7 +562,7 @@ func checkTrafficHostAnalysisWithBudgets(ctx context.Context, before, after traf
 			}
 		}
 		prior := environmentHostTotals(before, accepted[0], environments[0])
-		if environments[0] == nil && !ordinary[0] && (environments[1] != nil || ordinary[1]) {
+		if introducedDomain || environments[0] == nil && !ordinary[0] && (environments[1] != nil || ordinary[1]) {
 			// A new registered workload URL must fit its limits. An old
 			// over-limit selector language is not a serving-policy baseline.
 			prior = trafficHostTotals{}
@@ -567,6 +605,19 @@ func checkTrafficHostAnalysisWithBudgets(ctx context.Context, before, after traf
 		}
 	}
 	return nil
+}
+
+func trafficDomainHostTokens(domain string) []rune {
+	if suffix, wildcard := WildcardDomainSuffix(domain); wildcard {
+		// Runtime accepts a strict suffix, including nested subdomains, but
+		// excludes hosts containing any asterisk. Other legacy punctuation is
+		// literal, unlike edge-rule selectors.
+		if strings.ContainsRune(suffix, '*') {
+			return nil
+		}
+		return append([]rune{-3}, []rune("."+suffix)...)
+	}
+	return []rune(domain)
 }
 
 func retainedAnalysisStateBytes(positions []int, key string) int64 {

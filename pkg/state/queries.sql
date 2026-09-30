@@ -5298,8 +5298,14 @@ WITH environment_policies AS MATERIALIZED (
     FROM source
 ), rules AS MATERIALIZED (
     SELECT app_id, match_host, kind, preset, unsupported, environment_id, octet_length(formatted.data)+2 AS canonical,
-        CASE WHEN strpos(compiled_data,'<')>0 OR strpos(compiled_data,'&')>0 OR strpos(compiled_data,'>')>0
-            OR strpos(compiled_data,chr(8232))>0 OR strpos(compiled_data,chr(8233))>0
+        -- JSON string escaping expands by at most six. Larger amplification
+        -- is numeric formatting; inspect compact strings/keys in that case.
+        -- Model defaults and mirrored preset UUIDs introduce only ASCII.
+        CASE WHEN CASE WHEN octet_length(formatted.data)::bigint>6::bigint*pg_column_size(decoded.data)
+            THEN jsonb_path_exists(decoded.data,'$.** ? (@.type() == "string" && @ like_regex "[<&>\u2028\u2029]")') OR
+                 jsonb_path_exists(decoded.data,'$.** ? (@.type() == "object").keyvalue().key ? (@ like_regex "[<&>\u2028\u2029]")')
+            ELSE strpos(compiled_data,'<')>0 OR strpos(compiled_data,'&')>0 OR strpos(compiled_data,'>')>0 OR
+                 strpos(compiled_data,chr(8232))>0 OR strpos(compiled_data,chr(8233))>0 END
             THEN octet_length(replace(replace(replace(replace(replace(compiled_data,
                 '<','______'),'&','______'),'>','______'),chr(8232),'______'),chr(8233),'______'))
             ELSE octet_length(compiled_data) END +16+2+
@@ -5347,22 +5353,30 @@ WITH environment_policies AS MATERIALIZED (
       AND d.status IN ('pending','building','imaging','snapshotting','live','superseded')
       AND sqlc.arg(apps_suffix)::text<>''
     ORDER BY a.id,z.name LIMIT (sqlc.arg(max_inputs)::integer+1)
+), domain_hosts AS (
+    SELECT jsonb_build_object('Domain',d.domain,'App',a.id) AS data
+    FROM custom_domains d JOIN apps a ON a.id=d.app_id
+    WHERE a.account_id=sqlc.narg(account_id)::uuid AND a.status<>'deleted' AND a.visibility<>'internal'
+      AND d.verified_at IS NOT NULL AND d.environment_id IS NULL
+    ORDER BY d.domain LIMIT (sqlc.arg(max_inputs)::integer+1)
 ), bounds AS (
-    SELECT (SELECT count(*) FROM groups)+(SELECT count(*) FROM assets)+(SELECT count(*) FROM environments)+(SELECT count(*) FROM primary_hosts)+(SELECT count(*) FROM alias_hosts) AS inputs,
+    SELECT (SELECT count(*) FROM groups)+(SELECT count(*) FROM assets)+(SELECT count(*) FROM environments)+(SELECT count(*) FROM primary_hosts)+(SELECT count(*) FROM alias_hosts)+(SELECT count(*) FROM domain_hosts) AS inputs,
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM groups)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM assets)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM environments)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM primary_hosts)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM alias_hosts)+
+        (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM domain_hosts)+
         octet_length(jsonb_build_object('Groups','[]'::jsonb,'Assets','[]'::jsonb,
-            'Environments','[]'::jsonb,'PrimaryHosts','[]'::jsonb,'AliasHosts','[]'::jsonb)::text) AS bytes
+            'Environments','[]'::jsonb,'PrimaryHosts','[]'::jsonb,'AliasHosts','[]'::jsonb,'Domains','[]'::jsonb)::text) AS bytes
 )
 SELECT CASE WHEN inputs <= sqlc.arg(max_inputs)::integer AND bytes <= sqlc.arg(max_bytes)::bigint
     THEN jsonb_build_object('Groups',(SELECT coalesce(jsonb_agg(data),'[]') FROM groups),
         'Assets',(SELECT coalesce(jsonb_agg(data),'[]') FROM assets),
         'Environments',(SELECT coalesce(jsonb_agg(data),'[]') FROM environments),
         'PrimaryHosts',(SELECT coalesce(jsonb_agg(data),'[]') FROM primary_hosts),
-        'AliasHosts',(SELECT coalesce(jsonb_agg(data),'[]') FROM alias_hosts)) ELSE NULL::jsonb END::jsonb AS data,
+        'AliasHosts',(SELECT coalesce(jsonb_agg(data),'[]') FROM alias_hosts),
+        'Domains',(SELECT coalesce(jsonb_agg(data),'[]') FROM domain_hosts)) ELSE NULL::jsonb END::jsonb AS data,
     inputs::bigint, bytes::bigint FROM bounds;
 
 -- name: ConfigureTrafficPolicyAnalysisTimeout :one
@@ -5372,6 +5386,20 @@ SELECT prior.value::text AS prior, set_config('statement_timeout', sqlc.arg(time
 -- name: ReadAppTrafficAccount :one
 -- Ownership is immutable; discover it before acquiring the account/app locks.
 SELECT account_id FROM apps WHERE id=sqlc.arg(app_id)::uuid;
+
+-- name: ReadDomainTrafficVerificationOwner :one
+SELECT a.account_id, d.app_id FROM custom_domains d JOIN apps a ON a.id=d.app_id
+WHERE d.domain=sqlc.arg(domain)::text AND (NOT sqlc.arg(challenge_bound)::boolean OR
+    (d.challenge_token=sqlc.arg(token)::text AND d.verified_at IS NULL AND d.verification_expires_at>now()));
+
+-- name: MarkTrafficDomainVerified :execrows
+UPDATE custom_domains SET verified_at=now()
+WHERE domain=sqlc.arg(domain)::text AND app_id=sqlc.arg(app_id)::uuid
+  AND (NOT sqlc.arg(challenge_bound)::boolean OR
+    (challenge_token=sqlc.arg(token)::text AND verified_at IS NULL AND verification_expires_at>clock_timestamp()));
+
+-- name: LockCustomDomainQuotaAccount :one
+SELECT id FROM accounts WHERE id=sqlc.arg(account_id)::uuid FOR UPDATE;
 
 -- name: CompareAndSetTrafficAppStatus :execrows
 UPDATE apps SET status=sqlc.arg(next)::text,

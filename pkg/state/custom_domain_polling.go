@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 var ErrCustomDomainQuotaExceeded = errors.New("state: custom domain quota exceeded")
@@ -65,11 +66,20 @@ func (s *PgStore) CreateCustomDomainInEnvironmentIfUnderQuotaWithActivity(ctx co
 }
 
 func (s *PgStore) createCustomDomainIfUnderQuota(ctx context.Context, domain, appID, environmentID, token string, appLimit, accountLimit int, entry *OrgActivity) (CustomDomain, int64, error) {
+	account, err := sqlc.New().ReadAppTrafficAccount(ctx, s.pool, mustPgUUID(appID))
+	if err != nil {
+		return CustomDomain{}, 0, mapErr(err)
+	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return CustomDomain{}, 0, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// Match traffic publication's account-before-app lock order. Domain
+	// claims themselves are unverified and introduce no serving URL.
+	if _, err := sqlc.New().LockCustomDomainQuotaAccount(ctx, tx, account); err != nil {
+		return CustomDomain{}, 0, mapErr(err)
+	}
 	var accountID string
 	if err = tx.QueryRow(ctx, `select a.account_id from apps a
 		left join project_environments e on e.id = nullif($2, '')::uuid
@@ -86,9 +96,6 @@ func (s *PgStore) createCustomDomainIfUnderQuota(ctx context.Context, domain, ap
 		return CustomDomain{}, 0, &CustomDomainQuotaError{"app", appLimit}
 	}
 	// The account row serializes creates made concurrently for different apps.
-	if err = tx.QueryRow(ctx, `select 1 from accounts where id=$1 for update`, accountID).Scan(&n); err != nil {
-		return CustomDomain{}, 0, mapErr(err)
-	}
 	if err = tx.QueryRow(ctx, `select count(*) from custom_domains d join apps a on a.id=d.app_id where a.account_id=$1 and d.verified_at is null and d.verification_expires_at > now()`, accountID).Scan(&n); err != nil {
 		return CustomDomain{}, 0, err
 	}

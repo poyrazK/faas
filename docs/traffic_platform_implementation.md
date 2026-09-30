@@ -1237,3 +1237,87 @@ full daemon/load/recovery and customer/staging release acceptance remain
 pending. No native Linux x86_64 KVM acceptance host is available; VM/restore,
 nft connection/source-IP, process-death and leak checks remain pending. All
 six release guarantees remain unchecked.
+
+### Ordinary custom-domain publication guard, 2026-10-01
+
+Plain and challenge-bound verification now use the owning account's guarded
+traffic transaction. The bounded scalar projection includes verified ordinary
+domains attached to public, non-deleted apps. Exact domain markers are literal;
+wildcards match the runtime's strict suffix language, including nested
+subdomains and excluding the apex and any literal asterisk. Domain/app identity
+gives newly published bindings a zero baseline; unchanged bindings retain the
+incremental repair allowance. Public visibility and app restoration validate
+the same attached ordinary domains, including when the apps namespace is empty.
+
+The verification write repeats the discovered app owner and, for challenge
+verification, the token, unverified state and expiry against the wall clock.
+Account-lock waiting cannot verify a reclaimed owner's domain or resurrect an
+expired challenge using the transaction's start time. Refusal rolls back
+verification. Quota claims take the account row before the app row to avoid
+reversing the guarded mutation's lock order. MemStore validates proposed
+verification before publishing under its existing mutex.
+
+The DNS poller preserves certificate intent and emits no certificate work on
+refusal or stale proof. Its new fixed-label publication counter distinguishes
+success, stale proof, policy refusal and store error separately from TXT probe
+results. Repair followed by the existing retry operation publishes successfully.
+Polling backoff remains independent of publication.
+
+The broad PostgreSQL regression exposed repeated escape scans over numerically
+expanded compiler text reaching the existing SQL deadline. Compact JSONB string
+values and object keys now establish escape presence when formatting amplifies
+the input beyond the maximum sixfold string escape expansion; ordinary small
+rows retain their text checks. Byte estimates, defaults, quotas and phase
+deadlines are unchanged. The original legacy numeric environment-clone fixture
+is unchanged. Numeric amplification with sensitive keys, values and Unicode
+separators is checked against the actual decoded runtime projection.
+
+Final evidence uses full source sets without Go source overlays on Darwin
+arm64, Go 1.25.13 and PostgreSQL 16.15. Go runs use CGO_ENABLED=0, serialized
+package execution, vet disabled, inlining/DWARF disabled and stripped links.
+The PostgreSQL runs use an owned local cluster and private migrated test
+templates; the source database remains unmigrated.
+
+- Selected PostgreSQL traffic, domain, deployment and promotion regressions:
+  372 named cases pass, no failures or skips, 173.793 s.
+  Covers verification refusal/repair, binding identity, wildcard language,
+  owner reclaim during a real account-lock wait, expiry after transaction
+  start, visibility publication, scalar metadata bounds, account-before-app
+  cancellation/retry, quota/activity rollback, alias revival, environment
+  clone and the existing snapshot/service/canary/promotion fences.
+  `/tmp/gregale-domain-broad-post-escape-pg-20261001.jsonl`.
+- Full `pkg/state -tags no_pg`: 1,914 named cases pass, no failures,
+  772 existing guarded database skips, 5.191 s.
+  `/tmp/gregale-domain-full-final-no-pg-20261001.jsonl`.
+- Full `cmd/apid`: 3,628 named cases pass, no failures,
+  16 existing guarded database skips, 68.926 s.
+  Includes DNS publication outcomes, unchanged certificate intent and
+  notification refusal followed by successful repair/retry.
+  `/tmp/gregale-domain-full-api-20261001.jsonl`.
+- Focused PostgreSQL regression: 20 named cases pass, no failures or skips,
+  54.029 s. Includes the unchanged legacy numeric clone fixture and extended
+  decoded-runtime byte estimator.
+  `/tmp/gregale-domain-escape-final-pg-20261001.jsonl`.
+- Production state/SQLC lint and API lint with tests pass, zero issues and
+  successful exit codes. State uses tests=false and disables its existing
+  test-only unused helper.
+  `/tmp/gregale-domain-state-post-escape-lint-20261001.log`,
+  `/tmp/gregale-domain-api-final-lint-20261001.log`.
+- SQLC v1.31.1 regeneration exactly matches all four generated files.
+  Whitespace checks pass. No schema or migration changes.
+
+Compressed final logs and a machine-readable result summary are preserved in
+`/Users/poyrazk/dev/Cloud/gregale/outputs/traffic-domain-evidence-20261001/`.
+Earlier interrupted, timed-out or failed profiles are excluded from this
+passing evidence. The final PostgreSQL profile passes after the escape scan
+change without weakening its numeric fixture or analysis deadline.
+
+Named-environment custom domains, tenant surfaces, exact cross-account binding
+shadowing, alias/domain removal and fallback, immutable revision publication,
+operator namespace changes and global claimed/reserved exclusions still need
+the complete binding projection and acceptance. Bounded decision evidence,
+preview/runtime/full synthetic-path agreement, full daemon/load/recovery and
+customer/staging release acceptance remain pending. No native Linux x86_64 KVM
+acceptance host is available; VM/restore, nft connection/source-IP,
+process-death and leak checks remain pending. All six release guarantees remain
+unchecked.

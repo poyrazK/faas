@@ -82,9 +82,14 @@ func TestPgTrafficHostEstimateBoundsDecodedRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for index, action := range []string{`{}`, `{"cors":{}}`,
+	actions := []string{`{}`, `{"cors":{}}`,
 		`{"headers":{"request_headers":[{},null,{"name":"<>&\u2028\u2029","action":null}]}}`,
-		`{"cors":{"allow_credentials":null},"route":{},"jwt":{},"retry":{},"circuit_breaker":{},"validate":{},"respond":{},"budget":{},"limit":{},"throttle":{},"async":{}}`} {
+		`{"cors":{"allow_credentials":null},"route":{},"jwt":{},"retry":{},"circuit_breaker":{},"validate":{},"respond":{},"budget":{},"limit":{},"throttle":{},"async":{}}`,
+		fmt.Sprintf(`{"validate":{"schema":{%q:[1e130000]}}}`, strings.Repeat("<>&\u2028\u2029", 200)),
+		`{"validate":{"schema":{"plain":[1e130000]}}}`,
+		fmt.Sprintf(`{"validate":{"schema":{"plain":[1e130000],"text":%q}}}`, strings.Repeat("<>&\u2028\u2029", 200)),
+	}
+	for index, action := range actions {
 		host := fmt.Sprintf("shape-%d.example.test", index)
 		rule, err := store.CreateEdgeRule(t.Context(), trafficHostRule(account, app, host))
 		if err != nil {
@@ -110,7 +115,7 @@ func TestPgTrafficHostEstimateBoundsDecodedRuntime(t *testing.T) {
 	if err := tx.QueryRow(t.Context(), `SHOW statement_timeout`).Scan(&restored); err != nil || restored != "5s" {
 		t.Fatalf("analysis did not restore statement timeout: setting=%q err=%v", restored, err)
 	}
-	if len(analysis.Groups) != 4 || len(analysis.Assets) != 1 {
+	if len(analysis.Groups) != len(actions) || len(analysis.Assets) != 1 {
 		t.Fatalf("unexpected skinny analysis: %+v", analysis)
 	}
 	reader := newPublicHostPolicyReader(tx)

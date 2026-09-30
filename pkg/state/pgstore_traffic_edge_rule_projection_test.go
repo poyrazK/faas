@@ -99,6 +99,10 @@ func TestPgTrafficPolicyMutationsShareAccountLockBeforeAppLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	domain, err := store.CreateCustomDomain(ctx, "locked-domain.example.test", other.ID, "current-token")
+	if err != nil {
+		t.Fatal(err)
+	}
 	lock, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -153,6 +157,17 @@ func TestPgTrafficPolicyMutationsShareAccountLockBeforeAppLock(t *testing.T) {
 		{"deployment-mark-live", func(ctx context.Context) error {
 			return store.MarkDeploymentLive(ctx, deployment.ID)
 		}},
+		{"domain-verification", func(ctx context.Context) error {
+			return store.MarkDomainVerified(ctx, domain.Domain)
+		}},
+		{"domain-challenge-verification", func(ctx context.Context) error {
+			_, err := store.MarkDomainVerifiedIfChallenge(ctx, domain.Domain, domain.ChallengeToken)
+			return err
+		}},
+		{"domain-quota-claim", func(ctx context.Context) error {
+			_, err := store.CreateCustomDomainIfUnderQuota(ctx, "locked-claim.example.test", other.ID, "token", 10, 20)
+			return err
+		}},
 	} {
 		t.Run(mutation.name, func(t *testing.T) {
 			bounded, cancel := context.WithTimeout(ctx, 75*time.Millisecond)
@@ -174,6 +189,9 @@ func TestPgTrafficPolicyMutationsShareAccountLockBeforeAppLock(t *testing.T) {
 	if err != nil || current.Status != deployment.Status {
 		t.Fatalf("canceled deployment writer changed status: %s err=%v", current.Status, err)
 	}
+	if got, err := store.DomainByName(ctx, domain.Domain); err != nil || got.Verified() {
+		t.Fatalf("canceled verification changed domain: %+v err=%v", got, err)
+	}
 	independent, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
 	if _, err := store.CreateEdgeRule(independent, pgSampleEdgeRuleParams(peerAccount.ID, peer.ID, "independent-policy.example.test")); err != nil {
@@ -193,6 +211,12 @@ func TestPgTrafficPolicyMutationsShareAccountLockBeforeAppLock(t *testing.T) {
 	}
 	if err := store.MarkDeploymentLive(ctx, deployment.ID); err != nil {
 		t.Fatalf("mark live after canceled waiter: %v", err)
+	}
+	if matched, err := store.MarkDomainVerifiedIfChallenge(ctx, domain.Domain, domain.ChallengeToken); err != nil || !matched {
+		t.Fatalf("domain verification after canceled waiter: matched=%v err=%v", matched, err)
+	}
+	if _, err := store.CreateCustomDomainIfUnderQuota(ctx, "locked-claim.example.test", other.ID, "token", 10, 20); err != nil {
+		t.Fatalf("domain quota claim after canceled waiter: %v", err)
 	}
 }
 

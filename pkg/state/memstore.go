@@ -11001,7 +11001,7 @@ func (m *MemStore) ListDomainsForAccount(_ context.Context, accountID string) ([
 	return out, nil
 }
 
-func (m *MemStore) MarkDomainVerified(_ context.Context, domain string) error {
+func (m *MemStore) MarkDomainVerified(ctx context.Context, domain string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, ok := m.domains[domain]
@@ -11009,13 +11009,16 @@ func (m *MemStore) MarkDomainVerified(_ context.Context, domain string) error {
 		return ErrNotFound
 	}
 	d.VerifiedAt = time.Now()
+	if err := m.checkMemTrafficDomainChangeLocked(ctx, d); err != nil {
+		return err
+	}
 	m.domains[domain] = d
 	return nil
 }
 
 // MarkDomainVerifiedIfChallenge mirrors PgStore's compare-and-set so an old
 // verifier cannot mark a newly reclaimed claim as verified.
-func (m *MemStore) MarkDomainVerifiedIfChallenge(_ context.Context, domain, token string) (bool, error) {
+func (m *MemStore) MarkDomainVerifiedIfChallenge(ctx context.Context, domain, token string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	d, ok := m.domains[domain]
@@ -11026,6 +11029,9 @@ func (m *MemStore) MarkDomainVerifiedIfChallenge(_ context.Context, domain, toke
 		return false, nil
 	}
 	d.VerifiedAt = time.Now()
+	if err := m.checkMemTrafficDomainChangeLocked(ctx, d); err != nil {
+		return false, err
+	}
 	m.domains[domain] = d
 	return true, nil
 }

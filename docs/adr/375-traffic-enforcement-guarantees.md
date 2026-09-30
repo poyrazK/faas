@@ -558,6 +558,33 @@ Builder, image and scheduler writers receive the same immutable apps-domain
 configuration through TOML, its environment overlay and the manifest renderer.
 Managed host roles supply that DNS value to their systemd units as well.
 
+Ordinary custom-domain verification also uses the owning account's traffic
+transaction. Exact domains are literal markers; wildcard domains use the
+router's strict suffix language, including nested subdomains and excluding
+the apex and literal asterisks. Each newly published domain/app binding starts
+with a zero baseline even if another potential owned binding covers the same
+host. Existing bindings retain the incremental repair baseline. The bounded
+SQL projection includes only verified, public, non-deleted ordinary owners;
+named-environment custom domains remain outside this slice. App publication
+and restoration see the same ordinary domain markers.
+The challenge, expiry and discovered app owner are repeated in the verification
+UPDATE predicate. An expired, reclaimed or already verified challenge remains
+a compare-and-set miss. Refusal rolls back verification, so certificate work
+cannot follow a failed publication. Quota claim writers acquire the account
+row before the app row, matching traffic mutation lock order. This conservative
+owned projection does not resolve higher-priority binding shadowing, wildcard
+fallback across accounts, domain removal/global discovery or tenant surfaces.
+The DNS poller records publication success, stale proof, policy refusal and
+store error separately from its existing TXT probe outcomes.
+Compiler escape detection inspects string values and object keys in compact
+JSONB when numeric formatting expands the body. Small ordinary rows retain
+their text checks. JSON string formatting expands by at most six bytes per
+input byte; larger amplification selects the compact inspection. Numeric-expanded
+text is not scanned repeatedly just to establish that it has no HTML or Unicode
+separator escapes. Canonical and compiler byte measurements, escape expansion,
+defaults and phase limits retain
+their existing meaning; no policy body is transferred for this analysis.
+
 The implementation tracker is `docs/traffic_platform_implementation.md`.
 Each guarantee needs configuration-to-runtime tests, cancellation/recovery
 tests and customer documentation. VM lifecycle changes require native x86_64

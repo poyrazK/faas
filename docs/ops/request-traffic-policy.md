@@ -61,8 +61,8 @@ remain available. This single-row check does not establish the combined host
 rule and referenced-preset bound.
 
 Rule and preset creates/updates, environment edge overlays, new environment
-registration, environment clones, alias publication and positive deployment
-status writes share account serialization. A session
+registration, environment clones, alias publication, positive deployment
+status writes and ordinary custom-domain verification share account serialization. A session
 advisory lock on a pinned direct-pool connection precedes the repeatable-read
 transaction; its account row lock then precedes app/FK/policy-row locks and is
 retained through commit. Route creates/updates first take the shared global
@@ -95,7 +95,7 @@ close to the byte ceiling before the exact compiler size reaches that ceiling.
 Each before/after analysis phase has a two-second allowance. Its SQL read uses
 a local 1,750 ms server timeout so cancellation does not depend on client
 connection cleanup; the previous statement timeout is restored on success.
-Analysis also limits inputs to 100,000 groups/assets/environment/primary/alias identities, metadata to 64 MiB,
+Analysis also limits inputs to 100,000 groups/assets/environment/primary/alias/domain identities, metadata to 64 MiB,
 automaton nodes to 1,000,000, states to 100,000, retained state buffers/overhead
 to 64 MiB and transitions to 2,000,000. A proved overload returns
 `traffic_policy_too_large`/422. An exhausted analysis returns the distinct
@@ -146,9 +146,29 @@ retain their repair baseline. Builderd, imaged and schedd receive `apps_domain`
 through TOML, `FAAS_APPS_DOMAIN` and the manifest renderer. Managed host roles
 supply the same configured DNS value to their units.
 
+Ordinary custom-domain verification validates all matched account rules and
+distinct presets before publishing the verified binding. This covers exact
+and wildcard domains; wildcard analysis follows strict suffix routing,
+including nested subdomains and excluding the apex and literal asterisks.
+A new domain/app binding must fit its full allowance, including when an old
+selector or another potential owned binding already covers that hostname.
+Already published bindings retain the incremental repair rule. App publication
+and restore include their verified ordinary domains even when `apps_domain`
+is empty. Refusal leaves verification and certificate intent unchanged; the
+DNS poller reports the failure and can retry after policy repair. Challenge
+verification repeats the observed token, current app owner and unexpired
+deadline in the write; a stale challenge cannot publish a reclaimed domain.
+Quota claims take the account row before the app row to match this lock order.
+The DNS poller's `*_domain_verification_publications_total{outcome}` counter
+distinguishes `success`, `stale`, `refused` and `error`. Existing
+`*_domain_verification_results_total` reports TXT probe outcomes; a successful
+probe alone does not mean verification was published. These counters have
+fixed labels and include neither hostnames nor challenge tokens.
+
 This initial projection includes potential legacy tag-prefixed primary URLs
 conservatively. Exact legacy alias shadowing, deletion/fallback transitions,
-immutable revision URL activation, custom-domain transitions and operator
+immutable revision URL activation, named-environment domains, complete custom-domain
+shadowing/removal transitions and operator
 namespace changes still need the complete binding projection and acceptance.
 
 Route creates/updates also check enabled route-only discovery across accounts
@@ -211,7 +231,7 @@ RawMessage numbers are not expanded for the Go compiler. Rejected changes
 preserve related project, cron, preview-set and activity intent.
 
 MemStore also checks route-only global aggregates under that mutex.
-Alias/domain activation and namespace changes, complete global binding/synthetic
+Complete alias/domain binding transitions and namespace changes, global binding/synthetic
 path agreement and recovery acceptance remain rollout requirements. These
 write checks do not establish release acceptance.
 

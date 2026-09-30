@@ -115,6 +115,7 @@ func (s *server) runVerifyOnce(ctx context.Context, log *slog.Logger) {
 				continue
 			}
 			matched, err := verifier.MarkDomainVerifiedIfChallenge(ctx, d.Domain, d.ChallengeToken)
+			s.domainVerificationMetrics.recordPublication(matched, err)
 			if err != nil {
 				log.Warn("dns_poller: mark verified failed", "domain", d.Domain, "err", err)
 				continue
