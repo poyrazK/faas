@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ExecutionArtifact } from './ExecutionArtifact.js';
 import type { ExecutionFailure } from './ExecutionFailure.js';
 import type { ExecutionUsage } from './ExecutionUsage.js';
 import type { ResolvedExecutionLimits } from './ResolvedExecutionLimits.js';
@@ -16,6 +17,10 @@ export type ExecutionResponse = {
   status: 'queued' | 'restoring' | 'running' | 'succeeded' | 'failed' | 'timed_out' | 'out_of_memory' | 'cancelled';
   runtime: 'node22' | 'node24' | 'python312' | 'python313';
   limits: ResolvedExecutionLimits;
+  /**
+   * Selected output files, present only after successful execution and VM teardown.
+   */
+  artifacts?: Array<ExecutionArtifact>;
   /**
    * Terminal JSON result
    */

@@ -5015,6 +5015,9 @@ const (
 	ExecutionOutputDefaultBytes     = 256 << 10
 	ExecutionOutputMinBytes         = 1 << 10
 	ExecutionOutputHardMaxBytes     = 16 << 20
+	// Artifact metadata and base64 content share the existing output budget.
+	ExecutionArtifactMaxFiles       = 8
+	ExecutionArtifactMaxPathBytes   = 256
 	ExecutionPlaintextFieldMaxBytes = 1 << 20
 	ExecutionPIDsMax                = 64
 	// ExecutionSealedPayloadMaxBytes is the storage-layer ceiling for the

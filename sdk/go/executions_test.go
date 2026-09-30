@@ -2,6 +2,8 @@ package faas_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -166,5 +168,23 @@ func TestRunStreamsAndReturnsFinalReceipt(t *testing.T) {
 	defer mu.Unlock()
 	if len(methods) != 3 || methods[0] != "POST /v1/executions" || methods[1] != "GET /v1/executions/run-1/events" || methods[2] != "GET /v1/executions/run-1" {
 		t.Errorf("request order: %v", methods)
+	}
+}
+
+func TestExecutionArtifactBytesVerifiesReceipt(t *testing.T) {
+	data := []byte{0, 1, 255}
+	hash := sha256.Sum256(data)
+	artifact := faas.ExecutionArtifact{Name: "result.bin", SizeBytes: len(data), SHA256: "sha256:" + hex.EncodeToString(hash[:]), Content: data}
+	decoded, err := artifact.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded[0]++
+	if artifact.Content[0] != 0 {
+		t.Fatal("Bytes aliased receipt memory")
+	}
+	artifact.SizeBytes++
+	if _, err := artifact.Bytes(); err == nil {
+		t.Fatal("accepted corrupt receipt")
 	}
 }

@@ -180,10 +180,15 @@ func executionRequestFromProto(req *vmmdpb.ExecuteExecutionRequest) (executionpr
 		ExecutionID: req.GetExecutionId(),
 		Runtime:     api.ExecutionRuntime(req.GetRuntime()),
 		Source:      req.GetSource(),
+		Entrypoint:  req.GetEntrypoint(),
+		OutputFiles: append([]string(nil), req.GetOutputFiles()...),
 		Input:       append([]byte(nil), req.GetInput()...),
 		TimeoutMS:   int(req.GetTimeoutMs()),
 		MaxOutput:   int(req.GetMaxOutputBytes()),
 		NetworkMode: api.ExecutionNetworkMode(req.GetNetworkMode()),
+	}
+	for _, file := range req.GetFiles() {
+		wireReq.Files = append(wireReq.Files, api.ExecutionFile{Path: file.GetPath(), Content: append([]byte{}, file.GetContent()...)})
 	}
 	if err := wireReq.Validate(); err != nil {
 		return executionproto.Request{}, api.NewProblem(int(codes.InvalidArgument),
@@ -207,6 +212,9 @@ func executionResponseFromResult(executionID string, result executionproto.Resul
 		CpuTimeMs:       result.Usage.CPUTimeMS,
 		PeakMemoryMb:    int32(result.Usage.PeakMemoryMB),
 	}
+	for _, artifact := range result.Artifacts {
+		resp.Artifacts = append(resp.Artifacts, &vmmdpb.ExecutionArtifact{Name: artifact.Name, SizeBytes: int32(artifact.SizeBytes), Sha256: artifact.SHA256, Content: append([]byte{}, artifact.Content...)})
+	}
 	if result.ExitCode != nil {
 		resp.ExitCode = wrapperspb.Int32(int32(*result.ExitCode))
 	}
@@ -225,6 +233,12 @@ func executionFailureForWire(result executionproto.Result) (string, string) {
 	case api.ExecutionStatusCancelled:
 		return "cancelled", "execution was cancelled"
 	default:
+		if result.FailureCode == "artifact_invalid" {
+			return "artifact_invalid", "a requested output file is missing or invalid"
+		}
+		if result.FailureCode == "output_limit" {
+			return "output_limit", "execution output exceeded its byte limit"
+		}
 		return "guest_error", "execution failed inside the isolated guest"
 	}
 }

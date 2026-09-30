@@ -75,16 +75,26 @@ const (
 	ExecutionBundleMaxPathSize = 256
 )
 
+// ExecutionArtifact is an explicitly selected output file. Content is base64
+// in JSON; its complete serialized metadata and content share MaxOutputBytes.
+type ExecutionArtifact struct {
+	Name      string `json:"name"`
+	SizeBytes int    `json:"size_bytes"`
+	SHA256    string `json:"sha256"`
+	Content   []byte `json:"content"`
+}
+
 // CreateExecutionRequest is the caller-authored one-shot execution contract.
 // Source and input are never included in ExecutionResponse.
 type CreateExecutionRequest struct {
-	Runtime    ExecutionRuntime        `json:"runtime"`
-	Source     string                  `json:"source,omitempty"`
-	Entrypoint string                  `json:"entrypoint,omitempty"`
-	Files      []ExecutionFile         `json:"files,omitempty"`
-	Input      json.RawMessage         `json:"input,omitempty"`
-	Limits     *ExecutionLimitRequest  `json:"limits,omitempty"`
-	Network    *ExecutionNetworkPolicy `json:"network,omitempty"`
+	Runtime     ExecutionRuntime        `json:"runtime"`
+	Source      string                  `json:"source,omitempty"`
+	Entrypoint  string                  `json:"entrypoint,omitempty"`
+	Files       []ExecutionFile         `json:"files,omitempty"`
+	OutputFiles []string                `json:"output_files,omitempty"`
+	Input       json.RawMessage         `json:"input,omitempty"`
+	Limits      *ExecutionLimitRequest  `json:"limits,omitempty"`
+	Network     *ExecutionNetworkPolicy `json:"network,omitempty"`
 }
 
 // ResolvedExecutionLimits is the immutable envelope admitted by apid and
@@ -101,13 +111,14 @@ type ResolvedExecutionLimits struct {
 // ResolvedExecutionRequest is the normalized form persisted as execution
 // intent. Input is always valid JSON and Network.Mode is always explicit.
 type ResolvedExecutionRequest struct {
-	Runtime    ExecutionRuntime
-	Source     string
-	Entrypoint string
-	Files      []ExecutionFile
-	Input      json.RawMessage
-	Limits     ResolvedExecutionLimits
-	Network    ExecutionNetworkPolicy
+	Runtime     ExecutionRuntime
+	Source      string
+	Entrypoint  string
+	Files       []ExecutionFile
+	OutputFiles []string
+	Input       json.RawMessage
+	Limits      ResolvedExecutionLimits
+	Network     ExecutionNetworkPolicy
 }
 
 // SourceBytes returns the admitted source footprint for state accounting. It
@@ -217,19 +228,24 @@ func (r CreateExecutionRequest) Resolve(plan Plan) (ResolvedExecutionRequest, *P
 		)
 	}
 
+	if err := ValidateExecutionOutputFiles(r.OutputFiles); err != nil {
+		return ResolvedExecutionRequest{}, executionInvalid(CodeExecutionPayloadInvalid, err.Error())
+	}
+
 	limits, problem := resolveExecutionLimits(r.Limits, planLimits)
 	if problem != nil {
 		return ResolvedExecutionRequest{}, problem
 	}
 
 	return ResolvedExecutionRequest{
-		Runtime:    r.Runtime,
-		Source:     source,
-		Entrypoint: entrypoint,
-		Files:      files,
-		Input:      append(json.RawMessage(nil), input...),
-		Limits:     limits,
-		Network:    network,
+		Runtime:     r.Runtime,
+		Source:      source,
+		Entrypoint:  entrypoint,
+		Files:       files,
+		OutputFiles: append([]string(nil), r.OutputFiles...),
+		Input:       append(json.RawMessage(nil), input...),
+		Limits:      limits,
+		Network:     network,
 	}, nil
 }
 
@@ -489,6 +505,7 @@ type ExecutionResponse struct {
 	Status          ExecutionStatus         `json:"status"`
 	Runtime         ExecutionRuntime        `json:"runtime"`
 	Limits          ResolvedExecutionLimits `json:"limits"`
+	Artifacts       []ExecutionArtifact     `json:"artifacts,omitempty"`
 	Result          json.RawMessage         `json:"result,omitempty"`
 	Stdout          string                  `json:"stdout,omitempty"`
 	Stderr          string                  `json:"stderr,omitempty"`

@@ -56,6 +56,7 @@ func executionResponse(row state.Execution) api.ExecutionResponse {
 		OutputTruncated: row.OutputTruncated,
 		CreatedAt:       row.CreatedAt.UTC().Format(time.RFC3339Nano),
 	}
+	resp.Artifacts = api.CloneExecutionArtifacts(row.Artifacts)
 	if len(row.Result) > 0 {
 		resp.Result = append(json.RawMessage(nil), row.Result...)
 	}

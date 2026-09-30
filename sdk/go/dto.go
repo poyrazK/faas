@@ -131,6 +131,7 @@ type (
 	ExecutionNetworkPolicy   = api.ExecutionNetworkPolicy
 	ExecutionLimitRequest    = api.ExecutionLimitRequest
 	ExecutionFile            = api.ExecutionFile
+	ExecutionArtifact        = api.ExecutionArtifact
 	CreateExecutionRequest   = api.CreateExecutionRequest
 	ResolvedExecutionLimits  = api.ResolvedExecutionLimits
 	ExecutionUsage           = api.ExecutionUsage

@@ -2342,7 +2342,7 @@ Functional smoke test (invoke [--async] &lt;slug&gt; [--payload J|@file|-]; slug
 
 Run untrusted code in an isolated disposable microVM
 
-`gregale run [--runtime <R>] [--source <CODE>] [--file <PATH>] [--input <J|@file|->] [--timeout-ms <N>] [--memory-mb <N>] [--cpu-millicores <N>] [--ephemeral-disk-mb <N>] [--max-output-bytes <N>] [--wait] [--watch] [--poll-interval <D>] [--wait-timeout <D>]`
+`gregale run [--runtime <R>] [--source <CODE>] [--file <PATH>] [--input <J|@file|->] [--timeout-ms <N>] [--memory-mb <N>] [--cpu-millicores <N>] [--ephemeral-disk-mb <N>] [--max-output-bytes <N>] [--output-file <PATH>] [--output-dir <DIR>] [--wait] [--watch] [--poll-interval <D>] [--wait-timeout <D>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2355,6 +2355,8 @@ Run untrusted code in an isolated disposable microVM
 | `--cpu-millicores <N>` | CPU limit |  |
 | `--ephemeral-disk-mb <N>` | ephemeral scratch size |  |
 | `--max-output-bytes <N>` | combined output cap |  |
+| `--output-file <PATH>` | output file below context.output_dir to export (repeatable) |  |
+| `--output-dir <DIR>` | save artifacts locally; implies --wait |  |
 | `--wait` | wait for terminal result |  |
 | `--watch` | stream live output while waiting |  |
 | `--poll-interval <D>` | status polling interval with --wait |  |
@@ -2376,6 +2378,16 @@ List runs
 | `--limit <N>` | maximum number of runs (1..200) |  |
 | `--offset <N>` | number of matching runs to skip |  |
 | `--status <STATUS>` | filter by lifecycle status | one of `queued` · `restoring` · `running` · `succeeded` · `failed` · `timed_out` · `out_of_memory` · `cancelled` |
+
+### runs artifacts
+
+Save output artifacts from a successful run
+
+`gregale runs artifacts <id> [--output-dir <DIR>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--output-dir <DIR>` | local destination (required) |  |
 
 ### runs get
 

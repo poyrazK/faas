@@ -60,6 +60,7 @@ type Execution struct {
 	LeaseOwner      *string
 	LeaseExpiresAt  *time.Time
 	CancelRequested *time.Time
+	Artifacts       []api.ExecutionArtifact
 	Result          json.RawMessage
 	Stdout          string
 	Stderr          string
@@ -103,6 +104,7 @@ type CompleteExecutionParams struct {
 	ID              string
 	LeaseToken      string
 	Status          api.ExecutionStatus
+	Artifacts       []api.ExecutionArtifact
 	Result          json.RawMessage
 	Stdout          string
 	Stderr          string
@@ -272,6 +274,9 @@ func validateCompletion(params CompleteExecutionParams, maxOutputBytes int) erro
 	if params.ID == "" || params.LeaseToken == "" || params.FinishedAt.IsZero() || !params.Status.Terminal() {
 		return ErrExecutionInvalidTerminal
 	}
+	if err := api.ValidateExecutionArtifacts(params.Artifacts); err != nil || (params.Status != api.ExecutionStatusSucceeded && len(params.Artifacts) != 0) {
+		return fmt.Errorf("%w: invalid artifacts", ErrExecutionInvalidTerminal)
+	}
 	if params.Status == api.ExecutionStatusSucceeded {
 		if len(params.Result) != 0 && !json.Valid(params.Result) {
 			return fmt.Errorf("%w: result is not valid JSON", ErrExecutionInvalidTerminal)
@@ -279,7 +284,7 @@ func validateCompletion(params CompleteExecutionParams, maxOutputBytes int) erro
 	} else if len(params.Result) != 0 {
 		return fmt.Errorf("%w: only succeeded executions may store a result", ErrExecutionInvalidTerminal)
 	}
-	if len(params.Result)+len(params.Stdout)+len(params.Stderr) > maxOutputBytes {
+	if len(params.Result)+len(params.Stdout)+len(params.Stderr)+api.ExecutionArtifactsOutputBytes(params.Artifacts) > maxOutputBytes {
 		return fmt.Errorf("%w: combined output exceeds admitted budget", ErrExecutionInvalidTerminal)
 	}
 	if params.ExitCode != nil && (*params.ExitCode < 0 || *params.ExitCode > 255) {

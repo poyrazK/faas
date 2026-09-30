@@ -4,7 +4,10 @@ package state_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -211,5 +214,75 @@ func TestPgStoreExecutionSweepRecovery(t *testing.T) {
 	}
 	if usage.Runs != 2 || usage.TimedOut != 1 || usage.Failed != 1 || usage.Succeeded != 0 {
 		t.Fatalf("sweep usage = %+v, want timed_out=1 failed=1 exactly once", usage)
+	}
+}
+
+func TestPgStoreExecutionArtifactsReceiptsAndAccounting(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	account := pgExecutionAccount(t, store, ctx, "artifacts")
+	exerciseExecutionArtifacts(t, store, account.ID)
+}
+
+func TestMemStoreExecutionArtifactsReceiptsAndAccounting(t *testing.T) {
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(context.Background(), "artifacts@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exerciseExecutionArtifacts(t, store, account.ID)
+}
+
+func exerciseExecutionArtifacts(t *testing.T, store state.ExecutionStore, accountID string) {
+	t.Helper()
+	ctx := context.Background()
+	base := time.Now().UTC().Add(time.Second)
+	params := pgExecutionParams(t, accountID, base, 0, "sealed")
+	params.Request.Limits.MaxOutputBytes = 1024
+	row, err := store.CreateExecution(ctx, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := store.ClaimExecution(ctx, "artifacts", base.Add(time.Millisecond), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.MarkExecutionRunning(ctx, row.ID, *claim.LeaseToken, base.Add(2*time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	content := []byte("a,b\n1,2\n")
+	hash := sha256.Sum256(content)
+	artifacts := []api.ExecutionArtifact{{Name: "data.csv", Content: content, SizeBytes: len(content), SHA256: "sha256:" + hex.EncodeToString(hash[:])}}
+	completion := state.CompleteExecutionParams{ID: row.ID, LeaseToken: *claim.LeaseToken, Status: api.ExecutionStatusSucceeded, Result: []byte("null"), Artifacts: artifacts, FinishedAt: base.Add(3 * time.Millisecond)}
+	completion.Stdout = strings.Repeat("a", 1000)
+	if _, err := store.CompleteExecution(ctx, completion); !errors.Is(err, state.ErrExecutionInvalidTerminal) {
+		t.Fatalf("combined output limit: %v", err)
+	}
+	completion.Stdout = ""
+	completed, err := store.CompleteExecution(ctx, completion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(completed.Artifacts) != 1 || string(completed.Artifacts[0].Content) != string(content) {
+		t.Fatalf("receipt lost artifacts: %+v", completed)
+	}
+	completed.Artifacts[0].Content[0] = 'X'
+	read, err := store.ExecutionByID(ctx, accountID, row.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(read.Artifacts[0].Content) != string(content) {
+		t.Fatal("receipt content aliased mutable memory")
+	}
+	if _, err := store.ExecutionByID(ctx, "00000000-0000-0000-0000-000000000000", row.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("cross-account read: %v", err)
+	}
+	usageStore := store.(state.ExecutionUsageStore)
+	month := time.Date(base.Year(), base.Month(), 1, 0, 0, 0, 0, time.UTC)
+	usage, err := usageStore.ExecutionUsageByAccount(ctx, accountID, month)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if usage.OutputBytes != int64(4+api.ExecutionArtifactsOutputBytes(artifacts)) {
+		t.Fatalf("output bytes = %d", usage.OutputBytes)
 	}
 }

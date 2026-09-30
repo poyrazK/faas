@@ -165,3 +165,27 @@ async def test_arun_execution_awaits_callback_and_returns_receipt() -> None:
         assert len(requests) == 3
     finally:
         await client.aclose()
+
+
+def test_decode_execution_artifact_validates_binary_content() -> None:
+    import base64
+    import hashlib
+
+    from faas_sdk import decode_execution_artifact
+    from faas_sdk.models.execution_artifact import ExecutionArtifact
+
+    content = bytes([0, 1, 255])
+    artifact = ExecutionArtifact(
+        name="result.bin",
+        size_bytes=3,
+        sha256="sha256:" + hashlib.sha256(content).hexdigest(),
+        content=base64.b64encode(content).decode(),
+    )
+    assert decode_execution_artifact(artifact) == content
+    artifact.size_bytes = 4
+    with pytest.raises(ValueError):
+        decode_execution_artifact(artifact)
+    artifact.size_bytes = 3
+    artifact.sha256 = "sha256:bad"
+    with pytest.raises(ValueError):
+        decode_execution_artifact(artifact)

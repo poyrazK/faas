@@ -107,7 +107,8 @@ func TestSealDecodeBundleRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	req := api.ResolvedExecutionRequest{
-		Entrypoint: "src/main.mjs",
+		Entrypoint:  "src/main.mjs",
+		OutputFiles: []string{"report.txt", "data/result.bin"},
 		Files: []api.ExecutionFile{
 			{Path: "src/main.mjs", Content: []byte("export default () => 42")},
 			{Path: "src/lib.mjs", Content: []byte("export const value = 41")},
@@ -124,6 +125,13 @@ func TestSealDecodeBundleRoundTrip(t *testing.T) {
 	}
 	if decoded.Source != "" || decoded.Entrypoint != req.Entrypoint || string(decoded.Input) != string(req.Input) || len(decoded.Files) != 2 {
 		t.Fatalf("decoded = %#v", decoded)
+	}
+	if strings.Join(decoded.OutputFiles, ",") != strings.Join(req.OutputFiles, ",") {
+		t.Fatalf("output selection lost: %v", decoded.OutputFiles)
+	}
+	req.OutputFiles[0] = "../invalid"
+	if _, err := SealRequest(identity.Recipient(), req); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("invalid output selection = %v", err)
 	}
 	req.Files[0].Content[0] = 'X'
 	if decoded.Files[0].Content[0] == 'X' {

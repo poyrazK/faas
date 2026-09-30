@@ -28,6 +28,10 @@ export type CreateExecutionRequest = {
    */
   files?: Array<ExecutionFile>;
   /**
+   * Explicit normalized relative paths below context.output_dir to export on success. No globs. Missing, symlink, and special files fail the run.
+   */
+  output_files?: Array<string>;
+  /**
    * One complete JSON value delivered to the guest as input.
    */
   input?: any;

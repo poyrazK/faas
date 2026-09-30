@@ -5,6 +5,8 @@ package sched
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -182,6 +184,10 @@ func TestExecutionCoordinatorFairClaimsAcrossAccounts(t *testing.T) {
 }
 
 func TestExecutionCoordinatorDispatchFenceAndTeardownBeforeCompletion(t *testing.T) {
+	// adr:381 — inline artifacts commit only after the disposable VM is destroyed.
+	content := []byte("patch")
+	digest := sha256.Sum256(content)
+	artifacts := []api.ExecutionArtifact{{Name: "patch.diff", Content: content, SizeBytes: len(content), SHA256: "sha256:" + hex.EncodeToString(digest[:])}}
 	store, account, executions, sealed := newExecutionCoordinatorFixture(t, 1, 2000)
 	destroyed := &atomic.Bool{}
 	checkingStore := &teardownCheckingExecutionStore{ExecutionStore: store, destroyed: destroyed}
@@ -204,7 +210,8 @@ func TestExecutionCoordinatorDispatchFenceAndTeardownBeforeCompletion(t *testing
 				exitCode := 0
 				return ExecutionOutcome{
 					Status: api.ExecutionStatusSucceeded, Result: []byte(`{"ok":true}`), Stdout: "ok\n",
-					ExitCode: &exitCode, Usage: api.ExecutionUsage{WallTimeMS: 4, CPUTimeMS: 2, PeakMemoryMB: 12},
+					Artifacts: artifacts,
+					ExitCode:  &exitCode, Usage: api.ExecutionUsage{WallTimeMS: 4, CPUTimeMS: 2, PeakMemoryMB: 12},
 				}, nil
 			},
 			destroy: func(context.Context) error {
@@ -228,6 +235,9 @@ func TestExecutionCoordinatorDispatchFenceAndTeardownBeforeCompletion(t *testing
 	}
 	if checkingStore.complete.Load() != 1 {
 		t.Fatalf("CompleteExecution calls = %d, want 1", checkingStore.complete.Load())
+	}
+	if len(row.Artifacts) != 1 || string(row.Artifacts[0].Content) != "patch" {
+		t.Fatalf("terminal artifacts = %+v", row.Artifacts)
 	}
 }
 
