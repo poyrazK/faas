@@ -1326,3 +1326,12 @@ test-flags: ## Validate customer-aware flag release, SDK and request evidence ag
 	@$(GO) test -p 1 ./pkg/gateway -run 'TestFeatureFlag|TestFlagEvidence' -count=1
 	@GREGALE_FLAGS_ACCEPTANCE=1 DATABASE_URL="$(DATABASE_URL)" $(GO) test -p 1 ./cmd/apid -run '^TestFeatureFlags' -count=1
 	@$(GO) test -p 1 ./cmd/gregale -run '^TestCmdFlags' -count=1
+
+.PHONY: test-flags-metal
+test-flags-metal: ## Validate Node Flags refresh after native VM restore (root, KVM, FAAS_TEST_KERNEL, FAAS_BUILDER_BASE_PATH)
+	@test "$$(id -u)" -eq 0 || (echo "test-flags-metal must run as root" >&2; exit 1)
+	@test -c /dev/kvm || (echo "/dev/kvm is required for test-flags-metal" >&2; exit 1)
+	@test -r "$$FAAS_TEST_KERNEL" || (echo "FAAS_TEST_KERNEL must name a readable kernel" >&2; exit 1)
+	@test -r "$$FAAS_BUILDER_BASE_PATH" || (echo "FAAS_BUILDER_BASE_PATH must name a readable builder base" >&2; exit 1)
+	@cd sdk/node && npm ci --ignore-scripts --no-audit --no-fund && npm run build
+	@RUN_REGEX='^TestFeatureFlagsNativeParkRestoreMetal$$' $(MAKE) test-metal PKGS=./cmd/e2e/...
