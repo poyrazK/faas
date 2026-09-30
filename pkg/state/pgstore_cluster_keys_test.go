@@ -439,12 +439,24 @@ func TestCreateClusterSigningKeyIfAbsent_CreatesOnceNeverOverwrites(t *testing.T
 	store := NewPgStore(pool)
 	ctx := context.Background()
 
-	first := ClusterSigningKey{KeyID: strings.Repeat("A", 22), PublicKeyPEM: "first", SealedBlob: []byte("first-blob")}
+	// The table CHECKs a 22-char base64url kid and a PKIX PEM public key.
+	pemFor := func() string {
+		pub, _, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := marshalPubPEM(pub)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(body)
+	}
+	first := ClusterSigningKey{KeyID: strings.Repeat("A", 22), PublicKeyPEM: pemFor(), SealedBlob: []byte("first-blob")}
 	created, err := store.CreateClusterSigningKeyIfAbsent(ctx, first)
 	if err != nil || !created {
 		t.Fatalf("first create: created=%v err=%v", created, err)
 	}
-	second := ClusterSigningKey{KeyID: strings.Repeat("B", 22), PublicKeyPEM: "second", SealedBlob: []byte("second-blob")}
+	second := ClusterSigningKey{KeyID: strings.Repeat("B", 22), PublicKeyPEM: pemFor(), SealedBlob: []byte("second-blob")}
 	created, err = store.CreateClusterSigningKeyIfAbsent(ctx, second)
 	if err != nil || created {
 		t.Fatalf("second create: created=%v err=%v, want false/nil", created, err)
