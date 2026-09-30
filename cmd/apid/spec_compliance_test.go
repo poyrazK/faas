@@ -83,6 +83,8 @@ const (
 // /dashboard/account/set-password into the public spec — the
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
+	"GET /v1/dev/bridges/{id}/connect":           true, // ADR-377 scoped WebSocket transport, described in docs/dev-bridge.md
+	"GET /v1/dev/bridges/{id}/status":            true, // attachment-authenticated CLI readiness protocol
 	"GET /v1/account/dpa":                        true, // public markdown (no auth)
 	"POST /v1/webhooks/stripe":                   true, // HMAC-signed webhook
 	"POST /v1/webhooks/paddle":                   true, // HMAC-signed webhook (PR #3 / ADR-025)
@@ -510,6 +512,10 @@ var codeExclude = map[string]bool{
 // to a standalone Go struct: aliases, inline anonymous structs, or pure-
 // documentation shapes (such as error envelopes).
 var schemaSpecOnly = map[string]bool{
+	"DevBridgeScope":         true, // wire types live in pkg/devbridge; digests never cross the wire
+	"DevBridgeSession":       true,
+	"DevBridgeCredentials":   true,
+	"DevBridgeWebhookReplay": true,
 	// Migration preflight verdict level is a typed string, not a struct, so
 	// the DTO scanner does not surface it. Same pattern as TriggerKind and
 	// ResourceProfile below.
@@ -991,6 +997,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", appTasksFile),
 		filepath.Join(root, "pkg", "api", projectsFile),
 		filepath.Join(root, "pkg", "api", devSyncFile),
+		filepath.Join(root, "pkg", "api", "dev_bridge.go"),
 		filepath.Join(root, "pkg", "api", privateNetworkFile),
 		filepath.Join(root, "pkg", "api", queueBindingFile),
 		filepath.Join(root, "pkg", "api", outboundBindingsFile),

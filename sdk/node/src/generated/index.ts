@@ -195,6 +195,8 @@ export type { CreateCustomDomainRequest } from './models/CreateCustomDomainReque
 export type { CreateDeploymentOverrides } from './models/CreateDeploymentOverrides.js';
 export type { CreateDeploymentRequest } from './models/CreateDeploymentRequest.js';
 export type { CreateDeployTokenRequest } from './models/CreateDeployTokenRequest.js';
+export type { CreateDevBridgeRequest } from './models/CreateDevBridgeRequest.js';
+export type { CreateDevBridgeResponse } from './models/CreateDevBridgeResponse.js';
 export type { CreateEdgeRuleRequest } from './models/CreateEdgeRuleRequest.js';
 export type { CreateExecutionRequest } from './models/CreateExecutionRequest.js';
 export type { CreateInboundWebhookEndpointRequest } from './models/CreateInboundWebhookEndpointRequest.js';
@@ -316,6 +318,11 @@ export type { DeploymentReadinessProbe } from './models/DeploymentReadinessProbe
 export type { DeploymentResponse } from './models/DeploymentResponse.js';
 export type { DeploymentSummaryResponse } from './models/DeploymentSummaryResponse.js';
 export type { DeployTokenResponse } from './models/DeployTokenResponse.js';
+export type { DevBridgeCredentials } from './models/DevBridgeCredentials.js';
+export type { DevBridgeDependency } from './models/DevBridgeDependency.js';
+export type { DevBridgeScope } from './models/DevBridgeScope.js';
+export type { DevBridgeSession } from './models/DevBridgeSession.js';
+export type { DevBridgeWebhookReplay } from './models/DevBridgeWebhookReplay.js';
 export type { DevPostgresRequest } from './models/DevPostgresRequest.js';
 export type { DevPostgresResponse } from './models/DevPostgresResponse.js';
 export type { DevSessionResponse } from './models/DevSessionResponse.js';
@@ -781,6 +788,7 @@ export type { RegisterEventSchemaResponse } from './models/RegisterEventSchemaRe
 export type { RegisterScenarioTestRequest } from './models/RegisterScenarioTestRequest.js';
 export type { RekeyProgress } from './models/RekeyProgress.js';
 export type { RenameAppRequest } from './models/RenameAppRequest.js';
+export type { ReplayDevBridgeWebhookRequest } from './models/ReplayDevBridgeWebhookRequest.js';
 export type { ReplayEventFanoutFailureRequest } from './models/ReplayEventFanoutFailureRequest.js';
 export type { ReplayEventFanoutFailureResponse } from './models/ReplayEventFanoutFailureResponse.js';
 export type { ReplayRetryableEventFanoutFailuresRequest } from './models/ReplayRetryableEventFanoutFailuresRequest.js';

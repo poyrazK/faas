@@ -128,6 +128,12 @@ func OpenWithAppName(ctx context.Context, dsnOverride, appName string) (*pgxpool
 	return open(ctx, dsnOverride, appName)
 }
 
+// OpenReadOnlyWithAppName enforces the read-only boundary on every pooled
+// connection, including connections opened after reconnect or idle expiry.
+func OpenReadOnlyWithAppName(ctx context.Context, dsnOverride, appName string) (*pgxpool.Pool, error) {
+	return open(ctx, dsnOverride, appName, true)
+}
+
 // daemonMaxConnections resolves a daemon's pool budget for the notify mode
 // this process is running in.
 //
@@ -149,7 +155,7 @@ func daemonMaxConnections(appName string) int32 {
 	return defaultMaxConnections
 }
 
-func open(ctx context.Context, dsnOverride, appName string) (*pgxpool.Pool, error) {
+func open(ctx context.Context, dsnOverride, appName string, readOnly ...bool) (*pgxpool.Pool, error) {
 	dsn := dsnOverride
 	if dsn == "" {
 		dsn = os.Getenv("DATABASE_URL")
@@ -174,6 +180,9 @@ func open(ctx context.Context, dsnOverride, appName string) (*pgxpool.Pool, erro
 	cfg.HealthCheckPeriod = healthCheckPeriod
 	if appName != "" {
 		cfg.ConnConfig.RuntimeParams["application_name"] = appName
+	}
+	if len(readOnly) > 0 && readOnly[0] {
+		cfg.ConnConfig.RuntimeParams["default_transaction_read_only"] = "on"
 	}
 	// Safe under a transaction-mode pooler; a no-op without one.
 	applyPooledExecMode(cfg, dsn)

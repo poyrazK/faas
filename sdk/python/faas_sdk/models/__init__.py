@@ -377,6 +377,8 @@ from .create_deployment_request import CreateDeploymentRequest
 from .create_deployment_request_tag_type_1 import CreateDeploymentRequestTagType1
 from .create_deployment_request_tag_type_2_type_1 import CreateDeploymentRequestTagType2Type1
 from .create_deployment_request_tag_type_3_type_1 import CreateDeploymentRequestTagType3Type1
+from .create_dev_bridge_request import CreateDevBridgeRequest
+from .create_dev_bridge_response import CreateDevBridgeResponse
 from .create_edge_rule_request import CreateEdgeRuleRequest
 from .create_edge_rule_request_kind import CreateEdgeRuleRequestKind
 from .create_edge_rule_request_match_headers import CreateEdgeRuleRequestMatchHeaders
@@ -613,6 +615,12 @@ from .deployment_response_rollout_state import DeploymentResponseRolloutState
 from .deployment_response_stage_state import DeploymentResponseStageState
 from .deployment_response_tag import DeploymentResponseTag
 from .deployment_summary_response import DeploymentSummaryResponse
+from .dev_bridge_credentials import DevBridgeCredentials
+from .dev_bridge_dependency import DevBridgeDependency
+from .dev_bridge_scope import DevBridgeScope
+from .dev_bridge_session import DevBridgeSession
+from .dev_bridge_webhook_replay import DevBridgeWebhookReplay
+from .dev_bridge_webhook_replay_state import DevBridgeWebhookReplayState
 from .dev_postgres_request import DevPostgresRequest
 from .dev_postgres_response import DevPostgresResponse
 from .dev_postgres_response_binding_state import DevPostgresResponseBindingState
@@ -1506,6 +1514,7 @@ from .rekey_progress import RekeyProgress
 from .rename_app_request import RenameAppRequest
 from .reorder_deployment_body import ReorderDeploymentBody
 from .reorder_deployment_response_200 import ReorderDeploymentResponse200
+from .replay_dev_bridge_webhook_request import ReplayDevBridgeWebhookRequest
 from .replay_event_fanout_failure_request import ReplayEventFanoutFailureRequest
 from .replay_event_fanout_failure_response import ReplayEventFanoutFailureResponse
 from .replay_event_fanout_failure_response_state import ReplayEventFanoutFailureResponseState
@@ -2260,6 +2269,8 @@ __all__ = (
     "CreateDeploymentRequestTagType2Type1",
     "CreateDeploymentRequestTagType3Type1",
     "CreateDeployTokenRequest",
+    "CreateDevBridgeRequest",
+    "CreateDevBridgeResponse",
     "CreateEdgeRuleRequest",
     "CreateEdgeRuleRequestKind",
     "CreateEdgeRuleRequestMatchHeaders",
@@ -2486,6 +2497,12 @@ __all__ = (
     "DeployTokenResponse",
     "DeployTokenResponseScopesItem",
     "DeployTokenResponseStatus",
+    "DevBridgeCredentials",
+    "DevBridgeDependency",
+    "DevBridgeScope",
+    "DevBridgeSession",
+    "DevBridgeWebhookReplay",
+    "DevBridgeWebhookReplayState",
     "DevPostgresRequest",
     "DevPostgresResponse",
     "DevPostgresResponseBindingState",
@@ -3335,6 +3352,7 @@ __all__ = (
     "RenameAppRequest",
     "ReorderDeploymentBody",
     "ReorderDeploymentResponse200",
+    "ReplayDevBridgeWebhookRequest",
     "ReplayEventFanoutFailureRequest",
     "ReplayEventFanoutFailureResponse",
     "ReplayEventFanoutFailureResponseState",

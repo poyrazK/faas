@@ -4754,8 +4754,9 @@ INSERT INTO dev_bridge_sessions
 SELECT sqlc.arg(id),sqlc.arg(account_id),sqlc.arg(target_app_id),sqlc.arg(environment_id),
        sqlc.arg(scope),sqlc.arg(attachment_digest),sqlc.arg(request_digest),sqlc.arg(expires_at)
 FROM apps a JOIN project_environments e ON e.project_id=a.project_id AND e.account_id=a.account_id
-WHERE a.id=sqlc.arg(target_app_id) AND a.account_id=sqlc.arg(account_id)
+WHERE a.id=sqlc.arg(target_app_id) AND a.account_id=sqlc.arg(account_id) AND a.status='active'
   AND e.id=sqlc.arg(environment_id) AND NOT e.protected AND e.slug NOT IN ('production','default')
+  AND (sqlc.arg(scope)::jsonb->>'project_id')=e.project_id::text
   AND (SELECT count(*) FROM dev_bridge_sessions b WHERE b.account_id=a.account_id
        AND b.revoked_at IS NULL AND b.expires_at > now()) < sqlc.arg(max_sessions)::integer;
 
@@ -4763,9 +4764,32 @@ WHERE a.id=sqlc.arg(target_app_id) AND a.account_id=sqlc.arg(account_id)
 SELECT id,scope,attachment_digest,request_digest,expires_at,revoked_at
 FROM dev_bridge_sessions WHERE id=$1 AND account_id=$2;
 
+-- name: PruneDevBridgeSessions :exec
+DELETE FROM dev_bridge_sessions WHERE account_id=$1 AND expires_at < $2;
+
 -- name: RevokeDevBridge :execrows
 UPDATE dev_bridge_sessions SET revoked_at=COALESCE(revoked_at,sqlc.arg(revoked_at))
 WHERE id=sqlc.arg(id) AND account_id=sqlc.arg(account_id);
 
 -- name: LockDevBridgeAccount :one
 SELECT plan FROM accounts WHERE id=$1 FOR UPDATE;
+
+-- name: LockDevBridgeReplaySession :one
+SELECT id FROM dev_bridge_sessions WHERE id=$1 AND account_id=$2
+  AND revoked_at IS NULL AND expires_at > now() FOR UPDATE;
+
+-- name: CreateDevBridgeWebhookReplay :execrows
+INSERT INTO dev_bridge_webhook_replays (id,session_id,account_id,invocation_id,idempotency_key)
+SELECT sqlc.arg(id),sqlc.arg(session_id),sqlc.arg(account_id),sqlc.arg(invocation_id),sqlc.arg(idempotency_key)
+WHERE (SELECT count(*) FROM dev_bridge_webhook_replays WHERE session_id=sqlc.arg(session_id)) < sqlc.arg(max_replays)::integer
+ON CONFLICT (session_id,idempotency_key) DO NOTHING;
+
+-- name: DevBridgeWebhookReplayByKey :one
+SELECT * FROM dev_bridge_webhook_replays WHERE session_id=$1 AND account_id=$2 AND idempotency_key=$3;
+
+-- name: FinishDevBridgeWebhookReplay :execrows
+UPDATE dev_bridge_webhook_replays SET state=sqlc.arg(state),http_status=sqlc.arg(http_status),completed_at=now()
+WHERE id=sqlc.arg(id) AND account_id=sqlc.arg(account_id) AND state='dispatching';
+
+-- name: DevBridgeWebhookReplayByID :one
+SELECT * FROM dev_bridge_webhook_replays WHERE id=$1 AND account_id=$2 AND session_id=$3;

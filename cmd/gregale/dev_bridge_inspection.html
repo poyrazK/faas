@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Gregale Dev Bridge · Requests</title>
+<style>
+:root{color-scheme:light dark;font:15px system-ui}body{max-width:1100px;margin:3rem auto;padding:0 1.5rem}h1{font-size:1.8rem}p{opacity:.7}table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}th,td{padding:.85rem;text-align:left;border-bottom:1px solid #8884}th{font-size:.8rem;text-transform:uppercase;letter-spacing:.05em}td:nth-child(3){font-family:ui-monospace,monospace;overflow-wrap:anywhere}#state{font-size:.85rem}caption{text-align:left;padding:1rem 0}.error{color:#e56}
+</style>
+<h1>Dev Bridge requests</h1><p>Latest 100 requests to your local service. Query strings, headers and bodies are excluded. Records stay in this CLI process.</p>
+<div id="state" role="status">Connecting…</div>
+<table><caption id="empty">Waiting for requests</caption><thead><tr><th>Time</th><th>Method</th><th>Path</th><th>Status</th><th>Duration</th><th>Response</th></tr></thead><tbody id="rows"></tbody></table>
+<script>
+async function refresh(){try{const res=await fetch('/requests',{cache:'no-store'});if(!res.ok)throw Error();const records=await res.json();const body=document.querySelector('#rows');body.replaceChildren();for(const record of records.reverse()){const row=document.createElement('tr');if(record.error)row.className='error';for(const value of [new Date(record.started_at).toLocaleTimeString(),record.method,record.path,record.complete?(record.status||record.error):'Pending',record.complete?record.duration_ms+' ms':'…',record.response_bytes+' B']){const cell=document.createElement('td');cell.textContent=value;row.append(cell)}body.append(row)}document.querySelector('#empty').hidden=records.length>0;document.querySelector('#state').textContent='Connected · refreshes every second'}catch{document.querySelector('#state').textContent='CLI inspection endpoint is unavailable'}finally{setTimeout(refresh,1000)}}refresh()
+</script></html>

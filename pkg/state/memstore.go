@@ -136,6 +136,7 @@ type jobRegistryCredentialKey struct {
 
 type MemStore struct {
 	devBridgeSessions           map[string]devbridge.Session
+	devBridgeWebhookReplays     map[string]devbridge.WebhookReplay
 	safeReleaseWorkerLeaseUntil time.Time
 	requestAuditEvents          map[string]RequestAuditRecord
 	discoveredAPIRoutes         map[string]DiscoveredAPIRoute

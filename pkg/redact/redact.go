@@ -211,7 +211,7 @@ func defaultPatterns() []Pattern {
 	return []Pattern{
 		{
 			Name:  "dev_bridge_token",
-			Regex: regexp.MustCompile(`(?i)(X-Gregale-Dev-Bridge-Token)(\s*:\s*)([^\r\n\000]+)`),
+			Regex: regexp.MustCompile(`(?i)(X-Gregale-Dev-(?:Bridge-Token|Session-Context))(\s*:\s*)([^\r\n\000]+)`),
 			Replacer: func(g []string) string {
 				if len(g) < 4 {
 					return "[REDACTED:dev_bridge_token]"

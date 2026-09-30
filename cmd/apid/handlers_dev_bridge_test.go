@@ -8,7 +8,9 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/devbridge"
+	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 func TestDevBridgeCreationInspectionRevocation(t *testing.T) {
@@ -90,5 +92,54 @@ func TestDevBridgeRejectsProductionAndProtectedEnvironments(t *testing.T) {
 	e.s.devBridgeEnabled = false
 	if response := e.do(t, "POST", "/v1/dev/bridges", nil, nil); response.Code != 503 {
 		t.Fatalf("disabled: %d", response.Code)
+	}
+}
+
+func TestDevBridgeEntrypointPreservesDiscoveredBindings(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	e.s.devBridgeEnabled = true
+	project, err := e.store.CreateProject(t.Context(), state.Project{AccountID: e.acct.ID, Slug: "shop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := e.store.CreateProjectEnvironment(t.Context(), state.ProjectEnvironment{AccountID: e.acct.ID, ProjectID: project.ID, Slug: "development"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	apps := map[string]state.App{}
+	for _, name := range []string{"payments", "frontend", "inventory"} {
+		app := state.App{AccountID: e.acct.ID, ProjectID: project.ID, Slug: name, Type: state.AppTypeApp, RAMMB: 128, WorkloadClass: state.WorkloadClassHTTP}
+		if name == "payments" {
+			app.Manifest.ServiceBindings = []api.AppServiceBinding{{Binding: "GREGALE_SERVICE_INVENTORY_URL", Service: "inventory"}}
+		}
+		apps[name], err = e.store.CreateApp(t.Context(), app)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	response := e.do(t, "POST", "/v1/dev/bridges", api.CreateDevBridgeRequest{App: "payments", Environment: env.Slug, DeveloperID: "alice", Entrypoint: "frontend"}, nil)
+	if response.Code != 201 {
+		t.Fatalf("create: %d %s", response.Code, response.Body)
+	}
+	var out api.CreateDevBridgeResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.EnvironmentURL != "https://"+gateway.BuildEnvironmentHost(wire.DeployWildcardSuffix, env.ID, apps["frontend"].ID) {
+		t.Fatalf("wrong entrypoint: %s", out.EnvironmentURL)
+	}
+	deps := map[string]bool{}
+	for _, dep := range out.Dependencies {
+		deps[dep.AppID] = true
+		if dep.EnvironmentURL == "" {
+			t.Fatal("missing discovery URL")
+		}
+	}
+	if len(deps) != 2 || !deps[apps["frontend"].ID] || !deps[apps["inventory"].ID] {
+		t.Fatalf("lost graph: %+v", deps)
+	}
+	response = e.do(t, "POST", "/v1/dev/bridges", api.CreateDevBridgeRequest{App: "payments", Environment: env.Slug, DeveloperID: "alice", Entrypoint: "outside-project"}, nil)
+	if response.Code != 400 {
+		t.Fatalf("invalid entrypoint admitted: %d", response.Code)
 	}
 }

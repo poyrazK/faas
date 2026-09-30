@@ -40,14 +40,10 @@ func (s *server) createDevBridge(w http.ResponseWriter, r *http.Request, acct st
 		return
 	}
 	now := time.Now().UTC()
-	var dependencies []api.DevBridgeDependency
-	for _, id := range scope.DependencyAppIDs {
-		dependency, err := s.store.AppByID(r.Context(), id)
-		if err != nil {
-			api.WriteProblem(w, api.ErrCapacity("resolve bridge dependencies"))
-			return
-		}
-		dependencies = append(dependencies, api.DevBridgeDependency{AppID: id, Name: dependency.Slug})
+	entrypoint, dependencies, err := s.devBridgeEndpoints(r.Context(), scope, request.Entrypoint)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("resolve bridge dependencies"))
+		return
 	}
 	session, credentials, err := devbridge.NewSession(scope, now, now.Add(api.DevBridgeSessionTTL))
 	if err != nil {
@@ -64,7 +60,28 @@ func (s *server) createDevBridge(w http.ResponseWriter, r *http.Request, acct st
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusCreated, api.CreateDevBridgeResponse{Session: session, Credentials: credentials,
-		EnvironmentURL: "https://" + gateway.BuildEnvironmentHost(wire.DeployWildcardSuffix, scope.EnvironmentID, scope.TargetAppID), Dependencies: dependencies})
+		EnvironmentURL: "https://" + gateway.BuildEnvironmentHost(wire.DeployWildcardSuffix, scope.EnvironmentID, entrypoint), Dependencies: dependencies})
+}
+
+func (s *server) devBridgeEndpoints(ctx context.Context, scope devbridge.Scope, requested string) (string, []api.DevBridgeDependency, error) {
+	entrypoint := scope.TargetAppID
+	var dependencies []api.DevBridgeDependency
+	for _, id := range scope.DependencyAppIDs {
+		dependency, err := s.store.AppByID(ctx, id)
+		if err != nil {
+			return "", nil, err
+		}
+		name := dependency.Slug
+		if dependency.WorkloadName != "" {
+			name = dependency.WorkloadName
+		}
+		dependencies = append(dependencies, api.DevBridgeDependency{AppID: id, Name: name,
+			EnvironmentURL: "https://" + gateway.BuildEnvironmentHost(wire.DeployWildcardSuffix, scope.EnvironmentID, id)})
+		if requested == name || requested == dependency.Slug {
+			entrypoint = id
+		}
+	}
+	return entrypoint, dependencies, nil
 }
 
 func devBridgeValidation(detail string) *api.Problem {
@@ -76,7 +93,7 @@ func (s *server) resolveDevBridgeScope(ctx context.Context, acct state.Account, 
 		return devbridge.Scope{}, devBridgeValidation("developer_id is required and dependencies must be bounded")
 	}
 	app, err := s.store.AppBySlug(ctx, request.App)
-	if err != nil || app.AccountID != acct.ID || app.ProjectID == "" {
+	if err != nil || app.AccountID != acct.ID || app.ProjectID == "" || app.Status != state.AppActive || app.Type != state.AppTypeApp {
 		return devbridge.Scope{}, api.NewProblem(404, "dev_bridge_target_not_found", "Bridge target unavailable", "select an owned project app")
 	}
 	env, err := s.store.ProjectEnvironmentBySlug(ctx, acct.ID, app.ProjectID, request.Environment)
@@ -88,6 +105,9 @@ func (s *server) resolveDevBridgeScope(ctx context.Context, acct state.Account, 
 		for _, binding := range app.Manifest.ServiceBindings {
 			request.Dependencies = append(request.Dependencies, binding.Service)
 		}
+	}
+	if request.Entrypoint != "" && request.Entrypoint != request.App {
+		request.Dependencies = append(request.Dependencies, request.Entrypoint)
 	}
 	if len(request.Dependencies) > api.DevBridgeMaxDependencies {
 		return devbridge.Scope{}, devBridgeValidation("too many declared dependencies")

@@ -18,6 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/devbridge"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -25,6 +26,9 @@ import (
 func main() { wire.Daemon("bridged", run) }
 
 func run(ctx context.Context, log *slog.Logger) error {
+	if err := role.Require("bridged", role.FromConfig("", "FAAS_BRIDGED_ROLE"), role.RoleSingleBox, role.RoleControlPlane); err != nil {
+		return err
+	}
 	if os.Getenv("FAAS_DEV_BRIDGE_ENABLED") != "1" {
 		return errors.New("bridged: preview is not enabled")
 	}
@@ -36,7 +40,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
 		return errors.New("bridged: listener must be loopback")
 	}
-	pool, err := db.OpenWithAppName(ctx, "", "bridged")
+	pool, err := db.OpenReadOnlyWithAppName(ctx, "", "bridged")
 	if err != nil {
 		return fmt.Errorf("bridged database: %w", err)
 	}
@@ -52,7 +56,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return session, err
 		}
 		env, err := store.ProjectEnvironmentByID(ctx, session.Scope.EnvironmentID)
-		if err != nil || env.AccountID != account || env.Protected || env.Slug == "production" || env.Slug == "default" {
+		if err != nil || env.AccountID != account || env.ProjectID != session.Scope.ProjectID || env.Protected || env.Slug == "production" || env.Slug == "default" {
 			return devbridge.Session{}, devbridge.ErrUnauthorized
 		}
 		app, err := store.AppByID(ctx, session.Scope.TargetAppID)
@@ -67,10 +71,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 		dependencyGateway = "http://127.0.0.1:8080"
 	}
 	target, err := url.Parse(dependencyGateway)
-	if err != nil || target.Host == "" || (target.Scheme != "http" && target.Scheme != "https") {
+	if err != nil {
 		return errors.New("bridged: invalid dependency gateway URL")
 	}
-	dependencies := httputil.NewSingleHostReverseProxy(target)
+	ip := net.ParseIP(target.Hostname())
+	if ip == nil || !ip.IsLoopback() || (target.Scheme != "http" && target.Scheme != "https") || target.User != nil || target.RawQuery != "" || target.Fragment != "" || (target.Path != "" && target.Path != "/") {
+		return errors.New("bridged: invalid dependency gateway URL")
+	}
+	dependencies := httputil.NewSingleHostReverseProxy(target) //nolint:gosec // Operator configuration is restricted above to a literal loopback origin.
 	director := dependencies.Director
 	dependencies.Director = func(r *http.Request) {
 		director(r)

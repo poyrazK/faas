@@ -25,5 +25,6 @@ func (s *server) proxyDevBridge(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.NewProblem(503, "dev_bridge_disconnected", "Dev Bridge unavailable", "the relay is disconnected"))
 	}
 	proxy.FlushInterval = -1
+	_ = http.NewResponseController(w).EnableFullDuplex()
 	proxy.ServeHTTP(w, r)
 }

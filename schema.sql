@@ -5576,6 +5576,47 @@ CREATE TABLE public.deployments (
 
 
 --
+-- Name: dev_bridge_sessions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.dev_bridge_sessions (
+    id text NOT NULL,
+    account_id uuid NOT NULL,
+    target_app_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    scope jsonb NOT NULL,
+    attachment_digest bytea NOT NULL,
+    request_digest bytea NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    revoked_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT dev_bridge_scope_shape CHECK (((jsonb_typeof(scope) = 'object'::text) AND (scope ?& ARRAY['account_id'::text, 'target_app_id'::text, 'environment_id'::text, 'developer_id'::text, 'project_id'::text]) AND ((scope ->> 'account_id'::text) = (account_id)::text) AND ((scope ->> 'target_app_id'::text) = (target_app_id)::text) AND ((scope ->> 'environment_id'::text) = (environment_id)::text) AND (jsonb_typeof((scope -> 'dependency_app_ids'::text)) = ANY (ARRAY['array'::text, 'null'::text])) AND ((length((scope ->> 'developer_id'::text)) >= 1) AND (length((scope ->> 'developer_id'::text)) <= 128)))),
+    CONSTRAINT dev_bridge_sessions_attachment_digest_check CHECK ((octet_length(attachment_digest) = 32)),
+    CONSTRAINT dev_bridge_sessions_request_digest_check CHECK ((octet_length(request_digest) = 32))
+);
+
+
+--
+-- Name: dev_bridge_webhook_replays; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.dev_bridge_webhook_replays (
+    id uuid NOT NULL,
+    session_id text NOT NULL,
+    account_id uuid NOT NULL,
+    invocation_id uuid NOT NULL,
+    idempotency_key text NOT NULL,
+    state text DEFAULT 'dispatching'::text NOT NULL,
+    http_status integer DEFAULT 0 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    completed_at timestamp with time zone,
+    CONSTRAINT dev_bridge_webhook_replays_http_status_check CHECK (((http_status = 0) OR ((http_status >= 100) AND (http_status <= 599)))),
+    CONSTRAINT dev_bridge_webhook_replays_idempotency_key_check CHECK (((length(idempotency_key) >= 1) AND (length(idempotency_key) <= 64))),
+    CONSTRAINT dev_bridge_webhook_replays_state_check CHECK ((state = ANY (ARRAY['dispatching'::text, 'completed'::text, 'uncertain'::text])))
+);
+
+
+--
 -- Name: developer_sync_history; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -11455,6 +11496,30 @@ ALTER TABLE ONLY public.deployments
 
 
 --
+-- Name: dev_bridge_sessions dev_bridge_sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dev_bridge_sessions
+    ADD CONSTRAINT dev_bridge_sessions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: dev_bridge_webhook_replays dev_bridge_webhook_replays_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dev_bridge_webhook_replays
+    ADD CONSTRAINT dev_bridge_webhook_replays_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: dev_bridge_webhook_replays dev_bridge_webhook_replays_session_id_idempotency_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dev_bridge_webhook_replays
+    ADD CONSTRAINT dev_bridge_webhook_replays_session_id_idempotency_key_key UNIQUE (session_id, idempotency_key);
+
+
+--
 -- Name: developer_sync_history developer_sync_history_app_id_deployment_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -14916,6 +14981,13 @@ CREATE INDEX deployments_rollout_pending_idx ON public.deployments USING btree (
 --
 
 CREATE INDEX deployments_snapshot_backoff_idx ON public.deployments USING btree (id) WHERE (snapshot_miss_backoff_until IS NOT NULL);
+
+
+--
+-- Name: dev_bridge_sessions_account_expiry; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX dev_bridge_sessions_account_expiry ON public.dev_bridge_sessions USING btree (account_id, expires_at);
 
 
 --
@@ -20178,6 +20250,46 @@ ALTER TABLE ONLY public.deployments
 
 
 --
+-- Name: dev_bridge_sessions dev_bridge_sessions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dev_bridge_sessions
+    ADD CONSTRAINT dev_bridge_sessions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: dev_bridge_sessions dev_bridge_sessions_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dev_bridge_sessions
+    ADD CONSTRAINT dev_bridge_sessions_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: dev_bridge_sessions dev_bridge_sessions_target_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dev_bridge_sessions
+    ADD CONSTRAINT dev_bridge_sessions_target_app_id_fkey FOREIGN KEY (target_app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: dev_bridge_webhook_replays dev_bridge_webhook_replays_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dev_bridge_webhook_replays
+    ADD CONSTRAINT dev_bridge_webhook_replays_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: dev_bridge_webhook_replays dev_bridge_webhook_replays_session_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dev_bridge_webhook_replays
+    ADD CONSTRAINT dev_bridge_webhook_replays_session_id_fkey FOREIGN KEY (session_id) REFERENCES public.dev_bridge_sessions(id) ON DELETE CASCADE;
+
+
+--
 -- Name: developer_sync_history developer_sync_history_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -22299,26 +22411,3 @@ ALTER TABLE ONLY public.workflow_steps
 
 --
 --
-
-CREATE TABLE public.dev_bridge_sessions (
-    id text PRIMARY KEY,
-    account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    target_app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
-    environment_id uuid NOT NULL REFERENCES project_environments(id) ON DELETE CASCADE,
-    scope jsonb NOT NULL,
-    attachment_digest bytea NOT NULL CHECK (octet_length(attachment_digest) = 32),
-    request_digest bytea NOT NULL CHECK (octet_length(request_digest) = 32),
-    expires_at timestamptz NOT NULL,
-    revoked_at timestamptz,
-    created_at timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT dev_bridge_scope_shape CHECK (
-      jsonb_typeof(scope) = 'object' AND
-      scope ?& ARRAY['account_id','target_app_id','environment_id','developer_id','project_id'] AND
-      scope->>'account_id' = account_id::text AND
-      scope->>'target_app_id' = target_app_id::text AND
-      scope->>'environment_id' = environment_id::text AND
-      jsonb_typeof(scope->'dependency_app_ids') IN ('array', 'null') AND
-      length(scope->>'developer_id') BETWEEN 1 AND 128
-    )
-);
-CREATE INDEX dev_bridge_sessions_account_expiry ON dev_bridge_sessions(account_id, expires_at);

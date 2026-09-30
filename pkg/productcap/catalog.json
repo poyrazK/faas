@@ -100,6 +100,17 @@
       "acceptance_test": "cmd/e2e/normal_path_e2e_test.go::TestE2E_NormalPath_DelayedTaskWaitsThenUsesRealGatewayBridge"
     },
     {
+      "id": "dev-bridge",
+      "name": "Gregale Dev Bridge",
+      "category": "delivery",
+      "description": "Run one HTTP service locally while its frontend and dependencies stay in a selected Gregale development environment.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/dev-bridge",
+      "operator_flag": "FAAS_DEV_BRIDGE_ENABLED",
+      "acceptance_test": "cmd/gatewayd-internal/dev_bridge_service_test.go::TestDevBridgeRemoteFrontendLocalPaymentsRemoteInventory"
+    },
+    {
       "id": "disposable-runs",
       "name": "Disposable isolated runs",
       "category": "runtime",
@@ -190,7 +201,12 @@
       "category": "runtime",
       "description": "Call another app in the same account by a stable internal name, with no VPC, service registry, or DNS configuration. A parked target is woken by the call, and callers may opt into a declared-binding allowlist.",
       "maturity": "preview",
-      "plans": ["free", "hobby", "pro", "scale"],
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
       "docs_url": "/docs/networking",
       "acceptance_test": "cmd/e2e/service_mesh_e2e_test.go::TestE2E_ServiceMesh_WakesParkedTarget"
     },
@@ -256,7 +272,12 @@
       "category": "edge",
       "description": "Keep an app off the public edge entirely while it stays reachable over authenticated same-account service routing.",
       "maturity": "preview",
-      "plans": ["free", "hobby", "pro", "scale"],
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
       "docs_url": "/docs/networking",
       "acceptance_test": "cmd/gatewayd-internal/backend_test.go::TestPgRouter_InternalAppIsNotPubliclyRouted"
     },

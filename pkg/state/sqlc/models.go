@@ -1431,6 +1431,18 @@ type DevBridgeSession struct {
 	CreatedAt        pgtype.Timestamptz
 }
 
+type DevBridgeWebhookReplay struct {
+	ID             pgtype.UUID
+	SessionID      string
+	AccountID      pgtype.UUID
+	InvocationID   pgtype.UUID
+	IdempotencyKey string
+	State          string
+	HttpStatus     int32
+	CreatedAt      pgtype.Timestamptz
+	CompletedAt    pgtype.Timestamptz
+}
+
 type DeveloperSyncHistory struct {
 	ID           pgtype.UUID
 	AppID        pgtype.UUID

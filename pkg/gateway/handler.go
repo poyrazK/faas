@@ -5547,7 +5547,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			api.WriteProblem(w, problem)
 			return
 		}
-	} else if r.Header.Get("X-Gregale-Dev-Bridge-Session") != "" || r.Header.Get("X-Gregale-Dev-Bridge-Token") != "" {
+	} else if r.Header.Get("X-Gregale-Dev-Bridge-Session") != "" || r.Header.Get("X-Gregale-Dev-Bridge-Token") != "" || r.Header.Get("X-Gregale-Dev-Session-Context") != "" {
 		api.WriteProblem(w, api.NewProblem(503, "dev_bridge_unavailable", "Bridge unavailable", "development routing is not enabled"))
 		return
 	}
@@ -6102,10 +6102,6 @@ haveApp:
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
-	if h.devBridgeForward != nil && h.devBridgeForward(w, r, app) {
-		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
-		return
-	}
 	managedVersionSetCookie := ""
 	managedReleaseContextSetCookie := ""
 	if app.VersionAffinityManagedCookie && app.VersionAffinityCookie == "" {
@@ -6466,6 +6462,12 @@ haveApp:
 		h.writeAppRateLimitHeaders(w, app.ID, app.Plan)
 	}
 	if !h.enforceTenantRequestBudget(w, r, rec, app, deploymentSmoke) {
+		return
+	}
+	// Scoped local execution retains ordinary authentication, body limits and
+	// rate/budget admission, then streams without VM upload spooling or wake.
+	if h.devBridgeForward != nil && h.devBridgeForward(w, r, app) {
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
 
@@ -6948,7 +6950,7 @@ haveApp:
 	//     unbuffered).
 	//   - r.Body is restored to a fresh bytes.Reader so the proxy
 	//     downstream sees the full body unchanged.
-	if rules, ok := h.backend.LookupMirrorRules(r.Context(), app.ID); ok { //nolint:contextcheck // request ctx at handler boundary.
+	if rules, ok := h.backend.LookupMirrorRules(r.Context(), app.ID); ok && !hasDevBridgeScope(r.Context()) { //nolint:contextcheck // request ctx at handler boundary.
 		requestBody, requestBodyTruncated, restoreBody := snapshotSourceBodyWithTruncation(r)
 		// snapshotSourceBody consumes the captured prefix from r.Body. Restore
 		// it before the source proxy runs; deferring this until ServeHTTP exits
@@ -7332,7 +7334,9 @@ haveApp:
 	// Retain the safe response-header shape for a future parked HEAD / edge
 	// answer. This is deliberately after the origin leg and before observe so
 	// only live responses can populate the cache.
-	h.cacheHeadResponse(app.ID, rec)
+	if !hasDevBridgeScope(r.Context()) {
+		h.cacheHeadResponse(app.ID, rec)
+	}
 	h.recordPreAuthFailedResponse(r, rec.status)
 	h.recordPreAuthTargetResponse(r, rec, app)
 	h.observe(r, rec.status, app.ID, string(app.Plan), cold, target)

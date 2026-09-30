@@ -1412,9 +1412,12 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/dev/bridges", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.createDevBridge)))))
 	mux.HandleFunc("GET /v1/dev/bridges/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDevBridge))))
 	mux.HandleFunc("DELETE /v1/dev/bridges/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.revokeDevBridge))))
+	mux.HandleFunc("POST /v1/dev/bridges/{id}/webhook-replays", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.replayDevBridgeWebhook))))
+	mux.HandleFunc("GET /v1/dev/bridges/{id}/webhook-replays/{replay}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDevBridgeWebhookReplay))))
 	// The relay revalidates scoped session credentials from durable state;
 	// these traffic endpoints do not accept account API keys as authorization.
 	mux.HandleFunc("GET /v1/dev/bridges/{id}/connect", s.proxyDevBridge)
+	mux.HandleFunc("GET /v1/dev/bridges/{id}/status", s.proxyDevBridge)
 	mux.HandleFunc("/v1/dev/bridges/{id}/traffic/{path...}", s.proxyDevBridge)
 	mux.HandleFunc("/v1/dev/bridges/{id}/dependencies/{app}/{path...}", s.proxyDevBridge)
 	mux.HandleFunc("DELETE /v1/dev/sessions/{project}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.destroyDevSession))))

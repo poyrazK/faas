@@ -3546,6 +3546,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			identityResolver := newServiceProxyCallerIdentityResolver(pgStore.ListAllInstances, cfg.NodeName)
 			identityResolver.lookup = pgStore.LiveInstancesByHostIP
 			serviceProxyConfig.ResolveCallerIdentity = identityResolver.ResolveIdentity
+			if osGetenv("FAAS_DEV_BRIDGE_ENABLED") == "1" {
+				serviceProxyConfig.DevBridge = developmentBridgeServiceForwarder(pgStore, handler)
+			}
 			guestServiceProxy = gateway.NewServiceProxy(serviceProxyConfig)
 		}
 	}

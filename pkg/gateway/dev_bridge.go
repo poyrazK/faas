@@ -2,9 +2,10 @@ package gateway
 
 import (
 	"context"
+	"net/http"
+
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
-	"net/http"
 )
 
 type devBridgeScopeKey struct{}
@@ -13,6 +14,11 @@ type devBridgeScope struct{ account, environment, app string }
 // WithDevBridgeScope is set only by the daemon's durable session verifier.
 func WithDevBridgeScope(ctx context.Context, account, environment, app string) context.Context {
 	return context.WithValue(ctx, devBridgeScopeKey{}, devBridgeScope{account, environment, app})
+}
+
+func hasDevBridgeScope(ctx context.Context) bool {
+	scope, ok := ctx.Value(devBridgeScopeKey{}).(devBridgeScope)
+	return ok && scope.account != "" && scope.environment != "" && scope.app != ""
 }
 
 func DevBridgeAllowsPrivateEnvironment(ctx context.Context, account, environment, app string) bool {

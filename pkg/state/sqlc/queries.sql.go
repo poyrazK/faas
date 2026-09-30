@@ -1392,8 +1392,9 @@ INSERT INTO dev_bridge_sessions
 SELECT $1,$2,$3,$4,
        $5,$6,$7,$8
 FROM apps a JOIN project_environments e ON e.project_id=a.project_id AND e.account_id=a.account_id
-WHERE a.id=$3 AND a.account_id=$2
+WHERE a.id=$3 AND a.account_id=$2 AND a.status='active'
   AND e.id=$4 AND NOT e.protected AND e.slug NOT IN ('production','default')
+  AND ($5::jsonb->>'project_id')=e.project_id::text
   AND (SELECT count(*) FROM dev_bridge_sessions b WHERE b.account_id=a.account_id
        AND b.revoked_at IS NULL AND b.expires_at > now()) < $9::integer
 `
@@ -1421,6 +1422,37 @@ func (q *Queries) CreateDevBridge(ctx context.Context, db DBTX, arg CreateDevBri
 		arg.RequestDigest,
 		arg.ExpiresAt,
 		arg.MaxSessions,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const createDevBridgeWebhookReplay = `-- name: CreateDevBridgeWebhookReplay :execrows
+INSERT INTO dev_bridge_webhook_replays (id,session_id,account_id,invocation_id,idempotency_key)
+SELECT $1,$2,$3,$4,$5
+WHERE (SELECT count(*) FROM dev_bridge_webhook_replays WHERE session_id=$2) < $6::integer
+ON CONFLICT (session_id,idempotency_key) DO NOTHING
+`
+
+type CreateDevBridgeWebhookReplayParams struct {
+	ID             pgtype.UUID
+	SessionID      string
+	AccountID      pgtype.UUID
+	InvocationID   pgtype.UUID
+	IdempotencyKey string
+	MaxReplays     int32
+}
+
+func (q *Queries) CreateDevBridgeWebhookReplay(ctx context.Context, db DBTX, arg CreateDevBridgeWebhookReplayParams) (int64, error) {
+	result, err := db.Exec(ctx, createDevBridgeWebhookReplay,
+		arg.ID,
+		arg.SessionID,
+		arg.AccountID,
+		arg.InvocationID,
+		arg.IdempotencyKey,
+		arg.MaxReplays,
 	)
 	if err != nil {
 		return 0, err
@@ -2270,6 +2302,60 @@ func (q *Queries) DevBridgeByID(ctx context.Context, db DBTX, arg DevBridgeByIDP
 		&i.RequestDigest,
 		&i.ExpiresAt,
 		&i.RevokedAt,
+	)
+	return i, err
+}
+
+const devBridgeWebhookReplayByID = `-- name: DevBridgeWebhookReplayByID :one
+SELECT id, session_id, account_id, invocation_id, idempotency_key, state, http_status, created_at, completed_at FROM dev_bridge_webhook_replays WHERE id=$1 AND account_id=$2 AND session_id=$3
+`
+
+type DevBridgeWebhookReplayByIDParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	SessionID string
+}
+
+func (q *Queries) DevBridgeWebhookReplayByID(ctx context.Context, db DBTX, arg DevBridgeWebhookReplayByIDParams) (DevBridgeWebhookReplay, error) {
+	row := db.QueryRow(ctx, devBridgeWebhookReplayByID, arg.ID, arg.AccountID, arg.SessionID)
+	var i DevBridgeWebhookReplay
+	err := row.Scan(
+		&i.ID,
+		&i.SessionID,
+		&i.AccountID,
+		&i.InvocationID,
+		&i.IdempotencyKey,
+		&i.State,
+		&i.HttpStatus,
+		&i.CreatedAt,
+		&i.CompletedAt,
+	)
+	return i, err
+}
+
+const devBridgeWebhookReplayByKey = `-- name: DevBridgeWebhookReplayByKey :one
+SELECT id, session_id, account_id, invocation_id, idempotency_key, state, http_status, created_at, completed_at FROM dev_bridge_webhook_replays WHERE session_id=$1 AND account_id=$2 AND idempotency_key=$3
+`
+
+type DevBridgeWebhookReplayByKeyParams struct {
+	SessionID      string
+	AccountID      pgtype.UUID
+	IdempotencyKey string
+}
+
+func (q *Queries) DevBridgeWebhookReplayByKey(ctx context.Context, db DBTX, arg DevBridgeWebhookReplayByKeyParams) (DevBridgeWebhookReplay, error) {
+	row := db.QueryRow(ctx, devBridgeWebhookReplayByKey, arg.SessionID, arg.AccountID, arg.IdempotencyKey)
+	var i DevBridgeWebhookReplay
+	err := row.Scan(
+		&i.ID,
+		&i.SessionID,
+		&i.AccountID,
+		&i.InvocationID,
+		&i.IdempotencyKey,
+		&i.State,
+		&i.HttpStatus,
+		&i.CreatedAt,
+		&i.CompletedAt,
 	)
 	return i, err
 }
@@ -3752,6 +3838,31 @@ func (q *Queries) FindInvoiceIDsByProviderKey(ctx context.Context, db DBTX, arg 
 		return nil, err
 	}
 	return items, nil
+}
+
+const finishDevBridgeWebhookReplay = `-- name: FinishDevBridgeWebhookReplay :execrows
+UPDATE dev_bridge_webhook_replays SET state=$1,http_status=$2,completed_at=now()
+WHERE id=$3 AND account_id=$4 AND state='dispatching'
+`
+
+type FinishDevBridgeWebhookReplayParams struct {
+	State      string
+	HttpStatus int32
+	ID         pgtype.UUID
+	AccountID  pgtype.UUID
+}
+
+func (q *Queries) FinishDevBridgeWebhookReplay(ctx context.Context, db DBTX, arg FinishDevBridgeWebhookReplayParams) (int64, error) {
+	result, err := db.Exec(ctx, finishDevBridgeWebhookReplay,
+		arg.State,
+		arg.HttpStatus,
+		arg.ID,
+		arg.AccountID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const getAppErrorSample = `-- name: GetAppErrorSample :one
@@ -8249,6 +8360,23 @@ func (q *Queries) LockDevBridgeAccount(ctx context.Context, db DBTX, id pgtype.U
 	return plan, err
 }
 
+const lockDevBridgeReplaySession = `-- name: LockDevBridgeReplaySession :one
+SELECT id FROM dev_bridge_sessions WHERE id=$1 AND account_id=$2
+  AND revoked_at IS NULL AND expires_at > now() FOR UPDATE
+`
+
+type LockDevBridgeReplaySessionParams struct {
+	ID        string
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) LockDevBridgeReplaySession(ctx context.Context, db DBTX, arg LockDevBridgeReplaySessionParams) (string, error) {
+	row := db.QueryRow(ctx, lockDevBridgeReplaySession, arg.ID, arg.AccountID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockInvoiceForRefund = `-- name: LockInvoiceForRefund :one
 SELECT account_id, provider, provider_invoice_id, amount_paid_cents,
        total_cents, amount_refunded_cents, amount_refund_pending_cents, credits_applied_cents
@@ -11813,6 +11941,20 @@ DELETE FROM data_upstream_probes WHERE sampled_at < $1
 // the current month that are older than cutoff).
 func (q *Queries) PruneDataUpstreamProbesOlderThan(ctx context.Context, db DBTX, sampledAt pgtype.Timestamptz) error {
 	_, err := db.Exec(ctx, pruneDataUpstreamProbesOlderThan, sampledAt)
+	return err
+}
+
+const pruneDevBridgeSessions = `-- name: PruneDevBridgeSessions :exec
+DELETE FROM dev_bridge_sessions WHERE account_id=$1 AND expires_at < $2
+`
+
+type PruneDevBridgeSessionsParams struct {
+	AccountID pgtype.UUID
+	ExpiresAt pgtype.Timestamptz
+}
+
+func (q *Queries) PruneDevBridgeSessions(ctx context.Context, db DBTX, arg PruneDevBridgeSessionsParams) error {
+	_, err := db.Exec(ctx, pruneDevBridgeSessions, arg.AccountID, arg.ExpiresAt)
 	return err
 }
 

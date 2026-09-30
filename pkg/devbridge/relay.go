@@ -46,7 +46,7 @@ func NewRelay(maxConcurrent int) *Relay {
 // or revocation. Calling CloseSession revokes immediately; the owner must also
 // revalidate persisted authorization before dispatching every request.
 func (h *Relay) Attach(ctx context.Context, session Session, socket net.Conn) error {
-	transport, err := (&http2.Transport{}).NewClientConn(socket)
+	transport, err := (&http2.Transport{ReadIdleTimeout: 20 * time.Second, PingTimeout: 10 * time.Second}).NewClientConn(socket)
 	if err != nil {
 		_ = socket.Close()
 		return err

@@ -27,7 +27,7 @@ func (r *releaseBody) Close() error { err := r.ReadCloser.Close(); r.once.Do(r.r
 // ServeLocal forwards HTTP/2 tunnel streams to one fixed loopback HTTP app.
 // A remote request cannot alter the destination or use the laptop as an open
 // proxy. Redirects are returned to the caller rather than followed.
-func ServeLocal(ctx context.Context, socket net.Conn, target *url.URL, maxConcurrent uint32) error {
+func ServeLocal(ctx context.Context, socket net.Conn, target *url.URL, maxConcurrent uint32, inspectors ...*Inspector) error {
 	ip := net.ParseIP(target.Hostname())
 	if target.Scheme != "http" || ip == nil || !ip.IsLoopback() || target.User != nil || target.RawQuery != "" || target.Fragment != "" || target.Opaque != "" || (target.Path != "" && target.Path != "/") {
 		_ = socket.Close()
@@ -38,14 +38,15 @@ func ServeLocal(ctx context.Context, socket net.Conn, target *url.URL, maxConcur
 	proxy.Director = func(r *http.Request) {
 		original(r)
 		r.Host = target.Host
-		r.Header.Del(SessionHeader)
-		r.Header.Del(TokenHeader)
-		r.Header.Del(AccountHeader)
+		ClearCredentials(r.Header)
 		r.Header.Del("X-Faas-Caller-App")
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
 	proxy.Transport = transport
+	if len(inspectors) > 0 && inspectors[0] != nil {
+		proxy.Transport = inspectors[0].Transport(transport)
+	}
 	defer transport.CloseIdleConnections()
 	stopped := make(chan struct{})
 	go func() {

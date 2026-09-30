@@ -48,3 +48,31 @@ func TestDevBridgeLocalProxyUsesScopedEnvironmentRouting(t *testing.T) {
 		t.Fatal("unrelated browser origin admitted")
 	}
 }
+
+func TestDevBridgeInspectionRejectsForeignHostAndOrigin(t *testing.T) {
+	inspector := devbridge.NewInspector(100, 1024)
+	handler := bridgeLoopbackOnly(bridgeInspectionHandler(inspector))
+	for _, test := range []struct {
+		host, origin string
+		want         int
+	}{
+		{"127.0.0.1:9000", "", 200},
+		{"127.0.0.1:9000", "http://127.0.0.1:9000", 200},
+		{"attacker.example", "", 403},
+		{"127.0.0.1:9000", "https://attacker.example", 403},
+	} {
+		request := httptest.NewRequest("GET", "http://127.0.0.1:9000/requests", nil)
+		request.Host = test.host
+		if test.origin != "" {
+			request.Header.Set("Origin", test.origin)
+		}
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != test.want {
+			t.Fatalf("host=%s origin=%s status=%d", test.host, test.origin, response.Code)
+		}
+		if response.Code == 200 && response.Header().Get("Cache-Control") != "no-store" {
+			t.Fatal("inspection cached")
+		}
+	}
+}

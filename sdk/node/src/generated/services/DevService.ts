@@ -2,16 +2,163 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { CreateDevBridgeRequest } from '../models/CreateDevBridgeRequest.js';
+import type { CreateDevBridgeResponse } from '../models/CreateDevBridgeResponse.js';
+import type { DevBridgeSession } from '../models/DevBridgeSession.js';
+import type { DevBridgeWebhookReplay } from '../models/DevBridgeWebhookReplay.js';
 import type { DevSessionResponse } from '../models/DevSessionResponse.js';
 import type { DevSyncHistoryItem } from '../models/DevSyncHistoryItem.js';
 import type { DevSyncHistoryResponse } from '../models/DevSyncHistoryResponse.js';
 import type { RecordDevSyncRequest } from '../models/RecordDevSyncRequest.js';
 import type { RegisterScenarioTestRequest } from '../models/RegisterScenarioTestRequest.js';
+import type { ReplayDevBridgeWebhookRequest } from '../models/ReplayDevBridgeWebhookRequest.js';
 import type { UpsertDevSessionRequest } from '../models/UpsertDevSessionRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class DevService {
+  /**
+   * Create a leased local service development session.
+   * Operator-gated ADR-377 feature. Select an owned app in an unprotected non-production project environment. Credentials are returned once; the request token routes only the selected application graph, while the attachment token connects the laptop. The lease lasts one hour.
+   * @returns CreateDevBridgeResponse Development session and one-time credentials created.
+   * @throws ApiError
+   */
+  public static createDevBridge({
+    requestBody,
+  }: {
+    requestBody: CreateDevBridgeRequest,
+  }): CancelablePromise<CreateDevBridgeResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/dev/bridges',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Development bridge is disabled or unavailable.`,
+      },
+    });
+  }
+  /**
+   * Inspect a development session without its credentials.
+   * @returns DevBridgeSession Owned development session metadata.
+   * @throws ApiError
+   */
+  public static getDevBridge({
+    id,
+  }: {
+    /**
+     * Opaque development session identifier returned by creation.
+     */
+    id: string,
+  }): CancelablePromise<DevBridgeSession> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/dev/bridges/{id}',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Revoke a development session and close its laptop connection.
+   * @returns void
+   * @throws ApiError
+   */
+  public static revokeDevBridge({
+    id,
+  }: {
+    /**
+     * Opaque development session identifier returned by creation.
+     */
+    id: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/dev/bridges/{id}',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Copy one verified webhook receipt to the local service.
+   * Requires account deploy permission and the session request credential. Copies only a provider-verified receipt for the intercepted app. Creates a separate durable receipt before dispatch; the original invocation stays untouched. Repeating the same key never redispatches. An uncertain or interrupted dispatch must be inspected before explicitly requesting another copy. Provider signature headers are excluded because the original receipt already records verification.
+   * @returns DevBridgeWebhookReplay New or previously recorded development replay receipt.
+   * @throws ApiError
+   */
+  public static replayDevBridgeWebhook({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Destination development session identifier.
+     */
+    id: string,
+    requestBody: ReplayDevBridgeWebhookRequest,
+  }): CancelablePromise<DevBridgeWebhookReplay> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/dev/bridges/{id}/webhook-replays',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `Session routing credential is invalid or expired.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Inspect an owned development webhook copy receipt.
+   * @returns DevBridgeWebhookReplay Persisted copy outcome without payload or credentials.
+   * @throws ApiError
+   */
+  public static getDevBridgeWebhookReplay({
+    id,
+    replay,
+  }: {
+    /**
+     * Owning development session identifier.
+     */
+    id: string,
+    /**
+     * Replay receipt identifier, including after session revocation.
+     */
+    replay: string,
+  }): CancelablePromise<DevBridgeWebhookReplay> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/dev/bridges/{id}/webhook-replays/{replay}',
+      path: {
+        'id': id,
+        'replay': replay,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
   /**
    * Create or refresh a remote developer environment.
    * Creates one stable preview app per account, project, and developer workspace, or renews its 24-hour lease. Omitting workspace_id retains the legacy account-and-project identity.

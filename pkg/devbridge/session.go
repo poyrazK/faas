@@ -100,3 +100,20 @@ func (s Session) AuthorizeDependency(now time.Time, credential, accountID, envir
 	}
 	return ErrUnauthorized
 }
+
+// AuthorizeContextRoute lets a request participate only in its selected
+// application graph. It cannot attach a tunnel or expand the dependency set.
+func (s Session) AuthorizeContextRoute(now time.Time, c RequestContext, environmentID, appID string) error {
+	if c.SessionID != s.ID || c.AccountID != s.Scope.AccountID || environmentID != s.Scope.EnvironmentID || !s.valid(now, c.Token, s.RequestDigest) {
+		return ErrUnauthorized
+	}
+	if appID == s.Scope.TargetAppID {
+		return nil
+	}
+	for _, allowed := range s.Scope.DependencyAppIDs {
+		if allowed == appID {
+			return nil
+		}
+	}
+	return ErrUnauthorized
+}

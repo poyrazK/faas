@@ -1,0 +1,2 @@
+[Service]
+Environment=FAAS_DEV_BRIDGE_ENABLED={{ (faas_dev_bridge_enabled | bool) | ternary('1', '0') }}

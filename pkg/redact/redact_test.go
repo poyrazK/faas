@@ -409,6 +409,7 @@ func TestRedactor_ApplyHeaders_CredentialHeadersByName(t *testing.T) {
 		{"X-Api-Key", "k_9f8e7d6c5b4a39281706", "[REDACTED:x-api-key]", "x-api-key"},
 		{"X-API-Token", "t_0123456789abcdef", "[REDACTED:x-api-key]", "x-api-key"},
 		{"X-Gregale-Dev-Bridge-Token", "opaque-laptop-credential", "[REDACTED:dev_bridge_token]", "dev_bridge_token"},
+		{"X-Gregale-Dev-Session-Context", "account.session.request-secret", "[REDACTED:dev_bridge_token]", "dev_bridge_token"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.header, func(t *testing.T) {

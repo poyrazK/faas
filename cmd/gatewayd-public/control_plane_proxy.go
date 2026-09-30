@@ -121,6 +121,9 @@ func newControlPlaneProxy(rawTarget string, next http.Handler, log *slog.Logger,
 }
 
 func (p *controlPlaneProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, "/v1/dev/bridges/") {
+		_ = http.NewResponseController(w).EnableFullDuplex()
+	}
 	// Stamp the public boundary even when this handler is exercised without
 	// gatewayd-public's outer middleware (unit tests and embedded callers).
 	// The same value is forwarded to apid, whose middleware reuses it.

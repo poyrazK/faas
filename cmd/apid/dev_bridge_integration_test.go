@@ -55,11 +55,21 @@ func TestDevBridgeAPIToLaptopAndDurableRevocation(t *testing.T) {
 		if cookie, err := r.Cookie("faas_sid"); err == nil {
 			t.Errorf("dashboard cookie leaked: %s", cookie.Name)
 		}
+		if r.URL.Path == "/echo" {
+			_ = http.NewResponseController(w).EnableFullDuplex()
+			w.WriteHeader(200)
+			w.(http.Flusher).Flush()
+			_, _ = io.Copy(w, r.Body)
+			return
+		}
 		_, _ = io.WriteString(w, "local payments")
 	}))
 	defer local.Close()
 	target, _ := url.Parse(local.URL)
-	socket, _, err := websocket.DefaultDialer.DialContext(ctx, "ws"+strings.TrimPrefix(apiServer.URL, "http")+"/v1/dev/bridges/"+session.Session.ID+"/connect", http.Header{devbridge.AccountHeader: []string{e.acct.ID}, devbridge.TokenHeader: []string{session.Credentials.AttachmentToken}})
+	socket, handshake, err := websocket.DefaultDialer.DialContext(ctx, "ws"+strings.TrimPrefix(apiServer.URL, "http")+"/v1/dev/bridges/"+session.Session.ID+"/connect", http.Header{devbridge.AccountHeader: []string{e.acct.ID}, devbridge.TokenHeader: []string{session.Credentials.AttachmentToken}})
+	if handshake != nil && handshake.Body != nil {
+		_ = handshake.Body.Close()
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,6 +99,27 @@ func TestDevBridgeAPIToLaptopAndDurableRevocation(t *testing.T) {
 	_ = response.Body.Close()
 	if err != nil || response.StatusCode != 200 || string(body) != "local payments" {
 		t.Fatalf("local response: status=%d err=%v", response.StatusCode, err)
+	}
+	// Response headers must arrive before the upload ends across both HTTP/1
+	// proxy hops, the WebSocket/HTTP2 tunnel and the local HTTP/1 process.
+	streamCtx, streamCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer streamCancel()
+	reader, writer := io.Pipe()
+	go func() { <-streamCtx.Done(); _ = writer.CloseWithError(streamCtx.Err()) }()
+	defer func() { _ = writer.Close() }()
+	stream := request.Clone(streamCtx)
+	stream.URL.Path = "/v1/dev/bridges/" + session.Session.ID + "/traffic/echo"
+	stream.Body, stream.ContentLength = reader, -1
+	response, err = http.DefaultClient.Do(stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := strings.Repeat("streamed", 10000)
+	go func() { _, _ = io.WriteString(writer, payload); _ = writer.Close() }()
+	body, err = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil || response.StatusCode != 200 || string(body) != payload {
+		t.Fatalf("duplex body len=%d err=%v", len(body), err)
 	}
 	if err := client.RevokeDevBridge(ctx, session.Session.ID); err != nil {
 		t.Fatal(err)

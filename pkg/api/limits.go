@@ -34,6 +34,13 @@ const (
 	DevBridgeMaxDependencies       = 32
 	DevBridgeMaxConcurrentRequests = 32
 	DevBridgeMaxHeaderBytes        = 32 << 10
+	DevBridgeInspectionRecords     = 100
+	DevBridgeInspectionPathBytes   = 1024
+	DevBridgeMaxWebhookReplays     = 100
+	DevBridgeReplayKeyBytes        = 64
+	DevBridgeMetadataRetention     = 7 * 24 * time.Hour
+	DevBridgeWebhookReplayTimeout  = 30 * time.Second
+	DevBridgeReplayResponseBytes   = 64 << 10
 )
 
 // MaxOutboundRequestsPerDay is the structural upper bound for a

@@ -49,6 +49,9 @@ func (s *PgStore) CreateDevBridge(ctx context.Context, session devbridge.Session
 		return err
 	}
 	limit := api.MustLimitsFor(api.Plan(plan)).DeveloperApps
+	if err := q.PruneDevBridgeSessions(ctx, tx, sqlc.PruneDevBridgeSessionsParams{AccountID: account, ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(-api.DevBridgeMetadataRetention), Valid: true}}); err != nil {
+		return err
+	}
 	affected, err := q.CreateDevBridge(ctx, tx, sqlc.CreateDevBridgeParams{
 		ID: session.ID, AccountID: account, TargetAppID: app, EnvironmentID: env, Scope: scope,
 		AttachmentDigest: session.AttachmentDigest[:], RequestDigest: session.RequestDigest[:],
@@ -124,15 +127,25 @@ func (m *MemStore) CreateDevBridge(_ context.Context, s devbridge.Session) error
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	app, ok := m.apps[s.Scope.TargetAppID]
-	if !ok || app.AccountID != s.Scope.AccountID {
+	if !ok || app.AccountID != s.Scope.AccountID || app.Status != AppActive {
 		return ErrNotFound
 	}
 	env, exists := m.projectEnvironments[s.Scope.EnvironmentID]
-	if !exists || env.AccountID != app.AccountID || env.ProjectID != app.ProjectID || env.Protected || env.Slug == "production" || env.Slug == "default" {
+	if !exists || env.AccountID != app.AccountID || env.ProjectID != app.ProjectID || s.Scope.ProjectID != env.ProjectID || env.Protected || env.Slug == "production" || env.Slug == "default" {
 		return ErrNotFound
 	}
 	active := 0
+	cutoff := time.Now().Add(-api.DevBridgeMetadataRetention)
 	for _, existing := range m.devBridgeSessions {
+		if existing.Scope.AccountID == s.Scope.AccountID && existing.ExpiresAt.Before(cutoff) {
+			delete(m.devBridgeSessions, existing.ID)
+			for id, receipt := range m.devBridgeWebhookReplays {
+				if receipt.SessionID == existing.ID {
+					delete(m.devBridgeWebhookReplays, id)
+				}
+			}
+			continue
+		}
 		if existing.Scope.AccountID == s.Scope.AccountID && existing.RevokedAt == nil && time.Now().Before(existing.ExpiresAt) {
 			active++
 		}

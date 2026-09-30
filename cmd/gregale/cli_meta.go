@@ -1200,6 +1200,9 @@ var cliCommands = []cliCommand{
 				{Name: "environment", Short: "named development environment", Value: "ENV"},
 				{Name: "local-port", Short: "local HTTP service port", Value: "PORT"},
 				{Name: "dependencies", Short: "comma-separated remote dependency apps", Value: "APPS"},
+				{Name: "entrypoint", Short: "remote frontend for the session URL", Value: "APP"},
+				{Name: "inspect", Short: "inspect recent requests in a local browser"},
+				{Name: "replay-webhook", Short: "copy one provider-verified webhook receipt locally", Value: "INVOCATION"},
 			}},
 			{Name: "history", Short: "show edit-to-live timings and SLO guidance", Flags: []cliFlag{
 				{Name: "path", Short: "source directory", Value: "DIR"},

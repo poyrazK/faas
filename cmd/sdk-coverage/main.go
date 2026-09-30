@@ -273,6 +273,11 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
+	"POST /v1/dev/bridges":                                       "CreateDevBridge",
+	"GET /v1/dev/bridges/{id}":                                   "GetDevBridge",
+	"DELETE /v1/dev/bridges/{id}":                                "RevokeDevBridge",
+	"POST /v1/dev/bridges/{id}/webhook-replays":                  "ReplayDevBridgeWebhook",
+	"GET /v1/dev/bridges/{id}/webhook-replays/{replay}":          "GetDevBridgeWebhookReplay",
 	"GET /v1/apps/{slug}/work-policies":                          "ListAppWorkPolicies",
 	"PUT /v1/apps/{slug}/work-policies/{name}":                   "UpsertAppWorkPolicy",
 	"DELETE /v1/apps/{slug}/work-policies/{name}":                "DeleteAppWorkPolicy",

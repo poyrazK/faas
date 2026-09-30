@@ -1,7 +1,8 @@
 ---
 # Fleet-wide direct-pool inputs. The role derives max_connections from the
 # complete [compute_nodes] inventory; it never assumes a two-node ceiling.
-faas_postgres_control_plane_pool_budget: 40
+# Includes both optional data planes so enabling a bridge needs no DB resize.
+faas_postgres_control_plane_pool_budget: 42
 faas_postgres_per_compute_pool_budget: 34
 
 # Pooled fleet (faas_pgbouncer_enabled). A compute node's ORDINARY pools no
