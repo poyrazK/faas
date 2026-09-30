@@ -8293,15 +8293,23 @@ paths:
         the OpenTelemetry proto — the spec documents the
         endpoint metadata only. The SDK does not model this
         route (routeExclude on sdk-coverage + spec_compliance);
-        OTel SDKs speak OTLP/HTTP directly.
+        OTel SDKs speak OTLP/HTTP directly. Supports application/json
+        (OTLP hexadecimal trace/span IDs) and application/x-protobuf,
+        optional gzip compression, empty exports, and multi-trace batches.
+        Responses use ExportTraceServiceResponse; per-trace ownership
+        rejection returns partialSuccess with rejectedSpans. Error bodies
+        use google.rpc.Status in the request encoding. Missing Content-Type
+        retains the legacy ordinary-protobuf JSON input decoder. Acceptance
+        stages an in-memory diagnostic summary; it is not durable raw-span storage.
       x-since: 2026-08
       responses:
         '200':
           description: Spans accepted (truncated summary staged in flush accumulator).
-        '400': { $ref: '#/components/responses/ValidationFailed' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '402': { $ref: '#/components/responses/PaymentRequired' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '400': { description: Invalid OTLP payload; google.rpc.Status in the request encoding. }
+        '401': { description: Missing or invalid bearer; google.rpc.Status in the request encoding. }
+        '402': { description: Telemetry is unavailable on the account plan; google.rpc.Status in the request encoding. }
+        '415': { description: Unsupported media type or content encoding. }
+        '429': { description: Request rate limit exceeded; google.rpc.Status with Retry-After. }
 
   /v1/apps/{slug}/deployment-aliases:
     parameters:

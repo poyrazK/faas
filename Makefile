@@ -1156,8 +1156,12 @@ standards-check: ## Verify the standards registry and generated matrix are in sy
 	@echo "standards-check: OK"
 
 .PHONY: standards-conformance
-standards-conformance: ## Verify standards claims resolve to executable test fixtures
+standards-conformance: ## Validate AsyncAPI and verify standards evidence references
 	@$(GO) run ./cmd/standards-conformance
+
+.PHONY: standards-contract-check
+standards-contract-check: ## Run official-schema and SDK interoperability checks for event/trace contracts
+	@$(GO) test -count=1 -run 'Test(AsyncAPI|OTLPHTTPConformance|CloudEvents|Webhook_Dispatch_CloudEventsStructured)' ./pkg/productstandards ./pkg/gateway ./pkg/events ./pkg/webhookout
 
 .PHONY: pricing-md
 pricing-md: ## Regenerate customer plan/pricing page from api limits

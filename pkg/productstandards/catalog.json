@@ -11,12 +11,17 @@
       "scope": "The published AsyncAPI 3.0 document describes outbound app-webhook channels for app.parked, app.woken, deployment.live, deployment.failed, rollout.completed, rollout.aborted, usage_statement.finalized, and the tenant-scoped platform_tenant.statement.finalized, platform_tenant.hostname.verified, platform_tenant.surface.certificate.changed, platform_tenant.surface.deployment.changed, platform_tenant.customer.linked, and platform_tenant.customer.offboarded events; the authenticated internal event publish ingress at POST /v1/events:publish; the workflow external-event injection channel at POST /v1/workflows/runs/{id}/events; per-app FIFO queue send/receive/ack channels; and explicitly addressed application inbox and outbox endpoints.",
       "limitations": "Queue introspection/dead-letter/replay endpoints, the scheduler-internal subscription delivery path, trigger broker contracts, workflow lifecycle/audit events, and the remaining closed-vocabulary webhook events are not yet described; legacy JSON webhook delivery remains outside this CloudEvents contract.",
       "docs_url": "https://www.asyncapi.com/docs/reference/specification/v3.0.0",
-      "evidence": "api/asyncapi.yaml; api/openapi.yaml; pkg/productstandards/asyncapi_test.go",
+      "evidence": "api/asyncapi.yaml; api/openapi.yaml; pkg/productstandards/asyncapi_test.go; pkg/productstandards/asyncapi_schema.go (pinned official schema)",
       "conformance": [
         {
           "fixture": "asyncapi-event-contract",
           "tier": "unit",
           "target": "pkg/productstandards/asyncapi_test.go::TestAsyncAPIContract"
+        },
+        {
+          "fixture": "asyncapi-official-schema",
+          "tier": "unit",
+          "target": "pkg/productstandards/asyncapi_schema_test.go::TestAsyncAPIOfficialSchema"
         }
       ]
     },
@@ -27,8 +32,8 @@
       "category": "eventing",
       "surface": "internal event router and outbound webhooks",
       "status": "partial",
-      "scope": "The internal event publish API normalizes a CloudEvents-shaped envelope for durable tenant-scoped routing; app and platform-tenant webhook subscriptions can opt into CloudEvents 1.0 structured JSON delivery with the standard context attributes and an account_id extension.",
-      "limitations": "The public ingress retains Gregale's snake_case data_content_type spelling and does not expose CloudEvents binary-mode headers; subscription delivery is an internal async invocation rather than an externally addressed HTTP binding. Legacy JSON webhook delivery remains the default.",
+      "scope": "The internal event publish API normalizes canonical CloudEvents context attributes for durable tenant-scoped routing; app and platform-tenant webhook subscriptions can opt into CloudEvents 1.0 structured JSON delivery with an accountid extension. Ingress validates source URI references and accepts historical snake_case aliases on input.",
+      "limitations": "The event-router ingress remains a Gregale JSON profile that supplies server-owned context defaults and accepts JSON event data only; CloudEvents binary-mode headers, arbitrary extension passthrough, and externally addressed subscription HTTP bindings are not exposed. Legacy JSON webhook delivery remains the default.",
       "docs_url": "https://cloudevents.io/",
       "evidence": "pkg/events/cloud.go; pkg/events/cloud_test.go; pkg/webhookout/webhookout.go; pkg/webhook/dispatcher.go; api/openapi.yaml delivery_format",
       "conformance": [
@@ -41,6 +46,11 @@
           "fixture": "cloudevents-structured-webhook",
           "tier": "unit",
           "target": "pkg/webhookout/webhookout_test.go::TestWebhook_Dispatch_CloudEventsStructured"
+        },
+        {
+          "fixture": "cloudevents-source-uri-reference",
+          "tier": "unit",
+          "target": "pkg/events/cloud_test.go::TestCloudEventsSourceValidation"
         }
       ]
     },
@@ -296,15 +306,30 @@
       "category": "observability",
       "surface": "trace ingestion and log export",
       "status": "partial",
-      "scope": "Apps and daemons can use OTLP/HTTP, and Gregale propagates W3C trace context across the runtime boundary.",
-      "limitations": "The customer contract is strongest for traces and logs; a full tenant-facing OTLP metrics pipeline is not yet promised.",
+      "scope": "The authenticated trace ingress accepts OTLP/HTTP JSON with hexadecimal IDs and ignored unknown fields, binary protobuf, gzip, empty exports, and multi-trace batches. It returns standard export/status responses and partial-success counts for rejected traces while preserving account isolation. Apps and daemons also export telemetry and propagate W3C trace context.",
+      "limitations": "Trace ingress stages a bounded diagnostic summary for existing request telemetry, not a full raw-span backend or a durable telemetry ingestion acknowledgement. Tenant-facing OTLP metrics ingestion and OTLP/gRPC ingestion are not exposed. Requests without Content-Type retain the historical ordinary-protobuf JSON decoder.",
       "docs_url": "https://opentelemetry.io/docs/specs/otlp/",
-      "evidence": "docs/runtimes/trace-propagation.md; api/openapi.yaml telemetry routes",
+      "evidence": "pkg/gateway/otlp_trace_codec.go; pkg/gateway/otel_spans_handler.go; docs/runtimes/trace-propagation.md; api/openapi.yaml telemetry routes",
       "conformance": [
         {
           "fixture": "otlp-endpoint-wiring",
           "tier": "unit",
           "target": "pkg/wire/otelinit/otelinit_test.go::TestInit_WithEndpoint_WiresProvider"
+        },
+        {
+          "fixture": "otlp-http-wire",
+          "tier": "unit",
+          "target": "pkg/gateway/otlp_trace_conformance_test.go::TestOTLPHTTPConformance"
+        },
+        {
+          "fixture": "otlp-http-sdk-exporter",
+          "tier": "unit",
+          "target": "pkg/gateway/otlp_trace_conformance_test.go::TestOTLPHTTPConformanceSDKExporter"
+        },
+        {
+          "fixture": "otlp-http-partial-success",
+          "tier": "unit",
+          "target": "pkg/gateway/otlp_trace_conformance_test.go::TestOTLPHTTPConformancePartialSuccess"
         }
       ]
     },

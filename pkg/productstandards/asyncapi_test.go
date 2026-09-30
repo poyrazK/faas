@@ -149,7 +149,7 @@ func TestAsyncAPIContract(t *testing.T) {
 	security := workflowOperation["security"].([]any)
 	if len(security) != 1 {
 		t.Errorf("operations.receiveWorkflowExternalEvent security entries = %d, want 1", len(security))
-	} else if _, ok := security[0].(map[string]any)["bearerAuth"]; !ok {
+	} else if ref := security[0].(map[string]any)["$ref"]; ref != "#/components/securitySchemes/bearerAuth" {
 		t.Errorf("operations.receiveWorkflowExternalEvent security = %v, want bearerAuth", security)
 	}
 	workflowRefs := workflowOperation["messages"].([]any)
@@ -164,7 +164,7 @@ func TestAsyncAPIContract(t *testing.T) {
 		t.Errorf("operations.receiveInternalEventPublish channel ref = %v, want internal event channel", internalEventOperation["channel"])
 	}
 	internalEventSecurity := internalEventOperation["security"].([]any)
-	if len(internalEventSecurity) != 1 || internalEventSecurity[0].(map[string]any)["bearerAuth"] == nil {
+	if len(internalEventSecurity) != 1 || internalEventSecurity[0].(map[string]any)["$ref"] != "#/components/securitySchemes/bearerAuth" {
 		t.Errorf("operations.receiveInternalEventPublish security = %v, want bearerAuth", internalEventSecurity)
 	}
 	internalEventBindings := object(t, internalEventOperation, "bindings")
@@ -200,7 +200,7 @@ func TestAsyncAPIContract(t *testing.T) {
 			t.Errorf("operations.%s HTTP method = %v, want POST", operationName, httpBinding["method"])
 		}
 		security := operation["security"].([]any)
-		if len(security) != 1 || security[0].(map[string]any)["bearerAuth"] == nil {
+		if len(security) != 1 || security[0].(map[string]any)["$ref"] != "#/components/securitySchemes/bearerAuth" {
 			t.Errorf("operations.%s security = %v, want bearerAuth", operationName, security)
 		}
 		refs := operation["messages"].([]any)
