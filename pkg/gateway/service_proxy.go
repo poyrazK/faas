@@ -27,6 +27,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/dependencytrace"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/trafficdeadline"
+	"github.com/onebox-faas/faas/pkg/trafficrevocation"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
@@ -269,8 +270,9 @@ type ServiceProxyConfig struct {
 	RetryPolicy RetryPolicy
 	// RetryBudget may be shared with the public handler so all platform-
 	// generated retries for an app draw from the same aggregate allowance.
-	RetryBudget      *RetryBudget
-	TrafficDeadlines *trafficdeadline.Signer
+	RetryBudget        *RetryBudget
+	TrafficDeadlines   *trafficdeadline.Signer
+	TrafficRevocations *trafficrevocation.Registry
 }
 
 // ServiceProxy is an HTTP service-name router backed by the gateway's live
@@ -297,10 +299,11 @@ type ServiceProxy struct {
 	now                   func() time.Time
 	log                   *slog.Logger
 
-	breaker          *circuit.Group
-	retryPolicy      RetryPolicy
-	retryBudget      *RetryBudget
-	trafficDeadlines *trafficdeadline.Signer
+	breaker            *circuit.Group
+	retryPolicy        RetryPolicy
+	retryBudget        *RetryBudget
+	trafficDeadlines   *trafficdeadline.Signer
+	trafficRevocations *trafficrevocation.Registry
 
 	mu        sync.Mutex
 	snapshots map[string]serviceProxySnapshot
@@ -397,6 +400,7 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		retryPolicy:           retryPolicy,
 		retryBudget:           retryBudget,
 		trafficDeadlines:      cfg.TrafficDeadlines,
+		trafficRevocations:    cfg.TrafficRevocations,
 		snapshots:             make(map[string]serviceProxySnapshot),
 		next:                  make(map[string]uint64),
 		nextSeen:              make(map[string]time.Time),
@@ -528,6 +532,14 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if validateManagedDeadlineCaller(dispatchWriter, r, caller) {
 		return
 	}
+	callerScopes := []trafficrevocation.Scope{{Kind: "app", ID: caller}}
+	if callerDeploymentID != "" {
+		callerScopes = append(callerScopes, trafficrevocation.Scope{Kind: "deployment", ID: callerDeploymentID})
+	}
+	if enrollTrafficScopes(dispatchWriter, r, p.trafficRevocations, callerScopes...) {
+		return
+	}
+	dependencyCtx = r.Context()
 	setProbeStage("binding")
 	if alias {
 		if p.allowAlias == nil {
@@ -616,6 +628,11 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if validateManagedDeadlineAccount(dispatchWriter, r, callerInfo.AccountID) {
 		return
 	}
+	if enrollTrafficScopes(dispatchWriter, r, p.trafficRevocations,
+		trafficrevocation.Scope{Kind: "account", ID: callerInfo.AccountID}, trafficrevocation.Scope{Kind: "app", ID: target.AppID}) {
+		return
+	}
+	dependencyCtx = r.Context()
 	if callerInfo.AppID != "" {
 		// This identity is sourced from the tenant authorizer and stamped only
 		// after authorization, so trace search cannot trust a guest header.
@@ -753,6 +770,10 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// failures as well as final upstream responses, but exclude malformed or
 	// unauthorized requests from release health.
 	dependencyCallEligible = true
+	if versionDeploymentID != "" && enrollTrafficScopes(dispatchWriter, r, p.trafficRevocations,
+		trafficrevocation.Scope{Kind: "deployment", ID: versionDeploymentID}) {
+		return
+	}
 	endpoints, woken, served := p.routableEndpoints(dispatchWriter, r, target.AppID, versionDeploymentID)
 	if !served {
 		return
@@ -1287,6 +1308,9 @@ func (p *ServiceProxy) forwardUpgrade(w http.ResponseWriter, r *http.Request, ta
 	}
 	request := p.guestRequest(r, targetPath, target, caller)
 	applyServiceEndpointIdentity(request, target, endpoint, caller)
+	if enrollTrafficScopes(w, request, p.trafficRevocations, trafficrevocation.Scope{Kind: "deployment", ID: endpoint.DeploymentID}) {
+		return
+	}
 	// Mirrors the public edge (ADR-080): the wake-timeline vocabulary marks a
 	// raw-bytes session so observability does not have to re-derive it from
 	// the Connection/Upgrade pair.
@@ -1409,6 +1433,9 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 			}
 		}
 		applyServiceEndpointIdentity(forwardReq, target, endpoint, caller)
+		if enrollTrafficScopes(w, forwardReq, p.trafficRevocations, trafficrevocation.Scope{Kind: "deployment", ID: endpoint.DeploymentID}) {
+			return
+		}
 		signal := &staleTargetSignal{onStale: func() { p.quarantine(appID, endpoint.InstanceID) }}
 		buffer := newServiceProxyResponseWriter(w)
 		// withStaleTargetSignal intentionally inherits the inbound request
@@ -1468,6 +1495,9 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 			case <-timer.C:
 			case <-request.Context().Done():
 				timer.Stop()
+				if handleForwardRequestCancellation(w, request, !buffer.committed) {
+					return
+				}
 				buffer.commit()
 				buffer.commitTrailers()
 				return

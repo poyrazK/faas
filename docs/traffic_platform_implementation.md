@@ -201,3 +201,32 @@ Production gateway/service enrollment remains pending.
 The Postgres acceptance package passed the pinned linter. State production code
 also passed with the unused check disabled because an existing helper is used
 only by tests; the full state-test lint compilation exhausted local disk space.
+
+Production public and service-proxy admission now uses those generations.
+Startup verifies the shared table under a 250 ms deadline; requests enroll
+before wake and add selected deployments before each dispatch. Periodic repair
+and notification-triggered rereads cancel changed generations and store failures.
+The lifetime fence survives stream/gRPC/Upgrade budget detachment. Cancellation
+keeps registrations and forwarding permits until actual cleanup, and final
+handler cleanup runs after response-write guards stop. Known initial account
+hold/suspension errors remain compatible; a verified release overrides their
+stale cached flags. Active revocation returns a stable 403 before headers,
+verification failure a 503, and committed forwarding responses abort visibly.
+
+Local checks passed for scope/capacity/refusal, account/app/deployment cancellation,
+missed revoke/release, upload spool removal, public and service retry deployments,
+HTTP/1 and HTTP/2 wake errors, and real gRPC cancellation after handshake-budget
+detachment. A 64 MiB response with an open unread client verified interruption
+and upstream cleanup for ordinary and streaming compute writes on both HTTP
+versions. Two HTTP service gateways against real Postgres, with notifications
+absent, repaired a missed hold/release pair. One lost its database pool and
+refused new traffic while its healthy peer continued; replacement read the
+durable released generation. These are gateway instances in one process with
+source identity and forwarding ownership fixtures, not full daemon/VM acceptance.
+The full gateway suite passed in 55.744 seconds and internal-gateway suite in
+5.202 seconds. The pinned linter passed gateway, internal-gateway, db and the
+Postgres acceptance package with zero findings. Operational semantics and
+rollout gates are in `docs/ops/traffic-security-revocation.md`.
+Imported document/service snapshots, bounded decision evidence, preview/path
+agreement, all public-hop long-stream behavior, native VM/network/leak,
+complete daemon/load/recovery and deployment acceptance remain pending.

@@ -24,6 +24,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
+	"github.com/onebox-faas/faas/pkg/trafficrevocation"
 )
 
 // retryBufferLimit bounds how much of an in-flight response is held back
@@ -270,6 +271,7 @@ func runAttempts(
 			case <-timer.C:
 			case <-r.Context().Done():
 				timer.Stop()
+				handleForwardRequestCancellation(w, r, true)
 				return
 			}
 			timer.Stop()
@@ -467,6 +469,13 @@ func (h *Handler) proxyAttempt(
 	forward retryAttempt,
 	app App,
 ) {
+	unguarded := forward
+	forward = func(dst http.ResponseWriter, req *http.Request, selected Target) {
+		if enrollTrafficScopes(dst, req, h.trafficRevocations, trafficrevocation.Scope{Kind: "deployment", ID: selected.DeploymentID}) {
+			return
+		}
+		unguarded(dst, req, selected)
+	}
 	if isStreaming {
 		forward(w, r, target)
 		return

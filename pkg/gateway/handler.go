@@ -37,6 +37,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/sched"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/trafficdeadline"
+	"github.com/onebox-faas/faas/pkg/trafficrevocation"
 	"github.com/onebox-faas/faas/pkg/usageoutbox"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -1117,8 +1118,9 @@ type Handler struct {
 	retryObs retryObserver
 	// retryBudget caps aggregate replay amplification per app. It is shared
 	// with internal service forwarding in production.
-	retryBudget      *RetryBudget
-	trafficDeadlines *trafficdeadline.Signer
+	retryBudget        *RetryBudget
+	trafficDeadlines   *trafficdeadline.Signer
+	trafficRevocations *trafficrevocation.Registry
 	// streamingWarned is the once-per-process log dedup for the
 	// buffered-fallback deprecation. Keyed on (appID, content-type) so
 	// the first instance of an SSE-emitting app under the flag-off
@@ -5735,12 +5737,16 @@ haveApp:
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
-	if app.AccountAbuseHeld {
+	if enrollPublicTrafficScopes(w, r, h.trafficRevocations, app) {
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
+	}
+	if h.trafficRevocations == nil && app.AccountAbuseHeld {
 		api.WriteProblem(w, api.ErrAccountAbuseHold())
 		h.observe(r, rec.status, app.ID, "", false, Target{})
 		return
 	}
-	if app.AccountStatus == "suspended" || app.AccountStatus == "deleted_pending" {
+	if h.trafficRevocations == nil && (app.AccountStatus == "suspended" || app.AccountStatus == "deleted_pending") {
 		api.WriteProblem(w, api.ErrAccountSuspended())
 		h.observe(r, rec.status, app.ID, "", false, Target{})
 		return
@@ -6630,6 +6636,11 @@ haveApp:
 				h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 				return
 			}
+			if trafficRevocationCause(r.Context()) != nil {
+				writeTrafficRevocationError(w, r, trafficRevocationCause(r.Context()))
+				h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+				return
+			}
 			if requestBudgetExpired(r.Context()) {
 				writeRequestBudgetExceededForRequest(w, r)
 				h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
@@ -6818,6 +6829,10 @@ haveApp:
 	}
 	defer vmRelease()
 	target := pick.Target
+	if enrollTrafficScopes(w, r, h.trafficRevocations, trafficrevocation.Scope{Kind: "deployment", ID: target.DeploymentID}) {
+		h.observe(r, rec.status, app.ID, string(app.Plan), cold, target)
+		return
+	}
 	servedDeploymentID = target.DeploymentID
 	if !deploymentSmoke && app.RevisionPinTTLSeconds > 0 && target.DeploymentID != "" {
 		w.Header().Set(api.RevisionHeader, target.DeploymentID)

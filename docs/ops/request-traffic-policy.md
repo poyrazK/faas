@@ -34,11 +34,12 @@ verified empty policy is valid. Invalidation between selector-host and
 base-host reads refuses the inconsistent combination. Normal convergence
 fences new requests; previously admitted requests retain their inputs.
 
-Emergency cancellation of admitted requests, imported declared-route document
-pinning, simulator/runtime agreement and managed-service policy fingerprints
-remain required work. The existing account/security checks at initial
-admission do not establish emergency cancellation of an already admitted
-exchange. Native lifecycle and deployment acceptance remain pending.
+Account/app/deployment emergency cancellation now uses the separate durable
+generation fence described in [HTTP security revocation](traffic-security-revocation.md).
+Its local gateway and Postgres checks do not establish full path or deployed
+acceptance. Imported declared-route document pinning, simulator/runtime
+agreement and managed-service policy fingerprints remain required work.
+Native lifecycle and deployment acceptance remain pending.
 
 ## Covered paths
 

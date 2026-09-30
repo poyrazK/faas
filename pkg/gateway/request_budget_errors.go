@@ -57,6 +57,10 @@ func writeRequestBudgetExceededForRequest(w http.ResponseWriter, r *http.Request
 // caller disconnect with a platform failure. It returns false when the client
 // has already gone away and no response should be written.
 func writeBurstCapacityError(w http.ResponseWriter, r *http.Request, err error) bool {
+	if r != nil && trafficRevocationCause(r.Context()) != nil {
+		writeTrafficRevocationError(w, r, trafficRevocationCause(r.Context()))
+		return true
+	}
 	if r != nil && requestBudgetExpired(r.Context()) {
 		writeRequestBudgetExceededForRequest(w, r)
 		return true
@@ -78,6 +82,12 @@ func handleForwardRequestCancellation(w http.ResponseWriter, r *http.Request, ca
 		return false
 	}
 	ctx := r.Context()
+	if cause := trafficRevocationCause(ctx); cause != nil {
+		if canWrite {
+			writeTrafficRevocationError(w, r, cause)
+		}
+		return true
+	}
 	if requestBudgetExpired(ctx) {
 		if canWrite {
 			writeRequestBudgetExceededForRequest(w, r)

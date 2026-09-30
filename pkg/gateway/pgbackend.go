@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/trafficrevocation"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -268,10 +269,11 @@ func (s *targetSet) routableCount() int {
 // deployments but does not deadlock the request. PR-C ships
 // wake-fan-out to remove this fallback.
 type PGBackend struct {
-	router  Router
-	sched   Scheduler
-	log     *slog.Logger
-	metrics *Metrics
+	trafficRevocations atomic.Pointer[trafficrevocation.Registry]
+	router             Router
+	sched              Scheduler
+	log                *slog.Logger
+	metrics            *Metrics
 
 	routes *RouteCache // host -> app_id (LRU)
 	// stale (ADR-190) is the last-known-good host -> App tier consulted

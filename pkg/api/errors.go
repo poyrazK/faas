@@ -3627,9 +3627,11 @@ const (
 	// handler body" — surfaces this single stable code on every
 	// outbound problem envelope so an SDK can branch on it
 	// without parsing prose. ADR-093 §Decision.
-	CodeRequestBudgetExceeded      = "request_budget_exceeded"
-	CodeTrafficDeadlineUnavailable = "traffic_deadline_unavailable"
-	CodeTrafficDeadlineInvalid     = "traffic_deadline_invalid"
+	CodeRequestBudgetExceeded        = "request_budget_exceeded"
+	CodeTrafficRevoked               = "traffic_revoked"
+	CodeTrafficRevocationUnavailable = "traffic_revocation_unavailable"
+	CodeTrafficDeadlineUnavailable   = "traffic_deadline_unavailable"
+	CodeTrafficDeadlineInvalid       = "traffic_deadline_invalid"
 	// Upload admission precedes guest execution, so upload failures have
 	// distinct stable codes and do not masquerade as app timeouts.
 	CodeRequestUploadTimeout  = "request_upload_timeout"

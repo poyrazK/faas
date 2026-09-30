@@ -129,6 +129,12 @@ func admitRequestBodyWithin(w http.ResponseWriter, r *http.Request, limit int64,
 		if readErr == nil {
 			continue
 		}
+		if trafficRevocationCause(r.Context()) != nil {
+			cleanupSpool()
+			_ = original.Close()
+			writeTrafficRevocationError(w, r, trafficRevocationCause(r.Context()))
+			return true
+		}
 		if errors.Is(readErr, io.EOF) {
 			if expectedLength >= 0 && total != expectedLength {
 				cleanupSpool()

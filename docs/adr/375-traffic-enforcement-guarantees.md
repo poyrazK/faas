@@ -227,8 +227,11 @@ or revoke traffic based only on payload claims. A changed generation, an active
 revoke, a regressed/inconsistent store result or failed verification cancels the
 affected exchange. Store outages refuse new admissions and cancel active
 tracked traffic; no private allow fallback or indefinite warm lease is used.
-Tracking is bounded by 65,536 exchanges and 4,096 distinct active scopes per
-gateway; exhaustion refuses admission. The limits live in pkg/api/limits.go.
+Tracking is bounded by 65,536 registry registrations and 4,096 distinct active
+scopes per gateway, and 16 distinct scopes per request across all attempts;
+exhaustion refuses admission. Account/app and later deployment enrollment may
+use separate registrations, so that bound is conservative for logical requests.
+The limits live in pkg/api/limits.go.
 This fence initially covers account/app/deployment security state, not individual
 credential revocation, managed realtime, detached work or arbitrary guest sockets.
 Preview agreement, declared internal-path coverage and update/recovery evidence

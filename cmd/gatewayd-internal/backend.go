@@ -959,6 +959,7 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 		// owner's app at that host stayed unreachable on this node.
 		db.NotifyAppDelete,
 		db.NotifyAccountDeleted,
+		db.NotifyTrafficSecurityChanged,
 	}
 	notif, err := db.SubscribeWithReconnect(ctx, pool, channels, log)
 	if err != nil {
@@ -1081,6 +1082,17 @@ func ackEdgeRuleInvalidation(ctx context.Context, pool *pgxpool.Pool, raw, node 
 // require both app_id and instance_id and malformed payloads are logged.
 func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification, log *slog.Logger) {
 	switch n.Channel {
+	case db.NotifyTrafficSecurityChanged:
+		if _, err := db.ParseTrafficSecurityChangedPayload(n.Payload); err != nil {
+			log.Warn("gatewayd: invalid traffic security notification", "err", err)
+			return
+		}
+		if refresher, ok := inv.(interface{ RequestTrafficRevocationRefresh() }); ok {
+			refresher.RequestTrafficRevocationRefresh()
+		}
+		// Refresh advisory app/account flags too. Decisions still use the
+		// authoritative generation even when this notification was missed.
+		inv.FlushRoutes()
 	case db.NotifyInstanceReadinessChanged:
 		var p struct {
 			AppID      string    `json:"app_id"`

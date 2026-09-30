@@ -488,6 +488,9 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		frame, err := stream.Recv()
 		touch()
 		if errors.Is(err, io.EOF) {
+			if wroteHeader && trafficRevocationCause(r.Context()) != nil {
+				panic(http.ErrAbortHandler)
+			}
 			break
 		}
 		if err != nil {
@@ -496,6 +499,9 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			// closed and the body goroutine can finish before return.
 			cancel()
 			<-bodyErrCh
+			if wroteHeader && trafficRevocationCause(r.Context()) != nil {
+				panic(http.ErrAbortHandler)
+			}
 			if wroteHeader && !budgetDetached && (streamErr != nil || requestBudgetExpired(r.Context())) {
 				// A partial ordinary response must be visibly truncated,
 				// never terminated as a complete short body.
@@ -544,9 +550,9 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		}
 		if init := frame.GetInit(); init != nil && !wroteHeader {
 			recordForwardedFirstByte(r.Context())
-			if !isLongLivedForward(r) || init.GetStatus() >= http.StatusBadRequest {
-				defer guardResponseWrites(ctx, w)()
-			}
+			// The session context drops only the handshake budget after a
+			// successful long response. Its lifetime fence still interrupts writes.
+			defer guardResponseWrites(ctx, w)()
 			for _, h := range init.GetHeaders() {
 				forwardedResponseHeader(r.Context(), w.Header(), h.GetName(), h.GetValue())
 			}
@@ -622,7 +628,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 					"node", t.NodeID, "err", werr.Error())
 				cancel()
 				<-bodyErrCh
-				if !budgetDetached && requestBudgetExpired(r.Context()) {
+				if trafficRevocationCause(r.Context()) != nil || (!budgetDetached && requestBudgetExpired(r.Context())) {
 					panic(http.ErrAbortHandler)
 				}
 				return

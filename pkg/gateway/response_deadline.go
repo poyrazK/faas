@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/reqbudget"
 )
 
 const (
@@ -82,11 +83,15 @@ func (s *statusRecorder) commitTrafficResponse(code int) {
 	ctx := s.trafficResponseContext()
 	if s.trafficResponseLongLived != nil && s.trafficResponseLongLived(code) {
 		s.Header().Set(trafficResponseSessionHeader, "long-lived")
+		lifetime, detach, cancel := reqbudget.WithStream(ctx)
+		detach()
+		s.trafficResponseCancel = cancel
+		s.trafficResponseStop = guardResponseWrites(lifetime, s.ResponseWriter)
 		return
 	}
 	// A 504 generated after expiry is best effort, with a separate bounded
 	// error-write allowance. Never grant this allowance to a successful body.
-	if code == http.StatusGatewayTimeout && ctx.Err() != nil {
+	if (code == http.StatusGatewayTimeout || (code >= http.StatusBadRequest && trafficRevocationCause(ctx) != nil)) && ctx.Err() != nil {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(context.WithoutCancel(ctx), api.RequestBudgetErrorWriteTimeout)
 		s.trafficResponseCancel = cancel

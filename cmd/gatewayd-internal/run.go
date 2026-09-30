@@ -80,6 +80,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/trafficdeadline"
+	"github.com/onebox-faas/faas/pkg/trafficrevocation"
 	"github.com/onebox-faas/faas/pkg/usageoutbox"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -977,8 +978,9 @@ type runDeps struct {
 	// session cookie. cmd/apid shares the same construct; the two
 	// daemons are independent processes so the AEAD keys are loaded
 	// separately per daemon. nil in tests.
-	sessions         *session.Manager
-	trafficDeadlines *trafficdeadline.Signer
+	sessions           *session.Manager
+	trafficDeadlines   *trafficdeadline.Signer
+	trafficRevocations *trafficrevocation.Registry
 	// hostKeyDir (issue #477 / ADR-079) is the directory
 	// secretbox.LoadHostKeys reads from to build the
 	// multi-identity rotation-overlap slice for the basic-auth
@@ -2413,7 +2415,22 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	retryBudget.WithObserver(deps.metrics)
 	defer func() { _ = retryBudget.Close() }()
-	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log).WithRetryBudget(retryBudget).WithTrafficDeadlines(deps.trafficDeadlines)
+	if deps.pool != nil && deps.trafficRevocations == nil {
+		var err error
+		deps.trafficRevocations, err = newTrafficRevocationRegistry(counterCtx, deps.pool)
+		if err != nil {
+			return err
+		}
+	}
+	if deps.trafficRevocations != nil {
+		defer deps.trafficRevocations.Close()
+		go deps.trafficRevocations.Run(counterCtx)
+		if backend, ok := deps.backend.(*gateway.PGBackend); ok {
+			backend.WithTrafficRevocations(deps.trafficRevocations)
+		}
+	}
+	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log).WithRetryBudget(retryBudget).
+		WithTrafficDeadlines(deps.trafficDeadlines).WithTrafficRevocations(deps.trafficRevocations)
 	if strings.EqualFold(strings.TrimSpace(osGetenv("FAAS_REQUEST_AUDIT_ENABLED")), streamingFlagTrue) {
 		handler.WithRequestAudit(true)
 	}
@@ -3465,13 +3482,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		pgStore := deps.pgStore
 		guestServiceAliasAllowed = newServiceAliasAllowed(pgStore)
 		serviceProxyConfig := gateway.ServiceProxyConfig{
-			TrafficDeadlines: deps.trafficDeadlines,
-			Provider:         serviceEndpointProvider,
-			Resolve:          newServiceProxyResolver(pgStore),
-			Authorize:        newServiceProxyAuthorizer(pgStore),
-			AllowAlias:       guestServiceAliasAllowed,
-			Forward:          deps.nodeCache.Forwarding(),
-			RawForward:       deps.nodeCache.RawForwarding(),
+			TrafficDeadlines:   deps.trafficDeadlines,
+			TrafficRevocations: deps.trafficRevocations,
+			Provider:           serviceEndpointProvider,
+			Resolve:            newServiceProxyResolver(pgStore),
+			Authorize:          newServiceProxyAuthorizer(pgStore),
+			AllowAlias:         guestServiceAliasAllowed,
+			Forward:            deps.nodeCache.Forwarding(),
+			RawForward:         deps.nodeCache.RawForwarding(),
 			// ADR-196: a call to a parked internal service must hold and
 			// wake exactly like a public request does. Without this seam a
 			// scale-to-zero internal service 503s on every cold call, which
