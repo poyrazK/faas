@@ -90,9 +90,10 @@ type App struct {
 	ID        string
 	AccountID string // joined in pgRouter.toApp; empty only in fakeBackend unit tests (ADR-040)
 	// Private verifier inputs; only the effective fingerprint leaves the gateway.
-	PublicPolicySource  *PublicAppPolicySource   `json:",omitempty"`
-	PublicRouteSource   *PublicRouteSourcePolicy `json:",omitempty"`
-	ImportedRoutePolicy *ImportedRoutePolicy     `json:",omitempty"`
+	PublicPolicySource     *PublicAppPolicySource   `json:",omitempty"`
+	PublicRouteSource      *PublicRouteSourcePolicy `json:",omitempty"`
+	ImportedRoutePolicy    *ImportedRoutePolicy     `json:",omitempty"`
+	PublicCompiledPolicies map[string]*HostEntry    `json:"-"`
 	// Host-specific tenant surface binding. Never store these in the shared
 	// app cache: one app can serve several independent customer hostnames.
 	RoutedSurfaceID  string
@@ -1260,7 +1261,8 @@ type Handler struct {
 	// `edge_rule.route_blocked` audit + `outcome=blocked`
 	// metric in that case. nil = same as edgeRules==nil
 	// (matcher disabled; pre-PR-3 behaviour preserved).
-	resolveTargetApp ResolveTargetApp
+	resolveTargetApp    ResolveTargetApp
+	resolveTargetPolicy ResolveTargetAppPolicy
 	// edgeRuleAudit emits the `edge_rule.route_matched` /
 	// `edge_rule.route_blocked` audit rows when a kind=route
 	// rule fires (PR 3 only; PR 4-7 extend the kind set).
@@ -2159,7 +2161,7 @@ func (h *Handler) emitAuthnAudit(r *http.Request, app App, subject *string, kind
 // Backend.Lookup. Extracted from ServeHTTP to keep the
 // handler cap under 50 lines.
 func (h *Handler) matchAndSubstituteRoute(r *http.Request, appHost string, app *App) bool {
-	if h.edgeRules == nil || h.resolveTargetApp == nil {
+	if h.edgeRules == nil || h.resolveTargetApp == nil && h.resolveTargetPolicy == nil {
 		return false
 	}
 	// A named-environment host must resolve its encoded app/environment pair
@@ -2174,11 +2176,10 @@ func (h *Handler) matchAndSubstituteRoute(r *http.Request, appHost string, app *
 		}
 		return false
 	}
-	target, ok := h.resolveTargetApp(r.Context(), rule.TargetAppSlug)
+	target, ok := h.resolveEdgeTargetPolicy(r, rule.TargetAppSlug)
 	if !ok {
-		// Transient — the target app row was deleted (or
-		// pending, or the slug was never on this box).
-		// Silent fall-through; next request re-resolves.
+		// Authoritative loaders retain a failure in the request context so the
+		// fallback lookup refuses. Legacy fixture loaders preserve a clean miss.
 		if h.metrics != nil {
 			h.metrics.ObserveEdgeRuleMatch(rateLimitScopeRoute, "miss")
 		}

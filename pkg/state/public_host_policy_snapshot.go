@@ -38,6 +38,9 @@ type PublicHostPolicyReader interface {
 	PublicHostReserved(context.Context, string, string) (bool, error)
 	PublicHostRoutePolicy(context.Context, string, string, string) (ProjectEnvironmentRoutePolicy, error)
 	PublicHostOpenAPIDoc(context.Context, string, string) ([]byte, error)
+	PublicHostEdgeRules(context.Context, string, string, bool) ([]EdgeRule, error)
+	GetCorsPresetByID(context.Context, string, string) (CorsPreset, error)
+	NewProjectionReader() PublicHostPolicyReader
 	PublicHostPolicyRevision() string
 }
 
@@ -70,6 +73,10 @@ func newPublicHostPolicyReader(tx pgx.Tx) *publicHostPolicyReader {
 
 func (s *publicHostPolicyReader) PublicHostPolicyRevision() string {
 	return "public-host-v1:" + hex.EncodeToString(s.revision.Sum(nil))
+}
+
+func (s *publicHostPolicyReader) NewProjectionReader() PublicHostPolicyReader {
+	return newPublicHostPolicyReader(s.tx)
 }
 
 // Framed JSON records include successful reads and authoritative
@@ -175,10 +182,13 @@ func (s *publicHostPolicyReader) ProjectEnvironmentByID(ctx context.Context, id 
 }
 
 func (s *publicHostPolicyReader) GetProjectEnvironmentEdgePolicy(ctx context.Context, account, app, scope string) (ProjectEnvironmentEdgePolicy, error) {
-	data, err := sqlc.New().ReadPublicHostEnvironmentPolicy(ctx, s.tx, sqlc.ReadPublicHostEnvironmentPolicyParams{
-		AccountID: uuidToPgtype(account), AppID: uuidToPgtype(app), Scope: scope})
-	s.record("environment-policy:"+account+":"+app+":"+scope, data, err)
-	return decodePublicHostJSON[ProjectEnvironmentEdgePolicy](data, err)
+	row, err := sqlc.New().ReadPublicHostEnvironmentPolicy(ctx, s.tx, sqlc.ReadPublicHostEnvironmentPolicyParams{
+		AccountID: uuidToPgtype(account), AppID: uuidToPgtype(app), Scope: scope, MaxBytes: api.TrafficPolicyMaxContractBytes})
+	if err == nil && row.Oversized {
+		return ProjectEnvironmentEdgePolicy{}, errors.New("public environment edge policy exceeds the projection limit")
+	}
+	s.record("environment-policy:"+account+":"+app+":"+scope, row.Data, err)
+	return decodePublicHostJSON[ProjectEnvironmentEdgePolicy](row.Data, err)
 }
 
 func (s *publicHostPolicyReader) ActiveProjectReleaseSet(ctx context.Context, account, project, scope string) (ProjectReleaseSet, error) {

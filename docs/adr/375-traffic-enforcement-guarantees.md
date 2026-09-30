@@ -314,6 +314,24 @@ verified projection and selected deployment during wake and retries.
 Compiled edge-policy agreement and complete path evidence remain required
 before the policy guarantee is accepted.
 
+Public edge policy resolution has two phases. A bounded fresh route-only
+graph selects the owner/target without loading unrelated tenants' presets.
+The hostname/app transaction then reads the verified owner's complete rule
+set, referenced CORS presets and the stable environment URL's overlay. It verifies the
+earlier route graph, compiles the owned inputs, and supplies sealed host
+policies before security checks. Compiler cache reuse requires a matching
+content baseline; notifications are an optimization. Unknown synthetic hosts
+verify the global route graph; claimed hosts verify their owner's routes.
+Source and target baselines must agree before a substitution can return an
+edge response. Production target loaders retain read failures and refuse a
+selected route whose target is missing or unavailable; they cannot fall back
+to an ordinary source-app response. Dispatch rechecks all these inputs in the routing view, while
+admitted wake/retry work retains the sealed policies. Reads are bounded to
+50,020 matching rules and 64 MiB of canonical projection per host, with
+512 KiB per preset or environment overlay. Referenced presets count toward
+the aggregate projection bound. The compiled cache retains its existing host-count bound.
+Complete path, overload and preview/runtime evidence remain required.
+
 Public declared-route inputs join the fresh hostname/app view. An exact
 environment's route overlay is read before deciding whether an imported
 OpenAPI document is needed; explicit routes keep precedence. The readonly

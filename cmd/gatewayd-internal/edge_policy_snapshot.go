@@ -19,6 +19,9 @@ func (g *gatewaydEdgeRules) PinHostPolicy(ctx context.Context, host string) (con
 	if g == nil || g.cache == nil || g.store == nil {
 		return nil, errors.New("traffic policy source unavailable")
 	}
+	if g.RequiresOwnerPolicySnapshot() {
+		return g.pinPublicRouteGraph(ctx, host)
+	}
 	generation := g.cache.Generation()
 	prior, pinned := ctx.Value(pinnedPolicyGenerationKey{}).(pinnedPolicyGeneration)
 	if g.Converging(host) || (pinned && (prior.owner != g || prior.generation != generation)) {

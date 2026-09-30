@@ -27,6 +27,14 @@ type PublicRouteSourcePolicy struct {
 
 type publicRouteSourcePolicyKey struct{}
 
+func PublicRouteSourceClaim(ctx context.Context) *PublicRouteSourcePolicy {
+	claim, found := ctx.Value(publicRouteSourcePolicyKey{}).(PublicRouteSourcePolicy)
+	if !found {
+		return nil
+	}
+	return &claim
+}
+
 func rememberPublicRouteSourcePolicy(r *http.Request, app App, found bool) {
 	if app.PublicPolicySource == nil {
 		return // Legacy in-process backends have no authoritative claim carrier.

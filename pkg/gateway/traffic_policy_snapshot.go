@@ -47,6 +47,10 @@ type EdgePolicySnapshotter interface {
 	PinHostPolicy(context.Context, string) (context.Context, error)
 }
 
+type EdgeOwnerPolicySnapshotter interface {
+	RequiresOwnerPolicySnapshot() bool
+}
+
 // SealPolicy copies all nested compiled actions once, before publication to
 // the shared cache. Cache metadata and later source mutations cannot alter it.
 func (e *HostEntry) SealPolicy() error {
@@ -175,6 +179,9 @@ func freezeTrafficApp(ctx context.Context, app App) (App, string, error) {
 func (h *Handler) pinAppTrafficPolicy(w http.ResponseWriter, r *http.Request, app *App) bool {
 	if _, productionSnapshot := h.edgeRules.(EdgePolicySnapshotter); !productionSnapshot && h.publicRoutingPolicy == nil {
 		return false
+	}
+	if h.pinResolvedOwnerPolicies(w, r, *app) {
+		return true
 	}
 	if err := ValidatePinnedHostPolicies(r.Context(), app.AccountID); err != nil {
 		h.writeTrafficPolicyUnavailable(w)

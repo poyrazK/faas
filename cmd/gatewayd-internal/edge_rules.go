@@ -257,6 +257,23 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 	if err != nil {
 		return nil, err
 	}
+	entry, err := g.compileHostRules(ctx, host, storeRules)
+	if err != nil {
+		return nil, err
+	}
+	if err := entry.SealPolicy(); err != nil {
+		return nil, err
+	}
+	g.cache.PutIfGeneration(host, entry, generation)
+	return entry, nil
+}
+
+// Compilation uses only supplied rules and the compiler's preset reader. The
+// caller seals after adding the trusted source revision, before publication.
+func (g *gatewaydEdgeRules) compileHostRules(ctx context.Context, host string, storeRules []state.EdgeRule) (*gateway.HostEntry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	route, routeErrs := compileRouteRules(storeRules)
 	rewrite, rewriteErrs := compileRewriteRules(storeRules)
 	redirect, redirectErrs := compileRedirectRules(storeRules)
@@ -374,10 +391,9 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 		}
 	}
 	entry.Host = host
-	if err := entry.SealPolicy(); err != nil {
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	g.cache.PutIfGeneration(host, entry, generation)
 	return entry, nil
 }
 

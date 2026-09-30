@@ -1,7 +1,11 @@
 # Request traffic policy snapshots
 
-ADR-375 pins a public request's compiled host rules before route substitution.
-The resolved app flags and plan table join that snapshot after owner lookup.
+ADR-375 pins a fresh route-only graph before public route substitution. The
+hostname/app transaction then reads the verified owner's complete host rules,
+referenced presets and stable environment URL overlay alongside app flags.
+Compiler-cache reuse requires the same freshly read content baseline; missed
+notifications cannot keep a stale policy active for a fresh request. The plan
+table joins those inputs before security checks or an edge response.
 External CORS presets and named-environment headers/CORS are included as
 resolved actions. Imported OpenAPI method/path declarations and environment
 route-contract overlays are pinned before the app snapshot is sealed. Route
@@ -31,18 +35,30 @@ Canonical JSONB contract payloads are bounded to 512 KiB before transfer,
 covering the existing 256 KiB import allowance plus formatting expansion.
 Raw documents are excluded from serialized app and response/trace evidence.
 
+Edge projections use sqlc and deterministic priority/creation/ID ordering.
+SQL refuses over 50,020 matching rules or 64 MiB of canonical row JSON before
+transferring the aggregate. Referenced presets count toward the compiled
+input byte bound; each preset and environment overlay is limited to 512 KiB
+before transfer. Unrelated tenants' non-route rules and presets are not loaded.
+The compiled cache preserves the existing 10,000-host entry ceiling.
+An oversized projection refuses with `traffic_policy_unavailable`/503.
+Write-time validation of these projection limits and oversized-policy recovery
+remain rollout requirements; this implementation is not yet release acceptance.
+
 Before dispatch, the public routing transaction re-resolves the host projection
 and compares its private content fingerprint. Changed settings, alias/domain
 retargeting, environment policy changes, deleted targets or a changed tenant
 binding refuse dispatch with `traffic_policy_unavailable`/503. A policy read
 failure cannot turn an owned hostname into a synthetic edge-rule host.
 Changed imported documents or scoped route contracts also refuse an old
-dispatch baseline; admitted requests retain their compiled contract.
+dispatch baseline, as do changed edge rules or CORS presets. Admitted requests
+retain their compiled contracts and actions.
 Both transactions finish before wake. Admitted requests retain their verified
 settings and selected deployment during wake and retry.
 
 An edge route substitution records both the source hostname and target app
-baselines. Dispatch rechecks both in the routing transaction. A genuinely
+baselines. The target transaction rechecks the source before a pure edge
+response can run; dispatch rechecks both in the routing transaction. A genuinely
 unclaimed host has a verified negative claim. Internal/deleted app slugs,
 unverified exact/wildcard domains, tenant reservations and failed alias targets
 cannot become synthetic hosts. Named-environment, immutable deployment and
@@ -51,8 +67,9 @@ the first lookup and dispatch refuses the old negative claim. Releasing the
 domain reservation lets a fresh request resolve again. The alias namespace
 remains protected after removal of an alias binding. Both baselines join the sealed
 effective fingerprint, and source app deletion can revoke the admitted target
-exchange. Compiled edge-policy agreement, preview/runtime agreement and
-full acceptance remain required.
+exchange. A selected route with a missing/unavailable target refuses with
+`traffic_policy_unavailable`/503 instead of answering from the source app.
+Preview/runtime agreement and full acceptance remain required.
 
 ## Runtime evidence
 
@@ -72,9 +89,9 @@ state are decisions made against the snapshot, not frozen counter values.
 
 ## Failure and update behavior
 
-A warm verified compiled-policy cache can supply its inputs during a store outage. A cold or
-expired cache cannot: it returns `traffic_policy_unavailable`/503 with
-`Retry-After: 1` before authentication, wake or guest execution. A compiled
+A fresh production request requires authoritative reads even with a warm
+compiled-policy cache. Store failure returns `traffic_policy_unavailable`/503
+with `Retry-After: 1` before authentication, wake or guest execution. A compiled
 policy with reported rule errors also refuses an unverified owner snapshot.
 Failure checks run after owner resolution: another account's broken free-form
 host rule or unavailable preset cannot take this tenant offline. A
@@ -87,8 +104,10 @@ generation fence described in [HTTP security revocation](traffic-security-revoca
 Its local gateway and Postgres checks do not establish full path or deployed
 acceptance. Imported document cache entries are owner scoped. An invalidation
 during a pending document load refuses its unpublished snapshot, while an
-already pinned request retains its contract. The configured total deadline is
-armed before loading that document or scoped contract; expiry returns 504.
+already pinned request retains its contract. The configured total deadline
+uses the trusted request start after app resolution, including time spent in
+the bounded initial hostname/contract reads; expiry returns 504 once the app
+budget is known. Complete-path timing/failure acceptance remains required.
 Managed service calls now pin the policy inputs described below. Simulator/runtime
 agreement and complete service-path acceptance still require verification.
 Native lifecycle and deployment acceptance remain pending.
@@ -179,7 +198,7 @@ policy; emergency generation fences still apply.
 | --- | --- |
 | Ordinary public HTTP dispatch and response cache | Compiled host rules, imported/scoped route contract, resolved app flags/plan and atomic scoped deployment routing; one deployment through wake/retry/refresh; response/span/log fingerprint |
 | Public edge answers without guest dispatch | Compiled host rules, imported/scoped route contract, resolved app flags and plan; unused deployment routing is excluded |
-| Named environment, verified domain, listener selector | Effective host rules; selector and base host use one cache generation |
+| Named environment, verified domain, listener selector | Fresh route graphs; selector/base owned rules and referenced presets share the app transaction; stable environment URL overlay included |
 | Public streaming and raw Upgrade | Pinned rules/app inputs; span/log evidence; ordinary HTTP header only where normal response commitment is used |
 | Managed service proxy | Atomic access/namespace/reliability/transport/release/override/weight snapshot; one deployment across wake/retry; response/span fingerprint |
 | Synthetic HTTP through the public routing handler | Same handler snapshot; direct bridge dispatch has no host-policy snapshot |

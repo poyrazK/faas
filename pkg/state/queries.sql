@@ -5039,7 +5039,7 @@ SELECT jsonb_build_object(
 )::jsonb AS data FROM project_environments WHERE id = sqlc.arg(environment_id)::uuid;
 
 -- name: ReadPublicHostEnvironmentPolicy :one
-SELECT jsonb_build_object(
+WITH policy AS (SELECT jsonb_build_object(
     'AccountID', p.account_id,
     'ProjectID', p.project_id,
     'AppID', p.app_id,
@@ -5049,7 +5049,10 @@ SELECT jsonb_build_object(
 FROM project_environment_edge_policies p
 JOIN apps a ON a.id = p.app_id AND a.account_id = p.account_id AND a.project_id = p.project_id
 WHERE p.account_id = sqlc.arg(account_id)::uuid AND p.app_id = sqlc.arg(app_id)::uuid
-  AND p.environment_slug = sqlc.arg(scope)::text AND a.status <> 'deleted' AND a.deleted_at IS NULL;
+  AND p.environment_slug = sqlc.arg(scope)::text AND a.status <> 'deleted' AND a.deleted_at IS NULL)
+SELECT CASE WHEN octet_length(data::text) <= sqlc.arg(max_bytes)::integer THEN data
+    ELSE NULL::jsonb END::jsonb AS data,
+    (octet_length(data::text) > sqlc.arg(max_bytes)::integer)::boolean AS oversized FROM policy;
 
 -- name: ReadPublicHostDomain :one
 SELECT jsonb_build_object(
@@ -5132,3 +5135,39 @@ SELECT CASE WHEN octet_length(doc::text) <= sqlc.arg(max_bytes)::integer THEN do
     (octet_length(doc::text) > sqlc.arg(max_bytes)::integer)::boolean AS oversized
 FROM app_openapi_docs
 WHERE app_id = sqlc.arg(app_id)::uuid AND account_id = sqlc.arg(account_id)::uuid;
+
+-- name: ReadPublicHostEdgeRules :one
+WITH matching AS (
+    SELECT id, priority, created_at,
+        jsonb_build_object('ID', id, 'AccountID', account_id, 'AppID', app_id,
+            'MatchHost', match_host, 'MatchPath', match_path, 'MatchMethods', match_methods,
+            'MatchHeaders', match_headers, 'Priority', priority, 'Enabled', enabled,
+            'Kind', kind, 'Action', action, 'CorsPresetID', cors_preset_id,
+            'ValidateMode', validate_mode, 'CreatedAt', created_at, 'UpdatedAt', updated_at,
+            'ManifestKey', manifest_key)::jsonb AS data
+    FROM edge_rules
+    WHERE enabled AND (sqlc.narg(account_id)::uuid IS NULL OR account_id = sqlc.narg(account_id)::uuid)
+      AND (NOT sqlc.arg(route_only)::boolean OR kind = 'route')
+      AND (match_host = sqlc.arg(host)::text OR match_host = '*'
+           OR sqlc.arg(host)::text LIKE replace(replace(match_host, '*', '%'), '?', '_'))
+    ORDER BY priority, created_at, id LIMIT (sqlc.arg(max_rows)::integer + 1)
+), bounds AS (
+    SELECT count(*) > sqlc.arg(max_rows)::integer
+        OR coalesce(sum(octet_length(data::text) + 2), 0) + 2 > sqlc.arg(max_bytes)::integer AS oversized
+    FROM matching
+)
+SELECT CASE WHEN oversized THEN NULL::jsonb
+    ELSE (SELECT coalesce(jsonb_agg(data ORDER BY priority, created_at, id), '[]'::jsonb) FROM matching)
+    END::jsonb AS data, oversized::boolean FROM bounds;
+
+-- name: ReadPublicHostCorsPreset :one
+WITH preset AS (
+    SELECT jsonb_build_object('ID', id, 'AccountID', account_id, 'AppID', app_id,
+        'AllowOrigins', allow_origins, 'AllowMethods', allow_methods,
+        'AllowHeaders', allow_headers, 'ExposeHeaders', expose_headers,
+        'AllowCredentials', allow_credentials, 'MaxAgeSeconds', max_age_seconds)::jsonb AS data
+    FROM cors_presets WHERE id = sqlc.arg(preset_id)::uuid AND account_id = sqlc.arg(account_id)::uuid
+)
+SELECT CASE WHEN octet_length(data::text) <= sqlc.arg(max_bytes)::integer THEN data
+    ELSE NULL::jsonb END::jsonb AS data,
+    (octet_length(data::text) > sqlc.arg(max_bytes)::integer)::boolean AS oversized FROM preset;

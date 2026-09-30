@@ -7286,6 +7286,10 @@ const (
 	// Canonical JSONB text can be larger than a valid 256 KiB OpenAPI import.
 	// Bound route-contract projections before transferring them to a gateway.
 	TrafficPolicyMaxContractBytes = 512 * 1024
+	// Scale's 100 deployed apps can each own 500 rules; reserve 20 more for
+	// an environment overlay. Also bound the aggregate wire projection.
+	TrafficPolicyMaxHostRules = 50_020
+	TrafficPolicyMaxHostBytes = 64 * 1024 * 1024
 
 	// AppErrorsDedupeWindowSeconds (ADR-096) is the platform-wide
 	// dedupe window for the IncrementAppError INSERT. NOT a

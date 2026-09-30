@@ -42,6 +42,63 @@ Claimed source apps retain emergency cancellation ownership through cleanup.
 
 ## Evidence log
 
+### Compiled edge-rule and preset agreement, 2026-09-30
+
+Public requests now resolve a bounded fresh route-only graph before selecting
+an owner. The hostname/app transaction reads only that owner's complete host
+rules, referenced CORS presets and stable environment URL overlay. Sorted
+host/preset reads and deterministic rule ordering produce a content baseline;
+compiler-cache hits require that freshly verified baseline. Full sealed actions
+replace the initial matcher view before security checks or a pure edge answer.
+The original route graph remains private for later comparison. Claimed hosts
+verify owned routes; unclaimed synthetic hosts verify the global route graph.
+
+Target resolution checks the source claim in the same database view before a
+substitution can answer at the edge. The production target loader retains read
+failures and refuses a selected route whose target is unavailable or missing,
+instead of falling back to the source app. Dispatch rechecks rules, presets,
+overlays and both app/host baselines with routing eligibility and weights.
+Admitted requests retain their sealed actions through cache reset and wake/retry.
+Compiled carriers are excluded from serialized app evidence.
+
+The sqlc projections cap matching rows at 50,020 and canonical row JSON at
+64 MiB before aggregate transfer. Referenced presets count toward the compiled
+input byte cap; presets and environment overlays each have a 512 KiB SQL
+projection bound. Invalid owner IDs cannot turn an owned read into a global
+read. Compiler caches retain the existing host-entry ceiling. The edge-rule
+schema projection adds the existing match_headers column/check from the actual
+migrated database; no migration was added. All four sqlc v1.31.1 generated
+files matched fresh generation against those table definitions.
+
+Real Postgres fixtures verify app/rule/preset changes committed between reads,
+refusal between lookup and dispatch, missed-notification repair, independent
+admitted actions, owner isolation, unused foreign preset locks/broken policies,
+synthetic owner changes, source cutover before a pure edge answer, unavailable
+targets, bounded aggregate/preset/overlay refusal, transaction cleanup and
+store outage/recovery. Stable environment overlays preserve missing-row
+fallback and explicit-empty replacement. Two HTTP gateway handlers, one HTTP/1
+and one HTTP/2, repair IP and CORS changes without notifications; denied traffic
+does not reach forwarding and response fingerprints change. Scheduler and
+forwarding remain fixtures in one process.
+
+Full internal-gateway and gateway suites passed in 37.274 s and 64.456 s.
+The API suite passed separately in 1.595 s after reclaiming task-owned build
+caches and inactive test templates; disk-exhausted runs are excluded from
+acceptance evidence. Final focused Postgres/HTTP checks, including successful
+claimed/synthetic substitutions, passed in 11.012 s; focused gateway carrier
+checks passed in 3.249 s. Pinned lint passed gateway, internal gateway, API and
+state production code with zero findings; state excluded tests and the
+pre-existing test-only unused helper. Diff whitespace checks passed.
+
+All six guarantees remain unchecked. Bounded runtime decision evidence,
+preview/runtime and complete synthetic-path agreement, full daemon/load/recovery
+and customer/staging release evidence remain required. Write-time validation
+of the projection limits and oversized-policy recovery also need completion
+before rollout. Initial fresh-policy
+reads require complete-path total-deadline timing/failure acceptance. Native
+Linux x86_64 KVM, nft connection/source-IP, process-death and leak acceptance
+remain pending; no acceptance host is currently available.
+
 ### Imported and scoped route-contract agreement, 2026-09-30
 
 Public hostname resolution now includes the exact environment's route-contract

@@ -12021,6 +12021,37 @@ func (q *Queries) ReadPublicHostApp(ctx context.Context, db DBTX, arg ReadPublic
 	return data, err
 }
 
+const readPublicHostCorsPreset = `-- name: ReadPublicHostCorsPreset :one
+WITH preset AS (
+    SELECT jsonb_build_object('ID', id, 'AccountID', account_id, 'AppID', app_id,
+        'AllowOrigins', allow_origins, 'AllowMethods', allow_methods,
+        'AllowHeaders', allow_headers, 'ExposeHeaders', expose_headers,
+        'AllowCredentials', allow_credentials, 'MaxAgeSeconds', max_age_seconds)::jsonb AS data
+    FROM cors_presets WHERE id = $2::uuid AND account_id = $3::uuid
+)
+SELECT CASE WHEN octet_length(data::text) <= $1::integer THEN data
+    ELSE NULL::jsonb END::jsonb AS data,
+    (octet_length(data::text) > $1::integer)::boolean AS oversized FROM preset
+`
+
+type ReadPublicHostCorsPresetParams struct {
+	MaxBytes  int32
+	PresetID  pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+type ReadPublicHostCorsPresetRow struct {
+	Data      []byte
+	Oversized bool
+}
+
+func (q *Queries) ReadPublicHostCorsPreset(ctx context.Context, db DBTX, arg ReadPublicHostCorsPresetParams) (ReadPublicHostCorsPresetRow, error) {
+	row := db.QueryRow(ctx, readPublicHostCorsPreset, arg.MaxBytes, arg.PresetID, arg.AccountID)
+	var i ReadPublicHostCorsPresetRow
+	err := row.Scan(&i.Data, &i.Oversized)
+	return i, err
+}
+
 const readPublicHostDeployment = `-- name: ReadPublicHostDeployment :many
 SELECT jsonb_build_object(
     'ID', d.id,
@@ -12101,6 +12132,57 @@ func (q *Queries) ReadPublicHostDomain(ctx context.Context, db DBTX, arg ReadPub
 	return data, err
 }
 
+const readPublicHostEdgeRules = `-- name: ReadPublicHostEdgeRules :one
+WITH matching AS (
+    SELECT id, priority, created_at,
+        jsonb_build_object('ID', id, 'AccountID', account_id, 'AppID', app_id,
+            'MatchHost', match_host, 'MatchPath', match_path, 'MatchMethods', match_methods,
+            'MatchHeaders', match_headers, 'Priority', priority, 'Enabled', enabled,
+            'Kind', kind, 'Action', action, 'CorsPresetID', cors_preset_id,
+            'ValidateMode', validate_mode, 'CreatedAt', created_at, 'UpdatedAt', updated_at,
+            'ManifestKey', manifest_key)::jsonb AS data
+    FROM edge_rules
+    WHERE enabled AND ($1::uuid IS NULL OR account_id = $1::uuid)
+      AND (NOT $2::boolean OR kind = 'route')
+      AND (match_host = $3::text OR match_host = '*'
+           OR $3::text LIKE replace(replace(match_host, '*', '%'), '?', '_'))
+    ORDER BY priority, created_at, id LIMIT ($4::integer + 1)
+), bounds AS (
+    SELECT count(*) > $4::integer
+        OR coalesce(sum(octet_length(data::text) + 2), 0) + 2 > $5::integer AS oversized
+    FROM matching
+)
+SELECT CASE WHEN oversized THEN NULL::jsonb
+    ELSE (SELECT coalesce(jsonb_agg(data ORDER BY priority, created_at, id), '[]'::jsonb) FROM matching)
+    END::jsonb AS data, oversized::boolean FROM bounds
+`
+
+type ReadPublicHostEdgeRulesParams struct {
+	AccountID pgtype.UUID
+	RouteOnly bool
+	Host      string
+	MaxRows   int32
+	MaxBytes  int32
+}
+
+type ReadPublicHostEdgeRulesRow struct {
+	Data      []byte
+	Oversized bool
+}
+
+func (q *Queries) ReadPublicHostEdgeRules(ctx context.Context, db DBTX, arg ReadPublicHostEdgeRulesParams) (ReadPublicHostEdgeRulesRow, error) {
+	row := db.QueryRow(ctx, readPublicHostEdgeRules,
+		arg.AccountID,
+		arg.RouteOnly,
+		arg.Host,
+		arg.MaxRows,
+		arg.MaxBytes,
+	)
+	var i ReadPublicHostEdgeRulesRow
+	err := row.Scan(&i.Data, &i.Oversized)
+	return i, err
+}
+
 const readPublicHostEnvironment = `-- name: ReadPublicHostEnvironment :one
 SELECT jsonb_build_object(
     'ID', id,
@@ -12118,7 +12200,7 @@ func (q *Queries) ReadPublicHostEnvironment(ctx context.Context, db DBTX, enviro
 }
 
 const readPublicHostEnvironmentPolicy = `-- name: ReadPublicHostEnvironmentPolicy :one
-SELECT jsonb_build_object(
+WITH policy AS (SELECT jsonb_build_object(
     'AccountID', p.account_id,
     'ProjectID', p.project_id,
     'AppID', p.app_id,
@@ -12127,21 +12209,35 @@ SELECT jsonb_build_object(
 )::jsonb AS data
 FROM project_environment_edge_policies p
 JOIN apps a ON a.id = p.app_id AND a.account_id = p.account_id AND a.project_id = p.project_id
-WHERE p.account_id = $1::uuid AND p.app_id = $2::uuid
-  AND p.environment_slug = $3::text AND a.status <> 'deleted' AND a.deleted_at IS NULL
+WHERE p.account_id = $2::uuid AND p.app_id = $3::uuid
+  AND p.environment_slug = $4::text AND a.status <> 'deleted' AND a.deleted_at IS NULL)
+SELECT CASE WHEN octet_length(data::text) <= $1::integer THEN data
+    ELSE NULL::jsonb END::jsonb AS data,
+    (octet_length(data::text) > $1::integer)::boolean AS oversized FROM policy
 `
 
 type ReadPublicHostEnvironmentPolicyParams struct {
+	MaxBytes  int32
 	AccountID pgtype.UUID
 	AppID     pgtype.UUID
 	Scope     string
 }
 
-func (q *Queries) ReadPublicHostEnvironmentPolicy(ctx context.Context, db DBTX, arg ReadPublicHostEnvironmentPolicyParams) ([]byte, error) {
-	row := db.QueryRow(ctx, readPublicHostEnvironmentPolicy, arg.AccountID, arg.AppID, arg.Scope)
-	var data []byte
-	err := row.Scan(&data)
-	return data, err
+type ReadPublicHostEnvironmentPolicyRow struct {
+	Data      []byte
+	Oversized bool
+}
+
+func (q *Queries) ReadPublicHostEnvironmentPolicy(ctx context.Context, db DBTX, arg ReadPublicHostEnvironmentPolicyParams) (ReadPublicHostEnvironmentPolicyRow, error) {
+	row := db.QueryRow(ctx, readPublicHostEnvironmentPolicy,
+		arg.MaxBytes,
+		arg.AccountID,
+		arg.AppID,
+		arg.Scope,
+	)
+	var i ReadPublicHostEnvironmentPolicyRow
+	err := row.Scan(&i.Data, &i.Oversized)
+	return i, err
 }
 
 const readPublicHostOpenAPIDoc = `-- name: ReadPublicHostOpenAPIDoc :one

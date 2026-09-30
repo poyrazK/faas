@@ -1108,6 +1108,7 @@ type EdgeRule struct {
 	UpdatedAt    pgtype.Timestamptz
 	ValidateMode string
 	CorsPresetID pgtype.UUID
+	MatchHeaders []byte
 	ManifestKey  pgtype.Text
 }
 

@@ -90,8 +90,15 @@ func resolvePublicPolicySource(ctx context.Context, reader state.PublicHostPolic
 		err = resolvePublicDeclaredRoutePolicy(ctx, reader, &app)
 	}
 	if err == nil {
+		err = resolvePublicCompiledPolicy(ctx, reader, &app, found, &projection)
+	}
+	if err == nil {
 		projection.Revision = reader.PublicHostPolicyRevision()
 		app.PublicPolicySource = &projection
+		if _, pinned := ctx.Value(publicRouteGraphsKey{}).(publicRouteGraphs); pinned && projection.Slug != "" && found {
+			app.PublicRouteSource = gateway.PublicRouteSourceClaim(ctx)
+			err = verifyPublicRouteSourceClaim(ctx, reader.NewProjectionReader(), app)
+		}
 	}
 	return app, found, err
 }
@@ -140,6 +147,10 @@ func verifyPublicHostPolicy(ctx context.Context, reader state.PublicRoutingPolic
 }
 
 func verifyPublicRouteSourcePolicy(ctx context.Context, reader state.PublicRoutingHostPolicyReader, app gateway.App) error {
+	return verifyPublicRouteSourceClaim(ctx, reader.HostPolicyReader(), app)
+}
+
+func verifyPublicRouteSourceClaim(ctx context.Context, host state.PublicHostPolicyReader, app gateway.App) error {
 	claim := app.PublicRouteSource
 	if app.PublicPolicySource.Slug == "" {
 		if claim != nil {
@@ -157,7 +168,6 @@ func verifyPublicRouteSourcePolicy(ctx context.Context, reader state.PublicRouti
 		!claim.Found && (claim.AppID != "" || claim.AccountID != "") {
 		return errors.New("public route source owner is inconsistent")
 	}
-	host := reader.HostPolicyReader()
 	resolved, found, err := resolvePublicPolicySource(ctx, host, claim.Source)
 	if err != nil {
 		return err

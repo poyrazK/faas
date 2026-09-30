@@ -2571,13 +2571,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// lookup, so the account and app limiters receive the same plan as the
 	// ordinary hostname path. An empty plan fails both limiters closed.
 	//
-	// Error classification (review fix R2): state.ErrNotFound
-	// is a clean miss (the target app row was deleted) — silent
-	// fall-through. Anything else is a real error (DB outage,
-	// pool exhaustion, ctx cancel) and gets logged at WARN +
-	// audited so a dashboard operator can distinguish a noisy
-	// transient from a sustained backend failure.
-	handler.WithEdgeRules(deps.edgeRulesMatcher, func(ctx context.Context, slug string) (gateway.App, bool) {
+	// Selected target misses and policy read failures refuse the request before
+	// source-app fallback. Read failures are also logged and audited.
+	handler.WithEdgeRules(deps.edgeRulesMatcher, nil, deps.edgeRulesAudit).WithEdgeTargetPolicyLoader(func(ctx context.Context, slug string) (gateway.App, bool, error) {
 		resolved, ok, err := (pgRouter{store: deps.pgStore}).resolvePublicAppSlug(ctx, slug)
 		if err != nil {
 			if log != nil {
@@ -2589,10 +2585,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					"slug": slug, "err": err.Error(),
 				})
 			}
-			return gateway.App{}, false
+			return gateway.App{}, false, err
 		}
-		return resolved, ok
-	}, deps.edgeRulesAudit)
+		return resolved, ok, nil
+	})
 	if deps.pgStore != nil {
 		handler.WithAsyncRouteEnqueuer(&asyncRouteEnqueuer{store: deps.pgStore})
 	}
