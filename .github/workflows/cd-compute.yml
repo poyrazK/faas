@@ -435,6 +435,11 @@ jobs:
         if: inputs.fleet_bundle_url != ''
         run: |
           set -euo pipefail
+          # Two runner instances on one fleet host share a user and $HOME.
+          # A shared ~/.sigstore cache made parallel jobs race on its lock
+          # ("creating cached local store: resource temporarily
+          # unavailable"); keep the TUF cache per job.
+          echo "TUF_ROOT=$RUNNER_TEMP/sigstore-tuf" >> "$GITHUB_ENV"
           mkdir -p "$RUNNER_TEMP/fleet-bundle-tools"
           COSIGN_SHA256=8b24b946dd5809c6bd93de08033bcf6bc0ed7d336b7785787c080f574b89249b
           COSIGN_DEST="$RUNNER_TEMP/fleet-bundle-tools/cosign"
@@ -746,6 +751,11 @@ jobs:
       - name: Install pinned cosign verifier
         run: |
           set -euo pipefail
+          # Two runner instances on one fleet host share a user and $HOME.
+          # A shared ~/.sigstore cache made parallel jobs race on its lock
+          # ("creating cached local store: resource temporarily
+          # unavailable"); keep the TUF cache per job.
+          echo "TUF_ROOT=$RUNNER_TEMP/sigstore-tuf" >> "$GITHUB_ENV"
           mkdir -p "$RUNNER_TEMP/release-tools"
           # The fleet runner is long-lived and Ansible provisions the same
           # pinned verifier at /usr/local/bin/cosign. Reuse it when its bytes

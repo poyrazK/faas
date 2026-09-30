@@ -214,3 +214,26 @@ func TestCDControlPlaneCredentialCheckAllowsGCSOnlyStorage(t *testing.T) {
 		}
 	}
 }
+
+// Two runner instances share one fleet host user and $HOME. cosign's shared
+// ~/.sigstore TUF cache made the parallel production-us compute prepares race
+// on its lock ("creating cached local store: resource temporarily
+// unavailable"). Every job that installs cosign keeps the cache per job.
+func TestCDCosignStepsUseAPerJobTUFCache(t *testing.T) {
+	for _, name := range []string{"cd-compute.yml", "cd-controlplane.yml"} {
+		workflow := readWorkflow(t, name)
+		steps := 0
+		for _, part := range strings.Split(workflow, "\n      - name: ")[1:] {
+			if !strings.HasPrefix(part, "Install pinned cosign") {
+				continue
+			}
+			steps++
+			if !strings.Contains(part, `echo "TUF_ROOT=$RUNNER_TEMP/sigstore-tuf" >> "$GITHUB_ENV"`) {
+				t.Errorf("%s step %q shares the runner user's sigstore cache", name, strings.SplitN(part, "\n", 2)[0])
+			}
+		}
+		if steps == 0 {
+			t.Errorf("%s has no cosign install step; the scan is broken", name)
+		}
+	}
+}

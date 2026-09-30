@@ -142,6 +142,11 @@ jobs:
           COSIGN_SHA256: "8b24b946dd5809c6bd93de08033bcf6bc0ed7d336b7785787c080f574b89249b"
         run: |
           set -euo pipefail
+          # Two runner instances on one fleet host share a user and $HOME.
+          # A shared ~/.sigstore cache made parallel jobs race on its lock
+          # ("creating cached local store: resource temporarily
+          # unavailable"); keep the TUF cache per job.
+          echo "TUF_ROOT=$RUNNER_TEMP/sigstore-tuf" >> "$GITHUB_ENV"
           mkdir -p "$RUNNER_TEMP/release-tools"
           curl --fail --silent --show-error --location \
             --proto '=https' --tlsv1.2 \
