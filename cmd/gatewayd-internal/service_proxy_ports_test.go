@@ -2,6 +2,8 @@
 package main
 
 import (
+	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -9,6 +11,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"golang.org/x/net/http2"
 )
 
 func TestGuestServiceHTTPPortsShareHandlerAndTransport(t *testing.T) {
@@ -43,33 +47,51 @@ func TestGuestServiceHTTPPortsShareHandlerAndTransport(t *testing.T) {
 		if !server.Protocols.HTTP1() || !server.Protocols.UnencryptedHTTP2() || server.WriteTimeout != writeTimeoutOrDefault(0) {
 			t.Fatalf("listener %s lost H1/H2C or request envelope", server.Addr)
 		}
-		for _, authorized := range []bool{false, true} {
-			request, err := http.NewRequest(http.MethodGet, "http://"+addresses[server.Addr]+"/orders", nil)
-			if err != nil {
-				t.Fatal(err)
+		for _, protocol := range []string{"h1", "h2c"} {
+			transport := &http2.Transport{AllowHTTP: true, DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, network, addr)
+			}}
+			t.Cleanup(transport.CloseIdleConnections)
+			client := http.DefaultClient
+			if protocol == "h2c" {
+				client = &http.Client{Transport: transport}
 			}
-			request.Host = "orders.svc.gregale"
-			if authorized {
-				request.Header.Set("X-Test-Identity", "allowed")
-			}
-			response, err := http.DefaultClient.Do(request)
-			if err != nil {
-				t.Fatal(err)
-			}
-			body, err := io.ReadAll(response.Body)
-			_ = response.Body.Close()
-			if err != nil {
-				t.Fatal(err)
-			}
-			want := http.StatusForbidden
-			if authorized {
-				want = http.StatusOK
-				if string(body) != "orders.svc.gregale /orders" {
-					t.Fatalf("listener rewrote request: %s", body)
+			for _, authorized := range []bool{false, true} {
+				request, err := http.NewRequest(http.MethodGet, "http://"+addresses[server.Addr]+"/orders", nil)
+				if err != nil {
+					t.Fatal(err)
 				}
-			}
-			if response.StatusCode != want {
-				t.Fatalf("%s authorized=%v: status=%d, want %d", server.Addr, authorized, response.StatusCode, want)
+				request.Host = "orders.svc.gregale"
+				if authorized {
+					request.Header.Set("X-Test-Identity", "allowed")
+				}
+				response, err := client.Do(request)
+				if err != nil {
+					t.Fatal(err)
+				}
+				wantMajor := 1
+				if protocol == "h2c" {
+					wantMajor = 2
+				}
+				if response.ProtoMajor != wantMajor {
+					_ = response.Body.Close()
+					t.Fatalf("%s %s protocol = %s", server.Addr, protocol, response.Proto)
+				}
+				body, err := io.ReadAll(response.Body)
+				_ = response.Body.Close()
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := http.StatusForbidden
+				if authorized {
+					want = http.StatusOK
+					if string(body) != "orders.svc.gregale /orders" {
+						t.Fatalf("listener rewrote request: %s", body)
+					}
+				}
+				if response.StatusCode != want {
+					t.Fatalf("%s authorized=%v: status=%d, want %d", server.Addr, authorized, response.StatusCode, want)
+				}
 			}
 		}
 	}
