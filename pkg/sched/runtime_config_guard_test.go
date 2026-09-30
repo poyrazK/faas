@@ -159,6 +159,10 @@ func (changeLookupFailingStore) AppRuntimeConfigChangedAt(context.Context, strin
 	return time.Time{}, false, errors.New("database unavailable")
 }
 
+func (changeLookupFailingStore) AppRuntimeConfigChangedAtInScope(context.Context, string, string) (time.Time, bool, error) {
+	return time.Time{}, false, errors.New("database unavailable")
+}
+
 // A failed stamp read must skip the capture: a missed snapshot costs one
 // cold boot, a stale one keeps a credential the customer replaced.
 func TestPark_RuntimeConfigLookupFailureSkipsCapture(t *testing.T) {

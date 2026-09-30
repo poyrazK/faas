@@ -135,7 +135,7 @@ func (s *PgStore) ReconcileEnvironmentGitOpsRuntime(ctx context.Context, lease E
 	if err != nil {
 		return EnvironmentGitOpsRuntimeProgress{}, mapErr(err)
 	}
-	if err := q.InvalidateEnvironmentGitOpsRuntimeAtBoundary(ctx, tx, sqlc.InvalidateEnvironmentGitOpsRuntimeAtBoundaryParams{AppID: effect.AppID, RequiredAt: effect.RequiredAt}); err != nil {
+	if err := q.InvalidateEnvironmentGitOpsRuntimeAtBoundary(ctx, tx, sqlc.InvalidateEnvironmentGitOpsRuntimeAtBoundaryParams{AppID: effect.AppID, Scope: effect.EnvironmentSlug, RequiredAt: effect.RequiredAt}); err != nil {
 		return EnvironmentGitOpsRuntimeProgress{}, mapErr(err)
 	}
 	targets, err := readGitOpsRuntime(ctx, tx, lease.Source)
@@ -161,7 +161,7 @@ func (s *PgStore) ReconcileEnvironmentGitOpsRuntime(ctx context.Context, lease E
 		// Publish the advanced boundary before handing off its new wake ID.
 		// Otherwise schedd could consider an older refresh sufficient and
 		// suppress every replay of this request as already completed.
-		if err := q.InvalidateEnvironmentGitOpsRuntimeAtBoundary(ctx, tx, sqlc.InvalidateEnvironmentGitOpsRuntimeAtBoundaryParams{AppID: effect.AppID, RequiredAt: effect.RequiredAt}); err != nil {
+		if err := q.InvalidateEnvironmentGitOpsRuntimeAtBoundary(ctx, tx, sqlc.InvalidateEnvironmentGitOpsRuntimeAtBoundaryParams{AppID: effect.AppID, Scope: effect.EnvironmentSlug, RequiredAt: effect.RequiredAt}); err != nil {
 			return EnvironmentGitOpsRuntimeProgress{}, mapErr(err)
 		}
 		targets, err = readGitOpsRuntime(ctx, tx, lease.Source)

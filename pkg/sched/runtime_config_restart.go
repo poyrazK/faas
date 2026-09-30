@@ -82,7 +82,13 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 	}
 	maxConcurrency := effectiveMaxConcurrency(app, limits)
 
-	changedAt, stamped, err := e.store.AppRuntimeConfigChangedAt(ctx, appID)
+	readBoundary := func() (time.Time, bool, error) {
+		if refreshScope != "" {
+			return state.RuntimeConfigChangedAtForScope(ctx, e.store, appID, refreshScope)
+		}
+		return e.store.AppRuntimeConfigChangedAt(ctx, appID)
+	}
+	changedAt, stamped, err := readBoundary()
 	if err != nil {
 		return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: read change stamp for %s: %w", appID, err)
 	}
@@ -93,7 +99,7 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 		if _, err := state.InvalidateAppSnapshots(ctx, e.store, appID); err != nil {
 			return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: invalidate snapshots for %s: %w", appID, err)
 		}
-		changedAt, stamped, err = e.store.AppRuntimeConfigChangedAt(ctx, appID)
+		changedAt, stamped, err = readBoundary()
 		if err != nil || !stamped {
 			return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: load change stamp for %s: %w", appID, err)
 		}

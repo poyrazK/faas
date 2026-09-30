@@ -98,7 +98,7 @@ func (l *Loop) recoverPrimeCandidate(ctx context.Context, deploymentID string, c
 	if err != nil {
 		return err
 	}
-	changedAt, changed, err := l.engine.store.AppRuntimeConfigChangedAt(ctx, app.ID)
+	changedAt, changed, err := state.RuntimeConfigChangedAtForScope(ctx, l.engine.store, app.ID, dep.Scope)
 	if err != nil {
 		return err
 	}

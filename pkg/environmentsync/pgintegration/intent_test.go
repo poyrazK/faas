@@ -96,7 +96,7 @@ func TestRealEnvironmentGitOpsAdoptionAndEnforcement(t *testing.T) {
 			t.Fatalf("unreviewed owned mutation: %v", err)
 		}
 		deployment, err := store.CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage,
-			ImageDigest: "sha256:" + strings.Repeat("c", 64), Status: state.DeployLive})
+			ImageDigest: "sha256:" + strings.Repeat("c", 64), Status: state.DeployLive, Scope: "production"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -116,7 +116,7 @@ func TestRealEnvironmentGitOpsAdoptionAndEnforcement(t *testing.T) {
 		if _, err := store.LatestSnapshot(t.Context(), deployment.ID); !errors.Is(err, state.ErrNotFound) {
 			t.Fatalf("old runtime cache remained restorable: %v", err)
 		}
-		if stamp, exists, err := store.AppRuntimeConfigChangedAt(t.Context(), app.ID); err != nil || !exists || stamp.IsZero() {
+		if stamp, exists, err := state.RuntimeConfigChangedAtForScope(t.Context(), store, app.ID, "production"); err != nil || !exists || stamp.IsZero() {
 			t.Fatalf("runtime freshness stamp: %v %v %v", stamp, exists, err)
 		}
 		routes, err := store.GetProjectEnvironmentRoutePolicy(t.Context(), source.AccountID, app.ID, "production")

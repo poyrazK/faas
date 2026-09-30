@@ -407,6 +407,27 @@ func (q *Queries) AppBySlug(ctx context.Context, db DBTX, slug string) (AppBySlu
 	return i, err
 }
 
+const appRuntimeConfigChangedAtInScope = `-- name: AppRuntimeConfigChangedAtInScope :one
+SELECT max(boundary.changed_at)::timestamptz AS changed_at FROM (
+    SELECT changed_at FROM app_runtime_config_changes WHERE app_id = $1::uuid
+    UNION ALL
+    SELECT changed_at FROM app_runtime_config_scope_changes WHERE app_id = $1::uuid
+        AND scope IN ('default', $2::text)
+) AS boundary
+`
+
+type AppRuntimeConfigChangedAtInScopeParams struct {
+	AppID pgtype.UUID
+	Scope string
+}
+
+func (q *Queries) AppRuntimeConfigChangedAtInScope(ctx context.Context, db DBTX, arg AppRuntimeConfigChangedAtInScopeParams) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, appRuntimeConfigChangedAtInScope, arg.AppID, arg.Scope)
+	var changed_at pgtype.Timestamptz
+	err := row.Scan(&changed_at)
+	return changed_at, err
+}
+
 const appendAccountCreditLedgerEntry = `-- name: AppendAccountCreditLedgerEntry :exec
 INSERT INTO credit_ledger (account_id, credit_id, delta_cents, reason, actor, provider, provider_invoice_id)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -5670,7 +5691,9 @@ const insertEnvironmentGitOpsRuntimeEffect = `-- name: InsertEnvironmentGitOpsRu
 INSERT INTO environment_gitops_runtime_effects(source_id, revision_id, generation, intent_version, plan_hash,
     app_id, environment_slug, required_at)
 SELECT s.id, $1::uuid, s.generation, s.intent_version, $2::text,
-    $3::uuid, e.slug, greatest(coalesce(c.changed_at, 'epoch'::timestamptz), $4::timestamptz)
+    $3::uuid, e.slug, greatest(coalesce(c.changed_at, 'epoch'::timestamptz), $4::timestamptz,
+        coalesce((SELECT max(x.changed_at) FROM app_runtime_config_scope_changes x
+            WHERE x.app_id = $3::uuid AND x.scope IN ('default', e.slug)), 'epoch'::timestamptz))
 FROM environment_git_sources s JOIN project_environments e ON e.id = s.environment_id
 LEFT JOIN app_runtime_config_changes c ON c.app_id = $3::uuid
 WHERE s.id = $5::uuid
@@ -6115,38 +6138,50 @@ func (q *Queries) InstanceListByNodeForRecovery(ctx context.Context, db DBTX, no
 
 const invalidateEnvironmentGitOpsRuntimeAtBoundary = `-- name: InvalidateEnvironmentGitOpsRuntimeAtBoundary :exec
 WITH stamped AS (
-    INSERT INTO app_runtime_config_changes(app_id, changed_at)
-    VALUES ($1::uuid, $2::timestamptz)
-    ON CONFLICT (app_id) DO UPDATE SET changed_at = greatest(app_runtime_config_changes.changed_at, excluded.changed_at)
-    RETURNING app_id, changed_at
+    INSERT INTO app_runtime_config_scope_changes(app_id, scope, changed_at)
+    VALUES ($1::uuid, $2::text, $3::timestamptz)
+    ON CONFLICT (app_id, scope) DO UPDATE SET changed_at = greatest(app_runtime_config_scope_changes.changed_at, excluded.changed_at)
+    RETURNING app_id, scope, changed_at
 )
 UPDATE snapshots p SET stale = true FROM deployments d, stamped c
-WHERE p.deployment_id = d.id AND d.app_id = c.app_id AND p.created_at <= c.changed_at AND NOT p.stale
+WHERE p.deployment_id = d.id AND d.app_id = c.app_id AND d.scope = c.scope
+AND p.created_at <= c.changed_at AND NOT p.stale
 `
 
 type InvalidateEnvironmentGitOpsRuntimeAtBoundaryParams struct {
 	AppID      pgtype.UUID
+	Scope      string
 	RequiredAt pgtype.Timestamptz
 }
 
 func (q *Queries) InvalidateEnvironmentGitOpsRuntimeAtBoundary(ctx context.Context, db DBTX, arg InvalidateEnvironmentGitOpsRuntimeAtBoundaryParams) error {
-	_, err := db.Exec(ctx, invalidateEnvironmentGitOpsRuntimeAtBoundary, arg.AppID, arg.RequiredAt)
+	_, err := db.Exec(ctx, invalidateEnvironmentGitOpsRuntimeAtBoundary, arg.AppID, arg.Scope, arg.RequiredAt)
 	return err
 }
 
-const invalidateEnvironmentGitOpsRuntimeConfig = `-- name: InvalidateEnvironmentGitOpsRuntimeConfig :exec
+const invalidateEnvironmentGitOpsRuntimeConfig = `-- name: InvalidateEnvironmentGitOpsRuntimeConfig :execrows
 WITH stamped AS (
-    INSERT INTO app_runtime_config_changes(app_id, changed_at)
-    VALUES ($1::uuid, clock_timestamp())
-    ON CONFLICT (app_id) DO UPDATE SET changed_at = excluded.changed_at RETURNING app_id
+    INSERT INTO app_runtime_config_scope_changes(app_id, scope, changed_at)
+    VALUES ($1::uuid, $2::text, clock_timestamp())
+    ON CONFLICT (app_id, scope) DO UPDATE SET changed_at = greatest(app_runtime_config_scope_changes.changed_at, excluded.changed_at)
+    RETURNING app_id, scope, changed_at
 )
 UPDATE snapshots SET stale = true FROM deployments d, stamped
-WHERE snapshots.deployment_id = d.id AND d.app_id = stamped.app_id AND NOT snapshots.stale
+WHERE snapshots.deployment_id = d.id AND d.app_id = stamped.app_id AND d.scope = stamped.scope
+AND snapshots.created_at <= stamped.changed_at AND NOT snapshots.stale
 `
 
-func (q *Queries) InvalidateEnvironmentGitOpsRuntimeConfig(ctx context.Context, db DBTX, appID pgtype.UUID) error {
-	_, err := db.Exec(ctx, invalidateEnvironmentGitOpsRuntimeConfig, appID)
-	return err
+type InvalidateEnvironmentGitOpsRuntimeConfigParams struct {
+	AppID pgtype.UUID
+	Scope string
+}
+
+func (q *Queries) InvalidateEnvironmentGitOpsRuntimeConfig(ctx context.Context, db DBTX, arg InvalidateEnvironmentGitOpsRuntimeConfigParams) (int64, error) {
+	result, err := db.Exec(ctx, invalidateEnvironmentGitOpsRuntimeConfig, arg.AppID, arg.Scope)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const isMailSuppressed = `-- name: IsMailSuppressed :one
@@ -11000,6 +11035,23 @@ func (q *Queries) LockInvoiceForRefund(ctx context.Context, db DBTX, id pgtype.U
 		&i.AmountRefundPendingCents,
 		&i.CreditsAppliedCents,
 	)
+	return i, err
+}
+
+const lockSnapshotRuntimePublicationScope = `-- name: LockSnapshotRuntimePublicationScope :one
+SELECT a.id AS app_id, d.scope FROM apps a JOIN deployments d ON d.app_id = a.id
+WHERE d.id = $1::uuid FOR UPDATE OF a
+`
+
+type LockSnapshotRuntimePublicationScopeRow struct {
+	AppID pgtype.UUID
+	Scope string
+}
+
+func (q *Queries) LockSnapshotRuntimePublicationScope(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (LockSnapshotRuntimePublicationScopeRow, error) {
+	row := db.QueryRow(ctx, lockSnapshotRuntimePublicationScope, deploymentID)
+	var i LockSnapshotRuntimePublicationScopeRow
+	err := row.Scan(&i.AppID, &i.Scope)
 	return i, err
 }
 

@@ -152,7 +152,8 @@ type MemStore struct {
 	snapshotRestoreLeaseMu    sync.Mutex
 	snapshotRestoreLeases     map[string]snapshotRestorePressureLease
 	// runtimeConfigChangedAt mirrors app_runtime_config_changes (issue #3360).
-	runtimeConfigChangedAt map[string]time.Time
+	runtimeConfigChangedAt            map[string]time.Time
+	environmentRuntimeConfigChangedAt map[environmentRuntimeKey]time.Time
 	// serviceCallerKeys mirrors service_caller_keys: one published
 	// public key per node (ADR-206). Rotated keys remain trusted only for
 	// the assertion maximum TTL so requests already in flight can finish.
@@ -14224,7 +14225,7 @@ func (m *MemStore) PublishSnapshotIfRuntimeFresh(_ context.Context, snap Snapsho
 	if !ok {
 		return Snapshot{}, ErrNotFound
 	}
-	changedAt, changed := m.runtimeConfigChangedAt[dep.AppID]
+	changedAt, changed := m.environmentRuntimeChangedAtLocked(dep.AppID, dep.Scope)
 	if sourceInstanceID == "" {
 		if changed {
 			return Snapshot{}, ErrSnapshotRuntimeStale

@@ -4089,6 +4089,19 @@ CREATE TABLE public.app_runtime_config_changes (
 
 
 --
+-- Name: app_runtime_config_scope_changes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_runtime_config_scope_changes (
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    changed_at timestamp with time zone NOT NULL,
+    CONSTRAINT app_runtime_config_scope_changes_changed_at_check CHECK ((changed_at >= '1970-01-01 02:00:00+02'::timestamp with time zone)),
+    CONSTRAINT app_runtime_config_scope_changes_scope_check CHECK (((scope <> ''::text) AND (length(scope) <= 64)))
+);
+
+
+--
 -- Name: app_scaling_policy_scheduler_status; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -6300,7 +6313,9 @@ CREATE VIEW public.environment_gitops_runtime_targets AS
             t.environment_slug,
             GREATEST(COALESCE(( SELECT c.changed_at
                    FROM public.app_runtime_config_changes c
-                  WHERE (c.app_id = t.app_id)), '1970-01-01 02:00:00+02'::timestamp with time zone), COALESCE(( SELECT max(v.updated_at) AS max
+                  WHERE (c.app_id = t.app_id)), '1970-01-01 02:00:00+02'::timestamp with time zone), COALESCE(( SELECT max(c.changed_at) AS max
+                   FROM public.app_runtime_config_scope_changes c
+                  WHERE ((c.app_id = t.app_id) AND (c.scope = ANY (ARRAY['default'::text, t.environment_slug])))), '1970-01-01 02:00:00+02'::timestamp with time zone), COALESCE(( SELECT max(v.updated_at) AS max
                    FROM (public.app_envs v
                      JOIN public.environment_managed_fields f ON (((f.source_id = t.source_id) AND (f.resource = t.resource) AND (f.field_path = ('variables/'::text || v.key)))))
                   WHERE ((v.app_id = t.app_id) AND (v.scope = t.environment_slug))), '1970-01-01 02:00:00+02'::timestamp with time zone), COALESCE(( SELECT max(x.required_at) AS max
@@ -11562,6 +11577,14 @@ ALTER TABLE ONLY public.app_registry_credentials
 
 ALTER TABLE ONLY public.app_runtime_config_changes
     ADD CONSTRAINT app_runtime_config_changes_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: app_runtime_config_scope_changes app_runtime_config_scope_changes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_runtime_config_scope_changes
+    ADD CONSTRAINT app_runtime_config_scope_changes_pkey PRIMARY KEY (app_id, scope);
 
 
 --
@@ -19209,6 +19232,13 @@ CREATE TRIGGER app_runtime_config_change_lock_app BEFORE INSERT OR UPDATE ON pub
 
 
 --
+-- Name: app_runtime_config_scope_changes app_runtime_config_scope_change_lock_app; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_config_scope_change_lock_app BEFORE INSERT OR UPDATE ON public.app_runtime_config_scope_changes FOR EACH ROW EXECUTE FUNCTION public.app_runtime_config_change_lock_app();
+
+
+--
 -- Name: app_secrets app_secret_managed_postgres_owner_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -20558,6 +20588,14 @@ ALTER TABLE ONLY public.app_registry_credentials
 
 ALTER TABLE ONLY public.app_runtime_config_changes
     ADD CONSTRAINT app_runtime_config_changes_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_runtime_config_scope_changes app_runtime_config_scope_changes_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_runtime_config_scope_changes
+    ADD CONSTRAINT app_runtime_config_scope_changes_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

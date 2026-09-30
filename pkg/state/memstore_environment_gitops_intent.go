@@ -329,16 +329,7 @@ func (m *MemStore) applyEnvironmentGitOps(_ context.Context, lease EnvironmentGi
 		key := projectEnvironmentRoutePolicyKey(appID, source.EnvironmentSlug)
 		switch {
 		case strings.HasPrefix(change.Path, "variables/"):
-			if m.runtimeConfigChangedAt == nil {
-				m.runtimeConfigChangedAt = map[string]time.Time{}
-			}
-			m.runtimeConfigChangedAt[appID] = now
-			for id, snapshot := range m.snapshots {
-				if m.deployments[snapshot.DeploymentID].AppID == appID {
-					snapshot.Stale = true
-					m.snapshots[id] = snapshot
-				}
-			}
+			m.markEnvironmentRuntimeChangedAndSnapshotsLocked(appID, source.EnvironmentSlug, now)
 			variableKey := envKey{AppID: appID, Scope: source.EnvironmentSlug, Key: strings.TrimPrefix(change.Path, "variables/")}
 			if change.Action == "remove" {
 				delete(m.envs, variableKey)
@@ -395,7 +386,8 @@ func (m *MemStore) applyEnvironmentGitOps(_ context.Context, lease EnvironmentGi
 	}
 	if requireEffects {
 		for _, appID := range gitOpsChangedVariableApps(plan, observed.State.ResourceIDs) {
-			m.insertGitOpsRuntimeEffectLocked(memory, lease, plan, appID, m.runtimeConfigChangedAt[appID])
+			boundary, _ := m.environmentRuntimeChangedAtLocked(appID, source.EnvironmentSlug)
+			m.insertGitOpsRuntimeEffectLocked(memory, lease, plan, appID, boundary)
 		}
 	}
 	run := memory.runs[lease.RunID]

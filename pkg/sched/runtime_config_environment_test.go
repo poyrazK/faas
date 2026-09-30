@@ -46,7 +46,7 @@ func TestRefreshRuntimeConfigForEnvironmentPreservesNeighborsAndIdleDeployments(
 	if err := store.UpsertAppEnvInScope(t.Context(), account.ID, app.ID, "production", "MODE", "approved"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := state.InvalidateAppSnapshots(t.Context(), store, app.ID); err != nil {
+	if _, err := state.InvalidateAppSnapshotsInScope(t.Context(), store, app.ID, "production"); err != nil {
 		t.Fatal(err)
 	}
 	vmm.coldBootHook = func() {

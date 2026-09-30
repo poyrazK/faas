@@ -20,7 +20,7 @@ func (m *MemStore) gitOpsRuntimeTargetsLocked(memory *environmentGitOpsMemory) [
 		}
 		needed := false
 		required := time.Unix(0, 0).UTC()
-		if at := m.runtimeConfigChangedAt[appID]; at.After(required) {
+		if at, _ := m.environmentRuntimeChangedAtLocked(appID, memory.source.EnvironmentSlug); at.After(required) {
 			required = at
 		}
 		for _, owner := range memory.owners {
@@ -183,19 +183,7 @@ func (m *MemStore) ReconcileEnvironmentGitOpsRuntime(_ context.Context, lease En
 	if !exists || effect.CompletedAt != nil {
 		return EnvironmentGitOpsRuntimeProgress{}, ErrConflict
 	}
-	if m.runtimeConfigChangedAt == nil {
-		m.runtimeConfigChangedAt = map[string]time.Time{}
-	}
-	if effect.RequiredAt.After(m.runtimeConfigChangedAt[effect.AppID]) {
-		m.runtimeConfigChangedAt[effect.AppID] = effect.RequiredAt
-	}
-	boundary := m.runtimeConfigChangedAt[effect.AppID]
-	for key, snapshot := range m.snapshots {
-		if m.deployments[snapshot.DeploymentID].AppID == effect.AppID && !snapshot.CreatedAt.After(boundary) {
-			snapshot.Stale = true
-			m.snapshots[key] = snapshot
-		}
-	}
+	m.markEnvironmentRuntimeChangedAndSnapshotsLocked(effect.AppID, effect.Environment, effect.RequiredAt)
 	var target *EnvironmentGitOpsRuntimeTarget
 	targets := m.gitOpsRuntimeTargetsLocked(memory)
 	for i := range targets {
@@ -209,13 +197,7 @@ func (m *MemStore) ReconcileEnvironmentGitOpsRuntime(_ context.Context, lease En
 	}
 	if target.RequiredAt.After(effect.RequiredAt) {
 		effect.RequiredAt, effect.WakeID, effect.RequestedAt, effect.NextRequestAt = target.RequiredAt, newID(), nil, time.Now()
-		m.runtimeConfigChangedAt[effect.AppID] = target.RequiredAt
-		for key, snapshot := range m.snapshots {
-			if m.deployments[snapshot.DeploymentID].AppID == effect.AppID && !snapshot.CreatedAt.After(target.RequiredAt) {
-				snapshot.Stale = true
-				m.snapshots[key] = snapshot
-			}
-		}
+		m.markEnvironmentRuntimeChangedAndSnapshotsLocked(effect.AppID, effect.Environment, target.RequiredAt)
 		// The pending effect must carry the new boundary while re-observing.
 		memory.runtime[id] = effect
 		targets = m.gitOpsRuntimeTargetsLocked(memory)

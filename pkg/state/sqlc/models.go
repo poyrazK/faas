@@ -609,6 +609,12 @@ type AppRuntimeConfigChange struct {
 	ChangedAt pgtype.Timestamptz
 }
 
+type AppRuntimeConfigScopeChange struct {
+	AppID     pgtype.UUID
+	Scope     string
+	ChangedAt pgtype.Timestamptz
+}
+
 type AppScalingPolicySchedulerStatus struct {
 	AppID            pgtype.UUID
 	SchedulerNodeID  pgtype.UUID

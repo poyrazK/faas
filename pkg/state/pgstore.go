@@ -17438,15 +17438,14 @@ func (s *PgStore) PublishSnapshotIfRuntimeFresh(ctx context.Context, snap Snapsh
 		return Snapshot{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var appID string
-	err = tx.QueryRow(ctx, `select a.id::text from apps a join deployments d on d.app_id = a.id
-		where d.id = $1 for update of a`, snap.DeploymentID).Scan(&appID)
+	scope, err := sqlc.New().LockSnapshotRuntimePublicationScope(ctx, tx, mustPgUUID(snap.DeploymentID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Snapshot{}, ErrNotFound
 	}
 	if err != nil {
 		return Snapshot{}, err
 	}
+	appID := pgUUIDString(scope.AppID)
 	var currentStartedAt *time.Time
 	if sourceInstanceID != "" {
 		var sourceAppID, sourceDeploymentID string
@@ -17463,12 +17462,11 @@ func (s *PgStore) PublishSnapshotIfRuntimeFresh(ctx context.Context, snap Snapsh
 			return Snapshot{}, ErrSnapshotRuntimeStale
 		}
 	}
-	var changedAt time.Time
-	err = tx.QueryRow(ctx, `select changed_at from app_runtime_config_changes where app_id = $1`, appID).Scan(&changedAt)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	changedAt, changed, err := readEnvironmentRuntimeChangedAt(ctx, tx, appID, scope.Scope)
+	if err != nil {
 		return Snapshot{}, err
 	}
-	if err == nil && !sourceStartedAt.After(changedAt) {
+	if changed && !sourceStartedAt.After(changedAt) {
 		return Snapshot{}, ErrSnapshotRuntimeStale
 	}
 	stored, err := createSnapshotWithQuerier(ctx, tx, snap)

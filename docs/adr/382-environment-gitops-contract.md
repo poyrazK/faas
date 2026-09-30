@@ -136,11 +136,24 @@ tests require runtime readiness after intent and fleet success, including
 recovery in a fresh controller. Scheduler tests drive the scoped event decoder
 and assert fresh capacity before retirement and zero stale snapshot captures.
 These checks use a VM transport fixture; native runtime acceptance remains open.
-The existing runtime freshness stamp and snapshot invalidation remain
-application-wide. Scoped scheduler requests preserve neighboring resident VMs,
-but an application-wide stamp can conservatively require another managed
-environment to refresh later. Separating scoped variable boundaries from
-application-shared credential changes remains part of the scope audit.
+Named environment variable changes now carry independent freshness stamps and
+invalidate only that environment's snapshots. Default variable overlays and
+application-shared credential changes retain a shared boundary. Snapshot
+publication serializes with both kinds of stamp through the application row;
+the scheduler consults the combined shared/scoped boundary before capture,
+recovery, and refresh. Ordinary scoped variable edits use the same invalidation
+contract. PostgreSQL checks cover two managed environments on one application,
+delayed warm captures, and a publication waiting behind an uncommitted scoped
+stamp. Shared memory/PostgreSQL conformance checks cover the same isolation and
+default-overlay behavior.
+
+Instance start time remains an indirect runtime freshness signal. A boot can
+read old inputs while a configuration transaction is uncommitted even if its
+instance row was created after the transaction's timestamp. Before runtime
+convergence is a launch claim, schedd must persist an acknowledgement tied to
+the committed boot inputs and carry that evidence through snapshot publication
+and restore; native tests must prove the guest used those inputs. Start times
+and scheduler notification success alone are insufficient evidence.
 
 The remaining full feature gates include source polling and protected-branch
 approval evidence; environment-scoped workload creation, source/runtime,

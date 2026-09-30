@@ -1,6 +1,7 @@
 package pgintegration_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -8,6 +9,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
@@ -205,14 +208,14 @@ func TestEnvironmentGitOpsRuntimeDurableOutboxAndAdvancedBoundary(t *testing.T) 
 	if err := store.UpsertAppEnvInScope(t.Context(), lease.Source.AccountID, app.ID, "production", "MODE", "production"); err != nil {
 		t.Fatal(err)
 	}
-	before, _, err := store.AppRuntimeConfigChangedAt(t.Context(), app.ID)
+	before, _, err := store.AppRuntimeConfigChangedAtInScope(t.Context(), app.ID, "production")
 	if err != nil || !before.Equal(effect.RequiredAt) {
 		t.Fatal("fixture advanced the scheduler stamp before runtime reconciliation", err)
 	}
 	if _, err := store.ReconcileEnvironmentGitOpsRuntime(t.Context(), lease, effect.ID); err != nil {
 		t.Fatal(err)
 	}
-	stamp, exists, err := store.AppRuntimeConfigChangedAt(t.Context(), app.ID)
+	stamp, exists, err := store.AppRuntimeConfigChangedAtInScope(t.Context(), app.ID, "production")
 	if err != nil || !exists || !stamp.After(effect.RequiredAt) {
 		t.Fatal("runtime reconciliation did not publish the committed variable boundary", err)
 	}
@@ -283,4 +286,167 @@ func TestEnvironmentGitOpsRuntimeEqualIntentStillRepairsStaleResidents(t *testin
 			t.Fatalf("equal intent skipped effective runtime drift: %+v %v", pending, err)
 		}
 	})
+}
+
+func TestEnvironmentGitOpsScopedFreshnessPreservesNeighborManagedEnvironment(t *testing.T) {
+	stores(t, func(t *testing.T, basic gitOpsTestStore) {
+		store := basic.(intentTestStore)
+		production, desired, app := intentFixture(t, store, "enforce")
+		if _, err := store.CreateProjectEnvironment(t.Context(), state.ProjectEnvironment{
+			AccountID: production.AccountID, ProjectID: production.ProjectID, Slug: "staging"}); err != nil {
+			t.Fatal(err)
+		}
+		staging, err := store.CreateEnvironmentGitSource(t.Context(), production.AccountID, production.ProjectID, "staging",
+			state.EnvironmentGitSourceSpec{RepositoryID: 123, InstallationID: 42, Repository: "example/shop", Ref: "refs/heads/main",
+				ManifestPath: "environments/staging.yaml", Mode: "enforce", ApprovalPolicy: "manual"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		stageDesired, err := environmentsync.Compile(api.EnvironmentDefinition{APIVersion: environmentsync.APIVersion,
+			Project: "shop", Environment: "staging", Workloads: map[string]api.EnvironmentWorkload{
+				"api": {App: app.Slug, Variables: map[string]string{"MODE": "staging"}},
+			}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		staging, _, err = store.ApproveEnvironmentDesiredRevision(t.Context(), approval(staging, stageDesired, strings.Repeat("b", 40)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, source := range []state.EnvironmentGitSource{production, staging} {
+			preview, err := store.PreviewEnvironmentGitOpsAdoption(t.Context(), source.AccountID, source.ID)
+			if err != nil || !preview.CanApply() {
+				t.Fatalf("adoption: %+v %v", preview, err)
+			}
+			if err := store.AdoptEnvironmentGitOps(t.Context(), source.AccountID, source.ID, preview.Hash); err != nil {
+				t.Fatal(err)
+			}
+		}
+		deployments := map[string]state.Deployment{}
+		instances := map[string]state.Instance{}
+		for _, scope := range []string{"production", "staging"} {
+			deployment, err := store.CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, Scope: scope,
+				Kind: state.DeploymentKindImage, ImageDigest: "sha256:" + strings.Repeat("c", 64), Status: state.DeployLive})
+			if err != nil {
+				t.Fatal(err)
+			}
+			deployments[scope] = deployment
+			instances[scope] = runtimeInstance(t, store, app, deployment, state.StateRunning)
+			if _, err := store.CreateSnapshot(t.Context(), state.Snapshot{DeploymentID: deployment.ID, FCVersion: "1.13.0", StorageKey: state.SnapMemKey(deployment.ID)}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		leases := map[string]state.EnvironmentGitOpsLease{}
+		for range 2 {
+			lease, err := store.ClaimEnvironmentGitOps(t.Context(), uuid.NewString(), time.Now(), time.Minute)
+			if err != nil {
+				t.Fatal(err)
+			}
+			leases[lease.Source.EnvironmentSlug] = lease
+		}
+		prodLease := leases["production"]
+		if _, err := store.ApplyEnvironmentGitOps(t.Context(), prodLease, claimedIntentPlan(t, store, prodLease, desired)); err != nil {
+			t.Fatal(err)
+		}
+		if _, shared, err := store.AppRuntimeConfigChangedAt(t.Context(), app.ID); err != nil || shared {
+			t.Fatalf("scoped variables advanced a shared-credential boundary: %v %v", shared, err)
+		}
+		runtime := basic.(state.EnvironmentGitOpsRuntimeStore)
+		stageTargets, err := runtime.ObserveEnvironmentGitOpsRuntime(t.Context(), leases["staging"])
+		if err != nil || len(stageTargets) != 1 || !stageTargets[0].Ready() {
+			t.Fatalf("production changed neighboring GitOps runtime: %+v %v", stageTargets, err)
+		}
+		if _, err := store.LatestSnapshot(t.Context(), deployments["staging"].ID); err != nil {
+			t.Fatalf("production invalidated staging cache: %v", err)
+		}
+		publish := func(scope string) error {
+			instance, deployment := instances[scope], deployments[scope]
+			_, err := store.PublishSnapshotIfRuntimeFresh(t.Context(), state.Snapshot{DeploymentID: deployment.ID,
+				FCVersion: "1.13.0", StorageKey: state.SnapshotCaptureMemKey(deployment.ID, state.SnapshotTierWarm, uuid.NewString()), Tier: state.SnapshotTierWarm}, instance.ID, instance.StartedAt)
+			return err
+		}
+		if err := publish("staging"); err != nil {
+			t.Fatalf("unchanged neighboring guest could not publish a fresh cache: %v", err)
+		}
+		if err := publish("production"); !errors.Is(err, state.ErrSnapshotRuntimeStale) {
+			t.Fatalf("late capture from old production guest was accepted: %v", err)
+		}
+		// A shared credential still invalidates both environments and rejects
+		// late captures, even though their scoped variable values are equal.
+		if _, err := state.InvalidateAppSnapshots(t.Context(), store, app.ID); err != nil {
+			t.Fatal(err)
+		}
+		stageTargets, err = runtime.ObserveEnvironmentGitOpsRuntime(t.Context(), leases["staging"])
+		if err != nil || len(stageTargets) != 1 || stageTargets[0].Ready() || !errors.Is(publish("staging"), state.ErrSnapshotRuntimeStale) {
+			t.Fatalf("shared credentials failed to invalidate affected environments: %+v %v", stageTargets, err)
+		}
+	})
+}
+
+func TestEnvironmentGitOpsScopedStampFencesConcurrentSnapshotPublication(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	if err := db.MigrateUp(t.Context(), pool); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewPgStore(pool)
+	_, _, _, app, deployment, _ := runtimeFixture(t, store, false)
+	instance := runtimeInstance(t, store, app, deployment, state.StateRunning)
+	writer, err := pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = writer.Rollback(t.Context()) }()
+	if _, err := writer.Exec(t.Context(), `INSERT INTO app_runtime_config_scope_changes(app_id, scope, changed_at)
+        VALUES ($1, 'production', clock_timestamp()) ON CONFLICT (app_id, scope)
+        DO UPDATE SET changed_at = excluded.changed_at`, app.ID); err != nil {
+		t.Fatal(err)
+	}
+	config := pool.Config().Copy()
+	name := "gitops-snapshot-" + uuid.NewString()
+	config.ConnConfig.RuntimeParams["application_name"] = name
+	reader, err := pgxpool.NewWithConfig(t.Context(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		_, err := state.NewPgStore(reader).PublishSnapshotIfRuntimeFresh(ctx, state.Snapshot{
+			DeploymentID: deployment.ID, FCVersion: "1.13.0", Tier: state.SnapshotTierWarm,
+			StorageKey: state.SnapshotCaptureMemKey(deployment.ID, state.SnapshotTierWarm, uuid.NewString()),
+		}, instance.ID, instance.StartedAt)
+		result <- err
+	}()
+	// Observe the database lock rather than treating a sleep or unreturned
+	// goroutine as proof that publication serialized with the pending stamp.
+	for {
+		var waiting bool
+		if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity
+            WHERE application_name = $1 AND wait_event_type = 'Lock')`, name).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			break
+		}
+		select {
+		case err := <-result:
+			t.Fatalf("publication bypassed the pending scope stamp: %v", err)
+		case <-ctx.Done():
+			t.Fatal("publication never reached the stamp lock", ctx.Err())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if err := writer.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-result:
+		if !errors.Is(err, state.ErrSnapshotRuntimeStale) {
+			t.Fatalf("publication accepted the old guest after the scoped stamp committed: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("publication did not recover after stamp commit", ctx.Err())
+	}
 }

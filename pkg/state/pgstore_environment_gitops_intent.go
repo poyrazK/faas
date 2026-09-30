@@ -480,7 +480,7 @@ func applyEnvironmentGitOpsScopedField(ctx context.Context, tx pgx.Tx, source En
 		key := strings.TrimPrefix(change.Path, "variables/")
 		// The freshness stamp and cache invalidation commit with the env value,
 		// so a crashed worker cannot leave a restorable cache with old variables.
-		if err := q.InvalidateEnvironmentGitOpsRuntimeConfig(ctx, tx, app); err != nil {
+		if _, err := q.InvalidateEnvironmentGitOpsRuntimeConfig(ctx, tx, sqlc.InvalidateEnvironmentGitOpsRuntimeConfigParams{AppID: app, Scope: source.EnvironmentSlug}); err != nil {
 			return err
 		}
 		if change.Action == "remove" {

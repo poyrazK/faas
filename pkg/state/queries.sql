@@ -5221,14 +5221,16 @@ AND o.resource = sqlc.arg(resource)::text AND o.field_path = sqlc.arg(field_path
 INSERT INTO environment_gitops_events(source_id, actor, kind, details)
 VALUES (sqlc.arg(source_id)::uuid, sqlc.arg(actor)::text, sqlc.arg(kind)::text, sqlc.arg(details)::jsonb);
 
--- name: InvalidateEnvironmentGitOpsRuntimeConfig :exec
+-- name: InvalidateEnvironmentGitOpsRuntimeConfig :execrows
 WITH stamped AS (
-    INSERT INTO app_runtime_config_changes(app_id, changed_at)
-    VALUES (sqlc.arg(app_id)::uuid, clock_timestamp())
-    ON CONFLICT (app_id) DO UPDATE SET changed_at = excluded.changed_at RETURNING app_id
+    INSERT INTO app_runtime_config_scope_changes(app_id, scope, changed_at)
+    VALUES (sqlc.arg(app_id)::uuid, sqlc.arg(scope)::text, clock_timestamp())
+    ON CONFLICT (app_id, scope) DO UPDATE SET changed_at = greatest(app_runtime_config_scope_changes.changed_at, excluded.changed_at)
+    RETURNING app_id, scope, changed_at
 )
 UPDATE snapshots SET stale = true FROM deployments d, stamped
-WHERE snapshots.deployment_id = d.id AND d.app_id = stamped.app_id AND NOT snapshots.stale;
+WHERE snapshots.deployment_id = d.id AND d.app_id = stamped.app_id AND d.scope = stamped.scope
+AND snapshots.created_at <= stamped.changed_at AND NOT snapshots.stale;
 
 -- name: InsertEnvironmentGitOpsEffect :exec
 INSERT INTO environment_gitops_effects(source_id, revision_id, generation, intent_version, plan_hash,
@@ -5278,7 +5280,9 @@ AND account_id = sqlc.arg(account_id)::uuid ORDER BY app_id;
 INSERT INTO environment_gitops_runtime_effects(source_id, revision_id, generation, intent_version, plan_hash,
     app_id, environment_slug, required_at)
 SELECT s.id, sqlc.arg(revision_id)::uuid, s.generation, s.intent_version, sqlc.arg(plan_hash)::text,
-    sqlc.arg(app_id)::uuid, e.slug, greatest(coalesce(c.changed_at, 'epoch'::timestamptz), sqlc.arg(required_at)::timestamptz)
+    sqlc.arg(app_id)::uuid, e.slug, greatest(coalesce(c.changed_at, 'epoch'::timestamptz), sqlc.arg(required_at)::timestamptz,
+        coalesce((SELECT max(x.changed_at) FROM app_runtime_config_scope_changes x
+            WHERE x.app_id = sqlc.arg(app_id)::uuid AND x.scope IN ('default', e.slug)), 'epoch'::timestamptz))
 FROM environment_git_sources s JOIN project_environments e ON e.id = s.environment_id
 LEFT JOIN app_runtime_config_changes c ON c.app_id = sqlc.arg(app_id)::uuid
 WHERE s.id = sqlc.arg(source_id)::uuid
@@ -5307,13 +5311,26 @@ AND completed_at IS NULL AND required_at < sqlc.arg(required_at)::timestamptz RE
 
 -- name: InvalidateEnvironmentGitOpsRuntimeAtBoundary :exec
 WITH stamped AS (
-    INSERT INTO app_runtime_config_changes(app_id, changed_at)
-    VALUES (sqlc.arg(app_id)::uuid, sqlc.arg(required_at)::timestamptz)
-    ON CONFLICT (app_id) DO UPDATE SET changed_at = greatest(app_runtime_config_changes.changed_at, excluded.changed_at)
-    RETURNING app_id, changed_at
+    INSERT INTO app_runtime_config_scope_changes(app_id, scope, changed_at)
+    VALUES (sqlc.arg(app_id)::uuid, sqlc.arg(scope)::text, sqlc.arg(required_at)::timestamptz)
+    ON CONFLICT (app_id, scope) DO UPDATE SET changed_at = greatest(app_runtime_config_scope_changes.changed_at, excluded.changed_at)
+    RETURNING app_id, scope, changed_at
 )
 UPDATE snapshots p SET stale = true FROM deployments d, stamped c
-WHERE p.deployment_id = d.id AND d.app_id = c.app_id AND p.created_at <= c.changed_at AND NOT p.stale;
+WHERE p.deployment_id = d.id AND d.app_id = c.app_id AND d.scope = c.scope
+AND p.created_at <= c.changed_at AND NOT p.stale;
+
+-- name: AppRuntimeConfigChangedAtInScope :one
+SELECT max(boundary.changed_at)::timestamptz AS changed_at FROM (
+    SELECT changed_at FROM app_runtime_config_changes WHERE app_id = sqlc.arg(app_id)::uuid
+    UNION ALL
+    SELECT changed_at FROM app_runtime_config_scope_changes WHERE app_id = sqlc.arg(app_id)::uuid
+        AND scope IN ('default', sqlc.arg(scope)::text)
+) AS boundary;
+
+-- name: LockSnapshotRuntimePublicationScope :one
+SELECT a.id AS app_id, d.scope FROM apps a JOIN deployments d ON d.app_id = a.id
+WHERE d.id = sqlc.arg(deployment_id)::uuid FOR UPDATE OF a;
 
 -- name: RequestEnvironmentGitOpsRuntimeRefresh :exec
 UPDATE environment_gitops_runtime_effects SET requested_at = now(), next_request_at = sqlc.arg(next_request_at)::timestamptz
