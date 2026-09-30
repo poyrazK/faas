@@ -4296,6 +4296,46 @@ CREATE TABLE public.app_work_policies (
 
 
 --
+-- Name: application_standard_log_destinations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.application_standard_log_destinations (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    org_id uuid NOT NULL,
+    name text NOT NULL,
+    kind text NOT NULL,
+    target_url text NOT NULL,
+    auth_header_sealed bytea DEFAULT '\x'::bytea NOT NULL,
+    config_hash text NOT NULL,
+    created_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT application_standard_log_destinations_auth_header_sealed_check CHECK ((octet_length(auth_header_sealed) <= 8192)),
+    CONSTRAINT application_standard_log_destinations_config_hash_check CHECK ((config_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT application_standard_log_destinations_kind_check CHECK ((kind = ANY (ARRAY['http_json'::text, 'otlp'::text]))),
+    CONSTRAINT application_standard_log_destinations_name_check CHECK (((octet_length(name) >= 1) AND (octet_length(name) <= 128))),
+    CONSTRAINT application_standard_log_destinations_target_url_check CHECK (((target_url ~~ 'https://%'::text) AND (octet_length(target_url) <= 2048)))
+);
+
+
+--
+-- Name: application_standard_publishers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.application_standard_publishers (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    org_id uuid NOT NULL,
+    name text NOT NULL,
+    public_key_der bytea NOT NULL,
+    fingerprint text NOT NULL,
+    created_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT application_standard_publishers_fingerprint_check CHECK ((fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT application_standard_publishers_name_check CHECK (((octet_length(name) >= 1) AND (octet_length(name) <= 128))),
+    CONSTRAINT application_standard_publishers_public_key_der_check CHECK (((octet_length(public_key_der) >= 64) AND (octet_length(public_key_der) <= 1024)))
+);
+
+
+--
 -- Name: application_standard_versions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -11162,6 +11202,38 @@ ALTER TABLE ONLY public.app_work_policies
 
 
 --
+-- Name: application_standard_log_destinations application_standard_log_destinations_org_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_destinations
+    ADD CONSTRAINT application_standard_log_destinations_org_id_id_key UNIQUE (org_id, id);
+
+
+--
+-- Name: application_standard_log_destinations application_standard_log_destinations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_destinations
+    ADD CONSTRAINT application_standard_log_destinations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: application_standard_publishers application_standard_publishers_org_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_publishers
+    ADD CONSTRAINT application_standard_publishers_org_id_id_key UNIQUE (org_id, id);
+
+
+--
+-- Name: application_standard_publishers application_standard_publishers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_publishers
+    ADD CONSTRAINT application_standard_publishers_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: application_standard_versions application_standard_versions_org_id_standard_id_version_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -14285,6 +14357,20 @@ CREATE UNIQUE INDEX app_webhooks_app_target_uniq ON public.app_webhooks USING bt
 --
 
 CREATE UNIQUE INDEX app_webhooks_platform_tenant_target_uniq ON public.app_webhooks USING btree (platform_tenant_id, target_url) WHERE (scope = 'platform_tenant'::text);
+
+
+--
+-- Name: application_standard_log_destinations_org_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX application_standard_log_destinations_org_idx ON public.application_standard_log_destinations USING btree (org_id, id);
+
+
+--
+-- Name: application_standard_publishers_org_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX application_standard_publishers_org_idx ON public.application_standard_publishers USING btree (org_id, id);
 
 
 --
@@ -18446,6 +18532,20 @@ CREATE TRIGGER application_standard_identity_immutable BEFORE DELETE OR UPDATE O
 
 
 --
+-- Name: application_standard_log_destinations application_standard_log_destination_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_log_destination_immutable BEFORE DELETE OR UPDATE ON public.application_standard_log_destinations FOR EACH ROW EXECUTE FUNCTION public.application_standard_version_immutable();
+
+
+--
+-- Name: application_standard_publishers application_standard_publisher_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_publisher_immutable BEFORE DELETE OR UPDATE ON public.application_standard_publishers FOR EACH ROW EXECUTE FUNCTION public.application_standard_version_immutable();
+
+
+--
 -- Name: application_standard_versions application_standard_version_immutable; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -19926,6 +20026,22 @@ ALTER TABLE ONLY public.app_work_policies
 
 ALTER TABLE ONLY public.app_work_policies
     ADD CONSTRAINT app_work_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_log_destinations application_standard_log_destinations_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_log_destinations
+    ADD CONSTRAINT application_standard_log_destinations_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_publishers application_standard_publishers_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_publishers
+    ADD CONSTRAINT application_standard_publishers_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
 
 
 --

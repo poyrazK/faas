@@ -25,6 +25,9 @@ func (m *MemStore) PublishApplicationStandardVersion(_ context.Context, p Applic
 	if _, exists := m.accounts[p.ActorID]; !exists {
 		return ApplicationStandardVersion{}, ErrNotFound
 	}
+	if err := m.validateApplicationStandardRefsLocked(p.OrgID, version.Definition); err != nil {
+		return ApplicationStandardVersion{}, err
+	}
 	if m.applicationStandardVersions == nil {
 		m.applicationStandardVersions = map[string][]ApplicationStandardVersion{}
 	}

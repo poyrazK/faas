@@ -1200,6 +1200,83 @@ func (q *Queries) CreateApplicationStandard(ctx context.Context, db DBTX, arg Cr
 	return id, err
 }
 
+const createApplicationStandardLogDestination = `-- name: CreateApplicationStandardLogDestination :one
+INSERT INTO application_standard_log_destinations (org_id, name, kind, target_url, auth_header_sealed, config_hash, created_by)
+VALUES ($1::uuid, $2::text, $3::text, $4::text,
+        $5::bytea, $6::text, $7::uuid)
+RETURNING id, org_id, name, kind, target_url, auth_header_sealed, config_hash, created_by, created_at
+`
+
+type CreateApplicationStandardLogDestinationParams struct {
+	OrgID            pgtype.UUID
+	Name             string
+	Kind             string
+	TargetUrl        string
+	AuthHeaderSealed []byte
+	ConfigHash       string
+	CreatedBy        pgtype.UUID
+}
+
+func (q *Queries) CreateApplicationStandardLogDestination(ctx context.Context, db DBTX, arg CreateApplicationStandardLogDestinationParams) (ApplicationStandardLogDestination, error) {
+	row := db.QueryRow(ctx, createApplicationStandardLogDestination,
+		arg.OrgID,
+		arg.Name,
+		arg.Kind,
+		arg.TargetUrl,
+		arg.AuthHeaderSealed,
+		arg.ConfigHash,
+		arg.CreatedBy,
+	)
+	var i ApplicationStandardLogDestination
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Name,
+		&i.Kind,
+		&i.TargetUrl,
+		&i.AuthHeaderSealed,
+		&i.ConfigHash,
+		&i.CreatedBy,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const createApplicationStandardPublisher = `-- name: CreateApplicationStandardPublisher :one
+INSERT INTO application_standard_publishers (org_id, name, public_key_der, fingerprint, created_by)
+VALUES ($1::uuid, $2::text, $3::bytea, $4::text, $5::uuid)
+RETURNING id, org_id, name, public_key_der, fingerprint, created_by, created_at
+`
+
+type CreateApplicationStandardPublisherParams struct {
+	OrgID        pgtype.UUID
+	Name         string
+	PublicKeyDer []byte
+	Fingerprint  string
+	CreatedBy    pgtype.UUID
+}
+
+func (q *Queries) CreateApplicationStandardPublisher(ctx context.Context, db DBTX, arg CreateApplicationStandardPublisherParams) (ApplicationStandardPublisher, error) {
+	row := db.QueryRow(ctx, createApplicationStandardPublisher,
+		arg.OrgID,
+		arg.Name,
+		arg.PublicKeyDer,
+		arg.Fingerprint,
+		arg.CreatedBy,
+	)
+	var i ApplicationStandardPublisher
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Name,
+		&i.PublicKeyDer,
+		&i.Fingerprint,
+		&i.CreatedBy,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const createBuild = `-- name: CreateBuild :one
 insert into builds (id, deployment_id, kind, source_bytes, status, log_path)
 values (gen_random_uuid(), $1, $2, $3, 'queued', $4)
@@ -4007,6 +4084,56 @@ func (q *Queries) GetAppSecretRevocation(ctx context.Context, db DBTX, arg GetAp
 	return i, err
 }
 
+const getApplicationStandardLogDestination = `-- name: GetApplicationStandardLogDestination :one
+SELECT id, org_id, name, kind, target_url, auth_header_sealed, config_hash, created_by, created_at FROM application_standard_log_destinations WHERE org_id = $1::uuid AND id = $2::uuid
+`
+
+type GetApplicationStandardLogDestinationParams struct {
+	OrgID      pgtype.UUID
+	ResourceID pgtype.UUID
+}
+
+func (q *Queries) GetApplicationStandardLogDestination(ctx context.Context, db DBTX, arg GetApplicationStandardLogDestinationParams) (ApplicationStandardLogDestination, error) {
+	row := db.QueryRow(ctx, getApplicationStandardLogDestination, arg.OrgID, arg.ResourceID)
+	var i ApplicationStandardLogDestination
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Name,
+		&i.Kind,
+		&i.TargetUrl,
+		&i.AuthHeaderSealed,
+		&i.ConfigHash,
+		&i.CreatedBy,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getApplicationStandardPublisher = `-- name: GetApplicationStandardPublisher :one
+SELECT id, org_id, name, public_key_der, fingerprint, created_by, created_at FROM application_standard_publishers WHERE org_id = $1::uuid AND id = $2::uuid
+`
+
+type GetApplicationStandardPublisherParams struct {
+	OrgID      pgtype.UUID
+	ResourceID pgtype.UUID
+}
+
+func (q *Queries) GetApplicationStandardPublisher(ctx context.Context, db DBTX, arg GetApplicationStandardPublisherParams) (ApplicationStandardPublisher, error) {
+	row := db.QueryRow(ctx, getApplicationStandardPublisher, arg.OrgID, arg.ResourceID)
+	var i ApplicationStandardPublisher
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Name,
+		&i.PublicKeyDer,
+		&i.Fingerprint,
+		&i.CreatedBy,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getApplicationStandardVersion = `-- name: GetApplicationStandardVersion :one
 SELECT s.id::text AS standard_id, s.org_id::text AS org_id, s.slug, v.version,
        v.definition, v.definition_hash, v.description, v.created_by::text AS created_by, v.created_at
@@ -6222,6 +6349,88 @@ func (q *Queries) ListAppSecretRuntimeReloadTargets(ctx context.Context, db DBTX
 			&i.ApplicationAckStatus,
 			&i.ApplicationAckAt,
 			&i.ApplicationAckErrorCode,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listApplicationStandardLogDestinations = `-- name: ListApplicationStandardLogDestinations :many
+SELECT id, org_id, name, kind, target_url, auth_header_sealed, config_hash, created_by, created_at FROM application_standard_log_destinations WHERE org_id = $1::uuid
+AND ($2::text = '' OR id > NULLIF($2::text, '')::uuid)
+ORDER BY id LIMIT $3::integer
+`
+
+type ListApplicationStandardLogDestinationsParams struct {
+	OrgID     pgtype.UUID
+	AfterID   string
+	PageLimit int32
+}
+
+func (q *Queries) ListApplicationStandardLogDestinations(ctx context.Context, db DBTX, arg ListApplicationStandardLogDestinationsParams) ([]ApplicationStandardLogDestination, error) {
+	rows, err := db.Query(ctx, listApplicationStandardLogDestinations, arg.OrgID, arg.AfterID, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ApplicationStandardLogDestination{}
+	for rows.Next() {
+		var i ApplicationStandardLogDestination
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.Name,
+			&i.Kind,
+			&i.TargetUrl,
+			&i.AuthHeaderSealed,
+			&i.ConfigHash,
+			&i.CreatedBy,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listApplicationStandardPublishers = `-- name: ListApplicationStandardPublishers :many
+SELECT id, org_id, name, public_key_der, fingerprint, created_by, created_at FROM application_standard_publishers WHERE org_id = $1::uuid
+AND ($2::text = '' OR id > NULLIF($2::text, '')::uuid)
+ORDER BY id LIMIT $3::integer
+`
+
+type ListApplicationStandardPublishersParams struct {
+	OrgID     pgtype.UUID
+	AfterID   string
+	PageLimit int32
+}
+
+func (q *Queries) ListApplicationStandardPublishers(ctx context.Context, db DBTX, arg ListApplicationStandardPublishersParams) ([]ApplicationStandardPublisher, error) {
+	rows, err := db.Query(ctx, listApplicationStandardPublishers, arg.OrgID, arg.AfterID, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ApplicationStandardPublisher{}
+	for rows.Next() {
+		var i ApplicationStandardPublisher
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.Name,
+			&i.PublicKeyDer,
+			&i.Fingerprint,
+			&i.CreatedBy,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -16022,4 +16231,24 @@ func (q *Queries) UsageByMonth(ctx context.Context, db DBTX, arg UsageByMonthPar
 		return nil, err
 	}
 	return items, nil
+}
+
+const validateApplicationStandardResourceRefs = `-- name: ValidateApplicationStandardResourceRefs :one
+SELECT NOT EXISTS (SELECT 1 FROM unnest($1::uuid[]) AS ref(id)
+  WHERE NOT EXISTS (SELECT 1 FROM application_standard_log_destinations AS d WHERE d.id = ref.id AND d.org_id = $2::uuid))
+AND NOT EXISTS (SELECT 1 FROM unnest($3::uuid[]) AS ref(id)
+  WHERE NOT EXISTS (SELECT 1 FROM application_standard_publishers AS p WHERE p.id = ref.id AND p.org_id = $2::uuid)) AS valid
+`
+
+type ValidateApplicationStandardResourceRefsParams struct {
+	DestinationIds []pgtype.UUID
+	OrgID          pgtype.UUID
+	PublisherIds   []pgtype.UUID
+}
+
+func (q *Queries) ValidateApplicationStandardResourceRefs(ctx context.Context, db DBTX, arg ValidateApplicationStandardResourceRefsParams) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, validateApplicationStandardResourceRefs, arg.DestinationIds, arg.OrgID, arg.PublisherIds)
+	var valid pgtype.Bool
+	err := row.Scan(&valid)
+	return valid, err
 }

@@ -1762,6 +1762,8 @@ var cliCommands = []cliCommand{
 		Short:   "Manage orgs, members, and workspace activity",
 		Subcommands: []cliSub{
 			{Name: "standards", Short: "Manage versioned application standards", Subcommands: []cliSub{
+				{Name: "destinations", Short: "Manage immutable logging destination references", Subcommands: standardResourceCLIHelp()},
+				{Name: "publishers", Short: "Manage immutable trusted publisher references", Subcommands: standardResourceCLIHelp()},
 				{Name: "list", Short: "List the organization's latest standard versions", Flags: []cliFlag{
 					{Name: "org", Short: "organization slug", Value: "SLUG", Req: true},
 					{Name: "after", Short: "last standard slug from the previous page", Value: "SLUG"},

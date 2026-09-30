@@ -19,8 +19,11 @@ type standardCLIOptions struct {
 }
 
 func cmdOrgStandards(args []string) int {
+	if len(args) > 0 && (args[0] == "destinations" || args[0] == "publishers") {
+		return cmdOrgStandardResources(args[0], args[1:])
+	}
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale orgs standards <list|show|publish> --org ORG [options]", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale orgs standards <list|show|publish|destinations|publishers> --org ORG [options]", "orgs")
 		return 1
 	}
 	options, err := parseStandardCLI(args[0], args[1:])

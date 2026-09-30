@@ -1,3 +1,36 @@
+-- name: CreateApplicationStandardLogDestination :one
+INSERT INTO application_standard_log_destinations (org_id, name, kind, target_url, auth_header_sealed, config_hash, created_by)
+VALUES (sqlc.arg(org_id)::uuid, sqlc.arg(name)::text, sqlc.arg(kind)::text, sqlc.arg(target_url)::text,
+        sqlc.arg(auth_header_sealed)::bytea, sqlc.arg(config_hash)::text, sqlc.arg(created_by)::uuid)
+RETURNING *;
+
+-- name: GetApplicationStandardLogDestination :one
+SELECT * FROM application_standard_log_destinations WHERE org_id = sqlc.arg(org_id)::uuid AND id = sqlc.arg(resource_id)::uuid;
+
+-- name: ListApplicationStandardLogDestinations :many
+SELECT * FROM application_standard_log_destinations WHERE org_id = sqlc.arg(org_id)::uuid
+AND (sqlc.arg(after_id)::text = '' OR id > NULLIF(sqlc.arg(after_id)::text, '')::uuid)
+ORDER BY id LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: CreateApplicationStandardPublisher :one
+INSERT INTO application_standard_publishers (org_id, name, public_key_der, fingerprint, created_by)
+VALUES (sqlc.arg(org_id)::uuid, sqlc.arg(name)::text, sqlc.arg(public_key_der)::bytea, sqlc.arg(fingerprint)::text, sqlc.arg(created_by)::uuid)
+RETURNING *;
+
+-- name: GetApplicationStandardPublisher :one
+SELECT * FROM application_standard_publishers WHERE org_id = sqlc.arg(org_id)::uuid AND id = sqlc.arg(resource_id)::uuid;
+
+-- name: ListApplicationStandardPublishers :many
+SELECT * FROM application_standard_publishers WHERE org_id = sqlc.arg(org_id)::uuid
+AND (sqlc.arg(after_id)::text = '' OR id > NULLIF(sqlc.arg(after_id)::text, '')::uuid)
+ORDER BY id LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: ValidateApplicationStandardResourceRefs :one
+SELECT NOT EXISTS (SELECT 1 FROM unnest(sqlc.arg(destination_ids)::uuid[]) AS ref(id)
+  WHERE NOT EXISTS (SELECT 1 FROM application_standard_log_destinations AS d WHERE d.id = ref.id AND d.org_id = sqlc.arg(org_id)::uuid))
+AND NOT EXISTS (SELECT 1 FROM unnest(sqlc.arg(publisher_ids)::uuid[]) AS ref(id)
+  WHERE NOT EXISTS (SELECT 1 FROM application_standard_publishers AS p WHERE p.id = ref.id AND p.org_id = sqlc.arg(org_id)::uuid)) AS valid;
+
 -- name: ReadAccountCreditConsumption :one
 -- An unqualified legacy row blocks the whole key; guessing could double-debit.
 SELECT coalesce(sum(-delta_cents) FILTER (WHERE provider = sqlc.arg(provider)::text), 0)::bigint AS consumed_cents,

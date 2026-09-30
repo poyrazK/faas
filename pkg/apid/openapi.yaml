@@ -21716,6 +21716,234 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/orgs/{slug}/application-standards:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    get:
+      tags: [orgs]
+      operationId: listApplicationStandards
+      summary: List the latest published application standard versions.
+      description: Requires org.view_application_standards. Publication does not activate a standard.
+      parameters:
+        - name: after
+          in: query
+          schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$' }
+          description: Exclusive standard slug from next_page_after.
+        - name: limit
+          in: query
+          description: Maximum standard versions returned in this page.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+      responses:
+        '200':
+          description: Latest versions, ordered by standard slug.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplicationStandardList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Caller cannot list standards in this organization.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/orgs/{slug}/application-standards/{standard}:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+      - name: standard
+        in: path
+        required: true
+        description: Organization-local standard slug.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$' }
+    get:
+      tags: [orgs]
+      operationId: getApplicationStandardVersion
+      summary: Read an immutable application standard version.
+      description: Requires org.view_application_standards. Omitting version returns the latest published candidate.
+      parameters:
+        - name: version
+          in: query
+          description: Immutable candidate version; omit to read the latest.
+          schema: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+      responses:
+        '200':
+          description: Immutable version with canonical definition hash and publishing identity.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplicationStandardVersion' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Caller cannot inspect the requested standard version.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/orgs/{slug}/application-standards/{standard}/versions:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+      - name: standard
+        in: path
+        required: true
+        description: Slug receiving the new immutable version.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$' }
+    post:
+      tags: [orgs]
+      operationId: publishApplicationStandardVersion
+      summary: Publish a candidate application standard version.
+      description: |
+        Requires org.manage_application_standards (owner or admin), MFA and deploy-write scope.
+        expected_version is 0 for a new standard and the latest version for an update.
+        Publication creates immutable history and does not change an assignment or application.
+        A concurrent publication returns application_standard_version_stale without writes.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateApplicationStandardVersionRequest' }
+      responses:
+        '201':
+          description: Published candidate version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplicationStandardVersion' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Caller cannot manage application standards in this organization.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/orgs/{slug}/application-standard-log-destinations:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    get:
+      tags: [orgs]
+      operationId: listApplicationStandardLogDestinations
+      summary: List immutable organization-owned standard log-destinations.
+      description: Requires org.view_application_standards to list logging destination references.
+      parameters:
+        - { name: after, in: query, schema: { type: string, format: uuid }, description: Exclusive logging destination ID from next_page_after. }
+        - { name: limit, in: query, description: Maximum logging destination references in this page., schema: { type: integer, minimum: 1, maximum: 100, default: 100 } }
+      responses:
+        '200':
+          description: Page of logging destination references ordered by ID.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ApplicationStandardLogDestinationList' } } }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Caller cannot list logging destination references., content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [orgs]
+      operationId: createApplicationStandardLogDestination
+      summary: Create an immutable organization-owned logging destination.
+      description: |
+        Requires org.manage_application_standards to create logging destination references (owner or admin).
+        Existing resources cannot be edited. Rotation creates a new reference and
+        requires a new standard version to adopt it. Resource creation does not
+        enroll or change any service. Customer responses and audit events omit sealed credentials.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/CreateApplicationStandardLogDestinationRequest' } } }
+      responses:
+        '201':
+          description: Created immutable logging destination reference.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ApplicationStandardLogDestination' } } }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Caller cannot create logging destination references in this organization., content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/orgs/{slug}/application-standard-log-destinations/{resource}:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+      - { name: resource, in: path, required: true, description: Immutable logging destination UUID., schema: { type: string, format: uuid } }
+    get:
+      tags: [orgs]
+      operationId: getApplicationStandardLogDestination
+      summary: Read an immutable logging destination reference.
+      description: Requires org.view_application_standards to read this logging destination in its owning organization.
+      responses:
+        '200':
+          description: Requested logging destination metadata.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ApplicationStandardLogDestination' } } }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Caller cannot read this logging destination., content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/orgs/{slug}/application-standard-publishers:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    get:
+      tags: [orgs]
+      operationId: listApplicationStandardPublishers
+      summary: List immutable organization-owned standard publishers.
+      description: Requires org.view_application_standards to list publisher key references.
+      parameters:
+        - { name: after, in: query, schema: { type: string, format: uuid }, description: Exclusive publisher key ID from next_page_after. }
+        - { name: limit, in: query, description: Maximum publisher key references in this page., schema: { type: integer, minimum: 1, maximum: 100, default: 100 } }
+      responses:
+        '200':
+          description: Page of publisher key references ordered by ID.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ApplicationStandardPublisherList' } } }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Caller cannot list publisher key references., content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [orgs]
+      operationId: createApplicationStandardPublisher
+      summary: Create an immutable organization-owned publisher key.
+      description: |
+        Requires org.manage_application_standards to create publisher key references (owner or admin).
+        Existing resources cannot be edited. Rotation creates a new reference and
+        requires a new standard version to adopt it. Resource creation does not
+        enroll or change any service. Customer responses and audit events omit sealed credentials.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/CreateApplicationStandardPublisherRequest' } } }
+      responses:
+        '201':
+          description: Created immutable publisher key reference.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ApplicationStandardPublisher' } } }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Caller cannot create publisher key references in this organization., content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/orgs/{slug}/application-standard-publishers/{resource}:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+      - { name: resource, in: path, required: true, description: Immutable publisher key UUID., schema: { type: string, format: uuid } }
+    get:
+      tags: [orgs]
+      operationId: getApplicationStandardPublisher
+      summary: Read an immutable publisher key reference.
+      description: Requires org.view_application_standards to read this publisher key in its owning organization.
+      responses:
+        '200':
+          description: Requested publisher key metadata.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ApplicationStandardPublisher' } } }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Caller cannot read this publisher key., content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/orgs/{slug}/apps:
     parameters:
       - $ref: '#/components/parameters/OrgSlug'
@@ -41280,6 +41508,211 @@ components:
         runtime: { type: string, description: Runtime identifier for functions when configured. }
         status: { type: string }
         created_at: { type: string, format: date-time }
+
+    CreateApplicationStandardLogDestinationRequest:
+      type: object
+      description: A logging endpoint and optional write-only credential to seal.
+      additionalProperties: false
+      required: [name, kind, target_url]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 128 }
+        kind: { type: string, enum: [http_json, otlp] }
+        target_url:
+          type: string
+          format: uri
+          maxLength: 2048
+          description: HTTPS endpoint without userinfo, query string or fragment. Put credentials in auth_header.
+        auth_header:
+          type: string
+          maxLength: 4096
+          writeOnly: true
+          description: One Name/value header, sealed server-side and never returned.
+
+    ApplicationStandardLogDestination:
+      type: object
+      description: An immutable logging endpoint with credential presence and a configuration hash.
+      additionalProperties: false
+      required: [id, org_id, name, kind, target_url, has_auth_header, config_hash, created_by, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        org_id: { type: string, format: uuid }
+        name: { type: string }
+        kind: { type: string, enum: [http_json, otlp] }
+        target_url: { type: string, format: uri }
+        has_auth_header: { type: boolean }
+        config_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
+        created_by: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+
+    ApplicationStandardLogDestinationList:
+      type: object
+      description: A page of immutable logging destinations.
+      additionalProperties: false
+      required: [destinations]
+      properties:
+        destinations: { type: array, items: { $ref: '#/components/schemas/ApplicationStandardLogDestination' } }
+        next_page_after: { type: string, format: uuid }
+
+    CreateApplicationStandardPublisherRequest:
+      type: object
+      description: An approved ECDSA P-256 public signing key.
+      additionalProperties: false
+      required: [name, public_key_der]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 128 }
+        public_key_der:
+          type: string
+          format: byte
+          description: Base64 ECDSA P-256 SubjectPublicKeyInfo DER; private keys and unsupported curves are rejected.
+
+    ApplicationStandardPublisher:
+      type: object
+      description: An immutable signing key with its public fingerprint.
+      additionalProperties: false
+      required: [id, org_id, name, public_key_der, fingerprint, created_by, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        org_id: { type: string, format: uuid }
+        name: { type: string }
+        public_key_der: { type: string, format: byte }
+        fingerprint: { type: string, pattern: '^[a-f0-9]{64}$' }
+        created_by: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+
+    ApplicationStandardPublisherList:
+      type: object
+      description: A page of approved publisher keys.
+      additionalProperties: false
+      required: [publishers]
+      properties:
+        publishers: { type: array, items: { $ref: '#/components/schemas/ApplicationStandardPublisher' } }
+        next_page_after: { type: string, format: uuid }
+
+    ApplicationStandardLogDestinationRule:
+      type: object
+      description: Organization-owned logging destination references. Modes and override combinations are validated on publication.
+      additionalProperties: false
+      required: [mode, value]
+      properties:
+        mode: { type: string, enum: [default, mandatory] }
+        override: { type: string, enum: [none, extend] }
+        value:
+          type: array
+          maxItems: 64
+          items: { type: string, format: uuid }
+
+    ApplicationStandardSignatureRule:
+      type: object
+      description: Image signature requirement. Modes and override combinations are validated on publication.
+      additionalProperties: false
+      required: [mode, value]
+      properties:
+        mode: { type: string, enum: [default, mandatory, restricted] }
+        override: { type: string, enum: [none, narrow] }
+        value:
+          type: boolean
+
+    ApplicationStandardSecurityPolicyRule:
+      type: object
+      description: Deploy-time security posture requirement. Modes and override combinations are validated on publication.
+      additionalProperties: false
+      required: [mode, value]
+      properties:
+        mode: { type: string, enum: [default, mandatory, restricted] }
+        override: { type: string, enum: [none, narrow] }
+        value:
+          type: string
+          enum: [off, warn, enforce]
+
+    ApplicationStandardPublisherRule:
+      type: object
+      description: Permitted organization-owned signing keys. Modes and override combinations are validated on publication.
+      additionalProperties: false
+      required: [mode, value]
+      properties:
+        mode: { type: string, enum: [default, mandatory, restricted] }
+        override: { type: string, enum: [none, narrow] }
+        value:
+          type: array
+          maxItems: 64
+          items: { type: string, format: uuid }
+
+    ApplicationStandardCIDRRule:
+      type: object
+      description: Approved outbound CIDR ranges. Modes and override combinations are validated on publication.
+      additionalProperties: false
+      required: [mode, value]
+      properties:
+        mode: { type: string, enum: [default, mandatory, restricted] }
+        override: { type: string, enum: [none, narrow] }
+        value:
+          type: array
+          maxItems: 64
+          items: { type: string }
+
+    ApplicationStandardExtraPortRule:
+      type: object
+      description: Approved extra outbound TCP ports. Modes and override combinations are validated on publication.
+      additionalProperties: false
+      required: [mode, value]
+      properties:
+        mode: { type: string, enum: [default, mandatory, restricted] }
+        override: { type: string, enum: [none, narrow] }
+        value:
+          type: array
+          maxItems: 64
+          items: { type: integer, minimum: 1, maximum: 65535 }
+
+    ApplicationStandardDefinition:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      description: |
+        Supported versioned application requirements. Resource UUIDs must belong to the organization.
+        Enforced destination, publisher and CIDR sets cannot be empty.
+        Empty local CIDRs mean unrestricted access and cannot satisfy a restriction.
+      properties:
+        log_destinations: { $ref: '#/components/schemas/ApplicationStandardLogDestinationRule' }
+        require_signed: { $ref: '#/components/schemas/ApplicationStandardSignatureRule' }
+        security_policy: { $ref: '#/components/schemas/ApplicationStandardSecurityPolicyRule' }
+        trusted_publishers: { $ref: '#/components/schemas/ApplicationStandardPublisherRule' }
+        egress_cidrs: { $ref: '#/components/schemas/ApplicationStandardCIDRRule' }
+        egress_extra_ports: { $ref: '#/components/schemas/ApplicationStandardExtraPortRule' }
+
+    CreateApplicationStandardVersionRequest:
+      type: object
+      description: A strictly decoded candidate publication with an explicit concurrency version.
+      additionalProperties: false
+      required: [expected_version, definition]
+      properties:
+        expected_version: { type: integer, format: int64, minimum: 0, maximum: 9007199254740990 }
+        description: { type: string, maxLength: 512, description: UTF-8 description limited to 512 bytes. }
+        definition: { $ref: '#/components/schemas/ApplicationStandardDefinition' }
+
+    ApplicationStandardVersion:
+      type: object
+      description: One immutable canonical standard version and publishing provenance.
+      required: [standard_id, org_id, slug, version, definition, definition_hash, description, created_by, created_at]
+      properties:
+        standard_id: { type: string, format: uuid }
+        org_id: { type: string, format: uuid }
+        slug: { type: string }
+        version: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        definition: { $ref: '#/components/schemas/ApplicationStandardDefinition' }
+        definition_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
+        description: { type: string }
+        created_by: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+
+    ApplicationStandardList:
+      type: object
+      description: The latest candidates ordered by standard slug.
+      required: [standards]
+      properties:
+        standards:
+          type: array
+          items: { $ref: '#/components/schemas/ApplicationStandardVersion' }
+        next_page_after: { type: string }
 
     OrgAppListResponse:
       description: Newest-first safe inventory of apps attributed to an organization.

@@ -5,7 +5,7 @@ Published versions are immutable, carry a canonical definition hash, and record
 their publishing identity. Publishing creates a candidate; it does not activate
 the version or change applications.
 
-The implementation is in progress. Candidate version management is implemented;
+The implementation is in progress. Candidate version and resource management are implemented;
 assignment, automatic enrollment, runtime enforcement and controlled rollout
 must pass the acceptance checklist in [ADR-379](adr/379-inherited-application-standards.md)
 before this feature is declared available.
@@ -43,6 +43,50 @@ retrieve the next page. Output is structured JSON.
 Owners and admins publish versions. Active organization members can inspect
 candidate definitions. Requests require the existing authentication, MFA and API
 key scope checks in addition to the organization action.
+
+## Organization-owned resources
+
+Create logging destinations and approved publishers once per organization.
+Use the returned resource UUIDs in `log_destinations` and `trusted_publishers`.
+Publication rejects missing resources and resources owned by another organization.
+
+For a logging destination, save a private JSON file:
+
+```json
+{
+  "name": "Central production logs",
+  "kind": "http_json",
+  "target_url": "https://logs.example.com/ingest",
+  "auth_header": "Authorization: Bearer REPLACE_WITH_CREDENTIAL"
+}
+```
+
+The endpoint must use HTTPS and cannot contain userinfo, query strings or
+fragments. Credentials belong in the optional header and are sealed server-side.
+Read/list responses, standard definitions and audit events omit credential material.
+
+```bash
+gregale orgs standards destinations create --org acme --file destination.json
+gregale orgs standards destinations list --org acme
+gregale orgs standards destinations show --org acme --id DESTINATION_UUID
+```
+
+A publisher file contains `name` and `public_key_der`, the base64-encoded ECDSA
+P-256 SubjectPublicKeyInfo DER supported by Gregale's image verifier. Private
+keys, malformed keys and unsupported curves are rejected. Publisher responses
+include the public key and its SHA-256 fingerprint.
+
+```bash
+gregale orgs standards publishers create --org acme --file publisher.json
+gregale orgs standards publishers list --org acme
+gregale orgs standards publishers show --org acme --id PUBLISHER_UUID
+```
+
+Resources are immutable, including destination credentials. Rotation creates a
+new resource and a new standard version referencing it; existing services change
+through the controlled adoption process. Creating a resource alone changes no
+service. Emergency revocation and adoption still require the remaining acceptance
+work; these endpoints are candidate management during implementation.
 
 ## Requirement semantics
 

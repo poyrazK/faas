@@ -3,8 +3,17 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { APIKeyResponse } from '../models/APIKeyResponse.js';
+import type { ApplicationStandardList } from '../models/ApplicationStandardList.js';
+import type { ApplicationStandardLogDestination } from '../models/ApplicationStandardLogDestination.js';
+import type { ApplicationStandardLogDestinationList } from '../models/ApplicationStandardLogDestinationList.js';
+import type { ApplicationStandardPublisher } from '../models/ApplicationStandardPublisher.js';
+import type { ApplicationStandardPublisherList } from '../models/ApplicationStandardPublisherList.js';
+import type { ApplicationStandardVersion } from '../models/ApplicationStandardVersion.js';
 import type { AppResponse } from '../models/AppResponse.js';
 import type { ChangeMemberRoleRequest } from '../models/ChangeMemberRoleRequest.js';
+import type { CreateApplicationStandardLogDestinationRequest } from '../models/CreateApplicationStandardLogDestinationRequest.js';
+import type { CreateApplicationStandardPublisherRequest } from '../models/CreateApplicationStandardPublisherRequest.js';
+import type { CreateApplicationStandardVersionRequest } from '../models/CreateApplicationStandardVersionRequest.js';
 import type { CreateAppRequest } from '../models/CreateAppRequest.js';
 import type { CreateOrgAPIKeyRequest } from '../models/CreateOrgAPIKeyRequest.js';
 import type { CreateOrgRequest } from '../models/CreateOrgRequest.js';
@@ -518,6 +527,459 @@ export class OrgsService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         403: `Workspace app inventory requires the \`org.view\` action.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List the latest published application standard versions.
+   * Requires org.view_application_standards. Publication does not activate a standard.
+   * @returns ApplicationStandardList Latest versions, ordered by standard slug.
+   * @throws ApiError
+   */
+  public static listApplicationStandards({
+    slug,
+    after,
+    limit = 100,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
+     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    /**
+     * Exclusive standard slug from next_page_after.
+     */
+    after?: string,
+    /**
+     * Maximum standard versions returned in this page.
+     */
+    limit?: number,
+  }): CancelablePromise<ApplicationStandardList> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/application-standards',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'after': after,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `Caller cannot list standards in this organization.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read an immutable application standard version.
+   * Requires org.view_application_standards. Omitting version returns the latest published candidate.
+   * @returns ApplicationStandardVersion Immutable version with canonical definition hash and publishing identity.
+   * @throws ApiError
+   */
+  public static getApplicationStandardVersion({
+    slug,
+    standard,
+    version,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
+     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    /**
+     * Organization-local standard slug.
+     */
+    standard: string,
+    /**
+     * Immutable candidate version; omit to read the latest.
+     */
+    version?: number,
+  }): CancelablePromise<ApplicationStandardVersion> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/application-standards/{standard}',
+      path: {
+        'slug': slug,
+        'standard': standard,
+      },
+      query: {
+        'version': version,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `Caller cannot inspect the requested standard version.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Publish a candidate application standard version.
+   * Requires org.manage_application_standards (owner or admin), MFA and deploy-write scope.
+   * expected_version is 0 for a new standard and the latest version for an update.
+   * Publication creates immutable history and does not change an assignment or application.
+   * A concurrent publication returns application_standard_version_stale without writes.
+   *
+   * @returns ApplicationStandardVersion Published candidate version.
+   * @throws ApiError
+   */
+  public static publishApplicationStandardVersion({
+    slug,
+    standard,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
+     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    /**
+     * Slug receiving the new immutable version.
+     */
+    standard: string,
+    requestBody: CreateApplicationStandardVersionRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<ApplicationStandardVersion> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{slug}/application-standards/{standard}/versions',
+      path: {
+        'slug': slug,
+        'standard': standard,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `Caller cannot manage application standards in this organization.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List immutable organization-owned standard log-destinations.
+   * Requires org.view_application_standards to list logging destination references.
+   * @returns ApplicationStandardLogDestinationList Page of logging destination references ordered by ID.
+   * @throws ApiError
+   */
+  public static listApplicationStandardLogDestinations({
+    slug,
+    after,
+    limit = 100,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
+     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    /**
+     * Exclusive logging destination ID from next_page_after.
+     */
+    after?: string,
+    /**
+     * Maximum logging destination references in this page.
+     */
+    limit?: number,
+  }): CancelablePromise<ApplicationStandardLogDestinationList> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/application-standard-log-destinations',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'after': after,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `Caller cannot list logging destination references.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Create an immutable organization-owned logging destination.
+   * Requires org.manage_application_standards to create logging destination references (owner or admin).
+   * Existing resources cannot be edited. Rotation creates a new reference and
+   * requires a new standard version to adopt it. Resource creation does not
+   * enroll or change any service. Customer responses and audit events omit sealed credentials.
+   *
+   * @returns ApplicationStandardLogDestination Created immutable logging destination reference.
+   * @throws ApiError
+   */
+  public static createApplicationStandardLogDestination({
+    slug,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
+     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    requestBody: CreateApplicationStandardLogDestinationRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<ApplicationStandardLogDestination> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{slug}/application-standard-log-destinations',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `Caller cannot create logging destination references in this organization.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read an immutable logging destination reference.
+   * Requires org.view_application_standards to read this logging destination in its owning organization.
+   * @returns ApplicationStandardLogDestination Requested logging destination metadata.
+   * @throws ApiError
+   */
+  public static getApplicationStandardLogDestination({
+    slug,
+    resource,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
+     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    /**
+     * Immutable logging destination UUID.
+     */
+    resource: string,
+  }): CancelablePromise<ApplicationStandardLogDestination> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/application-standard-log-destinations/{resource}',
+      path: {
+        'slug': slug,
+        'resource': resource,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `Caller cannot read this logging destination.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List immutable organization-owned standard publishers.
+   * Requires org.view_application_standards to list publisher key references.
+   * @returns ApplicationStandardPublisherList Page of publisher key references ordered by ID.
+   * @throws ApiError
+   */
+  public static listApplicationStandardPublishers({
+    slug,
+    after,
+    limit = 100,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
+     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    /**
+     * Exclusive publisher key ID from next_page_after.
+     */
+    after?: string,
+    /**
+     * Maximum publisher key references in this page.
+     */
+    limit?: number,
+  }): CancelablePromise<ApplicationStandardPublisherList> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/application-standard-publishers',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'after': after,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `Caller cannot list publisher key references.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Create an immutable organization-owned publisher key.
+   * Requires org.manage_application_standards to create publisher key references (owner or admin).
+   * Existing resources cannot be edited. Rotation creates a new reference and
+   * requires a new standard version to adopt it. Resource creation does not
+   * enroll or change any service. Customer responses and audit events omit sealed credentials.
+   *
+   * @returns ApplicationStandardPublisher Created immutable publisher key reference.
+   * @throws ApiError
+   */
+  public static createApplicationStandardPublisher({
+    slug,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
+     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    requestBody: CreateApplicationStandardPublisherRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<ApplicationStandardPublisher> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{slug}/application-standard-publishers',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `Caller cannot create publisher key references in this organization.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read an immutable publisher key reference.
+   * Requires org.view_application_standards to read this publisher key in its owning organization.
+   * @returns ApplicationStandardPublisher Requested publisher key metadata.
+   * @throws ApiError
+   */
+  public static getApplicationStandardPublisher({
+    slug,
+    resource,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
+     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    /**
+     * Immutable publisher key UUID.
+     */
+    resource: string,
+  }): CancelablePromise<ApplicationStandardPublisher> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/application-standard-publishers/{resource}',
+      path: {
+        'slug': slug,
+        'resource': resource,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `Caller cannot read this publisher key.`,
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable

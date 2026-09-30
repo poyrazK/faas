@@ -819,6 +819,28 @@ type ApplicationStandard struct {
 	CreatedAt pgtype.Timestamptz
 }
 
+type ApplicationStandardLogDestination struct {
+	ID               pgtype.UUID
+	OrgID            pgtype.UUID
+	Name             string
+	Kind             string
+	TargetUrl        string
+	AuthHeaderSealed []byte
+	ConfigHash       string
+	CreatedBy        pgtype.UUID
+	CreatedAt        pgtype.Timestamptz
+}
+
+type ApplicationStandardPublisher struct {
+	ID           pgtype.UUID
+	OrgID        pgtype.UUID
+	Name         string
+	PublicKeyDer []byte
+	Fingerprint  string
+	CreatedBy    pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
+}
+
 type ApplicationStandardVersion struct {
 	OrgID          pgtype.UUID
 	StandardID     pgtype.UUID

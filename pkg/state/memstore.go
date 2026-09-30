@@ -135,17 +135,19 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
-	applicationStandardVersions map[string][]ApplicationStandardVersion
-	devBridgeSessions           map[string]devbridge.Session
-	devBridgeWebhookReplays     map[string]devbridge.WebhookReplay
-	featureFlagVersions         map[string][]FeatureFlagVersion
-	safeReleaseWorkerLeaseUntil time.Time
-	requestAuditEvents          map[string]RequestAuditRecord
-	discoveredAPIRoutes         map[string]DiscoveredAPIRoute
-	discoveryReceipts           map[string]struct{}
-	revisionPins                map[string]time.Time
-	deploymentActivationMu      sync.Mutex
-	deploymentActivationLocks   map[string]*deploymentActivationLock
+	applicationStandardVersions        map[string][]ApplicationStandardVersion
+	applicationStandardLogDestinations map[string]ApplicationStandardLogDestination
+	applicationStandardPublishers      map[string]api.ApplicationStandardPublisher
+	devBridgeSessions                  map[string]devbridge.Session
+	devBridgeWebhookReplays            map[string]devbridge.WebhookReplay
+	featureFlagVersions                map[string][]FeatureFlagVersion
+	safeReleaseWorkerLeaseUntil        time.Time
+	requestAuditEvents                 map[string]RequestAuditRecord
+	discoveredAPIRoutes                map[string]DiscoveredAPIRoute
+	discoveryReceipts                  map[string]struct{}
+	revisionPins                       map[string]time.Time
+	deploymentActivationMu             sync.Mutex
+	deploymentActivationLocks          map[string]*deploymentActivationLock
 	// Snapshot restore reservations are separate from mu so the coordinator
 	// can serialize only its short lease/count critical section.
 	snapshotRestorePressureMu sync.Mutex

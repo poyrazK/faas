@@ -72,6 +72,12 @@ var orgRoutesRequiringAuthorize = []struct {
 	{"GET", "/v1/orgs/example-slug/application-standards"},
 	{"GET", "/v1/orgs/example-slug/application-standards/production-baseline"},
 	{"POST", "/v1/orgs/example-slug/application-standards/production-baseline/versions"},
+	{"GET", "/v1/orgs/example-slug/application-standard-log-destinations"},
+	{"POST", "/v1/orgs/example-slug/application-standard-log-destinations"},
+	{"GET", "/v1/orgs/example-slug/application-standard-log-destinations/00000000-0000-4000-8000-000000000001"},
+	{"GET", "/v1/orgs/example-slug/application-standard-publishers"},
+	{"POST", "/v1/orgs/example-slug/application-standard-publishers"},
+	{"GET", "/v1/orgs/example-slug/application-standard-publishers/00000000-0000-4000-8000-000000000001"},
 
 	// Org-bound API keys (server.go:835-839, PR 6).
 	{"GET", "/v1/orgs/example-slug/keys"},

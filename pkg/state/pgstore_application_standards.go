@@ -79,6 +79,9 @@ func (s *PgStore) PublishApplicationStandardVersion(ctx context.Context, p Appli
 	} else if err != nil {
 		return ApplicationStandardVersion{}, fmt.Errorf("lock standard organization: %w", err)
 	}
+	if err := validateApplicationStandardRefs(ctx, tx, p.OrgID, version.Definition); err != nil {
+		return ApplicationStandardVersion{}, err
+	}
 	prior, err := readApplicationStandard(ctx, tx, orgID, p.Slug, 0)
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return ApplicationStandardVersion{}, err

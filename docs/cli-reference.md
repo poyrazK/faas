@@ -2648,6 +2648,18 @@ Manage orgs, members, and workspace activity
 
 Manage versioned application standards
 
+#### orgs standards destinations
+
+Manage immutable logging destination references
+
+`gregale orgs standards destinations`
+
+#### orgs standards publishers
+
+Manage immutable trusted publisher references
+
+`gregale orgs standards publishers`
+
 #### orgs standards list
 
 List the organization&#39;s latest standard versions

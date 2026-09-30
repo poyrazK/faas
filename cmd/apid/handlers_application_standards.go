@@ -99,7 +99,7 @@ func writeApplicationStandardError(w http.ResponseWriter, err error) {
 	case errors.Is(err, state.ErrInvalidArgument):
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid application standard", err.Error()))
 	case errors.Is(err, state.ErrConflict):
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "application_standard_version_stale", "Standard version changed", "Refresh the current version before publishing."))
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeApplicationStandardVersionStale, "Standard version changed", "Refresh the current version before publishing."))
 	case errors.Is(err, state.ErrNotFound):
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Application standard not found", "No application standard exists in this organization at the requested version."))
 	default:

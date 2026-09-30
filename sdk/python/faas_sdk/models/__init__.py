@@ -234,6 +234,33 @@ from .app_webhook_response_event_filter_item import AppWebhookResponseEventFilte
 from .app_webhook_response_retry_policy import AppWebhookResponseRetryPolicy
 from .app_webhook_response_webhook_secret_sealed_masked import AppWebhookResponseWebhookSecretSealedMasked
 from .app_webhook_retry_delivery_response import AppWebhookRetryDeliveryResponse
+from .application_standard_cidr_rule import ApplicationStandardCIDRRule
+from .application_standard_cidr_rule_mode import ApplicationStandardCIDRRuleMode
+from .application_standard_cidr_rule_override import ApplicationStandardCIDRRuleOverride
+from .application_standard_definition import ApplicationStandardDefinition
+from .application_standard_extra_port_rule import ApplicationStandardExtraPortRule
+from .application_standard_extra_port_rule_mode import ApplicationStandardExtraPortRuleMode
+from .application_standard_extra_port_rule_override import ApplicationStandardExtraPortRuleOverride
+from .application_standard_list import ApplicationStandardList
+from .application_standard_log_destination import ApplicationStandardLogDestination
+from .application_standard_log_destination_kind import ApplicationStandardLogDestinationKind
+from .application_standard_log_destination_list import ApplicationStandardLogDestinationList
+from .application_standard_log_destination_rule import ApplicationStandardLogDestinationRule
+from .application_standard_log_destination_rule_mode import ApplicationStandardLogDestinationRuleMode
+from .application_standard_log_destination_rule_override import ApplicationStandardLogDestinationRuleOverride
+from .application_standard_publisher import ApplicationStandardPublisher
+from .application_standard_publisher_list import ApplicationStandardPublisherList
+from .application_standard_publisher_rule import ApplicationStandardPublisherRule
+from .application_standard_publisher_rule_mode import ApplicationStandardPublisherRuleMode
+from .application_standard_publisher_rule_override import ApplicationStandardPublisherRuleOverride
+from .application_standard_security_policy_rule import ApplicationStandardSecurityPolicyRule
+from .application_standard_security_policy_rule_mode import ApplicationStandardSecurityPolicyRuleMode
+from .application_standard_security_policy_rule_override import ApplicationStandardSecurityPolicyRuleOverride
+from .application_standard_security_policy_rule_value import ApplicationStandardSecurityPolicyRuleValue
+from .application_standard_signature_rule import ApplicationStandardSignatureRule
+from .application_standard_signature_rule_mode import ApplicationStandardSignatureRuleMode
+from .application_standard_signature_rule_override import ApplicationStandardSignatureRuleOverride
+from .application_standard_version import ApplicationStandardVersion
 from .applied_build import AppliedBuild
 from .apply_app_open_api_policy_request import ApplyAppOpenAPIPolicyRequest
 from .apply_platform_tenant_consumer_request import ApplyPlatformTenantConsumerRequest
@@ -360,6 +387,10 @@ from .create_app_webhook_request import CreateAppWebhookRequest
 from .create_app_webhook_request_delivery_format import CreateAppWebhookRequestDeliveryFormat
 from .create_app_webhook_request_event_filter_item import CreateAppWebhookRequestEventFilterItem
 from .create_app_webhook_request_retry_policy import CreateAppWebhookRequestRetryPolicy
+from .create_application_standard_log_destination_request import CreateApplicationStandardLogDestinationRequest
+from .create_application_standard_log_destination_request_kind import CreateApplicationStandardLogDestinationRequestKind
+from .create_application_standard_publisher_request import CreateApplicationStandardPublisherRequest
+from .create_application_standard_version_request import CreateApplicationStandardVersionRequest
 from .create_consumer_key_request import CreateConsumerKeyRequest
 from .create_consumer_key_request_scopes_item import CreateConsumerKeyRequestScopesItem
 from .create_cors_preset_request import CreateCorsPresetRequest
@@ -2021,6 +2052,33 @@ __all__ = (
     "AppErrorsSummaryResponse",
     "AppErrorSummaryItem",
     "AppErrorSummaryItemErrorClass",
+    "ApplicationStandardCIDRRule",
+    "ApplicationStandardCIDRRuleMode",
+    "ApplicationStandardCIDRRuleOverride",
+    "ApplicationStandardDefinition",
+    "ApplicationStandardExtraPortRule",
+    "ApplicationStandardExtraPortRuleMode",
+    "ApplicationStandardExtraPortRuleOverride",
+    "ApplicationStandardList",
+    "ApplicationStandardLogDestination",
+    "ApplicationStandardLogDestinationKind",
+    "ApplicationStandardLogDestinationList",
+    "ApplicationStandardLogDestinationRule",
+    "ApplicationStandardLogDestinationRuleMode",
+    "ApplicationStandardLogDestinationRuleOverride",
+    "ApplicationStandardPublisher",
+    "ApplicationStandardPublisherList",
+    "ApplicationStandardPublisherRule",
+    "ApplicationStandardPublisherRuleMode",
+    "ApplicationStandardPublisherRuleOverride",
+    "ApplicationStandardSecurityPolicyRule",
+    "ApplicationStandardSecurityPolicyRuleMode",
+    "ApplicationStandardSecurityPolicyRuleOverride",
+    "ApplicationStandardSecurityPolicyRuleValue",
+    "ApplicationStandardSignatureRule",
+    "ApplicationStandardSignatureRuleMode",
+    "ApplicationStandardSignatureRuleOverride",
+    "ApplicationStandardVersion",
     "AppliedBuild",
     "AppLogDrainAnalyticsBucket",
     "AppLogDrainAnalyticsResponse",
@@ -2249,6 +2307,10 @@ __all__ = (
     "CreateAPIConsumerRateCardRequest",
     "CreateAPIConsumerRequest",
     "CreateAPIConsumerUsageStatementRequest",
+    "CreateApplicationStandardLogDestinationRequest",
+    "CreateApplicationStandardLogDestinationRequestKind",
+    "CreateApplicationStandardPublisherRequest",
+    "CreateApplicationStandardVersionRequest",
     "CreateAppLogDrainRequest",
     "CreateAppLogDrainRequestKind",
     "CreateAppRequest",

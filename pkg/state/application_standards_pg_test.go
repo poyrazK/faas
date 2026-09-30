@@ -36,6 +36,29 @@ func TestPgApplicationStandardVersions(t *testing.T) {
 	}
 }
 
+func TestPgApplicationStandardResources(t *testing.T) {
+	ctx := context.Background()
+	pool := pgtest.Open(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	standardResourceLifecycle(t, state.NewPgStore(pool))
+	for _, query := range []string{
+		`UPDATE application_standard_log_destinations SET target_url = 'https://evil.example.com/'`,
+		`UPDATE application_standard_log_destinations SET auth_header_sealed = 'changed'`,
+		`DELETE FROM application_standard_log_destinations`,
+		`UPDATE application_standard_publishers SET name = 'changed'`,
+		`DELETE FROM application_standard_publishers`,
+	} {
+		if _, err := pool.Exec(ctx, query); err == nil {
+			t.Fatalf("immutable resource mutation accepted: %s", query)
+		}
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM orgs WHERE slug = 'standard-resource-org'`); err != nil {
+		t.Fatalf("resource organization erasure: %v", err)
+	}
+}
+
 func TestPgApplicationStandardPublisherErasure(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Open(t)
