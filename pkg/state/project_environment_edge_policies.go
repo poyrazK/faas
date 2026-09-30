@@ -124,7 +124,12 @@ func (s *PgStore) PutProjectEnvironmentEdgePolicy(ctx context.Context, policy Pr
 	if err != nil {
 		return ProjectEnvironmentEdgePolicy{}, err
 	}
-	row := s.pool.QueryRow(ctx, `
+	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(policy.AccountID))
+	if err != nil {
+		return ProjectEnvironmentEdgePolicy{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	row := tx.QueryRow(ctx, `
 		insert into project_environment_edge_policies
 		    (account_id, project_id, app_id, environment_slug, rules)
 		select $1, $2, $3, $4, $5::jsonb
@@ -140,6 +145,9 @@ func (s *PgStore) PutProjectEnvironmentEdgePolicy(ctx context.Context, policy Pr
 			return ProjectEnvironmentEdgePolicy{}, ErrNotFound
 		}
 		return ProjectEnvironmentEdgePolicy{}, mapErr(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ProjectEnvironmentEdgePolicy{}, err
 	}
 	policy.Rules = cloneProjectEnvironmentEdgeRules(rules)
 	return policy, nil

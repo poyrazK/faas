@@ -352,6 +352,21 @@ and referenced-preset bound. Atomic checks across concurrent contributing
 mutations remain delivery work; an account-wide byte
 quota must not silently replace the per-host runtime bound.
 
+Edge-rule creates and updates also validate the complete canonical saved row
+against the host projection's 64 MiB ceiling before committing. The guard
+includes metadata and action fields outside the active union member, because
+the runtime SQL transfers those fields too. Rejection rolls back intent and
+its transactional change event; deletion and smaller replacement remain repair
+paths. The in-memory store uses a conservative serialized bound. Rule creates,
+rule updates, preset creates/updates, environment edge overlays and environment
+clones acquire the same account row lock
+before any app or policy-row lock, then retain it through validation and
+commit. Contenders use NOWAIT and roll back before a context-bounded retry,
+so they do not reserve pool connections while waiting. This is the
+serialization boundary for aggregate validation, not an
+account-wide byte quota. Per-host overlap analysis still requires implementation
+before that aggregate guard is complete.
+
 Imported documents also validate canonical runtime bytes before replacement;
 the existing import-body cap alone cannot bound JSONB numeric expansion.
 Replacing an owned import reuses its account quota slot, including repair of

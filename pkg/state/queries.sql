@@ -5177,6 +5177,40 @@ SELECT CASE WHEN octet_length(data::text) <= sqlc.arg(max_bytes)::integer THEN d
 -- canonical representation as bounded runtime reads, before changing a row.
 SELECT octet_length(sqlc.arg(payload)::jsonb::text)::bigint;
 
+-- name: LockTrafficPolicyAccount :one
+-- Acquire before app/FK locks so different apps and shared presets serialize.
+SELECT id FROM accounts WHERE id = sqlc.arg(account_id)::uuid FOR UPDATE NOWAIT;
+
+-- name: ReadEdgeRuleTrafficAccount :one
+SELECT account_id FROM edge_rules WHERE id = sqlc.arg(rule_id)::uuid;
+
+-- name: MeasureEdgeRuleTrafficProjection :one
+-- Match the full ReadPublicHostEdgeRules projection, including its array.
+SELECT octet_length(jsonb_build_array(jsonb_build_object(
+    'ID', id, 'AccountID', account_id, 'AppID', app_id,
+    'MatchHost', match_host, 'MatchPath', match_path, 'MatchMethods', match_methods,
+    'MatchHeaders', match_headers, 'Priority', priority, 'Enabled', enabled,
+    'Kind', kind, 'Action', action, 'CorsPresetID', cors_preset_id,
+    'ValidateMode', validate_mode, 'CreatedAt', created_at, 'UpdatedAt', updated_at,
+    'ManifestKey', manifest_key))::text)::bigint
+FROM edge_rules WHERE id = sqlc.arg(rule_id)::uuid;
+
+-- name: ReadBoundedTrafficEdgeRule :one
+WITH projection AS (
+    SELECT jsonb_build_object(
+        'ID', id, 'AccountID', account_id, 'AppID', app_id,
+        'MatchHost', match_host, 'MatchPath', match_path, 'MatchMethods', match_methods,
+        'MatchHeaders', match_headers, 'Priority', priority, 'Enabled', enabled,
+        'Kind', kind, 'Action', action, 'CorsPresetID', cors_preset_id,
+        'ValidateMode', validate_mode, 'CreatedAt', created_at, 'UpdatedAt', updated_at,
+        'ManifestKey', manifest_key)::jsonb AS data
+    FROM edge_rules WHERE id = sqlc.arg(rule_id)::uuid
+), measured AS (
+    SELECT data, (octet_length(data::text) + 2)::bigint AS observed FROM projection
+)
+SELECT CASE WHEN observed <= sqlc.arg(max_bytes)::bigint THEN data ELSE NULL::jsonb END::jsonb AS data,
+    observed::bigint FROM measured;
+
 -- name: ReadOpenAPIImportQuota :one
 SELECT count(*)::bigint AS observed,
     coalesce(bool_or(app_id = sqlc.arg(app_id)::uuid), false)::boolean AS replacement

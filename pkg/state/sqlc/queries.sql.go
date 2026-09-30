@@ -8324,6 +8324,18 @@ func (q *Queries) LockInvoiceForRefund(ctx context.Context, db DBTX, id pgtype.U
 	return i, err
 }
 
+const lockTrafficPolicyAccount = `-- name: LockTrafficPolicyAccount :one
+SELECT id FROM accounts WHERE id = $1::uuid FOR UPDATE NOWAIT
+`
+
+// Acquire before app/FK locks so different apps and shared presets serialize.
+func (q *Queries) LockTrafficPolicyAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockTrafficPolicyAccount, accountID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const markClaimedTriggerRecordDeadLetter = `-- name: MarkClaimedTriggerRecordDeadLetter :execrows
 UPDATE trigger_records
    SET state = 'dead_letter', attempts = attempts + 1, last_error = $3,
@@ -8510,6 +8522,25 @@ func (q *Queries) MarkUploadSessionCommitted(ctx context.Context, db DBTX, arg M
 	var i MarkUploadSessionCommittedRow
 	err := row.Scan(&i.ID, &i.Status, &i.DeploymentID)
 	return i, err
+}
+
+const measureEdgeRuleTrafficProjection = `-- name: MeasureEdgeRuleTrafficProjection :one
+SELECT octet_length(jsonb_build_array(jsonb_build_object(
+    'ID', id, 'AccountID', account_id, 'AppID', app_id,
+    'MatchHost', match_host, 'MatchPath', match_path, 'MatchMethods', match_methods,
+    'MatchHeaders', match_headers, 'Priority', priority, 'Enabled', enabled,
+    'Kind', kind, 'Action', action, 'CorsPresetID', cors_preset_id,
+    'ValidateMode', validate_mode, 'CreatedAt', created_at, 'UpdatedAt', updated_at,
+    'ManifestKey', manifest_key))::text)::bigint
+FROM edge_rules WHERE id = $1::uuid
+`
+
+// Match the full ReadPublicHostEdgeRules projection, including its array.
+func (q *Queries) MeasureEdgeRuleTrafficProjection(ctx context.Context, db DBTX, ruleID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, measureEdgeRuleTrafficProjection, ruleID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const measureTrafficPolicyProjection = `-- name: MeasureTrafficPolicyProjection :one
@@ -11965,6 +11996,51 @@ func (q *Queries) ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg
 	var i ReadAccountCreditConsumptionRow
 	err := row.Scan(&i.ConsumedCents, &i.HasPrior, &i.HasUnqualified)
 	return i, err
+}
+
+const readBoundedTrafficEdgeRule = `-- name: ReadBoundedTrafficEdgeRule :one
+WITH projection AS (
+    SELECT jsonb_build_object(
+        'ID', id, 'AccountID', account_id, 'AppID', app_id,
+        'MatchHost', match_host, 'MatchPath', match_path, 'MatchMethods', match_methods,
+        'MatchHeaders', match_headers, 'Priority', priority, 'Enabled', enabled,
+        'Kind', kind, 'Action', action, 'CorsPresetID', cors_preset_id,
+        'ValidateMode', validate_mode, 'CreatedAt', created_at, 'UpdatedAt', updated_at,
+        'ManifestKey', manifest_key)::jsonb AS data
+    FROM edge_rules WHERE id = $2::uuid
+), measured AS (
+    SELECT data, (octet_length(data::text) + 2)::bigint AS observed FROM projection
+)
+SELECT CASE WHEN observed <= $1::bigint THEN data ELSE NULL::jsonb END::jsonb AS data,
+    observed::bigint FROM measured
+`
+
+type ReadBoundedTrafficEdgeRuleParams struct {
+	MaxBytes int64
+	RuleID   pgtype.UUID
+}
+
+type ReadBoundedTrafficEdgeRuleRow struct {
+	Data     []byte
+	Observed int64
+}
+
+func (q *Queries) ReadBoundedTrafficEdgeRule(ctx context.Context, db DBTX, arg ReadBoundedTrafficEdgeRuleParams) (ReadBoundedTrafficEdgeRuleRow, error) {
+	row := db.QueryRow(ctx, readBoundedTrafficEdgeRule, arg.MaxBytes, arg.RuleID)
+	var i ReadBoundedTrafficEdgeRuleRow
+	err := row.Scan(&i.Data, &i.Observed)
+	return i, err
+}
+
+const readEdgeRuleTrafficAccount = `-- name: ReadEdgeRuleTrafficAccount :one
+SELECT account_id FROM edge_rules WHERE id = $1::uuid
+`
+
+func (q *Queries) ReadEdgeRuleTrafficAccount(ctx context.Context, db DBTX, ruleID pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, readEdgeRuleTrafficAccount, ruleID)
+	var account_id pgtype.UUID
+	err := row.Scan(&account_id)
+	return account_id, err
 }
 
 const readOpenAPIImportQuota = `-- name: ReadOpenAPIImportQuota :one

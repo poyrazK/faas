@@ -51,6 +51,23 @@ before transfer. Claimed hosts do not load unrelated tenants' routes, other
 rule kinds or presets, so foreign policy cannot exhaust their projection bound.
 The compiled cache preserves the existing 10,000-host entry ceiling.
 An oversized projection refuses with `traffic_policy_unavailable`/503.
+Edge-rule creates and updates now validate the complete canonical saved row
+against the 64 MiB host ceiling before commit. Mutation statements return only
+the ID; a bounded sqlc read returns no policy body when it exceeds the ceiling.
+This includes inactive action fields and JSONB numeric expansion. Refusal
+rolls back the intent and transactional change event and returns the existing
+`traffic_policy_too_large`/422 problem. Smaller replacements and deletion
+remain available. This single-row check does not establish the combined host
+rule and referenced-preset bound.
+
+Rule and preset creates/updates, environment edge overlays and environment
+clones share an account row lock, acquired before app/FK/policy-row locks and
+retained through commit. Contenders retry without holding a pool connection;
+their request context bounds the wait. Different accounts use different locks.
+This also serializes the existing account preset quota across different apps.
+Aggregate overlap validation still needs to use that transaction boundary;
+there is no account-wide policy byte quota.
+
 Individual CORS preset creates/replacements, environment overlay replacements,
 scoped route replacements and imported documents validate the complete runtime
 object before saving. Postgres measures canonical JSONB bytes, including

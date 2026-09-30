@@ -781,6 +781,8 @@ type Querier interface {
 	// Keep the historical broad lock key, also shared with refund compensation.
 	LockCreditConsumption(ctx context.Context, db DBTX, providerInvoiceID string) error
 	LockInvoiceForRefund(ctx context.Context, db DBTX, id pgtype.UUID) (LockInvoiceForRefundRow, error)
+	// Acquire before app/FK locks so different apps and shared presets serialize.
+	LockTrafficPolicyAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (pgtype.UUID, error)
 	MarkClaimedTriggerRecordDeadLetter(ctx context.Context, db DBTX, arg MarkClaimedTriggerRecordDeadLetterParams) (int64, error)
 	MarkClaimedTriggerRecordRetry(ctx context.Context, db DBTX, arg MarkClaimedTriggerRecordRetryParams) (int64, error)
 	MarkClaimedTriggerRecordSucceeded(ctx context.Context, db DBTX, arg MarkClaimedTriggerRecordSucceededParams) (int64, error)
@@ -803,6 +805,8 @@ type Querier interface {
 	// itself hits 0 rows and the handler reads upload_commit_outcomes
 	// to return the original deployment_id.
 	MarkUploadSessionCommitted(ctx context.Context, db DBTX, arg MarkUploadSessionCommittedParams) (MarkUploadSessionCommittedRow, error)
+	// Match the full ReadPublicHostEdgeRules projection, including its array.
+	MeasureEdgeRuleTrafficProjection(ctx context.Context, db DBTX, ruleID pgtype.UUID) (int64, error)
 	// Write validation measures the proposed complete projection using the same
 	// canonical representation as bounded runtime reads, before changing a row.
 	MeasureTrafficPolicyProjection(ctx context.Context, db DBTX, payload []byte) (int64, error)
@@ -988,6 +992,8 @@ type Querier interface {
 	PutAppEgressCircuits(ctx context.Context, db DBTX, arg PutAppEgressCircuitsParams) (PutAppEgressCircuitsRow, error)
 	// An unqualified legacy row blocks the whole key; guessing could double-debit.
 	ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg ReadAccountCreditConsumptionParams) (ReadAccountCreditConsumptionRow, error)
+	ReadBoundedTrafficEdgeRule(ctx context.Context, db DBTX, arg ReadBoundedTrafficEdgeRuleParams) (ReadBoundedTrafficEdgeRuleRow, error)
+	ReadEdgeRuleTrafficAccount(ctx context.Context, db DBTX, ruleID pgtype.UUID) (pgtype.UUID, error)
 	ReadOpenAPIImportQuota(ctx context.Context, db DBTX, arg ReadOpenAPIImportQuotaParams) (ReadOpenAPIImportQuotaRow, error)
 	// A single statement reads the pointer and its complete membership together.
 	ReadProjectReleaseSet(ctx context.Context, db DBTX, arg ReadProjectReleaseSetParams) ([]byte, error)

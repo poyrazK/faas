@@ -63,8 +63,12 @@ func environmentRouteTrafficProjection(p ProjectEnvironmentRoutePolicy) any {
 }
 
 func checkTrafficProjectionSize(scope string, observed int64) error {
-	if observed > api.TrafficPolicyMaxContractBytes {
-		return &TrafficPolicyProjectionError{Scope: scope, Limit: api.TrafficPolicyMaxContractBytes, Observed: observed}
+	return checkTrafficProjectionLimit(scope, observed, api.TrafficPolicyMaxContractBytes)
+}
+
+func checkTrafficProjectionLimit(scope string, observed, limit int64) error {
+	if observed > limit {
+		return &TrafficPolicyProjectionError{Scope: scope, Limit: limit, Observed: observed}
 	}
 	return nil
 }
@@ -90,9 +94,17 @@ func validateTrafficProjectionWithDB(ctx context.Context, db sqlc.DBTX, scope st
 // Scientific numbers (including inactive action fields) also allow for JSONB's
 // decimal expansion; counting wire bytes alone would miss that expansion.
 func validateMemTrafficProjection(scope string, projection any) error {
+	observed, err := memTrafficProjectionSize(scope, projection)
+	if err != nil {
+		return err
+	}
+	return checkTrafficProjectionSize(scope, observed)
+}
+
+func memTrafficProjectionSize(scope string, projection any) (int64, error) {
 	payload, err := json.Marshal(projection)
 	if err != nil {
-		return fmt.Errorf("state: encode %s traffic projection: %w", scope, err)
+		return 0, fmt.Errorf("state: encode %s traffic projection: %w", scope, err)
 	}
 	observed := int64(len(payload))
 	quoted, escaped := false, false
@@ -124,7 +136,7 @@ func validateMemTrafficProjection(scope string, projection any) error {
 			}
 			exponent, parseErr := strconv.ParseInt(string(payload[i+1:end]), 10, 32)
 			if parseErr != nil {
-				return fmt.Errorf("state: %s traffic projection exponent: %w", scope, ErrInvalidArgument)
+				return 0, fmt.Errorf("state: %s traffic projection exponent: %w", scope, ErrInvalidArgument)
 			}
 			if exponent < 0 {
 				exponent = -exponent
@@ -133,5 +145,5 @@ func validateMemTrafficProjection(scope string, projection any) error {
 			i = end - 1
 		}
 	}
-	return checkTrafficProjectionSize(scope, observed)
+	return observed, nil
 }

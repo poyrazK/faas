@@ -42,6 +42,61 @@ Claimed source apps retain emergency cancellation ownership through cleanup.
 
 ## Evidence log
 
+### Rule write bounds and account mutation serialization, 2026-09-30
+
+Both edge-rule create methods and complete merged updates validate the saved
+row's canonical runtime projection against the 64 MiB host ceiling before
+commit. Mutation statements return only their ID; the sqlc projection read
+returns a scalar observed size and no body for an oversized row. Metadata,
+inactive union fields and JSONB numeric expansion participate. Failure rolls
+back intent and its transactional change event. The in-memory mirror uses
+the existing conservative JSONB estimator with timestamp spelling allowance.
+The API returns the existing structured 422 and aborts fleet convergence on
+refusal. Smaller replacements and deletion remain repair paths.
+
+Rule/preset creates and updates, environment edge overlays and clones now
+acquire the same account row lock before app, FK or policy rows. The lock is
+retained through mutation and commit. Contended attempts roll back and return
+the pool connection before a context-bounded retry. The account preset count
+is therefore serialized across different apps. No byte quota across disjoint
+hostnames was introduced. These are prerequisites for the aggregate guard;
+per-host overlap analysis, combined rules/presets/overlay measurement and
+concurrent aggregate-bound acceptance are still required.
+
+All 56 selected state tests passed in 23.190 s without skips. Real Postgres
+fixtures reject a roughly 5 KiB action whose numeric expansion exceeds 64 MiB,
+verify no oversized body transfers from the guarded read, retain the saved
+intent/change ledger after refusal, and repair the legacy row. Measurement of
+the repaired row matches the public runtime SQL projection. Both create paths
+and the in-memory mirror passed refusal/replacement/delete checks. Seven
+mutation paths wait on the account lock without retaining an app lock; context
+cancellation releases waiters and another account can still mutate. Concurrent
+presets for different apps compete correctly for one account slot. Six writers
+waiting on a three-connection pool leave ordinary reads available and complete
+after the holder releases its lock. Existing edge-rule, preset, environment
+and clone behavior passed in the same selection.
+
+All 134 selected apid/API checks passed without skips: apid 2.481 s and API
+0.811 s. An injected store refusal verifies both HTTP mutation error paths,
+saved-state retention, convergence abort and absence of an activation event;
+numeric expansion is verified by the actual stores separately. Fresh sqlc
+v1.31.1 generation matched all four committed Go files. The new reads and
+account-lock query use existing schema; no migration was required.
+Pinned golangci-lint v2.4.0 reported zero issues for apid and API, including
+tests. State production lint reported zero issues with tests=false/unused
+disabled for the pre-existing test helper. Lint used matching compiler flags,
+two runtime workers and GOGC=50. Whitespace checks passed.
+
+Builds used CGO_ENABLED=0, one package worker, disabled DWARF and stripped
+linker output. One initial build returned only FAIL; another reported disk
+exhaustion before creating the test binary. Those runs are excluded. After
+reclaiming obsolete task-owned test archives, the recorded runs passed.
+
+Atomic aggregate per-host validation, decision/path evidence, preview
+agreement and full daemon/load/customer/staging acceptance remain pending.
+Native KVM/network/process-death/leak acceptance remains pending because no
+host is available. All six release requirements remain unchecked.
+
 ### Initial public route graph ownership, 2026-09-30
 
 The production matcher now uses the public router's namespace configuration

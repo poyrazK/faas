@@ -21186,6 +21186,9 @@ func (m *MemStore) CreateEdgeRule(_ context.Context, in CreateEdgeRuleParams) (E
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
+	if err := validateMemEdgeRuleTrafficProjection(r); err != nil {
+		return EdgeRule{}, err
+	}
 	stored := r
 	stored.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 	m.edgeRules[r.ID] = stored
@@ -21305,6 +21308,9 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRu
 		ValidateMode: in.ValidateMode,
 		CreatedAt:    now,
 		UpdatedAt:    now,
+	}
+	if err := validateMemEdgeRuleTrafficProjection(r); err != nil {
+		return EdgeRule{}, err
 	}
 	stored := r
 	stored.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
@@ -21877,6 +21883,9 @@ func (m *MemStore) UpdateEdgeRule(_ context.Context, id string, p UpdateEdgeRule
 		r.ValidateMode = *p.ValidateMode
 	}
 	r.UpdatedAt = time.Now()
+	if err := validateMemEdgeRuleTrafficProjection(r); err != nil {
+		return EdgeRule{}, err
+	}
 	stored := r
 	stored.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 	m.edgeRules[id] = stored

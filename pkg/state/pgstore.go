@@ -13497,6 +13497,11 @@ func scanEdgeRuleCols(scan func(...any) error) (EdgeRule, error) {
 // CreateEdgeRule is the un-capped insert path used by tests. The
 // customer-facing handler always calls CreateEdgeRuleIfUnderQuota.
 func (s *PgStore) CreateEdgeRule(ctx context.Context, in CreateEdgeRuleParams) (EdgeRule, error) {
+	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(in.AccountID))
+	if err != nil {
+		return EdgeRule{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
 	actionBytes, err := json.Marshal(in.Action)
 	if err != nil {
 		return EdgeRule{}, fmt.Errorf("state: marshal edge_rule.action: %w", err)
@@ -13516,7 +13521,7 @@ func (s *PgStore) CreateEdgeRule(ctx context.Context, in CreateEdgeRuleParams) (
 	if in.CorsPresetID != nil {
 		corsPresetIDArg = *in.CorsPresetID
 	}
-	row := s.pool.QueryRow(ctx, `
+	row := tx.QueryRow(ctx, `
 		insert into edge_rules (
 			account_id, app_id, match_host, match_path,
 			match_methods, priority, enabled, kind, action,
@@ -13526,7 +13531,7 @@ func (s *PgStore) CreateEdgeRule(ctx context.Context, in CreateEdgeRuleParams) (
 			$5, $6, $7, $8, $9::jsonb,
 			$10::uuid, coalesce(nullif($11, ''), 'block'), $12::jsonb, nullif($13, '')
 		)
-		returning `+edgeRuleSelectCols,
+		returning id`,
 		in.AccountID, in.AppID, in.MatchHost, in.MatchPath,
 		methods, in.Priority, in.Enabled, string(in.Kind), actionBytes,
 		// $10: cors_preset_id nullable FK (migration 00428). nil
@@ -13543,9 +13548,12 @@ func (s *PgStore) CreateEdgeRule(ctx context.Context, in CreateEdgeRuleParams) (
 		matchHeadersBytes,
 		in.ManifestKey,
 	)
-	r, err := scanEdgeRule(row)
+	r, err := readBoundedEdgeRuleTrafficProjection(ctx, tx, row)
 	if err != nil {
 		return EdgeRule{}, mapErr(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return EdgeRule{}, fmt.Errorf("state: commit edge rule: %w", err)
 	}
 	return r, nil
 }
@@ -13560,7 +13568,7 @@ func (s *PgStore) CreateEdgeRule(ctx context.Context, in CreateEdgeRuleParams) (
 // count, so a burst of N parallel inserts can't race past the cap
 // by N-1.
 func (s *PgStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeRuleParams, limits api.Limits) (EdgeRule, error) {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(in.AccountID))
 	if err != nil {
 		return EdgeRule{}, fmt.Errorf("state: begin tx: %w", err)
 	}
@@ -13679,7 +13687,7 @@ func (s *PgStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeR
 			$5, $6, $7, $8, $9::jsonb,
 			coalesce(nullif($10, ''), 'block'), $11::jsonb, nullif($12, '')
 		)
-		returning `+edgeRuleSelectCols,
+		returning id`,
 		in.AccountID, in.AppID, in.MatchHost, in.MatchPath,
 		methods, in.Priority, in.Enabled, string(in.Kind), actionBytes,
 		// $10: same empty-string→'block' coalesce as the un-capped
@@ -13688,7 +13696,7 @@ func (s *PgStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeR
 		matchHeadersBytes,
 		in.ManifestKey,
 	)
-	r, err := scanEdgeRule(row)
+	r, err := readBoundedEdgeRuleTrafficProjection(ctx, tx, row)
 	if err != nil {
 		return EdgeRule{}, mapErr(err)
 	}
@@ -13900,7 +13908,7 @@ func (s *PgStore) CreateCorsPresetIfUnderQuota(ctx context.Context, p CorsPreset
 	if err := s.validateTrafficProjection(ctx, "cors_preset", corsPresetTrafficProjection(proposed)); err != nil {
 		return CorsPreset{}, err
 	}
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(p.AccountID))
 	if err != nil {
 		return CorsPreset{}, fmt.Errorf("state: begin tx: %w", err)
 	}
@@ -14007,6 +14015,11 @@ func (s *PgStore) UpdateCorsPreset(ctx context.Context, accountID, id string, p 
 	if err := s.validateTrafficProjection(ctx, "cors_preset", corsPresetTrafficProjection(p)); err != nil {
 		return CorsPreset{}, err
 	}
+	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(accountID))
+	if err != nil {
+		return CorsPreset{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
 	var appIDArg any
 	if p.AppID != "" {
 		appIDArg = p.AppID
@@ -14015,7 +14028,7 @@ func (s *PgStore) UpdateCorsPreset(ctx context.Context, accountID, id string, p 
 	if p.Description != "" {
 		descriptionArg = p.Description
 	}
-	row := s.pool.QueryRow(ctx, `
+	row := tx.QueryRow(ctx, `
 		update cors_presets set
 			app_id           = $2,
 			name             = $3,
@@ -14036,6 +14049,9 @@ func (s *PgStore) UpdateCorsPreset(ctx context.Context, accountID, id string, p 
 	r, err := scanCorsPreset(row)
 	if err != nil {
 		return CorsPreset{}, mapErr(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return CorsPreset{}, fmt.Errorf("state: commit preset replacement: %w", err)
 	}
 	return r, nil
 }
@@ -14445,6 +14461,11 @@ func (s *PgStore) ListCertExpiryStateForWalker(ctx context.Context, staleCutoff 
 // the action union (a 'cors' action has no fields a 'route' rule
 // expects); the customer deletes + recreates instead.
 func (s *PgStore) UpdateEdgeRule(ctx context.Context, id string, p UpdateEdgeRuleParams) (EdgeRule, error) {
+	tx, txErr := s.beginEdgeRuleTrafficMutation(ctx, id)
+	if txErr != nil {
+		return EdgeRule{}, txErr
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
 	var (
 		hostArg, pathArg any
 		methodsArg       any
@@ -14507,7 +14528,7 @@ func (s *PgStore) UpdateEdgeRule(ctx context.Context, id string, p UpdateEdgeRul
 		validateModeArg = *p.ValidateMode
 	}
 
-	row := s.pool.QueryRow(ctx, `
+	row := tx.QueryRow(ctx, `
 		update edge_rules set
 			match_host    = coalesce($2, match_host),
 			match_path    = coalesce($3, match_path),
@@ -14519,7 +14540,7 @@ func (s *PgStore) UpdateEdgeRule(ctx context.Context, id string, p UpdateEdgeRul
 			validate_mode = coalesce(nullif($9, ''), validate_mode),
 			match_headers = case when $12 then $13::jsonb else match_headers end
 		where id = $1
-		returning `+edgeRuleSelectCols,
+		returning id`,
 		id, hostArg, pathArg, methodsArg, p.Priority, p.Enabled,
 		p.Action != nil, actionArg,
 		// $9: nil-skip via coalesce (nil → keep existing).
@@ -14537,9 +14558,12 @@ func (s *PgStore) UpdateEdgeRule(ctx context.Context, id string, p UpdateEdgeRul
 		// a UUID for the "set preset" signal.
 		corsPresetSet, corsPresetValue, matchHeadersSet, matchHeadersArg,
 	)
-	r, err := scanEdgeRule(row)
+	r, err := readBoundedEdgeRuleTrafficProjection(ctx, tx, row)
 	if err != nil {
 		return EdgeRule{}, mapErr(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return EdgeRule{}, fmt.Errorf("state: commit rule replacement: %w", err)
 	}
 	return r, nil
 }
