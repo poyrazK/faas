@@ -30,6 +30,9 @@ type Supervisor struct {
 	Routes          RouteResolver
 	Targets         TargetResolver
 	Forwarder       Forwarder
+	Certificates    CertificateProvider
+	Observations    TLSObservationPublisher
+	EdgeID          string
 	RefreshInterval time.Duration
 	MaxConnections  int
 	// MaxConnectionsPerAccount bounds concurrent sessions for one account on
@@ -51,6 +54,7 @@ type Supervisor struct {
 }
 
 type supervisedListener struct {
+	route    Route
 	listener net.Listener
 	cancel   context.CancelFunc
 }
@@ -92,6 +96,10 @@ func (s *Supervisor) Serve(ctx context.Context) error {
 		s.lifecycleMu.Unlock()
 	}()
 	limiter := NewConnectionLimiter(s.MaxConnectionsPerAccount)
+	var connectionSlots chan struct{}
+	if s.MaxConnections > 0 {
+		connectionSlots = make(chan struct{}, s.MaxConnections)
+	}
 
 	listeners := make(map[int]supervisedListener)
 	var mu sync.Mutex
@@ -121,34 +129,56 @@ func (s *Supervisor) Serve(ctx context.Context) error {
 	defer func() {
 		closeAll()
 		servers.Wait()
+		s.Metrics.SetTLSReadiness(0, 0, time.Time{})
 	}()
 
+	publication := tlsObservationPublication{saved: make(map[string]state.TCPListenerTLSObservation)}
 	refresh := func() error {
 		rows, err := s.Source.ListEnabledTCPListeners(serveCtx)
 		if err != nil {
 			return fmt.Errorf("list enabled TCP listeners: %w", err)
 		}
 		desired := make(map[int]Route, len(rows))
+		readyTLS, notReadyTLS := 0, 0
+		var earliestExpiry time.Time
+		observations := make([]state.TCPListenerTLSObservation, 0, len(rows))
 		for _, row := range rows {
-			route := Route{
-				PublicPort:   row.PublicPort,
-				AppID:        row.AppID,
-				ListenerName: row.ListenerName,
-				GuestPort:    row.GuestPort,
-				Protocol:     row.Protocol,
-			}
-			if err := ValidateRoute(route); err != nil {
+			route, err := routeFromListener(row)
+			if err != nil {
 				return err
 			}
 			if _, exists := desired[route.PublicPort]; exists {
 				return fmt.Errorf("duplicate TCP listener public port %d", route.PublicPort)
 			}
 			desired[route.PublicPort] = route
+			if route.TLSHostname != "" {
+				expiry := observeTLSCertificateExpiry(serveCtx, s.Certificates, route.TLSHostname)
+				observedAt := time.Now()
+				if !expiry.After(observedAt) {
+					expiry = time.Time{}
+				}
+				if expiry.IsZero() {
+					notReadyTLS++
+				} else {
+					readyTLS++
+					if earliestExpiry.IsZero() || expiry.Before(earliestExpiry) {
+						earliestExpiry = expiry
+					}
+				}
+				observations = append(observations, state.TCPListenerTLSObservation{
+					ListenerID: row.ID, EdgeID: s.EdgeID, Hostname: row.TLSHostname,
+					IntentUpdatedAt: row.UpdatedAt, ObservedAt: observedAt, Ready: !expiry.IsZero(), NotAfter: expiry,
+				})
+			}
+		}
+		s.Metrics.SetTLSReadiness(readyTLS, notReadyTLS, earliestExpiry)
+		if err := publication.publish(serveCtx, s.Observations, observations); err != nil && serveCtx.Err() == nil && s.OnError != nil {
+			s.OnError(fmt.Errorf("publish TCP TLS certificate status: %w", err))
 		}
 
 		mu.Lock()
 		for port, entry := range listeners {
-			if _, keep := desired[port]; !keep {
+			if route, keep := desired[port]; !keep || route != entry.route {
 				delete(listeners, port)
 				entry.cancel()
 				_ = entry.listener.Close()
@@ -169,13 +199,15 @@ func (s *Supervisor) Serve(ctx context.Context) error {
 			}
 			childCtx, cancel := context.WithCancel(serveCtx)
 			server := &Server{
-				Listener:       listener,
-				Routes:         s.Routes,
-				Targets:        s.Targets,
-				Forwarder:      s.Forwarder,
-				Limiter:        limiter,
-				Metrics:        s.Metrics,
-				MaxConnections: s.MaxConnections,
+				Listener:        listener,
+				Routes:          s.Routes,
+				Targets:         s.Targets,
+				Forwarder:       s.Forwarder,
+				Certificates:    s.Certificates,
+				Limiter:         limiter,
+				Metrics:         s.Metrics,
+				MaxConnections:  s.MaxConnections,
+				connectionSlots: connectionSlots,
 				OnError: func(err error) {
 					if s.OnError != nil && !isDraining() {
 						s.OnError(fmt.Errorf("TCP port %d: %w", port, err))
@@ -183,7 +215,7 @@ func (s *Supervisor) Serve(ctx context.Context) error {
 				},
 			}
 			mu.Lock()
-			listeners[port] = supervisedListener{listener: listener, cancel: cancel}
+			listeners[port] = supervisedListener{listener: listener, cancel: cancel, route: route}
 			mu.Unlock()
 			servers.Add(1)
 			go func(port int, route Route, srv *Server, childCtx context.Context) {
@@ -285,6 +317,8 @@ func (s *Supervisor) validate() error {
 		return errors.New("tcpd supervisor max connections cannot be negative")
 	case s.MaxConnectionsPerAccount < 0:
 		return errors.New("tcpd supervisor max connections per account cannot be negative")
+	case s.Observations != nil && state.ValidateTCPListenerTLSEdgeID(s.EdgeID) != nil:
+		return errors.New("tcpd supervisor requires a valid observation edge identity")
 	default:
 		return nil
 	}

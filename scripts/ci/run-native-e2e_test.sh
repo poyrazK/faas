@@ -207,6 +207,16 @@ fi
 grep -Fq "required test ${lane_tests[1]} did not pass or run" "${work}/lane-subtest.out" ||
   fail "the bounded lane did not name the absent top-level test"
 
+# A parent PASS must not conceal unexecuted required subtests.
+cp "${work}/lane-green.log" "${work}/lane-subskip.log"
+printf -- '    --- SKIP: %s/missing-fixture (0.00s)\n' "${lane_tests[0]}" >> "${work}/lane-subskip.log"
+if native_e2e_lane_verdict "${work}/lane-subskip.log" containers "${lane_tests[@]}" >"${work}/lane-subskip.out" 2>&1; then
+  fail "a parent PASS concealed a skipped qualification subtest"
+fi
+grep -Fq 'SKIPPED subtests' "${work}/lane-subskip.out" || fail "missing subtest skip diagnostic"
+# shellcheck disable=SC2016 # Match workflow code literally.
+grep -Fq 'native_e2e_lane_tests containers "$GITHUB_WORKSPACE"' "${workflow}" || fail "container workflow has no exact verdict"
+
 # Keep dispatch routing explicit: smoke and jobs-only validate their derived
 # selection, while full/qualify continue to use the platform-wide contract.
 grep -Fq 'native_e2e_lane_tests smoke "$GITHUB_WORKSPACE"' "${workflow}" ||
@@ -278,6 +288,13 @@ grep -Fq 'no metal-tagged tests found in cmd/e2e' "${runner}" ||
   fail "the wrapper does not fail when the derived run set is empty"
 grep -Fq 'is not in the metal-tagged set' "${runner}" ||
   fail "the wrapper does not verify every required test is in the derived set"
+
+# Linux process placement/identity contracts must execute in the container
+# lane in addition to microVM tests, and use the actual cgroup hierarchy.
+grep -Fq 'FAAS_TEST_CGROUP_PARENT=/sys/fs/cgroup' "${runner}" ||
+  fail "container lane does not provide a real cgroup v2 parent"
+grep -Fq 'make GO="${FAAS_E2E_GO}" test-container-guest-contract' "${runner}" ||
+  fail "container lane does not execute the Linux guest process contracts"
 
 # EXECUTE make with a regex carrying the two characters that broke it, and
 # assert the filter reaches `go test` byte-for-byte.

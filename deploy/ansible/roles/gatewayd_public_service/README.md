@@ -48,6 +48,37 @@ daemon forwards plaintext requests to `gatewayd-internal` over
   `faas_tcpd_max_connections_per_account` bounds concurrent sessions per
   account on each gateway.
 
+## UDP ingress rollout
+
+UDP ingress is disabled by default. Set `faas_udpd_enabled: true` and a nonempty
+`faas_udpd_allowed_cidrs` list of IPv4 client CIDRs in the public gateway's host
+variables. The same variables feed the nftables role and `/etc/faas/udpd.env`;
+apply both roles together. IPv6 public UDP is not supported. Do this only after
+the native acceptance cases in ADR-382 have passed for the release.
+
+Use `faas_udpd_schedd_target` for the scheduler endpoint and
+`faas_udpd_{schedd,vmmd}_tls_{ca,cert,key}_path` for the transport credentials.
+The release includes `vmmd-udp-bridge`; every target compute node must run that
+same release so VMMD can launch `/opt/faas/current/bin/vmmd-udp-bridge`.
+
+Declare the named UDP port in the app manifest, then reserve a stable endpoint:
+
+```sh
+gregale apps udp my-app add --name dns --guest-port 5353
+gregale apps udp my-app enable dns
+gregale apps udp my-app list
+```
+
+Creation starts disabled. The public address uses the gateway IP and returned
+public UDP port (40000–49999). TCP and UDP may independently reserve the same
+port number. `disable` closes the listener and peer sessions at reconciliation;
+`rm` releases the reservation. Roll back exposure by disabling the runtime and
+applying the nftables role with `faas_udpd_enabled: false`.
+
+`make udp-deployment-check` renders the default/explicit-source configurations
+without applying them. It does not prove a live firewall, PostgreSQL migration,
+or VM cold-wake/restore acceptance.
+
 ## Note on the public edge
 
 gatewayd-public is the ONLY public listener on a node (Tier A7 split,

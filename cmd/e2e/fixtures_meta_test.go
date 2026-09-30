@@ -74,3 +74,7 @@ func TestGoDockerfileFixture_Shape(t *testing.T) {
 	assertFixtureContains(t, GoDockerfileFixture(t),
 		"Dockerfile", "go.mod", "main.go", "faas-build-token")
 }
+
+func TestNodeFixtureUDP_Shape(t *testing.T) {
+	assertFixtureContains(t, NodeFixtureUDP(t), "package.json", "index.js", ".faas-fixture", "faas-build-token")
+}

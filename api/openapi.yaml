@@ -5663,7 +5663,10 @@ paths:
       operationId: createAppTCPListener
       summary: Expose one app port over raw TCP.
       description: |
-        Creates an enabled TCP listener. `public_port` is optional; when it
+        Creates a TCP listener. Passthrough is enabled immediately; TLS
+        termination starts disabled and requires a verified app-owned domain
+        and an explicitly provisioned edge certificate before enabling.
+        `public_port` is optional; when it
         is omitted Gregale allocates a free port from the reserved
         40000–49999 range. Public ports remain stable across instance wake,
         migration, and redeployments. `name` and `guest_port` must match an
@@ -5699,8 +5702,8 @@ paths:
     patch:
       tags: [apps]
       operationId: updateAppTCPListener
-      summary: Enable or disable an app TCP listener.
-      description: Disabling a listener fail-closes new connections without releasing its stable public port.
+      summary: Change serving state or TLS policy of an app TCP listener.
+      description: Supply exactly one of enabled or tls. TLS policy changes atomically disable the endpoint and cancel existing sessions; provision the selected certificate policy before explicitly re-enabling. Disabling retains the stable public port.
       requestBody:
         required: true
         content:
@@ -5722,6 +5725,117 @@ paths:
       summary: Delete an app TCP listener.
       responses:
         '204': { description: No body. The listener was removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/tcp-listeners/{name}/tls-status:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: name
+        in: path
+        required: true
+        description: TCP endpoint whose observed certificates are requested.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,30}$' }
+    get:
+      tags: [apps]
+      operationId: appTCPListenerTLSStatus
+      summary: Read observed edge certificate status for a TCP listener.
+      description: |
+        Returns customer-safe certificate evidence for each observed edge.
+        Missing evidence, evidence at least sixty seconds old, and changed or
+        disabled TLS intent have unknown status. This does not establish fleet
+        coverage, client trust, public routing or guest availability.
+      responses:
+        '200':
+          description: Certificate evidence from observed edges only.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TCPListenerTLSStatusResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Certificate observation storage is unavailable.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/udp-listeners:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: listAppUDPListeners
+      summary: List an app's public UDP listeners.
+      responses:
+        '200':
+          description: Stable app-owned datagram endpoints.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/UDPListenerResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [apps]
+      operationId: createAppUDPListener
+      summary: Reserve an app-owned public UDP endpoint.
+      description: Requires a matching declared UDP workload port. New endpoints start disabled and require an explicit enable request plus the operator's source-CIDR rollout.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateUDPListenerRequest' }
+      responses:
+        '201':
+          description: The reserved disabled UDP endpoint.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UDPListenerResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/udp-listeners/{name}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: name
+        in: path
+        required: true
+        description: UDP workload listener selected for mutation.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,30}$' }
+    patch:
+      tags: [apps]
+      operationId: updateAppUDPListener
+      summary: Enable or disable a public UDP listener.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateUDPListenerRequest' }
+      responses:
+        '200':
+          description: The UDP endpoint's updated serving state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UDPListenerResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [apps]
+      operationId: deleteAppUDPListener
+      summary: Delete a public UDP listener.
+      responses:
+        '204': { description: The datagram endpoint was removed. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -28014,7 +28128,7 @@ components:
       description: "One app-owned raw TCP listener with a stable public endpoint."
       type: object
       additionalProperties: false
-      required: [id, name, guest_port, public_port, protocol, enabled, created_at, updated_at]
+      required: [id, name, guest_port, public_port, protocol, enabled, created_at, updated_at, tls]
       properties:
         id: { type: string, description: "Stable listener identifier." }
         name:
@@ -28038,6 +28152,7 @@ components:
           description: "Whether the edge accepts new TCP connections."
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        tls: { $ref: '#/components/schemas/TCPListenerTLSConfig' }
 
     CreateTCPListenerRequest:
       description: "Request to expose one workload TCP port."
@@ -28057,19 +28172,64 @@ components:
           minimum: 40000
           maximum: 49999
           description: "Optional stable public port; Gregale allocates one when omitted."
+        tls: { $ref: '#/components/schemas/TCPListenerTLSConfig' }
 
     UpdateTCPListenerRequest:
-      description: "Request to change whether an app TCP listener accepts connections."
+      description: "Supply exactly one serving-state or TLS-policy mutation. TLS changes disable the listener."
       type: object
       additionalProperties: false
-      required: [enabled]
+      oneOf:
+        - required: [enabled]
+        - required: [tls]
       properties:
         enabled: { type: boolean }
+        tls: { $ref: '#/components/schemas/TCPListenerTLSConfig' }
+
+    TCPListenerTLSConfig:
+      description: "Listener TLS intent. Termination requires a verified app-owned ASCII DNS hostname; passthrough forbids a hostname."
+      type: object
+      additionalProperties: false
+      required: [mode]
+      properties:
+        mode:
+          type: string
+          enum: [passthrough, terminate]
+          default: passthrough
+        hostname:
+          type: string
+          maxLength: 253
+          description: "Normalized DNS hostname for termination. IP-shaped names and wildcards are forbidden."
+
+    TCPListenerTLSStatusResponse:
+      description: "Certificate evidence from observed edges; empty observations mean unknown status, never fleet-wide readiness."
+      type: object
+      additionalProperties: false
+      required: [name, tls, enabled, scope, observations]
+      properties:
+        name: { type: string }
+        tls: { $ref: '#/components/schemas/TCPListenerTLSConfig' }
+        enabled: { type: boolean }
+        scope: { type: string, enum: [observed_edges] }
+        observations:
+          type: array
+          items: { $ref: '#/components/schemas/TCPListenerTLSCertificateStatus' }
+
+    TCPListenerTLSCertificateStatus:
+      description: "Certificate evidence for one edge. Unknown evidence omits certificate expiry."
+      type: object
+      additionalProperties: false
+      required: [edge_id, status, observed_at]
+      properties:
+        edge_id: { type: string, maxLength: 128 }
+        status: { type: string, enum: [ready, not_ready, unknown] }
+        observed_at: { type: string, format: date-time }
+        not_after: { type: string, format: date-time }
 
     AppManifestHealthcheck:
       description: "AppManifest-level healthcheck shape: OCI HEALTHCHECK fields plus typed deployment probe overrides. Durations are integer seconds at the JSON boundary to match OCI/Docker conventions."
       type: object
       properties:
+        image_timing: { $ref: '#/components/schemas/OCIHealthcheckTiming' }
         test:
           type: array
           items: { type: string }
@@ -28115,6 +28275,49 @@ components:
         start_period_s:
           type: [integer, "null"]
           description: "Startup grace during which failures don't count (Docker 17.05+, default 0s)."
+
+    OCIHealthcheckTiming:
+      description: "Exact OCI image healthcheck durations in nanoseconds, preserved without rounding to whole seconds."
+      type: object
+      additionalProperties: false
+      properties:
+        interval_ns: { type: integer, format: int64, minimum: 0 }
+        timeout_ns: { type: integer, format: int64, minimum: 0 }
+        start_period_ns: { type: integer, format: int64, minimum: 0 }
+        start_interval_ns: { type: integer, format: int64, minimum: 0 }
+
+    UDPListenerResponse:
+      description: "One app-owned public datagram listener with a reserved stable port."
+      type: object
+      additionalProperties: false
+      required: [id, name, guest_port, public_port, protocol, enabled, created_at, updated_at]
+      properties:
+        id: { type: string }
+        name: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,30}$' }
+        guest_port: { type: integer, minimum: 1, maximum: 65535 }
+        public_port: { type: integer, minimum: 40000, maximum: 49999 }
+        protocol: { type: string, enum: [udp] }
+        enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    CreateUDPListenerRequest:
+      description: "Reserve a disabled public datagram endpoint for a declared workload port."
+      type: object
+      additionalProperties: false
+      required: [name, guest_port]
+      properties:
+        name: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,30}$' }
+        guest_port: { type: integer, minimum: 1, maximum: 65535 }
+        public_port: { type: integer, minimum: 40000, maximum: 49999 }
+
+    UpdateUDPListenerRequest:
+      description: "Set whether an existing datagram endpoint accepts peers."
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
 
     SidecarExecProbe:
       description: "Exec probe command passed as argv inside the container; no shell is implied."

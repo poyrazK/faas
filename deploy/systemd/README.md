@@ -17,6 +17,12 @@ The edge is two services:
 nftables rule that admits the reserved 40000–49999 listener range; the Ansible
 role renders this file from the `faas_tcpd_*` variables.
 
+The unit also loads `/etc/faas/udpd.env`. UDP remains disabled unless
+`FAAS_UDPD_ENABLED=1` and `FAAS_UDPD_ALLOWED_SOURCE_CIDRS` contains explicit
+IPv4 client CIDRs. The Ansible `faas_udpd_*` variables render that file and
+the matching UDP firewall rules. See the gatewayd_public_service role README
+and ADR-382 for the native acceptance gate.
+
 The remaining units are installed by their owning role: `apid`, `schedd`,
 `vmmd`, `builderd`, `imaged`, `meterd`, `outboundd`, and `realtimed`, plus the
 PostgreSQL backup and WAL-prune timers. The control-plane and compute-only

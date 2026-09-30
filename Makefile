@@ -13,7 +13,7 @@ export GOOS GOARCH
 TLS_CUTOVER_MODE ?= dry-run
 PKGS    := ./...
 COVERAGE_DIR := coverage
-DAEMONS := apid gatewayd-public gatewayd-internal realtimed s3-gatewayd schedd vmmd vmmd-jail-helper vmmd-raw-bridge vmmd-tcp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd hostage-gen
+DAEMONS := apid gatewayd-public gatewayd-internal realtimed s3-gatewayd schedd vmmd vmmd-jail-helper vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd hostage-gen
 GOVULNCHECK_VERSION ?= 1.7.0
 # gregale is the customer-facing CLI; gregalectl is the
 # operator-only companion CLI (issue #911 / ADR-110 PR-6.5).
@@ -45,6 +45,15 @@ ANSIBLE_PLAYBOOK = ANSIBLE_CONFIG="$(ANSIBLE_CONFIG)" ansible-playbook
 .PHONY: test-customer-platform
 test-customer-platform: ## Run the two-customer starter acceptance with disposable PostgreSQL databases (no KVM)
 	@GO="$(GO)" sh scripts/test-customer-platform.sh
+
+.PHONY: test-container-contract
+test-container-contract: ## Offline OCI resolution, container preflight, and deployment override contract checks (no KVM)
+	@python3 scripts/ci/container-contract-check_test.py
+	@GO="$(GO)" python3 scripts/ci/container-contract-check.py
+
+.PHONY: test-container-guest-contract
+test-container-guest-contract: ## Linux root acceptance for OCI identity and atomic cgroup launch (explicit delegated cgroup parent required)
+	@GO="$(GO)" bash scripts/ci/container-guest-contract.sh
 
 .PHONY: help
 help: ## List targets
@@ -1316,3 +1325,26 @@ sdk-smoke-python: ## Build fakeapid fixture + run Python SDK smoke + unit tests
 .PHONY: sdk-unit-python
 sdk-unit-python: ## Run Python SDK unit tests (no fixture required)
 	@cd sdk/python && .venv/bin/python -m pytest tests/test_client.py tests/test_sse.py
+
+.PHONY: udp-deployment-check
+udp-deployment-check: ## Render opt-in UDP environment, source policy and systemd contracts without applying them
+	python3 scripts/ci/test_udp_deployment.py
+
+.PHONY: udp-alert-check
+udp-alert-check: ## Verify UDP ingress alert syntax and pressure/failure versus normal completion behavior
+	promtool check rules deploy/ansible/roles/prometheus/files/faas.rules.yml
+	promtool test rules deploy/ansible/roles/prometheus/files/udp.rules.test.yml
+
+.PHONY: udp-postgres-check
+.PHONY: tcp-tls-alert-check
+tcp-tls-alert-check: ## Verify raw TCP TLS certificate availability and expiry alerts
+	promtool check rules deploy/ansible/roles/prometheus/files/faas.rules.yml
+	promtool test rules deploy/ansible/roles/prometheus/files/tcp-tls.rules.test.yml
+
+udp-postgres-check: ## Require real PostgreSQL passes for UDP store/migration tests; rejects skips
+	bash scripts/ci/udp-postgres-check.sh
+
+.PHONY: udp-contract-check
+udp-contract-check: udp-deployment-check udp-alert-check ## Require portable UDP socket, transport, intent, API and CLI race contracts; rejects skips
+	@python3 scripts/ci/container-contract-check_test.py
+	python3 scripts/ci/udp-contract-check.py

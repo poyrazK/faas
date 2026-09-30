@@ -20,15 +20,18 @@ type Forwarder interface {
 // Server accepts public TCP connections, resolves their local listener port,
 // and forwards them to a selected workload instance.
 type Server struct {
-	Listener  net.Listener
-	Routes    RouteResolver
-	Targets   TargetResolver
-	Forwarder Forwarder
-	Limiter   *ConnectionLimiter
-	Metrics   *tcpmetrics.Metrics
+	Listener     net.Listener
+	Routes       RouteResolver
+	Targets      TargetResolver
+	Forwarder    Forwarder
+	Limiter      *ConnectionLimiter
+	Metrics      *tcpmetrics.Metrics
+	Certificates CertificateProvider
 
 	// MaxConnections bounds concurrent sessions. Zero means unlimited.
 	MaxConnections int
+	// connectionSlots shares the supervisor-wide cap across listener ports.
+	connectionSlots chan struct{}
 	// OnError receives per-connection errors. It is optional; connection
 	// errors do not stop the accept loop.
 	OnError func(error)
@@ -55,8 +58,8 @@ func (s *Server) Serve(ctx context.Context) error {
 		active.CloseAll()
 	}()
 
-	var slots chan struct{}
-	if s.MaxConnections > 0 {
+	slots := s.connectionSlots
+	if slots == nil && s.MaxConnections > 0 {
 		slots = make(chan struct{}, s.MaxConnections)
 	}
 	for {
@@ -166,6 +169,14 @@ func (s *Server) handle(ctx context.Context, conn net.Conn, session *tcpmetrics.
 			return fmt.Errorf("%w for %q", ErrConnectionLimit, key)
 		}
 		defer release()
+	}
+	if route.TLSHostname != "" {
+		secure, err := TerminateTLS(ctx, conn, route.TLSHostname, s.Certificates)
+		if err != nil {
+			session.Reject("tls_handshake")
+			return err
+		}
+		conn = secure
 	}
 	target, err := s.Targets.ResolveTarget(ctx, route)
 	if err != nil {

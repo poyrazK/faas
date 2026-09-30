@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // ErrInvalidTCPListener identifies a listener that cannot be exposed by the
@@ -38,6 +39,11 @@ func normalizeTCPListener(in TCPListener) (TCPListener, error) {
 	if in.Protocol != "tcp" {
 		return TCPListener{}, fmt.Errorf("%w: protocol %q is not tcp", ErrInvalidTCPListener, in.Protocol)
 	}
+	tlsConfig, err := (api.TCPListenerTLSConfig{Mode: in.TLSMode, Hostname: in.TLSHostname}).Normalize()
+	if err != nil {
+		return TCPListener{}, fmt.Errorf("%w: %w", ErrInvalidTCPListener, err)
+	}
+	in.TLSMode, in.TLSHostname = tlsConfig.Mode, tlsConfig.Hostname
 	return in, nil
 }
 
@@ -64,6 +70,7 @@ func scanTCPListener(row tcpListenerScanner) (TCPListener, error) {
 		&listener.ID, &listener.AppID, &listener.AccountID,
 		&listener.ListenerName, &listener.GuestPort, &listener.PublicPort,
 		&listener.Protocol, &listener.Enabled, &listener.CreatedAt, &listener.UpdatedAt,
+		&listener.TLSMode, &listener.TLSHostname,
 	); err != nil {
 		return TCPListener{}, err
 	}
@@ -72,7 +79,7 @@ func scanTCPListener(row tcpListenerScanner) (TCPListener, error) {
 
 const tcpListenerColumns = `
     id, app_id, account_id, listener_name, guest_port, public_port,
-    protocol, enabled, created_at, updated_at`
+    protocol, enabled, created_at, updated_at, tls_mode, tls_hostname`
 
 func (s *PgStore) CreateTCPListener(ctx context.Context, in TCPListener) (TCPListener, error) {
 	in, err := normalizeTCPListener(in)
@@ -105,11 +112,11 @@ func (s *PgStore) CreateTCPListener(ctx context.Context, in TCPListener) (TCPLis
 	}
 	row := tx.QueryRow(ctx, `
 		insert into app_tcp_listeners
-			(id, app_id, account_id, listener_name, guest_port, public_port, protocol, enabled)
-		values ($1, $2, $3, $4, $5, $6, $7, $8)
+			(id, app_id, account_id, listener_name, guest_port, public_port, protocol, enabled, tls_mode, tls_hostname)
+		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		returning `+tcpListenerColumns,
 		in.ID, in.AppID, in.AccountID, in.ListenerName, in.GuestPort,
-		in.PublicPort, in.Protocol, in.Enabled)
+		in.PublicPort, in.Protocol, in.Enabled, in.TLSMode, in.TLSHostname)
 	listener, err := scanTCPListener(row)
 	if err != nil {
 		if isUniqueViolation(err) {

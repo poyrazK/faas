@@ -4,7 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
+	"github.com/onebox-faas/faas/pkg/api"
+	"sync/atomic"
 
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -13,6 +14,9 @@ import (
 // InstanceSource is the authoritative instance projection needed by the raw
 // TCP edge. Keeping it narrow lets tcpd use either PgStore or MemStore.
 type InstanceSource interface {
+	AppByID(ctx context.Context, appID string) (state.App, error)
+	TCPListenerByAppAndName(ctx context.Context, appID, listenerName string) (state.TCPListener, error)
+	DomainByName(ctx context.Context, domain string) (state.CustomDomain, error)
 	ListInstancesForApp(ctx context.Context, appID string) ([]state.Instance, error)
 }
 
@@ -32,8 +36,7 @@ type StoreTargetResolver struct {
 	Instances InstanceSource
 	Admitter  Admitter
 
-	mu      sync.Mutex
-	cursors map[string]uint64
+	cursor atomic.Uint64
 }
 
 // ResolveTarget implements TargetResolver.
@@ -44,24 +47,49 @@ func (r *StoreTargetResolver) ResolveTarget(ctx context.Context, route Route) (g
 	if err := ValidateRoute(route); err != nil {
 		return gateway.Target{}, err
 	}
+	app, err := r.Instances.AppByID(ctx, route.AppID)
+	if err != nil {
+		return gateway.Target{}, fmt.Errorf("read TCP app: %w", err)
+	}
+	if app.Status == state.AppDeleted || (route.AccountID != "" && app.AccountID != route.AccountID) {
+		return gateway.Target{}, errors.New("TCP app ownership no longer matches listener")
+	}
+	if app.MaintenanceMode {
+		return gateway.Target{}, errors.New("TCP app is in maintenance mode")
+	}
+	intent, err := r.Instances.TCPListenerByAppAndName(ctx, route.AppID, route.ListenerName)
+	if err != nil {
+		return gateway.Target{}, fmt.Errorf("read TCP listener intent: %w", err)
+	}
+	if !intent.Enabled || intent.AppID != route.AppID || intent.AccountID != app.AccountID ||
+		intent.PublicPort != route.PublicPort || intent.GuestPort != route.GuestPort || intent.Protocol != "tcp" {
+		return gateway.Target{}, errors.New("TCP listener is disabled or changed")
+	}
+	policy, err := (api.TCPListenerTLSConfig{Mode: intent.TLSMode, Hostname: intent.TLSHostname}).Normalize()
+	if err != nil || policy.Hostname != route.TLSHostname {
+		return gateway.Target{}, errors.New("TCP listener TLS intent is invalid or changed")
+	}
+	if policy.Mode == api.TCPListenerTLSTerminate {
+		domain, err := r.Instances.DomainByName(ctx, policy.Hostname)
+		if err != nil {
+			return gateway.Target{}, errors.New("TCP TLS domain unavailable")
+		}
+		if err := state.ValidateTCPListenerTLSDomain(route.AppID, policy.Hostname, domain); err != nil {
+			return gateway.Target{}, err
+		}
+	}
 	instances, err := r.Instances.ListInstancesForApp(ctx, route.AppID)
 	if err != nil {
 		return gateway.Target{}, fmt.Errorf("list instances for app %q: %w", route.AppID, err)
 	}
 	var running []state.Instance
 	for _, instance := range instances {
-		if instance.State == string(state.StateRunning) && instance.ID != "" && instance.NodeID != "" {
+		if instance.AppID == route.AppID && instance.State == string(state.StateRunning) && instance.ID != "" && instance.NodeID != "" {
 			running = append(running, instance)
 		}
 	}
 	if len(running) > 0 {
-		r.mu.Lock()
-		if r.cursors == nil {
-			r.cursors = make(map[string]uint64)
-		}
-		idx := r.cursors[route.AppID] % uint64(len(running))
-		r.cursors[route.AppID]++
-		r.mu.Unlock()
+		idx := (r.cursor.Add(1) - 1) % uint64(len(running))
 		instance := running[idx]
 		return gateway.Target{
 			AppID:        route.AppID,

@@ -31,3 +31,9 @@ func (c *Client) UpdateAppTCPListener(ctx context.Context, slug, name string, re
 func (c *Client) DeleteAppTCPListener(ctx context.Context, slug, name string) error {
 	return c.do(ctx, http.MethodDelete, "/v1/apps/"+url.PathEscape(slug)+"/tcp-listeners/"+url.PathEscape(name), nil, nil)
 }
+
+func (c *Client) AppTCPListenerTLSStatus(ctx context.Context, slug, name string) (TCPListenerTLSStatusResponse, error) {
+	var out TCPListenerTLSStatusResponse
+	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/tcp-listeners/"+url.PathEscape(name)+"/tls-status", nil, &out)
+	return out, err
+}

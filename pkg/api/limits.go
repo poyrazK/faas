@@ -20,6 +20,14 @@ import (
 	"time"
 )
 
+// OCI healthcheck image durations are nanoseconds. Docker permits zero for
+// inheritance and otherwise requires at least one millisecond.
+const (
+	OCIHealthcheckMinimumDuration      = time.Millisecond
+	OCIHealthcheckDefaultStartInterval = 5 * time.Second
+	OCIHealthcheckDurationMaxSeconds   = int64((1<<63 - 1) / time.Second)
+)
+
 // A restore hook is on the wake critical path. Keep its customer timeout
 // below the host's five-second resume deadline, including transport overhead.
 const (
@@ -259,6 +267,13 @@ func PlanMeetsFullRootfs(p Plan) bool {
 	}
 	return false
 }
+
+// OCI identity resolution shares the existing image ownership trust boundary
+// and guest passwd read budget across main, companion, probe, and task launch.
+const (
+	OCIIdentityIDMax        = 65534
+	OCIIdentityFileMaxBytes = 1 << 20
+)
 
 // UserUIDOverrideMax (M-3 / ADR-142 §Decision 4) is the per-plan
 // cap on the number of /etc/passwd entries BuildFullRootfs merges
@@ -7661,3 +7676,60 @@ func TenantEgressForbiddenPort(port int) (reason string, forbidden bool) {
 	reason, forbidden = tenantEgressForbiddenPorts[port]
 	return reason, forbidden
 }
+
+// UDPDatagramMaxBytes is the largest UDP payload on the IPv4 guest network:
+// a 65535-byte IP packet minus the minimum 20-byte IP and 8-byte UDP headers.
+const UDPDatagramMaxBytes = 65507
+
+// UDPStreamMaxBytes and UDPStreamMaxDatagrams bound each direction of one
+// admitted peer session. Empty datagrams consume the message budget.
+const UDPStreamMaxBytes int64 = 64 * 1024 * 1024
+const UDPStreamMaxDatagrams uint64 = 65536
+
+// UDPIdleTimeoutDefault bounds quiet admitted peer sessions at the edge.
+const UDPIdleTimeoutDefault = 30 * time.Second
+
+// UDP peer buffering stays small during admission/wake. A full peer queue
+// drops the newest datagram instead of blocking the shared public listener.
+const UDPPeerQueueDepth = 4
+const UDPMaxPeersDefault = 64
+const UDPMaxPeersPerAccountDefault = 16
+
+const UDPReplyQueueDepth = 64
+const UDPWriteTimeout = time.Second
+
+// UDP rate budgets apply independently in both directions for each account
+// across the listeners sharing one edge limiter.
+const UDPPacketsPerSecondPerAccount = 1000
+const UDPPacketBurstPerAccount = 200
+const UDPBytesPerSecondPerAccount = 4 * 1024 * 1024
+const UDPByteBurstPerAccount = 4 * UDPDatagramMaxBytes
+const UDPRateLimitMaxAccounts = 4096
+const UDPRateLimitIdleTTL = 2 * time.Minute
+
+const UDPListenerPublicPortMin = 40000
+const UDPListenerPublicPortMax = 49999
+
+// UDPListenerRefreshInterval bounds intent reconciliation latency at the edge.
+const UDPListenerRefreshInterval = 2 * time.Second
+
+// UDPAdmissionTimeout bounds queued peers waiting for scheduler admission.
+const UDPAdmissionTimeout = 30 * time.Second
+
+// TCPListenerTLSHandshakeTimeout bounds public listener TLS negotiation.
+const TCPListenerTLSHandshakeTimeout = 10 * time.Second
+
+const TCPListenerTLSHostnameMaxBytes = 253
+const TCPListenerTLSDNSLabelMaxBytes = 63
+
+// TCPListenerTLSBundleMaxBytes bounds a certificate chain plus private key.
+const TCPListenerTLSBundleMaxBytes = 64 * 1024
+
+// TCPListenerTLSObservationMaxAge prevents a stopped edge from advertising
+// certificate readiness indefinitely through its last durable observation.
+const TCPListenerTLSObservationMaxAge = 60 * time.Second
+
+const TCPListenerTLSObservationEdgeIDMaxBytes = 128
+
+const TCPListenerTLSObservationRefreshInterval = 15 * time.Second
+const TCPListenerTLSObservationWriteTimeout = 2 * time.Second

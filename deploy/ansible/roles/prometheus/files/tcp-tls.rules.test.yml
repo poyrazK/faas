@@ -1,0 +1,62 @@
+rule_files:
+  - faas.rules.yml
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'gatewayd_public_tcp_tls_listeners_not_ready{instance="edge-1"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: FaasTCPTLSCertificateUnavailable
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: FaasTCPTLSCertificateUnavailable
+        exp_alerts:
+          - exp_labels:
+              instance: edge-1
+              severity: warn
+              component: gatewayd-public
+              family: tcp_ingress
+            exp_annotations:
+              summary: "Enabled TCP TLS listeners lack valid certificates"
+              description: "Inspect the configured certificate directory, bundle permissions, hostname and validity. Provision complete bundles atomically or disable affected listeners. Socket readiness does not establish certificate readiness."
+  - interval: 1m
+    input_series:
+      - series: 'gatewayd_public_tcp_tls_certificate_expiry_seconds{instance="edge-1"}'
+        values: '86400x20'
+      - series: 'gatewayd_public_tcp_tls_listeners_ready{instance="edge-1"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: FaasTCPTLSCertificateExpiring
+        exp_alerts:
+          - exp_labels:
+              instance: edge-1
+              severity: warn
+              component: gatewayd-public
+              family: tcp_ingress
+            exp_annotations:
+              summary: "TCP TLS certificate expires within seven days"
+              description: "Renew the earliest-expiring enabled listener certificate and replace its complete PEM bundle atomically. Existing sessions retain their negotiated certificate; new handshakes use the replacement."
+  - interval: 1m
+    input_series:
+      - series: 'gatewayd_public_tcp_tls_certificate_expiry_seconds{instance="disabled"}'
+        values: '0x20'
+      - series: 'gatewayd_public_tcp_tls_listeners_ready{instance="disabled"}'
+        values: '0x20'
+      - series: 'gatewayd_public_tcp_tls_listeners_not_ready{instance="disabled"}'
+        values: '0x20'
+      - series: 'gatewayd_public_tcp_tls_certificate_expiry_seconds{instance="healthy"}'
+        values: '1209600x20'
+      - series: 'gatewayd_public_tcp_tls_listeners_ready{instance="healthy"}'
+        values: '1x20'
+      - series: 'gatewayd_public_tcp_tls_listeners_not_ready{instance="healthy"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: FaasTCPTLSCertificateExpiring
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: FaasTCPTLSCertificateUnavailable
+        exp_alerts: []
