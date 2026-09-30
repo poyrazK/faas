@@ -97,6 +97,51 @@ func (s *PgStore) beginEdgeRuleTrafficMutation(ctx context.Context, id string) (
 	return s.beginTrafficPolicyMutation(ctx, account)
 }
 
+func (s *PgStore) beginAppTrafficMutation(ctx context.Context, id string) (pgx.Tx, error) {
+	account, err := sqlc.New().ReadAppTrafficAccount(ctx, s.pool, uuidToPgtype(id))
+	if err != nil {
+		return nil, fmt.Errorf("state: read app traffic owner: %w", mapErr(err))
+	}
+	return s.beginTrafficPolicyMutation(ctx, account)
+}
+
+func (s *PgStore) beginAppConfigMutation(ctx context.Context, id string, p UpdateAppParams) (pgx.Tx, error) {
+	if appConfigIntroducesPublicScope(p) {
+		return s.beginAppTrafficMutation(ctx, id)
+	}
+	return s.pool.BeginTx(ctx, pgx.TxOptions{})
+}
+
+func appConfigIntroducesPublicScope(p UpdateAppParams) bool {
+	if p.SetVisibility && api.NormalizeAppVisibility(derefAppVisibility(p.Visibility)) == api.AppVisibilityInternal {
+		return false
+	}
+	if p.Status != nil {
+		return *p.Status != AppDeleted
+	}
+	return p.SetVisibility
+}
+
+func (s *PgStore) compareAndSetAppTrafficStatus(ctx context.Context, id string, from, to AppStatus) (bool, error) {
+	tx, err := s.beginAppTrafficMutation(ctx, id)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	changed, err := sqlc.New().CompareAndSetTrafficAppStatus(ctx, tx, sqlc.CompareAndSetTrafficAppStatusParams{
+		AppID: uuidToPgtype(id), Prior: string(from), Next: string(to)})
+	if err != nil || changed == 0 {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func readBoundedEdgeRuleTrafficProjection(ctx context.Context, tx pgx.Tx, mutation pgx.Row) (EdgeRule, error) {
 	var id string
 	if err := mutation.Scan(&id); err != nil {

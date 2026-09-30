@@ -3,8 +3,6 @@ package state
 import (
 	"context"
 	"fmt"
-
-	"github.com/jackc/pgx/v5"
 )
 
 var _ OrgActivityAppConfigMutationStore = (*PgStore)(nil)
@@ -17,7 +15,7 @@ func (s *PgStore) UpdateAppWithActivity(ctx context.Context, id string, p Update
 	if build == nil {
 		return App{}, 0, ErrInvalidArgument
 	}
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.beginAppConfigMutation(ctx, id, p)
 	if err != nil {
 		return App{}, 0, fmt.Errorf("state: begin app config activity update: %w", err)
 	}

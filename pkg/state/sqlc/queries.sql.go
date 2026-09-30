@@ -930,6 +930,27 @@ func (q *Queries) ClearUploadSessionPartPath(ctx context.Context, db DBTX, id st
 	return err
 }
 
+const compareAndSetTrafficAppStatus = `-- name: CompareAndSetTrafficAppStatus :execrows
+UPDATE apps SET status=$1::text,
+    park_transition_id=CASE WHEN $1::text<>'evicted_cold' THEN NULL ELSE park_transition_id END,
+    wake_transition_id=CASE WHEN $1::text<>'active' THEN NULL ELSE wake_transition_id END
+WHERE id=$2::uuid AND status=$3::text
+`
+
+type CompareAndSetTrafficAppStatusParams struct {
+	Next  string
+	AppID pgtype.UUID
+	Prior string
+}
+
+func (q *Queries) CompareAndSetTrafficAppStatus(ctx context.Context, db DBTX, arg CompareAndSetTrafficAppStatusParams) (int64, error) {
+	result, err := db.Exec(ctx, compareAndSetTrafficAppStatus, arg.Next, arg.AppID, arg.Prior)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const configureTrafficPolicyAnalysisTimeout = `-- name: ConfigureTrafficPolicyAnalysisTimeout :one
 WITH prior AS MATERIALIZED (SELECT current_setting('statement_timeout')::text AS value)
 SELECT prior.value::text AS prior, set_config('statement_timeout', $1::text, true)::text AS configured FROM prior
@@ -12041,6 +12062,18 @@ func (q *Queries) ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg
 	return i, err
 }
 
+const readAppTrafficAccount = `-- name: ReadAppTrafficAccount :one
+SELECT account_id FROM apps WHERE id=$1::uuid
+`
+
+// Ownership is immutable; discover it before acquiring the account/app locks.
+func (q *Queries) ReadAppTrafficAccount(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, readAppTrafficAccount, appID)
+	var account_id pgtype.UUID
+	err := row.Scan(&account_id)
+	return account_id, err
+}
+
 const readBoundedTrafficEdgeRule = `-- name: ReadBoundedTrafficEdgeRule :one
 WITH projection AS (
     SELECT jsonb_build_object(
@@ -13144,7 +13177,9 @@ WITH environment_policies AS MATERIALIZED (
     FROM apps a JOIN project_environments e ON e.project_id=a.project_id AND e.account_id=a.account_id
     LEFT JOIN project_environment_edge_policies p ON p.app_id=a.id AND p.environment_slug=e.slug
         AND p.account_id=a.account_id AND p.project_id=a.project_id
-    WHERE a.account_id=$3::uuid AND a.status<>'deleted' AND a.deleted_at IS NULL
+    -- Runtime owner eligibility uses status; a status-only reactivation can
+    -- retain a historical deleted_at stamp and must still be analyzed.
+    WHERE a.account_id=$3::uuid AND a.status<>'deleted' AND a.visibility<>'internal'
 ), raw_source AS (
     SELECT app_id, match_host, kind, cors_preset_id, action, NULL::uuid AS environment_id,
         jsonb_build_object('ID', id, 'AccountID', account_id, 'AppID', app_id,

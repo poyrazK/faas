@@ -404,9 +404,20 @@ identity metadata cross the management store boundary. Overlay writes, new
 environment registration and clones use the same before/after account
 transaction as rule/preset changes. A newly registered URL starts with no
 serving-policy baseline; an old oversized wildcard cannot authorize exposing
-a new oversized scope. App membership/reactivation writers, global synthetic
-route discovery and the in-memory aggregate mirror still require their own
-integration and evidence.
+a new oversized scope. App creation, quota/activity creation, preview batches
+and set replacement, project apply/reconcile, restore (including activity), and
+status updates that can reactivate a tombstone and visibility changes that
+publish an internal app acquire that same account lock
+before app/FK locks and retain it through the verdict. Related activity outbox,
+cron and project changes commit only after the aggregate check. Parking/waking
+already registered apps keeps its existing hot path. Removed environment/app
+URLs cease to be serving scopes and cannot introduce an overload by dropping
+their former app filter. Existing create conflict/quota, restore grace/claim
+and compare-and-set predicates remain in force. This registered-URL eligibility
+uses runtime status and public visibility, including status-only reactivation
+with a retained historical deletion timestamp. Primary-hostname and alias/domain
+activation, global synthetic route discovery and the in-memory aggregate mirror
+still require their own integration and evidence.
 
 Imported documents also validate canonical runtime bytes before replacement;
 the existing import-body cap alone cannot bound JSONB numeric expansion.
@@ -417,8 +428,8 @@ validates copied target projections in its transaction before commit, including
 app-wide fallback routes and the target slug's bytes. Failure rolls back the
 entire target configuration. The in-memory clone preflights all projections
 under its existing mutex before creating target state. Global aggregate
-validation, its in-memory mirror, app membership/reactivation integration and
-complete-path recovery acceptance remain pending.
+validation, its in-memory mirror, primary-hostname and alias/domain activation,
+and complete-path recovery acceptance remain pending.
 
 Public declared-route inputs join the fresh hostname/app view. An exact
 environment's route overlay is read before deciding whether an imported

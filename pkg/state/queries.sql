@@ -5232,7 +5232,9 @@ WITH environment_policies AS MATERIALIZED (
     FROM apps a JOIN project_environments e ON e.project_id=a.project_id AND e.account_id=a.account_id
     LEFT JOIN project_environment_edge_policies p ON p.app_id=a.id AND p.environment_slug=e.slug
         AND p.account_id=a.account_id AND p.project_id=a.project_id
-    WHERE a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted' AND a.deleted_at IS NULL
+    -- Runtime owner eligibility uses status; a status-only reactivation can
+    -- retain a historical deleted_at stamp and must still be analyzed.
+    WHERE a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted' AND a.visibility<>'internal'
 ), raw_source AS (
     SELECT app_id, match_host, kind, cors_preset_id, action, NULL::uuid AS environment_id,
         jsonb_build_object('ID', id, 'AccountID', account_id, 'AppID', app_id,
@@ -5338,6 +5340,16 @@ SELECT CASE WHEN inputs <= sqlc.arg(max_inputs)::integer AND bytes <= sqlc.arg(m
 -- name: ConfigureTrafficPolicyAnalysisTimeout :one
 WITH prior AS MATERIALIZED (SELECT current_setting('statement_timeout')::text AS value)
 SELECT prior.value::text AS prior, set_config('statement_timeout', sqlc.arg(timeout)::text, true)::text AS configured FROM prior;
+
+-- name: ReadAppTrafficAccount :one
+-- Ownership is immutable; discover it before acquiring the account/app locks.
+SELECT account_id FROM apps WHERE id=sqlc.arg(app_id)::uuid;
+
+-- name: CompareAndSetTrafficAppStatus :execrows
+UPDATE apps SET status=sqlc.arg(next)::text,
+    park_transition_id=CASE WHEN sqlc.arg(next)::text<>'evicted_cold' THEN NULL ELSE park_transition_id END,
+    wake_transition_id=CASE WHEN sqlc.arg(next)::text<>'active' THEN NULL ELSE wake_transition_id END
+WHERE id=sqlc.arg(app_id)::uuid AND status=sqlc.arg(prior)::text;
 
 -- name: CreateTrafficProjectEnvironment :one
 INSERT INTO project_environments (account_id,project_id,slug,protected)

@@ -494,7 +494,13 @@ func checkTrafficHostAnalysisWithBudgets(ctx context.Context, before, after traf
 			// over-limit selector language is not a serving-policy baseline.
 			prior = trafficHostTotals{}
 		}
-		if err := checkHostTotals(prior, environmentHostTotals(after, accepted[1], environments[1]), ""); err != nil {
+		nextTotals := environmentHostTotals(after, accepted[1], environments[1])
+		if environments[0] != nil && environments[1] == nil {
+			// A deleted registered URL cannot fall back to route discovery.
+			// Removing its app filter does not expose a new serving scope.
+			nextTotals = trafficHostTotals{}
+		}
+		if err := checkHostTotals(prior, nextTotals, ""); err != nil {
 			err.Host = hostWitness(states, index)
 			return err
 		}

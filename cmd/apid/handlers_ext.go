@@ -1468,7 +1468,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		updated, err = s.store.UpdateApp(r.Context(), app.ID, params)
 	}
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not update app"))
+		api.WriteProblem(w, trafficPolicyWriteProblem(err, api.ErrCapacity("could not update app")))
 		return
 	}
 	if req.BeforeCheckpoint != nil {
@@ -1909,7 +1909,7 @@ func (s *server) restoreApp(w http.ResponseWriter, r *http.Request, acct state.A
 				"the seven-day app deletion grace window has lapsed"))
 			return
 		}
-		api.WriteProblem(w, api.ErrCapacity("could not restore app"))
+		api.WriteProblem(w, trafficPolicyWriteProblem(err, api.ErrCapacity("could not restore app")))
 		return
 	}
 	_ = s.notif.Notify(r.Context(), db.NotifyAppChanged,

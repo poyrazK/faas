@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -16,7 +17,7 @@ var _ OrgActivityAppLifecycleMutationStore = (*PgStore)(nil)
 // the same transaction. Quota and slug-conflict behavior matches the ordinary
 // create path.
 func (s *PgStore) CreateAppIfUnderQuotaWithActivity(ctx context.Context, app App, limits api.Limits, entry OrgActivity) (App, int64, error) {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(app.AccountID))
 	if err != nil {
 		return App{}, 0, fmt.Errorf("state: begin app activity create: %w", err)
 	}
@@ -104,8 +105,11 @@ func (s *PgStore) ScheduleAppDeletionWithActivity(ctx context.Context, id string
 // handoff together. A closed or claimed grace window retains RestoreApp's
 // existing conflict behavior.
 func (s *PgStore) RestoreAppWithActivity(ctx context.Context, id string, limits api.Limits, entry OrgActivity) (App, int64, error) {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.beginAppTrafficMutation(ctx, id)
 	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return App{}, 0, ErrConflict
+		}
 		return App{}, 0, fmt.Errorf("state: begin app activity restore: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()

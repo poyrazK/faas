@@ -103,9 +103,15 @@ bytes while every matching account rule still counts toward the original
 canonical read bound. Registered environment/workload identities split the
 selector analysis at their actual stable URLs. New environment registration
 and clones must fit their newly exposed URLs; legacy unknown-host overload
-cannot serve as their baseline. App membership/reactivation writers, global
-synthetic route discovery across accounts and the in-memory aggregate mirror
-remain pending.
+cannot serve as their baseline. App creation, quota/activity creation, preview
+batches and set replacement, project apply/reconcile, restore, and status or
+visibility publication now validate newly exposed registered environment URLs
+inside that transaction. Refusal also rolls back activity, cron, project and
+preview-set changes. Eligibility follows runtime status and public visibility;
+a historical deletion timestamp alone does not exclude a reactivated app.
+Removing a registered URL does not expose its former fallback. Ordinary
+primary-hostname, alias/domain activation, global synthetic route discovery
+across accounts and the in-memory aggregate mirror remain pending.
 
 Individual CORS preset creates/replacements, environment overlay replacements,
 scoped route replacements and imported documents validate the complete runtime
@@ -144,8 +150,8 @@ serving-policy repair.
 The in-memory store uses a conservative bound and may reject a near-limit
 object whose extra JSON string escapes are smaller in Postgres.
 
-Global and memory aggregate validation, app membership/reactivation writer
-integration and complete recovery acceptance remain rollout requirements. These write checks do not establish
+Primary-hostname and alias/domain activation, global and memory aggregate
+validation and complete recovery acceptance remain rollout requirements. These write checks do not establish
 release acceptance.
 
 Before dispatch, the public routing transaction re-resolves the host projection

@@ -2158,6 +2158,11 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 	// follow this pattern; the wrapper is a no-op when no Budget
 	// is attached.
 	ctx = db.WithBudget(ctx)
+	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(app.AccountID))
+	if err != nil {
+		return App{}, err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	manifest := app.Manifest
 	if manifest.IsZero() {
 		manifest = AppManifest{}
@@ -2325,7 +2330,7 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 	if len(retryPolicy) == 0 {
 		retryPolicy = []byte(`{}`)
 	}
-	row := s.pool.QueryRow(ctx, insertAppSQL,
+	row := tx.QueryRow(ctx, insertAppSQL,
 		app.AccountID, app.Slug, string(appType), runtime, ramMB, idle, maxConcurrency, string(statusValue), manifestBytes, app.MinInstances, cidrPrefixesToArray(app.EgressAllowlist), cidrPrefixesToArray(app.PublicAuthIPAllowlist), app.StreamingEnabled, nullString(app.ProjectID), app.RootDir, app.WorkloadName, string(workloadClass), nullString(app.StartCommand), nullString(app.NodeID),
 		app.WarmSnapshotEnabled, warmMinRequests, warmMinMs, app.WarmPoolSize, evictionPriority, app.RequireAuthn, publicAuthMode, app.WebSocketEnabled, app.RouteMetricsEnabled,
 		// Tier A10 / ADR-088: overflow_node preference (nullable
@@ -2366,7 +2371,14 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 		// last-line defence for internal callers that build an
 		// App by hand.
 		appProtocol, cpuMillicores, string(visibility), retryPolicy, nullString(app.OrgID))
-	return scanApp(row)
+	created, err := scanApp(row)
+	if err != nil {
+		return App{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return App{}, fmt.Errorf("state: commit create app: %w", err)
+	}
+	return created, nil
 }
 
 // CreateAppIfUnderQuota inserts an app iff the account currently holds
@@ -2385,7 +2397,7 @@ func (s *PgStore) CreateApp(ctx context.Context, app App) (App, error) {
 // other createApp for the same account only. Cross-account inserts don't
 // contend, so the one-box stays well under its max_concurrency ceiling.
 func (s *PgStore) CreateAppIfUnderQuota(ctx context.Context, app App, limits api.Limits) (App, error) {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(app.AccountID))
 	if err != nil {
 		return App{}, fmt.Errorf("state: begin tx: %w", err)
 	}
@@ -2428,7 +2440,7 @@ func (s *PgStore) CreatePRPreviewAppsIfUnderQuota(ctx context.Context, apps []Ap
 			}
 		}
 	}
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(apps[0].AccountID))
 	if err != nil {
 		return nil, fmt.Errorf("state: begin preview batch: %w", err)
 	}
@@ -3892,7 +3904,22 @@ func (s *PgStore) AuthDefaultFlippedAt(ctx context.Context) (time.Time, error) {
 }
 
 func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (App, error) {
-	return updateApp(ctx, s.pool, id, p)
+	if !appConfigIntroducesPublicScope(p) {
+		return updateApp(ctx, s.pool, id, p)
+	}
+	tx, err := s.beginAppTrafficMutation(ctx, id)
+	if err != nil {
+		return App{}, err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	updated, err := updateApp(ctx, tx, id, p)
+	if err != nil {
+		return App{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return App{}, fmt.Errorf("state: commit app status update: %w", err)
+	}
+	return updated, nil
 }
 
 type appUpdateQueryRower interface {
@@ -4221,6 +4248,9 @@ func updateApp(ctx context.Context, queryer appUpdateQueryRower, id string, p Up
 // UpdateApp. PgStore and MemStore both implement it, which covers every real
 // server and integration test path.
 func (s *PgStore) CompareAndSetAppStatus(ctx context.Context, id string, from, to AppStatus) (bool, error) {
+	if from == AppDeleted && to != AppDeleted {
+		return s.compareAndSetAppTrafficStatus(ctx, id, from, to)
+	}
 	tag, err := s.pool.Exec(ctx,
 		`update apps
 		    set status = $3,
@@ -4440,9 +4470,12 @@ func (s *PgStore) ScheduleAppDeletion(ctx context.Context, id string, graceUntil
 // still in the future. The conditional update makes restore vs. sweep a
 // single race-safe decision; an unsuccessful update is reported as conflict.
 func (s *PgStore) RestoreApp(ctx context.Context, id string, limits api.Limits) (App, error) {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.beginAppTrafficMutation(ctx, id)
 	if err != nil {
-		return App{}, fmt.Errorf("state: begin tx: %w", err)
+		if errors.Is(err, ErrNotFound) {
+			return App{}, ErrConflict
+		}
+		return App{}, fmt.Errorf("state: begin app restore: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
 	a, err := restoreAppTx(ctx, tx, id, limits)
@@ -5374,7 +5407,7 @@ func (s *PgStore) ApplyProjectPlan(
 	crons []Cron,
 	limits api.Limits,
 ) (Project, []App, []Cron, error) {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(project.AccountID))
 	if err != nil {
 		return Project{}, nil, nil, fmt.Errorf("state: begin tx: %w", err)
 	}
@@ -5593,7 +5626,7 @@ func (s *PgStore) ApplyProjectReconcile(
 	scanSource ProjectScanSource,
 	limits api.Limits,
 ) (ProjectReconcileResult, error) {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(project.AccountID))
 	if err != nil {
 		return ProjectReconcileResult{}, fmt.Errorf("state: begin project reconcile: %w", err)
 	}

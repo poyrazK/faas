@@ -83,6 +83,18 @@ func TestTrafficHostAnalysisEnvironmentPresetsAndScopeIsolation(t *testing.T) {
 	}
 }
 
+func TestTrafficHostAnalysisRemovedEnvironmentDoesNotExposeFallback(t *testing.T) {
+	before := trafficHostAnalysis{Environments: []trafficHostEnvironment{{ID: uuid.NewString(), App: uuid.NewString(), Present: true}}}
+	if err := prepareTrafficEnvironmentHosts(&before); err != nil {
+		t.Fatal(err)
+	}
+	before.Groups = []trafficHostGroup{{App: before.Environments[0].App, Pattern: "*", Kind: string(EdgeRuleKindCORSA), Rows: 1, Canonical: 10, Compiled: api.TrafficPolicyMaxHostBytes + 100}}
+	after := trafficHostAnalysis{Groups: before.Groups}
+	if err := checkTrafficHostAnalysis(t.Context(), before, after); err != nil {
+		t.Fatalf("removing a registered URL exposed its unservable fallback: %v", err)
+	}
+}
+
 func TestTrafficHostAnalysisOverlapAndLegacyRepair(t *testing.T) {
 	capBytes := int64(api.TrafficPolicyMaxHostBytes)
 	heavy := capBytes/2 + 100

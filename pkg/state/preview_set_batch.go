@@ -71,7 +71,7 @@ func (s *PgStore) ReservePRPreviewSet(ctx context.Context, head PRPreviewHead, a
 			}
 		}
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(apps[0].AccountID))
 	if err != nil {
 		return nil, fmt.Errorf("state: begin PR preview replacement: %w", err)
 	}

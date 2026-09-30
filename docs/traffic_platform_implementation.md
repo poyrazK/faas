@@ -857,3 +857,40 @@ complete daemon/load/recovery and customer/staging rollout evidence still need
 completion. No native Linux x86_64 KVM acceptance host is available; VM/restore,
 nft connection/source-IP, process-death and leak checks remain pending. All six
 release guarantees remain unchecked.
+
+### Registered environment app activation guard, 2026-09-30
+
+Postgres app creation, quota/activity creation, preview batch/set replacement,
+project apply/reconcile, restore (including activity), deleted-to-live status
+updates/CAS, and internal-to-public visibility updates now acquire the account
+traffic lock before app/FK locks. The existing before/after host analysis runs
+before commit. Refusal rolls back app intent together with project, preview-set,
+cron and activity-outbox changes. Existing quota/conflict, restore grace/claim
+and CAS predicates are retained; ordinary park/wake transitions keep their
+existing path. Registered URL eligibility follows runtime status and public
+visibility, including reactivation with a retained historical deletion stamp.
+Removing an environment/app URL does not expose an unknown-host fallback.
+The affected HTTP entry points retain the typed 422 count/byte/analysis refusal
+codes and do not emit change notifications after rejected writes.
+
+The final regression used the original source and test files, without a Go
+overlay: 117 state cases passed with no failures/skips in 58.936 s. Real
+Postgres fixtures cover 15 activation writers against a legacy oversized
+wildcard, atomic rollback and repair/retry, plus concurrent restore and rule
+updates sharing the last environment compiler allowance. Existing quota,
+project/reconcile, preview, lifecycle/activity, policy mutation and host-analysis
+regressions are included. HTTP/API regression passed 60 cases with no
+failures/skips (apid 1.902 s, API 2.555 s). The HTTP refusal fixtures exercise
+real handlers with an in-memory store wrapper; they are not full daemon
+acceptance. Pinned lint reported zero issues for API/apid with tests enabled and
+state production with tests=false/unused disabled for the existing test-only
+helper. Fresh sqlc v1.31.1 generation matched all four generated Go files.
+Whitespace checks passed. Disk-exhausted build attempts are excluded.
+
+Primary-hostname and alias/domain activation, global synthetic route aggregate
+validation and the MemStore aggregate mirror remain pending. Bounded decision
+evidence, preview/runtime and complete synthetic-path agreement, complete
+daemon/load/recovery and customer/staging rollout evidence still need
+completion. The user confirmed no Linux x86_64 KVM acceptance host is currently
+available. Native VM/restore, nft connection/source-IP, process-death and leak
+checks remain pending; all six release guarantees remain unchecked.
