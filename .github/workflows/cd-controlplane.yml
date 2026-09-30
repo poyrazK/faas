@@ -223,7 +223,7 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ env.CP_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H ${{ env.CP_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+          ssh-keyscan -t ed25519,ecdsa,rsa -H ${{ env.CP_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
           chmod 600 ~/.ssh/known_hosts
 
       - name: Converge APID lifecycle storage credential

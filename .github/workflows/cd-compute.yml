@@ -922,7 +922,7 @@ jobs:
             scanned_keys="$RUNNER_TEMP/compute-pki-scanned-keys"
             verified_keys="$RUNNER_TEMP/compute-pki-known-hosts"
             : > "$verified_keys"
-            ssh-keyscan -T 10 -p "$SSH_PORT" "$SSH_HOST" > "$scanned_keys" 2>/dev/null
+            ssh-keyscan -t ed25519,ecdsa,rsa -T 10 -p "$SSH_PORT" "$SSH_HOST" > "$scanned_keys" 2>/dev/null
             while IFS= read -r host_key_line; do
               [[ -n "$host_key_line" ]] || continue
               candidate="$RUNNER_TEMP/compute-pki-candidate-key"
@@ -1195,7 +1195,7 @@ jobs:
           scanned_keys="$RUNNER_TEMP/adopted-compute-scanned-keys"
           verified_keys="$RUNNER_TEMP/adopted-compute-verified-keys"
           : >"$verified_keys"
-          if ! ssh-keyscan -T 10 -p "$SSH_PORT" "$SSH_HOST" >"$scanned_keys" 2>/dev/null; then
+          if ! ssh-keyscan -t ed25519,ecdsa,rsa -T 10 -p "$SSH_PORT" "$SSH_HOST" >"$scanned_keys" 2>/dev/null; then
             echo "::error::could not scan SSH host keys from $SSH_HOST:$SSH_PORT" >&2
             exit 1
           fi

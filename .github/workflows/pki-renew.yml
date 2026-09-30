@@ -49,7 +49,7 @@ jobs:
           # over SSH with the control-plane key, pinned the same way the CD
           # workflows pin it, and render the inventory there: the installed
           # release's manifest and gregalectl stay the source of truth.
-          ssh-keyscan -H "$CP_HOST" >> "$RUNNER_TEMP/pki-known-hosts" 2>/dev/null
+          ssh-keyscan -t ed25519,ecdsa,rsa -H "$CP_HOST" >> "$RUNNER_TEMP/pki-known-hosts" 2>/dev/null
           cp_ssh=(ssh -i "$RUNNER_TEMP/pki-control-key"
             -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes
             -o "UserKnownHostsFile=$RUNNER_TEMP/pki-known-hosts" "root@${CP_HOST}")
