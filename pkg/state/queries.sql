@@ -5135,3 +5135,43 @@ WHERE id = sqlc.arg(operation_id)::uuid AND account_id = sqlc.arg(account_id)::u
   AND lease_token = sqlc.arg(lease_token)::uuid AND lease_until > clock_timestamp()
   AND revision = sqlc.arg(revision)::bigint AND status = sqlc.arg(status)::text
   AND status IN ('pending', 'capturing', 'copying', 'publishing', 'compensating');
+
+-- name: ReadProjectEnvironmentClonePostgresBindings :many
+SELECT jsonb_build_object(
+    'id', b.id::text, 'database_id', d.id::text, 'database_name', d.name,
+    'environment_key', b.environment_key, 'access', b.access,
+    'credential_ref', coalesce(b.credential_ref, ''), 'credential_generation', b.credential_generation,
+    'backend_id', d.backend_id, 'backend_fingerprint', d.backend_fingerprint,
+    'provider_resource_id', coalesce(d.provider_resource_id, ''), 'region', d.region,
+    'postgres_major', d.postgres_major, 'service_class', d.service_class,
+    'availability', d.availability, 'scale_to_zero', d.scale_to_zero,
+    'storage_limit_bytes', d.storage_limit_bytes, 'restore_window_seconds', d.restore_window_seconds
+) AS definition,
+    (b.state = 'ready' AND d.state = 'ready' AND b.provider_identity_id IS NOT NULL
+     AND d.observed_generation = d.desired_generation AND d.account_id = b.account_id)::boolean AS ready
+FROM managed_postgres_bindings b JOIN managed_postgres_databases d ON d.id = b.database_id
+WHERE b.account_id = sqlc.arg(account_id)::uuid AND b.app_id = sqlc.arg(app_id)::uuid
+  AND b.scope = sqlc.arg(source_scope)::text AND b.state <> 'deleted'
+ORDER BY b.id;
+
+-- name: ReadProjectEnvironmentCloneObjectBuckets :many
+SELECT jsonb_build_object(
+    'id', b.id::text, 'name', b.name, 'region', b.region,
+    'backend_id', b.backend_id, 'backend_fingerprint', b.backend_fingerprint,
+    'physical_name', b.physical_name, 'public_read', b.public_read, 'serve_at', coalesce(b.serve_at, ''),
+    'credentials', coalesce((
+        SELECT jsonb_agg(jsonb_build_object('id', c.id::text, 'label', c.label, 'permission', c.permission,
+            'managed_app_id', coalesce(c.managed_app_id::text, ''), 'managed_scope', coalesce(c.managed_scope, ''),
+            'managed_prefix', coalesce(c.managed_prefix, '')) ORDER BY c.id)
+        FROM object_storage_s3_credentials c
+        WHERE c.bucket_id = b.id AND c.account_id = b.account_id AND c.status = 'active' AND c.rotation_parent_id IS NULL
+    ), '[]'::jsonb),
+    'access_grants', coalesce((
+        SELECT jsonb_agg(jsonb_build_object('api_key_id', g.api_key_id::text, 'permission', g.permission) ORDER BY g.api_key_id)
+        FROM object_storage_access_grants g WHERE g.bucket_id = b.id AND g.account_id = b.account_id
+    ), '[]'::jsonb)
+) AS definition, (b.state = 'ready')::boolean AS ready
+FROM object_buckets b
+WHERE b.account_id = sqlc.arg(account_id)::uuid AND b.app_id = sqlc.arg(app_id)::uuid
+  AND b.scope = sqlc.arg(source_scope)::text AND b.state <> 'deleted'
+ORDER BY b.id;

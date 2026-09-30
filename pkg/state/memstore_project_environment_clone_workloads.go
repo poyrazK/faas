@@ -77,6 +77,11 @@ func (m *MemStore) CaptureProjectEnvironmentCloneWorkloads(_ context.Context, ac
 		snapshot := projectCloneWorkloadSnapshot{WorkloadSlug: app.Slug, Artifact: projectCloneArtifactFromDeployment(source), Settings: settings, SidecarSignals: map[string]string{}, ProjectConfig: &projectConfig}
 		variables, secrets := m.projectCloneValuesLocked(map[string]string{appID: scopes[appID]})
 		snapshot.Values = &projectCloneWorkloadValues{Variables: variables, Secrets: secrets}
+		bindings, err := m.captureCloneBindingsLocked(accountID, appID, scopes[appID], *snapshot.Values)
+		if err != nil {
+			return nil, err
+		}
+		snapshot.Bindings = &bindings
 		for _, layer := range m.deploymentSidecarLayers {
 			if layer.DeploymentID == source.ID {
 				snapshot.Layers = append(snapshot.Layers, layer)

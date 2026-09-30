@@ -166,6 +166,11 @@ func captureCloneWorkloadTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmen
 		return snapshot, err
 	}
 	snapshot.Values = &projectCloneWorkloadValues{Variables: variables, Secrets: secrets}
+	bindings, err := captureCloneBindingsDB(ctx, tx, op.AccountID, appID, scope, *snapshot.Values)
+	if err != nil {
+		return snapshot, err
+	}
+	snapshot.Bindings = &bindings
 	legacy, err := q.ReadProjectEnvironmentCloneLegacySettings(ctx, tx, sqlc.ReadProjectEnvironmentCloneLegacySettingsParams{AppID: mustPgUUID(appID), Environment: op.SourceEnvironment})
 	if err != nil {
 		return snapshot, mapErr(err)

@@ -1,3 +1,5 @@
+//go:build !no_pg
+
 package state_test
 
 import (
@@ -12,9 +14,9 @@ import (
 
 // ADR-375: deleting a source credential after capture cannot erase its required
 // recreation, and captured managed envelopes must never become customer rows.
-func TestMemCloneCapturedManagedCredentialRequiresIndependentPreparation(t *testing.T) {
+func TestPgCloneCapturedManagedCredentialRequiresIndependentPreparation(t *testing.T) {
 	ctx := context.Background()
-	s := state.NewMemStore()
+	s, _, pool := pgWithPool(t)
 	a, err := s.CreateAccount(ctx, "captured-managed@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
@@ -37,8 +39,7 @@ func TestMemCloneCapturedManagedCredentialRequiresIndependentPreparation(t *test
 	if err := s.MarkDeploymentLive(ctx, d.ID); err != nil {
 		t.Fatal(err)
 	}
-	source := state.AppSecret{AccountID: a.ID, AppID: app.ID, Scope: "production", Key: "DATABASE_URL", Ciphertext: []byte("sealed-source-credential"),
-		ManagedPostgresBindingID: "source-binding", ManagedCredentialRef: "source-credential", ManagedCredentialGeneration: 3}
+	source := clonePostgresSecretFixture(t, pool, a, app, "production", "source-db", 3)
 	if err := s.PutManagedPostgresSecret(ctx, source); err != nil {
 		t.Fatal(err)
 	}
@@ -78,9 +79,8 @@ func TestMemCloneCapturedManagedCredentialRequiresIndependentPreparation(t *test
 	if _, err := s.ProjectEnvironmentBySlug(ctx, a.ID, p.ID, "stage"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("unprepared managed resource materialized the target: %v", err)
 	}
-	target := source
-	target.Scope, target.ManagedPostgresBindingID, target.ManagedCredentialRef = "stage", "target-binding", "target-credential"
-	target.ManagedCredentialGeneration, target.Ciphertext = 1, []byte("sealed-independent-target")
+	target := clonePostgresSecretFixture(t, pool, a, app, "stage", "target-db", 1)
+	target.Ciphertext = []byte("sealed-independent-target")
 	if err := s.PutManagedPostgresSecret(ctx, target); err != nil {
 		t.Fatal(err)
 	}

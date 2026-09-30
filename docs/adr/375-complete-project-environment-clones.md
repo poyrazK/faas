@@ -516,3 +516,45 @@ their durable binding specifications, fresh target-envelope identities and
 independent provider-resource proofs are integrated. Host-key resealing and
 captured-key retention also remain required. These store checks do not establish
 native readiness, coordinated provider data capture or the complete command.
+
+
+### Frozen managed-resource catalogue (2026-09-30)
+
+New private workload captures include managed PostgreSQL binding definitions,
+database specs and provider placement/identity, plus every workload-owned bucket
+in the selected source scope. Bucket definitions include public-read/serve-path
+policy, active credential labels and permissions, compute-binding ownership and
+API-key access grants. Standalone buckets and customer credentials are included
+without relying on application secret discovery. Transient leases, retries,
+rotation staging rows, signing keys and sealed credential material are excluded
+from the worker catalogue. Captured managed application envelopes remain in the
+existing private values capture and are never replayed as customer credentials.
+
+PostgreSQL reads these catalogue rows in the same repeatable-read transaction as
+workload artifacts, deployed settings and source values. Capture rejects unready
+resources, missing managed envelopes, mismatched credential generations, and
+incomplete or foreign-scope object bindings. Each normalized definition set has
+a separate hash and enters the complete workload capture hash. Retries and the
+account/project-scoped worker reader use the persisted payload, including after
+source edits or metadata deletion; returned definitions are independent copies.
+Older captures without a catalogue cannot supply a complete resource plan.
+MemStore captures its object catalogue atomically, but rejects managed PostgreSQL
+capture with a named unavailable error because that memory catalogue belongs to
+a separate store. A secret ownership ID cannot substitute for a provider spec.
+
+Publication rejects captured standalone resources with a named proof-unavailable
+error until their isolated target resources and copy receipts can be verified.
+This closes the path where a bucket with no managed application secret could be
+omitted while the workload/value graph was advertised ready. The existing
+managed-envelope publication gate remains in place. Catalogue capture preserves
+configuration metadata; it does not retain provider data or establish a shared
+application write checkpoint.
+
+Focused MemStore and real PostgreSQL contracts cover standalone bucket policy,
+credential permissions and access grants, source deletion, retry stability,
+caller-copy isolation and ownership boundaries. PostgreSQL contracts also cover
+frozen database specs/access/generation and missing managed envelopes. The managed
+credential preparation/publication regression now runs against the real
+PostgreSQL catalogue rather than invented memory-store binding IDs. The complete
+worker, coordinated provider capture, independent target proofs, credential
+issuance/resealing and native VM acceptance remain required.

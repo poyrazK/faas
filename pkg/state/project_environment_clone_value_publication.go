@@ -38,6 +38,11 @@ func validateCloneValuePublication(op ProjectEnvironmentCloneOperation, resource
 		if err := validateCloneWorkloadTargetValues(op, record, captured[record.AppID], targets[record.AppID]); err != nil {
 			return err
 		}
+		// Standalone buckets are part of the capture even without managed
+		// application secrets. A workload/value proof cannot prove their copy.
+		if definitions := record.snapshot.Bindings; definitions != nil && (len(definitions.Postgres) > 0 || len(definitions.Buckets) > 0) {
+			return fmt.Errorf("clone workload %q: %w", record.WorkloadSlug, ErrProjectEnvironmentCloneResourcePublicationProof)
+		}
 	}
 	return nil
 }

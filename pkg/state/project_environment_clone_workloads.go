@@ -24,6 +24,7 @@ type ProjectEnvironmentCloneWorkload struct {
 	SourceSettingsHash      string
 	SourceProjectConfigHash string
 	SourceValuesHash        string
+	SourceBindingsHash      string
 	TargetDeploymentID      string
 	TargetSettingsHash      string
 }
@@ -105,13 +106,14 @@ func (a projectCloneArtifact) deployment(operationID, target string, settings Pr
 }
 
 type projectCloneWorkloadSnapshot struct {
-	WorkloadSlug   string                             `json:"workload_slug"`
-	Artifact       projectCloneArtifact               `json:"artifact"`
-	Settings       ProjectEnvironmentWorkloadSettings `json:"settings"`
-	Layers         []DeploymentSidecarLayer           `json:"layers"`
-	SidecarSignals map[string]string                  `json:"sidecar_signals"`
-	ProjectConfig  *projectCloneProjectConfig         `json:"project_config,omitempty"`
-	Values         *projectCloneWorkloadValues        `json:"values,omitempty"`
+	WorkloadSlug   string                                     `json:"workload_slug"`
+	Artifact       projectCloneArtifact                       `json:"artifact"`
+	Settings       ProjectEnvironmentWorkloadSettings         `json:"settings"`
+	Layers         []DeploymentSidecarLayer                   `json:"layers"`
+	SidecarSignals map[string]string                          `json:"sidecar_signals"`
+	ProjectConfig  *projectCloneProjectConfig                 `json:"project_config,omitempty"`
+	Values         *projectCloneWorkloadValues                `json:"values,omitempty"`
+	Bindings       *ProjectEnvironmentCloneBindingDefinitions `json:"bindings,omitempty"`
 }
 
 type projectCloneWorkloadRecord struct {
@@ -127,6 +129,16 @@ func encodeCloneWorkloadSnapshot(snapshot projectCloneWorkloadSnapshot) ([]byte,
 			return nil, "", err
 		}
 		snapshot.Values = &values
+	}
+	if snapshot.Bindings != nil {
+		if snapshot.Values == nil {
+			return nil, "", ErrProjectEnvironmentCloneBindingCapture
+		}
+		bindings, err := normalizeCloneBindingDefinitions(snapshot.Artifact.AppID, snapshot.Artifact.Scope, *snapshot.Values, *snapshot.Bindings)
+		if err != nil {
+			return nil, "", err
+		}
+		snapshot.Bindings = &bindings
 	}
 	if snapshot.ProjectConfig != nil {
 		config, err := normalizeCloneProjectConfig(*snapshot.ProjectConfig)
@@ -254,8 +266,17 @@ func decodeCloneWorkloadRecord(operationID, appID, sourceID, sourceHash, targetI
 	if snapshot.Values != nil {
 		valuesHash, _ = projectCloneValuesHash(map[string]string{appID: snapshot.Artifact.Scope}, snapshot.Values.Variables, snapshot.Values.Secrets)
 	}
+	bindingsHash := ""
+	if snapshot.Bindings != nil {
+		bindings, err := normalizeCloneBindingDefinitions(appID, snapshot.Artifact.Scope, *snapshot.Values, *snapshot.Bindings)
+		if err != nil {
+			return projectCloneWorkloadRecord{}, err
+		}
+		snapshot.Bindings = &bindings
+		bindingsHash, _ = cloneBindingDefinitionsHash(bindings)
+	}
 	return projectCloneWorkloadRecord{ProjectEnvironmentCloneWorkload: ProjectEnvironmentCloneWorkload{
 		OperationID: operationID, AppID: appID, WorkloadSlug: snapshot.WorkloadSlug, SourceDeploymentID: sourceID,
-		SourceScope: snapshot.Artifact.Scope, SourceHash: hash, SourceSettingsHash: settingsHash, SourceProjectConfigHash: projectHash, SourceValuesHash: valuesHash,
+		SourceScope: snapshot.Artifact.Scope, SourceHash: hash, SourceSettingsHash: settingsHash, SourceProjectConfigHash: projectHash, SourceValuesHash: valuesHash, SourceBindingsHash: bindingsHash,
 		TargetDeploymentID: targetID, TargetSettingsHash: targetHash}, snapshot: snapshot}, nil
 }

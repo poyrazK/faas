@@ -11045,3 +11045,83 @@ CREATE TABLE project_environment_clone_layer_pins (
     FOREIGN KEY (operation_id, app_id) REFERENCES project_environment_clone_workloads(operation_id, app_id) ON DELETE CASCADE
 );
 CREATE INDEX project_environment_clone_layer_pins_key_idx ON project_environment_clone_layer_pins(storage_key);
+
+-- Managed PostgreSQL catalogue, from its foundation/recovery/binding/restore/rotation migrations.
+CREATE TABLE IF NOT EXISTS managed_postgres_databases (
+    id uuid PRIMARY KEY,
+    account_id uuid NOT NULL REFERENCES accounts(id),
+    name text NOT NULL CHECK (name ~ '^[a-z][a-z0-9-]{0,62}$'),
+    region text NOT NULL CHECK (region ~ '^[a-z][a-z0-9-]{0,62}$'),
+    postgres_major smallint NOT NULL CHECK (postgres_major BETWEEN 12 AND 99),
+    service_class text NOT NULL CHECK (service_class IN ('development','burstable','production')),
+    availability text NOT NULL CHECK (availability IN ('single_zone','high_availability')),
+    scale_to_zero boolean NOT NULL DEFAULT false,
+    storage_limit_bytes bigint NOT NULL DEFAULT 0 CHECK (storage_limit_bytes >= 0),
+    restore_window_seconds bigint NOT NULL DEFAULT 0 CHECK (restore_window_seconds >= 0),
+    backend_id text NOT NULL CHECK (backend_id ~ '^[a-z][a-z0-9-]{0,62}$'),
+    backend_fingerprint text NOT NULL CHECK (backend_fingerprint ~ '^[a-f0-9]{64}$'),
+    provider_resource_id text,
+    state text NOT NULL DEFAULT 'provisioning'
+        CHECK (state IN ('provisioning','ready','updating','deleting','failed','deleted')),
+    desired_generation bigint NOT NULL DEFAULT 1 CHECK (desired_generation >= 1),
+    observed_generation bigint NOT NULL DEFAULT 0
+        CHECK (observed_generation >= 0 AND observed_generation <= desired_generation),
+    last_error_code text CHECK (last_error_code ~ '^[a-z][a-z0-9_]{0,62}$'),
+    lease_token text,
+    lease_until timestamptz,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    deleted_at timestamptz,
+    CHECK ((lease_token IS NULL) = (lease_until IS NULL)),
+    CHECK (state <> 'ready' OR (provider_resource_id IS NOT NULL AND observed_generation = desired_generation)),
+    CHECK ((state = 'deleted') = (deleted_at IS NOT NULL))
+);
+
+CREATE TABLE IF NOT EXISTS managed_postgres_bindings (
+    id uuid PRIMARY KEY,
+    account_id uuid NOT NULL REFERENCES accounts(id),
+    database_id uuid NOT NULL REFERENCES managed_postgres_databases(id),
+    app_id uuid NOT NULL REFERENCES apps(id),
+    scope text NOT NULL CHECK (length(scope) BETWEEN 1 AND 63),
+    environment_key text NOT NULL DEFAULT 'DATABASE_URL'
+        CHECK (environment_key ~ '^[A-Z_][A-Z0-9_]{0,126}$'),
+    provider_identity_id text,
+    credential_ref text,
+    credential_generation bigint NOT NULL DEFAULT 1 CHECK (credential_generation >= 1),
+    state text NOT NULL DEFAULT 'provisioning'
+        CHECK (state IN ('provisioning','ready','deleting','failed','deleted')),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    deleted_at timestamptz,
+    CHECK (state <> 'ready' OR (provider_identity_id IS NOT NULL AND credential_ref IS NOT NULL)),
+    CHECK ((state = 'deleted') = (deleted_at IS NOT NULL))
+);
+
+ALTER TABLE managed_postgres_databases
+    ADD COLUMN IF NOT EXISTS attempt_count integer NOT NULL DEFAULT 0
+        CHECK (attempt_count BETWEEN 0 AND 30),
+    ADD COLUMN IF NOT EXISTS retry_at timestamptz NOT NULL DEFAULT now();
+
+ALTER TABLE managed_postgres_databases
+    ADD COLUMN IF NOT EXISTS restore_source_database_id uuid,
+    ADD COLUMN IF NOT EXISTS restore_source_resource_id text,
+    ADD COLUMN IF NOT EXISTS restore_point_in_time timestamptz;
+
+ALTER TABLE managed_postgres_bindings
+    ADD COLUMN IF NOT EXISTS access text NOT NULL DEFAULT 'read_write'
+        CHECK (access IN ('read_write', 'read_only')),
+    ADD COLUMN IF NOT EXISTS last_error_code text
+        CHECK (last_error_code ~ '^[a-z][a-z0-9_]{0,62}$'),
+    ADD COLUMN IF NOT EXISTS lease_token text,
+    ADD COLUMN IF NOT EXISTS lease_until timestamptz,
+    ADD COLUMN IF NOT EXISTS attempt_count integer NOT NULL DEFAULT 0
+        CHECK (attempt_count BETWEEN 0 AND 30),
+    ADD COLUMN IF NOT EXISTS retry_at timestamptz NOT NULL DEFAULT now();
+
+ALTER TABLE managed_postgres_bindings
+    ADD COLUMN IF NOT EXISTS rotation_previous_generation bigint,
+    ADD COLUMN IF NOT EXISTS rotation_wake_id uuid,
+    ADD COLUMN IF NOT EXISTS rotation_cleanup_ready boolean NOT NULL DEFAULT false;
+
+ALTER TABLE managed_postgres_bindings DROP CONSTRAINT managed_postgres_bindings_state_check;
+ALTER TABLE managed_postgres_bindings ADD CONSTRAINT managed_postgres_bindings_state_check CHECK (state IN ('provisioning','ready','deleting','retiring','failed','deleted'));

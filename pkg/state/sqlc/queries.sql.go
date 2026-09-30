@@ -12528,6 +12528,60 @@ func (q *Queries) ReadProjectEnvironmentCloneLegacySettings(ctx context.Context,
 	return i, err
 }
 
+const readProjectEnvironmentCloneObjectBuckets = `-- name: ReadProjectEnvironmentCloneObjectBuckets :many
+SELECT jsonb_build_object(
+    'id', b.id::text, 'name', b.name, 'region', b.region,
+    'backend_id', b.backend_id, 'backend_fingerprint', b.backend_fingerprint,
+    'physical_name', b.physical_name, 'public_read', b.public_read, 'serve_at', coalesce(b.serve_at, ''),
+    'credentials', coalesce((
+        SELECT jsonb_agg(jsonb_build_object('id', c.id::text, 'label', c.label, 'permission', c.permission,
+            'managed_app_id', coalesce(c.managed_app_id::text, ''), 'managed_scope', coalesce(c.managed_scope, ''),
+            'managed_prefix', coalesce(c.managed_prefix, '')) ORDER BY c.id)
+        FROM object_storage_s3_credentials c
+        WHERE c.bucket_id = b.id AND c.account_id = b.account_id AND c.status = 'active' AND c.rotation_parent_id IS NULL
+    ), '[]'::jsonb),
+    'access_grants', coalesce((
+        SELECT jsonb_agg(jsonb_build_object('api_key_id', g.api_key_id::text, 'permission', g.permission) ORDER BY g.api_key_id)
+        FROM object_storage_access_grants g WHERE g.bucket_id = b.id AND g.account_id = b.account_id
+    ), '[]'::jsonb)
+) AS definition, (b.state = 'ready')::boolean AS ready
+FROM object_buckets b
+WHERE b.account_id = $1::uuid AND b.app_id = $2::uuid
+  AND b.scope = $3::text AND b.state <> 'deleted'
+ORDER BY b.id
+`
+
+type ReadProjectEnvironmentCloneObjectBucketsParams struct {
+	AccountID   pgtype.UUID
+	AppID       pgtype.UUID
+	SourceScope string
+}
+
+type ReadProjectEnvironmentCloneObjectBucketsRow struct {
+	Definition []byte
+	Ready      bool
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneObjectBuckets(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneObjectBucketsParams) ([]ReadProjectEnvironmentCloneObjectBucketsRow, error) {
+	rows, err := db.Query(ctx, readProjectEnvironmentCloneObjectBuckets, arg.AccountID, arg.AppID, arg.SourceScope)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadProjectEnvironmentCloneObjectBucketsRow{}
+	for rows.Next() {
+		var i ReadProjectEnvironmentCloneObjectBucketsRow
+		if err := rows.Scan(&i.Definition, &i.Ready); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const readProjectEnvironmentCloneObjectCopyProofs = `-- name: ReadProjectEnvironmentCloneObjectCopyProofs :many
 SELECT m.source_bucket_id::text AS source_bucket_id, m.target_bucket_id::text AS target_bucket_id,
        m.manifest_hash, m.captured_at_exact, m.object_count,
@@ -12597,6 +12651,56 @@ func (q *Queries) ReadProjectEnvironmentCloneOwnedApp(ctx context.Context, db DB
 	var id string
 	err := row.Scan(&id)
 	return id, err
+}
+
+const readProjectEnvironmentClonePostgresBindings = `-- name: ReadProjectEnvironmentClonePostgresBindings :many
+SELECT jsonb_build_object(
+    'id', b.id::text, 'database_id', d.id::text, 'database_name', d.name,
+    'environment_key', b.environment_key, 'access', b.access,
+    'credential_ref', coalesce(b.credential_ref, ''), 'credential_generation', b.credential_generation,
+    'backend_id', d.backend_id, 'backend_fingerprint', d.backend_fingerprint,
+    'provider_resource_id', coalesce(d.provider_resource_id, ''), 'region', d.region,
+    'postgres_major', d.postgres_major, 'service_class', d.service_class,
+    'availability', d.availability, 'scale_to_zero', d.scale_to_zero,
+    'storage_limit_bytes', d.storage_limit_bytes, 'restore_window_seconds', d.restore_window_seconds
+) AS definition,
+    (b.state = 'ready' AND d.state = 'ready' AND b.provider_identity_id IS NOT NULL
+     AND d.observed_generation = d.desired_generation AND d.account_id = b.account_id)::boolean AS ready
+FROM managed_postgres_bindings b JOIN managed_postgres_databases d ON d.id = b.database_id
+WHERE b.account_id = $1::uuid AND b.app_id = $2::uuid
+  AND b.scope = $3::text AND b.state <> 'deleted'
+ORDER BY b.id
+`
+
+type ReadProjectEnvironmentClonePostgresBindingsParams struct {
+	AccountID   pgtype.UUID
+	AppID       pgtype.UUID
+	SourceScope string
+}
+
+type ReadProjectEnvironmentClonePostgresBindingsRow struct {
+	Definition []byte
+	Ready      bool
+}
+
+func (q *Queries) ReadProjectEnvironmentClonePostgresBindings(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresBindingsParams) ([]ReadProjectEnvironmentClonePostgresBindingsRow, error) {
+	rows, err := db.Query(ctx, readProjectEnvironmentClonePostgresBindings, arg.AccountID, arg.AppID, arg.SourceScope)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadProjectEnvironmentClonePostgresBindingsRow{}
+	for rows.Next() {
+		var i ReadProjectEnvironmentClonePostgresBindingsRow
+		if err := rows.Scan(&i.Definition, &i.Ready); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const readProjectEnvironmentCloneProductionValueScope = `-- name: ReadProjectEnvironmentCloneProductionValueScope :one

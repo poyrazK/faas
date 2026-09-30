@@ -1453,6 +1453,61 @@ type MailSuppression struct {
 	CreatedAt       pgtype.Timestamptz
 }
 
+type ManagedPostgresBinding struct {
+	ID                         pgtype.UUID
+	AccountID                  pgtype.UUID
+	DatabaseID                 pgtype.UUID
+	AppID                      pgtype.UUID
+	Scope                      string
+	EnvironmentKey             string
+	ProviderIdentityID         pgtype.Text
+	CredentialRef              pgtype.Text
+	CredentialGeneration       int64
+	State                      string
+	CreatedAt                  pgtype.Timestamptz
+	UpdatedAt                  pgtype.Timestamptz
+	DeletedAt                  pgtype.Timestamptz
+	Access                     string
+	LastErrorCode              pgtype.Text
+	LeaseToken                 pgtype.Text
+	LeaseUntil                 pgtype.Timestamptz
+	AttemptCount               int32
+	RetryAt                    pgtype.Timestamptz
+	RotationPreviousGeneration pgtype.Int8
+	RotationWakeID             pgtype.UUID
+	RotationCleanupReady       bool
+}
+
+type ManagedPostgresDatabase struct {
+	ID                      pgtype.UUID
+	AccountID               pgtype.UUID
+	Name                    string
+	Region                  string
+	PostgresMajor           int16
+	ServiceClass            string
+	Availability            string
+	ScaleToZero             bool
+	StorageLimitBytes       int64
+	RestoreWindowSeconds    int64
+	BackendID               string
+	BackendFingerprint      string
+	ProviderResourceID      pgtype.Text
+	State                   string
+	DesiredGeneration       int64
+	ObservedGeneration      int64
+	LastErrorCode           pgtype.Text
+	LeaseToken              pgtype.Text
+	LeaseUntil              pgtype.Timestamptz
+	CreatedAt               pgtype.Timestamptz
+	UpdatedAt               pgtype.Timestamptz
+	DeletedAt               pgtype.Timestamptz
+	AttemptCount            int32
+	RetryAt                 pgtype.Timestamptz
+	RestoreSourceDatabaseID pgtype.UUID
+	RestoreSourceResourceID pgtype.Text
+	RestorePointInTime      pgtype.Timestamptz
+}
+
 type MeterGatewayUsageEvent struct {
 	NodeID     pgtype.UUID
 	EventID    pgtype.UUID
