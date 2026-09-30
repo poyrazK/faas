@@ -87,7 +87,7 @@ func ValidateOutcomeCode(code string) error {
 		return fmt.Errorf("outcome_code must be a token of at most 64 bytes")
 	}
 	for _, c := range code {
-		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_' || c == '-' || c == '.') {
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '_' && c != '-' && c != '.' {
 			return fmt.Errorf("outcome_code must use lowercase letters, digits, underscore, dash, or dot")
 		}
 	}

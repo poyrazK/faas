@@ -132,7 +132,7 @@ func (r Result) Validate(maxOutput int) error {
 		return fmt.Errorf("%w: failure detail is too long", ErrInvalidResult)
 	}
 	if err := jobresult.ValidateOutcomeCode(r.OutcomeCode); err != nil {
-		return fmt.Errorf("%w: %v", ErrInvalidResult, err)
+		return fmt.Errorf("%w: %w", ErrInvalidResult, err)
 	}
 	if maxOutput < 0 || len(r.Stdout)+len(r.Stderr) > maxOutput {
 		return ErrOutputLimitExceeded

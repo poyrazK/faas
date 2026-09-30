@@ -92,7 +92,7 @@ func (p FailureRules) Validate() error {
 				return errors.New("outcome codes must be unique nonempty tokens of at most 64 bytes")
 			}
 			for _, c := range code {
-				if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_' || c == '-' || c == '.') {
+				if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '_' && c != '-' && c != '.' {
 					return errors.New("outcome codes must use lowercase letters, digits, underscore, dash, or dot")
 				}
 			}

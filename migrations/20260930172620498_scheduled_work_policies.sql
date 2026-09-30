@@ -1,19 +1,34 @@
 -- +goose Up
 -- Explicit policy objects opt a definition into the versioned execution contract.
 ALTER TABLE jobs
- ADD COLUMN schedule_policy jsonb,
- ADD COLUMN failure_rules jsonb,
- ADD COLUMN schedule_revision bigint NOT NULL DEFAULT 1 CHECK (schedule_revision >= 1),
- ADD CONSTRAINT jobs_schedule_policy_shape CHECK (schedule_policy IS NULL OR (jsonb_typeof(schedule_policy) = 'object' AND schedule_policy->>'version' = '1')),
- ADD CONSTRAINT jobs_failure_rules_shape CHECK (failure_rules IS NULL OR (jsonb_typeof(failure_rules) = 'object' AND failure_rules->>'version' = '1'));
+ ADD COLUMN IF NOT EXISTS schedule_policy jsonb,
+ ADD COLUMN IF NOT EXISTS failure_rules jsonb,
+ ADD COLUMN IF NOT EXISTS schedule_revision bigint NOT NULL DEFAULT 1 CHECK (schedule_revision >= 1);
 ALTER TABLE crons
- ADD COLUMN schedule_policy jsonb,
- ADD COLUMN failure_rules jsonb,
- ADD COLUMN schedule_revision bigint NOT NULL DEFAULT 1 CHECK (schedule_revision >= 1),
- ADD CONSTRAINT crons_schedule_policy_shape CHECK (schedule_policy IS NULL OR (jsonb_typeof(schedule_policy) = 'object' AND schedule_policy->>'version' = '1')),
- ADD CONSTRAINT crons_failure_rules_shape CHECK (failure_rules IS NULL OR (jsonb_typeof(failure_rules) = 'object' AND failure_rules->>'version' = '1'));
+ ADD COLUMN IF NOT EXISTS schedule_policy jsonb,
+ ADD COLUMN IF NOT EXISTS failure_rules jsonb,
+ ADD COLUMN IF NOT EXISTS schedule_revision bigint NOT NULL DEFAULT 1 CHECK (schedule_revision >= 1);
 
-CREATE TABLE schedule_occurrences (
+-- Constraint creation is guarded separately because PostgreSQL does not
+-- support ADD CONSTRAINT IF NOT EXISTS.
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint WHERE conname = 'jobs_schedule_policy_shape' AND conrelid = 'jobs'::regclass) THEN
+  ALTER TABLE jobs ADD CONSTRAINT jobs_schedule_policy_shape CHECK (schedule_policy IS NULL OR (jsonb_typeof(schedule_policy) = 'object' AND schedule_policy->>'version' = '1'));
+ END IF;
+ IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint WHERE conname = 'jobs_failure_rules_shape' AND conrelid = 'jobs'::regclass) THEN
+  ALTER TABLE jobs ADD CONSTRAINT jobs_failure_rules_shape CHECK (failure_rules IS NULL OR (jsonb_typeof(failure_rules) = 'object' AND failure_rules->>'version' = '1'));
+ END IF;
+ IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint WHERE conname = 'crons_schedule_policy_shape' AND conrelid = 'crons'::regclass) THEN
+  ALTER TABLE crons ADD CONSTRAINT crons_schedule_policy_shape CHECK (schedule_policy IS NULL OR (jsonb_typeof(schedule_policy) = 'object' AND schedule_policy->>'version' = '1'));
+ END IF;
+ IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint WHERE conname = 'crons_failure_rules_shape' AND conrelid = 'crons'::regclass) THEN
+  ALTER TABLE crons ADD CONSTRAINT crons_failure_rules_shape CHECK (failure_rules IS NULL OR (jsonb_typeof(failure_rules) = 'object' AND failure_rules->>'version' = '1'));
+ END IF;
+END $$;
+-- +goose StatementEnd
+
+CREATE TABLE IF NOT EXISTS schedule_occurrences (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  cron_id uuid REFERENCES crons(id) ON DELETE CASCADE,
@@ -35,29 +50,29 @@ CREATE TABLE schedule_occurrences (
  CHECK ((cron_id IS NOT NULL)::int + (job_id IS NOT NULL)::int = 1),
  CHECK (start_deadline_at IS NULL OR start_deadline_at >= scheduled_for)
 );
-CREATE UNIQUE INDEX schedule_occurrences_cron_identity ON schedule_occurrences(cron_id,schedule_revision,scheduled_for) WHERE cron_id IS NOT NULL;
-CREATE UNIQUE INDEX schedule_occurrences_job_identity ON schedule_occurrences(job_id,schedule_revision,scheduled_for) WHERE job_id IS NOT NULL;
-CREATE INDEX schedule_occurrences_account_history ON schedule_occurrences(account_id,scheduled_for DESC,id DESC);
-CREATE INDEX schedule_occurrences_job_history ON schedule_occurrences(job_id,scheduled_for DESC,id DESC) WHERE job_id IS NOT NULL;
-CREATE INDEX schedule_occurrences_cron_history ON schedule_occurrences(cron_id,scheduled_for DESC,id DESC) WHERE cron_id IS NOT NULL;
-CREATE INDEX schedule_occurrences_pending ON schedule_occurrences(status,scheduled_for,id) WHERE status IN ('pending','waiting_replacement');
+CREATE UNIQUE INDEX IF NOT EXISTS schedule_occurrences_cron_identity ON schedule_occurrences(cron_id,schedule_revision,scheduled_for) WHERE cron_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS schedule_occurrences_job_identity ON schedule_occurrences(job_id,schedule_revision,scheduled_for) WHERE job_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS schedule_occurrences_account_history ON schedule_occurrences(account_id,scheduled_for DESC,id DESC);
+CREATE INDEX IF NOT EXISTS schedule_occurrences_job_history ON schedule_occurrences(job_id,scheduled_for DESC,id DESC) WHERE job_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS schedule_occurrences_cron_history ON schedule_occurrences(cron_id,scheduled_for DESC,id DESC) WHERE cron_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS schedule_occurrences_pending ON schedule_occurrences(status,scheduled_for,id) WHERE status IN ('pending','waiting_replacement');
 
-ALTER TABLE job_runs ADD COLUMN failure_rules jsonb,
- ADD COLUMN occurrence_id uuid REFERENCES schedule_occurrences(id) ON DELETE SET NULL,
- ADD COLUMN start_deadline_at timestamptz;
-ALTER TABLE job_tasks ADD COLUMN work_decision jsonb,
- ADD COLUMN outcome_code text NOT NULL DEFAULT '' CHECK (octet_length(outcome_code) <= 64);
-ALTER TABLE job_task_attempts ADD COLUMN work_decision jsonb,
- ADD COLUMN outcome_code text NOT NULL DEFAULT '' CHECK (octet_length(outcome_code) <= 64);
-ALTER TABLE app_tasks ADD COLUMN failure_rules jsonb,
- ADD COLUMN occurrence_id uuid REFERENCES schedule_occurrences(id) ON DELETE SET NULL,
- ADD COLUMN start_deadline_at timestamptz,
- ADD COLUMN work_decision jsonb,
- ADD COLUMN outcome_code text NOT NULL DEFAULT '' CHECK (octet_length(outcome_code) <= 64);
-ALTER TABLE invocations ADD COLUMN failure_rules jsonb,
- ADD COLUMN occurrence_id uuid REFERENCES schedule_occurrences(id) ON DELETE SET NULL,
- ADD COLUMN start_deadline_at timestamptz,
- ADD COLUMN work_decision jsonb;
+ALTER TABLE job_runs ADD COLUMN IF NOT EXISTS failure_rules jsonb,
+ ADD COLUMN IF NOT EXISTS occurrence_id uuid REFERENCES schedule_occurrences(id) ON DELETE SET NULL,
+ ADD COLUMN IF NOT EXISTS start_deadline_at timestamptz;
+ALTER TABLE job_tasks ADD COLUMN IF NOT EXISTS work_decision jsonb,
+ ADD COLUMN IF NOT EXISTS outcome_code text NOT NULL DEFAULT '' CHECK (octet_length(outcome_code) <= 64);
+ALTER TABLE job_task_attempts ADD COLUMN IF NOT EXISTS work_decision jsonb,
+ ADD COLUMN IF NOT EXISTS outcome_code text NOT NULL DEFAULT '' CHECK (octet_length(outcome_code) <= 64);
+ALTER TABLE app_tasks ADD COLUMN IF NOT EXISTS failure_rules jsonb,
+ ADD COLUMN IF NOT EXISTS occurrence_id uuid REFERENCES schedule_occurrences(id) ON DELETE SET NULL,
+ ADD COLUMN IF NOT EXISTS start_deadline_at timestamptz,
+ ADD COLUMN IF NOT EXISTS work_decision jsonb,
+ ADD COLUMN IF NOT EXISTS outcome_code text NOT NULL DEFAULT '' CHECK (octet_length(outcome_code) <= 64);
+ALTER TABLE invocations ADD COLUMN IF NOT EXISTS failure_rules jsonb,
+ ADD COLUMN IF NOT EXISTS occurrence_id uuid REFERENCES schedule_occurrences(id) ON DELETE SET NULL,
+ ADD COLUMN IF NOT EXISTS start_deadline_at timestamptz,
+ ADD COLUMN IF NOT EXISTS work_decision jsonb;
 
 -- The reaper records lost completion receipts as an explicit uncertain class.
 ALTER TABLE job_tasks
@@ -74,7 +89,7 @@ ALTER TABLE job_tasks
     );
 
 -- +goose StatementBegin
-CREATE FUNCTION revise_job_schedule_policy() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION revise_job_schedule_policy() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF NEW.cron_schedule IS DISTINCT FROM OLD.cron_schedule OR NEW.cron_timezone IS DISTINCT FROM OLD.cron_timezone OR NEW.schedule_policy IS DISTINCT FROM OLD.schedule_policy THEN
   NEW.schedule_revision := OLD.schedule_revision + 1;
@@ -82,8 +97,9 @@ BEGIN
  RETURN NEW;
 END;
 $$;
+DROP TRIGGER IF EXISTS jobs_schedule_revision ON jobs;
 CREATE TRIGGER jobs_schedule_revision BEFORE UPDATE ON jobs FOR EACH ROW EXECUTE FUNCTION revise_job_schedule_policy();
-CREATE FUNCTION revise_cron_schedule_policy() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION revise_cron_schedule_policy() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF NEW.schedule IS DISTINCT FROM OLD.schedule OR NEW.timezone IS DISTINCT FROM OLD.timezone OR NEW.schedule_policy IS DISTINCT FROM OLD.schedule_policy THEN
   NEW.schedule_revision := OLD.schedule_revision + 1;
@@ -91,11 +107,12 @@ BEGIN
  RETURN NEW;
 END;
 $$;
+DROP TRIGGER IF EXISTS crons_schedule_revision ON crons;
 CREATE TRIGGER crons_schedule_revision BEFORE UPDATE ON crons FOR EACH ROW EXECUTE FUNCTION revise_cron_schedule_policy();
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE FUNCTION sync_job_schedule_occurrence() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION sync_job_schedule_occurrence() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
  first_started timestamptz;
  missed_deadline boolean;
@@ -125,10 +142,11 @@ BEGIN
  RETURN NEW;
 END;
 $$;
+DROP TRIGGER IF EXISTS job_runs_schedule_occurrence ON job_runs;
 CREATE TRIGGER job_runs_schedule_occurrence AFTER UPDATE OF aggregate_status ON job_runs
  FOR EACH ROW EXECUTE FUNCTION sync_job_schedule_occurrence();
 
-CREATE FUNCTION sync_app_task_schedule_occurrence() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION sync_app_task_schedule_occurrence() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF NEW.status IS NOT DISTINCT FROM OLD.status THEN RETURN NEW; END IF;
  UPDATE schedule_occurrences o SET
@@ -150,10 +168,11 @@ BEGIN
  RETURN NEW;
 END;
 $$;
+DROP TRIGGER IF EXISTS app_tasks_schedule_occurrence ON app_tasks;
 CREATE TRIGGER app_tasks_schedule_occurrence AFTER UPDATE OF status ON app_tasks
  FOR EACH ROW EXECUTE FUNCTION sync_app_task_schedule_occurrence();
 
-CREATE FUNCTION sync_invocation_schedule_occurrence() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION sync_invocation_schedule_occurrence() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF NEW.state IS NOT DISTINCT FROM OLD.state THEN RETURN NEW; END IF;
  UPDATE schedule_occurrences o SET
@@ -171,6 +190,7 @@ BEGIN
  RETURN NEW;
 END;
 $$;
+DROP TRIGGER IF EXISTS invocations_schedule_occurrence ON invocations;
 CREATE TRIGGER invocations_schedule_occurrence AFTER UPDATE OF state ON invocations
  FOR EACH ROW EXECUTE FUNCTION sync_invocation_schedule_occurrence();
 -- +goose StatementEnd

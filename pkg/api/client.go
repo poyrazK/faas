@@ -2659,6 +2659,16 @@ func (c *Client) ListCronScheduleOccurrences(ctx context.Context, id string, lim
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// GetCronsIdOccurrences is the typed OpenAPI route method for cron history.
+func (c *Client) GetCronsIdOccurrences(ctx context.Context, id string, limit int, before string) (ListScheduleOccurrencesResponse, error) {
+	return c.ListCronScheduleOccurrences(ctx, id, limit, before)
+}
+
+// GetJobsNameOccurrences is the typed OpenAPI route method for job history.
+func (c *Client) GetJobsNameOccurrences(ctx context.Context, name string, limit int, before string) (ListScheduleOccurrencesResponse, error) {
+	return c.ListJobScheduleOccurrences(ctx, name, limit, before)
+}
+
 // GetJobRun returns one run by id (uuid). Backs `gregale jobs run
 // <name> <id>`. Wire shape matches JobRunResponse.
 func (c *Client) GetJobRun(ctx context.Context, name, runID string) (JobRunResponse, error) {

@@ -13245,11 +13245,12 @@ paths:
           in: query
           required: false
           schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+          description: Maximum number of cron occurrence records to return.
         - name: before
           in: query
           required: false
           schema: { type: string, format: uuid }
-          description: Pass the last occurrence id from the previous page.
+          description: Cron occurrence id that starts the next older page.
       responses:
         '200':
           description: A newest-first page of durable occurrence outcomes.
@@ -14019,6 +14020,7 @@ paths:
         in: path
         required: true
         schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$' }
+        description: Customer-visible name of the recurring job.
     get:
       tags: [jobs]
       operationId: listJobScheduleOccurrences
@@ -14029,14 +14031,15 @@ paths:
           in: query
           required: false
           schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+          description: Maximum number of job occurrence records to return.
         - name: before
           in: query
           required: false
           schema: { type: string, format: uuid }
-          description: Pass the last occurrence id from the previous page.
+          description: Job occurrence id that starts the next older page.
       responses:
         '200':
-          description: A newest-first page of durable occurrence outcomes.
+          description: A newest-first page of job occurrence outcomes.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ListScheduleOccurrencesResponse' }

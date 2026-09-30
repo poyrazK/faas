@@ -199,7 +199,7 @@ func resolveCreateAppTask(params CreateAppTaskParams) (CreateAppTaskParams, erro
 	}
 	if params.FailureRules != nil {
 		if err := params.FailureRules.Validate(); err != nil {
-			return CreateAppTaskParams{}, fmt.Errorf("%w: %v", ErrAppTaskInvalid, err)
+			return CreateAppTaskParams{}, fmt.Errorf("%w: %w", ErrAppTaskInvalid, err)
 		}
 		encoded, err := json.Marshal(params.FailureRules)
 		if err != nil || len(encoded) > 16*1024 {
@@ -304,7 +304,7 @@ func validateCompleteAppTask(params CompleteAppTaskParams, maxOutputBytes int) e
 		return fmt.Errorf("%w: exit code must be between 0 and 255", ErrAppTaskInvalid)
 	}
 	if err := jobresult.ValidateOutcomeCode(params.OutcomeCode); err != nil {
-		return fmt.Errorf("%w: %v", ErrAppTaskInvalid, err)
+		return fmt.Errorf("%w: %w", ErrAppTaskInvalid, err)
 	}
 	failurePresent := params.FailureCode != nil || params.FailureMessage != nil
 	if (params.FailureCode == nil) != (params.FailureMessage == nil) {

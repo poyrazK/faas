@@ -91,9 +91,15 @@ type (
 	CreateCustomDomainRequest = api.CreateCustomDomainRequest
 
 	// Crons.
-	CronResponse      = api.CronResponse
-	CreateCronRequest = api.CreateCronRequest
-	UpdateCronRequest = api.UpdateCronRequest
+	CronResponse                    = api.CronResponse
+	CreateCronRequest               = api.CreateCronRequest
+	UpdateCronRequest               = api.UpdateCronRequest
+	SchedulePolicy                  = api.SchedulePolicy
+	FailureRule                     = api.FailureRule
+	FailureRules                    = api.FailureRules
+	WorkDecision                    = api.WorkDecision
+	ScheduleOccurrenceResponse      = api.ScheduleOccurrenceResponse
+	ListScheduleOccurrencesResponse = api.ListScheduleOccurrencesResponse
 
 	// Jobs (issue #1184 Workstream A).
 	CreateJobRequest            = api.CreateJobRequest
