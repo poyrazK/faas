@@ -5019,3 +5019,20 @@ GROUP BY totals.decision_type, totals.decision_value, totals.request_count, tota
 -- the bounded response can display. Most flags have at most 16 live variants.
 ORDER BY totals.request_count DESC, totals.decision_type, totals.decision_value
 LIMIT 101;
+
+-- name: SelectPendingFireNowRequestForNode :one
+-- Hold placement stable while the caller changes the claimed request status.
+SELECT r.id::text AS id, r.cron_id::text AS cron_id, r.account_id::text AS account_id, r.requested_at, r.status
+FROM cron_fire_now_requests r
+JOIN crons c ON c.id = r.cron_id
+JOIN apps a ON a.id = c.app_id
+WHERE r.status = 'pending'
+  AND (sqlc.narg(node_id)::text IS NULL OR a.node_id IS NULL OR a.node_id::text = sqlc.narg(node_id))
+ORDER BY r.requested_at ASC, r.id ASC
+FOR UPDATE OF r, a SKIP LOCKED
+LIMIT 1;
+
+-- name: RequeueFireNowRequest :execrows
+UPDATE cron_fire_now_requests
+SET status = 'pending'
+WHERE id = sqlc.arg(id)::uuid AND status = 'running';

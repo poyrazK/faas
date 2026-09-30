@@ -15377,6 +15377,20 @@ func (q *Queries) RequestTelemetryCoverage(ctx context.Context, db DBTX, arg Req
 	return i, err
 }
 
+const requeueFireNowRequest = `-- name: RequeueFireNowRequest :execrows
+UPDATE cron_fire_now_requests
+SET status = 'pending'
+WHERE id = $1::uuid AND status = 'running'
+`
+
+func (q *Queries) RequeueFireNowRequest(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, requeueFireNowRequest, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const reserveAccountCreditConsumption = `-- name: ReserveAccountCreditConsumption :one
 INSERT INTO credit_ledger (account_id, credit_id, delta_cents, reason, actor, provider, provider_invoice_id)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -15788,6 +15802,40 @@ func (q *Queries) SafeReleaseWorkerLeaseReady(ctx context.Context, db DBTX) (boo
 	var ready bool
 	err := row.Scan(&ready)
 	return ready, err
+}
+
+const selectPendingFireNowRequestForNode = `-- name: SelectPendingFireNowRequestForNode :one
+SELECT r.id::text AS id, r.cron_id::text AS cron_id, r.account_id::text AS account_id, r.requested_at, r.status
+FROM cron_fire_now_requests r
+JOIN crons c ON c.id = r.cron_id
+JOIN apps a ON a.id = c.app_id
+WHERE r.status = 'pending'
+  AND ($1::text IS NULL OR a.node_id IS NULL OR a.node_id::text = $1)
+ORDER BY r.requested_at ASC, r.id ASC
+FOR UPDATE OF r, a SKIP LOCKED
+LIMIT 1
+`
+
+type SelectPendingFireNowRequestForNodeRow struct {
+	ID          string
+	CronID      string
+	AccountID   string
+	RequestedAt pgtype.Timestamptz
+	Status      string
+}
+
+// Hold placement stable while the caller changes the claimed request status.
+func (q *Queries) SelectPendingFireNowRequestForNode(ctx context.Context, db DBTX, nodeID pgtype.Text) (SelectPendingFireNowRequestForNodeRow, error) {
+	row := db.QueryRow(ctx, selectPendingFireNowRequestForNode, nodeID)
+	var i SelectPendingFireNowRequestForNodeRow
+	err := row.Scan(
+		&i.ID,
+		&i.CronID,
+		&i.AccountID,
+		&i.RequestedAt,
+		&i.Status,
+	)
+	return i, err
 }
 
 const setAppManifest = `-- name: SetAppManifest :exec
