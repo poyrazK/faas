@@ -98,8 +98,8 @@ func TestPgCommandCronClassifiesStructuredOutcomeFromSuccessfulExit(t *testing.T
 	cron, err := store.CreateCronWithOptions(ctx, appID, "* * * * *", "", true, state.CronOptions{
 		Command: []string{"bin/synchronize"}, RetryMax: 2, RetryBackoffSeconds: 1,
 		FailureRules: &workpolicy.FailureRules{
-			Version: workpolicy.Version,
-			Rules: []workpolicy.FailureRule{{OutcomeCodes: []string{"invalid_record"}, Action: "fail_partition"}},
+			Version:          workpolicy.Version,
+			Rules:            []workpolicy.FailureRule{{OutcomeCodes: []string{"invalid_record"}, Action: "fail_partition"}},
 			UnmatchedFailure: "retry", UncertainOutcome: "hold",
 		},
 	})

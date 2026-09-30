@@ -328,8 +328,8 @@ func TestHandleJobExitClassifiesStructuredOutcomeAndRetainsAttempt(t *testing.T)
 			acct, job, _ := seedJobRun(t, store, json.RawMessage(`{}`), json.RawMessage(`{}`))
 			retryMax := 1
 			rules := &workpolicy.FailureRules{
-				Version: workpolicy.Version,
-				Rules: []workpolicy.FailureRule{{OutcomeCodes: []string{tc.outcomeCode}, Action: tc.action}},
+				Version:          workpolicy.Version,
+				Rules:            []workpolicy.FailureRule{{OutcomeCodes: []string{tc.outcomeCode}, Action: tc.action}},
 				UnmatchedFailure: "retry", UncertainOutcome: "hold",
 			}
 			run, _, err := store.JobRunCreate(context.Background(), job.ID, acct.ID, "manual", nil, &retryMax, nil, nil, 1,
