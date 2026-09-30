@@ -6684,6 +6684,54 @@ func (q *Queries) ListDeploymentsForCompare(ctx context.Context, db DBTX, arg Li
 	return items, nil
 }
 
+const listDevBridges = `-- name: ListDevBridges :many
+SELECT id,scope,attachment_digest,request_digest,expires_at,revoked_at
+FROM dev_bridge_sessions
+WHERE account_id=$1 AND revoked_at IS NULL AND expires_at > now()
+ORDER BY expires_at DESC, id ASC LIMIT $2
+`
+
+type ListDevBridgesParams struct {
+	AccountID pgtype.UUID
+	RowLimit  int32
+}
+
+type ListDevBridgesRow struct {
+	ID               string
+	Scope            []byte
+	AttachmentDigest []byte
+	RequestDigest    []byte
+	ExpiresAt        pgtype.Timestamptz
+	RevokedAt        pgtype.Timestamptz
+}
+
+func (q *Queries) ListDevBridges(ctx context.Context, db DBTX, arg ListDevBridgesParams) ([]ListDevBridgesRow, error) {
+	rows, err := db.Query(ctx, listDevBridges, arg.AccountID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListDevBridgesRow{}
+	for rows.Next() {
+		var i ListDevBridgesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Scope,
+			&i.AttachmentDigest,
+			&i.RequestDigest,
+			&i.ExpiresAt,
+			&i.RevokedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDomainsForAccount = `-- name: ListDomainsForAccount :many
 select d.domain, d.app_id, d.challenge_token, d.verified_at, d.environment_id
 from custom_domains d join apps a on a.id = d.app_id

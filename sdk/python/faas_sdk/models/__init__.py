@@ -615,10 +615,15 @@ from .deployment_response_rollout_state import DeploymentResponseRolloutState
 from .deployment_response_stage_state import DeploymentResponseStageState
 from .deployment_response_tag import DeploymentResponseTag
 from .deployment_summary_response import DeploymentSummaryResponse
+from .dev_bridge_activity import DevBridgeActivity
+from .dev_bridge_activity_connection_state import DevBridgeActivityConnectionState
 from .dev_bridge_credentials import DevBridgeCredentials
 from .dev_bridge_dependency import DevBridgeDependency
+from .dev_bridge_request_record import DevBridgeRequestRecord
 from .dev_bridge_scope import DevBridgeScope
 from .dev_bridge_session import DevBridgeSession
+from .dev_bridge_session_summary import DevBridgeSessionSummary
+from .dev_bridge_session_summary_connection_state import DevBridgeSessionSummaryConnectionState
 from .dev_bridge_webhook_replay import DevBridgeWebhookReplay
 from .dev_bridge_webhook_replay_state import DevBridgeWebhookReplayState
 from .dev_postgres_request import DevPostgresRequest
@@ -922,6 +927,7 @@ from .list_cron_runs_response import ListCronRunsResponse
 from .list_delayed_tasks_response import ListDelayedTasksResponse
 from .list_deploy_tokens_response import ListDeployTokensResponse
 from .list_deployment_audit_response import ListDeploymentAuditResponse
+from .list_dev_bridges_response import ListDevBridgesResponse
 from .list_event_deliveries_state import ListEventDeliveriesState
 from .list_executions_status import ListExecutionsStatus
 from .list_instances_response import ListInstancesResponse
@@ -2512,10 +2518,15 @@ __all__ = (
     "DeployTokenResponse",
     "DeployTokenResponseScopesItem",
     "DeployTokenResponseStatus",
+    "DevBridgeActivity",
+    "DevBridgeActivityConnectionState",
     "DevBridgeCredentials",
     "DevBridgeDependency",
+    "DevBridgeRequestRecord",
     "DevBridgeScope",
     "DevBridgeSession",
+    "DevBridgeSessionSummary",
+    "DevBridgeSessionSummaryConnectionState",
     "DevBridgeWebhookReplay",
     "DevBridgeWebhookReplayState",
     "DevPostgresRequest",
@@ -2819,6 +2830,7 @@ __all__ = (
     "ListDelayedTasksResponse",
     "ListDeploymentAuditResponse",
     "ListDeployTokensResponse",
+    "ListDevBridgesResponse",
     "ListEventDeliveriesState",
     "ListExecutionsStatus",
     "ListInstancesResponse",

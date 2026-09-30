@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -18,6 +19,7 @@ import (
 type DevBridgeStore interface {
 	CreateDevBridge(context.Context, devbridge.Session) error
 	DevBridgeByID(context.Context, string, string) (devbridge.Session, error)
+	ListDevBridges(context.Context, string, int) ([]devbridge.Session, error)
 	RevokeDevBridge(context.Context, string, string, time.Time) error
 }
 
@@ -78,6 +80,14 @@ func (s *PgStore) DevBridgeByID(ctx context.Context, accountID, id string) (devb
 	if err != nil {
 		return devbridge.Session{}, err
 	}
+	out, err := decodeDevBridge(row)
+	if err != nil || out.Scope.AccountID != accountID {
+		return devbridge.Session{}, ErrNotFound
+	}
+	return out, nil
+}
+
+func decodeDevBridge(row sqlc.DevBridgeByIDRow) (devbridge.Session, error) {
 	out := devbridge.Session{ID: row.ID, ExpiresAt: row.ExpiresAt.Time}
 	if row.RevokedAt.Valid {
 		v := row.RevokedAt.Time
@@ -91,10 +101,27 @@ func (s *PgStore) DevBridgeByID(ctx context.Context, accountID, id string) (devb
 	}
 	copy(out.AttachmentDigest[:], row.AttachmentDigest)
 	copy(out.RequestDigest[:], row.RequestDigest)
-	if out.Scope.AccountID != accountID {
-		return devbridge.Session{}, ErrNotFound
-	}
 	return out, nil
+}
+
+func (s *PgStore) ListDevBridges(ctx context.Context, accountID string, limit int) ([]devbridge.Session, error) {
+	account, err := parsePgUUID(accountID)
+	if err != nil || limit < 1 || limit > api.DevBridgeInventoryLimit {
+		return nil, ErrInvalidArgument
+	}
+	rows, err := sqlc.New().ListDevBridges(ctx, s.pool, sqlc.ListDevBridgesParams{AccountID: account, RowLimit: int32(limit)})
+	if err != nil {
+		return nil, err
+	}
+	result := make([]devbridge.Session, 0, len(rows))
+	for _, row := range rows {
+		session, err := decodeDevBridge(sqlc.DevBridgeByIDRow(row))
+		if err != nil || session.Scope.AccountID != accountID {
+			return nil, ErrInvalidArgument
+		}
+		result = append(result, session)
+	}
+	return result, nil
 }
 
 func (s *PgStore) RevokeDevBridge(ctx context.Context, accountID, id string, now time.Time) error {
@@ -171,6 +198,30 @@ func (m *MemStore) DevBridgeByID(_ context.Context, accountID, id string) (devbr
 		return devbridge.Session{}, ErrNotFound
 	}
 	return cloneDevBridge(s), nil
+}
+
+func (m *MemStore) ListDevBridges(_ context.Context, accountID string, limit int) ([]devbridge.Session, error) {
+	if limit < 1 || limit > api.DevBridgeInventoryLimit {
+		return nil, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	result := make([]devbridge.Session, 0)
+	for _, session := range m.devBridgeSessions {
+		if session.Scope.AccountID == accountID && session.RevokedAt == nil && time.Now().Before(session.ExpiresAt) {
+			result = append(result, cloneDevBridge(session))
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].ExpiresAt.Equal(result[j].ExpiresAt) {
+			return result[i].ID < result[j].ID
+		}
+		return result[i].ExpiresAt.After(result[j].ExpiresAt)
+	})
+	if len(result) > limit {
+		result = result[:limit]
+	}
+	return result, nil
 }
 
 func (m *MemStore) RevokeDevBridge(_ context.Context, accountID, id string, now time.Time) error {

@@ -6334,6 +6334,20 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/dev/bridges:
+    get:
+      tags: [dev]
+      operationId: listDevBridges
+      summary: List active development sessions owned by the account.
+      description: ADR-379 bounded inventory. Returns at most 100 active leases, newest expiry first. Connection state is informational and unknown after observer restart or eviction. No credentials are returned.
+      responses:
+        '200':
+          description: Active owned sessions.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListDevBridgesResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { description: Development bridge inventory is disabled. }
     post:
       tags: [dev]
       operationId: createDevBridge
@@ -6384,6 +6398,29 @@ paths:
         '204': { description: Session revoked. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/dev/bridges/{id}/activity:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Owned development session identifier.
+        schema: { type: string, minLength: 43, maxLength: 43 }
+    get:
+      tags: [dev]
+      operationId: getDevBridgeActivity
+      summary: Inspect recent connection and request metadata.
+      description: ADR-379 temporary API observer window. Queries, headers and bodies are excluded. Restart or bounded eviction clears activity; observation never authorizes routing.
+      responses:
+        '200':
+          description: Bounded session activity.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DevBridgeActivity' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { description: Development bridge activity is disabled. }
 
   /v1/dev/bridges/{id}/webhook-replays:
     parameters:
@@ -22720,6 +22757,42 @@ components:
         scope: { $ref: '#/components/schemas/DevBridgeScope' }
         expires_at: { type: string, format: date-time }
         revoked_at: { type: [string, 'null'], format: date-time }
+    ListDevBridgesResponse:
+      type: object
+      description: Bounded active development sessions owned by the account.
+      required: [sessions]
+      properties:
+        sessions: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/DevBridgeSessionSummary' } }
+    DevBridgeSessionSummary:
+      type: object
+      description: A durable session and its informational observed connection state.
+      required: [session, connection_state]
+      properties:
+        session: { $ref: '#/components/schemas/DevBridgeSession' }
+        connection_state: { type: string, enum: [unknown, connected, disconnected, expired, revoked] }
+    DevBridgeActivity:
+      type: object
+      description: Temporary connection and request observations without credentials or payloads.
+      required: [connection_state, requests]
+      properties:
+        connection_state: { type: string, enum: [unknown, connected, disconnected, expired, revoked] }
+        connected_at: { type: [string, 'null'], format: date-time }
+        disconnected_at: { type: [string, 'null'], format: date-time }
+        requests: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/DevBridgeRequestRecord' } }
+    DevBridgeRequestRecord:
+      type: object
+      description: Redacted request metadata without queries, headers or bodies.
+      required: [id, started_at, method, path, status, duration_ms, response_bytes, complete]
+      properties:
+        id: { type: integer, minimum: 1 }
+        started_at: { type: string, format: date-time }
+        method: { type: string }
+        path: { type: string, maxLength: 1024 }
+        status: { type: integer }
+        duration_ms: { type: integer, minimum: 0 }
+        response_bytes: { type: integer, minimum: 0 }
+        complete: { type: boolean }
+        error: { type: string }
     DevBridgeCredentials:
       type: object
       description: Distinct secrets for laptop attachment and request routing.

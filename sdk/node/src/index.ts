@@ -139,3 +139,13 @@ export { GregaleFlags, evaluateFlag, flagBucket, GREGALE_FLAG_EVIDENCE_HEADER, G
 export type { FlagsBundle, FlagRule, FeatureFlag, FlagDecision, FlagEvidence, FlagRequestHeaders, GregaleFlagsOptions } from './flags.js';
 
 export { FlagsService } from './generated/services/FlagsService.js';
+
+export { DevService } from './generated/services/DevService.js';
+export {
+  DEV_BRIDGE_CONTEXT_HEADER,
+  createDevBridgeFetch,
+  currentDevBridgeContext,
+  devBridgeMiddleware,
+  withDevBridgeContext,
+  withDevBridgeRequestContext,
+} from './dev-bridge.js';

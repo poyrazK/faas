@@ -36,6 +36,10 @@ const (
 	DevBridgeMaxHeaderBytes        = 32 << 10
 	DevBridgeInspectionRecords     = 100
 	DevBridgeInspectionPathBytes   = 1024
+	DevBridgeInventoryLimit        = 100
+	DevBridgeObservedSessions      = 512
+	DevBridgeLocalReadyTimeout     = 30 * time.Second
+	DevBridgeLocalStopTimeout      = 5 * time.Second
 	DevBridgeMaxWebhookReplays     = 100
 	DevBridgeReplayKeyBytes        = 64
 	DevBridgeMetadataRetention     = 7 * 24 * time.Hour

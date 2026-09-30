@@ -20,6 +20,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/bindinghash"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/devbridge"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
@@ -51,6 +52,7 @@ import (
 type server struct {
 	devBridgeEnabled      bool
 	devBridgeURL          string
+	devBridgeObserver     *devbridge.Observer
 	featureFlagsEnabled   bool
 	flagsWorkloadVerifier *workloadidentity.Verifier
 	// totp limits TOTP guesses per account (totp_guard.go).
@@ -1047,6 +1049,7 @@ func newServerWithDeps(
 	// resulting reconcile rows carry actor="apid" in events.actor.
 	aud := newAuditor(store, log, nil)
 	s := &server{
+		devBridgeObserver:      devbridge.NewObserver(api.DevBridgeObservedSessions, api.DevBridgeInspectionRecords, api.DevBridgeInspectionPathBytes),
 		store:                  store,
 		log:                    log,
 		domain:                 domain,
@@ -1413,6 +1416,8 @@ func (s *server) handler() http.Handler {
 	// routes only own the developer-session lease.
 	mux.HandleFunc("PUT /v1/dev/sessions/{project}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.upsertDevSession)))))
 	mux.HandleFunc("POST /v1/dev/bridges", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.createDevBridge)))))
+	mux.HandleFunc("GET /v1/dev/bridges", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listDevBridges))))
+	mux.HandleFunc("GET /v1/dev/bridges/{id}/activity", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDevBridgeActivity))))
 	mux.HandleFunc("GET /v1/dev/bridges/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDevBridge))))
 	mux.HandleFunc("DELETE /v1/dev/bridges/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.revokeDevBridge))))
 	mux.HandleFunc("POST /v1/dev/bridges/{id}/webhook-replays", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.replayDevBridgeWebhook))))
@@ -3139,6 +3144,9 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/apps/new", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.createAppFromGitHubWizard))))
 	mux.Handle("GET /dashboard/", s.dashboardChain(s.sessionAuth(s.dashboardHandler(s.log))))
 	mux.Handle("GET /dashboard", s.dashboardChain(s.sessionAuth(s.dashboardHandler(s.log))))
+	mux.Handle("GET /dashboard/dev-bridges", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderDevBridgesDashboard))))
+	mux.Handle("GET /dashboard/dev-bridges/{id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderDevBridgesDashboard))))
+	mux.Handle("POST /dashboard/dev-bridges/{id}/revoke", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.revokeDevBridgeDashboard))))
 
 	// PR-B bind picker UX (handlers_install_github.go). Both routes
 	// are cookie-session-authenticated (NOT API-key auth — the

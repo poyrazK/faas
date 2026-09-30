@@ -1647,6 +1647,38 @@ run an HTTP service locally in a remote development environment
 | `--entrypoint <APP>` | remote frontend for the session URL |  |
 | `--inspect` | inspect recent requests in a local browser |  |
 | `--replay-webhook <INVOCATION>` | copy one provider-verified webhook receipt locally |  |
+| `--ready-path <PATH>` | check a local HTTP readiness path before attaching |  |
+| `--bind-env <BINDING>` | map ENV_KEY=dependency to its local proxy URL; repeatable |  |
+
+#### dev bridge list
+
+list active account development bridges
+
+`gregale dev bridge list`
+
+#### dev bridge status
+
+inspect a session and recent request activity
+
+`gregale dev bridge status SESSION`
+
+#### dev bridge revoke
+
+revoke a session and disconnect its laptop
+
+`gregale dev bridge revoke SESSION`
+
+#### dev bridge doctor
+
+check admission, relay and local listener using a temporary session
+
+`gregale dev bridge doctor APP [--environment <ENV>] [--local-port <PORT>] [--entrypoint <APP>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--environment <ENV>` | named development environment |  |
+| `--local-port <PORT>` | local HTTP service port |  |
+| `--entrypoint <APP>` | remote frontend |  |
 
 ### dev history
 

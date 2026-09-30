@@ -535,6 +535,10 @@ metal-lima: ## Run metal tests locally on an M3+ Mac via Lima nested KVM (see de
 	limactl shell --workdir "$(CURDIR)" faas-metal sudo ./deploy/lima/run-metal.sh
 
 .PHONY: native-m9-acceptance
+.PHONY: native-dev-bridge-acceptance
+native-dev-bridge-acceptance: ## Verify Dev Bridge against designated native split-box fixtures and public TLS
+	@bash scripts/ci/run-native-dev-bridge-acceptance.sh
+
 native-m9-acceptance: ## M9: run the guarded two-node failure-safe drill on the native x86 split-box pair
 	@bash scripts/ci/run-native-m9-acceptance.sh
 
@@ -1315,7 +1319,7 @@ sdk-smoke-python: ## Build fakeapid fixture + run Python SDK smoke + unit tests
 
 .PHONY: sdk-unit-python
 sdk-unit-python: ## Run Python SDK unit tests (no fixture required)
-	@cd sdk/python && .venv/bin/python -m pytest tests/test_client.py tests/test_sse.py
+	@cd sdk/python && .venv/bin/python -m pytest tests/test_client.py tests/test_sse.py tests/test_dev_bridge.py
 
 .PHONY: test-flags
 test-flags: ## Validate customer-aware flag release, SDK and request evidence against disposable Postgres

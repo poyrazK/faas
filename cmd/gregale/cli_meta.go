@@ -1203,6 +1203,17 @@ var cliCommands = []cliCommand{
 				{Name: "entrypoint", Short: "remote frontend for the session URL", Value: "APP"},
 				{Name: "inspect", Short: "inspect recent requests in a local browser"},
 				{Name: "replay-webhook", Short: "copy one provider-verified webhook receipt locally", Value: "INVOCATION"},
+				{Name: "ready-path", Short: "check a local HTTP readiness path before attaching", Value: "PATH"},
+				{Name: "bind-env", Short: "map ENV_KEY=dependency to its local proxy URL; repeatable", Value: "BINDING"},
+			}, Subcommands: []cliSub{
+				{Name: "list", Short: "list active account development bridges"},
+				{Name: "status", Short: "inspect a session and recent request activity", Positionals: []string{"SESSION"}},
+				{Name: "revoke", Short: "revoke a session and disconnect its laptop", Positionals: []string{"SESSION"}},
+				{Name: "doctor", Short: "check admission, relay and local listener using a temporary session", Positionals: []string{"APP"}, Flags: []cliFlag{
+					{Name: "environment", Short: "named development environment", Value: "ENV"},
+					{Name: "local-port", Short: "local HTTP service port", Value: "PORT"},
+					{Name: "entrypoint", Short: "remote frontend", Value: "APP"},
+				}},
 			}},
 			{Name: "history", Short: "show edit-to-live timings and SLO guidance", Flags: []cliFlag{
 				{Name: "path", Short: "source directory", Value: "DIR"},

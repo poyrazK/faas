@@ -165,6 +165,9 @@ var routeExclude = map[string]bool{
 	"GET /oauth/callback":                                        true, // GitHub App install callback
 	"GET /oauth/code-callback":                                   true, // GitHub App user-to-server OAuth callback (PR-C)
 	"POST /dashboard/install/connect":                            true, // GitHub App "Connect GitHub" button (PR-C)
+	"GET /dashboard/dev-bridges":                                 true, // ADR-379 HTML session inventory
+	"GET /dashboard/dev-bridges/{id}":                            true, // ADR-379 HTML activity projection
+	"POST /dashboard/dev-bridges/{id}/revoke":                    true, // ADR-379 cookie + CSRF form
 	"POST /dashboard/apps/new":                                   true, // dashboard-only create + GitHub bind form adapter
 	"POST /dashboard/apps/{slug}/github/sync":                    true, // GitHub connection repair form; session-cookie + CSRF-only
 	"POST /dashboard/apps/{slug}/github/disconnect":              true, // GitHub connection disconnect form; session-cookie + CSRF-only
@@ -514,6 +517,8 @@ var codeExclude = map[string]bool{
 var schemaSpecOnly = map[string]bool{
 	"DevBridgeScope":         true, // wire types live in pkg/devbridge; digests never cross the wire
 	"DevBridgeSession":       true,
+	"DevBridgeActivity":      true, // ADR-379 wire observer types live in pkg/devbridge
+	"DevBridgeRequestRecord": true,
 	"DevBridgeCredentials":   true,
 	"DevBridgeWebhookReplay": true,
 	// ADR-377: evaluator contracts live in pkg/flags; publication metadata

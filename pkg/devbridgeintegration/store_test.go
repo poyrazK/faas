@@ -81,6 +81,20 @@ func TestDevBridgeStoreParity(t *testing.T) {
 			if err := stored.AuthorizeAttachment(now, credentials.AttachmentToken); err != nil {
 				t.Fatal(err)
 			}
+			// adr: 379 — inventory must recover the same durable session in
+			// a fresh store, without exposing another account or expired rows.
+			rows, err := fresh().ListDevBridges(ctx, account.ID, 1)
+			if err != nil || len(rows) != 1 || rows[0].ID != session.ID {
+				t.Fatalf("active inventory: %+v %v", rows, err)
+			}
+			if rows, err := fresh().ListDevBridges(ctx, uuid.NewString(), 1); err != nil || len(rows) != 0 {
+				t.Fatalf("foreign inventory: %+v %v", rows, err)
+			}
+			for _, limit := range []int{0, api.DevBridgeInventoryLimit + 1} {
+				if _, err := bridges.ListDevBridges(ctx, account.ID, limit); err == nil {
+					t.Fatal("invalid inventory bound accepted")
+				}
+			}
 			second, _, err := devbridge.NewSession(scope, now, now.Add(time.Hour))
 			if err != nil {
 				t.Fatal(err)
@@ -93,6 +107,10 @@ func TestDevBridgeStoreParity(t *testing.T) {
 			}
 			if err := bridges.CreateDevBridge(ctx, second); err != nil {
 				t.Fatalf("revocation did not release quota: %v", err)
+			}
+			rows, err = fresh().ListDevBridges(ctx, account.ID, api.DevBridgeInventoryLimit)
+			if err != nil || len(rows) != 1 || rows[0].ID != second.ID {
+				t.Fatalf("revoked inventory: %+v %v", rows, err)
 			}
 			testWebhookReplayLedger(t, store, second)
 			stored, err = bridges.DevBridgeByID(ctx, account.ID, session.ID)

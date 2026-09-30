@@ -13,4 +13,8 @@ type (
 	DevBridgeCredentials          = api.DevBridgeCredentials
 	ReplayDevBridgeWebhookRequest = api.ReplayDevBridgeWebhookRequest
 	DevBridgeWebhookReplay        = api.DevBridgeWebhookReplay
+	DevBridgeSessionSummary       = api.DevBridgeSessionSummary
+	ListDevBridgesResponse        = api.ListDevBridgesResponse
+	DevBridgeActivity             = api.DevBridgeActivity
+	DevBridgeRequestRecord        = api.DevBridgeRequestRecord
 )

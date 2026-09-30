@@ -4765,6 +4765,12 @@ WHERE a.id=sqlc.arg(target_app_id) AND a.account_id=sqlc.arg(account_id) AND a.s
 SELECT id,scope,attachment_digest,request_digest,expires_at,revoked_at
 FROM dev_bridge_sessions WHERE id=$1 AND account_id=$2;
 
+-- name: ListDevBridges :many
+SELECT id,scope,attachment_digest,request_digest,expires_at,revoked_at
+FROM dev_bridge_sessions
+WHERE account_id=sqlc.arg(account_id) AND revoked_at IS NULL AND expires_at > now()
+ORDER BY expires_at DESC, id ASC LIMIT sqlc.arg(row_limit);
+
 -- name: PruneDevBridgeSessions :exec
 DELETE FROM dev_bridge_sessions WHERE account_id=$1 AND expires_at < $2;
 
