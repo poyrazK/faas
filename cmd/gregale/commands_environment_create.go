@@ -30,8 +30,8 @@ func envCreate(args []string) int {
 	if !api.ValidProjectEnvironmentSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(*from) || positional[0] == *from {
 		return printErr("Invalid environment", errors.New("target and --from must be different valid environment slugs"))
 	}
-	if *full && *shareResources || *wait && !*full || *timeoutSeconds <= 0 {
-		return printErr("Invalid clone options", errors.New("--full requires isolated resources, --wait requires --full, and --timeout must be positive"))
+	if *full && *shareResources || *wait && !*full || *timeoutSeconds <= 0 || *timeoutSeconds > 24*60*60 {
+		return printErr("Invalid clone options", errors.New("--full requires isolated resources, --wait requires --full, and --timeout must be between 1 and 86400 seconds"))
 	}
 	projectSlug, err := environmentProjectSlug(*project)
 	if err != nil {

@@ -632,3 +632,34 @@ and a resume command without cancelling the server operation. SDK/CLI/handler
 contracts and OpenAPI route/schema/error parity pass. Full admission remains
 closed until the complete leased worker and isolation proofs are implemented;
 these command contracts do not establish full stage support.
+
+### Leased PostgreSQL copy step from the frozen catalogue (2026-09-30)
+
+The copying-phase database worker step now reads only the stored workload and
+binding captures. It authenticates their rosters and hashes, rejects conflicting
+definitions across workloads, and produces one physical restore per captured
+source database. Target reservation names include the operation identity. The
+capture owner must record the same canonical microsecond recovery time for all
+database resources before entering copying; a retry never chooses a new time.
+
+Before provider IO the worker renews its token/revision lease, verifies the
+exact database resource roster, and bounds IO by the lease deadline. Each
+completed reservation is checkpointed with its target ID and status before
+another database starts. Target account, spec, backend, physical separation,
+restore origin and recovery time must agree with the capture. A worker that
+loses its lease cannot checkpoint or compensate a replacement worker's copy.
+
+Account-scoped lookup by the exact operation-owned reservation name repairs a
+crash after provider completion but before the operation checkpoint. Completed
+restores can be adopted after their original PITR window expires, without
+re-reading source definitions or performing another restore. Pending restores
+still pass the service's current and captured recovery-window checks.
+
+Focused real PostgreSQL evidence covers two workloads sharing one database,
+source spec/binding edits after capture, an unavailable checkpoint, replay after
+PITR expiry, stale-worker rejection, takeover during provider IO, and rejection
+of changed target lineage. Planner contracts cover invalid/missing catalogues,
+resource inventories and inconsistent recovery points. This step does not yet
+create target credentials or establish a cross-provider write checkpoint.
+The claim loop, object-copy/credential steps, complete coverage gates and
+native acceptance remain required; full-copy admission stays closed.
