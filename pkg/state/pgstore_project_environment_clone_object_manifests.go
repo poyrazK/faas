@@ -8,9 +8,42 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
+var _ ProjectEnvironmentCloneLeasedObjectManifestStore = (*PgStore)(nil)
+var _ ProjectEnvironmentCloneLeasedObjectManifestStore = (*MemStore)(nil)
+
 func (s *PgStore) PutProjectEnvironmentCloneObjectManifest(ctx context.Context, accountID, projectID string, manifest ProjectEnvironmentCloneObjectManifest) (ProjectEnvironmentCloneObjectManifest, error) {
+	return s.putProjectEnvironmentCloneObjectManifest(ctx, accountID, projectID, manifest, nil)
+}
+
+func (s *PgStore) PutProjectEnvironmentCloneObjectManifestForLease(ctx context.Context, lease ProjectEnvironmentCloneLease, manifest ProjectEnvironmentCloneObjectManifest) (ProjectEnvironmentCloneObjectManifest, error) {
+	if !validCloneLeaseIdentity(lease) || manifest.OperationID != lease.Operation.ID {
+		return ProjectEnvironmentCloneObjectManifest{}, ErrInvalidArgument
+	}
+	return s.putProjectEnvironmentCloneObjectManifest(ctx, lease.Operation.AccountID, lease.Operation.ProjectID, manifest, &lease)
+}
+
+func authorizeCloneObjectMutationTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, lease *ProjectEnvironmentCloneLease) error {
+	params := sqlc.ReadProjectEnvironmentCloneObjectMutationAuthorityParams{
+		OperationID: mustPgUUID(op.ID), AccountID: mustPgUUID(op.AccountID), ProjectID: mustPgUUID(op.ProjectID),
+	}
+	if lease != nil {
+		params.WorkerToken, params.ExpectedRevision, params.ExpectedStatus = lease.Token, lease.Operation.Revision, lease.Operation.Status
+	}
+	authority, err := new(sqlc.Queries).ReadProjectEnvironmentCloneObjectMutationAuthority(ctx, tx, params)
+	if err != nil {
+		return mapErr(err)
+	}
+	if lease == nil && !authority.LegacyAllowed || lease != nil && !authority.WorkerAllowed {
+		return ErrConflict
+	}
+	return nil
+}
+
+func (s *PgStore) putProjectEnvironmentCloneObjectManifest(ctx context.Context, accountID, projectID string, manifest ProjectEnvironmentCloneObjectManifest, lease *ProjectEnvironmentCloneLease) (ProjectEnvironmentCloneObjectManifest, error) {
 	if err := validateProjectEnvironmentCloneObjectManifest(manifest); err != nil {
 		return ProjectEnvironmentCloneObjectManifest{}, err
 	}
@@ -23,20 +56,19 @@ func (s *PgStore) PutProjectEnvironmentCloneObjectManifest(ctx context.Context, 
 	if err != nil {
 		return ProjectEnvironmentCloneObjectManifest{}, err
 	}
-	status := op.Status
-	if status != CloneOperationCapturing && status != CloneOperationCopying {
+	if err := authorizeCloneObjectMutationTx(ctx, tx, op, lease); err != nil {
+		return ProjectEnvironmentCloneObjectManifest{}, err
+	}
+	if op.Status != CloneOperationCapturing && op.Status != CloneOperationCopying {
 		return ProjectEnvironmentCloneObjectManifest{}, ErrConflict
 	}
-	var existingTarget, existingHash string
-	var existingCapture string
-	var existingCount int
-	err = tx.QueryRow(ctx, `select target_bucket_id::text, captured_at_exact, manifest_hash, object_count
-		from project_environment_clone_object_manifests
-		where operation_id = $1 and source_bucket_id = $2`,
-		manifest.OperationID, manifest.SourceBucketID).Scan(&existingTarget, &existingCapture, &existingHash, &existingCount)
+	q := new(sqlc.Queries)
+	existing, err := q.ReadProjectEnvironmentCloneObjectManifestHeader(ctx, tx, sqlc.ReadProjectEnvironmentCloneObjectManifestHeaderParams{
+		OperationID: mustPgUUID(manifest.OperationID), SourceBucketID: mustPgUUID(manifest.SourceBucketID), AccountID: mustPgUUID(accountID), ProjectID: mustPgUUID(projectID),
+	})
 	if err == nil {
-		if existingTarget != manifest.TargetBucketID || existingCapture != manifest.CapturedAt.UTC().Format(time.RFC3339Nano) ||
-			existingHash != manifest.Hash || existingCount != len(manifest.Objects) {
+		if existing.TargetBucketID != manifest.TargetBucketID || existing.CapturedAtExact != manifest.CapturedAt.UTC().Format(time.RFC3339Nano) ||
+			existing.ManifestHash != manifest.Hash || int(existing.ObjectCount) != len(manifest.Objects) {
 			return ProjectEnvironmentCloneObjectManifest{}, ErrConflict
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -47,27 +79,32 @@ func (s *PgStore) PutProjectEnvironmentCloneObjectManifest(ctx context.Context, 
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return ProjectEnvironmentCloneObjectManifest{}, mapErr(err)
 	}
-	if status != CloneOperationCapturing {
+	if op.Status != CloneOperationCapturing {
 		return ProjectEnvironmentCloneObjectManifest{}, ErrConflict
 	}
-	if _, err := tx.Exec(ctx, `insert into project_environment_clone_object_manifests
-		(operation_id, source_bucket_id, target_bucket_id, captured_at, captured_at_exact, manifest_hash, object_count)
-		values ($1, $2, $3, $4, $5, $6, $7)`, manifest.OperationID, manifest.SourceBucketID,
-		manifest.TargetBucketID, manifest.CapturedAt, manifest.CapturedAt.UTC().Format(time.RFC3339Nano), manifest.Hash, len(manifest.Objects)); err != nil {
+	if err := q.InsertProjectEnvironmentCloneObjectManifestHeader(ctx, tx, sqlc.InsertProjectEnvironmentCloneObjectManifestHeaderParams{
+		OperationID: mustPgUUID(manifest.OperationID), SourceBucketID: mustPgUUID(manifest.SourceBucketID), TargetBucketID: mustPgUUID(manifest.TargetBucketID),
+		CapturedAt: pgtype.Timestamptz{Time: manifest.CapturedAt, Valid: true}, CapturedAtExact: manifest.CapturedAt.UTC().Format(time.RFC3339Nano),
+		ManifestHash: manifest.Hash, ObjectCount: int32(len(manifest.Objects)),
+	}); err != nil {
 		return ProjectEnvironmentCloneObjectManifest{}, mapErr(err)
 	}
 	if len(manifest.Objects) > 0 {
-		count, err := tx.CopyFrom(ctx,
-			pgx.Identifier{"project_environment_clone_object_entries"},
-			[]string{"operation_id", "source_bucket_id", "object_key", "source_version", "source_object"},
-			pgx.CopyFromSlice(len(manifest.Objects), func(i int) ([]any, error) {
-				item := manifest.Objects[i].Source
-				raw, err := json.Marshal(item)
-				if err != nil {
-					return nil, err
-				}
-				return []any{manifest.OperationID, manifest.SourceBucketID, item.Key, item.VersionID, raw}, nil
-			}))
+		entries := make([]struct {
+			Key     string                               `json:"object_key"`
+			Version string                               `json:"source_version"`
+			Source  ProjectEnvironmentCloneObjectVersion `json:"source_object"`
+		}, len(manifest.Objects))
+		for i, checkpoint := range manifest.Objects {
+			entries[i].Key, entries[i].Version, entries[i].Source = checkpoint.Source.Key, checkpoint.Source.VersionID, checkpoint.Source
+		}
+		raw, err := json.Marshal(entries)
+		if err != nil {
+			return ProjectEnvironmentCloneObjectManifest{}, err
+		}
+		count, err := q.InsertProjectEnvironmentCloneObjectManifestEntries(ctx, tx, sqlc.InsertProjectEnvironmentCloneObjectManifestEntriesParams{
+			OperationID: mustPgUUID(manifest.OperationID), SourceBucketID: mustPgUUID(manifest.SourceBucketID), Entries: raw,
+		})
 		if err != nil {
 			return ProjectEnvironmentCloneObjectManifest{}, mapErr(err)
 		}
@@ -82,52 +119,55 @@ func (s *PgStore) PutProjectEnvironmentCloneObjectManifest(ctx context.Context, 
 }
 
 func (s *PgStore) ProjectEnvironmentCloneObjectManifest(ctx context.Context, accountID, projectID, operationID, sourceBucketID string) (ProjectEnvironmentCloneObjectManifest, error) {
-	var manifest ProjectEnvironmentCloneObjectManifest
-	var count int
-	var capturedAt string
-	err := s.pool.QueryRow(ctx, `select m.operation_id::text, m.source_bucket_id::text, m.target_bucket_id::text,
-		m.captured_at_exact, m.manifest_hash, m.object_count
-		from project_environment_clone_object_manifests m
-		join project_environment_clone_operations o on o.id = m.operation_id
-		where m.operation_id = $1 and m.source_bucket_id = $2 and o.account_id = $3 and o.project_id = $4`,
-		operationID, sourceBucketID, accountID, projectID).Scan(&manifest.OperationID, &manifest.SourceBucketID,
-		&manifest.TargetBucketID, &capturedAt, &manifest.Hash, &count)
+	q := new(sqlc.Queries)
+	header, err := q.ReadProjectEnvironmentCloneObjectManifestHeader(ctx, s.pool, sqlc.ReadProjectEnvironmentCloneObjectManifestHeaderParams{
+		OperationID: mustPgUUID(operationID), SourceBucketID: mustPgUUID(sourceBucketID), AccountID: mustPgUUID(accountID), ProjectID: mustPgUUID(projectID),
+	})
 	if err != nil {
 		return ProjectEnvironmentCloneObjectManifest{}, mapErr(err)
 	}
-	manifest.CapturedAt, err = time.Parse(time.RFC3339Nano, capturedAt)
+	capturedAt, err := time.Parse(time.RFC3339Nano, header.CapturedAtExact)
 	if err != nil {
 		return ProjectEnvironmentCloneObjectManifest{}, ErrConflict
 	}
-	rows, err := s.pool.Query(ctx, `select source_object, copied_at, target_etag, verified_sha256
-		from project_environment_clone_object_entries
-		where operation_id = $1 and source_bucket_id = $2 order by object_key`, operationID, sourceBucketID)
+	rows, err := q.ReadProjectEnvironmentCloneObjectManifestEntries(ctx, s.pool, sqlc.ReadProjectEnvironmentCloneObjectManifestEntriesParams{
+		OperationID: mustPgUUID(operationID), SourceBucketID: mustPgUUID(sourceBucketID),
+	})
 	if err != nil {
 		return ProjectEnvironmentCloneObjectManifest{}, fmt.Errorf("state: load clone object manifest entries: %w", err)
 	}
-	defer rows.Close()
-	manifest.Objects = make([]ProjectEnvironmentCloneObjectCheckpoint, 0, count)
-	for rows.Next() {
-		var item ProjectEnvironmentCloneObjectCheckpoint
-		var raw []byte
-		if err := rows.Scan(&raw, &item.CopiedAt, &item.TargetETag, &item.VerifiedSHA256); err != nil {
-			return ProjectEnvironmentCloneObjectManifest{}, mapErr(err)
-		}
-		if err := json.Unmarshal(raw, &item.Source); err != nil {
+	if len(rows) != int(header.ObjectCount) {
+		return ProjectEnvironmentCloneObjectManifest{}, ErrConflict
+	}
+	manifest := ProjectEnvironmentCloneObjectManifest{OperationID: header.OperationID, SourceBucketID: header.SourceBucketID,
+		TargetBucketID: header.TargetBucketID, CapturedAt: capturedAt, Hash: header.ManifestHash,
+		Objects: make([]ProjectEnvironmentCloneObjectCheckpoint, len(rows))}
+	for i, row := range rows {
+		item := ProjectEnvironmentCloneObjectCheckpoint{TargetETag: row.TargetEtag, VerifiedSHA256: row.VerifiedSha256}
+		if err := json.Unmarshal(row.SourceObject, &item.Source); err != nil {
 			return ProjectEnvironmentCloneObjectManifest{}, ErrConflict
 		}
-		manifest.Objects = append(manifest.Objects, item)
-	}
-	if err := rows.Err(); err != nil {
-		return ProjectEnvironmentCloneObjectManifest{}, fmt.Errorf("state: load clone object manifest rows: %w", err)
-	}
-	if len(manifest.Objects) != count {
-		return ProjectEnvironmentCloneObjectManifest{}, ErrConflict
+		if row.CopiedAt.Valid {
+			stamp := row.CopiedAt.Time
+			item.CopiedAt = &stamp
+		}
+		manifest.Objects[i] = item
 	}
 	return manifest, nil
 }
 
 func (s *PgStore) MarkProjectEnvironmentCloneObjectCopied(ctx context.Context, accountID, projectID, operationID, sourceBucketID, key, sourceVersion, targetETag, verifiedSHA256 string) error {
+	return s.markProjectEnvironmentCloneObjectCopied(ctx, accountID, projectID, operationID, sourceBucketID, key, sourceVersion, targetETag, verifiedSHA256, nil)
+}
+
+func (s *PgStore) MarkProjectEnvironmentCloneObjectCopiedForLease(ctx context.Context, lease ProjectEnvironmentCloneLease, sourceBucketID, key, sourceVersion, targetETag, verifiedSHA256 string) error {
+	if !validCloneLeaseIdentity(lease) {
+		return ErrInvalidArgument
+	}
+	return s.markProjectEnvironmentCloneObjectCopied(ctx, lease.Operation.AccountID, lease.Operation.ProjectID, lease.Operation.ID, sourceBucketID, key, sourceVersion, targetETag, verifiedSHA256, &lease)
+}
+
+func (s *PgStore) markProjectEnvironmentCloneObjectCopied(ctx context.Context, accountID, projectID, operationID, sourceBucketID, key, sourceVersion, targetETag, verifiedSHA256 string, lease *ProjectEnvironmentCloneLease) error {
 	if !validCloneObjectKey(key) || sourceVersion == "" || targetETag == "" || !validCloneObjectSHA256(verifiedSHA256) {
 		return ErrInvalidProjectEnvironmentCloneOperation
 	}
@@ -140,24 +180,21 @@ func (s *PgStore) MarkProjectEnvironmentCloneObjectCopied(ctx context.Context, a
 	if err != nil {
 		return err
 	}
+	if err := authorizeCloneObjectMutationTx(ctx, tx, op, lease); err != nil {
+		return err
+	}
 	if op.Status != CloneOperationCopying {
 		return ErrConflict
 	}
-	var copiedAt time.Time
-	err = tx.QueryRow(ctx, `update project_environment_clone_object_entries e
-		set copied_at = coalesce(e.copied_at, now()), target_etag = $7, verified_sha256 = $8
-		from project_environment_clone_operations o
-		where e.operation_id = $1 and e.source_bucket_id = $2 and e.object_key = $3
-		  and e.source_version = $4 and o.id = e.operation_id
-		  and o.account_id = $5 and o.project_id = $6 and o.status = 'copying'
-		  and (e.copied_at is null or (e.target_etag = $7 and e.verified_sha256 = $8))
-		returning e.copied_at`, operationID, sourceBucketID, key, sourceVersion,
-		accountID, projectID, targetETag, verifiedSHA256).Scan(&copiedAt)
-	if err == nil {
-		return tx.Commit(ctx)
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
+	count, err := new(sqlc.Queries).MarkProjectEnvironmentCloneObjectManifestEntryCopied(ctx, tx, sqlc.MarkProjectEnvironmentCloneObjectManifestEntryCopiedParams{
+		OperationID: mustPgUUID(operationID), SourceBucketID: mustPgUUID(sourceBucketID), ObjectKey: key, SourceVersion: sourceVersion,
+		TargetEtag: targetETag, VerifiedSha256: verifiedSHA256,
+	})
+	if err != nil {
 		return mapErr(err)
+	}
+	if count == 1 {
+		return tx.Commit(ctx)
 	}
 	if err := tx.Rollback(ctx); err != nil {
 		return err

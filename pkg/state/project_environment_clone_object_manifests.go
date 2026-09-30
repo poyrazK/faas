@@ -49,6 +49,14 @@ type ProjectEnvironmentCloneObjectManifestStore interface {
 	MarkProjectEnvironmentCloneObjectCopied(context.Context, string, string, string, string, string, string, string, string) error
 }
 
+// Claimed operations use explicit worker authority for manifest/checkpoint
+// writes. The legacy writer methods are restricted to never-claimed captures.
+type ProjectEnvironmentCloneLeasedObjectManifestStore interface {
+	ProjectEnvironmentCloneObjectManifestStore
+	PutProjectEnvironmentCloneObjectManifestForLease(context.Context, ProjectEnvironmentCloneLease, ProjectEnvironmentCloneObjectManifest) (ProjectEnvironmentCloneObjectManifest, error)
+	MarkProjectEnvironmentCloneObjectCopiedForLease(context.Context, ProjectEnvironmentCloneLease, string, string, string, string, string) error
+}
+
 func validateProjectEnvironmentCloneObjectManifest(manifest ProjectEnvironmentCloneObjectManifest) error {
 	for _, id := range []string{manifest.OperationID, manifest.SourceBucketID, manifest.TargetBucketID} {
 		if _, err := uuid.Parse(id); err != nil {

@@ -5199,3 +5199,42 @@ VALUES(sqlc.arg(account_id)::uuid, sqlc.arg(project_id)::uuid, sqlc.arg(app_id):
 -- name: InsertProjectEnvironmentCloneCapturedEdgePolicy :exec
 INSERT INTO project_environment_edge_policies(account_id, project_id, app_id, environment_slug, rules)
 VALUES(sqlc.arg(account_id)::uuid, sqlc.arg(project_id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(environment)::text, sqlc.arg(rules)::jsonb);
+
+-- name: ReadProjectEnvironmentCloneObjectMutationAuthority :one
+SELECT coalesce(attempt_count = 0 AND lease_token IS NULL, false)::boolean AS legacy_allowed,
+       coalesce(lease_token = nullif(sqlc.arg(worker_token)::text, '')::uuid
+         AND lease_until > clock_timestamp() AND revision = sqlc.arg(expected_revision)::bigint
+         AND status = sqlc.arg(expected_status)::text, false)::boolean AS worker_allowed
+FROM project_environment_clone_operations
+WHERE id = sqlc.arg(operation_id)::uuid AND account_id = sqlc.arg(account_id)::uuid AND project_id = sqlc.arg(project_id)::uuid;
+
+-- name: ReadProjectEnvironmentCloneObjectManifestHeader :one
+SELECT m.operation_id::text AS operation_id, m.source_bucket_id::text AS source_bucket_id, m.target_bucket_id::text AS target_bucket_id,
+       m.captured_at_exact, m.manifest_hash, m.object_count
+FROM project_environment_clone_object_manifests m
+JOIN project_environment_clone_operations o ON o.id = m.operation_id
+WHERE m.operation_id = sqlc.arg(operation_id)::uuid AND m.source_bucket_id = sqlc.arg(source_bucket_id)::uuid
+  AND o.account_id = sqlc.arg(account_id)::uuid AND o.project_id = sqlc.arg(project_id)::uuid;
+
+-- name: InsertProjectEnvironmentCloneObjectManifestHeader :exec
+INSERT INTO project_environment_clone_object_manifests
+    (operation_id, source_bucket_id, target_bucket_id, captured_at, captured_at_exact, manifest_hash, object_count)
+VALUES (sqlc.arg(operation_id)::uuid, sqlc.arg(source_bucket_id)::uuid, sqlc.arg(target_bucket_id)::uuid,
+    sqlc.arg(captured_at)::timestamptz, sqlc.arg(captured_at_exact)::text, sqlc.arg(manifest_hash)::text, sqlc.arg(object_count)::integer);
+
+-- name: InsertProjectEnvironmentCloneObjectManifestEntries :execrows
+INSERT INTO project_environment_clone_object_entries(operation_id, source_bucket_id, object_key, source_version, source_object)
+SELECT sqlc.arg(operation_id)::uuid, sqlc.arg(source_bucket_id)::uuid, e.object_key, e.source_version, e.source_object
+FROM jsonb_to_recordset(sqlc.arg(entries)::jsonb) AS e(object_key text, source_version text, source_object jsonb);
+
+-- name: ReadProjectEnvironmentCloneObjectManifestEntries :many
+SELECT source_object, copied_at, target_etag, verified_sha256
+FROM project_environment_clone_object_entries
+WHERE operation_id = sqlc.arg(operation_id)::uuid AND source_bucket_id = sqlc.arg(source_bucket_id)::uuid ORDER BY object_key;
+
+-- name: MarkProjectEnvironmentCloneObjectManifestEntryCopied :execrows
+UPDATE project_environment_clone_object_entries
+SET copied_at = coalesce(copied_at, clock_timestamp()), target_etag = sqlc.arg(target_etag)::text, verified_sha256 = sqlc.arg(verified_sha256)::text
+WHERE operation_id = sqlc.arg(operation_id)::uuid AND source_bucket_id = sqlc.arg(source_bucket_id)::uuid
+  AND object_key = sqlc.arg(object_key)::text AND source_version = sqlc.arg(source_version)::text
+  AND (copied_at IS NULL OR (target_etag = sqlc.arg(target_etag)::text AND verified_sha256 = sqlc.arg(verified_sha256)::text));

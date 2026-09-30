@@ -10,6 +10,29 @@ func cloneObjectManifestKey(operationID, bucketID string) string {
 }
 
 func (m *MemStore) PutProjectEnvironmentCloneObjectManifest(_ context.Context, accountID, projectID string, manifest ProjectEnvironmentCloneObjectManifest) (ProjectEnvironmentCloneObjectManifest, error) {
+	return m.putProjectEnvironmentCloneObjectManifest(accountID, projectID, manifest, nil)
+}
+
+func (m *MemStore) PutProjectEnvironmentCloneObjectManifestForLease(_ context.Context, lease ProjectEnvironmentCloneLease, manifest ProjectEnvironmentCloneObjectManifest) (ProjectEnvironmentCloneObjectManifest, error) {
+	if !validCloneLeaseIdentity(lease) || manifest.OperationID != lease.Operation.ID {
+		return ProjectEnvironmentCloneObjectManifest{}, ErrInvalidArgument
+	}
+	return m.putProjectEnvironmentCloneObjectManifest(lease.Operation.AccountID, lease.Operation.ProjectID, manifest, &lease)
+}
+
+func (m *MemStore) authorizeCloneObjectMutationLocked(op ProjectEnvironmentCloneOperation, lease *ProjectEnvironmentCloneLease) error {
+	if lease == nil {
+		owner := m.projectEnvironmentCloneWorkerLeases[op.ID]
+		if owner.attemptCount != 0 || owner.token != "" {
+			return ErrConflict
+		}
+		return nil
+	}
+	_, _, err := m.cloneLeaseOwnedLocked(*lease, time.Now().UTC())
+	return err
+}
+
+func (m *MemStore) putProjectEnvironmentCloneObjectManifest(accountID, projectID string, manifest ProjectEnvironmentCloneObjectManifest, lease *ProjectEnvironmentCloneLease) (ProjectEnvironmentCloneObjectManifest, error) {
 	if err := validateProjectEnvironmentCloneObjectManifest(manifest); err != nil {
 		return ProjectEnvironmentCloneObjectManifest{}, err
 	}
@@ -18,6 +41,9 @@ func (m *MemStore) PutProjectEnvironmentCloneObjectManifest(_ context.Context, a
 	op, ok := m.projectEnvironmentCloneOperations[manifest.OperationID]
 	if !ok || op.AccountID != accountID || op.ProjectID != projectID {
 		return ProjectEnvironmentCloneObjectManifest{}, ErrNotFound
+	}
+	if err := m.authorizeCloneObjectMutationLocked(op, lease); err != nil {
+		return ProjectEnvironmentCloneObjectManifest{}, err
 	}
 	if (op.Status != CloneOperationCapturing && op.Status != CloneOperationCopying) || !m.cloneOperationLeaseLiveLocked(op.ID) {
 		return ProjectEnvironmentCloneObjectManifest{}, ErrConflict
@@ -53,6 +79,17 @@ func (m *MemStore) ProjectEnvironmentCloneObjectManifest(_ context.Context, acco
 }
 
 func (m *MemStore) MarkProjectEnvironmentCloneObjectCopied(_ context.Context, accountID, projectID, operationID, sourceBucketID, key, sourceVersion, targetETag, verifiedSHA256 string) error {
+	return m.markProjectEnvironmentCloneObjectCopied(accountID, projectID, operationID, sourceBucketID, key, sourceVersion, targetETag, verifiedSHA256, nil)
+}
+
+func (m *MemStore) MarkProjectEnvironmentCloneObjectCopiedForLease(_ context.Context, lease ProjectEnvironmentCloneLease, sourceBucketID, key, sourceVersion, targetETag, verifiedSHA256 string) error {
+	if !validCloneLeaseIdentity(lease) {
+		return ErrInvalidArgument
+	}
+	return m.markProjectEnvironmentCloneObjectCopied(lease.Operation.AccountID, lease.Operation.ProjectID, lease.Operation.ID, sourceBucketID, key, sourceVersion, targetETag, verifiedSHA256, &lease)
+}
+
+func (m *MemStore) markProjectEnvironmentCloneObjectCopied(accountID, projectID, operationID, sourceBucketID, key, sourceVersion, targetETag, verifiedSHA256 string, lease *ProjectEnvironmentCloneLease) error {
 	if !validCloneObjectKey(key) || sourceVersion == "" || targetETag == "" || !validCloneObjectSHA256(verifiedSHA256) {
 		return ErrInvalidProjectEnvironmentCloneOperation
 	}
@@ -61,6 +98,9 @@ func (m *MemStore) MarkProjectEnvironmentCloneObjectCopied(_ context.Context, ac
 	op, ok := m.projectEnvironmentCloneOperations[operationID]
 	if !ok || op.AccountID != accountID || op.ProjectID != projectID {
 		return ErrNotFound
+	}
+	if err := m.authorizeCloneObjectMutationLocked(op, lease); err != nil {
+		return err
 	}
 	if op.Status != CloneOperationCopying || !m.cloneOperationLeaseLiveLocked(op.ID) {
 		return ErrConflict

@@ -4986,6 +4986,56 @@ func (q *Queries) InsertProjectEnvironmentCloneLayerPin(ctx context.Context, db 
 	return err
 }
 
+const insertProjectEnvironmentCloneObjectManifestEntries = `-- name: InsertProjectEnvironmentCloneObjectManifestEntries :execrows
+INSERT INTO project_environment_clone_object_entries(operation_id, source_bucket_id, object_key, source_version, source_object)
+SELECT $1::uuid, $2::uuid, e.object_key, e.source_version, e.source_object
+FROM jsonb_to_recordset($3::jsonb) AS e(object_key text, source_version text, source_object jsonb)
+`
+
+type InsertProjectEnvironmentCloneObjectManifestEntriesParams struct {
+	OperationID    pgtype.UUID
+	SourceBucketID pgtype.UUID
+	Entries        []byte
+}
+
+func (q *Queries) InsertProjectEnvironmentCloneObjectManifestEntries(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneObjectManifestEntriesParams) (int64, error) {
+	result, err := db.Exec(ctx, insertProjectEnvironmentCloneObjectManifestEntries, arg.OperationID, arg.SourceBucketID, arg.Entries)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const insertProjectEnvironmentCloneObjectManifestHeader = `-- name: InsertProjectEnvironmentCloneObjectManifestHeader :exec
+INSERT INTO project_environment_clone_object_manifests
+    (operation_id, source_bucket_id, target_bucket_id, captured_at, captured_at_exact, manifest_hash, object_count)
+VALUES ($1::uuid, $2::uuid, $3::uuid,
+    $4::timestamptz, $5::text, $6::text, $7::integer)
+`
+
+type InsertProjectEnvironmentCloneObjectManifestHeaderParams struct {
+	OperationID     pgtype.UUID
+	SourceBucketID  pgtype.UUID
+	TargetBucketID  pgtype.UUID
+	CapturedAt      pgtype.Timestamptz
+	CapturedAtExact string
+	ManifestHash    string
+	ObjectCount     int32
+}
+
+func (q *Queries) InsertProjectEnvironmentCloneObjectManifestHeader(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneObjectManifestHeaderParams) error {
+	_, err := db.Exec(ctx, insertProjectEnvironmentCloneObjectManifestHeader,
+		arg.OperationID,
+		arg.SourceBucketID,
+		arg.TargetBucketID,
+		arg.CapturedAt,
+		arg.CapturedAtExact,
+		arg.ManifestHash,
+		arg.ObjectCount,
+	)
+	return err
+}
+
 const insertProjectEnvironmentCloneProjectConfiguration = `-- name: InsertProjectEnvironmentCloneProjectConfiguration :execrows
 INSERT INTO project_environment_config_versions (account_id, project_id, environment_slug, version, config_hash, config_json)
 VALUES ($1::uuid, $2::uuid, $3::text,
@@ -8986,6 +9036,38 @@ func (q *Queries) MarkDomainVerified(ctx context.Context, db DBTX, domain interf
 	return err
 }
 
+const markProjectEnvironmentCloneObjectManifestEntryCopied = `-- name: MarkProjectEnvironmentCloneObjectManifestEntryCopied :execrows
+UPDATE project_environment_clone_object_entries
+SET copied_at = coalesce(copied_at, clock_timestamp()), target_etag = $1::text, verified_sha256 = $2::text
+WHERE operation_id = $3::uuid AND source_bucket_id = $4::uuid
+  AND object_key = $5::text AND source_version = $6::text
+  AND (copied_at IS NULL OR (target_etag = $1::text AND verified_sha256 = $2::text))
+`
+
+type MarkProjectEnvironmentCloneObjectManifestEntryCopiedParams struct {
+	TargetEtag     string
+	VerifiedSha256 string
+	OperationID    pgtype.UUID
+	SourceBucketID pgtype.UUID
+	ObjectKey      string
+	SourceVersion  string
+}
+
+func (q *Queries) MarkProjectEnvironmentCloneObjectManifestEntryCopied(ctx context.Context, db DBTX, arg MarkProjectEnvironmentCloneObjectManifestEntryCopiedParams) (int64, error) {
+	result, err := db.Exec(ctx, markProjectEnvironmentCloneObjectManifestEntryCopied,
+		arg.TargetEtag,
+		arg.VerifiedSha256,
+		arg.OperationID,
+		arg.SourceBucketID,
+		arg.ObjectKey,
+		arg.SourceVersion,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const markTriggerRecordDeadLetter = `-- name: MarkTriggerRecordDeadLetter :exec
 update trigger_records
    set state = 'dead_letter',
@@ -12683,6 +12765,130 @@ func (q *Queries) ReadProjectEnvironmentCloneObjectCopyProofs(ctx context.Contex
 		return nil, err
 	}
 	return items, nil
+}
+
+const readProjectEnvironmentCloneObjectManifestEntries = `-- name: ReadProjectEnvironmentCloneObjectManifestEntries :many
+SELECT source_object, copied_at, target_etag, verified_sha256
+FROM project_environment_clone_object_entries
+WHERE operation_id = $1::uuid AND source_bucket_id = $2::uuid ORDER BY object_key
+`
+
+type ReadProjectEnvironmentCloneObjectManifestEntriesParams struct {
+	OperationID    pgtype.UUID
+	SourceBucketID pgtype.UUID
+}
+
+type ReadProjectEnvironmentCloneObjectManifestEntriesRow struct {
+	SourceObject   []byte
+	CopiedAt       pgtype.Timestamptz
+	TargetEtag     string
+	VerifiedSha256 string
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneObjectManifestEntries(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneObjectManifestEntriesParams) ([]ReadProjectEnvironmentCloneObjectManifestEntriesRow, error) {
+	rows, err := db.Query(ctx, readProjectEnvironmentCloneObjectManifestEntries, arg.OperationID, arg.SourceBucketID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadProjectEnvironmentCloneObjectManifestEntriesRow{}
+	for rows.Next() {
+		var i ReadProjectEnvironmentCloneObjectManifestEntriesRow
+		if err := rows.Scan(
+			&i.SourceObject,
+			&i.CopiedAt,
+			&i.TargetEtag,
+			&i.VerifiedSha256,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readProjectEnvironmentCloneObjectManifestHeader = `-- name: ReadProjectEnvironmentCloneObjectManifestHeader :one
+SELECT m.operation_id::text AS operation_id, m.source_bucket_id::text AS source_bucket_id, m.target_bucket_id::text AS target_bucket_id,
+       m.captured_at_exact, m.manifest_hash, m.object_count
+FROM project_environment_clone_object_manifests m
+JOIN project_environment_clone_operations o ON o.id = m.operation_id
+WHERE m.operation_id = $1::uuid AND m.source_bucket_id = $2::uuid
+  AND o.account_id = $3::uuid AND o.project_id = $4::uuid
+`
+
+type ReadProjectEnvironmentCloneObjectManifestHeaderParams struct {
+	OperationID    pgtype.UUID
+	SourceBucketID pgtype.UUID
+	AccountID      pgtype.UUID
+	ProjectID      pgtype.UUID
+}
+
+type ReadProjectEnvironmentCloneObjectManifestHeaderRow struct {
+	OperationID     string
+	SourceBucketID  string
+	TargetBucketID  string
+	CapturedAtExact string
+	ManifestHash    string
+	ObjectCount     int32
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneObjectManifestHeader(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneObjectManifestHeaderParams) (ReadProjectEnvironmentCloneObjectManifestHeaderRow, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentCloneObjectManifestHeader,
+		arg.OperationID,
+		arg.SourceBucketID,
+		arg.AccountID,
+		arg.ProjectID,
+	)
+	var i ReadProjectEnvironmentCloneObjectManifestHeaderRow
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBucketID,
+		&i.TargetBucketID,
+		&i.CapturedAtExact,
+		&i.ManifestHash,
+		&i.ObjectCount,
+	)
+	return i, err
+}
+
+const readProjectEnvironmentCloneObjectMutationAuthority = `-- name: ReadProjectEnvironmentCloneObjectMutationAuthority :one
+SELECT coalesce(attempt_count = 0 AND lease_token IS NULL, false)::boolean AS legacy_allowed,
+       coalesce(lease_token = nullif($1::text, '')::uuid
+         AND lease_until > clock_timestamp() AND revision = $2::bigint
+         AND status = $3::text, false)::boolean AS worker_allowed
+FROM project_environment_clone_operations
+WHERE id = $4::uuid AND account_id = $5::uuid AND project_id = $6::uuid
+`
+
+type ReadProjectEnvironmentCloneObjectMutationAuthorityParams struct {
+	WorkerToken      string
+	ExpectedRevision int64
+	ExpectedStatus   string
+	OperationID      pgtype.UUID
+	AccountID        pgtype.UUID
+	ProjectID        pgtype.UUID
+}
+
+type ReadProjectEnvironmentCloneObjectMutationAuthorityRow struct {
+	LegacyAllowed bool
+	WorkerAllowed bool
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneObjectMutationAuthority(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneObjectMutationAuthorityParams) (ReadProjectEnvironmentCloneObjectMutationAuthorityRow, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentCloneObjectMutationAuthority,
+		arg.WorkerToken,
+		arg.ExpectedRevision,
+		arg.ExpectedStatus,
+		arg.OperationID,
+		arg.AccountID,
+		arg.ProjectID,
+	)
+	var i ReadProjectEnvironmentCloneObjectMutationAuthorityRow
+	err := row.Scan(&i.LegacyAllowed, &i.WorkerAllowed)
+	return i, err
 }
 
 const readProjectEnvironmentCloneOwnedApp = `-- name: ReadProjectEnvironmentCloneOwnedApp :one

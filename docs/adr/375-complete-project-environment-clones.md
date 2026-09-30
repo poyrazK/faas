@@ -663,3 +663,22 @@ resource inventories and inconsistent recovery points. This step does not yet
 create target credentials or establish a cross-provider write checkpoint.
 The claim loop, object-copy/credential steps, complete coverage gates and
 native acceptance remain required; full-copy admission stays closed.
+
+### Object manifest writes require worker ownership (2026-09-30)
+
+Manifest insertion and copied-object checkpoints now accept explicit worker
+authority. Both stores verify account/project, token, revision, phase and live
+lease under the operation lock. Legacy writer methods are limited to operations
+that have never been claimed, including after a claimed lease is released.
+A replaced worker cannot record progress under its replacement's live lease.
+The PostgreSQL manifest path uses generated sqlc queries throughout.
+
+Leased capture/copy helpers renew ownership before provider IO and bound IO by
+the renewed deadline. Retries use the already committed version manifest.
+MemStore and real PostgreSQL contracts cover expiry, release, takeover and
+idempotent checkpoints; the application worker contract covers takeover after
+physical copy and retry of the same pinned version without relisting.
+
+These checks fence durable metadata writes. An already accepted provider write
+can outlive a worker, so physical write completion, pending target access and
+publication still require isolation checks before full-copy admission opens.
