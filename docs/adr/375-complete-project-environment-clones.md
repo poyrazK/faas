@@ -576,3 +576,37 @@ restore retries, unchanged production intent, physical placement/identity drift,
 shortened recovery windows and conflicting target adoption. This preserves
 restore configuration identity; application write checkpoints and the complete
 leased clone worker remain separate required integrations.
+
+
+### Frozen scoped route and edge policies (2026-09-30)
+
+Durable workload captures now include the selected deployment's explicit route
+configuration and the source environment's headers/CORS policy, including the
+absence of a scoped policy. Each normalized policy definition has a separate
+hash and enters the complete private workload hash. Materialization uses these
+captured definitions rather than reading mutable source route/edge rows again.
+Routes therefore agree with the deployed workload settings even when a desired
+source head or legacy route row differs. A scoped edge policy added after
+capture does not silently appear in the target.
+
+Both publication gates authenticate the actual target route and scoped edge
+rows. PostgreSQL route/edge configuration inserts, updates and deletes take the
+same app lock held by publication; readers do not acquire policy-row locks in a
+reverse order. Existing environment-before-app route writers keep their lock
+order. Captures predating the policy payload cannot materialize a complete
+configuration through a live-source fallback.
+
+MemStore and real PostgreSQL contracts cover source policy edits/additions after
+capture, route agreement with deployed settings, edge changes before both gates
+and direct route-row changes under unchanged workload hashes. PostgreSQL blocking
+contracts cover route/edge insertion, update and deletion as well as variable and
+secret writers. The expanded store contracts run through the temporary runner
+with narrow fixture interfaces to avoid the large state test binary on this
+shared disk. SQL generation matches independent regeneration.
+
+This captures the current environment-owned policy surface. Application-wide
+edge-rule kinds, inherited application policies, CORS preset references and
+OpenAPI-backed route documents still require isolated ownership, frozen payloads
+and coverage checks before enabling complete stages. Provider copy proofs,
+coordinated data capture, the complete worker/command and native VM acceptance
+remain required.

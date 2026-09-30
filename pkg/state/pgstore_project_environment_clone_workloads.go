@@ -227,6 +227,11 @@ func captureCloneWorkloadTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmen
 	for _, signal := range signals {
 		snapshot.SidecarSignals[signal.SidecarName] = signal.Signal
 	}
+	policies, err := captureCloneScopedPoliciesDB(ctx, tx, op, appID, snapshot.Settings)
+	if err != nil {
+		return snapshot, err
+	}
+	snapshot.Policies = &policies
 	return snapshot, nil
 }
 

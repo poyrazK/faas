@@ -82,6 +82,8 @@ func (m *MemStore) CaptureProjectEnvironmentCloneWorkloads(_ context.Context, ac
 			return nil, err
 		}
 		snapshot.Bindings = &bindings
+		policies := m.capturedScopedPoliciesLocked(appID, op.SourceEnvironment, settings)
+		snapshot.Policies = &policies
 		for _, layer := range m.deploymentSidecarLayers {
 			if layer.DeploymentID == source.ID {
 				snapshot.Layers = append(snapshot.Layers, layer)

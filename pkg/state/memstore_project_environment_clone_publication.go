@@ -96,6 +96,9 @@ func (m *MemStore) verifyClonePublicationLocked(op ProjectEnvironmentCloneOperat
 	if err := validateCloneValuePublication(op, resources, records, targets); err != nil {
 		return err
 	}
+	if err := m.verifyCloneScopedPolicyPublicationLocked(op, records); err != nil {
+		return err
+	}
 	return validateCloneProjectConfigProof(op, resources, records, m.projectEnvironmentConfigLatestLocked(op.ProjectID, op.TargetEnvironment))
 }
 

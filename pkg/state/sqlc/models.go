@@ -2056,6 +2056,16 @@ type ProjectEnvironmentConfigVersion struct {
 	CreatedAt       pgtype.Timestamptz
 }
 
+type ProjectEnvironmentEdgePolicy struct {
+	AccountID       pgtype.UUID
+	ProjectID       pgtype.UUID
+	AppID           pgtype.UUID
+	EnvironmentSlug string
+	Rules           []byte
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
 type ProjectEnvironmentQualification struct {
 	ID                   pgtype.UUID
 	AccountID            pgtype.UUID

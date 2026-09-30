@@ -25,6 +25,9 @@ type cloneWorkloadTestStore interface {
 	state.ProjectPromotionDeploymentStore
 	ProjectEnvironmentWorkloadSpecForDeployment(context.Context, string, string, string) (state.ProjectEnvironmentWorkloadSpec, error)
 	DeploymentSidecarSecretReloadSignal(context.Context, string, string) (string, error)
+	GetProjectEnvironmentEdgePolicy(context.Context, string, string, string) (state.ProjectEnvironmentEdgePolicy, error)
+	PutProjectEnvironmentEdgePolicy(context.Context, state.ProjectEnvironmentEdgePolicy) (state.ProjectEnvironmentEdgePolicy, error)
+	GetProjectEnvironmentRoutePolicy(context.Context, string, string, string) (state.ProjectEnvironmentRoutePolicy, error)
 }
 
 // ADR-375: a clone reuses the selected immutable artifacts and actual deployed
@@ -44,7 +47,7 @@ func projectEnvironmentCloneCapturesAndPreparesWorkloads(t *testing.T, s cloneWo
 	projectEnvironmentClonePublicationContract(t, s, len(omitConfigReceipt) > 0 && omitConfigReceipt[0], "")
 }
 
-func projectEnvironmentClonePublicationContract(t *testing.T, s cloneWorkloadTestStore, missingConfigReceipt bool, fault string) {
+func projectEnvironmentClonePublicationContract(t *testing.T, s cloneWorkloadTestStore, missingConfigReceipt bool, fault string, policyMutation ...func(context.Context, string) error) {
 	t.Helper()
 	ctx := context.Background()
 	a, err := s.CreateAccount(ctx, "workload-clone@example.com", api.PlanPro)
@@ -71,6 +74,7 @@ func projectEnvironmentClonePublicationContract(t *testing.T, s cloneWorkloadTes
 		settings.RetryPolicyJSON = json.RawMessage(`{"max_attempts":2,"backoff_multiplier":1e0}`)
 		settings.PublicAuthBasicSealed = []byte("sealed-basic")
 		if i == 0 {
+			settings.OnlyAllowDeclaredRoutes, settings.DeclaredRoutes = true, []state.DeclaredRoute{{Path: "/captured", Methods: []string{"GET"}}}
 			if _, err := s.PutProjectEnvironmentWorkloadSpec(ctx, a.ID, p.ID, "production", app.ID, 0, settings); err != nil {
 				t.Fatal(err)
 			}
@@ -106,6 +110,9 @@ func projectEnvironmentClonePublicationContract(t *testing.T, s cloneWorkloadTes
 			t.Fatal(err)
 		}
 		apps, sources = append(apps, app), append(sources, source)
+	}
+	if _, err := s.PutProjectEnvironmentEdgePolicy(ctx, cloneWorkloadEdgePolicy(a.ID, p.ID, apps[0].ID, "production", "captured-policy")); err != nil {
+		t.Fatal(err)
 	}
 	configValues, configHash, err := api.NormalizeProjectEnvironmentConfig([]byte(`{"feature":"captured","large":9007199254740993123,"factor":1e0}`))
 	if err != nil {
@@ -215,6 +222,11 @@ func projectEnvironmentClonePublicationContract(t *testing.T, s cloneWorkloadTes
 	if _, err := s.CaptureProjectEnvironmentCloneWorkloads(ctx, a.ID, p.ID, op.ID, op.Revision-1); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("stale capture = %v", err)
 	}
+	for _, app := range apps {
+		if _, err := s.PutProjectEnvironmentEdgePolicy(ctx, cloneWorkloadEdgePolicy(a.ID, p.ID, app.ID, "production", "changed-source-policy")); err != nil {
+			t.Fatal(err)
+		}
+	}
 	resources := []state.ProjectEnvironmentCloneResource{{Kind: "source_revision", Name: "production", SourceVersion: op.SourceRevisionHash, Status: "ready"}}
 	for _, view := range views {
 		resources = append(resources, state.ProjectEnvironmentCloneResource{Kind: "workload", Name: view.WorkloadSlug, SourceID: view.SourceDeploymentID, SourceVersion: view.SourceHash, Status: "captured"})
@@ -282,6 +294,18 @@ func projectEnvironmentClonePublicationContract(t *testing.T, s cloneWorkloadTes
 		}
 		if spec.Settings.RAMMB != 256 || (app.ID == apps[0].ID && spec.Settings.StartCommand != "serve captured") {
 			t.Fatalf("copied desired source instead of capture: %+v", spec.Settings)
+		}
+		route, err := s.GetProjectEnvironmentRoutePolicy(ctx, a.ID, app.ID, "stage")
+		if err != nil || route.OnlyAllowDeclaredRoutes != spec.Settings.OnlyAllowDeclaredRoutes || (app.ID == apps[0].ID && (len(route.DeclaredRoutes) != 1 || route.DeclaredRoutes[0].Path != "/captured")) {
+			t.Fatalf("target routes ignored deployed capture: %v", err)
+		}
+		edge, err := s.GetProjectEnvironmentEdgePolicy(ctx, a.ID, app.ID, "stage")
+		if app.ID == apps[0].ID {
+			if err != nil || len(edge.Rules) != 1 || len(edge.Rules[0].Action.Headers.ResponseHeaders) != 1 || edge.Rules[0].Action.Headers.ResponseHeaders[0].Value != "captured-policy" {
+				t.Fatalf("target edge policy read changed source configuration: %v", err)
+			}
+		} else if !errors.Is(err, state.ErrNotFound) {
+			t.Fatal("source policy added after capture leaked into stage")
 		}
 		if _, err := s.CreateDeploymentForEnvironmentClone(ctx, a.ID, p.ID, op.ID, op.Revision-1, app.ID, spec.Hash); !errors.Is(err, state.ErrConflict) {
 			t.Fatalf("stale preparation = %v", err)
@@ -359,7 +383,20 @@ func projectEnvironmentClonePublicationContract(t *testing.T, s cloneWorkloadTes
 			t.Fatal(err)
 		}
 	}
-	if fault == "before_variable" || strings.HasPrefix(fault, "omit_") || fault == "wrong_value_hash" {
+	if fault == "before_edge_policy" {
+		if _, err := s.PutProjectEnvironmentEdgePolicy(ctx, cloneWorkloadEdgePolicy(a.ID, p.ID, apps[0].ID, "stage", "changed-private-target-policy")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if fault == "before_route_policy" {
+		if len(policyMutation) != 1 {
+			t.Fatal("missing route policy fault injector")
+		}
+		if err := policyMutation[0](ctx, apps[0].ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if strings.HasPrefix(fault, "before_") || strings.HasPrefix(fault, "omit_") || fault == "wrong_value_hash" {
 		_, err := s.AdvanceProjectEnvironmentCloneOperation(ctx, a.ID, p.ID, op.ID, op.Status, state.CloneOperationPublishing, op.Revision, resources, "")
 		assertCloneValuePublicationRejected(t, s, a.ID, p.ID, op, err)
 		return
@@ -420,6 +457,13 @@ func projectEnvironmentClonePublicationContract(t *testing.T, s cloneWorkloadTes
 			mutationErr = s.ResealAppSecretWithKidAndValueHashInScope(ctx, a.ID, apps[0].ID, "stage", "TOKEN", "age1-captured", "2222222222222222", []byte("changed-private-target-envelope"))
 		case "after_secret_deleted":
 			mutationErr = s.DeleteAppSecretInScope(ctx, a.ID, apps[0].ID, "stage", "TOKEN")
+		case "after_edge_policy":
+			_, mutationErr = s.PutProjectEnvironmentEdgePolicy(ctx, cloneWorkloadEdgePolicy(a.ID, p.ID, apps[0].ID, "stage", "changed-private-target-policy"))
+		case "after_route_policy":
+			if len(policyMutation) != 1 {
+				t.Fatal("missing route policy fault injector")
+			}
+			mutationErr = policyMutation[0](ctx, apps[0].ID)
 		default:
 			t.Fatalf("unknown publication fault: %s", fault)
 		}
@@ -462,7 +506,14 @@ func TestMemProjectEnvironmentCloneValuePublication(t *testing.T) {
 	}
 }
 
-var cloneValuePublicationFaults = []string{"before_variable", "omit_variables", "omit_secrets", "wrong_value_hash", "after_variable", "after_extra_variable", "after_secret_ciphertext", "after_secret_deleted"}
+var cloneValuePublicationFaults = []string{"before_variable", "before_edge_policy", "omit_variables", "omit_secrets", "wrong_value_hash", "after_variable", "after_extra_variable", "after_secret_ciphertext", "after_secret_deleted", "after_edge_policy"}
+
+func cloneWorkloadEdgePolicy(accountID, projectID, appID, environment, value string) state.ProjectEnvironmentEdgePolicy {
+	return state.ProjectEnvironmentEdgePolicy{AccountID: accountID, ProjectID: projectID, AppID: appID, EnvironmentSlug: environment, Rules: []state.ProjectEnvironmentEdgeRule{{
+		Kind: state.EdgeRuleKindHeaders, MatchPath: "/", Priority: 100, Enabled: true,
+		Action: state.EdgeRuleAction{Kind: state.EdgeRuleKindHeaders, Headers: &state.EdgeRuleHeadersAction{ResponseHeaders: []state.EdgeRuleHeaderOp{{Name: "X-Stage-Policy", Value: value, Action: "set"}}}},
+	}}}
+}
 
 func assertCloneValuePublicationRejected(t *testing.T, s cloneWorkloadTestStore, accountID, projectID string, op state.ProjectEnvironmentCloneOperation, err error) {
 	t.Helper()

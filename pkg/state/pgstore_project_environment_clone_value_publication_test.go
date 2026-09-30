@@ -22,6 +22,12 @@ func TestPgCloneValuePublicationSerializesEveryWriter(t *testing.T) {
 		{"variable_delete", `delete from app_envs where app_id = $1 and scope = 'stage' and key = 'CAPTURED'`},
 		{"secret_reseal", `update app_secrets set ciphertext = '\x656469746564' where app_id = $1 and scope = 'stage' and key = 'TOKEN'`},
 		{"secret_delete", `delete from app_secrets where app_id = $1 and scope = 'stage' and key = 'TOKEN'`},
+		{"route_update", `update project_environment_route_policies set declared_routes='[{"path":"/edited","methods":["GET"]}]' where app_id=$1 and environment_slug='stage'`},
+		{"route_insert", `insert into project_environment_route_policies(account_id,project_id,app_id,environment_slug) select account_id,project_id,id,'stage' from apps where id=$1`},
+		{"route_delete", `delete from project_environment_route_policies where app_id=$1 and environment_slug='stage'`},
+		{"edge_update", `update project_environment_edge_policies set rules='[{"kind":"headers","match_path":"/","priority":100,"enabled":true,"action":{"kind":"headers","headers":{"response_headers":[{"name":"X-Edited","value":"edited","action":"set"}]}}}]' where app_id=$1 and environment_slug='stage'`},
+		{"edge_insert", `insert into project_environment_edge_policies(account_id,project_id,app_id,environment_slug) select account_id,project_id,id,'stage' from apps where id=$1`},
+		{"edge_delete", `delete from project_environment_edge_policies where app_id=$1 and environment_slug='stage'`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -30,7 +36,11 @@ func TestPgCloneValuePublicationSerializesEveryWriter(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			app, err := s.CreateApp(ctx, state.App{AccountID: a.ID, Slug: test.name + "-value-fence", Type: state.AppTypeApp})
+			project, err := s.CreateProject(ctx, state.Project{AccountID: a.ID, Slug: "value-fence"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			app, err := s.CreateApp(ctx, state.App{AccountID: a.ID, ProjectID: project.ID, Slug: test.name + "-value-fence", Type: state.AppTypeApp})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -39,6 +49,25 @@ func TestPgCloneValuePublicationSerializesEveryWriter(t *testing.T) {
 			}
 			if err := s.UpsertAppSecretWithClassInScope(ctx, a.ID, app.ID, "stage", "TOKEN", "age1-captured", "1111111111111111", state.SecretClassPersistent, []byte("captured")); err != nil {
 				t.Fatal(err)
+			}
+			if _, err := s.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: a.ID, ProjectID: project.ID, Slug: "stage"}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.PutProjectEnvironmentRoutePolicy(ctx, state.ProjectEnvironmentRoutePolicy{AccountID: a.ID, ProjectID: project.ID, AppID: app.ID, EnvironmentSlug: "stage"}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.PutProjectEnvironmentEdgePolicy(ctx, state.ProjectEnvironmentEdgePolicy{AccountID: a.ID, ProjectID: project.ID, AppID: app.ID, EnvironmentSlug: "stage"}); err != nil {
+				t.Fatal(err)
+			}
+			if test.name == "route_insert" {
+				if _, err := pool.Exec(ctx, `delete from project_environment_route_policies where app_id=$1 and environment_slug='stage'`, app.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if test.name == "edge_insert" {
+				if _, err := pool.Exec(ctx, `delete from project_environment_edge_policies where app_id=$1 and environment_slug='stage'`, app.ID); err != nil {
+					t.Fatal(err)
+				}
 			}
 			publication, err := pool.Begin(ctx)
 			if err != nil {

@@ -37,6 +37,7 @@ type ProjectEnvironmentClone struct {
 	sourceValueScopesJSON  []byte
 	capturedValues         map[string]projectCloneWorkloadValues
 	capturedValueScopes    map[string]string
+	capturedPolicies       map[string]projectCloneScopedPolicies
 }
 
 // ProjectEnvironmentCloneResult contains non-secret copy counts.
@@ -112,6 +113,10 @@ func (m *MemStore) CloneProjectEnvironment(_ context.Context, clone ProjectEnvir
 			clone.capturedValueScopes[record.AppID] = record.SourceScope
 		}
 		clone.capturedValues, err = capturedCloneValues(records)
+		if err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+		clone.capturedPolicies, err = capturedCloneScopedPolicies(records)
 		if err != nil {
 			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
 		}
@@ -282,6 +287,14 @@ func (m *MemStore) CloneProjectEnvironment(_ context.Context, clone ProjectEnvir
 	} else {
 		result.VariablesCopied = m.copyProjectEnvironmentVariablesLocked(apps, valueScopes, clone.TargetSlug, created.CreatedAt)
 		result.SecretsCopied = m.copyProjectEnvironmentSecretsLocked(apps, valueScopes, clone.TargetSlug, created.CreatedAt)
+	}
+	if clone.capturedPolicies != nil {
+		m.copyCapturedScopedPoliciesLocked(clone, created.CreatedAt, &result)
+		if result.RoutesCopied < result.WorkloadsCopied {
+			result.SharedResources = append(result.SharedResources, "routes")
+		}
+		result.SharedResources = append(result.SharedResources, "policies")
+		return created, result, nil
 	}
 	for appID := range apps {
 		app := m.apps[appID]

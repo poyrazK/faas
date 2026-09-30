@@ -5175,3 +5175,27 @@ FROM object_buckets b
 WHERE b.account_id = sqlc.arg(account_id)::uuid AND b.app_id = sqlc.arg(app_id)::uuid
   AND b.scope = sqlc.arg(source_scope)::text AND b.state <> 'deleted'
 ORDER BY b.id;
+
+-- name: ReadProjectEnvironmentCloneScopedEdgePolicy :one
+SELECT jsonb_build_object('edge_present', p.app_id IS NOT NULL, 'edge_rules', coalesce(p.rules, '[]'::jsonb)) AS definition
+FROM apps a LEFT JOIN project_environment_edge_policies p ON p.app_id = a.id
+    AND p.account_id = a.account_id AND p.project_id = a.project_id AND p.environment_slug = sqlc.arg(environment)::text
+WHERE a.id = sqlc.arg(app_id)::uuid AND a.account_id = sqlc.arg(account_id)::uuid AND a.project_id = sqlc.arg(project_id)::uuid;
+
+-- name: ReadProjectEnvironmentCloneScopedPolicyProof :one
+SELECT jsonb_build_object('only_allow_declared_routes', r.only_allow_declared_routes, 'declared_routes', r.declared_routes,
+    'edge_present', e.app_id IS NOT NULL, 'edge_rules', coalesce(e.rules, '[]'::jsonb)) AS definition
+FROM project_environment_route_policies r
+LEFT JOIN project_environment_edge_policies e ON e.app_id = r.app_id AND e.account_id = r.account_id
+    AND e.project_id = r.project_id AND e.environment_slug = r.environment_slug
+WHERE r.account_id = sqlc.arg(account_id)::uuid AND r.project_id = sqlc.arg(project_id)::uuid
+  AND r.app_id = sqlc.arg(app_id)::uuid AND r.environment_slug = sqlc.arg(environment)::text;
+
+-- name: InsertProjectEnvironmentCloneCapturedRoutePolicy :exec
+INSERT INTO project_environment_route_policies(account_id, project_id, app_id, environment_slug, only_allow_declared_routes, declared_routes)
+VALUES(sqlc.arg(account_id)::uuid, sqlc.arg(project_id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(environment)::text,
+    sqlc.arg(only_allow_declared_routes)::boolean, sqlc.arg(declared_routes)::jsonb);
+
+-- name: InsertProjectEnvironmentCloneCapturedEdgePolicy :exec
+INSERT INTO project_environment_edge_policies(account_id, project_id, app_id, environment_slug, rules)
+VALUES(sqlc.arg(account_id)::uuid, sqlc.arg(project_id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(environment)::text, sqlc.arg(rules)::jsonb);

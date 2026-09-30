@@ -4851,6 +4851,57 @@ func (q *Queries) InsertOIDCExchangedToken(ctx context.Context, db DBTX, arg Ins
 	return i, err
 }
 
+const insertProjectEnvironmentCloneCapturedEdgePolicy = `-- name: InsertProjectEnvironmentCloneCapturedEdgePolicy :exec
+INSERT INTO project_environment_edge_policies(account_id, project_id, app_id, environment_slug, rules)
+VALUES($1::uuid, $2::uuid, $3::uuid, $4::text, $5::jsonb)
+`
+
+type InsertProjectEnvironmentCloneCapturedEdgePolicyParams struct {
+	AccountID   pgtype.UUID
+	ProjectID   pgtype.UUID
+	AppID       pgtype.UUID
+	Environment string
+	Rules       []byte
+}
+
+func (q *Queries) InsertProjectEnvironmentCloneCapturedEdgePolicy(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneCapturedEdgePolicyParams) error {
+	_, err := db.Exec(ctx, insertProjectEnvironmentCloneCapturedEdgePolicy,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.AppID,
+		arg.Environment,
+		arg.Rules,
+	)
+	return err
+}
+
+const insertProjectEnvironmentCloneCapturedRoutePolicy = `-- name: InsertProjectEnvironmentCloneCapturedRoutePolicy :exec
+INSERT INTO project_environment_route_policies(account_id, project_id, app_id, environment_slug, only_allow_declared_routes, declared_routes)
+VALUES($1::uuid, $2::uuid, $3::uuid, $4::text,
+    $5::boolean, $6::jsonb)
+`
+
+type InsertProjectEnvironmentCloneCapturedRoutePolicyParams struct {
+	AccountID               pgtype.UUID
+	ProjectID               pgtype.UUID
+	AppID                   pgtype.UUID
+	Environment             string
+	OnlyAllowDeclaredRoutes bool
+	DeclaredRoutes          []byte
+}
+
+func (q *Queries) InsertProjectEnvironmentCloneCapturedRoutePolicy(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneCapturedRoutePolicyParams) error {
+	_, err := db.Exec(ctx, insertProjectEnvironmentCloneCapturedRoutePolicy,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.AppID,
+		arg.Environment,
+		arg.OnlyAllowDeclaredRoutes,
+		arg.DeclaredRoutes,
+	)
+	return err
+}
+
 const insertProjectEnvironmentCloneCapturedSecret = `-- name: InsertProjectEnvironmentCloneCapturedSecret :exec
 INSERT INTO app_secrets (account_id, app_id, scope, key, ciphertext, kid, value_hash, secret_version, secret_class)
 VALUES ($1::uuid, $2::uuid, $3::text,
@@ -12764,6 +12815,61 @@ func (q *Queries) ReadProjectEnvironmentCloneProjectConfiguration(ctx context.Co
 	var i ReadProjectEnvironmentCloneProjectConfigurationRow
 	err := row.Scan(&i.ID, &i.ConfigHash, &i.ConfigJson)
 	return i, err
+}
+
+const readProjectEnvironmentCloneScopedEdgePolicy = `-- name: ReadProjectEnvironmentCloneScopedEdgePolicy :one
+SELECT jsonb_build_object('edge_present', p.app_id IS NOT NULL, 'edge_rules', coalesce(p.rules, '[]'::jsonb)) AS definition
+FROM apps a LEFT JOIN project_environment_edge_policies p ON p.app_id = a.id
+    AND p.account_id = a.account_id AND p.project_id = a.project_id AND p.environment_slug = $1::text
+WHERE a.id = $2::uuid AND a.account_id = $3::uuid AND a.project_id = $4::uuid
+`
+
+type ReadProjectEnvironmentCloneScopedEdgePolicyParams struct {
+	Environment string
+	AppID       pgtype.UUID
+	AccountID   pgtype.UUID
+	ProjectID   pgtype.UUID
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneScopedEdgePolicy(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneScopedEdgePolicyParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentCloneScopedEdgePolicy,
+		arg.Environment,
+		arg.AppID,
+		arg.AccountID,
+		arg.ProjectID,
+	)
+	var definition []byte
+	err := row.Scan(&definition)
+	return definition, err
+}
+
+const readProjectEnvironmentCloneScopedPolicyProof = `-- name: ReadProjectEnvironmentCloneScopedPolicyProof :one
+SELECT jsonb_build_object('only_allow_declared_routes', r.only_allow_declared_routes, 'declared_routes', r.declared_routes,
+    'edge_present', e.app_id IS NOT NULL, 'edge_rules', coalesce(e.rules, '[]'::jsonb)) AS definition
+FROM project_environment_route_policies r
+LEFT JOIN project_environment_edge_policies e ON e.app_id = r.app_id AND e.account_id = r.account_id
+    AND e.project_id = r.project_id AND e.environment_slug = r.environment_slug
+WHERE r.account_id = $1::uuid AND r.project_id = $2::uuid
+  AND r.app_id = $3::uuid AND r.environment_slug = $4::text
+`
+
+type ReadProjectEnvironmentCloneScopedPolicyProofParams struct {
+	AccountID   pgtype.UUID
+	ProjectID   pgtype.UUID
+	AppID       pgtype.UUID
+	Environment string
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneScopedPolicyProof(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneScopedPolicyProofParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentCloneScopedPolicyProof,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.AppID,
+		arg.Environment,
+	)
+	var definition []byte
+	err := row.Scan(&definition)
+	return definition, err
 }
 
 const readProjectEnvironmentCloneSecrets = `-- name: ReadProjectEnvironmentCloneSecrets :many

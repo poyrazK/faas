@@ -35,6 +35,10 @@ func (s *PgStore) CloneProjectEnvironment(ctx context.Context, clone ProjectEnvi
 		if err != nil {
 			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
 		}
+		clone.capturedPolicies, err = capturedCloneScopedPolicies(records)
+		if err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
 	}
 	clone.sourceValueScopesJSON, err = projectCloneValueScopesTx(ctx, tx, clone)
 	if err != nil {
@@ -289,6 +293,16 @@ func copyProjectEnvironmentRows(ctx context.Context, tx pgx.Tx, clone ProjectEnv
 	result.VariablesCopied, result.SecretsCopied, err = copyProjectEnvironmentScopedValues(ctx, tx, clone)
 	if err != nil {
 		return result, err
+	}
+	if clone.capturedPolicies != nil {
+		if err := copyCapturedProjectEnvironmentScopedPolicies(ctx, tx, clone, &result); err != nil {
+			return result, err
+		}
+		if result.RoutesCopied < result.WorkloadsCopied {
+			result.SharedResources = append(result.SharedResources, "routes")
+		}
+		result.SharedResources = append(result.SharedResources, "policies")
+		return result, nil
 	}
 	if err := tx.QueryRow(ctx, `
 		with copied as (

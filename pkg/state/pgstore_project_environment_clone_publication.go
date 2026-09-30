@@ -119,6 +119,9 @@ func verifyClonePublicationTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironm
 	if err := verifyCloneValuePublicationTx(ctx, tx, op, resources); err != nil {
 		return err
 	}
+	if err := verifyCloneScopedPolicyPublicationDB(ctx, tx, op); err != nil {
+		return err
+	}
 	return verifyCloneProjectConfigTx(ctx, tx, op, resources)
 }
 

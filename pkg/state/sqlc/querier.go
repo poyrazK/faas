@@ -439,6 +439,8 @@ type Querier interface {
 	// Fresh-token insert. The id is server-minted by sqlc (gen_random_uuid).
 	// Returns the full row (with created_at server-stamped).
 	InsertOIDCExchangedToken(ctx context.Context, db DBTX, arg InsertOIDCExchangedTokenParams) (InsertOIDCExchangedTokenRow, error)
+	InsertProjectEnvironmentCloneCapturedEdgePolicy(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneCapturedEdgePolicyParams) error
+	InsertProjectEnvironmentCloneCapturedRoutePolicy(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneCapturedRoutePolicyParams) error
 	// Managed ownership columns are deliberately absent: provider credentials
 	// must be recreated against isolated target bindings by their owner.
 	InsertProjectEnvironmentCloneCapturedSecret(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneCapturedSecretParams) error
@@ -1038,6 +1040,8 @@ type Querier interface {
 	// Empty scope means that an active graph has an invalid or missing member.
 	ReadProjectEnvironmentCloneProductionValueScope(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneProductionValueScopeParams) (string, error)
 	ReadProjectEnvironmentCloneProjectConfiguration(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneProjectConfigurationParams) (ReadProjectEnvironmentCloneProjectConfigurationRow, error)
+	ReadProjectEnvironmentCloneScopedEdgePolicy(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneScopedEdgePolicyParams) ([]byte, error)
+	ReadProjectEnvironmentCloneScopedPolicyProof(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneScopedPolicyProofParams) ([]byte, error)
 	// Decode the explicit configuration fields in Go; delivery observations do
 	// not enter the fingerprint. No encrypted content leaves the store boundary.
 	ReadProjectEnvironmentCloneSecrets(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneSecretsParams) ([][]byte, error)

@@ -25,6 +25,7 @@ type ProjectEnvironmentCloneWorkload struct {
 	SourceProjectConfigHash string
 	SourceValuesHash        string
 	SourceBindingsHash      string
+	SourcePoliciesHash      string
 	TargetDeploymentID      string
 	TargetSettingsHash      string
 }
@@ -114,6 +115,7 @@ type projectCloneWorkloadSnapshot struct {
 	ProjectConfig  *projectCloneProjectConfig                 `json:"project_config,omitempty"`
 	Values         *projectCloneWorkloadValues                `json:"values,omitempty"`
 	Bindings       *ProjectEnvironmentCloneBindingDefinitions `json:"bindings,omitempty"`
+	Policies       *projectCloneScopedPolicies                `json:"policies,omitempty"`
 }
 
 type projectCloneWorkloadRecord struct {
@@ -139,6 +141,19 @@ func encodeCloneWorkloadSnapshot(snapshot projectCloneWorkloadSnapshot) ([]byte,
 			return nil, "", err
 		}
 		snapshot.Bindings = &bindings
+	}
+	if snapshot.Policies != nil {
+		policies, err := normalizeCloneScopedPolicies(*snapshot.Policies)
+		if err != nil {
+			return nil, "", err
+		}
+		settingsRoutes := projectCloneScopedPolicies{OnlyAllowDeclaredRoutes: snapshot.Settings.OnlyAllowDeclaredRoutes, DeclaredRoutes: snapshot.Settings.DeclaredRoutes, EdgePresent: policies.EdgePresent, EdgeRules: policies.EdgeRules}
+		settingsHash, _ := cloneScopedPoliciesHash(settingsRoutes)
+		policiesHash, _ := cloneScopedPoliciesHash(policies)
+		if settingsHash != policiesHash {
+			return nil, "", ErrConflict
+		}
+		snapshot.Policies = &policies
 	}
 	if snapshot.ProjectConfig != nil {
 		config, err := normalizeCloneProjectConfig(*snapshot.ProjectConfig)
@@ -275,8 +290,17 @@ func decodeCloneWorkloadRecord(operationID, appID, sourceID, sourceHash, targetI
 		snapshot.Bindings = &bindings
 		bindingsHash, _ = cloneBindingDefinitionsHash(bindings)
 	}
+	policiesHash := ""
+	if snapshot.Policies != nil {
+		policies, err := normalizeCloneScopedPolicies(*snapshot.Policies)
+		if err != nil {
+			return projectCloneWorkloadRecord{}, err
+		}
+		snapshot.Policies = &policies
+		policiesHash, _ = cloneScopedPoliciesHash(policies)
+	}
 	return projectCloneWorkloadRecord{ProjectEnvironmentCloneWorkload: ProjectEnvironmentCloneWorkload{
 		OperationID: operationID, AppID: appID, WorkloadSlug: snapshot.WorkloadSlug, SourceDeploymentID: sourceID,
-		SourceScope: snapshot.Artifact.Scope, SourceHash: hash, SourceSettingsHash: settingsHash, SourceProjectConfigHash: projectHash, SourceValuesHash: valuesHash, SourceBindingsHash: bindingsHash,
+		SourceScope: snapshot.Artifact.Scope, SourceHash: hash, SourceSettingsHash: settingsHash, SourceProjectConfigHash: projectHash, SourceValuesHash: valuesHash, SourceBindingsHash: bindingsHash, SourcePoliciesHash: policiesHash,
 		TargetDeploymentID: targetID, TargetSettingsHash: targetHash}, snapshot: snapshot}, nil
 }
