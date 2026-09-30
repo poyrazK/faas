@@ -810,6 +810,7 @@ type MemStore struct {
 	projectEnvironmentWorkloadDeploymentSpecs map[string]string
 	projectEnvironmentCleanupJobs             map[string]ProjectEnvironmentCleanupJob
 	projectEnvironmentCloneOperations         map[string]ProjectEnvironmentCloneOperation
+	projectEnvironmentCloneWorkerLeases       map[string]projectEnvironmentCloneLeaseState
 	projectEnvironmentCloneWorkloads          map[string]map[string]projectCloneWorkloadRecord
 	projectEnvironmentCloneObjectManifests    map[string]ProjectEnvironmentCloneObjectManifest
 	projectEnvironmentApprovals               map[string]ProjectEnvironmentApproval
@@ -1317,6 +1318,7 @@ func NewMemStore() *MemStore {
 		activeProjectReleaseSets:                  map[string]string{},
 		projectEnvironmentCleanupJobs:             map[string]ProjectEnvironmentCleanupJob{},
 		projectEnvironmentCloneOperations:         map[string]ProjectEnvironmentCloneOperation{},
+		projectEnvironmentCloneWorkerLeases:       map[string]projectEnvironmentCloneLeaseState{},
 		projectEnvironmentCloneWorkloads:          map[string]map[string]projectCloneWorkloadRecord{},
 		projectEnvironmentCloneObjectManifests:    map[string]ProjectEnvironmentCloneObjectManifest{},
 		projectEnvironmentApprovals:               map[string]ProjectEnvironmentApproval{},

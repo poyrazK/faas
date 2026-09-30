@@ -266,6 +266,44 @@ func (q *Queries) AccountsByIDs(ctx context.Context, db DBTX, dollar_1 []pgtype.
 	return items, nil
 }
 
+const advanceProjectEnvironmentCloneOperationStatus = `-- name: AdvanceProjectEnvironmentCloneOperationStatus :execrows
+UPDATE project_environment_clone_operations
+SET status = $1::text, revision = revision + 1,
+    resources = $2::jsonb, error_code = $3::text, updated_at = now(),
+    lease_token = CASE WHEN $1::text IN ('ready', 'failed', 'compensated') THEN NULL ELSE lease_token END,
+    lease_until = CASE WHEN $1::text IN ('ready', 'failed', 'compensated') THEN NULL ELSE lease_until END
+WHERE id = $4::uuid AND account_id = $5::uuid AND project_id = $6::uuid
+  AND status = $7::text AND revision = $8::bigint
+`
+
+type AdvanceProjectEnvironmentCloneOperationStatusParams struct {
+	NextStatus       string
+	Resources        []byte
+	ErrorCode        string
+	OperationID      pgtype.UUID
+	AccountID        pgtype.UUID
+	ProjectID        pgtype.UUID
+	ExpectedStatus   string
+	ExpectedRevision int64
+}
+
+func (q *Queries) AdvanceProjectEnvironmentCloneOperationStatus(ctx context.Context, db DBTX, arg AdvanceProjectEnvironmentCloneOperationStatusParams) (int64, error) {
+	result, err := db.Exec(ctx, advanceProjectEnvironmentCloneOperationStatus,
+		arg.NextStatus,
+		arg.Resources,
+		arg.ErrorCode,
+		arg.OperationID,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.ExpectedStatus,
+		arg.ExpectedRevision,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const appByID = `-- name: AppByID :one
 select id, account_id, slug, type, coalesce(runtime, ''), ram_mb, coalesce(idle_timeout_s, 0),
        max_concurrency, status, manifest, created_at
@@ -753,6 +791,47 @@ func (q *Queries) CancelUploadSession(ctx context.Context, db DBTX, arg CancelUp
 	return err
 }
 
+const claimProjectEnvironmentCloneInProject = `-- name: ClaimProjectEnvironmentCloneInProject :one
+WITH candidate AS (
+    SELECT id FROM project_environment_clone_operations
+    WHERE project_id = $3::uuid AND account_id = $4::uuid
+      AND status IN ('pending', 'capturing', 'copying', 'publishing', 'compensating')
+      AND next_attempt_at <= clock_timestamp() AND (lease_until IS NULL OR lease_until <= clock_timestamp())
+    ORDER BY next_attempt_at, created_at, id LIMIT 1 FOR UPDATE SKIP LOCKED
+)
+UPDATE project_environment_clone_operations o
+SET lease_token = $1::uuid,
+    lease_until = clock_timestamp() + $2::bigint * interval '1 microsecond',
+    attempt_count = o.attempt_count + 1, revision = o.revision + 1, updated_at = clock_timestamp()
+FROM candidate c WHERE o.id = c.id
+RETURNING o.id::text AS operation_id, o.lease_until, o.attempt_count
+`
+
+type ClaimProjectEnvironmentCloneInProjectParams struct {
+	LeaseToken        pgtype.UUID
+	LeaseMicroseconds int64
+	ProjectID         pgtype.UUID
+	AccountID         pgtype.UUID
+}
+
+type ClaimProjectEnvironmentCloneInProjectRow struct {
+	OperationID  string
+	LeaseUntil   pgtype.Timestamptz
+	AttemptCount int32
+}
+
+func (q *Queries) ClaimProjectEnvironmentCloneInProject(ctx context.Context, db DBTX, arg ClaimProjectEnvironmentCloneInProjectParams) (ClaimProjectEnvironmentCloneInProjectRow, error) {
+	row := db.QueryRow(ctx, claimProjectEnvironmentCloneInProject,
+		arg.LeaseToken,
+		arg.LeaseMicroseconds,
+		arg.ProjectID,
+		arg.AccountID,
+	)
+	var i ClaimProjectEnvironmentCloneInProjectRow
+	err := row.Scan(&i.OperationID, &i.LeaseUntil, &i.AttemptCount)
+	return i, err
+}
+
 const claimTriggerRecords = `-- name: ClaimTriggerRecords :many
 WITH due AS MATERIALIZED (
     SELECT candidate.id FROM trigger_records candidate
@@ -936,7 +1015,8 @@ func (q *Queries) ClearUploadSessionPartPath(ctx context.Context, db DBTX, id st
 
 const completeProjectEnvironmentClonePublication = `-- name: CompleteProjectEnvironmentClonePublication :execrows
 UPDATE project_environment_clone_operations
-SET status = 'ready', revision = revision + 1, target_release_set_id = $1::uuid, updated_at = now()
+SET status = 'ready', revision = revision + 1, target_release_set_id = $1::uuid, updated_at = now(),
+    lease_token = NULL, lease_until = NULL
 WHERE id = $2::uuid AND status = 'publishing' AND revision = $3::bigint
 `
 
@@ -8299,6 +8379,34 @@ func (q *Queries) LockInvoiceForRefund(ctx context.Context, db DBTX, id pgtype.U
 	return i, err
 }
 
+const lockNextProjectEnvironmentCloneWorkerProject = `-- name: LockNextProjectEnvironmentCloneWorkerProject :one
+SELECT p.id::text AS project_id, p.account_id::text AS account_id
+FROM projects p
+WHERE EXISTS (
+    SELECT 1 FROM project_environment_clone_operations o WHERE o.project_id = p.id
+      AND o.status IN ('pending', 'capturing', 'copying', 'publishing', 'compensating')
+      AND o.next_attempt_at <= clock_timestamp() AND (o.lease_until IS NULL OR o.lease_until <= clock_timestamp())
+)
+ORDER BY (SELECT min(o.next_attempt_at) FROM project_environment_clone_operations o WHERE o.project_id = p.id
+      AND o.status IN ('pending', 'capturing', 'copying', 'publishing', 'compensating')
+      AND o.next_attempt_at <= clock_timestamp() AND (o.lease_until IS NULL OR o.lease_until <= clock_timestamp())), p.id
+LIMIT 1 FOR UPDATE OF p SKIP LOCKED
+`
+
+type LockNextProjectEnvironmentCloneWorkerProjectRow struct {
+	ProjectID string
+	AccountID string
+}
+
+// All clone mutations acquire the project row before the operation row.
+// Skip projects held by another transaction instead of reversing that order.
+func (q *Queries) LockNextProjectEnvironmentCloneWorkerProject(ctx context.Context, db DBTX) (LockNextProjectEnvironmentCloneWorkerProjectRow, error) {
+	row := db.QueryRow(ctx, lockNextProjectEnvironmentCloneWorkerProject)
+	var i LockNextProjectEnvironmentCloneWorkerProjectRow
+	err := row.Scan(&i.ProjectID, &i.AccountID)
+	return i, err
+}
+
 const lockProjectEnvironmentCloneApps = `-- name: LockProjectEnvironmentCloneApps :many
 SELECT id::text AS app_id FROM apps
 WHERE account_id = $1::uuid
@@ -8376,7 +8484,8 @@ func (q *Queries) LockProjectEnvironmentCloneTargetDeployments(ctx context.Conte
 }
 
 const lockProjectEnvironmentCloneTargetReservation = `-- name: LockProjectEnvironmentCloneTargetReservation :one
-SELECT id::text, revision, status, source_environment
+SELECT id::text, revision, status, source_environment,
+       (lease_token IS NULL OR lease_until > clock_timestamp())::boolean AS lease_live
 FROM project_environment_clone_operations
 WHERE project_id = $1::uuid AND account_id = $2::uuid
   AND target_environment = $3::text
@@ -8395,6 +8504,7 @@ type LockProjectEnvironmentCloneTargetReservationRow struct {
 	Revision          int64
 	Status            string
 	SourceEnvironment string
+	LeaseLive         bool
 }
 
 func (q *Queries) LockProjectEnvironmentCloneTargetReservation(ctx context.Context, db DBTX, arg LockProjectEnvironmentCloneTargetReservationParams) (LockProjectEnvironmentCloneTargetReservationRow, error) {
@@ -8405,6 +8515,7 @@ func (q *Queries) LockProjectEnvironmentCloneTargetReservation(ctx context.Conte
 		&i.Revision,
 		&i.Status,
 		&i.SourceEnvironment,
+		&i.LeaseLive,
 	)
 	return i, err
 }
@@ -8464,7 +8575,8 @@ func (q *Queries) LockProjectEnvironmentCloneTargetSidecarSignals(ctx context.Co
 const lockProjectEnvironmentCloneWorkloadOperation = `-- name: LockProjectEnvironmentCloneWorkloadOperation :one
 SELECT source_environment, target_environment, source_revision_hash,
        coalesce(source_release_set_id::text, '')::text AS source_release_set_id, status, revision,
-       resources, error_code, coalesce(target_release_set_id::text, '')::text AS target_release_set_id
+       resources, error_code, coalesce(target_release_set_id::text, '')::text AS target_release_set_id,
+       (lease_token IS NULL OR lease_until > clock_timestamp())::boolean AS lease_live
 FROM project_environment_clone_operations
 WHERE id = $1::uuid AND account_id = $2::uuid AND project_id = $3::uuid
 FOR UPDATE
@@ -8486,6 +8598,7 @@ type LockProjectEnvironmentCloneWorkloadOperationRow struct {
 	Resources          []byte
 	ErrorCode          string
 	TargetReleaseSetID string
+	LeaseLive          bool
 }
 
 func (q *Queries) LockProjectEnvironmentCloneWorkloadOperation(ctx context.Context, db DBTX, arg LockProjectEnvironmentCloneWorkloadOperationParams) (LockProjectEnvironmentCloneWorkloadOperationRow, error) {
@@ -8501,6 +8614,7 @@ func (q *Queries) LockProjectEnvironmentCloneWorkloadOperation(ctx context.Conte
 		&i.Resources,
 		&i.ErrorCode,
 		&i.TargetReleaseSetID,
+		&i.LeaseLive,
 	)
 	return i, err
 }
@@ -12491,6 +12605,62 @@ func (q *Queries) ReadProjectEnvironmentCloneVariables(ctx context.Context, db D
 	return items, nil
 }
 
+const readProjectEnvironmentCloneWorkerOperation = `-- name: ReadProjectEnvironmentCloneWorkerOperation :one
+SELECT id::text, account_id::text, project_id::text, source_environment, target_environment,
+       idempotency_key, source_revision_hash, coalesce(source_release_set_id::text, '')::text AS source_release_set_id,
+       status, revision, resources, error_code, created_at, updated_at,
+       coalesce(target_release_set_id::text, '')::text AS target_release_set_id
+FROM project_environment_clone_operations
+WHERE id = $1::uuid AND account_id = $2::uuid AND project_id = $3::uuid
+`
+
+type ReadProjectEnvironmentCloneWorkerOperationParams struct {
+	OperationID pgtype.UUID
+	AccountID   pgtype.UUID
+	ProjectID   pgtype.UUID
+}
+
+type ReadProjectEnvironmentCloneWorkerOperationRow struct {
+	ID                 string
+	AccountID          string
+	ProjectID          string
+	SourceEnvironment  string
+	TargetEnvironment  string
+	IdempotencyKey     string
+	SourceRevisionHash string
+	SourceReleaseSetID string
+	Status             string
+	Revision           int64
+	Resources          []byte
+	ErrorCode          string
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+	TargetReleaseSetID string
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneWorkerOperation(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneWorkerOperationParams) (ReadProjectEnvironmentCloneWorkerOperationRow, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentCloneWorkerOperation, arg.OperationID, arg.AccountID, arg.ProjectID)
+	var i ReadProjectEnvironmentCloneWorkerOperationRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.ProjectID,
+		&i.SourceEnvironment,
+		&i.TargetEnvironment,
+		&i.IdempotencyKey,
+		&i.SourceRevisionHash,
+		&i.SourceReleaseSetID,
+		&i.Status,
+		&i.Revision,
+		&i.Resources,
+		&i.ErrorCode,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.TargetReleaseSetID,
+	)
+	return i, err
+}
+
 const readProjectEnvironmentCloneWorkloads = `-- name: ReadProjectEnvironmentCloneWorkloads :many
 SELECT w.app_id::text AS app_id, w.source_deployment_id::text AS source_deployment_id, w.source_hash, w.snapshot,
        coalesce(w.target_deployment_id::text, '')::text AS target_deployment_id, w.target_settings_hash
@@ -12905,6 +13075,82 @@ func (q *Queries) RegisterGatewayUsageEvent(ctx context.Context, db DBTX, arg Re
 	var inserted bool
 	err := row.Scan(&inserted)
 	return inserted, err
+}
+
+const releaseProjectEnvironmentCloneWorkerLease = `-- name: ReleaseProjectEnvironmentCloneWorkerLease :execrows
+UPDATE project_environment_clone_operations
+SET lease_token = NULL, lease_until = NULL, revision = revision + 1, updated_at = clock_timestamp(),
+    next_attempt_at = clock_timestamp() + $1::bigint * interval '1 microsecond'
+WHERE id = $2::uuid AND account_id = $3::uuid AND project_id = $4::uuid
+  AND lease_token = $5::uuid AND lease_until > clock_timestamp()
+  AND revision = $6::bigint AND status = $7::text
+  AND status IN ('pending', 'capturing', 'copying', 'publishing', 'compensating')
+`
+
+type ReleaseProjectEnvironmentCloneWorkerLeaseParams struct {
+	RetryMicroseconds int64
+	OperationID       pgtype.UUID
+	AccountID         pgtype.UUID
+	ProjectID         pgtype.UUID
+	LeaseToken        pgtype.UUID
+	Revision          int64
+	Status            string
+}
+
+func (q *Queries) ReleaseProjectEnvironmentCloneWorkerLease(ctx context.Context, db DBTX, arg ReleaseProjectEnvironmentCloneWorkerLeaseParams) (int64, error) {
+	result, err := db.Exec(ctx, releaseProjectEnvironmentCloneWorkerLease,
+		arg.RetryMicroseconds,
+		arg.OperationID,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.LeaseToken,
+		arg.Revision,
+		arg.Status,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const renewProjectEnvironmentCloneWorkerLease = `-- name: RenewProjectEnvironmentCloneWorkerLease :one
+UPDATE project_environment_clone_operations
+SET lease_until = greatest(lease_until, clock_timestamp() + $1::bigint * interval '1 microsecond')
+WHERE id = $2::uuid AND account_id = $3::uuid AND project_id = $4::uuid
+  AND lease_token = $5::uuid AND lease_until > clock_timestamp()
+  AND revision = $6::bigint AND status = $7::text
+  AND status IN ('pending', 'capturing', 'copying', 'publishing', 'compensating')
+RETURNING lease_until, attempt_count
+`
+
+type RenewProjectEnvironmentCloneWorkerLeaseParams struct {
+	LeaseMicroseconds int64
+	OperationID       pgtype.UUID
+	AccountID         pgtype.UUID
+	ProjectID         pgtype.UUID
+	LeaseToken        pgtype.UUID
+	Revision          int64
+	Status            string
+}
+
+type RenewProjectEnvironmentCloneWorkerLeaseRow struct {
+	LeaseUntil   pgtype.Timestamptz
+	AttemptCount int32
+}
+
+func (q *Queries) RenewProjectEnvironmentCloneWorkerLease(ctx context.Context, db DBTX, arg RenewProjectEnvironmentCloneWorkerLeaseParams) (RenewProjectEnvironmentCloneWorkerLeaseRow, error) {
+	row := db.QueryRow(ctx, renewProjectEnvironmentCloneWorkerLease,
+		arg.LeaseMicroseconds,
+		arg.OperationID,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.LeaseToken,
+		arg.Revision,
+		arg.Status,
+	)
+	var i RenewProjectEnvironmentCloneWorkerLeaseRow
+	err := row.Scan(&i.LeaseUntil, &i.AttemptCount)
+	return i, err
 }
 
 const requestTelemetryAnalyticsByDeployment = `-- name: RequestTelemetryAnalyticsByDeployment :many

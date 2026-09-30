@@ -30,5 +30,8 @@ func lockProjectEnvironmentCloneReservationTx(ctx context.Context, tx pgx.Tx, cl
 	if err != nil {
 		return mapErr(err)
 	}
+	if !row.LeaseLive {
+		return ErrConflict
+	}
 	return validateProjectEnvironmentCloneOwner(clone, row.ID, row.SourceEnvironment, row.Status, row.Revision)
 }

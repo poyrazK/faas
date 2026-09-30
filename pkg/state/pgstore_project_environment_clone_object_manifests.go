@@ -19,12 +19,11 @@ func (s *PgStore) PutProjectEnvironmentCloneObjectManifest(ctx context.Context, 
 		return ProjectEnvironmentCloneObjectManifest{}, fmt.Errorf("state: begin clone object manifest: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	var status string
-	if err := tx.QueryRow(ctx, `select status from project_environment_clone_operations
-		where id = $1 and account_id = $2 and project_id = $3 for update`,
-		manifest.OperationID, accountID, projectID).Scan(&status); err != nil {
-		return ProjectEnvironmentCloneObjectManifest{}, mapErr(err)
+	op, err := lockCloneWorkloadOperationTx(ctx, tx, accountID, projectID, manifest.OperationID)
+	if err != nil {
+		return ProjectEnvironmentCloneObjectManifest{}, err
 	}
+	status := op.Status
 	if status != CloneOperationCapturing && status != CloneOperationCopying {
 		return ProjectEnvironmentCloneObjectManifest{}, ErrConflict
 	}
@@ -137,13 +136,11 @@ func (s *PgStore) MarkProjectEnvironmentCloneObjectCopied(ctx context.Context, a
 		return fmt.Errorf("state: begin clone object checkpoint: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	var status string
-	if err := tx.QueryRow(ctx, `select status from project_environment_clone_operations
-		where id = $1 and account_id = $2 and project_id = $3 for update`,
-		operationID, accountID, projectID).Scan(&status); err != nil {
-		return mapErr(err)
+	op, err := lockCloneWorkloadOperationTx(ctx, tx, accountID, projectID, operationID)
+	if err != nil {
+		return err
 	}
-	if status != CloneOperationCopying {
+	if op.Status != CloneOperationCopying {
 		return ErrConflict
 	}
 	var copiedAt time.Time

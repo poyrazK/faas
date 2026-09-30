@@ -5,6 +5,9 @@ func (m *MemStore) checkProjectEnvironmentCloneReservationLocked(clone ProjectEn
 		if op.ProjectID != clone.ProjectID || op.TargetEnvironment != clone.TargetSlug || !cloneOperationReservesTarget(op.Status) {
 			continue
 		}
+		if !m.cloneOperationLeaseLiveLocked(op.ID) {
+			return ErrConflict
+		}
 		return validateProjectEnvironmentCloneOwner(clone, op.ID, op.SourceEnvironment, op.Status, op.Revision)
 	}
 	if clone.CloneOperationID != "" || clone.CloneOperationRevision != 0 {

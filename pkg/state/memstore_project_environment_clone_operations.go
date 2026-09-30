@@ -88,7 +88,7 @@ func (m *MemStore) AdvanceProjectEnvironmentCloneOperation(_ context.Context, ac
 	if !ok || op.AccountID != accountID || op.ProjectID != projectID {
 		return ProjectEnvironmentCloneOperation{}, ErrNotFound
 	}
-	if op.Status != expectedStatus || op.Revision != expectedRevision {
+	if op.Status != expectedStatus || op.Revision != expectedRevision || !m.cloneOperationLeaseLiveLocked(id) {
 		return ProjectEnvironmentCloneOperation{}, ErrConflict
 	}
 	if err := validateCloneResourceTransition(op, nextStatus, resources, errorCode); err != nil {
@@ -109,5 +109,8 @@ func (m *MemStore) AdvanceProjectEnvironmentCloneOperation(_ context.Context, ac
 	op.ErrorCode = errorCode
 	op.UpdatedAt = time.Now().UTC()
 	m.projectEnvironmentCloneOperations[id] = op
+	if op.Status == CloneOperationReady || op.Status == CloneOperationFailed || op.Status == CloneOperationCompensated {
+		m.clearCloneWorkerLeaseLocked(id)
+	}
 	return cloneProjectEnvironmentCloneOperation(op), nil
 }

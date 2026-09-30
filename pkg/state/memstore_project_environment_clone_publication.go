@@ -99,7 +99,7 @@ func (m *MemStore) PublishProjectEnvironmentCloneReleaseSet(_ context.Context, a
 		}
 		return cloneProjectReleaseSet(m.projectReleaseSets[op.TargetReleaseSetID]), nil
 	}
-	if op.Status != CloneOperationPublishing || op.Revision != revision || op.TargetReleaseSetID != "" {
+	if op.Status != CloneOperationPublishing || op.Revision != revision || op.TargetReleaseSetID != "" || !m.cloneOperationLeaseLiveLocked(operationID) {
 		return ProjectReleaseSet{}, ErrConflict
 	}
 	if err := validateCloneResourceTransition(op, CloneOperationReady, op.Resources, op.ErrorCode); err != nil {
@@ -121,5 +121,6 @@ func (m *MemStore) PublishProjectEnvironmentCloneReleaseSet(_ context.Context, a
 	}
 	op.Status, op.TargetReleaseSetID, op.Revision, op.UpdatedAt = CloneOperationReady, release.ID, op.Revision+1, time.Now().UTC()
 	m.projectEnvironmentCloneOperations[op.ID] = op
+	m.clearCloneWorkerLeaseLocked(op.ID)
 	return cloneProjectReleaseSet(release), nil
 }

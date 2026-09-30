@@ -4887,7 +4887,8 @@ VALUES (sqlc.arg(deployment_id)::uuid, sqlc.arg(sidecar_name)::text, sqlc.arg(si
 -- name: LockProjectEnvironmentCloneWorkloadOperation :one
 SELECT source_environment, target_environment, source_revision_hash,
        coalesce(source_release_set_id::text, '')::text AS source_release_set_id, status, revision,
-       resources, error_code, coalesce(target_release_set_id::text, '')::text AS target_release_set_id
+       resources, error_code, coalesce(target_release_set_id::text, '')::text AS target_release_set_id,
+       (lease_token IS NULL OR lease_until > clock_timestamp())::boolean AS lease_live
 FROM project_environment_clone_operations
 WHERE id = sqlc.arg(operation_id)::uuid AND account_id = sqlc.arg(account_id)::uuid AND project_id = sqlc.arg(project_id)::uuid
 FOR UPDATE;
@@ -4904,7 +4905,8 @@ WHERE w.operation_id = sqlc.arg(operation_id)::uuid ORDER BY d.id FOR UPDATE OF 
 
 -- name: CompleteProjectEnvironmentClonePublication :execrows
 UPDATE project_environment_clone_operations
-SET status = 'ready', revision = revision + 1, target_release_set_id = sqlc.arg(release_id)::uuid, updated_at = now()
+SET status = 'ready', revision = revision + 1, target_release_set_id = sqlc.arg(release_id)::uuid, updated_at = now(),
+    lease_token = NULL, lease_until = NULL
 WHERE id = sqlc.arg(operation_id)::uuid AND status = 'publishing' AND revision = sqlc.arg(revision)::bigint;
 
 -- name: LockProjectEnvironmentCloneTargetSidecarLayers :many
@@ -4940,9 +4942,75 @@ SELECT EXISTS(SELECT 1 FROM project_environments
                 AND slug = sqlc.arg(target_environment)::text)::boolean AS target_exists;
 
 -- name: LockProjectEnvironmentCloneTargetReservation :one
-SELECT id::text, revision, status, source_environment
+SELECT id::text, revision, status, source_environment,
+       (lease_token IS NULL OR lease_until > clock_timestamp())::boolean AS lease_live
 FROM project_environment_clone_operations
 WHERE project_id = sqlc.arg(project_id)::uuid AND account_id = sqlc.arg(account_id)::uuid
   AND target_environment = sqlc.arg(target_environment)::text
   AND status IN ('pending', 'capturing', 'copying', 'publishing', 'failed', 'compensating')
 FOR UPDATE;
+
+-- name: LockNextProjectEnvironmentCloneWorkerProject :one
+-- All clone mutations acquire the project row before the operation row.
+-- Skip projects held by another transaction instead of reversing that order.
+SELECT p.id::text AS project_id, p.account_id::text AS account_id
+FROM projects p
+WHERE EXISTS (
+    SELECT 1 FROM project_environment_clone_operations o WHERE o.project_id = p.id
+      AND o.status IN ('pending', 'capturing', 'copying', 'publishing', 'compensating')
+      AND o.next_attempt_at <= clock_timestamp() AND (o.lease_until IS NULL OR o.lease_until <= clock_timestamp())
+)
+ORDER BY (SELECT min(o.next_attempt_at) FROM project_environment_clone_operations o WHERE o.project_id = p.id
+      AND o.status IN ('pending', 'capturing', 'copying', 'publishing', 'compensating')
+      AND o.next_attempt_at <= clock_timestamp() AND (o.lease_until IS NULL OR o.lease_until <= clock_timestamp())), p.id
+LIMIT 1 FOR UPDATE OF p SKIP LOCKED;
+
+-- name: ClaimProjectEnvironmentCloneInProject :one
+WITH candidate AS (
+    SELECT id FROM project_environment_clone_operations
+    WHERE project_id = sqlc.arg(project_id)::uuid AND account_id = sqlc.arg(account_id)::uuid
+      AND status IN ('pending', 'capturing', 'copying', 'publishing', 'compensating')
+      AND next_attempt_at <= clock_timestamp() AND (lease_until IS NULL OR lease_until <= clock_timestamp())
+    ORDER BY next_attempt_at, created_at, id LIMIT 1 FOR UPDATE SKIP LOCKED
+)
+UPDATE project_environment_clone_operations o
+SET lease_token = sqlc.arg(lease_token)::uuid,
+    lease_until = clock_timestamp() + sqlc.arg(lease_microseconds)::bigint * interval '1 microsecond',
+    attempt_count = o.attempt_count + 1, revision = o.revision + 1, updated_at = clock_timestamp()
+FROM candidate c WHERE o.id = c.id
+RETURNING o.id::text AS operation_id, o.lease_until, o.attempt_count;
+
+-- name: ReadProjectEnvironmentCloneWorkerOperation :one
+SELECT id::text, account_id::text, project_id::text, source_environment, target_environment,
+       idempotency_key, source_revision_hash, coalesce(source_release_set_id::text, '')::text AS source_release_set_id,
+       status, revision, resources, error_code, created_at, updated_at,
+       coalesce(target_release_set_id::text, '')::text AS target_release_set_id
+FROM project_environment_clone_operations
+WHERE id = sqlc.arg(operation_id)::uuid AND account_id = sqlc.arg(account_id)::uuid AND project_id = sqlc.arg(project_id)::uuid;
+
+-- name: AdvanceProjectEnvironmentCloneOperationStatus :execrows
+UPDATE project_environment_clone_operations
+SET status = sqlc.arg(next_status)::text, revision = revision + 1,
+    resources = sqlc.arg(resources)::jsonb, error_code = sqlc.arg(error_code)::text, updated_at = now(),
+    lease_token = CASE WHEN sqlc.arg(next_status)::text IN ('ready', 'failed', 'compensated') THEN NULL ELSE lease_token END,
+    lease_until = CASE WHEN sqlc.arg(next_status)::text IN ('ready', 'failed', 'compensated') THEN NULL ELSE lease_until END
+WHERE id = sqlc.arg(operation_id)::uuid AND account_id = sqlc.arg(account_id)::uuid AND project_id = sqlc.arg(project_id)::uuid
+  AND status = sqlc.arg(expected_status)::text AND revision = sqlc.arg(expected_revision)::bigint;
+
+-- name: RenewProjectEnvironmentCloneWorkerLease :one
+UPDATE project_environment_clone_operations
+SET lease_until = greatest(lease_until, clock_timestamp() + sqlc.arg(lease_microseconds)::bigint * interval '1 microsecond')
+WHERE id = sqlc.arg(operation_id)::uuid AND account_id = sqlc.arg(account_id)::uuid AND project_id = sqlc.arg(project_id)::uuid
+  AND lease_token = sqlc.arg(lease_token)::uuid AND lease_until > clock_timestamp()
+  AND revision = sqlc.arg(revision)::bigint AND status = sqlc.arg(status)::text
+  AND status IN ('pending', 'capturing', 'copying', 'publishing', 'compensating')
+RETURNING lease_until, attempt_count;
+
+-- name: ReleaseProjectEnvironmentCloneWorkerLease :execrows
+UPDATE project_environment_clone_operations
+SET lease_token = NULL, lease_until = NULL, revision = revision + 1, updated_at = clock_timestamp(),
+    next_attempt_at = clock_timestamp() + sqlc.arg(retry_microseconds)::bigint * interval '1 microsecond'
+WHERE id = sqlc.arg(operation_id)::uuid AND account_id = sqlc.arg(account_id)::uuid AND project_id = sqlc.arg(project_id)::uuid
+  AND lease_token = sqlc.arg(lease_token)::uuid AND lease_until > clock_timestamp()
+  AND revision = sqlc.arg(revision)::bigint AND status = sqlc.arg(status)::text
+  AND status IN ('pending', 'capturing', 'copying', 'publishing', 'compensating');

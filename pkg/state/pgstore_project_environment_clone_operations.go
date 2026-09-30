@@ -139,19 +139,17 @@ func (s *PgStore) AdvanceProjectEnvironmentCloneOperation(ctx context.Context, a
 	if err != nil {
 		return ProjectEnvironmentCloneOperation{}, fmt.Errorf("state: encode project environment clone resources: %w", err)
 	}
-	updated, err := scanProjectEnvironmentCloneOperation(tx.QueryRow(ctx, `
-		update project_environment_clone_operations
-		   set status = $5, revision = revision + 1, resources = $7::jsonb, error_code = $8, updated_at = now()
-		 where id = $1 and account_id = $2 and project_id = $3 and status = $4 and revision = $6
-		returning `+projectEnvironmentCloneOperationColumns,
-		id, accountID, projectID, expectedStatus, nextStatus, expectedRevision, raw, errorCode))
-	if errors.Is(err, ErrNotFound) {
-		if _, lookupErr := s.ProjectEnvironmentCloneOperationByID(ctx, accountID, projectID, id); lookupErr == nil {
-			return ProjectEnvironmentCloneOperation{}, ErrConflict
-		} else if !errors.Is(lookupErr, ErrNotFound) {
-			return ProjectEnvironmentCloneOperation{}, lookupErr
-		}
+	count, err := new(sqlc.Queries).AdvanceProjectEnvironmentCloneOperationStatus(ctx, tx, sqlc.AdvanceProjectEnvironmentCloneOperationStatusParams{
+		OperationID: mustPgUUID(id), AccountID: mustPgUUID(accountID), ProjectID: mustPgUUID(projectID),
+		ExpectedStatus: expectedStatus, NextStatus: nextStatus, ExpectedRevision: expectedRevision, Resources: raw, ErrorCode: errorCode,
+	})
+	if err != nil {
+		return ProjectEnvironmentCloneOperation{}, mapErr(err)
 	}
+	if count != 1 {
+		return ProjectEnvironmentCloneOperation{}, ErrConflict
+	}
+	updated, err := cloneWorkerOperationDB(ctx, tx, accountID, projectID, id)
 	if err != nil {
 		return ProjectEnvironmentCloneOperation{}, err
 	}

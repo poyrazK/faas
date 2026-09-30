@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -17,6 +19,7 @@ type cloneWorkloadTestStore interface {
 	state.ProjectEnvironmentCloneWorkloadStore
 	state.ProjectEnvironmentWorkloadSpecStore
 	state.ProjectEnvironmentClonePublicationStore
+	state.ProjectEnvironmentCloneWorkerLeaseStore
 	state.ProjectPromotionDeploymentStore
 	ProjectEnvironmentWorkloadSpecForDeployment(context.Context, string, string, string) (state.ProjectEnvironmentWorkloadSpec, error)
 	DeploymentSidecarSecretReloadSignal(context.Context, string, string) (string, error)
@@ -87,6 +90,11 @@ func projectEnvironmentCloneCapturesAndPreparesWorkloads(t *testing.T, s cloneWo
 	if err != nil {
 		t.Fatal(err)
 	}
+	lease, err := s.ClaimNextProjectEnvironmentClone(ctx, uuid.NewString(), 10*time.Minute)
+	if err != nil || lease.Operation.ID != op.ID {
+		t.Fatalf("claim workload operation: %v", err)
+	}
+	op = lease.Operation
 	op, err = s.AdvanceProjectEnvironmentCloneOperation(ctx, a.ID, p.ID, op.ID, op.Status, state.CloneOperationCapturing, op.Revision, nil, "")
 	if err != nil {
 		t.Fatal(err)

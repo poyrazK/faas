@@ -19,7 +19,7 @@ func (m *MemStore) PutProjectEnvironmentCloneObjectManifest(_ context.Context, a
 	if !ok || op.AccountID != accountID || op.ProjectID != projectID {
 		return ProjectEnvironmentCloneObjectManifest{}, ErrNotFound
 	}
-	if op.Status != CloneOperationCapturing && op.Status != CloneOperationCopying {
+	if (op.Status != CloneOperationCapturing && op.Status != CloneOperationCopying) || !m.cloneOperationLeaseLiveLocked(op.ID) {
 		return ProjectEnvironmentCloneObjectManifest{}, ErrConflict
 	}
 	key := cloneObjectManifestKey(manifest.OperationID, manifest.SourceBucketID)
@@ -62,7 +62,7 @@ func (m *MemStore) MarkProjectEnvironmentCloneObjectCopied(_ context.Context, ac
 	if !ok || op.AccountID != accountID || op.ProjectID != projectID {
 		return ErrNotFound
 	}
-	if op.Status != CloneOperationCopying {
+	if op.Status != CloneOperationCopying || !m.cloneOperationLeaseLiveLocked(op.ID) {
 		return ErrConflict
 	}
 	manifestKey := cloneObjectManifestKey(operationID, sourceBucketID)

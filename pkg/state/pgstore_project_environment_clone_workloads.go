@@ -19,6 +19,9 @@ func lockCloneWorkloadOperationTx(ctx context.Context, tx pgx.Tx, accountID, pro
 	if err != nil {
 		return ProjectEnvironmentCloneOperation{}, mapErr(err)
 	}
+	if !r.LeaseLive {
+		return ProjectEnvironmentCloneOperation{}, ErrConflict
+	}
 	op := ProjectEnvironmentCloneOperation{ID: operationID, AccountID: accountID, ProjectID: projectID, SourceEnvironment: r.SourceEnvironment,
 		TargetEnvironment: r.TargetEnvironment, SourceReleaseSetID: r.SourceReleaseSetID, SourceRevisionHash: r.SourceRevisionHash, Status: r.Status, Revision: r.Revision,
 		TargetReleaseSetID: r.TargetReleaseSetID, ErrorCode: r.ErrorCode}

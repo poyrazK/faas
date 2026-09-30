@@ -1958,6 +1958,10 @@ type ProjectEnvironmentCloneOperation struct {
 	CreatedAt          pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
 	TargetReleaseSetID pgtype.UUID
+	LeaseToken         pgtype.UUID
+	LeaseUntil         pgtype.Timestamptz
+	AttemptCount       int32
+	NextAttemptAt      pgtype.Timestamptz
 }
 
 type ProjectEnvironmentCloneWorkload struct {

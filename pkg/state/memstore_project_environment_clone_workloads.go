@@ -14,7 +14,7 @@ func (m *MemStore) CaptureProjectEnvironmentCloneWorkloads(_ context.Context, ac
 	if !ok || op.AccountID != accountID || op.ProjectID != projectID {
 		return nil, ErrNotFound
 	}
-	if op.Status != CloneOperationCapturing || op.Revision != revision {
+	if op.Status != CloneOperationCapturing || op.Revision != revision || !m.cloneOperationLeaseLiveLocked(operationID) {
 		return nil, ErrConflict
 	}
 	if records := m.projectEnvironmentCloneWorkloads[operationID]; len(records) > 0 {
@@ -124,7 +124,7 @@ func (m *MemStore) prepareCloneDeploymentLocked(input projectEnvironmentCloneDep
 	if !ok || op.AccountID != input.AccountID || op.ProjectID != input.ProjectID {
 		return Deployment{}, projectCloneWorkloadRecord{}, ErrNotFound
 	}
-	if op.Status != CloneOperationCopying || op.Revision != input.Revision {
+	if op.Status != CloneOperationCopying || op.Revision != input.Revision || !m.cloneOperationLeaseLiveLocked(input.OperationID) {
 		return Deployment{}, projectCloneWorkloadRecord{}, ErrConflict
 	}
 	record, ok := m.projectEnvironmentCloneWorkloads[op.ID][input.AppID]

@@ -366,3 +366,28 @@ runner because the full state test binary exceeded local disk capacity.
 Native KVM acceptance remains outstanding. Full resource coverage, coordinated
 data capture, artifact retention during long captures, physical setting remaps,
 per-environment capacity and the one-command integration are still required.
+
+### Durable clone worker leases (2026-09-30)
+
+Both stores now support claiming, renewing and releasing clone work with delayed
+retries and attempt counts. PostgreSQL owns its lease clock and skips locked
+projects while retaining the project-before-operation lock order. A claim or
+release increments the operation revision, so a previous owner's capture,
+configuration materialization, deployment preparation and publication cannot
+commit at its old revision. Expired claims reject clone mutations until takeover.
+Renewal requires the current token, status and revision, and does not advance the
+configuration fence or shorten a valid deadline. Terminal transitions revoke
+the lease atomically, including release-graph publication. Worker tokens are
+excluded from serialized lease status.
+
+Focused MemStore and real PostgreSQL contracts cover competing replicas, expiry,
+renewal, takeover, stale writes, retry delay, independent projects and locked
+projects. The captured-workload publication contract also runs under a worker
+lease. Existing operation, reservation, manifest and resource-publication fences
+pass through the focused runner. sqlc regeneration is consistent.
+
+These are queue primitives; the persistent API worker loop and public full-create
+command still require integration. Provider calls must be bounded by the lease
+and replay the frozen resource identities. Immutable object-copy receipts retain
+their existing exact source-version/target verification checks; cancellation and
+ownership of provider-side preparation remain part of the worker integration.
