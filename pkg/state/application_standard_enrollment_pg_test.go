@@ -122,4 +122,13 @@ func TestPgApplicationStandardProjectScopeFence(t *testing.T) {
 	if !errors.As(err, &failure) || failure.ConstraintName != "application_standard_scope_owner" {
 		t.Fatalf("foreign member bypassed assigned project: %v", err)
 	}
+	// Parent erasure remains the explicit retention boundary even though
+	// directly deleting the assignment is forbidden.
+	if _, err := pool.Exec(ctx, `DELETE FROM orgs WHERE id = $1`, owner.PersonalOrg.ID); err != nil {
+		t.Fatalf("assignment organization erasure: %v", err)
+	}
+	var remaining int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM application_standard_assignments WHERE id = $1`, assignmentID).Scan(&remaining); err != nil || remaining != 0 {
+		t.Fatalf("assignment retained after organization erasure: count=%d err=%v", remaining, err)
+	}
 }
