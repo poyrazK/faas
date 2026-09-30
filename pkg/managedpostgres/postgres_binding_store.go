@@ -222,30 +222,30 @@ func (s *PostgresStore) DueBindings(ctx context.Context, includeProvisioning boo
 	if limit < 1 || limit > 100 || now.IsZero() {
 		return nil, ErrInvalid
 	}
-	rows, err := s.pool.Query(ctx,
-		`SELECT `+postgresBindingColumns+` FROM managed_postgres_bindings
-		 WHERE (state = 'deleting' OR ($1 AND state IN ('provisioning','failed'))
-		   OR (rotation_cleanup_ready AND state IN ('ready','retiring')))
-		   AND retry_at <= $2 AND (lease_until IS NULL OR lease_until <= $2)
-		 ORDER BY retry_at, id LIMIT $3`,
-		includeProvisioning, now, limit,
-	)
+	rows, err := new(sqlc.Queries).ManagedPostgresDueBindings(ctx, s.pool, sqlc.ManagedPostgresDueBindingsParams{
+		IncludeProvisioning: includeProvisioning, ObservedAt: pgtype.Timestamptz{Time: now, Valid: true}, BatchLimit: int32(limit)})
 	if err != nil {
 		return nil, mapPostgresError(err)
 	}
-	defer rows.Close()
-	items := make([]Binding, 0)
-	for rows.Next() {
-		binding, scanErr := scanBinding(rows)
-		if scanErr != nil {
-			return nil, scanErr
-		}
-		items = append(items, binding)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, mapPostgresError(err)
+	items := make([]Binding, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, bindingFromSQL(row))
 	}
 	return items, nil
+}
+
+func bindingFromSQL(row sqlc.ManagedPostgresBinding) Binding {
+	binding := Binding{ID: databaseUUID(row.ID), AccountID: databaseUUID(row.AccountID), DatabaseID: databaseUUID(row.DatabaseID), AppID: databaseUUID(row.AppID),
+		Scope: row.Scope, EnvironmentKey: row.EnvironmentKey, Access: CredentialAccess(row.Access), ProviderIdentityID: row.ProviderIdentityID.String,
+		CredentialRef: row.CredentialRef.String, CredentialGeneration: row.CredentialGeneration, RotationPreviousGeneration: row.RotationPreviousGeneration.Int64,
+		RotationWakeID: databaseUUID(row.RotationWakeID), RotationCleanupReady: row.RotationCleanupReady, State: BindingState(row.State),
+		LastErrorCode: row.LastErrorCode.String, LeaseToken: row.LeaseToken.String, LeaseUntil: row.LeaseUntil.Time, AttemptCount: row.AttemptCount,
+		RetryAt: row.RetryAt.Time, CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time}
+	if row.DeletedAt.Valid {
+		at := row.DeletedAt.Time
+		binding.DeletedAt = &at
+	}
+	return binding
 }
 
 func (s *PostgresStore) BeginBindingRotation(ctx context.Context, accountID, bindingID, wakeID string, now time.Time) (Binding, bool, error) {

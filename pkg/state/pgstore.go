@@ -22859,6 +22859,16 @@ func (s *PgStore) PutManagedPostgresSecret(ctx context.Context, secret AppSecret
 		return err
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	// Private clone envelopes commit through the leased preparation writer.
+	// The ordinary sink cannot mutate a pending target or stamp production.
+	q := new(sqlc.Queries)
+	databaseID, err := q.ManagedPostgresBindingDatabaseID(ctx, tx, sqlc.ManagedPostgresBindingDatabaseIDParams{ID: mustPgUUID(secret.ManagedPostgresBindingID), AccountID: mustPgUUID(secret.AccountID)})
+	if err != nil {
+		return mapErr(err)
+	}
+	if _, err := q.LockManagedPostgresCustomerDatabase(ctx, tx, sqlc.LockManagedPostgresCustomerDatabaseParams{ID: databaseID, AccountID: mustPgUUID(secret.AccountID)}); err != nil {
+		return mapErr(err)
+	}
 	if err := lockAppSecretTarget(ctx, tx, secret.AppID, secret.Scope, secret.Key); err != nil {
 		return err
 	}

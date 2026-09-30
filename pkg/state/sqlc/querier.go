@@ -285,6 +285,8 @@ type Querier interface {
 	ExpireUploadSession(ctx context.Context, db DBTX, id string) error
 	// Two matches mean an invoice ID collides with another invoice's charge ID.
 	FindInvoiceIDsByProviderKey(ctx context.Context, db DBTX, arg FindInvoiceIDsByProviderKeyParams) ([]pgtype.UUID, error)
+	FinishProjectEnvironmentClonePostgresBinding(ctx context.Context, db DBTX, arg FinishProjectEnvironmentClonePostgresBindingParams) (int64, error)
+	FinishProjectEnvironmentClonePostgresBindingLedger(ctx context.Context, db DBTX, arg FinishProjectEnvironmentClonePostgresBindingLedgerParams) (int64, error)
 	// Single oldest request row for one fingerprint, used by the
 	// UI's "what does this look like" preview. Returns
 	// headers_sample + redactions for the wire-side "we redacted
@@ -452,6 +454,9 @@ type Querier interface {
 	InsertProjectEnvironmentCloneObjectCredentialPreparation(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneObjectCredentialPreparationParams) error
 	InsertProjectEnvironmentCloneObjectManifestEntries(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneObjectManifestEntriesParams) (int64, error)
 	InsertProjectEnvironmentCloneObjectManifestHeader(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneObjectManifestHeaderParams) error
+	InsertProjectEnvironmentClonePostgresBinding(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresBindingParams) (ManagedPostgresBinding, error)
+	InsertProjectEnvironmentClonePostgresBindingLedger(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresBindingLedgerParams) error
+	InsertProjectEnvironmentClonePostgresSecret(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresSecretParams) error
 	InsertProjectEnvironmentCloneProjectConfiguration(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneProjectConfigurationParams) (int64, error)
 	InsertProjectEnvironmentCloneSidecarLayer(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneSidecarLayerParams) error
 	InsertProjectEnvironmentCloneSidecarSignal(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneSidecarSignalParams) error
@@ -831,13 +836,17 @@ type Querier interface {
 	LockProjectEnvironmentCloneApps(ctx context.Context, db DBTX, arg LockProjectEnvironmentCloneAppsParams) ([]string, error)
 	LockProjectEnvironmentCloneCredentialBucket(ctx context.Context, db DBTX, arg LockProjectEnvironmentCloneCredentialBucketParams) (ObjectBucket, error)
 	LockProjectEnvironmentCloneDatabaseAccount(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
+	LockProjectEnvironmentClonePostgresBinding(ctx context.Context, db DBTX, arg LockProjectEnvironmentClonePostgresBindingParams) (ManagedPostgresBinding, error)
 	LockProjectEnvironmentClonePreparedObjectCredential(ctx context.Context, db DBTX, arg LockProjectEnvironmentClonePreparedObjectCredentialParams) (ObjectStorageS3Credential, error)
 	LockProjectEnvironmentCloneProject(ctx context.Context, db DBTX, arg LockProjectEnvironmentCloneProjectParams) (string, error)
+	LockProjectEnvironmentCloneSecretTarget(ctx context.Context, db DBTX, arg LockProjectEnvironmentCloneSecretTargetParams) error
 	LockProjectEnvironmentCloneTargetDeployments(ctx context.Context, db DBTX, operationID pgtype.UUID) ([]string, error)
 	LockProjectEnvironmentCloneTargetReservation(ctx context.Context, db DBTX, arg LockProjectEnvironmentCloneTargetReservationParams) (LockProjectEnvironmentCloneTargetReservationRow, error)
 	LockProjectEnvironmentCloneTargetSidecarLayers(ctx context.Context, db DBTX, operationID pgtype.UUID) ([]string, error)
 	LockProjectEnvironmentCloneTargetSidecarSignals(ctx context.Context, db DBTX, operationID pgtype.UUID) ([]string, error)
 	LockProjectEnvironmentCloneWorkloadOperation(ctx context.Context, db DBTX, arg LockProjectEnvironmentCloneWorkloadOperationParams) (LockProjectEnvironmentCloneWorkloadOperationRow, error)
+	ManagedPostgresBindingDatabaseID(ctx context.Context, db DBTX, arg ManagedPostgresBindingDatabaseIDParams) (pgtype.UUID, error)
+	ManagedPostgresDueBindings(ctx context.Context, db DBTX, arg ManagedPostgresDueBindingsParams) ([]ManagedPostgresBinding, error)
 	MarkClaimedTriggerRecordDeadLetter(ctx context.Context, db DBTX, arg MarkClaimedTriggerRecordDeadLetterParams) (int64, error)
 	MarkClaimedTriggerRecordRetry(ctx context.Context, db DBTX, arg MarkClaimedTriggerRecordRetryParams) (int64, error)
 	MarkClaimedTriggerRecordSucceeded(ctx context.Context, db DBTX, arg MarkClaimedTriggerRecordSucceededParams) (int64, error)
@@ -1028,6 +1037,7 @@ type Querier interface {
 	// the kind + at DESC predicate. The subject grouping is in-memory
 	// after the index scan.
 	PerAccountRateLimitAggregate(ctx context.Context, db DBTX, arg PerAccountRateLimitAggregateParams) ([]PerAccountRateLimitAggregateRow, error)
+	ProjectEnvironmentCloneSecretTargetExists(ctx context.Context, db DBTX, arg ProjectEnvironmentCloneSecretTargetExistsParams) (bool, error)
 	// Retention purge. The meterd cron calls this
 	// hourly with `cutoff = now() - interval '30 days'`
 	// (matches the §12 prom_retention_days:15 floor +
@@ -1058,6 +1068,8 @@ type Querier interface {
 	ReadProjectEnvironmentCloneObjectManifestHeader(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneObjectManifestHeaderParams) (ReadProjectEnvironmentCloneObjectManifestHeaderRow, error)
 	ReadProjectEnvironmentCloneObjectMutationAuthority(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneObjectMutationAuthorityParams) (ReadProjectEnvironmentCloneObjectMutationAuthorityRow, error)
 	ReadProjectEnvironmentCloneOwnedApp(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneOwnedAppParams) (string, error)
+	ReadProjectEnvironmentClonePostgresBindingLedger(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresBindingLedgerParams) (ProjectEnvironmentClonePostgresBinding, error)
+	ReadProjectEnvironmentClonePostgresBindingSecrets(ctx context.Context, db DBTX, managedPostgresBindingID pgtype.UUID) ([]AppSecret, error)
 	ReadProjectEnvironmentClonePostgresBindings(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresBindingsParams) ([]ReadProjectEnvironmentClonePostgresBindingsRow, error)
 	// Empty scope means that an active graph has an invalid or missing member.
 	ReadProjectEnvironmentCloneProductionValueScope(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneProductionValueScopeParams) (string, error)

@@ -3853,6 +3853,56 @@ func (q *Queries) FindInvoiceIDsByProviderKey(ctx context.Context, db DBTX, arg 
 	return items, nil
 }
 
+const finishProjectEnvironmentClonePostgresBinding = `-- name: FinishProjectEnvironmentClonePostgresBinding :execrows
+UPDATE managed_postgres_bindings SET state='ready',provider_identity_id=$3,credential_ref=$4,updated_at=now()
+WHERE id=$1 AND account_id=$2 AND state='provisioning' AND lease_token IS NULL AND credential_generation=1
+`
+
+type FinishProjectEnvironmentClonePostgresBindingParams struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	ProviderIdentityID pgtype.Text
+	CredentialRef      pgtype.Text
+}
+
+func (q *Queries) FinishProjectEnvironmentClonePostgresBinding(ctx context.Context, db DBTX, arg FinishProjectEnvironmentClonePostgresBindingParams) (int64, error) {
+	result, err := db.Exec(ctx, finishProjectEnvironmentClonePostgresBinding,
+		arg.ID,
+		arg.AccountID,
+		arg.ProviderIdentityID,
+		arg.CredentialRef,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const finishProjectEnvironmentClonePostgresBindingLedger = `-- name: FinishProjectEnvironmentClonePostgresBindingLedger :execrows
+UPDATE project_environment_clone_postgres_bindings SET preparation_hash=$3,preparation=$4
+WHERE operation_id=$1 AND source_binding_id=$2 AND preparation_hash IS NULL
+`
+
+type FinishProjectEnvironmentClonePostgresBindingLedgerParams struct {
+	OperationID     pgtype.UUID
+	SourceBindingID pgtype.UUID
+	PreparationHash pgtype.Text
+	Preparation     []byte
+}
+
+func (q *Queries) FinishProjectEnvironmentClonePostgresBindingLedger(ctx context.Context, db DBTX, arg FinishProjectEnvironmentClonePostgresBindingLedgerParams) (int64, error) {
+	result, err := db.Exec(ctx, finishProjectEnvironmentClonePostgresBindingLedger,
+		arg.OperationID,
+		arg.SourceBindingID,
+		arg.PreparationHash,
+		arg.Preparation,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getAppErrorSample = `-- name: GetAppErrorSample :one
 SELECT
     id, request_id, received_at, route, http_status,
@@ -5201,6 +5251,112 @@ func (q *Queries) InsertProjectEnvironmentCloneObjectManifestHeader(ctx context.
 		arg.CapturedAtExact,
 		arg.ManifestHash,
 		arg.ObjectCount,
+	)
+	return err
+}
+
+const insertProjectEnvironmentClonePostgresBinding = `-- name: InsertProjectEnvironmentClonePostgresBinding :one
+INSERT INTO managed_postgres_bindings(id,account_id,database_id,app_id,scope,environment_key,access,credential_generation,state)
+VALUES($1,$2,$3,$4,$5,$6,$7,1,'provisioning') RETURNING id, account_id, database_id, app_id, scope, environment_key, provider_identity_id, credential_ref, credential_generation, state, created_at, updated_at, deleted_at, access, last_error_code, lease_token, lease_until, attempt_count, retry_at, rotation_previous_generation, rotation_wake_id, rotation_cleanup_ready
+`
+
+type InsertProjectEnvironmentClonePostgresBindingParams struct {
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	DatabaseID     pgtype.UUID
+	AppID          pgtype.UUID
+	Scope          string
+	EnvironmentKey string
+	Access         string
+}
+
+func (q *Queries) InsertProjectEnvironmentClonePostgresBinding(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresBindingParams) (ManagedPostgresBinding, error) {
+	row := db.QueryRow(ctx, insertProjectEnvironmentClonePostgresBinding,
+		arg.ID,
+		arg.AccountID,
+		arg.DatabaseID,
+		arg.AppID,
+		arg.Scope,
+		arg.EnvironmentKey,
+		arg.Access,
+	)
+	var i ManagedPostgresBinding
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.DatabaseID,
+		&i.AppID,
+		&i.Scope,
+		&i.EnvironmentKey,
+		&i.ProviderIdentityID,
+		&i.CredentialRef,
+		&i.CredentialGeneration,
+		&i.State,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.Access,
+		&i.LastErrorCode,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.RotationPreviousGeneration,
+		&i.RotationWakeID,
+		&i.RotationCleanupReady,
+	)
+	return i, err
+}
+
+const insertProjectEnvironmentClonePostgresBindingLedger = `-- name: InsertProjectEnvironmentClonePostgresBindingLedger :exec
+INSERT INTO project_environment_clone_postgres_bindings(operation_id,source_binding_id,target_binding_id,reservation_hash) VALUES($1,$2,$3,$4)
+`
+
+type InsertProjectEnvironmentClonePostgresBindingLedgerParams struct {
+	OperationID     pgtype.UUID
+	SourceBindingID pgtype.UUID
+	TargetBindingID pgtype.UUID
+	ReservationHash string
+}
+
+func (q *Queries) InsertProjectEnvironmentClonePostgresBindingLedger(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresBindingLedgerParams) error {
+	_, err := db.Exec(ctx, insertProjectEnvironmentClonePostgresBindingLedger,
+		arg.OperationID,
+		arg.SourceBindingID,
+		arg.TargetBindingID,
+		arg.ReservationHash,
+	)
+	return err
+}
+
+const insertProjectEnvironmentClonePostgresSecret = `-- name: InsertProjectEnvironmentClonePostgresSecret :exec
+INSERT INTO app_secrets(account_id,app_id,scope,key,ciphertext,kid,value_hash,managed_postgres_binding_id,managed_credential_ref,managed_credential_generation)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,1)
+`
+
+type InsertProjectEnvironmentClonePostgresSecretParams struct {
+	AccountID                pgtype.UUID
+	AppID                    pgtype.UUID
+	Scope                    string
+	Key                      string
+	Ciphertext               []byte
+	Kid                      pgtype.Text
+	ValueHash                pgtype.Text
+	ManagedPostgresBindingID pgtype.UUID
+	ManagedCredentialRef     pgtype.Text
+}
+
+func (q *Queries) InsertProjectEnvironmentClonePostgresSecret(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresSecretParams) error {
+	_, err := db.Exec(ctx, insertProjectEnvironmentClonePostgresSecret,
+		arg.AccountID,
+		arg.AppID,
+		arg.Scope,
+		arg.Key,
+		arg.Ciphertext,
+		arg.Kid,
+		arg.ValueHash,
+		arg.ManagedPostgresBindingID,
+		arg.ManagedCredentialRef,
 	)
 	return err
 }
@@ -9077,6 +9233,45 @@ func (q *Queries) LockProjectEnvironmentCloneDatabaseAccount(ctx context.Context
 	return id_2, err
 }
 
+const lockProjectEnvironmentClonePostgresBinding = `-- name: LockProjectEnvironmentClonePostgresBinding :one
+SELECT id, account_id, database_id, app_id, scope, environment_key, provider_identity_id, credential_ref, credential_generation, state, created_at, updated_at, deleted_at, access, last_error_code, lease_token, lease_until, attempt_count, retry_at, rotation_previous_generation, rotation_wake_id, rotation_cleanup_ready FROM managed_postgres_bindings WHERE id=$1 AND account_id=$2 FOR UPDATE
+`
+
+type LockProjectEnvironmentClonePostgresBindingParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) LockProjectEnvironmentClonePostgresBinding(ctx context.Context, db DBTX, arg LockProjectEnvironmentClonePostgresBindingParams) (ManagedPostgresBinding, error) {
+	row := db.QueryRow(ctx, lockProjectEnvironmentClonePostgresBinding, arg.ID, arg.AccountID)
+	var i ManagedPostgresBinding
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.DatabaseID,
+		&i.AppID,
+		&i.Scope,
+		&i.EnvironmentKey,
+		&i.ProviderIdentityID,
+		&i.CredentialRef,
+		&i.CredentialGeneration,
+		&i.State,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.Access,
+		&i.LastErrorCode,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.RotationPreviousGeneration,
+		&i.RotationWakeID,
+		&i.RotationCleanupReady,
+	)
+	return i, err
+}
+
 const lockProjectEnvironmentClonePreparedObjectCredential = `-- name: LockProjectEnvironmentClonePreparedObjectCredential :one
 SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at FROM object_storage_s3_credentials
 WHERE id = $1 AND account_id = $2 AND bucket_id = $3 AND rotation_parent_id IS NULL
@@ -9131,6 +9326,21 @@ func (q *Queries) LockProjectEnvironmentCloneProject(ctx context.Context, db DBT
 	var id string
 	err := row.Scan(&id)
 	return id, err
+}
+
+const lockProjectEnvironmentCloneSecretTarget = `-- name: LockProjectEnvironmentCloneSecretTarget :exec
+SELECT pg_advisory_xact_lock(managed_secret_target_lock_key($1::uuid,$2::text,$3::text))
+`
+
+type LockProjectEnvironmentCloneSecretTargetParams struct {
+	AppID pgtype.UUID
+	Scope string
+	Key   string
+}
+
+func (q *Queries) LockProjectEnvironmentCloneSecretTarget(ctx context.Context, db DBTX, arg LockProjectEnvironmentCloneSecretTargetParams) error {
+	_, err := db.Exec(ctx, lockProjectEnvironmentCloneSecretTarget, arg.AppID, arg.Scope, arg.Key)
+	return err
 }
 
 const lockProjectEnvironmentCloneTargetDeployments = `-- name: LockProjectEnvironmentCloneTargetDeployments :many
@@ -9292,6 +9502,85 @@ func (q *Queries) LockProjectEnvironmentCloneWorkloadOperation(ctx context.Conte
 		&i.LeaseLive,
 	)
 	return i, err
+}
+
+const managedPostgresBindingDatabaseID = `-- name: ManagedPostgresBindingDatabaseID :one
+SELECT database_id FROM managed_postgres_bindings WHERE id=$1 AND account_id=$2
+`
+
+type ManagedPostgresBindingDatabaseIDParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) ManagedPostgresBindingDatabaseID(ctx context.Context, db DBTX, arg ManagedPostgresBindingDatabaseIDParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, managedPostgresBindingDatabaseID, arg.ID, arg.AccountID)
+	var database_id pgtype.UUID
+	err := row.Scan(&database_id)
+	return database_id, err
+}
+
+const managedPostgresDueBindings = `-- name: ManagedPostgresDueBindings :many
+SELECT b.id, b.account_id, b.database_id, b.app_id, b.scope, b.environment_key, b.provider_identity_id, b.credential_ref, b.credential_generation, b.state, b.created_at, b.updated_at, b.deleted_at, b.access, b.last_error_code, b.lease_token, b.lease_until, b.attempt_count, b.retry_at, b.rotation_previous_generation, b.rotation_wake_id, b.rotation_cleanup_ready FROM managed_postgres_bindings b JOIN managed_postgres_databases d ON d.id=b.database_id
+WHERE (b.state='deleting' OR ($1::boolean AND b.state IN ('provisioning','failed'))
+    OR (b.rotation_cleanup_ready AND b.state IN ('ready','retiring')))
+  AND b.retry_at<=$2::timestamptz AND (b.lease_until IS NULL OR b.lease_until<=$2::timestamptz)
+  AND (d.environment_clone_operation_id IS NULL OR EXISTS (
+    SELECT 1 FROM project_environment_clone_operations o WHERE o.id=d.environment_clone_operation_id AND o.account_id=d.account_id AND o.status='ready'
+      AND EXISTS(SELECT 1 FROM project_environments e JOIN projects p ON p.id=e.project_id
+          WHERE e.project_id=o.project_id AND e.slug=o.target_environment AND p.account_id=d.account_id)
+      AND EXISTS(SELECT 1 FROM jsonb_array_elements(o.resources) r WHERE r->>'kind' IN ('postgres','managed_postgres')
+          AND r->>'source_id'=d.restore_source_database_id::text AND r->>'target_id'=d.id::text AND r->>'status'='ready')))
+ORDER BY b.retry_at,b.id LIMIT $3::int
+`
+
+type ManagedPostgresDueBindingsParams struct {
+	IncludeProvisioning bool
+	ObservedAt          pgtype.Timestamptz
+	BatchLimit          int32
+}
+
+func (q *Queries) ManagedPostgresDueBindings(ctx context.Context, db DBTX, arg ManagedPostgresDueBindingsParams) ([]ManagedPostgresBinding, error) {
+	rows, err := db.Query(ctx, managedPostgresDueBindings, arg.IncludeProvisioning, arg.ObservedAt, arg.BatchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ManagedPostgresBinding{}
+	for rows.Next() {
+		var i ManagedPostgresBinding
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.DatabaseID,
+			&i.AppID,
+			&i.Scope,
+			&i.EnvironmentKey,
+			&i.ProviderIdentityID,
+			&i.CredentialRef,
+			&i.CredentialGeneration,
+			&i.State,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+			&i.Access,
+			&i.LastErrorCode,
+			&i.LeaseToken,
+			&i.LeaseUntil,
+			&i.AttemptCount,
+			&i.RetryAt,
+			&i.RotationPreviousGeneration,
+			&i.RotationWakeID,
+			&i.RotationCleanupReady,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const markClaimedTriggerRecordDeadLetter = `-- name: MarkClaimedTriggerRecordDeadLetter :execrows
@@ -12936,6 +13225,23 @@ func (q *Queries) PerAccountRateLimitAggregate(ctx context.Context, db DBTX, arg
 	return items, nil
 }
 
+const projectEnvironmentCloneSecretTargetExists = `-- name: ProjectEnvironmentCloneSecretTargetExists :one
+SELECT EXISTS(SELECT 1 FROM app_secrets WHERE app_id=$1 AND scope=$2 AND key=$3)::boolean
+`
+
+type ProjectEnvironmentCloneSecretTargetExistsParams struct {
+	AppID pgtype.UUID
+	Scope string
+	Key   string
+}
+
+func (q *Queries) ProjectEnvironmentCloneSecretTargetExists(ctx context.Context, db DBTX, arg ProjectEnvironmentCloneSecretTargetExistsParams) (bool, error) {
+	row := db.QueryRow(ctx, projectEnvironmentCloneSecretTargetExists, arg.AppID, arg.Scope, arg.Key)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const pruneDataUpstreamProbesOlderThan = `-- name: PruneDataUpstreamProbesOlderThan :exec
 DELETE FROM data_upstream_probes WHERE sampled_at < $1
 `
@@ -13628,6 +13934,70 @@ func (q *Queries) ReadProjectEnvironmentCloneOwnedApp(ctx context.Context, db DB
 	var id string
 	err := row.Scan(&id)
 	return id, err
+}
+
+const readProjectEnvironmentClonePostgresBindingLedger = `-- name: ReadProjectEnvironmentClonePostgresBindingLedger :one
+SELECT operation_id, source_binding_id, target_binding_id, reservation_hash, preparation_hash, preparation FROM project_environment_clone_postgres_bindings WHERE operation_id=$1 AND source_binding_id=$2 FOR UPDATE
+`
+
+type ReadProjectEnvironmentClonePostgresBindingLedgerParams struct {
+	OperationID     pgtype.UUID
+	SourceBindingID pgtype.UUID
+}
+
+func (q *Queries) ReadProjectEnvironmentClonePostgresBindingLedger(ctx context.Context, db DBTX, arg ReadProjectEnvironmentClonePostgresBindingLedgerParams) (ProjectEnvironmentClonePostgresBinding, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentClonePostgresBindingLedger, arg.OperationID, arg.SourceBindingID)
+	var i ProjectEnvironmentClonePostgresBinding
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBindingID,
+		&i.TargetBindingID,
+		&i.ReservationHash,
+		&i.PreparationHash,
+		&i.Preparation,
+	)
+	return i, err
+}
+
+const readProjectEnvironmentClonePostgresBindingSecrets = `-- name: ReadProjectEnvironmentClonePostgresBindingSecrets :many
+SELECT account_id, app_id, key, ciphertext, created_at, updated_at, org_id, kid, scope, value_hash, secret_version, secret_class, managed_object_storage_credential_id, managed_postgres_binding_id, managed_credential_ref, managed_credential_generation FROM app_secrets WHERE managed_postgres_binding_id=$1 ORDER BY app_id,scope,key FOR UPDATE
+`
+
+func (q *Queries) ReadProjectEnvironmentClonePostgresBindingSecrets(ctx context.Context, db DBTX, managedPostgresBindingID pgtype.UUID) ([]AppSecret, error) {
+	rows, err := db.Query(ctx, readProjectEnvironmentClonePostgresBindingSecrets, managedPostgresBindingID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppSecret{}
+	for rows.Next() {
+		var i AppSecret
+		if err := rows.Scan(
+			&i.AccountID,
+			&i.AppID,
+			&i.Key,
+			&i.Ciphertext,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.OrgID,
+			&i.Kid,
+			&i.Scope,
+			&i.ValueHash,
+			&i.SecretVersion,
+			&i.SecretClass,
+			&i.ManagedObjectStorageCredentialID,
+			&i.ManagedPostgresBindingID,
+			&i.ManagedCredentialRef,
+			&i.ManagedCredentialGeneration,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const readProjectEnvironmentClonePostgresBindings = `-- name: ReadProjectEnvironmentClonePostgresBindings :many

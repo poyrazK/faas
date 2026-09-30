@@ -49,6 +49,32 @@ func (s *cloneDatabaseCheckpointFailStore) AdvanceProjectEnvironmentCloneOperati
 type cloneDatabaseDeadlineProvider struct {
 	environmentClonePostgresProvider
 	deadlineObserved bool
+	issued           []managedpostgres.CredentialRequest
+	onIssue          func(managedpostgres.CredentialRequest) error
+}
+
+func (p *cloneDatabaseDeadlineProvider) Capabilities() managedpostgres.Capabilities {
+	c := p.environmentClonePostgresProvider.Capabilities()
+	c.CredentialAccess = []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite, managedpostgres.CredentialReadOnly}
+	return c
+}
+
+func (p *cloneDatabaseDeadlineProvider) IssueCredentials(ctx context.Context, request managedpostgres.CredentialRequest) (managedpostgres.CredentialMaterial, error) {
+	if _, ok := ctx.Deadline(); !ok {
+		return managedpostgres.CredentialMaterial{}, errors.New("credential provider missing deadline")
+	}
+	p.issued = append(p.issued, request)
+	if p.onIssue != nil {
+		if err := p.onIssue(request); err != nil {
+			return managedpostgres.CredentialMaterial{}, err
+		}
+	}
+	role := managedpostgres.EndpointPooled
+	if request.Access == managedpostgres.CredentialReadOnly {
+		role = managedpostgres.EndpointReadOnly
+	}
+	return managedpostgres.CredentialMaterial{ProviderIdentityID: "identity-" + request.IdentityKey, Username: "u_" + request.IdentityKey, Password: "password-" + request.IdentityKey,
+		Database: "gregale", TLSMode: "require", Endpoints: []managedpostgres.Endpoint{{Role: role, Host: request.ProviderResourceID + ".db.example.com", Port: 5432}}}, nil
 }
 
 func (p *cloneDatabaseDeadlineProvider) Restore(ctx context.Context, request managedpostgres.RestoreRequest) (managedpostgres.ObservedDatabase, error) {
@@ -114,7 +140,11 @@ func TestPGCapturedCloneDatabaseWorkerRecoversUncheckpointedRestore(t *testing.T
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := bindings.Create(ctx, managedpostgres.CreateBindingRequest{AccountID: acct.ID, DatabaseID: source.ID, AppID: app.ID, Scope: "default", EnvironmentKey: "DATABASE_URL", Access: managedpostgres.CredentialReadWrite}); err != nil {
+		access := managedpostgres.CredentialReadWrite
+		if slug == "worker-jobs" {
+			access = managedpostgres.CredentialReadOnly
+		}
+		if _, err := bindings.Create(ctx, managedpostgres.CreateBindingRequest{AccountID: acct.ID, DatabaseID: source.ID, AppID: app.ID, Scope: "default", EnvironmentKey: "DATABASE_URL", Access: access}); err != nil {
 			t.Fatal(err)
 		}
 		d, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:captured"})
@@ -350,6 +380,7 @@ func TestPGCapturedCloneDatabaseWorkerRecoversUncheckpointedRestore(t *testing.T
 	if _, err := store.ProjectEnvironmentBySlug(ctx, acct.ID, project.ID, "stage"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("copy step published a target: %v", err)
 	}
+	finished = capturedClonePostgresBindingWorkerContract(t, srv, store, pool, databases, provider, finished)
 	if _, err := pool.Exec(ctx, "update managed_postgres_databases set restore_source_resource_id = 'replaced' where id = $1", target.ID); err != nil {
 		t.Fatal(err)
 	}

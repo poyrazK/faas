@@ -468,6 +468,9 @@ type AppSecret struct {
 	SecretVersion                    pgtype.Int8
 	SecretClass                      string
 	ManagedObjectStorageCredentialID pgtype.UUID
+	ManagedPostgresBindingID         pgtype.UUID
+	ManagedCredentialRef             pgtype.Text
+	ManagedCredentialGeneration      pgtype.Int8
 }
 
 type AppSecretRevocation struct {
@@ -2043,6 +2046,15 @@ type ProjectEnvironmentCloneOperation struct {
 	LeaseUntil         pgtype.Timestamptz
 	AttemptCount       int32
 	NextAttemptAt      pgtype.Timestamptz
+}
+
+type ProjectEnvironmentClonePostgresBinding struct {
+	OperationID     pgtype.UUID
+	SourceBindingID pgtype.UUID
+	TargetBindingID pgtype.UUID
+	ReservationHash string
+	PreparationHash pgtype.Text
+	Preparation     []byte
 }
 
 type ProjectEnvironmentCloneWorkload struct {

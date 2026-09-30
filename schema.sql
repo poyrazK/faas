@@ -11141,6 +11141,13 @@ ALTER TABLE managed_postgres_bindings
 ALTER TABLE managed_postgres_bindings DROP CONSTRAINT managed_postgres_bindings_state_check;
 ALTER TABLE managed_postgres_bindings ADD CONSTRAINT managed_postgres_bindings_state_check CHECK (state IN ('provisioning','ready','deleting','retiring','failed','deleted'));
 
+-- Existing managed PostgreSQL secret ownership columns, from the binding
+-- foundation migration; keep the sqlc snapshot complete for private writers.
+ALTER TABLE public.app_secrets
+    ADD COLUMN managed_postgres_binding_id uuid REFERENCES managed_postgres_bindings(id),
+    ADD COLUMN managed_credential_ref text,
+    ADD COLUMN managed_credential_generation bigint CHECK (managed_credential_generation >= 1);
+
 -- Environment edge policy catalogue, from its foundation migration.
 CREATE TABLE IF NOT EXISTS project_environment_edge_policies (
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -11169,4 +11176,16 @@ CREATE TABLE project_environment_clone_object_credentials (
     PRIMARY KEY (operation_id, source_credential_id),
     UNIQUE (target_credential_id),
     CHECK (source_credential_id <> target_credential_id)
+);
+
+CREATE TABLE project_environment_clone_postgres_bindings (
+    operation_id uuid NOT NULL REFERENCES project_environment_clone_operations(id) ON DELETE CASCADE,
+    source_binding_id uuid NOT NULL,
+    target_binding_id uuid NOT NULL REFERENCES managed_postgres_bindings(id),
+    reservation_hash text NOT NULL CHECK (reservation_hash ~ '^[a-f0-9]{64}$'),
+    preparation_hash text CHECK (preparation_hash ~ '^[a-f0-9]{64}$'),
+    preparation jsonb CHECK (jsonb_typeof(preparation) = 'object'),
+    PRIMARY KEY(operation_id, source_binding_id), UNIQUE(target_binding_id),
+    CHECK(source_binding_id <> target_binding_id),
+    CHECK((preparation_hash IS NULL) = (preparation IS NULL))
 );

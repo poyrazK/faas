@@ -5390,3 +5390,53 @@ INSERT INTO managed_postgres_databases(id, account_id, name, region, postgres_ma
     storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, restore_source_database_id, restore_source_resource_id,
     restore_point_in_time, environment_clone_operation_id, state, desired_generation, observed_generation)
 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'provisioning',1,0) RETURNING *;
+
+-- name: ReadProjectEnvironmentClonePostgresBindingLedger :one
+SELECT * FROM project_environment_clone_postgres_bindings WHERE operation_id=$1 AND source_binding_id=$2 FOR UPDATE;
+
+-- name: InsertProjectEnvironmentClonePostgresBindingLedger :exec
+INSERT INTO project_environment_clone_postgres_bindings(operation_id,source_binding_id,target_binding_id,reservation_hash) VALUES($1,$2,$3,$4);
+
+-- name: InsertProjectEnvironmentClonePostgresBinding :one
+INSERT INTO managed_postgres_bindings(id,account_id,database_id,app_id,scope,environment_key,access,credential_generation,state)
+VALUES($1,$2,$3,$4,$5,$6,$7,1,'provisioning') RETURNING *;
+
+-- name: LockProjectEnvironmentClonePostgresBinding :one
+SELECT * FROM managed_postgres_bindings WHERE id=$1 AND account_id=$2 FOR UPDATE;
+
+-- name: ReadProjectEnvironmentClonePostgresBindingSecrets :many
+SELECT * FROM app_secrets WHERE managed_postgres_binding_id=$1 ORDER BY app_id,scope,key FOR UPDATE;
+
+-- name: InsertProjectEnvironmentClonePostgresSecret :exec
+INSERT INTO app_secrets(account_id,app_id,scope,key,ciphertext,kid,value_hash,managed_postgres_binding_id,managed_credential_ref,managed_credential_generation)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,1);
+
+-- name: FinishProjectEnvironmentClonePostgresBinding :execrows
+UPDATE managed_postgres_bindings SET state='ready',provider_identity_id=$3,credential_ref=$4,updated_at=now()
+WHERE id=$1 AND account_id=$2 AND state='provisioning' AND lease_token IS NULL AND credential_generation=1;
+
+-- name: FinishProjectEnvironmentClonePostgresBindingLedger :execrows
+UPDATE project_environment_clone_postgres_bindings SET preparation_hash=$3,preparation=$4
+WHERE operation_id=$1 AND source_binding_id=$2 AND preparation_hash IS NULL;
+
+-- name: LockProjectEnvironmentCloneSecretTarget :exec
+SELECT pg_advisory_xact_lock(managed_secret_target_lock_key(sqlc.arg(app_id)::uuid,sqlc.arg(scope)::text,sqlc.arg(key)::text));
+
+-- name: ProjectEnvironmentCloneSecretTargetExists :one
+SELECT EXISTS(SELECT 1 FROM app_secrets WHERE app_id=$1 AND scope=$2 AND key=$3)::boolean;
+
+-- name: ManagedPostgresBindingDatabaseID :one
+SELECT database_id FROM managed_postgres_bindings WHERE id=$1 AND account_id=$2;
+
+-- name: ManagedPostgresDueBindings :many
+SELECT b.* FROM managed_postgres_bindings b JOIN managed_postgres_databases d ON d.id=b.database_id
+WHERE (b.state='deleting' OR (sqlc.arg(include_provisioning)::boolean AND b.state IN ('provisioning','failed'))
+    OR (b.rotation_cleanup_ready AND b.state IN ('ready','retiring')))
+  AND b.retry_at<=sqlc.arg(observed_at)::timestamptz AND (b.lease_until IS NULL OR b.lease_until<=sqlc.arg(observed_at)::timestamptz)
+  AND (d.environment_clone_operation_id IS NULL OR EXISTS (
+    SELECT 1 FROM project_environment_clone_operations o WHERE o.id=d.environment_clone_operation_id AND o.account_id=d.account_id AND o.status='ready'
+      AND EXISTS(SELECT 1 FROM project_environments e JOIN projects p ON p.id=e.project_id
+          WHERE e.project_id=o.project_id AND e.slug=o.target_environment AND p.account_id=d.account_id)
+      AND EXISTS(SELECT 1 FROM jsonb_array_elements(o.resources) r WHERE r->>'kind' IN ('postgres','managed_postgres')
+          AND r->>'source_id'=d.restore_source_database_id::text AND r->>'target_id'=d.id::text AND r->>'status'='ready')))
+ORDER BY b.retry_at,b.id LIMIT sqlc.arg(batch_limit)::int;

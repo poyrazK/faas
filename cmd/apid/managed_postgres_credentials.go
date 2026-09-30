@@ -45,34 +45,45 @@ func newAppSecretCredentialSink(store managedPostgresSecretStore, recipient func
 }
 
 func (s *appSecretCredentialSink) Put(ctx context.Context, binding managedpostgres.Binding, material managedpostgres.CredentialMaterial) (string, error) {
-	value, err := managedPostgresConnectionURL(binding.Access, material)
+	secret, credentialRef, err := s.seal(binding, material)
 	if err != nil {
 		return "", err
 	}
+	if err := s.store.PutManagedPostgresSecret(ctx, secret); err != nil {
+		return "", normalizeCredentialSinkError(err)
+	}
+	return credentialRef, nil
+}
+
+func (s *appSecretCredentialSink) seal(binding managedpostgres.Binding, material managedpostgres.CredentialMaterial) (state.AppSecret, string, error) {
+	value, err := managedPostgresConnectionURL(binding.Access, material)
+	if err != nil {
+		return state.AppSecret{}, "", err
+	}
 	if len(value) > managedPostgresCredentialMaxBytes {
-		return "", managedpostgres.ErrUnsupported
+		return state.AppSecret{}, "", managedpostgres.ErrUnsupported
 	}
 	recipient := s.recipient()
 	if recipient == nil {
-		return "", managedpostgres.ErrUnavailable
+		return state.AppSecret{}, "", managedpostgres.ErrUnavailable
 	}
 	hmacKey := s.hmacKey()
 	if len(hmacKey) == 0 {
-		return "", managedpostgres.ErrUnavailable
+		return state.AppSecret{}, "", managedpostgres.ErrUnavailable
 	}
 	valueHash, err := secretbox.ValueFingerprint([]byte(value), hmacKey)
 	if err != nil {
-		return "", managedpostgres.ErrUnavailable
+		return state.AppSecret{}, "", managedpostgres.ErrUnavailable
 	}
 	ciphertext, err := secretbox.SealOne(recipient, binding.EnvironmentKey, value, managedPostgresCredentialMaxBytes)
 	if err != nil {
-		return "", managedpostgres.ErrUnavailable
+		return state.AppSecret{}, "", managedpostgres.ErrUnavailable
 	}
 	credentialRef, err := managedPostgresCredentialRef(binding)
 	if err != nil {
-		return "", err
+		return state.AppSecret{}, "", err
 	}
-	if err := s.store.PutManagedPostgresSecret(ctx, state.AppSecret{
+	return state.AppSecret{
 		AccountID:                   binding.AccountID,
 		AppID:                       binding.AppID,
 		Scope:                       binding.Scope,
@@ -83,10 +94,7 @@ func (s *appSecretCredentialSink) Put(ctx context.Context, binding managedpostgr
 		ManagedPostgresBindingID:    binding.ID,
 		ManagedCredentialRef:        credentialRef,
 		ManagedCredentialGeneration: binding.CredentialGeneration,
-	}); err != nil {
-		return "", normalizeCredentialSinkError(err)
-	}
-	return credentialRef, nil
+	}, credentialRef, nil
 }
 
 func (s *appSecretCredentialSink) Delete(ctx context.Context, binding managedpostgres.Binding) error {

@@ -229,6 +229,12 @@ func (s *BindingService) Reconcile(ctx context.Context, accountID, bindingID str
 	default:
 		return Binding{}, ErrConflict
 	}
+	// A private clone binding is prepared by its owning worker and atomic
+	// receipt sink. Ordinary reconciliation must not issue credentials or
+	// invalidate the source app's runtime configuration while it is pending.
+	if _, err := customerDatabase(ctx, s.databases, accountID, binding.DatabaseID); err != nil {
+		return Binding{}, err
+	}
 
 	now := s.now()
 	binding, err = s.bindings.ClaimBinding(ctx, accountID, bindingID, s.newLeaseToken(), BindingStateProvisioning, now, now.Add(s.leaseDuration))
