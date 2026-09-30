@@ -176,7 +176,10 @@ func TestDevBridgeRemoteFrontendLocalPaymentsRemoteInventory(t *testing.T) {
 		}))
 		defer local.Close()
 		localURL, _ := url.Parse(local.URL)
-		socket, _, err := websocket.DefaultDialer.DialContext(ctx, "ws"+strings.TrimPrefix(relayServer.URL, "http")+"/v1/dev/bridges/"+session.ID+"/connect", http.Header{devbridge.AccountHeader: []string{account.ID}, devbridge.TokenHeader: []string{creds.AttachmentToken}})
+		socket, handshake, err := websocket.DefaultDialer.DialContext(ctx, "ws"+strings.TrimPrefix(relayServer.URL, "http")+"/v1/dev/bridges/"+session.ID+"/connect", http.Header{devbridge.AccountHeader: []string{account.ID}, devbridge.TokenHeader: []string{creds.AttachmentToken}})
+		if handshake != nil {
+			_ = handshake.Body.Close()
+		}
 		if err != nil {
 			t.Fatal(err)
 		}

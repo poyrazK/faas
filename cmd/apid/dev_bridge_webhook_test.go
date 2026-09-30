@@ -67,7 +67,10 @@ func TestDevBridgeSelectedWebhookReplayPreservesOriginal(t *testing.T) {
 	}))
 	defer local.Close()
 	target, _ := url.Parse(local.URL)
-	socket, _, err := websocket.DefaultDialer.DialContext(ctx, "ws"+strings.TrimPrefix(apiServer.URL, "http")+"/v1/dev/bridges/"+session.Session.ID+"/connect", http.Header{devbridge.AccountHeader: []string{e.acct.ID}, devbridge.TokenHeader: []string{session.Credentials.AttachmentToken}})
+	socket, handshake, err := websocket.DefaultDialer.DialContext(ctx, "ws"+strings.TrimPrefix(apiServer.URL, "http")+"/v1/dev/bridges/"+session.Session.ID+"/connect", http.Header{devbridge.AccountHeader: []string{e.acct.ID}, devbridge.TokenHeader: []string{session.Credentials.AttachmentToken}})
+	if handshake != nil {
+		_ = handshake.Body.Close()
+	}
 	if err != nil {
 		t.Fatal(err)
 	}

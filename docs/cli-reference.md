@@ -1634,6 +1634,19 @@ gregale dev --path ./api --once
 
 show developer-environment quota usage
 
+### dev bridge
+
+run an HTTP service locally in a remote development environment
+
+| Flag | Meaning | |
+|---|---|---|
+| `--environment <ENV>` | named development environment |  |
+| `--local-port <PORT>` | local HTTP service port |  |
+| `--dependencies <APPS>` | comma-separated remote dependency apps |  |
+| `--entrypoint <APP>` | remote frontend for the session URL |  |
+| `--inspect` | inspect recent requests in a local browser |  |
+| `--replay-webhook <INVOCATION>` | copy one provider-verified webhook receipt locally |  |
+
 ### dev history
 
 show edit-to-live timings and SLO guidance

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -51,7 +52,7 @@ func TestDevBridgeCreationInspectionRevocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if session.AuthorizeAttachment(time.Now(), out.Credentials.AttachmentToken) != devbridge.ErrUnauthorized {
+	if !errors.Is(session.AuthorizeAttachment(time.Now(), out.Credentials.AttachmentToken), devbridge.ErrUnauthorized) {
 		t.Fatal("revoked attachment accepted")
 	}
 	other, err := e.store.CreateAccount(t.Context(), "other-bridge@example.com", api.PlanPro)
