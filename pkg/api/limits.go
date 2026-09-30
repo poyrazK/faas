@@ -29,6 +29,10 @@ const EnvironmentGitOpsMaxOverrideDuration = 24 * time.Hour
 const EnvironmentGitOpsMaxOverrideReasonBytes = 1024
 const EnvironmentGitOpsMaxExpandedArchiveBytes int64 = 512 << 20
 const EnvironmentGitOpsMaxPolicies = 20
+
+// Runtime refresh requests use the durable scheduler outbox. Rate-limit replay
+// production independently from the reconciler's observation polling interval.
+const EnvironmentGitOpsRuntimeRefreshRetry = 30 * time.Second
 const EnvironmentGitOpsMaxDeclaredRoutes = 50
 
 // A restore hook is on the wake critical path. Keep its customer timeout

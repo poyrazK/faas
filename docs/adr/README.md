@@ -390,3 +390,7 @@ concurrently). The log above already contains several such pairs (157, 158, 167,
 - [ADR-148: nonblocking resume hardware entropy](148-nonblocking-resume-hardware-entropy.md)
 - [ADR-149: prepared unused network cache](149-prepared-unused-network-cache.md)
 - [ADR-150: firecracker tsc restore order canary](150-firecracker-tsc-restore-order-canary.md)
+
+## Environment intent decisions
+
+- [ADR-382: Git-owned environment intent and continuous reconciliation](382-environment-gitops-contract.md) — reviewed definitions, field ownership, durable effects, and scoped runtime convergence

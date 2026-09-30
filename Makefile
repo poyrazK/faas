@@ -1345,6 +1345,7 @@ test-environment-gitops-core: ## Strict contract, planner, worker, and real Post
 test-environment-gitops-controls: test-environment-gitops-core ## API/CLI/dashboard review workflows and SDK contracts; does not replace native runtime acceptance.
 	@$(GO) test -p 1 ./cmd/apid ./cmd/gregale ./pkg/dashboard -run '^(TestEnvironmentGitOps.*|TestSpecCompliance)$$' -count=1
 	@$(GO) test -p 1 ./pkg/state -run '^TestPgStoreEdgeRule(Batch|MutationLock)' -count=1
+	@$(GO) test -p 1 ./pkg/sched -run '^(TestRefreshRuntimeConfig.*|TestRuntimeConfig.*)$$' -count=1
 	@cd sdk/go && $(GO) test -p 1 ./... -run '^TestEnvironmentGitOps' -count=1
 	@cd sdk/node && npm run test:build && node --test --test-concurrency=1 dist-test/test/environment-gitops.test.js
 	@cd sdk/python && python3 -m pytest tests/test_environment_gitops.py -q

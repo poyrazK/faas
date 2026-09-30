@@ -5133,3 +5133,65 @@ SELECT pg_try_advisory_lock(hashtextextended(sqlc.arg(app_id)::text, 0))::boolea
 
 -- name: ReleaseEdgeRuleMutationLock :one
 SELECT pg_advisory_unlock(hashtextextended(sqlc.arg(app_id)::text, 0))::boolean AS unlocked;
+
+-- name: ObserveEnvironmentGitOpsRuntime :many
+SELECT app_id, resource, environment_slug, required_at::timestamptz AS required_at, stale_residents, starting_residents, stale_snapshots
+FROM environment_gitops_runtime_targets WHERE source_id = sqlc.arg(source_id)::uuid
+AND account_id = sqlc.arg(account_id)::uuid ORDER BY app_id;
+
+-- name: InsertEnvironmentGitOpsRuntimeEffect :execrows
+INSERT INTO environment_gitops_runtime_effects(source_id, revision_id, generation, intent_version, plan_hash,
+    app_id, environment_slug, required_at)
+SELECT s.id, sqlc.arg(revision_id)::uuid, s.generation, s.intent_version, sqlc.arg(plan_hash)::text,
+    sqlc.arg(app_id)::uuid, e.slug, greatest(coalesce(c.changed_at, 'epoch'::timestamptz), sqlc.arg(required_at)::timestamptz)
+FROM environment_git_sources s JOIN project_environments e ON e.id = s.environment_id
+LEFT JOIN app_runtime_config_changes c ON c.app_id = sqlc.arg(app_id)::uuid
+WHERE s.id = sqlc.arg(source_id)::uuid
+ON CONFLICT (source_id, generation, plan_hash, app_id) DO UPDATE SET
+    completed_at = NULL,
+    required_at = CASE WHEN environment_gitops_runtime_effects.completed_at IS NOT NULL
+        THEN greatest(environment_gitops_runtime_effects.required_at, excluded.required_at)
+        ELSE environment_gitops_runtime_effects.required_at END,
+    wake_id = CASE WHEN environment_gitops_runtime_effects.completed_at IS NOT NULL THEN gen_random_uuid() ELSE environment_gitops_runtime_effects.wake_id END,
+    requested_at = CASE WHEN environment_gitops_runtime_effects.completed_at IS NOT NULL THEN NULL ELSE environment_gitops_runtime_effects.requested_at END,
+    next_request_at = CASE WHEN environment_gitops_runtime_effects.completed_at IS NOT NULL THEN now() ELSE environment_gitops_runtime_effects.next_request_at END;
+
+-- name: PendingEnvironmentGitOpsRuntime :many
+SELECT * FROM environment_gitops_runtime_effects
+WHERE source_id = sqlc.arg(source_id)::uuid AND completed_at IS NULL ORDER BY app_id, created_at, id;
+
+-- name: LockEnvironmentGitOpsRuntimeEffect :one
+SELECT * FROM environment_gitops_runtime_effects WHERE source_id = sqlc.arg(source_id)::uuid
+AND id = sqlc.arg(effect_id)::uuid AND completed_at IS NULL FOR UPDATE;
+
+-- name: AdvanceEnvironmentGitOpsRuntimeBoundary :one
+UPDATE environment_gitops_runtime_effects SET required_at = sqlc.arg(required_at)::timestamptz,
+    wake_id = gen_random_uuid(), requested_at = NULL, next_request_at = now()
+WHERE source_id = sqlc.arg(source_id)::uuid AND id = sqlc.arg(effect_id)::uuid
+AND completed_at IS NULL AND required_at < sqlc.arg(required_at)::timestamptz RETURNING *;
+
+-- name: InvalidateEnvironmentGitOpsRuntimeAtBoundary :exec
+WITH stamped AS (
+    INSERT INTO app_runtime_config_changes(app_id, changed_at)
+    VALUES (sqlc.arg(app_id)::uuid, sqlc.arg(required_at)::timestamptz)
+    ON CONFLICT (app_id) DO UPDATE SET changed_at = greatest(app_runtime_config_changes.changed_at, excluded.changed_at)
+    RETURNING app_id, changed_at
+)
+UPDATE snapshots p SET stale = true FROM deployments d, stamped c
+WHERE p.deployment_id = d.id AND d.app_id = c.app_id AND p.created_at <= c.changed_at AND NOT p.stale;
+
+-- name: RequestEnvironmentGitOpsRuntimeRefresh :exec
+UPDATE environment_gitops_runtime_effects SET requested_at = now(), next_request_at = sqlc.arg(next_request_at)::timestamptz
+WHERE source_id = sqlc.arg(source_id)::uuid AND id = sqlc.arg(effect_id)::uuid AND completed_at IS NULL;
+
+-- name: CompleteEnvironmentGitOpsRuntime :execrows
+UPDATE environment_gitops_runtime_effects SET completed_at = now()
+WHERE source_id = sqlc.arg(source_id)::uuid AND id = sqlc.arg(effect_id)::uuid AND completed_at IS NULL;
+
+-- name: HasPendingEnvironmentGitOpsRuntime :one
+SELECT EXISTS(SELECT 1 FROM environment_gitops_runtime_effects
+WHERE source_id = sqlc.arg(source_id)::uuid AND completed_at IS NULL) AS pending;
+
+-- name: HasEnvironmentGitOpsRuntimeDrift :one
+SELECT EXISTS(SELECT 1 FROM environment_gitops_runtime_targets WHERE source_id = sqlc.arg(source_id)::uuid
+AND (stale_residents > 0 OR starting_residents > 0 OR stale_snapshots > 0)) AS drifted;

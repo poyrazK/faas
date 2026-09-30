@@ -6102,6 +6102,33 @@ CREATE TABLE public.environment_gitops_runs (
 
 
 --
+-- Name: environment_gitops_runtime_effects; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_gitops_runtime_effects (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    source_id uuid NOT NULL,
+    revision_id uuid NOT NULL,
+    generation bigint NOT NULL,
+    intent_version bigint NOT NULL,
+    plan_hash text NOT NULL,
+    app_id uuid NOT NULL,
+    environment_slug text NOT NULL,
+    required_at timestamp with time zone NOT NULL,
+    wake_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    requested_at timestamp with time zone,
+    next_request_at timestamp with time zone DEFAULT now() NOT NULL,
+    completed_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT environment_gitops_runtime_effects_environment_slug_check CHECK ((environment_slug <> ''::text)),
+    CONSTRAINT environment_gitops_runtime_effects_generation_check CHECK ((generation > 0)),
+    CONSTRAINT environment_gitops_runtime_effects_intent_version_check CHECK ((intent_version >= 0)),
+    CONSTRAINT environment_gitops_runtime_effects_plan_hash_check CHECK ((plan_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT environment_gitops_runtime_effects_required_at_check CHECK ((required_at >= '1970-01-01 02:00:00+02'::timestamp with time zone))
+);
+
+
+--
 -- Name: environment_managed_fields; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -6120,6 +6147,154 @@ CREATE TABLE public.environment_managed_fields (
     CONSTRAINT environment_managed_fields_manager_kind_check CHECK ((manager_kind = ANY (ARRAY['git'::text, 'terraform'::text, 'operator'::text]))),
     CONSTRAINT environment_managed_fields_resource_check CHECK (((resource = 'environment'::text) OR (resource ~ '^workload/[a-z0-9][a-z0-9-]*$'::text)))
 );
+
+
+--
+-- Name: instances; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.instances (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    app_id uuid,
+    deployment_id uuid,
+    state text NOT NULL,
+    netns text,
+    guest_uid integer,
+    host_ip inet,
+    ram_mb integer NOT NULL,
+    started_at timestamp with time zone,
+    last_request_at timestamp with time zone,
+    parked_at timestamp with time zone,
+    terminal_at timestamp with time zone,
+    node_id uuid NOT NULL,
+    wake_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    org_id uuid,
+    migrated_from_node_id uuid,
+    migrated_at timestamp with time zone,
+    lease_token text,
+    framework_ready_at timestamp with time zone,
+    tail_count integer DEFAULT 0 NOT NULL,
+    request_count bigint DEFAULT 0 NOT NULL,
+    kind text DEFAULT 'wake'::text NOT NULL,
+    job_id uuid,
+    mode text DEFAULT 'normal'::text NOT NULL,
+    migration_started_at timestamp with time zone,
+    startup_cpu_boost_until timestamp with time zone,
+    CONSTRAINT instances_app_or_job_chk CHECK ((((kind = ANY (ARRAY['wake'::text, 'build'::text])) AND (app_id IS NOT NULL) AND (job_id IS NULL)) OR ((kind = 'job_task'::text) AND (app_id IS NULL) AND (job_id IS NOT NULL)))),
+    CONSTRAINT instances_kind_check CHECK ((kind = ANY (ARRAY['wake'::text, 'build'::text, 'job_task'::text]))),
+    CONSTRAINT instances_migrated_at_chk CHECK (((migrated_at IS NULL) OR (migrated_at <= (now() + '00:01:00'::interval)))),
+    CONSTRAINT instances_mode_check CHECK ((mode = ANY (ARRAY['normal'::text, 'mirror'::text, 'job'::text, 'worker'::text, 'service'::text]))),
+    CONSTRAINT instances_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'parked'::text, 'waking'::text, 'cold_booting'::text, 'running'::text, 'draining'::text, 'snapshotting'::text, 'migrating'::text, 'warm'::text, 'stopped'::text, 'failed'::text, 'evicting_account_deleting'::text])))
+);
+
+
+--
+-- Name: project_environments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environments (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    slug text NOT NULL,
+    protected boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT project_environments_slug_shape CHECK ((slug ~ '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$'::text))
+);
+
+
+--
+-- Name: snapshots; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.snapshots (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    deployment_id uuid NOT NULL,
+    fc_version text NOT NULL,
+    mem_bytes bigint NOT NULL,
+    disk_bytes bigint NOT NULL,
+    stale boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    storage_key text DEFAULT ''::text NOT NULL,
+    tier text DEFAULT 'init'::text NOT NULL,
+    stored_bytes bigint DEFAULT 0 NOT NULL,
+    base_image_version text DEFAULT ''::text NOT NULL,
+    delete_pending boolean DEFAULT false NOT NULL,
+    CONSTRAINT snapshots_stored_bytes_nonnegative CHECK ((stored_bytes >= 0)),
+    CONSTRAINT snapshots_tier_check CHECK ((tier = ANY (ARRAY['init'::text, 'warm'::text])))
+);
+
+
+--
+-- Name: COLUMN snapshots.stored_bytes; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.snapshots.stored_bytes IS 'Filesystem allocation of published mem + vmstate artifacts. Zero means a legacy writer; telemetry conservatively falls back to logical bytes.';
+
+
+--
+-- Name: COLUMN snapshots.base_image_version; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.snapshots.base_image_version IS 'Runner base-image compatibility generation; required for HTTP/2 and gRPC snapshot restore.';
+
+
+--
+-- Name: environment_gitops_runtime_targets; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.environment_gitops_runtime_targets AS
+ WITH targets AS (
+         SELECT s.id AS source_id,
+            s.account_id,
+            r.app_id,
+            r.logical_name AS resource,
+            e.slug AS environment_slug
+           FROM (((public.environment_git_sources s
+             JOIN public.project_environments e ON ((e.id = s.environment_id)))
+             JOIN public.environment_gitops_resources r ON ((r.source_id = s.id)))
+             JOIN public.apps a ON (((a.id = r.app_id) AND (a.account_id = s.account_id) AND (a.project_id = s.project_id))))
+          WHERE ((EXISTS ( SELECT 1
+                   FROM public.environment_managed_fields f
+                  WHERE ((f.source_id = s.id) AND (f.resource = r.logical_name) AND (f.field_path ~~ 'variables/%'::text)))) OR (EXISTS ( SELECT 1
+                   FROM public.environment_gitops_runtime_effects x
+                  WHERE ((x.source_id = s.id) AND (x.app_id = r.app_id) AND (x.completed_at IS NULL)))))
+        ), boundaries AS (
+         SELECT t.source_id,
+            t.account_id,
+            t.app_id,
+            t.resource,
+            t.environment_slug,
+            GREATEST(COALESCE(( SELECT c.changed_at
+                   FROM public.app_runtime_config_changes c
+                  WHERE (c.app_id = t.app_id)), '1970-01-01 02:00:00+02'::timestamp with time zone), COALESCE(( SELECT max(v.updated_at) AS max
+                   FROM (public.app_envs v
+                     JOIN public.environment_managed_fields f ON (((f.source_id = t.source_id) AND (f.resource = t.resource) AND (f.field_path = ('variables/'::text || v.key)))))
+                  WHERE ((v.app_id = t.app_id) AND (v.scope = t.environment_slug))), '1970-01-01 02:00:00+02'::timestamp with time zone), COALESCE(( SELECT max(x.required_at) AS max
+                   FROM public.environment_gitops_runtime_effects x
+                  WHERE ((x.source_id = t.source_id) AND (x.app_id = t.app_id) AND (x.completed_at IS NULL))), '1970-01-01 02:00:00+02'::timestamp with time zone)) AS required_at
+           FROM targets t
+        )
+ SELECT source_id,
+    account_id,
+    app_id,
+    resource,
+    environment_slug,
+    required_at,
+    ( SELECT count(*) AS count
+           FROM (public.instances i
+             JOIN public.deployments d ON ((d.id = i.deployment_id)))
+          WHERE ((i.app_id = b.app_id) AND (d.scope = b.environment_slug) AND (i.state = ANY (ARRAY['waking'::text, 'cold_booting'::text, 'running'::text, 'warm'::text, 'draining'::text])) AND ((i.started_at IS NULL) OR (i.started_at <= b.required_at)))) AS stale_residents,
+    ( SELECT count(*) AS count
+           FROM (public.instances i
+             JOIN public.deployments d ON ((d.id = i.deployment_id)))
+          WHERE ((i.app_id = b.app_id) AND (d.scope = b.environment_slug) AND (i.state = ANY (ARRAY['waking'::text, 'cold_booting'::text])))) AS starting_residents,
+    ( SELECT count(*) AS count
+           FROM (public.snapshots p
+             JOIN public.deployments d ON ((d.id = p.deployment_id)))
+          WHERE ((d.app_id = b.app_id) AND (d.scope = b.environment_slug) AND (NOT p.stale) AND (NOT p.delete_pending) AND (p.created_at <= b.required_at))) AS stale_snapshots
+   FROM boundaries b;
 
 
 --
@@ -6804,45 +6979,6 @@ CREATE SEQUENCE public.instance_billing_intervals_id_seq
 --
 
 ALTER SEQUENCE public.instance_billing_intervals_id_seq OWNED BY public.instance_billing_intervals.id;
-
-
---
--- Name: instances; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.instances (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    app_id uuid,
-    deployment_id uuid,
-    state text NOT NULL,
-    netns text,
-    guest_uid integer,
-    host_ip inet,
-    ram_mb integer NOT NULL,
-    started_at timestamp with time zone,
-    last_request_at timestamp with time zone,
-    parked_at timestamp with time zone,
-    terminal_at timestamp with time zone,
-    node_id uuid NOT NULL,
-    wake_id uuid DEFAULT gen_random_uuid() NOT NULL,
-    org_id uuid,
-    migrated_from_node_id uuid,
-    migrated_at timestamp with time zone,
-    lease_token text,
-    framework_ready_at timestamp with time zone,
-    tail_count integer DEFAULT 0 NOT NULL,
-    request_count bigint DEFAULT 0 NOT NULL,
-    kind text DEFAULT 'wake'::text NOT NULL,
-    job_id uuid,
-    mode text DEFAULT 'normal'::text NOT NULL,
-    migration_started_at timestamp with time zone,
-    startup_cpu_boost_until timestamp with time zone,
-    CONSTRAINT instances_app_or_job_chk CHECK ((((kind = ANY (ARRAY['wake'::text, 'build'::text])) AND (app_id IS NOT NULL) AND (job_id IS NULL)) OR ((kind = 'job_task'::text) AND (app_id IS NULL) AND (job_id IS NOT NULL)))),
-    CONSTRAINT instances_kind_check CHECK ((kind = ANY (ARRAY['wake'::text, 'build'::text, 'job_task'::text]))),
-    CONSTRAINT instances_migrated_at_chk CHECK (((migrated_at IS NULL) OR (migrated_at <= (now() + '00:01:00'::interval)))),
-    CONSTRAINT instances_mode_check CHECK ((mode = ANY (ARRAY['normal'::text, 'mirror'::text, 'job'::text, 'worker'::text, 'service'::text]))),
-    CONSTRAINT instances_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'parked'::text, 'waking'::text, 'cold_booting'::text, 'running'::text, 'draining'::text, 'snapshotting'::text, 'migrating'::text, 'warm'::text, 'stopped'::text, 'failed'::text, 'evicting_account_deleting'::text])))
-);
 
 
 --
@@ -9344,22 +9480,6 @@ CREATE TABLE public.project_environment_route_policies (
 
 
 --
--- Name: project_environments; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.project_environments (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    account_id uuid NOT NULL,
-    project_id uuid NOT NULL,
-    slug text NOT NULL,
-    protected boolean DEFAULT false NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT project_environments_slug_shape CHECK ((slug ~ '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$'::text))
-);
-
-
---
 -- Name: project_release_members; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -10228,42 +10348,6 @@ COMMENT ON COLUMN public.snapshot_storage_daily.snapshot_bytes IS 'Σ snapshots.
 --
 
 COMMENT ON COLUMN public.snapshot_storage_daily.layer_bytes IS 'Σ overlay staging bytes per app per day. ADR-049 §B.3. Informational.';
-
-
---
--- Name: snapshots; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.snapshots (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    deployment_id uuid NOT NULL,
-    fc_version text NOT NULL,
-    mem_bytes bigint NOT NULL,
-    disk_bytes bigint NOT NULL,
-    stale boolean DEFAULT false NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    storage_key text DEFAULT ''::text NOT NULL,
-    tier text DEFAULT 'init'::text NOT NULL,
-    stored_bytes bigint DEFAULT 0 NOT NULL,
-    base_image_version text DEFAULT ''::text NOT NULL,
-    delete_pending boolean DEFAULT false NOT NULL,
-    CONSTRAINT snapshots_stored_bytes_nonnegative CHECK ((stored_bytes >= 0)),
-    CONSTRAINT snapshots_tier_check CHECK ((tier = ANY (ARRAY['init'::text, 'warm'::text])))
-);
-
-
---
--- Name: COLUMN snapshots.stored_bytes; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.snapshots.stored_bytes IS 'Filesystem allocation of published mem + vmstate artifacts. Zero means a legacy writer; telemetry conservatively falls back to logical bytes.';
-
-
---
--- Name: COLUMN snapshots.base_image_version; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.snapshots.base_image_version IS 'Runner base-image compatibility generation; required for HTTP/2 and gRPC snapshot restore.';
 
 
 --
@@ -12070,6 +12154,22 @@ ALTER TABLE ONLY public.environment_gitops_resources
 
 ALTER TABLE ONLY public.environment_gitops_runs
     ADD CONSTRAINT environment_gitops_runs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: environment_gitops_runtime_effects environment_gitops_runtime_ef_source_id_generation_plan_has_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_gitops_runtime_effects
+    ADD CONSTRAINT environment_gitops_runtime_ef_source_id_generation_plan_has_key UNIQUE (source_id, generation, plan_hash, app_id);
+
+
+--
+-- Name: environment_gitops_runtime_effects environment_gitops_runtime_effects_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_gitops_runtime_effects
+    ADD CONSTRAINT environment_gitops_runtime_effects_pkey PRIMARY KEY (id);
 
 
 --
@@ -15636,6 +15736,13 @@ CREATE INDEX environment_gitops_runs_source_history_idx ON public.environment_gi
 --
 
 CREATE UNIQUE INDEX environment_gitops_runs_source_lease_uniq ON public.environment_gitops_runs USING btree (source_id, lease_token);
+
+
+--
+-- Name: environment_gitops_runtime_effects_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX environment_gitops_runtime_effects_pending_idx ON public.environment_gitops_runtime_effects USING btree (source_id, app_id) WHERE (completed_at IS NULL);
 
 
 --
@@ -21097,6 +21204,30 @@ ALTER TABLE ONLY public.environment_gitops_runs
 
 ALTER TABLE ONLY public.environment_gitops_runs
     ADD CONSTRAINT environment_gitops_runs_source_id_revision_id_fkey FOREIGN KEY (source_id, revision_id) REFERENCES public.environment_desired_revisions(source_id, id);
+
+
+--
+-- Name: environment_gitops_runtime_effects environment_gitops_runtime_effects_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_gitops_runtime_effects
+    ADD CONSTRAINT environment_gitops_runtime_effects_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_gitops_runtime_effects environment_gitops_runtime_effects_source_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_gitops_runtime_effects
+    ADD CONSTRAINT environment_gitops_runtime_effects_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.environment_git_sources(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_gitops_runtime_effects environment_gitops_runtime_effects_source_id_revision_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_gitops_runtime_effects
+    ADD CONSTRAINT environment_gitops_runtime_effects_source_id_revision_id_fkey FOREIGN KEY (source_id, revision_id) REFERENCES public.environment_desired_revisions(source_id, id);
 
 
 --

@@ -1,4 +1,4 @@
-# ADR-379 · Git-owned environment intent and continuous reconciliation
+# ADR-382 · Git-owned environment intent and continuous reconciliation
 
 - **Status:** implementation in progress
 - **Date:** 2026-09-30
@@ -116,10 +116,31 @@ notification failure, a fresh controller, and two-workload prepare/apply orderin
 These tests use gateway transport fixtures; native serving-fleet proof remains
 required along with guest runtime acknowledgement.
 
+Variable intent now commits with durable runtime effects. Their freshness
+boundary comes from committed rows, remains stable across polling, and advances
+with a new wake identity when configuration changes again. PostgreSQL enqueues
+the scoped scheduler request in the same transaction as its durable effect;
+notification delivery alone cannot complete the work. Recovery checks resident
+process start boundaries, boot readiness, and restorable scoped snapshots before
+completing an effect. Publishing convergence rejects pending runtime work or
+freshly observed runtime drift. The apid backend also performs this verification
+when intent already equals Git, and report mode exposes runtime drift without
+requesting new VMs.
+
+The scheduler reuses its existing fresh-boot, route convergence, and drain path
+for an explicitly named environment. It leaves neighboring residents and idle
+canary deployments untouched and preserves scale-to-zero. Memory/PostgreSQL
+tests cover readiness, stable retries, advanced boundaries, superseded workers,
+report mode, and durable outbox payloads without customer values. Controller
+tests require runtime readiness after intent and fleet success, including
+recovery in a fresh controller. Scheduler tests drive the scoped event decoder
+and assert fresh capacity before retirement and zero stale snapshot captures.
+These checks use a VM transport fixture; native runtime acceptance remains open.
+
 The remaining full feature gates include source polling and protected-branch
 approval evidence; environment-scoped workload creation, source/runtime,
 secret-reference and queue/service-binding adapters; staged graph qualification
-and release activation; native serving-fleet and guest runtime acknowledgement; source freshness and
+and release activation; native serving-fleet and guest runtime evidence; source freshness and
 operational status integration; and native runtime acceptance.
 Unsupported resource fields currently block the complete plan. The source
 worker is not started from apid until these integration contracts are wired.

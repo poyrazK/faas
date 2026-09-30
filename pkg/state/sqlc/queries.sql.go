@@ -294,6 +294,41 @@ func (q *Queries) AcknowledgeEnvironmentGitOpsEffect(ctx context.Context, db DBT
 	return result.RowsAffected(), nil
 }
 
+const advanceEnvironmentGitOpsRuntimeBoundary = `-- name: AdvanceEnvironmentGitOpsRuntimeBoundary :one
+UPDATE environment_gitops_runtime_effects SET required_at = $1::timestamptz,
+    wake_id = gen_random_uuid(), requested_at = NULL, next_request_at = now()
+WHERE source_id = $2::uuid AND id = $3::uuid
+AND completed_at IS NULL AND required_at < $1::timestamptz RETURNING id, source_id, revision_id, generation, intent_version, plan_hash, app_id, environment_slug, required_at, wake_id, requested_at, next_request_at, completed_at, created_at
+`
+
+type AdvanceEnvironmentGitOpsRuntimeBoundaryParams struct {
+	RequiredAt pgtype.Timestamptz
+	SourceID   pgtype.UUID
+	EffectID   pgtype.UUID
+}
+
+func (q *Queries) AdvanceEnvironmentGitOpsRuntimeBoundary(ctx context.Context, db DBTX, arg AdvanceEnvironmentGitOpsRuntimeBoundaryParams) (EnvironmentGitopsRuntimeEffect, error) {
+	row := db.QueryRow(ctx, advanceEnvironmentGitOpsRuntimeBoundary, arg.RequiredAt, arg.SourceID, arg.EffectID)
+	var i EnvironmentGitopsRuntimeEffect
+	err := row.Scan(
+		&i.ID,
+		&i.SourceID,
+		&i.RevisionID,
+		&i.Generation,
+		&i.IntentVersion,
+		&i.PlanHash,
+		&i.AppID,
+		&i.EnvironmentSlug,
+		&i.RequiredAt,
+		&i.WakeID,
+		&i.RequestedAt,
+		&i.NextRequestAt,
+		&i.CompletedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const appByID = `-- name: AppByID :one
 select id, account_id, slug, type, coalesce(runtime, ''), ram_mb, coalesce(idle_timeout_s, 0),
        max_concurrency, status, manifest, created_at
@@ -1013,6 +1048,24 @@ type CompleteEnvironmentGitOpsEffectParams struct {
 
 func (q *Queries) CompleteEnvironmentGitOpsEffect(ctx context.Context, db DBTX, arg CompleteEnvironmentGitOpsEffectParams) (int64, error) {
 	result, err := db.Exec(ctx, completeEnvironmentGitOpsEffect, arg.SourceID, arg.EffectID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const completeEnvironmentGitOpsRuntime = `-- name: CompleteEnvironmentGitOpsRuntime :execrows
+UPDATE environment_gitops_runtime_effects SET completed_at = now()
+WHERE source_id = $1::uuid AND id = $2::uuid AND completed_at IS NULL
+`
+
+type CompleteEnvironmentGitOpsRuntimeParams struct {
+	SourceID pgtype.UUID
+	EffectID pgtype.UUID
+}
+
+func (q *Queries) CompleteEnvironmentGitOpsRuntime(ctx context.Context, db DBTX, arg CompleteEnvironmentGitOpsRuntimeParams) (int64, error) {
+	result, err := db.Exec(ctx, completeEnvironmentGitOpsRuntime, arg.SourceID, arg.EffectID)
 	if err != nil {
 		return 0, err
 	}
@@ -5005,12 +5058,36 @@ func (q *Queries) GetUploadSession(ctx context.Context, db DBTX, id string) (Upl
 	return i, err
 }
 
+const hasEnvironmentGitOpsRuntimeDrift = `-- name: HasEnvironmentGitOpsRuntimeDrift :one
+SELECT EXISTS(SELECT 1 FROM environment_gitops_runtime_targets WHERE source_id = $1::uuid
+AND (stale_residents > 0 OR starting_residents > 0 OR stale_snapshots > 0)) AS drifted
+`
+
+func (q *Queries) HasEnvironmentGitOpsRuntimeDrift(ctx context.Context, db DBTX, sourceID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, hasEnvironmentGitOpsRuntimeDrift, sourceID)
+	var drifted bool
+	err := row.Scan(&drifted)
+	return drifted, err
+}
+
 const hasPendingEnvironmentGitOpsEffects = `-- name: HasPendingEnvironmentGitOpsEffects :one
 SELECT EXISTS(SELECT 1 FROM environment_gitops_effects WHERE source_id = $1::uuid AND completed_at IS NULL) AS pending
 `
 
 func (q *Queries) HasPendingEnvironmentGitOpsEffects(ctx context.Context, db DBTX, sourceID pgtype.UUID) (bool, error) {
 	row := db.QueryRow(ctx, hasPendingEnvironmentGitOpsEffects, sourceID)
+	var pending bool
+	err := row.Scan(&pending)
+	return pending, err
+}
+
+const hasPendingEnvironmentGitOpsRuntime = `-- name: HasPendingEnvironmentGitOpsRuntime :one
+SELECT EXISTS(SELECT 1 FROM environment_gitops_runtime_effects
+WHERE source_id = $1::uuid AND completed_at IS NULL) AS pending
+`
+
+func (q *Queries) HasPendingEnvironmentGitOpsRuntime(ctx context.Context, db DBTX, sourceID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, hasPendingEnvironmentGitOpsRuntime, sourceID)
 	var pending bool
 	err := row.Scan(&pending)
 	return pending, err
@@ -5484,6 +5561,46 @@ func (q *Queries) InsertEnvironmentGitOpsRun(ctx context.Context, db DBTX, arg I
 	return i, err
 }
 
+const insertEnvironmentGitOpsRuntimeEffect = `-- name: InsertEnvironmentGitOpsRuntimeEffect :execrows
+INSERT INTO environment_gitops_runtime_effects(source_id, revision_id, generation, intent_version, plan_hash,
+    app_id, environment_slug, required_at)
+SELECT s.id, $1::uuid, s.generation, s.intent_version, $2::text,
+    $3::uuid, e.slug, greatest(coalesce(c.changed_at, 'epoch'::timestamptz), $4::timestamptz)
+FROM environment_git_sources s JOIN project_environments e ON e.id = s.environment_id
+LEFT JOIN app_runtime_config_changes c ON c.app_id = $3::uuid
+WHERE s.id = $5::uuid
+ON CONFLICT (source_id, generation, plan_hash, app_id) DO UPDATE SET
+    completed_at = NULL,
+    required_at = CASE WHEN environment_gitops_runtime_effects.completed_at IS NOT NULL
+        THEN greatest(environment_gitops_runtime_effects.required_at, excluded.required_at)
+        ELSE environment_gitops_runtime_effects.required_at END,
+    wake_id = CASE WHEN environment_gitops_runtime_effects.completed_at IS NOT NULL THEN gen_random_uuid() ELSE environment_gitops_runtime_effects.wake_id END,
+    requested_at = CASE WHEN environment_gitops_runtime_effects.completed_at IS NOT NULL THEN NULL ELSE environment_gitops_runtime_effects.requested_at END,
+    next_request_at = CASE WHEN environment_gitops_runtime_effects.completed_at IS NOT NULL THEN now() ELSE environment_gitops_runtime_effects.next_request_at END
+`
+
+type InsertEnvironmentGitOpsRuntimeEffectParams struct {
+	RevisionID pgtype.UUID
+	PlanHash   string
+	AppID      pgtype.UUID
+	RequiredAt pgtype.Timestamptz
+	SourceID   pgtype.UUID
+}
+
+func (q *Queries) InsertEnvironmentGitOpsRuntimeEffect(ctx context.Context, db DBTX, arg InsertEnvironmentGitOpsRuntimeEffectParams) (int64, error) {
+	result, err := db.Exec(ctx, insertEnvironmentGitOpsRuntimeEffect,
+		arg.RevisionID,
+		arg.PlanHash,
+		arg.AppID,
+		arg.RequiredAt,
+		arg.SourceID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const insertFeatureFlagVersion = `-- name: InsertFeatureFlagVersion :one
 INSERT INTO feature_flag_versions (account_id, project_id, environment_id, version, config, actor, restored_from)
 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING account_id, project_id, environment_id, version, config, actor, restored_from, created_at
@@ -5889,6 +6006,27 @@ func (q *Queries) InstanceListByNodeForRecovery(ctx context.Context, db DBTX, no
 		return nil, err
 	}
 	return items, nil
+}
+
+const invalidateEnvironmentGitOpsRuntimeAtBoundary = `-- name: InvalidateEnvironmentGitOpsRuntimeAtBoundary :exec
+WITH stamped AS (
+    INSERT INTO app_runtime_config_changes(app_id, changed_at)
+    VALUES ($1::uuid, $2::timestamptz)
+    ON CONFLICT (app_id) DO UPDATE SET changed_at = greatest(app_runtime_config_changes.changed_at, excluded.changed_at)
+    RETURNING app_id, changed_at
+)
+UPDATE snapshots p SET stale = true FROM deployments d, stamped c
+WHERE p.deployment_id = d.id AND d.app_id = c.app_id AND p.created_at <= c.changed_at AND NOT p.stale
+`
+
+type InvalidateEnvironmentGitOpsRuntimeAtBoundaryParams struct {
+	AppID      pgtype.UUID
+	RequiredAt pgtype.Timestamptz
+}
+
+func (q *Queries) InvalidateEnvironmentGitOpsRuntimeAtBoundary(ctx context.Context, db DBTX, arg InvalidateEnvironmentGitOpsRuntimeAtBoundaryParams) error {
+	_, err := db.Exec(ctx, invalidateEnvironmentGitOpsRuntimeAtBoundary, arg.AppID, arg.RequiredAt)
+	return err
 }
 
 const invalidateEnvironmentGitOpsRuntimeConfig = `-- name: InvalidateEnvironmentGitOpsRuntimeConfig :exec
@@ -9325,6 +9463,38 @@ func (q *Queries) LockEnvironmentGitOpsLease(ctx context.Context, db DBTX, arg L
 	return i, err
 }
 
+const lockEnvironmentGitOpsRuntimeEffect = `-- name: LockEnvironmentGitOpsRuntimeEffect :one
+SELECT id, source_id, revision_id, generation, intent_version, plan_hash, app_id, environment_slug, required_at, wake_id, requested_at, next_request_at, completed_at, created_at FROM environment_gitops_runtime_effects WHERE source_id = $1::uuid
+AND id = $2::uuid AND completed_at IS NULL FOR UPDATE
+`
+
+type LockEnvironmentGitOpsRuntimeEffectParams struct {
+	SourceID pgtype.UUID
+	EffectID pgtype.UUID
+}
+
+func (q *Queries) LockEnvironmentGitOpsRuntimeEffect(ctx context.Context, db DBTX, arg LockEnvironmentGitOpsRuntimeEffectParams) (EnvironmentGitopsRuntimeEffect, error) {
+	row := db.QueryRow(ctx, lockEnvironmentGitOpsRuntimeEffect, arg.SourceID, arg.EffectID)
+	var i EnvironmentGitopsRuntimeEffect
+	err := row.Scan(
+		&i.ID,
+		&i.SourceID,
+		&i.RevisionID,
+		&i.Generation,
+		&i.IntentVersion,
+		&i.PlanHash,
+		&i.AppID,
+		&i.EnvironmentSlug,
+		&i.RequiredAt,
+		&i.WakeID,
+		&i.RequestedAt,
+		&i.NextRequestAt,
+		&i.CompletedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const lockEnvironmentGitSource = `-- name: LockEnvironmentGitSource :one
 SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at FROM environment_git_sources s
 WHERE s.account_id = $1::uuid AND s.id = $2::uuid
@@ -12715,6 +12885,55 @@ func (q *Queries) ObserveEnvironmentGitOpsIntent(ctx context.Context, db DBTX, a
 	return observation, err
 }
 
+const observeEnvironmentGitOpsRuntime = `-- name: ObserveEnvironmentGitOpsRuntime :many
+SELECT app_id, resource, environment_slug, required_at::timestamptz AS required_at, stale_residents, starting_residents, stale_snapshots
+FROM environment_gitops_runtime_targets WHERE source_id = $1::uuid
+AND account_id = $2::uuid ORDER BY app_id
+`
+
+type ObserveEnvironmentGitOpsRuntimeParams struct {
+	SourceID  pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+type ObserveEnvironmentGitOpsRuntimeRow struct {
+	AppID             pgtype.UUID
+	Resource          string
+	EnvironmentSlug   string
+	RequiredAt        pgtype.Timestamptz
+	StaleResidents    int64
+	StartingResidents int64
+	StaleSnapshots    int64
+}
+
+func (q *Queries) ObserveEnvironmentGitOpsRuntime(ctx context.Context, db DBTX, arg ObserveEnvironmentGitOpsRuntimeParams) ([]ObserveEnvironmentGitOpsRuntimeRow, error) {
+	rows, err := db.Query(ctx, observeEnvironmentGitOpsRuntime, arg.SourceID, arg.AccountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObserveEnvironmentGitOpsRuntimeRow{}
+	for rows.Next() {
+		var i ObserveEnvironmentGitOpsRuntimeRow
+		if err := rows.Scan(
+			&i.AppID,
+			&i.Resource,
+			&i.EnvironmentSlug,
+			&i.RequiredAt,
+			&i.StaleResidents,
+			&i.StartingResidents,
+			&i.StaleSnapshots,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const orgByID = `-- name: OrgByID :one
 select
     id, slug, name, personal_org,
@@ -13005,6 +13224,46 @@ func (q *Queries) PendingEnvironmentGitOpsEffects(ctx context.Context, db DBTX, 
 			&i.AcknowledgedNodes,
 			&i.CreatedAt,
 			&i.CompletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const pendingEnvironmentGitOpsRuntime = `-- name: PendingEnvironmentGitOpsRuntime :many
+SELECT id, source_id, revision_id, generation, intent_version, plan_hash, app_id, environment_slug, required_at, wake_id, requested_at, next_request_at, completed_at, created_at FROM environment_gitops_runtime_effects
+WHERE source_id = $1::uuid AND completed_at IS NULL ORDER BY app_id, created_at, id
+`
+
+func (q *Queries) PendingEnvironmentGitOpsRuntime(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]EnvironmentGitopsRuntimeEffect, error) {
+	rows, err := db.Query(ctx, pendingEnvironmentGitOpsRuntime, sourceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EnvironmentGitopsRuntimeEffect{}
+	for rows.Next() {
+		var i EnvironmentGitopsRuntimeEffect
+		if err := rows.Scan(
+			&i.ID,
+			&i.SourceID,
+			&i.RevisionID,
+			&i.Generation,
+			&i.IntentVersion,
+			&i.PlanHash,
+			&i.AppID,
+			&i.EnvironmentSlug,
+			&i.RequiredAt,
+			&i.WakeID,
+			&i.RequestedAt,
+			&i.NextRequestAt,
+			&i.CompletedAt,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -13700,6 +13959,22 @@ func (q *Queries) RenewEnvironmentGitOpsLease(ctx context.Context, db DBTX, arg 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const requestEnvironmentGitOpsRuntimeRefresh = `-- name: RequestEnvironmentGitOpsRuntimeRefresh :exec
+UPDATE environment_gitops_runtime_effects SET requested_at = now(), next_request_at = $1::timestamptz
+WHERE source_id = $2::uuid AND id = $3::uuid AND completed_at IS NULL
+`
+
+type RequestEnvironmentGitOpsRuntimeRefreshParams struct {
+	NextRequestAt pgtype.Timestamptz
+	SourceID      pgtype.UUID
+	EffectID      pgtype.UUID
+}
+
+func (q *Queries) RequestEnvironmentGitOpsRuntimeRefresh(ctx context.Context, db DBTX, arg RequestEnvironmentGitOpsRuntimeRefreshParams) error {
+	_, err := db.Exec(ctx, requestEnvironmentGitOpsRuntimeRefresh, arg.NextRequestAt, arg.SourceID, arg.EffectID)
+	return err
 }
 
 const requestTelemetryAnalyticsByDeployment = `-- name: RequestTelemetryAnalyticsByDeployment :many

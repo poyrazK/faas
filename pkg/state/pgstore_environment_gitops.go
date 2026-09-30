@@ -295,6 +295,17 @@ func (s *PgStore) FinishEnvironmentGitOps(ctx context.Context, lease Environment
 		if pending {
 			return ErrConflict
 		}
+		pendingRuntime, err := q.HasPendingEnvironmentGitOpsRuntime(ctx, tx, source.ID)
+		if err != nil {
+			return mapErr(err)
+		}
+		runtimeDrift, err := q.HasEnvironmentGitOpsRuntimeDrift(ctx, tx, source.ID)
+		if err != nil {
+			return mapErr(err)
+		}
+		if pendingRuntime || runtimeDrift {
+			return ErrConflict
+		}
 	}
 	count, err := q.FinishEnvironmentGitOpsRun(ctx, tx, sqlc.FinishEnvironmentGitOpsRunParams{
 		RunID: mustPgUUID(lease.RunID), SourceID: mustPgUUID(lease.Source.ID), Generation: lease.Source.Generation,

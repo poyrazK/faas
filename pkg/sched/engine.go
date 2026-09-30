@@ -1864,6 +1864,20 @@ func (e *Engine) RefreshRuntimeConfig(ctx context.Context, appID, wakeID string)
 	return e.restartApp(ctx, appID, wakeID, true)
 }
 
+// RefreshRuntimeConfigForEnvironment refreshes resident workloads in one
+// environment. A parked environment stays cold; its next ordinary wake uses
+// the committed configuration. Legacy refresh requests still cover all scopes.
+func (e *Engine) RefreshRuntimeConfigForEnvironment(ctx context.Context, appID, wakeID, scope string) (CoordOutcome, error) {
+	if !api.ValidProjectEnvironmentSlug(scope) {
+		return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: invalid environment %q", scope)
+	}
+	return e.restartApp(context.WithValue(ctx, runtimeRefreshScopeKey{}, scope), appID, wakeID, true)
+}
+
+// Keep refresh selection separate from the ordinary wake context: a scoped
+// wake context must not silently narrow a legacy application-wide refresh.
+type runtimeRefreshScopeKey struct{}
+
 // restartApp serializes both restart policies behind the same app-level and
 // notification single-flight. EnsureWake retains the existing admission,
 // ownership, wake-correlation, and rate-limit behavior for the replacement.

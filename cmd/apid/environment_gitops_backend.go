@@ -205,6 +205,9 @@ func (b *environmentGitOpsBackend) applyEffect(ctx context.Context, lease state.
 }
 
 func (b *environmentGitOpsBackend) RecoverEffects(ctx context.Context, lease state.EnvironmentGitOpsLease) error {
+	if err := b.recoverRuntime(ctx, lease); err != nil {
+		return err
+	}
 	pending, err := b.effects.PendingEnvironmentGitOpsEffects(ctx, lease)
 	if err != nil || len(pending) == 0 {
 		return err

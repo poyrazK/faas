@@ -393,6 +393,11 @@ func (m *MemStore) applyEnvironmentGitOps(_ context.Context, lease EnvironmentGi
 			RevisionID: lease.Revision.ID, Generation: source.Generation, IntentVersion: memory.source.IntentVersion, PlanHash: plan.Hash}
 		memory.effects[effect.ID] = cloneEnvironmentGitOpsEffect(effect)
 	}
+	if requireEffects {
+		for _, appID := range gitOpsChangedVariableApps(plan, observed.State.ResourceIDs) {
+			m.insertGitOpsRuntimeEffectLocked(memory, lease, plan, appID, m.runtimeConfigChangedAt[appID])
+		}
+	}
 	run := memory.runs[lease.RunID]
 	run.Status = "applying"
 	run.Plan, _ = json.Marshal(plan)

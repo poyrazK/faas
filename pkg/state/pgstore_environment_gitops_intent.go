@@ -449,6 +449,13 @@ func (s *PgStore) applyEnvironmentGitOps(ctx context.Context, lease EnvironmentG
 			return nil, mapErr(err)
 		}
 	}
+	if requireEffects {
+		for _, appID := range gitOpsChangedVariableApps(plan, observed.State.ResourceIDs) {
+			if err := insertGitOpsRuntimeEffect(ctx, tx, lease, plan, appID, time.Unix(0, 0).UTC()); err != nil {
+				return nil, err
+			}
+		}
+	}
 	count, err := q.SaveEnvironmentGitOpsProgress(ctx, tx, sqlc.SaveEnvironmentGitOpsProgressParams{RunID: mustPgUUID(lease.RunID), SourceID: mustPgUUID(lease.Source.ID), LeaseToken: lease.LeaseToken, Plan: rawPlan, Steps: rawSteps})
 	if err != nil {
 		return nil, mapErr(err)

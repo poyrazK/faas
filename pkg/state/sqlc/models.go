@@ -1621,6 +1621,35 @@ type EnvironmentGitopsRun struct {
 	CompletedAt pgtype.Timestamptz
 }
 
+type EnvironmentGitopsRuntimeEffect struct {
+	ID              pgtype.UUID
+	SourceID        pgtype.UUID
+	RevisionID      pgtype.UUID
+	Generation      int64
+	IntentVersion   int64
+	PlanHash        string
+	AppID           pgtype.UUID
+	EnvironmentSlug string
+	RequiredAt      pgtype.Timestamptz
+	WakeID          pgtype.UUID
+	RequestedAt     pgtype.Timestamptz
+	NextRequestAt   pgtype.Timestamptz
+	CompletedAt     pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+}
+
+type EnvironmentGitopsRuntimeTarget struct {
+	SourceID          pgtype.UUID
+	AccountID         pgtype.UUID
+	AppID             pgtype.UUID
+	Resource          string
+	EnvironmentSlug   string
+	RequiredAt        interface{}
+	StaleResidents    int64
+	StartingResidents int64
+	StaleSnapshots    int64
+}
+
 type EnvironmentManagedField struct {
 	EnvironmentID pgtype.UUID
 	Resource      string

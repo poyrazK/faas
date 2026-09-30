@@ -102,6 +102,7 @@ func TestEnvironmentGitOpsEffectsCommitWithIntentAndFenceConvergence(t *testing.
 		if err := effects.CompleteEnvironmentGitOpsEffect(t.Context(), lease, effect.ID); err != nil {
 			t.Fatal(err)
 		}
+		finishColdGitOpsRuntime(t, basic, lease)
 		if err := finish(); err != nil {
 			t.Fatalf("fully acknowledged effect prevented finish: %v", err)
 		}
@@ -173,6 +174,7 @@ func testGitOpsEffectsReplacementWorker(t *testing.T, supersede bool) {
 		if err := effects.CompleteEnvironmentGitOpsEffect(t.Context(), fresh, id); err != nil {
 			t.Fatal(err)
 		}
+		finishColdGitOpsRuntime(t, basic, fresh)
 		verified := claimedIntentPlan(t, store, fresh, desired)
 		rawPlan, _ := json.Marshal(verified)
 		now := claimAt

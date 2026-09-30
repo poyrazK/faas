@@ -172,3 +172,46 @@ func TestWorkerCannotFinishAfterNewRevisionIsApprovedDuringApply(t *testing.T) {
 		t.Fatalf("old generation published success: %+v", status)
 	}
 }
+
+type runtimeBackend struct {
+	*backend
+	ready    bool
+	err      error
+	verified int
+}
+
+func (b *runtimeBackend) VerifyRuntime(context.Context, state.EnvironmentGitOpsLease, environmentsync.Plan) (bool, error) {
+	b.verified++
+	return b.ready, b.err
+}
+
+func TestWorkerRequiresRuntimeProofBeforePublishingAppliedRevision(t *testing.T) {
+	for _, test := range []struct {
+		name, mode, status, code string
+		ready                    bool
+		err                      error
+	}{
+		{name: "enforce-pending", mode: "enforce", status: "partial", code: "environment_runtime_unacknowledged"},
+		{name: "report-pending", mode: "report", status: "drifted", code: "environment_runtime_unacknowledged"},
+		{name: "verified", mode: "enforce", status: "converged", ready: true},
+		{name: "probe-failed", mode: "enforce", status: "partial", code: "environment_runtime_verification_failed", err: errors.New("must-not-leak runtime value")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store, source, _, base, worker := setup(t, test.mode)
+			b := &runtimeBackend{backend: base, ready: test.ready, err: test.err}
+			worker.Backend = b
+			if worked, err := worker.RunOnce(t.Context()); err != nil || !worked {
+				t.Fatalf("worker: %v %v", worked, err)
+			}
+			run := lastRun(t, store, source)
+			current, err := store.EnvironmentGitSource(t.Context(), source.AccountID, source.ProjectID, source.EnvironmentSlug)
+			encoded, _ := json.Marshal(run)
+			if err != nil || run.Status != test.status || run.ErrorCode != test.code || b.verified != 1 || b.applied != 0 || strings.Contains(string(encoded), "must-not-leak") {
+				t.Fatalf("runtime proof/status lost: %+v %+v %v", run, b, err)
+			}
+			if test.ready != (current.AppliedRevisionID == source.ApprovedRevisionID) {
+				t.Fatalf("applied revision disagrees with runtime readiness: %+v", current)
+			}
+		})
+	}
+}

@@ -34,6 +34,12 @@ type EffectRecoverer interface {
 	RecoverEffects(context.Context, state.EnvironmentGitOpsLease) error
 }
 
+// RuntimeVerifier proves effective runtime separately from customer intent.
+// In report mode it must observe only; enforcement may resume durable work.
+type RuntimeVerifier interface {
+	VerifyRuntime(context.Context, state.EnvironmentGitOpsLease, environmentsync.Plan) (bool, error)
+}
+
 type Worker struct {
 	Store         state.EnvironmentGitOpsStore
 	Backend       Backend
@@ -147,7 +153,8 @@ func (w *Worker) reconcile(ctx context.Context, lease state.EnvironmentGitOpsLea
 		return "blocked", plan, steps, ""
 	}
 	if lease.Source.Spec.Mode == "report" {
-		return convergenceStatus(plan), plan, steps, ""
+		status, code := w.runtimeStatus(ctx, lease, plan)
+		return status, plan, steps, code
 	}
 	if plan.HasDrift() {
 		steps, err = w.Backend.Apply(ctx, lease, plan)
@@ -167,7 +174,27 @@ func (w *Worker) reconcile(ctx context.Context, lease state.EnvironmentGitOpsLea
 	if !plan.CanApply() {
 		return "blocked", plan, steps, ""
 	}
-	return convergenceStatus(plan), plan, steps, ""
+	status, code := w.runtimeStatus(ctx, lease, plan)
+	return status, plan, steps, code
+}
+
+func (w *Worker) runtimeStatus(ctx context.Context, lease state.EnvironmentGitOpsLease, plan environmentsync.Plan) (string, string) {
+	status := convergenceStatus(plan)
+	verifier, ok := w.Backend.(RuntimeVerifier)
+	if status != "converged" || !ok {
+		return status, ""
+	}
+	ready, err := verifier.VerifyRuntime(ctx, lease, plan)
+	if err != nil {
+		return "partial", "environment_runtime_verification_failed"
+	}
+	if !ready {
+		if lease.Source.Spec.Mode == "report" {
+			return "drifted", "environment_runtime_unacknowledged"
+		}
+		return "partial", "environment_runtime_unacknowledged"
+	}
+	return status, ""
 }
 
 func (w *Worker) observePlan(ctx context.Context, lease state.EnvironmentGitOpsLease, desired environmentsync.DesiredState) (environmentsync.Plan, error) {

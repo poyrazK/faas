@@ -21,6 +21,7 @@ type environmentGitOpsMemory struct {
 	owners    map[string]environmentsync.Ownership
 	overrides map[string]environmentsync.Override
 	effects   map[string]EnvironmentGitOpsEffect
+	runtime   map[string]EnvironmentGitOpsRuntimeEffect
 }
 
 var _ EnvironmentGitOpsStore = (*MemStore)(nil)
@@ -234,6 +235,14 @@ func (m *MemStore) FinishEnvironmentGitOps(_ context.Context, lease EnvironmentG
 			if effect.CompletedAt == nil {
 				return ErrConflict
 			}
+		}
+		for _, effect := range memory.runtime {
+			if effect.CompletedAt == nil {
+				return ErrConflict
+			}
+		}
+		if !gitOpsRuntimeReady(m.gitOpsRuntimeTargetsLocked(memory)) {
+			return ErrConflict
 		}
 	}
 	completed := now.UTC()
