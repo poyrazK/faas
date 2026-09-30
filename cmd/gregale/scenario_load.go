@@ -33,6 +33,8 @@ type testLoadSpec struct {
 	Pacing     string              `yaml:"pacing"`
 	Stages     []testLoadStageSpec `yaml:"stages"`
 	Thresholds testLoadThresholds  `yaml:"thresholds"`
+	Workload   string              `yaml:"workload,omitempty"`
+	Regression *testRegressionSpec `yaml:"regression,omitempty"`
 }
 
 type testLoadThresholds struct {
@@ -74,6 +76,7 @@ type testLoadConfig struct {
 	Stages                              []testLoadStage
 	StepThresholds                      map[string]testLoadStepThresholdConfig
 	Progress                            func(testLoadProgress)
+	Regression                          testRegressionConfig
 }
 
 type testLoadLatency struct {
@@ -132,6 +135,7 @@ type testLoadEvidence struct {
 	Thresholds []testLoadThresholdEvidence `json:"thresholds,omitempty"`
 	Stages     []testLoadStageEvidence     `json:"stages,omitempty"`
 	Arrival    *testLoadArrivalEvidence    `json:"arrival,omitempty"`
+	Workload   *testLoadWorkload           `json:"workload,omitempty"`
 }
 
 func validateTestLoadSpec(spec *testLoadSpec) error {
@@ -212,7 +216,10 @@ func validateTestLoadSpec(spec *testLoadSpec) error {
 			return fmt.Errorf("load.thresholds.steps.%s: %w", name, err)
 		}
 	}
-	return nil
+	if spec.Workload != "" && !testSuiteNamePattern.MatchString(spec.Workload) {
+		return errors.New("load.workload needs 1..80 lowercase letters, digits, or hyphens starting with a letter")
+	}
+	return validateTestRegressionSpec(spec.Regression)
 }
 
 func validateTestLoadThresholds(p95 string, errorRate *float64) error {
@@ -242,6 +249,13 @@ func validateTestLoadStepThresholds(scenario testScenario) error {
 	for name := range scenario.Load.Thresholds.Steps {
 		if !names[name] {
 			return fmt.Errorf("load.thresholds.steps references undeclared HTTP step %q", name)
+		}
+	}
+	if scenario.Load.Regression != nil {
+		for name := range scenario.Load.Regression.Steps {
+			if !names[name] {
+				return fmt.Errorf("load.regression.steps references undeclared HTTP step %q", name)
+			}
 		}
 	}
 	return nil
@@ -301,6 +315,7 @@ func resolveTestLoadConfig(scenario testScenario, overrides testLoadOverrides) (
 		return nil, err
 	}
 	cfg := &testLoadConfig{VUs: spec.VUs, Iterations: spec.Iterations, Rate: spec.Rate, RequestLimit: testLoadMaxRequests}
+	cfg.Regression = resolveTestRegressionConfig(spec.Regression)
 	if cfg.VUs == 0 {
 		cfg.VUs = 1
 	}

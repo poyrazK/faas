@@ -23,6 +23,8 @@ type testRunPlan struct {
 	Profile  string
 	Case     testDataCase
 	Attempt  int
+	Workload *testLoadWorkload
+	Baseline *testRunReceipt
 }
 
 func prepareTestRunPlans(scenarios []testPreparedScenario, repeat int) []testRunPlan {
@@ -47,14 +49,19 @@ func prepareTestRunPlans(scenarios []testPreparedScenario, repeat int) []testRun
 	return plans
 }
 
-func executePreparedTests(client *Client, suite string, scenarios []testPreparedScenario, repeat int, failFast bool, reportPath, junitPath string) int {
+func executePreparedTests(client *Client, suite string, scenarios []testPreparedScenario, repeat int, failFast bool, reportPath, junitPath, baselinePath string) int {
+	plans := prepareTestRunPlans(scenarios, repeat)
+	digest, err := prepareTestBaselines(baselinePath, plans, reportPath, junitPath)
+	if err != nil {
+		return printErr("Invalid performance baseline", &exitErr{msg: err.Error(), code: 1})
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), testTerminationSignals()...)
 	defer stop()
-	results := runPreparedTestPlans(ctx, client, suite, prepareTestRunPlans(scenarios, repeat), repeat, failFast)
+	results := runPreparedTestPlans(ctx, client, suite, plans, repeat, failFast, digest)
 	return finishTestRunReports(suite, results, reportPath, junitPath)
 }
 
-func runPreparedTestPlans(ctx context.Context, client *Client, suite string, plans []testRunPlan, repeat int, failFast bool) []testRunReceipt {
+func runPreparedTestPlans(ctx context.Context, client *Client, suite string, plans []testRunPlan, repeat int, failFast bool, baselineDigest string) []testRunReceipt {
 	results := make([]testRunReceipt, 0, len(plans))
 	skipReason := ""
 	for _, plan := range plans {
@@ -70,11 +77,16 @@ func runPreparedTestPlans(ctx context.Context, client *Client, suite string, pla
 			}
 			if plan.Prepared.Load != nil {
 				receipt.Load = newTestLoadEvidence(plan.Prepared.Load)
+				receipt.Load.Workload = plan.Workload
+			}
+			if plan.Baseline != nil {
+				receipt.Baseline = &testBaselineEvidence{Status: "not_compared", ReportSHA256: baselineDigest, Error: skipReason}
 			}
 		} else {
 			printTestRunStart(plan, repeat)
 			receipt = executeTestRunPlan(ctx, client, plan)
 			// Runners return only after fixtures and resources have been cleaned up.
+			applyTestBaseline(plan, &receipt, baselineDigest)
 			if failFast && receipt.Status != "passed" {
 				skipReason = "not run after an earlier failure (--fail-fast)"
 			}
@@ -138,6 +150,9 @@ func printTestRunResult(receipt testRunReceipt, repeat int) {
 	_, _ = fmt.Fprintf(osStdout, "%s: %s (%s)\n", receipt.Scenario, receipt.Status, label)
 	if receipt.Load != nil {
 		printTestLoadSummary(osStdout, receipt.Load)
+	}
+	if receipt.Baseline != nil {
+		_, _ = fmt.Fprintf(osStdout, "  baseline: %s (%d checks)\n", receipt.Baseline.Status, len(receipt.Baseline.Checks))
 	}
 	for _, message := range []string{receipt.Error, receipt.CleanupError, receipt.SkipReason} {
 		if message != "" {

@@ -460,6 +460,90 @@ runs. Commands receive `GREGALE_TEST_LOAD=1`, `GREGALE_TEST_LOAD_MODE`,
 `GREGALE_TEST_LOAD_DURATION`. After load, assertions and cleanup can also inspect
 aggregate evidence in `GREGALE_TEST_LOAD_JSON`.
 
+### Compare against a performance baseline
+
+Save a successful local load report, then use it as a regression gate:
+
+```sh
+gregale test --scenario api-smoke --engine local --load --repeat 3 \
+  --report baseline.json
+gregale test --scenario api-smoke --engine local --load --repeat 3 \
+  --baseline baseline.json --report current.json --junit current.xml
+```
+
+These commands use `local.command`; add the same `--base-url` for an app you
+start yourself. The same workflow works with `--suite` and member case files.
+`--baseline` requires `--load` and test execution. Recording a report does not
+require a baseline, and the comparison never updates the baseline file.
+
+By default, the aggregate and **every HTTP step** must have at least 20 samples
+in both runs, p95 latency may increase by at most 10%, and the error rate may not
+increase. Keep different budgets in the scenario:
+
+```yaml
+load:
+  workload: exports-small-v1
+  vus: 5
+  iterations: 100
+  thresholds: {p95: 250ms, error_rate: 0.01}
+  regression:
+    p95_percent: 15
+    error_rate_increase: 0.005
+    min_samples: 50
+    steps:
+      submit: {p95_percent: 10}
+      read: {p95_percent: 20, error_rate_increase: 0}
+```
+
+Step budgets inherit unspecified values from the aggregate regression block.
+Limits are inclusive. `p95_percent` is a relative increase: baseline p95 of
+100ms and a 15% budget permit at most 115ms. A zero baseline permits only zero
+latency. `error_rate_increase` is an absolute fraction: `0.005` allows an increase
+of 0.5 percentage points, such as 1% to 1.5%. The allowed ranges are 0–1,000 for
+the percent, 0–1 for the error fraction, and 1–100,000 for minimum samples.
+Absolute `thresholds` still apply; regression budgets add a separate gate only
+when `--baseline` is supplied. Validate the manifest budgets with the usual
+`--validate --engine local --load` command.
+
+Before starting any app or fixture, the CLI matches each selected run by
+scenario, engine, profile, case, and attempt number. A baseline can contain
+additional runs, but missing or duplicate matches fail. Only successful load
+runs with successful cleanup qualify. Incomplete runs, dropped arrivals,
+insufficient baseline samples, and malformed metrics are rejected. Reports from
+older CLI versions without workload metadata must be recorded again.
+
+New load reports include versioned `load.workload` metadata. Its signature checks
+the ordered request templates (including query, JSON body, assertions, captures,
+and header template dependencies), data field names and scalar types, managed
+versus manually started app mode, scenario timeout, VUs, iteration or duration
+budget, rate, stages, and pacing. Thresholds, regression budgets, progress,
+app source revisions, commands, and loopback ports are excluded. This lets an
+application change while keeping its test workload constant.
+
+Resolved consumer credentials, literal header values, environment values, and
+case values are excluded from the signature. They are not written into workload
+metadata. Set `load.workload` to identify your dataset and environment version,
+and change that label when those inputs change. Use equivalent fixture state and
+generator resources for the two runs; the CLI cannot certify those conditions.
+Literal values declared in request bodies and expectations enter the signature
+as part of their templates; the report contains only their hash.
+
+Each repeated attempt and data row is compared separately. Percentiles are not
+averaged or reconstructed from report summaries. Use enough journeys and repeats
+to measure your application reliably; a regression budget is a deterministic
+gate, not a statistical confidence test. A sparse current run fails its sample
+gate even when the observed latency and errors would pass.
+
+JSON records comparison status, the baseline report's SHA-256, and per-metric
+baseline/current values, deltas, limits, and pass/fail results under `baseline`.
+Failed comparisons fail the command and JUnit case. Cleanup completes before
+comparison; `--fail-fast` then skips remaining attempts and suite members.
+Their comparison status is `not_compared`, as it is for a run that fails its
+execution or cleanup. A regression-only failure can have `load.status: passed`
+while the receipt and `baseline.status` are failed. Report destinations that
+alias the baseline file are rejected, including symlinks and hard links.
+Baseline inputs are local JSON report arrays, capped at 64 MiB.
+
 ### Schedule a fixed arrival rate
 
 Use `--rate` to schedule journeys independently of response speed. A journey is

@@ -197,6 +197,7 @@ type testRunReceipt struct {
 	Requests     []testHTTPRequestEvidence          `json:"requests,omitempty"`
 	Load         *testLoadEvidence                  `json:"load,omitempty"`
 	LocalApp     *testLocalAppEvidence              `json:"local_app,omitempty"`
+	Baseline     *testBaselineEvidence              `json:"baseline,omitempty"`
 }
 
 func cmdTest(args []string) int {
@@ -222,6 +223,7 @@ func cmdTest(args []string) int {
 	duration := fs.String("duration", "", "schedule journeys for this duration with --load (1s..5m)")
 	pacing := fs.String("pacing", "", "pause between each user's load journeys (0s..1m)")
 	progress := fs.Bool("progress", false, "print live load progress to stderr")
+	baselinePath := fs.String("baseline", "", "compare local load with a saved successful JSON report")
 	profile := fs.String("profile", "all", "warm, cold, restored, or all")
 	repeat := fs.Int("repeat", 1, "runs per lifecycle profile or local case (1..20)")
 	maxWorkloadMinutes := fs.Int("max-workload-minutes", 0, "maximum estimated VM workload-minutes for this command (0 disables guard)")
@@ -232,7 +234,7 @@ func cmdTest(args []string) int {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) || fs.NArg() != 0 {
-		PrintUsage(osStderr, "usage: gregale test [--validate|--preflight] [--scenario NAME|--suite NAME] [--fail-fast] [--engine real-vm|local|simulated] [--base-url URL] [--data PATH] [--load [--vus N] [--iterations N|--duration D [--rate N]] [--pacing D] [--progress]] [--profile warm|cold|restored|all] [--repeat N] [--max-workload-minutes N] [--manifest PATH] [--report PATH] [--junit PATH]", "test")
+		PrintUsage(osStderr, "usage: gregale test [--validate|--preflight] [--scenario NAME|--suite NAME] [--fail-fast] [--engine real-vm|local|simulated] [--base-url URL] [--data PATH] [--load [--vus N] [--iterations N|--duration D [--rate N]] [--pacing D] [--progress] [--baseline PATH]] [--profile warm|cold|restored|all] [--repeat N] [--max-workload-minutes N] [--manifest PATH] [--report PATH] [--junit PATH]", "test")
 		return 1
 	}
 	loadOverrides := testLoadOverrides{VUs: *vus, Iterations: *iterations, Rate: *rate, Duration: *duration, Pacing: *pacing}
@@ -252,6 +254,9 @@ func cmdTest(args []string) int {
 	})
 	if !*load && (loadOverrides.VUsSet || loadOverrides.IterationsSet || loadOverrides.RateSet || loadOverrides.DurationSet || loadOverrides.PacingSet || *progress) {
 		return printErr("Invalid load options", errors.New("--vus, --iterations, --rate, --duration, --pacing, and --progress require --load"))
+	}
+	if *baselinePath != "" && (!*load || *validateOnly || *preflightOnly) {
+		return printErr("Invalid baseline options", errors.New("--baseline requires --load and test execution"))
 	}
 	if *repeat < 1 || *repeat > 20 {
 		return printErr("Invalid repeat count", errors.New("--repeat must be between 1 and 20"))
@@ -278,6 +283,7 @@ func cmdTest(args []string) int {
 		options := testSuiteOptions{
 			Engine: *engine, Profile: *profile, BaseURL: *baseURL, Repeat: *repeat,
 			Load: *load, LoadOverrides: loadOverrides, Progress: *progress,
+			BaselinePath:       *baselinePath,
 			MaxWorkloadMinutes: *maxWorkloadMinutes, Validate: *validateOnly, Preflight: *preflightOnly,
 		}
 		fs.Visit(func(selected *flag.Flag) {
@@ -394,7 +400,7 @@ func cmdTest(args []string) int {
 		Name: *scenarioName, Scenario: scenario, ManifestDir: sourceDir,
 		Engine: *engine, Profiles: profiles, Cases: cases, BaseURL: *baseURL, Load: loadConfigs[*scenarioName],
 	}
-	return executePreparedTests(client, "", []testPreparedScenario{prepared}, *repeat, *failFast, *reportPath, *junitPath)
+	return executePreparedTests(client, "", []testPreparedScenario{prepared}, *repeat, *failFast, *reportPath, *junitPath, *baselinePath)
 }
 
 func selectedTestProfiles(profile string) ([]string, error) {

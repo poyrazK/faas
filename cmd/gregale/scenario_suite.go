@@ -29,6 +29,7 @@ type testSuiteOptions struct {
 	Load               bool
 	LoadOverrides      testLoadOverrides
 	Progress           bool
+	BaselinePath       string
 	MaxWorkloadMinutes int
 	Validate           bool
 	Preflight          bool
@@ -93,7 +94,7 @@ func cmdTestSuite(path, name string, options testSuiteOptions, failFast bool, re
 	if options.Preflight {
 		return runTestSuitePreflight(context.Background(), client, scenarios, options.Repeat)
 	}
-	return executePreparedTests(client, name, scenarios, options.Repeat, failFast, reportPath, junitPath)
+	return executePreparedTests(client, name, scenarios, options.Repeat, failFast, reportPath, junitPath, options.BaselinePath)
 }
 
 func prepareTestSuite(path, name string, options testSuiteOptions) ([]testPreparedScenario, error) {

@@ -1677,7 +1677,7 @@ Compare two named environments in the linked project
 
 Run scenario suites and bounded local HTTP load tests
 
-`gregale test [<subcommand>] [--scenario <NAME>] [--suite <NAME>] [--fail-fast] [--validate] [--preflight] [--engine <ENGINE>] [--base-url <URL>] [--data <PATH>] [--load] [--vus <N>] [--rate <N>] [--iterations <N>] [--duration <DURATION>] [--pacing <DURATION>] [--progress] [--profile <PROFILE>] [--repeat <N>] [--max-workload-minutes <N>] [--manifest <PATH>] [--report <PATH>] [--junit <PATH>]`
+`gregale test [<subcommand>] [--scenario <NAME>] [--suite <NAME>] [--fail-fast] [--validate] [--preflight] [--engine <ENGINE>] [--base-url <URL>] [--data <PATH>] [--load] [--vus <N>] [--rate <N>] [--iterations <N>] [--duration <DURATION>] [--pacing <DURATION>] [--progress] [--baseline <PATH>] [--profile <PROFILE>] [--repeat <N>] [--max-workload-minutes <N>] [--manifest <PATH>] [--report <PATH>] [--junit <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1696,6 +1696,7 @@ Run scenario suites and bounded local HTTP load tests
 | `--duration <DURATION>` | schedule journeys for this duration with --load (1s..5m) |  |
 | `--pacing <DURATION>` | pause between each user&#39;s load journeys (0s..1m) |  |
 | `--progress` | print live load progress to stderr |  |
+| `--baseline <PATH>` | compare local load with a saved successful JSON report; apply regression budgets |  |
 | `--profile <PROFILE>` | required lifecycle (default all) | one of `warm` · `cold` · `restored` · `all` |
 | `--repeat <N>` | runs per lifecycle profile or local case (1..20) |  |
 | `--max-workload-minutes <N>` | abort if the estimated VM workload-minute ceiling exceeds N |  |
@@ -1714,6 +1715,7 @@ gregale test --suite regression --validate
 gregale test --scenario customer-export --preflight
 gregale test --scenario customer-export --profile restored --repeat 3 --max-workload-minutes 135 --report test-results.json --junit test-results.xml
 gregale test --scenario api-smoke --engine local
+gregale test --scenario api-smoke --engine local --load --baseline baseline.json --report current.json --junit current.xml
 gregale test --scenario customer-export --engine local --base-url http://localhost:3000 --data cases.json
 gregale test --scenario api-smoke --engine local --base-url http://localhost:3000 --load --vus 5 --duration 30s --pacing 100ms --progress
 gregale test --scenario api-smoke --engine local --load --rate 20 --duration 30s --vus 10 --progress

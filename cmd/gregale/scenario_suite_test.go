@@ -328,7 +328,7 @@ func TestScenarioSuiteInterruptedRunsRemainExplicitlySkipped(t *testing.T) {
 	prepared := []testPreparedScenario{{Name: "export", Engine: "real-vm", Profiles: []string{"warm", "cold", "restored"}}}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	results := runPreparedTestPlans(ctx, nil, "lifecycle", prepareTestRunPlans(prepared, 2), 2, false)
+	results := runPreparedTestPlans(ctx, nil, "lifecycle", prepareTestRunPlans(prepared, 2), 2, false, "")
 	if len(results) != 6 {
 		t.Fatalf("interrupted run count = %d", len(results))
 	}
@@ -433,7 +433,7 @@ func TestScenarioSuiteSkippedLoadRetainsJourneyIdentity(t *testing.T) {
 	}}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	results := runPreparedTestPlans(ctx, nil, "smoke", prepareTestRunPlans(prepared, 1), 1, false)
+	results := runPreparedTestPlans(ctx, nil, "smoke", prepareTestRunPlans(prepared, 1), 1, false, "")
 	if len(results) != 1 || results[0].Status != "skipped" || results[0].Load == nil || results[0].Load.Status != "not_started" || results[0].Load.IterationsStarted != 0 {
 		t.Fatalf("skipped load evidence = %+v", results)
 	}
