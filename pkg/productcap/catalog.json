@@ -140,6 +140,17 @@
       "acceptance_test": "pkg/sched/egress_circuit_test.go::TestEgressBreakerClosesAndRemovesRuleAfterRecovery"
     },
     {
+      "id": "feature-flags",
+      "name": "Customer-aware feature flags",
+      "category": "delivery",
+      "description": "Release deployed application behavior to selected platform customers with sticky rollout, decision explanations, and request cohort evidence.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/flags",
+      "acceptance_test": "cmd/apid/feature_flags_acceptance_test.go::TestFeatureFlagsThreeCustomerAcceptance",
+      "operator_flag": "FAAS_FLAGS_ENABLED"
+    },
+    {
       "id": "firecracker-isolation",
       "name": "Firecracker isolation",
       "category": "runtime",

@@ -2075,7 +2075,7 @@ INSERT INTO request_telemetry (
     guest_duration_ms, guest_runtime, guest_outcome, guest_error_class, consumer_id,
     node_id, region, commit_sha, deployment_tag, deployment_created_at, image_digest,
     platform_tenant_id,
-    guest_cpu_time_ms, guest_peak_rss_mb, guest_resource_usage_available
+    guest_cpu_time_ms, guest_peak_rss_mb, guest_resource_usage_available, flag_evidence
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
@@ -2093,7 +2093,8 @@ INSERT INTO request_telemetry (
     sqlc.arg('platform_tenant_id')::uuid,
     sqlc.arg('guest_cpu_time_ms')::int,
     sqlc.arg('guest_peak_rss_mb')::int,
-    sqlc.arg('guest_resource_usage_available')::bool
+    sqlc.arg('guest_resource_usage_available')::bool,
+    COALESCE(NULLIF(sqlc.arg('flag_evidence_json')::text, '')::jsonb, '[]'::jsonb)
 );
 
 -- name: ListRequestTelemetryByPlatformTenant :many
@@ -4747,3 +4748,46 @@ SELECT id, request_id, trace_id, received_at, expires_at
    AND expires_at > sqlc.arg(now_at)::timestamptz
  ORDER BY received_at DESC, id DESC
  LIMIT 1;
+
+-- name: LockFeatureFlagEnvironment :one
+SELECT e.id FROM project_environments e
+JOIN projects p ON p.id = e.project_id AND p.account_id = e.account_id
+WHERE e.id = sqlc.arg(environment_id)::uuid AND e.project_id = sqlc.arg(project_id)::uuid
+ AND e.account_id = sqlc.arg(account_id)::uuid
+FOR UPDATE OF e;
+
+-- name: GetFeatureFlagVersion :one
+SELECT * FROM feature_flag_versions
+WHERE environment_id = sqlc.arg(environment_id)::uuid
+ AND account_id = sqlc.arg(account_id)::uuid AND project_id = sqlc.arg(project_id)::uuid
+ AND (sqlc.arg(version)::bigint = 0 OR version = sqlc.arg(version)::bigint)
+ORDER BY version DESC LIMIT 1;
+
+-- name: ListFeatureFlagVersions :many
+SELECT * FROM feature_flag_versions
+WHERE environment_id = sqlc.arg(environment_id)::uuid
+ AND account_id = sqlc.arg(account_id)::uuid AND project_id = sqlc.arg(project_id)::uuid
+ AND version < sqlc.arg(before_version)::bigint
+ORDER BY version DESC LIMIT 100;
+
+-- name: InsertFeatureFlagVersion :one
+INSERT INTO feature_flag_versions (account_id, project_id, environment_id, version, config, actor, restored_from)
+VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *;
+
+-- name: FeatureFlagCustomerOwned :one
+SELECT EXISTS(SELECT 1 FROM platform_tenants
+ WHERE account_id = sqlc.arg(account_id)::uuid AND id = sqlc.arg(tenant_id)::uuid) AS owned;
+
+-- name: ListFeatureFlagRequestEvidence :many
+SELECT t.id, t.app_id, t.deployment_id, t.platform_tenant_id, t.received_at, t.route, t.method,
+ t.status, t.latency_ms, t.count, t.cold_boot, t.trace_id, t.flag_evidence
+FROM request_telemetry t JOIN deployments d ON d.id = t.deployment_id
+WHERE (d.scope = sqlc.arg(environment_slug)::text OR (d.scope = 'default' AND sqlc.arg(environment_slug)::text = 'production'))
+ AND t.account_id = sqlc.arg(account_id)::uuid
+ AND t.app_id = ANY(sqlc.arg(app_ids)::uuid[])
+ AND t.received_at >= sqlc.arg(received_from)::timestamptz
+ AND t.received_at < sqlc.arg(received_until)::timestamptz
+ AND (sqlc.arg(customer_id)::text = '' OR platform_tenant_id::text = sqlc.arg(customer_id)::text)
+ AND flag_evidence @> sqlc.arg(evidence_filter)::jsonb
+ AND (sqlc.narg(cursor_at)::timestamptz IS NULL OR (t.received_at,t.id) < (sqlc.narg(cursor_at)::timestamptz,sqlc.narg(cursor_id)::uuid))
+ORDER BY t.received_at DESC, t.id DESC LIMIT 101;

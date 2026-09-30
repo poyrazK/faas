@@ -134,6 +134,7 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	featureFlagVersions         map[string][]FeatureFlagVersion
 	safeReleaseWorkerLeaseUntil time.Time
 	requestAuditEvents          map[string]RequestAuditRecord
 	discoveredAPIRoutes         map[string]DiscoveredAPIRoute

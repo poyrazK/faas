@@ -510,6 +510,16 @@ var codeExclude = map[string]bool{
 // to a standalone Go struct: aliases, inline anonymous structs, or pure-
 // documentation shapes (such as error envelopes).
 var schemaSpecOnly = map[string]bool{
+	// ADR-377: evaluator contracts live in pkg/flags; publication metadata
+	// lives in pkg/state/feature_flags.go and handler-local request/evidence
+	// DTOs in handlers_feature_flags.go and handlers_feature_flag_evidence.go.
+	// TestFeatureFlagsSpecContracts checks these actual encoded shapes,
+	// including their flattened embedded fields, against the OpenAPI schemas.
+	"FlagRule": true, "FeatureFlag": true, "FlagsConfig": true,
+	"FlagsBundle": true, "FeatureFlagVersion": true,
+	"FlagDecision": true, "FlagEvidence": true,
+	"UpdateFeatureFlagsRequest": true, "RollbackFeatureFlagsRequest": true,
+	"InspectFeatureFlagRequest": true, "FlagRequestEvidence": true, "FlagEvidencePage": true,
 	// Migration preflight verdict level is a typed string, not a struct, so
 	// the DTO scanner does not surface it. Same pattern as TriggerKind and
 	// ResourceProfile below.

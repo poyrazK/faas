@@ -273,6 +273,14 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
+	"GET /v1/projects/{slug}/environments/{environment}/flags":                "ProjectFlags",
+	"PUT /v1/projects/{slug}/environments/{environment}/flags":                "PublishProjectFlags",
+	"GET /v1/projects/{slug}/environments/{environment}/flags/versions":       "ProjectFlagVersions",
+	"POST /v1/projects/{slug}/environments/{environment}/flags/rollback":      "RollbackProjectFlags",
+	"POST /v1/projects/{slug}/environments/{environment}/flags/{key}/inspect": "InspectProjectFlag",
+	"GET /v1/projects/{slug}/environments/{environment}/flags/{key}/requests": "ProjectFlagRequests",
+	"GET /v1/runtime/flags": "RuntimeFlags",
+
 	"GET /v1/apps/{slug}/work-policies":                          "ListAppWorkPolicies",
 	"PUT /v1/apps/{slug}/work-policies/{name}":                   "UpsertAppWorkPolicy",
 	"DELETE /v1/apps/{slug}/work-policies/{name}":                "DeleteAppWorkPolicy",

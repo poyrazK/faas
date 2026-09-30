@@ -7582,6 +7582,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				GuestRuntime:                         guestEvidence.Runtime,
 				GuestOutcome:                         guestEvidence.Outcome,
 				GuestErrorClass:                      guestEvidence.ErrorClass,
+				FlagEvidenceJSON:                     guestEvidence.FlagEvidenceJSON,
 				GuestCPUTimeMS:                       guestEvidence.CPUTimeMS,
 				GuestPeakRSSMB:                       guestEvidence.PeakRSSMB,
 				GuestResourceUsageAvailable:          guestEvidence.ResourceUsageAvailable,

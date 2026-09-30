@@ -377,6 +377,7 @@ func collapseRequestTelemetry(rows []RequestTelemetryRow) []RequestTelemetryRow 
 		row.GuestPeakRSSMB = requestTelemetryMemoryBucketUpperBound(row.GuestPeakRSSMB)
 		bucket := row.ReceivedAt.Truncate(time.Minute)
 		key := bucketKey{
+			FlagEvidenceJSON:                     row.FlagEvidenceJSON,
 			AccountID:                            row.AccountID,
 			AppID:                                row.AppID,
 			DeploymentID:                         row.DeploymentID,
@@ -436,6 +437,7 @@ func collapseRequestTelemetry(rows []RequestTelemetryRow) []RequestTelemetryRow 
 // reader; the apid receiver never sees bucketKey, only the resulting
 // RequestTelemetryRow.
 type bucketKey struct {
+	FlagEvidenceJSON                     string
 	AccountID                            uuid.UUID
 	AppID                                uuid.UUID
 	DeploymentID                         uuid.UUID
