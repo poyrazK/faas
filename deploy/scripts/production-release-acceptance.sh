@@ -74,8 +74,11 @@ deploy_one() {
 		--yes --no-require-authn --reason production-release-acceptance >"$output"
 }
 
+# verify_receipt checks one deployment receipt and its public routes. The
+# optional second argument is the app URL for receipts that do not carry one:
+# `gregale deployment wait` prints the bare deployment, which has no app_url.
 verify_receipt() {
-	local output="$1"
+	local output="$1" app_url="${2:-}" health_path
 	jq -e '
 		(.id | type == "string" and length > 0) and
 		.status == "live" and
@@ -83,9 +86,17 @@ verify_receipt() {
 		.hosting_receipt.smoke.status == "verified" and
 		.hosting_receipt.smoke.status_code >= 200 and
 		.hosting_receipt.smoke.status_code < 300
-	' "$output" >/dev/null
-	local app_url health_path
-	app_url="$(jq -er '.app_url' "$output")"
+	' "$output" >/dev/null || {
+		echo "deployment receipt is not live, rollout-complete, and smoke-verified: $output" >&2
+		jq -c '{id, status, rollout_state, smoke: .hosting_receipt.smoke}' "$output" >&2 || true
+		return 1
+	}
+	if [[ -z "$app_url" ]]; then
+		app_url="$(jq -er '.app_url' "$output")" || {
+			echo "deployment receipt has no app_url: $output" >&2
+			return 1
+		}
+	fi
 	health_path="$(jq -r '.hosting_receipt.smoke.path // "/healthz"' "$output")"
 	curl --fail --silent --show-error --location \
 		--retry 10 --retry-delay 2 --retry-all-errors \
@@ -324,7 +335,7 @@ while kill -0 "$wait_pid" 2>/dev/null; do
 	sleep 2
 done
 wait "$wait_pid"
-verify_receipt "$redeploy_final"
+verify_receipt "$redeploy_final" "$(jq -er '.app_url' "${outputs[0]}")"
 
 if [[ "$SHARED_RETRY_BUDGET_REQUIRED" == true ]]; then
 	PROMETHEUS_URL="$PROMETHEUS_URL" \

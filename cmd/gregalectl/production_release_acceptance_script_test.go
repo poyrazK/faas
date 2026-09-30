@@ -28,7 +28,8 @@ set -euo pipefail
 case "$1" in
   apps) exit 0 ;;
   deployment)
-    printf '{"id":"redeployed","status":"live","rollout_state":"complete","app_url":"https://test.invalid","hosting_receipt":{"smoke":{"status":"verified","status_code":200,"path":"/healthz"}}}\n'
+    # Like the real CLI, deployment wait prints the bare deployment: no app_url.
+    printf '{"id":"redeployed","status":"live","rollout_state":"complete","hosting_receipt":{"smoke":{"status":"verified","status_code":200,"path":"/healthz"}}}\n'
     exit 0 ;;
   deploy)
     slug=""; no_wait=false
