@@ -46,6 +46,11 @@ ANSIBLE_PLAYBOOK = ANSIBLE_CONFIG="$(ANSIBLE_CONFIG)" ansible-playbook
 test-customer-platform: ## Run the two-customer starter acceptance with disposable PostgreSQL databases (no KVM)
 	@GO="$(GO)" sh scripts/test-customer-platform.sh
 
+.PHONY: bench-platform-tenant-coverage
+bench-platform-tenant-coverage: ## Measure 90-day, two-app statement coverage reads/writes on disposable PostgreSQL
+	@test -n "$$DATABASE_URL" || (echo "DATABASE_URL not set — set it to a disposable PostgreSQL database"; exit 1)
+	@GO="$(GO)" sh scripts/bench-platform-tenant-coverage.sh
+
 .PHONY: help
 help: ## List targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
