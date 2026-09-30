@@ -20,6 +20,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/openapiimport"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -133,11 +134,15 @@ func (s *PgStore) UpsertAppOpenAPIDoc(ctx context.Context, appID, accountID stri
 		}
 		return fmt.Errorf("state: openapi import parent check: %w", err)
 	}
-	if err := s.validateTrafficProjection(ctx, "imported_openapi_contract", json.RawMessage(doc)); err != nil {
+	docJSON, err := openapiimport.JSONDocument(doc)
+	if err != nil {
+		return fmt.Errorf("state: normalize imported OpenAPI: %w", err)
+	}
+	if err := s.validateTrafficProjection(ctx, "imported_openapi_contract", json.RawMessage(docJSON)); err != nil {
 		return err
 	}
 	sum := sha256.Sum256(doc)
-	_, err := s.pool.Exec(ctx, `
+	_, err = s.pool.Exec(ctx, `
 		insert into app_openapi_docs
 		    (app_id, account_id, doc, doc_sha256, byte_size,
 		     endpoint_count, source, openapi_version, captured_at, updated_at)
@@ -152,7 +157,7 @@ func (s *PgStore) UpsertAppOpenAPIDoc(ctx context.Context, appID, accountID stri
 		    captured_at     = app_openapi_docs.captured_at,
 		    updated_at      = now()
 	`,
-		appID, accountID, doc, sum[:],
+		appID, accountID, docJSON, sum[:],
 		len(doc), endpointCount, openapiVersion)
 	if err != nil {
 		return fmt.Errorf("state: upsert app openapi doc: %w", err)
@@ -251,7 +256,11 @@ func (s *PgStore) UpsertAppOpenAPIDocIfUnderQuota(ctx context.Context, appID, ac
 	if !quota.Replacement && quota.Observed >= int64(planMax) {
 		return &QuotaError{Kind: QuotaErrorKindOpenAPIImports, Limit: planMax, Observed: int(quota.Observed)}
 	}
-	if err := validateTrafficProjectionWithDB(ctx, tx, "imported_openapi_contract", json.RawMessage(doc)); err != nil {
+	docJSON, err := openapiimport.JSONDocument(doc)
+	if err != nil {
+		return fmt.Errorf("state: normalize imported OpenAPI: %w", err)
+	}
+	if err := validateTrafficProjectionWithDB(ctx, tx, "imported_openapi_contract", json.RawMessage(docJSON)); err != nil {
 		return err
 	}
 	sum := sha256.Sum256(doc)
@@ -269,7 +278,7 @@ func (s *PgStore) UpsertAppOpenAPIDocIfUnderQuota(ctx context.Context, appID, ac
 		    openapi_version = excluded.openapi_version,
 		    captured_at     = app_openapi_docs.captured_at,
 		    updated_at      = now()
-	`, appID, accountID, doc, sum[:], len(doc), endpointCount, openapiVersion); err != nil {
+	`, appID, accountID, docJSON, sum[:], len(doc), endpointCount, openapiVersion); err != nil {
 		return fmt.Errorf("state: openapi import upsert: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {

@@ -479,11 +479,11 @@ func TestRenderTOML_ComputeMetricsBindPrivateHost(t *testing.T) {
 }
 
 // TestRenderTOML_AppsDomainFlowsThrough pins that the manifest's
-// DNS.AppsDomain flows into apid + gatewayd-internal TOMLs (the two
+// DNS.AppsDomain flows into apid, githubd and gatewayd-internal TOMLs (the
 // daemons whose HostKeys declare apps_domain). An empty AppsDomain
 // omits the key, matching the daemon's env-var fallback.
 func TestRenderTOML_AppsDomainFlowsThrough(t *testing.T) {
-	for _, d := range []string{"apid", "gatewayd-internal"} {
+	for _, d := range []string{"apid", "githubd", "gatewayd-internal"} {
 		body, _, err := renderTOML(tomlRenderCtx{
 			Daemon:     d,
 			DC:         fixtureTOML(d),

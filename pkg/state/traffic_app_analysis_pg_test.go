@@ -37,9 +37,25 @@ func trafficAppIntentCounts(t *testing.T, pool *pgxpool.Pool) string {
 }
 
 func TestPgTrafficAppActivationRefusesNewEnvironmentOverload(t *testing.T) {
+	testPgTrafficAppActivation(t, false)
+}
+
+func TestPgTrafficAppActivationRefusesNewPrimaryOverload(t *testing.T) {
+	testPgTrafficAppActivation(t, true)
+}
+
+func testPgTrafficAppActivation(t *testing.T, primary bool) {
 	for _, operation := range []string{"create", "quota_create", "activity_create", "preview_batch", "preview_set", "project_plan", "reconcile_create", "restore", "activity_restore", "reconcile_restore", "status_update", "activity_status_update", "status_cas", "visibility_update", "activity_visibility_update"} {
 		t.Run(operation, func(t *testing.T) {
 			store, pool, account, project, source, _ := trafficEnvironmentPGFixture(t)
+			if primary {
+				store = NewPgStore(pool, WithTrafficAppsDomain(".APPS.EXAMPLE.TEST "))
+				// No registered environments: this refusal must come solely
+				// from the configured ordinary primary URL.
+				if _, err := pool.Exec(t.Context(), `DELETE FROM project_environments WHERE project_id=$1`, project.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
 			limits := api.MustLimitsFor(account.Plan)
 			target := App{AccountID: account.ID, ProjectID: project.ID, Slug: "traffic-new-web", WorkloadName: "new-web", WorkloadClass: WorkloadClassHTTP, Status: AppActive}
 			needsTombstone := strings.Contains(operation, "restore") || strings.Contains(operation, "status")
@@ -90,13 +106,17 @@ func TestPgTrafficAppActivationRefusesNewEnvironmentOverload(t *testing.T) {
 			// beyond the runtime read cap. It already affects old URLs; only
 			// the new registered scope must be refused by activation.
 			ruleID := uuid.NewString()
+			matchHost := "*"
+			if primary {
+				matchHost = target.Slug + ".apps.example.test"
+			}
 			action := EdgeRuleAction{Kind: EdgeRuleKindRoute, Route: &EdgeRuleRouteAction{TargetAppSlug: source.Slug},
 				Validate: &EdgeRuleValidateAction{Schema: json.RawMessage("[" + strings.Repeat("1e130000,", 519) + "1e130000]")}}
 			encoded, err := json.Marshal(action)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := pool.Exec(t.Context(), `INSERT INTO edge_rules(id,account_id,app_id,match_host,match_path,enabled,kind,action) VALUES($1,$2,$3,'*','/',true,'route',$4::jsonb)`, ruleID, account.ID, source.ID, encoded); err != nil {
+			if _, err := pool.Exec(t.Context(), `INSERT INTO edge_rules(id,account_id,app_id,match_host,match_path,enabled,kind,action) VALUES($1,$2,$3,$4,'/',true,'route',$5::jsonb)`, ruleID, account.ID, source.ID, matchHost, encoded); err != nil {
 				t.Fatal(err)
 			}
 			before := trafficAppIntentCounts(t, pool)
@@ -161,7 +181,10 @@ func TestPgTrafficAppActivationRefusesNewEnvironmentOverload(t *testing.T) {
 			err = apply()
 			var aggregate *TrafficPolicyAggregateError
 			if !errors.As(err, &aggregate) || aggregate.Scope != "host_rule_projection" {
-				t.Fatalf("activation accepted new overloaded environment: %v", err)
+				t.Fatalf("activation accepted new overloaded URL: %v", err)
+			}
+			if primary && aggregate.Host != matchHost {
+				t.Fatalf("primary witness=%q want=%q", aggregate.Host, matchHost)
 			}
 			if after := trafficAppIntentCounts(t, pool); after != before {
 				t.Fatalf("rejected activation retained intent: before=%s after=%s", before, after)

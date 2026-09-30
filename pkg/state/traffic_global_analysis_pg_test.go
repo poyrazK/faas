@@ -126,7 +126,7 @@ func TestPgTrafficSessionLocksPrecedeSnapshot(t *testing.T) {
 			if global {
 				viewAccount = pgtype.UUID{}
 			}
-			view, err := readTrafficHostAnalysis(t.Context(), tx, viewAccount)
+			view, err := readTrafficHostAnalysis(t.Context(), tx, viewAccount, store.trafficAppsSuffix)
 			if err != nil || len(view.Groups) != 1 {
 				t.Fatalf("first guarded view missed preceding commit: groups=%d err=%v", len(view.Groups), err)
 			}
@@ -399,7 +399,7 @@ func TestPgTrafficGlobalReadMatchesRouteOnlyRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(t.Context())) }()
-	view, err := readTrafficHostAnalysis(t.Context(), tx, pgtype.UUID{})
+	view, err := readTrafficHostAnalysis(t.Context(), tx, pgtype.UUID{}, store.trafficAppsSuffix)
 	if err != nil {
 		t.Fatal(err)
 	}

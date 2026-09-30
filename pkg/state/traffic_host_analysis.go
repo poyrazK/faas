@@ -57,6 +57,7 @@ type trafficHostAnalysis struct {
 	Groups       []trafficHostGroup
 	Assets       []trafficHostAsset
 	Environments []trafficHostEnvironment
+	PrimaryHosts []string
 }
 
 type trafficHostEnvironment struct {
@@ -65,7 +66,7 @@ type trafficHostEnvironment struct {
 	ContractBytes, Unsupported int64
 }
 
-func readTrafficHostAnalysis(ctx context.Context, tx pgx.Tx, account pgtype.UUID) (trafficHostAnalysis, error) {
+func readTrafficHostAnalysis(ctx context.Context, tx pgx.Tx, account pgtype.UUID, appsSuffix string) (trafficHostAnalysis, error) {
 	defaults, err := trafficHostActionDefaults()
 	if err != nil {
 		return trafficHostAnalysis{}, err
@@ -78,7 +79,7 @@ func readTrafficHostAnalysis(ctx context.Context, tx pgx.Tx, account pgtype.UUID
 	start := time.Now()
 	row, err := queries.ReadTrafficHostAnalysis(ctx, tx, sqlc.ReadTrafficHostAnalysisParams{
 		AccountID: account, MaxInputs: api.TrafficPolicyMaxAnalysisInputs, MaxBytes: api.TrafficPolicyMaxAnalysisMetadataBytes,
-		Defaults: defaults, EnvironmentHostBytes: int32(len(hostidentity.BuildEnvironmentHost(hostidentity.DeployWildcardSuffix,
+		Defaults: defaults, AppsSuffix: appsSuffix, EnvironmentHostBytes: int32(len(hostidentity.BuildEnvironmentHost(hostidentity.DeployWildcardSuffix,
 			"00000000-0000-0000-0000-000000000000", "00000000-0000-0000-0000-000000000000")))})
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -101,7 +102,19 @@ func readTrafficHostAnalysis(ctx context.Context, tx pgx.Tx, account pgtype.UUID
 	if err := json.Unmarshal(row.Data, &result); err != nil {
 		return result, fmt.Errorf("state: decode traffic host analysis: %w", err)
 	}
+	result.PrimaryHosts = servingTrafficPrimaryHosts(appsSuffix, result.PrimaryHosts)
 	return result, prepareTrafficEnvironmentHosts(&result)
+}
+
+func servingTrafficPrimaryHosts(appsSuffix string, candidates []string) []string {
+	var hosts []string
+	for _, host := range candidates {
+		slug, ok := hostidentity.AppSlugFromHost(appsSuffix, host)
+		if ok && hostidentity.BuildPrimaryAppHost(appsSuffix, slug) == host {
+			hosts = append(hosts, host)
+		}
+	}
+	return hosts
 }
 
 func prepareTrafficEnvironmentHosts(view *trafficHostAnalysis) error {
@@ -155,7 +168,10 @@ func (v trafficHostTotals) exceeds() bool {
 		v.canonical > api.TrafficPolicyMaxHostBytes || v.compiled > api.TrafficPolicyMaxHostBytes || v.contractBytes > api.TrafficPolicyMaxContractBytes
 }
 
-type hostAnalysisRef struct{ side, group int }
+type hostAnalysisRef struct {
+	side, group int
+	primary     bool
+}
 
 type hostAnalysisNode struct {
 	literal  map[rune]int
@@ -249,16 +265,23 @@ func (m *hostAnalysisMachine) add(pattern string, ref hostAnalysisRef) error {
 		branches = append(branches, like)
 	}
 	for _, tokens := range branches {
-		position := 0
-		for _, token := range tokens {
-			var err error
-			position, err = m.child(position, token)
-			if err != nil {
-				return err
-			}
+		if err := m.addTokens(tokens, ref); err != nil {
+			return err
 		}
-		m.nodes[position].accepted = append(m.nodes[position].accepted, ref)
 	}
+	return nil
+}
+
+func (m *hostAnalysisMachine) addTokens(tokens []rune, ref hostAnalysisRef) error {
+	position := 0
+	for _, token := range tokens {
+		var err error
+		position, err = m.child(position, token)
+		if err != nil {
+			return err
+		}
+	}
+	m.nodes[position].accepted = append(m.nodes[position].accepted, ref)
 	return nil
 }
 
@@ -459,7 +482,15 @@ func checkTrafficHostAnalysisWithBudgets(ctx context.Context, before, after traf
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			if err := machine.add(environment.Host, hostAnalysisRef{side: side, group: -1 - i}); err != nil {
+			if err := machine.addTokens([]rune(environment.Host), hostAnalysisRef{side: side, group: -1 - i}); err != nil {
+				return err
+			}
+		}
+		for _, host := range view.PrimaryHosts {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if err := machine.addTokens([]rune(host), hostAnalysisRef{side: side, primary: true}); err != nil {
 				return err
 			}
 		}
@@ -479,9 +510,12 @@ func checkTrafficHostAnalysisWithBudgets(ctx context.Context, before, after traf
 		positions := states[index].positions
 		accepted := [2]map[int]bool{make(map[int]bool), make(map[int]bool)}
 		var environments [2]*trafficHostEnvironment
+		var primary [2]bool
 		for _, position := range positions {
 			for _, ref := range machine.nodes[position].accepted {
-				if ref.group < 0 {
+				if ref.primary {
+					primary[ref.side] = true
+				} else if ref.group < 0 {
 					environments[ref.side] = &views[ref.side].Environments[-1-ref.group]
 				} else {
 					accepted[ref.side][ref.group] = true
@@ -489,13 +523,13 @@ func checkTrafficHostAnalysisWithBudgets(ctx context.Context, before, after traf
 			}
 		}
 		prior := environmentHostTotals(before, accepted[0], environments[0])
-		if environments[0] == nil && environments[1] != nil {
+		if environments[0] == nil && !primary[0] && (environments[1] != nil || primary[1]) {
 			// A new registered workload URL must fit its limits. An old
 			// over-limit selector language is not a serving-policy baseline.
 			prior = trafficHostTotals{}
 		}
 		nextTotals := environmentHostTotals(after, accepted[1], environments[1])
-		if environments[0] != nil && environments[1] == nil {
+		if (environments[0] != nil || primary[0]) && environments[1] == nil && !primary[1] {
 			// A deleted registered URL cannot fall back to route discovery.
 			// Removing its app filter does not expose a new serving scope.
 			nextTotals = trafficHostTotals{}

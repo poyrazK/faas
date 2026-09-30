@@ -102,7 +102,7 @@ func TestPgTrafficHostEstimateBoundsDecodedRuntime(t *testing.T) {
 	if _, err := sqlc.New().RestoreTrafficPolicyStatementTimeout(t.Context(), tx, "5s"); err != nil {
 		t.Fatal(err)
 	}
-	analysis, err := readTrafficHostAnalysis(t.Context(), tx, uuidToPgtype(account.ID))
+	analysis, err := readTrafficHostAnalysis(t.Context(), tx, uuidToPgtype(account.ID), store.trafficAppsSuffix)
 	if err != nil {
 		t.Fatal(err)
 	}

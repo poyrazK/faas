@@ -26,6 +26,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/cursor"
 	"github.com/onebox-faas/faas/pkg/hostport"
+	"github.com/onebox-faas/faas/pkg/openapiimport"
 	"github.com/onebox-faas/faas/pkg/publicstatus"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -134,6 +135,7 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	trafficAppsSuffix           string
 	safeReleaseWorkerLeaseUntil time.Time
 	requestAuditEvents          map[string]RequestAuditRecord
 	discoveredAPIRoutes         map[string]DiscoveredAPIRoute
@@ -1000,8 +1002,9 @@ type builderVMCleanupRow struct {
 // The seed mirrors migrations/00024_compute_nodes.sql so unit tests
 // don't have to call CreateComputeNode to exercise the single-box path.
 // Production (PgStore) gets the same row from the migration.
-func NewMemStore() *MemStore {
+func NewMemStore(options ...StoreOption) *MemStore {
 	m := &MemStore{
+		trafficAppsSuffix:         configuredTrafficAppsSuffix(options),
 		revisionPins:              map[string]time.Time{},
 		objectAccessGrants:        map[string]ObjectBucketAccessGrant{},
 		objectS3Credentials:       map[string]ObjectS3Credential{},
@@ -9771,12 +9774,16 @@ func (m *MemStore) UpsertAppOpenAPIDoc(_ context.Context, appID, accountID strin
 	if !ok || app.AccountID != accountID {
 		return ErrNotFound
 	}
-	if err := validateMemTrafficProjection("imported_openapi_contract", json.RawMessage(doc)); err != nil {
+	docJSON, err := openapiimport.JSONDocument(doc)
+	if err != nil {
+		return fmt.Errorf("state: normalize imported OpenAPI: %w", err)
+	}
+	if err := validateMemTrafficProjection("imported_openapi_contract", json.RawMessage(docJSON)); err != nil {
 		return err
 	}
 	now := time.Now()
-	docCopy := append([]byte(nil), doc...)
-	sum := sha256.Sum256(docCopy)
+	docCopy := append([]byte(nil), docJSON...)
+	sum := sha256.Sum256(doc)
 	row := appOpenAPIImportRow{
 		AppID:          appID,
 		AccountID:      accountID,
@@ -9784,7 +9791,7 @@ func (m *MemStore) UpsertAppOpenAPIDoc(_ context.Context, appID, accountID strin
 		Source:         OpenAPIImportSourceManualImport,
 		OpenAPIVersion: openapiVersion,
 		EndpointCount:  endpointCount,
-		ByteSize:       len(docCopy),
+		ByteSize:       len(doc),
 		DocSHA256:      sum[:],
 	}
 	if existing, ok := m.openAPIImports[appID]; ok {
@@ -9874,12 +9881,16 @@ func (m *MemStore) UpsertAppOpenAPIDocIfUnderQuota(_ context.Context, appID, acc
 	if replacement && existing.AccountID != accountID {
 		return ErrNotFound
 	}
-	if err := validateMemTrafficProjection("imported_openapi_contract", json.RawMessage(doc)); err != nil {
+	docJSON, err := openapiimport.JSONDocument(doc)
+	if err != nil {
+		return fmt.Errorf("state: normalize imported OpenAPI: %w", err)
+	}
+	if err := validateMemTrafficProjection("imported_openapi_contract", json.RawMessage(docJSON)); err != nil {
 		return err
 	}
 	now := time.Now()
-	docCopy := append([]byte(nil), doc...)
-	sum := sha256.Sum256(docCopy)
+	docCopy := append([]byte(nil), docJSON...)
+	sum := sha256.Sum256(doc)
 	row := appOpenAPIImportRow{
 		AppID:          appID,
 		AccountID:      accountID,
@@ -9887,7 +9898,7 @@ func (m *MemStore) UpsertAppOpenAPIDocIfUnderQuota(_ context.Context, appID, acc
 		Source:         OpenAPIImportSourceManualImport,
 		OpenAPIVersion: openapiVersion,
 		EndpointCount:  endpointCount,
-		ByteSize:       len(docCopy),
+		ByteSize:       len(doc),
 		DocSHA256:      sum[:],
 	}
 	if existing, ok := m.openAPIImports[appID]; ok {

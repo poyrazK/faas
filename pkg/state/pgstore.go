@@ -41,14 +41,15 @@ import (
 // PgStore implements Store against Postgres. It holds a connection pool and
 // is safe for concurrent use.
 type PgStore struct {
-	pool *pgxpool.Pool
+	pool              *pgxpool.Pool
+	trafficAppsSuffix string
 }
 
 // NewPgStore wraps a pool. The pool is owned by the caller; PgStore does not
 // close it on shutdown so daemons can share a single pool across a Store and
 // their LISTEN goroutine.
-func NewPgStore(pool *pgxpool.Pool) *PgStore {
-	return &PgStore{pool: pool}
+func NewPgStore(pool *pgxpool.Pool, options ...StoreOption) *PgStore {
+	return &PgStore{pool: pool, trafficAppsSuffix: configuredTrafficAppsSuffix(options)}
 }
 
 // Ping tests database connectivity through the underlying connection pool.

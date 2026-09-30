@@ -40,7 +40,7 @@ func (s *PgStore) beginTrafficPolicyMutationWithRoutes(ctx context.Context, acco
 			}
 			_, err = sqlc.New().LockTrafficPolicyAccount(ctx, tx, account)
 			if err == nil {
-				guarded := &trafficPolicyMutationTx{Tx: tx, account: account, globalRoutes: globalRoutes, release: release}
+				guarded := &trafficPolicyMutationTx{Tx: tx, account: account, globalRoutes: globalRoutes, release: release, appsSuffix: s.trafficAppsSuffix}
 				if err := guarded.readBefore(ctx); err != nil {
 					_ = guarded.Rollback(context.WithoutCancel(ctx))
 					return nil, err
@@ -73,13 +73,14 @@ type trafficPolicyMutationTx struct {
 	before       trafficHostAnalysis
 	globalRoutes bool
 	globalBefore trafficHostAnalysis
+	appsSuffix   string
 	release      func(context.Context)
 }
 
 func (tx *trafficPolicyMutationTx) readBefore(ctx context.Context) error {
 	if err := boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
 		var err error
-		tx.before, err = readTrafficHostAnalysis(bounded, tx.Tx, tx.account)
+		tx.before, err = readTrafficHostAnalysis(bounded, tx.Tx, tx.account, tx.appsSuffix)
 		return err
 	}); err != nil {
 		return err
@@ -87,7 +88,7 @@ func (tx *trafficPolicyMutationTx) readBefore(ctx context.Context) error {
 	if tx.globalRoutes {
 		return globalTrafficPolicyError(boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
 			var err error
-			tx.globalBefore, err = readTrafficHostAnalysis(bounded, tx.Tx, pgtype.UUID{})
+			tx.globalBefore, err = readTrafficHostAnalysis(bounded, tx.Tx, pgtype.UUID{}, tx.appsSuffix)
 			return err
 		}))
 	}
@@ -96,7 +97,7 @@ func (tx *trafficPolicyMutationTx) readBefore(ctx context.Context) error {
 
 func (tx *trafficPolicyMutationTx) Commit(ctx context.Context) error {
 	if err := boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
-		after, err := readTrafficHostAnalysis(bounded, tx.Tx, tx.account)
+		after, err := readTrafficHostAnalysis(bounded, tx.Tx, tx.account, tx.appsSuffix)
 		if err != nil {
 			return err
 		}
@@ -106,7 +107,7 @@ func (tx *trafficPolicyMutationTx) Commit(ctx context.Context) error {
 	}
 	if tx.globalRoutes {
 		if err := globalTrafficPolicyError(boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
-			after, err := readTrafficHostAnalysis(bounded, tx.Tx, pgtype.UUID{})
+			after, err := readTrafficHostAnalysis(bounded, tx.Tx, pgtype.UUID{}, tx.appsSuffix)
 			if err != nil {
 				return err
 			}

@@ -13276,16 +13276,23 @@ WITH environment_policies AS MATERIALIZED (
     SELECT jsonb_build_object('ID',environment_id,'App',app_id,'Present',present,
         'ContractBytes',contract_bytes,'Unsupported',unsupported) AS data
     FROM environment_policies ORDER BY environment_id,app_id LIMIT ($1::integer+1)
+), primary_hosts AS (
+    SELECT to_jsonb(slug || $6::text) AS data FROM apps
+    WHERE account_id=$3::uuid AND status<>'deleted' AND visibility<>'internal'
+      AND $6::text<>''
+    ORDER BY slug LIMIT ($1::integer+1)
 ), bounds AS (
-    SELECT (SELECT count(*) FROM groups)+(SELECT count(*) FROM assets)+(SELECT count(*) FROM environments) AS inputs,
+    SELECT (SELECT count(*) FROM groups)+(SELECT count(*) FROM assets)+(SELECT count(*) FROM environments)+(SELECT count(*) FROM primary_hosts) AS inputs,
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM groups)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM assets)+
-        (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM environments)+64 AS bytes
+        (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM environments)+
+        (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM primary_hosts)+64 AS bytes
 )
 SELECT CASE WHEN inputs <= $1::integer AND bytes <= $2::bigint
     THEN jsonb_build_object('Groups',(SELECT coalesce(jsonb_agg(data),'[]') FROM groups),
         'Assets',(SELECT coalesce(jsonb_agg(data),'[]') FROM assets),
-        'Environments',(SELECT coalesce(jsonb_agg(data),'[]') FROM environments)) ELSE NULL::jsonb END::jsonb AS data,
+        'Environments',(SELECT coalesce(jsonb_agg(data),'[]') FROM environments),
+        'PrimaryHosts',(SELECT coalesce(jsonb_agg(data),'[]') FROM primary_hosts)) ELSE NULL::jsonb END::jsonb AS data,
     inputs::bigint, bytes::bigint FROM bounds
 `
 
@@ -13295,6 +13302,7 @@ type ReadTrafficHostAnalysisParams struct {
 	AccountID            pgtype.UUID
 	EnvironmentHostBytes int32
 	Defaults             []byte
+	AppsSuffix           string
 }
 
 type ReadTrafficHostAnalysisRow struct {
@@ -13311,6 +13319,7 @@ func (q *Queries) ReadTrafficHostAnalysis(ctx context.Context, db DBTX, arg Read
 		arg.AccountID,
 		arg.EnvironmentHostBytes,
 		arg.Defaults,
+		arg.AppsSuffix,
 	)
 	var i ReadTrafficHostAnalysisRow
 	err := row.Scan(&i.Data, &i.Inputs, &i.Bytes)

@@ -76,7 +76,7 @@ func (m *MemStore) readMemTrafficHostAnalysisLocked(ctx context.Context, account
 		group.Canonical += canonical + 16
 		group.Compiled += int64(len(compiled)) + 2
 		groups[key] = group
-		return checkMemTrafficAnalysisInputs(len(groups) + len(view.Environments))
+		return checkMemTrafficAnalysisInputs(len(groups) + len(view.Environments) + len(view.PrimaryHosts))
 	}
 	if err := visitMemTrafficRows(ctx, m.edgeRules, change.Rules, func(rule EdgeRule) error {
 		return addRule(rule, "")
@@ -95,6 +95,12 @@ func (m *MemStore) readMemTrafficHostAnalysisLocked(ctx context.Context, account
 	err := visitMemTrafficRows(ctx, m.apps, change.Apps, func(app App) error {
 		if change.GlobalRoutes || app.AccountID != account || app.Status == AppDeleted || api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
 			return nil
+		}
+		if host := hostidentity.BuildPrimaryAppHost(m.trafficAppsSuffix, app.Slug); host != "" {
+			view.PrimaryHosts = append(view.PrimaryHosts, host)
+			if err := checkMemTrafficAnalysisInputs(len(groups) + len(view.Environments) + len(view.PrimaryHosts)); err != nil {
+				return err
+			}
 		}
 		for _, environment := range environments[app.ProjectID] {
 			if err := ctx.Err(); err != nil {
@@ -124,7 +130,7 @@ func (m *MemStore) readMemTrafficHostAnalysisLocked(ctx context.Context, account
 				}
 			}
 			view.Environments = append(view.Environments, projection)
-			if err := checkMemTrafficAnalysisInputs(len(groups) + len(view.Environments)); err != nil {
+			if err := checkMemTrafficAnalysisInputs(len(groups) + len(view.Environments) + len(view.PrimaryHosts)); err != nil {
 				return err
 			}
 		}
@@ -149,7 +155,7 @@ func (m *MemStore) readMemTrafficHostAnalysisLocked(ctx context.Context, account
 			return fmt.Errorf("state: encode in-memory traffic preset: %w", err)
 		}
 		view.Assets = append(view.Assets, trafficHostAsset{ID: preset.ID, Compiled: int64(len(encoded))})
-		return checkMemTrafficAnalysisInputs(len(view.Groups) + len(view.Environments) + len(view.Assets))
+		return checkMemTrafficAnalysisInputs(len(view.Groups) + len(view.Environments) + len(view.PrimaryHosts) + len(view.Assets))
 	})
 	if err != nil {
 		return view, err
@@ -164,6 +170,7 @@ func (m *MemStore) readMemTrafficHostAnalysisLocked(ctx context.Context, account
 		a, b := view.Environments[i], view.Environments[j]
 		return a.ID+"\x00"+a.App < b.ID+"\x00"+b.App
 	})
+	sort.Strings(view.PrimaryHosts)
 	metadata, err := json.Marshal(view)
 	if err != nil {
 		return view, fmt.Errorf("state: encode in-memory traffic metadata: %w", err)

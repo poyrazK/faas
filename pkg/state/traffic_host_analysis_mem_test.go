@@ -170,9 +170,25 @@ func memTrafficIntentCounts(m *MemStore) []int {
 }
 
 func TestMemTrafficAppActivationAndEnvironmentRegistrationRollback(t *testing.T) {
-	for _, operation := range []string{"create", "quota_create", "activity_create", "preview_batch", "preview_set", "project_plan", "reconcile_create", "restore", "activity_restore", "reconcile_restore", "status_update", "activity_status_update", "status_cas", "visibility_update", "activity_visibility_update", "environment", "clone"} {
+	testMemTrafficAppActivation(t, false)
+}
+
+func TestMemTrafficPrimaryAppActivationRollback(t *testing.T) {
+	testMemTrafficAppActivation(t, true)
+}
+
+func testMemTrafficAppActivation(t *testing.T, primary bool) {
+	operations := []string{"create", "quota_create", "activity_create", "preview_batch", "preview_set", "project_plan", "reconcile_create", "restore", "activity_restore", "reconcile_restore", "status_update", "activity_status_update", "status_cas", "visibility_update", "activity_visibility_update"}
+	if !primary {
+		operations = append(operations, "environment", "clone")
+	}
+	for _, operation := range operations {
 		t.Run(operation, func(t *testing.T) {
 			m, account, project, source, _ := memTrafficFixture(t)
+			if primary {
+				m.trafficAppsSuffix = ".apps.example.test"
+				m.projectEnvironments = map[string]ProjectEnvironment{}
+			}
 			limits := api.MustLimitsFor(account.Plan)
 			target := App{AccountID: account.ID, ProjectID: project.ID, Slug: "mem-new-web", WorkloadName: "new-web", Status: AppActive}
 			needsTombstone := strings.Contains(operation, "restore") || strings.Contains(operation, "status")
@@ -200,8 +216,12 @@ func TestMemTrafficAppActivationAndEnvironmentRegistrationRollback(t *testing.T)
 				target.Slug, target.PreviewOfSlug, target.PreviewPrNumber = "pr-42-mem-new-web", source.Slug, 42
 				target.PreviewPrState, target.PreviewExpiresAt = PreviewPrStateOpen, &expires
 			}
-			legacy := memTrafficRule(account, source, "*", 520)
-			m.edgeRules["legacy"] = EdgeRule{ID: "legacy", AccountID: account.ID, AppID: source.ID, MatchHost: "*", MatchPath: "/", Enabled: true, Kind: legacy.Kind, Action: legacy.Action}
+			matchHost := "*"
+			if primary {
+				matchHost = target.Slug + ".apps.example.test"
+			}
+			legacy := memTrafficRule(account, source, matchHost, 520)
+			m.edgeRules["legacy"] = EdgeRule{ID: "legacy", AccountID: account.ID, AppID: source.ID, MatchHost: matchHost, MatchPath: "/", Enabled: true, Kind: legacy.Kind, Action: legacy.Action}
 			before := memTrafficIntentCounts(m)
 			apply := func() error {
 				switch operation {

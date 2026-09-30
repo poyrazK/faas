@@ -121,7 +121,14 @@ inside that transaction. Refusal also rolls back activity, cron, project and
 preview-set changes. Eligibility follows runtime status and public visibility;
 a historical deletion timestamp alone does not exclude a reactivated app.
 Removing a registered URL does not expose its former fallback. Ordinary
-primary-hostname and alias/domain activation remain pending.
+primary hostnames also join that activation check using the configured
+`apps_domain`. Ordinary primary hosts retain all matched account rules and
+presets. API and GitHub preview/reconcile writers receive the manifest DNS
+value; `FAAS_APPS_DOMAIN` overrides their TOML. Empty disables ordinary primary
+URLs. Immutable deployment/environment URL shapes remain separate. This initial
+check includes potential legacy tag-prefixed primary URLs conservatively. Alias
+shadowing/activation, custom-domain transitions and namespace changes still
+need complete binding projection and acceptance.
 
 Route creates/updates also check enabled route-only discovery across accounts
 using the same per-host language and resource ceilings. Disjoint hosts retain
@@ -151,6 +158,9 @@ runtime bound and return the structured 422 below. Replacing an existing
 owned document reuses its import quota slot, including at the account limit;
 creating another import still requires a free slot. Plan tiers without import
 support continue to refuse writes.
+JSON and YAML imports keep the documented format support. YAML is normalized
+to JSON before projection validation and storage; expanded aliases must fit
+the runtime bound. Upload size/hash metadata still describes the source bytes.
 
 Environment cloning validates the actual copied target projections before
 committing its transaction. The bound includes the target environment name
@@ -180,7 +190,7 @@ RawMessage numbers are not expanded for the Go compiler. Rejected changes
 preserve related project, cron, preview-set and activity intent.
 
 MemStore also checks route-only global aggregates under that mutex.
-Primary-hostname and alias/domain activation, complete global binding/synthetic
+Alias/domain activation and namespace changes, complete global binding/synthetic
 path agreement and recovery acceptance remain rollout requirements. These
 write checks do not establish release acceptance.
 

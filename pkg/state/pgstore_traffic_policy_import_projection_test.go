@@ -20,6 +20,11 @@ func TestPgTrafficImportProjectionRefusal(t *testing.T) {
 	trafficImportProjectionRefusal(t, store)
 }
 
+func TestPgTrafficImportYAMLProjectionRecovery(t *testing.T) {
+	store, _ := pgStore(t)
+	trafficImportYAMLProjectionRecovery(t, store)
+}
+
 func TestPgTrafficImportConcurrentNewSlotAndReplacement(t *testing.T) {
 	store, _, ctx := pgStoreWithPool(t)
 	account, _, first := trafficProjectionOwner(t, store)

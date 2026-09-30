@@ -222,6 +222,7 @@ var HostKeys = map[string]HostBlock{
 			"socket_path",
 			"metrics_addr",
 			"db_url",
+			"apps_domain",
 		},
 		ComputeNodeBlock: nil,
 	},

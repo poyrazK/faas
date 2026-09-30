@@ -93,7 +93,7 @@ func TestPgTrafficEnvironmentEstimateMatchesRuntimeReplacement(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer func() { _ = tx.Rollback(context.Background()) }()
-			view, err := readTrafficHostAnalysis(t.Context(), tx, uuidToPgtype(account.ID))
+			view, err := readTrafficHostAnalysis(t.Context(), tx, uuidToPgtype(account.ID), store.trafficAppsSuffix)
 			if err != nil {
 				t.Fatal(err)
 			}

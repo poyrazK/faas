@@ -1015,3 +1015,79 @@ recovery and customer/staging rollout evidence remain pending. The user
 confirmed no native Linux x86_64 KVM acceptance host is available. VM/restore,
 nft connection/source-IP, process-death and leak checks remain pending. All
 six release guarantees remain unchecked.
+
+### Configured primary-host activation and YAML import repair, 2026-09-30
+
+This goal turn made progress on ordinary primary app URL activation. PgStore
+and MemStore receive an immutable apps-domain option. The API writer supplies
+its existing TOML/environment getter; GitHub preview/reconcile supplies the
+same DNS value through its config, manifest renderer and managed systemd
+drop-in. The common default is the existing API default `gregale.dev`; an
+explicit empty domain disables this namespace. Deployment URLs keep their
+separate suffix. Runtime and management share suffix normalization, one-label
+slug extraction and the higher-priority environment/deployment parser.
+
+Eligible public, non-deleted app primary URLs join the owned scalar SQLC
+metadata projection and its input/byte ceilings. Exact literal markers split
+the before/after automaton at those URLs. New publication/restore starts with
+no serving-policy baseline; unchanged legacy overloads cannot authorize a new
+overloaded URL. Removed primary scopes cannot become global discovery while
+their app slug remains reserved. Ordinary primary compilation retains all
+matched account rules and distinct presets, including sibling app rules; only
+named environments use the app filter. In-memory projection and publication
+use the same analyzer under the existing mutex.
+
+All 15 existing guarded app writers now enforce this primary scope. The new
+Postgres and in-memory activation profiles use a custom apps domain, no
+registered environments and an exact target selector to isolate the primary
+guard. Refusals retain app/project/cron/preview/activity intent; supported
+policy deletion and retry succeeds. Namespace tests cover custom/disabled
+domains, immutable shape precedence, literal legacy metacharacters, scalar
+metadata bounds and separation from global route-only analysis. The existing
+HTTP activation profile verifies structured 422 count/byte/analysis errors
+and unchanged intent/notifications for create, restore and publication.
+
+The full in-memory suite exposed a valid YAML OpenAPI fixture rejected by the
+new JSON projection check. Both plain and quota import writers now normalize
+YAML through the API validator's parser before checking and saving its JSONB
+representation. JSON source numbers and formatting remain intact for the
+canonical size check. Upload size/hash metadata retains the original input.
+Shared PgStore/MemStore tests preserve declared routes and metadata and reject
+a small YAML alias document whose normalized representation exceeds 512 KiB,
+without replacing the saved import. The original YAML snapshot fixture remains
+unchanged and passes; JSON numeric-expansion refusal/recovery also passes.
+
+Final evidence (full source sets, no Go source overlays):
+
+- Selected PostgreSQL/state traffic regressions: 217 named cases, no failures
+  or skips, 81.857 s. `/tmp/gregale-primary-state-verified-pg-20260930.jsonl`.
+- Full `pkg/state -tags no_pg` suite: 1,867 named cases pass, 772 existing
+  guarded integration skips, no failures, 4.514 s.
+  `/tmp/gregale-primary-full-no-pg-final-20260930.jsonl`.
+- Import/snapshot/HTTP regressions: 63 named cases, no failures or skips.
+  `/tmp/gregale-primary-import-api-20260930.jsonl`.
+- Writer config and deployment parser regressions: 88 named cases pass.
+  `/tmp/gregale-primary-writer-config-20260930.jsonl`.
+- Shared identity, renderer and manifest tests: 182 named cases pass.
+  `/tmp/gregale-primary-config-20260930.jsonl`.
+- HTTP activation refusal/rollback profile: 10 named cases pass.
+  `/tmp/gregale-primary-activation-http-20260930.jsonl`.
+- Pinned production lint passes for state, identity/import, renderer/manifest
+  and API/GitHub/internal gateway packages (`tests=false`, existing test-only
+  unused helper disabled). `/tmp/gregale-primary-production-lint-20260930.log`.
+  Identity/import, renderer/manifest and API/GitHub lint with tests also passes.
+  `/tmp/gregale-primary-tests-lint-20260930.log`.
+- Fresh SQLC v1.31.1 output matches all four generated files; whitespace check
+  passes. No schema or migration changes. The first full no_pg attempt's YAML
+  failure and one later Postgres clone disk-exhaustion failure are excluded
+  from passing evidence; both complete profiles above are successful reruns.
+
+The primary guard currently includes potential legacy tag-prefixed app URLs
+conservatively. Exact alias shadowing/activation, domain binding transitions,
+operator namespace changes and global claimed/reserved exclusions/newly
+unclaimed scopes still require the complete hostname binding projection.
+Bounded decision evidence, preview/runtime/full synthetic-path agreement,
+full daemon/load/recovery and customer/staging rollout acceptance remain
+pending. No native Linux x86_64 KVM acceptance host is available; VM/restore,
+nft connection/source-IP, process-death and leak checks remain pending. All six
+release guarantees remain unchecked.

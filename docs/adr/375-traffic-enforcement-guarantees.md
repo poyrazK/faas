@@ -451,8 +451,9 @@ URLs cease to be serving scopes and cannot introduce an overload by dropping
 their former app filter. Existing create conflict/quota, restore grace/claim
 and compare-and-set predicates remain in force. This registered-URL eligibility
 uses runtime status and public visibility, including status-only reactivation
-with a retained historical deletion timestamp. Primary-hostname and alias/domain
-activation and complete global discovery/binding agreement still require their
+with a retained historical deletion timestamp. Ordinary primary-hostname
+activation follows the integration below. Alias/domain activation and complete
+global discovery/binding agreement still require their
 own integration and evidence. The in-memory aggregate mirror uses the same host
 analyzer under its existing mutex. Proposed rule, preset, overlay, environment,
 clone and app activation inputs are projected before publication; project
@@ -472,6 +473,10 @@ input.
 
 Imported documents also validate canonical runtime bytes before replacement;
 the existing import-body cap alone cannot bound JSONB numeric expansion.
+JSON imports retain their source number tokens. YAML imports normalize through
+the same parser as API validation before the JSONB projection check and save;
+normalized expansion is bounded, while upload size/hash metadata remains tied
+to the source. Both plain and quota writers use this representation.
 Replacing an owned import reuses its account quota slot, including repair of
 an oversized legacy document; unavailable plan tiers still refuse imports.
 The quota decision remains serialized by the account lock. Environment cloning
@@ -479,7 +484,7 @@ validates copied target projections in its transaction before commit, including
 app-wide fallback routes and the target slug's bytes. Failure rolls back the
 entire target configuration. The in-memory clone preflights all projections
 under its existing mutex before creating target state. Global aggregate
-validation, primary-hostname and alias/domain activation,
+validation, complete primary/alias/domain binding transitions,
 and complete-path recovery acceptance remain pending.
 
 Public declared-route inputs join the fresh hostname/app view. An exact
@@ -511,6 +516,21 @@ production substitution. The sealed effective fingerprint includes both
 projections; ordinary changes after admission do not alter them during wake
 or retries. A claimed source app also joins the account/target app security
 fence before wake, so source deletion cancels an admitted routed exchange.
+
+Primary app URL activation also joins the owned before/after projection. The
+store takes the configured apps domain from its app writer; API and GitHub
+preview/reconcile writers receive the same manifest DNS value and environment
+override as routing. Empty disables that namespace. The ordinary primary URL
+retains all matching account rules and distinct presets; it does not apply
+the named-environment app filter. New publication/restore starts at zero and
+removal cannot fall back to global discovery while its slug remains reserved.
+Runtime and management share suffix normalization, one-label extraction and
+the higher-priority immutable environment/deployment parsers. Primary markers
+are literal strings, including legacy selector metacharacters in slugs. Their
+metadata joins the existing bounded scalar SQL projection. This initial primary
+activation guard includes potential legacy tag-prefixed app URLs conservatively;
+alias shadowing/activation, domain binding transitions and operator namespace
+changes still need the complete binding projection and acceptance evidence.
 
 The implementation tracker is `docs/traffic_platform_implementation.md`.
 Each guarantee needs configuration-to-runtime tests, cancellation/recovery

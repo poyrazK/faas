@@ -15,6 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -492,14 +493,7 @@ func (r pgRouter) resolveTenantSurface(ctx context.Context, host string) (gatewa
 // the host is a custom domain (or the suffix is unconfigured). It rejects
 // multi-label prefixes (only one app-slug label under the configured suffix).
 func (r pgRouter) slugFor(host string) (string, bool) {
-	if r.appsSuffix == "" {
-		return "", false
-	}
-	label, ok := strings.CutSuffix(host, r.appsSuffix)
-	if !ok || label == "" || strings.Contains(label, ".") {
-		return "", false
-	}
-	return label, true
+	return hostidentity.AppSlugFromHost(r.appsSuffix, host)
 }
 
 // previewScopeFromHost (issue #272 / ADR-095 PR-B) peels a preview-hostname
@@ -819,14 +813,7 @@ func edgeAnswersFromManifest(manifest state.AppManifest) ([]byte, string, bool, 
 // leading-dot suffix form pgRouter/gateway compare against (".gregale.dev").
 // Empty in → empty out (custom-domain-only routing).
 func appsSuffix(domain string) string {
-	domain = strings.ToLower(strings.TrimSpace(domain))
-	if domain == "" {
-		return ""
-	}
-	if domain[0] != '.' {
-		domain = "." + domain
-	}
-	return domain
+	return hostidentity.AppsSuffix(domain)
 }
 
 // invalidator is the slice of gateway.PGBackend the notify loop drives. Declared
