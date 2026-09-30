@@ -546,6 +546,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	dependencyCtx = r.Context()
 	setProbeStage("binding")
+	p.withServiceRoutingInputs(r, callerDeploymentID, targetPath, probe)
 	if p.pinServicePolicy(dispatchWriter, r, caller, service, alias) {
 		return
 	}
@@ -721,7 +722,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			requested = releaseID
 		}
 		var releaseErr error
-		releaseID, releaseDeploymentID, releaseErr = p.resolveRelease(dependencyCtx, caller, callerDeploymentID, target.AppID, requested)
+		releaseID, releaseDeploymentID, releaseErr = p.resolveServiceRelease(dependencyCtx, caller, callerDeploymentID, target.AppID, requested)
 		if releaseErr != nil {
 			status := http.StatusServiceUnavailable
 			switch {
@@ -752,12 +753,12 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			serviceProxyProblem(dispatchWriter, http.StatusBadRequest, "Gregale-Target-Deployment must contain one deployment ID")
 			return
 		}
-		if p.validateDeployment == nil {
+		if p.validateDeployment == nil && p.policy == nil {
 			p.metrics.IncServiceCall(ServiceCallOverrideUnavailable)
 			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service deployment validation is unavailable")
 			return
 		}
-		live, err := p.validateDeployment(dependencyCtx, target.AppID, overrideID)
+		live, err := p.validateServiceDeployment(dependencyCtx, target.AppID, overrideID)
 		if err != nil {
 			p.metrics.IncServiceCall(ServiceCallOverrideUnavailable)
 			p.log.Warn("gateway: service deployment validation failed", "app", target.AppID, "err", err)
@@ -773,10 +774,20 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	versionKey, versionKeyOutcome := versionAffinityKeyFromRequest(r)
 	p.metrics.ObserveVersionAffinityKey(versionAffinitySurfaceService, versionKeyOutcome)
 	versionDeploymentID := overrideID
-	if !overridePresent && versionKey != "" {
+	if p.policy != nil {
+		var err error
+		versionDeploymentID, err = p.serviceSnapshotDeployment(r.Context(), target.AppID)
+		if err != nil {
+			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service routing policy has no admitted deployment")
+			return
+		}
+	} else if !overridePresent && versionKey != "" {
 		if resolver, ok := p.provider.(versionAffinityResolver); ok {
 			versionDeploymentID, _ = resolver.AffinityDeployment(target.AppID, versionKey)
 		}
+	}
+	if versionDeploymentID != "" {
+		dependencySpan.SetAttributes(attribute.String("gregale.traffic.selected_deployment_id", versionDeploymentID))
 	}
 	// From this point, the request has passed identity, target, and binding
 	// checks and is an actual managed dependency attempt. Count route/wake

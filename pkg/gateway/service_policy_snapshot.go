@@ -20,6 +20,7 @@ type ServicePolicySnapshot struct {
 	Target             ServiceTarget
 	Caller             ServiceCaller
 	AuthorizationError error `json:"-"`
+	Routing            *ServiceRoutingSnapshot
 }
 
 type ServicePolicyPinner func(context.Context, string, string, bool) (ServicePolicySnapshot, error)
@@ -42,6 +43,9 @@ func (p *ServiceProxy) pinServicePolicy(w http.ResponseWriter, r *http.Request, 
 	cancel()
 	if err == nil {
 		snapshot, err = freezeServicePolicy(snapshot, caller)
+	}
+	if err == nil {
+		selectServiceSnapshotDeployment(r.Context(), &snapshot)
 	}
 	if err != nil {
 		if handleForwardRequestCancellation(w, r, true) {
@@ -83,6 +87,9 @@ func freezeServicePolicy(snapshot ServicePolicySnapshot, caller string) (Service
 		return ServicePolicySnapshot{}, err
 	}
 	frozen.AuthorizationError = snapshot.AuthorizationError
+	if frozen.Routing != nil {
+		frozen.Routing.ReleaseError = snapshot.Routing.ReleaseError
+	}
 	return frozen, nil
 }
 

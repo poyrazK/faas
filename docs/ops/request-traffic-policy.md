@@ -45,7 +45,7 @@ during a pending document load refuses its unpublished snapshot, while an
 already pinned request retains its contract. The configured total deadline is
 armed before loading that document or scoped contract; expiry returns 504.
 Managed service calls now pin the policy inputs described below. Simulator/runtime
-agreement and the remaining service routing inputs still require verification.
+agreement and complete service-path acceptance still require verification.
 Native lifecycle and deployment acceptance remain pending.
 
 ## Managed service calls
@@ -54,7 +54,9 @@ Both internal service-proxy listeners read discovery, alias access and
 authorization in one read-only repeatable-read Postgres transaction. This
 includes preview/scenario-test namespace, caller binding and transport policy,
 target caller/method/path grants, dependency reliability, and target protocol
-and WebSocket posture. The complete lookup has a 250 ms bound and releases the
+and WebSocket posture. Release membership/expiry, exact override eligibility and
+positive deployment weights use that same committed view. The complete lookup
+has a 250 ms bound and releases the
 transaction before queueing, wake or dispatch. Missing verification returns
 503 with `Retry-After: 1`; it does not use a warm authorization fallback.
 
@@ -66,10 +68,23 @@ budget. Application headers and trailers cannot replace the proof. Raw Upgrade
 bytes have span evidence but no protected HTTP proof header.
 
 Emergency account/app/deployment generations remain fresh independent checks.
-Endpoint health remains live. Project release routing, exact deployment
-validation and version-affinity selection occur later and are not yet included
-in this transaction/fingerprint; completing that routing snapshot remains an
-acceptance requirement.
+Endpoint health remains live. The snapshot chooses one deployment before wake:
+release membership takes precedence over an exact override, followed by version
+affinity or weighted selection. Ordinary calls without an affinity key use local
+random selection against the pinned weights. Instance rotation/local-node
+preference and retries stay inside that deployment, including after a cold wake.
+A newly published graph or changed weight cannot redirect an admitted call.
+No eligible deployment returns 503 before wake. The roster is bounded to 100
+positive deployments; a larger roster refuses verification.
+
+The policy proof includes verified release/override verdicts and weights.
+Selection entropy and the individual random choice are excluded, so equivalent
+policy inputs keep the same fingerprint. The dependency span separately records
+`gregale.traffic.selected_deployment_id`. Expired release pins return 410,
+ambiguous membership/conflicting pins 409, invalid header shapes 400, an explicit
+release without verified source deployment 403, and an ineligible exact override
+422. These refusals precede wake/guest dispatch. Normal updates retain admitted
+policy; emergency generation fences still apply.
 
 ## Covered paths
 
@@ -78,7 +93,7 @@ acceptance requirement.
 | Ordinary public HTTP, including cache and edge responses | Compiled host rules, imported/scoped route contract, resolved app flags and plan; response/span/log fingerprint |
 | Named environment, verified domain, listener selector | Effective host rules; selector and base host use one cache generation |
 | Public streaming and raw Upgrade | Pinned rules/app inputs; span/log evidence; ordinary HTTP header only where normal response commitment is used |
-| Managed service proxy | Atomic discovery/access/namespace/reliability/transport snapshot; response/span fingerprint; later release/deployment/affinity inputs pending |
+| Managed service proxy | Atomic access/namespace/reliability/transport/release/override/weight snapshot; one deployment across wake/retry; response/span fingerprint |
 | Synthetic HTTP through the public routing handler | Same handler snapshot; direct bridge dispatch has no host-policy snapshot |
 | TCP service tunnels, detached jobs, unmediated guest sockets | Outside this public HTTP snapshot |
 

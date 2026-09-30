@@ -4869,3 +4869,40 @@ SELECT account_id, run_id, workload_name, app_id FROM scenario_test_members WHER
 -- name: ReadServicePolicyProject :one
 SELECT preview_service_policy FROM github_deploy_policies
 WHERE project_id = sqlc.arg(project_id)::uuid AND account_id = sqlc.arg(account_id)::uuid;
+
+-- name: ReadServicePolicyActiveRelease :one
+SELECT EXISTS (
+    SELECT 1 FROM apps caller JOIN apps target ON target.project_id = caller.project_id
+    JOIN project_release_sets rs ON rs.project_id = caller.project_id
+    WHERE caller.id = sqlc.arg(caller_app_id)::uuid AND target.id = sqlc.arg(target_app_id)::uuid AND rs.active
+)::boolean AS active;
+
+-- name: ReadServicePolicyReleaseCandidates :many
+SELECT rs.id, member.deployment_id,
+       EXISTS (
+           SELECT 1 FROM deployments d WHERE d.id = member.deployment_id AND d.app_id = member.app_id AND d.status = 'live'
+           AND (d.traffic_percent > 0 OR EXISTS (SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id = d.id AND p.expires_at > now())
+                OR EXISTS (SELECT 1 FROM project_release_members retained JOIN project_release_sets retained_set ON retained_set.id = retained.release_id
+                           WHERE retained.deployment_id = d.id AND retained.app_id = d.app_id AND (retained_set.active OR retained_set.expires_at > now())))
+       )::boolean AS target_live
+FROM project_release_sets rs
+JOIN project_release_members caller ON caller.release_id = rs.id
+JOIN project_release_members member ON member.release_id = rs.id
+WHERE caller.app_id = sqlc.arg(caller_app_id)::uuid AND caller.deployment_id = sqlc.arg(caller_deployment_id)::uuid
+  AND member.app_id = sqlc.arg(target_app_id)::uuid AND (rs.active OR rs.expires_at > now())
+  AND (sqlc.narg(requested_release_id)::uuid IS NULL OR rs.id = sqlc.narg(requested_release_id)::uuid)
+ORDER BY rs.created_at DESC LIMIT 2;
+
+-- name: ReadServicePolicyDeploymentOverride :one
+SELECT EXISTS (
+    SELECT 1 FROM deployments d JOIN apps a ON a.id = d.app_id
+    WHERE d.id = sqlc.arg(deployment_id)::uuid AND d.app_id = sqlc.arg(app_id)::uuid AND d.status = 'live'
+      AND (d.traffic_percent > 0 OR d.traffic_percent_explicit
+           OR (coalesce((a.manifest->>'revision_pin_ttl_seconds')::integer, 0) > 0
+               AND EXISTS (SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id = d.id AND p.expires_at > now())))
+)::boolean AS allowed;
+
+-- name: ReadServicePolicyDeploymentWeights :many
+SELECT id, traffic_percent FROM deployments
+WHERE app_id = sqlc.arg(app_id)::uuid AND status = 'live' AND traffic_percent > 0
+ORDER BY id LIMIT sqlc.arg(row_limit)::integer;

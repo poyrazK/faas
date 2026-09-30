@@ -10929,3 +10929,24 @@ ALTER TABLE ONLY public.scenario_test_members
 
 ALTER TABLE ONLY public.scenario_test_members
     ADD CONSTRAINT scenario_test_members_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+-- Existing retained-revision table used by the ADR-375 routing snapshot.
+CREATE TABLE public.deployment_revision_pins (
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+ALTER TABLE ONLY public.deployment_revision_pins
+    ADD CONSTRAINT deployment_revision_pins_pkey PRIMARY KEY (deployment_id);
+
+CREATE INDEX deployment_revision_pins_app_idx ON public.deployment_revision_pins USING btree (app_id, expires_at DESC);
+
+CREATE INDEX deployment_revision_pins_expiry_idx ON public.deployment_revision_pins USING btree (expires_at);
+
+ALTER TABLE ONLY public.deployment_revision_pins
+    ADD CONSTRAINT deployment_revision_pins_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.deployment_revision_pins
+    ADD CONSTRAINT deployment_revision_pins_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;

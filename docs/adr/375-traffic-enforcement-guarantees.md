@@ -210,9 +210,19 @@ ends before queueing, wake or dispatch. The gateway copies the result and pins
 its fingerprint through wake and retries; the configured call timeout counts
 from service-handler entry. New calls require a fresh verified view. The
 projection and evidence exclude unrelated manifest fields and credentials.
-Release graph, exact deployment validation and affinity selection still require
-their own coverage/evidence work; this service slice does not freeze those
-later routing reads or live endpoint health.
+Release membership and expiry, exact override eligibility and positive deployment
+weights use that same committed view. A routing roster is bounded to 100 positive
+deployments; exceeding it refuses verification. One deployment is selected before
+wake: release membership, then exact override, then affinity or weighted selection.
+Ordinary calls without an affinity key use local random selection against those
+weights. Instance rotation and local-node preference operate within that selected
+deployment. Cold wake and retries cannot switch deployments when weights or release
+graphs change. A request without an eligible deployment refuses before wake.
+Selection entropy and the individual random choice do not change the policy
+fingerprint; the selected deployment is separate span evidence. Live endpoint
+health and independent security generations can still refuse or cancel dispatch.
+These routing checks have local fixtures and Postgres evidence; deployed path,
+load and native lifecycle acceptance remain required.
 
 Ordinary policy updates fence new requests during convergence; an admitted
 request retains its snapshot. Emergency security revocation uses a separate

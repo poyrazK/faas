@@ -50,6 +50,12 @@ func newServicePolicyPinner(store state.ServicePolicySnapshotStore) gateway.Serv
 					if err := result.AuthorizationError; err != nil && !isServicePolicyDenial(err) {
 						return err
 					}
+					if result.AuthorizationError == nil {
+						result.Routing, err = loadServiceRoutingSnapshot(ctx, source, result)
+						if err != nil {
+							return err
+						}
+					}
 				}
 			}
 			encoded, err := json.Marshal(reader)

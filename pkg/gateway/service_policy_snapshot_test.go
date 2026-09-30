@@ -16,8 +16,9 @@ import (
 
 func serviceSnapshotFixture() ServicePolicySnapshot {
 	return ServicePolicySnapshot{InputRevision: "service-inputs-v1:old", Found: true, AliasAllowed: true,
-		Target: ServiceTarget{AppID: "orders", AppProtocol: api.AppProtocolHTTP2},
-		Caller: ServiceCaller{AppID: "client", AccountID: "account", CallScope: &api.ServiceCallScope{Methods: []string{"GET"}, PathPrefixes: []string{"/health"}}}}
+		Routing: &ServiceRoutingSnapshot{Weights: []DeploymentWeightsRow{{ID: "release", TrafficPercent: 100}}},
+		Target:  ServiceTarget{AppID: "orders", AppProtocol: api.AppProtocolHTTP2},
+		Caller:  ServiceCaller{AppID: "client", AccountID: "account", CallScope: &api.ServiceCallScope{Methods: []string{"GET"}, PathPrefixes: []string{"/health"}}}}
 }
 
 func serviceSnapshotRequest(proxy *ServiceProxy) *httptest.ResponseRecorder {
@@ -49,7 +50,7 @@ func TestServicePolicySnapshotRetainsAccessAndTransportAcrossWakeRetry(t *testin
 			source.Target.AppProtocol = api.AppProtocolGRPC
 			source.Caller.CallScope.Methods[0] = http.MethodDelete
 			source.AuthorizationError = ErrServiceProxyCallerDenied
-			provider.snapshot = ServiceEndpointsSnapshot{AppID: "orders", Endpoints: []ServiceEndpoint{{InstanceID: "one", NodeID: "node", Port: 8080}, {InstanceID: "two", NodeID: "node", Port: 8081}}}
+			provider.snapshot = ServiceEndpointsSnapshot{AppID: "orders", Endpoints: []ServiceEndpoint{{InstanceID: "one", DeploymentID: "release", NodeID: "node", Port: 8080}, {InstanceID: "two", DeploymentID: "release", NodeID: "node", Port: 8081}}}
 			return nil
 		},
 		Forward: func(Target) http.Handler {

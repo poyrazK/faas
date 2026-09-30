@@ -11939,6 +11939,26 @@ func (q *Queries) ReadProjectReleaseSet(ctx context.Context, db DBTX, arg ReadPr
 	return release, err
 }
 
+const readServicePolicyActiveRelease = `-- name: ReadServicePolicyActiveRelease :one
+SELECT EXISTS (
+    SELECT 1 FROM apps caller JOIN apps target ON target.project_id = caller.project_id
+    JOIN project_release_sets rs ON rs.project_id = caller.project_id
+    WHERE caller.id = $1::uuid AND target.id = $2::uuid AND rs.active
+)::boolean AS active
+`
+
+type ReadServicePolicyActiveReleaseParams struct {
+	CallerAppID pgtype.UUID
+	TargetAppID pgtype.UUID
+}
+
+func (q *Queries) ReadServicePolicyActiveRelease(ctx context.Context, db DBTX, arg ReadServicePolicyActiveReleaseParams) (bool, error) {
+	row := db.QueryRow(ctx, readServicePolicyActiveRelease, arg.CallerAppID, arg.TargetAppID)
+	var active bool
+	err := row.Scan(&active)
+	return active, err
+}
+
 const readServicePolicyAppByID = `-- name: ReadServicePolicyAppByID :one
 
 SELECT id, account_id, slug, status, project_id, preview_of_slug,
@@ -12039,6 +12059,64 @@ func (q *Queries) ReadServicePolicyAppBySlug(ctx context.Context, db DBTX, slug 
 	return i, err
 }
 
+const readServicePolicyDeploymentOverride = `-- name: ReadServicePolicyDeploymentOverride :one
+SELECT EXISTS (
+    SELECT 1 FROM deployments d JOIN apps a ON a.id = d.app_id
+    WHERE d.id = $1::uuid AND d.app_id = $2::uuid AND d.status = 'live'
+      AND (d.traffic_percent > 0 OR d.traffic_percent_explicit
+           OR (coalesce((a.manifest->>'revision_pin_ttl_seconds')::integer, 0) > 0
+               AND EXISTS (SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id = d.id AND p.expires_at > now())))
+)::boolean AS allowed
+`
+
+type ReadServicePolicyDeploymentOverrideParams struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+}
+
+func (q *Queries) ReadServicePolicyDeploymentOverride(ctx context.Context, db DBTX, arg ReadServicePolicyDeploymentOverrideParams) (bool, error) {
+	row := db.QueryRow(ctx, readServicePolicyDeploymentOverride, arg.DeploymentID, arg.AppID)
+	var allowed bool
+	err := row.Scan(&allowed)
+	return allowed, err
+}
+
+const readServicePolicyDeploymentWeights = `-- name: ReadServicePolicyDeploymentWeights :many
+SELECT id, traffic_percent FROM deployments
+WHERE app_id = $1::uuid AND status = 'live' AND traffic_percent > 0
+ORDER BY id LIMIT $2::integer
+`
+
+type ReadServicePolicyDeploymentWeightsParams struct {
+	AppID    pgtype.UUID
+	RowLimit int32
+}
+
+type ReadServicePolicyDeploymentWeightsRow struct {
+	ID             pgtype.UUID
+	TrafficPercent int32
+}
+
+func (q *Queries) ReadServicePolicyDeploymentWeights(ctx context.Context, db DBTX, arg ReadServicePolicyDeploymentWeightsParams) ([]ReadServicePolicyDeploymentWeightsRow, error) {
+	rows, err := db.Query(ctx, readServicePolicyDeploymentWeights, arg.AppID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadServicePolicyDeploymentWeightsRow{}
+	for rows.Next() {
+		var i ReadServicePolicyDeploymentWeightsRow
+		if err := rows.Scan(&i.ID, &i.TrafficPercent); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const readServicePolicyPreviewApp = `-- name: ReadServicePolicyPreviewApp :one
 SELECT id, account_id, slug, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
@@ -12117,6 +12195,61 @@ func (q *Queries) ReadServicePolicyProject(ctx context.Context, db DBTX, arg Rea
 	var preview_service_policy string
 	err := row.Scan(&preview_service_policy)
 	return preview_service_policy, err
+}
+
+const readServicePolicyReleaseCandidates = `-- name: ReadServicePolicyReleaseCandidates :many
+SELECT rs.id, member.deployment_id,
+       EXISTS (
+           SELECT 1 FROM deployments d WHERE d.id = member.deployment_id AND d.app_id = member.app_id AND d.status = 'live'
+           AND (d.traffic_percent > 0 OR EXISTS (SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id = d.id AND p.expires_at > now())
+                OR EXISTS (SELECT 1 FROM project_release_members retained JOIN project_release_sets retained_set ON retained_set.id = retained.release_id
+                           WHERE retained.deployment_id = d.id AND retained.app_id = d.app_id AND (retained_set.active OR retained_set.expires_at > now())))
+       )::boolean AS target_live
+FROM project_release_sets rs
+JOIN project_release_members caller ON caller.release_id = rs.id
+JOIN project_release_members member ON member.release_id = rs.id
+WHERE caller.app_id = $1::uuid AND caller.deployment_id = $2::uuid
+  AND member.app_id = $3::uuid AND (rs.active OR rs.expires_at > now())
+  AND ($4::uuid IS NULL OR rs.id = $4::uuid)
+ORDER BY rs.created_at DESC LIMIT 2
+`
+
+type ReadServicePolicyReleaseCandidatesParams struct {
+	CallerAppID        pgtype.UUID
+	CallerDeploymentID pgtype.UUID
+	TargetAppID        pgtype.UUID
+	RequestedReleaseID pgtype.UUID
+}
+
+type ReadServicePolicyReleaseCandidatesRow struct {
+	ID           pgtype.UUID
+	DeploymentID pgtype.UUID
+	TargetLive   bool
+}
+
+func (q *Queries) ReadServicePolicyReleaseCandidates(ctx context.Context, db DBTX, arg ReadServicePolicyReleaseCandidatesParams) ([]ReadServicePolicyReleaseCandidatesRow, error) {
+	rows, err := db.Query(ctx, readServicePolicyReleaseCandidates,
+		arg.CallerAppID,
+		arg.CallerDeploymentID,
+		arg.TargetAppID,
+		arg.RequestedReleaseID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadServicePolicyReleaseCandidatesRow{}
+	for rows.Next() {
+		var i ReadServicePolicyReleaseCandidatesRow
+		if err := rows.Scan(&i.ID, &i.DeploymentID, &i.TargetLive); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const readServicePolicyTestApp = `-- name: ReadServicePolicyTestApp :one

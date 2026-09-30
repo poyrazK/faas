@@ -1040,6 +1040,13 @@ type DeploymentOpenapiSnapshot struct {
 	CapturedAt    pgtype.Timestamptz
 }
 
+type DeploymentRevisionPin struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	ExpiresAt    pgtype.Timestamptz
+	CreatedAt    pgtype.Timestamptz
+}
+
 type DeploymentScopeExclusion struct {
 	ID        pgtype.UUID
 	AccountID pgtype.UUID

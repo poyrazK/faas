@@ -270,3 +270,29 @@ deployment and affinity routing inputs still need snapshot/evidence coverage.
 Decision evidence, preview/path agreement, public-hop blocked long responses,
 native VM/network/leak and complete daemon/load/deployment acceptance remain
 pending. No release guarantee is marked accepted.
+
+Managed service routing now joins the access snapshot's read-only transaction:
+source deployment release membership/expiry, exact override eligibility and
+positive deployment weights are verified together. The roster is bounded to
+100 positive deployments. One deployment is selected before wake, with release,
+override and affinity precedence followed by weighted selection for ordinary
+calls. Instance rotation and local preference stay inside that deployment;
+refreshes and retries cannot cross into a new graph or changed rollout cohort.
+No eligible deployment refuses before wake. Selected deployment is separate
+span evidence; random selection entropy/choice does not change the policy proof.
+Known release refusals remain pinned verdicts while storage errors fail verification.
+
+Local wake/retry mutation tests passed for release, exact override, affinity and
+ordinary weighted calls; fresh requests observed changed routing. Refusal tests
+preserved 400/403/409/410/422/503 without endpoint lookup, wake or forwarding.
+Real Postgres tests passed for a cutover committed between access and routing
+reads, ambiguous source membership, expired release/direct pins, current/foreign
+override checks, current weights and transaction cleanup. The final Postgres
+check passed in 2.759 seconds; full gateway and internal-gateway suites passed
+in 56.074 and 8.862 seconds. Pinned lint passed gateway/internal-gateway and state
+production code with zero findings; state used tests=false/unused disabled for
+the existing test-only helper. sqlc regeneration matched all four generated Go
+files. The existing revision-pin table was added to schema.sql from its actual
+migrated definition. Public routing snapshot completeness, bounded decision
+evidence, preview/path agreement, public-hop blocked long responses and the
+remaining native/daemon/load/deployment acceptance gates still require work.

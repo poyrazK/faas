@@ -265,6 +265,18 @@ func affinityDeployment(appID, key string, picker *appPicker) (string, bool) {
 	return picker.affinityWeights[len(picker.affinityWeights)-1].DeploymentID, true
 }
 
+// AffinityDeploymentFromWeights uses the same cohort algorithm as the live
+// picker against an immutable request roster, including cold deployments.
+func AffinityDeploymentFromWeights(appID, key string, rows []DeploymentWeightsRow) (string, bool) {
+	key, ok := normalizeVersionAffinityKey(key)
+	if !ok || appID == "" {
+		return "", false
+	}
+	picker := &appPicker{}
+	setPickerWeights(picker, buildDeploymentWeights(rows))
+	return affinityDeployment(appID, key, picker)
+}
+
 func versionAffinityDeploymentForRequest(backend Backend, appID string, r *http.Request) string {
 	if r != nil {
 		if deploymentID, _ := r.Context().Value(versionAffinityDeploymentContextKey{}).(string); deploymentID != "" {
