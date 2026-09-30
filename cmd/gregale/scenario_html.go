@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -70,7 +71,6 @@ func writeTestHTMLReport(path, suite string, receipts []testRunReceipt) error {
 
 func renderTestHTML(path, source string, data any) error {
 	funcs := template.FuncMap{
-		"styles": func() template.CSS { return template.CSS(testHTMLStyles) },
 		"json": func(value any) string {
 			body, err := json.MarshalIndent(value, "", "  ")
 			if err != nil {
@@ -104,6 +104,9 @@ func renderTestHTML(path, source string, data any) error {
 			}{receipt.Evidence, receipt.Outputs, receipt.Invocations, receipt.Deliveries, receipt.ServiceWake, receipt.ServiceHot, receipt.Diagnostics, receipt.LocalApp, receipt.QueueIdle}
 		},
 	}
+	// The stylesheet is a compile-time constant. Insert it before parsing the
+	// HTML template so no runtime value bypasses html/template's escaping.
+	source = strings.ReplaceAll(source, "{{styles}}", testHTMLStyles)
 	parsed, err := template.New("gregale-test-report").Funcs(funcs).Parse(source)
 	if err != nil {
 		return fmt.Errorf("parse HTML report: %w", err)
