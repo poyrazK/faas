@@ -6,6 +6,7 @@ package state
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -48,16 +49,24 @@ func TestPgTrafficAppActivationRefusesNewAliasOverload(t *testing.T) {
 	testPgTrafficAppActivation(t, "alias")
 }
 
+func TestPgTrafficAppActivationRefusesNewScopedDomainOverload(t *testing.T) {
+	testPgTrafficAppActivation(t, "domain")
+}
+
 func testPgTrafficAppActivation(t *testing.T, namespace string) {
 	primary := namespace == "primary"
 	aliasScope := namespace == "alias"
+	domainScope := namespace == "domain"
 	operations := []string{"create", "quota_create", "activity_create", "preview_batch", "preview_set", "project_plan", "reconcile_create", "restore", "activity_restore", "reconcile_restore", "status_update", "activity_status_update", "status_cas", "visibility_update", "activity_visibility_update"}
 	if aliasScope {
 		operations = []string{"restore", "activity_restore", "reconcile_restore", "visibility_update", "activity_visibility_update"}
 	}
+	if domainScope {
+		operations = []string{"restore", "activity_restore", "reconcile_restore", "status_update", "activity_status_update", "status_cas", "visibility_update", "activity_visibility_update"}
+	}
 	for _, operation := range operations {
 		t.Run(operation, func(t *testing.T) {
-			store, pool, account, project, source, _ := trafficEnvironmentPGFixture(t)
+			store, pool, account, project, source, environment := trafficEnvironmentPGFixture(t)
 			if primary || aliasScope {
 				store = NewPgStore(pool, WithTrafficAppsDomain(".APPS.EXAMPLE.TEST "))
 				// No registered environments: this refusal must come solely
@@ -71,6 +80,16 @@ func testPgTrafficAppActivation(t *testing.T, namespace string) {
 			needsTombstone := strings.Contains(operation, "restore") || strings.Contains(operation, "status")
 			aliasHost := ""
 			registerAlias := func() {
+				if domainScope {
+					aliasHost = "scoped-activation.example.test"
+					if _, err := store.CreateCustomDomainInEnvironmentIfUnderQuota(t.Context(), aliasHost, target.ID, environment.ID, "token", 100, 500); err != nil {
+						t.Fatal(err)
+					}
+					if err := store.MarkDomainVerified(t.Context(), aliasHost); err != nil {
+						t.Fatal(err)
+					}
+					return
+				}
 				if !aliasScope {
 					return
 				}
@@ -143,7 +162,7 @@ func testPgTrafficAppActivation(t *testing.T, namespace string) {
 			if primary {
 				matchHost = target.Slug + ".apps.example.test"
 			}
-			if aliasScope {
+			if aliasScope || domainScope {
 				matchHost = aliasHost
 			}
 			action := EdgeRuleAction{Kind: EdgeRuleKindRoute, Route: &EdgeRuleRouteAction{TargetAppSlug: source.Slug},
@@ -156,6 +175,13 @@ func testPgTrafficAppActivation(t *testing.T, namespace string) {
 				t.Fatal(err)
 			}
 			before := trafficAppIntentCounts(t, pool)
+			var domainBefore CustomDomain
+			if domainScope {
+				domainBefore, err = store.DomainByName(t.Context(), aliasHost)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
 			apply := func() error {
 				switch operation {
 				case "create":
@@ -219,11 +245,17 @@ func testPgTrafficAppActivation(t *testing.T, namespace string) {
 			if !errors.As(err, &aggregate) || aggregate.Scope != "host_rule_projection" {
 				t.Fatalf("activation accepted new overloaded URL: %v", err)
 			}
-			if (primary || aliasScope) && aggregate.Host != matchHost {
+			if (primary || aliasScope || domainScope) && aggregate.Host != matchHost {
 				t.Fatalf("primary witness=%q want=%q", aggregate.Host, matchHost)
 			}
 			if after := trafficAppIntentCounts(t, pool); after != before {
 				t.Fatalf("rejected activation retained intent: before=%s after=%s", before, after)
+			}
+			if domainScope {
+				after, err := store.DomainByName(t.Context(), aliasHost)
+				if err != nil || !reflect.DeepEqual(domainBefore, after) {
+					t.Fatalf("refused activation changed scoped domain: %+v/%v", after, err)
+				}
 			}
 			if needsTombstone {
 				saved, err := store.AppByID(t.Context(), target.ID)

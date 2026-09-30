@@ -148,6 +148,9 @@ func (r pgRouter) RequiresFreshHostPolicy() bool {
 }
 
 func (r pgRouter) CachedCustomDomainRouteActive(ctx context.Context, host, appID string) (bool, error) {
+	if strings.ContainsRune(host, '*') {
+		return false, nil
+	}
 	domain, err := r.store.DomainByName(ctx, host)
 	if errors.Is(err, state.ErrNotFound) {
 		if wildcardStore, ok := r.store.(state.CustomDomainWildcardStore); ok {
@@ -208,6 +211,7 @@ func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID stri
 	}
 	resolved.PinnedDeploymentID = deployment.ID
 	resolved.PinnedDeploymentScope = environment.Slug
+	resolved.PublicEnvironmentID = environment.ID
 	return resolved, true, nil
 }
 
@@ -350,6 +354,9 @@ func (r pgRouter) appBySlug(ctx context.Context, slug string) (gateway.App, bool
 // Must exist AND be verified before we route to it; a deleted
 // parent app falls through to a clean 404.
 func (r pgRouter) customDomain(ctx context.Context, host string) (gateway.App, bool, error) {
+	if strings.ContainsRune(host, '*') {
+		return gateway.App{}, false, nil
+	}
 	dom, err := r.store.DomainByName(ctx, host)
 	if errors.Is(err, state.ErrNotFound) {
 		// Wildcard rows are a separate optional seam so narrow test doubles

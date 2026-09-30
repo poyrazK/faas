@@ -318,6 +318,9 @@ type App struct {
 	// scoped configuration it was built to serve.
 	PinnedDeploymentID    string
 	PinnedDeploymentScope string
+	// PublicEnvironmentID identifies a stable environment URL or a verified
+	// scoped domain. Exact revision/alias URLs keep their own policy semantics.
+	PublicEnvironmentID string
 	// CustomDomainRoute records that the resolved host is a verified custom
 	// domain, so its cache entry can revalidate current domain ownership.
 	CustomDomainRoute bool

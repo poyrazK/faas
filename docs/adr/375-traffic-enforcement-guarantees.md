@@ -564,9 +564,9 @@ router's strict suffix language, including nested subdomains and excluding
 the apex and literal asterisks. Each newly published domain/app binding starts
 with a zero baseline even if another potential owned binding covers the same
 host. Existing bindings retain the incremental repair baseline. The bounded
-SQL projection includes only verified, public, non-deleted ordinary owners;
-named-environment custom domains remain outside this slice. App publication
-and restoration see the same ordinary domain markers.
+SQL projection initially included only verified, public, non-deleted ordinary
+owners. The environment-scoped follow-up below adds named-environment domains.
+App publication and restoration see the same domain markers.
 The challenge, expiry and discovered app owner are repeated in the verification
 UPDATE predicate. An expired, reclaimed or already verified challenge remains
 a compare-and-set miss. Refusal rolls back verification, so certificate work
@@ -584,6 +584,41 @@ text is not scanned repeatedly just to establish that it has no HTML or Unicode
 separator escapes. Canonical and compiler byte measurements, escape expansion,
 defaults and phase limits retain
 their existing meaning; no policy body is transferred for this analysis.
+
+### Follow-up: environment-scoped custom-domain policy
+
+Verified environment-scoped domains now select the same app-filtered policy
+and optional headers/CORS replacement as the stable environment URL. This
+supersedes ADR-233's application-owned custom-domain edge-policy limitation
+for domains with an explicit environment binding; ordinary domains retain
+their existing policy. Authoritative public compilation resolves each host
+with the configured router in the same snapshot before selecting its overlay.
+An alias or higher-priority tenant binding does not inherit a shadowed domain's
+environment. Missing or failed environment reads refuse compilation.
+
+Domain metadata includes the environment identity only when the app and
+environment share an account/project. Publication, visibility/restoration and
+rule/preset/overlay mutations validate every potential owned binding at each
+matching host. The bounded analysis checks overlapping exact/wildcard scopes
+separately, including ordinary and generated environment scopes. A new
+domain/app/environment binding has no prior serving-policy allowance.
+Raw owner-rule projection bounds apply before app filtering; compiled bounds
+include only that app's retained rules, overlay and distinct retained presets.
+
+Public policy hostnames are limited to 253 bytes, matching custom-domain DNS
+validation; overlong input refuses before policy reads/compilation. Overlay
+estimates reserve the full sixfold JSON escape allowance for that host length,
+so exact and wildcard domain spellings cannot enlarge a compiled overlay beyond
+its estimate. This is a centralized input bound, not a new account quota.
+Cross-account shadow/fallback transitions, tenant surfaces and global binding
+publication/removal still require the complete binding projection.
+Wildcard lookup uses literal suffix comparisons in both direct and snapshot
+SQLC reads, with the shared Go matcher's whitespace and single trailing-dot
+normalization and case folding for supported ASCII DNS names. SQL LIKE operators do not widen a
+legacy wildcard suffix. Most-specific ordering uses byte length, with lexical
+ties, including unverified reservations. HTTP routing and cached-domain
+validation reject asterisk-bearing request hosts; domain management can still
+read wildcard claims by name.
 
 The implementation tracker is `docs/traffic_platform_implementation.md`.
 Each guarantee needs configuration-to-runtime tests, cancellation/recovery

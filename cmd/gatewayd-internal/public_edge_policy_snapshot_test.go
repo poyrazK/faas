@@ -46,6 +46,11 @@ func (f publicRoutingPGFixture) corsPreset(t *testing.T, origins ...string) stat
 func (f publicRoutingPGFixture) compiledApp(t *testing.T, g *gatewaydEdgeRules, host string) (context.Context, gateway.App) {
 	t.Helper()
 	router := pgRouter{store: f.store, appsSuffix: ".apps.gregale.dev", deploySuffix: ".gregale.dev", tenantSurfacesEnabled: func() bool { return false }}
+	return f.compiledAppWithRouter(t, g, router, host)
+}
+
+func (f publicRoutingPGFixture) compiledAppWithRouter(t *testing.T, g *gatewaydEdgeRules, router pgRouter, host string) (context.Context, gateway.App) {
+	t.Helper()
 	if g.publicHostSource == nil {
 		g.withPublicHostRouter(router)
 	}

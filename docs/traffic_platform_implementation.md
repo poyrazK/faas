@@ -1321,3 +1321,79 @@ customer/staging release acceptance remain pending. No native Linux x86_64 KVM
 acceptance host is available; VM/restore, nft connection/source-IP,
 process-death and leak checks remain pending. All six release guarantees remain
 unchecked.
+
+### Environment-scoped domain policy and publication guard, 2026-10-01
+
+Explicitly environment-bound verified domains now select the stable environment
+URL's workload app filter and optional headers/CORS replacement. Missing policy
+retains the workload fallback; an explicitly empty replacement suppresses its
+headers/CORS. Authoritative compilation resolves the actual binding with the
+captured router namespace in the same snapshot. An alias, exact ordinary domain
+or higher-priority tenant binding cannot inherit a shadowed domain's overlay.
+Fresh requests read the authoritative inputs before cache reuse; admitted
+snapshots remain immutable. Oversized or failed scoped reads refuse forwarding.
+ADR-375 records the decision, with follow-up references in ADR-233 and ADR-283.
+
+Bounded aggregate analysis includes valid owned scoped-domain identities and
+injects their environment overlays by binding rather than only by generated
+URL. Overlapping potential ordinary, exact/wildcard scoped and generated
+bindings are checked separately. A new domain/app/environment identity starts
+with zero serving-policy allowance. Verification, overlay changes and positive
+app visibility/status/restoration writers preserve intent after refusal and
+succeed after repair. Raw owner rules are bounded before app filtering;
+compiled bounds include only retained rules, overlays and distinct presets.
+
+Public policy input is bounded to 253 hostname bytes before authoritative reads.
+The centralized limit matches domain validation. Overlay estimates reserve the
+maximum hostname and its sixfold JSON escape expansion. No account quota,
+analysis deadline, schema or migration is changed.
+
+Direct and snapshot wildcard reads now use SQLC literal suffix comparisons;
+legacy percent and underscore characters cannot widen a match as SQL LIKE
+operators. Whitespace normalization, one trailing host dot, supported ASCII DNS
+case folding, byte-length specificity and lexical ties agree with the shared
+Go matcher. Unverified wildcard reservations and complete management rows are
+preserved. Asterisk-bearing request hosts cannot route or retain a cached domain
+route. Exact snapshot lookup, reservations and both verification writes retain
+citext domain identity; exact aggregate markers use lowercase request hosts.
+
+Final evidence uses full source sets without Go source overlays on Darwin
+arm64, Go 1.25.13 and PostgreSQL 16.15. Go runs use CGO_ENABLED=0, serialized
+packages, vet disabled, inlining/DWARF disabled and stripped links. PostgreSQL
+uses an owned local cluster and private migrated test templates; its source
+database remains unmigrated.
+
+- Selected PostgreSQL state traffic, domain, deployment and promotion
+  regressions: 430 named cases pass, no failures or skips, 149.540 s.
+  Covers scoped verification and overlay refusal/repair, eight positive app
+  publication/restoration writers with preserved domain and activity intent,
+  overlapping scopes, wildcard lookup/full-row parity and mixed-case identity.
+- PostgreSQL public binding, route-source and edge-policy regressions:
+  62 named cases pass, no failures or skips, 34.725 s. Includes captured custom
+  namespaces, exact/wildcard scoped domains, 253-byte escaped input, shadowed
+  bindings, old dispatch refusal and repair without notifications on HTTP/1
+  and HTTP/2 peers. These are in-process listeners sharing PostgreSQL with
+  fake scheduling/forwarding; they do not establish real daemon acceptance.
+- Full `pkg/state -tags no_pg`: 1,939 named cases pass, no failures,
+  772 existing guarded database skips, 7.741 s.
+- Selected `pkg/gateway` policy, public routing, deadline and revocation
+  regressions: 116 named cases pass, no failures or skips, 7.407 s.
+- Production state/SQLC/API/gateway lint and internal gateway lint with tests
+  pass, zero issues and successful exits. Production lint uses tests=false and
+  disables the existing test-only unused helper.
+- SQLC v1.31.1 regeneration exactly matches all four generated files.
+  Whitespace checks pass. Compressed final logs, command/profile metadata and
+  changed-file hashes are preserved in
+  `/Users/poyrazk/dev/Cloud/gregale/outputs/traffic-env-domain-evidence-20261001/`.
+  Earlier failed, empty-output and superseded runs are excluded from passing
+  evidence. The existing limits and legacy numeric fixtures remain intact.
+
+Tenant-surface publication, exact cross-account binding shadowing,
+alias/domain removal and fallback, immutable revision publication, operator
+namespace transitions and global claimed/reserved exclusions still need the
+complete binding projection and acceptance. Bounded decision evidence,
+preview/runtime/full synthetic-path agreement, real daemon/load/recovery and
+customer/staging release acceptance remain pending. The user reports no native
+Linux x86_64 KVM acceptance host available; VM/restore, nft connection/source-IP,
+process-death and leak checks remain pending. All six release guarantees remain
+unchecked.

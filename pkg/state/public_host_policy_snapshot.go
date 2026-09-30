@@ -216,7 +216,11 @@ func (s *publicHostPolicyReader) DeploymentAliasByHostLabel(ctx context.Context,
 }
 
 func (s *publicHostPolicyReader) domain(ctx context.Context, host string, wildcard bool) (CustomDomain, error) {
-	data, err := sqlc.New().ReadPublicHostDomain(ctx, s.tx, sqlc.ReadPublicHostDomainParams{Host: host, Wildcard: wildcard})
+	lookup := host
+	if wildcard {
+		lookup = normalizeWildcardDomainHost(host)
+	}
+	data, err := sqlc.New().ReadPublicHostDomain(ctx, s.tx, sqlc.ReadPublicHostDomainParams{Host: lookup, Wildcard: wildcard, TrimCharacters: customDomainTrimCharacters})
 	s.record(fmt.Sprintf("domain:%t:%s", wildcard, host), data, err)
 	return decodePublicHostJSON[CustomDomain](data, err)
 }

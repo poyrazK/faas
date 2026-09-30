@@ -62,7 +62,7 @@ rule and referenced-preset bound.
 
 Rule and preset creates/updates, environment edge overlays, new environment
 registration, environment clones, alias publication, positive deployment
-status writes and ordinary custom-domain verification share account serialization. A session
+status writes and custom-domain verification share account serialization. A session
 advisory lock on a pinned direct-pool connection precedes the repeatable-read
 transaction; its account row lock then precedes app/FK/policy-row locks and is
 retained through commit. Route creates/updates first take the shared global
@@ -165,10 +165,34 @@ distinguishes `success`, `stale`, `refused` and `error`. Existing
 probe alone does not mean verification was published. These counters have
 fixed labels and include neither hostnames nor challenge tokens.
 
+Explicitly environment-scoped custom domains now use the same app filter and
+optional headers/CORS replacement as the stable environment URL. A missing
+overlay retains that workload's rules; a present empty overlay suppresses its
+headers/CORS. Publication and later rule, preset, visibility/restore and overlay
+writes include those domain bindings in the guarded aggregate. Raw owner rules
+are bounded before filtering; compiled bounds include retained rules, distinct
+retained presets and the selected overlay. Overlapping potential owned bindings
+are checked separately. A new domain/app/environment binding has no prior
+overload allowance.
+
+The public compiler resolves the actual binding using the captured router
+namespace in the same snapshot. Exact ordinary domains, aliases and tenant
+routes do not inherit an environment from a shadowed domain. Fresh requests
+read the authoritative overlay before using a compiled cache entry; missed
+notifications cannot retain an old policy. Unavailable or oversized scoped
+reads refuse admission. Public policy input is bounded to 253 hostname bytes;
+overlong hosts refuse before policy reads. Overlay byte estimates include the
+maximum hostname length and JSON escape expansion, including wildcard hosts.
+Direct and snapshot wildcard lookup use literal suffix comparisons, including
+legacy percent/underscore characters. HTTP request hosts containing an asterisk
+cannot activate or retain a custom-domain route; wildcard claims remain visible
+to domain management. Exact snapshot lookup, reservations and verification
+preserve the database's case-insensitive domain identity.
+
 This initial projection includes potential legacy tag-prefixed primary URLs
 conservatively. Exact legacy alias shadowing, deletion/fallback transitions,
-immutable revision URL activation, named-environment domains, complete custom-domain
-shadowing/removal transitions and operator
+immutable revision URL activation, tenant-surface publication, complete custom-domain
+shadowing/removal transitions across accounts and operator
 namespace changes still need the complete binding projection and acceptance.
 
 Route creates/updates also check enabled route-only discovery across accounts

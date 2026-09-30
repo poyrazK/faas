@@ -38,6 +38,9 @@ func (g *gatewaydEdgeRules) RequiresOwnerPolicySnapshot() bool {
 }
 
 func (g *gatewaydEdgeRules) pinPublicRouteGraph(ctx context.Context, host string) (context.Context, error) {
+	if len(host) > api.TrafficPolicyMaxHostnameBytes {
+		return nil, errors.New("public policy hostname exceeds the DNS name bound")
+	}
 	if g.publicHostSource == nil {
 		return nil, errors.New("public route ownership resolver is unavailable")
 	}
@@ -137,7 +140,7 @@ func resolvePublicCompiledPolicy(ctx context.Context, reader state.PublicHostPol
 	}
 	app.PublicCompiledPolicies = make(map[string]*gateway.HostEntry, len(hosts))
 	for _, host := range hosts {
-		entry, err := graphs.owner.compilePublicOwnerPolicy(ctx, reader, host, app.AccountID)
+		entry, err := graphs.owner.compilePublicOwnerPolicy(ctx, reader, host, app.AccountID, graphs.claims[host].Source)
 		if err != nil {
 			return err
 		}
@@ -215,14 +218,14 @@ func verifyPublicRouteGraph(prior, fresh *gateway.HostEntry, account string) err
 
 // All reads happen before the compiled cache lookup, inside the app resolver's
 // transaction. Cache entries can save compilation, never replace a fresh read.
-func (g *gatewaydEdgeRules) compilePublicOwnerPolicy(ctx context.Context, reader state.PublicHostPolicyReader, host, account string) (*gateway.HostEntry, error) {
+func (g *gatewaydEdgeRules) compilePublicOwnerPolicy(ctx context.Context, reader state.PublicHostPolicyReader, host, account string, source *gateway.PublicAppPolicySource) (*gateway.HostEntry, error) {
 	rules, err := reader.PublicHostEdgeRules(ctx, host, account, false)
 	if err != nil {
 		return nil, err
 	}
 	bundle := &publicEdgeCompileStore{PublicHostPolicyReader: reader, rules: rules, presets: make(map[string]state.CorsPreset)}
 	compiler := &gatewaydEdgeRules{store: bundle, validate: g.validate, metrics: g.metrics}
-	rules, err = compiler.environmentEdgeRules(ctx, host, rules)
+	rules, err = publicEnvironmentEdgeRules(ctx, reader, compiler, host, source, rules)
 	if err != nil {
 		return nil, err
 	}
@@ -250,6 +253,22 @@ func (g *gatewaydEdgeRules) compilePublicOwnerPolicy(ctx context.Context, reader
 	}
 	g.cache.PutIfGeneration(key, entry, generation)
 	return entry, nil
+}
+
+// Resolve the actual binding, including configured namespace precedence,
+// before selecting an environment. A shadowed domain cannot supply an overlay.
+func publicEnvironmentEdgeRules(ctx context.Context, reader state.PublicHostPolicyReader, compiler *gatewaydEdgeRules, host string, source *gateway.PublicAppPolicySource, rules []state.EdgeRule) ([]state.EdgeRule, error) {
+	if len(host) > api.TrafficPolicyMaxHostnameBytes || source == nil || source.Host != host {
+		return nil, errors.New("public environment policy source is unavailable")
+	}
+	app, found, err := resolvePublicPolicyIdentity(ctx, reader.NewProjectionReader(), source)
+	if err != nil {
+		return nil, err
+	}
+	if !found || app.PublicEnvironmentID == "" {
+		return rules, nil
+	}
+	return compiler.environmentPolicyRules(ctx, host, app.PublicEnvironmentID, app.ID, rules)
 }
 
 type publicEdgeCompileStore struct {

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/hostidentity"
@@ -67,7 +68,13 @@ func (m *MemStore) readMemTrafficHostAnalysisLocked(ctx context.Context, account
 		if err != nil {
 			return err
 		}
-		compiled, err := json.Marshal(rule)
+		compiledRule := rule
+		if environment != "" {
+			// Preserve the selector identity while reserving the same maximum
+			// hostname/escape allowance as the SQL compiler projection.
+			compiledRule.MatchHost = strings.Repeat("x", 6*api.TrafficPolicyMaxHostnameBytes)
+		}
+		compiled, err := json.Marshal(compiledRule)
 		if err != nil {
 			return fmt.Errorf("state: encode in-memory traffic rule: %w", err)
 		}
@@ -173,8 +180,12 @@ func (m *MemStore) readMemTrafficHostAnalysisLocked(ctx context.Context, account
 		return view, err
 	}
 	referenced := make(map[string]bool)
+	registered := make(map[trafficHostDomain]bool, len(view.Environments))
+	for _, environment := range view.Environments {
+		registered[trafficHostDomain{App: environment.App, Environment: environment.ID}] = true
+	}
 	if err := visitMemTrafficRows(ctx, m.domains, change.Domains, func(domain CustomDomain) error {
-		if change.GlobalRoutes || !domain.Verified() || domain.EnvironmentID != "" {
+		if change.GlobalRoutes || !domain.Verified() {
 			return nil
 		}
 		app, found := change.Apps[domain.AppID]
@@ -184,7 +195,10 @@ func (m *MemStore) readMemTrafficHostAnalysisLocked(ctx context.Context, account
 		if !found || app.AccountID != account || app.Status == AppDeleted || api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
 			return nil
 		}
-		view.Domains = append(view.Domains, trafficHostDomain{Domain: domain.Domain, App: domain.AppID})
+		if domain.EnvironmentID != "" && !registered[trafficHostDomain{App: domain.AppID, Environment: domain.EnvironmentID}] {
+			return nil
+		}
+		view.Domains = append(view.Domains, trafficHostDomain{Domain: domain.Domain, App: domain.AppID, Environment: domain.EnvironmentID})
 		return checkMemTrafficAnalysisInputs(len(groups) + len(view.Environments) + len(view.PrimaryHosts) + len(view.AliasHosts) + len(view.Domains))
 	}); err != nil {
 		return view, err

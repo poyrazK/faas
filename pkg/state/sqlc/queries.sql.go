@@ -8510,7 +8510,7 @@ func (q *Queries) MarkDomainVerified(ctx context.Context, db DBTX, domain interf
 
 const markTrafficDomainVerified = `-- name: MarkTrafficDomainVerified :execrows
 UPDATE custom_domains SET verified_at=now()
-WHERE domain=$1::text AND app_id=$2::uuid
+WHERE domain=$1::text::citext AND app_id=$2::uuid
   AND (NOT $3::boolean OR
     (challenge_token=$4::text AND verified_at IS NULL AND verification_expires_at>clock_timestamp()))
 `
@@ -12160,7 +12160,7 @@ func (q *Queries) ReadDeploymentTrafficAccount(ctx context.Context, db DBTX, dep
 
 const readDomainTrafficVerificationOwner = `-- name: ReadDomainTrafficVerificationOwner :one
 SELECT a.account_id, d.app_id FROM custom_domains d JOIN apps a ON a.id=d.app_id
-WHERE d.domain=$1::text AND (NOT $2::boolean OR
+WHERE d.domain=$1::text::citext AND (NOT $2::boolean OR
     (d.challenge_token=$3::text AND d.verified_at IS NULL AND d.verification_expires_at>now()))
 `
 
@@ -12429,19 +12429,22 @@ SELECT jsonb_build_object(
     'EnvironmentID', environment_id,
     'VerifiedAt', verified_at
 )::jsonb AS data FROM custom_domains
-WHERE (NOT $1::boolean AND domain = $2::text)
-   OR ($1 AND domain LIKE '*.%' AND lower($2) LIKE '%' || lower(substr(domain, 2))
-       AND lower($2) <> lower(substr(domain, 3)))
-ORDER BY length(domain) DESC LIMIT 1
+WHERE (NOT $1::boolean AND domain = $2::text::citext)
+   OR ($1 AND left(lower(domain),2)='*.'
+       AND length(btrim(domain,$3::text))>2 AND strpos($2,'*')=0
+       AND right($2,length(lower(btrim(domain,$3)))-1)=substr(lower(btrim(domain,$3)),2)
+       AND $2<>substr(lower(btrim(domain,$3)),3))
+ORDER BY octet_length(domain) DESC, domain::text COLLATE "C" LIMIT 1
 `
 
 type ReadPublicHostDomainParams struct {
-	Wildcard bool
-	Host     string
+	Wildcard       bool
+	Host           string
+	TrimCharacters string
 }
 
 func (q *Queries) ReadPublicHostDomain(ctx context.Context, db DBTX, arg ReadPublicHostDomainParams) ([]byte, error) {
-	row := db.QueryRow(ctx, readPublicHostDomain, arg.Wildcard, arg.Host)
+	row := db.QueryRow(ctx, readPublicHostDomain, arg.Wildcard, arg.Host, arg.TrimCharacters)
 	var data []byte
 	err := row.Scan(&data)
 	return data, err
@@ -12586,7 +12589,7 @@ SELECT (
     EXISTS (SELECT 1 FROM apps WHERE slug = nullif($1::text, ''))
     OR EXISTS (SELECT 1 FROM custom_domains
                WHERE nullif($2::text, '') IS NOT NULL
-                 AND (domain = $2
+                 AND (domain = $2::text::citext
                       OR (domain LIKE '*.%' AND lower($2) LIKE '%' || lower(substr(domain, 2))
                           AND lower($2) <> lower(substr(domain, 3)))))
     OR EXISTS (SELECT 1 FROM tenant_hostnames WHERE hostname = nullif($2::text, ''))
@@ -13394,10 +13397,11 @@ WITH environment_policies AS MATERIALIZED (
       AND $6::text<>''
     ORDER BY a.id,z.name LIMIT ($1::integer+1)
 ), domain_hosts AS (
-    SELECT jsonb_build_object('Domain',d.domain,'App',a.id) AS data
+    SELECT jsonb_build_object('Domain',d.domain,'App',a.id,'Environment',coalesce(d.environment_id::text,'')) AS data
     FROM custom_domains d JOIN apps a ON a.id=d.app_id
+    LEFT JOIN environment_policies e ON e.environment_id=d.environment_id AND e.app_id=a.id
     WHERE a.account_id=$3::uuid AND a.status<>'deleted' AND a.visibility<>'internal'
-      AND d.verified_at IS NOT NULL AND d.environment_id IS NULL
+      AND d.verified_at IS NOT NULL AND (d.environment_id IS NULL OR e.environment_id IS NOT NULL)
     ORDER BY d.domain LIMIT ($1::integer+1)
 ), bounds AS (
     SELECT (SELECT count(*) FROM groups)+(SELECT count(*) FROM assets)+(SELECT count(*) FROM environments)+(SELECT count(*) FROM primary_hosts)+(SELECT count(*) FROM alias_hosts)+(SELECT count(*) FROM domain_hosts) AS inputs,
@@ -13495,6 +13499,34 @@ func (q *Queries) ReadTrafficSecurityEpochs(ctx context.Context, db DBTX, arg Re
 		return nil, err
 	}
 	return items, nil
+}
+
+const readWildcardCustomDomain = `-- name: ReadWildcardCustomDomain :one
+SELECT jsonb_build_object('Domain',domain,'AppID',app_id,'ChallengeToken',challenge_token,
+    'VerifiedAt',verified_at,'CertStatus',cert_status,'CertExpiresAt',cert_expires_at,
+    'CertLastError',coalesce(cert_last_error,''),'DNSLastCheckedAt',dns_last_checked_at,
+    'CertFailedAt',cert_failed_at,'VerificationNextCheckAt',verification_next_check_at,
+    'VerificationExpiresAt',verification_expires_at,'VerificationAttempts',verification_attempts,
+    'EnvironmentID',coalesce(environment_id::text,''))::jsonb AS data FROM custom_domains
+WHERE left(lower(domain),2)='*.' AND length(btrim(domain,$1::text))>2
+  AND strpos($2,'*')=0
+  AND right($2,length(lower(btrim(domain,$1)))-1)=substr(lower(btrim(domain,$1)),2)
+  AND $2<>substr(lower(btrim(domain,$1)),3)
+ORDER BY octet_length(domain) DESC, domain::text COLLATE "C" LIMIT 1
+`
+
+type ReadWildcardCustomDomainParams struct {
+	TrimCharacters string
+	Host           string
+}
+
+// Same literal suffix language as ReadPublicHostDomain and WildcardMatchesHost.
+// Management callers retain the complete row; request snapshots omit secrets.
+func (q *Queries) ReadWildcardCustomDomain(ctx context.Context, db DBTX, arg ReadWildcardCustomDomainParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readWildcardCustomDomain, arg.TrimCharacters, arg.Host)
+	var data []byte
+	err := row.Scan(&data)
+	return data, err
 }
 
 const reapExpiredUploadSessions = `-- name: ReapExpiredUploadSessions :many

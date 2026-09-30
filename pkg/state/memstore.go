@@ -10961,7 +10961,7 @@ func (m *MemStore) WildcardDomainForHost(_ context.Context, host string) (Custom
 		if !WildcardMatchesHost(d.Domain, host) {
 			continue
 		}
-		if best.Domain == "" || len(d.Domain) > len(best.Domain) {
+		if best.Domain == "" || len(d.Domain) > len(best.Domain) || len(d.Domain) == len(best.Domain) && d.Domain < best.Domain {
 			best = d
 		}
 	}

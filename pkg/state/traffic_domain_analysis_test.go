@@ -60,6 +60,16 @@ func TestTrafficDomainLanguageMatchesWildcardRouting(t *testing.T) {
 	}
 }
 
+func TestTrafficDomainExactMarkerUsesLowercaseRequestHost(t *testing.T) {
+	before := trafficHostAnalysis{Groups: []trafficHostGroup{{Pattern: "upper.example.test", Rows: api.TrafficPolicyMaxHostRules + 1}}}
+	after := before
+	after.Domains = []trafficHostDomain{{Domain: "UPPER.EXAMPLE.TEST", App: "owner"}}
+	var aggregate *TrafficPolicyAggregateError
+	if err := checkTrafficHostAnalysis(t.Context(), before, after); !errors.As(err, &aggregate) || aggregate.Host != "upper.example.test" {
+		t.Fatalf("case-insensitive domain escaped publication guard: %v", err)
+	}
+}
+
 var trafficDomainVerificationModes = []string{"plain", "challenge", "wildcard", "nested", "apex", "literal-marker", "unchanged", "stale-token", "missing", "foreign-policy", "internal", "canceled"}
 
 func testTrafficDomainVerification(t *testing.T, store Store, account Account, app App, mode string, seed func(Account, App, string)) {
@@ -200,7 +210,7 @@ func TestMemTrafficDomainMetadataAndAppPublication(t *testing.T) {
 		t.Fatal(err)
 	}
 	view, err := m.readMemTrafficHostAnalysisLocked(t.Context(), account.ID, memTrafficPolicyChange{})
-	if err != nil || len(view.Domains) != 2 {
-		t.Fatalf("ordinary verified domain metadata: %+v err=%v", view.Domains, err)
+	if err != nil || len(view.Domains) != 3 {
+		t.Fatalf("verified domain metadata: %+v err=%v", view.Domains, err)
 	}
 }

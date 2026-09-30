@@ -404,6 +404,13 @@ func (g *gatewaydEdgeRules) environmentEdgeRules(ctx context.Context, host strin
 	if !matched {
 		return global, nil
 	}
+	return g.environmentPolicyRules(ctx, host, environmentID, appID, global)
+}
+
+func (g *gatewaydEdgeRules) environmentPolicyRules(ctx context.Context, host, environmentID, appID string, global []state.EdgeRule) ([]state.EdgeRule, error) {
+	if len(host) > api.TrafficPolicyMaxHostnameBytes {
+		return nil, errors.New("environment policy hostname exceeds the DNS name bound")
+	}
 	lookup, ok := g.store.(interface {
 		ProjectEnvironmentByID(context.Context, string) (state.ProjectEnvironment, error)
 		AppByID(context.Context, string) (state.App, error)

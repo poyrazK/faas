@@ -7279,6 +7279,9 @@ const (
 	TrafficServicePolicyReadTimeout = 250 * time.Millisecond
 	TrafficPublicRoutingReadTimeout = 250 * time.Millisecond
 	TrafficPublicHostReadTimeout    = 250 * time.Millisecond
+	// Bound public policy host input and hostname expansion in environment
+	// overlays to the DNS name size accepted for custom domains (ADR-375).
+	TrafficPolicyMaxHostnameBytes = 253
 	// Contended policy writers return pool connections between lock attempts.
 	TrafficPolicyMutationLockRetry        = 25 * time.Millisecond
 	TrafficPolicyAnalysisTimeout          = 2 * time.Second

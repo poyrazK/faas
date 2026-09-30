@@ -62,9 +62,9 @@ type trafficHostAnalysis struct {
 	Domains      []trafficHostDomain
 }
 
-// Ordinary domains retain all matching account rules and distinct presets.
-// App identity makes a newly published binding independent of old selectors.
-type trafficHostDomain struct{ Domain, App string }
+// Binding identity gives a new publication no legacy selector allowance.
+// An empty Environment retains ordinary account-wide compilation.
+type trafficHostDomain struct{ Domain, App, Environment string }
 
 type trafficHostEnvironment struct {
 	ID, App, Host              string
@@ -85,8 +85,9 @@ func readTrafficHostAnalysis(ctx context.Context, tx pgx.Tx, account pgtype.UUID
 	start := time.Now()
 	row, err := queries.ReadTrafficHostAnalysis(ctx, tx, sqlc.ReadTrafficHostAnalysisParams{
 		AccountID: account, MaxInputs: api.TrafficPolicyMaxAnalysisInputs, MaxBytes: api.TrafficPolicyMaxAnalysisMetadataBytes,
-		Defaults: defaults, AppsSuffix: appsSuffix, EnvironmentHostBytes: int32(len(hostidentity.BuildEnvironmentHost(hostidentity.DeployWildcardSuffix,
-			"00000000-0000-0000-0000-000000000000", "00000000-0000-0000-0000-000000000000")))})
+		// Scoped domains can be longer than a generated environment host.
+		// Reserve maximum hostname length and JSON escape amplification.
+		Defaults: defaults, AppsSuffix: appsSuffix, EnvironmentHostBytes: 6 * api.TrafficPolicyMaxHostnameBytes})
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.QueryCanceled {
@@ -488,9 +489,13 @@ func checkTrafficHostAnalysisWithBudgets(ctx context.Context, before, after traf
 		return nil // Even the union of all groups fits, so every host fits.
 	}
 	views := [2]trafficHostAnalysis{before, after}
-	oldDomains := make(map[trafficHostDomain]bool, len(before.Domains))
-	for _, domain := range before.Domains {
-		oldDomains[domain] = true
+	var scopes [2]trafficHostScopeIndex
+	for side, view := range views {
+		var err error
+		scopes[side], err = indexTrafficHostScopes(ctx, view)
+		if err != nil {
+			return err
+		}
 	}
 	machine := hostAnalysisMachine{nodes: []hostAnalysisNode{newHostAnalysisNode()}, maxNodes: budgets.nodes}
 	for side, view := range views {
@@ -544,37 +549,28 @@ func checkTrafficHostAnalysisWithBudgets(ctx context.Context, before, after traf
 		}
 		positions := states[index].positions
 		accepted := [2]map[int]bool{make(map[int]bool), make(map[int]bool)}
-		var environments [2]*trafficHostEnvironment
-		var ordinary [2]bool
-		introducedDomain := false
+		bindings := [2]map[trafficHostDomain]*trafficHostEnvironment{make(map[trafficHostDomain]*trafficHostEnvironment), make(map[trafficHostDomain]*trafficHostEnvironment)}
 		for _, position := range positions {
 			for _, ref := range machine.nodes[position].accepted {
 				if ref.domain {
-					ordinary[ref.side] = true
-					introducedDomain = introducedDomain || ref.side == 1 && !oldDomains[after.Domains[ref.group]]
+					domain := views[ref.side].Domains[ref.group]
+					bindings[ref.side][domain] = scopes[ref.side].environments[trafficHostDomain{App: domain.App, Environment: domain.Environment}]
 				} else if ref.ordinary {
-					ordinary[ref.side] = true
+					bindings[ref.side][trafficHostDomain{}] = nil
 				} else if ref.group < 0 {
-					environments[ref.side] = &views[ref.side].Environments[-1-ref.group]
+					environment := &views[ref.side].Environments[-1-ref.group]
+					bindings[ref.side][trafficHostDomain{App: environment.App, Environment: environment.ID}] = environment
 				} else {
 					accepted[ref.side][ref.group] = true
 				}
 			}
 		}
-		prior := environmentHostTotals(before, accepted[0], environments[0])
-		if introducedDomain || environments[0] == nil && !ordinary[0] && (environments[1] != nil || ordinary[1]) {
-			// A new registered workload URL must fit its limits. An old
-			// over-limit selector language is not a serving-policy baseline.
-			prior = trafficHostTotals{}
-		}
-		nextTotals := environmentHostTotals(after, accepted[1], environments[1])
-		if (environments[0] != nil || ordinary[0]) && environments[1] == nil && !ordinary[1] {
-			// A deleted registered URL cannot fall back to route discovery.
-			// Removing its app filter does not expose a new serving scope.
-			nextTotals = trafficHostTotals{}
-		}
-		if err := checkHostTotals(prior, nextTotals, ""); err != nil {
-			err.Host = hostWitness(states, index)
+		if err := checkTrafficHostBindings(ctx, views, scopes, accepted, bindings); err != nil {
+			var aggregate *TrafficPolicyAggregateError
+			if !errors.As(err, &aggregate) {
+				return err
+			}
+			aggregate.Host = hostWitness(states, index)
 			return err
 		}
 		for _, character := range machine.alphabet(positions) {
@@ -617,7 +613,7 @@ func trafficDomainHostTokens(domain string) []rune {
 		}
 		return append([]rune{-3}, []rune("."+suffix)...)
 	}
-	return []rune(domain)
+	return []rune(strings.ToLower(domain))
 }
 
 func retainedAnalysisStateBytes(positions []int, key string) int64 {

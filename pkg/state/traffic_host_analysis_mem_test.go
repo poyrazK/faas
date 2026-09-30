@@ -181,9 +181,14 @@ func TestMemTrafficAliasAppActivationRollback(t *testing.T) {
 	testMemTrafficAppActivation(t, "alias")
 }
 
+func TestMemTrafficScopedDomainAppActivationRollback(t *testing.T) {
+	testMemTrafficAppActivation(t, "domain")
+}
+
 func testMemTrafficAppActivation(t *testing.T, namespace string) {
 	primary := namespace == "primary"
 	aliasScope := namespace == "alias"
+	domainScope := namespace == "domain"
 	operations := []string{"create", "quota_create", "activity_create", "preview_batch", "preview_set", "project_plan", "reconcile_create", "restore", "activity_restore", "reconcile_restore", "status_update", "activity_status_update", "status_cas", "visibility_update", "activity_visibility_update"}
 	if !primary && !aliasScope {
 		operations = append(operations, "environment", "clone")
@@ -191,9 +196,12 @@ func testMemTrafficAppActivation(t *testing.T, namespace string) {
 	if aliasScope {
 		operations = []string{"restore", "activity_restore", "reconcile_restore", "visibility_update", "activity_visibility_update"}
 	}
+	if domainScope {
+		operations = []string{"restore", "activity_restore", "reconcile_restore", "status_update", "activity_status_update", "status_cas", "visibility_update", "activity_visibility_update"}
+	}
 	for _, operation := range operations {
 		t.Run(operation, func(t *testing.T) {
-			m, account, project, source, _ := memTrafficFixture(t)
+			m, account, project, source, environment := memTrafficFixture(t)
 			if primary || aliasScope {
 				m.trafficAppsSuffix = ".apps.example.test"
 				m.projectEnvironments = map[string]ProjectEnvironment{}
@@ -203,6 +211,16 @@ func testMemTrafficAppActivation(t *testing.T, namespace string) {
 			needsTombstone := strings.Contains(operation, "restore") || strings.Contains(operation, "status")
 			aliasHost := ""
 			registerAlias := func() {
+				if domainScope {
+					aliasHost = "scoped-activation.example.test"
+					if _, err := m.CreateCustomDomainInEnvironmentIfUnderQuota(t.Context(), aliasHost, target.ID, environment.ID, "token", 100, 500); err != nil {
+						t.Fatal(err)
+					}
+					if err := m.MarkDomainVerified(t.Context(), aliasHost); err != nil {
+						t.Fatal(err)
+					}
+					return
+				}
 				if !aliasScope {
 					return
 				}
@@ -249,12 +267,13 @@ func testMemTrafficAppActivation(t *testing.T, namespace string) {
 			if primary {
 				matchHost = target.Slug + ".apps.example.test"
 			}
-			if aliasScope {
+			if aliasScope || domainScope {
 				matchHost = aliasHost
 			}
 			legacy := memTrafficRule(account, source, matchHost, 520)
 			m.edgeRules["legacy"] = EdgeRule{ID: "legacy", AccountID: account.ID, AppID: source.ID, MatchHost: matchHost, MatchPath: "/", Enabled: true, Kind: legacy.Kind, Action: legacy.Action}
 			before := memTrafficIntentCounts(m)
+			domainBefore := m.domains[aliasHost]
 			apply := func() error {
 				switch operation {
 				case "create":
@@ -315,6 +334,9 @@ func testMemTrafficAppActivation(t *testing.T, namespace string) {
 			requireMemTrafficAggregate(t, apply(), "host_rule_projection")
 			if !reflect.DeepEqual(before, memTrafficIntentCounts(m)) {
 				t.Fatalf("rejected activation retained intent: before=%v after=%v", before, memTrafficIntentCounts(m))
+			}
+			if domainScope && !reflect.DeepEqual(domainBefore, m.domains[aliasHost]) {
+				t.Fatal("refused activation changed scoped domain")
 			}
 			if target.ID != "" && !reflect.DeepEqual(m.apps[target.ID], target) {
 				t.Fatal("rejected activation changed tombstone or visibility")

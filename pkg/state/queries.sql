@@ -5061,10 +5061,27 @@ SELECT jsonb_build_object(
     'EnvironmentID', environment_id,
     'VerifiedAt', verified_at
 )::jsonb AS data FROM custom_domains
-WHERE (NOT sqlc.arg(wildcard)::boolean AND domain = sqlc.arg(host)::text)
-   OR (sqlc.arg(wildcard) AND domain LIKE '*.%' AND lower(sqlc.arg(host)) LIKE '%' || lower(substr(domain, 2))
-       AND lower(sqlc.arg(host)) <> lower(substr(domain, 3)))
-ORDER BY length(domain) DESC LIMIT 1;
+WHERE (NOT sqlc.arg(wildcard)::boolean AND domain = sqlc.arg(host)::text::citext)
+   OR (sqlc.arg(wildcard) AND left(lower(domain),2)='*.'
+       AND length(btrim(domain,sqlc.arg(trim_characters)::text))>2 AND strpos(sqlc.arg(host),'*')=0
+       AND right(sqlc.arg(host),length(lower(btrim(domain,sqlc.arg(trim_characters))))-1)=substr(lower(btrim(domain,sqlc.arg(trim_characters))),2)
+       AND sqlc.arg(host)<>substr(lower(btrim(domain,sqlc.arg(trim_characters))),3))
+ORDER BY octet_length(domain) DESC, domain::text COLLATE "C" LIMIT 1;
+
+-- name: ReadWildcardCustomDomain :one
+-- Same literal suffix language as ReadPublicHostDomain and WildcardMatchesHost.
+-- Management callers retain the complete row; request snapshots omit secrets.
+SELECT jsonb_build_object('Domain',domain,'AppID',app_id,'ChallengeToken',challenge_token,
+    'VerifiedAt',verified_at,'CertStatus',cert_status,'CertExpiresAt',cert_expires_at,
+    'CertLastError',coalesce(cert_last_error,''),'DNSLastCheckedAt',dns_last_checked_at,
+    'CertFailedAt',cert_failed_at,'VerificationNextCheckAt',verification_next_check_at,
+    'VerificationExpiresAt',verification_expires_at,'VerificationAttempts',verification_attempts,
+    'EnvironmentID',coalesce(environment_id::text,''))::jsonb AS data FROM custom_domains
+WHERE left(lower(domain),2)='*.' AND length(btrim(domain,sqlc.arg(trim_characters)::text))>2
+  AND strpos(sqlc.arg(host),'*')=0
+  AND right(sqlc.arg(host),length(lower(btrim(domain,sqlc.arg(trim_characters))))-1)=substr(lower(btrim(domain,sqlc.arg(trim_characters))),2)
+  AND sqlc.arg(host)<>substr(lower(btrim(domain,sqlc.arg(trim_characters))),3)
+ORDER BY octet_length(domain) DESC, domain::text COLLATE "C" LIMIT 1;
 
 -- name: ReadPublicHostTenantSurface :one
 SELECT jsonb_build_object(
@@ -5107,7 +5124,7 @@ SELECT (
     EXISTS (SELECT 1 FROM apps WHERE slug = nullif(sqlc.arg(slug)::text, ''))
     OR EXISTS (SELECT 1 FROM custom_domains
                WHERE nullif(sqlc.arg(host)::text, '') IS NOT NULL
-                 AND (domain = sqlc.arg(host)
+                 AND (domain = sqlc.arg(host)::text::citext
                       OR (domain LIKE '*.%' AND lower(sqlc.arg(host)) LIKE '%' || lower(substr(domain, 2))
                           AND lower(sqlc.arg(host)) <> lower(substr(domain, 3)))))
     OR EXISTS (SELECT 1 FROM tenant_hostnames WHERE hostname = nullif(sqlc.arg(host)::text, ''))
@@ -5354,10 +5371,11 @@ WITH environment_policies AS MATERIALIZED (
       AND sqlc.arg(apps_suffix)::text<>''
     ORDER BY a.id,z.name LIMIT (sqlc.arg(max_inputs)::integer+1)
 ), domain_hosts AS (
-    SELECT jsonb_build_object('Domain',d.domain,'App',a.id) AS data
+    SELECT jsonb_build_object('Domain',d.domain,'App',a.id,'Environment',coalesce(d.environment_id::text,'')) AS data
     FROM custom_domains d JOIN apps a ON a.id=d.app_id
+    LEFT JOIN environment_policies e ON e.environment_id=d.environment_id AND e.app_id=a.id
     WHERE a.account_id=sqlc.narg(account_id)::uuid AND a.status<>'deleted' AND a.visibility<>'internal'
-      AND d.verified_at IS NOT NULL AND d.environment_id IS NULL
+      AND d.verified_at IS NOT NULL AND (d.environment_id IS NULL OR e.environment_id IS NOT NULL)
     ORDER BY d.domain LIMIT (sqlc.arg(max_inputs)::integer+1)
 ), bounds AS (
     SELECT (SELECT count(*) FROM groups)+(SELECT count(*) FROM assets)+(SELECT count(*) FROM environments)+(SELECT count(*) FROM primary_hosts)+(SELECT count(*) FROM alias_hosts)+(SELECT count(*) FROM domain_hosts) AS inputs,
@@ -5389,12 +5407,12 @@ SELECT account_id FROM apps WHERE id=sqlc.arg(app_id)::uuid;
 
 -- name: ReadDomainTrafficVerificationOwner :one
 SELECT a.account_id, d.app_id FROM custom_domains d JOIN apps a ON a.id=d.app_id
-WHERE d.domain=sqlc.arg(domain)::text AND (NOT sqlc.arg(challenge_bound)::boolean OR
+WHERE d.domain=sqlc.arg(domain)::text::citext AND (NOT sqlc.arg(challenge_bound)::boolean OR
     (d.challenge_token=sqlc.arg(token)::text AND d.verified_at IS NULL AND d.verification_expires_at>now()));
 
 -- name: MarkTrafficDomainVerified :execrows
 UPDATE custom_domains SET verified_at=now()
-WHERE domain=sqlc.arg(domain)::text AND app_id=sqlc.arg(app_id)::uuid
+WHERE domain=sqlc.arg(domain)::text::citext AND app_id=sqlc.arg(app_id)::uuid
   AND (NOT sqlc.arg(challenge_bound)::boolean OR
     (challenge_token=sqlc.arg(token)::text AND verified_at IS NULL AND verification_expires_at>clock_timestamp()));
 

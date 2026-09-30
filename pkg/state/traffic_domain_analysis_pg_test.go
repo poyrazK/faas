@@ -201,8 +201,8 @@ func TestPgTrafficDomainMetadataAndAppPublication(t *testing.T) {
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(t.Context())) }()
 	view, err := readTrafficHostAnalysis(t.Context(), tx, uuidToPgtype(account.ID), ".apps.example.test")
-	if err != nil || len(view.Domains) != 2 {
-		t.Fatalf("ordinary verified domain metadata: %+v err=%v", view.Domains, err)
+	if err != nil || len(view.Domains) != 3 {
+		t.Fatalf("verified domain metadata: %+v err=%v", view.Domains, err)
 	}
 	row, err := sqlc.New().ReadTrafficHostAnalysis(t.Context(), tx, sqlc.ReadTrafficHostAnalysisParams{AccountID: uuidToPgtype(account.ID), MaxInputs: 1, MaxBytes: 1})
 	if err != nil || len(row.Data) != 0 || row.Inputs <= 1 {
