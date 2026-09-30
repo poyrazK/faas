@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 const postgresBindingColumns = `id::text, account_id::text, database_id::text,
@@ -70,6 +71,9 @@ func (s *PostgresStore) ReserveBinding(ctx context.Context, binding Binding) (Bi
 	}
 
 	var databaseAccountID, databaseState string
+	if _, err := new(sqlc.Queries).LockManagedPostgresCustomerDatabase(ctx, tx, sqlc.LockManagedPostgresCustomerDatabaseParams{AccountID: accountID, ID: databaseID}); err != nil {
+		return Binding{}, false, mapPostgresError(err)
+	}
 	if err := tx.QueryRow(ctx,
 		`SELECT account_id::text, state FROM managed_postgres_databases WHERE id = $1 FOR KEY SHARE`,
 		databaseID,

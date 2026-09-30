@@ -4076,6 +4076,60 @@ func (q *Queries) GetInstanceTailCount(ctx context.Context, db DBTX, id pgtype.U
 	return tail_count, err
 }
 
+const getManagedPostgresCustomerDatabase = `-- name: GetManagedPostgresCustomerDatabase :one
+SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.environment_clone_operation_id FROM managed_postgres_databases d
+WHERE d.account_id=$1 AND d.id=$2 AND (
+    d.environment_clone_operation_id IS NULL OR EXISTS (
+        SELECT 1 FROM project_environment_clone_operations o
+        WHERE o.id=d.environment_clone_operation_id AND o.account_id=d.account_id AND o.status='ready'
+          AND EXISTS (SELECT 1 FROM project_environments e JOIN projects p ON p.id=e.project_id
+              WHERE e.project_id=o.project_id AND e.slug=o.target_environment AND p.account_id=d.account_id)
+          AND EXISTS (SELECT 1 FROM jsonb_array_elements(o.resources) r
+              WHERE r->>'kind' IN ('postgres','managed_postgres') AND r->>'source_id'=d.restore_source_database_id::text
+                AND r->>'target_id'=d.id::text AND r->>'status'='ready')))
+`
+
+type GetManagedPostgresCustomerDatabaseParams struct {
+	AccountID pgtype.UUID
+	ID        pgtype.UUID
+}
+
+func (q *Queries) GetManagedPostgresCustomerDatabase(ctx context.Context, db DBTX, arg GetManagedPostgresCustomerDatabaseParams) (ManagedPostgresDatabase, error) {
+	row := db.QueryRow(ctx, getManagedPostgresCustomerDatabase, arg.AccountID, arg.ID)
+	var i ManagedPostgresDatabase
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Name,
+		&i.Region,
+		&i.PostgresMajor,
+		&i.ServiceClass,
+		&i.Availability,
+		&i.ScaleToZero,
+		&i.StorageLimitBytes,
+		&i.RestoreWindowSeconds,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.ProviderResourceID,
+		&i.State,
+		&i.DesiredGeneration,
+		&i.ObservedGeneration,
+		&i.LastErrorCode,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.RestoreSourceDatabaseID,
+		&i.RestoreSourceResourceID,
+		&i.RestorePointInTime,
+		&i.EnvironmentCloneOperationID,
+	)
+	return i, err
+}
+
 const getOIDCExchangedTokenByHash = `-- name: GetOIDCExchangedTokenByHash :one
 select id, account_id, token_hash, expires_at, issuer_url, subject,
        audience, coalesce(jti, '') as jti, scopes, created_at
@@ -7596,6 +7650,69 @@ func (q *Queries) ListLatestDeploymentPerApp(ctx context.Context, db DBTX, accou
 	return items, nil
 }
 
+const listManagedPostgresCustomerDatabases = `-- name: ListManagedPostgresCustomerDatabases :many
+SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.environment_clone_operation_id FROM managed_postgres_databases d
+WHERE d.account_id=$1 AND d.state<>'deleted' AND (
+    d.environment_clone_operation_id IS NULL OR EXISTS (
+        SELECT 1 FROM project_environment_clone_operations o
+        WHERE o.id=d.environment_clone_operation_id AND o.account_id=d.account_id AND o.status='ready'
+          AND EXISTS (SELECT 1 FROM project_environments e JOIN projects p ON p.id=e.project_id
+              WHERE e.project_id=o.project_id AND e.slug=o.target_environment AND p.account_id=d.account_id)
+          AND EXISTS (SELECT 1 FROM jsonb_array_elements(o.resources) r
+              WHERE r->>'kind' IN ('postgres','managed_postgres') AND r->>'source_id'=d.restore_source_database_id::text
+                AND r->>'target_id'=d.id::text AND r->>'status'='ready')))
+ORDER BY d.created_at,d.id
+`
+
+func (q *Queries) ListManagedPostgresCustomerDatabases(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ManagedPostgresDatabase, error) {
+	rows, err := db.Query(ctx, listManagedPostgresCustomerDatabases, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ManagedPostgresDatabase{}
+	for rows.Next() {
+		var i ManagedPostgresDatabase
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.Name,
+			&i.Region,
+			&i.PostgresMajor,
+			&i.ServiceClass,
+			&i.Availability,
+			&i.ScaleToZero,
+			&i.StorageLimitBytes,
+			&i.RestoreWindowSeconds,
+			&i.BackendID,
+			&i.BackendFingerprint,
+			&i.ProviderResourceID,
+			&i.State,
+			&i.DesiredGeneration,
+			&i.ObservedGeneration,
+			&i.LastErrorCode,
+			&i.LeaseToken,
+			&i.LeaseUntil,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+			&i.AttemptCount,
+			&i.RetryAt,
+			&i.RestoreSourceDatabaseID,
+			&i.RestoreSourceResourceID,
+			&i.RestorePointInTime,
+			&i.EnvironmentCloneOperationID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listMatchingEventSubscriptionsForAccount = `-- name: ListMatchingEventSubscriptionsForAccount :many
 select s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled,
        s.created_at, s.updated_at
@@ -8722,6 +8839,32 @@ func (q *Queries) LockLayerArtifactRetention(ctx context.Context, db DBTX, stora
 	var i LockLayerArtifactRetentionRow
 	err := row.Scan(&i.StorageKey, &i.State, &i.DeletionID)
 	return i, err
+}
+
+const lockManagedPostgresCustomerDatabase = `-- name: LockManagedPostgresCustomerDatabase :one
+SELECT d.id FROM managed_postgres_databases d
+WHERE d.account_id=$1 AND d.id=$2 AND (
+    d.environment_clone_operation_id IS NULL OR EXISTS (
+        SELECT 1 FROM project_environment_clone_operations o
+        WHERE o.id=d.environment_clone_operation_id AND o.account_id=d.account_id AND o.status='ready'
+          AND EXISTS (SELECT 1 FROM project_environments e JOIN projects p ON p.id=e.project_id
+              WHERE e.project_id=o.project_id AND e.slug=o.target_environment AND p.account_id=d.account_id)
+          AND EXISTS (SELECT 1 FROM jsonb_array_elements(o.resources) r
+              WHERE r->>'kind' IN ('postgres','managed_postgres') AND r->>'source_id'=d.restore_source_database_id::text
+                AND r->>'target_id'=d.id::text AND r->>'status'='ready')))
+FOR KEY SHARE OF d
+`
+
+type LockManagedPostgresCustomerDatabaseParams struct {
+	AccountID pgtype.UUID
+	ID        pgtype.UUID
+}
+
+func (q *Queries) LockManagedPostgresCustomerDatabase(ctx context.Context, db DBTX, arg LockManagedPostgresCustomerDatabaseParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockManagedPostgresCustomerDatabase, arg.AccountID, arg.ID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const lockNextProjectEnvironmentCloneWorkerProject = `-- name: LockNextProjectEnvironmentCloneWorkerProject :one

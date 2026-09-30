@@ -15,7 +15,7 @@ func (s *MemoryStore) ReserveBinding(_ context.Context, binding Binding) (Bindin
 		return Binding{}, false, err
 	}
 	database, exists := s.databases[binding.DatabaseID]
-	if !exists || database.AccountID != binding.AccountID {
+	if !exists || database.AccountID != binding.AccountID || database.EnvironmentCloneOperationID != "" {
 		return Binding{}, false, ErrNotFound
 	}
 	if database.State != StateReady && database.State != StateProvisioning {

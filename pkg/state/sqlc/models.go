@@ -1479,33 +1479,34 @@ type ManagedPostgresBinding struct {
 }
 
 type ManagedPostgresDatabase struct {
-	ID                      pgtype.UUID
-	AccountID               pgtype.UUID
-	Name                    string
-	Region                  string
-	PostgresMajor           int16
-	ServiceClass            string
-	Availability            string
-	ScaleToZero             bool
-	StorageLimitBytes       int64
-	RestoreWindowSeconds    int64
-	BackendID               string
-	BackendFingerprint      string
-	ProviderResourceID      pgtype.Text
-	State                   string
-	DesiredGeneration       int64
-	ObservedGeneration      int64
-	LastErrorCode           pgtype.Text
-	LeaseToken              pgtype.Text
-	LeaseUntil              pgtype.Timestamptz
-	CreatedAt               pgtype.Timestamptz
-	UpdatedAt               pgtype.Timestamptz
-	DeletedAt               pgtype.Timestamptz
-	AttemptCount            int32
-	RetryAt                 pgtype.Timestamptz
-	RestoreSourceDatabaseID pgtype.UUID
-	RestoreSourceResourceID pgtype.Text
-	RestorePointInTime      pgtype.Timestamptz
+	ID                          pgtype.UUID
+	AccountID                   pgtype.UUID
+	Name                        string
+	Region                      string
+	PostgresMajor               int16
+	ServiceClass                string
+	Availability                string
+	ScaleToZero                 bool
+	StorageLimitBytes           int64
+	RestoreWindowSeconds        int64
+	BackendID                   string
+	BackendFingerprint          string
+	ProviderResourceID          pgtype.Text
+	State                       string
+	DesiredGeneration           int64
+	ObservedGeneration          int64
+	LastErrorCode               pgtype.Text
+	LeaseToken                  pgtype.Text
+	LeaseUntil                  pgtype.Timestamptz
+	CreatedAt                   pgtype.Timestamptz
+	UpdatedAt                   pgtype.Timestamptz
+	DeletedAt                   pgtype.Timestamptz
+	AttemptCount                int32
+	RetryAt                     pgtype.Timestamptz
+	RestoreSourceDatabaseID     pgtype.UUID
+	RestoreSourceResourceID     pgtype.Text
+	RestorePointInTime          pgtype.Timestamptz
+	EnvironmentCloneOperationID pgtype.UUID
 }
 
 type MeterGatewayUsageEvent struct {

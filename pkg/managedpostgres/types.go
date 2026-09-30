@@ -570,27 +570,28 @@ type ScaleToZeroProber interface {
 }
 
 type Database struct {
-	ID                      string
-	AccountID               string
-	Name                    string
-	Spec                    Spec
-	BackendID               string
-	BackendFingerprint      string
-	ProviderResourceID      string
-	RestoreSourceDatabaseID string
-	RestoreSourceResourceID string
-	RestorePointInTime      time.Time
-	State                   State
-	DesiredGeneration       int64
-	ObservedGeneration      int64
-	LastErrorCode           string
-	LeaseToken              string
-	LeaseUntil              time.Time
-	AttemptCount            int32
-	RetryAt                 time.Time
-	CreatedAt               time.Time
-	UpdatedAt               time.Time
-	DeletedAt               *time.Time
+	ID                          string
+	AccountID                   string
+	Name                        string
+	Spec                        Spec
+	BackendID                   string
+	BackendFingerprint          string
+	ProviderResourceID          string
+	RestoreSourceDatabaseID     string
+	RestoreSourceResourceID     string
+	RestorePointInTime          time.Time
+	EnvironmentCloneOperationID string
+	State                       State
+	DesiredGeneration           int64
+	ObservedGeneration          int64
+	LastErrorCode               string
+	LeaseToken                  string
+	LeaseUntil                  time.Time
+	AttemptCount                int32
+	RetryAt                     time.Time
+	CreatedAt                   time.Time
+	UpdatedAt                   time.Time
+	DeletedAt                   *time.Time
 }
 
 type BindingState string
@@ -657,6 +658,14 @@ type Store interface {
 	FinishProvision(context.Context, string, string, time.Time) (Database, error)
 	Release(context.Context, string, string, State, string, time.Time, time.Time) error
 	FinishDelete(context.Context, string, string, time.Time) (Database, error)
+}
+
+// CustomerDatabaseStore excludes operation-owned targets until the owning
+// clone has published them. Internal lifecycle and accounting readers still
+// need the complete catalogue, including private pending targets.
+type CustomerDatabaseStore interface {
+	GetCustomerDatabase(context.Context, string, string) (Database, error)
+	ListCustomerDatabases(context.Context, string) ([]Database, error)
 }
 
 // UsageDatabaseCursor is the keyset position of the last database a usage

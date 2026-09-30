@@ -833,3 +833,27 @@ The resource publication guard remains closed for captured databases/buckets:
 the value proof does not establish every credential/grant/public-policy mapping,
 provider write fencing, cross-provider checkpoint consistency or retention.
 Full-copy API admission remains closed and this work is not native acceptance.
+
+### PostgreSQL ownership and customer visibility (2026-09-30)
+
+Managed PostgreSQL now has an operation ownership marker. Owned rows must carry
+complete restore lineage and an independent logical/provider identity. Ordinary
+reservations cannot assign or adopt that marker. Customer database reads/lists,
+create/restore adoption, deletion and binding operations exclude private targets.
+Visibility requires a ready owning operation, its target environment and an exact
+ready source-to-target database resource mapping. Unknown owners stay private.
+Internal catalogue reads remain complete for lifecycle and accounting work.
+
+Normal restore and binding reservations also check customer visibility inside
+their transaction. The new queries use sqlc; normal databases retain their
+existing behavior. MemoryStore lacks the durable clone catalogue and therefore
+keeps every owned database private rather than guessing publication authority.
+
+The managed PostgreSQL package and APId database/worker regression contracts
+pass against real PostgreSQL. They cover non-ready owners, incomplete publication
+metadata, ordinary operation denial without provider calls, independent identity
+constraints and preservation of internal visibility. Independent sqlc output
+matches. This slice supplies visibility enforcement; the clone worker still
+needs to assign ownership atomically during reservation before provider IO.
+Fresh PostgreSQL binding preparations, compensation and full publication remain
+unfinished, and full-copy admission remains closed.

@@ -124,7 +124,7 @@ func (s *BindingService) CreateWithResult(ctx context.Context, request CreateBin
 	if !s.provisioningAllowed(ctx, request.AccountID) {
 		return Binding{}, false, ErrUnavailable
 	}
-	database, err := s.databases.Get(ctx, request.AccountID, request.DatabaseID)
+	database, err := customerDatabase(ctx, s.databases, request.AccountID, request.DatabaseID)
 	if err != nil {
 		return Binding{}, false, err
 	}
@@ -186,7 +186,7 @@ func (s *BindingService) Rotate(ctx context.Context, accountID, bindingID string
 	if !s.provisioningEnabled() || !s.provisioningAllowed(ctx, accountID) {
 		return Binding{}, ErrUnavailable
 	}
-	binding, err := s.bindings.GetBinding(ctx, accountID, bindingID)
+	binding, err := s.Get(ctx, accountID, bindingID)
 	if err != nil {
 		return Binding{}, err
 	}
@@ -282,7 +282,7 @@ func (s *BindingService) Reconcile(ctx context.Context, accountID, bindingID str
 }
 
 func (s *BindingService) Delete(ctx context.Context, accountID, bindingID string) (Binding, error) {
-	binding, err := s.bindings.GetBinding(ctx, accountID, bindingID)
+	binding, err := s.Get(ctx, accountID, bindingID)
 	if err != nil {
 		return Binding{}, err
 	}
@@ -372,12 +372,22 @@ func (s *BindingService) ReconcileRotationCleanup(ctx context.Context, accountID
 }
 
 func (s *BindingService) Get(ctx context.Context, accountID, bindingID string) (Binding, error) {
-	return s.bindings.GetBinding(ctx, accountID, bindingID)
+	binding, err := s.bindings.GetBinding(ctx, accountID, bindingID)
+	if err != nil {
+		return Binding{}, err
+	}
+	if _, err := customerDatabase(ctx, s.databases, accountID, binding.DatabaseID); err != nil {
+		return Binding{}, err
+	}
+	return binding, nil
 }
 
 func (s *BindingService) List(ctx context.Context, accountID, databaseID string) ([]Binding, error) {
 	if accountID == "" || databaseID == "" {
 		return nil, ErrInvalid
+	}
+	if _, err := customerDatabase(ctx, s.databases, accountID, databaseID); err != nil {
+		return nil, err
 	}
 	return s.bindings.ListBindings(ctx, accountID, databaseID)
 }

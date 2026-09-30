@@ -11109,6 +11109,16 @@ ALTER TABLE managed_postgres_databases
     ADD COLUMN IF NOT EXISTS restore_source_resource_id text,
     ADD COLUMN IF NOT EXISTS restore_point_in_time timestamptz;
 
+ALTER TABLE managed_postgres_databases ADD COLUMN environment_clone_operation_id uuid;
+ALTER TABLE managed_postgres_databases ADD CONSTRAINT managed_postgres_clone_has_restore
+    CHECK (environment_clone_operation_id IS NULL OR
+           (restore_source_database_id IS NOT NULL AND restore_source_resource_id IS NOT NULL AND restore_point_in_time IS NOT NULL));
+ALTER TABLE managed_postgres_databases ADD CONSTRAINT managed_postgres_clone_is_independent
+    CHECK (environment_clone_operation_id IS NULL OR
+           (id <> restore_source_database_id AND (provider_resource_id IS NULL OR provider_resource_id <> restore_source_resource_id)));
+CREATE INDEX managed_postgres_clone_owner_idx ON managed_postgres_databases(environment_clone_operation_id)
+    WHERE environment_clone_operation_id IS NOT NULL;
+
 ALTER TABLE managed_postgres_bindings
     ADD COLUMN IF NOT EXISTS access text NOT NULL DEFAULT 'read_write'
         CHECK (access IN ('read_write', 'read_only')),

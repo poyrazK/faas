@@ -5327,3 +5327,41 @@ SELECT b.* FROM object_buckets b
 WHERE b.account_id = $1 AND b.app_id = $2 AND b.id = $3 AND b.environment_clone_operation_id = $4
   AND b.state = 'ready'
 FOR UPDATE OF b;
+
+-- name: GetManagedPostgresCustomerDatabase :one
+SELECT d.* FROM managed_postgres_databases d
+WHERE d.account_id=$1 AND d.id=$2 AND (
+    d.environment_clone_operation_id IS NULL OR EXISTS (
+        SELECT 1 FROM project_environment_clone_operations o
+        WHERE o.id=d.environment_clone_operation_id AND o.account_id=d.account_id AND o.status='ready'
+          AND EXISTS (SELECT 1 FROM project_environments e JOIN projects p ON p.id=e.project_id
+              WHERE e.project_id=o.project_id AND e.slug=o.target_environment AND p.account_id=d.account_id)
+          AND EXISTS (SELECT 1 FROM jsonb_array_elements(o.resources) r
+              WHERE r->>'kind' IN ('postgres','managed_postgres') AND r->>'source_id'=d.restore_source_database_id::text
+                AND r->>'target_id'=d.id::text AND r->>'status'='ready')));
+
+-- name: ListManagedPostgresCustomerDatabases :many
+SELECT d.* FROM managed_postgres_databases d
+WHERE d.account_id=$1 AND d.state<>'deleted' AND (
+    d.environment_clone_operation_id IS NULL OR EXISTS (
+        SELECT 1 FROM project_environment_clone_operations o
+        WHERE o.id=d.environment_clone_operation_id AND o.account_id=d.account_id AND o.status='ready'
+          AND EXISTS (SELECT 1 FROM project_environments e JOIN projects p ON p.id=e.project_id
+              WHERE e.project_id=o.project_id AND e.slug=o.target_environment AND p.account_id=d.account_id)
+          AND EXISTS (SELECT 1 FROM jsonb_array_elements(o.resources) r
+              WHERE r->>'kind' IN ('postgres','managed_postgres') AND r->>'source_id'=d.restore_source_database_id::text
+                AND r->>'target_id'=d.id::text AND r->>'status'='ready')))
+ORDER BY d.created_at,d.id;
+
+-- name: LockManagedPostgresCustomerDatabase :one
+SELECT d.id FROM managed_postgres_databases d
+WHERE d.account_id=$1 AND d.id=$2 AND (
+    d.environment_clone_operation_id IS NULL OR EXISTS (
+        SELECT 1 FROM project_environment_clone_operations o
+        WHERE o.id=d.environment_clone_operation_id AND o.account_id=d.account_id AND o.status='ready'
+          AND EXISTS (SELECT 1 FROM project_environments e JOIN projects p ON p.id=e.project_id
+              WHERE e.project_id=o.project_id AND e.slug=o.target_environment AND p.account_id=d.account_id)
+          AND EXISTS (SELECT 1 FROM jsonb_array_elements(o.resources) r
+              WHERE r->>'kind' IN ('postgres','managed_postgres') AND r->>'source_id'=d.restore_source_database_id::text
+                AND r->>'target_id'=d.id::text AND r->>'status'='ready')))
+FOR KEY SHARE OF d;

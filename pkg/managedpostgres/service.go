@@ -159,6 +159,9 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Database, 
 	}
 	existing, err := s.store.FindByName(ctx, request.AccountID, request.Name)
 	if err == nil {
+		if _, err := s.Get(ctx, request.AccountID, existing.ID); err != nil {
+			return Database{}, err
+		}
 		if existing.Spec != request.Spec {
 			return Database{}, ErrConflict
 		}
@@ -232,7 +235,7 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	if !s.provisioningAllowed(ctx, request.AccountID) {
 		return Database{}, false, ErrUnavailable
 	}
-	source, err := s.store.Get(ctx, request.AccountID, request.SourceDatabaseID)
+	source, err := s.Get(ctx, request.AccountID, request.SourceDatabaseID)
 	if err != nil {
 		return Database{}, false, err
 	}
@@ -260,6 +263,9 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	}
 	existing, err := s.store.FindByName(ctx, request.AccountID, request.Name)
 	if err == nil {
+		if _, err := s.Get(ctx, request.AccountID, existing.ID); err != nil {
+			return Database{}, false, err
+		}
 		if existing.RestoreSourceDatabaseID != request.SourceDatabaseID || !existing.RestorePointInTime.Equal(request.PointInTime) {
 			return Database{}, false, ErrConflict
 		}
@@ -427,7 +433,7 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 }
 
 func (s *Service) Delete(ctx context.Context, accountID, databaseID string) (Database, error) {
-	database, err := s.store.Get(ctx, accountID, databaseID)
+	database, err := s.Get(ctx, accountID, databaseID)
 	if err != nil {
 		return Database{}, err
 	}
@@ -469,7 +475,7 @@ func (s *Service) Delete(ctx context.Context, accountID, databaseID string) (Dat
 }
 
 func (s *Service) Get(ctx context.Context, accountID, databaseID string) (Database, error) {
-	return s.store.Get(ctx, accountID, databaseID)
+	return customerDatabase(ctx, s.store, accountID, databaseID)
 }
 
 // FindByName locates an account-owned durable reservation. Clone workers use
@@ -483,7 +489,17 @@ func (s *Service) List(ctx context.Context, accountID string) ([]Database, error
 	if accountID == "" {
 		return nil, ErrInvalid
 	}
-	return s.store.List(ctx, accountID)
+	if customers, ok := s.store.(CustomerDatabaseStore); ok {
+		return customers.ListCustomerDatabases(ctx, accountID)
+	}
+	items, err := s.store.List(ctx, accountID)
+	visible := make([]Database, 0, len(items))
+	for _, database := range items {
+		if database.EnvironmentCloneOperationID == "" {
+			visible = append(visible, database)
+		}
+	}
+	return visible, err
 }
 
 func (s *Service) releaseProviderError(ctx context.Context, database Database, next State, providerErr error) error {

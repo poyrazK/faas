@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 const postgresDatabaseColumns = `id::text, account_id::text, name, region,
@@ -21,7 +22,7 @@ storage_limit_bytes, restore_window_seconds, backend_id,
 backend_fingerprint, provider_resource_id, restore_source_database_id::text,
 restore_source_resource_id, restore_point_in_time, state, desired_generation,
 observed_generation, last_error_code, lease_token, lease_until,
-attempt_count, retry_at, created_at, updated_at, deleted_at`
+attempt_count, retry_at, created_at, updated_at, deleted_at, environment_clone_operation_id::text`
 
 // PostgresStore is the production catalog adapter for managed PostgreSQL.
 // The pool remains owned by the daemon and may be shared with other stores.
@@ -76,6 +77,9 @@ func (s *PostgresStore) Reserve(ctx context.Context, database Database, limit in
 		accountID, database.Name,
 	)
 	if err == nil {
+		if existing.EnvironmentCloneOperationID != "" {
+			return Database{}, false, ErrConflict
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return Database{}, false, mapPostgresError(err)
 		}
@@ -85,6 +89,13 @@ func (s *PostgresStore) Reserve(ctx context.Context, database Database, limit in
 		return Database{}, false, err
 	}
 	if database.RestoreSourceDatabaseID != "" {
+		sourceID, err := postgresUUID(database.RestoreSourceDatabaseID)
+		if err != nil {
+			return Database{}, false, err
+		}
+		if _, err := new(sqlc.Queries).LockManagedPostgresCustomerDatabase(ctx, tx, sqlc.LockManagedPostgresCustomerDatabaseParams{AccountID: accountID, ID: sourceID}); err != nil {
+			return Database{}, false, mapPostgresError(err)
+		}
 		var sourceAccountID, sourceState, sourceProviderResourceID string
 		if err := tx.QueryRow(ctx,
 			`SELECT account_id::text, state, COALESCE(provider_resource_id, '')
@@ -444,6 +455,7 @@ func scanDatabase(row databaseScanner) (Database, error) {
 	var database Database
 	var providerResourceID, lastErrorCode, leaseToken pgtype.Text
 	var restoreSourceDatabaseID, restoreSourceResourceID pgtype.Text
+	var cloneOperationID pgtype.Text
 	var restorePointInTime pgtype.Timestamptz
 	var leaseUntil, deletedAt pgtype.Timestamptz
 	if err := row.Scan(
@@ -455,7 +467,7 @@ func scanDatabase(row databaseScanner) (Database, error) {
 		&restoreSourceResourceID, &restorePointInTime, &database.State,
 		&database.DesiredGeneration, &database.ObservedGeneration, &lastErrorCode,
 		&leaseToken, &leaseUntil, &database.AttemptCount, &database.RetryAt,
-		&database.CreatedAt, &database.UpdatedAt, &deletedAt,
+		&database.CreatedAt, &database.UpdatedAt, &deletedAt, &cloneOperationID,
 	); err != nil {
 		return Database{}, mapPostgresError(err)
 	}
@@ -482,6 +494,9 @@ func scanDatabase(row databaseScanner) (Database, error) {
 	}
 	if deletedAt.Valid {
 		database.DeletedAt = &deletedAt.Time
+	}
+	if cloneOperationID.Valid {
+		database.EnvironmentCloneOperationID = cloneOperationID.String
 	}
 	return database, nil
 }
@@ -519,7 +534,7 @@ func validateReservation(database Database, limit int) error {
 		!validFingerprint.MatchString(database.BackendFingerprint) ||
 		database.DesiredGeneration < 1 || database.ObservedGeneration != 0 ||
 		database.CreatedAt.IsZero() || database.UpdatedAt.IsZero() ||
-		database.ProviderResourceID != "" || database.LeaseToken != "" || database.DeletedAt != nil {
+		database.ProviderResourceID != "" || database.LeaseToken != "" || database.DeletedAt != nil || database.EnvironmentCloneOperationID != "" {
 		return ErrInvalid
 	}
 	if database.RestoreSourceDatabaseID == "" && database.RestoreSourceResourceID == "" && database.RestorePointInTime.IsZero() {
