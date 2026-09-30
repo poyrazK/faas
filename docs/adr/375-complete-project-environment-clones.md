@@ -317,3 +317,16 @@ The store gates do not establish inventory coverage by themselves. The capture
 worker must still enumerate the complete effective state, connect these operation
 and object-copy primitives to resource preparation, and publish a ready deployment
 graph. Those integration steps and native acceptance remain outstanding.
+
+### Clone target ownership (2026-09-30)
+
+All environment creation paths now honor active durable clone reservations.
+PostgreSQL serializes reservation and environment creation on the project row;
+MemStore uses its existing mutex. Only the owning operation in `copying`, at its
+current revision, may materialize the isolated target. The operation row remains
+locked through the target configuration transaction, fencing concurrent failure
+or compensation. Shared-resource requests cannot use the full-clone owner path.
+
+Focused MemStore and PostgreSQL contracts cover stale workers, unauthorized
+creation, owner materialization and idempotent replay, plus concurrent creation
+versus reservation races. These store contracts do not establish VM acceptance.

@@ -5198,17 +5198,26 @@ func (s *PgStore) ProjectEnvironmentByID(ctx context.Context, id string) (Projec
 }
 
 func (s *PgStore) CreateProjectEnvironment(ctx context.Context, env ProjectEnvironment) (ProjectEnvironment, error) {
-	project, err := s.ProjectByID(ctx, env.ProjectID)
-	if err != nil || project.AccountID != env.AccountID {
-		return ProjectEnvironment{}, ErrNotFound
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return ProjectEnvironment{}, err
 	}
-	row := s.pool.QueryRow(ctx, `
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	if err := lockProjectEnvironmentCloneReservationTx(ctx, tx, ProjectEnvironmentClone{
+		AccountID: env.AccountID, ProjectID: env.ProjectID, TargetSlug: env.Slug,
+	}); err != nil {
+		return ProjectEnvironment{}, err
+	}
+	row := tx.QueryRow(ctx, `
 		insert into project_environments (account_id, project_id, slug, protected)
 		values ($1, $2, $3, $4)
 		returning id, account_id, project_id, slug, protected, created_at, updated_at
 	`, env.AccountID, env.ProjectID, env.Slug, env.Protected)
 	created, err := scanProjectEnvironment(row)
 	if err != nil {
+		return ProjectEnvironment{}, mapErr(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return ProjectEnvironment{}, mapErr(err)
 	}
 	return created, nil

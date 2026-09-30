@@ -33,7 +33,21 @@ func (s *PgStore) CreateProjectEnvironmentCloneOperation(ctx context.Context, op
 	if err := validateProjectEnvironmentCloneOperation(op); err != nil || (op.Status != "" && op.Status != CloneOperationPending) {
 		return ProjectEnvironmentCloneOperation{}, ErrInvalidProjectEnvironmentCloneOperation
 	}
-	if existing, err := s.ProjectEnvironmentCloneOperationByIdempotencyKey(ctx, op.AccountID, op.ProjectID, op.IdempotencyKey); err == nil {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return ProjectEnvironmentCloneOperation{}, mapErr(err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	q := new(sqlc.Queries)
+	if _, err := q.LockProjectEnvironmentCloneProject(ctx, tx, sqlc.LockProjectEnvironmentCloneProjectParams{
+		AccountID: mustPgUUID(op.AccountID), ProjectID: mustPgUUID(op.ProjectID),
+	}); err != nil {
+		return ProjectEnvironmentCloneOperation{}, mapErr(err)
+	}
+	existing, err := scanProjectEnvironmentCloneOperation(tx.QueryRow(ctx, `
+		select `+projectEnvironmentCloneOperationColumns+` from project_environment_clone_operations
+		where account_id = $1 and project_id = $2 and idempotency_key = $3`, op.AccountID, op.ProjectID, op.IdempotencyKey))
+	if err == nil {
 		if existing.SourceEnvironment == op.SourceEnvironment && existing.TargetEnvironment == op.TargetEnvironment &&
 			existing.SourceRevisionHash == op.SourceRevisionHash && existing.SourceReleaseSetID == op.SourceReleaseSetID {
 			return existing, nil
@@ -42,22 +56,19 @@ func (s *PgStore) CreateProjectEnvironmentCloneOperation(ctx context.Context, op
 	} else if !errors.Is(err, ErrNotFound) {
 		return ProjectEnvironmentCloneOperation{}, err
 	}
-	project, err := s.ProjectByID(ctx, op.ProjectID)
+	presence, err := q.ReadProjectEnvironmentCloneEnvironmentPresence(ctx, tx, sqlc.ReadProjectEnvironmentCloneEnvironmentPresenceParams{
+		ProjectID: mustPgUUID(op.ProjectID), SourceEnvironment: op.SourceEnvironment, TargetEnvironment: op.TargetEnvironment,
+	})
 	if err != nil {
-		return ProjectEnvironmentCloneOperation{}, err
+		return ProjectEnvironmentCloneOperation{}, mapErr(err)
 	}
-	if project.AccountID != op.AccountID {
+	if !presence.SourceExists {
 		return ProjectEnvironmentCloneOperation{}, ErrNotFound
 	}
-	if _, err := s.ProjectEnvironmentBySlug(ctx, op.AccountID, op.ProjectID, op.SourceEnvironment); err != nil {
-		return ProjectEnvironmentCloneOperation{}, err
-	}
-	if _, err := s.ProjectEnvironmentBySlug(ctx, op.AccountID, op.ProjectID, op.TargetEnvironment); err == nil {
+	if presence.TargetExists {
 		return ProjectEnvironmentCloneOperation{}, ErrConflict
-	} else if !errors.Is(err, ErrNotFound) {
-		return ProjectEnvironmentCloneOperation{}, err
 	}
-	created, err := scanProjectEnvironmentCloneOperation(s.pool.QueryRow(ctx, `
+	created, err := scanProjectEnvironmentCloneOperation(tx.QueryRow(ctx, `
 		insert into project_environment_clone_operations
 			(account_id, project_id, source_environment, target_environment,
 			 idempotency_key, source_revision_hash, source_release_set_id)
@@ -65,16 +76,13 @@ func (s *PgStore) CreateProjectEnvironmentCloneOperation(ctx context.Context, op
 		returning `+projectEnvironmentCloneOperationColumns,
 		op.AccountID, op.ProjectID, op.SourceEnvironment, op.TargetEnvironment,
 		op.IdempotencyKey, op.SourceRevisionHash, op.SourceReleaseSetID))
-	if errors.Is(err, ErrConflict) {
-		existing, lookupErr := s.ProjectEnvironmentCloneOperationByIdempotencyKey(ctx, op.AccountID, op.ProjectID, op.IdempotencyKey)
-		if lookupErr == nil && existing.SourceEnvironment == op.SourceEnvironment &&
-			existing.TargetEnvironment == op.TargetEnvironment && existing.SourceRevisionHash == op.SourceRevisionHash &&
-			existing.SourceReleaseSetID == op.SourceReleaseSetID {
-			return existing, nil
-		}
-		return ProjectEnvironmentCloneOperation{}, ErrConflict
+	if err != nil {
+		return ProjectEnvironmentCloneOperation{}, err
 	}
-	return created, err
+	if err := tx.Commit(ctx); err != nil {
+		return ProjectEnvironmentCloneOperation{}, mapErr(err)
+	}
+	return created, nil
 }
 
 func (s *PgStore) ProjectEnvironmentCloneOperationByID(ctx context.Context, accountID, projectID, id string) (ProjectEnvironmentCloneOperation, error) {

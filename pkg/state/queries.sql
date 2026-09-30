@@ -4810,3 +4810,23 @@ SELECT id, request_id, trace_id, received_at, expires_at
    AND expires_at > sqlc.arg(now_at)::timestamptz
  ORDER BY received_at DESC, id DESC
  LIMIT 1;
+-- name: LockProjectEnvironmentCloneProject :one
+SELECT id::text FROM projects
+WHERE id = sqlc.arg(project_id)::uuid AND account_id = sqlc.arg(account_id)::uuid
+FOR UPDATE;
+
+-- name: ReadProjectEnvironmentCloneEnvironmentPresence :one
+SELECT EXISTS(SELECT 1 FROM project_environments
+              WHERE project_id = sqlc.arg(project_id)::uuid
+                AND slug = sqlc.arg(source_environment)::text)::boolean AS source_exists,
+       EXISTS(SELECT 1 FROM project_environments
+              WHERE project_id = sqlc.arg(project_id)::uuid
+                AND slug = sqlc.arg(target_environment)::text)::boolean AS target_exists;
+
+-- name: LockProjectEnvironmentCloneTargetReservation :one
+SELECT id::text, revision, status, source_environment
+FROM project_environment_clone_operations
+WHERE project_id = sqlc.arg(project_id)::uuid AND account_id = sqlc.arg(account_id)::uuid
+  AND target_environment = sqlc.arg(target_environment)::text
+  AND status IN ('pending', 'capturing', 'copying', 'publishing', 'failed', 'compensating')
+FOR UPDATE;

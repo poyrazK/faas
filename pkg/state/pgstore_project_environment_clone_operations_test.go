@@ -30,8 +30,8 @@ func TestPgProjectEnvironmentCloneOperationIdempotencyAndCAS(t *testing.T) {
 	if err != nil || created.Status != state.CloneOperationPending || created.Revision != 1 {
 		t.Fatalf("create = %+v, %v", created, err)
 	}
-	if _, err := s.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: acct.ID, ProjectID: project.ID, Slug: "staging"}); err != nil {
-		t.Fatal(err)
+	if _, err := s.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: acct.ID, ProjectID: project.ID, Slug: "staging"}); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("reserved target creation = %v, want conflict", err)
 	}
 	if replayed, err := s.CreateProjectEnvironmentCloneOperation(ctx, input); err != nil || replayed.ID != created.ID {
 		t.Fatalf("replay after target creation = %+v, %v", replayed, err)

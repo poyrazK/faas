@@ -28,8 +28,8 @@ func TestMemProjectEnvironmentCloneOperationPinsSourceAndFencesTransitions(t *te
 	if err != nil || created.ID == "" || created.Status != CloneOperationPending || created.Revision != 1 {
 		t.Fatalf("create = %+v, %v", created, err)
 	}
-	if _, err := s.CreateProjectEnvironment(ctx, ProjectEnvironment{AccountID: acct.ID, ProjectID: project.ID, Slug: "staging"}); err != nil {
-		t.Fatal(err)
+	if _, err := s.CreateProjectEnvironment(ctx, ProjectEnvironment{AccountID: acct.ID, ProjectID: project.ID, Slug: "staging"}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("reserved target creation = %v, want conflict", err)
 	}
 	// A retry is recognized even after work on the target has started.
 	replayed, err := s.CreateProjectEnvironmentCloneOperation(ctx, input)

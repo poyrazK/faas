@@ -3178,6 +3178,11 @@ func (m *MemStore) CreateProjectEnvironment(_ context.Context, env ProjectEnviro
 	if !ok || project.AccountID != env.AccountID {
 		return ProjectEnvironment{}, ErrNotFound
 	}
+	if err := m.checkProjectEnvironmentCloneReservationLocked(ProjectEnvironmentClone{
+		AccountID: env.AccountID, ProjectID: env.ProjectID, TargetSlug: env.Slug,
+	}); err != nil {
+		return ProjectEnvironment{}, err
+	}
 	for _, existing := range m.projectEnvironments {
 		if existing.ProjectID == env.ProjectID && existing.Slug == env.Slug {
 			return ProjectEnvironment{}, ErrConflict

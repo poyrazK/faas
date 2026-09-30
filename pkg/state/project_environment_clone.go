@@ -30,7 +30,11 @@ type ProjectEnvironmentClone struct {
 	// value scope is checked again before any target configuration is written.
 	ExpectedSourceValueScopes map[string]string
 	ExpectedSourceValuesHash  string
-	sourceValueScopesJSON     []byte
+	// A durable clone alone may materialize its reserved target. The revision
+	// fences workers which lost ownership while preparing provider resources.
+	CloneOperationID       string
+	CloneOperationRevision int64
+	sourceValueScopesJSON  []byte
 }
 
 // ProjectEnvironmentCloneResult contains non-secret copy counts.
@@ -82,6 +86,9 @@ func (m *MemStore) CloneProjectEnvironment(_ context.Context, clone ProjectEnvir
 	project, ok := m.projects[clone.ProjectID]
 	if !ok || project.AccountID != clone.AccountID {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrNotFound
+	}
+	if err := m.checkProjectEnvironmentCloneReservationLocked(clone); err != nil {
+		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
 	}
 	source, err := m.projectEnvironmentBySlugLocked(clone.ProjectID, clone.SourceSlug)
 	if err != nil {

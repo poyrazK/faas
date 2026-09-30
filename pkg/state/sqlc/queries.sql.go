@@ -8220,6 +8220,58 @@ func (q *Queries) LockProjectEnvironmentCloneApps(ctx context.Context, db DBTX, 
 	return items, nil
 }
 
+const lockProjectEnvironmentCloneProject = `-- name: LockProjectEnvironmentCloneProject :one
+SELECT id::text FROM projects
+WHERE id = $1::uuid AND account_id = $2::uuid
+FOR UPDATE
+`
+
+type LockProjectEnvironmentCloneProjectParams struct {
+	ProjectID pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) LockProjectEnvironmentCloneProject(ctx context.Context, db DBTX, arg LockProjectEnvironmentCloneProjectParams) (string, error) {
+	row := db.QueryRow(ctx, lockProjectEnvironmentCloneProject, arg.ProjectID, arg.AccountID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockProjectEnvironmentCloneTargetReservation = `-- name: LockProjectEnvironmentCloneTargetReservation :one
+SELECT id::text, revision, status, source_environment
+FROM project_environment_clone_operations
+WHERE project_id = $1::uuid AND account_id = $2::uuid
+  AND target_environment = $3::text
+  AND status IN ('pending', 'capturing', 'copying', 'publishing', 'failed', 'compensating')
+FOR UPDATE
+`
+
+type LockProjectEnvironmentCloneTargetReservationParams struct {
+	ProjectID         pgtype.UUID
+	AccountID         pgtype.UUID
+	TargetEnvironment string
+}
+
+type LockProjectEnvironmentCloneTargetReservationRow struct {
+	ID                string
+	Revision          int64
+	Status            string
+	SourceEnvironment string
+}
+
+func (q *Queries) LockProjectEnvironmentCloneTargetReservation(ctx context.Context, db DBTX, arg LockProjectEnvironmentCloneTargetReservationParams) (LockProjectEnvironmentCloneTargetReservationRow, error) {
+	row := db.QueryRow(ctx, lockProjectEnvironmentCloneTargetReservation, arg.ProjectID, arg.AccountID, arg.TargetEnvironment)
+	var i LockProjectEnvironmentCloneTargetReservationRow
+	err := row.Scan(
+		&i.ID,
+		&i.Revision,
+		&i.Status,
+		&i.SourceEnvironment,
+	)
+	return i, err
+}
+
 const markClaimedTriggerRecordDeadLetter = `-- name: MarkClaimedTriggerRecordDeadLetter :execrows
 UPDATE trigger_records
    SET state = 'dead_letter', attempts = attempts + 1, last_error = $3,
@@ -11780,6 +11832,33 @@ func (q *Queries) ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg
 	row := db.QueryRow(ctx, readAccountCreditConsumption, arg.Provider, arg.AccountID, arg.ProviderInvoiceID)
 	var i ReadAccountCreditConsumptionRow
 	err := row.Scan(&i.ConsumedCents, &i.HasPrior, &i.HasUnqualified)
+	return i, err
+}
+
+const readProjectEnvironmentCloneEnvironmentPresence = `-- name: ReadProjectEnvironmentCloneEnvironmentPresence :one
+SELECT EXISTS(SELECT 1 FROM project_environments
+              WHERE project_id = $1::uuid
+                AND slug = $2::text)::boolean AS source_exists,
+       EXISTS(SELECT 1 FROM project_environments
+              WHERE project_id = $1::uuid
+                AND slug = $3::text)::boolean AS target_exists
+`
+
+type ReadProjectEnvironmentCloneEnvironmentPresenceParams struct {
+	ProjectID         pgtype.UUID
+	SourceEnvironment string
+	TargetEnvironment string
+}
+
+type ReadProjectEnvironmentCloneEnvironmentPresenceRow struct {
+	SourceExists bool
+	TargetExists bool
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneEnvironmentPresence(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneEnvironmentPresenceParams) (ReadProjectEnvironmentCloneEnvironmentPresenceRow, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentCloneEnvironmentPresence, arg.ProjectID, arg.SourceEnvironment, arg.TargetEnvironment)
+	var i ReadProjectEnvironmentCloneEnvironmentPresenceRow
+	err := row.Scan(&i.SourceExists, &i.TargetExists)
 	return i, err
 }
 
