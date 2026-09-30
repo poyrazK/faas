@@ -136,6 +136,11 @@ tests require runtime readiness after intent and fleet success, including
 recovery in a fresh controller. Scheduler tests drive the scoped event decoder
 and assert fresh capacity before retirement and zero stale snapshot captures.
 These checks use a VM transport fixture; native runtime acceptance remains open.
+The existing runtime freshness stamp and snapshot invalidation remain
+application-wide. Scoped scheduler requests preserve neighboring resident VMs,
+but an application-wide stamp can conservatively require another managed
+environment to refresh later. Separating scoped variable boundaries from
+application-shared credential changes remains part of the scope audit.
 
 The remaining full feature gates include source polling and protected-branch
 approval evidence; environment-scoped workload creation, source/runtime,
