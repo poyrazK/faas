@@ -15,6 +15,16 @@ package api
 
 import "time"
 
+// InvoiceRefreshResponse reports the persisted source coverage after refresh.
+type InvoiceRefreshResponse struct {
+	InvoiceID string    `json:"invoice_id"`
+	Provider  string    `json:"provider"`
+	Detailed  bool      `json:"detailed"`
+	LineItems int       `json:"line_items"`
+	SourceGap string    `json:"source_gap,omitempty"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 // UpdateAccountBillingInfoRequest is the partial update payload for
 // PATCH /v1/account/billing. A nil field leaves its existing value unchanged;
 // an explicitly empty string clears it.

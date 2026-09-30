@@ -16,7 +16,8 @@ Free accounts have a zero monthly charge and are subject to the published limits
 
 Gregale provides a **partial FOCUS 1.4 Invoice Detail projection** for financial
 reconciliation. Signed billing webhooks retain provider line items and invoice
-terms/dates where available. The export remains partial; its metadata and
+terms/dates where available; an authenticated refresh can enrich existing
+invoices. The export remains partial; its metadata and
 `X-Gregale-FOCUS-Conformance: partial` header describe source coverage and gaps.
 
 ```bash
@@ -87,17 +88,55 @@ lines; a supplied line list replaces the snapshot, including its completeness.
 
 | Provider | Captured facts and classification |
 |---|---|
-| Stripe | Public invoice business name, effective/finalized issue date, due date, and terms expressed as `Due by <actual due date>`. Expanded recurring prices identify licensed purchases or metered usage; modern opaque price IDs remain unclassified. Both tax shapes, inclusive tax, and discounts are supported. `has_more` must explicitly be false. |
+| Stripe | Public invoice business name, effective/finalized issue date, due date, and terms expressed as `Due by <actual due date>`. Expanded recurring prices identify licensed purchases or metered usage; refresh resolves opaque price/plan IDs and retrieves every line page. Both tax shapes, inclusive tax, and discounts are supported. `has_more` must explicitly be false. |
 | Paddle | Actual structured payment terms and `billed_at`; calculated line total minus tax gives net cost after discounts. Gregale's provisioned monthly/overage descriptions identify Purchase/Usage. Exact issuer and due date are not supplied by this transaction payload. Duplicate price IDs mark the list incomplete; original lines may not reconcile to adjusted totals. |
 | Polar | Order items and their amounts/taxes. Legacy expanded price types distinguish fixed purchases from metered usage; current payloads without price facts remain unclassified. Invoice terms, actual issue/due dates, and issuer identity remain unavailable. Buyer billing names and order creation dates are never substituted. Unallocated order discounts can require aggregate fallback. |
 
-Historical invoices stay aggregate until enriched by provider deliveries; this
-change does not backfill provider history. The export remains partial even
-when every invoice in a particular month has payment terms.
+Historical invoices can be enriched by provider deliveries or the refresh
+operation below. The export remains partial even when every invoice in a
+particular month has payment terms.
 
 Malformed currencies, unsupported currency precision (for example JPY or KWD),
 inconsistent amounts, missing identifiers, and unrepresentable dates fail the
 entire download with HTTP 409. No amounts or timestamps are guessed.
+
+### Refresh invoice facts
+
+Use an ID from `gregale invoices` to refresh a locally stored invoice:
+
+```bash
+gregale billing refresh-invoice INVOICE_ID
+```
+
+`POST /v1/invoices/{id}/refresh` exposes the same operation with no request body
+or query parameters. It requires `usage:read` and the invoice-history session MFA
+gate, and is available during billing suspension. The invoice must belong to the
+caller and the deployment's configured billing provider. The response reports
+`invoice_id`, `provider`, `line_items`, `detailed`, `source_gap` when present, and
+`updated_at`. `detailed` describes line reconciliation/classification; it does
+not certify that all required invoice facts or historical documents are present.
+Export metadata reports those remaining gaps.
+
+Refresh performs authenticated reads of the existing Stripe invoice, Paddle
+transaction, or Polar order. Stripe fetches its dedicated line endpoint in pages
+of up to 100 and resolves opaque price/plan IDs once per operation. Every refresh
+is limited to 32 provider reads, 1,000 lines, 4 MiB per response, 20 seconds per
+read, and two minutes overall. Exceeding read, line, or response bounds returns
+422 with the limit, observed count, and documentation link; no partial snapshot
+is stored. Provider failures return 503. Unsupported providers return 501.
+
+Remote customer/document IDs, currency, total, and tax must match the captured
+local invoice. Refresh updates facts and record lifecycle atomically and leaves
+amounts, payment state, refunds, credits, plan, and entitlements unchanged. A
+concurrent webhook or refund produces 409; retrieve the current invoice and retry
+once the provider deliveries have reconciled. Exact replay preserves record
+lifecycle dates. Unknown classifications and unavailable issuer/terms/dates
+remain source gaps; refresh never substitutes buyer identity or order creation
+for invoice issuer or issue date.
+
+Refresh enriches known invoices only. It does not enumerate provider history or
+import documents absent from Gregale. Provider reads happen only during refresh,
+so exports remain a projection of stored facts.
 
 ### Remaining gaps
 
@@ -113,7 +152,7 @@ are retained and flagged; exports count both untracked and legacy records and
 declare this historical gap when present. Facts and lifecycle history are
 updated in one transaction so downloads cannot see mismatched snapshots.
 
-The next invoice steps are authenticated provider backfill/enrichment, missing
+The next invoice steps are provider history discovery/backfill, remaining
 price classifications and legal issuer coverage, and correction-document
 lineage. A historical cost ledger with
 service/resource identifiers, quantities, units, and price snapshots is then
@@ -123,4 +162,5 @@ cannot reliably reconstruct past list, contracted, or effective costs.
 The mapping is based on the official
 [FOCUS 1.4 Invoice Detail specification](https://focus.finops.org/docs/specification/v1-4/datasets/invoice-detail/).
 `make focus-contract-check` checks the pinned upstream columns, exact
-reconciliation, snapshot metadata, ownership, export bounds, and CLI downloads.
+reconciliation, snapshot metadata, ownership, export/refresh bounds, provider
+reads, lifecycle concurrency, and CLI operations.

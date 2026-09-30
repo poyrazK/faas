@@ -41,3 +41,32 @@ test('FOCUS downloads retain structured Problem errors', async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
+test('FOCUS invoice refresh sends an authenticated empty POST and retains source gaps', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalBase = OpenAPI.BASE;
+  const originalToken = OpenAPI.TOKEN;
+  const id = 'c4979a3e-345b-4a96-a635-321589233f7f';
+  try {
+    OpenAPI.BASE = 'https://api.example.com';
+    OpenAPI.TOKEN = 'focus-token';
+    globalThis.fetch = async (input, options) => {
+      const url = new URL(String(input));
+      assert.equal(url.pathname, `/v1/invoices/${id}/refresh`);
+      assert.equal(url.search, '');
+      assert.equal(options?.method, 'POST');
+      assert.equal(options?.body, undefined);
+      assert.equal(new Headers(options?.headers).get('Authorization'), 'Bearer focus-token');
+      return Response.json({invoice_id: id, provider: 'polar', detailed: false, line_items: 2, source_gap: 'unclassified', updated_at: '2026-10-01T00:00:00Z'});
+    };
+    const result = await BillingService.refreshInvoiceFacts({id});
+    assert.equal(result.invoice_id, id);
+    assert.equal(result.source_gap, 'unclassified');
+    globalThis.fetch = async () => new Response(JSON.stringify({status: 409, title: 'Refresh conflict', code: 'conflict'}), {status: 409, headers: {'Content-Type': 'application/problem+json'}});
+    await assert.rejects(BillingService.refreshInvoiceFacts({id}), (error: unknown) => error instanceof ApiError && error.status === 409 && error.body.code === 'conflict');
+  } finally {
+    globalThis.fetch = originalFetch;
+    OpenAPI.BASE = originalBase;
+    OpenAPI.TOKEN = originalToken;
+  }
+});

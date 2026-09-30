@@ -662,6 +662,18 @@ Show the card on file
 
 Show subscription status
 
+### billing refresh-invoice
+
+Refresh provider facts for an existing invoice
+
+`gregale billing refresh-invoice ID`
+
+Examples:
+
+```sh
+gregale billing refresh-invoice INVOICE_ID
+```
+
 ### billing export
 
 Export a partial FOCUS 1.4 invoice projection

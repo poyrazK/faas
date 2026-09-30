@@ -453,6 +453,7 @@ export type { Invocation } from './models/Invocation.js';
 export type { InvocationDestinations } from './models/InvocationDestinations.js';
 export type { Invoice } from './models/Invoice.js';
 export type { InvoiceListResponse } from './models/InvoiceListResponse.js';
+export type { InvoiceRefreshResponse } from './models/InvoiceRefreshResponse.js';
 export type { InvokeRequest } from './models/InvokeRequest.js';
 export type { InvokeResponse } from './models/InvokeResponse.js';
 export type { InvokeWork } from './models/InvokeWork.js';

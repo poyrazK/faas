@@ -66,6 +66,8 @@ func cmdBilling(args []string) int {
 		return cmdBillingStatus(args[1:])
 	case "export":
 		return cmdBillingExport(args[1:])
+	case "refresh-invoice":
+		return cmdBillingRefreshInvoice(args[1:])
 	case billingSubPriceCatalog:
 		return cmdBillingPriceCatalog(args[1:])
 	case billingSubReconcile:
@@ -88,6 +90,7 @@ func cmdBilling(args []string) int {
 
 func printBillingUsage(w io.Writer) {
 	_, _ = fmt.Fprintf(w, "usage: gregale billing <subcommand>\n\n"+
+		"  refresh-invoice ID  refresh a stored invoice's provider facts\n"+
 		"  portal              open the active billing provider's portal in your browser\n"+
 		"                      (--print  print URL to stdout only; --no-open  skip browser)\n"+
 		"  payment-method      show the card-on-file summary; open the portal to update\n"+

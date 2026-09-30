@@ -65,6 +65,10 @@ func (s *server) accountForActiveBillingProvider(ctx context.Context, acct state
 	if !qualified {
 		return acct, nil
 	}
+	return s.accountForBillingProvider(ctx, acct, provider)
+}
+
+func (s *server) accountForBillingProvider(ctx context.Context, acct state.Account, provider string) (state.Account, error) {
 	acct.ProviderCustomerID = ""
 	acct.StripeSubscriptionItem = ""
 	identity, err := s.store.BillingIdentity(ctx, acct.ID, provider)

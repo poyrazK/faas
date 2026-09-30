@@ -891,6 +891,9 @@ from .invoice import Invoice
 from .invoice_currency import InvoiceCurrency
 from .invoice_list_response import InvoiceListResponse
 from .invoice_provider import InvoiceProvider
+from .invoice_refresh_response import InvoiceRefreshResponse
+from .invoice_refresh_response_provider import InvoiceRefreshResponseProvider
+from .invoice_refresh_response_source_gap import InvoiceRefreshResponseSourceGap
 from .invoice_status import InvoiceStatus
 from .invoke_request import InvokeRequest
 from .invoke_request_headers import InvokeRequestHeaders
@@ -2841,6 +2844,9 @@ __all__ = (
     "InvoiceCurrency",
     "InvoiceListResponse",
     "InvoiceProvider",
+    "InvoiceRefreshResponse",
+    "InvoiceRefreshResponseProvider",
+    "InvoiceRefreshResponseSourceGap",
     "InvoiceStatus",
     "InvokeRequest",
     "InvokeRequestHeaders",

@@ -20661,6 +20661,52 @@ paths:
   # dashboard's billing page both render from the same round-trip.
   # Field is omitempty — operator boxes without a configured payment
   # method still return 200 with payment_method absent.
+  /v1/invoices/{id}/refresh:
+    post:
+      tags: [billing]
+      operationId: refreshInvoiceFacts
+      summary: Refresh provider facts for an existing account invoice.
+      description: |
+        Requires usage:read and the invoice-history session MFA gate. Fetches
+        the configured provider's invoice, transaction, or order using the
+        account's provider-qualified customer identity. Accepts no body or query
+        parameters. Only invoice details and their lifecycle history change;
+        monetary values, payment state, refunds, credits, and plan are preserved.
+        Provider identity, currency, total, and tax must match the captured local
+        invoice. A concurrent invoice update returns 409, allowing a fresh retry.
+        Stripe paginates all lines and resolves opaque price/plan IDs. Unknown
+        facts and classifications remain source gaps. The operation is bounded
+        to 32 provider reads, 1,000 items, 4 MiB per response, and two minutes.
+        It enriches known invoices; it does not discover missing provider history.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+          description: Local invoice UUID from GET /v1/invoices.
+      responses:
+        '200':
+          description: Refreshed source coverage; invoice financial fields are unchanged.
+          headers:
+            Cache-Control:
+              schema: { type: string, const: 'private, no-store' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InvoiceRefreshResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501':
+          description: Configured provider does not implement invoice refresh.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/billing/focus:
     get:
       tags: [billing]
@@ -30086,6 +30132,23 @@ components:
           type: array
           items: { $ref: '#/components/schemas/Invoice' }
         next_before: { type: [string, "null"], format: date-time }
+
+    InvoiceRefreshResponse:
+      description: Persisted line coverage after refreshing an existing invoice from its billing provider.
+      type: object
+      required: [invoice_id, provider, detailed, line_items, updated_at]
+      properties:
+        invoice_id: { type: string, format: uuid }
+        provider: { type: string, enum: [stripe, paddle, polar] }
+        detailed:
+          type: boolean
+          description: Whether the refreshed line snapshot is complete, classified, and exactly reconciled.
+        line_items: { type: integer, minimum: 0, maximum: 1000 }
+        source_gap:
+          type: string
+          enum: [unavailable, incomplete, empty, unclassified, tax_in_non_tax_lines, totals_mismatch]
+          description: Reason for aggregate fallback; omitted when detailed is true.
+        updated_at: { type: string, format: date-time }
 
     BillingStatusResponse:
       description: Provider-independent customer billing status (issue #2302).

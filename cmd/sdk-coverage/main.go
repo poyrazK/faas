@@ -567,6 +567,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/usage/storage":                                                  "StorageUsage",
 	"GET /v1/invoices":                                                       "ListInvoices",
 	"GET /v1/billing/focus":                                                  "ExportFOCUSInvoices",
+	"POST /v1/invoices/{id}/refresh":                                         "RefreshInvoiceFacts",
 	"POST /v1/invocations/{id}/replay":                                       "ReplayInvocation", // issue #315 — re-issue a failed/dead_letter invocation
 	"GET /v1/apps/{slug}/secrets":                                            "ListSecrets",
 	"GET /v1/domains":                                                        "ListDomains",

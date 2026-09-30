@@ -5558,6 +5558,17 @@ func (q *Queries) InstanceListByNodeForRecovery(ctx context.Context, db DBTX, no
 	return items, nil
 }
 
+const invoiceRefreshTime = `-- name: InvoiceRefreshTime :one
+SELECT clock_timestamp()::timestamptz
+`
+
+func (q *Queries) InvoiceRefreshTime(ctx context.Context, db DBTX) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, invoiceRefreshTime)
+	var column_1 pgtype.Timestamptz
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const isMailSuppressed = `-- name: IsMailSuppressed :one
 SELECT EXISTS (
     SELECT 1 FROM mail_suppressions
@@ -10319,6 +10330,75 @@ func (q *Queries) LockInvoiceForRefund(ctx context.Context, db DBTX, id pgtype.U
 		&i.AmountRefundedCents,
 		&i.AmountRefundPendingCents,
 		&i.CreditsAppliedCents,
+	)
+	return i, err
+}
+
+const lockOwnedInvoiceSnapshot = `-- name: LockOwnedInvoiceSnapshot :one
+SELECT id, account_id, provider, provider_invoice_id, provider_charge_id, number, status,
+       period_start, period_end, subtotal_cents, tax_cents, total_cents, amount_paid_cents,
+       plan, amount_refunded_cents, amount_refund_pending_cents, credits_applied_cents,
+       currency, pdf_available, created_at, updated_at, details, detail_lifecycle FROM invoices WHERE id = $1 AND account_id = $2 FOR UPDATE
+`
+
+type LockOwnedInvoiceSnapshotParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+type LockOwnedInvoiceSnapshotRow struct {
+	ID                       pgtype.UUID
+	AccountID                pgtype.UUID
+	Provider                 string
+	ProviderInvoiceID        string
+	ProviderChargeID         string
+	Number                   string
+	Status                   string
+	PeriodStart              pgtype.Timestamptz
+	PeriodEnd                pgtype.Timestamptz
+	SubtotalCents            int64
+	TaxCents                 int64
+	TotalCents               int64
+	AmountPaidCents          int64
+	Plan                     string
+	AmountRefundedCents      int64
+	AmountRefundPendingCents int64
+	CreditsAppliedCents      int64
+	Currency                 string
+	PdfAvailable             bool
+	CreatedAt                pgtype.Timestamptz
+	UpdatedAt                pgtype.Timestamptz
+	Details                  []byte
+	DetailLifecycle          []byte
+}
+
+func (q *Queries) LockOwnedInvoiceSnapshot(ctx context.Context, db DBTX, arg LockOwnedInvoiceSnapshotParams) (LockOwnedInvoiceSnapshotRow, error) {
+	row := db.QueryRow(ctx, lockOwnedInvoiceSnapshot, arg.ID, arg.AccountID)
+	var i LockOwnedInvoiceSnapshotRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Provider,
+		&i.ProviderInvoiceID,
+		&i.ProviderChargeID,
+		&i.Number,
+		&i.Status,
+		&i.PeriodStart,
+		&i.PeriodEnd,
+		&i.SubtotalCents,
+		&i.TaxCents,
+		&i.TotalCents,
+		&i.AmountPaidCents,
+		&i.Plan,
+		&i.AmountRefundedCents,
+		&i.AmountRefundPendingCents,
+		&i.CreditsAppliedCents,
+		&i.Currency,
+		&i.PdfAvailable,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Details,
+		&i.DetailLifecycle,
 	)
 	return i, err
 }
@@ -16247,6 +16327,27 @@ type SetInvoiceDetailLifecycleParams struct {
 // The caller retains the natural-key upsert's row lock in the same transaction.
 func (q *Queries) SetInvoiceDetailLifecycle(ctx context.Context, db DBTX, arg SetInvoiceDetailLifecycleParams) error {
 	_, err := db.Exec(ctx, setInvoiceDetailLifecycle, arg.ID, arg.DetailLifecycle)
+	return err
+}
+
+const setInvoiceEnrichment = `-- name: SetInvoiceEnrichment :exec
+UPDATE invoices SET details = $2, detail_lifecycle = $3, updated_at = $4 WHERE id = $1
+`
+
+type SetInvoiceEnrichmentParams struct {
+	ID              pgtype.UUID
+	Details         []byte
+	DetailLifecycle []byte
+	UpdatedAt       pgtype.Timestamptz
+}
+
+func (q *Queries) SetInvoiceEnrichment(ctx context.Context, db DBTX, arg SetInvoiceEnrichmentParams) error {
+	_, err := db.Exec(ctx, setInvoiceEnrichment,
+		arg.ID,
+		arg.Details,
+		arg.DetailLifecycle,
+		arg.UpdatedAt,
+	)
 	return err
 }
 

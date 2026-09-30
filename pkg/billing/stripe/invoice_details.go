@@ -22,6 +22,10 @@ func InvoiceDetailsFromWebhook(raw []byte) *state.InvoiceDetails {
 		return nil
 	}
 	facts := envelope.Data.Object
+	return invoiceDetailsFromFacts(facts)
+}
+
+func invoiceDetailsFromFacts(facts stripeInvoiceFacts) *state.InvoiceDetails {
 	d := &state.InvoiceDetails{IssuerName: facts.AccountName, DueAt: stripeFactDate(facts.DueDate), IssuedAt: stripeFactDate(facts.StatusTransitions.FinalizedAt)}
 	if facts.EffectiveAt > 0 {
 		d.IssuedAt = stripeFactDate(facts.EffectiveAt)
@@ -42,12 +46,16 @@ func InvoiceDetailsFromWebhook(raw []byte) *state.InvoiceDetails {
 		}
 		seen[line.ID] = true
 		price := line.Price
-		if len(price) == 0 {
+		if len(price) == 0 || string(price) == "null" {
 			price = line.Pricing.PriceDetails.Price
+		}
+		category := stripeInvoiceCategory(price)
+		if category == "" && (len(price) == 0 || string(price) == "null") {
+			category = stripePlanCategory(line.Plan)
 		}
 		d.Lines.Items = append(d.Lines.Items, state.InvoiceLineItem{
 			ID: line.ID, Description: line.Description, NetCents: net, TaxCents: tax,
-			ChargeCategory: stripeInvoiceCategory(price),
+			ChargeCategory: category,
 		})
 	}
 	return d
@@ -61,10 +69,12 @@ type stripeInvoiceFacts struct {
 	StatusTransitions struct {
 		FinalizedAt int64 `json:"finalized_at"`
 	} `json:"status_transitions"`
-	Lines *struct {
-		HasMore *bool               `json:"has_more"`
-		Data    []stripeInvoiceLine `json:"data"`
-	} `json:"lines"`
+	Lines *stripeInvoiceLines `json:"lines"`
+}
+
+type stripeInvoiceLines struct {
+	HasMore *bool               `json:"has_more"`
+	Data    []stripeInvoiceLine `json:"data"`
 }
 
 type stripeInvoiceLine struct {
@@ -84,6 +94,7 @@ type stripeInvoiceLine struct {
 		TaxBehavior string `json:"tax_behavior"`
 	} `json:"taxes"`
 	Price   json.RawMessage `json:"price"`
+	Plan    json.RawMessage `json:"plan"`
 	Pricing struct {
 		PriceDetails struct {
 			Price json.RawMessage `json:"price"`
@@ -127,6 +138,22 @@ func stripeInvoiceCategory(raw json.RawMessage) string {
 		return ""
 	}
 	switch price.Recurring.UsageType {
+	case "metered":
+		return "Usage"
+	case "licensed":
+		return "Purchase"
+	}
+	return ""
+}
+
+func stripePlanCategory(raw json.RawMessage) string {
+	var plan struct {
+		UsageType string `json:"usage_type"`
+	}
+	if json.Unmarshal(raw, &plan) != nil {
+		return ""
+	}
+	switch plan.UsageType {
 	case "metered":
 		return "Usage"
 	case "licensed":

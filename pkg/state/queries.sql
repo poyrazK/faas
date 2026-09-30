@@ -243,6 +243,18 @@ SELECT id, account_id, provider, provider_invoice_id, provider_charge_id, number
        plan, amount_refunded_cents, amount_refund_pending_cents, credits_applied_cents,
        currency, pdf_available, created_at, updated_at, details, detail_lifecycle FROM invoices WHERE id = $1;
 
+-- name: LockOwnedInvoiceSnapshot :one
+SELECT id, account_id, provider, provider_invoice_id, provider_charge_id, number, status,
+       period_start, period_end, subtotal_cents, tax_cents, total_cents, amount_paid_cents,
+       plan, amount_refunded_cents, amount_refund_pending_cents, credits_applied_cents,
+       currency, pdf_available, created_at, updated_at, details, detail_lifecycle FROM invoices WHERE id = $1 AND account_id = $2 FOR UPDATE;
+
+-- name: InvoiceRefreshTime :one
+SELECT clock_timestamp()::timestamptz;
+
+-- name: SetInvoiceEnrichment :exec
+UPDATE invoices SET details = $2, detail_lifecycle = $3, updated_at = $4 WHERE id = $1;
+
 -- name: UpsertInvoiceSnapshot :one
 INSERT INTO invoices (
   account_id, provider, provider_invoice_id, provider_charge_id, number, status,

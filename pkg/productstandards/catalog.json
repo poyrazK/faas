@@ -99,10 +99,10 @@
       "category": "billing",
       "surface": "account invoice export",
       "status": "partial",
-      "scope": "Account-scoped FOCUS 1.4 Invoice Detail exports use durable provider facts and exactly reconciled, classified line snapshots when available. Per-record lifecycle tracks every exported column change. Aggregate fallbacks, missing facts, and historical lifecycle uncertainty are counted in metadata; ZIP binds CSV and metadata with a checksum.",
-      "limitations": "Conformance remains partial. PaymentTerms, legal issuer and date coverage depend on provider payloads; opaque price IDs, partial lists, unallocated discounts, and adjusted totals can require aggregate fallback. Older invoices have incomplete historical record creation observations; coverage counts declare that uncertainty. Provider history backfill, conditional FX/PO fields, correction links, separate credit/refund documents, and Cost and Usage allocation/historical prices remain unimplemented.",
+      "scope": "Account-scoped FOCUS 1.4 Invoice Detail exports use durable provider facts and exactly reconciled, classified line snapshots when available. Authenticated refresh enriches known invoices; Stripe resolves opaque prices and paginates all lines. Per-record lifecycle tracks every exported column change. Aggregate fallbacks, missing facts, and historical lifecycle uncertainty are counted in metadata; ZIP binds CSV and metadata with a checksum.",
+      "limitations": "Conformance remains partial. PaymentTerms, legal issuer and date coverage depend on provider payloads; unresolved classifications, partial lists, unallocated discounts, and adjusted totals can require aggregate fallback. Older invoices have incomplete historical record creation observations; coverage counts declare that uncertainty. Provider history discovery/backfill, conditional FX/PO fields, correction links, separate credit/refund documents, and Cost and Usage allocation/historical prices remain unimplemented.",
       "docs_url": "https://focus.finops.org/docs/specification/v1-4/datasets/invoice-detail/",
-      "evidence": "pkg/focus; pkg/focus/testdata/specification/manifest.json (pinned official FOCUS 1.4 columns); cmd/apid/handlers_billing_focus.go; docs/billing.md; docs/adr/380-focus-invoice-projection.md; docs/adr/381-provider-invoice-facts.md; docs/adr/382-invoice-detail-lifecycle.md; pkg/billing/testdata/invoices",
+      "evidence": "pkg/focus; pkg/focus/testdata/specification/manifest.json (pinned official FOCUS 1.4 columns); cmd/apid/handlers_billing_focus.go; docs/billing.md; docs/adr/380-focus-invoice-projection.md; docs/adr/381-provider-invoice-facts.md; docs/adr/382-invoice-detail-lifecycle.md; pkg/billing/testdata/invoices; docs/adr/383-provider-invoice-refresh.md; cmd/apid/handlers_invoice_refresh.go",
       "conformance": [
         {
           "fixture": "focus-invoice-column-contract",
@@ -153,6 +153,41 @@
           "fixture": "focus-lifecycle-coverage",
           "tier": "unit",
           "target": "pkg/focus/invoice_lifecycle_test.go::TestFOCUSInvoiceLifecycleCoverageAndValidation"
+        },
+        {
+          "fixture": "focus-provider-refresh-pagination",
+          "tier": "unit",
+          "target": "pkg/billing/stripe/invoice_refresh_test.go::TestInvoiceRefreshStripePaginationAndPrices"
+        },
+        {
+          "fixture": "focus-paddle-refresh-identity",
+          "tier": "unit",
+          "target": "pkg/billing/paddle/invoice_refresh_test.go::TestInvoiceRefreshPaddleIdentityAndFacts"
+        },
+        {
+          "fixture": "focus-polar-refresh-identity",
+          "tier": "unit",
+          "target": "pkg/billing/polar/invoice_refresh_test.go::TestInvoiceRefreshPolarIdentityAndFacts"
+        },
+        {
+          "fixture": "focus-refresh-ownership",
+          "tier": "unit",
+          "target": "cmd/apid/handlers_invoice_refresh_test.go::TestFOCUSInvoiceRefreshOwnershipAndCoverage"
+        },
+        {
+          "fixture": "focus-refresh-atomicity",
+          "tier": "unit",
+          "target": "pkg/state/invoice_refresh_test.go::TestMemInvoiceRefresh"
+        },
+        {
+          "fixture": "focus-refresh-postgres",
+          "tier": "integration",
+          "target": "pkg/state/invoice_refresh_test.go::TestPgInvoiceRefresh"
+        },
+        {
+          "fixture": "focus-refresh-cli",
+          "tier": "unit",
+          "target": "cmd/gregale/commands_billing_refresh_test.go::TestFOCUSCLIRefreshInvoice"
         }
       ]
     },

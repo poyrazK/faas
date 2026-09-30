@@ -6,10 +6,58 @@ import type { BillingCancelResponse } from '../models/BillingCancelResponse.js';
 import type { BillingPortalResponse } from '../models/BillingPortalResponse.js';
 import type { BillingRetryResponse } from '../models/BillingRetryResponse.js';
 import type { BillingStatusResponse } from '../models/BillingStatusResponse.js';
+import type { InvoiceRefreshResponse } from '../models/InvoiceRefreshResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class BillingService {
+  /**
+   * Refresh provider facts for an existing account invoice.
+   * Requires usage:read and the invoice-history session MFA gate. Fetches
+   * the configured provider's invoice, transaction, or order using the
+   * account's provider-qualified customer identity. Accepts no body or query
+   * parameters. Only invoice details and their lifecycle history change;
+   * monetary values, payment state, refunds, credits, and plan are preserved.
+   * Provider identity, currency, total, and tax must match the captured local
+   * invoice. A concurrent invoice update returns 409, allowing a fresh retry.
+   * Stripe paginates all lines and resolves opaque price/plan IDs. Unknown
+   * facts and classifications remain source gaps. The operation is bounded
+   * to 32 provider reads, 1,000 items, 4 MiB per response, and two minutes.
+   * It enriches known invoices; it does not discover missing provider history.
+   *
+   * @returns InvoiceRefreshResponse Refreshed source coverage; invoice financial fields are unchanged.
+   * @throws ApiError
+   */
+  public static refreshInvoiceFacts({
+    id,
+  }: {
+    /**
+     * Local invoice UUID from GET /v1/invoices.
+     */
+    id: string,
+  }): CancelablePromise<InvoiceRefreshResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/invoices/{id}/refresh',
+      path: {
+        'id': id,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        501: `Configured provider does not implement invoice refresh.`,
+        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
+      },
+    });
+  }
   /**
    * Download a partial FOCUS 1.4 Invoice Detail projection.
    * Requires usage:read and the same session MFA gate as invoice history.
