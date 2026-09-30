@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE dev_bridge_sessions (
+CREATE TABLE IF NOT EXISTS dev_bridge_sessions (
     id text PRIMARY KEY,
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     target_app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
@@ -20,7 +20,7 @@ CREATE TABLE dev_bridge_sessions (
       length(scope->>'developer_id') BETWEEN 1 AND 128
     )
 );
-CREATE INDEX dev_bridge_sessions_account_expiry ON dev_bridge_sessions(account_id, expires_at);
+CREATE INDEX IF NOT EXISTS dev_bridge_sessions_account_expiry ON dev_bridge_sessions(account_id, expires_at);
 
 -- +goose Down
 DROP TABLE dev_bridge_sessions;

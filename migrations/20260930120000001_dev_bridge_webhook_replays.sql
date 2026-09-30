@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE dev_bridge_webhook_replays (
+CREATE TABLE IF NOT EXISTS dev_bridge_webhook_replays (
     id uuid PRIMARY KEY,
     session_id text NOT NULL REFERENCES dev_bridge_sessions(id) ON DELETE CASCADE,
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
