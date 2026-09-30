@@ -125,6 +125,26 @@ func (a *scheddCPUAdapter) CPUUsageUsec(instanceID string) (uint64, bool) {
 	return row.CPUUsageUsec, true
 }
 
+// refreshFleetStatsPeriodically keeps the fleet snapshot, and with it the
+// meterd_fleet_stats_{expected,connected}_nodes gauges, current on an idle
+// fleet. The CPU and egress samplers refresh only while instances run, so a
+// new fleet reported zero expected nodes until its first wake and the
+// rollout's metering-convergence gate could never pass. refresh is
+// TTL-bounded, so this adds no round trips while samplers are active.
+func refreshFleetStatsPeriodically(ctx context.Context, cpu *scheddCPUAdapter, every time.Duration) {
+	cpu.refresh()
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			cpu.refresh()
+		}
+	}
+}
+
 // refresh refreshes the in-memory snapshot if the last fetch is
 // older than scheddCPUAdapterTTL. The cost is one gRPC round trip
 // per minute per sampler iteration; the TTL bounds the staleness
@@ -1047,6 +1067,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 	}
 	cpu := &scheddCPUAdapter{parker: statsParker, now: deps.now}
+	if cfg.Role == role.RoleControlPlane {
+		go refreshFleetStatsPeriodically(ctx, cpu, scheddCPUAdapterTTL)
+	}
 	// ADR-046 (PR-1 + PR-2): wire the egress adapters so the
 	// sampler can append tx_bytes + net_tx_bytes to
 	// usage_minutes. PR-1 leaves the gateway adapter as a
