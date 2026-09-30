@@ -1761,6 +1761,25 @@ var cliCommands = []cliCommand{
 		DocSlug: "orgs",
 		Short:   "Manage orgs, members, and workspace activity",
 		Subcommands: []cliSub{
+			{Name: "standards", Short: "Manage versioned application standards", Subcommands: []cliSub{
+				{Name: "list", Short: "List the organization's latest standard versions", Flags: []cliFlag{
+					{Name: "org", Short: "organization slug", Value: "SLUG", Req: true},
+					{Name: "after", Short: "last standard slug from the previous page", Value: "SLUG"},
+					{Name: "limit", Short: "page size (1..100)", Value: "N"},
+				}},
+				{Name: "show", Short: "Inspect an immutable standard version", Flags: []cliFlag{
+					{Name: "org", Short: "organization slug", Value: "SLUG", Req: true},
+					{Name: "standard", Short: "standard slug", Value: "SLUG", Req: true},
+					{Name: "version", Short: "version; omitted reads the latest", Value: "N"},
+				}},
+				{Name: "publish", Short: "Publish a candidate version; does not activate it", Examples: []string{"gregale orgs standards publish --org acme --standard production-baseline --file standard.json --expected-version 0"}, Flags: []cliFlag{
+					{Name: "org", Short: "organization slug", Value: "SLUG", Req: true},
+					{Name: "standard", Short: "standard slug", Value: "SLUG", Req: true},
+					{Name: "file", Short: "standard definition JSON file", Value: "PATH", Req: true},
+					{Name: "expected-version", Short: "current version; 0 creates a new standard", Value: "N", Req: true},
+					{Name: "description", Short: "version description", Value: "TEXT"},
+				}},
+			}},
 			{Name: "ls", Short: "List orgs"},
 			{Name: "create", Short: "Create an org"},
 			{Name: "info", Short: "Show one org"},

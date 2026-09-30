@@ -20,6 +20,18 @@ import (
 	"time"
 )
 
+// Application standards preview safeguards, independent of billing quotas.
+const (
+	ApplicationStandardMaxDefinitionBytes        = 64 << 10
+	ApplicationStandardMaxSetEntries             = 64
+	ApplicationStandardMaxLayers                 = 64
+	ApplicationStandardMaxDescriptionBytes       = 512
+	ApplicationStandardMaxExceptionTTL           = 30 * 24 * time.Hour
+	ApplicationStandardMaxRolloutBatch           = 100
+	ApplicationStandardMaxListPage               = 100
+	ApplicationStandardMaxVersion          int64 = 9007199254740991
+)
+
 // A restore hook is on the wake critical path. Keep its customer timeout
 // below the host's five-second resume deadline, including transport overhead.
 const (

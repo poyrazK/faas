@@ -811,6 +811,25 @@ type AppWorkPolicy struct {
 	MaxRunningPerFairnessKey int32
 }
 
+type ApplicationStandard struct {
+	ID        pgtype.UUID
+	OrgID     pgtype.UUID
+	Slug      string
+	CreatedBy pgtype.UUID
+	CreatedAt pgtype.Timestamptz
+}
+
+type ApplicationStandardVersion struct {
+	OrgID          pgtype.UUID
+	StandardID     pgtype.UUID
+	Version        int64
+	Definition     []byte
+	DefinitionHash string
+	Description    string
+	CreatedBy      pgtype.UUID
+	CreatedAt      pgtype.Timestamptz
+}
+
 type AuditEventOutbox struct {
 	ID          int64
 	Actor       string

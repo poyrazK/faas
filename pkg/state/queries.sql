@@ -4836,3 +4836,33 @@ WHERE (d.scope = sqlc.arg(environment_slug)::text OR (d.scope = 'default' AND sq
  AND flag_evidence @> sqlc.arg(evidence_filter)::jsonb
  AND (sqlc.narg(cursor_at)::timestamptz IS NULL OR (t.received_at,t.id) < (sqlc.narg(cursor_at)::timestamptz,sqlc.narg(cursor_id)::uuid))
 ORDER BY t.received_at DESC, t.id DESC LIMIT 101;
+-- name: LockApplicationStandardOrg :one
+SELECT o.id FROM orgs o WHERE o.id = sqlc.arg(org_id)::uuid AND o.deleted_pending = false
+AND EXISTS (SELECT 1 FROM accounts WHERE id = sqlc.arg(actor_id)::uuid) FOR UPDATE OF o;
+
+-- name: CreateApplicationStandard :one
+INSERT INTO application_standards (org_id, slug, created_by)
+VALUES (sqlc.arg(org_id)::uuid, sqlc.arg(slug)::text, sqlc.arg(created_by)::uuid)
+RETURNING id;
+
+-- name: InsertApplicationStandardVersion :exec
+INSERT INTO application_standard_versions (org_id, standard_id, version, definition, definition_hash, description, created_by)
+VALUES (sqlc.arg(org_id)::uuid, sqlc.arg(standard_id)::uuid, sqlc.arg(version)::bigint,
+        sqlc.arg(definition)::jsonb, sqlc.arg(definition_hash)::text,
+        sqlc.arg(description)::text, sqlc.arg(created_by)::uuid);
+
+-- name: GetApplicationStandardVersion :one
+SELECT s.id::text AS standard_id, s.org_id::text AS org_id, s.slug, v.version,
+       v.definition, v.definition_hash, v.description, v.created_by::text AS created_by, v.created_at
+FROM application_standards s JOIN application_standard_versions v ON v.standard_id = s.id AND v.org_id = s.org_id
+WHERE s.org_id = sqlc.arg(org_id)::uuid AND s.slug = sqlc.arg(slug)::text
+  AND (sqlc.arg(version)::bigint = 0 OR v.version = sqlc.arg(version)::bigint)
+ORDER BY v.version DESC LIMIT 1;
+
+-- name: ListApplicationStandards :many
+SELECT s.id::text AS standard_id, s.org_id::text AS org_id, s.slug, v.version,
+       v.definition, v.definition_hash, v.description, v.created_by::text AS created_by, v.created_at
+FROM application_standards s
+JOIN LATERAL (SELECT * FROM application_standard_versions WHERE standard_id = s.id AND org_id = s.org_id ORDER BY version DESC LIMIT 1) v ON true
+WHERE s.org_id = sqlc.arg(org_id)::uuid AND s.slug > sqlc.arg(after_slug)::text
+ORDER BY s.slug ASC LIMIT sqlc.arg(page_limit)::integer;

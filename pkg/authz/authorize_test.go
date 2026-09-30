@@ -83,6 +83,21 @@ var roleMatrixCells = []struct {
 	role        state.OrgRole
 	wantAllowed bool
 }{
+	{OrgActionViewApplicationStandards, state.OrgRoleOwner, true},
+	{OrgActionViewApplicationStandards, state.OrgRoleAdmin, true},
+	{OrgActionViewApplicationStandards, state.OrgRoleDeveloper, true},
+	{OrgActionViewApplicationStandards, state.OrgRoleViewer, true},
+	{OrgActionViewApplicationStandards, state.OrgRoleBilling, true},
+	{OrgActionManageApplicationStandards, state.OrgRoleOwner, true},
+	{OrgActionManageApplicationStandards, state.OrgRoleAdmin, true},
+	{OrgActionManageApplicationStandards, state.OrgRoleDeveloper, false},
+	{OrgActionManageApplicationStandards, state.OrgRoleViewer, false},
+	{OrgActionManageApplicationStandards, state.OrgRoleBilling, false},
+	{OrgActionApproveApplicationStandards, state.OrgRoleOwner, true},
+	{OrgActionApproveApplicationStandards, state.OrgRoleAdmin, true},
+	{OrgActionApproveApplicationStandards, state.OrgRoleDeveloper, false},
+	{OrgActionApproveApplicationStandards, state.OrgRoleViewer, false},
+	{OrgActionApproveApplicationStandards, state.OrgRoleBilling, false},
 	// View — every role can read.
 	{OrgActionView, state.OrgRoleOwner, true},
 	{OrgActionView, state.OrgRoleAdmin, true},

@@ -19,6 +19,21 @@ import (
 // (action, role) cell. A missing cell returns false (deny), not panic
 // — fail closed.
 var allowRoleMatrix = map[OrgAction]map[state.OrgRole]bool{
+	OrgActionViewApplicationStandards: {
+		state.OrgRoleOwner:     true,
+		state.OrgRoleAdmin:     true,
+		state.OrgRoleDeveloper: true,
+		state.OrgRoleViewer:    true,
+		state.OrgRoleBilling:   true,
+	},
+	OrgActionManageApplicationStandards: {
+		state.OrgRoleOwner: true,
+		state.OrgRoleAdmin: true,
+	},
+	OrgActionApproveApplicationStandards: {
+		state.OrgRoleOwner: true,
+		state.OrgRoleAdmin: true,
+	},
 	OrgActionView: {
 		state.OrgRoleOwner:     true,
 		state.OrgRoleAdmin:     true,

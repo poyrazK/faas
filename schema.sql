@@ -204,6 +204,24 @@ $$;
 
 
 --
+-- Name: application_standard_version_immutable(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_version_immutable() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    -- Organization erasure cascades through the parent foreign key. Direct
+    -- customer/version deletion and every update remain prohibited.
+    IF TG_OP = 'DELETE' AND pg_trigger_depth() > 1 THEN
+        RETURN OLD;
+    END IF;
+    RAISE EXCEPTION 'application standards and their versions are immutable' USING ERRCODE = '23514';
+END;
+$$;
+
+
+--
 -- Name: apps_bump_cpu_policy_revision(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -4274,6 +4292,40 @@ CREATE TABLE public.app_work_policies (
     CONSTRAINT app_work_policies_name_check CHECK ((name ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
     CONSTRAINT app_work_policies_pending_updates_check CHECK ((pending_updates = ANY (ARRAY['all'::text, 'keep_latest'::text]))),
     CONSTRAINT app_work_policies_revision_check CHECK ((revision > 0))
+);
+
+
+--
+-- Name: application_standard_versions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.application_standard_versions (
+    org_id uuid NOT NULL,
+    standard_id uuid NOT NULL,
+    version bigint NOT NULL,
+    definition jsonb NOT NULL,
+    definition_hash text NOT NULL,
+    description text DEFAULT ''::text NOT NULL,
+    created_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT application_standard_versions_definition_check CHECK (((jsonb_typeof(definition) = 'object'::text) AND (definition <> '{}'::jsonb) AND (octet_length((definition)::text) <= 131072))),
+    CONSTRAINT application_standard_versions_definition_hash_check CHECK ((definition_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT application_standard_versions_description_check CHECK ((octet_length(description) <= 512)),
+    CONSTRAINT application_standard_versions_version_check CHECK (((version >= 1) AND (version <= '9007199254740991'::bigint)))
+);
+
+
+--
+-- Name: application_standards; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.application_standards (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    org_id uuid NOT NULL,
+    slug text NOT NULL,
+    created_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT application_standards_slug_check CHECK ((slug ~ '^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$'::text))
 );
 
 
@@ -11107,6 +11159,46 @@ ALTER TABLE ONLY public.app_webhooks
 
 ALTER TABLE ONLY public.app_work_policies
     ADD CONSTRAINT app_work_policies_pkey PRIMARY KEY (app_id, name);
+
+
+--
+-- Name: application_standard_versions application_standard_versions_org_id_standard_id_version_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_versions
+    ADD CONSTRAINT application_standard_versions_org_id_standard_id_version_key UNIQUE (org_id, standard_id, version);
+
+
+--
+-- Name: application_standard_versions application_standard_versions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_versions
+    ADD CONSTRAINT application_standard_versions_pkey PRIMARY KEY (standard_id, version);
+
+
+--
+-- Name: application_standards application_standards_org_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standards
+    ADD CONSTRAINT application_standards_org_id_id_key UNIQUE (org_id, id);
+
+
+--
+-- Name: application_standards application_standards_org_id_slug_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standards
+    ADD CONSTRAINT application_standards_org_id_slug_key UNIQUE (org_id, slug);
+
+
+--
+-- Name: application_standards application_standards_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standards
+    ADD CONSTRAINT application_standards_pkey PRIMARY KEY (id);
 
 
 --
@@ -18347,6 +18439,20 @@ CREATE TRIGGER app_webhook_deliveries_capture_dead_letter AFTER UPDATE OF status
 
 
 --
+-- Name: application_standards application_standard_identity_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_identity_immutable BEFORE DELETE OR UPDATE ON public.application_standards FOR EACH ROW EXECUTE FUNCTION public.application_standard_version_immutable();
+
+
+--
+-- Name: application_standard_versions application_standard_version_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_version_immutable BEFORE DELETE OR UPDATE ON public.application_standard_versions FOR EACH ROW EXECUTE FUNCTION public.application_standard_version_immutable();
+
+
+--
 -- Name: apps apps_bump_cpu_policy_revision_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -19820,6 +19926,22 @@ ALTER TABLE ONLY public.app_work_policies
 
 ALTER TABLE ONLY public.app_work_policies
     ADD CONSTRAINT app_work_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_versions application_standard_versions_org_id_standard_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_versions
+    ADD CONSTRAINT application_standard_versions_org_id_standard_id_fkey FOREIGN KEY (org_id, standard_id) REFERENCES public.application_standards(org_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standards application_standards_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standards
+    ADD CONSTRAINT application_standards_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
 
 
 --

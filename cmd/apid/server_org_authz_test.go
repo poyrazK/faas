@@ -69,6 +69,9 @@ var orgRoutesRequiringAuthorize = []struct {
 	// PR 7: invitation revoke + seat-usage visibility.
 	{"DELETE", "/v1/orgs/example-slug/invitations/00000000-0000-0000-0000-000000000001"},
 	{"GET", "/v1/orgs/example-slug/seat_usage"},
+	{"GET", "/v1/orgs/example-slug/application-standards"},
+	{"GET", "/v1/orgs/example-slug/application-standards/production-baseline"},
+	{"POST", "/v1/orgs/example-slug/application-standards/production-baseline/versions"},
 
 	// Org-bound API keys (server.go:835-839, PR 6).
 	{"GET", "/v1/orgs/example-slug/keys"},

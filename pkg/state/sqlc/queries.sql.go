@@ -1181,6 +1181,25 @@ func (q *Queries) CreateAppSecretRevocationTarget(ctx context.Context, db DBTX, 
 	return err
 }
 
+const createApplicationStandard = `-- name: CreateApplicationStandard :one
+INSERT INTO application_standards (org_id, slug, created_by)
+VALUES ($1::uuid, $2::text, $3::uuid)
+RETURNING id
+`
+
+type CreateApplicationStandardParams struct {
+	OrgID     pgtype.UUID
+	Slug      string
+	CreatedBy pgtype.UUID
+}
+
+func (q *Queries) CreateApplicationStandard(ctx context.Context, db DBTX, arg CreateApplicationStandardParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, createApplicationStandard, arg.OrgID, arg.Slug, arg.CreatedBy)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const createBuild = `-- name: CreateBuild :one
 insert into builds (id, deployment_id, kind, source_bytes, status, log_path)
 values (gen_random_uuid(), $1, $2, $3, 'queued', $4)
@@ -3988,6 +4007,50 @@ func (q *Queries) GetAppSecretRevocation(ctx context.Context, db DBTX, arg GetAp
 	return i, err
 }
 
+const getApplicationStandardVersion = `-- name: GetApplicationStandardVersion :one
+SELECT s.id::text AS standard_id, s.org_id::text AS org_id, s.slug, v.version,
+       v.definition, v.definition_hash, v.description, v.created_by::text AS created_by, v.created_at
+FROM application_standards s JOIN application_standard_versions v ON v.standard_id = s.id AND v.org_id = s.org_id
+WHERE s.org_id = $1::uuid AND s.slug = $2::text
+  AND ($3::bigint = 0 OR v.version = $3::bigint)
+ORDER BY v.version DESC LIMIT 1
+`
+
+type GetApplicationStandardVersionParams struct {
+	OrgID   pgtype.UUID
+	Slug    string
+	Version int64
+}
+
+type GetApplicationStandardVersionRow struct {
+	StandardID     string
+	OrgID          string
+	Slug           string
+	Version        int64
+	Definition     []byte
+	DefinitionHash string
+	Description    string
+	CreatedBy      string
+	CreatedAt      pgtype.Timestamptz
+}
+
+func (q *Queries) GetApplicationStandardVersion(ctx context.Context, db DBTX, arg GetApplicationStandardVersionParams) (GetApplicationStandardVersionRow, error) {
+	row := db.QueryRow(ctx, getApplicationStandardVersion, arg.OrgID, arg.Slug, arg.Version)
+	var i GetApplicationStandardVersionRow
+	err := row.Scan(
+		&i.StandardID,
+		&i.OrgID,
+		&i.Slug,
+		&i.Version,
+		&i.Definition,
+		&i.DefinitionHash,
+		&i.Description,
+		&i.CreatedBy,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getCustomerAppSecretForDeletion = `-- name: GetCustomerAppSecretForDeletion :one
 SELECT EXISTS (
            SELECT 1 FROM app_secrets
@@ -4694,6 +4757,36 @@ func (q *Queries) InsertAppErrorRequest(ctx context.Context, db DBTX, arg Insert
 		arg.DeploymentTag,
 		arg.DeploymentCreatedAt,
 		arg.ImageDigest,
+	)
+	return err
+}
+
+const insertApplicationStandardVersion = `-- name: InsertApplicationStandardVersion :exec
+INSERT INTO application_standard_versions (org_id, standard_id, version, definition, definition_hash, description, created_by)
+VALUES ($1::uuid, $2::uuid, $3::bigint,
+        $4::jsonb, $5::text,
+        $6::text, $7::uuid)
+`
+
+type InsertApplicationStandardVersionParams struct {
+	OrgID          pgtype.UUID
+	StandardID     pgtype.UUID
+	Version        int64
+	Definition     []byte
+	DefinitionHash string
+	Description    string
+	CreatedBy      pgtype.UUID
+}
+
+func (q *Queries) InsertApplicationStandardVersion(ctx context.Context, db DBTX, arg InsertApplicationStandardVersionParams) error {
+	_, err := db.Exec(ctx, insertApplicationStandardVersion,
+		arg.OrgID,
+		arg.StandardID,
+		arg.Version,
+		arg.Definition,
+		arg.DefinitionHash,
+		arg.Description,
+		arg.CreatedBy,
 	)
 	return err
 }
@@ -6129,6 +6222,63 @@ func (q *Queries) ListAppSecretRuntimeReloadTargets(ctx context.Context, db DBTX
 			&i.ApplicationAckStatus,
 			&i.ApplicationAckAt,
 			&i.ApplicationAckErrorCode,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listApplicationStandards = `-- name: ListApplicationStandards :many
+SELECT s.id::text AS standard_id, s.org_id::text AS org_id, s.slug, v.version,
+       v.definition, v.definition_hash, v.description, v.created_by::text AS created_by, v.created_at
+FROM application_standards s
+JOIN LATERAL (SELECT org_id, standard_id, version, definition, definition_hash, description, created_by, created_at FROM application_standard_versions WHERE standard_id = s.id AND org_id = s.org_id ORDER BY version DESC LIMIT 1) v ON true
+WHERE s.org_id = $1::uuid AND s.slug > $2::text
+ORDER BY s.slug ASC LIMIT $3::integer
+`
+
+type ListApplicationStandardsParams struct {
+	OrgID     pgtype.UUID
+	AfterSlug string
+	PageLimit int32
+}
+
+type ListApplicationStandardsRow struct {
+	StandardID     string
+	OrgID          string
+	Slug           string
+	Version        int64
+	Definition     []byte
+	DefinitionHash string
+	Description    string
+	CreatedBy      string
+	CreatedAt      pgtype.Timestamptz
+}
+
+func (q *Queries) ListApplicationStandards(ctx context.Context, db DBTX, arg ListApplicationStandardsParams) ([]ListApplicationStandardsRow, error) {
+	rows, err := db.Query(ctx, listApplicationStandards, arg.OrgID, arg.AfterSlug, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListApplicationStandardsRow{}
+	for rows.Next() {
+		var i ListApplicationStandardsRow
+		if err := rows.Scan(
+			&i.StandardID,
+			&i.OrgID,
+			&i.Slug,
+			&i.Version,
+			&i.Definition,
+			&i.DefinitionHash,
+			&i.Description,
+			&i.CreatedBy,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -8568,6 +8718,23 @@ func (q *Queries) ListTriggersForApp(ctx context.Context, db DBTX, appID pgtype.
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockApplicationStandardOrg = `-- name: LockApplicationStandardOrg :one
+SELECT o.id FROM orgs o WHERE o.id = $1::uuid AND o.deleted_pending = false
+AND EXISTS (SELECT 1 FROM accounts WHERE id = $2::uuid) FOR UPDATE OF o
+`
+
+type LockApplicationStandardOrgParams struct {
+	OrgID   pgtype.UUID
+	ActorID pgtype.UUID
+}
+
+func (q *Queries) LockApplicationStandardOrg(ctx context.Context, db DBTX, arg LockApplicationStandardOrgParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockApplicationStandardOrg, arg.OrgID, arg.ActorID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const lockCreditConsumption = `-- name: LockCreditConsumption :exec

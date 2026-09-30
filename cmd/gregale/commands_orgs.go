@@ -56,6 +56,8 @@ func cmdOrgs(args []string) int {
 		return 1
 	}
 	switch args[0] {
+	case "standards":
+		return cmdOrgStandards(args[1:])
 	case "ls", subList:
 		return cmdOrgsLs(args[1:])
 	case "create":

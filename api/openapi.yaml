@@ -21716,6 +21716,104 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/orgs/{slug}/application-standards:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    get:
+      tags: [orgs]
+      operationId: listApplicationStandards
+      summary: List the latest published application standard versions.
+      description: Requires org.view_application_standards. Publication does not activate a standard.
+      parameters:
+        - name: after
+          in: query
+          schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$' }
+          description: Exclusive standard slug from next_page_after.
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+      responses:
+        '200':
+          description: Latest versions, ordered by standard slug.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplicationStandardList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Caller lacks organization membership or the standard read action.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/orgs/{slug}/application-standards/{standard}:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+      - name: standard
+        in: path
+        required: true
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$' }
+    get:
+      tags: [orgs]
+      operationId: getApplicationStandardVersion
+      summary: Read an immutable application standard version.
+      description: Requires org.view_application_standards. Omitting version returns the latest published candidate.
+      parameters:
+        - name: version
+          in: query
+          schema: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+      responses:
+        '200':
+          description: Immutable version with canonical definition hash and publishing identity.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplicationStandardVersion' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Caller lacks organization membership or the standard read action.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/orgs/{slug}/application-standards/{standard}/versions:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+      - name: standard
+        in: path
+        required: true
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$' }
+    post:
+      tags: [orgs]
+      operationId: publishApplicationStandardVersion
+      summary: Publish a candidate application standard version.
+      description: |
+        Requires org.manage_application_standards (owner or admin), MFA and deploy-write scope.
+        expected_version is 0 for a new standard and the latest version for an update.
+        Publication creates immutable history and does not change an assignment or application.
+        A concurrent publication returns application_standard_version_stale without writes.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateApplicationStandardVersionRequest' }
+      responses:
+        '201':
+          description: Published candidate version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplicationStandardVersion' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Caller cannot manage application standards in this organization.
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/orgs/{slug}/apps:
     parameters:
       - $ref: '#/components/parameters/OrgSlug'
@@ -41280,6 +41378,126 @@ components:
         runtime: { type: string, description: Runtime identifier for functions when configured. }
         status: { type: string }
         created_at: { type: string, format: date-time }
+
+    ApplicationStandardRule:
+      type: object
+      additionalProperties: false
+      required: [mode, value]
+      properties:
+        mode: { type: string, enum: [default, mandatory, restricted] }
+        override:
+          type: string
+          enum: [none, narrow, extend]
+          description: Restricted mode permits narrow only. Extend is valid only for mandatory logging destinations.
+        value:
+          description: Field-typed value; booleans for require_signed, posture for security_policy, and bounded arrays for destination, publisher, CIDR and port sets.
+          anyOf:
+            - { type: boolean }
+            - { type: string, enum: [off, warn, enforce] }
+            - type: array
+              maxItems: 64
+              items: { type: string }
+            - type: array
+              maxItems: 64
+              items: { type: integer, minimum: 1, maximum: 65535 }
+
+    ApplicationStandardDefinition:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      description: |
+        Canonical supported requirements. Destination and publisher arrays contain
+        organization-owned resource UUIDs. Egress CIDRs use canonical IPv4/IPv6 prefixes.
+        An enforced destination, publisher or CIDR set cannot be empty.
+        Empty local CIDRs mean unrestricted access and cannot satisfy a restriction.
+      properties:
+        log_destinations:
+          allOf:
+            - { $ref: '#/components/schemas/ApplicationStandardRule' }
+            - type: object
+              properties:
+                mode: { type: string, enum: [default, mandatory] }
+                override: { type: string, enum: [none, extend] }
+                value:
+                  type: array
+                  maxItems: 64
+                  items: { type: string, format: uuid }
+        require_signed:
+          allOf:
+            - { $ref: '#/components/schemas/ApplicationStandardRule' }
+            - type: object
+              properties:
+                override: { type: string, enum: [none, narrow] }
+                value: { type: boolean }
+        security_policy:
+          allOf:
+            - { $ref: '#/components/schemas/ApplicationStandardRule' }
+            - type: object
+              properties:
+                override: { type: string, enum: [none, narrow] }
+                value: { type: string, enum: [off, warn, enforce] }
+        trusted_publishers:
+          allOf:
+            - { $ref: '#/components/schemas/ApplicationStandardRule' }
+            - type: object
+              properties:
+                override: { type: string, enum: [none, narrow] }
+                value:
+                  type: array
+                  maxItems: 64
+                  items: { type: string, format: uuid }
+        egress_cidrs:
+          allOf:
+            - { $ref: '#/components/schemas/ApplicationStandardRule' }
+            - type: object
+              properties:
+                override: { type: string, enum: [none, narrow] }
+                value:
+                  type: array
+                  maxItems: 64
+                  items: { type: string, description: Canonical IPv4 or IPv6 CIDR. }
+        egress_extra_ports:
+          allOf:
+            - { $ref: '#/components/schemas/ApplicationStandardRule' }
+            - type: object
+              properties:
+                override: { type: string, enum: [none, narrow] }
+                value:
+                  type: array
+                  maxItems: 64
+                  items: { type: integer, minimum: 1, maximum: 65535 }
+
+    CreateApplicationStandardVersionRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_version, definition]
+      properties:
+        expected_version: { type: integer, format: int64, minimum: 0, maximum: 9007199254740990 }
+        description: { type: string, maxLength: 512, description: UTF-8 description limited to 512 bytes. }
+        definition: { $ref: '#/components/schemas/ApplicationStandardDefinition' }
+
+    ApplicationStandardVersion:
+      type: object
+      required: [standard_id, org_id, slug, version, definition, definition_hash, description, created_by, created_at]
+      properties:
+        standard_id: { type: string, format: uuid }
+        org_id: { type: string, format: uuid }
+        slug: { type: string }
+        version: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        definition: { $ref: '#/components/schemas/ApplicationStandardDefinition' }
+        definition_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
+        description: { type: string }
+        created_by: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+
+    ApplicationStandardList:
+      type: object
+      required: [standards]
+      properties:
+        standards:
+          type: array
+          items: { $ref: '#/components/schemas/ApplicationStandardVersion' }
+        next_page_after: { type: string }
 
     OrgAppListResponse:
       description: Newest-first safe inventory of apps attributed to an organization.
