@@ -1729,6 +1729,9 @@ func (c *Client) GetProjectEnvironmentDiff(ctx context.Context, projectSlug, tar
 
 // CreateProjectEnvironment adds a named environment to a project.
 func (c *Client) CreateProjectEnvironment(ctx context.Context, projectSlug string, req CreateProjectEnvironmentRequest) (ProjectEnvironmentResponse, error) {
+	if req.Full {
+		return c.CreateFullProjectEnvironmentClone(ctx, projectSlug, req)
+	}
 	var out ProjectEnvironmentResponse
 	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments"
 	return out, c.do(ctx, http.MethodPost, path, req, &out)

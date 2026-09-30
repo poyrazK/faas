@@ -221,12 +221,14 @@ func cmdStatus(args []string) int {
 // park-and-wake after every requested key has been persisted.
 func cmdEnv(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale env <create|pull|push|diff>", "env")
+		PrintUsage(os.Stderr, "usage: gregale env <create|clone-status|pull|push|diff>", "env")
 		return 1
 	}
 	switch args[0] {
 	case "create":
 		return envCreate(args[1:])
+	case "clone-status":
+		return envCloneStatus(args[1:])
 	case "pull":
 		return envPull(args[1:])
 	case "push":

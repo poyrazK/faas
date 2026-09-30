@@ -610,3 +610,25 @@ OpenAPI-backed route documents still require isolated ownership, frozen payloads
 and coverage checks before enabling complete stages. Provider copy proofs,
 coordinated data capture, the complete worker/command and native VM acceptance
 remain required.
+
+### Full-copy command and durable status contract (2026-09-30)
+
+The SDK and CLI now recognize `env create --full --wait`. Full requests use a
+dedicated `POST /v1/projects/{slug}/environment-clones` route, so older servers
+cannot ignore a new flag and perform a partial clone. Both this route and full
+requests to the legacy create endpoint reject admission with the stable
+`environment_full_clone_unavailable` code and named coverage, checkpoint,
+managed-binding and policy blockers. Admission performs no clone writes.
+
+`GET /v1/projects/{slug}/environment-clones/{clone}` exposes the durable
+operation before its target environment exists. The account/project checks
+apply to the operation itself. Explicit response DTOs exclude private captures,
+values, idempotency keys and worker leases; status responses are not cached.
+
+`env clone-status` resumes inspection or waiting. Polling keeps the captured
+operation identity and monotonic revision, distinguishes terminal failure from
+success, and returns a single JSON receipt. Local timeout returns exit code 3
+and a resume command without cancelling the server operation. SDK/CLI/handler
+contracts and OpenAPI route/schema/error parity pass. Full admission remains
+closed until the complete leased worker and isolation proofs are implemented;
+these command contracts do not establish full stage support.

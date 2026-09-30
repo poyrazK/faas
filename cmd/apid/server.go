@@ -2116,6 +2116,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PATCH /v1/projects/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateProject))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listProjectEnvironments))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createProjectEnvironment))))))
+	mux.HandleFunc("POST /v1/projects/{slug}/environment-clones", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createFullProjectEnvironmentClone))))))
+	mux.HandleFunc("GET /v1/projects/{slug}/environment-clones/{clone}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectEnvironmentCloneOperation))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectEnvironment))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/releases", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProjectEnvironmentReleases))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/qualifications", s.authLimited(s.requireMFA(s.requireScope(api.ScopesProjectEnvironmentQualifySurface...)(s.idempotent(s.createProjectEnvironmentQualification)))))

@@ -2038,6 +2038,29 @@ Clone a project environment with isolated managed data by default
 | `--project <SLUG>` | project slug (defaults to linked project) |  |
 | `--protected` | protect the new environment |  |
 | `--share-resources` | use source managed data with fresh target credentials instead of isolating it |  |
+| `--full` | require complete configuration, workload, policy and isolated data coverage |  |
+| `--wait` | wait for a full clone operation to finish | requires `--full` |
+| `--timeout <SECONDS>` | maximum wait time; the server operation continues after timeout |  |
+
+Full-copy admission currently returns `environment_full_clone_unavailable` with
+named blockers. It never falls back to a partial clone. The command contract is:
+
+```sh
+gregale env create staging --from production --full --wait
+```
+
+### env clone-status
+
+Read durable clone progress, including before the target environment exists.
+
+```sh
+gregale env clone-status <operation-id> --project <project-slug> --wait
+```
+
+`--project` defaults to the linked project. `--wait` polls the same operation;
+`--timeout <SECONDS>` bounds the local wait. JSON output contains one receipt.
+Timeout returns exit code 3 with a resume command; failed or compensated
+operations return exit code 1.
 
 ### env pull
 

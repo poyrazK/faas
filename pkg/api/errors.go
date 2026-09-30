@@ -630,10 +630,11 @@ const (
 	CodeUndeclaredRoute = "undeclared_route"
 	// CodeDeclaredRoutePolicyUnavailable is a fail-closed 503 used when the
 	// gateway cannot load or compile the contract required by an enabled app.
-	CodeDeclaredRoutePolicyUnavailable = "declared_route_policy_unavailable"
-	CodeValidation                     = "validation_failed"
-	CodeConflict                       = "conflict"
-	CodeNoLiveDeployment               = "no_live_deployment"
+	CodeDeclaredRoutePolicyUnavailable  = "declared_route_policy_unavailable"
+	CodeValidation                      = "validation_failed"
+	CodeConflict                        = "conflict"
+	CodeFullEnvironmentCloneUnavailable = "environment_full_clone_unavailable"
+	CodeNoLiveDeployment                = "no_live_deployment"
 	// CodeInternal is returned by handlers when an unexpected server-side
 	// failure surfaces to the caller (DB Tx commit, network blip, partial
 	// state). Distinct from CodeCapacity (503, "we ran out of headroom")
@@ -1907,7 +1908,7 @@ func StatusForCode(code string) int {
 	// reorder-of-non-pending map to 409 Conflict; range-error
 	// priority maps to 422 (handled at the Problem constructor
 	// since the StatusForCode fallback returns 422 generically).
-	case CodeConflict, CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
+	case CodeConflict, CodeFullEnvironmentCloneUnavailable, CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
 		CodeWorkflowNotRunning, CodeWorkflowCallbackClosed, CodeWorkflowCallbackPayloadConflict, CodeWorkflowCallbackBindingConflict,
 		CodeDeploymentCancelLiveForbidden, CodeDeploymentCancelNotCancellable,
 		CodeDeploymentReorderNotPending, CodeDebugReplayUnsupported,

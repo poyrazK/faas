@@ -313,6 +313,10 @@ func (s *server) createProjectEnvironment(w http.ResponseWriter, r *http.Request
 		api.WriteProblem(w, problem)
 		return
 	}
+	if req.Full {
+		api.WriteProblem(w, fullProjectEnvironmentCloneUnavailable())
+		return
+	}
 	environment, clone, err := s.persistProjectEnvironment(r, acct, project, req)
 	if err != nil {
 		writeCreateProjectEnvironmentError(w, project.Slug, req, acct, err)
@@ -356,6 +360,10 @@ func decodeCreateProjectEnvironmentRequest(r *http.Request) (api.CreateProjectEn
 	if req.ShareResources && req.FromEnvironment == "" {
 		return req, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid resource sharing option", "share_resources is only valid when cloning with from_environment")
+	}
+	if req.Full && (req.FromEnvironment == "" || req.ShareResources) {
+		return req, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid full clone", "full requires from_environment and isolated resources")
 	}
 	return req, nil
 }

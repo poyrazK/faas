@@ -14497,6 +14497,60 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environment-clones:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [projects]
+      operationId: createFullProjectEnvironmentClone
+      summary: Request a complete isolated environment clone.
+      description: |
+        This dedicated route never falls back to partial cloning. Full admission
+        currently returns environment_full_clone_unavailable with named blockers
+        until complete coverage and coordinated data-copy proofs are available.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateProjectEnvironmentRequest' }
+      responses:
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Full-copy capability unavailable; no partial target is created.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/projects/{slug}/environment-clones/{clone}:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+      - name: clone
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [projects]
+      operationId: getProjectEnvironmentCloneOperation
+      summary: Read account- and project-scoped durable clone progress.
+      description: Status is available before the target environment is registered. Private captures, values and worker lease tokens are excluded.
+      responses:
+        '200':
+          description: Non-secret clone operation receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentCloneOperationResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/projects/{slug}/environments:
     parameters:
       - name: slug
@@ -32035,6 +32089,7 @@ components:
         updated_at: { type: string, format: date-time }
         cloned_from: { type: string }
         clone: { $ref: '#/components/schemas/ProjectEnvironmentCloneResponse' }
+        clone_operation: { $ref: '#/components/schemas/ProjectEnvironmentCloneOperationResponse' }
 
     ProjectEnvironmentCloneResponse:
       description: Non-secret copy counts for an environment clone. Managed database or bucket data appears as shared only after explicit opt-in.
@@ -32622,6 +32677,37 @@ components:
         created_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
 
+    ProjectEnvironmentCloneOperationResponse:
+      type: object
+      required: [operation_id, project_slug, source_environment, target_environment, source_revision_hash, status, revision, resources, created_at, updated_at]
+      properties:
+        operation_id: { type: string }
+        project_slug: { type: string }
+        source_environment: { type: string }
+        target_environment: { type: string }
+        source_revision_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
+        source_release_set_id: { type: string }
+        target_release_set_id: { type: string }
+        status: { type: string, enum: [pending, capturing, copying, publishing, ready, failed, compensating, compensated] }
+        revision: { type: integer, format: int64, minimum: 1 }
+        resources:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentCloneResourceResponse' }
+        error_code: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ProjectEnvironmentCloneResourceResponse:
+      type: object
+      required: [kind, name, status]
+      properties:
+        kind: { type: string }
+        name: { type: string }
+        source_id: { type: string }
+        source_version: { type: string }
+        target_id: { type: string }
+        capture_point: { type: string }
+        status: { type: string, enum: [planned, capturing, captured, copying, verifying, ready, failed, unsupported, compensating, compensated] }
+
     CreateProjectEnvironmentRequest:
       description: Request to register or clone a named project environment.
       type: object
@@ -32638,6 +32724,10 @@ components:
           pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'
           not: { const: default }
           description: Source environment whose scoped configuration and values are copied.
+        full:
+          type: boolean
+          default: false
+          description: Require a complete isolated copy; use the dedicated environment-clones route. Admission remains closed while complete coverage is unavailable.
         share_resources:
           type: boolean
           default: false
@@ -42873,6 +42963,11 @@ components:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
 
+    FullEnvironmentCloneUnavailable:
+      description: 'code: environment_full_clone_unavailable — complete isolated resource coverage and coordinated data copies are unavailable.'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
     Conflict:
       description: 'code: conflict'
       content:
