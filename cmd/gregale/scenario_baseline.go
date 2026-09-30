@@ -85,7 +85,7 @@ func readTestBaselineReport(path string, outputs []string) ([]testRunReceipt, st
 			return nil, "", fmt.Errorf("inspect report destination: %w", err)
 		}
 		if err == nil && os.SameFile(info, outputInfo) {
-			return nil, "", errors.New("--report and --junit must not overwrite the baseline report")
+			return nil, "", errors.New("report outputs must not overwrite the baseline report")
 		}
 	}
 	body, err := io.ReadAll(io.LimitReader(file, testBaselineReportLimit+1))

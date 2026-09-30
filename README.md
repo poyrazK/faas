@@ -78,7 +78,9 @@ for commands and flags.
 
 Repository assertions can also run against isolated Gregale instances with
 [`gregale test`](docs/scenario-tests.md), including warm, cold-boot, and
-snapshot-restore profiles.
+snapshot-restore profiles. The [scenario test example](examples/scenario-tests/README.md)
+includes a local API, suite manifest, HTML reports, offline report comparison,
+and a GitHub Actions workflow.
 
 ## Platform areas
 

@@ -147,6 +147,39 @@ scenario/profile/case/attempt names, failures, and `<skipped>` entries. A partia
 suite never exits successfully. Human output ends with passed/failed/skipped
 counts. Reports continue to omit dataset values and credentials.
 
+Add `--html` to write a standalone report that can be opened in a browser or
+uploaded as a CI artifact:
+
+```sh
+gregale test --suite smoke --report results.json --junit results.xml --html results.html
+```
+
+The HTML file has no external assets. It summarizes run outcomes, phases, HTTP
+steps, load percentiles, baseline checks, and platform evidence. Expand a run to
+inspect its evidence or the complete JSON receipt. Values are HTML-escaped, and
+the report omits dataset values and credentials just like the JSON report.
+
+### Compare two saved reports offline
+
+Compare JSON reports from separate runs without starting the application or
+contacting Gregale:
+
+```sh
+gregale test compare before.json after.json
+gregale test compare before.json after.json --html comparison.html
+gregale test compare before.json after.json --json
+```
+
+The command pairs runs by scenario, engine, profile, case, and attempt. It shows
+added and removed runs, status changes, duration and phase changes, HTTP step
+timings, and aggregate, per-step, and arrival-rate load metrics when available.
+It also marks a changed load workload signature or label so those metric deltas
+are easy to spot.
+The comparison is informational and does not apply regression budgets or fail
+because a metric changed. Use `--baseline` during a load run when the comparison
+must enforce the configured performance limits. Inputs are local JSON
+report arrays written by `--report` or JSON stdout, capped at 64 MiB each.
+
 ## Native HTTP workflows
 
 For common API tests, declare requests directly. `requests` run after the

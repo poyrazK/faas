@@ -207,6 +207,9 @@ func cmdTest(args []string) int {
 	if len(args) > 0 && args[0] == "import" {
 		return cmdTestImport(args[1:])
 	}
+	if len(args) > 0 && args[0] == "compare" {
+		return cmdTestCompare(args[1:])
+	}
 	fs := newFlagSet("test", flag.ContinueOnError)
 	scenarioName := fs.String("scenario", "", "scenario name from the manifest")
 	suiteName := fs.String("suite", "", "named suite from the manifest (runs members in declaration order)")
@@ -230,12 +233,16 @@ func cmdTest(args []string) int {
 	manifestPath := fs.String("manifest", "gregale-test.yaml", "scenario manifest path")
 	reportPath := fs.String("report", "", "write a JSON report to this path")
 	junitPath := fs.String("junit", "", "write a JUnit XML report to this path")
+	htmlPath := fs.String("html", "", "write a standalone HTML report to this path")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) || fs.NArg() != 0 {
-		PrintUsage(osStderr, "usage: gregale test [--validate|--preflight] [--scenario NAME|--suite NAME] [--fail-fast] [--engine real-vm|local|simulated] [--base-url URL] [--data PATH] [--load [--vus N] [--iterations N|--duration D [--rate N]] [--pacing D] [--progress] [--baseline PATH]] [--profile warm|cold|restored|all] [--repeat N] [--max-workload-minutes N] [--manifest PATH] [--report PATH] [--junit PATH]", "test")
+		PrintUsage(osStderr, "usage: gregale test [--validate|--preflight] [--scenario NAME|--suite NAME] [--fail-fast] [--engine real-vm|local|simulated] [--base-url URL] [--data PATH] [--load [--vus N] [--iterations N|--duration D [--rate N]] [--pacing D] [--progress] [--baseline PATH]] [--profile warm|cold|restored|all] [--repeat N] [--max-workload-minutes N] [--manifest PATH] [--report PATH] [--junit PATH] [--html PATH]", "test")
 		return 1
+	}
+	if err := validateDistinctTestReportPaths(*reportPath, *junitPath, *htmlPath); err != nil {
+		return printErr("Invalid test report paths", err)
 	}
 	loadOverrides := testLoadOverrides{VUs: *vus, Iterations: *iterations, Rate: *rate, Duration: *duration, Pacing: *pacing}
 	fs.Visit(func(selected *flag.Flag) {
@@ -264,7 +271,7 @@ func cmdTest(args []string) int {
 	if *maxWorkloadMinutes < 0 {
 		return printErr("Invalid workload-minute limit", errors.New("--max-workload-minutes must be zero or greater"))
 	}
-	if (*validateOnly && *preflightOnly) || ((*validateOnly || *preflightOnly) && (*reportPath != "" || *junitPath != "")) {
+	if (*validateOnly && *preflightOnly) || ((*validateOnly || *preflightOnly) && (*reportPath != "" || *junitPath != "" || *htmlPath != "")) {
 		return printErr("Invalid test options", errors.New("validation and preflight do not run scenarios or write reports"))
 	}
 	if *scenarioName != "" && *suiteName != "" {
@@ -290,7 +297,7 @@ func cmdTest(args []string) int {
 			options.EngineSet = options.EngineSet || selected.Name == "engine"
 			options.ProfileSet = options.ProfileSet || selected.Name == "profile"
 		})
-		return cmdTestSuite(*manifestPath, *suiteName, options, *failFast, *reportPath, *junitPath)
+		return cmdTestSuite(*manifestPath, *suiteName, options, *failFast, *reportPath, *junitPath, *htmlPath)
 	}
 	if *load && *engine != "local" {
 		return printErr("Invalid load engine", errors.New("--load currently requires --engine local"))
@@ -400,7 +407,7 @@ func cmdTest(args []string) int {
 		Name: *scenarioName, Scenario: scenario, ManifestDir: sourceDir,
 		Engine: *engine, Profiles: profiles, Cases: cases, BaseURL: *baseURL, Load: loadConfigs[*scenarioName],
 	}
-	return executePreparedTests(client, "", []testPreparedScenario{prepared}, *repeat, *failFast, *reportPath, *junitPath, *baselinePath)
+	return executePreparedTests(client, "", []testPreparedScenario{prepared}, *repeat, *failFast, *reportPath, *junitPath, *htmlPath, *baselinePath)
 }
 
 func selectedTestProfiles(profile string) ([]string, error) {

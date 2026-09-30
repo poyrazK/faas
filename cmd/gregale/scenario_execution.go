@@ -49,16 +49,16 @@ func prepareTestRunPlans(scenarios []testPreparedScenario, repeat int) []testRun
 	return plans
 }
 
-func executePreparedTests(client *Client, suite string, scenarios []testPreparedScenario, repeat int, failFast bool, reportPath, junitPath, baselinePath string) int {
+func executePreparedTests(client *Client, suite string, scenarios []testPreparedScenario, repeat int, failFast bool, reportPath, junitPath, htmlPath, baselinePath string) int {
 	plans := prepareTestRunPlans(scenarios, repeat)
-	digest, err := prepareTestBaselines(baselinePath, plans, reportPath, junitPath)
+	digest, err := prepareTestBaselines(baselinePath, plans, reportPath, junitPath, htmlPath)
 	if err != nil {
 		return printErr("Invalid performance baseline", &exitErr{msg: err.Error(), code: 1})
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), testTerminationSignals()...)
 	defer stop()
 	results := runPreparedTestPlans(ctx, client, suite, plans, repeat, failFast, digest)
-	return finishTestRunReports(suite, results, reportPath, junitPath)
+	return finishTestRunReports(suite, results, reportPath, junitPath, htmlPath)
 }
 
 func runPreparedTestPlans(ctx context.Context, client *Client, suite string, plans []testRunPlan, repeat int, failFast bool, baselineDigest string) []testRunReceipt {
@@ -161,7 +161,11 @@ func printTestRunResult(receipt testRunReceipt, repeat int) {
 	}
 }
 
-func finishTestRunReports(suite string, results []testRunReceipt, reportPath, junitPath string) int {
+func finishTestRunReports(suite string, results []testRunReceipt, reportPath, junitPath string, htmlPaths ...string) int {
+	htmlPath := ""
+	if len(htmlPaths) > 0 {
+		htmlPath = htmlPaths[0]
+	}
 	if reportPath != "" {
 		if err := writeTestReport(reportPath, results); err != nil {
 			return printErr("Could not save test report", err)
@@ -170,6 +174,11 @@ func finishTestRunReports(suite string, results []testRunReceipt, reportPath, ju
 	if junitPath != "" {
 		if err := writeTestJUnit(junitPath, results); err != nil {
 			return printErr("Could not save JUnit report", err)
+		}
+	}
+	if htmlPath != "" {
+		if err := writeTestHTMLReport(htmlPath, suite, results); err != nil {
+			return printErr("Could not save HTML report", err)
 		}
 	}
 	if jsonOutput {

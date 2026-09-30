@@ -265,6 +265,21 @@ jobs:
           ./bin/gregale test --manifest tests/scenario-acceptance/gregale-test.yaml --validate
           ./bin/gregale test --manifest tests/scenario-acceptance/gregale-test.yaml --suite simulation --report scenario-results.json --junit scenario-results.xml
 
+      # Run the copyable customer example with the CLI built from this commit.
+      # Two reports exercise both standalone HTML rendering and offline diffing.
+      - name: scenario reports example
+        env:
+          GREGALE_TEST_CONSUMER_CUSTOMER_A_KEY: example-customer-a
+          GREGALE_TEST_CONSUMER_CUSTOMER_B_KEY: example-customer-b
+        run: |
+          ./bin/gregale test --manifest examples/scenario-tests/gregale-test.yaml --suite smoke \
+            --report "$RUNNER_TEMP/scenario-before.json" --junit "$RUNNER_TEMP/scenario-before.xml" \
+            --html "$RUNNER_TEMP/scenario-before.html"
+          ./bin/gregale test --manifest examples/scenario-tests/gregale-test.yaml --suite smoke \
+            --report "$RUNNER_TEMP/scenario-after.json" --html "$RUNNER_TEMP/scenario-after.html"
+          ./bin/gregale test compare "$RUNNER_TEMP/scenario-before.json" "$RUNNER_TEMP/scenario-after.json" \
+            --html "$RUNNER_TEMP/scenario-comparison.html"
+
       # Provider-created machines hand their one-time connection details to
       # the provider-neutral adoption pipeline through ComputeNodeClaim files.
       # Keep checked-in examples schema-valid so the workflow can consume a
