@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 )
 
 // DeploymentAlias is a stable, customer-chosen name for one immutable
@@ -58,7 +59,7 @@ func (m *MemStore) ListDeploymentAliases(_ context.Context, appID string) ([]Dep
 	return aliases, nil
 }
 
-func (m *MemStore) SetDeploymentAlias(_ context.Context, appID, name, deploymentID string) (DeploymentAlias, error) {
+func (m *MemStore) SetDeploymentAlias(ctx context.Context, appID, name, deploymentID string) (DeploymentAlias, error) {
 	if !api.ValidDeploymentAliasName(name) {
 		return DeploymentAlias{}, ErrInvalidArgument
 	}
@@ -72,14 +73,18 @@ func (m *MemStore) SetDeploymentAlias(_ context.Context, appID, name, deployment
 	if !ok {
 		return DeploymentAlias{}, ErrInvalidArgument
 	}
-	for otherID, candidate := range m.apps {
-		if otherID != appID && candidate.Status != AppDeleted && candidate.DeletedAt == nil && candidate.Slug == hostLabel {
+	for _, candidate := range m.apps {
+		if candidate.Slug == hostLabel {
 			return DeploymentAlias{}, ErrConflict
 		}
 	}
 	deployment, ok := m.deployments[deploymentID]
 	if !ok || deployment.AppID != appID || deployment.DeletedAt != nil || !deployment.DeploymentPreviewActive() {
 		return DeploymentAlias{}, ErrNotFound
+	}
+	before, err := m.readBoundedMemTrafficAnalysisLocked(ctx, app.AccountID)
+	if err != nil {
+		return DeploymentAlias{}, err
 	}
 	now := time.Now().UTC()
 	key := deploymentAliasKey(appID, name)
@@ -90,6 +95,9 @@ func (m *MemStore) SetDeploymentAlias(_ context.Context, appID, name, deployment
 	alias.DeploymentID = deploymentID
 	alias.Revision = deployment.Revision
 	alias.UpdatedAt = now
+	if err := m.checkMemTrafficPolicyChangeLocked(ctx, app.AccountID, before, memTrafficPolicyChange{Aliases: map[string]DeploymentAlias{key: alias}}); err != nil {
+		return DeploymentAlias{}, err
+	}
 	m.deploymentAliases[key] = alias
 	return alias, nil
 }
@@ -114,8 +122,8 @@ func (m *MemStore) DeploymentAliasByHostLabel(_ context.Context, hostLabel strin
 		if !ok || app.Status == AppDeleted || app.DeletedAt != nil {
 			continue
 		}
-		label, ok := api.DeploymentAliasHostLabel(app.ID, alias.Name)
-		if !ok || label != hostLabel {
+		label, ok := hostidentity.DeploymentAliasLabel(app.ID, alias.Name)
+		if !ok || !api.ValidDeploymentAliasName(alias.Name) || label != hostLabel {
 			continue
 		}
 		deployment, ok := m.deployments[alias.DeploymentID]

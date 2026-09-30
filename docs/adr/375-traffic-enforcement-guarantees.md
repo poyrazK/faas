@@ -532,6 +532,19 @@ activation guard includes potential legacy tag-prefixed app URLs conservatively;
 alias shadowing/activation, domain binding transitions and operator namespace
 changes still need the complete binding projection and acceptance evidence.
 
+Alias publication joins the account-locked before/after projection as well.
+Its URL uses the configured apps suffix and the existing app UUID/name label.
+The projection mirrors routing's public owner, deletion metadata and allowed
+target-status predicates, including retained superseded revisions. Ordinary
+alias URLs retain account-wide matching rules/presets. A newly serving alias
+starts with no baseline even when its selector was already oversized. The
+alias row and its verdict share one transaction; app publication/restore also
+sees existing aliases in that projection. Alias hostname collision lookup is
+inside the same transaction. MemStore projects proposed alias rows under its
+mutex. This publication integration does not complete legacy alias shadowing,
+deletion/fallback transitions or deployment-status resurrection; those still
+need the complete binding transition projection and all relevant writers.
+
 The implementation tracker is `docs/traffic_platform_implementation.md`.
 Each guarantee needs configuration-to-runtime tests, cancellation/recovery
 tests and customer documentation. VM lifecycle changes require native x86_64

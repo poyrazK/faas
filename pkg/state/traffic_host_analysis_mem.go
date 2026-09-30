@@ -21,6 +21,7 @@ type memTrafficPolicyChange struct {
 	Apps         map[string]App
 	Environments map[string]ProjectEnvironment
 	Policies     map[string]ProjectEnvironmentEdgePolicy
+	Aliases      map[string]DeploymentAlias
 }
 
 func visitMemTrafficRows[T any](ctx context.Context, rows, proposed map[string]T, visit func(T) error) error {
@@ -76,7 +77,7 @@ func (m *MemStore) readMemTrafficHostAnalysisLocked(ctx context.Context, account
 		group.Canonical += canonical + 16
 		group.Compiled += int64(len(compiled)) + 2
 		groups[key] = group
-		return checkMemTrafficAnalysisInputs(len(groups) + len(view.Environments) + len(view.PrimaryHosts))
+		return checkMemTrafficAnalysisInputs(len(groups) + len(view.Environments) + len(view.PrimaryHosts) + len(view.AliasHosts))
 	}
 	if err := visitMemTrafficRows(ctx, m.edgeRules, change.Rules, func(rule EdgeRule) error {
 		return addRule(rule, "")
@@ -98,7 +99,7 @@ func (m *MemStore) readMemTrafficHostAnalysisLocked(ctx context.Context, account
 		}
 		if host := hostidentity.BuildPrimaryAppHost(m.trafficAppsSuffix, app.Slug); host != "" {
 			view.PrimaryHosts = append(view.PrimaryHosts, host)
-			if err := checkMemTrafficAnalysisInputs(len(groups) + len(view.Environments) + len(view.PrimaryHosts)); err != nil {
+			if err := checkMemTrafficAnalysisInputs(len(groups) + len(view.Environments) + len(view.PrimaryHosts) + len(view.AliasHosts)); err != nil {
 				return err
 			}
 		}
@@ -130,13 +131,40 @@ func (m *MemStore) readMemTrafficHostAnalysisLocked(ctx context.Context, account
 				}
 			}
 			view.Environments = append(view.Environments, projection)
-			if err := checkMemTrafficAnalysisInputs(len(groups) + len(view.Environments) + len(view.PrimaryHosts)); err != nil {
+			if err := checkMemTrafficAnalysisInputs(len(groups) + len(view.Environments) + len(view.PrimaryHosts) + len(view.AliasHosts)); err != nil {
 				return err
 			}
 		}
 		return nil
 	})
 	if err != nil {
+		return view, err
+	}
+	if err := visitMemTrafficRows(ctx, m.deploymentAliases, change.Aliases, func(alias DeploymentAlias) error {
+		if change.GlobalRoutes || m.trafficAppsSuffix == "" {
+			return nil
+		}
+		app, found := change.Apps[alias.AppID]
+		if !found {
+			app, found = m.apps[alias.AppID]
+		}
+		if !found || app.AccountID != account || app.Status == AppDeleted || app.DeletedAt != nil || api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
+			return nil
+		}
+		deployment, found := m.deployments[alias.DeploymentID]
+		if !found || deployment.AppID != alias.AppID || deployment.DeletedAt != nil || !deployment.DeploymentAliasActive() {
+			return nil
+		}
+		// Runtime routing accepts existing SQL labels verbatim. Unlike new
+		// allocation, legacy labels are not revalidated against the DNS cap.
+		label, ok := hostidentity.DeploymentAliasLabel(app.ID, alias.Name)
+		if !ok || !api.ValidDeploymentAliasName(alias.Name) {
+			return nil
+		}
+		host := label + m.trafficAppsSuffix
+		view.AliasHosts = append(view.AliasHosts, host)
+		return checkMemTrafficAnalysisInputs(len(groups) + len(view.Environments) + len(view.PrimaryHosts) + len(view.AliasHosts))
+	}); err != nil {
 		return view, err
 	}
 	referenced := make(map[string]bool)
@@ -155,7 +183,7 @@ func (m *MemStore) readMemTrafficHostAnalysisLocked(ctx context.Context, account
 			return fmt.Errorf("state: encode in-memory traffic preset: %w", err)
 		}
 		view.Assets = append(view.Assets, trafficHostAsset{ID: preset.ID, Compiled: int64(len(encoded))})
-		return checkMemTrafficAnalysisInputs(len(view.Groups) + len(view.Environments) + len(view.PrimaryHosts) + len(view.Assets))
+		return checkMemTrafficAnalysisInputs(len(view.Groups) + len(view.Environments) + len(view.PrimaryHosts) + len(view.AliasHosts) + len(view.Assets))
 	})
 	if err != nil {
 		return view, err
@@ -171,6 +199,7 @@ func (m *MemStore) readMemTrafficHostAnalysisLocked(ctx context.Context, account
 		return a.ID+"\x00"+a.App < b.ID+"\x00"+b.App
 	})
 	sort.Strings(view.PrimaryHosts)
+	sort.Strings(view.AliasHosts)
 	metadata, err := json.Marshal(view)
 	if err != nil {
 		return view, fmt.Errorf("state: encode in-memory traffic metadata: %w", err)

@@ -95,6 +95,10 @@ func TestPgTrafficPolicyMutationsShareAccountLockBeforeAppLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	deployment, err := store.CreateDeployment(ctx, state.Deployment{AppID: other.ID, Kind: state.DeploymentKindImage, Status: state.DeployBuilding})
+	if err != nil {
+		t.Fatal(err)
+	}
 	lock, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -139,6 +143,10 @@ func TestPgTrafficPolicyMutationsShareAccountLockBeforeAppLock(t *testing.T) {
 				ProjectID: project.ID, SourceSlug: "production", TargetSlug: "staging"}, limits)
 			return err
 		}},
+		{"alias-publication", func(ctx context.Context) error {
+			_, err := store.SetDeploymentAlias(ctx, other.ID, "candidate", deployment.ID)
+			return err
+		}},
 	} {
 		t.Run(mutation.name, func(t *testing.T) {
 			bounded, cancel := context.WithTimeout(ctx, 75*time.Millisecond)
@@ -152,6 +160,10 @@ func TestPgTrafficPolicyMutationsShareAccountLockBeforeAppLock(t *testing.T) {
 			}
 		})
 	}
+	aliases, err := store.ListDeploymentAliases(ctx, other.ID)
+	if err != nil || len(aliases) != 0 {
+		t.Fatalf("canceled alias publication changed intent: %+v err=%v", aliases, err)
+	}
 	independent, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
 	if _, err := store.CreateEdgeRule(independent, pgSampleEdgeRuleParams(peerAccount.ID, peer.ID, "independent-policy.example.test")); err != nil {
@@ -162,6 +174,9 @@ func TestPgTrafficPolicyMutationsShareAccountLockBeforeAppLock(t *testing.T) {
 	}
 	if _, err := store.UpdateEdgeRule(ctx, rule.ID, state.UpdateEdgeRuleParams{Priority: &priority}); err != nil {
 		t.Fatalf("cancelled waiter leaked account lock: %v", err)
+	}
+	if _, err := store.SetDeploymentAlias(ctx, other.ID, "candidate", deployment.ID); err != nil {
+		t.Fatalf("alias publication after canceled waiter: %v", err)
 	}
 }
 

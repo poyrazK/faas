@@ -35,20 +35,27 @@ func (s *PgStore) SetDeploymentAlias(ctx context.Context, appID, name, deploymen
 	if !api.ValidDeploymentAliasName(name) {
 		return DeploymentAlias{}, ErrInvalidArgument
 	}
-	app, err := s.AppByID(ctx, appID)
+	account, err := sqlc.New().ReadAppTrafficAccount(ctx, s.pool, mustPgUUID(appID))
 	if err != nil {
-		return DeploymentAlias{}, err
+		return DeploymentAlias{}, mapErr(err)
 	}
-	hostLabel, ok := api.DeploymentAliasHostLabel(app.ID, name)
+	hostLabel, ok := api.DeploymentAliasHostLabel(appID, name)
 	if !ok {
 		return DeploymentAlias{}, ErrInvalidArgument
 	}
-	if _, err := s.AppBySlug(ctx, hostLabel); err == nil {
-		return DeploymentAlias{}, ErrConflict
-	} else if !errors.Is(err, ErrNotFound) {
+	tx, err := s.beginTrafficPolicyMutation(ctx, account)
+	if err != nil {
 		return DeploymentAlias{}, err
 	}
-	row, err := sqlc.New().UpsertDeploymentAlias(ctx, s.pool, sqlc.UpsertDeploymentAliasParams{
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	conflict, err := sqlc.New().ReadTrafficAliasHostnameConflict(ctx, tx, hostLabel)
+	if err != nil {
+		return DeploymentAlias{}, mapErr(err)
+	}
+	if conflict {
+		return DeploymentAlias{}, ErrConflict
+	}
+	row, err := sqlc.New().UpsertDeploymentAlias(ctx, tx, sqlc.UpsertDeploymentAliasParams{
 		AppID: mustPgUUID(appID), Name: name, DeploymentID: mustPgUUID(deploymentID),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -56,6 +63,9 @@ func (s *PgStore) SetDeploymentAlias(ctx context.Context, appID, name, deploymen
 	}
 	if err != nil {
 		return DeploymentAlias{}, mapErr(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return DeploymentAlias{}, err
 	}
 	return DeploymentAlias{
 		AppID:        pgUUIDString(row.AppID),

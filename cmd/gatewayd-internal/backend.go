@@ -250,14 +250,7 @@ func (r pgRouter) environmentDeployment(ctx context.Context, app state.App, envi
 }
 
 func (r pgRouter) deploymentAliasLabelForHost(host string) (string, bool) {
-	if r.appsSuffix == "" {
-		return "", false
-	}
-	label, ok := strings.CutSuffix(host, r.appsSuffix)
-	if !ok || !strings.HasPrefix(label, "tag-") || strings.Contains(label, ".") {
-		return "", false
-	}
-	return label, true
+	return hostidentity.DeploymentAliasLabelFromHost(r.appsSuffix, host)
 }
 
 func (r pgRouter) deploymentAliasByHostLabel(ctx context.Context, hostLabel string) (gateway.App, bool, error) {

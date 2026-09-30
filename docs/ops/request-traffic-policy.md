@@ -61,7 +61,7 @@ remain available. This single-row check does not establish the combined host
 rule and referenced-preset bound.
 
 Rule and preset creates/updates, environment edge overlays, new environment
-registration and environment clones share account serialization. A session
+registration, environment clones and alias publication share account serialization. A session
 advisory lock on a pinned direct-pool connection precedes the repeatable-read
 transaction; its account row lock then precedes app/FK/policy-row locks and is
 retained through commit. Route creates/updates first take the shared global
@@ -94,7 +94,7 @@ close to the byte ceiling before the exact compiler size reaches that ceiling.
 Each before/after analysis phase has a two-second allowance. Its SQL read uses
 a local 1,750 ms server timeout so cancellation does not depend on client
 connection cleanup; the previous statement timeout is restored on success.
-Analysis also limits inputs to 100,000 groups/assets/environment identities, metadata to 64 MiB,
+Analysis also limits inputs to 100,000 groups/assets/environment/primary/alias identities, metadata to 64 MiB,
 automaton nodes to 1,000,000, states to 100,000, retained state buffers/overhead
 to 64 MiB and transitions to 2,000,000. A proved overload returns
 `traffic_policy_too_large`/422. An exhausted analysis returns the distinct
@@ -125,10 +125,22 @@ primary hostnames also join that activation check using the configured
 `apps_domain`. Ordinary primary hosts retain all matched account rules and
 presets. API and GitHub preview/reconcile writers receive the manifest DNS
 value; `FAAS_APPS_DOMAIN` overrides their TOML. Empty disables ordinary primary
-URLs. Immutable deployment/environment URL shapes remain separate. This initial
-check includes potential legacy tag-prefixed primary URLs conservatively. Alias
-shadowing/activation, custom-domain transitions and namespace changes still
-need complete binding projection and acceptance.
+URLs. Immutable deployment/environment URL shapes remain separate. Alias
+publication now joins this check using its stable app UUID/name URL and that
+same apps domain. The alias write and verdict commit together. A new serving
+alias must fit the host allowance, even if an existing selector was already
+oversized; retargeting an existing URL retains the incremental repair rule.
+App publication and restore also validate attached aliases. Their eligibility
+requires a public owner with neither deleted status nor a deletion timestamp,
+and an undeleted target in a routing-eligible status, including superseded
+revisions. Ordinary alias URLs retain all matched account rules and presets.
+Refusals preserve the alias row and return the structured 422 errors below.
+An explicit empty apps domain disables alias publication scope as well.
+
+This initial projection includes potential legacy tag-prefixed primary URLs
+conservatively. Exact legacy alias shadowing, deletion/fallback transitions,
+deployment-status resurrection, custom-domain transitions and operator
+namespace changes still need the complete binding projection and acceptance.
 
 Route creates/updates also check enabled route-only discovery across accounts
 using the same per-host language and resource ceilings. Disjoint hosts retain

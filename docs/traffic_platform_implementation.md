@@ -1091,3 +1091,65 @@ full daemon/load/recovery and customer/staging rollout acceptance remain
 pending. No native Linux x86_64 KVM acceptance host is available; VM/restore,
 nft connection/source-IP, process-death and leak checks remain pending. All six
 release guarantees remain unchecked.
+
+### Alias publication aggregate guard, 2026-09-30
+
+New serving deployment aliases join the configured apps-domain host projection.
+SQLC returns only their stable host labels, with the same public-owner,
+deletion-metadata and target-status predicates as routing, including retained
+superseded targets. Alias identities count toward the scalar metadata input
+and byte bounds. The aggregate header estimate now measures the empty JSON
+object's actual serialized size rather than using a fixed header allowance.
+In-memory projection uses the same host identity and runtime predicates.
+Legacy SQL labels remain visible to reads; new alias allocation retains the
+existing DNS-label limit. Tombstone/internal app slugs retain their alias
+collision reservation in both stores.
+
+Alias publication takes the account serialization lock before its stable
+before/after transaction. The collision lookup, upsert and aggregate verdict
+use that transaction. A new URL starts with no serving baseline; an existing
+overloaded selector cannot authorize exposing it. Retargeting an unchanged
+serving URL retains the legacy incremental-repair contract. Alias scopes use
+all matched account rules and distinct referenced presets, including sibling
+app policy. App restore and visibility publication validate attached aliases
+in the same projection. Refusal rolls back saved intent and returns the
+existing structured byte/count/analysis 422 errors without notification.
+
+Final evidence (full source sets, no Go source overlays):
+
+- Selected PostgreSQL traffic regressions: 254 named cases pass, no failures
+  or skips, 114.825 s. `/tmp/gregale-alias-broad-pg-20260930.jsonl`.
+  Includes publication/new-URL rollback and repair, unchanged-URL retarget,
+  custom/disabled namespaces, runtime target-status and legacy-label agreement,
+  scalar metadata refusal, five app restore/publication paths, and an alias
+  writer canceled behind the account lock with no saved row, no retained app
+  lock and successful retry.
+- Full `pkg/state -tags no_pg` suite: 1,881 named cases pass, 772 existing
+  guarded integration skips, no failures, 4.478 s.
+  `/tmp/gregale-alias-full-no-pg-20260930.jsonl`.
+- Runtime routing, alias CRUD/refusal, API and shared host identity profile:
+  36 named cases pass, no failures or skips. Internal gateway 5.405 s,
+  apid 1.328 s, API 8.248 s, identity 0.426 s.
+  `/tmp/gregale-alias-http-routing-20260930.jsonl`.
+  Fresh Postgres host snapshots retain alias retargeting without notifications;
+  actual HTTP publication verifies structured refusals and unchanged intent.
+- Pinned production lint passes for state/API/identity/apid/internal gateway
+  (`tests=false`, existing test-only unused helper disabled).
+  `/tmp/gregale-alias-production-lint-20260930.log`.
+  API/identity/apid lint with tests also passes.
+  `/tmp/gregale-alias-tests-lint-20260930.log`.
+- Fresh SQLC v1.31.1 output matches all four generated files; whitespace check
+  passes. No schema or migration changes. The first empty-output/disk-pressure
+  build and the initial missing deployment-kind and superseding-fixture failures
+  are excluded from passing evidence; the final profiles above pass.
+
+This completes the local alias-publication guard slice, not the complete
+hostname binding projection. Exact legacy alias shadowing, alias removal and
+fallback transitions, deployment-status resurrection, custom-domain binding,
+operator namespace changes and global claimed/reserved exclusions/newly
+unclaimed scopes remain pending. Bounded decision evidence, preview/runtime
+and full synthetic-path agreement, full daemon/load/recovery and customer/
+staging release acceptance remain pending. The user confirmed no native Linux
+x86_64 KVM acceptance host is available. VM/restore, nft connection/source-IP,
+process-death and leak checks remain pending. All six release guarantees
+remain unchecked.

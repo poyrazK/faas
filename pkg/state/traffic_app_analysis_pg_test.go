@@ -37,21 +37,31 @@ func trafficAppIntentCounts(t *testing.T, pool *pgxpool.Pool) string {
 }
 
 func TestPgTrafficAppActivationRefusesNewEnvironmentOverload(t *testing.T) {
-	testPgTrafficAppActivation(t, false)
+	testPgTrafficAppActivation(t, "environment")
 }
 
 func TestPgTrafficAppActivationRefusesNewPrimaryOverload(t *testing.T) {
-	testPgTrafficAppActivation(t, true)
+	testPgTrafficAppActivation(t, "primary")
 }
 
-func testPgTrafficAppActivation(t *testing.T, primary bool) {
-	for _, operation := range []string{"create", "quota_create", "activity_create", "preview_batch", "preview_set", "project_plan", "reconcile_create", "restore", "activity_restore", "reconcile_restore", "status_update", "activity_status_update", "status_cas", "visibility_update", "activity_visibility_update"} {
+func TestPgTrafficAppActivationRefusesNewAliasOverload(t *testing.T) {
+	testPgTrafficAppActivation(t, "alias")
+}
+
+func testPgTrafficAppActivation(t *testing.T, namespace string) {
+	primary := namespace == "primary"
+	aliasScope := namespace == "alias"
+	operations := []string{"create", "quota_create", "activity_create", "preview_batch", "preview_set", "project_plan", "reconcile_create", "restore", "activity_restore", "reconcile_restore", "status_update", "activity_status_update", "status_cas", "visibility_update", "activity_visibility_update"}
+	if aliasScope {
+		operations = []string{"restore", "activity_restore", "reconcile_restore", "visibility_update", "activity_visibility_update"}
+	}
+	for _, operation := range operations {
 		t.Run(operation, func(t *testing.T) {
 			store, pool, account, project, source, _ := trafficEnvironmentPGFixture(t)
-			if primary {
+			if primary || aliasScope {
 				store = NewPgStore(pool, WithTrafficAppsDomain(".APPS.EXAMPLE.TEST "))
 				// No registered environments: this refusal must come solely
-				// from the configured ordinary primary URL.
+				// from the configured primary or alias URL.
 				if _, err := pool.Exec(t.Context(), `DELETE FROM project_environments WHERE project_id=$1`, project.ID); err != nil {
 					t.Fatal(err)
 				}
@@ -59,6 +69,25 @@ func testPgTrafficAppActivation(t *testing.T, primary bool) {
 			limits := api.MustLimitsFor(account.Plan)
 			target := App{AccountID: account.ID, ProjectID: project.ID, Slug: "traffic-new-web", WorkloadName: "new-web", WorkloadClass: WorkloadClassHTTP, Status: AppActive}
 			needsTombstone := strings.Contains(operation, "restore") || strings.Contains(operation, "status")
+			aliasHost := ""
+			registerAlias := func() {
+				if !aliasScope {
+					return
+				}
+				deployment, err := store.CreateDeployment(t.Context(), Deployment{AppID: target.ID, Kind: DeploymentKindImage, Status: DeployBuilding})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := store.SetDeploymentAlias(t.Context(), target.ID, "candidate", deployment.ID); err != nil {
+					t.Fatal(err)
+				}
+				label, ok := api.DeploymentAliasHostLabel(target.ID, "candidate")
+				if !ok {
+					t.Fatal("fixture alias label invalid")
+				}
+				aliasHost = label + ".apps.example.test"
+			}
+
 			if strings.Contains(operation, "visibility") {
 				target.Visibility = api.AppVisibilityInternal
 				var err error
@@ -67,12 +96,16 @@ func testPgTrafficAppActivation(t *testing.T, primary bool) {
 					t.Fatal(err)
 				}
 			}
+			if !needsTombstone {
+				registerAlias()
+			}
 			if needsTombstone {
 				var err error
 				target, err = store.CreateApp(t.Context(), target)
 				if err != nil {
 					t.Fatal(err)
 				}
+				registerAlias()
 				if _, err := store.CreateCron(t.Context(), target.ID, "*/5 * * * *", "/job", true); err != nil {
 					t.Fatal(err)
 				}
@@ -109,6 +142,9 @@ func testPgTrafficAppActivation(t *testing.T, primary bool) {
 			matchHost := "*"
 			if primary {
 				matchHost = target.Slug + ".apps.example.test"
+			}
+			if aliasScope {
+				matchHost = aliasHost
 			}
 			action := EdgeRuleAction{Kind: EdgeRuleKindRoute, Route: &EdgeRuleRouteAction{TargetAppSlug: source.Slug},
 				Validate: &EdgeRuleValidateAction{Schema: json.RawMessage("[" + strings.Repeat("1e130000,", 519) + "1e130000]")}}
@@ -183,7 +219,7 @@ func testPgTrafficAppActivation(t *testing.T, primary bool) {
 			if !errors.As(err, &aggregate) || aggregate.Scope != "host_rule_projection" {
 				t.Fatalf("activation accepted new overloaded URL: %v", err)
 			}
-			if primary && aggregate.Host != matchHost {
+			if (primary || aliasScope) && aggregate.Host != matchHost {
 				t.Fatalf("primary witness=%q want=%q", aggregate.Host, matchHost)
 			}
 			if after := trafficAppIntentCounts(t, pool); after != before {

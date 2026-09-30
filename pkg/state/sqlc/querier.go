@@ -1036,6 +1036,8 @@ type Querier interface {
 	ReadServicePolicyReleaseCandidates(ctx context.Context, db DBTX, arg ReadServicePolicyReleaseCandidatesParams) ([]ReadServicePolicyReleaseCandidatesRow, error)
 	ReadServicePolicyTestApp(ctx context.Context, db DBTX, arg ReadServicePolicyTestAppParams) (ReadServicePolicyTestAppRow, error)
 	ReadServicePolicyTestMember(ctx context.Context, db DBTX, appID pgtype.UUID) (ScenarioTestMember, error)
+	// Existing slug reservations, including tombstones/internal apps, keep their key.
+	ReadTrafficAliasHostnameConflict(ctx context.Context, db DBTX, hostLabel string) (bool, error)
 	// Only selectors, counts, sizes and referenced IDs leave the database.
 	ReadTrafficHostAnalysis(ctx context.Context, db DBTX, arg ReadTrafficHostAnalysisParams) (ReadTrafficHostAnalysisRow, error)
 	ReadTrafficSecurityEpochs(ctx context.Context, db DBTX, arg ReadTrafficSecurityEpochsParams) ([]ReadTrafficSecurityEpochsRow, error)

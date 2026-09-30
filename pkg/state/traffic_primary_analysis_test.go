@@ -49,6 +49,24 @@ func TestTrafficPrimaryMarkerIsLiteral(t *testing.T) {
 	}
 }
 
+func TestTrafficAliasCompilerRetainsAccountRulesAndPresets(t *testing.T) {
+	host := "tag-candidate-0123456789ab4cde8123456789abcdef.apps.test"
+	for _, preset := range []bool{false, true} {
+		before := trafficHostAnalysis{Groups: []trafficHostGroup{{App: "sibling", Pattern: host, Rows: 1, Canonical: 10, Compiled: api.TrafficPolicyMaxHostBytes + 1}}}
+		if preset {
+			before.Groups[0].Compiled = 10
+			before.Groups[0].Preset = "shared"
+			before.Assets = []trafficHostAsset{{ID: "shared", Compiled: api.TrafficPolicyMaxHostBytes + 1}}
+		}
+		after := before
+		after.AliasHosts = []string{host}
+		var aggregate *TrafficPolicyAggregateError
+		if err := checkTrafficHostAnalysis(t.Context(), before, after); !errors.As(err, &aggregate) || aggregate.Scope != "host_compiled_projection_estimate" || aggregate.Host != host {
+			t.Fatalf("alias acquired an environment app filter: %v", err)
+		}
+	}
+}
+
 func TestMemTrafficAppsDomainConfiguration(t *testing.T) {
 	for _, test := range []struct{ name, domain, want string }{
 		{"custom", " .APPS.EXAMPLE.TEST ", ".apps.example.test"},

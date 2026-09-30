@@ -170,28 +170,56 @@ func memTrafficIntentCounts(m *MemStore) []int {
 }
 
 func TestMemTrafficAppActivationAndEnvironmentRegistrationRollback(t *testing.T) {
-	testMemTrafficAppActivation(t, false)
+	testMemTrafficAppActivation(t, "environment")
 }
 
 func TestMemTrafficPrimaryAppActivationRollback(t *testing.T) {
-	testMemTrafficAppActivation(t, true)
+	testMemTrafficAppActivation(t, "primary")
 }
 
-func testMemTrafficAppActivation(t *testing.T, primary bool) {
+func TestMemTrafficAliasAppActivationRollback(t *testing.T) {
+	testMemTrafficAppActivation(t, "alias")
+}
+
+func testMemTrafficAppActivation(t *testing.T, namespace string) {
+	primary := namespace == "primary"
+	aliasScope := namespace == "alias"
 	operations := []string{"create", "quota_create", "activity_create", "preview_batch", "preview_set", "project_plan", "reconcile_create", "restore", "activity_restore", "reconcile_restore", "status_update", "activity_status_update", "status_cas", "visibility_update", "activity_visibility_update"}
-	if !primary {
+	if !primary && !aliasScope {
 		operations = append(operations, "environment", "clone")
+	}
+	if aliasScope {
+		operations = []string{"restore", "activity_restore", "reconcile_restore", "visibility_update", "activity_visibility_update"}
 	}
 	for _, operation := range operations {
 		t.Run(operation, func(t *testing.T) {
 			m, account, project, source, _ := memTrafficFixture(t)
-			if primary {
+			if primary || aliasScope {
 				m.trafficAppsSuffix = ".apps.example.test"
 				m.projectEnvironments = map[string]ProjectEnvironment{}
 			}
 			limits := api.MustLimitsFor(account.Plan)
 			target := App{AccountID: account.ID, ProjectID: project.ID, Slug: "mem-new-web", WorkloadName: "new-web", Status: AppActive}
 			needsTombstone := strings.Contains(operation, "restore") || strings.Contains(operation, "status")
+			aliasHost := ""
+			registerAlias := func() {
+				if !aliasScope {
+					return
+				}
+				deployment, err := m.CreateDeployment(t.Context(), Deployment{AppID: target.ID, Kind: DeploymentKindImage, Status: DeployBuilding})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := m.SetDeploymentAlias(t.Context(), target.ID, "candidate", deployment.ID); err != nil {
+					t.Fatal(err)
+				}
+				label, ok := api.DeploymentAliasHostLabel(target.ID, "candidate")
+				if !ok {
+					t.Fatal("fixture alias label invalid")
+				}
+				aliasHost = label + ".apps.example.test"
+			}
+
 			if needsTombstone || strings.Contains(operation, "visibility") {
 				if !needsTombstone {
 					target.Visibility = api.AppVisibilityInternal
@@ -201,6 +229,7 @@ func testMemTrafficAppActivation(t *testing.T, primary bool) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				registerAlias()
 				if needsTombstone {
 					if _, err := m.CreateCron(t.Context(), target.ID, "*/5 * * * *", "/job", true); err != nil {
 						t.Fatal(err)
@@ -219,6 +248,9 @@ func testMemTrafficAppActivation(t *testing.T, primary bool) {
 			matchHost := "*"
 			if primary {
 				matchHost = target.Slug + ".apps.example.test"
+			}
+			if aliasScope {
+				matchHost = aliasHost
 			}
 			legacy := memTrafficRule(account, source, matchHost, 520)
 			m.edgeRules["legacy"] = EdgeRule{ID: "legacy", AccountID: account.ID, AppID: source.ID, MatchHost: matchHost, MatchPath: "/", Enabled: true, Kind: legacy.Kind, Action: legacy.Action}

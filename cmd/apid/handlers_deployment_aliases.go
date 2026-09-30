@@ -64,7 +64,7 @@ func (s *server) setDeploymentAlias(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not set deployment alias"))
+		api.WriteProblem(w, trafficPolicyWriteProblem(err, api.ErrCapacity("could not set deployment alias")))
 		return
 	}
 	s.audit.Emit(r.Context(), "deployment_alias.set", &acct.ID, map[string]any{

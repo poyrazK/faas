@@ -58,6 +58,7 @@ type trafficHostAnalysis struct {
 	Assets       []trafficHostAsset
 	Environments []trafficHostEnvironment
 	PrimaryHosts []string
+	AliasHosts   []string
 }
 
 type trafficHostEnvironment struct {
@@ -170,7 +171,7 @@ func (v trafficHostTotals) exceeds() bool {
 
 type hostAnalysisRef struct {
 	side, group int
-	primary     bool
+	ordinary    bool
 }
 
 type hostAnalysisNode struct {
@@ -486,11 +487,11 @@ func checkTrafficHostAnalysisWithBudgets(ctx context.Context, before, after traf
 				return err
 			}
 		}
-		for _, host := range view.PrimaryHosts {
+		for _, host := range append(append([]string(nil), view.PrimaryHosts...), view.AliasHosts...) {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			if err := machine.addTokens([]rune(host), hostAnalysisRef{side: side, primary: true}); err != nil {
+			if err := machine.addTokens([]rune(host), hostAnalysisRef{side: side, ordinary: true}); err != nil {
 				return err
 			}
 		}
@@ -510,11 +511,11 @@ func checkTrafficHostAnalysisWithBudgets(ctx context.Context, before, after traf
 		positions := states[index].positions
 		accepted := [2]map[int]bool{make(map[int]bool), make(map[int]bool)}
 		var environments [2]*trafficHostEnvironment
-		var primary [2]bool
+		var ordinary [2]bool
 		for _, position := range positions {
 			for _, ref := range machine.nodes[position].accepted {
-				if ref.primary {
-					primary[ref.side] = true
+				if ref.ordinary {
+					ordinary[ref.side] = true
 				} else if ref.group < 0 {
 					environments[ref.side] = &views[ref.side].Environments[-1-ref.group]
 				} else {
@@ -523,13 +524,13 @@ func checkTrafficHostAnalysisWithBudgets(ctx context.Context, before, after traf
 			}
 		}
 		prior := environmentHostTotals(before, accepted[0], environments[0])
-		if environments[0] == nil && !primary[0] && (environments[1] != nil || primary[1]) {
+		if environments[0] == nil && !ordinary[0] && (environments[1] != nil || ordinary[1]) {
 			// A new registered workload URL must fit its limits. An old
 			// over-limit selector language is not a serving-policy baseline.
 			prior = trafficHostTotals{}
 		}
 		nextTotals := environmentHostTotals(after, accepted[1], environments[1])
-		if (environments[0] != nil || primary[0]) && environments[1] == nil && !primary[1] {
+		if (environments[0] != nil || ordinary[0]) && environments[1] == nil && !ordinary[1] {
 			// A deleted registered URL cannot fall back to route discovery.
 			// Removing its app filter does not expose a new serving scope.
 			nextTotals = trafficHostTotals{}

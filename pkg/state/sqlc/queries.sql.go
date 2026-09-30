@@ -13167,6 +13167,18 @@ func (q *Queries) ReadServicePolicyTestMember(ctx context.Context, db DBTX, appI
 	return i, err
 }
 
+const readTrafficAliasHostnameConflict = `-- name: ReadTrafficAliasHostnameConflict :one
+SELECT EXISTS(SELECT 1 FROM apps WHERE slug=$1::text)::boolean AS conflict
+`
+
+// Existing slug reservations, including tombstones/internal apps, keep their key.
+func (q *Queries) ReadTrafficAliasHostnameConflict(ctx context.Context, db DBTX, hostLabel string) (bool, error) {
+	row := db.QueryRow(ctx, readTrafficAliasHostnameConflict, hostLabel)
+	var conflict bool
+	err := row.Scan(&conflict)
+	return conflict, err
+}
+
 const readTrafficHostAnalysis = `-- name: ReadTrafficHostAnalysis :one
 WITH environment_policies AS MATERIALIZED (
     SELECT e.id AS environment_id, a.id AS app_id, e.slug,
@@ -13281,18 +13293,31 @@ WITH environment_policies AS MATERIALIZED (
     WHERE account_id=$3::uuid AND status<>'deleted' AND visibility<>'internal'
       AND $6::text<>''
     ORDER BY slug LIMIT ($1::integer+1)
+), alias_hosts AS (
+    SELECT to_jsonb('tag-' || z.name || '-' || replace(a.id::text,'-','') || $6::text) AS data
+    FROM deployment_aliases z JOIN apps a ON a.id=z.app_id
+    JOIN deployments d ON d.id=z.deployment_id AND d.app_id=a.id
+    WHERE a.account_id=$3::uuid AND a.status<>'deleted' AND a.deleted_at IS NULL
+      AND a.visibility<>'internal' AND d.deleted_at IS NULL
+      AND d.status IN ('pending','building','imaging','snapshotting','live','superseded')
+      AND $6::text<>''
+    ORDER BY a.id,z.name LIMIT ($1::integer+1)
 ), bounds AS (
-    SELECT (SELECT count(*) FROM groups)+(SELECT count(*) FROM assets)+(SELECT count(*) FROM environments)+(SELECT count(*) FROM primary_hosts) AS inputs,
+    SELECT (SELECT count(*) FROM groups)+(SELECT count(*) FROM assets)+(SELECT count(*) FROM environments)+(SELECT count(*) FROM primary_hosts)+(SELECT count(*) FROM alias_hosts) AS inputs,
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM groups)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM assets)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM environments)+
-        (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM primary_hosts)+64 AS bytes
+        (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM primary_hosts)+
+        (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM alias_hosts)+
+        octet_length(jsonb_build_object('Groups','[]'::jsonb,'Assets','[]'::jsonb,
+            'Environments','[]'::jsonb,'PrimaryHosts','[]'::jsonb,'AliasHosts','[]'::jsonb)::text) AS bytes
 )
 SELECT CASE WHEN inputs <= $1::integer AND bytes <= $2::bigint
     THEN jsonb_build_object('Groups',(SELECT coalesce(jsonb_agg(data),'[]') FROM groups),
         'Assets',(SELECT coalesce(jsonb_agg(data),'[]') FROM assets),
         'Environments',(SELECT coalesce(jsonb_agg(data),'[]') FROM environments),
-        'PrimaryHosts',(SELECT coalesce(jsonb_agg(data),'[]') FROM primary_hosts)) ELSE NULL::jsonb END::jsonb AS data,
+        'PrimaryHosts',(SELECT coalesce(jsonb_agg(data),'[]') FROM primary_hosts),
+        'AliasHosts',(SELECT coalesce(jsonb_agg(data),'[]') FROM alias_hosts)) ELSE NULL::jsonb END::jsonb AS data,
     inputs::bigint, bytes::bigint FROM bounds
 `
 
