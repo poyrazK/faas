@@ -16,6 +16,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/executionpayload"
+	"github.com/onebox-faas/faas/pkg/executionprofiles"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -49,12 +50,15 @@ func requireExecutionEntitlement(w http.ResponseWriter, acct state.Account) bool
 // source and input never enter this projection.
 func executionResponse(row state.Execution) api.ExecutionResponse {
 	resp := api.ExecutionResponse{
-		ID:              row.ID,
-		Status:          row.Status,
-		Runtime:         row.Runtime,
-		Limits:          row.Limits,
-		OutputTruncated: row.OutputTruncated,
-		CreatedAt:       row.CreatedAt.UTC().Format(time.RFC3339Nano),
+		Profile:            row.Profile.Normalized(),
+		RuntimeImageDigest: row.RuntimeImageDigest,
+		Packages:           executionprofiles.Packages(row.Profile),
+		ID:                 row.ID,
+		Status:             row.Status,
+		Runtime:            row.Runtime,
+		Limits:             row.Limits,
+		OutputTruncated:    row.OutputTruncated,
+		CreatedAt:          row.CreatedAt.UTC().Format(time.RFC3339Nano),
 	}
 	resp.Artifacts = api.CloneExecutionArtifacts(row.Artifacts)
 	if len(row.Result) > 0 {

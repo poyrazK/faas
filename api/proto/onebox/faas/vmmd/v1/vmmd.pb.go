@@ -6236,6 +6236,7 @@ type ExecuteExecutionRequest struct {
 	Entrypoint     string                 `protobuf:"bytes,10,opt,name=entrypoint,proto3" json:"entrypoint,omitempty"`
 	Files          []*ExecutionSourceFile `protobuf:"bytes,11,rep,name=files,proto3" json:"files,omitempty"`
 	OutputFiles    []string               `protobuf:"bytes,12,rep,name=output_files,json=outputFiles,proto3" json:"output_files,omitempty"`
+	Profile        string                 `protobuf:"bytes,13,opt,name=profile,proto3" json:"profile,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -6352,6 +6353,13 @@ func (x *ExecuteExecutionRequest) GetOutputFiles() []string {
 		return x.OutputFiles
 	}
 	return nil
+}
+
+func (x *ExecuteExecutionRequest) GetProfile() string {
+	if x != nil {
+		return x.Profile
+	}
+	return ""
 }
 
 type ExecutionSourceFile struct {
@@ -8781,7 +8789,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"storageKey\x12.\n" +
 	"\x13vmstate_storage_key\x18\x02 \x01(\tR\x11vmstateStorageKey\"6\n" +
 	"\x1aDeleteWarmSnapshotResponse\x12\x18\n" +
-	"\adeleted\x18\x01 \x01(\bR\adeleted\"\xa9\x03\n" +
+	"\adeleted\x18\x01 \x01(\bR\adeleted\"\xc3\x03\n" +
 	"\x17ExecuteExecutionRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\rR\aversion\x12!\n" +
@@ -8798,7 +8806,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	" \x01(\tR\n" +
 	"entrypoint\x12>\n" +
 	"\x05files\x18\v \x03(\v2(.onebox.faas.vmmd.v1.ExecutionSourceFileR\x05files\x12!\n" +
-	"\foutput_files\x18\f \x03(\tR\voutputFiles\"C\n" +
+	"\foutput_files\x18\f \x03(\tR\voutputFiles\x12\x18\n" +
+	"\aprofile\x18\r \x01(\tR\aprofile\"C\n" +
 	"\x13ExecutionSourceFile\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x18\n" +
 	"\acontent\x18\x02 \x01(\fR\acontent\"x\n" +

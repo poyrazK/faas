@@ -20,6 +20,98 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+func TestPgStoreExecutionProfilePinsImageBeforeRunning(t *testing.T) {
+	store, pool, ctx := pgStoreWithPool(t)
+	row := exerciseExecutionProfilePin(t, store, ctx)
+	for _, query := range []string{
+		`update executions set profile='standard' where id=$1::uuid`,
+		`update executions set runtime_image_digest=NULL where id=$1::uuid`,
+		`update executions set runtime_image_digest='sha256:' || repeat('b',64) where id=$1::uuid`,
+	} {
+		if _, err := pool.Exec(ctx, query, row.ID); err == nil {
+			t.Fatalf("database rewrote terminal provenance: %s", query)
+		}
+	}
+}
+
+func TestMemStoreExecutionProfilePinsImageBeforeRunning(t *testing.T) {
+	exerciseExecutionProfilePin(t, state.NewMemStore(), context.Background())
+}
+
+func exerciseExecutionProfilePin(t *testing.T, store interface {
+	state.ExecutionStore
+	state.ExecutionRuntimeSelectionStore
+	CreateAccount(context.Context, string, api.Plan) (state.Account, error)
+}, ctx context.Context) state.Execution {
+	t.Helper()
+	account, err := store.CreateAccount(ctx, "profile-pin@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := api.CreateExecutionRequest{Runtime: api.ExecutionRuntimePython313, Profile: api.ExecutionProfilePythonDataV1, Source: "def main(input, context): return input"}
+	resolved, problem := req.Resolve(api.PlanPro)
+	if problem != nil {
+		t.Fatal(problem)
+	}
+	base := time.Now().UTC()
+	created, err := store.CreateExecution(ctx, state.CreateExecutionParams{AccountID: account.ID, Request: resolved, SourceBytes: len(req.Source), AdmittedAt: base, DeadlineAt: base.Add(time.Duration(resolved.Limits.TimeoutMS) * time.Millisecond), SealedPayload: []byte("sealed"), PayloadKID: "kid"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := store.ClaimExecution(ctx, "profile-test", base.Add(time.Millisecond), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.MarkExecutionRunning(ctx, created.ID, *claim.LeaseToken, base.Add(2*time.Millisecond)); err == nil {
+		t.Fatal("dispatched unpinned profile")
+	}
+	digest := "sha256:" + strings.Repeat("a", 64)
+	if _, err := store.PinExecutionRuntime(ctx, created.ID, "wrong-lease", digest, base.Add(3*time.Millisecond)); err == nil {
+		t.Fatal("stale lease pinned image")
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := store.PinExecutionRuntime(ctx, created.ID, *claim.LeaseToken, digest, base.Add(3*time.Millisecond)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.PinExecutionRuntime(ctx, created.ID, *claim.LeaseToken, "sha256:"+strings.Repeat("b", 64), base.Add(4*time.Millisecond)); err == nil {
+		t.Fatal("changed pinned image")
+	}
+	if _, err := store.MarkExecutionRunning(ctx, created.ID, *claim.LeaseToken, base.Add(5*time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	row, err := store.CompleteExecution(ctx, state.CompleteExecutionParams{ID: created.ID, LeaseToken: *claim.LeaseToken, Status: api.ExecutionStatusSucceeded, Result: []byte("null"), FinishedAt: base.Add(6 * time.Millisecond)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Profile != api.ExecutionProfilePythonDataV1 || row.RuntimeImageDigest != digest {
+		t.Fatalf("runtime provenance lost: %+v", row)
+	}
+	if _, err := store.PinExecutionRuntime(ctx, created.ID, *claim.LeaseToken, digest, base.Add(7*time.Millisecond)); err == nil {
+		t.Fatal("terminal receipt was rewritten")
+	}
+	return row
+}
+
+func TestPgStoreRuntimeSnapshotRetainsProfile(t *testing.T) {
+	store, pool, ctx := pgStoreWithPool(t)
+	record := state.RuntimeSnapshotRecord{Profile: api.ExecutionProfilePythonDataV1, Runtime: api.ExecutionRuntimePython313, Architecture: "amd64", KernelDigest: strings.Repeat("a", 64), GuestExecutorDigest: strings.Repeat("b", 64), BaseImageDigest: strings.Repeat("c", 64), MemoryMB: 128, EphemeralDiskMB: 64, FormatVersion: 1, StorageKey: "execution-snapshots/data/mem", SnapshotDigest: strings.Repeat("d", 64), MemBytes: 128 << 20, VMStateBytes: 4096, Sanitized: true, PayloadFree: true, State: state.RuntimeSnapshotStateReady, CreatedAt: time.Now().UTC()}
+	record.CatalogKey = "execution-snapshots/v1/python313/profile-python-data-v1/amd64/memory-128/disk-64/kernel-" + record.KernelDigest + "/executor-" + record.GuestExecutorDigest + "/base-" + record.BaseImageDigest
+	if _, err := store.PublishRuntimeSnapshot(ctx, record); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.LookupRuntimeSnapshot(ctx, record.CatalogKey)
+	if err != nil || got.Profile != record.Profile {
+		t.Fatalf("catalog lost profile: %+v, %v", got, err)
+	}
+	if _, err := pool.Exec(ctx, `update runtime_snapshots set profile='standard' where id=$1::uuid`, got.ID); err == nil {
+		t.Fatal("database changed immutable snapshot profile")
+	}
+	if err := store.RetireRuntimeSnapshot(ctx, record.CatalogKey, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func pgExecutionParams(t *testing.T, accountID string, admittedAt time.Time, timeoutMS int, payload string) state.CreateExecutionParams {
 	t.Helper()
 	request := api.CreateExecutionRequest{

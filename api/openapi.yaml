@@ -39875,6 +39875,11 @@ components:
         - required: [entrypoint, files]
       additionalProperties: false
       properties:
+        profile:
+          type: string
+          enum: [standard, python-data-v1]
+          default: standard
+          description: Immutable preinstalled dependency profile. python-data-v1 requires python313; standard preserves standard-library-only execution.
         runtime:
           type: string
           enum: [node22, node24, python312, python313]
@@ -39988,6 +39993,12 @@ components:
       type: object
       required: [id, status, runtime, limits, output_truncated, created_at]
       properties:
+        profile: { type: string, enum: [standard, python-data-v1] }
+        runtime_image_digest: { type: string, pattern: '^sha256:[a-f0-9]{64}$', description: "Scheduler-pinned base image digest, recorded before dispatch of a dependency profile." }
+        packages:
+          type: object
+          additionalProperties: { type: string }
+          description: Immutable versions declared by the selected profile and verified by its guest before caller code runs.
         id: { type: string, format: uuid }
         status: { type: string, enum: [queued, restoring, running, succeeded, failed, timed_out, out_of_memory, cancelled] }
         runtime: { type: string, enum: [node22, node24, python312, python313] }

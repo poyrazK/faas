@@ -1994,6 +1994,7 @@ message ExecuteExecutionRequest {
   string entrypoint = 10;
   repeated ExecutionSourceFile files = 11;
   repeated string output_files = 12;
+  string profile = 13;
 }
 
 message ExecutionSourceFile {

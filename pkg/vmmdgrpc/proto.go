@@ -176,6 +176,7 @@ func executionRequestFromProto(req *vmmdpb.ExecuteExecutionRequest) (executionpr
 			api.CodeValidation, "Invalid execution request", "version is outside the supported range")
 	}
 	wireReq := executionproto.Request{
+		Profile:     api.ExecutionProfile(req.GetProfile()),
 		Version:     uint16(req.GetVersion()),
 		ExecutionID: req.GetExecutionId(),
 		Runtime:     api.ExecutionRuntime(req.GetRuntime()),

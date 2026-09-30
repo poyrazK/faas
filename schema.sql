@@ -1081,6 +1081,28 @@ $$;
 
 
 --
+-- Name: enforce_execution_profile_identity(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enforce_execution_profile_identity() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.profile IS DISTINCT FROM OLD.profile THEN
+  RAISE EXCEPTION 'execution profile is immutable' USING ERRCODE = '23514';
+ END IF;
+ IF TG_TABLE_NAME = 'executions' THEN
+  IF NEW.runtime_image_digest IS DISTINCT FROM OLD.runtime_image_digest AND
+     (OLD.status <> 'restoring' OR OLD.runtime_image_digest IS NOT NULL) THEN
+   RAISE EXCEPTION 'execution image digest is immutable after selection' USING ERRCODE = '23514';
+  END IF;
+ END IF;
+ RETURN NEW;
+END
+$$;
+
+
+--
 -- Name: enforce_execution_status_transition(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -6103,6 +6125,8 @@ CREATE TABLE public.executions (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     artifacts bytea DEFAULT '\x'::bytea NOT NULL,
+    profile text DEFAULT 'standard'::text NOT NULL,
+    runtime_image_digest text,
     CONSTRAINT executions_artifacts_check CHECK (((octet_length(artifacts) = 0) OR ((status = 'succeeded'::text) AND (octet_length(artifacts) <= max_output_bytes)))),
     CONSTRAINT executions_cpu_millicores_check CHECK ((cpu_millicores = ANY (ARRAY[250, 500, 1000]))),
     CONSTRAINT executions_deadline_check CHECK ((deadline_at > created_at)),
@@ -6120,9 +6144,12 @@ CREATE TABLE public.executions (
     CONSTRAINT executions_network_mode_check CHECK ((network_mode = 'none'::text)),
     CONSTRAINT executions_output_budget_check CHECK (((((octet_length(stdout) + octet_length(stderr)) + result_bytes) + octet_length(artifacts)) <= max_output_bytes)),
     CONSTRAINT executions_pids_max_check CHECK ((pids_max = 64)),
+    CONSTRAINT executions_profile_check CHECK (((profile = 'standard'::text) OR ((profile = 'python-data-v1'::text) AND (runtime = 'python313'::text)))),
+    CONSTRAINT executions_profile_pin_check CHECK (((profile = 'standard'::text) OR (status <> ALL (ARRAY['running'::text, 'succeeded'::text])) OR (runtime_image_digest IS NOT NULL))),
     CONSTRAINT executions_result_bytes_check CHECK ((((result IS NULL) AND (result_bytes = 0)) OR ((result IS NOT NULL) AND ((result_bytes >= 1) AND (result_bytes <= max_output_bytes))))),
     CONSTRAINT executions_result_status_check CHECK (((result IS NULL) OR (status = 'succeeded'::text))),
     CONSTRAINT executions_runtime_check CHECK ((runtime = ANY (ARRAY['node22'::text, 'node24'::text, 'python312'::text, 'python313'::text]))),
+    CONSTRAINT executions_runtime_image_digest_check CHECK (((runtime_image_digest IS NULL) OR (runtime_image_digest ~ '^sha256:[a-f0-9]{64}$'::text))),
     CONSTRAINT executions_source_bytes_check CHECK (((source_bytes >= 1) AND (source_bytes <= 1048576))),
     CONSTRAINT executions_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'restoring'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'timed_out'::text, 'out_of_memory'::text, 'cancelled'::text]))),
     CONSTRAINT executions_timeout_ms_check CHECK (((timeout_ms >= 100) AND (timeout_ms <= 30000))),
@@ -9787,6 +9814,7 @@ CREATE TABLE public.runtime_snapshots (
     created_at timestamp with time zone NOT NULL,
     published_at timestamp with time zone DEFAULT now() NOT NULL,
     retired_at timestamp with time zone,
+    profile text DEFAULT 'standard'::text NOT NULL,
     CONSTRAINT runtime_snapshots_architecture_check CHECK ((architecture = ANY (ARRAY['amd64'::text, 'arm64'::text]))),
     CONSTRAINT runtime_snapshots_base_digest_check CHECK ((base_image_digest ~ '^[0-9a-f]{64}$'::text)),
     CONSTRAINT runtime_snapshots_digest_check CHECK ((snapshot_digest ~ '^[0-9a-f]{64}$'::text)),
@@ -9795,6 +9823,7 @@ CREATE TABLE public.runtime_snapshots (
     CONSTRAINT runtime_snapshots_format_check CHECK ((format_version > 0)),
     CONSTRAINT runtime_snapshots_kernel_digest_check CHECK ((kernel_digest ~ '^[0-9a-f]{64}$'::text)),
     CONSTRAINT runtime_snapshots_memory_check CHECK ((memory_mb = ANY (ARRAY[128, 256, 512, 1024]))),
+    CONSTRAINT runtime_snapshots_profile_check CHECK (((profile = 'standard'::text) OR ((profile = 'python-data-v1'::text) AND (runtime = 'python313'::text)))),
     CONSTRAINT runtime_snapshots_publication_order_check CHECK ((published_at >= created_at)),
     CONSTRAINT runtime_snapshots_retirement_check CHECK ((((state = 'ready'::text) AND (retired_at IS NULL)) OR ((state = 'retired'::text) AND (retired_at IS NOT NULL)))),
     CONSTRAINT runtime_snapshots_runtime_check CHECK ((runtime = ANY (ARRAY['node22'::text, 'node24'::text, 'python312'::text, 'python313'::text]))),
@@ -18856,6 +18885,13 @@ CREATE TRIGGER events_enqueue_fanout AFTER INSERT ON public.events FOR EACH ROW 
 
 
 --
+-- Name: executions executions_profile_identity; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER executions_profile_identity BEFORE UPDATE ON public.executions FOR EACH ROW EXECUTE FUNCTION public.enforce_execution_profile_identity();
+
+
+--
 -- Name: executions executions_status_transition; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -19203,6 +19239,13 @@ CREATE TRIGGER runtime_config_entries_notify AFTER INSERT OR UPDATE ON public.ru
 --
 
 CREATE TRIGGER runtime_config_operations_notify AFTER INSERT OR UPDATE ON public.runtime_config_operations FOR EACH ROW EXECUTE FUNCTION public.notify_runtime_config_operation_changed();
+
+
+--
+-- Name: runtime_snapshots runtime_snapshots_profile_identity; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER runtime_snapshots_profile_identity BEFORE UPDATE ON public.runtime_snapshots FOR EACH ROW EXECUTE FUNCTION public.enforce_execution_profile_identity();
 
 
 --

@@ -1573,6 +1573,7 @@ var cliCommands = []cliCommand{
 		DocSlug: "run",
 		Short:   "Run untrusted code in an isolated disposable microVM",
 		Flags: []cliFlag{
+			{Name: "profile", Short: "preinstalled dependencies (data requires python313)", Value: "P", ClosedSet: []string{"standard", "python-data-v1"}},
 			{Name: "runtime", Short: "runtime (node22|node24|python312|python313)", Value: "R", ClosedSet: []string{"node22", "node24", "python312", "python313"}},
 			{Name: "source", Short: "inline source code", Value: "CODE"},
 			{Name: "file", Short: "source file (regular file only)", Value: "PATH"},

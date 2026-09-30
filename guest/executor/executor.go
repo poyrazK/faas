@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/executionprofiles"
 	"github.com/onebox-faas/faas/pkg/executionproto"
 )
 
@@ -41,6 +42,7 @@ type commandResolver func(executionproto.Request) (string, []string, string, err
 
 // Executor is the guest-side execution protocol handler.
 type Executor struct {
+	profile api.ExecutionProfile
 	build   commandBuilder
 	resolve commandResolver
 	now     func() time.Time
@@ -60,6 +62,13 @@ func New() *Executor {
 	return e
 }
 
+// NewWithProfile is called only with the platform-owned guest image marker.
+func NewWithProfile(profile api.ExecutionProfile) *Executor {
+	e := New()
+	e.profile = profile.Normalized()
+	return e
+}
+
 // Handle implements executionproto.Handler.
 func (e *Executor) Handle(ctx context.Context, req executionproto.Request, stdout, stderr *executionproto.OutputWriter) (executionproto.Result, error) {
 	if e == nil || e.build == nil {
@@ -67,6 +76,9 @@ func (e *Executor) Handle(ctx context.Context, req executionproto.Request, stdou
 	}
 	if err := req.Validate(); err != nil {
 		return executionproto.Result{}, err
+	}
+	if req.Profile.Normalized() != e.profile.Normalized() {
+		return executionproto.Result{}, errors.New("execution profile does not match guest image")
 	}
 	requestCtx, cancelRequest := context.WithTimeout(ctx, time.Duration(req.TimeoutMS)*time.Millisecond)
 	defer cancelRequest()
@@ -121,7 +133,11 @@ func (e *Executor) Handle(ctx context.Context, req executionproto.Request, stdou
 	if maxResult > resultReserve {
 		maxResult -= resultReserve
 	}
-	args = append(args, sourcePath, inputPath, resultPath, req.ExecutionID, string(req.Runtime), fmt.Sprint(maxResult), outputDir)
+	packages, err := json.Marshal(executionprofiles.Packages(req.Profile))
+	if err != nil {
+		return executionproto.Result{}, err
+	}
+	args = append(args, sourcePath, inputPath, resultPath, req.ExecutionID, string(req.Runtime), fmt.Sprint(maxResult), outputDir, string(req.Profile.Normalized()), string(packages))
 	commandCtx, cancel := context.WithCancel(requestCtx)
 	defer cancel()
 	cmd := e.build(commandCtx, interpreter, args...)
@@ -129,6 +145,9 @@ func (e *Executor) Handle(ctx context.Context, req executionproto.Request, stdou
 		return executionproto.Result{}, errors.New("execution interpreter unavailable")
 	}
 	cmd.Env = guestEnv(req.Runtime)
+	if req.Profile.Normalized() == api.ExecutionProfilePythonDataV1 {
+		cmd.Env = append(cmd.Env, "OPENBLAS_NUM_THREADS=1", "OMP_NUM_THREADS=1", "MKL_NUM_THREADS=1", "NUMEXPR_NUM_THREADS=1")
+	}
 	cmd.Dir = workdir
 	configureProcess(cmd)
 
@@ -206,6 +225,9 @@ func (e *Executor) command(req executionproto.Request) (string, []string, string
 		return path, []string{"--input-type=module", "-e", nodeWrapper}, nodeSourceName, err
 	case api.ExecutionRuntimePython312, api.ExecutionRuntimePython313:
 		path, err := lookupInterpreter("python3", "/usr/local/bin/python3")
+		if req.Profile.Normalized() == api.ExecutionProfilePythonDataV1 {
+			return path, []string{"-I", "-c", pythonWrapper}, pythonSourceName, err
+		}
 		return path, []string{"-I", "-S", "-c", pythonWrapper}, pythonSourceName, err
 	default:
 		return "", nil, "", fmt.Errorf("unsupported execution runtime %q", req.Runtime)
@@ -410,7 +432,13 @@ fs.writeFileSync(resultPath, encoded, { encoding: "utf8", mode: 0o600 });
 
 const pythonWrapper = `
 import asyncio, importlib.util, inspect, json, os, sys
-source_path, input_path, result_path, execution_id, runtime, max_bytes, output_dir = sys.argv[1:]
+source_path, input_path, result_path, execution_id, runtime, max_bytes, output_dir, profile, packages = sys.argv[1:]
+if profile == "python-data-v1":
+    import importlib.metadata
+    if sys.version_info[:2] != (3, 13): raise RuntimeError("profile interpreter mismatch")
+    for package, expected in json.loads(packages).items():
+        if importlib.metadata.version(package) != expected: raise RuntimeError("profile package mismatch")
+    import numpy, pandas
 sys.path.insert(0, os.path.dirname(source_path))
 spec = importlib.util.spec_from_file_location("faas_execution", source_path)
 module = importlib.util.module_from_spec(spec)
@@ -418,7 +446,7 @@ spec.loader.exec_module(module)
 handler = getattr(module, "main", None)
 if not callable(handler): raise RuntimeError("main must be callable")
 with open(input_path, encoding="utf-8") as input_file:
-    value = handler(json.load(input_file), {"execution_id": execution_id, "runtime": runtime, "output_dir": output_dir})
+    value = handler(json.load(input_file), {"execution_id": execution_id, "runtime": runtime, "profile": profile, "output_dir": output_dir})
 if inspect.isawaitable(value): value = asyncio.run(value)
 encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
 encoded_bytes = encoded.encode("utf-8")

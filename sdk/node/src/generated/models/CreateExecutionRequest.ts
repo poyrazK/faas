@@ -14,6 +14,10 @@ import type { ExecutionNetworkPolicy } from './ExecutionNetworkPolicy.js';
  *
  */
 export type CreateExecutionRequest = {
+  /**
+   * Immutable preinstalled dependency profile. python-data-v1 requires python313; standard preserves standard-library-only execution.
+   */
+  profile?: 'standard' | 'python-data-v1';
   runtime: 'node22' | 'node24' | 'python312' | 'python313';
   /**
    * Single-file source code; never returned by execution reads.

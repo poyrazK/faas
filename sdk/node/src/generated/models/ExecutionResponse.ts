@@ -13,6 +13,15 @@ import type { ResolvedExecutionLimits } from './ResolvedExecutionLimits.js';
  *
  */
 export type ExecutionResponse = {
+  profile?: 'standard' | 'python-data-v1';
+  /**
+   * Scheduler-pinned base image digest, recorded before dispatch of a dependency profile.
+   */
+  runtime_image_digest?: string;
+  /**
+   * Immutable versions declared by the selected profile and verified by its guest before caller code runs.
+   */
+  packages?: Record<string, string>;
   id: string;
   status: 'queued' | 'restoring' | 'running' | 'succeeded' | 'failed' | 'timed_out' | 'out_of_memory' | 'cancelled';
   runtime: 'node22' | 'node24' | 'python312' | 'python313';

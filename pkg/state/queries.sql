@@ -4179,11 +4179,11 @@ WHERE account_id = sqlc.arg(account_id)
 
 -- name: ExecutionInsert :one
 INSERT INTO executions (
-  account_id, runtime, status, network_mode, timeout_ms, memory_mb,
+  account_id, runtime, profile, status, network_mode, timeout_ms, memory_mb,
   cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max,
   source_bytes, input_bytes, deadline_at, created_at, updated_at
 ) VALUES (
-  sqlc.arg(account_id), sqlc.arg(runtime), 'queued', sqlc.arg(network_mode),
+  sqlc.arg(account_id), sqlc.arg(runtime), sqlc.arg(profile), 'queued', sqlc.arg(network_mode),
   sqlc.arg(timeout_ms), sqlc.arg(memory_mb), sqlc.arg(cpu_millicores),
   sqlc.arg(ephemeral_disk_mb), sqlc.arg(max_output_bytes), sqlc.arg(pids_max),
   sqlc.arg(source_bytes), sqlc.arg(input_bytes), sqlc.arg(deadline_at),
@@ -4293,6 +4293,17 @@ WHERE id = sqlc.arg(execution_id)
   AND lease_expires_at > sqlc.arg(started_at)
   AND cancel_requested_at IS NULL
   AND deadline_at > sqlc.arg(started_at)
+  AND (profile = 'standard' OR runtime_image_digest IS NOT NULL)
+RETURNING *;
+
+-- name: ExecutionPinRuntime :one
+UPDATE executions
+SET runtime_image_digest = sqlc.arg(image_digest), updated_at = sqlc.arg(pinned_at)
+WHERE id = sqlc.arg(execution_id) AND status = 'restoring'
+  AND lease_token = sqlc.arg(lease_token)
+  AND lease_expires_at > sqlc.arg(pinned_at) AND deadline_at > sqlc.arg(pinned_at)
+  AND cancel_requested_at IS NULL
+  AND (runtime_image_digest IS NULL OR runtime_image_digest = sqlc.arg(image_digest))
 RETURNING *;
 
 -- name: ExecutionLockForLease :one
@@ -4498,13 +4509,13 @@ WHERE account_id = sqlc.arg(account_id)
 -- Publication is insert-only; retirement is the sole mutable transition.
 -- name: RuntimeSnapshotInsert :one
 INSERT INTO runtime_snapshots (
-    catalog_key, runtime, architecture, kernel_digest, guest_executor_digest,
+    catalog_key, runtime, profile, architecture, kernel_digest, guest_executor_digest,
     base_image_digest, memory_mb, ephemeral_disk_mb, format_version,
     storage_key, snapshot_digest, mem_bytes, vm_state_bytes, sanitized,
     payload_free, state, created_at, published_at, retired_at
 )
 VALUES (
-    sqlc.arg(catalog_key), sqlc.arg(runtime), sqlc.arg(architecture),
+    sqlc.arg(catalog_key), sqlc.arg(runtime), sqlc.arg(profile), sqlc.arg(architecture),
     sqlc.arg(kernel_digest), sqlc.arg(guest_executor_digest),
     sqlc.arg(base_image_digest), sqlc.arg(memory_mb), sqlc.arg(ephemeral_disk_mb),
     sqlc.arg(format_version), sqlc.arg(storage_key), sqlc.arg(snapshot_digest),

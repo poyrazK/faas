@@ -61,6 +61,7 @@ type ExecutionCoordinatorConfig struct {
 // the disposable-VM backend. Restore must prepare a fresh jail, cgroup, and
 // scratch drive with no tenant network namespace, but must not run caller code.
 type ExecutionRestoreRequest struct {
+	Profile     api.ExecutionProfile
 	ID          string
 	AccountID   string
 	NodeID      string
@@ -387,7 +388,8 @@ func (c *ExecutionCoordinator) processClaim(parent context.Context, claim state.
 	}
 
 	request := ExecutionRestoreRequest{
-		ID: claim.ID, AccountID: claim.AccountID, Runtime: claim.Runtime,
+		Profile: claim.Profile.Normalized(),
+		ID:      claim.ID, AccountID: claim.AccountID, Runtime: claim.Runtime,
 		NetworkMode: claim.NetworkMode, Limits: claim.Limits, DeadlineAt: claim.DeadlineAt,
 	}
 	restoreStarted := c.now()

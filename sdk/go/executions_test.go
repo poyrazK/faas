@@ -127,17 +127,17 @@ func TestRunStreamsAndReturnsFinalReceipt(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Errorf("decode create request: %v", err)
 			}
-			if request.Runtime != faas.ExecutionRuntimeNode22 || request.Source == "" {
+			if request.Runtime != faas.ExecutionRuntimePython313 || request.Profile != faas.ExecutionProfilePythonDataV1 || request.Source == "" {
 				t.Errorf("create request: %+v", request)
 			}
 			w.WriteHeader(http.StatusAccepted)
-			_, _ = io.WriteString(w, `{"id":"run-1","status":"queued","runtime":"node22","limits":{"timeout_ms":1000},"output_truncated":false,"created_at":"2026-01-01T00:00:00Z"}`)
+			_, _ = io.WriteString(w, `{"id":"run-1","status":"queued","runtime":"python313","profile":"python-data-v1","packages":{"numpy":"2.5.3"},"limits":{"timeout_ms":1000},"output_truncated":false,"created_at":"2026-01-01T00:00:00Z"}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/executions/run-1/events":
 			writeExecutionStream(w, "id: 1\nevent: status\ndata: {\"status\":\"running\"}\n\n"+
 				"id: 2\nevent: stdout\ndata: {\"chunk\":\"hello\"}\n\n"+
 				"id: 3\nevent: terminal\ndata: {\"status\":\"succeeded\",\"exit_code\":0}\n\n")
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/executions/run-1":
-			_, _ = io.WriteString(w, `{"id":"run-1","status":"succeeded","runtime":"node22","limits":{"timeout_ms":1000},"result":{"ok":true},"stdout":"hello","output_truncated":false,"exit_code":0,"created_at":"2026-01-01T00:00:00Z"}`)
+			_, _ = io.WriteString(w, `{"id":"run-1","status":"succeeded","runtime":"python313","profile":"python-data-v1","runtime_image_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","packages":{"numpy":"2.5.3"},"limits":{"timeout_ms":1000},"result":{"ok":true},"stdout":"hello","output_truncated":false,"exit_code":0,"created_at":"2026-01-01T00:00:00Z"}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -146,8 +146,9 @@ func TestRunStreamsAndReturnsFinalReceipt(t *testing.T) {
 	c, _ := faas.NewClient(srv.URL, "token")
 	var seen []faas.ExecutionEventType
 	receipt, err := c.Run(context.Background(), faas.CreateExecutionRequest{
-		Runtime: faas.ExecutionRuntimeNode22,
-		Source:  "console.log('hello')",
+		Runtime: faas.ExecutionRuntimePython313,
+		Profile: faas.ExecutionProfilePythonDataV1,
+		Source:  "def main(input, context): return input",
 	}, faas.RunOptions{
 		Watch: faas.WatchExecutionOptions{RetryInitial: 0, RetryMax: 0},
 		OnEvent: func(event faas.ExecutionEvent) error {
@@ -168,6 +169,9 @@ func TestRunStreamsAndReturnsFinalReceipt(t *testing.T) {
 	defer mu.Unlock()
 	if len(methods) != 3 || methods[0] != "POST /v1/executions" || methods[1] != "GET /v1/executions/run-1/events" || methods[2] != "GET /v1/executions/run-1" {
 		t.Errorf("request order: %v", methods)
+	}
+	if receipt.Profile != faas.ExecutionProfilePythonDataV1 || receipt.Packages["numpy"] != "2.5.3" || receipt.RuntimeImageDigest == "" {
+		t.Fatalf("profile provenance lost: %+v", receipt)
 	}
 }
 

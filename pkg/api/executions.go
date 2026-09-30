@@ -87,6 +87,7 @@ type ExecutionArtifact struct {
 // CreateExecutionRequest is the caller-authored one-shot execution contract.
 // Source and input are never included in ExecutionResponse.
 type CreateExecutionRequest struct {
+	Profile     ExecutionProfile        `json:"profile,omitempty"`
 	Runtime     ExecutionRuntime        `json:"runtime"`
 	Source      string                  `json:"source,omitempty"`
 	Entrypoint  string                  `json:"entrypoint,omitempty"`
@@ -111,6 +112,7 @@ type ResolvedExecutionLimits struct {
 // ResolvedExecutionRequest is the normalized form persisted as execution
 // intent. Input is always valid JSON and Network.Mode is always explicit.
 type ResolvedExecutionRequest struct {
+	Profile     ExecutionProfile
 	Runtime     ExecutionRuntime
 	Source      string
 	Entrypoint  string
@@ -138,6 +140,7 @@ func (r ResolvedExecutionRequest) SourceBytes() int {
 // compatible runtime snapshot. Kernel, guest-executor, architecture, and base
 // image digests are added by the snapshot catalog.
 type ExecutionSnapshotShape struct {
+	Profile         ExecutionProfile `json:"profile,omitempty"`
 	Runtime         ExecutionRuntime `json:"runtime"`
 	MemoryMB        int              `json:"memory_mb"`
 	EphemeralDiskMB int              `json:"ephemeral_disk_mb"`
@@ -147,7 +150,12 @@ type ExecutionSnapshotShape struct {
 // snapshot capture and restore. CPU is absent because it is enforced as a host
 // cgroup quota rather than a Firecracker machine shape.
 func (r ResolvedExecutionRequest) SnapshotShape() ExecutionSnapshotShape {
+	profile := r.Profile
+	if profile.Normalized() == ExecutionProfileStandard {
+		profile = ""
+	}
 	return ExecutionSnapshotShape{
+		Profile:         profile,
 		Runtime:         r.Runtime,
 		MemoryMB:        r.Limits.MemoryMB,
 		EphemeralDiskMB: r.Limits.EphemeralDiskMB,
@@ -157,6 +165,9 @@ func (r ResolvedExecutionRequest) SnapshotShape() ExecutionSnapshotShape {
 // Resolve validates a caller request against the selected plan and fills every
 // default. No persistence, scheduling, or VM work may occur before this gate.
 func (r CreateExecutionRequest) Resolve(plan Plan) (ResolvedExecutionRequest, *Problem) {
+	if err := r.Profile.Validate(r.Runtime); err != nil {
+		return ResolvedExecutionRequest{}, executionInvalid(CodeExecutionRuntimeInvalid, err.Error())
+	}
 	planLimits, ok := plan.ExecutionLimits()
 	if !ok || !planLimits.Allowed {
 		return ResolvedExecutionRequest{}, ErrExecutionsNotAllowed(plan)
@@ -238,6 +249,7 @@ func (r CreateExecutionRequest) Resolve(plan Plan) (ResolvedExecutionRequest, *P
 	}
 
 	return ResolvedExecutionRequest{
+		Profile:     r.Profile.Normalized(),
 		Runtime:     r.Runtime,
 		Source:      source,
 		Entrypoint:  entrypoint,
@@ -501,21 +513,24 @@ type ExecutionFailure struct {
 // ExecutionResponse intentionally omits source and input. Result, stdout, and
 // stderr share the admitted MaxOutputBytes budget.
 type ExecutionResponse struct {
-	ID              string                  `json:"id"`
-	Status          ExecutionStatus         `json:"status"`
-	Runtime         ExecutionRuntime        `json:"runtime"`
-	Limits          ResolvedExecutionLimits `json:"limits"`
-	Artifacts       []ExecutionArtifact     `json:"artifacts,omitempty"`
-	Result          json.RawMessage         `json:"result,omitempty"`
-	Stdout          string                  `json:"stdout,omitempty"`
-	Stderr          string                  `json:"stderr,omitempty"`
-	OutputTruncated bool                    `json:"output_truncated"`
-	ExitCode        *int                    `json:"exit_code,omitempty"`
-	Usage           *ExecutionUsage         `json:"usage,omitempty"`
-	Failure         *ExecutionFailure       `json:"failure,omitempty"`
-	CreatedAt       string                  `json:"created_at"`
-	StartedAt       *string                 `json:"started_at,omitempty"`
-	FinishedAt      *string                 `json:"finished_at,omitempty"`
+	Profile            ExecutionProfile        `json:"profile"`
+	RuntimeImageDigest string                  `json:"runtime_image_digest,omitempty"`
+	Packages           map[string]string       `json:"packages,omitempty"`
+	ID                 string                  `json:"id"`
+	Status             ExecutionStatus         `json:"status"`
+	Runtime            ExecutionRuntime        `json:"runtime"`
+	Limits             ResolvedExecutionLimits `json:"limits"`
+	Artifacts          []ExecutionArtifact     `json:"artifacts,omitempty"`
+	Result             json.RawMessage         `json:"result,omitempty"`
+	Stdout             string                  `json:"stdout,omitempty"`
+	Stderr             string                  `json:"stderr,omitempty"`
+	OutputTruncated    bool                    `json:"output_truncated"`
+	ExitCode           *int                    `json:"exit_code,omitempty"`
+	Usage              *ExecutionUsage         `json:"usage,omitempty"`
+	Failure            *ExecutionFailure       `json:"failure,omitempty"`
+	CreatedAt          string                  `json:"created_at"`
+	StartedAt          *string                 `json:"started_at,omitempty"`
+	FinishedAt         *string                 `json:"finished_at,omitempty"`
 }
 
 // ExecutionListResponse is the account-scoped page returned by

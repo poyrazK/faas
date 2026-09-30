@@ -211,7 +211,11 @@ func (s *vmmdExecutionSession) execute(ctx context.Context, payload ExecutionPay
 		// fixed structural error at this boundary.
 		return ExecutionOutcome{}, errors.New("sched: decode execution payload failed")
 	}
+	if decoded.Profile.Normalized() != s.request.Profile.Normalized() {
+		return ExecutionOutcome{}, errors.New("sched: execution profile differs from sealed request")
+	}
 	resolved := api.ResolvedExecutionRequest{
+		Profile: s.request.Profile.Normalized(),
 		Runtime: s.request.Runtime, Source: decoded.Source,
 		Entrypoint:  decoded.Entrypoint,
 		Files:       append([]api.ExecutionFile(nil), decoded.Files...),

@@ -103,6 +103,7 @@ func (m *MemStore) CreateExecution(_ context.Context, params CreateExecutionPara
 		return Execution{}, &ExecutionQuotaError{Limit: planLimits.MaxConcurrent, Observed: active + 1}
 	}
 	row := Execution{
+		Profile:     params.Request.Profile.Normalized(),
 		ID:          uuid.NewString(),
 		AccountID:   params.AccountID,
 		Runtime:     params.Request.Runtime,
@@ -299,6 +300,9 @@ func (m *MemStore) MarkExecutionRunning(_ context.Context, executionID, leaseTok
 		return Execution{}, ErrExecutionLeaseLost
 	}
 	startedAt = startedAt.UTC()
+	if row.Profile.Normalized() != api.ExecutionProfileStandard && row.RuntimeImageDigest == "" {
+		return Execution{}, ErrExecutionRuntimeUnpinned
+	}
 	row.Status = api.ExecutionStatusRunning
 	row.StartedAt = &startedAt
 	row.UpdatedAt = startedAt

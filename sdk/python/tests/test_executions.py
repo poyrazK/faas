@@ -97,7 +97,7 @@ def test_run_execution_creates_streams_and_fetches_receipt() -> None:
         if request.method == "POST" and request.url.path == "/v1/executions":
             assert request.headers["idempotency-key"] == "run-key-1"
             body = request.read().decode()
-            assert "console.log('hello')" in body
+            assert "def main(input, context): return input" in body
             return httpx.Response(202, json=_receipt("queued"))
         if request.url.path == f"/v1/executions/{_EXECUTION_ID}/events":
             return _stream(
@@ -106,7 +106,18 @@ def test_run_execution_creates_streams_and_fetches_receipt() -> None:
                 'id: 3\nevent: terminal\ndata: {"status":"succeeded"}\n\n'
             )
         if request.method == "GET" and request.url.path == f"/v1/executions/{_EXECUTION_ID}":
-            return httpx.Response(200, json=_receipt("succeeded", result={"ok": True}, stdout="hello"))
+            return httpx.Response(
+                200,
+                json=_receipt(
+                    "succeeded",
+                    runtime="python313",
+                    profile="python-data-v1",
+                    runtime_image_digest="sha256:" + "a" * 64,
+                    packages={"numpy": "2.5.3"},
+                    result={"ok": True},
+                    stdout="hello",
+                ),
+            )
         return httpx.Response(404)
 
     client = FaaSClient(
@@ -116,7 +127,7 @@ def test_run_execution_creates_streams_and_fetches_receipt() -> None:
     try:
         seen: list[str] = []
         receipt = client.run_execution(
-            {"runtime": "node22", "source": "console.log('hello')"},
+            {"runtime": "python313", "profile": "python-data-v1", "source": "def main(input, context): return input"},
             on_event=lambda event: seen.append(event.type),
             idempotency_key="run-key-1",
             retry_initial=0,
@@ -124,6 +135,10 @@ def test_run_execution_creates_streams_and_fetches_receipt() -> None:
         )
         assert str(receipt.id) == _EXECUTION_ID
         assert receipt.status == "succeeded"
+        assert receipt.profile == "python-data-v1"
+        assert receipt.packages.to_dict() == {"numpy": "2.5.3"}
+        assert receipt.runtime_image_digest == "sha256:" + "a" * 64
+        assert '"profile":"python-data-v1"' in requests[0].content.decode().replace(" ", "")
         assert receipt.result == {"ok": True}
         assert seen == ["status", "stdout", "terminal"]
         assert [request.method for request in requests] == ["POST", "GET", "GET"]

@@ -29,6 +29,30 @@ func (f *fakeVMM) ExecuteExecution(_ context.Context, _ string, _ executionproto
 
 type artifactExecutionVMM struct{ *fakeVMM }
 
+type profileExecutionVMM struct{ *fakeVMM }
+
+func (f *profileExecutionVMM) ExecuteExecution(_ context.Context, _ string, req executionproto.Request) (executionproto.Result, error) {
+	if req.Profile != api.ExecutionProfilePythonDataV1 || req.Runtime != api.ExecutionRuntimePython313 || req.Version != executionproto.ProfileVersion {
+		return executionproto.Result{}, fmt.Errorf("profile lost in transport: %+v", req)
+	}
+	return executionproto.Result{Status: api.ExecutionStatusSucceeded, Result: json.RawMessage("null")}, nil
+}
+
+func (f *profileExecutionVMM) ExecuteExecutionWithOutput(ctx context.Context, instance string, req executionproto.Request, _ executionproto.OutputReceiver) (executionproto.Result, error) {
+	return f.ExecuteExecution(ctx, instance, req)
+}
+
+func TestVMMClientExecutionProfileSurvivesUnaryAndStreamingTransport(t *testing.T) {
+	c := newClient(t, &profileExecutionVMM{fakeVMM: &fakeVMM{}})
+	req := executionproto.Request{Version: executionproto.ProfileVersion, Profile: api.ExecutionProfilePythonDataV1, ExecutionID: "data", Runtime: api.ExecutionRuntimePython313, Source: "def main(input, context): return input", Input: json.RawMessage("null"), TimeoutMS: 1000, MaxOutput: 1024, NetworkMode: api.ExecutionNetworkNone}
+	if _, err := c.ExecuteExecution(context.Background(), "exec-vm-1", req); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.ExecuteExecutionWithOutput(context.Background(), "exec-vm-1", req, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (f *artifactExecutionVMM) ExecuteExecution(_ context.Context, _ string, req executionproto.Request) (executionproto.Result, error) {
 	if req.Version != executionproto.ArtifactVersion || req.Entrypoint != "main.mjs" || len(req.Files) != 1 || string(req.Files[0].Content) != "export default () => null" || len(req.OutputFiles) != 1 || req.OutputFiles[0] != "report.bin" {
 		return executionproto.Result{}, fmt.Errorf("bundle/output selection lost: %+v", req)

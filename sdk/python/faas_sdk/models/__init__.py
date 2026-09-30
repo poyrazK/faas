@@ -754,6 +754,8 @@ from .execution_list_response import ExecutionListResponse
 from .execution_network_policy import ExecutionNetworkPolicy
 from .execution_network_policy_mode import ExecutionNetworkPolicyMode
 from .execution_response import ExecutionResponse
+from .execution_response_packages import ExecutionResponsePackages
+from .execution_response_profile import ExecutionResponseProfile
 from .execution_response_runtime import ExecutionResponseRuntime
 from .execution_response_status import ExecutionResponseStatus
 from .execution_usage import ExecutionUsage
@@ -2685,6 +2687,8 @@ __all__ = (
     "ExecutionNetworkPolicy",
     "ExecutionNetworkPolicyMode",
     "ExecutionResponse",
+    "ExecutionResponsePackages",
+    "ExecutionResponseProfile",
     "ExecutionResponseRuntime",
     "ExecutionResponseStatus",
     "ExecutionUsage",

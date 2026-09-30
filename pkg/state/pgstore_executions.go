@@ -88,12 +88,14 @@ func executionFromSQL(row sqlc.Execution) Execution {
 		_ = json.Unmarshal(row.Artifacts, &artifacts)
 	}
 	return Execution{
-		Artifacts:   artifacts,
-		ID:          pgUUIDString(row.ID),
-		AccountID:   pgUUIDString(row.AccountID),
-		Runtime:     api.ExecutionRuntime(row.Runtime),
-		Status:      api.ExecutionStatus(row.Status),
-		NetworkMode: api.ExecutionNetworkMode(row.NetworkMode),
+		Profile:            api.ExecutionProfile(row.Profile),
+		RuntimeImageDigest: row.RuntimeImageDigest.String,
+		Artifacts:          artifacts,
+		ID:                 pgUUIDString(row.ID),
+		AccountID:          pgUUIDString(row.AccountID),
+		Runtime:            api.ExecutionRuntime(row.Runtime),
+		Status:             api.ExecutionStatus(row.Status),
+		NetworkMode:        api.ExecutionNetworkMode(row.NetworkMode),
 		Limits: api.ResolvedExecutionLimits{
 			TimeoutMS:       int(row.TimeoutMs),
 			MemoryMB:        int(row.MemoryMb),
@@ -177,6 +179,7 @@ func (s *PgStore) CreateExecution(ctx context.Context, params CreateExecutionPar
 	row, err := q.ExecutionInsert(ctx, tx, sqlc.ExecutionInsertParams{
 		AccountID:       accountID,
 		Runtime:         string(params.Request.Runtime),
+		Profile:         string(params.Request.Profile.Normalized()),
 		NetworkMode:     string(params.Request.Network.Mode),
 		TimeoutMs:       int32(params.Request.Limits.TimeoutMS),
 		MemoryMb:        int32(params.Request.Limits.MemoryMB),

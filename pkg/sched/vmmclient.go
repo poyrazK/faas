@@ -710,6 +710,7 @@ func (c *VMMClient) ExecuteExecution(ctx context.Context, instance string, req e
 	fields, _ := wire.FromContext(ctx)
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
 	resp, err := c.cli.ExecuteExecution(ctx, &vmmdpb.ExecuteExecutionRequest{
+		Profile:        string(req.Profile),
 		Instance:       instance,
 		Version:        uint32(req.Version),
 		ExecutionId:    req.ExecutionID,
@@ -741,6 +742,7 @@ func (c *VMMClient) ExecuteExecutionWithOutput(ctx context.Context, instance str
 	fields, _ := wire.FromContext(ctx)
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
 	stream, err := c.cli.ExecuteExecutionStream(ctx, &vmmdpb.ExecuteExecutionRequest{
+		Profile:        string(req.Profile),
 		Instance:       instance,
 		Version:        uint32(req.Version),
 		ExecutionId:    req.ExecutionID,

@@ -62,6 +62,58 @@ bundles contain regular file bytes only—there is no symlink, device, or host
 path representation. Source and input are encrypted before durable admission
 and are never returned by reads.
 
+## Preinstalled dependency profiles
+
+Set `profile` in the API/SDK request or `--profile` on the CLI. Omission selects
+`standard`, which retains the standard-library-only Python environment.
+`python-data-v1` requires `python313` and provides NumPy 2.5.3, pandas 3.0.6,
+python-dateutil 2.9.0.post0, and six 1.17.0. This versioned package set is built
+into a shared read-only image; packages are available without downloads or
+per-run installation. Source bundles can include local modules, but a run
+cannot request arbitrary third-party dependencies.
+
+For example, `analyze.py`:
+
+```python
+import os
+import numpy as np
+import pandas as pd
+
+def main(input, context):
+    frame = pd.DataFrame({"value": input})
+    frame.to_csv(os.path.join(context["output_dir"], "report.csv"), index=False)
+    return {"sum": int(frame.value.sum()), "mean": float(np.mean(input))}
+```
+
+```sh
+gregale run --runtime python313 --profile python-data-v1 --file analyze.py \
+  --input '[1,2,3]' --memory-mb 256 --timeout-ms 30000 \
+  --output-file report.csv --output-dir ./results --json
+```
+
+The receipt returns `profile` and `packages`. Once the scheduler selects an
+image it also returns `runtime_image_digest` (`sha256:` plus lowercase hex),
+pinned before dispatch and preserved across restore retries. Package versions
+are declared at admission and checked in the guest before caller code runs.
+Unknown profiles, incompatible runtimes, and mismatched guest images fail
+closed. Standard and data runs never share a snapshot identity. Every run
+keeps its existing network, resource, output, and ephemeral-storage limits.
+
+Operators must publish and validate the profile image and matching guest
+artifacts before use. On imaged, set `FAAS_EXECUTION_PYTHON_DATA_V1_BASE_REF`
+to the concrete linux/amd64 OCI manifest reference (`...@sha256:...`). It
+opts into the existing verified staging path under
+`base/runner-python-data-v1-amd64.ext4`; omission stages no data base. Use the
+reported image configuration digest for `BASE_DIGEST` below, and publish a
+separate payload-free execution layer preserving the data profile marker.
+The scheduler reads all eight artifact fields from
+`FAAS_EXECUTION_PYTHON313_PYTHON_DATA_V1_`: `ARCH`, `KERNEL_DIGEST`,
+`EXECUTOR_DIGEST`, `BASE_DIGEST`, `KERNEL_KEY`, `BASE_KEY`, `LAYER_KEY`, and
+`FC_VERSION`. Digests are lowercase SHA-256 hex without the `sha256:` prefix.
+This namespace never falls back to plain `FAAS_EXECUTION_PYTHON313_*` values.
+Dependency profiles require guest protocol v3 and native KVM/leak acceptance;
+see [ADR-382](adr/382-curated-stateless-execution-profiles.md) for rollout.
+
 ## Usage accounting
 
 `GET /v1/usage/summary` (and its `compute` projection in

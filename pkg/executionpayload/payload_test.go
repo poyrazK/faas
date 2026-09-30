@@ -139,6 +139,26 @@ func TestSealDecodeBundleRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSealDecodeProfileBinding(t *testing.T) {
+	identity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, profile := range []api.ExecutionProfile{"", api.ExecutionProfileStandard, api.ExecutionProfilePythonDataV1} {
+		sealed, err := SealRequest(identity.Recipient(), api.ResolvedExecutionRequest{Profile: profile, Source: "def main(input, context): return input"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		decoded, err := DecodeRequest(context.Background(), []*age.X25519Identity{identity}, sealed, identity.Recipient().String())
+		if err != nil || decoded.Profile != profile.Normalized() {
+			t.Fatalf("profile=%q decoded=%q, %v", profile, decoded.Profile, err)
+		}
+	}
+	if _, err := SealRequest(identity.Recipient(), api.ResolvedExecutionRequest{Profile: "pip-anything", Source: "def main(input, context): return input"}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("unknown profile accepted: %v", err)
+	}
+}
+
 func sealRaw(identity *age.X25519Identity, namespace string, envelope Envelope) ([]byte, error) {
 	plaintext, err := json.Marshal(envelope)
 	if err != nil {

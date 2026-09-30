@@ -30,6 +30,7 @@ const (
 	Version uint16 = 1
 	// ArtifactVersion fails closed on old vmmd/guest binaries. Legacy runs use v1.
 	ArtifactVersion uint16 = 2
+	ProfileVersion  uint16 = 3
 
 	// VsockPort is the guest listener reserved for one-shot executions. It is
 	// intentionally distinct from resume (1024), characterization/job exit
@@ -79,6 +80,7 @@ var (
 // vmmd adapter decrypts them in host memory immediately before this request is
 // sent to the already-restored disposable guest.
 type Request struct {
+	Profile     api.ExecutionProfile     `json:"profile,omitempty"`
 	Version     uint16                   `json:"version"`
 	ExecutionID string                   `json:"execution_id"`
 	Runtime     api.ExecutionRuntime     `json:"runtime"`
@@ -129,7 +131,14 @@ func RequestFromResolvedExecution(id string, req api.ResolvedExecutionRequest) R
 	if len(req.OutputFiles) != 0 {
 		version = ArtifactVersion
 	}
+	profile := req.Profile
+	if profile.Normalized() == api.ExecutionProfileStandard {
+		profile = ""
+	} else {
+		version = ProfileVersion
+	}
 	return Request{
+		Profile:     profile,
 		Version:     version,
 		ExecutionID: id,
 		Runtime:     req.Runtime,
@@ -157,11 +166,14 @@ type ErrorFrame struct {
 // called; these checks defend the guest boundary if a future caller bypasses
 // apid or a stale scheduler sends malformed state.
 func (r Request) Validate() error {
-	if r.Version != Version && r.Version != ArtifactVersion {
+	if r.Version != Version && r.Version != ArtifactVersion && r.Version != ProfileVersion {
 		return fmt.Errorf("%w: unsupported version %d", ErrInvalidRequest, r.Version)
 	}
-	if len(r.OutputFiles) != 0 && r.Version != ArtifactVersion {
+	if len(r.OutputFiles) != 0 && r.Version < ArtifactVersion {
 		return fmt.Errorf("%w: artifacts require version 2", ErrInvalidRequest)
+	}
+	if err := r.Profile.Validate(r.Runtime); err != nil || (r.Profile.Normalized() != api.ExecutionProfileStandard && r.Version != ProfileVersion) {
+		return fmt.Errorf("%w: profile requires compatible runtime and protocol v3", ErrInvalidRequest)
 	}
 	if err := api.ValidateExecutionOutputFiles(r.OutputFiles); err != nil {
 		return fmt.Errorf("%w: invalid output files", ErrInvalidRequest)

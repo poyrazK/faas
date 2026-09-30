@@ -28,6 +28,7 @@ const (
 func cmdRun(args []string) int {
 	fs := newFlagSet("run", flag.ContinueOnError)
 	runtimeName := fs.String("runtime", string(api.ExecutionRuntimeNode22), "isolated runtime (node22|node24|python312|python313)")
+	profile := fs.String("profile", string(api.ExecutionProfileStandard), "dependency profile (standard|python-data-v1; data requires python313)")
 	source := fs.String("source", "", "source code (use --file for a local file)")
 	file := fs.String("file", "", "read source from a local regular file")
 	dir := fs.String("dir", "", "read a bounded ephemeral source bundle from a local directory")
@@ -85,6 +86,7 @@ func cmdRun(args []string) int {
 		return printErr("Invalid input", err)
 	}
 	req := api.CreateExecutionRequest{
+		Profile: api.ExecutionProfile(*profile),
 		Runtime: api.ExecutionRuntime(*runtimeName), Source: string(sourceBytes),
 		Entrypoint: *entrypoint, Files: files, Input: inputBytes, OutputFiles: outputFiles,
 		Limits: &api.ExecutionLimitRequest{

@@ -47,32 +47,34 @@ type ExecutionEventStore interface {
 // one-shot execution. Source and input deliberately live in ExecutionClaim
 // only, after a scheduler has acquired the row's lease.
 type Execution struct {
-	ID              string
-	AccountID       string
-	Runtime         api.ExecutionRuntime
-	Status          api.ExecutionStatus
-	NetworkMode     api.ExecutionNetworkMode
-	Limits          api.ResolvedExecutionLimits
-	SourceBytes     int
-	InputBytes      int
-	DeadlineAt      time.Time
-	LeaseToken      *string
-	LeaseOwner      *string
-	LeaseExpiresAt  *time.Time
-	CancelRequested *time.Time
-	Artifacts       []api.ExecutionArtifact
-	Result          json.RawMessage
-	Stdout          string
-	Stderr          string
-	OutputTruncated bool
-	ExitCode        *int
-	FailureCode     *string
-	FailureMessage  *string
-	Usage           api.ExecutionUsage
-	StartedAt       *time.Time
-	FinishedAt      *time.Time
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	Profile            api.ExecutionProfile
+	RuntimeImageDigest string
+	ID                 string
+	AccountID          string
+	Runtime            api.ExecutionRuntime
+	Status             api.ExecutionStatus
+	NetworkMode        api.ExecutionNetworkMode
+	Limits             api.ResolvedExecutionLimits
+	SourceBytes        int
+	InputBytes         int
+	DeadlineAt         time.Time
+	LeaseToken         *string
+	LeaseOwner         *string
+	LeaseExpiresAt     *time.Time
+	CancelRequested    *time.Time
+	Artifacts          []api.ExecutionArtifact
+	Result             json.RawMessage
+	Stdout             string
+	Stderr             string
+	OutputTruncated    bool
+	ExitCode           *int
+	FailureCode        *string
+	FailureMessage     *string
+	Usage              api.ExecutionUsage
+	StartedAt          *time.Time
+	FinishedAt         *time.Time
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 // ExecutionClaim is returned only to the schedd claim path. The encrypted
@@ -203,6 +205,7 @@ func (e *ExecutionQuotaError) Is(target error) bool {
 }
 
 var (
+	ErrExecutionRuntimeUnpinned = errors.New("state: execution runtime is not pinned")
 	ErrExecutionQuotaExceeded   = errors.New("state: execution concurrency exceeded")
 	ErrExecutionsNotAllowed     = errors.New("state: executions are not allowed for account plan")
 	ErrExecutionLeaseLost       = errors.New("state: execution lease lost")
@@ -226,6 +229,9 @@ type ExecutionStore interface {
 }
 
 func validateCreateExecution(params CreateExecutionParams) error {
+	if err := params.Request.Profile.Validate(params.Request.Runtime); err != nil {
+		return fmt.Errorf("%w: %w", ErrExecutionInvalid, err)
+	}
 	if params.AccountID == "" {
 		return fmt.Errorf("%w: account id is required", ErrExecutionInvalid)
 	}

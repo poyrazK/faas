@@ -18,6 +18,13 @@ import (
 // an ephemeral scratch filesystem for the lifetime of the run only.
 type ExecutionRuntime string
 
+type ExecutionProfile string
+
+const (
+	ExecutionProfileStandard     ExecutionProfile = "standard"
+	ExecutionProfilePythonDataV1 ExecutionProfile = "python-data-v1"
+)
+
 const (
 	ExecutionRuntimeNode22    ExecutionRuntime = "node22"
 	ExecutionRuntimeNode24    ExecutionRuntime = "node24"
@@ -64,6 +71,7 @@ type ExecutionArtifact struct {
 // Set either Source or Entrypoint + Files; source and input are never echoed
 // by the execution read APIs.
 type CreateExecutionRequest struct {
+	Profile     ExecutionProfile        `json:"profile,omitempty"`
 	Runtime     ExecutionRuntime        `json:"runtime"`
 	Source      string                  `json:"source,omitempty"`
 	Entrypoint  string                  `json:"entrypoint,omitempty"`
@@ -126,21 +134,24 @@ func (s ExecutionStatus) Terminal() bool {
 // are intentionally absent. A terminal receipt is persisted only after the
 // disposable VM has been destroyed.
 type ExecutionResponse struct {
-	ID              string                  `json:"id"`
-	Status          ExecutionStatus         `json:"status"`
-	Runtime         ExecutionRuntime        `json:"runtime"`
-	Limits          ResolvedExecutionLimits `json:"limits"`
-	Artifacts       []ExecutionArtifact     `json:"artifacts,omitempty"`
-	Result          json.RawMessage         `json:"result,omitempty"`
-	Stdout          string                  `json:"stdout,omitempty"`
-	Stderr          string                  `json:"stderr,omitempty"`
-	OutputTruncated bool                    `json:"output_truncated"`
-	ExitCode        *int                    `json:"exit_code,omitempty"`
-	Usage           *ExecutionUsage         `json:"usage,omitempty"`
-	Failure         *ExecutionFailure       `json:"failure,omitempty"`
-	CreatedAt       string                  `json:"created_at"`
-	StartedAt       *string                 `json:"started_at,omitempty"`
-	FinishedAt      *string                 `json:"finished_at,omitempty"`
+	Profile            ExecutionProfile        `json:"profile"`
+	RuntimeImageDigest string                  `json:"runtime_image_digest,omitempty"`
+	Packages           map[string]string       `json:"packages,omitempty"`
+	ID                 string                  `json:"id"`
+	Status             ExecutionStatus         `json:"status"`
+	Runtime            ExecutionRuntime        `json:"runtime"`
+	Limits             ResolvedExecutionLimits `json:"limits"`
+	Artifacts          []ExecutionArtifact     `json:"artifacts,omitempty"`
+	Result             json.RawMessage         `json:"result,omitempty"`
+	Stdout             string                  `json:"stdout,omitempty"`
+	Stderr             string                  `json:"stderr,omitempty"`
+	OutputTruncated    bool                    `json:"output_truncated"`
+	ExitCode           *int                    `json:"exit_code,omitempty"`
+	Usage              *ExecutionUsage         `json:"usage,omitempty"`
+	Failure            *ExecutionFailure       `json:"failure,omitempty"`
+	CreatedAt          string                  `json:"created_at"`
+	StartedAt          *string                 `json:"started_at,omitempty"`
+	FinishedAt         *string                 `json:"finished_at,omitempty"`
 }
 
 // ExecutionListResponse is one account-scoped page of execution receipts.
