@@ -48,7 +48,7 @@ func cmdFlags(args []string) int {
 	case "inspect":
 		valid = *key != ""
 	case "requests":
-		valid = *key != "" && !(*variant != "" && *value != "")
+		valid = *key != "" && (*variant == "" || *value == "")
 	case "rollback":
 		valid = *version > 0 && *expected >= 0
 	}
