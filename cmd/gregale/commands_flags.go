@@ -23,10 +23,12 @@ func cmdFlags(args []string) int {
 	file := fs.String("file", "", "JSON update with expected_version and config")
 	key := fs.String("key", "", "flag key")
 	customer := fs.String("customer-id", "", "verified platform customer UUID")
+	fallbackVariant := fs.String("fallback-variant", "", "named-variant fallback for inspect")
 	version := fs.Int64("version", 0, "historical version for inspect or rollback")
 	expected := fs.Int64("expected-version", -1, "current version required for rollback")
 	before := fs.Int64("before-version", 0, "history pagination boundary")
 	value := fs.String("value", "", "filter requests by true or false")
+	variant := fs.String("variant", "", "filter variant request evidence by key")
 	used := fs.String("used", "", "filter requests by true or false exposure")
 	since := fs.String("since", "24h", "request evidence lookback")
 	cursor := fs.String("cursor", "", "request evidence next-page cursor")
@@ -43,8 +45,10 @@ func cmdFlags(args []string) int {
 		valid = true
 	case "apply":
 		valid = *file != ""
-	case "inspect", "requests":
+	case "inspect":
 		valid = *key != ""
+	case "requests":
+		valid = *key != "" && !(*variant != "" && *value != "")
 	case "rollback":
 		valid = *version > 0 && *expected >= 0
 	}
@@ -70,11 +74,11 @@ func cmdFlags(args []string) int {
 			out, err = client.PublishProjectFlags(ctx, *project, *environment, raw)
 		}
 	case "inspect":
-		out, err = client.InspectProjectFlag(ctx, *project, *environment, *key, *customer, *version)
+		out, err = client.InspectProjectFlag(ctx, *project, *environment, *key, *customer, *version, *fallbackVariant)
 	case "rollback":
 		out, err = client.RollbackProjectFlags(ctx, *project, *environment, *expected, *version)
 	case "requests":
-		out, err = client.ProjectFlagRequests(ctx, *project, *environment, *key, url.Values{"customer_id": {*customer}, "value": {*value}, "used": {*used}, "since": {*since}, "cursor": {*cursor}})
+		out, err = client.ProjectFlagRequests(ctx, *project, *environment, *key, url.Values{"customer_id": {*customer}, "value": {*value}, "variant": {*variant}, "used": {*used}, "since": {*since}, "cursor": {*cursor}})
 	}
 	if err != nil {
 		return printErr("Flags operation failed", err)

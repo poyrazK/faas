@@ -398,6 +398,7 @@ export type { FlagEvidence } from './FlagEvidence.js';
 export type { FlagEvidencePage } from './FlagEvidencePage.js';
 export type { FlagRequestEvidence } from './FlagRequestEvidence.js';
 export type { FlagRule } from './FlagRule.js';
+export type { FlagVariant } from './FlagVariant.js';
 export type { FlagsBundle } from './FlagsBundle.js';
 export type { FlagsConfig } from './FlagsConfig.js';
 export type { FlagsEnvironment } from './FlagsEnvironment.js';

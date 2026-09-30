@@ -20,6 +20,8 @@ class InspectFeatureFlagRequest:
     version: int | Unset = UNSET
     """Zero or omitted selects current configuration."""
     fallback: bool | Unset = False
+    fallback_variant: str | Unset = UNSET
+    """Fallback variant for an absent flag; configured variant flags use their own default."""
 
     def to_dict(self) -> dict[str, Any]:
         customer_id: str | Unset = UNSET
@@ -30,6 +32,8 @@ class InspectFeatureFlagRequest:
 
         fallback = self.fallback
 
+        fallback_variant = self.fallback_variant
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update({})
@@ -39,6 +43,8 @@ class InspectFeatureFlagRequest:
             field_dict["version"] = version
         if fallback is not UNSET:
             field_dict["fallback"] = fallback
+        if fallback_variant is not UNSET:
+            field_dict["fallback_variant"] = fallback_variant
 
         return field_dict
 
@@ -56,10 +62,13 @@ class InspectFeatureFlagRequest:
 
         fallback = d.pop("fallback", UNSET)
 
+        fallback_variant = d.pop("fallback_variant", UNSET)
+
         inspect_feature_flag_request = cls(
             customer_id=customer_id,
             version=version,
             fallback=fallback,
+            fallback_variant=fallback_variant,
         )
 
         return inspect_feature_flag_request

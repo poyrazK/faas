@@ -49,19 +49,25 @@ func CanonicalEvidence(raw []byte) (string, error) {
 	}
 	seen := map[string]bool{}
 	for _, r := range rows {
-		if !ValidKey(r.Flag) || seen[r.Flag] || r.ConfigVersion < 0 || r.ConfigVersion > api.FlagsMaxConfigVersion || r.RuleID != "" && !ValidKey(r.RuleID) || r.Bucket != nil && (*r.Bucket < 0 || *r.Bucket >= 10000) {
+		_, booleanValue := r.Value.(bool)
+		_, variantValue := r.Value.(string)
+		validType := (r.Type == "" || r.Type == "boolean") && booleanValue || r.Type == "variant" && variantValue
+		if !ValidKey(r.Flag) || seen[r.Flag] || r.ConfigVersion < 0 || r.ConfigVersion > api.FlagsMaxConfigVersion || r.RuleID != "" && !ValidKey(r.RuleID) || r.Bucket != nil && (*r.Bucket < 0 || *r.Bucket >= 10000) || r.RolloutBucket != nil && (*r.RolloutBucket < 0 || *r.RolloutBucket >= 10000) || !validType {
 			return "", fmt.Errorf("invalid flag evidence")
 		}
 		seen[r.Flag] = true
 		switch r.Reason {
-		case "flag_missing", "default", "disabled", "customer_missing", "rule_match", "configuration_stale":
+		case "flag_missing", "default", "disabled", "customer_missing", "rule_match", "configuration_stale", "type_mismatch":
 		default:
 			return "", fmt.Errorf("invalid flag decision reason")
 		}
 		if r.Source != "fallback" && r.Source != "configuration" {
 			return "", fmt.Errorf("invalid flag evidence source")
 		}
-		if r.Reason == "rule_match" && r.RuleID == "" || r.Reason != "rule_match" && (r.RuleID != "" || r.Bucket != nil) {
+		if (r.Reason == "flag_missing" || r.Reason == "configuration_stale" || r.Reason == "type_mismatch") != (r.Source == "fallback") {
+			return "", fmt.Errorf("flag evidence source does not match its decision reason")
+		}
+		if r.Reason == "rule_match" && r.RuleID == "" || r.Reason != "rule_match" && (r.RuleID != "" || r.Bucket != nil || r.RolloutBucket != nil) {
 			return "", fmt.Errorf("invalid flag rule evidence")
 		}
 	}

@@ -23,6 +23,7 @@ func TestFeatureFlagsSpecContracts(t *testing.T) {
 	}
 	for name, value := range map[string]any{
 		"FlagRule": flags.Rule{}, "FeatureFlag": flags.Flag{}, "FlagsConfig": flags.Config{},
+		"FlagVariant": flags.FlagVariant{},
 		"FlagsBundle": flags.Bundle{}, "FeatureFlagVersion": state.FeatureFlagVersion{},
 		"FlagDecision": flags.Decision{}, "FlagEvidence": flags.Evidence{},
 		"UpdateFeatureFlagsRequest":   updateFeatureFlagsRequest{},

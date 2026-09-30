@@ -15,5 +15,9 @@ export type InspectFeatureFlagRequest = {
    */
   version?: number;
   fallback?: boolean;
+  /**
+   * Fallback variant for an absent flag; configured variant flags use their own default.
+   */
+  fallback_variant?: string;
 };
 

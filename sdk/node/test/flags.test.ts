@@ -1,12 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { evaluateFlag, flagBucket, GregaleFlags, type FlagsBundle } from '../src/flags.js';
+import { evaluateFlag, evaluateVariant, flagBucket, flagVariantBucket, GregaleFlags, type FlagsBundle } from '../src/flags.js';
 const customer = '00000000-0000-0000-0000-000000000001';
 const bundle = (): FlagsBundle => ({environment_id: customer, version: 1, groups: { internal: [customer] }, flags: [{key: 'export', enabled: true, default: false, seed: 'seed', rules: [{id: 'selected', group: 'internal', value: true}]}]});
 test('cross-language allocation vectors', () => {
  const vectors = JSON.parse(readFileSync(new URL('../../../../pkg/flags/testdata/allocation.json',import.meta.url),'utf8')) as {seed:string;key:string;customer:string;bucket:number}[];
  for (const v of vectors) assert.equal(flagBucket(v.seed,v.key,v.customer),v.bucket);
+});
+test('cross-language variant allocation vectors', () => {
+ const vectors = JSON.parse(readFileSync(new URL('../../../../pkg/flags/testdata/variant_allocation.json',import.meta.url),'utf8')) as {seed:string;key:string;customer:string;bucket:number}[];
+ for (const v of vectors) assert.equal(flagVariantBucket(v.seed,v.key,v.customer),v.bucket);
+});
+const variants = (): FlagsBundle => ({environment_id:customer,version:5,groups:{},flags:[{key:'checkout',type:'variant',enabled:true,default:'control',seed:'stable',variants:[{key:'control',weight:5000},{key:'treatment',weight:5000}],rules:[{id:'eligible',rollout:10000}]}]});
+test('weighted variants are sticky, explainable, and independently rollout-gated', () => {
+ const first = evaluateVariant(variants(),'checkout',customer,'fallback');
+ assert.equal(first.type,'variant');assert.equal(first.value,evaluateVariant(variants(),'checkout',customer,'fallback').value);
+ assert.equal(first.bucket,flagVariantBucket('stable','checkout',customer));assert.equal(first.rule_id,'eligible');
+ const mismatched = evaluateFlag(variants(),'checkout',customer,false);assert.equal(mismatched.reason,'type_mismatch');assert.equal(mismatched.value,false);
+ const targeted = variants();targeted.flags[0] = {key:'checkout',type:'variant',enabled:true,default:'control',seed:'stable',variants:[{key:'control',weight:5000},{key:'treatment',weight:5000}],rules:[{id:'selected',customers:[customer],value:'treatment'}]};
+ assert.equal(evaluateVariant(targeted,'checkout',customer,'fallback').value,'treatment');
 });
 test('targeting defaults and first-match explanation', () => {
  assert.equal(evaluateFlag(bundle(),'export',customer,false).rule_id,'selected');
@@ -34,6 +47,17 @@ test('request snapshots, explicit exposure, and restore freshness', async () => 
  unavailable=true;now=240_000;
  await flags.runRequest({'X-Faas-Platform-Tenant-Id':customer},()=>assert.equal(flags.boolean('export',false).reason,'configuration_stale'));
  assert.ok(calls>=7);flags.close();
+});
+test('request-scoped variant decisions are included in application evidence', async () => {
+ const flags = new GregaleFlags({apiURL:'https://api.example.com',identityEndpoint:'http://127.0.0.1/token',fetch:async input=>new Response(JSON.stringify(String(input).includes('127.0.0.1')?{access_token:'token'}:variants()))});
+ await flags.refresh();
+ await flags.runRequest({'X-Faas-Platform-Tenant-Id':customer},()=>{
+  const decision = flags.variant('checkout','fallback');
+  assert.equal(decision.type,'variant');assert.ok(['control','treatment'].includes(decision.value));
+  flags.used('checkout');
+  assert.deepEqual(flags.evidence()[0],{...decision,used:true});
+ });
+ flags.close();
 });
 test('concurrent request contexts do not share customer decisions', async () => {
  const flags = new GregaleFlags({apiURL:'https://api.example.com',identityEndpoint:'http://127.0.0.1/token',fetch:async input=>new Response(JSON.stringify(String(input).includes('127.0.0.1')?{access_token:'token'}:bundle()))});

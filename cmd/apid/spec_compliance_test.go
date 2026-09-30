@@ -521,7 +521,7 @@ var schemaSpecOnly = map[string]bool{
 	// DTOs in handlers_feature_flags.go and handlers_feature_flag_evidence.go.
 	// TestFeatureFlagsSpecContracts checks these actual encoded shapes,
 	// including their flattened embedded fields, against the OpenAPI schemas.
-	"FlagRule": true, "FeatureFlag": true, "FlagsConfig": true,
+	"FlagRule": true, "FlagVariant": true, "FeatureFlag": true, "FlagsConfig": true,
 	"FlagsBundle": true, "FeatureFlagVersion": true,
 	"FlagDecision": true, "FlagEvidence": true,
 	"UpdateFeatureFlagsRequest": true, "RollbackFeatureFlagsRequest": true,

@@ -61,6 +61,13 @@ func flagEvidenceQuery(r *http.Request, scope state.FeatureFlagScope, retention 
 			filter[k] = v
 		}
 	}
+	if raw := r.URL.Query().Get("variant"); raw != "" {
+		if !flags.ValidKey(raw) || r.URL.Query().Get("value") != "" {
+			return sqlc.ListFeatureFlagRequestEvidenceParams{}, featureFlagEvidenceCursor{}, state.ErrInvalidArgument
+		}
+		filter["type"] = "variant"
+		filter["value"] = raw
+	}
 	raw, _ := json.Marshal([]any{filter})
 	now := time.Now().UTC()
 	lookback := 24 * time.Hour

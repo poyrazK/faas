@@ -34,9 +34,13 @@ func (c *Client) ProjectFlagVersions(ctx context.Context, project, environment s
 	err := c.do(ctx, http.MethodGet, p, nil, &out)
 	return out, err
 }
-func (c *Client) InspectProjectFlag(ctx context.Context, project, environment, key, customer string, version int64) (json.RawMessage, error) {
+func (c *Client) InspectProjectFlag(ctx context.Context, project, environment, key, customer string, version int64, fallbackVariants ...string) (json.RawMessage, error) {
 	var out json.RawMessage
-	err := c.do(ctx, http.MethodPost, flagsPath(project, environment)+"/"+url.PathEscape(key)+"/inspect", map[string]any{"customer_id": customer, "version": version, "fallback": false}, &out)
+	var fallbackVariant string
+	if len(fallbackVariants) > 0 {
+		fallbackVariant = fallbackVariants[0]
+	}
+	err := c.do(ctx, http.MethodPost, flagsPath(project, environment)+"/"+url.PathEscape(key)+"/inspect", map[string]any{"customer_id": customer, "version": version, "fallback": false, "fallback_variant": fallbackVariant}, &out)
 	return out, err
 }
 func (c *Client) RollbackProjectFlags(ctx context.Context, project, environment string, expected, version int64) (json.RawMessage, error) {
