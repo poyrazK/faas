@@ -28,6 +28,8 @@ const (
 	// envelope. The frame header itself stays compatible with the existing
 	// Firecracker vsock framing used by vmmd.
 	Version uint16 = 1
+	// ArtifactVersion fails closed on old vmmd/guest binaries. Legacy runs use v1.
+	ArtifactVersion uint16 = 2
 
 	// VsockPort is the guest listener reserved for one-shot executions. It is
 	// intentionally distinct from resume (1024), characterization/job exit
@@ -83,6 +85,7 @@ type Request struct {
 	Source      string                   `json:"source,omitempty"`
 	Entrypoint  string                   `json:"entrypoint,omitempty"`
 	Files       []api.ExecutionFile      `json:"files,omitempty"`
+	OutputFiles []string                 `json:"output_files,omitempty"`
 	Input       json.RawMessage          `json:"input"`
 	TimeoutMS   int                      `json:"timeout_ms"`
 	MaxOutput   int                      `json:"max_output_bytes"`
@@ -93,15 +96,16 @@ type Request struct {
 // separate stream frames and are populated by Client.Execute after the final
 // result frame arrives.
 type Result struct {
-	Status          api.ExecutionStatus `json:"status"`
-	Result          json.RawMessage     `json:"result,omitempty"`
-	OutputTruncated bool                `json:"output_truncated"`
-	ExitCode        *int                `json:"exit_code,omitempty"`
-	FailureCode     string              `json:"failure_code,omitempty"`
-	FailureMessage  string              `json:"failure_message,omitempty"`
-	Usage           api.ExecutionUsage  `json:"usage,omitempty"`
-	Stdout          []byte              `json:"-"`
-	Stderr          []byte              `json:"-"`
+	Status          api.ExecutionStatus     `json:"status"`
+	Artifacts       []api.ExecutionArtifact `json:"artifacts,omitempty"`
+	Result          json.RawMessage         `json:"result,omitempty"`
+	OutputTruncated bool                    `json:"output_truncated"`
+	ExitCode        *int                    `json:"exit_code,omitempty"`
+	FailureCode     string                  `json:"failure_code,omitempty"`
+	FailureMessage  string                  `json:"failure_message,omitempty"`
+	Usage           api.ExecutionUsage      `json:"usage,omitempty"`
+	Stdout          []byte                  `json:"-"`
+	Stderr          []byte                  `json:"-"`
 }
 
 // OutputReceiver observes one bounded stdout/stderr frame as it arrives from
@@ -121,13 +125,18 @@ func RequestFromResolvedExecution(id string, req api.ResolvedExecutionRequest) R
 	if networkMode == "" {
 		networkMode = api.ExecutionNetworkNone
 	}
+	version := Version
+	if len(req.OutputFiles) != 0 {
+		version = ArtifactVersion
+	}
 	return Request{
-		Version:     Version,
+		Version:     version,
 		ExecutionID: id,
 		Runtime:     req.Runtime,
 		Source:      req.Source,
 		Entrypoint:  req.Entrypoint,
 		Files:       cloneExecutionFiles(req.Files),
+		OutputFiles: append([]string(nil), req.OutputFiles...),
 		Input:       input,
 		TimeoutMS:   req.Limits.TimeoutMS,
 		MaxOutput:   req.Limits.MaxOutputBytes,
@@ -148,8 +157,14 @@ type ErrorFrame struct {
 // called; these checks defend the guest boundary if a future caller bypasses
 // apid or a stale scheduler sends malformed state.
 func (r Request) Validate() error {
-	if r.Version != Version {
+	if r.Version != Version && r.Version != ArtifactVersion {
 		return fmt.Errorf("%w: unsupported version %d", ErrInvalidRequest, r.Version)
+	}
+	if len(r.OutputFiles) != 0 && r.Version != ArtifactVersion {
+		return fmt.Errorf("%w: artifacts require version 2", ErrInvalidRequest)
+	}
+	if err := api.ValidateExecutionOutputFiles(r.OutputFiles); err != nil {
+		return fmt.Errorf("%w: invalid output files", ErrInvalidRequest)
 	}
 	if strings.TrimSpace(r.ExecutionID) == "" || len(r.ExecutionID) > MaxExecutionIDBytes {
 		return fmt.Errorf("%w: execution_id is empty or too long", ErrInvalidRequest)
@@ -207,7 +222,13 @@ func (r Result) Validate(maxOutput int) error {
 	if len(r.FailureMessage) > MaxFailureMessageBytes {
 		return fmt.Errorf("%w: failure message too long", ErrInvalidResult)
 	}
-	if maxOutput < 0 || len(r.Result)+len(r.Stdout)+len(r.Stderr) > maxOutput {
+	if err := api.ValidateExecutionArtifacts(r.Artifacts); err != nil {
+		return fmt.Errorf("%w: invalid artifacts", ErrInvalidResult)
+	}
+	if r.Status != api.ExecutionStatusSucceeded && len(r.Artifacts) != 0 {
+		return fmt.Errorf("%w: failed execution has artifacts", ErrInvalidResult)
+	}
+	if maxOutput < 0 || len(r.Result)+len(r.Stdout)+len(r.Stderr)+api.ExecutionArtifactsOutputBytes(r.Artifacts) > maxOutput {
 		return fmt.Errorf("%w: combined output exceeds limit", ErrOutputLimitExceeded)
 	}
 	return nil
@@ -304,6 +325,9 @@ func (c *Client) ExecuteWithOutput(ctx context.Context, req Request, receive Out
 			}
 			if err := out.Validate(req.MaxOutput); err != nil {
 				return zero, err
+			}
+			if out.Status == api.ExecutionStatusSucceeded && !api.ExecutionArtifactsMatch(req.OutputFiles, out.Artifacts) {
+				return zero, fmt.Errorf("%w: artifact selection mismatch", ErrInvalidResult)
 			}
 			return out, nil
 		case FrameError:

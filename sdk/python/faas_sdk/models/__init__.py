@@ -743,6 +743,7 @@ from .event_subscription_list_response import EventSubscriptionListResponse
 from .event_subscription_response import EventSubscriptionResponse
 from .event_subscription_response_filter import EventSubscriptionResponseFilter
 from .event_subscription_response_work_action import EventSubscriptionResponseWorkAction
+from .execution_artifact import ExecutionArtifact
 from .execution_failure import ExecutionFailure
 from .execution_file import ExecutionFile
 from .execution_limit_request import ExecutionLimitRequest
@@ -2673,6 +2674,7 @@ __all__ = (
     "EventSubscriptionResponse",
     "EventSubscriptionResponseFilter",
     "EventSubscriptionResponseWorkAction",
+    "ExecutionArtifact",
     "ExecutionFailure",
     "ExecutionFile",
     "ExecutionLimitRequest",

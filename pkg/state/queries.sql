@@ -4321,6 +4321,7 @@ SET status = sqlc.arg(terminal_status),
     lease_expires_at = NULL,
     result = NULLIF(sqlc.arg(result_json)::text, '')::jsonb,
     result_bytes = sqlc.arg(result_bytes),
+    artifacts = sqlc.arg(artifacts),
     stdout = sqlc.arg(stdout),
     stderr = sqlc.arg(stderr),
     output_truncated = sqlc.arg(output_truncated),
@@ -4469,7 +4470,7 @@ INSERT INTO execution_usage_ledger (
 )
 SELECT id, account_id, runtime, status, wall_time_ms, cpu_time_ms,
        peak_memory_mb,
-       (result_bytes + octet_length(stdout) + octet_length(stderr))::bigint,
+       (result_bytes + octet_length(stdout) + octet_length(stderr) + octet_length(artifacts))::bigint,
        started_at, finished_at, created_at
 FROM executions
 WHERE id = sqlc.arg(execution_id)

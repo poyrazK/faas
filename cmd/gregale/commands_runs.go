@@ -31,13 +31,16 @@ func cmdRun(args []string) int {
 	source := fs.String("source", "", "source code (use --file for a local file)")
 	file := fs.String("file", "", "read source from a local regular file")
 	dir := fs.String("dir", "", "read a bounded ephemeral source bundle from a local directory")
+	var outputFiles executionOutputFileFlags
+	fs.Var(&outputFiles, "output-file", "file below context.output_dir to export (repeatable)")
+	outputDir := fs.String("output-dir", "", "save exported artifacts locally; implies --wait")
 	entrypoint := fs.String("entrypoint", "", "normalized bundle path to execute (required with --dir)")
 	input := fs.String("input", "", "JSON input (inline | @file | - for stdin)")
 	timeoutMS := fs.Int("timeout-ms", 0, "maximum execution time in milliseconds")
 	memoryMB := fs.Int("memory-mb", 0, "memory limit in MB")
 	cpuMillicores := fs.Int("cpu-millicores", 0, "CPU limit in millicores")
 	diskMB := fs.Int("ephemeral-disk-mb", 0, "ephemeral scratch size in MB")
-	maxOutputBytes := fs.Int("max-output-bytes", 0, "combined stdout/stderr/result cap")
+	maxOutputBytes := fs.Int("max-output-bytes", 0, "combined stdout/stderr/result/artifacts cap")
 	wait := fs.Bool("wait", false, "wait for the terminal result")
 	watch := fs.Bool("watch", false, "stream live output while waiting for the terminal result")
 	pollInterval := fs.Duration("poll-interval", executionPollIntervalDefault, "status polling interval when --wait is set")
@@ -45,6 +48,12 @@ func cmdRun(args []string) int {
 	flags, positional := splitArgsForFlags(args, "wait", "watch")
 	if err := fs.Parse(flags); err != nil {
 		return 1
+	}
+	if err := api.ValidateExecutionOutputFiles(outputFiles); err != nil {
+		return printErr("Invalid output files", err)
+	}
+	if *outputDir != "" {
+		*wait = true
 	}
 	legacyMode := *source != "" || *file != ""
 	bundleMode := *dir != ""
@@ -77,7 +86,7 @@ func cmdRun(args []string) int {
 	}
 	req := api.CreateExecutionRequest{
 		Runtime: api.ExecutionRuntime(*runtimeName), Source: string(sourceBytes),
-		Entrypoint: *entrypoint, Files: files, Input: inputBytes,
+		Entrypoint: *entrypoint, Files: files, Input: inputBytes, OutputFiles: outputFiles,
 		Limits: &api.ExecutionLimitRequest{
 			TimeoutMS:       *timeoutMS,
 			MemoryMB:        *memoryMB,
@@ -126,6 +135,9 @@ func cmdRun(args []string) int {
 			}
 			return printErr("Run watch failed", err)
 		}
+		if err := saveExecutionArtifacts(resp, *outputDir); err != nil {
+			return printErr("Could not save artifacts", err)
+		}
 		if jsonOutput {
 			if resp.Status != api.ExecutionStatusSucceeded {
 				return 1
@@ -145,6 +157,9 @@ func cmdRun(args []string) int {
 			return printErr("Run status failed", err)
 		}
 	}
+	if err := saveExecutionArtifacts(resp, *outputDir); err != nil {
+		return printErr("Could not save artifacts", err)
+	}
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))
 	}
@@ -153,20 +168,23 @@ func cmdRun(args []string) int {
 
 func cmdRuns(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(osStderr, "usage: gregale runs <list|get|status|cancel> [<id>]", "runs")
+		PrintUsage(osStderr, "usage: gregale runs <list|get|status|cancel|artifacts> [<id>]", "runs")
 		return 1
 	}
 	verb := args[0]
+	if verb == "artifacts" {
+		return cmdRunsArtifacts(args[1:])
+	}
 	if verb == "list" {
 		return cmdRunsList(args[1:])
 	}
 	if verb != "get" && verb != statusLiteral && verb != "cancel" {
-		PrintUsage(osStderr, "usage: gregale runs <list|get|status|cancel> [<id>]", "runs")
+		PrintUsage(osStderr, "usage: gregale runs <list|get|status|cancel|artifacts> [<id>]", "runs")
 		return 1
 	}
 	flags, positional := splitArgsForFlags(args[1:])
 	if len(flags) != 0 || len(positional) != 1 {
-		PrintUsage(osStderr, "usage: gregale runs <list|get|status|cancel> [<id>]", "runs")
+		PrintUsage(osStderr, "usage: gregale runs <list|get|status|cancel|artifacts> [<id>]", "runs")
 		return 1
 	}
 	client, err := authedClient()
@@ -289,6 +307,9 @@ func renderExecutionTerminal(resp api.ExecutionResponse) int {
 func renderExecutionTerminalSummary(resp api.ExecutionResponse) int {
 	if resp.Status == api.ExecutionStatusSucceeded {
 		PrintOK(osStdout, "Run %s succeeded.", resp.ID)
+		for _, artifact := range resp.Artifacts {
+			_, _ = fmt.Fprintf(osStdout, "Artifact %s (%d bytes, %s)\n", artifact.Name, artifact.SizeBytes, artifact.SHA256)
+		}
 	} else {
 		PrintFail(osStdout, "Run %s finished with status=%s.", resp.ID, resp.Status)
 	}

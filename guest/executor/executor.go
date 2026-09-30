@@ -92,6 +92,13 @@ func (e *Executor) Handle(ctx context.Context, req executionproto.Request, stdou
 	sourcePath := filepath.Join(workdir, sourceName)
 	inputPath := filepath.Join(workdir, "input.json")
 	resultPath := filepath.Join(workdir, "result.json")
+	// A separate scratch directory prevents source bundle paths from staging
+	// files into the selected output namespace before the interpreter runs.
+	outputDir, err := newWorkdir()
+	if err != nil {
+		return executionproto.Result{}, errors.New("execution output directory unavailable")
+	}
+	defer func() { _ = os.RemoveAll(outputDir) }()
 	if len(req.Files) != 0 {
 		if err := stageBundle(workdir, req.Entrypoint, req.Files); err != nil {
 			return executionproto.Result{}, errors.New("execution bundle staging failed")
@@ -114,7 +121,7 @@ func (e *Executor) Handle(ctx context.Context, req executionproto.Request, stdou
 	if maxResult > resultReserve {
 		maxResult -= resultReserve
 	}
-	args = append(args, sourcePath, inputPath, resultPath, req.ExecutionID, string(req.Runtime), fmt.Sprint(maxResult))
+	args = append(args, sourcePath, inputPath, resultPath, req.ExecutionID, string(req.Runtime), fmt.Sprint(maxResult), outputDir)
 	commandCtx, cancel := context.WithCancel(requestCtx)
 	defer cancel()
 	cmd := e.build(commandCtx, interpreter, args...)
@@ -143,6 +150,7 @@ func (e *Executor) Handle(ctx context.Context, req executionproto.Request, stdou
 		}
 	}()
 	runErr := cmd.Wait()
+	terminateProcess(cmd) // stop remaining process-group descendants before collection
 	close(processDone)
 	<-processStopped
 
@@ -173,10 +181,21 @@ func (e *Executor) Handle(ctx context.Context, req executionproto.Request, stdou
 	if len(result)+budget.Used() > req.MaxOutput {
 		return failedResultWithUsage(started, e.now(), "output_limit", true, budget.Used()), nil
 	}
+	artifacts, err := collectArtifacts(requestCtx, outputDir, req.OutputFiles, req.MaxOutput-len(result)-budget.Used())
+	if err != nil {
+		if requestCtx.Err() != nil {
+			return executionproto.Result{}, requestCtx.Err()
+		}
+		if errors.Is(err, executionproto.ErrOutputLimitExceeded) {
+			return failedResultWithUsage(started, e.now(), "output_limit", true, budget.Used()), nil
+		}
+		return failedResultWithUsage(started, e.now(), "artifact_invalid", false, budget.Used()), nil
+	}
 	return executionproto.Result{
-		Status: api.ExecutionStatusSucceeded,
-		Result: result,
-		Usage:  api.ExecutionUsage{WallTimeMS: elapsedMS(started, e.now())},
+		Artifacts: artifacts,
+		Status:    api.ExecutionStatusSucceeded,
+		Result:    result,
+		Usage:     api.ExecutionUsage{WallTimeMS: elapsedMS(started, e.now())},
 	}, nil
 }
 
@@ -375,12 +394,12 @@ func (w *budgetWriter) Write(p []byte) (int, error) {
 const nodeWrapper = `
 import fs from "node:fs";
 import { pathToFileURL } from "node:url";
-const [sourcePath, inputPath, resultPath, executionID, runtime, maxBytes] = process.argv.slice(1);
+const [sourcePath, inputPath, resultPath, executionID, runtime, maxBytes, outputDir] = process.argv.slice(1);
 const moduleURL = pathToFileURL(sourcePath).href + "?execution=" + encodeURIComponent(executionID);
 const loaded = await import(moduleURL);
 if (typeof loaded.default !== "function") throw new Error("default export must be a function");
 const input = JSON.parse(fs.readFileSync(inputPath, "utf8"));
-const context = Object.freeze({ execution_id: executionID, runtime });
+const context = Object.freeze({ execution_id: executionID, runtime, output_dir: outputDir });
 let value = await loaded.default(input, context);
 if (value === undefined) value = null;
 const encoded = JSON.stringify(value);
@@ -391,7 +410,7 @@ fs.writeFileSync(resultPath, encoded, { encoding: "utf8", mode: 0o600 });
 
 const pythonWrapper = `
 import asyncio, importlib.util, inspect, json, os, sys
-source_path, input_path, result_path, execution_id, runtime, max_bytes = sys.argv[1:]
+source_path, input_path, result_path, execution_id, runtime, max_bytes, output_dir = sys.argv[1:]
 sys.path.insert(0, os.path.dirname(source_path))
 spec = importlib.util.spec_from_file_location("faas_execution", source_path)
 module = importlib.util.module_from_spec(spec)
@@ -399,7 +418,7 @@ spec.loader.exec_module(module)
 handler = getattr(module, "main", None)
 if not callable(handler): raise RuntimeError("main must be callable")
 with open(input_path, encoding="utf-8") as input_file:
-    value = handler(json.load(input_file), {"execution_id": execution_id, "runtime": runtime})
+    value = handler(json.load(input_file), {"execution_id": execution_id, "runtime": runtime, "output_dir": output_dir})
 if inspect.isawaitable(value): value = asyncio.run(value)
 encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
 encoded_bytes = encoded.encode("utf-8")

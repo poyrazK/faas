@@ -13,6 +13,7 @@ from ..models.execution_response_status import ExecutionResponseStatus, check_ex
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.execution_artifact import ExecutionArtifact
     from ..models.execution_failure import ExecutionFailure
     from ..models.execution_usage import ExecutionUsage
     from ..models.resolved_execution_limits import ResolvedExecutionLimits
@@ -36,6 +37,8 @@ class ExecutionResponse:
     """Immutable limits admitted and enforced for one execution."""
     output_truncated: bool
     created_at: datetime.datetime
+    artifacts: list[ExecutionArtifact] | Unset = UNSET
+    """Selected output files, present only after successful execution and VM teardown."""
     result: Any | Unset = UNSET
     """Terminal JSON result"""
     stdout: str | Unset = UNSET
@@ -62,6 +65,13 @@ class ExecutionResponse:
         output_truncated = self.output_truncated
 
         created_at = self.created_at.isoformat()
+
+        artifacts: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.artifacts, Unset):
+            artifacts = []
+            for artifacts_item_data in self.artifacts:
+                artifacts_item = artifacts_item_data.to_dict()
+                artifacts.append(artifacts_item)
 
         result = self.result
 
@@ -119,6 +129,8 @@ class ExecutionResponse:
                 "created_at": created_at,
             }
         )
+        if artifacts is not UNSET:
+            field_dict["artifacts"] = artifacts
         if result is not UNSET:
             field_dict["result"] = result
         if stdout is not UNSET:
@@ -140,6 +152,7 @@ class ExecutionResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.execution_artifact import ExecutionArtifact
         from ..models.execution_failure import ExecutionFailure
         from ..models.execution_usage import ExecutionUsage
         from ..models.resolved_execution_limits import ResolvedExecutionLimits
@@ -156,6 +169,15 @@ class ExecutionResponse:
         output_truncated = d.pop("output_truncated")
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
+        _artifacts = d.pop("artifacts", UNSET)
+        artifacts: list[ExecutionArtifact] | Unset = UNSET
+        if _artifacts is not UNSET:
+            artifacts = []
+            for artifacts_item_data in _artifacts:
+                artifacts_item = ExecutionArtifact.from_dict(artifacts_item_data)
+
+                artifacts.append(artifacts_item)
 
         result = d.pop("result", UNSET)
 
@@ -247,6 +269,7 @@ class ExecutionResponse:
             limits=limits,
             output_truncated=output_truncated,
             created_at=created_at,
+            artifacts=artifacts,
             result=result,
             stdout=stdout,
             stderr=stderr,

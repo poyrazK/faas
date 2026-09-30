@@ -93,6 +93,7 @@ type ExecutionPayload struct {
 // placed in FailureMessage.
 type ExecutionOutcome struct {
 	Status          api.ExecutionStatus
+	Artifacts       []api.ExecutionArtifact
 	Result          json.RawMessage
 	Stdout          string
 	Stderr          string
@@ -612,7 +613,7 @@ func completionParams(claim state.ExecutionClaim, outcome ExecutionOutcome, fini
 	}
 	return state.CompleteExecutionParams{
 		ID: claim.ID, LeaseToken: *claim.LeaseToken, Status: outcome.Status,
-		Result: append(json.RawMessage(nil), outcome.Result...), Stdout: outcome.Stdout, Stderr: outcome.Stderr,
+		Artifacts: api.CloneExecutionArtifacts(outcome.Artifacts), Result: append(json.RawMessage(nil), outcome.Result...), Stdout: outcome.Stdout, Stderr: outcome.Stderr,
 		OutputTruncated: outcome.OutputTruncated, ExitCode: outcome.ExitCode,
 		FailureCode: failureCode, FailureMessage: failureMessage, Usage: outcome.Usage, FinishedAt: finishedAt,
 		OutputEventsPersisted: outcome.OutputEventsPersisted,
@@ -620,6 +621,9 @@ func completionParams(claim state.ExecutionClaim, outcome ExecutionOutcome, fini
 }
 
 func normalizeExecutionOutcome(outcome ExecutionOutcome, maxOutputBytes int) ExecutionOutcome {
+	if err := api.ValidateExecutionArtifacts(outcome.Artifacts); err != nil || (outcome.Status != api.ExecutionStatusSucceeded && len(outcome.Artifacts) != 0) {
+		return executionFailure("guest_protocol_error", "execution guest returned invalid artifacts")
+	}
 	validStatus := outcome.Status == api.ExecutionStatusSucceeded || outcome.Status == api.ExecutionStatusFailed ||
 		outcome.Status == api.ExecutionStatusTimedOut || outcome.Status == api.ExecutionStatusOutOfMemory
 	if !validStatus || (outcome.Status == api.ExecutionStatusSucceeded && len(outcome.Result) != 0 && !json.Valid(outcome.Result)) ||
@@ -628,7 +632,7 @@ func normalizeExecutionOutcome(outcome ExecutionOutcome, maxOutputBytes int) Exe
 		outcome.Usage.WallTimeMS < 0 || outcome.Usage.CPUTimeMS < 0 || outcome.Usage.PeakMemoryMB < 0 {
 		return executionFailure("guest_protocol_error", "execution guest returned an invalid result")
 	}
-	if len(outcome.Result)+len(outcome.Stdout)+len(outcome.Stderr) > maxOutputBytes {
+	if len(outcome.Result)+len(outcome.Stdout)+len(outcome.Stderr)+api.ExecutionArtifactsOutputBytes(outcome.Artifacts) > maxOutputBytes {
 		return executionFailure("output_limit_exceeded", "execution output exceeded the admitted byte limit")
 	}
 	if outcome.Status == api.ExecutionStatusSucceeded {
@@ -712,7 +716,7 @@ func (c *ExecutionCoordinator) recordExecutionTerminal(runtime api.ExecutionRunt
 		return
 	}
 	c.metrics.RecordExecutionTerminal(string(runtime), string(outcome.Status))
-	outputBytes := len(outcome.Result) + len(outcome.Stdout) + len(outcome.Stderr)
+	outputBytes := len(outcome.Result) + len(outcome.Stdout) + len(outcome.Stderr) + api.ExecutionArtifactsOutputBytes(outcome.Artifacts)
 	c.metrics.ObserveExecutionOutput(string(runtime), outputBytes)
 }
 

@@ -112,3 +112,55 @@ disabled, it verifies that admission fails closed with the documented 501
 problem. When enabled, it submits a bounded Node 24 run and polls its receipt
 until stdout contains the smoke marker. Set `GREGALE_API_URL` for a non-default
 origin and `FAAS_EXECUTION_SMOKE_TIMEOUT_SECONDS` to change the polling limit.
+
+## Export generated files
+
+Declare the exact files to export with `output_files` (API/SDK) or repeat
+`--output-file` on the CLI. Both runtimes expose `context.output_dir`: use
+`context.output_dir` in Node and `context["output_dir"]` in Python. It points to
+a fresh scratch directory for generated outputs, separate from staged inputs.
+
+For example, `tool.py`:
+
+```python
+import os
+
+def main(input, context):
+    with open(os.path.join(context["output_dir"], "data.csv"), "w") as output:
+        output.write("x,y\n1,2\n")
+    with open(os.path.join(context["output_dir"], "patch.diff"), "w") as output:
+        output.write("--- a/example\n+++ b/example\n")
+    return {"rows": 1}
+```
+
+```sh
+gregale run --runtime python313 --file tool.py \
+  --output-file data.csv --output-file patch.diff --output-dir ./results
+# --output-dir implies --wait; omit it to receive inline artifacts in JSON.
+gregale runs artifacts <execution-id> --output-dir ./results-again
+```
+
+Up to eight unique normalized relative paths, each at most 256 UTF-8 bytes,
+are allowed. No globs or automatic directory export occurs. Missing files,
+symlinks (including parent directories), directories, and special files fail
+the run with `artifact_invalid`; no partial artifact set is returned. Outputs
+are collected only on success, before scratch removal and VM teardown.
+
+The successful terminal receipt contains an optional `artifacts` array. Each
+entry has `name`, `size_bytes` (raw file size), `sha256` (`sha256:` plus lowercase
+hex), and `content` (base64). Result/stdout/stderr plus the compact JSON artifact
+array must fit `limits.max_output_bytes`; encoded content and all artifact
+metadata count toward the existing budget and usage output-byte total.
+Artifacts use the same account-scoped receipt storage and lifecycle as other
+terminal output. This feature retains neither a guest disk nor a guest session.
+
+The CLI verifies integrity before saving and refuses to overwrite local files.
+Node's `decodeExecutionArtifact(artifact)`, Python's
+`decode_execution_artifact(artifact)`, and Go's `artifact.Bytes()` return verified
+bytes without writing files. Use these helpers on artifacts from the final
+receipt returned by the existing submit-and-watch SDK methods.
+
+Exports require guest protocol v2 and rebuilt guest images/runtime snapshots.
+Legacy runs retain v1. Older nodes reject export requests; a missing export is
+never silently accepted as success. Native KVM isolation and leak checks must
+pass before enabling this release's export path.

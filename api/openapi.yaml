@@ -39892,6 +39892,12 @@ components:
           maxItems: 256
           items: { $ref: '#/components/schemas/ExecutionFile' }
           description: Regular files staged into the guest's ephemeral scratch filesystem.
+        output_files:
+          type: array
+          maxItems: 8
+          uniqueItems: true
+          items: { type: string, minLength: 1, maxLength: 256 }
+          description: Explicit normalized relative paths below context.output_dir to export on success. No globs. Missing, symlink, and special files fail the run.
         input:
           description: One complete JSON value delivered to the guest as input.
         limits:
@@ -39915,6 +39921,17 @@ components:
           format: byte
           description: File bytes, base64-encoded by JSON clients.
 
+    ExecutionArtifact:
+      description: An explicitly exported file. Its compact JSON metadata and base64 contents share the execution output budget.
+      type: object
+      required: [name, size_bytes, sha256, content]
+      additionalProperties: false
+      properties:
+        name: { type: string, minLength: 1, maxLength: 256 }
+        size_bytes: { type: integer, minimum: 0 }
+        sha256: { type: string, pattern: '^sha256:[a-f0-9]{64}$' }
+        content: { type: string, format: byte, description: "File bytes encoded as base64." }
+
     ExecutionLimitRequest:
       description: Caller-selected execution resource limits; zero selects the plan default.
       type: object
@@ -39924,7 +39941,7 @@ components:
         memory_mb: { type: integer, enum: [0, 128, 256, 512, 1024] }
         cpu_millicores: { type: integer, enum: [0, 250, 500, 1000] }
         ephemeral_disk_mb: { type: integer, enum: [0, 64, 128, 256, 512, 1024, 2048] }
-        max_output_bytes: { type: integer, minimum: 0, description: "Combined result/stdout/stderr cap; zero uses the plan default." }
+        max_output_bytes: { type: integer, minimum: 0, description: "Combined result/stdout/stderr/serialized-artifacts cap; zero uses the plan default." }
 
     ExecutionNetworkPolicy:
       description: Network policy for a disposable run; v1 is loopback-only.
@@ -39975,6 +39992,11 @@ components:
         status: { type: string, enum: [queued, restoring, running, succeeded, failed, timed_out, out_of_memory, cancelled] }
         runtime: { type: string, enum: [node22, node24, python312, python313] }
         limits: { $ref: '#/components/schemas/ResolvedExecutionLimits' }
+        artifacts:
+          type: array
+          maxItems: 8
+          items: { $ref: '#/components/schemas/ExecutionArtifact' }
+          description: Selected output files, present only after successful execution and VM teardown.
         result: { description: Terminal JSON result, omitted when unavailable. }
         stdout: { type: string }
         stderr: { type: string }

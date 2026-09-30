@@ -254,7 +254,7 @@ func (f *fakeVMM) MarkInstanceFrameworkReady(_ context.Context, _ string, _ int6
 
 // newClient stands up a vmmdgrpc.Server on bufconn and returns a sched.VMMClient
 // dialed to it.
-func newClient(t *testing.T, fake *fakeVMM) *sched.VMMClient {
+func newClient(t *testing.T, fake vmmdgrpc.VmmdAPI) *sched.VMMClient {
 	t.Helper()
 	srv := grpc.NewServer()
 	vmmdgrpc.New(fake, wire.NewOpsMetrics("sched_test"), "1.10.0", nil).Register(srv)

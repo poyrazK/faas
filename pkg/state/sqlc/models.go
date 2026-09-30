@@ -1660,6 +1660,7 @@ type Execution struct {
 	FinishedAt        pgtype.Timestamptz
 	CreatedAt         pgtype.Timestamptz
 	UpdatedAt         pgtype.Timestamptz
+	Artifacts         []byte
 }
 
 type ExecutionEvent struct {

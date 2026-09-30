@@ -83,7 +83,12 @@ func executionNullableTime(value interface{}) (*time.Time, error) {
 }
 
 func executionFromSQL(row sqlc.Execution) Execution {
+	var artifacts []api.ExecutionArtifact
+	if len(row.Artifacts) != 0 {
+		_ = json.Unmarshal(row.Artifacts, &artifacts)
+	}
 	return Execution{
+		Artifacts:   artifacts,
 		ID:          pgUUIDString(row.ID),
 		AccountID:   pgUUIDString(row.AccountID),
 		Runtime:     api.ExecutionRuntime(row.Runtime),
@@ -445,8 +450,12 @@ func (s *PgStore) CompleteExecution(ctx context.Context, params CompleteExecutio
 	if params.FailureMessage != nil {
 		failureMessage = *params.FailureMessage
 	}
+	artifacts := []byte{}
+	if len(params.Artifacts) != 0 {
+		artifacts, _ = json.Marshal(params.Artifacts)
+	}
 	row, err := q.ExecutionMarkTerminal(ctx, tx, sqlc.ExecutionMarkTerminalParams{
-		TerminalStatus: string(params.Status), ResultJson: string(params.Result), ResultBytes: int32(len(params.Result)),
+		Artifacts: artifacts, TerminalStatus: string(params.Status), ResultJson: string(params.Result), ResultBytes: int32(len(params.Result)),
 		Stdout: params.Stdout, Stderr: params.Stderr, OutputTruncated: params.OutputTruncated,
 		ExitCode: exitCode, FailureCode: failureCode, FailureMessage: failureMessage,
 		WallTimeMs: params.Usage.WallTimeMS, CpuTimeMs: params.Usage.CPUTimeMS,

@@ -36,6 +36,7 @@ type executionUsageLedgerRow struct {
 
 func cloneExecution(row Execution) Execution {
 	row.Result = append([]byte(nil), row.Result...)
+	row.Artifacts = api.CloneExecutionArtifacts(row.Artifacts)
 	if row.LeaseToken != nil {
 		value := *row.LeaseToken
 		row.LeaseToken = &value
@@ -365,6 +366,7 @@ func (m *MemStore) CompleteExecution(_ context.Context, params CompleteExecution
 	row.LeaseOwner = nil
 	row.LeaseExpiresAt = nil
 	row.Result = append([]byte(nil), params.Result...)
+	row.Artifacts = api.CloneExecutionArtifacts(params.Artifacts)
 	row.Stdout = params.Stdout
 	row.Stderr = params.Stderr
 	row.OutputTruncated = params.OutputTruncated
@@ -403,7 +405,7 @@ func (m *MemStore) recordExecutionUsageLocked(row Execution) {
 		WallTimeMS:   row.Usage.WallTimeMS,
 		CPUTimeMS:    row.Usage.CPUTimeMS,
 		PeakMemoryMB: int64(row.Usage.PeakMemoryMB),
-		OutputBytes:  int64(len(row.Result) + len(row.Stdout) + len(row.Stderr)),
+		OutputBytes:  int64(len(row.Result) + len(row.Stdout) + len(row.Stderr) + api.ExecutionArtifactsOutputBytes(row.Artifacts)),
 		StartedAt:    startedAt,
 		FinishedAt:   derefTime(row.FinishedAt),
 		CreatedAt:    row.CreatedAt,

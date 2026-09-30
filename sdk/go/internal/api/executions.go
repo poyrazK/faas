@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -50,17 +52,26 @@ type ExecutionFile struct {
 	Content []byte `json:"content"`
 }
 
+// ExecutionArtifact is an explicitly exported output file; Content is base64 in JSON.
+type ExecutionArtifact struct {
+	Name      string `json:"name"`
+	SizeBytes int    `json:"size_bytes"`
+	SHA256    string `json:"sha256"`
+	Content   []byte `json:"content"`
+}
+
 // CreateExecutionRequest is the caller-authored one-shot execution contract.
 // Set either Source or Entrypoint + Files; source and input are never echoed
 // by the execution read APIs.
 type CreateExecutionRequest struct {
-	Runtime    ExecutionRuntime        `json:"runtime"`
-	Source     string                  `json:"source,omitempty"`
-	Entrypoint string                  `json:"entrypoint,omitempty"`
-	Files      []ExecutionFile         `json:"files,omitempty"`
-	Input      json.RawMessage         `json:"input,omitempty"`
-	Limits     *ExecutionLimitRequest  `json:"limits,omitempty"`
-	Network    *ExecutionNetworkPolicy `json:"network,omitempty"`
+	Runtime     ExecutionRuntime        `json:"runtime"`
+	Source      string                  `json:"source,omitempty"`
+	Entrypoint  string                  `json:"entrypoint,omitempty"`
+	Files       []ExecutionFile         `json:"files,omitempty"`
+	OutputFiles []string                `json:"output_files,omitempty"`
+	Input       json.RawMessage         `json:"input,omitempty"`
+	Limits      *ExecutionLimitRequest  `json:"limits,omitempty"`
+	Network     *ExecutionNetworkPolicy `json:"network,omitempty"`
 }
 
 // ResolvedExecutionLimits are the immutable limits admitted for one run.
@@ -119,6 +130,7 @@ type ExecutionResponse struct {
 	Status          ExecutionStatus         `json:"status"`
 	Runtime         ExecutionRuntime        `json:"runtime"`
 	Limits          ResolvedExecutionLimits `json:"limits"`
+	Artifacts       []ExecutionArtifact     `json:"artifacts,omitempty"`
 	Result          json.RawMessage         `json:"result,omitempty"`
 	Stdout          string                  `json:"stdout,omitempty"`
 	Stderr          string                  `json:"stderr,omitempty"`
@@ -524,4 +536,13 @@ func (c *Client) Run(ctx context.Context, req CreateExecutionRequest, opts RunOp
 		}
 	}
 	return c.GetExecution(ctx, receipt.ID)
+}
+
+// Bytes validates an inline artifact and returns an independent content copy.
+func (a ExecutionArtifact) Bytes() ([]byte, error) {
+	hash := sha256.Sum256(a.Content)
+	if a.SizeBytes != len(a.Content) || a.SHA256 != "sha256:"+hex.EncodeToString(hash[:]) {
+		return nil, fmt.Errorf("execution artifact content failed integrity verification")
+	}
+	return append([]byte{}, a.Content...), nil
 }
