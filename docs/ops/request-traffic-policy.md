@@ -110,8 +110,8 @@ inside that transaction. Refusal also rolls back activity, cron, project and
 preview-set changes. Eligibility follows runtime status and public visibility;
 a historical deletion timestamp alone does not exclude a reactivated app.
 Removing a registered URL does not expose its former fallback. Ordinary
-primary-hostname, alias/domain activation, global synthetic route discovery
-across accounts and the in-memory aggregate mirror remain pending.
+primary-hostname, alias/domain activation and global synthetic route discovery
+across accounts remain pending.
 
 Individual CORS preset creates/replacements, environment overlay replacements,
 scoped route replacements and imported documents validate the complete runtime
@@ -149,8 +149,14 @@ continue to refuse traffic, so deleting a referenced preset alone is not a
 serving-policy repair.
 The in-memory store uses a conservative bound and may reject a near-limit
 object whose extra JSON string escapes are smaller in Postgres.
+It now applies the same per-host aggregate analyzer under its mutex to rule,
+preset, overlay, environment/clone and app activation writes. Its canonical
+read estimate retains the existing conservative numeric/whitespace allowance;
+compiler bytes measure actual Go JSON and distinct referenced presets. Compact
+RawMessage numbers are not expanded for the Go compiler. Rejected changes
+preserve related project, cron, preview-set and activity intent.
 
-Primary-hostname and alias/domain activation, global and memory aggregate
+Primary-hostname and alias/domain activation, global aggregate
 validation and complete recovery acceptance remain rollout requirements. These write checks do not establish
 release acceptance.
 

@@ -56,7 +56,7 @@ func (m *MemStore) GetProjectEnvironmentEdgePolicy(_ context.Context, accountID,
 	return policy, nil
 }
 
-func (m *MemStore) PutProjectEnvironmentEdgePolicy(_ context.Context, policy ProjectEnvironmentEdgePolicy) (ProjectEnvironmentEdgePolicy, error) {
+func (m *MemStore) PutProjectEnvironmentEdgePolicy(ctx context.Context, policy ProjectEnvironmentEdgePolicy) (ProjectEnvironmentEdgePolicy, error) {
 	if !validProjectEnvironmentEdgeRules(policy.Rules) {
 		return ProjectEnvironmentEdgePolicy{}, ErrInvalidArgument
 	}
@@ -81,6 +81,9 @@ func (m *MemStore) PutProjectEnvironmentEdgePolicy(_ context.Context, policy Pro
 	}
 	policy.UpdatedAt = now
 	policy.Rules = cloneProjectEnvironmentEdgeRules(policy.Rules)
+	if err := m.validateMemTrafficPolicyChangeLocked(ctx, policy.AccountID, memTrafficPolicyChange{Policies: map[string]ProjectEnvironmentEdgePolicy{key: policy}}); err != nil {
+		return ProjectEnvironmentEdgePolicy{}, err
+	}
 	m.projectEnvironmentEdgePolicies[key] = policy
 	policy.Rules = cloneProjectEnvironmentEdgeRules(policy.Rules)
 	return policy, nil

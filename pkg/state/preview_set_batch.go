@@ -236,7 +236,7 @@ func retireReplacedPreviewMembersTx(ctx context.Context, tx pgx.Tx, head PRPrevi
 	return nil
 }
 
-func (m *MemStore) ReservePRPreviewSet(_ context.Context, head PRPreviewHead, apps []App, limits api.Limits) ([]App, error) {
+func (m *MemStore) ReservePRPreviewSet(ctx context.Context, head PRPreviewHead, apps []App, limits api.Limits) ([]App, error) {
 	if err := validatePRPreviewHead(head, apps); err != nil {
 		return nil, err
 	}
@@ -326,7 +326,7 @@ func (m *MemStore) ReservePRPreviewSet(_ context.Context, head PRPreviewHead, ap
 		}
 		if !found {
 			var err error
-			row, err = m.createAppIfUnderQuotaLocked(desired, limits)
+			row, err = m.createAppIfUnderQuotaLocked(ctx, desired, limits)
 			if err != nil {
 				return rollback(err)
 			}

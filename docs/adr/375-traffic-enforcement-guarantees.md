@@ -416,8 +416,23 @@ their former app filter. Existing create conflict/quota, restore grace/claim
 and compare-and-set predicates remain in force. This registered-URL eligibility
 uses runtime status and public visibility, including status-only reactivation
 with a retained historical deletion timestamp. Primary-hostname and alias/domain
-activation, global synthetic route discovery and the in-memory aggregate mirror
-still require their own integration and evidence.
+activation and global synthetic route discovery still require their own
+integration and evidence. The in-memory aggregate mirror uses the same host
+analyzer under its existing mutex. Proposed rule, preset, overlay, environment,
+clone and app activation inputs are projected before publication; project
+reconcile keeps its existing rollback maps through the verdict. Canonical reads
+retain the conservative JSONB estimator already used by MemStore's individual
+write bounds, while compiler inputs measure actual typed Go JSON (including
+compact RawMessage numbers) and distinct referenced preset rows. The shared
+environment projection supplies synthetic identities and replacement semantics.
+The same phase timeout and input/metadata/automaton ceilings apply. No database
+numeric expansion is invented for the in-memory compiler. Refused operations
+retain related app/project/cron/preview/activity intent.
+MemStore's runtime matcher also shares the analyzer's exact-or-SQL-LIKE parser,
+including translated star/question-mark selectors, percent/underscore,
+backslash escaping and Unicode. Exact/global/plain-suffix matches keep their
+fast paths; unsupported resource use refuses rather than matching unverified
+input.
 
 Imported documents also validate canonical runtime bytes before replacement;
 the existing import-body cap alone cannot bound JSONB numeric expansion.
@@ -428,7 +443,7 @@ validates copied target projections in its transaction before commit, including
 app-wide fallback routes and the target slug's bytes. Failure rolls back the
 entire target configuration. The in-memory clone preflights all projections
 under its existing mutex before creating target state. Global aggregate
-validation, its in-memory mirror, primary-hostname and alias/domain activation,
+validation, primary-hostname and alias/domain activation,
 and complete-path recovery acceptance remain pending.
 
 Public declared-route inputs join the fresh hostname/app view. An exact

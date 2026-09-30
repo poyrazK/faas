@@ -2870,14 +2870,19 @@ func (m *MemStore) CreateProject(_ context.Context, p Project) (Project, error) 
 }
 
 func (m *MemStore) seedProjectProductionEnvironmentLocked(p Project) {
+	env := m.projectProductionEnvironmentLocked(p)
+	m.projectEnvironments[env.ID] = env
+}
+
+func (m *MemStore) projectProductionEnvironmentLocked(p Project) ProjectEnvironment {
 	for _, env := range m.projectEnvironments {
 		if env.ProjectID == p.ID && env.Slug == "production" {
-			return
+			return env
 		}
 	}
 	now := time.Now()
 	id := newID()
-	m.projectEnvironments[id] = ProjectEnvironment{
+	return ProjectEnvironment{
 		ID: id, AccountID: p.AccountID, ProjectID: p.ID, Slug: "production",
 		Protected: true, CreatedAt: now, UpdatedAt: now,
 	}
@@ -3158,7 +3163,7 @@ func (m *MemStore) ProjectEnvironmentByID(_ context.Context, id string) (Project
 	return environment, nil
 }
 
-func (m *MemStore) CreateProjectEnvironment(_ context.Context, env ProjectEnvironment) (ProjectEnvironment, error) {
+func (m *MemStore) CreateProjectEnvironment(ctx context.Context, env ProjectEnvironment) (ProjectEnvironment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	project, ok := m.projects[env.ProjectID]
@@ -3178,6 +3183,9 @@ func (m *MemStore) CreateProjectEnvironment(_ context.Context, env ProjectEnviro
 		env.CreatedAt = now
 	}
 	env.UpdatedAt = now
+	if err := m.validateMemTrafficPolicyChangeLocked(ctx, env.AccountID, memTrafficPolicyChange{Environments: map[string]ProjectEnvironment{env.ID: env}}); err != nil {
+		return ProjectEnvironment{}, err
+	}
 	m.projectEnvironments[env.ID] = env
 	return env, nil
 }
@@ -3437,7 +3445,7 @@ func (m *MemStore) ConsumeProjectEnvironmentApproval(_ context.Context, accountI
 // insert for project + apps + crons inside one Tx so the apid
 // "one keypress" path either lands the whole set or nothing.
 func (m *MemStore) ApplyProjectPlan(
-	_ context.Context,
+	ctx context.Context,
 	project Project,
 	apps []App,
 	crons []Cron,
@@ -3516,8 +3524,7 @@ func (m *MemStore) ApplyProjectPlan(
 	if project.ScanSource == "" {
 		project.ScanSource = ProjectScanSourceUnknown
 	}
-	m.projects[project.ID] = project
-	m.seedProjectProductionEnvironmentLocked(project)
+	environment := m.projectProductionEnvironmentLocked(project)
 
 	// 6. Insert apps. The apply handler resolves crons[i].AppID
 	// against the just-inserted apps — callers see the same Cron
@@ -3539,8 +3546,19 @@ func (m *MemStore) ApplyProjectPlan(
 			a.CPUMillicores = api.DefaultAppCPUMillicores
 		}
 		a.CreatedAt = now
-		m.apps[a.ID] = a
 		insertedApps = append(insertedApps, a)
+	}
+	change := memTrafficPolicyChange{Apps: make(map[string]App, len(insertedApps)), Environments: map[string]ProjectEnvironment{environment.ID: environment}}
+	for _, app := range insertedApps {
+		change.Apps[app.ID] = app
+	}
+	if err := m.validateMemTrafficPolicyChangeLocked(ctx, project.AccountID, change); err != nil {
+		return Project{}, nil, nil, err
+	}
+	m.projects[project.ID] = project
+	m.projectEnvironments[environment.ID] = environment
+	for _, app := range insertedApps {
+		m.apps[app.ID] = app
 	}
 
 	// 7. Insert crons (AppID is the caller's responsibility to set
@@ -3569,7 +3587,7 @@ func (m *MemStore) ApplyProjectPlan(
 // discovered after an earlier mutation; PostgreSQL provides the equivalent
 // guarantee with its transaction in pgstore.go.
 func (m *MemStore) ApplyProjectReconcile(
-	_ context.Context,
+	ctx context.Context,
 	project Project,
 	mutations []ProjectReconcileMutation,
 	desiredCrons []ProjectReconcileCron,
@@ -3709,6 +3727,10 @@ func (m *MemStore) ApplyProjectReconcile(
 		}
 	}
 
+	beforeTraffic, err := m.readBoundedMemTrafficAnalysisLocked(ctx, project.AccountID)
+	if err != nil {
+		return rollback(err)
+	}
 	var out ProjectReconcileResult
 	for _, mutation := range mutations {
 		switch mutation.Op {
@@ -3861,6 +3883,9 @@ func (m *MemStore) ApplyProjectReconcile(
 		m.projects[project.ID] = storedProject
 	}
 	out.Project = storedProject
+	if err := m.checkMemTrafficPolicyChangeLocked(ctx, project.AccountID, beforeTraffic, memTrafficPolicyChange{}); err != nil {
+		return rollback(err)
+	}
 	return out, nil
 }
 
@@ -3882,7 +3907,7 @@ func (m *MemStore) ensureAppOrgLocked(app *App) {
 	}
 }
 
-func (m *MemStore) CreateApp(_ context.Context, app App) (App, error) {
+func (m *MemStore) CreateApp(ctx context.Context, app App) (App, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, a := range m.apps {
@@ -3940,6 +3965,9 @@ func (m *MemStore) CreateApp(_ context.Context, app App) (App, error) {
 		app.WorkloadClass = WorkloadClassHTTP
 	}
 	m.ensureAppOrgLocked(&app)
+	if err := m.validateMemAppTrafficChangeLocked(ctx, app); err != nil {
+		return App{}, err
+	}
 	m.apps[app.ID] = app
 	return app, nil
 }
@@ -3950,15 +3978,15 @@ func (m *MemStore) CreateApp(_ context.Context, app App) (App, error) {
 // so a Free account that already holds 1 app always sees observed=1 on
 // the second call. The handler's CreateApp call site becomes store-
 // agnostic.
-func (m *MemStore) CreateAppIfUnderQuota(_ context.Context, app App, limits api.Limits) (App, error) {
+func (m *MemStore) CreateAppIfUnderQuota(ctx context.Context, app App, limits api.Limits) (App, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.createAppIfUnderQuotaLocked(app, limits)
+	return m.createAppIfUnderQuotaLocked(ctx, app, limits)
 }
 
 // CreatePRPreviewAppsIfUnderQuota mirrors PgStore's all-or-nothing preview
 // reservation. The mutex covers the full batch, including quota accounting.
-func (m *MemStore) CreatePRPreviewAppsIfUnderQuota(_ context.Context, apps []App, limits api.Limits) ([]App, error) {
+func (m *MemStore) CreatePRPreviewAppsIfUnderQuota(ctx context.Context, apps []App, limits api.Limits) ([]App, error) {
 	if err := validatePRPreviewBatch(apps); err != nil {
 		return nil, err
 	}
@@ -3979,7 +4007,7 @@ func (m *MemStore) CreatePRPreviewAppsIfUnderQuota(_ context.Context, apps []App
 		return nil, err
 	}
 	for _, app := range apps {
-		row, err := m.createAppIfUnderQuotaLocked(app, limits)
+		row, err := m.createAppIfUnderQuotaLocked(ctx, app, limits)
 		if errors.Is(err, ErrConflict) {
 			for _, existing := range m.apps {
 				if existing.Slug == app.Slug && existing.Status != AppDeleted {
@@ -4037,7 +4065,7 @@ func (m *MemStore) checkAppQuotaLocked(app App, limits api.Limits) error {
 	return nil
 }
 
-func (m *MemStore) createAppIfUnderQuotaLocked(app App, limits api.Limits) (App, error) {
+func (m *MemStore) createAppIfUnderQuotaLocked(ctx context.Context, app App, limits api.Limits) (App, error) {
 	if _, ok := m.accounts[app.AccountID]; !ok {
 		return App{}, ErrNotFound
 	}
@@ -4096,6 +4124,9 @@ func (m *MemStore) createAppIfUnderQuotaLocked(app App, limits api.Limits) (App,
 		app.WorkloadClass = WorkloadClassHTTP
 	}
 	m.ensureAppOrgLocked(&app)
+	if err := m.validateMemAppTrafficChangeLocked(ctx, app); err != nil {
+		return App{}, err
+	}
 	m.apps[app.ID] = app
 	return app, nil
 }
@@ -5591,7 +5622,7 @@ func (m *MemStore) UpdateAppWithActivity(ctx context.Context, id string, p Updat
 	return app, outboxID, err
 }
 
-func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateAppParams, entry *OrgActivity, build OrgActivityAppConfigBuilder, outboxID *int64) (App, error) {
+func (m *MemStore) updateAppWithActivity(ctx context.Context, id string, p UpdateAppParams, entry *OrgActivity, build OrgActivityAppConfigBuilder, outboxID *int64) (App, error) {
 	if (p.SetRequestRateLimitRPS && p.RequestRateLimitRPS != nil && *p.RequestRateLimitRPS < 0) ||
 		(p.SetRequestRateLimitBurst && p.RequestRateLimitBurst != nil && *p.RequestRateLimitBurst < 0) {
 		return App{}, ErrInvalidArgument
@@ -5971,6 +6002,11 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 			recordActivity = true
 		}
 	}
+	if appConfigIntroducesPublicScope(p) {
+		if err := m.validateMemAppTrafficChangeLocked(ctx, a); err != nil {
+			return App{}, err
+		}
+	}
 	m.apps[id] = a
 	if ramChanged {
 		m.markAppSnapshotsStaleLocked(id)
@@ -5984,7 +6020,7 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 // CompareAndSetAppStatus is the in-memory equivalent of PgStore's atomic
 // lifecycle claim. Holding m.mu across the predicate and write makes parallel
 // restart requests deterministic in tests and local development.
-func (m *MemStore) CompareAndSetAppStatus(_ context.Context, id string, from, to AppStatus) (bool, error) {
+func (m *MemStore) CompareAndSetAppStatus(ctx context.Context, id string, from, to AppStatus) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	a, ok := m.apps[id]
@@ -5995,6 +6031,11 @@ func (m *MemStore) CompareAndSetAppStatus(_ context.Context, id string, from, to
 		return false, nil
 	}
 	a.Status = to
+	if from == AppDeleted && to != AppDeleted {
+		if err := m.validateMemAppTrafficChangeLocked(ctx, a); err != nil {
+			return false, err
+		}
+	}
 	if to != AppEvictedCold {
 		m.clearCurrentAppParkTransitionLocked(id)
 	}
@@ -6087,15 +6128,15 @@ func (m *MemStore) ScheduleAppDeletion(_ context.Context, id string, graceUntil 
 	return a, err
 }
 
-func (m *MemStore) RestoreApp(_ context.Context, id string, limits api.Limits) (App, error) {
+func (m *MemStore) RestoreApp(ctx context.Context, id string, limits api.Limits) (App, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.restoreAppLocked(id, limits)
+	return m.restoreAppLocked(ctx, id, limits)
 }
 
 // restoreAppLocked is the restore body shared by RestoreApp and
 // RestoreAppWithActivity. Caller holds m.mu.
-func (m *MemStore) restoreAppLocked(id string, limits api.Limits) (App, error) {
+func (m *MemStore) restoreAppLocked(ctx context.Context, id string, limits api.Limits) (App, error) {
 	a, ok := m.apps[id]
 	if !ok {
 		return App{}, ErrNotFound
@@ -6109,6 +6150,9 @@ func (m *MemStore) restoreAppLocked(id string, limits api.Limits) (App, error) {
 	a.Status = AppActive
 	a.DeletedAt = nil
 	a.DeleteGraceUntil = nil
+	if err := m.validateMemAppTrafficChangeLocked(ctx, a); err != nil {
+		return App{}, err
+	}
 	m.apps[id] = a
 	delete(m.appDeletionClaims, id)
 	for cronID, cron := range m.crons {
@@ -21154,7 +21198,7 @@ func (m *MemStore) manifestEdgeRuleKeyExistsLocked(appID, manifestKey, excludeID
 	return false
 }
 
-func (m *MemStore) CreateEdgeRule(_ context.Context, in CreateEdgeRuleParams) (EdgeRule, error) {
+func (m *MemStore) CreateEdgeRule(ctx context.Context, in CreateEdgeRuleParams) (EdgeRule, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.manifestEdgeRuleKeyExistsLocked(in.AppID, in.ManifestKey, "") {
@@ -21189,6 +21233,9 @@ func (m *MemStore) CreateEdgeRule(_ context.Context, in CreateEdgeRuleParams) (E
 	if err := validateMemEdgeRuleTrafficProjection(r); err != nil {
 		return EdgeRule{}, err
 	}
+	if err := m.validateMemTrafficPolicyChangeLocked(ctx, r.AccountID, memTrafficPolicyChange{Rules: map[string]EdgeRule{r.ID: r}}); err != nil {
+		return EdgeRule{}, err
+	}
 	stored := r
 	stored.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 	m.edgeRules[r.ID] = stored
@@ -21200,7 +21247,7 @@ func (m *MemStore) CreateEdgeRule(_ context.Context, in CreateEdgeRuleParams) (E
 // mirrors the pgstore's `where id = $1 and status <> 'deleted'`
 // predicate: a soft-deleted app is treated as missing so the
 // customer can't smuggle rules into a dead app.
-func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRuleParams, limits api.Limits) (EdgeRule, error) {
+func (m *MemStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeRuleParams, limits api.Limits) (EdgeRule, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.manifestEdgeRuleKeyExistsLocked(in.AppID, in.ManifestKey, "") {
@@ -21310,6 +21357,9 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRu
 		UpdatedAt:    now,
 	}
 	if err := validateMemEdgeRuleTrafficProjection(r); err != nil {
+		return EdgeRule{}, err
+	}
+	if err := m.validateMemTrafficPolicyChangeLocked(ctx, r.AccountID, memTrafficPolicyChange{Rules: map[string]EdgeRule{r.ID: r}}); err != nil {
 		return EdgeRule{}, err
 	}
 	stored := r
@@ -21454,7 +21504,7 @@ func (m *MemStore) GetCorsPresetByID(_ context.Context, accountID, id string) (C
 // section as the insert. UNIQUE collision on
 // (account_id, COALESCE(app_id, ...), name) returns ErrConflict,
 // matching pgstore's 23505-→-ErrConflict map.
-func (m *MemStore) CreateCorsPresetIfUnderQuota(_ context.Context, p CorsPreset, limits api.Limits) (CorsPreset, error) {
+func (m *MemStore) CreateCorsPresetIfUnderQuota(ctx context.Context, p CorsPreset, limits api.Limits) (CorsPreset, error) {
 	if err := validateMemTrafficProjection("cors_preset", corsPresetTrafficProjection(p)); err != nil {
 		return CorsPreset{}, err
 	}
@@ -21516,6 +21566,9 @@ func (m *MemStore) CreateCorsPresetIfUnderQuota(_ context.Context, p CorsPreset,
 		p.CreatedAt = now
 	}
 	p.UpdatedAt = now
+	if err := m.validateMemTrafficPolicyChangeLocked(ctx, p.AccountID, memTrafficPolicyChange{Presets: map[string]CorsPreset{p.ID: p}}); err != nil {
+		return CorsPreset{}, err
+	}
 	m.corsPresets[p.ID] = p
 	return p, nil
 }
@@ -21525,7 +21578,7 @@ func (m *MemStore) CreateCorsPresetIfUnderQuota(_ context.Context, p CorsPreset,
 // matching the pgstore WHERE clause. UNIQUE collisions
 // (account_id, COALESCE(app_id, ...), name) return ErrConflict
 // (the apid boundary maps to 409 "name already in use").
-func (m *MemStore) UpdateCorsPreset(_ context.Context, accountID, id string, p CorsPreset) (CorsPreset, error) {
+func (m *MemStore) UpdateCorsPreset(ctx context.Context, accountID, id string, p CorsPreset) (CorsPreset, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	existing, ok := m.corsPresets[id]
@@ -21550,6 +21603,9 @@ func (m *MemStore) UpdateCorsPreset(_ context.Context, accountID, id string, p C
 		return CorsPreset{}, err
 	}
 	p.UpdatedAt = time.Now()
+	if err := m.validateMemTrafficPolicyChangeLocked(ctx, accountID, memTrafficPolicyChange{Presets: map[string]CorsPreset{id: p}}); err != nil {
+		return CorsPreset{}, err
+	}
 	m.corsPresets[id] = p
 	return p, nil
 }
@@ -21843,7 +21899,7 @@ func (m *MemStore) ListCertExpiryStateForWalker(_ context.Context, staleCutoff t
 
 // UpdateEdgeRule mirrors the pgstore nil-skip semantics. Action
 // replacement is whole-struct (no partial jsonb merge in MemStore).
-func (m *MemStore) UpdateEdgeRule(_ context.Context, id string, p UpdateEdgeRuleParams) (EdgeRule, error) {
+func (m *MemStore) UpdateEdgeRule(ctx context.Context, id string, p UpdateEdgeRuleParams) (EdgeRule, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	r, ok := m.edgeRules[id]
@@ -21884,6 +21940,9 @@ func (m *MemStore) UpdateEdgeRule(_ context.Context, id string, p UpdateEdgeRule
 	}
 	r.UpdatedAt = time.Now()
 	if err := validateMemEdgeRuleTrafficProjection(r); err != nil {
+		return EdgeRule{}, err
+	}
+	if err := m.validateMemTrafficPolicyChangeLocked(ctx, r.AccountID, memTrafficPolicyChange{Rules: map[string]EdgeRule{r.ID: r}}); err != nil {
 		return EdgeRule{}, err
 	}
 	stored := r
@@ -21963,10 +22022,8 @@ func (m *MemStore) MatchEdgeRulesForHost(_ context.Context, host string) ([]Edge
 	return out, nil
 }
 
-// matchHostPattern mirrors the pgstore LIKE: "*" → every host;
-// "*.<suffix>" → any subdomain of suffix; exact hosts match
-// themselves. The two stores MUST stay aligned — a drift here
-// surfaces as "rule matches in test, fails in prod".
+// matchHostPattern shares the aggregate analyzer's exact-or-SQL-LIKE parser,
+// including translated */?, literal %/_, Unicode and backslash escaping.
 func matchHostPattern(pattern, host string) bool {
 	switch pattern {
 	case "*":
@@ -21974,9 +22031,25 @@ func matchHostPattern(pattern, host string) bool {
 	case host:
 		return true
 	}
-	if len(pattern) > 2 && pattern[:2] == "*." {
+	if len(pattern) > 2 && pattern[:2] == "*." && !strings.ContainsAny(pattern[2:], "*?%_\\") {
 		suffix := pattern[1:] // ".example.com"
-		return len(host) > len(suffix) && host[len(host)-len(suffix):] == suffix
+		return strings.HasSuffix(host, suffix)
+	}
+	machine := hostAnalysisMachine{nodes: []hostAnalysisNode{newHostAnalysisNode()}, maxNodes: api.TrafficPolicyMaxAnalysisNodes}
+	if err := machine.add(pattern, hostAnalysisRef{}); err != nil {
+		return false
+	}
+	positions := machine.closure([]int{0})
+	for _, character := range host {
+		positions = machine.step(positions, character)
+		if len(positions) == 0 {
+			return false
+		}
+	}
+	for _, position := range positions {
+		if len(machine.nodes[position].accepted) > 0 {
+			return true
+		}
 	}
 	return false
 }

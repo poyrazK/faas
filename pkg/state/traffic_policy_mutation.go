@@ -167,6 +167,15 @@ func readBoundedEdgeRuleTrafficProjection(ctx context.Context, tx pgx.Tx, mutati
 }
 
 func validateMemEdgeRuleTrafficProjection(rule EdgeRule) error {
+	observed, err := memEdgeRuleTrafficProjectionSize(rule)
+	if err != nil {
+		return err
+	}
+	// Reserve differing JSONB/Go timestamp punctuation and zone spellings.
+	return checkTrafficProjectionLimit("edge_rule", observed+16, api.TrafficPolicyMaxHostBytes)
+}
+
+func memEdgeRuleTrafficProjectionSize(rule EdgeRule) (int64, error) {
 	// ReadPublicHostEdgeRules emits JSON null for absent manifest keys, but
 	// empty arrays/objects for the non-null match fields.
 	var manifest any
@@ -188,10 +197,5 @@ func validateMemEdgeRuleTrafficProjection(rule EdgeRule) error {
 		"Kind": rule.Kind, "Action": rule.Action, "CorsPresetID": rule.CorsPresetID,
 		"ValidateMode": mode, "CreatedAt": rule.CreatedAt, "UpdatedAt": rule.UpdatedAt, "ManifestKey": manifest,
 	}}
-	observed, err := memTrafficProjectionSize("edge_rule", projection)
-	if err != nil {
-		return err
-	}
-	// Reserve differing JSONB/Go timestamp punctuation and zone spellings.
-	return checkTrafficProjectionLimit("edge_rule", observed+16, api.TrafficPolicyMaxHostBytes)
+	return memTrafficProjectionSize("edge_rule", projection)
 }

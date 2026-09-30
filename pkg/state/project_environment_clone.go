@@ -71,7 +71,7 @@ func (e *ProjectEnvironmentCloneQuotaError) Unwrap() error {
 	return ErrProjectEnvironmentCloneQuota
 }
 
-func (m *MemStore) CloneProjectEnvironment(_ context.Context, clone ProjectEnvironmentClone, limits api.Limits) (ProjectEnvironment, ProjectEnvironmentCloneResult, error) {
+func (m *MemStore) CloneProjectEnvironment(ctx context.Context, clone ProjectEnvironmentClone, limits api.Limits) (ProjectEnvironment, ProjectEnvironmentCloneResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	project, ok := m.projects[clone.ProjectID]
@@ -153,6 +153,16 @@ func (m *MemStore) CloneProjectEnvironment(_ context.Context, clone ProjectEnvir
 		ID: newID(), AccountID: clone.AccountID, ProjectID: clone.ProjectID,
 		Slug: clone.TargetSlug, Protected: clone.TargetProtected,
 		CreatedAt: now, UpdatedAt: now,
+	}
+	change := memTrafficPolicyChange{Environments: map[string]ProjectEnvironment{created.ID: created}, Policies: make(map[string]ProjectEnvironmentEdgePolicy)}
+	for appID := range apps {
+		if policy, present := m.projectEnvironmentEdgePolicies[projectEnvironmentRoutePolicyKey(appID, clone.SourceSlug)]; present {
+			policy.EnvironmentSlug, policy.CreatedAt, policy.UpdatedAt = clone.TargetSlug, now, now
+			change.Policies[projectEnvironmentRoutePolicyKey(appID, clone.TargetSlug)] = policy
+		}
+	}
+	if err := m.validateMemTrafficPolicyChangeLocked(ctx, clone.AccountID, change); err != nil {
+		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
 	}
 	m.projectEnvironments[created.ID] = created
 	result := m.copyProjectEnvironmentConfigLocked(clone, created.CreatedAt)

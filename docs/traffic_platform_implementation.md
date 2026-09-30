@@ -894,3 +894,52 @@ daemon/load/recovery and customer/staging rollout evidence still need
 completion. The user confirmed no Linux x86_64 KVM acceptance host is currently
 available. Native VM/restore, nft connection/source-IP, process-death and leak
 checks remain pending; all six release guarantees remain unchecked.
+
+### In-memory owned host aggregate mutation guard, 2026-09-30
+
+MemStore now projects proposed rules, referenced presets, environment overlays,
+environment registrations/clones and app activation rows under its existing
+mutex and runs the shared before/after host analyzer before publication.
+Project apply preflights its complete app/environment set; reconcile retains
+its rollback maps through the final verdict. The quota/activity, preview batch
+and preview-set paths retain their related rollback behavior. Ordinary
+park/wake transitions keep their existing path. Clones include copied overlays
+in the proposed view, avoiding an intermediate fallback policy.
+
+Canonical measurements retain MemStore's existing conservative JSONB
+whitespace/numeric estimator. Compiler measurements use actual typed Go JSON,
+including compact RawMessage numbers, and count each referenced preset once.
+The shared environment host encoder and runtime rule projection supply exact
+identities, app filtering and explicit-empty replacement. Input/metadata,
+automaton and phase-time limits remain centrally defined. Unused presets and
+other accounts do not consume an owned host's allowance. The read projection
+contains scalar identities/measurements rather than action bodies.
+
+The final no_pg state regression passed 248 named cases with no failures/skips
+in 3.102 s. It includes MemStore conformance, existing quota/plan/reconcile,
+preview/activity, edge/preset, clone and projection recovery cases; new tests
+cover overlap create/quota/retarget/enable refusal and repair, two different
+apps racing for one allowance, 17 activation/environment/clone rollback and
+repair cases, cancellation, and production Go compiler size agreement for
+fallback/explicit-empty overlays and shared presets. An actual near-64-MiB Go
+compiler input verifies that preset growth and an escaped environment overlay
+each refuse the compiler aggregate without changing saved intent, then succeed
+after removing the large contributor. Runtime matcher cases cover the shared
+exact-or-SQL-LIKE parser, rich wildcards, escaping, Unicode and newline matching;
+the analyzer parser was already verified against real Postgres. Exact/global/
+plain-suffix matches retain their fast paths. The affected HTTP/API regression
+passed 60 cases without failures/skips (apid 1.947 s, API 0.673 s) before this
+matcher refinement; its write guards and HTTP mappings were unchanged by the
+refinement. These are selected handler/store checks, not full daemon acceptance.
+Pinned golangci-lint v2.4.0 reported zero issues for state with tests enabled
+and no_pg; unused was disabled for the pre-existing test-only helper. Whitespace
+checks passed. This slice changes neither SQL nor schema.
+The earlier build attempt with no test output is excluded from this evidence.
+
+Primary-hostname and alias/domain activation and global synthetic route
+aggregate validation remain pending. Bounded decision evidence,
+preview/runtime and complete synthetic-path agreement, complete
+daemon/load/recovery and customer/staging rollout evidence still need
+completion. No native Linux x86_64 KVM host is currently available; native
+VM/restore, nft connection/source-IP, process-death and leak checks remain
+pending. All six release guarantees remain unchecked.

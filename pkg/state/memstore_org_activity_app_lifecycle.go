@@ -11,10 +11,10 @@ import (
 
 var _ OrgActivityAppLifecycleMutationStore = (*MemStore)(nil)
 
-func (m *MemStore) CreateAppIfUnderQuotaWithActivity(_ context.Context, app App, limits api.Limits, entry OrgActivity) (App, int64, error) {
+func (m *MemStore) CreateAppIfUnderQuotaWithActivity(ctx context.Context, app App, limits api.Limits, entry OrgActivity) (App, int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	created, err := m.createAppIfUnderQuotaLocked(app, limits)
+	created, err := m.createAppIfUnderQuotaLocked(ctx, app, limits)
 	if err != nil {
 		return App{}, 0, err
 	}
@@ -94,7 +94,7 @@ func (m *MemStore) scheduleAppDeletion(id string, graceUntil time.Time, entry *O
 	return a, outboxID, nil
 }
 
-func (m *MemStore) RestoreAppWithActivity(_ context.Context, id string, limits api.Limits, entry OrgActivity) (App, int64, error) {
+func (m *MemStore) RestoreAppWithActivity(ctx context.Context, id string, limits api.Limits, entry OrgActivity) (App, int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	a, ok := m.apps[id]
@@ -105,7 +105,7 @@ func (m *MemStore) RestoreAppWithActivity(_ context.Context, id string, limits a
 	if err != nil {
 		return App{}, 0, err
 	}
-	restored, err := m.restoreAppLocked(id, limits)
+	restored, err := m.restoreAppLocked(ctx, id, limits)
 	if err != nil {
 		return App{}, 0, err
 	}
