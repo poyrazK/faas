@@ -1056,6 +1056,10 @@ type Querier interface {
 	ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg ReadAccountCreditConsumptionParams) (ReadAccountCreditConsumptionRow, error)
 	ReadDeploymentLayerArtifactKeys(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]string, error)
 	ReadProjectEnvironmentCloneConfigurationCaptureIdentity(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneConfigurationCaptureIdentityParams) (ReadProjectEnvironmentCloneConfigurationCaptureIdentityRow, error)
+	// Include all application-schema tables. Several configuration tables have
+	// neither tenant identity columns nor foreign keys, so ownership heuristics
+	// would silently omit them. Partition children inherit their parent's policy.
+	ReadProjectEnvironmentCloneCoverageSchema(ctx context.Context, db DBTX) ([]ReadProjectEnvironmentCloneCoverageSchemaRow, error)
 	ReadProjectEnvironmentCloneDatabaseByName(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneDatabaseByNameParams) (ManagedPostgresDatabase, error)
 	ReadProjectEnvironmentCloneDatabaseReservation(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneDatabaseReservationParams) (ManagedPostgresDatabase, error)
 	ReadProjectEnvironmentCloneDatabaseReservationTime(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)

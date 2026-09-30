@@ -314,7 +314,7 @@ func (s *server) createProjectEnvironment(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if req.Full {
-		api.WriteProblem(w, fullProjectEnvironmentCloneUnavailable())
+		api.WriteProblem(w, s.fullProjectEnvironmentCloneProblem(r, acct, project))
 		return
 	}
 	environment, clone, err := s.persistProjectEnvironment(r, acct, project, req)

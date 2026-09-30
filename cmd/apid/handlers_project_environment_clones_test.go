@@ -85,3 +85,63 @@ func TestProjectEnvironmentCloneStatusIsScopedAndExcludesPrivateCapture(t *testi
 		t.Fatalf("cross-account lookup = %d %s", rec.Code, rec.Body.String())
 	}
 }
+
+type cloneSchemaCoverageTestStore struct {
+	*state.MemStore
+	report               state.ProjectEnvironmentCloneSchemaCoverage
+	err                  error
+	accountID, projectID string
+	calls                int
+}
+
+func (s *cloneSchemaCoverageTestStore) ProjectEnvironmentCloneSchemaCoverage(_ context.Context, accountID, projectID string) (state.ProjectEnvironmentCloneSchemaCoverage, error) {
+	s.accountID, s.projectID = accountID, projectID
+	s.calls++
+	return s.report, s.err
+}
+
+func TestFullProjectEnvironmentCloneNamesSchemaBlockersAndFailsClosed(t *testing.T) {
+	for _, dedicated := range []bool{true, false} {
+		for _, failed := range []bool{false, true} {
+			name := map[bool]string{true: "dedicated", false: "legacy"}[dedicated] + "/" + map[bool]string{true: "read_failure", false: "blockers"}[failed]
+			t.Run(name, func(t *testing.T) {
+				srv, store, acct, project, _ := newProjectLifecycleFixture(t)
+				coverageStore := &cloneSchemaCoverageTestStore{MemStore: store, report: state.ProjectEnvironmentCloneSchemaCoverage{Blockers: []state.ProjectEnvironmentCloneCoverageBlocker{
+					{Table: "queue_bindings", Code: "isolated_strategy_unavailable"},
+					{Table: "app_envs", Column: "new_setting", Code: "unregistered_column"},
+				}}}
+				if failed {
+					coverageStore.err = errors.New("private-state-reader-error")
+				}
+				srv.store = coverageStore
+				req, rec := projectRequest(http.MethodPost, "/v1/projects/shop/environment-clones", project.Slug,
+					[]byte(`{"slug":"stage","from_environment":"production","full":true}`))
+				if dedicated {
+					srv.createFullProjectEnvironmentClone(rec, req, acct)
+				} else {
+					srv.createProjectEnvironment(rec, req, acct)
+				}
+				if coverageStore.calls != 1 || coverageStore.accountID != acct.ID || coverageStore.projectID != project.ID {
+					t.Fatalf("coverage was not scoped to the loaded project: %+v", coverageStore)
+				}
+				if failed {
+					if rec.Code != http.StatusServiceUnavailable || strings.Contains(rec.Body.String(), "private-state-reader-error") {
+						t.Fatalf("coverage failure was hidden or exposed: %d %s", rec.Code, rec.Body.String())
+					}
+				} else {
+					var problem api.Problem
+					if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil || rec.Code != http.StatusConflict || problem.Code != api.CodeFullEnvironmentCloneUnavailable || len(problem.Errors) != 6 {
+						t.Fatalf("named coverage response = %d %s, %v", rec.Code, rec.Body.String(), err)
+					}
+					if problem.Errors[4].Field != "resource_coverage.queue_bindings" || problem.Errors[4].Got != "isolated_strategy_unavailable" ||
+						problem.Errors[5].Field != "resource_coverage.app_envs.new_setting" || problem.Errors[5].Got != "unregistered_column" {
+						t.Fatalf("coverage blockers were dropped: %+v", problem.Errors)
+					}
+				}
+				if _, err := store.ProjectEnvironmentBySlug(context.Background(), acct.ID, project.ID, "stage"); !errors.Is(err, state.ErrNotFound) {
+					t.Fatalf("partial target exists: %v", err)
+				}
+			})
+		}
+	}
+}

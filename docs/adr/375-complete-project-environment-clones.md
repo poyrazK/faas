@@ -1011,3 +1011,57 @@ does not assert coverage of all related policies, triggers and integrations,
 capture empty projects, coordinate or retain provider data checkpoints, or
 enable full-copy admission. The resource coverage registry and capture barrier
 must extend this path before the complete command can use it.
+
+### Application schema coverage registry (2026-10-01)
+
+The clone boundary now has an explicit table/column registry checked against
+the actual migrated PostgreSQL schema through sqlc. Discovery includes every
+regular or partitioned parent table in the active application schema. Tenant
+identity columns and foreign keys alone are insufficient: generic scope IDs,
+including `runtime_config_entries.scope_id`, can also select application
+configuration. Partition children inherit the parent policy. Other schemas are
+outside this check.
+
+The initial registry classifies 289 tables: 80 configuration, two retained
+customer-data tables, 172 operational tables, 25 account-identity tables and
+10 platform-configuration tables. Configuration requires an environment-scoped
+capture/copy/diff/qualification/promotion/rollback strategy. Retained realtime
+channel heads and messages require an isolated data strategy. Operational
+records describe executions, leases, observations, delivery history or platform
+bookkeeping; target operational state must be initialized by its owner.
+Account identities remain account-owned. Platform infrastructure and immutable
+runtime catalogues are references whose existing acceptance and retention
+requirements remain applicable.
+
+Every table and column name is explicit. Unknown tables/columns and missing or
+renamed tables/columns produce deterministic named blockers. The canonical
+schema report hashes sorted table names, classifications and column names.
+Input order or caller classifications cannot alter the registry, and returned
+policies are defensive copies. This hash describes schema coverage; it does
+not hash customer row content, types, constraints or JSON object keys.
+
+Atomic internal capture checks for an unrecognized schema before reserving a
+new operation. Committed idempotent replay continues to authenticate its frozen
+catalogue without depending on the current live schema. Both public full-clone
+entry points add named schema/strategy blockers to the existing closed
+admission response. A schema read failure returns an unavailable response and
+cannot fall through to creation. The report is project-authorized and reads
+metadata only, without customer values or sealed material.
+
+The migrated-schema contract detects a new setting column, a new table without
+ownership columns or foreign keys, directly and indirectly referenced tables,
+and a renamed table. It verifies rejection before operation/target reservation,
+immutable replay, restored-schema recovery and account isolation. Registry
+contracts check configuration/data/identity/operational/platform boundaries,
+canonical ordering and caller mutation isolation. HTTP contracts cover named
+blockers, failed schema reads and absence of a partial target on both routes.
+State clone/object/value-publication regressions and APId clone/binding
+regressions pass. Independent sqlc regeneration matches the committed output.
+
+Registration alone establishes no complete copy strategy. The two retained
+data tables and all configuration tables still report unavailable complete
+strategies, including tables with existing partial capture support. Freezing
+their actual source instances and content, extending the configuration root,
+coordinating retained data checkpoints, proving publication and promotion,
+worker orchestration and native acceptance remain required. Full-copy admission
+stays closed.

@@ -11,7 +11,8 @@ import (
 )
 
 func (s *server) createFullProjectEnvironmentClone(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if _, ok := s.loadProject(w, r, acct); !ok {
+	project, ok := s.loadProject(w, r, acct)
+	if !ok {
 		return
 	}
 	req, problem := decodeCreateProjectEnvironmentRequest(r)
@@ -23,7 +24,27 @@ func (s *server) createFullProjectEnvironmentClone(w http.ResponseWriter, r *htt
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid full clone", "from_environment is required and share_resources must be false"))
 		return
 	}
-	api.WriteProblem(w, fullProjectEnvironmentCloneUnavailable())
+	api.WriteProblem(w, s.fullProjectEnvironmentCloneProblem(r, acct, project))
+}
+
+func (s *server) fullProjectEnvironmentCloneProblem(r *http.Request, acct state.Account, project state.Project) *api.Problem {
+	problem := fullProjectEnvironmentCloneUnavailable()
+	store, ok := s.store.(state.ProjectEnvironmentCloneSchemaCoverageStore)
+	if !ok {
+		return problem
+	}
+	coverage, err := store.ProjectEnvironmentCloneSchemaCoverage(r.Context(), acct.ID, project.ID)
+	if err != nil {
+		return api.ErrCapacity("could not verify clone configuration schema coverage")
+	}
+	for _, blocker := range coverage.Blockers {
+		field := "resource_coverage." + blocker.Table
+		if blocker.Column != "" {
+			field += "." + blocker.Column
+		}
+		problem.Errors = append(problem.Errors, api.FieldError{Field: field, Expected: "registered schema and complete isolated stage strategy", Got: blocker.Code})
+	}
+	return problem
 }
 
 // Admission stays closed until the worker can prove complete coverage and a

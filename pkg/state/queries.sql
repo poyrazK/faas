@@ -5459,3 +5459,14 @@ WHERE o.account_id=sqlc.arg(account_id)::uuid AND o.project_id=sqlc.arg(project_
 
 -- name: LockProjectEnvironmentCloneConfigurationCapture :one
 SELECT * FROM project_environment_clone_configuration_captures WHERE operation_id=$1 FOR UPDATE;
+
+-- name: ReadProjectEnvironmentCloneCoverageSchema :many
+-- Include all application-schema tables. Several configuration tables have
+-- neither tenant identity columns nor foreign keys, so ownership heuristics
+-- would silently omit them. Partition children inherit their parent's policy.
+SELECT c.relname::text AS table_name,
+    array_agg(a.attname::text ORDER BY a.attname)::text[] AS columns
+FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+JOIN pg_catalog.pg_attribute a ON a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped
+WHERE n.nspname=current_schema() AND c.relkind IN ('r','p') AND NOT c.relispartition
+GROUP BY c.oid,c.relname ORDER BY c.relname;

@@ -86,6 +86,13 @@ func (s *PgStore) CreateCapturedProjectEnvironmentCloneOperation(ctx context.Con
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return ProjectEnvironmentCloneOperation{}, mapErr(err)
 	}
+	coverage, err := readCloneSchemaCoverageDB(ctx, tx)
+	if err != nil {
+		return ProjectEnvironmentCloneOperation{}, err
+	}
+	if err := requireKnownCloneSchema(coverage); err != nil {
+		return ProjectEnvironmentCloneOperation{}, err
+	}
 	presence, err := q.ReadProjectEnvironmentCloneEnvironmentPresence(ctx, tx, sqlc.ReadProjectEnvironmentCloneEnvironmentPresenceParams{
 		ProjectID: mustPgUUID(request.ProjectID), SourceEnvironment: request.SourceEnvironment, TargetEnvironment: request.TargetEnvironment})
 	if err != nil {

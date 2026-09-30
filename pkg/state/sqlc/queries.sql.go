@@ -13412,6 +13412,43 @@ func (q *Queries) ReadProjectEnvironmentCloneConfigurationCaptureIdentity(ctx co
 	return i, err
 }
 
+const readProjectEnvironmentCloneCoverageSchema = `-- name: ReadProjectEnvironmentCloneCoverageSchema :many
+SELECT c.relname::text AS table_name,
+    array_agg(a.attname::text ORDER BY a.attname)::text[] AS columns
+FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+JOIN pg_catalog.pg_attribute a ON a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped
+WHERE n.nspname=current_schema() AND c.relkind IN ('r','p') AND NOT c.relispartition
+GROUP BY c.oid,c.relname ORDER BY c.relname
+`
+
+type ReadProjectEnvironmentCloneCoverageSchemaRow struct {
+	TableName string
+	Columns   []string
+}
+
+// Include all application-schema tables. Several configuration tables have
+// neither tenant identity columns nor foreign keys, so ownership heuristics
+// would silently omit them. Partition children inherit their parent's policy.
+func (q *Queries) ReadProjectEnvironmentCloneCoverageSchema(ctx context.Context, db DBTX) ([]ReadProjectEnvironmentCloneCoverageSchemaRow, error) {
+	rows, err := db.Query(ctx, readProjectEnvironmentCloneCoverageSchema)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadProjectEnvironmentCloneCoverageSchemaRow{}
+	for rows.Next() {
+		var i ReadProjectEnvironmentCloneCoverageSchemaRow
+		if err := rows.Scan(&i.TableName, &i.Columns); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const readProjectEnvironmentCloneDatabaseByName = `-- name: ReadProjectEnvironmentCloneDatabaseByName :one
 SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.environment_clone_operation_id FROM managed_postgres_databases d WHERE d.account_id=$1 AND d.name=$2 ORDER BY d.created_at,d.id LIMIT 1 FOR UPDATE OF d
 `
