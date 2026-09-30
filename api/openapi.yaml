@@ -7221,6 +7221,252 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/issue-events/otlp/{signal}:
+    post:
+      operationId: ingestIssueOTLP
+      tags: [apps]
+      summary: Ingest OTLP JSON exception events
+      description: Accepts bounded OTLP trace exception events or exception log records using a deployment-bound issue token. Unrelated telemetry is ignored. Deterministic event IDs permit safe retry after partial delivery. Protobuf encoding is not supported.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          description: Application slug owning the issue reporting scope.
+          in: path
+          required: true
+          schema: { type: string }
+        - name: signal
+          description: OTLP JSON signal, either traces or logs.
+          in: path
+          required: true
+          schema: { type: string, enum: [traces, logs] }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '200':
+          description: Exceptions accepted, including exact retries
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: false }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/issue-events:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [apps]
+      operationId: ingestIssueEvent
+      summary: Capture an exception using a deployment-bound issue ingest token.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IssueEvent' }
+      responses:
+        '202':
+          description: Occurrence accepted or exact retry acknowledged.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueEventResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+  /v1/apps/{slug}/issues:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: listIssues
+      summary: List durable grouped application issues.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: state
+          description: Filter by open, resolved, or ignored lifecycle state.
+          in: query
+          schema: { type: string }
+        - name: environment
+          description: Exact issue environment namespace.
+          in: query
+          schema: { type: string }
+        - name: cursor
+          description: Opaque next_cursor from the previous issue page.
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: A bounded page of issues for this application.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListIssuesResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+  /v1/apps/{slug}/issues/{issue_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: issue_id
+        description: UUID of the durable issue within this app.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [apps]
+      operationId: getIssue
+      summary: Read sanitized evidence, release history, activity, and observed customer impact.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: since
+          description: RFC3339 impact-window start, clamped to plan retention.
+          in: query
+          schema: { type: string }
+        - name: event_cursor
+          description: Opaque next_event_cursor for earlier occurrences.
+          in: query
+          schema: { type: string }
+        - name: release_cursor
+          description: Opaque next_release_cursor for earlier deployment history.
+          in: query
+          schema: { type: string }
+        - name: activity_cursor
+          description: Opaque next_activity_cursor for earlier actions.
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Issue evidence, verified impact, and paginated history.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueDetail' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+  /v1/apps/{slug}/issues/{issue_id}/actions:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: issue_id
+        description: UUID of the issue whose ownership or lifecycle should change.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [apps]
+      operationId: actOnIssue
+      summary: Assign, resolve in a deployment, reopen, or ignore an issue.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IssueActionRequest' }
+      responses:
+        '200':
+          description: Issue state or ownership updated with audited activity.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Issue' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+  /v1/apps/{slug}/issue-ingest-tokens:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [apps]
+      operationId: createIssueIngestToken
+      summary: Create a reporting-only credential bound to one app and deployment.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateIssueIngestTokenRequest' }
+      responses:
+        '201':
+          description: Reporting credential created; the secret is shown once.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueIngestToken' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    get:
+      tags: [apps]
+      operationId: listIssueIngestTokens
+      summary: List issue ingest credential metadata.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Reporting credential metadata without bearer secrets.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListIssueIngestTokensResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+  /v1/apps/{slug}/issue-ingest-tokens/{token_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: token_id
+        description: UUID of the reporting credential to revoke.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [apps]
+      operationId: revokeIssueIngestToken
+      summary: Revoke an issue ingest credential.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '204':
+          description: Reporting credential revoked for subsequent ingestion.
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/errors/summary:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -41402,7 +41648,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "debug.regression.detected", "debug.regression.resolved"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "debug.regression.detected", "debug.regression.resolved"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
@@ -41885,7 +42131,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "debug.regression.detected", "debug.regression.resolved"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "debug.regression.detected", "debug.regression.resolved"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format:
@@ -41966,7 +42212,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format:
@@ -42838,6 +43084,182 @@ components:
           type: boolean
           description: "True when neither source status nor source body hash was supplied, or the mirror produced no response."
 
+
+    IssueFrame:
+      description: "A sanitized application stack frame used by grouping version 1."
+      type: object
+      required: [file, function, in_app]
+      properties:
+        file: { type: string }
+        function: { type: string }
+        line: { type: integer }
+        in_app: { type: boolean }
+
+    IssueEvent:
+      description: "Structured exception evidence; credential-derived account and deployment identity cannot be overridden."
+      type: object
+      required: [event_id, occurred_at, exception_type, message]
+      properties:
+        event_id: { type: string, format: uuid }
+        occurred_at: { type: string, format: date-time }
+        exception_type: { type: string }
+        message: { type: string }
+        stack_trace: { type: string }
+        frames: { type: array, items: { $ref: '#/components/schemas/IssueFrame' } }
+        fingerprint_override: { type: string }
+        trace_id: { type: string }
+        span_id: { type: string }
+        request_id: { type: string, description: "Bounded opaque gateway request ID, sanitized before persistence." }
+        invocation_id: { type: string, format: uuid }
+        route: { type: string }
+        http_status: { type: integer }
+        source_kind: { type: string }
+        redactions: { type: array, items: { type: string } }
+
+    Issue:
+      description: "Durable failure group across releases in one app and environment."
+      type: object
+      required: [id, app_id, environment, fingerprint, grouping_version, title, state, first_seen_at, last_seen_at, event_count, regression_count]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        environment: { type: string }
+        fingerprint: { type: string }
+        grouping_version: { type: integer }
+        title: { type: string }
+        state: { type: string, enum: [open,resolved,ignored] }
+        assignee_account_id: { type: string, format: uuid }
+        first_seen_at: { type: string, format: date-time }
+        last_seen_at: { type: string, format: date-time }
+        event_count: { type: integer }
+        regression_count: { type: integer }
+        resolved_at: { type: string, format: date-time }
+        fixed_deployment_id: { type: string, format: uuid }
+        fixed_deployment_created_at: { type: string, format: date-time }
+        ignored_until: { type: string, format: date-time }
+
+    IssueOccurrence:
+      description: "Retained sanitized occurrence with verified platform attribution and optional debugger correlation."
+      allOf:
+        - $ref: '#/components/schemas/IssueEvent'
+        - type: object
+          required: [deployment_id, received_at, attribution]
+          properties:
+            id: { type: string, format: uuid }
+            deployment_id: { type: string, format: uuid }
+            received_at: { type: string, format: date-time }
+            verified_consumer_id: { type: string, format: uuid }
+            verified_platform_tenant_id: { type: string, format: uuid }
+            debug_request_id: { type: string, format: uuid }
+            attribution: { type: string }
+
+    IssueRelease:
+      description: "Immutable deployment metadata and aggregate observations for one issue."
+      type: object
+      required: [deployment_id, event_count, first_seen_at, last_seen_at]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        commit_sha: { type: string }
+        image_digest: { type: string }
+        event_count: { type: integer }
+        first_seen_at: { type: string, format: date-time }
+        last_seen_at: { type: string, format: date-time }
+
+    IssueActivity:
+      description: "An audited issue lifecycle or ownership transition."
+      type: object
+      required: [id, action, created_at, details]
+      properties:
+        id: { type: string, format: uuid }
+        action: { type: string }
+        actor_account_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        details: { type: object, additionalProperties: { type: string } }
+
+    IssueImpact:
+      description: "Observed retained customer impact within an explicit time window; unknown identity remains unattributed."
+      type: object
+      required: [window_start, window_end, identified_customers, observed_events, unattributed_events, coverage]
+      properties:
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+        identified_customers: { type: integer }
+        observed_events: { type: integer }
+        unattributed_events: { type: integer }
+        coverage: { type: string }
+
+    IssueDetail:
+      description: "Issue metadata and independently paginated occurrence, release, and activity collections."
+      type: object
+      required: [issue, events, releases, activity, impact]
+      properties:
+        issue: { $ref: '#/components/schemas/Issue' }
+        events: { type: array, items: { $ref: '#/components/schemas/IssueOccurrence' } }
+        releases: { type: array, items: { $ref: '#/components/schemas/IssueRelease' } }
+        activity: { type: array, items: { $ref: '#/components/schemas/IssueActivity' } }
+        impact: { $ref: '#/components/schemas/IssueImpact' }
+        next_event_cursor: { type: string }
+        next_release_cursor: { type: string }
+        next_activity_cursor: { type: string }
+
+    ListIssuesResponse:
+      description: "A bounded page of grouped issues with an opaque continuation cursor."
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Issue' } }
+        next_cursor: { type: string }
+
+    IssueEventResponse:
+      description: "Receipt acknowledging an accepted or exact duplicate occurrence."
+      type: object
+      required: [issue_id, event_id, duplicate, regressed]
+      properties:
+        issue_id: { type: string, format: uuid }
+        event_id: { type: string, format: uuid }
+        duplicate: { type: boolean }
+        regressed: { type: boolean }
+
+    IssueActionRequest:
+      description: "Desired ownership or lifecycle action, validated within the app scope."
+      type: object
+      required: [action]
+      properties:
+        action: { type: string, enum: [assign,resolve,reopen,ignore] }
+        assignee_account_id: { type: string, format: uuid }
+        fixed_deployment_id: { type: string, format: uuid }
+        ignored_until: { type: string, format: date-time }
+
+    CreateIssueIngestTokenRequest:
+      description: "Create a short-lived reporting credential for one existing deployment and environment."
+      type: object
+      required: [deployment_id, name, expires_at]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        environment: { type: string }
+        name: { type: string }
+        expires_at: { type: string, format: date-time }
+
+    IssueIngestToken:
+      description: "Reporting credential metadata; the bearer secret appears only on initial creation."
+      type: object
+      required: [id, name, app_id, deployment_id, environment, expires_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        app_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        environment: { type: string }
+        expires_at: { type: string, format: date-time }
+        revoked_at: { type: string, format: date-time }
+        token: { type: string }
+
+    ListIssueIngestTokensResponse:
+      description: "A collection of scoped reporting credentials; secret values are never included."
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/IssueIngestToken' } }
 
   responses:
 

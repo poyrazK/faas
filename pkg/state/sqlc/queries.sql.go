@@ -5014,6 +5014,1235 @@ func (q *Queries) IsMailSuppressed(ctx context.Context, db DBTX, lower string) (
 	return suppressed, err
 }
 
+const issueAddActivity = `-- name: IssueAddActivity :one
+INSERT INTO issue_activity(issue_id,action,actor_account_id,created_at,details) VALUES($1,$2,$3,$4,$5) RETURNING id, issue_id, action, actor_account_id, created_at, details
+`
+
+type IssueAddActivityParams struct {
+	IssueID        pgtype.UUID
+	Action         string
+	ActorAccountID pgtype.UUID
+	CreatedAt      pgtype.Timestamptz
+	Details        []byte
+}
+
+func (q *Queries) IssueAddActivity(ctx context.Context, db DBTX, arg IssueAddActivityParams) (IssueActivity, error) {
+	row := db.QueryRow(ctx, issueAddActivity,
+		arg.IssueID,
+		arg.Action,
+		arg.ActorAccountID,
+		arg.CreatedAt,
+		arg.Details,
+	)
+	var i IssueActivity
+	err := row.Scan(
+		&i.ID,
+		&i.IssueID,
+		&i.Action,
+		&i.ActorAccountID,
+		&i.CreatedAt,
+		&i.Details,
+	)
+	return i, err
+}
+
+const issueAddResolution = `-- name: IssueAddResolution :exec
+INSERT INTO issue_resolutions(issue_id,fixed_deployment_id,resolved_at,actor_account_id) VALUES($1,$2,$3,$4)
+`
+
+type IssueAddResolutionParams struct {
+	IssueID        pgtype.UUID
+	DeploymentID   pgtype.UUID
+	ResolvedAt     pgtype.Timestamptz
+	ActorAccountID pgtype.UUID
+}
+
+func (q *Queries) IssueAddResolution(ctx context.Context, db DBTX, arg IssueAddResolutionParams) error {
+	_, err := db.Exec(ctx, issueAddResolution,
+		arg.IssueID,
+		arg.DeploymentID,
+		arg.ResolvedAt,
+		arg.ActorAccountID,
+	)
+	return err
+}
+
+const issueAddTransition = `-- name: IssueAddTransition :exec
+WITH recipients AS (
+ SELECT array_agg(id) AS ids FROM app_webhooks
+ WHERE app_id=$3 AND account_id=$2 AND scope='app' AND enabled
+ AND (cardinality(event_filter)=0 OR ($4::jsonb->>'type')=ANY(event_filter))
+)
+INSERT INTO app_webhook_event_outbox(id,account_id,app_id,event,source_id,payload,recipient_webhook_ids)
+SELECT $1,$2,$3,$4::jsonb->>'type',$1,$4,ids
+FROM recipients WHERE cardinality(ids)>0 ON CONFLICT(event,source_id) DO NOTHING
+`
+
+type IssueAddTransitionParams struct {
+	ActivityID pgtype.UUID
+	AccountID  pgtype.UUID
+	AppID      pgtype.UUID
+	Payload    []byte
+}
+
+func (q *Queries) IssueAddTransition(ctx context.Context, db DBTX, arg IssueAddTransitionParams) error {
+	_, err := db.Exec(ctx, issueAddTransition,
+		arg.ActivityID,
+		arg.AccountID,
+		arg.AppID,
+		arg.Payload,
+	)
+	return err
+}
+
+const issueAssigneeAllowed = `-- name: IssueAssigneeAllowed :one
+SELECT EXISTS(SELECT 1 FROM apps a LEFT JOIN org_memberships m ON m.org_id=a.org_id AND m.account_id=$1 AND m.removed_at IS NULL
+WHERE a.id=$2 AND (a.account_id=$1 OR m.account_id IS NOT NULL))
+`
+
+type IssueAssigneeAllowedParams struct {
+	Assignee pgtype.UUID
+	AppID    pgtype.UUID
+}
+
+func (q *Queries) IssueAssigneeAllowed(ctx context.Context, db DBTX, arg IssueAssigneeAllowedParams) (bool, error) {
+	row := db.QueryRow(ctx, issueAssigneeAllowed, arg.Assignee, arg.AppID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const issueAttribution = `-- name: IssueAttribution :many
+SELECT DISTINCT consumer_id,platform_tenant_id FROM request_telemetry
+WHERE account_id=$1 AND app_id=$2 AND deployment_id=$3
+AND trace_id=$4 AND count=1 AND received_at >= $5 AND received_at <= $6 LIMIT 2
+`
+
+type IssueAttributionParams struct {
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	TraceID      pgtype.Text
+	Since        pgtype.Timestamptz
+	Until        pgtype.Timestamptz
+}
+
+type IssueAttributionRow struct {
+	ConsumerID       pgtype.UUID
+	PlatformTenantID pgtype.UUID
+}
+
+func (q *Queries) IssueAttribution(ctx context.Context, db DBTX, arg IssueAttributionParams) ([]IssueAttributionRow, error) {
+	rows, err := db.Query(ctx, issueAttribution,
+		arg.AccountID,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.TraceID,
+		arg.Since,
+		arg.Until,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []IssueAttributionRow{}
+	for rows.Next() {
+		var i IssueAttributionRow
+		if err := rows.Scan(&i.ConsumerID, &i.PlatformTenantID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const issueCount = `-- name: IssueCount :one
+SELECT count(*) FROM app_issues WHERE app_id = $1
+`
+
+func (q *Queries) IssueCount(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, issueCount, appID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const issueCountEvents = `-- name: IssueCountEvents :one
+SELECT count(*) FROM issue_events WHERE app_id = $1
+`
+
+func (q *Queries) IssueCountEvents(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, issueCountEvents, appID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const issueCountRecentEvents = `-- name: IssueCountRecentEvents :one
+SELECT count(*) FROM issue_events WHERE app_id = $1 AND received_at >= $2
+`
+
+type IssueCountRecentEventsParams struct {
+	AppID pgtype.UUID
+	Since pgtype.Timestamptz
+}
+
+func (q *Queries) IssueCountRecentEvents(ctx context.Context, db DBTX, arg IssueCountRecentEventsParams) (int64, error) {
+	row := db.QueryRow(ctx, issueCountRecentEvents, arg.AppID, arg.Since)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const issueCountTokens = `-- name: IssueCountTokens :one
+SELECT count(*) FROM issue_ingest_tokens WHERE app_id=$1 AND revoked_at IS NULL AND expires_at > now()
+`
+
+func (q *Queries) IssueCountTokens(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, issueCountTokens, appID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const issueCreate = `-- name: IssueCreate :one
+INSERT INTO app_issues(account_id,app_id,environment,fingerprint,grouping_version,title,first_seen_at,last_seen_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,$7) RETURNING id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until
+`
+
+type IssueCreateParams struct {
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	Environment     string
+	Fingerprint     string
+	GroupingVersion int32
+	Title           string
+	OccurredAt      pgtype.Timestamptz
+}
+
+func (q *Queries) IssueCreate(ctx context.Context, db DBTX, arg IssueCreateParams) (AppIssue, error) {
+	row := db.QueryRow(ctx, issueCreate,
+		arg.AccountID,
+		arg.AppID,
+		arg.Environment,
+		arg.Fingerprint,
+		arg.GroupingVersion,
+		arg.Title,
+		arg.OccurredAt,
+	)
+	var i AppIssue
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Environment,
+		&i.Fingerprint,
+		&i.GroupingVersion,
+		&i.Title,
+		&i.State,
+		&i.AssigneeAccountID,
+		&i.FirstSeenAt,
+		&i.LastSeenAt,
+		&i.EventCount,
+		&i.RegressionCount,
+		&i.ResolvedAt,
+		&i.FixedDeploymentID,
+		&i.FixedDeploymentCreatedAt,
+		&i.IgnoredUntil,
+	)
+	return i, err
+}
+
+const issueDebugRequest = `-- name: IssueDebugRequest :many
+SELECT id FROM request_telemetry WHERE account_id=$1 AND app_id=$2 AND deployment_id=$3
+AND count=1 AND received_at BETWEEN $4 AND $5
+AND (id=$6::uuid OR ($7::text<>'' AND trace_id=$7)) LIMIT 2
+`
+
+type IssueDebugRequestParams struct {
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	Since        pgtype.Timestamptz
+	Until        pgtype.Timestamptz
+	RequestID    pgtype.UUID
+	TraceID      string
+}
+
+func (q *Queries) IssueDebugRequest(ctx context.Context, db DBTX, arg IssueDebugRequestParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, issueDebugRequest,
+		arg.AccountID,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.Since,
+		arg.Until,
+		arg.RequestID,
+		arg.TraceID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const issueDeploymentScope = `-- name: IssueDeploymentScope :one
+SELECT d.id, d.commit_sha, d.image_digest, d.created_at FROM deployments d JOIN apps a ON a.id = d.app_id
+WHERE d.id = $1 AND d.app_id = $2 AND a.account_id = $3
+AND ($4::text = 'application' OR EXISTS (
+ SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id = rm.release_id
+ WHERE rm.app_id = a.id AND rm.deployment_id = d.id AND rs.environment_slug = $4::text AND rs.account_id = a.account_id))
+`
+
+type IssueDeploymentScopeParams struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+	Environment  string
+}
+
+type IssueDeploymentScopeRow struct {
+	ID          pgtype.UUID
+	CommitSha   pgtype.Text
+	ImageDigest string
+	CreatedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) IssueDeploymentScope(ctx context.Context, db DBTX, arg IssueDeploymentScopeParams) (IssueDeploymentScopeRow, error) {
+	row := db.QueryRow(ctx, issueDeploymentScope,
+		arg.DeploymentID,
+		arg.AppID,
+		arg.AccountID,
+		arg.Environment,
+	)
+	var i IssueDeploymentScopeRow
+	err := row.Scan(
+		&i.ID,
+		&i.CommitSha,
+		&i.ImageDigest,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const issueEnrichAttribution = `-- name: IssueEnrichAttribution :exec
+UPDATE issue_events SET verified_consumer_id=$1,verified_platform_tenant_id=$2,attribution_checked_at=$3
+WHERE app_id=$4 AND deployment_id=$5 AND event_id=$6
+AND verified_consumer_id IS NULL AND verified_platform_tenant_id IS NULL
+`
+
+type IssueEnrichAttributionParams struct {
+	ConsumerID   pgtype.UUID
+	TenantID     pgtype.UUID
+	Now          pgtype.Timestamptz
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	EventID      pgtype.UUID
+}
+
+func (q *Queries) IssueEnrichAttribution(ctx context.Context, db DBTX, arg IssueEnrichAttributionParams) error {
+	_, err := db.Exec(ctx, issueEnrichAttribution,
+		arg.ConsumerID,
+		arg.TenantID,
+		arg.Now,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.EventID,
+	)
+	return err
+}
+
+const issueExpiredIgnores = `-- name: IssueExpiredIgnores :many
+SELECT app_id,id FROM app_issues WHERE state='ignored' AND ignored_until <= $1 ORDER BY ignored_until LIMIT $2
+`
+
+type IssueExpiredIgnoresParams struct {
+	Now        pgtype.Timestamptz
+	BatchLimit int32
+}
+
+type IssueExpiredIgnoresRow struct {
+	AppID pgtype.UUID
+	ID    pgtype.UUID
+}
+
+func (q *Queries) IssueExpiredIgnores(ctx context.Context, db DBTX, arg IssueExpiredIgnoresParams) ([]IssueExpiredIgnoresRow, error) {
+	rows, err := db.Query(ctx, issueExpiredIgnores, arg.Now, arg.BatchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []IssueExpiredIgnoresRow{}
+	for rows.Next() {
+		var i IssueExpiredIgnoresRow
+		if err := rows.Scan(&i.AppID, &i.ID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const issueFindEvent = `-- name: IssueFindEvent :one
+SELECT issue_id,payload_hash FROM issue_events WHERE app_id=$1 AND deployment_id=$2 AND event_id=$3
+`
+
+type IssueFindEventParams struct {
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	EventID      pgtype.UUID
+}
+
+type IssueFindEventRow struct {
+	IssueID     pgtype.UUID
+	PayloadHash string
+}
+
+func (q *Queries) IssueFindEvent(ctx context.Context, db DBTX, arg IssueFindEventParams) (IssueFindEventRow, error) {
+	row := db.QueryRow(ctx, issueFindEvent, arg.AppID, arg.DeploymentID, arg.EventID)
+	var i IssueFindEventRow
+	err := row.Scan(&i.IssueID, &i.PayloadHash)
+	return i, err
+}
+
+const issueFindGroup = `-- name: IssueFindGroup :one
+SELECT id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until FROM app_issues WHERE app_id = $1 AND environment = $2
+AND grouping_version = $3 AND fingerprint = $4 FOR UPDATE
+`
+
+type IssueFindGroupParams struct {
+	AppID           pgtype.UUID
+	Environment     string
+	GroupingVersion int32
+	Fingerprint     string
+}
+
+func (q *Queries) IssueFindGroup(ctx context.Context, db DBTX, arg IssueFindGroupParams) (AppIssue, error) {
+	row := db.QueryRow(ctx, issueFindGroup,
+		arg.AppID,
+		arg.Environment,
+		arg.GroupingVersion,
+		arg.Fingerprint,
+	)
+	var i AppIssue
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Environment,
+		&i.Fingerprint,
+		&i.GroupingVersion,
+		&i.Title,
+		&i.State,
+		&i.AssigneeAccountID,
+		&i.FirstSeenAt,
+		&i.LastSeenAt,
+		&i.EventCount,
+		&i.RegressionCount,
+		&i.ResolvedAt,
+		&i.FixedDeploymentID,
+		&i.FixedDeploymentCreatedAt,
+		&i.IgnoredUntil,
+	)
+	return i, err
+}
+
+const issueFindToken = `-- name: IssueFindToken :one
+SELECT id, account_id, app_id, deployment_id, environment, name, token_hash, expires_at, revoked_at, created_at FROM issue_ingest_tokens WHERE token_hash=$1 AND revoked_at IS NULL AND expires_at > $2
+`
+
+type IssueFindTokenParams struct {
+	TokenHash []byte
+	Now       pgtype.Timestamptz
+}
+
+func (q *Queries) IssueFindToken(ctx context.Context, db DBTX, arg IssueFindTokenParams) (IssueIngestToken, error) {
+	row := db.QueryRow(ctx, issueFindToken, arg.TokenHash, arg.Now)
+	var i IssueIngestToken
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.Environment,
+		&i.Name,
+		&i.TokenHash,
+		&i.ExpiresAt,
+		&i.RevokedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const issueGet = `-- name: IssueGet :one
+SELECT id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until FROM app_issues WHERE app_id = $1 AND id = $2
+`
+
+type IssueGetParams struct {
+	AppID pgtype.UUID
+	ID    pgtype.UUID
+}
+
+func (q *Queries) IssueGet(ctx context.Context, db DBTX, arg IssueGetParams) (AppIssue, error) {
+	row := db.QueryRow(ctx, issueGet, arg.AppID, arg.ID)
+	var i AppIssue
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Environment,
+		&i.Fingerprint,
+		&i.GroupingVersion,
+		&i.Title,
+		&i.State,
+		&i.AssigneeAccountID,
+		&i.FirstSeenAt,
+		&i.LastSeenAt,
+		&i.EventCount,
+		&i.RegressionCount,
+		&i.ResolvedAt,
+		&i.FixedDeploymentID,
+		&i.FixedDeploymentCreatedAt,
+		&i.IgnoredUntil,
+	)
+	return i, err
+}
+
+const issueGetLocked = `-- name: IssueGetLocked :one
+SELECT id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until FROM app_issues WHERE app_id = $1 AND id = $2 FOR UPDATE
+`
+
+type IssueGetLockedParams struct {
+	AppID pgtype.UUID
+	ID    pgtype.UUID
+}
+
+func (q *Queries) IssueGetLocked(ctx context.Context, db DBTX, arg IssueGetLockedParams) (AppIssue, error) {
+	row := db.QueryRow(ctx, issueGetLocked, arg.AppID, arg.ID)
+	var i AppIssue
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Environment,
+		&i.Fingerprint,
+		&i.GroupingVersion,
+		&i.Title,
+		&i.State,
+		&i.AssigneeAccountID,
+		&i.FirstSeenAt,
+		&i.LastSeenAt,
+		&i.EventCount,
+		&i.RegressionCount,
+		&i.ResolvedAt,
+		&i.FixedDeploymentID,
+		&i.FixedDeploymentCreatedAt,
+		&i.IgnoredUntil,
+	)
+	return i, err
+}
+
+const issueImpact = `-- name: IssueImpact :one
+SELECT count(*) AS observed_events,count(DISTINCT COALESCE(verified_platform_tenant_id,verified_consumer_id)) AS identified_customers,
+count(*) FILTER(WHERE verified_platform_tenant_id IS NULL AND verified_consumer_id IS NULL) AS unattributed_events
+FROM issue_events WHERE issue_id=$1 AND occurred_at >= $2 AND occurred_at <= $3
+`
+
+type IssueImpactParams struct {
+	IssueID pgtype.UUID
+	Since   pgtype.Timestamptz
+	Until   pgtype.Timestamptz
+}
+
+type IssueImpactRow struct {
+	ObservedEvents      int64
+	IdentifiedCustomers int64
+	UnattributedEvents  int64
+}
+
+func (q *Queries) IssueImpact(ctx context.Context, db DBTX, arg IssueImpactParams) (IssueImpactRow, error) {
+	row := db.QueryRow(ctx, issueImpact, arg.IssueID, arg.Since, arg.Until)
+	var i IssueImpactRow
+	err := row.Scan(&i.ObservedEvents, &i.IdentifiedCustomers, &i.UnattributedEvents)
+	return i, err
+}
+
+const issueInsertEvent = `-- name: IssueInsertEvent :exec
+INSERT INTO issue_events(app_id,deployment_id,event_id,issue_id,payload_hash,payload,occurred_at,received_at,verified_consumer_id,verified_platform_tenant_id)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+`
+
+type IssueInsertEventParams struct {
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	EventID      pgtype.UUID
+	IssueID      pgtype.UUID
+	PayloadHash  string
+	Payload      []byte
+	OccurredAt   pgtype.Timestamptz
+	ReceivedAt   pgtype.Timestamptz
+	ConsumerID   pgtype.UUID
+	TenantID     pgtype.UUID
+}
+
+func (q *Queries) IssueInsertEvent(ctx context.Context, db DBTX, arg IssueInsertEventParams) error {
+	_, err := db.Exec(ctx, issueInsertEvent,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.EventID,
+		arg.IssueID,
+		arg.PayloadHash,
+		arg.Payload,
+		arg.OccurredAt,
+		arg.ReceivedAt,
+		arg.ConsumerID,
+		arg.TenantID,
+	)
+	return err
+}
+
+const issueInsertToken = `-- name: IssueInsertToken :one
+INSERT INTO issue_ingest_tokens(account_id,app_id,deployment_id,environment,name,token_hash,expires_at)
+VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id, account_id, app_id, deployment_id, environment, name, token_hash, expires_at, revoked_at, created_at
+`
+
+type IssueInsertTokenParams struct {
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	Environment  string
+	Name         string
+	TokenHash    []byte
+	ExpiresAt    pgtype.Timestamptz
+}
+
+func (q *Queries) IssueInsertToken(ctx context.Context, db DBTX, arg IssueInsertTokenParams) (IssueIngestToken, error) {
+	row := db.QueryRow(ctx, issueInsertToken,
+		arg.AccountID,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.Environment,
+		arg.Name,
+		arg.TokenHash,
+		arg.ExpiresAt,
+	)
+	var i IssueIngestToken
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.Environment,
+		&i.Name,
+		&i.TokenHash,
+		&i.ExpiresAt,
+		&i.RevokedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const issueInvocationScope = `-- name: IssueInvocationScope :one
+SELECT id,platform_tenant_id FROM invocations WHERE id=$1 AND app_id=$2 AND account_id=$3
+`
+
+type IssueInvocationScopeParams struct {
+	ID        pgtype.UUID
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+type IssueInvocationScopeRow struct {
+	ID               pgtype.UUID
+	PlatformTenantID pgtype.UUID
+}
+
+func (q *Queries) IssueInvocationScope(ctx context.Context, db DBTX, arg IssueInvocationScopeParams) (IssueInvocationScopeRow, error) {
+	row := db.QueryRow(ctx, issueInvocationScope, arg.ID, arg.AppID, arg.AccountID)
+	var i IssueInvocationScopeRow
+	err := row.Scan(&i.ID, &i.PlatformTenantID)
+	return i, err
+}
+
+const issueList = `-- name: IssueList :many
+SELECT id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until FROM app_issues WHERE app_id = $1
+AND ($2::text = '' OR state = $2)
+AND ($3::text = '' OR environment = $3)
+AND ($4::timestamptz IS NULL OR (last_seen_at,id) < ($4,$5::uuid))
+ORDER BY last_seen_at DESC,id DESC LIMIT $6
+`
+
+type IssueListParams struct {
+	AppID       pgtype.UUID
+	State       string
+	Environment string
+	CursorTime  pgtype.Timestamptz
+	CursorID    pgtype.UUID
+	PageLimit   int32
+}
+
+func (q *Queries) IssueList(ctx context.Context, db DBTX, arg IssueListParams) ([]AppIssue, error) {
+	rows, err := db.Query(ctx, issueList,
+		arg.AppID,
+		arg.State,
+		arg.Environment,
+		arg.CursorTime,
+		arg.CursorID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppIssue{}
+	for rows.Next() {
+		var i AppIssue
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Environment,
+			&i.Fingerprint,
+			&i.GroupingVersion,
+			&i.Title,
+			&i.State,
+			&i.AssigneeAccountID,
+			&i.FirstSeenAt,
+			&i.LastSeenAt,
+			&i.EventCount,
+			&i.RegressionCount,
+			&i.ResolvedAt,
+			&i.FixedDeploymentID,
+			&i.FixedDeploymentCreatedAt,
+			&i.IgnoredUntil,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const issueListActivity = `-- name: IssueListActivity :many
+SELECT id, issue_id, action, actor_account_id, created_at, details FROM issue_activity WHERE issue_id=$1 AND ($2::timestamptz IS NULL OR (created_at,id) < ($2,$3::uuid)) ORDER BY created_at DESC,id DESC LIMIT $4
+`
+
+type IssueListActivityParams struct {
+	IssueID    pgtype.UUID
+	CursorTime pgtype.Timestamptz
+	CursorID   pgtype.UUID
+	PageLimit  int32
+}
+
+func (q *Queries) IssueListActivity(ctx context.Context, db DBTX, arg IssueListActivityParams) ([]IssueActivity, error) {
+	rows, err := db.Query(ctx, issueListActivity,
+		arg.IssueID,
+		arg.CursorTime,
+		arg.CursorID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []IssueActivity{}
+	for rows.Next() {
+		var i IssueActivity
+		if err := rows.Scan(
+			&i.ID,
+			&i.IssueID,
+			&i.Action,
+			&i.ActorAccountID,
+			&i.CreatedAt,
+			&i.Details,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const issueListEvents = `-- name: IssueListEvents :many
+SELECT id, app_id, deployment_id, event_id, issue_id, payload_hash, payload, occurred_at, received_at, attribution_checked_at, verified_consumer_id, verified_platform_tenant_id FROM issue_events WHERE issue_id=$1 AND occurred_at >= $2 AND occurred_at <= $3
+AND ($4::timestamptz IS NULL OR (occurred_at,id) < ($4,$5::uuid))
+ORDER BY occurred_at DESC,id DESC LIMIT $6
+`
+
+type IssueListEventsParams struct {
+	IssueID    pgtype.UUID
+	Since      pgtype.Timestamptz
+	Until      pgtype.Timestamptz
+	CursorTime pgtype.Timestamptz
+	CursorID   pgtype.UUID
+	PageLimit  int32
+}
+
+func (q *Queries) IssueListEvents(ctx context.Context, db DBTX, arg IssueListEventsParams) ([]IssueEvent, error) {
+	rows, err := db.Query(ctx, issueListEvents,
+		arg.IssueID,
+		arg.Since,
+		arg.Until,
+		arg.CursorTime,
+		arg.CursorID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []IssueEvent{}
+	for rows.Next() {
+		var i IssueEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.AppID,
+			&i.DeploymentID,
+			&i.EventID,
+			&i.IssueID,
+			&i.PayloadHash,
+			&i.Payload,
+			&i.OccurredAt,
+			&i.ReceivedAt,
+			&i.AttributionCheckedAt,
+			&i.VerifiedConsumerID,
+			&i.VerifiedPlatformTenantID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const issueListReleases = `-- name: IssueListReleases :many
+SELECT issue_id, deployment_id, commit_sha, image_digest, event_count, first_seen_at, last_seen_at FROM issue_releases WHERE issue_id=$1 AND ($2::timestamptz IS NULL OR (first_seen_at,deployment_id) < ($2,$3::uuid)) ORDER BY first_seen_at DESC,deployment_id DESC LIMIT $4
+`
+
+type IssueListReleasesParams struct {
+	IssueID    pgtype.UUID
+	CursorTime pgtype.Timestamptz
+	CursorID   pgtype.UUID
+	PageLimit  int32
+}
+
+func (q *Queries) IssueListReleases(ctx context.Context, db DBTX, arg IssueListReleasesParams) ([]IssueRelease, error) {
+	rows, err := db.Query(ctx, issueListReleases,
+		arg.IssueID,
+		arg.CursorTime,
+		arg.CursorID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []IssueRelease{}
+	for rows.Next() {
+		var i IssueRelease
+		if err := rows.Scan(
+			&i.IssueID,
+			&i.DeploymentID,
+			&i.CommitSha,
+			&i.ImageDigest,
+			&i.EventCount,
+			&i.FirstSeenAt,
+			&i.LastSeenAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const issueListTokens = `-- name: IssueListTokens :many
+SELECT id, account_id, app_id, deployment_id, environment, name, token_hash, expires_at, revoked_at, created_at FROM issue_ingest_tokens WHERE app_id=$1 ORDER BY created_at DESC
+`
+
+func (q *Queries) IssueListTokens(ctx context.Context, db DBTX, appID pgtype.UUID) ([]IssueIngestToken, error) {
+	rows, err := db.Query(ctx, issueListTokens, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []IssueIngestToken{}
+	for rows.Next() {
+		var i IssueIngestToken
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.DeploymentID,
+			&i.Environment,
+			&i.Name,
+			&i.TokenHash,
+			&i.ExpiresAt,
+			&i.RevokedAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const issueLockApp = `-- name: IssueLockApp :one
+SELECT id, account_id, org_id FROM apps WHERE id = $1 FOR UPDATE
+`
+
+type IssueLockAppRow struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	OrgID     pgtype.UUID
+}
+
+func (q *Queries) IssueLockApp(ctx context.Context, db DBTX, appID pgtype.UUID) (IssueLockAppRow, error) {
+	row := db.QueryRow(ctx, issueLockApp, appID)
+	var i IssueLockAppRow
+	err := row.Scan(&i.ID, &i.AccountID, &i.OrgID)
+	return i, err
+}
+
+const issueObserve = `-- name: IssueObserve :one
+UPDATE app_issues SET event_count=event_count+1,first_seen_at=LEAST(first_seen_at,$1),last_seen_at=GREATEST(last_seen_at,$1),
+state=CASE WHEN $2::boolean THEN 'open' ELSE state END,
+regression_count=regression_count+CASE WHEN $2::boolean THEN 1 ELSE 0 END
+WHERE id=$3 RETURNING id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until
+`
+
+type IssueObserveParams struct {
+	OccurredAt pgtype.Timestamptz
+	Regressed  bool
+	ID         pgtype.UUID
+}
+
+func (q *Queries) IssueObserve(ctx context.Context, db DBTX, arg IssueObserveParams) (AppIssue, error) {
+	row := db.QueryRow(ctx, issueObserve, arg.OccurredAt, arg.Regressed, arg.ID)
+	var i AppIssue
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Environment,
+		&i.Fingerprint,
+		&i.GroupingVersion,
+		&i.Title,
+		&i.State,
+		&i.AssigneeAccountID,
+		&i.FirstSeenAt,
+		&i.LastSeenAt,
+		&i.EventCount,
+		&i.RegressionCount,
+		&i.ResolvedAt,
+		&i.FixedDeploymentID,
+		&i.FixedDeploymentCreatedAt,
+		&i.IgnoredUntil,
+	)
+	return i, err
+}
+
+const issueObserveRelease = `-- name: IssueObserveRelease :exec
+INSERT INTO issue_releases(issue_id,deployment_id,commit_sha,image_digest,event_count,first_seen_at,last_seen_at)
+VALUES($1,$2,$3,$4,1,$5,$5)
+ON CONFLICT(issue_id,deployment_id) DO UPDATE SET event_count=issue_releases.event_count+1,
+first_seen_at=LEAST(issue_releases.first_seen_at,excluded.first_seen_at),last_seen_at=GREATEST(issue_releases.last_seen_at,excluded.last_seen_at)
+`
+
+type IssueObserveReleaseParams struct {
+	IssueID      pgtype.UUID
+	DeploymentID pgtype.UUID
+	CommitSha    string
+	ImageDigest  string
+	OccurredAt   pgtype.Timestamptz
+}
+
+func (q *Queries) IssueObserveRelease(ctx context.Context, db DBTX, arg IssueObserveReleaseParams) error {
+	_, err := db.Exec(ctx, issueObserveRelease,
+		arg.IssueID,
+		arg.DeploymentID,
+		arg.CommitSha,
+		arg.ImageDigest,
+		arg.OccurredAt,
+	)
+	return err
+}
+
+const issuePurgeEvents = `-- name: IssuePurgeEvents :exec
+DELETE FROM issue_events WHERE app_id = $1 AND received_at < $2
+`
+
+type IssuePurgeEventsParams struct {
+	AppID  pgtype.UUID
+	Before pgtype.Timestamptz
+}
+
+func (q *Queries) IssuePurgeEvents(ctx context.Context, db DBTX, arg IssuePurgeEventsParams) error {
+	_, err := db.Exec(ctx, issuePurgeEvents, arg.AppID, arg.Before)
+	return err
+}
+
+const issuePurgeExpiredTokens = `-- name: IssuePurgeExpiredTokens :execrows
+DELETE FROM issue_ingest_tokens WHERE expires_at < $1
+`
+
+func (q *Queries) IssuePurgeExpiredTokens(ctx context.Context, db DBTX, now pgtype.Timestamptz) (int64, error) {
+	result, err := db.Exec(ctx, issuePurgeExpiredTokens, now)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const issuePurgePlanEvents = `-- name: IssuePurgePlanEvents :execrows
+WITH expired AS (
+ SELECT e.app_id,e.deployment_id,e.event_id FROM issue_events e JOIN apps a ON a.id=e.app_id JOIN accounts c ON c.id=a.account_id
+ WHERE c.plan=$1 AND e.received_at<$2 ORDER BY e.received_at LIMIT $3 FOR UPDATE OF e SKIP LOCKED
+)
+DELETE FROM issue_events e USING expired x WHERE e.app_id=x.app_id AND e.deployment_id=x.deployment_id AND e.event_id=x.event_id
+`
+
+type IssuePurgePlanEventsParams struct {
+	Plan       string
+	Before     pgtype.Timestamptz
+	BatchLimit int32
+}
+
+func (q *Queries) IssuePurgePlanEvents(ctx context.Context, db DBTX, arg IssuePurgePlanEventsParams) (int64, error) {
+	result, err := db.Exec(ctx, issuePurgePlanEvents, arg.Plan, arg.Before, arg.BatchLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const issueRequestAttribution = `-- name: IssueRequestAttribution :many
+SELECT DISTINCT consumer_key,platform_tenant_id FROM request_audit_events
+WHERE account_id=$1 AND app_id=$2 AND deployment_id=$3
+AND request_id=$4 LIMIT 2
+`
+
+type IssueRequestAttributionParams struct {
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	RequestID    string
+}
+
+type IssueRequestAttributionRow struct {
+	ConsumerKey      string
+	PlatformTenantID pgtype.UUID
+}
+
+func (q *Queries) IssueRequestAttribution(ctx context.Context, db DBTX, arg IssueRequestAttributionParams) ([]IssueRequestAttributionRow, error) {
+	rows, err := db.Query(ctx, issueRequestAttribution,
+		arg.AccountID,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.RequestID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []IssueRequestAttributionRow{}
+	for rows.Next() {
+		var i IssueRequestAttributionRow
+		if err := rows.Scan(&i.ConsumerKey, &i.PlatformTenantID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const issueRevokeToken = `-- name: IssueRevokeToken :execrows
+UPDATE issue_ingest_tokens SET revoked_at=now() WHERE app_id=$1 AND id=$2
+`
+
+type IssueRevokeTokenParams struct {
+	AppID pgtype.UUID
+	ID    pgtype.UUID
+}
+
+func (q *Queries) IssueRevokeToken(ctx context.Context, db DBTX, arg IssueRevokeTokenParams) (int64, error) {
+	result, err := db.Exec(ctx, issueRevokeToken, arg.AppID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const issueTokenStillValid = `-- name: IssueTokenStillValid :one
+SELECT EXISTS(SELECT 1 FROM issue_ingest_tokens WHERE id=$1 AND app_id=$2 AND deployment_id=$3 AND revoked_at IS NULL AND expires_at>$4)
+`
+
+type IssueTokenStillValidParams struct {
+	ID           pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	Now          pgtype.Timestamptz
+}
+
+func (q *Queries) IssueTokenStillValid(ctx context.Context, db DBTX, arg IssueTokenStillValidParams) (bool, error) {
+	row := db.QueryRow(ctx, issueTokenStillValid,
+		arg.ID,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.Now,
+	)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const issueUnattributedEvents = `-- name: IssueUnattributedEvents :many
+SELECT e.id, e.app_id, e.deployment_id, e.event_id, e.issue_id, e.payload_hash, e.payload, e.occurred_at, e.received_at, e.attribution_checked_at, e.verified_consumer_id, e.verified_platform_tenant_id,i.account_id,i.environment FROM issue_events e JOIN app_issues i ON i.id=e.issue_id
+WHERE e.verified_consumer_id IS NULL AND e.verified_platform_tenant_id IS NULL
+AND e.attribution_checked_at < $1 ORDER BY e.attribution_checked_at LIMIT $2
+`
+
+type IssueUnattributedEventsParams struct {
+	Before     pgtype.Timestamptz
+	BatchLimit int32
+}
+
+type IssueUnattributedEventsRow struct {
+	ID                       pgtype.UUID
+	AppID                    pgtype.UUID
+	DeploymentID             pgtype.UUID
+	EventID                  pgtype.UUID
+	IssueID                  pgtype.UUID
+	PayloadHash              string
+	Payload                  []byte
+	OccurredAt               pgtype.Timestamptz
+	ReceivedAt               pgtype.Timestamptz
+	AttributionCheckedAt     pgtype.Timestamptz
+	VerifiedConsumerID       pgtype.UUID
+	VerifiedPlatformTenantID pgtype.UUID
+	AccountID                pgtype.UUID
+	Environment              string
+}
+
+func (q *Queries) IssueUnattributedEvents(ctx context.Context, db DBTX, arg IssueUnattributedEventsParams) ([]IssueUnattributedEventsRow, error) {
+	rows, err := db.Query(ctx, issueUnattributedEvents, arg.Before, arg.BatchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []IssueUnattributedEventsRow{}
+	for rows.Next() {
+		var i IssueUnattributedEventsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AppID,
+			&i.DeploymentID,
+			&i.EventID,
+			&i.IssueID,
+			&i.PayloadHash,
+			&i.Payload,
+			&i.OccurredAt,
+			&i.ReceivedAt,
+			&i.AttributionCheckedAt,
+			&i.VerifiedConsumerID,
+			&i.VerifiedPlatformTenantID,
+			&i.AccountID,
+			&i.Environment,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const issueUpdateAction = `-- name: IssueUpdateAction :one
+UPDATE app_issues SET state=$1,assignee_account_id=$2,resolved_at=$3,
+fixed_deployment_id=$4,fixed_deployment_created_at=$5,ignored_until=$6 WHERE id=$7 RETURNING id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until
+`
+
+type IssueUpdateActionParams struct {
+	State                    string
+	Assignee                 pgtype.UUID
+	ResolvedAt               pgtype.Timestamptz
+	FixedDeploymentID        pgtype.UUID
+	FixedDeploymentCreatedAt pgtype.Timestamptz
+	IgnoredUntil             pgtype.Timestamptz
+	ID                       pgtype.UUID
+}
+
+func (q *Queries) IssueUpdateAction(ctx context.Context, db DBTX, arg IssueUpdateActionParams) (AppIssue, error) {
+	row := db.QueryRow(ctx, issueUpdateAction,
+		arg.State,
+		arg.Assignee,
+		arg.ResolvedAt,
+		arg.FixedDeploymentID,
+		arg.FixedDeploymentCreatedAt,
+		arg.IgnoredUntil,
+		arg.ID,
+	)
+	var i AppIssue
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Environment,
+		&i.Fingerprint,
+		&i.GroupingVersion,
+		&i.Title,
+		&i.State,
+		&i.AssigneeAccountID,
+		&i.FirstSeenAt,
+		&i.LastSeenAt,
+		&i.EventCount,
+		&i.RegressionCount,
+		&i.ResolvedAt,
+		&i.FixedDeploymentID,
+		&i.FixedDeploymentCreatedAt,
+		&i.IgnoredUntil,
+	)
+	return i, err
+}
+
 const latestDeployment = `-- name: LatestDeployment :one
 select id, app_id, coalesce(build_id::text, ''), image_digest, kind,
        coalesce(source_path, ''), coalesce(source_root, ''), coalesce(source_bytes, 0),

@@ -157,6 +157,7 @@ def regen(overwrite: bool = True) -> None:
             "release_context.py",
             "webhook.py",
             "pre_auth_target.py",
+            "issues.py",
         ]
         target = OUT / "faas_sdk"
         if target.exists():
@@ -648,6 +649,7 @@ from .idempotency import (
     mint_idempotency_key,
     with_idempotency_key,
 )
+from .issues import IssueReporter
 from .pre_auth_target import PRE_AUTH_TARGET_HEADER, pre_auth_target_digest
 from .release_context import (
     GREGALE_RELEASE_HEADER,
@@ -671,6 +673,7 @@ from .webhook import (
 __version__ = "0.1.0"
 
 __all__ = (
+    "IssueReporter",
     "FaaSClient",
     "FaaSClientOptions",
     "Client",

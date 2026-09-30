@@ -1593,6 +1593,7 @@ func (s *server) handler() http.Handler {
 	// (cross-account slug → 404, byte-identical to a real 404).
 	// The three handlers delegate sqlc → wire DTO conversion to
 	// handlers_app_errors_projection.go.
+	s.registerIssueRoutes(mux)
 	mux.HandleFunc("GET /v1/apps/{slug}/errors/summary", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppErrorsSummary)))
 	mux.HandleFunc("GET /v1/apps/{slug}/errors/{fingerprint}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listAppErrorRequests)))
 	mux.HandleFunc("GET /v1/apps/{slug}/errors/{fingerprint}/first", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppErrorSample)))
@@ -3307,6 +3308,7 @@ func (s *server) handler() http.Handler {
 	// ADR-127 — debugger replay. The form uses a dedicated named CSRF
 	// envelope and redirects back to the selected request so the customer can
 	// inspect the durable mirror invocation status without leaving the page.
+	mux.Handle("POST /dashboard/apps/{slug}/issues/{issue_id}/actions", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueActionHandler))))
 	mux.Handle("POST /dashboard/apps/{slug}/debug/requests/{req_id}/replay", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDebugReplay))))
 	// Issue #248 slice C: app-detail rollback form. It uses a dedicated
 	// named CSRF cookie and the same rollback core as the REST endpoint.

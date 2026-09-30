@@ -190,9 +190,28 @@
       "category": "runtime",
       "description": "Call another app in the same account by a stable internal name, with no VPC, service registry, or DNS configuration. A parked target is woken by the call, and callers may opt into a declared-binding allowlist.",
       "maturity": "preview",
-      "plans": ["free", "hobby", "pro", "scale"],
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
       "docs_url": "/docs/networking",
       "acceptance_test": "cmd/e2e/service_mesh_e2e_test.go::TestE2E_ServiceMesh_WakesParkedTarget"
+    },
+    {
+      "id": "issues",
+      "name": "Gregale Issues",
+      "category": "observability",
+      "description": "Group instrumented failures across releases, assign ownership, track resolution and recurrence, and inspect verified request, worker, and customer context.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/issues",
+      "acceptance_test": "cmd/apid/handlers_issues_integration_test.go::TestIssueEndToEndPostgres"
     },
     {
       "id": "managed-postgres",
@@ -256,7 +275,12 @@
       "category": "edge",
       "description": "Keep an app off the public edge entirely while it stays reachable over authenticated same-account service routing.",
       "maturity": "preview",
-      "plans": ["free", "hobby", "pro", "scale"],
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
       "docs_url": "/docs/networking",
       "acceptance_test": "cmd/gatewayd-internal/backend_test.go::TestPgRouter_InternalAppIsNotPubliclyRouted"
     },

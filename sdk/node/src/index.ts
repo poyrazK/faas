@@ -134,3 +134,5 @@ export {
 
 // Opaque login-target signal for opt-in pre-auth abuse observation.
 export { preAuthTargetDigest, PRE_AUTH_TARGET_HEADER } from './pre-auth-target.js';
+
+export { createIssueReporter, type IssueContext, type IssueReporterOptions } from './issues.js';

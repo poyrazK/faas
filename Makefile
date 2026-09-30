@@ -1316,3 +1316,7 @@ sdk-smoke-python: ## Build fakeapid fixture + run Python SDK smoke + unit tests
 .PHONY: sdk-unit-python
 sdk-unit-python: ## Run Python SDK unit tests (no fixture required)
 	@cd sdk/python && .venv/bin/python -m pytest tests/test_client.py tests/test_sse.py
+
+.PHONY: test-issues
+test-issues: ## Real PostgreSQL and SDK process acceptance for Gregale Issues
+	@bash scripts/test-issues.sh

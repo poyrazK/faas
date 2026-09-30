@@ -48,6 +48,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`run`](#run) | Run untrusted code in an isolated disposable microVM |
 | [`runs`](#runs) | Inspect or cancel isolated disposable runs |
 | [`invocations`](#invocations) | Per-account invocation ledger (invocations list\|get\|wait &lt;id&gt;) |
+| [`issues`](#issues) | Group failures and track ownership and release-aware resolution |
 | [`debug`](#debug) | Inspect production requests and regressions |
 | [`trace`](#trace) | Look up a W3C trace through the account trace index |
 | [`invitations`](#invitations) | Standalone invitation actions (invitations peek &lt;token&gt;\|accept &lt;token&gt;) |
@@ -2273,6 +2274,72 @@ Wait for one invocation to finish
 |---|---|---|
 | `--timeout <D>` | stop waiting after this duration (0 waits indefinitely) |  |
 | `--interval <D>` | time between status checks (default 1s) |  |
+
+
+## issues
+
+Group failures and track ownership and release-aware resolution
+
+`gregale issues [<subcommand>] [--app <SLUG>] [--deployment <UUID>] [--state <STATE>] [--environment <ENV>] [--cursor <CURSOR>] [--release-cursor <CURSOR>] [--activity-cursor <CURSOR>] [--assignee <UUID>] [--since <RFC3339>] [--until <RFC3339>] [--name <NAME>] [--expires-in <D>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | application slug |  |
+| `--deployment <UUID>` | fixed or token-bound deployment |  |
+| `--state <STATE>` | filter issue state |  |
+| `--environment <ENV>` | environment filter |  |
+| `--cursor <CURSOR>` | issue-list or occurrence cursor |  |
+| `--release-cursor <CURSOR>` | release history cursor |  |
+| `--activity-cursor <CURSOR>` | activity history cursor |  |
+| `--assignee <UUID>` | owner account |  |
+| `--since <RFC3339>` | impact window start |  |
+| `--until <RFC3339>` | ignore until |  |
+| `--name <NAME>` | credential name |  |
+| `--expires-in <D>` | credential lifetime |  |
+
+Examples:
+
+```sh
+gregale issues list --app my-api
+gregale issues get ISSUE_ID --app my-api
+gregale issues resolve ISSUE_ID --app my-api --deployment DEPLOYMENT_ID
+```
+
+### issues list
+
+List grouped issues
+
+### issues get
+
+Read evidence and release history
+
+### issues assign
+
+Assign an issue to an account
+
+### issues resolve
+
+Resolve in a deployment
+
+### issues reopen
+
+Reopen an issue
+
+### issues ignore
+
+Ignore until a timestamp
+
+### issues tokens
+
+List ingest credentials
+
+### issues create-token
+
+Create a deployment-bound ingest credential
+
+### issues revoke-token
+
+Revoke an ingest credential
 
 
 ## debug

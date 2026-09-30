@@ -4747,3 +4747,132 @@ SELECT id, request_id, trace_id, received_at, expires_at
    AND expires_at > sqlc.arg(now_at)::timestamptz
  ORDER BY received_at DESC, id DESC
  LIMIT 1;
+
+-- name: IssueLockApp :one
+SELECT id, account_id, org_id FROM apps WHERE id = sqlc.arg(app_id) FOR UPDATE;
+-- name: IssueDeploymentScope :one
+SELECT d.id, d.commit_sha, d.image_digest, d.created_at FROM deployments d JOIN apps a ON a.id = d.app_id
+WHERE d.id = sqlc.arg(deployment_id) AND d.app_id = sqlc.arg(app_id) AND a.account_id = sqlc.arg(account_id)
+AND (sqlc.arg(environment)::text = 'application' OR EXISTS (
+ SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id = rm.release_id
+ WHERE rm.app_id = a.id AND rm.deployment_id = d.id AND rs.environment_slug = sqlc.arg(environment)::text AND rs.account_id = a.account_id));
+-- name: IssueFindGroup :one
+SELECT * FROM app_issues WHERE app_id = sqlc.arg(app_id) AND environment = sqlc.arg(environment)
+AND grouping_version = sqlc.arg(grouping_version) AND fingerprint = sqlc.arg(fingerprint) FOR UPDATE;
+-- name: IssueGet :one
+SELECT * FROM app_issues WHERE app_id = sqlc.arg(app_id) AND id = sqlc.arg(id);
+-- name: IssueGetLocked :one
+SELECT * FROM app_issues WHERE app_id = sqlc.arg(app_id) AND id = sqlc.arg(id) FOR UPDATE;
+-- name: IssueCreate :one
+INSERT INTO app_issues(account_id,app_id,environment,fingerprint,grouping_version,title,first_seen_at,last_seen_at)
+VALUES(sqlc.arg(account_id),sqlc.arg(app_id),sqlc.arg(environment),sqlc.arg(fingerprint),sqlc.arg(grouping_version),sqlc.arg(title),sqlc.arg(occurred_at),sqlc.arg(occurred_at)) RETURNING *;
+-- name: IssueList :many
+SELECT * FROM app_issues WHERE app_id = sqlc.arg(app_id)
+AND (sqlc.arg(state)::text = '' OR state = sqlc.arg(state))
+AND (sqlc.arg(environment)::text = '' OR environment = sqlc.arg(environment))
+AND (sqlc.narg(cursor_time)::timestamptz IS NULL OR (last_seen_at,id) < (sqlc.narg(cursor_time),sqlc.narg(cursor_id)::uuid))
+ORDER BY last_seen_at DESC,id DESC LIMIT sqlc.arg(page_limit);
+-- name: IssueCount :one
+SELECT count(*) FROM app_issues WHERE app_id = sqlc.arg(app_id);
+-- name: IssueCountEvents :one
+SELECT count(*) FROM issue_events WHERE app_id = sqlc.arg(app_id);
+-- name: IssueCountRecentEvents :one
+SELECT count(*) FROM issue_events WHERE app_id = sqlc.arg(app_id) AND received_at >= sqlc.arg(since);
+-- name: IssuePurgeEvents :exec
+DELETE FROM issue_events WHERE app_id = sqlc.arg(app_id) AND received_at < sqlc.arg(before);
+-- name: IssueFindEvent :one
+SELECT issue_id,payload_hash FROM issue_events WHERE app_id=sqlc.arg(app_id) AND deployment_id=sqlc.arg(deployment_id) AND event_id=sqlc.arg(event_id);
+-- name: IssueInsertEvent :exec
+INSERT INTO issue_events(app_id,deployment_id,event_id,issue_id,payload_hash,payload,occurred_at,received_at,verified_consumer_id,verified_platform_tenant_id)
+VALUES(sqlc.arg(app_id),sqlc.arg(deployment_id),sqlc.arg(event_id),sqlc.arg(issue_id),sqlc.arg(payload_hash),sqlc.arg(payload),sqlc.arg(occurred_at),sqlc.arg(received_at),sqlc.narg(consumer_id),sqlc.narg(tenant_id));
+-- name: IssueObserve :one
+UPDATE app_issues SET event_count=event_count+1,first_seen_at=LEAST(first_seen_at,sqlc.arg(occurred_at)),last_seen_at=GREATEST(last_seen_at,sqlc.arg(occurred_at)),
+state=CASE WHEN sqlc.arg(regressed)::boolean THEN 'open' ELSE state END,
+regression_count=regression_count+CASE WHEN sqlc.arg(regressed)::boolean THEN 1 ELSE 0 END
+WHERE id=sqlc.arg(id) RETURNING *;
+-- name: IssueObserveRelease :exec
+INSERT INTO issue_releases(issue_id,deployment_id,commit_sha,image_digest,event_count,first_seen_at,last_seen_at)
+VALUES(sqlc.arg(issue_id),sqlc.arg(deployment_id),sqlc.arg(commit_sha),sqlc.arg(image_digest),1,sqlc.arg(occurred_at),sqlc.arg(occurred_at))
+ON CONFLICT(issue_id,deployment_id) DO UPDATE SET event_count=issue_releases.event_count+1,
+first_seen_at=LEAST(issue_releases.first_seen_at,excluded.first_seen_at),last_seen_at=GREATEST(issue_releases.last_seen_at,excluded.last_seen_at);
+-- name: IssueListEvents :many
+SELECT * FROM issue_events WHERE issue_id=sqlc.arg(issue_id) AND occurred_at >= sqlc.arg(since) AND occurred_at <= sqlc.arg(until)
+AND (sqlc.narg(cursor_time)::timestamptz IS NULL OR (occurred_at,id) < (sqlc.narg(cursor_time),sqlc.narg(cursor_id)::uuid))
+ORDER BY occurred_at DESC,id DESC LIMIT sqlc.arg(page_limit);
+-- name: IssueListReleases :many
+SELECT * FROM issue_releases WHERE issue_id=sqlc.arg(issue_id) AND (sqlc.narg(cursor_time)::timestamptz IS NULL OR (first_seen_at,deployment_id) < (sqlc.narg(cursor_time),sqlc.narg(cursor_id)::uuid)) ORDER BY first_seen_at DESC,deployment_id DESC LIMIT sqlc.arg(page_limit);
+-- name: IssueListActivity :many
+SELECT * FROM issue_activity WHERE issue_id=sqlc.arg(issue_id) AND (sqlc.narg(cursor_time)::timestamptz IS NULL OR (created_at,id) < (sqlc.narg(cursor_time),sqlc.narg(cursor_id)::uuid)) ORDER BY created_at DESC,id DESC LIMIT sqlc.arg(page_limit);
+-- name: IssueImpact :one
+SELECT count(*) AS observed_events,count(DISTINCT COALESCE(verified_platform_tenant_id,verified_consumer_id)) AS identified_customers,
+count(*) FILTER(WHERE verified_platform_tenant_id IS NULL AND verified_consumer_id IS NULL) AS unattributed_events
+FROM issue_events WHERE issue_id=sqlc.arg(issue_id) AND occurred_at >= sqlc.arg(since) AND occurred_at <= sqlc.arg(until);
+-- name: IssueAttribution :many
+SELECT DISTINCT consumer_id,platform_tenant_id FROM request_telemetry
+WHERE account_id=sqlc.arg(account_id) AND app_id=sqlc.arg(app_id) AND deployment_id=sqlc.arg(deployment_id)
+AND trace_id=sqlc.arg(trace_id) AND count=1 AND received_at >= sqlc.arg(since) AND received_at <= sqlc.arg(until) LIMIT 2;
+-- name: IssueInvocationScope :one
+SELECT id,platform_tenant_id FROM invocations WHERE id=sqlc.arg(id) AND app_id=sqlc.arg(app_id) AND account_id=sqlc.arg(account_id);
+-- name: IssueUpdateAction :one
+UPDATE app_issues SET state=sqlc.arg(state),assignee_account_id=sqlc.narg(assignee),resolved_at=sqlc.narg(resolved_at),
+fixed_deployment_id=sqlc.narg(fixed_deployment_id),fixed_deployment_created_at=sqlc.narg(fixed_deployment_created_at),ignored_until=sqlc.narg(ignored_until) WHERE id=sqlc.arg(id) RETURNING *;
+-- name: IssueAddActivity :one
+INSERT INTO issue_activity(issue_id,action,actor_account_id,created_at,details) VALUES(sqlc.arg(issue_id),sqlc.arg(action),sqlc.narg(actor_account_id),sqlc.arg(created_at),sqlc.arg(details)) RETURNING *;
+-- name: IssueAddResolution :exec
+INSERT INTO issue_resolutions(issue_id,fixed_deployment_id,resolved_at,actor_account_id) VALUES(sqlc.arg(issue_id),sqlc.arg(deployment_id),sqlc.arg(resolved_at),sqlc.arg(actor_account_id));
+-- name: IssueAssigneeAllowed :one
+SELECT EXISTS(SELECT 1 FROM apps a LEFT JOIN org_memberships m ON m.org_id=a.org_id AND m.account_id=sqlc.arg(assignee) AND m.removed_at IS NULL
+WHERE a.id=sqlc.arg(app_id) AND (a.account_id=sqlc.arg(assignee) OR m.account_id IS NOT NULL));
+-- name: IssueInsertToken :one
+INSERT INTO issue_ingest_tokens(account_id,app_id,deployment_id,environment,name,token_hash,expires_at)
+VALUES(sqlc.arg(account_id),sqlc.arg(app_id),sqlc.arg(deployment_id),sqlc.arg(environment),sqlc.arg(name),sqlc.arg(token_hash),sqlc.arg(expires_at)) RETURNING *;
+-- name: IssueFindToken :one
+SELECT * FROM issue_ingest_tokens WHERE token_hash=sqlc.arg(token_hash) AND revoked_at IS NULL AND expires_at > sqlc.arg(now);
+-- name: IssueListTokens :many
+SELECT * FROM issue_ingest_tokens WHERE app_id=sqlc.arg(app_id) ORDER BY created_at DESC;
+-- name: IssueRevokeToken :execrows
+UPDATE issue_ingest_tokens SET revoked_at=now() WHERE app_id=sqlc.arg(app_id) AND id=sqlc.arg(id);
+-- name: IssueCountTokens :one
+SELECT count(*) FROM issue_ingest_tokens WHERE app_id=sqlc.arg(app_id) AND revoked_at IS NULL AND expires_at > now();
+-- name: IssueAddTransition :exec
+WITH recipients AS (
+ SELECT array_agg(id) AS ids FROM app_webhooks
+ WHERE app_id=sqlc.arg(app_id) AND account_id=sqlc.arg(account_id) AND scope='app' AND enabled
+ AND (cardinality(event_filter)=0 OR (sqlc.arg(payload)::jsonb->>'type')=ANY(event_filter))
+)
+INSERT INTO app_webhook_event_outbox(id,account_id,app_id,event,source_id,payload,recipient_webhook_ids)
+SELECT sqlc.arg(activity_id),sqlc.arg(account_id),sqlc.arg(app_id),sqlc.arg(payload)::jsonb->>'type',sqlc.arg(activity_id),sqlc.arg(payload),ids
+FROM recipients WHERE cardinality(ids)>0 ON CONFLICT(event,source_id) DO NOTHING;
+
+-- name: IssueRequestAttribution :many
+SELECT DISTINCT consumer_key,platform_tenant_id FROM request_audit_events
+WHERE account_id=sqlc.arg(account_id) AND app_id=sqlc.arg(app_id) AND deployment_id=sqlc.arg(deployment_id)
+AND request_id=sqlc.arg(request_id) LIMIT 2;
+
+-- name: IssueTokenStillValid :one
+SELECT EXISTS(SELECT 1 FROM issue_ingest_tokens WHERE id=sqlc.arg(id) AND app_id=sqlc.arg(app_id) AND deployment_id=sqlc.arg(deployment_id) AND revoked_at IS NULL AND expires_at>sqlc.arg(now));
+-- name: IssuePurgePlanEvents :execrows
+WITH expired AS (
+ SELECT e.app_id,e.deployment_id,e.event_id FROM issue_events e JOIN apps a ON a.id=e.app_id JOIN accounts c ON c.id=a.account_id
+ WHERE c.plan=sqlc.arg(plan) AND e.received_at<sqlc.arg(before) ORDER BY e.received_at LIMIT sqlc.arg(batch_limit) FOR UPDATE OF e SKIP LOCKED
+)
+DELETE FROM issue_events e USING expired x WHERE e.app_id=x.app_id AND e.deployment_id=x.deployment_id AND e.event_id=x.event_id;
+-- name: IssuePurgeExpiredTokens :execrows
+DELETE FROM issue_ingest_tokens WHERE expires_at < sqlc.arg(now);
+-- name: IssueExpiredIgnores :many
+SELECT app_id,id FROM app_issues WHERE state='ignored' AND ignored_until <= sqlc.arg(now) ORDER BY ignored_until LIMIT sqlc.arg(batch_limit);
+
+-- name: IssueDebugRequest :many
+SELECT id FROM request_telemetry WHERE account_id=sqlc.arg(account_id) AND app_id=sqlc.arg(app_id) AND deployment_id=sqlc.arg(deployment_id)
+AND count=1 AND received_at BETWEEN sqlc.arg(since) AND sqlc.arg(until)
+AND (id=sqlc.narg(request_id)::uuid OR (sqlc.arg(trace_id)::text<>'' AND trace_id=sqlc.arg(trace_id))) LIMIT 2;
+
+-- name: IssueUnattributedEvents :many
+SELECT e.*,i.account_id,i.environment FROM issue_events e JOIN app_issues i ON i.id=e.issue_id
+WHERE e.verified_consumer_id IS NULL AND e.verified_platform_tenant_id IS NULL
+AND e.attribution_checked_at < sqlc.arg(before) ORDER BY e.attribution_checked_at LIMIT sqlc.arg(batch_limit);
+
+-- name: IssueEnrichAttribution :exec
+UPDATE issue_events SET verified_consumer_id=sqlc.narg(consumer_id),verified_platform_tenant_id=sqlc.narg(tenant_id),attribution_checked_at=sqlc.arg(now)
+WHERE app_id=sqlc.arg(app_id) AND deployment_id=sqlc.arg(deployment_id) AND event_id=sqlc.arg(event_id)
+AND verified_consumer_id IS NULL AND verified_platform_tenant_id IS NULL;

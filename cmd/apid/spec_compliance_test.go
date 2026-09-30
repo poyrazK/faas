@@ -83,6 +83,7 @@ const (
 // /dashboard/account/set-password into the public spec — the
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/actions": true, // scoped HTML/CSRF adapter for the public issue action API
 	"GET /v1/account/dpa":                        true, // public markdown (no auth)
 	"POST /v1/webhooks/stripe":                   true, // HMAC-signed webhook
 	"POST /v1/webhooks/paddle":                   true, // HMAC-signed webhook (PR #3 / ADR-025)
@@ -775,6 +776,7 @@ func testRoutesParity(t *testing.T, root string, spec *specDoc) {
 	// daemons share today.
 	sources := []string{
 		filepath.Join(root, "cmd/apid", serverSrcPath),
+		filepath.Join(root, "cmd/apid", "handlers_issues.go"),
 		filepath.Join(root, "cmd/gatewayd-internal", "run.go"),
 	}
 	var codeRoutes []string
@@ -951,6 +953,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 
 	files := []string{
 		filepath.Join(root, "pkg", "api", dtoFile),
+		filepath.Join(root, "pkg", "api", "issues.go"),
 		filepath.Join(root, "pkg", "api", "service_bindings.go"),
 		filepath.Join(root, "pkg", "api", "object_storage.go"),
 		filepath.Join(root, "pkg", "api", "object_storage_usage.go"),

@@ -592,7 +592,8 @@ type OpsMetrics struct {
 	// the per-row observe until the tripwire fires would let the
 	// first four failures of every outage disappear from the
 	// dashboard.
-	appErrorsRecorded *prometheus.CounterVec
+	appErrorsRecorded   *prometheus.CounterVec
+	issueEventsRecorded *prometheus.CounterVec
 	// requestTelemetryRecorded (ADR-127 PR-B) — counter the
 	// apid gRPC handler (cmd/apid/grpc_server_request_telemetry.go)
 	// increments per outcome. outcome ∈ {inserted, rate_limited,
@@ -4058,6 +4059,8 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Help: "Customer-facing automatic error grouping ingest outcomes (ADR-096), labelled by outcome ∈ {ok, redaction_failed, rate_limited, db_error}. `ok` is the §12 customer-error-ingest panel (rate over 5m). `redaction_failed` is the tripwire for pkg/redact panicking — MUST stay at 0. `rate_limited` is the LRU-cardinality backstop firing when an app exceeds CardinalityLimit fingerprints. `db_error` is the publisher's per-row drop signal — incremented for EVERY row of a failed flush batch (the batch is drained before flushBatch is called, so failures always lose data; per-row observe gives the §12 panel an accurate outage timeline rather than only the 5th-consecutive-failure tripwire). Single-registry: registered on every daemon; only gatewayd-internal + apid increment via ObserveAppErrorsRecorded.",
 	}, []string{"outcome"})
 	commonCollectors = append(commonCollectors, appErrorsRecorded)
+	issueEventsRecorded := prometheus.NewCounterVec(prometheus.CounterOpts{Name: prefix + "_issue_events_recorded_total", Help: "Gregale Issues accepted, duplicate, quota, rate, conflict, or persistence outcomes; no customer identifiers."}, []string{"outcome"})
+	commonCollectors = append(commonCollectors, issueEventsRecorded)
 	// ADR-127 PR-B: production debugger ingest outcomes.
 	// outcome ∈ {inserted, rate_limited, db_error}. `inserted`
 	// is the customer-telemetry-ingest panel; `rate_limited` is
@@ -5240,6 +5243,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		cveCheckTotal:                              cveCheckTotal,
 		cvesOpenTotal:                              cvesOpenTotal,
 		appErrorsRecorded:                          appErrorsRecorded,
+		issueEventsRecorded:                        issueEventsRecorded,
 		appErrorsFingerprintCacheHits:              appErrorsFingerprintCacheHits,
 		appErrorsDedupeMerges:                      appErrorsDedupeMerges,
 		appErrorsFlushDuration:                     appErrorsFlushDuration,
@@ -10482,4 +10486,17 @@ func (m *OpsMetrics) HubDelivered(channel string) {
 		return
 	}
 	m.dbNotifyHubDelivered.WithLabelValues(channel).Inc()
+}
+
+// ObserveIssueEvent records only a closed outcome vocabulary.
+func (m *OpsMetrics) ObserveIssueEvent(outcome string) {
+	if m == nil || m.issueEventsRecorded == nil {
+		return
+	}
+	switch outcome {
+	case "accepted", "duplicate", "quota_exceeded", "rate_limited", "conflict", "db_error":
+	default:
+		return
+	}
+	m.issueEventsRecorded.WithLabelValues(outcome).Inc()
 }

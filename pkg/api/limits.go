@@ -7661,3 +7661,43 @@ func TenantEgressForbiddenPort(port int) (reason string, forbidden bool) {
 	reason, forbidden = tenantEgressForbiddenPorts[port]
 	return reason, forbidden
 }
+
+// Issues limits bound ingestion and storage independently of trace sampling.
+const (
+	IssueEventMaxBytes    = 64 << 10
+	IssueMessageMaxBytes  = 2048
+	IssueStackMaxBytes    = 16 << 10
+	IssueMaxFrames        = 32
+	IssueMaxFrameBytes    = 512
+	IssueMaxTypeBytes     = 256
+	IssuePageSize         = 50
+	IssueCursorMaxBytes   = 512
+	IssueMaxTokenLifetime = 90 * 24 * time.Hour
+	IssueMaxClockSkew     = 5 * time.Minute
+)
+
+type IssueLimits struct {
+	Enabled         bool
+	IssuesPerApp    int
+	EventsPerApp    int
+	EventsPerMinute int
+	RetentionDays   int
+	TokensPerApp    int
+}
+
+func (p Plan) IssueLimits() IssueLimits {
+	switch p {
+	case PlanHobby:
+		return IssueLimits{true, 200, 10000, 120, 7, 20}
+	case PlanPro:
+		return IssueLimits{true, 1000, 50000, 600, 30, 100}
+	case PlanScale:
+		return IssueLimits{true, 5000, 200000, 2400, 90, 200}
+	default:
+		return IssueLimits{}
+	}
+}
+
+const IssueMaintenanceBatch = 1000
+const IssueMaintenanceInterval = time.Minute
+const IssueMaxBatchEvents = 32

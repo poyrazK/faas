@@ -383,6 +383,7 @@ from .create_edge_rule_request_match_headers import CreateEdgeRuleRequestMatchHe
 from .create_edge_rule_request_validate_mode import CreateEdgeRuleRequestValidateMode
 from .create_inbound_webhook_endpoint_request import CreateInboundWebhookEndpointRequest
 from .create_inbound_webhook_endpoint_request_provider import CreateInboundWebhookEndpointRequestProvider
+from .create_issue_ingest_token_request import CreateIssueIngestTokenRequest
 from .create_job_request import CreateJobRequest
 from .create_job_request_env_overrides import CreateJobRequestEnvOverrides
 from .create_job_request_kind import CreateJobRequestKind
@@ -813,6 +814,9 @@ from .inbound_webhook_endpoint_response_provider import InboundWebhookEndpointRe
 from .inbound_webhook_endpoint_response_signing_secret_masked import InboundWebhookEndpointResponseSigningSecretMasked
 from .inbound_webhook_receipt_response import InboundWebhookReceiptResponse
 from .inbound_webhook_receipt_response_status import InboundWebhookReceiptResponseStatus
+from .ingest_issue_otlp_body import IngestIssueOTLPBody
+from .ingest_issue_otlp_response_200 import IngestIssueOTLPResponse200
+from .ingest_issue_otlp_signal import IngestIssueOTLPSignal
 from .inject_workflow_event_request import InjectWorkflowEventRequest
 from .inject_workflow_event_response import InjectWorkflowEventResponse
 from .inject_workflow_event_response_status import InjectWorkflowEventResponseStatus
@@ -852,8 +856,22 @@ from .invoke_response import InvokeResponse
 from .invoke_response_result import InvokeResponseResult
 from .invoke_response_status import InvokeResponseStatus
 from .invoke_work import InvokeWork
+from .issue import Issue
 from .issue_account_credit_body import IssueAccountCreditBody
+from .issue_action_request import IssueActionRequest
+from .issue_action_request_action import IssueActionRequestAction
+from .issue_activity import IssueActivity
+from .issue_activity_details import IssueActivityDetails
 from .issue_browser_csrf_token_action import IssueBrowserCSRFTokenAction
+from .issue_detail import IssueDetail
+from .issue_event import IssueEvent
+from .issue_event_response import IssueEventResponse
+from .issue_frame import IssueFrame
+from .issue_impact import IssueImpact
+from .issue_ingest_token import IssueIngestToken
+from .issue_occurrence import IssueOccurrence
+from .issue_release import IssueRelease
+from .issue_state import IssueState
 from .job_artifact_download_response import JobArtifactDownloadResponse
 from .job_deleted_response import JobDeletedResponse
 from .job_finished_webhook_payload import JobFinishedWebhookPayload
@@ -905,6 +923,8 @@ from .list_event_deliveries_state import ListEventDeliveriesState
 from .list_executions_status import ListExecutionsStatus
 from .list_instances_response import ListInstancesResponse
 from .list_invocations_response import ListInvocationsResponse
+from .list_issue_ingest_tokens_response import ListIssueIngestTokensResponse
+from .list_issues_response import ListIssuesResponse
 from .list_job_runs_response import ListJobRunsResponse
 from .list_job_task_attempts_response import ListJobTaskAttemptsResponse
 from .list_job_tasks_response import ListJobTasksResponse
@@ -2266,6 +2286,7 @@ __all__ = (
     "CreateEdgeRuleRequestValidateMode",
     "CreateInboundWebhookEndpointRequest",
     "CreateInboundWebhookEndpointRequestProvider",
+    "CreateIssueIngestTokenRequest",
     "CreateJobRequest",
     "CreateJobRequestEnvOverrides",
     "CreateJobRequestKind",
@@ -2686,6 +2707,9 @@ __all__ = (
     "InboundWebhookEndpointResponseSigningSecretMasked",
     "InboundWebhookReceiptResponse",
     "InboundWebhookReceiptResponseStatus",
+    "IngestIssueOTLPBody",
+    "IngestIssueOTLPResponse200",
+    "IngestIssueOTLPSignal",
     "InjectWorkflowEventRequest",
     "InjectWorkflowEventResponse",
     "InjectWorkflowEventResponseStatus",
@@ -2725,8 +2749,22 @@ __all__ = (
     "InvokeResponseResult",
     "InvokeResponseStatus",
     "InvokeWork",
+    "Issue",
     "IssueAccountCreditBody",
+    "IssueActionRequest",
+    "IssueActionRequestAction",
+    "IssueActivity",
+    "IssueActivityDetails",
     "IssueBrowserCSRFTokenAction",
+    "IssueDetail",
+    "IssueEvent",
+    "IssueEventResponse",
+    "IssueFrame",
+    "IssueImpact",
+    "IssueIngestToken",
+    "IssueOccurrence",
+    "IssueRelease",
+    "IssueState",
     "JobArtifactDownloadResponse",
     "JobDeletedResponse",
     "JobFinishedWebhookPayload",
@@ -2778,6 +2816,8 @@ __all__ = (
     "ListExecutionsStatus",
     "ListInstancesResponse",
     "ListInvocationsResponse",
+    "ListIssueIngestTokensResponse",
+    "ListIssuesResponse",
     "ListJobRunsResponse",
     "ListJobsResponse",
     "ListJobTaskAttemptsResponse",
