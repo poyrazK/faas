@@ -28,6 +28,7 @@ func isTrafficResponseControlHeader(name string) bool {
 		name = strings.TrimSpace(name[len(http.TrailerPrefix):])
 	}
 	return strings.EqualFold(name, trafficResponseDeadlineHeader) ||
+		strings.EqualFold(name, trafficSecurityHeader) ||
 		strings.EqualFold(name, trafficResponseSessionHeader) ||
 		strings.EqualFold(name, TrafficPolicyRevisionHeader) ||
 		strings.EqualFold(name, api.StreamingStatusHeader)
@@ -82,6 +83,7 @@ func (s *statusRecorder) commitTrafficResponse(code int) {
 		return
 	}
 	ctx := s.trafficResponseContext()
+	stampTrafficSecurity(ctx, s.Header())
 	if s.trafficResponseLongLived != nil && s.trafficResponseLongLived(code) {
 		s.Header().Set(trafficResponseSessionHeader, "long-lived")
 		lifetime, detach, cancel := reqbudget.WithStream(ctx)

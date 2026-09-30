@@ -7382,6 +7382,7 @@ const (
 	TrafficSecurityMaxExchanges     = 65_536
 	TrafficSecurityMaxScopes        = 4_096
 	TrafficSecurityMaxRequestScopes = 16
+	TrafficSecurityMaxHeaderBytes   = 4096
 	// RequestBudgetApidDefault is the apid-side default budget.
 	// apid serves dashboards + admin + sync-invoke long-polls that
 	// are already capped at 910 s upstream (fwdStream) so 5 s is

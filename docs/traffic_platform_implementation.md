@@ -5,6 +5,13 @@ Base: `56618879c`; branch: `codex/traffic-platform-gaps`; decision: ADR-375.
 
 ## Requirements and acceptance
 
+Public response ownership must independently verify the exact security
+generations admitted by compute. It must cancel blocked client writes and both
+directions of an upgrade without waiting for another upstream read. A missed
+revoke/release pair during the handoff must refuse the old exchange. Protected
+metadata is bounded, consumed privately and cannot be authored by a guest.
+Managed realtime retains its separate, explicitly excluded owner.
+
 - [ ] Outbound circuit: startup wiring, IPv4/IPv6 rules, atomic updates,
   current desired state before new/restore execution, parked/restart recovery,
   all supported DNS answers, retry/reconciliation, opt-out cleanup, actual
@@ -296,3 +303,34 @@ files. The existing revision-pin table was added to schema.sql from its actual
 migrated definition. Public routing snapshot completeness, bounded decision
 evidence, preview/path agreement, public-hop blocked long responses and the
 remaining native/daemon/load/deployment acceptance gates still require work.
+
+Public HTTP response ownership now independently enrolls the exact security
+generations admitted by compute. The private, bounded snapshot is stamped after
+guest/action header mutations and verified against fresh authoritative rows
+before public commitment. A revoke/release pair during handoff refuses the old
+exchange; fresh requests can use the released generation. Both production
+gateways verify the security table before startup. Public repair interrupts
+blocked ordinary/long HTTP writes even after the handshake budget detaches.
+Successful Upgrade tunnels close both transports and join both copy goroutines
+before releasing their registration. Managed realtime explicitly retains its
+separate excluded owner, and private metadata never reaches a matched public
+client. Rollout requires a drained compute/public cutover for mixed versions.
+
+Local public/compute tests passed for 64 MiB open unread clients over HTTP/1 and
+HTTP/2, with real forwarding gRPC transports. Public-only revoke, a missed
+revoke/release, store failure and periodic repair without notifications end
+public, compute and RPC ownership before client closure. Long-response cases
+remain active after an 80 ms public handshake budget expires. HTTP/1 Upgrade
+fixtures cover idle and both blocked directions, protocol refusal and cleanup.
+Handoff/recovery, missing/invalid/ambiguous metadata, guest/late trailer forgery,
+the separate managed owner and startup refusal are covered. These public tests
+use an in-memory security store, not complete daemon/Postgres acceptance.
+
+The full registry, reqbudget, gateway and public-daemon suites passed; gateway
+took 59.197 seconds and public-daemon 0.986 seconds. After refining detached
+budget/protocol checks, final focused gateway tests passed in 4.538 seconds.
+Pinned lint passed registry/gateway/public-daemon with zero findings. Public
+routing snapshot completeness, bounded decision evidence, preview agreement,
+customer status/capability delivery and native/daemon/load/deployment acceptance
+remain pending. No Linux x86_64 KVM host is currently available, and no release
+guarantee is marked accepted.

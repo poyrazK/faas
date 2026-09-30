@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 	"sync"
@@ -69,28 +70,59 @@ func New(store Store) *Registry {
 // Admit verifies before enrolling. The release function only unregisters;
 // its owner cancels the lifetime context after final response writes finish.
 func (r *Registry) Admit(ctx context.Context, scopes []Scope, cancel context.CancelCauseFunc) (func(), error) {
+	_, release, err := r.AdmitSnapshot(ctx, scopes, cancel)
+	return release, err
+}
+
+// AdmitSnapshot returns a defensive copy of the exact admitted generations.
+// A forwarding hop must transfer these values, never a later independent read.
+func (r *Registry) AdmitSnapshot(ctx context.Context, scopes []Scope, cancel context.CancelCauseFunc) (map[Scope]State, func(), error) {
+	return r.admit(ctx, scopes, nil, cancel)
+}
+
+// AdmitAt verifies a preceding hop's baseline before independently enrolling.
+// A changed generation refuses even if a revoke has already been released.
+func (r *Registry) AdmitAt(ctx context.Context, expected map[Scope]State, cancel context.CancelCauseFunc) (func(), error) {
+	baseline := maps.Clone(expected)
+	scopes := make([]Scope, 0, len(baseline))
+	for scope, state := range baseline {
+		if state.Revision < 0 || state.Revoked {
+			return nil, ErrUnavailable
+		}
+		scopes = append(scopes, scope)
+	}
+	_, release, err := r.admit(ctx, scopes, baseline, cancel)
+	return release, err
+}
+
+func (r *Registry) admit(ctx context.Context, scopes []Scope, expected map[Scope]State, cancel context.CancelCauseFunc) (map[Scope]State, func(), error) {
 	if r == nil || r.store == nil || cancel == nil {
-		return nil, ErrUnavailable
+		return nil, nil, ErrUnavailable
 	}
 	scopes, err := normalize(scopes)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	states, err := r.read(ctx, scopes)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	lease := &exchange{states: make(map[Scope]State, len(scopes)), cancel: cancel}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	admissionErr := r.validateAdmission(scopes, states)
+	if expected != nil {
+		if err := verifyBaseline(states, expected); err != nil {
+			admissionErr = err
+		}
+	}
 	// A fresh request can discover a revoke before the periodic repair pass.
 	r.apply(states)
 	if admissionErr != nil {
-		return nil, admissionErr
+		return nil, nil, admissionErr
 	}
 	for _, scope := range scopes {
 		lease.states[scope] = states[scope]
@@ -102,7 +134,20 @@ func (r *Registry) Admit(ctx context.Context, scopes []Scope, cancel context.Can
 	}
 	r.active[lease] = struct{}{}
 	var once sync.Once
-	return func() { once.Do(func() { r.release(lease) }) }, nil
+	return maps.Clone(lease.states), func() { once.Do(func() { r.release(lease) }) }, nil
+}
+
+func verifyBaseline(states, expected map[Scope]State) error {
+	for scope, before := range expected {
+		after := states[scope]
+		if after.Revision < before.Revision || after.Revision == before.Revision && after != before {
+			return ErrUnavailable
+		}
+		if after != before {
+			return ErrRevoked
+		}
+	}
+	return nil
 }
 
 func (r *Registry) validateAdmission(scopes []Scope, states map[Scope]State) error {

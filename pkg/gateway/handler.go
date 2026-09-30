@@ -5560,6 +5560,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// normal request bookkeeping and drain tracker so a quiet socket does not
 	// hold an application request slot or wake/parking lease for its lifetime.
 	if h.managedRealtime != nil && strings.HasPrefix(r.URL.Path, realtime.ManagedPathPrefix) {
+		w.Header().Set(trafficSecurityHeader, trafficSecurityRealtime)
 		h.managedRealtime.ServeHTTP(w, r)
 		return
 	}

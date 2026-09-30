@@ -58,6 +58,7 @@ func (s *deadlineFloodServer) ForwardHTTPStream(stream grpc.BidiStreamingServer[
 		return err
 	}
 	init := &vmmdpb.ForwardHTTPResponseInit{Status: http.StatusOK, Headers: []*vmmdpb.Header{
+		{Name: trafficSecurityHeader, Value: trafficSecurityRealtime},
 		{Name: trafficResponseDeadlineHeader, Value: "1"},
 		{Name: trafficResponseSessionHeader, Value: "long-lived"},
 		{Name: api.StreamingStatusHeader, Value: string(api.StreamingStatusStreaming)},

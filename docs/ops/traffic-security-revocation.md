@@ -9,9 +9,9 @@ traffic weights and nonsecurity parking changes do not advance generations.
 
 ## Gateway behavior
 
-Production internal gateways verify the table with a bounded read before
-serving. Public HTTP enrolls its owner account and app before authentication,
-upload and wake, then its selected deployment before dispatch. A retry checks
+Both production gateways verify the table with a bounded read before
+serving. Compute's public HTTP handler enrolls its owner account and app before
+authentication, upload and wake, then its selected deployment before dispatch. A retry checks
 each additional deployment. Service calls enroll the verified caller app and,
 when available, its source deployment before discovery; account and target app
 follow tenant authorization, before wake. Each selected target deployment is
@@ -23,6 +23,23 @@ handshake detachment. Changing any enrolled generation cancels the exchange,
 including a revoke/release pair missed between reads. Store failure or
 inconsistent/regressed generations also cancel active tracked exchanges and
 refuse new admission. A warm policy snapshot supplies no security allow lease.
+
+The protected compute response carries its exact admitted generations in
+`X-Faas-Traffic-Security`. Public verifies the same baseline before committing
+the response and independently tracks those scopes. It never replaces compute's
+baseline with a newer released generation. This read is bounded to 250 ms and
+the transport header to 4 KiB/16 scopes. Invalid, ambiguous or missing metadata
+refuses a successful application response with 503; a changed generation gives
+403 `traffic_revoked`. Pre-admission errors may have no owner snapshot. The
+separate managed realtime handler explicitly marks its excluded surface.
+Neither guest headers, edge header actions nor late trailers can author the
+snapshot, and it is removed before customer delivery.
+
+Public refreshes active scopes once a second, without depending on compute's
+notifications or reading its next response bytes. A blocked HTTP/1 socket write
+or HTTP/2 flow-control wait is interrupted on cancellation. Successful Upgrade
+tunnels retain an independent 24-hour ceiling, close both client and compute
+sockets on cancellation, and join both copy goroutines before unregistering.
 Forwarding ownership and node permits remain until forwarding cleanup finishes.
 Final handler cleanup unregisters the scopes after stopping response-write
 guards, avoiding a late cancellation of the HTTP server's buffered flush.
@@ -63,8 +80,12 @@ Apply `20260929230709001_traffic_security_epochs.sql` before rolling internal
 gateways. A missing migration or unreadable store refuses new gateway startup.
 Update every participating internal gateway and both its public-request and
 service-proxy listeners before advertising fleet coverage. The public proxy
-response/session metadata rollout remains compute-first, as described in
-`traffic-total-deadline.md`. Older gateways do not provide this lifetime fence.
+response/session/security metadata rollout remains compute-first, as described in
+`traffic-total-deadline.md`. Drain public ingress during the compute/public
+cutover: an older public proxy can forward an unfamiliar private response
+header, while the enforcing public version refuses successful responses from
+older compute. Resume ingress on the matched versions. Older gateways do not
+provide this lifetime fence.
 
 Local tests cover account/app/deployment cancellation, initial refusal, upload
 spool removal, wake cancellation with real HTTP/1 and HTTP/2 error delivery,
@@ -80,5 +101,15 @@ only one gateway's database pool canceled that gateway and refused its new
 traffic while the healthy peer continued. A replacement verified the durable
 released generation. These are gateway instances in one test process; source
 identity and forwarding ownership are fixtures. The separate gateway tests use
-real gRPC transports. Full daemon, all public-hop long-stream behavior, native
+real gRPC transports. Public-hop ordinary and long response tests now also hold
+64 MiB HTTP/1 and HTTP/2 clients open and unread: public, compute and the real
+upstream RPC finish after public-only security refresh, before client closure.
+Revoke, a missed revoke/release pair, store failure and periodic repair without
+notifications are covered. Handoff tests refuse an intervening revoke/release
+and accept a fresh request. HTTP/1 Upgrade fixtures cover idle tunnels and both
+blocked directions; cancellation ends both socket owners before the client is
+closed. Metadata refusal, guest/late trailer forgery and registration cleanup
+are covered across ordinary and rejected-upgrade responses. These public
+transport tests use an in-memory security store; Upgrade's compute endpoint is
+a fixture. Full daemon, native
 VM/network/leak, deployment and complete policy-path acceptance remain pending.

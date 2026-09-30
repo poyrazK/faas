@@ -164,6 +164,65 @@ func TestRegistryNormalReleaseDoesNotCancelResponseBeforeFinalFlush(t *testing.T
 	}
 }
 
+func TestRegistryHandoffVerifiesExactAdmittedBaseline(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		after State
+		want  error
+	}{
+		{"unchanged", State{Revision: 1}, nil},
+		{"revoked", State{Revision: 2, Revoked: true}, ErrRevoked},
+		{"missed-revoke-release", State{Revision: 3}, ErrRevoked},
+		{"regressed", State{}, ErrUnavailable},
+		{"conflicting", State{Revision: 1, Revoked: true}, ErrUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			scope := Scope{"app", "app-a"}
+			store := &testStore{states: map[Scope]State{scope: {Revision: 1}}}
+			compute, public := New(store), New(store)
+			defer compute.Close()
+			defer public.Close()
+			ctx, cancel := context.WithCancelCause(t.Context())
+			defer cancel(nil)
+			baseline, release, err := compute.AdmitSnapshot(ctx, []Scope{scope}, cancel)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer release()
+			store.set(scope, tc.after, nil)
+			publicCtx, publicCancel := context.WithCancelCause(t.Context())
+			defer publicCancel(nil)
+			publicRelease, err := public.AdmitAt(publicCtx, baseline, publicCancel)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("handoff=%v, want %v", err, tc.want)
+			}
+			if err != nil {
+				if n, scopes := public.Tracked(); n != 0 || scopes != 0 {
+					t.Fatal("refused handoff retained ownership")
+				}
+				return
+			}
+			defer publicRelease()
+			baseline[scope] = State{Revision: 99} // Neither hop may retain the caller's map.
+			if err := compute.Refresh(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if err := public.Refresh(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if ctx.Err() != nil || publicCtx.Err() != nil {
+				t.Fatal("mutating transferred map changed private baseline")
+			}
+			store.set(scope, State{Revision: 3}, nil)
+			_ = compute.Refresh(t.Context())
+			_ = public.Refresh(t.Context())
+			if !errors.Is(context.Cause(ctx), ErrRevoked) || !errors.Is(context.Cause(publicCtx), ErrRevoked) {
+				t.Fatal("handoff did not retain both admitted baselines")
+			}
+		})
+	}
+}
+
 func TestRegistryStoreOperationIsBoundedAndFailureRefusesAdmission(t *testing.T) {
 	for _, refresh := range []bool{false, true} {
 		t.Run(fmt.Sprint(refresh), func(t *testing.T) {

@@ -253,6 +253,17 @@ scopes per gateway, and 16 distinct scopes per request across all attempts;
 exhaustion refuses admission. Account/app and later deployment enrollment may
 use separate registrations, so that bound is conservative for logical requests.
 The limits live in pkg/api/limits.go.
+The compute response transfers its exact admitted scope generations in the
+protected `X-Faas-Traffic-Security` header. The public hop verifies equality
+against Postgres before committing the response and independently enrolls the
+exchange. A fresh generation cannot replace the compute baseline: even a missed
+revoke/release pair refuses the old exchange. Public cancellation interrupts
+blocked HTTP writes and closes both sides of a hijacked upgrade. Registrations
+remain until copying and transport cleanup finish. Guest headers, actions and
+trailers cannot author this metadata; the public hop consumes it. Missing or
+invalid metadata refuses a successful application response. Pre-admission
+errors may have no scopes, and the separate managed realtime owner explicitly
+marks its excluded surface. Compute must be upgraded before public enforcement.
 This fence initially covers account/app/deployment security state, not individual
 credential revocation, managed realtime, detached work or arbitrary guest sockets.
 Preview agreement, declared internal-path coverage and update/recovery evidence

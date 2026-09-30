@@ -52,6 +52,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
+	"github.com/onebox-faas/faas/pkg/trafficrevocation"
 )
 
 // InternalDialer is the seam the public daemon wires to reach a
@@ -121,6 +122,7 @@ func (d *tcpDialer) DialContext(ctx context.Context, _ string) (net.Conn, error)
 //
 // The zero value is unusable; construct via NewInternalReverseProxy.
 type InternalReverseProxy struct {
+	trafficRevocations  *trafficrevocation.Registry
 	Dialer              InternalDialer
 	Target              *url.URL
 	Transport           http.RoundTripper
@@ -358,7 +360,9 @@ func dialWithTimeout(ctx context.Context, dialer InternalDialer, dialTimeout tim
 // On dial failure: 502 Bad Gateway. On upstream error: propagated
 // unchanged.
 func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	p.serveHTTP(w, r.WithContext(WithStartTime(r.Context(), time.Now())))
+	ctx, release := p.publicTrafficContext(r.Context())
+	defer release()
+	p.serveHTTP(w, r.WithContext(WithStartTime(ctx, time.Now())))
 }
 
 func (p *InternalReverseProxy) serveHTTP(w http.ResponseWriter, r *http.Request) {
@@ -530,6 +534,13 @@ func (p *InternalReverseProxy) serveHTTP(w http.ResponseWriter, r *http.Request)
 	}
 	// copyResponseBody owns Body.Close (issue #687: closes it on
 	// ctx cancel to release the H2C stream window).
+	if err := bindPublicTrafficSecurity(r, resp); err != nil {
+		_ = resp.Body.Close()
+		if !refusePublicTrafficSecurity(w, r, err) {
+			writeForwarderProblem(w, http.StatusServiceUnavailable)
+		}
+		return
+	}
 	longLived := isLongLivedResponse(resp.StatusCode, resp.Header)
 	publicBudget := r.Context()
 	if longLived {
@@ -664,7 +675,7 @@ func (p *InternalReverseProxy) serveHTTP(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(responseStatus)
 	// Body copy bound to ctx — a hung upstream pins only the
 	// in-flight goroutine, not the listener.
-	if _, err := copyResponseBodyWithActivity(bodyCtx, w, resp.Body, touch); err != nil && !errors.Is(err, context.Canceled) {
+	if _, err := copyResponseBodyWithActivity(bodyCtx, w, resp.Body, touch); err != nil && (!errors.Is(err, context.Canceled) || trafficRevocationCause(bodyCtx) != nil) {
 		p.logger().Warn("internal body copy failed",
 			"target", p.Target.String(),
 			"err", err)

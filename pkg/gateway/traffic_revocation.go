@@ -4,6 +4,7 @@ package gateway
 import (
 	"context"
 	"errors"
+	"maps"
 	"net/http"
 	"sync"
 
@@ -21,7 +22,7 @@ type trafficEnrollment struct {
 	mu       sync.Mutex
 	registry *trafficrevocation.Registry
 	cancel   context.CancelCauseFunc
-	scopes   map[trafficrevocation.Scope]struct{}
+	scopes   map[trafficrevocation.Scope]trafficrevocation.State
 	releases []func()
 	closed   bool
 }
@@ -63,7 +64,7 @@ func enrollTrafficScopesWith(w http.ResponseWriter, r *http.Request, registry *t
 	enrollment, _ := r.Context().Value(trafficEnrollmentKey{}).(*trafficEnrollment)
 	if enrollment == nil {
 		ctx, cancel := reqbudget.WithCancellationFence(r.Context())
-		enrollment = &trafficEnrollment{registry: registry, cancel: cancel, scopes: make(map[trafficrevocation.Scope]struct{})}
+		enrollment = &trafficEnrollment{registry: registry, cancel: cancel, scopes: make(map[trafficrevocation.Scope]trafficrevocation.State)}
 		ctx = context.WithValue(ctx, trafficEnrollmentKey{}, enrollment)
 		rememberBudgetCancel(r, ctx, enrollment.close)
 	}
@@ -109,15 +110,25 @@ func (e *trafficEnrollment) add(ctx context.Context, scopes []trafficrevocation.
 	if len(fresh) == 0 {
 		return ctx.Err()
 	}
-	release, err := e.registry.Admit(ctx, fresh, e.cancel)
+	states, release, err := e.registry.AdmitSnapshot(ctx, fresh, e.cancel)
 	if err != nil {
 		return err
 	}
-	for _, scope := range fresh {
-		e.scopes[scope] = struct{}{}
+	for scope, state := range states {
+		e.scopes[scope] = state
 	}
 	e.releases = append(e.releases, release)
 	return nil
+}
+
+func trafficSecuritySnapshot(ctx context.Context) map[trafficrevocation.Scope]trafficrevocation.State {
+	e, _ := ctx.Value(trafficEnrollmentKey{}).(*trafficEnrollment)
+	if e == nil {
+		return nil
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return maps.Clone(e.scopes)
 }
 
 func (e *trafficEnrollment) close() {
