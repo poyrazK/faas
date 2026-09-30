@@ -1,5 +1,9 @@
 package gateway
 
+// adr: 377
+// Flag evidence must retain verified customer attribution, stay private to
+// Gregale, and preserve separate telemetry cohorts for different decisions.
+
 import (
 	"encoding/base64"
 	"github.com/google/uuid"

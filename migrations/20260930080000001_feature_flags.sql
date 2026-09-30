@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE feature_flag_versions (
+CREATE TABLE IF NOT EXISTS feature_flag_versions (
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  project_id uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
  environment_id uuid NOT NULL REFERENCES project_environments(id) ON DELETE CASCADE,
@@ -10,9 +10,9 @@ CREATE TABLE feature_flag_versions (
  created_at timestamptz NOT NULL DEFAULT now(),
  PRIMARY KEY (environment_id, version)
 );
-CREATE INDEX feature_flag_versions_scope ON feature_flag_versions(account_id, project_id, environment_id, version DESC);
+CREATE INDEX IF NOT EXISTS feature_flag_versions_scope ON feature_flag_versions(account_id, project_id, environment_id, version DESC);
 
-ALTER TABLE request_telemetry ADD COLUMN flag_evidence jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(flag_evidence) = 'array');
+ALTER TABLE request_telemetry ADD COLUMN IF NOT EXISTS flag_evidence jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(flag_evidence) = 'array');
 
 -- +goose Down
 ALTER TABLE request_telemetry DROP COLUMN flag_evidence;

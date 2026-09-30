@@ -106,7 +106,7 @@ func prepareFeatureFlags(u FeatureFlagUpdate, prior FeatureFlagVersion) (Feature
 		}
 	}
 	if err := flags.Validate(c); err != nil {
-		return FeatureFlagVersion{}, fmt.Errorf("%s: %w", err, ErrInvalidArgument)
+		return FeatureFlagVersion{}, fmt.Errorf("%w: %w", err, ErrInvalidArgument)
 	}
 	raw, _ := json.Marshal(c)
 	if len(raw) > api.FlagsMaxBundleBytes {
