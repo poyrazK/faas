@@ -421,7 +421,7 @@ export class JobsService {
   /**
    * List durable scheduled occurrence decisions for a job.
    * Shows whether each nominal run started, was skipped, missed its start deadline, or was coalesced.
-   * @returns ListScheduleOccurrencesResponse A newest-first page of durable occurrence outcomes.
+   * @returns ListScheduleOccurrencesResponse A newest-first page of job occurrence outcomes.
    * @throws ApiError
    */
   public static listJobScheduleOccurrences({
