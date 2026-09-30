@@ -70,6 +70,15 @@ type RestoreDatabaseRequest struct {
 	SourceDatabaseID string
 	Name             string
 	PointInTime      time.Time
+	// SourceDefinition is an optional frozen environment-clone input. The
+	// source must still have this provider identity, but later desired spec
+	// edits cannot replace the captured target configuration.
+	SourceDefinition *RestoreSourceDefinition
+}
+
+type RestoreSourceDefinition struct {
+	Spec                                              Spec
+	BackendID, BackendFingerprint, ProviderResourceID string
 }
 
 func NewService(registry *Registry, store Store, options ServiceOptions) (*Service, error) {
@@ -231,12 +240,30 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 		return Database{}, false, ErrConflict
 	}
 	now := s.now()
+	if request.SourceDefinition != nil {
+		definition := *request.SourceDefinition
+		if definition.Spec.Validate() != nil || definition.Spec.RestoreWindowSeconds <= 0 || definition.BackendID == "" || definition.BackendFingerprint == "" || definition.ProviderResourceID == "" {
+			return Database{}, false, ErrInvalid
+		}
+		if source.BackendID != definition.BackendID || source.BackendFingerprint != definition.BackendFingerprint || source.ProviderResourceID != definition.ProviderResourceID {
+			return Database{}, false, ErrConflict
+		}
+		// Current retention may have been shortened since capture. Never
+		// promise recovery outside either the captured or current window.
+		if source.Spec.RestoreWindowSeconds <= 0 || now.Sub(request.PointInTime) > time.Duration(source.Spec.RestoreWindowSeconds)*time.Second {
+			return Database{}, false, ErrInvalid
+		}
+		source.Spec = definition.Spec
+	}
 	if !request.PointInTime.Before(now) || source.Spec.RestoreWindowSeconds <= 0 || now.Sub(request.PointInTime) > time.Duration(source.Spec.RestoreWindowSeconds)*time.Second {
 		return Database{}, false, ErrInvalid
 	}
 	existing, err := s.store.FindByName(ctx, request.AccountID, request.Name)
 	if err == nil {
 		if existing.RestoreSourceDatabaseID != request.SourceDatabaseID || !existing.RestorePointInTime.Equal(request.PointInTime) {
+			return Database{}, false, ErrConflict
+		}
+		if request.SourceDefinition != nil && !restoreMatchesSourceDefinition(existing, source) {
 			return Database{}, false, ErrConflict
 		}
 		if existing.State == StateReady {
@@ -291,6 +318,9 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	if database.RestoreSourceDatabaseID != request.SourceDatabaseID || !database.RestorePointInTime.Equal(request.PointInTime.UTC()) {
 		return Database{}, false, ErrConflict
 	}
+	if request.SourceDefinition != nil && !restoreMatchesSourceDefinition(database, source) {
+		return Database{}, false, ErrConflict
+	}
 	if database.State == StateReady {
 		return database, created, nil
 	}
@@ -299,6 +329,12 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 		return database, created, err
 	}
 	return ready, created, nil
+}
+
+func restoreMatchesSourceDefinition(target, source Database) bool {
+	return target.ID != source.ID && target.Spec == source.Spec && target.BackendID == source.BackendID && target.BackendFingerprint == source.BackendFingerprint &&
+		target.RestoreSourceResourceID == source.ProviderResourceID && target.State != StateDeleting && target.State != StateDeleted &&
+		(target.ProviderResourceID == "" || target.ProviderResourceID != source.ProviderResourceID)
 }
 
 func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (Database, error) {

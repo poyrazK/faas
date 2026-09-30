@@ -558,3 +558,21 @@ credential preparation/publication regression now runs against the real
 PostgreSQL catalogue rather than invented memory-store binding IDs. The complete
 worker, coordinated provider capture, independent target proofs, credential
 issuance/resealing and native VM acceptance remain required.
+
+
+### Restore preparation from captured database definitions (2026-09-30)
+
+Managed PostgreSQL restore requests can now carry a frozen source definition.
+The account-owned source must still resolve to the captured provider resource,
+backend and fingerprint. The restore target uses the captured spec rather than
+re-reading later desired configuration. Preparation checks both captured and
+current recovery windows, and rejects incompatible existing or concurrently
+adopted targets before reconciliation/provider I/O. Project environment database
+copy preparation supplies this definition from its plan. The durable catalogue
+worker can supply the same definition from its private capture.
+
+Focused service contracts verify frozen specs after source edits, idempotent
+restore retries, unchanged production intent, physical placement/identity drift,
+shortened recovery windows and conflicting target adoption. This preserves
+restore configuration identity; application write checkpoints and the complete
+leased clone worker remain separate required integrations.
