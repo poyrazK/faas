@@ -55,6 +55,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | ADR | Title | Status | Source |
 |---|---|---|---|
 | 381 | [Compact platform-tenant statement lines](381-compact-platform-tenant-statement-lines.md) | accepted | Separate compact invoice rows from exact private minute coverage; remove the public 20,000-line ceiling |
+| 384 | [Fetch-compatible internal service port](384-fetch-compatible-internal-service-port.md) | accepted | Canonical HTTP bindings use 10081 with the existing authorization path; legacy 10080 remains available |
 | 380 | [Gregale Issues](380-gregale-issues.md) | accepted for preview implementation | Account/app-scoped issue reporting, grouping, triage, occurrence retention, customer impact, OTLP and webhook recovery |
 | 379 | [Complete the local development bridge workflow](379-development-bridge-workflow.md) | accepted for internal HTTP use | Supervised execution, framework propagation, session activity, dashboard controls and native acceptance |
 | 378 | [Local processes in development environments](378-development-bridge.md) | accepted for internal HTTP use | Scoped one-hour sessions, local service routing, bounded inspection and webhook replay; operator-gated pending native acceptance |

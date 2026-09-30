@@ -156,7 +156,7 @@ func TestStandaloneServiceBindingProjection(t *testing.T) {
 		"GREGALE_SERVICE_OLD_HTTPS_URL": "stale",
 	}, bindings)
 	if len(env) != 5 || env["CUSTOM"] != "kept" || env["GREGALE_SERVICE_OLD_URL"] != "" ||
-		env["GREGALE_SERVICE_BILLING_URL"] != "http://billing.svc.gregale:10080" ||
+		env["GREGALE_SERVICE_BILLING_URL"] != "http://billing.svc.gregale:10081" ||
 		env["GREGALE_SERVICE_BILLING_HTTPS_URL"] != "https://billing.internal" ||
 		env["GREGALE_SERVICE_IDENTITY_HTTPS_URL"] != "https://identity.internal" {
 		t.Fatalf("env = %#v", env)

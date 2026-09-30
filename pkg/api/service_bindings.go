@@ -287,7 +287,8 @@ const (
 	ServiceBindingEnvPrefix      = "GREGALE_SERVICE_"
 	ServiceBindingEnvSuffix      = "_URL"
 	ServiceBindingHTTPSEnvSuffix = "_HTTPS_URL"
-	ServiceBindingPort           = 10080
+	ServiceBindingPort           = 10081
+	ServiceBindingLegacyPort     = 10080
 
 	// ServiceBindingProbePath is reserved by the gateway for the HTTPS canary
 	// sent by `gregale bindings verify`. The gateway only intercepts it when a
@@ -411,7 +412,7 @@ func ServiceBindingHTTPSEnvKey(name string) string {
 }
 
 // ServiceBindingEnv replaces platform-owned URLs while preserving other app
-// environment values. It retains the legacy HTTP canonical URL contract.
+// environment values. It selects the Fetch-compatible HTTP port (ADR-384).
 func ServiceBindingEnv(base map[string]string, bindings []AppServiceBinding) map[string]string {
 	return ServiceBindingEnvForTransport(base, bindings, ServiceBindingTransportHTTP)
 }

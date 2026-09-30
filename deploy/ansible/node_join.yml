@@ -1540,6 +1540,14 @@
         port: 10080
         timeout: 60
 
+    - name: Wait for the Fetch-compatible guest service proxy listener
+      ansible.builtin.wait_for:
+        host: >-
+          {{ (faas_gatewayd_service_proxy_listen |
+          default('10.100.0.1:10080', true)).split(':')[0] }}
+        port: 10081
+        timeout: 60
+
     - name: Wait for the guest DNS TCP listener
       ansible.builtin.wait_for:
         host: >-
