@@ -384,6 +384,24 @@ type AppApiRoute struct {
 	RequestCount  int64
 }
 
+type AppApplicationStandard struct {
+	AppID                     pgtype.UUID
+	OrgID                     pgtype.UUID
+	ProjectID                 pgtype.UUID
+	BaseSettings              []byte
+	LocalSettings             []byte
+	AdditionalLogDestinations []pgtype.UUID
+	Adoptions                 []byte
+	Effective                 []byte
+	EffectiveHash             string
+	DesiredRevision           int64
+	PersistedRevision         int64
+	ObservedRevision          int64
+	State                     string
+	ErrorCode                 string
+	UpdatedAt                 pgtype.Timestamptz
+}
+
 type AppCpuPolicyNodeStatus struct {
 	AppID             pgtype.UUID
 	NodeID            pgtype.UUID
@@ -817,6 +835,20 @@ type ApplicationStandard struct {
 	Slug      string
 	CreatedBy pgtype.UUID
 	CreatedAt pgtype.Timestamptz
+}
+
+type ApplicationStandardAssignment struct {
+	ID               pgtype.UUID
+	OrgID            pgtype.UUID
+	Scope            string
+	ScopeID          pgtype.UUID
+	StandardID       pgtype.UUID
+	AdmissionVersion int64
+	Revision         int64
+	Active           bool
+	CreatedBy        pgtype.UUID
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
 }
 
 type ApplicationStandardLogDestination struct {

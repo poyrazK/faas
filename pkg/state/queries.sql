@@ -1,3 +1,15 @@
+-- name: GetApplicationStandardEnrollment :one
+SELECT app_id::text, org_id::text, coalesce(project_id::text, '')::text AS project_id,
+       base_settings, local_settings, additional_log_destinations::text[] AS additional_log_destinations,
+       adoptions, effective, effective_hash, desired_revision, persisted_revision, observed_revision,
+       state, error_code, updated_at
+FROM app_application_standards WHERE org_id = sqlc.arg(org_id)::uuid AND app_id = sqlc.arg(app_id)::uuid;
+
+-- name: ListApplicationStandardAssignments :many
+SELECT id::text, org_id::text, scope, scope_id::text, standard_id::text, admission_version
+FROM application_standard_assignments WHERE org_id = sqlc.arg(org_id)::uuid AND active
+ORDER BY scope, scope_id, standard_id;
+
 -- name: CreateApplicationStandardLogDestination :one
 INSERT INTO application_standard_log_destinations (org_id, name, kind, target_url, auth_header_sealed, config_hash, created_by)
 VALUES (sqlc.arg(org_id)::uuid, sqlc.arg(name)::text, sqlc.arg(kind)::text, sqlc.arg(target_url)::text,

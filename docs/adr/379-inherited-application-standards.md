@@ -85,3 +85,20 @@ the next batch. No direct apid-to-vmmd calls and no hot-request inheritance quer
 
 This ADR records the complete intended feature. Individual green tests do not
 declare the feature launched or satisfy the entire checklist.
+
+### Enrollment evidence
+
+The storage boundary now captures admission pins at every app insert, including
+raw project/reconcile/preview inserts, and revalidates restore and scope changes.
+Deployment insertion is fenced in PostgreSQL as well as MemStore while enrollment
+is pending, applying or blocked. Project-row membership locks prevent an
+activation from overlooking a concurrent member owned by another organization.
+Assignment identities are fixed, updates require the next revision, and direct
+deletion is fenced except through owning-organization erasure. Tests cover both
+orderings of the project membership race, foreign tombstone restore, transaction
+rollback, immutable adoption reads and candidate publication without activation.
+
+Assignment review/activation, the projection worker and consumer observation
+are still pending. The enrollment gate currently covers deployment admission;
+restore/wake and existing-runtime behavior remain part of the runtime acceptance
+work before public activation is enabled.

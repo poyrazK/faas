@@ -204,6 +204,159 @@ $$;
 
 
 --
+-- Name: application_standard_app_scope_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_app_scope_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM 1 FROM orgs WHERE id = NEW.org_id FOR SHARE;
+    IF NEW.project_id IS NOT NULL THEN
+        PERFORM 1 FROM projects WHERE id = NEW.project_id FOR SHARE;
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM application_standard_assignments a
+        WHERE a.active AND a.org_id <> NEW.org_id
+          AND ((a.scope = 'project' AND a.scope_id = NEW.project_id)
+            OR (a.scope = 'application' AND a.scope_id = NEW.id))
+    ) THEN
+        RAISE EXCEPTION 'application scope is assigned to another organization'
+            USING ERRCODE = '23514', CONSTRAINT = 'application_standard_scope_owner';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_assignment_retention_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_assignment_retention_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF pg_trigger_depth() < 2 OR EXISTS (SELECT 1 FROM orgs WHERE id = OLD.org_id) THEN
+        RAISE EXCEPTION 'application standard assignments must be deactivated through review'
+            USING ERRCODE = '23514', CONSTRAINT = 'application_standard_assignment_retention';
+    END IF;
+    RETURN OLD;
+END;
+$$;
+
+
+--
+-- Name: application_standard_assignment_revision_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_assignment_revision_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.id IS DISTINCT FROM OLD.id OR NEW.org_id IS DISTINCT FROM OLD.org_id
+       OR NEW.scope IS DISTINCT FROM OLD.scope OR NEW.scope_id IS DISTINCT FROM OLD.scope_id
+       OR NEW.standard_id IS DISTINCT FROM OLD.standard_id
+       OR NEW.created_by IS DISTINCT FROM OLD.created_by OR NEW.created_at IS DISTINCT FROM OLD.created_at
+       OR NEW.revision <> OLD.revision + 1 THEN
+        RAISE EXCEPTION 'application standard assignment identity or revision changed'
+            USING ERRCODE = '23514', CONSTRAINT = 'application_standard_assignment_revision';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_assignment_scope_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_assignment_scope_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE creator uuid;
+BEGIN
+    PERFORM 1 FROM orgs WHERE id = NEW.org_id FOR UPDATE;
+    IF NEW.scope = 'application' THEN
+        IF NOT EXISTS (SELECT 1 FROM apps WHERE id = NEW.scope_id AND org_id = NEW.org_id AND status <> 'deleted') THEN
+            RAISE EXCEPTION 'application standard scope does not belong to its organization'
+                USING ERRCODE = '23514', CONSTRAINT = 'application_standard_scope_owner';
+        END IF;
+    ELSIF NEW.scope = 'project' THEN
+        PERFORM 1 FROM projects WHERE id = NEW.scope_id FOR UPDATE;
+        IF EXISTS (SELECT 1 FROM application_standard_assignments
+                   WHERE active AND scope = 'project' AND scope_id = NEW.scope_id AND org_id <> NEW.org_id) THEN
+            RAISE EXCEPTION 'project scope is already assigned to another organization'
+                USING ERRCODE = '23514', CONSTRAINT = 'application_standard_scope_owner';
+        END IF;
+        SELECT account_id INTO creator FROM projects WHERE id = NEW.scope_id;
+        IF creator IS NULL OR NOT EXISTS (
+            SELECT 1 FROM orgs o WHERE o.id = NEW.org_id AND
+              (o.personal_owner_account_id = creator OR EXISTS (
+                SELECT 1 FROM org_memberships m WHERE m.org_id = o.id AND m.account_id = creator AND m.removed_at IS NULL
+              ))
+        ) OR EXISTS (SELECT 1 FROM apps WHERE project_id = NEW.scope_id AND status <> 'deleted' AND org_id <> NEW.org_id) THEN
+            RAISE EXCEPTION 'project standard scope has no verified organization owner'
+                USING ERRCODE = '23514', CONSTRAINT = 'application_standard_scope_owner';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_deployment_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_deployment_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM 1 FROM apps WHERE id = NEW.app_id FOR UPDATE;
+    IF EXISTS (SELECT 1 FROM app_application_standards WHERE app_id = NEW.app_id
+               AND state IN ('pending', 'applying', 'blocked')) THEN
+        RAISE EXCEPTION 'application standards enrollment is not persisted'
+            USING ERRCODE = '23514', CONSTRAINT = 'application_standards_pending';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_enroll_app(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_enroll_app() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE pins jsonb;
+BEGIN
+    SELECT coalesce(jsonb_agg(jsonb_build_object('assignment_id', id::text, 'version', admission_version)
+                             ORDER BY id), '[]'::jsonb)
+      INTO pins FROM application_standard_assignments
+      WHERE active AND org_id = NEW.org_id
+        AND ((scope = 'organization' AND scope_id = NEW.org_id)
+          OR (scope = 'project' AND scope_id = NEW.project_id)
+          OR (scope = 'application' AND scope_id = NEW.id));
+    INSERT INTO app_application_standards (app_id, org_id, project_id, base_settings, adoptions, state)
+    VALUES (NEW.id, NEW.org_id, NEW.project_id,
+            jsonb_build_object('require_signed', NEW.require_signed, 'security_policy', NEW.security_policy,
+                               'egress_cidrs', to_jsonb(NEW.egress_allowlist::text[]),
+                               'egress_extra_ports', to_jsonb(NEW.egress_ports)),
+            pins, CASE WHEN pins = '[]'::jsonb THEN 'unmanaged' ELSE 'pending' END)
+    ON CONFLICT (app_id) DO UPDATE SET
+        org_id = EXCLUDED.org_id, project_id = EXCLUDED.project_id, adoptions = EXCLUDED.adoptions,
+        state = EXCLUDED.state, desired_revision = app_application_standards.desired_revision + 1,
+        effective = '{}'::jsonb, effective_hash = '', persisted_revision = 0, observed_revision = 0,
+        error_code = '', updated_at = now();
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: application_standard_version_immutable(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3585,6 +3738,39 @@ CREATE TABLE public.app_api_routes (
 
 
 --
+-- Name: app_application_standards; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_application_standards (
+    app_id uuid NOT NULL,
+    org_id uuid NOT NULL,
+    project_id uuid,
+    base_settings jsonb DEFAULT '{}'::jsonb NOT NULL,
+    local_settings jsonb DEFAULT '{}'::jsonb NOT NULL,
+    additional_log_destinations uuid[] DEFAULT '{}'::uuid[] NOT NULL,
+    adoptions jsonb DEFAULT '[]'::jsonb NOT NULL,
+    effective jsonb DEFAULT '{}'::jsonb NOT NULL,
+    effective_hash text DEFAULT ''::text NOT NULL,
+    desired_revision bigint DEFAULT 1 NOT NULL,
+    persisted_revision bigint DEFAULT 0 NOT NULL,
+    observed_revision bigint DEFAULT 0 NOT NULL,
+    state text DEFAULT 'unmanaged'::text NOT NULL,
+    error_code text DEFAULT ''::text NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_application_standards_adoptions_check CHECK ((jsonb_typeof(adoptions) = 'array'::text)),
+    CONSTRAINT app_application_standards_base_settings_check CHECK ((jsonb_typeof(base_settings) = 'object'::text)),
+    CONSTRAINT app_application_standards_check CHECK (((persisted_revision >= 0) AND (persisted_revision <= desired_revision))),
+    CONSTRAINT app_application_standards_check1 CHECK (((observed_revision >= 0) AND (observed_revision <= persisted_revision))),
+    CONSTRAINT app_application_standards_desired_revision_check CHECK ((desired_revision > 0)),
+    CONSTRAINT app_application_standards_effective_check CHECK ((jsonb_typeof(effective) = 'object'::text)),
+    CONSTRAINT app_application_standards_effective_hash_check CHECK (((effective_hash = ''::text) OR (effective_hash ~ '^[a-f0-9]{64}$'::text))),
+    CONSTRAINT app_application_standards_error_code_check CHECK ((error_code ~ '^[a-z0-9_]{0,128}$'::text)),
+    CONSTRAINT app_application_standards_local_settings_check CHECK ((jsonb_typeof(local_settings) = 'object'::text)),
+    CONSTRAINT app_application_standards_state_check CHECK ((state = ANY (ARRAY['unmanaged'::text, 'pending'::text, 'applying'::text, 'persisted'::text, 'observed'::text, 'blocked'::text])))
+);
+
+
+--
 -- Name: app_cpu_policy_node_status; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4292,6 +4478,29 @@ CREATE TABLE public.app_work_policies (
     CONSTRAINT app_work_policies_name_check CHECK ((name ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
     CONSTRAINT app_work_policies_pending_updates_check CHECK ((pending_updates = ANY (ARRAY['all'::text, 'keep_latest'::text]))),
     CONSTRAINT app_work_policies_revision_check CHECK ((revision > 0))
+);
+
+
+--
+-- Name: application_standard_assignments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.application_standard_assignments (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    org_id uuid NOT NULL,
+    scope text NOT NULL,
+    scope_id uuid NOT NULL,
+    standard_id uuid NOT NULL,
+    admission_version bigint NOT NULL,
+    revision bigint DEFAULT 1 NOT NULL,
+    active boolean DEFAULT false NOT NULL,
+    created_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT application_standard_assignments_admission_version_check CHECK (((admission_version >= 1) AND (admission_version <= '9007199254740991'::bigint))),
+    CONSTRAINT application_standard_assignments_check CHECK (((scope <> 'organization'::text) OR (scope_id = org_id))),
+    CONSTRAINT application_standard_assignments_revision_check CHECK ((revision > 0)),
+    CONSTRAINT application_standard_assignments_scope_check CHECK ((scope = ANY (ARRAY['organization'::text, 'project'::text, 'application'::text])))
 );
 
 
@@ -10930,6 +11139,14 @@ ALTER TABLE ONLY public.app_api_routes
 
 
 --
+-- Name: app_application_standards app_application_standards_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_application_standards
+    ADD CONSTRAINT app_application_standards_pkey PRIMARY KEY (app_id);
+
+
+--
 -- Name: app_cpu_policy_node_status app_cpu_policy_node_status_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -11199,6 +11416,30 @@ ALTER TABLE ONLY public.app_webhooks
 
 ALTER TABLE ONLY public.app_work_policies
     ADD CONSTRAINT app_work_policies_pkey PRIMARY KEY (app_id, name);
+
+
+--
+-- Name: application_standard_assignments application_standard_assignme_org_id_scope_scope_id_standar_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_assignments
+    ADD CONSTRAINT application_standard_assignme_org_id_scope_scope_id_standar_key UNIQUE (org_id, scope, scope_id, standard_id);
+
+
+--
+-- Name: application_standard_assignments application_standard_assignments_org_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_assignments
+    ADD CONSTRAINT application_standard_assignments_org_id_id_key UNIQUE (org_id, id);
+
+
+--
+-- Name: application_standard_assignments application_standard_assignments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_assignments
+    ADD CONSTRAINT application_standard_assignments_pkey PRIMARY KEY (id);
 
 
 --
@@ -13912,6 +14153,13 @@ CREATE INDEX api_keys_rotated_from_idx ON public.api_keys USING btree (rotated_f
 
 
 --
+-- Name: app_application_standards_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_application_standards_pending_idx ON public.app_application_standards USING btree (updated_at, app_id) WHERE (state = ANY (ARRAY['pending'::text, 'blocked'::text]));
+
+
+--
 -- Name: app_cpu_policy_node_status_observed_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -14357,6 +14605,13 @@ CREATE UNIQUE INDEX app_webhooks_app_target_uniq ON public.app_webhooks USING bt
 --
 
 CREATE UNIQUE INDEX app_webhooks_platform_tenant_target_uniq ON public.app_webhooks USING btree (platform_tenant_id, target_url) WHERE (scope = 'platform_tenant'::text);
+
+
+--
+-- Name: application_standard_assignments_scope_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX application_standard_assignments_scope_idx ON public.application_standard_assignments USING btree (scope, scope_id, org_id) WHERE active;
 
 
 --
@@ -18525,6 +18780,55 @@ CREATE TRIGGER app_webhook_deliveries_capture_dead_letter AFTER UPDATE OF status
 
 
 --
+-- Name: apps application_standard_app_scope_insert_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_app_scope_insert_guard BEFORE INSERT ON public.apps FOR EACH ROW EXECUTE FUNCTION public.application_standard_app_scope_guard();
+
+
+--
+-- Name: apps application_standard_app_scope_update_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_app_scope_update_guard BEFORE UPDATE OF org_id, project_id, status ON public.apps FOR EACH ROW WHEN (((old.org_id IS DISTINCT FROM new.org_id) OR (old.project_id IS DISTINCT FROM new.project_id) OR ((old.status = 'deleted'::text) AND (new.status <> 'deleted'::text)))) EXECUTE FUNCTION public.application_standard_app_scope_guard();
+
+
+--
+-- Name: application_standard_assignments application_standard_assignment_retention_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_assignment_retention_guard BEFORE DELETE ON public.application_standard_assignments FOR EACH ROW EXECUTE FUNCTION public.application_standard_assignment_retention_guard();
+
+
+--
+-- Name: application_standard_assignments application_standard_assignment_revision_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_assignment_revision_guard BEFORE UPDATE ON public.application_standard_assignments FOR EACH ROW EXECUTE FUNCTION public.application_standard_assignment_revision_guard();
+
+
+--
+-- Name: application_standard_assignments application_standard_assignment_scope_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_assignment_scope_guard BEFORE INSERT OR UPDATE ON public.application_standard_assignments FOR EACH ROW EXECUTE FUNCTION public.application_standard_assignment_scope_guard();
+
+
+--
+-- Name: deployments application_standard_deployment_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_deployment_guard BEFORE INSERT ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.application_standard_deployment_guard();
+
+
+--
+-- Name: apps application_standard_enroll_app; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_enroll_app AFTER INSERT ON public.apps FOR EACH ROW EXECUTE FUNCTION public.application_standard_enroll_app();
+
+
+--
 -- Name: application_standards application_standard_identity_immutable; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -18543,6 +18847,13 @@ CREATE TRIGGER application_standard_log_destination_immutable BEFORE DELETE OR U
 --
 
 CREATE TRIGGER application_standard_publisher_immutable BEFORE DELETE OR UPDATE ON public.application_standard_publishers FOR EACH ROW EXECUTE FUNCTION public.application_standard_version_immutable();
+
+
+--
+-- Name: apps application_standard_reenroll_app; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_reenroll_app AFTER UPDATE OF org_id, project_id, status ON public.apps FOR EACH ROW WHEN (((old.org_id IS DISTINCT FROM new.org_id) OR (old.project_id IS DISTINCT FROM new.project_id) OR ((old.status = 'deleted'::text) AND (new.status <> 'deleted'::text)))) EXECUTE FUNCTION public.application_standard_enroll_app();
 
 
 --
@@ -19565,6 +19876,22 @@ ALTER TABLE ONLY public.app_api_routes
 
 
 --
+-- Name: app_application_standards app_application_standards_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_application_standards
+    ADD CONSTRAINT app_application_standards_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_application_standards app_application_standards_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_application_standards
+    ADD CONSTRAINT app_application_standards_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+
+--
 -- Name: app_cpu_policy_node_status app_cpu_policy_node_status_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -20026,6 +20353,22 @@ ALTER TABLE ONLY public.app_work_policies
 
 ALTER TABLE ONLY public.app_work_policies
     ADD CONSTRAINT app_work_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_assignments application_standard_assignme_org_id_standard_id_admission_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_assignments
+    ADD CONSTRAINT application_standard_assignme_org_id_standard_id_admission_fkey FOREIGN KEY (org_id, standard_id, admission_version) REFERENCES public.application_standard_versions(org_id, standard_id, version) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_assignments application_standard_assignments_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_assignments
+    ADD CONSTRAINT application_standard_assignments_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
 
 
 --

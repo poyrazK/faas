@@ -5,10 +5,35 @@ Published versions are immutable, carry a canonical definition hash, and record
 their publishing identity. Publishing creates a candidate; it does not activate
 the version or change applications.
 
-The implementation is in progress. Candidate version and resource management are implemented;
-assignment, automatic enrollment, runtime enforcement and controlled rollout
+The implementation is in progress. Candidate version and resource management,
+plus the durable automatic enrollment boundary, are implemented. Reviewed
+assignment activation, control materialization, runtime enforcement and controlled rollout
 must pass the acceptance checklist in [ADR-379](adr/379-inherited-application-standards.md)
 before this feature is declared available.
+
+## Enrollment boundary
+
+Every organization-owned application insert records its original control values
+and the explicit admission versions of matching active organization, project and
+application assignments. This includes project plan/reconcile and PR preview
+inserts. Publishing a candidate does not move an admission pointer or an existing
+application's adoption. Restoring an application or changing its organization or
+project rechecks inheritance and preserves its original values and local intent.
+
+Enrollment keeps desired, persisted and observed revisions separate. Pending,
+applying or blocked enrollment rejects deployment creation with HTTP 409 and
+`application_standards_pending`. Persisting configuration will not count as
+runtime observation. The public assignment activation and enrollment worker are
+still being implemented; assignment fixtures currently exercise this boundary
+in tests.
+
+Legacy projects have account ownership rather than a dedicated organization
+column. Assigning a project verifies the creator's organization membership and
+every live member application's persisted organization. Shared project locks
+on membership changes serialize that check against activation, including
+cross-organization insert/restore races. An assignment retains its identity;
+updates advance its revision, and direct deletion is reserved for organization
+erasure.
 
 ## Publish and inspect candidates
 

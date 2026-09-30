@@ -48,6 +48,8 @@ const docsBase = "https://gregale.dev/docs"
 
 const CodeApplicationStandardVersionStale = "application_standard_version_stale"
 
+const CodeApplicationStandardsPending = "application_standards_pending"
+
 // dashboardBillingURL is duplicated from pkg/wire because pkg/api cannot
 // import pkg/wire without creating an import cycle.
 const dashboardBillingURL = "https://gregale.dev/dashboard/billing"

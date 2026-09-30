@@ -25434,6 +25434,12 @@ func mapErr(err error) error {
 		case pgerrcode.UniqueViolation:
 			return fmt.Errorf("%w: %s", ErrConflict, pgErr.ConstraintName)
 		case pgerrcode.CheckViolation:
+			if pgErr.ConstraintName == "application_standards_pending" {
+				return ErrApplicationStandardsPending
+			}
+			if pgErr.ConstraintName == "application_standard_scope_owner" {
+				return ErrInvalidArgument
+			}
 			if pgErr.ConstraintName == "invocation_platform_tenant_active" {
 				return ErrPlatformTenantSuspended
 			}

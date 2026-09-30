@@ -8184,6 +8184,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PaymentRequired' }
         '403': { $ref: '#/components/responses/DeploymentForbidden' }
+        '409': { $ref: '#/components/responses/ApplicationStandardsPending' }
         '413': { $ref: '#/components/responses/SourceTooLarge' }
         '422': { $ref: '#/components/responses/DeployFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -8310,7 +8311,7 @@ paths:
         '403': { $ref: '#/components/responses/EmailVerificationRequired' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: "code: dev_source_base_missing. Retry with a complete source snapshot."
+          description: "code: dev_source_base_missing | application_standards_pending. A missing source base requires a complete snapshot; pending inherited controls require enrollment to finish."
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -8377,7 +8378,8 @@ paths:
         '409':
           description: |
             code: source_ref_stale. source_branch no longer points at the
-            requested immutable commit SHA.
+            requested immutable commit SHA. A service awaiting inherited
+            controls instead returns code: application_standards_pending.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -8496,6 +8498,7 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '409': { $ref: '#/components/responses/ApplicationStandardsPending' }
         '413': { $ref: '#/components/responses/SourceTooLarge' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -8597,7 +8600,11 @@ paths:
               schema: { $ref: '#/components/schemas/DeploymentResponse' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
+        '409':
+          description: Upload session conflict or code application_standards_pending while inherited controls await persistence.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '410': { $ref: '#/components/responses/Gone' }
 
   # ADR-122 — endpoint discovery. Captured OpenAPI doc per deployment.
@@ -43866,6 +43873,11 @@ components:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
 
+    ApplicationStandardsPending:
+      description: "code: application_standards_pending. Inherited application controls must be persisted before this service accepts a deployment. Retry after enrollment completes."
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
     Conflict:
       description: 'code: conflict'
       content:

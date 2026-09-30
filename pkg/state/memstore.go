@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"net/netip"
 	"reflect"
@@ -138,6 +139,8 @@ type MemStore struct {
 	applicationStandardVersions        map[string][]ApplicationStandardVersion
 	applicationStandardLogDestinations map[string]ApplicationStandardLogDestination
 	applicationStandardPublishers      map[string]api.ApplicationStandardPublisher
+	applicationStandardAssignments     map[string]applicationStandardAssignmentRecord
+	applicationStandardEnrollments     map[string]ApplicationStandardEnrollment
 	devBridgeSessions                  map[string]devbridge.Session
 	devBridgeWebhookReplays            map[string]devbridge.WebhookReplay
 	featureFlagVersions                map[string][]FeatureFlagVersion
@@ -3062,6 +3065,20 @@ func (m *MemStore) DeleteProject(_ context.Context, projectID string) error {
 	if !ok {
 		return ErrNotFound
 	}
+	// Re-resolve membership before removing any ownership indexes. If a
+	// scope guard rejects a legacy fixture, the entire detach remains atomic.
+	enrollmentBackup := m.cloneApplicationStandardEnrollmentsLocked()
+	detachedApps := map[string]App{}
+	for appID, app := range m.apps {
+		if app.ProjectID == projectID {
+			app.ProjectID = ""
+			if err := m.initializeApplicationStandardEnrollmentLocked(app); err != nil {
+				m.applicationStandardEnrollments = enrollmentBackup
+				return err
+			}
+			detachedApps[appID] = app
+		}
+	}
 	delete(m.projects, projectID)
 	// Drop the by-account+slug entry. The map is keyed by
 	// accountID → slug → projectID; nil-ing out the slug
@@ -3082,11 +3099,8 @@ func (m *MemStore) DeleteProject(_ context.Context, projectID string) error {
 	// history remains. m.apps is map[string]App (not pointer
 	// values), so we have to re-assign the whole struct to
 	// mutate a field.
-	for appID, a := range m.apps {
-		if a.ProjectID == projectID {
-			a.ProjectID = ""
-			m.apps[appID] = a
-		}
+	for appID, app := range detachedApps {
+		m.apps[appID] = app
 	}
 	for environmentID, env := range m.projectEnvironments {
 		if env.ProjectID == projectID {
@@ -3511,7 +3525,25 @@ func (m *MemStore) ApplyProjectPlan(
 		}
 	}
 
-	// 5. Insert project.
+	// 5. Insert project. Preserve the complete transaction state: environments
+	// are keyed by environment ID, and caller-supplied IDs must not overwrite
+	// prior apps or projects during rollback.
+	if project.ID != "" {
+		if _, exists := m.projects[project.ID]; exists {
+			return Project{}, nil, nil, ErrConflict
+		}
+	}
+	for _, app := range apps {
+		if app.ID != "" {
+			if _, exists := m.apps[app.ID]; exists {
+				return Project{}, nil, nil, ErrConflict
+			}
+		}
+	}
+	enrollmentBackup := m.cloneApplicationStandardEnrollmentsLocked()
+	appsBackup := maps.Clone(m.apps)
+	projectsBackup := maps.Clone(m.projects)
+	environmentsBackup := maps.Clone(m.projectEnvironments)
 	if project.ID == "" {
 		project.ID = uuid.NewString()
 	}
@@ -3536,6 +3568,11 @@ func (m *MemStore) ApplyProjectPlan(
 		if a.ID == "" {
 			a.ID = uuid.NewString()
 		}
+		if _, exists := m.apps[a.ID]; exists {
+			m.applicationStandardEnrollments = enrollmentBackup
+			m.apps, m.projects, m.projectEnvironments = appsBackup, projectsBackup, environmentsBackup
+			return Project{}, nil, nil, ErrConflict
+		}
 		a.AccountID = project.AccountID
 		a.ProjectID = project.ID
 		m.ensureAppOrgLocked(&a)
@@ -3546,6 +3583,13 @@ func (m *MemStore) ApplyProjectPlan(
 			a.CPUMillicores = api.DefaultAppCPUMillicores
 		}
 		a.CreatedAt = now
+		if err := m.initializeApplicationStandardEnrollmentLocked(a); err != nil {
+			m.applicationStandardEnrollments = enrollmentBackup
+			m.apps = appsBackup
+			m.projects = projectsBackup
+			m.projectEnvironments = environmentsBackup
+			return Project{}, nil, nil, err
+		}
 		m.apps[a.ID] = a
 		insertedApps = append(insertedApps, a)
 	}
@@ -3599,7 +3643,9 @@ func (m *MemStore) ApplyProjectReconcile(
 		cronsBackup[id] = cron
 	}
 	projectBackup := storedProject
+	enrollmentBackup := m.cloneApplicationStandardEnrollmentsLocked()
 	rollback := func(err error) (ProjectReconcileResult, error) {
+		m.applicationStandardEnrollments = enrollmentBackup
 		m.apps = appsBackup
 		m.crons = cronsBackup
 		m.projects[project.ID] = projectBackup
@@ -3742,6 +3788,9 @@ func (m *MemStore) ApplyProjectReconcile(
 				tombstone.Status = AppActive
 				tombstone.DeletedAt = nil
 				tombstone.DeleteGraceUntil = nil
+				if err := m.initializeApplicationStandardEnrollmentLocked(tombstone); err != nil {
+					return rollback(err)
+				}
 				m.apps[tombstone.ID] = tombstone
 				out.Added = append(out.Added, tombstone)
 				continue
@@ -3767,6 +3816,9 @@ func (m *MemStore) ApplyProjectReconcile(
 			}
 			if app.CreatedAt.IsZero() {
 				app.CreatedAt = time.Now()
+			}
+			if err := m.initializeApplicationStandardEnrollmentLocked(app); err != nil {
+				return rollback(err)
 			}
 			m.apps[app.ID] = app
 			out.Added = append(out.Added, app)
@@ -3903,6 +3955,11 @@ func (m *MemStore) CreateApp(_ context.Context, app App) (App, error) {
 			return App{}, fmt.Errorf("state: slug %q already taken", app.Slug)
 		}
 	}
+	if app.ID != "" {
+		if _, exists := m.apps[app.ID]; exists {
+			return App{}, ErrConflict
+		}
+	}
 	if app.ID == "" {
 		app.ID = newID()
 	}
@@ -3953,6 +4010,9 @@ func (m *MemStore) CreateApp(_ context.Context, app App) (App, error) {
 		app.WorkloadClass = WorkloadClassHTTP
 	}
 	m.ensureAppOrgLocked(&app)
+	if err := m.initializeApplicationStandardEnrollmentLocked(app); err != nil {
+		return App{}, err
+	}
 	m.apps[app.ID] = app
 	return app, nil
 }
@@ -3988,6 +4048,7 @@ func (m *MemStore) CreatePRPreviewAppsIfUnderQuota(_ context.Context, apps []App
 	rollback := func(err error) ([]App, error) {
 		for _, id := range insertedIDs {
 			delete(m.apps, id)
+			delete(m.applicationStandardEnrollments, id)
 		}
 		return nil, err
 	}
@@ -4067,6 +4128,11 @@ func (m *MemStore) createAppIfUnderQuotaLocked(app App, limits api.Limits) (App,
 	}
 	// 3. Conditional insert. The lock keeps the collision check above and
 	// insert atomic for MemStore.
+	if app.ID != "" {
+		if _, exists := m.apps[app.ID]; exists {
+			return App{}, ErrConflict
+		}
+	}
 	if app.ID == "" {
 		app.ID = newID()
 	}
@@ -4109,6 +4175,9 @@ func (m *MemStore) createAppIfUnderQuotaLocked(app App, limits api.Limits) (App,
 		app.WorkloadClass = WorkloadClassHTTP
 	}
 	m.ensureAppOrgLocked(&app)
+	if err := m.initializeApplicationStandardEnrollmentLocked(app); err != nil {
+		return App{}, err
+	}
 	m.apps[app.ID] = app
 	return app, nil
 }
@@ -5987,6 +6056,11 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 			recordActivity = true
 		}
 	}
+	if before.Status == AppDeleted && a.Status != AppDeleted {
+		if err := m.initializeApplicationStandardEnrollmentLocked(a); err != nil {
+			return App{}, err
+		}
+	}
 	m.apps[id] = a
 	if ramChanged {
 		m.markAppSnapshotsStaleLocked(id)
@@ -6011,6 +6085,11 @@ func (m *MemStore) CompareAndSetAppStatus(_ context.Context, id string, from, to
 		return false, nil
 	}
 	a.Status = to
+	if from == AppDeleted && to != AppDeleted {
+		if err := m.initializeApplicationStandardEnrollmentLocked(a); err != nil {
+			return false, err
+		}
+	}
 	if to != AppEvictedCold {
 		m.clearCurrentAppParkTransitionLocked(id)
 	}
@@ -6125,6 +6204,9 @@ func (m *MemStore) restoreAppLocked(id string, limits api.Limits) (App, error) {
 	a.Status = AppActive
 	a.DeletedAt = nil
 	a.DeleteGraceUntil = nil
+	if err := m.initializeApplicationStandardEnrollmentLocked(a); err != nil {
+		return App{}, err
+	}
 	m.apps[id] = a
 	delete(m.appDeletionClaims, id)
 	for cronID, cron := range m.crons {
@@ -6355,6 +6437,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 		}
 	}
 	delete(m.apps, id)
+	delete(m.applicationStandardEnrollments, id)
 	return nil
 }
 
@@ -6795,6 +6878,9 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity) (Deploy
 	app, ok := m.apps[d.AppID]
 	if !ok || app.Status == AppDeleted {
 		return Deployment{}, 0, ErrNotFound
+	}
+	if enrollment, ok := m.applicationStandardEnrollments[app.ID]; ok && (enrollment.State == "pending" || enrollment.State == "blocked" || enrollment.State == "applying") {
+		return Deployment{}, 0, ErrApplicationStandardsPending
 	}
 	if d.ID != "" {
 		if _, exists := m.deployments[d.ID]; exists {
@@ -20544,6 +20630,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for aid, a := range m.apps {
 		if a.AccountID == id {
 			delete(m.apps, aid)
+			delete(m.applicationStandardEnrollments, aid)
 			delete(m.githubBindings, aid)
 		}
 	}

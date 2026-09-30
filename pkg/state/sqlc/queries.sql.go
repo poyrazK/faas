@@ -4084,6 +4084,60 @@ func (q *Queries) GetAppSecretRevocation(ctx context.Context, db DBTX, arg GetAp
 	return i, err
 }
 
+const getApplicationStandardEnrollment = `-- name: GetApplicationStandardEnrollment :one
+SELECT app_id::text, org_id::text, coalesce(project_id::text, '')::text AS project_id,
+       base_settings, local_settings, additional_log_destinations::text[] AS additional_log_destinations,
+       adoptions, effective, effective_hash, desired_revision, persisted_revision, observed_revision,
+       state, error_code, updated_at
+FROM app_application_standards WHERE org_id = $1::uuid AND app_id = $2::uuid
+`
+
+type GetApplicationStandardEnrollmentParams struct {
+	OrgID pgtype.UUID
+	AppID pgtype.UUID
+}
+
+type GetApplicationStandardEnrollmentRow struct {
+	AppID                     string
+	OrgID                     string
+	ProjectID                 string
+	BaseSettings              []byte
+	LocalSettings             []byte
+	AdditionalLogDestinations []string
+	Adoptions                 []byte
+	Effective                 []byte
+	EffectiveHash             string
+	DesiredRevision           int64
+	PersistedRevision         int64
+	ObservedRevision          int64
+	State                     string
+	ErrorCode                 string
+	UpdatedAt                 pgtype.Timestamptz
+}
+
+func (q *Queries) GetApplicationStandardEnrollment(ctx context.Context, db DBTX, arg GetApplicationStandardEnrollmentParams) (GetApplicationStandardEnrollmentRow, error) {
+	row := db.QueryRow(ctx, getApplicationStandardEnrollment, arg.OrgID, arg.AppID)
+	var i GetApplicationStandardEnrollmentRow
+	err := row.Scan(
+		&i.AppID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.BaseSettings,
+		&i.LocalSettings,
+		&i.AdditionalLogDestinations,
+		&i.Adoptions,
+		&i.Effective,
+		&i.EffectiveHash,
+		&i.DesiredRevision,
+		&i.PersistedRevision,
+		&i.ObservedRevision,
+		&i.State,
+		&i.ErrorCode,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getApplicationStandardLogDestination = `-- name: GetApplicationStandardLogDestination :one
 SELECT id, org_id, name, kind, target_url, auth_header_sealed, config_hash, created_by, created_at FROM application_standard_log_destinations WHERE org_id = $1::uuid AND id = $2::uuid
 `
@@ -6349,6 +6403,48 @@ func (q *Queries) ListAppSecretRuntimeReloadTargets(ctx context.Context, db DBTX
 			&i.ApplicationAckStatus,
 			&i.ApplicationAckAt,
 			&i.ApplicationAckErrorCode,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listApplicationStandardAssignments = `-- name: ListApplicationStandardAssignments :many
+SELECT id::text, org_id::text, scope, scope_id::text, standard_id::text, admission_version
+FROM application_standard_assignments WHERE org_id = $1::uuid AND active
+ORDER BY scope, scope_id, standard_id
+`
+
+type ListApplicationStandardAssignmentsRow struct {
+	ID               string
+	OrgID            string
+	Scope            string
+	ScopeID          string
+	StandardID       string
+	AdmissionVersion int64
+}
+
+func (q *Queries) ListApplicationStandardAssignments(ctx context.Context, db DBTX, orgID pgtype.UUID) ([]ListApplicationStandardAssignmentsRow, error) {
+	rows, err := db.Query(ctx, listApplicationStandardAssignments, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListApplicationStandardAssignmentsRow{}
+	for rows.Next() {
+		var i ListApplicationStandardAssignmentsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.Scope,
+			&i.ScopeID,
+			&i.StandardID,
+			&i.AdmissionVersion,
 		); err != nil {
 			return nil, err
 		}
