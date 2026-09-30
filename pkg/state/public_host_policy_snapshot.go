@@ -35,6 +35,7 @@ type PublicHostPolicyReader interface {
 	TenantSurfaceByHostname(context.Context, string) (TenantSurface, error)
 	GetTenantHostnameByName(context.Context, string) (TenantHostname, error)
 	PlatformTenantHostBinding(context.Context, string) (PlatformTenantHostBinding, error)
+	PublicHostReserved(context.Context, string, string) (bool, error)
 	PublicHostPolicyRevision() string
 }
 
@@ -232,4 +233,13 @@ func (s *publicHostPolicyReader) PlatformTenantHostBinding(ctx context.Context, 
 	data, err := sqlc.New().ReadPublicHostTenantBinding(ctx, s.tx, host)
 	s.record("tenant-binding:"+host, data, err)
 	return decodePublicHostJSON[PlatformTenantHostBinding](data, err)
+}
+
+func (s *publicHostPolicyReader) PublicHostReserved(ctx context.Context, slug, host string) (bool, error) {
+	reserved, err := sqlc.New().ReadPublicHostReservation(ctx, s.tx, sqlc.ReadPublicHostReservationParams{
+		Slug: slug, Host: host})
+	data, _ := json.Marshal(reserved)
+	key, _ := json.Marshal([]string{slug, host})
+	s.record("host-reservation:"+string(key), data, err)
+	return reserved, err
 }

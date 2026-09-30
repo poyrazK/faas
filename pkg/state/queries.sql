@@ -5095,3 +5095,17 @@ SELECT jsonb_build_object(
 FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id = h.surface_id
 LEFT JOIN platform_tenants t ON t.id = s.platform_tenant_id
 WHERE h.hostname = sqlc.arg(host)::text AND s.status <> 'deleted';
+
+-- name: ReadPublicHostReservation :one
+-- A routing miss is not a free hostname while customer intent still reserves
+-- it. App tombstones retain their namespace; alias hosts use the reserved
+-- tag- namespace and are excluded by the resolver before this query.
+SELECT (
+    EXISTS (SELECT 1 FROM apps WHERE slug = nullif(sqlc.arg(slug)::text, ''))
+    OR EXISTS (SELECT 1 FROM custom_domains
+               WHERE nullif(sqlc.arg(host)::text, '') IS NOT NULL
+                 AND (domain = sqlc.arg(host)
+                      OR (domain LIKE '*.%' AND lower(sqlc.arg(host)) LIKE '%' || lower(substr(domain, 2))
+                          AND lower(sqlc.arg(host)) <> lower(substr(domain, 3)))))
+    OR EXISTS (SELECT 1 FROM tenant_hostnames WHERE hostname = nullif(sqlc.arg(host)::text, ''))
+)::boolean AS reserved;

@@ -28,16 +28,19 @@ func (s *PgStore) WithPublicRoutingSnapshot(ctx context.Context, read func(Publi
 	}
 	return s.WithServicePolicySnapshot(ctx, func(reader ServicePolicyReader) error {
 		service := reader.(servicePolicyReader)
-		return read(publicRoutingPolicyReader{servicePolicyReader: service, host: newPublicHostPolicyReader(service.tx)})
+		return read(publicRoutingPolicyReader{servicePolicyReader: service})
 	})
 }
 
 type publicRoutingPolicyReader struct {
 	servicePolicyReader
-	host PublicHostPolicyReader
 }
 
-func (s publicRoutingPolicyReader) HostPolicyReader() PublicHostPolicyReader { return s.host }
+// Each projection gets its own fingerprint recorder over the same committed
+// view. Reading one projection cannot contaminate the next one's baseline.
+func (s publicRoutingPolicyReader) HostPolicyReader() PublicHostPolicyReader {
+	return newPublicHostPolicyReader(s.tx)
+}
 
 func (s servicePolicyReader) VerifyPublicRoutingOwner(ctx context.Context, app, account, project string) error {
 	verified, err := sqlc.New().ReadPublicRoutingOwner(ctx, s.tx, sqlc.ReadPublicRoutingOwnerParams{

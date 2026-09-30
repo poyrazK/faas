@@ -311,9 +311,26 @@ and weights. If settings or hostname bindings changed between the two reads,
 the request refuses dispatch instead of combining generations. Both
 transactions end before wake; an admitted request retains its complete
 verified projection and selected deployment during wake and retries.
-Imported edge policies and their source-host ownership still need their
-separate agreement and acceptance evidence before the policy guarantee is
+Compiled/imported edge-policy agreement and complete path evidence remain
+required before the policy guarantee is
 accepted.
+
+An edge route substitution retains both the source hostname claim and the
+target app projection. An authoritative unclaimed hostname is a verified
+negative claim, not a missing proof. An unroutable app, unverified domain,
+tenant reservation, deleted app tombstone or failed alias is still reserved;
+a rule cannot turn that refusal into a synthetic host. Immutable deployment,
+alias and named-environment URLs retain their exact dispatch and cannot be
+substituted. Dispatch rechecks both content baselines
+in the same read-only transaction as target eligibility and weights. Each
+projection has an independent fingerprint recorder over that transaction.
+Changed source ownership, a new claim on a synthetic hostname, a disappeared
+claim or changed source settings refuse dispatch. A claimed source and target
+must belong to the rule's account. Missing source proof cannot authorize a
+production substitution. The sealed effective fingerprint includes both
+projections; ordinary changes after admission do not alter them during wake
+or retries. A claimed source app also joins the account/target app security
+fence before wake, so source deletion cancels an admitted routed exchange.
 
 The implementation tracker is `docs/traffic_platform_implementation.md`.
 Each guarantee needs configuration-to-runtime tests, cancellation/recovery

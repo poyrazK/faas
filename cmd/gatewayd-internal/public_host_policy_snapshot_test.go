@@ -106,7 +106,7 @@ func TestPublicHostSnapshotPostgresScopesIngressAndRefreshesAliasWithoutNotify(t
 	}
 	preview := gateway.BuildDeploymentPreviewURL(router.deploySuffix, staging.Revision, f.app.Slug)
 	app, found, err = router.ResolveHost(t.Context(), preview)
-	if err != nil || !found || app.PrimaryIngressPort != 8082 || app.PinnedDeploymentID != staging.ID {
+	if err != nil || !found || app.PrimaryIngressPort != 8082 || app.PinnedDeploymentID != staging.ID || app.PublicPolicySource.CanSubstitute {
 		t.Fatalf("immutable URL did not project exact ingress: %+v %v %v", app, found, err)
 	}
 	if _, err := f.store.SetDeploymentAlias(t.Context(), f.app.ID, "qa", staging.ID); err != nil {
@@ -119,7 +119,7 @@ func TestPublicHostSnapshotPostgresScopesIngressAndRefreshesAliasWithoutNotify(t
 	host := label + router.appsSuffix
 	backend := gateway.NewPGBackend(router, gateway.NewFakeScheduler(""), nil)
 	old, found, err := backend.LookupHostPolicy(t.Context(), host)
-	if err != nil || !found || old.PrimaryIngressPort != 8082 || old.PinnedDeploymentID != staging.ID {
+	if err != nil || !found || old.PrimaryIngressPort != 8082 || old.PinnedDeploymentID != staging.ID || old.PublicPolicySource.CanSubstitute {
 		t.Fatalf("zero-weight alias lost its own ingress: %+v %v %v", old, found, err)
 	}
 	next := f.deployment(t, "staging", "sha256:stage-next")
@@ -236,7 +236,7 @@ func TestPublicHostSnapshotPostgresEnvironmentAndDomainBindingsRemainVerified(t 
 		tenantSurfacesEnabled: func() bool { return false }}
 	named := gateway.BuildEnvironmentHost(router.deploySuffix, environment.ID, f.app.ID)
 	old, found, err := router.ResolveHost(t.Context(), named)
-	if err != nil || !found || old.PinnedDeploymentID != staging.ID || old.PrimaryIngressPort != 8082 {
+	if err != nil || !found || old.PinnedDeploymentID != staging.ID || old.PrimaryIngressPort != 8082 || old.PublicPolicySource.CanSubstitute {
 		t.Fatalf("named environment projection: %+v %v %v", old, found, err)
 	}
 	inputs := gateway.PublicRoutingInputs{Valid: true, Scope: "staging", HostDeploymentID: staging.ID, HostScope: "staging"}

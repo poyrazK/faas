@@ -37,6 +37,10 @@ func enrollTrafficScopes(w http.ResponseWriter, r *http.Request, registry *traff
 }
 
 func enrollPublicTrafficScopes(w http.ResponseWriter, r *http.Request, registry *trafficrevocation.Registry, app App) bool {
+	scopes := []trafficrevocation.Scope{{Kind: "account", ID: app.AccountID}, {Kind: "app", ID: app.ID}}
+	if source := app.PublicRouteSource; source != nil && source.Found {
+		scopes = append(scopes, trafficrevocation.Scope{Kind: "app", ID: source.AppID})
+	}
 	return enrollTrafficScopesWith(w, r, registry, func(err error) {
 		// Preserve known initial suspension/hold contracts. Active exchanges
 		// use the generic revocation code, since their snapshot may be older.
@@ -51,7 +55,7 @@ func enrollPublicTrafficScopes(w http.ResponseWriter, r *http.Request, registry 
 			}
 		}
 		writeTrafficRevocationError(w, r, err)
-	}, trafficrevocation.Scope{Kind: "account", ID: app.AccountID}, trafficrevocation.Scope{Kind: "app", ID: app.ID})
+	}, scopes...)
 }
 
 func enrollTrafficScopesWith(w http.ResponseWriter, r *http.Request, registry *trafficrevocation.Registry, refuse func(error), scopes ...trafficrevocation.Scope) bool {

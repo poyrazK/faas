@@ -991,6 +991,10 @@ type Querier interface {
 	ReadPublicHostDomain(ctx context.Context, db DBTX, arg ReadPublicHostDomainParams) ([]byte, error)
 	ReadPublicHostEnvironment(ctx context.Context, db DBTX, environmentID pgtype.UUID) ([]byte, error)
 	ReadPublicHostEnvironmentPolicy(ctx context.Context, db DBTX, arg ReadPublicHostEnvironmentPolicyParams) ([]byte, error)
+	// A routing miss is not a free hostname while customer intent still reserves
+	// it. App tombstones retain their namespace; alias hosts use the reserved
+	// tag- namespace and are excluded by the resolver before this query.
+	ReadPublicHostReservation(ctx context.Context, db DBTX, arg ReadPublicHostReservationParams) (bool, error)
 	ReadPublicHostTenantBinding(ctx context.Context, db DBTX, host string) ([]byte, error)
 	ReadPublicHostTenantHostname(ctx context.Context, db DBTX, host string) ([]byte, error)
 	ReadPublicHostTenantSurface(ctx context.Context, db DBTX, host string) ([]byte, error)

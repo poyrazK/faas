@@ -12,7 +12,11 @@ traffic weights and nonsecurity parking changes do not advance generations.
 Both production gateways verify the table with a bounded read before
 serving. Compute's public HTTP handler enrolls its owner account and app before
 authentication, upload and wake, then its selected deployment before dispatch. A retry checks
-each additional deployment. Service calls enroll the verified caller app and,
+each additional deployment. Edge route substitutions also enroll the verified
+source app before wake; deleting that app cancels the routed target exchange.
+The source scope remains registered until forwarding cleanup finishes, and
+public response ownership verifies it with the other admitted scopes.
+Service calls enroll the verified caller app and,
 when available, its source deployment before discovery; account and target app
 follow tenant authorization, before wake. Each selected target deployment is
 checked before forwarding. Identity comes from routing, tenant authorization
@@ -111,5 +115,8 @@ blocked directions; cancellation ends both socket owners before the client is
 closed. Metadata refusal, guest/late trailer forgery and registration cleanup
 are covered across ordinary and rejected-upgrade responses. These public
 transport tests use an in-memory security store; Upgrade's compute endpoint is
-a fixture. Full daemon, native
+a fixture. Source-route cancellation tests use real HTTP/1 and HTTP/2 clients
+and keep all four account/source/target/deployment registrations until joined
+forwarding cleanup. The security store and forwarding owner are fixtures.
+Full daemon, native
 VM/network/leak, deployment and complete policy-path acceptance remain pending.

@@ -90,7 +90,8 @@ type App struct {
 	ID        string
 	AccountID string // joined in pgRouter.toApp; empty only in fakeBackend unit tests (ADR-040)
 	// Private verifier inputs; only the effective fingerprint leaves the gateway.
-	PublicPolicySource *PublicAppPolicySource `json:",omitempty"`
+	PublicPolicySource *PublicAppPolicySource   `json:",omitempty"`
+	PublicRouteSource  *PublicRouteSourcePolicy `json:",omitempty"`
 	// Host-specific tenant surface binding. Never store these in the shared
 	// app cache: one app can serve several independent customer hostnames.
 	RoutedSurfaceID  string
@@ -2206,6 +2207,9 @@ func (h *Handler) matchAndSubstituteRoute(r *http.Request, appHost string, app *
 		}
 		return false
 	}
+	if !h.attachPublicRouteSourcePolicy(r, &target) {
+		return false
+	}
 	// Happy path: audit + metric, then substitute.
 	if h.edgeRuleAudit != nil {
 		h.edgeRuleAudit.Emit(r.Context(), "edge_rule.route_matched", nil, map[string]any{
@@ -2245,6 +2249,10 @@ func (h *Handler) routeRuleForHost(r *http.Request, appHost string) (rule *EdgeR
 		*r = *r.WithContext(context.WithValue(r.Context(), hostPolicyLookupFailureKey{}, err))
 		return nil, true
 	}
+	if hostApp.PublicPolicySource != nil && !hostApp.PublicPolicySource.CanSubstitute {
+		return nil, true
+	}
+	rememberPublicRouteSourcePolicy(r, hostApp, found)
 	if !found || hostApp.AccountID == rule.AccountID {
 		return rule, false
 	}

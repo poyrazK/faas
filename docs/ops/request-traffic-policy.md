@@ -26,9 +26,20 @@ retargeting, environment policy changes, deleted targets or a changed tenant
 binding refuse dispatch with `traffic_policy_unavailable`/503. A policy read
 failure cannot turn an owned hostname into a synthetic edge-rule host.
 Both transactions finish before wake. Admitted requests retain their verified
-settings and selected deployment during wake and retry. Compiled/imported
-matcher revisions still have their separate verification; source-host ownership
-agreement, preview/runtime agreement and full acceptance remain required.
+settings and selected deployment during wake and retry.
+
+An edge route substitution records both the source hostname and target app
+baselines. Dispatch rechecks both in the routing transaction. A genuinely
+unclaimed host has a verified negative claim. Internal/deleted app slugs,
+unverified exact/wildcard domains, tenant reservations and failed alias targets
+cannot become synthetic hosts. Named-environment, immutable deployment and
+resolved alias URLs retain their exact target. A reservation created between
+the first lookup and dispatch refuses the old negative claim. Releasing the
+domain reservation lets a fresh request resolve again. The alias namespace
+remains protected after removal of an alias binding. Both baselines join the sealed
+effective fingerprint, and source app deletion can revoke the admitted target
+exchange. Compiled/imported policy agreement, preview/runtime agreement and
+full acceptance remain required.
 
 ## Runtime evidence
 

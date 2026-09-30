@@ -39,10 +39,6 @@ func (r pgRouter) resolveHostSnapshot(ctx context.Context, store state.PublicHos
 	err := store.WithPublicHostPolicySnapshot(bounded, func(reader state.PublicHostPolicyReader) error {
 		var err error
 		app, found, err = resolvePublicPolicySource(bounded, reader, source)
-		if err == nil && found {
-			source.Revision = reader.PublicHostPolicyRevision()
-			app.PublicPolicySource = source
-		}
 		return err
 	})
 	if err == nil {
@@ -64,10 +60,6 @@ func (r pgRouter) resolvePublicAppSlug(ctx context.Context, slug string) (gatewa
 	err := store.WithPublicHostPolicySnapshot(bounded, func(reader state.PublicHostPolicyReader) error {
 		var err error
 		app, found, err = resolvePublicPolicySource(bounded, reader, source)
-		if err == nil && found {
-			source.Revision = reader.PublicHostPolicyRevision()
-			app.PublicPolicySource = source
-		}
 		return err
 	})
 	if err == nil {
@@ -82,10 +74,46 @@ func resolvePublicPolicySource(ctx context.Context, reader state.PublicHostPolic
 	}
 	router := pgRouter{store: reader, appsSuffix: source.AppsSuffix, deploySuffix: source.DeploySuffix,
 		tenantSurfacesEnabled: func() bool { return source.TenantSurfaces }}
-	if source.Slug != "" {
-		return router.appBySlug(ctx, source.Slug)
+	var app gateway.App
+	var found bool
+	var err error
+	projection := *source
+	if projection.Slug != "" {
+		app, found, err = router.appBySlug(ctx, projection.Slug)
+	} else {
+		app, found, err = router.resolveHost(ctx, projection.Host)
+		if err == nil {
+			projection.CanSubstitute, err = router.publicHostSubstitutionAllowed(ctx, reader, projection.Host, app, found)
+		}
 	}
-	return router.resolveHost(ctx, source.Host)
+	if err == nil {
+		projection.Revision = reader.PublicHostPolicyRevision()
+		app.PublicPolicySource = &projection
+	}
+	return app, found, err
+}
+
+func (r pgRouter) publicHostSubstitutionAllowed(ctx context.Context, reader state.PublicHostPolicyReader, host string, app gateway.App, found bool) (bool, error) {
+	if _, _, matched := gateway.EnvironmentIDsFromHost(r.deploySuffix, host); matched {
+		return false, nil
+	}
+	if _, _, matched := gateway.DeploymentScopeFromHost(r.deploySuffix, host); matched {
+		return false, nil
+	}
+	if _, matched := r.deploymentAliasLabelForHost(host); matched {
+		return false, nil // The reserved tag- namespace survives alias removal.
+	}
+	if found {
+		return app.PinnedDeploymentID == "", nil
+	}
+	var reserved bool
+	var err error
+	if slug, platform := r.slugFor(host); platform {
+		reserved, err = reader.PublicHostReserved(ctx, slug, "")
+	} else {
+		reserved, err = reader.PublicHostReserved(ctx, "", host)
+	}
+	return !reserved, err
 }
 
 func verifyPublicHostPolicy(ctx context.Context, reader state.PublicRoutingPolicyReader, app gateway.App) error {
@@ -104,6 +132,37 @@ func verifyPublicHostPolicy(ctx context.Context, reader state.PublicRoutingPolic
 	if !found || resolved.ID != app.ID || resolved.AccountID != app.AccountID ||
 		host.PublicHostPolicyRevision() != app.PublicPolicySource.Revision {
 		return errors.New("public host policy changed before dispatch")
+	}
+	return verifyPublicRouteSourcePolicy(ctx, view, app)
+}
+
+func verifyPublicRouteSourcePolicy(ctx context.Context, reader state.PublicRoutingHostPolicyReader, app gateway.App) error {
+	claim := app.PublicRouteSource
+	if app.PublicPolicySource.Slug == "" {
+		if claim != nil {
+			return errors.New("ordinary public host has an unexpected route source")
+		}
+		return nil
+	}
+	if claim == nil || claim.Source == nil || claim.Source.Host == "" || claim.Source.Slug != "" || claim.Source.Revision == "" {
+		return errors.New("public route source policy is unavailable")
+	}
+	if !claim.Source.CanSubstitute {
+		return errors.New("public route source does not permit substitution")
+	}
+	if claim.Found && (claim.AppID == "" || claim.AccountID != app.AccountID) ||
+		!claim.Found && (claim.AppID != "" || claim.AccountID != "") {
+		return errors.New("public route source owner is inconsistent")
+	}
+	host := reader.HostPolicyReader()
+	resolved, found, err := resolvePublicPolicySource(ctx, host, claim.Source)
+	if err != nil {
+		return err
+	}
+	if found != claim.Found || resolved.ID != claim.AppID || resolved.AccountID != claim.AccountID ||
+		resolved.PublicPolicySource == nil || !resolved.PublicPolicySource.CanSubstitute ||
+		host.PublicHostPolicyRevision() != claim.Source.Revision {
+		return errors.New("public route source policy changed before dispatch")
 	}
 	return nil
 }

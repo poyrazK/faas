@@ -95,7 +95,8 @@ func (f publicRoutingPGFixture) publish(t *testing.T, deployment string) state.P
 
 func (f publicRoutingPGFixture) routingApp() gateway.App {
 	f.t.Helper()
-	app, found, err := (pgRouter{store: f.store, tenantSurfacesEnabled: func() bool { return false }}).resolvePublicAppSlug(f.t.Context(), f.app.Slug)
+	app, found, err := (pgRouter{store: f.store, appsSuffix: ".apps.gregale.dev", tenantSurfacesEnabled: func() bool { return false }}).
+		ResolveHost(f.t.Context(), f.app.Slug+".apps.gregale.dev")
 	if err != nil || !found {
 		f.t.Fatalf("routing app policy: found=%v err=%v", found, err)
 	}

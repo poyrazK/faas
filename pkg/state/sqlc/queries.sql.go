@@ -12144,6 +12144,33 @@ func (q *Queries) ReadPublicHostEnvironmentPolicy(ctx context.Context, db DBTX, 
 	return data, err
 }
 
+const readPublicHostReservation = `-- name: ReadPublicHostReservation :one
+SELECT (
+    EXISTS (SELECT 1 FROM apps WHERE slug = nullif($1::text, ''))
+    OR EXISTS (SELECT 1 FROM custom_domains
+               WHERE nullif($2::text, '') IS NOT NULL
+                 AND (domain = $2
+                      OR (domain LIKE '*.%' AND lower($2) LIKE '%' || lower(substr(domain, 2))
+                          AND lower($2) <> lower(substr(domain, 3)))))
+    OR EXISTS (SELECT 1 FROM tenant_hostnames WHERE hostname = nullif($2::text, ''))
+)::boolean AS reserved
+`
+
+type ReadPublicHostReservationParams struct {
+	Slug string
+	Host string
+}
+
+// A routing miss is not a free hostname while customer intent still reserves
+// it. App tombstones retain their namespace; alias hosts use the reserved
+// tag- namespace and are excluded by the resolver before this query.
+func (q *Queries) ReadPublicHostReservation(ctx context.Context, db DBTX, arg ReadPublicHostReservationParams) (bool, error) {
+	row := db.QueryRow(ctx, readPublicHostReservation, arg.Slug, arg.Host)
+	var reserved bool
+	err := row.Scan(&reserved)
+	return reserved, err
+}
+
 const readPublicHostTenantBinding = `-- name: ReadPublicHostTenantBinding :one
 SELECT jsonb_build_object(
     'SurfaceID', s.id,
