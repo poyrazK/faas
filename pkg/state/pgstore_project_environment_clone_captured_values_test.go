@@ -85,29 +85,16 @@ func TestPgCloneCapturedManagedCredentialRequiresIndependentPreparation(t *testi
 		t.Fatal(err)
 	}
 	clone.ManagedBindingsPrepared, clone.PreparedManagedBindingIDs, clone.PreparedManagedSecretCount = true, []string{target.ManagedPostgresBindingID}, 1
-	_, result, err := s.CloneProjectEnvironment(ctx, clone, api.MustLimitsFor(a.Plan))
-	if err != nil || result.SecretsCopied != 0 {
-		t.Fatalf("managed envelope copied as a customer secret: count=%d, err=%v", result.SecretsCopied, err)
+	if _, _, err := s.CloneProjectEnvironment(ctx, clone, api.MustLimitsFor(a.Plan)); !errors.Is(err, state.ErrProjectEnvironmentCloneManagedValueProof) {
+		t.Fatalf("unowned target and matching secret count passed materialization proof: %v", err)
+	}
+	if _, err := s.ProjectEnvironmentBySlug(ctx, a.ID, p.ID, "stage"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("forged preparation materialized the target: %v", err)
 	}
 	secrets, err := s.ListAppSecretsInScope(ctx, a.ID, app.ID, "stage")
 	if err != nil || len(secrets) != 1 || secrets[0].ManagedPostgresBindingID != target.ManagedPostgresBindingID ||
 		secrets[0].ManagedCredentialRef != target.ManagedCredentialRef || string(secrets[0].Ciphertext) != "sealed-independent-target" {
 		t.Fatalf("captured credential replaced independently prepared target: count=%d, err=%v", len(secrets), err)
-	}
-	spec, err := s.ProjectEnvironmentWorkloadSpec(ctx, a.ID, p.ID, "stage", app.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	prepared, err := s.CreateDeploymentForEnvironmentClone(ctx, a.ID, p.ID, op.ID, op.Revision, app.ID, spec.Hash)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.MarkDeploymentLiveDark(ctx, prepared.ID); err != nil {
-		t.Fatal(err)
-	}
-	resources[2].TargetID, resources[2].Status = prepared.ID, "ready"
-	if _, err := s.AdvanceProjectEnvironmentCloneOperation(ctx, a.ID, p.ID, op.ID, op.Status, state.CloneOperationPublishing, op.Revision, resources, ""); !errors.Is(err, state.ErrProjectEnvironmentCloneManagedValueProof) {
-		t.Fatalf("managed stage published without an independent resource/envelope proof: %v", err)
 	}
 	if _, err := s.ActiveProjectReleaseSet(ctx, a.ID, p.ID, "stage"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("unverified managed stage acquired a serving graph: %v", err)

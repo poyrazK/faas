@@ -46,5 +46,9 @@ func verifyCloneValuePublicationTx(ctx context.Context, tx pgx.Tx, op ProjectEnv
 	if err != nil {
 		return err
 	}
-	return validateCloneValuePublication(op, resources, records, targets, objects)
+	postgres, err := capturedClonePostgresPreparationsTx(ctx, tx, op, records, captured)
+	if err != nil {
+		return err
+	}
+	return validateCloneValuePublication(op, resources, records, targets, projectCloneManagedValuePreparations{Postgres: postgres, Objects: objects})
 }

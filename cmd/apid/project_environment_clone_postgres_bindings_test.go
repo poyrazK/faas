@@ -255,5 +255,6 @@ func capturedClonePostgresBindingWorkerContract(t *testing.T, srv *server, store
 	if err != nil || n != count || !reflect.DeepEqual(resumedIDs, ids) || len(provider.issued) != beforeIssues+3 {
 		t.Fatalf("takeover did not reuse prepared credentials: %v", err)
 	}
+	capturedClonePostgresMaterializationContract(t, store, pool, resumed, resumedIDs, n)
 	return resumed
 }

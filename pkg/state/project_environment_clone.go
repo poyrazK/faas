@@ -178,6 +178,9 @@ func (m *MemStore) CloneProjectEnvironment(_ context.Context, clone ProjectEnvir
 			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrConflict
 		}
 		if clone.CloneOperationID != "" {
+			if err := m.checkCapturedClonePostgresPreparationsLocked(clone); err != nil {
+				return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+			}
 			if err := m.checkCapturedCloneObjectPreparationsLocked(clone); err != nil {
 				return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
 			}

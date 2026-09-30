@@ -123,6 +123,9 @@ func checkPreparedProjectEnvironmentBindings(ctx context.Context, tx pgx.Tx, clo
 		return ErrConflict
 	}
 	if clone.CloneOperationID != "" {
+		if err := checkCapturedClonePostgresPreparationsTx(ctx, tx, clone); err != nil {
+			return err
+		}
 		return checkCapturedCloneObjectPreparationsTx(ctx, tx, clone)
 	}
 	return nil

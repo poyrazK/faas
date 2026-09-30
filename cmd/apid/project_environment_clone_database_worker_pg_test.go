@@ -147,6 +147,12 @@ func TestPGCapturedCloneDatabaseWorkerRecoversUncheckpointedRestore(t *testing.T
 		if _, err := bindings.Create(ctx, managedpostgres.CreateBindingRequest{AccountID: acct.ID, DatabaseID: source.ID, AppID: app.ID, Scope: "default", EnvironmentKey: "DATABASE_URL", Access: access}); err != nil {
 			t.Fatal(err)
 		}
+		if err := store.UpsertAppEnvInScope(ctx, acct.ID, app.ID, "default", "CAPTURED", "captured-value"); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.UpsertAppSecretWithKidAndValueHashInScope(ctx, acct.ID, app.ID, "default", "TOKEN", identity.Recipient().String(), "1111111111111111", []byte("sealed-customer-token")); err != nil {
+			t.Fatal(err)
+		}
 		d, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:captured"})
 		if err != nil {
 			t.Fatal(err)
@@ -170,7 +176,8 @@ func TestPGCapturedCloneDatabaseWorkerRecoversUncheckpointedRestore(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CaptureProjectEnvironmentCloneWorkloads(ctx, acct.ID, project.ID, op.ID, op.Revision); err != nil {
+	workloads, err := store.CaptureProjectEnvironmentCloneWorkloads(ctx, acct.ID, project.ID, op.ID, op.Revision)
+	if err != nil {
 		t.Fatal(err)
 	}
 	plans, err := srv.capturedProjectEnvironmentDatabasePlans(ctx, op)
@@ -181,6 +188,14 @@ func TestPGCapturedCloneDatabaseWorkerRecoversUncheckpointedRestore(t *testing.T
 	resources, err := capturedProjectEnvironmentDatabaseResources(plans, point)
 	if err != nil {
 		t.Fatal(err)
+	}
+	resources = append(resources, state.ProjectEnvironmentCloneResource{Kind: "source_revision", Name: "production", SourceVersion: op.SourceRevisionHash, Status: "ready"},
+		state.ProjectEnvironmentCloneResource{Kind: "project_config", Name: "production", SourceVersion: workloads[0].SourceProjectConfigHash, Status: "ready"})
+	for _, workload := range workloads {
+		resources = append(resources, state.ProjectEnvironmentCloneResource{Kind: "workload", Name: workload.WorkloadSlug, SourceID: workload.SourceDeploymentID, SourceVersion: workload.SourceHash, Status: "captured"})
+		for _, kind := range []string{"variables", "secrets"} {
+			resources = append(resources, state.ProjectEnvironmentCloneResource{Kind: kind, Name: workload.WorkloadSlug, SourceID: workload.AppID, TargetID: workload.AppID, SourceVersion: workload.SourceValuesHash, Status: "ready"})
+		}
 	}
 	op, err = store.AdvanceProjectEnvironmentCloneOperation(ctx, acct.ID, project.ID, op.ID, op.Status, state.CloneOperationCopying, op.Revision, resources, "")
 	if err != nil {

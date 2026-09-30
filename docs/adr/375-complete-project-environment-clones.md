@@ -937,3 +937,36 @@ must still authenticate these receipts before accepting PostgreSQL managed
 values. It does not fence already accepted physical provider writes, implement
 leased compensation or the persistent full clone loop. Full-copy admission and
 native acceptance remain gated by the requirements above.
+
+### PostgreSQL preparation proofs before materialization and publication (2026-10-01)
+
+Durable materialization now authenticates every captured managed PostgreSQL
+binding against its private reservation and preparation ledger. It reuses the
+worker's captured database roster, canonical recovery point and independent
+operation-owned placement checks, then locks the actual binding and sealed
+secret and compares their content with both immutable hashes. Every resulting
+target binding must appear in the prepared ID set. Caller-supplied IDs and equal
+secret counts cannot justify an unowned database or a changed preparation.
+Legacy configuration clones retain their existing contract; MemStore cannot
+establish a durable PostgreSQL restore proof.
+
+Publication derives expected PostgreSQL values from the same authenticated
+preparations, substituting the target owner, credential reference, generation,
+scope/key, ciphertext, key identity, class and first version. Customer values
+remain tied to their captured source hash. Every workload's complete actual
+target value set is checked before the independent resource-publication guard;
+an earlier resource blocker cannot conceal drift in a later workload.
+
+Real PostgreSQL worker contracts reject forged preparation IDs, altered binding
+identities/generations/keys, reservation hashes and ciphertext before environment
+creation. They observe materialization waiting behind a concurrent binding-row
+edit and reject its committed change. Authentic preparations materialize with
+the captured customer values and reach the independent resource guard. Changed
+managed envelopes and edited/extra customer variables on either workload fail
+publication before that guard, and no serving graph is created. APId clone and
+binding regressions and the state clone/object/value-publication contracts pass.
+
+These checks establish PostgreSQL managed-value preparation evidence. Complete
+resource, grant and public-policy publication, coordinated retained data capture,
+physical provider write fencing, compensation, the persistent full clone loop
+and native acceptance remain required. Full-copy admission stays closed.

@@ -17,38 +17,45 @@ func clonePostgresBindingContextTx(ctx context.Context, tx pgx.Tx, lease Project
 	if err != nil {
 		return op, ProjectEnvironmentClonePostgresBindingTarget{}, err
 	}
+	if _, err := new(sqlc.Queries).LockProjectEnvironmentCloneDatabaseAccount(ctx, tx, mustPgUUID(op.AccountID)); err != nil {
+		return op, ProjectEnvironmentClonePostgresBindingTarget{}, mapErr(err)
+	}
+	want, err := clonePostgresBindingTargetTx(ctx, tx, op, views, sourceID)
+	return op, want, err
+}
+
+// The operation and captured catalogue are authenticated by the caller. Both
+// workers and materialization/publication use the same private placement proof.
+func clonePostgresBindingTargetTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, views []ProjectEnvironmentCloneBindings, sourceID string) (ProjectEnvironmentClonePostgresBindingTarget, error) {
 	appID, source, err := capturedClonePostgresBinding(views, sourceID)
 	if err != nil {
-		return op, ProjectEnvironmentClonePostgresBindingTarget{}, err
+		return ProjectEnvironmentClonePostgresBindingTarget{}, err
 	}
 	q := new(sqlc.Queries)
-	if _, err := q.LockProjectEnvironmentCloneDatabaseAccount(ctx, tx, mustPgUUID(op.AccountID)); err != nil {
-		return op, ProjectEnvironmentClonePostgresBindingTarget{}, mapErr(err)
-	}
 	if _, err := q.ObjectBucketLockApp(ctx, tx, sqlc.ObjectBucketLockAppParams{ID: mustPgUUID(appID), AccountID: mustPgUUID(op.AccountID)}); err != nil {
-		return op, ProjectEnvironmentClonePostgresBindingTarget{}, mapErr(err)
+		return ProjectEnvironmentClonePostgresBindingTarget{}, mapErr(err)
 	}
 	databaseSource, resource, point, err := capturedCloneDatabaseReservation(op, views, source.DatabaseID)
 	if err != nil {
-		return op, ProjectEnvironmentClonePostgresBindingTarget{}, err
+		return ProjectEnvironmentClonePostgresBindingTarget{}, err
 	}
 	database, err := readCloneDatabaseReservationTx(ctx, tx, op, source.DatabaseID)
 	if err != nil {
-		return op, ProjectEnvironmentClonePostgresBindingTarget{}, mapErr(err)
+		return ProjectEnvironmentClonePostgresBindingTarget{}, mapErr(err)
 	}
 	if err := validateCloneDatabaseReservation(op, databaseSource, resource, point, database); err != nil {
-		return op, ProjectEnvironmentClonePostgresBindingTarget{}, err
+		return ProjectEnvironmentClonePostgresBindingTarget{}, err
 	}
 	if resource.Status != "ready" || resource.TargetID != pgUUIDString(database.ID) || database.State != "ready" {
-		return op, ProjectEnvironmentClonePostgresBindingTarget{}, ErrConflict
+		return ProjectEnvironmentClonePostgresBindingTarget{}, ErrConflict
 	}
 	want := ProjectEnvironmentClonePostgresBindingTarget{OperationID: op.ID, SourceBindingID: source.ID, AccountID: op.AccountID, AppID: appID, DatabaseID: pgUUIDString(database.ID),
 		Scope: op.TargetEnvironment, EnvironmentKey: source.EnvironmentKey, Access: source.Access, BackendID: source.BackendID, BackendFingerprint: source.BackendFingerprint,
 		DatabaseProviderResourceID: database.ProviderResourceID.String, SourceDatabaseVersion: resource.SourceVersion, CapturePoint: resource.CapturePoint, CredentialGeneration: 1, State: "provisioning"}
 	if err := q.LockProjectEnvironmentCloneSecretTarget(ctx, tx, sqlc.LockProjectEnvironmentCloneSecretTargetParams{AppID: mustPgUUID(appID), Scope: want.Scope, Key: want.EnvironmentKey}); err != nil {
-		return op, want, mapErr(err)
+		return want, mapErr(err)
 	}
-	return op, want, nil
+	return want, nil
 }
 
 func clonePostgresBindingLedgerTx(ctx context.Context, tx pgx.Tx, want ProjectEnvironmentClonePostgresBindingTarget) (ProjectEnvironmentClonePostgresBindingTarget, *ProjectEnvironmentClonePostgresBindingPreparation, error) {
