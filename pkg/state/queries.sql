@@ -4747,3 +4747,25 @@ SELECT id, request_id, trace_id, received_at, expires_at
    AND expires_at > sqlc.arg(now_at)::timestamptz
  ORDER BY received_at DESC, id DESC
  LIMIT 1;
+
+-- name: CreateDevBridge :execrows
+INSERT INTO dev_bridge_sessions
+(id,account_id,target_app_id,environment_id,scope,attachment_digest,request_digest,expires_at)
+SELECT sqlc.arg(id),sqlc.arg(account_id),sqlc.arg(target_app_id),sqlc.arg(environment_id),
+       sqlc.arg(scope),sqlc.arg(attachment_digest),sqlc.arg(request_digest),sqlc.arg(expires_at)
+FROM apps a JOIN project_environments e ON e.project_id=a.project_id AND e.account_id=a.account_id
+WHERE a.id=sqlc.arg(target_app_id) AND a.account_id=sqlc.arg(account_id)
+  AND e.id=sqlc.arg(environment_id) AND NOT e.protected AND e.slug NOT IN ('production','default')
+  AND (SELECT count(*) FROM dev_bridge_sessions b WHERE b.account_id=a.account_id
+       AND b.revoked_at IS NULL AND b.expires_at > now()) < sqlc.arg(max_sessions)::integer;
+
+-- name: DevBridgeByID :one
+SELECT id,scope,attachment_digest,request_digest,expires_at,revoked_at
+FROM dev_bridge_sessions WHERE id=$1 AND account_id=$2;
+
+-- name: RevokeDevBridge :execrows
+UPDATE dev_bridge_sessions SET revoked_at=COALESCE(revoked_at,sqlc.arg(revoked_at))
+WHERE id=sqlc.arg(id) AND account_id=sqlc.arg(account_id);
+
+-- name: LockDevBridgeAccount :one
+SELECT plan FROM accounts WHERE id=$1 FOR UPDATE;

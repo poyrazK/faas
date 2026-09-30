@@ -1418,6 +1418,19 @@ type DeploymentSidecarSecretReloadSignal struct {
 	Signal       string
 }
 
+type DevBridgeSession struct {
+	ID               string
+	AccountID        pgtype.UUID
+	TargetAppID      pgtype.UUID
+	EnvironmentID    pgtype.UUID
+	Scope            []byte
+	AttachmentDigest []byte
+	RequestDigest    []byte
+	ExpiresAt        pgtype.Timestamptz
+	RevokedAt        pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+}
+
 type DeveloperSyncHistory struct {
 	ID           pgtype.UUID
 	AppID        pgtype.UUID

@@ -1403,6 +1403,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid: billing mode: %w", err)
 	}
 	srv.WithBillingMode(billingMode)
+	srv.devBridgeEnabled = deps.getenv("FAAS_DEV_BRIDGE_ENABLED") == "1"
+	srv.devBridgeURL = deps.getenv("FAAS_DEV_BRIDGE_RELAY_URL")
+	if srv.devBridgeURL == "" {
+		srv.devBridgeURL = "http://127.0.0.1:9098"
+	}
 	objectRegistry, err := objectstorage.Load(deps.getenv)
 	if err != nil {
 		return fmt.Errorf("apid object storage configuration: %w", err)

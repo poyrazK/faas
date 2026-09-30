@@ -48,6 +48,8 @@ import (
 // wires a stub that returns 503 for every RPC; slices 7-8 replace with a
 // live socket-dialed client.
 type server struct {
+	devBridgeEnabled bool
+	devBridgeURL     string
 	// totp limits TOTP guesses per account (totp_guard.go).
 	totp                             *totpGuard
 	objectStorage                    *objectstorage.Registry
@@ -1407,6 +1409,14 @@ func (s *server) handler() http.Handler {
 	// Source bytes still flow through the normal deployment endpoints; these
 	// routes only own the developer-session lease.
 	mux.HandleFunc("PUT /v1/dev/sessions/{project}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.upsertDevSession)))))
+	mux.HandleFunc("POST /v1/dev/bridges", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.createDevBridge)))))
+	mux.HandleFunc("GET /v1/dev/bridges/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDevBridge))))
+	mux.HandleFunc("DELETE /v1/dev/bridges/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.revokeDevBridge))))
+	// The relay revalidates scoped session credentials from durable state;
+	// these traffic endpoints do not accept account API keys as authorization.
+	mux.HandleFunc("GET /v1/dev/bridges/{id}/connect", s.proxyDevBridge)
+	mux.HandleFunc("/v1/dev/bridges/{id}/traffic/{path...}", s.proxyDevBridge)
+	mux.HandleFunc("/v1/dev/bridges/{id}/dependencies/{app}/{path...}", s.proxyDevBridge)
 	mux.HandleFunc("DELETE /v1/dev/sessions/{project}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.destroyDevSession))))
 	mux.HandleFunc("PUT /v1/dev/test-runs/{run_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.registerScenarioTest))))
 	mux.HandleFunc("DELETE /v1/dev/test-runs/{run_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteScenarioTest))))

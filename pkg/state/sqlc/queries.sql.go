@@ -1386,6 +1386,48 @@ func (q *Queries) CreateDeployment(ctx context.Context, db DBTX, arg CreateDeplo
 	return i, err
 }
 
+const createDevBridge = `-- name: CreateDevBridge :execrows
+INSERT INTO dev_bridge_sessions
+(id,account_id,target_app_id,environment_id,scope,attachment_digest,request_digest,expires_at)
+SELECT $1,$2,$3,$4,
+       $5,$6,$7,$8
+FROM apps a JOIN project_environments e ON e.project_id=a.project_id AND e.account_id=a.account_id
+WHERE a.id=$3 AND a.account_id=$2
+  AND e.id=$4 AND NOT e.protected AND e.slug NOT IN ('production','default')
+  AND (SELECT count(*) FROM dev_bridge_sessions b WHERE b.account_id=a.account_id
+       AND b.revoked_at IS NULL AND b.expires_at > now()) < $9::integer
+`
+
+type CreateDevBridgeParams struct {
+	ID               string
+	AccountID        pgtype.UUID
+	TargetAppID      pgtype.UUID
+	EnvironmentID    pgtype.UUID
+	Scope            []byte
+	AttachmentDigest []byte
+	RequestDigest    []byte
+	ExpiresAt        pgtype.Timestamptz
+	MaxSessions      int32
+}
+
+func (q *Queries) CreateDevBridge(ctx context.Context, db DBTX, arg CreateDevBridgeParams) (int64, error) {
+	result, err := db.Exec(ctx, createDevBridge,
+		arg.ID,
+		arg.AccountID,
+		arg.TargetAppID,
+		arg.EnvironmentID,
+		arg.Scope,
+		arg.AttachmentDigest,
+		arg.RequestDigest,
+		arg.ExpiresAt,
+		arg.MaxSessions,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const createInstance = `-- name: CreateInstance :one
 insert into instances (id, app_id, deployment_id, state, ram_mb)
 values (gen_random_uuid(), $1, $2, $3, $4)
@@ -2196,6 +2238,39 @@ func (q *Queries) DeploymentSnapshotBackoffActive(ctx context.Context, db DBTX, 
 	row := db.QueryRow(ctx, deploymentSnapshotBackoffActive, id)
 	var i DeploymentSnapshotBackoffActiveRow
 	err := row.Scan(&i.SnapshotMissCount, &i.SnapshotMissBackoffUntil)
+	return i, err
+}
+
+const devBridgeByID = `-- name: DevBridgeByID :one
+SELECT id,scope,attachment_digest,request_digest,expires_at,revoked_at
+FROM dev_bridge_sessions WHERE id=$1 AND account_id=$2
+`
+
+type DevBridgeByIDParams struct {
+	ID        string
+	AccountID pgtype.UUID
+}
+
+type DevBridgeByIDRow struct {
+	ID               string
+	Scope            []byte
+	AttachmentDigest []byte
+	RequestDigest    []byte
+	ExpiresAt        pgtype.Timestamptz
+	RevokedAt        pgtype.Timestamptz
+}
+
+func (q *Queries) DevBridgeByID(ctx context.Context, db DBTX, arg DevBridgeByIDParams) (DevBridgeByIDRow, error) {
+	row := db.QueryRow(ctx, devBridgeByID, arg.ID, arg.AccountID)
+	var i DevBridgeByIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.Scope,
+		&i.AttachmentDigest,
+		&i.RequestDigest,
+		&i.ExpiresAt,
+		&i.RevokedAt,
+	)
 	return i, err
 }
 
@@ -8163,6 +8238,17 @@ func (q *Queries) LockCreditConsumption(ctx context.Context, db DBTX, providerIn
 	return err
 }
 
+const lockDevBridgeAccount = `-- name: LockDevBridgeAccount :one
+SELECT plan FROM accounts WHERE id=$1 FOR UPDATE
+`
+
+func (q *Queries) LockDevBridgeAccount(ctx context.Context, db DBTX, id pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, lockDevBridgeAccount, id)
+	var plan string
+	err := row.Scan(&plan)
+	return plan, err
+}
+
 const lockInvoiceForRefund = `-- name: LockInvoiceForRefund :one
 SELECT account_id, provider, provider_invoice_id, amount_paid_cents,
        total_cents, amount_refunded_cents, amount_refund_pending_cents, credits_applied_cents
@@ -13675,6 +13761,25 @@ func (q *Queries) RevokeAllSessions(ctx context.Context, db DBTX, arg RevokeAllS
 		return nil, err
 	}
 	return items, nil
+}
+
+const revokeDevBridge = `-- name: RevokeDevBridge :execrows
+UPDATE dev_bridge_sessions SET revoked_at=COALESCE(revoked_at,$1)
+WHERE id=$2 AND account_id=$3
+`
+
+type RevokeDevBridgeParams struct {
+	RevokedAt pgtype.Timestamptz
+	ID        string
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) RevokeDevBridge(ctx context.Context, db DBTX, arg RevokeDevBridgeParams) (int64, error) {
+	result, err := db.Exec(ctx, revokeDevBridge, arg.RevokedAt, arg.ID, arg.AccountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const revokeSession = `-- name: RevokeSession :one

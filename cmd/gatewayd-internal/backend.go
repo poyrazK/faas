@@ -177,7 +177,7 @@ func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID stri
 		return gateway.App{}, false, err
 	}
 	if app.ProjectID == "" || app.ProjectID != environment.ProjectID || app.AccountID != environment.AccountID ||
-		api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
+		(api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal && !gateway.DevBridgeAllowsPrivateEnvironment(ctx, app.AccountID, environment.ID, app.ID)) {
 		return gateway.App{}, false, nil
 	}
 	// Headers policies may carry security headers. A failed authoritative

@@ -25,6 +25,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/cursor"
+	"github.com/onebox-faas/faas/pkg/devbridge"
 	"github.com/onebox-faas/faas/pkg/hostport"
 	"github.com/onebox-faas/faas/pkg/publicstatus"
 	"github.com/onebox-faas/faas/pkg/safetext"
@@ -134,6 +135,7 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	devBridgeSessions           map[string]devbridge.Session
 	safeReleaseWorkerLeaseUntil time.Time
 	requestAuditEvents          map[string]RequestAuditRecord
 	discoveredAPIRoutes         map[string]DiscoveredAPIRoute

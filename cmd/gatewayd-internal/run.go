@@ -37,6 +37,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -2433,6 +2434,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	retryBudget.WithObserver(deps.metrics)
 	defer func() { _ = retryBudget.Close() }()
 	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log).WithRetryBudget(retryBudget)
+	if osGetenv("FAAS_DEV_BRIDGE_ENABLED") == "1" && deps.pgStore != nil {
+		bridgeTarget := deps.apidLoopback
+		if bridgeTarget == "" {
+			bridgeTarget = osGetenv("FAAS_APID_LOOPBACK")
+		}
+		if bridgeTarget == "" {
+			bridgeTarget = "http://127.0.0.1:8081"
+		}
+		bridgeURL, err := url.Parse(bridgeTarget)
+		if err != nil || bridgeURL.Host == "" || (bridgeURL.Scheme != "http" && bridgeURL.Scheme != "https") {
+			return fmt.Errorf("invalid development bridge API target")
+		}
+		handler.WithDevBridge(developmentBridgeAuthorization(deps.pgStore), developmentBridgeForwarder(deps.pgStore, bridgeURL))
+	}
 	if strings.EqualFold(strings.TrimSpace(osGetenv("FAAS_REQUEST_AUDIT_ENABLED")), streamingFlagTrue) {
 		handler.WithRequestAudit(true)
 	}

@@ -899,11 +899,13 @@ type warmEnsurer interface {
 // Handler is gatewayd-internal's HTTP entrypoint: route → rate-limit → (wake-block if
 // parked) → proxy (spec §4.1, §2). It is the only public listener on the box.
 type Handler struct {
-	backend        Backend
-	declaredRoutes DeclaredRouteMatcher
-	limiter        *Limiter
-	preAuthLimiter *preAuthSourceLimiter
-	preAuthCentral CentralBackend
+	devBridgeAuthorize func(*http.Request) *api.Problem
+	devBridgeForward   func(http.ResponseWriter, *http.Request, App) bool
+	backend            Backend
+	declaredRoutes     DeclaredRouteMatcher
+	limiter            *Limiter
+	preAuthLimiter     *preAuthSourceLimiter
+	preAuthCentral     CentralBackend
 	// routeLimiter is the per-rule token-bucket throttle (ADR-091
 	// D20.5 amendment, issue #881). Same underlying *Limiter type as
 	// limiter + accountLimiter but constructed with NewLimiterWithLRU
@@ -5540,6 +5542,15 @@ func (h *Handler) pickAfterCapacity(app App, preferredInstanceID, versionKey str
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if h.devBridgeAuthorize != nil {
+		if problem := h.devBridgeAuthorize(r); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+	} else if r.Header.Get("X-Gregale-Dev-Bridge-Session") != "" || r.Header.Get("X-Gregale-Dev-Bridge-Token") != "" {
+		api.WriteProblem(w, api.NewProblem(503, "dev_bridge_unavailable", "Bridge unavailable", "development routing is not enabled"))
+		return
+	}
 	// Managed realtime is a separate connection owner. Route it before the
 	// normal request bookkeeping and drain tracker so a quiet socket does not
 	// hold an application request slot or wake/parking lease for its lifetime.
@@ -6088,6 +6099,10 @@ haveApp:
 	// Preview-only fixed response rules return after both app auth gates and
 	// before cache lookup or backend wake/admission.
 	if h.applyEdgeRuleRespond(w, r, app) {
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
+	}
+	if h.devBridgeForward != nil && h.devBridgeForward(w, r, app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}

@@ -52,6 +52,7 @@ func Open(ctx context.Context, dsnOverride string) (*pgxpool.Pool, error) {
 // The precondition is recorded in docs/runbooks/FaasDBPoolStarved.md: a
 // flat-zero <daemon>_db_pool_canceled_acquires_total on a busy daemon.
 var DaemonMaxConnections = map[string]int32{
+	"bridged":           2,
 	"apid":              12,
 	"schedd":            16,
 	"gatewayd-internal": 8,

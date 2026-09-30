@@ -209,6 +209,16 @@ func sortStrings(s []string) {
 // preserving the caller's case.
 func defaultPatterns() []Pattern {
 	return []Pattern{
+		{
+			Name:  "dev_bridge_token",
+			Regex: regexp.MustCompile(`(?i)(X-Gregale-Dev-Bridge-Token)(\s*:\s*)([^\r\n\000]+)`),
+			Replacer: func(g []string) string {
+				if len(g) < 4 {
+					return "[REDACTED:dev_bridge_token]"
+				}
+				return g[1] + g[2] + "[REDACTED:dev_bridge_token]"
+			},
+		},
 		// Email — RFC 5322-lite. Anchored on word boundaries so
 		// we don't redact "user@vm1" inside a host:port string.
 		// Two-char TLD minimum keeps us from eating "x.y" pairs

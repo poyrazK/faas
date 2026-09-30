@@ -27,6 +27,15 @@ const (
 	AfterRestoreHookMaxTimeoutMS     = 2000
 )
 
+const (
+	// Development bridge transport safeguards. These are preview bounds, not
+	// a new billing allowance. Session creation also uses DeveloperApps.
+	DevBridgeSessionTTL            = time.Hour
+	DevBridgeMaxDependencies       = 32
+	DevBridgeMaxConcurrentRequests = 32
+	DevBridgeMaxHeaderBytes        = 32 << 10
+)
+
 // MaxOutboundRequestsPerDay is the structural upper bound for a
 // customer-configured daily request budget on one integration. Plan ceilings
 // below are at or below this value. See ADR-257.
