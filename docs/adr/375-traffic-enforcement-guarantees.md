@@ -332,6 +332,18 @@ admitted wake/retry work retains the sealed policies. Reads are bounded to
 the aggregate projection bound. The compiled cache retains its existing host-count bound.
 Complete path, overload and preview/runtime evidence remain required.
 
+Individual preset, environment-overlay and scoped-route replacements are
+validated against their complete runtime projection before persistence. The
+Postgres store measures canonical JSONB bytes, including ownership metadata
+and JSONB whitespace; the in-memory store uses a conservative serialization
+bound. Failed writes retain the previous policy and return a stable 422 problem
+with byte limit, observed size and recovery guidance. A smaller replacement or
+an empty overlay remains available for repairing an existing oversized row.
+This individual-object guard does not establish the aggregate per-host rule
+and referenced-preset bound. Atomic checks across concurrent contributing
+mutations and environment cloning remain delivery work; an account-wide byte
+quota must not silently replace the per-host runtime bound.
+
 Public declared-route inputs join the fresh hostname/app view. An exact
 environment's route overlay is read before deciding whether an imported
 OpenAPI document is needed; explicit routes keep precedence. The readonly

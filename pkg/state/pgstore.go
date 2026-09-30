@@ -13895,6 +13895,11 @@ func (s *PgStore) GetCorsPresetByID(ctx context.Context, accountID, id string) (
 // signal. The notification is delivered after commit; gatewayd also polls the
 // ledger so a missed notification cannot leave compiled CORS policy stale.
 func (s *PgStore) CreateCorsPresetIfUnderQuota(ctx context.Context, p CorsPreset, limits api.Limits) (CorsPreset, error) {
+	proposed := p
+	proposed.ID = "" // the insert generates its UUID rather than accepting p.ID
+	if err := s.validateTrafficProjection(ctx, "cors_preset", corsPresetTrafficProjection(proposed)); err != nil {
+		return CorsPreset{}, err
+	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return CorsPreset{}, fmt.Errorf("state: begin tx: %w", err)
@@ -13998,6 +14003,10 @@ func (s *PgStore) CreateCorsPresetIfUnderQuota(ctx context.Context, p CorsPreset
 // and emits pg_notify; gateways replay the ledger if notification delivery
 // is missed.
 func (s *PgStore) UpdateCorsPreset(ctx context.Context, accountID, id string, p CorsPreset) (CorsPreset, error) {
+	p.ID, p.AccountID = id, accountID
+	if err := s.validateTrafficProjection(ctx, "cors_preset", corsPresetTrafficProjection(p)); err != nil {
+		return CorsPreset{}, err
+	}
 	var appIDArg any
 	if p.AppID != "" {
 		appIDArg = p.AppID

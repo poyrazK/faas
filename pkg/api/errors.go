@@ -1596,6 +1596,7 @@ const (
 	// instance plan or admission owner was unavailable.
 	CodeHTTPAdmissionUnavailable = "http_admission_unavailable"
 	CodeTrafficPolicyUnavailable = "traffic_policy_unavailable"
+	CodeTrafficPolicyTooLarge    = "traffic_policy_too_large"
 	// Warm saturation queue outcomes are distinct from cold-wake and fleet
 	// capacity failures so clients can make safe retry decisions.
 	CodeConcurrencyQueueFull    = "concurrency_queue_full"
@@ -1870,6 +1871,8 @@ func StatusForCode(code string) int {
 		return http.StatusBadRequest
 	case CodeRequestUploadTimeout:
 		return http.StatusRequestTimeout
+	case CodeTrafficPolicyTooLarge:
+		return http.StatusUnprocessableEntity
 	case CodeWorkflowDefinitionNotFound, CodeWorkflowRunNotFound, CodeWorkflowStepNotFound,
 		CodeWorkflowEventNotFound:
 		return http.StatusNotFound
@@ -2735,6 +2738,16 @@ func ErrRequestBodyTooLarge(limit, observed int64) *Problem {
 		WithByteLimit(limit, observed).
 		WithDocs(docsBase + "/storage#signed-uploads").
 		WithHint("For larger uploads, use a bucket signed URL (gregale storage ... signed-url).")
+}
+
+// ErrTrafficPolicyTooLarge reports an unsaved runtime policy projection.
+func ErrTrafficPolicyTooLarge(scope string, limit, observed int64) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeTrafficPolicyTooLarge,
+		"Traffic policy too large",
+		fmt.Sprintf("%s runtime projection is %d bytes, above the %d-byte cap; no policy was changed", scope, observed, limit)).
+		WithByteLimit(limit, observed).
+		WithDocs(docsBase + "/plans#edge-rules").
+		WithHint("Reduce policy values and replace the policy. Clear an environment overlay or disable and clear its scoped route contract to recover it.")
 }
 
 // ErrRequestUploadTimeout reports a stalled or too-slow inbound upload. The

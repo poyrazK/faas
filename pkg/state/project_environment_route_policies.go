@@ -49,6 +49,9 @@ func (m *MemStore) PutProjectEnvironmentRoutePolicy(_ context.Context, policy Pr
 	if _, err := m.projectEnvironmentBySlugLocked(policy.ProjectID, policy.EnvironmentSlug); err != nil {
 		return ProjectEnvironmentRoutePolicy{}, err
 	}
+	if err := validateMemTrafficProjection("environment_route_policy", environmentRouteTrafficProjection(policy)); err != nil {
+		return ProjectEnvironmentRoutePolicy{}, err
+	}
 	key := projectEnvironmentRoutePolicyKey(policy.AppID, policy.EnvironmentSlug)
 	now := time.Now().UTC()
 	if prior, ok := m.projectEnvironmentRoutePolicies[key]; ok {
@@ -89,6 +92,9 @@ func (s *PgStore) GetProjectEnvironmentRoutePolicy(ctx context.Context, accountI
 func (s *PgStore) PutProjectEnvironmentRoutePolicy(ctx context.Context, policy ProjectEnvironmentRoutePolicy) (ProjectEnvironmentRoutePolicy, error) {
 	if policy.OnlyAllowDeclaredRoutes && len(policy.DeclaredRoutes) == 0 {
 		return ProjectEnvironmentRoutePolicy{}, ErrInvalidArgument
+	}
+	if err := s.validateTrafficProjection(ctx, "environment_route_policy", environmentRouteTrafficProjection(policy)); err != nil {
+		return ProjectEnvironmentRoutePolicy{}, err
 	}
 	routeList := policy.DeclaredRoutes
 	if routeList == nil {

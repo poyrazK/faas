@@ -42,8 +42,29 @@ input byte bound; each preset and environment overlay is limited to 512 KiB
 before transfer. Unrelated tenants' non-route rules and presets are not loaded.
 The compiled cache preserves the existing 10,000-host entry ceiling.
 An oversized projection refuses with `traffic_policy_unavailable`/503.
-Write-time validation of these projection limits and oversized-policy recovery
-remain rollout requirements; this implementation is not yet release acceptance.
+Individual CORS preset creates/replacements, environment overlay replacements
+and scoped route replacements validate the complete runtime object before
+saving. Postgres measures canonical JSONB bytes, including ownership metadata
+and separator whitespace. CORS PATCH validation uses the merged preset, so two
+individually small field updates cannot exceed the preset bound after merging.
+Display names, descriptions and timestamps are excluded from these projections.
+
+An oversized write returns `traffic_policy_too_large`/422 with `limit`,
+`observed`, `limit_bytes`, `observed_bytes` and `docs_url`. The existing policy
+is retained. Reduce the values and replace the policy; an empty environment
+overlay, a disabled empty scoped route policy, or preset deletion is also
+available. Existing oversized rows can be repaired by a smaller replacement;
+fresh bounded reads see the repair without relying on notification delivery.
+Remove referencing CORS rules before deleting a preset; retained references
+continue to refuse traffic, so deleting a referenced preset alone is not a
+serving-policy repair.
+The in-memory store uses a conservative bound and may reject a near-limit
+object whose extra JSON string escapes are smaller in Postgres.
+
+Atomic aggregate per-host validation across concurrent rule/preset mutations,
+environment cloning, imported-document mutation paths and complete recovery
+acceptance remain rollout requirements. These individual write checks do not
+establish release acceptance.
 
 Before dispatch, the public routing transaction re-resolves the host projection
 and compares its private content fingerprint. Changed settings, alias/domain

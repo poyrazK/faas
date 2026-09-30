@@ -800,6 +800,9 @@ type Querier interface {
 	// itself hits 0 rows and the handler reads upload_commit_outcomes
 	// to return the original deployment_id.
 	MarkUploadSessionCommitted(ctx context.Context, db DBTX, arg MarkUploadSessionCommittedParams) (MarkUploadSessionCommittedRow, error)
+	// Write validation measures the proposed complete projection using the same
+	// canonical representation as bounded runtime reads, before changing a row.
+	MeasureTrafficPolicyProjection(ctx context.Context, db DBTX, payload []byte) (int64, error)
 	// ----------------------------------------------------------------------
 	// NodeLifecycleStore (Workstream B, issue #1184)
 	//

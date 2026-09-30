@@ -21439,6 +21439,9 @@ func (m *MemStore) GetCorsPresetByID(_ context.Context, accountID, id string) (C
 // (account_id, COALESCE(app_id, ...), name) returns ErrConflict,
 // matching pgstore's 23505-→-ErrConflict map.
 func (m *MemStore) CreateCorsPresetIfUnderQuota(_ context.Context, p CorsPreset, limits api.Limits) (CorsPreset, error) {
+	if err := validateMemTrafficProjection("cors_preset", corsPresetTrafficProjection(p)); err != nil {
+		return CorsPreset{}, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if p.AppID != "" {
@@ -21527,6 +21530,9 @@ func (m *MemStore) UpdateCorsPreset(_ context.Context, accountID, id string, p C
 	p.ID = id
 	p.AccountID = accountID
 	p.CreatedAt = existing.CreatedAt
+	if err := validateMemTrafficProjection("cors_preset", corsPresetTrafficProjection(p)); err != nil {
+		return CorsPreset{}, err
+	}
 	p.UpdatedAt = time.Now()
 	m.corsPresets[id] = p
 	return p, nil

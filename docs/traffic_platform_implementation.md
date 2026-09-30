@@ -42,6 +42,47 @@ Claimed source apps retain emergency cancellation ownership through cleanup.
 
 ## Evidence log
 
+### Individual policy write bounds and legacy repair, 2026-09-30
+
+CORS preset creates and complete replacements, environment edge overlays and
+scoped route contracts now validate their complete proposed runtime projection
+before changing intent. Postgres measures canonical JSONB bytes with a sqlc
+query, including ownership metadata and separator whitespace. Preset display
+metadata and policy timestamps remain outside the projection. CORS PATCH checks
+the merged object. The in-memory store uses a conservative serialization bound.
+No flat account byte quota was introduced.
+
+Oversized writes return `traffic_policy_too_large`/422 with the generic and byte
+limit/observed fields, documentation URL and repair guidance. Saved policy is
+retained and the environment convergence operation is aborted on refusal.
+Smaller replacements and empty scoped policies repair existing oversized rows;
+fresh bounded runtime reads then accept the repaired projection without needing
+notification delivery. Referenced presets require reference removal before
+deletion; deleting one alone continues to refuse those rules.
+
+State checks cover rejected creates and replacements, retained saved state,
+exactly-at-bound acceptance and one-byte-over refusal for all three Postgres
+projections, legacy oversized runtime refusal and repair, and existing CORS and
+environment clone/delete behavior. All 34 selected top-level state tests passed
+in 14.260 s, with no skipped tests. Expanded builds exhausted disk; after
+reclaiming this task's obsolete build archives, the final run passed. An initial
+edge boundary fixture used an omitted empty header value; it was corrected to
+retain that field while measuring overhead. Failed runs are not acceptance
+evidence. HTTP fixtures cover the structured error contract, a merged preset
+PATCH whose individual fields fit, saved-state retention and empty recovery.
+All 15 selected HTTP tests passed in 1.618 s with no skips; the API package
+suite passed in 4.301 s. Pinned lint found zero issues in apid and API code;
+state production lint excluded tests and the pre-existing unused test helper
+and found zero issues. Fresh sqlc v1.31.1 generation matched all four committed
+Go files. No schema change or migration was required. Whitespace checks passed.
+
+Atomic aggregate per-host checks across contributing rule/preset mutations,
+environment clone paths and imported-document write validation remain pending.
+These individual object guards do not establish preview/runtime agreement,
+bounded decision evidence, complete daemon/load/customer/staging acceptance or
+native KVM/network/process-death/leak acceptance. No acceptance host is available;
+all six release requirements remain unchecked.
+
 ### Compiled edge-rule and preset agreement, 2026-09-30
 
 Public requests now resolve a bounded fresh route-only graph before selecting
@@ -93,7 +134,7 @@ pre-existing test-only unused helper. Diff whitespace checks passed.
 All six guarantees remain unchecked. Bounded runtime decision evidence,
 preview/runtime and complete synthetic-path agreement, full daemon/load/recovery
 and customer/staging release evidence remain required. Write-time validation
-of the projection limits and oversized-policy recovery also need completion
+of aggregate projection limits and complete oversized-policy recovery need completion
 before rollout. Initial fresh-policy
 reads require complete-path total-deadline timing/failure acceptance. Native
 Linux x86_64 KVM, nft connection/source-IP, process-death and leak acceptance

@@ -38,7 +38,7 @@ func (s *server) updateProjectEnvironmentRoutes(w http.ResponseWriter, r *http.R
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, projectEnvironmentNotFound(project.Slug, environment.Slug))
 		} else {
-			api.WriteProblem(w, api.ErrCapacity("could not store environment routes"))
+			api.WriteProblem(w, trafficPolicyWriteProblem(err, api.ErrCapacity("could not store environment routes")))
 		}
 		return
 	}

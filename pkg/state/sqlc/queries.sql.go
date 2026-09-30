@@ -8464,6 +8464,19 @@ func (q *Queries) MarkUploadSessionCommitted(ctx context.Context, db DBTX, arg M
 	return i, err
 }
 
+const measureTrafficPolicyProjection = `-- name: MeasureTrafficPolicyProjection :one
+SELECT octet_length($1::jsonb::text)::bigint
+`
+
+// Write validation measures the proposed complete projection using the same
+// canonical representation as bounded runtime reads, before changing a row.
+func (q *Queries) MeasureTrafficPolicyProjection(ctx context.Context, db DBTX, payload []byte) (int64, error) {
+	row := db.QueryRow(ctx, measureTrafficPolicyProjection, payload)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const nodeGet = `-- name: NodeGet :one
 
 SELECT

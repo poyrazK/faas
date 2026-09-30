@@ -92,7 +92,7 @@ func (s *server) updateProjectEnvironmentPolicies(w http.ResponseWriter, r *http
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, projectEnvironmentNotFound(project.Slug, environment.Slug))
 		} else {
-			api.WriteProblem(w, api.ErrCapacity("could not store environment policies"))
+			api.WriteProblem(w, trafficPolicyWriteProblem(err, api.ErrCapacity("could not store environment policies")))
 		}
 		return
 	}

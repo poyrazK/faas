@@ -5171,3 +5171,8 @@ WITH preset AS (
 SELECT CASE WHEN octet_length(data::text) <= sqlc.arg(max_bytes)::integer THEN data
     ELSE NULL::jsonb END::jsonb AS data,
     (octet_length(data::text) > sqlc.arg(max_bytes)::integer)::boolean AS oversized FROM preset;
+
+-- name: MeasureTrafficPolicyProjection :one
+-- Write validation measures the proposed complete projection using the same
+-- canonical representation as bounded runtime reads, before changing a row.
+SELECT octet_length(sqlc.arg(payload)::jsonb::text)::bigint;

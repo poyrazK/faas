@@ -205,7 +205,7 @@ func (s *server) patchCorsPreset(w http.ResponseWriter, r *http.Request, acct st
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation, "Name already in use", "a cors preset with this name already exists for the (account, app) tuple"))
 			return
 		}
-		api.WriteProblem(w, api.ErrCapacity("could not update cors preset"))
+		api.WriteProblem(w, trafficPolicyWriteProblem(err, api.ErrCapacity("could not update cors preset")))
 		return
 	}
 	s.audit.Emit(r.Context(), "cors_preset.updated", &acct.ID, map[string]any{
@@ -324,7 +324,7 @@ func (s *server) persistCreateCorsPreset(ctx context.Context, acct state.Account
 		case errors.Is(err, state.ErrConflict):
 			return state.CorsPreset{}, api.NewProblem(http.StatusConflict, api.CodeValidation, "Name already in use", "a cors preset with this name already exists for the (account, app) tuple")
 		default:
-			return state.CorsPreset{}, api.ErrCapacity("could not create cors preset")
+			return state.CorsPreset{}, trafficPolicyWriteProblem(err, api.ErrCapacity("could not create cors preset"))
 		}
 	}
 	s.audit.Emit(ctx, "cors_preset.created", &acct.ID, map[string]any{

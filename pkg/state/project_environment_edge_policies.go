@@ -69,6 +69,9 @@ func (m *MemStore) PutProjectEnvironmentEdgePolicy(_ context.Context, policy Pro
 	if _, err := m.projectEnvironmentBySlugLocked(policy.ProjectID, policy.EnvironmentSlug); err != nil {
 		return ProjectEnvironmentEdgePolicy{}, err
 	}
+	if err := validateMemTrafficProjection("environment_edge_policy", environmentEdgeTrafficProjection(policy)); err != nil {
+		return ProjectEnvironmentEdgePolicy{}, err
+	}
 	key := projectEnvironmentRoutePolicyKey(policy.AppID, policy.EnvironmentSlug)
 	now := time.Now().UTC()
 	if old, ok := m.projectEnvironmentEdgePolicies[key]; ok {
@@ -109,6 +112,9 @@ func (s *PgStore) GetProjectEnvironmentEdgePolicy(ctx context.Context, accountID
 func (s *PgStore) PutProjectEnvironmentEdgePolicy(ctx context.Context, policy ProjectEnvironmentEdgePolicy) (ProjectEnvironmentEdgePolicy, error) {
 	if !validProjectEnvironmentEdgeRules(policy.Rules) {
 		return ProjectEnvironmentEdgePolicy{}, ErrInvalidArgument
+	}
+	if err := s.validateTrafficProjection(ctx, "environment_edge_policy", environmentEdgeTrafficProjection(policy)); err != nil {
+		return ProjectEnvironmentEdgePolicy{}, err
 	}
 	rules := policy.Rules
 	if rules == nil {
