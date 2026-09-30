@@ -71,4 +71,6 @@ workflow; occurrence metadata alone cannot recreate a request or external state.
 acceptance, concurrent retry, customer attribution, lifecycle, webhook recovery,
 OTLP, dashboard security, retention, and actual Node/Python reporter processes.
 OpenAPI/SDK drift gates and generated CLI documentation cover the public surface.
+The acceptance command also checks migration replay safety and the Issues release
+scorecard references.
 No VM lifecycle is changed; live platform deployment remains a release operation.

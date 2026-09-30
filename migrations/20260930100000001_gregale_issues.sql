@@ -1,6 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
-CREATE TABLE app_issues (
+CREATE TABLE IF NOT EXISTS app_issues (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
@@ -20,8 +20,8 @@ CREATE TABLE app_issues (
  ignored_until timestamptz,
  UNIQUE(app_id,environment,grouping_version,fingerprint)
 );
-CREATE INDEX app_issues_list_idx ON app_issues(app_id,last_seen_at DESC,id DESC);
-CREATE TABLE issue_ingest_tokens (
+CREATE INDEX IF NOT EXISTS app_issues_list_idx ON app_issues(app_id,last_seen_at DESC,id DESC);
+CREATE TABLE IF NOT EXISTS issue_ingest_tokens (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
@@ -33,8 +33,8 @@ CREATE TABLE issue_ingest_tokens (
  revoked_at timestamptz,
  created_at timestamptz NOT NULL DEFAULT now()
 );
-CREATE INDEX issue_ingest_tokens_app_idx ON issue_ingest_tokens(app_id,expires_at);
-CREATE TABLE issue_events (
+CREATE INDEX IF NOT EXISTS issue_ingest_tokens_app_idx ON issue_ingest_tokens(app_id,expires_at);
+CREATE TABLE IF NOT EXISTS issue_events (
  id uuid NOT NULL UNIQUE DEFAULT gen_random_uuid(),
  app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
  deployment_id uuid NOT NULL,
@@ -49,10 +49,10 @@ CREATE TABLE issue_events (
  verified_platform_tenant_id uuid,
  PRIMARY KEY(app_id,deployment_id,event_id)
 );
-CREATE INDEX issue_events_list_idx ON issue_events(issue_id,occurred_at DESC,id DESC);
-CREATE INDEX issue_events_attribution_idx ON issue_events(attribution_checked_at) WHERE verified_consumer_id IS NULL AND verified_platform_tenant_id IS NULL;
-CREATE INDEX issue_events_retention_idx ON issue_events(app_id,received_at);
-CREATE TABLE issue_releases (
+CREATE INDEX IF NOT EXISTS issue_events_list_idx ON issue_events(issue_id,occurred_at DESC,id DESC);
+CREATE INDEX IF NOT EXISTS issue_events_attribution_idx ON issue_events(attribution_checked_at) WHERE verified_consumer_id IS NULL AND verified_platform_tenant_id IS NULL;
+CREATE INDEX IF NOT EXISTS issue_events_retention_idx ON issue_events(app_id,received_at);
+CREATE TABLE IF NOT EXISTS issue_releases (
  issue_id uuid NOT NULL REFERENCES app_issues(id) ON DELETE CASCADE,
  deployment_id uuid NOT NULL,
  commit_sha text NOT NULL,
@@ -62,7 +62,7 @@ CREATE TABLE issue_releases (
  last_seen_at timestamptz NOT NULL,
  PRIMARY KEY(issue_id,deployment_id)
 );
-CREATE TABLE issue_activity (
+CREATE TABLE IF NOT EXISTS issue_activity (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
  issue_id uuid NOT NULL REFERENCES app_issues(id) ON DELETE CASCADE,
  action text NOT NULL CHECK(action IN ('created','assigned','resolved','reopened','ignored','regressed')),
@@ -70,15 +70,15 @@ CREATE TABLE issue_activity (
  created_at timestamptz NOT NULL DEFAULT now(),
  details jsonb NOT NULL DEFAULT '{}'::jsonb CHECK(jsonb_typeof(details) = 'object')
 );
-CREATE INDEX issue_activity_list_idx ON issue_activity(issue_id,created_at DESC,id DESC);
-CREATE TABLE issue_resolutions (
+CREATE INDEX IF NOT EXISTS issue_activity_list_idx ON issue_activity(issue_id,created_at DESC,id DESC);
+CREATE TABLE IF NOT EXISTS issue_resolutions (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
  issue_id uuid NOT NULL REFERENCES app_issues(id) ON DELETE CASCADE,
  fixed_deployment_id uuid NOT NULL,
  resolved_at timestamptz NOT NULL,
  actor_account_id uuid NOT NULL
 );
-ALTER TABLE app_webhook_event_outbox DROP CONSTRAINT app_webhook_event_outbox_event_chk;
+ALTER TABLE app_webhook_event_outbox DROP CONSTRAINT IF EXISTS app_webhook_event_outbox_event_chk;
 ALTER TABLE app_webhook_event_outbox ADD CONSTRAINT app_webhook_event_outbox_event_chk
  CHECK(event IN ('usage_statement.finalized','app.parked','app.woken','issue.created','issue.assigned','issue.resolved','issue.reopened','issue.ignored','issue.regressed'));
 -- +goose StatementEnd
