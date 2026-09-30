@@ -1335,3 +1335,16 @@ test-flags-metal: ## Validate Node Flags refresh after native VM restore (root, 
 	@test -r "$$FAAS_BUILDER_BASE_PATH" || (echo "FAAS_BUILDER_BASE_PATH must name a readable builder base" >&2; exit 1)
 	@cd sdk/node && npm ci --ignore-scripts --no-audit --no-fund && npm run build
 	@RUN_REGEX='^TestFeatureFlagsNativeParkRestoreMetal$$' $(MAKE) test-metal PKGS=./cmd/e2e/...
+
+.PHONY: test-environment-gitops-core
+test-environment-gitops-core: ## Strict contract, planner, worker, and real PostgreSQL lease/revision acceptance (no KVM).
+	@test -n "$$DATABASE_URL" || (echo "DATABASE_URL is required; GitOps core acceptance refuses a skipped PostgreSQL run"; exit 1)
+	@GREGALE_GITOPS_ACCEPTANCE=1 $(GO) test -p 1 ./pkg/environmentsync/... ./pkg/environmentgitops ./pkg/gregalemanifest -count=1
+
+.PHONY: test-environment-gitops-controls
+test-environment-gitops-controls: test-environment-gitops-core ## API/CLI/dashboard review workflows and SDK contracts; does not replace native runtime acceptance.
+	@$(GO) test -p 1 ./cmd/apid ./cmd/gregale ./pkg/dashboard -run '^(TestEnvironmentGitOps.*|TestSpecCompliance)$$' -count=1
+	@$(GO) test -p 1 ./pkg/state -run '^TestPgStoreEdgeRule(Batch|MutationLock)' -count=1
+	@cd sdk/go && $(GO) test -p 1 ./... -run '^TestEnvironmentGitOps' -count=1
+	@cd sdk/node && npm run test:build && node --test --test-concurrency=1 dist-test/test/environment-gitops.test.js
+	@cd sdk/python && python3 -m pytest tests/test_environment_gitops.py -q
