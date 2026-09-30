@@ -45,6 +45,19 @@ func TestSelectionAdmissionAndPinnedAdoption(t *testing.T) {
 	if _, err := Select(app, []Assignment{assignment}, append(legacyPin, existing.Adoptions...), versions, limits); err == nil {
 		t.Fatal("duplicate UUID adoption accepted")
 	}
+	// Retained assignments are supplied separately from the active admission
+	// list. Missing adoptions cannot silently enroll an existing application.
+	unmanaged, err := SelectAdopted(app, []Assignment{assignment}, nil, versions, limits)
+	if err != nil || len(unmanaged.Layers) != 0 || len(unmanaged.Adoptions) != 0 {
+		t.Fatalf("existing service enrolled ahead of its batch: %+v %v", unmanaged, err)
+	}
+	retained, err := SelectAdopted(app, []Assignment{assignment}, legacyPin, versions, limits)
+	if err != nil || !reflect.DeepEqual(retained, existing) {
+		t.Fatalf("saved adoption did not survive an admission change: %+v %v", retained, err)
+	}
+	if _, err := SelectAdopted(app, []Assignment{assignment}, append(legacyPin, existing.Adoptions...), versions, limits); err == nil {
+		t.Fatal("duplicate adopted UUID alias accepted")
+	}
 }
 
 func TestSelectionScopeOwnershipAndVersionEvidence(t *testing.T) {

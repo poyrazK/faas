@@ -40,6 +40,31 @@ type Selection struct {
 	Adoptions []Adoption
 }
 
+// SelectAdopted resolves an existing application's saved adoptions. Admission
+// pointers govern newly created services; they cannot enroll an older service
+// ahead of its approved batch. An inactive assignment can still have existing
+// adoptions while its controlled removal is in progress. Storage supplies all
+// retained assignment identities, including those disabled for new admissions.
+func SelectAdopted(app ApplicationOwnership, assignments []Assignment, adopted []Adoption, versions map[VersionKey]PublishedVersion, limits Limits) (Selection, error) {
+	pins := map[string]bool{}
+	for _, pin := range adopted {
+		if !standardIdentity(pin.AssignmentID) {
+			return Selection{}, fmt.Errorf("invalid application adoption")
+		}
+		pins[canonicalIdentity(pin.AssignmentID)] = true
+	}
+	selected := []Assignment{}
+	for _, assignment := range assignments {
+		if _, err := assignmentMatches(app, assignment); err != nil {
+			return Selection{}, err
+		}
+		if pins[canonicalIdentity(assignment.ID)] {
+			selected = append(selected, assignment)
+		}
+	}
+	return Select(app, selected, adopted, versions, limits)
+}
+
 // Select uses explicit assignment admission versions for new apps and saved
 // pins for existing apps. Storage supplies active assignments and org-scoped
 // immutable versions; selection still verifies identity, ownership and hashes.
