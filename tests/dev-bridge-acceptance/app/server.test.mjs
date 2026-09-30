@@ -25,6 +25,11 @@ test('fixture uses SDK propagation at both service hops and proves production ho
   await once(frontend, 'listening');
   t.after(() => frontend.close());
   const url = `http://127.0.0.1:${frontend.address().port}/charge`;
+  for (const path of ['/', '/health', '/healthz']) {
+    const health = await fetch(`http://127.0.0.1:${frontend.address().port}${path}`);
+    assert.equal(health.status, 200);
+    assert.deepEqual(await health.json(), { ready: true });
+  }
   const result = await fetch(url, { headers: { 'X-Gregale-Dev-Session-Context': authority } });
   assert.deepEqual(await result.json(), { payments: 'remote', inventory: 'remote' });
   assert.deepEqual(observed, [['payments.svc.gregale', authority], ['inventory.svc.gregale', authority]]);

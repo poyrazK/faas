@@ -11,7 +11,7 @@ export function fixtureServer({ role, payments = 'http://payments.svc.gregale:10
       response.writeHead(status, { 'Content-Type': 'application/json' });
       response.end(JSON.stringify(value));
     };
-    if (request.url === '/health') return reply(200, { ready: true });
+    if (request.method === 'GET' && ['/', '/health', '/healthz'].includes(request.url)) return reply(200, { ready: true });
     const handle = async () => {
       if (role === 'inventory' && request.url === '/stock') return reply(200, { inventory: 'remote' });
       if (!['frontend', 'payments'].includes(role) || request.url !== '/charge') return reply(404, { error: 'unknown fixture route' });
