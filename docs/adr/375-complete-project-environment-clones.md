@@ -857,3 +857,44 @@ matches. This slice supplies visibility enforcement; the clone worker still
 needs to assign ownership atomically during reservation before provider IO.
 Fresh PostgreSQL binding preparations, compensation and full publication remain
 unfinished, and full-copy admission remains closed.
+
+### Leased PostgreSQL reservation before restore (2026-09-30)
+
+The database phase now reserves operation-owned targets through the state store,
+before invoking the managed PostgreSQL reconciler. The reservation transaction
+locks the project/operation, authenticates the current worker token and revision,
+validates the complete database roster and common canonical recovery point, and
+derives target configuration solely from the authenticated workload catalogue.
+It serializes account quota with ordinary reservations and checks live source
+provider identity, availability and both captured/current recovery retention.
+Lease authority is rechecked after lock waits and before commit.
+
+Ownership, frozen configuration and restore lineage commit in the same target
+row. A unique operation/source reservation index retains that identity even
+after deletion. Recovery reads it under the current clone lease and rejects
+changed placement, names, lineage, owners or checkpoint mappings. Foreign
+customer reservations, including deleted name collisions, cannot be adopted.
+The database definition receipt encoding remains compatible with the earlier
+worker. The managed service exposes admission/capability validation without
+provider IO; ordinary restores use that same validation.
+
+Completed replay reads only the authenticated private target. It can survive
+lost reservation/restore acknowledgements, source unavailability or shortened
+retention, exhausted quota and a subsequently disabled provisioning rollout.
+Pending targets reconcile through the internal lifecycle path; customer
+Get/Restore intentionally cannot access them. A restored database remains
+private until full publication, rather than becoming visible on provider ready.
+
+Real PostgreSQL worker contracts verify invalid authority/rosters, quota failure
+without writes, source identity and retention drift, observed account-lock waits
+that outlive the lease, lost acknowledgements, changed/duplicate reservations,
+private customer access during provider restore and takeover without another
+restore. Managed PostgreSQL package and APId clone/binding regressions pass;
+independent sqlc output matches.
+
+This completes private database reservation wiring, not full data isolation
+acceptance. Fresh PostgreSQL credential preparations and their publication
+proofs, leased compensation, coordinated retained capture and physical provider
+write fencing remain required. There is still no persistent full clone loop,
+and full-copy API admission remains closed pending the remaining coverage and
+native acceptance gates.

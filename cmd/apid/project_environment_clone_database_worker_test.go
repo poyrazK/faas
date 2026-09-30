@@ -35,6 +35,10 @@ func TestCapturedCloneDatabasePlansDeduplicateAndAuthenticateCatalogue(t *testin
 	if err != nil || len(plans) != 1 || plans[0].source.ID != "shared-db" {
 		t.Fatalf("shared plans = %+v, %v", plans, err)
 	}
+	// Persisted pre-reservation-worker receipts retain their exact hash.
+	if plans[0].hash != "a3210e328478e053a41dcc26ebe93cad5736506069ef314f78c7dbd22836fc7a" {
+		t.Fatalf("database definition receipt encoding changed: %s", plans[0].hash)
+	}
 	otherOp := op
 	otherOp.ID = "new-operation"
 	otherViews := append([]state.ProjectEnvironmentCloneWorkload(nil), views...)

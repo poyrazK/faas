@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -14,6 +15,7 @@ import (
 
 	"filippo.io/age"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
@@ -23,7 +25,17 @@ import (
 
 type cloneDatabaseCheckpointFailStore struct {
 	*state.PgStore
-	fail bool
+	fail               bool
+	failReservationAck bool
+}
+
+func (s *cloneDatabaseCheckpointFailStore) ReserveProjectEnvironmentCloneDatabase(ctx context.Context, lease state.ProjectEnvironmentCloneLease, sourceID string, limit int) (state.ProjectEnvironmentCloneDatabaseTarget, bool, error) {
+	target, created, err := s.PgStore.ReserveProjectEnvironmentCloneDatabase(ctx, lease, sourceID, limit)
+	if err == nil && s.failReservationAck {
+		s.failReservationAck = false
+		return state.ProjectEnvironmentCloneDatabaseTarget{}, false, errors.New("reservation acknowledgement lost")
+	}
+	return target, created, err
 }
 
 func (s *cloneDatabaseCheckpointFailStore) AdvanceProjectEnvironmentCloneOperation(ctx context.Context, account, project, id, expected, next string, revision int64, resources []state.ProjectEnvironmentCloneResource, code string) (state.ProjectEnvironmentCloneOperation, error) {
@@ -73,7 +85,8 @@ func TestPGCapturedCloneDatabaseWorkerRecoversUncheckpointedRestore(t *testing.T
 		t.Fatal(err)
 	}
 	clock := time.Now().UTC()
-	service, err := managedpostgres.NewService(registry, databases, managedpostgres.ServiceOptions{ProvisioningEnabled: func() bool { return true }, Now: func() time.Time { return clock }})
+	var serviceClockOffset time.Duration
+	service, err := managedpostgres.NewService(registry, databases, managedpostgres.ServiceOptions{ProvisioningEnabled: func() bool { return true }, Now: func() time.Time { return time.Now().UTC().Add(serviceClockOffset) }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,6 +157,82 @@ func TestPGCapturedCloneDatabaseWorkerRecoversUncheckpointedRestore(t *testing.T
 		t.Fatal(err)
 	}
 	lease.Operation = op
+	for _, fault := range []string{"token", "revision", "status", "account", "project"} {
+		bad := lease
+		switch fault {
+		case "token":
+			bad.Token = uuid.NewString()
+		case "revision":
+			bad.Operation.Revision++
+		case "status":
+			bad.Operation.Status = state.CloneOperationPublishing
+		case "account":
+			bad.Operation.AccountID = uuid.NewString()
+		case "project":
+			bad.Operation.ProjectID = uuid.NewString()
+		}
+		if _, _, err := store.ReserveProjectEnvironmentCloneDatabase(ctx, bad, source.ID, 3); err == nil {
+			t.Fatalf("%s authority reserved private database", fault)
+		}
+		if _, err := store.ProjectEnvironmentCloneDatabaseForLease(ctx, bad, source.ID); err == nil {
+			t.Fatalf("%s authority read private database", fault)
+		}
+	}
+	for _, fault := range []string{"hash", "missing", "duplicate", "shared_target", "point", "status", "unexpected"} {
+		bad := append([]state.ProjectEnvironmentCloneResource{}, resources...)
+		switch fault {
+		case "hash":
+			bad[0].SourceVersion = strings.Repeat("f", 64)
+		case "missing":
+			bad = []state.ProjectEnvironmentCloneResource{}
+		case "duplicate":
+			bad = append(bad, bad[0])
+		case "shared_target":
+			bad[0].TargetID = source.ID
+		case "point":
+			bad[0].CapturePoint = point.Add(time.Nanosecond).Format(time.RFC3339Nano)
+		case "status":
+			bad[0].Status = "failed"
+		case "unexpected":
+			bad[0].Name, bad[0].SourceID = uuid.NewString(), uuid.NewString()
+		}
+		raw, _ := json.Marshal(bad)
+		if _, err := pool.Exec(ctx, "update project_environment_clone_operations set resources=$2 where id=$1", op.ID, raw); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := store.ReserveProjectEnvironmentCloneDatabase(ctx, lease, source.ID, 3); err == nil {
+			t.Fatalf("%s durable roster reserved private database", fault)
+		}
+	}
+	raw, _ := json.Marshal(resources)
+	if _, err := pool.Exec(ctx, "update project_environment_clone_operations set resources=$2 where id=$1", op.ID, raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.ReserveProjectEnvironmentCloneDatabase(ctx, lease, source.ID, 1); !errors.Is(err, state.ErrQuotaExceeded) {
+		t.Fatalf("private database bypassed account quota: %v", err)
+	}
+	if _, err := databases.FindByName(ctx, acct.ID, plans[0].name); !errors.Is(err, managedpostgres.ErrNotFound) || len(provider.restores) != 0 {
+		t.Fatalf("rejected reservation wrote a target or restored data: %v", err)
+	}
+	for _, mutation := range []string{
+		"update managed_postgres_databases set restore_window_seconds=0 where id=$1",
+		"update managed_postgres_databases set restore_window_seconds=1 where id=$1",
+		"update managed_postgres_databases set state='updating' where id=$1",
+		"update managed_postgres_databases set provider_resource_id='replaced' where id=$1",
+		"update managed_postgres_databases set backend_fingerprint=repeat('f',64) where id=$1",
+	} {
+		if _, err := pool.Exec(ctx, mutation, source.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := store.ReserveProjectEnvironmentCloneDatabase(ctx, lease, source.ID, 3); !errors.Is(err, state.ErrConflict) {
+			t.Fatalf("source identity/availability/retention drift accepted: %s: %v", mutation, err)
+		}
+		if _, err := pool.Exec(ctx, "update managed_postgres_databases set state='ready', restore_window_seconds=$2, provider_resource_id=$3, backend_fingerprint=$4 where id=$1",
+			source.ID, source.Spec.RestoreWindowSeconds, source.ProviderResourceID, source.BackendFingerprint); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertCloneDatabaseReservationExpiresDuringAccountWait(t, ctx, pool, store, lease, source.ID)
 	// Later source desired configuration and bindings do not replace the
 	// private catalogue. This is test-only mutation of provider intent.
 	if _, err := pool.Exec(ctx, "update managed_postgres_databases set storage_limit_bytes = $1 where id = $2", int64(2<<30), source.ID); err != nil {
@@ -152,11 +241,61 @@ func TestPGCapturedCloneDatabaseWorkerRecoversUncheckpointedRestore(t *testing.T
 	if _, err := pool.Exec(ctx, "update managed_postgres_bindings set environment_key = 'LATER_DATABASE_URL' where database_id = $1", source.ID); err != nil {
 		t.Fatal(err)
 	}
-	srv.store = &cloneDatabaseCheckpointFailStore{PgStore: store, fail: true}
-	failedLease, ready, err := srv.prepareProjectEnvironmentCloneDatabases(ctx, lease)
+	srv.store = &cloneDatabaseCheckpointFailStore{PgStore: store, fail: true, failReservationAck: true}
+	reservationLease, ready, err := srv.prepareProjectEnvironmentCloneDatabases(ctx, lease)
+	if err == nil || !strings.Contains(err.Error(), "reservation acknowledgement lost") || ready || len(provider.restores) != 0 {
+		t.Fatalf("lost reservation response reached provider: ready %t, error %v, calls %+v", ready, err, provider.restores)
+	}
+	reserved, err := databases.FindByName(ctx, acct.ID, plans[0].name)
+	if err != nil || reserved.EnvironmentCloneOperationID != op.ID || reserved.State != managedpostgres.StateProvisioning || !reserved.RestorePointInTime.Equal(point) {
+		t.Fatalf("ownership and restore intent did not commit together: %+v, %v", reserved, err)
+	}
+	for _, mutation := range []string{
+		"update managed_postgres_databases set environment_clone_operation_id=null where id=$1",
+		"update managed_postgres_databases set environment_clone_operation_id='00000000-0000-0000-0000-000000000001' where id=$1",
+		"update managed_postgres_databases set name='changed-private-name' where id=$1",
+	} {
+		if _, err := pool.Exec(ctx, mutation, reserved.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.ProjectEnvironmentCloneDatabaseForLease(ctx, reservationLease, source.ID); !errors.Is(err, state.ErrConflict) {
+			t.Fatalf("changed reservation identity accepted: %s: %v", mutation, err)
+		}
+		if _, _, err := store.ReserveProjectEnvironmentCloneDatabase(ctx, reservationLease, source.ID, 3); !errors.Is(err, state.ErrConflict) {
+			t.Fatalf("changed reservation identity replaced/adopted: %s: %v", mutation, err)
+		}
+		if _, err := pool.Exec(ctx, "update managed_postgres_databases set environment_clone_operation_id=$2, name=$3 where id=$1", reserved.ID, op.ID, reserved.Name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := pool.Exec(ctx, `insert into managed_postgres_databases(id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero,
+		storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, restore_source_database_id, restore_source_resource_id,
+		restore_point_in_time, environment_clone_operation_id)
+		select $2, account_id, 'duplicate-private-target', region, postgres_major, service_class, availability, scale_to_zero,
+		storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, restore_source_database_id, restore_source_resource_id,
+		restore_point_in_time, environment_clone_operation_id from managed_postgres_databases where id=$1`, reserved.ID, uuid.NewString()); err == nil {
+		t.Fatal("duplicate operation/source database reservation accepted")
+	}
+	provider.onRestore = func() error {
+		if len(provider.restores) != 1 || provider.restores[0].ResourceID != reserved.ID {
+			return errors.New("restore retry replaced committed identity")
+		}
+		if _, err := service.Get(ctx, acct.ID, reserved.ID); !errors.Is(err, managedpostgres.ErrNotFound) {
+			return errors.New("customer could access target during provider restore")
+		}
+		if items, err := service.List(ctx, acct.ID); err != nil || len(items) != 1 || items[0].ID != source.ID {
+			return errors.New("private restore appeared in customer list")
+		}
+		if _, err := service.Delete(ctx, acct.ID, reserved.ID); !errors.Is(err, managedpostgres.ErrNotFound) {
+			return errors.New("customer could delete private restore")
+		}
+		return nil
+	}
+	failedLease, ready, err := srv.prepareProjectEnvironmentCloneDatabases(ctx, reservationLease)
 	if err == nil || ready || len(provider.restores) != 1 || !provider.deadlineObserved || provider.restores[0].Spec != source.Spec {
 		t.Fatalf("uncheckpointed restore = ready %t, error %v, calls %+v", ready, err, provider.restores)
 	}
+	provider.onRestore = nil
 	current, err := store.ProjectEnvironmentCloneOperationByID(ctx, acct.ID, project.ID, op.ID)
 	if err != nil || current.Resources[0].TargetID != "" {
 		t.Fatalf("checkpoint unexpectedly persisted = %+v, %v", current, err)
@@ -174,13 +313,35 @@ func TestPGCapturedCloneDatabaseWorkerRecoversUncheckpointedRestore(t *testing.T
 	// A completed copy survives expiration of its original restore window.
 	// Recovery reads only the exact operation-owned target reservation.
 	clock = clock.Add(2 * time.Hour)
+	serviceClockOffset = 2 * time.Hour
 	finished, ready, err := srv.prepareProjectEnvironmentCloneDatabases(ctx, replacement)
 	if err != nil || !ready || len(provider.restores) != 1 || finished.Operation.Resources[0].TargetID == "" || finished.Operation.Resources[0].Status != "ready" || finished.Operation.Resources[0].CapturePoint != resources[0].CapturePoint {
 		t.Fatalf("restart = %+v, ready %t, error %v, copies %d", finished.Operation.Resources, ready, err, len(provider.restores))
 	}
-	target, err := service.Get(ctx, acct.ID, finished.Operation.Resources[0].TargetID)
-	if err != nil || target.Spec != source.Spec || target.ProviderResourceID == source.ProviderResourceID || target.RestoreSourceDatabaseID != source.ID {
+	target, err := databases.Get(ctx, acct.ID, finished.Operation.Resources[0].TargetID)
+	if err != nil || target.ID != reserved.ID || target.EnvironmentCloneOperationID != op.ID || target.Spec != source.Spec || target.ProviderResourceID == source.ProviderResourceID || target.RestoreSourceDatabaseID != source.ID {
 		t.Fatalf("target = %+v, %v", target, err)
+	}
+	if _, err := service.Get(ctx, acct.ID, target.ID); !errors.Is(err, managedpostgres.ErrNotFound) {
+		t.Fatalf("completed restore became visible before full publication: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "update managed_postgres_databases set restore_window_seconds=0, provider_resource_id='source-unavailable' where id=$1", source.ID); err != nil {
+		t.Fatal(err)
+	}
+	if adopted, created, err := store.ReserveProjectEnvironmentCloneDatabase(ctx, finished, source.ID, 1); err != nil || created || adopted.ID != target.ID {
+		t.Fatalf("completed restore could not replay at an exhausted quota: %+v, %t, %v", adopted, created, err)
+	}
+	darkService, err := managedpostgres.NewService(registry, databases, managedpostgres.ServiceOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.managedPostgres = darkService
+	if replayed, ready, err := srv.prepareProjectEnvironmentCloneDatabases(ctx, finished); err != nil || !ready || len(provider.restores) != 1 || replayed.Operation.Revision != finished.Operation.Revision {
+		t.Fatalf("completed replay reread source or current provisioning gate: %+v, %t, %v", replayed, ready, err)
+	}
+	srv.managedPostgres = service
+	if _, err := pool.Exec(ctx, "update managed_postgres_databases set restore_window_seconds=$2, provider_resource_id=$3 where id=$1", source.ID, source.Spec.RestoreWindowSeconds, source.ProviderResourceID); err != nil {
+		t.Fatal(err)
 	}
 	live, err := service.Get(ctx, acct.ID, source.ID)
 	if err != nil || live.Spec.StorageLimitBytes != 2<<30 {
@@ -201,6 +362,7 @@ func TestPGCapturedCloneDatabaseWorkerRecoversUncheckpointedRestore(t *testing.T
 		t.Fatal(err)
 	}
 	clock = time.Now().UTC()
+	serviceClockOffset = 0
 	if _, err := pool.Exec(ctx, "update managed_postgres_databases set storage_limit_bytes = $1 where id = $2", source.Spec.StorageLimitBytes, source.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -255,5 +417,56 @@ func TestPGCapturedCloneDatabaseWorkerRecoversUncheckpointedRestore(t *testing.T
 	resumed, ready, err := srv.prepareProjectEnvironmentCloneDatabases(ctx, takeover)
 	if err != nil || !ready || len(provider.restores) != 2 || resumed.Operation.Resources[0].TargetID == "" {
 		t.Fatalf("takeover failed to adopt completed copy = %+v, ready %t, error %v, copies %d", resumed.Operation.Resources, ready, err, len(provider.restores))
+	}
+}
+
+func assertCloneDatabaseReservationExpiresDuringAccountWait(t *testing.T, parent context.Context, pool *pgxpool.Pool, store *state.PgStore, lease state.ProjectEnvironmentCloneLease, sourceID string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(parent, 6*time.Second)
+	defer cancel()
+	locker, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = locker.Rollback(context.WithoutCancel(ctx)) }()
+	if _, err := locker.Exec(ctx, "select id from accounts where id=$1 for update", lease.Operation.AccountID); err != nil {
+		t.Fatal(err)
+	}
+	var expiry time.Time
+	if err := pool.QueryRow(ctx, "update project_environment_clone_operations set lease_until=clock_timestamp()+interval '2 seconds' where id=$1 returning lease_until", lease.Operation.ID).Scan(&expiry); err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan error, 1)
+	go func() {
+		_, _, err := store.ReserveProjectEnvironmentCloneDatabase(ctx, lease, sourceID, 3)
+		result <- err
+	}()
+	for {
+		var blocked bool
+		if err := pool.QueryRow(ctx, "select exists(select 1 from pg_stat_activity where $1=any(pg_blocking_pids(pid)))", int32(locker.Conn().PgConn().PID())).Scan(&blocked); err != nil {
+			t.Fatal(err)
+		}
+		if blocked {
+			break
+		}
+		select {
+		case err := <-result:
+			t.Fatalf("reservation did not wait for quota serialization: %v", err)
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if delay := time.Until(expiry) + 10*time.Millisecond; delay > 0 {
+		time.Sleep(delay)
+	}
+	if err := locker.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-result; !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("lease expired during account lock wait still reserved target: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "update project_environment_clone_operations set lease_until=clock_timestamp()+interval '1 minute' where id=$1", lease.Operation.ID); err != nil {
+		t.Fatal(err)
 	}
 }

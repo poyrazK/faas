@@ -11118,6 +11118,9 @@ ALTER TABLE managed_postgres_databases ADD CONSTRAINT managed_postgres_clone_is_
            (id <> restore_source_database_id AND (provider_resource_id IS NULL OR provider_resource_id <> restore_source_resource_id)));
 CREATE INDEX managed_postgres_clone_owner_idx ON managed_postgres_databases(environment_clone_operation_id)
     WHERE environment_clone_operation_id IS NOT NULL;
+CREATE UNIQUE INDEX managed_postgres_clone_reservation_key
+    ON managed_postgres_databases(environment_clone_operation_id, restore_source_database_id)
+    WHERE environment_clone_operation_id IS NOT NULL;
 
 ALTER TABLE managed_postgres_bindings
     ADD COLUMN IF NOT EXISTS access text NOT NULL DEFAULT 'read_write'

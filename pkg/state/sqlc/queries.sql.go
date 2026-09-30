@@ -1107,6 +1107,17 @@ func (q *Queries) CountOpenUploadSessionsByAccountApp(ctx context.Context, db DB
 	return count, err
 }
 
+const countProjectEnvironmentCloneDatabaseAccount = `-- name: CountProjectEnvironmentCloneDatabaseAccount :one
+SELECT count(*) FROM managed_postgres_databases WHERE account_id=$1 AND state<>'deleted'
+`
+
+func (q *Queries) CountProjectEnvironmentCloneDatabaseAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, countProjectEnvironmentCloneDatabaseAccount, accountID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countTriggersByAccount = `-- name: CountTriggersByAccount :one
 select count(*) from triggers t
 join apps a on a.id = t.app_id
@@ -5015,6 +5026,85 @@ func (q *Queries) InsertProjectEnvironmentCloneCapturedVariable(ctx context.Cont
 		arg.Value,
 	)
 	return err
+}
+
+const insertProjectEnvironmentCloneDatabase = `-- name: InsertProjectEnvironmentCloneDatabase :one
+INSERT INTO managed_postgres_databases(id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero,
+    storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, restore_source_database_id, restore_source_resource_id,
+    restore_point_in_time, environment_clone_operation_id, state, desired_generation, observed_generation)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'provisioning',1,0) RETURNING id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, environment_clone_operation_id
+`
+
+type InsertProjectEnvironmentCloneDatabaseParams struct {
+	ID                          pgtype.UUID
+	AccountID                   pgtype.UUID
+	Name                        string
+	Region                      string
+	PostgresMajor               int16
+	ServiceClass                string
+	Availability                string
+	ScaleToZero                 bool
+	StorageLimitBytes           int64
+	RestoreWindowSeconds        int64
+	BackendID                   string
+	BackendFingerprint          string
+	RestoreSourceDatabaseID     pgtype.UUID
+	RestoreSourceResourceID     pgtype.Text
+	RestorePointInTime          pgtype.Timestamptz
+	EnvironmentCloneOperationID pgtype.UUID
+}
+
+func (q *Queries) InsertProjectEnvironmentCloneDatabase(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneDatabaseParams) (ManagedPostgresDatabase, error) {
+	row := db.QueryRow(ctx, insertProjectEnvironmentCloneDatabase,
+		arg.ID,
+		arg.AccountID,
+		arg.Name,
+		arg.Region,
+		arg.PostgresMajor,
+		arg.ServiceClass,
+		arg.Availability,
+		arg.ScaleToZero,
+		arg.StorageLimitBytes,
+		arg.RestoreWindowSeconds,
+		arg.BackendID,
+		arg.BackendFingerprint,
+		arg.RestoreSourceDatabaseID,
+		arg.RestoreSourceResourceID,
+		arg.RestorePointInTime,
+		arg.EnvironmentCloneOperationID,
+	)
+	var i ManagedPostgresDatabase
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Name,
+		&i.Region,
+		&i.PostgresMajor,
+		&i.ServiceClass,
+		&i.Availability,
+		&i.ScaleToZero,
+		&i.StorageLimitBytes,
+		&i.RestoreWindowSeconds,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.ProviderResourceID,
+		&i.State,
+		&i.DesiredGeneration,
+		&i.ObservedGeneration,
+		&i.LastErrorCode,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.RestoreSourceDatabaseID,
+		&i.RestoreSourceResourceID,
+		&i.RestorePointInTime,
+		&i.EnvironmentCloneOperationID,
+	)
+	return i, err
 }
 
 const insertProjectEnvironmentCloneLayerPin = `-- name: InsertProjectEnvironmentCloneLayerPin :exec
@@ -8976,6 +9066,17 @@ func (q *Queries) LockProjectEnvironmentCloneCredentialBucket(ctx context.Contex
 	return i, err
 }
 
+const lockProjectEnvironmentCloneDatabaseAccount = `-- name: LockProjectEnvironmentCloneDatabaseAccount :one
+SELECT id FROM accounts WHERE id=$1 AND status<>'deleted_pending' FOR UPDATE
+`
+
+func (q *Queries) LockProjectEnvironmentCloneDatabaseAccount(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockProjectEnvironmentCloneDatabaseAccount, id)
+	var id_2 pgtype.UUID
+	err := row.Scan(&id_2)
+	return id_2, err
+}
+
 const lockProjectEnvironmentClonePreparedObjectCredential = `-- name: LockProjectEnvironmentClonePreparedObjectCredential :one
 SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at FROM object_storage_s3_credentials
 WHERE id = $1 AND account_id = $2 AND bucket_id = $3 AND rotation_parent_id IS NULL
@@ -12908,6 +13009,154 @@ func (q *Queries) ReadDeploymentLayerArtifactKeys(ctx context.Context, db DBTX, 
 		return nil, err
 	}
 	return items, nil
+}
+
+const readProjectEnvironmentCloneDatabaseByName = `-- name: ReadProjectEnvironmentCloneDatabaseByName :one
+SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.environment_clone_operation_id FROM managed_postgres_databases d WHERE d.account_id=$1 AND d.name=$2 ORDER BY d.created_at,d.id LIMIT 1 FOR UPDATE OF d
+`
+
+type ReadProjectEnvironmentCloneDatabaseByNameParams struct {
+	AccountID pgtype.UUID
+	Name      string
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneDatabaseByName(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneDatabaseByNameParams) (ManagedPostgresDatabase, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentCloneDatabaseByName, arg.AccountID, arg.Name)
+	var i ManagedPostgresDatabase
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Name,
+		&i.Region,
+		&i.PostgresMajor,
+		&i.ServiceClass,
+		&i.Availability,
+		&i.ScaleToZero,
+		&i.StorageLimitBytes,
+		&i.RestoreWindowSeconds,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.ProviderResourceID,
+		&i.State,
+		&i.DesiredGeneration,
+		&i.ObservedGeneration,
+		&i.LastErrorCode,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.RestoreSourceDatabaseID,
+		&i.RestoreSourceResourceID,
+		&i.RestorePointInTime,
+		&i.EnvironmentCloneOperationID,
+	)
+	return i, err
+}
+
+const readProjectEnvironmentCloneDatabaseReservation = `-- name: ReadProjectEnvironmentCloneDatabaseReservation :one
+SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.environment_clone_operation_id FROM managed_postgres_databases d
+WHERE d.account_id=$1 AND d.environment_clone_operation_id=$2 AND d.restore_source_database_id=$3 FOR UPDATE OF d
+`
+
+type ReadProjectEnvironmentCloneDatabaseReservationParams struct {
+	AccountID                   pgtype.UUID
+	EnvironmentCloneOperationID pgtype.UUID
+	RestoreSourceDatabaseID     pgtype.UUID
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneDatabaseReservation(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneDatabaseReservationParams) (ManagedPostgresDatabase, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentCloneDatabaseReservation, arg.AccountID, arg.EnvironmentCloneOperationID, arg.RestoreSourceDatabaseID)
+	var i ManagedPostgresDatabase
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Name,
+		&i.Region,
+		&i.PostgresMajor,
+		&i.ServiceClass,
+		&i.Availability,
+		&i.ScaleToZero,
+		&i.StorageLimitBytes,
+		&i.RestoreWindowSeconds,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.ProviderResourceID,
+		&i.State,
+		&i.DesiredGeneration,
+		&i.ObservedGeneration,
+		&i.LastErrorCode,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.RestoreSourceDatabaseID,
+		&i.RestoreSourceResourceID,
+		&i.RestorePointInTime,
+		&i.EnvironmentCloneOperationID,
+	)
+	return i, err
+}
+
+const readProjectEnvironmentCloneDatabaseReservationTime = `-- name: ReadProjectEnvironmentCloneDatabaseReservationTime :one
+SELECT clock_timestamp()::timestamptz AS observed_at
+`
+
+func (q *Queries) ReadProjectEnvironmentCloneDatabaseReservationTime(ctx context.Context, db DBTX) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentCloneDatabaseReservationTime)
+	var observed_at pgtype.Timestamptz
+	err := row.Scan(&observed_at)
+	return observed_at, err
+}
+
+const readProjectEnvironmentCloneDatabaseSource = `-- name: ReadProjectEnvironmentCloneDatabaseSource :one
+SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.environment_clone_operation_id FROM managed_postgres_databases d WHERE d.account_id=$1 AND d.id=$2 FOR UPDATE OF d
+`
+
+type ReadProjectEnvironmentCloneDatabaseSourceParams struct {
+	AccountID pgtype.UUID
+	ID        pgtype.UUID
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneDatabaseSource(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneDatabaseSourceParams) (ManagedPostgresDatabase, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentCloneDatabaseSource, arg.AccountID, arg.ID)
+	var i ManagedPostgresDatabase
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Name,
+		&i.Region,
+		&i.PostgresMajor,
+		&i.ServiceClass,
+		&i.Availability,
+		&i.ScaleToZero,
+		&i.StorageLimitBytes,
+		&i.RestoreWindowSeconds,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.ProviderResourceID,
+		&i.State,
+		&i.DesiredGeneration,
+		&i.ObservedGeneration,
+		&i.LastErrorCode,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.RestoreSourceDatabaseID,
+		&i.RestoreSourceResourceID,
+		&i.RestorePointInTime,
+		&i.EnvironmentCloneOperationID,
+	)
+	return i, err
 }
 
 const readProjectEnvironmentCloneDeployedSettings = `-- name: ReadProjectEnvironmentCloneDeployedSettings :one

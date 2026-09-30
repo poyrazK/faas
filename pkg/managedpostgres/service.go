@@ -281,25 +281,8 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	if !errors.Is(err, ErrNotFound) {
 		return Database{}, false, err
 	}
-	if s.admit != nil {
-		if err := s.admit(ctx, request.AccountID); err != nil {
-			return Database{}, false, err
-		}
-	}
-	backend, err := s.registry.Resolve(source.BackendID, source.BackendFingerprint)
-	if err != nil {
-		return Database{}, false, err
-	}
-	if !backend.Capabilities.PointInTimeRestore {
-		return Database{}, false, ErrUnsupported
-	}
-	if s.registry.UsagePolicy().Enabled && !backend.Capabilities.RestoreUsageIsolated && !backend.Capabilities.RestoreUsageIncludedInSource {
-		return Database{}, false, ErrUnsupported
-	}
-	if err := backend.Capabilities.Supports(source.Spec); err != nil {
-		return Database{}, false, err
-	}
-	reservationLimit, err := s.reservationLimit(ctx, request.AccountID)
+	reservationLimit, err := s.AdmitRestoreReservation(ctx, request.AccountID, RestoreSourceDefinition{
+		Spec: source.Spec, BackendID: source.BackendID, BackendFingerprint: source.BackendFingerprint, ProviderResourceID: source.ProviderResourceID})
 	if err != nil {
 		return Database{}, false, err
 	}
@@ -335,6 +318,36 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 		return database, created, err
 	}
 	return ready, created, nil
+}
+
+// AdmitRestoreReservation validates operator rollout, account admission,
+// provider capabilities and entitlements without provider IO. Internal clone
+// writers must separately authenticate their capture and atomically reserve
+// the target with its owner and live source lineage. This grants no access to
+// an existing private database.
+func (s *Service) AdmitRestoreReservation(ctx context.Context, accountID string, definition RestoreSourceDefinition) (int, error) {
+	if !s.provisioningEnabled() || !s.provisioningAllowed(ctx, accountID) {
+		return 0, ErrUnavailable
+	}
+	if accountID == "" || definition.Spec.Validate() != nil || definition.Spec.RestoreWindowSeconds <= 0 || definition.ProviderResourceID == "" {
+		return 0, ErrInvalid
+	}
+	if s.admit != nil {
+		if err := s.admit(ctx, accountID); err != nil {
+			return 0, err
+		}
+	}
+	backend, err := s.registry.Resolve(definition.BackendID, definition.BackendFingerprint)
+	if err != nil {
+		return 0, err
+	}
+	if !backend.Capabilities.PointInTimeRestore || s.registry.UsagePolicy().Enabled && !backend.Capabilities.RestoreUsageIsolated && !backend.Capabilities.RestoreUsageIncludedInSource {
+		return 0, ErrUnsupported
+	}
+	if err := backend.Capabilities.Supports(definition.Spec); err != nil {
+		return 0, err
+	}
+	return s.reservationLimit(ctx, accountID)
 }
 
 func restoreMatchesSourceDefinition(target, source Database) bool {

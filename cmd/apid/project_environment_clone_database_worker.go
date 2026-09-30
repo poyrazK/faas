@@ -2,13 +2,9 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
@@ -65,15 +61,14 @@ func buildCapturedProjectEnvironmentDatabasePlans(op state.ProjectEnvironmentClo
 			if source.ID == "" || source.Name == "" || source.ProviderResourceID == "" || source.BackendID == "" || source.BackendFingerprint == "" || source.Spec.Validate() != nil || source.Spec.RestoreWindowSeconds <= 0 {
 				return nil, state.ErrProjectEnvironmentCloneBindingCapture
 			}
-			hash, err := capturedProjectEnvironmentDatabaseHash(source)
+			hash, err := state.ProjectEnvironmentCloneDatabaseSourceHash(binding)
 			if err != nil {
 				return nil, err
 			}
 			if previous, exists := byDatabase[source.ID]; exists && previous.hash != hash {
 				return nil, fmt.Errorf("captured database definitions differ across workloads: %w", state.ErrProjectEnvironmentCloneBindingCapture)
 			}
-			sum := sha256.Sum256([]byte(strings.Join([]string{op.ProjectID, op.ID, op.TargetEnvironment, source.ID}, "\x00")))
-			byDatabase[source.ID] = capturedProjectEnvironmentDatabasePlan{source: source, hash: hash, name: "env-" + op.TargetEnvironment + "-" + hex.EncodeToString(sum[:6])}
+			byDatabase[source.ID] = capturedProjectEnvironmentDatabasePlan{source: source, hash: hash, name: state.ProjectEnvironmentCloneDatabaseName(op, source.ID)}
 		}
 	}
 	plans := make([]capturedProjectEnvironmentDatabasePlan, 0, len(byDatabase))
@@ -92,19 +87,6 @@ func capturedProjectEnvironmentDatabase(accountID string, binding state.ProjectE
 			Availability: managedpostgres.Availability(binding.Availability), ScaleToZero: binding.ScaleToZero,
 			StorageLimitBytes: binding.StorageLimitBytes, RestoreWindowSeconds: binding.RestoreWindowSeconds},
 	}
-}
-
-func capturedProjectEnvironmentDatabaseHash(source managedpostgres.Database) (string, error) {
-	raw, err := json.Marshal(struct {
-		ID, Name   string
-		Definition managedpostgres.RestoreSourceDefinition
-	}{source.ID, source.Name, managedpostgres.RestoreSourceDefinition{Spec: source.Spec, BackendID: source.BackendID,
-		BackendFingerprint: source.BackendFingerprint, ProviderResourceID: source.ProviderResourceID}})
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(raw)
-	return hex.EncodeToString(sum[:]), nil
 }
 
 // The coordinated capture owner supplies this point before copying. Never
@@ -182,6 +164,9 @@ func (s *server) prepareProjectEnvironmentCloneDatabases(ctx context.Context, le
 	if err != nil {
 		return lease, false, err
 	}
+	if _, ok := s.store.(state.ProjectEnvironmentCloneDatabaseStore); len(plans) > 0 && !ok {
+		return lease, false, state.ErrProjectEnvironmentCloneBindingCaptureUnavailable
+	}
 	indices, point, err := validateCapturedProjectEnvironmentDatabaseResources(plans, lease.Operation.Resources)
 	if err != nil {
 		return lease, false, err
@@ -198,13 +183,16 @@ func (s *server) prepareProjectEnvironmentCloneDatabases(ctx context.Context, le
 		lease = renewed
 		copyCtx, cancel := context.WithDeadline(ctx, lease.ExpiresAt)
 		i := indices[plan.source.ID]
-		database, err := s.restoreCapturedProjectEnvironmentDatabase(copyCtx, plan, point, lease.Operation.Resources[i])
+		database, err := s.restoreCapturedProjectEnvironmentDatabase(copyCtx, lease, plan, point, lease.Operation.Resources[i])
 		cancel()
 		if err != nil {
 			return lease, false, fmt.Errorf("restore captured clone database: %w", err)
 		}
 		resources := append([]state.ProjectEnvironmentCloneResource(nil), lease.Operation.Resources...)
-		if err := verifyCapturedProjectEnvironmentDatabaseTarget(plan, point, resources[i], database); err != nil {
+		if err := verifyCapturedProjectEnvironmentDatabaseTarget(plan, point, resources[i], database); err != nil || database.EnvironmentCloneOperationID != lease.Operation.ID {
+			if err == nil {
+				err = state.ErrConflict
+			}
 			return lease, false, err
 		}
 		resources[i].TargetID, resources[i].Status = database.ID, "verifying"
@@ -226,30 +214,34 @@ func (s *server) prepareProjectEnvironmentCloneDatabases(ctx context.Context, le
 	return lease, ready, nil
 }
 
-func (s *server) restoreCapturedProjectEnvironmentDatabase(ctx context.Context, plan capturedProjectEnvironmentDatabasePlan, point time.Time, resource state.ProjectEnvironmentCloneResource) (managedpostgres.Database, error) {
-	var target managedpostgres.Database
-	var err error
-	if resource.TargetID != "" {
-		target, err = s.managedPostgres.Get(ctx, plan.source.AccountID, resource.TargetID)
-	} else {
-		target, err = s.managedPostgres.FindByName(ctx, plan.source.AccountID, plan.name)
+func (s *server) restoreCapturedProjectEnvironmentDatabase(ctx context.Context, lease state.ProjectEnvironmentCloneLease, plan capturedProjectEnvironmentDatabasePlan, point time.Time, resource state.ProjectEnvironmentCloneResource) (managedpostgres.Database, error) {
+	databases := s.store.(state.ProjectEnvironmentCloneDatabaseStore)
+	reservation, err := databases.ProjectEnvironmentCloneDatabaseForLease(ctx, lease, plan.source.ID)
+	if errors.Is(err, state.ErrNotFound) {
+		limit, admissionErr := s.managedPostgres.AdmitRestoreReservation(ctx, plan.source.AccountID, managedpostgres.RestoreSourceDefinition{
+			Spec: plan.source.Spec, BackendID: plan.source.BackendID, BackendFingerprint: plan.source.BackendFingerprint, ProviderResourceID: plan.source.ProviderResourceID})
+		if admissionErr != nil {
+			return managedpostgres.Database{}, admissionErr
+		}
+		reservation, _, err = databases.ReserveProjectEnvironmentCloneDatabase(ctx, lease, plan.source.ID, limit)
 	}
-	if err == nil {
-		if err := verifyCapturedProjectEnvironmentDatabaseTarget(plan, point, resource, target); err != nil {
-			return managedpostgres.Database{}, err
-		}
-		if target.State == managedpostgres.StateReady {
-			return target, nil
-		}
-	} else if !errors.Is(err, managedpostgres.ErrNotFound) || resource.TargetID != "" {
+	if err != nil {
 		return managedpostgres.Database{}, err
 	}
-	target, _, err = s.managedPostgres.RestoreWithResult(ctx, managedpostgres.RestoreDatabaseRequest{
-		AccountID: plan.source.AccountID, SourceDatabaseID: plan.source.ID, Name: plan.name, PointInTime: point,
-		SourceDefinition: &managedpostgres.RestoreSourceDefinition{Spec: plan.source.Spec, BackendID: plan.source.BackendID,
-			BackendFingerprint: plan.source.BackendFingerprint, ProviderResourceID: plan.source.ProviderResourceID},
-	})
-	return target, err
+	// Reconcile is an internal lifecycle read; customer Get/Restore deliberately
+	// cannot read this owned target until complete publication. Provider restore
+	// intent and ownership have already committed together.
+	target, err := s.managedPostgres.Reconcile(ctx, plan.source.AccountID, reservation.ID)
+	if err != nil {
+		return managedpostgres.Database{}, err
+	}
+	if err := verifyCapturedProjectEnvironmentDatabaseTarget(plan, point, resource, target); err != nil {
+		return managedpostgres.Database{}, err
+	}
+	if target.EnvironmentCloneOperationID != lease.Operation.ID {
+		return managedpostgres.Database{}, state.ErrConflict
+	}
+	return target, nil
 }
 
 func verifyCapturedProjectEnvironmentDatabaseTarget(plan capturedProjectEnvironmentDatabasePlan, point time.Time, resource state.ProjectEnvironmentCloneResource, target managedpostgres.Database) error {

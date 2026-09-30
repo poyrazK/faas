@@ -5365,3 +5365,28 @@ WHERE d.account_id=$1 AND d.id=$2 AND (
               WHERE r->>'kind' IN ('postgres','managed_postgres') AND r->>'source_id'=d.restore_source_database_id::text
                 AND r->>'target_id'=d.id::text AND r->>'status'='ready')))
 FOR KEY SHARE OF d;
+
+-- name: LockProjectEnvironmentCloneDatabaseAccount :one
+SELECT id FROM accounts WHERE id=$1 AND status<>'deleted_pending' FOR UPDATE;
+
+-- name: ReadProjectEnvironmentCloneDatabaseByName :one
+SELECT d.* FROM managed_postgres_databases d WHERE d.account_id=$1 AND d.name=$2 ORDER BY d.created_at,d.id LIMIT 1 FOR UPDATE OF d;
+
+-- name: ReadProjectEnvironmentCloneDatabaseReservation :one
+SELECT d.* FROM managed_postgres_databases d
+WHERE d.account_id=$1 AND d.environment_clone_operation_id=$2 AND d.restore_source_database_id=$3 FOR UPDATE OF d;
+
+-- name: ReadProjectEnvironmentCloneDatabaseSource :one
+SELECT d.* FROM managed_postgres_databases d WHERE d.account_id=$1 AND d.id=$2 FOR UPDATE OF d;
+
+-- name: ReadProjectEnvironmentCloneDatabaseReservationTime :one
+SELECT clock_timestamp()::timestamptz AS observed_at;
+
+-- name: CountProjectEnvironmentCloneDatabaseAccount :one
+SELECT count(*) FROM managed_postgres_databases WHERE account_id=$1 AND state<>'deleted';
+
+-- name: InsertProjectEnvironmentCloneDatabase :one
+INSERT INTO managed_postgres_databases(id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero,
+    storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, restore_source_database_id, restore_source_resource_id,
+    restore_point_in_time, environment_clone_operation_id, state, desired_generation, observed_generation)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'provisioning',1,0) RETURNING *;
