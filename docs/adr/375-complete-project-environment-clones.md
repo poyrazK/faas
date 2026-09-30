@@ -721,3 +721,34 @@ These are callable phase steps, not a deployed claim loop. Full admission remain
 closed while credential preparation/publication proofs, complete policy/resource
 coverage, source data retention and coordinated checkpoints, physical provider
 write fencing, compensation and native VM acceptance are still required.
+
+### Atomic object credential preparations (2026-09-30)
+
+A private preparation ledger now commits each captured source credential's fresh
+target credential and, for a compute binding, all six sealed runtime envelopes
+in one transaction. Its hash excludes delivery observations and authenticates
+the prepared identities and encrypted content. The ledger is not an API DTO.
+Replay recovers the same credential rather than minting another key, and the
+reader checks the actual credential and target envelopes against the ledger.
+Changed, revoked or missing prepared content cannot silently become a proof.
+
+The writer requires the live token/revision lease in copying, the frozen source
+credential's label/permissions/binding prefix, an operation-owned private bucket
+and a complete verified object-copy receipt. It accepts neither source resource
+identities nor source scopes as targets. Customer credentials have no runtime
+envelopes; compute credentials have exactly the captured binding's six keys.
+Preparation happens before environment materialization, which already requires
+independent prepared managed values. The operation's existing target reservation
+provides ownership while the environment row does not yet exist.
+
+Store contracts cover stale authority, missing data proof, source deletion,
+quota exhaustion, incomplete/mixed envelopes, secret-key collision rollback,
+replay, independent caller copies, takeover, private data-plane denial and
+changed target-envelope rejection. They run against MemStore and real PostgreSQL
+with the existing credential/binding regressions. Independent sqlc regeneration
+matches. Generic customer credential writers continue to reject pending copies.
+
+The worker still needs to generate/seal credentials and consume these receipts,
+and the complete publication proof must authenticate every resource, grant and
+managed value. These preparations do not open full admission or substitute for
+coordinated provider capture, physical write fencing and native acceptance.

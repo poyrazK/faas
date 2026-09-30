@@ -1992,6 +1992,14 @@ type ProjectEnvironmentCloneLayerPin struct {
 	Bytes       int64
 }
 
+type ProjectEnvironmentCloneObjectCredential struct {
+	OperationID        pgtype.UUID
+	SourceCredentialID pgtype.UUID
+	TargetCredentialID pgtype.UUID
+	PreparationHash    string
+	Preparation        []byte
+}
+
 type ProjectEnvironmentCloneObjectEntry struct {
 	OperationID    pgtype.UUID
 	SourceBucketID pgtype.UUID

@@ -5294,3 +5294,28 @@ WHERE operation_id = sqlc.arg(operation_id)::uuid AND source_bucket_id = sqlc.ar
 SELECT * FROM object_buckets
 WHERE account_id = $1 AND app_id = $2 AND id = $3
   AND environment_clone_operation_id = $4 AND state <> 'deleted';
+
+-- name: ReadProjectEnvironmentCloneObjectCredentialPreparation :one
+SELECT p.preparation_hash, p.preparation
+FROM project_environment_clone_object_credentials p
+JOIN project_environment_clone_operations o ON o.id = p.operation_id
+WHERE o.account_id = $1 AND o.project_id = $2 AND o.id = $3 AND p.source_credential_id = $4;
+
+-- name: InsertProjectEnvironmentCloneObjectCredentialPreparation :exec
+INSERT INTO project_environment_clone_object_credentials
+(operation_id, source_credential_id, target_credential_id, preparation_hash, preparation)
+VALUES ($1, $2, $3, $4, $5);
+
+-- name: ReadProjectEnvironmentCloneObjectCredentialSecrets :many
+SELECT account_id::text, app_id::text, scope, key, ciphertext, coalesce(kid, '')::text AS kid,
+       coalesce(value_hash, '')::text AS value_hash, secret_class, secret_version,
+       managed_object_storage_credential_id::text
+FROM app_secrets
+WHERE account_id = $1 AND app_id = $2 AND scope = $3 AND managed_object_storage_credential_id = $4
+ORDER BY key;
+
+-- name: LockProjectEnvironmentCloneCredentialBucket :one
+SELECT b.* FROM object_buckets b
+WHERE b.account_id = $1 AND b.app_id = $2 AND b.id = $3 AND b.environment_clone_operation_id = $4
+  AND b.state = 'ready'
+FOR UPDATE OF b;

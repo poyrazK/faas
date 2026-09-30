@@ -814,6 +814,7 @@ type MemStore struct {
 	projectEnvironmentCloneWorkloads          map[string]map[string]projectCloneWorkloadRecord
 	layerArtifactRetention                    map[string]layerArtifactRetentionRecord
 	projectEnvironmentCloneObjectManifests    map[string]ProjectEnvironmentCloneObjectManifest
+	projectEnvironmentCloneObjectCredentials  map[string]ProjectEnvironmentCloneObjectCredentialPreparation
 	projectEnvironmentApprovals               map[string]ProjectEnvironmentApproval
 	projectEnvironmentConfigs                 map[string][]ProjectEnvironmentConfig
 	projectEnvironmentRoutePolicies           map[string]ProjectEnvironmentRoutePolicy
@@ -1323,6 +1324,7 @@ func NewMemStore() *MemStore {
 		projectEnvironmentCloneWorkloads:          map[string]map[string]projectCloneWorkloadRecord{},
 		layerArtifactRetention:                    map[string]layerArtifactRetentionRecord{},
 		projectEnvironmentCloneObjectManifests:    map[string]ProjectEnvironmentCloneObjectManifest{},
+		projectEnvironmentCloneObjectCredentials:  map[string]ProjectEnvironmentCloneObjectCredentialPreparation{},
 		projectEnvironmentApprovals:               map[string]ProjectEnvironmentApproval{},
 		projectEnvironmentConfigs:                 map[string][]ProjectEnvironmentConfig{},
 		projectEnvironmentRoutePolicies:           map[string]ProjectEnvironmentRoutePolicy{},

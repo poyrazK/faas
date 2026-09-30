@@ -4986,6 +4986,31 @@ func (q *Queries) InsertProjectEnvironmentCloneLayerPin(ctx context.Context, db 
 	return err
 }
 
+const insertProjectEnvironmentCloneObjectCredentialPreparation = `-- name: InsertProjectEnvironmentCloneObjectCredentialPreparation :exec
+INSERT INTO project_environment_clone_object_credentials
+(operation_id, source_credential_id, target_credential_id, preparation_hash, preparation)
+VALUES ($1, $2, $3, $4, $5)
+`
+
+type InsertProjectEnvironmentCloneObjectCredentialPreparationParams struct {
+	OperationID        pgtype.UUID
+	SourceCredentialID pgtype.UUID
+	TargetCredentialID pgtype.UUID
+	PreparationHash    string
+	Preparation        []byte
+}
+
+func (q *Queries) InsertProjectEnvironmentCloneObjectCredentialPreparation(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneObjectCredentialPreparationParams) error {
+	_, err := db.Exec(ctx, insertProjectEnvironmentCloneObjectCredentialPreparation,
+		arg.OperationID,
+		arg.SourceCredentialID,
+		arg.TargetCredentialID,
+		arg.PreparationHash,
+		arg.Preparation,
+	)
+	return err
+}
+
 const insertProjectEnvironmentCloneObjectManifestEntries = `-- name: InsertProjectEnvironmentCloneObjectManifestEntries :execrows
 INSERT INTO project_environment_clone_object_entries(operation_id, source_bucket_id, object_key, source_version, source_object)
 SELECT $1::uuid, $2::uuid, e.object_key, e.source_version, e.source_object
@@ -8758,6 +8783,54 @@ func (q *Queries) LockProjectEnvironmentCloneApps(ctx context.Context, db DBTX, 
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockProjectEnvironmentCloneCredentialBucket = `-- name: LockProjectEnvironmentCloneCredentialBucket :one
+SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code, b.public_read, b.serve_at, b.environment_clone_source_bucket_id, b.environment_clone_operation_id FROM object_buckets b
+WHERE b.account_id = $1 AND b.app_id = $2 AND b.id = $3 AND b.environment_clone_operation_id = $4
+  AND b.state = 'ready'
+FOR UPDATE OF b
+`
+
+type LockProjectEnvironmentCloneCredentialBucketParams struct {
+	AccountID                   pgtype.UUID
+	AppID                       pgtype.UUID
+	ID                          pgtype.UUID
+	EnvironmentCloneOperationID pgtype.UUID
+}
+
+func (q *Queries) LockProjectEnvironmentCloneCredentialBucket(ctx context.Context, db DBTX, arg LockProjectEnvironmentCloneCredentialBucketParams) (ObjectBucket, error) {
+	row := db.QueryRow(ctx, lockProjectEnvironmentCloneCredentialBucket,
+		arg.AccountID,
+		arg.AppID,
+		arg.ID,
+		arg.EnvironmentCloneOperationID,
+	)
+	var i ObjectBucket
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.Scope,
+		&i.Region,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.PhysicalName,
+		&i.State,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.LastErrorCode,
+		&i.PublicRead,
+		&i.ServeAt,
+		&i.EnvironmentCloneSourceBucketID,
+		&i.EnvironmentCloneOperationID,
+	)
+	return i, err
 }
 
 const lockProjectEnvironmentCloneProject = `-- name: LockProjectEnvironmentCloneProject :one
@@ -12867,6 +12940,102 @@ func (q *Queries) ReadProjectEnvironmentCloneObjectCopyProofs(ctx context.Contex
 			&i.ObjectCount,
 			&i.EntryCount,
 			&i.VerifiedCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readProjectEnvironmentCloneObjectCredentialPreparation = `-- name: ReadProjectEnvironmentCloneObjectCredentialPreparation :one
+SELECT p.preparation_hash, p.preparation
+FROM project_environment_clone_object_credentials p
+JOIN project_environment_clone_operations o ON o.id = p.operation_id
+WHERE o.account_id = $1 AND o.project_id = $2 AND o.id = $3 AND p.source_credential_id = $4
+`
+
+type ReadProjectEnvironmentCloneObjectCredentialPreparationParams struct {
+	AccountID          pgtype.UUID
+	ProjectID          pgtype.UUID
+	ID                 pgtype.UUID
+	SourceCredentialID pgtype.UUID
+}
+
+type ReadProjectEnvironmentCloneObjectCredentialPreparationRow struct {
+	PreparationHash string
+	Preparation     []byte
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneObjectCredentialPreparation(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneObjectCredentialPreparationParams) (ReadProjectEnvironmentCloneObjectCredentialPreparationRow, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentCloneObjectCredentialPreparation,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.ID,
+		arg.SourceCredentialID,
+	)
+	var i ReadProjectEnvironmentCloneObjectCredentialPreparationRow
+	err := row.Scan(&i.PreparationHash, &i.Preparation)
+	return i, err
+}
+
+const readProjectEnvironmentCloneObjectCredentialSecrets = `-- name: ReadProjectEnvironmentCloneObjectCredentialSecrets :many
+SELECT account_id::text, app_id::text, scope, key, ciphertext, coalesce(kid, '')::text AS kid,
+       coalesce(value_hash, '')::text AS value_hash, secret_class, secret_version,
+       managed_object_storage_credential_id::text
+FROM app_secrets
+WHERE account_id = $1 AND app_id = $2 AND scope = $3 AND managed_object_storage_credential_id = $4
+ORDER BY key
+`
+
+type ReadProjectEnvironmentCloneObjectCredentialSecretsParams struct {
+	AccountID                        pgtype.UUID
+	AppID                            pgtype.UUID
+	Scope                            string
+	ManagedObjectStorageCredentialID pgtype.UUID
+}
+
+type ReadProjectEnvironmentCloneObjectCredentialSecretsRow struct {
+	AccountID                        string
+	AppID                            string
+	Scope                            string
+	Key                              string
+	Ciphertext                       []byte
+	Kid                              string
+	ValueHash                        string
+	SecretClass                      string
+	SecretVersion                    pgtype.Int8
+	ManagedObjectStorageCredentialID string
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneObjectCredentialSecrets(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneObjectCredentialSecretsParams) ([]ReadProjectEnvironmentCloneObjectCredentialSecretsRow, error) {
+	rows, err := db.Query(ctx, readProjectEnvironmentCloneObjectCredentialSecrets,
+		arg.AccountID,
+		arg.AppID,
+		arg.Scope,
+		arg.ManagedObjectStorageCredentialID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadProjectEnvironmentCloneObjectCredentialSecretsRow{}
+	for rows.Next() {
+		var i ReadProjectEnvironmentCloneObjectCredentialSecretsRow
+		if err := rows.Scan(
+			&i.AccountID,
+			&i.AppID,
+			&i.Scope,
+			&i.Key,
+			&i.Ciphertext,
+			&i.Kid,
+			&i.ValueHash,
+			&i.SecretClass,
+			&i.SecretVersion,
+			&i.ManagedObjectStorageCredentialID,
 		); err != nil {
 			return nil, err
 		}

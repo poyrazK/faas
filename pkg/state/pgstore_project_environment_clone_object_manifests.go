@@ -119,8 +119,12 @@ func (s *PgStore) putProjectEnvironmentCloneObjectManifest(ctx context.Context, 
 }
 
 func (s *PgStore) ProjectEnvironmentCloneObjectManifest(ctx context.Context, accountID, projectID, operationID, sourceBucketID string) (ProjectEnvironmentCloneObjectManifest, error) {
+	return projectEnvironmentCloneObjectManifestDB(ctx, s.pool, accountID, projectID, operationID, sourceBucketID)
+}
+
+func projectEnvironmentCloneObjectManifestDB(ctx context.Context, db sqlc.DBTX, accountID, projectID, operationID, sourceBucketID string) (ProjectEnvironmentCloneObjectManifest, error) {
 	q := new(sqlc.Queries)
-	header, err := q.ReadProjectEnvironmentCloneObjectManifestHeader(ctx, s.pool, sqlc.ReadProjectEnvironmentCloneObjectManifestHeaderParams{
+	header, err := q.ReadProjectEnvironmentCloneObjectManifestHeader(ctx, db, sqlc.ReadProjectEnvironmentCloneObjectManifestHeaderParams{
 		OperationID: mustPgUUID(operationID), SourceBucketID: mustPgUUID(sourceBucketID), AccountID: mustPgUUID(accountID), ProjectID: mustPgUUID(projectID),
 	})
 	if err != nil {
@@ -130,7 +134,7 @@ func (s *PgStore) ProjectEnvironmentCloneObjectManifest(ctx context.Context, acc
 	if err != nil {
 		return ProjectEnvironmentCloneObjectManifest{}, ErrConflict
 	}
-	rows, err := q.ReadProjectEnvironmentCloneObjectManifestEntries(ctx, s.pool, sqlc.ReadProjectEnvironmentCloneObjectManifestEntriesParams{
+	rows, err := q.ReadProjectEnvironmentCloneObjectManifestEntries(ctx, db, sqlc.ReadProjectEnvironmentCloneObjectManifestEntriesParams{
 		OperationID: mustPgUUID(operationID), SourceBucketID: mustPgUUID(sourceBucketID),
 	})
 	if err != nil {
