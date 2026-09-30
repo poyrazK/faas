@@ -36,7 +36,7 @@ The CLI waits up to 30 seconds for the TCP listener, or for a 2xx response at
 `--ready-path`, before attaching. Readiness redirects are rejected. A child that
 exits stops the bridge and preserves its exit code; a premature successful exit
 fails startup. Ctrl-C/SIGTERM stops the process group, closes local proxies and
-revokes the session. Shutdown escalates to termination after five seconds.
+revokes the session. Shutdown escalates to a forced kill after five seconds.
 Cleanup errors are reported; the lease still has its original one-hour expiry.
 
 Start payments in your IDE on port 8080, then run:
@@ -250,7 +250,7 @@ expiry override the observed connection state. Refresh the page to update it.
 
 Inventory returns at most 100 active leases; the API keeps activity for up to
 512 recently observed sessions, with 100 request records each. These bounds,
-the 30-second readiness deadline and five-second local stop deadline live in
+the 30-second readiness deadline and five-second local stop grace period live in
 `pkg/api/limits.go`.
 
 ## Acceptance evidence
@@ -267,5 +267,4 @@ private environment admission, preserved
 application authentication, account/environment isolation, MemStore/PostgreSQL
 quota parity, concurrent replay deduplication, original webhook preservation and
 credential redaction. Native split-box installation, edge WebSocket lifetime and
-real VM identity checks remain rollout acceptance gates. The complete repository
-suite has not been run as part of this feature check.
+real VM identity checks remain rollout acceptance gates.
