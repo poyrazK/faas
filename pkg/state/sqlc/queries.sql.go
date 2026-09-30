@@ -3804,6 +3804,23 @@ func (q *Queries) ExpireUploadSession(ctx context.Context, db DBTX, id string) e
 	return err
 }
 
+const featureFlagCustomerOwned = `-- name: FeatureFlagCustomerOwned :one
+SELECT EXISTS(SELECT 1 FROM platform_tenants
+ WHERE account_id = $1::uuid AND id = $2::uuid) AS owned
+`
+
+type FeatureFlagCustomerOwnedParams struct {
+	AccountID pgtype.UUID
+	TenantID  pgtype.UUID
+}
+
+func (q *Queries) FeatureFlagCustomerOwned(ctx context.Context, db DBTX, arg FeatureFlagCustomerOwnedParams) (bool, error) {
+	row := db.QueryRow(ctx, featureFlagCustomerOwned, arg.AccountID, arg.TenantID)
+	var owned bool
+	err := row.Scan(&owned)
+	return owned, err
+}
+
 const findInvoiceIDsByProviderKey = `-- name: FindInvoiceIDsByProviderKey :many
 SELECT id FROM invoices
 WHERE account_id = $1::uuid
@@ -4063,6 +4080,42 @@ func (q *Queries) GetDataUpstreamByID(ctx context.Context, db DBTX, id pgtype.UU
 		&i.LastRttMs,
 		&i.LastProbedAt,
 		&i.LastSeenAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getFeatureFlagVersion = `-- name: GetFeatureFlagVersion :one
+SELECT account_id, project_id, environment_id, version, config, actor, restored_from, created_at FROM feature_flag_versions
+WHERE environment_id = $1::uuid
+ AND account_id = $2::uuid AND project_id = $3::uuid
+ AND ($4::bigint = 0 OR version = $4::bigint)
+ORDER BY version DESC LIMIT 1
+`
+
+type GetFeatureFlagVersionParams struct {
+	EnvironmentID pgtype.UUID
+	AccountID     pgtype.UUID
+	ProjectID     pgtype.UUID
+	Version       int64
+}
+
+func (q *Queries) GetFeatureFlagVersion(ctx context.Context, db DBTX, arg GetFeatureFlagVersionParams) (FeatureFlagVersion, error) {
+	row := db.QueryRow(ctx, getFeatureFlagVersion,
+		arg.EnvironmentID,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.Version,
+	)
+	var i FeatureFlagVersion
+	err := row.Scan(
+		&i.AccountID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.Version,
+		&i.Config,
+		&i.Actor,
+		&i.RestoredFrom,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -4811,6 +4864,45 @@ func (q *Queries) InsertDataUpstreamProbe(ctx context.Context, db DBTX, arg Inse
 	return err
 }
 
+const insertFeatureFlagVersion = `-- name: InsertFeatureFlagVersion :one
+INSERT INTO feature_flag_versions (account_id, project_id, environment_id, version, config, actor, restored_from)
+VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING account_id, project_id, environment_id, version, config, actor, restored_from, created_at
+`
+
+type InsertFeatureFlagVersionParams struct {
+	AccountID     pgtype.UUID
+	ProjectID     pgtype.UUID
+	EnvironmentID pgtype.UUID
+	Version       int64
+	Config        []byte
+	Actor         string
+	RestoredFrom  pgtype.Int8
+}
+
+func (q *Queries) InsertFeatureFlagVersion(ctx context.Context, db DBTX, arg InsertFeatureFlagVersionParams) (FeatureFlagVersion, error) {
+	row := db.QueryRow(ctx, insertFeatureFlagVersion,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.Version,
+		arg.Config,
+		arg.Actor,
+		arg.RestoredFrom,
+	)
+	var i FeatureFlagVersion
+	err := row.Scan(
+		&i.AccountID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.Version,
+		&i.Config,
+		&i.Actor,
+		&i.RestoredFrom,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const insertOIDCExchangedToken = `-- name: InsertOIDCExchangedToken :one
 insert into oidc_exchanged_tokens
     (account_id, token_hash, expires_at, issuer_url, subject,
@@ -4883,7 +4975,7 @@ INSERT INTO request_telemetry (
     guest_duration_ms, guest_runtime, guest_outcome, guest_error_class, consumer_id,
     node_id, region, commit_sha, deployment_tag, deployment_created_at, image_digest,
     platform_tenant_id,
-    guest_cpu_time_ms, guest_peak_rss_mb, guest_resource_usage_available
+    guest_cpu_time_ms, guest_peak_rss_mb, guest_resource_usage_available, flag_evidence
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
@@ -4901,7 +4993,8 @@ INSERT INTO request_telemetry (
     $28::uuid,
     $29::int,
     $30::int,
-    $31::bool
+    $31::bool,
+    COALESCE(NULLIF($32::text, '')::jsonb, '[]'::jsonb)
 )
 `
 
@@ -4937,6 +5030,7 @@ type InsertRequestTelemetryParams struct {
 	GuestCpuTimeMs              int32
 	GuestPeakRssMb              int32
 	GuestResourceUsageAvailable bool
+	FlagEvidenceJson            string
 }
 
 // ---------------------------------------------------------------------------
@@ -5006,6 +5100,7 @@ func (q *Queries) InsertRequestTelemetry(ctx context.Context, db DBTX, arg Inser
 		arg.GuestCpuTimeMs,
 		arg.GuestPeakRssMb,
 		arg.GuestResourceUsageAvailable,
+		arg.FlagEvidenceJson,
 	)
 	return err
 }
@@ -7078,6 +7173,142 @@ func (q *Queries) ListEventsByWakeID(ctx context.Context, db DBTX, arg ListEvent
 	return items, nil
 }
 
+const listFeatureFlagRequestEvidence = `-- name: ListFeatureFlagRequestEvidence :many
+SELECT t.id, t.app_id, t.deployment_id, t.platform_tenant_id, t.received_at, t.route, t.method,
+ t.status, t.latency_ms, t.count, t.cold_boot, t.trace_id, t.flag_evidence
+FROM request_telemetry t JOIN deployments d ON d.id = t.deployment_id
+WHERE (d.scope = $1::text OR (d.scope = 'default' AND $1::text = 'production'))
+ AND t.account_id = $2::uuid
+ AND t.app_id = ANY($3::uuid[])
+ AND t.received_at >= $4::timestamptz
+ AND t.received_at < $5::timestamptz
+ AND ($6::text = '' OR platform_tenant_id::text = $6::text)
+ AND flag_evidence @> $7::jsonb
+ AND ($8::timestamptz IS NULL OR (t.received_at,t.id) < ($8::timestamptz,$9::uuid))
+ORDER BY t.received_at DESC, t.id DESC LIMIT 101
+`
+
+type ListFeatureFlagRequestEvidenceParams struct {
+	EnvironmentSlug string
+	AccountID       pgtype.UUID
+	AppIds          []pgtype.UUID
+	ReceivedFrom    pgtype.Timestamptz
+	ReceivedUntil   pgtype.Timestamptz
+	CustomerID      string
+	EvidenceFilter  []byte
+	CursorAt        pgtype.Timestamptz
+	CursorID        pgtype.UUID
+}
+
+type ListFeatureFlagRequestEvidenceRow struct {
+	ID               pgtype.UUID
+	AppID            pgtype.UUID
+	DeploymentID     pgtype.UUID
+	PlatformTenantID pgtype.UUID
+	ReceivedAt       pgtype.Timestamptz
+	Route            string
+	Method           string
+	Status           int32
+	LatencyMs        int32
+	Count            int32
+	ColdBoot         bool
+	TraceID          pgtype.Text
+	FlagEvidence     []byte
+}
+
+func (q *Queries) ListFeatureFlagRequestEvidence(ctx context.Context, db DBTX, arg ListFeatureFlagRequestEvidenceParams) ([]ListFeatureFlagRequestEvidenceRow, error) {
+	rows, err := db.Query(ctx, listFeatureFlagRequestEvidence,
+		arg.EnvironmentSlug,
+		arg.AccountID,
+		arg.AppIds,
+		arg.ReceivedFrom,
+		arg.ReceivedUntil,
+		arg.CustomerID,
+		arg.EvidenceFilter,
+		arg.CursorAt,
+		arg.CursorID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListFeatureFlagRequestEvidenceRow{}
+	for rows.Next() {
+		var i ListFeatureFlagRequestEvidenceRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AppID,
+			&i.DeploymentID,
+			&i.PlatformTenantID,
+			&i.ReceivedAt,
+			&i.Route,
+			&i.Method,
+			&i.Status,
+			&i.LatencyMs,
+			&i.Count,
+			&i.ColdBoot,
+			&i.TraceID,
+			&i.FlagEvidence,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFeatureFlagVersions = `-- name: ListFeatureFlagVersions :many
+SELECT account_id, project_id, environment_id, version, config, actor, restored_from, created_at FROM feature_flag_versions
+WHERE environment_id = $1::uuid
+ AND account_id = $2::uuid AND project_id = $3::uuid
+ AND version < $4::bigint
+ORDER BY version DESC LIMIT 100
+`
+
+type ListFeatureFlagVersionsParams struct {
+	EnvironmentID pgtype.UUID
+	AccountID     pgtype.UUID
+	ProjectID     pgtype.UUID
+	BeforeVersion int64
+}
+
+func (q *Queries) ListFeatureFlagVersions(ctx context.Context, db DBTX, arg ListFeatureFlagVersionsParams) ([]FeatureFlagVersion, error) {
+	rows, err := db.Query(ctx, listFeatureFlagVersions,
+		arg.EnvironmentID,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.BeforeVersion,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FeatureFlagVersion{}
+	for rows.Next() {
+		var i FeatureFlagVersion
+		if err := rows.Scan(
+			&i.AccountID,
+			&i.ProjectID,
+			&i.EnvironmentID,
+			&i.Version,
+			&i.Config,
+			&i.Actor,
+			&i.RestoredFrom,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listFirstSuccessfulRequestsForAccountsCreatedSince = `-- name: ListFirstSuccessfulRequestsForAccountsCreatedSince :many
 select a.account_id, min(i.last_request_at)::timestamptz as first_success_at
 from instances i
@@ -8373,6 +8604,27 @@ type LockDevBridgeReplaySessionParams struct {
 func (q *Queries) LockDevBridgeReplaySession(ctx context.Context, db DBTX, arg LockDevBridgeReplaySessionParams) (string, error) {
 	row := db.QueryRow(ctx, lockDevBridgeReplaySession, arg.ID, arg.AccountID)
 	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockFeatureFlagEnvironment = `-- name: LockFeatureFlagEnvironment :one
+SELECT e.id FROM project_environments e
+JOIN projects p ON p.id = e.project_id AND p.account_id = e.account_id
+WHERE e.id = $1::uuid AND e.project_id = $2::uuid
+ AND e.account_id = $3::uuid
+FOR UPDATE OF e
+`
+
+type LockFeatureFlagEnvironmentParams struct {
+	EnvironmentID pgtype.UUID
+	ProjectID     pgtype.UUID
+	AccountID     pgtype.UUID
+}
+
+func (q *Queries) LockFeatureFlagEnvironment(ctx context.Context, db DBTX, arg LockFeatureFlagEnvironmentParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockFeatureFlagEnvironment, arg.EnvironmentID, arg.ProjectID, arg.AccountID)
+	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
 }

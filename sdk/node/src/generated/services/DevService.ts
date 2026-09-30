@@ -19,7 +19,7 @@ import { request as __request } from '../core/request.js';
 export class DevService {
   /**
    * Create a leased local service development session.
-   * Operator-gated ADR-377 feature. Select an owned app in an unprotected non-production project environment. Credentials are returned once; the request token routes only the selected application graph, while the attachment token connects the laptop. The lease lasts one hour.
+   * Operator-gated ADR-378 feature. Select an owned app in an unprotected non-production project environment. Credentials are returned once; the request token routes only the selected application graph, while the attachment token connects the laptop. The lease lasts one hour.
    * @returns CreateDevBridgeResponse Development session and one-time credentials created.
    * @throws ApiError
    */

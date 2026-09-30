@@ -86,7 +86,7 @@ def sync_detailed(
 ) -> Response[Any | CreateDevBridgeResponse | Problem]:
     """Create a leased local service development session.
 
-     Operator-gated ADR-377 feature. Select an owned app in an unprotected non-production project
+     Operator-gated ADR-378 feature. Select an owned app in an unprotected non-production project
     environment. Credentials are returned once; the request token routes only the selected application
     graph, while the attachment token connects the laptop. The lease lasts one hour.
 
@@ -120,7 +120,7 @@ def sync(
 ) -> Any | CreateDevBridgeResponse | Problem | None:
     """Create a leased local service development session.
 
-     Operator-gated ADR-377 feature. Select an owned app in an unprotected non-production project
+     Operator-gated ADR-378 feature. Select an owned app in an unprotected non-production project
     environment. Credentials are returned once; the request token routes only the selected application
     graph, while the attachment token connects the laptop. The lease lasts one hour.
 
@@ -149,7 +149,7 @@ async def asyncio_detailed(
 ) -> Response[Any | CreateDevBridgeResponse | Problem]:
     """Create a leased local service development session.
 
-     Operator-gated ADR-377 feature. Select an owned app in an unprotected non-production project
+     Operator-gated ADR-378 feature. Select an owned app in an unprotected non-production project
     environment. Credentials are returned once; the request token routes only the selected application
     graph, while the attachment token connects the laptop. The lease lasts one hour.
 
@@ -181,7 +181,7 @@ async def asyncio(
 ) -> Any | CreateDevBridgeResponse | Problem | None:
     """Create a leased local service development session.
 
-     Operator-gated ADR-377 feature. Select an owned app in an unprotected non-production project
+     Operator-gated ADR-378 feature. Select an owned app in an unprotected non-production project
     environment. Credentials are returned once; the request token routes only the selected application
     graph, while the attachment token connects the laptop. The lease lasts one hour.
 

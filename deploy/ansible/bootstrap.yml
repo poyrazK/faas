@@ -113,6 +113,7 @@
       when: not (faas_image_seed | default(false) | bool)
     - role: control_plane_service
     - role: gatewayd_public_service
+    - role: public_edge
     - role: s3_gateway_service
       when: faas_object_storage_gateway_managed | default(false) | bool
     - role: githubd_service

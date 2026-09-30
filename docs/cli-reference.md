@@ -38,6 +38,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`diff`](#diff) | Compare two named environments in the linked project |
 | [`test`](#test) | Run scenario suites and bounded local HTTP load tests |
 | [`preview`](#preview) | Manage preview environments for pull requests |
+| [`flags`](#flags) | Release application behavior to selected customers |
 | [`platform-tenants`](#platform-tenants) | Manage one customer across app consumers and tenant hostnames |
 | [`edge-rules`](#edge-rules) | Per-app edge rules (edge-rules list\|trace\|create\|get\|update\|rm --app &lt;slug&gt;) |
 | [`openapi`](#openapi) | Manage app OpenAPI docs + pre-publish schema-drift checks |
@@ -1861,6 +1862,70 @@ Examples:
 ```sh
 gregale preview destroy pr-42-my-api
 ```
+
+
+## flags
+
+Release application behavior to selected customers
+
+`gregale flags [<subcommand>] --project <slug> [--environment <slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--project <slug>` | project slug | required |
+| `--environment <slug>` | named environment (default production) |  |
+
+### flags get
+
+Read current flag configuration
+
+### flags apply
+
+Publish a versioned configuration
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <path>` | JSON update bundle | required |
+
+### flags history
+
+List immutable configuration versions
+
+| Flag | Meaning | |
+|---|---|---|
+| `--before-version <number>` | page before this version |  |
+
+### flags inspect
+
+Explain a customer&#39;s decision
+
+| Flag | Meaning | |
+|---|---|---|
+| `--key <key>` | flag key | required |
+| `--customer-id <UUID>` | customer UUID |  |
+| `--version <number>` | historical configuration version |  |
+
+### flags rollback
+
+Publish an earlier configuration
+
+| Flag | Meaning | |
+|---|---|---|
+| `--version <number>` | version to restore | required |
+| `--expected-version <number>` | current version | required |
+
+### flags requests
+
+Inspect request evidence by flag value
+
+| Flag | Meaning | |
+|---|---|---|
+| `--key <key>` | flag key | required |
+| `--customer-id <UUID>` | customer UUID |  |
+| `--value <bool>` | true or false |  |
+| `--used <bool>` | true or false exposure |  |
+| `--since <duration>` | lookback (default 24h) |  |
+| `--cursor <cursor>` | next-page cursor |  |
 
 
 ## platform-tenants

@@ -2,7 +2,7 @@
 
 Dev Bridge runs one HTTP service on your laptop while the rest of its application
 runs in a Gregale development environment. It is an internal, operator-gated
-capability under [ADR-377](adr/377-development-bridge.md). The implementation is
+capability under [ADR-378](adr/378-development-bridge.md). The implementation is
 ready for a controlled development trial; native fleet acceptance and a public
 product rollout have not been performed.
 

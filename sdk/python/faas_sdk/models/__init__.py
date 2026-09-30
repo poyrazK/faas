@@ -751,6 +751,8 @@ from .execution_response_status import ExecutionResponseStatus
 from .execution_usage import ExecutionUsage
 from .execution_usage_summary_response import ExecutionUsageSummaryResponse
 from .export_app_debug_requests_format import ExportAppDebugRequestsFormat
+from .feature_flag import FeatureFlag
+from .feature_flag_version import FeatureFlagVersion
 from .field_error import FieldError
 from .filter_criteria import FilterCriteria
 from .filter_criteria_clause import FilterCriteriaClause
@@ -761,6 +763,16 @@ from .fire_cron_request_response import FireCronRequestResponse
 from .fire_cron_request_response_status import FireCronRequestResponseStatus
 from .fire_cron_response import FireCronResponse
 from .fire_cron_response_status import FireCronResponseStatus
+from .flag_decision import FlagDecision
+from .flag_decision_reason import FlagDecisionReason
+from .flag_decision_source import FlagDecisionSource
+from .flag_evidence import FlagEvidence
+from .flag_evidence_page import FlagEvidencePage
+from .flag_request_evidence import FlagRequestEvidence
+from .flag_rule import FlagRule
+from .flags_bundle import FlagsBundle
+from .flags_config import FlagsConfig
+from .flags_config_groups import FlagsConfigGroups
 from .gdpr_audit_export_response import GdprAuditExportResponse
 from .gdpr_audit_export_response_action import GdprAuditExportResponseAction
 from .gdpr_audit_export_response_data import GdprAuditExportResponseData
@@ -824,6 +836,7 @@ from .inbound_webhook_receipt_response_status import InboundWebhookReceiptRespon
 from .inject_workflow_event_request import InjectWorkflowEventRequest
 from .inject_workflow_event_response import InjectWorkflowEventResponse
 from .inject_workflow_event_response_status import InjectWorkflowEventResponseStatus
+from .inspect_feature_flag_request import InspectFeatureFlagRequest
 from .install_bind_request import InstallBindRequest
 from .install_bind_request_deploy_branches import InstallBindRequestDeployBranches
 from .install_bind_response import InstallBindResponse
@@ -1554,6 +1567,7 @@ from .retry_github_check_update_confirm import RetryGithubCheckUpdateConfirm
 from .retry_github_webhook_delivery_confirm import RetryGithubWebhookDeliveryConfirm
 from .retry_policy_dto import RetryPolicyDTO
 from .revoke_platform_tenant_self_consumers_request import RevokePlatformTenantSelfConsumersRequest
+from .rollback_feature_flags_request import RollbackFeatureFlagsRequest
 from .rollback_operator_runtime_config_request import RollbackOperatorRuntimeConfigRequest
 from .rollback_request import RollbackRequest
 from .rollout_aborted_webhook_payload import RolloutAbortedWebhookPayload
@@ -1799,6 +1813,7 @@ from .update_deployment_traffic_request import UpdateDeploymentTrafficRequest
 from .update_edge_rule_request import UpdateEdgeRuleRequest
 from .update_edge_rule_request_match_headers import UpdateEdgeRuleRequestMatchHeaders
 from .update_edge_rule_request_validate_mode import UpdateEdgeRuleRequestValidateMode
+from .update_feature_flags_request import UpdateFeatureFlagsRequest
 from .update_inbound_webhook_endpoint_request import UpdateInboundWebhookEndpointRequest
 from .update_job_request import UpdateJobRequest
 from .update_job_request_env_overrides import UpdateJobRequestEnvOverrides
@@ -2633,6 +2648,8 @@ __all__ = (
     "ExecutionUsage",
     "ExecutionUsageSummaryResponse",
     "ExportAppDebugRequestsFormat",
+    "FeatureFlag",
+    "FeatureFlagVersion",
     "FieldError",
     "FilterCriteria",
     "FilterCriteriaClause",
@@ -2643,6 +2660,16 @@ __all__ = (
     "FireCronRequestResponseStatus",
     "FireCronResponse",
     "FireCronResponseStatus",
+    "FlagDecision",
+    "FlagDecisionReason",
+    "FlagDecisionSource",
+    "FlagEvidence",
+    "FlagEvidencePage",
+    "FlagRequestEvidence",
+    "FlagRule",
+    "FlagsBundle",
+    "FlagsConfig",
+    "FlagsConfigGroups",
     "GdprAuditExportResponse",
     "GdprAuditExportResponseAction",
     "GdprAuditExportResponseData",
@@ -2706,6 +2733,7 @@ __all__ = (
     "InjectWorkflowEventRequest",
     "InjectWorkflowEventResponse",
     "InjectWorkflowEventResponseStatus",
+    "InspectFeatureFlagRequest",
     "InstallBindRequest",
     "InstallBindRequestDeployBranches",
     "InstallBindResponse",
@@ -3392,6 +3420,7 @@ __all__ = (
     "RetryGithubWebhookDeliveryConfirm",
     "RetryPolicyDTO",
     "RevokePlatformTenantSelfConsumersRequest",
+    "RollbackFeatureFlagsRequest",
     "RollbackOperatorRuntimeConfigRequest",
     "RollbackRequest",
     "RolloutAbortedWebhookPayload",
@@ -3625,6 +3654,7 @@ __all__ = (
     "UpdateEdgeRuleRequest",
     "UpdateEdgeRuleRequestMatchHeaders",
     "UpdateEdgeRuleRequestValidateMode",
+    "UpdateFeatureFlagsRequest",
     "UpdateInboundWebhookEndpointRequest",
     "UpdateJobRequest",
     "UpdateJobRequestEnvOverrides",

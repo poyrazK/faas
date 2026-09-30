@@ -11,6 +11,8 @@ import (
 const (
 	// RequestIDHeader carries the platform correlation id for every request.
 	RequestIDHeader = "X-Faas-Request-Id"
+	// FlagEvidenceHeader is consumed from app responses and never exposed to clients.
+	FlagEvidenceHeader = "X-Faas-Flag-Evidence"
 	// TraceIDHeader carries the canonical W3C trace id for a request. Unlike
 	// RequestIDHeader, this value is always the 32-character lowercase OTel
 	// trace id when tracing is active.

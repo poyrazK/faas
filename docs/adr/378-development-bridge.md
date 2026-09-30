@@ -1,4 +1,4 @@
-# ADR-377 · Local processes in development environments
+# ADR-378 · Local processes in development environments
 
 - **Status:** accepted for an internal, operator-gated HTTP capability
 - **Date:** 2026-09-30

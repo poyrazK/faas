@@ -273,11 +273,19 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
-	"POST /v1/dev/bridges":                                       "CreateDevBridge",
-	"GET /v1/dev/bridges/{id}":                                   "GetDevBridge",
-	"DELETE /v1/dev/bridges/{id}":                                "RevokeDevBridge",
-	"POST /v1/dev/bridges/{id}/webhook-replays":                  "ReplayDevBridgeWebhook",
-	"GET /v1/dev/bridges/{id}/webhook-replays/{replay}":          "GetDevBridgeWebhookReplay",
+	"POST /v1/dev/bridges":                                                    "CreateDevBridge",
+	"GET /v1/dev/bridges/{id}":                                                "GetDevBridge",
+	"DELETE /v1/dev/bridges/{id}":                                             "RevokeDevBridge",
+	"POST /v1/dev/bridges/{id}/webhook-replays":                               "ReplayDevBridgeWebhook",
+	"GET /v1/dev/bridges/{id}/webhook-replays/{replay}":                       "GetDevBridgeWebhookReplay",
+	"GET /v1/projects/{slug}/environments/{environment}/flags":                "ProjectFlags",
+	"PUT /v1/projects/{slug}/environments/{environment}/flags":                "PublishProjectFlags",
+	"GET /v1/projects/{slug}/environments/{environment}/flags/versions":       "ProjectFlagVersions",
+	"POST /v1/projects/{slug}/environments/{environment}/flags/rollback":      "RollbackProjectFlags",
+	"POST /v1/projects/{slug}/environments/{environment}/flags/{key}/inspect": "InspectProjectFlag",
+	"GET /v1/projects/{slug}/environments/{environment}/flags/{key}/requests": "ProjectFlagRequests",
+	"GET /v1/runtime/flags":                                                   "RuntimeFlags",
+
 	"GET /v1/apps/{slug}/work-policies":                          "ListAppWorkPolicies",
 	"PUT /v1/apps/{slug}/work-policies/{name}":                   "UpsertAppWorkPolicy",
 	"DELETE /v1/apps/{slug}/work-policies/{name}":                "DeleteAppWorkPolicy",

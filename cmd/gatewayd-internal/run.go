@@ -2918,6 +2918,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					GuestRuntime:                         row.GuestRuntime,
 					GuestOutcome:                         row.GuestOutcome,
 					GuestErrorClass:                      row.GuestErrorClass,
+					FlagEvidenceJson:                     row.FlagEvidenceJSON,
 					GuestCpuTimeMs:                       int32(row.GuestCPUTimeMS),
 					GuestPeakRssMb:                       int32(row.GuestPeakRSSMB),
 					GuestResourceUsageAvailable:          row.GuestResourceUsageAvailable,

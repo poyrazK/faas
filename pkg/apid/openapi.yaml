@@ -39,6 +39,8 @@ servers:
         description: Public hostname (one-box FaaS).
 
 tags:
+  - name: flags
+    description: Customer-aware application behavior releases and decision evidence.
   - name: outbound
     description: Bind apps to account-owned, operator-provisioned managed outbound integrations without exposing provider credentials.
   - name: storage
@@ -6336,7 +6338,7 @@ paths:
       tags: [dev]
       operationId: createDevBridge
       summary: Create a leased local service development session.
-      description: Operator-gated ADR-377 feature. Select an owned app in an unprotected non-production project environment. Credentials are returned once; the request token routes only the selected application graph, while the attachment token connects the laptop. The lease lasts one hour.
+      description: Operator-gated ADR-378 feature. Select an owned app in an unprotected non-production project environment. Credentials are returned once; the request token routes only the selected application graph, while the attachment token connects the laptop. The lease lasts one hour.
       requestBody:
         required: true
         content:
@@ -22283,9 +22285,184 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/projects/{slug}/environments/{environment}/flags:
+    parameters:
+      - { $ref: '#/components/parameters/FlagsProjectSlug' }
+      - { $ref: '#/components/parameters/FlagsEnvironment' }
+    get:
+      tags: [flags]
+      operationId: getProjectFlags
+      summary: Read current or historical feature flag configuration.
+      description: Requires operator enablement via FAAS_FLAGS_ENABLED. Account-scoped read credentials only; app deploy tokens cannot read project-wide targeting lists.
+      parameters:
+        - { name: version, in: query, description: Historical version; omit for current., schema: { type: integer, format: int64, minimum: 1 } }
+      responses:
+        '200':
+          description: Current or selected historical configuration publication.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FeatureFlagVersion' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    put:
+      tags: [flags]
+      operationId: publishProjectFlags
+      summary: Publish an atomic feature flag configuration.
+      description: Requires deploy-write scope and MFA when configured. expected_version zero creates the first version; conflicting writes return 409. Customers must belong to the account. Allocation seeds are immutable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateFeatureFlagsRequest' }
+      responses:
+        '200':
+          description: Newly committed configuration with its assigned version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FeatureFlagVersion' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/projects/{slug}/environments/{environment}/flags/versions:
+    parameters:
+      - { $ref: '#/components/parameters/FlagsProjectSlug' }
+      - { $ref: '#/components/parameters/FlagsEnvironment' }
+    get:
+      tags: [flags]
+      operationId: listProjectFlagVersions
+      summary: List up to 100 immutable configuration versions.
+      description: Returns publication audit metadata in descending order; use before_version to continue history.
+      parameters:
+        - { name: before_version, in: query, description: Exclusive version boundary for older history pages., schema: { type: integer, format: int64, minimum: 1 } }
+      responses:
+        '200':
+          description: Configuration history in descending version order.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/FeatureFlagVersion' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/flags/rollback:
+    parameters:
+      - { $ref: '#/components/parameters/FlagsProjectSlug' }
+      - { $ref: '#/components/parameters/FlagsEnvironment' }
+    post:
+      tags: [flags]
+      operationId: rollbackProjectFlags
+      summary: Publish a previous flag configuration as a new version.
+      description: Requires the current expected_version and preserves allocation seeds; history remains immutable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RollbackFeatureFlagsRequest' }
+      responses:
+        '200':
+          description: New publication restored from the requested historical configuration.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FeatureFlagVersion' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/projects/{slug}/environments/{environment}/flags/{key}/inspect:
+    parameters:
+      - { $ref: '#/components/parameters/FlagsProjectSlug' }
+      - { $ref: '#/components/parameters/FlagsEnvironment' }
+      - { $ref: '#/components/parameters/FlagsKey' }
+    post:
+      tags: [flags]
+      operationId: inspectProjectFlag
+      summary: Explain a current or historical customer decision without exposure.
+      description: Simulates ordered customer rules against the selected immutable configuration; this call records no application exposure.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InspectFeatureFlagRequest' }
+      responses:
+        '200':
+          description: Evaluation explanation for the supplied customer context.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlagDecision' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/flags/{key}/requests:
+    parameters:
+      - { $ref: '#/components/parameters/FlagsProjectSlug' }
+      - { $ref: '#/components/parameters/FlagsEnvironment' }
+      - { $ref: '#/components/parameters/FlagsKey' }
+    get:
+      tags: [flags]
+      operationId: listProjectFlagRequests
+      summary: Inspect retained requests with application-reported flag evidence.
+      description: Debugger entitlement and retention apply. Counts weight collapsed telemetry rows; rows with different decisions remain separate. These are operational observations, not exactly-once exposure counts or causal experiment results.
+      parameters:
+        - { name: customer_id, in: query, description: Verified platform tenant UUID., schema: { type: string, format: uuid } }
+        - { name: value, in: query, description: Filter the evaluated boolean., schema: { type: boolean } }
+        - { name: used, in: query, description: Filter application-reported exposure., schema: { type: boolean } }
+        - { name: since, in: query, description: Lookback clamped to plan retention., schema: { type: string, default: 24h } }
+        - { name: cursor, in: query, description: Cursor from the preceding page; preserve filters., schema: { type: string } }
+      responses:
+        '200':
+          description: Retained request cohort page with stable pagination window.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlagEvidencePage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/runtime/flags:
+    get:
+      tags: [flags]
+      operationId: getRuntimeFlags
+      summary: Read the live workload’s project-environment flag bundle.
+      description: Requires an RS256 workload identity token with audience gregale:flags from an active app instance. Project and environment are derived from the deployment; query parameters cannot select another scope.
+      security:
+        - flagsWorkloadIdentity: []
+      responses:
+        '200':
+          description: Runtime configuration for the authenticated workload environment.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlagsBundle' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
 components:
 
   securitySchemes:
+    flagsWorkloadIdentity:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Platform-issued short-lived RS256 workload JWT with audience gregale:flags.
     bearerAuth:
       type: http
       scheme: bearer
@@ -22334,6 +22511,24 @@ components:
         example: '</v1/uploads>; rel="successor-version", <https://github.com/poyrazK/faas/blob/main/docs/adr/115-local-tarball-deploy-trust-root.md>; rel="deprecation"'
 
   parameters:
+    FlagsProjectSlug:
+      name: slug
+      in: path
+      required: true
+      description: Project that owns this environment flag configuration.
+      schema: { type: string }
+    FlagsEnvironment:
+      name: environment
+      in: path
+      required: true
+      description: Named environment whose flag configuration is selected.
+      schema: { type: string }
+    FlagsKey:
+      name: key
+      in: path
+      required: true
+      description: Application flag key to evaluate or filter retained evidence.
+      schema: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
     PublicStatusEventID:
       name: public_id
       in: path
@@ -22552,6 +22747,130 @@ components:
         http_status: { type: integer, minimum: 0, maximum: 599 }
         created_at: { type: string, format: date-time }
         completed_at: { type: [string, 'null'], format: date-time }
+    FlagRule:
+      description: Ordered customer targeting rule; supplied constraints combine with AND.
+      type: object
+      additionalProperties: false
+      required: [id, value]
+      properties:
+        id: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+        customers: { type: array, maxItems: 1000, uniqueItems: true, items: { type: string, format: uuid } }
+        group: { type: string, description: Owner-managed customer group key. }
+        rollout: { type: integer, minimum: 0, maximum: 10000, description: Basis points of eligible customers; omitted means all eligible customers. }
+        value: { type: boolean }
+    FeatureFlag:
+      description: Boolean application behavior flag; business logic must check it explicitly.
+      type: object
+      additionalProperties: false
+      required: [key, enabled, default, rules]
+      properties:
+        key: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+        description: { type: string, maxLength: 512 }
+        enabled: { type: boolean }
+        default: { type: boolean, description: Value for disabled flags and unmatched customer rules. }
+        seed: { type: string, maxLength: 128, description: Server-supplied stable allocation seed; omit for a new flag. }
+        rules: { type: array, maxItems: 32, items: { $ref: '#/components/schemas/FlagRule' } }
+    FlagsConfig:
+      description: Complete atomic environment configuration; omitted flags are removed from current evaluation.
+      type: object
+      additionalProperties: false
+      required: [flags, groups]
+      properties:
+        flags: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/FeatureFlag' } }
+        groups:
+          type: object
+          maxProperties: 100
+          additionalProperties: { type: array, maxItems: 1000, uniqueItems: true, items: { type: string, format: uuid } }
+    FlagsBundle:
+      description: Immutable runtime configuration snapshot.
+      allOf:
+        - { $ref: '#/components/schemas/FlagsConfig' }
+        - type: object
+          required: [environment_id, version]
+          properties:
+            environment_id: { type: string, format: uuid }
+            version: { type: integer, format: int64, minimum: 0 }
+    FeatureFlagVersion:
+      description: Configuration publication with audit metadata; version zero is an unpublished empty environment.
+      allOf:
+        - { $ref: '#/components/schemas/FlagsBundle' }
+        - type: object
+          required: [actor, created_at]
+          properties:
+            actor: { type: string, description: Publishing account identity. }
+            created_at: { type: string, format: date-time }
+            restored_from: { type: integer, format: int64, minimum: 1 }
+    UpdateFeatureFlagsRequest:
+      description: Optimistic atomic configuration publication.
+      type: object
+      additionalProperties: false
+      required: [expected_version, config]
+      properties:
+        expected_version: { type: integer, format: int64, minimum: 0 }
+        config: { $ref: '#/components/schemas/FlagsConfig' }
+    RollbackFeatureFlagsRequest:
+      description: Publish the selected historical version while checking current version.
+      type: object
+      additionalProperties: false
+      required: [expected_version, version]
+      properties:
+        expected_version: { type: integer, format: int64, minimum: 0 }
+        version: { type: integer, format: int64, minimum: 1 }
+    InspectFeatureFlagRequest:
+      description: Owner-authorized simulation context; does not record exposure.
+      type: object
+      additionalProperties: false
+      properties:
+        customer_id: { type: string, format: uuid, description: Omit for anonymous evaluation. }
+        version: { type: integer, format: int64, minimum: 0, description: Zero or omitted selects current configuration. }
+        fallback: { type: boolean, default: false }
+    FlagDecision:
+      description: Explainable boolean decision against a configuration version.
+      type: object
+      required: [flag, value, config_version, reason, source]
+      properties:
+        flag: { type: string }
+        value: { type: boolean }
+        config_version: { type: integer, format: int64, minimum: 0 }
+        rule_id: { type: string }
+        reason: { type: string, enum: [flag_missing, default, disabled, customer_missing, rule_match, configuration_stale] }
+        bucket: { type: integer, minimum: 0, maximum: 9999 }
+        source: { type: string, enum: [configuration, fallback] }
+    FlagEvidence:
+      description: Application-reported evaluation and exposure, attributed by the gateway.
+      allOf:
+        - { $ref: '#/components/schemas/FlagDecision' }
+        - type: object
+          required: [used]
+          properties:
+            used: { type: boolean }
+    FlagRequestEvidence:
+      description: Retained request aggregate containing bounded flag decisions.
+      type: object
+      required: [id, app_id, deployment_id, received_at, route, method, status, latency_ms, count, cold_boot, flags]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid }
+        received_at: { type: string, format: date-time }
+        route: { type: string }
+        method: { type: string }
+        status: { type: integer }
+        latency_ms: { type: integer }
+        count: { type: integer }
+        cold_boot: { type: boolean }
+        trace_id: { type: string }
+        flags: { type: array, maxItems: 32, items: { $ref: '#/components/schemas/FlagEvidence' } }
+    FlagEvidencePage:
+      description: Stable window of up to 100 retained request aggregates; preserve filters for pagination.
+      type: object
+      required: [items, window_start, window_end]
+      properties:
+        items: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/FlagRequestEvidence' } }
+        next_cursor: { type: string }
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
     OutboundIntegrationOffer:
       type: object
       description: Account-owned managed integration metadata; never contains a provider key or gateway token.
