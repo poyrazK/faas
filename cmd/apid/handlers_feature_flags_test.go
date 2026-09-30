@@ -31,7 +31,10 @@ func TestFeatureFlagsCustomerReleaseLifecycle(t *testing.T) {
 		}
 		ids = append(ids, customer.ID)
 	}
-	cfg := flags.Config{Groups: map[string][]string{"internal": ids[:1]}, Flags: []flags.Flag{{Key: "export", Enabled: true, Rules: []flags.Rule{{ID: "selected", Customers: ids[:3], Value: true}}}}}
+	cfg := flags.Config{Groups: map[string][]string{"internal": ids[:1]}, Flags: []flags.Flag{
+		{Key: "export", Enabled: true, Rules: []flags.Rule{{ID: "selected", Customers: ids[:3], Value: true}}},
+		{Key: "checkout", Type: "variant", Enabled: true, Default: "legacy", Variants: []flags.FlagVariant{{Key: "legacy", Weight: 5000}, {Key: "new", Weight: 5000}}, Rules: []flags.Rule{{ID: "selected-customer", Customers: ids[:1], Value: "new"}}},
+	}}
 	path := "/v1/projects/flags/environments/production/flags"
 	zero := int64(0)
 	res := e.do(t, http.MethodPut, path, updateFeatureFlagsRequest{ExpectedVersion: &zero, Config: cfg}, nil)
@@ -51,6 +54,11 @@ func TestFeatureFlagsCustomerReleaseLifecycle(t *testing.T) {
 			t.Fatal(d)
 		}
 	}
+	res = e.do(t, http.MethodPost, path+"/checkout/inspect", inspectFeatureFlagRequest{CustomerID: ids[0]}, nil)
+	var variantDecision flags.Decision
+	if res.Code != 200 || json.Unmarshal(res.Body.Bytes(), &variantDecision) != nil || variantDecision.Type != "variant" || variantDecision.Value != "new" || variantDecision.RuleID != "selected-customer" {
+		t.Fatalf("variant inspect: %d %s %+v", res.Code, res.Body.String(), variantDecision)
+	}
 	saved.Flags[0].Enabled = false
 	one := int64(1)
 	res = e.do(t, http.MethodPut, path, updateFeatureFlagsRequest{ExpectedVersion: &one, Config: saved.Config}, nil)
@@ -60,12 +68,12 @@ func TestFeatureFlagsCustomerReleaseLifecycle(t *testing.T) {
 	res = e.do(t, http.MethodPost, path+"/export/inspect", inspectFeatureFlagRequest{CustomerID: ids[0]}, nil)
 	var d flags.Decision
 	_ = json.Unmarshal(res.Body.Bytes(), &d)
-	if d.Value || d.Reason != "disabled" {
+	if d.Value != false || d.Reason != "disabled" {
 		t.Fatal(d)
 	}
 	res = e.do(t, http.MethodPost, path+"/export/inspect", inspectFeatureFlagRequest{CustomerID: ids[0], Version: 1}, nil)
 	_ = json.Unmarshal(res.Body.Bytes(), &d)
-	if !d.Value || d.RuleID != "selected" {
+	if d.Value != true || d.RuleID != "selected" {
 		t.Fatal(d)
 	}
 	if res = e.do(t, http.MethodPut, path, updateFeatureFlagsRequest{ExpectedVersion: &one, Config: saved.Config}, nil); res.Code != 409 {

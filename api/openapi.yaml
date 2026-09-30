@@ -22703,6 +22703,7 @@ paths:
       parameters:
         - { name: customer_id, in: query, description: Verified platform tenant UUID., schema: { type: string, format: uuid } }
         - { name: value, in: query, description: Filter the evaluated boolean., schema: { type: boolean } }
+        - { name: variant, in: query, description: Filter the selected named variant; mutually exclusive with value., schema: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' } }
         - { name: used, in: query, description: Filter application-reported exposure., schema: { type: boolean } }
         - { name: since, in: query, description: Lookback clamped to plan retention., schema: { type: string, default: 24h } }
         - { name: cursor, in: query, description: Cursor from the preceding page; preserve filters., schema: { type: string } }
@@ -23067,28 +23068,45 @@ components:
         created_at: { type: string, format: date-time }
         completed_at: { type: [string, 'null'], format: date-time }
     FlagRule:
-      description: Ordered customer targeting rule; supplied constraints combine with AND.
+      description: Ordered customer targeting rule; supplied constraints combine with AND. Boolean flags require a boolean value; variant flags may omit value to use weighted assignment.
       type: object
       additionalProperties: false
-      required: [id, value]
+      required: [id]
       properties:
         id: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
         customers: { type: array, maxItems: 1000, uniqueItems: true, items: { type: string, format: uuid } }
         group: { type: string, description: Owner-managed customer group key. }
         rollout: { type: integer, minimum: 0, maximum: 10000, description: Basis points of eligible customers; omitted means all eligible customers. }
-        value: { type: boolean }
+        value:
+          oneOf:
+            - { type: boolean }
+            - { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$', description: Directly select a configured variant. }
+    FlagVariant:
+      description: Variant allocation weight in basis points; all weights on a flag total 10000.
+      type: object
+      additionalProperties: false
+      required: [key, weight]
+      properties:
+        key: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+        weight: { type: integer, minimum: 0, maximum: 10000 }
     FeatureFlag:
-      description: Boolean application behavior flag; business logic must check it explicitly.
+      description: Application behavior flag; business logic must check it explicitly. Omitted type means boolean for backward compatibility.
       type: object
       additionalProperties: false
       required: [key, enabled, default, rules]
       properties:
         key: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
         description: { type: string, maxLength: 512 }
+        type: { type: string, enum: [boolean, variant], default: boolean }
         enabled: { type: boolean }
-        default: { type: boolean, description: Value for disabled flags and unmatched customer rules. }
+        default:
+          description: Boolean fallback for boolean flags or named fallback variant for variant flags.
+          oneOf:
+            - { type: boolean }
+            - { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
         seed: { type: string, maxLength: 128, description: Server-supplied stable allocation seed; omit for a new flag. }
         rules: { type: array, maxItems: 32, items: { $ref: '#/components/schemas/FlagRule' } }
+        variants: { type: array, minItems: 2, maxItems: 16, items: { $ref: '#/components/schemas/FlagVariant' }, description: Required for variant flags; weights must total 10000 basis points. }
     FlagsConfig:
       description: Complete atomic environment configuration; omitted flags are removed from current evaluation.
       type: object
@@ -23143,17 +23161,23 @@ components:
         customer_id: { type: string, format: uuid, description: Omit for anonymous evaluation. }
         version: { type: integer, format: int64, minimum: 0, description: Zero or omitted selects current configuration. }
         fallback: { type: boolean, default: false }
+        fallback_variant: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$', description: Fallback variant for an absent flag; configured variant flags use their own default. }
     FlagDecision:
-      description: Explainable boolean decision against a configuration version.
+      description: Explainable boolean or named-variant decision against a configuration version.
       type: object
       required: [flag, value, config_version, reason, source]
       properties:
         flag: { type: string }
-        value: { type: boolean }
+        value:
+          oneOf:
+            - { type: boolean }
+            - { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+        type: { type: string, enum: [boolean, variant], description: Present as variant for named-variant decisions; omitted for legacy boolean decisions. }
         config_version: { type: integer, format: int64, minimum: 0 }
         rule_id: { type: string }
-        reason: { type: string, enum: [flag_missing, default, disabled, customer_missing, rule_match, configuration_stale] }
-        bucket: { type: integer, minimum: 0, maximum: 9999 }
+        reason: { type: string, enum: [flag_missing, default, disabled, customer_missing, rule_match, configuration_stale, type_mismatch] }
+        bucket: { type: integer, minimum: 0, maximum: 9999, description: Boolean rollout bucket or weighted variant assignment bucket. }
+        rollout_bucket: { type: integer, minimum: 0, maximum: 9999, description: Eligibility bucket for rollout-gated variant rules. }
         source: { type: string, enum: [configuration, fallback] }
     FlagEvidence:
       description: Application-reported evaluation and exposure, attributed by the gateway.

@@ -52,6 +52,7 @@ const (
 	FlagsMaxPerEnvironment     = 100
 	FlagsMaxGroups             = 100
 	FlagsMaxRules              = 32
+	FlagsMaxVariants           = 16
 	FlagsMaxCustomers          = 1000
 	FlagsMaxCustomerIDBytes    = 128
 	FlagsMaxBundleBytes        = 256 << 10

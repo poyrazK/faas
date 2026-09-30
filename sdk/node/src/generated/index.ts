@@ -413,6 +413,7 @@ export type { FlagsConfig } from './models/FlagsConfig.js';
 export type { FlagsEnvironment } from './models/FlagsEnvironment.js';
 export type { FlagsKey } from './models/FlagsKey.js';
 export type { FlagsProjectSlug } from './models/FlagsProjectSlug.js';
+export type { FlagVariant } from './models/FlagVariant.js';
 export type { GdprAuditExportResponse } from './models/GdprAuditExportResponse.js';
 export type { GitHubActivityRetryResponse } from './models/GitHubActivityRetryResponse.js';
 export type { GitHubCheckActivity } from './models/GitHubCheckActivity.js';

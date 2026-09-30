@@ -19,15 +19,24 @@ type Rule struct {
 	Group     string   `json:"group,omitempty"`
 	// Rollout is basis points (0..10000) of eligible customers. Nil is 100%.
 	Rollout *int `json:"rollout,omitempty"`
-	Value   bool `json:"value"`
+	// Value is a boolean for boolean flags, or a variant key for variant flags.
+	// Variant rules may omit it to use the configured weighted allocation.
+	Value any `json:"value,omitempty"`
 }
 type Flag struct {
 	Key         string `json:"key"`
 	Description string `json:"description,omitempty"`
-	Enabled     bool   `json:"enabled"`
-	Default     bool   `json:"default"`
-	Seed        string `json:"seed"`
-	Rules       []Rule `json:"rules"`
+	// Type is omitted for legacy boolean flags. Variant flags use "variant".
+	Type     string        `json:"type,omitempty"`
+	Enabled  bool          `json:"enabled"`
+	Default  any           `json:"default"`
+	Seed     string        `json:"seed"`
+	Rules    []Rule        `json:"rules"`
+	Variants []FlagVariant `json:"variants,omitempty"`
+}
+type FlagVariant struct {
+	Key    string `json:"key"`
+	Weight int    `json:"weight"`
 }
 type Config struct {
 	Flags  []Flag              `json:"flags"`
@@ -40,11 +49,13 @@ type Bundle struct {
 }
 type Decision struct {
 	Flag          string `json:"flag"`
-	Value         bool   `json:"value"`
+	Value         any    `json:"value"`
+	Type          string `json:"type,omitempty"`
 	ConfigVersion int64  `json:"config_version"`
 	RuleID        string `json:"rule_id,omitempty"`
 	Reason        string `json:"reason"`
 	Bucket        *int   `json:"bucket,omitempty"`
+	RolloutBucket *int   `json:"rollout_bucket,omitempty"`
 	Source        string `json:"source"`
 }
 
@@ -59,6 +70,16 @@ func Bucket(seed, key, customer string) int {
 	return int(binary.BigEndian.Uint32(h[:4]) % 10000)
 }
 
+// VariantBucket uses a separate hash domain from rollout eligibility so
+// changing a percentage does not bias variant assignment toward the first
+// allocation bucket. The wire algorithm is SHA-256(seed + NUL + key + NUL +
+// "variant" + NUL + customer), first four bytes as unsigned big-endian modulo
+// 10000.
+func VariantBucket(seed, key, customer string) int {
+	h := sha256.Sum256([]byte(seed + "\x00" + key + "\x00variant\x00" + customer))
+	return int(binary.BigEndian.Uint32(h[:4]) % 10000)
+}
+
 // Evaluate performs no I/O and requires customer identity supplied by trusted
 // application middleware. Anonymous contexts never match targeting rules.
 func Evaluate(b Bundle, key, customer string, fallback bool) Decision {
@@ -67,35 +88,134 @@ func Evaluate(b Bundle, key, customer string, fallback bool) Decision {
 		if f.Key != key {
 			continue
 		}
-		d.Value, d.Source, d.Reason = f.Default, "configuration", "default"
-		if !f.Enabled {
-			d.Reason = "disabled"
+		if flagType(f) != "boolean" {
+			d.Reason = "type_mismatch"
 			return d
 		}
-		if customer == "" {
-			d.Reason = "customer_missing"
+		return evaluateFlag(b, f, customer, fallback)
+	}
+	return d
+}
+
+// EvaluateVariant evaluates a named variant, using fallback when the flag is
+// missing or has a different type. Variant values are deterministic
+// for each customer and use the same immutable server-owned flag seed.
+func EvaluateVariant(b Bundle, key, customer, fallback string) Decision {
+	d := Decision{Flag: key, Value: fallback, Type: "variant", ConfigVersion: b.Version, Reason: "flag_missing", Source: "fallback"}
+	for _, f := range b.Flags {
+		if f.Key != key {
+			continue
+		}
+		if flagType(f) != "variant" {
+			d.Reason = "type_mismatch"
 			return d
 		}
-		for _, r := range f.Rules {
-			if len(r.Customers) > 0 && !slices.Contains(r.Customers, customer) {
+		return evaluateFlag(b, f, customer, fallback)
+	}
+	return d
+}
+
+func flagType(f Flag) string {
+	if f.Type == "" || f.Type == "boolean" {
+		return "boolean"
+	}
+	return f.Type
+}
+
+func evaluateFlag(b Bundle, f Flag, customer string, fallback any) Decision {
+	typ := flagType(f)
+	d := Decision{Flag: f.Key, Value: fallback, ConfigVersion: b.Version, Reason: "type_mismatch", Source: "fallback"}
+	if typ == "variant" {
+		d.Type = "variant"
+	}
+	switch typ {
+	case "boolean":
+		if _, ok := fallback.(bool); !ok {
+			return d
+		}
+	case "variant":
+		if _, ok := fallback.(string); !ok {
+			return d
+		}
+	default:
+		return d
+	}
+	d.Value = fallback
+	defaultValue := f.Default
+	if typ == "boolean" && defaultValue == nil {
+		// Preserve the Go zero-value behavior of the original boolean field.
+		defaultValue = false
+	}
+	if typ == "boolean" {
+		if _, ok := defaultValue.(bool); !ok {
+			return d
+		}
+	} else {
+		if _, ok := defaultValue.(string); !ok {
+			return d
+		}
+	}
+	d.Value, d.Source, d.Reason = defaultValue, "configuration", "default"
+	if !f.Enabled {
+		d.Reason = "disabled"
+		return d
+	}
+	if customer == "" {
+		d.Reason = "customer_missing"
+		return d
+	}
+	for _, r := range f.Rules {
+		if len(r.Customers) > 0 && !slices.Contains(r.Customers, customer) {
+			continue
+		}
+		if r.Group != "" && !slices.Contains(b.Groups[r.Group], customer) {
+			continue
+		}
+		if r.Rollout != nil {
+			bucket := Bucket(f.Seed, f.Key, customer)
+			if bucket >= *r.Rollout {
 				continue
 			}
-			if r.Group != "" && !slices.Contains(b.Groups[r.Group], customer) {
-				continue
-			}
-			if r.Rollout != nil {
-				bucket := Bucket(f.Seed, f.Key, customer)
-				if bucket >= *r.Rollout {
-					continue
-				}
+			if typ == "boolean" {
 				d.Bucket = &bucket
+			} else {
+				d.RolloutBucket = &bucket
 			}
-			d.Value, d.RuleID, d.Reason = r.Value, r.ID, "rule_match"
-			return d
 		}
+		if typ == "boolean" {
+			value, ok := r.Value.(bool)
+			if r.Value == nil {
+				value, ok = false, true
+			}
+			if !ok {
+				return d
+			}
+			d.Value = value
+		} else if r.Value != nil {
+			value, ok := r.Value.(string)
+			if !ok {
+				return d
+			}
+			d.Value = value
+		} else {
+			bucket := VariantBucket(f.Seed, f.Key, customer)
+			d.Bucket = &bucket
+			d.Value = chooseVariant(f.Variants, bucket)
+		}
+		d.RuleID, d.Reason = r.ID, "rule_match"
 		return d
 	}
 	return d
+}
+
+func chooseVariant(variants []FlagVariant, bucket int) string {
+	for _, variant := range variants {
+		if bucket < variant.Weight {
+			return variant.Key
+		}
+		bucket -= variant.Weight
+	}
+	return ""
 }
 
 // Validate bounds every collection and rejects ambiguous or dangling rules.
@@ -121,6 +241,37 @@ func Validate(c Config) error {
 		if len(f.Description) > api.FlagsMaxDescriptionBytes || len(f.Seed) > api.FlagsMaxSeedBytes || strings.ContainsRune(f.Seed, 0) {
 			return fmt.Errorf("invalid flag description or seed")
 		}
+		typ := flagType(f)
+		if typ != "boolean" && typ != "variant" {
+			return fmt.Errorf("invalid flag type %q", f.Type)
+		}
+		variantKeys := map[string]bool{}
+		if typ == "boolean" {
+			if f.Default != nil {
+				if _, ok := f.Default.(bool); !ok {
+					return fmt.Errorf("boolean flag requires a boolean default")
+				}
+			}
+			if len(f.Variants) != 0 {
+				return fmt.Errorf("boolean flag requires a boolean default and no variants")
+			}
+		} else {
+			defaultValue, ok := f.Default.(string)
+			if !ok || len(f.Variants) < 2 || len(f.Variants) > api.FlagsMaxVariants {
+				return fmt.Errorf("variant flag requires a string default and 2..%d variants", api.FlagsMaxVariants)
+			}
+			weightTotal := 0
+			for _, variant := range f.Variants {
+				if !ValidKey(variant.Key) || variantKeys[variant.Key] || variant.Weight < 0 || variant.Weight > 10000 {
+					return fmt.Errorf("invalid or duplicate flag variant")
+				}
+				variantKeys[variant.Key] = true
+				weightTotal += variant.Weight
+			}
+			if weightTotal != 10000 || !variantKeys[defaultValue] {
+				return fmt.Errorf("variant weights must total 10000 and default must name a variant")
+			}
+		}
 		if len(f.Rules) > api.FlagsMaxRules {
 			return fmt.Errorf("rule limit exceeded")
 		}
@@ -143,6 +294,18 @@ func Validate(c Config) error {
 			}
 			if len(r.Customers) == 0 && r.Group == "" && r.Rollout == nil {
 				return fmt.Errorf("rule requires customer, group, or rollout targeting")
+			}
+			if typ == "boolean" {
+				if r.Value != nil {
+					if _, ok := r.Value.(bool); !ok {
+						return fmt.Errorf("boolean rule requires a boolean value")
+					}
+				}
+			} else if r.Value != nil {
+				value, ok := r.Value.(string)
+				if !ok || !variantKeys[value] {
+					return fmt.Errorf("variant rule value must name a configured variant")
+				}
 			}
 		}
 	}

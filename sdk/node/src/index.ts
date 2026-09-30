@@ -137,8 +137,8 @@ export { preAuthTargetDigest, PRE_AUTH_TARGET_HEADER } from './pre-auth-target.j
 
 export { createIssueReporter, type IssueContext, type IssueReporterOptions } from './issues.js';
 
-export { GregaleFlags, evaluateFlag, flagBucket, GREGALE_FLAG_EVIDENCE_HEADER, GREGALE_FLAG_CONTEXT_HEADER } from './flags.js';
-export type { FlagsBundle, FlagRule, FeatureFlag, FlagDecision, FlagEvidence, FlagRequestHeaders, GregaleFlagsOptions } from './flags.js';
+export { GregaleFlags, evaluateFlag, evaluateVariant, flagBucket, flagVariantBucket, GREGALE_FLAG_EVIDENCE_HEADER, GREGALE_FLAG_CONTEXT_HEADER } from './flags.js';
+export type { FlagsBundle, FlagRule, VariantFlagRule, FeatureFlag, FlagDefinition, BooleanFeatureFlag, VariantFeatureFlag, WeightedVariant, BooleanFlagDecision, VariantFlagDecision, AnyFlagDecision, FlagDecision, FlagEvidence, VariantFlagEvidence, AnyFlagEvidence, FlagRequestHeaders, GregaleFlagsOptions } from './flags.js';
 
 export { FlagsService } from './generated/services/FlagsService.js';
 

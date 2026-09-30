@@ -758,6 +758,7 @@ from .execution_usage import ExecutionUsage
 from .execution_usage_summary_response import ExecutionUsageSummaryResponse
 from .export_app_debug_requests_format import ExportAppDebugRequestsFormat
 from .feature_flag import FeatureFlag
+from .feature_flag_type import FeatureFlagType
 from .feature_flag_version import FeatureFlagVersion
 from .field_error import FieldError
 from .filter_criteria import FilterCriteria
@@ -772,10 +773,12 @@ from .fire_cron_response_status import FireCronResponseStatus
 from .flag_decision import FlagDecision
 from .flag_decision_reason import FlagDecisionReason
 from .flag_decision_source import FlagDecisionSource
+from .flag_decision_type import FlagDecisionType
 from .flag_evidence import FlagEvidence
 from .flag_evidence_page import FlagEvidencePage
 from .flag_request_evidence import FlagRequestEvidence
 from .flag_rule import FlagRule
+from .flag_variant import FlagVariant
 from .flags_bundle import FlagsBundle
 from .flags_config import FlagsConfig
 from .flags_config_groups import FlagsConfigGroups
@@ -2681,6 +2684,7 @@ __all__ = (
     "ExecutionUsageSummaryResponse",
     "ExportAppDebugRequestsFormat",
     "FeatureFlag",
+    "FeatureFlagType",
     "FeatureFlagVersion",
     "FieldError",
     "FilterCriteria",
@@ -2695,6 +2699,7 @@ __all__ = (
     "FlagDecision",
     "FlagDecisionReason",
     "FlagDecisionSource",
+    "FlagDecisionType",
     "FlagEvidence",
     "FlagEvidencePage",
     "FlagRequestEvidence",
@@ -2702,6 +2707,7 @@ __all__ = (
     "FlagsBundle",
     "FlagsConfig",
     "FlagsConfigGroups",
+    "FlagVariant",
     "GdprAuditExportResponse",
     "GdprAuditExportResponseAction",
     "GdprAuditExportResponseData",

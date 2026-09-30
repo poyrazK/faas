@@ -251,6 +251,7 @@ export class FlagsService {
     key,
     customerId,
     value,
+    variant,
     used,
     since = '24h',
     cursor,
@@ -276,6 +277,10 @@ export class FlagsService {
      */
     value?: boolean,
     /**
+     * Filter the selected named variant; mutually exclusive with value.
+     */
+    variant?: string,
+    /**
      * Filter application-reported exposure.
      */
     used?: boolean,
@@ -299,6 +304,7 @@ export class FlagsService {
       query: {
         'customer_id': customerId,
         'value': value,
+        'variant': variant,
         'used': used,
         'since': since,
         'cursor': cursor,

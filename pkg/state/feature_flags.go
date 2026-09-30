@@ -60,8 +60,18 @@ func prepareFeatureFlags(u FeatureFlagUpdate, prior FeatureFlagVersion) (Feature
 	}
 	for i := range c.Flags {
 		f := &c.Flags[i]
+		if (f.Type == "" || f.Type == "boolean") && f.Default == nil {
+			f.Default = false
+		}
 		if f.Rules == nil {
 			f.Rules = []flags.Rule{}
+		}
+		if f.Type == "" || f.Type == "boolean" {
+			for j := range f.Rules {
+				if f.Rules[j].Value == nil {
+					f.Rules[j].Value = false
+				}
+			}
 		}
 		if seed := seeds[f.Key]; seed != "" {
 			if f.Seed != "" && f.Seed != seed {

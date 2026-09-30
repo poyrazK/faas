@@ -39,7 +39,9 @@ func exerciseFeatureFlags(t *testing.T, s state.Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v.Version != 1 || !flags.Evaluate(v.Bundle, "export", customer.ID, false).Value || v.Flags[0].Seed == "" {
+	decision := flags.Evaluate(v.Bundle, "export", customer.ID, false)
+	value, isBoolean := decision.Value.(bool)
+	if v.Version != 1 || !isBoolean || !value || v.Flags[0].Seed == "" {
 		t.Fatal(v)
 	}
 	firstSeed := v.Flags[0].Seed
