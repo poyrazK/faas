@@ -164,6 +164,7 @@ func runLocalTestWithLoad(parent context.Context, name string, scenario testScen
 			"GREGALE_TEST_LOAD_DURATION="+load.Duration.String(),
 			"GREGALE_TEST_LOAD_MAX_VUS="+strconv.Itoa(load.maxVUs()),
 			"GREGALE_TEST_LOAD_PACING="+load.Pacing.String(),
+			"GREGALE_TEST_LOAD_RATE="+strconv.Itoa(load.Rate),
 		)
 	}
 	if scenario.Local != nil {

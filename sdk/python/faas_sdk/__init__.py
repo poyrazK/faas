@@ -43,6 +43,14 @@ from ._sse import SseEvent, aiter_sse, iter_sse
 from ._transport import RetryOptions, WrapperOptions, install_chain
 from ._wrapper import FaaSClient, FaaSClientOptions
 from .client import AuthenticatedClient, Client
+from .dev_bridge import (
+    DEV_BRIDGE_CONTEXT_HEADER,
+    AsyncDevBridgeTransport,
+    DevBridgeMiddleware,
+    DevBridgeTransport,
+    current_dev_bridge_context,
+    with_dev_bridge_context,
+)
 from .executions import ExecutionEvent, ExecutionID, awatch_execution, watch_execution
 from .idempotency import (
     IdempotencyKey,
@@ -121,4 +129,10 @@ __all__ = (
     "watch_execution",
     "awatch_execution",
     "__version__",
+    "DEV_BRIDGE_CONTEXT_HEADER",
+    "AsyncDevBridgeTransport",
+    "DevBridgeMiddleware",
+    "DevBridgeTransport",
+    "current_dev_bridge_context",
+    "with_dev_bridge_context",
 )

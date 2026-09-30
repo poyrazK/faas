@@ -72,6 +72,114 @@ scenarios:
       - [node, test/fixtures/cleanup.mjs]
 ```
 
+## Named suites
+
+Declare suites alongside `scenarios` to run a smoke or regression selection in
+one command. Members execute sequentially in declaration order. Each member can
+choose an engine, a real-VM profile, and a local JSON/CSV dataset:
+
+```yaml
+suites:
+  smoke:
+    scenarios:
+      - scenario: api-health
+        engine: local
+      - scenario: customer-export
+        engine: local
+        data: test/export-cases.json
+  regression:
+    scenarios:
+      - scenario: customer-export
+        engine: real-vm
+        profile: all
+      - scenario: delivery-retry
+        engine: real-vm
+        profile: restored
+```
+
+These names must also be declared under `scenarios`. A suite contains 1..100
+unique scenario names; use `--repeat` or `profile: all` for repeated runs.
+Dataset paths resolve relative to the manifest directory. Data remains local
+only; use separate suites for local data cases and real-VM lifecycle checks.
+
+```sh
+# Validate every selected member and dataset without starting apps or logging in.
+gregale test --suite smoke --validate
+
+# With local.command on each member, the CLI manages app startup and shutdown.
+gregale test --suite smoke --report results.json --junit results.xml
+
+# Stop after the first failed run and cleanup.
+gregale test --suite smoke --fail-fast --junit results.xml
+
+# Override all member engines for a local development run.
+gregale test --suite regression --engine local --base-url http://localhost:3000
+
+# Preflight all real-VM members and guard the total estimated VM usage.
+gregale test --suite regression --preflight
+gregale test --suite regression --max-workload-minutes 180
+```
+
+Without a member `engine`, the default is `real-vm`. Explicit `--engine` overrides
+every member's engine. Explicit `--profile` overrides the real-VM members'
+profiles; local and simulated runs retain their own engine labels and do not
+claim lifecycle evidence. `--profile` requires at least one real-VM member.
+`--repeat` applies to every member: all attempts and cases/profiles finish before
+the next member starts. `--scenario` and `--suite` are mutually exclusive, and
+suite datasets must be declared on members rather than passed through `--data`.
+
+The CLI checks every selected member's source, engine requirements, data fields,
+and load configuration before starting the suite. `--load` requires all members
+to use the local engine and applies each scenario's load settings plus CLI
+overrides. `--base-url` supplies the origin for local members. Each managed local
+run starts a fresh app; fixtures finish and the app stops before the next run.
+The VM workload-minute guard adds all real-VM members, profiles, and repeats,
+rather than granting each member a separate budget. `--preflight` requires all
+members to use real VMs and checks capacity for each sequential member.
+
+By default, assertion or cleanup failures do not stop subsequent runs. The
+command exits unsuccessfully if any run fails. `--fail-fast` also works with a
+single `--scenario`: after the first failure and cleanup, remaining runs are
+reported as `skipped`, with a reason. Interruption likewise records remaining
+planned runs as skipped. JSON stdout and `--report` contain one combined array,
+with a `suite` field on each suite receipt. JUnit contains one suite with distinct
+scenario/profile/case/attempt names, failures, and `<skipped>` entries. A partial
+suite never exits successfully. Human output ends with passed/failed/skipped
+counts. Reports continue to omit dataset values and credentials.
+
+Add `--html` to write a standalone report that can be opened in a browser or
+uploaded as a CI artifact:
+
+```sh
+gregale test --suite smoke --report results.json --junit results.xml --html results.html
+```
+
+The HTML file has no external assets. It summarizes run outcomes, phases, HTTP
+steps, load percentiles, baseline checks, and platform evidence. Expand a run to
+inspect its evidence or the complete JSON receipt. Values are HTML-escaped, and
+the report omits dataset values and credentials just like the JSON report.
+
+### Compare two saved reports offline
+
+Compare JSON reports from separate runs without starting the application or
+contacting Gregale:
+
+```sh
+gregale test compare before.json after.json
+gregale test compare before.json after.json --html comparison.html
+gregale test compare before.json after.json --json
+```
+
+The command pairs runs by scenario, engine, profile, case, and attempt. It shows
+added and removed runs, status changes, duration and phase changes, HTTP step
+timings, and aggregate, per-step, and arrival-rate load metrics when available.
+It also marks a changed load workload signature or label so those metric deltas
+are easy to spot.
+The comparison is informational and does not apply regression budgets or fail
+because a metric changed. Use `--baseline` during a load run when the comparison
+must enforce the configured performance limits. Inputs are local JSON
+report arrays written by `--report` or JSON stdout, capped at 64 MiB each.
+
 ## Native HTTP workflows
 
 For common API tests, declare requests directly. `requests` run after the
@@ -305,8 +413,9 @@ gregale test --validate --engine local --data cases.json
 ```
 
 Each row runs the whole scenario with a fresh run ID and capture map. Cases run
-in file order; `--repeat N` repeats all rows N times. All rows use the same
-running local app, so use run IDs or fixture cleanup to avoid shared state.
+in file order; `--repeat N` repeats all rows N times. With a manually supplied
+`--base-url`, rows share the running app, so use run IDs or fixture cleanup to
+avoid shared state. With `local.command`, each row/attempt starts a fresh app.
 An assertion failure is reported for its row; remaining rows continue, and the
 command exits unsuccessfully if any row fails. Interruption stops new rows.
 Commands receive `GREGALE_TEST_CASE` (`row-1`, `row-2`, etc.) and
@@ -334,8 +443,9 @@ gregale test --scenario api-smoke --engine local --base-url http://localhost:300
 Each user runs a journey consisting of `requests` followed by `checks`, in order,
 then immediately starts the next journey. Users share the total iteration budget;
 `--iterations 100 --vus 5` runs 100 journeys in total. This is a closed concurrency
-model: throughput depends on the app's response speed. It does not promise a
-fixed arrival rate. Captures start empty for every journey. `${run.id}` becomes
+model: throughput depends on the app's response speed. Add `rate` and `duration`
+to choose the fixed arrival schedule described below. Captures start empty for
+every journey. `${run.id}` becomes
 `<run-ID>-<iteration-number>` so requests can create distinct resources. Cleanup
 commands receive the parent `GREGALE_TEST_RUN_ID` and can remove resources by
 that prefix.
@@ -365,9 +475,9 @@ step name, and failed budgets fail the JUnit case and command.
 This optional block configures `--load`; it does not enable load for a normal
 test. Replace `iterations` with `duration: 30s` to choose a timed run. CLI flags
 override the manifest; selecting `--duration` clears its iteration setting and
-stages, and selecting `--iterations` clears its duration and stages. Without
+stages, and selecting `--iterations` clears its duration, stages, and rate. Without
 configuration, `--load`
-uses one user and 100 journeys. `--vus`, `--iterations`, and `--duration` require
+uses one user and 100 journeys. `--vus`, `--iterations`, `--rate`, and `--duration` require
 `--load`. Validate the configuration without contacting the app:
 
 ```sh
@@ -382,6 +492,154 @@ runs. Commands receive `GREGALE_TEST_LOAD=1`, `GREGALE_TEST_LOAD_MODE`,
 `GREGALE_TEST_LOAD_VUS`, `GREGALE_TEST_LOAD_ITERATIONS`, and
 `GREGALE_TEST_LOAD_DURATION`. After load, assertions and cleanup can also inspect
 aggregate evidence in `GREGALE_TEST_LOAD_JSON`.
+
+### Compare against a performance baseline
+
+Save a successful local load report, then use it as a regression gate:
+
+```sh
+gregale test --scenario api-smoke --engine local --load --repeat 3 \
+  --report baseline.json
+gregale test --scenario api-smoke --engine local --load --repeat 3 \
+  --baseline baseline.json --report current.json --junit current.xml
+```
+
+These commands use `local.command`; add the same `--base-url` for an app you
+start yourself. The same workflow works with `--suite` and member case files.
+`--baseline` requires `--load` and test execution. Recording a report does not
+require a baseline, and the comparison never updates the baseline file.
+
+By default, the aggregate and **every HTTP step** must have at least 20 samples
+in both runs, p95 latency may increase by at most 10%, and the error rate may not
+increase. Keep different budgets in the scenario:
+
+```yaml
+load:
+  workload: exports-small-v1
+  vus: 5
+  iterations: 100
+  thresholds: {p95: 250ms, error_rate: 0.01}
+  regression:
+    p95_percent: 15
+    error_rate_increase: 0.005
+    min_samples: 50
+    steps:
+      submit: {p95_percent: 10}
+      read: {p95_percent: 20, error_rate_increase: 0}
+```
+
+Step budgets inherit unspecified values from the aggregate regression block.
+Limits are inclusive. `p95_percent` is a relative increase: baseline p95 of
+100ms and a 15% budget permit at most 115ms. A zero baseline permits only zero
+latency. `error_rate_increase` is an absolute fraction: `0.005` allows an increase
+of 0.5 percentage points, such as 1% to 1.5%. The allowed ranges are 0–1,000 for
+the percent, 0–1 for the error fraction, and 1–100,000 for minimum samples.
+Absolute `thresholds` still apply; regression budgets add a separate gate only
+when `--baseline` is supplied. Validate the manifest budgets with the usual
+`--validate --engine local --load` command.
+
+Before starting any app or fixture, the CLI matches each selected run by
+scenario, engine, profile, case, and attempt number. A baseline can contain
+additional runs, but missing or duplicate matches fail. Only successful load
+runs with successful cleanup qualify. Incomplete runs, dropped arrivals,
+insufficient baseline samples, and malformed metrics are rejected. Reports from
+older CLI versions without workload metadata must be recorded again.
+
+New load reports include versioned `load.workload` metadata. Its signature checks
+the ordered request templates (including query, JSON body, assertions, captures,
+and header template dependencies), data field names and scalar types, managed
+versus manually started app mode, scenario timeout, VUs, iteration or duration
+budget, rate, stages, and pacing. Thresholds, regression budgets, progress,
+app source revisions, commands, and loopback ports are excluded. This lets an
+application change while keeping its test workload constant.
+
+Resolved consumer credentials, literal header values, environment values, and
+case values are excluded from the signature. They are not written into workload
+metadata. Set `load.workload` to identify your dataset and environment version,
+and change that label when those inputs change. Use equivalent fixture state and
+generator resources for the two runs; the CLI cannot certify those conditions.
+Literal values declared in request bodies and expectations enter the signature
+as part of their templates; the report contains only their hash.
+
+Each repeated attempt and data row is compared separately. Percentiles are not
+averaged or reconstructed from report summaries. Use enough journeys and repeats
+to measure your application reliably; a regression budget is a deterministic
+gate, not a statistical confidence test. A sparse current run fails its sample
+gate even when the observed latency and errors would pass.
+
+JSON records comparison status, the baseline report's SHA-256, and per-metric
+baseline/current values, deltas, limits, and pass/fail results under `baseline`.
+Failed comparisons fail the command and JUnit case. Cleanup completes before
+comparison; `--fail-fast` then skips remaining attempts and suite members.
+Their comparison status is `not_compared`, as it is for a run that fails its
+execution or cleanup. A regression-only failure can have `load.status: passed`
+while the receipt and `baseline.status` are failed. Report destinations that
+alias the baseline file are rejected, including symlinks and hard links.
+Baseline inputs are local JSON report arrays, capped at 64 MiB.
+
+### Schedule a fixed arrival rate
+
+Use `--rate` to schedule journeys independently of response speed. A journey is
+the complete ordered workflow, so 20 journeys per second can produce more than
+20 HTTP requests per second:
+
+```sh
+gregale test --scenario api-smoke --engine local --base-url http://localhost:3000 \
+  --load --rate 20 --duration 30s --vus 10 --progress \
+  --report arrival-load.json --junit arrival-load.xml
+```
+
+Keep the same settings in the manifest to reuse them from a named suite:
+
+```yaml
+load:
+  rate: 20
+  duration: 30s
+  vus: 10
+  thresholds:
+    error_rate: 0
+    steps:
+      submit: {p95: 200ms}
+      read: {p95: 100ms}
+```
+
+`vus` caps active journeys in this mode. The CLI starts one arrival at the
+beginning of the scheduling window and then spaces arrivals at `1 / rate`
+seconds, ending before `duration`. The schedule contains `ceil(rate * duration
+in seconds)` arrivals. A busy pool drops the arrival immediately rather than
+queuing it. If the generator misses multiple deadlines, it counts the missed
+arrivals as late and admits at most the most recent due arrival. It never replays
+a backlog in a burst or starts arrivals after the scheduling window ends.
+Admitted journeys finish their entire workflow during the 30-second drain
+allowance. Their run identity uses the arrival's schedule number; dropped
+arrivals can leave gaps in those numbers.
+
+**Any dropped arrival fails the run**, even when HTTP error and latency budgets
+pass. This indicates that the requested traffic was not delivered; increase the
+VU cap or reduce the rate, and check generator capacity. Drops are reported
+separately from failed HTTP steps. The HTTP error-rate metric remains failed
+steps divided by attempted steps.
+
+The JSON `load.arrival` object records the target journeys/second, planned and
+scheduled arrivals, drops at the VU limit, late drops, total drops, scheduling
+duration, and achieved journey starts/second. `scheduled` counts starts plus
+drops; a canceled or resource-limited run can leave planned arrivals unscheduled.
+Achieved start rate uses the scheduling phase, while HTTP-step throughput uses
+the whole load phase including drain. Human summaries and progress also show
+the target rate and drops. JUnit embeds the same evidence and marks a dropped
+run as failed. A skipped suite member retains its arrival plan as not started.
+Commands receive `GREGALE_TEST_LOAD_MODE=arrival-rate` and
+`GREGALE_TEST_LOAD_RATE` in addition to the other load variables.
+
+Rates are whole journeys/second from 1 to 1,000. Duration is required, from 1
+second to 5 minutes, and concurrency remains capped at 50 VUs. The CLI rejects
+schedules whose planned complete journeys would exceed 100,000 HTTP steps.
+Arrival-rate load cannot use iteration counts, VU stages, or nonzero pacing.
+Explicit `--rate` selects this mode and clears manifest iteration counts,
+stages, and pacing; an accompanying positive `--pacing` remains an error.
+`--duration` can override an existing arrival duration, while `--iterations`
+selects the concurrency model and clears the manifest rate. Passing both
+`--rate` and `--iterations` is an error. `--rate` requires `--load`.
 
 ### Ramp traffic, pace users, and follow progress
 
@@ -421,11 +679,10 @@ and target user counts, and journeys started in that stage. Journeys are assigne
 to the stage in which they start, even if they finish in a later stage.
 
 `pacing` pauses each user after a journey finishes before starting its next one,
-including after a failed journey. It applies to all load modes and defaults to
+including after a failed journey. It applies to concurrency load modes and defaults to
 zero. It adds no pause after the final journey and does not count toward HTTP
 step latency. The allowed range is 0 seconds to 1 minute; `--pacing 0s` disables
-manifest pacing. This remains a concurrency model, not a fixed arrival-rate
-promise.
+manifest pacing. Stages and pacing use the concurrency model.
 
 ```sh
 gregale test --scenario customer-export --engine local --base-url http://localhost:3000 \
@@ -460,8 +717,9 @@ in-flight work. Receipts contain aggregate evidence rather than one entry per
 journey. JUnit names contain `/local/load/` to distinguish load cases; response
 bodies, request headers, data values, and captures are not added to reports.
 
-Load currently requires `--engine local` and an already running HTTP app on
-loopback. It uses native Go HTTP requests, with no k6 or Postman runtime download.
+Load currently requires `--engine local` and either `local.command` or an already
+running HTTP app on loopback. It uses native Go HTTP requests, with no k6 or
+Postman runtime download.
 Limits are 50 users, 10,000 journeys for an iteration run, 5 minutes of scheduling,
 and 100,000 HTTP-step attempts per case/run. Iteration configurations that could
 exceed the HTTP-step budget are rejected before execution. Timed runs fail if

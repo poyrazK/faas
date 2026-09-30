@@ -13,7 +13,7 @@ export GOOS GOARCH
 TLS_CUTOVER_MODE ?= dry-run
 PKGS    := ./...
 COVERAGE_DIR := coverage
-DAEMONS := apid gatewayd-public gatewayd-internal realtimed s3-gatewayd schedd vmmd vmmd-jail-helper vmmd-raw-bridge vmmd-tcp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd hostage-gen
+DAEMONS := apid bridged gatewayd-public gatewayd-internal realtimed s3-gatewayd schedd vmmd vmmd-jail-helper vmmd-raw-bridge vmmd-tcp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd hostage-gen
 GOVULNCHECK_VERSION ?= 1.7.0
 # gregale is the customer-facing CLI; gregalectl is the
 # operator-only companion CLI (issue #911 / ADR-110 PR-6.5).
@@ -535,6 +535,10 @@ metal-lima: ## Run metal tests locally on an M3+ Mac via Lima nested KVM (see de
 	limactl shell --workdir "$(CURDIR)" faas-metal sudo ./deploy/lima/run-metal.sh
 
 .PHONY: native-m9-acceptance
+.PHONY: native-dev-bridge-acceptance
+native-dev-bridge-acceptance: ## Verify Dev Bridge against designated native split-box fixtures and public TLS
+	@bash scripts/ci/run-native-dev-bridge-acceptance.sh
+
 native-m9-acceptance: ## M9: run the guarded two-node failure-safe drill on the native x86 split-box pair
 	@bash scripts/ci/run-native-m9-acceptance.sh
 
@@ -1315,7 +1319,26 @@ sdk-smoke-python: ## Build fakeapid fixture + run Python SDK smoke + unit tests
 
 .PHONY: sdk-unit-python
 sdk-unit-python: ## Run Python SDK unit tests (no fixture required)
-	@cd sdk/python && .venv/bin/python -m pytest tests/test_client.py tests/test_sse.py
+	@cd sdk/python && .venv/bin/python -m pytest tests/test_client.py tests/test_sse.py tests/test_dev_bridge.py
+
+.PHONY: test-flags
+test-flags: ## Validate customer-aware flag release, SDK and request evidence against disposable Postgres
+	@test -n "$(DATABASE_URL)" || (echo "DATABASE_URL is required for Flags acceptance"; exit 1)
+	@cd sdk/node && npm ci --ignore-scripts --no-audit --no-fund && npm run build && npm run test:build && node --test dist-test/test/flags.test.js
+	@$(GO) test -p 1 ./pkg/flags ./pkg/workloadidentity
+	@DATABASE_URL="$(DATABASE_URL)" $(GO) test -p 1 ./pkg/flagsintegration
+	@$(GO) test -p 1 ./pkg/gateway -run 'TestFeatureFlag|TestFlagEvidence' -count=1
+	@GREGALE_FLAGS_ACCEPTANCE=1 DATABASE_URL="$(DATABASE_URL)" $(GO) test -p 1 ./cmd/apid -run '^TestFeatureFlags' -count=1
+	@$(GO) test -p 1 ./cmd/gregale -run '^TestCmdFlags' -count=1
+
+.PHONY: test-flags-metal
+test-flags-metal: ## Validate Node Flags refresh after native VM restore (root, KVM, FAAS_TEST_KERNEL, FAAS_BUILDER_BASE_PATH)
+	@test "$$(id -u)" -eq 0 || (echo "test-flags-metal must run as root" >&2; exit 1)
+	@test -c /dev/kvm || (echo "/dev/kvm is required for test-flags-metal" >&2; exit 1)
+	@test -r "$$FAAS_TEST_KERNEL" || (echo "FAAS_TEST_KERNEL must name a readable kernel" >&2; exit 1)
+	@test -r "$$FAAS_BUILDER_BASE_PATH" || (echo "FAAS_BUILDER_BASE_PATH must name a readable builder base" >&2; exit 1)
+	@cd sdk/node && npm ci --ignore-scripts --no-audit --no-fund && npm run build
+	@RUN_REGEX='^TestFeatureFlagsNativeParkRestoreMetal$$' $(MAKE) test-metal PKGS=./cmd/e2e/...
 
 .PHONY: test-issues
 test-issues: ## Real PostgreSQL and SDK process acceptance for Gregale Issues

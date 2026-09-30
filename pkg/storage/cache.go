@@ -297,10 +297,17 @@ func (c *LocalCacheBackend) Exists(ctx context.Context, key string) (bool, error
 // chars), with the leading 2 chars used as the bucket directory
 // so a single flat directory doesn't grow unbounded.
 func (c *LocalCacheBackend) cacheFileFor(key string) (path string, metaPath string) {
+	full := CacheFileForKey(c.root, key)
+	return full, full + ".meta"
+}
+
+// CacheFileForKey returns where a read-through cache rooted at root keeps its
+// copy of key. It lets read-only tools (gregalectl doctor) find an artifact
+// that a daemon staged through a remote backend without opening that backend.
+func CacheFileForKey(root, key string) string {
 	sum := sha256.Sum256([]byte(key))
 	hex := hex.EncodeToString(sum[:])
-	full := filepath.Join(c.root, hex[:2], hex[2:])
-	return full, full + ".meta"
+	return filepath.Join(root, hex[:2], hex[2:])
 }
 
 // ensureSharedCacheDir creates dir with the shared-cache permission contract.

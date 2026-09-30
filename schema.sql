@@ -5608,6 +5608,47 @@ CREATE TABLE public.deployments (
 
 
 --
+-- Name: dev_bridge_sessions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.dev_bridge_sessions (
+    id text NOT NULL,
+    account_id uuid NOT NULL,
+    target_app_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    scope jsonb NOT NULL,
+    attachment_digest bytea NOT NULL,
+    request_digest bytea NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    revoked_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT dev_bridge_scope_shape CHECK (((jsonb_typeof(scope) = 'object'::text) AND (scope ?& ARRAY['account_id'::text, 'target_app_id'::text, 'environment_id'::text, 'developer_id'::text, 'project_id'::text]) AND ((scope ->> 'account_id'::text) = (account_id)::text) AND ((scope ->> 'target_app_id'::text) = (target_app_id)::text) AND ((scope ->> 'environment_id'::text) = (environment_id)::text) AND (jsonb_typeof((scope -> 'dependency_app_ids'::text)) = ANY (ARRAY['array'::text, 'null'::text])) AND ((length((scope ->> 'developer_id'::text)) >= 1) AND (length((scope ->> 'developer_id'::text)) <= 128)))),
+    CONSTRAINT dev_bridge_sessions_attachment_digest_check CHECK ((octet_length(attachment_digest) = 32)),
+    CONSTRAINT dev_bridge_sessions_request_digest_check CHECK ((octet_length(request_digest) = 32))
+);
+
+
+--
+-- Name: dev_bridge_webhook_replays; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.dev_bridge_webhook_replays (
+    id uuid NOT NULL,
+    session_id text NOT NULL,
+    account_id uuid NOT NULL,
+    invocation_id uuid NOT NULL,
+    idempotency_key text NOT NULL,
+    state text DEFAULT 'dispatching'::text NOT NULL,
+    http_status integer DEFAULT 0 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    completed_at timestamp with time zone,
+    CONSTRAINT dev_bridge_webhook_replays_http_status_check CHECK (((http_status = 0) OR ((http_status >= 100) AND (http_status <= 599)))),
+    CONSTRAINT dev_bridge_webhook_replays_idempotency_key_check CHECK (((length(idempotency_key) >= 1) AND (length(idempotency_key) <= 64))),
+    CONSTRAINT dev_bridge_webhook_replays_state_check CHECK ((state = ANY (ARRAY['dispatching'::text, 'completed'::text, 'uncertain'::text])))
+);
+
+
+--
 -- Name: developer_sync_history; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -6086,6 +6127,26 @@ CREATE TABLE public.executions (
     CONSTRAINT executions_timestamps_check CHECK ((((status = 'queued'::text) AND (started_at IS NULL) AND (finished_at IS NULL)) OR ((status = 'restoring'::text) AND (started_at IS NULL) AND (finished_at IS NULL)) OR ((status = 'running'::text) AND (started_at IS NOT NULL) AND (finished_at IS NULL)) OR ((status = ANY (ARRAY['succeeded'::text, 'failed'::text, 'timed_out'::text, 'out_of_memory'::text, 'cancelled'::text])) AND (finished_at IS NOT NULL)))),
     CONSTRAINT executions_updated_at_check CHECK ((updated_at >= created_at)),
     CONSTRAINT executions_usage_check CHECK (((wall_time_ms >= 0) AND (cpu_time_ms >= 0) AND (peak_memory_mb >= 0)))
+);
+
+
+--
+-- Name: feature_flag_versions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.feature_flag_versions (
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    version bigint NOT NULL,
+    config jsonb NOT NULL,
+    actor text NOT NULL,
+    restored_from bigint,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT feature_flag_versions_actor_check CHECK (((length(actor) >= 1) AND (length(actor) <= 256))),
+    CONSTRAINT feature_flag_versions_config_check CHECK ((jsonb_typeof(config) = 'object'::text)),
+    CONSTRAINT feature_flag_versions_restored_from_check CHECK ((restored_from > 0)),
+    CONSTRAINT feature_flag_versions_version_check CHECK ((version > 0))
 );
 
 
@@ -9274,8 +9335,10 @@ CREATE TABLE public.request_telemetry (
     guest_cpu_time_ms integer DEFAULT 0 NOT NULL,
     guest_peak_rss_mb integer DEFAULT 0 NOT NULL,
     guest_resource_usage_available boolean DEFAULT false NOT NULL,
+    flag_evidence jsonb DEFAULT '[]'::jsonb NOT NULL,
     CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
     CONSTRAINT request_telemetry_country_check CHECK (((country = '__unknown__'::text) OR (country ~ '^[A-Z]{2}$'::text))),
+    CONSTRAINT request_telemetry_flag_evidence_check CHECK ((jsonb_typeof(flag_evidence) = 'array'::text)),
     CONSTRAINT request_telemetry_guest_cpu_time_ms_check CHECK (((guest_cpu_time_ms >= 0) AND (guest_cpu_time_ms <= 86400000))),
     CONSTRAINT request_telemetry_guest_duration_ms_check CHECK (((guest_duration_ms >= 0) AND (guest_duration_ms <= 86400000))),
     CONSTRAINT request_telemetry_guest_error_class_check CHECK ((guest_error_class = ANY (ARRAY[''::text, 'http_5xx'::text, 'handler_exec'::text, 'handler_protocol'::text, 'timeout'::text, 'canceled'::text]))),
@@ -9331,8 +9394,10 @@ CREATE TABLE public.request_telemetry_202609 (
     guest_cpu_time_ms integer DEFAULT 0 NOT NULL,
     guest_peak_rss_mb integer DEFAULT 0 NOT NULL,
     guest_resource_usage_available boolean DEFAULT false NOT NULL,
+    flag_evidence jsonb DEFAULT '[]'::jsonb NOT NULL,
     CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
     CONSTRAINT request_telemetry_country_check CHECK (((country = '__unknown__'::text) OR (country ~ '^[A-Z]{2}$'::text))),
+    CONSTRAINT request_telemetry_flag_evidence_check CHECK ((jsonb_typeof(flag_evidence) = 'array'::text)),
     CONSTRAINT request_telemetry_guest_cpu_time_ms_check CHECK (((guest_cpu_time_ms >= 0) AND (guest_cpu_time_ms <= 86400000))),
     CONSTRAINT request_telemetry_guest_duration_ms_check CHECK (((guest_duration_ms >= 0) AND (guest_duration_ms <= 86400000))),
     CONSTRAINT request_telemetry_guest_error_class_check CHECK ((guest_error_class = ANY (ARRAY[''::text, 'http_5xx'::text, 'handler_exec'::text, 'handler_protocol'::text, 'timeout'::text, 'canceled'::text]))),
@@ -9387,8 +9452,10 @@ CREATE TABLE public.request_telemetry_202610 (
     guest_cpu_time_ms integer DEFAULT 0 NOT NULL,
     guest_peak_rss_mb integer DEFAULT 0 NOT NULL,
     guest_resource_usage_available boolean DEFAULT false NOT NULL,
+    flag_evidence jsonb DEFAULT '[]'::jsonb NOT NULL,
     CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
     CONSTRAINT request_telemetry_country_check CHECK (((country = '__unknown__'::text) OR (country ~ '^[A-Z]{2}$'::text))),
+    CONSTRAINT request_telemetry_flag_evidence_check CHECK ((jsonb_typeof(flag_evidence) = 'array'::text)),
     CONSTRAINT request_telemetry_guest_cpu_time_ms_check CHECK (((guest_cpu_time_ms >= 0) AND (guest_cpu_time_ms <= 86400000))),
     CONSTRAINT request_telemetry_guest_duration_ms_check CHECK (((guest_duration_ms >= 0) AND (guest_duration_ms <= 86400000))),
     CONSTRAINT request_telemetry_guest_error_class_check CHECK ((guest_error_class = ANY (ARRAY[''::text, 'http_5xx'::text, 'handler_exec'::text, 'handler_protocol'::text, 'timeout'::text, 'canceled'::text]))),
@@ -9443,8 +9510,10 @@ CREATE TABLE public.request_telemetry_202611 (
     guest_cpu_time_ms integer DEFAULT 0 NOT NULL,
     guest_peak_rss_mb integer DEFAULT 0 NOT NULL,
     guest_resource_usage_available boolean DEFAULT false NOT NULL,
+    flag_evidence jsonb DEFAULT '[]'::jsonb NOT NULL,
     CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
     CONSTRAINT request_telemetry_country_check CHECK (((country = '__unknown__'::text) OR (country ~ '^[A-Z]{2}$'::text))),
+    CONSTRAINT request_telemetry_flag_evidence_check CHECK ((jsonb_typeof(flag_evidence) = 'array'::text)),
     CONSTRAINT request_telemetry_guest_cpu_time_ms_check CHECK (((guest_cpu_time_ms >= 0) AND (guest_cpu_time_ms <= 86400000))),
     CONSTRAINT request_telemetry_guest_duration_ms_check CHECK (((guest_duration_ms >= 0) AND (guest_duration_ms <= 86400000))),
     CONSTRAINT request_telemetry_guest_error_class_check CHECK ((guest_error_class = ANY (ARRAY[''::text, 'http_5xx'::text, 'handler_exec'::text, 'handler_protocol'::text, 'timeout'::text, 'canceled'::text]))),
@@ -9499,8 +9568,10 @@ CREATE TABLE public.request_telemetry_default (
     guest_cpu_time_ms integer DEFAULT 0 NOT NULL,
     guest_peak_rss_mb integer DEFAULT 0 NOT NULL,
     guest_resource_usage_available boolean DEFAULT false NOT NULL,
+    flag_evidence jsonb DEFAULT '[]'::jsonb NOT NULL,
     CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
     CONSTRAINT request_telemetry_country_check CHECK (((country = '__unknown__'::text) OR (country ~ '^[A-Z]{2}$'::text))),
+    CONSTRAINT request_telemetry_flag_evidence_check CHECK ((jsonb_typeof(flag_evidence) = 'array'::text)),
     CONSTRAINT request_telemetry_guest_cpu_time_ms_check CHECK (((guest_cpu_time_ms >= 0) AND (guest_cpu_time_ms <= 86400000))),
     CONSTRAINT request_telemetry_guest_duration_ms_check CHECK (((guest_duration_ms >= 0) AND (guest_duration_ms <= 86400000))),
     CONSTRAINT request_telemetry_guest_error_class_check CHECK ((guest_error_class = ANY (ARRAY[''::text, 'http_5xx'::text, 'handler_exec'::text, 'handler_protocol'::text, 'timeout'::text, 'canceled'::text]))),
@@ -11591,6 +11662,30 @@ ALTER TABLE ONLY public.deployments
 
 
 --
+-- Name: dev_bridge_sessions dev_bridge_sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dev_bridge_sessions
+    ADD CONSTRAINT dev_bridge_sessions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: dev_bridge_webhook_replays dev_bridge_webhook_replays_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dev_bridge_webhook_replays
+    ADD CONSTRAINT dev_bridge_webhook_replays_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: dev_bridge_webhook_replays dev_bridge_webhook_replays_session_id_idempotency_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dev_bridge_webhook_replays
+    ADD CONSTRAINT dev_bridge_webhook_replays_session_id_idempotency_key_key UNIQUE (session_id, idempotency_key);
+
+
+--
 -- Name: developer_sync_history developer_sync_history_app_id_deployment_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -11748,6 +11843,14 @@ ALTER TABLE ONLY public.execution_usage_ledger
 
 ALTER TABLE ONLY public.executions
     ADD CONSTRAINT executions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: feature_flag_versions feature_flag_versions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.feature_flag_versions
+    ADD CONSTRAINT feature_flag_versions_pkey PRIMARY KEY (environment_id, version);
 
 
 --
@@ -15118,6 +15221,13 @@ CREATE INDEX deployments_snapshot_backoff_idx ON public.deployments USING btree 
 
 
 --
+-- Name: dev_bridge_sessions_account_expiry; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX dev_bridge_sessions_account_expiry ON public.dev_bridge_sessions USING btree (account_id, expires_at);
+
+
+--
 -- Name: developer_sync_history_app_created_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -15444,6 +15554,13 @@ CREATE INDEX executions_lease_expiry_idx ON public.executions USING btree (lease
 --
 
 CREATE INDEX executions_queue_account_idx ON public.executions USING btree (account_id, created_at, id) WHERE ((status = 'queued'::text) AND (cancel_requested_at IS NULL));
+
+
+--
+-- Name: feature_flag_versions_scope; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX feature_flag_versions_scope ON public.feature_flag_versions USING btree (account_id, project_id, environment_id, version DESC);
 
 
 --
@@ -20436,6 +20553,46 @@ ALTER TABLE ONLY public.deployments
 
 
 --
+-- Name: dev_bridge_sessions dev_bridge_sessions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dev_bridge_sessions
+    ADD CONSTRAINT dev_bridge_sessions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: dev_bridge_sessions dev_bridge_sessions_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dev_bridge_sessions
+    ADD CONSTRAINT dev_bridge_sessions_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: dev_bridge_sessions dev_bridge_sessions_target_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dev_bridge_sessions
+    ADD CONSTRAINT dev_bridge_sessions_target_app_id_fkey FOREIGN KEY (target_app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: dev_bridge_webhook_replays dev_bridge_webhook_replays_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dev_bridge_webhook_replays
+    ADD CONSTRAINT dev_bridge_webhook_replays_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: dev_bridge_webhook_replays dev_bridge_webhook_replays_session_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dev_bridge_webhook_replays
+    ADD CONSTRAINT dev_bridge_webhook_replays_session_id_fkey FOREIGN KEY (session_id) REFERENCES public.dev_bridge_sessions(id) ON DELETE CASCADE;
+
+
+--
 -- Name: developer_sync_history developer_sync_history_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -20625,6 +20782,30 @@ ALTER TABLE ONLY public.execution_usage_ledger
 
 ALTER TABLE ONLY public.executions
     ADD CONSTRAINT executions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: feature_flag_versions feature_flag_versions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.feature_flag_versions
+    ADD CONSTRAINT feature_flag_versions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: feature_flag_versions feature_flag_versions_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.feature_flag_versions
+    ADD CONSTRAINT feature_flag_versions_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: feature_flag_versions feature_flag_versions_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.feature_flag_versions
+    ADD CONSTRAINT feature_flag_versions_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
 
 
 --

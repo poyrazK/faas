@@ -30,6 +30,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/ratelimit/peraccount"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -439,6 +440,12 @@ func (r *requestTelemetryReceiver) handleOne(ctx context.Context, req *apidpb.In
 		out.Outcome = rtOutcomeDBError
 		return out
 	}
+	flagEvidence, flagErr := flags.CanonicalEvidence([]byte(req.GetFlagEvidenceJson()))
+	if flagErr != nil {
+		r.observe(rtOutcomeDBError)
+		out.Outcome = rtOutcomeDBError
+		return out
+	}
 	insertErr := r.store.InsertRequestTelemetryWithLogEvent(ctx, sqlc.InsertRequestTelemetryParams{
 		AccountID:                   state.NewPgtypeUUID(accountID),
 		AppID:                       state.NewPgtypeUUID(appID),
@@ -463,6 +470,7 @@ func (r *requestTelemetryReceiver) handleOne(ctx context.Context, req *apidpb.In
 		GuestRuntime:                guestRuntime,
 		GuestOutcome:                guestOutcome,
 		GuestErrorClass:             guestErrorClass,
+		FlagEvidenceJson:            flagEvidence,
 		ConsumerID:                  consumerID,
 		PlatformTenantID:            pgtype.UUID{Bytes: platformTenantUUID, Valid: platformTenantID != ""},
 		NodeID:                      req.GetNodeId(),

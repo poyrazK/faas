@@ -1,0 +1,75 @@
+version: 1
+
+suites:
+  smoke:
+    scenarios:
+      - scenario: customer-export
+        engine: local
+
+scenarios:
+  customer-export:
+    project: scenario-tests-example
+    source: ./app
+    timeout: 1m
+    local:
+      command: [node, server.js]
+      readiness:
+        path: /health
+        status: 200
+    consumers:
+      - name: customer-a
+      - name: customer-b
+    requests:
+      - name: submit-export
+        as: customer-a
+        method: POST
+        path: /exports
+        headers:
+          Idempotency-Key: tutorial-customer-export
+        json:
+          format: csv
+          source: '${run.id}'
+        expect:
+          status: 202
+          content_type: application/json
+          json:
+            /owner: customer-a
+            /status: queued
+            /created: true
+        capture:
+          export_id: /id
+      - name: duplicate-export
+        as: customer-a
+        method: POST
+        path: /exports
+        headers:
+          Idempotency-Key: tutorial-customer-export
+        json:
+          format: csv
+          source: '${run.id}'
+        expect:
+          status: 202
+          json:
+            /id: '${steps.submit-export.export_id}'
+            /owner: customer-a
+            /created: false
+    checks:
+      - name: owner-can-read-result
+        as: customer-a
+        method: GET
+        path: /exports/${steps.submit-export.export_id}
+        expect:
+          status: 200
+          content_type: application/json
+          json:
+            /id: '${steps.submit-export.export_id}'
+            /owner: customer-a
+            /status: queued
+      - name: other-customer-cannot-read-result
+        as: customer-b
+        method: GET
+        path: /exports/${steps.submit-export.export_id}
+        expect:
+          status: 404
+          json:
+            /error: not_found

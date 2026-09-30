@@ -358,6 +358,10 @@ func dialWithTimeout(ctx context.Context, dialer InternalDialer, dialTimeout tim
 // On dial failure: 502 Bad Gateway. On upstream error: propagated
 // unchanged.
 func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	bridgeDuplex := r.Header.Get("X-Gregale-Dev-Bridge-Session") != "" || r.Header.Get("X-Gregale-Dev-Session-Context") != ""
+	if bridgeDuplex {
+		_ = http.NewResponseController(w).EnableFullDuplex()
+	}
 	// Drain tracker (issue #587 / PR-A): a request that's
 	// handed off to the proxy is "in flight" from the daemon's
 	// perspective until this ServeHTTP returns.
@@ -640,6 +644,9 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		responseStatus = edgeOrigin504TransportStatus
 	}
 	w.WriteHeader(responseStatus)
+	if bridgeDuplex {
+		_ = http.NewResponseController(w).Flush()
+	}
 	// Body copy bound to ctx — a hung upstream pins only the
 	// in-flight goroutine, not the listener.
 	if isLongLivedResponse(resp.StatusCode, resp.Header) {

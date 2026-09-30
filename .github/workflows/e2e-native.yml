@@ -109,6 +109,16 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: false
 
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.10.0'
+          cache: 'npm'
+          cache-dependency-path: sdk/node/package-lock.json
+
+      - name: Build Node Flags SDK for the native guest fixture
+        working-directory: sdk/node
+        run: npm ci --ignore-scripts --no-audit --no-fund && npm run build
+
       - name: Build exact-source transfer bundle
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -116,8 +126,9 @@ jobs:
           set -euo pipefail
           [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]
           bundle="$RUNNER_TEMP/native-e2e-bundle"
-          mkdir -p "$bundle/source" "$bundle/tools/go"
+          mkdir -p "$bundle/source" "$bundle/source/sdk/node/dist" "$bundle/tools/go"
           git archive "$SOURCE_SHA" | tar -x -C "$bundle/source"
+          cp sdk/node/dist/flags.js "$bundle/source/sdk/node/dist/flags.js"
           printf '%s\n' "$SOURCE_SHA" > "$bundle/source/.faas-e2e-source-sha"
 
           go_root="$(go env GOROOT)"
@@ -267,7 +278,7 @@ jobs:
             --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
             --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=55m --property='StandardOutput=append:$remote_root/native-e2e.log' --property='StandardError=append:$remote_root/native-e2e.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' --setenv=FAAS_E2E_PHASE='$PHASE' /bin/bash scripts/ci/run-native-e2e.sh" 2>&1 | tee "$RUNNER_TEMP/phase-$PHASE.log"
 
-      - name: Phase 4 — wake (timeline, dedup, CPU fairness)
+      - name: Phase 4 — wake (restore, native Flags refresh, scheduling)
         id: phase_wake
         if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only'
         continue-on-error: true

@@ -27,6 +27,46 @@ const (
 	AfterRestoreHookMaxTimeoutMS     = 2000
 )
 
+const (
+	// Development bridge transport safeguards. These are preview bounds, not
+	// a new billing allowance. Session creation also uses DeveloperApps.
+	DevBridgeSessionTTL            = time.Hour
+	DevBridgeMaxDependencies       = 32
+	DevBridgeMaxConcurrentRequests = 32
+	DevBridgeMaxHeaderBytes        = 32 << 10
+	DevBridgeInspectionRecords     = 100
+	DevBridgeInspectionPathBytes   = 1024
+	DevBridgeInventoryLimit        = 100
+	DevBridgeObservedSessions      = 512
+	DevBridgeLocalReadyTimeout     = 30 * time.Second
+	DevBridgeLocalStopTimeout      = 5 * time.Second
+	DevBridgeMaxWebhookReplays     = 100
+	DevBridgeReplayKeyBytes        = 64
+	DevBridgeMetadataRetention     = 7 * 24 * time.Hour
+	DevBridgeWebhookReplayTimeout  = 30 * time.Second
+	DevBridgeReplayResponseBytes   = 64 << 10
+)
+
+// Flags qualification safeguards, independent from billing allowances.
+const (
+	FlagsMaxPerEnvironment     = 100
+	FlagsMaxGroups             = 100
+	FlagsMaxRules              = 32
+	FlagsMaxCustomers          = 1000
+	FlagsMaxCustomerIDBytes    = 128
+	FlagsMaxBundleBytes        = 256 << 10
+	FlagsMaxEvidencePerRequest = 32
+	FlagsMaxEvidenceBytes      = 16 << 10
+	FlagsMaxStaleSeconds       = 60
+	FlagsMaxDescriptionBytes   = 512
+	FlagsMaxSeedBytes          = 128
+	FlagsMaxActorBytes         = 256
+	FlagsMaxHistoryPage        = 100
+	FlagsMaxRequestPage        = 100
+	FlagsMaxCursorBytes        = 2048
+	FlagsMaxConfigVersion      = int64(9007199254740991)
+)
+
 // MaxOutboundRequestsPerDay is the structural upper bound for a
 // customer-configured daily request budget on one integration. Plan ceilings
 // below are at or below this value. See ADR-257.

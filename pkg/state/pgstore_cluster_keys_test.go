@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/db"
@@ -425,4 +426,49 @@ func deriveKidForTest(t *testing.T, priv ed25519.PrivateKey) string {
 	t.Helper()
 	_ = priv
 	return "AAAAAAAAAAAAAAAAAAAAAA"
+}
+
+// CreateClusterSigningKeyIfAbsent is the new-fleet bootstrap used by
+// fleet-seal migrate. It must create the row once and never overwrite an
+// existing key (a concurrent first migration, or a later rotation).
+func TestCreateClusterSigningKeyIfAbsent_CreatesOnceNeverOverwrites(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	if err := db.MigrateUp(context.Background(), pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	store := NewPgStore(pool)
+	ctx := context.Background()
+
+	// The table CHECKs a 22-char base64url kid and a PKIX PEM public key.
+	pemFor := func() string {
+		pub, _, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := marshalPubPEM(pub)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(body)
+	}
+	first := ClusterSigningKey{KeyID: strings.Repeat("A", 22), PublicKeyPEM: pemFor(), SealedBlob: []byte("first-blob")}
+	created, err := store.CreateClusterSigningKeyIfAbsent(ctx, first)
+	if err != nil || !created {
+		t.Fatalf("first create: created=%v err=%v", created, err)
+	}
+	second := ClusterSigningKey{KeyID: strings.Repeat("B", 22), PublicKeyPEM: pemFor(), SealedBlob: []byte("second-blob")}
+	created, err = store.CreateClusterSigningKeyIfAbsent(ctx, second)
+	if err != nil || created {
+		t.Fatalf("second create: created=%v err=%v, want false/nil", created, err)
+	}
+	got, err := store.LoadClusterSigningKey(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.KeyID != first.KeyID || got.PublicKeyPEM != first.PublicKeyPEM || string(got.SealedBlob) != "first-blob" {
+		t.Fatalf("row was overwritten: %+v", got)
+	}
+	if _, err := store.CreateClusterSigningKeyIfAbsent(ctx, ClusterSigningKey{}); err == nil {
+		t.Fatal("empty key was accepted")
+	}
 }

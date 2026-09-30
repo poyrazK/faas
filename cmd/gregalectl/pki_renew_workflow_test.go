@@ -29,7 +29,7 @@ func TestPKIRenewWorkflowUsesRoleScopedSSHIdentities(t *testing.T) {
 		"CP_HOST: ${{ secrets.CP_HOST",
 		"CONTROL_PLANE_SSH_KEY:",
 		"pki-control-key",
-		`ssh-keyscan -H "$CP_HOST"`,
+		`ssh-keyscan -t ed25519,ecdsa,rsa -H "$CP_HOST"`,
 		`"root@${CP_HOST}"`,
 		"test -r /etc/faas/tls/ca/ca.key",
 		"rendered inventory contains an unsafe archive path",

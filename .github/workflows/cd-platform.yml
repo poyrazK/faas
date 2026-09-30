@@ -378,7 +378,7 @@ jobs:
           install -d -m 0700 ~/.ssh
           printf '%s\n' "$CP_SSH_KEY" > ~/.ssh/deploy_key
           chmod 0600 ~/.ssh/deploy_key
-          ssh-keyscan -H "$CP_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          ssh-keyscan -t ed25519,ecdsa,rsa -H "$CP_HOST" >> ~/.ssh/known_hosts 2>/dev/null
           chmod 0600 ~/.ssh/known_hosts
 
       - name: Observe desired and active-node releases

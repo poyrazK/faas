@@ -37,6 +37,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -2433,6 +2434,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	retryBudget.WithObserver(deps.metrics)
 	defer func() { _ = retryBudget.Close() }()
 	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log).WithRetryBudget(retryBudget)
+	if osGetenv("FAAS_DEV_BRIDGE_ENABLED") == "1" && deps.pgStore != nil {
+		bridgeTarget := deps.apidLoopback
+		if bridgeTarget == "" {
+			bridgeTarget = osGetenv("FAAS_APID_LOOPBACK")
+		}
+		if bridgeTarget == "" {
+			bridgeTarget = "http://127.0.0.1:8081"
+		}
+		bridgeURL, err := url.Parse(bridgeTarget)
+		if err != nil || bridgeURL.Host == "" || (bridgeURL.Scheme != "http" && bridgeURL.Scheme != "https") {
+			return fmt.Errorf("invalid development bridge API target")
+		}
+		handler.WithDevBridge(developmentBridgeAuthorization(deps.pgStore), developmentBridgeForwarder(deps.pgStore, bridgeURL))
+	}
 	if strings.EqualFold(strings.TrimSpace(osGetenv("FAAS_REQUEST_AUDIT_ENABLED")), streamingFlagTrue) {
 		handler.WithRequestAudit(true)
 	}
@@ -2903,6 +2918,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					GuestRuntime:                         row.GuestRuntime,
 					GuestOutcome:                         row.GuestOutcome,
 					GuestErrorClass:                      row.GuestErrorClass,
+					FlagEvidenceJson:                     row.FlagEvidenceJSON,
 					GuestCpuTimeMs:                       int32(row.GuestCPUTimeMS),
 					GuestPeakRssMb:                       int32(row.GuestPeakRSSMB),
 					GuestResourceUsageAvailable:          row.GuestResourceUsageAvailable,
@@ -3531,6 +3547,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			identityResolver := newServiceProxyCallerIdentityResolver(pgStore.ListAllInstances, cfg.NodeName)
 			identityResolver.lookup = pgStore.LiveInstancesByHostIP
 			serviceProxyConfig.ResolveCallerIdentity = identityResolver.ResolveIdentity
+			if osGetenv("FAAS_DEV_BRIDGE_ENABLED") == "1" {
+				serviceProxyConfig.DevBridge = developmentBridgeServiceForwarder(pgStore, handler)
+			}
 			guestServiceProxy = gateway.NewServiceProxy(serviceProxyConfig)
 		}
 	}
@@ -3794,8 +3813,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			log.Info("gatewayd: guest DNS blocklist loaded", "domains", blocklist.Len())
 			// ADR-373 DNS-gated egress: report every guest answer to this
 			// node's vmmd before replying, so the guest may connect to it.
-			if deps.nodeCache != nil && cfg.NodeName != "" {
-				dnsHandler.WithResolvedEgressHook(newResolvedEgressHook(deps.nodeCache.cache, cfg.NodeName))
+			if deps.nodeCache != nil && deps.pgStore != nil && cfg.NodeName != "" {
+				dnsHandler.WithResolvedEgressHook(newResolvedEgressHook(deps.nodeCache.cache, newLocalNodeID(deps.pgStore, cfg.NodeName)))
 			}
 			dnsAddr := net.JoinHostPort(bridgeIP.String(), strconv.Itoa(gateway.ServiceDiscoveryDNSPort))
 			listenPacket := deps.listenPacket

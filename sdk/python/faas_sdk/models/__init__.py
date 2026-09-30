@@ -377,6 +377,8 @@ from .create_deployment_request import CreateDeploymentRequest
 from .create_deployment_request_tag_type_1 import CreateDeploymentRequestTagType1
 from .create_deployment_request_tag_type_2_type_1 import CreateDeploymentRequestTagType2Type1
 from .create_deployment_request_tag_type_3_type_1 import CreateDeploymentRequestTagType3Type1
+from .create_dev_bridge_request import CreateDevBridgeRequest
+from .create_dev_bridge_response import CreateDevBridgeResponse
 from .create_edge_rule_request import CreateEdgeRuleRequest
 from .create_edge_rule_request_kind import CreateEdgeRuleRequestKind
 from .create_edge_rule_request_match_headers import CreateEdgeRuleRequestMatchHeaders
@@ -614,6 +616,17 @@ from .deployment_response_rollout_state import DeploymentResponseRolloutState
 from .deployment_response_stage_state import DeploymentResponseStageState
 from .deployment_response_tag import DeploymentResponseTag
 from .deployment_summary_response import DeploymentSummaryResponse
+from .dev_bridge_activity import DevBridgeActivity
+from .dev_bridge_activity_connection_state import DevBridgeActivityConnectionState
+from .dev_bridge_credentials import DevBridgeCredentials
+from .dev_bridge_dependency import DevBridgeDependency
+from .dev_bridge_request_record import DevBridgeRequestRecord
+from .dev_bridge_scope import DevBridgeScope
+from .dev_bridge_session import DevBridgeSession
+from .dev_bridge_session_summary import DevBridgeSessionSummary
+from .dev_bridge_session_summary_connection_state import DevBridgeSessionSummaryConnectionState
+from .dev_bridge_webhook_replay import DevBridgeWebhookReplay
+from .dev_bridge_webhook_replay_state import DevBridgeWebhookReplayState
 from .dev_postgres_request import DevPostgresRequest
 from .dev_postgres_response import DevPostgresResponse
 from .dev_postgres_response_binding_state import DevPostgresResponseBindingState
@@ -744,6 +757,8 @@ from .execution_response_status import ExecutionResponseStatus
 from .execution_usage import ExecutionUsage
 from .execution_usage_summary_response import ExecutionUsageSummaryResponse
 from .export_app_debug_requests_format import ExportAppDebugRequestsFormat
+from .feature_flag import FeatureFlag
+from .feature_flag_version import FeatureFlagVersion
 from .field_error import FieldError
 from .filter_criteria import FilterCriteria
 from .filter_criteria_clause import FilterCriteriaClause
@@ -754,6 +769,16 @@ from .fire_cron_request_response import FireCronRequestResponse
 from .fire_cron_request_response_status import FireCronRequestResponseStatus
 from .fire_cron_response import FireCronResponse
 from .fire_cron_response_status import FireCronResponseStatus
+from .flag_decision import FlagDecision
+from .flag_decision_reason import FlagDecisionReason
+from .flag_decision_source import FlagDecisionSource
+from .flag_evidence import FlagEvidence
+from .flag_evidence_page import FlagEvidencePage
+from .flag_request_evidence import FlagRequestEvidence
+from .flag_rule import FlagRule
+from .flags_bundle import FlagsBundle
+from .flags_config import FlagsConfig
+from .flags_config_groups import FlagsConfigGroups
 from .gdpr_audit_export_response import GdprAuditExportResponse
 from .gdpr_audit_export_response_action import GdprAuditExportResponseAction
 from .gdpr_audit_export_response_data import GdprAuditExportResponseData
@@ -820,6 +845,7 @@ from .ingest_issue_otlp_signal import IngestIssueOTLPSignal
 from .inject_workflow_event_request import InjectWorkflowEventRequest
 from .inject_workflow_event_response import InjectWorkflowEventResponse
 from .inject_workflow_event_response_status import InjectWorkflowEventResponseStatus
+from .inspect_feature_flag_request import InspectFeatureFlagRequest
 from .install_bind_request import InstallBindRequest
 from .install_bind_request_deploy_branches import InstallBindRequestDeployBranches
 from .install_bind_response import InstallBindResponse
@@ -919,6 +945,7 @@ from .list_cron_runs_response import ListCronRunsResponse
 from .list_delayed_tasks_response import ListDelayedTasksResponse
 from .list_deploy_tokens_response import ListDeployTokensResponse
 from .list_deployment_audit_response import ListDeploymentAuditResponse
+from .list_dev_bridges_response import ListDevBridgesResponse
 from .list_event_deliveries_state import ListEventDeliveriesState
 from .list_executions_status import ListExecutionsStatus
 from .list_instances_response import ListInstancesResponse
@@ -1526,6 +1553,7 @@ from .rekey_progress import RekeyProgress
 from .rename_app_request import RenameAppRequest
 from .reorder_deployment_body import ReorderDeploymentBody
 from .reorder_deployment_response_200 import ReorderDeploymentResponse200
+from .replay_dev_bridge_webhook_request import ReplayDevBridgeWebhookRequest
 from .replay_event_fanout_failure_request import ReplayEventFanoutFailureRequest
 from .replay_event_fanout_failure_response import ReplayEventFanoutFailureResponse
 from .replay_event_fanout_failure_response_state import ReplayEventFanoutFailureResponseState
@@ -1565,6 +1593,7 @@ from .retry_github_check_update_confirm import RetryGithubCheckUpdateConfirm
 from .retry_github_webhook_delivery_confirm import RetryGithubWebhookDeliveryConfirm
 from .retry_policy_dto import RetryPolicyDTO
 from .revoke_platform_tenant_self_consumers_request import RevokePlatformTenantSelfConsumersRequest
+from .rollback_feature_flags_request import RollbackFeatureFlagsRequest
 from .rollback_operator_runtime_config_request import RollbackOperatorRuntimeConfigRequest
 from .rollback_request import RollbackRequest
 from .rollout_aborted_webhook_payload import RolloutAbortedWebhookPayload
@@ -1810,6 +1839,7 @@ from .update_deployment_traffic_request import UpdateDeploymentTrafficRequest
 from .update_edge_rule_request import UpdateEdgeRuleRequest
 from .update_edge_rule_request_match_headers import UpdateEdgeRuleRequestMatchHeaders
 from .update_edge_rule_request_validate_mode import UpdateEdgeRuleRequestValidateMode
+from .update_feature_flags_request import UpdateFeatureFlagsRequest
 from .update_inbound_webhook_endpoint_request import UpdateInboundWebhookEndpointRequest
 from .update_job_request import UpdateJobRequest
 from .update_job_request_env_overrides import UpdateJobRequestEnvOverrides
@@ -2280,6 +2310,8 @@ __all__ = (
     "CreateDeploymentRequestTagType2Type1",
     "CreateDeploymentRequestTagType3Type1",
     "CreateDeployTokenRequest",
+    "CreateDevBridgeRequest",
+    "CreateDevBridgeResponse",
     "CreateEdgeRuleRequest",
     "CreateEdgeRuleRequestKind",
     "CreateEdgeRuleRequestMatchHeaders",
@@ -2507,6 +2539,17 @@ __all__ = (
     "DeployTokenResponse",
     "DeployTokenResponseScopesItem",
     "DeployTokenResponseStatus",
+    "DevBridgeActivity",
+    "DevBridgeActivityConnectionState",
+    "DevBridgeCredentials",
+    "DevBridgeDependency",
+    "DevBridgeRequestRecord",
+    "DevBridgeScope",
+    "DevBridgeSession",
+    "DevBridgeSessionSummary",
+    "DevBridgeSessionSummaryConnectionState",
+    "DevBridgeWebhookReplay",
+    "DevBridgeWebhookReplayState",
     "DevPostgresRequest",
     "DevPostgresResponse",
     "DevPostgresResponseBindingState",
@@ -2637,6 +2680,8 @@ __all__ = (
     "ExecutionUsage",
     "ExecutionUsageSummaryResponse",
     "ExportAppDebugRequestsFormat",
+    "FeatureFlag",
+    "FeatureFlagVersion",
     "FieldError",
     "FilterCriteria",
     "FilterCriteriaClause",
@@ -2647,6 +2692,16 @@ __all__ = (
     "FireCronRequestResponseStatus",
     "FireCronResponse",
     "FireCronResponseStatus",
+    "FlagDecision",
+    "FlagDecisionReason",
+    "FlagDecisionSource",
+    "FlagEvidence",
+    "FlagEvidencePage",
+    "FlagRequestEvidence",
+    "FlagRule",
+    "FlagsBundle",
+    "FlagsConfig",
+    "FlagsConfigGroups",
     "GdprAuditExportResponse",
     "GdprAuditExportResponseAction",
     "GdprAuditExportResponseData",
@@ -2713,6 +2768,7 @@ __all__ = (
     "InjectWorkflowEventRequest",
     "InjectWorkflowEventResponse",
     "InjectWorkflowEventResponseStatus",
+    "InspectFeatureFlagRequest",
     "InstallBindRequest",
     "InstallBindRequestDeployBranches",
     "InstallBindResponse",
@@ -2812,6 +2868,7 @@ __all__ = (
     "ListDelayedTasksResponse",
     "ListDeploymentAuditResponse",
     "ListDeployTokensResponse",
+    "ListDevBridgesResponse",
     "ListEventDeliveriesState",
     "ListExecutionsStatus",
     "ListInstancesResponse",
@@ -3375,6 +3432,7 @@ __all__ = (
     "RenameAppRequest",
     "ReorderDeploymentBody",
     "ReorderDeploymentResponse200",
+    "ReplayDevBridgeWebhookRequest",
     "ReplayEventFanoutFailureRequest",
     "ReplayEventFanoutFailureResponse",
     "ReplayEventFanoutFailureResponseState",
@@ -3414,6 +3472,7 @@ __all__ = (
     "RetryGithubWebhookDeliveryConfirm",
     "RetryPolicyDTO",
     "RevokePlatformTenantSelfConsumersRequest",
+    "RollbackFeatureFlagsRequest",
     "RollbackOperatorRuntimeConfigRequest",
     "RollbackRequest",
     "RolloutAbortedWebhookPayload",
@@ -3647,6 +3706,7 @@ __all__ = (
     "UpdateEdgeRuleRequest",
     "UpdateEdgeRuleRequestMatchHeaders",
     "UpdateEdgeRuleRequestValidateMode",
+    "UpdateFeatureFlagsRequest",
     "UpdateInboundWebhookEndpointRequest",
     "UpdateJobRequest",
     "UpdateJobRequestEnvOverrides",

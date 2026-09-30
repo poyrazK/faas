@@ -22,15 +22,19 @@ const (
 	testLoadMaxDuration   = 5 * time.Minute
 	testLoadDrainTimeout  = 30 * time.Second
 	testLoadMaxStages     = 20
+	testLoadMaxRate       = 1000
 )
 
 type testLoadSpec struct {
 	VUs        int                 `yaml:"vus"`
+	Rate       int                 `yaml:"rate"`
 	Iterations int                 `yaml:"iterations"`
 	Duration   string              `yaml:"duration"`
 	Pacing     string              `yaml:"pacing"`
 	Stages     []testLoadStageSpec `yaml:"stages"`
 	Thresholds testLoadThresholds  `yaml:"thresholds"`
+	Workload   string              `yaml:"workload,omitempty"`
+	Regression *testRegressionSpec `yaml:"regression,omitempty"`
 }
 
 type testLoadThresholds struct {
@@ -60,18 +64,19 @@ type testLoadStage struct {
 }
 
 type testLoadOverrides struct {
-	VUs, Iterations                               int
-	Duration, Pacing                              string
-	VUsSet, IterationsSet, DurationSet, PacingSet bool
+	VUs, Iterations, Rate                                  int
+	Duration, Pacing                                       string
+	VUsSet, IterationsSet, RateSet, DurationSet, PacingSet bool
 }
 
 type testLoadConfig struct {
-	VUs, Iterations, RequestLimit int
-	Duration, P95, Pacing         time.Duration
-	ErrorRate                     float64
-	Stages                        []testLoadStage
-	StepThresholds                map[string]testLoadStepThresholdConfig
-	Progress                      func(testLoadProgress)
+	VUs, Iterations, Rate, RequestLimit int
+	Duration, P95, Pacing               time.Duration
+	ErrorRate                           float64
+	Stages                              []testLoadStage
+	StepThresholds                      map[string]testLoadStepThresholdConfig
+	Progress                            func(testLoadProgress)
+	Regression                          testRegressionConfig
 }
 
 type testLoadLatency struct {
@@ -129,6 +134,8 @@ type testLoadEvidence struct {
 	Steps      []testLoadStepEvidence      `json:"steps,omitempty"`
 	Thresholds []testLoadThresholdEvidence `json:"thresholds,omitempty"`
 	Stages     []testLoadStageEvidence     `json:"stages,omitempty"`
+	Arrival    *testLoadArrivalEvidence    `json:"arrival,omitempty"`
+	Workload   *testLoadWorkload           `json:"workload,omitempty"`
 }
 
 func validateTestLoadSpec(spec *testLoadSpec) error {
@@ -140,6 +147,20 @@ func validateTestLoadSpec(spec *testLoadSpec) error {
 	}
 	if spec.Iterations < 0 || spec.Iterations > testLoadMaxIterations {
 		return fmt.Errorf("load.iterations must be between 1 and %d when supplied", testLoadMaxIterations)
+	}
+	if spec.Rate < 0 || spec.Rate > testLoadMaxRate {
+		return fmt.Errorf("load.rate must be between 1 and %d when supplied", testLoadMaxRate)
+	}
+	if spec.Rate > 0 {
+		if spec.Duration == "" || spec.Iterations != 0 || len(spec.Stages) > 0 {
+			return errors.New("arrival-rate load requires duration and cannot use iterations or stages")
+		}
+		if spec.Pacing != "" {
+			pacing, err := time.ParseDuration(spec.Pacing)
+			if err != nil || pacing != 0 {
+				return errors.New("arrival-rate load cannot use pacing")
+			}
+		}
 	}
 	if spec.Duration != "" {
 		duration, err := time.ParseDuration(spec.Duration)
@@ -195,7 +216,10 @@ func validateTestLoadSpec(spec *testLoadSpec) error {
 			return fmt.Errorf("load.thresholds.steps.%s: %w", name, err)
 		}
 	}
-	return nil
+	if spec.Workload != "" && !testSuiteNamePattern.MatchString(spec.Workload) {
+		return errors.New("load.workload needs 1..80 lowercase letters, digits, or hyphens starting with a letter")
+	}
+	return validateTestRegressionSpec(spec.Regression)
 }
 
 func validateTestLoadThresholds(p95 string, errorRate *float64) error {
@@ -227,6 +251,13 @@ func validateTestLoadStepThresholds(scenario testScenario) error {
 			return fmt.Errorf("load.thresholds.steps references undeclared HTTP step %q", name)
 		}
 	}
+	if scenario.Load.Regression != nil {
+		for name := range scenario.Load.Regression.Steps {
+			if !names[name] {
+				return fmt.Errorf("load.regression.steps references undeclared HTTP step %q", name)
+			}
+		}
+	}
 	return nil
 }
 
@@ -244,6 +275,9 @@ func resolveTestLoadConfig(scenario testScenario, overrides testLoadOverrides) (
 	if overrides.IterationsSet && overrides.DurationSet {
 		return nil, errors.New("choose --iterations or --duration, not both")
 	}
+	if overrides.RateSet && overrides.IterationsSet {
+		return nil, errors.New("choose --rate with --duration or --iterations, not both")
+	}
 	if overrides.VUsSet {
 		if overrides.VUs < 1 {
 			return nil, errors.New("--vus must be at least 1")
@@ -254,7 +288,13 @@ func resolveTestLoadConfig(scenario testScenario, overrides testLoadOverrides) (
 		if overrides.Iterations < 1 {
 			return nil, errors.New("--iterations must be at least 1")
 		}
-		spec.Iterations, spec.Duration, spec.Stages = overrides.Iterations, "", nil
+		spec.Iterations, spec.Duration, spec.Stages, spec.Rate = overrides.Iterations, "", nil, 0
+	}
+	if overrides.RateSet {
+		if overrides.Rate < 1 {
+			return nil, errors.New("--rate must be at least 1 journey per second")
+		}
+		spec.Rate, spec.Iterations, spec.Stages, spec.Pacing = overrides.Rate, 0, nil, ""
 	}
 	if overrides.DurationSet {
 		if overrides.Duration == "" {
@@ -274,7 +314,8 @@ func resolveTestLoadConfig(scenario testScenario, overrides testLoadOverrides) (
 	if err := validateTestLoadStepThresholds(scenario); err != nil {
 		return nil, err
 	}
-	cfg := &testLoadConfig{VUs: spec.VUs, Iterations: spec.Iterations, RequestLimit: testLoadMaxRequests}
+	cfg := &testLoadConfig{VUs: spec.VUs, Iterations: spec.Iterations, Rate: spec.Rate, RequestLimit: testLoadMaxRequests}
+	cfg.Regression = resolveTestRegressionConfig(spec.Regression)
 	if cfg.VUs == 0 {
 		cfg.VUs = 1
 	}
@@ -291,6 +332,9 @@ func resolveTestLoadConfig(scenario testScenario, overrides testLoadOverrides) (
 	}
 	if cfg.Iterations > testLoadMaxRequests/(len(scenario.Requests)+len(scenario.Checks)) {
 		return nil, fmt.Errorf("load journey would exceed %d HTTP steps; select fewer iterations", testLoadMaxRequests)
+	}
+	if cfg.Rate > 0 && cfg.plannedArrivals() > testLoadMaxRequests/(len(scenario.Requests)+len(scenario.Checks)) {
+		return nil, fmt.Errorf("arrival schedule would exceed %d HTTP steps; select a lower rate or shorter duration", testLoadMaxRequests)
 	}
 	if spec.Thresholds.ErrorRate != nil {
 		cfg.ErrorRate = *spec.Thresholds.ErrorRate
@@ -323,7 +367,13 @@ func newTestLoadEvidence(cfg *testLoadConfig) *testLoadEvidence {
 	if len(cfg.Stages) > 0 {
 		mode = "stages"
 	}
+	if cfg.Rate > 0 {
+		mode = "arrival-rate"
+	}
 	report := &testLoadEvidence{Mode: mode, Status: "not_started", VUs: cfg.VUs, MaxVUs: cfg.maxVUs(), IterationLimit: cfg.Iterations, RequestedDurationMS: cfg.Duration.Milliseconds(), RequestLimit: cfg.RequestLimit, PacingMS: loadMilliseconds(cfg.Pacing)}
+	if cfg.Rate > 0 {
+		report.Arrival = &testLoadArrivalEvidence{TargetRate: cfg.Rate, Planned: cfg.plannedArrivals()}
+	}
 	startVUs := cfg.VUs
 	for i, stage := range cfg.Stages {
 		report.Stages = append(report.Stages, testLoadStageEvidence{Index: i + 1, StartVUs: startVUs, TargetVUs: stage.Target, DurationMS: stage.Duration.Milliseconds()})
@@ -346,6 +396,10 @@ type testLoadCollector struct {
 	budgetExceeded     bool
 	steps              []testLoadStepSamples
 	stageStarts        []int
+	arrivalsScheduled  int
+	droppedCapacity    int
+	droppedLate        int
+	schedulingDuration time.Duration
 }
 
 func (c *testLoadCollector) next(ctx context.Context, cfg *testLoadConfig, started time.Time, vu int, readyAt time.Time) (int, time.Duration, bool) {
@@ -450,51 +504,16 @@ func runTestLoad(parent context.Context, baseURL, runID string, consumerEnv []st
 	for i, step := range steps {
 		collector.steps[i].evidence = testLoadStepEvidence{Name: step.Name, Method: step.Method, Path: strings.SplitN(step.Path, "?", 2)[0], testLoadMetrics: testLoadMetrics{Statuses: map[string]int{}}}
 	}
-	var workers sync.WaitGroup
-	stopProgress := monitorTestLoadProgress(ctx, collector, cfg, started)
-	for vu := 0; vu < cfg.maxVUs(); vu++ {
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
-			readyAt := time.Time{}
-			for {
-				iteration, delay, ok := collector.next(ctx, cfg, started, vu, readyAt)
-				if !ok {
-					return
-				}
-				if delay > 0 {
-					if !waitTestLoad(ctx, delay) {
-						return
-					}
-					continue
-				}
-				values := testHTTPValues(fmt.Sprintf("%s-%d", runID, iteration), nil, data)
-				captures := map[string]string{}
-				failed, interrupted := false, false
-				for i, step := range steps {
-					if !collector.reserve(ctx, cfg.RequestLimit) {
-						interrupted = true
-						break
-					}
-					result := testHTTPRequestEvidence{Name: step.Name, Method: step.Method}
-					requestStarted := time.Now()
-					err := runOneTestHTTPRequestWithBody(ctx, client, baseURL, step, values, consumerKeys, captures, data, &result, true)
-					result.Passed = err == nil
-					if err != nil {
-						result.Error = err.Error()
-					}
-					collector.record(i, result, time.Since(requestStarted))
-					if err != nil {
-						failed, interrupted = true, ctx.Err() != nil
-						break
-					}
-				}
-				collector.finishIteration(failed, interrupted)
-				readyAt = time.Now().Add(cfg.Pacing)
-			}
-		}()
+	journey := testLoadJourney{
+		Client: client, BaseURL: baseURL, RunID: runID, ConsumerKeys: consumerKeys, Steps: steps, Data: data,
 	}
-	workers.Wait()
+	runJourney := func(iteration int) { journey.run(ctx, collector, cfg, iteration) }
+	stopProgress := monitorTestLoadProgress(ctx, collector, cfg, started)
+	if cfg.Rate > 0 {
+		runTestArrivalLoad(ctx, collector, cfg, started, runJourney)
+	} else {
+		runTestConcurrencyLoad(ctx, collector, cfg, started, runJourney)
+	}
 	stopProgress()
 	duration := time.Since(started)
 	report := collector.report(cfg, duration)
@@ -508,6 +527,8 @@ func runTestLoad(parent context.Context, baseURL, runID string, consumerEnv []st
 		report.StopReason, executionError = "time_limit", errors.New("load exceeded its execution deadline")
 	case collector.budgetExceeded:
 		report.StopReason, executionError = "request_limit", fmt.Errorf("load reached the %d HTTP-step limit before completion", cfg.RequestLimit)
+	case report.Arrival != nil && report.Arrival.Dropped > 0:
+		report.StopReason, executionError = "dropped_arrivals", fmt.Errorf("load dropped %d of %d scheduled arrivals (%d at the VU limit, %d late); the requested arrival rate was not delivered", report.Arrival.Dropped, report.Arrival.Scheduled, report.Arrival.DroppedCapacity, report.Arrival.DroppedLate)
 	case len(cfg.Stages) > 0:
 		report.StopReason = "stages"
 	case cfg.Duration > 0:
@@ -536,6 +557,15 @@ func (c *testLoadCollector) report(cfg *testLoadConfig, duration time.Duration) 
 	report.IterationsFailed, report.IterationsInterrupted = c.failedIterations, c.started-c.completed
 	report.PeakVUs = c.peak
 	report.DurationMS = loadMilliseconds(duration)
+	if report.Arrival != nil {
+		report.Arrival.Scheduled = c.arrivalsScheduled
+		report.Arrival.DroppedCapacity, report.Arrival.DroppedLate = c.droppedCapacity, c.droppedLate
+		report.Arrival.Dropped = c.droppedCapacity + c.droppedLate
+		report.Arrival.SchedulingDurationMS = loadMilliseconds(c.schedulingDuration)
+		if c.schedulingDuration > 0 {
+			report.Arrival.StartedPerSecond = float64(c.started) / c.schedulingDuration.Seconds()
+		}
+	}
 	report.Statuses = map[string]int{}
 	for i, count := range c.stageStarts {
 		report.Stages[i].IterationsStarted = count
@@ -620,6 +650,9 @@ func printTestLoadSummary(out io.Writer, report *testLoadEvidence) {
 	if report.Status == "not_started" {
 		_, _ = fmt.Fprintln(out, "  load: not started")
 		return
+	}
+	if arrival := report.Arrival; arrival != nil {
+		_, _ = fmt.Fprintf(out, "  arrivals: target %d journeys/s, achieved %.2f starts/s; %d/%d scheduled, %d started, %d dropped (%d at VU limit, %d late)\n", arrival.TargetRate, arrival.StartedPerSecond, arrival.Scheduled, arrival.Planned, report.IterationsStarted, arrival.Dropped, arrival.DroppedCapacity, arrival.DroppedLate)
 	}
 	_, _ = fmt.Fprintf(out, "  load: %d/%d journeys completed, %d HTTP steps, %d failures; %.1f steps/s, p95 %.3fms (start %d VUs, max %d, peak %d)\n", report.IterationsCompleted, report.IterationsStarted, report.Requests, report.Failures, report.RequestsPerSecond, report.Latency.P95MS, report.VUs, report.MaxVUs, report.PeakVUs)
 	for _, threshold := range report.Thresholds {

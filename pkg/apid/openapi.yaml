@@ -39,6 +39,8 @@ servers:
         description: Public hostname (one-box FaaS).
 
 tags:
+  - name: flags
+    description: Customer-aware application behavior releases and decision evidence.
   - name: outbound
     description: Bind apps to account-owned, operator-provisioned managed outbound integrations without exposing provider credentials.
   - name: storage
@@ -6330,6 +6332,149 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/dev/bridges:
+    get:
+      tags: [dev]
+      operationId: listDevBridges
+      summary: List active development sessions owned by the account.
+      description: ADR-379 bounded inventory. Returns at most 100 active leases, newest expiry first. Connection state is informational and unknown after observer restart or eviction. No credentials are returned.
+      responses:
+        '200':
+          description: Active owned sessions.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListDevBridgesResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { description: Development bridge inventory is disabled. }
+    post:
+      tags: [dev]
+      operationId: createDevBridge
+      summary: Create a leased local service development session.
+      description: Operator-gated ADR-378 feature. Select an owned app in an unprotected non-production project environment. Credentials are returned once; the request token routes only the selected application graph, while the attachment token connects the laptop. The lease lasts one hour.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateDevBridgeRequest' }
+      responses:
+        '201':
+          description: Development session and one-time credentials created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CreateDevBridgeResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Development bridge is disabled or unavailable.
+
+  /v1/dev/bridges/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Opaque development session identifier returned by creation.
+        schema: { type: string, minLength: 43, maxLength: 43 }
+    get:
+      tags: [dev]
+      operationId: getDevBridge
+      summary: Inspect a development session without its credentials.
+      responses:
+        '200':
+          description: Owned development session metadata.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DevBridgeSession' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [dev]
+      operationId: revokeDevBridge
+      summary: Revoke a development session and close its laptop connection.
+      responses:
+        '204': { description: Session revoked. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/dev/bridges/{id}/activity:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Owned development session identifier.
+        schema: { type: string, minLength: 43, maxLength: 43 }
+    get:
+      tags: [dev]
+      operationId: getDevBridgeActivity
+      summary: Inspect recent connection and request metadata.
+      description: ADR-379 temporary API observer window. Queries, headers and bodies are excluded. Restart or bounded eviction clears activity; observation never authorizes routing.
+      responses:
+        '200':
+          description: Bounded session activity.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DevBridgeActivity' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { description: Development bridge activity is disabled. }
+
+  /v1/dev/bridges/{id}/webhook-replays:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Destination development session identifier.
+        schema: { type: string, minLength: 43, maxLength: 43 }
+    post:
+      tags: [dev]
+      operationId: replayDevBridgeWebhook
+      summary: Copy one verified webhook receipt to the local service.
+      description: Requires account deploy permission and the session request credential. Copies only a provider-verified receipt for the intercepted app. Creates a separate durable receipt before dispatch; the original invocation stays untouched. Repeating the same key never redispatches. An uncertain or interrupted dispatch must be inspected before explicitly requesting another copy. Provider signature headers are excluded because the original receipt already records verification.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReplayDevBridgeWebhookRequest' }
+      responses:
+        '200':
+          description: New or previously recorded development replay receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DevBridgeWebhookReplay' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Session routing credential is invalid or expired. }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/dev/bridges/{id}/webhook-replays/{replay}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Owning development session identifier.
+        schema: { type: string, minLength: 43, maxLength: 43 }
+      - name: replay
+        in: path
+        required: true
+        description: Replay receipt identifier, including after session revocation.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [dev]
+      operationId: getDevBridgeWebhookReplay
+      summary: Inspect an owned development webhook copy receipt.
+      responses:
+        '200':
+          description: Persisted copy outcome without payload or credentials.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DevBridgeWebhookReplay' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /v1/dev/sessions/{project}:
     parameters:
@@ -22423,9 +22568,184 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/projects/{slug}/environments/{environment}/flags:
+    parameters:
+      - { $ref: '#/components/parameters/FlagsProjectSlug' }
+      - { $ref: '#/components/parameters/FlagsEnvironment' }
+    get:
+      tags: [flags]
+      operationId: getProjectFlags
+      summary: Read current or historical feature flag configuration.
+      description: Requires operator enablement via FAAS_FLAGS_ENABLED. Account-scoped read credentials only; app deploy tokens cannot read project-wide targeting lists.
+      parameters:
+        - { name: version, in: query, description: Historical version; omit for current., schema: { type: integer, format: int64, minimum: 1 } }
+      responses:
+        '200':
+          description: Current or selected historical configuration publication.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FeatureFlagVersion' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    put:
+      tags: [flags]
+      operationId: publishProjectFlags
+      summary: Publish an atomic feature flag configuration.
+      description: Requires deploy-write scope and MFA when configured. expected_version zero creates the first version; conflicting writes return 409. Customers must belong to the account. Allocation seeds are immutable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateFeatureFlagsRequest' }
+      responses:
+        '200':
+          description: Newly committed configuration with its assigned version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FeatureFlagVersion' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/projects/{slug}/environments/{environment}/flags/versions:
+    parameters:
+      - { $ref: '#/components/parameters/FlagsProjectSlug' }
+      - { $ref: '#/components/parameters/FlagsEnvironment' }
+    get:
+      tags: [flags]
+      operationId: listProjectFlagVersions
+      summary: List up to 100 immutable configuration versions.
+      description: Returns publication audit metadata in descending order; use before_version to continue history.
+      parameters:
+        - { name: before_version, in: query, description: Exclusive version boundary for older history pages., schema: { type: integer, format: int64, minimum: 1 } }
+      responses:
+        '200':
+          description: Configuration history in descending version order.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/FeatureFlagVersion' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/flags/rollback:
+    parameters:
+      - { $ref: '#/components/parameters/FlagsProjectSlug' }
+      - { $ref: '#/components/parameters/FlagsEnvironment' }
+    post:
+      tags: [flags]
+      operationId: rollbackProjectFlags
+      summary: Publish a previous flag configuration as a new version.
+      description: Requires the current expected_version and preserves allocation seeds; history remains immutable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RollbackFeatureFlagsRequest' }
+      responses:
+        '200':
+          description: New publication restored from the requested historical configuration.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FeatureFlagVersion' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/projects/{slug}/environments/{environment}/flags/{key}/inspect:
+    parameters:
+      - { $ref: '#/components/parameters/FlagsProjectSlug' }
+      - { $ref: '#/components/parameters/FlagsEnvironment' }
+      - { $ref: '#/components/parameters/FlagsKey' }
+    post:
+      tags: [flags]
+      operationId: inspectProjectFlag
+      summary: Explain a current or historical customer decision without exposure.
+      description: Simulates ordered customer rules against the selected immutable configuration; this call records no application exposure.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InspectFeatureFlagRequest' }
+      responses:
+        '200':
+          description: Evaluation explanation for the supplied customer context.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlagDecision' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/flags/{key}/requests:
+    parameters:
+      - { $ref: '#/components/parameters/FlagsProjectSlug' }
+      - { $ref: '#/components/parameters/FlagsEnvironment' }
+      - { $ref: '#/components/parameters/FlagsKey' }
+    get:
+      tags: [flags]
+      operationId: listProjectFlagRequests
+      summary: Inspect retained requests with application-reported flag evidence.
+      description: Debugger entitlement and retention apply. Counts weight collapsed telemetry rows; rows with different decisions remain separate. These are operational observations, not exactly-once exposure counts or causal experiment results.
+      parameters:
+        - { name: customer_id, in: query, description: Verified platform tenant UUID., schema: { type: string, format: uuid } }
+        - { name: value, in: query, description: Filter the evaluated boolean., schema: { type: boolean } }
+        - { name: used, in: query, description: Filter application-reported exposure., schema: { type: boolean } }
+        - { name: since, in: query, description: Lookback clamped to plan retention., schema: { type: string, default: 24h } }
+        - { name: cursor, in: query, description: Cursor from the preceding page; preserve filters., schema: { type: string } }
+      responses:
+        '200':
+          description: Retained request cohort page with stable pagination window.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlagEvidencePage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/runtime/flags:
+    get:
+      tags: [flags]
+      operationId: getRuntimeFlags
+      summary: Read the live workload’s project-environment flag bundle.
+      description: Requires an RS256 workload identity token with audience gregale:flags from an active app instance. Project and environment are derived from the deployment; query parameters cannot select another scope.
+      security:
+        - flagsWorkloadIdentity: []
+      responses:
+        '200':
+          description: Runtime configuration for the authenticated workload environment.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlagsBundle' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
 components:
 
   securitySchemes:
+    flagsWorkloadIdentity:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Platform-issued short-lived RS256 workload JWT with audience gregale:flags.
     bearerAuth:
       type: http
       scheme: bearer
@@ -22474,6 +22794,24 @@ components:
         example: '</v1/uploads>; rel="successor-version", <https://github.com/poyrazK/faas/blob/main/docs/adr/115-local-tarball-deploy-trust-root.md>; rel="deprecation"'
 
   parameters:
+    FlagsProjectSlug:
+      name: slug
+      in: path
+      required: true
+      description: Project that owns this environment flag configuration.
+      schema: { type: string }
+    FlagsEnvironment:
+      name: environment
+      in: path
+      required: true
+      description: Named environment whose flag configuration is selected.
+      schema: { type: string }
+    FlagsKey:
+      name: key
+      in: path
+      required: true
+      description: Application flag key to evaluate or filter retained evidence.
+      schema: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
     PublicStatusEventID:
       name: public_id
       in: path
@@ -22618,6 +22956,240 @@ components:
       description: "Cursor — the last id from the previous page (omit for the first page)."
 
   schemas:
+    CreateDevBridgeRequest:
+      type: object
+      description: Owned app and explicit development graph for local execution.
+      required: [app, environment, developer_id]
+      properties:
+        app: { type: string }
+        environment: { type: string }
+        developer_id: { type: string, minLength: 1, maxLength: 128 }
+        dependencies: { type: array, maxItems: 32, items: { type: string } }
+        entrypoint: { type: string, description: Remote frontend included in the selected graph and used for the session URL. }
+    CreateDevBridgeResponse:
+      type: object
+      description: New development lease with credentials returned exactly once.
+      required: [session, credentials, environment_url]
+      properties:
+        session: { $ref: '#/components/schemas/DevBridgeSession' }
+        credentials: { $ref: '#/components/schemas/DevBridgeCredentials' }
+        environment_url: { type: string, format: uri }
+        dependencies: { type: array, items: { $ref: '#/components/schemas/DevBridgeDependency' } }
+    DevBridgeDependency:
+      type: object
+      description: Discovered remote service in the selected project environment.
+      required: [app_id, name, environment_url]
+      properties:
+        app_id: { type: string, format: uuid }
+        name: { type: string }
+        environment_url: { type: string, format: uri }
+    DevBridgeScope:
+      type: object
+      description: Server-resolved account, developer, environment and permitted apps.
+      required: [account_id, developer_id, project_id, environment_id, target_app_id]
+      properties:
+        account_id: { type: string, format: uuid }
+        developer_id: { type: string }
+        project_id: { type: string, format: uuid }
+        environment_id: { type: string, format: uuid }
+        target_app_id: { type: string, format: uuid }
+        dependency_app_ids: { type: array, maxItems: 32, items: { type: string, format: uuid } }
+    DevBridgeSession:
+      type: object
+      description: Durable session metadata with credential digests excluded.
+      required: [id, scope, expires_at]
+      properties:
+        id: { type: string, minLength: 43, maxLength: 43 }
+        scope: { $ref: '#/components/schemas/DevBridgeScope' }
+        expires_at: { type: string, format: date-time }
+        revoked_at: { type: [string, 'null'], format: date-time }
+    ListDevBridgesResponse:
+      type: object
+      description: Bounded active development sessions owned by the account.
+      required: [sessions]
+      properties:
+        sessions: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/DevBridgeSessionSummary' } }
+    DevBridgeSessionSummary:
+      type: object
+      description: A durable session and its informational observed connection state.
+      required: [session, connection_state]
+      properties:
+        session: { $ref: '#/components/schemas/DevBridgeSession' }
+        connection_state: { type: string, enum: [unknown, connected, disconnected, expired, revoked] }
+    DevBridgeActivity:
+      type: object
+      description: Temporary connection and request observations without credentials or payloads.
+      required: [connection_state, requests]
+      properties:
+        connection_state: { type: string, enum: [unknown, connected, disconnected, expired, revoked] }
+        connected_at: { type: [string, 'null'], format: date-time }
+        disconnected_at: { type: [string, 'null'], format: date-time }
+        requests: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/DevBridgeRequestRecord' } }
+    DevBridgeRequestRecord:
+      type: object
+      description: Redacted request metadata without queries, headers or bodies.
+      required: [id, started_at, method, path, status, duration_ms, response_bytes, complete]
+      properties:
+        id: { type: integer, minimum: 1 }
+        started_at: { type: string, format: date-time }
+        method: { type: string }
+        path: { type: string, maxLength: 1024 }
+        status: { type: integer }
+        duration_ms: { type: integer, minimum: 0 }
+        response_bytes: { type: integer, minimum: 0 }
+        complete: { type: boolean }
+        error: { type: string }
+    DevBridgeCredentials:
+      type: object
+      description: Distinct secrets for laptop attachment and request routing.
+      required: [attachment_token, request_token]
+      properties:
+        attachment_token: { type: string, format: password, minLength: 43, maxLength: 43 }
+        request_token: { type: string, format: password, minLength: 43, maxLength: 43 }
+    ReplayDevBridgeWebhookRequest:
+      type: object
+      description: Explicit verified receipt selection with scoped routing authority.
+      required: [invocation_id, request_token, idempotency_key]
+      properties:
+        invocation_id: { type: string, format: uuid }
+        request_token: { type: string, format: password, writeOnly: true, minLength: 43, maxLength: 43 }
+        idempotency_key: { type: string, minLength: 1, maxLength: 64 }
+    DevBridgeWebhookReplay:
+      type: object
+      description: Durable outcome of one development copy, separate from original delivery.
+      required: [id, session_id, invocation_id, state, http_status, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        session_id: { type: string }
+        invocation_id: { type: string, format: uuid }
+        state: { type: string, enum: [dispatching, completed, uncertain] }
+        http_status: { type: integer, minimum: 0, maximum: 599 }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: [string, 'null'], format: date-time }
+    FlagRule:
+      description: Ordered customer targeting rule; supplied constraints combine with AND.
+      type: object
+      additionalProperties: false
+      required: [id, value]
+      properties:
+        id: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+        customers: { type: array, maxItems: 1000, uniqueItems: true, items: { type: string, format: uuid } }
+        group: { type: string, description: Owner-managed customer group key. }
+        rollout: { type: integer, minimum: 0, maximum: 10000, description: Basis points of eligible customers; omitted means all eligible customers. }
+        value: { type: boolean }
+    FeatureFlag:
+      description: Boolean application behavior flag; business logic must check it explicitly.
+      type: object
+      additionalProperties: false
+      required: [key, enabled, default, rules]
+      properties:
+        key: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+        description: { type: string, maxLength: 512 }
+        enabled: { type: boolean }
+        default: { type: boolean, description: Value for disabled flags and unmatched customer rules. }
+        seed: { type: string, maxLength: 128, description: Server-supplied stable allocation seed; omit for a new flag. }
+        rules: { type: array, maxItems: 32, items: { $ref: '#/components/schemas/FlagRule' } }
+    FlagsConfig:
+      description: Complete atomic environment configuration; omitted flags are removed from current evaluation.
+      type: object
+      additionalProperties: false
+      required: [flags, groups]
+      properties:
+        flags: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/FeatureFlag' } }
+        groups:
+          type: object
+          maxProperties: 100
+          additionalProperties: { type: array, maxItems: 1000, uniqueItems: true, items: { type: string, format: uuid } }
+    FlagsBundle:
+      description: Immutable runtime configuration snapshot.
+      allOf:
+        - { $ref: '#/components/schemas/FlagsConfig' }
+        - type: object
+          required: [environment_id, version]
+          properties:
+            environment_id: { type: string, format: uuid }
+            version: { type: integer, format: int64, minimum: 0 }
+    FeatureFlagVersion:
+      description: Configuration publication with audit metadata; version zero is an unpublished empty environment.
+      allOf:
+        - { $ref: '#/components/schemas/FlagsBundle' }
+        - type: object
+          required: [actor, created_at]
+          properties:
+            actor: { type: string, description: Publishing account identity. }
+            created_at: { type: string, format: date-time }
+            restored_from: { type: integer, format: int64, minimum: 1 }
+    UpdateFeatureFlagsRequest:
+      description: Optimistic atomic configuration publication.
+      type: object
+      additionalProperties: false
+      required: [expected_version, config]
+      properties:
+        expected_version: { type: integer, format: int64, minimum: 0 }
+        config: { $ref: '#/components/schemas/FlagsConfig' }
+    RollbackFeatureFlagsRequest:
+      description: Publish the selected historical version while checking current version.
+      type: object
+      additionalProperties: false
+      required: [expected_version, version]
+      properties:
+        expected_version: { type: integer, format: int64, minimum: 0 }
+        version: { type: integer, format: int64, minimum: 1 }
+    InspectFeatureFlagRequest:
+      description: Owner-authorized simulation context; does not record exposure.
+      type: object
+      additionalProperties: false
+      properties:
+        customer_id: { type: string, format: uuid, description: Omit for anonymous evaluation. }
+        version: { type: integer, format: int64, minimum: 0, description: Zero or omitted selects current configuration. }
+        fallback: { type: boolean, default: false }
+    FlagDecision:
+      description: Explainable boolean decision against a configuration version.
+      type: object
+      required: [flag, value, config_version, reason, source]
+      properties:
+        flag: { type: string }
+        value: { type: boolean }
+        config_version: { type: integer, format: int64, minimum: 0 }
+        rule_id: { type: string }
+        reason: { type: string, enum: [flag_missing, default, disabled, customer_missing, rule_match, configuration_stale] }
+        bucket: { type: integer, minimum: 0, maximum: 9999 }
+        source: { type: string, enum: [configuration, fallback] }
+    FlagEvidence:
+      description: Application-reported evaluation and exposure, attributed by the gateway.
+      allOf:
+        - { $ref: '#/components/schemas/FlagDecision' }
+        - type: object
+          required: [used]
+          properties:
+            used: { type: boolean }
+    FlagRequestEvidence:
+      description: Retained request aggregate containing bounded flag decisions.
+      type: object
+      required: [id, app_id, deployment_id, received_at, route, method, status, latency_ms, count, cold_boot, flags]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid }
+        received_at: { type: string, format: date-time }
+        route: { type: string }
+        method: { type: string }
+        status: { type: integer }
+        latency_ms: { type: integer }
+        count: { type: integer }
+        cold_boot: { type: boolean }
+        trace_id: { type: string }
+        flags: { type: array, maxItems: 32, items: { $ref: '#/components/schemas/FlagEvidence' } }
+    FlagEvidencePage:
+      description: Stable window of up to 100 retained request aggregates; preserve filters for pagination.
+      type: object
+      required: [items, window_start, window_end]
+      properties:
+        items: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/FlagRequestEvidence' } }
+        next_cursor: { type: string }
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
     OutboundIntegrationOffer:
       type: object
       description: Account-owned managed integration metadata; never contains a provider key or gateway token.

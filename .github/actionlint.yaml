@@ -10,3 +10,4 @@ self-hosted-runner:
   labels:
     - kvm
     - faas-fleet
+    - gregale-bridge-acceptance

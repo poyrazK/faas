@@ -258,12 +258,27 @@ jobs:
 
       # Keep the credential-free CLI scenario path executable on every PR.
       # The simulation starts the app and sink over local HTTP, including a
-      # planned failed delivery and retry.
+      # planned failed delivery and retry. Run both scenarios through the suite
+      # command so selection, sequential execution, and reporting stay covered.
       - name: scenario simulation fixture
         run: |
           ./bin/gregale test --manifest tests/scenario-acceptance/gregale-test.yaml --validate
-          ./bin/gregale test --manifest tests/scenario-acceptance/gregale-test.yaml --scenario delivery-smoke --engine simulated
-          ./bin/gregale test --manifest tests/scenario-acceptance/gregale-test.yaml --scenario customer-export --engine simulated
+          ./bin/gregale test --manifest tests/scenario-acceptance/gregale-test.yaml --suite simulation --report scenario-results.json --junit scenario-results.xml
+
+      # Run the copyable customer example with the CLI built from this commit.
+      # Two reports exercise both standalone HTML rendering and offline diffing.
+      - name: scenario reports example
+        env:
+          GREGALE_TEST_CONSUMER_CUSTOMER_A_KEY: example-customer-a
+          GREGALE_TEST_CONSUMER_CUSTOMER_B_KEY: example-customer-b
+        run: |
+          ./bin/gregale test --manifest examples/scenario-tests/gregale-test.yaml --suite smoke \
+            --report "$RUNNER_TEMP/scenario-before.json" --junit "$RUNNER_TEMP/scenario-before.xml" \
+            --html "$RUNNER_TEMP/scenario-before.html"
+          ./bin/gregale test --manifest examples/scenario-tests/gregale-test.yaml --suite smoke \
+            --report "$RUNNER_TEMP/scenario-after.json" --html "$RUNNER_TEMP/scenario-after.html"
+          ./bin/gregale test compare "$RUNNER_TEMP/scenario-before.json" "$RUNNER_TEMP/scenario-after.json" \
+            --html "$RUNNER_TEMP/scenario-comparison.html"
 
       # Provider-created machines hand their one-time connection details to
       # the provider-neutral adoption pipeline through ComputeNodeClaim files.
@@ -594,7 +609,8 @@ jobs:
         include:
           - id: a
             label: state/reconcile/reposcan
-            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/reconcile|pkg/reposcan)(/|$)'
+            # Bridge lease/replay parity and relay read-only checks require Postgres.
+            package_pattern: '/(pkg/state|pkg/statefuldenylist|pkg/devbridgeintegration|pkg/reconcile|pkg/reposcan)(/|$)'
             coverage_file: cover-shard2a.out
             state_coverage: true
           - id: b
@@ -822,7 +838,7 @@ jobs:
           GO_TEST_FRESHNESS: ${{ github.event_name != 'pull_request' && '-count=1 -shuffle=on' || '' }}  # queue counts as non-PR: fresh + shuffled
         run: |
           mkdir -p coverage
-          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -vE '(cmd/apid|migrations|pkg/meter|pkg/db|pkg/alerts|pkg/state|cmd/gregale|cmd/meterd|cmd/schedd|cmd/schema-dump|cmd/githubd|cmd/migrate|pkg/lease|pkg/managedpostgres|pkg/mirror|pkg/outbound|pkg/releaseinstall|pkg/reconcile|pkg/reposcan|pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api|pkg/e2etest)')
+          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -vE '(cmd/apid|migrations|pkg/meter|pkg/db|pkg/alerts|pkg/state|pkg/devbridgeintegration|cmd/gregale|cmd/meterd|cmd/schedd|cmd/schema-dump|cmd/githubd|cmd/migrate|pkg/lease|pkg/managedpostgres|pkg/mirror|pkg/outbound|pkg/releaseinstall|pkg/reconcile|pkg/reposcan|pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api|pkg/e2etest)')
           go test -race $GO_TEST_FRESHNESS -p 4 -timeout=10m -coverprofile=coverage/cover-shard4.out -covermode=atomic $PKGS
 
 
@@ -1392,6 +1408,44 @@ jobs:
       - name: unit tests
         working-directory: sdk/node
         run: npm run test:unit
+
+  # ADR-377: exercise the actual runtime SDK, control plane, gateway and
+  # telemetry persistence together; the small fakeapid fixture cannot prove
+  # verified customer targeting or refresh after inactivity.
+  flags-acceptance:
+    name: flags (customer release + request evidence)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:15
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_PASSWORD: faas
+          POSTGRES_DB: faas
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U faas -d faas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.10.0'
+          cache: 'npm'
+          cache-dependency-path: sdk/node/package-lock.json
+      - name: customer-aware feature flag acceptance
+        run: make test-flags
 
   # Python SDK gate: gen-check + fakeapid fixture build + smoke + unit tests
   sdk-python:

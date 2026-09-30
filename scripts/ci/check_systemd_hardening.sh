@@ -10,6 +10,7 @@ units=(
   "control_plane_service/files/faas-apid.service"
   "control_plane_service/files/faas-schedd.service"
   "control_plane_service/files/faas-meterd.service"
+  "control_plane_service/files/faas-bridged.service"
   "gatewayd_public_service/files/faas-gatewayd-public.service"
   "gatewayd_internal_service/files/faas-gatewayd-internal.service"
   "githubd_service/files/faas-githubd.service"

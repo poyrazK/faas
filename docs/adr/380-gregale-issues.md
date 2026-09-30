@@ -1,4 +1,4 @@
-# ADR-377: Gregale Issues
+# ADR-380: Gregale Issues
 
 Status: Accepted for preview implementation, 2026-09-30.
 

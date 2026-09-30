@@ -23,6 +23,8 @@ type testLoadProgress struct {
 	Started, Completed   int
 	Requests, Failures   int
 	Draining             bool
+	ArrivalRate          int
+	Scheduled, Dropped   int
 }
 
 func (cfg *testLoadConfig) maxVUs() int {
@@ -72,6 +74,10 @@ func (c *testLoadCollector) progress(cfg *testLoadConfig, elapsed time.Duration)
 	defer c.mu.Unlock()
 	target, stage := cfg.targetAt(elapsed)
 	progress := testLoadProgress{Elapsed: elapsed, Stage: stage + 1, StageCount: len(cfg.Stages), TargetVUs: target, ActiveVUs: c.active, Started: c.started, Completed: c.completed, Draining: cfg.Duration > 0 && elapsed >= cfg.Duration}
+	if cfg.Rate > 0 {
+		progress.ArrivalRate, progress.TargetVUs = cfg.Rate, cfg.maxVUs()
+		progress.Scheduled, progress.Dropped = c.arrivalsScheduled, c.droppedCapacity+c.droppedLate
+	}
 	for _, step := range c.steps {
 		progress.Requests += step.evidence.Requests
 		progress.Failures += step.evidence.Failures
@@ -109,6 +115,10 @@ func printTestLoadProgress(out io.Writer, progress testLoadProgress) {
 		phase = ", draining"
 	} else if progress.StageCount > 0 {
 		phase = fmt.Sprintf(", stage %d/%d", progress.Stage, progress.StageCount)
+	}
+	if progress.ArrivalRate > 0 {
+		_, _ = fmt.Fprintf(out, "  load %.1fs%s: target %d journeys/s, %d/%d VUs active; %d/%d arrivals started, %d dropped; %d/%d journeys completed, %d HTTP steps, %d failures\n", progress.Elapsed.Seconds(), phase, progress.ArrivalRate, progress.ActiveVUs, progress.TargetVUs, progress.Started, progress.Scheduled, progress.Dropped, progress.Completed, progress.Started, progress.Requests, progress.Failures)
+		return
 	}
 	_, _ = fmt.Fprintf(out, "  load %.1fs%s: target %d VUs, %d active; %d/%d journeys completed, %d HTTP steps, %d failures\n", progress.Elapsed.Seconds(), phase, progress.TargetVUs, progress.ActiveVUs, progress.Completed, progress.Started, progress.Requests, progress.Failures)
 }

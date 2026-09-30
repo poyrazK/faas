@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
@@ -28,6 +29,7 @@ const (
 
 type Store interface {
 	LoadClusterSigningKey(context.Context) (state.ClusterSigningKey, error)
+	CreateClusterSigningKeyIfAbsent(context.Context, state.ClusterSigningKey) (bool, error)
 	ResealClusterSigningKey(context.Context, string, []byte, []byte) error
 	ListAppSecretsForRekey(context.Context, int, string) ([]state.AppSecret, error)
 	ResealAppSecretForFleet(context.Context, state.AppSecret, string, []byte) error
@@ -36,11 +38,14 @@ type Store interface {
 }
 
 type MigrationReport struct {
-	Recipient       string `json:"recipient"`
-	ClusterKID      string `json:"cluster_kid"`
-	SecretsScanned  int    `json:"secrets_scanned"`
-	SecretsResealed int    `json:"secrets_resealed"`
-	ProbeWritten    bool   `json:"probe_written"`
+	Recipient  string `json:"recipient"`
+	ClusterKID string `json:"cluster_kid"`
+	// ClusterKeyCreated reports that this run found no cluster signing key
+	// (a new fleet) and created it, sealed to the fleet recipient.
+	ClusterKeyCreated bool `json:"cluster_key_created"`
+	SecretsScanned    int  `json:"secrets_scanned"`
+	SecretsResealed   int  `json:"secrets_resealed"`
+	ProbeWritten      bool `json:"probe_written"`
 }
 
 type VerificationReport struct {
@@ -65,6 +70,17 @@ func Migrate(ctx context.Context, store Store, fleet *age.X25519Identity, legacy
 	openers := dedupeIdentities(append([]*age.X25519Identity{fleet}, legacy...))
 
 	cluster, err := store.LoadClusterSigningKey(ctx)
+	if errors.Is(err, state.ErrNotFound) {
+		// A new fleet has no cluster signing key yet. This is ADR-125's
+		// cluster-init step: create it, sealed to the fleet recipient, unless
+		// a concurrent migration already did.
+		created, createErr := createClusterSigningKey(ctx, store, recipient)
+		if createErr != nil {
+			return report, createErr
+		}
+		report.ClusterKeyCreated = created
+		cluster, err = store.LoadClusterSigningKey(ctx)
+	}
 	if err != nil {
 		return report, fmt.Errorf("fleetseal: load cluster key: %w", err)
 	}
@@ -212,6 +228,40 @@ func Verify(ctx context.Context, store Store, fleet, host *age.X25519Identity) (
 	report.JWTRoundTripOK = true
 	report.Ready = report.ProbeOK && report.JWTRoundTripOK && (host == nil || report.HostIdentityKept)
 	return report, nil
+}
+
+// createClusterSigningKey generates the fleet's Ed25519 cluster signing key
+// and inserts it, sealed to recipient, only if the table is still empty.
+func createClusterSigningKey(ctx context.Context, store Store, recipient *age.X25519Recipient) (bool, error) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return false, fmt.Errorf("fleetseal: generate cluster key: %w", err)
+	}
+	defer zero(priv)
+	privateDER, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		return false, fmt.Errorf("fleetseal: encode cluster key: %w", err)
+	}
+	privatePEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateDER})
+	zero(privateDER)
+	defer zero(privatePEM)
+	publicDER, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		return false, fmt.Errorf("fleetseal: encode cluster public key: %w", err)
+	}
+	sealed, err := secretbox.SealBytes(recipient, clusterSigningNamespace, privatePEM, len(privatePEM)+1)
+	if err != nil {
+		return false, fmt.Errorf("fleetseal: seal cluster key: %w", err)
+	}
+	created, err := store.CreateClusterSigningKeyIfAbsent(ctx, state.ClusterSigningKey{
+		KeyID:        internalsvc.KidFromPub(pub),
+		PublicKeyPEM: string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: publicDER})),
+		SealedBlob:   sealed,
+	})
+	if err != nil {
+		return false, fmt.Errorf("fleetseal: create cluster key: %w", err)
+	}
+	return created, nil
 }
 
 func parseAndMatchClusterKey(privatePEM []byte, publicPEM, kid string) (ed25519.PrivateKey, ed25519.PublicKey, error) {

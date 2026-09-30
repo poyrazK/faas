@@ -38,7 +38,7 @@
     "registry": "https://registry.npmjs.org",
     "access": "restricted"
   },
-  "//publishConfig": "access stays 'restricted' while LICENSE is LicenseRef-onebox-internal (proprietary, non-redistributable). Flip to 'public' only alongside a customer-redistributable license — see sdk/README-publishing.md.",
+  "//publishConfig": "access stays 'restricted' while LICENSE is LicenseRef-onebox-internal (proprietary, non-redistributable). Flip to 'public' only alongside a customer-redistributable license \u2014 see sdk/README-publishing.md.",
   "scripts": {
     "gen": "node scripts/gen.mjs",
     "gen:check": "node scripts/gen.mjs && git diff --exit-code -- src/generated",
@@ -46,7 +46,7 @@
     "test:build": "tsc -p tsconfig.test.json",
     "test": "npm run test:build && node --test --test-concurrency=1 'dist-test/test/**/*.test.js' && node --test --test-concurrency=1 test/post-process.test.mjs",
     "test:smoke": "npm run test:build && node --test --test-concurrency=1 dist-test/test/smoke.test.js",
-    "test:unit": "npm run test:build && node --test --test-concurrency=1 dist-test/test/issues.test.js dist-test/test/sse.test.js dist-test/test/release-context.test.js dist-test/test/browser-release.test.js dist-test/test/pre-auth-target.test.js dist-test/test/browser-realtime.test.js dist-test/test/realtime-resume.test.js && node --test --test-concurrency=1 test/post-process.test.mjs",
+    "test:unit": "npm run test:build && node --test --test-concurrency=1 dist-test/test/issues.test.js dist-test/test/flags.test.js dist-test/test/dev-bridge.test.js dist-test/test/sse.test.js dist-test/test/release-context.test.js dist-test/test/browser-release.test.js dist-test/test/pre-auth-target.test.js dist-test/test/browser-realtime.test.js dist-test/test/realtime-resume.test.js && node --test --test-concurrency=1 test/post-process.test.mjs && npm run build && node --test ../../tests/dev-bridge-acceptance/app/server.test.mjs",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {},

@@ -25,6 +25,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/circuit"
 	"github.com/onebox-faas/faas/pkg/dependencytrace"
+	"github.com/onebox-faas/faas/pkg/devbridge"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -150,6 +151,10 @@ type ServiceCaller struct {
 // declared-binding policy. A nil authorizer is a wiring error and fails closed.
 type ServiceProxyAuthorizer func(ctx context.Context, callerAppID, targetAppID string) (ServiceCaller, error)
 
+// ServiceProxyDevBridge handles a scoped development call after ordinary
+// binding and caller authorization, before production endpoint selection.
+type ServiceProxyDevBridge func(http.ResponseWriter, *http.Request, ServiceCaller, ServiceTarget, string)
+
 // ServiceAliasAllowed checks whether a caller declared the target named by
 // a short .internal Host. It is checked even when the caller's legacy
 // outbound policy is account, so direct Host requests cannot bypass DNS.
@@ -227,6 +232,7 @@ type ServiceProxyConfig struct {
 	ResolveCaller         ServiceProxyCallerResolver
 	ResolveCallerIdentity ServiceProxyCallerIdentityResolver
 	ResolveRelease        ServiceProxyReleaseResolver
+	DevBridge             ServiceProxyDevBridge
 	Forward               func(Target) http.Handler
 	// RawForward is the optional verbatim-bytes bridge used for Upgrade
 	// traffic (ADR-197). nil rejects internal upgrade requests with 501
@@ -285,6 +291,7 @@ type ServiceProxy struct {
 	resolveCaller         ServiceProxyCallerResolver
 	resolveCallerIdentity ServiceProxyCallerIdentityResolver
 	resolveRelease        ServiceProxyReleaseResolver
+	devBridge             ServiceProxyDevBridge
 	forward               func(Target) http.Handler
 	rawForward            func(Target) http.Handler
 	wake                  ServiceProxyWaker
@@ -381,6 +388,7 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		resolveCaller:         cfg.ResolveCaller,
 		resolveCallerIdentity: cfg.ResolveCallerIdentity,
 		resolveRelease:        cfg.ResolveRelease,
+		devBridge:             cfg.DevBridge,
 		forward:               cfg.Forward,
 		rawForward:            cfg.RawForward,
 		wake:                  cfg.Wake,
@@ -618,6 +626,19 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	setProbeStage("routing")
+	if r.Header.Get(devbridge.ContextHeader) != "" || r.Header.Get(devbridge.SessionHeader) != "" || r.Header.Get(devbridge.TokenHeader) != "" {
+		if p.devBridge == nil || p.resolveCallerIdentity == nil {
+			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "development service routing is unavailable")
+			return
+		}
+		if probe {
+			serviceProxyProblem(dispatchWriter, http.StatusConflict, "development session calls cannot use a production binding probe")
+			return
+		}
+		dependencyCallEligible = true
+		p.devBridge(dispatchWriter, r, callerInfo, target, targetPath)
+		return
+	}
 	if probe {
 		if p.provider == nil {
 			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service endpoint registry is unavailable")

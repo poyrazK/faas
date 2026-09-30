@@ -1196,6 +1196,25 @@ var cliCommands = []cliCommand{
 		},
 		Subcommands: []cliSub{
 			{Name: "status", Short: "show developer-environment quota usage"},
+			{Name: "bridge", Short: "run an HTTP service locally in a remote development environment", Flags: []cliFlag{
+				{Name: "environment", Short: "named development environment", Value: "ENV"},
+				{Name: "local-port", Short: "local HTTP service port", Value: "PORT"},
+				{Name: "dependencies", Short: "comma-separated remote dependency apps", Value: "APPS"},
+				{Name: "entrypoint", Short: "remote frontend for the session URL", Value: "APP"},
+				{Name: "inspect", Short: "inspect recent requests in a local browser"},
+				{Name: "replay-webhook", Short: "copy one provider-verified webhook receipt locally", Value: "INVOCATION"},
+				{Name: "ready-path", Short: "check a local HTTP readiness path before attaching", Value: "PATH"},
+				{Name: "bind-env", Short: "map ENV_KEY=dependency to its local proxy URL; repeatable", Value: "BINDING"},
+			}, Subcommands: []cliSub{
+				{Name: "list", Short: "list active account development bridges"},
+				{Name: "status", Short: "inspect a session and recent request activity", Positionals: []string{"SESSION"}},
+				{Name: "revoke", Short: "revoke a session and disconnect its laptop", Positionals: []string{"SESSION"}},
+				{Name: "doctor", Short: "check admission, relay and local listener using a temporary session", Positionals: []string{"APP"}, Flags: []cliFlag{
+					{Name: "environment", Short: "named development environment", Value: "ENV"},
+					{Name: "local-port", Short: "local HTTP service port", Value: "PORT"},
+					{Name: "entrypoint", Short: "remote frontend", Value: "APP"},
+				}},
+			}},
 			{Name: "history", Short: "show edit-to-live timings and SLO guidance", Flags: []cliFlag{
 				{Name: "path", Short: "source directory", Value: "DIR"},
 				{Name: "name", Short: "developer-session project name", Value: "PROJECT"},
@@ -1227,14 +1246,16 @@ var cliCommands = []cliCommand{
 	{
 		Name:     "test",
 		DocSlug:  "test",
-		Short:    "Run application scenarios and bounded local HTTP load tests",
-		Examples: []string{"gregale test init --from openapi.yaml --project my-api", "gregale test import --from collection.json --project my-api", "gregale test --validate", "gregale test --scenario customer-export --preflight", "gregale test --scenario customer-export --profile restored --repeat 3 --max-workload-minutes 135 --report test-results.json --junit test-results.xml", "gregale test --scenario api-smoke --engine local", "gregale test --scenario customer-export --engine local --base-url http://localhost:3000 --data cases.json", "gregale test --scenario api-smoke --engine local --base-url http://localhost:3000 --load --vus 5 --duration 30s --pacing 100ms --progress", "gregale test --scenario customer-export --engine simulated"},
+		Short:    "Run scenario suites and bounded local HTTP load tests",
+		Examples: []string{"gregale test init --from openapi.yaml --project my-api", "gregale test import --from collection.json --project my-api", "gregale test --validate", "gregale test --suite smoke --engine local --fail-fast --junit test-results.xml", "gregale test --suite smoke --engine local --report test-results.json --junit test-results.xml --html test-results.html", "gregale test compare baseline.json current.json --html comparison.html", "gregale test --suite regression --validate", "gregale test --scenario customer-export --preflight", "gregale test --scenario customer-export --profile restored --repeat 3 --max-workload-minutes 135 --report test-results.json --junit test-results.xml", "gregale test --scenario api-smoke --engine local", "gregale test --scenario api-smoke --engine local --load --baseline baseline.json --report current.json --junit current.xml", "gregale test --scenario customer-export --engine local --base-url http://localhost:3000 --data cases.json", "gregale test --scenario api-smoke --engine local --base-url http://localhost:3000 --load --vus 5 --duration 30s --pacing 100ms --progress", "gregale test --scenario api-smoke --engine local --load --rate 20 --duration 30s --vus 10 --progress", "gregale test --scenario customer-export --engine simulated"},
 		Subcommands: []cliSub{{Name: "init", Short: "Create public GET smoke checks from a local OpenAPI document", Examples: []string{"gregale test init --from openapi.yaml --project my-api --source ."}, Flags: []cliFlag{
 			{Name: "from", Short: "local OpenAPI 3.0 or 3.1 document", Value: "PATH", Req: true},
 			{Name: "project", Short: "Gregale project slug", Value: "SLUG", Req: true},
 			{Name: "source", Short: "application source directory", Value: "DIR"},
 			{Name: "scenario", Short: "scenario name", Value: "NAME"},
 			{Name: "output", Short: "new manifest path", Value: "PATH"},
+		}}, {Name: "compare", Short: "Compare two saved JSON run reports without rerunning scenarios", Positionals: []string{"<before.json>", "<after.json>"}, Examples: []string{"gregale test compare baseline.json current.json", "gregale test compare baseline.json current.json --html comparison.html"}, Flags: []cliFlag{
+			{Name: "html", Short: "write a standalone HTML comparison report", Value: "PATH"},
 		}}, {Name: "import", Short: "Create draft native requests from a local Postman Collection v2.1 export", Examples: []string{"gregale test import --from collection.json --project my-api", "gregale test import --from collection.json --project my-api --requests-only --status 202"}, Flags: []cliFlag{
 			{Name: "from", Short: "local Postman Collection v2.1 JSON export", Value: "PATH", Req: true},
 			{Name: "project", Short: "Gregale project slug", Value: "SLUG", Req: true},
@@ -1246,23 +1267,28 @@ var cliCommands = []cliCommand{
 		}}},
 		Flags: []cliFlag{
 			{Name: "scenario", Short: "scenario declared in gregale-test.yaml", Value: "NAME"},
+			{Name: "suite", Short: "named suite; run members sequentially in declaration order", Value: "NAME"},
+			{Name: "fail-fast", Short: "stop after the first failed run and cleanup; report remaining runs as skipped"},
 			{Name: "validate", Short: "validate local scenario sources without a platform login"},
 			{Name: "preflight", Short: "check account entitlements and developer app capacity"},
 			{Name: "engine", Short: "execution engine (default real-vm)", Value: "ENGINE", ClosedSet: []string{"real-vm", "local", "simulated"}},
 			{Name: "base-url", Short: "HTTP loopback origin (optional with local.command)", Value: "URL"},
 			{Name: "data", Short: "JSON or CSV case data for the local engine", Value: "PATH"},
 			{Name: "load", Short: "repeat native HTTP journeys concurrently with the local engine"},
-			{Name: "vus", Short: "concurrent users for --load (1..50, default 1)", Value: "N"},
+			{Name: "vus", Short: "concurrent users or arrival-rate concurrency cap (1..50, default 1)", Value: "N"},
+			{Name: "rate", Short: "target journeys per second with --load and duration (1..1000)", Value: "N"},
 			{Name: "iterations", Short: "total journeys for --load (1..10000, default 100)", Value: "N"},
 			{Name: "duration", Short: "schedule journeys for this duration with --load (1s..5m)", Value: "DURATION"},
 			{Name: "pacing", Short: "pause between each user's load journeys (0s..1m)", Value: "DURATION"},
 			{Name: "progress", Short: "print live load progress to stderr"},
+			{Name: "baseline", Short: "compare local load with a saved successful JSON report; apply regression budgets", Value: "PATH"},
 			{Name: "profile", Short: "required lifecycle (default all)", Value: "PROFILE", ClosedSet: []string{"warm", "cold", "restored", "all"}},
 			{Name: "repeat", Short: "runs per lifecycle profile or local case (1..20)", Value: "N"},
 			{Name: "max-workload-minutes", Short: "abort if the estimated VM workload-minute ceiling exceeds N", Value: "N"},
 			{Name: "manifest", Short: "scenario manifest path", Value: "PATH"},
 			{Name: "report", Short: "write a JSON report", Value: "PATH"},
 			{Name: "junit", Short: "write a JUnit XML report", Value: "PATH"},
+			{Name: "html", Short: "write a standalone HTML report", Value: "PATH"},
 		},
 	},
 	{
@@ -1312,6 +1338,18 @@ var cliCommands = []cliCommand{
 		},
 		Flags: []cliFlag{
 			{Name: "app", Short: "app slug", Value: "slug"},
+		},
+	},
+	{
+		Name: "flags", DocSlug: "flags", Short: "Release application behavior to selected customers",
+		Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}},
+		Subcommands: []cliSub{
+			{Name: "get", Short: "Read current flag configuration"},
+			{Name: "apply", Short: "Publish a versioned configuration", Flags: []cliFlag{{Name: "file", Short: "JSON update bundle", Value: "path", Req: true}}},
+			{Name: "history", Short: "List immutable configuration versions", Flags: []cliFlag{{Name: "before-version", Short: "page before this version", Value: "number"}}},
+			{Name: "inspect", Short: "Explain a customer's decision", Flags: []cliFlag{{Name: "key", Short: "flag key", Value: "key", Req: true}, {Name: "customer-id", Short: "customer UUID", Value: "UUID"}, {Name: "version", Short: "historical configuration version", Value: "number"}}},
+			{Name: "rollback", Short: "Publish an earlier configuration", Flags: []cliFlag{{Name: "version", Short: "version to restore", Value: "number", Req: true}, {Name: "expected-version", Short: "current version", Value: "number", Req: true}}},
+			{Name: "requests", Short: "Inspect request evidence by flag value", Flags: []cliFlag{{Name: "key", Short: "flag key", Value: "key", Req: true}, {Name: "customer-id", Short: "customer UUID", Value: "UUID"}, {Name: "value", Short: "true or false", Value: "bool"}, {Name: "used", Short: "true or false exposure", Value: "bool"}, {Name: "since", Short: "lookback (default 24h)", Value: "duration"}, {Name: "cursor", Short: "next-page cursor", Value: "cursor"}}},
 		},
 	},
 	{

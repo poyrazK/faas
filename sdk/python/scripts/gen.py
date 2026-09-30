@@ -155,6 +155,7 @@ def regen(overwrite: bool = True) -> None:
             "idempotency.py",
             "executions.py",
             "release_context.py",
+            "dev_bridge.py",
             "webhook.py",
             "pre_auth_target.py",
             "issues.py",
@@ -334,7 +335,7 @@ def regen(overwrite: bool = True) -> None:
                     "--quiet",
                     str(sdk_root),
                     "--exclude",
-                    "_wrapper.py,_rfc7807.py,_sse.py,_transport.py,idempotency.py,executions.py,release_context.py,webhook.py,__init__.py",
+                    "_wrapper.py,_rfc7807.py,_sse.py,_transport.py,idempotency.py,executions.py,release_context.py,dev_bridge.py,webhook.py,__init__.py",
                 ],
                 check=False,
                 capture_output=True,
@@ -640,6 +641,14 @@ from ._rfc7807 import (
 )
 from ._sse import SseEvent, aiter_sse, iter_sse
 from .executions import ExecutionEvent, ExecutionID, awatch_execution, watch_execution
+from .dev_bridge import (
+    DEV_BRIDGE_CONTEXT_HEADER,
+    AsyncDevBridgeTransport,
+    DevBridgeMiddleware,
+    DevBridgeTransport,
+    current_dev_bridge_context,
+    with_dev_bridge_context,
+)
 from ._transport import RetryOptions, WrapperOptions, install_chain
 from ._wrapper import FaaSClient, FaaSClientOptions
 from .client import AuthenticatedClient, Client
@@ -720,6 +729,12 @@ __all__ = (
     "watch_execution",
     "awatch_execution",
     "__version__",
+    "DEV_BRIDGE_CONTEXT_HEADER",
+    "AsyncDevBridgeTransport",
+    "DevBridgeMiddleware",
+    "DevBridgeTransport",
+    "current_dev_bridge_context",
+    "with_dev_bridge_context",
 )
 '''
 

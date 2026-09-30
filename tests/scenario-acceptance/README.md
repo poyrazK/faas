@@ -15,15 +15,19 @@ The simulation and real VM assertion command call the same export contract in
 `export-api/test/contract.mjs`; the simulation additionally checks its local
 queue attempt count and object count.
 
-Run the fast local simulation from the repository root. It starts the app and
-delivery sink as local HTTP servers and checks the retry and recorded payload:
+Run the fast local simulation suite from the repository root. It runs both
+scenarios sequentially, starts the app and delivery sink as local HTTP servers,
+and checks the retry and recorded payload. Reports label every run `simulated`:
 
 ```sh
 gregale test --manifest tests/scenario-acceptance/gregale-test.yaml \
-  --scenario delivery-smoke --engine simulated
-gregale test --manifest tests/scenario-acceptance/gregale-test.yaml \
-  --scenario customer-export --engine simulated
+  --suite simulation --report scenario-simulation-report.json \
+  --junit scenario-simulation-report.xml
 ```
+
+Add `--fail-fast` to stop after the first failure. To run one member, use
+`--scenario delivery-smoke --engine simulated` or
+`--scenario customer-export --engine simulated` instead of `--suite`.
 
 On a live Gregale installation, run the real VM acceptance. `delivery-smoke`
 needs a Hobby or higher account; `customer-export` needs Pro or higher for its

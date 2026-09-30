@@ -1438,6 +1438,31 @@ type DeploymentSidecarSecretReloadSignal struct {
 	Signal       string
 }
 
+type DevBridgeSession struct {
+	ID               string
+	AccountID        pgtype.UUID
+	TargetAppID      pgtype.UUID
+	EnvironmentID    pgtype.UUID
+	Scope            []byte
+	AttachmentDigest []byte
+	RequestDigest    []byte
+	ExpiresAt        pgtype.Timestamptz
+	RevokedAt        pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+}
+
+type DevBridgeWebhookReplay struct {
+	ID             pgtype.UUID
+	SessionID      string
+	AccountID      pgtype.UUID
+	InvocationID   pgtype.UUID
+	IdempotencyKey string
+	State          string
+	HttpStatus     int32
+	CreatedAt      pgtype.Timestamptz
+	CompletedAt    pgtype.Timestamptz
+}
+
 type DeveloperSyncHistory struct {
 	ID           pgtype.UUID
 	AppID        pgtype.UUID
@@ -1666,6 +1691,17 @@ type ExecutionUsageLedger struct {
 	FinishedAt   pgtype.Timestamptz
 	CreatedAt    pgtype.Timestamptz
 	RecordedAt   pgtype.Timestamptz
+}
+
+type FeatureFlagVersion struct {
+	AccountID     pgtype.UUID
+	ProjectID     pgtype.UUID
+	EnvironmentID pgtype.UUID
+	Version       int64
+	Config        []byte
+	Actor         string
+	RestoredFrom  pgtype.Int8
+	CreatedAt     pgtype.Timestamptz
 }
 
 // Singleton non-secret secretbox probe proving every admitted node shares the fleet.age unseal domain.
@@ -3519,6 +3555,7 @@ type RequestTelemetry struct {
 	GuestCpuTimeMs              int32
 	GuestPeakRssMb              int32
 	GuestResourceUsageAvailable bool
+	FlagEvidence                []byte
 }
 
 type RequestTelemetry202609 struct {
@@ -3555,6 +3592,7 @@ type RequestTelemetry202609 struct {
 	GuestCpuTimeMs              int32
 	GuestPeakRssMb              int32
 	GuestResourceUsageAvailable bool
+	FlagEvidence                []byte
 }
 
 type RequestTelemetry202610 struct {
@@ -3591,6 +3629,7 @@ type RequestTelemetry202610 struct {
 	GuestCpuTimeMs              int32
 	GuestPeakRssMb              int32
 	GuestResourceUsageAvailable bool
+	FlagEvidence                []byte
 }
 
 type RequestTelemetry202611 struct {
@@ -3627,6 +3666,7 @@ type RequestTelemetry202611 struct {
 	GuestCpuTimeMs              int32
 	GuestPeakRssMb              int32
 	GuestResourceUsageAvailable bool
+	FlagEvidence                []byte
 }
 
 type RequestTelemetryDefault struct {
@@ -3663,6 +3703,7 @@ type RequestTelemetryDefault struct {
 	GuestCpuTimeMs              int32
 	GuestPeakRssMb              int32
 	GuestResourceUsageAvailable bool
+	FlagEvidence                []byte
 }
 
 type ReservedIpInventory struct {

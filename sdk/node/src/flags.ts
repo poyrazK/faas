@@ -1,0 +1,167 @@
+import { createHash } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
+
+export interface FlagRule { id: string; customers?: string[]; group?: string; rollout?: number; value: boolean }
+export interface FeatureFlag { key: string; description?: string; enabled: boolean; default: boolean; seed: string; rules: FlagRule[] }
+export interface FlagsBundle { environment_id: string; version: number; flags: FeatureFlag[]; groups: Record<string, string[]> }
+export interface FlagDecision {
+  flag: string; value: boolean; config_version: number; rule_id?: string;
+  reason: string; bucket?: number; source: 'configuration' | 'fallback';
+}
+export interface FlagEvidence extends FlagDecision { used: boolean }
+export type FlagRequestHeaders = HeadersInit | Record<string, string | string[] | undefined>;
+export const GREGALE_FLAG_EVIDENCE_HEADER = 'X-Faas-Flag-Evidence';
+export const GREGALE_FLAG_CONTEXT_HEADER = 'X-Faas-Platform-Tenant-Id';
+const CUSTOMER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+export function flagBucket(seed: string, key: string, customer: string): number {
+  return createHash('sha256').update(`${seed}\0${key}\0${customer}`).digest().readUInt32BE(0) % 10000;
+}
+/** Pure evaluator. customer must come from trusted server-side middleware. */
+export function evaluateFlag(bundle: FlagsBundle, key: string, customer: string | undefined, fallback: boolean): FlagDecision {
+  const d: FlagDecision = { flag: key, value: fallback, config_version: bundle.version, reason: 'flag_missing', source: 'fallback' };
+  const f = bundle.flags.find(flag => flag.key === key);
+  if (!f) return d;
+  d.value = f.default; d.source = 'configuration'; d.reason = 'default';
+  if (!f.enabled) return { ...d, reason: 'disabled' };
+  if (!customer) return { ...d, reason: 'customer_missing' };
+  for (const rule of f.rules) {
+    if (rule.customers?.length && !rule.customers.includes(customer)) continue;
+    if (rule.group && !bundle.groups[rule.group]?.includes(customer)) continue;
+    let bucket: number | undefined;
+    if (rule.rollout !== undefined) {
+      bucket = flagBucket(f.seed, f.key, customer);
+      if (bucket >= rule.rollout) continue;
+    }
+    return { ...d, value: rule.value, rule_id: rule.id, reason: 'rule_match', ...(bucket === undefined ? {} : { bucket }) };
+  }
+  return d;
+}
+
+export interface GregaleFlagsOptions {
+  /** Public apid base URL, e.g. https://api.gregale.dev. HTTPS required. */
+  apiURL: string;
+  /** Loopback URL supplied by guest-init. Defaults to FAAS_WORKLOAD_IDENTITY_ENDPOINT. */
+  identityEndpoint?: string;
+  fetch?: typeof globalThis.fetch;
+  refreshMs?: number;
+  /** At most 60s. Once stale, evaluation returns the call's explicit fallback. */
+  maxStaleMs?: number;
+  timeoutMs?: number;
+  now?: () => number;
+}
+type RequestFlags = { customer?: string; bundle?: FlagsBundle; fresh: boolean; evidence: Map<string, FlagEvidence> };
+
+/** Server-only client. Refresh is asynchronous; all checks in a request share one snapshot. */
+export class GregaleFlags {
+  private bundle?: FlagsBundle;
+  private refreshedAt = Number.NEGATIVE_INFINITY;
+  private refreshing?: Promise<void>;
+  private timer?: ReturnType<typeof setInterval>;
+  private readonly requests = new AsyncLocalStorage<RequestFlags>();
+  private readonly fetchImpl: typeof globalThis.fetch;
+  private readonly now: () => number;
+  private readonly maxStaleMs: number;
+  private readonly timeoutMs: number;
+  private readonly refreshMs: number;
+  private readonly apiURL: URL;
+  private readonly identityURL: URL;
+
+  constructor(options: GregaleFlagsOptions) {
+    this.apiURL = new URL('/v1/runtime/flags', options.apiURL);
+    if (this.apiURL.protocol !== 'https:') throw new Error('Flags API requires HTTPS');
+    this.identityURL = new URL(options.identityEndpoint ?? process.env.FAAS_WORKLOAD_IDENTITY_ENDPOINT ?? '');
+    if (this.identityURL.protocol !== 'http:' || !['127.0.0.1', '[::1]', 'localhost'].includes(this.identityURL.hostname)) throw new Error('Workload identity endpoint must be loopback HTTP');
+    this.identityURL.searchParams.set('audience', 'gregale:flags');
+    this.fetchImpl = options.fetch ?? globalThis.fetch;
+    this.now = options.now ?? Date.now;
+    this.maxStaleMs = options.maxStaleMs ?? 60_000;
+    this.refreshMs = options.refreshMs ?? 15_000;
+    this.timeoutMs = options.timeoutMs ?? 2000;
+    if (!(this.maxStaleMs > 0 && this.maxStaleMs <= 60_000 && this.refreshMs > 0 && this.refreshMs <= this.maxStaleMs && this.timeoutMs > 0 && this.timeoutMs <= 10_000)) throw new Error('Invalid Flags refresh or timeout bounds');
+  }
+  async start(): Promise<void> {
+    // Application startup remains available with explicit fallback behavior.
+    await this.refresh().catch(() => {});
+    if (!this.timer) { this.timer = setInterval(() => { void this.refresh().catch(() => {}); }, this.refreshMs); this.timer.unref(); }
+  }
+  close(): void { if (this.timer) clearInterval(this.timer); this.timer = undefined; }
+  refresh(): Promise<void> {
+    if (this.refreshing) return this.refreshing;
+    this.refreshing = this.load().finally(() => { this.refreshing = undefined; });
+    return this.refreshing;
+  }
+  private async load(): Promise<void> {
+    const signal = AbortSignal.timeout(this.timeoutMs);
+    const identity = await this.fetchImpl(this.identityURL, { signal, redirect: 'error', cache: 'no-store' });
+    if (!identity.ok) throw new Error('Flags workload identity unavailable');
+    const token = await boundedJSON(identity, 16_384) as { access_token?: string };
+    if (typeof token.access_token !== 'string' || !token.access_token || token.access_token.length > 8192) throw new Error('Invalid workload identity');
+    const response = await this.fetchImpl(this.apiURL, { signal, redirect: 'error', cache: 'no-store', headers: { Authorization: `Bearer ${token.access_token}` } });
+    if (!response.ok) throw new Error(`Flags refresh failed (${response.status})`);
+    // Configuration is bounded to 256 KiB; the runtime envelope adds scope/version.
+    const next = validateBundle(await boundedJSON(response, 262_144 + 1024));
+    if (this.bundle && (next.environment_id !== this.bundle.environment_id || next.version < this.bundle.version)) throw new Error('Flags configuration scope or version regressed');
+    this.bundle = next;
+    this.refreshedAt = this.now();
+  }
+  /** Call only on requests delivered by Gregale's gateway, which replaces reserved headers.
+   * Refresh on resume when stale; a bounded refresh failure uses explicit fallbacks. */
+  async runRequest<T>(headers: FlagRequestHeaders, handler: () => T | Promise<T>): Promise<T> {
+    const age = this.now() - this.refreshedAt;
+    if (!this.bundle || age < 0 || age > this.maxStaleMs) await this.refresh().catch(() => {});
+    const currentAge = this.now() - this.refreshedAt;
+    const normalized = headers instanceof Headers || Array.isArray(headers) ? new Headers(headers) : new Headers(
+      Object.entries(headers).filter((entry): entry is [string, string | string[]] => entry[1] !== undefined).map(([key, value]): [string, string] => [key, Array.isArray(value) ? value.join(', ') : value]));
+    const raw = normalized.get(GREGALE_FLAG_CONTEXT_HEADER) ?? '';
+    const request: RequestFlags = { customer: CUSTOMER_ID.test(raw) ? raw : undefined, bundle: this.bundle, fresh: !!this.bundle && currentAge >= 0 && currentAge <= this.maxStaleMs, evidence: new Map() };
+    return this.requests.run(request, handler);
+  }
+  boolean(key: string, fallback: boolean): FlagDecision {
+    const r = this.requests.getStore();
+    if (!r) throw new Error('Flag checks require runRequest');
+    const prior = r.evidence.get(key);
+    if (prior) return { ...prior };
+    const d = r.fresh && r.bundle ? evaluateFlag(r.bundle, key, r.customer, fallback) : { flag: key, value: fallback, config_version: r.bundle?.version ?? 0, reason: 'configuration_stale', source: 'fallback' as const };
+    if (r.evidence.size < 32) r.evidence.set(key, { ...d, used: false });
+    return d;
+  }
+  /** Mark at the point the selected application path is entered. */
+  used(key: string): void {
+    const request = this.requests.getStore();
+    const d = request?.evidence.get(key);
+    // Evidence overflow must not interrupt the application's selected behavior.
+    if (!d && request && request.evidence.size >= 32) return;
+    if (!d) throw new Error('Flag must be evaluated before marking exposure');
+    d.used = true;
+  }
+  evidence(): FlagEvidence[] { return [...(this.requests.getStore()?.evidence.values() ?? [])].map(d => ({ ...d })); }
+  /** Put on the app response before headers are sent; the gateway consumes and removes it. */
+  responseEvidence(): string { return Buffer.from(JSON.stringify(this.evidence())).toString('base64url'); }
+}
+
+async function boundedJSON(response: Response, max: number): Promise<unknown> {
+  if (!response.body) throw new Error('Missing Flags response body');
+  const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let size = 0;
+  try {
+    for (;;) { const { value, done } = await reader.read(); if (done) break; size += value.length; if (size > max) throw new Error('Flags response too large'); chunks.push(value); }
+    return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
+  } finally { await reader.cancel(); }
+}
+function validateBundle(raw: unknown): FlagsBundle {
+  const b = raw as FlagsBundle;
+  const key = (v: unknown): v is string => typeof v === 'string' && /^[a-z][a-z0-9_-]{0,63}$/.test(v);
+  const ids = (v: unknown): v is string[] => Array.isArray(v) && v.length <= 1000 && v.every(id => typeof id === 'string' && CUSTOMER_ID.test(id)) && new Set(v).size === v.length;
+  if (!b || typeof b.environment_id !== 'string' || !CUSTOMER_ID.test(b.environment_id) || !Number.isSafeInteger(b.version) || b.version < 0 || !Array.isArray(b.flags) || b.flags.length > 100 || !b.groups || typeof b.groups !== 'object' || Array.isArray(b.groups) || Object.keys(b.groups).length > 100) throw new Error('Invalid Flags bundle');
+  for (const [name, members] of Object.entries(b.groups)) if (!key(name) || !ids(members)) throw new Error('Invalid Flags group');
+  const keys = new Set<string>();
+  for (const f of b.flags) {
+    if (!key(f.key) || keys.has(f.key) || typeof f.enabled !== 'boolean' || typeof f.default !== 'boolean' || typeof f.seed !== 'string' || !f.seed || f.seed.length > 128 || f.seed.includes('\0') || !Array.isArray(f.rules) || f.rules.length > 32) throw new Error('Invalid Flags definition');
+    keys.add(f.key); const rules = new Set<string>();
+    for (const r of f.rules) {
+      if (!key(r.id) || rules.has(r.id) || typeof r.value !== 'boolean' || (r.customers !== undefined && !ids(r.customers)) || (r.group !== undefined && (!key(r.group) || !Object.hasOwn(b.groups, r.group))) || (r.rollout !== undefined && (!Number.isInteger(r.rollout) || r.rollout < 0 || r.rollout > 10000)) || (!r.customers?.length && !r.group && r.rollout === undefined)) throw new Error('Invalid Flags rule');
+      rules.add(r.id);
+    }
+  }
+  return b;
+}

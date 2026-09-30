@@ -36,7 +36,7 @@
 
     {{if .Data.Project}}
       {{$project := .Data.Project}}
-      <p><a href="/dashboard/projects">← All projects</a> · <a href="/dashboard/projects/{{$project.Slug}}/preview">Preview a new apply</a></p>
+      <p><a href="/dashboard/projects">← All projects</a> · <a href="/dashboard/projects/{{$project.Slug}}/preview">Preview a new apply</a> · <a href="/dashboard/dev-bridges?project={{$project.Slug}}">Dev Bridge sessions</a></p>
       <section class="card">
         <dl>
           <dt>ID</dt><dd><code>{{$project.ID}}</code></dd>
