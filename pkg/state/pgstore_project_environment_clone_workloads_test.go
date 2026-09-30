@@ -8,3 +8,9 @@ func TestPgProjectEnvironmentCloneCapturesAndPreparesWorkloads(t *testing.T) {
 	s, _, _ := pgWithPool(t)
 	projectEnvironmentCloneCapturesAndPreparesWorkloads(t, s)
 }
+
+// ADR-375: the publication gate requires the captured project configuration.
+func TestPgProjectEnvironmentCloneRequiresProjectConfigurationReceipt(t *testing.T) {
+	s, _, _ := pgWithPool(t)
+	projectEnvironmentCloneCapturesAndPreparesWorkloads(t, s, true)
+}

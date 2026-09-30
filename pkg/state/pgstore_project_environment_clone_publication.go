@@ -113,7 +113,10 @@ func verifyClonePublicationTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironm
 	if err != nil {
 		return err
 	}
-	return validateCloneWorkloadProofs(resources, workloads)
+	if err := validateCloneWorkloadProofs(resources, workloads); err != nil {
+		return err
+	}
+	return verifyCloneProjectConfigTx(ctx, tx, op, resources)
 }
 
 func (s *PgStore) PublishProjectEnvironmentCloneReleaseSet(ctx context.Context, accountID, projectID, operationID string, revision int64, ttl int) (ProjectReleaseSet, error) {

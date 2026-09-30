@@ -4823,6 +4823,16 @@ JOIN project_environment_clone_operations o ON o.id = w.operation_id
 WHERE o.id = sqlc.arg(operation_id)::uuid AND o.account_id = sqlc.arg(account_id)::uuid
   AND o.project_id = sqlc.arg(project_id)::uuid ORDER BY w.app_id;
 
+-- name: ReadProjectEnvironmentCloneProjectConfiguration :one
+SELECT id::text, config_hash, config_json FROM project_environment_config_versions
+WHERE account_id = sqlc.arg(account_id)::uuid AND project_id = sqlc.arg(project_id)::uuid
+  AND environment_slug = sqlc.arg(environment)::text ORDER BY version DESC LIMIT 1;
+
+-- name: InsertProjectEnvironmentCloneProjectConfiguration :execrows
+INSERT INTO project_environment_config_versions (account_id, project_id, environment_slug, version, config_hash, config_json)
+VALUES (sqlc.arg(account_id)::uuid, sqlc.arg(project_id)::uuid, sqlc.arg(environment)::text,
+        1, sqlc.arg(config_hash)::text, sqlc.arg(config_json)::jsonb);
+
 -- name: InsertProjectEnvironmentCloneWorkload :exec
 INSERT INTO project_environment_clone_workloads (operation_id, app_id, source_deployment_id, source_hash, snapshot)
 VALUES (sqlc.arg(operation_id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(source_deployment_id)::uuid,

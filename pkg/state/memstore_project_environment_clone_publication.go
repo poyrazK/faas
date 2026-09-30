@@ -83,7 +83,14 @@ func (m *MemStore) verifyClonePublicationLocked(op ProjectEnvironmentCloneOperat
 	if err != nil {
 		return err
 	}
-	return validateCloneWorkloadProofs(resources, proofs)
+	if err := validateCloneWorkloadProofs(resources, proofs); err != nil {
+		return err
+	}
+	var records []projectCloneWorkloadRecord
+	for _, record := range m.projectEnvironmentCloneWorkloads[op.ID] {
+		records = append(records, record)
+	}
+	return validateCloneProjectConfigProof(op, resources, records, m.projectEnvironmentConfigLatestLocked(op.ProjectID, op.TargetEnvironment))
 }
 
 func (m *MemStore) PublishProjectEnvironmentCloneReleaseSet(_ context.Context, accountID, projectID, operationID string, revision int64, ttl int) (ProjectReleaseSet, error) {

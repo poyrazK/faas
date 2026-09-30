@@ -391,3 +391,28 @@ command still require integration. Provider calls must be bounded by the lease
 and replay the frozen resource identities. Immutable object-copy receipts retain
 their existing exact source-version/target verification checks; cancellation and
 ownership of provider-side preparation remain part of the worker integration.
+
+### Frozen project configuration (2026-09-30)
+
+Workload capture now includes the source project configuration JSON in the same
+store snapshot as the selected artifacts and deployed settings. Retry reads the
+persisted capture, and owning target materialization copies it instead of the
+latest source version. An absent source configuration materializes an explicit
+empty target configuration. Public workload metadata exposes only its captured
+configuration hash. The private workload hash authenticates the captured values
+as well as the existing source version identity; JSONB numeric normalization does
+not silently replace that identity.
+
+Publication requires a matching project-configuration inventory receipt and
+rechecks both the target version hash and actual stored values under the project
+lock. Different values persisted under the same hash cannot pass. MemStore and
+PostgreSQL contracts exercise a source edit after capture, capture replay,
+exact large JSON numbers, omitted configuration receipts and target changes
+between preparation and publication. Source variables, sealed customer secrets,
+remaining policy/binding specifications and coordinated provider data capture
+still need durable payloads and worker integration.
+
+Source-layer cleanup currently remains based on deployment/snapshot retention.
+Reused artifacts require durable retention throughout capture and for every
+prepared/serving clone reference before enabling the complete command. The
+existing macOS store/fake-readiness checks do not establish that lifecycle.

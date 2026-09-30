@@ -4814,6 +4814,34 @@ func (q *Queries) InsertOIDCExchangedToken(ctx context.Context, db DBTX, arg Ins
 	return i, err
 }
 
+const insertProjectEnvironmentCloneProjectConfiguration = `-- name: InsertProjectEnvironmentCloneProjectConfiguration :execrows
+INSERT INTO project_environment_config_versions (account_id, project_id, environment_slug, version, config_hash, config_json)
+VALUES ($1::uuid, $2::uuid, $3::text,
+        1, $4::text, $5::jsonb)
+`
+
+type InsertProjectEnvironmentCloneProjectConfigurationParams struct {
+	AccountID   pgtype.UUID
+	ProjectID   pgtype.UUID
+	Environment string
+	ConfigHash  string
+	ConfigJson  []byte
+}
+
+func (q *Queries) InsertProjectEnvironmentCloneProjectConfiguration(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneProjectConfigurationParams) (int64, error) {
+	result, err := db.Exec(ctx, insertProjectEnvironmentCloneProjectConfiguration,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.Environment,
+		arg.ConfigHash,
+		arg.ConfigJson,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const insertProjectEnvironmentCloneSidecarLayer = `-- name: InsertProjectEnvironmentCloneSidecarLayer :exec
 INSERT INTO deployment_sidecar_layers (deployment_id, sidecar_name, storage_key, bytes, content_digest)
 VALUES ($1::uuid, $2::text, $3::text,
@@ -12358,6 +12386,31 @@ func (q *Queries) ReadProjectEnvironmentCloneProductionValueScope(ctx context.Co
 	var source_scope string
 	err := row.Scan(&source_scope)
 	return source_scope, err
+}
+
+const readProjectEnvironmentCloneProjectConfiguration = `-- name: ReadProjectEnvironmentCloneProjectConfiguration :one
+SELECT id::text, config_hash, config_json FROM project_environment_config_versions
+WHERE account_id = $1::uuid AND project_id = $2::uuid
+  AND environment_slug = $3::text ORDER BY version DESC LIMIT 1
+`
+
+type ReadProjectEnvironmentCloneProjectConfigurationParams struct {
+	AccountID   pgtype.UUID
+	ProjectID   pgtype.UUID
+	Environment string
+}
+
+type ReadProjectEnvironmentCloneProjectConfigurationRow struct {
+	ID         string
+	ConfigHash string
+	ConfigJson []byte
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneProjectConfiguration(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneProjectConfigurationParams) (ReadProjectEnvironmentCloneProjectConfigurationRow, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentCloneProjectConfiguration, arg.AccountID, arg.ProjectID, arg.Environment)
+	var i ReadProjectEnvironmentCloneProjectConfigurationRow
+	err := row.Scan(&i.ID, &i.ConfigHash, &i.ConfigJson)
+	return i, err
 }
 
 const readProjectEnvironmentCloneSecrets = `-- name: ReadProjectEnvironmentCloneSecrets :many

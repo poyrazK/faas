@@ -146,6 +146,15 @@ func captureCloneWorkloadTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmen
 	if snapshot.Artifact.AppID != appID || snapshot.Artifact.Scope != scope {
 		return snapshot, ErrConflict
 	}
+	config, err := readCloneProjectConfigDB(ctx, tx, op.AccountID, op.ProjectID, op.SourceEnvironment)
+	if err != nil {
+		return snapshot, err
+	}
+	projectConfig, err := normalizeCloneProjectConfig(projectCloneProjectConfig{Hash: config.ConfigHash, Values: config.Values})
+	if err != nil {
+		return snapshot, err
+	}
+	snapshot.ProjectConfig = &projectConfig
 	legacy, err := q.ReadProjectEnvironmentCloneLegacySettings(ctx, tx, sqlc.ReadProjectEnvironmentCloneLegacySettingsParams{AppID: mustPgUUID(appID), Environment: op.SourceEnvironment})
 	if err != nil {
 		return snapshot, mapErr(err)

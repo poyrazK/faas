@@ -1974,6 +1974,17 @@ type ProjectEnvironmentCloneWorkload struct {
 	TargetSettingsHash string
 }
 
+type ProjectEnvironmentConfigVersion struct {
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	ProjectID       pgtype.UUID
+	EnvironmentSlug string
+	Version         int64
+	ConfigHash      string
+	ConfigJson      []byte
+	CreatedAt       pgtype.Timestamptz
+}
+
 type ProjectEnvironmentQualification struct {
 	ID                   pgtype.UUID
 	AccountID            pgtype.UUID

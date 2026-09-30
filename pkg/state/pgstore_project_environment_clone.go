@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func (s *PgStore) CloneProjectEnvironment(ctx context.Context, clone ProjectEnvironmentClone, limits api.Limits) (ProjectEnvironment, ProjectEnvironmentCloneResult, error) {
@@ -285,6 +286,23 @@ func copyProjectEnvironmentRows(ctx context.Context, tx pgx.Tx, clone ProjectEnv
 }
 
 func copyProjectEnvironmentConfig(ctx context.Context, tx pgx.Tx, clone ProjectEnvironmentClone) (bool, error) {
+	if clone.CloneOperationID != "" {
+		records, err := cloneWorkloadRecordsDB(ctx, tx, clone.AccountID, clone.ProjectID, clone.CloneOperationID)
+		if err != nil {
+			return false, err
+		}
+		if len(records) > 0 {
+			config, err := capturedCloneProjectConfig(records)
+			if err != nil {
+				return false, err
+			}
+			count, err := new(sqlc.Queries).InsertProjectEnvironmentCloneProjectConfiguration(ctx, tx, sqlc.InsertProjectEnvironmentCloneProjectConfigurationParams{
+				AccountID: mustPgUUID(clone.AccountID), ProjectID: mustPgUUID(clone.ProjectID), Environment: clone.TargetSlug,
+				ConfigHash: config.Hash, ConfigJson: config.Values,
+			})
+			return count == 1, mapErr(err)
+		}
+	}
 	configTag, err := tx.Exec(ctx, `
 		insert into project_environment_config_versions
 			(account_id, project_id, environment_slug, version, config_hash, config_json)

@@ -172,6 +172,8 @@ func (m *MemStore) CloneProjectEnvironment(_ context.Context, clone ProjectEnvir
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
 	}
 	settings := make(map[string]ProjectEnvironmentWorkloadSettings, len(apps))
+	var capturedRecords []projectCloneWorkloadRecord
+	var frozenConfig *projectCloneProjectConfig
 	if clone.CloneOperationID != "" && len(m.projectEnvironmentCloneWorkloads[clone.CloneOperationID]) != len(apps) {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrConflict
 	}
@@ -185,6 +187,7 @@ func (m *MemStore) CloneProjectEnvironment(_ context.Context, clone ProjectEnvir
 			record, err = copyCloneWorkloadRecord(record)
 			if err == nil {
 				captured, err = cloneWorkloadSettings(record.snapshot.Settings)
+				capturedRecords = append(capturedRecords, record)
 			}
 		} else if specID := m.projectEnvironmentWorkloadHeads[workloadSpecHeadKey(source.ID, appID)]; specID != "" {
 			spec := m.projectEnvironmentWorkloadSpecs[specID]
@@ -204,6 +207,13 @@ func (m *MemStore) CloneProjectEnvironment(_ context.Context, clone ProjectEnvir
 		}
 		settings[appID] = captured
 	}
+	if len(capturedRecords) > 0 {
+		config, err := capturedCloneProjectConfig(capturedRecords)
+		if err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+		frozenConfig = &config
+	}
 	now := time.Now().UTC()
 	created := ProjectEnvironment{
 		ID: newID(), AccountID: clone.AccountID, ProjectID: clone.ProjectID,
@@ -221,7 +231,7 @@ func (m *MemStore) CloneProjectEnvironment(_ context.Context, clone ProjectEnvir
 		m.projectEnvironmentWorkloadSpecs[spec.ID] = spec
 		m.projectEnvironmentWorkloadHeads[workloadSpecHeadKey(created.ID, appID)] = spec.ID
 	}
-	result := m.copyProjectEnvironmentConfigLocked(clone, created.CreatedAt)
+	result := m.copyProjectEnvironmentConfigLocked(clone, created.CreatedAt, frozenConfig)
 	result.WorkloadsCopied = len(apps)
 	result.VariablesCopied = m.copyProjectEnvironmentVariablesLocked(apps, valueScopes, clone.TargetSlug, created.CreatedAt)
 	result.SecretsCopied = m.copyProjectEnvironmentSecretsLocked(apps, valueScopes, clone.TargetSlug, created.CreatedAt)
@@ -321,7 +331,14 @@ func (m *MemStore) checkProjectCloneQuotaLocked(apps map[string]string, scopes m
 	return nil
 }
 
-func (m *MemStore) copyProjectEnvironmentConfigLocked(clone ProjectEnvironmentClone, now time.Time) ProjectEnvironmentCloneResult {
+func (m *MemStore) copyProjectEnvironmentConfigLocked(clone ProjectEnvironmentClone, now time.Time, frozen *projectCloneProjectConfig) ProjectEnvironmentCloneResult {
+	if frozen != nil {
+		config := ProjectEnvironmentConfig{ID: newID(), AccountID: clone.AccountID, ProjectID: clone.ProjectID,
+			EnvironmentSlug: clone.TargetSlug, Version: 1, ConfigHash: frozen.Hash,
+			Values: append([]byte(nil), frozen.Values...), CreatedAt: now}
+		m.projectEnvironmentConfigs[projectEnvironmentConfigKey(clone.ProjectID, clone.TargetSlug)] = []ProjectEnvironmentConfig{config}
+		return ProjectEnvironmentCloneResult{ConfigurationCopied: true}
+	}
 	source := m.projectEnvironmentConfigs[projectEnvironmentConfigKey(clone.ProjectID, clone.SourceSlug)]
 	if len(source) == 0 {
 		return ProjectEnvironmentCloneResult{}

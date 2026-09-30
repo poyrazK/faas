@@ -15,15 +15,16 @@ import (
 // ProjectEnvironmentCloneWorkload is a non-secret view of an immutable source
 // capture. The stored artifact and settings are private to the state layer.
 type ProjectEnvironmentCloneWorkload struct {
-	OperationID        string
-	AppID              string
-	WorkloadSlug       string
-	SourceDeploymentID string
-	SourceScope        string
-	SourceHash         string
-	SourceSettingsHash string
-	TargetDeploymentID string
-	TargetSettingsHash string
+	OperationID             string
+	AppID                   string
+	WorkloadSlug            string
+	SourceDeploymentID      string
+	SourceScope             string
+	SourceHash              string
+	SourceSettingsHash      string
+	SourceProjectConfigHash string
+	TargetDeploymentID      string
+	TargetSettingsHash      string
 }
 
 type ProjectEnvironmentCloneWorkloadStore interface {
@@ -108,6 +109,7 @@ type projectCloneWorkloadSnapshot struct {
 	Settings       ProjectEnvironmentWorkloadSettings `json:"settings"`
 	Layers         []DeploymentSidecarLayer           `json:"layers"`
 	SidecarSignals map[string]string                  `json:"sidecar_signals"`
+	ProjectConfig  *projectCloneProjectConfig         `json:"project_config,omitempty"`
 }
 
 type projectCloneWorkloadRecord struct {
@@ -117,6 +119,13 @@ type projectCloneWorkloadRecord struct {
 
 func encodeCloneWorkloadSnapshot(snapshot projectCloneWorkloadSnapshot) ([]byte, string, error) {
 	snapshot.Artifact = normalizeProjectCloneArtifact(snapshot.Artifact)
+	if snapshot.ProjectConfig != nil {
+		config, err := normalizeCloneProjectConfig(*snapshot.ProjectConfig)
+		if err != nil {
+			return nil, "", err
+		}
+		snapshot.ProjectConfig = &config
+	}
 	if snapshot.Artifact.ID == "" || snapshot.Artifact.AppID == "" || snapshot.WorkloadSlug == "" ||
 		(snapshot.Artifact.RootfsKey == "" && snapshot.Artifact.RootfsPath == "") || snapshot.Artifact.RootfsBytes <= 0 {
 		return nil, "", ErrConflict
@@ -228,8 +237,12 @@ func decodeCloneWorkloadRecord(operationID, appID, sourceID, sourceHash, targetI
 		return projectCloneWorkloadRecord{}, ErrConflict
 	}
 	settingsHash, _ := WorkloadSettingsHash(snapshot.Settings)
+	projectHash := ""
+	if snapshot.ProjectConfig != nil {
+		projectHash = snapshot.ProjectConfig.Hash
+	}
 	return projectCloneWorkloadRecord{ProjectEnvironmentCloneWorkload: ProjectEnvironmentCloneWorkload{
 		OperationID: operationID, AppID: appID, WorkloadSlug: snapshot.WorkloadSlug, SourceDeploymentID: sourceID,
-		SourceScope: snapshot.Artifact.Scope, SourceHash: hash, SourceSettingsHash: settingsHash,
+		SourceScope: snapshot.Artifact.Scope, SourceHash: hash, SourceSettingsHash: settingsHash, SourceProjectConfigHash: projectHash,
 		TargetDeploymentID: targetID, TargetSettingsHash: targetHash}, snapshot: snapshot}, nil
 }

@@ -20,6 +20,7 @@ type cloneWorkloadTestStore interface {
 	state.ProjectEnvironmentWorkloadSpecStore
 	state.ProjectEnvironmentClonePublicationStore
 	state.ProjectEnvironmentCloneWorkerLeaseStore
+	state.ProjectReleaseSetReader
 	state.ProjectPromotionDeploymentStore
 	ProjectEnvironmentWorkloadSpecForDeployment(context.Context, string, string, string) (state.ProjectEnvironmentWorkloadSpec, error)
 	DeploymentSidecarSecretReloadSignal(context.Context, string, string) (string, error)
@@ -31,8 +32,15 @@ func TestMemProjectEnvironmentCloneCapturesAndPreparesWorkloads(t *testing.T) {
 	projectEnvironmentCloneCapturesAndPreparesWorkloads(t, state.NewMemStore())
 }
 
-func projectEnvironmentCloneCapturesAndPreparesWorkloads(t *testing.T, s cloneWorkloadTestStore) {
+// ADR-375: captured state must appear in the completeness receipt, even when
+// the target contains matching values and all workloads are already live.
+func TestMemProjectEnvironmentCloneRequiresProjectConfigurationReceipt(t *testing.T) {
+	projectEnvironmentCloneCapturesAndPreparesWorkloads(t, state.NewMemStore(), true)
+}
+
+func projectEnvironmentCloneCapturesAndPreparesWorkloads(t *testing.T, s cloneWorkloadTestStore, omitConfigReceipt ...bool) {
 	t.Helper()
+	missingConfigReceipt := len(omitConfigReceipt) > 0 && omitConfigReceipt[0]
 	ctx := context.Background()
 	a, err := s.CreateAccount(ctx, "workload-clone@example.com", api.PlanPro)
 	if err != nil {
@@ -85,6 +93,16 @@ func projectEnvironmentCloneCapturesAndPreparesWorkloads(t *testing.T, s cloneWo
 		}
 		apps, sources = append(apps, app), append(sources, source)
 	}
+	configValues, configHash, err := api.NormalizeProjectEnvironmentConfig([]byte(`{"feature":"captured","large":9007199254740993123,"factor":1e0}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := s.CreateProjectEnvironmentConfigVersion(ctx, state.ProjectEnvironmentConfig{
+		AccountID: a.ID, ProjectID: p.ID, EnvironmentSlug: "production", ConfigHash: configHash, Values: configValues,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	op, err := s.CreateProjectEnvironmentCloneOperation(ctx, state.ProjectEnvironmentCloneOperation{AccountID: a.ID, ProjectID: p.ID,
 		SourceEnvironment: "production", TargetEnvironment: "stage", IdempotencyKey: "capture", SourceRevisionHash: strings.Repeat("a", 64)})
 	if err != nil {
@@ -106,6 +124,9 @@ func projectEnvironmentCloneCapturesAndPreparesWorkloads(t *testing.T, s cloneWo
 	byApp := map[string]state.ProjectEnvironmentCloneWorkload{}
 	for _, view := range views {
 		byApp[view.AppID] = view
+		if view.SourceProjectConfigHash != configHash {
+			t.Fatal("capture omitted the selected project configuration identity")
+		}
 	}
 	for i, app := range apps {
 		if byApp[app.ID].SourceDeploymentID != sources[i].ID {
@@ -131,6 +152,15 @@ func projectEnvironmentCloneCapturesAndPreparesWorkloads(t *testing.T, s cloneWo
 	if err := s.MarkDeploymentLive(ctx, newer.ID); err != nil {
 		t.Fatal(err)
 	}
+	newConfigValues, newConfigHash, err := api.NormalizeProjectEnvironmentConfig([]byte(`{"feature":"newer"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateProjectEnvironmentConfigVersion(ctx, state.ProjectEnvironmentConfig{
+		AccountID: a.ID, ProjectID: p.ID, EnvironmentSlug: "production", ConfigHash: newConfigHash, Values: newConfigValues,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if replay, err := s.CaptureProjectEnvironmentCloneWorkloads(ctx, a.ID, p.ID, op.ID, op.Revision); err != nil || len(replay) != 2 || replay[0].SourceHash != views[0].SourceHash || replay[1].SourceHash != views[1].SourceHash {
 		t.Fatalf("recaptured changed source: %+v, %v", replay, err)
 	}
@@ -141,6 +171,9 @@ func projectEnvironmentCloneCapturesAndPreparesWorkloads(t *testing.T, s cloneWo
 	for _, view := range views {
 		resources = append(resources, state.ProjectEnvironmentCloneResource{Kind: "workload", Name: view.WorkloadSlug, SourceID: view.SourceDeploymentID, SourceVersion: view.SourceHash, Status: "captured"})
 	}
+	if !missingConfigReceipt {
+		resources = append(resources, state.ProjectEnvironmentCloneResource{Kind: "project_config", Name: "production", SourceVersion: configHash, Status: "ready"})
+	}
 	op, err = s.AdvanceProjectEnvironmentCloneOperation(ctx, a.ID, p.ID, op.ID, op.Status, state.CloneOperationCopying, op.Revision, resources, "")
 	if err != nil {
 		t.Fatal(err)
@@ -148,6 +181,15 @@ func projectEnvironmentCloneCapturesAndPreparesWorkloads(t *testing.T, s cloneWo
 	_, _, err = s.CloneProjectEnvironment(ctx, state.ProjectEnvironmentClone{AccountID: a.ID, ProjectID: p.ID, SourceSlug: "production", TargetSlug: "stage", CloneOperationID: op.ID, CloneOperationRevision: op.Revision}, api.MustLimitsFor(a.Plan))
 	if err != nil {
 		t.Fatal(err)
+	}
+	targetConfig, err := s.ProjectEnvironmentConfigLatest(ctx, a.ID, p.ID, "stage")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, expectedValuesHash, _ := api.NormalizeProjectEnvironmentConfig(config.Values)
+	_, actualValuesHash, _ := api.NormalizeProjectEnvironmentConfig(targetConfig.Values)
+	if targetConfig.ConfigHash != configHash || expectedValuesHash != actualValuesHash {
+		t.Fatal("clone copied the newer project configuration instead of its immutable capture")
 	}
 	targets := map[string]state.Deployment{}
 	for _, app := range apps {
@@ -220,6 +262,15 @@ func projectEnvironmentCloneCapturesAndPreparesWorkloads(t *testing.T, s cloneWo
 	if err := s.SetDeploymentRootfs(ctx, changed.ID, "/immutable/source.ext4", "layers/source.ext4", 4096); err != nil {
 		t.Fatal(err)
 	}
+	if missingConfigReceipt {
+		if _, err := s.AdvanceProjectEnvironmentCloneOperation(ctx, a.ID, p.ID, op.ID, op.Status, state.CloneOperationPublishing, op.Revision, resources, ""); !errors.Is(err, state.ErrConflict) {
+			t.Fatalf("project configuration omitted from completeness receipt: %v", err)
+		}
+		if _, err := s.ActiveProjectReleaseSet(ctx, a.ID, p.ID, "stage"); !errors.Is(err, state.ErrNotFound) {
+			t.Fatalf("incomplete clone acquired a serving graph: %v", err)
+		}
+		return
+	}
 	op, err = s.AdvanceProjectEnvironmentCloneOperation(ctx, a.ID, p.ID, op.ID, op.Status, state.CloneOperationPublishing, op.Revision, resources, "")
 	if err != nil {
 		t.Fatal(err)
@@ -245,6 +296,22 @@ func projectEnvironmentCloneCapturesAndPreparesWorkloads(t *testing.T, s cloneWo
 		t.Fatalf("edited head published: %v", err)
 	}
 	if _, err := s.PutProjectEnvironmentWorkloadSpec(ctx, a.ID, p.ID, "stage", apps[0].ID, edited.Revision, original); err != nil {
+		t.Fatal(err)
+	}
+	// The source version hash alone is insufficient: a corrupted writer could
+	// persist different values under the same hash. Publication authenticates
+	// both the captured identity and the stored target payload.
+	if _, err := s.CreateProjectEnvironmentConfigVersion(ctx, state.ProjectEnvironmentConfig{
+		AccountID: a.ID, ProjectID: p.ID, EnvironmentSlug: "stage", ConfigHash: configHash, Values: newConfigValues,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PublishProjectEnvironmentCloneReleaseSet(ctx, a.ID, p.ID, op.ID, op.Revision, 1800); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("changed project values published under captured hash: %v", err)
+	}
+	if _, err := s.CreateProjectEnvironmentConfigVersion(ctx, state.ProjectEnvironmentConfig{
+		AccountID: a.ID, ProjectID: p.ID, EnvironmentSlug: "stage", ConfigHash: configHash, Values: config.Values,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	release, err := s.PublishProjectEnvironmentCloneReleaseSet(ctx, a.ID, p.ID, op.ID, op.Revision, 1800)

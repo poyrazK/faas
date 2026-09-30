@@ -35,6 +35,11 @@ func (m *MemStore) CaptureProjectEnvironmentCloneWorkloads(_ context.Context, ac
 		return nil, err
 	}
 	records := map[string]projectCloneWorkloadRecord{}
+	config := m.projectEnvironmentConfigLatestLocked(projectID, op.SourceEnvironment)
+	projectConfig, err := normalizeCloneProjectConfig(projectCloneProjectConfig{Hash: config.ConfigHash, Values: config.Values})
+	if err != nil {
+		return nil, err
+	}
 	for appID := range apps {
 		app := m.apps[appID]
 		var source Deployment
@@ -69,7 +74,7 @@ func (m *MemStore) CaptureProjectEnvironmentCloneWorkloads(_ context.Context, ac
 			}
 			settings = spec.Settings
 		}
-		snapshot := projectCloneWorkloadSnapshot{WorkloadSlug: app.Slug, Artifact: projectCloneArtifactFromDeployment(source), Settings: settings, SidecarSignals: map[string]string{}}
+		snapshot := projectCloneWorkloadSnapshot{WorkloadSlug: app.Slug, Artifact: projectCloneArtifactFromDeployment(source), Settings: settings, SidecarSignals: map[string]string{}, ProjectConfig: &projectConfig}
 		for _, layer := range m.deploymentSidecarLayers {
 			if layer.DeploymentID == source.ID {
 				snapshot.Layers = append(snapshot.Layers, layer)
