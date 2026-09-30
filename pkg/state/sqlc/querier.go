@@ -984,6 +984,13 @@ type Querier interface {
 	ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg ReadAccountCreditConsumptionParams) (ReadAccountCreditConsumptionRow, error)
 	// A single statement reads the pointer and its complete membership together.
 	ReadProjectReleaseSet(ctx context.Context, db DBTX, arg ReadProjectReleaseSetParams) ([]byte, error)
+	// ADR-375: minimal credential-free projection for one read-only service-policy snapshot.
+	ReadServicePolicyAppByID(ctx context.Context, db DBTX, id pgtype.UUID) (ReadServicePolicyAppByIDRow, error)
+	ReadServicePolicyAppBySlug(ctx context.Context, db DBTX, slug string) (ReadServicePolicyAppBySlugRow, error)
+	ReadServicePolicyPreviewApp(ctx context.Context, db DBTX, arg ReadServicePolicyPreviewAppParams) (ReadServicePolicyPreviewAppRow, error)
+	ReadServicePolicyProject(ctx context.Context, db DBTX, arg ReadServicePolicyProjectParams) (string, error)
+	ReadServicePolicyTestApp(ctx context.Context, db DBTX, arg ReadServicePolicyTestAppParams) (ReadServicePolicyTestAppRow, error)
+	ReadServicePolicyTestMember(ctx context.Context, db DBTX, appID pgtype.UUID) (ScenarioTestMember, error)
 	ReadTrafficSecurityEpochs(ctx context.Context, db DBTX, arg ReadTrafficSecurityEpochsParams) ([]ReadTrafficSecurityEpochsRow, error)
 	// The reaper's scan query (cmd/apid/upload_session_reaper.go).
 	// Returns at most 100 rows per invocation to bound memory; the

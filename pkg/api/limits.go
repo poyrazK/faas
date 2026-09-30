@@ -7274,6 +7274,9 @@ const (
 	// MaxTrafficDeadlineTokenBytes bounds the private managed-request carrier
 	// before decoding or authenticating any customer-supplied bytes (ADR-375).
 	MaxTrafficDeadlineTokenBytes = 2048
+	// TrafficServicePolicyReadTimeout bounds the complete read-only discovery
+	// and authorization snapshot; no transaction is retained during wake.
+	TrafficServicePolicyReadTimeout = 250 * time.Millisecond
 
 	// AppErrorsDedupeWindowSeconds (ADR-096) is the platform-wide
 	// dedupe window for the IncrementAppError INSERT. NOT a

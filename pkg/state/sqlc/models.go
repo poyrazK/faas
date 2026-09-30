@@ -1219,6 +1219,18 @@ type GdprRequest struct {
 	RequestID    pgtype.Text
 }
 
+type GithubDeployPolicy struct {
+	ProjectID            pgtype.UUID
+	AccountID            pgtype.UUID
+	RootDir              string
+	IgnoredPaths         []byte
+	PreviewEnabled       bool
+	PreviewTtlHours      int32
+	UpdatedAt            pgtype.Timestamptz
+	PreviewServicePolicy string
+	ProductionTrigger    string
+}
+
 type GithubInstallation struct {
 	AccountID          pgtype.UUID
 	InstallationID     int64
@@ -2207,6 +2219,13 @@ type SafeReleaseWorkerLease struct {
 	Singleton bool
 	HealthyAt pgtype.Timestamptz
 	ExpiresAt pgtype.Timestamptz
+}
+
+type ScenarioTestMember struct {
+	AccountID    pgtype.UUID
+	RunID        string
+	WorkloadName string
+	AppID        pgtype.UUID
 }
 
 type Session struct {

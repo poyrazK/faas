@@ -4804,3 +4804,68 @@ WITH requested AS (
 SELECT e.scope_kind, e.scope_id, e.revision, e.revoked
 FROM traffic_security_epochs e JOIN requested r
     ON e.scope_kind = r.scope_kind AND e.scope_id = r.scope_id;
+
+-- ADR-375: minimal credential-free projection for one read-only service-policy snapshot.
+
+-- name: ReadServicePolicyAppByID :one
+SELECT id, account_id, slug, status, project_id, preview_of_slug,
+       preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
+       jsonb_strip_nulls(jsonb_build_object(
+           'service_bindings', manifest->'service_bindings',
+           'service_reliability', manifest->'service_reliability',
+           'service_binding_policy', manifest->'service_binding_policy',
+           'service_binding_transport', manifest->'service_binding_transport',
+           'preview_service_calls_policy', manifest->'preview_service_calls_policy',
+           'allowed_service_callers', manifest->'allowed_service_callers',
+           'allowed_service_call_scopes', manifest->'allowed_service_call_scopes'))::jsonb AS manifest
+FROM apps WHERE id = sqlc.arg(id)::uuid;
+
+-- name: ReadServicePolicyAppBySlug :one
+SELECT id, account_id, slug, status, project_id, preview_of_slug,
+       preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
+       jsonb_strip_nulls(jsonb_build_object(
+           'service_bindings', manifest->'service_bindings',
+           'service_reliability', manifest->'service_reliability',
+           'service_binding_policy', manifest->'service_binding_policy',
+           'service_binding_transport', manifest->'service_binding_transport',
+           'preview_service_calls_policy', manifest->'preview_service_calls_policy',
+           'allowed_service_callers', manifest->'allowed_service_callers',
+           'allowed_service_call_scopes', manifest->'allowed_service_call_scopes'))::jsonb AS manifest
+FROM apps WHERE slug = sqlc.arg(slug)::text AND status <> 'deleted';
+
+-- name: ReadServicePolicyPreviewApp :one
+SELECT id, account_id, slug, status, project_id, preview_of_slug,
+       preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
+       jsonb_strip_nulls(jsonb_build_object(
+           'service_bindings', manifest->'service_bindings',
+           'service_reliability', manifest->'service_reliability',
+           'service_binding_policy', manifest->'service_binding_policy',
+           'service_binding_transport', manifest->'service_binding_transport',
+           'preview_service_calls_policy', manifest->'preview_service_calls_policy',
+           'allowed_service_callers', manifest->'allowed_service_callers',
+           'allowed_service_call_scopes', manifest->'allowed_service_call_scopes'))::jsonb AS manifest
+FROM apps WHERE account_id = sqlc.arg(account_id)::uuid AND project_id = sqlc.arg(project_id)::uuid
+  AND preview_pr_number = sqlc.arg(preview_pr_number)::integer AND workload_name = sqlc.arg(workload_name)::text
+  AND preview_of_slug IS NOT NULL AND status <> 'deleted';
+
+-- name: ReadServicePolicyTestApp :one
+SELECT id, account_id, slug, status, project_id, preview_of_slug,
+       preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
+       jsonb_strip_nulls(jsonb_build_object(
+           'service_bindings', manifest->'service_bindings',
+           'service_reliability', manifest->'service_reliability',
+           'service_binding_policy', manifest->'service_binding_policy',
+           'service_binding_transport', manifest->'service_binding_transport',
+           'preview_service_calls_policy', manifest->'preview_service_calls_policy',
+           'allowed_service_callers', manifest->'allowed_service_callers',
+           'allowed_service_call_scopes', manifest->'allowed_service_call_scopes'))::jsonb AS manifest
+FROM apps WHERE id = (SELECT app_id FROM scenario_test_members WHERE account_id = sqlc.arg(account_id)::uuid
+        AND run_id = sqlc.arg(run_id)::text AND workload_name = sqlc.arg(workload_name)::text)
+  AND status <> 'deleted' AND preview_pr_state = 'open' AND preview_expires_at > now();
+
+-- name: ReadServicePolicyTestMember :one
+SELECT account_id, run_id, workload_name, app_id FROM scenario_test_members WHERE app_id = sqlc.arg(app_id)::uuid;
+
+-- name: ReadServicePolicyProject :one
+SELECT preview_service_policy FROM github_deploy_policies
+WHERE project_id = sqlc.arg(project_id)::uuid AND account_id = sqlc.arg(account_id)::uuid;

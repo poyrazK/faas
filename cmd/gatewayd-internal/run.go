@@ -3482,6 +3482,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		pgStore := deps.pgStore
 		guestServiceAliasAllowed = newServiceAliasAllowed(pgStore)
 		serviceProxyConfig := gateway.ServiceProxyConfig{
+			Policy:             newServicePolicyPinner(pgStore),
 			TrafficDeadlines:   deps.trafficDeadlines,
 			TrafficRevocations: deps.trafficRevocations,
 			Provider:           serviceEndpointProvider,

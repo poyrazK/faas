@@ -203,6 +203,17 @@ Another account's broken free-form host match cannot block this tenant.
 Empty verified policies remain
 valid snapshots. Runtime response/span evidence records the digest.
 
+Managed service discovery, alias access, binding/target authorization,
+preview/test namespace, method/path grant, reliability and transport posture
+are read from one bounded read-only repeatable-read transaction. The transaction
+ends before queueing, wake or dispatch. The gateway copies the result and pins
+its fingerprint through wake and retries; the configured call timeout counts
+from service-handler entry. New calls require a fresh verified view. The
+projection and evidence exclude unrelated manifest fields and credentials.
+Release graph, exact deployment validation and affinity selection still require
+their own coverage/evidence work; this service slice does not freeze those
+later routing reads or live endpoint health.
+
 Ordinary policy updates fence new requests during convergence; an admitted
 request retains its snapshot. Emergency security revocation uses a separate
 durable generation for an account, app or deployment. Account suspension/abuse

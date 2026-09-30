@@ -244,3 +244,29 @@ suite passed in 55.912 seconds and internal-gateway suite in 4.676 seconds;
 the pinned linter passed both with zero findings. Service snapshots, decision
 evidence, preview/path agreement and the remaining acceptance gates above are
 still pending. No native Linux x86_64 KVM acceptance host is currently available.
+
+Managed service discovery/access now pins one bounded read-only repeatable-read
+Postgres view: alias declaration, target selection, preview/test namespace,
+caller binding/transport, target caller/method/path grant, reliability and target
+protocol/WebSocket posture. The transaction ends before wake or forwarding.
+The gateway deep-copies the result, retains it across retries, and protects its
+response/span fingerprint against guest headers/trailers. Declared dependency
+timeouts now include time spent loading policy from service-handler entry.
+The sqlc projection excludes credentials and unrelated manifest settings;
+two existing tables missing from the schema snapshot were added from their
+real migrated Postgres definitions.
+
+Real Postgres tests passed for a policy change committed between snapshot reads,
+fresh-request denial/protocol changes, preview/test namespaces and project
+preview policy changes, credential exclusion and transaction cleanup. Local
+wake/retry mutation, unavailable/malformed/timed-out snapshot, proof forgery and
+lookup-time budget tests passed. The full gateway suite passed in 56.068 seconds.
+The full internal-gateway suite passed in 8.803 seconds against a fresh isolated
+database; its first run encountered an existing shared-public migration ledger
+in a legacy schema-based test. Pinned lint passed gateway/internal-gateway and
+state production code with zero findings; state used tests=false and disabled
+unused for the existing helper used only in tests. Project release, exact
+deployment and affinity routing inputs still need snapshot/evidence coverage.
+Decision evidence, preview/path agreement, public-hop blocked long responses,
+native VM/network/leak and complete daemon/load/deployment acceptance remain
+pending. No release guarantee is marked accepted.

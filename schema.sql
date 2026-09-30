@@ -10877,3 +10877,55 @@ CREATE TABLE public.traffic_security_epochs (
 
 ALTER TABLE ONLY public.traffic_security_epochs
     ADD CONSTRAINT traffic_security_epochs_pkey PRIMARY KEY (scope_kind, scope_id);
+
+-- Existing service-policy tables required by the ADR-375 sqlc snapshot reader.
+CREATE TABLE public.github_deploy_policies (
+    project_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    root_dir text DEFAULT ''::text NOT NULL,
+    ignored_paths jsonb DEFAULT '[]'::jsonb NOT NULL,
+    preview_enabled boolean DEFAULT true NOT NULL,
+    preview_ttl_hours integer DEFAULT 168 NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    preview_service_policy text DEFAULT 'deny'::text NOT NULL,
+    production_trigger text DEFAULT 'webhook'::text NOT NULL,
+    CONSTRAINT github_deploy_policies_ignored_paths_array_chk CHECK ((jsonb_typeof(ignored_paths) = 'array'::text)),
+    CONSTRAINT github_deploy_policies_preview_service_policy_chk CHECK ((preview_service_policy = ANY (ARRAY['deny'::text, 'allow_marked'::text]))),
+    CONSTRAINT github_deploy_policies_preview_ttl_chk CHECK (((preview_ttl_hours >= 1) AND (preview_ttl_hours <= 720))),
+    CONSTRAINT github_deploy_policies_production_trigger_chk CHECK ((production_trigger = ANY (ARRAY['webhook'::text, 'actions'::text]))),
+    CONSTRAINT github_deploy_policies_root_dir_chk CHECK (((length(root_dir) <= 255) AND (root_dir !~ '[[:cntrl:]]'::text)))
+);
+
+CREATE TABLE public.scenario_test_members (
+    account_id uuid NOT NULL,
+    run_id text NOT NULL,
+    workload_name text NOT NULL,
+    app_id uuid NOT NULL,
+    CONSTRAINT scenario_test_members_run_id_check CHECK ((run_id ~ '^[0-9a-f]{32}$'::text)),
+    CONSTRAINT scenario_test_members_workload_name_check CHECK ((workload_name ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text))
+);
+
+ALTER TABLE ONLY public.github_deploy_policies
+    ADD CONSTRAINT github_deploy_policies_pkey PRIMARY KEY (project_id);
+
+ALTER TABLE ONLY public.scenario_test_members
+    ADD CONSTRAINT scenario_test_members_app_id_key UNIQUE (app_id);
+
+ALTER TABLE ONLY public.scenario_test_members
+    ADD CONSTRAINT scenario_test_members_pkey PRIMARY KEY (account_id, run_id, workload_name);
+
+CREATE INDEX github_deploy_policies_account_idx ON public.github_deploy_policies USING btree (account_id);
+
+CREATE INDEX scenario_test_members_run_idx ON public.scenario_test_members USING btree (account_id, run_id);
+
+ALTER TABLE ONLY public.github_deploy_policies
+    ADD CONSTRAINT github_deploy_policies_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.github_deploy_policies
+    ADD CONSTRAINT github_deploy_policies_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.scenario_test_members
+    ADD CONSTRAINT scenario_test_members_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.scenario_test_members
+    ADD CONSTRAINT scenario_test_members_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;

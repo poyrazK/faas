@@ -222,6 +222,9 @@ type ServiceProxyDeploymentValidator func(ctx context.Context, appID, deployment
 // small handler factory so selection and retry behavior can be exercised
 // without a live gRPC server.
 type ServiceProxyConfig struct {
+	// Policy pins discovery, alias access, authorization and transport inputs
+	// together. Production wires this; legacy callback seams support fixtures.
+	Policy                ServicePolicyPinner
 	Provider              ServiceEndpointProvider
 	Resolve               ServiceProxyResolver
 	Authorize             ServiceProxyAuthorizer
@@ -283,6 +286,7 @@ type ServiceProxy struct {
 	mintAssertion         ServiceCallerMinter
 	localNodeID           string
 	provider              ServiceEndpointProvider
+	policy                ServicePolicyPinner
 	resolve               ServiceProxyResolver
 	authorize             ServiceProxyAuthorizer
 	allowAlias            ServiceAliasAllowed
@@ -381,6 +385,7 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		mintAssertion:         cfg.MintCallerAssertion,
 		localNodeID:           strings.TrimSpace(cfg.LocalNodeID),
 		provider:              cfg.Provider,
+		policy:                cfg.Policy,
 		resolve:               cfg.Resolve,
 		authorize:             cfg.Authorize,
 		allowAlias:            cfg.AllowAlias,
@@ -541,12 +546,20 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	dependencyCtx = r.Context()
 	setProbeStage("binding")
+	if p.pinServicePolicy(dispatchWriter, r, caller, service, alias) {
+		return
+	}
+	dependencyCtx = r.Context()
+	traceWriter.policyRevision = TrafficPolicyRevision(dependencyCtx)
+	if traceWriter.policyRevision != "" {
+		dependencySpan.SetAttributes(attribute.String("gregale.traffic.policy_revision", traceWriter.policyRevision))
+	}
 	if alias {
-		if p.allowAlias == nil {
+		if p.allowAlias == nil && p.policy == nil {
 			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service alias authorizer is not wired")
 			return
 		}
-		allowed, err := p.allowAlias(dependencyCtx, caller, service)
+		allowed, err := p.serviceAliasAllowed(dependencyCtx, caller, service)
 		if err != nil {
 			if handleForwardRequestCancellation(dispatchWriter, r, true) {
 				return
@@ -576,12 +589,12 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	dependencyHealthTarget = target
 	setProbeStage("authorization")
-	if p.authorize == nil {
+	if p.authorize == nil && p.policy == nil {
 		serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service proxy authorizer is not wired")
 		return
 	}
 	dependencySpan.SetAttributes(attribute.String("gregale.service.target_app_id", target.AppID))
-	callerInfo, err := p.authorize(dependencyCtx, caller, target.AppID)
+	callerInfo, err := p.authorizeServiceCaller(dependencyCtx, caller, target.AppID)
 	if err != nil {
 		if handleForwardRequestCancellation(dispatchWriter, r, true) {
 			return
@@ -645,7 +658,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		callTimeout := time.Duration(callerInfo.Reliability.TimeoutMS) * time.Millisecond
 		callTimeout = min(callTimeout, time.Duration(api.MaxServiceReliabilityTimeoutMS)*time.Millisecond)
-		boundedCtx, cancel, _ := reqbudget.WithRemaining(dependencyCtx, callTimeout, callTimeout, "service_proxy", target.AppID)
+		boundedCtx, cancel, _ := reqbudget.WithStarted(dependencyCtx, dependencyStarted, callTimeout, callTimeout, "service_proxy", target.AppID)
 		defer cancel()
 		dependencyCtx = boundedCtx
 		r = r.WithContext(newManagedDeadlineChain(boundedCtx, callerInfo.AccountID))
@@ -846,7 +859,8 @@ func serviceProxySpanName(service string) string {
 // unwrapping. Upgrade requests bypass it because they need net.Hijacker.
 type serviceProxyTraceResponseWriter struct {
 	http.ResponseWriter
-	status int
+	status         int
+	policyRevision string
 }
 
 func (w *serviceProxyTraceResponseWriter) WriteHeader(status int) {
@@ -854,6 +868,11 @@ func (w *serviceProxyTraceResponseWriter) WriteHeader(status int) {
 		return
 	}
 	w.status = status
+	if w.policyRevision != "" {
+		stripTrafficControlTrailerDeclarations(w.Header())
+		stripTrafficPolicyProof(w.Header())
+		w.Header().Set(TrafficPolicyRevisionHeader, w.policyRevision)
+	}
 	w.ResponseWriter.WriteHeader(status)
 }
 
@@ -985,6 +1004,15 @@ func validServiceDNSLabel(service string) bool {
 }
 
 func (p *ServiceProxy) resolveTarget(ctx context.Context, callerAppID, service string) (ServiceTarget, error) {
+	if pinned, ok := ctx.Value(pinnedServicePolicyKey{}).(pinnedServicePolicy); ok && pinned.caller == callerAppID && pinned.service == service {
+		if !pinned.snapshot.Found {
+			return ServiceTarget{}, ErrServiceProxyNotFound
+		}
+		return pinned.snapshot.Target, nil
+	}
+	if p.policy != nil {
+		return ServiceTarget{}, ErrServiceProxyUnavailable
+	}
 	if p.resolve == nil {
 		return ServiceTarget{}, fmt.Errorf("service name resolver is not wired")
 	}
@@ -1735,6 +1763,9 @@ func (w *serviceProxyResponseWriter) commitTrailers() {
 	}
 	dst := w.dst.Header()
 	for key, values := range w.header {
+		if isTrafficPolicyProof(key) {
+			continue
+		}
 		if _, present := dst[key]; present && !strings.HasPrefix(key, http.TrailerPrefix) {
 			continue
 		}

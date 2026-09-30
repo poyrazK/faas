@@ -11939,6 +11939,259 @@ func (q *Queries) ReadProjectReleaseSet(ctx context.Context, db DBTX, arg ReadPr
 	return release, err
 }
 
+const readServicePolicyAppByID = `-- name: ReadServicePolicyAppByID :one
+
+SELECT id, account_id, slug, status, project_id, preview_of_slug,
+       preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
+       jsonb_strip_nulls(jsonb_build_object(
+           'service_bindings', manifest->'service_bindings',
+           'service_reliability', manifest->'service_reliability',
+           'service_binding_policy', manifest->'service_binding_policy',
+           'service_binding_transport', manifest->'service_binding_transport',
+           'preview_service_calls_policy', manifest->'preview_service_calls_policy',
+           'allowed_service_callers', manifest->'allowed_service_callers',
+           'allowed_service_call_scopes', manifest->'allowed_service_call_scopes'))::jsonb AS manifest
+FROM apps WHERE id = $1::uuid
+`
+
+type ReadServicePolicyAppByIDRow struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	Slug             string
+	Status           string
+	ProjectID        pgtype.UUID
+	PreviewOfSlug    pgtype.Text
+	PreviewPrNumber  pgtype.Int4
+	PreviewPrState   pgtype.Text
+	PreviewExpiresAt pgtype.Timestamptz
+	AppProtocol      string
+	WebsocketEnabled bool
+	Manifest         []byte
+}
+
+// ADR-375: minimal credential-free projection for one read-only service-policy snapshot.
+func (q *Queries) ReadServicePolicyAppByID(ctx context.Context, db DBTX, id pgtype.UUID) (ReadServicePolicyAppByIDRow, error) {
+	row := db.QueryRow(ctx, readServicePolicyAppByID, id)
+	var i ReadServicePolicyAppByIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Slug,
+		&i.Status,
+		&i.ProjectID,
+		&i.PreviewOfSlug,
+		&i.PreviewPrNumber,
+		&i.PreviewPrState,
+		&i.PreviewExpiresAt,
+		&i.AppProtocol,
+		&i.WebsocketEnabled,
+		&i.Manifest,
+	)
+	return i, err
+}
+
+const readServicePolicyAppBySlug = `-- name: ReadServicePolicyAppBySlug :one
+SELECT id, account_id, slug, status, project_id, preview_of_slug,
+       preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
+       jsonb_strip_nulls(jsonb_build_object(
+           'service_bindings', manifest->'service_bindings',
+           'service_reliability', manifest->'service_reliability',
+           'service_binding_policy', manifest->'service_binding_policy',
+           'service_binding_transport', manifest->'service_binding_transport',
+           'preview_service_calls_policy', manifest->'preview_service_calls_policy',
+           'allowed_service_callers', manifest->'allowed_service_callers',
+           'allowed_service_call_scopes', manifest->'allowed_service_call_scopes'))::jsonb AS manifest
+FROM apps WHERE slug = $1::text AND status <> 'deleted'
+`
+
+type ReadServicePolicyAppBySlugRow struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	Slug             string
+	Status           string
+	ProjectID        pgtype.UUID
+	PreviewOfSlug    pgtype.Text
+	PreviewPrNumber  pgtype.Int4
+	PreviewPrState   pgtype.Text
+	PreviewExpiresAt pgtype.Timestamptz
+	AppProtocol      string
+	WebsocketEnabled bool
+	Manifest         []byte
+}
+
+func (q *Queries) ReadServicePolicyAppBySlug(ctx context.Context, db DBTX, slug string) (ReadServicePolicyAppBySlugRow, error) {
+	row := db.QueryRow(ctx, readServicePolicyAppBySlug, slug)
+	var i ReadServicePolicyAppBySlugRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Slug,
+		&i.Status,
+		&i.ProjectID,
+		&i.PreviewOfSlug,
+		&i.PreviewPrNumber,
+		&i.PreviewPrState,
+		&i.PreviewExpiresAt,
+		&i.AppProtocol,
+		&i.WebsocketEnabled,
+		&i.Manifest,
+	)
+	return i, err
+}
+
+const readServicePolicyPreviewApp = `-- name: ReadServicePolicyPreviewApp :one
+SELECT id, account_id, slug, status, project_id, preview_of_slug,
+       preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
+       jsonb_strip_nulls(jsonb_build_object(
+           'service_bindings', manifest->'service_bindings',
+           'service_reliability', manifest->'service_reliability',
+           'service_binding_policy', manifest->'service_binding_policy',
+           'service_binding_transport', manifest->'service_binding_transport',
+           'preview_service_calls_policy', manifest->'preview_service_calls_policy',
+           'allowed_service_callers', manifest->'allowed_service_callers',
+           'allowed_service_call_scopes', manifest->'allowed_service_call_scopes'))::jsonb AS manifest
+FROM apps WHERE account_id = $1::uuid AND project_id = $2::uuid
+  AND preview_pr_number = $3::integer AND workload_name = $4::text
+  AND preview_of_slug IS NOT NULL AND status <> 'deleted'
+`
+
+type ReadServicePolicyPreviewAppParams struct {
+	AccountID       pgtype.UUID
+	ProjectID       pgtype.UUID
+	PreviewPrNumber int32
+	WorkloadName    string
+}
+
+type ReadServicePolicyPreviewAppRow struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	Slug             string
+	Status           string
+	ProjectID        pgtype.UUID
+	PreviewOfSlug    pgtype.Text
+	PreviewPrNumber  pgtype.Int4
+	PreviewPrState   pgtype.Text
+	PreviewExpiresAt pgtype.Timestamptz
+	AppProtocol      string
+	WebsocketEnabled bool
+	Manifest         []byte
+}
+
+func (q *Queries) ReadServicePolicyPreviewApp(ctx context.Context, db DBTX, arg ReadServicePolicyPreviewAppParams) (ReadServicePolicyPreviewAppRow, error) {
+	row := db.QueryRow(ctx, readServicePolicyPreviewApp,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.PreviewPrNumber,
+		arg.WorkloadName,
+	)
+	var i ReadServicePolicyPreviewAppRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Slug,
+		&i.Status,
+		&i.ProjectID,
+		&i.PreviewOfSlug,
+		&i.PreviewPrNumber,
+		&i.PreviewPrState,
+		&i.PreviewExpiresAt,
+		&i.AppProtocol,
+		&i.WebsocketEnabled,
+		&i.Manifest,
+	)
+	return i, err
+}
+
+const readServicePolicyProject = `-- name: ReadServicePolicyProject :one
+SELECT preview_service_policy FROM github_deploy_policies
+WHERE project_id = $1::uuid AND account_id = $2::uuid
+`
+
+type ReadServicePolicyProjectParams struct {
+	ProjectID pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) ReadServicePolicyProject(ctx context.Context, db DBTX, arg ReadServicePolicyProjectParams) (string, error) {
+	row := db.QueryRow(ctx, readServicePolicyProject, arg.ProjectID, arg.AccountID)
+	var preview_service_policy string
+	err := row.Scan(&preview_service_policy)
+	return preview_service_policy, err
+}
+
+const readServicePolicyTestApp = `-- name: ReadServicePolicyTestApp :one
+SELECT id, account_id, slug, status, project_id, preview_of_slug,
+       preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
+       jsonb_strip_nulls(jsonb_build_object(
+           'service_bindings', manifest->'service_bindings',
+           'service_reliability', manifest->'service_reliability',
+           'service_binding_policy', manifest->'service_binding_policy',
+           'service_binding_transport', manifest->'service_binding_transport',
+           'preview_service_calls_policy', manifest->'preview_service_calls_policy',
+           'allowed_service_callers', manifest->'allowed_service_callers',
+           'allowed_service_call_scopes', manifest->'allowed_service_call_scopes'))::jsonb AS manifest
+FROM apps WHERE id = (SELECT app_id FROM scenario_test_members WHERE account_id = $1::uuid
+        AND run_id = $2::text AND workload_name = $3::text)
+  AND status <> 'deleted' AND preview_pr_state = 'open' AND preview_expires_at > now()
+`
+
+type ReadServicePolicyTestAppParams struct {
+	AccountID    pgtype.UUID
+	RunID        string
+	WorkloadName string
+}
+
+type ReadServicePolicyTestAppRow struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	Slug             string
+	Status           string
+	ProjectID        pgtype.UUID
+	PreviewOfSlug    pgtype.Text
+	PreviewPrNumber  pgtype.Int4
+	PreviewPrState   pgtype.Text
+	PreviewExpiresAt pgtype.Timestamptz
+	AppProtocol      string
+	WebsocketEnabled bool
+	Manifest         []byte
+}
+
+func (q *Queries) ReadServicePolicyTestApp(ctx context.Context, db DBTX, arg ReadServicePolicyTestAppParams) (ReadServicePolicyTestAppRow, error) {
+	row := db.QueryRow(ctx, readServicePolicyTestApp, arg.AccountID, arg.RunID, arg.WorkloadName)
+	var i ReadServicePolicyTestAppRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Slug,
+		&i.Status,
+		&i.ProjectID,
+		&i.PreviewOfSlug,
+		&i.PreviewPrNumber,
+		&i.PreviewPrState,
+		&i.PreviewExpiresAt,
+		&i.AppProtocol,
+		&i.WebsocketEnabled,
+		&i.Manifest,
+	)
+	return i, err
+}
+
+const readServicePolicyTestMember = `-- name: ReadServicePolicyTestMember :one
+SELECT account_id, run_id, workload_name, app_id FROM scenario_test_members WHERE app_id = $1::uuid
+`
+
+func (q *Queries) ReadServicePolicyTestMember(ctx context.Context, db DBTX, appID pgtype.UUID) (ScenarioTestMember, error) {
+	row := db.QueryRow(ctx, readServicePolicyTestMember, appID)
+	var i ScenarioTestMember
+	err := row.Scan(
+		&i.AccountID,
+		&i.RunID,
+		&i.WorkloadName,
+		&i.AppID,
+	)
+	return i, err
+}
+
 const readTrafficSecurityEpochs = `-- name: ReadTrafficSecurityEpochs :many
 WITH requested AS (
     SELECT unnest($1::text[]) AS scope_kind,
