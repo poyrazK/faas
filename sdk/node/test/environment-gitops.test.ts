@@ -1,0 +1,36 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { FaaSClient, ProjectsService } from '../src/index.js';
+
+test('GitOps services preserve reviewed authority and override identity', async () => {
+  const sha = 'a'.repeat(40), digest = 'b'.repeat(64);
+  const calls: Array<{ url: string; method: string; body: unknown; headers: Headers }> = [];
+  const client = new FaaSClient('https://api.example.test', {
+    token: 'token',
+    fetch: async (input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      calls.push({ url, method: init?.method ?? 'GET', body: init?.body ? JSON.parse(String(init.body)) : null, headers: new Headers(init?.headers) });
+      if (url.endsWith('/preview')) {
+        return Response.json({ commit_sha: sha, definition_digest: digest, generation: 7,
+          definition: { api_version: 'gregale.dev/environment/v1', project: 'shop', environment: 'production', workloads: { api: { app: 'shop-api' } } } });
+      }
+      if (url.endsWith('/approve')) return Response.json({}, { status: 202 });
+      return new Response(null, { status: 204 });
+    },
+  });
+  try {
+    const review = await ProjectsService.previewEnvironmentGitRevision({ slug: 'my project', environment: 'production', requestBody: { commit_sha: sha } });
+    await ProjectsService.approveEnvironmentGitRevision({ slug: 'my project', environment: 'production', requestBody: {
+      commit_sha: review.commit_sha, definition_digest: review.definition_digest, expected_generation: review.generation,
+    } });
+    await ProjectsService.removeEnvironmentGitOpsOverride({ slug: 'my project', environment: 'production', requestBody: { resource: 'workload/api', path: 'variables/MODE' } });
+    assert.equal(calls.length, 3);
+    assert.ok(calls[0]?.url.includes('/projects/my%20project/environments/production/gitops/revisions/preview'));
+    assert.deepEqual(calls[1]?.body, { commit_sha: sha, definition_digest: digest, expected_generation: 7 });
+    assert.equal(calls[2]?.method, 'DELETE');
+    assert.deepEqual(calls[2]?.body, { resource: 'workload/api', path: 'variables/MODE' });
+    for (const call of calls) assert.equal(call.headers.get('Authorization'), 'Bearer token');
+  } finally {
+    client.uninstall();
+  }
+});
