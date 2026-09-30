@@ -9988,6 +9988,8 @@ CREATE TABLE public.object_buckets (
     public_read boolean DEFAULT false NOT NULL,
     serve_at text,
     environment_clone_source_bucket_id uuid,
+    environment_clone_operation_id uuid,
+    CONSTRAINT object_buckets_clone_operation_origin_check CHECK ((environment_clone_operation_id IS NULL OR environment_clone_source_bucket_id IS NOT NULL)),
     CONSTRAINT object_buckets_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
     CONSTRAINT object_buckets_last_error_code_check CHECK ((last_error_code = ANY (ARRAY[''::text, 'temporary'::text, 'configuration'::text, 'conflict'::text, 'invalid'::text]))),
     CONSTRAINT object_buckets_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),

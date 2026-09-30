@@ -1646,6 +1646,7 @@ type ObjectBucket struct {
 	PublicRead                     bool
 	ServeAt                        pgtype.Text
 	EnvironmentCloneSourceBucketID pgtype.UUID
+	EnvironmentCloneOperationID    pgtype.UUID
 }
 
 type ObjectStorageAccessGrant struct {

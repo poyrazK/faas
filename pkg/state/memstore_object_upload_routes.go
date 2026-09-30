@@ -44,6 +44,9 @@ func (m *MemStore) UpsertObjectUploadRoute(_ context.Context, route ObjectUpload
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if bucket, exists := m.objectBuckets[route.BucketID]; exists && !m.cloneBucketAccessibleLocked(bucket) {
+		return ObjectUploadRoute{}, ErrNotFound
+	}
 	now := time.Now().UTC()
 	for id, existing := range m.objectUploadRoutes {
 		if id != route.ID && existing.AppID == route.AppID && existing.Name == route.Name {

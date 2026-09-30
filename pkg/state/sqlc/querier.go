@@ -1036,6 +1036,7 @@ type Querier interface {
 	ReadProjectEnvironmentCloneDeployedSettings(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (ReadProjectEnvironmentCloneDeployedSettingsRow, error)
 	ReadProjectEnvironmentCloneEnvironmentPresence(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneEnvironmentPresenceParams) (ReadProjectEnvironmentCloneEnvironmentPresenceRow, error)
 	ReadProjectEnvironmentCloneLegacySettings(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneLegacySettingsParams) (ReadProjectEnvironmentCloneLegacySettingsRow, error)
+	ReadProjectEnvironmentCloneObjectBucket(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneObjectBucketParams) (ObjectBucket, error)
 	ReadProjectEnvironmentCloneObjectBuckets(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneObjectBucketsParams) ([]ReadProjectEnvironmentCloneObjectBucketsRow, error)
 	ReadProjectEnvironmentCloneObjectCopyProofs(ctx context.Context, db DBTX, operationID pgtype.UUID) ([]ReadProjectEnvironmentCloneObjectCopyProofsRow, error)
 	ReadProjectEnvironmentCloneObjectManifestEntries(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneObjectManifestEntriesParams) ([]ReadProjectEnvironmentCloneObjectManifestEntriesRow, error)

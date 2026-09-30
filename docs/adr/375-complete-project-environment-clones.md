@@ -682,3 +682,42 @@ physical copy and retry of the same pinned version without relisting.
 These checks fence durable metadata writes. An already accepted provider write
 can outlive a worker, so physical write completion, pending target access and
 publication still require isolation checks before full-copy admission opens.
+
+### Durable object target reservations and copy worker steps (2026-09-30)
+
+A full-copy bucket reservation now has a durable operation owner as well as its
+captured source bucket identity. The leased reservation writer reads placement
+only from the authenticated private catalogue under the project/operation and
+app locks. Generic reservation writers cannot assign or adopt this owner.
+Retries adopt the same owned placement after source metadata deletion, provider
+completion or worker takeover; a foreign target or changed placement is rejected.
+Standalone buckets are included even when no managed application secret refers
+to them. Target names include the operation identity, and quota checks include
+unfinished copies.
+
+Targets remain private and inaccessible through customer bucket reads/lists,
+S3 credential creation/resolution, API-key grants, multipart initiation and
+upload-route creation until the owning operation is ready. Internal target
+reads require the current worker token, revision and lease. Captured public
+policy remains in the private catalogue for the eventual publication writer.
+
+The capturing worker step requires the coordinator's persisted canonical
+microsecond data point, preflights all providers, reserves/checkpoints targets,
+provisions private buckets and commits exact version manifests before copying.
+The copying step authenticates the complete bucket roster and manifest hashes,
+uses frozen provider placement, verifies copied bytes and checkpoints completion.
+Object and PostgreSQL resources must declare the same data point. This equality
+check does not itself establish an application write barrier. Replays of completed
+steps make no redundant progress write, relist or object copy.
+
+MemStore and real PostgreSQL contracts cover ownership, quota exhaustion, foreign
+targets, source deletion, takeover and pending-target access. The application
+worker contract runs against both stores and injects failures after manifest
+commit and byte-verified copy but before resource checkpoint. Existing bucket,
+credential, grant, multipart and upload-route store contracts and focused API
+regressions pass; independent sqlc regeneration matches.
+
+These are callable phase steps, not a deployed claim loop. Full admission remains
+closed while credential preparation/publication proofs, complete policy/resource
+coverage, source data retention and coordinated checkpoints, physical provider
+write fencing, compensation and native VM acceptance are still required.

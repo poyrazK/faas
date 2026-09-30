@@ -3919,14 +3919,27 @@ SELECT count(*) FROM object_buckets WHERE account_id = $1 AND state <> 'deleted'
 DELETE FROM object_buckets WHERE account_id = $1 AND state = 'deleted';
 
 -- name: ObjectBucketInsert :one
-INSERT INTO object_buckets (id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, public_read, serve_at, environment_clone_source_bucket_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *;
+INSERT INTO object_buckets (id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, public_read, serve_at, environment_clone_source_bucket_id, environment_clone_operation_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *;
 
 -- name: ObjectBucketList :many
-SELECT * FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND state <> 'deleted' ORDER BY created_at, id;
+SELECT b.* FROM object_buckets b WHERE b.account_id = $1 AND b.app_id = $2 AND b.state <> 'deleted'
+  AND (b.environment_clone_operation_id IS NULL OR EXISTS (
+      SELECT 1 FROM project_environment_clone_operations clone_owner
+      WHERE clone_owner.id = b.environment_clone_operation_id
+        AND clone_owner.account_id = b.account_id
+        AND clone_owner.target_environment = b.scope AND clone_owner.status = 'ready'
+  ))
+ORDER BY b.created_at, b.id;
 
 -- name: ObjectBucketGet :one
-SELECT * FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND id = $3 AND state <> 'deleted';
+SELECT b.* FROM object_buckets b WHERE b.account_id = $1 AND b.app_id = $2 AND b.id = $3 AND b.state <> 'deleted'
+  AND (b.environment_clone_operation_id IS NULL OR EXISTS (
+      SELECT 1 FROM project_environment_clone_operations clone_owner
+      WHERE clone_owner.id = b.environment_clone_operation_id
+        AND clone_owner.account_id = b.account_id
+        AND clone_owner.target_environment = b.scope AND clone_owner.status = 'ready'
+  ));
 
 -- name: ObjectBucketAccessGrantList :many
 SELECT g.account_id, g.bucket_id, g.api_key_id, g.permission,
@@ -3954,7 +3967,13 @@ SELECT b.account_id, b.id, k.id, sqlc.arg(permission)::text
 FROM object_buckets b
 JOIN api_keys k ON k.account_id = b.account_id
 WHERE b.account_id = sqlc.arg(account_id) AND b.id = sqlc.arg(bucket_id)
-  AND b.state <> 'deleted' AND k.id = sqlc.arg(api_key_id)
+  AND b.state <> 'deleted'
+  AND (b.environment_clone_operation_id IS NULL OR EXISTS (
+      SELECT 1 FROM project_environment_clone_operations clone_owner
+      WHERE clone_owner.id = b.environment_clone_operation_id
+        AND clone_owner.account_id = b.account_id
+        AND clone_owner.target_environment = b.scope AND clone_owner.status = 'ready'
+  )) AND k.id = sqlc.arg(api_key_id)
   AND k.status IN ('active', 'grace')
   AND NOT ('admin' = ANY(k.scopes))
   AND (sqlc.arg(permission)::text <> 'read' OR k.scopes @> ARRAY['storage:read']::text[])
@@ -3977,7 +3996,13 @@ SELECT EXISTS (
     JOIN object_buckets b ON b.id = g.bucket_id AND b.account_id = g.account_id
     JOIN api_keys k ON k.id = g.api_key_id AND k.account_id = g.account_id
     WHERE g.account_id = $1 AND g.bucket_id = $2 AND g.api_key_id = $3
-      AND b.state <> 'deleted' AND k.status IN ('active', 'grace')
+      AND b.state <> 'deleted'
+  AND (b.environment_clone_operation_id IS NULL OR EXISTS (
+      SELECT 1 FROM project_environment_clone_operations clone_owner
+      WHERE clone_owner.id = b.environment_clone_operation_id
+        AND clone_owner.account_id = b.account_id
+        AND clone_owner.target_environment = b.scope AND clone_owner.status = 'ready'
+  )) AND k.status IN ('active', 'grace')
       AND (($4::text = 'read' AND g.permission IN ('read', 'read_write'))
         OR ($4::text = 'write' AND g.permission IN ('write', 'read_write')))
       AND (($4::text = 'read' AND k.scopes @> ARRAY['storage:read']::text[])
@@ -3991,7 +4016,13 @@ JOIN object_storage_access_grants g
   ON g.bucket_id = b.id AND g.account_id = b.account_id
 JOIN api_keys k ON k.id = g.api_key_id AND k.account_id = g.account_id
 WHERE b.account_id = $1 AND b.app_id = $2 AND g.api_key_id = $3
-  AND b.state <> 'deleted' AND k.status IN ('active', 'grace')
+  AND b.state <> 'deleted'
+  AND (b.environment_clone_operation_id IS NULL OR EXISTS (
+      SELECT 1 FROM project_environment_clone_operations clone_owner
+      WHERE clone_owner.id = b.environment_clone_operation_id
+        AND clone_owner.account_id = b.account_id
+        AND clone_owner.target_environment = b.scope AND clone_owner.status = 'ready'
+  )) AND k.status IN ('active', 'grace')
 ORDER BY b.created_at, b.id;
 
 -- name: ObjectBucketClaim :one
@@ -4134,8 +4165,15 @@ WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND object_key=$4
 AND state IN ('initiating','active','completing','aborting');
 
 -- name: ObjectMultipartLockBucket :one
-SELECT id FROM object_buckets
-WHERE id=$1 AND account_id=$2 AND app_id=$3 AND state='ready' FOR UPDATE;
+SELECT b.id FROM object_buckets b
+WHERE b.id=$1 AND b.account_id=$2 AND b.app_id=$3 AND b.state='ready'
+  AND (b.environment_clone_operation_id IS NULL OR EXISTS (
+      SELECT 1 FROM project_environment_clone_operations clone_owner
+      WHERE clone_owner.id = b.environment_clone_operation_id
+        AND clone_owner.account_id = b.account_id
+        AND clone_owner.target_environment = b.scope AND clone_owner.status = 'ready'
+  ))
+FOR UPDATE;
 
 -- name: ObjectMultipartCount :one
 SELECT count(*) FROM object_storage_multipart_uploads
@@ -4206,8 +4244,15 @@ AND (lease_until IS NULL OR lease_until<now())
 ORDER BY retry_at,id LIMIT sqlc.arg(batch_limit)::int;
 
 -- name: ObjectS3CredentialLockBucket :one
-SELECT id FROM object_buckets
-WHERE id=$1 AND account_id=$2 AND state='ready' FOR UPDATE;
+SELECT b.id FROM object_buckets b
+WHERE b.id=$1 AND b.account_id=$2 AND b.state='ready'
+  AND (b.environment_clone_operation_id IS NULL OR EXISTS (
+      SELECT 1 FROM project_environment_clone_operations clone_owner
+      WHERE clone_owner.id = b.environment_clone_operation_id
+        AND clone_owner.account_id = b.account_id
+        AND clone_owner.target_environment = b.scope AND clone_owner.status = 'ready'
+  ))
+FOR UPDATE;
 
 -- name: ObjectS3CredentialCount :one
 SELECT count(*) FROM object_storage_s3_credentials
@@ -4322,7 +4367,13 @@ SELECT c.*, b.app_id, b.name AS bucket_name, b.scope AS bucket_scope,
        b.updated_at AS bucket_updated_at
 FROM object_storage_s3_credentials c
 JOIN object_buckets b ON b.id=c.bucket_id AND b.account_id=c.account_id
-WHERE c.access_key_id=$1 AND c.status='active' AND b.state='ready';
+WHERE c.access_key_id=$1 AND c.status='active' AND b.state='ready'
+  AND (b.environment_clone_operation_id IS NULL OR EXISTS (
+      SELECT 1 FROM project_environment_clone_operations clone_owner
+      WHERE clone_owner.id = b.environment_clone_operation_id
+        AND clone_owner.account_id = b.account_id
+        AND clone_owner.target_environment = b.scope AND clone_owner.status = 'ready'
+  ));
 
 -- name: ObjectS3CredentialTouch :execrows
 UPDATE object_storage_s3_credentials
@@ -5238,3 +5289,8 @@ SET copied_at = coalesce(copied_at, clock_timestamp()), target_etag = sqlc.arg(t
 WHERE operation_id = sqlc.arg(operation_id)::uuid AND source_bucket_id = sqlc.arg(source_bucket_id)::uuid
   AND object_key = sqlc.arg(object_key)::text AND source_version = sqlc.arg(source_version)::text
   AND (copied_at IS NULL OR (target_etag = sqlc.arg(target_etag)::text AND verified_sha256 = sqlc.arg(verified_sha256)::text));
+
+-- name: ReadProjectEnvironmentCloneObjectBucket :one
+SELECT * FROM object_buckets
+WHERE account_id = $1 AND app_id = $2 AND id = $3
+  AND environment_clone_operation_id = $4 AND state <> 'deleted';

@@ -9753,7 +9753,13 @@ SELECT EXISTS (
     JOIN object_buckets b ON b.id = g.bucket_id AND b.account_id = g.account_id
     JOIN api_keys k ON k.id = g.api_key_id AND k.account_id = g.account_id
     WHERE g.account_id = $1 AND g.bucket_id = $2 AND g.api_key_id = $3
-      AND b.state <> 'deleted' AND k.status IN ('active', 'grace')
+      AND b.state <> 'deleted'
+  AND (b.environment_clone_operation_id IS NULL OR EXISTS (
+      SELECT 1 FROM project_environment_clone_operations clone_owner
+      WHERE clone_owner.id = b.environment_clone_operation_id
+        AND clone_owner.account_id = b.account_id
+        AND clone_owner.target_environment = b.scope AND clone_owner.status = 'ready'
+  )) AND k.status IN ('active', 'grace')
       AND (($4::text = 'read' AND g.permission IN ('read', 'read_write'))
         OR ($4::text = 'write' AND g.permission IN ('write', 'read_write')))
       AND (($4::text = 'read' AND k.scopes @> ARRAY['storage:read']::text[])
@@ -9908,7 +9914,13 @@ SELECT b.account_id, b.id, k.id, $1::text
 FROM object_buckets b
 JOIN api_keys k ON k.account_id = b.account_id
 WHERE b.account_id = $2 AND b.id = $3
-  AND b.state <> 'deleted' AND k.id = $4
+  AND b.state <> 'deleted'
+  AND (b.environment_clone_operation_id IS NULL OR EXISTS (
+      SELECT 1 FROM project_environment_clone_operations clone_owner
+      WHERE clone_owner.id = b.environment_clone_operation_id
+        AND clone_owner.account_id = b.account_id
+        AND clone_owner.target_environment = b.scope AND clone_owner.status = 'ready'
+  )) AND k.id = $4
   AND k.status IN ('active', 'grace')
   AND NOT ('admin' = ANY(k.scopes))
   AND ($1::text <> 'read' OR k.scopes @> ARRAY['storage:read']::text[])
@@ -9939,7 +9951,7 @@ func (q *Queries) ObjectBucketAccessGrantUpsert(ctx context.Context, db DBTX, ar
 }
 
 const objectBucketByName = `-- name: ObjectBucketByName :one
-SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id FROM object_buckets WHERE app_id = $1 AND account_id = $2 AND name = $3 AND scope = $4 AND state <> 'deleted'
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id, environment_clone_operation_id FROM object_buckets WHERE app_id = $1 AND account_id = $2 AND name = $3 AND scope = $4 AND state <> 'deleted'
 `
 
 type ObjectBucketByNameParams struct {
@@ -9978,6 +9990,7 @@ func (q *Queries) ObjectBucketByName(ctx context.Context, db DBTX, arg ObjectBuc
 		&i.PublicRead,
 		&i.ServeAt,
 		&i.EnvironmentCloneSourceBucketID,
+		&i.EnvironmentCloneOperationID,
 	)
 	return i, err
 }
@@ -9994,7 +10007,7 @@ AND ($1 <> 'deleting' OR NOT EXISTS (
   AND m.state IN ('initiating','active','completing','aborting')
 ))
 AND (NOT $7::boolean OR object_buckets.state = $1)
-AND (object_buckets.retry_at <= now() OR object_buckets.state <> $1) RETURNING id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id
+AND (object_buckets.retry_at <= now() OR object_buckets.state <> $1) RETURNING id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id, environment_clone_operation_id
 `
 
 type ObjectBucketClaimParams struct {
@@ -10039,6 +10052,7 @@ func (q *Queries) ObjectBucketClaim(ctx context.Context, db DBTX, arg ObjectBuck
 		&i.PublicRead,
 		&i.ServeAt,
 		&i.EnvironmentCloneSourceBucketID,
+		&i.EnvironmentCloneOperationID,
 	)
 	return i, err
 }
@@ -10085,7 +10099,13 @@ func (q *Queries) ObjectBucketFinish(ctx context.Context, db DBTX, arg ObjectBuc
 }
 
 const objectBucketGet = `-- name: ObjectBucketGet :one
-SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND id = $3 AND state <> 'deleted'
+SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code, b.public_read, b.serve_at, b.environment_clone_source_bucket_id, b.environment_clone_operation_id FROM object_buckets b WHERE b.account_id = $1 AND b.app_id = $2 AND b.id = $3 AND b.state <> 'deleted'
+  AND (b.environment_clone_operation_id IS NULL OR EXISTS (
+      SELECT 1 FROM project_environment_clone_operations clone_owner
+      WHERE clone_owner.id = b.environment_clone_operation_id
+        AND clone_owner.account_id = b.account_id
+        AND clone_owner.target_environment = b.scope AND clone_owner.status = 'ready'
+  ))
 `
 
 type ObjectBucketGetParams struct {
@@ -10118,13 +10138,14 @@ func (q *Queries) ObjectBucketGet(ctx context.Context, db DBTX, arg ObjectBucket
 		&i.PublicRead,
 		&i.ServeAt,
 		&i.EnvironmentCloneSourceBucketID,
+		&i.EnvironmentCloneOperationID,
 	)
 	return i, err
 }
 
 const objectBucketInsert = `-- name: ObjectBucketInsert :one
-INSERT INTO object_buckets (id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, public_read, serve_at, environment_clone_source_bucket_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id
+INSERT INTO object_buckets (id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, public_read, serve_at, environment_clone_source_bucket_id, environment_clone_operation_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id, environment_clone_operation_id
 `
 
 type ObjectBucketInsertParams struct {
@@ -10140,6 +10161,7 @@ type ObjectBucketInsertParams struct {
 	PublicRead                     bool
 	ServeAt                        pgtype.Text
 	EnvironmentCloneSourceBucketID pgtype.UUID
+	EnvironmentCloneOperationID    pgtype.UUID
 }
 
 func (q *Queries) ObjectBucketInsert(ctx context.Context, db DBTX, arg ObjectBucketInsertParams) (ObjectBucket, error) {
@@ -10156,6 +10178,7 @@ func (q *Queries) ObjectBucketInsert(ctx context.Context, db DBTX, arg ObjectBuc
 		arg.PublicRead,
 		arg.ServeAt,
 		arg.EnvironmentCloneSourceBucketID,
+		arg.EnvironmentCloneOperationID,
 	)
 	var i ObjectBucket
 	err := row.Scan(
@@ -10179,12 +10202,20 @@ func (q *Queries) ObjectBucketInsert(ctx context.Context, db DBTX, arg ObjectBuc
 		&i.PublicRead,
 		&i.ServeAt,
 		&i.EnvironmentCloneSourceBucketID,
+		&i.EnvironmentCloneOperationID,
 	)
 	return i, err
 }
 
 const objectBucketList = `-- name: ObjectBucketList :many
-SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id FROM object_buckets WHERE account_id = $1 AND app_id = $2 AND state <> 'deleted' ORDER BY created_at, id
+SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code, b.public_read, b.serve_at, b.environment_clone_source_bucket_id, b.environment_clone_operation_id FROM object_buckets b WHERE b.account_id = $1 AND b.app_id = $2 AND b.state <> 'deleted'
+  AND (b.environment_clone_operation_id IS NULL OR EXISTS (
+      SELECT 1 FROM project_environment_clone_operations clone_owner
+      WHERE clone_owner.id = b.environment_clone_operation_id
+        AND clone_owner.account_id = b.account_id
+        AND clone_owner.target_environment = b.scope AND clone_owner.status = 'ready'
+  ))
+ORDER BY b.created_at, b.id
 `
 
 type ObjectBucketListParams struct {
@@ -10222,6 +10253,7 @@ func (q *Queries) ObjectBucketList(ctx context.Context, db DBTX, arg ObjectBucke
 			&i.PublicRead,
 			&i.ServeAt,
 			&i.EnvironmentCloneSourceBucketID,
+			&i.EnvironmentCloneOperationID,
 		); err != nil {
 			return nil, err
 		}
@@ -10234,13 +10266,19 @@ func (q *Queries) ObjectBucketList(ctx context.Context, db DBTX, arg ObjectBucke
 }
 
 const objectBucketListForKey = `-- name: ObjectBucketListForKey :many
-SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code, b.public_read, b.serve_at, b.environment_clone_source_bucket_id
+SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code, b.public_read, b.serve_at, b.environment_clone_source_bucket_id, b.environment_clone_operation_id
 FROM object_buckets b
 JOIN object_storage_access_grants g
   ON g.bucket_id = b.id AND g.account_id = b.account_id
 JOIN api_keys k ON k.id = g.api_key_id AND k.account_id = g.account_id
 WHERE b.account_id = $1 AND b.app_id = $2 AND g.api_key_id = $3
-  AND b.state <> 'deleted' AND k.status IN ('active', 'grace')
+  AND b.state <> 'deleted'
+  AND (b.environment_clone_operation_id IS NULL OR EXISTS (
+      SELECT 1 FROM project_environment_clone_operations clone_owner
+      WHERE clone_owner.id = b.environment_clone_operation_id
+        AND clone_owner.account_id = b.account_id
+        AND clone_owner.target_environment = b.scope AND clone_owner.status = 'ready'
+  )) AND k.status IN ('active', 'grace')
 ORDER BY b.created_at, b.id
 `
 
@@ -10280,6 +10318,7 @@ func (q *Queries) ObjectBucketListForKey(ctx context.Context, db DBTX, arg Objec
 			&i.PublicRead,
 			&i.ServeAt,
 			&i.EnvironmentCloneSourceBucketID,
+			&i.EnvironmentCloneOperationID,
 		); err != nil {
 			return nil, err
 		}
@@ -10343,7 +10382,7 @@ func (q *Queries) ObjectBucketRetry(ctx context.Context, db DBTX, arg ObjectBuck
 }
 
 const objectBucketsDue = `-- name: ObjectBucketsDue :many
-SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id FROM object_buckets
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id, environment_clone_operation_id FROM object_buckets
 WHERE (state = 'deleting' OR ($1::boolean AND state = 'provisioning'))
 AND retry_at <= now() AND (lease_until IS NULL OR lease_until < now())
 ORDER BY retry_at, id LIMIT $2::int
@@ -10384,6 +10423,7 @@ func (q *Queries) ObjectBucketsDue(ctx context.Context, db DBTX, arg ObjectBucke
 			&i.PublicRead,
 			&i.ServeAt,
 			&i.EnvironmentCloneSourceBucketID,
+			&i.EnvironmentCloneOperationID,
 		); err != nil {
 			return nil, err
 		}
@@ -10396,7 +10436,7 @@ func (q *Queries) ObjectBucketsDue(ctx context.Context, db DBTX, arg ObjectBucke
 }
 
 const objectInventoriesDue = `-- name: ObjectInventoriesDue :many
-SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code, b.public_read, b.serve_at, b.environment_clone_source_bucket_id FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=b.id
+SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code, b.public_read, b.serve_at, b.environment_clone_source_bucket_id, b.environment_clone_operation_id FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=b.id
 WHERE b.state='ready' AND (u.attempt_at IS NULL OR u.attempt_at < now() - interval '5 minutes')
 AND (u.lease_until IS NULL OR u.lease_until < now())
 ORDER BY u.attempt_at NULLS FIRST, b.id LIMIT $1
@@ -10432,6 +10472,7 @@ func (q *Queries) ObjectInventoriesDue(ctx context.Context, db DBTX, limit int32
 			&i.PublicRead,
 			&i.ServeAt,
 			&i.EnvironmentCloneSourceBucketID,
+			&i.EnvironmentCloneOperationID,
 		); err != nil {
 			return nil, err
 		}
@@ -10901,8 +10942,15 @@ func (q *Queries) ObjectMultipartList(ctx context.Context, db DBTX, arg ObjectMu
 }
 
 const objectMultipartLockBucket = `-- name: ObjectMultipartLockBucket :one
-SELECT id FROM object_buckets
-WHERE id=$1 AND account_id=$2 AND app_id=$3 AND state='ready' FOR UPDATE
+SELECT b.id FROM object_buckets b
+WHERE b.id=$1 AND b.account_id=$2 AND b.app_id=$3 AND b.state='ready'
+  AND (b.environment_clone_operation_id IS NULL OR EXISTS (
+      SELECT 1 FROM project_environment_clone_operations clone_owner
+      WHERE clone_owner.id = b.environment_clone_operation_id
+        AND clone_owner.account_id = b.account_id
+        AND clone_owner.target_environment = b.scope AND clone_owner.status = 'ready'
+  ))
+FOR UPDATE
 `
 
 type ObjectMultipartLockBucketParams struct {
@@ -11311,8 +11359,15 @@ func (q *Queries) ObjectS3CredentialListForRekey(ctx context.Context, db DBTX, a
 }
 
 const objectS3CredentialLockBucket = `-- name: ObjectS3CredentialLockBucket :one
-SELECT id FROM object_buckets
-WHERE id=$1 AND account_id=$2 AND state='ready' FOR UPDATE
+SELECT b.id FROM object_buckets b
+WHERE b.id=$1 AND b.account_id=$2 AND b.state='ready'
+  AND (b.environment_clone_operation_id IS NULL OR EXISTS (
+      SELECT 1 FROM project_environment_clone_operations clone_owner
+      WHERE clone_owner.id = b.environment_clone_operation_id
+        AND clone_owner.account_id = b.account_id
+        AND clone_owner.target_environment = b.scope AND clone_owner.status = 'ready'
+  ))
+FOR UPDATE
 `
 
 type ObjectS3CredentialLockBucketParams struct {
@@ -11360,6 +11415,12 @@ SELECT c.id, c.account_id, c.bucket_id, c.access_key_id, c.secret_sealed, c.kid,
 FROM object_storage_s3_credentials c
 JOIN object_buckets b ON b.id=c.bucket_id AND b.account_id=c.account_id
 WHERE c.access_key_id=$1 AND c.status='active' AND b.state='ready'
+  AND (b.environment_clone_operation_id IS NULL OR EXISTS (
+      SELECT 1 FROM project_environment_clone_operations clone_owner
+      WHERE clone_owner.id = b.environment_clone_operation_id
+        AND clone_owner.account_id = b.account_id
+        AND clone_owner.target_environment = b.scope AND clone_owner.status = 'ready'
+  ))
 `
 
 type ObjectS3CredentialResolveRow struct {
@@ -11730,7 +11791,7 @@ func (q *Queries) ObjectStorageManagedSecretRotate(ctx context.Context, db DBTX,
 }
 
 const objectStorageProviderBuckets = `-- name: ObjectStorageProviderBuckets :many
-SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id FROM object_buckets
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id, environment_clone_operation_id FROM object_buckets
 WHERE backend_id = $1 AND backend_fingerprint = $2
 ORDER BY physical_name, id
 `
@@ -11770,6 +11831,7 @@ func (q *Queries) ObjectStorageProviderBuckets(ctx context.Context, db DBTX, arg
 			&i.PublicRead,
 			&i.ServeAt,
 			&i.EnvironmentCloneSourceBucketID,
+			&i.EnvironmentCloneOperationID,
 		); err != nil {
 			return nil, err
 		}
@@ -11916,7 +11978,7 @@ func (q *Queries) ObjectUsageBucketAccount(ctx context.Context, db DBTX, id pgty
 }
 
 const objectUsageBuckets = `-- name: ObjectUsageBuckets :many
-SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code, b.public_read, b.serve_at, b.environment_clone_source_bucket_id, u.baseline_bytes, u.baseline_keys, u.granted_bytes, u.granted_keys,
+SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code, b.public_read, b.serve_at, b.environment_clone_source_bucket_id, b.environment_clone_operation_id, u.baseline_bytes, u.baseline_keys, u.granted_bytes, u.granted_keys,
 u.observed_bytes, u.observed_keys, u.observed_at, u.attempt_at, u.lease_until AS inventory_lease_until, u.token
 FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id = b.id
 WHERE b.account_id = $1
@@ -11943,6 +12005,7 @@ type ObjectUsageBucketsRow struct {
 	PublicRead                     bool
 	ServeAt                        pgtype.Text
 	EnvironmentCloneSourceBucketID pgtype.UUID
+	EnvironmentCloneOperationID    pgtype.UUID
 	BaselineBytes                  pgtype.Int8
 	BaselineKeys                   pgtype.Int8
 	GrantedBytes                   pgtype.Int8
@@ -11985,6 +12048,7 @@ func (q *Queries) ObjectUsageBuckets(ctx context.Context, db DBTX, accountID pgt
 			&i.PublicRead,
 			&i.ServeAt,
 			&i.EnvironmentCloneSourceBucketID,
+			&i.EnvironmentCloneOperationID,
 			&i.BaselineBytes,
 			&i.BaselineKeys,
 			&i.GrantedBytes,
@@ -12658,6 +12722,53 @@ func (q *Queries) ReadProjectEnvironmentCloneLegacySettings(ctx context.Context,
 	row := db.QueryRow(ctx, readProjectEnvironmentCloneLegacySettings, arg.Environment, arg.AppID)
 	var i ReadProjectEnvironmentCloneLegacySettingsRow
 	err := row.Scan(&i.App, &i.Route)
+	return i, err
+}
+
+const readProjectEnvironmentCloneObjectBucket = `-- name: ReadProjectEnvironmentCloneObjectBucket :one
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id, environment_clone_operation_id FROM object_buckets
+WHERE account_id = $1 AND app_id = $2 AND id = $3
+  AND environment_clone_operation_id = $4 AND state <> 'deleted'
+`
+
+type ReadProjectEnvironmentCloneObjectBucketParams struct {
+	AccountID                   pgtype.UUID
+	AppID                       pgtype.UUID
+	ID                          pgtype.UUID
+	EnvironmentCloneOperationID pgtype.UUID
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneObjectBucket(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneObjectBucketParams) (ObjectBucket, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentCloneObjectBucket,
+		arg.AccountID,
+		arg.AppID,
+		arg.ID,
+		arg.EnvironmentCloneOperationID,
+	)
+	var i ObjectBucket
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.Scope,
+		&i.Region,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.PhysicalName,
+		&i.State,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.LastErrorCode,
+		&i.PublicRead,
+		&i.ServeAt,
+		&i.EnvironmentCloneSourceBucketID,
+		&i.EnvironmentCloneOperationID,
+	)
 	return i, err
 }
 

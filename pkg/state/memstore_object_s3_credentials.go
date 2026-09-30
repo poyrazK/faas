@@ -19,7 +19,7 @@ func (m *MemStore) CreateObjectS3Credential(_ context.Context, c ObjectS3Credent
 		return ObjectS3Credential{}, ErrConflict
 	}
 	bucket, ok := m.objectBuckets[c.BucketID]
-	if !ok || bucket.AccountID != c.AccountID || bucket.State != "ready" {
+	if !ok || bucket.AccountID != c.AccountID || bucket.State != "ready" || !m.cloneBucketAccessibleLocked(bucket) {
 		return ObjectS3Credential{}, ErrNotFound
 	}
 	if m.objectS3Credentials == nil {
@@ -52,7 +52,7 @@ func (m *MemStore) CreateObjectS3ComputeBinding(_ context.Context, req ObjectS3C
 	defer m.mu.Unlock()
 	c := req.Credential
 	bucket, ok := m.objectBuckets[c.BucketID]
-	if !ok || bucket.AccountID != c.AccountID || bucket.AppID != c.ManagedAppID || bucket.State != "ready" {
+	if !ok || bucket.AccountID != c.AccountID || bucket.AppID != c.ManagedAppID || bucket.State != "ready" || !m.cloneBucketAccessibleLocked(bucket) {
 		return ObjectS3Credential{}, ErrNotFound
 	}
 	app, ok := m.apps[c.ManagedAppID]
@@ -328,7 +328,7 @@ func (m *MemStore) ResolveObjectS3Credential(_ context.Context, accessKeyID stri
 			continue
 		}
 		bucket, ok := m.objectBuckets[c.BucketID]
-		if !ok || bucket.AccountID != c.AccountID || bucket.State != "ready" {
+		if !ok || bucket.AccountID != c.AccountID || bucket.State != "ready" || !m.cloneBucketAccessibleLocked(bucket) {
 			return ObjectS3Credential{}, ObjectBucket{}, ErrNotFound
 		}
 		return cloneObjectS3Credential(c), bucket, nil
