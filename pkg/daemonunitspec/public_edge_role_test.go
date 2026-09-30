@@ -14,7 +14,8 @@ import (
 // A control plane rebuilt from scratch had no public TLS edge: the old one
 // was hand-built, so nothing listened on 443 and Cloudflare returned 521 for
 // api.gregale.dev. public_edge must front gatewayd-public's socket, run in the
-// control-plane play, and trust exactly the Cloudflare ranges nftables admits.
+// control-plane play, and hand gatewayd-public exactly one client hop (it
+// rejects any other X-Forwarded-For shape as a forged caller IP).
 func TestPublicEdgeFrontsGatewaydPublicBehindCloudflare(t *testing.T) {
 	root := repoRoot(t)
 	defaults := map[string]any{}
@@ -56,9 +57,6 @@ func TestPublicEdgeFrontsGatewaydPublicBehindCloudflare(t *testing.T) {
 	for _, task := range flattenRoleTasks("", tasks) {
 		if args, ok := task.body["ansible.builtin.blockinfile"].(map[string]any); ok {
 			block, _ = args["block"].(string)
-			if args["insertbefore"] != "BOF" {
-				t.Error("the global options block must be inserted at the top of the Caddyfile")
-			}
 		}
 	}
 	if block == "" {
@@ -68,18 +66,6 @@ func TestPublicEdgeFrontsGatewaydPublicBehindCloudflare(t *testing.T) {
 	playbookBin, err := exec.LookPath("ansible-playbook")
 	if err != nil {
 		t.Skip("ansible-playbook not installed; render check skipped")
-	}
-	var cidrs []string
-	for _, fam := range []string{"v4", "v6"} {
-		raw, err := os.ReadFile(filepath.Join(root, "deploy", "ansible", "roles", "nftables", "files", "cloudflare-ips-"+fam+".txt"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, line := range strings.Split(string(raw), "\n") {
-			if line = strings.TrimSpace(line); line != "" {
-				cidrs = append(cidrs, line)
-			}
-		}
 	}
 	dir := t.TempDir()
 	tmpl := filepath.Join(dir, "block.j2")
@@ -94,7 +80,6 @@ func TestPublicEdgeFrontsGatewaydPublicBehindCloudflare(t *testing.T) {
 		}
 	}
 	vars["faas_public_edge_domain"] = "gregale.dev"
-	vars["faas_public_edge_trusted_proxies"] = cidrs
 	play := []map[string]any{{
 		"hosts": "localhost", "gather_facts": false, "vars": vars,
 		"tasks": []map[string]any{{"ansible.builtin.template": map[string]any{"src": tmpl, "dest": out}}},
@@ -124,8 +109,8 @@ func TestPublicEdgeFrontsGatewaydPublicBehindCloudflare(t *testing.T) {
 	for _, want := range []string{
 		"gregale.dev, *.gregale.dev {",
 		"tls /etc/caddy/tls/cloudflare-origin.pem /etc/caddy/tls/cloudflare-origin.key",
-		"reverse_proxy " + listen[1],
-		"trusted_proxies static " + strings.Join(cidrs, " "),
+		"reverse_proxy " + listen[1] + " {",
+		"header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("rendered edge block is missing %q:\n%s", want, text)
