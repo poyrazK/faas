@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func (s *PgStore) CloneProjectEnvironment(ctx context.Context, clone ProjectEnvironmentClone, limits api.Limits) (ProjectEnvironment, ProjectEnvironmentCloneResult, error) {
@@ -42,10 +43,26 @@ func (s *PgStore) CloneProjectEnvironment(ctx context.Context, clone ProjectEnvi
 	if err != nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
 	}
+	if err := validateClonedEnvironmentPolicyProjections(ctx, tx, clone); err != nil {
+		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, fmt.Errorf("state: commit project environment clone: %w", err)
 	}
 	return created, result, nil
+}
+
+func validateClonedEnvironmentPolicyProjections(ctx context.Context, tx pgx.Tx, clone ProjectEnvironmentClone) error {
+	oversized, err := sqlc.New().FindOversizedClonedEnvironmentPolicy(ctx, tx, sqlc.FindOversizedClonedEnvironmentPolicyParams{
+		AccountID: uuidToPgtype(clone.AccountID), ProjectID: uuidToPgtype(clone.ProjectID),
+		EnvironmentSlug: clone.TargetSlug, MaxBytes: api.TrafficPolicyMaxContractBytes})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("state: validate cloned traffic policies: %w", mapErr(err))
+	}
+	return checkTrafficProjectionSize(oversized.Scope, oversized.Observed)
 }
 
 func checkPreparedProjectEnvironmentBindings(ctx context.Context, tx pgx.Tx, clone ProjectEnvironmentClone) error {

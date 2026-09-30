@@ -3,12 +3,15 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func requireTrafficProjectionProblem(t *testing.T, response *httptest.ResponseRecorder) {
@@ -24,6 +27,60 @@ func requireTrafficProjectionProblem(t *testing.T, response *httptest.ResponseRe
 		problem.Limit == nil || *problem.Limit != *problem.LimitBytes ||
 		problem.Observed == nil || *problem.Observed != *problem.ObservedBytes || problem.DocsURL == "" {
 		t.Fatalf("incomplete limit problem: status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestTrafficProjectionImportReplacementAtFullQuota(t *testing.T) {
+	env, _ := newTestServerWithCapturingNotifier(t, api.PlanHobby)
+	var target state.App
+	for i := range env.acct.Plan.OpenAPIImportsPerAccount() {
+		app := seedApp(t, env, fmt.Sprintf("full-import-%d", i))
+		seedImport(t, env, app.ID, []byte(sampleOpenAPIDoc), 1, "3.1.0")
+		if i == 0 {
+			target = app
+		}
+	}
+	if target.ID == "" {
+		t.Fatal("fixture requires an enabled import tier")
+	}
+	path := "/v1/apps/" + target.Slug + "/openapi"
+	replacement := strings.Replace(sampleOpenAPIDoc, `"title":"sample"`, `"title":"repaired"`, 1)
+	response := env.do(t, http.MethodPost, path, json.RawMessage(replacement), nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("replacement at full quota: status=%d body=%s", response.Code, response.Body.String())
+	}
+	oversized := []byte(`{"openapi":"3.1.0","info":{"title":"expansion","version":"1"},"paths":{},"x-values":[` + strings.Repeat("1e300,", 1799) + `1e300]}`)
+	if len(oversized) >= state.OpenAPIImportMaxDocBytes {
+		t.Fatal("fixture must fit the request body cap")
+	}
+	response = env.do(t, http.MethodPost, path, json.RawMessage(oversized), nil)
+	requireTrafficProjectionProblem(t, response)
+	doc, _, err := env.store.GetAppOpenAPIDoc(context.Background(), target.ID, env.acct.ID)
+	if err != nil || string(doc) != replacement {
+		t.Fatalf("rejected import changed saved document: err=%v", err)
+	}
+	// A new app cannot borrow the existing document's replacement slot.
+	other := seedApp(t, env, "full-import-extra")
+	response = env.do(t, http.MethodPost, "/v1/apps/"+other.Slug+"/openapi", json.RawMessage(sampleOpenAPIDoc), nil)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("new import at full quota: status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestTrafficProjectionCloneRejectsFallbackWithoutCreatingTarget(t *testing.T) {
+	srv, store, account, project, _ := newProjectLifecycleFixture(t)
+	_, err := store.CreateApp(context.Background(), state.App{AccountID: account.ID, ProjectID: project.ID,
+		Slug: "oversized-fallback", Status: state.AppActive, OnlyAllowDeclaredRoutes: true,
+		DeclaredRoutes: []state.DeclaredRoute{{Path: "/" + strings.Repeat("x", api.TrafficPolicyMaxContractBytes), Methods: []string{"GET"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, response := projectRequest(http.MethodPost, "/v1/projects/shop/environments", "shop",
+		[]byte(`{"slug":"staging","from_environment":"production"}`))
+	srv.createProjectEnvironment(response, req, account)
+	requireTrafficProjectionProblem(t, response)
+	if _, err := store.ProjectEnvironmentBySlug(context.Background(), account.ID, project.ID, "staging"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("refused clone created target: %v", err)
 	}
 }
 

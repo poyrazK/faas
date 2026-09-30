@@ -5176,3 +5176,31 @@ SELECT CASE WHEN octet_length(data::text) <= sqlc.arg(max_bytes)::integer THEN d
 -- Write validation measures the proposed complete projection using the same
 -- canonical representation as bounded runtime reads, before changing a row.
 SELECT octet_length(sqlc.arg(payload)::jsonb::text)::bigint;
+
+-- name: ReadOpenAPIImportQuota :one
+SELECT count(*)::bigint AS observed,
+    coalesce(bool_or(app_id = sqlc.arg(app_id)::uuid), false)::boolean AS replacement
+FROM app_openapi_docs WHERE account_id = sqlc.arg(account_id)::uuid;
+
+-- name: FindOversizedClonedEnvironmentPolicy :one
+-- Inspect the rows actually copied in the clone transaction. Return only a
+-- scalar error verdict; oversized policy bodies never cross the store boundary.
+WITH projections AS (
+    SELECT 'environment_edge_policy'::text AS scope, jsonb_build_object(
+        'AccountID', account_id, 'ProjectID', project_id, 'AppID', app_id,
+        'EnvironmentSlug', environment_slug, 'Rules', rules)::jsonb AS data
+    FROM project_environment_edge_policies
+    WHERE account_id = sqlc.arg(account_id)::uuid AND project_id = sqlc.arg(project_id)::uuid
+      AND environment_slug = sqlc.arg(environment_slug)::text
+    UNION ALL
+    SELECT 'environment_route_policy'::text AS scope, jsonb_build_object(
+        'AccountID', account_id, 'ProjectID', project_id, 'AppID', app_id,
+        'EnvironmentSlug', environment_slug, 'OnlyAllowDeclaredRoutes', only_allow_declared_routes,
+        'DeclaredRoutes', declared_routes)::jsonb AS data
+    FROM project_environment_route_policies
+    WHERE account_id = sqlc.arg(account_id)::uuid AND project_id = sqlc.arg(project_id)::uuid
+      AND environment_slug = sqlc.arg(environment_slug)::text
+)
+SELECT scope, octet_length(data::text)::bigint AS observed FROM projections
+WHERE octet_length(data::text) > sqlc.arg(max_bytes)::integer
+ORDER BY observed DESC, scope LIMIT 1;

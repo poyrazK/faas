@@ -70,15 +70,19 @@ func checkTrafficProjectionSize(scope string, observed int64) error {
 }
 
 func (s *PgStore) validateTrafficProjection(ctx context.Context, scope string, projection any) error {
+	return validateTrafficProjectionWithDB(ctx, s.pool, scope, projection)
+}
+
+func validateTrafficProjectionWithDB(ctx context.Context, db sqlc.DBTX, scope string, projection any) error {
 	payload, err := json.Marshal(projection)
 	if err != nil {
 		return fmt.Errorf("state: encode %s traffic projection: %w", scope, err)
 	}
-	observed, err := sqlc.New().MeasureTrafficPolicyProjection(ctx, s.pool, payload)
+	observed, err := sqlc.New().MeasureTrafficPolicyProjection(ctx, db, payload)
 	if err != nil {
 		return fmt.Errorf("state: measure %s traffic projection: %w", scope, mapErr(err))
 	}
-	return checkTrafficProjectionSize(scope, int64(observed))
+	return checkTrafficProjectionSize(scope, observed)
 }
 
 // validateMemTrafficProjection adds JSONB's separator whitespace to compact

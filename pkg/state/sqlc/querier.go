@@ -280,6 +280,9 @@ type Querier interface {
 	ExpireUploadSession(ctx context.Context, db DBTX, id string) error
 	// Two matches mean an invoice ID collides with another invoice's charge ID.
 	FindInvoiceIDsByProviderKey(ctx context.Context, db DBTX, arg FindInvoiceIDsByProviderKeyParams) ([]pgtype.UUID, error)
+	// Inspect the rows actually copied in the clone transaction. Return only a
+	// scalar error verdict; oversized policy bodies never cross the store boundary.
+	FindOversizedClonedEnvironmentPolicy(ctx context.Context, db DBTX, arg FindOversizedClonedEnvironmentPolicyParams) (FindOversizedClonedEnvironmentPolicyRow, error)
 	GetAppEgressCircuits(ctx context.Context, db DBTX, appID pgtype.UUID) (GetAppEgressCircuitsRow, error)
 	// Single oldest request row for one fingerprint, used by the
 	// UI's "what does this look like" preview. Returns
@@ -985,6 +988,7 @@ type Querier interface {
 	PutAppEgressCircuits(ctx context.Context, db DBTX, arg PutAppEgressCircuitsParams) (PutAppEgressCircuitsRow, error)
 	// An unqualified legacy row blocks the whole key; guessing could double-debit.
 	ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg ReadAccountCreditConsumptionParams) (ReadAccountCreditConsumptionRow, error)
+	ReadOpenAPIImportQuota(ctx context.Context, db DBTX, arg ReadOpenAPIImportQuotaParams) (ReadOpenAPIImportQuotaRow, error)
 	// A single statement reads the pointer and its complete membership together.
 	ReadProjectReleaseSet(ctx context.Context, db DBTX, arg ReadProjectReleaseSetParams) ([]byte, error)
 	ReadPublicHostAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]byte, error)

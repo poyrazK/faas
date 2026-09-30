@@ -145,6 +145,9 @@ func (m *MemStore) CloneProjectEnvironment(_ context.Context, clone ProjectEnvir
 	if err := m.checkProjectCloneQuotaLocked(apps, clone.SourceSlug, clone.ManagedBindingsPrepared, limits); err != nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
 	}
+	if err := m.validateProjectCloneTrafficPoliciesLocked(apps, clone.SourceSlug, clone.TargetSlug); err != nil {
+		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+	}
 	now := time.Now().UTC()
 	created := ProjectEnvironment{
 		ID: newID(), AccountID: clone.AccountID, ProjectID: clone.ProjectID,
@@ -157,16 +160,8 @@ func (m *MemStore) CloneProjectEnvironment(_ context.Context, clone ProjectEnvir
 	result.VariablesCopied = m.copyProjectEnvironmentVariablesLocked(apps, clone.SourceSlug, clone.TargetSlug, created.CreatedAt)
 	result.SecretsCopied = m.copyProjectEnvironmentSecretsLocked(apps, clone.SourceSlug, clone.TargetSlug, created.CreatedAt)
 	for appID := range apps {
-		app := m.apps[appID]
-		policy, ok := m.projectEnvironmentRoutePolicies[projectEnvironmentRoutePolicyKey(appID, clone.SourceSlug)]
-		if !ok {
-			policy = ProjectEnvironmentRoutePolicy{
-				AccountID: app.AccountID, ProjectID: app.ProjectID, AppID: app.ID,
-				OnlyAllowDeclaredRoutes: app.OnlyAllowDeclaredRoutes,
-				DeclaredRoutes:          cloneDeclaredRoutes(app.DeclaredRoutes),
-			}
-		}
-		if policy.OnlyAllowDeclaredRoutes && len(policy.DeclaredRoutes) == 0 {
+		policy, copyable := m.projectCloneRoutePolicyLocked(appID, clone.SourceSlug)
+		if !copyable {
 			continue // The app-wide OpenAPI document is not cloneable route structure.
 		}
 		policy.EnvironmentSlug, policy.CreatedAt, policy.UpdatedAt = clone.TargetSlug, created.CreatedAt, created.CreatedAt
@@ -191,6 +186,34 @@ func (m *MemStore) CloneProjectEnvironment(_ context.Context, clone ProjectEnvir
 	// edge-rule kinds remain application-wide even after an explicit clone.
 	result.SharedResources = append(result.SharedResources, "policies")
 	return created, result, nil
+}
+
+func (m *MemStore) projectCloneRoutePolicyLocked(appID, source string) (ProjectEnvironmentRoutePolicy, bool) {
+	app := m.apps[appID]
+	policy, ok := m.projectEnvironmentRoutePolicies[projectEnvironmentRoutePolicyKey(appID, source)]
+	if !ok {
+		policy.OnlyAllowDeclaredRoutes, policy.DeclaredRoutes = app.OnlyAllowDeclaredRoutes, app.DeclaredRoutes
+	}
+	policy.AccountID, policy.ProjectID, policy.AppID = app.AccountID, app.ProjectID, app.ID
+	return policy, !policy.OnlyAllowDeclaredRoutes || len(policy.DeclaredRoutes) != 0
+}
+
+func (m *MemStore) validateProjectCloneTrafficPoliciesLocked(apps map[string]string, source, target string) error {
+	for appID := range apps {
+		if policy, copyable := m.projectCloneRoutePolicyLocked(appID, source); copyable {
+			policy.EnvironmentSlug = target
+			if err := validateMemTrafficProjection("environment_route_policy", environmentRouteTrafficProjection(policy)); err != nil {
+				return err
+			}
+		}
+		if policy, ok := m.projectEnvironmentEdgePolicies[projectEnvironmentRoutePolicyKey(appID, source)]; ok {
+			policy.EnvironmentSlug = target
+			if err := validateMemTrafficProjection("environment_edge_policy", environmentEdgeTrafficProjection(policy)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (m *MemStore) projectCloneAppsLocked(projectID string) map[string]string {

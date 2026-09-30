@@ -476,7 +476,7 @@ func writeCreateProjectEnvironmentError(w http.ResponseWriter, projectSlug strin
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
 			"Environment already exists", "the project already has an environment with this slug"))
 	default:
-		api.WriteProblem(w, api.ErrCapacity("could not create project environment"))
+		api.WriteProblem(w, trafficPolicyWriteProblem(err, api.ErrCapacity("could not create project environment")))
 	}
 }
 

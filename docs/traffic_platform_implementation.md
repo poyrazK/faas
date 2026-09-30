@@ -42,6 +42,55 @@ Claimed source apps retain emergency cancellation ownership through cleanup.
 
 ## Evidence log
 
+### Clone and imported-contract write bounds, 2026-09-30
+
+Imported documents now validate canonical runtime bytes in both store write
+methods, including JSON numeric expansion beyond the upload body's size. The
+quota-aware path performs that check in the same transaction as the locked
+account count, owned-parent verification and replacement. Existing imports
+reuse their quota slot, including legacy repair at the account cap; new imports
+still require a slot and unsupported plan tiers refuse. The API delegates this
+decision to the store instead of rejecting all writes from an unlocked count.
+Both oversized imports and clone projections use the existing structured 422.
+
+Environment clones check the copied target rows inside the transaction before
+commit. The SQL verdict returns only scope and observed bytes. Ownership
+metadata, the target slug and app-wide fallback routes are included. Refusal
+rolls back the target and all copied database configuration. The in-memory
+store validates every candidate under its mutex before creating any target
+state and uses the same route fallback for validation and copying. Existing
+managed-provider preparation/compensation behavior is retained.
+
+All 32 selected state tests passed in 12.817 s without skips. Real Postgres
+fixtures cover numerical expansion, exactly-at-bound imports, oversized legacy
+refusal and repair at a full quota, preserved first-import time, and two
+concurrent new imports competing for one slot. Clone fixtures cover scoped edge
+and route policies at the source bound whose longer target slug exceeds it,
+oversized app-wide fallback routes, rollback of copied variables/secrets/policy
+rows, and successful retry after source repair. In-memory preflight, quota,
+IDOR, defensive-copy and existing clone behavior also passed.
+
+All 44 selected HTTP tests passed in 4.638 s without skips. They cover the
+actual plan import cap, replacement-slot reuse, new-slot refusal, structured
+numeric-expansion errors with saved document retention, and clone refusal
+without a target environment. Local runs used CGO_ENABLED=0, one Go package
+worker, -gcflags=all=-dwarf=false and stripped linker output to reduce temporary
+build storage. Initial runs that returned only FAIL are excluded from evidence;
+reruns after task-cache cleanup passed. The first lint run failed to load pgx
+export data. With matching Go compiler flags, a fresh task lint cache, two Go
+runtime workers and GOGC=50, pinned lint passed apid with zero issues. State
+production lint passed with tests=false/unused disabled for the pre-existing
+test helper and zero issues. Whitespace checks passed.
+Fresh sqlc v1.31.1 generation matched all four committed Go files; the queries
+use existing schema and require no migration.
+
+Atomic aggregate per-host validation, filtering a claimed host's initial route
+graph by its verified owner before applying global read bounds, decision/path
+evidence, preview agreement and full daemon/load/customer/staging acceptance
+remain pending. Native KVM/network/process-death/leak checks remain pending
+because no acceptance host is available. All six release requirements remain
+unchecked.
+
 ### Individual policy write bounds and legacy repair, 2026-09-30
 
 CORS preset creates and complete replacements, environment edge overlays and
@@ -76,8 +125,9 @@ state production lint excluded tests and the pre-existing unused test helper
 and found zero issues. Fresh sqlc v1.31.1 generation matched all four committed
 Go files. No schema change or migration was required. Whitespace checks passed.
 
-Atomic aggregate per-host checks across contributing rule/preset mutations,
-environment clone paths and imported-document write validation remain pending.
+Atomic aggregate per-host checks across contributing rule/preset mutations
+remain pending. Clone and imported-document validation continued in the later
+evidence entry above.
 These individual object guards do not establish preview/runtime agreement,
 bounded decision evidence, complete daemon/load/customer/staging acceptance or
 native KVM/network/process-death/leak acceptance. No acceptance host is available;

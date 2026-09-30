@@ -15,10 +15,12 @@ package state
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // appOpenAPIDocSelectCols is the canonical column order for every
@@ -131,6 +133,9 @@ func (s *PgStore) UpsertAppOpenAPIDoc(ctx context.Context, appID, accountID stri
 		}
 		return fmt.Errorf("state: openapi import parent check: %w", err)
 	}
+	if err := s.validateTrafficProjection(ctx, "imported_openapi_contract", json.RawMessage(doc)); err != nil {
+		return err
+	}
 	sum := sha256.Sum256(doc)
 	_, err := s.pool.Exec(ctx, `
 		insert into app_openapi_docs
@@ -193,13 +198,12 @@ func (s *PgStore) DeleteAppOpenAPIDoc(ctx context.Context, appID, accountID stri
 //  2. SELECT 1 FROM accounts WHERE id=$1 FOR UPDATE  — row
 //     lock on the account so a second concurrent import on
 //     the same account blocks until our tx commits.
-//  3. SELECT count(*) FROM app_openapi_docs WHERE
-//     account_id=$1 — observed count under the lock.
-//  4. If observed >= planMax → ROLLBACK + return *QuotaError
+//  3. Confirm parent ownership, then count imports and check whether this app
+//     already owns a slot, under the account lock.
+//  4. If a new slot would exceed planMax → ROLLBACK + return *QuotaError
 //     {Kind: openapi_imports, NotAllowed: planMax==0,
 //     Limit: planMax, Observed: observed}.
-//  5. SELECT id FROM apps WHERE id=$1 AND account_id=$2 —
-//     parent existence + IDOR floor in one go.
+//  5. Measure canonical document bytes before modifying the import.
 //  6. INSERT INTO app_openapi_docs ... ON CONFLICT DO UPDATE
 //     (same upsert as UpsertAppOpenAPIDoc).
 //  7. COMMIT.
@@ -230,15 +234,6 @@ func (s *PgStore) UpsertAppOpenAPIDocIfUnderQuota(ctx context.Context, appID, ac
 		}
 		return fmt.Errorf("state: openapi import quota lock account: %w", err)
 	}
-	var observed int
-	if err := tx.QueryRow(ctx,
-		`select count(*) from app_openapi_docs where account_id = $1`, accountID,
-	).Scan(&observed); err != nil {
-		return fmt.Errorf("state: openapi import quota count: %w", err)
-	}
-	if observed >= planMax {
-		return &QuotaError{Kind: QuotaErrorKindOpenAPIImports, Limit: planMax, Observed: observed}
-	}
 	var appOK string
 	if err := tx.QueryRow(ctx,
 		`select id from apps where id = $1 and account_id = $2`, appID, accountID,
@@ -247,6 +242,17 @@ func (s *PgStore) UpsertAppOpenAPIDocIfUnderQuota(ctx context.Context, appID, ac
 			return ErrNotFound
 		}
 		return fmt.Errorf("state: openapi import parent check: %w", err)
+	}
+	quota, err := sqlc.New().ReadOpenAPIImportQuota(ctx, tx, sqlc.ReadOpenAPIImportQuotaParams{
+		AccountID: uuidToPgtype(accountID), AppID: uuidToPgtype(appID)})
+	if err != nil {
+		return fmt.Errorf("state: openapi import quota count: %w", mapErr(err))
+	}
+	if !quota.Replacement && quota.Observed >= int64(planMax) {
+		return &QuotaError{Kind: QuotaErrorKindOpenAPIImports, Limit: planMax, Observed: int(quota.Observed)}
+	}
+	if err := validateTrafficProjectionWithDB(ctx, tx, "imported_openapi_contract", json.RawMessage(doc)); err != nil {
+		return err
 	}
 	sum := sha256.Sum256(doc)
 	if _, err := tx.Exec(ctx, `

@@ -9727,6 +9727,9 @@ func (m *MemStore) UpsertAppOpenAPIDoc(_ context.Context, appID, accountID strin
 	if !ok || app.AccountID != accountID {
 		return ErrNotFound
 	}
+	if err := validateMemTrafficProjection("imported_openapi_contract", json.RawMessage(doc)); err != nil {
+		return err
+	}
 	now := time.Now()
 	docCopy := append([]byte(nil), doc...)
 	sum := sha256.Sum256(docCopy)
@@ -9820,8 +9823,15 @@ func (m *MemStore) UpsertAppOpenAPIDocIfUnderQuota(_ context.Context, appID, acc
 			observed++
 		}
 	}
-	if observed >= planMax {
+	existing, replacement := m.openAPIImports[appID]
+	if !replacement && observed >= planMax {
 		return &QuotaError{Kind: QuotaErrorKindOpenAPIImports, Limit: planMax, Observed: observed}
+	}
+	if replacement && existing.AccountID != accountID {
+		return ErrNotFound
+	}
+	if err := validateMemTrafficProjection("imported_openapi_contract", json.RawMessage(doc)); err != nil {
+		return err
 	}
 	now := time.Now()
 	docCopy := append([]byte(nil), doc...)

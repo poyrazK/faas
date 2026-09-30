@@ -344,6 +344,17 @@ and referenced-preset bound. Atomic checks across concurrent contributing
 mutations and environment cloning remain delivery work; an account-wide byte
 quota must not silently replace the per-host runtime bound.
 
+Imported documents also validate canonical runtime bytes before replacement;
+the existing import-body cap alone cannot bound JSONB numeric expansion.
+Replacing an owned import reuses its account quota slot, including repair of
+an oversized legacy document; unavailable plan tiers still refuse imports.
+The quota decision remains serialized by the account lock. Environment cloning
+validates copied target projections in its transaction before commit, including
+app-wide fallback routes and the target slug's bytes. Failure rolls back the
+entire target configuration. The in-memory clone preflights all projections
+under its existing mutex before creating target state. Aggregate per-host
+mutation validation and complete-path recovery acceptance remain pending.
+
 Public declared-route inputs join the fresh hostname/app view. An exact
 environment's route overlay is read before deciding whether an imported
 OpenAPI document is needed; explicit routes keep precedence. The readonly

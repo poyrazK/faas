@@ -3747,6 +3747,54 @@ func (q *Queries) FindInvoiceIDsByProviderKey(ctx context.Context, db DBTX, arg 
 	return items, nil
 }
 
+const findOversizedClonedEnvironmentPolicy = `-- name: FindOversizedClonedEnvironmentPolicy :one
+WITH projections AS (
+    SELECT 'environment_edge_policy'::text AS scope, jsonb_build_object(
+        'AccountID', account_id, 'ProjectID', project_id, 'AppID', app_id,
+        'EnvironmentSlug', environment_slug, 'Rules', rules)::jsonb AS data
+    FROM project_environment_edge_policies
+    WHERE account_id = $2::uuid AND project_id = $3::uuid
+      AND environment_slug = $4::text
+    UNION ALL
+    SELECT 'environment_route_policy'::text AS scope, jsonb_build_object(
+        'AccountID', account_id, 'ProjectID', project_id, 'AppID', app_id,
+        'EnvironmentSlug', environment_slug, 'OnlyAllowDeclaredRoutes', only_allow_declared_routes,
+        'DeclaredRoutes', declared_routes)::jsonb AS data
+    FROM project_environment_route_policies
+    WHERE account_id = $2::uuid AND project_id = $3::uuid
+      AND environment_slug = $4::text
+)
+SELECT scope, octet_length(data::text)::bigint AS observed FROM projections
+WHERE octet_length(data::text) > $1::integer
+ORDER BY observed DESC, scope LIMIT 1
+`
+
+type FindOversizedClonedEnvironmentPolicyParams struct {
+	MaxBytes        int32
+	AccountID       pgtype.UUID
+	ProjectID       pgtype.UUID
+	EnvironmentSlug string
+}
+
+type FindOversizedClonedEnvironmentPolicyRow struct {
+	Scope    string
+	Observed int64
+}
+
+// Inspect the rows actually copied in the clone transaction. Return only a
+// scalar error verdict; oversized policy bodies never cross the store boundary.
+func (q *Queries) FindOversizedClonedEnvironmentPolicy(ctx context.Context, db DBTX, arg FindOversizedClonedEnvironmentPolicyParams) (FindOversizedClonedEnvironmentPolicyRow, error) {
+	row := db.QueryRow(ctx, findOversizedClonedEnvironmentPolicy,
+		arg.MaxBytes,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.EnvironmentSlug,
+	)
+	var i FindOversizedClonedEnvironmentPolicyRow
+	err := row.Scan(&i.Scope, &i.Observed)
+	return i, err
+}
+
 const getAppEgressCircuits = `-- name: GetAppEgressCircuits :one
 SELECT revision, targets FROM app_egress_circuits WHERE app_id = $1
 `
@@ -11916,6 +11964,29 @@ func (q *Queries) ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg
 	row := db.QueryRow(ctx, readAccountCreditConsumption, arg.Provider, arg.AccountID, arg.ProviderInvoiceID)
 	var i ReadAccountCreditConsumptionRow
 	err := row.Scan(&i.ConsumedCents, &i.HasPrior, &i.HasUnqualified)
+	return i, err
+}
+
+const readOpenAPIImportQuota = `-- name: ReadOpenAPIImportQuota :one
+SELECT count(*)::bigint AS observed,
+    coalesce(bool_or(app_id = $1::uuid), false)::boolean AS replacement
+FROM app_openapi_docs WHERE account_id = $2::uuid
+`
+
+type ReadOpenAPIImportQuotaParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+type ReadOpenAPIImportQuotaRow struct {
+	Observed    int64
+	Replacement bool
+}
+
+func (q *Queries) ReadOpenAPIImportQuota(ctx context.Context, db DBTX, arg ReadOpenAPIImportQuotaParams) (ReadOpenAPIImportQuotaRow, error) {
+	row := db.QueryRow(ctx, readOpenAPIImportQuota, arg.AppID, arg.AccountID)
+	var i ReadOpenAPIImportQuotaRow
+	err := row.Scan(&i.Observed, &i.Replacement)
 	return i, err
 }
 

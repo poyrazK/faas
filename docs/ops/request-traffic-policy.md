@@ -42,12 +42,29 @@ input byte bound; each preset and environment overlay is limited to 512 KiB
 before transfer. Unrelated tenants' non-route rules and presets are not loaded.
 The compiled cache preserves the existing 10,000-host entry ceiling.
 An oversized projection refuses with `traffic_policy_unavailable`/503.
-Individual CORS preset creates/replacements, environment overlay replacements
-and scoped route replacements validate the complete runtime object before
-saving. Postgres measures canonical JSONB bytes, including ownership metadata
-and separator whitespace. CORS PATCH validation uses the merged preset, so two
-individually small field updates cannot exceed the preset bound after merging.
+Individual CORS preset creates/replacements, environment overlay replacements,
+scoped route replacements and imported documents validate the complete runtime
+object before saving. Postgres measures canonical JSONB bytes, including
+ownership metadata and separator whitespace. CORS PATCH validation uses the
+merged preset, so two individually small field updates cannot exceed the
+preset bound after merging.
 Display names, descriptions and timestamps are excluded from these projections.
+
+An imported document must fit both the existing 256 KiB upload cap and the
+512 KiB canonical runtime bound. Scientific numbers can expand substantially
+in the stored JSON representation, so a small upload can still exceed the
+runtime bound and return the structured 422 below. Replacing an existing
+owned document reuses its import quota slot, including at the account limit;
+creating another import still requires a free slot. Plan tiers without import
+support continue to refuse writes.
+
+Environment cloning validates the actual copied target projections before
+committing its transaction. The bound includes the target environment name
+and app-wide routes copied as an explicit fallback. An oversized clone refuses
+with 422 and rolls back its target environment, variables, secrets and policies.
+Repair the source policy and retry the clone. A longer target name can make a
+source policy already at the bound exceed it after copying. Provider-managed
+binding creation and compensation retain their existing separate contract.
 
 An oversized write returns `traffic_policy_too_large`/422 with `limit`,
 `observed`, `limit_bytes`, `observed_bytes` and `docs_url`. The existing policy
@@ -61,10 +78,9 @@ serving-policy repair.
 The in-memory store uses a conservative bound and may reject a near-limit
 object whose extra JSON string escapes are smaller in Postgres.
 
-Atomic aggregate per-host validation across concurrent rule/preset mutations,
-environment cloning, imported-document mutation paths and complete recovery
-acceptance remain rollout requirements. These individual write checks do not
-establish release acceptance.
+Atomic aggregate per-host validation across concurrent rule/preset mutations
+and complete recovery acceptance remain rollout requirements. These individual
+write checks do not establish release acceptance.
 
 Before dispatch, the public routing transaction re-resolves the host projection
 and compares its private content fingerprint. Changed settings, alias/domain
