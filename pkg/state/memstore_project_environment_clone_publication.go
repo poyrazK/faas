@@ -87,8 +87,14 @@ func (m *MemStore) verifyClonePublicationLocked(op ProjectEnvironmentCloneOperat
 		return err
 	}
 	var records []projectCloneWorkloadRecord
+	targets := map[string]projectCloneWorkloadValues{}
 	for _, record := range m.projectEnvironmentCloneWorkloads[op.ID] {
 		records = append(records, record)
+		variables, secrets := m.projectCloneValuesLocked(map[string]string{record.AppID: op.TargetEnvironment})
+		targets[record.AppID] = projectCloneWorkloadValues{Variables: variables, Secrets: secrets}
+	}
+	if err := validateCloneValuePublication(op, resources, records, targets); err != nil {
+		return err
 	}
 	return validateCloneProjectConfigProof(op, resources, records, m.projectEnvironmentConfigLatestLocked(op.ProjectID, op.TargetEnvironment))
 }

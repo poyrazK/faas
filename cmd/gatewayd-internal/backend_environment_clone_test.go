@@ -55,6 +55,9 @@ func TestEnvironmentHostWaitsForAtomicCloneGraphPublication(t *testing.T) {
 	resources := []state.ProjectEnvironmentCloneResource{{Kind: "source_revision", Name: "production", SourceVersion: op.SourceRevisionHash, Status: "ready"},
 		{Kind: "workload", Name: app.Slug, SourceID: source.ID, SourceVersion: views[0].SourceHash, Status: "captured"},
 		{Kind: "project_config", Name: "production", SourceVersion: views[0].SourceProjectConfigHash, Status: "ready"}}
+	for _, kind := range []string{"variables", "secrets"} {
+		resources = append(resources, state.ProjectEnvironmentCloneResource{Kind: kind, Name: views[0].WorkloadSlug, SourceID: app.ID, TargetID: app.ID, SourceVersion: views[0].SourceValuesHash, Status: "ready"})
+	}
 	op, err = store.AdvanceProjectEnvironmentCloneOperation(ctx, acct.ID, project.ID, op.ID, op.Status, state.CloneOperationCopying, op.Revision, resources, "")
 	if err != nil {
 		t.Fatal(err)

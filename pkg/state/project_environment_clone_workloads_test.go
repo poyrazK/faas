@@ -41,7 +41,11 @@ func TestMemProjectEnvironmentCloneRequiresProjectConfigurationReceipt(t *testin
 
 func projectEnvironmentCloneCapturesAndPreparesWorkloads(t *testing.T, s cloneWorkloadTestStore, omitConfigReceipt ...bool) {
 	t.Helper()
-	missingConfigReceipt := len(omitConfigReceipt) > 0 && omitConfigReceipt[0]
+	projectEnvironmentClonePublicationContract(t, s, len(omitConfigReceipt) > 0 && omitConfigReceipt[0], "")
+}
+
+func projectEnvironmentClonePublicationContract(t *testing.T, s cloneWorkloadTestStore, missingConfigReceipt bool, fault string) {
+	t.Helper()
 	ctx := context.Background()
 	a, err := s.CreateAccount(ctx, "workload-clone@example.com", api.PlanPro)
 	if err != nil {
@@ -214,6 +218,16 @@ func projectEnvironmentCloneCapturesAndPreparesWorkloads(t *testing.T, s cloneWo
 	resources := []state.ProjectEnvironmentCloneResource{{Kind: "source_revision", Name: "production", SourceVersion: op.SourceRevisionHash, Status: "ready"}}
 	for _, view := range views {
 		resources = append(resources, state.ProjectEnvironmentCloneResource{Kind: "workload", Name: view.WorkloadSlug, SourceID: view.SourceDeploymentID, SourceVersion: view.SourceHash, Status: "captured"})
+		for _, kind := range []string{"variables", "secrets"} {
+			if fault == "omit_"+kind {
+				continue
+			}
+			version := view.SourceValuesHash
+			if fault == "wrong_value_hash" && kind == "variables" {
+				version = strings.Repeat("0", 64)
+			}
+			resources = append(resources, state.ProjectEnvironmentCloneResource{Kind: kind, Name: view.WorkloadSlug, SourceID: view.AppID, TargetID: view.AppID, SourceVersion: version, Status: "ready"})
+		}
 	}
 	if !missingConfigReceipt {
 		resources = append(resources, state.ProjectEnvironmentCloneResource{Kind: "project_config", Name: "production", SourceVersion: configHash, Status: "ready"})
@@ -340,6 +354,16 @@ func projectEnvironmentCloneCapturesAndPreparesWorkloads(t *testing.T, s cloneWo
 		}
 		return
 	}
+	if fault == "before_variable" {
+		if err := s.UpsertAppEnvInScope(ctx, a.ID, apps[0].ID, "stage", "CAPTURED", "changed-private-target-value"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if fault == "before_variable" || strings.HasPrefix(fault, "omit_") || fault == "wrong_value_hash" {
+		_, err := s.AdvanceProjectEnvironmentCloneOperation(ctx, a.ID, p.ID, op.ID, op.Status, state.CloneOperationPublishing, op.Revision, resources, "")
+		assertCloneValuePublicationRejected(t, s, a.ID, p.ID, op, err)
+		return
+	}
 	op, err = s.AdvanceProjectEnvironmentCloneOperation(ctx, a.ID, p.ID, op.ID, op.Status, state.CloneOperationPublishing, op.Revision, resources, "")
 	if err != nil {
 		t.Fatal(err)
@@ -383,6 +407,29 @@ func projectEnvironmentCloneCapturesAndPreparesWorkloads(t *testing.T, s cloneWo
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if strings.HasPrefix(fault, "after_") {
+		var mutationErr error
+		switch fault {
+		case "after_variable":
+			mutationErr = s.UpsertAppEnvInScope(ctx, a.ID, apps[0].ID, "stage", "CAPTURED", "changed-private-target-value")
+		case "after_extra_variable":
+			mutationErr = s.UpsertAppEnvInScope(ctx, a.ID, apps[0].ID, "stage", "EXTRA", "changed-private-target-value")
+		case "after_secret_ciphertext":
+			// Keep the public digest unchanged: the actual sealed envelope
+			// must still be authenticated by the final publication proof.
+			mutationErr = s.ResealAppSecretWithKidAndValueHashInScope(ctx, a.ID, apps[0].ID, "stage", "TOKEN", "age1-captured", "2222222222222222", []byte("changed-private-target-envelope"))
+		case "after_secret_deleted":
+			mutationErr = s.DeleteAppSecretInScope(ctx, a.ID, apps[0].ID, "stage", "TOKEN")
+		default:
+			t.Fatalf("unknown publication fault: %s", fault)
+		}
+		if mutationErr != nil {
+			t.Fatal(mutationErr)
+		}
+		_, err := s.PublishProjectEnvironmentCloneReleaseSet(ctx, a.ID, p.ID, op.ID, op.Revision, 1800)
+		assertCloneValuePublicationRejected(t, s, a.ID, p.ID, op, err)
+		return
+	}
 	release, err := s.PublishProjectEnvironmentCloneReleaseSet(ctx, a.ID, p.ID, op.ID, op.Revision, 1800)
 	if err != nil || len(release.Members) != len(apps) || !release.Active {
 		t.Fatalf("publish = %+v, %v", release, err)
@@ -405,5 +452,31 @@ func projectEnvironmentCloneCapturesAndPreparesWorkloads(t *testing.T, s cloneWo
 	}
 	if _, err := s.ProjectEnvironmentCloneWorkloads(ctx, other.ID, p.ID, op.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("cross account capture read = %v", err)
+	}
+}
+
+// ADR-375: a complete receipt and frozen values are checked at both publication gates.
+func TestMemProjectEnvironmentCloneValuePublication(t *testing.T) {
+	for _, fault := range cloneValuePublicationFaults {
+		t.Run(fault, func(t *testing.T) { projectEnvironmentClonePublicationContract(t, state.NewMemStore(), false, fault) })
+	}
+}
+
+var cloneValuePublicationFaults = []string{"before_variable", "omit_variables", "omit_secrets", "wrong_value_hash", "after_variable", "after_extra_variable", "after_secret_ciphertext", "after_secret_deleted"}
+
+func assertCloneValuePublicationRejected(t *testing.T, s cloneWorkloadTestStore, accountID, projectID string, op state.ProjectEnvironmentCloneOperation, err error) {
+	t.Helper()
+	if !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("changed or omitted values published: %v", err)
+	}
+	if strings.Contains(err.Error(), "changed-private-target") {
+		t.Fatal("publication error exposed private values")
+	}
+	current, readErr := s.ProjectEnvironmentCloneOperationByID(context.Background(), accountID, projectID, op.ID)
+	if readErr != nil || current.Status != op.Status || current.Revision != op.Revision || current.TargetReleaseSetID != "" {
+		t.Fatalf("rejected publication changed durable state: %+v, %v", current, readErr)
+	}
+	if _, err := s.ActiveProjectReleaseSet(context.Background(), accountID, projectID, op.TargetEnvironment); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("rejected publication acquired a serving graph: %v", err)
 	}
 }

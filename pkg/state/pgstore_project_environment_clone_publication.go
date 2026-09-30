@@ -116,6 +116,9 @@ func verifyClonePublicationTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironm
 	if err := validateCloneWorkloadProofs(resources, workloads); err != nil {
 		return err
 	}
+	if err := verifyCloneValuePublicationTx(ctx, tx, op, resources); err != nil {
+		return err
+	}
 	return verifyCloneProjectConfigTx(ctx, tx, op, resources)
 }
 

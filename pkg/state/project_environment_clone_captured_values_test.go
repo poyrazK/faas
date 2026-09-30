@@ -51,13 +51,23 @@ func TestMemCloneCapturedManagedCredentialRequiresIndependentPreparation(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CaptureProjectEnvironmentCloneWorkloads(ctx, a.ID, p.ID, op.ID, op.Revision); err != nil {
+	views, err := s.CaptureProjectEnvironmentCloneWorkloads(ctx, a.ID, p.ID, op.ID, op.Revision)
+	if err != nil || len(views) != 1 {
 		t.Fatal(err)
 	}
 	if err := s.DeleteManagedPostgresSecret(ctx, source.ManagedCredentialRef); err != nil {
 		t.Fatal(err)
 	}
-	op, err = s.AdvanceProjectEnvironmentCloneOperation(ctx, a.ID, p.ID, op.ID, op.Status, state.CloneOperationCopying, op.Revision, nil, "")
+	view := views[0]
+	resources := []state.ProjectEnvironmentCloneResource{
+		{Kind: "source_revision", Name: "production", SourceVersion: op.SourceRevisionHash, Status: "ready"},
+		{Kind: "project_config", Name: "production", SourceVersion: view.SourceProjectConfigHash, Status: "ready"},
+		{Kind: "workload", Name: view.WorkloadSlug, SourceID: view.SourceDeploymentID, SourceVersion: view.SourceHash, Status: "captured"},
+	}
+	for _, kind := range []string{"variables", "secrets"} {
+		resources = append(resources, state.ProjectEnvironmentCloneResource{Kind: kind, Name: view.WorkloadSlug, SourceID: app.ID, TargetID: app.ID, SourceVersion: view.SourceValuesHash, Status: "ready"})
+	}
+	op, err = s.AdvanceProjectEnvironmentCloneOperation(ctx, a.ID, p.ID, op.ID, op.Status, state.CloneOperationCopying, op.Revision, resources, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,5 +93,23 @@ func TestMemCloneCapturedManagedCredentialRequiresIndependentPreparation(t *test
 	if err != nil || len(secrets) != 1 || secrets[0].ManagedPostgresBindingID != target.ManagedPostgresBindingID ||
 		secrets[0].ManagedCredentialRef != target.ManagedCredentialRef || string(secrets[0].Ciphertext) != "sealed-independent-target" {
 		t.Fatalf("captured credential replaced independently prepared target: count=%d, err=%v", len(secrets), err)
+	}
+	spec, err := s.ProjectEnvironmentWorkloadSpec(ctx, a.ID, p.ID, "stage", app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := s.CreateDeploymentForEnvironmentClone(ctx, a.ID, p.ID, op.ID, op.Revision, app.ID, spec.Hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkDeploymentLiveDark(ctx, prepared.ID); err != nil {
+		t.Fatal(err)
+	}
+	resources[2].TargetID, resources[2].Status = prepared.ID, "ready"
+	if _, err := s.AdvanceProjectEnvironmentCloneOperation(ctx, a.ID, p.ID, op.ID, op.Status, state.CloneOperationPublishing, op.Revision, resources, ""); !errors.Is(err, state.ErrProjectEnvironmentCloneManagedValueProof) {
+		t.Fatalf("managed stage published without an independent resource/envelope proof: %v", err)
+	}
+	if _, err := s.ActiveProjectReleaseSet(ctx, a.ID, p.ID, "stage"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("unverified managed stage acquired a serving graph: %v", err)
 	}
 }

@@ -14,3 +14,13 @@ func TestPgProjectEnvironmentCloneRequiresProjectConfigurationReceipt(t *testing
 	s, _, _ := pgWithPool(t)
 	projectEnvironmentCloneCapturesAndPreparesWorkloads(t, s, true)
 }
+
+// ADR-375: actual sealed target values and completeness receipts are checked.
+func TestPgProjectEnvironmentCloneValuePublication(t *testing.T) {
+	for _, fault := range cloneValuePublicationFaults {
+		t.Run(fault, func(t *testing.T) {
+			s, _, _ := pgWithPool(t)
+			projectEnvironmentClonePublicationContract(t, s, false, fault)
+		})
+	}
+}

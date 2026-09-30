@@ -483,3 +483,36 @@ Physical existence verification and shared base/kernel/runtime artifact
 lifetimes still require audit. The complete command, coordinated provider data
 capture, complete configuration/binding coverage and native KVM lifecycle gates
 remain required before this feature can be advertised as fully copyable stages.
+
+### Target value publication checks (2026-09-30)
+
+Every captured workload now requires explicit variables and secrets inventory
+receipts, including empty sets, tied to its app and frozen source-values hash.
+Both the transition into publication and the final release-graph transaction
+read the actual target rows. For customer values they compare the complete
+captured configuration, mapping only the source/target scope address. This
+includes the sealed envelope, host-key identity, lifecycle class, ownership
+metadata and secret version; runtime delivery observations are excluded.
+Missing, extra or modified rows reject publication without acquiring a serving
+graph. Error diagnostics include workload and field categories, never values.
+
+PostgreSQL configuration writes to variables and secrets now take the same app
+row lock held by publication, covering direct writes, deletion, customer intent,
+resealing and managed-binding reconciliation. Delivery-only updates are excluded
+from this fence. MemStore already serializes these operations with its mutex.
+This establishes an order between the proof/graph commit and configuration edits;
+editing a published stage remains a normal configuration operation.
+
+Focused MemStore and PostgreSQL contracts verify edits before publication,
+changes between the two gates, unexpected variables, changed envelopes under an
+unchanged value digest, secret deletion, missing receipts and wrong capture
+hashes. Real PostgreSQL blocking tests verify existing-key updates, inserts,
+deletes and maintenance resealing against the publication lock. The managed
+credential contract verifies a named rejection instead of advertising readiness
+without an isolated-resource and prepared-envelope proof.
+
+Managed values remain intentionally unavailable at this publication gate until
+their durable binding specifications, fresh target-envelope identities and
+independent provider-resource proofs are integrated. Host-key resealing and
+captured-key retention also remain required. These store checks do not establish
+native readiness, coordinated provider data capture or the complete command.
