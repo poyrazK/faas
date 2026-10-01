@@ -1,4 +1,4 @@
-// adr: 387 — only fresh authoritative inventory may repair a missing service VM.
+// adr: 419 — only fresh authoritative inventory may repair a missing service VM.
 package sched
 
 import (

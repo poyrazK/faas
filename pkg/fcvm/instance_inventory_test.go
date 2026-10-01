@@ -1,4 +1,4 @@
-// adr: 387 — VM inventory includes processes independent of resource samples.
+// adr: 419 — VM inventory includes processes independent of resource samples.
 package fcvm
 
 import (

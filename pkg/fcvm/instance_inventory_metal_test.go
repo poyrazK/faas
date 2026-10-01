@@ -1,6 +1,6 @@
 //go:build metal
 
-// adr: 387 — SIGKILL must remove a VM from inventory even if its exit relay is lost.
+// adr: 419 — SIGKILL must remove a VM from inventory even if its exit relay is lost.
 package fcvm
 
 import (
