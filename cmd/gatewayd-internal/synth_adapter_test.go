@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
@@ -335,6 +336,7 @@ func TestSynthAdapterSanitizedReplayForwardsPayloadAndComparesBodyHash(t *testin
 	}
 	a := &synthAdapter{
 		backend: b,
+		store:   state.NewMemStore(),
 		forward: func(gateway.Target) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				body, _ := io.ReadAll(r.Body)
@@ -364,5 +366,12 @@ func TestSynthAdapterSanitizedReplayForwardsPayloadAndComparesBodyHash(t *testin
 	}
 	if result.StatusDiff || result.BodyDiff || result.Crashed {
 		t.Fatalf("comparison = %+v", result)
+	}
+	rows, err := a.store.ListMirrorResults(context.Background(), "rule-1", time.Time{}, 10)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("mirror ledger rows = %d, err=%v; want one result", len(rows), err)
+	}
+	if len(rows[0].BodyHash) != 0 || len(rows[0].SourceBodyHash) != 0 {
+		t.Fatalf("debug replay persisted raw response hashes: body=%x source=%x", rows[0].BodyHash, rows[0].SourceBodyHash)
 	}
 }

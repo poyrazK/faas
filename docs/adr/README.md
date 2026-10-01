@@ -13,9 +13,11 @@ and whichever merges second keeps it. The renumber trail through the table
 below ("renumbered 066→067→068→069", "through 6 hops") is what that costs.
 
 `make adr-number-uniqueness-check` (also part of `make lint` and CI) fails on
-any **newly** duplicated number. The 71 numbers already duplicated on `main` are
+any **newly** duplicated number. The 72 numbers already duplicated on `main` are
 frozen in [`DUPLICATE_NUMBERS_BASELINE.txt`](DUPLICATE_NUMBERS_BASELINE.txt);
-the gate holds that set and stops it growing. Never add a line to that file.
+the gate holds that set and stops it growing. Do not add a line for a collision
+introduced by this PR; refresh the baseline from `main` when `main` independently
+gains duplicate ADR numbers.
 
 Before claiming a number, check both the directory **and** open PRs — a PR can
 claim a number between your check and your merge:
@@ -54,6 +56,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 424 | [Managed outbound integrations for stateless Runs](424-run-scoped-managed-outbound-integrations.md) | proposed | Explicit account grants and a bounded vsock broker; the execution VM remains networkless |
 | 423 | [Scenario-scoped chaos testing](423-scenario-scoped-chaos-testing.md) | accepted | Bounded request faults on registered test-run service calls, with deterministic selection, expiry, and lifecycle-profile execution |
 | 392 | [Event and trace wire conformance](392-event-and-trace-wire-conformance.md) | accepted | OTLP/HTTP encodings and standard responses, CloudEvents attributes, and pinned official AsyncAPI validation |
 | 391 | [Provider invoice history discovery and backfill](391-provider-invoice-history-backfill.md) | accepted | Authenticated provider history discovery with bounded, customer-scoped imports |
@@ -393,8 +396,8 @@ note instead of the banner.
 
 Note: two ADRs carry the number 190 (`190-production-buildkit-cache.md` merged
 first; `190-daemon-durability-primitives.md` picked the same number
-concurrently). The log above already contains several such pairs (157, 158, 167,
-168). A renumber plus a CI uniqueness gate is worth its own PR.
+concurrently). The log above also has duplicate pairs 157, 158, 167, and 168.
+A renumber plus a CI uniqueness gate is worth its own PR.
 
 ## Object-storage binding decisions
 

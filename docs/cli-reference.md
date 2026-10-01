@@ -2623,10 +2623,12 @@ Functional smoke test (invoke [--async] &lt;slug&gt; [--payload J|@file|-]; slug
 
 Run untrusted code in an isolated disposable microVM
 
-`gregale run [--profile <P>] [--runtime <R>] [--source <CODE>] [--file <PATH>] [--input <J|@file|->] [--timeout-ms <N>] [--memory-mb <N>] [--cpu-millicores <N>] [--ephemeral-disk-mb <N>] [--max-output-bytes <N>] [--output-file <PATH>] [--output-dir <DIR>] [--wait] [--watch] [--poll-interval <D>] [--wait-timeout <D>]`
+`gregale run [--workflow-id <ID>] [--step-label <LABEL>] [--profile <P>] [--runtime <R>] [--source <CODE>] [--file <PATH>] [--input <J|@file|->] [--timeout-ms <N>] [--memory-mb <N>] [--cpu-millicores <N>] [--ephemeral-disk-mb <N>] [--max-output-bytes <N>] [--output-file <PATH>] [--output-dir <DIR>] [--wait] [--watch] [--poll-interval <D>] [--wait-timeout <D>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--workflow-id <ID>` | caller-generated workflow grouping id |  |
+| `--step-label <LABEL>` | short label for this step within --workflow-id |  |
 | `--profile <P>` | preinstalled dependencies (data requires python313) | one of `standard` · `python-data-v1` |
 | `--runtime <R>` | runtime (node22\|node24\|python312\|python313) | one of `node22` · `node24` · `python312` · `python313` |
 | `--source <CODE>` | inline source code |  |
@@ -2660,6 +2662,31 @@ List runs
 | `--limit <N>` | maximum number of runs (1..200) |  |
 | `--offset <N>` | number of matching runs to skip |  |
 | `--status <STATUS>` | filter by lifecycle status | one of `queued` · `restoring` · `running` · `succeeded` · `failed` · `timed_out` · `out_of_memory` · `cancelled` |
+| `--workflow-id <ID>` | filter by caller-generated workflow id |  |
+
+### runs workflow
+
+Show workflow status or resume a sequential Runs plan
+
+`gregale runs workflow <workflow-id>`
+
+#### runs workflow run
+
+Run or resume a sequential disposable Runs plan
+
+`gregale runs workflow run --manifest <PLAN.json> [--poll-interval <D>] [--wait-timeout <D>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--manifest <PLAN.json>` | JSON workflow plan file | required |
+| `--poll-interval <D>` | status polling interval |  |
+| `--wait-timeout <D>` | maximum client wait duration |  |
+
+Examples:
+
+```sh
+gregale runs workflow run --manifest incident.json --json
+```
 
 ### runs artifacts
 
@@ -2995,7 +3022,17 @@ List API keys
 
 Mint a new API key
 
-`gregale keys add <label>`
+`gregale keys add <label> [--scopes <SCOPE,...>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scopes <SCOPE,...>` | comma-separated API key scopes; omit for full admin access |  |
+
+Examples:
+
+```sh
+gregale keys add agent-runner --scopes runs:write
+```
 
 ### keys rm
 

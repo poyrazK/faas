@@ -73,6 +73,9 @@ def sync_detailed(
 ) -> Response[ExecutionResponse | Problem]:
     """Get one disposable execution.
 
+     Runs-only keys can read receipts created by their own key family. `admin` and broad legacy scopes
+    retain account-wide access. Requires `apps:read`, `runs:read`, `runs:write`, or `admin`.
+
     Args:
         id (UUID):
 
@@ -102,6 +105,9 @@ def sync(
 ) -> ExecutionResponse | Problem | None:
     """Get one disposable execution.
 
+     Runs-only keys can read receipts created by their own key family. `admin` and broad legacy scopes
+    retain account-wide access. Requires `apps:read`, `runs:read`, `runs:write`, or `admin`.
+
     Args:
         id (UUID):
 
@@ -125,6 +131,9 @@ async def asyncio_detailed(
     client: AuthenticatedClient,
 ) -> Response[ExecutionResponse | Problem]:
     """Get one disposable execution.
+
+     Runs-only keys can read receipts created by their own key family. `admin` and broad legacy scopes
+    retain account-wide access. Requires `apps:read`, `runs:read`, `runs:write`, or `admin`.
 
     Args:
         id (UUID):
@@ -152,6 +161,9 @@ async def asyncio(
     client: AuthenticatedClient,
 ) -> ExecutionResponse | Problem | None:
     """Get one disposable execution.
+
+     Runs-only keys can read receipts created by their own key family. `admin` and broad legacy scopes
+    retain account-wide access. Requires `apps:read`, `runs:read`, `runs:write`, or `admin`.
 
     Args:
         id (UUID):

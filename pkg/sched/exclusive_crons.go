@@ -95,7 +95,8 @@ func exclusiveAdmissionOutcome(err error, joined, replayed bool) string {
 	if errors.Is(err, exclusivework.ErrBusy) || errors.Is(err, exclusivework.ErrIdentityConflict) ||
 		errors.Is(err, state.ErrNotFound) || errors.Is(err, state.ErrInvalidArgument) ||
 		errors.Is(err, state.ErrPlatformTenantSuspended) || errors.Is(err, state.ErrQuotaExceeded) ||
-		errors.Is(err, state.ErrConflict) {
+		errors.Is(err, state.ErrConflict) || errors.Is(err, state.ErrAppTaskCronOverlap) ||
+		errors.Is(err, state.ErrAppTaskCronDisabled) || errors.Is(err, state.ErrAppTaskCronSuspended) {
 		return "rejected"
 	}
 	return "error"
@@ -128,6 +129,25 @@ func exclusiveCronScheduleIdempotencyKey(cronID string, at time.Time) string {
 
 func exclusiveCronManualIdempotencyKey(requestID string) string {
 	return "cron-manual:" + requestID
+}
+
+func exclusiveCommandCronAdmission(binding state.ExclusiveTriggerBinding, cron state.Cron, accountID, idempotencyKey string) (state.ExclusiveAdmission, error) {
+	request, err := json.Marshal(struct {
+		Kind   string `json:"kind"`
+		CronID string `json:"cron_id"`
+	}{Kind: "command_cron", CronID: cron.ID})
+	if err != nil {
+		return state.ExclusiveAdmission{}, err
+	}
+	return state.ExclusiveAdmission{
+		AccountID: accountID, AppID: cron.AppID, PlatformTenantID: binding.PlatformTenantID,
+		PolicyName: binding.PolicyName, Key: binding.Key, Request: request,
+		EquivalenceKey: binding.EquivalenceKey, IdempotencyKey: idempotencyKey,
+	}, nil
+}
+
+func exclusiveCommandCronScheduleIdempotencyKey(cronID string, at time.Time) string {
+	return "command-cron:" + cronID + ":" + at.UTC().Format(time.RFC3339Nano)
 }
 
 func isExclusiveCronTerminalAdmissionError(err error) bool {

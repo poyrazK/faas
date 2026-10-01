@@ -7,7 +7,7 @@ platform-customer identity define the security scope; the key is only a
 business identifier.
 
 Managed ownership is available for app invocations, deployment-attached
-AppTasks, Job runs, HTTP cron/webhook/broker triggers, and recurring Job
+AppTasks, Job runs, HTTP and command cron/webhook/broker triggers, and recurring Job
 schedules. Policies with `member_job_ids` require account scope and cannot use
 an app project environment. Gregale validates each selected Job ID against the
 authenticated account. Native KVM stale-snapshot acceptance remains an open
@@ -105,7 +105,7 @@ same explicit equivalence identity and normalized target/input.
 
 ## Route scheduled work and external triggers through the lane
 
-Bind an existing HTTP cron or verified inbound-webhook endpoint to the same
+Bind an existing HTTP or command cron, or a verified inbound-webhook endpoint, to the same
 policy, key, and optional equivalence identity:
 
 ```sh
@@ -116,6 +116,12 @@ gregale operations bind-trigger --policy crm-sync \
 gregale operations bind-trigger --policy crm-sync \
   --key '"customer:acme:crm-sync"' broker TRIGGER_ID
 ```
+
+For command crons, the accepted operation owns creation of the deployment-pinned
+AppTask. Scheduled occurrence history exposes its `exclusive_operation_id`, and
+the task's result is committed under that operation generation. Fire-now
+receipts expose the operation immediately and gain a task ID when the worker
+materializes the owned AppTask.
 
 Bind a recurring Job's native schedule using its Job ID:
 
@@ -171,11 +177,15 @@ close the check-to-use race.
 
 ## Current integration boundary
 
-Manual app, Job, and AppTask submissions, HTTP cron ticks/fire-now, recurring
-Job schedules, signature-verified inbound webhooks, and bound broker/queue
-triggers admit through the same operation store and scheduler claim path.
-AppTask and Job result transitions carry and enforce the ownership generation.
-Command crons cannot be bound directly yet. Bounded admission, dispatch,
-lease-renewal, and due-candidate metrics avoid customer IDs and business keys.
+Manual app, Job, and AppTask submissions, HTTP and command cron ticks/fire-now,
+recurring Job schedules, signature-verified inbound webhooks, and bound
+broker/queue triggers admit through the same operation store and scheduler
+claim path. A command-cron occurrence and its cursor advance commit atomically
+with operation admission; the claimed generation creates the deployment-pinned
+AppTask and fences its result. Fire-now receipts point to the accepted operation
+and are linked to its task when dispatch begins. AppTask and Job result
+transitions carry and enforce the ownership generation. Bounded admission,
+dispatch, lease-renewal, and due-candidate metrics avoid customer IDs and
+business keys.
 See [ADR-393](adr/393-managed-exclusive-operations.md)
 and the [implementation checklist](implementation/managed-exclusive-operations.md).

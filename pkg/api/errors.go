@@ -1727,14 +1727,15 @@ const (
 	CodeWildcardDomainTenantSurfaceOverlap = "wildcard_domain_tenant_surface_overlap"
 
 	// Disposable one-shot executions (ADR-171).
-	CodeExecutionsNotAllowed     = "executions_not_allowed"
-	CodeExecutionRuntimeInvalid  = "execution_runtime_invalid"
-	CodeExecutionSourceInvalid   = "execution_source_invalid"
-	CodeExecutionPayloadInvalid  = "execution_payload_invalid"
-	CodeExecutionPayloadTooLarge = "execution_payload_too_large"
-	CodeExecutionLimitInvalid    = "execution_limit_invalid"
-	CodeExecutionLimitExceeded   = "execution_limit_exceeded"
-	CodeExecutionNetworkInvalid  = "execution_network_invalid"
+	CodeExecutionsNotAllowed        = "executions_not_allowed"
+	CodeExecutionRuntimeInvalid     = "execution_runtime_invalid"
+	CodeExecutionSourceInvalid      = "execution_source_invalid"
+	CodeExecutionPayloadInvalid     = "execution_payload_invalid"
+	CodeExecutionPayloadTooLarge    = "execution_payload_too_large"
+	CodeExecutionLimitInvalid       = "execution_limit_invalid"
+	CodeExecutionLimitExceeded      = "execution_limit_exceeded"
+	CodeExecutionNetworkInvalid     = "execution_network_invalid"
+	CodeExecutionWorkflowStepExists = "execution_workflow_step_exists"
 
 	// Jobs (issue #1184 Workstream A / ADR-099 supplement).
 	//
@@ -2280,6 +2281,8 @@ func StatusForCode(code string) int {
 		return http.StatusUnprocessableEntity
 	case CodeExecutionPayloadTooLarge:
 		return http.StatusRequestEntityTooLarge
+	case CodeExecutionWorkflowStepExists:
+		return http.StatusConflict
 	// Jobs (issue #1184 Workstream A / ADR-099 supplement). Ten
 	// codes that ship with Mega-1 (CR-8 / code-review #8 — the
 	// gRPC error path lifts a gRPC status into a Problem carrying
