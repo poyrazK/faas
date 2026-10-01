@@ -1,23 +1,33 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.tcp_listener_tls_config import TCPListenerTLSConfig
+
 
 T = TypeVar("T", bound="CreateTCPListenerRequest")
 
 
 @_attrs_define
 class CreateTCPListenerRequest:
-    """Request to expose one workload TCP port."""
+    """Request to expose one workload TCP port. TLS termination listeners start disabled and require a verified app-owned
+    hostname.
+
+    """
 
     name: str
     guest_port: int
     public_port: int | Unset = UNSET
     """Optional stable public port; Gregale allocates one when omitted."""
+    tls: TCPListenerTLSConfig | Unset = UNSET
+    """Listener TLS intent. Termination requires a verified app-owned ASCII DNS hostname; passthrough forbids a
+    hostname."""
 
     def to_dict(self) -> dict[str, Any]:
         name = self.name
@@ -25,6 +35,10 @@ class CreateTCPListenerRequest:
         guest_port = self.guest_port
 
         public_port = self.public_port
+
+        tls: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.tls, Unset):
+            tls = self.tls.to_dict()
 
         field_dict: dict[str, Any] = {}
 
@@ -36,11 +50,15 @@ class CreateTCPListenerRequest:
         )
         if public_port is not UNSET:
             field_dict["public_port"] = public_port
+        if tls is not UNSET:
+            field_dict["tls"] = tls
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.tcp_listener_tls_config import TCPListenerTLSConfig
+
         d = dict(src_dict)
         name = d.pop("name")
 
@@ -48,10 +66,18 @@ class CreateTCPListenerRequest:
 
         public_port = d.pop("public_port", UNSET)
 
+        _tls = d.pop("tls", UNSET)
+        tls: TCPListenerTLSConfig | Unset
+        if isinstance(_tls, Unset):
+            tls = UNSET
+        else:
+            tls = TCPListenerTLSConfig.from_dict(_tls)
+
         create_tcp_listener_request = cls(
             name=name,
             guest_port=guest_port,
             public_port=public_port,
+            tls=tls,
         )
 
         return create_tcp_listener_request

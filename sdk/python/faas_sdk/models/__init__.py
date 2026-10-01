@@ -1755,6 +1755,8 @@ from .stream_deployment_logs_follow import StreamDeploymentLogsFollow
 from .sweep_stuck_builds_response import SweepStuckBuildsResponse
 from .tcp_listener_response import TCPListenerResponse
 from .tcp_listener_response_protocol import TCPListenerResponseProtocol
+from .tcp_listener_tls_config import TCPListenerTLSConfig
+from .tcp_listener_tls_config_mode import TCPListenerTLSConfigMode
 from .template_view import TemplateView
 from .template_view_category import TemplateViewCategory
 from .tenant_hostname_response import TenantHostnameResponse
@@ -3636,6 +3638,8 @@ __all__ = (
     "SweepStuckBuildsResponse",
     "TCPListenerResponse",
     "TCPListenerResponseProtocol",
+    "TCPListenerTLSConfig",
+    "TCPListenerTLSConfigMode",
     "TemplateView",
     "TemplateViewCategory",
     "TenantHostnameResponse",

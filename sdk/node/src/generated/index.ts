@@ -935,6 +935,7 @@ export type { StorageUsageListResponse } from './models/StorageUsageListResponse
 export type { StorageUsageResponse } from './models/StorageUsageResponse.js';
 export type { SweepStuckBuildsResponse } from './models/SweepStuckBuildsResponse.js';
 export type { TCPListenerResponse } from './models/TCPListenerResponse.js';
+export type { TCPListenerTLSConfig } from './models/TCPListenerTLSConfig.js';
 export type { TemplateView } from './models/TemplateView.js';
 export type { TenantHostnameResponse } from './models/TenantHostnameResponse.js';
 export type { TenantSurfaceResponse } from './models/TenantSurfaceResponse.js';
