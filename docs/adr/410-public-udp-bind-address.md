@@ -19,3 +19,5 @@ Operators supply a concrete local IPv4 address or the wildcard. No DNS lookup is
 Deployment validates the enabled bind literal and each source CIDR before rendering the UDP environment. Strict decimal IPv4 octets and prefix lengths 0..32 prevent malformed or injected nftables source entries. UDP environment values are JSON-quoted so whitespace, quotes and newlines cannot introduce extra assignments. This does not replace runtime source-policy validation.
 
 Both the gateway-public and nftables roles include the shared `deploy/ansible/tasks/validate_udp_policy.yml` assertions. The nftables role validates before any host changes, so independent firewall runs cannot bypass source-policy validation.
+
+The firewall opt-in uses the Ansible bool filter, matching environment rendering and preflight checks. Supported false string values must not expose listener ports merely because a nonempty string is truthy in Jinja.

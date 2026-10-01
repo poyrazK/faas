@@ -12,13 +12,20 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 ROLE = ROOT / 'deploy/ansible/roles/gatewayd_public_service'
 
 
+def ansible_bool(value):
+    # Model the Ansible bool filter for supported inventory values.
+    if isinstance(value, str):
+        return value.lower() in ('yes', 'on', '1', 'true')
+    return value is True or value == 1
+
+
 class UDPDeploymentTest(unittest.TestCase):
     def render_env(self, **changes):
         values = yaml.safe_load((ROLE / 'defaults/main.yml').read_text())
         values.update(changes)
         env = jinja2.Environment()
         env.filters['to_json'] = json.dumps
-        env.filters['bool'] = bool
+        env.filters['bool'] = ansible_bool
         env.filters['ternary'] = lambda value, yes, no: yes if value else no
         text = env.from_string((ROLE / 'templates/udpd.env.j2').read_text()).render(**values)
         values = dict(line.split('=', 1) for line in text.splitlines() if line and not line.startswith('#'))
@@ -26,7 +33,9 @@ class UDPDeploymentTest(unittest.TestCase):
 
     def firewall(self, enabled, sources):
         text = (ROOT / 'deploy/ansible/roles/nftables/templates/policy_nftables.conf.j2').read_text()
-        return jinja2.Template(text).render(public_iface='eth0', masquerade_cidr='10.100.0.0/16',
+        env = jinja2.Environment()
+        env.filters['bool'] = ansible_bool
+        return env.from_string(text).render(public_iface='eth0', masquerade_cidr='10.100.0.0/16',
             faas_udpd_enabled=enabled, faas_udpd_allowed_cidrs=sources)
 
     def test_default_exposes_no_udp(self):
@@ -34,6 +43,15 @@ class UDPDeploymentTest(unittest.TestCase):
         self.assertEqual(self.render_env()['FAAS_UDPD_ALLOWED_SOURCE_CIDRS'], '')
         for enabled, sources in [(False, []), (False, ['192.0.2.0/24']), (True, [])]:
             self.assertNotIn('UDP app listeners', self.firewall(enabled, sources))
+
+    def test_string_opt_in_matches_runtime_and_firewall(self):
+        sources = ['192.0.2.0/24']
+        for enabled in ['false', 'False', '0', 'no', 'off']:
+            self.assertEqual(self.render_env(faas_udpd_enabled=enabled, faas_udpd_allowed_cidrs=sources)['FAAS_UDPD_ENABLED'], '0')
+            self.assertNotIn('UDP app listeners', self.firewall(enabled, sources))
+        for enabled in ['true', 'True', '1', 'yes', 'on']:
+            self.assertEqual(self.render_env(faas_udpd_enabled=enabled, faas_udpd_allowed_cidrs=sources)['FAAS_UDPD_ENABLED'], '1')
+            self.assertIn('UDP app listeners', self.firewall(enabled, sources))
 
     def test_runtime_and_firewall_use_same_sources(self):
         sources = ['192.0.2.0/24', '198.51.100.1/32']
