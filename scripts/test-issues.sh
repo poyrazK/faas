@@ -14,6 +14,7 @@ export FAAS_PGTEST_TEMPLATE_DATABASE=1 GREGALE_ISSUES_SDK_ACCEPTANCE=1
 npm run build --prefix sdk/node
 npm run test:build --prefix sdk/node
 node --test sdk/node/dist-test/test/issues.test.js
+node --test tests/issues-smoke/run.test.mjs
 PYTHONPATH=sdk/python python3 -m pytest -q sdk/python/tests/test_issues.py
 FAAS_REPLAY_CHECK_VERSIONS=20260930100000001 go test -timeout=5m -ldflags='-s -w -linkmode=internal' -count=1 ./migrations -run '^TestNewMigrationsAreReplaySafe$'
 go test -timeout=5m -ldflags='-s -w -linkmode=internal' -count=1 ./pkg/issues ./cmd/apid -run '^TestIssue'

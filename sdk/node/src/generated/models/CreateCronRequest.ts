@@ -5,7 +5,7 @@
 import type { FailureRules } from './FailureRules.js';
 import type { SchedulePolicy } from './SchedulePolicy.js';
 /**
- * Create an HTTP-path cron or deployment-attached app command schedule.
+ * Create an HTTP-path cron or deployment-attached app command schedule. Schedule policies apply to both kinds; failure rules apply to command Crons only.
  */
 export type CreateCronRequest = {
   /**

@@ -73,13 +73,19 @@ func TestMemStoreScheduledCommandCronUsesCurrentLiveDeploymentOnce(t *testing.T)
 	}
 }
 
-func TestMemStoreHTTPCronRejectsDeploymentWorkPolicies(t *testing.T) {
+func TestMemStoreHTTPCronAcceptsSchedulePolicyAndRejectsFailureRules(t *testing.T) {
 	store, ctx, _, app, _ := memCoverageFixture(t)
-	_, err := store.CreateCronWithOptions(ctx, app.ID, "* * * * *", "/sync", true, CronOptions{
+	cron, err := store.CreateCronWithOptions(ctx, app.ID, "* * * * *", "/sync", true, CronOptions{
 		SchedulePolicy: &workpolicy.SchedulePolicy{Version: workpolicy.Version, Overlap: "replace", MissedRuns: "skip"},
 	})
+	if err != nil || cron.SchedulePolicy == nil || cron.SchedulePolicy.Overlap != "replace" {
+		t.Fatalf("CreateCronWithOptions(HTTP with schedule policy) = %+v, %v; want stored policy", cron, err)
+	}
+	_, err = store.CreateCronWithOptions(ctx, app.ID, "* * * * *", "/sync-failure", true, CronOptions{
+		FailureRules: &workpolicy.FailureRules{Version: workpolicy.Version},
+	})
 	if !errors.Is(err, ErrInvalidArgument) {
-		t.Fatalf("CreateCronWithOptions(HTTP with deployment schedule policy) = %v; want ErrInvalidArgument", err)
+		t.Fatalf("CreateCronWithOptions(HTTP with failure rules) = %v; want ErrInvalidArgument", err)
 	}
 }
 

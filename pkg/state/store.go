@@ -5403,6 +5403,12 @@ type Store interface {
 	// (account_id, provider, provider_invoice_id) makes webhook redelivery and
 	// order status updates idempotent.
 	UpsertInvoice(ctx context.Context, inv Invoice) error
+	// ImportInvoiceHistory inserts provider-discovered invoices only. Existing
+	// webhook or imported rows are counted as skips and remain untouched.
+	ImportInvoiceHistory(ctx context.Context, accountID, provider string, invoices []Invoice) (int, error)
+	// RefreshInvoiceDetails atomically enriches an owned invoice if its captured
+	// update timestamp still matches, preserving every financial/payment field.
+	RefreshInvoiceDetails(ctx context.Context, accountID, id string, expectedUpdatedAt time.Time, details *InvoiceDetails) (Invoice, error)
 	// RecordInvoiceRefund appends one idempotent refund row and advances the
 	// invoice's cumulative refunded/credit-applied totals atomically.
 	RecordInvoiceRefund(ctx context.Context, refund InvoiceRefund) error

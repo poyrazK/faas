@@ -488,7 +488,7 @@ def _fix_docstrings(text: str) -> str:
 def _patch_generator_bugs(sdk_root: Path) -> None:
     """Fix known bugs in the openapi-python-client 0.29.0 generator output.
 
-    Four cleanups:
+    Five cleanups:
 
     1. `from ...types import UNSET, Response` is missing `Unset` even
        though generated service files reference `Unset` in type
@@ -525,6 +525,9 @@ def _patch_generator_bugs(sdk_root: Path) -> None:
        Fix 4 extends the rule to opener/closer lines of multi-
        line blocks, which leaves the body lines untouched (their
        inner whitespace is semantically meaningful).
+    5. Binary File responses can be generated as BytesIO(response.text) when
+       a route also offers text/csv. BytesIO requires bytes; response.content
+       preserves ZIP and UTF-8 artifacts without decoding or corruption.
     """
     import re
 
@@ -556,6 +559,8 @@ def _patch_generator_bugs(sdk_root: Path) -> None:
     for path in sdk_root.rglob("*.py"):
         text = path.read_text()
         original = text
+        # Fix 5: downloads must preserve bytes, including invalid UTF-8 in ZIPs.
+        text = text.replace("BytesIO(response.text)", "BytesIO(response.content)")
         # Fix 1: add `Unset` to the types import when referenced in
         # the file but not yet imported. The check matches the
         # import line ONLY (single-line `from ... import ...`); we

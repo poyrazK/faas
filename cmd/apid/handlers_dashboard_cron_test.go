@@ -94,6 +94,52 @@ func TestDashboardCommandCronPolicyUpdateAndHistoryPanel(t *testing.T) {
 	}
 }
 
+func TestDashboardHTTPCronPolicyUpdateAndHistoryPanel(t *testing.T) {
+	h, cookie, store, sessions := newAuthedDashboardServerFullFull(t, "hobby", "http-policy@example.com")
+	acct, err := store.AccountByEmail(t.Context(), "http-policy@example.com")
+	if err != nil {
+		t.Fatalf("AccountByEmail: %v", err)
+	}
+	app, err := store.CreateApp(t.Context(), state.App{Slug: "httppolicy", AccountID: acct.ID})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	cron, err := store.CreateCronWithOptions(t.Context(), app.ID, "*/5 * * * *", "/sync", true, state.CronOptions{})
+	if err != nil {
+		t.Fatalf("CreateCronWithOptions: %v", err)
+	}
+	policyCookie := dashboardCronSchedulePolicyCookie(app.Slug)
+	token, err := middleware.IssueForAuthenticatedNamed(sessions, dashboardCronSchedulePolicyAction(app.Slug), acct.ID, policyCookie)
+	if err != nil {
+		t.Fatalf("IssueForAuthenticatedNamed: %v", err)
+	}
+	form := map[string]string{
+		middleware.FormFieldName: token, "overlap": "skip", "start_deadline_seconds": "90", "missed_runs": "coalesce_latest",
+	}
+	response := dashboardPOST(t, h, cookie, "/dashboard/apps/httppolicy/crons/"+cron.ID+"/policy", form,
+		&http.Cookie{Name: policyCookie, Value: token})
+	if response.Code != http.StatusSeeOther || !strings.Contains(response.Header().Get("Location"), "scheduled_work=updated") {
+		t.Fatalf("POST HTTP Cron policy = %d, location %q, body=%s", response.Code, response.Header().Get("Location"), response.Body.String())
+	}
+	updated, err := store.CronByID(t.Context(), cron.ID)
+	if err != nil || updated.SchedulePolicy == nil || updated.SchedulePolicy.Overlap != "skip" || updated.SchedulePolicy.StartDeadlineSeconds != 90 {
+		t.Fatalf("updated HTTP Cron policy = %+v, %v", updated.SchedulePolicy, err)
+	}
+	scheduledFor := time.Now().UTC().Truncate(time.Minute)
+	if _, _, _, err := store.CreateScheduledCronInvocationOccurrence(t.Context(), cron.ID, nil, scheduledFor,
+		state.CronScheduledOccurrenceOptions{ScheduledFor: scheduledFor, ScheduleRevision: updated.ScheduleRevision}, state.Invocation{Method: "POST", Path: "/sync"}); err != nil {
+		t.Fatalf("CreateScheduledCronInvocationOccurrence: %v", err)
+	}
+	page := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/dashboard/apps/httppolicy", nil)
+	request.AddCookie(cookie)
+	h.ServeHTTP(page, request)
+	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "Schedule policy: skip") ||
+		!strings.Contains(page.Body.String(), "Invocation <code>") || strings.Contains(page.Body.String(), "Failure rules JSON") {
+		t.Fatalf("HTTP Cron schedule panel = %d: %s", page.Code, page.Body.String())
+	}
+}
+
 // seedCronFixture wires the dashboard fixture for the panel +
 // flash + cross-account tests. Returns two harness halves — A
 // owns the app + cron, B never sees the cron.

@@ -52,6 +52,40 @@ except Exception as error:
 issues.close()
 ```
 
+Go:
+
+```go
+// Imports include context, os, time, and faas "github.com/poyrazK/faas/sdk/go".
+issues, err := faas.NewIssueReporter(faas.IssueReporterOptions{
+	BaseURL: os.Getenv("GREGALE_API_URL"),
+	App:     "exports",
+	Token:   os.Getenv("GREGALE_ISSUE_TOKEN"),
+})
+if err != nil {
+	return err
+}
+defer func() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = issues.Close(ctx)
+}()
+
+if err := generateExport(); err != nil {
+	issues.CaptureException(err, faas.IssueContext{
+		RequestID: requestID,
+		TraceID:   traceID,
+		Route:     "/exports",
+	})
+	return err
+}
+```
+
+For worker panics, `defer issues.RecoverAndRepanic(faas.IssueContext{SourceKind: "worker", InvocationID: invocationID})`
+captures the panic best-effort and re-panics with the original value. Standard Go errors do not
+carry creation-time stacks, so the helper records the current goroutine's stack
+at the capture call. No locals, request bodies, or arbitrary context fields are
+included.
+
 `install()` registers exception hooks while preserving the prior application
 hooks and fatal-exception behavior. Explicit wrappers capture then rethrow the
 original exception. Delivery uses a bounded in-memory queue, timeouts, and stable
@@ -176,3 +210,54 @@ external-service isolation; external state may prevent exact reproduction.
 and runs real API, SDK-process, dashboard, attribution, webhook recovery, quota,
 and retention checks. The gate refuses missing/disabled/unreachable PostgreSQL.
 It does not deploy to production or require KVM because VM lifecycle is unchanged.
+
+## Staging smoke test
+
+`make issues-smoke` starts two minimal instrumented Node sample apps on loopback,
+one per deployment token, and triggers an HTTP-handler failure and a worker
+failure in each. It checks that each failure type forms one issue across both
+releases and that the issue retains its occurrences and release history. Use a
+dedicated staging app; the command groups its events into two smoke issues and
+adds four retained events on every run. Events expire under the app's normal
+Issues retention policy.
+
+Create a short-lived issue token for each of two deployments of the same staging
+app. Set the target before token creation so the CLI cannot fall back to its saved
+API host, then save each one-time `g_issue_…` value securely:
+
+```sh
+export GREGALE_API_URL=https://api.staging.gregale.dev
+export GREGALE_ISSUES_SMOKE_TARGET=api.staging.gregale.dev
+export GREGALE_APP=issues-smoke
+export GREGALE_ISSUES_SMOKE_ENVIRONMENT=staging
+export GREGALE_ISSUES_SMOKE_DEPLOYMENT_A=DEPLOYMENT_UUID_A
+export GREGALE_ISSUES_SMOKE_DEPLOYMENT_B=DEPLOYMENT_UUID_B
+export FAAS_TOKEN='your-Gregale-API-key-with-issue-read-access'
+
+FAAS_API="$GREGALE_API_URL" gregale issues create-token --app "$GREGALE_APP" \
+  --deployment "$GREGALE_ISSUES_SMOKE_DEPLOYMENT_A" \
+  --environment "$GREGALE_ISSUES_SMOKE_ENVIRONMENT" --name issues-smoke-a --expires-in 24h
+FAAS_API="$GREGALE_API_URL" gregale issues create-token --app "$GREGALE_APP" \
+  --deployment "$GREGALE_ISSUES_SMOKE_DEPLOYMENT_B" \
+  --environment "$GREGALE_ISSUES_SMOKE_ENVIRONMENT" --name issues-smoke-b --expires-in 24h
+
+# Load the one-time values from your approved local secret store.
+export GREGALE_ISSUES_SMOKE_TOKEN_A='g_issue_token_for_deployment_a'
+export GREGALE_ISSUES_SMOKE_TOKEN_B='g_issue_token_for_deployment_b'
+npm ci --prefix sdk/node --ignore-scripts --no-audit --no-fund
+make issues-smoke
+```
+
+The hostname confirmation must exactly match `GREGALE_API_URL`; the hostname
+must also identify staging, preview, sandbox, dev, or test. The smoke command
+rejects the configured production API, requires HTTPS except for loopback, and
+has no default API target. The smoke script uses the API token only to list and
+read issues; the two issue-ingest tokens can report events only for their bound
+deployments.
+
+For a request debugger link check, also set
+`GREGALE_ISSUES_SMOKE_REQUEST_ID` to a request ID from deployment A that has
+unambiguous retained telemetry within five minutes of the smoke run. For an
+invocation link check, set `GREGALE_ISSUES_SMOKE_INVOCATION_ID` to a real worker
+invocation UUID belonging to the app. The command reports these checks as skipped
+when either ID is absent; it never fabricates platform evidence.

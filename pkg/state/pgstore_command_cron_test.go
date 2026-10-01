@@ -89,6 +89,109 @@ func TestPgScheduledCommandCronOccurrencePersistsPolicyDecisions(t *testing.T) {
 	}
 }
 
+func TestPgScheduledHTTPCronOccurrenceLinksInvocationAndEnforcesFirstStartDeadline(t *testing.T) {
+	store, pool, ctx := pgStoreWithPool(t)
+	_, appID, _ := seedLiveDeploy(t, store, ctx, "http-cron-policy-"+uuid.NewString(), "http-cron-policy-"+uuid.NewString()[:8])
+	cron, err := store.CreateCronWithOptions(ctx, appID, "* * * * *", "/sync", true, state.CronOptions{
+		SchedulePolicy: &workpolicy.SchedulePolicy{
+			Version: workpolicy.Version, Overlap: "skip", StartDeadlineSeconds: 10, MissedRuns: "skip",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateCronWithOptions: %v", err)
+	}
+	scheduledFor := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	evaluatedAt := scheduledFor.Add(5 * time.Second)
+	invocation, occurrence, created, err := store.CreateScheduledCronInvocationOccurrence(ctx, cron.ID, nil, evaluatedAt,
+		state.CronScheduledOccurrenceOptions{ScheduledFor: scheduledFor, ScheduleRevision: cron.ScheduleRevision}, state.Invocation{
+			Method: "POST", Path: "/sync", Headers: []byte(`{"x-faas-cron":"true"}`),
+		})
+	if err != nil || !created || occurrence.Status != "queued" || occurrence.InvocationID != invocation.ID || invocation.OccurrenceID != occurrence.ID {
+		t.Fatalf("scheduled HTTP occurrence = invocation %+v, occurrence %+v, created=%t, err=%v", invocation, occurrence, created, err)
+	}
+	if _, err := store.ClaimInvocationWithCap(ctx, invocation.ID, "", 60, 10); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("late first claim = %v; want ErrNotFound", err)
+	}
+	expired, err := store.ExpireUnstartedScheduledCronInvocations(ctx, time.Now().UTC(), 10)
+	if err != nil || expired != 1 {
+		t.Fatalf("expire scheduled invocation = %d, %v; want one", expired, err)
+	}
+	stored, err := store.InvocationByID(ctx, invocation.ID)
+	if err != nil || stored.State != state.InvocationFailed || stored.Outcome == nil || *stored.Outcome != state.OutcomeTimeout {
+		t.Fatalf("expired invocation = %+v, %v; want timeout", stored, err)
+	}
+	history, err := store.ScheduleOccurrenceListByCron(ctx, cron.ID, 10, "")
+	if err != nil || len(history) != 1 || history[0].Status != "missed_deadline" || history[0].InvocationID != invocation.ID {
+		t.Fatalf("expired occurrence history = %+v, %v; want linked missed_deadline", history, err)
+	}
+
+	retryCron, err := store.CreateCronWithOptions(ctx, appID, "* * * * *", "/retry", true, state.CronOptions{
+		SchedulePolicy: &workpolicy.SchedulePolicy{
+			Version: workpolicy.Version, Overlap: "allow", StartDeadlineSeconds: 120, MissedRuns: "skip",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateCronWithOptions(retry): %v", err)
+	}
+	retryScheduledAt := time.Now().UTC().Truncate(time.Minute)
+	retryInvocation, retryOccurrence, created, err := store.CreateScheduledCronInvocationOccurrence(ctx, retryCron.ID, nil, retryScheduledAt,
+		state.CronScheduledOccurrenceOptions{ScheduledFor: retryScheduledAt, ScheduleRevision: retryCron.ScheduleRevision}, state.Invocation{Method: "POST", Path: "/retry"})
+	if err != nil || !created || retryOccurrence.Status != "queued" {
+		t.Fatalf("retry occurrence = %+v, created=%t, err=%v", retryOccurrence, created, err)
+	}
+	if _, err := store.ClaimInvocationWithCap(ctx, retryInvocation.ID, "", 60, 10); err != nil {
+		t.Fatalf("first retryable claim: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `update invocations set start_deadline_at = $2 where id = $1::uuid`, retryInvocation.ID, time.Now().UTC().Add(-time.Second)); err != nil {
+		t.Fatalf("expire deadline after first start: %v", err)
+	}
+	if err := store.FailInvocation(ctx, retryInvocation.ID, "transient", time.Nanosecond, 0); err != nil {
+		t.Fatalf("requeue after first attempt: %v", err)
+	}
+	if _, err := store.ClaimInvocationWithCap(ctx, retryInvocation.ID, "", 60, 10); err != nil {
+		t.Fatalf("retry claim after first-start deadline: %v; deadline must not block a retry", err)
+	}
+}
+
+func TestPgScheduledHTTPCronReplaceWaitsForPreviouslyStartedRetry(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	_, appID, _ := seedLiveDeploy(t, store, ctx, "http-cron-replace-"+uuid.NewString(), "http-cron-replace-"+uuid.NewString()[:8])
+	cron, err := store.CreateCronWithOptions(ctx, appID, "* * * * *", "/sync", true, state.CronOptions{
+		SchedulePolicy: &workpolicy.SchedulePolicy{
+			Version: workpolicy.Version, Overlap: "replace", MissedRuns: "skip",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateCronWithOptions: %v", err)
+	}
+	firstAt := time.Now().UTC().Truncate(time.Minute)
+	first, _, created, err := store.CreateScheduledCronInvocationOccurrence(ctx, cron.ID, nil, firstAt,
+		state.CronScheduledOccurrenceOptions{ScheduledFor: firstAt, ScheduleRevision: cron.ScheduleRevision}, state.Invocation{Method: "POST", Path: "/sync"})
+	if err != nil || !created {
+		t.Fatalf("first occurrence created=%t, err=%v", created, err)
+	}
+	if _, err := store.ClaimInvocationWithCap(ctx, first.ID, "", 60, 10); err != nil {
+		t.Fatalf("first claim: %v", err)
+	}
+	if err := store.FailInvocation(ctx, first.ID, "transient", time.Nanosecond, 0); err != nil {
+		t.Fatalf("requeue after first attempt: %v", err)
+	}
+	secondAt := firstAt.Add(time.Minute)
+	_, occurrence, created, err := store.CreateScheduledCronInvocationOccurrence(ctx, cron.ID, &firstAt, secondAt,
+		state.CronScheduledOccurrenceOptions{ScheduledFor: secondAt, ScheduleRevision: cron.ScheduleRevision}, state.Invocation{Method: "POST", Path: "/sync"})
+	if err != nil || created || occurrence.ID != "" {
+		t.Fatalf("replacement after earlier start = %+v, created=%t, err=%v; must wait", occurrence, created, err)
+	}
+	retried, err := store.InvocationByID(ctx, first.ID)
+	if err != nil || retried.State != state.InvocationPending || retried.ReceivedAt == nil {
+		t.Fatalf("requeued invocation = %+v, %v; want pending with first-start evidence", retried, err)
+	}
+	storedCron, err := store.CronByID(ctx, cron.ID)
+	if err != nil || !storedCron.LastFiredAt.Equal(firstAt) {
+		t.Fatalf("cron cursor = %v, %v; blocked replacement must leave it at %v", storedCron.LastFiredAt, err, firstAt)
+	}
+}
+
 func TestPgCommandCronClassifiesStructuredOutcomeFromSuccessfulExit(t *testing.T) {
 	store, _, ctx := pgStoreWithPool(t)
 	_, appID, deploymentID := seedLiveDeploy(t, store, ctx, "classified-command-cron-"+uuid.NewString(), "classified-cron-"+uuid.NewString()[:8])

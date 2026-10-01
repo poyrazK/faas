@@ -95,6 +95,15 @@
 // The guest filesystem is ephemeral and no customer storage disk is attached
 // to the run. The final receipt is returned only after the VM is destroyed.
 //
+// # Gregale Issues
+//
+// Use a deployment-bound issue ingest token to report application exceptions
+// without an account API key. IssueReporter keeps a bounded in-memory queue;
+// call CaptureException at handled failure boundaries, RecoverAndRepanic from
+// a deferred worker boundary, and Flush or Close during graceful shutdown.
+// The reporter captures the current goroutine stack and never captures locals,
+// request bodies, or arbitrary context values.
+//
 // # Concurrency
 //
 // A Client is safe for concurrent use. The HTTP transport is shared;

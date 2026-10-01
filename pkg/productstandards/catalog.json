@@ -11,12 +11,17 @@
       "scope": "The published AsyncAPI 3.0 document describes outbound app-webhook channels for app.parked, app.woken, deployment.live, deployment.failed, rollout.completed, rollout.aborted, usage_statement.finalized, and the tenant-scoped platform_tenant.statement.finalized, platform_tenant.hostname.verified, platform_tenant.surface.certificate.changed, platform_tenant.surface.deployment.changed, platform_tenant.customer.linked, and platform_tenant.customer.offboarded events; the authenticated internal event publish ingress at POST /v1/events:publish; the workflow external-event injection channel at POST /v1/workflows/runs/{id}/events; per-app FIFO queue send/receive/ack channels; and explicitly addressed application inbox and outbox endpoints.",
       "limitations": "Queue introspection/dead-letter/replay endpoints, the scheduler-internal subscription delivery path, trigger broker contracts, workflow lifecycle/audit events, and the remaining closed-vocabulary webhook events are not yet described; legacy JSON webhook delivery remains outside this CloudEvents contract.",
       "docs_url": "https://www.asyncapi.com/docs/reference/specification/v3.0.0",
-      "evidence": "api/asyncapi.yaml; api/openapi.yaml; pkg/productstandards/asyncapi_test.go",
+      "evidence": "api/asyncapi.yaml; api/openapi.yaml; pkg/productstandards/asyncapi_test.go; pkg/productstandards/asyncapi_schema.go (pinned official schema)",
       "conformance": [
         {
           "fixture": "asyncapi-event-contract",
           "tier": "unit",
           "target": "pkg/productstandards/asyncapi_test.go::TestAsyncAPIContract"
+        },
+        {
+          "fixture": "asyncapi-official-schema",
+          "tier": "unit",
+          "target": "pkg/productstandards/asyncapi_schema_test.go::TestAsyncAPIOfficialSchema"
         }
       ]
     },
@@ -27,8 +32,8 @@
       "category": "eventing",
       "surface": "internal event router and outbound webhooks",
       "status": "partial",
-      "scope": "The internal event publish API normalizes a CloudEvents-shaped envelope for durable tenant-scoped routing; app and platform-tenant webhook subscriptions can opt into CloudEvents 1.0 structured JSON delivery with the standard context attributes and an account_id extension.",
-      "limitations": "The public ingress retains Gregale's snake_case data_content_type spelling and does not expose CloudEvents binary-mode headers; subscription delivery is an internal async invocation rather than an externally addressed HTTP binding. Legacy JSON webhook delivery remains the default.",
+      "scope": "The internal event publish API normalizes canonical CloudEvents context attributes for durable tenant-scoped routing; app and platform-tenant webhook subscriptions can opt into CloudEvents 1.0 structured JSON delivery with an accountid extension. Ingress validates source URI references and accepts historical snake_case aliases on input.",
+      "limitations": "The event-router ingress remains a Gregale JSON profile that supplies server-owned context defaults and accepts JSON event data only; CloudEvents binary-mode headers, arbitrary extension passthrough, and externally addressed subscription HTTP bindings are not exposed. Legacy JSON webhook delivery remains the default.",
       "docs_url": "https://cloudevents.io/",
       "evidence": "pkg/events/cloud.go; pkg/events/cloud_test.go; pkg/webhookout/webhookout.go; pkg/webhook/dispatcher.go; api/openapi.yaml delivery_format",
       "conformance": [
@@ -41,6 +46,11 @@
           "fixture": "cloudevents-structured-webhook",
           "tier": "unit",
           "target": "pkg/webhookout/webhookout_test.go::TestWebhook_Dispatch_CloudEventsStructured"
+        },
+        {
+          "fixture": "cloudevents-source-uri-reference",
+          "tier": "unit",
+          "target": "pkg/events/cloud_test.go::TestCloudEventsSourceValidation"
         }
       ]
     },
@@ -79,6 +89,105 @@
           "fixture": "cyclonedx-build-sbom",
           "tier": "unit",
           "target": "pkg/imaged/sbom_wire_test.go::TestUpdateBuildProvenanceSBOM_HappyPath"
+        }
+      ]
+    },
+    {
+      "id": "focus-1-4",
+      "name": "FinOps Open Cost and Usage Specification (FOCUS)",
+      "version": "1.4",
+      "category": "billing",
+      "surface": "account invoice export",
+      "status": "partial",
+      "scope": "Account-scoped FOCUS 1.4 Invoice Detail exports use durable provider facts and exactly reconciled, classified line snapshots when available. Authenticated Stripe, Paddle, and Polar history backfill discovers missing invoices page by page; refresh enriches known invoices. Stripe resolves opaque prices and paginates all lines. Per-record lifecycle tracks every exported column change. Aggregate fallbacks, missing facts, and historical lifecycle uncertainty are counted in metadata; ZIP binds CSV and metadata with a checksum.",
+      "limitations": "Conformance remains partial. PaymentTerms, legal issuer and date coverage depend on provider payloads; unresolved classifications, partial lists, unallocated discounts, and adjusted totals can require aggregate fallback. Older invoices have incomplete historical record creation observations; coverage counts declare that uncertainty. Provider pagination is best effort and records without supported currency, explicit billing periods, or complete totals are skipped; historical plans remain unknown. Conditional FX/PO fields, correction links, separate credit/refund documents, and Cost and Usage allocation/historical prices remain unimplemented.",
+      "docs_url": "https://focus.finops.org/docs/specification/v1-4/datasets/invoice-detail/",
+      "evidence": "pkg/focus; pkg/focus/testdata/specification/manifest.json (pinned official FOCUS 1.4 columns); cmd/apid/handlers_billing_focus.go; docs/billing.md; docs/adr/387-focus-invoice-projection.md; docs/adr/388-provider-invoice-facts.md; docs/adr/389-invoice-detail-lifecycle.md; pkg/billing/testdata/invoices; docs/adr/390-provider-invoice-refresh.md; cmd/apid/handlers_invoice_refresh.go; docs/adr/391-provider-invoice-history-backfill.md; cmd/apid/handlers_invoice_backfill.go",
+      "conformance": [
+        {
+          "fixture": "focus-invoice-column-contract",
+          "tier": "unit",
+          "target": "pkg/focus/invoice_test.go::TestFOCUSOfficialColumnContract"
+        },
+        {
+          "fixture": "focus-invoice-reconciliation",
+          "tier": "unit",
+          "target": "pkg/focus/invoice_test.go::TestFOCUSInvoiceDetailReconciliation"
+        },
+        {
+          "fixture": "focus-invoice-ownership",
+          "tier": "unit",
+          "target": "cmd/apid/handlers_billing_focus_test.go::TestFOCUSExportAccountAndMonthIsolation"
+        },
+        {
+          "fixture": "focus-invoice-cli-download",
+          "tier": "unit",
+          "target": "cmd/gregale/commands_billing_focus_test.go::TestFOCUSCLIExportsAndPreservesExistingFiles"
+        },
+        {
+          "fixture": "focus-provider-details",
+          "tier": "unit",
+          "target": "pkg/focus/invoice_details_test.go::TestFOCUSProviderDetailsReconciliation"
+        },
+        {
+          "fixture": "focus-invoice-ingestion",
+          "tier": "unit",
+          "target": "cmd/apid/handlers_billing_invoice_details_test.go::TestFOCUSSignedInvoiceIngestion"
+        },
+        {
+          "fixture": "focus-invoice-persistence",
+          "tier": "unit",
+          "target": "pkg/state/invoice_details_test.go::TestMemInvoiceDetailsPersistence"
+        },
+        {
+          "fixture": "focus-record-fingerprint",
+          "tier": "unit",
+          "target": "pkg/focus/invoicedetail/records_test.go::TestFOCUSRecordFingerprintNormalization"
+        },
+        {
+          "fixture": "focus-record-lifecycle",
+          "tier": "unit",
+          "target": "pkg/state/invoice_lifecycle_test.go::TestMemInvoiceLifecycle"
+        },
+        {
+          "fixture": "focus-lifecycle-coverage",
+          "tier": "unit",
+          "target": "pkg/focus/invoice_lifecycle_test.go::TestFOCUSInvoiceLifecycleCoverageAndValidation"
+        },
+        {
+          "fixture": "focus-provider-refresh-pagination",
+          "tier": "unit",
+          "target": "pkg/billing/stripe/invoice_refresh_test.go::TestInvoiceRefreshStripePaginationAndPrices"
+        },
+        {
+          "fixture": "focus-paddle-refresh-identity",
+          "tier": "unit",
+          "target": "pkg/billing/paddle/invoice_refresh_test.go::TestInvoiceRefreshPaddleIdentityAndFacts"
+        },
+        {
+          "fixture": "focus-polar-refresh-identity",
+          "tier": "unit",
+          "target": "pkg/billing/polar/invoice_refresh_test.go::TestInvoiceRefreshPolarIdentityAndFacts"
+        },
+        {
+          "fixture": "focus-refresh-ownership",
+          "tier": "unit",
+          "target": "cmd/apid/handlers_invoice_refresh_test.go::TestFOCUSInvoiceRefreshOwnershipAndCoverage"
+        },
+        {
+          "fixture": "focus-refresh-atomicity",
+          "tier": "unit",
+          "target": "pkg/state/invoice_refresh_test.go::TestMemInvoiceRefresh"
+        },
+        {
+          "fixture": "focus-refresh-postgres",
+          "tier": "integration",
+          "target": "pkg/state/invoice_refresh_test.go::TestPgInvoiceRefresh"
+        },
+        {
+          "fixture": "focus-refresh-cli",
+          "tier": "unit",
+          "target": "cmd/gregale/commands_billing_refresh_test.go::TestFOCUSCLIRefreshInvoice"
         }
       ]
     },
@@ -296,15 +405,30 @@
       "category": "observability",
       "surface": "trace ingestion and log export",
       "status": "partial",
-      "scope": "Apps and daemons can use OTLP/HTTP, and Gregale propagates W3C trace context across the runtime boundary.",
-      "limitations": "The customer contract is strongest for traces and logs; a full tenant-facing OTLP metrics pipeline is not yet promised.",
+      "scope": "The authenticated trace ingress accepts OTLP/HTTP JSON with hexadecimal IDs and ignored unknown fields, binary protobuf, gzip, empty exports, and multi-trace batches. It returns standard export/status responses and partial-success counts for rejected traces while preserving account isolation. Apps and daemons also export telemetry and propagate W3C trace context.",
+      "limitations": "Trace ingress stages a bounded diagnostic summary for existing request telemetry, not a full raw-span backend or a durable telemetry ingestion acknowledgement. Tenant-facing OTLP metrics ingestion and OTLP/gRPC ingestion are not exposed. Requests without Content-Type retain the historical ordinary-protobuf JSON decoder.",
       "docs_url": "https://opentelemetry.io/docs/specs/otlp/",
-      "evidence": "docs/runtimes/trace-propagation.md; api/openapi.yaml telemetry routes",
+      "evidence": "pkg/gateway/otlp_trace_codec.go; pkg/gateway/otel_spans_handler.go; docs/runtimes/trace-propagation.md; api/openapi.yaml telemetry routes",
       "conformance": [
         {
           "fixture": "otlp-endpoint-wiring",
           "tier": "unit",
           "target": "pkg/wire/otelinit/otelinit_test.go::TestInit_WithEndpoint_WiresProvider"
+        },
+        {
+          "fixture": "otlp-http-wire",
+          "tier": "unit",
+          "target": "pkg/gateway/otlp_trace_conformance_test.go::TestOTLPHTTPConformance"
+        },
+        {
+          "fixture": "otlp-http-sdk-exporter",
+          "tier": "unit",
+          "target": "pkg/gateway/otlp_trace_conformance_test.go::TestOTLPHTTPConformanceSDKExporter"
+        },
+        {
+          "fixture": "otlp-http-partial-success",
+          "tier": "unit",
+          "target": "pkg/gateway/otlp_trace_conformance_test.go::TestOTLPHTTPConformancePartialSuccess"
         }
       ]
     },
