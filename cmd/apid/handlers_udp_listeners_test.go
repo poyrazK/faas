@@ -57,11 +57,23 @@ func TestUDPListenerAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateApp(ctx, state.App{AccountID: other.ID, Slug: "udp-other", RAMMB: 256, Status: state.AppActive, Manifest: manifest}); err != nil {
+	foreignApp, err := store.CreateApp(ctx, state.App{AccountID: other.ID, Slug: "udp-other", RAMMB: 256, Status: state.AppActive, Manifest: manifest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign, err := store.CreateUDPListener(ctx, state.UDPListener{AppID: foreignApp.ID, AccountID: other.ID, ListenerName: "dns", GuestPort: 5353, PublicPort: 40199, Enabled: true})
+	if err != nil {
 		t.Fatal(err)
 	}
 	request(http.MethodGet, "/v1/apps/udp-other/udp-listeners", "", 404)
 	request(http.MethodPost, "/v1/apps/udp-other/udp-listeners", `{"name":"dns","guest_port":5353}`, 404)
+	request(http.MethodPatch, "/v1/apps/udp-other/udp-listeners/dns", `{"enabled":false}`, 404)
+	request(http.MethodPatch, "/v1/apps/udp-other/udp-listeners/dns", `{"enabled":true}`, 404)
+	request(http.MethodDelete, "/v1/apps/udp-other/udp-listeners/dns", "", 404)
+	retained, err := store.UDPListenerByAppAndName(ctx, foreignApp.ID, "dns")
+	if err != nil || retained != foreign {
+		t.Fatalf("foreign listener mutated: got=%+v want=%+v err=%v", retained, foreign, err)
+	}
 	request(http.MethodDelete, path+"/dns", "", 204)
 	request(http.MethodPatch, path+"/dns", `{"enabled":true}`, 404)
 }
