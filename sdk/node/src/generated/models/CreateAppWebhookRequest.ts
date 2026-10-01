@@ -11,7 +11,7 @@
 export type CreateAppWebhookRequest = {
   target_url: string;
   webhook_secret: string;
-  event_filter?: Array<'app.parked' | 'app.woken' | 'deployment.live' | 'deployment.failed' | 'rollout.completed' | 'rollout.aborted' | 'job.finished' | 'usage_statement.finalized' | 'debug.regression.detected' | 'debug.regression.resolved'>;
+  event_filter?: Array<'app.parked' | 'app.woken' | 'deployment.live' | 'deployment.failed' | 'rollout.completed' | 'rollout.aborted' | 'job.finished' | 'usage_statement.finalized' | 'issue.created' | 'issue.assigned' | 'issue.resolved' | 'issue.reopened' | 'issue.ignored' | 'issue.regressed' | 'debug.regression.detected' | 'debug.regression.resolved'>;
   retry_policy?: 'default' | 'aggressive' | 'none';
   /**
    * Wire envelope. json preserves the legacy Gregale body; cloudevents opts into CloudEvents 1.0 structured mode.

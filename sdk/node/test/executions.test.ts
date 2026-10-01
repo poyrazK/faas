@@ -85,7 +85,8 @@ test('runExecution creates, streams, and fetches the terminal receipt', async ()
         return new Response(JSON.stringify({
           id: 'run-1',
           status: 'queued',
-          runtime: 'node22',
+          runtime: 'python313',
+          profile: 'python-data-v1',
           limits: { timeout_ms: 1000 },
           output_truncated: false,
           created_at: '2026-01-01T00:00:00Z',
@@ -102,7 +103,10 @@ test('runExecution creates, streams, and fetches the terminal receipt', async ()
         return new Response(JSON.stringify({
           id: 'run-1',
           status: 'succeeded',
-          runtime: 'node22',
+          runtime_image_digest: 'sha256:' + 'a'.repeat(64),
+          packages: { numpy: '2.5.3' },
+          runtime: 'python313',
+          profile: 'python-data-v1',
           limits: { timeout_ms: 1000 },
           result: { ok: true },
           stdout: 'hello',
@@ -117,7 +121,10 @@ test('runExecution creates, streams, and fetches the terminal receipt', async ()
   try {
     const seen: string[] = [];
     const receipt = await client.runExecution(
-      { runtime: 'node22', source: "console.log('hello')" },
+      {
+        runtime: 'python313', profile: 'python-data-v1',
+        source: 'def main(input, context): return input',
+      },
       {
         retryInitialMs: 0,
         retryMaxMs: 0,
@@ -127,10 +134,14 @@ test('runExecution creates, streams, and fetches the terminal receipt', async ()
     );
     assert.equal(receipt.id, 'run-1');
     assert.equal(receipt.status, 'succeeded');
+    assert.equal(receipt.profile, 'python-data-v1');
+    assert.equal(receipt.packages?.numpy, '2.5.3');
+    assert.equal(receipt.runtime_image_digest, 'sha256:' + 'a'.repeat(64));
+    assert.equal(requests[0]?.body && JSON.parse(requests[0].body).profile, 'python-data-v1');
     assert.deepEqual(seen, ['status', 'stdout', 'terminal']);
     assert.equal(requests.length, 3);
     assert.equal(requests[0]?.method, 'POST');
-    assert.equal(requests[0]?.body && JSON.parse(requests[0].body).source, "console.log('hello')");
+    assert.equal(requests[0]?.body && JSON.parse(requests[0].body).source, 'def main(input, context): return input');
     assert.equal(requests[0]?.url.pathname, '/v1/executions');
     assert.equal(requests[1]?.url.pathname, '/v1/executions/run-1/events');
     assert.equal(requests[2]?.url.pathname, '/v1/executions/run-1');

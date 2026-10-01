@@ -1,4 +1,4 @@
--- Durable app-owned raw UDP listener identities (ADR-382).
+-- Durable app-owned raw UDP listener identities (ADR-389).
 -- The public port belongs to the app/listener, never to an instance or node.
 
 -- +goose Up

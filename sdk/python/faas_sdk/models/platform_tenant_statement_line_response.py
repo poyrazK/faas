@@ -15,13 +15,17 @@ T = TypeVar("T", bound="PlatformTenantStatementLineResponse")
 
 @_attrs_define
 class PlatformTenantStatementLineResponse:
-    """Immutable tenant-attributed UTC minute priced with either an app rate-card version or a tenant-wide rate-card
-    version. Exactly one of consumer_id, surface_id, or jwt_authorization_rule_id is present.
+    """Compact immutable invoice line grouped by app, tenant-attributed consumer, surface, or JWT rule, and effective price
+    source. window_start is the earliest included UTC minute; window_end is the exclusive end after the latest included
+    minute and may span gaps. Exact minute coverage remains internal for additive revisions. Exactly one of consumer_id,
+    surface_id, or jwt_authorization_rule_id is present.
 
     """
 
     app_id: UUID
     window_start: datetime.datetime
+    window_end: datetime.datetime
+    """Exclusive end after the latest included UTC minute; gaps inside the interval may have no usage."""
     billable_units: int
     amount_millicents: int
     consumer_id: UUID | Unset = UNSET
@@ -38,6 +42,8 @@ class PlatformTenantStatementLineResponse:
         app_id = str(self.app_id)
 
         window_start = self.window_start.isoformat()
+
+        window_end = self.window_end.isoformat()
 
         billable_units = self.billable_units
 
@@ -73,6 +79,7 @@ class PlatformTenantStatementLineResponse:
             {
                 "app_id": app_id,
                 "window_start": window_start,
+                "window_end": window_end,
                 "billable_units": billable_units,
                 "amount_millicents": amount_millicents,
             }
@@ -100,6 +107,8 @@ class PlatformTenantStatementLineResponse:
         app_id = UUID(d.pop("app_id"))
 
         window_start = datetime.datetime.fromisoformat(d.pop("window_start"))
+
+        window_end = datetime.datetime.fromisoformat(d.pop("window_end"))
 
         billable_units = d.pop("billable_units")
 
@@ -147,6 +156,7 @@ class PlatformTenantStatementLineResponse:
         platform_tenant_statement_line_response = cls(
             app_id=app_id,
             window_start=window_start,
+            window_end=window_end,
             billable_units=billable_units,
             amount_millicents=amount_millicents,
             consumer_id=consumer_id,

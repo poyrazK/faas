@@ -276,6 +276,9 @@ func runDevWatchLoop(ctx context.Context, sourceDir string, previous [sha256.Siz
 // deployable files change. --once is useful for scripts; --stop tears the
 // environment down explicitly instead of waiting for its lease to expire.
 func cmdDev(args []string) int {
+	if len(args) > 0 && args[0] == "bridge" {
+		return cmdDevBridge(args[1:])
+	}
 	if len(args) > 0 && args[0] == "status" {
 		if len(args) != 1 {
 			PrintUsage(osStderr, "usage: gregale dev status", "dev")

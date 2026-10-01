@@ -1021,7 +1021,7 @@ export class PlatformTenantsService {
   }
   /**
    * Snapshot tenant-attributed usage across apps or create a late-usage adjustment.
-   * For each usage minute, an effective tenant-wide rate card takes precedence over the app's rate card; before the tenant's first effective card, app pricing remains the fallback. A draft replays unchanged. After finalization, new units create the next revision; no new units replay the latest revision. Mixed effective currencies are rejected.
+   * For each usage minute, an effective tenant-wide rate card takes precedence over the app's rate card; before the tenant's first effective card, app pricing remains the fallback. Public invoice lines are grouped by app, attributed source, and effective price source, while exact minute coverage remains private for additive revisions. A draft replays unchanged. After finalization, new units create the next revision; no new units replay the latest revision. Mixed effective currencies are rejected.
    * @returns PlatformTenantStatementResponse Existing draft or latest unchanged revision.
    * @throws ApiError
    */

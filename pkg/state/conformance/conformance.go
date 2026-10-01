@@ -68,6 +68,7 @@ func Run(t *testing.T, open Open) {
 		{"webhook_delivery_attempts_health_retention_and_storage", testWebhookDeliveryAttemptsHealthRetentionAndStorage},
 		{"account_release_webhook_quota_and_cross_app_pagination", testAccountReleaseWebhookQuotaAndPagination},
 		{"fire_now_request_claim_is_exactly_once", testFireNowRequestClaimIsExactlyOnce},
+		{"fire_now_claim_respects_node_ownership_and_handoff", testFireNowNodeOwnershipAndHandoff},
 		{"manual_command_cron_fire_now_is_idempotent_and_keeps_schedule_cursor", testManualCommandCronFireNow},
 		{"runtime_config_operation_claim_is_exactly_once", testRuntimeConfigOperationClaimIsExactlyOnce},
 		{"trigger_record_claim_is_bounded_and_scoped", testTriggerRecordClaimIsBoundedAndScoped},

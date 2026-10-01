@@ -133,6 +133,11 @@ func newRetryRoundTripper(next http.RoundTripper, max int, backoff time.Duration
 // The sleep is context-aware: a cancelled or expired request
 // context aborts the wait and returns the context error.
 func (r *retryRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	// Session credentials are returned once and are never saved for generic
+	// API replay. Repeating creation could leave an inaccessible live session.
+	if req.Method == http.MethodPost && strings.HasSuffix(strings.TrimRight(req.URL.Path, "/"), "/v1/dev/bridges") {
+		return r.next.RoundTrip(req)
+	}
 	var lastResp *http.Response
 	for attempt := 0; attempt <= r.max; attempt++ {
 		if attempt > 0 {

@@ -237,7 +237,7 @@ TLS termination now has durable API/CLI intent, verified app-domain ownership,
 an opt-in file provider, bounded handshakes, certificate rotation and readiness
 metrics/alerts. Local trusted socket composition tests pass. Portable TLS
 shutdown evidence also covers a stalled client that sends no
-ClientHello is closed promptly on server cancellation, causes no workload
+ClientHello. Server cancellation closes it promptly, causes no workload
 admission and releases global/account credits. The socket regression passed five
 race-enabled repetitions and changed-code lint; this does not qualify native
 drain or node-failure behavior. `TestTCPIngressMetal`
@@ -287,3 +287,19 @@ snapshot memory lengths cold boot. The native OOM fixture uses retained
 anonymous memory and requires a SIGKILL result before checking main-service
 survival; reclaimable file reads or transport failures no longer count as an
 OOM-isolation pass. Execution of this strengthened gate remains outstanding.
+
+## Integration with upstream main (2026-10-01)
+
+Merged upstream main at `a50543f7c` after preserving the container work in a
+local checkpoint. Regenerated protobufs, sqlc bindings and both SDKs from the
+merged sources. Container ADRs now use numbers 384–390 to avoid upstream
+number collisions.
+
+Post-merge verification passed all 148 portable container contracts and all
+42 portable UDP contracts, including race checks and strict skip rejection.
+The first UDP build exhausted local disk space; the rerun passed. Task-owned
+Go cache cleanup recovered space for subsequent verification. Node build and
+65 unit checks passed, as did 42 selected Python tests (the opt-in regeneration
+test was deselected). SDK route coverage and native E2E runner contract checks
+passed. The merged metal E2E suite cross-compiled for Linux/amd64. This remains
+compilation evidence; no native KVM qualification was performed.

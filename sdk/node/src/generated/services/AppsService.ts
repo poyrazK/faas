@@ -17,6 +17,7 @@ import type { AppWakeResponse } from '../models/AppWakeResponse.js';
 import type { AppWakeTimelineResponse } from '../models/AppWakeTimelineResponse.js';
 import type { CreateAppRequest } from '../models/CreateAppRequest.js';
 import type { CreateDeployTokenRequest } from '../models/CreateDeployTokenRequest.js';
+import type { CreateIssueIngestTokenRequest } from '../models/CreateIssueIngestTokenRequest.js';
 import type { CreateTCPListenerRequest } from '../models/CreateTCPListenerRequest.js';
 import type { CreateUDPListenerRequest } from '../models/CreateUDPListenerRequest.js';
 import type { CustomMetricListResponse } from '../models/CustomMetricListResponse.js';
@@ -37,7 +38,15 @@ import type { DebugTelemetryListResponse } from '../models/DebugTelemetryListRes
 import type { DebugTelemetryRequestItem } from '../models/DebugTelemetryRequestItem.js';
 import type { DeployTokenResponse } from '../models/DeployTokenResponse.js';
 import type { DiscoveredRoutesResponse } from '../models/DiscoveredRoutesResponse.js';
+import type { Issue } from '../models/Issue.js';
+import type { IssueActionRequest } from '../models/IssueActionRequest.js';
+import type { IssueDetail } from '../models/IssueDetail.js';
+import type { IssueEvent } from '../models/IssueEvent.js';
+import type { IssueEventResponse } from '../models/IssueEventResponse.js';
+import type { IssueIngestToken } from '../models/IssueIngestToken.js';
 import type { ListDeployTokensResponse } from '../models/ListDeployTokensResponse.js';
+import type { ListIssueIngestTokensResponse } from '../models/ListIssueIngestTokensResponse.js';
+import type { ListIssuesResponse } from '../models/ListIssuesResponse.js';
 import type { PreAuthObservationsResponse } from '../models/PreAuthObservationsResponse.js';
 import type { PrewarmIntentResponse } from '../models/PrewarmIntentResponse.js';
 import type { PrewarmRequest } from '../models/PrewarmRequest.js';
@@ -1567,6 +1576,364 @@ export class AppsService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
+      },
+    });
+  }
+  /**
+   * Ingest OTLP JSON exception events
+   * Accepts bounded OTLP trace exception events or exception log records using a deployment-bound issue token. Unrelated telemetry is ignored. Deterministic event IDs permit safe retry after partial delivery. Protobuf encoding is not supported.
+   * @returns any Exceptions accepted, including exact retries
+   * @throws ApiError
+   */
+  public static ingestIssueOtlp({
+    slug,
+    signal,
+    requestBody,
+  }: {
+    /**
+     * Application slug owning the issue reporting scope.
+     */
+    slug: string,
+    /**
+     * OTLP JSON signal, either traces or logs.
+     */
+    signal: 'traces' | 'logs',
+    requestBody: Record<string, any>,
+  }): CancelablePromise<Record<string, any>> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/issue-events/otlp/{signal}',
+      path: {
+        'slug': slug,
+        'signal': signal,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
+      },
+    });
+  }
+  /**
+   * Capture an exception using a deployment-bound issue ingest token.
+   * @returns IssueEventResponse Occurrence accepted or exact retry acknowledged.
+   * @throws ApiError
+   */
+  public static ingestIssueEvent({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: IssueEvent,
+  }): CancelablePromise<IssueEventResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/issue-events',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
+      },
+    });
+  }
+  /**
+   * List durable grouped application issues.
+   * @returns ListIssuesResponse A bounded page of issues for this application.
+   * @throws ApiError
+   */
+  public static listIssues({
+    slug,
+    state,
+    environment,
+    cursor,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Filter by open, resolved, or ignored lifecycle state.
+     */
+    state?: string,
+    /**
+     * Exact issue environment namespace.
+     */
+    environment?: string,
+    /**
+     * Opaque next_cursor from the previous issue page.
+     */
+    cursor?: string,
+  }): CancelablePromise<ListIssuesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/issues',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'state': state,
+        'environment': environment,
+        'cursor': cursor,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
+      },
+    });
+  }
+  /**
+   * Read sanitized evidence, release history, activity, and observed customer impact.
+   * @returns IssueDetail Issue evidence, verified impact, and paginated history.
+   * @throws ApiError
+   */
+  public static getIssue({
+    slug,
+    issueId,
+    since,
+    eventCursor,
+    releaseCursor,
+    activityCursor,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * UUID of the durable issue within this app.
+     */
+    issueId: string,
+    /**
+     * RFC3339 impact-window start, clamped to plan retention.
+     */
+    since?: string,
+    /**
+     * Opaque next_event_cursor for earlier occurrences.
+     */
+    eventCursor?: string,
+    /**
+     * Opaque next_release_cursor for earlier deployment history.
+     */
+    releaseCursor?: string,
+    /**
+     * Opaque next_activity_cursor for earlier actions.
+     */
+    activityCursor?: string,
+  }): CancelablePromise<IssueDetail> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/issues/{issue_id}',
+      path: {
+        'slug': slug,
+        'issue_id': issueId,
+      },
+      query: {
+        'since': since,
+        'event_cursor': eventCursor,
+        'release_cursor': releaseCursor,
+        'activity_cursor': activityCursor,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
+      },
+    });
+  }
+  /**
+   * Assign, resolve in a deployment, reopen, or ignore an issue.
+   * @returns Issue Issue state or ownership updated with audited activity.
+   * @throws ApiError
+   */
+  public static actOnIssue({
+    slug,
+    issueId,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * UUID of the issue whose ownership or lifecycle should change.
+     */
+    issueId: string,
+    requestBody: IssueActionRequest,
+  }): CancelablePromise<Issue> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/issues/{issue_id}/actions',
+      path: {
+        'slug': slug,
+        'issue_id': issueId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
+      },
+    });
+  }
+  /**
+   * Create a reporting-only credential bound to one app and deployment.
+   * @returns IssueIngestToken Reporting credential created; the secret is shown once.
+   * @throws ApiError
+   */
+  public static createIssueIngestToken({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: CreateIssueIngestTokenRequest,
+  }): CancelablePromise<IssueIngestToken> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/issue-ingest-tokens',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
+      },
+    });
+  }
+  /**
+   * List issue ingest credential metadata.
+   * @returns ListIssueIngestTokensResponse Reporting credential metadata without bearer secrets.
+   * @throws ApiError
+   */
+  public static listIssueIngestTokens({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<ListIssueIngestTokensResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/issue-ingest-tokens',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
+      },
+    });
+  }
+  /**
+   * Revoke an issue ingest credential.
+   * @returns void
+   * @throws ApiError
+   */
+  public static revokeIssueIngestToken({
+    slug,
+    tokenId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * UUID of the reporting credential to revoke.
+     */
+    tokenId: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/issue-ingest-tokens/{token_id}',
+      path: {
+        'slug': slug,
+        'token_id': tokenId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
       },
     });
   }

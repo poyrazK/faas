@@ -43,6 +43,7 @@
     - faas-schedd
     - faas-meterd
     - faas-outboundd
+    - faas-bridged
 
 # schedd reads the non-secret signing public key directly. Keep the shared
 # parent traversable by the faas group while private children and files retain
@@ -140,9 +141,44 @@
     - { src: "faas-apid.service", dest: "/etc/systemd/system/faas-apid.service" }
     - { src: "faas-apid.socket", dest: "/etc/systemd/system/faas-apid.socket" }
     - { src: "faas-outboundd.service", dest: "/etc/systemd/system/faas-outboundd.service" }
+    - { src: "faas-bridged.service", dest: "/etc/systemd/system/faas-bridged.service" }
     - { src: "faas-schedd.service", dest: "/etc/systemd/system/faas-schedd.service" }
     - { src: "faas-meterd.service", dest: "/etc/systemd/system/faas-meterd.service" }
   register: cp_units
+
+- name: control_plane_service — render development relay environment
+  ansible.builtin.template:
+    src: dev-bridge.env.j2
+    dest: /etc/faas/dev-bridge.env
+    owner: root
+    group: faas
+    mode: "0640"
+  notify: restart faas-bridged
+
+- name: control_plane_service — create development API drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-apid.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: control_plane_service — set development API feature gate
+  ansible.builtin.template:
+    src: 99-faas-dev-bridge.conf.j2
+    dest: /etc/systemd/system/faas-apid.service.d/99-faas-dev-bridge.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-apid
+
+- name: control_plane_service — stop development relay when disabled
+  ansible.builtin.systemd_service:
+    name: faas-bridged.service
+    enabled: false
+    state: stopped
+    daemon_reload: true
+  when: not (faas_dev_bridge_enabled | bool)
 
 # Tier A7 PR-D — pre-create /run/faas with the canonical
 # root:faas 0775 ownership before any faas-*.service unit starts.

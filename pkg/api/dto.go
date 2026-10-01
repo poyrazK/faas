@@ -3556,6 +3556,12 @@ type AccountLimits struct {
 	TriggerTLSSkipVerifyAllowed bool          `json:"trigger_tls_skip_verify_allowed"`
 }
 
+// AccountOverageCapResponse preserves the saved monthly ceiling in integer cents.
+// Nil means no ceiling; zero means no overage is allowed.
+type AccountOverageCapResponse struct {
+	OverageCapCents *int64 `json:"overage_cap_cents"`
+}
+
 // AccountRateLimitsResponse reports account-wide rate windows that affect
 // customer operations.
 type AccountRateLimitsResponse struct {

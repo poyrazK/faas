@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -9,6 +10,7 @@ import (
 	"net/netip"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/httpsec"
@@ -456,5 +458,40 @@ func TestControlPlaneProxyKeepsSessionsOffTenantHosts(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Errorf("GET %s on a tenant host = %d, want it proxied without a session", path, rec.Code)
 		}
+	}
+}
+
+func TestDevBridgeControlPlaneIngressStreamsDuplex(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = http.NewResponseController(w).EnableFullDuplex()
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.WriteHeader(200)
+		w.(http.Flusher).Flush()
+		_, _ = io.Copy(w, r.Body)
+	}))
+	defer upstream.Close()
+	proxy, err := newControlPlaneProxy(upstream.URL, http.NotFoundHandler(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edge := httptest.NewServer(proxy)
+	defer edge.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	reader, writer := io.Pipe()
+	go func() { <-ctx.Done(); _ = writer.CloseWithError(ctx.Err()) }()
+	defer func() { _ = writer.Close() }()
+	request, _ := http.NewRequestWithContext(ctx, "POST", edge.URL+"/v1/dev/bridges/session/traffic/echo", reader)
+	request.Host = "api.gregale.dev"
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := strings.Repeat("duplex", 10000)
+	go func() { _, _ = io.WriteString(writer, payload); _ = writer.Close() }()
+	body, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil || response.StatusCode != 200 || string(body) != payload {
+		t.Fatalf("status=%d bytes=%d err=%v", response.StatusCode, len(body), err)
 	}
 }

@@ -656,6 +656,13 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	profileBases, err := h.EnsureExecutionProfileBases(ctx, arch, getenv)
+	if err != nil {
+		return err
+	}
+	for _, base := range profileBases {
+		log.Info("imaged execution profile base ready", "profile", base.Runtime, "digest", base.ConfigDigest, "skipped", base.Skipped)
+	}
 	if prestageOnlyFromEnv(getenv) {
 		log.Info("imaged runtime-base pre-stage complete",
 			"arch", arch,

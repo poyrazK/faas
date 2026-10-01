@@ -1,4 +1,4 @@
--- Explicit TLS intent for raw TCP listeners (ADR-383).
+-- Explicit TLS intent for raw TCP listeners (ADR-390).
 -- +goose Up
 -- +goose StatementBegin
 ALTER TABLE app_tcp_listeners

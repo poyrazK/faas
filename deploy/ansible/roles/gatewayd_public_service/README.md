@@ -54,7 +54,7 @@ UDP ingress is disabled by default. Set `faas_udpd_enabled: true` and a nonempty
 `faas_udpd_allowed_cidrs` list of IPv4 client CIDRs in the public gateway's host
 variables. The same variables feed the nftables role and `/etc/faas/udpd.env`;
 apply both roles together. IPv6 public UDP is not supported. Do this only after
-the native acceptance cases in ADR-382 have passed for the release.
+the native acceptance cases in ADR-389 have passed for the release.
 
 Use `faas_udpd_schedd_target` for the scheduler endpoint and
 `faas_udpd_{schedd,vmmd}_tls_{ca,cert,key}_path` for the transport credentials.

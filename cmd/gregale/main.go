@@ -374,6 +374,8 @@ func run(args []string) (status int) {
 		return cmdDomains(args[1:])
 	case "tenant-surfaces":
 		return cmdTenantSurfaces(args[1:])
+	case "flags":
+		return cmdFlags(args[1:])
 	case "platform-tenants":
 		return cmdPlatformTenants(args[1:])
 	case "edge-rules":
@@ -498,6 +500,8 @@ func run(args []string) (status int) {
 		return cmdSend(args[1:])
 	case "deliver":
 		return cmdDeliver(args[1:])
+	case "issues":
+		return cmdIssues(args[1:])
 	case "debug":
 		// ADR-127: production debugger (request evidence, regression
 		// watch, deployment compare, safe replay, and incident bundles).

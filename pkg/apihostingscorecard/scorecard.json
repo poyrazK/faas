@@ -123,6 +123,19 @@
       ]
     },
     {
+      "id": "issue-triage",
+      "name": "Grouped failure triage and recovery",
+      "category": "observability",
+      "description": "Accepted failures preserve grouping and release history, enforce scoped ownership and resolution, and recover committed notifications without counting exact retries twice.",
+      "capabilities": ["issues"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "cmd/apid/handlers_issues_integration_test.go::TestIssueEndToEndPostgres"},
+        {"kind": "test", "locator": "cmd/apid/handlers_issues_integration_test.go::TestIssueVerifiedCustomerImpactAndWebhookRecovery"},
+        {"kind": "make", "locator": "test-issues"}
+      ]
+    },
+    {
       "id": "preview-readiness",
       "name": "Pull-request preview readiness",
       "category": "delivery",

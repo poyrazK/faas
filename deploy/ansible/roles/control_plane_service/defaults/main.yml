@@ -1,4 +1,7 @@
 ---
+faas_dev_bridge_enabled: false
+faas_dev_bridge_gateway_url: http://127.0.0.1:8080
+faas_dev_bridge_database_url: postgres:///faas?host=/run/postgresql&user=faas
 # Managed meterd configuration is enabled by the manifest-generated
 # control-plane host_vars. Existing operator-owned /etc/faas/meterd.toml
 # files remain untouched unless this flag is explicitly true.

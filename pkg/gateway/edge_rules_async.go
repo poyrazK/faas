@@ -283,7 +283,7 @@ func asyncRouteHeaders(in http.Header) map[string]string {
 			continue
 		}
 		if lower == "authorization" || lower == "cookie" || lower == "content-length" ||
-			lower == "host" || strings.HasPrefix(lower, "x-faas-") || isHopByHopHeader(canonical) {
+			lower == "host" || strings.HasPrefix(lower, "x-faas-") || lower == "x-gregale-dev-session-context" || strings.HasPrefix(lower, "x-gregale-dev-bridge-") || isHopByHopHeader(canonical) {
 			continue
 		}
 		out[canonical] = strings.Join(values, ", ")

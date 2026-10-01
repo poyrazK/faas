@@ -59,6 +59,10 @@ var alwaysStrippedHeaders = []string{
 	"X-API-Key",
 	"Proxy-Authorization",
 	"WWW-Authenticate",
+	"X-Gregale-Dev-Session-Context",
+	"X-Gregale-Dev-Bridge-Token",
+	"X-Gregale-Dev-Bridge-Session",
+	"X-Gregale-Dev-Bridge-Account",
 }
 
 // StrippedRequestHeaders (issue #72 / ADR-124 / ADR-125 PR-A3)

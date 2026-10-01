@@ -34,6 +34,13 @@ func TestBuildPlatformTenantStatementCrossAppAdjustments(t *testing.T) {
 	if err != nil || adjustment.Revision != 2 || adjustment.BillableUnits != 2 || adjustment.AmountMillicents != 50 || len(adjustment.Lines) != 1 || adjustment.Lines[0].AppID != appB {
 		t.Fatalf("late-usage adjustment = %+v, err=%v", adjustment, err)
 	}
+	fromDelta, err := BuildPlatformTenantStatementFromDelta(first.AccountID, first.TenantID, start, start.Add(time.Hour),
+		start.Add(time.Hour), 2, state.APIConsumerUsageStatementFinalized,
+		[]state.APIConsumerUsageBucket{{AppID: appB, ConsumerKey: consumerB, WindowStart: start, BillableUnits: 2}}, cards, nil)
+	if err != nil || fromDelta.BillableUnits != adjustment.BillableUnits || fromDelta.AmountMillicents != adjustment.AmountMillicents ||
+		len(fromDelta.Coverage) != 1 || fromDelta.Coverage[0].BillableUnits != 2 {
+		t.Fatalf("delta builder result = %+v, err=%v", fromDelta, err)
+	}
 	usage[0].BillableUnits = 1
 	if _, err := BuildPlatformTenantStatement(first.AccountID, first.TenantID, start, start.Add(time.Hour), start.Add(time.Hour), usage, cards, nil, prior); !errors.Is(err, ErrTenantUsageRegressed) {
 		t.Fatalf("regressed usage err=%v", err)
@@ -73,5 +80,55 @@ func TestBuildPlatformTenantStatementSeparatesConsumerAndSurfaceMinutes(t *testi
 	adjustment, err := BuildPlatformTenantStatement(accountID, tenantID, start, start.Add(time.Hour), start.Add(time.Hour), usage, cards, nil, prior)
 	if err != nil || adjustment.BillableUnits != 2 || adjustment.AmountMillicents != 14 || len(adjustment.Lines) != 1 || adjustment.Lines[0].SurfaceID != surfaceID {
 		t.Fatalf("surface adjustment = %+v, err=%v", adjustment, err)
+	}
+}
+
+func TestBuildPlatformTenantStatementCompactsLinesButRetainsMinuteCoverage(t *testing.T) {
+	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(31 * 24 * time.Hour)
+	accountID, tenantID := uuid.NewString(), uuid.NewString()
+	apps := []string{uuid.NewString(), uuid.NewString()}
+	consumers := []string{uuid.NewString(), uuid.NewString()}
+	cards := map[string][]state.APIConsumerRateCard{}
+	usage := make([]state.APIConsumerUsageBucket, 0, 31*24*60*len(apps))
+	for appIndex, appID := range apps {
+		cards[appID] = []state.APIConsumerRateCard{{ID: uuid.NewString(), AppID: appID,
+			Currency: "EUR", Unit: state.APIConsumerRateCardUnitRequest,
+			PriceMillicentsPerUnit: int64(appIndex + 1), EffectiveFrom: start}}
+	}
+	for minute := start; minute.Before(end); minute = minute.Add(time.Minute) {
+		for appIndex, appID := range apps {
+			usage = append(usage, state.APIConsumerUsageBucket{AppID: appID, ConsumerKey: consumers[appIndex],
+				WindowStart: minute, BillableUnits: 1})
+		}
+	}
+
+	first, err := BuildPlatformTenantStatement(accountID, tenantID, start, end, end, usage, cards, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const expectedMinutes = 31 * 24 * 60 * 2
+	if first.BillableUnits != int64(expectedMinutes) || len(first.Coverage) != expectedMinutes ||
+		len(first.Lines) != len(apps) || first.AmountMillicents != 31*24*60*3 {
+		t.Fatalf("large statement totals/shape: units=%d coverage=%d lines=%d amount=%d",
+			first.BillableUnits, len(first.Coverage), len(first.Lines), first.AmountMillicents)
+	}
+	for _, line := range first.Lines {
+		if !line.WindowStart.Equal(start) || !line.WindowEnd.Equal(end) || line.BillableUnits != 31*24*60 {
+			t.Fatalf("compacted invoice line lost its minute span: %+v", line)
+		}
+	}
+
+	usage[0].BillableUnits++ // Late units in a minute already covered by revision 1.
+	prior := []state.PlatformTenantStatement{{Revision: first.Revision, Status: state.APIConsumerUsageStatementFinalized,
+		Lines: first.Lines, Coverage: first.Coverage}}
+	adjustment, err := BuildPlatformTenantStatement(accountID, tenantID, start, end, end.Add(time.Hour), usage, cards, nil, prior)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if adjustment.BillableUnits != 1 || len(adjustment.Coverage) != 1 || len(adjustment.Lines) != 1 ||
+		adjustment.Lines[0].AppID != apps[0] || adjustment.Lines[0].BillableUnits != 1 ||
+		!adjustment.Lines[0].WindowStart.Equal(start) || !adjustment.Lines[0].WindowEnd.Equal(start.Add(time.Minute)) {
+		t.Fatalf("late minute adjustment = %+v", adjustment)
 	}
 }

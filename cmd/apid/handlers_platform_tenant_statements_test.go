@@ -60,7 +60,8 @@ func TestPlatformTenantStatementCrossAppAndLateUsage(t *testing.T) {
 	if err := json.Unmarshal(created.Body.Bytes(), &first); err != nil {
 		t.Fatal(err)
 	}
-	if first.Revision != 1 || first.AmountMillicents != 80 || len(first.Lines) != 2 || first.UnpricedUnits != 0 {
+	if first.Revision != 1 || first.AmountMillicents != 80 || len(first.Lines) != 2 || first.UnpricedUnits != 0 ||
+		!first.Lines[0].WindowEnd.Equal(minute.Add(time.Minute)) {
 		t.Fatalf("cross-app statement = %+v", first)
 	}
 	listed := e.do(t, http.MethodGet, path+"?period_start="+url.QueryEscape(minute.Format(time.RFC3339))+"&period_end="+url.QueryEscape(end.Format(time.RFC3339)), nil, nil)
@@ -105,7 +106,8 @@ func TestPlatformTenantStatementCrossAppAndLateUsage(t *testing.T) {
 	if err := json.Unmarshal(adjusted.Body.Bytes(), &second); err != nil {
 		t.Fatal(err)
 	}
-	if second.Revision != 2 || second.BillableUnits != 1 || second.AmountMillicents != 25 || len(second.Lines) != 1 || second.Lines[0].AppID != appB {
+	if second.Revision != 2 || second.BillableUnits != 1 || second.AmountMillicents != 25 || len(second.Lines) != 1 ||
+		second.Lines[0].AppID != appB || !second.Lines[0].WindowEnd.Equal(minute.Add(time.Minute)) {
 		t.Fatalf("adjustment = %+v", second)
 	}
 	if got := e.do(t, http.MethodPost, path+"/"+second.ID+"/finalize", struct{}{}, nil); got.Code != http.StatusOK {
@@ -221,7 +223,9 @@ func TestPlatformTenantSurfaceUsageAndStatementAPI(t *testing.T) {
 		t.Fatalf("surface statement: %d %s", created.Code, created.Body)
 	}
 	var first api.PlatformTenantStatementResponse
-	if err := json.Unmarshal(created.Body.Bytes(), &first); err != nil || first.BillableUnits != 2 || first.AmountMillicents != 22 || len(first.Lines) != 1 || first.Lines[0].SurfaceID != surfaceID || first.Lines[0].ConsumerID != "" {
+	if err := json.Unmarshal(created.Body.Bytes(), &first); err != nil || first.BillableUnits != 2 || first.AmountMillicents != 22 ||
+		len(first.Lines) != 1 || first.Lines[0].SurfaceID != surfaceID || first.Lines[0].ConsumerID != "" ||
+		!first.Lines[0].WindowEnd.Equal(minute.Add(time.Minute)) {
 		t.Fatalf("surface statement response=%+v err=%v", first, err)
 	}
 	if got := e.do(t, http.MethodPost, path+"/"+first.ID+"/finalize", struct{}{}, nil); got.Code != http.StatusOK {
@@ -240,7 +244,8 @@ func TestPlatformTenantSurfaceUsageAndStatementAPI(t *testing.T) {
 		t.Fatalf("surface adjustment: %d %s", adjusted.Code, adjusted.Body)
 	}
 	var second api.PlatformTenantStatementResponse
-	if err := json.Unmarshal(adjusted.Body.Bytes(), &second); err != nil || second.Revision != 2 || second.AmountMillicents != 11 || len(second.Lines) != 1 || second.Lines[0].SurfaceID != surfaceID {
+	if err := json.Unmarshal(adjusted.Body.Bytes(), &second); err != nil || second.Revision != 2 || second.AmountMillicents != 11 ||
+		len(second.Lines) != 1 || second.Lines[0].SurfaceID != surfaceID || !second.Lines[0].WindowEnd.Equal(minute.Add(time.Minute)) {
 		t.Fatalf("surface adjustment response=%+v err=%v", second, err)
 	}
 }

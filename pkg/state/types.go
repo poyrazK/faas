@@ -3448,6 +3448,12 @@ const (
 	AppWebhookEventPlatformTenantStatementFinalized AppWebhookEvent = "platform_tenant.statement.finalized"
 	AppWebhookEventDebugRegressionDetected          AppWebhookEvent = "debug.regression.detected"
 	AppWebhookEventDebugRegressionResolved          AppWebhookEvent = "debug.regression.resolved"
+	AppWebhookEventIssueCreated                     AppWebhookEvent = "issue.created"
+	AppWebhookEventIssueAssigned                    AppWebhookEvent = "issue.assigned"
+	AppWebhookEventIssueResolved                    AppWebhookEvent = "issue.resolved"
+	AppWebhookEventIssueReopened                    AppWebhookEvent = "issue.reopened"
+	AppWebhookEventIssueIgnored                     AppWebhookEvent = "issue.ignored"
+	AppWebhookEventIssueRegressed                   AppWebhookEvent = "issue.regressed"
 )
 
 // AllAppWebhookEvents is the canonical closed vocabulary shared by
@@ -3476,6 +3482,12 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventPlatformTenantStatementFinalized,
 	AppWebhookEventDebugRegressionDetected,
 	AppWebhookEventDebugRegressionResolved,
+	AppWebhookEventIssueCreated,
+	AppWebhookEventIssueAssigned,
+	AppWebhookEventIssueResolved,
+	AppWebhookEventIssueReopened,
+	AppWebhookEventIssueIgnored,
+	AppWebhookEventIssueRegressed,
 }
 
 // ValidAppWebhookEvent reports whether event is in the closed

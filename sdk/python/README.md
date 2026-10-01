@@ -203,6 +203,36 @@ identifiers and key rotation. Call `failed_login_headers` with the normalized
 lookup value after either an unknown account or an incorrect credential, and
 set its result on the 401 response using your framework.
 
+## Dev Bridge request context
+
+Wrap a FastAPI/Starlette ASGI app and use an HTTPX transport that re-evaluates
+routing context on each outbound request and redirect hop:
+
+```python
+import httpx
+import os
+from fastapi import Response
+from faas_sdk import DevBridgeMiddleware, AsyncDevBridgeTransport
+
+app.add_middleware(DevBridgeMiddleware)
+service_client = httpx.AsyncClient(transport=AsyncDevBridgeTransport())
+
+@app.get('/charge')
+async def charge():
+    result = await service_client.get(os.environ['GREGALE_SERVICE_PAYMENTS_URL'] + '/charge')
+    return Response(result.content, status_code=result.status_code, media_type='application/json')
+```
+
+Close the shared HTTPX client in the application's shutdown hook. Synchronous
+applications can use `DevBridgeTransport`; other adapters can capture a header
+with `with_dev_bridge_context(value)`. ContextVar keeps concurrent requests
+separate. Both transports strip explicit bridge authority and propagate only to
+single-label `NAME.svc.gregale` or `NAME.internal` names without URL userinfo.
+HTTPX redirect handling passes each hop through the transport, so an external
+destination cannot inherit session authority. Application authentication remains
+subject to HTTPX's normal redirect policy. Gregale authorizes scope at every hop.
+See [the Dev Bridge guide](../../docs/dev-bridge.md) for local execution.
+
 ## Project release context
 
 For app-to-app calls, wrap the ASGI application in

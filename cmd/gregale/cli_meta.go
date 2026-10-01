@@ -1196,6 +1196,25 @@ var cliCommands = []cliCommand{
 		},
 		Subcommands: []cliSub{
 			{Name: "status", Short: "show developer-environment quota usage"},
+			{Name: "bridge", Short: "run an HTTP service locally in a remote development environment", Flags: []cliFlag{
+				{Name: "environment", Short: "named development environment", Value: "ENV"},
+				{Name: "local-port", Short: "local HTTP service port", Value: "PORT"},
+				{Name: "dependencies", Short: "comma-separated remote dependency apps", Value: "APPS"},
+				{Name: "entrypoint", Short: "remote frontend for the session URL", Value: "APP"},
+				{Name: "inspect", Short: "inspect recent requests in a local browser"},
+				{Name: "replay-webhook", Short: "copy one provider-verified webhook receipt locally", Value: "INVOCATION"},
+				{Name: "ready-path", Short: "check a local HTTP readiness path before attaching", Value: "PATH"},
+				{Name: "bind-env", Short: "map ENV_KEY=dependency to its local proxy URL; repeatable", Value: "BINDING"},
+			}, Subcommands: []cliSub{
+				{Name: "list", Short: "list active account development bridges"},
+				{Name: "status", Short: "inspect a session and recent request activity", Positionals: []string{"SESSION"}},
+				{Name: "revoke", Short: "revoke a session and disconnect its laptop", Positionals: []string{"SESSION"}},
+				{Name: "doctor", Short: "check admission, relay and local listener using a temporary session", Positionals: []string{"APP"}, Flags: []cliFlag{
+					{Name: "environment", Short: "named development environment", Value: "ENV"},
+					{Name: "local-port", Short: "local HTTP service port", Value: "PORT"},
+					{Name: "entrypoint", Short: "remote frontend", Value: "APP"},
+				}},
+			}},
 			{Name: "history", Short: "show edit-to-live timings and SLO guidance", Flags: []cliFlag{
 				{Name: "path", Short: "source directory", Value: "DIR"},
 				{Name: "name", Short: "developer-session project name", Value: "PROJECT"},
@@ -1228,14 +1247,32 @@ var cliCommands = []cliCommand{
 		Name:     "test",
 		DocSlug:  "test",
 		Short:    "Run scenario suites and bounded local HTTP load tests",
-		Examples: []string{"gregale test init --from openapi.yaml --project my-api", "gregale test import --from collection.json --project my-api", "gregale test --validate", "gregale test --suite smoke --engine local --fail-fast --junit test-results.xml", "gregale test --suite regression --validate", "gregale test --scenario customer-export --preflight", "gregale test --scenario customer-export --profile restored --repeat 3 --max-workload-minutes 135 --report test-results.json --junit test-results.xml", "gregale test --scenario api-smoke --engine local", "gregale test --scenario api-smoke --engine local --load --baseline baseline.json --report current.json --junit current.xml", "gregale test --scenario customer-export --engine local --base-url http://localhost:3000 --data cases.json", "gregale test --scenario api-smoke --engine local --base-url http://localhost:3000 --load --vus 5 --duration 30s --pacing 100ms --progress", "gregale test --scenario api-smoke --engine local --load --rate 20 --duration 30s --vus 10 --progress", "gregale test --scenario customer-export --engine simulated"},
+		Examples: []string{"gregale test init --from openapi.yaml --project my-api", "gregale test import --from collection.json --project my-api", "gregale test --validate", "gregale test --suite smoke --engine local --fail-fast --junit test-results.xml", "gregale test --suite smoke --engine local --report test-results.json --junit test-results.xml --html test-results.html", "gregale test compare baseline.json current.json --budget test-budget.yaml --html comparison.html", "gregale test --suite regression --validate", "gregale test --scenario customer-export --preflight", "gregale test --scenario customer-export --profile restored --repeat 3 --max-workload-minutes 135 --report test-results.json --junit test-results.xml", "gregale test --scenario api-smoke --engine local", "gregale test --scenario api-smoke --engine local --load --baseline baseline.json --report current.json --junit current.xml", "gregale test --scenario customer-export --engine local --base-url http://localhost:3000 --data cases.json", "gregale test --scenario api-smoke --engine local --base-url http://localhost:3000 --load --vus 5 --duration 30s --pacing 100ms --progress", "gregale test --scenario api-smoke --engine local --load --rate 20 --duration 30s --vus 10 --progress", "gregale test --scenario customer-export --engine simulated"},
 		Subcommands: []cliSub{{Name: "init", Short: "Create public GET smoke checks from a local OpenAPI document", Examples: []string{"gregale test init --from openapi.yaml --project my-api --source ."}, Flags: []cliFlag{
 			{Name: "from", Short: "local OpenAPI 3.0 or 3.1 document", Value: "PATH", Req: true},
 			{Name: "project", Short: "Gregale project slug", Value: "SLUG", Req: true},
 			{Name: "source", Short: "application source directory", Value: "DIR"},
 			{Name: "scenario", Short: "scenario name", Value: "NAME"},
 			{Name: "output", Short: "new manifest path", Value: "PATH"},
-		}}, {Name: "import", Short: "Create draft native requests from a local Postman Collection v2.1 export", Examples: []string{"gregale test import --from collection.json --project my-api", "gregale test import --from collection.json --project my-api --requests-only --status 202"}, Flags: []cliFlag{
+		}}, {Name: "compare", Short: "Compare saved JSON run reports, enforce budgets, and write summaries", Positionals: []string{"<before.json>", "<after.json>"}, Examples: []string{"gregale test compare baseline.json current.json", "gregale test compare baseline.json current.json --budget test-budget.yaml --markdown comparison.md", "gregale test compare baseline.json current.json --budget test-budget.yaml --github-summary"}, Flags: []cliFlag{
+			{Name: "budget", Short: "apply comparison budgets from a YAML file; fail if a check fails or is inconclusive", Value: "PATH"},
+			{Name: "html", Short: "write a standalone HTML comparison report", Value: "PATH"},
+			{Name: "markdown", Short: "write a Markdown comparison summary", Value: "PATH"},
+			{Name: "github-summary", Short: "append a Markdown summary to GITHUB_STEP_SUMMARY"},
+		}}, {Name: "ci", Short: "Set up GitHub Actions for scenario tests", Subcommands: []cliSub{{Name: "init", Short: "Generate GitHub Actions for local, simulated, or real-VM scenario tests", Examples: []string{"gregale test ci init --manifest gregale-test.yaml --suite smoke", "gregale test ci init --manifest gregale-test.yaml --suite smoke --baseline-max-age-days 14", "gregale test ci init --manifest tests/scenario-acceptance/gregale-test.yaml --suite real-vm --engine real-vm --profiles warm,cold,restored --max-workload-minutes 135"}, Flags: []cliFlag{
+			{Name: "manifest", Short: "scenario manifest path", Value: "PATH"},
+			{Name: "suite", Short: "suite from the manifest (inferred when exactly one exists)", Value: "NAME"},
+			{Name: "engine", Short: "override suite engine for CI", Value: "ENGINE", ClosedSet: []string{"local", "simulated", "real-vm"}},
+			{Name: "load", Short: "include local HTTP load execution"},
+			{Name: "repeat", Short: "runs per scenario (default 1; default 3 with --load)", Value: "N"},
+			{Name: "profiles", Short: "real-VM lifecycle profiles (all or comma-separated)", Value: "LIST"},
+			{Name: "max-workload-minutes", Short: "required real-VM workload-minute limit per profile job", Value: "N"},
+			{Name: "environment", Short: "GitHub environment containing real-VM credentials", Value: "NAME"},
+			{Name: "branch", Short: "baseline branch for local and simulated workflows", Value: "NAME"},
+			{Name: "baseline-max-age-days", Short: "maximum baseline artifact age (default 30; 0 disables age check)", Value: "N"},
+			{Name: "workflow", Short: "new GitHub Actions workflow path", Value: "PATH"},
+			{Name: "budget", Short: "comparison budget path for local and simulated workflows", Value: "PATH"},
+		}}}}, {Name: "import", Short: "Create draft native requests from a local Postman Collection v2.1 export", Examples: []string{"gregale test import --from collection.json --project my-api", "gregale test import --from collection.json --project my-api --requests-only --status 202"}, Flags: []cliFlag{
 			{Name: "from", Short: "local Postman Collection v2.1 JSON export", Value: "PATH", Req: true},
 			{Name: "project", Short: "Gregale project slug", Value: "SLUG", Req: true},
 			{Name: "source", Short: "command working directory", Value: "DIR"},
@@ -1267,6 +1304,7 @@ var cliCommands = []cliCommand{
 			{Name: "manifest", Short: "scenario manifest path", Value: "PATH"},
 			{Name: "report", Short: "write a JSON report", Value: "PATH"},
 			{Name: "junit", Short: "write a JUnit XML report", Value: "PATH"},
+			{Name: "html", Short: "write a standalone HTML report", Value: "PATH"},
 		},
 	},
 	{
@@ -1316,6 +1354,18 @@ var cliCommands = []cliCommand{
 		},
 		Flags: []cliFlag{
 			{Name: "app", Short: "app slug", Value: "slug"},
+		},
+	},
+	{
+		Name: "flags", DocSlug: "flags", Short: "Release application behavior to selected customers",
+		Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}},
+		Subcommands: []cliSub{
+			{Name: "get", Short: "Read current flag configuration"},
+			{Name: "apply", Short: "Publish a versioned configuration", Flags: []cliFlag{{Name: "file", Short: "JSON update bundle", Value: "path", Req: true}}},
+			{Name: "history", Short: "List immutable configuration versions", Flags: []cliFlag{{Name: "before-version", Short: "page before this version", Value: "number"}}},
+			{Name: "inspect", Short: "Explain a customer's decision", Flags: []cliFlag{{Name: "key", Short: "flag key", Value: "key", Req: true}, {Name: "customer-id", Short: "customer UUID", Value: "UUID"}, {Name: "version", Short: "historical configuration version", Value: "number"}}},
+			{Name: "rollback", Short: "Publish an earlier configuration", Flags: []cliFlag{{Name: "version", Short: "version to restore", Value: "number", Req: true}, {Name: "expected-version", Short: "current version", Value: "number", Req: true}}},
+			{Name: "requests", Short: "Inspect request evidence by flag value", Flags: []cliFlag{{Name: "key", Short: "flag key", Value: "key", Req: true}, {Name: "customer-id", Short: "customer UUID", Value: "UUID"}, {Name: "value", Short: "true or false", Value: "bool"}, {Name: "used", Short: "true or false exposure", Value: "bool"}, {Name: "since", Short: "lookback (default 24h)", Value: "duration"}, {Name: "cursor", Short: "next-page cursor", Value: "cursor"}}},
 		},
 	},
 	{
@@ -1523,6 +1573,7 @@ var cliCommands = []cliCommand{
 		DocSlug: "run",
 		Short:   "Run untrusted code in an isolated disposable microVM",
 		Flags: []cliFlag{
+			{Name: "profile", Short: "preinstalled dependencies (data requires python313)", Value: "P", ClosedSet: []string{"standard", "python-data-v1"}},
 			{Name: "runtime", Short: "runtime (node22|node24|python312|python313)", Value: "R", ClosedSet: []string{"node22", "node24", "python312", "python313"}},
 			{Name: "source", Short: "inline source code", Value: "CODE"},
 			{Name: "file", Short: "source file (regular file only)", Value: "PATH"},
@@ -1532,6 +1583,8 @@ var cliCommands = []cliCommand{
 			{Name: "cpu-millicores", Short: "CPU limit", Value: "N"},
 			{Name: "ephemeral-disk-mb", Short: "ephemeral scratch size", Value: "N"},
 			{Name: "max-output-bytes", Short: "combined output cap", Value: "N"},
+			{Name: "output-file", Short: "output file below context.output_dir to export (repeatable)", Value: "PATH"},
+			{Name: "output-dir", Short: "save artifacts locally; implies --wait", Value: "DIR"},
 			{Name: "wait", Short: "wait for terminal result"},
 			{Name: "watch", Short: "stream live output while waiting"},
 			{Name: "poll-interval", Short: "status polling interval with --wait", Value: "D"},
@@ -1548,6 +1601,7 @@ var cliCommands = []cliCommand{
 				{Name: "offset", Short: "number of matching runs to skip", Value: "N"},
 				{Name: "status", Short: "filter by lifecycle status", Value: "STATUS", ClosedSet: []string{"queued", "restoring", "running", "succeeded", "failed", "timed_out", "out_of_memory", "cancelled"}},
 			}},
+			{Name: "artifacts", Short: "Save output artifacts from a successful run", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "output-dir", Short: "local destination (required)", Value: "DIR"}}},
 			{Name: "get", Short: "Show one run"},
 			{Name: "status", Short: "Show one run (alias for get)"},
 			{Name: "cancel", Short: "Cancel one run"},
@@ -1568,6 +1622,10 @@ var cliCommands = []cliCommand{
 		},
 		Positionals: []string{"<id>"},
 	},
+	{Name: "issues", DocSlug: "issues", Short: "Group failures and track ownership and release-aware resolution", Examples: []string{"gregale issues list --app my-api", "gregale issues get ISSUE_ID --app my-api", "gregale issues resolve ISSUE_ID --app my-api --deployment DEPLOYMENT_ID"}, Subcommands: []cliSub{
+		{Name: "list", Short: "List grouped issues"}, {Name: "get", Short: "Read evidence and release history"}, {Name: "assign", Short: "Assign an issue to an account"}, {Name: "resolve", Short: "Resolve in a deployment"}, {Name: "reopen", Short: "Reopen an issue"}, {Name: "ignore", Short: "Ignore until a timestamp"}, {Name: "tokens", Short: "List ingest credentials"}, {Name: "create-token", Short: "Create a deployment-bound ingest credential"}, {Name: "revoke-token", Short: "Revoke an ingest credential"},
+	}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "application slug"}, {Name: "deployment", Value: "UUID", Short: "fixed or token-bound deployment"}, {Name: "state", Value: "STATE", Short: "filter issue state"}, {Name: "environment", Value: "ENV", Short: "environment filter"}, {Name: "cursor", Value: "CURSOR", Short: "issue-list or occurrence cursor"}, {Name: "release-cursor", Value: "CURSOR", Short: "release history cursor"}, {Name: "activity-cursor", Value: "CURSOR", Short: "activity history cursor"}, {Name: "assignee", Value: "UUID", Short: "owner account"}, {Name: "since", Value: "RFC3339", Short: "impact window start"}, {Name: "until", Value: "RFC3339", Short: "ignore until"}, {Name: "name", Value: "NAME", Short: "credential name"}, {Name: "expires-in", Value: "D", Short: "credential lifetime"}}},
+
 	{
 		Name:    "debug",
 		DocSlug: "debug",

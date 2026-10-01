@@ -62,6 +62,58 @@ bundles contain regular file bytes only—there is no symlink, device, or host
 path representation. Source and input are encrypted before durable admission
 and are never returned by reads.
 
+## Preinstalled dependency profiles
+
+Set `profile` in the API/SDK request or `--profile` on the CLI. Omission selects
+`standard`, which retains the standard-library-only Python environment.
+`python-data-v1` requires `python313` and provides NumPy 2.5.3, pandas 3.0.6,
+python-dateutil 2.9.0.post0, and six 1.17.0. This versioned package set is built
+into a shared read-only image; packages are available without downloads or
+per-run installation. Source bundles can include local modules, but a run
+cannot request arbitrary third-party dependencies.
+
+For example, `analyze.py`:
+
+```python
+import os
+import numpy as np
+import pandas as pd
+
+def main(input, context):
+    frame = pd.DataFrame({"value": input})
+    frame.to_csv(os.path.join(context["output_dir"], "report.csv"), index=False)
+    return {"sum": int(frame.value.sum()), "mean": float(np.mean(input))}
+```
+
+```sh
+gregale run --runtime python313 --profile python-data-v1 --file analyze.py \
+  --input '[1,2,3]' --memory-mb 256 --timeout-ms 30000 \
+  --output-file report.csv --output-dir ./results --json
+```
+
+The receipt returns `profile` and `packages`. Once the scheduler selects an
+image it also returns `runtime_image_digest` (`sha256:` plus lowercase hex),
+pinned before dispatch and preserved across restore retries. Package versions
+are declared at admission and checked in the guest before caller code runs.
+Unknown profiles, incompatible runtimes, and mismatched guest images fail
+closed. Standard and data runs never share a snapshot identity. Every run
+keeps its existing network, resource, output, and ephemeral-storage limits.
+
+Operators must publish and validate the profile image and matching guest
+artifacts before use. On imaged, set `FAAS_EXECUTION_PYTHON_DATA_V1_BASE_REF`
+to the concrete linux/amd64 OCI manifest reference (`...@sha256:...`). It
+opts into the existing verified staging path under
+`base/runner-python-data-v1-amd64.ext4`; omission stages no data base. Use the
+reported image configuration digest for `BASE_DIGEST` below, and publish a
+separate payload-free execution layer preserving the data profile marker.
+The scheduler reads all eight artifact fields from
+`FAAS_EXECUTION_PYTHON313_PYTHON_DATA_V1_`: `ARCH`, `KERNEL_DIGEST`,
+`EXECUTOR_DIGEST`, `BASE_DIGEST`, `KERNEL_KEY`, `BASE_KEY`, `LAYER_KEY`, and
+`FC_VERSION`. Digests are lowercase SHA-256 hex without the `sha256:` prefix.
+This namespace never falls back to plain `FAAS_EXECUTION_PYTHON313_*` values.
+Dependency profiles require guest protocol v3 and native KVM/leak acceptance;
+see [ADR-383](adr/383-curated-stateless-execution-profiles.md) for rollout.
+
 ## Usage accounting
 
 `GET /v1/usage/summary` (and its `compute` projection in
@@ -112,3 +164,55 @@ disabled, it verifies that admission fails closed with the documented 501
 problem. When enabled, it submits a bounded Node 24 run and polls its receipt
 until stdout contains the smoke marker. Set `GREGALE_API_URL` for a non-default
 origin and `FAAS_EXECUTION_SMOKE_TIMEOUT_SECONDS` to change the polling limit.
+
+## Export generated files
+
+Declare the exact files to export with `output_files` (API/SDK) or repeat
+`--output-file` on the CLI. Both runtimes expose `context.output_dir`: use
+`context.output_dir` in Node and `context["output_dir"]` in Python. It points to
+a fresh scratch directory for generated outputs, separate from staged inputs.
+
+For example, `tool.py`:
+
+```python
+import os
+
+def main(input, context):
+    with open(os.path.join(context["output_dir"], "data.csv"), "w") as output:
+        output.write("x,y\n1,2\n")
+    with open(os.path.join(context["output_dir"], "patch.diff"), "w") as output:
+        output.write("--- a/example\n+++ b/example\n")
+    return {"rows": 1}
+```
+
+```sh
+gregale run --runtime python313 --file tool.py \
+  --output-file data.csv --output-file patch.diff --output-dir ./results
+# --output-dir implies --wait; omit it to receive inline artifacts in JSON.
+gregale runs artifacts <execution-id> --output-dir ./results-again
+```
+
+Up to eight unique normalized relative paths, each at most 256 UTF-8 bytes,
+are allowed. No globs or automatic directory export occurs. Missing files,
+symlinks (including parent directories), directories, and special files fail
+the run with `artifact_invalid`; no partial artifact set is returned. Outputs
+are collected only on success, before scratch removal and VM teardown.
+
+The successful terminal receipt contains an optional `artifacts` array. Each
+entry has `name`, `size_bytes` (raw file size), `sha256` (`sha256:` plus lowercase
+hex), and `content` (base64). Result/stdout/stderr plus the compact JSON artifact
+array must fit `limits.max_output_bytes`; encoded content and all artifact
+metadata count toward the existing budget and usage output-byte total.
+Artifacts use the same account-scoped receipt storage and lifecycle as other
+terminal output. This feature retains neither a guest disk nor a guest session.
+
+The CLI verifies integrity before saving and refuses to overwrite local files.
+Node's `decodeExecutionArtifact(artifact)`, Python's
+`decode_execution_artifact(artifact)`, and Go's `artifact.Bytes()` return verified
+bytes without writing files. Use these helpers on artifacts from the final
+receipt returned by the existing submit-and-watch SDK methods.
+
+Exports require guest protocol v2 and rebuilt guest images/runtime snapshots.
+Legacy runs retain v1. Older nodes reject export requests; a missing export is
+never silently accepted as success. Native KVM isolation and leak checks must
+pass before enabling this release's export path.
