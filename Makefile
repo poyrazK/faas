@@ -1348,3 +1348,7 @@ test-flags-metal: ## Validate Node Flags refresh after native VM restore (root, 
 .PHONY: test-issues
 test-issues: ## Real PostgreSQL and SDK process acceptance for Gregale Issues
 	@bash scripts/test-issues.sh
+
+.PHONY: test-companion-scratch-contract
+test-companion-scratch-contract: ## Linux/x86_64 root acceptance for ephemeral companion scratch capacity and isolation
+	@GO="$(GO)" bash scripts/ci/companion-scratch-contract.sh

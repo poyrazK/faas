@@ -2374,19 +2374,18 @@ func mountSidecarRuntimeFilesystems(root string, tmpfsSizeMB int) error {
 			return fmt.Errorf("bind %s: %w", name, err)
 		}
 	}
-	for _, mount := range []struct {
-		name string
-		mode string
-	}{
-		{name: "tmp", mode: sidecarTmpfsMountData(tmpfsSizeMB)},
-	} {
-		target := filepath.Join(root, mount.name)
-		if err := ensureMountDirectory(target); err != nil {
-			return fmt.Errorf("%s target: %w", mount.name, err)
-		}
-		if err := syscall.Mount("tmpfs", target, "tmpfs", syscall.MS_NOSUID|syscall.MS_NODEV, mount.mode); err != nil {
-			return fmt.Errorf("tmpfs %s: %w", mount.name, err)
-		}
+	return mountSidecarScratch(root, tmpfsSizeMB)
+}
+
+// mountSidecarScratch is shared with the Linux capacity acceptance test so
+// the test exercises the mount options and target checks used during boot.
+func mountSidecarScratch(root string, tmpfsSizeMB int) error {
+	target := filepath.Join(root, "tmp")
+	if err := ensureMountDirectory(target); err != nil {
+		return fmt.Errorf("tmp target: %w", err)
+	}
+	if err := syscall.Mount("tmpfs", target, "tmpfs", syscall.MS_NOSUID|syscall.MS_NODEV, sidecarTmpfsMountData(tmpfsSizeMB)); err != nil {
+		return fmt.Errorf("tmpfs tmp: %w", err)
 	}
 	return nil
 }
