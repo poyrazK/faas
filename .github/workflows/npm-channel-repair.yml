@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   repair:
@@ -23,7 +24,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          registry-url: "https://registry.npmjs.org"
+      - name: Install the trusted-publishing npm client
+        run: npm install --global npm@11.21.0 --ignore-scripts --registry=https://registry.npmjs.org/
       - name: Download and verify the existing release archives
         env:
           GH_TOKEN: ${{ github.token }}
@@ -40,10 +42,9 @@ jobs:
             --artifacts-dir "$RUNNER_TEMP/archives" --out-dir "$RUNNER_TEMP/npm"
           bash scripts/verify-npm-package-payloads.sh "$RUNNER_TEMP/npm/publish-order.txt"
       - name: Repair tags and wait for all accepted versions
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          test -n "$NODE_AUTH_TOKEN"
+          test -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}"
+          test -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}"
           node scripts/publish-npm-packages.mjs --packages-dir "$RUNNER_TEMP/npm" --repair-only
       - name: Verify anonymous installation and binary checksum
         run: node scripts/verify-npm-installation.mjs --packages-dir "$RUNNER_TEMP/npm" --prefix "$RUNNER_TEMP/npm-smoke"
