@@ -1348,3 +1348,11 @@ test-flags-metal: ## Validate Node Flags refresh after native VM restore (root, 
 .PHONY: test-issues
 test-issues: ## Real PostgreSQL and SDK process acceptance for Gregale Issues
 	@bash scripts/test-issues.sh
+
+.PHONY: tcp-tls-alert-check tcp-tls-deployment-check
+tcp-tls-alert-check: ## Verify TCP TLS certificate availability and expiry alerts
+	promtool check rules deploy/ansible/roles/prometheus/files/faas.rules.yml
+	promtool test rules deploy/ansible/roles/prometheus/files/tcp-tls.rules.test.yml
+
+tcp-tls-deployment-check: ## Verify TCP TLS path validation and environment rendering locally
+	ansible-playbook -i localhost, -c local deploy/ansible/tests/tcp_tls_config.yml
