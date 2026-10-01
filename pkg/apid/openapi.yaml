@@ -7451,6 +7451,10 @@ paths:
           description: Exact issue environment namespace.
           in: query
           schema: { type: string }
+        - name: assignee
+          description: Filter by me, unassigned, or an owner account UUID.
+          in: query
+          schema: { type: string }
         - name: cursor
           description: Opaque next_cursor from the previous issue page.
           in: query
