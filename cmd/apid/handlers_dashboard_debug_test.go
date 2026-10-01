@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -268,7 +269,7 @@ func TestDashboardDebugReplayStatusProjectionIsScoped(t *testing.T) {
 	if _, err := store.ClaimInvocation(context.Background(), inv.ID, "instance-1", 60); err != nil {
 		t.Fatalf("ClaimInvocation: %v", err)
 	}
-	result := json.RawMessage(`{"source_status_code":500,"mirror_status_code":200,"source_latency_ms":90,"mirror_latency_ms":12,"status_diff":true,"crashed":false}`)
+	result := json.RawMessage(`{"source_deployment_id":"source-deployment","mirror_deployment_id":"mirror-deployment","source_status_code":500,"mirror_status_code":200,"source_latency_ms":90,"mirror_latency_ms":12,"status_diff":true,"crashed":false}`)
 	if err := store.CompleteInvocation(context.Background(), inv.ID, result); err != nil {
 		t.Fatalf("CompleteInvocation: %v", err)
 	}
@@ -278,7 +279,7 @@ func TestDashboardDebugReplayStatusProjectionIsScoped(t *testing.T) {
 	if err := s.populateDashboardDebugReplay(context.Background(), app, acct, inv.ID, requestID, data); err != nil {
 		t.Fatalf("populateDashboardDebugReplay: %v", err)
 	}
-	if data.Replay == nil || !data.Replay.HasResult || data.Replay.MirrorStatusCode != 200 || !data.Replay.StatusDiff {
+	if data.Replay == nil || !data.Replay.HasResult || data.Replay.MirrorStatusCode != 200 || !data.Replay.StatusDiff || data.Replay.SourceDeploymentID != "source-deployment" || data.Replay.MirrorDeploymentID != "mirror-deployment" {
 		t.Fatalf("replay projection = %#v, want completed comparison", data.Replay)
 	}
 	if err := s.populateDashboardDebugReplay(context.Background(), app, acct, inv.ID, "different-request", data); err == nil {
@@ -304,6 +305,47 @@ func TestDashboardDebugReplayActionFlash(t *testing.T) {
 		})
 	}
 
+}
+
+func TestIssueDashboardReplayTemplateRendersScopedReceipt(t *testing.T) {
+	occurrenceID := "11111111-1111-4111-8111-111111111111"
+	requestID := "22222222-2222-4222-8222-222222222222"
+	targetID := "33333333-3333-4333-8333-333333333333"
+	data := dashboardIssuesData{
+		AppSlug:    "issues-app",
+		ReplayCSRF: "csrf-token",
+		Detail: &api.IssueDetail{
+			Issue: api.Issue{ID: "44444444-4444-4444-8444-444444444444", Title: "Export failure"},
+			Events: []api.IssueOccurrence{{
+				ID: occurrenceID, IssueEvent: api.IssueEvent{ExceptionType: "DateFormatError", Message: "invalid date"},
+				DebugRequestID: requestID, DeploymentID: "55555555-5555-4555-8555-555555555555",
+			}},
+		},
+		ReplayTargets: map[string][]dashboardIssueReplayTarget{
+			"55555555-5555-4555-8555-555555555555": {{DeploymentID: targetID, Label: "v43 · live"}},
+		},
+		Replay: &dashboard.DebugReplayView{
+			ID: "66666666-6666-4666-8666-666666666666", State: "completed", HasResult: true,
+			SourceDeploymentID: "55555555-5555-4555-8555-555555555555", MirrorDeploymentID: targetID,
+			SourceStatusCode: 500, MirrorStatusCode: 200, SourceLatencyMS: 120, MirrorLatencyMS: 45, StatusDiff: true,
+		},
+		ReplayEventID:  occurrenceID,
+		ReplayDebugURL: "/dashboard/apps/issues-app/debug?request_id=" + requestID + "&replay_id=66666666-6666-4666-8666-666666666666#request-detail",
+	}
+	rec := httptest.NewRecorder()
+	if err := dashboard.Render(rec, slog.Default(), "nonce", dashboard.Page{Title: "issues", Body: "issues", Data: data}); err != nil {
+		t.Fatalf("render issue replay page: %v", err)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Replay metadata to mirror", `name="mirror_deployment_id"`, targetID,
+		"request bodies and credentials are excluded", "Mirror replay completed",
+		"Open replay in the request debugger", requestID, "HTTP 500", "HTTP 200", "different HTTP status",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("issue replay page missing %q", want)
+		}
+	}
 }
 
 func TestDashboardDebugReplayPollIsBounded(t *testing.T) {

@@ -373,7 +373,35 @@ func (s *server) dashboardDebugReplay(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.ErrPlanFeatureGated("debugger", acct.Plan))
 		return
 	}
-	result, problem := s.enqueueDebugReplay(r.Context(), app, acct, reqID, "")
+	if err := r.ParseForm(); err != nil {
+		api.WriteProblem(w, api.ErrValidation("invalid replay form"))
+		return
+	}
+	var issueReturn *dashboardIssueReplayReturn
+	if strings.TrimSpace(r.FormValue("return_issue_id")) != "" {
+		validated, err := s.validateDashboardIssueReplayReturn(r.Context(), app, acct, reqID, r)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		issueReturn = &validated
+	}
+	targetID := strings.TrimSpace(r.FormValue("mirror_deployment_id"))
+	if issueReturn != nil && targetID == "" {
+		redirectDashboardIssueReplay(w, r, slug, *issueReturn, "", &api.Problem{Code: api.CodeDebugReplayUnsupported})
+		return
+	}
+	var result debugReplayEnqueueResult
+	var problem *api.Problem
+	if issueReturn != nil {
+		result, problem = s.enqueueDebugReplayForDeployment(r.Context(), app, acct, reqID, issueReturn.DeploymentID, targetID)
+	} else {
+		result, problem = s.enqueueDebugReplay(r.Context(), app, acct, reqID, targetID)
+	}
+	if issueReturn != nil {
+		redirectDashboardIssueReplay(w, r, slug, *issueReturn, result.Invocation.ID, problem)
+		return
+	}
 	values := url.Values{
 		"request_id":     []string{reqID},
 		"since":          []string{strings.TrimSpace(r.FormValue("since"))},
@@ -393,6 +421,83 @@ func (s *server) dashboardDebugReplay(w http.ResponseWriter, r *http.Request) {
 		values.Set("replay_id", result.Invocation.ID)
 	}
 	http.Redirect(w, r, "/dashboard/apps/"+url.PathEscape(slug)+"/debug?"+values.Encode(), http.StatusSeeOther)
+}
+
+type dashboardIssueReplayReturn struct {
+	IssueID      string
+	EventID      string
+	Since        string
+	EventCursor  string
+	DeploymentID string
+}
+
+func (s *server) validateDashboardIssueReplayReturn(ctx context.Context, app state.App, acct state.Account, reqID string, r *http.Request) (dashboardIssueReplayReturn, error) {
+	issueID := strings.TrimSpace(r.FormValue("return_issue_id"))
+	eventID := strings.TrimSpace(r.FormValue("return_event_id"))
+	if _, err := uuid.Parse(issueID); err != nil {
+		return dashboardIssueReplayReturn{}, err
+	}
+	if _, err := uuid.Parse(eventID); err != nil {
+		return dashboardIssueReplayReturn{}, err
+	}
+	if len(r.FormValue("return_event_cursor")) > api.IssueCursorMaxBytes {
+		return dashboardIssueReplayReturn{}, state.ErrInvalidArgument
+	}
+	cursors := state.IssueDetailCursors{}
+	var err error
+	if cursors.Events, err = state.DecodeIssueCursor(r.FormValue("return_event_cursor")); err != nil {
+		return dashboardIssueReplayReturn{}, err
+	}
+	now := time.Now().UTC()
+	since := now.Add(-24 * time.Hour)
+	sinceRaw := strings.TrimSpace(r.FormValue("return_since"))
+	if sinceRaw != "" {
+		since, err = time.Parse(time.RFC3339Nano, sinceRaw)
+		if err != nil {
+			return dashboardIssueReplayReturn{}, err
+		}
+	}
+	if earliest := now.AddDate(0, 0, -acct.Plan.IssueLimits().RetentionDays); since.Before(earliest) {
+		since = earliest
+	}
+	if since.After(now) {
+		return dashboardIssueReplayReturn{}, state.ErrInvalidArgument
+	}
+	st, ok := s.store.(state.IssueStore)
+	if !ok || !acct.Plan.IssueLimits().Enabled {
+		return dashboardIssueReplayReturn{}, state.ErrNotFound
+	}
+	detail, err := st.GetIssueDetail(ctx, app.ID, issueID, since, now, cursors)
+	if err != nil {
+		return dashboardIssueReplayReturn{}, err
+	}
+	for _, occurrence := range detail.Events {
+		if occurrence.ID == eventID && occurrence.DebugRequestID == reqID {
+			return dashboardIssueReplayReturn{
+				IssueID: issueID, EventID: eventID, Since: sinceRaw,
+				EventCursor: strings.TrimSpace(r.FormValue("return_event_cursor")), DeploymentID: occurrence.DeploymentID,
+			}, nil
+		}
+	}
+	return dashboardIssueReplayReturn{}, state.ErrNotFound
+}
+
+func redirectDashboardIssueReplay(w http.ResponseWriter, r *http.Request, slug string, target dashboardIssueReplayReturn, replayID string, problem *api.Problem) {
+	values := url.Values{"issue": {target.IssueID}, "replay_event": {target.EventID}}
+	if target.Since != "" {
+		values.Set("since", target.Since)
+	}
+	if target.EventCursor != "" {
+		values.Set("event_cursor", target.EventCursor)
+	}
+	if problem != nil {
+		values.Set("action", "replay_error")
+		values.Set("error", problem.Code)
+	} else {
+		values.Set("action", "replay_queued")
+		values.Set("replay_id", replayID)
+	}
+	http.Redirect(w, r, "/dashboard/apps/"+url.PathEscape(slug)+"/issues?"+values.Encode(), http.StatusSeeOther)
 }
 
 func (s *server) populateDashboardDebugReplay(ctx context.Context, app state.App, acct state.Account, replayID, requestID string, data *dashboard.DebugPageData) error {
@@ -417,21 +522,40 @@ func (s *server) populateDashboardDebugReplay(ctx context.Context, app state.App
 	}
 	if len(inv.Result) > 0 {
 		var result struct {
-			SourceStatusCode int  `json:"source_status_code"`
-			MirrorStatusCode int  `json:"mirror_status_code"`
-			SourceLatencyMS  int  `json:"source_latency_ms"`
-			MirrorLatencyMS  int  `json:"mirror_latency_ms"`
-			StatusDiff       bool `json:"status_diff"`
-			Crashed          bool `json:"crashed"`
+			SourceDeploymentID string `json:"source_deployment_id"`
+			MirrorDeploymentID string `json:"mirror_deployment_id"`
+			SourceStatusCode   int    `json:"source_status_code"`
+			MirrorStatusCode   int    `json:"mirror_status_code"`
+			SourceLatencyMS    int    `json:"source_latency_ms"`
+			MirrorLatencyMS    int    `json:"mirror_latency_ms"`
+			StatusDiff         bool   `json:"status_diff"`
+			Crashed            bool   `json:"crashed"`
 		}
 		if err := json.Unmarshal(inv.Result, &result); err == nil {
 			view.HasResult = true
+			view.SourceDeploymentID = result.SourceDeploymentID
+			view.MirrorDeploymentID = result.MirrorDeploymentID
 			view.SourceStatusCode = result.SourceStatusCode
 			view.MirrorStatusCode = result.MirrorStatusCode
 			view.SourceLatencyMS = result.SourceLatencyMS
 			view.MirrorLatencyMS = result.MirrorLatencyMS
 			view.StatusDiff = result.StatusDiff
 			view.Crashed = result.Crashed
+		}
+	}
+	if err := json.Unmarshal(inv.Headers, &metadata); err == nil {
+		if view.SourceDeploymentID == "" {
+			view.SourceDeploymentID = metadata[api.DebugReplayDeploymentIDHeader]
+		}
+		if view.MirrorDeploymentID == "" && metadata[api.DebugReplayMirrorRuleIDHeader] != "" {
+			if rules, err := s.store.ListMirrorRules(ctx, app.ID); err == nil {
+				for _, rule := range rules {
+					if rule.ID == metadata[api.DebugReplayMirrorRuleIDHeader] {
+						view.MirrorDeploymentID = rule.MirrorDeploymentID
+						break
+					}
+				}
+			}
 		}
 	}
 	data.Replay = view

@@ -161,6 +161,17 @@ detail request. Keep `since` consistent when paging occurrences. The Go client
 offers `GetIssuePage` for independent collection cursors. Dashboard history links
 load earlier pages.
 
+When an occurrence links to retained request telemetry, the dashboard can send
+that request's metadata to an enabled mirror deployment configured for the
+deployment that served it. The action is CSRF-protected and selects only those
+enabled targets. It queues the same bodyless replay used by the request
+debugger: request bodies and credentials are not retained or sent. The issue
+page shows the queued/running state and the bounded source-versus-mirror status
+and latency comparison, with a link to the debugger receipt. Mirror targets are
+available on plans that support mirror rules and require a matching enabled
+rule; the action stays hidden when the occurrence has no linked request or
+configured target.
+
 ## Notifications and recovery
 
 Register an existing app webhook with filters `issue.created`, `issue.assigned`,
