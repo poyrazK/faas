@@ -4167,11 +4167,15 @@ CREATE TABLE public.app_tcp_listeners (
     enabled boolean DEFAULT true NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    tls_mode text DEFAULT 'passthrough'::text NOT NULL,
+    tls_hostname text DEFAULT ''::text NOT NULL,
     CONSTRAINT app_tcp_listeners_guest_port_chk CHECK (((guest_port >= 1) AND (guest_port <= 65535))),
     CONSTRAINT app_tcp_listeners_name_len_chk CHECK (((char_length(listener_name) >= 1) AND (char_length(listener_name) <= 31))),
     CONSTRAINT app_tcp_listeners_name_shape_chk CHECK ((listener_name ~ '^[a-z0-9][a-z0-9-]{0,30}$'::text)),
     CONSTRAINT app_tcp_listeners_protocol_chk CHECK ((protocol = 'tcp'::text)),
-    CONSTRAINT app_tcp_listeners_public_port_chk CHECK (((public_port >= 40000) AND (public_port <= 49999)))
+    CONSTRAINT app_tcp_listeners_public_port_chk CHECK (((public_port >= 40000) AND (public_port <= 49999))),
+    CONSTRAINT app_tcp_listeners_tls_hostname_chk CHECK ((((tls_mode = 'passthrough'::text) AND (tls_hostname = ''::text)) OR ((tls_mode = 'terminate'::text) AND ((char_length(tls_hostname) >= 1) AND (char_length(tls_hostname) <= 253)) AND (tls_hostname ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$'::text) AND (tls_hostname !~ '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'::text)))),
+    CONSTRAINT app_tcp_listeners_tls_mode_chk CHECK ((tls_mode = ANY (ARRAY['passthrough'::text, 'terminate'::text])))
 );
 
 

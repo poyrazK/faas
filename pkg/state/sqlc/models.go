@@ -735,6 +735,8 @@ type AppTcpListener struct {
 	Enabled      bool
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
+	TlsMode      string
+	TlsHostname  string
 }
 
 type AppTrustedSigner struct {

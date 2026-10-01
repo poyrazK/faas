@@ -3677,6 +3677,8 @@ type TCPListener struct {
 	Enabled      bool
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+	TLSMode      api.TCPListenerTLSMode
+	TLSHostname  string
 }
 
 // AppWebhookClaimLease is the recovery deadline assigned to each claimed row.
