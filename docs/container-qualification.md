@@ -1009,3 +1009,7 @@ The strict portable gate now requires `TestGatewayPublicEnvPrivateSchedulerTarge
 ### Firewall boolean renderer CI correction
 
 Monitoring/public CI exposed plain-Jinja2 E2E rendering failure from the Ansible-only `bool` filter. Deployment PR #3991 commit `7f9227ec6` uses standard string/lower membership for the supported true values, retaining false-by-default and string-false behavior. All seven UDP deployment tests now pass without a custom firewall bool filter, and all seven Go/Jinja2 egress matrix rows pass in integration and isolated deployment trees. Logs `/tmp/gregale-udp-jinja-{deployment,egress-matrix,isolated-deployment,isolated-egress}.log`. Downstream review branches still need this prerequisite correction; no live firewall rules were applied.
+
+### Downstream CI prerequisite propagation
+
+Public PR #3992 commit `bcc6d87e7` includes the standard-Jinja firewall fix; seven deployment tests and seven egress matrix rows passed on that branch. Monitoring PR #3998 commits `b37f42b44`/`10d709ac3` include the missing UDP environment registry/canonical-unit correction and firewall fix; `make generate-check env-contract-check egress-render-matrix` passed. Logs `/tmp/gregale-udp-public-firewall-{tests,matrix}.log` and `/tmp/gregale-udp-monitoring-prerequisite-gates.log`. Updated remote CI remains pending, and earlier failures remain historical evidence.
