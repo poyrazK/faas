@@ -26,6 +26,7 @@ class FixtureHost:
         self.calls = []
         self.postgres = (0, "t")
         self.virtualization = (0, "google")
+        self.free_bytes = 32 << 30
 
     def path(self, name):
         return self.root / str(name).lstrip("/")
@@ -41,6 +42,9 @@ class FixtureHost:
 
     def identity(self):
         return 0, "Linux", "x86_64", 2
+
+    def available_bytes(self, path):
+        return self.free_bytes
 
     def run(self, argv, env=None):
         self.calls.append((argv, env))
@@ -88,6 +92,8 @@ class PreflightTests(unittest.TestCase):
         self.digest = self.host.put("/srv/fc/base/runner-builder-amd64.ext4.digest",
             "source-ref=ghcr.io/example/builder@sha256:" + "a" * 64 + "\nlayout-v3\n")
         self.host.path("/srv/fc/snap").mkdir()
+        self.host.put("/repo/pkg/builderd/drive.go",
+            (SCRIPT.parents[2] / "pkg/builderd/drive.go").read_text())
         self.env = patch.dict(os.environ, {"FAAS_STORAGE_BACKEND": "local",
             "FAAS_STORAGE_ROOT": "/srv/fc", "FAAS_E2E_DATABASE_URL": "postgres://faas:secret@localhost/test"})
         self.env.start()
@@ -134,6 +140,19 @@ class PreflightTests(unittest.TestCase):
         path.write_text("not a directory")
         self.assertEqual("failed", self.check(self.collect(), "snapshot_directory")["status"])
         self.assertEqual("not a directory", path.read_text())
+
+    def test_builder_capacity_uses_owner_budget_and_available_blocks(self):
+        required = preflight.builder_drive_budget(self.host.path("/repo/pkg/builderd/drive.go").read_text())
+        for available in (required - 1, required, required + 1):
+            with self.subTest(available=available):
+                self.host.free_bytes = available
+                result = self.check(self.collect(), "builder_drive_capacity")
+                self.assertEqual("passed" if available >= required else "failed", result["status"])
+                self.assertEqual(required, result["detail"]["required_bytes"])
+
+    def test_unknown_builder_capacity_expression_blocks(self):
+        self.host.put("/repo/pkg/builderd/drive.go", "const BuildDriveMinFreeBytes = unknown\n")
+        self.assertEqual("failed", self.check(self.collect(), "builder_drive_capacity")["status"])
 
     def test_scan_absence_mismatch_malformed_and_fixable_critical_block(self):
         original = self.scan.read_text()

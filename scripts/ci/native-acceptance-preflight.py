@@ -86,6 +86,10 @@ class Host:
     def identity(self):
         return os.geteuid(), platform.system(), platform.machine(), os.cpu_count()
 
+    def available_bytes(self, path):
+        space = os.statvfs(path)
+        return space.f_bavail * space.f_frsize
+
 
 def sha256(path):
     digest = hashlib.sha256()
@@ -93,6 +97,21 @@ def sha256(path):
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return "sha256:" + digest.hexdigest()
+
+
+def builder_drive_budget(source):
+    """Read the pinned builderd owner rather than copying its capacity policy."""
+    constants = dict(re.findall(r"^const (BuildDrive\w+) = (.+)$", source, re.M))
+    names = ("BuildDriveMinWorkingSetBytes", "BuildDriveHostReserveBytes")
+    if constants.get("BuildDriveMinFreeBytes") != " + ".join(names):
+        raise ValueError("unknown builder drive capacity expression")
+    budget = 0
+    for name in names:
+        value = re.fullmatch(r"(\d+) << (\d+)", constants.get(name, ""))
+        if value is None or not 0 <= int(value[2]) <= 40:
+            raise ValueError("unknown builder drive capacity constant")
+        budget += int(value[1]) << int(value[2])
+    return budget
 
 
 def inspect_base(path, scan_path, digest_path):
@@ -179,6 +198,20 @@ def collect(args, host=None):
     if args.mode == "e2e":
         check("storage_backend", backend in {"local", "oci", "gcs"},
               "Use FAAS_STORAGE_BACKEND=local, oci, or gcs as supported by pkg/storage.")
+        # The source-build harness creates drive1 under Go's temporary root,
+        # even when artifacts use a remote backend. Mirror builderd's guard.
+        drive_parent = os.environ.get("TMPDIR") or "/tmp"
+        try:
+            required = builder_drive_budget(host.path(str(Path(args.repo_root) /
+                "pkg/builderd/drive.go")).read_text())
+            available = host.available_bytes(host.path(drive_parent))
+            check("builder_drive_capacity", available >= required,
+                  "Provision free space under " + drive_parent +
+                  " for pkg/builderd.BuildDriveMinFreeBytes; retire only completed run staging.",
+                  {"path": drive_parent, "available_bytes": available, "required_bytes": required})
+        except (OSError, ValueError):
+            check("builder_drive_capacity", False,
+                  "Verify the temporary filesystem and align preflight with pkg/builderd.BuildDriveMinFreeBytes.")
         if backend == "local":
             # VMMD inherits this directory's shared GC group when capturing
             # snapshots; it cannot create the absent root itself.
