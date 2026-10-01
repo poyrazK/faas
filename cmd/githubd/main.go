@@ -175,6 +175,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	wire.RegisterPoolMetrics(ops, pool)
 	ghAud := audit.New(store, log, ops, "githubd")
 	ghReconcile := buildGithubdReconcileService(store, ghAud, log)
+	ghReconcile.ValidateNewComputeRegion = func(ctx context.Context, id string) error {
+		if p := state.ValidateNewComputeRegion(ctx, store, cfg.RegionalComputeEnabled, id); p != nil {
+			return p
+		}
+		return nil
+	}
 
 	// PR-H: source fetcher for the push-dispatch path. The
 	// work dir is operator-configurable (default

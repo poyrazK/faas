@@ -19,6 +19,9 @@ class ProjectScanRequest:
 
     source: File
     """tar.gz of the repo root."""
+    compute_region: str | Unset = UNSET
+    """Immutable project default for new workloads. Omitted preserves the existing project default; per-workload
+    declarations take precedence."""
     project_slug: str | Unset = UNSET
     """kebab slug; default = repo dir basename"""
     repo_full_name: str | Unset = UNSET
@@ -41,6 +44,8 @@ class ProjectScanRequest:
 
     def to_dict(self) -> dict[str, Any]:
         source = self.source.to_tuple()
+
+        compute_region = self.compute_region
 
         project_slug = self.project_slug
 
@@ -65,6 +70,8 @@ class ProjectScanRequest:
                 "source": source,
             }
         )
+        if compute_region is not UNSET:
+            field_dict["compute_region"] = compute_region
         if project_slug is not UNSET:
             field_dict["project_slug"] = project_slug
         if repo_full_name is not UNSET:
@@ -88,6 +95,9 @@ class ProjectScanRequest:
         files: types.RequestFiles = []
 
         files.append(("source", self.source.to_tuple()))
+
+        if not isinstance(self.compute_region, Unset):
+            files.append(("compute_region", (None, str(self.compute_region).encode(), "text/plain")))
 
         if not isinstance(self.project_slug, Unset):
             files.append(("project_slug", (None, str(self.project_slug).encode(), "text/plain")))
@@ -125,6 +135,8 @@ class ProjectScanRequest:
         d = dict(src_dict)
         source = File(payload=BytesIO(d.pop("source")))
 
+        compute_region = d.pop("compute_region", UNSET)
+
         project_slug = d.pop("project_slug", UNSET)
 
         repo_full_name = d.pop("repo_full_name", UNSET)
@@ -143,6 +155,7 @@ class ProjectScanRequest:
 
         project_scan_request = cls(
             source=source,
+            compute_region=compute_region,
             project_slug=project_slug,
             repo_full_name=repo_full_name,
             production_branch=production_branch,

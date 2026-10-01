@@ -63,6 +63,10 @@ func (s *Service) reconcile(
 	if err != nil {
 		return out, fmt.Errorf("reconcile: validate workload admission: %w", err)
 	}
+	scan.Workloads = WorkloadsWithComputeRegions(scan.Workloads, accountApps, project)
+	if err := s.validateNewWorkloadRegions(ctx, scan.Workloads, accountApps, project); err != nil {
+		return out, err
+	}
 	if err := validateWorkloadAdmissionWithManaged(scan.Workloads, scan.Managed, accountApps, project.ID); err != nil {
 		return out, err
 	}

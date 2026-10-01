@@ -18,6 +18,7 @@ import (
 // File reads use BurntSushi/toml (already a transitive dep of many
 // tools; pinning it here makes the daemon's config story explicit).
 type Config struct {
+	RegionalComputeEnabled bool `toml:"regional_compute_enabled"`
 	// HTTPAddr is the loopback bind address the plain HTTP webhook
 	// listener uses. Defaults to 127.0.0.1:8083 (spec §11: githubd
 	// is loopback-only, gatewayd-public reverse-proxies /webhooks/github).

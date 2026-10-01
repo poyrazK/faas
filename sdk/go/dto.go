@@ -333,3 +333,23 @@ type (
 	CreateIssueIngestTokenRequest = api.CreateIssueIngestTokenRequest
 	IssueIngestToken              = api.IssueIngestToken
 )
+
+// Project deployment wire types.
+type (
+	ProjectSourceRefScanRequest = api.ProjectSourceRefScanRequest
+	PlanWorkload                = api.PlanWorkload
+	PlanDetectedBy              = api.PlanDetectedBy
+	PlanDetectionWarning        = api.PlanDetectionWarning
+	PlanManaged                 = api.PlanManaged
+	PlanCron                    = api.PlanCron
+	PlanAsyncRoute              = api.PlanAsyncRoute
+	PlanAffectedApp             = api.PlanAffectedApp
+	PlanResponse                = api.PlanResponse
+	ApplyResponse               = api.ApplyResponse
+	ApplyResponseApp            = api.ApplyResponseApp
+	AppliedBuild                = api.AppliedBuild
+	ProjectDeploymentOptions    = api.ProjectDeploymentOptions
+	ServiceBindingTransport     = api.ServiceBindingTransport
+	ServiceCallScope            = api.ServiceCallScope
+	ServiceCallerScopes         = api.ServiceCallerScopes
+)

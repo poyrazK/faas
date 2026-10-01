@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"time"
@@ -103,36 +102,6 @@ func (s *server) putComputeRegion(w http.ResponseWriter, r *http.Request, acct s
 	writeJSON(w, http.StatusOK, computeRegionResponse(region, nodes, time.Now()))
 }
 
-func (s *server) validateComputeRegionAvailable(ctx context.Context, id string) (problem *api.Problem) {
-	defer func() {
-		if problem != nil {
-			problem.ComputeRegion = id
-		}
-	}()
-	if id == "" {
-		return nil
-	}
-	if !s.regionalComputeEnabled {
-		return api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity, "Regional compute unavailable", "regional compute placement has not been enabled by the operator")
-	}
-	region, err := s.store.ComputeRegionByID(ctx, id)
-	if errors.Is(err, state.ErrNotFound) {
-		return api.ErrComputeRegionUnknown(id)
-	}
-	if err != nil {
-		return api.ErrCapacity("could not validate registered compute region")
-	}
-	if !region.AcceptingNewApps {
-		return api.ErrComputeRegionAdmissionPaused(id)
-	}
-	nodes, err := s.store.ActiveComputeNodes(ctx)
-	if err != nil {
-		return api.ErrCapacity("could not validate compute region availability")
-	}
-	for _, node := range nodes {
-		if state.ComputeRegionAllowsNode(id, node) && state.ComputeNodePlacementEligible(node) {
-			return nil
-		}
-	}
-	return api.ErrComputeRegionUnavailable(id)
+func (s *server) validateComputeRegionAvailable(ctx context.Context, id string) *api.Problem {
+	return state.ValidateNewComputeRegion(ctx, s.store, s.regionalComputeEnabled, id)
 }

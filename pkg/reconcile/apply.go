@@ -380,6 +380,7 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 	}
 	transport := serviceBindingTransportForNewWorkload(w)
 	return state.App{
+		ComputeRegion: w.ComputeRegion,
 		AccountID:     project.AccountID,
 		ProjectID:     project.ID,
 		Slug:          w.Name,

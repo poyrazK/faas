@@ -57,6 +57,7 @@ import (
 // source bytes (hex). TS is informational — the hash is the load-
 // bearing field.
 type planTokenWire struct {
+	ComputeRegion          string `json:"compute_region,omitempty"`
 	Hash                   string `json:"hash"`
 	AccountID              string `json:"account_id"`
 	Slug                   string `json:"slug"`
@@ -74,8 +75,9 @@ type planTokenWire struct {
 // /apply. The handler builds this from the multipart stream before
 // dispatching to the scan service.
 type scanPlanRequest struct {
-	SourcePath   string // spool path after validateAndSpool + extractTarGzToDir
-	SourceSHA256 string // hex digest of the original compressed bytes
+	ComputeRegion string
+	SourcePath    string // spool path after validateAndSpool + extractTarGzToDir
+	SourceSHA256  string // hex digest of the original compressed bytes
 	// ScanDir is the extracted source tree. Cleaned up by scanService's
 	// defer (task #19 fix; pre-fix was "cleaned up by caller" but no
 	// caller ever removed it, so every successful scan leaked the dir).
@@ -136,6 +138,7 @@ func validProjectRepoFullName(repo string) bool {
 // `plan.workloads[i].tier` serialize as "compose" instead of
 // `8`. The conversion lives in toPlanWorkload below.
 type scanPlanResponse struct {
+	ComputeRegion         string                  `json:"compute_region,omitempty"`
 	ProjectSlug           string                  `json:"project_slug"`
 	RepoFullName          string                  `json:"repo_full_name,omitempty"`
 	Environment           string                  `json:"environment,omitempty"`
@@ -228,11 +231,12 @@ func toPlanWorkload(w reposcan.Workload) api.PlanWorkload {
 		policy = api.ServiceBindingPolicyDeclared
 	}
 	return api.PlanWorkload{
-		Name:       w.Name,
-		RootDir:    w.RootDir,
-		Dockerfile: w.Dockerfile,
-		Command:    w.Command,
-		DependsOn:  w.DependsOn,
+		ComputeRegion: w.ComputeRegion,
+		Name:          w.Name,
+		RootDir:       w.RootDir,
+		Dockerfile:    w.Dockerfile,
+		Command:       w.Command,
+		DependsOn:     w.DependsOn,
 
 		ServiceBindingPolicy:      policy,
 		ServiceBindingTransport:   api.ServiceBindingTransport(w.ServiceBindingTransport),
@@ -1149,6 +1153,10 @@ func (s *server) scanService(
 	if prob != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, prob
 	}
+	defer func() { _ = os.Remove(req.SourcePath); _ = os.RemoveAll(req.ScanDir) }() //nolint:errcheck // best-effort
+	if prob := s.resolveProjectComputeRegion(r.Context(), acct, req); prob != nil {
+		return nil, state.Project{}, nil, nil, nil, nil, prob
+	}
 	if prob := s.validateProjectDeploymentEnvironment(r.Context(), acct, req.ProjectSlug, req.Environment); prob != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, prob
 	}
@@ -1262,18 +1270,6 @@ func (s *server) scanService(
 				fmt.Sprintf("duplicate: %s", strings.Join(clash, ", ")))
 		}
 	}
-	// Cleanup the spooled upload. Best-effort: a failure here just
-	// means the original tarball lingers under FAAS_SCAN_SPOOL_ROOT
-	// until the next sweep.
-	defer func() { _ = os.Remove(req.SourcePath) }() //nolint:errcheck // best-effort
-	// Cleanup the extracted dir on every return path. Pre-task #19
-	// this was documented "cleaned up by caller" but no caller ever
-	// removed it, so every successful scan leaked the extracted dir
-	// under FAAS_SCAN_SPOOL_ROOT. The defer fires AFTER all the
-	// in-function staging reads (applyBuildsForAddedChanged runs
-	// synchronously and walks req.ScanDir before the return at the
-	// bottom), so the staging sees a still-live tree.
-	defer func() { _ = os.RemoveAll(req.ScanDir) }() //nolint:errcheck // best-effort
 
 	// If a plan_token was passed (apply path), validate it BEFORE
 	// running the scan. Mismatch -> 409 plan_token_stale. This
@@ -1294,7 +1290,7 @@ func (s *server) scanService(
 		}
 		if pt.Slug != req.ProjectSlug || pt.RepoFullName != req.RepoFullName ||
 			pt.ProductionBranch != req.ProdBranch || pt.InstallID != req.InstallID ||
-			pt.NoTriggers != req.NoTriggers || pt.Environment != req.Environment ||
+			pt.ComputeRegion != req.ComputeRegion || pt.NoTriggers != req.NoTriggers || pt.Environment != req.Environment ||
 			pt.ConfigHash != environmentConfigHash || !samePlatformTenantPolicy(pt.PlatformTenantRequired, req.PlatformTenantRequired) {
 			return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(http.StatusConflict,
 				"plan_token_stale", "plan_token does not match project binding",
@@ -1641,6 +1637,18 @@ func (s *server) scanService(
 	// calls are self-contained (no shared scan state).
 	preCanApply, preNotAllowed, preReasons, _ := evaluateProjectedQuotaGate(preDesiredCrons, limits, preProjectedApps, preCronGate)
 	canApply, notAllowed, reasons, _ = evaluateProjectedQuotaGate(desiredCrons, limits, projectedApps, cronGate)
+	regionalProject := state.Project{ID: projectID, ComputeRegion: req.ComputeRegion}
+	result.Workloads = reconcile.WorkloadsWithComputeRegions(result.Workloads, acctApps, regionalProject)
+	filteredW = reconcile.WorkloadsWithComputeRegions(filteredW, acctApps, regionalProject)
+	regionProblem := s.projectNewWorkloadRegionProblem(r.Context(), filteredW, acctApps, regionalProject)
+	if regionProblem != nil {
+		canApply = false
+		reasons = append(reasons, regionProblem.Detail)
+	}
+	if p := s.projectNewWorkloadRegionProblem(r.Context(), result.Workloads, acctApps, regionalProject); p != nil {
+		preCanApply = false
+		preReasons = append(preReasons, p.Detail)
+	}
 	preAdmissionReasons := reconcile.WorkloadAdmissionReasonsWithManaged(result.Workloads, result.Managed, acctApps, projectID)
 	var admissionReasons []string
 	if len(filteredW) > 0 || len(result.Workloads) == 0 {
@@ -1724,6 +1732,7 @@ func (s *server) scanService(
 		respManaged[i] = toPlanManaged(m)
 	}
 	resp := &scanPlanResponse{
+		ComputeRegion:         req.ComputeRegion,
 		ProjectSlug:           req.ProjectSlug,
 		RepoFullName:          req.RepoFullName,
 		Environment:           req.Environment,
@@ -1789,7 +1798,7 @@ func (s *server) scanService(
 	// Mint a fresh plan_token unless one was supplied (apply path
 	// keeps the caller's; minting a new one would be confusing).
 	if planToken == "" {
-		tok, mintErr := mintPlanToken(acct.ID, req.ProjectSlug, req.RepoFullName, req.ProdBranch, req.InstallID, req.NoTriggers, req.Environment, environmentConfigHash, req.SourceSHA256, req.PlatformTenantRequired)
+		tok, mintErr := mintPlanToken(acct.ID, req.ProjectSlug, req.RepoFullName, req.ProdBranch, req.InstallID, req.NoTriggers, req.Environment, environmentConfigHash, req.SourceSHA256, req.PlatformTenantRequired, req.ComputeRegion)
 		if mintErr != nil {
 			return nil, state.Project{}, nil, nil, nil, nil, customerInternalProblem(s.log, "create project scan token",
 				"Gregale could not finish preparing this project scan.",
@@ -1836,6 +1845,8 @@ func (s *server) scanService(
 		// can branch on canApply=false without parsing.
 		var prob *api.Problem
 		switch {
+		case regionProblem != nil:
+			prob = regionProblem
 		case len(result.Workloads) == 0:
 			prob = api.NewProblem(http.StatusUnprocessableEntity, "plan_empty",
 				"Project plan is empty", reconcile.EmptyWorkloadPlanReason)
@@ -1854,6 +1865,7 @@ func (s *server) scanService(
 	}
 
 	project := state.Project{
+		ComputeRegion:    req.ComputeRegion,
 		AccountID:        acct.ID,
 		Slug:             req.ProjectSlug,
 		RepoFullName:     req.RepoFullName,
@@ -1910,6 +1922,9 @@ func (s *server) scanService(
 	case errors.Is(lookupErr, state.ErrNotFound):
 		created, projErr := s.store.CreateProject(r.Context(), project)
 		if projErr != nil {
+			if p := api.AsProblem(projErr); p != nil {
+				return resp, state.Project{}, nil, nil, nil, nil, p
+			}
 			if errors.Is(projErr, state.ErrConflict) {
 				// Lost a race against a concurrent apply — the
 				// winner just inserted; re-load and reuse.
@@ -1941,6 +1956,9 @@ func (s *server) scanService(
 			"Gregale could not load this project.",
 			"Retry the deployment in a moment; if it continues, contact support.", lookupErr)
 		return resp, state.Project{}, nil, nil, nil, nil, prob
+	}
+	if project.ComputeRegion != req.ComputeRegion {
+		return resp, state.Project{}, nil, nil, nil, nil, api.NewProblem(http.StatusConflict, "plan_token_stale", "Project compute region changed during apply", "re-run scan for the current project")
 	}
 	// Defer project rollback for any error path below.
 	// capturedProb tracks whether we already wrapped the
@@ -2069,6 +2087,10 @@ func (s *server) scanService(
 		reconcileInputs.CommitSHA, reconcileInputs.Branch,
 		excludeList, cronSpecs)
 	if recErr != nil {
+		if prob := api.AsProblem(recErr); prob != nil {
+			capturedProb = prob
+			return resp, state.Project{}, nil, nil, nil, nil, prob
+		}
 		// Map reconcile-package errors into the existing RFC 7807
 		// problem shapes so the handler can use a single dispatch
 		// path. mapReconcileError returns nil for nil err, so the
@@ -2210,6 +2232,7 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 		noTriggers             bool
 		platformTenantRequired *bool
 		environment            string
+		computeRegion          string
 		approvalToken          string
 		projectSlugSet         bool
 	)
@@ -2313,6 +2336,12 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 					"Invalid platform_tenant_required", "platform_tenant_required must be true or false")
 			}
 			platformTenantRequired = &parsed
+		case "compute_region":
+			b, readErr := io.ReadAll(io.LimitReader(part, 64))
+			if readErr != nil || !api.ValidComputeRegion(string(b)) {
+				return nil, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid compute region", "compute_region must be a canonical identifier of at most 63 characters")
+			}
+			computeRegion = string(b)
 		case "environment":
 			b, readErr := io.ReadAll(io.LimitReader(part, api.MaxEnvScopeLen+1))
 			if readErr != nil || len(b) > api.MaxEnvScopeLen {
@@ -2382,6 +2411,7 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 		PersistExclude:         persistExclude,
 		NoTriggers:             noTriggers,
 		PlatformTenantRequired: platformTenantRequired,
+		ComputeRegion:          computeRegion,
 		Environment:            environment,
 		ApprovalToken:          approvalToken,
 	}, nil
@@ -2409,7 +2439,7 @@ func hashFileSHA256(path string) (string, error) {
 // mintPlanToken produces the base64-JSON blob. The hash is the
 // SHA-256 of the source bytes (the apply handler re-hashes and
 // compares). AccountID prevents token-reuse across accounts.
-func mintPlanToken(accountID, slug, repoFullName, productionBranch string, installID int64, noTriggers bool, environment, configHash, hashHex string, platformTenantRequired *bool) (string, error) {
+func mintPlanToken(accountID, slug, repoFullName, productionBranch string, installID int64, noTriggers bool, environment, configHash, hashHex string, platformTenantRequired *bool, computeRegion ...string) (string, error) {
 	pt := planTokenWire{
 		Hash:                   hashHex,
 		AccountID:              accountID,
@@ -2422,6 +2452,9 @@ func mintPlanToken(accountID, slug, repoFullName, productionBranch string, insta
 		Environment:            environment,
 		ConfigHash:             configHash,
 		TSUnix:                 nowUnix(),
+	}
+	if len(computeRegion) > 0 {
+		pt.ComputeRegion = computeRegion[0]
 	}
 	b, err := json.Marshal(pt)
 	if err != nil {

@@ -98,11 +98,14 @@ const (
 // Workload is one discoverable unit of work. Stable, deterministic
 // fields; the confirm table in Phase 3 reads these verbatim.
 type Workload struct {
-	Name       string   // service name; deterministic sort key
-	RootDir    string   // build context relative to repo root; "" = root
-	Dockerfile string   // explicit path if declared (relative to RootDir)
-	Image      string   // prebuilt OCI image when the source declares one
-	Command    []string // start-command override (compose `command:`, Procfile rhs)
+	// ComputeRegion is explicit immutable placement intent. Empty preserves
+	// an existing app's region or uses the project's default for a new app.
+	ComputeRegion string
+	Name          string   // service name; deterministic sort key
+	RootDir       string   // build context relative to repo root; "" = root
+	Dockerfile    string   // explicit path if declared (relative to RootDir)
+	Image         string   // prebuilt OCI image when the source declares one
+	Command       []string // start-command override (compose `command:`, Procfile rhs)
 	// CommandShell distinguishes shell-form strings from exec-form argv. The
 	// plan wire keeps Command as an array, while reconciliation uses this bit
 	// to preserve argument boundaries when persisting start_command.

@@ -33,6 +33,8 @@ class PlanWorkload:
     remain available outside this directory."""
     command: list[str]
     ports: list[int]
+    compute_region: str | Unset = UNSET
+    """Effective immutable compute region for this workload. Empty uses legacy unconstrained placement."""
     platform_tenant_required: bool | Unset = UNSET
     """Requested customer identity policy from Compose x-gregale-platform-tenant-required or the request override.
     Omitted preserves existing app policy; new apps default to false."""
@@ -90,6 +92,8 @@ class PlanWorkload:
         command = self.command
 
         ports = self.ports
+
+        compute_region = self.compute_region
 
         platform_tenant_required = self.platform_tenant_required
 
@@ -159,6 +163,8 @@ class PlanWorkload:
                 "ports": ports,
             }
         )
+        if compute_region is not UNSET:
+            field_dict["compute_region"] = compute_region
         if platform_tenant_required is not UNSET:
             field_dict["platform_tenant_required"] = platform_tenant_required
         if dockerfile is not UNSET:
@@ -210,6 +216,8 @@ class PlanWorkload:
         command = cast(list[str], d.pop("command"))
 
         ports = cast(list[int], d.pop("ports"))
+
+        compute_region = d.pop("compute_region", UNSET)
 
         platform_tenant_required = d.pop("platform_tenant_required", UNSET)
 
@@ -295,6 +303,7 @@ class PlanWorkload:
             root_dir=root_dir,
             command=command,
             ports=ports,
+            compute_region=compute_region,
             platform_tenant_required=platform_tenant_required,
             dockerfile=dockerfile,
             depends_on=depends_on,

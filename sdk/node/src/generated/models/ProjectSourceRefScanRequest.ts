@@ -7,6 +7,10 @@
  */
 export type ProjectSourceRefScanRequest = {
   /**
+   * Immutable project default for new workloads in this source-ref plan. Omitted preserves an existing project default.
+   */
+  compute_region?: string;
+  /**
    * GitHub owner/name to fetch through the connected installation.
    */
   repo: string;

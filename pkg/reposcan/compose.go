@@ -29,15 +29,16 @@ import (
 // A typed struct forces unmarshal errors; `any` lets the helper
 // buildFromAny() below disambiguate all three.
 type composeCandidate struct {
-	Name        string   `yaml:"-"`
-	Build       any      `yaml:"build"`
-	Command     any      `yaml:"command"`    // string OR []string
-	DependsOn   any      `yaml:"depends_on"` // []string OR map[string]any
-	Ports       []any    `yaml:"ports"`      // "8080:80", 8080, {"target": 8080, …}
-	EnvFile     any      `yaml:"env_file"`
-	Environment any      `yaml:"environment"`
-	Image       string   `yaml:"image"`
-	Profiles    []string `yaml:"profiles"`
+	ComputeRegion string   `yaml:"x-gregale-region"`
+	Name          string   `yaml:"-"`
+	Build         any      `yaml:"build"`
+	Command       any      `yaml:"command"`    // string OR []string
+	DependsOn     any      `yaml:"depends_on"` // []string OR map[string]any
+	Ports         []any    `yaml:"ports"`      // "8080:80", 8080, {"target": 8080, …}
+	EnvFile       any      `yaml:"env_file"`
+	Environment   any      `yaml:"environment"`
+	Image         string   `yaml:"image"`
+	Profiles      []string `yaml:"profiles"`
 
 	ServiceBindingPolicy      string                                  `yaml:"x-gregale-service-policy"`
 	ServiceBindingTransport   string                                  `yaml:"x-gregale-service-transport"`
@@ -222,6 +223,9 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		if !hasBuild && s.PlatformTenantRequired != nil {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-platform-tenant-required requires a build workload", src, name)
 		}
+		if !api.ValidComputeRegion(s.ComputeRegion) || (!hasBuild && s.ComputeRegion != "") {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-region requires a canonical compute region on a build workload", src, name)
+		}
 		command, commandShell := commandSpec(s.Command)
 		if hasBuild {
 			if (ctx != "" && !fs.ValidPath(ctx)) || strings.HasPrefix(ctx, "../") ||
@@ -265,12 +269,13 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		// exists, mergeByKey infers HTTP from a published port and worker
 		// otherwise.
 		seeds = append(seeds, workloadSeed{
-			name:         name,
-			rootDir:      ctx,
-			dockerfile:   df,
-			command:      command,
-			commandShell: commandShell,
-			dependsOn:    dependencyNames(s.DependsOn),
+			computeRegion: s.ComputeRegion,
+			name:          name,
+			rootDir:       ctx,
+			dockerfile:    df,
+			command:       command,
+			commandShell:  commandShell,
+			dependsOn:     dependencyNames(s.DependsOn),
 
 			serviceBindingPolicy:      serviceBindingPolicy,
 			serviceBindingTransport:   serviceBindingTransport,

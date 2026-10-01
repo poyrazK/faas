@@ -46,16 +46,17 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 
 	// Group seeds by (RootDir, Name) keeping first-arrival order.
 	type bucket struct {
-		name         string
-		rootDir      string
-		tier         Tier   // highest tier seen (=first arrival under the sort)
-		source       string // highest-tier seed's source
-		dockerfile   string // highest-tier seed's dockerfile
-		image        string // highest-tier seed's prebuilt image
-		class        Class
-		command      []string
-		commandShell bool
-		dependsOn    []string
+		computeRegion string
+		name          string
+		rootDir       string
+		tier          Tier   // highest tier seen (=first arrival under the sort)
+		source        string // highest-tier seed's source
+		dockerfile    string // highest-tier seed's dockerfile
+		image         string // highest-tier seed's prebuilt image
+		class         Class
+		command       []string
+		commandShell  bool
+		dependsOn     []string
 
 		serviceBindingPolicy      ServiceBindingPolicy
 		serviceBindingTransport   ServiceBindingTransport
@@ -184,6 +185,9 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			value := *s.platformTenantRequired
 			b.platformTenantRequired = &value
 		}
+		if b.computeRegion == "" {
+			b.computeRegion = s.computeRegion
+		}
 		if !b.schedSet && (len(s.schedules) > 0 || s.schedule != "") {
 			if len(s.schedules) > 0 {
 				b.schedules = append([]CronSchedule(nil), s.schedules...)
@@ -240,6 +244,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			AllowedServiceCallers:     b.allowedServiceCallers,
 			AllowedServiceCallScopes:  b.allowedServiceCallScopes,
 			PlatformTenantRequired:    b.platformTenantRequired,
+			ComputeRegion:             b.computeRegion,
 
 			Class:     cls,
 			Schedule:  primarySchedule,

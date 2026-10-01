@@ -145,6 +145,7 @@ type Querier interface {
 	// sqlc surface cleanly and the existing precedent (CreateAppIfUnderQuota,
 	// ConsumeRecoveryCode, ApplyProjectPlan) renders those inline.
 	CreateOrg(ctx context.Context, db DBTX, arg CreateOrgParams) (CreateOrgRow, error)
+	CreateProjectWithComputeRegion(ctx context.Context, db DBTX, arg CreateProjectWithComputeRegionParams) (Project, error)
 	// IAM-3 (ADR-039, issue #187 + #244 merged). One row per dashboard login.
 	// Caller has already generated the uuid (the envelope seal needs the same
 	// value). issued_ip is an inet ('' cast to NULL means "RemoteAddr

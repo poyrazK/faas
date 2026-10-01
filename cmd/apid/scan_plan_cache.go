@@ -353,6 +353,11 @@ func buildCachedSourceRequest(cachedSourcePath, projectSlug string, exclude []st
 			return nil, err
 		}
 	}
+	if len(approvalToken) > 1 && approvalToken[1] != "" {
+		if err := mw.WriteField("compute_region", approvalToken[1]); err != nil {
+			return nil, fmt.Errorf("write compute region: %w", err)
+		}
+	}
 	if err := mw.Close(); err != nil {
 		return nil, err
 	}

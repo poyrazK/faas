@@ -9,6 +9,10 @@
  *
  */
 export type ProjectApplyRequest = {
+  /**
+   * Repeat the same compute region default used for scan. Existing project defaults and app regions are immutable.
+   */
+  compute_region?: string;
   source: Blob;
   project_slug?: string;
   repo_full_name?: string;

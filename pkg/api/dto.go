@@ -6400,6 +6400,7 @@ const (
 // schema-parity AST gate can assert field-for-field equivalence with
 // the OpenAPI spec.
 type ProjectScanRequest struct {
+	ComputeRegion          string `json:"compute_region,omitempty"`
 	Source                 string `json:"source"`                // tar.gz binary blob
 	ProjectSlug            string `json:"project_slug"`          // kebab slug
 	RepoFullName           string `json:"repo_full_name"`        // GitHub owner/name binding
@@ -6416,6 +6417,7 @@ type ProjectScanRequest struct {
 // credentials stay inside githubd; InstallID may be omitted when exactly one
 // account installation can access Repo.
 type ProjectSourceRefScanRequest struct {
+	ComputeRegion    string   `json:"compute_region,omitempty"`
 	Repo             string   `json:"repo"`
 	Ref              string   `json:"ref"`
 	ProjectSlug      string   `json:"project_slug"`
@@ -6432,6 +6434,7 @@ type ProjectSourceRefScanRequest struct {
 // Shape mirrors ProjectScanRequest — the handler re-runs the scan
 // and re-checks the plan token internally.
 type ProjectApplyRequest struct {
+	ComputeRegion          string `json:"compute_region,omitempty"`
 	Source                 string `json:"source"`
 	ProjectSlug            string `json:"project_slug"`
 	RepoFullName           string `json:"repo_full_name"`
@@ -6530,11 +6533,12 @@ type SourceTarballDeployRequest struct {
 // existing app, and which existing app row the update targets. ID is
 // empty when Action == "create".
 type PlanWorkload struct {
-	Name       string   `json:"name"`
-	RootDir    string   `json:"root_dir"`
-	Dockerfile string   `json:"dockerfile,omitempty"`
-	Command    []string `json:"command"`
-	DependsOn  []string `json:"depends_on,omitempty"`
+	ComputeRegion string   `json:"compute_region,omitempty"`
+	Name          string   `json:"name"`
+	RootDir       string   `json:"root_dir"`
+	Dockerfile    string   `json:"dockerfile,omitempty"`
+	Command       []string `json:"command"`
+	DependsOn     []string `json:"depends_on,omitempty"`
 
 	ServiceBindingPolicy ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
 	// ServiceBindingTransport opts a Compose workload into the HTTPS-first
@@ -6690,6 +6694,7 @@ type QuotaBlock struct {
 // creates (WillDeploy.Action == "create"). Removed is a flat slug
 // list — removal has no per-row editable metadata worth surfacing.
 type PlanResponse struct {
+	ComputeRegion         string                 `json:"compute_region,omitempty"`
 	ProjectSlug           string                 `json:"project_slug"`
 	RepoFullName          string                 `json:"repo_full_name,omitempty"`
 	Environment           string                 `json:"environment,omitempty"`

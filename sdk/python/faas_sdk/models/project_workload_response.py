@@ -18,6 +18,8 @@ class ProjectWorkloadResponse:
     slug: str
     workload_name: str
     status: str
+    compute_region: str | Unset = UNSET
+    """Immutable compute region of the workload app. Environment clones preserve this placement."""
     deployment_status: str | Unset = UNSET
     rollout_state: str | Unset = UNSET
     build_status: str | Unset = UNSET
@@ -29,6 +31,8 @@ class ProjectWorkloadResponse:
         workload_name = self.workload_name
 
         status = self.status
+
+        compute_region = self.compute_region
 
         deployment_status = self.deployment_status
 
@@ -45,6 +49,8 @@ class ProjectWorkloadResponse:
                 "status": status,
             }
         )
+        if compute_region is not UNSET:
+            field_dict["compute_region"] = compute_region
         if deployment_status is not UNSET:
             field_dict["deployment_status"] = deployment_status
         if rollout_state is not UNSET:
@@ -63,6 +69,8 @@ class ProjectWorkloadResponse:
 
         status = d.pop("status")
 
+        compute_region = d.pop("compute_region", UNSET)
+
         deployment_status = d.pop("deployment_status", UNSET)
 
         rollout_state = d.pop("rollout_state", UNSET)
@@ -73,6 +81,7 @@ class ProjectWorkloadResponse:
             slug=slug,
             workload_name=workload_name,
             status=status,
+            compute_region=compute_region,
             deployment_status=deployment_status,
             rollout_state=rollout_state,
             build_status=build_status,

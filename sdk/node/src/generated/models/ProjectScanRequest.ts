@@ -7,6 +7,10 @@
  */
 export type ProjectScanRequest = {
   /**
+   * Immutable project default for new workloads. Omitted preserves the existing project default; per-workload declarations take precedence.
+   */
+  compute_region?: string;
+  /**
    * tar.gz of the repo root.
    */
   source: Blob;

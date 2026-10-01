@@ -1570,7 +1570,7 @@ Deploy an app, function, or project
 
 | Flag | Meaning | |
 |---|---|---|
-| `--region <REGION>` | immutable compute region for a new standalone app |  |
+| `--region <REGION>` | immutable compute region for a new app or project default |  |
 | `--image <REF>` | deploy from a container image reference |  |
 | `--tarball <PATH>` | deploy from a source tarball |  |
 | `--path <DIR>` | deploy a selected local source directory (relative to the current directory) |  |
@@ -3533,7 +3533,7 @@ Preview or delete a project
 
 Decomposition dry-run (--tarball | --path | --repo OWNER/NAME)
 
-`gregale scan [--tarball <PATH>] [--path <DIR>] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--project-slug <SLUG>] [--environment <SLUG>] [--exclude <SLUGS>] [--show-affected] [--explain] [--persist-exclude]`
+`gregale scan [--tarball <PATH>] [--path <DIR>] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--project-slug <SLUG>] [--environment <SLUG>] [--region <REGION>] [--exclude <SLUGS>] [--show-affected] [--explain] [--persist-exclude]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -3545,6 +3545,7 @@ Decomposition dry-run (--tarball | --path | --repo OWNER/NAME)
 | `--production-branch <BRANCH>` | production branch for the project |  |
 | `--project-slug <SLUG>` | kebab slug; default = repo dir basename |  |
 | `--environment <SLUG>` | registered project environment to scan |  |
+| `--region <REGION>` | immutable default compute region for new project workloads |  |
 | `--exclude <SLUGS>` | omit workloads (comma-separated slugs; cannot combine with --only) |  |
 | `--show-affected` | show workloads that deploy or stay unchanged |  |
 | `--explain` | show detector provenance and skipped/merged decisions |  |

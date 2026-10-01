@@ -37,6 +37,10 @@ import (
 // only when Store, Audit, and Limits are themselves goroutine-safe
 // (true for *state.PgStore and *audit.Auditor in production).
 type Service struct {
+	// ValidateNewComputeRegion applies the caller daemon's operator gate.
+	// Nil disables new regional choices; existing members remain deployable.
+	ValidateNewComputeRegion func(context.Context, string) error
+
 	// Store is the state-layer facade. PgStore / MemStore both
 	// implement the interface.
 	Store state.Store
@@ -232,6 +236,10 @@ func (s *Service) Plan(
 	accountApps, err := s.Store.ListApps(ctx, project.AccountID)
 	if err != nil {
 		return Result{}, fmt.Errorf("reconcile: plan: validate workload admission: %w", err)
+	}
+	scan.Workloads = WorkloadsWithComputeRegions(scan.Workloads, accountApps, project)
+	if err := s.validateNewWorkloadRegions(ctx, scan.Workloads, accountApps, project); err != nil {
+		return Result{}, err
 	}
 	if err := validateWorkloadAdmissionWithManaged(scan.Workloads, scan.Managed, accountApps, project.ID); err != nil {
 		return Result{}, err

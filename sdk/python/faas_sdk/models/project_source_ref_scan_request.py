@@ -20,6 +20,9 @@ class ProjectSourceRefScanRequest:
     ref: str
     """Branch, tag, or commit ref to scan."""
     project_slug: str
+    compute_region: str | Unset = UNSET
+    """Immutable project default for new workloads in this source-ref plan. Omitted preserves an existing project
+    default."""
     repo_full_name: str | Unset = UNSET
     """Repository binding stored if the plan is later applied; defaults to repo."""
     production_branch: str | Unset = "main"
@@ -38,6 +41,8 @@ class ProjectSourceRefScanRequest:
         ref = self.ref
 
         project_slug = self.project_slug
+
+        compute_region = self.compute_region
 
         repo_full_name = self.repo_full_name
 
@@ -66,6 +71,8 @@ class ProjectSourceRefScanRequest:
                 "project_slug": project_slug,
             }
         )
+        if compute_region is not UNSET:
+            field_dict["compute_region"] = compute_region
         if repo_full_name is not UNSET:
             field_dict["repo_full_name"] = repo_full_name
         if production_branch is not UNSET:
@@ -92,6 +99,8 @@ class ProjectSourceRefScanRequest:
 
         project_slug = d.pop("project_slug")
 
+        compute_region = d.pop("compute_region", UNSET)
+
         repo_full_name = d.pop("repo_full_name", UNSET)
 
         production_branch = d.pop("production_branch", UNSET)
@@ -110,6 +119,7 @@ class ProjectSourceRefScanRequest:
             repo=repo,
             ref=ref,
             project_slug=project_slug,
+            compute_region=compute_region,
             repo_full_name=repo_full_name,
             production_branch=production_branch,
             install_id=install_id,

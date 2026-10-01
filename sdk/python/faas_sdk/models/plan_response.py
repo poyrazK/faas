@@ -38,6 +38,8 @@ class PlanResponse:
     can_apply: bool
     plan_token: str
     """base64-JSON plan token; pass back as ?plan_token= on /v1/projects to skip the second extract."""
+    compute_region: str | Unset = UNSET
+    """Effective immutable project default compute region for new workloads."""
     repo_full_name: str | Unset = UNSET
     environment: str | Unset = UNSET
     """Registered project environment targeted by this plan"""
@@ -96,6 +98,8 @@ class PlanResponse:
         can_apply = self.can_apply
 
         plan_token = self.plan_token
+
+        compute_region = self.compute_region
 
         repo_full_name = self.repo_full_name
 
@@ -184,6 +188,8 @@ class PlanResponse:
                 "plan_token": plan_token,
             }
         )
+        if compute_region is not UNSET:
+            field_dict["compute_region"] = compute_region
         if repo_full_name is not UNSET:
             field_dict["repo_full_name"] = repo_full_name
         if environment is not UNSET:
@@ -270,6 +276,8 @@ class PlanResponse:
 
         plan_token = d.pop("plan_token")
 
+        compute_region = d.pop("compute_region", UNSET)
+
         repo_full_name = d.pop("repo_full_name", UNSET)
 
         environment = d.pop("environment", UNSET)
@@ -352,6 +360,7 @@ class PlanResponse:
             limit_crons=limit_crons,
             can_apply=can_apply,
             plan_token=plan_token,
+            compute_region=compute_region,
             repo_full_name=repo_full_name,
             environment=environment,
             environment_protected=environment_protected,

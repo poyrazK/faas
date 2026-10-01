@@ -1791,6 +1791,48 @@ func (q *Queries) CreateOrg(ctx context.Context, db DBTX, arg CreateOrgParams) (
 	return i, err
 }
 
+const createProjectWithComputeRegion = `-- name: CreateProjectWithComputeRegion :one
+INSERT INTO projects (account_id, slug, repo_full_name, production_branch, install_id, scan_source, compute_region)
+VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, account_id, slug, repo_full_name, production_branch, install_id, scan_source, created_at, updated_at, org_id, compute_region
+`
+
+type CreateProjectWithComputeRegionParams struct {
+	AccountID        pgtype.UUID
+	Slug             string
+	RepoFullName     pgtype.Text
+	ProductionBranch pgtype.Text
+	InstallID        pgtype.Int8
+	ScanSource       string
+	ComputeRegion    string
+}
+
+func (q *Queries) CreateProjectWithComputeRegion(ctx context.Context, db DBTX, arg CreateProjectWithComputeRegionParams) (Project, error) {
+	row := db.QueryRow(ctx, createProjectWithComputeRegion,
+		arg.AccountID,
+		arg.Slug,
+		arg.RepoFullName,
+		arg.ProductionBranch,
+		arg.InstallID,
+		arg.ScanSource,
+		arg.ComputeRegion,
+	)
+	var i Project
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Slug,
+		&i.RepoFullName,
+		&i.ProductionBranch,
+		&i.InstallID,
+		&i.ScanSource,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OrgID,
+		&i.ComputeRegion,
+	)
+	return i, err
+}
+
 const createSession = `-- name: CreateSession :one
 insert into sessions (id, account_id, issued_ip, issued_ua)
 values ($1, $2, nullif($3, '')::inet, nullif($4, ''))

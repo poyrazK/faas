@@ -222,6 +222,7 @@ var HostKeys = map[string]HostBlock{
 	"githubd": {
 		Daemon: "githubd",
 		PrivateKeys: []string{
+			"regional_compute_enabled",
 			"socket_path",
 			"metrics_addr",
 			"db_url",

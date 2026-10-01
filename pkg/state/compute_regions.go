@@ -2,6 +2,8 @@ package state
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"sort"
 	"time"
 
@@ -122,4 +124,43 @@ func (m *MemStore) checkNewAppComputeRegionLocked(app App) error {
 		}
 	}
 	return m.checkComputeRegionLocked(app, app.NodeID)
+}
+
+// ValidateNewComputeRegion is the shared preflight for app/project creation.
+// Registry insert guards repeat durable admission policy transactionally.
+func ValidateNewComputeRegion(ctx context.Context, store Store, enabled bool, id string) (problem *api.Problem) {
+	defer func() {
+		if problem != nil {
+			problem.ComputeRegion = id
+		}
+	}()
+	if id == "" {
+		return nil
+	}
+	if !api.ValidComputeRegion(id) {
+		return api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid compute region", "compute_region must be canonical")
+	}
+	if !enabled {
+		return api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity, "Regional compute unavailable", "regional compute placement has not been enabled by the operator")
+	}
+	region, err := store.ComputeRegionByID(ctx, id)
+	if errors.Is(err, ErrNotFound) {
+		return api.ErrComputeRegionUnknown(id)
+	}
+	if err != nil {
+		return api.ErrCapacity("could not validate registered compute region")
+	}
+	if !region.AcceptingNewApps {
+		return api.ErrComputeRegionAdmissionPaused(id)
+	}
+	nodes, err := store.ActiveComputeNodes(ctx)
+	if err != nil {
+		return api.ErrCapacity("could not validate compute region availability")
+	}
+	for _, node := range nodes {
+		if ComputeRegionAllowsNode(id, node) && ComputeNodePlacementEligible(node) {
+			return nil
+		}
+	}
+	return api.ErrComputeRegionUnavailable(id)
 }

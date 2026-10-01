@@ -62,8 +62,9 @@ descriptive metadata in this milestone.
 sets the region when creating a standalone app, including source-ref deploys.
 Redeploying with a different region fails before configuration changes; omitting
 the flag preserves the choice. Existing unconstrained apps cannot be repinned.
-Create a new app to choose a different region. Project deploys, diff/dry-run/plan
-flows, and workflow snippets reject this flag until their plans carry locality.
+Create a new app to choose a different region. ADR-426 extends project deploys and their scan/dry-run/diff plans with locality.
+Single-app diff/plan and workflow snippets still reject this flag until those
+representations carry locality.
 Pull-request previews derived from a region-bound app inherit its region.
 
 Operators declare `region` and optional `zone` per fleet host. The renderer

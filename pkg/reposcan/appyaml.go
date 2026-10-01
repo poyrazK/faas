@@ -5,6 +5,8 @@ import (
 	"io/fs"
 	"sort"
 
+	"github.com/onebox-faas/faas/pkg/api"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -24,18 +26,21 @@ type appYamlDoc struct {
 	Cron     []appYamlJob              `yaml:"cron"`
 }
 type appYamlService struct {
-	Command any            `yaml:"command"`
-	Env     map[string]any `yaml:"env"`
-	Ports   []any          `yaml:"ports"`
+	ComputeRegion string         `yaml:"compute_region"`
+	Command       any            `yaml:"command"`
+	Env           map[string]any `yaml:"env"`
+	Ports         []any          `yaml:"ports"`
 }
 type appYamlWorker struct {
-	Command any            `yaml:"command"`
-	Env     map[string]any `yaml:"env"`
+	ComputeRegion string         `yaml:"compute_region"`
+	Command       any            `yaml:"command"`
+	Env           map[string]any `yaml:"env"`
 }
 type appYamlJob struct {
-	Name     string `yaml:"name"`
-	Schedule string `yaml:"schedule"`
-	Command  any    `yaml:"command"`
+	ComputeRegion string `yaml:"compute_region"`
+	Name          string `yaml:"name"`
+	Schedule      string `yaml:"schedule"`
+	Command       any    `yaml:"command"`
 }
 
 var appYamlFileNames = []string{nameAppYAML, nameAppYML}
@@ -54,29 +59,37 @@ func detectAppYaml(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		if n == "" {
 			continue
 		}
+		if !api.ValidComputeRegion(s.ComputeRegion) {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: services compute_region must be canonical", src)
+		}
 		command, commandShell := commandSpec(s.Command)
 		seeds = append(seeds, workloadSeed{
-			name:         n,
-			class:        ClassHTTP,
-			command:      command,
-			commandShell: commandShell,
-			envKeys:      envKeys(s.Env),
-			ports:        parsePorts(s.Ports),
-			source:       src + ": services." + n,
+			computeRegion: s.ComputeRegion,
+			name:          n,
+			class:         ClassHTTP,
+			command:       command,
+			commandShell:  commandShell,
+			envKeys:       envKeys(s.Env),
+			ports:         parsePorts(s.Ports),
+			source:        src + ": services." + n,
 		})
 	}
 	for n, w := range d.Workers {
 		if n == "" {
 			continue
 		}
+		if !api.ValidComputeRegion(w.ComputeRegion) {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: workers compute_region must be canonical", src)
+		}
 		command, commandShell := commandSpec(w.Command)
 		seeds = append(seeds, workloadSeed{
-			name:         n,
-			class:        ClassWorker,
-			command:      command,
-			commandShell: commandShell,
-			envKeys:      envKeys(w.Env),
-			source:       src + ": workers." + n,
+			computeRegion: w.ComputeRegion,
+			name:          n,
+			class:         ClassWorker,
+			command:       command,
+			commandShell:  commandShell,
+			envKeys:       envKeys(w.Env),
+			source:        src + ": workers." + n,
 		})
 	}
 	all := append([]appYamlJob{}, d.Jobs...)
@@ -85,14 +98,18 @@ func detectAppYaml(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		if j.Name == "" {
 			continue
 		}
+		if !api.ValidComputeRegion(j.ComputeRegion) {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: jobs compute_region must be canonical", src)
+		}
 		command, commandShell := commandSpec(j.Command)
 		seeds = append(seeds, workloadSeed{
-			name:         j.Name,
-			class:        ClassJob,
-			schedule:     j.Schedule,
-			command:      command,
-			commandShell: commandShell,
-			source:       src + ": jobs." + j.Name,
+			computeRegion: j.ComputeRegion,
+			name:          j.Name,
+			class:         ClassJob,
+			schedule:      j.Schedule,
+			command:       command,
+			commandShell:  commandShell,
+			source:        src + ": jobs." + j.Name,
 		})
 	}
 	sort.SliceStable(seeds, func(i, j int) bool { return seeds[i].name < seeds[j].name })

@@ -28,6 +28,8 @@ class ProjectResponse:
     updated_at: datetime.datetime
     workloads: list[ProjectWorkloadResponse]
     exclusions: list[str]
+    compute_region: str | Unset = UNSET
+    """Immutable default compute region for new project workloads."""
     repo_full_name: str | Unset = UNSET
     production_branch: str | Unset = UNSET
     last_reconciliation_status: str | Unset = UNSET
@@ -54,6 +56,8 @@ class ProjectResponse:
 
         exclusions = self.exclusions
 
+        compute_region = self.compute_region
+
         repo_full_name = self.repo_full_name
 
         production_branch = self.production_branch
@@ -76,6 +80,8 @@ class ProjectResponse:
                 "exclusions": exclusions,
             }
         )
+        if compute_region is not UNSET:
+            field_dict["compute_region"] = compute_region
         if repo_full_name is not UNSET:
             field_dict["repo_full_name"] = repo_full_name
         if production_branch is not UNSET:
@@ -113,6 +119,8 @@ class ProjectResponse:
 
         exclusions = cast(list[str], d.pop("exclusions"))
 
+        compute_region = d.pop("compute_region", UNSET)
+
         repo_full_name = d.pop("repo_full_name", UNSET)
 
         production_branch = d.pop("production_branch", UNSET)
@@ -130,6 +138,7 @@ class ProjectResponse:
             updated_at=updated_at,
             workloads=workloads,
             exclusions=exclusions,
+            compute_region=compute_region,
             repo_full_name=repo_full_name,
             production_branch=production_branch,
             last_reconciliation_status=last_reconciliation_status,

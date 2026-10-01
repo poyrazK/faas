@@ -210,7 +210,7 @@ func (s *server) projectResponse(r *http.Request, acct state.Account, project st
 	}
 	var latest time.Time
 	for _, app := range apps {
-		workload := api.ProjectWorkloadResponse{Slug: app.Slug, WorkloadName: app.WorkloadName, Status: string(app.Status)}
+		workload := api.ProjectWorkloadResponse{ComputeRegion: app.ComputeRegion, Slug: app.Slug, WorkloadName: app.WorkloadName, Status: string(app.Status)}
 		deployment, deployErr := s.store.LatestDeployment(r.Context(), app.ID)
 		if deployErr == nil {
 			workload.DeploymentStatus = string(deployment.Status)
@@ -239,7 +239,8 @@ func (s *server) projectResponse(r *http.Request, acct state.Account, project st
 
 func projectSummaryResponse(project state.Project, workloadCount int) api.ProjectSummaryResponse {
 	return api.ProjectSummaryResponse{
-		ID: project.ID, Slug: project.Slug, RepoFullName: project.RepoFullName,
+		ComputeRegion: project.ComputeRegion,
+		ID:            project.ID, Slug: project.Slug, RepoFullName: project.RepoFullName,
 		ProductionBranch: project.ProductionBranch, ScanSource: string(project.ScanSource),
 		WorkloadCount: workloadCount, CreatedAt: project.CreatedAt.UTC().Format(time.RFC3339Nano),
 		UpdatedAt: project.UpdatedAt.UTC().Format(time.RFC3339Nano),

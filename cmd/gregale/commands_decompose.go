@@ -83,6 +83,7 @@ func cmdScan(args []string) int {
 	// scan + apply pair. The handler ignores it on the scan path.
 	persistExclude := fs.Bool("persist-exclude", false, "record --exclude slugs into deployment_scope_exclusions (apply path only; ADR-124 follow-up #3)")
 	environment := fs.String("environment", "", "registered project environment to scan")
+	computeRegion := fs.String("region", "", "immutable default compute region for new project workloads")
 	projectSlug := fs.String("project-slug", "", "kebab slug; default = repo dir basename")
 	installID := fs.Int64("install-id", 0, "optional GitHub installation id; normally resolved from the connected account")
 	prodBranch := fs.String("production-branch", "main", "production branch for the project")
@@ -94,11 +95,18 @@ func cmdScan(args []string) int {
 		return 1
 	}
 	projectSlugExplicit := false
+	regionExplicit := false
 	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "region" {
+			regionExplicit = true
+		}
 		if f.Name == "project-slug" {
 			projectSlugExplicit = true
 		}
 	})
+	if regionExplicit && (*computeRegion == "" || !api.ValidComputeRegion(*computeRegion)) {
+		return printErr("Invalid --region", errors.New("use a canonical region from gregale regions list"))
+	}
 	resolvedEnvironment, resolveErr := resolveEnvironmentFlagOrContext(*environment)
 	if resolveErr != nil {
 		return printErr("Could not read local project context", resolveErr)
@@ -118,7 +126,7 @@ func cmdScan(args []string) int {
 			tarball: *tarball, path: *pathFlag, repo: *repo, ref: *ref,
 			projectSlug: *projectSlug, bindingRepo: *bindingRepo,
 			productionBranch: *prodBranch, installID: *installID,
-			only: *only, exclude: *exclude, environment: *environment, showAffected: *showAffected, explain: *explain,
+			only: *only, exclude: *exclude, environment: *environment, computeRegion: *computeRegion, showAffected: *showAffected, explain: *explain,
 		})
 	}
 	srcPath, sourceName, cleanup, err := resolveScanSource(*tarball, *pathFlag, *repo, *ref, *installID)
@@ -162,7 +170,7 @@ func cmdScan(args []string) int {
 		return printErr("Could not open source", err)
 	}
 	defer func() { _ = src.Close() }()
-	plan, err := client.ScanProjectWithBindingEnvironment(ctx, src, sourceName, *projectSlug, *bindingRepo, *prodBranch, *installID, onlyList, excludeList, *persistExclude, false, *environment)
+	plan, err := client.ScanProjectWithBindingOptions(ctx, src, sourceName, *projectSlug, *bindingRepo, *prodBranch, *installID, onlyList, excludeList, *persistExclude, false, *environment, api.ProjectDeploymentOptions{ComputeRegion: *computeRegion})
 	if err != nil {
 		return printErr("Scan failed", err)
 	}
@@ -174,7 +182,7 @@ func cmdScan(args []string) int {
 
 type connectedRepoScanOptions struct {
 	tarball, path, repo, ref, projectSlug, bindingRepo, productionBranch string
-	only, exclude, environment                                           string
+	only, exclude, environment, computeRegion                            string
 	installID                                                            int64
 	showAffected, explain                                                bool
 }
@@ -229,7 +237,7 @@ func executeConnectedRepoScan(opts connectedRepoScanOptions) int {
 		Repo: opts.repo, Ref: opts.ref, ProjectSlug: opts.projectSlug,
 		RepoFullName: opts.bindingRepo, ProductionBranch: opts.productionBranch,
 		InstallID: opts.installID, Only: onlyList, Exclude: excludeList,
-		Environment: opts.environment,
+		Environment: opts.environment, ComputeRegion: opts.computeRegion,
 	})
 	if err != nil {
 		return printErr("Scan failed", err)
@@ -289,7 +297,7 @@ func executeConnectedRepoPreview(ctx context.Context, opts connectedRepoScanOpti
 		Repo: opts.repo, Ref: opts.ref, ProjectSlug: opts.projectSlug,
 		RepoFullName: opts.bindingRepo, ProductionBranch: opts.productionBranch,
 		InstallID: opts.installID, Only: onlyList, Exclude: excludeList,
-		Environment: opts.environment, NoTriggers: noTriggers,
+		Environment: opts.environment, ComputeRegion: opts.computeRegion, NoTriggers: noTriggers,
 	})
 	if err != nil {
 		return printErr("Scan failed", err)
@@ -335,6 +343,17 @@ func runProjectDeployPreviewWithMode(
 	showAffected, emitJSON, strict, noTriggers bool, environment string,
 	platformTenantRequired ...*bool,
 ) int {
+	return runRegionalProjectDeployPreviewWithMode(ctx, client, tarball, projectSlug, bindingRepo, productionBranch, only, exclude, installID, showAffected, emitJSON, strict, noTriggers, environment, "", platformTenantRequired...)
+}
+
+func runRegionalProjectDeployPreviewWithMode(
+	ctx context.Context,
+	client *api.Client,
+	tarball, projectSlug, bindingRepo, productionBranch, only, exclude string,
+	installID int64,
+	showAffected, emitJSON, strict, noTriggers bool, environment, computeRegion string,
+	platformTenantRequired ...*bool,
+) int {
 	if tarball == "" {
 		return printErr("One-key provision requires --tarball, --template, or a TTY cwd",
 			errors.New("no source resolved"))
@@ -354,8 +373,8 @@ func runProjectDeployPreviewWithMode(
 	}
 	defer func() { _ = src.Close() }()
 
-	plan, err := client.ScanProjectWithBindingEnvironment(ctx, src, filepath.Base(tarball), projectSlug,
-		bindingRepo, productionBranch, installID, onlyList, excludeList, false, noTriggers, environment, platformTenantRequired...)
+	plan, err := client.ScanProjectWithBindingOptions(ctx, src, filepath.Base(tarball), projectSlug,
+		bindingRepo, productionBranch, installID, onlyList, excludeList, false, noTriggers, environment, projectDeploymentOptions(computeRegion, platformTenantRequired...))
 	if err != nil {
 		return printErr("Scan failed", err)
 	}
@@ -626,6 +645,11 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 		fmt.Fprintln(w, "can_apply: true")
 	}
 	printAsyncRoutePlanText(w, plan.AsyncRoutes)
+	for _, workload := range plan.Workloads {
+		if workload.ComputeRegion != "" {
+			fmt.Fprintf(w, "  workload %s compute region: %s\n", workload.Name, workload.ComputeRegion)
+		}
+	}
 	excludeIdx := make(map[string]bool, len(excludeSet))
 	for _, s := range excludeSet {
 		excludeIdx[s] = true
@@ -1025,4 +1049,12 @@ func planProblem(plan api.PlanResponse) api.Problem {
 		Title:  "Cron limit reached",
 		Detail: fmt.Sprintf("plan caps crons at %d; you have %d.", plan.LimitCrons, plan.ObservedCrons),
 	}
+}
+
+func projectDeploymentOptions(region string, tenantPolicy ...*bool) api.ProjectDeploymentOptions {
+	options := api.ProjectDeploymentOptions{ComputeRegion: region}
+	if len(tenantPolicy) > 0 {
+		options.PlatformTenantRequired = tenantPolicy[0]
+	}
+	return options
 }

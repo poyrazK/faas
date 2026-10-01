@@ -50,6 +50,12 @@ func WorkloadAdmissionReasonsWithManaged(workloads []reposcan.Workload, managed 
 	seen := make(map[string]string, len(workloads))
 	var reasons []string
 	for _, workload := range workloads {
+		if !api.ValidComputeRegion(workload.ComputeRegion) {
+			reasons = append(reasons, fmt.Sprintf("workload %q has invalid compute region %q", workload.Name, workload.ComputeRegion))
+		}
+		if app, exists := bySlug[workload.Name]; exists && projectID != "" && app.ProjectID == projectID && app.WorkloadName == workload.Name && workload.ComputeRegion != "" && workload.ComputeRegion != app.ComputeRegion {
+			reasons = append(reasons, fmt.Sprintf("workload %q has immutable compute region %q; create a new workload to use %q", workload.Name, app.ComputeRegion, workload.ComputeRegion))
+		}
 		if workload.DetectedBy.Detector == "serverless" {
 			reasons = append(reasons, fmt.Sprintf(
 				"workload %q is a Serverless function without an execution adapter; create a function app and deploy the handler explicitly",

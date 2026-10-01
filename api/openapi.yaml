@@ -34148,6 +34148,11 @@ components:
       type: object
       required: [source]
       properties:
+        compute_region:
+          type: string
+          maxLength: 63
+          pattern: '^$|^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+          description: "Immutable project default for new workloads. Omitted preserves the existing project default; per-workload declarations take precedence."
         source:
           type: string
           format: binary
@@ -34187,6 +34192,11 @@ components:
       type: object
       required: [id, slug, scan_source, workload_count, created_at, updated_at]
       properties:
+        compute_region:
+          type: string
+          maxLength: 63
+          pattern: '^$|^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+          description: "Immutable default compute region for new project workloads."
         id: { type: string, pattern: '^[a-f0-9]{32}$' }
         slug: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
         repo_full_name: { type: string }
@@ -34997,6 +35007,11 @@ components:
       type: object
       required: [slug, workload_name, status]
       properties:
+        compute_region:
+          type: string
+          maxLength: 63
+          pattern: '^$|^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+          description: "Immutable compute region of the workload app. Environment clones preserve this placement."
         slug: { type: string }
         workload_name: { type: string }
         status: { type: string }
@@ -35051,6 +35066,11 @@ components:
       type: object
       required: [repo, ref, project_slug]
       properties:
+        compute_region:
+          type: string
+          maxLength: 63
+          pattern: '^$|^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+          description: "Immutable project default for new workloads in this source-ref plan. Omitted preserves an existing project default."
         repo:
           type: string
           pattern: '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
@@ -35408,6 +35428,11 @@ components:
       type: object
       required: [source]
       properties:
+        compute_region:
+          type: string
+          maxLength: 63
+          pattern: '^$|^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+          description: "Repeat the same compute region default used for scan. Existing project defaults and app regions are immutable."
         source:
           type: string
           format: binary
@@ -35436,6 +35461,11 @@ components:
       type: object
       required: [name, root_dir, command, ports]
       properties:
+        compute_region:
+          type: string
+          maxLength: 63
+          pattern: '^$|^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+          description: "Effective immutable compute region for this workload. Empty uses legacy unconstrained placement."
         name: { type: string, example: api }
         platform_tenant_required:
           type: boolean
@@ -35673,6 +35703,11 @@ components:
         - can_apply
         - plan_token
       properties:
+        compute_region:
+          type: string
+          maxLength: 63
+          pattern: '^$|^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+          description: "Effective immutable project default compute region for new workloads."
         project_slug: { type: string }
         repo_full_name: { type: string }
         environment: { type: string, description: "Registered project environment targeted by this plan" }

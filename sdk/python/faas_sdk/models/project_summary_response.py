@@ -22,6 +22,8 @@ class ProjectSummaryResponse:
     workload_count: int
     created_at: datetime.datetime
     updated_at: datetime.datetime
+    compute_region: str | Unset = UNSET
+    """Immutable default compute region for new project workloads."""
     repo_full_name: str | Unset = UNSET
     production_branch: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -39,6 +41,8 @@ class ProjectSummaryResponse:
 
         updated_at = self.updated_at.isoformat()
 
+        compute_region = self.compute_region
+
         repo_full_name = self.repo_full_name
 
         production_branch = self.production_branch
@@ -55,6 +59,8 @@ class ProjectSummaryResponse:
                 "updated_at": updated_at,
             }
         )
+        if compute_region is not UNSET:
+            field_dict["compute_region"] = compute_region
         if repo_full_name is not UNSET:
             field_dict["repo_full_name"] = repo_full_name
         if production_branch is not UNSET:
@@ -77,6 +83,8 @@ class ProjectSummaryResponse:
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
+        compute_region = d.pop("compute_region", UNSET)
+
         repo_full_name = d.pop("repo_full_name", UNSET)
 
         production_branch = d.pop("production_branch", UNSET)
@@ -88,6 +96,7 @@ class ProjectSummaryResponse:
             workload_count=workload_count,
             created_at=created_at,
             updated_at=updated_at,
+            compute_region=compute_region,
             repo_full_name=repo_full_name,
             production_branch=production_branch,
         )

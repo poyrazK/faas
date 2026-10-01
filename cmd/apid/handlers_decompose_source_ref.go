@@ -67,6 +67,9 @@ func decodeProjectSourceRefScanRequest(r *http.Request) (api.ProjectSourceRefSca
 }
 
 func validateProjectSourceRefScanRequest(req api.ProjectSourceRefScanRequest) *api.Problem {
+	if !api.ValidComputeRegion(req.ComputeRegion) {
+		return api.ErrSourceInvalid("compute_region must be canonical")
+	}
 	invalid := func(detail string) *api.Problem {
 		return api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Validation failed", detail)
 	}
@@ -165,6 +168,7 @@ func projectSourceRefStreamProblem(copyErr, closeErr error, stats *StreamSourceR
 func writeProjectSourceRefFields(writer *multipart.Writer, req api.ProjectSourceRefScanRequest, installID int64) error {
 	fields := map[string]string{
 		"project_slug":      req.ProjectSlug,
+		"compute_region":    req.ComputeRegion,
 		"repo_full_name":    req.RepoFullName,
 		"production_branch": req.ProductionBranch,
 		"install_id":        strconv.FormatInt(installID, 10),

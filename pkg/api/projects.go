@@ -7,6 +7,7 @@ import (
 
 // ProjectSummaryResponse is the stable account-scoped project list shape.
 type ProjectSummaryResponse struct {
+	ComputeRegion    string `json:"compute_region,omitempty"`
 	ID               string `json:"id"`
 	Slug             string `json:"slug"`
 	RepoFullName     string `json:"repo_full_name,omitempty"`
@@ -19,6 +20,7 @@ type ProjectSummaryResponse struct {
 
 // ProjectWorkloadResponse describes one app still attached to a project.
 type ProjectWorkloadResponse struct {
+	ComputeRegion    string `json:"compute_region,omitempty"`
 	Slug             string `json:"slug"`
 	WorkloadName     string `json:"workload_name"`
 	Status           string `json:"status"`

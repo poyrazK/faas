@@ -1481,13 +1481,32 @@ func (c *Client) ScanProjectWithBindingEnvironment(
 	environment string,
 	platformTenantRequired ...*bool,
 ) (PlanResponse, error) {
+	var options ProjectDeploymentOptions
+	if len(platformTenantRequired) > 0 {
+		options.PlatformTenantRequired = platformTenantRequired[0]
+	}
+	return c.ScanProjectWithBindingOptions(ctx, source, sourceName, projectSlug, repoFullName, productionBranch, installID, only, exclude, persistExclude, noTriggers, environment, options)
+}
+
+func (c *Client) ScanProjectWithBindingOptions(
+	ctx context.Context,
+	source io.Reader, sourceName, projectSlug, repoFullName, productionBranch string,
+	installID int64, only, exclude []string, persistExclude, noTriggers bool,
+	environment string,
+	options ProjectDeploymentOptions,
+) (PlanResponse, error) {
 	var b bytes.Buffer
 	w := multipart.NewWriter(&b)
 	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, repoFullName, productionBranch, installID, only, exclude, persistExclude, noTriggers, environment); err != nil {
 		return PlanResponse{}, fmt.Errorf("build multipart: %w", err)
 	}
-	if err := writeProjectTenantPolicy(w, platformTenantRequired); err != nil {
+	if err := writeProjectTenantPolicy(w, []*bool{options.PlatformTenantRequired}); err != nil {
 		return PlanResponse{}, fmt.Errorf("build tenant policy field: %w", err)
+	}
+	if options.ComputeRegion != "" {
+		if err := w.WriteField("compute_region", options.ComputeRegion); err != nil {
+			return PlanResponse{}, fmt.Errorf("build compute region field: %w", err)
+		}
 	}
 	if err := w.Close(); err != nil {
 		return PlanResponse{}, fmt.Errorf("close multipart writer: %w", err)
@@ -1560,13 +1579,33 @@ func (c *Client) ApplyProjectPlanWithBindingEnvironmentApproval(
 	environment, approvalToken string,
 	platformTenantRequired ...*bool,
 ) (ApplyResponse, error) {
+	var options ProjectDeploymentOptions
+	if len(platformTenantRequired) > 0 {
+		options.PlatformTenantRequired = platformTenantRequired[0]
+	}
+	return c.ApplyProjectPlanWithBindingOptions(ctx, planToken, source, sourceName, projectSlug, repoFullName, productionBranch, installID, only, exclude, persistExclude, noTriggers, environment, approvalToken, options)
+}
+
+func (c *Client) ApplyProjectPlanWithBindingOptions(
+	ctx context.Context,
+	planToken string,
+	source io.Reader, sourceName, projectSlug, repoFullName, productionBranch string,
+	installID int64, only, exclude []string, persistExclude, noTriggers bool,
+	environment, approvalToken string,
+	options ProjectDeploymentOptions,
+) (ApplyResponse, error) {
 	var b bytes.Buffer
 	w := multipart.NewWriter(&b)
 	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, repoFullName, productionBranch, installID, only, exclude, persistExclude, noTriggers, environment, approvalToken); err != nil {
 		return ApplyResponse{}, fmt.Errorf("build multipart: %w", err)
 	}
-	if err := writeProjectTenantPolicy(w, platformTenantRequired); err != nil {
+	if err := writeProjectTenantPolicy(w, []*bool{options.PlatformTenantRequired}); err != nil {
 		return ApplyResponse{}, fmt.Errorf("build tenant policy field: %w", err)
+	}
+	if options.ComputeRegion != "" {
+		if err := w.WriteField("compute_region", options.ComputeRegion); err != nil {
+			return ApplyResponse{}, fmt.Errorf("build compute region field: %w", err)
+		}
 	}
 	if err := w.Close(); err != nil {
 		return ApplyResponse{}, fmt.Errorf("close multipart writer: %w", err)
@@ -7091,4 +7130,11 @@ func (c *Client) PutAppCustomMetric(ctx context.Context, slug, name string, valu
 // per-app name cap. Deleting a name that does not exist succeeds.
 func (c *Client) DeleteAppCustomMetric(ctx context.Context, slug, name string) error {
 	return c.do(ctx, "DELETE", "/v1/apps/"+slug+"/custom-metrics/"+name, nil, nil)
+}
+
+// ProjectDeploymentOptions carries app placement and ingress intent through a
+// project scan/apply pair. Existing helpers keep their historical defaults.
+type ProjectDeploymentOptions struct {
+	ComputeRegion          string
+	PlatformTenantRequired *bool
 }

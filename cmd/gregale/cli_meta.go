@@ -1082,7 +1082,7 @@ var cliCommands = []cliCommand{
 		Short:    "Deploy an app, function, or project",
 		Examples: []string{"gregale deploy --plan", "gregale deploy --source=head --name my-api", "gregale deploy --path packages/api --source=worktree"},
 		Flags: []cliFlag{
-			{Name: "region", Short: "immutable compute region for a new standalone app", Value: "REGION"},
+			{Name: "region", Short: "immutable compute region for a new app or project default", Value: "REGION"},
 			{Name: "image", Short: "deploy from a container image reference", Value: "REF"},
 			{Name: "tarball", Short: "deploy from a source tarball", Value: "PATH"},
 			{Name: "path", Short: "deploy a selected local source directory (relative to the current directory)", Value: "DIR"},
@@ -2166,6 +2166,7 @@ var cliCommands = []cliCommand{
 			{Name: "production-branch", Short: "production branch for the project", Value: "BRANCH"},
 			{Name: "project-slug", Short: "kebab slug; default = repo dir basename", Value: "SLUG"},
 			{Name: "environment", Short: "registered project environment to scan", Value: "SLUG"},
+			{Name: "region", Short: "immutable default compute region for new project workloads", Value: "REGION"},
 			// ADR-124 follow-up #1: --exclude + --show-affected
 			// ship on scan as well as deploy (the partition is the
 			// preview surface, scan is the operator's first stop).

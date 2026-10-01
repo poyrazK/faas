@@ -145,7 +145,7 @@ remains in place.
 
 ## Next milestone
 
-Carry region intent through project scan, signed plans, apply/reconcile, and
-environment cloning. Plans must expose immutable-region conflicts before any
-mutation. Regional control-plane independence, geographic ingress, data residency,
+ADR-426 carries region intent through project scan, plan identity tokens,
+apply/reconcile, and environment cloning. Plans expose immutable-region
+conflicts before mutation. Next, extend placement to standalone managed Jobs. Regional control-plane independence, geographic ingress, data residency,
 and a global app identity with multiple regional deployments remain later work.

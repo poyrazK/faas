@@ -2867,6 +2867,12 @@ func (m *MemStore) CreateProject(_ context.Context, p Project) (Project, error) 
 	if _, ok := m.accounts[p.AccountID]; !ok {
 		return Project{}, ErrNotFound
 	}
+	if !api.ValidComputeRegion(p.ComputeRegion) {
+		return Project{}, ErrInvalidArgument
+	}
+	if err := m.checkNewAppComputeRegionLocked(App{ComputeRegion: p.ComputeRegion}); err != nil {
+		return Project{}, err
+	}
 	if p.ScanSource == "" {
 		p.ScanSource = ProjectScanSourceUnknown
 	}
@@ -3481,6 +3487,12 @@ func (m *MemStore) ApplyProjectPlan(
 ) (Project, []App, []Cron, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if !api.ValidComputeRegion(project.ComputeRegion) {
+		return Project{}, nil, nil, ErrInvalidArgument
+	}
+	if err := m.checkNewAppComputeRegionLocked(App{ComputeRegion: project.ComputeRegion}); err != nil {
+		return Project{}, nil, nil, err
+	}
 
 	// 1. Account exists.
 	if _, ok := m.accounts[project.AccountID]; !ok {

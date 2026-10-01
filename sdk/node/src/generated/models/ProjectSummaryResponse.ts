@@ -6,6 +6,10 @@
  * Stable account-scoped project list item.
  */
 export type ProjectSummaryResponse = {
+  /**
+   * Immutable default compute region for new project workloads.
+   */
+  compute_region?: string;
   id: string;
   slug: string;
   repo_full_name?: string;

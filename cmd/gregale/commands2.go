@@ -2141,7 +2141,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	defer stop()
 	developerSync := execution.developerSource
 	fs := newFlagSet("deploy", flag.ContinueOnError)
-	computeRegion := fs.String("region", "", "immutable compute region for a new standalone app")
+	computeRegion := fs.String("region", "", "immutable compute region for a new app or project default")
 	image := fs.String("image", "", "digest-pinned image reference")
 	tarball := fs.String("tarball", "", "path to source archive (tar.gz)")
 	sourcePath := fs.String("path", "", "deploy this source directory (relative to the current directory)")
@@ -2415,8 +2415,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// through to the single-app upload path and were ignored.
 	projectRequested := *deployOnly != "" || *deployExclude != "" ||
 		*deployPersistExclude || *deployShowAffected || explicit["project-slug"] || *projectDeploy
-	if *computeRegion != "" && (projectRequested || *diff || *dryRun || *serverDiff || *simplePlan || *githubSnippet) {
-		return printErr("Invalid --region", fmt.Errorf("--region currently supports standalone deployments; project, preview, and snippet flows are not region-aware"))
+	if *computeRegion != "" && (!projectRequested && (*diff || *dryRun || *serverDiff) || *simplePlan || *githubSnippet) {
+		return printErr("Invalid --region", fmt.Errorf("--region supports standalone deployment and project scan/apply; single-app diff, plan, and snippet flows are not region-aware"))
 	}
 	if *waitTimeoutSeconds <= 0 {
 		return printErr("Invalid --timeout", fmt.Errorf("must be greater than zero seconds"))
@@ -2859,11 +2859,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return executeConnectedRepoPreview(ctx, connectedRepoScanOptions{
 				repo: *repo, ref: *ref, projectSlug: projectSlug,
 				bindingRepo: *bindingRepo, productionBranch: *productionBranch,
-				installID: *installID, environment: *environment,
+				installID: *installID, environment: *environment, computeRegion: *computeRegion,
 			}, *diffJSON, !*diffLenient, *noTriggers)
 		}
 		refIntent := deployIdempotencyIntent{
-			Slug: slug, Repo: *repo, Ref: *ref, SourceBranch: *sourceBranch, Reason: *reason, Tag: *tag, AppProtocol: *appProtocol,
+			ComputeRegion: *computeRegion,
+			Slug:          slug, Repo: *repo, Ref: *ref, SourceBranch: *sourceBranch, Reason: *reason, Tag: *tag, AppProtocol: *appProtocol,
 			DeployedBy: resolveDeployedBy(*deployedBy), PRNumber: *prNumber,
 			TrafficPercent: *trafficPercent, CanaryPreset: *canaryPreset,
 			CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr, Healthcheck: healthcheck,
@@ -3539,7 +3540,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		appProtocolIntent = *appProtocolPtr
 	}
 	deployIntent := deployIdempotencyIntent{
-		Slug: slug, Shape: resolvedShape, Runtime: deployRuntime, Handler: deployHandler,
+		ComputeRegion: *computeRegion, Slug: slug, Shape: resolvedShape, Runtime: deployRuntime, Handler: deployHandler,
 		Image: *image, SourceSHA256: sourceSHA256, SourceRoot: sourceRoot,
 		Profile: *profile, Dockerfile: *dockerfile, RequireAuthn: requireAuthnPtr,
 		AppProtocol: appProtocolIntent, ExecutionMode: *executionMode, RestartPolicy: *restartPolicy,
@@ -3577,10 +3578,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			if *profile != "" {
 				return printErr("Invalid flags", fmt.Errorf("--profile applies to a single app and cannot be combined with --project, --only, or --project-slug"))
 			}
-			return runProjectDeployPreviewWithMode(ctx, client, *tarball, *projectSlug,
+			return runRegionalProjectDeployPreviewWithMode(ctx, client, *tarball, *projectSlug,
 				*bindingRepo, *productionBranch, *deployOnly, *deployExclude, *installID,
 				*deployShowAffected, *diffJSON,
-				*diffStrict || !*diffLenient, *noTriggers, *environment, platformTenantRequiredPtr)
+				*diffStrict || !*diffLenient, *noTriggers, *environment, *computeRegion, platformTenantRequiredPtr)
 		}
 		opts := buildDiffOptionsWithLifecycle(slug, resolvedShape, deployRuntime, deployHandler, *image, sourceDir, requireAuthnPtr, appProtocolPtr, *profile, *vcpu, *executionMode, *restartPolicy, *startupDeadlineS, *maxRetries)
 		opts.BuildPlan = buildPreviewBuildPlan(sourceDir, resolvedShape, deployRuntime, deployHandler, sourceSHA256, *image != "", *dockerfile)
@@ -3642,8 +3643,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				"--only and --exclude share workload(s): %s",
 				strings.Join(clash, ", ")))
 		}
-		plan, err := client.ScanProjectWithBindingEnvironment(ctx, openTarball, filepath.Base(*tarball),
-			*projectSlug, *bindingRepo, prodBranch, *installID, onlyList, excludeList, *deployPersistExclude, *noTriggers, *environment, platformTenantRequiredPtr)
+		plan, err := client.ScanProjectWithBindingOptions(ctx, openTarball, filepath.Base(*tarball),
+			*projectSlug, *bindingRepo, prodBranch, *installID, onlyList, excludeList, *deployPersistExclude, *noTriggers, *environment, projectDeploymentOptions(*computeRegion, platformTenantRequiredPtr))
 		if err != nil {
 			return printErr("Scan failed", err)
 		}
@@ -3699,8 +3700,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 		defer func() { _ = openTarball2.Close() }()
 		applyCtx := api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(deployKey, "project-apply"))
-		apply, err := client.ApplyProjectPlanWithBindingEnvironmentApproval(applyCtx, plan.PlanToken, openTarball2, filepath.Base(*tarball),
-			*projectSlug, *bindingRepo, prodBranch, *installID, onlyList, excludeList, *deployPersistExclude, *noTriggers, *environment, approvalToken, platformTenantRequiredPtr)
+		apply, err := client.ApplyProjectPlanWithBindingOptions(applyCtx, plan.PlanToken, openTarball2, filepath.Base(*tarball),
+			*projectSlug, *bindingRepo, prodBranch, *installID, onlyList, excludeList, *deployPersistExclude, *noTriggers, *environment, approvalToken, projectDeploymentOptions(*computeRegion, platformTenantRequiredPtr))
 		if err != nil {
 			return printErr("Apply failed", err)
 		}

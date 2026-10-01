@@ -12,6 +12,10 @@ import type { ServiceReliabilityPolicies } from './ServiceReliabilityPolicies.js
  * One discovered unit of work. Mirrors reposcan.Workload.
  */
 export type PlanWorkload = {
+  /**
+   * Effective immutable compute region for this workload. Empty uses legacy unconstrained placement.
+   */
+  compute_region?: string;
   name: string;
   /**
    * Requested customer identity policy from Compose x-gregale-platform-tenant-required or the request override. Omitted preserves existing app policy; new apps default to false.

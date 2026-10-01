@@ -1156,6 +1156,12 @@ func newServerWithDeps(
 	// already on s. The handler is anonymous (no session
 	// required); the route is mounted via middleware.AuthLimit
 	// (no requireX chain) in cmd/apid/server.go:870 below.
+	s.reconcileSvc.ValidateNewComputeRegion = func(ctx context.Context, id string) error {
+		if p := s.validateComputeRegionAvailable(ctx, id); p != nil {
+			return p
+		}
+		return nil
+	}
 	s.oidcHandler = s.buildOIDCHandler()
 	// ADR-120: wire the package-level appsDomainFunc seam (declared at
 	// cmd/apid/dns_probes.go:125) to the server's apps base domain so

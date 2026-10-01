@@ -12,6 +12,10 @@ import type { PlanWorkload } from './PlanWorkload.js';
  * Dry-run scan response.
  */
 export type PlanResponse = {
+  /**
+   * Effective immutable project default compute region for new workloads.
+   */
+  compute_region?: string;
   project_slug: string;
   repo_full_name?: string;
   /**

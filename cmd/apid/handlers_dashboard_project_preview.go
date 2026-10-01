@@ -297,7 +297,7 @@ func (s *server) applyProjectPreview(w http.ResponseWriter, r *http.Request, log
 	// multipart part so parseScanMultipart's comma-split /
 	// lowercase / trim normalises identically to the live form.
 	exclude := r.Form["exclude"]
-	synthReq, buildErr := buildCachedSourceRequest(cachedPath, slug, exclude, approvalToken)
+	synthReq, buildErr := buildCachedSourceRequest(cachedPath, slug, exclude, approvalToken, pt.ComputeRegion)
 	if buildErr != nil {
 		log.Error("dashboard project_preview apply: build synth req",
 			"account_id", acct.ID, "slug", slug, "err", buildErr)

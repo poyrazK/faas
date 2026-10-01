@@ -22,6 +22,9 @@ class ProjectApplyRequest:
     """
 
     source: File
+    compute_region: str | Unset = UNSET
+    """Repeat the same compute region default used for scan. Existing project defaults and app regions are
+    immutable."""
     project_slug: str | Unset = UNSET
     repo_full_name: str | Unset = UNSET
     production_branch: str | Unset = UNSET
@@ -41,6 +44,8 @@ class ProjectApplyRequest:
 
     def to_dict(self) -> dict[str, Any]:
         source = self.source.to_tuple()
+
+        compute_region = self.compute_region
 
         project_slug = self.project_slug
 
@@ -67,6 +72,8 @@ class ProjectApplyRequest:
                 "source": source,
             }
         )
+        if compute_region is not UNSET:
+            field_dict["compute_region"] = compute_region
         if project_slug is not UNSET:
             field_dict["project_slug"] = project_slug
         if repo_full_name is not UNSET:
@@ -92,6 +99,9 @@ class ProjectApplyRequest:
         files: types.RequestFiles = []
 
         files.append(("source", self.source.to_tuple()))
+
+        if not isinstance(self.compute_region, Unset):
+            files.append(("compute_region", (None, str(self.compute_region).encode(), "text/plain")))
 
         if not isinstance(self.project_slug, Unset):
             files.append(("project_slug", (None, str(self.project_slug).encode(), "text/plain")))
@@ -132,6 +142,8 @@ class ProjectApplyRequest:
         d = dict(src_dict)
         source = File(payload=BytesIO(d.pop("source")))
 
+        compute_region = d.pop("compute_region", UNSET)
+
         project_slug = d.pop("project_slug", UNSET)
 
         repo_full_name = d.pop("repo_full_name", UNSET)
@@ -152,6 +164,7 @@ class ProjectApplyRequest:
 
         project_apply_request = cls(
             source=source,
+            compute_region=compute_region,
             project_slug=project_slug,
             repo_full_name=repo_full_name,
             production_branch=production_branch,

@@ -5542,3 +5542,7 @@ SELECT * FROM compute_regions ORDER BY id;
 
 -- name: ComputeRegionByID :one
 SELECT * FROM compute_regions WHERE id = $1;
+
+-- name: CreateProjectWithComputeRegion :one
+INSERT INTO projects (account_id, slug, repo_full_name, production_branch, install_id, scan_source, compute_region)
+VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *;

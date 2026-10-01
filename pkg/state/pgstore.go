@@ -4805,7 +4805,7 @@ func scanProject(row pgx.Row) (Project, error) {
 	)
 	if err := row.Scan(
 		&p.ID, &p.AccountID, &p.Slug, &p.RepoFullName, &p.ProductionBranch,
-		&p.InstallID, &scanSource, &p.CreatedAt, &p.UpdatedAt,
+		&p.InstallID, &scanSource, &p.ComputeRegion, &p.CreatedAt, &p.UpdatedAt,
 	); err != nil {
 		return Project{}, mapErr(err)
 	}
@@ -4918,6 +4918,9 @@ func (s *PgStore) ConsumeProjectEnvironmentApproval(ctx context.Context, account
 // surfaces as ErrConflict via 23505. scan_source defaults to 'unknown'
 // at the DB level when the caller passes the empty string.
 func (s *PgStore) CreateProject(ctx context.Context, p Project) (Project, error) {
+	if !api.ValidComputeRegion(p.ComputeRegion) {
+		return Project{}, ErrInvalidArgument
+	}
 	if p.ScanSource == "" {
 		p.ScanSource = ProjectScanSourceUnknown
 	}
@@ -4926,18 +4929,8 @@ func (s *PgStore) CreateProject(ctx context.Context, p Project) (Project, error)
 		return Project{}, fmt.Errorf("state: begin create project: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	row := tx.QueryRow(ctx, `
-		insert into projects
-		    (account_id, slug, repo_full_name, production_branch, install_id, scan_source)
-		values ($1, $2, $3, $4, $5, $6)
-		returning id, account_id, slug, coalesce(repo_full_name,''),
-		          coalesce(production_branch,''), coalesce(install_id,0),
-		          scan_source, created_at, updated_at
-	`,
-		p.AccountID, p.Slug, nullString(p.RepoFullName), nullString(p.ProductionBranch),
-		p.InstallID, string(p.ScanSource),
-	)
-	proj, err := scanProject(row)
+	record, err := (&sqlc.Queries{}).CreateProjectWithComputeRegion(ctx, tx, projectSQLParams(p))
+	proj := projectFromSQL(record)
 	if err != nil {
 		// FK violation on account_id means the owning account row is
 		// gone. Surface as ErrNotFound so handlers can branch on a
@@ -4966,7 +4959,7 @@ func (s *PgStore) CreateProject(ctx context.Context, p Project) (Project, error)
 func (s *PgStore) ProjectByID(ctx context.Context, projectID string) (Project, error) {
 	row := s.pool.QueryRow(ctx, `
 		select id, account_id, slug, coalesce(repo_full_name,''),
-		       coalesce(production_branch,''), coalesce(install_id, 0), scan_source,
+		       coalesce(production_branch,''), coalesce(install_id, 0), scan_source, compute_region,
 		       created_at, updated_at
 		  from projects
 		 where id = $1
@@ -4977,7 +4970,7 @@ func (s *PgStore) ProjectByID(ctx context.Context, projectID string) (Project, e
 func (s *PgStore) ProjectBySlug(ctx context.Context, accountID, slug string) (Project, error) {
 	row := s.pool.QueryRow(ctx, `
 		select id, account_id, slug, coalesce(repo_full_name,''),
-		       coalesce(production_branch,''), coalesce(install_id, 0), scan_source,
+		       coalesce(production_branch,''), coalesce(install_id, 0), scan_source, compute_region,
 		       created_at, updated_at
 		  from projects
 		 where account_id = $1 and slug = $2
@@ -4996,7 +4989,7 @@ func (s *PgStore) ProjectByRepo(ctx context.Context, accountID string, installID
 	if accountID == "" {
 		row := s.pool.QueryRow(ctx, `
 			select id, account_id, slug, coalesce(repo_full_name,''),
-			       coalesce(production_branch,''), coalesce(install_id, 0), scan_source,
+			       coalesce(production_branch,''), coalesce(install_id, 0), scan_source, compute_region,
 			       created_at, updated_at
 			  from projects
 			 where install_id = $1 and repo_full_name = $2
@@ -5006,7 +4999,7 @@ func (s *PgStore) ProjectByRepo(ctx context.Context, accountID string, installID
 	}
 	row := s.pool.QueryRow(ctx, `
 		select id, account_id, slug, coalesce(repo_full_name,''),
-		       coalesce(production_branch,''), coalesce(install_id, 0), scan_source,
+		       coalesce(production_branch,''), coalesce(install_id, 0), scan_source, compute_region,
 		       created_at, updated_at
 		  from projects
 		 where install_id = $1 and repo_full_name = $2
@@ -5019,7 +5012,7 @@ func (s *PgStore) ProjectByRepo(ctx context.Context, accountID string, installID
 func (s *PgStore) ListProjectsForAccount(ctx context.Context, accountID string) ([]Project, error) {
 	rows, err := s.pool.Query(ctx, `
 		select id, account_id, slug, coalesce(repo_full_name,''),
-		       coalesce(production_branch,''), coalesce(install_id, 0), scan_source,
+		       coalesce(production_branch,''), coalesce(install_id, 0), scan_source, compute_region,
 		       created_at, updated_at
 		  from projects
 		 where account_id = $1
@@ -5090,7 +5083,7 @@ func (s *PgStore) SetProjectScanSource(ctx context.Context, projectID string, sr
 		       updated_at  = case when scan_source <> $2 then now() else updated_at end
 		 where id = $1
 		returning id, account_id, slug, coalesce(repo_full_name,''),
-		          coalesce(production_branch,''), coalesce(install_id, 0), scan_source,
+		          coalesce(production_branch,''), coalesce(install_id, 0), scan_source, compute_region,
 		          created_at, updated_at
 	`, projectID, string(src))
 	return scanProject(row)
@@ -5105,7 +5098,7 @@ func (s *PgStore) UpdateProjectBinding(ctx context.Context, accountID, projectID
 		       updated_at = now()
 		 where id = $1 and account_id = $2
 		returning id, account_id, slug, coalesce(repo_full_name,''),
-		          coalesce(production_branch,''), coalesce(install_id, 0), scan_source,
+		          coalesce(production_branch,''), coalesce(install_id, 0), scan_source, compute_region,
 		          created_at, updated_at
 	`, projectID, accountID, repoFullName, productionBranch, installID)
 	project, err := scanProject(row)
@@ -5163,7 +5156,7 @@ func (s *PgStore) ListProjectEnvironments(ctx context.Context, accountID, projec
 func (s *PgStore) projectByIDForAccount(ctx context.Context, accountID, projectID string) (Project, error) {
 	row := s.pool.QueryRow(ctx, `
 		select id, account_id, slug, coalesce(repo_full_name,''),
-		       coalesce(production_branch,''), coalesce(install_id, 0), scan_source,
+		       coalesce(production_branch,''), coalesce(install_id, 0), scan_source, compute_region,
 		       created_at, updated_at
 		  from projects where id = $1 and account_id = $2
 	`, projectID, accountID)
@@ -5460,18 +5453,9 @@ func (s *PgStore) ApplyProjectPlan(
 	if scanSrc == "" {
 		scanSrc = ProjectScanSourceUnknown
 	}
-	projRow := tx.QueryRow(ctx, `
-		insert into projects
-		    (account_id, slug, repo_full_name, production_branch, install_id, scan_source)
-		values ($1, $2, $3, $4, $5, $6)
-		returning id, account_id, slug, coalesce(repo_full_name,''),
-		          coalesce(production_branch,''), coalesce(install_id,0),
-		          scan_source, created_at, updated_at
-	`,
-		project.AccountID, project.Slug, nullString(project.RepoFullName),
-		nullString(project.ProductionBranch), project.InstallID, string(scanSrc),
-	)
-	insertedProject, err := scanProject(projRow)
+	project.ScanSource = scanSrc
+	record, err := (&sqlc.Queries{}).CreateProjectWithComputeRegion(ctx, tx, projectSQLParams(project))
+	insertedProject := projectFromSQL(record)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.ForeignKeyViolation {
@@ -5615,7 +5599,7 @@ func (s *PgStore) ApplyProjectReconcile(
 	}
 	storedProject, err := scanProject(tx.QueryRow(ctx, `
 		select id, account_id, slug, coalesce(repo_full_name,''),
-		       coalesce(production_branch,''), coalesce(install_id,0), scan_source,
+		       coalesce(production_branch,''), coalesce(install_id,0), scan_source, compute_region,
 		       created_at, updated_at
 		  from projects where id = $1 and account_id = $2 for update`, project.ID, project.AccountID))
 	if err != nil {

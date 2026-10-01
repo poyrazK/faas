@@ -26,19 +26,21 @@ func TestComputeRegionRenderedPerHost(t *testing.T) {
 }
 
 func TestRegionalComputeOperatorGateRenderedAsBoolean(t *testing.T) {
-	for _, enabled := range []bool{false, true} {
-		body, _, err := renderTOML(tomlRenderCtx{Daemon: "apid", DC: &manifest.DaemonConfig{RegionalComputeEnabled: &enabled}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		var cfg struct {
-			Enabled bool `toml:"regional_compute_enabled"`
-		}
-		if _, err := toml.Decode(string(body), &cfg); err != nil {
-			t.Fatal(err)
-		}
-		if cfg.Enabled != enabled {
-			t.Fatalf("gate = %v, want %v", cfg.Enabled, enabled)
+	for _, daemon := range []string{"apid", "githubd"} {
+		for _, enabled := range []bool{false, true} {
+			body, _, err := renderTOML(tomlRenderCtx{Daemon: daemon, DC: &manifest.DaemonConfig{RegionalComputeEnabled: &enabled}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var cfg struct {
+				Enabled bool `toml:"regional_compute_enabled"`
+			}
+			if _, err := toml.Decode(string(body), &cfg); err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Enabled != enabled {
+				t.Fatalf("gate = %v, want %v", cfg.Enabled, enabled)
+			}
 		}
 	}
 }

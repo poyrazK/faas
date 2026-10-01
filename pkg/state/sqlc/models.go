@@ -3423,6 +3423,7 @@ type Project struct {
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
 	OrgID            pgtype.UUID
+	ComputeRegion    string
 }
 
 type ProjectEnvironment struct {

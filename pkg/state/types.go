@@ -6771,6 +6771,7 @@ const (
 // Members: apps.project_id references this row. Standalone apps
 // keep project_id NULL.
 type Project struct {
+	ComputeRegion    string // immutable default for new project workloads
 	ID               string
 	AccountID        string
 	Slug             string
