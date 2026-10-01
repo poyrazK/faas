@@ -181,6 +181,9 @@ func (m *MemStore) PublishInstanceRuntimeWithConfig(_ context.Context, id, expec
 	if !exists || instance.State != expectedState || instance.WakeID != wakeID || normalizedDeploymentScope(deployment.Scope) != inputs.Scope {
 		return Instance{}, ErrConflict
 	}
+	if err := validateWorkerInstanceMutation(instance, string(StateRunning), instance.Mode); err != nil {
+		return Instance{}, err
+	}
 	prior := instance
 	instance.State, instance.Netns, instance.HostIP, instance.GuestUID, instance.StartedAt = string(StateRunning), netns, hostIP, uid, time.Now().UTC()
 	m.instances[id] = instance

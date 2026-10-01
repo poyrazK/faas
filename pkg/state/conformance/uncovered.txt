@@ -535,7 +535,6 @@ SetDeploymentFailedEx
 SetDeploymentParked
 SetDeploymentSourceURL
 SetInstanceFrameworkReadyAt
-SetInstanceMode
 SetInstanceRuntime
 SetMFARequired
 SetMFASecret

@@ -303,8 +303,14 @@ nonresident. Failed creation rolls back both reservations; termination releases
 the account slot through the instance state. The worker wake and prime paths
 refuse before contacting vmmd when account capacity is exhausted. Shared-store
 cases and a real PostgreSQL cross-node admission race cover this contract.
-Legacy nonresident-to-resident state changes and mode retrofits still require
-an audit before this can be treated as a universal worker ownership guard.
+Worker mode is immutable for the lifetime of an instance. A stopped or parked
+worker must reenter through fresh creation and account admission. A PostgreSQL
+trigger guards all state/mode writes, including readiness publication, while
+the memory store mirrors that contract. Rejected publication preserves the row
+and publishes no runtime input receipt. Ordinary mirror classification remains
+supported, and an already resident worker can become ready, migrate, and stop
+without acquiring a second account slot. Replay-safe migration and shared-store
+checks cover legacy mutation helpers and publication paths.
 Scale-out and scale-in cooldowns use retained admission and termination history
 in the selected generation, respectively, so a recently active neighbor cannot hold a cold environment. New generations
 can start without inheriting their predecessor's cooldown.

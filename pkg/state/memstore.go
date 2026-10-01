@@ -13359,6 +13359,11 @@ func (m *MemStore) CreateInstanceWithMode(_ context.Context, appID, deploymentID
 	if mode == "" {
 		mode = string(InstanceModeNormal)
 	}
+	if mode == string(InstanceModeWorker) {
+		if err := validateInstanceState(state); err != nil {
+			return Instance{}, err
+		}
+	}
 	if mode == string(InstanceModeWorker) && State(state).CountsForRAM() {
 		if err := m.checkAccountWorkerReservationLocked(appID, deploymentID); err != nil {
 			return Instance{}, err
@@ -13837,6 +13842,9 @@ func (m *MemStore) UpdateInstanceState(_ context.Context, id, state string) erro
 	if !ok {
 		return ErrNotFound
 	}
+	if err := validateWorkerInstanceMutation(ins, state, ins.Mode); err != nil {
+		return err
+	}
 	ins.State = state
 	m.instances[id] = ins
 	return nil
@@ -13855,6 +13863,9 @@ func (m *MemStore) UpdateInstanceStateIf(_ context.Context, id, expectedState, n
 	ins, ok := m.instances[id]
 	if !ok || ins.State != expectedState {
 		return ErrConflict
+	}
+	if err := validateWorkerInstanceMutation(ins, nextState, ins.Mode); err != nil {
+		return err
 	}
 	ins.State = nextState
 	if State(nextState) == StateParked {
@@ -13896,6 +13907,9 @@ func (m *MemStore) UpdateInstanceStateWithTimestamp(_ context.Context, id, state
 	if !ok {
 		return ErrNotFound
 	}
+	if err := validateWorkerInstanceMutation(ins, state, ins.Mode); err != nil {
+		return err
+	}
 	ins.State = state
 	ins.ParkedAt = parkedAt
 	m.instances[id] = ins
@@ -13915,6 +13929,9 @@ func (m *MemStore) UpdateInstanceStateToTerminal(_ context.Context, id, state st
 	ins, ok := m.instances[id]
 	if !ok {
 		return ErrNotFound
+	}
+	if err := validateWorkerInstanceMutation(ins, state, ins.Mode); err != nil {
+		return err
 	}
 	ins.State = state
 	ts := terminalAt
@@ -13955,6 +13972,9 @@ func (m *MemStore) SetInstanceMode(_ context.Context, id string, mode InstanceMo
 	ins, ok := m.instances[id]
 	if !ok {
 		return ErrNotFound
+	}
+	if err := validateWorkerInstanceMutation(ins, ins.State, string(mode)); err != nil {
+		return err
 	}
 	ins.Mode = string(mode)
 	m.instances[id] = ins
@@ -14180,6 +14200,9 @@ func (m *MemStore) PublishInstanceRuntime(_ context.Context, id, expectedState, 
 	ins, ok := m.instances[id]
 	if !ok || ins.State != expectedState {
 		return Instance{}, ErrConflict
+	}
+	if err := validateWorkerInstanceMutation(ins, string(StateRunning), ins.Mode); err != nil {
+		return Instance{}, err
 	}
 	ins.Netns = netns
 	ins.HostIP = hostIP

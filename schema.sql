@@ -2527,6 +2527,31 @@ $$;
 
 
 --
+-- Name: guard_worker_admission_identity(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_worker_admission_identity() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF (OLD.mode = 'worker' OR NEW.mode = 'worker') AND OLD.mode IS DISTINCT FROM NEW.mode THEN
+    RAISE EXCEPTION USING ERRCODE = '23514',
+      CONSTRAINT = 'instances_worker_admission_identity',
+      MESSAGE = 'worker mode is immutable; create a reserved instance';
+  END IF;
+  IF NEW.mode = 'worker'
+     AND OLD.state NOT IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+     AND NEW.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm') THEN
+    RAISE EXCEPTION USING ERRCODE = '23514',
+      CONSTRAINT = 'instances_worker_admission_identity',
+      MESSAGE = 'worker residency requires a newly reserved instance';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: instance_readiness_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -19896,6 +19921,13 @@ CREATE TRIGGER instances_billing_interval_trigger AFTER INSERT OR UPDATE OF stat
 --
 
 CREATE TRIGGER instances_started_at_set_trg BEFORE INSERT ON public.instances FOR EACH ROW EXECUTE FUNCTION public.instances_started_at_set();
+
+
+--
+-- Name: instances instances_worker_admission_identity; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER instances_worker_admission_identity BEFORE UPDATE OF state, mode ON public.instances FOR EACH ROW EXECUTE FUNCTION public.guard_worker_admission_identity();
 
 
 --

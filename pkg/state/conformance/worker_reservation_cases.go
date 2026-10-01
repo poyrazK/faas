@@ -82,3 +82,76 @@ func testWorkerAccountCapacity(t *testing.T, fx *Fixture) {
 		}
 	}
 }
+
+func testWorkerAdmissionIdentity(t *testing.T, fx *Fixture) {
+	create := func(mode state.InstanceMode, status state.State) state.Instance {
+		t.Helper()
+		row, err := fx.Store.CreateInstanceWithMode(fx.Ctx, fx.App.ID, fx.Deployment.ID,
+			string(status), 128, fx.Node.ID, uuid.NewString(), string(mode))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return row
+	}
+	ordinary := create(state.InstanceModeNormal, state.StateRunning)
+	worker := create(state.InstanceModeWorker, state.StateColdBooting)
+	parked := create(state.InstanceModeWorker, state.StateParked)
+	if err := fx.Store.SetInstanceMode(fx.Ctx, ordinary.ID, state.InstanceModeWorker); err == nil {
+		t.Fatal("ordinary instance bypassed worker admission by changing mode")
+	}
+	if err := fx.Store.SetInstanceMode(fx.Ctx, worker.ID, state.InstanceModeNormal); err == nil {
+		t.Fatal("resident worker released account ownership by changing mode")
+	}
+	if err := fx.Store.SetInstanceMode(fx.Ctx, worker.ID, state.InstanceModeWorker); err != nil {
+		t.Fatalf("idempotent worker mode changed identity: %v", err)
+	}
+	if err := fx.Store.SetInstanceMode(fx.Ctx, ordinary.ID, state.InstanceModeMirror); err != nil {
+		t.Fatalf("ordinary mirror classification failed: %v", err)
+	}
+	inputs := state.RuntimeConfigInputs{Scope: "default", Boundary: time.Now().UTC()}
+	for name, mutate := range map[string]func() error{
+		"state": func() error { return fx.Store.UpdateInstanceState(fx.Ctx, parked.ID, string(state.StateRunning)) },
+		"conditional": func() error {
+			return fx.Store.UpdateInstanceStateIf(fx.Ctx, parked.ID, string(state.StateParked), string(state.StateWaking))
+		},
+		"timestamp": func() error {
+			return fx.Store.UpdateInstanceStateWithTimestamp(fx.Ctx, parked.ID, string(state.StateSnapshotting), time.Now())
+		},
+		"terminal helper": func() error {
+			return fx.Store.UpdateInstanceStateToTerminal(fx.Ctx, parked.ID, string(state.StateRunning), time.Now())
+		},
+		"runtime publication": func() error {
+			_, err := fx.Store.PublishInstanceRuntime(fx.Ctx, parked.ID, string(state.StateParked), "new-netns", "10.0.0.1", 20000)
+			return err
+		},
+		"receipt publication": func() error {
+			_, err := fx.Store.(state.RuntimeConfigReceiptPublisher).PublishInstanceRuntimeWithConfig(fx.Ctx, parked.ID,
+				string(state.StateParked), "new-netns", "10.0.0.1", 20000, parked.WakeID, inputs)
+			return err
+		},
+	} {
+		if err := mutate(); err == nil {
+			t.Fatalf("%s resurrected an unreserved worker", name)
+		}
+		after, err := fx.Store.InstanceByID(fx.Ctx, parked.ID)
+		if err != nil || after.State != string(state.StateParked) || after.Mode != string(state.InstanceModeWorker) || after.Netns != "" {
+			t.Fatalf("%s rejection changed worker: state=%s mode=%s netns=%s err=%v", name, after.State, after.Mode, after.Netns, err)
+		}
+	}
+	if _, exists, err := fx.Store.(state.RuntimeConfigReceiptStore).InstanceRuntimeConfigReceipt(fx.Ctx, parked.ID); err != nil || exists {
+		t.Fatalf("rejected resurrection published an input receipt: exists=%v err=%v", exists, err)
+	}
+	if _, err := fx.Store.PublishInstanceRuntime(fx.Ctx, worker.ID, string(state.StateColdBooting), "worker-netns", "10.0.0.2", 20001); err != nil {
+		t.Fatalf("reserved worker could not become ready: %v", err)
+	}
+	if err := fx.Store.UpdateInstanceStateToTerminal(fx.Ctx, worker.ID, string(state.StateStopped), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := fx.Store.UpdateInstanceState(fx.Ctx, worker.ID, string(state.StateColdBooting)); err == nil {
+		t.Fatal("terminal worker reused a released reservation")
+	}
+	if _, err := fx.Store.CreateInstanceWithMode(fx.Ctx, fx.App.ID, fx.Deployment.ID, "RUNNING",
+		128, fx.Node.ID, uuid.NewString(), string(state.InstanceModeWorker)); err == nil {
+		t.Fatal("noncanonical worker state bypassed reservation accounting")
+	}
+}

@@ -15,6 +15,18 @@ import (
 // A refusal publishes neither an instance nor a node reservation.
 var ErrAccountWorkerCapacity = errors.New("state: account worker replica capacity exhausted")
 
+// Worker mode identifies the reservation for the lifetime of an instance.
+// Nonresident workers must reenter through creation and fresh account admission.
+func validateWorkerInstanceMutation(ins Instance, nextState, nextMode string) error {
+	if (ins.Mode == string(InstanceModeWorker) || nextMode == string(InstanceModeWorker)) && ins.Mode != nextMode {
+		return fmt.Errorf("%w: worker mode is immutable", ErrInvalidArgument)
+	}
+	if nextMode == string(InstanceModeWorker) && !State(ins.State).CountsForRAM() && State(nextState).CountsForRAM() {
+		return fmt.Errorf("%w: worker residency requires a newly reserved instance", ErrInvalidArgument)
+	}
+	return nil
+}
+
 func reserveAccountWorker(ctx context.Context, tx pgx.Tx, appID, deploymentID string) error {
 	appUUID, err := uuid.Parse(appID)
 	if err != nil {
