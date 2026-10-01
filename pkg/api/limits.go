@@ -20,6 +20,11 @@ import (
 	"time"
 )
 
+// Queue binding intent ceilings are shared by the API and GitOps compiler.
+const QueueBindingMaxConcurrency = 10000
+const QueueBindingRetryMaxBaseSeconds = 3600
+const QueueBindingRetryMaxSeconds = 86400
+
 // EnvironmentGitOpsMaxDefinitionBytes bounds one complete environment graph,
 // independently of the smaller non-secret configuration object it may contain.
 const EnvironmentGitOpsMaxDefinitionBytes = 1 << 20

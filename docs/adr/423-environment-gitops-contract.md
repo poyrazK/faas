@@ -431,7 +431,7 @@ out-of-order replay replaces older admission/retirement functions. Shared
 memory/PostgreSQL cases cover deletion/recreation and tenant/scope isolation;
 real PostgreSQL scheduler checks cover separate caps, rename, replay and receipt
 retention. A populated-database migration check exercises the older-function
-interval and all twenty-one unreleased migrations, preserving captured identities
+interval and all twenty-two unreleased migrations, preserving captured identities
 and current leases. These checks qualify the internal scope contract. They do not establish
 GitOps queue ownership/recovery or complete environment graph support.
 
@@ -463,6 +463,35 @@ race with inherited flag context. PostgreSQL-backed HTTP tests exercise the
 same catalog and admission guards; SDK tests use transport fixtures. These
 selectors do not start the approved-intent executor or transfer GitOps ownership.
 
+Scoped queue intent now participates in the consistent observation and reviewed
+ownership plan. Adoption records the original binding UUID and preserves values,
+consumer UUIDs, accepted work and receipts. Approved creates and updates reuse
+the atomic binding/consumer publication transaction, with source lease fencing,
+account quotas and committed scheduler notifications. Queue label changes retain
+the original delivery lane. Memory transactions preflight every queue operation
+on detached maps; PostgreSQL rolls back all intent when a later queue operation
+fails. Explicit environment bindings take their own source ownership; legacy
+shared queues and neighboring environments remain unmanaged by this source.
+
+Enforce-mode ownership guards cover binding intent and private consumer intent,
+including direct SQL edits. Report-mode edits schedule durable drift checks.
+Temporary overrides preserve the incident value, prevent a converged run and
+restore approved queue intent when removed or expired. API mutations acquire the
+source lock before app/account/binding locks, and return the existing
+`environment_field_git_managed` conflict for rejected writes. Retired bindings,
+missing original identities and inconsistent private projections are blockers;
+Git cannot implicitly recover them. Queue pruning remains blocked until a
+reviewed disposition defines retained work and receipt recovery. The approved
+intent executor remains disabled in apid pending complete graph integration.
+
+Shared memory/PostgreSQL tests cover scoped adoption, report drift, stale
+reviews, label changes, receipt retention, creation, overrides, quota rollback,
+and pruning/recovery holds. PostgreSQL tests cover SQL guard bypass attempts and
+a real source-lock wait against a competing API mutation. Migration replay
+preserves queue ownership, accepted work, receipts and current controller leases.
+HTTP checks cover the public ownership conflict. These tests qualify queue
+customer intent; native dispatch and full staged graph acceptance remain open.
+
 The branch's unreleased migrations are replay-safe as a complete set. Their
 rollback retains management intent, ownership, captured work and runtime
 receipts. Historical capture runs only during initial installation; replay
@@ -472,7 +501,8 @@ populated-database recovery check verifies these identities through full replay.
 
 The remaining full feature gates include protected-branch
 approval evidence; environment-scoped workload creation, source/runtime,
-secret-reference and queue/service-binding adapters; staged graph qualification
+secret-reference and service-binding adapters; reviewed queue pruning/recovery
+and projection repair; staged graph qualification
 and release activation; native serving-fleet and guest runtime evidence;
 full staged graph/runtime operational status integration; and native runtime acceptance.
 Unsupported resource fields currently block the complete plan. The approved-intent

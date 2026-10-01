@@ -51,6 +51,33 @@ func (s *PgStore) mutateQueueBindingConsumer(ctx context.Context, accountID, app
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
+	environment := pgtype.UUID{}
+	scope := ""
+	if create != nil {
+		environment = mustPgUUID(create.EnvironmentID)
+		scope = create.DeploymentScope
+	}
+	if _, err := q.LockEnvironmentGitSourceForQueueMutation(ctx, tx, sqlc.LockEnvironmentGitSourceForQueueMutationParams{
+		AccountID: accountUUID, AppID: appUUID, EnvironmentID: environment, BindingID: bindingUUID, Environment: scope}); err != nil {
+		return QueueBindingConsumerResult{}, mapErr(err)
+	}
+	result, err := s.mutateQueueBindingConsumerTx(ctx, tx, accountID, appID, id, create, patch, remove)
+	if err != nil {
+		return QueueBindingConsumerResult{}, mapErr(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return QueueBindingConsumerResult{}, fmt.Errorf("state: commit queue binding consumer: %w", err)
+	}
+	result.NotificationsCommitted = true
+	return result, nil
+}
+
+func (s *PgStore) mutateQueueBindingConsumerTx(ctx context.Context, tx pgx.Tx, accountID, appID, id string, create *QueueBinding, patch *UpdateQueueBindingParams, remove bool) (QueueBindingConsumerResult, error) {
+	accountUUID, appUUID, bindingUUID, err := queueBindingIdentity(accountID, appID, id)
+	if err != nil {
+		return QueueBindingConsumerResult{}, err
+	}
+	q := sqlc.New()
 	app, err := q.QueueConsumerLockApp(ctx, tx, sqlc.QueueConsumerLockAppParams{AppID: appUUID, AccountID: accountUUID})
 	if err != nil {
 		return QueueBindingConsumerResult{}, mapErr(err)
@@ -165,10 +192,6 @@ func (s *PgStore) mutateQueueBindingConsumer(ctx context.Context, accountID, app
 			return QueueBindingConsumerResult{}, err
 		}
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return QueueBindingConsumerResult{}, fmt.Errorf("state: commit queue binding consumer: %w", err)
-	}
-	result.NotificationsCommitted = true
 	return result, nil
 }
 

@@ -158,3 +158,45 @@ func TestCompileGraphNormalizesAndRejectsDependencyCycles(t *testing.T) {
 		t.Fatal("cyclic preparation graph accepted")
 	}
 }
+
+func TestCompileQueueBindingContractLimitsAndDefaults(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		cap   int
+		retry *api.RetryPolicyDTO
+		valid bool
+	}{
+		{"defaults", 0, &api.RetryPolicyDTO{}, true},
+		{"ceiling", api.QueueBindingMaxConcurrency, &api.RetryPolicyDTO{MaxAttempts: 4, BaseSeconds: 1, MaxSeconds: 2}, true},
+		{"above ceiling", api.QueueBindingMaxConcurrency + 1, nil, false},
+		{"retry attempts", 1, &api.RetryPolicyDTO{MaxAttempts: api.DurableRetryMaxAttempts + 1}, false},
+		{"retry base", 1, &api.RetryPolicyDTO{BaseSeconds: api.QueueBindingRetryMaxBaseSeconds + 1}, false},
+		{"retry max", 1, &api.RetryPolicyDTO{MaxSeconds: api.QueueBindingRetryMaxSeconds + 1}, false},
+		{"retry jitter", 1, &api.RetryPolicyDTO{JitterSeconds: 2}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := definition()
+			w := d.Workloads["api"]
+			w.QueueBindings = map[string]api.EnvironmentQueueBinding{"orders": {QueueName: "orders", WorkloadClass: "worker", MaxConcurrency: tc.cap, RetryPolicy: tc.retry}}
+			d.Workloads["api"] = w
+			desired, err := Compile(d)
+			if (err == nil) != tc.valid {
+				t.Fatalf("queue contract validity: %v", err)
+			}
+			if err != nil {
+				return
+			}
+			value := desired.Definition.Workloads["api"].QueueBindings["orders"]
+			if value.Enabled == nil || !*value.Enabled || value.Mode != "pull" || value.MaxConcurrency < 1 {
+				t.Fatalf("queue defaults: %+v", value)
+			}
+			if tc.name == "defaults" && value.RetryPolicy != nil {
+				t.Fatal("empty retry policy retained noncanonical ownership")
+			}
+			next, err := Compile(desired.Definition)
+			if err != nil || next.Digest != desired.Digest {
+				t.Fatalf("queue contract is not stable: %v", err)
+			}
+		})
+	}
+}

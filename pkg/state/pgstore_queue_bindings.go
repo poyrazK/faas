@@ -115,6 +115,10 @@ func (s *PgStore) UpdateQueueBinding(ctx context.Context, accountID, appID, id s
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
+	if _, err := q.LockEnvironmentGitSourceForQueueMutation(ctx, tx, sqlc.LockEnvironmentGitSourceForQueueMutationParams{
+		AccountID: account, AppID: app, BindingID: binding}); err != nil {
+		return QueueBinding{}, mapErr(err)
+	}
 	row, err := q.QueueConsumerBindingForUpdate(ctx, tx, sqlc.QueueConsumerBindingForUpdateParams{ID: binding, AccountID: account, AppID: app})
 	if err != nil {
 		return QueueBinding{}, mapErr(err)

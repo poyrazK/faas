@@ -73,8 +73,8 @@ func validateQueueBindingTarget(mode, class string, app state.App) *api.Problem 
 }
 
 func validateQueueBindingConcurrency(value int) *api.Problem {
-	if value < 1 || value > 10000 {
-		return queueBindingProblem("max_concurrency must be between 1 and 10000")
+	if value < 1 || value > api.QueueBindingMaxConcurrency {
+		return queueBindingProblem(fmt.Sprintf("max_concurrency must be between 1 and %d", api.QueueBindingMaxConcurrency))
 	}
 	return nil
 }
@@ -86,7 +86,7 @@ func marshalQueueBindingRetryPolicy(policy *api.RetryPolicyDTO) ([]byte, *api.Pr
 	if policy.MaxAttempts < 0 || policy.MaxAttempts > 25 {
 		return nil, queueBindingProblem("retry_policy.max_attempts must be between 0 and 25")
 	}
-	if policy.BaseSeconds < 0 || policy.BaseSeconds > 3600 || policy.MaxSeconds < 0 || policy.MaxSeconds > 86400 || policy.JitterSeconds < 0 || policy.JitterSeconds > 1 {
+	if policy.BaseSeconds < 0 || policy.BaseSeconds > api.QueueBindingRetryMaxBaseSeconds || policy.MaxSeconds < 0 || policy.MaxSeconds > api.QueueBindingRetryMaxSeconds || policy.JitterSeconds < 0 || policy.JitterSeconds > 1 {
 		return nil, queueBindingProblem("retry_policy seconds must be non-negative and jitter_seconds must be between 0 and 1")
 	}
 	if policy.MaxSeconds > 0 && policy.BaseSeconds > policy.MaxSeconds {
@@ -477,6 +477,9 @@ func (s *server) notifyQueueBindingConsumer(ctx context.Context, result state.Qu
 }
 
 func writeQueueBindingMutationError(w http.ResponseWriter, acct state.Account, err error, detail string) {
+	if writeEnvironmentGitOpsOwnershipProblem(w, err) {
+		return
+	}
 	var quota *state.TriggerQuotaError
 	switch {
 	case errors.As(err, &quota):

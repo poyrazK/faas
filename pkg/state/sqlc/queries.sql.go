@@ -708,6 +708,33 @@ func (q *Queries) ApplyRegressionAction(ctx context.Context, db DBTX, arg ApplyR
 	return i, err
 }
 
+const bindEnvironmentGitOpsQueue = `-- name: BindEnvironmentGitOpsQueue :execrows
+INSERT INTO environment_gitops_queue_bindings(source_id, resource, field_path, binding_id)
+VALUES ($1::uuid, $2::text, $3::text, $4::uuid)
+ON CONFLICT (source_id, resource, field_path) DO UPDATE SET binding_id=excluded.binding_id
+WHERE environment_gitops_queue_bindings.binding_id=excluded.binding_id
+`
+
+type BindEnvironmentGitOpsQueueParams struct {
+	SourceID  pgtype.UUID
+	Resource  string
+	FieldPath string
+	BindingID pgtype.UUID
+}
+
+func (q *Queries) BindEnvironmentGitOpsQueue(ctx context.Context, db DBTX, arg BindEnvironmentGitOpsQueueParams) (int64, error) {
+	result, err := db.Exec(ctx, bindEnvironmentGitOpsQueue,
+		arg.SourceID,
+		arg.Resource,
+		arg.FieldPath,
+		arg.BindingID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const bindEnvironmentGitOpsResource = `-- name: BindEnvironmentGitOpsResource :execrows
 INSERT INTO environment_gitops_resources(source_id, logical_name, app_id)
 SELECT s.id, $1::text, a.id FROM environment_git_sources s
@@ -12358,6 +12385,49 @@ func (q *Queries) LockEnvironmentGitSource(ctx context.Context, db DBTX, arg Loc
 	return i, err
 }
 
+const lockEnvironmentGitSourceForQueueMutation = `-- name: LockEnvironmentGitSourceForQueueMutation :many
+SELECT s.id FROM environment_git_sources s JOIN apps a ON a.project_id=s.project_id AND a.account_id=s.account_id
+WHERE a.account_id=$1::uuid AND a.id=$2::uuid
+AND s.environment_id=coalesce($3::uuid,
+    (SELECT b.environment_id FROM queue_bindings b WHERE b.id=$4::uuid AND b.app_id=a.id AND b.account_id=a.account_id),
+    (SELECT e.id FROM project_environments e WHERE e.project_id=a.project_id AND e.account_id=a.account_id AND e.slug=$5::text))
+ORDER BY s.id FOR UPDATE OF s
+`
+
+type LockEnvironmentGitSourceForQueueMutationParams struct {
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	EnvironmentID pgtype.UUID
+	BindingID     pgtype.UUID
+	Environment   string
+}
+
+func (q *Queries) LockEnvironmentGitSourceForQueueMutation(ctx context.Context, db DBTX, arg LockEnvironmentGitSourceForQueueMutationParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, lockEnvironmentGitSourceForQueueMutation,
+		arg.AccountID,
+		arg.AppID,
+		arg.EnvironmentID,
+		arg.BindingID,
+		arg.Environment,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockEnvironmentGitSourceForScope = `-- name: LockEnvironmentGitSourceForScope :many
 SELECT s.id FROM environment_git_sources s JOIN project_environments e ON e.id = s.environment_id
 WHERE s.account_id = $1::uuid AND s.project_id = $2::uuid
@@ -15955,13 +16025,22 @@ func (q *Queries) ObjectUsageReports(ctx context.Context, db DBTX, arg ObjectUsa
 
 const observeEnvironmentGitOpsIntent = `-- name: ObserveEnvironmentGitOpsIntent :one
 SELECT jsonb_build_object(
-    'version', s.intent_version, 'project', p.slug, 'environment', e.slug, 'plan', acct.plan, 'source_id', s.id, 'prune', s.prune,
+    'version', s.intent_version, 'project', p.slug, 'environment', e.slug, 'environment_id', e.id, 'plan', acct.plan, 'source_id', s.id, 'prune', s.prune,
     'configuration', coalesce((SELECT config_json FROM project_environment_config_versions c
         WHERE c.project_id = s.project_id AND c.environment_slug = e.slug ORDER BY version DESC LIMIT 1), '{}'::jsonb),
     'resources', coalesce((SELECT jsonb_agg(jsonb_build_object('resource', r.logical_name, 'app_id', r.app_id))
         FROM environment_gitops_resources r WHERE r.source_id = s.id), '[]'::jsonb),
+    'queue_bindings', coalesce((SELECT jsonb_agg(jsonb_build_object('resource', q.resource, 'path', q.field_path, 'binding_id', q.binding_id))
+        FROM environment_gitops_queue_bindings q WHERE q.source_id=s.id), '[]'::jsonb),
     'apps', coalesce((SELECT jsonb_agg(jsonb_build_object(
-        'id', a.id, 'slug', a.slug, 'variable_count', (SELECT count(*) FROM app_envs v WHERE v.app_id = a.id AND v.account_id = s.account_id),
+        'id', a.id, 'slug', a.slug, 'type', a.type, 'workload_class', a.workload_class,
+        'queue_bindings', coalesce((SELECT jsonb_agg(jsonb_build_object('id', b.id, 'name', b.name, 'retired_at', b.retired_at,
+            'intent', jsonb_build_object('queue_name', b.queue_name, 'mode', b.mode, 'workload_class', b.workload_class,
+                'enabled', b.enabled, 'max_concurrency', b.max_concurrency, 'retry_policy', b.retry_policy),
+            'consumers', coalesce((SELECT jsonb_agg(jsonb_build_object('id', t.id, 'slug', t.slug, 'enabled', t.enabled,
+                'config', t.config, 'batch_size', t.batch_size_max, 'batch_window', t.batch_window_ms,
+                'max_attempts', t.max_attempts, 'payload_max', t.payload_max_bytes, 'broker_poison_strategy', t.broker_poison_strategy, 'filter_criteria', t.filter_criteria)) FROM triggers t WHERE t.queue_binding_id=b.id), '[]'::jsonb)))
+            FROM queue_bindings b WHERE b.app_id=a.id AND b.account_id=s.account_id AND b.environment_id=s.environment_id), '[]'::jsonb), 'variable_count', (SELECT count(*) FROM app_envs v WHERE v.app_id = a.id AND v.account_id = s.account_id),
         'variables', coalesce((SELECT jsonb_object_agg(v.key, v.value) FROM app_envs v
             WHERE v.app_id = a.id AND v.account_id = s.account_id AND v.scope = e.slug), '{}'::jsonb),
         'routes', (SELECT jsonb_build_object('only_allow_declared_routes', r.only_allow_declared_routes, 'declared_routes', r.declared_routes)

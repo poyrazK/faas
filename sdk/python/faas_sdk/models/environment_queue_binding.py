@@ -17,7 +17,10 @@ T = TypeVar("T", bound="EnvironmentQueueBinding")
 
 @_attrs_define
 class EnvironmentQueueBinding:
-    """Logical queue consumer intent for a workload."""
+    """Atomic queue binding intent in the named environment. Reviewed adoption preserves the original binding and consumer
+    IDs and delivery history. Queue pruning and retired identity recovery require a separate reviewed disposition.
+
+    """
 
     queue_name: str
     workload_class: str

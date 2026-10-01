@@ -23,6 +23,9 @@ type gitOpsIntentApp struct {
 	Routes        *api.EnvironmentRouteContract `json:"routes"`
 	Policies      *[]ProjectEnvironmentEdgeRule `json:"policies"`
 	VariableCount int                           `json:"variable_count"`
+	Type          AppType                       `json:"type"`
+	WorkloadClass WorkloadClass                 `json:"workload_class"`
+	QueueBindings []gitOpsQueueIntent           `json:"queue_bindings"`
 }
 
 type gitOpsIntentResource struct {
@@ -37,6 +40,8 @@ type gitOpsIntentSnapshot struct {
 	Version       int64                       `json:"version"`
 	Project       string                      `json:"project"`
 	Environment   string                      `json:"environment"`
+	EnvironmentID string                      `json:"environment_id"`
+	QueueBindings []gitOpsQueueIdentity       `json:"queue_bindings"`
 	Configuration map[string]json.RawMessage  `json:"configuration"`
 	Resources     []gitOpsIntentResource      `json:"resources"`
 	Apps          []gitOpsIntentApp           `json:"apps"`
@@ -153,11 +158,15 @@ func compileGitOpsObservation(snapshot gitOpsIntentSnapshot, desired environment
 		}
 	}
 	for resource, id := range out.State.ResourceIDs {
+		if !strings.HasPrefix(resource, "workload/") || strings.Count(resource, "/") != 1 {
+			continue
+		}
 		app, exists := byID[id]
 		if !exists {
 			continue
 		}
 		add(resource, "presence", true)
+		observeGitOpsQueues(&out, snapshot, desired, resource, app)
 		for key, value := range app.Variables {
 			add(resource, "variables/"+key, value)
 		}
@@ -215,7 +224,7 @@ func compileGitOpsObservation(snapshot gitOpsIntentSnapshot, desired environment
 }
 
 func gitOpsScopedFieldSupported(path string) bool {
-	return path == "presence" || path == "routes" || path == "policies" || strings.HasPrefix(path, "variables/") || strings.HasPrefix(path, "configuration/")
+	return path == "presence" || path == "routes" || path == "policies" || strings.HasPrefix(path, "variables/") || strings.HasPrefix(path, "configuration/") || strings.HasPrefix(path, "queue_bindings/")
 }
 
 func desiredEnvironmentRevision(revision EnvironmentDesiredRevision) (environmentsync.DesiredState, error) {
@@ -331,6 +340,11 @@ func (s *PgStore) AdoptEnvironmentGitOps(ctx context.Context, accountID, sourceI
 		if count != 1 {
 			return ErrConflict
 		}
+		if strings.HasPrefix(change.Path, "queue_bindings/") {
+			if err := bindGitOpsQueueIdentity(ctx, tx, source, change, observed.State.ResourceIDs[gitOpsQueueResource(change.Resource, change.Path)]); err != nil {
+				return err
+			}
+		}
 	}
 	if err := q.TouchEnvironmentGitOpsIntent(ctx, tx, mustPgUUID(source.ID)); err != nil {
 		return err
@@ -406,6 +420,10 @@ func (s *PgStore) applyEnvironmentGitOps(ctx context.Context, lease EnvironmentG
 				snapshot.Configuration[key] = change.After
 			}
 			configChanged = true
+		} else if strings.HasPrefix(change.Path, "queue_bindings/") {
+			if err := s.applyGitOpsQueue(ctx, tx, lease.Source, observed.State.ResourceIDs, change); err != nil {
+				return nil, mapErr(err)
+			}
 		} else if err := applyEnvironmentGitOpsScopedField(ctx, tx, lease.Source, observed.State.ResourceIDs[change.Resource], change); err != nil {
 			return nil, mapErr(err)
 		}

@@ -1646,6 +1646,13 @@ type EnvironmentGitopsJob struct {
 	AttemptCount      int32
 }
 
+type EnvironmentGitopsQueueBinding struct {
+	SourceID  pgtype.UUID
+	Resource  string
+	FieldPath string
+	BindingID pgtype.UUID
+}
+
 type EnvironmentGitopsResource struct {
 	SourceID        pgtype.UUID
 	LogicalName     string

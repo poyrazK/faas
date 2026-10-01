@@ -155,8 +155,16 @@ func compileWorkload(resource, name string, w *api.EnvironmentWorkload, workload
 		if binding.MaxConcurrency == 0 {
 			binding.MaxConcurrency = 1
 		}
-		if binding.MaxConcurrency < 1 {
-			return nil, fmt.Errorf("queue binding %q max_concurrency must be positive", key)
+		if binding.MaxConcurrency < 1 || binding.MaxConcurrency > api.QueueBindingMaxConcurrency {
+			return nil, fmt.Errorf("queue binding %q max_concurrency must be between 1 and %d", key, api.QueueBindingMaxConcurrency)
+		}
+		if binding.RetryPolicy != nil {
+			if binding.RetryPolicy.Validate() != nil || binding.RetryPolicy.BaseSeconds > api.QueueBindingRetryMaxBaseSeconds || binding.RetryPolicy.MaxSeconds > api.QueueBindingRetryMaxSeconds {
+				return nil, fmt.Errorf("queue binding %q has an invalid retry policy", key)
+			}
+			if *binding.RetryPolicy == (api.RetryPolicyDTO{}) {
+				binding.RetryPolicy = nil
+			}
 		}
 		if binding.Enabled == nil {
 			enabled := true

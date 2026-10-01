@@ -18,6 +18,7 @@ type environmentGitOpsMemory struct {
 	lease     *EnvironmentGitOpsLease
 	attempts  int
 	resources map[string]string
+	queues    map[string]string
 	owners    map[string]environmentsync.Ownership
 	overrides map[string]environmentsync.Override
 	effects   map[string]EnvironmentGitOpsEffect

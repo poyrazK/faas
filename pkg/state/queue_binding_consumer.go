@@ -74,7 +74,7 @@ func validateQueueBindingConsumer(row QueueBinding, appType AppType, appClass Wo
 		return ErrInvalidArgument
 	}
 	if !queueBindingNameRE.MatchString(row.Name) || !queueBindingNameRE.MatchString(row.QueueName) ||
-		(row.Mode != "push" && row.Mode != "pull") || row.MaxConcurrency < 1 || row.MaxConcurrency > 10000 {
+		(row.Mode != "push" && row.Mode != "pull") || row.MaxConcurrency < 1 || row.MaxConcurrency > api.QueueBindingMaxConcurrency {
 		return ErrInvalidArgument
 	}
 	if row.WorkloadClass == WorkloadClassHTTP {
@@ -91,7 +91,7 @@ func validateQueueBindingConsumer(row QueueBinding, appType AppType, appClass Wo
 	if len(row.RetryPolicyJSON) > 0 {
 		var object map[string]json.RawMessage
 		if json.Unmarshal(row.RetryPolicyJSON, &object) != nil || object == nil || json.Unmarshal(row.RetryPolicyJSON, &policy) != nil ||
-			policy.Validate() != nil || policy.BaseSeconds > 3600 || policy.MaxSeconds > 86400 {
+			policy.Validate() != nil || policy.BaseSeconds > api.QueueBindingRetryMaxBaseSeconds || policy.MaxSeconds > api.QueueBindingRetryMaxSeconds {
 			return ErrInvalidArgument
 		}
 	}

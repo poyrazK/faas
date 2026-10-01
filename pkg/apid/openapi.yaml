@@ -24563,7 +24563,7 @@ components:
       additionalProperties: false
     EnvironmentQueueBinding:
       type: object
-      description: Logical queue consumer intent for a workload.
+      description: Atomic queue binding intent in the named environment. Reviewed adoption preserves the original binding and consumer IDs and delivery history. Queue pruning and retired identity recovery require a separate reviewed disposition.
       properties:
         queue_name:
           type: string
@@ -24579,6 +24579,7 @@ components:
         max_concurrency:
           type: integer
           minimum: 1
+          maximum: 10000
         retry_policy:
           $ref: '#/components/schemas/RetryPolicyDTO'
       required:

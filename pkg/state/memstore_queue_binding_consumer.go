@@ -33,6 +33,10 @@ func (m *MemStore) mutateQueueBindingConsumer(accountID, appID, id string, creat
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.mutateQueueBindingConsumerLocked(accountID, appID, id, create, patch, remove, false)
+}
+
+func (m *MemStore) mutateQueueBindingConsumerLocked(accountID, appID, id string, create *QueueBinding, patch *UpdateQueueBindingParams, remove, controller bool) (QueueBindingConsumerResult, error) {
 	app, ok := m.apps[appID]
 	if !ok || app.AccountID != accountID || app.Status == AppDeleted {
 		return QueueBindingConsumerResult{}, ErrNotFound
@@ -73,6 +77,15 @@ func (m *MemStore) mutateQueueBindingConsumer(accountID, appID, id string, creat
 			if otherID != id && other.AppID == appID && other.EnvironmentID == binding.EnvironmentID && (other.Name == binding.Name || other.QueueName == binding.QueueName) {
 				return QueueBindingConsumerResult{}, ErrConflict
 			}
+		}
+	}
+	changed := create != nil || remove || !queueBindingIntentEqual(m.queueBindings[id], binding)
+	var managed *environmentGitOpsMemory
+	if !controller && changed {
+		var err error
+		managed, err = m.gitOpsGuardScopedWriteLocked(accountID, appID, binding.DeploymentScope, []string{"queue_bindings/" + binding.Name})
+		if err != nil {
+			return QueueBindingConsumerResult{}, err
 		}
 	}
 	var owned sqlc.Trigger
@@ -151,6 +164,7 @@ func (m *MemStore) mutateQueueBindingConsumer(accountID, appID, id string, creat
 		m.triggers[projected.ID.String()] = projected
 	}
 	result.Binding.RetryPolicyJSON = append([]byte(nil), result.Binding.RetryPolicyJSON...)
+	touchGitOpsMemoryIntent(managed)
 	return result, nil
 }
 

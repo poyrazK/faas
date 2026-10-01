@@ -23,6 +23,10 @@ func (m *MemStore) CreateQueueBinding(_ context.Context, in QueueBinding) (Queue
 	if err := m.captureQueueBindingScopeLocked(app, &in); err != nil {
 		return QueueBinding{}, err
 	}
+	managed, err := m.gitOpsGuardScopedWriteLocked(in.AccountID, in.AppID, in.DeploymentScope, []string{"queue_bindings/" + in.Name})
+	if err != nil {
+		return QueueBinding{}, err
+	}
 	for _, existing := range m.queueBindings {
 		if existing.EnvironmentID == in.EnvironmentID && existing.AppID == in.AppID && (existing.Name == in.Name || existing.QueueName == in.QueueName) {
 			return QueueBinding{}, ErrConflict
@@ -43,6 +47,7 @@ func (m *MemStore) CreateQueueBinding(_ context.Context, in QueueBinding) (Queue
 	}
 	in.RetryPolicyJSON = append([]byte(nil), in.RetryPolicyJSON...)
 	m.queueBindings[in.ID] = in
+	touchGitOpsMemoryIntent(managed)
 	return in, nil
 }
 
@@ -103,6 +108,10 @@ func (m *MemStore) UpdateQueueBinding(_ context.Context, accountID, appID, id st
 	if !ok || b.AccountID != accountID || b.AppID != appID || b.RetiredAt != nil {
 		return QueueBinding{}, ErrNotFound
 	}
+	managed, err := m.gitOpsGuardScopedWriteLocked(accountID, appID, b.DeploymentScope, []string{"queue_bindings/" + b.Name})
+	if err != nil {
+		return QueueBinding{}, err
+	}
 	for _, trigger := range m.triggers {
 		if trigger.AppID.String() == canonicalMemUUID(appID) &&
 			(trigger.QueueBindingID.Valid && trigger.QueueBindingID.String() == canonicalMemUUID(id) || queueConsumerBindingID(trigger.Config) == id) {
@@ -137,6 +146,7 @@ func (m *MemStore) UpdateQueueBinding(_ context.Context, accountID, appID, id st
 	}
 	b.UpdatedAt = time.Now().UTC()
 	m.queueBindings[id] = b
+	touchGitOpsMemoryIntent(managed)
 	b.RetryPolicyJSON = append([]byte(nil), b.RetryPolicyJSON...)
 	return b, nil
 }

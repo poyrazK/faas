@@ -5194,13 +5194,22 @@ ORDER BY r.started_at DESC, r.id DESC LIMIT sqlc.arg(row_limit)::integer;
 
 -- name: ObserveEnvironmentGitOpsIntent :one
 SELECT jsonb_build_object(
-    'version', s.intent_version, 'project', p.slug, 'environment', e.slug, 'plan', acct.plan, 'source_id', s.id, 'prune', s.prune,
+    'version', s.intent_version, 'project', p.slug, 'environment', e.slug, 'environment_id', e.id, 'plan', acct.plan, 'source_id', s.id, 'prune', s.prune,
     'configuration', coalesce((SELECT config_json FROM project_environment_config_versions c
         WHERE c.project_id = s.project_id AND c.environment_slug = e.slug ORDER BY version DESC LIMIT 1), '{}'::jsonb),
     'resources', coalesce((SELECT jsonb_agg(jsonb_build_object('resource', r.logical_name, 'app_id', r.app_id))
         FROM environment_gitops_resources r WHERE r.source_id = s.id), '[]'::jsonb),
+    'queue_bindings', coalesce((SELECT jsonb_agg(jsonb_build_object('resource', q.resource, 'path', q.field_path, 'binding_id', q.binding_id))
+        FROM environment_gitops_queue_bindings q WHERE q.source_id=s.id), '[]'::jsonb),
     'apps', coalesce((SELECT jsonb_agg(jsonb_build_object(
-        'id', a.id, 'slug', a.slug, 'variable_count', (SELECT count(*) FROM app_envs v WHERE v.app_id = a.id AND v.account_id = s.account_id),
+        'id', a.id, 'slug', a.slug, 'type', a.type, 'workload_class', a.workload_class,
+        'queue_bindings', coalesce((SELECT jsonb_agg(jsonb_build_object('id', b.id, 'name', b.name, 'retired_at', b.retired_at,
+            'intent', jsonb_build_object('queue_name', b.queue_name, 'mode', b.mode, 'workload_class', b.workload_class,
+                'enabled', b.enabled, 'max_concurrency', b.max_concurrency, 'retry_policy', b.retry_policy),
+            'consumers', coalesce((SELECT jsonb_agg(jsonb_build_object('id', t.id, 'slug', t.slug, 'enabled', t.enabled,
+                'config', t.config, 'batch_size', t.batch_size_max, 'batch_window', t.batch_window_ms,
+                'max_attempts', t.max_attempts, 'payload_max', t.payload_max_bytes, 'broker_poison_strategy', t.broker_poison_strategy, 'filter_criteria', t.filter_criteria)) FROM triggers t WHERE t.queue_binding_id=b.id), '[]'::jsonb)))
+            FROM queue_bindings b WHERE b.app_id=a.id AND b.account_id=s.account_id AND b.environment_id=s.environment_id), '[]'::jsonb), 'variable_count', (SELECT count(*) FROM app_envs v WHERE v.app_id = a.id AND v.account_id = s.account_id),
         'variables', coalesce((SELECT jsonb_object_agg(v.key, v.value) FROM app_envs v
             WHERE v.app_id = a.id AND v.account_id = s.account_id AND v.scope = e.slug), '{}'::jsonb),
         'routes', (SELECT jsonb_build_object('only_allow_declared_routes', r.only_allow_declared_routes, 'declared_routes', r.declared_routes)
@@ -6232,3 +6241,17 @@ SELECT last_poll_at, last_success_at, last_error_at, last_error,
        lag_messages, lag_age_seconds
 FROM trigger_consumer_health
 WHERE trigger_id = sqlc.arg(trigger_id)::uuid;
+
+-- name: BindEnvironmentGitOpsQueue :execrows
+INSERT INTO environment_gitops_queue_bindings(source_id, resource, field_path, binding_id)
+VALUES (sqlc.arg(source_id)::uuid, sqlc.arg(resource)::text, sqlc.arg(field_path)::text, sqlc.arg(binding_id)::uuid)
+ON CONFLICT (source_id, resource, field_path) DO UPDATE SET binding_id=excluded.binding_id
+WHERE environment_gitops_queue_bindings.binding_id=excluded.binding_id;
+
+-- name: LockEnvironmentGitSourceForQueueMutation :many
+SELECT s.id FROM environment_git_sources s JOIN apps a ON a.project_id=s.project_id AND a.account_id=s.account_id
+WHERE a.account_id=sqlc.arg(account_id)::uuid AND a.id=sqlc.arg(app_id)::uuid
+AND s.environment_id=coalesce(sqlc.narg(environment_id)::uuid,
+    (SELECT b.environment_id FROM queue_bindings b WHERE b.id=sqlc.narg(binding_id)::uuid AND b.app_id=a.id AND b.account_id=a.account_id),
+    (SELECT e.id FROM project_environments e WHERE e.project_id=a.project_id AND e.account_id=a.account_id AND e.slug=sqlc.arg(environment)::text))
+ORDER BY s.id FOR UPDATE OF s;

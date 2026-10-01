@@ -91,11 +91,15 @@ func (m *MemStore) gitOpsGuardConfigurationLocked(config ProjectEnvironmentConfi
 
 func (m *MemStore) gitOpsSnapshotLocked(memory *environmentGitOpsMemory) gitOpsIntentSnapshot {
 	source := memory.source
-	snapshot := gitOpsIntentSnapshot{Version: source.IntentVersion, Project: m.projects[source.ProjectID].Slug, Environment: source.EnvironmentSlug, Plan: m.accounts[source.AccountID].Plan, SourceID: source.ID, Prune: source.Spec.Prune}
+	snapshot := gitOpsIntentSnapshot{Version: source.IntentVersion, Project: m.projects[source.ProjectID].Slug, Environment: source.EnvironmentSlug, EnvironmentID: source.EnvironmentID, Plan: m.accounts[source.AccountID].Plan, SourceID: source.ID, Prune: source.Spec.Prune}
 	config := m.projectEnvironmentConfigLatestLocked(source.ProjectID, source.EnvironmentSlug)
 	_ = json.Unmarshal(config.Values, &snapshot.Configuration)
 	for resource, appID := range memory.resources {
 		snapshot.Resources = append(snapshot.Resources, gitOpsIntentResource{Resource: resource, AppID: appID})
+	}
+	for key, id := range memory.queues {
+		resource, path, _ := strings.Cut(key, "#")
+		snapshot.QueueBindings = append(snapshot.QueueBindings, gitOpsQueueIdentity{Resource: resource, Path: path, BindingID: id})
 	}
 	for _, owner := range memory.owners {
 		owner.Value = append(json.RawMessage(nil), owner.Value...)
@@ -108,7 +112,12 @@ func (m *MemStore) gitOpsSnapshotLocked(memory *environmentGitOpsMemory) gitOpsI
 		if app.AccountID != source.AccountID || app.ProjectID != source.ProjectID || app.Status == AppDeleted {
 			continue
 		}
-		row := gitOpsIntentApp{ID: app.ID, Slug: app.Slug, Variables: map[string]string{}}
+		row := gitOpsIntentApp{ID: app.ID, Slug: app.Slug, Type: app.Type, WorkloadClass: app.WorkloadClass, Variables: map[string]string{}}
+		for _, binding := range m.queueBindings {
+			if binding.AppID == app.ID && binding.AccountID == source.AccountID && binding.EnvironmentID == source.EnvironmentID {
+				row.QueueBindings = append(row.QueueBindings, m.gitOpsQueueIntentLocked(binding))
+			}
+		}
 		for _, variable := range m.envs {
 			if variable.AccountID == source.AccountID && variable.AppID == app.ID {
 				row.VariableCount++
@@ -205,6 +214,12 @@ func (m *MemStore) AdoptEnvironmentGitOps(_ context.Context, accountID, sourceID
 		if change.Path == "presence" {
 			memory.resources[change.Resource] = observed.State.ResourceIDs[change.Resource]
 		}
+		if strings.HasPrefix(change.Path, "queue_bindings/") {
+			if memory.queues == nil {
+				memory.queues = map[string]string{}
+			}
+			memory.queues[(environmentsync.Field{Resource: change.Resource, Path: change.Path}).Key()] = observed.State.ResourceIDs[gitOpsQueueResource(change.Resource, change.Path)]
+		}
 		field := environmentsync.Field{Resource: change.Resource, Path: change.Path, Value: append(json.RawMessage(nil), change.After...)}
 		memory.owners[field.Key()] = environmentsync.Ownership{Field: field, Manager: sourceID}
 	}
@@ -262,6 +277,10 @@ func (m *MemStore) applyEnvironmentGitOps(_ context.Context, lease EnvironmentGi
 			}
 		}
 	}
+	queueState, queueIdentities, err := m.prepareGitOpsQueuesLocked(memory.source, plan, observed.State.ResourceIDs)
+	if err != nil {
+		return nil, err
+	}
 	// Decode and validate every operation before changing any in-memory rows.
 	configChanged := false
 	policies := map[string][]ProjectEnvironmentEdgeRule{}
@@ -296,6 +315,8 @@ func (m *MemStore) applyEnvironmentGitOps(_ context.Context, lease EnvironmentGi
 					return nil, ErrInvalidArgument
 				}
 				routes[change.Resource] = contract
+			case strings.HasPrefix(change.Path, "queue_bindings/"):
+				// Validated on detached queue/consumer maps above.
 			case strings.HasPrefix(change.Path, "variables/"):
 				var value string
 				if json.Unmarshal(change.After, &value) != nil {
@@ -314,6 +335,15 @@ func (m *MemStore) applyEnvironmentGitOps(_ context.Context, lease EnvironmentGi
 		configValues, configHash, err = api.NormalizeProjectEnvironmentConfig(raw)
 		if err != nil {
 			return nil, ErrInvalidArgument
+		}
+	}
+	if queueState != nil {
+		m.queueBindings, m.triggers = queueState.queueBindings, queueState.triggers
+		if memory.queues == nil {
+			memory.queues = map[string]string{}
+		}
+		for key, id := range queueIdentities {
+			memory.queues[key] = id
 		}
 	}
 	now, source := time.Now().UTC(), memory.source
