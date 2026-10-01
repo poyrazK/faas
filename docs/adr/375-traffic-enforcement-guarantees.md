@@ -296,6 +296,21 @@ remain required delivery work.
 
 ## Delivery and verification
 
+Read-only policy preview uses the runtime's numeric budget resolution and
+stored retry compilation. API write-time defaults remain distinct from
+compiling an existing row. Request-header selectors use the immutable ingress
+header snapshot; header actions can change execution overrides but cannot
+manufacture a later selector match. A total-deadline rule is selected on the
+original public route after owner resolution and pins the later execution
+rule across rewrites. A deadline field on a rule reached only after rewriting
+does not create an ingress deadline. Preview reports that selection even when
+a later deterministic response or unavailable runtime gate ends its trace.
+All millisecond values are clamped numerically before conversion to duration,
+including request overrides, so a large integer cannot wrap into a short
+positive timeout. Preview does not infer operator enablement, live accounting,
+or deployed enforcement from entitlement or configured policy; those still
+require fresh observations and acceptance evidence.
+
 Public host resolution reads hostname ownership, app settings, account plan,
 environment/release membership and deployment ingress through a narrow,
 read-only repeatable-read view. New requests require this view even if the

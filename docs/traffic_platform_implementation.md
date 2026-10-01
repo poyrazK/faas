@@ -1536,3 +1536,66 @@ tenant/alias/revision/operator reservation transitions, preview/runtime and full
 synthetic-path agreement, real daemon/load/recovery/customer/staging acceptance
 remain pending. No native Linux x86_64 KVM acceptance host is available; native
 VM/firewall/process-death/leak acceptance remains pending.
+
+### Deadline/retry preview and forwarding agreement, 2026-10-01
+
+The daemon compiler, forwarding budget resolver and read-only simulator now
+share stored budget/retry normalization and the deterministic retry method
+guard. API write defaults remain separate: a legacy stored zero retry floor
+stays zero, and the forwarding loop still applies its low-traffic allowance
+when spending. An invalid total deadline surfaces the owner's host-snapshot
+verification refusal; a non-replayable retry action is omitted without
+shadowing a later valid retry rule. Budget overrides are clamped as integers
+before duration conversion, fixing a large-positive-value overflow that could
+previously wrap into a short positive timeout. App timeout arithmetic is also
+bounded before multiplication.
+
+Preview selects the total-deadline candidate on the original public path and
+immutable ingress headers, then retains that execution rule across rewrites.
+A total field reached only after rewriting creates no ingress timer. Header
+actions change forwarded values and execution overrides while later selectors
+still consult the original snapshot. CLI JSON/text and dashboard render the
+ingress candidate independently of the later execution step, so fixed
+responses and incomplete cache/throttle traces retain it. The reported
+enforcement state is explicitly unverified; configuration does not establish
+signing-key availability, operator enablement, counter health or admission.
+Routes to another app and missing plan ceilings remain incomplete.
+
+The final source freeze covers 6,278 Go/source and embedded-input files, with
+matching hashes after tests and lint. Verification uses the pinned Go 1.25.13
+darwin/arm64, CGO-disabled, inlining/DWARF-disabled, stripped-link profile and
+the owned caches; no source exclusions, overlays or limit/timeout assertions
+were weakened.
+
+- Full `pkg/api`: 1,813 named cases pass, no failures/skips, 1.231 s.
+- Full `pkg/edgeruletrace`: 117 pass, no failures/skips, 0.404 s.
+- Full `pkg/gateway`: 2,222 pass, no failures/skips, 62.052 s.
+- Full `cmd/gatewayd-internal`: 736 pass, no failures, 72 existing guarded
+  database skips, 4.677 s.
+- Full `cmd/gregale`: 2,902 pass, no failures, two existing unavailable-shell
+  skips, 29.483 s.
+- Selected dashboard edge-rule/capability tests: 24 pass, no failures/skips,
+  1.277 s. CLI and dashboard checks exercise real read-only handlers/rendering.
+- 89 focused passing cases compare real forwarded execution stamps/deadlines,
+  retry method guards, stored-row compilers and sealed owner-policy refusal,
+  original selectors, rewrite pins, numeric overflow and early trace stops.
+- Lint with tests passes for all six affected packages, zero issues. Formatting
+  and whitespace pass. No SQL/schema, quota or capability-maturity changes.
+
+Diagnostic runs are retained separately. They caught decoder pointer/value
+mistakes, noncanonical fixture headers, a POST cache bypass, conditional fixed
+response expectations and older fixtures that expected header actions to
+manufacture later selector matches. Those expectations now follow the runtime;
+the response composition test also proves an original ingress header does match.
+Review additionally distinguished owner compilation refusal from a dropped
+retry action before the final passing verification. Passing counts exclude
+diagnostic runs.
+
+Profiles, source hashes, compressed logs and commit receipts are in
+`/Users/poyrazk/dev/Cloud/gregale/outputs/traffic-preview-agreement-20261001/`.
+All six release guarantees remain unchecked. Complete binding publication and
+tenant/alias/revision/operator reservation transitions, broader preview/full
+synthetic-path agreement, live daemon feature observations and
+load/recovery/customer/staging acceptance remain pending. No native Linux
+x86_64 KVM acceptance host is available; native VM/firewall/process-death/leak
+acceptance remains pending.

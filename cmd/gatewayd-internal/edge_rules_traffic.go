@@ -40,28 +40,13 @@ func compileRetryRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleRetryReso
 		// default. Clamping would silently enable retry on a route whose
 		// stored row says otherwise, which is the wrong direction for a
 		// primitive that can double a side effect.
-		attempts := r.Action.Retry.MaxAttempts
-		if attempts < 2 {
+		action, valid := api.CompileRetryActionForRuntime(api.EdgeRuleRetryAction{
+			MaxAttempts: r.Action.Retry.MaxAttempts, AllowNonIdempotent: r.Action.Retry.AllowNonIdempotent,
+			MinRemainingMs: r.Action.Retry.MinRemainingMs, BackoffMs: r.Action.Retry.BackoffMs,
+			BudgetPercent: r.Action.Retry.BudgetPercent, BudgetMinRetries: r.Action.Retry.BudgetMinRetries,
+		})
+		if !valid {
 			continue
-		}
-		if attempts > api.EdgeRuleRetryMaxAttempts {
-			attempts = api.EdgeRuleRetryMaxAttempts
-		}
-		minRemaining := r.Action.Retry.MinRemainingMs
-		if minRemaining < 0 || minRemaining > api.MaxEdgeRuleRetryMinRemainingMs {
-			minRemaining = api.EdgeRuleRetryDefaultMinRemainingMs
-		}
-		backoff := r.Action.Retry.BackoffMs
-		if backoff < 0 || backoff > api.MaxEdgeRuleRetryBackoffMs {
-			backoff = 0
-		}
-		budgetPercent := r.Action.Retry.BudgetPercent
-		if budgetPercent < 1 || budgetPercent > api.MaxEdgeRuleRetryBudgetPercent {
-			budgetPercent = api.EdgeRuleRetryDefaultBudgetPercent
-		}
-		budgetMinRetries := r.Action.Retry.BudgetMinRetries
-		if budgetMinRetries < 0 || budgetMinRetries > api.MaxEdgeRuleRetryBudgetMin {
-			budgetMinRetries = api.EdgeRuleRetryDefaultBudgetMin
 		}
 		out = append(out, gateway.EdgeRuleRetryResolved{
 			ID:                 r.ID,
@@ -71,12 +56,12 @@ func compileRetryRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleRetryReso
 			PathGlob:           r.MatchPath,
 			Methods:            buildMethodsMap(r.MatchMethods),
 			MatchHeaders:       buildMatchHeadersMap(r.MatchHeaders),
-			MaxAttempts:        attempts,
-			AllowNonIdempotent: r.Action.Retry.AllowNonIdempotent,
-			MinRemaining:       time.Duration(minRemaining) * time.Millisecond,
-			Backoff:            time.Duration(backoff) * time.Millisecond,
-			BudgetPercent:      budgetPercent,
-			BudgetMinRetries:   budgetMinRetries,
+			MaxAttempts:        action.MaxAttempts,
+			AllowNonIdempotent: action.AllowNonIdempotent,
+			MinRemaining:       time.Duration(action.MinRemainingMs) * time.Millisecond,
+			Backoff:            time.Duration(action.BackoffMs) * time.Millisecond,
+			BudgetPercent:      action.BudgetPercent,
+			BudgetMinRetries:   action.BudgetMinRetries,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })

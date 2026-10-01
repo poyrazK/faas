@@ -449,6 +449,7 @@ func TestApplyEnvironmentEdgePolicyReplacesOnlyHeadersAndCORS(t *testing.T) {
 	input, err := edgeruletrace.NormalizeInput(edgeruletrace.Input{
 		Project: "shop", Environment: "staging", App: "demo", Host: "staging.example.com", Path: "/",
 		Method: http.MethodGet, AppMaintenanceLoaded: true,
+		Headers: http.Header{"X-Environment": []string{"staging"}},
 	})
 	if err != nil {
 		t.Fatalf("NormalizeInput: %v", err)
@@ -1504,7 +1505,7 @@ func TestSimulateRetryRuleUsesRuntimeDefaultsAndMethodGuard(t *testing.T) {
 	if policy == nil || policy.MaxAttempts != api.EdgeRuleRetryMaxAttempts || policy.MaxReplays != api.EdgeRuleRetryMaxAttempts-1 || policy.MaxAttemptsSource != "platform_ceiling" {
 		t.Fatalf("attempt ceiling = %#v", policy)
 	}
-	if policy.MinRemainingMS != api.EdgeRuleRetryDefaultMinRemainingMs || policy.BackoffMS != 0 || policy.BudgetPercent != api.EdgeRuleRetryDefaultBudgetPercent || policy.BudgetMinRetries != api.EdgeRuleRetryDefaultBudgetMin {
+	if policy.MinRemainingMS != 0 || policy.BackoffMS != 0 || policy.BudgetPercent != api.EdgeRuleRetryDefaultBudgetPercent || policy.BudgetMinRetries != api.EdgeRuleRetryDefaultBudgetMin {
 		t.Fatalf("retry defaults = %#v", policy)
 	}
 	if policy.MethodEligibility != "non_idempotent_disabled" || policy.IdempotencyKeyPresent {
@@ -1549,7 +1550,7 @@ func TestSimulateRetryRuleRequiresEffectiveAttemptCount(t *testing.T) {
 	if result.Rules[0].Outcome != "unavailable" || !strings.Contains(result.Rules[0].OutcomeReason, "gateway compilation would drop this rule") {
 		t.Fatalf("invalid rule preview = %#v", result.Rules[0])
 	}
-	if result.Simulation.Status != "incomplete" || result.Simulation.Outcome != "unavailable" || result.Simulation.StoppedAt != "retry" {
+	if result.Simulation.Status != "complete" || result.Simulation.Outcome != "continue" || len(result.Simulation.Steps) != 0 {
 		t.Fatalf("invalid rule simulation = %#v", result.Simulation)
 	}
 }
@@ -1612,7 +1613,7 @@ func TestSimulateBudgetFallbackUsesAppTimeoutAndPlanCeiling(t *testing.T) {
 		t.Fatalf("simulation = %#v", result.Simulation)
 	}
 	policy := result.Simulation.Steps[0].BudgetPolicy
-	if policy == nil || policy.ConfiguredMS != 8000 || policy.BudgetMS != 5000 || policy.PlanMaxMS != 5000 || policy.Source != "ceiling_clamp" || policy.OverrideStatus != "not_applicable" {
+	if policy == nil || policy.ConfiguredMS != 8000 || policy.BudgetMS != 5000 || policy.PlanMaxMS != 5000 || policy.Source != "app" || policy.OverrideStatus != "not_applicable" {
 		t.Fatalf("fallback budget policy = %#v", policy)
 	}
 

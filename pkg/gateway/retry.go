@@ -19,7 +19,6 @@ package gateway
 import (
 	"bytes"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -80,18 +79,11 @@ type RetryPolicy struct {
 
 // retryable reports whether the policy permits replaying this request.
 func (p RetryPolicy) retryable(r *http.Request) (bool, string) {
-	switch r.Method {
-	case http.MethodGet, http.MethodHead, http.MethodOptions,
-		http.MethodTrace, http.MethodPut, http.MethodDelete:
+	switch api.RequestRetryMethodEligibility(r.Method, p.AllowNonIdempotent, r.Header.Get("Idempotency-Key")) {
+	case "idempotent_method", "non_idempotent_allowed_with_key":
 		return true, ""
-	case http.MethodPost, http.MethodPatch:
-		if !p.AllowNonIdempotent {
-			return false, RetrySkipNonIdempotent
-		}
-		if strings.TrimSpace(r.Header.Get("Idempotency-Key")) == "" {
-			return false, RetrySkipIdempotency
-		}
-		return true, ""
+	case "idempotency_key_required":
+		return false, RetrySkipIdempotency
 	default:
 		return false, RetrySkipNonIdempotent
 	}

@@ -3,8 +3,6 @@ package gateway
 import (
 	"context"
 	"net/http"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -109,56 +107,31 @@ func (h *Handler) applyEdgeRuleBudget(w http.ResponseWriter, r *http.Request, ap
 	}
 	// Resolve the budget value: rule.BudgetMs, optionally overridden
 	// by the per-customer-tunable header.
-	budgetMs := rule.BudgetMs
-	source := "rule"
-	headerName := rule.AllowOverrideHeader
-	if headerName == "" {
-		headerName = api.RequestBudgetDefaultOverrideHeader
-	}
-	if v := r.Header.Get(headerName); v != "" {
-		if n, ok := parseBudgetHeaderMs(v); ok {
-			budgetMs = n
-			source = "header_override"
-		}
-		// Unparseable / non-positive → fall through to rule.BudgetMs.
-	}
-	total := time.Duration(budgetMs) * time.Millisecond
-	ceiling := limits.RequestBudgetMaxDuration()
-	if total <= 0 || total > ceiling {
-		// Defence-in-depth: a direct-DB rule with budget_ms out of
-		// range should never pin the budget to zero or to a value
-		// larger than the per-plan ceiling. Clamp silently to the
-		// ceiling; the customer never sees the warning (their rule
-		// still fires, just at the platform ceiling).
-		total = ceiling
-		source = "ceiling_clamp"
-	}
+	action := api.EdgeRuleBudgetAction{BudgetMs: rule.BudgetMs, AllowOverrideHeader: rule.AllowOverrideHeader}
+	policy := api.ResolveRequestExecutionBudget(limits.RequestBudgetForType(string(app.Type)).Milliseconds(),
+		limits.RequestBudgetMaxDuration().Milliseconds(), app.RequestTimeoutS, &action, r.Header)
+	total := time.Duration(policy.BudgetMS) * time.Millisecond
 	if h.edgeRuleAudit != nil {
 		h.edgeRuleAudit.Emit(r.Context(), "edge_rule.budget_matched", &rule.AccountID, map[string]any{
 			"rule_id":   rule.ID,
 			"from_host": r.Host,
 			"budget_ms": total.Milliseconds(),
-			"source":    source,
-			"header":    headerName,
+			"source":    policy.Source,
+			"header":    policy.OverrideHeader,
 		})
 	}
 	if h.metrics != nil {
 		h.metrics.ObserveEdgeRuleMatch("budget", "match")
 		h.metrics.ObserveEdgeRuleApply("budget", "success")
 	}
-	h.stampRequestBudget(w, r, app, total, source)
+	h.stampRequestBudget(w, r, app, total, policy.Source)
 	return false
 }
 
 func appRequestBudget(limits api.Limits, app App) time.Duration {
-	if app.RequestTimeoutS > 0 {
-		total := time.Duration(app.RequestTimeoutS) * time.Second
-		if ceiling := limits.RequestBudgetMaxDuration(); total > ceiling {
-			return ceiling
-		}
-		return total
-	}
-	return limits.RequestBudgetForType(string(app.Type))
+	policy := api.ResolveRequestExecutionBudget(limits.RequestBudgetForType(string(app.Type)).Milliseconds(),
+		limits.RequestBudgetMaxDuration().Milliseconds(), app.RequestTimeoutS, nil, nil)
+	return time.Duration(policy.BudgetMS) * time.Millisecond
 }
 
 func appRequestBudgetSource(app App) string {
@@ -211,20 +184,9 @@ func (h *Handler) stampRequestBudget(w http.ResponseWriter, r *http.Request, app
 // into a positive integer milliseconds value. Accepts decimal
 // integers (e.g. "3000") only — floats, ranges, and trailing units
 // (e.g. "3s", "3000ms") are rejected. Returns (n, true) when n is
-// in [1, math.MaxInt32]; (0, false) on parse failure or out-of-
+// in [1, the native integer maximum]; (0, false) on parse failure or out-of-
 // range. The ceiling check against per-plan RequestBudgetMaxDuration
 // lives in the caller so this helper stays stateless.
 func parseBudgetHeaderMs(s string) (int, bool) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return 0, false
-	}
-	n, err := strconv.Atoi(s)
-	if err != nil {
-		return 0, false
-	}
-	if n < 1 {
-		return 0, false
-	}
-	return n, true
+	return api.ParseRequestBudgetOverrideMS(s)
 }

@@ -407,6 +407,42 @@ Managed service calls now pin the policy inputs described below. Simulator/runti
 agreement and complete service-path acceptance still require verification.
 Native lifecycle and deployment acceptance remain pending.
 
+### Read-only deadline and retry preview
+
+`gregale edge-rules trace` and the dashboard report the total-deadline
+candidate independently of the execution-budget step. Selection uses the
+original public path and ingress headers. A positive total deadline pins the
+execution rule across rewrites; a total field on a rule matched only after a
+rewrite does not start an ingress timer. Header actions can change an
+execution override while selectors continue to use the original headers.
+The candidate remains visible if a fixed response, cache lookup candidate or
+another runtime-dependent gate ends the trace before execution.
+
+JSON includes `simulation.total_deadline_policy` with the selected rule,
+original selection path, configured/effective milliseconds, plan ceiling,
+coverage and `enforcement_status: "unverified"`. Text and dashboard show the
+same distinction. Configuration is insufficient to infer an available
+gateway signing key, operator retry gate, shared-counter health or actual
+admission. Cache, throttle, circuit and retry runtime outcomes remain
+incomplete. A route to another app remains incomplete until that owner's
+policy and plan can be resolved.
+
+Preview compiles existing budget/retry rows with the runtime's resolver.
+Invalid total deadlines surface the owner's host-snapshot verification
+refusal, including when the invalid rule's path would not select this request.
+Retry actions with fewer than two attempts are omitted from sequential
+selection and cannot shadow a later compiled retry rule.
+API writes still apply their normal defaults. A legacy stored zero retry floor
+is shown as zero, while a zero low-traffic retry allowance uses the forwarding
+loop's minimum at spend time. Execution overrides are clamped as integers
+before duration conversion, including extremely large positive values.
+POST/PATCH opt-in still requires a key; the app must honor it to prevent
+duplicate side effects after a transport failure.
+
+Local compiler/handler and CLI/dashboard checks cover these selectors and
+numeric bounds. Fleet feature availability, policy publication across owners,
+complete path/load/recovery evidence and native acceptance remain required.
+
 ## Public deployment routing
 
 Before cache access or dispatch, production public HTTP routing reads app

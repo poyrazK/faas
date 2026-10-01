@@ -1798,15 +1798,13 @@ func compileBudgetRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleBudgetRe
 		// 504 every request, which is worse than the platform
 		// default; the same defence-in-depth posture as
 		// compileLimitRules silently dropping malformed caps).
-		budgetMs := r.Action.Budget.BudgetMs
-		maxBudgetMs := int(api.RequestBudgetMax.Milliseconds())
-		totalDeadlineMs := r.Action.Budget.TotalDeadlineMs
-		if totalDeadlineMs < 0 || totalDeadlineMs > maxBudgetMs {
+		action, valid := api.CompileBudgetActionForRuntime(api.EdgeRuleBudgetAction{
+			BudgetMs: r.Action.Budget.BudgetMs, TotalDeadlineMs: r.Action.Budget.TotalDeadlineMs,
+			AllowOverrideHeader: r.Action.Budget.AllowOverrideHeader,
+		})
+		if !valid {
 			parseErrs = append(parseErrs, gateway.PathGlobError{RuleID: r.ID, Glob: r.MatchPath, Err: errors.New("invalid total deadline")})
 			continue
-		}
-		if budgetMs <= 0 || budgetMs > maxBudgetMs {
-			budgetMs = maxBudgetMs
 		}
 		out = append(out, gateway.EdgeRuleBudgetResolved{
 			ID:                  r.ID,
@@ -1816,9 +1814,9 @@ func compileBudgetRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleBudgetRe
 			PathGlob:            r.MatchPath,
 			Methods:             buildMethodsMap(r.MatchMethods),
 			MatchHeaders:        buildMatchHeadersMap(r.MatchHeaders),
-			BudgetMs:            budgetMs,
-			TotalDeadlineMs:     totalDeadlineMs,
-			AllowOverrideHeader: r.Action.Budget.AllowOverrideHeader,
+			BudgetMs:            action.BudgetMs,
+			TotalDeadlineMs:     action.TotalDeadlineMs,
+			AllowOverrideHeader: action.AllowOverrideHeader,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })
