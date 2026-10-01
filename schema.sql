@@ -11299,3 +11299,20 @@ CREATE TABLE invocation_work_environment_admissions (
     CHECK ((fairness_limit=0 AND fairness_digest IS NULL) OR (fairness_limit>0 AND fairness_digest IS NOT NULL AND length(fairness_digest)=32))
 );
 CREATE INDEX invocation_work_environment_admissions_environment_idx ON invocation_work_environment_admissions(environment_id);
+
+-- Established queue configuration (20260919140000001 / 20260924012754001).
+CREATE TABLE queue_bindings (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    name text NOT NULL CHECK (name ~ '^[a-z][a-z0-9-]{0,62}$'),
+    queue_name text NOT NULL CHECK (queue_name ~ '^[a-z][a-z0-9-]{0,62}$'),
+    mode text NOT NULL DEFAULT 'pull' CHECK (mode IN ('pull','push')),
+    workload_class text NOT NULL DEFAULT 'worker' CHECK (workload_class IN ('worker','job') OR (workload_class='http' AND mode='push')),
+    enabled boolean NOT NULL DEFAULT true,
+    max_concurrency integer NOT NULL DEFAULT 1 CHECK (max_concurrency BETWEEN 1 AND 10000),
+    retry_policy jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(retry_policy)='object'),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE(app_id,name),UNIQUE(app_id,queue_name)
+);

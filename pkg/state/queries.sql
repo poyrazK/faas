@@ -5669,3 +5669,11 @@ WHERE d.environment_id=$1 AND d.kind='fairness' AND l.app_id=d.app_id AND l.poli
 
 -- name: DeleteEnvironmentWorkDomains :exec
 DELETE FROM invocation_work_environment_domains WHERE environment_id=$1;
+
+-- name: CaptureProjectEnvironmentCloneQueues :one
+SELECT jsonb_build_object('version',1,'app_id',a.id::text,'source_scope',sqlc.arg(source_scope)::text,'environment_owned',false,
+    'bindings',coalesce((SELECT jsonb_agg(jsonb_build_object('source_id',b.id::text,'name',b.name,'queue_name',b.queue_name,
+        'mode',b.mode,'workload_class',b.workload_class,'enabled',b.enabled,'max_concurrency',b.max_concurrency,'retry_policy',b.retry_policy) ORDER BY b.name)
+        FROM queue_bindings b WHERE b.app_id=a.id),'[]'::jsonb)) AS definitions,
+    (SELECT count(*) FROM queue_bindings b WHERE b.app_id=a.id AND b.account_id<>a.account_id)::bigint AS ownership_violations
+FROM apps a WHERE a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted';

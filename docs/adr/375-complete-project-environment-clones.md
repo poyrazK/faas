@@ -1373,3 +1373,40 @@ Full clone publication and producer activation remain closed. Queue, cron,
 broker and completion-destination bindings still require scoped ownership;
 provider checkpoint consistency, complete resource orchestration, promotion,
 and native x86_64 KVM acceptance remain required for the full feature.
+
+### 2026-10-01: stage queue configuration and immutable clone capture
+
+Queue definitions now have a complete environment-owned collection in the
+immutable workload settings. It records logical binding and queue names,
+delivery mode, workload class, enabled state, concurrency and retry policy.
+It excludes runtime consumer IDs, leases, counters and messages. An absent
+collection remains a legacy/uninitialized value; a complete empty collection
+cannot inherit current production bindings. Collection edits share the workload
+revision CAS and the environment protection transaction, including no-op writes.
+The collection retains its clock after deleting its final definition. Reads for
+a deployment use its pinned settings rather than the current desired head.
+
+Atomic clone admission now captures queue definitions in the same repeatable-read
+transaction as the selected artifacts, settings and other configuration. Legacy
+production captures retain private source row IDs for later identity remapping;
+stage-owned definitions retain logical names without production consumer IDs.
+Both the policy and settings hashes cover the canonical queue definitions. A
+source stage without an owned collection cannot adopt nonempty production queues.
+Wrong account ownership aborts capture without creating a partial operation.
+
+A leased queue catalogue reader authenticates the committed configuration root
+and worker token before returning defensive copies. Subsequent production edits,
+desired stage edits and live source ownership changes do not alter a committed
+capture. Missing or damaged catalogue proof never falls back to the live source.
+The sqlc schema snapshot now includes the established queue configuration table;
+the new capture query is generated through sqlc.
+
+MemStore and migrated PostgreSQL contracts cover isolated edits, stale revisions,
+protected no-ops, canonical hashes, pinned deployment reads, complete empty
+collections, frozen clone replay, lease authentication, foreign ownership and
+damaged capture rejection. These establish configuration persistence and capture.
+Public scoped queue editing, isolated consumer projection and message partitions,
+admission/dispatch ownership and activation proof remain required. Qualification
+and clone publication reject queue collections until that proof exists, including
+complete empty collections. These contracts do not establish native runtime or
+provider data-copy acceptance.

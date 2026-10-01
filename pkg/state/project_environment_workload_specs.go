@@ -63,6 +63,8 @@ type ProjectEnvironmentWorkloadSettings struct {
 	// WorkPolicies is a complete environment-owned collection. Nil denotes a
 	// legacy deployment; an empty collection must never inherit later policies.
 	WorkPolicies *ProjectEnvironmentWorkPolicySettings `json:"work_policies,omitempty"`
+	// Nil preserves legacy configuration; explicit empty never inherits queues.
+	QueueBindings *ProjectEnvironmentQueueSettings `json:"queue_bindings,omitempty"`
 }
 
 // WorkloadSettingsFromApp materializes effective values so future source edits
@@ -167,6 +169,10 @@ func (settings ProjectEnvironmentWorkloadSettings) ApplyTo(app App) (App, error)
 }
 
 func cloneWorkloadSettings(settings ProjectEnvironmentWorkloadSettings) (ProjectEnvironmentWorkloadSettings, error) {
+	settings, err := normalizeWorkloadQueueSettings(settings)
+	if err != nil {
+		return ProjectEnvironmentWorkloadSettings{}, err
+	}
 	if settings.WorkPolicies != nil {
 		policies, err := normalizeEnvironmentWorkPolicySettings(*settings.WorkPolicies)
 		if err != nil {
@@ -186,6 +192,10 @@ func cloneWorkloadSettings(settings ProjectEnvironmentWorkloadSettings) (Project
 }
 
 func WorkloadSettingsHash(settings ProjectEnvironmentWorkloadSettings) (string, error) {
+	settings, err := normalizeWorkloadQueueSettings(settings)
+	if err != nil {
+		return "", err
+	}
 	if settings.WorkPolicies != nil {
 		policies, err := normalizeEnvironmentWorkPolicySettings(*settings.WorkPolicies)
 		if err != nil {

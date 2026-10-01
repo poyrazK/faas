@@ -124,6 +124,11 @@ type projectCloneWorkloadRecord struct {
 }
 
 func encodeCloneWorkloadSnapshot(snapshot projectCloneWorkloadSnapshot) ([]byte, string, error) {
+	var err error
+	snapshot.Settings, err = normalizeWorkloadQueueSettings(snapshot.Settings)
+	if err != nil {
+		return nil, "", err
+	}
 	if snapshot.Settings.WorkPolicies != nil {
 		settings, err := normalizeEnvironmentWorkPolicySettings(*snapshot.Settings.WorkPolicies)
 		if err != nil {
@@ -164,7 +169,17 @@ func encodeCloneWorkloadSnapshot(snapshot projectCloneWorkloadSnapshot) ([]byte,
 				return nil, "", ErrConflict
 			}
 		}
-		settingsRoutes := projectCloneScopedPolicies{OnlyAllowDeclaredRoutes: snapshot.Settings.OnlyAllowDeclaredRoutes, DeclaredRoutes: snapshot.Settings.DeclaredRoutes, EdgePresent: policies.EdgePresent, EdgeRules: policies.EdgeRules, Work: policies.Work}
+		if policies.Queues != nil {
+			if policies.Queues.AppID != snapshot.Artifact.AppID || policies.Queues.SourceScope != snapshot.Artifact.Scope || snapshot.Settings.QueueBindings == nil {
+				return nil, "", ErrConflict
+			}
+			captured, _ := json.Marshal(cloneQueueSettings(*policies.Queues))
+			settings, _ := json.Marshal(snapshot.Settings.QueueBindings.Bindings)
+			if !bytes.Equal(captured, settings) {
+				return nil, "", ErrConflict
+			}
+		}
+		settingsRoutes := projectCloneScopedPolicies{OnlyAllowDeclaredRoutes: snapshot.Settings.OnlyAllowDeclaredRoutes, DeclaredRoutes: snapshot.Settings.DeclaredRoutes, EdgePresent: policies.EdgePresent, EdgeRules: policies.EdgeRules, Work: policies.Work, Queues: policies.Queues}
 		settingsHash, _ := cloneScopedPoliciesHash(settingsRoutes)
 		policiesHash, _ := cloneScopedPoliciesHash(policies)
 		if settingsHash != policiesHash {

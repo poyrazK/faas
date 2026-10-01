@@ -2236,6 +2236,21 @@ type ProvisionedStaticEgressIp struct {
 	CreatedAt  pgtype.Timestamptz
 }
 
+type QueueBinding struct {
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	Name           string
+	QueueName      string
+	Mode           string
+	WorkloadClass  string
+	Enabled        bool
+	MaxConcurrency int32
+	RetryPolicy    []byte
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
 type RecentBuildClaim struct {
 	AccountID pgtype.UUID
 	ClaimedAt pgtype.Timestamptz

@@ -187,6 +187,9 @@ func captureCloneConfigurationWorkloadsTx(ctx context.Context, tx pgx.Tx, op Pro
 			snapshot.Settings.WorkPolicies = &ProjectEnvironmentWorkPolicySettings{Revision: clock, Policies: policies}
 		}
 		snapshot.Policies.Work = &work
+		if err := captureCloneQueuesTx(ctx, tx, op, &snapshot); err != nil {
+			return nil, err
+		}
 		raw, hash, err := encodeCloneWorkloadSnapshot(snapshot)
 		if err != nil {
 			return nil, err

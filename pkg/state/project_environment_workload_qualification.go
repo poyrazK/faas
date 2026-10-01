@@ -12,6 +12,9 @@ type ProjectEnvironmentWorkloadQualificationStore interface {
 }
 
 func qualificationWorkloadHash(desired, pinned ProjectEnvironmentWorkloadSpec, legacy ProjectEnvironmentWorkloadSettings) (string, error) {
+	if desired.Settings.QueueBindings != nil || pinned.Settings.QueueBindings != nil {
+		return "", ErrProjectEnvironmentQueueActivationUnavailable
+	}
 	if desired.Settings.WorkPolicies != nil || pinned.Settings.WorkPolicies != nil {
 		return "", ErrProjectEnvironmentWorkPolicyActivationUnavailable
 	}

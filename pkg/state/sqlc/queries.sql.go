@@ -830,6 +830,33 @@ func (q *Queries) CancelUploadSession(ctx context.Context, db DBTX, arg CancelUp
 	return err
 }
 
+const captureProjectEnvironmentCloneQueues = `-- name: CaptureProjectEnvironmentCloneQueues :one
+SELECT jsonb_build_object('version',1,'app_id',a.id::text,'source_scope',$1::text,'environment_owned',false,
+    'bindings',coalesce((SELECT jsonb_agg(jsonb_build_object('source_id',b.id::text,'name',b.name,'queue_name',b.queue_name,
+        'mode',b.mode,'workload_class',b.workload_class,'enabled',b.enabled,'max_concurrency',b.max_concurrency,'retry_policy',b.retry_policy) ORDER BY b.name)
+        FROM queue_bindings b WHERE b.app_id=a.id),'[]'::jsonb)) AS definitions,
+    (SELECT count(*) FROM queue_bindings b WHERE b.app_id=a.id AND b.account_id<>a.account_id)::bigint AS ownership_violations
+FROM apps a WHERE a.id=$2::uuid AND a.account_id=$3::uuid AND a.status<>'deleted'
+`
+
+type CaptureProjectEnvironmentCloneQueuesParams struct {
+	SourceScope string
+	AppID       pgtype.UUID
+	AccountID   pgtype.UUID
+}
+
+type CaptureProjectEnvironmentCloneQueuesRow struct {
+	Definitions         []byte
+	OwnershipViolations int64
+}
+
+func (q *Queries) CaptureProjectEnvironmentCloneQueues(ctx context.Context, db DBTX, arg CaptureProjectEnvironmentCloneQueuesParams) (CaptureProjectEnvironmentCloneQueuesRow, error) {
+	row := db.QueryRow(ctx, captureProjectEnvironmentCloneQueues, arg.SourceScope, arg.AppID, arg.AccountID)
+	var i CaptureProjectEnvironmentCloneQueuesRow
+	err := row.Scan(&i.Definitions, &i.OwnershipViolations)
+	return i, err
+}
+
 const captureProjectEnvironmentCloneWorkPolicies = `-- name: CaptureProjectEnvironmentCloneWorkPolicies :one
 SELECT jsonb_build_object(
     'version',1,'app_id',a.id::text,'source_scope',$1::text,

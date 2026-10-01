@@ -16,6 +16,7 @@ type projectCloneScopedPolicies struct {
 	EdgePresent             bool                                          `json:"edge_present"`
 	EdgeRules               []ProjectEnvironmentEdgeRule                  `json:"edge_rules"`
 	Work                    *ProjectEnvironmentCloneWorkPolicyDefinitions `json:"work,omitempty"`
+	Queues                  *ProjectEnvironmentCloneQueueDefinitions      `json:"queues,omitempty"`
 }
 
 func normalizeCloneScopedPolicies(policies projectCloneScopedPolicies) (projectCloneScopedPolicies, error) {
@@ -30,6 +31,13 @@ func normalizeCloneScopedPolicies(policies projectCloneScopedPolicies) (projectC
 			return policies, err
 		}
 		policies.Work = &work
+	}
+	if policies.Queues != nil {
+		queues, err := normalizeCloneQueues(*policies.Queues)
+		if err != nil {
+			return policies, err
+		}
+		policies.Queues = &queues
 	}
 	return policies, nil
 }
@@ -72,6 +80,10 @@ func validateCloneScopedPolicyPublication(record projectCloneWorkloadRecord, act
 	if record.snapshot.Policies.Work != nil || record.snapshot.Settings.WorkPolicies != nil {
 		return fmt.Errorf("clone workload %q work policies: %w", record.WorkloadSlug, ErrProjectEnvironmentCloneWorkPolicyIsolationUnavailable)
 	}
+	if record.snapshot.Policies.Queues != nil || record.snapshot.Settings.QueueBindings != nil {
+		return fmt.Errorf("clone workload %q queues: %w", record.WorkloadSlug, ErrProjectEnvironmentQueueActivationUnavailable)
+	}
+
 	actualHash, err := cloneScopedPoliciesHash(actual)
 	if err != nil || !routePresent || actualHash != record.SourcePoliciesHash {
 		return fmt.Errorf("clone workload %q scoped policies differ from its capture: %w", record.WorkloadSlug, ErrConflict)
