@@ -161,8 +161,8 @@ var catalog = map[string]Render{
 	api.CodeAppStartupTimeout: {
 		Title: "Application startup timeout",
 		Hint:  "your app didn't become ready in time",
-		Why:   "the wake readiness probe waited the full boot timeout (35s by default) and your app's /healthz never returned 200; this is distinct from idle_timeout_s (which parks the instance, not the boot)",
-		Fix:   "• if your app genuinely needs more than 35s, set `startup_timeout_s` higher (per-app config)\n• if it's a framework warm-up issue, defer work until after the /healthz listener is up\n• check `gregale logs <slug>` for the boot sequence",
+		Why:   "the app did not satisfy its configured startup readiness contract before the boot budget elapsed; this may be TCP, HTTP, or gRPC readiness. A process exit or permission error can also prevent readiness. idle_timeout_s controls parking after startup, not this budget",
+		Fix:   "• check the deployment's effective port and readiness mode/path\n• inspect startup logs for process exits or permission errors before increasing the budget\n• set `startup_timeout_s` higher only if a healthy app needs more startup time",
 	},
 	api.CodeStatelessOnlyViolation: {
 		Title: "Stateless-only platform",

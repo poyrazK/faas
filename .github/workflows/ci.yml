@@ -1861,6 +1861,18 @@ jobs:
             --no-new-privs \
             -- env "PATH=$BOOT_CONTRACT_PATH" \
             go test -race -count=1 -timeout=15m -run '^TestBootContract_' ./cmd/e2e/...
+      - name: OCI ownership and non-root descriptor regressions
+        # These tests use real ext4 metadata and credential drops; no KVM,
+        # daemon restart, or production fleet mutation is involved.
+        run: |
+          command -v mkfs.ext4
+          command -v debugfs
+          go test -race -c -o "$RUNNER_TEMP/oci-rootfs.test" ./pkg/rootfs
+          go test -race -c -o "$RUNNER_TEMP/oci-guest.test" ./guest/init
+          sudo env "PATH=$PATH" "$RUNNER_TEMP/oci-rootfs.test" \
+            -test.count=1 -test.v -test.run '^TestFullRootfsZeroGIDOwnershipRealExt4$'
+          sudo env "PATH=$PATH" "$RUNNER_TEMP/oci-guest.test" \
+            -test.count=1 -test.v -test.run '^Test(WorkloadOutput|GuestDescriptorLinks)'
 
   e2e-shard1:
     name: e2e (shard 1 — 18 tests)

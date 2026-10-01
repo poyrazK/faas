@@ -59,7 +59,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"log/slog"
 	"net/url"
@@ -890,14 +889,11 @@ func runSidecar(spec workloadSpec, apiEnv, workloadEnv map[string]string, sup *S
 	if cgroupErr != nil {
 		return fmt.Errorf("prepare sidecar workload cgroup %q: %w", spec.Name, cgroupErr)
 	}
-	// Pipe stdout/stderr into the supervisor's ring buffer
-	// (Slice A PR-B contract).
-	if sup != nil {
-		mw := io.MultiWriter(os.Stdout, sup.LogBuffer())
-		cmd.Stdout, cmd.Stderr = mw, mw
-	} else {
-		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	output, err := prepareWorkloadOutput(cmd, sup)
+	if err != nil {
+		return fmt.Errorf("run sidecar %s: %w", spec.Name, err)
 	}
+	defer output.close()
 	// ADR-051 Phase 4: expose the forked cmd to the
 	// supervisor so runCharacterizationForSup can read the
 	// PID via LastAppPID(). The characterize probe filters
@@ -910,8 +906,10 @@ func runSidecar(spec workloadSpec, apiEnv, workloadEnv map[string]string, sup *S
 	// exits; the supervisor's Run() loop captures the exit
 	// code via trackExit and decides whether to restart.
 	if err := cmd.Start(); err != nil {
+		output.started()
 		return fmt.Errorf("run sidecar %s: %w", spec.Name, err)
 	}
+	output.started()
 	if sup != nil {
 		sup.markStarted()
 		if spec.Type == "sidecar" {

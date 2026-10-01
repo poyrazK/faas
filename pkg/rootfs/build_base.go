@@ -286,7 +286,7 @@ func (b *Builder) BuildFullRootfs(ctx context.Context, in BuildFullRootfsInput) 
 		if err != nil {
 			return BuildResult{}, fmt.Errorf("rootfs: open layer 0: %w", err)
 		}
-		err = ApplyLayerGzWithResolver(staging, f, nil)
+		err = applyFullRootfsLayerGz(staging, f, nil)
 		_ = f.Close()
 		if err != nil {
 			return BuildResult{}, fmt.Errorf("rootfs: apply layer 0 (pre-parse): %w", err)
@@ -303,7 +303,7 @@ func (b *Builder) BuildFullRootfs(ctx context.Context, in BuildFullRootfsInput) 
 		if err != nil {
 			return BuildResult{}, fmt.Errorf("rootfs: reopen layer 0: %w", err)
 		}
-		err = ApplyLayerGzWithResolver(staging, f, resolver)
+		err = applyFullRootfsLayerGz(staging, f, resolver)
 		_ = f.Close()
 		if err != nil {
 			return BuildResult{}, fmt.Errorf("rootfs: apply layer 0 (resolved): %w", err)
@@ -311,7 +311,7 @@ func (b *Builder) BuildFullRootfs(ctx context.Context, in BuildFullRootfsInput) 
 	}
 	for i := 1; i < len(in.Layers); i++ {
 		layer := in.Layers[i]
-		if err := ApplyLayerGzWithResolver(staging, layer, resolver); err != nil {
+		if err := applyFullRootfsLayerGz(staging, layer, resolver); err != nil {
 			return BuildResult{}, fmt.Errorf("rootfs: apply layer %d: %w", i, err)
 		}
 		// Re-parse the top-most /etc/passwd after each apply.
