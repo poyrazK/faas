@@ -11,7 +11,7 @@ import (
 func TestDaemonConnectionBudgetFitsMultiNodeFleet(t *testing.T) {
 	// Control plane: apid, schedd, public gateway/control services. Each
 	// compute node: schedd, internal gateway, vmmd, imaged, and builderd.
-	control := []string{"apid", "schedd", "gatewayd-public", "meterd", "githubd", "outboundd", "s3-gatewayd"}
+	control := []string{"apid", "schedd", "gatewayd-public", "meterd", "githubd", "outboundd", "s3-gatewayd", "bridged"}
 	compute := []string{"schedd", "gatewayd-internal", "vmmd", "imaged", "builderd"}
 	sum := func(names []string) int32 {
 		var total int32

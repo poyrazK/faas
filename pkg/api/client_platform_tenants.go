@@ -394,3 +394,16 @@ func (c *Client) RetryPlatformTenantWebhookDelivery(ctx context.Context, tenantI
 	path := platformTenantWebhooksPath(tenantID) + "/" + url.PathEscape(webhookID) + "/deliveries/" + url.PathEscape(deliveryID) + "/retry"
 	return out, c.do(ctx, "POST", path, nil, &out)
 }
+
+func (c *Client) GetPlatformTenantSelfInvocation(ctx context.Context, id string) (PlatformTenantInvocationResponse, error) {
+	var out PlatformTenantInvocationResponse
+	return out, c.do(ctx, "GET", "/v1/platform-tenant-self/invocations/"+url.PathEscape(id), nil, &out)
+}
+func (c *Client) CancelPlatformTenantSelfInvocation(ctx context.Context, id string) (PlatformTenantInvocationResponse, error) {
+	var out PlatformTenantInvocationResponse
+	return out, c.do(ctx, "POST", "/v1/platform-tenant-self/invocations/"+url.PathEscape(id)+"/cancel", nil, &out)
+}
+func (c *Client) ReplayPlatformTenantSelfInvocation(ctx context.Context, id string) (AsyncInvokeResponse, error) {
+	var out AsyncInvokeResponse
+	return out, c.do(ctx, "POST", "/v1/platform-tenant-self/invocations/"+url.PathEscape(id)+"/replay", nil, &out)
+}

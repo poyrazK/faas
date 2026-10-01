@@ -274,6 +274,8 @@ type App struct {
 	// authentication on this app's public path. Empty is treated as
 	// optional for legacy/fake app rows; required rejects anonymous traffic.
 	ConsumerAuthMode string
+	// PlatformTenantRequired gates app traffic on verified tenant attribution.
+	PlatformTenantRequired bool
 	// PublicAuth (issue #477 / ADR-079) is the per-app
 	// public-URL auth mode (open|bearer|basic|ip_allowlist|internal_only). When
 	// mode='open' (the pre-#477 default), ServeHTTP
@@ -900,11 +902,13 @@ type warmEnsurer interface {
 // Handler is gatewayd-internal's HTTP entrypoint: route → rate-limit → (wake-block if
 // parked) → proxy (spec §4.1, §2). It is the only public listener on the box.
 type Handler struct {
-	backend        Backend
-	declaredRoutes DeclaredRouteMatcher
-	limiter        *Limiter
-	preAuthLimiter *preAuthSourceLimiter
-	preAuthCentral CentralBackend
+	devBridgeAuthorize func(*http.Request) *api.Problem
+	devBridgeForward   func(http.ResponseWriter, *http.Request, App) bool
+	backend            Backend
+	declaredRoutes     DeclaredRouteMatcher
+	limiter            *Limiter
+	preAuthLimiter     *preAuthSourceLimiter
+	preAuthCentral     CentralBackend
 	// routeLimiter is the per-rule token-bucket throttle (ADR-091
 	// D20.5 amendment, issue #881). Same underlying *Limiter type as
 	// limiter + accountLimiter but constructed with NewLimiterWithLRU
@@ -5541,6 +5545,15 @@ func (h *Handler) pickAfterCapacity(app App, preferredInstanceID, versionKey str
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if h.devBridgeAuthorize != nil {
+		if problem := h.devBridgeAuthorize(r); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+	} else if r.Header.Get("X-Gregale-Dev-Bridge-Session") != "" || r.Header.Get("X-Gregale-Dev-Bridge-Token") != "" || r.Header.Get("X-Gregale-Dev-Session-Context") != "" {
+		api.WriteProblem(w, api.NewProblem(503, "dev_bridge_unavailable", "Bridge unavailable", "development routing is not enabled"))
+		return
+	}
 	// Managed realtime is a separate connection owner. Route it before the
 	// normal request bookkeeping and drain tracker so a quiet socket does not
 	// hold an application request slot or wake/parking lease for its lifetime.
@@ -6085,6 +6098,13 @@ haveApp:
 	if !h.enforcePublicAuth(w, r, rec, app) { //nolint:contextcheck // request ctx is the canonical inbound ctx; the helper uses r.Context() internally so passing ctx separately would shadow it.
 		return
 	}
+	// The three verified identity sources have all run by this point. Keep
+	// operator-authorized deployment smoke available for rollout readiness.
+	if app.PlatformTenantRequired && !deploymentSmoke && authenticatedFrom(r.Context()).PlatformTenantID == "" {
+		api.WriteProblem(w, api.ErrPlatformTenantRequired())
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
+	}
 	// Preview-only fixed response rules return after both app auth gates and
 	// before cache lookup or backend wake/admission.
 	if h.applyEdgeRuleRespond(w, r, app) {
@@ -6451,6 +6471,12 @@ haveApp:
 		h.writeAppRateLimitHeaders(w, app.ID, app.Plan)
 	}
 	if !h.enforceTenantRequestBudget(w, r, rec, app, deploymentSmoke) {
+		return
+	}
+	// Scoped local execution retains ordinary authentication, body limits and
+	// rate/budget admission, then streams without VM upload spooling or wake.
+	if h.devBridgeForward != nil && h.devBridgeForward(w, r, app) {
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
 
@@ -6933,7 +6959,7 @@ haveApp:
 	//     unbuffered).
 	//   - r.Body is restored to a fresh bytes.Reader so the proxy
 	//     downstream sees the full body unchanged.
-	if rules, ok := h.backend.LookupMirrorRules(r.Context(), app.ID); ok { //nolint:contextcheck // request ctx at handler boundary.
+	if rules, ok := h.backend.LookupMirrorRules(r.Context(), app.ID); ok && !hasDevBridgeScope(r.Context()) { //nolint:contextcheck // request ctx at handler boundary.
 		requestBody, requestBodyTruncated, restoreBody := snapshotSourceBodyWithTruncation(r)
 		// snapshotSourceBody consumes the captured prefix from r.Body. Restore
 		// it before the source proxy runs; deferring this until ServeHTTP exits
@@ -7317,7 +7343,9 @@ haveApp:
 	// Retain the safe response-header shape for a future parked HEAD / edge
 	// answer. This is deliberately after the origin leg and before observe so
 	// only live responses can populate the cache.
-	h.cacheHeadResponse(app.ID, rec)
+	if !hasDevBridgeScope(r.Context()) {
+		h.cacheHeadResponse(app.ID, rec)
+	}
 	h.recordPreAuthFailedResponse(r, rec.status)
 	h.recordPreAuthTargetResponse(r, rec, app)
 	h.observe(r, rec.status, app.ID, string(app.Plan), cold, target)
@@ -7582,6 +7610,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				GuestRuntime:                         guestEvidence.Runtime,
 				GuestOutcome:                         guestEvidence.Outcome,
 				GuestErrorClass:                      guestEvidence.ErrorClass,
+				FlagEvidenceJSON:                     guestEvidence.FlagEvidenceJSON,
 				GuestCPUTimeMS:                       guestEvidence.CPUTimeMS,
 				GuestPeakRSSMB:                       guestEvidence.PeakRSSMB,
 				GuestResourceUsageAvailable:          guestEvidence.ResourceUsageAvailable,

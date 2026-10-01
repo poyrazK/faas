@@ -169,6 +169,7 @@ func appTaskResponseFromResult(taskID string, result apptaskproto.Result) *vmmdp
 		TaskId: taskID, Status: string(result.Status), OutputTruncated: result.OutputTruncated,
 		FailureCode: result.FailureCode, FailureMessage: result.FailureMessage,
 		Stdout: append([]byte(nil), result.Stdout...), Stderr: append([]byte(nil), result.Stderr...),
+		OutcomeCode: result.OutcomeCode,
 	}
 	if result.ExitCode != nil {
 		resp.ExitCode = wrapperspb.Int32(int32(*result.ExitCode))

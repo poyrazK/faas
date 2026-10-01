@@ -1,0 +1,60 @@
+name: Customer platform starter
+
+on:
+  pull_request:
+    paths:
+      - "cmd/gregale/templates/**"
+      - "cmd/apid/**"
+      - "pkg/gateway/**"
+      - "cmd/gatewayd-internal/**"
+      - "pkg/sched/**"
+      - "api/openapi.yaml"
+      - "pkg/state/**"
+      - "pkg/api/**"
+      - "pkg/auth/middleware/**"
+      - "migrations/**"
+      - "scripts/test-customer-platform.sh"
+      - ".github/workflows/customer-platform-starter.yml"
+      - "go.mod"
+      - "go.sum"
+      - "Makefile"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_PASSWORD: faas
+          POSTGRES_DB: faas
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U faas -d faas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://faas:faas@127.0.0.1:5432/faas?sslmode=disable
+      CUSTOMER_DATABASE_URL: postgres://customer_app:customer_test@127.0.0.1:5432/customer_platform?sslmode=disable
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Create a database role subject to row security
+        run: |
+          docker exec "${{ job.services.postgres.id }}" psql -U faas -d faas -v ON_ERROR_STOP=1 \
+            -c "CREATE ROLE customer_app LOGIN PASSWORD 'customer_test' NOSUPERUSER NOBYPASSRLS;" \
+            -c "CREATE DATABASE customer_platform OWNER customer_app;"
+      - name: Test two-customer lifecycle and PostgreSQL isolation
+        run: make test-customer-platform

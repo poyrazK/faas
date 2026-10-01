@@ -208,7 +208,7 @@ const (
 // silently drop valid inputs like `--ram 0` or `--idle -1`.
 func cmdApp(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> [--environment SLUG] [--visibility public|internal] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--maintenance] [--no-maintenance] [--streaming-enabled] [--no-streaming-enabled] [--websocket-enabled] [--no-websocket] [--route-metrics] [--no-route-metrics] [--consumer-auth-mode optional|required] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--public-auth open|bearer|basic|ip_allowlist|internal_only] [--ip-allowlist CIDR (repeatable)] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app <slug> [--environment SLUG] [--visibility public|internal] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--maintenance] [--no-maintenance] [--streaming-enabled] [--no-streaming-enabled] [--websocket-enabled] [--no-websocket] [--route-metrics] [--no-route-metrics] [--consumer-auth-mode optional|required] [--platform-tenant-required|--no-platform-tenant-required] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--public-auth open|bearer|basic|ip_allowlist|internal_only] [--ip-allowlist CIDR (repeatable)] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
 		return 1
 	}
 	slug := args[0]
@@ -292,6 +292,8 @@ func cmdApp(args []string) int {
 	routeMetrics := fs.Bool("route-metrics", false, "enable per-route gateway metrics (plan gates remain server-side)")
 	noRouteMetrics := fs.Bool("no-route-metrics", false, "disable per-route gateway metrics")
 	consumerAuthMode := fs.String("consumer-auth-mode", "", "end-customer API-key policy: optional|required")
+	platformTenantRequired := fs.Bool("platform-tenant-required", false, "require verified platform tenant identity on app traffic")
+	noPlatformTenantRequired := fs.Bool("no-platform-tenant-required", false, "allow app traffic without platform tenant identity")
 	// Only-allow-declared-routes is a plan-agnostic pre-wake gate. The
 	// positive/negative pair mirrors require-authn: explicit false is useful
 	// when temporarily rolling back a contract without deleting the document.
@@ -570,6 +572,16 @@ func cmdApp(args []string) int {
 		}
 		req.ConsumerAuthMode = &v
 	}
+	if explicit["platform-tenant-required"] && explicit["no-platform-tenant-required"] {
+		return printErr("Invalid flags", fmt.Errorf("--platform-tenant-required and --no-platform-tenant-required are mutually exclusive"))
+	}
+	if explicit["platform-tenant-required"] {
+		req.PlatformTenantRequired = platformTenantRequired
+	}
+	if explicit["no-platform-tenant-required"] {
+		v := !*noPlatformTenantRequired
+		req.PlatformTenantRequired = &v
+	}
 	if explicit["only-declared-routes"] {
 		v := true
 		req.OnlyAllowDeclaredRoutes = &v
@@ -696,7 +708,7 @@ func cmdApp(args []string) int {
 		req.AutoscaleTargetRPS == nil && req.AutoscaleTargetCPUPct == nil &&
 		req.WarmSnapshotEnabled == nil && req.WarmSnapshotMinRequests == nil && req.WarmSnapshotMinMs == nil && req.WarmPoolSize == nil &&
 		req.EvictionPriority == nil && req.RequireAuthn == nil && req.PublicAuth == nil &&
-		req.MaintenanceMode == nil && req.StreamingEnabled == nil && req.WebSocketEnabled == nil && req.RouteMetricsEnabled == nil && req.ConsumerAuthMode == nil &&
+		req.MaintenanceMode == nil && req.StreamingEnabled == nil && req.WebSocketEnabled == nil && req.RouteMetricsEnabled == nil && req.ConsumerAuthMode == nil && req.PlatformTenantRequired == nil &&
 		req.OverflowNode == nil && req.AppProtocol == nil && req.Visibility == nil && req.OnlyAllowDeclaredRoutes == nil && req.HeadWakes == nil && req.CrawlerPolicy == nil && req.HealthPath == nil && req.HealthPathWakes == nil && req.ScalingPolicy == nil {
 		a, err := (environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}).GetApp(ctx, slug)
 		if err != nil {
@@ -843,6 +855,7 @@ func cmdApp(args []string) int {
 			consumerAuth = api.ConsumerAuthModeOptional
 		}
 		fmt.Printf("%-30s %s\n", "consumer auth mode:", consumerAuth)
+		fmt.Printf("%-30s %t\n", "platform tenant required:", a.PlatformTenantRequired)
 		fmt.Printf("%-30s %s\n", "crawler policy:", a.Manifest.EffectiveCrawlerPolicy())
 		fmt.Printf("%-30s %s\n", "health path:", a.Manifest.HealthPath)
 		fmt.Printf("%-30s %t\n", "health path wakes:", a.Manifest.HealthPathWakes)
@@ -1054,7 +1067,6 @@ func validateRepoDeployFlags(explicit map[string]bool) error {
 	var unsupported []string
 	for _, name := range []string{
 		"function", "app", "runtime", "handler", "dockerfile", "vcpu",
-		"require-authn", "no-require-authn", "app-protocol",
 		"execution-mode", "restart-policy", "startup-deadline-s", "max-retries",
 		"doctor-strict", "no-doctor", "secret-scan",
 	} {
@@ -1073,7 +1085,7 @@ func validateSourceRefPreviewFlags(explicit map[string]bool, sourceBranch string
 	for _, name := range []string{
 		"traffic-percent", "no-traffic", "canary-preset", "canary-stages", "safe", "rollback-on-5xx", "disable-startup-cpu-boost",
 		"reason", "tag", "deployed-by", "pr-number", "idempotency-key",
-		"wait", "no-wait", "timeout",
+		"wait", "no-wait", "timeout", "app-protocol",
 	} {
 		if explicit[name] {
 			unsupported = append(unsupported, "--"+name)
@@ -1194,7 +1206,7 @@ func incompatibleCreateOnlyFlags(explicit map[string]bool) []string {
 	allowed := map[string]struct{}{
 		"create-only": {}, "name": {}, "template": {}, "path": {}, "worktree": {},
 		"function": {}, "app": {}, "runtime": {}, "handler": {}, "profile": {},
-		"vcpu": {}, "require-authn": {}, "no-require-authn": {}, "app-protocol": {},
+		"vcpu": {}, "require-authn": {}, "no-require-authn": {}, "platform-tenant-required": {}, "no-platform-tenant-required": {}, "app-protocol": {},
 		"execution-mode": {}, "restart-policy": {}, "startup-deadline-s": {}, "max-retries": {},
 		"json": {},
 	}
@@ -1255,11 +1267,11 @@ func configureExistingApp(ctx context.Context, client *Client, existing api.AppR
 		problem.Detail = fmt.Sprintf("app %q: %s", req.Slug, problem.Detail)
 		return &api.APIError{Problem: *problem}
 	}
-	if requireAuthnPtr == nil && appProtocolPtr == nil && publicAuthPtr == nil && req.ResourceProfile == "" &&
+	if requireAuthnPtr == nil && req.PlatformTenantRequired == nil && appProtocolPtr == nil && publicAuthPtr == nil && req.ResourceProfile == "" &&
 		req.ExecutionMode == "" && req.RestartPolicy == "" && req.StartupDeadlineS == 0 && req.MaxRetries == 0 && req.ServiceReplicas == nil {
 		return nil
 	}
-	upd := api.UpdateAppRequest{RequireAuthn: requireAuthnPtr, PublicAuth: publicAuthPtr, AppProtocol: appProtocolPtr}
+	upd := api.UpdateAppRequest{RequireAuthn: requireAuthnPtr, PlatformTenantRequired: req.PlatformTenantRequired, PublicAuth: publicAuthPtr, AppProtocol: appProtocolPtr}
 	if req.ExecutionMode != "" {
 		value := req.ExecutionMode
 		upd.ExecutionMode = &value
@@ -2239,11 +2251,16 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// app <slug> --require-authn`.
 	requireAuthn := fs.Bool("require-authn", false, "require Authorization: Bearer <token> on every request (Pro/Scale only)")
 	noRequireAuthn := fs.Bool("no-require-authn", false, "drop the token requirement and open the public URL")
+	platformTenantRequired := fs.Bool("platform-tenant-required", false, "require verified platform tenant identity on app traffic")
+	noPlatformTenantRequired := fs.Bool("no-platform-tenant-required", false, "allow app traffic without platform tenant identity")
 	// ADR-124: per-app wire-protocol selector (PATCH path).
 	// Same single-string flag shape as the CREATE path above.
 	// Empty value = no change (the Set bit in UpdateAppParams
 	// is unset, so the SQL keeps the existing value).
 	appProtocol := fs.String("app-protocol", "", "wire-protocol selector: http1|http2|grpc (omit to leave unchanged)")
+	healthcheckPath := fs.String("healthcheck-path", "", "startup readiness HTTP path (for example /readyz)")
+	healthcheckGRPC := fs.Bool("healthcheck-grpc", false, "use standard gRPC health for startup readiness")
+	healthcheckGRPCService := fs.String("healthcheck-grpc-service", "", "service name for --healthcheck-grpc; empty checks the overall server")
 	// Issue #556 PR-A: per-deployment traffic-split weight. Sentinel
 	// value -1 = "unset" — `fs.Int` doesn't have a
 	// pointer type, so the explicit `fs.Visit` check below
@@ -2343,7 +2360,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	deployedBy := fs.String("deployed-by", "", "operator label (auto-resolved from `git config user.name` when in a repo)")
 	prNumber := fs.Int("pr-number", 0, "PR number (positive int; 0 = absent). Default unset; CI paths stamp via the GitHub Action.")
 	if err := fs.Parse(args); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale deploy [--plan|--dry-run|--diff|--create-only|--safe|--no-traffic] [--doctor-strict|--no-doctor] [--path DIR] [--source auto|head|worktree] [--worktree] --image REF | --tarball PATH | --repo OWNER/NAME --ref REF [--source-branch BRANCH] | --template NAME [--repository OWNER/NAME --install-id N --production-branch BRANCH]", "deploy")
+		PrintUsage(os.Stderr, "usage: gregale deploy [--plan|--dry-run|--diff|--create-only|--safe|--no-traffic] [--platform-tenant-required|--no-platform-tenant-required] [--doctor-strict|--no-doctor] [--path DIR] [--source auto|head|worktree] [--worktree] --image REF | --tarball PATH | --repo OWNER/NAME --ref REF [--source-branch BRANCH] | --template NAME [--repository OWNER/NAME --install-id N --production-branch BRANCH]", "deploy")
 		return 1
 	}
 	// Deploy has no positional arguments. Go's flag parser stops at the
@@ -2478,6 +2495,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if *requireAuthn && *noRequireAuthn {
 		return printErr("Invalid flags", fmt.Errorf("--require-authn and --no-require-authn are mutually exclusive"))
 	}
+	if explicit["platform-tenant-required"] && explicit["no-platform-tenant-required"] {
+		return printErr("Invalid flags", fmt.Errorf("--platform-tenant-required and --no-platform-tenant-required are mutually exclusive"))
+	}
+	if *diff && !projectRequested && (explicit["platform-tenant-required"] || explicit["no-platform-tenant-required"]) {
+		return printErr("Invalid flags", fmt.Errorf("platform tenant policy flags cannot be combined with --dry-run or --diff"))
+	}
 	if *doctorStrict && *noDoctor {
 		return printErr("Invalid flags", fmt.Errorf("--doctor-strict and --no-doctor are mutually exclusive"))
 	}
@@ -2494,7 +2517,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if *secretsFile != "" {
 			return printErr("Invalid flags", errors.New("--plan cannot be combined with --secrets-file"))
 		}
-		for _, name := range []string{"runtime", "handler", "execution-mode", "restart-policy", "startup-deadline-s", "max-retries", "vcpu", "safe", "traffic-percent", "no-traffic", "canary-preset", "canary-stages", "rollback-on-5xx", "disable-startup-cpu-boost", "require-authn", "no-require-authn", "app-protocol"} {
+		for _, name := range []string{"runtime", "handler", "execution-mode", "restart-policy", "startup-deadline-s", "max-retries", "vcpu", "safe", "traffic-percent", "no-traffic", "canary-preset", "canary-stages", "rollback-on-5xx", "disable-startup-cpu-boost", "require-authn", "no-require-authn", "platform-tenant-required", "no-platform-tenant-required", "app-protocol"} {
 			if explicit[name] {
 				return printErr("Invalid flags", fmt.Errorf("--plan cannot be combined with --%s", name))
 			}
@@ -2521,6 +2544,13 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	if *vcpu < 0 {
 		return printErr("Invalid --vcpu", fmt.Errorf("must be zero (plan default) or greater; got %d", *vcpu))
+	}
+	healthcheck, healthErr := resolveDeployHealthcheck(*healthcheckPath, *healthcheckGRPC, *healthcheckGRPCService, explicit)
+	if healthErr != nil {
+		return printErr("Invalid startup healthcheck", healthErr)
+	}
+	if healthcheck != nil && (*diff || *dryRun || *simplePlan || projectRequested || *githubSnippet || *createOnly) {
+		return printErr("Invalid flags", errors.New("startup healthcheck flags require a single-app deployment; they cannot be combined with preview, --github, --project, or --create-only"))
 	}
 	if explicit["app-protocol"] && !api.IsValidAppProtocol(*appProtocol) {
 		problem := api.NewProblem(http.StatusBadRequest, api.CodeAppProtocolInvalid,
@@ -2675,6 +2705,21 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		requireAuthnPtr = &v
 		publicAuthPtr = &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen}
 	}
+	var platformTenantRequiredPtr *bool
+	switch {
+	case explicit["platform-tenant-required"]:
+		v := *platformTenantRequired
+		platformTenantRequiredPtr = &v
+	case explicit["no-platform-tenant-required"]:
+		v := !*noPlatformTenantRequired
+		platformTenantRequiredPtr = &v
+	}
+	// This starter depends on gateway-verified customer context. Set the
+	// create/update intent before the app can receive its first request.
+	if *templateName == "customer-platform" && platformTenantRequiredPtr == nil {
+		v := true
+		platformTenantRequiredPtr = &v
+	}
 	// ADR-124: per-app wire-protocol selector (deploy path).
 	// Single-string flag (closed set); empty value = omit so
 	// the per-plan default applies server-side. The
@@ -2734,6 +2779,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// customer can run `gregale deploy --github --name my-app` without
 	// a --ref. The slug is the only required input.
 	if *githubSnippet {
+		if platformTenantRequiredPtr != nil {
+			return printErr("Invalid flags", fmt.Errorf("--platform-tenant-required and --no-platform-tenant-required cannot be combined with --github"))
+		}
 		if *dryRun {
 			return printErr("Invalid flags", fmt.Errorf("--dry-run cannot be combined with --github"))
 		}
@@ -2806,10 +2854,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			}, *diffJSON, !*diffLenient, *noTriggers)
 		}
 		refIntent := deployIdempotencyIntent{
-			Slug: slug, Repo: *repo, Ref: *ref, SourceBranch: *sourceBranch, Reason: *reason, Tag: *tag,
+			Slug: slug, Repo: *repo, Ref: *ref, SourceBranch: *sourceBranch, Reason: *reason, Tag: *tag, AppProtocol: *appProtocol,
 			DeployedBy: resolveDeployedBy(*deployedBy), PRNumber: *prNumber,
 			TrafficPercent: *trafficPercent, CanaryPreset: *canaryPreset,
-			CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr,
+			CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr, Healthcheck: healthcheck,
 		}
 		refKey, keyErr := deployIdempotencyKey(*idempotencyKey, refIntent)
 		if keyErr != nil {
@@ -2842,8 +2890,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			TrafficPercent:         optTrafficPercent(*trafficPercent),
 			Canary:                 canarySpec,
 			RollbackOn5xx:          rollbackOn5xxPtr,
-			DisableStartupCPUBoost: disableStartupCPUBoostPtr,
-		}, waitForDeploy, jsonWait, refKey, time.Duration(*waitTimeoutSeconds)*time.Second, *noTriggers, *safeDeploy, *noTraffic)
+			DisableStartupCPUBoost: disableStartupCPUBoostPtr, Healthcheck: healthcheck,
+		}, waitForDeploy, jsonWait, refKey, time.Duration(*waitTimeoutSeconds)*time.Second, *noTriggers, *safeDeploy, *noTraffic,
+			sourceRefAppPolicy{PlatformTenantRequired: platformTenantRequiredPtr, RequireAuthn: requireAuthnPtr, PublicAuth: publicAuthPtr, AppProtocol: appProtocolPtr})
 		return code
 	}
 
@@ -3048,6 +3097,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// creation so an unrelated working tree cannot affect create-only latency.
 	if *createOnly && *templateName == "" && *sourcePath == "" && !*worktree && (deployFunction || deployApp) {
 		createReq := buildCreateRequest(slug, resolvedShape, deployRuntime, requireAuthnPtr, appProtocolPtr, *profile)
+		createReq.PlatformTenantRequired = platformTenantRequiredPtr
 		applyDeployLifecycleToCreateRequest(&createReq, *executionMode, *restartPolicy, *startupDeadlineS, *maxRetries)
 		if *vcpu != 0 {
 			createReq.VCPU = *vcpu
@@ -3486,7 +3536,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		StartupDeadlineS: *startupDeadlineS, MaxRetries: *maxRetries, Reason: *reason, Tag: *tag,
 		DeployedBy: resolveDeployedBy(*deployedBy), PRNumber: *prNumber,
 		TrafficPercent: *trafficPercent, CanaryPreset: *canaryPreset,
-		CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr, NoTriggers: *noTriggers,
+		CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr, Healthcheck: healthcheck, NoTriggers: *noTriggers,
 		ProjectSlug: *projectSlug, DeployOnly: *deployOnly, DeployExclude: *deployExclude,
 	}
 	deployKey, keyErr := deployIdempotencyKey(*idempotencyKey, deployIntent)
@@ -3520,7 +3570,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return runProjectDeployPreviewWithMode(ctx, client, *tarball, *projectSlug,
 				*bindingRepo, *productionBranch, *deployOnly, *deployExclude, *installID,
 				*deployShowAffected, *diffJSON,
-				*diffStrict || !*diffLenient, *noTriggers, *environment)
+				*diffStrict || !*diffLenient, *noTriggers, *environment, platformTenantRequiredPtr)
 		}
 		opts := buildDiffOptionsWithLifecycle(slug, resolvedShape, deployRuntime, deployHandler, *image, sourceDir, requireAuthnPtr, appProtocolPtr, *profile, *vcpu, *executionMode, *restartPolicy, *startupDeadlineS, *maxRetries)
 		opts.BuildPlan = buildPreviewBuildPlan(sourceDir, resolvedShape, deployRuntime, deployHandler, sourceSHA256, *image != "", *dockerfile)
@@ -3583,7 +3633,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				strings.Join(clash, ", ")))
 		}
 		plan, err := client.ScanProjectWithBindingEnvironment(ctx, openTarball, filepath.Base(*tarball),
-			*projectSlug, *bindingRepo, prodBranch, *installID, onlyList, excludeList, *deployPersistExclude, *noTriggers, *environment)
+			*projectSlug, *bindingRepo, prodBranch, *installID, onlyList, excludeList, *deployPersistExclude, *noTriggers, *environment, platformTenantRequiredPtr)
 		if err != nil {
 			return printErr("Scan failed", err)
 		}
@@ -3640,7 +3690,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		defer func() { _ = openTarball2.Close() }()
 		applyCtx := api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(deployKey, "project-apply"))
 		apply, err := client.ApplyProjectPlanWithBindingEnvironmentApproval(applyCtx, plan.PlanToken, openTarball2, filepath.Base(*tarball),
-			*projectSlug, *bindingRepo, prodBranch, *installID, onlyList, excludeList, *deployPersistExclude, *noTriggers, *environment, approvalToken)
+			*projectSlug, *bindingRepo, prodBranch, *installID, onlyList, excludeList, *deployPersistExclude, *noTriggers, *environment, approvalToken, platformTenantRequiredPtr)
 		if err != nil {
 			return printErr("Apply failed", err)
 		}
@@ -3708,9 +3758,15 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if app, readErr := client.GetApp(ctx, slug); readErr == nil {
 			resolvedApp = app
 		}
+		if platformTenantRequiredPtr != nil {
+			if _, err := client.UpdateApp(ctx, slug, api.UpdateAppRequest{PlatformTenantRequired: platformTenantRequiredPtr}); err != nil {
+				return printErr("Could not update app tenant policy", err)
+			}
+		}
 	}
 	if !existingApp {
 		createReq := buildCreateRequest(slug, resolvedShape, deployRuntime, requireAuthnPtr, appProtocolPtr, *profile)
+		createReq.PlatformTenantRequired = platformTenantRequiredPtr
 		if resolvedSimplePlan != nil {
 			applySimpleAppPlanToCreateRequest(&createReq, *resolvedSimplePlan)
 		}
@@ -3820,9 +3876,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			TrafficPercent:         optTrafficPercent(*trafficPercent),
 			Canary:                 canarySpec,
 			RollbackOn5xx:          rollbackOn5xxPtr,
-			DisableStartupCPUBoost: disableStartupCPUBoostPtr,
-			NoTriggers:             *noTriggers,
-			Companions:             sidecarDefs,
+			DisableStartupCPUBoost: disableStartupCPUBoostPtr, Healthcheck: healthcheck,
+			NoTriggers: *noTriggers,
+			Companions: sidecarDefs,
 		}
 		var (
 			dep           api.DeploymentResponse
@@ -3849,7 +3905,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			uploadOptions := api.UploadDeployOptions{
 				Runtime: deployRuntime, Handler: deployHandler, Dockerfile: *dockerfile,
 				SourceRoot: sourceRoot, Scope: ann.Scope, SourceURL: ann.SourceURL, CommitSHA: ann.CommitSHA,
-				Environment: ann.Environment, RollbackOn5xx: ann.RollbackOn5xx, DisableStartupCPUBoost: ann.DisableStartupCPUBoost,
+				Environment: ann.Environment, RollbackOn5xx: ann.RollbackOn5xx, DisableStartupCPUBoost: ann.DisableStartupCPUBoost, Healthcheck: ann.Healthcheck,
 				Reason: ann.Reason, Tag: ann.Tag,
 				DeployedBy: ann.DeployedBy, PRNumber: ann.PRNumber, Workflows: workflowDefs, Companions: sidecarDefs,
 				NoTriggers: ann.NoTriggers,
@@ -3979,6 +4035,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		Environment:            *environment,
 		RollbackOn5xx:          rollbackOn5xxPtr,
 		DisableStartupCPUBoost: disableStartupCPUBoostPtr,
+		Overrides:              deployHealthcheckOverrides(healthcheck),
 		Workflows:              workflowDefs,
 		Companions:             sidecarDefs,
 		TrafficPercent:         optTrafficPercent(*trafficPercent),
@@ -4583,7 +4640,7 @@ func cmdDomains(args []string) int {
 func cmdCrons(args []string) int {
 	parent, _ := lookupCliCommand("crons")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale crons <list|add|info|update|rm|run|fire-now|runs|cancel> [args]", "crons")
+		PrintUsage(os.Stderr, "usage: gregale crons <list|add|info|update|rm|run|fire-now|runs|occurrences|cancel> [args]", "crons")
 		return 1
 	}
 	switch args[0] {
@@ -4640,6 +4697,8 @@ func cmdCrons(args []string) int {
 		maxOutputBytes := fs.Int("max-output-bytes", 0, "maximum captured output bytes (default: 1048576; command crons only)")
 		timezone := fs.String("timezone", "", "IANA timezone (defaults to UTC)")
 		skipIfRunning := fs.Bool("skip-if-running", false, "skip a scheduled fire while the previous cron run is active")
+		schedulePolicyJSON := fs.String("schedule-policy", "", "versioned schedule policy as JSON")
+		failureRulesJSON := fs.String("failure-rules", "", "versioned retry/failure rules as JSON")
 		retryMax := fs.Int("retry-max", 0, "additional command attempts after failure or timeout (0 disables retries; max 5)")
 		retryBackoff := fs.Int("retry-backoff-seconds", 60, "base retry delay in seconds; doubles per attempt (1..3600)")
 		if err := fs.Parse(args[1:]); err != nil {
@@ -4690,6 +4749,20 @@ func cmdCrons(args []string) int {
 			AppID: *slug, Schedule: *schedule, Enabled: boolPtr(true),
 			Timezone: *timezone, SkipIfRunning: boolPtr(*skipIfRunning),
 		}
+		if *schedulePolicyJSON != "" {
+			policy, err := parseSchedulePolicyJSON(*schedulePolicyJSON)
+			if err != nil {
+				return printErr("Invalid schedule policy", err)
+			}
+			req.SchedulePolicy = policy
+		}
+		if *failureRulesJSON != "" {
+			rules, err := parseFailureRulesJSON(*failureRulesJSON)
+			if err != nil {
+				return printErr("Invalid failure rules", err)
+			}
+			req.FailureRules = rules
+		}
 		if *command == "" {
 			req.Path = *path
 			if req.Path == "" {
@@ -4722,6 +4795,8 @@ func cmdCrons(args []string) int {
 		return cmdCronsInfo(args[1:])
 	case subRuns:
 		return cmdCronsRuns(args[1:])
+	case "occurrences":
+		return cmdCronsOccurrences(args[1:])
 	case "cancel":
 		return cmdCronsCancel(args[1:])
 	case subRm:
@@ -4835,6 +4910,8 @@ func cmdCronsUpdate(args []string) int {
 	allowOverlap := fs.Bool("allow-overlap", false, "allow scheduled fires to overlap")
 	retryMax := fs.Int("retry-max", 0, "additional command attempts after failure or timeout (0 disables retries; max 5)")
 	retryBackoff := fs.Int("retry-backoff-seconds", 60, "base retry delay in seconds; doubles per attempt (1..3600)")
+	schedulePolicyJSON := fs.String("schedule-policy", "", "replace versioned schedule policy JSON")
+	failureRulesJSON := fs.String("failure-rules", "", "replace versioned retry/failure rules JSON")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 1
 	}
@@ -4855,7 +4932,7 @@ func cmdCronsUpdate(args []string) int {
 	// catch at the CLI before a pointless network round-trip.
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
-	if !explicit["schedule"] && !explicit["path"] && !explicit["timezone"] && !explicit["enable"] && !explicit["disable"] && !explicit["skip-if-running"] && !explicit["allow-overlap"] && !explicit["retry-max"] && !explicit["retry-backoff-seconds"] {
+	if !explicit["schedule"] && !explicit["path"] && !explicit["timezone"] && !explicit["enable"] && !explicit["disable"] && !explicit["skip-if-running"] && !explicit["allow-overlap"] && !explicit["retry-max"] && !explicit["retry-backoff-seconds"] && !explicit["schedule-policy"] && !explicit["failure-rules"] {
 		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--retry-max N] [--retry-backoff-seconds N] [--enable|--disable]", "crons")
 		return 1
 	}
@@ -4915,6 +4992,20 @@ func cmdCronsUpdate(args []string) int {
 		v := *retryBackoff
 		req.RetryBackoffSeconds = &v
 	}
+	if explicit["schedule-policy"] {
+		policy, err := parseSchedulePolicyJSON(*schedulePolicyJSON)
+		if err != nil {
+			return printErr("Invalid schedule policy", err)
+		}
+		req.SchedulePolicy = policy
+	}
+	if explicit["failure-rules"] {
+		rules, err := parseFailureRulesJSON(*failureRulesJSON)
+		if err != nil {
+			return printErr("Invalid failure rules", err)
+		}
+		req.FailureRules = rules
+	}
 	updated, err := client.UpdateCron(context.Background(), id, req)
 	if err != nil {
 		return printErr("Update failed", err)
@@ -4957,18 +5048,42 @@ func cmdKeys(args []string) int {
 		return 0
 	case subAdd:
 		if hasHelpFlag(args[1:]) {
-			PrintUsage(osStdout, "usage: gregale keys add <label>", "keys")
+			PrintUsage(osStdout, "usage: gregale keys add <label> [--scopes scope,...]", "keys")
 			return 0
 		}
-		if len(args) < 2 {
-			PrintUsage(os.Stderr, "usage: gregale keys add <label>", "keys")
+		flags, positional := splitArgsForFlags(args[1:])
+		fs := newFlagSet("keys add", flag.ContinueOnError)
+		scopesCSV := fs.String("scopes", "", "comma-separated API key scopes (default: admin)")
+		if err := fs.Parse(flags); err != nil {
 			return 1
+		}
+		if rejectUnexpectedFlagArgs(fs) || len(positional) != 1 {
+			PrintUsage(os.Stderr, "usage: gregale keys add <label> [--scopes scope,...]", "keys")
+			return 1
+		}
+		var scopes []string
+		if flagWasSet(fs, "scopes") {
+			if strings.TrimSpace(*scopesCSV) == "" {
+				return printErr("Invalid scopes", errors.New("--scopes must contain at least one scope"))
+			}
+			for _, scope := range strings.Split(*scopesCSV, ",") {
+				scope = strings.TrimSpace(scope)
+				if scope == "" {
+					return printErr("Invalid scopes", errors.New("--scopes cannot contain an empty scope"))
+				}
+				scopes = append(scopes, scope)
+			}
+			var err error
+			scopes, err = api.NormalizeCreateKeyScopes(scopes)
+			if err != nil {
+				return printErr("Invalid scopes", err)
+			}
 		}
 		client, err := authedClient()
 		if err != nil {
 			return printErr("Not logged in", err)
 		}
-		k, err := client.CreateKey(context.Background(), args[1], nil)
+		k, err := client.CreateKey(context.Background(), positional[0], scopes)
 		if err != nil {
 			return printErr("Create failed", err)
 		}

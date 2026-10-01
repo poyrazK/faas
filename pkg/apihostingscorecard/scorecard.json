@@ -123,6 +123,38 @@
       ]
     },
     {
+      "id": "issue-triage",
+      "name": "Grouped failure triage and recovery",
+      "category": "observability",
+      "description": "Accepted failures preserve grouping and release history, enforce scoped ownership and resolution, and recover committed notifications without counting exact retries twice.",
+      "capabilities": ["issues"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "cmd/apid/handlers_issues_integration_test.go::TestIssueEndToEndPostgres"},
+        {"kind": "test", "locator": "cmd/apid/handlers_issues_integration_test.go::TestIssueVerifiedCustomerImpactAndWebhookRecovery"},
+        {"kind": "make", "locator": "test-issues"}
+      ]
+    },
+    {
+      "id": "mcp-hosting-readiness",
+      "name": "Stateless MCP hosting qualification",
+      "category": "compatibility",
+      "description": "The stateless MCP starter passes discovery, explicit calls, streaming, Origin policy and failure recovery through the existing application lifecycle. Native receipts record park and restored qualification; untouched lockfile deployment and external-provider interoperability remain release qualification requirements.",
+      "capabilities": ["mcp-hosting"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "cmd/gregale/commands_mcp_test.go::TestMCPCLIJourney"},
+        {"kind": "test", "locator": "cmd/gregale/commands_mcp_test.go::TestMCPDeploymentVerificationFailureEnablesMaintenance"},
+        {"kind": "test", "locator": "cmd/apid/handlers_templates_test.go::TestListTemplates_ReturnsAllNames"},
+        {"kind": "test", "locator": "cmd/apid/secretscan_mcp_test.go::TestScanExtractedMCPStarterPreservesSecretDefense"},
+        {"kind": "test", "locator": "pkg/mcphosting/client_test.go::TestStatelessDiscoveryAndStreaming"},
+        {"kind": "test", "locator": "pkg/mcphosting/oauth_test.go::TestOAuthDiscoveryDoesNotForwardTokens"},
+        {"kind": "workflow", "locator": ".github/workflows/mcp-contract.yml"},
+        {"kind": "runbook", "locator": "docs/ops/evidence/20261001-mcp-preview/README.md"},
+        {"kind": "runbook", "locator": "docs/mcp.md"}
+      ]
+    },
+    {
       "id": "preview-readiness",
       "name": "Pull-request preview readiness",
       "category": "delivery",

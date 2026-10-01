@@ -1,0 +1,44 @@
+name: Dev Bridge native acceptance
+on:
+  workflow_dispatch:
+    inputs:
+      idle_for:
+        description: Public edge idle interval (shorter than the one-hour lease)
+        type: string
+        default: 2m
+permissions:
+  contents: read
+concurrency:
+  group: dev-bridge-native-acceptance
+  cancel-in-progress: false
+jobs:
+  native:
+    runs-on: [self-hosted, linux, x64, gregale-bridge-acceptance]
+    environment: dev-bridge-acceptance
+    timeout-minutes: 65
+    env:
+      FAAS_API: ${{ vars.GREGALE_ACCEPTANCE_API_URL }}
+      FAAS_TOKEN: ${{ secrets.GREGALE_ACCEPTANCE_TOKEN }}
+      FAAS_BRIDGE_PROJECT: ${{ vars.GREGALE_BRIDGE_PROJECT }}
+      FAAS_BRIDGE_ENVIRONMENT: development
+      FAAS_BRIDGE_PAYMENTS: ${{ vars.GREGALE_BRIDGE_PAYMENTS }}
+      FAAS_BRIDGE_FRONTEND: ${{ vars.GREGALE_BRIDGE_FRONTEND }}
+      FAAS_BRIDGE_INVENTORY: ${{ vars.GREGALE_BRIDGE_INVENTORY }}
+      FAAS_BRIDGE_IDLE_FOR: ${{ inputs.idle_for }}
+      FAAS_BRIDGE_EVIDENCE: dev-bridge-native-evidence.json
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.25.13"
+          cache: true
+      - name: Exercise dedicated deployment
+        run: make native-dev-bridge-acceptance
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev-bridge-native-${{ github.sha }}
+          path: dev-bridge-native-evidence.json
+          if-no-files-found: warn
+          retention-days: 14

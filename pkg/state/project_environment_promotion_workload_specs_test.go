@@ -64,6 +64,7 @@ func testPromotionWorkloadSettings(t *testing.T, store promotionWorkloadTestStor
 	}
 	settings.RAMMB, settings.CPUMillicores, settings.StartCommand = 512, 1000, "serve tested"
 	settings.AppProtocol, settings.OnlyAllowDeclaredRoutes = "http2", true
+	settings.PlatformTenantRequired = true
 	settings.DeclaredRoutes = []state.DeclaredRoute{{Path: "/ready", Methods: []string{"GET"}}}
 	settings.Manifest.Env = map[string]string{"MODE": "tested"}
 	settings.PublicAuthMode, settings.PublicAuthBasicSealed = "basic", []byte("sealed-stage-credential")
@@ -121,11 +122,11 @@ func testPromotionWorkloadSettings(t *testing.T, store promotionWorkloadTestStor
 		t.Fatalf("preparation advanced production desired head: %v", err)
 	}
 	unchanged, err := store.AppByID(ctx, app.ID)
-	if err != nil || unchanged.RAMMB != 256 {
+	if err != nil || unchanged.RAMMB != 256 || unchanged.PlatformTenantRequired {
 		t.Fatalf("preparation changed production: RAM=%d, %v", unchanged.RAMMB, err)
 	}
 	pinned, err := state.AppForDeployment(ctx, store, prepared)
-	if err != nil || pinned.RAMMB != 512 || pinned.StartCommand != "serve tested" || pinned.StaticEgressIP == nil || *pinned.StaticEgressIP != productionIP {
+	if err != nil || pinned.RAMMB != 512 || pinned.StartCommand != "serve tested" || !pinned.PlatformTenantRequired || pinned.StaticEgressIP == nil || *pinned.StaticEgressIP != productionIP {
 		t.Fatalf("prepared configuration = %+v, %v", pinned, err)
 	}
 	if err := store.MarkDeploymentLiveDark(ctx, prepared.ID); err != nil {
@@ -142,7 +143,7 @@ func testPromotionWorkloadSettings(t *testing.T, store promotionWorkloadTestStor
 	}
 	production, err := store.AppByID(ctx, app.ID)
 	if err != nil || production.RAMMB != 512 || production.CPUMillicores != 1000 || production.StartCommand != "serve tested" ||
-		production.AppProtocol != "http2" || production.Manifest.Env["MODE"] != "tested" || production.PublicAuthMode != "basic" ||
+		production.AppProtocol != "http2" || !production.PlatformTenantRequired || production.Manifest.Env["MODE"] != "tested" || production.PublicAuthMode != "basic" ||
 		!reflect.DeepEqual(production.PublicAuthBasicSealed, settings.PublicAuthBasicSealed) || !reflect.DeepEqual(production.EgressPorts, []int{443}) {
 		t.Fatalf("production projection = %+v, %v", production, err)
 	}
@@ -151,7 +152,7 @@ func testPromotionWorkloadSettings(t *testing.T, store promotionWorkloadTestStor
 		t.Fatal(err)
 	}
 	priorRuntime, err := state.AppForDeployment(ctx, store, priorDeployment)
-	if err != nil || priorRuntime.RAMMB != 256 || priorRuntime.StartCommand == "serve tested" {
+	if err != nil || priorRuntime.RAMMB != 256 || priorRuntime.StartCommand == "serve tested" || priorRuntime.PlatformTenantRequired {
 		t.Fatalf("retained previous release adopted promoted settings: %+v, %v", priorRuntime, err)
 	}
 	stage, err := store.ProjectEnvironmentWorkloadSpec(ctx, account.ID, project.ID, "staging", app.ID)
@@ -184,7 +185,7 @@ func testPromotionWorkloadSettings(t *testing.T, store promotionWorkloadTestStor
 		t.Fatalf("rollback retry = %+v, %v", retry, err)
 	}
 	production, err = store.AppByID(ctx, app.ID)
-	if err != nil || production.RAMMB != 256 || production.StartCommand == "serve tested" || production.PublicAuthMode != app.PublicAuthMode {
+	if err != nil || production.RAMMB != 256 || production.StartCommand == "serve tested" || production.PublicAuthMode != app.PublicAuthMode || production.PlatformTenantRequired {
 		t.Fatalf("rollback did not restore production config: %+v, %v", production, err)
 	}
 	if _, err := store.ProjectEnvironmentWorkloadSpec(ctx, account.ID, project.ID, "production", app.ID); !errors.Is(err, state.ErrNotFound) {

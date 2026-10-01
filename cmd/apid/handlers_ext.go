@@ -42,6 +42,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/webhook"
 	"github.com/onebox-faas/faas/pkg/webhookdedupe"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // dialFailureDetailMaxBytes bounds the error text folded into a dial-failure
@@ -496,6 +497,9 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 		if *req.ConsumerAuthMode == api.ConsumerAuthModeRequired && acct.Plan.ConsumerKeysPerApp() == 0 {
 			return api.ErrConsumerKeysNotAllowed(acct.Plan)
 		}
+	}
+	if req.PlatformTenantRequired != nil && *req.PlatformTenantRequired && acct.Plan.ConsumerKeysPerApp() == 0 {
+		return api.ErrPlanPlatformTenantRequiredNotAllowed(acct.Plan)
 	}
 	// ADR-124: per-app wire-protocol selector. Same plan-gate
 	// shape as the streaming / require_authn gates above — Free +
@@ -1379,10 +1383,12 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		// customers may PATCH true → false to opt out on a
 		// Pro-upgraded app; Hobby customers may opt back out
 		// the same way.
-		RequireAuthn:        req.RequireAuthn,
-		SetRequireAuthn:     req.RequireAuthn != nil,
-		ConsumerAuthMode:    req.ConsumerAuthMode,
-		SetConsumerAuthMode: req.ConsumerAuthMode != nil,
+		RequireAuthn:              req.RequireAuthn,
+		SetRequireAuthn:           req.RequireAuthn != nil,
+		ConsumerAuthMode:          req.ConsumerAuthMode,
+		SetConsumerAuthMode:       req.ConsumerAuthMode != nil,
+		PlatformTenantRequired:    req.PlatformTenantRequired,
+		SetPlatformTenantRequired: req.PlatformTenantRequired != nil,
 		// Issue #477 / ADR-079: per-app public_auth
 		// (open|bearer|basic). Set bit distinguishes "unset"
 		// (don't touch) from explicit mode flip. The sealed
@@ -1499,7 +1505,11 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		updated, err = s.store.UpdateApp(r.Context(), app.ID, params)
 	}
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not update app"))
+		if problem := state.ServiceCapacityProblem(err); problem != nil {
+			api.WriteProblem(w, problem)
+		} else {
+			api.WriteProblem(w, api.ErrCapacity("could not update app"))
+		}
 		return
 	}
 	if req.BeforeCheckpoint != nil {
@@ -1636,6 +1646,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if req.ConsumerAuthMode != nil {
 		oldApp["consumer_auth_mode"] = string(app.ConsumerAuthMode)
 		newApp["consumer_auth_mode"] = string(updated.ConsumerAuthMode)
+	}
+	if req.PlatformTenantRequired != nil {
+		oldApp["platform_tenant_required"] = app.PlatformTenantRequired
+		newApp["platform_tenant_required"] = updated.PlatformTenantRequired
 	}
 	// Issue #477 / ADR-079: record the public_auth mode
 	// flip. Only the mode (not the credentials) is mirrored
@@ -3633,6 +3647,10 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
+	if problem := validateWorkPolicies(req.SchedulePolicy, req.FailureRules); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if !validCron(req.Schedule) {
 		api.WriteProblem(w, api.ErrCronInvalid("expected 5-field cron expression (m h dom mon dow)"))
 		return
@@ -3719,6 +3737,7 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 		skipIfRunning = *req.SkipIfRunning
 	}
 	c, err := s.store.CreateCronIfUnderQuotaWithOptions(r.Context(), app.ID, req.Schedule, path, enabled, limits, state.CronOptions{
+		SchedulePolicy: req.SchedulePolicy, FailureRules: req.FailureRules,
 		Timezone: timezone, SkipIfRunning: skipIfRunning, Command: cronCommand,
 		CommandShell: commandShell, CommandTimeoutSeconds: commandTimeoutSeconds,
 		CommandMaxOutputBytes: commandMaxOutputBytes, RetryMax: req.RetryMax,
@@ -3789,6 +3808,10 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
+	if problem := validateWorkPolicies(req.SchedulePolicy, req.FailureRules); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if req.Schedule != nil && !validCron(*req.Schedule) {
 		api.WriteProblem(w, api.ErrCronInvalid("expected 5-field cron expression"))
 		return
@@ -3833,7 +3856,17 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 			api.WriteProblem(w, api.ErrValidation("retry_max must be 0..5 and retry_backoff_seconds must be 1..3600"))
 			return
 		}
-		retryOptions = append(retryOptions, state.CronOptions{RetryMax: retryMax, RetryBackoffSeconds: backoffSeconds})
+	}
+	if req.RetryMax != nil || req.RetryBackoffSeconds != nil || req.SchedulePolicy != nil || req.FailureRules != nil {
+		opts := state.CronOptions{RetryMax: c.RetryMax, RetryBackoffSeconds: c.RetryBackoffSeconds,
+			SchedulePolicy: req.SchedulePolicy, FailureRules: req.FailureRules}
+		if req.RetryMax != nil {
+			opts.RetryMax = *req.RetryMax
+		}
+		if req.RetryBackoffSeconds != nil {
+			opts.RetryBackoffSeconds = *req.RetryBackoffSeconds
+		}
+		retryOptions = append(retryOptions, opts)
 	}
 	var timezonePatch *string
 	if req.Timezone != nil {
@@ -5000,6 +5033,7 @@ func normalizeStripeWebhook(ev stripeWebhookEnvelope, raw []byte) billing.Event 
 			}
 		}
 		normalized.Invoice = &billing.InvoiceData{
+			Details:           stripe.InvoiceDetailsFromWebhook(raw),
 			ProviderInvoiceID: obj.ID,
 			ProviderChargeID:  stripeExpandableID(obj.Charge),
 			Number:            obj.Number,
@@ -5007,7 +5041,7 @@ func normalizeStripeWebhook(ev stripeWebhookEnvelope, raw []byte) billing.Event 
 			PeriodStart:       stripeUnixTime(obj.PeriodStart),
 			PeriodEnd:         stripeUnixTime(obj.PeriodEnd),
 			SubtotalCents:     obj.Subtotal,
-			TaxCents:          obj.Tax,
+			TaxCents:          stripe.InvoiceTaxCentsFromWebhook(raw, obj.Tax),
 			TotalCents:        obj.Total,
 			AmountPaidCents:   amountPaid,
 			Currency:          strings.ToLower(obj.Currency),
@@ -5196,6 +5230,7 @@ func (s *server) persistBillingInvoice(ctx context.Context, provider string, acc
 		plan = acct.Plan
 	}
 	return s.store.UpsertInvoice(ctx, state.Invoice{
+		Details:           data.Details,
 		AccountID:         acct.ID,
 		Provider:          provider,
 		ProviderInvoiceID: data.ProviderInvoiceID,
@@ -5957,6 +5992,8 @@ func cronResponse(c state.Cron) api.CronResponse {
 		c.Timezone = defaultCronTimezone
 	}
 	resp := api.CronResponse{
+		SchedulePolicy:  workpolicy.Clone(c.SchedulePolicy),
+		FailureRules:    workpolicy.Clone(c.FailureRules),
 		ID:              c.ID,
 		AppID:           c.AppID,
 		Kind:            "http",

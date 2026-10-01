@@ -29,6 +29,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+var ErrInvoiceHistoricalPlanUnknown = errors.New("billing: invoice historical plan is unknown")
+
 // ComputeInvoiceOverageCents converts the account's usage_minutes for
 // the invoice's billing period [PeriodStart, PeriodEnd) into integer
 // cents of overage, floored. The plan allowance is applied once to the
@@ -42,6 +44,9 @@ func ComputeInvoiceOverageCents(ctx context.Context, store state.Store, inv stat
 		return 0, fmt.Errorf("billing: invoice %s has PeriodEnd %v before PeriodStart %v", inv.ID, inv.PeriodEnd, inv.PeriodStart)
 	}
 	plan := inv.Plan
+	if plan == state.InvoicePlanUnknown {
+		return 0, ErrInvoiceHistoricalPlanUnknown
+	}
 	if !plan.Valid() {
 		// Compatibility for invoice rows created before plan snapshots shipped.
 		acct, err := store.AccountByID(ctx, inv.AccountID)

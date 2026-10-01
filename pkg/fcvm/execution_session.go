@@ -53,6 +53,12 @@ func (s *ExecutionSession) Execute(ctx context.Context, req executionproto.Reque
 // stdout/stderr frames. Keeping this on the concrete vmmd-side session lets
 // older scheduler transports continue using Execute unchanged.
 func (s *ExecutionSession) ExecuteWithOutput(ctx context.Context, req executionproto.Request, receive executionproto.OutputReceiver) (executionproto.Result, error) {
+	return s.ExecuteWithOutputAndBroker(ctx, req, receive, nil)
+}
+
+// ExecuteWithOutputAndBroker carries bounded outbound calls over the same
+// one-shot vsock session while the output reader remains active.
+func (s *ExecutionSession) ExecuteWithOutputAndBroker(ctx context.Context, req executionproto.Request, receive executionproto.OutputReceiver, broker executionproto.OutboundCallFunc) (executionproto.Result, error) {
 	var zero executionproto.Result
 	if s == nil || s.client == nil {
 		return zero, fmt.Errorf("fcvm: nil execution session")
@@ -63,7 +69,7 @@ func (s *ExecutionSession) ExecuteWithOutput(ctx context.Context, req executionp
 	if destroyed {
 		return zero, fmt.Errorf("fcvm: execution session destroyed")
 	}
-	return s.client.ExecuteWithOutput(ctx, req, receive)
+	return s.client.ExecuteWithOutputAndBroker(ctx, req, receive, broker)
 }
 
 // Destroy is idempotent and closes the vsock stream immediately. VM process

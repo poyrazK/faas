@@ -333,6 +333,7 @@ func runProjectDeployPreviewWithMode(
 	tarball, projectSlug, bindingRepo, productionBranch, only, exclude string,
 	installID int64,
 	showAffected, emitJSON, strict, noTriggers bool, environment string,
+	platformTenantRequired ...*bool,
 ) int {
 	if tarball == "" {
 		return printErr("One-key provision requires --tarball, --template, or a TTY cwd",
@@ -354,7 +355,7 @@ func runProjectDeployPreviewWithMode(
 	defer func() { _ = src.Close() }()
 
 	plan, err := client.ScanProjectWithBindingEnvironment(ctx, src, filepath.Base(tarball), projectSlug,
-		bindingRepo, productionBranch, installID, onlyList, excludeList, false, noTriggers, environment)
+		bindingRepo, productionBranch, installID, onlyList, excludeList, false, noTriggers, environment, platformTenantRequired...)
 	if err != nil {
 		return printErr("Scan failed", err)
 	}
@@ -664,13 +665,17 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 			if wl.PreviewServiceCallsPolicy.Effective() == api.PreviewServiceCallsDeny {
 				previewPolicySuffix = "  preview_calls=deny"
 			}
+			tenantPolicySuffix := ""
+			if wl.PlatformTenantRequired != nil {
+				tenantPolicySuffix = fmt.Sprintf("  platform_tenant_required=%t", *wl.PlatformTenantRequired)
+			}
 			// plan.Workloads is the post-filter set: the scan
 			// service drops --only/--exclude slugs before populating
 			// it (scan_service.go:564-577). So no excluded row ever
 			// appears in this loop, and no "(excluded)" tag is
 			// needed here. The show-affected branch (printAffectedText)
 			// renders the partition including Skipped.
-			fmt.Fprintf(w, "  - %-20s root=%-20s%s%s%s%s%s\n", wl.Name, wl.RootDir, schedSuffix, classSuffix, servicePolicySuffix, serviceTransportSuffix, previewPolicySuffix)
+			fmt.Fprintf(w, "  - %-20s root=%-20s%s%s%s%s%s%s\n", wl.Name, wl.RootDir, schedSuffix, classSuffix, servicePolicySuffix, serviceTransportSuffix, previewPolicySuffix, tenantPolicySuffix)
 			if explain {
 				printWorkloadDetectionTrace(w, wl)
 			}

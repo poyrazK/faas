@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — Gregale</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; --muted: #666; }
+    @media (prefers-color-scheme: dark) { :root { --muted: #aaa; } }
+    body { font: 16px/1.5 system-ui, sans-serif; max-width: 1100px; margin: auto; padding: 0 1.5rem; }
+    header { padding: 1rem 0; border-bottom: 1px solid #8886; } nav { display: flex; gap: 1rem; flex-wrap: wrap; }
+    table { border-collapse: collapse; width: 100%; } th, td { text-align: left; padding: .65rem; border-bottom: 1px solid #8884; vertical-align: top; }
+    .scroll { overflow-x: auto; } .muted { color: var(--muted); } .card { border: 1px solid #8886; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
+    code { overflow-wrap: anywhere; } button { font: inherit; cursor: pointer; } .connected { color: #15803d; } .flash { padding: .75rem; background: #15803d22; }
+  </style>
+</head>
+<body>
+<header><nav><strong>Gregale</strong><a href="/dashboard/">Overview</a><a href="/dashboard/developers">Developer environments</a><a href="/dashboard/projects">Projects</a><a href="/dashboard/dev-bridges">Dev Bridge</a></nav></header>
+<main>
+{{template "email-verification-banner" .}}
+<h1>Dev Bridge</h1>
+{{with .Data}}
+{{if .Flash}}<p class="flash" role="status">{{.Flash}}</p>{{end}}
+{{if not .Enabled}}
+  <p>Dev Bridge is not enabled for this deployment.</p>
+{{else}}
+  <p>Run one service locally while its frontend and dependencies stay in your development environment.</p>
+  <div class="card"><code>gregale dev bridge payments --environment development --entrypoint frontend --inspect -- go run .</code></div>
+  {{if .Sessions}}
+  <div class="scroll"><table><thead><tr><th>Developer</th><th>Service</th><th>Environment</th><th>Connection</th><th>Expires</th><th>Session</th></tr></thead><tbody>
+  {{range .Sessions}}<tr>
+    <td><code>{{.Session.Scope.DeveloperID}}</code></td>
+    <td><a href="/dashboard/apps/{{.App}}">{{.App}}</a></td>
+    <td><a href="/dashboard/projects/{{.Project}}">{{.Project}}</a> / {{.Environment}}</td>
+    <td class="{{if eq .Activity.ConnectionState "connected"}}connected{{end}}">{{.Activity.ConnectionState}}</td>
+    <td><time datetime="{{.Session.ExpiresAt.Format "2006-01-02T15:04:05Z07:00"}}">{{.Session.ExpiresAt.Format "15:04 MST"}}</time></td>
+    <td><a href="/dashboard/dev-bridges/{{.Session.ID}}">Inspect</a></td>
+  </tr>{{end}}</tbody></table></div>
+  {{else}}<p class="muted">No active bridge sessions. Start one from your terminal or IDE.</p>{{end}}
+  {{with .Selected}}
+  <section class="card"><h2>{{.App}} · {{.Environment}}</h2>
+    <p>Developer: <code>{{.Session.Scope.DeveloperID}}</code> · Connection: <strong>{{.Activity.ConnectionState}}</strong></p>
+    <p>Expires: {{.Session.ExpiresAt.Format "2006-01-02 15:04 MST"}}</p>
+    <p class="muted">Request metadata is a recent, temporary window. Query strings, headers and bodies are excluded. Refresh to update activity.</p>
+    {{if .Activity.Requests}}<div class="scroll"><table><thead><tr><th>Started</th><th>Method / path</th><th>Status</th><th>Duration</th><th>Response</th></tr></thead><tbody>
+    {{range .Activity.Requests}}<tr><td>{{.StartedAt.Format "15:04:05"}}</td><td><code>{{.Method}} {{.Path}}</code></td><td>{{if .Complete}}{{.Status}}{{else}}pending{{end}}</td><td>{{if .Complete}}{{.DurationMS}} ms{{else}}streaming{{end}}</td><td>{{.ResponseBytes}} bytes{{if .Error}} · {{.Error}}{{end}}</td></tr>{{end}}
+    </tbody></table></div>{{else}}<p class="muted">No recent request activity observed.</p>{{end}}
+    {{if not .Session.RevokedAt}}<form method="POST" action="/dashboard/dev-bridges/{{.Session.ID}}/revoke"><input type="hidden" name="csrf_token" value="{{$.Data.CSRFToken}}"><button type="submit">Revoke session</button></form>{{end}}
+  </section>
+  {{end}}
+  <p class="muted">Connections marked unknown have not been observed since the API restarted or its activity window was cleared.</p>
+{{end}}
+{{end}}
+</main>
+</body>
+</html>

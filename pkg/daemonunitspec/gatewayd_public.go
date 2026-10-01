@@ -51,12 +51,18 @@ func UnitGatewaydPublic() daemonunit.Unit {
 
 		Slice:           "faas-cp.slice",
 		MemoryMax:       "512M",
-		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/secrets/object-storage/provider.env -/etc/faas/otel.env -/etc/faas/tcpd.env",
+		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/secrets/object-storage/provider.env -/etc/faas/otel.env -/etc/faas/tcpd.env -/etc/faas/udpd.env",
 
 		AmbientCapabilities: []string{""}, // explicit empty body: "no caps elevated"
 
 		Environment: []daemonunit.KV{
 			{Key: "FAAS_OBJECT_STORAGE_CONFIG", Value: "/etc/faas/object-storage.json"},
+			// The socket unit owns the public bind (127.0.0.1:8080 behind
+			// Caddy). Declare it explicitly: the node-name drop-in puts the
+			// daemon in multi-host posture, where ADR-126's bind check
+			// refuses an implicit loopback default and the service never
+			// starts on a fresh split-box control plane.
+			{Key: "FAAS_PUBLIC_LISTEN_ADDR", Value: "127.0.0.1:8080"},
 			{Key: "FAAS_PUBLIC_CONTROL_ADDR", Value: "127.0.0.1:9092"},
 			{Key: "FAAS_TRUSTED_INGRESS_CIDRS", Value: "127.0.0.0/8,::1/128"},
 			{Key: "FAAS_INTERNAL_TARGET", Value: ""},

@@ -1,7 +1,8 @@
 # `github_actions_runner`
 
 Installs one pinned, repository-scoped GitHub Actions runner for the
-provider-neutral `cd-compute` workflow. The runner is labeled `faas-fleet`,
+provider-neutral `cd-compute` workflow. The runner is labeled `faas-fleet`
+(or `faas-fleet-us` for the `production-us` fleet: set `faas_runner_labels`),
 uses a dedicated non-root account, and is managed by a hardened systemd unit.
 
 The role is intentionally conservative:

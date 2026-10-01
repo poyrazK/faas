@@ -52,6 +52,46 @@ cd /path/to/your/project
 npm install /tmp/gregale-sdk-node-0.1.0.tgz
 ```
 
+## Container listeners
+
+UDP ingress requires an operator-enabled public edge and source-CIDR/firewall
+rollout. The app must declare the guest UDP port. Reserving a listener creates a
+disabled endpoint; enable it explicitly after deployment and rollout checks:
+
+```ts
+import { FaaSClient, AppsService } from '@gregale/sdk-node';
+
+new FaaSClient('https://api.example.com', { token: process.env.FAAS_TOKEN! });
+const udp = await AppsService.createAppUdpListener({
+  slug: 'app', requestBody: { name: 'dns', guest_port: 5353 },
+});
+await AppsService.updateAppUdpListener({
+  slug: 'app', name: udp.name, requestBody: { enabled: true },
+});
+```
+
+An existing TCP listener can terminate TLS using a verified app-owned hostname.
+The operator provisions its certificate bundle on the serving edge. Updating TLS
+policy disables the listener; send a separate enable mutation after provisioning:
+
+```ts
+await AppsService.updateAppTcpListener({
+  slug: 'app', name: 'echo',
+  requestBody: { tls: { mode: 'terminate', hostname: 'echo.example.com' } },
+});
+await AppsService.updateAppTcpListener({
+  slug: 'app', name: 'echo', requestBody: { enabled: true },
+});
+const status = await AppsService.appTcpListenerTlsStatus({ slug: 'app', name: 'echo' });
+console.log(status.observations);
+```
+
+Supply exactly one of `enabled` or `tls` in each TCP update. Status covers observed
+edges only: empty observations or `unknown` do not establish readiness. Certificate
+readiness does not prove fleet coverage, client trust or guest availability.
+Native listener qualification remains pending; see the
+[qualification procedure](../../docs/container-qualification.md).
+
 ## Quick start
 
 ```ts
@@ -258,6 +298,38 @@ removes it before returning the response to the client. See
 [pre-auth security guidance](../../docs/security.md) for tenant-scoped
 identifiers and key rotation. Call `failedLoginResponse` with the normalized
 lookup value after either an unknown account or an incorrect credential.
+
+## Dev Bridge request context
+
+Opt a remote HTTP service into preserving a developer's routing context across
+managed service calls. In an Express service, install `devBridgeMiddleware` before
+handlers and use `createDevBridgeFetch` for outbound HTTP:
+
+```ts
+import { devBridgeMiddleware, createDevBridgeFetch } from '@gregale/sdk-node';
+
+app.use(devBridgeMiddleware);
+const serviceFetch = createDevBridgeFetch();
+const paymentsURL = process.env.GREGALE_SERVICE_PAYMENTS_URL;
+if (!paymentsURL) throw new Error('Declare the payments service binding');
+app.get('/charge', async (_request, response) => {
+  const result = await serviceFetch(paymentsURL + '/charge');
+  response.status(result.status).send(await result.text());
+});
+```
+
+For a framework using Fetch headers, wrap its handler with
+`withDevBridgeRequestContext(request.headers, handler)`. AsyncLocalStorage keeps
+concurrent developer and ordinary requests separate. The wrapper removes explicit
+bridge credentials on every destination and propagates request context only to
+single-label `NAME.svc.gregale` or `NAME.internal` discovery names. Gregale still
+authorizes the lease at each hop. Application `Authorization` is preserved.
+
+Scoped managed requests use manual redirects: inspect `Location` and call the
+wrapper again if the application chooses to follow it. Do not hand the scoped
+request to an unwrapped fetch that automatically follows redirects. The helpers
+are Node-only; the browser subpath does not expose laptop/session authority.
+See [the Dev Bridge guide](../../docs/dev-bridge.md) for local execution.
 
 ## Project release context
 

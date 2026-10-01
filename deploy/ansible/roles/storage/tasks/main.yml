@@ -242,13 +242,16 @@
 
 - name: storage — select automatically discovered disks
   ansible.builtin.set_fact:
+    # Split on the discovery separator instead of an escaped regex: the
+    # backslash in '\\|' survives templating on ansible-core 2.16 but not on
+    # 2.19+, where the pattern degrades to an alternation and yields
+    # "/dev/sdb|" plus size 0 (found bootstrapping gregale-prod).
     faas_storage_selected_disks: >-
       {{ (storage_blank_disks.stdout_lines | default([])) |
-         map('regex_replace', '\\|[0-9]+$', '') | list }}
+         map('split', '|') | map('first') | list }}
     faas_storage_selected_sizes: >-
       {{ (storage_blank_disks.stdout_lines | default([])) |
-         map('regex_replace', '^[^|]+\\|', '') |
-         map('int') | list }}
+         map('split', '|') | map('last') | map('int') | list }}
   when:
     - not (faas_storage_existing_valid | bool)
     - faas_storage_device | length == 0

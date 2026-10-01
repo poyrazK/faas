@@ -33,6 +33,10 @@ class ProjectScanRequest:
     no_triggers: bool | Unset = False
     """Leave trigger and async-route declarations and existing project trigger/route state unchanged for this
     scan/apply pair."""
+    platform_tenant_required: bool | Unset = UNSET
+    """Override the customer identity policy for selected workloads in this scan/apply pair (Hobby and above).
+    Omitted uses Compose declarations and preserves existing app policy. Apply must repeat the same override as
+    scan."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -51,6 +55,8 @@ class ProjectScanRequest:
         environment = self.environment
 
         no_triggers = self.no_triggers
+
+        platform_tenant_required = self.platform_tenant_required
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -73,6 +79,8 @@ class ProjectScanRequest:
             field_dict["environment"] = environment
         if no_triggers is not UNSET:
             field_dict["no_triggers"] = no_triggers
+        if platform_tenant_required is not UNSET:
+            field_dict["platform_tenant_required"] = platform_tenant_required
 
         return field_dict
 
@@ -102,6 +110,11 @@ class ProjectScanRequest:
         if not isinstance(self.no_triggers, Unset):
             files.append(("no_triggers", (None, str(self.no_triggers).encode(), "text/plain")))
 
+        if not isinstance(self.platform_tenant_required, Unset):
+            files.append(
+                ("platform_tenant_required", (None, str(self.platform_tenant_required).encode(), "text/plain"))
+            )
+
         for prop_name, prop in self.additional_properties.items():
             files.append((prop_name, (None, str(prop).encode(), "text/plain")))
 
@@ -126,6 +139,8 @@ class ProjectScanRequest:
 
         no_triggers = d.pop("no_triggers", UNSET)
 
+        platform_tenant_required = d.pop("platform_tenant_required", UNSET)
+
         project_scan_request = cls(
             source=source,
             project_slug=project_slug,
@@ -135,6 +150,7 @@ class ProjectScanRequest:
             only=only,
             environment=environment,
             no_triggers=no_triggers,
+            platform_tenant_required=platform_tenant_required,
         )
 
         project_scan_request.additional_properties = d

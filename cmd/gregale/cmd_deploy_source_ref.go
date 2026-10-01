@@ -96,7 +96,14 @@ func cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifest(ctx context.Con
 	return cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifestAndRollout(ctx, slug, repo, ref, ann, waitForDeploy, jsonWait, idempotencyKey, waitTimeout, noTriggers, false, false)
 }
 
-func cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifestAndRollout(ctx context.Context, slug, repo, ref string, ann api.DeployAnnotations, waitForDeploy, jsonWait bool, idempotencyKey string, waitTimeout time.Duration, noTriggers, waitForRollout, darkDeploy bool) int {
+type sourceRefAppPolicy struct {
+	AppProtocol            *string
+	PlatformTenantRequired *bool
+	RequireAuthn           *bool
+	PublicAuth             *api.PublicAuthBlock
+}
+
+func cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifestAndRollout(ctx context.Context, slug, repo, ref string, ann api.DeployAnnotations, waitForDeploy, jsonWait bool, idempotencyKey string, waitTimeout time.Duration, noTriggers, waitForRollout, darkDeploy bool, appPolicy ...sourceRefAppPolicy) int {
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -104,7 +111,7 @@ func cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifestAndRollout(ctx c
 	// Source-ref is a first-deploy transport as well as a redeploy transport.
 	// Probe first so an existing app can redeploy even when the account is at
 	// its app cap; create only after the account-scoped lookup returns 404.
-	app, err := ensureSourceRefApp(ctx, client, slug)
+	app, err := ensureSourceRefApp(ctx, client, slug, appPolicy...)
 	if err != nil {
 		return printErr("Could not create or fetch app", err)
 	}
@@ -124,6 +131,7 @@ func cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifestAndRollout(ctx c
 		NoTriggers:             noTriggers,
 		RollbackOn5xx:          ann.RollbackOn5xx,
 		DisableStartupCPUBoost: ann.DisableStartupCPUBoost,
+		Healthcheck:            ann.Healthcheck,
 	}
 	deployCtx := ctx
 	if idempotencyKey != "" {
@@ -171,13 +179,34 @@ func cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifestAndRollout(ctx c
 	return streamDeployLogsContextWithOptions(ctx, client, dep, slug, streamDeployOptions{waitTimeout: waitTimeout, waitForRollout: waitForRollout, darkDeploy: darkDeploy})
 }
 
-func ensureSourceRefApp(ctx context.Context, client *Client, slug string) (api.AppResponse, error) {
+func ensureSourceRefApp(ctx context.Context, client *Client, slug string, appPolicy ...sourceRefAppPolicy) (api.AppResponse, error) {
+	var policy sourceRefAppPolicy
+	if len(appPolicy) > 0 {
+		policy = appPolicy[0]
+	}
+	configure := func(app api.AppResponse) (api.AppResponse, error) {
+		if policy.PlatformTenantRequired == nil && policy.RequireAuthn == nil && policy.PublicAuth == nil && policy.AppProtocol == nil {
+			return app, nil
+		}
+		return client.UpdateApp(ctx, slug, api.UpdateAppRequest{
+			PlatformTenantRequired: policy.PlatformTenantRequired,
+			RequireAuthn:           policy.RequireAuthn,
+			PublicAuth:             policy.PublicAuth,
+			AppProtocol:            policy.AppProtocol,
+		})
+	}
 	if app, err := client.GetApp(ctx, slug); err == nil {
-		return app, nil
+		return configure(app)
 	} else if !isNotFound(err) {
 		return api.AppResponse{}, err
 	}
-	if app, err := client.CreateApp(ctx, buildCreateRequest(slug, shapeApp, "", nil, nil)); err == nil {
+	createReq := buildCreateRequest(slug, shapeApp, "", nil, policy.AppProtocol)
+	createReq.PlatformTenantRequired = policy.PlatformTenantRequired
+	createReq.RequireAuthn = policy.RequireAuthn
+	if app, err := client.CreateApp(ctx, createReq); err == nil {
+		if policy.PublicAuth != nil {
+			return client.UpdateApp(ctx, slug, api.UpdateAppRequest{PublicAuth: policy.PublicAuth})
+		}
 		return app, nil
 	} else {
 		var ae *APIError
@@ -192,5 +221,5 @@ func ensureSourceRefApp(ctx context.Context, client *Client, slug string) (api.A
 	if err != nil {
 		return api.AppResponse{}, fmt.Errorf("slug %q is already in use; pick a different --name", slug)
 	}
-	return app, nil
+	return configure(app)
 }

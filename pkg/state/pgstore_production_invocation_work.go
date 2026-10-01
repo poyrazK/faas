@@ -21,7 +21,10 @@ func (s *PgStore) ProductionQueueInvocationByID(ctx context.Context, id string) 
 		return Invocation{}, err
 	}
 	row, err := sqlc.New().ReadProductionQueueInvocation(ctx, s.pool, parsed)
-	return invocationFromSQLC(row), mapErr(err)
+	if err != nil {
+		return Invocation{}, mapErr(err)
+	}
+	return invocationFromSQLC(row)
 }
 
 func (s *PgStore) productionQueueState(ctx context.Context, appID, queueName string, named bool) (QueueStats, error) {

@@ -243,6 +243,10 @@ export type UpdateAppRequest = {
    */
   consumer_auth_mode?: 'optional' | 'required';
   /**
+   * Require verified platform tenant identity on app traffic. Omit for no change; true requires a linked consumer key, verified tenant surface, or opted-in JWT rule. Available on Hobby and above.
+   */
+  platform_tenant_required?: boolean | null;
+  /**
    * Per-app public-URL auth configuration (issue #477 / ADR-077). Omitted → no change. When present, mode is the closed enum {open, bearer, basic}; basic_user + basic_pass are required when mode='basic' and the apid seal step encrypts them under the APP_BASIC_AUTH secretbox namespace before persistence.
    */
   public_auth?: (null | PublicAuthBlock);

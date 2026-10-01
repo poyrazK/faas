@@ -31,8 +31,11 @@ source "${verdict}"
 # shellcheck source=scripts/ci/native-e2e-phases.sh
 source "${phases}"
 
-[[ "${#NATIVE_E2E_REQUIRED_TESTS[@]}" -ge 8 ]] ||
+[[ "${#NATIVE_E2E_REQUIRED_TESTS[@]}" -ge 9 ]] ||
   fail "the required-test contract shrank to ${#NATIVE_E2E_REQUIRED_TESTS[@]} tests"
+
+printf '%s\n' "${NATIVE_E2E_REQUIRED_TESTS[@]}" | grep -qx 'TestFeatureFlagsNativeParkRestoreMetal' ||
+  fail "the native Flags park/restore qualification is not required"
 
 for required in "${NATIVE_E2E_REQUIRED_TESTS[@]}"; do
   # A typo'd requirement could never match a PASS line: the gate would fail for
@@ -75,7 +78,7 @@ grep -Fq 'no test executed' "${work}/empty.out" ||
 #    Postgres/kernel/builder-base regression shape: hundreds of other tests
 #    still pass, so the tally alone stays plausible.
 all_pass_log "${work}/skip.log"
-victim="${NATIVE_E2E_REQUIRED_TESTS[0]}"
+victim="TestFeatureFlagsNativeParkRestoreMetal"
 grep -v -- "--- PASS: ${victim} " "${work}/skip.log" > "${work}/skip.tmp"
 printf -- '--- SKIP: %s (0.00s)\n' "${victim}" >> "${work}/skip.tmp"
 mv "${work}/skip.tmp" "${work}/skip.log"
@@ -161,6 +164,19 @@ if native_e2e_verdict "${work}/jobs-only.log" >"${work}/jobs-only-full.out" 2>&1
   fail "the whole-suite verdict unexpectedly accepted a Jobs-only log"
 fi
 
+exclusive_tests=()
+while IFS= read -r selected_test; do
+  exclusive_tests+=("${selected_test}")
+done < <(native_e2e_lane_tests exclusive-operations-only "${repo_root}")
+[[ "${#exclusive_tests[@]}" -eq 1 && \
+   "${exclusive_tests[0]}" == "TestExclusiveOperationFencesRestoredKVMOwnerMetal" ]] ||
+  fail "exclusive-operations-only does not select exactly the stale-owner KVM test"
+lane_pass_log "${work}/exclusive-operations-only.log" "${exclusive_tests[@]}"
+native_e2e_lane_verdict "${work}/exclusive-operations-only.log" \
+  "exclusive operations KVM lane" "${exclusive_tests[@]}" \
+  >"${work}/exclusive-operations-only.out" 2>&1 ||
+  fail "a passing stale-owner KVM test was rejected: $(cat "${work}/exclusive-operations-only.out")"
+
 lane_pass_log "${work}/lane-skip.log" "${lane_tests[@]}"
 grep -v -- "--- PASS: ${lane_tests[0]} " "${work}/lane-skip.log" > "${work}/lane-skip.tmp"
 printf -- '--- SKIP: %s (0.00s)\n' "${lane_tests[0]}" >> "${work}/lane-skip.tmp"
@@ -207,12 +223,31 @@ fi
 grep -Fq "required test ${lane_tests[1]} did not pass or run" "${work}/lane-subtest.out" ||
   fail "the bounded lane did not name the absent top-level test"
 
-# Keep dispatch routing explicit: smoke and jobs-only validate their derived
+# A parent PASS must not conceal unexecuted required subtests.
+cp "${work}/lane-green.log" "${work}/lane-subskip.log"
+printf -- '    --- SKIP: %s/missing-fixture (0.00s)\n' "${lane_tests[0]}" >> "${work}/lane-subskip.log"
+if native_e2e_lane_verdict "${work}/lane-subskip.log" containers "${lane_tests[@]}" >"${work}/lane-subskip.out" 2>&1; then
+  fail "a parent PASS concealed a skipped qualification subtest"
+fi
+grep -Fq 'SKIPPED subtests' "${work}/lane-subskip.out" || fail "missing subtest skip diagnostic"
+# shellcheck disable=SC2016 # Match workflow code literally.
+grep -Fq 'native_e2e_lane_tests containers "$GITHUB_WORKSPACE"' "${workflow}" || fail "container workflow has no exact verdict"
+
+# Keep dispatch routing explicit: bounded lanes validate their derived
 # selection, while full/qualify continue to use the platform-wide contract.
 grep -Fq 'native_e2e_lane_tests smoke "$GITHUB_WORKSPACE"' "${workflow}" ||
   fail "the smoke lane does not derive its selected tests for its verdict"
 grep -Fq 'native_e2e_phase_tests jobs "$GITHUB_WORKSPACE"' "${workflow}" ||
   fail "the Jobs-only lane does not derive its selected tests for its verdict"
+grep -Fq 'native_e2e_lane_tests exclusive-operations-only "$GITHUB_WORKSPACE"' "${workflow}" ||
+  fail "the exclusive-operations lane does not derive its selected test for its verdict"
+grep -Fq "inputs.lane == 'exclusive-operations-only'" "${workflow}" ||
+  fail "the native workflow has no exclusive-operations-only dispatch route"
+grep -Fq 'exclusive_operations_only=${{ steps.phase_exclusive_operations_only.outcome }}' "${workflow}" ||
+  fail "the exclusive-operations lane outcome is absent from the native verdict"
+exclusive_exclusions="$(grep -Fc "inputs.lane != 'exclusive-operations-only'" "${workflow}" || true)"
+[[ "${exclusive_exclusions}" -eq 9 ]] ||
+  fail "exclusive-operations-only must skip all nine platform phases (found ${exclusive_exclusions} exclusions)"
 grep -Fq 'native_e2e_verdict "$log" || rc=1' "${workflow}" ||
   fail "full native e2e dispatches no longer apply the platform-wide verdict"
 
@@ -278,6 +313,13 @@ grep -Fq 'no metal-tagged tests found in cmd/e2e' "${runner}" ||
   fail "the wrapper does not fail when the derived run set is empty"
 grep -Fq 'is not in the metal-tagged set' "${runner}" ||
   fail "the wrapper does not verify every required test is in the derived set"
+
+# Linux process placement/identity contracts must execute in the container
+# lane in addition to microVM tests, and use the actual cgroup hierarchy.
+grep -Fq 'FAAS_TEST_CGROUP_PARENT=/sys/fs/cgroup' "${runner}" ||
+  fail "container lane does not provide a real cgroup v2 parent"
+grep -Fq 'make GO="${FAAS_E2E_GO}" test-container-guest-contract' "${runner}" ||
+  fail "container lane does not execute the Linux guest process contracts"
 
 # EXECUTE make with a regex carrying the two characters that broke it, and
 # assert the filter reaches `go test` byte-for-byte.
@@ -441,7 +483,7 @@ grep -Fq 'native_e2e_assert_phase_partition' "${runner}" ||
 # link costs; the Go build cache does not cover the final link.
 grep -Fq 'FAAS_E2E_BIN_DIR' "${runner}" ||
   fail "the wrapper does not share compiled daemons across phases"
-# Whole-suite contract must NOT be applied per phase: no phase holds all eight
+# Whole-suite contract must NOT be applied per phase: no phase holds all nine
 # required tests, so it would fail every phase for tests it never ran.
 grep -Fq 'native_e2e_phase_tally' "${runner}" ||
   fail "the wrapper applies the whole-suite verdict to a single phase"

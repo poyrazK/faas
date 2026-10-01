@@ -357,6 +357,8 @@ func boot() error {
 	// assignment. The wiring below is the canonical fix.
 	policy, maxRestarts := supervisorPolicyFromManifest(manifest)
 	supRef := &Supervisor{Max: maxRestarts, Policy: policy}
+	mainStarted := make(chan struct{})
+	supRef.onStart = func() { close(mainStarted) }
 	var rotatingSecrets *runtimeSecretsState
 	if manifest.SecretReloadSignal != "" {
 		rotatingSecrets = newRuntimeSecretsState(secrets)
@@ -407,7 +409,16 @@ func boot() error {
 	// Soft-fail on bind (e.g. guest kernel without AF_VSOCK) —
 	// the engine's existing :8080 TCP-accept probe continues to
 	// gate readiness, so the customer doesn't lose the boot.
-	if err := runHealthcheckPoll(bootCtx, manifest, slog.Default()); err != nil {
+	if err := runHealthcheckPoll(bootCtx, manifest, slog.Default(), healthcheckPollOptions{
+		Started: mainStarted,
+		Environment: func() []string {
+			currentSecrets := secrets
+			if rotatingSecrets != nil {
+				currentSecrets = rotatingSecrets.snapshot()
+			}
+			return BuildEnvWithSecrets(os.Environ(), manifest, currentSecrets, apiEnv)
+		},
+	}); err != nil {
 		slog.Default().Warn("healthcheck poll unavailable", "err", err)
 	}
 	// M-2 / ADR-138 §Decision 1 / issue #474 — install the PID 1
@@ -502,11 +513,11 @@ func runAppWithRAMAndWorkloadEnv(m api.AppManifest, secrets, apiEnv map[string]s
 	} else {
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	}
-	if uid := lookupUID(m.EffectiveUser()); uid > 0 {
-		cmd.SysProcAttr = &syscall.SysProcAttr{
-			Credential: &syscall.Credential{Uid: uint32(uid), Gid: uint32(uid)},
-		}
+	credential, err := processCredential("", m.EffectiveUser())
+	if err != nil {
+		return fmt.Errorf("run app: %w", err)
 	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: execProcessCredential(credential)}
 	// ADR-051 Phase 4: expose the forked cmd to the supervisor so
 	// runCharacterizationForSup can read the PID via LastAppPID().
 	// The supervisor's Run() loop captures the cmd at every
@@ -526,6 +537,13 @@ func runAppWithRAMAndWorkloadEnv(m api.AppManifest, secrets, apiEnv map[string]s
 	if cgroupErr != nil {
 		return fmt.Errorf("prepare main workload cgroup: %w", cgroupErr)
 	}
+	cgroupFile, err := attachWorkloadCgroup(cmd, mainLeaf)
+	if err != nil {
+		return fmt.Errorf("attach main workload cgroup: %w", err)
+	}
+	if cgroupFile != nil {
+		defer func() { _ = cgroupFile.Close() }()
+	}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("run %v: %w", argv, err)
 	}
@@ -540,11 +558,6 @@ func runAppWithRAMAndWorkloadEnv(m api.AppManifest, secrets, apiEnv map[string]s
 			}
 		}
 		sup.markHealthy()
-	}
-	// Place the forked child into the leaf. Same race
-	// posture as runSidecar — see placeIntoLeaf's doc.
-	if mainLeaf != "" {
-		placeIntoLeaf(mainLeaf, cmd.Process.Pid, slog.Default())
 	}
 	// Cluster C / ADR-121: spawn the per-workload cgroup.events
 	// oom_kill listener (guest/init/cgroup_partition_linux.go::
@@ -2374,19 +2387,18 @@ func mountSidecarRuntimeFilesystems(root string, tmpfsSizeMB int) error {
 			return fmt.Errorf("bind %s: %w", name, err)
 		}
 	}
-	for _, mount := range []struct {
-		name string
-		mode string
-	}{
-		{name: "tmp", mode: sidecarTmpfsMountData(tmpfsSizeMB)},
-	} {
-		target := filepath.Join(root, mount.name)
-		if err := ensureMountDirectory(target); err != nil {
-			return fmt.Errorf("%s target: %w", mount.name, err)
-		}
-		if err := syscall.Mount("tmpfs", target, "tmpfs", syscall.MS_NOSUID|syscall.MS_NODEV, mount.mode); err != nil {
-			return fmt.Errorf("tmpfs %s: %w", mount.name, err)
-		}
+	return mountSidecarScratch(root, tmpfsSizeMB)
+}
+
+// mountSidecarScratch is shared with the Linux capacity acceptance test so
+// the test exercises the mount options and target checks used during boot.
+func mountSidecarScratch(root string, tmpfsSizeMB int) error {
+	target := filepath.Join(root, "tmp")
+	if err := ensureMountDirectory(target); err != nil {
+		return fmt.Errorf("tmp target: %w", err)
+	}
+	if err := syscall.Mount("tmpfs", target, "tmpfs", syscall.MS_NOSUID|syscall.MS_NODEV, sidecarTmpfsMountData(tmpfsSizeMB)); err != nil {
+		return fmt.Errorf("tmpfs tmp: %w", err)
 	}
 	return nil
 }
@@ -2454,7 +2466,8 @@ func pivotInto(root string) error {
 // two-drive legacy path is unaffected.
 //
 // ADR-142 §Decision 3 (binary-search reader).
-func lookupUID(user string) int {
+func legacyLookupUID(user string) int {
+	user, _, _ = strings.Cut(user, ":")
 	if user == api.DefaultAppUser {
 		return api.DefaultAppUID
 	}

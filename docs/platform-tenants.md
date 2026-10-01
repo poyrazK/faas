@@ -2,6 +2,27 @@
 
 A platform tenant represents one of your customers across multiple Gregale apps. It complements the app-local API consumer and tenant-surface resources; it does not replace either one.
 
+## Start a customer platform
+
+`gregale init --template customer-platform --path customer-platform` scaffolds a
+Node.js + PostgreSQL document API and local owner tools for customer onboarding,
+hash-only credential issuance/rotation, usage lookup, suspension, and resumption.
+Template deployment enables verified tenant ingress before serving traffic; the
+app scopes every document query by tenant and uses forced PostgreSQL row security
+with transaction-local context. Owner credentials remain on the operator machine.
+See the [starter README](../cmd/gregale/templates/customer-platform/README.md) for
+deployment, the database role contract, retry-safe key journals, and extension points.
+The starter includes a monthly billing-review workflow with stable daily
+statements and explicit finalization/invoice handoff. Native deployment and
+remaining end-to-end acceptance are tracked in the
+[reference platform qualification](reference-platform-qualification.md).
+
+Run `make test-customer-platform` with disposable `DATABASE_URL` and
+`CUSTOMER_DATABASE_URL` databases to exercise the real PostgreSQL-backed API,
+gateway, and Node app with two customers. The gate covers forged headers,
+cross-customer CRUD denial, credential replay and rotation, suspension, and
+resumption. It does not require KVM or claim VM deployment acceptance.
+
 Create the account-level identity once:
 
 ```http
@@ -234,7 +255,7 @@ Content-Type: application/json
 {"period_start":"2026-09-01T00:00:00Z","period_end":"2026-10-01T00:00:00Z"}
 ```
 
-The draft contains one frozen line per tenant-attributed app/consumer/minute or app/surface/minute with its effective app rate-card ID, price, units, and amount. Exactly one of `consumer_id` and `surface_id` identifies the source. A request on a verified, active, linked customer hostname without a consumer key is surface usage; a linked key is consumer usage and is counted only once. A key belonging to a different or unlinked tenant is rejected on that hostname. Other anonymous app domains and independent JWT traffic without a tenant-surface hostname are not attributed to a platform tenant. Public traffic to a customer hostname may become that customer's billable usage, so configure the app's versioned rate card deliberately and review drafts before handoff. The total is in one currency; mixed-currency apps return 422 rather than an invented converted total. Usage without an effective card remains explicitly unpriced and prevents finalization. Periods are at most 90 days, and one statement is limited to 20,000 minute lines; split larger periods. A period with no new billable usage does not create an empty statement.
+The draft exposes compact invoice lines grouped by app, tenant-attributed consumer, surface, or JWT rule, and effective rate-card version. Each line carries its units and amount plus `window_start` (the earliest included minute) and exclusive `window_end` (one minute after the latest included minute); gaps within that span may have no usage. Exactly one of `consumer_id`, `surface_id`, or `jwt_authorization_rule_id` identifies the source. Gregale retains the immutable minute-level billable-unit coverage privately for exact additive adjustments; it does not expose that internal evidence as invoice rows. A request on a verified, active, linked customer hostname without a consumer key is surface usage; a linked key is consumer usage and is counted only once. A key belonging to a different or unlinked tenant is rejected on that hostname. Other anonymous app domains and independent JWT traffic without a tenant-surface hostname are not attributed to a platform tenant. Public traffic to a customer hostname may become that customer's billable usage, so configure the app's versioned rate card deliberately and review drafts before handoff. The total is in one currency; mixed-currency apps return 422 rather than an invented converted total. Usage without an effective card remains explicitly unpriced and prevents finalization. Periods are at most 90 days, with no invoice-line count ceiling. A period with no new billable usage does not create an empty statement.
 
 Use `GET /v1/account/platform-tenants/{id}/usage-statements?period_start=…&period_end=…` for all revisions, or `GET .../usage-statements/{statement_id}` for one snapshot. `POST .../{statement_id}/finalize` freezes the billable lifecycle once every unit is priced in a single currency. `POST .../{statement_id}/handoff` with `{"external_invoice_id":"your-invoice-123"}` records one provider-neutral receipt for your billing system; `GET` on the same path retrieves it. Gregale does not collect payment. A handoff conflicts if the same app consumer has already had an overlapping app-local statement handed off (or vice versa), and the same external invoice ID cannot be used on both paths.
 
@@ -272,6 +293,94 @@ To temporarily stop the linked credential and hostname paths, send `PATCH /v1/ac
 
 On requests authenticated with a linked consumer key, or anonymous requests routed through a verified tenant-surface hostname, Gregale sends `X-Faas-Platform-Tenant-Id` to the guest and records `platform_tenant.id` on its request/forward traces. This is the stable account-level customer ID across apps and key rotations. It is distinct from `X-Faas-Tenant-Id`, which remains the app owner's account ID. Anonymous traffic on other domains receives no claim; incoming copies of the header are stripped. A consumer key presented on a hostname bound to a different platform tenant, including an unlinked key, is rejected with the same non-enumerating invalid-key response. Suspension is checked on cached hostname routes as well as cache misses; a custom-domain request may fail closed if the tenant guard's database read is unavailable.
 
+## Require customer identity on an app
+
+Enable the app ingress policy when creating or deploying the app, so it is active from the first request:
+
+```sh
+gregale deploy --path . --app --name my-api --platform-tenant-required --no-require-authn
+```
+
+The equivalent create API request is `POST /v1/apps` with `{"slug":"my-api","platform_tenant_required":true,"require_authn":false}`. On Pro and Scale, the CLI also opens the separate public-auth gate when `--no-require-authn` is specified. The tenant policy continues to reject traffic without verified customer identity. For an existing app, enable it after linking your customer identities:
+
+```sh
+gregale app my-api --platform-tenant-required
+```
+
+The equivalent API request is `PATCH /v1/apps/my-api` with `{"platform_tenant_required":true}`. The setting is available on Hobby and above and appears in the app response. A request reaches the app only when Gregale verified a platform tenant through a linked consumer key, a verified tenant-surface hostname, or an opted-in JWT authorization rule with a tenant claim. Keep `consumer_auth_mode` at `optional` when accepting hostname or JWT identity without a consumer key. Anonymous requests on the ordinary app domain, unlinked consumer keys, and caller-supplied `X-Faas-Platform-Tenant-Id` headers receive `403 platform_tenant_required`. The check runs before fixed edge responses, cache lookup, and workload wake. Edge-handled CORS preflight, redirects, and health/crawler answers remain edge responses; authenticated deployment smoke remains available for rollout checks. Use `gregale app my-api --no-platform-tenant-required` to allow app traffic without tenant identity again.
+
 The CLI provides the same lifecycle with `gregale platform-tenants add|apply|list|info|activation|link-consumer|link-surface|usage|suspend|resume`.
 
+### Repository and project deploys
+
+Source-reference deploys accept the same policy and authentication flags:
+
+```sh
+gregale deploy --repo owner/repo --ref main --name my-api --platform-tenant-required --no-require-authn
+```
+
+For a project, declare the policy on each customer-facing Compose workload so it also applies to later GitHub push reconciliations and newly added workloads:
+
+```yaml
+services:
+  my-api:
+    build: ./api
+    x-gregale-platform-tenant-required: true
+  worker:
+    build: ./worker
+```
+
+Use `false` to explicitly disable the policy. Omission preserves an existing app's setting and defaults to disabled for a new app. Managed image services cannot declare this app policy.
+
+```sh
+gregale deploy --path . --project --project-slug my-platform --dry-run --platform-tenant-required
+gregale deploy --path . --project --project-slug my-platform --platform-tenant-required
+```
+
+The project flag overrides the Compose declaration for the workloads selected by `--only` and `--exclude` in that deploy. It persists on those apps, but does not establish a default for workloads added on a later push; use the Compose declaration for that. Scan shows the requested policy and binds the override into its plan token. API clients must repeat the same optional `platform_tenant_required` multipart field on scan and apply. A changed or omitted override requires a new scan.
+
+The tenant policy adds a gate to existing authentication settings. Project deploys retain the plan's operator-authentication defaults; configure the separate app gate with `gregale app my-api --no-require-authn` when customers should authenticate using their linked keys, hostnames, or JWTs. The project deploy command does not accept `--no-require-authn`.
+
 Suspension does not block anonymous traffic on unlinked app domains, independent JWT authentication on those domains, or credentials not linked to the tenant. Configure those separately if you need a complete customer access ban. Account-scoped platform-tenant management requires the same MFA-gated account scopes as API consumer management; tenant-self read tokens are separate and remain limited to the tenant's own usage and finalized statements. Free plans do not expose the feature.
+
+
+## Tenant-aware background requests
+
+An existing `kind=async` edge rule can queue a customer-platform HTTP route
+(such as `POST /documents`) and return `202` before waking the app. The guest
+uses the same verified `x-faas-platform-tenant-id` and PostgreSQL tenant
+transaction as a synchronous request. No tenant ID belongs in the payload.
+An `Idempotency-Key` is scoped to app and verified tenant, so two customers may
+use the same key without sharing a job.
+
+The acceptance returns an invocation ID and a relative control API
+`status_url`. Use that URL on the Gregale control API origin with a separate
+tenant-bound access token. The `ck_...` app credential is used for enqueue;
+it does not authorize the control API. The owner issues these capabilities
+through the existing tenant access-token endpoint:
+
+| Capability | Endpoint |
+|---|---|
+| `platform_tenant:invocations:read` | `GET /v1/platform-tenant-self/invocations/{id}` |
+| `platform_tenant:invocations:manage` | `POST /v1/platform-tenant-self/invocations/{id}/cancel` |
+| `platform_tenant:invocations:manage` | `POST /v1/platform-tenant-self/invocations/{id}/replay` |
+
+A read response includes state, attempts, result and failure information. It
+omits the original payload, headers and owner metadata and is never cacheable.
+Missing, foreign and unbound invocations return the same 404. Replay accepts
+only failed or dead-lettered work, creates a fresh invocation with the original
+tenant and request, and supports an `Idempotency-Key` scoped to that original
+invocation. Automatic retries keep the same identity.
+
+Suspended customers may read and cancel existing work, but cannot enqueue or replay new work. Suspension holds new claims without using attempts or async quota. Resume makes
+pending work eligible on the next scheduler tick. Maximum-age deadlines still
+apply while suspended. Work already claimed may finish; cancellation of a
+running request cannot undo side effects. Applications should make repeated
+worker execution safe: a durable queue can redeliver after a lost response.
+
+This support covers deferred HTTP requests. Tenant-bound named queue batches,
+OCI Jobs and AppTasks are not supported by this delivery contract. The
+`test-customer-platform` gate exercises two real customers, queued requests,
+results, retry, replay, cancellation and suspension against PostgreSQL and the
+Node starter with a warm guest substitute. Native KVM delivery acceptance is
+still outstanding. See [ADR-376](adr/376-platform-tenant-async-invocations.md).

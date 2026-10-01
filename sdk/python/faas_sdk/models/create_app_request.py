@@ -201,6 +201,9 @@ class CreateAppRequest:
     require_authn: bool | Unset = UNSET
     """Per-deployment token-gate flag (issue #560). Omitted at create-time → apid applies the plan default (false).
     Pro/Scale only."""
+    platform_tenant_required: bool | Unset = UNSET
+    """Require verified platform tenant identity on app traffic from creation. Omitted or false leaves the policy
+    disabled. Available on Hobby and above."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -365,6 +368,8 @@ class CreateAppRequest:
 
         require_authn = self.require_authn
 
+        platform_tenant_required = self.platform_tenant_required
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -474,6 +479,8 @@ class CreateAppRequest:
             field_dict["overflow_node"] = overflow_node
         if require_authn is not UNSET:
             field_dict["require_authn"] = require_authn
+        if platform_tenant_required is not UNSET:
+            field_dict["platform_tenant_required"] = platform_tenant_required
 
         return field_dict
 
@@ -715,6 +722,8 @@ class CreateAppRequest:
 
         require_authn = d.pop("require_authn", UNSET)
 
+        platform_tenant_required = d.pop("platform_tenant_required", UNSET)
+
         create_app_request = cls(
             slug=slug,
             type_=type_,
@@ -768,6 +777,7 @@ class CreateAppRequest:
             eviction_priority=eviction_priority,
             overflow_node=overflow_node,
             require_authn=require_authn,
+            platform_tenant_required=platform_tenant_required,
         )
 
         create_app_request.additional_properties = d

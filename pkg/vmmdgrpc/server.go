@@ -41,6 +41,7 @@ import (
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/vmmdmount"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"github.com/onebox-faas/faas/pkg/workloadidentity"
 	"go.opentelemetry.io/otel/attribute"
 	oteltrace "go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
@@ -182,6 +183,17 @@ type ExecutionOutputVMMAPI interface {
 	ExecuteExecutionWithOutput(context.Context, string, executionproto.Request, executionproto.OutputReceiver) (executionproto.Result, error)
 }
 
+// ExecutionBrokerVMMAPI is the optional full-duplex guest broker capability.
+// Keeping it separate preserves compatibility for vmmd instances that have
+// not yet enabled managed Runs integrations.
+type ExecutionBrokerVMMAPI interface {
+	ExecuteExecutionWithBroker(context.Context, string, executionproto.Request, executionproto.OutputReceiver, executionproto.OutboundCallFunc) (executionproto.Result, error)
+}
+
+type ExecutionIdentityAPI interface {
+	ExecutionOutboundIdentity(instance, integrationID string) (accountID, executionID, leaseToken string, err error)
+}
+
 // ExecutionRestoreVMMAPI is the dedicated pre-dispatch capability. It is
 // separate from ExecuteExecution so a node cannot receive caller source until
 // it has returned a fresh execution-only VM.
@@ -267,6 +279,9 @@ type Server struct {
 	// constructors; production cmd/vmmd uses
 	// NewWithCPUAndNetAndActivity.
 	activity *activity.ActivityTracker
+	// identitySigner mints execution-only assertions for the scheduler's
+	// outbound relay. Tokens are sent only over the vmmd↔schedd stream.
+	identitySigner *workloadidentity.Signer
 	// flowCounter samples conntrack on the compute host. Stats includes the
 	// resulting count in the existing persistent capacity telemetry stream so
 	// schedd's reaper does not query a remote node or misclassify a live flow.
@@ -384,6 +399,15 @@ func (s *Server) WithMigrationStore(store state.Store) *Server {
 func (s *Server) WithNodeID(nodeID string) *Server {
 	if s != nil {
 		s.nodeID = strings.TrimSpace(nodeID)
+	}
+	return s
+}
+
+// WithExecutionIdentitySigner enables the host-only Runs outbound identity
+// minting path. A nil signer leaves broker RPCs unavailable.
+func (s *Server) WithExecutionIdentitySigner(signer *workloadidentity.Signer) *Server {
+	if s != nil {
+		s.identitySigner = signer
 	}
 	return s
 }
@@ -2101,6 +2125,9 @@ func executionProblem(err error) *api.Problem {
 	case errors.Is(err, fcvm.ErrExecutionNotConfigured):
 		return api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented,
 			"Execution unavailable", "vmmd execution is not configured")
+	case errors.Is(err, executionproto.ErrOutboundNotAuthorized):
+		return api.NewProblem(int(codes.PermissionDenied), api.CodeForbidden,
+			"Outbound integration unavailable", "this Run is not authorized for the requested outbound integration")
 	case errors.Is(err, executionproto.ErrInvalidRequest):
 		return api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"Invalid execution request", "request failed guest-boundary validation")

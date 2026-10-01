@@ -274,6 +274,8 @@ message IncrementRequestTelemetryRequest {
   bool guest_resource_usage_available = 33;
   string platform_tenant_surface_id = 34;
   string platform_tenant_jwt_authorization_rule_id = 35;
+  // Bounded canonical application-reported flag decisions; no customer attributes.
+  string flag_evidence_json = 36;
 }
 
 // IncrementRequestTelemetryResponse is the per-record outcome the

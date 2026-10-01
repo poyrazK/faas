@@ -51,14 +51,16 @@ type ProjectEnvironmentWorkloadSettings struct {
 	WarmSnapshotEnabled     bool                  `json:"warm_snapshot_enabled"`
 	RequireAuthn            bool                  `json:"require_authn"`
 	PublicAuthMode          string                `json:"public_auth_mode"`
-	ConsumerAuthMode        ConsumerAuthMode      `json:"consumer_auth_mode"`
-	PublicAuthBasicSealed   []byte                `json:"public_auth_basic_sealed"`
-	WarmSnapshotMinRequests int                   `json:"warm_snapshot_min_requests"`
-	WarmSnapshotMinMs       int                   `json:"warm_snapshot_min_ms"`
-	WarmPoolSize            int                   `json:"warm_pool_size"`
-	EvictionPriority        string                `json:"eviction_priority"`
-	CORSDefaultEnabled      *bool                 `json:"cors_default_enabled"`
-	CORSDefaultOrigins      []string              `json:"cors_default_origins"`
+	// Omit false to preserve hashes of existing immutable legacy settings.
+	PlatformTenantRequired  bool             `json:"platform_tenant_required,omitempty"`
+	ConsumerAuthMode        ConsumerAuthMode `json:"consumer_auth_mode"`
+	PublicAuthBasicSealed   []byte           `json:"public_auth_basic_sealed"`
+	WarmSnapshotMinRequests int              `json:"warm_snapshot_min_requests"`
+	WarmSnapshotMinMs       int              `json:"warm_snapshot_min_ms"`
+	WarmPoolSize            int              `json:"warm_pool_size"`
+	EvictionPriority        string           `json:"eviction_priority"`
+	CORSDefaultEnabled      *bool            `json:"cors_default_enabled"`
+	CORSDefaultOrigins      []string         `json:"cors_default_origins"`
 
 	// WorkPolicies is a complete environment-owned collection. Nil denotes a
 	// legacy deployment; an empty collection must never inherit later policies.
@@ -107,6 +109,7 @@ func WorkloadSettingsFromApp(app App) (ProjectEnvironmentWorkloadSettings, error
 		RequireAuthn:            app.RequireAuthn,
 		PublicAuthMode:          app.PublicAuthMode,
 		ConsumerAuthMode:        app.ConsumerAuthMode,
+		PlatformTenantRequired:  app.PlatformTenantRequired,
 		PublicAuthBasicSealed:   app.PublicAuthBasicSealed,
 		WarmSnapshotMinRequests: app.WarmSnapshotMinRequests,
 		WarmSnapshotMinMs:       app.WarmSnapshotMinMs,
@@ -158,6 +161,7 @@ func (settings ProjectEnvironmentWorkloadSettings) ApplyTo(app App) (App, error)
 	app.RequireAuthn = copy.RequireAuthn
 	app.PublicAuthMode = copy.PublicAuthMode
 	app.ConsumerAuthMode = copy.ConsumerAuthMode
+	app.PlatformTenantRequired = copy.PlatformTenantRequired
 	app.PublicAuthBasicSealed = copy.PublicAuthBasicSealed
 	app.WarmSnapshotMinRequests = copy.WarmSnapshotMinRequests
 	app.WarmSnapshotMinMs = copy.WarmSnapshotMinMs
@@ -337,6 +341,7 @@ var workloadAppFieldPolicies = map[string]WorkloadFieldPolicy{
 	"RequireAuthn":              WorkloadFieldCopy,
 	"PublicAuthMode":            WorkloadFieldCopy,
 	"ConsumerAuthMode":          WorkloadFieldCopy,
+	"PlatformTenantRequired":    WorkloadFieldCopy,
 	"PublicAuthBasicSealed":     WorkloadFieldCopy,
 	"AuthDefaultFlippedAt":      WorkloadFieldOperational,
 	"WarmSnapshotMinRequests":   WorkloadFieldCopy,

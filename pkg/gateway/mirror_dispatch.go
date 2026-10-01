@@ -44,6 +44,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -109,7 +110,10 @@ func (d *defaultMirrorRoundTripper) RoundTripMirror(ctx context.Context, target 
 	// Rewrite the request's URL to the target's scheme+host so
 	// http.Client.Do dials target.Host with the request's path.
 	req2 := req.Clone(ctx)
-	req2.URL = &url.URL{Scheme: target.Scheme, Host: target.Host, Path: req.URL.Path, RawQuery: req.URL.RawQuery}
+	// Clone retained RawPath and ForceQuery as well as RawQuery. Replacing
+	// only the destination preserves the exact origin request URI.
+	req2.URL.Scheme = target.Scheme
+	req2.URL.Host = target.Host
 	req2.Host = target.Host
 	req2.RequestURI = ""
 	return d.client.Do(req2)
@@ -152,7 +156,7 @@ func (h *Handler) dispatchMirror(parentCtx context.Context, sourceInstanceID str
 		return
 	}
 	timeout := time.Duration(api.MirrorMaxLifetimeSeconds) * time.Second
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(parentCtx), timeout)
+	ctx, cancel := context.WithTimeout(reqbudget.WithoutBudget(context.WithoutCancel(parentCtx)), timeout)
 	defer cancel()
 
 	// 0. Per-rule concurrent mirror-VM cap (PR-A3 code-review fix #3).
@@ -527,11 +531,7 @@ func (h *Handler) buildMirrorRequest(ctx context.Context, rule MirrorRuleRow, sr
 	stripped := StrippedRequestHeaders(rstateRule, srcReq.Header)
 
 	method := srcReq.Method
-	path := srcReq.URL.Path
-	if path == "" {
-		path = "/"
-	}
-	mirrorReq, err := http.NewRequestWithContext(ctx, method, path, bytes.NewReader(sourceBody))
+	mirrorReq, err := http.NewRequestWithContext(ctx, method, srcReq.URL.RequestURI(), bytes.NewReader(sourceBody))
 	if err != nil {
 		return nil, fmt.Errorf("mirror dispatch: build mirror request: %w", err)
 	}

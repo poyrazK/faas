@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/ociidentity"
 )
 
 // This package models just enough of the OCI image spec to power the two-drive
@@ -68,6 +69,7 @@ type Config struct {
 //
 // ADR-136 §Decision 3 records the rationale for surfacing these.
 type ImageHealthcheck struct {
+	ImageTiming  *api.OCIHealthcheckTiming
 	Test         []string
 	IntervalS    int
 	TimeoutS     int
@@ -239,6 +241,9 @@ func LayersAboveBase(baseDiffIDs, appDiffIDs []string) ([]string, error) {
 // A single valid TCP ExposedPorts entry also seeds the serving port; callers
 // may replace it later with an explicit deployment override.
 func ManifestFromConfig(cfg Config) (api.AppManifest, error) {
+	if err := ociidentity.ValidateSpec(cfg.User); err != nil {
+		return api.AppManifest{}, fmt.Errorf("%w: process identity: %w", ErrImageManifestInvalid, err)
+	}
 	if len(cfg.Entrypoint) == 0 && len(cfg.Cmd) == 0 {
 		return api.AppManifest{}, fmt.Errorf("%w: image declares neither Entrypoint nor Cmd", ErrImageManifestInvalid)
 	}
@@ -270,6 +275,7 @@ func ManifestFromConfig(cfg Config) (api.AppManifest, error) {
 	if cfg.Healthcheck != nil {
 		m.Healthcheck = &api.AppManifestHealthcheck{
 			Test:         append([]string(nil), cfg.Healthcheck.Test...),
+			ImageTiming:  cfg.Healthcheck.ImageTiming,
 			IntervalS:    cfg.Healthcheck.IntervalS,
 			TimeoutS:     cfg.Healthcheck.TimeoutS,
 			Retries:      cfg.Healthcheck.Retries,
@@ -328,11 +334,22 @@ func healthcheckFromRaw(r *rawHealthcheck) *ImageHealthcheck {
 	}
 	return &ImageHealthcheck{
 		Test:         append([]string(nil), r.Test...),
-		IntervalS:    r.IntervalS,
-		TimeoutS:     r.TimeoutS,
+		IntervalS:    durationSeconds(r.Interval),
+		TimeoutS:     durationSeconds(r.Timeout),
 		Retries:      r.Retries,
-		StartPeriodS: r.StartPeriodS,
+		StartPeriodS: durationSeconds(r.StartPeriod),
+		ImageTiming:  r.timing(),
 	}
+}
+
+// durationSeconds rounds up only the compatibility view. Exact image
+// timing is retained separately for guest execution.
+func durationSeconds(value time.Duration) int {
+	seconds := value / time.Second
+	if value%time.Second > 0 {
+		seconds++
+	}
+	return int(seconds)
 }
 
 // stopGraceFromRaw reads the OCI-spec StopGracePeriodSeconds value.
@@ -355,10 +372,6 @@ func normalizeUser(user string) string {
 	}
 	if n, err := strconv.Atoi(user); err == nil && n == api.DefaultAppUID {
 		return api.DefaultAppUser
-	}
-	// Strip an optional group ("user:group") — guest-init only needs the user.
-	if u, _, ok := strings.Cut(user, ":"); ok {
-		return u
 	}
 	return user
 }

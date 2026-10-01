@@ -544,7 +544,8 @@ export class TriggersService {
     id: string,
     /**
      * Optional DLQ reason filter (poison_record / max_attempts /
-     * broker_error / rate_limited / payload_too_large).
+     * broker_error / rate_limited / payload_too_large /
+     * exclusive_operation_rejected).
      *
      */
     reason?: TriggerDeadLetterReason,

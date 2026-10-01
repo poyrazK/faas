@@ -5,13 +5,62 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/oci"
 )
 
 type doctorInspectorFunc func(context.Context, string, *oci.BasicAuth) (oci.ImageInspection, error)
+
+func TestDoctorImageVolumePathsAndUDPIngressGuidance(t *testing.T) {
+	inspector := doctorInspectorFunc(func(context.Context, string, *oci.BasicAuth) (oci.ImageInspection, error) {
+		return oci.ImageInspection{Reference: "example.com/app", Digest: "sha256:fixture", Config: oci.ImageConfig{OS: "linux", Architecture: "amd64", Cmd: []string{"/server"}, Volumes: map[string]struct{}{"/var/data": {}, "/cache": {}}, ExposedPorts: map[string]struct{}{"5353/udp": {}}}}, nil
+	})
+	report := runDoctorImageChecks(t.Context(), "example.com/app", nil, inspector)
+	encoded, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire struct {
+		Image struct {
+			VolumePaths []string `json:"volume_paths"`
+		} `json:"image"`
+	}
+	if err := json.Unmarshal(encoded, &wire); err != nil || len(wire.Image.VolumePaths) != 2 || wire.Image.VolumePaths[0] != "/cache" || wire.Image.VolumePaths[1] != "/var/data" {
+		t.Fatalf("volume projection=%+v err=%v", wire, err)
+	}
+	var human bytes.Buffer
+	renderDoctorImage(&human, report.Image)
+	if !strings.Contains(human.String(), `declared volumes: ["/cache" "/var/data"]`) || !strings.Contains(human.String(), "durable storage is not provisioned") {
+		t.Fatalf("missing storage boundary in human output: %s", &human)
+	}
+	found := false
+	volumeFinding := false
+	for _, check := range report.Checks {
+		if check.Name == "volumes" {
+			volumeFinding = true
+			if check.Status != "warn" || !strings.Contains(check.Hint, "cold fallback") || !strings.Contains(check.Hint, "node failure") || !strings.Contains(check.Fix, "external database") {
+				t.Fatalf("missing durability boundary: %+v", check)
+			}
+		}
+		if check.Name == "listener" {
+			found = true
+			if check.Status != "warn" || !strings.Contains(check.Fix, "app-owned UDP listeners") || !strings.Contains(check.Fix, "source CIDRs") || strings.Contains(check.Hint, "do not provide public ingress") {
+				t.Fatalf("stale UDP guidance: %+v", check)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("missing UDP-only listener finding")
+	}
+	if !volumeFinding {
+		t.Fatal("missing volume durability finding")
+	}
+}
 
 func (f doctorInspectorFunc) InspectImage(ctx context.Context, ref string, auth *oci.BasicAuth) (oci.ImageInspection, error) {
 	return f(ctx, ref, auth)
@@ -27,6 +76,7 @@ func TestDoctorImageFindings(t *testing.T) {
 		{"arm", "example.com/app", func(c *oci.ImageConfig) { c.Architecture = "arm64" }, true, false},
 		{"windows", "example.com/app", func(c *oci.ImageConfig) { c.OS = "windows" }, true, false},
 		{"unknown platform", "example.com/app", func(c *oci.ImageConfig) { c.OS = "" }, true, false},
+		{"invalid group", "example.com/app", func(c *oci.ImageConfig) { c.User = "1001:" }, true, false},
 		{"missing command", "example.com/app", func(c *oci.ImageConfig) { c.Cmd = nil }, true, false},
 		{"stateful", "postgres:16", func(c *oci.ImageConfig) {}, true, false},
 		{"volume", "example.com/app", func(c *oci.ImageConfig) { c.Volumes = map[string]struct{}{"/data": {}} }, false, true},
@@ -110,7 +160,7 @@ func TestDoctorImageCommand(t *testing.T) {
 			if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 				t.Fatalf("invalid JSON: %v: %s", err, out.String())
 			}
-			if len(report.Image.EffectiveArgv) != 2 || report.Image.User != "1000" {
+			if len(report.Image.EffectiveArgv) != 2 || report.Image.User != "1000:1000" {
 				t.Fatalf("incorrect runtime projection: %+v", report.Image)
 			}
 			if strings.Contains(out.String()+stderr.String(), "secret-token") {
@@ -163,5 +213,101 @@ func TestDoctorImagePlatformResolutionReport(t *testing.T) {
 	finding := doctorImageAccessError(&oci.PlatformSelectionError{Reason: "no compatible image", Available: []string{"linux/arm64"}})
 	if finding.Status != "error" || !strings.Contains(finding.Hint, "linux/arm64") || !strings.Contains(finding.Fix, "Linux/amd64") {
 		t.Fatalf("missing actionable platform diagnostic: %+v", finding)
+	}
+}
+
+func TestDoctorImageListenerInference(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		ports  map[string]struct{}
+		port   int
+		status string
+	}{
+		{"implicit default", nil, api.DefaultAppPort, "ok"},
+		{"single TCP", map[string]struct{}{"8787/tcp": {}}, 8787, "ok"},
+		{"TCP and UDP", map[string]struct{}{"8787/tcp": {}, "53/udp": {}}, 8787, "ok"},
+		{"ambiguous TCP", map[string]struct{}{"8787/tcp": {}, "9090/tcp": {}}, api.DefaultAppPort, "warn"},
+		{"UDP only", map[string]struct{}{"53/udp": {}}, api.DefaultAppPort, "warn"},
+		{"ignored malformed port", map[string]struct{}{"invalid/tcp": {}}, api.DefaultAppPort, "ok"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := oci.ImageConfig{OS: "linux", Architecture: "amd64", Cmd: []string{"/app/server"}, ExposedPorts: tc.ports}
+			inspector := doctorInspectorFunc(func(context.Context, string, *oci.BasicAuth) (oci.ImageInspection, error) {
+				return oci.ImageInspection{Reference: "example.com/app", Config: cfg}, nil
+			})
+			report := runDoctorImageChecks(context.Background(), "example.com/app", nil, inspector)
+			manifest, err := oci.ManifestFromConfig(oci.Config{Cmd: cfg.Cmd, ExposedPorts: cfg.ExposedPorts})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if report.Image.ServingPort != tc.port || report.Image.ServingPort != manifest.EffectivePort() {
+				t.Fatalf("doctor port %d, want %d; deployment port %d", report.Image.ServingPort, tc.port, manifest.EffectivePort())
+			}
+			found := false
+			for _, check := range report.Checks {
+				if check.Name == "listener" {
+					found = true
+					if check.Status != tc.status {
+						t.Fatalf("listener: %+v", check)
+					}
+				}
+			}
+			if !found {
+				t.Fatal("missing listener diagnostic")
+			}
+			body, err := json.Marshal(report)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(body), `"serving_port":`) {
+				t.Fatal("missing JSON serving port")
+			}
+		})
+	}
+}
+
+func TestDoctorImageRejectsExcessListeners(t *testing.T) {
+	ports := make(map[string]struct{})
+	for i := 0; i <= api.WorkloadPortCapMax; i++ {
+		ports[fmt.Sprintf("%d/tcp", 8000+i)] = struct{}{}
+	}
+	cfg := oci.ImageConfig{Cmd: []string{"/app/server"}, ExposedPorts: ports}
+	if check := doctorImageContractCheck(cfg); check.Status != "error" || check.Code != api.CodeImageManifestInvalid {
+		t.Fatalf("invalid listener contract accepted: %+v", check)
+	}
+	if check := doctorImageListenerCheck(cfg); check.Status != "error" {
+		t.Fatalf("missing listener limit diagnostic: %+v", check)
+	}
+}
+
+func TestDoctorImageExactHealthcheckTiming(t *testing.T) {
+	report := runDoctorImageChecks(context.Background(), "fixture", nil, doctorInspectorFunc(func(context.Context, string, *oci.BasicAuth) (oci.ImageInspection, error) {
+		return oci.ImageInspection{Reference: "fixture", Digest: "sha256:fixture", Config: oci.ImageConfig{
+			OS: "linux", Architecture: "amd64", Entrypoint: []string{"/server"},
+			Healthcheck: &oci.ImageHealthcheck{Test: []string{"CMD", "/probe"}, Retries: 2,
+				ImageTiming: &api.OCIHealthcheckTiming{IntervalNS: int64(250 * time.Millisecond), TimeoutNS: int64(1500 * time.Millisecond), StartIntervalNS: int64(100 * time.Millisecond)}},
+		}}, nil
+	}))
+	encoded, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded doctorReport
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Image == nil || decoded.Image.Healthcheck == nil || decoded.Image.Healthcheck.ImageTiming == nil {
+		t.Fatalf("JSON report dropped exact timing: %s", encoded)
+	}
+	var out bytes.Buffer
+	renderDoctorImage(&out, decoded.Image)
+	for _, want := range []string{"interval: 250ms", "timeout: 1.5s", "startup grace: 0s", "startup interval: 100ms", "retries: 2"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("missing %q in %s", want, out.String())
+		}
+	}
+	invalid := doctorImageHealthcheck(&oci.ImageHealthcheck{Test: []string{"CMD", "/probe"}, ImageTiming: &api.OCIHealthcheckTiming{TimeoutNS: 3}})
+	if invalid.Status != "warn" {
+		t.Fatalf("invalid exact timing accepted: %+v", invalid)
 	}
 }

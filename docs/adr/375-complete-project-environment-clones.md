@@ -2535,3 +2535,67 @@ environment materialization. Independent SQLC generation matches and whitespace
 checks pass. These focused control-plane/adapter contracts do not establish
 cross-provider checkpoint consistency, real-provider acceptance, a complete
 state/repository test run, lint, or native KVM acceptance.
+
+
+### Upstream reconciliation (2026-10-02)
+
+The stage implementation is reconciled with main through `72893dc28`. The
+merged migration set was applied to a fresh local PostgreSQL 16 database;
+`schema.sql` was regenerated from that database and SQLC regenerated from the
+combined named queries. This preserves the runtime configuration proofs,
+materialization receipts, environment-owned queue/work admissions, and atomic
+PostgreSQL restore receipts alongside upstream tenant, scheduling, exclusive
+operation, service-capacity, development-bridge, and Runs changes.
+
+The upstream shared async-route enqueue helper now owns stage selection as well
+as trusted platform-tenant identity. Idempotency receipts are distinct for each
+stage/customer combination; committed production receipt IDs retain their
+original encoding. The helper uses the selected deployment's frozen retry
+settings and rejects a receipt from another environment or customer.
+
+Environment host visibility is checked after loading the pinned workload
+settings. A production visibility edit cannot hide or expose a stage. Private
+stage hosts still require the development bridge's verified scope. The new
+`platform_tenant_required` app setting is copied into workload settings,
+deployment pins, production projection, promotion, and rollback. False is
+omitted from the canonical settings encoding to preserve preexisting immutable
+configuration hashes; a true value is explicitly captured.
+
+Both SQLC and raw invocation readers retain platform-tenant identity, occurrence
+ID, first-start deadline, failure rules, work decision, and outcome code. Invalid
+JSON is returned as an error before claims or delivery receipts commit. These
+fields must reach the scheduler and queue consumers without dropping the
+admitted customer identity or the scheduled work's retry decision.
+
+The schema inventory now names 323 base tables, including 23 new upstream table
+boundaries. Feature flags, exclusive policies and trigger bindings, UDP listener
+configuration, issue alert policies, and ingest credentials retain explicit
+`isolated_strategy_unavailable` blockers. Knowing a table's schema is not
+proof that its rows have an isolated capture/activation/promotion strategy.
+
+Complete admission and publication remain closed. This integration does not
+establish a coordinated application/database/object-storage checkpoint, provider
+configuration independence, full row coverage, compensation, or native VM
+acceptance.
+
+Verification for this merge used a task-owned local PostgreSQL instance:
+
+- The migrated-schema/configuration/promotion/rollback contract set passed
+  (`pkg/state`, 6.632 s).
+- The final tenant/scheduled-work metadata, environment queue delivery,
+  service-capacity, schema coverage, and workload contract set passed
+  (`pkg/state`, 71.943 s).
+- Clone coordinator, materialization/credential proof, app environment, tenant,
+  and message/flag-context regressions passed (`cmd/apid`, 16.693 s).
+- Environment/tenant/async-route regressions passed (`cmd/gatewayd-internal`,
+  0.948 s; shared `pkg/gateway` regressions, 0.804 s).
+- CLI environment/tenant/clone regressions passed (`cmd/gregale`, 0.875 s).
+- Selected environment/clone/runtime-config/exclusive-operation regressions
+  passed (`cmd/schedd`, 0.822 s; `cmd/vmmd`, 0.820 s).
+- Complete local managed-PostgreSQL and Neon package suites passed
+  (29.270 s and 0.829 s). Real-provider tests were disabled.
+- Independent SQLC regeneration reproduced the committed generated sources;
+  whitespace/conflict-marker checks passed.
+
+These are local contracts and mocked provider tests, not native x86 Linux KVM,
+`test-metal`/`leakcheck`, or real PostgreSQL/object-storage provider acceptance.

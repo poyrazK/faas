@@ -22,6 +22,9 @@ func (s *server) applyInvoiceCredits(ctx context.Context, provider string, acct 
 	if err != nil {
 		return fmt.Errorf("load invoice for credits: %w", err)
 	}
+	if inv.Plan == state.InvoicePlanUnknown {
+		return nil
+	}
 	_, _, err = s.consumeAndRefundInvoiceCredits(ctx, inv, "apid-webhook", "automatic invoice credit")
 	return err
 }
@@ -32,6 +35,9 @@ func (s *server) applyInvoiceCredits(ctx context.Context, provider string, acct 
 // money twice. The provider's idempotency contract covers the external call,
 // and invoice_refunds covers the local cumulative projection.
 func (s *server) consumeAndRefundInvoiceCredits(ctx context.Context, inv state.Invoice, actor, reason string) (state.ConsumeAccountCreditResult, state.Invoice, error) {
+	if inv.Plan == state.InvoicePlanUnknown {
+		return state.ConsumeAccountCreditResult{}, inv, billing.ErrInvoiceHistoricalPlanUnknown
+	}
 	provider := providerName(s.billingProvider)
 	if s.billingProvider == nil || !s.billingProvider.Capabilities().Has(billing.CapRefund) {
 		return state.ConsumeAccountCreditResult{}, inv, fmt.Errorf("billing credits cannot be applied: provider %q has no refund capability", provider)

@@ -74,6 +74,19 @@ type LocalPathResolver interface {
 	LocalPath(key string) (path string, ok bool, err error)
 }
 
+// LocalFileLinker is an optional capability of a Get reader backed by an
+// immutable local file. LinkTo creates a new hardlink to the exact file opened
+// by that reader, without replacing an existing destination or consuming the
+// stream. The caller owns the link and must remove it after use; it survives
+// closing the reader, cache eviction and replacement of the storage key.
+// On failure the destination is absent (or unchanged if it already existed),
+// and the reader remains usable for the ordinary streaming copy fallback.
+// Callers must never write through the link: writable VM drives still require
+// a private copy or CoW clone. Cross-filesystem links may fail normally.
+type LocalFileLinker interface {
+	LinkTo(path string) error
+}
+
 // ExistenceChecker is an optional capability for backends that can answer
 // whether a key exists without transferring its body. Request-path callers
 // (for example apid's rollback precheck) use it to fail fast on a missing

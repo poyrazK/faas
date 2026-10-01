@@ -15,7 +15,6 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -24,15 +23,17 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/chaos"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"gopkg.in/yaml.v3"
 )
 
-// Scenario files keep application assertions in the customer's own test
-// command. Gregale owns the expiring environment and lifecycle evidence.
+// Scenario files may declare HTTP checks or run application-owned commands.
+// Gregale owns the expiring environment and lifecycle evidence.
 type testManifest struct {
 	Version   int                     `yaml:"version"`
 	Scenarios map[string]testScenario `yaml:"scenarios"`
+	Suites    map[string]testSuite    `yaml:"suites,omitempty"`
 }
 
 type testScenario struct {
@@ -45,12 +46,17 @@ type testScenario struct {
 	Services         map[string]testService `yaml:"services"`
 	Trigger          []string               `yaml:"trigger"`
 	Command          []string               `yaml:"command"`
+	Requests         []testHTTPRequest      `yaml:"requests"`
+	Checks           []testHTTPRequest      `yaml:"checks"`
 	Setup            [][]string             `yaml:"setup"`
 	Cleanup          [][]string             `yaml:"cleanup"`
 	Postgres         bool                   `yaml:"postgres"`
 	Buckets          []testBucket           `yaml:"buckets"`
 	WaitFor          testWaitFor            `yaml:"wait_for"`
 	Timeout          string                 `yaml:"timeout"`
+	Load             *testLoadSpec          `yaml:"load"`
+	Local            *testLocalAppSpec      `yaml:"local"`
+	Chaos            *testChaosSpec         `yaml:"chaos,omitempty"`
 }
 
 type testService struct {
@@ -162,9 +168,11 @@ type testServiceHotEvidence struct {
 }
 
 type testRunReceipt struct {
+	Suite        string                             `json:"suite,omitempty"`
 	Scenario     string                             `json:"scenario"`
 	Profile      string                             `json:"profile"`
 	Engine       string                             `json:"engine"`
+	Case         string                             `json:"case,omitempty"`
 	Attempt      int                                `json:"attempt"`
 	StartedAt    time.Time                          `json:"started_at"`
 	FinishedAt   time.Time                          `json:"finished_at"`
@@ -178,6 +186,7 @@ type testRunReceipt struct {
 	ServiceWake  map[string]testServiceWakeEvidence `json:"service_wake,omitempty"`
 	ServiceHot   map[string]testServiceHotEvidence  `json:"service_hot,omitempty"`
 	Status       string                             `json:"status"`
+	SkipReason   string                             `json:"skip_reason,omitempty"`
 	Error        string                             `json:"error,omitempty"`
 	CleanupError string                             `json:"cleanup_error,omitempty"`
 	Buckets      []string                           `json:"buckets,omitempty"`
@@ -187,26 +196,102 @@ type testRunReceipt struct {
 	Deliveries   []testDeliveryEvidence             `json:"deliveries,omitempty"`
 	QueueIdle    bool                               `json:"queue_idle,omitempty"`
 	Diagnostics  map[string]testWorkloadDiagnostics `json:"diagnostics,omitempty"`
+	Requests     []testHTTPRequestEvidence          `json:"requests,omitempty"`
+	Load         *testLoadEvidence                  `json:"load,omitempty"`
+	LocalApp     *testLocalAppEvidence              `json:"local_app,omitempty"`
+	Chaos        *testChaosEvidence                 `json:"chaos,omitempty"`
+	Baseline     *testBaselineEvidence              `json:"baseline,omitempty"`
+}
+
+type testChaosEvidence struct {
+	ExpiresAt      time.Time    `json:"expires_at"`
+	RulesInstalled int          `json:"rules_installed"`
+	Rules          []chaos.Rule `json:"rules"`
 }
 
 func cmdTest(args []string) int {
+	return cmdTestWithChaos(args, nil)
+}
+
+func cmdTestWithChaos(args []string, chaosOverride *testChaosSpec) int {
+	if len(args) > 0 && args[0] == "init" {
+		if chaosOverride != nil {
+			return printErr("Invalid chaos command", errors.New("chaos injection requires a declared scenario run"))
+		}
+		return cmdTestInit(args[1:])
+	}
+	if len(args) > 0 && args[0] == "import" {
+		if chaosOverride != nil {
+			return printErr("Invalid chaos command", errors.New("chaos injection requires a declared scenario run"))
+		}
+		return cmdTestImport(args[1:])
+	}
+	if len(args) > 0 && args[0] == "compare" {
+		if chaosOverride != nil {
+			return printErr("Invalid chaos command", errors.New("chaos injection requires a declared scenario run"))
+		}
+		return cmdTestCompare(args[1:])
+	}
+	if len(args) > 0 && args[0] == "ci" {
+		if chaosOverride != nil {
+			return printErr("Invalid chaos command", errors.New("chaos injection requires a declared scenario run"))
+		}
+		return cmdTestCI(args[1:])
+	}
 	fs := newFlagSet("test", flag.ContinueOnError)
 	scenarioName := fs.String("scenario", "", "scenario name from the manifest")
+	suiteName := fs.String("suite", "", "named suite from the manifest (runs members in declaration order)")
+	failFast := fs.Bool("fail-fast", false, "stop after the first failed run and its cleanup")
 	validateOnly := fs.Bool("validate", false, "validate scenario sources without platform access")
 	preflightOnly := fs.Bool("preflight", false, "check account capacity before provisioning")
-	engine := fs.String("engine", "real-vm", "real-vm or simulated")
+	engine := fs.String("engine", "real-vm", "real-vm, local, or simulated")
+	baseURL := fs.String("base-url", "", "HTTP loopback origin (optional with local.command)")
+	dataPath := fs.String("data", "", "JSON or CSV case data for the local engine")
+	load := fs.Bool("load", false, "run native HTTP journeys concurrently with the local engine")
+	vus := fs.Int("vus", 0, "concurrent users or arrival-rate concurrency cap (1..50, default 1)")
+	rate := fs.Int("rate", 0, "target journeys per second with --load and duration (1..1000)")
+	iterations := fs.Int("iterations", 0, "total journeys for --load (1..10000, default 100)")
+	duration := fs.String("duration", "", "schedule journeys for this duration with --load (1s..5m)")
+	pacing := fs.String("pacing", "", "pause between each user's load journeys (0s..1m)")
+	progress := fs.Bool("progress", false, "print live load progress to stderr")
+	baselinePath := fs.String("baseline", "", "compare local load with a saved successful JSON report")
 	profile := fs.String("profile", "all", "warm, cold, restored, or all")
-	repeat := fs.Int("repeat", 1, "independent runs per selected profile (1..20)")
+	repeat := fs.Int("repeat", 1, "runs per lifecycle profile or local case (1..20)")
 	maxWorkloadMinutes := fs.Int("max-workload-minutes", 0, "maximum estimated VM workload-minutes for this command (0 disables guard)")
 	manifestPath := fs.String("manifest", "gregale-test.yaml", "scenario manifest path")
 	reportPath := fs.String("report", "", "write a JSON report to this path")
 	junitPath := fs.String("junit", "", "write a JUnit XML report to this path")
+	htmlPath := fs.String("html", "", "write a standalone HTML report to this path")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) || fs.NArg() != 0 {
-		PrintUsage(osStderr, "usage: gregale test [--validate|--preflight] [--scenario NAME] [--engine real-vm|simulated] [--profile warm|cold|restored|all] [--repeat N] [--max-workload-minutes N] [--manifest PATH] [--report PATH] [--junit PATH]", "test")
+		PrintUsage(osStderr, "usage: gregale test [--validate|--preflight] [--scenario NAME|--suite NAME] [--fail-fast] [--engine real-vm|local|simulated] [--base-url URL] [--data PATH] [--load [--vus N] [--iterations N|--duration D [--rate N]] [--pacing D] [--progress] [--baseline PATH]] [--profile warm|cold|restored|all] [--repeat N] [--max-workload-minutes N] [--manifest PATH] [--report PATH] [--junit PATH] [--html PATH]", "test")
 		return 1
+	}
+	if err := validateDistinctTestReportPaths(*reportPath, *junitPath, *htmlPath); err != nil {
+		return printErr("Invalid test report paths", err)
+	}
+	loadOverrides := testLoadOverrides{VUs: *vus, Iterations: *iterations, Rate: *rate, Duration: *duration, Pacing: *pacing}
+	fs.Visit(func(selected *flag.Flag) {
+		switch selected.Name {
+		case "vus":
+			loadOverrides.VUsSet = true
+		case "iterations":
+			loadOverrides.IterationsSet = true
+		case "rate":
+			loadOverrides.RateSet = true
+		case "duration":
+			loadOverrides.DurationSet = true
+		case "pacing":
+			loadOverrides.PacingSet = true
+		}
+	})
+	if !*load && (loadOverrides.VUsSet || loadOverrides.IterationsSet || loadOverrides.RateSet || loadOverrides.DurationSet || loadOverrides.PacingSet || *progress) {
+		return printErr("Invalid load options", errors.New("--vus, --iterations, --rate, --duration, --pacing, and --progress require --load"))
+	}
+	if *baselinePath != "" && (!*load || *validateOnly || *preflightOnly) {
+		return printErr("Invalid baseline options", errors.New("--baseline requires --load and test execution"))
 	}
 	if *repeat < 1 || *repeat > 20 {
 		return printErr("Invalid repeat count", errors.New("--repeat must be between 1 and 20"))
@@ -214,11 +299,42 @@ func cmdTest(args []string) int {
 	if *maxWorkloadMinutes < 0 {
 		return printErr("Invalid workload-minute limit", errors.New("--max-workload-minutes must be zero or greater"))
 	}
-	if (*validateOnly && *preflightOnly) || ((*validateOnly || *preflightOnly) && (*reportPath != "" || *junitPath != "")) {
+	if (*validateOnly && *preflightOnly) || ((*validateOnly || *preflightOnly) && (*reportPath != "" || *junitPath != "" || *htmlPath != "")) {
 		return printErr("Invalid test options", errors.New("validation and preflight do not run scenarios or write reports"))
 	}
-	if *scenarioName == "" && !*validateOnly {
-		return printErr("Scenario required", errors.New("pass --scenario NAME"))
+	if *scenarioName != "" && *suiteName != "" {
+		return printErr("Invalid test selection", errors.New("--scenario and --suite are mutually exclusive"))
+	}
+	if *scenarioName == "" && *suiteName == "" && !*validateOnly {
+		return printErr("Scenario required", errors.New("pass --scenario NAME or --suite NAME"))
+	}
+	if *failFast && (*validateOnly || *preflightOnly) {
+		return printErr("Invalid test options", errors.New("--fail-fast applies only to test execution"))
+	}
+	if *suiteName != "" {
+		if chaosOverride != nil {
+			return printErr("Invalid chaos selection", errors.New("chaos injection requires --scenario, not --suite"))
+		}
+		if *dataPath != "" {
+			return printErr("Invalid suite data", errors.New("declare data on suite members instead of using --data with --suite"))
+		}
+		options := testSuiteOptions{
+			Engine: *engine, Profile: *profile, BaseURL: *baseURL, Repeat: *repeat,
+			Load: *load, LoadOverrides: loadOverrides, Progress: *progress,
+			BaselinePath:       *baselinePath,
+			MaxWorkloadMinutes: *maxWorkloadMinutes, Validate: *validateOnly, Preflight: *preflightOnly,
+		}
+		fs.Visit(func(selected *flag.Flag) {
+			options.EngineSet = options.EngineSet || selected.Name == "engine"
+			options.ProfileSet = options.ProfileSet || selected.Name == "profile"
+		})
+		return cmdTestSuite(*manifestPath, *suiteName, options, *failFast, *reportPath, *junitPath, *htmlPath)
+	}
+	if *load && *engine != "local" {
+		return printErr("Invalid load engine", errors.New("--load currently requires --engine local"))
+	}
+	if *engine != "local" && (*baseURL != "" || *dataPath != "") {
+		return printErr("Invalid local test options", errors.New("--base-url and --data apply only to --engine local"))
 	}
 	var profiles []string
 	switch *engine {
@@ -228,21 +344,53 @@ func cmdTest(args []string) int {
 		if err != nil {
 			return printErr("Invalid profile", err)
 		}
-	case "simulated":
+	case "simulated", "local":
 		explicitProfile := false
 		fs.Visit(func(selected *flag.Flag) { explicitProfile = explicitProfile || selected.Name == "profile" })
 		if explicitProfile {
 			return printErr("Invalid profile", errors.New("--profile applies only to real-vm tests"))
 		}
+		if *engine == "local" {
+			if *maxWorkloadMinutes > 0 {
+				return printErr("Invalid local test options", errors.New("--max-workload-minutes applies only to real-vm tests"))
+			}
+			if *baseURL != "" {
+				resolvedURL, err := validateLocalTestURL(*baseURL)
+				if err != nil {
+					return printErr("Invalid local test URL", err)
+				}
+				*baseURL = resolvedURL
+			}
+		}
 	default:
-		return printErr("Invalid engine", fmt.Errorf("engine %q is invalid; use real-vm or simulated", *engine))
+		return printErr("Invalid engine", fmt.Errorf("engine %q is invalid; use real-vm, local, or simulated", *engine))
 	}
-	scenarios, sourceDir, err := readTestManifest(*manifestPath)
+	cases, dataFields, err := readTestData(*dataPath)
+	if err != nil {
+		return printErr("Invalid test case data", err)
+	}
+	scenarios, sourceDir, err := readTestManifestForScenario(*manifestPath, *scenarioName, dataFields)
 	if err != nil {
 		return printErr("Invalid scenario manifest", err)
 	}
+	loadConfigs := make(map[string]*testLoadConfig)
+	if *load {
+		for name, scenario := range scenarios {
+			if *scenarioName != "" && name != *scenarioName {
+				continue
+			}
+			cfg, err := resolveTestLoadConfig(scenario, loadOverrides)
+			if err != nil {
+				return printErr("Invalid load scenario", fmt.Errorf("scenario %q: %w", name, err))
+			}
+			if *progress {
+				cfg.Progress = func(update testLoadProgress) { printTestLoadProgress(osStderr, update) }
+			}
+			loadConfigs[name] = cfg
+		}
+	}
 	if *validateOnly {
-		return validateTestManifest(scenarios, sourceDir, *scenarioName)
+		return validateTestManifestForEngine(scenarios, sourceDir, *scenarioName, *engine)
 	}
 	if *preflightOnly {
 		if *engine != "real-vm" {
@@ -261,6 +409,18 @@ func cmdTest(args []string) int {
 	if !ok {
 		return printErr("Unknown scenario", fmt.Errorf("%q is not declared in %s", *scenarioName, *manifestPath))
 	}
+	if chaosOverride != nil {
+		if scenario.Chaos != nil {
+			return printErr("Invalid chaos plan", errors.New("scenario already declares chaos rules; remove the manifest plan before using gregale chaos inject"))
+		}
+		scenario.Chaos = chaosOverride
+	}
+	if err := validateScenarioChaos(scenario); err != nil {
+		return printErr("Invalid chaos plan", err)
+	}
+	if scenario.Chaos != nil && *engine != "real-vm" {
+		return printErr("Invalid chaos engine", errors.New("scenario chaos requires --engine real-vm; local and simulated runs do not apply proxy faults"))
+	}
 	if *engine == "real-vm" && *maxWorkloadMinutes > 0 {
 		estimate := estimateTestWorkloadMinutes(scenario, len(profiles)*(*repeat))
 		if estimate > *maxWorkloadMinutes {
@@ -276,73 +436,21 @@ func cmdTest(args []string) int {
 		if err != nil {
 			return printErr("Not logged in", err)
 		}
-	} else if len(scenario.Simulation) == 0 {
+	} else if *engine == "simulated" && len(scenario.Simulation) == 0 {
 		return printErr("No simulation", fmt.Errorf("scenario %q has no simulation command", *scenarioName))
-	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-	results := make([]testRunReceipt, 0, (len(profiles)+1)*(*repeat))
-	failed := false
-runLoop:
-	for attempt := 1; attempt <= *repeat; attempt++ {
-		if ctx.Err() != nil {
-			failed = true
-			break
+	} else if *engine == "local" {
+		if err := validateLocalTestScenario(scenario); err != nil {
+			return printErr("Invalid local scenario", err)
 		}
-		if *engine == "simulated" {
-			receipt := runSimulatedTest(ctx, *scenarioName, scenario, sourceDir)
-			receipt.Attempt = attempt
-			results = append(results, receipt)
-			failed = failed || receipt.Status != "passed"
-			if !jsonOutput {
-				_, _ = fmt.Fprintf(osStdout, "%s: %s (simulated, attempt %d/%d)\n", receipt.Scenario, receipt.Status, attempt, *repeat)
-				if receipt.Error != "" {
-					_, _ = fmt.Fprintln(osStderr, receipt.Error)
-				}
-			}
-			continue
-		}
-		for _, selected := range profiles {
-			if ctx.Err() != nil {
-				failed = true
-				break runLoop
-			}
-			receipt := runTestProfile(ctx, client, *scenarioName, scenario, sourceDir, selected)
-			receipt.Attempt = attempt
-			results = append(results, receipt)
-			if receipt.Status != "passed" {
-				failed = true
-			}
-			if !jsonOutput {
-				_, _ = fmt.Fprintf(osStdout, "%s: %s (%s, attempt %d/%d, app %s)\n", receipt.Scenario, receipt.Status, receipt.Profile, attempt, *repeat, receipt.AppSlug)
-				if receipt.Error != "" {
-					_, _ = fmt.Fprintln(osStderr, receipt.Error)
-				}
-				if receipt.CleanupError != "" {
-					_, _ = fmt.Fprintln(osStderr, receipt.CleanupError)
-				}
-			}
+		if *baseURL == "" && scenario.Local == nil {
+			return printErr("Invalid local test URL", errors.New("--engine local requires --base-url or a local.command in the scenario"))
 		}
 	}
-	if *reportPath != "" {
-		if err := writeTestReport(*reportPath, results); err != nil {
-			return printErr("Could not save test report", err)
-		}
+	prepared := testPreparedScenario{
+		Name: *scenarioName, Scenario: scenario, ManifestDir: sourceDir,
+		Engine: *engine, Profiles: profiles, Cases: cases, BaseURL: *baseURL, Load: loadConfigs[*scenarioName],
 	}
-	if *junitPath != "" {
-		if err := writeTestJUnit(*junitPath, results); err != nil {
-			return printErr("Could not save JUnit report", err)
-		}
-	}
-	if jsonOutput {
-		if err := writeJSON(results); err != nil {
-			return printErr("Could not print test report", err)
-		}
-	}
-	if failed {
-		return 1
-	}
-	return 0
+	return executePreparedTests(client, "", []testPreparedScenario{prepared}, *repeat, *failFast, *reportPath, *junitPath, *htmlPath, *baselinePath)
 }
 
 func selectedTestProfiles(profile string) ([]string, error) {
@@ -356,98 +464,134 @@ func selectedTestProfiles(profile string) ([]string, error) {
 	}
 }
 
-func readTestManifest(path string) (map[string]testScenario, string, error) {
+func readTestManifest(path string, dataFields ...string) (map[string]testScenario, string, error) {
+	return readTestManifestForScenario(path, "", dataFields)
+}
+
+func readTestManifestForScenario(path, selected string, dataFields []string) (map[string]testScenario, string, error) {
+	manifest, dir, err := readTestManifestDocument(path, func(name string, scenario testScenario) []string {
+		if selected != "" && name != selected {
+			return testHTTPDataFields(scenario)
+		}
+		return dataFields
+	})
+	return manifest.Scenarios, dir, err
+}
+
+func readTestManifestDocument(path string, fieldsForScenario func(string, testScenario) []string) (testManifest, string, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
-		return nil, "", err
+		return testManifest{}, "", err
 	}
 	data, err := os.ReadFile(absolute)
 	if err != nil {
-		return nil, "", err
+		return testManifest{}, "", err
 	}
 	if len(data) > 1024*1024 {
-		return nil, "", errors.New("scenario manifest exceeds 1 MiB")
+		return testManifest{}, "", errors.New("scenario manifest exceeds 1 MiB")
 	}
 	var manifest testManifest
 	decoder := yaml.NewDecoder(strings.NewReader(string(data)))
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&manifest); err != nil {
-		return nil, "", err
+		return testManifest{}, "", err
 	}
 	var extra any
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		return nil, "", errors.New("scenario manifest must contain exactly one YAML document")
+		return testManifest{}, "", errors.New("scenario manifest must contain exactly one YAML document")
 	}
 	if manifest.Version != 1 {
-		return nil, "", errors.New("scenario manifest version must be 1")
+		return testManifest{}, "", errors.New("scenario manifest version must be 1")
+	}
+	if err := validateTestSuites(manifest); err != nil {
+		return testManifest{}, "", err
 	}
 	for name, scenario := range manifest.Scenarios {
 		if len(name) < 3 || len(name) > 80 || !api.ValidAppSlug(scenario.Project) {
-			return nil, "", fmt.Errorf("scenario %q needs a valid project slug", name)
+			return testManifest{}, "", fmt.Errorf("scenario %q needs a valid project slug", name)
 		}
-		if len(scenario.Command) == 0 || scenario.Command[0] == "" {
-			return nil, "", fmt.Errorf("scenario %q needs a command", name)
+		if err := validateScenarioChaos(scenario); err != nil {
+			return testManifest{}, "", fmt.Errorf("scenario %q chaos: %w", name, err)
+		}
+		if len(scenario.Command) == 0 && len(scenario.Requests) == 0 && len(scenario.Checks) == 0 {
+			return testManifest{}, "", fmt.Errorf("scenario %q needs a command, requests, or checks", name)
+		}
+		if len(scenario.Command) > 0 && scenario.Command[0] == "" {
+			return testManifest{}, "", fmt.Errorf("scenario %q has an empty assertion command", name)
+		}
+		fields := fieldsForScenario(name, scenario)
+		if err := validateTestHTTPRequestsWithData(scenario, fields); err != nil {
+			return testManifest{}, "", fmt.Errorf("scenario %q: %w", name, err)
+		}
+		if err := validateTestLoadSpec(scenario.Load); err != nil {
+			return testManifest{}, "", fmt.Errorf("scenario %q: %w", name, err)
+		}
+		if err := validateTestLoadStepThresholds(scenario); err != nil {
+			return testManifest{}, "", fmt.Errorf("scenario %q: %w", name, err)
+		}
+		if err := validateTestLocalAppSpec(scenario.Local); err != nil {
+			return testManifest{}, "", fmt.Errorf("scenario %q: %w", name, err)
 		}
 		if len(scenario.Simulation) > 0 && scenario.Simulation[0] == "" {
-			return nil, "", fmt.Errorf("scenario %q has an empty simulation command", name)
+			return testManifest{}, "", fmt.Errorf("scenario %q has an empty simulation command", name)
 		}
 		if len(scenario.Services) > 15 {
-			return nil, "", fmt.Errorf("scenario %q may declare at most 15 services", name)
+			return testManifest{}, "", fmt.Errorf("scenario %q may declare at most 15 services", name)
 		}
 		for service, spec := range scenario.Services {
 			if !api.ValidAppSlug(service) ||
 				len(scenario.Project)+1+len(service) > 40 || service == scenario.Project || (spec.Source == "") == (spec.Fixture == "") {
-				return nil, "", fmt.Errorf("scenario %q service %q needs exactly one source or fixture", name, service)
+				return testManifest{}, "", fmt.Errorf("scenario %q service %q needs exactly one source or fixture", name, service)
 			}
 			if spec.Fixture != "" && spec.Fixture != testDeliverySinkFixture {
-				return nil, "", fmt.Errorf("scenario %q service %q has unknown fixture %q", name, service, spec.Fixture)
+				return testManifest{}, "", fmt.Errorf("scenario %q service %q has unknown fixture %q", name, service, spec.Fixture)
 			}
 			if spec.FailFirst < 0 || spec.FailFirst > 20 || (spec.FailFirst != 0 && spec.Fixture != testDeliverySinkFixture) {
-				return nil, "", fmt.Errorf("scenario %q service %q has invalid fail_first", name, service)
+				return testManifest{}, "", fmt.Errorf("scenario %q service %q has invalid fail_first", name, service)
 			}
 			if spec.Fixture == testDeliverySinkFixture {
 				if _, reserved := spec.Secrets["GREGALE_TEST_SINK_FAIL_FIRST"]; reserved {
-					return nil, "", fmt.Errorf("scenario %q service %q sets reserved fixture secret", name, service)
+					return testManifest{}, "", fmt.Errorf("scenario %q service %q sets reserved fixture secret", name, service)
 				}
 				if _, reserved := spec.Secrets["GREGALE_TEST_SINK_TOKEN"]; reserved {
-					return nil, "", fmt.Errorf("scenario %q service %q sets reserved fixture secret", name, service)
+					return testManifest{}, "", fmt.Errorf("scenario %q service %q sets reserved fixture secret", name, service)
 				}
 			}
 			if spec.Fixture != "" && len(spec.AsyncRoutes) > 0 {
-				return nil, "", fmt.Errorf("scenario %q service %q cannot add async routes to a built-in fixture", name, service)
+				return testManifest{}, "", fmt.Errorf("scenario %q service %q cannot add async routes to a built-in fixture", name, service)
 			}
 			seenRoutes := map[string]bool{}
 			for _, route := range spec.AsyncRoutes {
 				if !strings.HasPrefix(route.Path, "/") || len(route.Path) > 2048 || len(route.Methods) == 0 || len(route.Methods) > 4 {
-					return nil, "", fmt.Errorf("scenario %q service %q has an invalid async route", name, service)
+					return testManifest{}, "", fmt.Errorf("scenario %q service %q has an invalid async route", name, service)
 				}
 				for _, method := range route.Methods {
 					if method != http.MethodPost && method != http.MethodPut && method != http.MethodPatch && method != http.MethodDelete {
-						return nil, "", fmt.Errorf("scenario %q service %q async route has unsupported method %q", name, service, method)
+						return testManifest{}, "", fmt.Errorf("scenario %q service %q async route has unsupported method %q", name, service, method)
 					}
 					key := method + " " + route.Path
 					if seenRoutes[key] {
-						return nil, "", fmt.Errorf("scenario %q service %q has duplicate async route %s", name, service, key)
+						return testManifest{}, "", fmt.Errorf("scenario %q service %q has duplicate async route %s", name, service, key)
 					}
 					seenRoutes[key] = true
 				}
 				if route.RetryPolicy != nil {
 					if problem := route.RetryPolicy.dto().Validate(); problem != nil {
-						return nil, "", fmt.Errorf("scenario %q service %q async route retry policy: %s", name, service, problem.Detail)
+						return testManifest{}, "", fmt.Errorf("scenario %q service %q async route retry policy: %s", name, service, problem.Detail)
 					}
 				}
 			}
 		}
 		if len(scenario.Trigger) > 0 && scenario.Trigger[0] == "" {
-			return nil, "", fmt.Errorf("scenario %q has an empty trigger command", name)
+			return testManifest{}, "", fmt.Errorf("scenario %q has an empty trigger command", name)
 		}
-		if (scenario.WaitFor.QueueIdle || len(scenario.WaitFor.Invocations) > 0 || len(scenario.WaitFor.Objects) > 0 || len(scenario.WaitFor.Deliveries) > 0) && len(scenario.Trigger) == 0 {
-			return nil, "", fmt.Errorf("scenario %q needs trigger when wait_for is set", name)
+		if (scenario.WaitFor.QueueIdle || len(scenario.WaitFor.Invocations) > 0 || len(scenario.WaitFor.Objects) > 0 || len(scenario.WaitFor.Deliveries) > 0) && len(scenario.Trigger) == 0 && len(scenario.Requests) == 0 {
+			return testManifest{}, "", fmt.Errorf("scenario %q needs trigger or requests when wait_for is set", name)
 		}
 		seenTriggerKeys := map[string]bool{}
 		for _, invocation := range scenario.WaitFor.Invocations {
 			if _, ok := scenario.Services[invocation.Service]; !ok || !testTriggerKeyPattern.MatchString(invocation.TriggerKey) || seenTriggerKeys[invocation.TriggerKey] || invocation.MinAttempts < 0 {
-				return nil, "", fmt.Errorf("scenario %q has an invalid invocation wait condition", name)
+				return testManifest{}, "", fmt.Errorf("scenario %q has an invalid invocation wait condition", name)
 			}
 			seenTriggerKeys[invocation.TriggerKey] = true
 		}
@@ -455,73 +599,73 @@ func readTestManifest(path string) (map[string]testScenario, string, error) {
 			service, ok := scenario.Services[delivery.Service]
 			if !ok || service.Fixture != testDeliverySinkFixture || delivery.MinAttempts < 1 || delivery.MinAttempts > 100 ||
 				(delivery.LastStatus != 0 && (delivery.LastStatus < 200 || delivery.LastStatus > 599)) {
-				return nil, "", fmt.Errorf("scenario %q has an invalid delivery wait condition for service %q", name, delivery.Service)
+				return testManifest{}, "", fmt.Errorf("scenario %q has an invalid delivery wait condition for service %q", name, delivery.Service)
 			}
 		}
 		for _, step := range append(append([][]string{}, scenario.Setup...), scenario.Cleanup...) {
 			if len(step) == 0 || step[0] == "" {
-				return nil, "", fmt.Errorf("scenario %q has an empty setup or cleanup command", name)
+				return testManifest{}, "", fmt.Errorf("scenario %q has an empty setup or cleanup command", name)
 			}
 		}
 		if scenario.Timeout != "" {
 			d, parseErr := time.ParseDuration(scenario.Timeout)
 			if parseErr != nil || d < time.Second || d > time.Hour {
-				return nil, "", fmt.Errorf("scenario %q timeout must be a duration between 1 second and 1 hour", name)
+				return testManifest{}, "", fmt.Errorf("scenario %q timeout must be a duration between 1 second and 1 hour", name)
 			}
 		}
 		seenBuckets := map[string]bool{}
 		for _, bucket := range scenario.Buckets {
 			if bucket.Name != sanitizeSlug(bucket.Name) || len(bucket.Name) < 3 || len(bucket.Name) > 30 || seenBuckets[bucket.Name] {
-				return nil, "", fmt.Errorf("scenario %q has an invalid or duplicate bucket name %q", name, bucket.Name)
+				return testManifest{}, "", fmt.Errorf("scenario %q has an invalid or duplicate bucket name %q", name, bucket.Name)
 			}
 			seenBuckets[bucket.Name] = true
 			if bucket.Permission != "" && bucket.Permission != "read" && bucket.Permission != "write" && bucket.Permission != "read_write" {
-				return nil, "", fmt.Errorf("scenario %q bucket %q has invalid permission", name, bucket.Name)
+				return testManifest{}, "", fmt.Errorf("scenario %q bucket %q has invalid permission", name, bucket.Name)
 			}
 			if bucket.Service != "" && bucket.Service != scenario.Project {
 				if _, ok := scenario.Services[bucket.Service]; !ok {
-					return nil, "", fmt.Errorf("scenario %q bucket %q names unknown service %q", name, bucket.Name, bucket.Service)
+					return testManifest{}, "", fmt.Errorf("scenario %q bucket %q names unknown service %q", name, bucket.Name, bucket.Service)
 				}
 			}
 			if bucket.Prefix != "" && !testBucketPrefixPattern.MatchString(bucket.Prefix) {
-				return nil, "", fmt.Errorf("scenario %q bucket %q has invalid secret prefix", name, bucket.Name)
+				return testManifest{}, "", fmt.Errorf("scenario %q bucket %q has invalid secret prefix", name, bucket.Name)
 			}
 		}
 		for _, output := range scenario.WaitFor.Objects {
 			if !seenBuckets[output.Bucket] || output.MinCount < 1 || output.MinTotalBytes < 0 {
-				return nil, "", fmt.Errorf("scenario %q has an invalid object wait condition for bucket %q", name, output.Bucket)
+				return testManifest{}, "", fmt.Errorf("scenario %q has an invalid object wait condition for bucket %q", name, output.Bucket)
 			}
 		}
 		if err := validateTestSecrets(scenario.Project, scenario.Secrets, scenario); err != nil {
-			return nil, "", fmt.Errorf("scenario %q: %w", name, err)
+			return testManifest{}, "", fmt.Errorf("scenario %q: %w", name, err)
 		}
 		for service, spec := range scenario.Services {
 			if err := validateTestSecrets(service, spec.Secrets, scenario); err != nil {
-				return nil, "", fmt.Errorf("scenario %q: %w", name, err)
+				return testManifest{}, "", fmt.Errorf("scenario %q: %w", name, err)
 			}
 		}
 		if len(scenario.Consumers) > 16 {
-			return nil, "", fmt.Errorf("scenario %q may declare at most 16 consumers", name)
+			return testManifest{}, "", fmt.Errorf("scenario %q may declare at most 16 consumers", name)
 		}
 		if scenario.ConsumerAuthMode != "" && scenario.ConsumerAuthMode != api.ConsumerAuthModeOptional && scenario.ConsumerAuthMode != api.ConsumerAuthModeRequired {
-			return nil, "", fmt.Errorf("scenario %q consumer_auth_mode must be optional or required", name)
+			return testManifest{}, "", fmt.Errorf("scenario %q consumer_auth_mode must be optional or required", name)
 		}
 		seenConsumers := map[string]bool{}
 		for _, consumer := range scenario.Consumers {
 			if !api.ValidAppSlug(consumer.Name) || seenConsumers[consumer.Name] {
-				return nil, "", fmt.Errorf("scenario %q has invalid or duplicate consumer %q", name, consumer.Name)
+				return testManifest{}, "", fmt.Errorf("scenario %q has invalid or duplicate consumer %q", name, consumer.Name)
 			}
 			seenConsumers[consumer.Name] = true
 			seenScopes := map[string]bool{}
 			for _, scope := range consumer.Scopes {
 				if (scope != "read" && scope != "write" && scope != "admin") || seenScopes[scope] {
-					return nil, "", fmt.Errorf("scenario %q consumer %q has invalid or duplicate scope", name, consumer.Name)
+					return testManifest{}, "", fmt.Errorf("scenario %q consumer %q has invalid or duplicate scope", name, consumer.Name)
 				}
 				seenScopes[scope] = true
 			}
 		}
 	}
-	return manifest.Scenarios, filepath.Dir(absolute), nil
+	return manifest, filepath.Dir(absolute), nil
 }
 
 var testSecretReferencePattern = regexp.MustCompile(`\$\{([^{}]+)\}`)
@@ -1056,11 +1200,32 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 			serviceRequestBaseline[workload.name] = seenRequests
 		}
 	}
+	if scenario.Chaos != nil {
+		plan, err := scenario.Chaos.plan()
+		if err != nil {
+			receipt.Error = fmt.Sprintf("prepare chaos plan: %v", err)
+			return
+		}
+		advancePhase("inject_chaos")
+		installed, err := client.InjectScenarioTestChaos(ctx, receipt.RunID, api.InjectScenarioTestChaosRequest{
+			DurationMS: plan.DurationMS,
+			Rules:      scenarioChaosAPIRules(plan.Rules),
+		})
+		if err != nil {
+			receipt.Error = fmt.Sprintf("install scenario chaos plan: %v", err)
+			return
+		}
+		receipt.Chaos = &testChaosEvidence{
+			ExpiresAt: installed.ExpiresAt, RulesInstalled: installed.RulesInstalled,
+			Rules: append([]chaos.Rule(nil), plan.Rules...),
+		}
+	}
 	recorder.reset()
 	advancePhase("trigger")
-	if len(scenario.Trigger) > 0 {
+	captures := make(map[string]string)
+	if len(scenario.Trigger) > 0 || len(scenario.Requests) > 0 {
 		triggerOutputPath := ""
-		if len(scenario.WaitFor.Invocations) > 0 {
+		if len(scenario.Trigger) > 0 && len(scenario.WaitFor.Invocations) > 0 {
 			output, err := os.CreateTemp("", "gregale-test-trigger-*.json")
 			if err != nil {
 				receipt.Error = fmt.Sprintf("create trigger output: %v", err)
@@ -1071,27 +1236,46 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 			defer func() { _ = os.Remove(triggerOutputPath) }()
 			env = append(env, "GREGALE_TEST_TRIGGER_OUTPUT="+triggerOutputPath)
 		}
-		if err := runTestCommand(ctx, sourceDir, env, scenario.Trigger); err != nil {
-			receipt.Error = fmt.Sprintf("application trigger command: %v", err)
+		if len(scenario.Trigger) > 0 {
+			if err := runTestCommand(ctx, sourceDir, env, scenario.Trigger); err != nil {
+				receipt.Error = fmt.Sprintf("application trigger command: %v", err)
+				receipt.captureWakeEvidence(recorder)
+				return
+			}
+		}
+		var requestEvidence []testHTTPRequestEvidence
+		requestEvidence, err = runTestHTTPRequests(ctx, proxy.URL, receipt.RunID, consumerEnv, scenario.Requests, captures)
+		receipt.Requests = append(receipt.Requests, requestEvidence...)
+		if err != nil {
+			receipt.Error = fmt.Sprintf("application request: %v", err)
 			receipt.captureWakeEvidence(recorder)
 			return
 		}
 		advancePhase("completion")
+		triggerValues := make(map[string]string)
 		if triggerOutputPath != "" {
-			triggerValues, err := readTestTriggerOutput(triggerOutputPath)
+			triggerValues, err = readTestTriggerOutput(triggerOutputPath)
 			if err != nil {
 				receipt.Error = fmt.Sprintf("read application trigger output: %v", err)
 				receipt.captureWakeEvidence(recorder)
 				return
 			}
-			for _, condition := range scenario.WaitFor.Invocations {
-				evidence, err := waitForTestInvocation(ctx, client, condition, serviceAppIDs[condition.Service], triggerValues[condition.TriggerKey])
-				receipt.Invocations = append(receipt.Invocations, evidence)
-				if err != nil {
-					receipt.Error = fmt.Sprintf("wait for invocation from %s: %v", condition.Service, err)
-					receipt.captureWakeEvidence(recorder)
-					return
-				}
+		}
+		for key, value := range captures {
+			if _, exists := triggerValues[key]; exists {
+				receipt.Error = fmt.Sprintf("trigger output and HTTP capture both define %s", key)
+				receipt.captureWakeEvidence(recorder)
+				return
+			}
+			triggerValues[key] = value
+		}
+		for _, condition := range scenario.WaitFor.Invocations {
+			evidence, err := waitForTestInvocation(ctx, client, condition, serviceAppIDs[condition.Service], triggerValues[condition.TriggerKey])
+			receipt.Invocations = append(receipt.Invocations, evidence)
+			if err != nil {
+				receipt.Error = fmt.Sprintf("wait for invocation from %s: %v", condition.Service, err)
+				receipt.captureWakeEvidence(recorder)
+				return
 			}
 		}
 		slugs := make([]string, 0, len(workloads))
@@ -1120,8 +1304,14 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		}
 	}
 	advancePhase("assertions")
-	if err := runTestCommand(ctx, sourceDir, env, scenario.Command); err != nil {
-		receipt.Error = fmt.Sprintf("application assertion command: %v", err)
+	requestEvidence, err := runTestHTTPRequests(ctx, proxy.URL, receipt.RunID, consumerEnv, scenario.Checks, captures)
+	receipt.Requests = append(receipt.Requests, requestEvidence...)
+	if err != nil {
+		receipt.Error = fmt.Sprintf("application check: %v", err)
+	} else if len(scenario.Command) > 0 {
+		if err := runTestCommand(ctx, sourceDir, env, scenario.Command); err != nil {
+			receipt.Error = fmt.Sprintf("application assertion command: %v", err)
+		}
 	}
 	receipt.captureWakeEvidence(recorder)
 	advancePhase("lifecycle_evidence")

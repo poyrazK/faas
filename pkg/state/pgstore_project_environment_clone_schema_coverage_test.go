@@ -55,6 +55,12 @@ func TestPgCloneSchemaRegistryCoversMigratedApplicationTablesAndFailsBeforeReser
 		{Table: "app_webhooks", Code: "isolated_strategy_unavailable"},
 		{Table: "managed_realtime_channel_messages", Code: "isolated_data_strategy_unavailable"},
 		{Table: "runtime_config_entries", Code: "isolated_strategy_unavailable"},
+		{Table: "feature_flag_versions", Code: "isolated_strategy_unavailable"},
+		{Table: "exclusive_work_policies", Code: "isolated_strategy_unavailable"},
+		{Table: "exclusive_work_trigger_bindings", Code: "isolated_strategy_unavailable"},
+		{Table: "app_udp_listeners", Code: "isolated_strategy_unavailable"},
+		{Table: "app_issue_impact_alert_policies", Code: "isolated_strategy_unavailable"},
+		{Table: "issue_ingest_tokens", Code: "isolated_strategy_unavailable"},
 	} {
 		assertCloneCoverageBlocker(t, coverage, want)
 	}

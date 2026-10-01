@@ -316,6 +316,12 @@ type OpsMetrics struct {
 	executionQueueDepth      prometheus.Gauge
 	executionQueueOldestWait prometheus.Gauge
 	executionWorkers         prometheus.Gauge
+	// Managed exclusive operations use only closed source/outcome labels;
+	// no account, tenant, policy, key, or operation ID is exported.
+	exclusiveOperationAdmissions *prometheus.CounterVec
+	exclusiveOperationDispatches *prometheus.CounterVec
+	exclusiveOperationRenewals   *prometheus.CounterVec
+	exclusiveOperationDueRows    prometheus.Gauge
 	// wakeFailure (issue #1059 / ADR-127) — operator-facing wake
 	// failure-mode counter. Labelled by (box, reason). The closed
 	// reason vocabulary is
@@ -592,7 +598,8 @@ type OpsMetrics struct {
 	// the per-row observe until the tripwire fires would let the
 	// first four failures of every outage disappear from the
 	// dashboard.
-	appErrorsRecorded *prometheus.CounterVec
+	appErrorsRecorded   *prometheus.CounterVec
+	issueEventsRecorded *prometheus.CounterVec
 	// requestTelemetryRecorded (ADR-127 PR-B) — counter the
 	// apid gRPC handler (cmd/apid/grpc_server_request_telemetry.go)
 	// increments per outcome. outcome ∈ {inserted, rate_limited,
@@ -2094,6 +2101,38 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 			0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0,
 		},
 	}, []string{"op"})
+	var exclusiveOperationAdmissions, exclusiveOperationDispatches, exclusiveOperationRenewals *prometheus.CounterVec
+	var exclusiveOperationDueRows prometheus.Gauge
+	if prefix == "apid" || prefix == "schedd" {
+		exclusiveOperationAdmissions = prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: prefix + "_exclusive_operation_admissions_total",
+			Help: "Managed exclusive-operation admissions by trusted ingress and outcome. Labels are closed and contain no customer identity or business key.",
+		}, []string{"source", "outcome"})
+		exclusiveOperationDispatches = prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: prefix + "_exclusive_operation_dispatch_total",
+			Help: "Managed exclusive-operation worker terminal and recovery outcomes. Labels are closed and contain no customer identity or operation ID.",
+		}, []string{"outcome"})
+		exclusiveOperationRenewals = prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: prefix + "_exclusive_operation_lease_renewals_total",
+			Help: "Managed exclusive-operation lease renewal outcomes. Labels are closed and contain no ownership token.",
+		}, []string{"outcome"})
+		exclusiveOperationDueRows = prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: prefix + "_exclusive_operation_due_candidates",
+			Help: "Number of due managed exclusive operations returned by the most recent bounded scheduler scan.",
+		})
+		reg.MustRegister(exclusiveOperationAdmissions, exclusiveOperationDispatches, exclusiveOperationRenewals, exclusiveOperationDueRows)
+		for _, source := range []string{"manual", "cron", "inbound_webhook", "broker", "other"} {
+			for _, outcome := range []string{"accepted", "replayed", "joined", "rejected", "error"} {
+				exclusiveOperationAdmissions.WithLabelValues(source, outcome)
+			}
+		}
+		for _, outcome := range []string{"completed", "failed", "retry", "lost_owner"} {
+			exclusiveOperationDispatches.WithLabelValues(outcome)
+		}
+		for _, outcome := range []string{"renewed", "lost", "error"} {
+			exclusiveOperationRenewals.WithLabelValues(outcome)
+		}
+	}
 	watchdogKills := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_watchdog_kills_total",
 		Help: "Count of instances the §6.1 watchdog transitioned out of a stuck state, labelled by from→to state.",
@@ -4058,6 +4097,8 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Help: "Customer-facing automatic error grouping ingest outcomes (ADR-096), labelled by outcome ∈ {ok, redaction_failed, rate_limited, db_error}. `ok` is the §12 customer-error-ingest panel (rate over 5m). `redaction_failed` is the tripwire for pkg/redact panicking — MUST stay at 0. `rate_limited` is the LRU-cardinality backstop firing when an app exceeds CardinalityLimit fingerprints. `db_error` is the publisher's per-row drop signal — incremented for EVERY row of a failed flush batch (the batch is drained before flushBatch is called, so failures always lose data; per-row observe gives the §12 panel an accurate outage timeline rather than only the 5th-consecutive-failure tripwire). Single-registry: registered on every daemon; only gatewayd-internal + apid increment via ObserveAppErrorsRecorded.",
 	}, []string{"outcome"})
 	commonCollectors = append(commonCollectors, appErrorsRecorded)
+	issueEventsRecorded := prometheus.NewCounterVec(prometheus.CounterOpts{Name: prefix + "_issue_events_recorded_total", Help: "Gregale Issues accepted, duplicate, quota, rate, conflict, or persistence outcomes; no customer identifiers."}, []string{"outcome"})
+	commonCollectors = append(commonCollectors, issueEventsRecorded)
 	// ADR-127 PR-B: production debugger ingest outcomes.
 	// outcome ∈ {inserted, rate_limited, db_error}. `inserted`
 	// is the customer-telemetry-ingest panel; `rate_limited` is
@@ -5220,6 +5261,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		executionQueueDepth:                        executionQueueDepth,
 		executionQueueOldestWait:                   executionQueueOldestWait,
 		executionWorkers:                           executionWorkers,
+		exclusiveOperationAdmissions:               exclusiveOperationAdmissions,
+		exclusiveOperationDispatches:               exclusiveOperationDispatches,
+		exclusiveOperationRenewals:                 exclusiveOperationRenewals,
+		exclusiveOperationDueRows:                  exclusiveOperationDueRows,
 		wakeFailure:                                wakeFailure,
 		wakeLatency:                                wakeLatency,
 		boxLabels:                                  newBoxLabelSet(maxBoxLabelValues),
@@ -5240,6 +5285,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		cveCheckTotal:                              cveCheckTotal,
 		cvesOpenTotal:                              cvesOpenTotal,
 		appErrorsRecorded:                          appErrorsRecorded,
+		issueEventsRecorded:                        issueEventsRecorded,
 		appErrorsFingerprintCacheHits:              appErrorsFingerprintCacheHits,
 		appErrorsDedupeMerges:                      appErrorsDedupeMerges,
 		appErrorsFlushDuration:                     appErrorsFlushDuration,
@@ -5282,158 +5328,159 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		safedeployOrchestratorAbortedTotal:         safedeployOrchestratorAbortedTotal,
 		safedeployOrchestratorStuckDetectedTotal:   safedeployOrchestratorStuckDetectedTotal,
 		safedeployOrchestratorAuditEmitFailedTotal: safedeployOrchestratorAuditEmitFailedTotal,
-		safedeployOrchestratorStuckCheckMissingTimestamp:      safedeployOrchestratorStuckCheckMissingTimestamp,
-		safedeployOrchestratorAutoAbortedTotal:                safedeployOrchestratorAutoAbortedTotal,
-		safedeployOrchestratorAutoAbortFailedTotal:            safedeployOrchestratorAutoAbortFailedTotal,
-		deploymentAuditEmittedTotal:                           deploymentAuditEmittedTotal,
-		deploymentAuditGCFailedTotal:                          deploymentAuditGCFailedTotal,
-		safedeployInFlightRollouts:                            safedeployInFlightRollouts,
-		canaryStuckStepAlertFiredTotal:                        canaryStuckStepAlertFiredTotal,
-		safedeployAuditEmitFailingAlertFiredTotal:             safedeployAuditEmitFailingAlertFiredTotal,
-		deploymentAuditGCFailingAlertFiredTotal:               deploymentAuditGCFailingAlertFiredTotal,
-		canaryFleetInFlightHighAlertFiredTotal:                canaryFleetInFlightHighAlertFiredTotal,
-		alertDeliveryAttemptsTotal:                            alertDeliveryAttemptsTotal,
-		alertActionExecutedTotal:                              alertActionExecutedTotal,
-		paddleWebhookVerifyFailedTotal:                        paddleWebhookVerifyFailedTotal,
-		paddleWebhookReplaySuppressedTotal:                    paddleWebhookReplaySuppressedTotal,
-		alertEvaluatorEnabled:                                 alertEvaluatorEnabled,
-		meterdAccountSpendEur:                                 meterdAccountSpendEur,
-		meterdAPIReachable:                                    meterdAPIReachable,
-		apidDeploymentFailedTotal:                             apidDeploymentFailedTotal,
-		apidTenantSurfaceCertExpirySeconds:                    apidTenantSurfaceCertExpirySeconds,
+		safedeployOrchestratorStuckCheckMissingTimestamp: safedeployOrchestratorStuckCheckMissingTimestamp,
+		safedeployOrchestratorAutoAbortedTotal:           safedeployOrchestratorAutoAbortedTotal,
+		safedeployOrchestratorAutoAbortFailedTotal:       safedeployOrchestratorAutoAbortFailedTotal,
+		deploymentAuditEmittedTotal:                      deploymentAuditEmittedTotal,
+		deploymentAuditGCFailedTotal:                     deploymentAuditGCFailedTotal,
+		safedeployInFlightRollouts:                       safedeployInFlightRollouts,
+		canaryStuckStepAlertFiredTotal:                   canaryStuckStepAlertFiredTotal,
+		safedeployAuditEmitFailingAlertFiredTotal:        safedeployAuditEmitFailingAlertFiredTotal,
+		deploymentAuditGCFailingAlertFiredTotal:          deploymentAuditGCFailingAlertFiredTotal,
+		canaryFleetInFlightHighAlertFiredTotal:           canaryFleetInFlightHighAlertFiredTotal,
+		alertDeliveryAttemptsTotal:                       alertDeliveryAttemptsTotal,
+		alertActionExecutedTotal:                         alertActionExecutedTotal,
+		paddleWebhookVerifyFailedTotal:                   paddleWebhookVerifyFailedTotal,
+		paddleWebhookReplaySuppressedTotal:               paddleWebhookReplaySuppressedTotal,
+		alertEvaluatorEnabled:                            alertEvaluatorEnabled,
+		meterdAccountSpendEur:                            meterdAccountSpendEur,
+		meterdAPIReachable:                               meterdAPIReachable,
+		apidDeploymentFailedTotal:                        apidDeploymentFailedTotal,
+		apidTenantSurfaceCertExpirySeconds:               apidTenantSurfaceCertExpirySeconds,
+
 		apidTenantSurfaceCertExpiryRefresherWalkCompleteTotal: apidTenantSurfaceCertExpiryRefresherWalkCompleteTotal,
-		pgBackupLastPushed:                                    pgBackupLastPushed,
-		pgWalArchiveBytes:                                     pgWalArchiveBytes,
-		pgWalArchiveOldestAge:                                 pgWalArchiveOldestAge,
-		pgWalArchiveNewestAge:                                 pgWalArchiveNewestAge,
-		pgWalPruneLastSuccessful:                              pgWalPruneLastSuccessful,
-		ipLabels:                                              newIPLabelSet(maxIPLabelValues),
-		topTenantRPS:                                          topTenantRPS,
-		topAccounts:                                           newTopAccountSet(topAccountSetCap),
-		throttleSecondsTotal:                                  throttleSecondsTotal,
-		throttleRatio:                                         throttleRatio,
-		topApps:                                               newTopAppSet(topAppSetCap),
-		throttleSecondsLastSeen:                               newCPUThrottleLastSeen(),
-		cpuSecondsLast:                                        newCPUSecondsLastSeen(),
-		cronFireNowDispatchDur:                                cronFireNowDispatchDur,
-		stripePushDur:                                         stripePushDur,
-		paddlePushDur:                                         paddlePushDur,
-		polarPushDur:                                          polarPushDur,
-		buildDur:                                              buildDur,
-		buildQueueWait:                                        buildQueueWait,
-		buildCacheOutcome:                                     buildCacheOutcome,
-		builderWarmRestoreTotal:                               builderWarmRestoreTotal,
-		buildExportCleanupTotal:                               buildExportCleanupTotal,
-		buildExportCleanupErrors:                              buildExportCleanupErrors,
-		buildExportBytes:                                      buildExportBytes,
-		builderSliceOOMKills:                                  builderSliceOOMKills,
-		residentGBPerCustomer:                                 residentGBPerCustomer,
-		billingCapExceededTotal:                               billingCapExceededTotal,
-		meterdFloorAppliedTotal:                               meterdFloorAppliedTotal,
-		meteredMBSecondsTotal:                                 meteredMBSecondsTotal,
-		auditOrgEvent:                                         auditOrgEvent,
-		authzDenied:                                           authzDenied,
-		authzAllowed:                                          authzAllowed,
-		wakeIDV4Fallback:                                      wakeIDV4Fallback,
-		snapshotDiskDrift:                                     snapshotDiskDrift,
-		snapshotDiskDriftLastSuccess:                          snapshotDiskDriftLastSuccess,
-		snapshotDiskDriftDuration:                             snapshotDiskDriftDuration,
-		snapshotDiskDriftObjects:                              snapshotDiskDriftObjects,
-		snapshotDiskDriftFailures:                             snapshotDiskDriftFailures,
-		snapshotDiskDriftConsecutiveFailures:                  snapshotDiskDriftConsecutiveFailures,
-		capacitySignatureRejected:                             capacitySignatureRejected,
-		notificationPayloadRejected:                           notificationPayloadRejected,
-		imagedOCIPull:                                         imagedOCIPull,
-		imagedOCIBlobCacheHits:                                imagedOCIBlobCacheHits,
-		imagedOCIBlobCacheMisses:                              imagedOCIBlobCacheMisses,
-		imagedOCIBlobCacheEvictions:                           imagedOCIBlobCacheEvictions,
-		staleDeploymentOldestAge:                              staleDeploymentOldestAge,
-		staleDeploymentsReconciled:                            staleDeploymentsReconciled,
-		instanceCPUPct:                                        instanceCPUPct,
-		instanceRSSMB:                                         instanceRSSMB,
-		instanceInflightReqs:                                  instanceInflightReqs,
-		instanceCPUSecondsTotal:                               instanceCPUSecondsTotal,
-		instanceStatsCollectDur:                               instanceStatsCollectDur,
-		instanceStatsPartialErrors:                            instanceStatsPartialErrors,
-		sidecarRestartTotal:                                   sidecarRestartTotal,
-		sidecarHealthTransitionsTotal:                         sidecarHealthTransitionsTotal,
-		cpuStatsCollectDur:                                    cpuStatsCollectDurLocal,
-		scaleUpDecisions:                                      scaleUpDecisions,
-		scaleUpWinningSignal:                                  scaleUpWinningSignal,
-		scheduledFloorActive:                                  scheduledFloorActive,
-		appOwnershipChecks:                                    appOwnershipChecks,
-		scaleDownDecisions:                                    scaleDownDecisions,
-		floorReconcileDecisions:                               floorReconcileDecisions,
-		floorReconcileErrors:                                  floorReconcileErrors,
-		floorInstancesAdmitted:                                floorInstancesAdmitted,
-		scaleUpAdmitRPS:                                       scaleUpAdmitRPS,
-		sseClients:                                            sseClients,
-		egressDeny:                                            egressDeny,
-		egressDenied:                                          egressDenied,
-		egressNewDestinations:                                 egressNewDestinations,
-		egressAbuseRecycles:                                   egressAbuseRecycles,
-		accountAbuseHolds:                                     accountAbuseHolds,
-		dnsBlocked:                                            dnsBlocked,
-		abuseScanFindings:                                     abuseScanFindings,
-		egressFlowLogRows:                                     egressFlowLogRows,
-		ociEgressDeny:                                         ociEgressDeny,
-		ownershipClamp:                                        ownershipClamp,
-		layerEntrySkipped:                                     layerEntrySkipped,
-		passwdEntries:                                         passwdEntries,
-		provenanceWrites:                                      provenanceWrites,
-		imageScanVulns:                                        imageScanVulns,
-		deployScanDuration:                                    deployScanDuration,
-		deployStageDuration:                                   deployStageDuration,
-		apiHostingPhaseTotal:                                  apiHostingPhaseTotal,
-		apiHostingPhaseDuration:                               apiHostingPhaseDuration,
-		deployScanTotal:                                       deployScanTotal,
-		deployScanVulns:                                       deployScanVulns,
-		liveMigrationDecisions:                                liveMigrationDecisions,
-		rebalanceDecisions:                                    rebalanceDecisions,
-		migratingReconcileDecisions:                           migratingReconcileDecisions,
-		appAtCapacityTotal:                                    appAtCapacityTotal,
-		pressureReassignmentsTotal:                            pressureReassignmentsTotal,
-		overflowTargetSpillHitsTotal:                          overflowTargetSpillHitsTotal,
-		activePassiveFailoversTotal:                           activePassiveFailoversTotal,
-		standbyState:                                          standbyState,
-		standbyStateValue:                                     StandbyStateWarming, // mirrors the gauge.Set(StandbyStateWarming) above
-		deadNodeReconcileDecisions:                            deadNodeReconcileDecisions,
-		jobInstanceReconcileDecisions:                         jobInstanceReconcileDecisions,
-		recreateDecisions:                                     recreateDecisions,
-		snapshotBackoffStamp:                                  snapshotBackoffStamp,
-		snapshotBackoffGate:                                   snapshotBackoffGate,
-		registryCredentialMarkUsedFailures:                    registryCredentialMarkUsedFailures,
-		storageCacheStaleFallback:                             storageCacheStaleFallback,
-		apidLogsEmittedTotal:                                  apidLogsEmittedTotal,
-		apidLogsDroppedTotal:                                  apidLogsDroppedTotal,
-		egressSourceErrors:                                    egressSourceErrors,
-		oauthDisabledTotal:                                    oauthDisabledTotal,
-		advisoryBatchesEmittedTotal:                           advisoryBatchesEmittedTotal,
-		apidStatelessAdvisoryEventsTotal:                      apidStatelessAdvisoryEventsTotal,
-		apidGithubdBridgeEnqueuedTotal:                        apidGithubdBridgeEnqueuedTotal,
-		githubdPathFilterTotal:                                githubdPathFilterTotal,
-		githubdPushSkippedTotal:                               githubdPushSkippedTotal,
-		wakePhaseEmitted:                                      wakePhaseEmitted,
-		wakeIdentityInvalid:                                   wakeIdentityInvalid,
-		wakePhaseDur:                                          wakePhaseDur,
-		recoveryEventEmitted:                                  recoveryEventEmitted,
-		esmPollsTotal:                                         esmPollsTotal,
-		esmRecordsConsumedTotal:                               esmRecordsConsumedTotal,
-		esmLagSeconds:                                         esmLagSeconds,
-		esmRecordsOutcomeTotal:                                esmRecordsOutcomeTotal,
-		esmRecordProcessingSeconds:                            esmRecordProcessingSeconds,
-		esmConsumerLagMessages:                                esmConsumerLagMessages,
-		esmConsumerLagAgeSeconds:                              esmConsumerLagAgeSeconds,
-		dlqEventsTotal:                                        dlqEventsTotal,
-		dlqReplayedTotal:                                      dlqReplayedTotal,
-		dlqPurgedTotal:                                        dlqPurgedTotal,
-		dlqRetentionPurgedTotal:                               dlqRetentionPurgedTotal,
-		queue:                                                 queue,
-		delayedTasks:                                          delayedTasks,
-		auditLogWriteTotal:                                    auditLogWriteTotal,
-		auditLogWriteFailuresTotal:                            auditLogWriteFailuresTotal,
-		operatorActionTraceCompletenessRatio:                  operatorActionTraceCompletenessRatio,
-		operatorActionTraceCompletenessFirstTickCompleted:     operatorActionTraceCompletenessFirstTickCompleted,
+		pgBackupLastPushed:                   pgBackupLastPushed,
+		pgWalArchiveBytes:                    pgWalArchiveBytes,
+		pgWalArchiveOldestAge:                pgWalArchiveOldestAge,
+		pgWalArchiveNewestAge:                pgWalArchiveNewestAge,
+		pgWalPruneLastSuccessful:             pgWalPruneLastSuccessful,
+		ipLabels:                             newIPLabelSet(maxIPLabelValues),
+		topTenantRPS:                         topTenantRPS,
+		topAccounts:                          newTopAccountSet(topAccountSetCap),
+		throttleSecondsTotal:                 throttleSecondsTotal,
+		throttleRatio:                        throttleRatio,
+		topApps:                              newTopAppSet(topAppSetCap),
+		throttleSecondsLastSeen:              newCPUThrottleLastSeen(),
+		cpuSecondsLast:                       newCPUSecondsLastSeen(),
+		cronFireNowDispatchDur:               cronFireNowDispatchDur,
+		stripePushDur:                        stripePushDur,
+		paddlePushDur:                        paddlePushDur,
+		polarPushDur:                         polarPushDur,
+		buildDur:                             buildDur,
+		buildQueueWait:                       buildQueueWait,
+		buildCacheOutcome:                    buildCacheOutcome,
+		builderWarmRestoreTotal:              builderWarmRestoreTotal,
+		buildExportCleanupTotal:              buildExportCleanupTotal,
+		buildExportCleanupErrors:             buildExportCleanupErrors,
+		buildExportBytes:                     buildExportBytes,
+		builderSliceOOMKills:                 builderSliceOOMKills,
+		residentGBPerCustomer:                residentGBPerCustomer,
+		billingCapExceededTotal:              billingCapExceededTotal,
+		meterdFloorAppliedTotal:              meterdFloorAppliedTotal,
+		meteredMBSecondsTotal:                meteredMBSecondsTotal,
+		auditOrgEvent:                        auditOrgEvent,
+		authzDenied:                          authzDenied,
+		authzAllowed:                         authzAllowed,
+		wakeIDV4Fallback:                     wakeIDV4Fallback,
+		snapshotDiskDrift:                    snapshotDiskDrift,
+		snapshotDiskDriftLastSuccess:         snapshotDiskDriftLastSuccess,
+		snapshotDiskDriftDuration:            snapshotDiskDriftDuration,
+		snapshotDiskDriftObjects:             snapshotDiskDriftObjects,
+		snapshotDiskDriftFailures:            snapshotDiskDriftFailures,
+		snapshotDiskDriftConsecutiveFailures: snapshotDiskDriftConsecutiveFailures,
+		capacitySignatureRejected:            capacitySignatureRejected,
+		notificationPayloadRejected:          notificationPayloadRejected,
+		imagedOCIPull:                        imagedOCIPull,
+		imagedOCIBlobCacheHits:               imagedOCIBlobCacheHits,
+		imagedOCIBlobCacheMisses:             imagedOCIBlobCacheMisses,
+		imagedOCIBlobCacheEvictions:          imagedOCIBlobCacheEvictions,
+		staleDeploymentOldestAge:             staleDeploymentOldestAge,
+		staleDeploymentsReconciled:           staleDeploymentsReconciled,
+		instanceCPUPct:                       instanceCPUPct,
+		instanceRSSMB:                        instanceRSSMB,
+		instanceInflightReqs:                 instanceInflightReqs,
+		instanceCPUSecondsTotal:              instanceCPUSecondsTotal,
+		instanceStatsCollectDur:              instanceStatsCollectDur,
+		instanceStatsPartialErrors:           instanceStatsPartialErrors,
+		sidecarRestartTotal:                  sidecarRestartTotal,
+		sidecarHealthTransitionsTotal:        sidecarHealthTransitionsTotal,
+		cpuStatsCollectDur:                   cpuStatsCollectDurLocal,
+		scaleUpDecisions:                     scaleUpDecisions,
+		scaleUpWinningSignal:                 scaleUpWinningSignal,
+		scheduledFloorActive:                 scheduledFloorActive,
+		appOwnershipChecks:                   appOwnershipChecks,
+		scaleDownDecisions:                   scaleDownDecisions,
+		floorReconcileDecisions:              floorReconcileDecisions,
+		floorReconcileErrors:                 floorReconcileErrors,
+		floorInstancesAdmitted:               floorInstancesAdmitted,
+		scaleUpAdmitRPS:                      scaleUpAdmitRPS,
+		sseClients:                           sseClients,
+		egressDeny:                           egressDeny,
+		egressDenied:                         egressDenied,
+		egressNewDestinations:                egressNewDestinations,
+		egressAbuseRecycles:                  egressAbuseRecycles,
+		accountAbuseHolds:                    accountAbuseHolds,
+		dnsBlocked:                           dnsBlocked,
+		abuseScanFindings:                    abuseScanFindings,
+		egressFlowLogRows:                    egressFlowLogRows,
+		ociEgressDeny:                        ociEgressDeny,
+		ownershipClamp:                       ownershipClamp,
+		layerEntrySkipped:                    layerEntrySkipped,
+		passwdEntries:                        passwdEntries,
+		provenanceWrites:                     provenanceWrites,
+		imageScanVulns:                       imageScanVulns,
+		deployScanDuration:                   deployScanDuration,
+		deployStageDuration:                  deployStageDuration,
+		apiHostingPhaseTotal:                 apiHostingPhaseTotal,
+		apiHostingPhaseDuration:              apiHostingPhaseDuration,
+		deployScanTotal:                      deployScanTotal,
+		deployScanVulns:                      deployScanVulns,
+		liveMigrationDecisions:               liveMigrationDecisions,
+		rebalanceDecisions:                   rebalanceDecisions,
+		migratingReconcileDecisions:          migratingReconcileDecisions,
+		appAtCapacityTotal:                   appAtCapacityTotal,
+		pressureReassignmentsTotal:           pressureReassignmentsTotal,
+		overflowTargetSpillHitsTotal:         overflowTargetSpillHitsTotal,
+		activePassiveFailoversTotal:          activePassiveFailoversTotal,
+		standbyState:                         standbyState,
+		standbyStateValue:                    StandbyStateWarming, // mirrors the gauge.Set(StandbyStateWarming) above
+		deadNodeReconcileDecisions:           deadNodeReconcileDecisions,
+		jobInstanceReconcileDecisions:        jobInstanceReconcileDecisions,
+		recreateDecisions:                    recreateDecisions,
+		snapshotBackoffStamp:                 snapshotBackoffStamp,
+		snapshotBackoffGate:                  snapshotBackoffGate,
+		registryCredentialMarkUsedFailures:   registryCredentialMarkUsedFailures,
+		storageCacheStaleFallback:            storageCacheStaleFallback,
+		apidLogsEmittedTotal:                 apidLogsEmittedTotal,
+		apidLogsDroppedTotal:                 apidLogsDroppedTotal,
+		egressSourceErrors:                   egressSourceErrors,
+		oauthDisabledTotal:                   oauthDisabledTotal,
+		advisoryBatchesEmittedTotal:          advisoryBatchesEmittedTotal,
+		apidStatelessAdvisoryEventsTotal:     apidStatelessAdvisoryEventsTotal,
+		apidGithubdBridgeEnqueuedTotal:       apidGithubdBridgeEnqueuedTotal,
+		githubdPathFilterTotal:               githubdPathFilterTotal,
+		githubdPushSkippedTotal:              githubdPushSkippedTotal,
+		wakePhaseEmitted:                     wakePhaseEmitted,
+		wakeIdentityInvalid:                  wakeIdentityInvalid,
+		wakePhaseDur:                         wakePhaseDur,
+		recoveryEventEmitted:                 recoveryEventEmitted,
+		esmPollsTotal:                        esmPollsTotal,
+		esmRecordsConsumedTotal:              esmRecordsConsumedTotal,
+		esmLagSeconds:                        esmLagSeconds,
+		esmRecordsOutcomeTotal:               esmRecordsOutcomeTotal,
+		esmRecordProcessingSeconds:           esmRecordProcessingSeconds,
+		esmConsumerLagMessages:               esmConsumerLagMessages,
+		esmConsumerLagAgeSeconds:             esmConsumerLagAgeSeconds,
+		dlqEventsTotal:                       dlqEventsTotal,
+		dlqReplayedTotal:                     dlqReplayedTotal,
+		dlqPurgedTotal:                       dlqPurgedTotal,
+		dlqRetentionPurgedTotal:              dlqRetentionPurgedTotal,
+		queue:                                queue,
+		delayedTasks:                         delayedTasks,
+		auditLogWriteTotal:                   auditLogWriteTotal,
+		auditLogWriteFailuresTotal:           auditLogWriteFailuresTotal,
+		operatorActionTraceCompletenessRatio: operatorActionTraceCompletenessRatio,
+		operatorActionTraceCompletenessFirstTickCompleted:   operatorActionTraceCompletenessFirstTickCompleted,
 		operatorActionTraceCompletenessLastSuccessTimestamp: operatorActionTraceCompletenessLastSuccessTimestamp,
 		uploadSessionCreatedTotal:                           uploadSessionCreatedTotal,
 		uploadSessionCommittedTotal:                         uploadSessionCommittedTotal,
@@ -7722,6 +7769,63 @@ func (m *OpsMetrics) MetricPrefix() string {
 		return ""
 	}
 	return m.metricPrefix
+}
+
+// ObserveExclusiveOperationAdmission records a managed operation admission
+// without exposing the account, tenant, policy, coordination key, or request.
+func (m *OpsMetrics) ObserveExclusiveOperationAdmission(source, outcome string) {
+	if m == nil || m.exclusiveOperationAdmissions == nil {
+		return
+	}
+	switch source {
+	case "manual", "cron", "inbound_webhook", "broker":
+	default:
+		source = "other"
+	}
+	switch outcome {
+	case "accepted", "replayed", "joined", "rejected", "error":
+	default:
+		outcome = "error"
+	}
+	m.exclusiveOperationAdmissions.WithLabelValues(source, outcome).Inc()
+}
+
+// ObserveExclusiveOperationDispatch records a bounded worker outcome.
+func (m *OpsMetrics) ObserveExclusiveOperationDispatch(outcome string) {
+	if m == nil || m.exclusiveOperationDispatches == nil {
+		return
+	}
+	switch outcome {
+	case "completed", "failed", "retry", "lost_owner":
+	default:
+		outcome = "failed"
+	}
+	m.exclusiveOperationDispatches.WithLabelValues(outcome).Inc()
+}
+
+// ObserveExclusiveOperationLeaseRenewal records whether the platform
+// retained ownership during a running operation.
+func (m *OpsMetrics) ObserveExclusiveOperationLeaseRenewal(outcome string) {
+	if m == nil || m.exclusiveOperationRenewals == nil {
+		return
+	}
+	switch outcome {
+	case "renewed", "lost", "error":
+	default:
+		outcome = "error"
+	}
+	m.exclusiveOperationRenewals.WithLabelValues(outcome).Inc()
+}
+
+// SetExclusiveOperationDueCandidates publishes the bounded scan result size.
+func (m *OpsMetrics) SetExclusiveOperationDueCandidates(n int) {
+	if m == nil || m.exclusiveOperationDueRows == nil {
+		return
+	}
+	if n < 0 {
+		n = 0
+	}
+	m.exclusiveOperationDueRows.Set(float64(n))
 }
 
 // ObserveDataUpstreamClassifierFailure records one env-classifier failure.
@@ -10482,4 +10586,17 @@ func (m *OpsMetrics) HubDelivered(channel string) {
 		return
 	}
 	m.dbNotifyHubDelivered.WithLabelValues(channel).Inc()
+}
+
+// ObserveIssueEvent records only a closed outcome vocabulary.
+func (m *OpsMetrics) ObserveIssueEvent(outcome string) {
+	if m == nil || m.issueEventsRecorded == nil {
+		return
+	}
+	switch outcome {
+	case "accepted", "duplicate", "quota_exceeded", "rate_limited", "conflict", "db_error":
+	default:
+		return
+	}
+	m.issueEventsRecorded.WithLabelValues(outcome).Inc()
 }

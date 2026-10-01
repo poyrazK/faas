@@ -47,19 +47,22 @@ const (
 // Mirror logic in cmd/apid/spec_compliance_test.go::routeExclude;
 // keep both in sync.
 var routeExclude = map[string]bool{
-	"GET /v1/account/dpa":                       true, // public markdown (no Bearer; SDK consumers don't render HTML)
-	"POST /v1/webhooks/stripe":                  true, // HMAC-signed webhook; outside the Bearer-auth surface
-	"POST /v1/webhooks/resend":                  true, // Svix-signed webhook (issue #246 / ADR-115); outside the Bearer-auth surface
-	"POST /v1/hooks/{token}":                    true, // ADR-212 provider-signed ingress; outside the Bearer-auth SDK
-	"GET /v1/openapi.yaml":                      true, // metadata
-	"GET /v1/openapi.json":                      true, // metadata
-	"GET /docs":                                 true, // anonymous Swagger UI metadata page
-	"GET /v1/internal/metrics/targets":          true, // issue #1219 — loopback Prometheus HTTP-SD endpoint
-	"GET /v1/internal/metrics/promtail-targets": true, // issue #274 — loopback Promtail HTTP-SD endpoint
-	"POST /v1/cli-auth/code":                    true, // anonymous device-code (CLI uses wrapper)
-	"POST /v1/cli-auth/exchange":                true,
-	"GET /status/slo.json":                      true,
-	"GET /status":                               true,
+	"GET /v1/account/dpa":                                 true, // public markdown (no Bearer; SDK consumers don't render HTML)
+	"POST /v1/webhooks/stripe":                            true, // HMAC-signed webhook; outside the Bearer-auth surface
+	"POST /v1/webhooks/resend":                            true, // Svix-signed webhook (issue #246 / ADR-115); outside the Bearer-auth surface
+	"POST /v1/hooks/{token}":                              true, // ADR-212 provider-signed ingress; outside the Bearer-auth SDK
+	"GET /v1/openapi.yaml":                                true, // metadata
+	"GET /v1/openapi.json":                                true, // metadata
+	"GET /docs":                                           true, // anonymous Swagger UI metadata page
+	"GET /v1/internal/metrics/targets":                    true, // issue #1219 — loopback Prometheus HTTP-SD endpoint
+	"GET /v1/internal/metrics/promtail-targets":           true, // issue #274 — loopback Promtail HTTP-SD endpoint
+	"POST /v1/cli-auth/code":                              true, // anonymous device-code (CLI uses wrapper)
+	"POST /v1/cli-auth/exchange":                          true,
+	"GET /status/slo.json":                                true,
+	"GET /status":                                         true,
+	"POST /dashboard/apps/{slug}/crons/{id}/policy":       true, // HTML form, scheduled-work policy editor (ADR-385)
+	"POST /dashboard/jobs/{name}/policy":                  true, // HTML form, scheduled-work policy editor (ADR-385)
+	"POST /dashboard/jobs/{name}/runs/{id}/replay-failed": true, // HTML form, failed job partition replay (ADR-385)
 
 	// Issue #555 trace endpoint. Operator-only surface (X-Faas-Trace-Auth
 	// header), not a customer-Bearer-auth endpoint. The SDK does not
@@ -273,27 +276,77 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
-	"GET /v1/apps/{slug}/work-policies":                          "ListAppWorkPolicies",
-	"PUT /v1/apps/{slug}/work-policies/{name}":                   "UpsertAppWorkPolicy",
-	"DELETE /v1/apps/{slug}/work-policies/{name}":                "DeleteAppWorkPolicy",
-	"POST /v1/apps/{slug}/work-policies/{name}/cancel-pending":   "CancelPendingAppWork",
-	"GET /v1/triggers/{id}/work-binding":                         "GetTriggerWorkBinding",
-	"PUT /v1/triggers/{id}/work-binding":                         "PutTriggerWorkBinding",
-	"DELETE /v1/triggers/{id}/work-binding":                      "DeleteTriggerWorkBinding",
-	"GET /v1/outbound/integrations":                              "ListOutboundIntegrationOffers",
-	"POST /v1/outbound/integrations":                             "CreateOutboundIntegration",
-	"DELETE /v1/outbound/integrations/{integration}":             "DeleteOutboundIntegration",
-	"GET /v1/outbound/integrations/{integration}/usage":          "GetOutboundIntegrationUsage",
-	"PUT /v1/outbound/integrations/{integration}/budget":         "SetOutboundIntegrationDailyBudget",
-	"PUT /v1/outbound/integrations/{integration}/request-policy": "SetOutboundIntegrationRequestPolicy",
-	"GET /v1/apps/{slug}/outbound-bindings":                      "ListOutboundAppBindings",
-	"PUT /v1/apps/{slug}/outbound-bindings/{integration}":        "BindOutboundIntegration",
-	"PATCH /v1/apps/{slug}/outbound-bindings/{integration}":      "UpdateOutboundBindingPolicy",
-	"GET /v1/apps/{slug}/outbound-bindings/{integration}/usage":  "GetOutboundBindingUsage",
-	"PUT /v1/apps/{slug}/outbound-bindings/{integration}/budget": "SetOutboundBindingDailyBudget",
-	"DELETE /v1/apps/{slug}/outbound-bindings/{integration}":     "UnbindOutboundIntegration",
-	"PUT /v1/outbound/integrations/{integration}/credential":     "PutOutboundCredential",
-	"DELETE /v1/outbound/integrations/{integration}/credential":  "DeleteOutboundCredential",
+	"GET /v1/execution-workflows/{workflow_id}":             "GetExecutionWorkflow",
+	"GET /v1/executions/capabilities":                       "GetExecutionCapabilities",
+	"POST /v1/executions/{id}/artifact-grants":              "CreateExecutionArtifactGrant",
+	"DELETE /v1/execution-artifact-grants/{id}":             "RevokeExecutionArtifactGrant",
+	"POST /v1/apps/{slug}/issue-events":                     "IngestIssueEvent",
+	"POST /v1/apps/{slug}/issue-events/otlp/{signal}":       "IngestIssueOTLP",
+	"GET /v1/apps/{slug}/issues":                            "ListIssues",
+	"GET /v1/apps/{slug}/issue-impact-alert-policy":         "GetIssueImpactAlertPolicy",
+	"PUT /v1/apps/{slug}/issue-impact-alert-policy":         "SetIssueImpactAlertPolicy",
+	"GET /v1/apps/{slug}/issues/{issue_id}":                 "GetIssue",
+	"POST /v1/apps/{slug}/issues/{issue_id}/actions":        "ActOnIssue",
+	"POST /v1/apps/{slug}/issue-ingest-tokens":              "CreateIssueIngestToken",
+	"GET /v1/apps/{slug}/issue-ingest-tokens":               "ListIssueIngestTokens",
+	"DELETE /v1/apps/{slug}/issue-ingest-tokens/{token_id}": "RevokeIssueIngestToken",
+	"GET /v1/apps/{slug}/runtime-config-restarts/{wake_id}": "GetRuntimeConfigRestartStatus",
+
+	"GET /v1/dev/bridges":                                                             "ListDevBridges",
+	"GET /v1/dev/bridges/{id}/activity":                                               "GetDevBridgeActivity",
+	"POST /v1/dev/bridges":                                                            "CreateDevBridge",
+	"GET /v1/dev/bridges/{id}":                                                        "GetDevBridge",
+	"DELETE /v1/dev/bridges/{id}":                                                     "RevokeDevBridge",
+	"POST /v1/dev/bridges/{id}/webhook-replays":                                       "ReplayDevBridgeWebhook",
+	"GET /v1/dev/bridges/{id}/webhook-replays/{replay}":                               "GetDevBridgeWebhookReplay",
+	"GET /v1/projects/{slug}/environments/{environment}/flags":                        "ProjectFlags",
+	"PUT /v1/projects/{slug}/environments/{environment}/flags":                        "PublishProjectFlags",
+	"GET /v1/projects/{slug}/environments/{environment}/flags/versions":               "ProjectFlagVersions",
+	"POST /v1/projects/{slug}/environments/{environment}/flags/rollback":              "RollbackProjectFlags",
+	"POST /v1/projects/{slug}/environments/{environment}/flags/{key}/inspect":         "InspectProjectFlag",
+	"GET /v1/projects/{slug}/environments/{environment}/flags/{key}/requests":         "ProjectFlagRequests",
+	"GET /v1/projects/{slug}/environments/{environment}/flags/{key}/outcomes":         "ProjectFlagOutcomes",
+	"POST /v1/projects/{slug}/environments/{environment}/flags/{key}/rollout/promote": "PromoteProjectFlagRollout",
+	"GET /v1/runtime/flags":                                                           "RuntimeFlags",
+
+	"GET /v1/apps/{slug}/work-policies":                        "ListAppWorkPolicies",
+	"PUT /v1/apps/{slug}/work-policies/{name}":                 "UpsertAppWorkPolicy",
+	"DELETE /v1/apps/{slug}/work-policies/{name}":              "DeleteAppWorkPolicy",
+	"POST /v1/apps/{slug}/work-policies/{name}/cancel-pending": "CancelPendingAppWork",
+	// Exclusive-operation SDK helpers use domain names that differ from the
+	// route-derived names, and hyphenated path segments need explicit mapping.
+	"GET /v1/account/operation-policies":                                   "ListExclusiveWorkPolicies",
+	"PUT /v1/account/operation-policies/{name}":                            "UpsertExclusiveWorkPolicy",
+	"GET /v1/account/operation-trigger-bindings/{source}/{id}":             "GetExclusiveTriggerBinding",
+	"PUT /v1/account/operation-trigger-bindings/{source}/{id}":             "UpsertExclusiveTriggerBinding",
+	"DELETE /v1/account/operation-trigger-bindings/{source}/{id}":          "DeleteExclusiveTriggerBinding",
+	"POST /v1/apps/{slug}/operations":                                      "SubmitExclusiveOperation",
+	"POST /v1/account/platform-tenants/{tenant_id}/apps/{slug}/operations": "SubmitExclusiveOperation",
+	"POST /v1/platform-tenant-self/apps/{slug}/operations":                 "SubmitPlatformTenantExclusiveOperation",
+	"POST /v1/apps/{slug}/operations/tasks":                                "SubmitExclusiveAppTaskOperation",
+	"POST /v1/jobs/{name}/operations":                                      "SubmitExclusiveJobOperation",
+	"GET /v1/operations/{id}":                                              "GetExclusiveOperation",
+	"POST /v1/operations/{id}/cancel":                                      "CancelExclusiveOperation",
+	"GET /v1/platform-tenant-self/operations/{id}":                         "GetPlatformTenantExclusiveOperation",
+	"POST /v1/platform-tenant-self/operations/{id}/cancel":                 "CancelPlatformTenantExclusiveOperation",
+	"GET /v1/triggers/{id}/work-binding":                                   "GetTriggerWorkBinding",
+	"PUT /v1/triggers/{id}/work-binding":                                   "PutTriggerWorkBinding",
+	"DELETE /v1/triggers/{id}/work-binding":                                "DeleteTriggerWorkBinding",
+	"GET /v1/outbound/integrations":                                        "ListOutboundIntegrationOffers",
+	"POST /v1/outbound/integrations":                                       "CreateOutboundIntegration",
+	"DELETE /v1/outbound/integrations/{integration}":                       "DeleteOutboundIntegration",
+	"PUT /v1/outbound/integrations/{integration}/runs":                     "SetOutboundIntegrationRunsEnabled",
+	"GET /v1/outbound/integrations/{integration}/usage":                    "GetOutboundIntegrationUsage",
+	"PUT /v1/outbound/integrations/{integration}/budget":                   "SetOutboundIntegrationDailyBudget",
+	"PUT /v1/outbound/integrations/{integration}/request-policy":           "SetOutboundIntegrationRequestPolicy",
+	"GET /v1/apps/{slug}/outbound-bindings":                                "ListOutboundAppBindings",
+	"PUT /v1/apps/{slug}/outbound-bindings/{integration}":                  "BindOutboundIntegration",
+	"PATCH /v1/apps/{slug}/outbound-bindings/{integration}":                "UpdateOutboundBindingPolicy",
+	"GET /v1/apps/{slug}/outbound-bindings/{integration}/usage":            "GetOutboundBindingUsage",
+	"PUT /v1/apps/{slug}/outbound-bindings/{integration}/budget":           "SetOutboundBindingDailyBudget",
+	"DELETE /v1/apps/{slug}/outbound-bindings/{integration}":               "UnbindOutboundIntegration",
+	"PUT /v1/outbound/integrations/{integration}/credential":               "PutOutboundCredential",
+	"DELETE /v1/outbound/integrations/{integration}/credential":            "DeleteOutboundCredential",
 	// The hyphenated path uses its explicit OpenAPI operationId in the Go SDK.
 	"GET /v1/service-caller-keys": "GetServiceCallerKeys",
 	// First-class queue bindings use a hyphenated path segment. Pin the
@@ -328,6 +381,11 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/tcp-listeners":                                        "CreateAppTCPListener",
 	"PATCH /v1/apps/{slug}/tcp-listeners/{name}":                                "UpdateAppTCPListener",
 	"DELETE /v1/apps/{slug}/tcp-listeners/{name}":                               "DeleteAppTCPListener",
+	"GET /v1/apps/{slug}/tcp-listeners/{name}/tls-status":                       "AppTCPListenerTLSStatus",
+	"GET /v1/apps/{slug}/udp-listeners":                                         "ListAppUDPListeners",
+	"POST /v1/apps/{slug}/udp-listeners":                                        "CreateAppUDPListener",
+	"PATCH /v1/apps/{slug}/udp-listeners/{name}":                                "UpdateAppUDPListener",
+	"DELETE /v1/apps/{slug}/udp-listeners/{name}":                               "DeleteAppUDPListener",
 	"POST /v1/apps/{slug}/previews":                                             "CreatePreview",
 	"GET /v1/apps/{slug}/instances":                                             "ListInstances",
 	"POST /v1/apps/{slug}/park":                                                 "Park",
@@ -339,6 +397,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/dev/sessions/{project}/syncs":                                     "RecordDevSync",
 	"PUT /v1/dev/test-runs/{run_id}":                                            "RegisterScenarioTest",
 	"DELETE /v1/dev/test-runs/{run_id}":                                         "DeleteScenarioTest",
+	"PUT /v1/dev/test-runs/{run_id}/chaos":                                      "InjectScenarioTestChaos",
 	"GET /v1/dev/sessions/{project}/history":                                    "GetDevSyncHistory",
 	"POST /v1/apps/{slug}/deployments":                                          "Deploy",
 	"POST /v1/account/platform-tenants/{id}/reconciliation-plan/apply":          "ApplyPlatformTenantReconciliation",
@@ -396,6 +455,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/tasks/{id}":             "GetAppTask",
 	"DELETE /v1/apps/{slug}/tasks/{id}":          "CancelAppTask",
 	"POST /v1/account/restore":                   "RestoreAccount",
+	"GET /v1/account/overage-cap":                "GetOverageCap",   // saved monthly spend cap
 	"POST /v1/account/overage-cap":               "RaiseOverageCap", // issue #561 spend cap
 	"POST /v1/account/mfa/disable-email":         "PostAccountMfaDisableEmail",
 	"POST /v1/account/mfa/disable-email/confirm": "PostAccountMfaDisableEmailConfirm",
@@ -539,6 +599,9 @@ var methodRouteMap = map[string]string{
 	"GET /v1/usage/daily":                                                    "UsageDaily",
 	"GET /v1/usage/storage":                                                  "StorageUsage",
 	"GET /v1/invoices":                                                       "ListInvoices",
+	"GET /v1/billing/focus":                                                  "ExportFOCUSInvoices",
+	"POST /v1/invoices/{id}/refresh":                                         "RefreshInvoiceFacts",
+	"POST /v1/invoices/backfill":                                             "BackfillInvoiceHistory",
 	"POST /v1/invocations/{id}/replay":                                       "ReplayInvocation", // issue #315 — re-issue a failed/dead_letter invocation
 	"GET /v1/apps/{slug}/secrets":                                            "ListSecrets",
 	"GET /v1/domains":                                                        "ListDomains",
@@ -665,6 +728,9 @@ var methodRouteMap = map[string]string{
 	"GET /v1/account/platform-tenants/{id}/usage":                                         "GetPlatformTenantUsage",
 	"GET /v1/platform-tenant-self/activation":                                             "GetPlatformTenantSelfActivation",
 	"GET /v1/platform-tenant-self/usage":                                                  "GetPlatformTenantSelfUsage",
+	"GET /v1/platform-tenant-self/invocations/{id}":                                       "GetPlatformTenantSelfInvocation",
+	"POST /v1/platform-tenant-self/invocations/{id}/cancel":                               "CancelPlatformTenantSelfInvocation",
+	"POST /v1/platform-tenant-self/invocations/{id}/replay":                               "ReplayPlatformTenantSelfInvocation",
 	"POST /v1/platform-tenant-self/hostnames":                                             "CreatePlatformTenantSelfHostname",
 	"GET /v1/platform-tenant-self/usage-statements":                                       "ListPlatformTenantSelfStatements",
 	"GET /v1/platform-tenant-self/usage-statements/{statement_id}":                        "GetPlatformTenantSelfStatement",

@@ -120,7 +120,7 @@ func TestCDComputeWorkflowExportsNodeScopedPKIForExistingHosts(t *testing.T) {
 		"pki_source:",
 		`PKI_SOURCE_KIND: ${{ inputs.pki_source }}`,
 		`[[ "$PKI_SOURCE_KIND" == "live-node" ]]`,
-		`ssh-keyscan -T 10 -p "$SSH_PORT" "$SSH_HOST"`,
+		`ssh-keyscan -t ed25519,ecdsa,rsa -T 10 -p "$SSH_PORT" "$SSH_HOST"`,
 		`[[ "$candidate_fingerprint" == "$SSH_HOST_KEY_SHA256" ]]`,
 		`-o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes`,
 		`gregalectl pki export-bundle`,
@@ -171,7 +171,7 @@ func TestCDComputeWorkflowPinsDynamicHostForPostJoinProbes(t *testing.T) {
 	step := workflow[pin : pin+end]
 	for _, required := range []string{
 		"if: inputs.rollout_phase != 'prepare'",
-		`ssh-keyscan -T 10 -p "$SSH_PORT" "$SSH_HOST"`,
+		`ssh-keyscan -t ed25519,ecdsa,rsa -T 10 -p "$SSH_PORT" "$SSH_HOST"`,
 		`ssh-keygen -lf "$candidate" -E sha256`,
 		`[[ "$candidate_fingerprint" == "$SSH_HOST_KEY_SHA256" ]]`,
 		`cat "$verified_keys" >>"$ARTIFACT_DIR/compute-known-hosts"`,

@@ -13,11 +13,13 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apptaskproto"
+	"github.com/onebox-faas/faas/pkg/jobresult"
 	"golang.org/x/sys/unix"
 )
 
@@ -166,6 +168,7 @@ func executeAppTaskCommand(ctx context.Context, req apptaskproto.Request, manife
 	env = StampWorkloadIdentityEnv(env)
 	env = StampEventPublishEnv(env)
 	env = StampRuntimeConfigEnv(env)
+	env = stampAppTaskOutputManifestPath(env)
 	if req.CommandShell {
 		argv = []string{"/bin/sh", "-lc", argv[0]}
 	} else {
@@ -177,9 +180,11 @@ func executeAppTaskCommand(ctx context.Context, req apptaskproto.Request, manife
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if uid := lookupUID(manifest.EffectiveUser()); uid > 0 {
-		cmd.SysProcAttr.Credential = &syscall.Credential{Uid: uint32(uid), Gid: uint32(uid)}
+	credential, err := processCredential("", manifest.EffectiveUser())
+	if err != nil {
+		return appTaskInfraFailure("command_identity_invalid", "command identity could not be resolved", 126), nil //nolint:nilerr // identity errors are terminal protocol results
 	}
+	cmd.SysProcAttr.Credential = execProcessCredential(credential)
 	if err := cmd.Start(); err != nil {
 		exitCode := 126
 		failureCode := "command_start_failed"
@@ -196,7 +201,9 @@ func executeAppTaskCommand(ctx context.Context, req apptaskproto.Request, manife
 	go func() { waitCh <- cmd.Wait() }()
 	select {
 	case waitErr := <-waitCh:
-		return appTaskResultFromWait(cmd, waitErr), nil
+		result := appTaskResultFromWait(cmd, waitErr)
+		manifestBytes, manifestErr := readGuestJobOutputManifest(jobresult.GuestPath)
+		return appTaskResultWithOutputManifest(result, manifestBytes, manifestErr), nil
 	case <-ctx.Done():
 		_ = signalJobProcessGroup(cmd.Process.Pid, syscall.SIGTERM)
 		timer := time.NewTimer(appTaskTerminationGrace)
@@ -209,6 +216,38 @@ func executeAppTaskCommand(ctx context.Context, req apptaskproto.Request, manife
 		}
 		return apptaskproto.Result{}, ctx.Err()
 	}
+}
+
+func stampAppTaskOutputManifestPath(env []string) []string {
+	result := make([]string, 0, len(env)+1)
+	for _, item := range env {
+		if strings.HasPrefix(item, "GREGALE_OUTPUT_MANIFEST_PATH=") {
+			continue
+		}
+		result = append(result, item)
+	}
+	return append(result, "GREGALE_OUTPUT_MANIFEST_PATH="+jobresult.GuestPath)
+}
+
+func appTaskResultWithOutputManifest(result apptaskproto.Result, raw []byte, manifestErr error) apptaskproto.Result {
+	if manifestErr != nil {
+		if result.Status == apptaskproto.StatusSucceeded {
+			return appTaskInfraFailure("guest_protocol_error", "command result manifest is invalid", 65)
+		}
+		return result
+	}
+	if len(raw) == 0 {
+		return result
+	}
+	manifest, err := jobresult.Validate(raw)
+	if err != nil {
+		if result.Status == apptaskproto.StatusSucceeded {
+			return appTaskInfraFailure("guest_protocol_error", "command result manifest is invalid", 65)
+		}
+		return result
+	}
+	result.OutcomeCode = manifest.OutcomeCode
+	return result
 }
 
 func appTaskResultFromWait(cmd *exec.Cmd, waitErr error) apptaskproto.Result {

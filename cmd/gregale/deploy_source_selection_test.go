@@ -50,7 +50,7 @@ func TestValidateDeploySourceSelection(t *testing.T) {
 }
 
 func TestValidateRepoDeployFlags(t *testing.T) {
-	if err := validateRepoDeployFlags(map[string]bool{"no-triggers": true, "wait": true}); err != nil {
+	if err := validateRepoDeployFlags(map[string]bool{"no-triggers": true, "wait": true, "platform-tenant-required": true, "no-require-authn": true}); err != nil {
 		t.Fatalf("supported flags rejected: %v", err)
 	}
 	err := validateRepoDeployFlags(map[string]bool{"app": true, "vcpu": true, "doctor-strict": true})

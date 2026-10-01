@@ -14,6 +14,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.app_task_failure import AppTaskFailure
+    from ..models.work_decision import WorkDecision
 
 
 T = TypeVar("T", bound="AppTaskResponse")
@@ -41,6 +42,8 @@ class AppTaskResponse:
     output_truncated: bool
     created_at: datetime.datetime
     updated_at: datetime.datetime
+    work_decision: None | Unset | WorkDecision = UNSET
+    outcome_code: str | Unset = UNSET
     retry_max: int | Unset = UNSET
     retry_backoff_seconds: int | Unset = UNSET
     retry_at: datetime.datetime | None | Unset = UNSET
@@ -56,6 +59,7 @@ class AppTaskResponse:
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.app_task_failure import AppTaskFailure
+        from ..models.work_decision import WorkDecision
 
         id = str(self.id)
 
@@ -84,6 +88,16 @@ class AppTaskResponse:
         created_at = self.created_at.isoformat()
 
         updated_at = self.updated_at.isoformat()
+
+        work_decision: dict[str, Any] | None | Unset
+        if isinstance(self.work_decision, Unset):
+            work_decision = UNSET
+        elif isinstance(self.work_decision, WorkDecision):
+            work_decision = self.work_decision.to_dict()
+        else:
+            work_decision = self.work_decision
+
+        outcome_code = self.outcome_code
 
         retry_max = self.retry_max
 
@@ -159,6 +173,10 @@ class AppTaskResponse:
                 "updated_at": updated_at,
             }
         )
+        if work_decision is not UNSET:
+            field_dict["work_decision"] = work_decision
+        if outcome_code is not UNSET:
+            field_dict["outcome_code"] = outcome_code
         if retry_max is not UNSET:
             field_dict["retry_max"] = retry_max
         if retry_backoff_seconds is not UNSET:
@@ -185,6 +203,7 @@ class AppTaskResponse:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.app_task_failure import AppTaskFailure
+        from ..models.work_decision import WorkDecision
 
         d = dict(src_dict)
         id = UUID(d.pop("id"))
@@ -214,6 +233,25 @@ class AppTaskResponse:
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
+
+        def _parse_work_decision(data: object) -> None | Unset | WorkDecision:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                work_decision_type_0 = WorkDecision.from_dict(data)
+
+                return work_decision_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | Unset | WorkDecision, data)
+
+        work_decision = _parse_work_decision(d.pop("work_decision", UNSET))
+
+        outcome_code = d.pop("outcome_code", UNSET)
 
         retry_max = d.pop("retry_max", UNSET)
 
@@ -332,6 +370,8 @@ class AppTaskResponse:
             output_truncated=output_truncated,
             created_at=created_at,
             updated_at=updated_at,
+            work_decision=work_decision,
+            outcome_code=outcome_code,
             retry_max=retry_max,
             retry_backoff_seconds=retry_backoff_seconds,
             retry_at=retry_at,

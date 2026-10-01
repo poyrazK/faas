@@ -1,0 +1,17 @@
+version: 1
+
+runs:
+  require_passing: true
+  require_same_runs: true
+
+load:
+  max_p95_increase_percent: 500
+  max_p99_increase_percent: 500
+  max_error_rate_increase_percentage_points: 1
+  min_samples: 50
+
+repeat:
+  min_runs: 3
+  # Loopback p99 tails vary with shared CI runner scheduling.
+  max_spread_percent: 250
+  max_error_rate_spread_percentage_points: 5

@@ -217,6 +217,8 @@ func run(args []string) (status int) {
 		return cmdProjects(args[1:])
 	case "init":
 		return cmdInit(args[1:])
+	case "mcp":
+		return cmdMCP(args[1:])
 	case "connect":
 		return cmdConnect(args[1:])
 	case "github":
@@ -266,6 +268,12 @@ func run(args []string) (status int) {
 			}
 			return cmdAppsTCP(args[2], args[3:])
 		}
+		if len(args) > 1 && args[1] == subUDPListeners {
+			if len(args) < 3 {
+				return cmdAppsUDP("", nil)
+			}
+			return cmdAppsUDP(args[2], args[3:])
+		}
 		// `gregale apps streaming-cap <slug>` — ADR-102 D6 operator
 		// entry point. Same shape as the routes arm above: 3-token
 		// form (`apps streaming-cap <slug>`), placed BEFORE the
@@ -286,7 +294,7 @@ func run(args []string) (status int) {
 			return cmdAppsRm(args[1:])
 		}
 		if len(args) > 1 {
-			PrintUsage(os.Stderr, "usage: gregale apps [ls|restore <slug>|routes <slug>|tcp <slug>|streaming-cap <slug>|-q|--quiet <slug>]", "apps")
+			PrintUsage(os.Stderr, "usage: gregale apps [ls|restore <slug>|routes <slug>|tcp <slug>|udp <slug>|streaming-cap <slug>|-q|--quiet <slug>]", "apps")
 			return 1
 		}
 		return cmdApps()
@@ -356,6 +364,8 @@ func run(args []string) (status int) {
 		return cmdWake(args[1:])
 	case "test":
 		return cmdTest(args[1:])
+	case "chaos":
+		return cmdChaos(args[1:])
 	case "traffic":
 		return cmdTraffic(args[1:])
 	case "mirror":
@@ -368,6 +378,8 @@ func run(args []string) (status int) {
 		return cmdDomains(args[1:])
 	case "tenant-surfaces":
 		return cmdTenantSurfaces(args[1:])
+	case "flags":
+		return cmdFlags(args[1:])
 	case "platform-tenants":
 		return cmdPlatformTenants(args[1:])
 	case "edge-rules":
@@ -473,6 +485,10 @@ func run(args []string) (status int) {
 		// Tier C: per-account invocation ledger (issue #394 follow-up).
 		// Mirrors `audit-events` for dispatcher shape.
 		return cmdInvocations(args[1:])
+	case "operations":
+		// Durable exclusive operations: reconcile coordination policies and
+		// trigger bindings, submit work, inspect ownership, or cancel it.
+		return cmdOperations(args[1:])
 	case "invoices":
 		return cmdInvoices(args[1:])
 	case "jobs":
@@ -492,6 +508,8 @@ func run(args []string) (status int) {
 		return cmdSend(args[1:])
 	case "deliver":
 		return cmdDeliver(args[1:])
+	case "issues":
+		return cmdIssues(args[1:])
 	case "debug":
 		// ADR-127: production debugger (request evidence, regression
 		// watch, deployment compare, safe replay, and incident bundles).

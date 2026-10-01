@@ -24,7 +24,7 @@ case "${runtime_image}" in
   runner-node22|runner-node24)
     required=(etc/passwd usr/local/bin/node)
     ;;
-  runner-python312|runner-python313)
+  runner-python312|runner-python313|execution-python-data-v1)
     required=(etc/passwd usr/local/bin/python3)
     ;;
   runner-go124)
@@ -117,7 +117,7 @@ if [[ "${runtime_image}" == base-minimal ]]; then
     exit 1
   fi
 fi
-if [[ "${runtime_image}" == runner-python313 ]]; then
+if [[ "${runtime_image}" == runner-python313 || "${runtime_image}" == execution-python-data-v1 ]]; then
   python_minor=$(docker run --rm --platform "${expected_platform}" \
     --entrypoint /usr/local/bin/python3 "${image_ref}" \
     -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
@@ -125,5 +125,28 @@ if [[ "${runtime_image}" == runner-python313 ]]; then
     echo "::error::${image_ref} has Python ${python_minor}, want Python 3.13" >&2
     exit 1
   fi
+fi
+if [[ "${runtime_image}" == execution-python-data-v1 ]]; then
+  # Match tenant uid, isolation flags, and the guest's numerical thread cap.
+  # This also proves the packages work without downloads or writable rootfs.
+  docker run --rm --platform "${expected_platform}" --network none --read-only \
+    --user 1000:1000 -e OPENBLAS_NUM_THREADS=1 -e OMP_NUM_THREADS=1 \
+    -e MKL_NUM_THREADS=1 -e NUMEXPR_NUM_THREADS=1 \
+    --entrypoint /usr/local/bin/python3 "${image_ref}" -I -c '
+import importlib.metadata, importlib.util, json, pathlib
+manifest = json.loads(pathlib.Path("/usr/share/faas/execution-profile.json").read_text())
+marker = json.loads(pathlib.Path("/etc/faas/execution.json").read_text())
+assert manifest["profile"] == marker["profile"] == "python-data-v1"
+assert marker["kind"] == "execution" and marker["version"] == 1
+for package, expected in manifest["packages"].items():
+    assert importlib.metadata.version(package) == expected, package
+assert importlib.util.find_spec("pip") is None
+import numpy, pandas
+assert int(pandas.DataFrame({"x": [1, 2]}).x.sum()) == 3
+assert float(numpy.mean([1, 3])) == 2
+report = json.loads(pathlib.Path("/usr/share/faas/execution-profile-build.json").read_text())
+assert report["installed_bytes"] > 0
+print(json.dumps(report))
+'
 fi
 echo "OK: ${image_ref} contains the ${runtime_image} rootfs contract"

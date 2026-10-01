@@ -67,6 +67,7 @@ var updateAppRequestCLISurfaces = map[string]updateAppCLISurface{
 	"warm_snapshot_enabled":           {Path: "gregale app <slug> --warm-snapshot / --no-warm-snapshot", AppFlags: []string{"warm-snapshot", "no-warm-snapshot"}},
 	"require_authn":                   {Path: "gregale app <slug> --require-authn / --no-require-authn", AppFlags: []string{"require-authn", "no-require-authn"}},
 	"consumer_auth_mode":              {Path: "gregale app <slug> --consumer-auth-mode", AppFlags: []string{"consumer-auth-mode"}},
+	"platform_tenant_required":        {Path: "gregale app <slug> --platform-tenant-required / --no-platform-tenant-required", AppFlags: []string{"platform-tenant-required", "no-platform-tenant-required"}},
 	"public_auth":                     {Path: "gregale app <slug> --public-auth", AppFlags: []string{"public-auth"}},
 	"warm_snapshot_min_requests":      {Path: "gregale app <slug> --warm-snapshot-min-requests", AppFlags: []string{"warm-snapshot-min-requests"}},
 	"warm_snapshot_min_ms":            {Path: "gregale app <slug> --warm-snapshot-min-ms", AppFlags: []string{"warm-snapshot-min-ms"}},

@@ -8,9 +8,11 @@ import (
 )
 
 const (
-	CodeConsumerAuthModeInvalid     = "consumer_auth_mode_invalid"
-	CodeConsumerKeysNotAllowed      = "consumer_keys_not_allowed"
-	CodePlanConsumerKeyQuotaReached = "plan_consumer_key_quota_reached"
+	CodeConsumerAuthModeInvalid              = "consumer_auth_mode_invalid"
+	CodeConsumerKeysNotAllowed               = "consumer_keys_not_allowed"
+	CodePlatformTenantRequired               = "platform_tenant_required"
+	CodePlanPlatformTenantRequiredNotAllowed = "plan_platform_tenant_required_not_allowed"
+	CodePlanConsumerKeyQuotaReached          = "plan_consumer_key_quota_reached"
 )
 
 // docsBase is the canonical documentation URL prefix for SDK-side
@@ -446,6 +448,8 @@ func StatusForCode(code string) int {
 	switch code {
 	case CodePlanLimitApps, CodePlanLimitRAM, CodeAppLayerTooBig, CodeBillingPastDue:
 		return http.StatusForbidden
+	case CodePlanPlatformTenantRequiredNotAllowed:
+		return http.StatusPaymentRequired
 	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeConcurrencyQueueFull:
 		return http.StatusTooManyRequests
 	case CodeSourceTooLarge:
@@ -457,7 +461,7 @@ func StatusForCode(code string) int {
 		return http.StatusServiceUnavailable
 	case CodeUnauthorized:
 		return http.StatusUnauthorized
-	case CodeMFARequired, CodeStepUpRequired:
+	case CodeMFARequired, CodeStepUpRequired, CodePlatformTenantRequired:
 		return http.StatusForbidden
 	case CodeUnsupportedByCLI:
 		return http.StatusForbidden

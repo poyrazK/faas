@@ -348,9 +348,9 @@ func TestParseConfig_NumericUser(t *testing.T) {
 // over a nested one.
 func TestParseConfig_HealthcheckFlatPreferred(t *testing.T) {
 	raw := []byte(`{
-        "Healthcheck": {"Test": ["CMD", "/flat/check"], "Interval": 60},
+        "Healthcheck": {"Test": ["CMD", "/flat/check"], "Interval": 60000000000},
         "config": {
-            "Healthcheck": {"Test": ["CMD", "/nested/check"], "Interval": 30}
+            "Healthcheck": {"Test": ["CMD", "/nested/check"], "Interval": 30000000000}
         }
     }`)
 	cfg, err := ParseConfig(bytes.NewReader(raw))

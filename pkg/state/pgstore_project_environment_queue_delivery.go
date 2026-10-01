@@ -72,7 +72,11 @@ func (s *PgStore) ClaimNextProjectEnvironmentQueueDelivery(ctx context.Context, 
 	if err != nil {
 		return ProjectEnvironmentQueueDelivery{}, err
 	}
-	if environmentQueueDeliveryAttemptsExhausted(invocationFromSQLC(row), limits) {
+	inv, err := invocationFromSQLC(row)
+	if err != nil {
+		return ProjectEnvironmentQueueDelivery{}, err
+	}
+	if environmentQueueDeliveryAttemptsExhausted(inv, limits) {
 		count, err := q.ExhaustEnvironmentQueueDeliveryInvocation(ctx, tx, sqlc.ExhaustEnvironmentQueueDeliveryInvocationParams{
 			InvocationID: row.ID, ConsumerID: mustPgUUID(consumer.ID), RuntimeSetID: mustPgUUID(set.ID), Attempt: row.Attempts})
 		if err != nil {
@@ -112,6 +116,10 @@ func (s *PgStore) ClaimNextProjectEnvironmentQueueDelivery(ctx context.Context, 
 	if !row.LeaseExpiresAt.Time.After(clock.Time) {
 		return ProjectEnvironmentQueueDelivery{}, ErrNotFound
 	}
+	inv, err = invocationFromSQLC(row)
+	if err != nil {
+		return ProjectEnvironmentQueueDelivery{}, err
+	}
 	token, tokenHash, err := newEnvironmentQueueReceipt()
 	if err != nil {
 		return ProjectEnvironmentQueueDelivery{}, err
@@ -128,7 +136,7 @@ func (s *PgStore) ClaimNextProjectEnvironmentQueueDelivery(ctx context.Context, 
 	if err := tx.Commit(ctx); err != nil {
 		return ProjectEnvironmentQueueDelivery{}, err
 	}
-	return cloneEnvironmentQueueDelivery(invocationFromSQLC(row), consumer, token), nil
+	return cloneEnvironmentQueueDelivery(inv, consumer, token), nil
 }
 
 func (s *PgStore) CompleteProjectEnvironmentQueueDelivery(ctx context.Context, scope ProjectEnvironmentQueueDeliveryScope, id, token string, result json.RawMessage) error {
@@ -191,7 +199,10 @@ func (s *PgStore) finishEnvironmentQueueDelivery(ctx context.Context, scope Proj
 	if err != nil {
 		return err
 	}
-	inv := invocationFromSQLC(row)
+	inv, err := invocationFromSQLC(row)
+	if err != nil {
+		return err
+	}
 	if err := validateEnvironmentQueueReceipt(environmentQueueReceipt{Attempt: int(r.Attempt), TokenHash: r.TokenHash, OwnerHash: r.OwnerHash,
 		IssuedAt: r.IssuedAt.Time, LeaseExpiresAt: r.LeaseExpiresAt.Time}, owner, inv, tokenHash, clock.Time); err != nil {
 		return err

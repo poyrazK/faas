@@ -20,7 +20,7 @@ func platformTenantStatementResponse(s state.PlatformTenantStatement) api.Platfo
 		Lines: make([]api.PlatformTenantStatementLineResponse, 0, len(s.Lines))}
 	for _, line := range s.Lines {
 		out.Lines = append(out.Lines, api.PlatformTenantStatementLineResponse{
-			AppID: line.AppID, ConsumerID: line.ConsumerID, SurfaceID: line.SurfaceID, JWTAuthorizationRuleID: line.JWTAuthorizationRuleID, WindowStart: line.WindowStart,
+			AppID: line.AppID, ConsumerID: line.ConsumerID, SurfaceID: line.SurfaceID, JWTAuthorizationRuleID: line.JWTAuthorizationRuleID, WindowStart: line.WindowStart, WindowEnd: line.WindowEnd,
 			BillableUnits: line.BillableUnits, RateCardID: line.RateCardID,
 			PlatformTenantRateCardID: line.PlatformTenantRateCardID, Currency: line.Currency,
 			PriceMillicentsPerUnit: line.PriceMillicentsPerUnit, AmountMillicents: line.AmountMillicents,
@@ -83,28 +83,22 @@ func (s *server) createPlatformTenantStatement(w http.ResponseWriter, r *http.Re
 		return
 	}
 	start, end := req.PeriodStart.UTC(), req.PeriodEnd.UTC()
-	prior, err := store.ListPlatformTenantStatements(r.Context(), acct.ID, tenant.ID, start, end)
-	if err != nil {
-		api.WriteProblem(w, api.ErrInternal("could not load platform tenant statements"))
-		return
-	}
-	usage, err := store.ListPlatformTenantUsageMinutes(r.Context(), acct.ID, tenant.ID, start, end)
-	if err != nil {
-		api.WriteProblem(w, api.ErrInternal("could not load platform tenant usage"))
-		return
-	}
-	input, err := s.quotePlatformTenantStatement(r, acct.ID, tenant.ID, start, end, usage, prior)
-	if errors.Is(err, billing.ErrNoNewTenantUsage) && len(prior) > 0 {
-		writeJSON(w, http.StatusOK, platformTenantStatementResponse(prior[len(prior)-1]))
-		return
-	}
+	plan, err := store.PlanPlatformTenantStatement(r.Context(), acct.ID, tenant.ID, start, end)
 	if err != nil {
 		writeTenantStatementQuoteError(w, err)
 		return
 	}
-	if len(prior) > 0 && prior[len(prior)-1].Status == state.APIConsumerUsageStatementDraft &&
-		sameTenantStatementSnapshot(prior[len(prior)-1], input) {
-		writeJSON(w, http.StatusOK, platformTenantStatementResponse(prior[len(prior)-1]))
+	if len(plan.UsageDelta) == 0 && plan.HasLatest {
+		writeJSON(w, http.StatusOK, platformTenantStatementResponse(plan.Latest))
+		return
+	}
+	revision, priorStatus := 1, state.APIConsumerUsageStatementStatus("")
+	if plan.HasLatest {
+		revision, priorStatus = plan.Latest.Revision+1, plan.Latest.Status
+	}
+	input, err := s.quotePlatformTenantStatement(r, acct.ID, tenant.ID, start, end, revision, priorStatus, plan.UsageDelta)
+	if err != nil {
+		writeTenantStatementQuoteError(w, err)
 		return
 	}
 	s.persistPlatformTenantStatement(w, r, acct, tenant, store, input)
@@ -129,26 +123,9 @@ func (s *server) persistPlatformTenantStatement(w http.ResponseWriter, r *http.R
 	writeJSON(w, http.StatusOK, platformTenantStatementResponse(statement))
 }
 
-func sameTenantStatementSnapshot(existing state.PlatformTenantStatement, input state.PlatformTenantStatementInput) bool {
-	if existing.Currency != input.Currency || existing.BillableUnits != input.BillableUnits ||
-		existing.UnpricedUnits != input.UnpricedUnits || existing.AmountMillicents != input.AmountMillicents ||
-		len(existing.Lines) != len(input.Lines) {
-		return false
-	}
-	for i, line := range existing.Lines {
-		other := input.Lines[i]
-		if line.AppID != other.AppID || line.ConsumerID != other.ConsumerID || line.SurfaceID != other.SurfaceID || line.JWTAuthorizationRuleID != other.JWTAuthorizationRuleID || !line.WindowStart.Equal(other.WindowStart) ||
-			line.BillableUnits != other.BillableUnits || line.RateCardID != other.RateCardID ||
-			line.PlatformTenantRateCardID != other.PlatformTenantRateCardID || line.Currency != other.Currency ||
-			line.PriceMillicentsPerUnit != other.PriceMillicentsPerUnit || line.AmountMillicents != other.AmountMillicents {
-			return false
-		}
-	}
-	return true
-}
-
 func (s *server) quotePlatformTenantStatement(r *http.Request, accountID, tenantID string, start, end time.Time,
-	usage []state.APIConsumerUsageBucket, prior []state.PlatformTenantStatement) (state.PlatformTenantStatementInput, error) {
+	revision int, priorStatus state.APIConsumerUsageStatementStatus,
+	usageDelta []state.APIConsumerUsageBucket) (state.PlatformTenantStatementInput, error) {
 	cardsStore, ok := s.store.(state.APIConsumerRateCardStore)
 	if !ok {
 		return state.PlatformTenantStatementInput{}, state.ErrNotFound
@@ -162,7 +139,7 @@ func (s *server) quotePlatformTenantStatement(r *http.Request, accountID, tenant
 	if err != nil {
 		return state.PlatformTenantStatementInput{}, err
 	}
-	for _, bucket := range usage {
+	for _, bucket := range usageDelta {
 		if _, loaded := cards[bucket.AppID]; loaded {
 			continue
 		}
@@ -172,7 +149,8 @@ func (s *server) quotePlatformTenantStatement(r *http.Request, accountID, tenant
 		}
 		cards[bucket.AppID] = appCards
 	}
-	return billing.BuildPlatformTenantStatement(accountID, tenantID, start, end, time.Now().UTC(), usage, cards, tenantCards, prior)
+	return billing.BuildPlatformTenantStatementFromDelta(accountID, tenantID, start, end, time.Now().UTC(), revision,
+		priorStatus, usageDelta, cards, tenantCards)
 }
 
 func writeTenantStatementQuoteError(w http.ResponseWriter, err error) {
@@ -186,9 +164,6 @@ func writeTenantStatementQuoteError(w http.ResponseWriter, err error) {
 	case errors.Is(err, billing.ErrTenantUsageRegressed):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
 			"Usage coverage conflict", "current usage is below an earlier immutable statement snapshot"))
-	case errors.Is(err, billing.ErrTenantStatementTooLarge):
-		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"Statement too large", "split the period so each statement contains at most 20,000 usage-minute lines"))
 	default:
 		api.WriteProblem(w, api.ErrInternal("could not price platform tenant usage"))
 	}
@@ -205,7 +180,7 @@ func (s *server) listPlatformTenantStatements(w http.ResponseWriter, r *http.Req
 		tenantStatementPeriodProblem(w)
 		return
 	}
-	statements, err := store.ListPlatformTenantStatements(r.Context(), acct.ID, tenant.ID, start.UTC(), end.UTC())
+	statements, err := store.ListPlatformTenantStatementHeaders(r.Context(), acct.ID, tenant.ID, start.UTC(), end.UTC())
 	if err != nil {
 		api.WriteProblem(w, api.ErrInternal("could not list platform tenant statements"))
 		return
@@ -222,7 +197,7 @@ func (s *server) getPlatformTenantStatement(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	statement, err := store.GetPlatformTenantStatement(r.Context(), acct.ID, tenant.ID, r.PathValue("statement_id"))
+	statement, err := store.GetPlatformTenantStatementHeader(r.Context(), acct.ID, tenant.ID, r.PathValue("statement_id"))
 	if errors.Is(err, state.ErrNotFound) {
 		s.notFound(w, "no such platform tenant statement")
 		return

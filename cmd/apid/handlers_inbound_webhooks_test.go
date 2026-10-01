@@ -17,6 +17,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	stripex "github.com/onebox-faas/faas/pkg/billing/stripe"
+	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -128,6 +129,58 @@ func TestInboundWebhookAcceptsDurablyAndDeduplicatesProviderRetries(t *testing.T
 	}
 	if len(due) != 1 {
 		t.Fatalf("provider retry created %d durable deliveries, want 1", len(due))
+	}
+}
+
+func TestInboundWebhookBindingSubmitsToManagedExclusiveLane(t *testing.T) {
+	e := setupWebhookTest(t, api.PlanPro)
+	appID := mustSeedApp(t, e, "exclusive-inbound-stripe")
+	app, err := e.store.AppByID(t.Context(), appID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint := mustCreateInboundWebhook(t, e, "exclusive-inbound-stripe")
+	owners := e.store
+	if _, err := owners.UpsertExclusiveWorkPolicy(t.Context(), e.acct.ID, exclusivework.Policy{
+		Name: "crm-sync", Scope: "account", MemberAppIDs: []string{appID}, Contention: "queue",
+		LeaseSeconds: 5, MaxAttemptSeconds: 60,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	bindings := e.store
+	if _, err := bindings.UpsertExclusiveTriggerBinding(t.Context(), state.ExclusiveTriggerBinding{
+		Source: "inbound_webhook", TriggerID: endpoint.ID, AccountID: e.acct.ID,
+		PolicyName: "crm-sync", Key: json.RawMessage(`"customer:acme:crm-sync"`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"id":"evt_exclusive_sync","object":"event"}`)
+	first := postStripeInboundWebhook(t, e, endpoint.EndpointURL, body, inboundWebhookTestSecret)
+	if first.Code != http.StatusAccepted {
+		t.Fatalf("exclusive webhook status %d: %s", first.Code, first.Body.String())
+	}
+	var receipt api.InboundWebhookReceiptResponse
+	if err := json.Unmarshal(first.Body.Bytes(), &receipt); err != nil {
+		t.Fatal(err)
+	}
+	operation, err := owners.ExclusiveOperationByID(t.Context(), e.acct.ID, receipt.ReceiptID)
+	if err != nil || operation.AppID != app.ID || operation.State != "pending" {
+		t.Fatalf("webhook was not durably admitted as an operation: op=%+v err=%v", operation, err)
+	}
+	var request api.InvokeRequest
+	if err := json.Unmarshal(operation.Request, &request); err != nil || request.Path != "/internal/stripe" || !bytes.Equal(request.Payload, body) {
+		t.Fatalf("exclusive webhook invocation mismatch: request=%+v decode=%v", request, err)
+	}
+	second := postStripeInboundWebhook(t, e, endpoint.EndpointURL, body, inboundWebhookTestSecret)
+	var duplicate api.InboundWebhookReceiptResponse
+	if err := json.Unmarshal(second.Body.Bytes(), &duplicate); err != nil {
+		t.Fatal(err)
+	}
+	if second.Code != http.StatusAccepted || !duplicate.Duplicate || duplicate.ReceiptID != receipt.ReceiptID {
+		t.Fatalf("provider retry did not replay same operation receipt: status=%d receipt=%+v", second.Code, duplicate)
+	}
+	if _, err := e.store.InvocationByID(t.Context(), receipt.ReceiptID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("exclusive webhook also created a legacy invocation: %v", err)
 	}
 }
 

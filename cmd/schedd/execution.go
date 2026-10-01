@@ -42,15 +42,22 @@ func executionDispatchConcurrencyFromEnv(value string) (int, error) {
 //
 //	ARCH, KERNEL_DIGEST, EXECUTOR_DIGEST, BASE_DIGEST, KERNEL_KEY,
 //	BASE_KEY, LAYER_KEY, FC_VERSION
-func executionRuntimeArtifactsFromEnv(ctx context.Context, runtimeID api.ExecutionRuntime, _ api.ExecutionSnapshotShape) (sched.ExecutionRuntimeArtifacts, error) {
+func executionRuntimeArtifactsFromEnv(ctx context.Context, runtimeID api.ExecutionRuntime, shape api.ExecutionSnapshotShape) (sched.ExecutionRuntimeArtifacts, error) {
 	if err := ctx.Err(); err != nil {
 		return sched.ExecutionRuntimeArtifacts{}, err
 	}
 	prefix := "FAAS_EXECUTION_" + strings.ToUpper(string(runtimeID))
+	if err := shape.Profile.Validate(runtimeID); err != nil {
+		return sched.ExecutionRuntimeArtifacts{}, err
+	}
+	if shape.Profile.Normalized() != api.ExecutionProfileStandard {
+		prefix += "_" + strings.ToUpper(strings.ReplaceAll(string(shape.Profile), "-", "_"))
+	}
 	value := func(field string) string {
 		return strings.TrimSpace(os.Getenv(prefix + "_" + field))
 	}
 	artifacts := sched.ExecutionRuntimeArtifacts{
+		Profile:             shape.Profile.Normalized(),
 		Architecture:        value("ARCH"),
 		KernelDigest:        value("KERNEL_DIGEST"),
 		GuestExecutorDigest: value("EXECUTOR_DIGEST"),

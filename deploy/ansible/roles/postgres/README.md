@@ -68,8 +68,10 @@ chroot bootstrap) without halting. On a real control-plane node the handlers in
 
 - The role does not run migrations (M5 owns `migrations/`; that's a
   separate `migrate` role).
-- `community.postgresql.postgresql_user` may fail silently on hosts
-  without the collection — the role has an explicit `psql` fallback.
+- The `faas` role and database are created with
+  `community.postgresql.postgresql_user` / `postgresql_db`, which import
+  `python3-psycopg2` on the target (installed by this role). Both fail
+  loudly; there is no silent fallback.
 - `listen_addresses=''` is **destructive**: any client currently
   connected via TCP will drop. Split-box operators must deliberately
   opt into the mesh listener and provide the database password through

@@ -187,6 +187,9 @@ func applyAppConfigurationParams(a App, p UpdateAppParams) App {
 	if p.SetConsumerAuthMode && p.ConsumerAuthMode != nil {
 		a.ConsumerAuthMode = ConsumerAuthMode(*p.ConsumerAuthMode)
 	}
+	if p.SetPlatformTenantRequired {
+		a.PlatformTenantRequired = boolOrFalse(p.PlatformTenantRequired)
+	}
 	if p.SetVisibility && p.Visibility != nil {
 		a.Visibility = api.NormalizeAppVisibility(*p.Visibility)
 	}

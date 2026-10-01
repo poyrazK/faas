@@ -80,8 +80,12 @@ func (s *PgStore) ClaimQueueTriggerInvocation(ctx context.Context, id, triggerID
 	if err != nil {
 		return Invocation{}, mapErr(err)
 	}
+	inv, err := invocationFromSQLC(row)
+	if err != nil {
+		return Invocation{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Invocation{}, fmt.Errorf("state: queue trigger claim commit: %w", err)
 	}
-	return invocationFromSQLC(row), nil
+	return inv, nil
 }

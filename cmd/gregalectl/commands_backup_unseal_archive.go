@@ -134,7 +134,7 @@ func unsealArchiveCreds(f *unsealArchiveCredsFlags) error {
 	if err != nil {
 		return fmt.Errorf("read age identity %s: %w", f.ageIdentity, err)
 	}
-	identity, err := age.ParseX25519Identity(string(identityData))
+	identity, err := parseBoxAgeIdentity(identityData)
 	if err != nil {
 		return fmt.Errorf("parse age identity: %w", err)
 	}

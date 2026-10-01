@@ -13,7 +13,7 @@ export GOOS GOARCH
 TLS_CUTOVER_MODE ?= dry-run
 PKGS    := ./...
 COVERAGE_DIR := coverage
-DAEMONS := apid gatewayd-public gatewayd-internal realtimed s3-gatewayd schedd vmmd vmmd-jail-helper vmmd-raw-bridge vmmd-tcp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd hostage-gen
+DAEMONS := apid bridged gatewayd-public gatewayd-internal realtimed s3-gatewayd schedd vmmd vmmd-jail-helper vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd hostage-gen
 GOVULNCHECK_VERSION ?= 1.7.0
 # gregale is the customer-facing CLI; gregalectl is the
 # operator-only companion CLI (issue #911 / ADR-110 PR-6.5).
@@ -41,6 +41,24 @@ ANSIBLE_INVENTORY ?= deploy/ansible/inventory/hosts.ini
 ANSIBLE_PLAYBOOK = ANSIBLE_CONFIG="$(ANSIBLE_CONFIG)" ansible-playbook
 
 .DEFAULT_GOAL := help
+
+.PHONY: test-customer-platform
+test-customer-platform: ## Run the two-customer starter acceptance with disposable PostgreSQL databases (no KVM)
+	@GO="$(GO)" sh scripts/test-customer-platform.sh
+
+.PHONY: test-container-contract
+test-container-contract: ## Portable OCI, container preflight, TCP/TLS lifecycle and deployment routing contracts (no KVM)
+	@python3 scripts/ci/container-contract-check_test.py
+	@GO="$(GO)" python3 scripts/ci/container-contract-check.py
+
+.PHONY: test-container-guest-contract
+test-container-guest-contract: ## Linux root acceptance for OCI identity and atomic cgroup launch (explicit delegated cgroup parent required)
+	@GO="$(GO)" bash scripts/ci/container-guest-contract.sh
+
+.PHONY: bench-platform-tenant-coverage
+bench-platform-tenant-coverage: ## Measure 90-day, two-app statement coverage reads/writes on disposable PostgreSQL
+	@test -n "$$DATABASE_URL" || (echo "DATABASE_URL not set — set it to a disposable PostgreSQL database"; exit 1)
+	@GO="$(GO)" sh scripts/bench-platform-tenant-coverage.sh
 
 .PHONY: help
 help: ## List targets
@@ -531,6 +549,10 @@ metal-lima: ## Run metal tests locally on an M3+ Mac via Lima nested KVM (see de
 	limactl shell --workdir "$(CURDIR)" faas-metal sudo ./deploy/lima/run-metal.sh
 
 .PHONY: native-m9-acceptance
+.PHONY: native-dev-bridge-acceptance
+native-dev-bridge-acceptance: ## Verify Dev Bridge against designated native split-box fixtures and public TLS
+	@bash scripts/ci/run-native-dev-bridge-acceptance.sh
+
 native-m9-acceptance: ## M9: run the guarded two-node failure-safe drill on the native x86 split-box pair
 	@bash scripts/ci/run-native-m9-acceptance.sh
 
@@ -1143,8 +1165,17 @@ standards-check: ## Verify the standards registry and generated matrix are in sy
 	@echo "standards-check: OK"
 
 .PHONY: standards-conformance
-standards-conformance: ## Verify standards claims resolve to executable test fixtures
+standards-conformance: ## Validate AsyncAPI and verify standards evidence references
 	@$(GO) run ./cmd/standards-conformance
+
+.PHONY: standards-contract-check
+standards-contract-check: ## Run official-schema and SDK interoperability checks for event/trace contracts
+	@$(GO) test -count=1 -run 'Test(AsyncAPI|OTLPHTTPConformance|CloudEvents|Webhook_Dispatch_CloudEventsStructured)' ./pkg/productstandards ./pkg/gateway ./pkg/events ./pkg/webhookout
+
+.PHONY: focus-contract-check
+focus-contract-check: ## Check FOCUS invoice projection, refresh, ownership, and CLI operations
+	@$(GO) test -count=1 -run '^TestFOCUS|^TestInactiveAccount_CanStillPay$$' ./pkg/focus/... ./pkg/api ./cmd/apid ./cmd/gregale
+	@$(GO) test -count=1 -run '^TestInvoiceSnapshot|^TestInvoiceRefresh|^TestMemInvoiceRefresh|^TestMemInvoiceDetails|^TestMemInvoiceLifecycle|^TestInvoiceDetailsValidation' ./pkg/billing ./pkg/billing/stripe ./pkg/billing/paddle ./pkg/billing/polar ./pkg/state
 
 .PHONY: pricing-md
 pricing-md: ## Regenerate customer plan/pricing page from api limits
@@ -1311,4 +1342,64 @@ sdk-smoke-python: ## Build fakeapid fixture + run Python SDK smoke + unit tests
 
 .PHONY: sdk-unit-python
 sdk-unit-python: ## Run Python SDK unit tests (no fixture required)
-	@cd sdk/python && .venv/bin/python -m pytest tests/test_client.py tests/test_sse.py
+	@cd sdk/python && .venv/bin/python -m pytest tests/test_client.py tests/test_sse.py tests/test_dev_bridge.py tests/test_flags.py
+
+.PHONY: test-flags
+test-flags: ## Validate customer-aware flag release, SDK and request evidence against disposable Postgres
+	@test -n "$(DATABASE_URL)" || (echo "DATABASE_URL is required for Flags acceptance"; exit 1)
+	@cd sdk/node && npm ci --ignore-scripts --no-audit --no-fund && npm run build && npm run test:build && node --test dist-test/test/flags.test.js
+	@cd sdk/go && $(GO) test -count=1 ./...
+	@$(GO) test -p 1 ./pkg/flags ./pkg/workloadidentity
+	@DATABASE_URL="$(DATABASE_URL)" $(GO) test -p 1 ./pkg/flagsintegration
+	@$(GO) test -p 1 ./pkg/gateway -run 'TestFeatureFlag|TestFlagEvidence' -count=1
+	@GREGALE_FLAGS_ACCEPTANCE=1 DATABASE_URL="$(DATABASE_URL)" $(GO) test -p 1 ./cmd/apid -run '^TestFeatureFlags' -count=1
+	@$(GO) test -p 1 ./cmd/gregale -run '^TestCmdFlags' -count=1
+
+.PHONY: test-flags-metal
+test-flags-metal: ## Validate Node Flags refresh after native VM restore (root, KVM, FAAS_TEST_KERNEL, FAAS_BUILDER_BASE_PATH)
+	@test "$$(id -u)" -eq 0 || (echo "test-flags-metal must run as root" >&2; exit 1)
+	@test -c /dev/kvm || (echo "/dev/kvm is required for test-flags-metal" >&2; exit 1)
+	@test -r "$$FAAS_TEST_KERNEL" || (echo "FAAS_TEST_KERNEL must name a readable kernel" >&2; exit 1)
+	@test -r "$$FAAS_BUILDER_BASE_PATH" || (echo "FAAS_BUILDER_BASE_PATH must name a readable builder base" >&2; exit 1)
+	@cd sdk/node && npm ci --ignore-scripts --no-audit --no-fund && npm run build
+	@RUN_REGEX='^TestFeatureFlagsNativeParkRestoreMetal$$' $(MAKE) test-metal PKGS=./cmd/e2e/...
+
+.PHONY: test-issues
+test-issues: ## Real PostgreSQL and SDK process acceptance for Gregale Issues
+	@bash scripts/test-issues.sh
+
+
+.PHONY: udp-deployment-check
+udp-deployment-check: ## Render opt-in UDP environment, source policy and systemd contracts without applying them
+	python3 scripts/ci/test_udp_deployment.py
+
+.PHONY: udp-alert-check
+udp-alert-check: ## Verify UDP ingress alert syntax and pressure/failure versus normal completion behavior
+	promtool check rules deploy/ansible/roles/prometheus/files/faas.rules.yml
+	promtool test rules deploy/ansible/roles/prometheus/files/udp.rules.test.yml
+
+.PHONY: udp-postgres-check
+.PHONY: tcp-tls-alert-check
+tcp-tls-alert-check: ## Verify raw TCP TLS certificate availability and expiry alerts
+	promtool check rules deploy/ansible/roles/prometheus/files/faas.rules.yml
+	promtool test rules deploy/ansible/roles/prometheus/files/tcp-tls.rules.test.yml
+
+udp-postgres-check: ## Require real PostgreSQL passes for UDP store/migration tests; rejects skips
+	bash scripts/ci/udp-postgres-check.sh
+
+.PHONY: udp-contract-check
+udp-contract-check: udp-deployment-check udp-alert-check ## Require portable UDP socket, transport, intent, API and CLI race contracts; rejects skips
+	@python3 scripts/ci/container-contract-check_test.py
+	python3 scripts/ci/udp-contract-check.py
+
+.PHONY: test-companion-scratch-contract
+test-companion-scratch-contract: ## Linux/x86_64 root acceptance for ephemeral companion scratch capacity and isolation
+	@GO="$(GO)" bash scripts/ci/companion-scratch-contract.sh
+
+.PHONY: tcp-tls-deployment-check
+tcp-tls-deployment-check: ## Verify TCP TLS path validation and environment rendering locally
+	ansible-playbook -i localhost, -c local deploy/ansible/tests/tcp_tls_config.yml
+.PHONY: issues-smoke
+issues-smoke: ## Send controlled Gregale Issues failures to an explicitly confirmed staging API
+	@npm run build --prefix sdk/node
+	@node tests/issues-smoke/run.mjs

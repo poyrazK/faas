@@ -42,8 +42,8 @@ type Config struct {
 
 	// ServiceProxyListen is the tenant-bridge listener for cross-VM service
 	// discovery. It must bind the host bridge address on the reserved service
-	// proxy port; the sibling DNS resolver is started on the same address at
-	// port 53. Empty disables the guest-facing listener and resolver.
+	// proxy port (10081 or legacy 10080). Both HTTP ports start on the same
+	// bridge address, along with DNS on port 53. Empty disables all three.
 	ServiceProxyListen string `toml:"service_proxy_listen"`
 	// ServiceProxyHTTPSListen enables the opt-in, bridge-only HTTPS endpoint
 	// for binding-scoped <service>.internal aliases. Empty keeps the legacy

@@ -20,14 +20,39 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"flag"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 )
+
+type processEvidence struct {
+	UID              int    `json:"uid"`
+	GID              int    `json:"gid"`
+	WorkingDir       string `json:"working_dir"`
+	Marker           string `json:"marker"`
+	DeploymentMarker string `json:"deployment_marker,omitempty"`
+	Cgroup           string `json:"cgroup,omitempty"`
+	Count            int    `json:"count,omitempty"`
+}
+
+func currentEvidence() processEvidence {
+	cwd, err := os.Getwd()
+	if err != nil {
+		log.Fatal(err)
+	}
+	cgroup, _ := os.ReadFile("/proc/self/cgroup")
+	return processEvidence{UID: os.Getuid(), GID: os.Getgid(), WorkingDir: cwd,
+		Marker: os.Getenv("FIXTURE_MARKER"), DeploymentMarker: os.Getenv("DEPLOYMENT_MARKER"), Cgroup: strings.TrimSpace(string(cgroup))}
+}
 
 func main() {
 	addr := flag.String("addr", "", "listen address (defaults to $PORT or :8080)")
@@ -35,6 +60,8 @@ func main() {
 	spin := flag.Bool("spin", false, "burn one CPU forever")
 	ignoreTerm := flag.Bool("ignore-term", false, "ignore SIGTERM")
 	noListen := flag.Bool("no-listen", false, "never bind the port")
+	contract := flag.Bool("contract", false, "expose fixed process-contract evidence")
+	probeContract := flag.Bool("probe-contract", false, "report this exec probe process to the local fixture server")
 	noHealthz := flag.Bool("no-healthz", false, "omit the /healthz endpoint")
 	flag.Parse()
 	if *addr == "" {
@@ -47,6 +74,27 @@ func main() {
 		} else {
 			*addr = ":" + port
 		}
+	}
+
+	if *probeContract {
+		_, port, err := net.SplitHostPort(*addr)
+		if err != nil {
+			log.Fatal(err)
+		}
+		body, err := json.Marshal(currentEvidence())
+		if err != nil {
+			log.Fatal(err)
+		}
+		client := &http.Client{Timeout: 2 * time.Second}
+		resp, err := client.Post("http://127.0.0.1:"+port+"/probe-contract", "application/json", bytes.NewReader(body))
+		if err != nil {
+			log.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusNoContent {
+			log.Fatalf("probe contract status=%d", resp.StatusCode)
+		}
+		return
 	}
 
 	if *ignoreTerm {
@@ -69,6 +117,39 @@ func main() {
 	body = []byte(strings.TrimRight(string(body), "\n") + "\n")
 
 	mux := http.NewServeMux()
+	if *contract {
+		var mu sync.Mutex
+		var lastProbe *processEvidence
+		mux.HandleFunc("/probe-contract", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			var evidence processEvidence
+			if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&evidence); err != nil {
+				http.Error(w, "invalid probe evidence", http.StatusBadRequest)
+				return
+			}
+			mu.Lock()
+			evidence.Count = 1
+			if lastProbe != nil {
+				evidence.Count = lastProbe.Count + 1
+			}
+			lastProbe = &evidence
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+		})
+		mux.HandleFunc("/contract", func(w http.ResponseWriter, _ *http.Request) {
+			mu.Lock()
+			probe := lastProbe
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(struct {
+				processEvidence
+				Probe *processEvidence `json:"probe,omitempty"`
+			}{currentEvidence(), probe})
+		})
+	}
 	if !*noHealthz {
 		mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	}

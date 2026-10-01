@@ -6,13 +6,15 @@ import (
 )
 
 const (
-	ConsumerAuthModeOptional    = "optional"
-	ConsumerAuthModeRequired    = "required"
-	CodeConsumerAuthModeInvalid = "consumer_auth_mode_invalid"
-	CodeConsumerKeyRequired     = "consumer_key_required"
-	CodeConsumerKeyInvalid      = "consumer_key_invalid"
-	CodeConsumerKeyInactive     = "consumer_key_inactive"
-	CodeConsumerScopeMissing    = "consumer_scope_missing"
+	ConsumerAuthModeOptional                 = "optional"
+	ConsumerAuthModeRequired                 = "required"
+	CodeConsumerAuthModeInvalid              = "consumer_auth_mode_invalid"
+	CodeConsumerKeyRequired                  = "consumer_key_required"
+	CodeConsumerKeyInvalid                   = "consumer_key_invalid"
+	CodeConsumerKeyInactive                  = "consumer_key_inactive"
+	CodeConsumerScopeMissing                 = "consumer_scope_missing"
+	CodePlatformTenantRequired               = "platform_tenant_required"
+	CodePlanPlatformTenantRequiredNotAllowed = "plan_platform_tenant_required_not_allowed"
 )
 
 func ErrInvalidConsumerAuthMode(mode string) *Problem {
@@ -43,6 +45,17 @@ func ErrConsumerKeyQuota(p Plan, scope string, limit, observed int) *Problem {
 func ErrConsumerKeyRequired() *Problem {
 	return NewProblem(http.StatusUnauthorized, CodeConsumerKeyRequired,
 		"Consumer key required", "this app requires Authorization: Bearer <consumer-key>")
+}
+
+func ErrPlatformTenantRequired() *Problem {
+	return NewProblem(http.StatusForbidden, CodePlatformTenantRequired,
+		"Platform tenant required", "this app requires a verified platform tenant")
+}
+
+func ErrPlanPlatformTenantRequiredNotAllowed(p Plan) *Problem {
+	return NewProblem(http.StatusPaymentRequired, CodePlanPlatformTenantRequiredNotAllowed,
+		"Platform tenant policy unavailable on this plan",
+		fmt.Sprintf("the %s plan does not include platform tenants; upgrade to Hobby or above to require customer identity on an app.", p))
 }
 
 func ErrConsumerKeyInvalid() *Problem {

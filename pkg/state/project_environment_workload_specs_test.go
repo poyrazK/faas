@@ -44,7 +44,8 @@ func TestWorkloadAppFieldPoliciesCoverEveryAppField(t *testing.T) {
 	for i := 0; i < settingsType.NumField(); i++ {
 		field := settingsType.Field(i)
 		if _, belongsToApp := appType.FieldByName(field.Name); !belongsToApp {
-			if field.Name != "WorkPolicies" || field.Type != reflect.TypeOf((*state.ProjectEnvironmentWorkPolicySettings)(nil)) {
+			if (field.Name != "WorkPolicies" || field.Type != reflect.TypeOf((*state.ProjectEnvironmentWorkPolicySettings)(nil))) &&
+				(field.Name != "QueueBindings" || field.Type != reflect.TypeOf((*state.ProjectEnvironmentQueueSettings)(nil))) {
 				t.Errorf("Settings.%s needs an explicit environment configuration ownership decision", field.Name)
 			}
 		}
@@ -96,6 +97,7 @@ func testEnvironmentWorkloadSettings(t *testing.T, store workloadSpecTestStore) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	settings.PlatformTenantRequired = true
 	first, err := store.PutProjectEnvironmentWorkloadSpec(ctx, account.ID, project.ID, "staging", app.ID, 0, settings)
 	if err != nil || first.Revision != 1 {
 		t.Fatalf("create workload spec = %+v, %v", first, err)
@@ -106,32 +108,34 @@ func testEnvironmentWorkloadSettings(t *testing.T, store workloadSpecTestStore) 
 		t.Fatal(err)
 	}
 	settings.RAMMB, settings.StartCommand = 512, "serve staging"
+	settings.PlatformTenantRequired = false
 	settings.Manifest.Env["MODE"] = "staging"
 	second, err := store.PutProjectEnvironmentWorkloadSpec(ctx, account.ID, project.ID, "staging", app.ID, 1, settings)
 	if err != nil || second.Revision != 2 || second.ID == first.ID || second.Hash == first.Hash {
 		t.Fatalf("edit workload spec = %+v, %v", second, err)
 	}
 	legacyApp, err := state.AppForDeployment(ctx, store, legacy)
-	if err != nil || legacyApp.RAMMB != 256 || legacyApp.StartCommand != "serve original" {
+	if err != nil || legacyApp.RAMMB != 256 || legacyApp.StartCommand != "serve original" || legacyApp.PlatformTenantRequired {
 		t.Fatalf("desired settings changed legacy deployment: %+v, %v", legacyApp, err)
 	}
 	if _, err := store.PutProjectEnvironmentWorkloadSpec(ctx, account.ID, project.ID, "staging", app.ID, 1, settings); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("stale edit = %v, want conflict", err)
 	}
 	pinned, err := state.AppForDeployment(ctx, store, dep)
-	if err != nil || pinned.RAMMB != 256 || pinned.StartCommand != "serve original" || pinned.Manifest.Env["MODE"] != "original" {
+	if err != nil || pinned.RAMMB != 256 || pinned.StartCommand != "serve original" || pinned.Manifest.Env["MODE"] != "original" || !pinned.PlatformTenantRequired {
 		t.Fatalf("tested deployment changed after stage edit: %+v, %v", pinned, err)
 	}
 	current, err := state.ResolveAppForEnvironment(ctx, store, app, "staging")
-	if err != nil || current.RAMMB != 512 || current.Manifest.Env["MODE"] != "staging" {
+	if err != nil || current.RAMMB != 512 || current.Manifest.Env["MODE"] != "staging" || current.PlatformTenantRequired {
 		t.Fatalf("current stage configuration = %+v, %v", current, err)
 	}
 	production, err := store.AppByID(ctx, app.ID)
-	if err != nil || production.RAMMB != 256 || production.Manifest.Env["MODE"] != "original" {
+	if err != nil || production.RAMMB != 256 || production.Manifest.Env["MODE"] != "original" || production.PlatformTenantRequired {
 		t.Fatalf("stage edit changed production: %+v, %v", production, err)
 	}
 	newRAM := 1024
-	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{RAMMB: &newRAM}); err != nil {
+	requireTenant := true
+	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{RAMMB: &newRAM, SetPlatformTenantRequired: true, PlatformTenantRequired: &requireTenant}); err != nil {
 		t.Fatal(err)
 	}
 	pinned, err = state.AppForDeployment(ctx, store, dep)
@@ -167,7 +171,7 @@ func testEnvironmentWorkloadSettings(t *testing.T, store workloadSpecTestStore) 
 		if source == "production" {
 			wantRAM = 1024
 		}
-		if err != nil || copied.Revision != 1 || copied.Settings.RAMMB != wantRAM {
+		if err != nil || copied.Revision != 1 || copied.Settings.RAMMB != wantRAM || copied.Settings.PlatformTenantRequired != (source == "production") {
 			t.Fatalf("clone %s configuration = %+v, %v", source, copied, err)
 		}
 		if source == "production" && (!copied.Settings.OnlyAllowDeclaredRoutes || len(copied.Settings.DeclaredRoutes) != 1 || copied.Settings.DeclaredRoutes[0].Path != "/production") {

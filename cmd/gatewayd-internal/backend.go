@@ -205,7 +205,10 @@ func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID stri
 	if err != nil || !found {
 		return resolved, found, err
 	}
-	if api.NormalizeAppVisibility(resolved.Visibility) == api.AppVisibilityInternal {
+	// The selected deployment owns visibility; a production edit cannot
+	// hide or expose a stage. Private stages still require a verified bridge.
+	if api.NormalizeAppVisibility(resolved.Visibility) == api.AppVisibilityInternal &&
+		!gateway.DevBridgeAllowsPrivateEnvironment(ctx, app.AccountID, environment.ID, app.ID) {
 		return gateway.App{}, false, nil
 	}
 	resolved.PinnedDeploymentID = deployment.ID
@@ -676,9 +679,10 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 		// short-circuit WITHOUT re-reading the database. Default
 		// false on the App struct matches the apps.maintenance_mode
 		// column DEFAULT (migration 00237).
-		MaintenanceMode:  app.MaintenanceMode,
-		RequireAuthn:     app.RequireAuthn,
-		ConsumerAuthMode: string(app.ConsumerAuthMode),
+		MaintenanceMode:        app.MaintenanceMode,
+		RequireAuthn:           app.RequireAuthn,
+		ConsumerAuthMode:       string(app.ConsumerAuthMode),
+		PlatformTenantRequired: app.PlatformTenantRequired,
 		// ADR-124: per-app wire-protocol selector (closed-set
 		// {http1, http2, grpc}, default 'http1'). Plumbed from
 		// apps.app_protocol through pgRouter.toApp so

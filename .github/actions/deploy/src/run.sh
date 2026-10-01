@@ -280,10 +280,40 @@ verify_release_tag_push() {
 		echo "status=skipped" >> "$GITHUB_OUTPUT"
 		return 1
 	fi
-	if [[ ! "${GITHUB_SHA:-}" =~ ^[0-9a-fA-F]{40}$ ]] || [ "$after" != "$GITHUB_SHA" ]; then
+	if [[ ! "${GITHUB_SHA:-}" =~ ^[0-9a-fA-F]{40}$ ]]; then
+		die "release tag event did not match its immutable commit SHA"
+	fi
+	# A lightweight tag's push payload names the commit itself. An annotated
+	# tag's payload names the tag object, while GITHUB_SHA is the commit it
+	# points at; accept it only when GitHub reports that exact tag object
+	# pointing directly at GITHUB_SHA.
+	if [ "$after" != "$GITHUB_SHA" ] && ! annotated_tag_points_at "$after" "$tag" "$GITHUB_SHA"; then
 		die "release tag event did not match its immutable commit SHA"
 	fi
 	return 0
+}
+
+# annotated_tag_points_at OBJECT TAG COMMIT succeeds when OBJECT is the
+# annotated tag TAG in this repository and points directly at COMMIT.
+annotated_tag_points_at() {
+	local object="$1" tag="$2" commit="$3"
+	if [[ ! "$object" =~ ^[0-9a-fA-F]{40}$ ]] ||
+		[[ ! "${GITHUB_REPOSITORY:-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+		return 1
+	fi
+	local api_base="${GITHUB_API_URL:-https://api.github.com}" response
+	local -a auth=()
+	if [ -n "${GITHUB_TOKEN:-}" ]; then
+		auth=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+	fi
+	if ! response="$(curl --fail --silent --show-error \
+		-H "Accept: application/vnd.github+json" "${auth[@]}" \
+		"${api_base%/}/repos/${GITHUB_REPOSITORY}/git/tags/${object}")"; then
+		return 1
+	fi
+	printf '%s' "$response" | jq -e --arg tag "$tag" --arg commit "$commit" --arg object "$object" '
+		.sha == $object and .tag == $tag and
+		.object.type == "commit" and .object.sha == $commit' >/dev/null
 }
 
 exchange_oidc() {

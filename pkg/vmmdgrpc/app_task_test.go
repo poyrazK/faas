@@ -29,7 +29,7 @@ func (v *appTaskRuntimeVMM) WakeAppTask(_ context.Context, request fcvm.AppTaskW
 func (v *appTaskRuntimeVMM) ExecuteAppTask(_ context.Context, _ string, request apptaskproto.Request) (apptaskproto.Result, error) {
 	v.execute = request
 	exit := 0
-	return apptaskproto.Result{Status: apptaskproto.StatusSucceeded, ExitCode: &exit, Stdout: []byte("done\n")}, nil
+	return apptaskproto.Result{Status: apptaskproto.StatusSucceeded, ExitCode: &exit, OutcomeCode: "accepted", Stdout: []byte("done\n")}, nil
 }
 
 func (v *appTaskRuntimeVMM) ExecuteAppTaskWithOutput(ctx context.Context, instance string, request apptaskproto.Request, receive apptaskproto.OutputReceiver) (apptaskproto.Result, error) {
@@ -62,7 +62,7 @@ func TestAppTaskRestoreAndExecuteUseSeparateEnvelopes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExecuteAppTask: %v", err)
 	}
-	if response.GetTaskId() != "task-1" || response.GetStatus() != string(apptaskproto.StatusSucceeded) || string(response.GetStdout()) != "done\n" {
+	if response.GetTaskId() != "task-1" || response.GetStatus() != string(apptaskproto.StatusSucceeded) || response.GetOutcomeCode() != "accepted" || string(response.GetStdout()) != "done\n" {
 		t.Fatalf("response = %#v", response)
 	}
 	if len(vmm.execute.Command) != 2 || vmm.execute.Command[0] != "bin/migrate" {

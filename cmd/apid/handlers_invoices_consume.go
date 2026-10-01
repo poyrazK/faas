@@ -42,6 +42,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -77,6 +78,10 @@ func (s *server) consumeInvoiceCredits(w http.ResponseWriter, r *http.Request, a
 		}
 	}
 	if err != nil {
+		if errors.Is(err, billing.ErrInvoiceHistoricalPlanUnknown) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Invoice plan is unknown", "The historical plan must be established before credits can be prorated against this invoice."))
+			return
+		}
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
 				"Invoice not found", err.Error()))

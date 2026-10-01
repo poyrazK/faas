@@ -121,7 +121,11 @@ func validateInvocationQueueClaimDB(ctx context.Context, db sqlc.DBTX, id string
 	if err != nil {
 		return true, mapErr(err)
 	}
-	if !queueOwnerMatchesEnvelope(owner, invocationFromSQLC(row)) {
+	inv, err := invocationFromSQLC(row)
+	if err != nil {
+		return true, err
+	}
+	if !queueOwnerMatchesEnvelope(owner, inv) {
 		return true, ErrInvocationEnvironmentWorkIsolation
 	}
 	projectID, err := q.ReadEnvironmentQueueAdmissionProject(ctx, db, mustPgUUID(owner.EnvironmentID))
@@ -132,7 +136,7 @@ func validateInvocationQueueClaimDB(ctx context.Context, db sqlc.DBTX, id string
 	if err != nil {
 		return true, ErrInvocationEnvironmentWorkIsolation
 	}
-	if _, err := validateQueueAdmission(owner, invocationFromSQLC(row), set); err != nil {
+	if _, err := validateQueueAdmission(owner, inv, set); err != nil {
 		return true, err
 	}
 	valid, err := q.ValidateInvocationEnvironmentQueuePin(ctx, db, sqlc.ValidateInvocationEnvironmentQueuePinParams{InvocationID: mustPgUUID(id), RequireLive: requireLive})

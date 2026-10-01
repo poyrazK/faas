@@ -35,6 +35,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -43,20 +44,23 @@ import (
 type workKind string
 
 const (
-	workPrime               workKind = "prime"
-	workRestart             workKind = "restart"
-	workAppReconcile        workKind = "app_reconcile"
-	workDeploymentReconcile workKind = "deployment_reconcile"
-	workJobCancel           workKind = "job_cancel"
-	workJobDispatch         workKind = "job_dispatch"
-	workPrimeRecovery       workKind = "prime_recovery"
-	workWorkflowDispatch    workKind = "workflow_dispatch"
-	workTriggerDispatch     workKind = "trigger_dispatch"
-	workEventFanout         workKind = "event_fanout"
+	workServiceRecovery      workKind = "service_recovery"
+	workServiceRecoverySweep workKind = "service_recovery_sweep"
+	workPrime                workKind = "prime"
+	workRestart              workKind = "restart"
+	workAppReconcile         workKind = "app_reconcile"
+	workDeploymentReconcile  workKind = "deployment_reconcile"
+	workJobCancel            workKind = "job_cancel"
+	workJobDispatch          workKind = "job_dispatch"
+	workPrimeRecovery        workKind = "prime_recovery"
+	workWorkflowDispatch     workKind = "workflow_dispatch"
+	workTriggerDispatch      workKind = "trigger_dispatch"
+	workEventFanout          workKind = "event_fanout"
 )
 
 // workKinds is the iteration order for metric pre-instantiation.
 var workKinds = []workKind{
+	workServiceRecovery, workServiceRecoverySweep,
 	workPrime, workRestart, workAppReconcile, workDeploymentReconcile, workJobCancel, workJobDispatch, workPrimeRecovery,
 	workWorkflowDispatch, workTriggerDispatch, workEventFanout,
 }
@@ -96,16 +100,18 @@ type workSpec struct {
 // fanout get one slot each because their tick work is already bounded and
 // durable state makes the next tick a safe retry.
 var workSpecs = map[workKind]workSpec{
-	workPrime:               {slots: maxConcurrentPrimes, overflow: overflowInline},
-	workRestart:             {slots: 8, overflow: overflowDrop},
-	workAppReconcile:        {slots: 8, overflow: overflowDrop},
-	workDeploymentReconcile: {slots: 8, overflow: overflowDrop},
-	workJobCancel:           {slots: 8, overflow: overflowDrop},
-	workJobDispatch:         {slots: 1, overflow: overflowDrop},
-	workPrimeRecovery:       {slots: 1, overflow: overflowDrop},
-	workWorkflowDispatch:    {slots: 4, overflow: overflowDrop},
-	workTriggerDispatch:     {slots: 1, overflow: overflowDrop},
-	workEventFanout:         {slots: 1, overflow: overflowDrop},
+	workServiceRecovery:      {slots: api.ServiceRecoveryConcurrentApps, overflow: overflowDrop},
+	workServiceRecoverySweep: {slots: 1, overflow: overflowDrop},
+	workPrime:                {slots: maxConcurrentPrimes, overflow: overflowInline},
+	workRestart:              {slots: 8, overflow: overflowDrop},
+	workAppReconcile:         {slots: 8, overflow: overflowDrop},
+	workDeploymentReconcile:  {slots: 8, overflow: overflowDrop},
+	workJobCancel:            {slots: 8, overflow: overflowDrop},
+	workJobDispatch:          {slots: 1, overflow: overflowDrop},
+	workPrimeRecovery:        {slots: 1, overflow: overflowDrop},
+	workWorkflowDispatch:     {slots: 4, overflow: overflowDrop},
+	workTriggerDispatch:      {slots: 1, overflow: overflowDrop},
+	workEventFanout:          {slots: 1, overflow: overflowDrop},
 }
 
 // workPool runs bounded, coalesced, off-loop tasks for Loop.

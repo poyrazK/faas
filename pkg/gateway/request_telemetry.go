@@ -54,6 +54,7 @@ import (
 // recorder's enqueue boundary (RecordFromObserve) so a publisher
 // collapse never has to reason about zero.
 type RequestTelemetryRow struct {
+	FlagEvidenceJSON string
 	// EventID identifies the collapsed usage increment represented by this
 	// row. It is generated once at the recorder boundary and retained through
 	// publisher retries for idempotent apid ledger writes.

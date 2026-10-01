@@ -297,10 +297,17 @@ func (c *LocalCacheBackend) Exists(ctx context.Context, key string) (bool, error
 // chars), with the leading 2 chars used as the bucket directory
 // so a single flat directory doesn't grow unbounded.
 func (c *LocalCacheBackend) cacheFileFor(key string) (path string, metaPath string) {
+	full := CacheFileForKey(c.root, key)
+	return full, full + ".meta"
+}
+
+// CacheFileForKey returns where a read-through cache rooted at root keeps its
+// copy of key. It lets read-only tools (gregalectl doctor) find an artifact
+// that a daemon staged through a remote backend without opening that backend.
+func CacheFileForKey(root, key string) string {
 	sum := sha256.Sum256([]byte(key))
 	hex := hex.EncodeToString(sum[:])
-	full := filepath.Join(c.root, hex[:2], hex[2:])
-	return full, full + ".meta"
+	return filepath.Join(root, hex[:2], hex[2:])
 }
 
 // ensureSharedCacheDir creates dir with the shared-cache permission contract.
@@ -790,7 +797,7 @@ func (c *LocalCacheBackend) openCache(key string) (io.ReadCloser, bool) {
 	// a frequently restored app layer was evicted merely because it had been
 	// downloaded before an inactive layer.
 	c.touchCacheFile(path)
-	return f, true
+	return &cacheFileReader{File: f, cache: c}, true
 }
 
 // touchCacheFile queues the mtime update used by the byte-budget eviction
@@ -884,7 +891,43 @@ func (c *LocalCacheBackend) materializeCache(ctx context.Context, key string, sr
 	if err != nil {
 		return nil, fmt.Errorf("cache open %q: %w", path, err)
 	}
-	return f, nil
+	return &cacheFileReader{File: f, cache: c}, nil
+}
+
+// cacheFileReader can retain its opened inode without another full copy.
+// Serialize the link with this backend's eviction/refresh, then verify inode
+// identity because other daemons also share and can replace the cache path.
+type cacheFileReader struct {
+	*os.File
+	cache *LocalCacheBackend
+}
+
+func (r *cacheFileReader) LinkTo(path string) error {
+	r.cache.mu.Lock()
+	defer r.cache.mu.Unlock()
+	return linkOpenCacheFile(r.File, path)
+}
+
+func linkOpenCacheFile(file *os.File, path string) error {
+	opened, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("cache stat opened file: %w", err)
+	}
+	if !opened.Mode().IsRegular() {
+		return fmt.Errorf("cache link: opened file is not regular")
+	}
+	if err := os.Link(file.Name(), path); err != nil {
+		return fmt.Errorf("cache retain opened file: %w", err)
+	}
+	linked, err := os.Lstat(path)
+	if err != nil || !os.SameFile(opened, linked) {
+		_ = os.Remove(path)
+		if err != nil {
+			return fmt.Errorf("cache stat retained file: %w", err)
+		}
+		return fmt.Errorf("cache retain opened file: cache path was replaced")
+	}
+	return nil
 }
 
 // cacheTempReader removes an oversized, non-cached materialization when the
@@ -892,6 +935,10 @@ func (c *LocalCacheBackend) materializeCache(ctx context.Context, key string, sr
 type cacheTempReader struct {
 	*os.File
 	path string
+}
+
+func (r *cacheTempReader) LinkTo(path string) error {
+	return linkOpenCacheFile(r.File, path)
 }
 
 func (r *cacheTempReader) Close() error {

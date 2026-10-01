@@ -7,6 +7,7 @@ import (
 	"errors"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func promotionWorkloadActivationsTx(ctx context.Context, tx pgx.Tx, promotion ProjectEnvironmentPromotion, members []ProjectReleaseMember, rollback, completed bool) error {
@@ -112,27 +113,14 @@ func replaceAppWorkloadSettingsTx(ctx context.Context, tx pgx.Tx, appID string, 
 	if err != nil {
 		return ErrInvalidArgument
 	}
-	_, err = tx.Exec(ctx, `with config as (select (json_populate_record(null::apps, $2::json)).*)
-		update apps a set visibility = c.visibility, type = c.type, runtime = nullif(c.runtime, ''),
-		ram_mb = c.ram_mb, cpu_millicores = nullif(c.cpu_millicores, 0), idle_timeout_s = nullif(c.idle_timeout_s, 0),
-		max_concurrency = c.max_concurrency, request_rate_limit_rps = c.request_rate_limit_rps,
-		request_rate_limit_burst = c.request_rate_limit_burst, min_instances = c.min_instances,
-		egress_allowlist = coalesce(c.egress_allowlist, '{}'), egress_ports = coalesce(c.egress_ports, '{}'), static_egress_ip = c.static_egress_ip,
-		public_auth_ip_allowlist = coalesce(c.public_auth_ip_allowlist, '{}'), autoscale_target_rps = c.autoscale_target_rps,
-		autoscale_target_cpu_pct = c.autoscale_target_cpu_pct, root_dir = c.root_dir, workload_class = c.workload_class,
-		streaming_enabled = c.streaming_enabled, websocket_enabled = c.websocket_enabled,
-		route_metrics_enabled = c.route_metrics_enabled, app_protocol = c.app_protocol, maintenance_mode = c.maintenance_mode,
-		only_declared_routes = c.only_declared_routes, declared_routes = coalesce(c.declared_routes, '[]'::jsonb),
-		require_signed = c.require_signed, security_policy = c.security_policy, start_command = nullif(c.start_command, ''),
-		manifest = coalesce(c.manifest, '{}'::jsonb), scaling_policy = coalesce(c.scaling_policy, '{}'::jsonb),
-		retry_policy = coalesce(c.retry_policy, '{}'::jsonb), overflow_node = c.overflow_node,
-		warm_snapshot_enabled = c.warm_snapshot_enabled, require_authn = c.require_authn,
-		public_auth_mode = c.public_auth_mode, consumer_auth_mode = c.consumer_auth_mode,
-		public_auth_basic = c.public_auth_basic, warm_snapshot_min_requests = c.warm_snapshot_min_requests,
-		warm_snapshot_min_ms = c.warm_snapshot_min_ms, warm_pool_size = c.warm_pool_size,
-		eviction_priority = c.eviction_priority, cors_default_enabled = c.cors_default_enabled,
-		cors_default_origins = coalesce(c.cors_default_origins, '{}'), scaling_policy_revision = a.scaling_policy_revision + 1
-		from config c where a.id = $1`, appID, raw)
+	parsedID, err := parsePgUUID(appID)
+	if err != nil {
+		return ErrInvalidArgument
+	}
+	err = new(sqlc.Queries).ReplaceProductionAppWorkloadSettings(ctx, tx, sqlc.ReplaceProductionAppWorkloadSettingsParams{
+		AppID:    parsedID,
+		Settings: raw,
+	})
 	return mapErr(err)
 }
 
