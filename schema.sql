@@ -7965,7 +7965,9 @@ CREATE TABLE public.mirror_invocation_results (
     request_id text NOT NULL,
     completed_at timestamp with time zone DEFAULT now() NOT NULL,
     rollup_counted boolean DEFAULT false NOT NULL,
-    comparison_incomplete boolean DEFAULT false NOT NULL
+    comparison_incomplete boolean DEFAULT false NOT NULL,
+    admission_failure_reason text DEFAULT ''::text NOT NULL,
+    CONSTRAINT mirror_invocation_results_admission_failure_reason_check CHECK (admission_failure_reason = ANY (ARRAY[''::text, 'scheduler_admission_timeout'::text, 'scheduler_admission_rejected'::text, 'scheduler_admission_error'::text]))
 );
 
 

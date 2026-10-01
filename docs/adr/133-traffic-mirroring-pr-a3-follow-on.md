@@ -88,7 +88,7 @@ Four flags drive the ledger row + metric increment:
 - `statusDiff`: src status != mirror status
 - `schemaDiff`: `sha256(strippedMirrorBody) != sha256(strippedSrcBody)`
 - `bodyDiff`: same predicate as schemaDiff (field exists distinct for forward-compat with JCS semantic diff)
-- `crashed`: `mirrorStatus == 0` (timeout / transport error) OR `mirrorStatus >= 500`
+- `crashed`: a missing/failed response after an admitted target, or `mirrorStatus >= 500`. Scheduler admission failures are not guest crashes.
 
 A3 ships byte-equal diff via per-comparison HMAC-SHA-256. JCS schema-hash body
 diff is an ADR-124 §Follow-on. The four-flag shape is
@@ -108,6 +108,20 @@ emits exactly one of:
 - `sched_error` — schedd errored other than cap-at-max
 - `mirror_roundtrip_error` — round-trip transport error
 - `build_request_error` — request body read / header build failed
+
+## Admission outcomes and cleanup (issue #4064)
+
+A failed mirror admission has no guest response to compare. The invocation
+ledger stores a closed `admission_failure_reason` (`scheduler_admission_timeout`,
+`scheduler_admission_rejected`, or `scheduler_admission_error`), marks the row
+incomplete, and leaves crash and response-diff counts unchanged. The summary
+API and dashboard expose separate counters for these reasons.
+
+The gateway retains the five-second mirror lifetime. If that deadline cancels
+an admission after schedd has created an instance row, schedd performs a
+bounded cleanup with a detached context: it asks vmmd to destroy the partial
+guest, releases the admission reservation, and marks the row failed. Schedd
+owns this cleanup because the gateway may not have received the instance ID.
 
 `rule_id` cardinality is bounded by `Limits.MirrorTargetsPerApp`
 ≤ 3 per app. `app_id` cardinality matches the rest of the

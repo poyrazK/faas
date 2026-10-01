@@ -3696,6 +3696,17 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// Audit-log it under kind="wake_boot_error" so a query for
 		// `kind='wake_boot_error'` finds both this and the
 		// SetInstanceRuntime-failure case below.
+		transitionCtx := ctx
+		if mode == string(state.InstanceModeMirror) {
+			// The gateway's mirror deadline can cancel this RPC after
+			// schedd has inserted and admitted the shadow row. The VMMD
+			// request may also have created resources before observing
+			// cancellation, so schedd owns a bounded, detached destroy and
+			// terminal-state write for every failed mirror boot.
+			cleanupCtx, cleanupCancel := e.cleanupFailedMirrorAdmission(ctx, bootInput)
+			defer cleanupCancel()
+			transitionCtx = cleanupCtx
+		}
 		e.ledger.Release(bootInput.insID)
 		// issue #517 / PR-C / ADR-064 — emit wake.boot_failed with
 		// the structured reason. The customer-facing timeline pairs
@@ -3731,7 +3742,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		if e.ops != nil {
 			e.ops.WakeFailure("", bootInput.appID, "vmm_boot_failed").Inc()
 		}
-		e.transitionWithKind(ctx, bootInput.insID, bootInput.appID, state.StateFailed, "wake_boot_error", "vmm_boot_failed")
+		e.transitionWithKind(transitionCtx, bootInput.insID, bootInput.appID, state.StateFailed, "wake_boot_error", "vmm_boot_failed")
 		return WakeResult{}, err
 	}
 	configuredBootCPU := int(bootInput.spec.CPUMillicores)
@@ -3746,9 +3757,16 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// temporary peak in their fleet-wide CPU aggregate.
 		boostUntil := time.Now().Add(fcvm.StartupCPUBoostTailDuration)
 		if err := e.store.SetInstanceStartupCPUBoostUntil(ctx, bootInput.insID, &boostUntil); err != nil {
+			cleanupCtx := ctx
+			if mode == string(state.InstanceModeMirror) {
+				var cleanupCancel context.CancelFunc
+				cleanupCtx, cleanupCancel = e.cleanupFailedMirrorAdmission(ctx, bootInput)
+				defer cleanupCancel()
+			} else {
+				e.bestEffortDestroy(ctx, bootInput.nodeID, bootInput.insID)
+			}
 			e.ledger.Release(bootInput.insID)
-			e.bestEffortDestroy(ctx, bootInput.nodeID, bootInput.insID)
-			e.transitionWithKind(ctx, bootInput.insID, bootInput.appID, state.StateFailed, "wake_boot_error", "startup_cpu_reservation_failed")
+			e.transitionWithKind(cleanupCtx, bootInput.insID, bootInput.appID, state.StateFailed, "wake_boot_error", "startup_cpu_reservation_failed")
 			return WakeResult{}, fmt.Errorf("sched: wake: persist startup CPU boost tail deadline: %w", err)
 		}
 		e.ledger.SetCPUStartupBoostUntil(bootInput.insID, boostUntil)
@@ -3785,8 +3803,13 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// a stolen state a failure without adding a read to the successful path.
 	fresh, publishErr := e.store.PublishInstanceRuntime(ctx, bootInput.insID, string(bootInput.initState), out.Netns, out.HostIP, int(out.LeaseUID))
 	if errors.Is(publishErr, state.ErrConflict) {
+		if mode == string(state.InstanceModeMirror) {
+			_, cleanupCancel := e.cleanupFailedMirrorAdmission(ctx, bootInput)
+			defer cleanupCancel()
+		} else {
+			e.bestEffortDestroy(ctx, bootInput.nodeID, bootInput.insID)
+		}
 		e.ledger.Release(bootInput.insID)
-		e.bestEffortDestroy(ctx, bootInput.nodeID, bootInput.insID)
 		actual := "changed or deleted"
 		if current, err := e.store.InstanceByID(ctx, bootInput.insID); err == nil {
 			actual = current.State
@@ -3800,7 +3823,14 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// Booted but unrecordable — destroy to avoid a resource leak,
 		// then fail. Best-effort with a hard ceiling: a hung
 		// Firecracker can't pin the Wake goroutine forever.
-		e.bestEffortDestroy(ctx, bootInput.nodeID, bootInput.insID)
+		cleanupCtx := ctx
+		if mode == string(state.InstanceModeMirror) {
+			var cleanupCancel context.CancelFunc
+			cleanupCtx, cleanupCancel = e.cleanupFailedMirrorAdmission(ctx, bootInput)
+			defer cleanupCancel()
+		} else {
+			e.bestEffortDestroy(ctx, bootInput.nodeID, bootInput.insID)
+		}
 		e.ledger.Release(bootInput.insID)
 		// issue #517 / PR-C / ADR-064 — emit wake.boot_failed with
 		// the structured reason. Pairs with wake.boot_started under
@@ -3828,7 +3858,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		if e.ops != nil {
 			e.ops.WakeFailure("", bootInput.appID, "record_runtime_failed").Inc()
 		}
-		e.transitionWithKind(ctx, bootInput.insID, bootInput.appID, state.StateFailed, "wake_boot_error", "record_runtime_failed")
+		e.transitionWithKind(cleanupCtx, bootInput.insID, bootInput.appID, state.StateFailed, "wake_boot_error", "record_runtime_failed")
 		return WakeResult{}, fmt.Errorf("sched: wake: record runtime: %w", publishErr)
 	}
 
@@ -3976,6 +4006,20 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			QueuedCount:           bootInput.queuedCount,
 			ConcurrencyAtAdmit:    bootInput.concurrencyAtAdmit,
 		})
+	}
+
+	if mode == string(state.InstanceModeMirror) && ctx.Err() != nil {
+		// A mirror admission can finish boot after the gateway's deadline
+		// and then lose its ScheduleMirror response. If cancellation landed
+		// after runtime publication, the ordinary boot-error branches above
+		// no longer own cleanup; destroy the now-unreachable VM and close
+		// its row before returning the cancellation to the RPC caller.
+		cleanupCtx, cleanupCancel := e.cleanupFailedMirrorAdmission(ctx, bootInput)
+		defer cleanupCancel()
+		e.ledger.Release(bootInput.insID)
+		e.transitionWithKind(cleanupCtx, bootInput.insID, bootInput.appID,
+			state.StateFailed, "wake_boot_error", "mirror_admission_canceled")
+		return WakeResult{}, ctx.Err()
 	}
 
 	bootInput.identity.InstanceID = fresh.ID
@@ -4167,6 +4211,19 @@ func (e *Engine) nodeForRoute(nodeID string) string {
 // and the row is already doomed.
 func (e *Engine) bestEffortDestroy(ctx context.Context, nodeID, instanceID string) {
 	_ = e.timedDestroy(ctx, nodeID, instanceID, DestroyTimeout)
+}
+
+// cleanupFailedMirrorAdmission tears down a shadow VM when admission fails
+// after its instance row has been created. The gateway may already have hit
+// its short dispatch deadline, so destroy and terminal-state writes use a
+// detached context with room for both bounded operations.
+func (e *Engine) cleanupFailedMirrorAdmission(ctx context.Context, input bootInput) (context.Context, context.CancelFunc) {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*DestroyTimeout)
+	if err := e.timedDestroy(cleanupCtx, input.nodeID, input.insID, DestroyTimeout); err != nil {
+		e.log.Error("mirror: destroy instance after failed admission", "app_id", input.appID,
+			"instance_id", input.insID, "wake_id", input.wakeID, "err", err)
+	}
+	return cleanupCtx, cancel
 }
 
 // applyLiveCapacityMB returns the chooser's per-node used_mb input:
