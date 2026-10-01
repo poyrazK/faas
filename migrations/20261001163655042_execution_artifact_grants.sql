@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE execution_artifact_grants (
+CREATE TABLE IF NOT EXISTS execution_artifact_grants (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     source_execution_id uuid NOT NULL REFERENCES executions(id) ON DELETE CASCADE,
@@ -15,7 +15,7 @@ CREATE TABLE execution_artifact_grants (
     CONSTRAINT execution_artifact_grants_redeemed_pair_check CHECK ((redeemed_at IS NULL) = (redeemed_execution_id IS NULL))
 );
 
-CREATE INDEX execution_artifact_grants_account_source_idx
+CREATE INDEX IF NOT EXISTS execution_artifact_grants_account_source_idx
     ON execution_artifact_grants (account_id, source_execution_id, created_at DESC);
 
 -- +goose Down

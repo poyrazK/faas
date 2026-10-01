@@ -3,9 +3,9 @@
 -- API keys in one rotation family retain one stable identity. New, unrelated
 -- keys receive independent identities from the column default.
 ALTER TABLE api_keys
-    ADD COLUMN runs_principal_id uuid NOT NULL DEFAULT gen_random_uuid();
+    ADD COLUMN IF NOT EXISTS runs_principal_id uuid NOT NULL DEFAULT gen_random_uuid();
 
-CREATE FUNCTION preserve_api_key_runs_principal() RETURNS trigger
+CREATE OR REPLACE FUNCTION preserve_api_key_runs_principal() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 DECLARE
@@ -24,15 +24,16 @@ BEGIN
 END;
 $$;
 
+DROP TRIGGER IF EXISTS api_keys_preserve_runs_principal ON api_keys;
 CREATE TRIGGER api_keys_preserve_runs_principal
     BEFORE INSERT ON api_keys
     FOR EACH ROW EXECUTE FUNCTION preserve_api_key_runs_principal();
 
 -- Existing rows are intentionally left unowned: only their legacy broad
 -- account principals can see them. New API-key-created runs stamp the owner.
-ALTER TABLE executions ADD COLUMN runs_principal_id uuid;
+ALTER TABLE executions ADD COLUMN IF NOT EXISTS runs_principal_id uuid;
 
-CREATE INDEX executions_account_principal_created_idx
+CREATE INDEX IF NOT EXISTS executions_account_principal_created_idx
     ON executions (account_id, runs_principal_id, created_at DESC, id DESC)
     WHERE runs_principal_id IS NOT NULL;
 -- +goose StatementEnd
