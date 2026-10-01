@@ -4,7 +4,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 
 | Command | What it does |
 |---|---|
-| [`regions`](#regions) | List registered active compute regions |
+| [`regions`](#regions) | List durable compute regions and availability |
 | [`account`](#account) | Manage the local account (account export\|delete\|restore\|status\|dpa\|slo) |
 | [`add`](#add) | Provision and bind managed resources to an app |
 | [`bindings`](#bindings) | Inspect app bindings and rotation status, manage storage credentials, or verify service and PostgreSQL connections |
@@ -102,13 +102,13 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 
 ## regions
 
-List registered active compute regions
+List durable compute regions and availability
 
 `gregale regions [<subcommand>]`
 
 ### regions list
 
-List registered active compute regions
+List durable compute regions and availability
 
 
 ## account

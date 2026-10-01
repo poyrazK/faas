@@ -33,6 +33,9 @@ func TestComputeRegionPostgresDirectWrites(t *testing.T) {
 	fx := conformance.Seed(t, store)
 	node := fx.Node
 	region := "eu-fsn"
+	if _, err := store.UpsertComputeRegion(fx.Ctx, state.ComputeRegion{ID: "eu-fsn", DisplayName: "Falkenstein", AcceptingNewApps: true}); err != nil {
+		t.Fatal(err)
+	}
 	node.Region = &region
 	if _, err := store.UpsertComputeNodeFromOperator(fx.Ctx, node); err != nil {
 		t.Fatal(err)
@@ -77,6 +80,9 @@ func TestComputeRegionPostgresAdmissionSerializesWithRelabel(t *testing.T) {
 			fx := conformance.Seed(t, store)
 			node := fx.Node
 			region := "eu-fsn"
+			if _, err := store.UpsertComputeRegion(fx.Ctx, state.ComputeRegion{ID: "eu-fsn", DisplayName: "Falkenstein", AcceptingNewApps: true}); err != nil {
+				t.Fatal(err)
+			}
 			node.Region = &region
 			if _, err := store.UpsertComputeNodeFromOperator(fx.Ctx, node); err != nil {
 				t.Fatal(err)

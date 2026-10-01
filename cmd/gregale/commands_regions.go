@@ -26,7 +26,7 @@ func cmdRegions(args []string) int {
 		return jsonOut(writeJSON(regions))
 	}
 	for _, region := range regions {
-		_, _ = fmt.Fprintf(osStdout, "%s\t%d active node(s)\n", region.ID, region.ActiveNodes)
+		_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\tnew apps=%t\t%d eligible node(s)\thealth=%s\n", region.ID, region.DisplayName, region.Availability, region.AcceptingNewApps, region.EligibleNodes, region.ObservedHealth)
 	}
 	return 0
 }

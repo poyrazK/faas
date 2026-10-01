@@ -64,6 +64,7 @@ import type { TCPListenerResponse } from '../models/TCPListenerResponse.js';
 import type { TCPListenerTLSStatusResponse } from '../models/TCPListenerTLSStatusResponse.js';
 import type { UDPListenerResponse } from '../models/UDPListenerResponse.js';
 import type { UpdateAppRequest } from '../models/UpdateAppRequest.js';
+import type { UpdateComputeRegionRequest } from '../models/UpdateComputeRegionRequest.js';
 import type { UpdateTCPListenerRequest } from '../models/UpdateTCPListenerRequest.js';
 import type { UpdateUDPListenerRequest } from '../models/UpdateUDPListenerRequest.js';
 import type { WakeTimelineResponse } from '../models/WakeTimelineResponse.js';
@@ -72,9 +73,9 @@ import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class AppsService {
   /**
-   * List registered active compute regions.
-   * Lists compute locality identifiers and registered active node counts. These counts do not promise spare capacity or independent regional control planes.
-   * @returns ComputeRegionResponse Registered active compute regions.
+   * List durable compute regions and observed availability.
+   * Lists durable region identifiers, new-app admission policy, node eligibility, and heartbeat observations, including unavailable regions. Availability follows node lifecycle admission; observed health reports heartbeat freshness separately. Counts do not reserve capacity or establish regional control-plane independence.
+   * @returns ComputeRegionResponse Durable compute region catalog and current observations.
    * @throws ApiError
    */
   public static listComputeRegions(): CancelablePromise<Array<ComputeRegionResponse>> {
@@ -84,6 +85,48 @@ export class AppsService {
       errors: {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Declare compute region policy.
+   * Operator-only complete policy update. Requires an allowlisted operator session, fresh MFA step-up, same-origin protection, and an Idempotency-Key. Pausing admission blocks new apps and previews; existing apps retain their region and may wake, recover, migrate within that region, or restore. Does not evict instances.
+   * @returns ComputeRegionResponse Declared region policy and observed node state.
+   * @throws ApiError
+   */
+  public static updateComputeRegion({
+    id,
+    idempotencyKey,
+    requestBody,
+  }: {
+    id: string,
+    idempotencyKey: string,
+    requestBody: UpdateComputeRegionRequest,
+  }): CancelablePromise<ComputeRegionResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/regions/{id}',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.

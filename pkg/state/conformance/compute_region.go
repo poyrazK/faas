@@ -10,6 +10,9 @@ import (
 )
 
 func testComputeRegionPlacement(t *testing.T, fx *Fixture) {
+	if _, err := fx.Store.UpsertComputeRegion(fx.Ctx, state.ComputeRegion{ID: "eu-fsn", DisplayName: "Falkenstein", AcceptingNewApps: true}); err != nil {
+		t.Fatal(err)
+	}
 	source := fx.Node
 	source.Region = regionPointer("eu-fsn")
 	var err error

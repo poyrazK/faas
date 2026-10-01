@@ -97,6 +97,9 @@ func (s *server) provisionPreview(r *http.Request, acct state.Account, parent st
 	if err == nil {
 		return created, true, nil
 	}
+	if p := api.AsProblem(err); p != nil {
+		return state.App{}, false, p
+	}
 	if errors.Is(err, state.ErrConflict) {
 		existing, lookupErr := s.store.AppBySlug(r.Context(), slug)
 		if lookupErr == nil && samePreview(existing, parent, req.PRNumber) {

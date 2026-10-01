@@ -53,6 +53,8 @@ class Problem:
     instance: str | Unset = UNSET
     """URI reference identifying this problem occurrence when supplied by the caller."""
     detail: str | Unset = UNSET
+    compute_region: str | Unset = UNSET
+    """Selected compute region associated with a regional admission or placement refusal."""
     limit: int | None | Unset = UNSET
     observed: int | None | Unset = UNSET
     limit_bytes: int | None | Unset = UNSET
@@ -153,6 +155,8 @@ class Problem:
 
         detail = self.detail
 
+        compute_region = self.compute_region
+
         limit: int | None | Unset
         if isinstance(self.limit, Unset):
             limit = UNSET
@@ -233,6 +237,8 @@ class Problem:
             field_dict["instance"] = instance
         if detail is not UNSET:
             field_dict["detail"] = detail
+        if compute_region is not UNSET:
+            field_dict["compute_region"] = compute_region
         if limit is not UNSET:
             field_dict["limit"] = limit
         if observed is not UNSET:
@@ -288,6 +294,8 @@ class Problem:
         instance = d.pop("instance", UNSET)
 
         detail = d.pop("detail", UNSET)
+
+        compute_region = d.pop("compute_region", UNSET)
 
         def _parse_limit(data: object) -> int | None | Unset:
             if data is None:
@@ -379,6 +387,7 @@ class Problem:
             type_=type_,
             instance=instance,
             detail=detail,
+            compute_region=compute_region,
             limit=limit,
             observed=observed,
             limit_bytes=limit_bytes,

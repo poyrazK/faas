@@ -74,10 +74,12 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Problem | list[ComputeRegionResponse]]:
-    """List registered active compute regions.
+    """List durable compute regions and observed availability.
 
-     Lists compute locality identifiers and registered active node counts. These counts do not promise
-    spare capacity or independent regional control planes.
+     Lists durable region identifiers, new-app admission policy, node eligibility, and heartbeat
+    observations, including unavailable regions. Availability follows node lifecycle admission; observed
+    health reports heartbeat freshness separately. Counts do not reserve capacity or establish regional
+    control-plane independence.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -100,10 +102,12 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> Problem | list[ComputeRegionResponse] | None:
-    """List registered active compute regions.
+    """List durable compute regions and observed availability.
 
-     Lists compute locality identifiers and registered active node counts. These counts do not promise
-    spare capacity or independent regional control planes.
+     Lists durable region identifiers, new-app admission policy, node eligibility, and heartbeat
+    observations, including unavailable regions. Availability follows node lifecycle admission; observed
+    health reports heartbeat freshness separately. Counts do not reserve capacity or establish regional
+    control-plane independence.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -122,10 +126,12 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Problem | list[ComputeRegionResponse]]:
-    """List registered active compute regions.
+    """List durable compute regions and observed availability.
 
-     Lists compute locality identifiers and registered active node counts. These counts do not promise
-    spare capacity or independent regional control planes.
+     Lists durable region identifiers, new-app admission policy, node eligibility, and heartbeat
+    observations, including unavailable regions. Availability follows node lifecycle admission; observed
+    health reports heartbeat freshness separately. Counts do not reserve capacity or establish regional
+    control-plane independence.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -146,10 +152,12 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> Problem | list[ComputeRegionResponse] | None:
-    """List registered active compute regions.
+    """List durable compute regions and observed availability.
 
-     Lists compute locality identifiers and registered active node counts. These counts do not promise
-    spare capacity or independent regional control planes.
+     Lists durable region identifiers, new-app admission policy, node eligibility, and heartbeat
+    observations, including unavailable regions. Availability follows node lifecycle admission; observed
+    health reports heartbeat freshness separately. Counts do not reserve capacity or establish regional
+    control-plane independence.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

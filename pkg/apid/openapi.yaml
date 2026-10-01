@@ -3906,11 +3906,11 @@ paths:
     get:
       tags: [apps]
       operationId: listComputeRegions
-      summary: List registered active compute regions.
-      description: "Lists compute locality identifiers and registered active node counts. These counts do not promise spare capacity or independent regional control planes."
+      summary: List durable compute regions and observed availability.
+      description: "Lists durable region identifiers, new-app admission policy, node eligibility, and heartbeat observations, including unavailable regions. Availability follows node lifecycle admission; observed health reports heartbeat freshness separately. Counts do not reserve capacity or establish regional control-plane independence."
       responses:
         '200':
-          description: Registered active compute regions.
+          description: Durable compute region catalog and current observations.
           content:
             application/json:
               schema:
@@ -3918,6 +3918,38 @@ paths:
                 items: { $ref: '#/components/schemas/ComputeRegionResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/regions/{id}:
+    put:
+      tags: [apps]
+      operationId: updateComputeRegion
+      summary: Declare compute region policy.
+      description: "Operator-only complete policy update. Requires an allowlisted operator session, fresh MFA step-up, same-origin protection, and an Idempotency-Key. Pausing admission blocks new apps and previews; existing apps retain their region and may wake, recover, migrate within that region, or restore. Does not evict instances."
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$' }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateComputeRegionRequest' }
+      responses:
+        '200':
+          description: Declared region policy and observed node state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ComputeRegionResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/apps:
@@ -28490,11 +28522,26 @@ components:
 
     ComputeRegionResponse:
       type: object
-      description: Registered compute locality and active node count.
-      required: [id, active_nodes]
+      description: Durable compute locality with admission policy and observed node state. No capacity reservation is implied.
+      required: [id, display_name, accepting_new_apps, availability, observed_health, registered_nodes, active_nodes, eligible_nodes, healthy_nodes]
       properties:
         id: { type: string, maxLength: 63, pattern: '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$', example: eu-fsn }
-        active_nodes: { type: integer, minimum: 0, example: 2 }
+        display_name: { type: string, minLength: 1, maxLength: 128, example: Falkenstein }
+        accepting_new_apps: { type: boolean, description: Operator policy for new app admission; independent of node health. }
+        availability: { type: string, enum: [available, unavailable], description: Whether at least one node passes static placement eligibility; does not report spare capacity. }
+        observed_health: { type: string, enum: [healthy, degraded, unavailable, unknown], description: Heartbeat freshness among eligible nodes; unknown when no eligible node has reported a heartbeat. Existing lifecycle reconciliation remains authoritative for admission. }
+        registered_nodes: { type: integer, minimum: 0 }
+        active_nodes: { type: integer, minimum: 0 }
+        eligible_nodes: { type: integer, minimum: 0 }
+        healthy_nodes: { type: integer, minimum: 0 }
+    UpdateComputeRegionRequest:
+      type: object
+      description: Complete operator-controlled compute region policy.
+      required: [display_name, accepting_new_apps]
+      additionalProperties: false
+      properties:
+        display_name: { type: string, minLength: 1, maxLength: 128, description: Human-readable name without surrounding whitespace or control characters. }
+        accepting_new_apps: { type: boolean, description: Explicit new-app admission policy. }
     CreateAppRequest:
       description: "App creation payload: slug, type (app|function), runtime (only for function), RAM MB, max concurrency, idle timeout, and optional manifest."
       type: object
@@ -41893,6 +41940,7 @@ components:
           description: URI reference identifying this problem occurrence when supplied by the caller.
         code: { type: string, description: 'Stable machine-readable error code. See StatusForCode in pkg/api/errors.go.' }
         detail: { type: string }
+        compute_region: { type: string, description: Selected compute region associated with a regional admission or placement refusal. }
         limit: { type: [integer, "null"] }
         observed: { type: [integer, "null"] }
         limit_bytes: { type: [integer, "null"], description: "Explicit byte limit for request-body and other byte-oriented errors." }

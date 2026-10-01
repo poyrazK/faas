@@ -40,6 +40,9 @@ func codeToGRPC(code string) codes.Code {
 		api.CodeAppLayerTooBig,
 		api.CodeQuotaExhausted,
 		api.CodeCapacity,
+		api.CodeComputeRegionAdmissionPaused,
+		api.CodeComputeRegionUnavailable,
+		api.CodeComputeRegionCapacityExhausted,
 		api.CodeWaitForWarm,
 		api.CodeSnapshotBackoff,
 		api.CodeMirrorSlotAtCapacity:
@@ -52,7 +55,8 @@ func codeToGRPC(code string) codes.Code {
 		// the Code field on the Problem and dispatches the right
 		// HTTP status (503 vs 429).
 		return codes.ResourceExhausted
-	case api.CodeBuildUndetected,
+	case api.CodeComputeRegionUnknown,
+		api.CodeBuildUndetected,
 		api.CodeValidation,
 		api.CodeInvalidRef:
 		return codes.InvalidArgument
@@ -107,6 +111,9 @@ func ToStatus(p *api.Problem) error {
 		// precision in the worst case but never more than Int63).
 		Metadata: map[string]string{},
 	}
+	if p.ComputeRegion != "" {
+		ei.Metadata["compute_region"] = p.ComputeRegion
+	}
 	if p.DocsURL != "" {
 		ei.Metadata["docs_url"] = p.DocsURL
 	}
@@ -155,6 +162,7 @@ func FromStatus(err error) (*api.Problem, bool) {
 			continue
 		}
 		p.Code = ei.Reason
+		p.ComputeRegion = ei.Metadata["compute_region"]
 		if v, ok := ei.Metadata["docs_url"]; ok {
 			p.DocsURL = v
 		}

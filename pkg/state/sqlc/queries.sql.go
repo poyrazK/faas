@@ -1058,6 +1058,23 @@ func (q *Queries) CompleteServiceRecovery(ctx context.Context, db DBTX, arg Comp
 	return result.RowsAffected(), nil
 }
 
+const computeRegionByID = `-- name: ComputeRegionByID :one
+SELECT id, display_name, accepting_new_apps, created_at, updated_at FROM compute_regions WHERE id = $1
+`
+
+func (q *Queries) ComputeRegionByID(ctx context.Context, db DBTX, id string) (ComputeRegion, error) {
+	row := db.QueryRow(ctx, computeRegionByID, id)
+	var i ComputeRegion
+	err := row.Scan(
+		&i.ID,
+		&i.DisplayName,
+		&i.AcceptingNewApps,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const countDeployedApps = `-- name: CountDeployedApps :one
 select count(*) from apps where account_id = $1 and status in ('active', 'evicted_cold')
   and not (preview_of_slug is not null and coalesce(preview_pr_number, 0) = 0)
@@ -8574,6 +8591,36 @@ func (q *Queries) ListComputeNodeHeartbeats(ctx context.Context, db DBTX, arg Li
 			&i.ReceivedAt,
 			&i.LastHeartbeatAt,
 			&i.Source,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listComputeRegions = `-- name: ListComputeRegions :many
+SELECT id, display_name, accepting_new_apps, created_at, updated_at FROM compute_regions ORDER BY id
+`
+
+func (q *Queries) ListComputeRegions(ctx context.Context, db DBTX) ([]ComputeRegion, error) {
+	rows, err := db.Query(ctx, listComputeRegions)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ComputeRegion{}
+	for rows.Next() {
+		var i ComputeRegion
+		if err := rows.Scan(
+			&i.ID,
+			&i.DisplayName,
+			&i.AcceptingNewApps,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -19199,6 +19246,33 @@ func (q *Queries) UpdateTrigger(ctx context.Context, db DBTX, arg UpdateTriggerP
 		&i.PayloadMaxBytes,
 		&i.BrokerPoisonStrategy,
 		&i.FilterCriteria,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const upsertComputeRegion = `-- name: UpsertComputeRegion :one
+INSERT INTO compute_regions (id, display_name, accepting_new_apps)
+VALUES ($1, $2, $3)
+ON CONFLICT (id) DO UPDATE SET display_name = EXCLUDED.display_name,
+    accepting_new_apps = EXCLUDED.accepting_new_apps, updated_at = now()
+RETURNING id, display_name, accepting_new_apps, created_at, updated_at
+`
+
+type UpsertComputeRegionParams struct {
+	ID               string
+	DisplayName      string
+	AcceptingNewApps bool
+}
+
+func (q *Queries) UpsertComputeRegion(ctx context.Context, db DBTX, arg UpsertComputeRegionParams) (ComputeRegion, error) {
+	row := db.QueryRow(ctx, upsertComputeRegion, arg.ID, arg.DisplayName, arg.AcceptingNewApps)
+	var i ComputeRegion
+	err := row.Scan(
+		&i.ID,
+		&i.DisplayName,
+		&i.AcceptingNewApps,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

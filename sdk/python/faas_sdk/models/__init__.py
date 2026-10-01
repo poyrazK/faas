@@ -324,6 +324,8 @@ from .complete_object_multipart_upload_request import CompleteObjectMultipartUpl
 from .complete_workflow_callback_response import CompleteWorkflowCallbackResponse
 from .complete_workflow_callback_response_status import CompleteWorkflowCallbackResponseStatus
 from .compute_region_response import ComputeRegionResponse
+from .compute_region_response_availability import ComputeRegionResponseAvailability
+from .compute_region_response_observed_health import ComputeRegionResponseObservedHealth
 from .consume_invoice_response import ConsumeInvoiceResponse
 from .consumed_credit_row import ConsumedCreditRow
 from .consumer_key_list_response import ConsumerKeyListResponse
@@ -1895,6 +1897,7 @@ from .update_app_webhook_request import UpdateAppWebhookRequest
 from .update_app_webhook_request_delivery_format import UpdateAppWebhookRequestDeliveryFormat
 from .update_app_webhook_request_event_filter_item import UpdateAppWebhookRequestEventFilterItem
 from .update_app_webhook_request_retry_policy import UpdateAppWebhookRequestRetryPolicy
+from .update_compute_region_request import UpdateComputeRegionRequest
 from .update_cors_preset_request import UpdateCorsPresetRequest
 from .update_cron_request import UpdateCronRequest
 from .update_deployment_min_instances_body import UpdateDeploymentMinInstancesBody
@@ -2329,6 +2332,8 @@ __all__ = (
     "CompleteWorkflowCallbackResponse",
     "CompleteWorkflowCallbackResponseStatus",
     "ComputeRegionResponse",
+    "ComputeRegionResponseAvailability",
+    "ComputeRegionResponseObservedHealth",
     "ConsumedCreditRow",
     "ConsumeInvoiceResponse",
     "ConsumerKeyListResponse",
@@ -3834,6 +3839,7 @@ __all__ = (
     "UpdateAppWebhookRequestDeliveryFormat",
     "UpdateAppWebhookRequestEventFilterItem",
     "UpdateAppWebhookRequestRetryPolicy",
+    "UpdateComputeRegionRequest",
     "UpdateCorsPresetRequest",
     "UpdateCronRequest",
     "UpdateDeploymentMinInstancesBody",

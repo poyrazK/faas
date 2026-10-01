@@ -4699,6 +4699,11 @@ type Store interface {
 	// count. Idempotent.
 	DeleteSnapshotsStaleOlderThan(ctx context.Context, retention time.Duration) (int64, error)
 
+	// Durable region identity and new-app admission policy. No deletion API.
+	UpsertComputeRegion(ctx context.Context, region ComputeRegion) (ComputeRegion, error)
+	ListComputeRegions(ctx context.Context) ([]ComputeRegion, error)
+	ComputeRegionByID(ctx context.Context, id string) (ComputeRegion, error)
+
 	// Compute nodes (issue #97 / ADR-025 axis 3). schedd's Wake flow
 	// is the sole reader of these methods (single-leader CP, no
 	// consensus); apid writes via CreateComputeNode on
@@ -4712,6 +4717,8 @@ type Store interface {
 	// path). Order is by name (placement sorts in memory after
 	// computing used_mb per node).
 	ActiveComputeNodes(ctx context.Context) ([]ComputeNode, error)
+	// ListAllComputeNodes includes inactive nodes for durable regional diagnostics.
+	ListAllComputeNodes(ctx context.Context) ([]ComputeNode, error)
 	// ComputeNodeByID resolves a row by primary key. Wake calls this
 	// after placement to fetch the target URL for the dial step.
 	// Returns ErrNotFound when the id has no row.

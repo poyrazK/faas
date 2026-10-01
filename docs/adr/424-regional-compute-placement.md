@@ -4,6 +4,8 @@ Date: 2026-10-01
 
 Status: Implemented as an internal capability; native fleet qualification pending.
 
+Discovery and admission policy are extended by [ADR-425](425-compute-region-registry.md).
+
 ## Context
 
 Gregale already stores optional region and zone labels on compute nodes. The
@@ -135,8 +137,8 @@ purging those apps requires a separate deliberate migration or cleanup.
 
 ## Follow-on milestones
 
-Introduce a durable region registry with availability and rollout state, then
-regionalize project plans and managed jobs. Build independent regional control
+ADR-425 adds the durable region registry, new-app admission policy, and
+availability diagnostics. Next, regionalize project plans and managed jobs. Build independent regional control
 planes and storage boundaries before promising regional fault isolation or
 residency. A later multi-target app model can attach per-region deployments,
 capacity and health to a global identity, followed by explicit ingress routing

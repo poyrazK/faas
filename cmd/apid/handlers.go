@@ -205,6 +205,8 @@ func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct sta
 	if err != nil {
 		var qe *state.QuotaError
 		switch {
+		case api.AsProblem(err) != nil:
+			api.WriteProblem(w, api.AsProblem(err))
 		case state.ServiceCapacityProblem(err) != nil:
 			api.WriteProblem(w, state.ServiceCapacityProblem(err))
 		case errors.As(err, &qe):

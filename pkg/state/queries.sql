@@ -5529,3 +5529,16 @@ SELECT last_poll_at, last_success_at, last_error_at, last_error,
        lag_messages, lag_age_seconds
 FROM trigger_consumer_health
 WHERE trigger_id = sqlc.arg(trigger_id)::uuid;
+
+-- name: UpsertComputeRegion :one
+INSERT INTO compute_regions (id, display_name, accepting_new_apps)
+VALUES ($1, $2, $3)
+ON CONFLICT (id) DO UPDATE SET display_name = EXCLUDED.display_name,
+    accepting_new_apps = EXCLUDED.accepting_new_apps, updated_at = now()
+RETURNING *;
+
+-- name: ListComputeRegions :many
+SELECT * FROM compute_regions ORDER BY id;
+
+-- name: ComputeRegionByID :one
+SELECT * FROM compute_regions WHERE id = $1;

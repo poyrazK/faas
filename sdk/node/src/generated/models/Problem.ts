@@ -39,6 +39,10 @@ export type Problem = {
    */
   code: string;
   detail?: string;
+  /**
+   * Selected compute region associated with a regional admission or placement refusal.
+   */
+  compute_region?: string;
   limit?: number | null;
   observed?: number | null;
   /**

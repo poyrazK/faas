@@ -29,6 +29,10 @@ the caller supplies an occurrence URI.
 | `log_archive_invalid_query` (400) | An archived-log request is missing or has malformed filters | Provide an instance and a date in `YYYY-MM-DD` format. |
 | `log_archive_retention_exceeded` (403) | The requested log date is outside the plan's retention window | Choose a more recent date or review plans with longer retention. |
 | `verification_link_invalid` (410) | A verification link is malformed, expired, or already used | Request a new verification email and open its latest link. |
+| `compute_region_unknown` (422) | The selected compute region is not registered | Choose an identifier from `gregale regions list`. |
+| `compute_region_admission_paused` (503) | The region is not accepting new apps | Retry after the operator resumes admission; existing apps retain their region. |
+| `compute_region_unavailable` (503) | No eligible compute node is available in the selected region | Inspect `gregale regions list` and retry when the region recovers. |
+| `compute_region_capacity_exhausted` (503) | Regional nodes cannot admit the requested resources | Retry later or reduce resources; execution stays inside the selected region. |
 | `not_found` (404) | The requested resource is missing or not visible to this account | Check the URL and account, then retry. |
 
 Never paste secrets into an error report. Request IDs and deployment IDs are

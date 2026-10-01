@@ -789,7 +789,8 @@ type MemStore struct {
 	// seeded by NewMemStore so tests don't have to call
 	// CreateComputeNode to exercise the single-box path. Production
 	// (PgStore) gets the same row from migrations/00024_compute_nodes.
-	computeNodes map[string]ComputeNode
+	computeNodes   map[string]ComputeNode
+	computeRegions map[string]ComputeRegion
 	// computeNodeKeys is the in-memory mirror of compute_node_keys
 	// (migration 00076, ADR-053). Keyed by (nodeID, keyID) tuple
 	// joined by a NUL so the composite key stays string-typed for
@@ -1304,7 +1305,8 @@ func NewMemStore() *MemStore {
 		invitations:                     map[string]OrgInvitation{},
 		// computeNodes is empty here; seedDefaultLocalNodeLocked
 		// inserts the synthetic default-local row below.
-		computeNodes: map[string]ComputeNode{},
+		computeNodes:   map[string]ComputeNode{},
+		computeRegions: map[string]ComputeRegion{},
 		// computeNodeKeys is the in-memory mirror of
 		// compute_node_keys (migration 00076). Empty by default
 		// — vmmd's self-registration populates it via
@@ -1342,6 +1344,7 @@ func NewMemStore() *MemStore {
 	// the migration's seed (e.g., target_url mismatch); both land in
 	// the test 00024_compute_nodes_test.go.
 	m.seedDefaultLocalNodeLocked()
+	m.seedComputeRegionsLocked()
 	// Default clock is real wall-clock; tests override via
 	// SetClockForTest so a fixture-time AppendUsage row is still
 	// visible to CurrentMonthOverageCents later in the same test.
@@ -3484,7 +3487,7 @@ func (m *MemStore) ApplyProjectPlan(
 		return Project{}, nil, nil, ErrNotFound
 	}
 	for _, app := range apps {
-		if err := m.checkComputeRegionLocked(app, app.NodeID); err != nil {
+		if err := m.checkNewAppComputeRegionLocked(app); err != nil {
 			return Project{}, nil, nil, err
 		}
 	}
@@ -3686,7 +3689,7 @@ func (m *MemStore) ApplyProjectReconcile(
 	for _, mutation := range mutations {
 		switch mutation.Op {
 		case "create":
-			if err := m.checkComputeRegionLocked(mutation.App, mutation.App.NodeID); err != nil {
+			if err := m.checkNewAppComputeRegionLocked(mutation.App); err != nil {
 				return rollback(err)
 			}
 			if mutation.App.PreviewOfSlug != "" || mutation.App.PreviewPrNumber != 0 {
@@ -3960,7 +3963,7 @@ func (m *MemStore) ensureAppOrgLocked(app *App) {
 func (m *MemStore) CreateApp(_ context.Context, app App) (App, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if err := m.checkComputeRegionLocked(app, app.NodeID); err != nil {
+	if err := m.checkNewAppComputeRegionLocked(app); err != nil {
 		return App{}, err
 	}
 	for _, a := range m.apps {
@@ -4119,7 +4122,7 @@ func (m *MemStore) checkAppQuotaLocked(app App, limits api.Limits) error {
 }
 
 func (m *MemStore) createAppIfUnderQuotaLocked(app App, limits api.Limits) (App, error) {
-	if err := m.checkComputeRegionLocked(app, app.NodeID); err != nil {
+	if err := m.checkNewAppComputeRegionLocked(app); err != nil {
 		return App{}, err
 	}
 	if _, ok := m.accounts[app.AccountID]; !ok {

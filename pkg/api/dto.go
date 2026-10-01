@@ -383,8 +383,15 @@ type ServiceReliabilityPolicy struct {
 // ComputeRegionResponse describes registered compute locality, not a promise
 // of spare capacity or regional control-plane independence.
 type ComputeRegionResponse struct {
-	ID          string `json:"id"`
-	ActiveNodes int    `json:"active_nodes"`
+	ID               string `json:"id"`
+	DisplayName      string `json:"display_name"`
+	AcceptingNewApps bool   `json:"accepting_new_apps"`
+	Availability     string `json:"availability"`
+	ObservedHealth   string `json:"observed_health"`
+	RegisteredNodes  int    `json:"registered_nodes"`
+	ActiveNodes      int    `json:"active_nodes"`
+	EligibleNodes    int    `json:"eligible_nodes"`
+	HealthyNodes     int    `json:"healthy_nodes"`
 }
 
 // CreateAppRequest creates an app or function.
@@ -11658,4 +11665,10 @@ type EgressFlowLogEntry struct {
 type EgressFlowLogResponse struct {
 	Flows     []EgressFlowLogEntry `json:"flows"`
 	Truncated bool                 `json:"truncated"`
+}
+
+// UpdateComputeRegionRequest declares complete operator-controlled policy.
+type UpdateComputeRegionRequest struct {
+	DisplayName      string `json:"display_name"`
+	AcceptingNewApps *bool  `json:"accepting_new_apps"`
 }

@@ -267,7 +267,7 @@ var templateNames13 = []string{
 // catches the omission; the manifest-drift guard is the load-bearing
 // sync mechanism per ADR-083 §Decision 4.
 var cliCommands = []cliCommand{
-	{Name: "regions", DocSlug: "regions", Short: "List registered active compute regions", Subcommands: []cliSub{{Name: "list", Short: "List registered active compute regions"}}},
+	{Name: "regions", DocSlug: "regions", Short: "List durable compute regions and availability", Subcommands: []cliSub{{Name: "list", Short: "List durable compute regions and availability"}}},
 	{
 		Name:    "account",
 		DocSlug: "account",

@@ -105,6 +105,14 @@ var cliCommands = []cliCommand{
 			{Name: "maintenance", Short: "Schedule, update, start, complete, cancel, or list maintenance"},
 		},
 	},
+	{Name: "regions", DocSlug: "regions", Short: "Durable compute regions and new-app admission",
+		Subcommands: []cliSub{{Name: "list", Short: "List regions including unavailable regions"},
+			{Name: "set", Short: "Declare region policy without evicting existing apps", Flags: []cliFlag{
+				{Name: "region", Short: "canonical region identifier (required)", Req: true},
+				{Name: "display-name", Short: "human-readable name (required)", Req: true},
+				{Name: "accepting-new-apps", Short: "explicit true or false (required)", Req: true, ClosedSet: []string{"true", "false"}},
+			}}},
+	},
 	{
 		Name:    dispatchReleaseAcceptance,
 		DocSlug: "release-acceptance",

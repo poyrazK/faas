@@ -25357,6 +25357,12 @@ func mapErr(err error) error {
 			}
 			return err
 		case pgerrcode.CheckViolation:
+			switch pgErr.ConstraintName {
+			case "compute_region_unknown":
+				return api.ErrComputeRegionUnknown(pgErr.Detail)
+			case "compute_region_admission_paused":
+				return api.ErrComputeRegionAdmissionPaused(pgErr.Detail)
+			}
 			if pgErr.ConstraintName == "service_capacity_protection" {
 				return &ServiceCapacityError{}
 			}

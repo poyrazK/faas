@@ -55,6 +55,7 @@ Commands:
   backup       Operator rclone / archive credentials (backup init|unseal-archive-creds|unseal-rclone)
   secrets      Post-bootstrap secrets init (secrets init|rotate|status|stamp; PR-X / issue #911 / ADR-110)
   artifact     Publish or verify release-pinned shared artifacts (artifact publish|verify)
+  regions       Durable compute regions and new-app admission (list|set)
   compute-nodes  Compute-node state and release readiness (add|list|show|release-status|drain|activate|retire)
   instances    Authenticated instance recovery (force-park|force-cold-boot|force-restart)
   accounts     Authenticated tenant support and lifecycle controls (list|show|360|activity|suspend|restore|revoke-sessions)
@@ -107,6 +108,8 @@ func run(args []string) int {
 		return code
 	}
 	switch args[0] {
+	case "regions":
+		return cmdRegionsDispatch(args[1:])
 	case "version", "--version", "-v":
 		if len(args) > 1 && (args[1] == "--help" || args[1] == "-h") {
 			PrintUsage(os.Stderr, "usage: gregalectl version", "version")

@@ -990,6 +990,7 @@ export type { UpdateAlertRuleRequest } from './models/UpdateAlertRuleRequest.js'
 export type { UpdateAppLogDrainRequest } from './models/UpdateAppLogDrainRequest.js';
 export type { UpdateAppRequest } from './models/UpdateAppRequest.js';
 export type { UpdateAppWebhookRequest } from './models/UpdateAppWebhookRequest.js';
+export type { UpdateComputeRegionRequest } from './models/UpdateComputeRegionRequest.js';
 export type { UpdateCorsPresetRequest } from './models/UpdateCorsPresetRequest.js';
 export type { UpdateCronRequest } from './models/UpdateCronRequest.js';
 export type { UpdateDeploymentRequest } from './models/UpdateDeploymentRequest.js';

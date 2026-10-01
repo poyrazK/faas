@@ -4322,16 +4322,21 @@ func effectiveAppCPUMillicores(app state.App) int {
 }
 
 type placementSnapshot struct {
-	requiredRegion    string
-	nodes             []state.ComputeNode
-	usedMB            map[string]int64
-	usedVCPU          map[string]int64
-	usedCPUMillicores map[string]int64
+	requiredRegion        string
+	eligibleRegionalNodes int
+	nodes                 []state.ComputeNode
+	usedMB                map[string]int64
+	usedVCPU              map[string]int64
+	usedCPUMillicores     map[string]int64
 }
 
 func (s placementSnapshot) choose(r Request) (Placement, error) {
 	r.RequiredRegion = s.requiredRegion
-	return choosePlacementWithCPU(s.nodes, s.usedMB, s.usedVCPU, s.usedCPUMillicores, r)
+	placement, err := choosePlacementWithCPU(s.nodes, s.usedMB, s.usedVCPU, s.usedCPUMillicores, r)
+	if p := api.AsProblem(err); p != nil && p.Code == api.CodeComputeRegionUnavailable && s.eligibleRegionalNodes > 0 {
+		return Placement{}, api.ErrComputeRegionCapacityExhausted(s.requiredRegion)
+	}
+	return placement, err
 }
 
 func (e *Engine) loadPlacementSnapshot(ctx context.Context, r Request) (placementSnapshot, error) {
@@ -4378,6 +4383,12 @@ func (e *Engine) loadPlacementSnapshot(ctx context.Context, r Request) (placemen
 			return placementSnapshot{}, fmt.Errorf("sched: placement: list active compute_nodes: %w", err)
 		}
 	}
+	eligibleRegionalNodes := 0
+	for _, node := range nodes {
+		if app.ComputeRegion != "" && state.ComputeRegionAllowsNode(app.ComputeRegion, node) && state.ComputeNodePlacementEligible(node) {
+			eligibleRegionalNodes++
+		}
+	}
 	if isServiceReplicaPlacementSpread(ctx) {
 		capacity, err := e.store.ServiceCapacityPlacement(ctx)
 		if err != nil {
@@ -4407,7 +4418,7 @@ func (e *Engine) loadPlacementSnapshot(ctx context.Context, r Request) (placemen
 		usedVCPU[n.ID] = int64(e.ledger.UsedVCPUForNode(n.ID))
 	}
 	return placementSnapshot{
-		requiredRegion: app.ComputeRegion, nodes: nodes, usedMB: usedMB, usedVCPU: usedVCPU,
+		requiredRegion: app.ComputeRegion, eligibleRegionalNodes: eligibleRegionalNodes, nodes: nodes, usedMB: usedMB, usedVCPU: usedVCPU,
 		usedCPUMillicores: usedCPUMillicores,
 	}, nil
 }

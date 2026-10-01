@@ -206,6 +206,9 @@ func TestSentinelCoverage(t *testing.T) {
 		{"unauthorized", http.StatusUnauthorized, faas.CodeUnauthorized, faas.ErrUnauthorized},
 		{"rate_limited", http.StatusTooManyRequests, faas.CodeRateLimited, faas.ErrRateLimited},
 		{"capacity", http.StatusServiceUnavailable, faas.CodeCapacity, faas.ErrCapacity},
+		{"regional_paused", http.StatusServiceUnavailable, "compute_region_admission_paused", faas.ErrCapacity},
+		{"regional_unavailable", http.StatusServiceUnavailable, "compute_region_unavailable", faas.ErrCapacity},
+		{"regional_exhausted", http.StatusServiceUnavailable, "compute_region_capacity_exhausted", faas.ErrCapacity},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -214,10 +217,11 @@ func TestSentinelCoverage(t *testing.T) {
 				w.Header().Set("Content-Type", "application/problem+json")
 				w.WriteHeader(tc.status)
 				_ = json.NewEncoder(w).Encode(faas.Problem{
-					Status: tc.status,
-					Code:   tc.code,
-					Title:  tc.name,
-					Detail: "sentinel coverage test",
+					Status:        tc.status,
+					Code:          tc.code,
+					Title:         tc.name,
+					Detail:        "sentinel coverage test",
+					ComputeRegion: "eu-fsn",
 				})
 			}))
 			defer srv.Close()
@@ -238,6 +242,9 @@ func TestSentinelCoverage(t *testing.T) {
 			ae, ok := faas.AsAPIError(gerr)
 			if !ok {
 				t.Fatalf("AsAPIError: not an APIError: %v", gerr)
+			}
+			if ae.Problem.ComputeRegion != "eu-fsn" {
+				t.Errorf("lost compute region: %+v", ae.Problem)
 			}
 			if ae.Problem.Code != tc.code {
 				t.Errorf("code: got %q, want %q", ae.Problem.Code, tc.code)

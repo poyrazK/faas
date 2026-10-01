@@ -47,7 +47,7 @@ func (e *APIError) Unwrap() error {
 		return ErrSentinelUnauthorized
 	case CodeRateLimited:
 		return ErrSentinelRateLimited
-	case CodeCapacity:
+	case CodeCapacity, "compute_region_admission_paused", "compute_region_unavailable", "compute_region_capacity_exhausted":
 		return ErrSentinelCapacity
 	}
 	return nil

@@ -42,6 +42,8 @@ export interface Problem {
   observed?: number;
   /** Docs URL pointing at the error code's reference page. */
   docs_url?: string;
+  /** Selected compute region for a regional admission or placement refusal. */
+  compute_region?: string;
   /** Provider-neutral hosted checkout URL (billing errors). */
   checkout_url?: string;
   /** Provider billing portal URL (billing errors). */

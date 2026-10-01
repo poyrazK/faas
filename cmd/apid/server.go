@@ -1418,6 +1418,7 @@ func (s *server) handler() http.Handler {
 	// Apps. Internal metrics discovery is mounted only on the dedicated
 	// loopback metrics listener; see metricsDiscoveryHandler.
 	mux.HandleFunc("GET /v1/regions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listComputeRegions))))
+	mux.Handle("PUT /v1/regions/{id}", middleware.TraceID(s.authLimited(s.requireAdminMutation(s.putComputeRegion))))
 	mux.HandleFunc("GET /v1/apps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listApps))))
 	mux.HandleFunc("POST /v1/apps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createApp))))))
 	mux.HandleFunc("POST /v1/apps/{slug}/previews", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.createPreview))))))

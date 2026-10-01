@@ -140,9 +140,10 @@ func choosePlacementWithCPU(nodes []state.ComputeNode, usedMB map[string]int64, 
 	// through a parallel per-node usedVCPU map passed by the
 	// engine. (A zero-budget node with r.VCPU > 0 is excluded.)
 	var (
-		candidates []state.ComputeNode
-		warmFit    *state.ComputeNode
-		snapshotF  []state.ComputeNode
+		regionEligible int
+		candidates     []state.ComputeNode
+		warmFit        *state.ComputeNode
+		snapshotF      []state.ComputeNode
 	)
 	for i := range nodes {
 		n := nodes[i]
@@ -178,6 +179,7 @@ func choosePlacementWithCPU(nodes []state.ComputeNode, usedMB map[string]int64, 
 		if n.VCPUBudget <= 0 {
 			continue
 		}
+		regionEligible++
 		// usedVCPU is keyed by node id; absent means 0. The
 		// engine passes the ledger's per-node view (reservations
 		// made so far this process). A request of r.VCPU=0
@@ -270,6 +272,12 @@ func choosePlacementWithCPU(nodes []state.ComputeNode, usedMB map[string]int64, 
 	}
 
 	if len(candidates) == 0 {
+		if r.RequiredRegion != "" {
+			if regionEligible == 0 {
+				return Placement{}, api.ErrComputeRegionUnavailable(r.RequiredRegion)
+			}
+			return Placement{}, api.ErrComputeRegionCapacityExhausted(r.RequiredRegion)
+		}
 		return Placement{}, api.ErrCapacity(fmt.Sprintf(
 			"placement: no active compute_node fits %d MB billable (per-node ceilings: see compute_nodes.admission_ceiling_mb) / %d guest vCPU (per-node budgets: see compute_nodes.vcpu_budget) / %d millicores (physical host CPU budget) across %d candidates",
 			billable, r.VCPU, r.CPUMillicores, len(nodes)))

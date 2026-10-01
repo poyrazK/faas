@@ -1064,6 +1064,14 @@ type ComputeNodeKey struct {
 	RevokedAt     pgtype.Timestamptz
 }
 
+type ComputeRegion struct {
+	ID               string
+	DisplayName      string
+	AcceptingNewApps bool
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
 type ConsumerKey struct {
 	ID           pgtype.UUID
 	AccountID    pgtype.UUID

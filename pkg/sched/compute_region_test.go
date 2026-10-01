@@ -111,6 +111,9 @@ func TestComputeRegionClaimAndRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := store.UpsertComputeRegion(ctx, state.ComputeRegion{ID: fsn, DisplayName: "Falkenstein", AcceptingNewApps: true}); err != nil {
+		t.Fatal(err)
+	}
 	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "regional-app", RAMMB: 128, MaxConcurrency: 1, ComputeRegion: fsn})
 	if err != nil {
 		t.Fatal(err)
@@ -133,5 +136,38 @@ func TestComputeRegionClaimAndRecovery(t *testing.T) {
 	app, err = store.AppByID(ctx, app.ID)
 	if err != nil || app.NodeID != local.ID {
 		t.Fatalf("out-of-region recovery changed owner: %s %v", app.NodeID, err)
+	}
+}
+
+func TestComputeRegionPlacementRefusalCodes(t *testing.T) {
+	fsn, hel := "eu-fsn", "eu-hel"
+	home, remote := node("home", "home", 0, 100), node("remote", "remote", 0, 1000)
+	home.Region, remote.Region = &fsn, &hel
+	for _, tc := range []struct {
+		name  string
+		nodes []state.ComputeNode
+		used  map[string]int64
+		code  string
+	}{
+		{"outage", []state.ComputeNode{remote}, nil, api.CodeComputeRegionUnavailable},
+		{"exhausted", []state.ComputeNode{home, remote}, map[string]int64{"home": 100}, api.CodeComputeRegionCapacityExhausted},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ChoosePlacement(tc.nodes, tc.used, nil, Request{RAMMB: 40, RequiredRegion: fsn})
+			p := api.AsProblem(err)
+			if p == nil || p.Code != tc.code || p.ComputeRegion != fsn {
+				t.Fatalf("problem=%+v err=%v", p, err)
+			}
+		})
+	}
+}
+
+func TestComputeRegionRecoverySlotsAreCapacityRefusal(t *testing.T) {
+	// The engine counted healthy regional nodes before filtering peers whose
+	// recovery slots were exhausted. Empty filtered candidates are not an outage.
+	snapshot := placementSnapshot{requiredRegion: "eu-fsn", eligibleRegionalNodes: 1}
+	_, err := snapshot.choose(Request{RAMMB: 128})
+	if p := api.AsProblem(err); p == nil || p.Code != api.CodeComputeRegionCapacityExhausted {
+		t.Fatalf("recovery-slot exhaustion misreported as outage: %v", err)
 	}
 }

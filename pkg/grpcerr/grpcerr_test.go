@@ -242,3 +242,12 @@ func TestNew_Convenience(t *testing.T) {
 		t.Fatalf("FromStatus failed: %v %v", p, ok)
 	}
 }
+
+func TestComputeRegionProblemRoundTrip(t *testing.T) {
+	for _, original := range []*api.Problem{api.ErrComputeRegionUnknown("eu-fsn"), api.ErrComputeRegionAdmissionPaused("eu-fsn"), api.ErrComputeRegionUnavailable("eu-fsn"), api.ErrComputeRegionCapacityExhausted("eu-fsn")} {
+		recovered, ok := grpcerr.FromStatus(grpcerr.ToStatus(original))
+		if !ok || recovered.Code != original.Code || recovered.ComputeRegion != original.ComputeRegion || recovered.Status != original.Status {
+			t.Fatalf("lost regional diagnostics: original=%+v recovered=%+v", original, recovered)
+		}
+	}
+}

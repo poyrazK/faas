@@ -46,6 +46,7 @@ class Problem:
     limit: int | None = None
     observed: int | None = None
     docs_url: str | None = None
+    compute_region: str | None = None
     checkout_url: str | None = None
     billing_portal_url: str | None = None
     paddle_checkout_url: str | None = None
@@ -101,6 +102,9 @@ _SENTINEL_BY_CODE: dict[str, type[FaasProblemError]] = {
     "unauthorized": ErrUnauthorized,
     "rate_limited": ErrRateLimited,
     "capacity_unavailable": ErrCapacity,
+    "compute_region_admission_paused": ErrCapacity,
+    "compute_region_unavailable": ErrCapacity,
+    "compute_region_capacity_exhausted": ErrCapacity,
 }
 
 
@@ -136,6 +140,7 @@ def parse_problem(body: bytes, content_type: str, status: int) -> Problem | None
         limit=data.get("limit"),
         observed=data.get("observed"),
         docs_url=data.get("docs_url"),
+        compute_region=data.get("compute_region"),
         checkout_url=data.get("checkout_url"),
         billing_portal_url=data.get("billing_portal_url"),
         paddle_checkout_url=data.get("paddle_checkout_url"),
