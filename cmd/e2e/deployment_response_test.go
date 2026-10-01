@@ -52,6 +52,9 @@ func TestImageDeploymentResponseContract(t *testing.T) {
 			if id != test.wantID || (err != nil) != (test.wantID == "") {
 				t.Fatalf("decodeImageDeploymentID = %q, %v; want ID %q", id, err, test.wantID)
 			}
+			if test.wantID != "" && parseImageDeployment(t, []byte(test.body)) != test.wantID {
+				t.Fatalf("image acceptance helper did not return ID %q", test.wantID)
+			}
 		})
 	}
 }
