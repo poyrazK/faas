@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -21,7 +19,7 @@ func (s *PgStore) CreateAppIfUnderQuotaWithActivity(ctx context.Context, app App
 	if err != nil {
 		return App{}, 0, fmt.Errorf("state: begin app activity create: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	created, err := createAppIfUnderQuotaTx(ctx, tx, app, limits)
 	if err != nil {
 		return App{}, 0, err
@@ -47,11 +45,11 @@ func (s *PgStore) ScheduleAppDeletionWithActivity(ctx context.Context, id string
 	if graceUntil.IsZero() {
 		graceUntil = time.Now().UTC().Add(AppDeleteGraceDuration())
 	}
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.beginAppTrafficMutation(ctx, id)
 	if err != nil {
 		return App{}, 0, fmt.Errorf("state: begin app activity delete: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 
 	var priorStatus string
 	if err := tx.QueryRow(ctx, `select status from apps where id = $1 for update`, id).Scan(&priorStatus); err != nil {
@@ -84,6 +82,9 @@ func (s *PgStore) ScheduleAppDeletionWithActivity(ctx context.Context, id string
 	if err := scanAppInto(&app, row); err != nil {
 		return App{}, 0, mapErr(err)
 	}
+	if err := cancelAppInvocationsTx(ctx, tx, id); err != nil {
+		return App{}, 0, err
+	}
 	var outboxID int64
 	if priorStatus != string(AppDeleted) {
 		entry, err = bindOrgActivityToApp(entry, app)
@@ -112,7 +113,7 @@ func (s *PgStore) RestoreAppWithActivity(ctx context.Context, id string, limits 
 		}
 		return App{}, 0, fmt.Errorf("state: begin app activity restore: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	app, err := restoreAppTx(ctx, tx, id, limits)
 	if err != nil {
 		return App{}, 0, err

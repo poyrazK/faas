@@ -33,11 +33,11 @@ func (m *MemStore) CreateAppIfUnderQuotaWithActivity(ctx context.Context, app Ap
 	return created, m.enqueueOrgActivityOutboxLocked(entry), nil
 }
 
-func (m *MemStore) ScheduleAppDeletionWithActivity(_ context.Context, id string, graceUntil time.Time, entry OrgActivity) (App, int64, error) {
-	return m.scheduleAppDeletion(id, graceUntil, &entry)
+func (m *MemStore) ScheduleAppDeletionWithActivity(ctx context.Context, id string, graceUntil time.Time, entry OrgActivity) (App, int64, error) {
+	return m.scheduleAppDeletion(ctx, id, graceUntil, &entry)
 }
 
-func (m *MemStore) scheduleAppDeletion(id string, graceUntil time.Time, entry *OrgActivity) (App, int64, error) {
+func (m *MemStore) scheduleAppDeletion(ctx context.Context, id string, graceUntil time.Time, entry *OrgActivity) (App, int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	a, ok := m.apps[id]
@@ -70,7 +70,11 @@ func (m *MemStore) scheduleAppDeletion(id string, graceUntil time.Time, entry *O
 		a.DeleteGraceUntil = &deadline
 	}
 	a.Status = AppDeleted
+	if err := m.validateMemAppTrafficChangeLocked(ctx, a); err != nil {
+		return App{}, 0, err
+	}
 	m.apps[id] = a
+	m.cancelAppInvocationsLocked(id, now)
 	m.cancelAppTasksForAppLocked(id, now)
 	if !wasDeleted {
 		delete(m.appDeletionClaims, id)

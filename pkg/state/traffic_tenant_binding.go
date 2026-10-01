@@ -30,8 +30,13 @@ type trafficTenantBindingTx struct {
 	release      func(context.Context)
 }
 
-func trafficTenantAffectedHosts(claims trafficBindingClaims, account string, requested []string) []string {
+func trafficBindingAffectedHosts(claims trafficBindingClaims, account string, requested []string, appID string) []string {
 	hosts := append(trafficTenantHostsForAccount(claims.Tenants, account), requested...)
+	for _, claim := range claims.Domains {
+		if claim.Account == account || appID != "" && claim.RedirectApp == appID {
+			hosts = append(hosts, claim.Domain)
+		}
+	}
 	for i := range hosts {
 		hosts[i] = strings.ToLower(hosts[i])
 	}
@@ -119,8 +124,12 @@ func trafficTenantBindingOwners(ctx context.Context, reader sqlc.DBTX, claims tr
 }
 
 func (s *PgStore) beginTrafficTenantBinding(ctx context.Context, account string, hosts []string) (*trafficTenantBindingTx, error) {
+	return s.beginTrafficBinding(ctx, account, hosts, "")
+}
+
+func (s *PgStore) beginTrafficBinding(ctx context.Context, account string, hosts []string, appID string) (*trafficTenantBindingTx, error) {
 	for {
-		tx, retry, err := s.tryBeginTrafficTenantBinding(ctx, account, hosts)
+		tx, retry, err := s.tryBeginTrafficBinding(ctx, account, hosts, appID)
 		if err != nil || !retry {
 			return tx, err
 		}
@@ -134,14 +143,14 @@ func (s *PgStore) beginTrafficTenantBinding(ctx context.Context, account string,
 	}
 }
 
-func (s *PgStore) tryBeginTrafficTenantBinding(ctx context.Context, account string, requested []string) (*trafficTenantBindingTx, bool, error) {
+func (s *PgStore) tryBeginTrafficBinding(ctx context.Context, account string, requested []string, appID string) (*trafficTenantBindingTx, bool, error) {
 	var hosts, accounts []string
 	err := boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
 		claims, err := readTrafficBindingClaims(bounded, s.pool)
 		if err != nil {
 			return err
 		}
-		hosts = trafficTenantAffectedHosts(claims, account, requested)
+		hosts = trafficBindingAffectedHosts(claims, account, requested, appID)
 		accounts, err = trafficTenantBindingOwners(bounded, s.pool, claims, hosts, account)
 		return err
 	})
@@ -174,7 +183,7 @@ func (s *PgStore) tryBeginTrafficTenantBinding(ctx context.Context, account stri
 		if err != nil {
 			return err
 		}
-		freshHosts := trafficTenantAffectedHosts(tx.before, account, requested)
+		freshHosts := trafficBindingAffectedHosts(tx.before, account, requested, appID)
 		freshAccounts, err := trafficTenantBindingOwners(bounded, base, tx.before, freshHosts, account)
 		if err != nil {
 			return err

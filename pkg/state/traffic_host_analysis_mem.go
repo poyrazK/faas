@@ -319,8 +319,5 @@ func (m *MemStore) validateMemGlobalTrafficChangeLocked(ctx context.Context, cha
 }
 
 func (m *MemStore) validateMemAppTrafficChangeLocked(ctx context.Context, app App) error {
-	if app.Status == AppDeleted || api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
-		return nil
-	}
-	return m.validateMemTrafficPolicyChangeLocked(ctx, app.AccountID, memTrafficPolicyChange{Apps: map[string]App{app.ID: app}})
+	return appTrafficBindingError(m.checkMemTrafficBindingLocked(ctx, app.AccountID, nil, app.ID, memTrafficPolicyChange{Apps: map[string]App{app.ID: app}}))
 }

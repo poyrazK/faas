@@ -5530,6 +5530,7 @@ SELECT CASE WHEN inputs<=sqlc.arg(max_inputs)::integer AND bytes<=sqlc.arg(max_b
 WITH domains AS (
     SELECT jsonb_build_object('Domain',d.domain,'App',d.app_id,
         'Environment',coalesce(d.environment_id::text,''),'Account',a.account_id,
+        'RedirectApp',coalesce(d.app_id_redirect::text,''),
         'Eligible',d.verified_at IS NOT NULL AND a.status<>'deleted' AND a.visibility<>'internal'
             AND (d.environment_id IS NULL OR EXISTS (
                 SELECT 1 FROM project_environments e WHERE e.id=d.environment_id
@@ -5796,3 +5797,18 @@ WHERE created_at < sqlc.arg(before)::timestamptz
         AND n.gateway_target_url IS NOT NULL AND btrim(n.gateway_target_url) <> ''
   ), 9223372036854775807::bigint)
   AND id < (SELECT MAX(current.id) FROM response_cache_purge_change_log current WHERE current.app_id = response_cache_purge_change_log.app_id);
+
+-- name: CancelTrafficAppInvocations :exec
+WITH target AS MATERIALIZED (
+    SELECT id, account_id, quota_reserved FROM invocations
+    WHERE app_id=sqlc.arg(app_id)::uuid AND state IN ('pending','dispatching')
+      AND (work_policy_name IS NULL OR state='pending') FOR UPDATE
+), cancelled AS (
+    UPDATE invocations i SET state='cancelled',quota_reserved=false,
+        completed_at=coalesce(i.completed_at,now()) FROM target t WHERE i.id=t.id
+    RETURNING t.account_id,t.quota_reserved
+), reservations AS (
+    SELECT account_id,count(*) AS slots FROM cancelled WHERE quota_reserved GROUP BY account_id
+)
+UPDATE account_async_quota q SET current_inflight=greatest(q.current_inflight-r.slots,0),updated_at=now()
+FROM reservations r WHERE q.account_id=r.account_id;

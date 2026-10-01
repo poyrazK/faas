@@ -67,8 +67,11 @@ func (m *MemStore) memTrafficDomainClaimsLocked(ctx context.Context, change memT
 		if domain.Domain == "" {
 			return nil
 		}
-		app, found := m.apps[domain.AppID]
-		eligible := found && domain.Verified() && app.Status != AppDeleted && api.NormalizeAppVisibility(app.Visibility) != api.AppVisibilityInternal
+		app, found := change.Apps[domain.AppID]
+		if !found {
+			app, found = m.apps[domain.AppID]
+		}
+		eligible := found && app.ID != "" && domain.Verified() && app.Status != AppDeleted && api.NormalizeAppVisibility(app.Visibility) != api.AppVisibilityInternal
 		if domain.EnvironmentID != "" {
 			valid := false
 			for _, environment := range m.projectEnvironments {
@@ -82,7 +85,7 @@ func (m *MemStore) memTrafficDomainClaimsLocked(ctx context.Context, change memT
 			}
 			eligible = eligible && valid
 		}
-		claims = append(claims, trafficDomainClaim{Domain: domain.Domain, App: domain.AppID, Environment: domain.EnvironmentID, Account: app.AccountID, Eligible: eligible})
+		claims = append(claims, trafficDomainClaim{Domain: domain.Domain, App: domain.AppID, Environment: domain.EnvironmentID, Account: app.AccountID, RedirectApp: domain.RedirectAppID, Eligible: eligible})
 		return checkMemTrafficAnalysisInputs(len(claims))
 	})
 	if err != nil {
@@ -108,7 +111,7 @@ func (m *MemStore) appendMemTrafficReservationsLocked(ctx context.Context, view 
 		return checkMemTrafficAnalysisInputs(len(view.Groups) + len(view.Assets) + len(view.Environments) + len(view.PrimaryHosts) + len(view.AliasHosts) + len(view.Domains) + len(view.Reservations))
 	}
 	if err := visitMemTrafficRows(ctx, m.apps, change.Apps, func(app App) error {
-		if m.trafficAppsSuffix == "" {
+		if app.ID == "" || m.trafficAppsSuffix == "" {
 			return nil
 		}
 		return add("primary", app.Slug+m.trafficAppsSuffix)

@@ -6005,7 +6005,7 @@ func (m *MemStore) updateAppWithActivity(ctx context.Context, id string, p Updat
 			recordActivity = true
 		}
 	}
-	if appConfigIntroducesPublicScope(p) {
+	if appConfigChangesTrafficScope(p) {
 		if err := m.validateMemAppTrafficChangeLocked(ctx, a); err != nil {
 			return App{}, err
 		}
@@ -6034,7 +6034,7 @@ func (m *MemStore) CompareAndSetAppStatus(ctx context.Context, id string, from, 
 		return false, nil
 	}
 	a.Status = to
-	if from == AppDeleted && to != AppDeleted {
+	if from != to && (from == AppDeleted || to == AppDeleted) {
 		if err := m.validateMemAppTrafficChangeLocked(ctx, a); err != nil {
 			return false, err
 		}
@@ -6053,7 +6053,7 @@ func (m *MemStore) CompareAndSetAppStatus(ctx context.Context, id string, from, 
 // in-memory map under lock for the (accountID, oldSlug) pair; rejects
 // newSlug collisions with ErrConflict so tests can exercise the same
 // 409 surface PgStore produces from the apps.slug unique constraint.
-func (m *MemStore) RenameApp(_ context.Context, accountID, oldSlug, newSlug string) (App, error) {
+func (m *MemStore) RenameApp(ctx context.Context, accountID, oldSlug, newSlug string) (App, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var found *App
@@ -6075,6 +6075,9 @@ func (m *MemStore) RenameApp(_ context.Context, accountID, oldSlug, newSlug stri
 		}
 	}
 	found.Slug = newSlug
+	if err := m.validateMemAppTrafficChangeLocked(ctx, *found); err != nil {
+		return App{}, err
+	}
 	m.apps[found.ID] = *found
 	return *found, nil
 }
@@ -6126,8 +6129,8 @@ func (m *MemStore) DeleteApp(ctx context.Context, id string) error {
 
 // ScheduleAppDeletion stamps a restorable tombstone. Repeated calls preserve
 // the first deadline, matching the PostgreSQL COALESCE update.
-func (m *MemStore) ScheduleAppDeletion(_ context.Context, id string, graceUntil time.Time) (App, error) {
-	a, _, err := m.scheduleAppDeletion(id, graceUntil, nil)
+func (m *MemStore) ScheduleAppDeletion(ctx context.Context, id string, graceUntil time.Time) (App, error) {
+	a, _, err := m.scheduleAppDeletion(ctx, id, graceUntil, nil)
 	return a, err
 }
 
@@ -6258,7 +6261,7 @@ func (m *MemStore) ClaimAppDeletion(_ context.Context, id string) error {
 	return nil
 }
 
-func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
+func (m *MemStore) DeleteAppPermanently(ctx context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	a, ok := m.apps[id]
@@ -6274,6 +6277,10 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 			return ErrConflict
 		}
 	}
+	if err := m.checkMemTrafficAppPurgeLocked(ctx, a); err != nil {
+		return err
+	}
+	m.publishMemTrafficAppPurgeLocked(id)
 	delete(m.appDeletionClaims, id)
 	for key, v := range m.envs {
 		if v.AppID == id {
@@ -6342,6 +6349,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	}
 	for buildID := range buildIDs {
 		delete(m.buildProvenance, buildID)
+		delete(m.builderVMCleanup, buildID)
 	}
 	filtered := m.snapshots[:0]
 	for _, snap := range m.snapshots {
@@ -6392,7 +6400,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 // SoftDeleteAppCascade marks the app deleted and atomically cancels
 // non-terminal deployment/build work. Child rows survive for history and
 // slug reuse, but no pipeline writer may resume work after acknowledgement.
-func (m *MemStore) SoftDeleteAppCascade(_ context.Context, id string) (App, error) {
+func (m *MemStore) SoftDeleteAppCascade(ctx context.Context, id string) (App, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	a, ok := m.apps[id]
@@ -6413,7 +6421,11 @@ func (m *MemStore) SoftDeleteAppCascade(_ context.Context, id string) (App, erro
 	if a.DeleteGraceUntil == nil {
 		a.DeleteGraceUntil = &deadline
 	}
+	if err := m.validateMemAppTrafficChangeLocked(ctx, a); err != nil {
+		return App{}, err
+	}
 	m.apps[id] = a
+	m.cancelAppInvocationsLocked(id, now)
 	m.cancelAppTasksForAppLocked(id, now)
 	for cronID, cron := range m.crons {
 		if cron.AppID == id {

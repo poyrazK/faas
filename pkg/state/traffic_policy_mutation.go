@@ -153,24 +153,18 @@ func (s *PgStore) beginAppTrafficMutation(ctx context.Context, id string) (pgx.T
 	if err != nil {
 		return nil, fmt.Errorf("state: read app traffic owner: %w", mapErr(err))
 	}
-	return s.beginTrafficPolicyMutation(ctx, account)
+	return s.beginAccountAppTrafficMutation(ctx, account.String(), id)
 }
 
 func (s *PgStore) beginAppConfigMutation(ctx context.Context, id string, p UpdateAppParams) (pgx.Tx, error) {
-	if appConfigIntroducesPublicScope(p) {
+	if appConfigChangesTrafficScope(p) {
 		return s.beginAppTrafficMutation(ctx, id)
 	}
 	return s.pool.BeginTx(ctx, pgx.TxOptions{})
 }
 
-func appConfigIntroducesPublicScope(p UpdateAppParams) bool {
-	if p.SetVisibility && api.NormalizeAppVisibility(derefAppVisibility(p.Visibility)) == api.AppVisibilityInternal {
-		return false
-	}
-	if p.Status != nil {
-		return *p.Status != AppDeleted
-	}
-	return p.SetVisibility
+func appConfigChangesTrafficScope(p UpdateAppParams) bool {
+	return p.SetVisibility || p.Status != nil
 }
 
 func (s *PgStore) compareAndSetAppTrafficStatus(ctx context.Context, id string, from, to AppStatus) (bool, error) {

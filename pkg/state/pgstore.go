@@ -3905,7 +3905,7 @@ func (s *PgStore) AuthDefaultFlippedAt(ctx context.Context) (time.Time, error) {
 }
 
 func (s *PgStore) UpdateApp(ctx context.Context, id string, p UpdateAppParams) (App, error) {
-	if !appConfigIntroducesPublicScope(p) {
+	if !appConfigChangesTrafficScope(p) {
 		return updateApp(ctx, s.pool, id, p)
 	}
 	tx, err := s.beginAppTrafficMutation(ctx, id)
@@ -4249,7 +4249,7 @@ func updateApp(ctx context.Context, queryer appUpdateQueryRower, id string, p Up
 // UpdateApp. PgStore and MemStore both implement it, which covers every real
 // server and integration test path.
 func (s *PgStore) CompareAndSetAppStatus(ctx context.Context, id string, from, to AppStatus) (bool, error) {
-	if from == AppDeleted && to != AppDeleted {
+	if from != to && (from == AppDeleted || to == AppDeleted) {
 		return s.compareAndSetAppTrafficStatus(ctx, id, from, to)
 	}
 	tag, err := s.pool.Exec(ctx,
@@ -4416,12 +4416,23 @@ func (s *PgStore) SetAppWorkloadClass(ctx context.Context, appID string, class W
 // Both PgStore and MemStore share the same error contract so the apid
 // handler can branch on errors.Is without checking the concrete type.
 func (s *PgStore) RenameApp(ctx context.Context, accountID, oldSlug, newSlug string) (App, error) {
+	tx, err := s.beginAccountAppTrafficMutation(ctx, accountID, "")
+	if err != nil {
+		return App{}, err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	upd := `update apps set slug = $3
 		 where account_id = $1 and slug = $2 and status <> 'deleted'
 		 returning ` + appsSelectColumns
-	row := s.pool.QueryRow(ctx, upd,
-		accountID, oldSlug, newSlug)
-	return scanApp(row)
+	row := tx.QueryRow(ctx, upd, accountID, oldSlug, newSlug)
+	updated, err := scanApp(row)
+	if err != nil {
+		return App{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return App{}, err
+	}
+	return updated, nil
 }
 
 func (s *PgStore) DeleteApp(ctx context.Context, id string) error {
@@ -4434,11 +4445,16 @@ func (s *PgStore) DeleteApp(ctx context.Context, id string) error {
 // ScheduleAppDeletion parks an app in a restorable tombstone. Repeated
 // requests preserve the original deletion timestamp and deadline.
 func (s *PgStore) ScheduleAppDeletion(ctx context.Context, id string, graceUntil time.Time) (App, error) {
+	tx, err := s.beginAppTrafficMutation(ctx, id)
+	if err != nil {
+		return App{}, err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	if graceUntil.IsZero() {
 		graceUntil = time.Now().UTC().Add(AppDeleteGraceDuration())
 	}
 	var a App
-	row := s.pool.QueryRow(ctx, `
+	row := tx.QueryRow(ctx, `
 		with suspended_crons as (
 			-- Suspend, don't delete: restoring the app inside its grace
 			-- window brings its schedules back. The purge removes them.
@@ -4464,6 +4480,12 @@ func (s *PgStore) ScheduleAppDeletion(ctx context.Context, id string, graceUntil
 	if err := scanAppInto(&a, row); err != nil {
 		return App{}, mapErr(err)
 	}
+	if err := cancelAppInvocationsTx(ctx, tx, id); err != nil {
+		return App{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return App{}, err
+	}
 	return a, nil
 }
 
@@ -4478,7 +4500,7 @@ func (s *PgStore) RestoreApp(ctx context.Context, id string, limits api.Limits) 
 		}
 		return App{}, fmt.Errorf("state: begin app restore: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }() //nolint:errcheck // no-op after Commit
 	a, err := restoreAppTx(ctx, tx, id, limits)
 	if err != nil {
 		return App{}, err
@@ -4553,7 +4575,7 @@ func (s *PgStore) ClaimAppDeletion(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("state: begin app purge claim: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	var activeBuckets int
 	if err := tx.QueryRow(ctx,
 		`select count(*) from object_buckets where app_id = $1 and state <> 'deleted'`, id).Scan(&activeBuckets); err != nil {
@@ -4654,11 +4676,11 @@ func (s *PgStore) ListAppDeletionArtifacts(ctx context.Context, appID string) ([
 // covered by an ON DELETE CASCADE. It deliberately rechecks the deadline in
 // the final DELETE so a concurrent restore cannot be lost.
 func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.beginAppTrafficMutation(ctx, id)
 	if err != nil {
 		return fmt.Errorf("state: begin app purge: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	var activeBuckets int
 	if err := tx.QueryRow(ctx,
 		`select count(*) from object_buckets where app_id = $1 and state <> 'deleted'`, id).Scan(&activeBuckets); err != nil {
@@ -4733,11 +4755,11 @@ func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
 // reuse, while the status fence prevents a late pipeline writer from
 // resuming work after deletion is acknowledged.
 func (s *PgStore) SoftDeleteAppCascade(ctx context.Context, id string) (App, error) {
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginAppTrafficMutation(ctx, id)
 	if err != nil {
 		return App{}, fmt.Errorf("state: soft delete app begin: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	var locked int
 	if err := tx.QueryRow(ctx, `select 1 from apps where id = $1 for update`, id).Scan(&locked); err != nil {
 		return App{}, mapErr(err)
@@ -4801,6 +4823,9 @@ func (s *PgStore) SoftDeleteAppCascade(ctx context.Context, id string) (App, err
 			where id = $1
 			returning `+appsSelectColumns, id, now, deadline)); err != nil {
 		return App{}, mapErr(err)
+	}
+	if err := cancelAppInvocationsTx(ctx, tx, id); err != nil {
+		return App{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return App{}, fmt.Errorf("state: soft delete app commit: %w", err)

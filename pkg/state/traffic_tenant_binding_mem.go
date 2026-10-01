@@ -126,6 +126,10 @@ func (m *MemStore) memTrafficBindingClaimsLocked(ctx context.Context, change mem
 }
 
 func (m *MemStore) checkMemTrafficTenantBindingLocked(ctx context.Context, account string, requested []string, change memTrafficPolicyChange) error {
+	return m.checkMemTrafficBindingLocked(ctx, account, requested, "", change)
+}
+
+func (m *MemStore) checkMemTrafficBindingLocked(ctx context.Context, account string, requested []string, appID string, change memTrafficPolicyChange) error {
 	return boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
 		before, err := m.memTrafficBindingClaimsLocked(bounded, memTrafficPolicyChange{})
 		if err != nil {
@@ -135,7 +139,7 @@ func (m *MemStore) checkMemTrafficTenantBindingLocked(ctx context.Context, accou
 		if err != nil {
 			return err
 		}
-		hosts := trafficTenantAffectedHosts(before, account, requested)
+		hosts := trafficBindingAffectedHosts(before, account, requested, appID)
 		owners, err := trafficTenantOverlappingOwners(bounded, before, hosts, account)
 		if err != nil {
 			return err

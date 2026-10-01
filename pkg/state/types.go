@@ -2877,6 +2877,8 @@ const (
 type CustomDomain struct {
 	Domain string
 	AppID  string
+	// RedirectAppID mirrors the legacy redirect FK used by app purge.
+	RedirectAppID string `json:"-"`
 	// EnvironmentID is empty for the legacy application-wide route. A
 	// non-empty value binds the hostname to one project environment.
 	EnvironmentID    string

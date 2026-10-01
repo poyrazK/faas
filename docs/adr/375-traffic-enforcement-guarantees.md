@@ -804,6 +804,27 @@ additive owner-bound store seam carries the authorized account and surface;
 authoritative HTTP writers refuse when that seam is unavailable. A refused
 cascade publishes neither partial hostname cleanup nor an audit event.
 
+### Follow-up: app eligibility and retirement across binding owners
+
+App visibility/status changes, tombstoning, cleanup, restore and namespace
+publication can change tenant/domain eligibility or remove reservations. App
+writers must discover the account's affected tenant and domain host languages,
+join the same global/sorted-owner coordination, and compare authoritative
+before/after topology in both tenant modes. Internal visibility and deleted
+status are withdrawals of an app binding, but can publish a foreign fallback;
+they therefore require analysis before publishing intent or activity.
+
+Memory writers stage app and reservation changes before cancellation of jobs,
+crons, builds or cleanup handoffs. Native writers keep that cleanup and its
+activity inside the guarded transaction. Physical purge must account for
+cascaded domain and hostname removals. Restore/new public bindings retain zero
+prior binding allowance. Refused changes return existing typed traffic problems
+with foreign witness/count privacy and preserve the complete lifecycle intent.
+The immediate emergency security generation remains independent of routing
+cleanup. App, alias, revision and operator coverage is complete only after each
+writer and resolver path has matching evidence; native and fleet acceptance
+remain separate gates.
+
 ### Follow-up: bounded request decision evidence
 
 Public-handler requests and managed HTTP service calls receive a separate,

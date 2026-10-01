@@ -19,7 +19,7 @@ func (s *PgStore) UpdateAppWithActivity(ctx context.Context, id string, p Update
 	if err != nil {
 		return App{}, 0, fmt.Errorf("state: begin app config activity update: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 
 	var before App
 	if err := scanAppInto(&before, tx.QueryRow(ctx, `select `+appsSelectColumns+` from apps where id = $1 for update`, id)); err != nil {

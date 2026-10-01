@@ -1961,3 +1961,86 @@ with complete runtime/preview/synthetic/path agreement and observations, real
 daemon fleet load/recovery, customer/staging acceptance and native
 VM/restore/firewall/process-death/leak checks. No dedicated Linux x86_64 KVM
 acceptance host is available.
+
+### 2026-10-01 — app eligibility and retirement across binding owners
+
+App visibility/status updates, CAS into or out of deleted status, direct restore,
+rename, scheduled deletion (including activity), cascade deletion and physical
+purge now use the shared cross-owner binding analysis. Both tenant-routing modes
+are checked. Ordinary active/evicted restart CAS retains its existing lightweight
+path because it does not change binding eligibility. Memory creation also checks
+its app proposal through this analysis; bulk project/preview writers remain open.
+
+Discovery includes the account's domain languages and tenant hostname rows,
+including inactive reservations, then overlaps and enabled global route owners.
+App purge additionally discovers foreign domain rows whose legacy redirect FK
+points to the app. The native guard acquires the global session lock and sorted
+account sessions before a repeatable-read snapshot, rereads discovery under
+account row locks and retries stale discovery without holding a pool connection.
+The existing bounded analyses and central limits apply. SQLC projects the redirect
+identity privately; no migration, API/SDK schema or limit value changed.
+
+Withdrawals of a verified public tenant binding can expose a foreign wildcard
+domain. Refusal preserves the app, timestamps/grace deadline, reservations,
+invocations, reserved async quota, command tasks, crons, deployment/build state,
+cleanup handoffs and activity. Memory validates a proposed app/cascade before
+publishing cleanup. Native mutation and activity share the guarded transaction.
+Restore and rename retain the zero prior allowance for a newly serving binding.
+
+Eligible invocation cancellation moved from the HTTP handler into scheduled and
+cascade deletion. The SQLC query captures prior reservation ownership and releases
+quota with cancellation in the same transaction. Memory preserves the same split.
+Managed work already dispatching keeps its existing cancellation fence. A refused
+HTTP deletion leaves invocations untouched and emits no audit or notification.
+Accepted deletion is checked for cancellation and reserved-quota release.
+
+Physical purge projects domain/tenant reservations and app-scoped routing children
+before deleting any lifecycle intent. It includes a suspended tenant hostname
+whose removal exposes a foreign domain, pending domains, deleted-surface hostname
+reservations and a foreign legacy redirect claim. The memory cascade also clears
+default-domain selections; later foreign reclamation cannot inherit the old
+selection. The redirect owner app survives purge of its target.
+
+A typed binding marker preserves internal error diagnosis while HTTP problems
+report only `observed = limit + 1`, with no foreign witness, exact count or policy
+scope. App update, deletion, restore and rename retain the existing 422 codes and
+docs links. The modified delete/restore handlers are 42 lines and rename is 39.
+
+All nine memory withdrawal forms reproduced the oversized foreign fallback before
+the fix. Shared memory/Postgres cases now exercise refusal, canceled context,
+complete intent preservation and policy repair. Additional cases cover rename
+publication, physical purge, foreign redirect removal, inactive reservations,
+default selection/reclamation and reserved invocation quota. HTTP aggregate,
+projection and analysis refusals cover visibility, deletion, restore and rename,
+plus repair and notification/audit privacy.
+
+The final 12,461-file source freeze passed:
+
+- Full state, internal gateway and API unit runs: 6,521 named passes and 1,362
+  guarded/skipped results, 110.950 s; all three packages passed.
+- Selected real private Postgres routing/lifecycle runs: 556 named passes, zero
+  skips, 271.081 s; state 400, internal gateway 104, API 52.
+- After duplicate results are removed: 6,955 distinct named passes (state 2,446,
+  gateway 823, API 3,686), with 997 guarded results without acceptance evidence
+  (state 974, gateway 7, API 16).
+- SQLC 1.31.1 reproduced all four generated files. GolangCI-Lint 2.4.0 checked
+  all three packages with tests and reported zero issues in 75.321 s. No overlays,
+  exclusions or weaker assertions were used for the accepted gates.
+- Source Postgres public schema remained empty; fsync, synchronous commit and
+  full-page writes stayed enabled. The local Postgres process is a macOS test
+  environment and supplies no native VM/network acceptance.
+
+Failed fixture builds, three empty-output Go failures and earlier gate runs are
+retained separately. The first completed gates preceded the default-selection
+repair; both full gates were rerun on the final freeze. Only stale files from this
+task's own Go cache were removed during disk pressure. Accepted counts exclude all
+failed attempts. Evidence is under
+`/Users/poyrazk/dev/Cloud/gregale/outputs/traffic-app-bindings-20261001/`.
+
+All six release requirements above remain unchecked. Next software work includes
+project reconciliation and preview retirement, account/operator writers and the
+remaining alias/revision transitions, then complete runtime/preview/synthetic/path
+agreement and observations. Real daemon fleet/load/recovery, customer capability
+and staging qualification, and native Linux x86_64 KVM VM/firewall/restore/
+process-death/leak acceptance remain pending. The user has reported no acceptance
+host available; no new host request or unsupported local acceptance was substituted.

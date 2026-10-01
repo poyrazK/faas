@@ -1837,32 +1837,10 @@ func (s *server) deleteApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			return
 		}
 	}
-	// Move 2: GC pending invocations for this app BEFORE the row goes
-	// away. Without this, a delayed_task can fire after deleteApp and
-	// the drain is forced to log a permanent-wake error on a row the
-	// customer has already given up on. CancelInvocation is a no-op on
-	// terminal rows (returns state.ErrNotFound) so dispatching /
-	// completed rows are untouched.
-	pending, err := s.store.ListInvocationsForApp(r.Context(), app.ID,
-		state.InvocationPending, state.InvocationDispatching)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("list-inv"))
-		return
-	}
-	for _, inv := range pending {
-		if err := s.store.CancelInvocation(r.Context(), inv.ID); err != nil && !errors.Is(err, state.ErrNotFound) {
-			// Don't fail the delete on a per-row cancel error; the
-			// drain will surface the row as failed and the customer
-			// sees it in the meter. Logging at warn so it's
-			// observable.
-			s.log.Warn("deleteApp: cancel invocation",
-				"inv", inv.ID, "app", app.ID, "err", err)
-		}
-	}
 	graceUntil := time.Now().UTC().Add(state.AppDeleteGraceDuration())
 	parked, err := s.scheduleAppDeletionWithActivity(r.Context(), r, acct, app, graceUntil)
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not delete app"))
+		api.WriteProblem(w, trafficPolicyWriteProblem(err, api.ErrCapacity("could not delete app")))
 		return
 	}
 	// NotifyAppDelete is the lifecycle cleanup signal consumed by schedd.
@@ -2734,39 +2712,10 @@ func (s *server) renameApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	}
 	updated, err := s.store.RenameApp(r.Context(), acct.ID, oldSlug, req.NewSlug)
 	if err != nil {
-		if errors.Is(err, state.ErrConflict) {
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeAppRenameFailed,
-				"Slug taken",
-				fmt.Sprintf("another app already uses slug %q", req.NewSlug)))
-			return
-		}
-		if errors.Is(err, state.ErrNotFound) {
-			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
-				"App not found", "no app with the given slug exists"))
-			return
-		}
-		api.WriteProblem(w, api.ErrCapacity("could not rename app"))
+		api.WriteProblem(w, appRenameWriteProblem(err, req.NewSlug))
 		return
 	}
-	// F-04: renamed emit now carries app_id. The old appsRoot/<oldSlug>/
-	// directory becomes orphan (renamed app is the new slug); the cleanup
-	// is left to imaged's GC, which removes stale snapshot rows and their
-	// files. We do NOT scrub the old slug directory on rename — that
-	// race-conditions with concurrent deploys that still reference the
-	// old slug in their deployment.app_id-to-slug lookup.
-	_ = s.notif.Notify(r.Context(), db.NotifyAppChanged,
-		string(safetext.JSONObject(struct {
-			Kind  string `json:"kind"`
-			AppID string `json:"app_id"`
-			From  string `json:"from"`
-			To    string `json:"to"`
-		}{Kind: "renamed", AppID: app.ID, From: oldSlug, To: req.NewSlug})))
-	// CodeQL go/log-injection (CWE-117): oldSlug came from the
-	// apps.slug column (regex-validated at create) and req.NewSlug
-	// passed the same validSlug check on this request's body. Wrap
-	// both so a future relax of validSlug (or a hostile migration)
-	// cannot smuggle CR/LF into the audit line.
-	s.log.Info("app renamed", "app", updated.ID, "from", logsanitize.Field(oldSlug), "to", logsanitize.Field(req.NewSlug), "account", acct.ID)
+	s.notifyAppRenamed(r.Context(), acct, updated, oldSlug, req.NewSlug)
 	resp := s.appResponseWithContext(r.Context(), updated, acct.Plan)
 	writeJSON(w, http.StatusOK, s.withParkedDeploymentRef(r.Context(), resp, updated))
 }
@@ -7239,4 +7188,36 @@ func derefIntSlice(p *[]int) []int {
 		return nil
 	}
 	return *p
+}
+
+func appRenameWriteProblem(err error, newSlug string) *api.Problem {
+	if errors.Is(err, state.ErrConflict) {
+		return api.NewProblem(http.StatusConflict, api.CodeAppRenameFailed, "Slug taken", fmt.Sprintf("another app already uses slug %q", newSlug))
+	}
+	if errors.Is(err, state.ErrNotFound) {
+		return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "App not found", "no app with the given slug exists")
+	}
+	return trafficPolicyWriteProblem(err, api.ErrCapacity("could not rename app"))
+}
+
+func (s *server) notifyAppRenamed(ctx context.Context, acct state.Account, updated state.App, oldSlug, newSlug string) {
+	// F-04: renamed emit now carries app_id. The old appsRoot/<oldSlug>/
+	// directory becomes orphan (renamed app is the new slug); the cleanup
+	// is left to imaged's GC, which removes stale snapshot rows and their
+	// files. We do NOT scrub the old slug directory on rename — that
+	// race-conditions with concurrent deploys that still reference the
+	// old slug in their deployment.app_id-to-slug lookup.
+	_ = s.notif.Notify(ctx, db.NotifyAppChanged,
+		string(safetext.JSONObject(struct {
+			Kind  string `json:"kind"`
+			AppID string `json:"app_id"`
+			From  string `json:"from"`
+			To    string `json:"to"`
+		}{Kind: "renamed", AppID: updated.ID, From: oldSlug, To: newSlug})))
+	// CodeQL go/log-injection (CWE-117): oldSlug came from the
+	// apps.slug column (regex-validated at create) and newSlug
+	// passed the same validSlug check on this request's body. Wrap
+	// both so a future relax of validSlug (or a hostile migration)
+	// cannot smuggle CR/LF into the audit line.
+	s.log.Info("app renamed", "app", updated.ID, "from", logsanitize.Field(oldSlug), "to", logsanitize.Field(newSlug), "account", acct.ID)
 }

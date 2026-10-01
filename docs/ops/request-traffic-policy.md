@@ -672,3 +672,35 @@ transitions, complete preview/runtime/path agreement, real daemon fleet load and
 recovery, customer/staging acceptance, and native VM/firewall/leak acceptance
 remain release gates. No dedicated Linux x86_64 KVM acceptance host is currently
 available.
+
+## App binding changes
+
+App visibility and deleted status change tenant-hostname eligibility. Such a
+withdrawal can expose a custom domain owned by another account. Visibility/status updates,
+deleted-status CAS, restoration, rename, scheduled deletion, cascade deletion and
+physical purge use coordinated before/after analysis for both tenant routing
+modes. Account domains and tenant hostnames participate in owner discovery;
+purge also includes legacy domains whose redirect target is the app being removed.
+
+A refused app binding change returns the existing 422 traffic-policy problem.
+The response reports a proven lower bound (`observed = limit + 1`) and omits the
+foreign witness hostname, exact count and policy scope. Repair the affected
+policy and retry; an operator may need to repair another account's policy.
+
+Deletion refusal preserves the app row, grace deadline, runnable invocations,
+reserved async quota, command tasks, crons, deployments, builds, cleanup handoffs
+and activity records. Accepted scheduled or cascade deletion cancels eligible
+invocations and releases their reserved quota in the same transaction as the app
+change. Managed invocations already dispatching keep their existing cancellation
+fence. Audit and routing notifications follow successful commit.
+
+Physical purge analyzes removal of domain and tenant reservations before deleting
+children or the deletion claim. The memory implementation also clears default
+domain selections, so a later foreign claim cannot inherit a deleted selection.
+A soft-deleted or pending hostname can still be a routing reservation until its
+row is removed.
+
+Project reconciliation, preview retirement, account/operator cleanup and the
+remaining alias/revision writers require separate coverage. VM, firewall,
+restore, process-death, leak, real fleet/load/recovery and staging acceptance
+remain pending.
