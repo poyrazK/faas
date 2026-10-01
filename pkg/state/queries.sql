@@ -5403,6 +5403,21 @@ UPDATE environment_git_sources SET source_checked_at = sqlc.arg(checked_at)::tim
     source_verified_at = CASE WHEN sqlc.arg(error_code)::text = '' THEN sqlc.arg(checked_at)::timestamptz ELSE source_verified_at END
 WHERE id = sqlc.arg(source_id)::uuid;
 
+-- name: EnvironmentGitSourceHealth :one
+SELECT count(*) FILTER (WHERE NOT s.suspended)::bigint AS active,
+    count(*) FILTER (WHERE s.suspended)::bigint AS suspended,
+    count(*) FILTER (WHERE NOT s.suspended AND s.source_checked_at IS NULL)::bigint AS unchecked,
+    count(*) FILTER (WHERE NOT s.suspended AND s.source_verified_at IS NULL)::bigint AS unverified,
+    count(*) FILTER (WHERE NOT s.suspended AND coalesce(s.source_checked_at, s.created_at) <= sqlc.arg(stale_before)::timestamptz)::bigint AS poll_stale,
+    count(*) FILTER (WHERE NOT s.suspended AND coalesce(s.source_verified_at, s.created_at) <= sqlc.arg(stale_before)::timestamptz)::bigint AS verification_stale,
+    count(*) FILTER (WHERE NOT s.suspended AND s.source_error_code <> '')::bigint AS unavailable,
+    count(*) FILTER (WHERE NOT s.suspended AND s.source_commit_sha <> '' AND
+        (s.source_commit_sha IS DISTINCT FROM r.commit_sha OR s.source_definition_digest IS DISTINCT FROM r.definition_digest))::bigint AS candidate_pending_approval,
+    count(*) FILTER (WHERE NOT s.suspended AND s.approved_revision_id IS NOT NULL AND s.approved_revision_id IS DISTINCT FROM s.applied_revision_id)::bigint AS approved_pending_apply,
+    greatest(coalesce(max(extract(epoch FROM (sqlc.arg(now_at)::timestamptz - coalesce(s.source_checked_at, s.created_at)))) FILTER (WHERE NOT s.suspended), 0), 0)::double precision AS oldest_check_age_seconds,
+    greatest(coalesce(max(extract(epoch FROM (sqlc.arg(now_at)::timestamptz - coalesce(s.source_verified_at, s.created_at)))) FILTER (WHERE NOT s.suspended), 0), 0)::double precision AS oldest_verification_age_seconds
+FROM environment_git_sources s LEFT JOIN environment_desired_revisions r ON r.source_id = s.id AND r.id = s.approved_revision_id;
+
 -- name: RequestEnvironmentGitOpsRuntimeRefresh :exec
 UPDATE environment_gitops_runtime_effects SET requested_at = now(), next_request_at = sqlc.arg(next_request_at)::timestamptz
 WHERE source_id = sqlc.arg(source_id)::uuid AND id = sqlc.arg(effect_id)::uuid AND completed_at IS NULL;

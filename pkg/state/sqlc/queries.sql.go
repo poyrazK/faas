@@ -2766,6 +2766,60 @@ func (q *Queries) EnqueueEnvironmentGitOps(ctx context.Context, db DBTX, arg Enq
 	return err
 }
 
+const environmentGitSourceHealth = `-- name: EnvironmentGitSourceHealth :one
+SELECT count(*) FILTER (WHERE NOT s.suspended)::bigint AS active,
+    count(*) FILTER (WHERE s.suspended)::bigint AS suspended,
+    count(*) FILTER (WHERE NOT s.suspended AND s.source_checked_at IS NULL)::bigint AS unchecked,
+    count(*) FILTER (WHERE NOT s.suspended AND s.source_verified_at IS NULL)::bigint AS unverified,
+    count(*) FILTER (WHERE NOT s.suspended AND coalesce(s.source_checked_at, s.created_at) <= $1::timestamptz)::bigint AS poll_stale,
+    count(*) FILTER (WHERE NOT s.suspended AND coalesce(s.source_verified_at, s.created_at) <= $1::timestamptz)::bigint AS verification_stale,
+    count(*) FILTER (WHERE NOT s.suspended AND s.source_error_code <> '')::bigint AS unavailable,
+    count(*) FILTER (WHERE NOT s.suspended AND s.source_commit_sha <> '' AND
+        (s.source_commit_sha IS DISTINCT FROM r.commit_sha OR s.source_definition_digest IS DISTINCT FROM r.definition_digest))::bigint AS candidate_pending_approval,
+    count(*) FILTER (WHERE NOT s.suspended AND s.approved_revision_id IS NOT NULL AND s.approved_revision_id IS DISTINCT FROM s.applied_revision_id)::bigint AS approved_pending_apply,
+    greatest(coalesce(max(extract(epoch FROM ($2::timestamptz - coalesce(s.source_checked_at, s.created_at)))) FILTER (WHERE NOT s.suspended), 0), 0)::double precision AS oldest_check_age_seconds,
+    greatest(coalesce(max(extract(epoch FROM ($2::timestamptz - coalesce(s.source_verified_at, s.created_at)))) FILTER (WHERE NOT s.suspended), 0), 0)::double precision AS oldest_verification_age_seconds
+FROM environment_git_sources s LEFT JOIN environment_desired_revisions r ON r.source_id = s.id AND r.id = s.approved_revision_id
+`
+
+type EnvironmentGitSourceHealthParams struct {
+	StaleBefore pgtype.Timestamptz
+	NowAt       pgtype.Timestamptz
+}
+
+type EnvironmentGitSourceHealthRow struct {
+	Active                       int64
+	Suspended                    int64
+	Unchecked                    int64
+	Unverified                   int64
+	PollStale                    int64
+	VerificationStale            int64
+	Unavailable                  int64
+	CandidatePendingApproval     int64
+	ApprovedPendingApply         int64
+	OldestCheckAgeSeconds        float64
+	OldestVerificationAgeSeconds float64
+}
+
+func (q *Queries) EnvironmentGitSourceHealth(ctx context.Context, db DBTX, arg EnvironmentGitSourceHealthParams) (EnvironmentGitSourceHealthRow, error) {
+	row := db.QueryRow(ctx, environmentGitSourceHealth, arg.StaleBefore, arg.NowAt)
+	var i EnvironmentGitSourceHealthRow
+	err := row.Scan(
+		&i.Active,
+		&i.Suspended,
+		&i.Unchecked,
+		&i.Unverified,
+		&i.PollStale,
+		&i.VerificationStale,
+		&i.Unavailable,
+		&i.CandidatePendingApproval,
+		&i.ApprovedPendingApply,
+		&i.OldestCheckAgeSeconds,
+		&i.OldestVerificationAgeSeconds,
+	)
+	return i, err
+}
+
 const executionClaimNext = `-- name: ExecutionClaimNext :one
 WITH candidate AS (
   SELECT id, deadline_at

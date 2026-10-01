@@ -108,6 +108,23 @@ preserve the same distinction. Polling defaults on and can be disabled with
 `FAAS_ENVIRONMENT_GIT_SOURCE_POLLING_ENABLED=false`; successful checks recur
 every five minutes and source failures retry after thirty seconds.
 
+Source operational health is read as one bounded, consistent fleet aggregate
+on each apid Prometheus scrape. Closed-set conditions separate unchecked and
+unverified sources, stale checks, stale successful verification, availability
+errors, candidates pending approval, and approvals pending application. Suspended
+sources contribute only to the suspended count. Failed health reads omit counts
+and ages and emit an explicit unsuccessful observation. Polling enablement is
+separate from health, and replica counts use a maximum rather than a sum.
+Internal alerts cover stalled checks, stale verification, and missing health
+evidence; none establishes a serving outage or public status incident. The
+dashboard applies the same ten-minute freshness boundary and does not label
+old verification as current availability. PostgreSQL/memory tests cover startup
+grace, approval/application separation, retained evidence through outages,
+recovery, clock skew, suspension, and neighboring environments. Prometheus
+fixtures cover the alert hold, failed/missing evidence, disablement, replica
+aggregation, and recovery. The operator procedure is recorded in
+`docs/runbooks/FaasEnvironmentGitSourceHealth.md`.
+
 `make test-environment-gitops-controls` runs the strict PostgreSQL core gate,
 authenticated HTTP and dashboard review/adoption/override workflows, contract
 parity, and SDK transport tests. The Git transport is a fixture; the API routing,
@@ -199,7 +216,7 @@ The remaining full feature gates include protected-branch
 approval evidence; environment-scoped workload creation, source/runtime,
 secret-reference and queue/service-binding adapters; staged graph qualification
 and release activation; native serving-fleet and guest runtime evidence;
-source freshness alerting and operational status integration; and native runtime acceptance.
+full staged graph/runtime operational status integration; and native runtime acceptance.
 Unsupported resource fields currently block the complete plan. The approved-intent
 worker is not started from apid until these integration contracts are wired;
 candidate discovery is running independently.

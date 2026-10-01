@@ -133,12 +133,18 @@ func TestEnvironmentGitSourcePollingStartsFromApidWithoutGrantingApproval(t *tes
 		}
 		return ""
 	})
+	if srv.environmentGitSourcePollingEnabled.Load() {
+		t.Fatal("explicitly disabled polling was advertised as enabled")
+	}
 	select {
 	case <-client.calls:
 		t.Fatal("disabled source polling fetched Git")
 	case <-time.After(20 * time.Millisecond):
 	}
 	srv.startEnvironmentGitSourcePolling(ctx, func(string) string { return "" })
+	if !srv.environmentGitSourcePollingEnabled.Load() {
+		t.Fatal("configured polling was advertised as disabled")
+	}
 	select {
 	case <-client.calls:
 	case <-time.After(2 * time.Second):

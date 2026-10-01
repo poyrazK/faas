@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -309,6 +310,10 @@ type server struct {
 	// It records producer-side health for the loopback Prometheus HTTP-SD
 	// endpoints; nil keeps tests and degraded construction paths no-op.
 	metricsDiscoveryMetrics *metricsDiscoveryMetrics
+	// Source health reads durable fleet aggregates, so replicas do not need to
+	// own a poll lease to expose freshness. Enablement is configured at startup.
+	environmentGitSourceMetrics        *environmentGitSourceMetrics
+	environmentGitSourcePollingEnabled atomic.Bool
 	// graceWindowCache (issue #189 / IAM-5) caches the per-account
 	// rotation grace override (accounts.key_grace_window_days). The
 	// bearer-key auth path does NOT read it (the lazy expiry gate
@@ -479,6 +484,7 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 		s.prewarmMetrics = nil
 		s.statusMetrics = nil
 		s.realtimeHistoryMetrics = nil
+		s.environmentGitSourceMetrics = nil
 	} else if s.metricsDiscoveryMetrics == nil || s.metricsDiscoveryMetrics.registry != ops.Registry() {
 		s.domainVerificationMetrics = newDomainVerificationMetrics(ops.Registry(), ops.MetricPrefix())
 		s.metricsDiscoveryMetrics = newMetricsDiscoveryMetrics(ops.Registry(), ops.MetricPrefix())
@@ -489,6 +495,10 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 	}
 	if ops != nil && (s.realtimeHistoryMetrics == nil || s.realtimeHistoryMetrics.registry != ops.Registry()) {
 		s.realtimeHistoryMetrics = newManagedRealtimeHistoryMetrics(ops.Registry(), ops.MetricPrefix())
+	}
+	if ops != nil && (s.environmentGitSourceMetrics == nil || s.environmentGitSourceMetrics.registry != ops.Registry()) {
+		store, _ := s.store.(state.EnvironmentGitSourceHealthStore)
+		s.environmentGitSourceMetrics = newEnvironmentGitSourceMetrics(ctx, ops.Registry(), ops.MetricPrefix(), store, &s.environmentGitSourcePollingEnabled)
 	}
 	// Re-bind the audit counter so the IAM-4 seam can record
 	// failures. If ops is nil (unit tests that don't care about

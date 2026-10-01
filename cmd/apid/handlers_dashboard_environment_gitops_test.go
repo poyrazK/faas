@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/environmentgitops"
 )
 
@@ -25,6 +27,46 @@ func gitOpsDashboardPost(t *testing.T, handler http.Handler, session *http.Cooki
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, request)
 	return rec
+}
+
+func TestEnvironmentGitOpsDashboardShowsStaleSourceEvidence(t *testing.T) {
+	srv, _, _, _, _ := newProjectLifecycleFixture(t)
+	now := time.Now().UTC()
+	recent, old := now.Add(-time.Minute), now.Add(-api.EnvironmentGitSourceStaleAfter)
+	for _, tc := range []struct {
+		name              string
+		checked, verified *time.Time
+		created           time.Time
+		suspended         bool
+		errorCode         string
+		want              string
+	}{
+		{name: "first check", created: recent, want: "Waiting for the first successful Git check."},
+		{name: "first check overdue", created: old, want: "Git checks are stale."},
+		{name: "fresh", created: old, checked: &recent, verified: &recent, want: "Git definition verified."},
+		{name: "stale checks", created: old, checked: &old, verified: &old, want: "Git checks are stale."},
+		{name: "fresh failed check", created: old, checked: &recent, verified: &old, errorCode: "environment_git_source_unavailable", want: "The Git definition could not be verified."},
+		{name: "missing current verification", created: old, checked: &recent, want: "Git verification is stale."},
+		{name: "suspended", created: old, checked: &old, verified: &old, suspended: true, want: "Git checks are suspended."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data := dashboard.EnvironmentGitOpsData{Project: "shop", Environment: "production", Status: &api.EnvironmentGitOpsStatusResponse{
+				Source: api.EnvironmentGitSource{CreatedAt: tc.created, SourceCheckedAt: tc.checked, SourceVerifiedAt: tc.verified,
+					SourceErrorCode: tc.errorCode, Suspended: tc.suspended},
+			}}
+			setEnvironmentGitOpsDashboardFreshness(&data, now)
+			rec := httptest.NewRecorder()
+			if err := dashboard.Render(rec, srv.log, "", dashboard.Page{Title: "GitOps", Body: "environment_gitops", Data: data}); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(rec.Body.String(), tc.want) {
+				t.Fatalf("source evidence missing %q: %s", tc.want, rec.Body.String())
+			}
+			if tc.name != "fresh" && strings.Contains(rec.Body.String(), "Git definition verified.") {
+				t.Fatal("unavailable or old source was shown as freshly verified")
+			}
+		})
+	}
 }
 
 func gitOpsDashboardHidden(t *testing.T, page string, name string) string {

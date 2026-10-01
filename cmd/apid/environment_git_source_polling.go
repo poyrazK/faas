@@ -60,8 +60,10 @@ func (s *server) verifyEnvironmentGitDefinitionScope(ctx context.Context, source
 // Discovery is safe to start independently from the full graph executor. It
 // writes source availability/candidates only, and never grants approval.
 func (s *server) startEnvironmentGitSourcePolling(ctx context.Context, getenv func(string) string) {
+	enabled := !strings.EqualFold(getenv("FAAS_ENVIRONMENT_GIT_SOURCE_POLLING_ENABLED"), "false")
+	s.environmentGitSourcePollingEnabled.Store(enabled)
 	store, ok := s.store.(state.EnvironmentGitSourcePollStore)
-	if !ok || strings.EqualFold(getenv("FAAS_ENVIRONMENT_GIT_SOURCE_POLLING_ENABLED"), "false") {
+	if !ok || !enabled {
 		return
 	}
 	poller := &environmentgitops.SourcePoller{Store: store, Reader: &environmentGitSourceReader{server: s}, Log: s.log,

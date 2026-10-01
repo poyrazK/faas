@@ -20,6 +20,65 @@
 # implicitly anchored, so the regex MUST match the case exactly.
 
 groups:
+  # ADR-382: source discovery health is separate from approved-intent/runtime
+  # convergence. Counts come from one durable fleet observation per scrape;
+  # max avoids counting the same sources again on every apid replica.
+  - name: faas_environment_git_sources
+    interval: 30s
+    rules:
+      - alert: FaasEnvironmentGitSourcePollingStalled
+        expr: |
+          max by (job) (
+            apid_environment_git_sources{condition="poll_stale"}
+            and on (job, instance) (apid_environment_git_source_health_up == 1)
+            and on (job, instance) (apid_environment_git_source_polling_enabled == 1)
+          ) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: environment_git_sources
+          public_status: internal
+        annotations:
+          summary: "Environment Git source checks have stalled"
+          description: "At least one active environment has gone ten minutes without a completed Git check. Inspect the durable poll leases and apid polling configuration. The last approved definition remains authoritative."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEnvironmentGitSourceHealth.md"
+
+      - alert: FaasEnvironmentGitSourceVerificationStale
+        expr: |
+          max by (job) (
+            apid_environment_git_sources{condition="verification_stale"}
+            and on (job, instance) (apid_environment_git_source_health_up == 1)
+            and on (job, instance) (apid_environment_git_source_polling_enabled == 1)
+          ) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: environment_git_sources
+          public_status: internal
+        annotations:
+          summary: "Environment Git definitions cannot be verified"
+          description: "At least one active environment has gone ten minutes without successful Git definition verification. Check repository installation access, Git transport health, and definition validation. A recent failed check does not renew verification."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEnvironmentGitSourceHealth.md"
+
+      - alert: FaasEnvironmentGitSourceHealthUnavailable
+        expr: |
+          max by (job) (
+            (apid_environment_git_source_polling_enabled == 1)
+            unless on (job, instance) (apid_environment_git_source_health_up == 1)
+          ) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: environment_git_sources
+          public_status: internal
+        annotations:
+          summary: "Environment Git source health is unavailable"
+          description: "An apid replica configured for Git polling cannot read durable source health. Counts and ages are omitted when the bounded database query fails; check PostgreSQL reachability and the GitOps migrations before relying on source freshness."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEnvironmentGitSourceHealth.md"
+
   - name: faas_realtime_callbacks
     interval: 30s
     rules:

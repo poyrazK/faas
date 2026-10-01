@@ -50,6 +50,7 @@ func (s *server) environmentGitOpsDashboardData(r *http.Request, acct state.Acco
 		return data, err
 	}
 	data.Status = &api.EnvironmentGitOpsStatusResponse{Source: source, Runs: runs}
+	setEnvironmentGitOpsDashboardFreshness(&data, time.Now().UTC())
 	for _, run := range runs {
 		view := dashboard.EnvironmentGitOpsRunView{Run: run}
 		var plan api.EnvironmentGitOpsPlan
@@ -70,6 +71,23 @@ func (s *server) environmentGitOpsDashboardData(r *http.Request, acct state.Acco
 		data.Adoption = &plan
 	}
 	return data, nil
+}
+
+func setEnvironmentGitOpsDashboardFreshness(data *dashboard.EnvironmentGitOpsData, now time.Time) {
+	data.SourcePollStale, data.SourceVerificationStale = false, false
+	if data.Status == nil || data.Status.Source.Suspended {
+		return
+	}
+	source := data.Status.Source
+	checked, verified := source.CreatedAt, source.CreatedAt
+	if source.SourceCheckedAt != nil {
+		checked = *source.SourceCheckedAt
+	}
+	if source.SourceVerifiedAt != nil {
+		verified = *source.SourceVerifiedAt
+	}
+	cutoff := now.Add(-api.EnvironmentGitSourceStaleAfter)
+	data.SourcePollStale, data.SourceVerificationStale = !checked.After(cutoff), !verified.After(cutoff)
 }
 
 func (s *server) renderDashboardEnvironmentGitOps(w http.ResponseWriter, r *http.Request, acct state.Account, review *api.PreviewEnvironmentGitRevisionResponse) {

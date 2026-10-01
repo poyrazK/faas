@@ -43,6 +43,8 @@ const (
 	EnvironmentGitSourcePollCheckInterval = 5 * time.Minute
 	EnvironmentGitSourcePollRetryInterval = 30 * time.Second
 	EnvironmentGitSourcePollIdleInterval  = 5 * time.Second
+	EnvironmentGitSourceStaleAfter        = 2 * EnvironmentGitSourcePollCheckInterval
+	EnvironmentGitSourceHealthTimeout     = 2 * time.Second
 )
 
 // A restore hook is on the wake critical path. Keep its customer timeout

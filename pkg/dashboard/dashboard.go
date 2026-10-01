@@ -128,14 +128,16 @@ type ProjectsData struct {
 }
 
 type EnvironmentGitOpsData struct {
-	Project     string
-	Environment string
-	CSRFToken   string
-	Status      *api.EnvironmentGitOpsStatusResponse
-	Review      *api.PreviewEnvironmentGitRevisionResponse
-	Definition  string
-	Adoption    *api.EnvironmentGitOpsPlan
-	Runs        []EnvironmentGitOpsRunView
+	Project                 string
+	Environment             string
+	CSRFToken               string
+	Status                  *api.EnvironmentGitOpsStatusResponse
+	Review                  *api.PreviewEnvironmentGitRevisionResponse
+	Definition              string
+	Adoption                *api.EnvironmentGitOpsPlan
+	Runs                    []EnvironmentGitOpsRunView
+	SourcePollStale         bool
+	SourceVerificationStale bool
 }
 
 type EnvironmentGitOpsRunView struct {
