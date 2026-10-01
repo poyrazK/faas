@@ -189,3 +189,14 @@ dispatch, lease-renewal, and due-candidate metrics avoid customer IDs and
 business keys.
 See [ADR-393](adr/393-managed-exclusive-operations.md)
 and the [implementation checklist](implementation/managed-exclusive-operations.md).
+
+## Retiring a policy
+
+Finish or cancel pending and running operations, then remove each producer with
+`gregale operations unbind-trigger`. Retire the idle policy with
+`gregale operations policy retire crm-sync --json`. A 409
+`operation_policy_in_use` means work or a trigger binding still uses it.
+
+Retirement is permanent and idempotent. It releases an active-policy quota slot
+and preserves the policy ID, operation receipts and ownership generations. The
+retired record remains listed; its name cannot be recreated or accept new work.

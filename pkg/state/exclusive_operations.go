@@ -73,6 +73,7 @@ type ExclusiveAdmission struct {
 
 type ExclusiveWorkStore interface {
 	UpsertExclusiveWorkPolicy(context.Context, string, exclusivework.Policy) (ExclusiveWorkPolicy, error)
+	RetireExclusiveWorkPolicy(context.Context, string, string) (ExclusiveWorkPolicy, error)
 	ListExclusiveWorkPolicies(context.Context, string) ([]ExclusiveWorkPolicy, error)
 	AdmitExclusiveOperation(context.Context, ExclusiveAdmission) (ExclusiveOperation, bool, error)
 	ExclusiveOperationByID(context.Context, string, string) (ExclusiveOperation, error)
@@ -145,6 +146,7 @@ type exclusiveTransaction interface {
 	now() (time.Time, error)
 	policy(string, string) (ExclusiveWorkPolicy, error)
 	policies(string) ([]ExclusiveWorkPolicy, error)
+	policyInUse(ExclusiveWorkPolicy) (bool, error)
 	savePolicy(ExclusiveWorkPolicy) (ExclusiveWorkPolicy, error)
 	ensureKey(exclusiveKey) (exclusiveKey, error)
 	key(string, string) (exclusiveKey, error)
@@ -251,7 +253,13 @@ func upsertExclusivePolicy(ctx context.Context, atomic exclusiveAtomic, account 
 			if err != nil {
 				return err
 			}
-			if len(policies) >= api.MaxExclusivePoliciesPerAccount {
+			active := 0
+			for _, policy := range policies {
+				if !policy.Retired {
+					active++
+				}
+			}
+			if active >= api.MaxExclusivePoliciesPerAccount {
 				return ErrQuotaExceeded
 			}
 			old = ExclusiveWorkPolicy{ID: uuid.NewString(), AccountID: account}

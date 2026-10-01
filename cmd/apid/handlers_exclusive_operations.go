@@ -37,6 +37,8 @@ func (s *server) exclusiveStore(w http.ResponseWriter) (state.ExclusiveWorkStore
 func writeExclusiveError(w http.ResponseWriter, err error) {
 	var p *api.Problem
 	switch {
+	case errors.Is(err, state.ErrExclusivePolicyInUse):
+		p = api.NewProblem(http.StatusConflict, "operation_policy_in_use", "Operation policy in use", "finish or cancel active operations and remove trigger bindings before retiring the policy")
 	case errors.Is(err, exclusivework.ErrBusy):
 		p = api.NewProblem(http.StatusConflict, "operation_busy", "Operation busy", "an earlier operation owns or is waiting for this key")
 	case errors.Is(err, exclusivework.ErrIdentityConflict):
@@ -118,6 +120,19 @@ func (s *server) listExclusivePolicies(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"policies": rows})
+}
+
+func (s *server) retireExclusivePolicy(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	store, ok := s.exclusiveStore(w)
+	if !ok {
+		return
+	}
+	row, err := store.RetireExclusiveWorkPolicy(r.Context(), acct.ID, r.PathValue("name"))
+	if err != nil {
+		writeExclusiveError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, row)
 }
 
 func exclusiveTriggerBindingRecord(binding state.ExclusiveTriggerBinding) api.ExclusiveTriggerBindingRecord {

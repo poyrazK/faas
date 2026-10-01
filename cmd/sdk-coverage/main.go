@@ -317,6 +317,7 @@ var methodRouteMap = map[string]string{
 	// route-derived names, and hyphenated path segments need explicit mapping.
 	"GET /v1/account/operation-policies":                                   "ListExclusiveWorkPolicies",
 	"PUT /v1/account/operation-policies/{name}":                            "UpsertExclusiveWorkPolicy",
+	"DELETE /v1/account/operation-policies/{name}":                         "RetireExclusiveWorkPolicy",
 	"GET /v1/account/operation-trigger-bindings/{source}/{id}":             "GetExclusiveTriggerBinding",
 	"PUT /v1/account/operation-trigger-bindings/{source}/{id}":             "UpsertExclusiveTriggerBinding",
 	"DELETE /v1/account/operation-trigger-bindings/{source}/{id}":          "DeleteExclusiveTriggerBinding",

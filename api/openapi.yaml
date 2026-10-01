@@ -23519,6 +23519,33 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/account/operation-policies/{name}:
+    delete:
+      tags: [exclusive-operations]
+      operationId: retireExclusiveOperationPolicy
+      summary: Retire an idle exclusive operation policy while preserving ownership history.
+      description: |
+        Requires deploy-write scope and MFA when configured. Pending or running
+        operations and existing trigger bindings block retirement with 409.
+        Retirement is idempotent, releases the active-policy quota slot, and
+        preserves policy identity, operation receipts and ownership generations.
+        A retired name cannot be recreated or used to submit new work.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+      responses:
+        '200':
+          description: Retired policy revision; repeated retirement returns the same revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExclusiveWorkPolicyRecord' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
     put:
       tags: [exclusive-operations]
       operationId: upsertExclusiveOperationPolicy
