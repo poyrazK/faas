@@ -177,5 +177,5 @@ triggers admit through the same operation store and scheduler claim path.
 AppTask and Job result transitions carry and enforce the ownership generation.
 Command crons cannot be bound directly yet. Bounded admission, dispatch,
 lease-renewal, and due-candidate metrics avoid customer IDs and business keys.
-See [ADR-387](adr/387-managed-exclusive-operations.md)
+See [ADR-393](adr/393-managed-exclusive-operations.md)
 and the [implementation checklist](implementation/managed-exclusive-operations.md).
