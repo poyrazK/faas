@@ -64,6 +64,12 @@ func cmdAppsUDP(slug string, args []string) int {
 			PrintUsage(os.Stderr, "usage: gregale apps udp <slug> add --name NAME --guest-port PORT [--public-port PORT]", "apps")
 			return 1
 		}
+		if err := api.ValidateWorkloadPorts([]api.WorkloadPort{{Name: *name, Port: *guestPort, Protocol: api.WorkloadPortUDP}}); err != nil {
+			return printErr("Invalid UDP listener", err)
+		}
+		if *publicPort != 0 && (*publicPort < api.UDPListenerPublicPortMin || *publicPort > api.UDPListenerPublicPortMax) {
+			return printErr("Invalid UDP listener", fmt.Errorf("public port must be between %d and %d", api.UDPListenerPublicPortMin, api.UDPListenerPublicPortMax))
+		}
 		out, err := client.CreateAppUDPListener(context.Background(), slug, api.CreateUDPListenerRequest{
 			Name: *name, GuestPort: *guestPort, PublicPort: *publicPort,
 		})

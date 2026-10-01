@@ -100,6 +100,17 @@ func TestAppsUDPCommands(t *testing.T) {
 			t.Errorf("%v accepted", args)
 		}
 	}
+	for _, flags := range [][]string{
+		{"--name", "dns", "--guest-port", "-1"},
+		{"--name", "dns", "--guest-port", "65536"},
+		{"--name", "dns", "--guest-port", "5353", "--public-port", "39999"},
+		{"--name", "dns", "--guest-port", "5353", "--public-port", "50000"},
+	} {
+		args := append([]string{"apps", "udp", "test-app", "add"}, flags...)
+		if code := run(args); code == 0 {
+			t.Errorf("invalid ports accepted: %v", args)
+		}
+	}
 	if requests != before {
 		t.Error("invalid input made HTTP request")
 	}

@@ -861,3 +861,7 @@ Dedicated real-HTTP Go client fixtures now exercise list/create/update/delete, b
 ### Isolated Go UDP client publication (2026-10-01)
 
 Draft [#3994](https://github.com/poyrazK/faas/pull/3994), commit `e110dee0e`, stacks on customer API #3993 and isolates the four Go client methods with real-HTTP contract fixtures. Isolated contracts passed three race repetitions without skips and scoped lint found zero issues (`/tmp/gregale-udp-client-isolated-{tests,lint}.log`). All launched handles are terminal. CLI/schema publication and native/deployed acceptance remain pending; no merge or rollout occurred.
+
+### UDP CLI local port validation (2026-10-01)
+
+The UDP add command now applies the shared workload-port validator and public reservation range before HTTP create. CLI fixtures cover negative/oversized guest ports and both public-range boundaries and prove no requests occur for invalid input, alongside existing routing, create/list/enable/disable/delete and JSON output cases. The real-HTTP CLI fixture passed three race repetitions without skips and scoped lint reported zero issues (`/tmp/gregale-udp-cli-{tests,lint}.log`). All launched handles are terminal. CLI isolated publication, schema/SDK review and native/deployed acceptance remain pending.
