@@ -7747,6 +7747,49 @@ const IssueMaintenanceBatch = 1000
 const IssueMaintenanceInterval = time.Minute
 const IssueMaxBatchEvents = 32
 
+// UDPDatagramMaxBytes bounds IPv4 payloads after the minimum IP and UDP headers.
+const UDPDatagramMaxBytes = 65507
+
+// NamespaceBridgeReadinessTimeout allows the TCP helper's 30-second guest dial
+// plus launcher overhead, while bounding an unresponsive TCP or UDP helper.
+const NamespaceBridgeReadinessTimeout = 35 * time.Second
+
+// NamespaceBridgeReadinessMaxBytes bounds the helper's newline-terminated
+// readiness record, including its delimiter and any diagnostic text.
+const NamespaceBridgeReadinessMaxBytes = 4096
+
+// UDPStreamMaxBytes and UDPStreamMaxDatagrams bound each direction of one
+// admitted peer independently; caller caps can only tighten these defaults.
+const UDPStreamMaxBytes int64 = 64 * 1024 * 1024
+const UDPStreamMaxDatagrams uint64 = 65536
+
+// UDPIdleTimeoutDefault bounds quiet admitted peer sessions at the edge.
+const UDPIdleTimeoutDefault = 30 * time.Second
+
+// UDP peer queues drop the newest datagram when full, without blocking a socket.
+const UDPPeerQueueDepth = 4
+const UDPMaxPeersDefault = 64
+const UDPMaxPeersPerAccountDefault = 16
+
+// UDP account budgets are shared across listeners, separately per direction.
+const UDPPacketsPerSecondPerAccount = 1000
+const UDPPacketBurstPerAccount = 200
+const UDPBytesPerSecondPerAccount = 4 * 1024 * 1024
+const UDPByteBurstPerAccount = 4 * UDPDatagramMaxBytes
+const UDPRateLimitMaxAccounts = 4096
+const UDPRateLimitIdleTTL = 2 * time.Minute
+
+// UDPReplyQueueDepth bounds retained replies per public listener socket.
+const UDPReplyQueueDepth = 64
+const UDPWriteTimeout = time.Second
+const UDPAdmissionTimeout = 30 * time.Second
+
 // UDP listener ports reserve an independent UDP namespace at the public edge.
 const UDPListenerPublicPortMin = 40000
 const UDPListenerPublicPortMax = 49999
+
+// UDPListenerRefreshInterval bounds intent reconciliation latency at the edge.
+const UDPListenerRefreshInterval = 2 * time.Second
+
+// UDPListenerReadTimeout bounds each durable intent refresh.
+const UDPListenerReadTimeout = 5 * time.Second

@@ -557,6 +557,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_VMMD_STREAM_BRIDGE_PATH", Owners: []string{"shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_VMMD_TARGET_URL", Owners: []string{"vmmd"}, Source: EnvSourceDropin},
 	{Name: "FAAS_VMMD_TCP_BRIDGE_PATH", Owners: []string{"shared"}, Source: EnvSourceDefault},
+	{Name: "FAAS_VMMD_UDP_BRIDGE_PATH", Owners: []string{"shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_VMM_SOCK", Owners: []string{"imaged"}, Source: EnvSourceDropin},
 	{Name: "FAAS_VMM_TLS_CA_PATH", Owners: []string{"imaged"}, Source: EnvSourceDropin},
 	{Name: "FAAS_VMM_TLS_CERT_PATH", Owners: []string{"imaged"}, Source: EnvSourceDropin},
