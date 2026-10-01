@@ -12450,7 +12450,7 @@ func (m *MemStore) CountPendingInvocations(_ context.Context, appID string, sour
 	defer m.mu.Unlock()
 	n := 0
 	for _, inv := range m.invocations {
-		if inv.AppID != appID || inv.Source != source {
+		if inv.AppID != appID || inv.Source != source || !m.productionInvocationWorkLocked(inv) {
 			continue
 		}
 		if inv.State != InvocationPending && inv.State != InvocationDispatching {
@@ -12800,7 +12800,7 @@ func (m *MemStore) QueueState(_ context.Context, appID string) (QueueStats, erro
 	defer m.mu.Unlock()
 	var s QueueStats
 	for _, inv := range m.invocations {
-		if inv.AppID != appID || inv.Source != InvocationQueue {
+		if inv.AppID != appID || inv.Source != InvocationQueue || !m.productionInvocationWorkLocked(inv) {
 			continue
 		}
 		switch inv.State {
@@ -12816,7 +12816,7 @@ func (m *MemStore) QueueState(_ context.Context, appID string) (QueueStats, erro
 			// a row's lease has slipped past that deadline the worker
 			// is no longer holding it and the row should not count
 			// toward InFlight (the next drain tick will re-claim it).
-			if inv.LeaseExpiresAt == nil || inv.LeaseExpiresAt.After(time.Now()) {
+			if inv.LeaseExpiresAt != nil && inv.LeaseExpiresAt.After(time.Now()) {
 				s.InFlight++
 			}
 		case InvocationDeadLetter:
@@ -12834,7 +12834,7 @@ func (m *MemStore) QueueStateForQueue(_ context.Context, appID, queueName string
 	defer m.mu.Unlock()
 	var s QueueStats
 	for _, inv := range m.invocations {
-		if inv.AppID != appID || inv.QueueName != queueName || inv.Source != InvocationQueue {
+		if inv.AppID != appID || inv.QueueName != queueName || inv.Source != InvocationQueue || !m.productionInvocationWorkLocked(inv) {
 			continue
 		}
 		switch inv.State {
@@ -12845,7 +12845,7 @@ func (m *MemStore) QueueStateForQueue(_ context.Context, appID, queueName string
 			}
 		case InvocationDispatching:
 			s.Depth++
-			if inv.LeaseExpiresAt == nil || inv.LeaseExpiresAt.After(time.Now()) {
+			if inv.LeaseExpiresAt != nil && inv.LeaseExpiresAt.After(time.Now()) {
 				s.InFlight++
 			}
 		case InvocationDeadLetter:
@@ -12883,14 +12883,14 @@ func (m *MemStore) QueuePeek(_ context.Context, appID string, limit int, before 
 	var anchor *Invocation
 	if before != "" {
 		a, ok := m.invocations[before]
-		if !ok {
-			return nil, nil // unknown cursor; treat as "start from oldest"
+		if !ok || a.AppID != appID || a.Source != InvocationQueue || !m.productionInvocationWorkLocked(a) {
+			return nil, nil // cursor is outside the production queue partition
 		}
 		anchor = &a
 	}
 	var out []Invocation
 	for _, inv := range m.invocations {
-		if inv.AppID != appID || inv.Source != InvocationQueue {
+		if inv.AppID != appID || inv.Source != InvocationQueue || !m.productionInvocationWorkLocked(inv) {
 			continue
 		}
 		if inv.State != InvocationPending {
@@ -12904,7 +12904,7 @@ func (m *MemStore) QueuePeek(_ context.Context, appID string, limit int, before 
 				continue
 			}
 		}
-		out = append(out, inv)
+		out = append(out, cloneInvocationWorkEnvelope(inv))
 	}
 	// Oldest-first, then id ASC as the stable tie-breaker (mirrors the
 	// ORDER BY clause in pkg/state/pgstore.go::QueuePeek).
@@ -12940,14 +12940,14 @@ func (m *MemStore) QueueDeadLetter(_ context.Context, appID string, limit int, b
 	var anchor *Invocation
 	if before != "" {
 		a, ok := m.invocations[before]
-		if !ok {
+		if !ok || a.AppID != appID || a.Source != InvocationQueue || !m.productionInvocationWorkLocked(a) {
 			return nil, nil
 		}
 		anchor = &a
 	}
 	var out []Invocation
 	for _, inv := range m.invocations {
-		if inv.AppID != appID || inv.Source != InvocationQueue {
+		if inv.AppID != appID || inv.Source != InvocationQueue || !m.productionInvocationWorkLocked(inv) {
 			continue
 		}
 		if inv.State != InvocationDeadLetter {
@@ -12961,7 +12961,7 @@ func (m *MemStore) QueueDeadLetter(_ context.Context, appID string, limit int, b
 				continue
 			}
 		}
-		out = append(out, inv)
+		out = append(out, cloneInvocationWorkEnvelope(inv))
 	}
 	// Newest-first, then id DESC as the stable tie-breaker (matches
 	// the partial index order on the PgStore side).
@@ -24633,7 +24633,7 @@ func (m *MemStore) RetryQueueDeadLetter(_ context.Context, accountID, invocation
 	if !ok {
 		return Invocation{}, ErrNotFound
 	}
-	if inv.AccountID != accountID {
+	if inv.AccountID != accountID || !m.productionInvocationWorkLocked(inv) {
 		return Invocation{}, ErrNotFound
 	}
 	if inv.State != InvocationDeadLetter {
@@ -24651,7 +24651,7 @@ func (m *MemStore) RetryQueueDeadLetter(_ context.Context, accountID, invocation
 	inv.LastReplayedAt = &now
 	inv.CompletedAt = nil
 	m.invocations[invocationID] = inv
-	return inv, nil
+	return cloneInvocationWorkEnvelope(inv), nil
 }
 
 func unifiedDeadLetterEventID(source, sourceID string) string {
@@ -24661,7 +24661,7 @@ func unifiedDeadLetterEventID(source, sourceID string) string {
 func (m *MemStore) deadLetterEventsLocked(appID string) []DeadLetterEvent {
 	out := make([]DeadLetterEvent, 0)
 	for _, inv := range m.invocations {
-		if inv.AppID != appID || inv.State != InvocationDeadLetter {
+		if inv.AppID != appID || inv.State != InvocationDeadLetter || !m.productionInvocationWorkLocked(inv) {
 			continue
 		}
 		eventID := unifiedDeadLetterEventID("invocation", inv.ID)
@@ -24832,6 +24832,14 @@ func (m *MemStore) deadLetterEventsLocked(appID string) []DeadLetterEvent {
 		if _, purged := m.deadLetterPurged[id]; purged {
 			continue
 		}
+		if ev.Source == "invocation" {
+			if !m.productionInvocationWorkLocked(Invocation{ID: ev.SourceID, AppID: ev.AppID, Headers: ev.Headers}) {
+				continue
+			}
+			if inv, exists := m.invocations[ev.SourceID]; exists && !m.productionInvocationWorkLocked(inv) {
+				continue
+			}
+		}
 		if _, ok := seen[id]; !ok && ev.AppID == appID {
 			out = append(out, ev)
 		}
@@ -24893,9 +24901,10 @@ func (m *MemStore) ListDeadLetterEvents(_ context.Context, appID string, limit i
 				break
 			}
 		}
-		if anchor >= 0 {
-			events = events[anchor+1:]
+		if anchor < 0 {
+			return nil, nil
 		}
+		events = events[anchor+1:]
 	}
 	if len(events) > limit {
 		events = events[:limit]
@@ -24921,9 +24930,10 @@ func (m *MemStore) ListDeadLetterEventsForAccount(_ context.Context, accountID s
 				break
 			}
 		}
-		if anchor >= 0 {
-			events = events[anchor+1:]
+		if anchor < 0 {
+			return nil, nil
 		}
+		events = events[anchor+1:]
 	}
 	if len(events) > limit {
 		events = events[:limit]

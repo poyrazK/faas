@@ -6151,3 +6151,95 @@ WHERE i.environment_id=$1 OR p.environment_id=$1 ORDER BY i.id;
 
 -- name: ReadEnvironmentQueueAdmissionProject :one
 SELECT project_id FROM project_environments WHERE id=$1;
+
+-- ADR-375: production filtering precedes aggregates, limits, and cursor anchors.
+-- name: ReadProductionQueueInvocation :one
+SELECT i.* FROM invocations i JOIN production_invocation_work p ON p.id=i.id
+WHERE i.id=$1 AND i.source='queue';
+
+-- name: CountProductionPendingInvocations :one
+SELECT count(*) FROM production_invocation_work WHERE app_id=$1 AND source=$2 AND state IN ('pending','dispatching');
+
+-- name: CountProductionPendingQueueWorkInLane :one
+SELECT count(*) FROM production_invocation_work WHERE app_id=$1 AND source='queue' AND state='pending'
+    AND work_policy_name=$2 AND work_key_digest=$3;
+
+-- name: ReadProductionQueueStateLive :one
+SELECT count(*) AS depth,
+    count(*) FILTER(WHERE state='dispatching' AND lease_expires_at IS NOT NULL AND lease_expires_at>now()) AS in_flight,
+    min(created_at) FILTER(WHERE state='pending')::timestamptz AS oldest_pending_at
+FROM production_invocation_work WHERE app_id=sqlc.arg(app_id)::uuid AND source='queue' AND state IN ('pending','dispatching')
+    AND (NOT sqlc.arg(named)::boolean OR queue_name=sqlc.arg(queue_name)::text);
+
+-- name: CountProductionQueueDeadLetter :one
+SELECT count(*) FROM production_invocation_work WHERE app_id=sqlc.arg(app_id)::uuid AND source='queue' AND state='dead_letter'
+    AND (NOT sqlc.arg(named)::boolean OR queue_name=sqlc.arg(queue_name)::text);
+
+-- name: PeekProductionQueue :many
+WITH anchor AS (SELECT created_at,id FROM production_invocation_work WHERE id=sqlc.narg(cursor_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND source='queue')
+SELECT i.* FROM invocations i JOIN production_invocation_work p ON p.id=i.id
+WHERE i.app_id=sqlc.arg(app_id)::uuid AND i.source='queue' AND i.state='pending'
+    AND (sqlc.narg(cursor_id)::uuid IS NULL OR (i.created_at,i.id)>(SELECT created_at,id FROM anchor))
+ORDER BY i.created_at,i.id LIMIT sqlc.arg(page_limit)::bigint;
+
+-- name: ListProductionQueueDeadLetter :many
+WITH anchor AS (SELECT created_at,id FROM production_invocation_work WHERE id=sqlc.narg(cursor_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND source='queue')
+SELECT i.* FROM invocations i JOIN production_invocation_work p ON p.id=i.id
+WHERE i.app_id=sqlc.arg(app_id)::uuid AND i.source='queue' AND i.state='dead_letter'
+    AND (sqlc.narg(cursor_id)::uuid IS NULL OR (i.created_at,i.id)<(SELECT created_at,id FROM anchor))
+ORDER BY i.created_at DESC,i.id DESC LIMIT sqlc.arg(page_limit)::bigint;
+
+-- name: RetryProductionQueueDeadLetter :one
+UPDATE invocations i SET state='pending',attempts=0,last_error=NULL,outcome=NULL,due_at=now(),lease_expires_at=NULL,
+    instance_id=NULL,last_replayed_at=now(),completed_at=NULL,quota_reserved=false
+FROM production_invocation_work p WHERE p.id=i.id AND i.id=$1 AND i.account_id=$2 AND i.state='dead_letter'
+RETURNING i.*;
+
+-- name: ListProductionDeadLetterEvents :many
+WITH anchor AS (SELECT last_failed_at,id FROM production_dead_letter_events
+    WHERE id=sqlc.narg(cursor_id)::uuid AND (sqlc.narg(account_id)::uuid IS NULL OR account_id=sqlc.narg(account_id)::uuid)
+    AND (sqlc.narg(app_id)::uuid IS NULL OR app_id=sqlc.narg(app_id)::uuid))
+SELECT d.* FROM dead_letter_events d JOIN production_dead_letter_events p ON p.id=d.id
+WHERE (sqlc.narg(account_id)::uuid IS NULL OR d.account_id=sqlc.narg(account_id)::uuid)
+    AND (sqlc.narg(app_id)::uuid IS NULL OR d.app_id=sqlc.narg(app_id)::uuid)
+    AND (sqlc.narg(cursor_id)::uuid IS NULL OR (d.last_failed_at,d.id)<(SELECT last_failed_at,id FROM anchor))
+ORDER BY d.last_failed_at DESC,d.id DESC LIMIT sqlc.arg(page_limit)::bigint;
+
+-- name: ReadProductionDeadLetterEvent :one
+SELECT d.* FROM dead_letter_events d JOIN production_dead_letter_events p ON p.id=d.id
+WHERE d.id=sqlc.arg(event_id)::uuid
+    AND (sqlc.narg(account_id)::uuid IS NULL OR d.account_id=sqlc.narg(account_id)::uuid)
+    AND (sqlc.narg(app_id)::uuid IS NULL OR d.app_id=sqlc.narg(app_id)::uuid);
+
+-- name: LockProductionDeadLetterEvent :one
+SELECT d.* FROM dead_letter_events d JOIN production_dead_letter_events p ON p.id=d.id
+WHERE d.id=sqlc.arg(event_id)::uuid AND d.account_id=sqlc.arg(account_id)::uuid
+    AND (sqlc.narg(app_id)::uuid IS NULL OR d.app_id=sqlc.narg(app_id)::uuid) AND d.replayed_at IS NULL
+FOR UPDATE OF d;
+
+-- name: LockProductionDeadLetterEvents :many
+SELECT d.* FROM dead_letter_events d JOIN production_dead_letter_events p ON p.id=d.id
+WHERE d.account_id=sqlc.arg(account_id)::uuid
+    AND (sqlc.narg(app_id)::uuid IS NULL OR d.app_id=sqlc.narg(app_id)::uuid)
+    AND (NOT sqlc.arg(open_only)::boolean OR d.replayed_at IS NULL)
+ORDER BY d.last_failed_at DESC,d.id DESC LIMIT sqlc.arg(page_limit)::bigint FOR UPDATE OF d SKIP LOCKED;
+
+-- name: DeleteProductionDeadLetterEvent :execrows
+DELETE FROM dead_letter_events d USING production_dead_letter_events p WHERE p.id=d.id
+    AND d.id=sqlc.arg(event_id)::uuid AND d.account_id=sqlc.arg(account_id)::uuid
+    AND (sqlc.narg(app_id)::uuid IS NULL OR d.app_id=sqlc.narg(app_id)::uuid);
+
+-- name: ReplayProductionDeadLetterInvocation :execrows
+UPDATE invocations i SET state='pending',attempts=0,last_error=NULL,outcome=NULL,due_at=now(),lease_expires_at=NULL,
+    instance_id=NULL,last_replayed_at=now(),completed_at=NULL,quota_reserved=false
+FROM production_invocation_work p WHERE p.id=i.id AND i.id=sqlc.arg(invocation_id)::uuid
+    AND i.account_id=sqlc.arg(account_id)::uuid AND i.app_id=sqlc.arg(app_id)::uuid AND i.state='dead_letter';
+
+-- name: DeleteProductionDeadLetterEvents :execrows
+WITH victims AS (SELECT d.id FROM dead_letter_events d JOIN production_dead_letter_events p ON p.id=d.id
+    WHERE d.account_id=sqlc.arg(account_id)::uuid AND (sqlc.narg(app_id)::uuid IS NULL OR d.app_id=sqlc.narg(app_id)::uuid)
+    ORDER BY d.last_failed_at DESC,d.id DESC LIMIT sqlc.arg(page_limit)::bigint FOR UPDATE OF d SKIP LOCKED)
+DELETE FROM dead_letter_events d USING victims v WHERE d.id=v.id;
+
+-- name: StampDeadLetterEventReplay :exec
+UPDATE dead_letter_events SET replayed_at=$1 WHERE id=$2;

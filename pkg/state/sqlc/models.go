@@ -897,6 +897,26 @@ type DataUpstreamProbesDefault struct {
 	ProbeNode        pgtype.Text
 }
 
+type DeadLetterEvent struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	Source           string
+	SourceID         pgtype.UUID
+	Origin           string
+	TriggerID        pgtype.UUID
+	EventPayload     []byte
+	Headers          []byte
+	ErrorKind        string
+	ErrorDetail      []byte
+	RetryCount       int32
+	FirstFailedAt    pgtype.Timestamptz
+	LastFailedAt     pgtype.Timestamptz
+	ReplayedAt       pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+	EnvironmentOwned bool
+}
+
 type DebugRegressionObservation struct {
 	AppID            pgtype.UUID
 	DeploymentID     pgtype.UUID
@@ -2037,6 +2057,69 @@ type PgRatelimitCounter struct {
 	Plan       string
 	Tokens     int64
 	LastRefill pgtype.Timestamptz
+}
+
+type ProductionDeadLetterEvent struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	Source           string
+	SourceID         pgtype.UUID
+	Origin           string
+	TriggerID        pgtype.UUID
+	EventPayload     []byte
+	Headers          []byte
+	ErrorKind        string
+	ErrorDetail      []byte
+	RetryCount       int32
+	FirstFailedAt    pgtype.Timestamptz
+	LastFailedAt     pgtype.Timestamptz
+	ReplayedAt       pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+	EnvironmentOwned bool
+}
+
+type ProductionInvocationWork struct {
+	ID                       pgtype.UUID
+	EnvironmentID            pgtype.UUID
+	AppID                    pgtype.UUID
+	AccountID                pgtype.UUID
+	Source                   string
+	State                    string
+	Payload                  []byte
+	Headers                  []byte
+	DueAt                    pgtype.Timestamptz
+	Method                   string
+	Path                     string
+	CronID                   pgtype.UUID
+	ScheduledAt              pgtype.Timestamptz
+	AckUrl                   pgtype.Text
+	Result                   []byte
+	LeaseExpiresAt           pgtype.Timestamptz
+	ReceivedAt               pgtype.Timestamptz
+	CompletedAt              pgtype.Timestamptz
+	InstanceID               pgtype.Text
+	Attempts                 int32
+	QuotaReserved            bool
+	LastError                pgtype.Text
+	CreatedAt                pgtype.Timestamptz
+	OrgID                    pgtype.UUID
+	Outcome                  pgtype.Text
+	DeadlineAt               pgtype.Timestamptz
+	RetryPolicy              []byte
+	ResultRetentionUntil     pgtype.Timestamptz
+	ReplayedFromInvocationID pgtype.UUID
+	LastReplayedAt           pgtype.Timestamptz
+	QueueName                string
+	OnSuccessDestinationID   pgtype.UUID
+	OnFailureDestinationID   pgtype.UUID
+	WorkPolicyName           pgtype.Text
+	WorkKeyDigest            []byte
+	WorkExpiresAt            pgtype.Timestamptz
+	WorkSequence             pgtype.Int8
+	WorkPolicyRevision       pgtype.Int8
+	WorkFairnessDigest       []byte
+	WorkFairnessLimit        pgtype.Int4
 }
 
 type Project struct {

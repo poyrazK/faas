@@ -1413,6 +1413,40 @@ func (q *Queries) CountOpenUploadSessionsByAccountApp(ctx context.Context, db DB
 	return count, err
 }
 
+const countProductionPendingInvocations = `-- name: CountProductionPendingInvocations :one
+SELECT count(*) FROM production_invocation_work WHERE app_id=$1 AND source=$2 AND state IN ('pending','dispatching')
+`
+
+type CountProductionPendingInvocationsParams struct {
+	AppID  pgtype.UUID
+	Source string
+}
+
+func (q *Queries) CountProductionPendingInvocations(ctx context.Context, db DBTX, arg CountProductionPendingInvocationsParams) (int64, error) {
+	row := db.QueryRow(ctx, countProductionPendingInvocations, arg.AppID, arg.Source)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countProductionPendingQueueWorkInLane = `-- name: CountProductionPendingQueueWorkInLane :one
+SELECT count(*) FROM production_invocation_work WHERE app_id=$1 AND source='queue' AND state='pending'
+    AND work_policy_name=$2 AND work_key_digest=$3
+`
+
+type CountProductionPendingQueueWorkInLaneParams struct {
+	AppID          pgtype.UUID
+	WorkPolicyName pgtype.Text
+	WorkKeyDigest  []byte
+}
+
+func (q *Queries) CountProductionPendingQueueWorkInLane(ctx context.Context, db DBTX, arg CountProductionPendingQueueWorkInLaneParams) (int64, error) {
+	row := db.QueryRow(ctx, countProductionPendingQueueWorkInLane, arg.AppID, arg.WorkPolicyName, arg.WorkKeyDigest)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countProductionQueueBindingActive = `-- name: CountProductionQueueBindingActive :one
 select count(*) from invocations i
 			where i.app_id = $1 and source = 'queue' and queue_name = $2
@@ -1436,6 +1470,24 @@ type CountProductionQueueBindingActiveParams struct {
 
 func (q *Queries) CountProductionQueueBindingActive(ctx context.Context, db DBTX, arg CountProductionQueueBindingActiveParams) (int64, error) {
 	row := db.QueryRow(ctx, countProductionQueueBindingActive, arg.AppID, arg.QueueName)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countProductionQueueDeadLetter = `-- name: CountProductionQueueDeadLetter :one
+SELECT count(*) FROM production_invocation_work WHERE app_id=$1::uuid AND source='queue' AND state='dead_letter'
+    AND (NOT $2::boolean OR queue_name=$3::text)
+`
+
+type CountProductionQueueDeadLetterParams struct {
+	AppID     pgtype.UUID
+	Named     bool
+	QueueName string
+}
+
+func (q *Queries) CountProductionQueueDeadLetter(ctx context.Context, db DBTX, arg CountProductionQueueDeadLetterParams) (int64, error) {
+	row := db.QueryRow(ctx, countProductionQueueDeadLetter, arg.AppID, arg.Named, arg.QueueName)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -2718,6 +2770,47 @@ delete from oidc_exchanged_tokens where id = $1
 func (q *Queries) DeleteOIDCExchangedToken(ctx context.Context, db DBTX, id pgtype.UUID) error {
 	_, err := db.Exec(ctx, deleteOIDCExchangedToken, id)
 	return err
+}
+
+const deleteProductionDeadLetterEvent = `-- name: DeleteProductionDeadLetterEvent :execrows
+DELETE FROM dead_letter_events d USING production_dead_letter_events p WHERE p.id=d.id
+    AND d.id=$1::uuid AND d.account_id=$2::uuid
+    AND ($3::uuid IS NULL OR d.app_id=$3::uuid)
+`
+
+type DeleteProductionDeadLetterEventParams struct {
+	EventID   pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) DeleteProductionDeadLetterEvent(ctx context.Context, db DBTX, arg DeleteProductionDeadLetterEventParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteProductionDeadLetterEvent, arg.EventID, arg.AccountID, arg.AppID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteProductionDeadLetterEvents = `-- name: DeleteProductionDeadLetterEvents :execrows
+WITH victims AS (SELECT d.id FROM dead_letter_events d JOIN production_dead_letter_events p ON p.id=d.id
+    WHERE d.account_id=$1::uuid AND ($2::uuid IS NULL OR d.app_id=$2::uuid)
+    ORDER BY d.last_failed_at DESC,d.id DESC LIMIT $3::bigint FOR UPDATE OF d SKIP LOCKED)
+DELETE FROM dead_letter_events d USING victims v WHERE d.id=v.id
+`
+
+type DeleteProductionDeadLetterEventsParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	PageLimit int64
+}
+
+func (q *Queries) DeleteProductionDeadLetterEvents(ctx context.Context, db DBTX, arg DeleteProductionDeadLetterEventsParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteProductionDeadLetterEvents, arg.AccountID, arg.AppID, arg.PageLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deleteTrigger = `-- name: DeleteTrigger :exec
@@ -9237,6 +9330,67 @@ func (q *Queries) ListOrgsForAccount(ctx context.Context, db DBTX, accountID pgt
 	return items, nil
 }
 
+const listProductionDeadLetterEvents = `-- name: ListProductionDeadLetterEvents :many
+WITH anchor AS (SELECT last_failed_at,id FROM production_dead_letter_events
+    WHERE id=$3::uuid AND ($1::uuid IS NULL OR account_id=$1::uuid)
+    AND ($2::uuid IS NULL OR app_id=$2::uuid))
+SELECT d.id, d.account_id, d.app_id, d.source, d.source_id, d.origin, d.trigger_id, d.event_payload, d.headers, d.error_kind, d.error_detail, d.retry_count, d.first_failed_at, d.last_failed_at, d.replayed_at, d.created_at, d.environment_owned FROM dead_letter_events d JOIN production_dead_letter_events p ON p.id=d.id
+WHERE ($1::uuid IS NULL OR d.account_id=$1::uuid)
+    AND ($2::uuid IS NULL OR d.app_id=$2::uuid)
+    AND ($3::uuid IS NULL OR (d.last_failed_at,d.id)<(SELECT last_failed_at,id FROM anchor))
+ORDER BY d.last_failed_at DESC,d.id DESC LIMIT $4::bigint
+`
+
+type ListProductionDeadLetterEventsParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	CursorID  pgtype.UUID
+	PageLimit int64
+}
+
+func (q *Queries) ListProductionDeadLetterEvents(ctx context.Context, db DBTX, arg ListProductionDeadLetterEventsParams) ([]DeadLetterEvent, error) {
+	rows, err := db.Query(ctx, listProductionDeadLetterEvents,
+		arg.AccountID,
+		arg.AppID,
+		arg.CursorID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DeadLetterEvent{}
+	for rows.Next() {
+		var i DeadLetterEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Source,
+			&i.SourceID,
+			&i.Origin,
+			&i.TriggerID,
+			&i.EventPayload,
+			&i.Headers,
+			&i.ErrorKind,
+			&i.ErrorDetail,
+			&i.RetryCount,
+			&i.FirstFailedAt,
+			&i.LastFailedAt,
+			&i.ReplayedAt,
+			&i.CreatedAt,
+			&i.EnvironmentOwned,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProductionNamedQueueCandidates = `-- name: ListProductionNamedQueueCandidates :many
 select i.id::text from invocations i
 		left join trigger_records tr on tr.trigger_id = $1
@@ -9322,6 +9476,81 @@ func (q *Queries) ListProductionNamedQueueCandidates(ctx context.Context, db DBT
 			return nil, err
 		}
 		items = append(items, i_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listProductionQueueDeadLetter = `-- name: ListProductionQueueDeadLetter :many
+WITH anchor AS (SELECT created_at,id FROM production_invocation_work WHERE id=$2::uuid AND app_id=$1::uuid AND source='queue')
+SELECT i.id, i.environment_id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.quota_reserved, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.queue_name, i.on_success_destination_id, i.on_failure_destination_id, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit FROM invocations i JOIN production_invocation_work p ON p.id=i.id
+WHERE i.app_id=$1::uuid AND i.source='queue' AND i.state='dead_letter'
+    AND ($2::uuid IS NULL OR (i.created_at,i.id)<(SELECT created_at,id FROM anchor))
+ORDER BY i.created_at DESC,i.id DESC LIMIT $3::bigint
+`
+
+type ListProductionQueueDeadLetterParams struct {
+	AppID     pgtype.UUID
+	CursorID  pgtype.UUID
+	PageLimit int64
+}
+
+func (q *Queries) ListProductionQueueDeadLetter(ctx context.Context, db DBTX, arg ListProductionQueueDeadLetterParams) ([]Invocation, error) {
+	rows, err := db.Query(ctx, listProductionQueueDeadLetter, arg.AppID, arg.CursorID, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Invocation{}
+	for rows.Next() {
+		var i Invocation
+		if err := rows.Scan(
+			&i.ID,
+			&i.EnvironmentID,
+			&i.AppID,
+			&i.AccountID,
+			&i.Source,
+			&i.State,
+			&i.Payload,
+			&i.Headers,
+			&i.DueAt,
+			&i.Method,
+			&i.Path,
+			&i.CronID,
+			&i.ScheduledAt,
+			&i.AckUrl,
+			&i.Result,
+			&i.LeaseExpiresAt,
+			&i.ReceivedAt,
+			&i.CompletedAt,
+			&i.InstanceID,
+			&i.Attempts,
+			&i.QuotaReserved,
+			&i.LastError,
+			&i.CreatedAt,
+			&i.OrgID,
+			&i.Outcome,
+			&i.DeadlineAt,
+			&i.RetryPolicy,
+			&i.ResultRetentionUntil,
+			&i.ReplayedFromInvocationID,
+			&i.LastReplayedAt,
+			&i.QueueName,
+			&i.OnSuccessDestinationID,
+			&i.OnFailureDestinationID,
+			&i.WorkPolicyName,
+			&i.WorkKeyDigest,
+			&i.WorkExpiresAt,
+			&i.WorkSequence,
+			&i.WorkPolicyRevision,
+			&i.WorkFairnessDigest,
+			&i.WorkFairnessLimit,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -10233,6 +10462,102 @@ func (q *Queries) LockNextProjectEnvironmentCloneWorkerProject(ctx context.Conte
 	var i LockNextProjectEnvironmentCloneWorkerProjectRow
 	err := row.Scan(&i.ProjectID, &i.AccountID)
 	return i, err
+}
+
+const lockProductionDeadLetterEvent = `-- name: LockProductionDeadLetterEvent :one
+SELECT d.id, d.account_id, d.app_id, d.source, d.source_id, d.origin, d.trigger_id, d.event_payload, d.headers, d.error_kind, d.error_detail, d.retry_count, d.first_failed_at, d.last_failed_at, d.replayed_at, d.created_at, d.environment_owned FROM dead_letter_events d JOIN production_dead_letter_events p ON p.id=d.id
+WHERE d.id=$1::uuid AND d.account_id=$2::uuid
+    AND ($3::uuid IS NULL OR d.app_id=$3::uuid) AND d.replayed_at IS NULL
+FOR UPDATE OF d
+`
+
+type LockProductionDeadLetterEventParams struct {
+	EventID   pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) LockProductionDeadLetterEvent(ctx context.Context, db DBTX, arg LockProductionDeadLetterEventParams) (DeadLetterEvent, error) {
+	row := db.QueryRow(ctx, lockProductionDeadLetterEvent, arg.EventID, arg.AccountID, arg.AppID)
+	var i DeadLetterEvent
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Source,
+		&i.SourceID,
+		&i.Origin,
+		&i.TriggerID,
+		&i.EventPayload,
+		&i.Headers,
+		&i.ErrorKind,
+		&i.ErrorDetail,
+		&i.RetryCount,
+		&i.FirstFailedAt,
+		&i.LastFailedAt,
+		&i.ReplayedAt,
+		&i.CreatedAt,
+		&i.EnvironmentOwned,
+	)
+	return i, err
+}
+
+const lockProductionDeadLetterEvents = `-- name: LockProductionDeadLetterEvents :many
+SELECT d.id, d.account_id, d.app_id, d.source, d.source_id, d.origin, d.trigger_id, d.event_payload, d.headers, d.error_kind, d.error_detail, d.retry_count, d.first_failed_at, d.last_failed_at, d.replayed_at, d.created_at, d.environment_owned FROM dead_letter_events d JOIN production_dead_letter_events p ON p.id=d.id
+WHERE d.account_id=$1::uuid
+    AND ($2::uuid IS NULL OR d.app_id=$2::uuid)
+    AND (NOT $3::boolean OR d.replayed_at IS NULL)
+ORDER BY d.last_failed_at DESC,d.id DESC LIMIT $4::bigint FOR UPDATE OF d SKIP LOCKED
+`
+
+type LockProductionDeadLetterEventsParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	OpenOnly  bool
+	PageLimit int64
+}
+
+func (q *Queries) LockProductionDeadLetterEvents(ctx context.Context, db DBTX, arg LockProductionDeadLetterEventsParams) ([]DeadLetterEvent, error) {
+	rows, err := db.Query(ctx, lockProductionDeadLetterEvents,
+		arg.AccountID,
+		arg.AppID,
+		arg.OpenOnly,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DeadLetterEvent{}
+	for rows.Next() {
+		var i DeadLetterEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Source,
+			&i.SourceID,
+			&i.Origin,
+			&i.TriggerID,
+			&i.EventPayload,
+			&i.Headers,
+			&i.ErrorKind,
+			&i.ErrorDetail,
+			&i.RetryCount,
+			&i.FirstFailedAt,
+			&i.LastFailedAt,
+			&i.ReplayedAt,
+			&i.CreatedAt,
+			&i.EnvironmentOwned,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const lockProductionQueueBindingCap = `-- name: LockProductionQueueBindingCap :one
@@ -14410,6 +14735,81 @@ func (q *Queries) OrgMemberByAccount(ctx context.Context, db DBTX, arg OrgMember
 	return i, err
 }
 
+const peekProductionQueue = `-- name: PeekProductionQueue :many
+WITH anchor AS (SELECT created_at,id FROM production_invocation_work WHERE id=$2::uuid AND app_id=$1::uuid AND source='queue')
+SELECT i.id, i.environment_id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.quota_reserved, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.queue_name, i.on_success_destination_id, i.on_failure_destination_id, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit FROM invocations i JOIN production_invocation_work p ON p.id=i.id
+WHERE i.app_id=$1::uuid AND i.source='queue' AND i.state='pending'
+    AND ($2::uuid IS NULL OR (i.created_at,i.id)>(SELECT created_at,id FROM anchor))
+ORDER BY i.created_at,i.id LIMIT $3::bigint
+`
+
+type PeekProductionQueueParams struct {
+	AppID     pgtype.UUID
+	CursorID  pgtype.UUID
+	PageLimit int64
+}
+
+func (q *Queries) PeekProductionQueue(ctx context.Context, db DBTX, arg PeekProductionQueueParams) ([]Invocation, error) {
+	rows, err := db.Query(ctx, peekProductionQueue, arg.AppID, arg.CursorID, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Invocation{}
+	for rows.Next() {
+		var i Invocation
+		if err := rows.Scan(
+			&i.ID,
+			&i.EnvironmentID,
+			&i.AppID,
+			&i.AccountID,
+			&i.Source,
+			&i.State,
+			&i.Payload,
+			&i.Headers,
+			&i.DueAt,
+			&i.Method,
+			&i.Path,
+			&i.CronID,
+			&i.ScheduledAt,
+			&i.AckUrl,
+			&i.Result,
+			&i.LeaseExpiresAt,
+			&i.ReceivedAt,
+			&i.CompletedAt,
+			&i.InstanceID,
+			&i.Attempts,
+			&i.QuotaReserved,
+			&i.LastError,
+			&i.CreatedAt,
+			&i.OrgID,
+			&i.Outcome,
+			&i.DeadlineAt,
+			&i.RetryPolicy,
+			&i.ResultRetentionUntil,
+			&i.ReplayedFromInvocationID,
+			&i.LastReplayedAt,
+			&i.QueueName,
+			&i.OnSuccessDestinationID,
+			&i.OnFailureDestinationID,
+			&i.WorkPolicyName,
+			&i.WorkKeyDigest,
+			&i.WorkExpiresAt,
+			&i.WorkSequence,
+			&i.WorkPolicyRevision,
+			&i.WorkFairnessDigest,
+			&i.WorkFairnessLimit,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const pendingLayerArtifactDeletions = `-- name: PendingLayerArtifactDeletions :many
 SELECT storage_key, state, coalesce(deletion_id::text, '')::text AS deletion_id FROM layer_artifact_retention
 WHERE state = 'deleting' OR (state = 'retained' AND delete_requested_at IS NOT NULL) ORDER BY storage_key
@@ -14768,6 +15168,125 @@ func (q *Queries) ReadInvocationWorkEnvironmentDomain(ctx context.Context, db DB
 	var environment_id pgtype.UUID
 	err := row.Scan(&environment_id)
 	return environment_id, err
+}
+
+const readProductionDeadLetterEvent = `-- name: ReadProductionDeadLetterEvent :one
+SELECT d.id, d.account_id, d.app_id, d.source, d.source_id, d.origin, d.trigger_id, d.event_payload, d.headers, d.error_kind, d.error_detail, d.retry_count, d.first_failed_at, d.last_failed_at, d.replayed_at, d.created_at, d.environment_owned FROM dead_letter_events d JOIN production_dead_letter_events p ON p.id=d.id
+WHERE d.id=$1::uuid
+    AND ($2::uuid IS NULL OR d.account_id=$2::uuid)
+    AND ($3::uuid IS NULL OR d.app_id=$3::uuid)
+`
+
+type ReadProductionDeadLetterEventParams struct {
+	EventID   pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) ReadProductionDeadLetterEvent(ctx context.Context, db DBTX, arg ReadProductionDeadLetterEventParams) (DeadLetterEvent, error) {
+	row := db.QueryRow(ctx, readProductionDeadLetterEvent, arg.EventID, arg.AccountID, arg.AppID)
+	var i DeadLetterEvent
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Source,
+		&i.SourceID,
+		&i.Origin,
+		&i.TriggerID,
+		&i.EventPayload,
+		&i.Headers,
+		&i.ErrorKind,
+		&i.ErrorDetail,
+		&i.RetryCount,
+		&i.FirstFailedAt,
+		&i.LastFailedAt,
+		&i.ReplayedAt,
+		&i.CreatedAt,
+		&i.EnvironmentOwned,
+	)
+	return i, err
+}
+
+const readProductionQueueInvocation = `-- name: ReadProductionQueueInvocation :one
+SELECT i.id, i.environment_id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.quota_reserved, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.queue_name, i.on_success_destination_id, i.on_failure_destination_id, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit FROM invocations i JOIN production_invocation_work p ON p.id=i.id
+WHERE i.id=$1 AND i.source='queue'
+`
+
+// ADR-375: production filtering precedes aggregates, limits, and cursor anchors.
+func (q *Queries) ReadProductionQueueInvocation(ctx context.Context, db DBTX, id pgtype.UUID) (Invocation, error) {
+	row := db.QueryRow(ctx, readProductionQueueInvocation, id)
+	var i Invocation
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.AppID,
+		&i.AccountID,
+		&i.Source,
+		&i.State,
+		&i.Payload,
+		&i.Headers,
+		&i.DueAt,
+		&i.Method,
+		&i.Path,
+		&i.CronID,
+		&i.ScheduledAt,
+		&i.AckUrl,
+		&i.Result,
+		&i.LeaseExpiresAt,
+		&i.ReceivedAt,
+		&i.CompletedAt,
+		&i.InstanceID,
+		&i.Attempts,
+		&i.QuotaReserved,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.OrgID,
+		&i.Outcome,
+		&i.DeadlineAt,
+		&i.RetryPolicy,
+		&i.ResultRetentionUntil,
+		&i.ReplayedFromInvocationID,
+		&i.LastReplayedAt,
+		&i.QueueName,
+		&i.OnSuccessDestinationID,
+		&i.OnFailureDestinationID,
+		&i.WorkPolicyName,
+		&i.WorkKeyDigest,
+		&i.WorkExpiresAt,
+		&i.WorkSequence,
+		&i.WorkPolicyRevision,
+		&i.WorkFairnessDigest,
+		&i.WorkFairnessLimit,
+	)
+	return i, err
+}
+
+const readProductionQueueStateLive = `-- name: ReadProductionQueueStateLive :one
+SELECT count(*) AS depth,
+    count(*) FILTER(WHERE state='dispatching' AND lease_expires_at IS NOT NULL AND lease_expires_at>now()) AS in_flight,
+    min(created_at) FILTER(WHERE state='pending')::timestamptz AS oldest_pending_at
+FROM production_invocation_work WHERE app_id=$1::uuid AND source='queue' AND state IN ('pending','dispatching')
+    AND (NOT $2::boolean OR queue_name=$3::text)
+`
+
+type ReadProductionQueueStateLiveParams struct {
+	AppID     pgtype.UUID
+	Named     bool
+	QueueName string
+}
+
+type ReadProductionQueueStateLiveRow struct {
+	Depth           int64
+	InFlight        int64
+	OldestPendingAt pgtype.Timestamptz
+}
+
+func (q *Queries) ReadProductionQueueStateLive(ctx context.Context, db DBTX, arg ReadProductionQueueStateLiveParams) (ReadProductionQueueStateLiveRow, error) {
+	row := db.QueryRow(ctx, readProductionQueueStateLive, arg.AppID, arg.Named, arg.QueueName)
+	var i ReadProductionQueueStateLiveRow
+	err := row.Scan(&i.Depth, &i.InFlight, &i.OldestPendingAt)
+	return i, err
 }
 
 const readProductionQueueTriggerInvocation = `-- name: ReadProductionQueueTriggerInvocation :one
@@ -16753,6 +17272,27 @@ func (q *Queries) RenewProjectEnvironmentCloneWorkerLease(ctx context.Context, d
 	return i, err
 }
 
+const replayProductionDeadLetterInvocation = `-- name: ReplayProductionDeadLetterInvocation :execrows
+UPDATE invocations i SET state='pending',attempts=0,last_error=NULL,outcome=NULL,due_at=now(),lease_expires_at=NULL,
+    instance_id=NULL,last_replayed_at=now(),completed_at=NULL,quota_reserved=false
+FROM production_invocation_work p WHERE p.id=i.id AND i.id=$1::uuid
+    AND i.account_id=$2::uuid AND i.app_id=$3::uuid AND i.state='dead_letter'
+`
+
+type ReplayProductionDeadLetterInvocationParams struct {
+	InvocationID pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+}
+
+func (q *Queries) ReplayProductionDeadLetterInvocation(ctx context.Context, db DBTX, arg ReplayProductionDeadLetterInvocationParams) (int64, error) {
+	result, err := db.Exec(ctx, replayProductionDeadLetterInvocation, arg.InvocationID, arg.AccountID, arg.AppID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const requestLayerArtifactDeletion = `-- name: RequestLayerArtifactDeletion :exec
 UPDATE layer_artifact_retention SET delete_requested_at = coalesce(delete_requested_at, clock_timestamp())
 WHERE storage_key = $1::text
@@ -18270,6 +18810,66 @@ func (q *Queries) RetainedLayerBytesWithClonePins(ctx context.Context, db DBTX, 
 	return retained_bytes, err
 }
 
+const retryProductionQueueDeadLetter = `-- name: RetryProductionQueueDeadLetter :one
+UPDATE invocations i SET state='pending',attempts=0,last_error=NULL,outcome=NULL,due_at=now(),lease_expires_at=NULL,
+    instance_id=NULL,last_replayed_at=now(),completed_at=NULL,quota_reserved=false
+FROM production_invocation_work p WHERE p.id=i.id AND i.id=$1 AND i.account_id=$2 AND i.state='dead_letter'
+RETURNING i.id, i.environment_id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.quota_reserved, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.queue_name, i.on_success_destination_id, i.on_failure_destination_id, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit
+`
+
+type RetryProductionQueueDeadLetterParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) RetryProductionQueueDeadLetter(ctx context.Context, db DBTX, arg RetryProductionQueueDeadLetterParams) (Invocation, error) {
+	row := db.QueryRow(ctx, retryProductionQueueDeadLetter, arg.ID, arg.AccountID)
+	var i Invocation
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.AppID,
+		&i.AccountID,
+		&i.Source,
+		&i.State,
+		&i.Payload,
+		&i.Headers,
+		&i.DueAt,
+		&i.Method,
+		&i.Path,
+		&i.CronID,
+		&i.ScheduledAt,
+		&i.AckUrl,
+		&i.Result,
+		&i.LeaseExpiresAt,
+		&i.ReceivedAt,
+		&i.CompletedAt,
+		&i.InstanceID,
+		&i.Attempts,
+		&i.QuotaReserved,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.OrgID,
+		&i.Outcome,
+		&i.DeadlineAt,
+		&i.RetryPolicy,
+		&i.ResultRetentionUntil,
+		&i.ReplayedFromInvocationID,
+		&i.LastReplayedAt,
+		&i.QueueName,
+		&i.OnSuccessDestinationID,
+		&i.OnFailureDestinationID,
+		&i.WorkPolicyName,
+		&i.WorkKeyDigest,
+		&i.WorkExpiresAt,
+		&i.WorkSequence,
+		&i.WorkPolicyRevision,
+		&i.WorkFairnessDigest,
+		&i.WorkFairnessLimit,
+	)
+	return i, err
+}
+
 const retryProductionQueueTriggerInvocations = `-- name: RetryProductionQueueTriggerInvocations :exec
 with targets as (
 			select unnest($5::text[]) as id, unnest($6::int[]) as attempt
@@ -18845,6 +19445,20 @@ update orgs set deleted_pending = true, status = 'deleted_pending', updated_at =
 
 func (q *Queries) SoftDeleteOrg(ctx context.Context, db DBTX, id pgtype.UUID) error {
 	_, err := db.Exec(ctx, softDeleteOrg, id)
+	return err
+}
+
+const stampDeadLetterEventReplay = `-- name: StampDeadLetterEventReplay :exec
+UPDATE dead_letter_events SET replayed_at=$1 WHERE id=$2
+`
+
+type StampDeadLetterEventReplayParams struct {
+	ReplayedAt pgtype.Timestamptz
+	ID         pgtype.UUID
+}
+
+func (q *Queries) StampDeadLetterEventReplay(ctx context.Context, db DBTX, arg StampDeadLetterEventReplayParams) error {
+	_, err := db.Exec(ctx, stampDeadLetterEventReplay, arg.ReplayedAt, arg.ID)
 	return err
 }
 

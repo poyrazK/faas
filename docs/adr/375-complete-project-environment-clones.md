@@ -1597,3 +1597,57 @@ generic drain contracts also pass. The final selected run completed state in
 154.530 seconds and scheduler in 18.526 seconds. Independent sqlc regeneration
 and the whitespace check pass. This evidence is local state/scheduler coverage;
 full VM/provider acceptance and full clone capability remain outstanding.
+
+### Production queue diagnostics and failed-event isolation
+
+Legacy app-only queue readers now own production. The PostgreSQL
+`production_invocation_work` view and the equivalent in-memory predicate exclude
+persisted environment owners, private queue/work admission records, and owned
+stage revision/release pins. Pin matching handles folded header names, compact
+UUIDs, braces, URN prefixes and whitespace independently of release expiry.
+Filtering precedes counts, page limits, cursor anchors and mutations.
+
+This boundary applies to app/named-queue state, producer backlog admission,
+replaceable work-lane counts, queue peeks, dead-letter pages, queue completion
+notifications, acknowledgements, queue replay, and the pending-per-app rollup.
+Queue replay also checks the URL's app before mutation. Completion notifications
+are hints: both their predicate and the final payload read enforce ownership.
+Returned in-memory envelopes do not alias stored payloads, leases or retry data.
+
+Invocation-derived entries in the unified failed-event ledger have a durable
+`environment_owned` marker. A database trigger records stage ownership when an
+event is captured, preserves it on later updates, and the migration backfills
+existing failures from source ownership or retained revision/release pins.
+Source retention cannot turn an owned stage failure
+into a production event. App/account reads, cursor anchors, individual and bulk
+replay, and individual and bulk discard filter the production projection.
+Global ledger retention still removes expired operational evidence without
+changing source work. The schema registry records the new operational column.
+
+Legacy queue/inbox and unified failed-event HTTP routes reject stage or
+ambiguous selectors. Mutation guards precede idempotency lookup so an existing
+production receipt cannot satisfy a stage-selected request. Handler extraction
+keeps every changed HTTP handler within the repository's 50-line convention.
+
+Prepared stage queue messages remain private and excluded from production
+consumers. Public stage queue activation and delivery, the coordinated database
+and object checkpoint, complete configuration/resource strategies, promotion
+and rollback, and native VM/provider acceptance remain required for the full
+one-command clone capability. These isolation changes do not qualify a stage
+for promotion or open full-clone admission.
+
+Verification for this increment: the final focused state run passed in 18.780
+seconds against PostgreSQL 16 and MemStore. It covers shared queue names across
+production/two stages, stage backlog filtering before limits, counts/oldest age,
+leases and quota remaining unchanged by reads/rejections, defensive payload
+copies, foreign queue and unified-ledger cursors, bulk replay/discard,
+damaged owners/pins, deleted sources, migration rollback/reapplication/backfill,
+legacy queue replay/state/peek and exhaustive schema-registry coverage. The
+final API run passed in 1.612 seconds, including stage IDs/notifications,
+selector validation before receipt replay, production app ownership, existing
+queue/inbox APIs, project environment queue configuration, app/account unified
+DLQ and dashboard failed-event operations. Production queue poller contracts
+passed in 11.429 seconds and queue scaling contracts in 0.630 seconds.
+Independent sqlc 1.31.1 regeneration matches checked-in output; the whitespace
+check and changed-handler size check pass. These are selected local tests, not
+a full-suite or native VM/provider acceptance claim.

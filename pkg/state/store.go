@@ -4189,11 +4189,15 @@ type Store interface {
 	//
 	// QueueState returns the per-app live counters — depth
 	// (pending+dispatching), in_flight (dispatching with lease_expires_at
-	// either NULL or in the future), oldest pending created_at, and the
+	// in the future), oldest pending created_at, and the
 	// terminal dead-letter count.
 	// Used by the queueStats handler. OldestPendingAt is the zero-time
 	// when the app has no pending rows; callers translate to nil.
+	// Legacy queue reads/counts exclude stage rows; stage queue APIs remain gated.
 	QueueState(ctx context.Context, appID string) (QueueStats, error)
+
+	// ProductionQueueInvocationByID excludes stage ownership and non-queue sources.
+	ProductionQueueInvocationByID(ctx context.Context, id string) (Invocation, error)
 
 	// --- ADR-202 custom application metrics -------------------------
 	//

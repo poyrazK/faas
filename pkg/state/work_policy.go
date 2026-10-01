@@ -9,6 +9,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
@@ -51,12 +53,12 @@ type PendingQueueWorkCounter interface {
 }
 
 func (s *PgStore) PendingQueueWorkInLane(ctx context.Context, appID, policyName string, keyDigest []byte) (int, error) {
-	var n int
-	err := s.pool.QueryRow(ctx, `
-		select count(*) from invocations
-		where app_id = $1 and source = 'queue' and state = 'pending'
-		  and work_policy_name = $2 and work_key_digest = $3`, appID, policyName, keyDigest).Scan(&n)
-	return n, err
+	app, err := productionWorkUUID(appID)
+	if err != nil {
+		return 0, err
+	}
+	n, err := sqlc.New().CountProductionPendingQueueWorkInLane(ctx, s.pool, sqlc.CountProductionPendingQueueWorkInLaneParams{AppID: app, WorkPolicyName: pgtype.Text{String: policyName, Valid: true}, WorkKeyDigest: keyDigest})
+	return int(n), err
 }
 
 func (m *MemStore) PendingQueueWorkInLane(_ context.Context, appID, policyName string, keyDigest []byte) (int, error) {
@@ -65,7 +67,7 @@ func (m *MemStore) PendingQueueWorkInLane(_ context.Context, appID, policyName s
 	n := 0
 	for _, inv := range m.invocations {
 		if inv.AppID == appID && inv.Source == InvocationQueue && inv.State == InvocationPending &&
-			inv.WorkPolicyName == policyName && bytes.Equal(inv.WorkKeyDigest, keyDigest) {
+			inv.WorkPolicyName == policyName && bytes.Equal(inv.WorkKeyDigest, keyDigest) && m.productionInvocationWorkLocked(inv) {
 			n++
 		}
 	}

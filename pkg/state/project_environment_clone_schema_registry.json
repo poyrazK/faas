@@ -148,7 +148,7 @@
   {"table": "data_upstreams", "kind": "configuration",
     "columns": ["account_id", "app_id", "circuit_breaker_enabled", "circuit_breaker_failure_threshold", "circuit_breaker_min_samples", "circuit_breaker_open_seconds", "created_at", "declared_region", "deployment_scope", "host", "host_redacted_hash", "id", "kind", "last_probed_at", "last_rtt_ms", "last_seen_at", "port", "scope", "source"]},
   {"table": "dead_letter_events", "kind": "operational",
-    "columns": ["account_id", "app_id", "created_at", "error_detail", "error_kind", "event_payload", "first_failed_at", "headers", "id", "last_failed_at", "origin", "replayed_at", "retry_count", "source", "source_id", "trigger_id"]},
+    "columns": ["account_id", "app_id", "created_at", "environment_owned", "error_detail", "error_kind", "event_payload", "first_failed_at", "headers", "id", "last_failed_at", "origin", "replayed_at", "retry_count", "source", "source_id", "trigger_id"]},
   {"table": "debug_regression_observations", "kind": "operational",
     "columns": ["acknowledged_at", "affected_count", "app_id", "deployment_id", "dismissed_until", "first_detected_at", "last_detected_at", "p95_base_ms", "p95_ms", "regression_factor", "resolved_at", "route", "state"]},
   {"table": "deploy_tokens", "kind": "account_identity",

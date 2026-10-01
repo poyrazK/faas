@@ -15736,15 +15736,12 @@ func (s *PgStore) FailInvocation(ctx context.Context, id string, lastError strin
 // Mirrors the `invocations_app_pending_idx` partial index predicate
 // (state in ('pending','dispatching')) so the planner uses it.
 func (s *PgStore) CountPendingInvocations(ctx context.Context, appID string, source InvocationSource) (int, error) {
-	var n int
-	err := s.pool.QueryRow(ctx, `
-		select count(*) from invocations
-		 where app_id = $1 and source = $2
-		   and state in ('pending','dispatching')`, appID, string(source)).Scan(&n)
+	app, err := productionWorkUUID(appID)
 	if err != nil {
 		return 0, err
 	}
-	return n, nil
+	n, err := sqlc.New().CountProductionPendingInvocations(ctx, s.pool, sqlc.CountProductionPendingInvocationsParams{AppID: app, Source: string(source)})
+	return int(n), err
 }
 
 func (s *PgStore) CancelInvocation(ctx context.Context, id string) error {
@@ -16110,36 +16107,7 @@ func (s *PgStore) ListCronRunsForCron(ctx context.Context, cronID string, limit 
 // FILTER (state = 'dispatching') precondition excludes any state
 // that hasn't gone through ClaimInvocation.
 func (s *PgStore) QueueState(ctx context.Context, appID string) (QueueStats, error) {
-	var stats QueueStats
-	var oldest *time.Time
-	err := s.pool.QueryRow(ctx, `
-		select
-		  count(*)                                                              as depth,
-		  count(*) filter (where state = 'dispatching'
-		                    and lease_expires_at is not null
-		                    and lease_expires_at > now())                        as in_flight,
-		  min(created_at) filter (where state = 'pending')                      as oldest_pending_at
-		from invocations
-		where app_id = $1
-		  and source = 'queue'
-		  and state in ('pending','dispatching')
-	`, appID).Scan(&stats.Depth, &stats.InFlight, &oldest)
-	if err != nil {
-		return QueueStats{}, err
-	}
-	if oldest != nil {
-		stats.OldestPendingAt = *oldest
-	}
-	if err := s.pool.QueryRow(ctx, `
-		select count(*)
-		  from invocations
-		 where app_id = $1
-		   and source = 'queue'
-		   and state = 'dead_letter'
-	`, appID).Scan(&stats.DeadLetter); err != nil {
-		return QueueStats{}, err
-	}
-	return stats, nil
+	return s.productionQueueState(ctx, appID, "", false)
 }
 
 // QueueStateForQueue is the binding-scoped variant of QueueState. Keeping
@@ -16147,38 +16115,7 @@ func (s *PgStore) QueueState(ctx context.Context, appID string) (QueueStats, err
 // from masking a stalled sibling when queue telemetry is consumed by the
 // target scaler.
 func (s *PgStore) QueueStateForQueue(ctx context.Context, appID, queueName string) (QueueStats, error) {
-	var stats QueueStats
-	var oldest *time.Time
-	err := s.pool.QueryRow(ctx, `
-		select
-		  count(*)                                                              as depth,
-		  count(*) filter (where state = 'dispatching'
-		                    and lease_expires_at is not null
-		                    and lease_expires_at > now())                        as in_flight,
-		  min(created_at) filter (where state = 'pending')                      as oldest_pending_at
-		from invocations
-		where app_id = $1
-		  and queue_name = $2
-		  and source = 'queue'
-		  and state in ('pending','dispatching')
-	`, appID, queueName).Scan(&stats.Depth, &stats.InFlight, &oldest)
-	if err != nil {
-		return QueueStats{}, err
-	}
-	if oldest != nil {
-		stats.OldestPendingAt = *oldest
-	}
-	if err := s.pool.QueryRow(ctx, `
-		select count(*)
-		  from invocations
-		 where app_id = $1
-		   and queue_name = $2
-		   and source = 'queue'
-		   and state = 'dead_letter'
-	`, appID, queueName).Scan(&stats.DeadLetter); err != nil {
-		return QueueStats{}, err
-	}
-	return stats, nil
+	return s.productionQueueState(ctx, appID, queueName, true)
 }
 
 // QueuePeek (issue #394) lists the oldest pending queue messages for
@@ -16204,34 +16141,12 @@ func (s *PgStore) QueueStateForQueue(ctx context.Context, appID, queueName strin
 // partial index; on hot apps the index-only path also covers the
 // payload column for small payloads, keeping the read off the heap.
 func (s *PgStore) QueuePeek(ctx context.Context, appID string, limit int, before string) ([]Invocation, error) {
-	if limit <= 0 {
-		limit = 20
-	}
-	if limit > 200 {
-		limit = 200
-	}
-	var beforeParam any
-	if before != "" {
-		beforeParam = before
-	}
-	rows, err := s.pool.Query(ctx, `
-		with anchor as (
-		    select created_at, id from invocations where id = $2
-		)
-		select `+invocationSelectCols+`
-		  from invocations
-		 where app_id = $1
-		   and source = 'queue'
-		   and state = 'pending'
-		   and ($2::uuid is null or
-		        (created_at, id) > (select created_at, id from anchor))
-		 order by created_at asc, id asc
-		 limit $3
-	`, appID, beforeParam, limit)
+	app, cursor, page, err := productionQueueCursor(appID, before, limit)
 	if err != nil {
 		return nil, err
 	}
-	return scanInvocations(rows)
+	rows, err := sqlc.New().PeekProductionQueue(ctx, s.pool, sqlc.PeekProductionQueueParams{AppID: app, CursorID: cursor, PageLimit: page})
+	return invocationsFromSQLC(rows), err
 }
 
 // QueueDeadLetter (issue #394) lists dead-letter rows (state =
@@ -16246,34 +16161,12 @@ func (s *PgStore) QueuePeek(ctx context.Context, appID string, limit int, before
 // created_at would otherwise swap pages under non-deterministic
 // ordering.
 func (s *PgStore) QueueDeadLetter(ctx context.Context, appID string, limit int, before string) ([]Invocation, error) {
-	if limit <= 0 {
-		limit = 20
-	}
-	if limit > 200 {
-		limit = 200
-	}
-	var beforeParam any
-	if before != "" {
-		beforeParam = before
-	}
-	rows, err := s.pool.Query(ctx, `
-		with anchor as (
-		    select created_at, id from invocations where id = $2
-		)
-		select `+invocationSelectCols+`
-		  from invocations
-		 where app_id = $1
-		   and source = 'queue'
-		   and state = 'dead_letter'
-		   and ($2::uuid is null or
-		        (created_at, id) < (select created_at, id from anchor))
-		 order by created_at desc, id desc
-		 limit $3
-	`, appID, beforeParam, limit)
+	app, cursor, page, err := productionQueueCursor(appID, before, limit)
 	if err != nil {
 		return nil, err
 	}
-	return scanInvocations(rows)
+	rows, err := sqlc.New().ListProductionQueueDeadLetter(ctx, s.pool, sqlc.ListProductionQueueDeadLetterParams{AppID: app, CursorID: cursor, PageLimit: page})
+	return invocationsFromSQLC(rows), err
 }
 
 // CountInstanceInvocationsInMinute is the meter sampler hook.
@@ -30218,417 +30111,88 @@ func (s *PgStore) RetryTriggerRecordByOperator(ctx context.Context, id string) e
 // state='dead_letter'). The dashboard renders this as
 // "already replayed".
 func (s *PgStore) RetryQueueDeadLetter(ctx context.Context, accountID, invocationID string) (Invocation, error) {
-	row := s.pool.QueryRow(ctx, `
-		update invocations
-		   set state = 'pending',
-		       attempts = 0,
-		       last_error = null,
-		       outcome = null,
-		       due_at = now(),
-		       lease_expires_at = null,
-		       instance_id = null,
-		       last_replayed_at = now(),
-		       completed_at = null
-		 where id = $1
-		   and account_id = $2
-		   and state = 'dead_letter'
-		 returning `+invocationSelectCols, invocationID, accountID)
-	inv, err := scanInvocation(row)
+	account, err := productionWorkUUID(accountID)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Invocation{}, ErrNotFound
-		}
-		return Invocation{}, fmt.Errorf("state: retry queue dead_letter %s: %w", invocationID, err)
+		return Invocation{}, err
 	}
-	return inv, nil
+	id, err := productionWorkUUID(invocationID)
+	if err != nil {
+		return Invocation{}, err
+	}
+	row, err := sqlc.New().RetryProductionQueueDeadLetter(ctx, s.pool, sqlc.RetryProductionQueueDeadLetterParams{ID: id, AccountID: account})
+	return invocationFromSQLC(row), mapErr(err)
 }
 
 // ListDeadLetterEvents returns the unified, app-scoped DLQ projection. The
 // cursor is the last event id returned by the previous page; ordering uses
 // (last_failed_at, id) so simultaneous failures page deterministically.
 func (s *PgStore) ListDeadLetterEvents(ctx context.Context, appID string, limit int, before string) ([]DeadLetterEvent, error) {
-	if limit <= 0 {
-		limit = 20
-	}
-	if limit > 200 {
-		limit = 200
-	}
-	var beforeParam any
-	if before != "" {
-		beforeParam = before
-	}
-	rows, err := s.pool.Query(ctx, `
-		with anchor as (
-			select last_failed_at, id from dead_letter_events where id = $2
-		)
-		select id::text, account_id::text, coalesce(app_id::text, ''), source, source_id::text,
-		       origin, coalesce(trigger_id::text, ''), event_payload, headers,
-		       error_kind, error_detail, retry_count, first_failed_at,
-		       last_failed_at, replayed_at, created_at
-		  from dead_letter_events
-		 where app_id = $1
-		   and ($2::uuid is null or
-		        (last_failed_at, id) < (select last_failed_at, id from anchor))
-		 order by last_failed_at desc, id desc
-		 limit $3`, appID, beforeParam, limit)
-	if err != nil {
-		return nil, err
-	}
-	return scanDeadLetterEvents(rows)
+	return s.productionDeadLetterPage(ctx, "", appID, limit, before)
 }
 
 // ListDeadLetterEventsForAccount returns the account-wide failed-events
 // projection. Unlike the app-scoped reader it also includes account-owned
 // job runs, which intentionally have no app_id.
 func (s *PgStore) ListDeadLetterEventsForAccount(ctx context.Context, accountID string, limit int, before string) ([]DeadLetterEvent, error) {
-	if limit <= 0 {
-		limit = deadLetterEventsDefaultLimit
-	}
-	if limit > deadLetterEventsMaxLimit {
-		limit = deadLetterEventsMaxLimit
-	}
-	var beforeParam any
-	if before != "" {
-		beforeParam = before
-	}
-	rows, err := s.pool.Query(ctx, `
-		with anchor as (
-			select last_failed_at, id from dead_letter_events where id = $2
-		)
-		select id::text, account_id::text, coalesce(app_id::text, ''), source, source_id::text,
-		       origin, coalesce(trigger_id::text, ''), event_payload, headers,
-		       error_kind, error_detail, retry_count, first_failed_at,
-		       last_failed_at, replayed_at, created_at
-		  from dead_letter_events
-		 where account_id = $1
-		   and ($2::uuid is null or
-		        (last_failed_at, id) < (select last_failed_at, id from anchor))
-		 order by last_failed_at desc, id desc
-		 limit $3`, accountID, beforeParam, limit)
-	if err != nil {
-		return nil, err
-	}
-	return scanDeadLetterEvents(rows)
+	return s.productionDeadLetterPage(ctx, accountID, "", limit, before)
 }
 
 // DeadLetterEventByAccountID reads one event while enforcing account scope.
 func (s *PgStore) DeadLetterEventByAccountID(ctx context.Context, accountID, eventID string) (DeadLetterEvent, error) {
-	row := s.pool.QueryRow(ctx, `
-		select id::text, account_id::text, coalesce(app_id::text, ''), source, source_id::text,
-		       origin, coalesce(trigger_id::text, ''), event_payload, headers,
-		       error_kind, error_detail, retry_count, first_failed_at,
-		       last_failed_at, replayed_at, created_at
-		  from dead_letter_events
-		 where id = $1 and account_id = $2`, eventID, accountID)
-	event, err := scanDeadLetterEventRows(row)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return DeadLetterEvent{}, ErrNotFound
-		}
-		return DeadLetterEvent{}, err
-	}
-	return event, nil
+	return s.productionDeadLetterRead(ctx, accountID, "", eventID)
 }
 
 // ReplayDeadLetterEventForAccount atomically redrives one event from the
 // account-wide projection, including job and workflow sources.
 func (s *PgStore) ReplayDeadLetterEventForAccount(ctx context.Context, accountID, eventID string) (DeadLetterEvent, error) {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return DeadLetterEvent{}, err
-	}
-	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
-
-	row := tx.QueryRow(ctx, `
-		select id::text, account_id::text, coalesce(app_id::text, ''), source, source_id::text,
-		       origin, coalesce(trigger_id::text, ''), event_payload, headers,
-		       error_kind, error_detail, retry_count, first_failed_at,
-		       last_failed_at, replayed_at, created_at
-		  from dead_letter_events
-		 where id = $1 and account_id = $2 and replayed_at is null
-		 for update`, eventID, accountID)
-	ev, err := scanDeadLetterEventRows(row)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return DeadLetterEvent{}, ErrNotFound
-		}
-		return DeadLetterEvent{}, err
-	}
-	now, err := replayDeadLetterEventTx(ctx, tx, accountID, ev.AppID, ev)
-	if err != nil {
-		return DeadLetterEvent{}, err
-	}
-	ev.ReplayedAt = &now
-	if err := tx.Commit(ctx); err != nil {
-		return DeadLetterEvent{}, err
-	}
-	return ev, nil
+	return s.productionDeadLetterReplay(ctx, accountID, "", eventID)
 }
 
 // ReplayDeadLetterEventsForAccount replays up to limit account-wide events.
 func (s *PgStore) ReplayDeadLetterEventsForAccount(ctx context.Context, accountID string, limit int) (int, error) {
-	if limit <= 0 {
-		limit = deadLetterEventsDefaultLimit
-	}
-	if limit > deadLetterEventsMaxLimit {
-		limit = deadLetterEventsMaxLimit
-	}
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
-	rows, err := tx.Query(ctx, `
-		select id::text, account_id::text, coalesce(app_id::text, ''), source, source_id::text,
-		       origin, coalesce(trigger_id::text, ''), event_payload, headers,
-		       error_kind, error_detail, retry_count, first_failed_at,
-		       last_failed_at, replayed_at, created_at
-		  from dead_letter_events
-		 where account_id = $1 and replayed_at is null
-		 order by last_failed_at desc, id desc
-		 limit $2
-		 for update skip locked`, accountID, limit)
-	if err != nil {
-		return 0, err
-	}
-	events, err := scanDeadLetterEvents(rows)
-	if err != nil {
-		return 0, err
-	}
-	replayed := 0
-	for _, ev := range events {
-		if _, err := replayDeadLetterEventTx(ctx, tx, accountID, ev.AppID, ev); err != nil {
-			if errors.Is(err, ErrNotFound) {
-				continue
-			}
-			return 0, err
-		}
-		replayed++
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return 0, err
-	}
-	return replayed, nil
+	return s.productionDeadLetterReplayMany(ctx, accountID, "", limit)
 }
 
 // DeleteDeadLetterEventForAccount purges only the projection row.
 func (s *PgStore) DeleteDeadLetterEventForAccount(ctx context.Context, accountID, eventID string) error {
-	tag, err := s.pool.Exec(ctx, `delete from dead_letter_events where id = $1 and account_id = $2`, eventID, accountID)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return s.productionDeadLetterDelete(ctx, accountID, "", eventID)
 }
 
 // DeleteDeadLetterEventsForAccount purges up to limit account-wide rows.
 func (s *PgStore) DeleteDeadLetterEventsForAccount(ctx context.Context, accountID string, limit int) (int, error) {
-	if limit <= 0 {
-		limit = deadLetterEventsDefaultLimit
-	}
-	if limit > deadLetterEventsMaxLimit {
-		limit = deadLetterEventsMaxLimit
-	}
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
-	rows, err := tx.Query(ctx, `
-		select id::text, account_id::text, coalesce(app_id::text, ''), source, source_id::text,
-		       origin, coalesce(trigger_id::text, ''), event_payload, headers,
-		       error_kind, error_detail, retry_count, first_failed_at,
-		       last_failed_at, replayed_at, created_at
-		  from dead_letter_events
-		 where account_id = $1
-		 order by last_failed_at desc, id desc
-		 limit $2
-		 for update skip locked`, accountID, limit)
-	if err != nil {
-		return 0, err
-	}
-	events, err := scanDeadLetterEvents(rows)
-	if err != nil {
-		return 0, err
-	}
-	purged := 0
-	for _, ev := range events {
-		tag, err := tx.Exec(ctx, `delete from dead_letter_events where id = $1 and account_id = $2`, ev.ID, accountID)
-		if err != nil {
-			return 0, err
-		}
-		purged += int(tag.RowsAffected())
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return 0, err
-	}
-	return purged, nil
+	return s.productionDeadLetterDeleteMany(ctx, accountID, "", limit)
 }
 
 // DeadLetterEventByID reads one unified DLQ event while enforcing app scope.
 func (s *PgStore) DeadLetterEventByID(ctx context.Context, appID, eventID string) (DeadLetterEvent, error) {
-	row := s.pool.QueryRow(ctx, `
-		select id::text, account_id::text, coalesce(app_id::text, ''), source, source_id::text,
-		       origin, coalesce(trigger_id::text, ''), event_payload, headers,
-		       error_kind, error_detail, retry_count, first_failed_at,
-		       last_failed_at, replayed_at, created_at
-		  from dead_letter_events
-		 where id = $1 and app_id = $2`, eventID, appID)
-	events, err := scanDeadLetterEventRows(row)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return DeadLetterEvent{}, ErrNotFound
-		}
-		return DeadLetterEvent{}, err
-	}
-	return events, nil
+	return s.productionDeadLetterRead(ctx, "", appID, eventID)
 }
 
 // ReplayDeadLetterEvent atomically resets the source row and stamps the
 // unified event. Trigger dead-letter rows are removed so a subsequent failure
 // can create a fresh trigger_dead_letter row for the same record.
 func (s *PgStore) ReplayDeadLetterEvent(ctx context.Context, accountID, appID, eventID string) (DeadLetterEvent, error) {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return DeadLetterEvent{}, err
-	}
-	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
-
-	row := tx.QueryRow(ctx, `
-		select id::text, account_id::text, coalesce(app_id::text, ''), source, source_id::text,
-		       origin, coalesce(trigger_id::text, ''), event_payload, headers,
-		       error_kind, error_detail, retry_count, first_failed_at,
-		       last_failed_at, replayed_at, created_at
-		  from dead_letter_events
-		 where id = $1 and app_id = $2 and account_id = $3
-		   and replayed_at is null
-		 for update`, eventID, appID, accountID)
-	ev, err := scanDeadLetterEventRows(row)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return DeadLetterEvent{}, ErrNotFound
-		}
-		return DeadLetterEvent{}, err
-	}
-
-	now, err := replayDeadLetterEventTx(ctx, tx, accountID, appID, ev)
-	if err != nil {
-		return DeadLetterEvent{}, err
-	}
-	ev.ReplayedAt = &now
-	if err = tx.Commit(ctx); err != nil {
-		return DeadLetterEvent{}, err
-	}
-	return ev, nil
+	return s.productionDeadLetterReplay(ctx, accountID, appID, eventID)
 }
 
 // ReplayDeadLetterEvents replays up to limit pending events in one transaction.
 // Row locks use SKIP LOCKED so concurrent operators do not contend on the
 // same ledger page; each source reset and audit stamp commits atomically.
 func (s *PgStore) ReplayDeadLetterEvents(ctx context.Context, accountID, appID string, limit int) (int, error) {
-	if limit <= 0 {
-		limit = deadLetterEventsDefaultLimit
-	}
-	if limit > deadLetterEventsMaxLimit {
-		limit = deadLetterEventsMaxLimit
-	}
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
-	rows, err := tx.Query(ctx, `
-		select id::text, account_id::text, coalesce(app_id::text, ''), source, source_id::text,
-		       origin, coalesce(trigger_id::text, ''), event_payload, headers,
-		       error_kind, error_detail, retry_count, first_failed_at,
-		       last_failed_at, replayed_at, created_at
-		  from dead_letter_events
-		 where account_id = $1 and app_id = $2 and replayed_at is null
-		 order by last_failed_at desc, id desc
-		 limit $3
-		 for update skip locked`, accountID, appID, limit)
-	if err != nil {
-		return 0, err
-	}
-	events, err := scanDeadLetterEvents(rows)
-	if err != nil {
-		return 0, err
-	}
-	replayed := 0
-	for _, ev := range events {
-		if _, err := replayDeadLetterEventTx(ctx, tx, accountID, appID, ev); err != nil {
-			if errors.Is(err, ErrNotFound) {
-				continue
-			}
-			return 0, err
-		}
-		replayed++
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return 0, err
-	}
-	return replayed, nil
+	return s.productionDeadLetterReplayMany(ctx, accountID, appID, limit)
 }
 
 // DeleteDeadLetterEvent purges the ledger row while leaving its source row in
 // dead_letter. This is an explicit operator acknowledgement, not a replay or
 // destructive source deletion.
 func (s *PgStore) DeleteDeadLetterEvent(ctx context.Context, accountID, appID, eventID string) error {
-	tag, err := s.pool.Exec(ctx, `delete from dead_letter_events where id = $1 and app_id = $2 and account_id = $3`, eventID, appID, accountID)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return s.productionDeadLetterDelete(ctx, accountID, appID, eventID)
 }
 
 // DeleteDeadLetterEvents purges up to limit ledger rows in one transaction.
 // Source invocation and trigger rows remain dead-lettered for audit safety.
 func (s *PgStore) DeleteDeadLetterEvents(ctx context.Context, accountID, appID string, limit int) (int, error) {
-	if limit <= 0 {
-		limit = deadLetterEventsDefaultLimit
-	}
-	if limit > deadLetterEventsMaxLimit {
-		limit = deadLetterEventsMaxLimit
-	}
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
-	rows, err := tx.Query(ctx, `
-		select id::text, account_id::text, coalesce(app_id::text, ''), source, source_id::text,
-		       origin, coalesce(trigger_id::text, ''), event_payload, headers,
-		       error_kind, error_detail, retry_count, first_failed_at,
-		       last_failed_at, replayed_at, created_at
-		  from dead_letter_events
-		 where account_id = $1 and app_id = $2
-		 order by last_failed_at desc, id desc
-		 limit $3
-		 for update skip locked`, accountID, appID, limit)
-	if err != nil {
-		return 0, err
-	}
-	events, err := scanDeadLetterEvents(rows)
-	if err != nil {
-		return 0, err
-	}
-	purged := 0
-	for _, ev := range events {
-		tag, err := tx.Exec(ctx, `delete from dead_letter_events where id = $1 and account_id = $2 and app_id = $3`, ev.ID, accountID, appID)
-		if err != nil {
-			return 0, err
-		}
-		purged += int(tag.RowsAffected())
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return 0, err
-	}
-	return purged, nil
+	return s.productionDeadLetterDeleteMany(ctx, accountID, appID, limit)
 }
 
 // PurgeExpiredDeadLetterEvents removes only old rows from the unified failed
@@ -30667,13 +30231,15 @@ func replayDeadLetterEventTx(ctx context.Context, tx pgx.Tx, accountID, appID st
 	var err error
 	switch ev.Source {
 	case "invocation":
-		tag, err = tx.Exec(ctx, `
-			update invocations
-			   set state = 'pending', attempts = 0, last_error = null,
-			       outcome = null, due_at = now(), lease_expires_at = null,
-			       instance_id = null, last_replayed_at = now(), completed_at = null
-			 where id = $1 and account_id = $2 and app_id = $3
-			   and state = 'dead_letter'`, ev.SourceID, accountID, appID)
+		args, parseErr := productionDeadLetterScope(accountID, appID, ev.SourceID)
+		if parseErr != nil {
+			return time.Time{}, parseErr
+		}
+		n, updateErr := sqlc.New().ReplayProductionDeadLetterInvocation(ctx, tx, sqlc.ReplayProductionDeadLetterInvocationParams{
+			InvocationID: args.EventID, AccountID: args.AccountID, AppID: args.AppID,
+		})
+		err = updateErr
+		tag = pgconn.NewCommandTag(fmt.Sprintf("UPDATE %d", n))
 	case "trigger_record":
 		tag, err = tx.Exec(ctx, `
 			update trigger_records r
@@ -30739,52 +30305,14 @@ func replayDeadLetterEventTx(ctx context.Context, tx pgx.Tx, accountID, appID st
 		return time.Time{}, ErrNotFound
 	}
 	now := time.Now().UTC()
-	if _, err = tx.Exec(ctx, `update dead_letter_events set replayed_at = $1 where id = $2`, now, ev.ID); err != nil {
+	eventID, parseErr := productionWorkUUID(ev.ID)
+	if parseErr != nil {
+		return time.Time{}, parseErr
+	}
+	if err = sqlc.New().StampDeadLetterEventReplay(ctx, tx, sqlc.StampDeadLetterEventReplayParams{ReplayedAt: pgtype.Timestamptz{Time: now, Valid: true}, ID: eventID}); err != nil {
 		return time.Time{}, err
 	}
 	return now, nil
-}
-
-func scanDeadLetterEvents(rows pgx.Rows) ([]DeadLetterEvent, error) {
-	defer rows.Close()
-	out := make([]DeadLetterEvent, 0, 20)
-	for rows.Next() {
-		ev, err := scanDeadLetterEventRow(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, ev)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-type deadLetterEventScanner interface {
-	Scan(...any) error
-}
-
-func scanDeadLetterEventRows(row deadLetterEventScanner) (DeadLetterEvent, error) {
-	return scanDeadLetterEventRow(row)
-}
-
-func scanDeadLetterEventRow(row deadLetterEventScanner) (DeadLetterEvent, error) {
-	var ev DeadLetterEvent
-	var replayedAt pgtype.Timestamptz
-	if err := row.Scan(
-		&ev.ID, &ev.AccountID, &ev.AppID, &ev.Source, &ev.SourceID,
-		&ev.Origin, &ev.TriggerID, &ev.Payload, &ev.Headers, &ev.ErrorKind,
-		&ev.ErrorDetail, &ev.RetryCount, &ev.FirstFailedAt, &ev.LastFailedAt,
-		&replayedAt, &ev.CreatedAt,
-	); err != nil {
-		return DeadLetterEvent{}, err
-	}
-	if replayedAt.Valid {
-		t := replayedAt.Time
-		ev.ReplayedAt = &t
-	}
-	return ev, nil
 }
 
 // DropTriggerRecordByOperator (issue #757 / ADR-0NN, commit #6)

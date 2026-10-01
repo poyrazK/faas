@@ -12,13 +12,7 @@ import (
 // Legacy queue endpoints operate on app-wide production consumers. Never
 // discard a requested stage and then read or mutate that production state.
 func queueBindingProductionRequest(w http.ResponseWriter, r *http.Request) bool {
-	query := r.URL.Query()
-	values, selected := query["environment"]
-	if query.Has("scope") || (selected && (len(values) != 1 || values[0] != "production")) {
-		api.WriteProblem(w, api.ErrValidation("this endpoint manages production queues; use the project environment workload queue-bindings endpoint for stage configuration"))
-		return false
-	}
-	return true
+	return productionWorkRequest(w, r, "this endpoint manages production queues; use the project environment workload queue-bindings endpoint for stage configuration")
 }
 
 func productionQueueBindingHandler(next accountHandler) accountHandler {

@@ -298,10 +298,26 @@ func TestPgInvocationEnvironmentOwnerMigrationBackfillsPins(t *testing.T) {
 	if !ok {
 		t.Fatal("missing migration down section")
 	}
+	// Newer production views depend on environment_id. Roll back their
+	// migration before this older migration, as the real runner does.
+	productionRaw, err := migrations.FS.ReadFile("20261001060000000_production_invocation_work.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	productionUp, productionDown, ok := strings.Cut(string(productionRaw), "-- +goose Down")
+	if !ok {
+		t.Fatal("missing production work migration down section")
+	}
+	if _, err := pool.Exec(ctx, productionDown); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := pool.Exec(ctx, down); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, up); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, productionUp); err != nil {
 		t.Fatal(err)
 	}
 	for id, expected := range owners {
