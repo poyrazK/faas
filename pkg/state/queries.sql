@@ -6243,3 +6243,26 @@ DELETE FROM dead_letter_events d USING victims v WHERE d.id=v.id;
 
 -- name: StampDeadLetterEventReplay :exec
 UPDATE dead_letter_events SET replayed_at=$1 WHERE id=$2;
+
+-- ADR-375: serialize stage producers before app/deployment locks, across
+-- every binding and deployment generation in the environment's workload.
+-- name: LockEnvironmentQueueProducer :one
+SELECT e.id FROM project_environments e JOIN apps a ON a.project_id=e.project_id AND a.account_id=e.account_id
+WHERE e.id=sqlc.arg(environment_id)::uuid AND e.account_id=sqlc.arg(account_id)::uuid
+    AND e.project_id=sqlc.arg(project_id)::uuid AND a.id=sqlc.arg(app_id)::uuid
+    AND a.status<>'deleted' AND e.slug NOT IN ('production','default')
+FOR NO KEY UPDATE OF e;
+
+-- name: CountEnvironmentQueueProducerDepth :one
+WITH owned AS (
+    SELECT invocation_id AS id FROM invocation_environment_queue_admissions
+    WHERE environment_id=sqlc.arg(environment_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+    UNION
+    SELECT id FROM invocations WHERE environment_id=sqlc.arg(environment_id)::uuid
+        AND app_id=sqlc.arg(app_id)::uuid AND source='queue'
+)
+SELECT count(*) FROM invocations i JOIN owned o ON o.id=i.id
+WHERE i.state IN ('pending','dispatching') OR i.quota_reserved;
+
+-- name: ReadEnvironmentQueueProducerPlan :one
+SELECT plan FROM accounts WHERE id=$1;

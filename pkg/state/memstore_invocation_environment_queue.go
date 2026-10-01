@@ -58,6 +58,13 @@ func (m *MemStore) EnqueueProjectEnvironmentQueueInvocation(ctx context.Context,
 	if !m.invocationQueuePinLocked(inv, owner.DeploymentID, true) {
 		return Invocation{}, ErrInvocationEnvironmentWorkIsolation
 	}
+	account, found := m.accounts[accountID]
+	if !found {
+		return Invocation{}, ErrNotFound
+	}
+	if err := environmentQueueProducerCapacity(account.Plan, m.environmentQueueProducerDepthLocked(current.EnvironmentID, current.AppID)); err != nil {
+		return Invocation{}, err
+	}
 	m.invocations[inv.ID] = cloneInvocationWorkEnvelope(inv)
 	m.invocationEnvironmentQueueAdmissions[inv.ID] = owner
 	return cloneInvocationWorkEnvelope(inv), nil

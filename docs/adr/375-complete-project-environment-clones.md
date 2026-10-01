@@ -1651,3 +1651,46 @@ passed in 11.429 seconds and queue scaling contracts in 0.630 seconds.
 Independent sqlc 1.31.1 regeneration matches checked-in output; the whitespace
 check and changed-handler size check pass. These are selected local tests, not
 a full-suite or native VM/provider acceptance claim.
+
+### Stage queue producer depth admission
+
+Private stage queue enqueue now enforces the account's current
+`api.Limits.MaxQueueDepth` in an independent `(environment_id, app_id)` domain.
+Every queue name and deployment generation shares that workload's depth; a
+binding rename or new deployment cannot create another capacity allowance.
+Production and sibling environments retain their separate backlogs. Free-plan
+accounts cannot use private stage queue admission, and a plan change affects
+subsequent admissions without rewriting pinned consumer definitions.
+
+MemStore checks capacity under its existing mutation lock. PostgreSQL acquires
+an environment `FOR NO KEY UPDATE` lock before app/deployment ownership locks,
+then checks the domain and inserts the invocation plus private admission proof
+in the same transaction. This serializes concurrent producers across deployment
+generations while remaining compatible with the claim path's environment
+key-share lock. Existing deletion locks still take precedence. SQLC queries
+select the domain through its ownership indexes before counting.
+
+Pending/dispatching rows and unreleased reservations retain their depth,
+including expired leases that have not been recovered. Private admission
+ownership remains authoritative when a row's mutable environment/source fields
+are damaged; persisted invocation ownership also counts a queue whose admission
+proof is missing. Over-capacity failures leave no row or proof and do not
+reserve async claim capacity. Completion and cancellation free depth normally.
+No new plan limit is introduced.
+
+Worker/job delivery requires a pull consumer path: the existing request wake
+and HTTP gateway reject workloads without listeners. HTTP function push uses
+the request transport. Producer depth admission is a prerequisite for those
+class-specific stage paths; public activation, delivery receipts and full-clone
+qualification remain unavailable until the entire runtime contract is wired
+and verified. Preparation continues to cover all supported consumer classes.
+
+Verification: the final selected state run passed in 71.973 seconds, covering
+MemStore and PostgreSQL producer races across queue names/generations,
+production/sibling separation, authoritative plan changes, expired leases,
+terminal release, damaged ownership and no partial row/proof/quota writes.
+Existing private queue ownership, class/mode preparation, consumer concurrency,
+cleanup, production queue boundaries and account quota contracts also passed.
+The API caller regressions passed in 1.869 seconds and scheduler queue/drain
+regressions in 24.382 seconds. Independent SQLC 1.31.1 generation and the
+whitespace check passed. Full suite and native VM/provider gates remain open.

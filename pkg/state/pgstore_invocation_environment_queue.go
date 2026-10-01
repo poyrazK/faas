@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -43,6 +44,12 @@ func (s *PgStore) EnqueueProjectEnvironmentQueueInvocation(ctx context.Context, 
 		return Invocation{}, err
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	q := sqlc.New()
+	if _, err := q.LockEnvironmentQueueProducer(ctx, tx, sqlc.LockEnvironmentQueueProducerParams{
+		EnvironmentID: mustPgUUID(set.EnvironmentID), AccountID: mustPgUUID(accountID), ProjectID: mustPgUUID(projectID), AppID: mustPgUUID(set.AppID),
+	}); err != nil {
+		return Invocation{}, mapErr(err)
+	}
 	current, err := projectEnvironmentQueueConsumersDB(ctx, tx, accountID, projectID, deploymentID, false, true)
 	if err != nil {
 		return Invocation{}, err
@@ -56,6 +63,17 @@ func (s *PgStore) EnqueueProjectEnvironmentQueueInvocation(ctx context.Context, 
 	}
 	owner := queueAdmissionForInvocation(set, consumer, inv)
 	if _, err := validateQueueAdmission(owner, inv, current); err != nil {
+		return Invocation{}, err
+	}
+	plan, err := q.ReadEnvironmentQueueProducerPlan(ctx, tx, mustPgUUID(accountID))
+	if err != nil {
+		return Invocation{}, mapErr(err)
+	}
+	depth, err := q.CountEnvironmentQueueProducerDepth(ctx, tx, sqlc.CountEnvironmentQueueProducerDepthParams{EnvironmentID: mustPgUUID(current.EnvironmentID), AppID: mustPgUUID(current.AppID)})
+	if err != nil {
+		return Invocation{}, err
+	}
+	if err := environmentQueueProducerCapacity(api.Plan(plan), depth); err != nil {
 		return Invocation{}, err
 	}
 	out, err := enqueueInvocationRow(ctx, tx, inv)

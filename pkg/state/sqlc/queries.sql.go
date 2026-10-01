@@ -1389,6 +1389,30 @@ func (q *Queries) CountDeployedApps(ctx context.Context, db DBTX, accountID pgty
 	return count, err
 }
 
+const countEnvironmentQueueProducerDepth = `-- name: CountEnvironmentQueueProducerDepth :one
+WITH owned AS (
+    SELECT invocation_id AS id FROM invocation_environment_queue_admissions
+    WHERE environment_id=$1::uuid AND app_id=$2::uuid
+    UNION
+    SELECT id FROM invocations WHERE environment_id=$1::uuid
+        AND app_id=$2::uuid AND source='queue'
+)
+SELECT count(*) FROM invocations i JOIN owned o ON o.id=i.id
+WHERE i.state IN ('pending','dispatching') OR i.quota_reserved
+`
+
+type CountEnvironmentQueueProducerDepthParams struct {
+	EnvironmentID pgtype.UUID
+	AppID         pgtype.UUID
+}
+
+func (q *Queries) CountEnvironmentQueueProducerDepth(ctx context.Context, db DBTX, arg CountEnvironmentQueueProducerDepthParams) (int64, error) {
+	row := db.QueryRow(ctx, countEnvironmentQueueProducerDepth, arg.EnvironmentID, arg.AppID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countOpenUploadSessionsByAccountApp = `-- name: CountOpenUploadSessionsByAccountApp :one
 SELECT COUNT(*)::bigint AS count
 FROM upload_sessions
@@ -10317,6 +10341,35 @@ func (q *Queries) LockEnvironmentInvocationCleanup(ctx context.Context, db DBTX,
 	return id, err
 }
 
+const lockEnvironmentQueueProducer = `-- name: LockEnvironmentQueueProducer :one
+SELECT e.id FROM project_environments e JOIN apps a ON a.project_id=e.project_id AND a.account_id=e.account_id
+WHERE e.id=$1::uuid AND e.account_id=$2::uuid
+    AND e.project_id=$3::uuid AND a.id=$4::uuid
+    AND a.status<>'deleted' AND e.slug NOT IN ('production','default')
+FOR NO KEY UPDATE OF e
+`
+
+type LockEnvironmentQueueProducerParams struct {
+	EnvironmentID pgtype.UUID
+	AccountID     pgtype.UUID
+	ProjectID     pgtype.UUID
+	AppID         pgtype.UUID
+}
+
+// ADR-375: serialize stage producers before app/deployment locks, across
+// every binding and deployment generation in the environment's workload.
+func (q *Queries) LockEnvironmentQueueProducer(ctx context.Context, db DBTX, arg LockEnvironmentQueueProducerParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockEnvironmentQueueProducer,
+		arg.EnvironmentID,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.AppID,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockInvocationEnvironmentAdmission = `-- name: LockInvocationEnvironmentAdmission :one
 SELECT e.id FROM project_environments e JOIN apps a ON a.project_id=e.project_id AND a.account_id=e.account_id
 WHERE e.id=$1::uuid AND e.slug NOT IN ('production','default')
@@ -15052,6 +15105,17 @@ func (q *Queries) ReadEnvironmentQueueInvocation(ctx context.Context, db DBTX, i
 		&i.WorkFairnessLimit,
 	)
 	return i, err
+}
+
+const readEnvironmentQueueProducerPlan = `-- name: ReadEnvironmentQueueProducerPlan :one
+SELECT plan FROM accounts WHERE id=$1
+`
+
+func (q *Queries) ReadEnvironmentQueueProducerPlan(ctx context.Context, db DBTX, id pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, readEnvironmentQueueProducerPlan, id)
+	var plan string
+	err := row.Scan(&plan)
+	return plan, err
 }
 
 const readInvocationEnvironmentOwner = `-- name: ReadInvocationEnvironmentOwner :one
