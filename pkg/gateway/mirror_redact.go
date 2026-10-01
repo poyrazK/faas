@@ -270,12 +270,18 @@ func ClassifyResult(srcStatus int, srcBody []byte, mirrorStatus int, mirrorBody 
 // ClassifyResultWithHashes returns exact raw-body SHA-256 hashes for callers
 // that compare against a caller-supplied historical hash. Live mirror
 // comparisons use CompareMirrorResponses so schema and value drift remain
-// distinct.
+// distinct. The digest outputs are only for transient equality checks; callers
+// must not persist them as fingerprints of potentially sensitive responses.
 func ClassifyResultWithHashes(srcStatus int, srcBody []byte, mirrorStatus int, mirrorBody []byte) (statusDiff, schemaDiff, bodyDiff, crashed bool, srcFingerprint, mirrorFingerprint [sha256.Size]byte) {
 	if srcStatus != mirrorStatus {
 		statusDiff = true
 	}
+	// codeql[go/weak-sensitive-data-hashing] -- These exact digests support the
+	// legacy expected_body_sha256 comparison only; they are not credential
+	// verifiers and the gateway does not persist them.
 	srcHash := sha256.Sum256(srcBody)
+	// codeql[go/weak-sensitive-data-hashing] -- Transient digest for exact
+	// response comparison only; only the boolean bodyDiff is stored.
 	mirrorHash := sha256.Sum256(mirrorBody)
 	if srcHash != mirrorHash {
 		schemaDiff = true
