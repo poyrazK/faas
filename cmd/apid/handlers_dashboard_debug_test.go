@@ -258,7 +258,8 @@ func TestDashboardDebugReplayStatusProjectionIsScoped(t *testing.T) {
 		t.Fatalf("CreateApp: %v", err)
 	}
 	requestID := "00000000-0000-0000-0000-000000000002"
-	metadata, _ := json.Marshal(map[string]string{api.DebugReplayRequestIDHeader: requestID})
+	traceID := "4bf92f3577b34da6a3ce929d0e0e4736"
+	metadata, _ := json.Marshal(map[string]string{api.DebugReplayRequestIDHeader: traceID})
 	inv, err := store.EnqueueInvocation(context.Background(), state.Invocation{
 		AccountID: acct.ID, AppID: app.ID, Source: state.InvocationReplay,
 		Headers: metadata, DueAt: time.Now().UTC(),
@@ -276,14 +277,32 @@ func TestDashboardDebugReplayStatusProjectionIsScoped(t *testing.T) {
 
 	s := &server{store: store}
 	data := &dashboard.DebugPageData{}
-	if err := s.populateDashboardDebugReplay(context.Background(), app, acct, inv.ID, requestID, data); err != nil {
+	if err := s.populateDashboardDebugReplay(context.Background(), app, acct, inv.ID, requestID, traceID, data); err != nil {
 		t.Fatalf("populateDashboardDebugReplay: %v", err)
 	}
 	if data.Replay == nil || !data.Replay.HasResult || data.Replay.MirrorStatusCode != 200 || !data.Replay.StatusDiff || data.Replay.SourceDeploymentID != "source-deployment" || data.Replay.MirrorDeploymentID != "mirror-deployment" {
 		t.Fatalf("replay projection = %#v, want completed comparison", data.Replay)
 	}
-	if err := s.populateDashboardDebugReplay(context.Background(), app, acct, inv.ID, "different-request", data); err == nil {
+	if err := s.populateDashboardDebugReplay(context.Background(), app, acct, inv.ID, "different-request", "different-trace", data); err == nil {
 		t.Fatal("foreign request id unexpectedly exposed replay")
+	}
+}
+
+func TestDashboardDebugReplayMatchesRequest(t *testing.T) {
+	for _, tc := range []struct {
+		name, replayID, requestID, traceID string
+		want                               bool
+	}{
+		{name: "row id", replayID: "row-id", requestID: "row-id", traceID: "trace-id", want: true},
+		{name: "linked trace id", replayID: "trace-id", requestID: "row-id", traceID: "trace-id", want: true},
+		{name: "foreign request", replayID: "other-id", requestID: "row-id", traceID: "trace-id", want: false},
+		{name: "empty replay id", replayID: "", requestID: "row-id", traceID: "trace-id", want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := dashboardDebugReplayMatchesRequest(tc.replayID, tc.requestID, tc.traceID); got != tc.want {
+				t.Fatalf("dashboardDebugReplayMatchesRequest(%q, %q, %q) = %t, want %t", tc.replayID, tc.requestID, tc.traceID, got, tc.want)
+			}
+		})
 	}
 }
 

@@ -263,7 +263,7 @@ func (s *server) populateIssueDashboardReplay(ctx context.Context, app state.App
 		return
 	}
 	debugData := dashboard.DebugPageData{}
-	if err := s.populateDashboardDebugReplay(ctx, app, acct, replayID, occurrence.DebugRequestID, &debugData); err != nil {
+	if err := s.populateDashboardDebugReplay(ctx, app, acct, replayID, occurrence.DebugRequestID, occurrence.TraceID, &debugData); err != nil {
 		return
 	}
 	if debugData.Replay == nil || (debugData.Replay.SourceDeploymentID != "" && debugData.Replay.SourceDeploymentID != occurrence.DeploymentID) {

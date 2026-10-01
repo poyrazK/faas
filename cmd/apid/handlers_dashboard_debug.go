@@ -318,7 +318,7 @@ func (s *server) renderAppDebug(w http.ResponseWriter, r *http.Request, log *slo
 	}
 	if replayID := strings.TrimSpace(r.URL.Query().Get("replay_id")); replayID != "" && data.Selected != nil {
 		data.ReplayPoll = parseDashboardDebugReplayPoll(r.URL.Query().Get("replay_poll"))
-		if err := s.populateDashboardDebugReplay(ctx, app, acct, replayID, data.Selected.Request.ID, &data); err != nil {
+		if err := s.populateDashboardDebugReplay(ctx, app, acct, replayID, data.Selected.Request.ID, data.Selected.Request.TraceID, &data); err != nil {
 			data.ActionMessage = err.Error()
 			data.ActionError = true
 		} else if data.Replay != nil && (data.Replay.State == "queued" || data.Replay.State == "running") {
@@ -500,13 +500,13 @@ func redirectDashboardIssueReplay(w http.ResponseWriter, r *http.Request, slug s
 	http.Redirect(w, r, "/dashboard/apps/"+url.PathEscape(slug)+"/issues?"+values.Encode(), http.StatusSeeOther)
 }
 
-func (s *server) populateDashboardDebugReplay(ctx context.Context, app state.App, acct state.Account, replayID, requestID string, data *dashboard.DebugPageData) error {
+func (s *server) populateDashboardDebugReplay(ctx context.Context, app state.App, acct state.Account, replayID, requestID, traceID string, data *dashboard.DebugPageData) error {
 	inv, err := s.store.InvocationByID(ctx, replayID)
 	if err != nil || inv.AccountID != acct.ID || inv.AppID != app.ID || inv.Source != state.InvocationReplay {
 		return fmt.Errorf("replay invocation was not found")
 	}
 	var metadata map[string]string
-	if err := json.Unmarshal(inv.Headers, &metadata); err != nil || metadata[api.DebugReplayRequestIDHeader] != requestID {
+	if err := json.Unmarshal(inv.Headers, &metadata); err != nil || !dashboardDebugReplayMatchesRequest(metadata[api.DebugReplayRequestIDHeader], requestID, traceID) {
 		return fmt.Errorf("replay invocation was not found")
 	}
 	view := &dashboard.DebugReplayView{
@@ -560,6 +560,16 @@ func (s *server) populateDashboardDebugReplay(ctx context.Context, app state.App
 	}
 	data.Replay = view
 	return nil
+}
+
+// Replay envelopes use the public trace/request identifier when telemetry has
+// one, while dashboard links may address the same request by its internal row
+// UUID. Accept either identifier only when the selected request provides it.
+func dashboardDebugReplayMatchesRequest(replayRequestID, requestID, traceID string) bool {
+	if replayRequestID == "" {
+		return false
+	}
+	return replayRequestID == requestID || (traceID != "" && replayRequestID == traceID)
 }
 
 func dashboardDebugReplayState(invState state.InvocationState) string {
