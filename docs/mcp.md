@@ -4,7 +4,7 @@ The MCP hosting profile is preview for tool servers that implement `tools/list`.
 Resources-only or prompts-only servers can use ordinary app deployment but do not
 pass this profile's qualification. It uses ordinary HTTP applications and
 stateless Streamable HTTP, with optional stateless legacy compatibility. Builds
-containing ADR-424 provide the commands below; check `gregale mcp --help`.
+containing ADR-426 provide the commands below; check `gregale mcp --help`.
 The profile requires a streaming-enabled Hobby, Pro, or Scale account and a
 gateway with streaming enabled.
 
@@ -98,4 +98,4 @@ rollout checks are follow-on capabilities, not included in this preview.
 
 Protocol references: [Streamable HTTP](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http)
 and [authorization](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization).
-Design: [ADR-424](adr/424-mcp-hosting-contract.md).
+Design: [ADR-426](adr/426-mcp-hosting-contract.md).

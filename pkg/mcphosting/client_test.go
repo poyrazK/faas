@@ -23,7 +23,7 @@ func testClient(t *testing.T, h http.HandlerFunc) *Client {
 }
 
 func TestStatelessDiscoveryAndStreaming(t *testing.T) {
-	// adr: 424 — POST metadata, JSON/SSE, origin validation and unbuffered progress.
+	// adr: 426 — POST metadata, JSON/SSE, origin validation and unbuffered progress.
 	calls := 0
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Origin") != "" {
@@ -121,7 +121,7 @@ func TestCallDoesNotRetryToolErrors(t *testing.T) {
 }
 
 func TestCallRejectsIncompleteResults(t *testing.T) {
-	// adr: 424 — diagnostics require a complete result and never resume work.
+	// adr: 426 — diagnostics require a complete result and never resume work.
 	for _, result := range []string{`{}`, `{"content":null}`, `{"resultType":"task","content":[]}`, `{"resultType":"input_required","content":[]}`} {
 		t.Run(result, func(t *testing.T) {
 			calls := 0
@@ -138,7 +138,7 @@ func TestCallRejectsIncompleteResults(t *testing.T) {
 }
 
 func TestCallRejectsSessionCreatedDuringExecution(t *testing.T) {
-	// adr: 424 — stateless qualification applies to tool execution as well as discovery.
+	// adr: 426 — stateless qualification applies to tool execution as well as discovery.
 	c := testClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Mcp-Session-Id", "new-session")
