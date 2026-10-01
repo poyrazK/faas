@@ -1,4 +1,4 @@
-# ADR-385 · Atomic workload cgroup launch
+# ADR-412 · Atomic workload cgroup launch
 
 - **Status:** accepted
 - **Date:** 2026-09-30

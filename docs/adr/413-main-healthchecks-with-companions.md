@@ -1,4 +1,4 @@
-# ADR-386 · Main-image healthchecks with companion workloads
+# ADR-413 · Main-image healthchecks with companion workloads
 
 - **Status:** accepted
 - **Date:** 2026-09-30
@@ -30,7 +30,7 @@ main image's working directory with the shared OCI credential resolver.
 When the main workload has an inner resource leaf, acquire its cgroup descriptor
 only after the start signal and launch every probe atomically in that leaf.
 A failed acquisition never retries the probe outside its resource scope. This
-uses ADR-385's cgroup launch contract. Single workloads without an inner leaf
+uses ADR-412's cgroup launch contract. Single workloads without an inner leaf
 retain the existing host-enforced VM resource scope.
 
 ## Validation and recovery
