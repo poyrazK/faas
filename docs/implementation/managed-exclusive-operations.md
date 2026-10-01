@@ -24,7 +24,8 @@ The feature contract and database acceptance checklist:
 
 Host-specific release validation remains:
 
-- [ ] Native KVM stale-snapshot acceptance, metal checks, and leakcheck.
+- [ ] Native KVM stale-snapshot acceptance
+      (`TestExclusiveOperationFencesRestoredKVMOwnerMetal`), metal checks, and leakcheck.
 
 Progress note: manual app, Job, and AppTask submissions, HTTP cron/fire-now,
 recurring Job schedules, signature-verified Stripe webhooks, and in-platform
@@ -39,5 +40,7 @@ VMMD delivery path. The full `pkg/sched` suite currently has a separate failure 
 `TestWakeBurstSpreadsSnapshotRestoresAcrossPgEngines`: its fixture's first
 wake returns `no live deployment to wake`, including when run alone. YAML/TOML
 declarations reconcile account-owned policies and trigger bindings through
-the CLI. Native KVM stale-snapshot acceptance, metal checks, and leakcheck
-remain open because this host has no `/dev/kvm`.
+the CLI. The native test `TestExclusiveOperationFencesRestoredKVMOwnerMetal`
+is assigned to the `wake` phase. Its real guest/snapshot assertions remain
+unverified until the designated KVM gate runs; metal checks and leakcheck are
+still open because this host has no `/dev/kvm`.

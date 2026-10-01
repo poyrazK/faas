@@ -65,6 +65,7 @@ native_e2e_phase_files() {
       wake_timeline_metal_test.go \
       wake_burst_metal_test.go \
       after_restore_metal_test.go \
+      exclusive_operations_restore_metal_test.go \
       feature_flags_native_restore_metal_test.go \
       before_checkpoint_metal_test.go \
       fleet_wake_dedup_e2e_test.go \
