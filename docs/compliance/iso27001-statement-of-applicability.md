@@ -12,8 +12,10 @@ of four statuses:
   auditor can re-derive it from a fresh checkout of `main`.
 - **Planned** — control is in the implementation roadmap; named PR
   delivers it before the audit window closes.
-- **Inherited** — control is satisfied by a sub-processor / hosting
-  provider; evidence is the upstream attestation (named).
+- **Inherited** — the upstream provider owns the control for Gregale's service
+  scope. Provider evidence must be named and assessed before the control is
+  represented as verified; missing or unreviewed evidence is called out in
+  the row.
 - **Out of scope** — control does not apply to a single-operator
   cloud FaaS platform; rationale recorded.
 
@@ -52,11 +54,11 @@ Cross-references are abbreviated:
 | A.5.15 | Access control | Implemented | `pkg/auth/middleware.RequireSession` is the single authentication seam; per-org RBAC (ADR-061). | C-6.1, C-6.3. |
 | A.5.16 | Identity management | Implemented | `accounts` table; email verification + GitHub OAuth (30-day account age) per spec §11. | C-6.2. |
 | A.5.17 | Authentication information | Implemented | API keys hashed (`pkg/auth/hash.go`, SHA-256); TOTP MFA sealed at rest + 10 recovery codes (ADR-077). | |
-| A.5.18 | Access rights | Implemented | Quarterly `access-review.sql` (PR-9); `keys.revoked_at` lineage; CI gate `subprocessor-check` (PR-3). | C-6.5, C-9.2. |
-| A.5.19 | Supplier relationships | Implemented | `docs/compliance/subprocessors.md` + per-vendor assessments (PR-3 + PR-10). | C-9.1, C-9.2. |
-| A.5.20 | Addressing information security in supplier agreements | Implemented | DPA §8 (Art. 32 security measures) is part of every sub-processor contract. | |
+| A.5.18 | Access rights | Planned | Quarterly read-only inventory and review procedure (`access-review.sql`, `access-review.md`) plus sign-off template are ready; first dated review evidence remains outstanding. API-key and session revocation lineage is enforced by the application. | C-6.5. |
+| A.5.19 | Supplier relationships | Planned | Subprocessor list and change-notice check exist. Supplier tiers, review criteria, and preliminary critical-supplier workpapers are drafted; current provider evidence and signed decisions remain open (PR-10). | C-9.1, C-9.2. |
+| A.5.20 | Addressing information security in supplier agreements | Planned | The DPA template contains Art. 32 security measures, but executed supplier agreements, product scope, and transfer terms have not been verified for every listed processor. Reconcile them in the supplier workpapers before claiming coverage. | C-9.2. |
 | A.5.21 | Managing information security in the ICT supply chain | Implemented | OCI image digest pinning (`pull_digest`); cosign signature enforcement (`docs/adr/058-cosign-deploy-time-enforcement.md`); grype scan per deploy (PR-10, `docs/adr/075-per-deploy-grype-scan.md`). | |
-| A.5.22 | Monitoring, review & change management of supplier services | Implemented | Quarterly `access-review.sql` (PR-9) flags dormant sub-processor relationships; vendor assessment re-cadence per `docs/compliance/vendor-risk-management.md` (PR-10). | |
+| A.5.22 | Monitoring, review & change management of supplier services | Planned | The sub-processor list and change-notice check exist; vendor-risk procedure, dated assessments, and recurring supplier review evidence remain outstanding (PR-10). | |
 | A.5.23 | Information security for use of cloud services | Implemented | This document; DPA §5 + §8; per-instance netns + cgroup scope (spec §11). | The entire ISMS is built around cloud-service-provider responsibilities. |
 | A.5.24 | Information security incident management planning | Implemented | `docs/runbooks/` per-family (FaasWakeLatencyHigh, FaasDaemonDown, FaasFailedLoginSpike, …); alertmanager routing (`docs/adr/039-traffic-anomaly-detection.md` / §12.3). | C-4.2, C-7.4. |
 | A.5.25 | Assessment & decision on information security events | Implemented | Per-instance liveness probe (`docs/adr/079-liveness-probe-restart-wedged-vm.md`) — 3 consecutive non-2xx on vsock 1028 → destroy + cold-boot; 3 destroys in 300 s → `apps.status='evicted_cold'`. | C-4.1. |
@@ -92,24 +94,28 @@ Cross-references are abbreviated:
 
 ## A.7 Physical & environmental controls (14)
 
-**All 14 are inherited from the hosting provider (Hetzner bare-metal x86_64).** Gregale ships only with this attestation — no in-repo evidence.
+**Thirteen of the fourteen controls are allocated to the hosting provider for
+Gregale's physical facilities and equipment.** Their evidence remains
+unverified until the current, in-scope provider materials are reviewed. The
+public workpaper at [`vendor-assessments/hetzner.md`](vendor-assessments/hetzner.md)
+lists the evidence still required; no provider report is included in this repo.
 
 | ID | Control | Status | Evidence | Notes / cross-ref |
 |---|---|---|---|---|
-| A.7.1 | Physical security perimeters | Inherited | Hetzner SOC 2 Type II report (vendor assessment: `docs/compliance/vendor-assessments/hetzner.md`, PR-10). | |
+| A.7.1 | Physical security perimeters | Inherited | Current provider audit / TOM evidence for the products and sites Gregale uses is required; not yet retrieved or reviewed (`docs/compliance/vendor-assessments/hetzner.md`). | |
 | A.7.2 | Physical entry | Inherited | Same as A.7.1. | |
 | A.7.3 | Securing offices, rooms & facilities | Inherited | Same as A.7.1. | |
 | A.7.4 | Physical security monitoring | Inherited | Same as A.7.1. | |
 | A.7.5 | Protecting against physical & environmental threats | Inherited | Same as A.7.1. | |
 | A.7.6 | Working in secure areas | Inherited | Same as A.7.1. | |
 | A.7.7 | Clear desk & clear screen | Inherited | Same as A.7.1. (operator workstation hardening is operator-side, not in-repo). | |
-| A.7.8 | Equipment siting & protection | Inherited | Hetzner bare-metal x86_64 deployment. | |
+| A.7.8 | Equipment siting & protection | Inherited | Provider control; verify the applicable sites and dedicated-server scope in current provider evidence. | |
 | A.7.9 | Security of assets off-premises | Out of scope | No Gregale assets off-premises; the laptop is operator-side. | |
-| A.7.10 | Storage media | Inherited | Hetzner encrypted NVMe at rest; pgbackrest off-host encrypted backup to Hetzner Storage Box. | |
-| A.7.11 | Supporting utilities | Inherited | Hetzner datacenter (redundant power + cooling). | |
-| A.7.12 | Cabling security | Inherited | Hetzner datacenter. | |
-| A.7.13 | Equipment maintenance | Inherited | Hetzner on-site maintenance. | |
-| A.7.14 | Secure disposal or re-use of equipment | Inherited | Hetzner decommission procedure (vendor assessment, PR-10). | |
+| A.7.10 | Storage media | Inherited | Provider media handling and at-rest protections require verification for each product; Gregale's off-host database backup is encrypted before upload (`docs/adr/020-customer-secrets.md`). | |
+| A.7.11 | Supporting utilities | Inherited | Provider control; current evidence for the in-scope facilities is not yet reviewed. | |
+| A.7.12 | Cabling security | Inherited | Provider control; current evidence for the in-scope facilities is not yet reviewed. | |
+| A.7.13 | Equipment maintenance | Inherited | Provider control; current evidence for the in-scope facilities is not yet reviewed. | |
+| A.7.14 | Secure disposal or re-use of equipment | Inherited | Provider control; request current media and equipment disposal evidence in the supplier assessment. | |
 
 ---
 
@@ -158,13 +164,13 @@ Cross-references are abbreviated:
 
 | Status | Count |
 |---|---|
-| Implemented | 75 |
-| Planned | 6 |
+| Implemented | 63 |
+| Planned | 10 |
 | Inherited | 13 |
-| Out of scope | 13 |
+| Out of scope | 7 |
 | **Total** | **93** |
 
-**Coverage:** 75 Implemented + 6 Planned (PR-3, PR-4, PR-8, PR-10, PR-11, E1) = **81** in-process or in-place. The 6 Planned PRs all live in the issue #755 plan and close before the audit window opens (E3 — SOC 2 Type 1 / ISO 27001 cert issued).
+**Coverage:** 63 Implemented + 10 Planned = **73** controls in place or in the implementation plan. Planned items include PR-3, PR-4, PR-8, PR-9, PR-10, PR-11, and E1; multi-node HA (M9) remains a Type 2 objective. The audit and certification outcomes (E3) remain open.
 
 **Inherited** (13): all A.7.1–A.7.14 except A.7.9, which is out of scope.
 

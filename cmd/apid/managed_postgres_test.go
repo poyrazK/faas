@@ -33,6 +33,7 @@ func TestLoadManagedPostgresRegistersNeonDriver(t *testing.T) {
   "backends": [{
     "id": "neon-eu",
     "driver": "neon",
+    "supplier_name": "Neon",
     "region": "eu-central-1",
     "namespace": "org-gregale-12345678",
     "settings": {

@@ -14,6 +14,8 @@ const (
 	QualificationUntilEnv           = "FAAS_MANAGED_POSTGRES_QUALIFIED_UNTIL"
 	QualificationApprovalPathEnv    = "FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_PATH"
 	QualificationApprovalTTLEnv     = "FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_TTL"
+	SupplierApprovalPathEnv         = "FAAS_MANAGED_POSTGRES_SUPPLIER_APPROVAL_PATH"
+	SubprocessorRegisterPathEnv     = "FAAS_MANAGED_POSTGRES_SUBPROCESSOR_REGISTER_PATH"
 	CanaryAccountsEnv               = "FAAS_MANAGED_POSTGRES_CANARY_ACCOUNTS"
 	QualificationStagingEnvironment = "staging"
 )
@@ -22,16 +24,22 @@ const (
 // provisioning. Configuration opt-in alone is insufficient: the daemon must
 // run in staging, an operator must explicitly approve qualification, the
 // approval must be unexpired, and it must name the exact configured backend
-// fingerprint. When an approval artifact path is configured, that artifact is
-// authoritative; the legacy qualification environment variables are only a
-// fallback. A single qualified default backend is required while the preview
-// is being rolled out so an unqualified region cannot receive writes.
+// fingerprint. A separately reviewed supplier decision and current public
+// subprocessor-register entry are also required. When an approval artifact
+// path is configured, that artifact is authoritative; the legacy qualification
+// environment variables are only a fallback. A single qualified default
+// backend is required while the preview is being rolled out so an unqualified
+// region cannot receive writes.
 func NewStagingProvisioningGate(registry *Registry, getenv func(string) string, now func() time.Time) func() bool {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
 	var approval *QualificationArtifact
 	var approvalErr error
+	var supplierApproval *SupplierApproval
+	var supplierApprovalErr error
+	var subprocessorRegister *SubprocessorRegister
+	var subprocessorRegisterErr error
 	if getenv != nil {
 		if path := strings.TrimSpace(getenv(QualificationApprovalPathEnv)); path != "" {
 			loaded, err := LoadQualificationArtifact(path)
@@ -41,6 +49,28 @@ func NewStagingProvisioningGate(registry *Registry, getenv func(string) string, 
 				approval = &loaded
 			}
 		}
+		if path := strings.TrimSpace(getenv(SupplierApprovalPathEnv)); path != "" {
+			loaded, err := LoadSupplierApproval(path)
+			if err != nil {
+				supplierApprovalErr = err
+			} else {
+				supplierApproval = &loaded
+			}
+		}
+		if path := strings.TrimSpace(getenv(SubprocessorRegisterPathEnv)); path != "" {
+			loaded, err := LoadSubprocessorRegister(path)
+			if err != nil {
+				subprocessorRegisterErr = err
+			} else {
+				subprocessorRegister = &loaded
+			}
+		}
+	}
+	supplierApproved := func() bool {
+		if supplierApprovalErr != nil || subprocessorRegisterErr != nil || supplierApproval == nil || subprocessorRegister == nil {
+			return false
+		}
+		return registry.VerifySupplierApproval(*supplierApproval, *subprocessorRegister, now().UTC()).Ready
 	}
 	return func() bool {
 		if registry == nil || !registry.ProvisioningEnabled || getenv == nil {
@@ -57,7 +87,7 @@ func NewStagingProvisioningGate(registry *Registry, getenv func(string) string, 
 			if err != nil {
 				return false
 			}
-			return registry.VerifyQualificationArtifact(*approval, canaryAccounts, now().UTC()).Ready
+			return registry.VerifyQualificationArtifact(*approval, canaryAccounts, now().UTC()).Ready && supplierApproved()
 		}
 		approved, err := strconv.ParseBool(strings.TrimSpace(getenv(QualificationEnv)))
 		if err != nil || !approved {
@@ -75,7 +105,7 @@ func NewStagingProvisioningGate(registry *Registry, getenv func(string) string, 
 		if err != nil || strings.TrimSpace(getenv(QualificationBackendEnv)) != backend.ID || strings.TrimSpace(getenv(QualificationFingerprintEnv)) != backend.Fingerprint {
 			return false
 		}
-		return true
+		return supplierApproved()
 	}
 }
 

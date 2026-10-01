@@ -74,9 +74,9 @@ will notify the reporter and explain. The SLAs are NOT a contract.
 - Rate-limit testing that intentionally exhausts shared resources
   (CPU, RAM, network bandwidth).
 - Social engineering of the operator or Gregale staff.
-- Physical attacks against the Hetzner datacenter (see vendor
-  assessment file `docs/compliance/vendor-assessments/hetzner.md`
-  for physical controls).
+- Physical attacks against the hosting provider's datacenter. Physical
+  controls are provider-owned; current evidence is still under review in
+  `docs/compliance/vendor-assessments/hetzner.md`.
 - Reports against a deployment running a known-vulnerable Firecracker
   version past the 90-day patch window — these are operator-side
   hygiene, not Gregale code.

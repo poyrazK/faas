@@ -157,7 +157,7 @@ func managedPostgresE2EEnv(t *testing.T) ([]string, managedpostgres.Backend) {
 		MaxDatabasesPerAccount: 3,
 		ProvisioningEnabled:    true,
 		Backends: []managedpostgres.BackendConfig{{
-			ID: "e2e-neon", Driver: "neon", Region: "eu-central-1", Namespace: "org-e2e-test",
+			ID: "e2e-neon", Driver: "neon", SupplierName: "Neon", Region: "eu-central-1", Namespace: "org-e2e-test",
 			Settings:  map[string]string{"region_id": "aws-eu-central-1", "database_name": "gregale", "max_storage_bytes": "1073741824", "max_restore_window_seconds": "0"},
 			SecretEnv: map[string]string{"api-key": "FAAS_E2E_NEON_API_KEY"},
 		}},

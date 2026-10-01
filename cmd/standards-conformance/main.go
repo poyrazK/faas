@@ -18,12 +18,16 @@ func main() {
 	if err := productstandards.CheckConformance(catalog, "."); err != nil {
 		fail(err)
 	}
+	readinessAreas, err := productstandards.CheckCSAReadiness(".")
+	if err != nil {
+		fail(err)
+	}
 
 	refs := 0
 	for _, standard := range catalog.Standards {
 		refs += len(standard.Conformance)
 	}
-	fmt.Printf("standards-conformance: OK (%d standards, %d executable fixtures)\n", len(catalog.Standards), refs)
+	fmt.Printf("standards-conformance: OK (%d standards, %d executable fixtures, %d CSA readiness areas)\n", len(catalog.Standards), refs, readinessAreas)
 }
 
 func fail(err error) {

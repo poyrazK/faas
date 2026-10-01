@@ -10,6 +10,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -67,17 +68,19 @@ func (c UsageConfig) policy() (UsagePolicy, error) {
 }
 
 type BackendConfig struct {
-	ID        string            `json:"id"`
-	Driver    string            `json:"driver"`
-	Region    string            `json:"region"`
-	Namespace string            `json:"namespace"`
-	Settings  map[string]string `json:"settings,omitempty"`
-	SecretEnv map[string]string `json:"secret_env,omitempty"`
+	ID           string            `json:"id"`
+	Driver       string            `json:"driver"`
+	SupplierName string            `json:"supplier_name"`
+	Region       string            `json:"region"`
+	Namespace    string            `json:"namespace"`
+	Settings     map[string]string `json:"settings,omitempty"`
+	SecretEnv    map[string]string `json:"secret_env,omitempty"`
 }
 
 type Backend struct {
 	ID           string
 	Driver       string
+	SupplierName string
 	Region       string
 	Fingerprint  string
 	Capabilities Capabilities
@@ -117,7 +120,7 @@ func NewRegistry(config Config, getenv func(string) string, factories map[string
 	validID := regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 	validEnv := regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	for _, backendConfig := range config.Backends {
-		if !validID.MatchString(backendConfig.ID) || !validID.MatchString(backendConfig.Driver) || !validID.MatchString(backendConfig.Region) || backendConfig.Namespace == "" || len(backendConfig.Namespace) > 255 {
+		if !validID.MatchString(backendConfig.ID) || !validID.MatchString(backendConfig.Driver) || (backendConfig.SupplierName != "" && !validSupplierName(backendConfig.SupplierName)) || !validID.MatchString(backendConfig.Region) || backendConfig.Namespace == "" || len(backendConfig.Namespace) > 255 {
 			return nil, errors.New("managed postgres: invalid backend identity")
 		}
 		if _, exists := registry.backends[backendConfig.ID]; exists {
@@ -143,6 +146,7 @@ func NewRegistry(config Config, getenv func(string) string, factories map[string
 		registry.backends[backendConfig.ID] = Backend{
 			ID:           backendConfig.ID,
 			Driver:       backendConfig.Driver,
+			SupplierName: strings.TrimSpace(backendConfig.SupplierName),
 			Region:       backendConfig.Region,
 			Fingerprint:  fingerprint(backendConfig),
 			Capabilities: capabilities,
@@ -160,6 +164,10 @@ func NewRegistry(config Config, getenv func(string) string, factories map[string
 		return nil, errors.New("managed postgres: default_region is not configured")
 	}
 	return registry, nil
+}
+
+func validSupplierName(value string) bool {
+	return value != "" && value == strings.TrimSpace(value) && len(value) <= 128
 }
 
 func (r *Registry) UsagePolicy() UsagePolicy {
@@ -231,8 +239,10 @@ func (r *Registry) Regions() []string {
 
 func fingerprint(config BackendConfig) string {
 	// SecretEnv is intentionally excluded: credential rotation or renaming an
-	// environment variable must not change placement. Namespace and all
-	// non-secret settings fail closed if a backend is accidentally repurposed.
+	// environment variable must not change placement. SupplierName is review
+	// metadata, not placement, so adding it to an existing config preserves its
+	// fingerprint; the supplier gate compares it independently. Namespace and
+	// all non-secret placement settings fail closed if a backend is repurposed.
 	payload := struct {
 		Driver    string            `json:"driver"`
 		Region    string            `json:"region"`

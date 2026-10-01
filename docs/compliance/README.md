@@ -9,16 +9,21 @@ security and privacy attestations (SOC 2 Type 1, ISO 27001, GDPR DPA).
 |---|---|---|---|
 | [soc2-control-mapping.md](soc2-control-mapping.md) | Maps every SOC 2 Trust Services Criteria (TSC) control to the artifact in the codebase that satisfies it. | Platform | Draft |
 | [iso27001-statement-of-applicability.md](iso27001-statement-of-applicability.md) | ISO/IEC 27001:2022 Annex A — Applicable / Not-applicable per control + rationale. | Platform | Draft |
+| [csa-ccm-v4.1-readiness.md](csa-ccm-v4.1-readiness.md) | Gregale-authored, high-level evidence and gap index for CSA CCM / CAIQ v4.1. | Platform + Security | Alignment draft |
+| [csa-ccm-v4.1-evidence-ledger-template.csv](csa-ccm-v4.1-evidence-ledger-template.csv) | Empty Gregale-authored schema for a restricted control-level evidence ledger; populate only after confirming licensing. | Security | Template; licensing review required |
+| [iso27017-2026-readiness.md](iso27017-2026-readiness.md) | Gregale-authored cloud-service evidence and gap index for the ISO/IEC 27017:2026 review. | Platform + Security | Alignment draft; authorized clause review outstanding |
 | [subprocessors.md](subprocessors.md) | Public sub-processor list with category, data, region, DPA reference. | Platform + Legal | Draft |
 | [subprocessors.json](subprocessors.json) | Source-of-truth JSON for the sub-processor list; `subprocessor-check` CI gate renders `subprocessors.md` from this. | Platform | Draft |
 | [subprocessor-archive.json](subprocessor-archive.json) | Removed sub-processors with effective date + removal reason. | Platform | Draft |
 | [responsible-disclosure.md](responsible-disclosure.md) | Public security disclosure policy + 24/72/7-day SLAs + PGP. | Security | Draft |
 | [../../SECURITY.md](../../SECURITY.md) | Repo-root mirror of `responsible-disclosure.md` (GitHub convention). | Security | Draft |
 | [../../.well-known/security.txt](../../.well-known/security.txt) | RFC 9116 security.txt for tool-driven discovery. | Security | Draft |
-| [vendor-risk-management.md](vendor-risk-management.md) | Tier classification (critical / important / general) + per-tier assessment depth + re-assessment cadence. | Security | Open |
-| [vendor-assessments/](vendor-assessments/) | One file per critical-tier vendor with questionnaire + DPA + decision. | Security | Open |
-| [access-review.sql](access-review.sql) | Quarterly SQL template joining `accounts`, `keys`, `sessions`, `invitations`, `events`, `usage_monthly`. | Security | Open |
-| [access-review.md](access-review.md) | Runbook for the quarterly review — when / who / what to do with findings. | Security | Open |
+| [vendor-risk-management.md](vendor-risk-management.md) | Gregale-authored supplier tiers, evidence criteria, review cadence, and decision process. | Security | Policy draft; assessments open |
+| [vendor-assessments/README.md](vendor-assessments/README.md) | Public index for critical-supplier workpapers and pre-onboarding candidates; confidential reports and decisions stay in restricted storage. | Security | Evidence collection required |
+| [vendor-assessments/managed-postgres-supplier-approval.example.json](vendor-assessments/managed-postgres-supplier-approval.example.json) | Operator decision record shape enforced by the managed-PostgreSQL provisioning gate. | Platform + Security | Template; completed copies stay in restricted storage |
+| [access-review.sql](access-review.sql) | Read-only quarterly inventory of active org memberships, API keys, sessions, pending invitations, and access audit events. | Security | First review outstanding |
+| [access-review.md](access-review.md) | Procedure for running the database inventory, reviewing operator access, handling findings, and retaining restricted evidence. | Security | First review outstanding |
+| [access-review-record-template.md](access-review-record-template.md) | Sign-off record for a completed quarterly review; production copies belong in restricted evidence storage. | Security | Template |
 
 ## Companion documents outside `docs/compliance/`
 

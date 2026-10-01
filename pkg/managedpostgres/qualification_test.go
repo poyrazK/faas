@@ -159,12 +159,15 @@ func TestNewStagingProvisioningGateRequiresExactQualification(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
+	supplierApprovalPath, subprocessorRegisterPath := writeSupplierGateArtifacts(t, registry, now)
 	values := map[string]string{
 		EnvironmentEnv:              "staging",
 		QualificationEnv:            "true",
 		QualificationBackendEnv:     backend.ID,
 		QualificationFingerprintEnv: backend.Fingerprint,
 		QualificationUntilEnv:       now.Add(time.Hour).Format(time.RFC3339),
+		SupplierApprovalPathEnv:     supplierApprovalPath,
+		SubprocessorRegisterPathEnv: subprocessorRegisterPath,
 	}
 	getenv := func(key string) string { return values[key] }
 	if !NewStagingProvisioningGate(registry, getenv, func() time.Time { return now })() {
@@ -173,6 +176,12 @@ func TestNewStagingProvisioningGateRequiresExactQualification(t *testing.T) {
 	tests := map[string]func(map[string]string){
 		"production": func(values map[string]string) { values[EnvironmentEnv] = "production" },
 		"approval":   func(values map[string]string) { values[QualificationEnv] = "false" },
+		"supplier approval missing": func(values map[string]string) {
+			delete(values, SupplierApprovalPathEnv)
+		},
+		"subprocessor register missing": func(values map[string]string) {
+			delete(values, SubprocessorRegisterPathEnv)
+		},
 		"expired": func(values map[string]string) {
 			values[QualificationUntilEnv] = now.Add(-time.Minute).Format(time.RFC3339)
 		},
@@ -213,6 +222,7 @@ func TestNewStagingProvisioningGateUsesApprovalArtifact(t *testing.T) {
 	}
 	lifecycle := passingLifecycleQualificationReport()
 	now := report.CompletedAt.Add(time.Minute)
+	supplierApprovalPath, subprocessorRegisterPath := writeSupplierGateArtifacts(t, registry, now)
 	approval, err := BuildQualificationApproval(report, &lifecycle, backend.ID, backend.Fingerprint, []string{"account-a"}, now, time.Hour)
 	if err != nil {
 		t.Fatalf("BuildQualificationApproval: %v", err)
@@ -239,6 +249,8 @@ func TestNewStagingProvisioningGateUsesApprovalArtifact(t *testing.T) {
 		EnvironmentEnv:               QualificationStagingEnvironment,
 		QualificationApprovalPathEnv: path,
 		CanaryAccountsEnv:            "account-a",
+		SupplierApprovalPathEnv:      supplierApprovalPath,
+		SubprocessorRegisterPathEnv:  subprocessorRegisterPath,
 		QualificationEnv:             "false",
 		QualificationBackendEnv:      "wrong-backend",
 		QualificationFingerprintEnv:  "wrong-fingerprint",

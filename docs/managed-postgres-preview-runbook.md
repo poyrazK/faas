@@ -36,28 +36,50 @@ Run the provider qualification with
 `FAAS_MANAGED_POSTGRES_QUALIFY_LIFECYCLE=true` and save its JSON output in an
 operator-owned path. The output includes a versioned approval envelope and the
 exact `approval_env` values for the staging gate. Verify the saved artifact
-before applying those values:
+after completing the supplier review and publishing the processor notice. Keep
+the signed DPA and assessment in the restricted evidence store. Copy the
+published [`subprocessors.json`](compliance/subprocessors.json) to the
+operator-owned deployment path after adding the supplier with its verified
+notice publication and effective dates. Create the internal decision from the
+[`approval template`](compliance/vendor-assessments/managed-postgres-supplier-approval.example.json),
+replace every placeholder, bind it to the configured backend ID and
+fingerprint, record the restricted reviewer identity, and keep it in the
+restricted store. A conditional acceptance also requires an explicit
+satisfied flag and a restricted evidence reference for condition completion.
+The approval records only opaque evidence references.
+
+Verify all rollout evidence before applying the qualification `approval_env`
+values:
 
 ```sh
 FAAS_ENVIRONMENT=staging \
 FAAS_MANAGED_POSTGRES_CONFIG=/etc/faas/managed-postgres.json \
+FAAS_MANAGED_POSTGRES_SUPPLIER_APPROVAL_PATH=/var/lib/faas/managed-postgres-supplier-approval.json \
+FAAS_MANAGED_POSTGRES_SUBPROCESSOR_REGISTER_PATH=/etc/faas/subprocessors.json \
 FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_PATH=/var/lib/faas/managed-postgres-qualification.json \
 go run ./cmd/managed-postgres-qualify --verify
 ```
 
 Verification is read-only: it checks the report digest, expiry, lifecycle
 checks, provider-neutral spec, exact configured backend fingerprint, and
-canary allowlist without contacting Neon. A non-zero exit or any readiness
-reason blocks rollout. Treat the artifact as expired when its `expires_at`
-passes; rerun qualification instead of extending it by hand.
+canary allowlist, then checks the accepted supplier decision, restricted DPA
+and risk references, current database-category register entry, signed-DPA
+claim, and matured 30-day notice without contacting Neon. The JSON reports
+`qualification_readiness`, `supplier_readiness`, and combined `readiness`. A
+non-zero exit or any readiness reason blocks rollout. Treat either approval as
+expired according to its recorded expiry; repeat the review or qualification
+instead of extending an artifact by hand.
 
 When `FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_PATH` is configured on `apid`,
 the provisioning gate loads that artifact at startup and validates it against
 the configured backend and current canary list. The artifact is authoritative:
 missing, malformed, stale, tampered, or mismatched approval keeps provisioning
 disabled even if the legacy `FAAS_MANAGED_POSTGRES_QUALIFIED*` variables look
-valid. Those variables are a fallback only when no approval path is set.
-Restart `apid` after replacing the artifact so the new document is loaded.
+valid. Those variables are a fallback only when no qualification approval path
+is set. The supplier decision and register snapshot are always required,
+regardless of the qualification path. Missing, malformed, expired, unsigned,
+or mismatched supplier evidence keeps provisioning disabled. Restart `apid`
+after replacing any of the three artifacts so the new documents are loaded.
 
 ## Staging canary rollout
 

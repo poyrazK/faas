@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "supplier_name": "REPLACE_WITH_CONFIGURED_SUPPLIER_NAME",
+  "subprocessor_id": "REPLACE_WITH_ACTIVE_REGISTER_ID",
+  "backend_id": "REPLACE_WITH_CONFIGURED_BACKEND_ID",
+  "backend_fingerprint": "REPLACE_WITH_CONFIGURED_BACKEND_FINGERPRINT",
+  "decision": "pending",
+  "reviewer_reference": "REPLACE_WITH_RESTRICTED_REVIEWER_ID",
+  "assessment_reference": "REPLACE_WITH_RESTRICTED_RISK_RECORD_ID",
+  "agreement_reference": "REPLACE_WITH_RESTRICTED_EXECUTED_DPA_ID",
+  "reviewed_at": "",
+  "expires_at": "",
+  "conditions": "",
+  "conditions_satisfied": false,
+  "conditions_evidence_reference": ""
+}

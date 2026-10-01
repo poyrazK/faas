@@ -1,0 +1,149 @@
+{
+  "standard_id": "csa-ccm-v4-1",
+  "source_version": "CCM 4.1 / CAIQ 4.1",
+  "source_url": "https://cloudsecurityalliance.org/artifacts/cloud-controls-matrix-v4-1",
+  "public_use_note": "Gregale-authored readiness index only. It does not reproduce CSA control text or the full control inventory and is not a completed CAIQ or STAR submission.",
+  "areas": [
+    {
+      "id": "governance-assurance",
+      "name": "Governance and assurance",
+      "accountable_party": "gregale",
+      "supporting_parties": [],
+      "status": "partial",
+      "evidence": [
+        "docs/compliance/soc2-control-mapping.md",
+        "docs/compliance/iso27001-statement-of-applicability.md"
+      ],
+      "gap": "Both mappings are drafts; independent review and attestation have not been completed."
+    },
+    {
+      "id": "identity-access",
+      "name": "Identity and access",
+      "accountable_party": "gregale",
+      "supporting_parties": ["customer"],
+      "status": "partial",
+      "evidence": [
+        "docs/adr/061-organizations-and-memberships.md",
+        "docs/adr/077-step-up-mfa.md",
+        "docs/compliance/access-review.sql",
+        "docs/compliance/access-review.md",
+        "docs/compliance/access-review-record-template.md",
+        "pkg/auth"
+      ],
+      "gap": "The quarterly review procedure and read-only inventory are ready, but no dated, signed review record has been completed yet."
+    },
+    {
+      "id": "platform-infrastructure",
+      "name": "Platform infrastructure and isolation",
+      "accountable_party": "gregale",
+      "supporting_parties": ["hosting_provider"],
+      "status": "partial",
+      "evidence": [
+        "docs/faas_implementation_spec.md",
+        "docs/adr/052-control-plane-mtls-and-handler-peer-binding.md",
+        "deploy/ansible"
+      ],
+      "gap": "The control plane remains single-node; cross-node high availability is documented as future work."
+    },
+    {
+      "id": "data-privacy",
+      "name": "Data protection and customer rights",
+      "accountable_party": "gregale",
+      "supporting_parties": ["customer", "hosting_provider"],
+      "status": "partial",
+      "evidence": [
+        "docs/DPA.md",
+        "docs/adr/021-account-export-and-staged-deletion.md",
+        "docs/compliance/subprocessors.md",
+        "docs/compliance/subprocessors.json"
+      ],
+      "gap": "The DPA and subprocessor artifacts are drafts; a control-specific responsibility split and evidence review remain outstanding."
+    },
+    {
+      "id": "continuity-recovery",
+      "name": "Continuity and recovery",
+      "accountable_party": "gregale",
+      "supporting_parties": ["hosting_provider"],
+      "status": "partial",
+      "evidence": [
+        "docs/drills/2026-09-09-060104-restore-drill.md",
+        "docs/runbooks/PostgresBackup.md",
+        "docs/ops/release-readiness-checklist.md"
+      ],
+      "gap": "The recorded restore drill passed in 56 seconds, but its basebackup RPO was 176 minutes. Define customer-facing RPO/RTO targets and retain recurring off-host restore evidence."
+    },
+    {
+      "id": "facilities-suppliers",
+      "name": "Facilities and supplier oversight",
+      "accountable_party": "gregale",
+      "supporting_parties": ["hosting_provider"],
+      "status": "inherited",
+      "evidence": [
+        "docs/compliance/subprocessors.md",
+        "docs/compliance/README.md",
+        "docs/compliance/iso27001-statement-of-applicability.md",
+        "docs/compliance/vendor-risk-management.md",
+        "docs/compliance/vendor-assessments/README.md",
+        "docs/compliance/vendor-assessments/hetzner.md",
+        "docs/compliance/vendor-assessments/neon.md"
+      ],
+      "gap": "A draft vendor-risk process and preliminary provider workpapers now exist, but no current assurance report or signed risk decision has been reviewed. The live hosting and backup scope is unverified, and Neon remains a pre-onboarding managed-PostgreSQL candidate while the subprocessor register still names Hetzner for that service; hosting physical controls remain inherited and unverified."
+    },
+    {
+      "id": "development-supply-chain",
+      "name": "Secure development and software supply chain",
+      "accountable_party": "gregale",
+      "supporting_parties": [],
+      "status": "partial",
+      "evidence": [
+        "docs/adr/038-build-attestation.md",
+        "docs/adr/058-cosign-deploy-time-enforcement.md",
+        "docs/adr/075-per-deploy-grype-scan.md",
+        "pkg/releaseinstall/sbom.go",
+        "docs/compliance/vendor-risk-management.md",
+        "docs/compliance/vendor-assessments/github.md"
+      ],
+      "gap": "Evidence exists for signing, scanning, and release SBOMs, but application SBOM generation is best-effort and GitHub's current vendor evidence and risk decision remain unreviewed."
+    },
+    {
+      "id": "monitoring-incident-response",
+      "name": "Monitoring and incident response",
+      "accountable_party": "gregale",
+      "supporting_parties": ["hosting_provider"],
+      "status": "partial",
+      "evidence": [
+        "docs/adr/035-auth-audit-events.md",
+        "docs/adr/036-instance-metrics-cardinality-rollups.md",
+        "docs/runbooks/incident-response.md",
+        "docs/compliance/responsible-disclosure.md"
+      ],
+      "gap": "The policy and runbook evidence has not been tied to a recurring, recorded incident-response exercise or a reviewed evidence-retention schedule."
+    },
+    {
+      "id": "workforce-endpoint",
+      "name": "Workforce and endpoint responsibilities",
+      "accountable_party": "gregale",
+      "supporting_parties": ["customer"],
+      "status": "open",
+      "evidence": [
+        "docs/compliance/iso27001-statement-of-applicability.md",
+        "docs/compliance/README.md"
+      ],
+      "gap": "The current SoA marks workforce training as planned and several people controls as out of scope. Operator endpoint evidence and the boundary with customer-managed endpoints need review."
+    },
+    {
+      "id": "customer-portability",
+      "name": "Customer portability and shared responsibility",
+      "accountable_party": "gregale",
+      "supporting_parties": ["customer"],
+      "status": "partial",
+      "evidence": [
+        "docs/DPA.md",
+        "docs/event-driven.md",
+        "api/openapi.yaml",
+        "api/asyncapi.yaml"
+      ],
+      "gap": "The public API and DPA describe individual interfaces and data rights, but a consolidated shared-responsibility guide and end-to-end portability assessment are not present."
+    }
+  ]
+}
