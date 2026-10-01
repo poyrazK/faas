@@ -86,15 +86,18 @@ type branchesResponse struct {
 }
 
 type createBranchRequest struct {
-	Endpoints []struct {
-		Type string `json:"type"`
-	} `json:"endpoints,omitempty"`
-	Branch struct {
+	Endpoints []createBranchEndpoint `json:"endpoints,omitempty"`
+	Branch    struct {
 		Name            string `json:"name"`
 		ParentID        string `json:"parent_id"`
 		ParentTimestamp string `json:"parent_timestamp"`
 		InitSource      string `json:"init_source"`
 	} `json:"branch"`
+}
+
+type createBranchEndpoint struct {
+	Type string `json:"type"`
+	endpointSettings
 }
 
 type createdBranchResponse struct {
@@ -239,9 +242,9 @@ func (p *Provider) Restore(ctx context.Context, request managedpostgres.RestoreR
 	payload.Branch.ParentID = parentID
 	payload.Branch.ParentTimestamp = request.PointInTime.UTC().Format(time.RFC3339Nano)
 	payload.Branch.InitSource = "parent-data"
-	payload.Endpoints = []struct {
-		Type string `json:"type"`
-	}{{Type: "read_write"}}
+	// Branch endpoints otherwise inherit today's project defaults. Those can
+	// differ from the immutable configuration selected for an environment clone.
+	payload.Endpoints = []createBranchEndpoint{{Type: "read_write", endpointSettings: endpointSettingsForSpec(request.Spec)}}
 	var created createdBranchResponse
 	path := "/projects/" + url.PathEscape(source.projectID) + "/branches"
 	if err := p.doJSON(ctx, http.MethodPost, path, nil, payload, &created, http.StatusCreated); err != nil {
@@ -466,11 +469,6 @@ func (p *Provider) Delete(ctx context.Context, request managedpostgres.DeleteReq
 }
 
 func (p *Provider) projectPayload(name string, spec managedpostgres.Spec) createProjectRequest {
-	profile := profiles[spec.Class]
-	suspendTimeout := int64(-1)
-	if spec.ScaleToZero {
-		suspendTimeout = 300
-	}
 	var request createProjectRequest
 	request.Project.Name = name
 	request.Project.OrganizationID = p.organizationID
@@ -478,12 +476,21 @@ func (p *Provider) projectPayload(name string, spec managedpostgres.Spec) create
 	request.Project.PostgresMajor = spec.PostgresMajor
 	request.Project.StorePasswords = true
 	request.Project.HistoryRetentionSeconds = spec.RestoreWindowSeconds
-	request.Project.DefaultEndpointSettings = endpointSettings{MinimumCU: profile.minimumCU, MaximumCU: profile.maximumCU, SuspendTimeoutSecond: suspendTimeout}
+	request.Project.DefaultEndpointSettings = endpointSettingsForSpec(spec)
 	request.Project.Settings.Quota.LogicalSizeBytes = &spec.StorageLimitBytes
 	request.Project.Branch.Name = "production"
 	request.Project.Branch.RoleName = "gregale_owner"
 	request.Project.Branch.DatabaseName = p.databaseName
 	return request
+}
+
+func endpointSettingsForSpec(spec managedpostgres.Spec) endpointSettings {
+	profile := profiles[spec.Class]
+	suspendTimeout := int64(-1)
+	if spec.ScaleToZero {
+		suspendTimeout = 300
+	}
+	return endpointSettings{MinimumCU: profile.minimumCU, MaximumCU: profile.maximumCU, SuspendTimeoutSecond: suspendTimeout}
 }
 
 func (p *Provider) projectName(resourceID string) string {

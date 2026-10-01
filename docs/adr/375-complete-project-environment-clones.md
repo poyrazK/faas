@@ -2769,3 +2769,37 @@ whitespace checks passed. Earlier attempts encountered a test fixture reserved
 slug and shared-host disk exhaustion; the final runs passed after correcting the
 fixture and reclaiming this task's stale build cache artifacts. No whole-repo,
 provider, or native KVM acceptance is claimed.
+
+
+### Captured Neon restore endpoint configuration (2026-10-02)
+
+Neon branch restoration now sends the captured service-class compute bounds and
+scale-to-zero timeout in its dedicated endpoint creation options. Previously
+only the endpoint type was sent, so creation inherited mutable project defaults;
+those could differ from the configuration authenticated by clone capture. Root
+project provisioning and restore endpoint creation use the same adapter mapping
+for the provider-neutral specification. The request changes only the new branch
+endpoint and does not update source project or source endpoint settings.
+
+The endpoint options are defined in the primary
+[Neon OpenAPI schema](https://neon.com/api_spec/release/v2.json), under
+`BranchCreateRequestEndpointOptions`. This use of explicit options preserves the
+captured compute intent; it does not establish an independent project-level
+region, PostgreSQL major, retention, or quota configuration strategy.
+
+The complete Neon adapter suite passed (0.883 s). The new contract covers all
+three service classes, scale-to-zero enabled/disabled, and successful/lost
+creation responses. It decodes actual HTTP request fields independently, then
+inspects the restored target against deliberately different project defaults;
+the observed target specification and exact data lineage match the requested
+capture. Replays issue no additional creation request. The test provider rejects
+any source mutation request. Real provider acceptance was not run.
+
+Checkpoint inspection also confirmed that root database identities currently
+retain a project alias, while a verified restore lineage identifies an exact
+project/branch pair. Source branch identity must be frozen before the coordinated
+capture, rather than resolving a mutable default during bulk restoration. The
+shared application/database/object checkpoint and source-data retention remain
+required; pending/capturing coordinator phases continue to report
+`data_checkpoint_unavailable`. This increment does not enable full admission or
+publication.
