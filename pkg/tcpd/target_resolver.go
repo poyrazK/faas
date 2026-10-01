@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/ingressroute"
+	"math/rand/v2"
 	"sync"
 
 	"github.com/onebox-faas/faas/pkg/gateway"
@@ -13,6 +15,7 @@ import (
 // InstanceSource is the authoritative instance projection needed by the raw
 // TCP edge. Keeping it narrow lets tcpd use either PgStore or MemStore.
 type InstanceSource interface {
+	LiveDeployments(context.Context, string) ([]state.Deployment, error)
 	ListInstancesForApp(ctx context.Context, appID string) ([]state.Instance, error)
 }
 
@@ -44,13 +47,17 @@ func (r *StoreTargetResolver) ResolveTarget(ctx context.Context, route Route) (g
 	if err := ValidateRoute(route); err != nil {
 		return gateway.Target{}, err
 	}
+	selectedDeploymentID, err := ingressroute.Deployment(ctx, r.Instances, route.AppID, rand.Uint64())
+	if err != nil {
+		return gateway.Target{}, fmt.Errorf("select raw ingress deployment: %w", err)
+	}
 	instances, err := r.Instances.ListInstancesForApp(ctx, route.AppID)
 	if err != nil {
 		return gateway.Target{}, fmt.Errorf("list instances for app %q: %w", route.AppID, err)
 	}
 	var running []state.Instance
 	for _, instance := range instances {
-		if instance.AppID == route.AppID && instance.State == string(state.StateRunning) && instance.Mode != string(state.InstanceModeMirror) && instance.ID != "" && instance.NodeID != "" {
+		if instance.AppID == route.AppID && instance.DeploymentID == selectedDeploymentID && instance.State == string(state.StateRunning) && instance.Mode != string(state.InstanceModeMirror) && instance.ID != "" && instance.NodeID != "" {
 			running = append(running, instance)
 		}
 	}
@@ -76,11 +83,11 @@ func (r *StoreTargetResolver) ResolveTarget(ctx context.Context, route Route) (g
 	if r.Admitter == nil {
 		return gateway.Target{}, fmt.Errorf("app %q has no running instance and TCP admission is unavailable", route.AppID)
 	}
-	instanceID, nodeID, deploymentID, wakeID, _, atCapacity, _, err := r.Admitter.AdmitInstance(ctx, route.AppID, "", "", "gateway")
+	instanceID, nodeID, deploymentID, wakeID, _, atCapacity, _, err := r.Admitter.AdmitInstance(ctx, route.AppID, selectedDeploymentID, "", "gateway")
 	if err != nil {
 		return gateway.Target{}, fmt.Errorf("admit app %q for TCP listener: %w", route.AppID, err)
 	}
-	if atCapacity || instanceID == "" || nodeID == "" {
+	if atCapacity || instanceID == "" || nodeID == "" || deploymentID != selectedDeploymentID {
 		return gateway.Target{}, fmt.Errorf("app %q has no routable instance after TCP admission", route.AppID)
 	}
 	return gateway.Target{
