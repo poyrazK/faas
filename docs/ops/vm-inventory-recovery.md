@@ -2,7 +2,7 @@
 
 The signed process inventory repairs a service VM that disappears on a healthy
 node. A complete empty inventory covers a node whose only VM is gone. Missing
-resource metrics never assert VM absence. See [ADR-381](../adr/381-authoritative-vm-inventory-recovery.md).
+resource metrics never assert VM absence. See [ADR-387](../adr/387-authoritative-vm-inventory-recovery.md).
 
 ## Enablement
 

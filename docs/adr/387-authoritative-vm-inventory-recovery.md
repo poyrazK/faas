@@ -1,4 +1,4 @@
-# ADR-381: Authoritative VM inventory recovery
+# ADR-387: Authoritative VM inventory recovery
 
 - **Status:** accepted
 - **Date:** 2026-09-30
