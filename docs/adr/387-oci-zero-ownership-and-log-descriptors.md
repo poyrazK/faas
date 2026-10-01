@@ -1,4 +1,4 @@
-# ADR-385 · OCI zero ownership and workload log descriptors
+# ADR-387 · OCI zero ownership and workload log descriptors
 
 - **Status:** accepted
 - **Date:** 2026-10-01
