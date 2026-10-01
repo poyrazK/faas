@@ -12,14 +12,18 @@ import (
 )
 
 func TestDrain_StageInvocationWakesPinnedStageDeployment(t *testing.T) {
-	testDrainStageInvocation(t, false)
+	testDrainStageInvocation(t, false, false)
 }
 
 func TestDrain_StageKeyedInvocationWakesPinnedStageDeployment(t *testing.T) {
-	testDrainStageInvocation(t, true)
+	testDrainStageInvocation(t, true, false)
 }
 
-func testDrainStageInvocation(t *testing.T, keyed bool) {
+func TestDrain_StageDelayedTaskIgnoresProductionQueueTrigger(t *testing.T) {
+	testDrainStageInvocation(t, false, true)
+}
+
+func testDrainStageInvocation(t *testing.T, keyed, productionTrigger bool) {
 	t.Helper()
 	ctx := t.Context()
 	store := state.NewMemStore()
@@ -62,8 +66,21 @@ func testDrainStageInvocation(t *testing.T, keyed bool) {
 			stage = dep
 		}
 	}
+	source := state.InvocationAsyncInvoke
+	var production state.Invocation
+	if productionTrigger {
+		source = state.InvocationDelayedTask
+		if _, err := store.CreateTriggerIfUnderQuota(ctx, app.ID, "queue", "timers", true, []byte(`{"mode":"delayed_task"}`),
+			"delayed_task", 1, 20, 3, 8192, "commit", api.MustLimitsFor(api.PlanPro)); err != nil {
+			t.Fatal(err)
+		}
+		production, err = store.EnqueueInvocation(ctx, state.Invocation{AppID: app.ID, AccountID: account.ID, Source: source, DueAt: time.Now().Add(-time.Second)})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	prepared, _, err := state.ResolveInvocationVersionForEnvironment(ctx, store, state.Invocation{AppID: app.ID, AccountID: account.ID,
-		Source: state.InvocationAsyncInvoke, Method: "POST", Path: "/work", Payload: json.RawMessage(`{}`), DueAt: time.Now().Add(-time.Second)}, "staging")
+		Source: source, Method: "POST", Path: "/work", Payload: json.RawMessage(`{}`), DueAt: time.Now().Add(-time.Second)}, "staging")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,5 +109,11 @@ func testDrainStageInvocation(t *testing.T, keyed bool) {
 	instance, err := store.InstanceByID(ctx, completed.InstanceID)
 	if err != nil || instance.DeploymentID != stage.ID {
 		t.Fatalf("stage invocation woke production: %+v, %v", instance, err)
+	}
+	if productionTrigger {
+		got, err := store.InvocationByID(ctx, production.ID)
+		if err != nil || got.State != state.InvocationPending || got.Attempts != 0 {
+			t.Fatalf("stage drain took production trigger work: %+v, %v", got, err)
+		}
 	}
 }

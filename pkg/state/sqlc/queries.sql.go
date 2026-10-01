@@ -918,6 +918,203 @@ func (q *Queries) ClaimLayerArtifactDeletion(ctx context.Context, db DBTX, arg C
 	return result.RowsAffected(), nil
 }
 
+const claimProductionLegacyQueueInvocations = `-- name: ClaimProductionLegacyQueueInvocations :many
+with claimed as (
+			select i.id
+			  from invocations i
+			  left join trigger_records tr
+			    on tr.trigger_id = $1
+			   and tr.item_identifier = i.id::text
+			 where i.app_id = $2
+
+          and i.environment_id is null
+          and not exists (select 1 from deployments stage
+              where stage.app_id=i.app_id and stage.scope not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-revision' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))
+          and not exists (select 1 from project_release_sets stage join apps owner
+              on owner.project_id=stage.project_id and owner.account_id=stage.account_id
+              where owner.id=i.app_id and stage.environment_slug not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-release' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))
+			   and i.source = $3
+			   and (i.queue_name = $4 or (
+				       i.queue_name = ''
+				   and not exists (
+				       select 1 from triggers other
+				        where other.app_id = $2
+				          and other.kind = 'queue'
+				          and other.enabled
+				          and other.source = $3
+				          and other.id <> $1
+				   )
+			       ))
+			   and i.state = 'pending'
+			   and i.work_policy_name is null
+			   and i.due_at <= now()
+			   and (tr.id is null
+			        or (tr.state in ('pending','retry') and tr.next_fire_at <= now())
+			        or (tr.state = 'claimed' and tr.claim_expires_at <= now()))
+			 order by i.created_at asc
+			 limit $5
+			 for update of i skip locked
+		), updated as (
+			update invocations i
+			   set state = 'dispatching',
+			       lease_expires_at = now() + interval '10 minutes',
+			       received_at = coalesce(i.received_at, now()),
+			       attempts = i.attempts + 1
+			  from claimed c
+			 where i.id = c.id
+			returning i.id::text as id, i.payload::text as payload, i.headers::text as headers,
+			           '{}'::text as metadata, i.created_at, i.attempts
+		)
+		select id, payload, headers, metadata, created_at, attempts
+		  from updated
+		 order by created_at asc, id asc
+`
+
+type ClaimProductionLegacyQueueInvocationsParams struct {
+	TriggerID  pgtype.UUID
+	AppID      pgtype.UUID
+	Source     string
+	QueueName  string
+	BatchLimit int32
+}
+
+type ClaimProductionLegacyQueueInvocationsRow struct {
+	ID        string
+	Payload   string
+	Headers   string
+	Metadata  string
+	CreatedAt pgtype.Timestamptz
+	Attempts  int32
+}
+
+func (q *Queries) ClaimProductionLegacyQueueInvocations(ctx context.Context, db DBTX, arg ClaimProductionLegacyQueueInvocationsParams) ([]ClaimProductionLegacyQueueInvocationsRow, error) {
+	rows, err := db.Query(ctx, claimProductionLegacyQueueInvocations,
+		arg.TriggerID,
+		arg.AppID,
+		arg.Source,
+		arg.QueueName,
+		arg.BatchLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ClaimProductionLegacyQueueInvocationsRow{}
+	for rows.Next() {
+		var i ClaimProductionLegacyQueueInvocationsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Payload,
+			&i.Headers,
+			&i.Metadata,
+			&i.CreatedAt,
+			&i.Attempts,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const claimProductionQueueTriggerInvocation = `-- name: ClaimProductionQueueTriggerInvocation :one
+update invocations i set state = 'dispatching',
+		lease_expires_at = clock_timestamp() + $1::text::interval,
+		received_at = coalesce(i.received_at, clock_timestamp()),
+		attempts = i.attempts + 1
+		where i.id = $2 and i.app_id = $3 and i.source = 'queue'
+		  and i.state = 'pending' and i.due_at <= clock_timestamp()
+          and i.environment_id is null
+          and not exists (select 1 from deployments stage
+              where stage.app_id=i.app_id and stage.scope not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-revision' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))
+          and not exists (select 1 from project_release_sets stage join apps owner
+              on owner.project_id=stage.project_id and owner.account_id=stage.account_id
+              where owner.id=i.app_id and stage.environment_slug not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-release' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))
+		  and (i.queue_name = $4 or (i.queue_name = ''
+		      and i.work_policy_name is null and not exists (
+		      select 1 from triggers other where other.app_id = $3
+		        and other.kind = 'queue' and other.enabled and other.source = 'queue'
+		        and other.id <> $5)))
+		  and not exists (select 1 from trigger_records tr
+		      where tr.trigger_id = $5 and tr.item_identifier = i.id::text
+		        and not ((tr.state in ('pending','retry') and tr.next_fire_at <= clock_timestamp())
+		          or (tr.state = 'claimed' and tr.claim_expires_at <= clock_timestamp())))
+		returning i.id, i.environment_id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.quota_reserved, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.queue_name, i.on_success_destination_id, i.on_failure_destination_id, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit
+`
+
+type ClaimProductionQueueTriggerInvocationParams struct {
+	Lease        string
+	InvocationID pgtype.UUID
+	AppID        pgtype.UUID
+	QueueName    string
+	TriggerID    pgtype.UUID
+}
+
+func (q *Queries) ClaimProductionQueueTriggerInvocation(ctx context.Context, db DBTX, arg ClaimProductionQueueTriggerInvocationParams) (Invocation, error) {
+	row := db.QueryRow(ctx, claimProductionQueueTriggerInvocation,
+		arg.Lease,
+		arg.InvocationID,
+		arg.AppID,
+		arg.QueueName,
+		arg.TriggerID,
+	)
+	var i Invocation
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.AppID,
+		&i.AccountID,
+		&i.Source,
+		&i.State,
+		&i.Payload,
+		&i.Headers,
+		&i.DueAt,
+		&i.Method,
+		&i.Path,
+		&i.CronID,
+		&i.ScheduledAt,
+		&i.AckUrl,
+		&i.Result,
+		&i.LeaseExpiresAt,
+		&i.ReceivedAt,
+		&i.CompletedAt,
+		&i.InstanceID,
+		&i.Attempts,
+		&i.QuotaReserved,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.OrgID,
+		&i.Outcome,
+		&i.DeadlineAt,
+		&i.RetryPolicy,
+		&i.ResultRetentionUntil,
+		&i.ReplayedFromInvocationID,
+		&i.LastReplayedAt,
+		&i.QueueName,
+		&i.OnSuccessDestinationID,
+		&i.OnFailureDestinationID,
+		&i.WorkPolicyName,
+		&i.WorkKeyDigest,
+		&i.WorkExpiresAt,
+		&i.WorkSequence,
+		&i.WorkPolicyRevision,
+		&i.WorkFairnessDigest,
+		&i.WorkFairnessLimit,
+	)
+	return i, err
+}
+
 const claimProjectEnvironmentCloneInProject = `-- name: ClaimProjectEnvironmentCloneInProject :one
 WITH candidate AS (
     SELECT id FROM project_environment_clone_operations
@@ -1211,6 +1408,34 @@ type CountOpenUploadSessionsByAccountAppParams struct {
 // Hits the partial index upload_sessions_account_open_idx.
 func (q *Queries) CountOpenUploadSessionsByAccountApp(ctx context.Context, db DBTX, arg CountOpenUploadSessionsByAccountAppParams) (int64, error) {
 	row := db.QueryRow(ctx, countOpenUploadSessionsByAccountApp, arg.Column1, arg.AppSlug)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countProductionQueueBindingActive = `-- name: CountProductionQueueBindingActive :one
+select count(*) from invocations i
+			where i.app_id = $1 and source = 'queue' and queue_name = $2
+			  and state = 'dispatching' and lease_expires_at > clock_timestamp()
+          and i.environment_id is null
+          and not exists (select 1 from deployments stage
+              where stage.app_id=i.app_id and stage.scope not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-revision' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))
+          and not exists (select 1 from project_release_sets stage join apps owner
+              on owner.project_id=stage.project_id and owner.account_id=stage.account_id
+              where owner.id=i.app_id and stage.environment_slug not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-release' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))
+`
+
+type CountProductionQueueBindingActiveParams struct {
+	AppID     pgtype.UUID
+	QueueName string
+}
+
+func (q *Queries) CountProductionQueueBindingActive(ctx context.Context, db DBTX, arg CountProductionQueueBindingActiveParams) (int64, error) {
+	row := db.QueryRow(ctx, countProductionQueueBindingActive, arg.AppID, arg.QueueName)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -4096,6 +4321,72 @@ func (q *Queries) FindInvoiceIDsByProviderKey(ctx context.Context, db DBTX, arg 
 		return nil, err
 	}
 	return items, nil
+}
+
+const finishProductionQueueTriggerInvocations = `-- name: FinishProductionQueueTriggerInvocations :exec
+with targets as (
+			select unnest($4::text[]) as id, unnest($5::int[]) as attempt
+		), finalized_invocations as (
+		update invocations i
+		   set state = $6,
+		       outcome = $7,
+		       result = $8::jsonb,
+		       completed_at = now(),
+		       lease_expires_at = null,
+		       last_error = $2::text
+		  from targets
+		 where i.id::text = targets.id and i.attempts = targets.attempt
+		   and i.app_id = $9 and i.source = $10 and i.state = 'dispatching'
+
+          and i.environment_id is null
+          and not exists (select 1 from deployments stage
+              where stage.app_id=i.app_id and stage.scope not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-revision' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))
+          and not exists (select 1 from project_release_sets stage join apps owner
+              on owner.project_id=stage.project_id and owner.account_id=stage.account_id
+              where owner.id=i.app_id and stage.environment_slug not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-release' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))
+		 returning i.id::text as id
+		)
+		update trigger_records tr
+		   set state = $1,
+		       attempts = tr.attempts + case when $1 = 'dead_letter' and tr.state <> 'dead_letter' then 1 else 0 end,
+		       last_error = case when $1 = 'dead_letter' then nullif($2::text, '') else tr.last_error end,
+		       last_dispatched_at = now()
+		  from finalized_invocations finalized
+		 where tr.trigger_id = $3 and tr.item_identifier = finalized.id
+		   and tr.state <> $1
+`
+
+type FinishProductionQueueTriggerInvocationsParams struct {
+	RecordState     string
+	LastError       string
+	TriggerID       pgtype.UUID
+	InvocationIds   []string
+	Attempts        []int32
+	InvocationState string
+	Outcome         pgtype.Text
+	Result          []byte
+	AppID           pgtype.UUID
+	Source          string
+}
+
+func (q *Queries) FinishProductionQueueTriggerInvocations(ctx context.Context, db DBTX, arg FinishProductionQueueTriggerInvocationsParams) error {
+	_, err := db.Exec(ctx, finishProductionQueueTriggerInvocations,
+		arg.RecordState,
+		arg.LastError,
+		arg.TriggerID,
+		arg.InvocationIds,
+		arg.Attempts,
+		arg.InvocationState,
+		arg.Outcome,
+		arg.Result,
+		arg.AppID,
+		arg.Source,
+	)
+	return err
 }
 
 const finishProjectEnvironmentClonePostgresBinding = `-- name: FinishProjectEnvironmentClonePostgresBinding :execrows
@@ -7610,6 +7901,248 @@ func (q *Queries) ListDomainsForApp(ctx context.Context, db DBTX, appID pgtype.U
 	return items, nil
 }
 
+const listDueInvocationRows = `-- name: ListDueInvocationRows :many
+select i.id, i.environment_id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.quota_reserved, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.queue_name, i.on_success_destination_id, i.on_failure_destination_id, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit
+		  from invocations i
+		 where i.state = 'pending' and i.due_at <= $1
+		   and (i.source <> 'queue' or i.queue_name = '')
+		   and (i.environment_id is not null or i.work_policy_name is not null or not exists (
+		       select 1
+		         from triggers t
+		         where t.app_id = i.app_id
+		          and t.kind = 'queue'
+		          and t.enabled
+		          and t.source = i.source
+		   ))
+		   and (i.work_policy_name is null or not exists (
+		       select 1 from invocations older
+		       where older.app_id = i.app_id
+		         and older.work_policy_name = i.work_policy_name
+		         and older.work_key_digest = i.work_key_digest
+		         and older.work_sequence < i.work_sequence
+		         and older.state in ('pending','dispatching')
+		   ))
+		   and (i.work_policy_name is null or not exists (
+		       select 1 from trigger_records older
+		       join triggers source on source.id=older.trigger_id
+		       where source.app_id=i.app_id
+		         and older.work_policy_name=i.work_policy_name
+		         and older.work_key_digest=i.work_key_digest
+		         and older.work_sequence<i.work_sequence
+		         and older.state in ('pending','retry','claimed')
+		   ))
+		   and (i.work_fairness_limit is null or ((
+		       select count(*) from invocations active
+		       where active.app_id = i.app_id
+		         and active.work_policy_name = i.work_policy_name
+		         and active.work_fairness_digest = i.work_fairness_digest
+		         and active.state = 'dispatching'
+		         and active.lease_expires_at > $1
+		   ) + (
+		       select count(*) from trigger_records active
+		       join triggers source on source.id=active.trigger_id
+		       where source.app_id=i.app_id
+		         and active.work_policy_name=i.work_policy_name
+		         and active.work_fairness_digest=i.work_fairness_digest
+		         and active.state='claimed' and active.claim_expires_at > $1
+		   )) < i.work_fairness_limit)
+		 order by i.due_at
+		 for update skip locked
+		 limit $2::bigint
+`
+
+type ListDueInvocationRowsParams struct {
+	NowAt      pgtype.Timestamptz
+	BatchLimit int64
+}
+
+func (q *Queries) ListDueInvocationRows(ctx context.Context, db DBTX, arg ListDueInvocationRowsParams) ([]Invocation, error) {
+	rows, err := db.Query(ctx, listDueInvocationRows, arg.NowAt, arg.BatchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Invocation{}
+	for rows.Next() {
+		var i Invocation
+		if err := rows.Scan(
+			&i.ID,
+			&i.EnvironmentID,
+			&i.AppID,
+			&i.AccountID,
+			&i.Source,
+			&i.State,
+			&i.Payload,
+			&i.Headers,
+			&i.DueAt,
+			&i.Method,
+			&i.Path,
+			&i.CronID,
+			&i.ScheduledAt,
+			&i.AckUrl,
+			&i.Result,
+			&i.LeaseExpiresAt,
+			&i.ReceivedAt,
+			&i.CompletedAt,
+			&i.InstanceID,
+			&i.Attempts,
+			&i.QuotaReserved,
+			&i.LastError,
+			&i.CreatedAt,
+			&i.OrgID,
+			&i.Outcome,
+			&i.DeadlineAt,
+			&i.RetryPolicy,
+			&i.ResultRetentionUntil,
+			&i.ReplayedFromInvocationID,
+			&i.LastReplayedAt,
+			&i.QueueName,
+			&i.OnSuccessDestinationID,
+			&i.OnFailureDestinationID,
+			&i.WorkPolicyName,
+			&i.WorkKeyDigest,
+			&i.WorkExpiresAt,
+			&i.WorkSequence,
+			&i.WorkPolicyRevision,
+			&i.WorkFairnessDigest,
+			&i.WorkFairnessLimit,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDueInvocationRowsAfter = `-- name: ListDueInvocationRowsAfter :many
+select i.id, i.environment_id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.quota_reserved, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.queue_name, i.on_success_destination_id, i.on_failure_destination_id, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit
+		  from invocations i
+		 where i.state = 'pending' and i.due_at <= $1
+		   and (i.source <> 'queue' or i.queue_name = '')
+		   and (i.environment_id is not null or i.work_policy_name is not null or not exists (
+		       select 1
+		         from triggers t
+		         where t.app_id = i.app_id
+		          and t.kind = 'queue'
+		          and t.enabled
+		          and t.source = i.source
+		   ))
+		   and (i.work_policy_name is null or not exists (
+		       select 1 from invocations older
+		       where older.app_id = i.app_id
+		         and older.work_policy_name = i.work_policy_name
+		         and older.work_key_digest = i.work_key_digest
+		         and older.work_sequence < i.work_sequence
+		         and older.state in ('pending','dispatching')
+		   ))
+		   and (i.work_policy_name is null or not exists (
+		       select 1 from trigger_records older
+		       join triggers source on source.id=older.trigger_id
+		       where source.app_id=i.app_id
+		         and older.work_policy_name=i.work_policy_name
+		         and older.work_key_digest=i.work_key_digest
+		         and older.work_sequence<i.work_sequence
+		         and older.state in ('pending','retry','claimed')
+		   ))
+		   and (i.work_fairness_limit is null or ((
+		       select count(*) from invocations active
+		       where active.app_id = i.app_id
+		         and active.work_policy_name = i.work_policy_name
+		         and active.work_fairness_digest = i.work_fairness_digest
+		         and active.state = 'dispatching'
+		         and active.lease_expires_at > $1
+		   ) + (
+		       select count(*) from trigger_records active
+		       join triggers source on source.id=active.trigger_id
+		       where source.app_id=i.app_id
+		         and active.work_policy_name=i.work_policy_name
+		         and active.work_fairness_digest=i.work_fairness_digest
+		         and active.state='claimed' and active.claim_expires_at > $1
+		   )) < i.work_fairness_limit)
+		   and ($2::boolean or (i.due_at, i.id) > ($3::timestamptz, $4::uuid))
+		 order by i.due_at, i.id
+		 for update skip locked
+		 limit $5::bigint
+`
+
+type ListDueInvocationRowsAfterParams struct {
+	NowAt      pgtype.Timestamptz
+	FirstPage  bool
+	AfterDueAt pgtype.Timestamptz
+	AfterID    pgtype.UUID
+	BatchLimit int64
+}
+
+func (q *Queries) ListDueInvocationRowsAfter(ctx context.Context, db DBTX, arg ListDueInvocationRowsAfterParams) ([]Invocation, error) {
+	rows, err := db.Query(ctx, listDueInvocationRowsAfter,
+		arg.NowAt,
+		arg.FirstPage,
+		arg.AfterDueAt,
+		arg.AfterID,
+		arg.BatchLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Invocation{}
+	for rows.Next() {
+		var i Invocation
+		if err := rows.Scan(
+			&i.ID,
+			&i.EnvironmentID,
+			&i.AppID,
+			&i.AccountID,
+			&i.Source,
+			&i.State,
+			&i.Payload,
+			&i.Headers,
+			&i.DueAt,
+			&i.Method,
+			&i.Path,
+			&i.CronID,
+			&i.ScheduledAt,
+			&i.AckUrl,
+			&i.Result,
+			&i.LeaseExpiresAt,
+			&i.ReceivedAt,
+			&i.CompletedAt,
+			&i.InstanceID,
+			&i.Attempts,
+			&i.QuotaReserved,
+			&i.LastError,
+			&i.CreatedAt,
+			&i.OrgID,
+			&i.Outcome,
+			&i.DeadlineAt,
+			&i.RetryPolicy,
+			&i.ResultRetentionUntil,
+			&i.ReplayedFromInvocationID,
+			&i.LastReplayedAt,
+			&i.QueueName,
+			&i.OnSuccessDestinationID,
+			&i.OnFailureDestinationID,
+			&i.WorkPolicyName,
+			&i.WorkKeyDigest,
+			&i.WorkExpiresAt,
+			&i.WorkSequence,
+			&i.WorkPolicyRevision,
+			&i.WorkFairnessDigest,
+			&i.WorkFairnessLimit,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEgressCircuitCandidates = `-- name: ListEgressCircuitCandidates :many
 SELECT DISTINCT ON (u.app_id, u.host_redacted_hash, u.port)
     u.app_id,
@@ -8603,6 +9136,98 @@ func (q *Queries) ListOrgsForAccount(ctx context.Context, db DBTX, accountID pgt
 	return items, nil
 }
 
+const listProductionNamedQueueCandidates = `-- name: ListProductionNamedQueueCandidates :many
+select i.id::text from invocations i
+		left join trigger_records tr on tr.trigger_id = $1
+		  and tr.item_identifier = i.id::text
+		where i.app_id = $2 and i.source = 'queue' and i.state = 'pending'
+
+          and i.environment_id is null
+          and not exists (select 1 from deployments stage
+              where stage.app_id=i.app_id and stage.scope not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-revision' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))
+          and not exists (select 1 from project_release_sets stage join apps owner
+              on owner.project_id=stage.project_id and owner.account_id=stage.account_id
+              where owner.id=i.app_id and stage.environment_slug not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-release' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))
+		  and i.due_at <= clock_timestamp()
+		  and (tr.id is null
+		    or (tr.state in ('pending','retry') and tr.next_fire_at <= clock_timestamp())
+		    or (tr.state = 'claimed' and tr.claim_expires_at <= clock_timestamp()))
+		  and (i.work_policy_name is null or not exists (
+		      select 1 from invocations older
+		      where older.app_id = i.app_id
+		        and older.work_policy_name = i.work_policy_name
+		        and older.work_key_digest = i.work_key_digest
+		        and older.work_sequence < i.work_sequence
+		        and older.state in ('pending','dispatching')))
+		  and (i.work_policy_name is null or not exists (
+		      select 1 from trigger_records older
+		      join triggers source on source.id=older.trigger_id
+		      where source.app_id=i.app_id
+		        and older.work_policy_name=i.work_policy_name
+		        and older.work_key_digest=i.work_key_digest
+		        and older.work_sequence<i.work_sequence
+		        and older.state in ('pending','retry','claimed')))
+		  and (i.work_fairness_limit is null or (
+		      select count(*) from invocations active
+		      where active.app_id = i.app_id
+		        and active.work_policy_name = i.work_policy_name
+		        and active.work_fairness_digest = i.work_fairness_digest
+		        and active.state = 'dispatching'
+		        and active.lease_expires_at > clock_timestamp()
+		  ) + (
+		      select count(*) from trigger_records active
+		      join triggers source on source.id=active.trigger_id
+		      where source.app_id=i.app_id
+		        and active.work_policy_name=i.work_policy_name
+		        and active.work_fairness_digest=i.work_fairness_digest
+		        and active.state='claimed'
+		        and active.claim_expires_at > clock_timestamp()
+		  ) < i.work_fairness_limit)
+		  and (i.queue_name = $3 or (i.queue_name = ''
+		      and i.work_policy_name is null and not exists (
+		      select 1 from triggers other where other.app_id = $2
+		        and other.kind = 'queue' and other.enabled and other.source = 'queue'
+		        and other.id <> $1)))
+		order by i.created_at, i.id limit $4
+`
+
+type ListProductionNamedQueueCandidatesParams struct {
+	TriggerID      pgtype.UUID
+	AppID          pgtype.UUID
+	QueueName      string
+	CandidateLimit int32
+}
+
+// ADR-375: production queue pollers cannot own stage work.
+func (q *Queries) ListProductionNamedQueueCandidates(ctx context.Context, db DBTX, arg ListProductionNamedQueueCandidatesParams) ([]string, error) {
+	rows, err := db.Query(ctx, listProductionNamedQueueCandidates,
+		arg.TriggerID,
+		arg.AppID,
+		arg.QueueName,
+		arg.CandidateLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var i_id string
+		if err := rows.Scan(&i_id); err != nil {
+			return nil, err
+		}
+		items = append(items, i_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProjectReleaseSetsBefore = `-- name: ListProjectReleaseSetsBefore :many
 SELECT (to_jsonb(rs) || jsonb_build_object('environment', rs.environment_slug,
         'members', COALESCE((SELECT jsonb_agg(jsonb_build_object(
@@ -9507,6 +10132,49 @@ func (q *Queries) LockNextProjectEnvironmentCloneWorkerProject(ctx context.Conte
 	var i LockNextProjectEnvironmentCloneWorkerProjectRow
 	err := row.Scan(&i.ProjectID, &i.AccountID)
 	return i, err
+}
+
+const lockProductionQueueBindingCap = `-- name: LockProductionQueueBindingCap :one
+select max_concurrency from queue_bindings
+		where app_id = $1 and queue_name = $2 and enabled for update
+`
+
+type LockProductionQueueBindingCapParams struct {
+	AppID     pgtype.UUID
+	QueueName string
+}
+
+func (q *Queries) LockProductionQueueBindingCap(ctx context.Context, db DBTX, arg LockProductionQueueBindingCapParams) (int32, error) {
+	row := db.QueryRow(ctx, lockProductionQueueBindingCap, arg.AppID, arg.QueueName)
+	var max_concurrency int32
+	err := row.Scan(&max_concurrency)
+	return max_concurrency, err
+}
+
+const lockProductionQueueTriggerInvocationRow = `-- name: LockProductionQueueTriggerInvocationRow :one
+SELECT i.id FROM invocations i WHERE i.id=$1 AND i.app_id=$2 AND i.source='queue' AND i.state='pending'
+          and i.environment_id is null
+          and not exists (select 1 from deployments stage
+              where stage.app_id=i.app_id and stage.scope not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-revision' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))
+          and not exists (select 1 from project_release_sets stage join apps owner
+              on owner.project_id=stage.project_id and owner.account_id=stage.account_id
+              where owner.id=i.app_id and stage.environment_slug not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-release' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-',''))) FOR UPDATE OF i SKIP LOCKED
+`
+
+type LockProductionQueueTriggerInvocationRowParams struct {
+	InvocationID pgtype.UUID
+	AppID        pgtype.UUID
+}
+
+func (q *Queries) LockProductionQueueTriggerInvocationRow(ctx context.Context, db DBTX, arg LockProductionQueueTriggerInvocationRowParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockProductionQueueTriggerInvocationRow, arg.InvocationID, arg.AppID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const lockProjectEnvironmentCloneApps = `-- name: LockProjectEnvironmentCloneApps :many
@@ -13903,6 +14571,73 @@ func (q *Queries) ReadInvocationWorkEnvironmentDomain(ctx context.Context, db DB
 	return environment_id, err
 }
 
+const readProductionQueueTriggerInvocation = `-- name: ReadProductionQueueTriggerInvocation :one
+SELECT i.id, i.environment_id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.quota_reserved, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.queue_name, i.on_success_destination_id, i.on_failure_destination_id, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit FROM invocations i WHERE i.id=$1 AND i.app_id=$2 AND i.source='queue'
+          and i.environment_id is null
+          and not exists (select 1 from deployments stage
+              where stage.app_id=i.app_id and stage.scope not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-revision' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))
+          and not exists (select 1 from project_release_sets stage join apps owner
+              on owner.project_id=stage.project_id and owner.account_id=stage.account_id
+              where owner.id=i.app_id and stage.environment_slug not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-release' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))
+`
+
+type ReadProductionQueueTriggerInvocationParams struct {
+	InvocationID pgtype.UUID
+	AppID        pgtype.UUID
+}
+
+func (q *Queries) ReadProductionQueueTriggerInvocation(ctx context.Context, db DBTX, arg ReadProductionQueueTriggerInvocationParams) (Invocation, error) {
+	row := db.QueryRow(ctx, readProductionQueueTriggerInvocation, arg.InvocationID, arg.AppID)
+	var i Invocation
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.AppID,
+		&i.AccountID,
+		&i.Source,
+		&i.State,
+		&i.Payload,
+		&i.Headers,
+		&i.DueAt,
+		&i.Method,
+		&i.Path,
+		&i.CronID,
+		&i.ScheduledAt,
+		&i.AckUrl,
+		&i.Result,
+		&i.LeaseExpiresAt,
+		&i.ReceivedAt,
+		&i.CompletedAt,
+		&i.InstanceID,
+		&i.Attempts,
+		&i.QuotaReserved,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.OrgID,
+		&i.Outcome,
+		&i.DeadlineAt,
+		&i.RetryPolicy,
+		&i.ResultRetentionUntil,
+		&i.ReplayedFromInvocationID,
+		&i.LastReplayedAt,
+		&i.QueueName,
+		&i.OnSuccessDestinationID,
+		&i.OnFailureDestinationID,
+		&i.WorkPolicyName,
+		&i.WorkKeyDigest,
+		&i.WorkExpiresAt,
+		&i.WorkSequence,
+		&i.WorkPolicyRevision,
+		&i.WorkFairnessDigest,
+		&i.WorkFairnessLimit,
+	)
+	return i, err
+}
+
 const readProjectEnvironmentCloneConfigurationCaptureIdentity = `-- name: ReadProjectEnvironmentCloneConfigurationCaptureIdentity :one
 SELECT o.configuration_capture_version,o.source_revision_hash,o.source_environment,coalesce(o.source_release_set_id::text,'')::text AS source_release_set_id,
     EXISTS(SELECT 1 FROM project_environment_clone_configuration_captures c WHERE c.operation_id=o.id)::boolean AS has_capture
@@ -15706,6 +16441,43 @@ func (q *Queries) RegisterLayerArtifactRetention(ctx context.Context, db DBTX, s
 	return err
 }
 
+const releaseProductionNamedQueueClaims = `-- name: ReleaseProductionNamedQueueClaims :exec
+with targets as (
+		select unnest($3::text[]) as id, unnest($4::int[]) as attempt
+	) update invocations i set state = 'pending', lease_expires_at = null
+	  from targets where i.id::text = targets.id and i.attempts = targets.attempt
+	    and i.app_id = $1 and i.source = 'queue' and i.queue_name in ($2, '')
+	    and i.state = 'dispatching'
+
+          and i.environment_id is null
+          and not exists (select 1 from deployments stage
+              where stage.app_id=i.app_id and stage.scope not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-revision' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))
+          and not exists (select 1 from project_release_sets stage join apps owner
+              on owner.project_id=stage.project_id and owner.account_id=stage.account_id
+              where owner.id=i.app_id and stage.environment_slug not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-release' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))
+`
+
+type ReleaseProductionNamedQueueClaimsParams struct {
+	AppID         pgtype.UUID
+	QueueName     string
+	InvocationIds []string
+	Attempts      []int32
+}
+
+func (q *Queries) ReleaseProductionNamedQueueClaims(ctx context.Context, db DBTX, arg ReleaseProductionNamedQueueClaimsParams) error {
+	_, err := db.Exec(ctx, releaseProductionNamedQueueClaims,
+		arg.AppID,
+		arg.QueueName,
+		arg.InvocationIds,
+		arg.Attempts,
+	)
+	return err
+}
+
 const releaseProjectEnvironmentCloneWorkerLease = `-- name: ReleaseProjectEnvironmentCloneWorkerLease :execrows
 UPDATE project_environment_clone_operations
 SET lease_token = NULL, lease_until = NULL, revision = revision + 1, updated_at = clock_timestamp(),
@@ -17297,6 +18069,61 @@ func (q *Queries) RetainedLayerBytesWithClonePins(ctx context.Context, db DBTX, 
 	var retained_bytes int64
 	err := row.Scan(&retained_bytes)
 	return retained_bytes, err
+}
+
+const retryProductionQueueTriggerInvocations = `-- name: RetryProductionQueueTriggerInvocations :exec
+with targets as (
+			select unnest($5::text[]) as id, unnest($6::int[]) as attempt
+		)
+		update invocations i
+		   set state = 'pending',
+		       outcome = null,
+		       completed_at = null,
+		       due_at = coalesce((
+		           select tr.next_fire_at
+		             from trigger_records tr
+		            where tr.trigger_id = $1
+		              and tr.item_identifier = i.id::text
+		       ), now() + interval '1 second'),
+		       lease_expires_at = null,
+		       last_error = $2::text
+		  from targets
+		 where i.id::text = targets.id and i.attempts = targets.attempt
+		   and i.app_id = $3
+		   and i.source = $4
+		   and i.state = 'dispatching'
+
+          and i.environment_id is null
+          and not exists (select 1 from deployments stage
+              where stage.app_id=i.app_id and stage.scope not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-revision' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))
+          and not exists (select 1 from project_release_sets stage join apps owner
+              on owner.project_id=stage.project_id and owner.account_id=stage.account_id
+              where owner.id=i.app_id and stage.environment_slug not in ('production','default')
+                and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
+                    where lower(pin.key)='x-gregale-release' and translate(regexp_replace(lower(pin.value), '[[:space:]]|(^urn:uuid:)|[{}]', '', 'g'), '-', '')=replace(stage.id::text,'-','')))
+`
+
+type RetryProductionQueueTriggerInvocationsParams struct {
+	TriggerID     pgtype.UUID
+	LastError     string
+	AppID         pgtype.UUID
+	Source        string
+	InvocationIds []string
+	Attempts      []int32
+}
+
+func (q *Queries) RetryProductionQueueTriggerInvocations(ctx context.Context, db DBTX, arg RetryProductionQueueTriggerInvocationsParams) error {
+	_, err := db.Exec(ctx, retryProductionQueueTriggerInvocations,
+		arg.TriggerID,
+		arg.LastError,
+		arg.AppID,
+		arg.Source,
+		arg.InvocationIds,
+		arg.Attempts,
+	)
+	return err
 }
 
 const reverseAccountInvoiceCreditConsumption = `-- name: ReverseAccountInvoiceCreditConsumption :execrows

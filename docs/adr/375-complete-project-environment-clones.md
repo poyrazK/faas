@@ -1501,3 +1501,40 @@ coverage contracts also pass. Independent sqlc regeneration matches the generate
 files and `git diff --check` is clean. These local contracts do not establish
 message dispatch, full configuration coverage, provider copying or native VM
 acceptance.
+
+### 2026-10-01: production queue consumer boundaries
+
+Production queue triggers previously selected pending work by app and source.
+That selection could claim a stage-pinned delayed task, and a production trigger
+could hide the same task from the generic drain. Generic due lists and the drain
+now retain environment-owned tasks regardless of production trigger definitions.
+Their ordinary quota-aware claim and pinned deployment delivery paths apply.
+
+Named and retained legacy queue pollers exclude environment-owned rows and owned
+stage revision/release pins before the candidate/batch limit. The ownership
+checks also apply to named claims, active production concurrency counts, partial
+batch releases, retry, acknowledgement and dead-letter callbacks. Header matching
+accounts for case, whitespace and supported UUID spellings. A missing ownership
+marker cannot make an owned stage pin eligible for a production consumer.
+
+The named claim takes the environment ownership lock before lane/row/binding
+locks and verifies production eligibility again at row lock and update. All
+changed poller, claim and due-list queries are generated through sqlc. A shared
+typed invocation conversion preserves private environment ownership, quota and
+work-lane metadata along with the persisted delivery envelope.
+
+These boundaries do not activate prepared stage queue consumers or admit stage
+queue messages. Their isolated message partition and consumer claim/dispatch
+proofs remain required, along with complete resource and data-copy strategies.
+
+MemStore and migrated PostgreSQL contracts verify that production triggers do
+not hide stage delayed tasks, their quota-aware claims retain ownership, and
+production named claims reject owned stage rows/pins without mutations. Poller
+contracts cover delayed, named and retained unnamed queues, forged acknowledgement,
+retry/dead-letter/release callbacks, preserved stage leases/account reservations,
+and a 1,100-row stage backlog that must not consume the production candidate
+budget. Existing keyed queue receipt, concurrency, fairness, paging, quota,
+invocation ownership/cleanup, consumer preparation and generic drain checks pass.
+The drain's simulated gateway/VM contract selects the pinned stage deployment;
+this is not native VM acceptance. Independent sqlc regeneration and the whitespace
+check pass. Complete stage queue dispatch and full cloning remain unverified.

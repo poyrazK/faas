@@ -12162,7 +12162,7 @@ func (m *MemStore) dueInvocationsLocked(now time.Time) []Invocation {
 				continue
 			}
 		}
-		if inv.WorkPolicyName == "" {
+		if inv.WorkPolicyName == "" && inv.EnvironmentID == "" {
 			ownedByTrigger := false
 			for _, trigger := range m.triggers {
 				if trigger.Enabled && trigger.Kind == "queue" && trigger.Source.Valid &&

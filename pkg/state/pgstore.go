@@ -15285,61 +15285,11 @@ func (s *PgStore) ListDueInvocations(ctx context.Context, now time.Time, limit i
 		return nil, fmt.Errorf("state: invocations begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	rows, err := tx.Query(ctx, `
-		select `+invocationSelectCols+`
-		  from invocations i
-		 where i.state = 'pending' and i.due_at <= $1
-		   and (i.source <> 'queue' or i.queue_name = '')
-		   and (i.work_policy_name is not null or not exists (
-		       select 1
-		         from triggers t
-		         where t.app_id = i.app_id
-		          and t.kind = 'queue'
-		          and t.enabled
-		          and t.source = i.source
-		   ))
-		   and (i.work_policy_name is null or not exists (
-		       select 1 from invocations older
-		       where older.app_id = i.app_id
-		         and older.work_policy_name = i.work_policy_name
-		         and older.work_key_digest = i.work_key_digest
-		         and older.work_sequence < i.work_sequence
-		         and older.state in ('pending','dispatching')
-		   ))
-		   and (i.work_policy_name is null or not exists (
-		       select 1 from trigger_records older
-		       join triggers source on source.id=older.trigger_id
-		       where source.app_id=i.app_id
-		         and older.work_policy_name=i.work_policy_name
-		         and older.work_key_digest=i.work_key_digest
-		         and older.work_sequence<i.work_sequence
-		         and older.state in ('pending','retry','claimed')
-		   ))
-		   and (i.work_fairness_limit is null or ((
-		       select count(*) from invocations active
-		       where active.app_id = i.app_id
-		         and active.work_policy_name = i.work_policy_name
-		         and active.work_fairness_digest = i.work_fairness_digest
-		         and active.state = 'dispatching'
-		         and active.lease_expires_at > $1
-		   ) + (
-		       select count(*) from trigger_records active
-		       join triggers source on source.id=active.trigger_id
-		       where source.app_id=i.app_id
-		         and active.work_policy_name=i.work_policy_name
-		         and active.work_fairness_digest=i.work_fairness_digest
-		         and active.state='claimed' and active.claim_expires_at > $1
-		   )) < i.work_fairness_limit)
-		 order by i.due_at
-		 for update skip locked
-		 limit $2`, now.UTC(), limit)
+	rows, err := sqlc.New().ListDueInvocationRows(ctx, tx, sqlc.ListDueInvocationRowsParams{NowAt: pgtype.Timestamptz{Time: now.UTC(), Valid: true}, BatchLimit: int64(limit)})
 	if err != nil {
 		return nil, fmt.Errorf("state: invocations list-due: %w", err)
 	}
-	out, err := scanInvocations(rows)
-	if err != nil {
-		return nil, err
-	}
+	out := invocationsFromSQLC(rows)
 	// SKIP LOCKED implies we hold a row lock until commit. The drain
 	// re-fetches the row by id (via ClaimInvocation) which is fine —
 	// the lock release at commit allows the claim to resolve in a
@@ -15369,6 +15319,9 @@ func (s *PgStore) ListDueInvocationsAfter(ctx context.Context, now time.Time, af
 	}
 	afterDue, afterID := time.Time{}, "00000000-0000-0000-0000-000000000000"
 	if after.ID != "" {
+		if parsed, err := uuid.Parse(after.ID); err != nil || parsed == uuid.Nil {
+			return nil, ErrInvalidArgument
+		}
 		afterDue, afterID = after.DueAt.UTC(), after.ID
 	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
@@ -15376,62 +15329,12 @@ func (s *PgStore) ListDueInvocationsAfter(ctx context.Context, now time.Time, af
 		return nil, fmt.Errorf("state: invocations begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	rows, err := tx.Query(ctx, `
-		select `+invocationSelectCols+`
-		  from invocations i
-		 where i.state = 'pending' and i.due_at <= $1
-		   and (i.source <> 'queue' or i.queue_name = '')
-		   and (i.work_policy_name is not null or not exists (
-		       select 1
-		         from triggers t
-		         where t.app_id = i.app_id
-		          and t.kind = 'queue'
-		          and t.enabled
-		          and t.source = i.source
-		   ))
-		   and (i.work_policy_name is null or not exists (
-		       select 1 from invocations older
-		       where older.app_id = i.app_id
-		         and older.work_policy_name = i.work_policy_name
-		         and older.work_key_digest = i.work_key_digest
-		         and older.work_sequence < i.work_sequence
-		         and older.state in ('pending','dispatching')
-		   ))
-		   and (i.work_policy_name is null or not exists (
-		       select 1 from trigger_records older
-		       join triggers source on source.id=older.trigger_id
-		       where source.app_id=i.app_id
-		         and older.work_policy_name=i.work_policy_name
-		         and older.work_key_digest=i.work_key_digest
-		         and older.work_sequence<i.work_sequence
-		         and older.state in ('pending','retry','claimed')
-		   ))
-		   and (i.work_fairness_limit is null or ((
-		       select count(*) from invocations active
-		       where active.app_id = i.app_id
-		         and active.work_policy_name = i.work_policy_name
-		         and active.work_fairness_digest = i.work_fairness_digest
-		         and active.state = 'dispatching'
-		         and active.lease_expires_at > $1
-		   ) + (
-		       select count(*) from trigger_records active
-		       join triggers source on source.id=active.trigger_id
-		       where source.app_id=i.app_id
-		         and active.work_policy_name=i.work_policy_name
-		         and active.work_fairness_digest=i.work_fairness_digest
-		         and active.state='claimed' and active.claim_expires_at > $1
-		   )) < i.work_fairness_limit)
-		   and ($3::boolean or (i.due_at, i.id) > ($4::timestamptz, $5::uuid))
-		 order by i.due_at, i.id
-		 for update skip locked
-		 limit $2`, now.UTC(), limit, after.ID == "", afterDue, afterID)
+	rows, err := sqlc.New().ListDueInvocationRowsAfter(ctx, tx, sqlc.ListDueInvocationRowsAfterParams{NowAt: pgtype.Timestamptz{Time: now.UTC(), Valid: true}, BatchLimit: int64(limit),
+		FirstPage: after.ID == "", AfterDueAt: pgtype.Timestamptz{Time: afterDue, Valid: true}, AfterID: mustPgUUID(afterID)})
 	if err != nil {
 		return nil, fmt.Errorf("state: invocations list-due-after: %w", err)
 	}
-	out, err := scanInvocations(rows)
-	if err != nil {
-		return nil, err
-	}
+	out := invocationsFromSQLC(rows)
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("state: invocations list-due-after commit: %w", err)
 	}
