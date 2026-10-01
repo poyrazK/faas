@@ -973,3 +973,7 @@ Inspection of `startGatewaydPublic` found that it supplied only `FAAS_TCPD_SCHED
 ### Harness private scheduler environment contract
 
 The public gateway harness now builds its environment through `gatewaydPublicEnv`, exercised by `TestGatewayPublicEnvPrivateSchedulerTargets`. Three race runs passed together with existing VMMD environment regressions. The test requires TCP and UDP targets to equal the same private Unix socket and checks gateway addresses, UDP opt-in and source policy remain present. Scoped lint reported zero issues. Logs `/tmp/gregale-udp-harness-target-contract.log` and `/tmp/gregale-udp-harness-target-lint.log`. This pins environment construction; native UDP admission remains unexecuted.
+
+### Published native UDP harness wiring correction
+
+Public ingress draft PR #3992 commit `e47b267f2` includes the private scheduler target correction and portable environment regression. Three race-detector runs passed on that isolated branch, log `/tmp/gregale-udp-public-harness-tests.log`. Native execution and CI for the updated public head remain pending.
