@@ -933,3 +933,7 @@ Supervisor PR #3988 commit `667ad5c30` tests an explicit listener-source error, 
 ### Current integrated portable UDP gate
 
 Integration commit `05d46cfff` expands the required gate to include both Go client HTTP contract tests. Full `make udp-contract-check` completed successfully on that tree: all 81 required portable race contracts passed, with no skipped cases accepted, plus deployment-policy and alert fixtures. Log `/tmp/gregale-udp-full-current-contract.log`. This includes the newly added socket and listener-source recovery regressions; native KVM, deployed dependency recovery, firewall load and scrape acceptance remain unverified.
+
+### Real PostgreSQL UDP listener read stall recovery
+
+`TestPgStoreUDPListenerReadDeadlineAndRecovery` passed three race-detector runs without skips against the owned local PostgreSQL 16 cluster. An exclusive lock on the private fixture table forces the enabled-listener query to honor a 100ms context deadline. After rollback releases the lock, a fresh read returns the unchanged listener, and disabling it removes it from the enabled projection. Scoped lint reported zero issues. Logs `/tmp/gregale-udp-pg-read-recovery.log` and `/tmp/gregale-udp-pg-read-recovery-lint.log`. The owned cluster was stopped afterward. Database restart/reconnection and deployed daemon recovery remain unverified.
