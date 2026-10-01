@@ -7749,3 +7749,11 @@ const IssueMaxBatchEvents = 32
 
 // UDPDatagramMaxBytes bounds IPv4 payloads after the minimum IP and UDP headers.
 const UDPDatagramMaxBytes = 65507
+
+// NamespaceBridgeReadinessTimeout allows the TCP helper's 30-second guest dial
+// plus launcher overhead, while bounding an unresponsive TCP or UDP helper.
+const NamespaceBridgeReadinessTimeout = 35 * time.Second
+
+// NamespaceBridgeReadinessMaxBytes bounds the helper's newline-terminated
+// readiness record, including its delimiter and any diagnostic text.
+const NamespaceBridgeReadinessMaxBytes = 4096
