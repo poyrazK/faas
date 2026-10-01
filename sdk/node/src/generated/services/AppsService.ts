@@ -58,6 +58,7 @@ import type { RotateDeployTokenResponse } from '../models/RotateDeployTokenRespo
 import type { RuntimePolicyStatusResponse } from '../models/RuntimePolicyStatusResponse.js';
 import type { SidecarTimelineResponse } from '../models/SidecarTimelineResponse.js';
 import type { TCPListenerResponse } from '../models/TCPListenerResponse.js';
+import type { TCPListenerTLSStatusResponse } from '../models/TCPListenerTLSStatusResponse.js';
 import type { UpdateAppRequest } from '../models/UpdateAppRequest.js';
 import type { UpdateTCPListenerRequest } from '../models/UpdateTCPListenerRequest.js';
 import type { WakeTimelineResponse } from '../models/WakeTimelineResponse.js';
@@ -435,6 +436,47 @@ export class AppsService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
+      },
+    });
+  }
+  /**
+   * Read observed edge certificate status for a TCP listener.
+   * Returns customer-safe certificate evidence for each observed edge.
+   * Missing evidence, evidence at least sixty seconds old, and changed or
+   * disabled TLS intent have unknown status. This does not establish fleet
+   * coverage, client trust, public routing or guest availability.
+   *
+   * @returns TCPListenerTLSStatusResponse Certificate evidence from observed edges only.
+   * @throws ApiError
+   */
+  public static appTcpListenerTlsStatus({
+    slug,
+    name,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * TCP endpoint whose observed certificates are requested.
+     */
+    name: string,
+  }): CancelablePromise<TCPListenerTLSStatusResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/tcp-listeners/{name}/tls-status',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Certificate observation storage is unavailable.`,
       },
     });
   }

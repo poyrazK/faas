@@ -1755,8 +1755,12 @@ from .stream_deployment_logs_follow import StreamDeploymentLogsFollow
 from .sweep_stuck_builds_response import SweepStuckBuildsResponse
 from .tcp_listener_response import TCPListenerResponse
 from .tcp_listener_response_protocol import TCPListenerResponseProtocol
+from .tcp_listener_tls_certificate_status import TCPListenerTLSCertificateStatus
+from .tcp_listener_tls_certificate_status_status import TCPListenerTLSCertificateStatusStatus
 from .tcp_listener_tls_config import TCPListenerTLSConfig
 from .tcp_listener_tls_config_mode import TCPListenerTLSConfigMode
+from .tcp_listener_tls_status_response import TCPListenerTLSStatusResponse
+from .tcp_listener_tls_status_response_scope import TCPListenerTLSStatusResponseScope
 from .template_view import TemplateView
 from .template_view_category import TemplateViewCategory
 from .tenant_hostname_response import TenantHostnameResponse
@@ -3638,8 +3642,12 @@ __all__ = (
     "SweepStuckBuildsResponse",
     "TCPListenerResponse",
     "TCPListenerResponseProtocol",
+    "TCPListenerTLSCertificateStatus",
+    "TCPListenerTLSCertificateStatusStatus",
     "TCPListenerTLSConfig",
     "TCPListenerTLSConfigMode",
+    "TCPListenerTLSStatusResponse",
+    "TCPListenerTLSStatusResponseScope",
     "TemplateView",
     "TemplateViewCategory",
     "TenantHostnameResponse",
