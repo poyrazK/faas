@@ -604,6 +604,15 @@ func (q *Queries) AuthorizeBaseImageProducerInsert(ctx context.Context, db DBTX,
 	return err
 }
 
+const authorizeBaseImageScanInsert = `-- name: AuthorizeBaseImageScanInsert :exec
+SELECT set_config('gregale.base_scan_insert',$1::uuid::text,true)
+`
+
+func (q *Queries) AuthorizeBaseImageScanInsert(ctx context.Context, db DBTX, id pgtype.UUID) error {
+	_, err := db.Exec(ctx, authorizeBaseImageScanInsert, id)
+	return err
+}
+
 const authorizeDeploymentArtifactScanInsert = `-- name: AuthorizeDeploymentArtifactScanInsert :exec
 SELECT set_config('gregale.artifact_scan_insert',$1::uuid::text,true)
 `
@@ -4716,6 +4725,37 @@ func (q *Queries) GetBaseImageProducerByID(ctx context.Context, db DBTX, id pgty
 	return i, err
 }
 
+const getBaseImageScanByID = `-- name: GetBaseImageScanByID :one
+SELECT id, base_producer_id, storage_key, input_snapshot, input_hash, result_snapshot, scanned_at, expires_at FROM base_image_scans WHERE id=$1::uuid
+`
+
+func (q *Queries) GetBaseImageScanByID(ctx context.Context, db DBTX, id pgtype.UUID) (BaseImageScan, error) {
+	row := db.QueryRow(ctx, getBaseImageScanByID, id)
+	var i BaseImageScan
+	err := row.Scan(
+		&i.ID,
+		&i.BaseProducerID,
+		&i.StorageKey,
+		&i.InputSnapshot,
+		&i.InputHash,
+		&i.ResultSnapshot,
+		&i.ScannedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
+const getBaseImageScanPointer = `-- name: GetBaseImageScanPointer :one
+SELECT scan_id FROM base_image_scan_current WHERE storage_key=$1::text
+`
+
+func (q *Queries) GetBaseImageScanPointer(ctx context.Context, db DBTX, storageKey string) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, getBaseImageScanPointer, storageKey)
+	var scan_id pgtype.UUID
+	err := row.Scan(&scan_id)
+	return scan_id, err
+}
+
 const getCurrentBaseImageProducer = `-- name: GetCurrentBaseImageProducer :one
 SELECT p.id, p.storage_key, p.parent_producer_id, p.input_snapshot, p.input_hash, p.published_at FROM base_image_producers p JOIN base_image_producer_current c ON c.producer_id=p.id AND c.storage_key=p.storage_key
 WHERE c.storage_key=$1
@@ -4731,6 +4771,29 @@ func (q *Queries) GetCurrentBaseImageProducer(ctx context.Context, db DBTX, stor
 		&i.InputSnapshot,
 		&i.InputHash,
 		&i.PublishedAt,
+	)
+	return i, err
+}
+
+const getCurrentBaseImageScan = `-- name: GetCurrentBaseImageScan :one
+SELECT s.id, s.base_producer_id, s.storage_key, s.input_snapshot, s.input_hash, s.result_snapshot, s.scanned_at, s.expires_at FROM base_image_scan_current c JOIN base_image_scans s ON s.id=c.scan_id
+JOIN base_image_producer_current p ON p.storage_key=c.storage_key AND p.producer_id=s.base_producer_id
+JOIN base_image_producers b ON b.id=p.producer_id
+WHERE c.storage_key=$1::text AND s.input_snapshot->>'base_input_hash'=b.input_hash
+`
+
+func (q *Queries) GetCurrentBaseImageScan(ctx context.Context, db DBTX, storageKey string) (BaseImageScan, error) {
+	row := db.QueryRow(ctx, getCurrentBaseImageScan, storageKey)
+	var i BaseImageScan
+	err := row.Scan(
+		&i.ID,
+		&i.BaseProducerID,
+		&i.StorageKey,
+		&i.InputSnapshot,
+		&i.InputHash,
+		&i.ResultSnapshot,
+		&i.ScannedAt,
+		&i.ExpiresAt,
 	)
 	return i, err
 }
@@ -5050,6 +5113,39 @@ func (q *Queries) GetFeatureFlagVersion(ctx context.Context, db DBTX, arg GetFea
 		&i.Actor,
 		&i.RestoredFrom,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getFreshBaseImageScan = `-- name: GetFreshBaseImageScan :one
+WITH storage_clock AS MATERIALIZED (SELECT clock_timestamp() AS now)
+SELECT s.id, s.base_producer_id, s.storage_key, s.input_snapshot, s.input_hash, s.result_snapshot, s.scanned_at, s.expires_at FROM base_image_scan_current c JOIN base_image_scans s ON s.id=c.scan_id
+JOIN base_image_producer_current p ON p.storage_key=c.storage_key AND p.producer_id=s.base_producer_id
+JOIN base_image_producers b ON b.id=p.producer_id CROSS JOIN storage_clock
+WHERE b.id=$1::uuid AND b.input_hash=$2::text AND s.input_snapshot->>'base_input_hash'=b.input_hash
+ AND s.scanned_at>=b.published_at AND s.scanned_at<=now AND s.expires_at>now AND s.input_snapshot->>'status'='complete'
+ AND (s.input_snapshot->'report'->>'scanner_db_built_at')::timestamptz<=now
+ AND (s.input_snapshot->'report'->>'scanner_db_built_at')::timestamptz>=now-make_interval(secs=>$3::double precision)
+`
+
+type GetFreshBaseImageScanParams struct {
+	ProducerID      pgtype.UUID
+	ProducerHash    string
+	DbMaxAgeSeconds float64
+}
+
+func (q *Queries) GetFreshBaseImageScan(ctx context.Context, db DBTX, arg GetFreshBaseImageScanParams) (BaseImageScan, error) {
+	row := db.QueryRow(ctx, getFreshBaseImageScan, arg.ProducerID, arg.ProducerHash, arg.DbMaxAgeSeconds)
+	var i BaseImageScan
+	err := row.Scan(
+		&i.ID,
+		&i.BaseProducerID,
+		&i.StorageKey,
+		&i.InputSnapshot,
+		&i.InputHash,
+		&i.ResultSnapshot,
+		&i.ScannedAt,
+		&i.ExpiresAt,
 	)
 	return i, err
 }
@@ -6117,6 +6213,56 @@ func (q *Queries) InsertBaseImageProducer(ctx context.Context, db DBTX, arg Inse
 		&i.InputSnapshot,
 		&i.InputHash,
 		&i.PublishedAt,
+	)
+	return i, err
+}
+
+const insertBaseImageScan = `-- name: InsertBaseImageScan :one
+WITH storage_clock AS MATERIALIZED (SELECT clock_timestamp() AS now),
+inputs AS MATERIALIZED (SELECT $6::jsonb AS value)
+INSERT INTO base_image_scans(id,base_producer_id,storage_key,input_snapshot,input_hash,result_snapshot,scanned_at,expires_at)
+SELECT $1::uuid,p.id,p.storage_key,inputs.value,$2::text,
+ (CASE WHEN inputs.value->>'status'='complete' THEN inputs.value->'report'
+ ELSE jsonb_build_object('image_digest',inputs.value->>'source_reference','artifact_digest',inputs.value->'artifact'->>'digest',
+ 'vulnerabilities','[]'::jsonb,'severity_counts',jsonb_build_object('critical',0,'high',0,'medium',0,'low',0,'unknown',0),'error',inputs.value->>'failure') END)
+ || jsonb_build_object('status',inputs.value->>'status','scanned_at',to_char(now AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')),
+ now,now+make_interval(secs=>$3::double precision)
+FROM base_image_producers p CROSS JOIN storage_clock CROSS JOIN inputs
+WHERE p.id=$4::uuid AND p.published_at<=now
+ AND (inputs.value->>'status'='failed' OR
+ ((inputs.value->'report'->>'scanner_db_built_at')::timestamptz<=now
+ AND (inputs.value->'report'->>'scanner_db_built_at')::timestamptz>=now-make_interval(secs=>$5::double precision)))
+RETURNING id, base_producer_id, storage_key, input_snapshot, input_hash, result_snapshot, scanned_at, expires_at
+`
+
+type InsertBaseImageScanParams struct {
+	ID              pgtype.UUID
+	InputHash       string
+	TtlSeconds      float64
+	ProducerID      pgtype.UUID
+	DbMaxAgeSeconds float64
+	InputSnapshot   []byte
+}
+
+func (q *Queries) InsertBaseImageScan(ctx context.Context, db DBTX, arg InsertBaseImageScanParams) (BaseImageScan, error) {
+	row := db.QueryRow(ctx, insertBaseImageScan,
+		arg.ID,
+		arg.InputHash,
+		arg.TtlSeconds,
+		arg.ProducerID,
+		arg.DbMaxAgeSeconds,
+		arg.InputSnapshot,
+	)
+	var i BaseImageScan
+	err := row.Scan(
+		&i.ID,
+		&i.BaseProducerID,
+		&i.StorageKey,
+		&i.InputSnapshot,
+		&i.InputHash,
+		&i.ResultSnapshot,
+		&i.ScannedAt,
+		&i.ExpiresAt,
 	)
 	return i, err
 }
@@ -18826,6 +18972,21 @@ type SelectBaseImageProducerParams struct {
 
 func (q *Queries) SelectBaseImageProducer(ctx context.Context, db DBTX, arg SelectBaseImageProducerParams) error {
 	_, err := db.Exec(ctx, selectBaseImageProducer, arg.StorageKey, arg.ProducerID)
+	return err
+}
+
+const selectBaseImageScan = `-- name: SelectBaseImageScan :exec
+INSERT INTO base_image_scan_current(storage_key,scan_id) VALUES($1::text,$2::uuid)
+ON CONFLICT(storage_key) DO UPDATE SET scan_id=excluded.scan_id
+`
+
+type SelectBaseImageScanParams struct {
+	StorageKey string
+	ID         pgtype.UUID
+}
+
+func (q *Queries) SelectBaseImageScan(ctx context.Context, db DBTX, arg SelectBaseImageScanParams) error {
+	_, err := db.Exec(ctx, selectBaseImageScan, arg.StorageKey, arg.ID)
 	return err
 }
 

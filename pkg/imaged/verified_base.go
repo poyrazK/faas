@@ -37,6 +37,9 @@ func baseGuestDigest(raw string) string {
 }
 
 func (h *Handler) ensureVerifiedBaseExt4(ctx context.Context, r verifiedBaseRequest, resolver oci.ImageResolver) (BaseStageResult, error) {
+	if err := writeProducedBaseScanCompatibility(ctx, r.be, r.key, r.ref, r.out, state.BaseImageScan{}); err != nil {
+		return BaseStageResult{}, err
+	}
 	store, ok := h.store.(state.BaseImageProducerStore)
 	if !ok {
 		return BaseStageResult{}, fmt.Errorf("imaged: base producer store unavailable")
@@ -250,10 +253,8 @@ func (h *Handler) finishVerifiedBase(ctx context.Context, r verifiedBaseRequest,
 	if err := h.writeBaseDigestSidecar(ctx, r.be, r.digestKey, configDigest, r.guestDigest, producer.Input.SourceReference); err != nil {
 		return BaseStageResult{}, err
 	}
-	if !skipped || !h.scanSidecarSourceCurrent(ctx, r.be, r.key, r.out, producer.Input.SourceReference) {
-		if err := h.writeScanSidecar(ctx, r.key, r.digestKey, producer.Input.SourceReference, r.out); err != nil {
-			h.log.Warn("imaged: base scan remains pending", "key", r.key, "err", err)
-		}
+	if err := h.writeProducedBaseScanSidecar(ctx, r, producer); err != nil {
+		return BaseStageResult{}, fmt.Errorf("imaged: publish produced shared-base scan: %w", err)
 	}
 	generation := baseDigestSidecarValueWithSource(configDigest, r.guestDigest, producer.Input.SourceReference)
 	if err := markCachedBaseGeneration(r.be, r.key, r.digestKey, generation); err != nil {

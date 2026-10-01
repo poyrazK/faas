@@ -1602,6 +1602,35 @@ $$;
 
 
 --
+-- Name: base_image_scan_current_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.base_image_scan_current_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP<>'DELETE' AND current_setting('gregale.base_scan_insert',true)=NEW.scan_id::text
+   AND (TG_OP='INSERT' OR NEW.storage_key=OLD.storage_key) THEN RETURN NEW; END IF;
+ RAISE EXCEPTION 'base scan selection is private' USING ERRCODE='23514',CONSTRAINT='base_image_scan_immutable';
+END;
+$$;
+
+
+--
+-- Name: base_image_scan_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.base_image_scan_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='INSERT' AND current_setting('gregale.base_scan_insert',true)=NEW.id::text THEN RETURN NEW; END IF;
+ RAISE EXCEPTION 'base scan evidence is immutable/private' USING ERRCODE='23514',CONSTRAINT='base_image_scan_immutable';
+END;
+$$;
+
+
+--
 -- Name: bind_job_run_image_snapshot(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -6179,6 +6208,40 @@ CREATE TABLE public.base_image_producers (
     CONSTRAINT base_image_producers_input_hash_check CHECK ((input_hash ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT base_image_producers_input_snapshot_check CHECK ((jsonb_typeof(input_snapshot) = 'object'::text)),
     CONSTRAINT base_image_producers_storage_key_check CHECK (((storage_key ~ '^base/[^/]+[.]ext4$'::text) AND (length(storage_key) <= 512)))
+);
+
+
+--
+-- Name: base_image_scan_current; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.base_image_scan_current (
+    storage_key text NOT NULL,
+    scan_id uuid NOT NULL,
+    CONSTRAINT base_image_scan_current_storage_key_check CHECK (((storage_key ~ '^base/[^/]+[.]ext4$'::text) AND (length(storage_key) <= 512)))
+);
+
+
+--
+-- Name: base_image_scans; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.base_image_scans (
+    id uuid NOT NULL,
+    base_producer_id uuid NOT NULL,
+    storage_key text NOT NULL,
+    input_snapshot jsonb NOT NULL,
+    input_hash text NOT NULL,
+    result_snapshot jsonb NOT NULL,
+    scanned_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT base_image_scans_check CHECK (((expires_at > scanned_at) AND (expires_at <= (scanned_at + '00:05:00'::interval)))),
+    CONSTRAINT base_image_scans_check1 CHECK ((((input_snapshot ->> 'base_producer_id'::text) = (base_producer_id)::text) AND (((input_snapshot -> 'artifact'::text) ->> 'storage_key'::text) = storage_key))),
+    CONSTRAINT base_image_scans_check2 CHECK ((((input_snapshot ->> 'status'::text) = ANY (ARRAY['complete'::text, 'failed'::text])) AND ((result_snapshot ->> 'status'::text) = (input_snapshot ->> 'status'::text)))),
+    CONSTRAINT base_image_scans_input_hash_check CHECK ((input_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT base_image_scans_input_snapshot_check CHECK ((jsonb_typeof(input_snapshot) = 'object'::text)),
+    CONSTRAINT base_image_scans_result_snapshot_check CHECK ((jsonb_typeof(result_snapshot) = 'object'::text)),
+    CONSTRAINT base_image_scans_storage_key_check CHECK (((storage_key ~ '^base/[^/]+[.]ext4$'::text) AND (length(storage_key) <= 512)))
 );
 
 
@@ -13381,6 +13444,30 @@ ALTER TABLE ONLY public.base_image_producers
 
 ALTER TABLE ONLY public.base_image_producers
     ADD CONSTRAINT base_image_producers_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: base_image_scan_current base_image_scan_current_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.base_image_scan_current
+    ADD CONSTRAINT base_image_scan_current_pkey PRIMARY KEY (storage_key);
+
+
+--
+-- Name: base_image_scans base_image_scans_id_storage_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.base_image_scans
+    ADD CONSTRAINT base_image_scans_id_storage_key_key UNIQUE (id, storage_key);
+
+
+--
+-- Name: base_image_scans base_image_scans_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.base_image_scans
+    ADD CONSTRAINT base_image_scans_pkey PRIMARY KEY (id);
 
 
 --
@@ -21356,6 +21443,20 @@ CREATE TRIGGER base_producer_private_guard BEFORE INSERT OR DELETE OR UPDATE ON 
 
 
 --
+-- Name: base_image_scan_current base_scan_current_private_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER base_scan_current_private_guard BEFORE INSERT OR DELETE OR UPDATE ON public.base_image_scan_current FOR EACH ROW EXECUTE FUNCTION public.base_image_scan_current_guard();
+
+
+--
+-- Name: base_image_scans base_scan_private_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER base_scan_private_guard BEFORE INSERT OR DELETE OR UPDATE ON public.base_image_scans FOR EACH ROW EXECUTE FUNCTION public.base_image_scan_guard();
+
+
+--
 -- Name: cluster_signing_keys cluster_signing_keys_changed_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -23003,6 +23104,22 @@ ALTER TABLE ONLY public.base_image_producer_current
 
 ALTER TABLE ONLY public.base_image_producers
     ADD CONSTRAINT base_image_producers_parent_producer_id_fkey FOREIGN KEY (parent_producer_id) REFERENCES public.base_image_producers(id);
+
+
+--
+-- Name: base_image_scan_current base_image_scan_current_scan_id_storage_key_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.base_image_scan_current
+    ADD CONSTRAINT base_image_scan_current_scan_id_storage_key_fkey FOREIGN KEY (scan_id, storage_key) REFERENCES public.base_image_scans(id, storage_key);
+
+
+--
+-- Name: base_image_scans base_image_scans_base_producer_id_storage_key_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.base_image_scans
+    ADD CONSTRAINT base_image_scans_base_producer_id_storage_key_fkey FOREIGN KEY (base_producer_id, storage_key) REFERENCES public.base_image_producers(id, storage_key);
 
 
 --

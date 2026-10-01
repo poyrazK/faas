@@ -1011,6 +1011,22 @@ type BaseImageProducerCurrent struct {
 	ProducerID pgtype.UUID
 }
 
+type BaseImageScan struct {
+	ID             pgtype.UUID
+	BaseProducerID pgtype.UUID
+	StorageKey     string
+	InputSnapshot  []byte
+	InputHash      string
+	ResultSnapshot []byte
+	ScannedAt      pgtype.Timestamptz
+	ExpiresAt      pgtype.Timestamptz
+}
+
+type BaseImageScanCurrent struct {
+	StorageKey string
+	ScanID     pgtype.UUID
+}
+
 type BillingIdentity struct {
 	AccountID      pgtype.UUID
 	Provider       string

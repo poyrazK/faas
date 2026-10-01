@@ -145,6 +145,8 @@ type MemStore struct {
 	deploymentRegistryRootfsCurrent            map[string]string
 	deploymentArtifactScans                    map[string]DeploymentArtifactScan
 	deploymentArtifactScanCurrent              map[string]string
+	baseImageScans                             map[string]BaseImageScan
+	baseImageScanCurrent                       map[string]string
 	instanceApplicationStandardAdmissions      map[string]InstanceApplicationStandardAdmission
 	instanceApplicationStandardBoots           map[string]instanceStandardBoot
 	instanceApplicationStandardBootTokens      map[string]string

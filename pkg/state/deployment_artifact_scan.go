@@ -68,32 +68,41 @@ func prepareDeploymentArtifactScan(input DeploymentArtifactScanInput) (Deploymen
 	if !validStandardResourceRead(in.ID, in.RootfsProducerID) || !validStandardResourceRead(in.AccountID, in.AppID) || !validStandardResourceRead(in.DeploymentID, in.DeploymentID) || in.OrgID != "" && !validStandardResourceRead(in.OrgID, in.OrgID) || len(in.RootfsInputHash) != 64 || api.ValidateScope(in.Scope) != nil || in.ImageReference == "" || in.ArtifactBytes <= 0 || in.ArtifactBytes > api.ApplicationStandardBaseMaxArtifactBytes || ociref.ValidateDigest(in.ArtifactDigest) != nil || in.WorkloadName != "" && !api.ValidSidecarName(in.WorkloadName) {
 		return in, "", ErrInvalidArgument
 	}
-	switch in.Status {
-	case "complete":
-		if in.Failure != "" || in.ScannerName != "grype" || in.Report == nil {
-			return in, "", ErrInvalidArgument
-		}
-		report, err := prepareArtifactScanReport(*in.Report, in.ImageReference, in.ArtifactDigest)
-		if err != nil {
-			return in, "", err
-		}
-		in.Report = &report
-	case "failed":
-		if in.Report != nil || in.ScannerName != "" {
-			return in, "", ErrInvalidArgument
-		}
-		switch in.Failure {
-		case "artifact_read", "artifact_mismatch", "scanner_unavailable", "scanner_invalid":
-		default:
-			return in, "", ErrInvalidArgument
-		}
-	default:
-		return in, "", ErrInvalidArgument
+	report, err := prepareProducerScanReport(in.Status, in.ScannerName, in.Failure, in.Report, in.ImageReference, in.ArtifactDigest)
+	if err != nil {
+		return in, "", err
 	}
+	in.Report = report
 	in.ID, in.RootfsProducerID, in.AccountID, in.AppID, in.DeploymentID = canonicalStandardUUID(in.ID), canonicalStandardUUID(in.RootfsProducerID), canonicalStandardUUID(in.AccountID), canonicalStandardUUID(in.AppID), canonicalStandardUUID(in.DeploymentID)
 	in.OrgID = registryCanonicalOrg(in.OrgID)
 	hash, err := standardReviewDigest(in)
 	return in, hash, err
+}
+
+func prepareProducerScanReport(status, scanner, failure string, report *api.ScanResult, image, digest string) (*api.ScanResult, error) {
+	switch status {
+	case "complete":
+		if failure != "" || scanner != "grype" || report == nil {
+			return nil, ErrInvalidArgument
+		}
+		value, err := prepareArtifactScanReport(cloneArtifactScanResult(*report), image, digest)
+		if err != nil {
+			return nil, err
+		}
+		return &value, nil
+	case "failed":
+		if report != nil || scanner != "" {
+			return nil, ErrInvalidArgument
+		}
+		switch failure {
+		case "artifact_read", "artifact_mismatch", "scanner_unavailable", "scanner_invalid":
+			return nil, nil
+		default:
+			return nil, ErrInvalidArgument
+		}
+	default:
+		return nil, ErrInvalidArgument
+	}
 }
 func boundedScanMetadata(value string) bool {
 	return value != "" && value == strings.TrimSpace(value) && len(value) <= api.ApplicationStandardScanMaxMetadataBytes && !strings.ContainsAny(value, "\r\n\x00")
@@ -152,10 +161,13 @@ func artifactScanResult(in DeploymentArtifactScanInput, at time.Time) api.ScanRe
 	return report
 }
 func checkArtifactScanFreshness(in DeploymentArtifactScanInput, now time.Time) error {
-	if in.Report == nil {
+	return checkProducerScanFreshness(in.Report, now)
+}
+func checkProducerScanFreshness(report *api.ScanResult, now time.Time) error {
+	if report == nil {
 		return nil
 	}
-	built, err := time.Parse(time.RFC3339Nano, in.Report.ScannerDBBuiltAt)
+	built, err := time.Parse(time.RFC3339Nano, report.ScannerDBBuiltAt)
 	if err != nil || built.After(now) || now.Sub(built) > api.ApplicationStandardScannerDBMaxAge {
 		return ErrApplicationStandardRuntimeStale
 	}

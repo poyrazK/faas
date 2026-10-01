@@ -25,6 +25,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/imagechain"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/rootfs"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -32,6 +33,10 @@ import (
 // fixtures. This verifies portable ownership/identity behavior, not native ext4,
 // Grype execution, or any VM consumer ACK.
 func producedScanFixture(t *testing.T, sidecar bool) (*Handler, *testHarness) {
+	return producedScanFixtureWithBase(t, sidecar, false)
+}
+
+func producedScanFixtureWithBase(t *testing.T, sidecar, sharedBase bool) (*Handler, *testHarness) {
 	t.Helper()
 	th := newTestHarness(t, state.DeploymentKindImage, api.PlanPro, "")
 	th.app.RequireSigned, th.app.Runtime = true, "node22"
@@ -42,13 +47,25 @@ func producedScanFixture(t *testing.T, sidecar bool) (*Handler, *testHarness) {
 	th.createReplacementDeployment(t)
 	layer := gzTar(t, map[string]string{"app/server": "#!/bin/sh\n"})
 	diff := imagechain.Digest(layerPlainBytes(t, layer))
-	cfg, _ := json.Marshal(map[string]any{"os": "linux", "architecture": "amd64", "config": map[string]any{"Entrypoint": []string{"/app/server"}}, "rootfs": map[string]any{"type": "layers", "diff_ids": []string{diff}}})
-	manifest := oci.Manifest{SchemaVersion: 2, MediaType: "application/vnd.oci.image.manifest.v1+json", Config: oci.Descriptor{Digest: imagechain.Digest(cfg), Size: int64(len(cfg))}, Layers: []oci.Descriptor{{Digest: imagechain.Digest(layer), Size: int64(len(layer))}}}
+	baseLayer := gzTar(t, map[string]string{"usr/share/base": "base contents"})
+	baseDiff := imagechain.Digest(layerPlainBytes(t, baseLayer))
+	diffs, layers := []string{diff}, []oci.Descriptor{{Digest: imagechain.Digest(layer), Size: int64(len(layer))}}
+	if sharedBase {
+		diffs = append([]string{baseDiff}, diffs...)
+		layers = append([]oci.Descriptor{{Digest: imagechain.Digest(baseLayer), Size: int64(len(baseLayer))}}, layers...)
+	}
+	cfg, _ := json.Marshal(map[string]any{"os": "linux", "architecture": "amd64", "config": map[string]any{"Entrypoint": []string{"/app/server"}}, "rootfs": map[string]any{"type": "layers", "diff_ids": diffs}})
+	manifest := oci.Manifest{SchemaVersion: 2, MediaType: "application/vnd.oci.image.manifest.v1+json", Config: oci.Descriptor{Digest: imagechain.Digest(cfg), Size: int64(len(cfg))}, Layers: layers}
 	raw, _ := json.Marshal(manifest)
 	digest := imagechain.Digest(raw)
 	ref := "registry.example/team/app@" + digest
-	baseCfg := []byte(`{"rootfs":{"type":"layers","diff_ids":["` + diff + `","` + diff + `"]}}`)
-	mp := &fakeManifestPuller{appRef: ref, appManifest: manifest, appConfig: oci.Config{Entrypoint: []string{"/app/server"}, DiffIDs: []string{diff}}, baseManifest: oci.Manifest{Config: oci.Descriptor{Digest: imagechain.Digest(baseCfg), Size: int64(len(baseCfg))}}, baseConfig: oci.Config{DiffIDs: []string{diff, diff}}, layerBlobs: map[string][]byte{imagechain.Digest(layer): layer, imagechain.Digest(cfg): cfg, imagechain.Digest(baseCfg): baseCfg}}
+	baseDiffs := []string{diff, diff} // force the existing full-rootfs fixture
+	if sharedBase {
+		baseDiffs = []string{baseDiff}
+	}
+	baseCfg, _ := json.Marshal(map[string]any{"os": "linux", "architecture": "amd64", "rootfs": map[string]any{"type": "layers", "diff_ids": baseDiffs}})
+	baseManifest := oci.Manifest{SchemaVersion: 2, MediaType: "application/vnd.oci.image.manifest.v1+json", Config: oci.Descriptor{Digest: imagechain.Digest(baseCfg), Size: int64(len(baseCfg))}, Layers: []oci.Descriptor{{Digest: imagechain.Digest(baseLayer), Size: int64(len(baseLayer))}}}
+	mp := &fakeManifestPuller{appRef: ref, appManifest: manifest, appConfig: oci.Config{Entrypoint: []string{"/app/server"}, DiffIDs: diffs}, baseManifest: baseManifest, baseConfig: oci.Config{DiffIDs: baseDiffs}, layerBlobs: map[string][]byte{imagechain.Digest(layer): layer, imagechain.Digest(baseLayer): baseLayer, imagechain.Digest(cfg): cfg, imagechain.Digest(baseCfg): baseCfg}}
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -74,6 +91,17 @@ func producedScanFixture(t *testing.T, sidecar bool) (*Handler, *testHarness) {
 	h := New(th.store, th.notif, p, rootfs.NewBuilder(&recordingRunner{}), guest, th.appsR, silentLogger())
 	h.trustedPublishersCacheOK = true
 	h.trustedPublishersCache = map[string][]cosign.TrustedPublisher{th.app.ID: {{Name: "company", PublicKey: &key.PublicKey}}}
+	if sharedBase {
+		rawBase, _ := json.Marshal(baseManifest)
+		baseRef := "registry.example/base@" + imagechain.Digest(rawBase)
+		basePuller := &baseResolutionPuller{minimalManifestPuller: &minimalManifestPuller{manifest: baseManifest, layers: mp.layerBlobs}, resolution: oci.ImageResolution{SourceReference: baseRef, Reference: baseRef, SourceDigest: imagechain.Digest(rawBase), Digest: imagechain.Digest(rawBase), Evidence: &imagechain.Evidence{SourceManifest: rawBase, Config: baseCfg}}}
+		baseHandler := New(th.store, th.notif, basePuller, rootfs.NewBuilder(&recordingRunner{}), guest, th.appsR, silentLogger())
+		baseHandler.WithGrypeRun(func(context.Context, string) (*ScanResult, error) { return producedScanResult(t, false), nil })
+		if _, err := baseHandler.EnsureBaseExt4(t.Context(), baseRef, sched.BaseKeyForArch(th.app.Runtime, oci.ImageArchitecture), "base/scan-fixture.digest", "", "", ""); err != nil {
+			t.Fatal(err)
+		}
+		h.WithDeployBaseRef(baseRef)
+	}
 	if err := h.buildImageLayer(t.Context(), th.app, th.dep, th.acct); err != nil {
 		t.Fatal(err)
 	}

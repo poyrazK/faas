@@ -76,6 +76,7 @@ type Querier interface {
 	// webhook gets its own stable id.
 	ApplyRegressionAction(ctx context.Context, db DBTX, arg ApplyRegressionActionParams) (DebugRegressionObservation, error)
 	AuthorizeBaseImageProducerInsert(ctx context.Context, db DBTX, id string) error
+	AuthorizeBaseImageScanInsert(ctx context.Context, db DBTX, id pgtype.UUID) error
 	AuthorizeDeploymentArtifactScanInsert(ctx context.Context, db DBTX, id pgtype.UUID) error
 	AuthorizeDeploymentRegistryRootfsInsert(ctx context.Context, db DBTX, id pgtype.UUID) error
 	AuthorizeDeploymentRegistryVerificationInsert(ctx context.Context, db DBTX, id pgtype.UUID) error
@@ -314,7 +315,10 @@ type Querier interface {
 	GetApplicationStandardReviewPlan(ctx context.Context, db DBTX, arg GetApplicationStandardReviewPlanParams) (ApplicationStandardReviewPlan, error)
 	GetApplicationStandardVersion(ctx context.Context, db DBTX, arg GetApplicationStandardVersionParams) (GetApplicationStandardVersionRow, error)
 	GetBaseImageProducerByID(ctx context.Context, db DBTX, id pgtype.UUID) (BaseImageProducer, error)
+	GetBaseImageScanByID(ctx context.Context, db DBTX, id pgtype.UUID) (BaseImageScan, error)
+	GetBaseImageScanPointer(ctx context.Context, db DBTX, storageKey string) (pgtype.UUID, error)
 	GetCurrentBaseImageProducer(ctx context.Context, db DBTX, storageKey string) (BaseImageProducer, error)
+	GetCurrentBaseImageScan(ctx context.Context, db DBTX, storageKey string) (BaseImageScan, error)
 	GetCurrentDeploymentArtifactScan(ctx context.Context, db DBTX, arg GetCurrentDeploymentArtifactScanParams) (DeploymentArtifactScan, error)
 	GetCurrentDeploymentRegistryRootfs(ctx context.Context, db DBTX, arg GetCurrentDeploymentRegistryRootfsParams) (DeploymentRegistryRootf, error)
 	GetCustomerAppSecretForDeletion(ctx context.Context, db DBTX, arg GetCustomerAppSecretForDeletionParams) (GetCustomerAppSecretForDeletionRow, error)
@@ -330,6 +334,7 @@ type Querier interface {
 	GetDeploymentRegistryRootfsPointer(ctx context.Context, db DBTX, arg GetDeploymentRegistryRootfsPointerParams) (pgtype.UUID, error)
 	GetDeploymentRegistryVerificationByID(ctx context.Context, db DBTX, id pgtype.UUID) (DeploymentRegistryVerification, error)
 	GetFeatureFlagVersion(ctx context.Context, db DBTX, arg GetFeatureFlagVersionParams) (FeatureFlagVersion, error)
+	GetFreshBaseImageScan(ctx context.Context, db DBTX, arg GetFreshBaseImageScanParams) (BaseImageScan, error)
 	// Returns the bytea secret for the given installation_id. The
 	// daemon-side resolver treats pgx.ErrNoRows as fail-closed (the
 	// webhook is rejected rather than falling back to the platform-
@@ -436,6 +441,7 @@ type Querier interface {
 	InsertApplicationStandardReviewPlan(ctx context.Context, db DBTX, arg InsertApplicationStandardReviewPlanParams) error
 	InsertApplicationStandardVersion(ctx context.Context, db DBTX, arg InsertApplicationStandardVersionParams) error
 	InsertBaseImageProducer(ctx context.Context, db DBTX, arg InsertBaseImageProducerParams) (BaseImageProducer, error)
+	InsertBaseImageScan(ctx context.Context, db DBTX, arg InsertBaseImageScanParams) (BaseImageScan, error)
 	// CP-1 (operator observability): append one row to the heartbeat
 	// history. The schedd Heartbeat.Tick goroutine is the only writer.
 	// We deliberately do NOT use ON CONFLICT DO NOTHING — a duplicate
@@ -1331,6 +1337,7 @@ type Querier interface {
 	SafeReleaseWorkerLeaseReady(ctx context.Context, db DBTX) (bool, error)
 	SaveApplicationStandardControlBackup(ctx context.Context, db DBTX, arg SaveApplicationStandardControlBackupParams) error
 	SelectBaseImageProducer(ctx context.Context, db DBTX, arg SelectBaseImageProducerParams) error
+	SelectBaseImageScan(ctx context.Context, db DBTX, arg SelectBaseImageScanParams) error
 	SelectDeploymentArtifactScan(ctx context.Context, db DBTX, arg SelectDeploymentArtifactScanParams) error
 	SelectDeploymentRegistryRootfs(ctx context.Context, db DBTX, arg SelectDeploymentRegistryRootfsParams) error
 	// Hold placement stable while the caller changes the claimed request status.

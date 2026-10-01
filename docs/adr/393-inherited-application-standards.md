@@ -234,16 +234,39 @@ per retained report, 16 MiB scanner stdout, 64 KiB per diagnostic stream,
 bytes per path. Complete artifact reads use the existing 16 GiB cap. Subprocess
 diagnostics are bounded and are not echoed into logs or reports.
 
+The complete shared-base drive now has its own immutable private scan record,
+bound to the current base producer ID, input hash, artifact digest, byte size and
+retained source reference. Publication and selection share the base key fence.
+Fresh reads check the current producer, scan lease and database age against an
+advancing storage clock; selection history alone does not assert freshness.
+Cached reuse freshly hashes canonical bytes and rechecks the lease without
+extending the original scan clock. A new scan attempt receives a new immutable
+record. Enforce-mode registry app-layer scanning checks this shared-base report
+before scanning the app drive; unsafe base findings refuse deployment.
+
+Before a verified base rebuild or scan refresh, imaged writes a compatibility
+refusal so a failed conversion, producer publication or scan publication cannot
+leave an older clean sidecar usable. This preflight refusal has a zero timestamp:
+it is not a scan attempt. Successful compatibility output is derived from the
+separately retained private scan. Failed private evidence keeps zero finding
+counts and a closed failure reason; only the legacy compatibility output uses
+its refusal sentinel. Shared-base scans use the same protected byte-copy and
+scanner bounds as deployment component scans. These platform base records do
+not establish approval by a company publisher or native consumption.
+
 These are component producer facts under the existing trusted imaged/database
 writer boundary. Portable fixtures verify real byte copies, real layer
 consumption, PostgreSQL atomicity and refusal behavior; injected mkfs and Grype
-fixtures do not establish native scanner execution or consumer ACKs. Scans of
-the shared base, complete two-drive approval, immutable-source refresh after
+fixtures do not establish native scanner execution or consumer ACKs. Complete
+two-drive runtime approval, immutable-source refresh after
 registry verification expiry, native capture/consumption and dedicated Linux
 Grype/KVM/leakcheck acceptance remain pending. Ext4 extraction resource and
 cleanup behavior also requires native acceptance. The existing six-hour legacy
 re-scan schedule is not a renewal mechanism for the new five-minute component
-lease. Public activation remains disabled.
+lease. Shared-base renewal currently runs when the verified base is ensured or
+an app-layer deployment is scanned. Continuous runtime renewal and native
+consumption of both drives' current evidence remain pending. Public activation
+remains disabled.
 
 This is a producer boundary under the existing imaged/database writer trust
 model. Source-build publisher approval, complete runtime scans and native boot

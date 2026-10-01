@@ -62,6 +62,11 @@ func (h *Handler) runProducedDeploymentScans(ctx context.Context, app state.App,
 	}
 	ctx, cancel := context.WithTimeout(ctx, api.ApplicationStandardArtifactScanTimeout)
 	defer cancel()
+	if main.Input.Kind == "app-layer" {
+		if err := h.checkProducedBaseScan(ctx, app, dep, main); err != nil {
+			return err
+		}
+	}
 	if err := h.runProducedComponentScan(ctx, app, dep, main, dep.ImageDigest); err != nil {
 		return err
 	}
@@ -93,33 +98,37 @@ func (h *Handler) runProducedComponentScan(ctx context.Context, app state.App, d
 		return h.publishArtifactScanFailure(ctx, app, in, "artifact_read")
 	}
 	expected := scanArtifactTarget{StorageKey: root.Input.StorageKey, ArtifactIdentity: rootfs.ArtifactIdentity{Digest: in.ArtifactDigest, Bytes: in.ArtifactBytes}}
-	path, cleanup, err := stageProducedScanArtifact(ctx, be, h.appsRoot, expected)
-	if err != nil {
-		failure := "artifact_read"
-		if errors.Is(err, errScanArtifactMismatch) {
-			failure = "artifact_mismatch"
-		}
+	result, failure := h.readProducedArtifactScan(ctx, be, expected)
+	if failure != "" {
 		return h.publishArtifactScanFailure(ctx, app, in, failure)
-	}
-	defer cleanup()
-	result, err := h.runGrype(ctx, path)
-	if err != nil {
-		return h.publishArtifactScanFailure(ctx, app, in, "scanner_unavailable")
-	}
-	if result == nil || result.ScannerName != "grype" || result.Error != "" || result.ScannedAt != "" {
-		return h.publishArtifactScanFailure(ctx, app, in, "scanner_invalid")
-	}
-	if err := checkStagedScanArtifact(ctx, path, expected); err != nil {
-		return h.publishArtifactScanFailure(ctx, app, in, "artifact_mismatch")
-	}
-	if err := checkStoredScanArtifact(ctx, be, expected); err != nil {
-		return h.publishArtifactScanFailure(ctx, app, in, "artifact_mismatch")
 	}
 	published, err := h.publishCompleteArtifactScan(ctx, app, dep, in, result)
 	if published {
 		status = "complete"
 	}
 	return err
+}
+
+func (h *Handler) readProducedArtifactScan(ctx context.Context, be storage.StorageBackend, expected scanArtifactTarget) (*ScanResult, string) {
+	path, cleanup, err := stageProducedScanArtifact(ctx, be, h.appsRoot, expected)
+	if err != nil {
+		if errors.Is(err, errScanArtifactMismatch) {
+			return nil, "artifact_mismatch"
+		}
+		return nil, "artifact_read"
+	}
+	defer cleanup()
+	result, err := h.runGrype(ctx, path)
+	if err != nil {
+		return nil, "scanner_unavailable"
+	}
+	if result == nil || result.ScannerName != "grype" || result.Error != "" || result.ScannedAt != "" {
+		return nil, "scanner_invalid"
+	}
+	if checkStagedScanArtifact(ctx, path, expected) != nil || checkStoredScanArtifact(ctx, be, expected) != nil {
+		return nil, "artifact_mismatch"
+	}
+	return result, ""
 }
 
 func (h *Handler) publishCompleteArtifactScan(ctx context.Context, app state.App, dep state.Deployment, in state.DeploymentArtifactScanInput, result *ScanResult) (bool, error) {

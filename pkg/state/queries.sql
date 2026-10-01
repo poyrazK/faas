@@ -5733,3 +5733,49 @@ WHERE a.account_id=sqlc.arg(account_id)::uuid AND a.id=sqlc.arg(app_id)::uuid AN
  ELSE (SELECT CASE WHEN count(*)=1 THEN min(x->>'image') END FROM jsonb_array_elements(d.sidecars) x WHERE x->>'name'=c.workload_name) END
  AND ((c.workload_name='' AND f.input_snapshot->>'storage_key'=d.rootfs_key AND f.input_snapshot->>'rootfs_path'=d.rootfs_path AND (f.input_snapshot->>'content_bytes')::bigint=d.rootfs_bytes)
  OR (c.workload_name<>'' AND f.input_snapshot->>'storage_key'=l.storage_key AND (f.input_snapshot->>'content_bytes')::bigint=l.bytes AND r.input_snapshot->>'selected_reference'=l.content_digest));
+
+-- name: AuthorizeBaseImageScanInsert :exec
+SELECT set_config('gregale.base_scan_insert',sqlc.arg(id)::uuid::text,true);
+
+-- name: InsertBaseImageScan :one
+WITH storage_clock AS MATERIALIZED (SELECT clock_timestamp() AS now),
+inputs AS MATERIALIZED (SELECT sqlc.arg(input_snapshot)::jsonb AS value)
+INSERT INTO base_image_scans(id,base_producer_id,storage_key,input_snapshot,input_hash,result_snapshot,scanned_at,expires_at)
+SELECT sqlc.arg(id)::uuid,p.id,p.storage_key,inputs.value,sqlc.arg(input_hash)::text,
+ (CASE WHEN inputs.value->>'status'='complete' THEN inputs.value->'report'
+ ELSE jsonb_build_object('image_digest',inputs.value->>'source_reference','artifact_digest',inputs.value->'artifact'->>'digest',
+ 'vulnerabilities','[]'::jsonb,'severity_counts',jsonb_build_object('critical',0,'high',0,'medium',0,'low',0,'unknown',0),'error',inputs.value->>'failure') END)
+ || jsonb_build_object('status',inputs.value->>'status','scanned_at',to_char(now AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')),
+ now,now+make_interval(secs=>sqlc.arg(ttl_seconds)::double precision)
+FROM base_image_producers p CROSS JOIN storage_clock CROSS JOIN inputs
+WHERE p.id=sqlc.arg(producer_id)::uuid AND p.published_at<=now
+ AND (inputs.value->>'status'='failed' OR
+ ((inputs.value->'report'->>'scanner_db_built_at')::timestamptz<=now
+ AND (inputs.value->'report'->>'scanner_db_built_at')::timestamptz>=now-make_interval(secs=>sqlc.arg(db_max_age_seconds)::double precision)))
+RETURNING *;
+
+-- name: GetBaseImageScanByID :one
+SELECT * FROM base_image_scans WHERE id=sqlc.arg(id)::uuid;
+
+-- name: GetBaseImageScanPointer :one
+SELECT scan_id FROM base_image_scan_current WHERE storage_key=sqlc.arg(storage_key)::text;
+
+-- name: SelectBaseImageScan :exec
+INSERT INTO base_image_scan_current(storage_key,scan_id) VALUES(sqlc.arg(storage_key)::text,sqlc.arg(id)::uuid)
+ON CONFLICT(storage_key) DO UPDATE SET scan_id=excluded.scan_id;
+
+-- name: GetCurrentBaseImageScan :one
+SELECT s.* FROM base_image_scan_current c JOIN base_image_scans s ON s.id=c.scan_id
+JOIN base_image_producer_current p ON p.storage_key=c.storage_key AND p.producer_id=s.base_producer_id
+JOIN base_image_producers b ON b.id=p.producer_id
+WHERE c.storage_key=sqlc.arg(storage_key)::text AND s.input_snapshot->>'base_input_hash'=b.input_hash;
+
+-- name: GetFreshBaseImageScan :one
+WITH storage_clock AS MATERIALIZED (SELECT clock_timestamp() AS now)
+SELECT s.* FROM base_image_scan_current c JOIN base_image_scans s ON s.id=c.scan_id
+JOIN base_image_producer_current p ON p.storage_key=c.storage_key AND p.producer_id=s.base_producer_id
+JOIN base_image_producers b ON b.id=p.producer_id CROSS JOIN storage_clock
+WHERE b.id=sqlc.arg(producer_id)::uuid AND b.input_hash=sqlc.arg(producer_hash)::text AND s.input_snapshot->>'base_input_hash'=b.input_hash
+ AND s.scanned_at>=b.published_at AND s.scanned_at<=now AND s.expires_at>now AND s.input_snapshot->>'status'='complete'
+ AND (s.input_snapshot->'report'->>'scanner_db_built_at')::timestamptz<=now
+ AND (s.input_snapshot->'report'->>'scanner_db_built_at')::timestamptz>=now-make_interval(secs=>sqlc.arg(db_max_age_seconds)::double precision);
