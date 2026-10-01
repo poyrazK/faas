@@ -42,6 +42,8 @@ func (s *server) reconcileObjectUploads(ctx context.Context, observe func(string
 			operation := "upload"
 			if c.Origin == "gateway" {
 				operation = "gateway_put"
+			} else if c.Origin == "gateway_copy" {
+				operation = "gateway_copy"
 			}
 			observe(operation, outcome)
 		}

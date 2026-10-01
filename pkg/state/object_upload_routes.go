@@ -47,6 +47,8 @@ type ObjectUploadCompletion struct {
 	CreatedAt          time.Time
 	// Provider dispatch and recovery fields are internal; uploadResponse projects only the receipt.
 	Origin             string
+	SourceKey          string
+	SourceETag         string
 	WritePhase         string
 	RecoveryToken      string
 	RecoveryLeaseUntil time.Time

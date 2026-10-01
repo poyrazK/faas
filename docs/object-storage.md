@@ -373,7 +373,7 @@ when available; Gregale does not synthesize checksums for older objects or
 providers without that capability. Ordinary PUTs and multipart completion preserve
 `If-Match` and `If-None-Match: *` atomically on S3 backends. Conditions are mutually
 exclusive; If-Match is limited to 256 bytes and rejects control characters.
-GCS conditional PUTs/completion and conditional CopyObject return 501 explicitly.
+GCS conditional PUTs/completion and branded conditional CopyObject return 501 explicitly.
 Multipart listing uses standard key/upload
 markers and excludes completed history. Unsupported listing options return 501.
 
@@ -942,9 +942,35 @@ thirty-second retries, five-second detached settlement, and thirty-minute
 transfers. Gateway-owned provider PUT URLs expire after one minute and stay
 private. See [ADR-393](adr/393-recoverable-s3-gateway-puts.md).
 
+## Recoverable branded copies
+
+Same-bucket `CopyObject` through the branded gateway now tracks a durable
+destination receipt on S3 backends. A source HEAD captures the size and ETag;
+the provider copy must match that ETag. If the source changes before copying,
+the request returns 412 `PreconditionFailed`. Start a new request to capture
+the current source. Missing source size/ETag, weak ETags, versioned sources and
+copies exceeding the existing 5 GiB single-write limit fail closed.
+
+Metadata COPY preserves the captured source HTTP/customer metadata and Expires
+while replacing private markers with a fresh receipt. REPLACE uses customer
+metadata; tag COPY/REPLACE stays independent. Metadata-only source changes
+that preserve its ETag do not change the captured metadata snapshot. Client
+copy-condition headers and multipart part-copy remain unsupported.
+
+Admitted copies return `X-Gregale-Upload-ID`. Each request uses one provider
+copy attempt. Lost, truncated or invalid acknowledgments, HTTP 408/5xx and
+embedded errors inside HTTP 200 remain pending. Recovery confirms only the
+destination receipt, size and ETag; it never repeats the copy. After confirmed
+settlement, deletion and fenced inventory can reclaim capacity without
+refunding monthly authorizations or billing. Existing upload recovery and
+transfer limits apply. GCS, older copies, environment-clone/cross-bucket copies
+and providers without the capability remain conservative.
+Apply the additive migration before upgrading gateways and API workers.
+See [ADR-394](adr/394-recoverable-s3-gateway-copies.md).
+
 ## Reclaim reserved capacity
 
-For buckets using tracked branded S3 PUTs, S3 application upload routes or public
+For buckets using tracked branded S3 PUTs/copies, S3 application upload routes or public
 multipart completion, request an inventory and capacity reconciliation after deleting or shrinking objects:
 
 ```sh
@@ -970,7 +996,7 @@ uses a two-minute lease, scans for up to 45 seconds and 1,000 pages, retries aft
 pause immediately without changing reservations.
 
 `blocked/untracked_writes` means legacy, direct signed uploads, untracked native
-uploads or copies have conservative grants. `waiting/unsettled_writes` means a tracked request has
+uploads or untracked copies have conservative grants. `waiting/unsettled_writes` means a tracked request has
 no confirmed outcome. An expired URL or elapsed deadline cannot settle an
 uncertain write. Those cases retain capacity; this release does not offer a force
 refund. Use dedicated managed buckets with versioning disabled, ordered complete

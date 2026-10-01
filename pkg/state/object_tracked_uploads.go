@@ -37,14 +37,27 @@ type ObjectTrackedGatewayUploadStore interface {
 	BeginTrackedGatewayUpload(context.Context, ObjectUploadCompletion, api.ObjectStoragePolicy) (ObjectUploadCompletion, error)
 }
 
+// ObjectTrackedGatewayCopyStore records the measured source identity with the
+// destination receipt. Recovery confirms the destination and never replays a copy.
+type ObjectTrackedGatewayCopyStore interface {
+	ObjectTrackedGatewayUploadStore
+	BeginTrackedGatewayCopy(context.Context, ObjectUploadCompletion, api.ObjectStoragePolicy) (ObjectUploadCompletion, error)
+}
+
 func validTrackedObjectUpload(c ObjectUploadCompletion) bool {
-	if _, err := uuid.Parse(c.RouteID); err != nil || c.Origin != "" && c.Origin != "route" {
+	if _, err := uuid.Parse(c.RouteID); err != nil || c.Origin != "" && c.Origin != "route" || c.SourceKey != "" || c.SourceETag != "" {
 		return false
 	}
 	return validTrackedUploadIdentity(c)
 }
 func validTrackedGatewayUpload(c ObjectUploadCompletion) bool {
-	return c.RouteID == "" && c.IdempotencyKey == "" && c.RequestFingerprint == "" && (c.Origin == "" || c.Origin == "gateway") && validTrackedUploadIdentity(c)
+	return validGatewayReceiptShape(c) && c.SourceKey == "" && c.SourceETag == "" && (c.Origin == "" || c.Origin == "gateway") && validTrackedUploadIdentity(c)
+}
+func validTrackedGatewayCopy(c ObjectUploadCompletion) bool {
+	return validGatewayReceiptShape(c) && (c.Origin == "" || c.Origin == "gateway_copy") && c.SourceKey != "" && len(c.SourceKey) <= 1024 && validObjectUploadETag(c.SourceETag) && validTrackedUploadIdentity(c)
+}
+func validGatewayReceiptShape(c ObjectUploadCompletion) bool {
+	return c.RouteID == "" && c.IdempotencyKey == "" && c.RequestFingerprint == ""
 }
 func validTrackedUploadIdentity(c ObjectUploadCompletion) bool {
 	for _, id := range []string{c.ID, c.AccountID, c.AppID, c.BucketID} {

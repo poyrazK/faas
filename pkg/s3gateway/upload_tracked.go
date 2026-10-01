@@ -88,7 +88,7 @@ func (h *Handler) finishGatewayPut(parent context.Context, st state.ObjectTracke
 	defer cancel()
 	done, err := st.FinishTrackedObjectUpload(ctx, c)
 	if err != nil {
-		h.log.Warn("S3 PUT settlement deferred", "bucket_id", c.BucketID, "request_id", c.RequestID)
+		h.log.Warn("S3 write settlement deferred", "bucket_id", c.BucketID, "request_id", c.RequestID)
 	}
 	return done, err
 }

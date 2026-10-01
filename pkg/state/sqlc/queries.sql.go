@@ -11946,8 +11946,8 @@ func (q *Queries) ObjectCapacitySave(ctx context.Context, db DBTX, arg ObjectCap
 
 const objectGatewayUploadInsert = `-- name: ObjectGatewayUploadInsert :one
 INSERT INTO object_upload_completions
- (id,account_id,app_id,bucket_id,subject_id,object_key,bytes,content_type,request_id,status,write_phase,origin,recovery_retry_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending','prepared','gateway',now()+make_interval(secs=>$10::int)) RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin
+ (id,account_id,app_id,bucket_id,subject_id,object_key,bytes,content_type,request_id,status,write_phase,origin,source_key,source_etag,recovery_retry_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending','prepared',$10::text,$11::text,$12::text,now()+make_interval(secs=>$13::int)) RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag
 `
 
 type ObjectGatewayUploadInsertParams struct {
@@ -11960,6 +11960,9 @@ type ObjectGatewayUploadInsertParams struct {
 	Bytes        int64
 	ContentType  string
 	RequestID    string
+	Origin       string
+	SourceKey    string
+	SourceEtag   string
 	RetrySeconds int32
 }
 
@@ -11974,6 +11977,9 @@ func (q *Queries) ObjectGatewayUploadInsert(ctx context.Context, db DBTX, arg Ob
 		arg.Bytes,
 		arg.ContentType,
 		arg.RequestID,
+		arg.Origin,
+		arg.SourceKey,
+		arg.SourceEtag,
 		arg.RetrySeconds,
 	)
 	var i ObjectUploadCompletion
@@ -11999,6 +12005,8 @@ func (q *Queries) ObjectGatewayUploadInsert(ctx context.Context, db DBTX, arg Ob
 		&i.RecoveryLeaseUntil,
 		&i.RecoveryRetryAt,
 		&i.Origin,
+		&i.SourceKey,
+		&i.SourceEtag,
 	)
 	return i, err
 }
@@ -13870,7 +13878,7 @@ func (q *Queries) ObjectTrackedGrantUpsert(ctx context.Context, db DBTX, arg Obj
 
 const objectTrackedUploadClaim = `-- name: ObjectTrackedUploadClaim :one
 UPDATE object_upload_completions SET recovery_token=$2,recovery_lease_until=now()+make_interval(secs=>$3::int)
- WHERE id=$1 RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin
+ WHERE id=$1 RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag
 `
 
 type ObjectTrackedUploadClaimParams struct {
@@ -13904,13 +13912,15 @@ func (q *Queries) ObjectTrackedUploadClaim(ctx context.Context, db DBTX, arg Obj
 		&i.RecoveryLeaseUntil,
 		&i.RecoveryRetryAt,
 		&i.Origin,
+		&i.SourceKey,
+		&i.SourceEtag,
 	)
 	return i, err
 }
 
 const objectTrackedUploadDispatch = `-- name: ObjectTrackedUploadDispatch :one
 UPDATE object_upload_completions SET write_phase='dispatched', recovery_retry_at=now()+make_interval(secs=>$4::int)
- WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND write_phase='prepared' RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin
+ WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND write_phase='prepared' RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag
 `
 
 type ObjectTrackedUploadDispatchParams struct {
@@ -13950,12 +13960,14 @@ func (q *Queries) ObjectTrackedUploadDispatch(ctx context.Context, db DBTX, arg 
 		&i.RecoveryLeaseUntil,
 		&i.RecoveryRetryAt,
 		&i.Origin,
+		&i.SourceKey,
+		&i.SourceEtag,
 	)
 	return i, err
 }
 
 const objectTrackedUploadDue = `-- name: ObjectTrackedUploadDue :many
-SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin FROM object_upload_completions WHERE write_phase IN ('prepared','dispatched') AND recovery_retry_at<=now()
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag FROM object_upload_completions WHERE write_phase IN ('prepared','dispatched') AND recovery_retry_at<=now()
  AND (recovery_lease_until IS NULL OR recovery_lease_until<=now()) ORDER BY recovery_retry_at,id LIMIT $1
 `
 
@@ -13990,6 +14002,8 @@ func (q *Queries) ObjectTrackedUploadDue(ctx context.Context, db DBTX, limit int
 			&i.RecoveryLeaseUntil,
 			&i.RecoveryRetryAt,
 			&i.Origin,
+			&i.SourceKey,
+			&i.SourceEtag,
 		); err != nil {
 			return nil, err
 		}
@@ -14003,7 +14017,7 @@ func (q *Queries) ObjectTrackedUploadDue(ctx context.Context, db DBTX, limit int
 
 const objectTrackedUploadFinish = `-- name: ObjectTrackedUploadFinish :one
 UPDATE object_upload_completions SET status=$2,etag=$3,error_code=$4,write_phase='settled',recovery_token='',recovery_lease_until=NULL
- WHERE id=$1 RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin
+ WHERE id=$1 RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag
 `
 
 type ObjectTrackedUploadFinishParams struct {
@@ -14043,12 +14057,14 @@ func (q *Queries) ObjectTrackedUploadFinish(ctx context.Context, db DBTX, arg Ob
 		&i.RecoveryLeaseUntil,
 		&i.RecoveryRetryAt,
 		&i.Origin,
+		&i.SourceKey,
+		&i.SourceEtag,
 	)
 	return i, err
 }
 
 const objectTrackedUploadGet = `-- name: ObjectTrackedUploadGet :one
-SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND bucket_id=$3 FOR UPDATE
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND bucket_id=$3 FOR UPDATE
 `
 
 type ObjectTrackedUploadGetParams struct {
@@ -14082,6 +14098,8 @@ func (q *Queries) ObjectTrackedUploadGet(ctx context.Context, db DBTX, arg Objec
 		&i.RecoveryLeaseUntil,
 		&i.RecoveryRetryAt,
 		&i.Origin,
+		&i.SourceKey,
+		&i.SourceEtag,
 	)
 	return i, err
 }
@@ -14089,7 +14107,7 @@ func (q *Queries) ObjectTrackedUploadGet(ctx context.Context, db DBTX, arg Objec
 const objectTrackedUploadInsert = `-- name: ObjectTrackedUploadInsert :one
 INSERT INTO object_upload_completions
  (id,route_id,account_id,app_id,bucket_id,subject_id,object_key,bytes,content_type,request_id,idempotency_key,request_fingerprint,status,write_phase,recovery_retry_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending','prepared',now()+make_interval(secs=>$13::int)) RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending','prepared',now()+make_interval(secs=>$13::int)) RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag
 `
 
 type ObjectTrackedUploadInsertParams struct {
@@ -14147,12 +14165,14 @@ func (q *Queries) ObjectTrackedUploadInsert(ctx context.Context, db DBTX, arg Ob
 		&i.RecoveryLeaseUntil,
 		&i.RecoveryRetryAt,
 		&i.Origin,
+		&i.SourceKey,
+		&i.SourceEtag,
 	)
 	return i, err
 }
 
 const objectTrackedUploadReplay = `-- name: ObjectTrackedUploadReplay :one
-SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin FROM object_upload_completions WHERE route_id=$1 AND subject_id=$2 AND idempotency_key=$3 AND account_id=$4 AND app_id=$5
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag FROM object_upload_completions WHERE route_id=$1 AND subject_id=$2 AND idempotency_key=$3 AND account_id=$4 AND app_id=$5
 `
 
 type ObjectTrackedUploadReplayParams struct {
@@ -14194,6 +14214,8 @@ func (q *Queries) ObjectTrackedUploadReplay(ctx context.Context, db DBTX, arg Ob
 		&i.RecoveryLeaseUntil,
 		&i.RecoveryRetryAt,
 		&i.Origin,
+		&i.SourceKey,
+		&i.SourceEtag,
 	)
 	return i, err
 }
@@ -14215,7 +14237,7 @@ func (q *Queries) ObjectTrackedUploadRetry(ctx context.Context, db DBTX, arg Obj
 }
 
 const objectUploadReceiptGet = `-- name: ObjectUploadReceiptGet :one
-SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND app_id=$3 AND route_id IS NOT DISTINCT FROM $4 AND subject_id=$5
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND app_id=$3 AND route_id IS NOT DISTINCT FROM $4 AND subject_id=$5
 `
 
 type ObjectUploadReceiptGetParams struct {
@@ -14257,6 +14279,8 @@ func (q *Queries) ObjectUploadReceiptGet(ctx context.Context, db DBTX, arg Objec
 		&i.RecoveryLeaseUntil,
 		&i.RecoveryRetryAt,
 		&i.Origin,
+		&i.SourceKey,
+		&i.SourceEtag,
 	)
 	return i, err
 }

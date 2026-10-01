@@ -159,34 +159,50 @@ func (p *S3) CopyObject(ctx context.Context, bucket string, r CopyObjectRequest)
 }
 
 func (p *S3) CopyObjectBetweenBuckets(ctx context.Context, sourceBucket, destinationBucket string, r CopyObjectRequest) (CopyObjectResult, error) {
+	in, err := copyObjectInput(sourceBucket, destinationBucket, r)
+	if err != nil {
+		return CopyObjectResult{}, err
+	}
+	out, err := p.client.CopyObject(ctx, in)
+	if err != nil {
+		return CopyObjectResult{}, normalize(err)
+	}
+	return copyObjectResult(out)
+}
+
+func copyObjectInput(sourceBucket, destinationBucket string, r CopyObjectRequest) (*s3.CopyObjectInput, error) {
 	if sourceBucket == "" || destinationBucket == "" {
-		return CopyObjectResult{}, ErrInvalid
+		return nil, ErrInvalid
 	}
 	if !ValidKey(r.SourceKey) || !ValidKey(r.DestinationKey) {
-		return CopyObjectResult{}, ErrInvalid
+		return nil, ErrInvalid
 	}
 	if r.MetadataDirective == "" {
 		r.MetadataDirective = "COPY"
 	}
 	if r.MetadataDirective != "COPY" && r.MetadataDirective != "REPLACE" {
-		return CopyObjectResult{}, ErrInvalid
+		return nil, ErrInvalid
 	}
 	if r.TaggingDirective == "" {
 		r.TaggingDirective = "COPY"
 	}
 	if r.TaggingDirective != "COPY" && r.TaggingDirective != "REPLACE" {
-		return CopyObjectResult{}, ErrInvalid
+		return nil, ErrInvalid
 	}
 	if r.TaggingDirective == "COPY" && len(r.Metadata.Tags) != 0 {
-		return CopyObjectResult{}, ErrInvalid
+		return nil, ErrInvalid
 	}
 	if err := ValidateObjectMetadata(r.Metadata); err != nil {
-		return CopyObjectResult{}, err
+		return nil, err
 	}
 	tagging, err := EncodeObjectTags(r.Metadata.Tags)
 	if err != nil {
-		return CopyObjectResult{}, err
+		return nil, err
 	}
+	return buildCopyObjectInput(sourceBucket, destinationBucket, r, tagging), nil
+}
+
+func buildCopyObjectInput(sourceBucket, destinationBucket string, r CopyObjectRequest, tagging string) *s3.CopyObjectInput {
 	in := &s3.CopyObjectInput{
 		Bucket:             aws.String(destinationBucket),
 		CopySource:         aws.String(url.PathEscape(sourceBucket + "/" + r.SourceKey)),
@@ -203,11 +219,11 @@ func (p *S3) CopyObjectBetweenBuckets(ctx context.Context, sourceBucket, destina
 	if r.TaggingDirective == "REPLACE" {
 		in.Tagging = aws.String(tagging)
 	}
-	out, err := p.client.CopyObject(ctx, in)
-	if err != nil {
-		return CopyObjectResult{}, normalize(err)
-	}
-	if out == nil || out.CopyObjectResult == nil || aws.ToString(out.CopyObjectResult.ETag) == "" {
+	return in
+}
+
+func copyObjectResult(out *s3.CopyObjectOutput) (CopyObjectResult, error) {
+	if out == nil || out.CopyObjectResult == nil || !validUploadETag(aws.ToString(out.CopyObjectResult.ETag)) {
 		return CopyObjectResult{}, ErrUnavailable
 	}
 	return CopyObjectResult{ETag: aws.ToString(out.CopyObjectResult.ETag), LastModified: aws.ToTime(out.CopyObjectResult.LastModified)}, nil

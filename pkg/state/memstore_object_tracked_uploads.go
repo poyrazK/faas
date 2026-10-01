@@ -193,6 +193,21 @@ func (m *MemStore) BeginTrackedGatewayUpload(_ context.Context, c ObjectUploadCo
 	if !validTrackedGatewayUpload(c) {
 		return c, ErrConflict
 	}
+	c.Origin = "gateway"
+	return m.beginTrackedGatewayWrite(c, p)
+}
+
+var _ ObjectTrackedGatewayCopyStore = (*MemStore)(nil)
+
+func (m *MemStore) BeginTrackedGatewayCopy(_ context.Context, c ObjectUploadCompletion, p api.ObjectStoragePolicy) (ObjectUploadCompletion, error) {
+	if !validTrackedGatewayCopy(c) {
+		return c, ErrConflict
+	}
+	c.Origin = "gateway_copy"
+	return m.beginTrackedGatewayWrite(c, p)
+}
+
+func (m *MemStore) beginTrackedGatewayWrite(c ObjectUploadCompletion, p api.ObjectStoragePolicy) (ObjectUploadCompletion, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	b, ok := m.objectBuckets[c.BucketID]
@@ -202,7 +217,6 @@ func (m *MemStore) BeginTrackedGatewayUpload(_ context.Context, c ObjectUploadCo
 	if b.State != "ready" {
 		return c, ErrConflict
 	}
-	c.Origin = "gateway"
 	out, _, err := m.beginTrackedUploadLocked(c, p)
 	return out, err
 }

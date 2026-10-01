@@ -629,13 +629,8 @@ func (h *Handler) copyObject(w http.ResponseWriter, r *http.Request, req request
 	if !h.require(w, req, state.ObjectBucketPermissionRead, r.URL.Path) || !h.require(w, req, state.ObjectBucketPermissionWrite, r.URL.Path) {
 		return
 	}
-	if r.ContentLength > 0 {
+	if r.ContentLength != 0 {
 		writeS3Error(w, http.StatusBadRequest, "InvalidRequest", "CopyObject does not accept a request body.", r.URL.Path, req.requestID)
-		return
-	}
-	copier, ok := req.provider.(objectstorage.ObjectCopier)
-	if !ok {
-		h.unsupported(w, r, req.requestID)
 		return
 	}
 	sourceBucket, sourceKey, err := parseCopySource(r.Header.Get("X-Amz-Copy-Source"))
@@ -643,62 +638,20 @@ func (h *Handler) copyObject(w http.ResponseWriter, r *http.Request, req request
 		writeS3Error(w, http.StatusNotFound, "NoSuchKey", "The specified copy source does not exist.", r.URL.Path, req.requestID)
 		return
 	}
-	directive := strings.ToUpper(strings.TrimSpace(r.Header.Get("X-Amz-Metadata-Directive")))
-	if directive == "" {
-		directive = "COPY"
-	}
-	if directive != "COPY" && directive != "REPLACE" {
-		writeS3Error(w, http.StatusBadRequest, "InvalidDirective", "The metadata directive is invalid.", r.URL.Path, req.requestID)
+	copy, ok := gatewayCopyRequest(w, r, req, sourceKey, destinationKey)
+	if !ok {
 		return
 	}
-	metadata, err := copyMetadata(r, directive)
-	if err != nil {
-		writeS3Error(w, http.StatusBadRequest, "InvalidRequest", "The object metadata is invalid.", r.URL.Path, req.requestID)
+	if copier, ok := req.provider.(objectstorage.TrackedObjectCopier); ok {
+		h.performTrackedGatewayCopy(w, r, req, copier, copy)
 		return
 	}
-	taggingDirective := strings.ToUpper(strings.TrimSpace(r.Header.Get("X-Amz-Tagging-Directive")))
-	if taggingDirective == "" {
-		taggingDirective = "COPY"
-	}
-	if taggingDirective != "COPY" && taggingDirective != "REPLACE" {
-		writeS3Error(w, http.StatusBadRequest, "InvalidDirective", "The tagging directive is invalid.", r.URL.Path, req.requestID)
+	copier, ok := req.provider.(objectstorage.ObjectCopier)
+	if !ok {
+		h.unsupported(w, r, req.requestID)
 		return
 	}
-	if raw := r.Header.Get("X-Amz-Tagging"); raw != "" || taggingDirective == "REPLACE" {
-		tags, tagErr := objectstorage.ParseObjectTags(raw)
-		if tagErr != nil {
-			writeS3Error(w, http.StatusBadRequest, "InvalidTag", "The object tags are invalid.", r.URL.Path, req.requestID)
-			return
-		}
-		metadata.Tags = tags
-	}
-	if taggingDirective == "COPY" && len(metadata.Tags) != 0 {
-		writeS3Error(w, http.StatusBadRequest, "InvalidRequest", "x-amz-tagging requires REPLACE tagging directive.", r.URL.Path, req.requestID)
-		return
-	}
-	size := int64(0)
-	if sizer, ok := req.provider.(objectstorage.ObjectSizer); ok {
-		size, err = sizer.ObjectSize(r.Context(), req.bucket.PhysicalName, sourceKey)
-		if err != nil {
-			h.providerError(w, r, req, err, sourceKey)
-			return
-		}
-	}
-	if !h.admit(w, r, req, destinationKey, size, true) || !h.recordProviderRequest(w, r, req) {
-		return
-	}
-	result, err := copier.CopyObject(r.Context(), req.bucket.PhysicalName, objectstorage.CopyObjectRequest{
-		SourceKey: sourceKey, DestinationKey: destinationKey, MetadataDirective: directive, TaggingDirective: taggingDirective, Metadata: metadata,
-	})
-	if err != nil {
-		h.providerError(w, r, req, err, sourceKey)
-		return
-	}
-	lastModified := ""
-	if !result.LastModified.IsZero() {
-		lastModified = result.LastModified.UTC().Format(time.RFC3339Nano)
-	}
-	writeS3XML(w, http.StatusOK, req.requestID, copyObjectResult{XMLNS: s3XMLNamespace, LastModified: lastModified, ETag: result.ETag})
+	h.performLegacyGatewayCopy(w, r, req, copier, copy)
 }
 
 func parseCopySource(value string) (string, string, error) {

@@ -18,24 +18,44 @@ func TestGatewayUploadReceiptsPG(t *testing.T) {
 	gatewayUploadReceiptsSuite(t, st)
 }
 
+func TestGatewayCopyReceiptsMem(t *testing.T) {
+	gatewayWriteReceiptsSuite(t, state.NewMemStore(), true)
+}
+func TestGatewayCopyReceiptsPG(t *testing.T) {
+	st, _ := pgStore(t)
+	gatewayWriteReceiptsSuite(t, st, true)
+}
+
 type gatewayUploadStore interface {
 	accountingStore
-	state.ObjectTrackedGatewayUploadStore
+	state.ObjectTrackedGatewayCopyStore
 	state.ObjectCapacityStore
 }
 
 func gatewayUploadReceiptsSuite(t *testing.T, st gatewayUploadStore) {
+	gatewayWriteReceiptsSuite(t, st, false)
+}
+
+func gatewayWriteReceiptsSuite(t *testing.T, st gatewayUploadStore, copy bool) {
 	ctx := context.Background()
 	b, _ := seedAccounting(t, st)
 	c := state.ObjectUploadCompletion{ID: uuid.NewString(), AccountID: b.AccountID, AppID: b.AppID, BucketID: b.ID, SubjectID: "credential", Key: "same-key", Bytes: 10, Status: "pending"}
 	p := accountingPolicy()
+	begin := st.BeginTrackedGatewayUpload
+	origin := "gateway"
+	if copy {
+		begin = st.BeginTrackedGatewayCopy
+		origin = "gateway_copy"
+		c.SourceKey = "source"
+		c.SourceETag = `"source"`
+	}
 	var wins atomic.Int32
 	var wg sync.WaitGroup
 	for range 12 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := st.BeginTrackedGatewayUpload(ctx, c, p)
+			_, err := begin(ctx, c, p)
 			if err == nil {
 				wins.Add(1)
 			} else if !errors.Is(err, state.ErrConflict) {
@@ -48,8 +68,19 @@ func gatewayUploadReceiptsSuite(t *testing.T, st gatewayUploadStore) {
 		t.Fatal("duplicate admission", wins.Load())
 	}
 	saved, err := st.GetObjectUploadReceipt(ctx, b.AccountID, b.AppID, "", c.SubjectID, c.ID)
-	if err != nil || saved.Origin != "gateway" || saved.WritePhase != state.ObjectUploadPrepared || saved.RouteID != "" {
+	if err != nil || saved.Origin != origin || saved.WritePhase != state.ObjectUploadPrepared || saved.RouteID != "" {
 		t.Fatal(saved, err)
+	}
+	if saved.SourceKey != c.SourceKey || saved.SourceETag != c.SourceETag {
+		t.Fatal("source identity not durable", saved)
+	}
+	if copy {
+		bad := c
+		bad.ID = uuid.NewString()
+		bad.SourceETag = ""
+		if _, err = begin(ctx, bad, p); !errors.Is(err, state.ErrConflict) {
+			t.Fatal("copy admitted without source proof", err)
+		}
 	}
 	usage, err := st.ObjectUsage(ctx, b.AccountID, time.Now())
 	if err != nil || usage.Authorizations != 1 || usage.Buckets[0].GrantedBytes != 10 {
@@ -58,13 +89,13 @@ func gatewayUploadReceiptsSuite(t *testing.T, st gatewayUploadStore) {
 	foreign := c
 	foreign.ID = uuid.NewString()
 	foreign.AppID = uuid.NewString()
-	if _, err = st.BeginTrackedGatewayUpload(ctx, foreign, p); !errors.Is(err, state.ErrNotFound) {
+	if _, err = begin(ctx, foreign, p); !errors.Is(err, state.ErrNotFound) {
 		t.Fatal("foreign bucket", err)
 	}
 	invalid := c
 	invalid.ID = uuid.NewString()
 	invalid.IdempotencyKey = "client-idem"
-	if _, err = st.BeginTrackedGatewayUpload(ctx, invalid, p); !errors.Is(err, state.ErrConflict) {
+	if _, err = begin(ctx, invalid, p); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("gateway silently deduplicated client semantics", err)
 	}
 	if err = st.SettleObjectWrite(ctx, b.AccountID, b.ID, c.ID); !errors.Is(err, state.ErrNotFound) {
@@ -74,7 +105,7 @@ func gatewayUploadReceiptsSuite(t *testing.T, st gatewayUploadStore) {
 	next := c
 	next.ID = uuid.NewString()
 	next.Bytes = 5
-	if _, err = st.BeginTrackedGatewayUpload(ctx, next, p); err != nil {
+	if _, err = begin(ctx, next, p); err != nil {
 		t.Fatal(err)
 	}
 	wins.Store(0)
@@ -138,13 +169,13 @@ func gatewayUploadReceiptsSuite(t *testing.T, st gatewayUploadStore) {
 	next.Bytes = 100
 	next.Status = "pending"
 	next.ETag = ""
-	if _, err = st.BeginTrackedGatewayUpload(ctx, next, p); err != nil {
+	if _, err = begin(ctx, next, p); err != nil {
 		t.Fatal("capacity not reusable", err)
 	}
 	rejected := next
 	rejected.ID = uuid.NewString()
 	rejected.Key = "over-limit"
-	if _, err = st.BeginTrackedGatewayUpload(ctx, rejected, p); !errors.Is(err, state.ErrObjectCapacity) {
+	if _, err = begin(ctx, rejected, p); !errors.Is(err, state.ErrObjectCapacity) {
 		t.Fatal(err)
 	}
 	if _, err = st.GetObjectUploadReceipt(ctx, b.AccountID, b.AppID, "", c.SubjectID, rejected.ID); !errors.Is(err, state.ErrNotFound) {

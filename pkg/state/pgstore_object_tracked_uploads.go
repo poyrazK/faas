@@ -13,7 +13,7 @@ import (
 var _ ObjectTrackedUploadStore = (*PgStore)(nil)
 
 func objectTrackedUploadFromSQL(r sqlc.ObjectUploadCompletion) ObjectUploadCompletion {
-	return ObjectUploadCompletion{ID: pgUUIDString(r.ID), RouteID: pgUUIDString(r.RouteID), AccountID: pgUUIDString(r.AccountID), AppID: pgUUIDString(r.AppID), BucketID: pgUUIDString(r.BucketID), SubjectID: r.SubjectID, Key: r.ObjectKey, Bytes: r.Bytes, ContentType: r.ContentType, ETag: r.Etag, Status: r.Status, ErrorCode: r.ErrorCode, RequestID: r.RequestID, IdempotencyKey: r.IdempotencyKey, RequestFingerprint: r.RequestFingerprint, CreatedAt: r.CreatedAt.Time, Origin: r.Origin, WritePhase: r.WritePhase, RecoveryToken: r.RecoveryToken, RecoveryLeaseUntil: r.RecoveryLeaseUntil.Time, RecoveryRetryAt: r.RecoveryRetryAt.Time}
+	return ObjectUploadCompletion{ID: pgUUIDString(r.ID), RouteID: pgUUIDString(r.RouteID), AccountID: pgUUIDString(r.AccountID), AppID: pgUUIDString(r.AppID), BucketID: pgUUIDString(r.BucketID), SubjectID: r.SubjectID, Key: r.ObjectKey, Bytes: r.Bytes, ContentType: r.ContentType, ETag: r.Etag, Status: r.Status, ErrorCode: r.ErrorCode, RequestID: r.RequestID, IdempotencyKey: r.IdempotencyKey, RequestFingerprint: r.RequestFingerprint, CreatedAt: r.CreatedAt.Time, Origin: r.Origin, SourceKey: r.SourceKey, SourceETag: r.SourceEtag, WritePhase: r.WritePhase, RecoveryToken: r.RecoveryToken, RecoveryLeaseUntil: r.RecoveryLeaseUntil.Time, RecoveryRetryAt: r.RecoveryRetryAt.Time}
 }
 func (s *PgStore) BeginTrackedObjectUpload(ctx context.Context, c ObjectUploadCompletion, p api.ObjectStoragePolicy) (ObjectUploadCompletion, bool, error) {
 	if !validTrackedObjectUpload(c) {
@@ -193,6 +193,21 @@ func (s *PgStore) BeginTrackedGatewayUpload(ctx context.Context, c ObjectUploadC
 	if !validTrackedGatewayUpload(c) {
 		return c, ErrConflict
 	}
+	c.Origin = "gateway"
+	return s.beginTrackedGatewayWrite(ctx, c, p)
+}
+
+var _ ObjectTrackedGatewayCopyStore = (*PgStore)(nil)
+
+func (s *PgStore) BeginTrackedGatewayCopy(ctx context.Context, c ObjectUploadCompletion, p api.ObjectStoragePolicy) (ObjectUploadCompletion, error) {
+	if !validTrackedGatewayCopy(c) {
+		return c, ErrConflict
+	}
+	c.Origin = "gateway_copy"
+	return s.beginTrackedGatewayWrite(ctx, c, p)
+}
+
+func (s *PgStore) beginTrackedGatewayWrite(ctx context.Context, c ObjectUploadCompletion, p api.ObjectStoragePolicy) (ObjectUploadCompletion, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return c, err
@@ -213,7 +228,7 @@ func (s *PgStore) BeginTrackedGatewayUpload(ctx context.Context, c ObjectUploadC
 	if err = admitObjectURLTx(ctx, tx, c.AccountID, c.BucketID, c.Key, c.Bytes, true, p, c.ID, true); err != nil {
 		return c, err
 	}
-	r, err := q.ObjectGatewayUploadInsert(ctx, tx, sqlc.ObjectGatewayUploadInsertParams{ID: mustPgUUID(c.ID), AccountID: mustPgUUID(c.AccountID), AppID: mustPgUUID(c.AppID), BucketID: mustPgUUID(c.BucketID), SubjectID: c.SubjectID, ObjectKey: c.Key, Bytes: c.Bytes, ContentType: c.ContentType, RequestID: c.RequestID, RetrySeconds: int32(api.ObjectUploadPreparationTimeout / time.Second)})
+	r, err := q.ObjectGatewayUploadInsert(ctx, tx, sqlc.ObjectGatewayUploadInsertParams{ID: mustPgUUID(c.ID), AccountID: mustPgUUID(c.AccountID), AppID: mustPgUUID(c.AppID), BucketID: mustPgUUID(c.BucketID), SubjectID: c.SubjectID, ObjectKey: c.Key, Bytes: c.Bytes, ContentType: c.ContentType, RequestID: c.RequestID, Origin: c.Origin, SourceKey: c.SourceKey, SourceEtag: c.SourceETag, RetrySeconds: int32(api.ObjectUploadPreparationTimeout / time.Second)})
 	if err != nil {
 		return c, mapErr(err)
 	}

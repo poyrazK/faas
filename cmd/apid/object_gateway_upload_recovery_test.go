@@ -17,6 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
@@ -75,8 +76,21 @@ func (o *acceptedGatewayObject) serve(t *testing.T, w http.ResponseWriter, r *ht
 	}
 }
 
-// adr: 393
-func TestGatewayPUTLostAcknowledgmentRecoveryPG(t *testing.T) {
+type gatewayRecoveryFixture struct {
+	pool       *pgxpool.Pool
+	st         *state.PgStore
+	account    state.Account
+	app        state.App
+	bucket     state.ObjectBucket
+	credential state.ObjectS3Credential
+	registry   *objectstorage.Registry
+	policy     api.ObjectStoragePolicy
+	report     api.ObjectStorageUsageReport
+	client     *awss3.Client
+}
+
+func newGatewayRecoveryFixture(t *testing.T, handler http.Handler, sourceBytes int64) gatewayRecoveryFixture {
+	t.Helper()
 	ctx := t.Context()
 	pool := pgtest.OpenMigrated(t)
 	if err := db.MigrateUp(ctx, pool); err != nil {
@@ -91,9 +105,8 @@ func TestGatewayPUTLostAcknowledgmentRecoveryPG(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	object := &acceptedGatewayObject{}
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { object.serve(t, w, r) }))
-	defer upstream.Close()
+	upstream := httptest.NewServer(handler)
+	t.Cleanup(upstream.Close)
 	policy := api.ObjectStoragePolicy{MaxAccountBytes: 100, MaxBucketBytes: 100, MaxAccountKeys: 100, MaxMonthlyCostMillicents: 100, MaxMonthlyRequests: 100, MaxMonthlyEgressBytes: 100, MaxMonthlyAuthorizations: 100, MaxReportAgeSeconds: 3600}
 	config := objectstorage.Config{Accounting: &policy, DefaultRegion: "us-east-1", Defaults: map[string]string{"us-east-1": "test"}, Backends: []objectstorage.BackendConfig{{ID: "test", Driver: "s3", Region: "us-east-1", Namespace: "test", Endpoint: upstream.URL, S3Region: "us-east-1", PathStyle: true, AllowHTTP: true, AccessKeyEnv: "TEST_KEY", SecretKeyEnv: "TEST_SECRET"}}}
 	registry, err := objectstorage.NewRegistry(config, func(string) string { return "upstream-secret" }, map[string]objectstorage.Factory{"s3": objectstorage.NewS3})
@@ -114,10 +127,14 @@ func TestGatewayPUTLostAcknowledgmentRecoveryPG(t *testing.T) {
 	if err = st.FinishObjectBucket(ctx, b.ID, "create", "ready"); err != nil {
 		t.Fatal(err)
 	}
+	sourceKeys := int64(0)
+	if sourceBytes > 0 {
+		sourceKeys = 1
+	}
 	if err = st.ClaimObjectInventory(ctx, b.ID, "initial"); err != nil {
 		t.Fatal(err)
 	}
-	if err = st.FinishObjectInventory(ctx, b.ID, "initial", 0, 0); err != nil {
+	if err = st.FinishObjectInventory(ctx, b.ID, "initial", sourceBytes, sourceKeys); err != nil {
 		t.Fatal(err)
 	}
 	report := api.ObjectStorageUsageReport{AccountID: acct.ID, BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, Source: "provider", PeriodStart: state.ObjectStoragePeriod(time.Now()), ObservedAt: time.Now()}
@@ -142,8 +159,18 @@ func TestGatewayPUTLostAcknowledgmentRecoveryPG(t *testing.T) {
 	}
 	edge.Config.Handler = h
 	edge.Start()
-	defer edge.Close()
+	t.Cleanup(edge.Close)
 	client := awss3.New(awss3.Options{Region: "us-east-1", BaseEndpoint: aws.String(edge.URL), UsePathStyle: true, Credentials: credentials.NewStaticCredentialsProvider(access, secret, ""), RetryMaxAttempts: 1, RequestChecksumCalculation: aws.RequestChecksumCalculationWhenRequired})
+	return gatewayRecoveryFixture{pool: pool, st: st, account: acct, app: app, bucket: b, credential: credential, registry: registry, policy: policy, report: report, client: client}
+}
+
+// adr: 393
+func TestGatewayPUTLostAcknowledgmentRecoveryPG(t *testing.T) {
+	object := &acceptedGatewayObject{}
+	f := newGatewayRecoveryFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { object.serve(t, w, r) }), 0)
+	ctx := t.Context()
+	pool, st, acct, app, b, credential, registry, policy, report, client := f.pool, f.st, f.account, f.app, f.bucket, f.credential, f.registry, f.policy, f.report, f.client
+	var err error
 	_, err = client.PutObject(ctx, &awss3.PutObjectInput{Bucket: aws.String("assets"), Key: aws.String("key"), Body: strings.NewReader("hello")})
 	if err == nil {
 		t.Fatal("lost acknowledgment was reported as success")

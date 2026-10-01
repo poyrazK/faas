@@ -2883,6 +2883,8 @@ type ObjectUploadCompletion struct {
 	RecoveryLeaseUntil pgtype.Timestamptz
 	RecoveryRetryAt    pgtype.Timestamptz
 	Origin             string
+	SourceKey          string
+	SourceEtag         string
 }
 
 type ObjectUploadRoute struct {

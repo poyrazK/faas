@@ -5222,5 +5222,5 @@ SELECT * FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND app_id
 
 -- name: ObjectGatewayUploadInsert :one
 INSERT INTO object_upload_completions
- (id,account_id,app_id,bucket_id,subject_id,object_key,bytes,content_type,request_id,status,write_phase,origin,recovery_retry_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending','prepared','gateway',now()+make_interval(secs=>sqlc.arg(retry_seconds)::int)) RETURNING *;
+ (id,account_id,app_id,bucket_id,subject_id,object_key,bytes,content_type,request_id,status,write_phase,origin,source_key,source_etag,recovery_retry_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending','prepared',sqlc.arg(origin)::text,sqlc.arg(source_key)::text,sqlc.arg(source_etag)::text,now()+make_interval(secs=>sqlc.arg(retry_seconds)::int)) RETURNING *;

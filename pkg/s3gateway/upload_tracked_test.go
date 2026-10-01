@@ -49,7 +49,10 @@ func (s *gatewayReceiptStore) FinishTrackedObjectUpload(ctx context.Context, c s
 type gatewayReceiptProvider struct {
 	mu sync.Mutex
 	*gatewayTestProvider
-	signErr error
+	signErr    error
+	sourceErr  error
+	copySource objectstorage.CopySourceSnapshot
+	copyFn     func(context.Context, string, objectstorage.CopyObjectRequest, objectstorage.CopySourceSnapshot) (objectstorage.CopyObjectResult, error)
 }
 
 func (p *gatewayReceiptProvider) PresignTrackedPut(ctx context.Context, bucket string, r objectstorage.SignRequest, c objectstorage.ObjectWriteConditions, id string) (objectstorage.SignedRequest, error) {

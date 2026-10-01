@@ -219,6 +219,23 @@ type ObjectCopier interface {
 	CopyObject(context.Context, string, CopyObjectRequest) (CopyObjectResult, error)
 }
 
+// CopySourceSnapshot captures the source before capacity admission. The copy
+// must atomically require its ETag; metadata COPY uses this captured metadata.
+type CopySourceSnapshot struct {
+	SizeBytes int64
+	ETag      string
+	Metadata  ObjectMetadata
+	Expires   *time.Time
+}
+
+// TrackedObjectCopier must issue one copy with a fresh private receipt and the
+// measured source condition. Only ErrWriteRejected proves no destination write.
+type TrackedObjectCopier interface {
+	ObjectWriteConfirmer
+	SnapshotCopySource(context.Context, string, string) (CopySourceSnapshot, error)
+	CopyTrackedObject(context.Context, string, string, CopyObjectRequest, CopySourceSnapshot) (CopyObjectResult, error)
+}
+
 // CrossBucketObjectCopier is the optional provider capability used when an
 // environment clone needs an isolated bucket. Providers must copy server-side
 // and preserve the same metadata and tag directives as CopyObject.
