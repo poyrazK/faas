@@ -34,7 +34,6 @@ class UDPDeploymentTest(unittest.TestCase):
     def firewall(self, enabled, sources):
         text = (ROOT / 'deploy/ansible/roles/nftables/templates/policy_nftables.conf.j2').read_text()
         env = jinja2.Environment()
-        env.filters['bool'] = ansible_bool
         return env.from_string(text).render(public_iface='eth0', masquerade_cidr='10.100.0.0/16',
             faas_udpd_enabled=enabled, faas_udpd_allowed_cidrs=sources)
 

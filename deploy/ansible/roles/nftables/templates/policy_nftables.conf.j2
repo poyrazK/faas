@@ -55,7 +55,7 @@ table inet faas {
 {% else %}    ip saddr {{ cidr }} tcp dport 40000-49999 accept comment "raw TCP app listeners"
 {% endif -%}
 {% endfor -%}
-{% endif %}{% if faas_udpd_enabled | default(false) | bool and faas_udpd_allowed_cidrs | default([]) -%}
+{% endif %}{% if (faas_udpd_enabled | default(false) | string | lower) in ["true", "yes", "on", "1"] and faas_udpd_allowed_cidrs | default([]) -%}
 {% for cidr in faas_udpd_allowed_cidrs -%}
     ip saddr {{ cidr }} udp dport 40000-49999 accept comment "UDP app listeners"
 {% endfor -%}
