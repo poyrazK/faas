@@ -2,6 +2,8 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { FailureRules } from './FailureRules.js';
+import type { SchedulePolicy } from './SchedulePolicy.js';
 /**
  * Partial cron update.
  */
@@ -25,5 +27,7 @@ export type UpdateCronRequest = {
    * Replace the base retry delay for an existing deployment-command cron; the delay doubles after each failed attempt.
    */
   retry_backoff_seconds?: number | null;
+  schedule_policy?: SchedulePolicy;
+  failure_rules?: FailureRules;
 };
 

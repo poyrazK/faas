@@ -144,10 +144,14 @@ Two mechanisms, because the tally alone is not enough:
 - **A required-test contract.** `TestDeployWakeMetal`,
   `TestSourceDeployWakeMetal`, `TestBuildMetal`, `TestWakeTimelineMetal`,
   `TestDeployHealthcheckMetal`, `TestCatalogRuntimeParityMetal`,
+  `TestFeatureFlagsNativeParkRestoreMetal`,
   `TestSec11_MemoryMaxFenceEnforced_CrossProcess` and
   `TestSec11_SeccompFilterEnforced_CrossProcess` must actually execute. If any
-  of them *skips*, the gate fails and names it. A tally cannot distinguish "the
-  suite grew" from "the build path stopped running"; this can.
+  of them *skips*, the gate fails and names it. The Flags test publishes a new
+  config while a real Node app is parked, waits beyond the SDK freshness bound,
+  then verifies a restored VM fetches the new signed bundle and records the
+  updated customer decision. A tally cannot distinguish "the suite grew" from
+  "the build path stopped running"; this can.
 
 The `-run` filter is generated from the build tag, never hand-written, and
 `scripts/ci/run-native-e2e_test.sh` — wired into the `checks` job in `ci.yml`, so

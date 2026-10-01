@@ -30,8 +30,9 @@ type Artifact struct {
 }
 
 type Manifest struct {
-	Version   int        `json:"version"`
-	Artifacts []Artifact `json:"artifacts"`
+	Version     int        `json:"version"`
+	Artifacts   []Artifact `json:"artifacts"`
+	OutcomeCode string     `json:"outcome_code,omitempty"`
 }
 
 // Validate parses and checks a result before it crosses the guest exit
@@ -52,6 +53,9 @@ func Validate(raw []byte) (Manifest, error) {
 	if manifest.Version != Version || len(manifest.Artifacts) > MaxArtifacts {
 		return Manifest{}, fmt.Errorf("output manifest needs version %d and at most %d artifacts", Version, MaxArtifacts)
 	}
+	if err := ValidateOutcomeCode(manifest.OutcomeCode); err != nil {
+		return Manifest{}, err
+	}
 	seen := make(map[string]struct{}, len(manifest.Artifacts))
 	for _, artifact := range manifest.Artifacts {
 		if artifact.Name == "" || len(artifact.Name) > 128 || strings.ContainsAny(artifact.Name, "/\\\x00") {
@@ -71,4 +75,21 @@ func Validate(raw []byte) (Manifest, error) {
 		}
 	}
 	return manifest, nil
+}
+
+// ValidateOutcomeCode checks the bounded token written by a job to describe a
+// confirmed application result. Empty means the workload did not report one.
+func ValidateOutcomeCode(code string) error {
+	if code == "" {
+		return nil
+	}
+	if len(code) > 64 || strings.TrimSpace(code) != code {
+		return fmt.Errorf("outcome_code must be a token of at most 64 bytes")
+	}
+	for _, c := range code {
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '_' && c != '-' && c != '.' {
+			return fmt.Errorf("outcome_code must use lowercase letters, digits, underscore, dash, or dot")
+		}
+	}
+	return nil
 }

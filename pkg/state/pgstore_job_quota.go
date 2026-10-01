@@ -92,12 +92,12 @@ func (s *PgStore) JobCreateScheduledIfUnderQuota(ctx context.Context, job Job, l
 	row := tx.QueryRow(ctx,
 		`insert into jobs (account_id, kind, name, image_ref, ram_mb,
 		                  task_timeout_s, max_parallelism, retry_max,
-		                  env_overrides, command, cron_schedule, cron_timezone)
-		 values ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12)
+		                  env_overrides, command, cron_schedule, cron_timezone, schedule_policy, failure_rules)
+		 values ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, nullif($11, ''), $12, $13::jsonb, $14::jsonb)
 		 returning `+jobSelectCols,
 		job.AccountID, job.Kind, job.Name, job.ImageRef, job.RAMMB,
 		job.TaskTimeoutS, job.MaxParallelism, job.RetryMax,
-		[]byte(job.EnvOverrides), job.Command, job.CronSchedule, job.CronTimezone)
+		[]byte(job.EnvOverrides), job.Command, job.CronSchedule, job.CronTimezone, policyJSON(job.SchedulePolicy), policyJSON(job.FailureRules))
 	created, err := scanJob(row)
 	if err != nil {
 		return Job{}, mapErr(err)

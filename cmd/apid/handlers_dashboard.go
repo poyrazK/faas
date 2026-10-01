@@ -656,15 +656,41 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 			MaxAge:   int(middleware.DefaultCSRFTTL.Seconds()),
 		})
 	}
+	cronPolicyCSRFAction := dashboardCronSchedulePolicyAction(app.Slug)
+	cronPolicyCSRFCookie := dashboardCronSchedulePolicyCookie(app.Slug)
+	schedulePolicyCSRFToken, err := middleware.IssueForAuthenticatedNamed(
+		s.sessions, cronPolicyCSRFAction, acct.ID, cronPolicyCSRFCookie)
+	if err != nil {
+		log.Error("dashboard renderAppDetail: csrf issue scheduled work policy", "app_id", app.ID, "err", err)
+		schedulePolicyCSRFToken = ""
+	} else {
+		http.SetCookie(w, &http.Cookie{
+			Name: cronPolicyCSRFCookie, Value: schedulePolicyCSRFToken, Path: "/", HttpOnly: true,
+			Secure: s.domain != "", SameSite: http.SameSiteLaxMode, MaxAge: int(middleware.DefaultCSRFTTL.Seconds()),
+		})
+	}
 	cronItems := make([]dashboard.CronItem, 0, len(crons))
 	for _, c := range crons {
 		item := dashboard.CronItem{
-			ID:                  c.ID,
-			Schedule:            c.Schedule,
-			Path:                c.Path,
-			Enabled:             c.Enabled,
-			FireNowConfirmToken: fireCSRFToken,
+			ID:                    c.ID,
+			Schedule:              c.Schedule,
+			Path:                  c.Path,
+			Enabled:               c.Enabled,
+			FireNowConfirmToken:   fireCSRFToken,
+			SchedulePolicyEnabled: len(c.Command) > 0,
+			SchedulePolicyCSRF:    schedulePolicyCSRFToken,
+			PolicyURL:             "/dashboard/apps/" + url.PathEscape(app.Slug) + "/crons/" + url.PathEscape(c.ID) + "/policy",
 		}
+		item.OverlapPolicy, item.MissedRunsPolicy = "allow", "skip"
+		if c.SkipIfRunning {
+			item.OverlapPolicy = "skip"
+		}
+		if c.SchedulePolicy != nil {
+			item.OverlapPolicy = c.SchedulePolicy.Overlap
+			item.DeadlineSeconds = c.SchedulePolicy.StartDeadlineSeconds
+			item.MissedRunsPolicy = c.SchedulePolicy.MissedRuns
+		}
+		item.FailureRulesJSON = dashboardFailureRulesJSON(c.FailureRules)
 		if !c.LastFiredAt.IsZero() {
 			item.LastFiredAt = c.LastFiredAt.UTC().Format(time.RFC3339)
 		}
@@ -681,6 +707,17 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 			item.RunsCount = len(proj)
 		} else {
 			log.Warn("dashboard renderAppDetail: list cron runs", "account_id", acct.ID, "app_id", app.ID, "cron_id", c.ID, "err", rerr)
+		}
+		if item.SchedulePolicyEnabled {
+			if history, ok := s.store.(state.ScheduleOccurrenceHistoryStore); ok {
+				if rows, historyErr := history.ScheduleOccurrenceListByCron(ctx, c.ID, 10, ""); historyErr == nil {
+					item.HistoryAvailable = true
+					item.Occurrences = projectDashboardScheduleOccurrences(rows)
+					item.OccurrencesCount = len(item.Occurrences)
+				} else {
+					log.Warn("dashboard renderAppDetail: list cron schedule occurrences", "account_id", acct.ID, "app_id", app.ID, "cron_id", c.ID, "err", historyErr)
+				}
+			}
 		}
 		cronItems = append(cronItems, item)
 	}
@@ -829,6 +866,8 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		// Anything other than the canonical values collapses to
 		// empty so a stale "?fired=" doesn't render an empty banner.
 		FiredFlash:           firedFlash(r),
+		ScheduledWorkFlash:   dashboardScheduleFlash(r),
+		SchedulePolicyCSRF:   schedulePolicyCSRFToken,
 		RollbackConfirmToken: rollbackCSRFToken,
 		RollbackFlash:        rollbackFlash(r),
 		// Issue #273 / ADR-042 — best-effort metrics snapshot.

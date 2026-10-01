@@ -16,7 +16,12 @@
   combine with AND. Anonymous requests do not match customer rules.
 
 The capability is internal until operational and native restore qualification;
-`FAAS_FLAGS_ENABLED=1` enables owner access for operator qualification.
+`FAAS_FLAGS_ENABLED=1` enables owner access for operator qualification. The
+native e2e gate requires `TestFeatureFlagsNativeParkRestoreMetal`, which checks
+configuration refresh and verified customer evidence after a real VM restore.
+The catalog points to this test as the capability qualification evidence; the
+database-backed `make test-flags` gate continues to cover management and
+application-level acceptance.
 The initial runtime client is the server-only Node SDK. It retrieves configuration
 with the existing loopback workload identity endpoint and an RS256 assertion for
 `gregale:flags`. apid derives account, project and environment from the live
@@ -54,16 +59,22 @@ The first acceptance gate runs the real Node SDK, apid, gateway and PostgreSQL
 with four customers: three select the new implementation, one retains the old
 implementation; forged customer headers are replaced, new-path errors are
 filterable, and the same process refreshes disablement after simulated inactivity.
-This is application/configuration acceptance, not native KVM park/restore proof.
-No VM lifecycle behavior is changed by this decision. SDK allocation vectors and
+This is application/configuration acceptance; the native KVM park/restore proof
+is a separate required test in the hardware gate. No VM lifecycle behavior is
+changed by this decision. SDK allocation vectors and
 rollout monotonicity, optimistic concurrency, tenant ownership, history, rollback,
 workload-token audience and scope, and evidence stripping are separate gates.
 
 Multivariate flags, arbitrary user attributes, automatic progressive release,
-and explicit authenticated inheritance across services or queued work are future
-extensions. Current downstream or async HTTP delivery reevaluates configuration
-in that workload's environment using its existing verified tenant identity; no
-client-supplied flag header establishes an inherited decision.
+and inheritance through queued work are future extensions. For synchronous
+managed service calls, the Node SDK can explicitly propagate only decisions
+marked used. The service proxy forwards a bounded, canonical envelope only
+after its existing caller identity and binding checks; public ingress removes
+caller-supplied copies. Downstream SDK evidence records the original app,
+environment, config version and rule with source `inherited`. This envelope
+carries application behavior context and never grants access or entitlements.
+Other downstream and asynchronous work continues to evaluate its own
+configuration using its existing verified tenant identity.
 
 Operational owner: apid and SDK maintainers. Recover by publishing a known good
 version with the current expected version, or using explicit application defaults

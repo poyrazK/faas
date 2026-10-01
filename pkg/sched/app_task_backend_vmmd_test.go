@@ -29,7 +29,7 @@ func (r *recordingRoutedAppTaskVMM) RestoreAppTask(_ context.Context, nodeID str
 func (r *recordingRoutedAppTaskVMM) ExecuteAppTask(_ context.Context, nodeID, _ string, request apptaskproto.Request) (apptaskproto.Result, error) {
 	r.executeNode, r.executeRequest = nodeID, request
 	exit := 0
-	return apptaskproto.Result{Status: apptaskproto.StatusSucceeded, ExitCode: &exit, Stdout: []byte("done\n")}, nil
+	return apptaskproto.Result{Status: apptaskproto.StatusSucceeded, ExitCode: &exit, OutcomeCode: "accepted", Stdout: []byte("done\n")}, nil
 }
 
 func (r *recordingRoutedAppTaskVMM) ExecuteAppTaskWithOutput(ctx context.Context, nodeID, instance string, request apptaskproto.Request, _ apptaskproto.OutputReceiver) (apptaskproto.Result, error) {
@@ -42,6 +42,7 @@ func (r *recordingRoutedAppTaskVMM) Destroy(_ context.Context, nodeID, _ string)
 	return nil
 }
 
+// adr: 385 — structured application outcomes survive the routed VM boundary.
 func TestRoutedVmmdAppTaskBackendKeepsCommandOutOfRestoreAndPinsSession(t *testing.T) {
 	router := &recordingRoutedAppTaskVMM{}
 	var resolved AppTaskRestoreRequest
@@ -74,7 +75,7 @@ func TestRoutedVmmdAppTaskBackendKeepsCommandOutOfRestoreAndPinsSession(t *testi
 		len(router.executeRequest.Command) != 2 || router.executeRequest.Command[0] != "bin/migrate" {
 		t.Fatalf("execute route = %#v", router)
 	}
-	if outcome.Status != state.AppTaskSucceeded || outcome.StdoutTail != "done\n" || outcome.ExitCode == nil || *outcome.ExitCode != 0 {
+	if outcome.Status != state.AppTaskSucceeded || outcome.StdoutTail != "done\n" || outcome.ExitCode == nil || *outcome.ExitCode != 0 || outcome.OutcomeCode != "accepted" {
 		t.Fatalf("outcome = %#v", outcome)
 	}
 	if err := session.Destroy(context.Background()); err != nil {

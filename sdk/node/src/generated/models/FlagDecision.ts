@@ -23,6 +23,10 @@ export type FlagDecision = {
    * Eligibility bucket for rollout-gated variant rules.
    */
   rollout_bucket?: number;
-  source: 'configuration' | 'fallback';
+  source: 'configuration' | 'fallback' | 'inherited';
+  inherited_from?: {
+    app_id: string;
+    environment_id: string;
+  };
 };
 

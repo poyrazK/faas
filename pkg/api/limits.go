@@ -7768,3 +7768,11 @@ const TCPListenerTLSObservationWriteTimeout = 2 * time.Second
 // UDP listener ports reserve an independent UDP namespace at the public edge.
 const UDPListenerPublicPortMin = 40000
 const UDPListenerPublicPortMax = 49999
+
+// Versioned work-policy wire bounds; plan retry/task/concurrency limits still
+// apply independently to every execution admitted under one of these policies.
+const (
+	WorkPolicyMaxBytes                = 16384
+	WorkPolicyMaxRules                = 64
+	WorkPolicyMaxStartDeadlineSeconds = 30 * 24 * 60 * 60
+)

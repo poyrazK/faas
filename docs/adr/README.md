@@ -54,6 +54,8 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 386 | [HTTP/1 upgrade socket ownership](386-http1-upgrade-socket-ownership.md) | accepted | Hijack successful raw upgrades, retain buffered duplex bytes, and cancel both directions on session closure |
+| 385 | [Durable scheduled work policies](385-scheduled-work-policies.md) | accepted for recurring Jobs and deployment-command Crons | Persist versioned schedule decisions and classified retries with per-occurrence history |
 | 384 | [Fetch-compatible internal service port](384-fetch-compatible-internal-service-port.md) | accepted | Canonical HTTP bindings use 10081 with the existing authorization path; legacy 10080 remains available |
 | 383 | [Curated dependency profiles for stateless executions](383-curated-stateless-execution-profiles.md) | accepted | Preinstalled immutable package sets, separate snapshots, and lease-pinned image provenance |
 | 382 | [Bounded inline output artifacts for stateless executions](382-stateless-execution-output-artifacts.md) | accepted | Explicit file exports within the existing receipt output budget; disposable scratch and VM teardown |

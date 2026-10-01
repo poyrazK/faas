@@ -349,6 +349,7 @@ jobs:
       CP_HOST: ${{ secrets.CP_HOST || secrets.DO_HOST }}
       CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
       CONTROL_RESULT: ${{ needs.control.result }}
+      CONTROL_ACTIVATED: ${{ needs.control.outputs.activated }}
       BATCH_PREPARE: ${{ needs.plan.outputs.batch_prepare }}
       COMPUTE_PREPARE_RESULT: ${{ needs.compute-prepare.result }}
       COMPUTE_PREPARE_COMPAT_RESULT: ${{ needs.compute-prepare-compat.result }}
@@ -572,6 +573,15 @@ jobs:
           # actually reached.
           if [[ -z "${DESIRED_RELEASE:-}" ]]; then
             echo "::error::this job failed before the release was identified; nothing was rolled back"
+            exit 1
+          fi
+          if [[ "$CONTROL_ACTIVATED" != "true" ]]; then
+            echo "::error::control-plane activation was not confirmed in this run; nothing was rolled back"
+            exit 1
+          fi
+          active_release="$(ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "root@${CP_HOST}" 'readlink -f /opt/faas/current')"
+          if [[ "$active_release" != "/opt/faas/releases/${DESIRED_RELEASE}" ]]; then
+            echo "::error::the selected release is no longer active; nothing was rolled back"
             exit 1
           fi
           echo "::warning::a post-activation gate failed; rolling the control plane back"

@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { FailureRules } from './FailureRules.js';
 /**
  * Wire projection of state.JobRun. Aggregate counters are recomputed by schedd after every terminal task transition.
  */
@@ -10,6 +11,15 @@ export type JobRunResponse = {
   job_id: string;
   account_id: string;
   trigger_kind: 'manual' | 'scheduled' | 'triggered';
+  /**
+   * Durable scheduled-occurrence decision linked to this run.
+   */
+  occurrence_id?: string;
+  /**
+   * Latest permitted first task start for this scheduled occurrence.
+   */
+  start_deadline_at?: string;
+  failure_rules?: FailureRules;
   env_overrides?: Record<string, string>;
   tasks: number;
   /**

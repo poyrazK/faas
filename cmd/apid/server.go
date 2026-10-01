@@ -2026,6 +2026,7 @@ func (s *server) handler() http.Handler {
 	// Per-cron execution history (issue #791). Read surface, so
 	// ScopesReadSurface and no idempotency wrapper.
 	mux.HandleFunc("GET /v1/crons/{id}/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listCronRuns))))
+	mux.HandleFunc("GET /v1/crons/{id}/occurrences", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listCronScheduleOccurrences))))
 	// On-demand output and attempt details for one command-cron run.
 	mux.HandleFunc("GET /v1/crons/{id}/runs/{run_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getCronCommandRun))))
 	// Cancel one command-cron run. Deploy-write scope, optional idempotency
@@ -2080,6 +2081,7 @@ func (s *server) handler() http.Handler {
 		s.authLimited(s.requireMFA(s.requireScope(api.ScopesRegistryCredentialsWriteSurface...)(s.deleteJobRegistryCredential))))
 	mux.HandleFunc("POST /v1/jobs/{name}/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createJobRun)))))
 	mux.HandleFunc("GET /v1/jobs/{name}/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listJobRuns))))
+	mux.HandleFunc("GET /v1/jobs/{name}/occurrences", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listJobScheduleOccurrences))))
 	mux.HandleFunc("GET /v1/jobs/{name}/runs/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getJobRun))))
 	mux.HandleFunc("POST /v1/jobs/{name}/runs/{id}/cancel", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.cancelJobRun))))
 	mux.HandleFunc("POST /v1/jobs/{name}/runs/{id}/replay-failed", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.replayFailedJobRun)))))
@@ -3254,6 +3256,7 @@ func (s *server) handler() http.Handler {
 	// (Go 1.22+ mux needs concrete segment counts; the
 	// /crons/{id}/fire-now suffix is the path tail).
 	mux.Handle("POST /dashboard/apps/{slug}/crons/{id}/fire-now", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardFireCron))))
+	mux.Handle("POST /dashboard/apps/{slug}/crons/{id}/policy", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardUpdateCronSchedulePolicy))))
 	// G2 / issue #1397 — the combined env + secrets editor uses
 	// form-encoded POST adapters because browsers cannot submit PUT or
 	// DELETE forms. Each adapter verifies its own named CSRF envelope and
@@ -3312,6 +3315,8 @@ func (s *server) handler() http.Handler {
 	// the dashboard's named CSRF envelope before delegating to the same
 	// account-scoped store transition as the JSON API endpoint.
 	mux.Handle("POST /dashboard/apps/{slug}/queues/dead_letter/{id}/replay", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardQueueDeadLetterReplay))))
+	mux.Handle("POST /dashboard/jobs/{name}/policy", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardUpdateJobSchedulePolicy))))
+	mux.Handle("POST /dashboard/jobs/{name}/runs/{id}/replay-failed", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardReplayFailedJobRun))))
 	// Unified customer failure inbox. These actions use the same named CSRF
 	// envelope and source transition as the app-scoped JSON DLQ endpoints.
 	mux.Handle("POST /dashboard/failed-events/replay-all", s.dashboardChain(s.sessionAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

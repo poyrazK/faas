@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 	"time"
 
 	"github.com/google/uuid"
@@ -47,23 +48,26 @@ import (
 // All UUID columns are exposed as string to match the Cron precedent
 // (Cron.ID is string; the pgx conversion lives inside PgStore).
 type Job struct {
-	ID              string
-	AccountID       string
-	Kind            string // 'batch' | 'recurring'
-	Name            string
-	ImageRef        string
-	RAMMB           int
-	TaskTimeoutS    int
-	MaxParallelism  int
-	RetryMax        int
-	EnvOverrides    json.RawMessage
-	Status          string // 'active' | 'paused' | 'deleted'
-	CronSchedule    string
-	CronTimezone    string
-	LastScheduledAt *time.Time
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-	Command         []string // migrations/00572
+	SchedulePolicy   *workpolicy.SchedulePolicy
+	FailureRules     *workpolicy.FailureRules
+	ScheduleRevision int64
+	ID               string
+	AccountID        string
+	Kind             string // 'batch' | 'recurring'
+	Name             string
+	ImageRef         string
+	RAMMB            int
+	TaskTimeoutS     int
+	MaxParallelism   int
+	RetryMax         int
+	EnvOverrides     json.RawMessage
+	Status           string // 'active' | 'paused' | 'deleted'
+	CronSchedule     string
+	CronTimezone     string
+	LastScheduledAt  *time.Time
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	Command          []string // migrations/00572
 	// ImageResolvedDigest is the immutable OCI manifest digest selected from
 	// ImageRef by imaged. Empty until materialization succeeds.
 	ImageResolvedDigest string
@@ -107,7 +111,12 @@ type JobScheduleCreateStore interface {
 // untouched. Changing either schedule field resets the occurrence cursor so
 // the new rule starts from the update time instead of replaying old fires.
 type JobScheduleUpdateStore interface {
-	JobUpdateWithSchedule(ctx context.Context, id string, command []string, imageRef *string, ramMB, taskTimeoutSec, maxParallelism, retryMax *int, envOverrides json.RawMessage, status *string, schedule, timezone *string) (Job, error)
+	JobUpdateWithSchedule(ctx context.Context, id string, command []string, imageRef *string, ramMB, taskTimeoutSec, maxParallelism, retryMax *int, envOverrides json.RawMessage, status *string, schedule, timezone *string, policyOptions ...JobPolicyOptions) (Job, error)
+}
+
+type JobPolicyOptions struct {
+	SchedulePolicy *workpolicy.SchedulePolicy
+	FailureRules   *workpolicy.FailureRules
 }
 
 // JobRegistryCredential is a sealed Basic Auth credential scoped to one job
@@ -131,6 +140,9 @@ type JobRegistryCredential struct {
 // FinishedAt stay NULL until the run leaves the queued state. AggregateStatus
 // is the closed 6-value vocabulary enforced by job_runs_aggregate_status_check.
 type JobRun struct {
+	FailureRules         *workpolicy.FailureRules
+	OccurrenceID         string
+	StartDeadlineAt      *time.Time
 	ID                   string
 	JobID                string
 	AccountID            string
@@ -173,6 +185,7 @@ type JobRun struct {
 // pointer uses the job's complete command; a pointer to an empty slice runs
 // the executable with no trailing arguments.
 type JobRunOptions struct {
+	FailureRules        *workpolicy.FailureRules
 	CommandArgs         *[]string
 	Inputs              []JobInput
 	InputManifestURI    string
@@ -231,6 +244,8 @@ func jobEffectiveEnv(base, overrides json.RawMessage) (json.RawMessage, error) {
 // relationship between instance_id and status (queued ⇒ NULL;
 // claimed ⇒ NOT NULL; terminal ⇒ either, see migrations/00571).
 type JobTask struct {
+	WorkDecision    *workpolicy.Decision
+	OutcomeCode     string
 	RunID           string
 	TaskIndex       int
 	InputID         string // empty for numeric fan-out runs
@@ -257,6 +272,8 @@ type JobTask struct {
 // JobTaskAttempt is an immutable outcome for one task attempt. The task row
 // remains the current dispatch projection; this record survives later retries.
 type JobTaskAttempt struct {
+	WorkDecision   *workpolicy.Decision
+	OutcomeCode    string
 	RunID          string
 	TaskIndex      int
 	Attempt        int
