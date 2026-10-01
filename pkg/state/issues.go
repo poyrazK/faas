@@ -19,6 +19,8 @@ type IssueStore interface {
 	ListIssues(context.Context, string, IssueListFilter, IssueCursor) (api.ListIssuesResponse, error)
 	GetIssueDetail(context.Context, string, string, time.Time, time.Time, IssueDetailCursors) (api.IssueDetail, error)
 	ActOnIssue(context.Context, string, string, string, api.IssueActionRequest, time.Time) (api.Issue, error)
+	GetIssueImpactAlertPolicy(context.Context, string) (api.IssueImpactAlertPolicy, error)
+	SetIssueImpactAlertPolicy(context.Context, string, string, int64, time.Time) (api.IssueImpactAlertPolicy, error)
 }
 
 type IssueCredential struct {

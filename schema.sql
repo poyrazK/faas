@@ -3821,6 +3821,18 @@ CREATE TABLE public.app_errors (
 
 
 --
+-- Name: app_issue_impact_alert_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_issue_impact_alert_policies (
+    app_id uuid NOT NULL,
+    minimum_customers integer NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_issue_impact_alert_policies_minimum_customers_check CHECK (((minimum_customers >= 1) AND (minimum_customers <= 10000)))
+);
+
+
+--
 -- Name: app_issues; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4410,7 +4422,7 @@ CREATE TABLE public.app_webhook_event_outbox (
     payload jsonb NOT NULL,
     recipient_webhook_ids uuid[] NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text]))),
+    CONSTRAINT app_webhook_event_outbox_event_chk CHECK ((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text]))),
     CONSTRAINT app_webhook_event_outbox_payload_chk CHECK ((jsonb_typeof(payload) = 'object'::text)),
     CONSTRAINT app_webhook_event_outbox_recipients_chk CHECK ((cardinality(recipient_webhook_ids) > 0))
 );
@@ -7041,7 +7053,7 @@ CREATE TABLE public.issue_activity (
     actor_account_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     details jsonb DEFAULT '{}'::jsonb NOT NULL,
-    CONSTRAINT issue_activity_action_check CHECK ((action = ANY (ARRAY['created'::text, 'assigned'::text, 'resolved'::text, 'reopened'::text, 'ignored'::text, 'regressed'::text]))),
+    CONSTRAINT issue_activity_action_check CHECK ((action = ANY (ARRAY['created'::text, 'assigned'::text, 'resolved'::text, 'reopened'::text, 'ignored'::text, 'regressed'::text, 'impact_threshold_reached'::text]))),
     CONSTRAINT issue_activity_details_check CHECK ((jsonb_typeof(details) = 'object'::text))
 );
 
@@ -11397,6 +11409,14 @@ ALTER TABLE ONLY public.app_errors
 
 
 --
+-- Name: app_issue_impact_alert_policies app_issue_impact_alert_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_issue_impact_alert_policies
+    ADD CONSTRAINT app_issue_impact_alert_policies_pkey PRIMARY KEY (app_id);
+
+
+--
 -- Name: app_issues app_issues_app_id_environment_grouping_version_fingerprint_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -14509,6 +14529,13 @@ CREATE INDEX app_errors_account_app_last_seen_idx ON public.app_errors USING btr
 --
 
 CREATE UNIQUE INDEX app_errors_dedupe_uniq ON public.app_errors USING btree (account_id, app_id, fingerprint);
+
+
+--
+-- Name: app_issue_impact_alert_policies_pkey; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX app_issue_impact_alert_policies_pkey ON public.app_issue_impact_alert_policies USING btree (app_id);
 
 
 --
@@ -20344,6 +20371,14 @@ ALTER TABLE ONLY public.app_errors
 
 ALTER TABLE ONLY public.app_errors
     ADD CONSTRAINT app_errors_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE SET NULL;
+
+
+--
+-- Name: app_issue_impact_alert_policies app_issue_impact_alert_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_issue_impact_alert_policies
+    ADD CONSTRAINT app_issue_impact_alert_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

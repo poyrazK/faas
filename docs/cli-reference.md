@@ -2556,7 +2556,7 @@ Group failures and track ownership and release-aware resolution
 | `--activity-cursor <CURSOR>` | activity history cursor |  |
 | `--assignee <OWNER>` | list filter me, unassigned, or account UUID; assignment owner UUID |  |
 | `--sort <ORDER>` | list order: recent or impact by verified customers in 24h |  |
-| `--min-customers <N>` | minimum verified customers affected in 24h |  |
+| `--min-customers <N>` | issue list threshold, or impact-alert policy threshold (0 disables) |  |
 | `--since <RFC3339>` | impact window start |  |
 | `--until <RFC3339>` | ignore until |  |
 | `--name <NAME>` | credential name |  |
@@ -2569,6 +2569,7 @@ gregale issues list --app my-api
 gregale issues list --app my-api --assignee me
 gregale issues list --app my-api --assignee unassigned
 gregale issues list --app my-api --sort impact
+gregale issues impact-alert --app my-api --min-customers 5
 gregale issues get ISSUE_ID --app my-api
 gregale issues resolve ISSUE_ID --app my-api --deployment DEPLOYMENT_ID
 ```
@@ -2596,6 +2597,10 @@ Reopen an issue
 ### issues ignore
 
 Ignore until a timestamp
+
+### issues impact-alert
+
+Read or configure customer-impact alert threshold
 
 ### issues tokens
 

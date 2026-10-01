@@ -6,6 +6,9 @@ import "time"
 // summaries. Detailed issue views can still request a plan-bounded window.
 const IssueImpactSummaryWindow = 24 * time.Hour
 
+// IssueImpactAlertWindow is the fixed rolling window used by impact alerts.
+const IssueImpactAlertWindow = 24 * time.Hour
+
 // IssueEvent is the instrumentation envelope. Identity and deployment fields
 // are resolved from the ingest credential, never accepted from this body.
 type IssueEvent struct {
@@ -59,6 +62,19 @@ type IssueImpactSummary struct {
 	IdentifiedCustomers int64 `json:"identified_customers"`
 	ObservedEvents      int64 `json:"observed_events"`
 	UnattributedEvents  int64 `json:"unattributed_events"`
+}
+
+// IssueImpactAlertPolicy configures one app-level alert for the first point in
+// the rolling window where verified distinct customer impact reaches a threshold.
+type IssueImpactAlertPolicy struct {
+	Enabled          bool  `json:"enabled"`
+	MinimumCustomers int64 `json:"minimum_customers"`
+	WindowSeconds    int64 `json:"window_seconds"`
+}
+
+type UpdateIssueImpactAlertPolicyRequest struct {
+	// Zero disables customer-impact alerts; positive values enable the policy.
+	MinimumCustomers int64 `json:"minimum_customers"`
 }
 
 type IssueOccurrence struct {

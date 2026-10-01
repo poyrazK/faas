@@ -41,6 +41,18 @@ func (c *Client) ListIssuesWithOptions(ctx context.Context, slug string, options
 	err := c.do(ctx, "GET", issueAppPath(slug)+"/issues?"+q.Encode(), nil, &out)
 	return out, err
 }
+
+func (c *Client) GetIssueImpactAlertPolicy(ctx context.Context, slug string) (IssueImpactAlertPolicy, error) {
+	var out IssueImpactAlertPolicy
+	err := c.do(ctx, "GET", issueAppPath(slug)+"/issue-impact-alert-policy", nil, &out)
+	return out, err
+}
+
+func (c *Client) SetIssueImpactAlertPolicy(ctx context.Context, slug string, in UpdateIssueImpactAlertPolicyRequest) (IssueImpactAlertPolicy, error) {
+	var out IssueImpactAlertPolicy
+	err := c.do(ctx, "PUT", issueAppPath(slug)+"/issue-impact-alert-policy", in, &out)
+	return out, err
+}
 func (c *Client) GetIssue(ctx context.Context, slug, id, since, cursor string) (IssueDetail, error) {
 	return c.GetIssuePage(ctx, slug, id, since, cursor, "", "")
 }

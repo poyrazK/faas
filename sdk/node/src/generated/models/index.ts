@@ -473,6 +473,7 @@ export type { IssueEvent } from './IssueEvent.js';
 export type { IssueEventResponse } from './IssueEventResponse.js';
 export type { IssueFrame } from './IssueFrame.js';
 export type { IssueImpact } from './IssueImpact.js';
+export type { IssueImpactAlertPolicy } from './IssueImpactAlertPolicy.js';
 export type { IssueImpactSummary } from './IssueImpactSummary.js';
 export type { IssueIngestToken } from './IssueIngestToken.js';
 export type { IssueOccurrence } from './IssueOccurrence.js';
@@ -990,6 +991,7 @@ export type { UpdateDeploymentTrafficRequest } from './UpdateDeploymentTrafficRe
 export type { UpdateEdgeRuleRequest } from './UpdateEdgeRuleRequest.js';
 export type { UpdateFeatureFlagsRequest } from './UpdateFeatureFlagsRequest.js';
 export type { UpdateInboundWebhookEndpointRequest } from './UpdateInboundWebhookEndpointRequest.js';
+export type { UpdateIssueImpactAlertPolicyRequest } from './UpdateIssueImpactAlertPolicyRequest.js';
 export type { UpdateJobRequest } from './UpdateJobRequest.js';
 export type { UpdateManagedRealtimeEndpointRequest } from './UpdateManagedRealtimeEndpointRequest.js';
 export type { UpdateMirrorRuleRequest } from './UpdateMirrorRuleRequest.js';

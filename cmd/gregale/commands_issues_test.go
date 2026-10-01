@@ -54,3 +54,54 @@ func TestIssuesListAssigneeFilterAndTriageColumns(t *testing.T) {
 		}
 	}
 }
+
+func TestIssuesImpactAlertPolicyCLI(t *testing.T) {
+	var method, path string
+	var threshold int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, path = r.Method, r.URL.Path
+		policy := api.IssueImpactAlertPolicy{WindowSeconds: int64(api.IssueImpactAlertWindow / time.Second)}
+		if r.Method == http.MethodPut {
+			var input api.UpdateIssueImpactAlertPolicyRequest
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				t.Errorf("decode update: %v", err)
+			}
+			threshold = input.MinimumCustomers
+			policy.MinimumCustomers = threshold
+			policy.Enabled = threshold > 0
+		} else {
+			policy.MinimumCustomers = 4
+			policy.Enabled = true
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(policy)
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	oldOut, oldJSON := osStdout, jsonOutput
+	var out bytes.Buffer
+	osStdout, jsonOutput = &out, false
+	t.Cleanup(func() { osStdout, jsonOutput = oldOut, oldJSON })
+
+	if code := cmdIssues([]string{"impact-alert", "--app", "exports"}); code != 0 {
+		t.Fatalf("policy read returned %d", code)
+	}
+	if method != http.MethodGet || path != "/v1/apps/exports/issue-impact-alert-policy" || !strings.Contains(out.String(), "4 verified customers") {
+		t.Fatalf("policy read request=%s %s output=%q", method, path, out.String())
+	}
+	out.Reset()
+	if code := cmdIssues([]string{"impact-alert", "--app", "exports", "--min-customers", "6"}); code != 0 {
+		t.Fatalf("policy update returned %d", code)
+	}
+	if method != http.MethodPut || path != "/v1/apps/exports/issue-impact-alert-policy" || threshold != 6 || !strings.Contains(out.String(), "6 verified customers") {
+		t.Fatalf("policy update request=%s %s threshold=%d output=%q", method, path, threshold, out.String())
+	}
+	out.Reset()
+	if code := cmdIssues([]string{"impact-alert", "--app", "exports", "--min-customers", "0"}); code != 0 {
+		t.Fatalf("policy disable returned %d", code)
+	}
+	if threshold != 0 || !strings.Contains(out.String(), "disabled") {
+		t.Fatalf("disable threshold=%d output=%q", threshold, out.String())
+	}
+}

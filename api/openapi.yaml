@@ -7556,6 +7556,50 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
+  /v1/apps/{slug}/issue-impact-alert-policy:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getIssueImpactAlertPolicy
+      summary: Read the app's customer-impact alert policy.
+      description: Returns the threshold for verified distinct customers in a rolling 24-hour window. A zero threshold disables the policy.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The current policy; disabled apps report minimum_customers as zero.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueImpactAlertPolicy' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    put:
+      tags: [apps]
+      operationId: setIssueImpactAlertPolicy
+      summary: Configure or disable customer-impact alerts for an app.
+      description: Setting minimum_customers to zero disables the policy. Policy changes apply prospectively; they do not backfill alerts for issues already above the threshold.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateIssueImpactAlertPolicyRequest' }
+      responses:
+        '200':
+          description: The updated policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueImpactAlertPolicy' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/issues:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -43465,7 +43509,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "debug.regression.detected", "debug.regression.resolved"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
@@ -43948,7 +43992,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "debug.regression.detected", "debug.regression.resolved"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format:
@@ -44029,7 +44073,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format:
@@ -45175,6 +45219,23 @@ components:
         observed_events: { type: integer }
         unattributed_events: { type: integer }
         coverage: { type: string }
+
+    IssueImpactAlertPolicy:
+      description: "App-level customer-impact threshold measured using verified distinct customers in a rolling 24-hour window."
+      type: object
+      required: [enabled, minimum_customers, window_seconds]
+      properties:
+        enabled: { type: boolean }
+        minimum_customers: { type: integer, minimum: 0, maximum: 10000 }
+        window_seconds: { type: integer, const: 86400 }
+
+    UpdateIssueImpactAlertPolicyRequest:
+      description: "Set the minimum verified distinct customer count; zero disables the policy."
+      type: object
+      required: [minimum_customers]
+      additionalProperties: false
+      properties:
+        minimum_customers: { type: integer, minimum: 0, maximum: 10000 }
 
     IssueDetail:
       description: "Issue metadata and independently paginated occurrence, release, and activity collections."

@@ -157,6 +157,26 @@ unattributed events from the previous 24 hours. These counts are an observed,
 bounded view of instrumented failures and do not estimate customer impact
 outside retained and attributable events.
 
+To notify a configured app webhook when an issue becomes customer-impacting,
+set a rolling 24-hour threshold:
+
+```sh
+gregale issues impact-alert --app exports                 # read current policy
+gregale issues impact-alert --app exports --min-customers 5
+gregale issues impact-alert --app exports --min-customers 0 # disable
+```
+
+The policy fires when verified distinct customer impact moves from below the
+configured threshold to at or above it. It uses the same tenant-first verified
+identity as the inbox; unattributed occurrences do not count. A later request
+telemetry enrichment can trigger the transition when it supplies the identity
+that crosses the threshold. Changing a policy does not backfill alerts for
+issues already above the new threshold. The transition appears in issue
+activity and emits `issue.impact_threshold_reached`; subscribe an app webhook
+to that event to receive it. Delivery uses Gregale's durable outbox and retry
+ledger. The payload's `details` contains the threshold, observed customer
+count, window bounds, and deployment that supplied the crossing evidence.
+
 Issue identity survives deployments. Grouping removes line numbers and known
 container/build roots but preserves source directories and function names.
 Use an explicit fingerprint for unsupported or unstable stack representations.
@@ -198,6 +218,8 @@ configured target.
 
 Register an existing app webhook with filters `issue.created`, `issue.assigned`,
 `issue.resolved`, `issue.reopened`, `issue.ignored`, or `issue.regressed`.
+Add `issue.impact_threshold_reached` to the filter to receive the configured
+customer-impact alert.
 Payloads contain the issue, transition ID, and bounded action details. The issue
 transaction snapshots recipients in the existing webhook outbox. The normal
 relay and signed delivery ledger recover committed transitions after restart.

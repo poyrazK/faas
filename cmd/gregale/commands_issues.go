@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const issuesCmdUsage = "usage: gregale issues <list|get|assign|resolve|reopen|ignore|tokens|create-token|revoke-token> --app <slug> [<issue-id>] [--sort recent|impact] [--min-customers N] [flags]"
+const issuesCmdUsage = "usage: gregale issues <list|get|assign|resolve|reopen|ignore|impact-alert|tokens|create-token|revoke-token> --app <slug> [<issue-id>] [--sort recent|impact] [--min-customers N] [flags]"
 
 func cmdIssues(args []string) int {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
@@ -45,6 +45,12 @@ func cmdIssues(args []string) int {
 		PrintUsage(os.Stderr, issuesCmdUsage, "issues")
 		return 1
 	}
+	impactThresholdSpecified := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "min-customers" {
+			impactThresholdSpecified = true
+		}
+	})
 	c, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -108,6 +114,31 @@ func cmdIssues(args []string) int {
 			return printErr("Could not read issue", err)
 		}
 		return jsonOut(writeJSON(out))
+	case "impact-alert":
+		if len(positionals) != 0 {
+			return issueCLIUsage()
+		}
+		var policy api.IssueImpactAlertPolicy
+		if impactThresholdSpecified {
+			if *minCustomers < 0 || *minCustomers > api.IssueImpactAlertMaxCustomers {
+				return printErr("Invalid customer threshold", fmt.Errorf("min-customers must be between 0 and %d", api.IssueImpactAlertMaxCustomers))
+			}
+			policy, err = c.SetIssueImpactAlertPolicy(ctx, *app, api.UpdateIssueImpactAlertPolicyRequest{MinimumCustomers: *minCustomers})
+		} else {
+			policy, err = c.GetIssueImpactAlertPolicy(ctx, *app)
+		}
+		if err != nil {
+			return printErr("Could not read impact alert policy", err)
+		}
+		if jsonOutput {
+			return jsonOut(writeJSON(policy))
+		}
+		if !policy.Enabled {
+			PrintOK(osStdout, "Customer-impact alerts are disabled.")
+			return 0
+		}
+		PrintOK(osStdout, "Customer-impact alerts fire at %d verified customers within 24 hours.", policy.MinimumCustomers)
+		return 0
 	case "assign", "resolve", "reopen", "ignore":
 		if len(positionals) != 1 {
 			return issueCLIUsage()

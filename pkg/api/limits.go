@@ -7857,6 +7857,9 @@ type IssueLimits struct {
 	TokensPerApp    int
 }
 
+// IssueImpactAlertMaxCustomers bounds the configurable customer-impact alert threshold.
+const IssueImpactAlertMaxCustomers = 10000
+
 func (p Plan) IssueLimits() IssueLimits {
 	switch p {
 	case PlanHobby:

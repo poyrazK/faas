@@ -479,6 +479,7 @@ export type { IssueEvent } from './models/IssueEvent.js';
 export type { IssueEventResponse } from './models/IssueEventResponse.js';
 export type { IssueFrame } from './models/IssueFrame.js';
 export type { IssueImpact } from './models/IssueImpact.js';
+export type { IssueImpactAlertPolicy } from './models/IssueImpactAlertPolicy.js';
 export type { IssueImpactSummary } from './models/IssueImpactSummary.js';
 export type { IssueIngestToken } from './models/IssueIngestToken.js';
 export type { IssueOccurrence } from './models/IssueOccurrence.js';
@@ -996,6 +997,7 @@ export type { UpdateDeploymentTrafficRequest } from './models/UpdateDeploymentTr
 export type { UpdateEdgeRuleRequest } from './models/UpdateEdgeRuleRequest.js';
 export type { UpdateFeatureFlagsRequest } from './models/UpdateFeatureFlagsRequest.js';
 export type { UpdateInboundWebhookEndpointRequest } from './models/UpdateInboundWebhookEndpointRequest.js';
+export type { UpdateIssueImpactAlertPolicyRequest } from './models/UpdateIssueImpactAlertPolicyRequest.js';
 export type { UpdateJobRequest } from './models/UpdateJobRequest.js';
 export type { UpdateManagedRealtimeEndpointRequest } from './models/UpdateManagedRealtimeEndpointRequest.js';
 export type { UpdateMirrorRuleRequest } from './models/UpdateMirrorRuleRequest.js';

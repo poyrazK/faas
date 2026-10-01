@@ -6422,6 +6422,15 @@ func (q *Queries) IssueDebugRequest(ctx context.Context, db DBTX, arg IssueDebug
 	return items, nil
 }
 
+const issueDeleteImpactAlertPolicy = `-- name: IssueDeleteImpactAlertPolicy :exec
+DELETE FROM app_issue_impact_alert_policies WHERE app_id=$1
+`
+
+func (q *Queries) IssueDeleteImpactAlertPolicy(ctx context.Context, db DBTX, appID pgtype.UUID) error {
+	_, err := db.Exec(ctx, issueDeleteImpactAlertPolicy, appID)
+	return err
+}
+
 const issueDeploymentScope = `-- name: IssueDeploymentScope :one
 SELECT d.id, d.commit_sha, d.image_digest, d.created_at FROM deployments d JOIN apps a ON a.id = d.app_id
 WHERE d.id = $1 AND d.app_id = $2 AND a.account_id = $3
@@ -6461,7 +6470,7 @@ func (q *Queries) IssueDeploymentScope(ctx context.Context, db DBTX, arg IssueDe
 	return i, err
 }
 
-const issueEnrichAttribution = `-- name: IssueEnrichAttribution :exec
+const issueEnrichAttribution = `-- name: IssueEnrichAttribution :execrows
 UPDATE issue_events SET verified_consumer_id=$1,verified_platform_tenant_id=$2,attribution_checked_at=$3
 WHERE app_id=$4 AND deployment_id=$5 AND event_id=$6
 AND verified_consumer_id IS NULL AND verified_platform_tenant_id IS NULL
@@ -6476,8 +6485,8 @@ type IssueEnrichAttributionParams struct {
 	EventID      pgtype.UUID
 }
 
-func (q *Queries) IssueEnrichAttribution(ctx context.Context, db DBTX, arg IssueEnrichAttributionParams) error {
-	_, err := db.Exec(ctx, issueEnrichAttribution,
+func (q *Queries) IssueEnrichAttribution(ctx context.Context, db DBTX, arg IssueEnrichAttributionParams) (int64, error) {
+	result, err := db.Exec(ctx, issueEnrichAttribution,
 		arg.ConsumerID,
 		arg.TenantID,
 		arg.Now,
@@ -6485,7 +6494,10 @@ func (q *Queries) IssueEnrichAttribution(ctx context.Context, db DBTX, arg Issue
 		arg.DeploymentID,
 		arg.EventID,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const issueExpiredIgnores = `-- name: IssueExpiredIgnores :many
@@ -6647,6 +6659,17 @@ func (q *Queries) IssueGet(ctx context.Context, db DBTX, arg IssueGetParams) (Ap
 	return i, err
 }
 
+const issueGetImpactAlertPolicy = `-- name: IssueGetImpactAlertPolicy :one
+SELECT COALESCE((SELECT minimum_customers FROM app_issue_impact_alert_policies WHERE app_id=$1),0)::integer AS minimum_customers
+`
+
+func (q *Queries) IssueGetImpactAlertPolicy(ctx context.Context, db DBTX, appID pgtype.UUID) (int32, error) {
+	row := db.QueryRow(ctx, issueGetImpactAlertPolicy, appID)
+	var minimum_customers int32
+	err := row.Scan(&minimum_customers)
+	return minimum_customers, err
+}
+
 const issueGetLocked = `-- name: IssueGetLocked :one
 SELECT id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until FROM app_issues WHERE app_id = $1 AND id = $2 FOR UPDATE
 `
@@ -6704,6 +6727,27 @@ func (q *Queries) IssueImpact(ctx context.Context, db DBTX, arg IssueImpactParam
 	var i IssueImpactRow
 	err := row.Scan(&i.ObservedEvents, &i.IdentifiedCustomers, &i.UnattributedEvents)
 	return i, err
+}
+
+const issueImpactCustomerCount = `-- name: IssueImpactCustomerCount :one
+SELECT count(DISTINCT COALESCE(verified_platform_tenant_id,verified_consumer_id))
+FROM issue_events
+WHERE issue_id=$1
+  AND occurred_at >= $2
+  AND occurred_at <= $3
+`
+
+type IssueImpactCustomerCountParams struct {
+	IssueID pgtype.UUID
+	Since   pgtype.Timestamptz
+	Until   pgtype.Timestamptz
+}
+
+func (q *Queries) IssueImpactCustomerCount(ctx context.Context, db DBTX, arg IssueImpactCustomerCountParams) (int64, error) {
+	row := db.QueryRow(ctx, issueImpactCustomerCount, arg.IssueID, arg.Since, arg.Until)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const issueImpactSummaries = `-- name: IssueImpactSummaries :many
@@ -7554,6 +7598,23 @@ func (q *Queries) IssueUpdateAction(ctx context.Context, db DBTX, arg IssueUpdat
 		&i.IgnoredUntil,
 	)
 	return i, err
+}
+
+const issueUpsertImpactAlertPolicy = `-- name: IssueUpsertImpactAlertPolicy :exec
+INSERT INTO app_issue_impact_alert_policies(app_id,minimum_customers,updated_at)
+VALUES($1,$2,$3)
+ON CONFLICT(app_id) DO UPDATE SET minimum_customers=excluded.minimum_customers,updated_at=excluded.updated_at
+`
+
+type IssueUpsertImpactAlertPolicyParams struct {
+	AppID            pgtype.UUID
+	MinimumCustomers int32
+	UpdatedAt        pgtype.Timestamptz
+}
+
+func (q *Queries) IssueUpsertImpactAlertPolicy(ctx context.Context, db DBTX, arg IssueUpsertImpactAlertPolicyParams) error {
+	_, err := db.Exec(ctx, issueUpsertImpactAlertPolicy, arg.AppID, arg.MinimumCustomers, arg.UpdatedAt)
+	return err
 }
 
 const latestDeployment = `-- name: LatestDeployment :one

@@ -81,7 +81,7 @@ var AllowedAppWebhookEvents = []string{
 	"job.finished",
 	"usage_statement.finalized",
 	"debug.regression.detected", "debug.regression.resolved",
-	"issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed",
+	"issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached",
 }
 
 // Account receivers intentionally cannot use the app-level all-events

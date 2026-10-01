@@ -51,6 +51,23 @@ func issueSend(t *testing.T, e pgHandlerEnv, slug string, token api.IssueIngestT
 	return e.do(t, "POST", "/v1/apps/"+slug+"/issue-events", event, map[string]string{"Authorization": "Bearer " + token.Token})
 }
 
+func issueSeedRequestAttribution(t *testing.T, e pgHandlerEnv, app state.App, dep state.Deployment, requestID string) {
+	t.Helper()
+	tenant, consumer, auditEventID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	if _, err := e.pool.Exec(t.Context(), `INSERT INTO platform_tenants(id,account_id,external_ref,name) VALUES($1,$2,$3,$3)`, tenant, e.acct.ID, uuid.NewString()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.pool.Exec(t.Context(), `INSERT INTO api_consumers(id,account_id,app_id,external_ref,name,platform_tenant_id) VALUES($1,$2,$3,$4,$4,$5)`, consumer, e.acct.ID, app.ID, uuid.NewString(), tenant); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.pool.Exec(t.Context(), `INSERT INTO api_consumer_usage_events(event_id,account_id,app_id,consumer_key,window_start,request_count,error_count,billable_units,platform_tenant_id) VALUES($1,$2,$3,$4,date_trunc('minute',now()),1,1,0,$5)`, auditEventID, e.acct.ID, app.ID, consumer, tenant); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.pool.Exec(t.Context(), `INSERT INTO request_audit_events(event_id,account_id,app_id,consumer_key,platform_tenant_id,route_template,method,http_status,latency_ms,deployment_id,occurred_at,request_id) VALUES($1,$2,$3,$4,$5,'/exports','POST',500,10,$6,now(),$7)`, auditEventID, e.acct.ID, app.ID, consumer, tenant, dep.ID, requestID); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // This gate exercises the production HTTP router and real PgStore: credentials,
 // grouping, idempotency, release-aware lifecycle, history, and verified impact.
 func TestIssueEndToEndPostgres(t *testing.T) {
@@ -229,6 +246,149 @@ func TestIssueVerifiedCustomerImpactAndWebhookRecovery(t *testing.T) {
 	}
 	if _, err := e.store.(state.IssueStore).ActOnIssue(t.Context(), app.ID, issueID, e.acct.ID, api.IssueActionRequest{Action: "assign", AssigneeAccountID: other.ID}, time.Now()); !errors.Is(err, state.ErrNotFound) {
 		t.Fatal("foreign assignee accepted")
+	}
+}
+
+func TestIssueImpactAlertPolicyCrossingsAndLateAttributionPostgres(t *testing.T) {
+	e := setupPGHandler(t, api.PlanHobby)
+	app := seedPGApp(t, e, "issue-impact-alert")
+	dep := issueSeedDeployment(t, e, app, 1)
+	token := issueCreateToken(t, e, app.Slug, dep)
+	base := "/v1/apps/" + app.Slug + "/issue-impact-alert-policy"
+	policy := issueDecode[api.IssueImpactAlertPolicy](t, e.do(t, http.MethodGet, base, nil, nil), http.StatusOK)
+	if policy.Enabled || policy.MinimumCustomers != 0 || policy.WindowSeconds != int64(api.IssueImpactAlertWindow/time.Second) {
+		t.Fatalf("default policy = %+v", policy)
+	}
+	if w := e.do(t, http.MethodPut, base, api.UpdateIssueImpactAlertPolicyRequest{MinimumCustomers: api.IssueImpactAlertMaxCustomers + 1}, nil); w.Code != http.StatusBadRequest {
+		t.Fatalf("out-of-range threshold status = %d: %s", w.Code, w.Body.String())
+	}
+	policy = issueDecode[api.IssueImpactAlertPolicy](t, e.do(t, http.MethodPut, base, api.UpdateIssueImpactAlertPolicyRequest{MinimumCustomers: 2}, nil), http.StatusOK)
+	if !policy.Enabled || policy.MinimumCustomers != 2 {
+		t.Fatalf("enabled policy = %+v", policy)
+	}
+	hook, err := e.store.CreateAppWebhook(t.Context(), state.AppWebhook{AccountID: e.acct.ID, AppID: app.ID, TargetURL: "https://example.com/impact-alert", Enabled: true, EventFilter: []string{"issue.impact_threshold_reached"}, SecretSealed: []byte("test-sealed")})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	requestA, requestB := uuid.NewString(), uuid.NewString()
+	issueSeedRequestAttribution(t, e, app, dep, requestA)
+	issueSeedRequestAttribution(t, e, app, dep, requestB)
+	eventA := api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "DateFormatError", Message: "format failure", RequestID: requestA}
+	first := issueDecode[api.IssueEventResponse](t, issueSend(t, e, app.Slug, token, eventA), http.StatusAccepted)
+	if duplicate := issueDecode[api.IssueEventResponse](t, issueSend(t, e, app.Slug, token, eventA), http.StatusAccepted); !duplicate.Duplicate {
+		t.Fatal("exact retry was not marked duplicate")
+	}
+	// A second event for the same verified tenant is not another customer and
+	// must not cross the threshold.
+	sameCustomer := eventA
+	sameCustomer.EventID = uuid.NewString()
+	sameCustomer.OccurredAt = time.Now().UTC()
+	issueDecode[api.IssueEventResponse](t, issueSend(t, e, app.Slug, token, sameCustomer), http.StatusAccepted)
+	eventB := eventA
+	eventB.EventID = uuid.NewString()
+	eventB.OccurredAt = time.Now().UTC()
+	eventB.RequestID = requestB
+	issueDecode[api.IssueEventResponse](t, issueSend(t, e, app.Slug, token, eventB), http.StatusAccepted)
+	// Once above threshold, additional distinct customers in this window do
+	// not produce duplicate notifications.
+	requestC := uuid.NewString()
+	issueSeedRequestAttribution(t, e, app, dep, requestC)
+	eventC := eventB
+	eventC.EventID = uuid.NewString()
+	eventC.OccurredAt = time.Now().UTC()
+	eventC.RequestID = requestC
+	issueDecode[api.IssueEventResponse](t, issueSend(t, e, app.Slug, token, eventC), http.StatusAccepted)
+
+	detailURL := "/v1/apps/" + app.Slug + "/issues/" + first.IssueID
+	detail := issueDecode[api.IssueDetail](t, e.do(t, http.MethodGet, detailURL, nil, nil), http.StatusOK)
+	impactAlerts := 0
+	for _, activity := range detail.Activity {
+		if activity.Action == "impact_threshold_reached" {
+			impactAlerts++
+			if activity.Details["minimum_customers"] != "2" || activity.Details["identified_customers"] != "2" {
+				t.Fatalf("threshold activity details = %+v", activity.Details)
+			}
+		}
+	}
+	if impactAlerts != 1 || detail.Impact.IdentifiedCustomers != 3 {
+		t.Fatalf("impact transition count=%d detail impact=%+v", impactAlerts, detail.Impact)
+	}
+	relay := e.store.(state.AppWebhookEventOutboxStore)
+	if n, err := relay.DrainAppWebhookEventOutbox(t.Context(), 10); err != nil || n != 1 {
+		t.Fatalf("threshold relay = %d %v", n, err)
+	}
+	deliveries, _, err := e.store.ListAppWebhookDeliveries(t.Context(), app.ID, hook.ID, 10, "")
+	if err != nil || len(deliveries) != 1 || deliveries[0].Event != state.AppWebhookEventIssueImpactThresholdReached {
+		t.Fatalf("threshold deliveries = %+v %v", deliveries, err)
+	}
+	if n, err := relay.DrainAppWebhookEventOutbox(t.Context(), 10); err != nil || n != 0 {
+		t.Fatalf("duplicate threshold relay = %d %v", n, err)
+	}
+
+	// The same crossing must be detected if request identity becomes available
+	// only after the exception event was first accepted.
+	latePolicy := issueDecode[api.IssueImpactAlertPolicy](t, e.do(t, http.MethodPut, base, api.UpdateIssueImpactAlertPolicyRequest{MinimumCustomers: 1}, nil), http.StatusOK)
+	if latePolicy.MinimumCustomers != 1 {
+		t.Fatalf("late-attribution policy = %+v", latePolicy)
+	}
+	lateRequest := uuid.NewString()
+	lateEvent := api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "LateIdentityError", Message: "late request evidence", RequestID: lateRequest}
+	lateIssue := issueDecode[api.IssueEventResponse](t, issueSend(t, e, app.Slug, token, lateEvent), http.StatusAccepted)
+	issueSeedRequestAttribution(t, e, app, dep, lateRequest)
+	if _, err := e.pool.Exec(t.Context(), `UPDATE issue_events SET attribution_checked_at=$1 WHERE app_id=$2 AND deployment_id=$3 AND event_id=$4`, time.Now().UTC().Add(-2*time.Minute), app.ID, dep.ID, lateEvent.EventID); err != nil {
+		t.Fatal(err)
+	}
+	maintenance, ok := e.store.(interface {
+		MaintainIssues(context.Context, time.Time) error
+	})
+	if !ok {
+		t.Fatal("store does not expose issue maintenance")
+	}
+	if err := maintenance.MaintainIssues(t.Context(), time.Now().UTC().Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	lateDetail := issueDecode[api.IssueDetail](t, e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/issues/"+lateIssue.IssueID, nil, nil), http.StatusOK)
+	lateAlerts := 0
+	for _, activity := range lateDetail.Activity {
+		if activity.Action == "impact_threshold_reached" {
+			lateAlerts++
+		}
+	}
+	if lateAlerts != 1 || lateDetail.Impact.IdentifiedCustomers != 1 {
+		t.Fatalf("late attribution alert=%d impact=%+v", lateAlerts, lateDetail.Impact)
+	}
+	if n, err := relay.DrainAppWebhookEventOutbox(t.Context(), 10); err != nil || n != 1 {
+		t.Fatalf("late threshold relay = %d %v", n, err)
+	}
+	if err := maintenance.MaintainIssues(t.Context(), time.Now().UTC().Add(4*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := relay.DrainAppWebhookEventOutbox(t.Context(), 10); err != nil || n != 0 {
+		t.Fatalf("repeat enrichment relayed %d events: %v", n, err)
+	}
+
+	disabled := issueDecode[api.IssueImpactAlertPolicy](t, e.do(t, http.MethodPut, base, api.UpdateIssueImpactAlertPolicyRequest{MinimumCustomers: 0}, nil), http.StatusOK)
+	if disabled.Enabled || disabled.MinimumCustomers != 0 {
+		t.Fatalf("disabled policy = %+v", disabled)
+	}
+	requestD, requestE := uuid.NewString(), uuid.NewString()
+	issueSeedRequestAttribution(t, e, app, dep, requestD)
+	issueSeedRequestAttribution(t, e, app, dep, requestE)
+	disabledEvent := api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "DisabledAlertError", Message: "disabled policy", RequestID: requestD, FingerprintOverride: "disabled-impact-policy"}
+	disabledIssue := issueDecode[api.IssueEventResponse](t, issueSend(t, e, app.Slug, token, disabledEvent), http.StatusAccepted)
+	disabledEvent.EventID = uuid.NewString()
+	disabledEvent.OccurredAt = time.Now().UTC()
+	disabledEvent.RequestID = requestE
+	issueDecode[api.IssueEventResponse](t, issueSend(t, e, app.Slug, token, disabledEvent), http.StatusAccepted)
+	disabledDetail := issueDecode[api.IssueDetail](t, e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/issues/"+disabledIssue.IssueID, nil, nil), http.StatusOK)
+	for _, activity := range disabledDetail.Activity {
+		if activity.Action == "impact_threshold_reached" {
+			t.Fatal("disabled impact policy still emitted a threshold transition")
+		}
+	}
+	if n, err := relay.DrainAppWebhookEventOutbox(t.Context(), 10); err != nil || n != 0 {
+		t.Fatalf("disabled threshold relay = %d %v", n, err)
 	}
 }
 

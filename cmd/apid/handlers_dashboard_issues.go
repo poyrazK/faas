@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -40,6 +41,8 @@ type dashboardIssuesData struct {
 	ReplayTargets       map[string][]dashboardIssueReplayTarget
 	Since               string
 	EventCursor         string
+	ImpactAlertPolicy   api.IssueImpactAlertPolicy
+	ImpactAlertSaved    bool
 	Replay              *dashboard.DebugReplayView
 	ReplayEventID       string
 	ReplayDebugURL      string
@@ -73,6 +76,7 @@ func (s *server) renderAppIssues(w http.ResponseWriter, r *http.Request, log *sl
 		return
 	}
 	data := dashboardIssuesData{AppSlug: slug, CurrentAccountID: acct.ID}
+	data.ImpactAlertSaved = r.URL.Query().Get("impact_alert") == "updated"
 	data.Since = strings.TrimSpace(r.URL.Query().Get("since"))
 	data.EventCursor = strings.TrimSpace(r.URL.Query().Get("event_cursor"))
 	token, err := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardIssueAction, acct.ID, dashboardIssueCookie)
@@ -81,6 +85,11 @@ func (s *server) renderAppIssues(w http.ResponseWriter, r *http.Request, log *sl
 		return
 	}
 	data.CSRF = token
+	data.ImpactAlertPolicy, err = st.GetIssueImpactAlertPolicy(r.Context(), app.ID)
+	if err != nil {
+		writeIssueError(w, err)
+		return
+	}
 	// #nosec G124 -- configured production domains use Secure; empty domain supports local HTTP development.
 	http.SetCookie(w, &http.Cookie{Name: dashboardIssueCookie, Value: token, Path: "/", HttpOnly: true, Secure: s.domain != "", SameSite: http.SameSiteLaxMode, MaxAge: int(middleware.DefaultCSRFTTL.Seconds())})
 	if api.MustLimitsFor(acct.Plan).DebugTelemetryEnabled && s.sessions != nil {
@@ -117,6 +126,45 @@ func (s *server) dashboardIssueActionHandler(w http.ResponseWriter, r *http.Requ
 	}
 	// Session principal authorization remains identical to the API write surface.
 	s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.dashboardIssueActionForAccount)))(w, r)
+}
+
+func (s *server) dashboardIssueImpactAlertPolicyHandler(w http.ResponseWriter, r *http.Request) {
+	acct, ok := AccountFrom(r.Context())
+	if !ok {
+		writeDashboardUnauthorized(w, r)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1024)
+	if err := middleware.VerifyAuthenticatedNamed(s.sessions, r, dashboardIssueAction, acct.ID, dashboardIssueCookie); err != nil {
+		api.WriteProblem(w, api.ErrValidation("invalid CSRF token; reload the issues page"))
+		return
+	}
+	s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.dashboardIssueImpactAlertPolicyForAccount)))(w, r)
+}
+
+func (s *server) dashboardIssueImpactAlertPolicyForAccount(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	st, ok := s.issueStore(w, acct)
+	if !ok {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		api.WriteProblem(w, api.ErrValidation("invalid impact alert policy form"))
+		return
+	}
+	minimum, err := strconv.ParseInt(r.FormValue("minimum_customers"), 10, 64)
+	if err != nil || minimum < 0 || minimum > api.IssueImpactAlertMaxCustomers {
+		api.WriteProblem(w, api.ErrValidation("minimum_customers must be between 0 and 10000"))
+		return
+	}
+	if _, err := st.SetIssueImpactAlertPolicy(r.Context(), app.ID, app.AccountID, minimum, time.Now().UTC()); err != nil {
+		writeIssueError(w, err)
+		return
+	}
+	http.Redirect(w, r, "/dashboard/apps/"+url.PathEscape(app.Slug)+"/issues?impact_alert=updated", http.StatusSeeOther)
 }
 func (s *server) dashboardIssueActionForAccount(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
