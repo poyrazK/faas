@@ -881,3 +881,7 @@ Node and Python SDKs were regenerated from the corrected UDP schema. Node compil
 ### UDP schema SDK regeneration determinism (2026-10-01)
 
 Both Node and Python SDKs were regenerated twice in sequence from the committed corrected schema. Each completed regenerate-and-diff check left its generated tree unchanged; final whole-worktree status was clean before this evidence entry. Logs are `/tmp/gregale-udp-sdk-{node,python}-determinism.log`. Python rebuilds its tree during generation, so intermediate differences were not used as final results or reverted. All launched handles are terminal. This verifies committed generator output stability, not a new runtime SDK qualification. Isolated schema/SDK publication and native/deployed acceptance remain pending.
+
+### Isolated UDP OpenAPI publication (2026-10-01)
+
+Draft [#3996](https://github.com/poyrazK/faas/pull/3996), commit `8a6f13ceb`, stacks on customer API #3993 and isolates four UDP operations plus request/response models, disabled creation, zero/omitted automatic allocation, explicit public range and implemented HTTP failure responses. Isolated Vacuum lint passed with 1,618 warnings and 108 informs (`/tmp/gregale-udp-schema-isolated-lint.log`); whitespace checking passed. Generated SDK publication remains a separate dependent slice; the integrated generation/determinism evidence is unchanged. All launched handles are terminal; no merge, deployment or rollout occurred. Native/deployed acceptance remains pending.
