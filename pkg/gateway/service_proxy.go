@@ -492,7 +492,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		if evidence, ok := guestExecutionEvidenceFromContext(r.Context()); ok {
+		if evidence, ok := guestExecutionEvidenceFromContext(r.Context()); ok { //nolint:contextcheck // the deferred read observes the shared evidence sink through the dependency request context.
 			addServiceFlagEvidenceEvents(dependencySpan, evidence.FlagEvidenceJSON)
 		}
 		dependencySpan.End()
@@ -1213,8 +1213,9 @@ func (p *ServiceProxy) guestRequest(r *http.Request, targetPath string, target S
 	api.PlatformIdentity{RequestID: requestID, AppID: target.AppID}.ApplyGuestHeaders(request.Header)
 	if values := r.Header.Values(api.FlagContextHeader); len(values) == 1 {
 		if inherited, err := flags.DecodePropagationHeader(values[0]); err == nil {
-			request = request.WithContext(context.WithValue(request.Context(), serviceFlagPropagationContextKey{}, inherited))
-			addServiceFlagPropagationEvents(request.Context(), inherited)
+			inheritedCtx := context.WithValue(r.Context(), serviceFlagPropagationContextKey{}, inherited)
+			request = request.WithContext(inheritedCtx)
+			addServiceFlagPropagationEvents(inheritedCtx, inherited)
 		}
 	}
 	request.Header.Set("x-faas-protocol", serviceGuestProtocol(target))
