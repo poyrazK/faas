@@ -961,3 +961,7 @@ PR #3997 title and description now describe the current client, cancellation, re
 ### PostgreSQL backend loss recovery
 
 `TestPgStoreUDPListenerBackendLossRecovery` terminates only a backend acquired by its private fixture pool, verifies that connection no longer responds, releases it and reads the unchanged enabled-listener projection through the pool. Three real PostgreSQL race-detector runs passed without skips; scoped lint reported zero issues. Logs `/tmp/gregale-udp-backend-recovery.log` and `/tmp/gregale-udp-backend-recovery-lint.log`. The strict database gate discovers the added case automatically; its previous seven-case result predates this change. Cluster stopped after qualification. Whole-server restart and deployed daemon/native recovery remain unverified.
+
+### Expanded candidate database recovery gate
+
+Combined PR #3997 now includes backend-loss recovery. The strict database gate passed all eight required cases with race detection on the candidate, rejecting skips; log `/tmp/gregale-udp-stack-postgres-gate-eight.log`. This supersedes the prior seven-case candidate result. The owned cluster was stopped. Remote CI for the newly updated head remains pending; native/deployed acceptance is unchanged.
