@@ -5236,6 +5236,23 @@ SELECT status FROM accounts WHERE id=sqlc.arg(account_id)::text::uuid FOR KEY SH
 -- name: LockManagedPostgresCutoverApp :one
 SELECT account_id::text AS account_id, status FROM apps WHERE id=sqlc.arg(app_id)::text::uuid FOR KEY SHARE;
 
+-- name: LockManagedPostgresCutoverAdmissionApp :one
+SELECT account_id::text AS account_id,status,managed_postgres_admission_cutover_id,
+ managed_postgres_admission_fenced_at FROM apps WHERE id=sqlc.arg(app_id)::text::uuid FOR UPDATE;
+
+-- name: FenceManagedPostgresCutoverAdmission :one
+UPDATE apps SET managed_postgres_admission_cutover_id=sqlc.arg(cutover_id)::text::uuid,
+ managed_postgres_admission_fenced_at=clock_timestamp()
+WHERE id=sqlc.arg(app_id)::text::uuid AND managed_postgres_admission_cutover_id IS NULL
+RETURNING managed_postgres_admission_fenced_at;
+
+-- name: UnfenceCancelledManagedPostgresCutover :exec
+UPDATE apps SET managed_postgres_admission_cutover_id=NULL,managed_postgres_admission_fenced_at=NULL
+WHERE managed_postgres_admission_cutover_id=sqlc.arg(cutover_id)::text::uuid;
+
+-- name: ManagedPostgresAdmissionFenced :one
+SELECT (managed_postgres_admission_cutover_id IS NOT NULL)::boolean AS fenced FROM apps WHERE id=sqlc.arg(app_id)::text::uuid;
+
 -- name: LockManagedPostgresCutoverDatabases :many
 SELECT * FROM managed_postgres_databases
 WHERE id::text=ANY(sqlc.arg(database_ids)::text[]) ORDER BY id FOR UPDATE;
@@ -5288,11 +5305,15 @@ AND lease_token=sqlc.arg(token)::text AND lease_until>sqlc.arg(now)::timestamptz
 -- name: SaveManagedPostgresCutoverCredential :execrows
 UPDATE managed_postgres_cutover_credentials SET state='sealed',provider_identity_id=sqlc.arg(provider_identity)::text,
 credential_ref=sqlc.arg(ref)::text,ciphertext=sqlc.arg(ciphertext)::bytea,kid=sqlc.arg(kid)::text,value_hash=sqlc.arg(value_hash)::text
-WHERE id=sqlc.arg(id)::text::uuid AND cutover_id=sqlc.arg(cutover_id)::text::uuid AND state='pending';
+WHERE id=sqlc.arg(id)::text::uuid AND cutover_id=sqlc.arg(cutover_id)::text::uuid AND state='pending'
+AND EXISTS (SELECT 1 FROM managed_postgres_cutovers c WHERE c.id=sqlc.arg(cutover_id)::text::uuid
+ AND c.state='preparing' AND c.lease_token=sqlc.arg(token)::text AND c.lease_until>clock_timestamp());
 
 -- name: RevokeManagedPostgresCutoverCredential :execrows
 UPDATE managed_postgres_cutover_credentials SET state='revoked',provider_identity_id=NULL,credential_ref=NULL,ciphertext=NULL,kid=NULL,value_hash=NULL,verified_at=NULL
-WHERE id=sqlc.arg(id)::text::uuid AND cutover_id=sqlc.arg(cutover_id)::text::uuid AND state<>'revoked';
+WHERE id=sqlc.arg(id)::text::uuid AND cutover_id=sqlc.arg(cutover_id)::text::uuid AND state<>'revoked'
+AND EXISTS (SELECT 1 FROM managed_postgres_cutovers c WHERE c.id=sqlc.arg(cutover_id)::text::uuid
+ AND c.state='cancelling' AND c.lease_token=sqlc.arg(token)::text AND c.lease_until>clock_timestamp());
 
 -- name: FinishManagedPostgresCutoverStep :exec
 UPDATE managed_postgres_cutovers c SET

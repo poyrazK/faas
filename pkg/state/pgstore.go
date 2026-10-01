@@ -16516,6 +16516,9 @@ func scanCreatedInstance(row pgx.Row, wakeID, appID string) (Instance, error) {
 	inst, err := scanInstanceCols(row.Scan)
 	if err != nil {
 		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.ConstraintName == "managed_postgres_cutover_admission_fenced" {
+			return Instance{}, ErrManagedPostgresAdmissionFenced
+		}
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return Instance{}, fmt.Errorf(
 				"state: %w: wake_id=%s app_id=%s already in-flight — recover via ReadActiveInstanceForWakeID",
@@ -16849,7 +16852,7 @@ func (s *PgStore) ListLatestInstancePerApp(ctx context.Context, accountID string
 func (s *PgStore) UpdateInstanceState(ctx context.Context, id, state string) error {
 	tag, err := s.pool.Exec(ctx, `update instances set state = $2 where id = $1`, id, state)
 	if err != nil {
-		return err
+		return mapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -16871,7 +16874,7 @@ func (s *PgStore) UpdateInstanceStateIf(ctx context.Context, id, expectedState, 
 		  where id = $1
 		    and state = $2`, id, expectedState, nextState)
 	if err != nil {
-		return err
+		return mapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrConflict
@@ -25451,6 +25454,9 @@ func mapErr(err error) error {
 		case pgerrcode.UniqueViolation:
 			return fmt.Errorf("%w: %s", ErrConflict, pgErr.ConstraintName)
 		case pgerrcode.CheckViolation:
+			if pgErr.ConstraintName == "managed_postgres_cutover_admission_fenced" {
+				return ErrManagedPostgresAdmissionFenced
+			}
 			if pgErr.ConstraintName == "invocation_platform_tenant_active" {
 				return ErrPlatformTenantSuspended
 			}

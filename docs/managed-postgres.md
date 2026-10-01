@@ -461,6 +461,15 @@ Cancellation and status remain available when provisioning is disabled. Required
 host age/HMAC keys must remain available while envelopes are staged; cancel and
 reprepare before retiring those keys. See [ADR-391](adr/391-managed-postgres-cutover-verification.md).
 
+The next cutover prerequisite is an internal, durable app-wide admission fence
+([ADR-392](adr/392-managed-postgres-cutover-admission-fence.md)). It requires fresh
+verification and blocks new instance admission and running-state publication,
+including worker, job, mirror, and warm-pool paths. It persists through retries
+and credential verification refresh, and completed cancellation releases it.
+Prepare and Verify never install this fence. Existing VMs and SQL sessions still
+require scheduler drain; atomic publication and customer activation remain
+unavailable. Lifecycle acceptance requires native x86_64 KVM tests and leakcheck.
+
 ## Customer usability
 
 The `gregale postgres` command is the supported customer entry point for the

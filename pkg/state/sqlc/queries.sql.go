@@ -4385,6 +4385,25 @@ func (q *Queries) FeatureFlagRequestOutcomes(ctx context.Context, db DBTX, arg F
 	return items, nil
 }
 
+const fenceManagedPostgresCutoverAdmission = `-- name: FenceManagedPostgresCutoverAdmission :one
+UPDATE apps SET managed_postgres_admission_cutover_id=$1::text::uuid,
+ managed_postgres_admission_fenced_at=clock_timestamp()
+WHERE id=$2::text::uuid AND managed_postgres_admission_cutover_id IS NULL
+RETURNING managed_postgres_admission_fenced_at
+`
+
+type FenceManagedPostgresCutoverAdmissionParams struct {
+	CutoverID string
+	AppID     string
+}
+
+func (q *Queries) FenceManagedPostgresCutoverAdmission(ctx context.Context, db DBTX, arg FenceManagedPostgresCutoverAdmissionParams) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, fenceManagedPostgresCutoverAdmission, arg.CutoverID, arg.AppID)
+	var managed_postgres_admission_fenced_at pgtype.Timestamptz
+	err := row.Scan(&managed_postgres_admission_fenced_at)
+	return managed_postgres_admission_fenced_at, err
+}
+
 const findInvoiceIDsByProviderKey = `-- name: FindInvoiceIDsByProviderKey :many
 SELECT id FROM invoices
 WHERE account_id = $1::uuid
@@ -11159,6 +11178,30 @@ func (q *Queries) LockManagedPostgresCutoverAccount(ctx context.Context, db DBTX
 	return status, err
 }
 
+const lockManagedPostgresCutoverAdmissionApp = `-- name: LockManagedPostgresCutoverAdmissionApp :one
+SELECT account_id::text AS account_id,status,managed_postgres_admission_cutover_id,
+ managed_postgres_admission_fenced_at FROM apps WHERE id=$1::text::uuid FOR UPDATE
+`
+
+type LockManagedPostgresCutoverAdmissionAppRow struct {
+	AccountID                         string
+	Status                            string
+	ManagedPostgresAdmissionCutoverID pgtype.UUID
+	ManagedPostgresAdmissionFencedAt  pgtype.Timestamptz
+}
+
+func (q *Queries) LockManagedPostgresCutoverAdmissionApp(ctx context.Context, db DBTX, appID string) (LockManagedPostgresCutoverAdmissionAppRow, error) {
+	row := db.QueryRow(ctx, lockManagedPostgresCutoverAdmissionApp, appID)
+	var i LockManagedPostgresCutoverAdmissionAppRow
+	err := row.Scan(
+		&i.AccountID,
+		&i.Status,
+		&i.ManagedPostgresAdmissionCutoverID,
+		&i.ManagedPostgresAdmissionFencedAt,
+	)
+	return i, err
+}
+
 const lockManagedPostgresCutoverApp = `-- name: LockManagedPostgresCutoverApp :one
 SELECT account_id::text AS account_id, status FROM apps WHERE id=$1::text::uuid FOR KEY SHARE
 `
@@ -11378,6 +11421,17 @@ func (q *Queries) LockManagedPostgresCutoverLease(ctx context.Context, db DBTX, 
 		&i.VerifiedAt,
 	)
 	return i, err
+}
+
+const managedPostgresAdmissionFenced = `-- name: ManagedPostgresAdmissionFenced :one
+SELECT (managed_postgres_admission_cutover_id IS NOT NULL)::boolean AS fenced FROM apps WHERE id=$1::text::uuid
+`
+
+func (q *Queries) ManagedPostgresAdmissionFenced(ctx context.Context, db DBTX, appID string) (bool, error) {
+	row := db.QueryRow(ctx, managedPostgresAdmissionFenced, appID)
+	var fenced bool
+	err := row.Scan(&fenced)
+	return fenced, err
 }
 
 const markClaimedTriggerRecordDeadLetter = `-- name: MarkClaimedTriggerRecordDeadLetter :execrows
@@ -17099,15 +17153,18 @@ func (q *Queries) RevokeDevBridge(ctx context.Context, db DBTX, arg RevokeDevBri
 const revokeManagedPostgresCutoverCredential = `-- name: RevokeManagedPostgresCutoverCredential :execrows
 UPDATE managed_postgres_cutover_credentials SET state='revoked',provider_identity_id=NULL,credential_ref=NULL,ciphertext=NULL,kid=NULL,value_hash=NULL,verified_at=NULL
 WHERE id=$1::text::uuid AND cutover_id=$2::text::uuid AND state<>'revoked'
+AND EXISTS (SELECT 1 FROM managed_postgres_cutovers c WHERE c.id=$2::text::uuid
+ AND c.state='cancelling' AND c.lease_token=$3::text AND c.lease_until>clock_timestamp())
 `
 
 type RevokeManagedPostgresCutoverCredentialParams struct {
 	ID        string
 	CutoverID string
+	Token     string
 }
 
 func (q *Queries) RevokeManagedPostgresCutoverCredential(ctx context.Context, db DBTX, arg RevokeManagedPostgresCutoverCredentialParams) (int64, error) {
-	result, err := db.Exec(ctx, revokeManagedPostgresCutoverCredential, arg.ID, arg.CutoverID)
+	result, err := db.Exec(ctx, revokeManagedPostgresCutoverCredential, arg.ID, arg.CutoverID, arg.Token)
 	if err != nil {
 		return 0, err
 	}
@@ -17354,6 +17411,8 @@ const saveManagedPostgresCutoverCredential = `-- name: SaveManagedPostgresCutove
 UPDATE managed_postgres_cutover_credentials SET state='sealed',provider_identity_id=$1::text,
 credential_ref=$2::text,ciphertext=$3::bytea,kid=$4::text,value_hash=$5::text
 WHERE id=$6::text::uuid AND cutover_id=$7::text::uuid AND state='pending'
+AND EXISTS (SELECT 1 FROM managed_postgres_cutovers c WHERE c.id=$7::text::uuid
+ AND c.state='preparing' AND c.lease_token=$8::text AND c.lease_until>clock_timestamp())
 `
 
 type SaveManagedPostgresCutoverCredentialParams struct {
@@ -17364,6 +17423,7 @@ type SaveManagedPostgresCutoverCredentialParams struct {
 	ValueHash        string
 	ID               string
 	CutoverID        string
+	Token            string
 }
 
 func (q *Queries) SaveManagedPostgresCutoverCredential(ctx context.Context, db DBTX, arg SaveManagedPostgresCutoverCredentialParams) (int64, error) {
@@ -17375,6 +17435,7 @@ func (q *Queries) SaveManagedPostgresCutoverCredential(ctx context.Context, db D
 		arg.ValueHash,
 		arg.ID,
 		arg.CutoverID,
+		arg.Token,
 	)
 	if err != nil {
 		return 0, err
@@ -18105,6 +18166,16 @@ func (q *Queries) TriggerRecordIDByItemIdentifier(ctx context.Context, db DBTX, 
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const unfenceCancelledManagedPostgresCutover = `-- name: UnfenceCancelledManagedPostgresCutover :exec
+UPDATE apps SET managed_postgres_admission_cutover_id=NULL,managed_postgres_admission_fenced_at=NULL
+WHERE managed_postgres_admission_cutover_id=$1::text::uuid
+`
+
+func (q *Queries) UnfenceCancelledManagedPostgresCutover(ctx context.Context, db DBTX, cutoverID string) error {
+	_, err := db.Exec(ctx, unfenceCancelledManagedPostgresCutover, cutoverID)
+	return err
 }
 
 const unpinManagedPostgresCutoverBindings = `-- name: UnpinManagedPostgresCutoverBindings :exec

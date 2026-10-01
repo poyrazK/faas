@@ -366,13 +366,15 @@ type App struct {
 	// Optional app-wide edge token-bucket refill override. NULL inherits the account plan.
 	RequestRateLimitRps pgtype.Int4
 	// Optional app-wide edge token-bucket burst override. NULL inherits the account plan.
-	RequestRateLimitBurst  pgtype.Int4
-	GithubOwnerID          pgtype.Int8
-	GithubRepoID           pgtype.Int8
-	ParkTransitionID       pgtype.UUID
-	WakeTransitionID       pgtype.UUID
-	EgressPorts            []int32
-	PlatformTenantRequired bool
+	RequestRateLimitBurst             pgtype.Int4
+	GithubOwnerID                     pgtype.Int8
+	GithubRepoID                      pgtype.Int8
+	ParkTransitionID                  pgtype.UUID
+	WakeTransitionID                  pgtype.UUID
+	EgressPorts                       []int32
+	PlatformTenantRequired            bool
+	ManagedPostgresAdmissionCutoverID pgtype.UUID
+	ManagedPostgresAdmissionFencedAt  pgtype.Timestamptz
 }
 
 type AppApiRoute struct {

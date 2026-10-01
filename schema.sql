@@ -2105,6 +2105,46 @@ $$;
 
 
 --
+-- Name: guard_managed_postgres_admission_fence(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_managed_postgres_admission_fence() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE intent managed_postgres_cutovers%ROWTYPE; checked_at timestamptz;
+BEGIN
+ IF NEW.managed_postgres_admission_cutover_id IS NOT DISTINCT FROM OLD.managed_postgres_admission_cutover_id THEN
+  IF NEW.managed_postgres_admission_fenced_at IS DISTINCT FROM OLD.managed_postgres_admission_fenced_at
+   OR (OLD.managed_postgres_admission_cutover_id IS NOT NULL AND ROW(NEW.id,NEW.account_id) IS DISTINCT FROM ROW(OLD.id,OLD.account_id)) THEN
+   RAISE EXCEPTION 'admission fence is immutable' USING ERRCODE='23514', CONSTRAINT='managed_postgres_cutover_conflict';
+  END IF;
+  RETURN NEW;
+ END IF;
+ IF OLD.managed_postgres_admission_cutover_id IS NOT NULL THEN
+  SELECT * INTO intent FROM managed_postgres_cutovers WHERE id=OLD.managed_postgres_admission_cutover_id FOR SHARE;
+  IF NEW.managed_postgres_admission_cutover_id IS NOT NULL OR intent.state IS DISTINCT FROM 'cancelled' THEN
+   RAISE EXCEPTION 'admission fence cannot be released' USING ERRCODE='23514', CONSTRAINT='managed_postgres_cutover_conflict';
+  END IF;
+ ELSE
+  SELECT * INTO intent FROM managed_postgres_cutovers WHERE id=NEW.managed_postgres_admission_cutover_id FOR SHARE;
+  checked_at := clock_timestamp();
+  IF intent.app_id IS DISTINCT FROM NEW.id OR intent.account_id IS DISTINCT FROM NEW.account_id
+   OR intent.state IS DISTINCT FROM 'verified' OR intent.lease_token IS NOT NULL
+   OR intent.verified_at IS NULL OR intent.verified_at>checked_at OR intent.verified_at<checked_at-interval '5 minutes'
+   OR NEW.status NOT IN ('active','evicted_cold')
+   OR NOT EXISTS (SELECT 1 FROM managed_postgres_cutover_credentials WHERE cutover_id=intent.id)
+   OR EXISTS (SELECT 1 FROM managed_postgres_cutover_credentials WHERE cutover_id=intent.id
+    AND (state<>'sealed' OR verified_at IS NULL OR verified_at>checked_at OR verified_at<checked_at-interval '5 minutes')) THEN
+   RAISE EXCEPTION 'cutover verification is not fresh' USING ERRCODE='23514', CONSTRAINT='managed_postgres_cutover_conflict';
+  END IF;
+  NEW.managed_postgres_admission_fenced_at := checked_at;
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_managed_postgres_binding_owner(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2193,6 +2233,33 @@ BEGIN
             USING ERRCODE = '23514', CONSTRAINT = 'managed_postgres_database_has_bindings';
     END IF;
     RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: guard_managed_postgres_instance_admission(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_managed_postgres_instance_admission() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE pinned uuid;
+BEGIN
+ IF NEW.app_id IS NULL THEN RETURN NEW; END IF;
+ IF TG_OP='INSERT' THEN
+  IF NEW.state IN ('parked','stopped','failed') THEN RETURN NEW; END IF;
+ ELSIF ROW(NEW.app_id,NEW.state) IS NOT DISTINCT FROM ROW(OLD.app_id,OLD.state)
+  OR NEW.state NOT IN ('waking','cold_booting','running','warm') THEN
+  RETURN NEW;
+ END IF;
+ -- A SHARE lock conflicts with the app UPDATE that installs the fence.
+ -- The updated app tuple also fences transactions using repeatable-read.
+ SELECT managed_postgres_admission_cutover_id INTO pinned FROM apps WHERE id=NEW.app_id FOR SHARE;
+ IF pinned IS NOT NULL THEN
+  RAISE EXCEPTION 'instance admission is fenced by a database cutover' USING ERRCODE='23514', CONSTRAINT='managed_postgres_cutover_admission_fenced';
+ END IF;
+ RETURN NEW;
 END;
 $$;
 
@@ -4465,6 +4532,8 @@ CREATE TABLE public.apps (
     wake_transition_id uuid,
     egress_ports integer[] DEFAULT '{}'::integer[] NOT NULL,
     platform_tenant_required boolean DEFAULT false NOT NULL,
+    managed_postgres_admission_cutover_id uuid,
+    managed_postgres_admission_fenced_at timestamp with time zone,
     CONSTRAINT apps_app_cpu_policy_revision_positive CHECK ((app_cpu_policy_revision > 0)),
     CONSTRAINT apps_app_protocol_chk CHECK ((app_protocol = ANY (ARRAY['http1'::text, 'http2'::text, 'grpc'::text]))),
     CONSTRAINT apps_autoscale_target_cpu_pct_range CHECK (((autoscale_target_cpu_pct IS NULL) OR ((autoscale_target_cpu_pct >= 0) AND (autoscale_target_cpu_pct <= 100)))),
@@ -4479,6 +4548,7 @@ CREATE TABLE public.apps (
     CONSTRAINT apps_idle_timeout_s_check CHECK (((idle_timeout_s IS NULL) OR (idle_timeout_s >= 10))),
     CONSTRAINT apps_last_scale_in_at_le_now_chk CHECK (((last_scale_in_at IS NULL) OR (last_scale_in_at <= now()))),
     CONSTRAINT apps_last_scale_out_at_le_now_chk CHECK (((last_scale_out_at IS NULL) OR (last_scale_out_at <= now()))),
+    CONSTRAINT apps_managed_postgres_admission_fence_check CHECK (((managed_postgres_admission_cutover_id IS NULL) = (managed_postgres_admission_fenced_at IS NULL))),
     CONSTRAINT apps_max_concurrency_check CHECK ((max_concurrency >= 1)),
     CONSTRAINT apps_migrated_at_chk CHECK (((migrated_at IS NULL) OR (migrated_at <= (now() + '00:01:00'::interval)))),
     CONSTRAINT apps_min_instances_check CHECK ((min_instances >= 0)),
@@ -19237,6 +19307,13 @@ CREATE TRIGGER job_tasks_notify_trg AFTER INSERT OR UPDATE ON public.job_tasks F
 
 
 --
+-- Name: apps managed_postgres_admission_fence_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_admission_fence_guard BEFORE INSERT OR UPDATE ON public.apps FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_admission_fence();
+
+
+--
 -- Name: managed_postgres_bindings managed_postgres_binding_owner_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -19262,6 +19339,13 @@ CREATE TRIGGER managed_postgres_cutover_database_guard BEFORE DELETE OR UPDATE O
 --
 
 CREATE TRIGGER managed_postgres_database_bindings_guard BEFORE UPDATE OF state ON public.managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_database_bindings();
+
+
+--
+-- Name: instances managed_postgres_instance_admission_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_instance_admission_guard BEFORE INSERT OR UPDATE OF app_id, state ON public.instances FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_instance_admission();
 
 
 --
@@ -20400,6 +20484,14 @@ ALTER TABLE ONLY public.apps
 
 ALTER TABLE ONLY public.apps
     ADD CONSTRAINT apps_github_install_account_id_fkey FOREIGN KEY (github_install_account_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: apps apps_managed_postgres_admission_cutover_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.apps
+    ADD CONSTRAINT apps_managed_postgres_admission_cutover_id_fkey FOREIGN KEY (managed_postgres_admission_cutover_id) REFERENCES public.managed_postgres_cutovers(id) ON DELETE RESTRICT;
 
 
 --

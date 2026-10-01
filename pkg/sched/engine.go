@@ -1679,6 +1679,10 @@ func (e *Engine) Wake(ctx context.Context, appID, deploymentID, scope, trigger s
 	ctx = WithScope(ctx, scope)
 	// ── Phase 1: fast path under appMu ─────────────────────────────
 	release := e.lockApp(appID)
+	if err := e.checkManagedPostgresAdmission(ctx, appID); err != nil {
+		release()
+		return WakeResult{}, err
+	}
 	if ins, err := e.runningInstanceForWake(ctx, appID, deploymentID, scope); err == nil && e.wakeInstanceModeMatchesApp(ctx, appID, ins) {
 		// PR-C (issue #460 / ADR-053): resolve the live deployment so
 		// the response's Port field is consistent with what
@@ -2683,6 +2687,11 @@ func (e *Engine) admitAndDispatch(ctx context.Context, appID, trigger string, li
 // RPC and no Phase 4 commit. Explicit deployment callers still bypass the
 // request wake gates as before, but now share the complete boot lifecycle.
 func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploymentID, mode, trigger string, liftCapacityToResult, bypassGates bool) (WakeResult, error) {
+	// Explicit deployment, worker/job and config-restart paths may bypass
+	// ordinary request gates; none may bypass a database cutover barrier.
+	if err := e.checkManagedPostgresAdmission(ctx, appID); err != nil {
+		return WakeResult{}, err
+	}
 	var releaseRestorePressure func()
 	defer func() {
 		if releaseRestorePressure != nil {

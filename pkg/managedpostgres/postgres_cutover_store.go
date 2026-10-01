@@ -196,6 +196,14 @@ func (s *PostgresStore) finishCutoverStep(ctx context.Context, c Cutover, member
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	q := sqlc.New()
+	// Admission acquisition locks app before intent. Cancellation must use
+	// that same order before it can atomically release the app-wide barrier.
+	if _, err := q.LockManagedPostgresCutoverAccount(ctx, tx, c.AccountID); err != nil {
+		return mapPostgresError(err)
+	}
+	if _, err := q.LockManagedPostgresCutoverAdmissionApp(ctx, tx, c.AppID); err != nil {
+		return mapPostgresError(err)
+	}
 	r, err := q.LockManagedPostgresCutoverLease(ctx, tx, sqlc.LockManagedPostgresCutoverLeaseParams{AccountID: c.AccountID, ID: c.ID, Token: c.LeaseToken, Now: healthTimestamp(now)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrConflict
@@ -207,14 +215,14 @@ func (s *PostgresStore) finishCutoverStep(ctx context.Context, c Cutover, member
 	if revoke {
 		expected = CutoverCancelling
 	}
-	if CutoverState(r.State) != expected {
+	if CutoverState(r.State) != expected || cutoverUUID(r.AppID) != c.AppID {
 		return ErrConflict
 	}
 	var n int64
 	if revoke {
-		n, err = q.RevokeManagedPostgresCutoverCredential(ctx, tx, sqlc.RevokeManagedPostgresCutoverCredentialParams{ID: member.ID, CutoverID: c.ID})
+		n, err = q.RevokeManagedPostgresCutoverCredential(ctx, tx, sqlc.RevokeManagedPostgresCutoverCredentialParams{ID: member.ID, CutoverID: c.ID, Token: c.LeaseToken})
 	} else {
-		n, err = q.SaveManagedPostgresCutoverCredential(ctx, tx, sqlc.SaveManagedPostgresCutoverCredentialParams{ID: member.ID, CutoverID: c.ID, ProviderIdentity: sealed.ProviderIdentityID, Ref: sealed.Ref, Ciphertext: sealed.Ciphertext, Kid: sealed.Kid, ValueHash: sealed.ValueHash})
+		n, err = q.SaveManagedPostgresCutoverCredential(ctx, tx, sqlc.SaveManagedPostgresCutoverCredentialParams{ID: member.ID, CutoverID: c.ID, Token: c.LeaseToken, ProviderIdentity: sealed.ProviderIdentityID, Ref: sealed.Ref, Ciphertext: sealed.Ciphertext, Kid: sealed.Kid, ValueHash: sealed.ValueHash})
 	}
 	if err != nil {
 		return mapPostgresError(err)
@@ -230,6 +238,9 @@ func (s *PostgresStore) finishCutoverStep(ctx context.Context, c Cutover, member
 		return mapPostgresError(err)
 	}
 	if r.State == string(CutoverCancelled) {
+		if err = q.UnfenceCancelledManagedPostgresCutover(ctx, tx, c.ID); err != nil {
+			return mapPostgresError(err)
+		}
 		if err = q.UnpinManagedPostgresCutoverDatabases(ctx, tx, c.ID); err != nil {
 			return mapPostgresError(err)
 		}

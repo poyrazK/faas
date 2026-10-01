@@ -251,12 +251,24 @@ func TestPostgresCutoverPinsStageAndCancel(t *testing.T) {
 	if _, err = store.ClaimDelete(ctx, account, target.ID, "delete", now, now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
+	// Later migrations own dependent app fences. Roll back in version order
+	// rather than dropping the preparation table out from under its foreign key.
+	fenceUp, fenceDown := cutoverMigrationStatements(t, "20261001175350459_managed_postgres_cutover_admission_fence.sql")
+	if _, err = pool.Exec(ctx, fenceDown); err != nil {
+		t.Fatalf("rollback admission fence after cleanup: %v", err)
+	}
 	if _, err = pool.Exec(ctx, down); err != nil {
 		t.Fatalf("rollback after cleanup: %v", err)
 	}
 	up := strings.Split(strings.Split(parts[0], "-- +goose StatementBegin")[1], "-- +goose StatementEnd")[0]
 	if _, err = pool.Exec(ctx, up); err != nil {
 		t.Fatalf("reapply migration: %v", err)
+	}
+	verificationUp, _ := cutoverMigrationStatements(t, "20261001155101225_managed_postgres_cutover_verification.sql")
+	for _, forward := range []string{verificationUp, fenceUp} {
+		if _, err = pool.Exec(ctx, forward); err != nil {
+			t.Fatalf("reapply dependent migration: %v", err)
+		}
 	}
 }
 
