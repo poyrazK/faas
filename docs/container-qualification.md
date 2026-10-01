@@ -969,3 +969,7 @@ Combined PR #3997 now includes backend-loss recovery. The strict database gate p
 ### Native UDP harness scheduler target correction
 
 Inspection of `startGatewaydPublic` found that it supplied only `FAAS_TCPD_SCHEDD_TARGET`; UDP admission would use `/run/faas/schedd.sock` rather than the private harness scheduler. The harness now supplies `FAAS_UDPD_SCHEDD_TARGET` using the same per-test Unix socket. Related portable VMMD environment fixtures passed with race detection, log `/tmp/gregale-udp-harness-wiring-tests.log`; those tests are not UDP cold-admission evidence. `TestUDPIngressMetal` still requires a designated native KVM host.
+
+### Harness private scheduler environment contract
+
+The public gateway harness now builds its environment through `gatewaydPublicEnv`, exercised by `TestGatewayPublicEnvPrivateSchedulerTargets`. Three race runs passed together with existing VMMD environment regressions. The test requires TCP and UDP targets to equal the same private Unix socket and checks gateway addresses, UDP opt-in and source policy remain present. Scoped lint reported zero issues. Logs `/tmp/gregale-udp-harness-target-contract.log` and `/tmp/gregale-udp-harness-target-lint.log`. This pins environment construction; native UDP admission remains unexecuted.
