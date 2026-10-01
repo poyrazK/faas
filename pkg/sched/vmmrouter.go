@@ -35,6 +35,7 @@ import (
 	"sync"
 	"time"
 
+	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apptaskproto"
 	"github.com/onebox-faas/faas/pkg/executionproto"
@@ -202,13 +203,14 @@ type LiveMigrationPrepare struct {
 
 // LiveMigrationAdopt is the typed return for RoutedVMM::
 // AdoptMigratedInstance. Mirrors vmmdpb.AdoptMigratedInstanceResponse;
-// the network identifiers (HostIP, Netns, GuestUID) are surfaced
-// so the new owner vmmd's logs can correlate, even though schedd
-// doesn't currently persist them on the migration path.
+// Destination network identifiers and the actual boot-path acknowledgement
+// are committed together with the instance's new ownership.
 type LiveMigrationAdopt struct {
 	HostIP   string
 	Netns    string
 	GuestUID int
+	Method   vmmdpb.WakeMethod
+	WakeID   string
 }
 
 // VMMRouter is the dial-once-per-target cache that satisfies

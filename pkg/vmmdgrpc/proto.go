@@ -392,6 +392,7 @@ func toMigrationWakeRequest(ctx context.Context, req *vmmdpb.AdoptMigratedInstan
 		App:       req.GetAppSpec(),
 		Plan:      req.GetPlan(),
 		AccountId: req.GetAccountId(),
+		WakeId:    req.GetWakeId(),
 		Snapshot: &vmmdpb.SnapshotRef{
 			DeploymentId:      req.GetDeploymentId(),
 			StorageKey:        req.GetMemStorageKey(),

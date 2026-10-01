@@ -50,7 +50,7 @@ func (m *MemStore) gitOpsRuntimeTargetsLocked(memory *environmentGitOpsMemory) [
 				continue
 			}
 			state := State(instance.State)
-			if state == StateWaking || state == StateColdBooting {
+			if state == StateWaking || state == StateColdBooting || state == StateMigrating {
 				target.StartingResidents++
 			}
 			if state == StateWaking || state == StateColdBooting || state == StateRunning || state == StateWarm || state == StateDraining {

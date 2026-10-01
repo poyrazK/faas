@@ -208,8 +208,22 @@ transport tests cover that readiness race, inherited restore inputs, rolling
 replacement, and preparation failures that release admission.
 
 Native tests must still prove that the guest used the acknowledged payload.
-Migration and other runtime paths require their own evidence audit before
-full environment graph support can be claimed. Start times and scheduler
+Live migration now prepares runtime inputs before pausing its source. Read
+failures abort preparation instead of silently dropping API variables. Vmmd
+acknowledges the actual restore/cold-fallback result and the destination wake;
+the scheduler preserves source inputs for a restore and uses the prepared
+payload for a cold fallback. A fenced ownership transaction publishes the new
+wake, readiness, destination network identifiers, and its corresponding receipt.
+Older peers, unknown results, or missing wake acknowledgement remove source
+evidence rather than certifying the destination. Legacy ownership commits also
+advance wake identity so a late source acknowledgement cannot recreate evidence.
+In-flight migrations count as pending runtime convergence. PostgreSQL/memory
+tests cover atomic publication, source wake/lease/scope rejection, delayed
+source captures, missing acknowledgement, and late source ACKs. Scheduler tests
+drive the full handoff with restore, cold fallback, concurrent input changes,
+and old/unknown replies; vmmd tests cover the actual method and wake wire fields.
+Native migration and other runtime paths still require guest/serving evidence
+before full environment graph support can be claimed. Start times and scheduler
 notification success alone remain insufficient evidence.
 
 The remaining full feature gates include protected-branch

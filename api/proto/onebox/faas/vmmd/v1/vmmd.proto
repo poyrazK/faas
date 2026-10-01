@@ -896,6 +896,8 @@ message WakeResponse {
 enum WakeMethod {
   WAKE_COLD_BOOT = 0;
   WAKE_RESTORE   = 1;
+  // An explicit unavailable result; zero remains cold boot for wire compatibility.
+  WAKE_UNKNOWN   = 2;
 }
 
 message CreateFromSnapshotRequest {
@@ -1839,6 +1841,8 @@ message AdoptMigratedInstanceRequest {
   string account_id = 7;
   string deployment_id = 8;
   string fc_version = 9;
+  // Destination wake identity, distinct from the source's boot attempt.
+  string wake_id = 10;
 }
 
 // AdoptMigratedInstanceResponse carries the network identifiers
@@ -1847,18 +1851,17 @@ message AdoptMigratedInstanceRequest {
 // re-derive the runtime state.
 message AdoptMigratedInstanceResponse {
   // The new owner's host IP for this instance (the /30 vethHost
-  // address inside the new owner's tenant netns). schedd
-  // currently doesn't write this anywhere on the migration path
-  // — the instances table's host_ip column is set at wake time
-  // and stays — but it's included on the wire so the vmmd's
-  // audit log can correlate.
+  // address inside the new owner's tenant netns). schedd publishes it with
+  // destination ownership and runtime input evidence.
   string host_ip = 1;
-  // The new owner's netns path the vmmd created. Same caveat
-  // as host_ip.
+  // The new owner's netns path the vmmd created.
   string netns = 2;
-  // The new owner's per-VM guest UID (20000-29999). Same
-  // caveat as host_ip.
+  // The new owner's per-VM guest UID (20000-29999).
   int32 guest_uid = 3;
+  // Actual Manager.Wake result. A requested restore can cold-boot instead.
+  // Older peers omit this field; callers must not infer input acknowledgement.
+  WakeMethod method = 4;
+  string wake_id = 5;
 }
 
 // AcknowledgeMigrationRequest (Tier A5 / ADR-065) is the input

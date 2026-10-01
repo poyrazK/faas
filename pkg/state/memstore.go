@@ -5257,6 +5257,7 @@ func (m *MemStore) MigrateInstanceOwner(_ context.Context, instanceID, fromNodeI
 	now := time.Now()
 	migFrom := fromNodeID
 	ins.NodeID = toNodeID
+	ins.WakeID, ins.StartedAt = newID(), now
 	ins.MigratedFromNodeID = &migFrom
 	ins.MigratedAt = &now
 	ins.LeaseToken = leaseToken
@@ -5265,6 +5266,7 @@ func (m *MemStore) MigrateInstanceOwner(_ context.Context, instanceID, fromNodeI
 	m.instances[instanceID] = ins
 	// Stamp apps.migrated_at to match the SQL transaction's
 	// second UPDATE.
+	delete(m.instanceRuntimeConfigReceipts, instanceID)
 	if a, ok := m.apps[ins.AppID]; ok {
 		a.MigratedAt = &now
 		m.apps[ins.AppID] = a

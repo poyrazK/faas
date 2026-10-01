@@ -6450,7 +6450,7 @@ CREATE VIEW public.environment_gitops_runtime_targets AS
     ( SELECT count(*) AS count
            FROM (public.instances i
              JOIN public.deployments d ON ((d.id = i.deployment_id)))
-          WHERE ((i.app_id = b.app_id) AND (d.scope = b.environment_slug) AND (i.state = ANY (ARRAY['waking'::text, 'cold_booting'::text])))) AS starting_residents,
+          WHERE ((i.app_id = b.app_id) AND (d.scope = b.environment_slug) AND (i.state = ANY (ARRAY['waking'::text, 'cold_booting'::text, 'migrating'::text])))) AS starting_residents,
     ( SELECT count(*) AS count
            FROM (public.snapshots p
              JOIN public.deployments d ON ((d.id = p.deployment_id)))

@@ -379,10 +379,8 @@ func (h *MigrationHarness) MigrateOne(ctx context.Context, instanceID, fromNodeI
 	// Phase 3: AdoptMigratedInstance on the new owner vmmd.
 	// The new owner restores the snapshot the dying vmmd wrote
 	// at Phase 1, brings the VM up, and returns the network
-	// identifiers. We don't currently persist those on the
-	// migration path (the instance row's host_ip is set at
-	// wake time and the column stays), but the wire shape
-	// carries them so the new owner vmmd's logs can correlate.
+	// identifiers and actual boot path. The ownership transaction publishes
+	// the destination network and binds its input evidence to the new wake.
 	//
 	// The snapshot's FC version is part of the restore compatibility
 	// decision. Preserve it through the typed scheduler value so the
@@ -459,17 +457,12 @@ func (h *MigrationHarness) MigrateOne(ctx context.Context, instanceID, fromNodeI
 		h.cancelSource(leaseCtx, fromNodeID, instanceID, prepared.LeaseToken)
 		return fmt.Errorf("sched: migrate one: phase 3 adopt: %w", err)
 	}
-	_ = adopted // network identifiers are surfaced on the wire but
-	// not persisted in this PR; future work can plumb them
-	// through the gateway listener if a customer wants
-	// zero-downtime migration observability.
-
 	// Phase 4: MigrateInstanceOwner on the local store. The
 	// conditional UPDATE flips the instance row: state
 	// 'migrating' → 'running', node_id flips to newOwner, the
 	// migration lineage columns are stamped, AND
 	// apps.migrated_at is stamped in the same transaction.
-	if err := h.store.MigrateInstanceOwner(leaseCtx, instanceID, fromNodeID, h.newOwnerNodeID, prepared.LeaseToken); err != nil {
+	if err := h.commitMigrationRuntime(leaseCtx, instanceID, fromNodeID, h.newOwnerNodeID, prepared.LeaseToken, appSpec, adopted); err != nil {
 		// Distinguish peer rollback / re-owner / lease
 		// expiry / row-gone via errors.Is. Each branch has a
 		// different metric label.

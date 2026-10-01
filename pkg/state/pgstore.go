@@ -3548,21 +3548,10 @@ func (s *PgStore) MigrateInstanceOwner(ctx context.Context, instanceID, fromNode
 	//      second UPDATE.
 	//   2. apps row: stamps migrated_at = now() so the dashboard's
 	//      "fleet live-migration throughput" panel stays coherent.
-	var appID string
-	err = tx.QueryRow(ctx,
-		`update instances
-		    set node_id = $3,
-		        migrated_from_node_id = $2,
-		        migrated_at = now(),
-		        lease_token = $4,
-		        migration_started_at = NULL,
-		        state = 'running'
-		where id = $1
-		    and state = 'migrating'
-		    and node_id = $2
-		    and lease_token = $4
-		returning app_id`,
-		instanceID, fromNodeID, toNodeID, leaseToken).Scan(&appID)
+	row, err := sqlc.New().MigrateInstanceRuntimeConfig(ctx, tx, sqlc.MigrateInstanceRuntimeConfigParams{
+		InstanceID: mustPgUUID(instanceID), FromNodeID: mustPgUUID(fromNodeID), ToNodeID: mustPgUUID(toNodeID),
+		LeaseToken: leaseToken, WakeID: mustPgUUID(newID()),
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrConflict
@@ -3571,8 +3560,13 @@ func (s *PgStore) MigrateInstanceOwner(ctx context.Context, instanceID, fromNode
 	}
 	if _, err := tx.Exec(ctx,
 		`update apps set migrated_at = now() where id = $1`,
-		appID); err != nil {
+		pgUUIDString(row.AppID)); err != nil {
 		return fmt.Errorf("state: migrate instance owner (apps.migrated_at): %w", err)
+	}
+	// A legacy caller supplies no destination boot-path evidence. Its old
+	// source receipt must not certify an unknown cold fallback as fresh.
+	if err := sqlc.New().ClearInstanceRuntimeConfigReceipt(ctx, tx, mustPgUUID(instanceID)); err != nil {
+		return mapErr(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("state: migrate instance owner commit: %w", err)

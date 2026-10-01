@@ -107,6 +107,7 @@ type Querier interface {
 	// The broker batch is authoritative: claiming an unrelated due row would
 	// lease it without dispatching it and block its actual broker delivery.
 	ClaimTriggerRecordsByItems(ctx context.Context, db DBTX, arg ClaimTriggerRecordsByItemsParams) ([]ClaimTriggerRecordsByItemsRow, error)
+	ClearInstanceRuntimeConfigReceipt(ctx context.Context, db DBTX, instanceID pgtype.UUID) error
 	// Records that the spool file has been removed. Terminal status is
 	// required so an out-of-order cleanup call cannot hide the path of
 	// an open session that a concurrent PATCH still needs.
@@ -916,6 +917,7 @@ type Querier interface {
 	// itself hits 0 rows and the handler reads upload_commit_outcomes
 	// to return the original deployment_id.
 	MarkUploadSessionCommitted(ctx context.Context, db DBTX, arg MarkUploadSessionCommittedParams) (MarkUploadSessionCommittedRow, error)
+	MigrateInstanceRuntimeConfig(ctx context.Context, db DBTX, arg MigrateInstanceRuntimeConfigParams) (Instance, error)
 	// ----------------------------------------------------------------------
 	// NodeLifecycleStore (Workstream B, issue #1184)
 	//
@@ -1315,6 +1317,7 @@ type Querier interface {
 	SnapshotRuntimeConfigReceipt(ctx context.Context, db DBTX, snapshotID pgtype.UUID) (SnapshotRuntimeConfigReceipt, error)
 	SnapshotStorageKeys(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]string, error)
 	SoftDeleteOrg(ctx context.Context, db DBTX, id pgtype.UUID) error
+	StampRuntimeMigrationApp(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	StampSafeReleaseWorkerLease(ctx context.Context, db DBTX, ttlSeconds int64) error
 	SumAccountCreditRefundReversal(ctx context.Context, db DBTX, arg SumAccountCreditRefundReversalParams) (int64, error)
 	// Per-account open-spool budget check (4 × SourceTarballMaxMB cap

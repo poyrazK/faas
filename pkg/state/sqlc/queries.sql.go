@@ -1069,6 +1069,15 @@ func (q *Queries) ClaimTriggerRecordsByItems(ctx context.Context, db DBTX, arg C
 	return items, nil
 }
 
+const clearInstanceRuntimeConfigReceipt = `-- name: ClearInstanceRuntimeConfigReceipt :exec
+DELETE FROM instance_runtime_config_receipts WHERE instance_id = $1::uuid
+`
+
+func (q *Queries) ClearInstanceRuntimeConfigReceipt(ctx context.Context, db DBTX, instanceID pgtype.UUID) error {
+	_, err := db.Exec(ctx, clearInstanceRuntimeConfigReceipt, instanceID)
+	return err
+}
+
 const clearUploadSessionPartPath = `-- name: ClearUploadSessionPartPath :exec
 UPDATE upload_sessions
    SET part_path = ''
@@ -11434,6 +11443,82 @@ func (q *Queries) MarkUploadSessionCommitted(ctx context.Context, db DBTX, arg M
 	return i, err
 }
 
+const migrateInstanceRuntimeConfig = `-- name: MigrateInstanceRuntimeConfig :one
+UPDATE instances i SET node_id = $1::uuid,
+    migrated_from_node_id = $2::uuid, migrated_at = now(), migration_started_at = NULL,
+    state = 'running', wake_id = $3::uuid, started_at = clock_timestamp(),
+    netns = CASE WHEN $4::text <> '' THEN $4::text ELSE i.netns END,
+    host_ip = CASE WHEN $5::text <> '' THEN $5::inet ELSE i.host_ip END,
+    guest_uid = CASE WHEN $6::int > 0 THEN $6::int ELSE i.guest_uid END
+WHERE i.id = $7::uuid AND i.state = 'migrating'
+    AND i.node_id = $2::uuid AND i.lease_token = $8::text
+    AND (NOT $9::boolean OR i.wake_id IS NOT DISTINCT FROM $10::uuid)
+    AND (NOT $11::boolean OR EXISTS (SELECT 1 FROM deployments d WHERE d.id = i.deployment_id AND d.scope = $12::text))
+RETURNING i.id, i.app_id, i.deployment_id, i.state, i.netns, i.guest_uid, i.host_ip, i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.terminal_at, i.node_id, i.wake_id, i.org_id, i.migrated_from_node_id, i.migrated_at, i.lease_token, i.framework_ready_at, i.tail_count, i.request_count, i.kind, i.job_id, i.mode, i.migration_started_at, i.startup_cpu_boost_until
+`
+
+type MigrateInstanceRuntimeConfigParams struct {
+	ToNodeID        pgtype.UUID
+	FromNodeID      pgtype.UUID
+	WakeID          pgtype.UUID
+	Netns           string
+	HostIp          string
+	GuestUid        int32
+	InstanceID      pgtype.UUID
+	LeaseToken      string
+	CheckSourceWake bool
+	ExpectedWakeID  pgtype.UUID
+	HasInputs       bool
+	Scope           string
+}
+
+func (q *Queries) MigrateInstanceRuntimeConfig(ctx context.Context, db DBTX, arg MigrateInstanceRuntimeConfigParams) (Instance, error) {
+	row := db.QueryRow(ctx, migrateInstanceRuntimeConfig,
+		arg.ToNodeID,
+		arg.FromNodeID,
+		arg.WakeID,
+		arg.Netns,
+		arg.HostIp,
+		arg.GuestUid,
+		arg.InstanceID,
+		arg.LeaseToken,
+		arg.CheckSourceWake,
+		arg.ExpectedWakeID,
+		arg.HasInputs,
+		arg.Scope,
+	)
+	var i Instance
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.State,
+		&i.Netns,
+		&i.GuestUid,
+		&i.HostIp,
+		&i.RamMb,
+		&i.StartedAt,
+		&i.LastRequestAt,
+		&i.ParkedAt,
+		&i.TerminalAt,
+		&i.NodeID,
+		&i.WakeID,
+		&i.OrgID,
+		&i.MigratedFromNodeID,
+		&i.MigratedAt,
+		&i.LeaseToken,
+		&i.FrameworkReadyAt,
+		&i.TailCount,
+		&i.RequestCount,
+		&i.Kind,
+		&i.JobID,
+		&i.Mode,
+		&i.MigrationStartedAt,
+		&i.StartupCpuBoostUntil,
+	)
+	return i, err
+}
+
 const nodeGet = `-- name: NodeGet :one
 
 SELECT
@@ -17880,6 +17965,15 @@ update orgs set deleted_pending = true, status = 'deleted_pending', updated_at =
 
 func (q *Queries) SoftDeleteOrg(ctx context.Context, db DBTX, id pgtype.UUID) error {
 	_, err := db.Exec(ctx, softDeleteOrg, id)
+	return err
+}
+
+const stampRuntimeMigrationApp = `-- name: StampRuntimeMigrationApp :exec
+UPDATE apps SET migrated_at = now() WHERE id = $1::uuid
+`
+
+func (q *Queries) StampRuntimeMigrationApp(ctx context.Context, db DBTX, appID pgtype.UUID) error {
+	_, err := db.Exec(ctx, stampRuntimeMigrationApp, appID)
 	return err
 }
 

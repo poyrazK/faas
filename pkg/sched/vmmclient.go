@@ -405,12 +405,15 @@ type VMInstanceStat struct {
 // Empty slice = no allowlist rule emitted in the per-netns forward chain
 // (current behaviour preserved).
 type AppSpec struct {
-	BaseKey       string // drive0 base rootfs StorageBackend key (e.g. "base/runtime-node22.ext4")
-	LayerKey      string // drive1 per-app layer StorageBackend key (e.g. "apps/<slug>/<depID>.ext4")
-	VCPUCount     int32  // 2, or 4 for Scale
-	MemSizeMiB    int32  // plan RAM; the slice fences at +8 MiB (pkg/api/limits.go)
-	CPUMillicores int32  // sustained cgroup CPU allowance; 250, 500, or 1000
-	EgressMbit    int32  // per-plan tc cap (pkg/api/limits.EgressMbit); 0 = no cap
+	// Migration evidence stays in schedd; no receipt values enter the protobuf
+	// envelope. The flat APIEnv/sealed inputs already carry the boot payload.
+	migrationRuntime *migrationRuntimeInputs
+	BaseKey          string // drive0 base rootfs StorageBackend key (e.g. "base/runtime-node22.ext4")
+	LayerKey         string // drive1 per-app layer StorageBackend key (e.g. "apps/<slug>/<depID>.ext4")
+	VCPUCount        int32  // 2, or 4 for Scale
+	MemSizeMiB       int32  // plan RAM; the slice fences at +8 MiB (pkg/api/limits.go)
+	CPUMillicores    int32  // sustained cgroup CPU allowance; 250, 500, or 1000
+	EgressMbit       int32  // per-plan tc cap (pkg/api/limits.EgressMbit); 0 = no cap
 	// StartupDeadlineS is the plan-resolved readiness budget. 0 preserves the
 	// vmmd default for legacy callers.
 	StartupDeadlineS int32
@@ -1251,6 +1254,11 @@ func (c *VMMClient) PrepareLiveMigration(ctx context.Context, _, instanceID, sna
 // wrote at Phase 1 and returns the new instance's network
 // identifiers.
 func (c *VMMClient) AdoptMigratedInstance(ctx context.Context, _, instanceID string, app AppSpec, memKey, vmstateKey, leaseToken string) (LiveMigrationAdopt, error) {
+	fields, _ := wire.FromContext(ctx)
+	if app.migrationRuntime != nil {
+		fields.WakeID = app.migrationRuntime.WakeID
+	}
+	ctx = wire.WithCorrelationOutgoing(ctx, fields)
 	resp, err := c.cli.AdoptMigratedInstance(ctx, &vmmdpb.AdoptMigratedInstanceRequest{
 		InstanceId:        instanceID,
 		AppSpec:           app.toProto(),
@@ -1261,6 +1269,7 @@ func (c *VMMClient) AdoptMigratedInstance(ctx context.Context, _, instanceID str
 		AccountId:         app.AccountID,
 		DeploymentId:      app.DeploymentID,
 		FcVersion:         app.FCVersion,
+		WakeId:            fields.WakeID,
 	})
 	if err != nil {
 		return LiveMigrationAdopt{}, liftErr(err)
@@ -1269,6 +1278,8 @@ func (c *VMMClient) AdoptMigratedInstance(ctx context.Context, _, instanceID str
 		HostIP:   resp.GetHostIp(),
 		Netns:    resp.GetNetns(),
 		GuestUID: int(resp.GetGuestUid()),
+		Method:   resp.GetMethod(),
+		WakeID:   resp.GetWakeId(),
 	}, nil
 }
 

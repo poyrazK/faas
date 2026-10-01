@@ -5355,6 +5355,25 @@ WHERE instance_runtime_config_receipts.wake_id <> excluded.wake_id OR
      AND instance_runtime_config_receipts.variables = excluded.variables AND instance_runtime_config_receipts.secret_versions = excluded.secret_versions
      AND instance_runtime_config_receipts.all_secrets = excluded.all_secrets);
 
+-- name: ClearInstanceRuntimeConfigReceipt :exec
+DELETE FROM instance_runtime_config_receipts WHERE instance_id = sqlc.arg(instance_id)::uuid;
+
+-- name: MigrateInstanceRuntimeConfig :one
+UPDATE instances i SET node_id = sqlc.arg(to_node_id)::uuid,
+    migrated_from_node_id = sqlc.arg(from_node_id)::uuid, migrated_at = now(), migration_started_at = NULL,
+    state = 'running', wake_id = sqlc.arg(wake_id)::uuid, started_at = clock_timestamp(),
+    netns = CASE WHEN sqlc.arg(netns)::text <> '' THEN sqlc.arg(netns)::text ELSE i.netns END,
+    host_ip = CASE WHEN sqlc.arg(host_ip)::text <> '' THEN sqlc.arg(host_ip)::inet ELSE i.host_ip END,
+    guest_uid = CASE WHEN sqlc.arg(guest_uid)::int > 0 THEN sqlc.arg(guest_uid)::int ELSE i.guest_uid END
+WHERE i.id = sqlc.arg(instance_id)::uuid AND i.state = 'migrating'
+    AND i.node_id = sqlc.arg(from_node_id)::uuid AND i.lease_token = sqlc.arg(lease_token)::text
+    AND (NOT sqlc.arg(check_source_wake)::boolean OR i.wake_id IS NOT DISTINCT FROM sqlc.narg(expected_wake_id)::uuid)
+    AND (NOT sqlc.arg(has_inputs)::boolean OR EXISTS (SELECT 1 FROM deployments d WHERE d.id = i.deployment_id AND d.scope = sqlc.arg(scope)::text))
+RETURNING i.*;
+
+-- name: StampRuntimeMigrationApp :exec
+UPDATE apps SET migrated_at = now() WHERE id = sqlc.arg(app_id)::uuid;
+
 -- name: PublishInstanceRuntimeConfig :one
 UPDATE instances i SET netns = sqlc.arg(netns), host_ip = sqlc.arg(host_ip)::text::inet,
     guest_uid = sqlc.arg(guest_uid), started_at = clock_timestamp(), state = 'running'

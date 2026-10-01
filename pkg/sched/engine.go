@@ -5304,6 +5304,20 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 		return AppSpec{}, fmt.Errorf("sched: build app spec: account by id: %w", err)
 	}
 	limits := api.MustLimitsFor(acct.Plan)
+	runtimeInputs, runtimeAPIEnv, err := e.prepareRuntimeConfigInputs(ctx, app.AccountID, app.ID, dep.Scope)
+	if err != nil {
+		return AppSpec{}, fmt.Errorf("sched: build app spec: runtime inputs: %w", err)
+	}
+	migrationInputs := &migrationRuntimeInputs{ExpectedWakeID: ins.WakeID, WakeID: uuid.NewString(), Cold: runtimeInputs}
+	if receipts, ok := e.store.(state.RuntimeConfigReceiptStore); ok && ins.DeploymentID != "" {
+		captured, exists, err := receipts.InstanceRuntimeConfigReceipt(ctx, ins.ID)
+		if err != nil {
+			return AppSpec{}, fmt.Errorf("sched: build app spec: source receipt: %w", err)
+		}
+		if exists && captured.Scope == normalizedDeploymentScope(dep.Scope) {
+			migrationInputs.Restored = &captured
+		}
+	}
 	// Sealed env is filtered through dep.OverrideEnvSecrets
 	// (jsonb) when present, mirroring the Wake path at
 	// engine.go:907-910. A migration without the override
@@ -5319,8 +5333,13 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 	if err != nil {
 		return AppSpec{}, fmt.Errorf("sched: build app spec: sidecars: %w", err)
 	}
-	if _, err := mergeSecretDeliveryCandidates(sealedEnv.Candidates, sidecarCandidates); err != nil {
+	secretCandidates, err := mergeSecretDeliveryCandidates(sealedEnv.Candidates, sidecarCandidates)
+	if err != nil {
 		return AppSpec{}, fmt.Errorf("sched: build app spec: sidecar secret versions changed during preparation: %w", err)
+	}
+	addRuntimeSecretVersions(&migrationInputs.Cold, secretCandidates, len(envSecretsFromDep(dep)) == 0)
+	if ins.DeploymentID == "" {
+		migrationInputs = nil // legacy rows cannot bind input evidence to a deployment
 	}
 	mainDependencies, err := mainWorkloadDependenciesForDeployment(dep, sidecars)
 	if err != nil {
@@ -5329,12 +5348,13 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 	privateNetwork := e.privateNetworkProjection(ctx, app)
 	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
 	return AppSpec{
-		BaseKey:       baseKey(app.Runtime),
-		LayerKey:      layerKey(dep.RootfsKey, dep.ID),
-		VCPUCount:     int32(limits.VCPU),
-		MemSizeMiB:    int32(app.RAMMB),
-		CPUMillicores: int32(effectiveAppCPUMillicores(app)),
-		EgressMbit:    int32(limits.EgressMbit),
+		migrationRuntime: migrationInputs,
+		BaseKey:          baseKey(app.Runtime),
+		LayerKey:         layerKey(dep.RootfsKey, dep.ID),
+		VCPUCount:        int32(limits.VCPU),
+		MemSizeMiB:       int32(app.RAMMB),
+		CPUMillicores:    int32(effectiveAppCPUMillicores(app)),
+		EgressMbit:       int32(limits.EgressMbit),
 		// M-3: migration must preserve the same readiness budget as the
 		// original wake, including a manifest override.
 		StartupDeadlineS:       startupDeadlineForApp(app, acct.Plan),
@@ -5347,15 +5367,10 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 		SealedEnv:              sealedEnv.Entries,
 		Sidecars:               sidecars,
 		MainDependsOn:          mainDependencies,
-		// ADR-045: api_env plaintext layer; the loadAPIEnv
-		// helper already fail-softs on a lookup error and logs
-		// Warn (engine.go:2382-2396). A hiccup here ships an
-		// empty api_env block, NOT a failed migration — the
-		// overlayfs upper layers carry the same precedence
-		// rules as Wake time and the customer's runtime config
-		// (most of it) lives in sealedEnv + manifest_env.
+		// Read failures abort before the source is paused; a migration can
+		// cold-boot and must not silently discard runtime inputs.
 		APIEnv: appendPlatformIdentity(
-			e.loadAPIEnv(ctx, app.AccountID, app.ID, dep.Scope),
+			runtimeAPIEnv,
 			app, dep, acct, ins.NodeID, ins.ID, func() string {
 				if node, err := e.store.ComputeNodeByID(ctx, ins.NodeID); err == nil {
 					return stringValue(node.Region)

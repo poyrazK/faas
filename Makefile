@@ -1360,6 +1360,7 @@ test-environment-gitops-controls: test-environment-gitops-core ## API/CLI/dashbo
 	@$(GO) test -p 1 ./pkg/state -run '^Test(Mem|Pg)StoreConformance$$/^(runtime_input_receipt.*|scoped_runtime_changes.*|snapshot_publication_fences_runtime_config_changes)$$' -count=1
 	@$(GO) test -p 1 ./pkg/state/conformance -run '^TestConformanceCoverage$$' -count=1
 	@$(GO) test -p 1 ./pkg/sched -run '^(TestRefreshRuntimeConfig.*|TestRuntimeConfig.*)$$' -count=1
+	@$(GO) test -p 1 ./pkg/vmmdgrpc -run '^TestMigrationAdoptionAcknowledges.*$$' -count=1
 	@cd sdk/go && $(GO) test -p 1 ./... -run '^TestEnvironmentGitOps' -count=1
 	@cd sdk/node && npm run test:build && node --test --test-concurrency=1 dist-test/test/environment-gitops.test.js
 	@cd sdk/python && python3 -m pytest tests/test_environment_gitops.py -q
