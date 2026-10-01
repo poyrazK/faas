@@ -156,7 +156,7 @@ func cmdAppsTCP(slug string, args []string) int {
 		PrintOK(osStdout, "Deleted TCP listener %s", args[0])
 		return 0
 	default:
-		PrintUsage(os.Stderr, "usage: gregale apps tcp <slug> [list|add|enable|disable|rm]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale apps tcp <slug> [list|add|tls|tls-status|enable|disable|rm]", "apps")
 		return 1
 	}
 }
