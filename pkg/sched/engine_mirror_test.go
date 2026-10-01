@@ -1,4 +1,5 @@
 // engine_mirror_test.go — issue #72 / ADR-133 / ADR-125 PR-A3
+// adr: 133
 //
 // PR-A3 code-review fix #3 moved the per-rule mirror VM
 // concurrency cap from pkg/sched.Engine to pkg/gateway.Handler
