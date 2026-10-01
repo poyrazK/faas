@@ -35,6 +35,8 @@ func (s *server) requireAppTaskAPI(w http.ResponseWriter) bool {
 
 func appTaskResponse(row state.AppTask) api.AppTaskResponse {
 	resp := api.AppTaskResponse{
+		WorkDecision:        row.WorkDecision,
+		OutcomeCode:         row.OutcomeCode,
 		ID:                  row.ID,
 		AppID:               row.AppID,
 		DeploymentID:        row.DeploymentID,

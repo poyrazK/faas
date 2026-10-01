@@ -7778,3 +7778,11 @@ func (p Plan) IssueLimits() IssueLimits {
 const IssueMaintenanceBatch = 1000
 const IssueMaintenanceInterval = time.Minute
 const IssueMaxBatchEvents = 32
+
+// Versioned work-policy wire bounds; plan retry/task/concurrency limits still
+// apply independently to every execution admitted under one of these policies.
+const (
+	WorkPolicyMaxBytes                = 16384
+	WorkPolicyMaxRules                = 64
+	WorkPolicyMaxStartDeadlineSeconds = 30 * 24 * 60 * 60
+)

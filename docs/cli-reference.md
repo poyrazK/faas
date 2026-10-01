@@ -886,6 +886,8 @@ Schedule an HTTP request or deployment command
 | `--skip-if-running` | skip fires while the previous run is active |  |
 | `--retry-max` | additional command attempts after failure or timeout |  |
 | `--retry-backoff-seconds` | base retry delay; doubles per attempt |  |
+| `--schedule-policy <JSON>` | versioned schedule policy JSON (command crons only) |  |
+| `--failure-rules <JSON>` | versioned retry rules JSON (command crons only) |  |
 
 ### crons info
 
@@ -906,6 +908,8 @@ Update one cron rule
 | `--allow-overlap` | allow scheduled fires to overlap |  |
 | `--retry-max` | additional command attempts after failure or timeout |  |
 | `--retry-backoff-seconds <N>` | base retry delay; doubles per attempt |  |
+| `--schedule-policy <JSON>` | replace versioned schedule policy JSON (command crons only) |  |
+| `--failure-rules <JSON>` | replace versioned retry rules JSON (command crons only) |  |
 
 ### crons rm
 
@@ -928,6 +932,15 @@ Show execution history
 | `--before <CURSOR>` | pagination cursor for older runs |  |
 | `--limit <N>` | max runs to show (1..100) |  |
 | `--run <TASK-ID>` | show details and captured output for one command run |  |
+
+### crons occurrences
+
+Inspect scheduled occurrence decisions
+
+| Flag | Meaning | |
+|---|---|---|
+| `--before <ID>` | occurrence id cursor from the previous page |  |
+| `--limit <N>` | max occurrence decisions (1..200) |  |
 
 ### crons cancel
 
@@ -1095,6 +1108,8 @@ Create a new job
 | `--image <REF>` | OCI image (required) | required |
 | `--schedule <EXPR>` | recurring five-field cron schedule |  |
 | `--timezone <TZ>` | IANA timezone for the recurring schedule |  |
+| `--schedule-policy <JSON>` | versioned recurring schedule policy JSON |  |
+| `--failure-rules <JSON>` | versioned exit-code and outcome retry rules JSON |  |
 
 ### jobs info
 
@@ -1109,6 +1124,8 @@ Update one job
 | `--schedule <EXPR>` | replace recurring cron schedule |  |
 | `--timezone <TZ>` | replace schedule IANA timezone |  |
 | `--unschedule` | remove recurring schedule |  |
+| `--schedule-policy <JSON>` | replace versioned recurring schedule policy JSON |  |
+| `--failure-rules <JSON>` | replace versioned exit-code and outcome retry rules JSON |  |
 
 ### jobs rm
 
@@ -1128,10 +1145,20 @@ Dispatch a new run (fan-out N tasks)
 | `--eligible-at <RFC3339>` | earliest task start |  |
 | `--latest-start-at <RFC3339>` | latest task start |  |
 | `--fail-fast` | cancel unstarted tasks after permanent failure |  |
+| `--failure-rules <JSON>` | override versioned exit-code and outcome retry rules for this run |  |
 
 ### jobs runs
 
 List runs for one job
+
+### jobs occurrences
+
+Inspect recurring schedule decisions
+
+| Flag | Meaning | |
+|---|---|---|
+| `--before <ID>` | occurrence id cursor from the previous page |  |
+| `--limit <N>` | max occurrence decisions (1..200) |  |
 
 ### jobs cancel
 

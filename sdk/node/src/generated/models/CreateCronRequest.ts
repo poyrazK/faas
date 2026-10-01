@@ -2,6 +2,8 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { FailureRules } from './FailureRules.js';
+import type { SchedulePolicy } from './SchedulePolicy.js';
 /**
  * Create an HTTP-path cron or deployment-attached app command schedule.
  */
@@ -48,5 +50,7 @@ export type CreateCronRequest = {
    * Base retry delay in seconds; doubles per retry and is capped at 24 hours. Command crons only.
    */
   retry_backoff_seconds?: number;
+  schedule_policy?: SchedulePolicy;
+  failure_rules?: FailureRules;
 };
 

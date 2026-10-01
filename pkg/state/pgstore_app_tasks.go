@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 var _ AppTaskStore = (*PgStore)(nil)
@@ -28,7 +29,8 @@ const appTaskSelectColumns = `id, account_id, app_id, deployment_id, kind,
        lease_token, lease_owner, lease_expires_at, cancel_requested_at,
        stdout_tail, stderr_tail, output_truncated, exit_code,
        failure_code, failure_message, started_at, finished_at,
-       created_at, updated_at, cron_id, scheduled_for`
+       created_at, updated_at, cron_id, scheduled_for,
+       failure_rules, occurrence_id, start_deadline_at, work_decision, outcome_code`
 
 type appTaskRowScanner interface {
 	Scan(dest ...any) error
@@ -38,10 +40,12 @@ func scanAppTask(row appTaskRowScanner) (AppTask, error) {
 	var task AppTask
 	var id, accountID, appID, deploymentID pgtype.UUID
 	var cronID pgtype.UUID
+	var occurrenceID pgtype.UUID
 	var leaseToken pgtype.UUID
 	var leaseOwner, failureCode, failureMessage pgtype.Text
-	var leaseExpiresAt, cancelRequestedAt, startedAt, finishedAt, scheduledFor, retryAt pgtype.Timestamptz
+	var leaseExpiresAt, cancelRequestedAt, startedAt, finishedAt, scheduledFor, retryAt, startDeadlineAt pgtype.Timestamptz
 	var exitCode pgtype.Int4
+	var failureRules, workDecision []byte
 	if err := row.Scan(
 		&id, &accountID, &appID, &deploymentID, &task.Kind,
 		&task.Command, &task.CommandShell, &task.DeploymentScope, &task.ArtifactKey, &task.ImageDigest,
@@ -51,6 +55,7 @@ func scanAppTask(row appTaskRowScanner) (AppTask, error) {
 		&task.StdoutTail, &task.StderrTail, &task.OutputTruncated, &exitCode,
 		&failureCode, &failureMessage, &startedAt, &finishedAt,
 		&task.CreatedAt, &task.UpdatedAt, &cronID, &scheduledFor,
+		&failureRules, &occurrenceID, &startDeadlineAt, &workDecision, &task.OutcomeCode,
 	); err != nil {
 		return AppTask{}, err
 	}
@@ -62,6 +67,20 @@ func scanAppTask(row appTaskRowScanner) (AppTask, error) {
 		task.CronID = pgUUIDString(cronID)
 	}
 	task.ScheduledFor = timestamptzToTimePtr(scheduledFor)
+	if len(failureRules) > 0 {
+		if err := json.Unmarshal(failureRules, &task.FailureRules); err != nil {
+			return AppTask{}, err
+		}
+	}
+	if occurrenceID.Valid {
+		task.OccurrenceID = pgUUIDString(occurrenceID)
+	}
+	task.StartDeadlineAt = timestamptzToTimePtr(startDeadlineAt)
+	if len(workDecision) > 0 {
+		if err := json.Unmarshal(workDecision, &task.WorkDecision); err != nil {
+			return AppTask{}, err
+		}
+	}
 	task.RetryAt = timestamptzToTimePtr(retryAt)
 	task.LeaseToken = executionUUIDPtr(leaseToken)
 	task.LeaseOwner = executionStringPtr(leaseOwner)
@@ -98,11 +117,12 @@ func (s *PgStore) CreateAppTask(ctx context.Context, params CreateAppTaskParams)
 		insert into app_tasks (
 			account_id, app_id, deployment_id, kind, command, command_shell,
 			deployment_scope, artifact_key, image_digest, timeout_seconds,
-			max_output_bytes, created_at, updated_at, cron_id, scheduled_for
+			max_output_bytes, created_at, updated_at, cron_id, scheduled_for,
+			failure_rules, occurrence_id, start_deadline_at
 		)
 		select $1, a.id, d.id, $4, $5, $6,
 		       coalesce(nullif(d.scope, ''), 'default'), d.rootfs_key, d.image_digest,
-		       $7, $8, $9, $9, $10::uuid, $11::timestamptz
+		       $7, $8, $9, $9, $10::uuid, $11::timestamptz, $12::jsonb, $13::uuid, $14::timestamptz
 		  from apps a
 		  join deployments d on d.app_id = a.id
 		 where a.id = $2
@@ -116,7 +136,8 @@ func (s *PgStore) CreateAppTask(ctx context.Context, params CreateAppTaskParams)
 		returning `+appTaskSelectColumns,
 		resolved.AccountID, resolved.AppID, resolved.DeploymentID, string(resolved.Kind),
 		resolved.Command, resolved.CommandShell, resolved.TimeoutSeconds,
-		resolved.MaxOutputBytes, resolved.CreatedAt, nullableCronID(resolved.CronID), resolved.ScheduledFor)
+		resolved.MaxOutputBytes, resolved.CreatedAt, nullableCronID(resolved.CronID), resolved.ScheduledFor,
+		policyJSON(resolved.FailureRules), nullableCronID(resolved.OccurrenceID), resolved.StartDeadlineAt)
 	task, err := scanAppTask(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AppTask{}, ErrAppTaskDeploymentUnavailable
@@ -146,6 +167,7 @@ func (s *PgStore) CreateScheduledCronAppTask(ctx context.Context, cronID string,
 	var command []string
 	var commandShell bool
 	var timeoutSeconds, maxOutputBytes, retryMax, retryBackoffSeconds int
+	var schedulePolicyRaw, failureRulesRaw []byte
 	err = tx.QueryRow(ctx, `
 		update crons
 		   set last_fired_at = $3
@@ -156,8 +178,10 @@ func (s *PgStore) CreateScheduledCronAppTask(ctx context.Context, cronID string,
 		   and last_fired_at is not distinct from $2::timestamptz
 		   and ($2::timestamptz is null or $3 > $2::timestamptz)
 		 returning app_id, command, command_shell, command_timeout_seconds,
-		           command_max_output_bytes, retry_max, retry_backoff_seconds`, cronID, expectedLastFiredAt, firedAt).
-		Scan(&appID, &command, &commandShell, &timeoutSeconds, &maxOutputBytes, &retryMax, &retryBackoffSeconds)
+		           command_max_output_bytes, retry_max, retry_backoff_seconds,
+	           schedule_policy, failure_rules`, cronID, expectedLastFiredAt, firedAt).
+		Scan(&appID, &command, &commandShell, &timeoutSeconds, &maxOutputBytes, &retryMax, &retryBackoffSeconds,
+			&schedulePolicyRaw, &failureRulesRaw)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AppTask{}, false, nil
 	}
@@ -186,15 +210,29 @@ func (s *PgStore) CreateScheduledCronAppTask(ctx context.Context, cronID string,
 		return AppTask{}, false, fmt.Errorf("state: select live deployment for command cron %s: %w", cronID, err)
 	}
 
+	var schedulePolicy *workpolicy.SchedulePolicy
+	if len(schedulePolicyRaw) > 0 {
+		var policy workpolicy.SchedulePolicy
+		if err := json.Unmarshal(schedulePolicyRaw, &policy); err != nil {
+			return AppTask{}, false, fmt.Errorf("state: decode cron schedule policy: %w", err)
+		}
+		schedulePolicy = &policy
+	}
+	var deadline *time.Time
+	if schedulePolicy != nil {
+		deadline = schedulePolicy.Deadline(firedAt)
+	}
 	task, err := scanAppTask(tx.QueryRow(ctx, `
 		insert into app_tasks (
 			account_id, app_id, deployment_id, kind, command, command_shell,
 			deployment_scope, artifact_key, image_digest, timeout_seconds,
-			max_output_bytes, retry_max, retry_backoff_seconds, created_at, updated_at, cron_id, scheduled_for
-		) values ($1::uuid, $2::uuid, $3::uuid, 'cron', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $13, $14::uuid, $13)
+			max_output_bytes, retry_max, retry_backoff_seconds, created_at, updated_at, cron_id, scheduled_for,
+			failure_rules, start_deadline_at
+		) values ($1::uuid, $2::uuid, $3::uuid, 'cron', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $13, $14::uuid, $13, $15::jsonb, $16)
 		returning `+appTaskSelectColumns,
 		accountID, appID, deploymentID, command, commandShell, scope, artifactKey,
-		imageDigest, timeoutSeconds, maxOutputBytes, retryMax, retryBackoffSeconds, firedAt, cronID))
+		imageDigest, timeoutSeconds, maxOutputBytes, retryMax, retryBackoffSeconds, firedAt, cronID,
+		failureRulesRaw, deadline))
 	if err != nil {
 		return AppTask{}, false, fmt.Errorf("state: create scheduled app task for cron %s: %w", cronID, mapErr(err))
 	}
@@ -202,6 +240,168 @@ func (s *PgStore) CreateScheduledCronAppTask(ctx context.Context, cronID string,
 		return AppTask{}, false, fmt.Errorf("state: commit scheduled app task for cron %s: %w", cronID, err)
 	}
 	return task, true, nil
+}
+
+// CreateScheduledCronAppTaskOccurrence atomically persists the occurrence
+// decision and, when admitted, its command task. The cron row lock fences
+// duplicate schedulers and policy edits against the cursor advance.
+func (s *PgStore) CreateScheduledCronAppTaskOccurrence(ctx context.Context, cronID string, expectedLastFiredAt *time.Time, evaluatedAt time.Time, options CronScheduledOccurrenceOptions) (AppTask, ScheduleOccurrence, bool, error) {
+	if cronID == "" || evaluatedAt.IsZero() {
+		return AppTask{}, ScheduleOccurrence{}, false, ErrAppTaskInvalid
+	}
+	evaluatedAt = evaluatedAt.UTC()
+	scheduledFor := options.ScheduledFor.UTC()
+	if options.ScheduledFor.IsZero() {
+		scheduledFor = evaluatedAt
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return AppTask{}, ScheduleOccurrence{}, false, fmt.Errorf("state: begin scheduled cron occurrence: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var cron Cron
+	var accountID string
+	var enabled bool
+	var skipIfRunning bool
+	var suspendedReason string
+	var lastFiredAt pgtype.Timestamptz
+	var schedulePolicyRaw, failureRulesRaw []byte
+	err = tx.QueryRow(ctx, `
+		select c.app_id::text, a.account_id::text, c.command, c.command_shell,
+		       c.command_timeout_seconds, c.command_max_output_bytes,
+		       c.retry_max, c.retry_backoff_seconds, c.enabled, c.skip_if_running,
+		       c.suspended_reason, c.last_fired_at, c.schedule_revision,
+		       c.schedule_policy, c.failure_rules
+		  from crons c join apps a on a.id = c.app_id
+		 where c.id = $1::uuid and a.status <> 'deleted'
+		 for update of c`, cronID).Scan(
+		&cron.AppID, &accountID, &cron.Command, &cron.CommandShell,
+		&cron.CommandTimeoutSeconds, &cron.CommandMaxOutputBytes,
+		&cron.RetryMax, &cron.RetryBackoffSeconds, &enabled, &skipIfRunning,
+		&suspendedReason, &lastFiredAt, &cron.ScheduleRevision,
+		&schedulePolicyRaw, &failureRulesRaw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return AppTask{}, ScheduleOccurrence{}, false, nil
+	}
+	if err != nil {
+		return AppTask{}, ScheduleOccurrence{}, false, fmt.Errorf("state: lock scheduled command cron %s: %w", cronID, err)
+	}
+	cron.ID, cron.Enabled, cron.SkipIfRunning, cron.SuspendedReason = cronID, enabled, skipIfRunning, suspendedReason
+	if !enabled || suspendedReason != "" || len(cron.Command) == 0 ||
+		!sameTimePointer(timestamptzToTimePtr(lastFiredAt), expectedLastFiredAt) ||
+		(options.ScheduleRevision > 0 && cron.ScheduleRevision != options.ScheduleRevision) {
+		return AppTask{}, ScheduleOccurrence{}, false, nil
+	}
+	if expectedLastFiredAt != nil && !scheduledFor.After(*expectedLastFiredAt) {
+		return AppTask{}, ScheduleOccurrence{}, false, nil
+	}
+	if len(schedulePolicyRaw) > 0 {
+		var policy workpolicy.SchedulePolicy
+		if err := json.Unmarshal(schedulePolicyRaw, &policy); err != nil {
+			return AppTask{}, ScheduleOccurrence{}, false, fmt.Errorf("state: decode cron schedule policy: %w", err)
+		}
+		cron.SchedulePolicy = &policy
+	}
+	if len(failureRulesRaw) > 0 {
+		var rules workpolicy.FailureRules
+		if err := json.Unmarshal(failureRulesRaw, &rules); err != nil {
+			return AppTask{}, ScheduleOccurrence{}, false, fmt.Errorf("state: decode cron failure rules: %w", err)
+		}
+		cron.FailureRules = &rules
+	}
+	policy := effectiveCronSchedulePolicy(cron)
+	deadline := policy.Deadline(scheduledFor)
+	status, reason, blocker := "queued", "", ""
+	if options.Disposition != "" {
+		if options.Disposition != "coalesced" && options.Disposition != "missed_deadline" {
+			return AppTask{}, ScheduleOccurrence{}, false, ErrInvalidArgument
+		}
+		status, reason = options.Disposition, options.Reason
+	} else if workpolicy.DeadlineMissed(deadline, evaluatedAt) {
+		status, reason = "missed_deadline", "start deadline expired before the scheduler could dispatch the occurrence"
+	}
+	if status == "queued" && policy.Overlap != "allow" {
+		var active bool
+		var activeOccurrence string
+		err = tx.QueryRow(ctx, `
+			select true, coalesce(occurrence_id::text, '') from app_tasks
+			 where cron_id = $1::uuid and status in ('queued','restoring','running')
+			 order by created_at asc, id asc limit 1`, cronID).Scan(&active, &activeOccurrence)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return AppTask{}, ScheduleOccurrence{}, false, fmt.Errorf("state: check active command cron tasks: %w", err)
+		}
+		if active {
+			if policy.Overlap == "replace" {
+				return AppTask{}, ScheduleOccurrence{}, false, nil
+			}
+			status, reason, blocker = "skipped_overlap", "an earlier task for this cron is still active", activeOccurrence
+		}
+	}
+
+	var deploymentID, scope, artifactKey, imageDigest string
+	if status == "queued" {
+		err = tx.QueryRow(ctx, `
+			select d.id::text, coalesce(nullif(d.scope, ''), 'default'), d.rootfs_key, d.image_digest
+			  from deployments d
+			 where d.app_id = $1::uuid and d.status = 'live'
+			   and d.rootfs_key is not null and d.rootfs_key <> '' and d.image_digest <> ''
+			 order by (d.traffic_percent > 0) desc, d.created_at desc, d.id desc
+			 limit 1 for update`, cron.AppID).Scan(&deploymentID, &scope, &artifactKey, &imageDigest)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return AppTask{}, ScheduleOccurrence{}, false, ErrAppTaskDeploymentUnavailable
+		}
+		if err != nil {
+			return AppTask{}, ScheduleOccurrence{}, false, fmt.Errorf("state: select live deployment for scheduled cron: %w", err)
+		}
+	}
+	if _, err := tx.Exec(ctx, `update crons set last_fired_at = $2 where id = $1::uuid`, cronID, scheduledFor); err != nil {
+		return AppTask{}, ScheduleOccurrence{}, false, fmt.Errorf("state: advance scheduled cron cursor: %w", err)
+	}
+	var occurrenceID string
+	if err := tx.QueryRow(ctx, `insert into schedule_occurrences (
+		account_id, cron_id, schedule_revision, scheduled_for, start_deadline_at,
+		 schedule_policy, status, reason, blocking_occurrence_id)
+		values ($1::uuid,$2::uuid,$3,$4,$5,$6::jsonb,$7,$8,nullif($9,'')::uuid)
+		returning id::text`, accountID, cronID, cron.ScheduleRevision, scheduledFor, deadline,
+		policyJSON(policy), status, reason, blocker).Scan(&occurrenceID); err != nil {
+		return AppTask{}, ScheduleOccurrence{}, false, fmt.Errorf("state: record scheduled cron occurrence: %w", mapErr(err))
+	}
+	occurrence := ScheduleOccurrence{
+		ID: occurrenceID, AccountID: accountID, CronID: cronID,
+		ScheduleRevision: cron.ScheduleRevision, ScheduledFor: scheduledFor,
+		StartDeadlineAt: cloneTimePtr(deadline), SchedulePolicy: *workpolicy.Clone(policy),
+		Status: status, Reason: reason, BlockingOccurrenceID: blocker,
+		CreatedAt: evaluatedAt, UpdatedAt: evaluatedAt,
+	}
+	if status != "queued" {
+		if err := tx.Commit(ctx); err != nil {
+			return AppTask{}, ScheduleOccurrence{}, false, fmt.Errorf("state: commit skipped cron occurrence: %w", err)
+		}
+		return AppTask{}, occurrence, false, nil
+	}
+	task, err := scanAppTask(tx.QueryRow(ctx, `insert into app_tasks (
+		 account_id, app_id, deployment_id, kind, command, command_shell,
+		 deployment_scope, artifact_key, image_digest, timeout_seconds,
+		 max_output_bytes, retry_max, retry_backoff_seconds, created_at, updated_at,
+		 cron_id, scheduled_for, failure_rules, occurrence_id, start_deadline_at)
+		values ($1::uuid,$2::uuid,$3::uuid,'cron',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13,
+		 $14::uuid,$15,$16::jsonb,$17::uuid,$18)
+		returning `+appTaskSelectColumns,
+		accountID, cron.AppID, deploymentID, cron.Command, cron.CommandShell, scope, artifactKey,
+		imageDigest, cron.CommandTimeoutSeconds, cron.CommandMaxOutputBytes, cron.RetryMax,
+		cron.RetryBackoffSeconds, evaluatedAt, cronID, scheduledFor, policyJSON(cron.FailureRules), occurrenceID, deadline))
+	if err != nil {
+		return AppTask{}, ScheduleOccurrence{}, false, fmt.Errorf("state: create scheduled command task: %w", mapErr(err))
+	}
+	if _, err := tx.Exec(ctx, `update schedule_occurrences set app_task_id=$2::uuid where id=$1::uuid`, occurrenceID, task.ID); err != nil {
+		return AppTask{}, ScheduleOccurrence{}, false, err
+	}
+	occurrence.AppTaskID = task.ID
+	if err := tx.Commit(ctx); err != nil {
+		return AppTask{}, ScheduleOccurrence{}, false, fmt.Errorf("state: commit scheduled command task: %w", err)
+	}
+	return task, occurrence, true, nil
 }
 
 // CreateManualCronAppTaskForFireNow creates a command task for a claimed
@@ -439,6 +639,15 @@ func (s *PgStore) ClaimNextAppTask(ctx context.Context, owner string, claimedAt 
 	}
 	claimedAt = claimedAt.UTC()
 	expiresAt := claimedAt.Add(leaseDuration)
+	if _, err := s.pool.Exec(ctx, `
+		update app_tasks task
+		   set status = 'cancelled', retry_at = null, finished_at = $1, updated_at = $1
+		 where task.status = 'queued' and task.start_deadline_at < $1
+		   and (task.occurrence_id is null or not exists (
+		       select 1 from schedule_occurrences occurrence
+		        where occurrence.id = task.occurrence_id and occurrence.started_at is not null))`, claimedAt); err != nil {
+		return AppTask{}, mapErr(err)
+	}
 	task, err := scanAppTask(s.pool.QueryRow(ctx, `
 		with candidate as (
 			select id
@@ -447,6 +656,9 @@ func (s *PgStore) ClaimNextAppTask(ctx context.Context, owner string, claimedAt 
 			   and cancel_requested_at is null
 			   and created_at <= $2
 			   and (retry_at is null or retry_at <= $2)
+			   and (start_deadline_at is null or start_deadline_at >= $2 or exists (
+			       select 1 from schedule_occurrences occurrence
+			        where occurrence.id = app_tasks.occurrence_id and occurrence.started_at is not null))
 			 order by coalesce(retry_at, created_at), created_at, id
 			 for update skip locked
 			 limit 1
@@ -487,8 +699,28 @@ func (s *PgStore) MarkAppTaskRunning(ctx context.Context, taskID, leaseToken str
 		   and lease_token = $2
 		   and cancel_requested_at is null
 		   and lease_expires_at > $3
+		   and (start_deadline_at is null or start_deadline_at >= $3 or exists (
+		       select 1 from schedule_occurrences occurrence
+		        where occurrence.id = app_tasks.occurrence_id and occurrence.started_at is not null))
 		returning `+appTaskSelectColumns, taskID, leaseToken, startedAt))
 	if errors.Is(err, pgx.ErrNoRows) {
+		tag, cancelErr := s.pool.Exec(ctx, `
+			update app_tasks task
+			   set status = 'cancelled', retry_at = null, lease_token = null,
+			       lease_owner = null, lease_expires_at = null,
+			       finished_at = $3, updated_at = $3
+			 where task.id = $1 and task.status = 'restoring' and task.lease_token = $2
+			   and task.cancel_requested_at is null and task.lease_expires_at > $3
+			   and task.start_deadline_at < $3 and task.started_at is null
+			   and (task.occurrence_id is null or not exists (
+			       select 1 from schedule_occurrences occurrence
+			        where occurrence.id = task.occurrence_id and occurrence.started_at is not null))`, taskID, leaseToken, startedAt)
+		if cancelErr != nil {
+			return AppTask{}, mapErr(cancelErr)
+		}
+		if tag.RowsAffected() == 0 {
+			return AppTask{}, ErrAppTaskLeaseLost
+		}
 		return AppTask{}, ErrAppTaskLeaseLost
 	}
 	if err != nil {
@@ -609,6 +841,16 @@ func (s *PgStore) CompleteAppTask(ctx context.Context, params CompleteAppTaskPar
 	if params.Status == AppTaskSucceeded && current.Status != AppTaskRunning {
 		return AppTask{}, fmt.Errorf("%w: a task must be running before it can succeed", ErrAppTaskInvalid)
 	}
+	decision := workpolicy.Evaluate(current.FailureRules, workpolicy.Evidence{
+		Succeeded: params.Status == AppTaskSucceeded, Cancelled: params.Status == AppTaskCancelled,
+		Infra: current.Status == AppTaskRestoring, ExitCode: params.ExitCode, OutcomeCode: params.OutcomeCode,
+	})
+	if decision.Reason == "outcome_code_matched" && params.Status == AppTaskSucceeded {
+		params.Status = AppTaskFailed
+		code, message := "classified_outcome", "command reported an application outcome classified by policy"
+		params.FailureCode, params.FailureMessage = &code, &message
+	}
+	current.WorkDecision, current.OutcomeCode = &decision, params.OutcomeCode
 	retryAt := cronAppTaskRetryAt(current, current.Status, params.Status, params.FinishedAt)
 	var startedAtArg any
 	if current.StartedAt != nil && !current.StartedAt.IsZero() {
@@ -633,13 +875,15 @@ func (s *PgStore) CompleteAppTask(ctx context.Context, params CompleteAppTaskPar
 			       retry_at = null,
 			       updated_at = $11,
 			       started_at = $12,
+			       work_decision = $13::jsonb, outcome_code = $14,
 			       lease_token = null,
 			       lease_owner = null,
 			       lease_expires_at = null
 			 where id = $1 and lease_token = $2`,
 			params.ID, params.LeaseToken, string(params.Status), params.StdoutTail,
 			params.StderrTail, params.OutputTruncated, params.ExitCode,
-			params.FailureCode, params.FailureMessage, params.FinishedAt, params.FinishedAt, startedAtArg)
+			params.FailureCode, params.FailureMessage, params.FinishedAt, params.FinishedAt, startedAtArg,
+			policyJSON(&decision), params.OutcomeCode)
 		if execErr != nil {
 			return AppTask{}, mapErr(execErr)
 		}
@@ -670,6 +914,7 @@ func (s *PgStore) CompleteAppTask(ctx context.Context, params CompleteAppTaskPar
 			       retry_at = null,
 			       updated_at = $11,
 			       started_at = $12,
+			       work_decision = $13::jsonb, outcome_code = $14,
 			       lease_token = null,
 			       lease_owner = null,
 			       lease_expires_at = null
@@ -677,7 +922,8 @@ func (s *PgStore) CompleteAppTask(ctx context.Context, params CompleteAppTaskPar
 			returning `+appTaskSelectColumns,
 			params.ID, params.LeaseToken, string(params.Status), params.StdoutTail,
 			params.StderrTail, params.OutputTruncated, params.ExitCode,
-			params.FailureCode, params.FailureMessage, params.FinishedAt, params.FinishedAt, startedAtArg))
+			params.FailureCode, params.FailureMessage, params.FinishedAt, params.FinishedAt, startedAtArg,
+			policyJSON(&decision), params.OutcomeCode))
 	}
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -705,75 +951,82 @@ func (s *PgStore) SweepExpiredAppTasks(ctx context.Context, at time.Time) (AppTa
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	var result AppTaskSweepResult
-	rows, err := tx.Query(ctx, `
-		with expired as materialized (
-			select id, status as old_status, cancel_requested_at
-			  from app_tasks
-			 where status in ('restoring', 'running')
-			   and lease_expires_at <= $1
-			 for update skip locked
-		), updated as (
-			update app_tasks as task
-			   set status = case
-			       when expired.cancel_requested_at is not null then 'cancelled'
-			       when expired.old_status = 'restoring' then 'queued'
-			       else 'failed'
-			   end,
-			       lease_token = null,
-			       lease_owner = null,
-			       lease_expires_at = null,
-			       failure_code = case
-			           when expired.old_status = 'running' and expired.cancel_requested_at is null
-			           then 'lease_expired' else null end,
-			       failure_message = case
-			           when expired.old_status = 'running' and expired.cancel_requested_at is null
-			           then 'the app task worker lease expired after dispatch; the command was not replayed'
-			           else null end,
-			       finished_at = case
-			           when expired.cancel_requested_at is not null or expired.old_status = 'running'
-			           then $1 else null end,
-			       updated_at = $1
-			  from expired
-			 where task.id = expired.id
-			returning task.id, task.account_id, task.app_id, task.deployment_id,
-			          task.kind, task.status, expired.old_status,
-			          expired.cancel_requested_at is not null as was_cancelled
-		)
-		select id, account_id, app_id, deployment_id, kind, status, old_status, was_cancelled
-		  from updated`, at)
+	rows, err := tx.Query(ctx, `select `+appTaskSelectColumns+`
+		  from app_tasks
+		 where status in ('restoring', 'running')
+		   and lease_expires_at <= $1
+		 order by id
+		 for update skip locked`, at)
 	if err != nil {
 		return AppTaskSweepResult{}, mapErr(err)
 	}
-	defer rows.Close()
+	expiredTasks, err := scanAppTaskRows(rows)
+	rows.Close()
+	if err != nil {
+		return AppTaskSweepResult{}, mapErr(err)
+	}
 	terminalReleaseTasks := make([]AppTask, 0)
-	for rows.Next() {
-		var id, accountID, appID, deploymentID pgtype.UUID
-		var task AppTask
-		var oldStatus AppTaskStatus
-		var wasCancelled bool
-		if err := rows.Scan(&id, &accountID, &appID, &deploymentID, &task.Kind, &task.Status, &oldStatus, &wasCancelled); err != nil {
+	for _, task := range expiredTasks {
+		terminal := false
+		if task.CancelRequested != nil {
+			_, err = tx.Exec(ctx, `update app_tasks
+				set status = 'cancelled', retry_at = null, lease_token = null,
+				    lease_owner = null, lease_expires_at = null, finished_at = $2, updated_at = $2
+				where id = $1`, task.ID, at)
+			result.Cancelled++
+			terminal = true
+		} else if task.Status == AppTaskRestoring {
+			_, err = tx.Exec(ctx, `update app_tasks
+				set status = 'queued', retry_at = null, lease_token = null,
+				    lease_owner = null, lease_expires_at = null, finished_at = null, updated_at = $2
+				where id = $1`, task.ID, at)
+			result.RequeuedRestores++
+		} else {
+			var decision *workpolicy.Decision
+			if task.FailureRules != nil {
+				evaluated := workpolicy.Evaluate(task.FailureRules, workpolicy.Evidence{Uncertain: true})
+				decision = &evaluated
+			}
+			message := "the app task worker lease expired after dispatch; the command was not replayed"
+			if decision != nil {
+				message = "completion receipt missing; the command outcome is uncertain"
+			}
+			_, err = tx.Exec(ctx, `update app_tasks
+				set status = 'failed', retry_at = null, lease_token = null,
+				    lease_owner = null, lease_expires_at = null, failure_code = 'lease_expired',
+				    failure_message = $2, finished_at = $3, updated_at = $3,
+				    work_decision = $4::jsonb
+				where id = $1`, task.ID, message, at, policyJSON(decision))
+			if err == nil && decision != nil && decision.Action == "retry" {
+				retryTask := task
+				retryTask.WorkDecision = decision
+				retryAt := cronAppTaskRetryAt(retryTask, AppTaskRunning, AppTaskFailed, at)
+				if retryAt != nil {
+					_, err = tx.Exec(ctx, `update app_tasks
+						set status = 'queued', retry_at = $2, started_at = null,
+						    finished_at = null, updated_at = $3
+						where id = $1 and status = 'failed'`, task.ID, retryAt, at)
+				} else {
+					result.FailedRuns++
+					terminal = true
+				}
+			} else if err == nil {
+				result.FailedRuns++
+				terminal = true
+			}
+		}
+		if err != nil {
 			return AppTaskSweepResult{}, mapErr(err)
 		}
-		task.ID = pgUUIDString(id)
-		task.AccountID = pgUUIDString(accountID)
-		task.AppID = pgUUIDString(appID)
-		task.DeploymentID = pgUUIDString(deploymentID)
-		switch {
-		case wasCancelled:
-			result.Cancelled++
-		case oldStatus == AppTaskRestoring:
-			result.RequeuedRestores++
-		case oldStatus == AppTaskRunning:
-			result.FailedRuns++
-		}
-		if task.Kind == AppTaskKindRelease && task.Status.Terminal() {
+		if task.Kind == AppTaskKindRelease && terminal {
+			if task.CancelRequested != nil {
+				task.Status = AppTaskCancelled
+			} else {
+				task.Status = AppTaskFailed
+			}
 			terminalReleaseTasks = append(terminalReleaseTasks, task)
 		}
 	}
-	if err := rows.Err(); err != nil {
-		return AppTaskSweepResult{}, mapErr(err)
-	}
-	rows.Close()
 	for _, task := range terminalReleaseTasks {
 		if err := enqueueTerminalReleaseTask(ctx, tx, task); err != nil {
 			return AppTaskSweepResult{}, err
@@ -793,5 +1046,7 @@ func prefixedAppTaskColumns(alias string) string {
        ` + alias + `.lease_token, ` + alias + `.lease_owner, ` + alias + `.lease_expires_at, ` + alias + `.cancel_requested_at,
        ` + alias + `.stdout_tail, ` + alias + `.stderr_tail, ` + alias + `.output_truncated, ` + alias + `.exit_code,
        ` + alias + `.failure_code, ` + alias + `.failure_message, ` + alias + `.started_at, ` + alias + `.finished_at,
-       ` + alias + `.created_at, ` + alias + `.updated_at, ` + alias + `.cron_id, ` + alias + `.scheduled_for`
+       ` + alias + `.created_at, ` + alias + `.updated_at, ` + alias + `.cron_id, ` + alias + `.scheduled_for,
+       ` + alias + `.failure_rules, ` + alias + `.occurrence_id, ` + alias + `.start_deadline_at,
+       ` + alias + `.work_decision, ` + alias + `.outcome_code`
 }

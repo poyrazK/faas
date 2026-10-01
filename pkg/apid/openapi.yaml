@@ -13232,6 +13232,35 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/crons/{id}/occurrences:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [crons]
+      operationId: listCronScheduleOccurrences
+      summary: List durable scheduled occurrence decisions for a cron.
+      description: Shows whether each nominal fire ran, was skipped, missed its start deadline, or was coalesced.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+          description: Maximum number of cron occurrence records to return.
+        - name: before
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+          description: Cron occurrence id that starts the next older page.
+      responses:
+        '200':
+          description: A newest-first page of durable occurrence outcomes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListScheduleOccurrencesResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/crons/{id}/runs/{run_id}:
     parameters:
       - $ref: '#/components/parameters/Id32'
@@ -13983,6 +14012,39 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/jobs/{name}/occurrences:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$' }
+        description: Customer-visible name of the recurring job.
+    get:
+      tags: [jobs]
+      operationId: listJobScheduleOccurrences
+      summary: List durable scheduled occurrence decisions for a job.
+      description: Shows whether each nominal run started, was skipped, missed its start deadline, or was coalesced.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+          description: Maximum number of job occurrence records to return.
+        - name: before
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+          description: Job occurrence id that starts the next older page.
+      responses:
+        '200':
+          description: A newest-first page of job occurrence outcomes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListScheduleOccurrencesResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
@@ -32949,6 +33011,8 @@ components:
         skip_if_running: { type: boolean, description: "When true, consume a scheduled occurrence while a prior HTTP invocation or app command task is active." }
         created_at: { type: string, format: date-time }
         last_fired_at: { type: [string, "null"], format: date-time }
+        schedule_policy: { $ref: '#/components/schemas/SchedulePolicy' }
+        failure_rules: { $ref: '#/components/schemas/FailureRules' }
 
     CronRun:
       description: "One execution of a cron: when it fired, how long it ran, and how it ended. HTTP fires project invocations; command fires project deployment-attached app tasks."
@@ -32976,6 +33040,38 @@ components:
         runs:
           type: array
           items: { $ref: '#/components/schemas/CronRun' }
+
+    ScheduleOccurrenceResponse:
+      description: Durable decision and lifecycle snapshot for one nominal schedule time.
+      type: object
+      required: [id, schedule_revision, scheduled_for, schedule_policy, status, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        schedule_revision: { type: integer, minimum: 1 }
+        scheduled_for: { type: string, format: date-time }
+        start_deadline_at: { type: string, format: date-time }
+        schedule_policy: { $ref: '#/components/schemas/SchedulePolicy' }
+        status: { type: string, enum: [pending, queued, running, succeeded, failed, cancelled, skipped_overlap, missed_deadline, coalesced, waiting_replacement, uncertain] }
+        reason: { type: string }
+        blocking_occurrence_id: { type: string, format: uuid }
+        job_run_id: { type: string, format: uuid }
+        invocation_id: { type: string, format: uuid }
+        app_task_id: { type: string, format: uuid }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+
+    ListScheduleOccurrencesResponse:
+      description: Newest-first page of scheduled occurrence decisions.
+      type: object
+      required: [occurrences, limit]
+      properties:
+        occurrences:
+          type: array
+          items: { $ref: '#/components/schemas/ScheduleOccurrenceResponse' }
+        limit: { type: integer, minimum: 1, maximum: 200 }
+        before: { type: string, format: uuid }
+        next_before: { type: string, format: uuid, description: Pass this id as before to read an older page; omitted when the page is complete. }
 
     FireCronResponse:
       description: |
@@ -33032,6 +33128,8 @@ components:
         skip_if_running: { type: [boolean, "null"], description: "Skip a scheduled fire when an earlier cron invocation is still running." }
         retry_max: { type: integer, minimum: 0, maximum: 5, description: "Additional command attempts after failure or timeout; command crons only." }
         retry_backoff_seconds: { type: integer, minimum: 1, maximum: 3600, description: "Base retry delay in seconds; doubles per retry and is capped at 24 hours. Command crons only." }
+        schedule_policy: { $ref: '#/components/schemas/SchedulePolicy' }
+        failure_rules: { $ref: '#/components/schemas/FailureRules' }
 
     UpdateCronRequest:
       description: "Partial cron update."
@@ -33044,6 +33142,51 @@ components:
         skip_if_running: { type: [boolean, "null"], description: "Enable or disable overlap skipping for scheduled fires." }
         retry_max: { type: [integer, "null"], minimum: 0, maximum: 5, description: "Replace the retry allowance for an existing deployment-command cron." }
         retry_backoff_seconds: { type: [integer, "null"], minimum: 1, maximum: 3600, description: "Replace the base retry delay for an existing deployment-command cron; the delay doubles after each failed attempt." }
+        schedule_policy: { $ref: '#/components/schemas/SchedulePolicy' }
+        failure_rules: { $ref: '#/components/schemas/FailureRules' }
+
+    SchedulePolicy:
+      description: Versioned recurring-work scheduling policy.
+      type: object
+      required: [version, overlap, missed_runs]
+      properties:
+        version: { type: integer, enum: [1] }
+        overlap: { type: string, enum: [allow, skip, replace], description: "Allow concurrent occurrences, record-and-skip while one is active, or stop prior scheduled work before replacement." }
+        start_deadline_seconds: { type: integer, minimum: 0, maximum: 2592000, description: "Maximum delay from the nominal schedule time to the first task start; zero or omitted disables the deadline." }
+        missed_runs: { type: string, enum: [coalesce_latest, skip], description: "On scheduler recovery, coalesce the due backlog into its latest occurrence or record stale occurrences as skipped." }
+
+    FailureRules:
+      description: Versioned explicit classification policy for failed partition attempts.
+      type: object
+      required: [version, rules, unmatched_failure, uncertain_outcome]
+      properties:
+        version: { type: integer, enum: [1] }
+        rules:
+          type: array
+          maxItems: 64
+          items: { $ref: '#/components/schemas/FailureRule' }
+        unmatched_failure: { type: string, enum: [retry, fail_partition] }
+        uncertain_outcome: { type: string, enum: [hold, retry], description: "Choose whether a missing completion receipt stays held for reconciliation or is retried with possible duplicate execution." }
+
+    FailureRule:
+      description: A guest exit-code or structured application-outcome matcher and the action for that confirmed result. HTTP status evidence is not available on the scheduled-job execution path.
+      type: object
+      required: [action]
+      additionalProperties: false
+      properties:
+        exit_codes: { type: array, uniqueItems: true, items: { type: integer, minimum: 1, maximum: 255 } }
+        outcome_codes: { type: array, uniqueItems: true, items: { type: string, minLength: 1, maxLength: 64, pattern: '^[a-z0-9_.-]+$' } }
+        action: { type: string, enum: [retry, fail_partition] }
+
+    WorkDecision:
+      description: Persisted classifier decision for one execution result.
+      type: object
+      required: [classification, action, reason, policy_version]
+      properties:
+        classification: { type: string }
+        action: { type: string, enum: [retry, fail_partition, complete, hold] }
+        reason: { type: string }
+        policy_version: { type: integer, minimum: 0 }
 
     PrewarmRequest:
       description: "Schedule temporary capacity restoration ahead of a demand window."
@@ -33103,6 +33246,8 @@ components:
         task_timeout_sec: { type: integer, minimum: 0, example: 1800 }
         max_parallelism: { type: integer, minimum: 0, example: 25 }
         retry_max: { type: integer, minimum: 0, example: 5 }
+        schedule_policy: { $ref: '#/components/schemas/SchedulePolicy' }
+        failure_rules: { $ref: '#/components/schemas/FailureRules' }
 
     UpdateJobRequest:
       description: "Partial job update. nil pointer fields leave the column untouched."
@@ -33122,6 +33267,8 @@ components:
         status: { type: string, enum: [active, paused] }
         schedule: { type: string, description: "Replace the cron expression; an empty string removes the schedule." }
         timezone: { type: string, description: "Replace the schedule IANA timezone." }
+        schedule_policy: { $ref: '#/components/schemas/SchedulePolicy' }
+        failure_rules: { $ref: '#/components/schemas/FailureRules' }
 
     CreateJobRunRequest:
       description: |
@@ -33135,6 +33282,7 @@ components:
       type: object
       properties:
         tasks: { type: integer, minimum: 1, maximum: 5000, example: 100 }
+        failure_rules: { $ref: '#/components/schemas/FailureRules' }
         inputs:
           type: array
           minItems: 1
@@ -33184,6 +33332,8 @@ components:
         schedule: { type: string, description: "Recurring five-field cron expression, when configured." }
         timezone: { type: string, description: "IANA timezone used to evaluate the recurring schedule." }
         last_scheduled_at: { type: string, format: date-time, description: "Most recent scheduled occurrence that created a run." }
+        schedule_policy: { $ref: '#/components/schemas/SchedulePolicy' }
+        failure_rules: { $ref: '#/components/schemas/FailureRules' }
         image_ref: { type: string }
         image_resolved_digest: { type: string, description: "Immutable OCI manifest digest selected from image_ref." }
         image_storage_key: { type: string, description: "Canonical ext4 artifact key consumed by vmmd." }
@@ -33213,6 +33363,9 @@ components:
         job_id: { type: string, format: uuid }
         account_id: { type: string, format: uuid }
         trigger_kind: { type: string, enum: [manual, scheduled, triggered] }
+        occurrence_id: { type: string, format: uuid, description: "Durable scheduled-occurrence decision linked to this run." }
+        start_deadline_at: { type: string, format: date-time, description: "Latest permitted first task start for this scheduled occurrence." }
+        failure_rules: { $ref: '#/components/schemas/FailureRules' }
         env_overrides:
           type: object
           additionalProperties: { type: string }
@@ -33275,6 +33428,8 @@ components:
                   size_bytes: { type: integer, format: int64 }
                   sha256: { type: string }
         status: { type: string, enum: [queued, claimed, succeeded, failed, timeout, cancelled, oom] }
+        work_decision: { $ref: '#/components/schemas/WorkDecision' }
+        outcome_code: { type: string, maxLength: 64 }
         attempt: { type: integer, minimum: 1 }
         instance_id: { type: string, format: uuid }
         error_class: { type: string, enum: [succeeded, failed, timeout, oom, cancelled, infra] }
@@ -33295,6 +33450,8 @@ components:
         input_id: { type: string }
         input_ref: { type: string }
         status: { type: string, enum: [succeeded, failed, timeout, cancelled, oom] }
+        work_decision: { $ref: '#/components/schemas/WorkDecision' }
+        outcome_code: { type: string, maxLength: 64 }
         instance_id: { type: string, format: uuid }
         error_class: { type: string }
         error_message: { type: string }
@@ -41033,6 +41190,8 @@ components:
       type: object
       required: [id, app_id, deployment_id, deployment_scope, kind, command, command_shell, status, timeout_seconds, max_output_bytes, attempt_count, output_truncated, created_at, updated_at]
       properties:
+        work_decision: { anyOf: [{ $ref: '#/components/schemas/WorkDecision' }, { type: "null" }] }
+        outcome_code: { type: string, maxLength: 64, pattern: '^[a-z0-9_.-]*$' }
         id: { type: string, format: uuid }
         app_id: { type: string, pattern: '^[a-f0-9]{32}$' }
         deployment_id: { type: string, pattern: '^[a-f0-9]{32}$' }

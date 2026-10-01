@@ -688,6 +688,23 @@ func (c *Client) DeleteCron(ctx context.Context, id string) error {
 	return c.do(ctx, "DELETE", "/v1/crons/"+id, nil, nil)
 }
 
+// GetCronsIdOccurrences returns durable decisions for nominal cron fires.
+func (c *Client) GetCronsIdOccurrences(ctx context.Context, id string, limit int, before string) (ListScheduleOccurrencesResponse, error) {
+	var out ListScheduleOccurrencesResponse
+	q := url.Values{}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if before != "" {
+		q.Set("before", before)
+	}
+	path := "/v1/crons/" + url.PathEscape(id) + "/occurrences"
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // --- Jobs (issue #1184 Workstream A) ----------------------------------------
 // Methods mirror the /v1/jobs surface added in M11.4. Mirrors
 // the canonical client (pkg/api/client.go). Routes are keyed on
@@ -731,6 +748,23 @@ func (c *Client) CreateJob(ctx context.Context, req CreateJobRequest) (JobRespon
 func (c *Client) GetJob(ctx context.Context, name string) (JobResponse, error) {
 	var out JobResponse
 	return out, c.do(ctx, "GET", "/v1/jobs/"+name, nil, &out)
+}
+
+// GetJobsNameOccurrences returns durable decisions for nominal job runs.
+func (c *Client) GetJobsNameOccurrences(ctx context.Context, name string, limit int, before string) (ListScheduleOccurrencesResponse, error) {
+	var out ListScheduleOccurrencesResponse
+	q := url.Values{}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if before != "" {
+		q.Set("before", before)
+	}
+	path := "/v1/jobs/" + url.PathEscape(name) + "/occurrences"
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
 // UpdateJob patches a job's image_ref / command / env_overrides /

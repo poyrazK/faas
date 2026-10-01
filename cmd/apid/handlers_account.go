@@ -1147,6 +1147,7 @@ func listCronsForAccountExport(ctx context.Context, st state.Store, accountID st
 	out := make([]api.CronResponse, 0, len(rows))
 	for _, c := range rows {
 		out = append(out, api.CronResponse{
+			SchedulePolicy: c.SchedulePolicy, FailureRules: c.FailureRules,
 			ID: c.ID, AppID: c.AppID, Schedule: c.Schedule,
 			Path: c.Path, Enabled: c.Enabled,
 			CreatedAt:   c.CreatedAt.UTC().Format(time.RFC3339),

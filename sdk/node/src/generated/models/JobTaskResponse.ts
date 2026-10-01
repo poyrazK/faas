@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { WorkDecision } from './WorkDecision.js';
 /**
  * Wire projection of state.JobTask. LeaseToken is intentionally omitted (internal dispatch primitive).
  */
@@ -33,6 +34,8 @@ export type JobTaskResponse = {
     }>;
   };
   status: 'queued' | 'claimed' | 'succeeded' | 'failed' | 'timeout' | 'cancelled' | 'oom';
+  work_decision?: WorkDecision;
+  outcome_code?: string;
   attempt: number;
   instance_id?: string;
   error_class?: 'succeeded' | 'failed' | 'timeout' | 'oom' | 'cancelled' | 'infra';

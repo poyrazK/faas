@@ -42,6 +42,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/webhook"
 	"github.com/onebox-faas/faas/pkg/webhookdedupe"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // dialFailureDetailMaxBytes bounds the error text folded into a dial-failure
@@ -3611,6 +3612,10 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
+	if problem := validateWorkPolicies(req.SchedulePolicy, req.FailureRules); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if !validCron(req.Schedule) {
 		api.WriteProblem(w, api.ErrCronInvalid("expected 5-field cron expression (m h dom mon dow)"))
 		return
@@ -3658,6 +3663,10 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, api.ErrValidation("retry options require a deployment command cron"))
 		return
 	}
+	if len(cronCommand) == 0 && (req.SchedulePolicy != nil || req.FailureRules != nil) {
+		api.WriteProblem(w, api.ErrValidation("schedule policies and failure rules require a deployment command cron"))
+		return
+	}
 	// Plan-tier gate (spec §4.4 / paid-only event-shaped primitives).
 	// Fires BEFORE AppByID so a Free customer gets a clean 402 rather
 	// than a 404 (no app can be theirs anyway, but the wire shape
@@ -3697,6 +3706,7 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 		skipIfRunning = *req.SkipIfRunning
 	}
 	c, err := s.store.CreateCronIfUnderQuotaWithOptions(r.Context(), app.ID, req.Schedule, path, enabled, limits, state.CronOptions{
+		SchedulePolicy: req.SchedulePolicy, FailureRules: req.FailureRules,
 		Timezone: timezone, SkipIfRunning: skipIfRunning, Command: cronCommand,
 		CommandShell: commandShell, CommandTimeoutSeconds: commandTimeoutSeconds,
 		CommandMaxOutputBytes: commandMaxOutputBytes, RetryMax: req.RetryMax,
@@ -3767,6 +3777,10 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
+	if problem := validateWorkPolicies(req.SchedulePolicy, req.FailureRules); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if req.Schedule != nil && !validCron(*req.Schedule) {
 		api.WriteProblem(w, api.ErrCronInvalid("expected 5-field cron expression"))
 		return
@@ -3794,6 +3808,10 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, api.ErrValidation("command crons do not have an HTTP path; delete and recreate the cron to change its kind"))
 		return
 	}
+	if len(c.Command) == 0 && (req.SchedulePolicy != nil || req.FailureRules != nil) {
+		api.WriteProblem(w, api.ErrValidation("schedule policies and failure rules require a deployment command cron"))
+		return
+	}
 	var retryOptions []state.CronOptions
 	if req.RetryMax != nil || req.RetryBackoffSeconds != nil {
 		if len(c.Command) == 0 {
@@ -3811,7 +3829,17 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 			api.WriteProblem(w, api.ErrValidation("retry_max must be 0..5 and retry_backoff_seconds must be 1..3600"))
 			return
 		}
-		retryOptions = append(retryOptions, state.CronOptions{RetryMax: retryMax, RetryBackoffSeconds: backoffSeconds})
+	}
+	if req.RetryMax != nil || req.RetryBackoffSeconds != nil || req.SchedulePolicy != nil || req.FailureRules != nil {
+		opts := state.CronOptions{RetryMax: c.RetryMax, RetryBackoffSeconds: c.RetryBackoffSeconds,
+			SchedulePolicy: req.SchedulePolicy, FailureRules: req.FailureRules}
+		if req.RetryMax != nil {
+			opts.RetryMax = *req.RetryMax
+		}
+		if req.RetryBackoffSeconds != nil {
+			opts.RetryBackoffSeconds = *req.RetryBackoffSeconds
+		}
+		retryOptions = append(retryOptions, opts)
 	}
 	var timezonePatch *string
 	if req.Timezone != nil {
@@ -5935,6 +5963,8 @@ func cronResponse(c state.Cron) api.CronResponse {
 		c.Timezone = defaultCronTimezone
 	}
 	resp := api.CronResponse{
+		SchedulePolicy:  workpolicy.Clone(c.SchedulePolicy),
+		FailureRules:    workpolicy.Clone(c.FailureRules),
 		ID:              c.ID,
 		AppID:           c.AppID,
 		Kind:            "http",

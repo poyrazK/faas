@@ -3247,14 +3247,14 @@ BEGIN
         INSERT INTO job_task_attempts (
             run_id, task_index, attempt, status, instance_id, error_class,
             error_message, exit_code, started_at, finished_at, log_content,
-            log_truncated, output_manifest)
+            log_truncated, output_manifest, work_decision, outcome_code)
         VALUES (
             OLD.run_id, OLD.task_index, OLD.attempt,
             CASE WHEN OLD.status = 'claimed' THEN
                 CASE WHEN NEW.error_class = 'infra' THEN 'failed' ELSE 'timeout' END
                 ELSE OLD.status END,
             OLD.instance_id,
-            CASE WHEN OLD.status = 'claimed' THEN 'infra' ELSE OLD.error_class END,
+            CASE WHEN OLD.status = 'claimed' THEN COALESCE(NEW.error_class, 'infra') ELSE OLD.error_class END,
             CASE WHEN OLD.status = 'claimed' THEN
                 COALESCE(NEW.error_message, 'reaper reclaimed stale lease')
                 ELSE OLD.error_message END,
@@ -3262,19 +3262,20 @@ BEGIN
                 CASE WHEN NEW.error_class = 'infra' THEN 1 ELSE 124 END
                 ELSE OLD.exit_code END,
             OLD.started_at, COALESCE(OLD.finished_at, clock_timestamp()),
-            OLD.log_content, OLD.log_truncated, OLD.output_manifest)
+            OLD.log_content, OLD.log_truncated, OLD.output_manifest,
+            COALESCE(NEW.work_decision, OLD.work_decision), COALESCE(NEW.outcome_code, OLD.outcome_code))
         ON CONFLICT (run_id, task_index, attempt) DO NOTHING;
     ELSIF NEW.status IN ('succeeded', 'failed', 'timeout', 'cancelled', 'oom')
        AND OLD.status NOT IN ('succeeded', 'failed', 'timeout', 'cancelled', 'oom') THEN
         INSERT INTO job_task_attempts (
             run_id, task_index, attempt, status, instance_id, error_class,
             error_message, exit_code, started_at, finished_at, log_content,
-            log_truncated, output_manifest)
+            log_truncated, output_manifest, work_decision, outcome_code)
         VALUES (
             NEW.run_id, NEW.task_index, NEW.attempt, NEW.status, NEW.instance_id,
             NEW.error_class, NEW.error_message, NEW.exit_code, NEW.started_at,
             COALESCE(NEW.finished_at, clock_timestamp()), NEW.log_content,
-            NEW.log_truncated, NEW.output_manifest)
+            NEW.log_truncated, NEW.output_manifest, NEW.work_decision, NEW.outcome_code)
         ON CONFLICT (run_id, task_index, attempt) DO NOTHING;
     END IF;
     RETURN NEW;
@@ -3355,6 +3356,38 @@ CREATE FUNCTION public.reserved_ip_leases_set_updated_at() RETURNS trigger
 BEGIN
   NEW.updated_at = now();
   RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: revise_cron_schedule_policy(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.revise_cron_schedule_policy() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.schedule IS DISTINCT FROM OLD.schedule OR NEW.timezone IS DISTINCT FROM OLD.timezone OR NEW.schedule_policy IS DISTINCT FROM OLD.schedule_policy THEN
+  NEW.schedule_revision := OLD.schedule_revision + 1;
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: revise_job_schedule_policy(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.revise_job_schedule_policy() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.cron_schedule IS DISTINCT FROM OLD.cron_schedule OR NEW.cron_timezone IS DISTINCT FROM OLD.cron_timezone OR NEW.schedule_policy IS DISTINCT FROM OLD.schedule_policy THEN
+  NEW.schedule_revision := OLD.schedule_revision + 1;
+ END IF;
+ RETURN NEW;
 END;
 $$;
 
@@ -3540,6 +3573,100 @@ BEGIN
        )
     RETURNING TRUE INTO flipped;
     RETURN COALESCE(flipped, FALSE);
+END;
+$$;
+
+
+--
+-- Name: sync_app_task_schedule_occurrence(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sync_app_task_schedule_occurrence() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.status IS NOT DISTINCT FROM OLD.status THEN RETURN NEW; END IF;
+ UPDATE schedule_occurrences o SET
+   status = CASE WHEN NEW.start_deadline_at IS NOT NULL AND NEW.started_at IS NULL AND o.started_at IS NULL
+       AND NEW.start_deadline_at < COALESCE(NEW.finished_at, clock_timestamp()) THEN 'missed_deadline'
+     ELSE CASE NEW.status
+       WHEN 'queued' THEN CASE WHEN o.started_at IS NULL THEN 'queued' ELSE 'running' END
+       WHEN 'restoring' THEN 'running' WHEN 'running' THEN 'running'
+       WHEN 'succeeded' THEN 'succeeded' WHEN 'failed' THEN 'failed'
+       WHEN 'timed_out' THEN 'failed' WHEN 'cancelled' THEN 'cancelled' ELSE o.status END END,
+   reason = CASE WHEN NEW.start_deadline_at IS NOT NULL AND NEW.started_at IS NULL AND o.started_at IS NULL
+       AND NEW.start_deadline_at < COALESCE(NEW.finished_at, clock_timestamp())
+       THEN 'command task did not start before the occurrence start deadline' ELSE o.reason END,
+   started_at = COALESCE(o.started_at, NEW.started_at),
+   finished_at = CASE WHEN NEW.status IN ('succeeded','failed','timed_out','cancelled')
+       THEN COALESCE(NEW.finished_at, clock_timestamp()) ELSE NULL END,
+   updated_at = clock_timestamp()
+ WHERE o.id = NEW.occurrence_id;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: sync_invocation_schedule_occurrence(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sync_invocation_schedule_occurrence() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.state IS NOT DISTINCT FROM OLD.state THEN RETURN NEW; END IF;
+ UPDATE schedule_occurrences o SET
+   status = CASE NEW.state
+     WHEN 'pending' THEN 'queued' WHEN 'dispatching' THEN 'running'
+     WHEN 'completed' THEN 'succeeded' WHEN 'failed' THEN 'failed'
+     WHEN 'cancelled' THEN 'cancelled' WHEN 'dead_letter' THEN 'failed' ELSE o.status END,
+   reason = CASE WHEN o.started_at IS NULL AND NEW.start_deadline_at IS NOT NULL
+       AND NEW.start_deadline_at < COALESCE(NEW.completed_at, clock_timestamp())
+       AND NEW.state = 'failed' THEN 'invocation did not start before the occurrence start deadline' ELSE o.reason END,
+   started_at = CASE WHEN NEW.state = 'dispatching' THEN COALESCE(o.started_at, clock_timestamp()) ELSE o.started_at END,
+   finished_at = CASE WHEN NEW.state IN ('completed','failed','cancelled','dead_letter') THEN COALESCE(NEW.completed_at, clock_timestamp()) ELSE NULL END,
+   updated_at = clock_timestamp()
+ WHERE o.id = NEW.occurrence_id;
+ RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: sync_job_schedule_occurrence(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sync_job_schedule_occurrence() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+ first_started timestamptz;
+ missed_deadline boolean;
+BEGIN
+ IF NEW.aggregate_status IS NOT DISTINCT FROM OLD.aggregate_status THEN RETURN NEW; END IF;
+ SELECT min(started_at) INTO first_started FROM job_tasks WHERE run_id = NEW.id AND started_at IS NOT NULL;
+ SELECT o.start_deadline_at IS NOT NULL
+        AND o.start_deadline_at < COALESCE(NEW.finished_at, clock_timestamp())
+        AND first_started IS NULL
+   INTO missed_deadline
+   FROM schedule_occurrences o WHERE o.job_run_id = NEW.id;
+ UPDATE schedule_occurrences o SET
+   status = CASE
+     WHEN COALESCE(missed_deadline, false) THEN 'missed_deadline'
+     WHEN NEW.aggregate_status = 'queued' THEN 'queued'
+     WHEN NEW.aggregate_status = 'running' THEN 'running'
+     WHEN NEW.aggregate_status = 'succeeded' THEN 'succeeded'
+     WHEN NEW.aggregate_status = 'cancelled' THEN 'cancelled'
+     ELSE 'failed' END,
+   reason = CASE WHEN COALESCE(missed_deadline, false)
+       THEN 'no task started before the occurrence start deadline' ELSE o.reason END,
+   started_at = COALESCE(o.started_at, first_started),
+   finished_at = CASE WHEN NEW.aggregate_status IN ('succeeded','failed','cancelled','dead_letter')
+       OR COALESCE(missed_deadline, false) THEN COALESCE(NEW.finished_at, clock_timestamp()) ELSE NULL END,
+   updated_at = clock_timestamp()
+ WHERE o.job_run_id = NEW.id;
+ RETURN NEW;
 END;
 $$;
 
@@ -4561,6 +4688,11 @@ CREATE TABLE public.app_tasks (
     retry_backoff_seconds integer DEFAULT 60 NOT NULL,
     attempt_count integer DEFAULT 0 NOT NULL,
     retry_at timestamp with time zone,
+    failure_rules jsonb,
+    occurrence_id uuid,
+    start_deadline_at timestamp with time zone,
+    work_decision jsonb,
+    outcome_code text DEFAULT ''::text NOT NULL,
     CONSTRAINT app_tasks_artifact_key_chk CHECK (((octet_length(artifact_key) >= 1) AND (octet_length(artifact_key) <= 2048))),
     CONSTRAINT app_tasks_command_chk CHECK ((((cardinality(command) >= 1) AND (cardinality(command) <= 64)) AND (array_position(command, NULL::text) IS NULL) AND ((octet_length(command[1]) >= 1) AND (octet_length(command[1]) <= 4096)) AND ((octet_length(array_to_string(command, ''::text)) >= 1) AND (octet_length(array_to_string(command, ''::text)) <= 16384)) AND ((NOT command_shell) OR (cardinality(command) = 1)))),
     CONSTRAINT app_tasks_exit_code_chk CHECK (((exit_code IS NULL) OR ((exit_code >= 0) AND (exit_code <= 255)))),
@@ -4570,6 +4702,7 @@ CREATE TABLE public.app_tasks (
     CONSTRAINT app_tasks_lease_shape_chk CHECK ((((lease_token IS NULL) AND (lease_owner IS NULL) AND (lease_expires_at IS NULL)) OR ((lease_token IS NOT NULL) AND (lease_owner IS NOT NULL) AND (lease_expires_at IS NOT NULL)))),
     CONSTRAINT app_tasks_lease_status_chk CHECK (((status = ANY (ARRAY['restoring'::text, 'running'::text])) = (lease_token IS NOT NULL))),
     CONSTRAINT app_tasks_lifecycle_order_chk CHECK (((updated_at >= created_at) AND ((started_at IS NULL) OR (started_at >= created_at)) AND ((finished_at IS NULL) OR (finished_at >= created_at)) AND ((started_at IS NULL) OR (finished_at IS NULL) OR (finished_at >= started_at)) AND ((cancel_requested_at IS NULL) OR (cancel_requested_at >= created_at)) AND ((lease_expires_at IS NULL) OR (lease_expires_at > created_at)))),
+    CONSTRAINT app_tasks_outcome_code_check CHECK ((octet_length(outcome_code) <= 64)),
     CONSTRAINT app_tasks_output_budget_chk CHECK ((((max_output_bytes >= 1024) AND (max_output_bytes <= 16777216)) AND ((octet_length(stdout_tail) + octet_length(stderr_tail)) <= max_output_bytes))),
     CONSTRAINT app_tasks_retry_policy_check CHECK ((((retry_max >= 0) AND (retry_max <= 5)) AND ((retry_backoff_seconds >= 1) AND (retry_backoff_seconds <= 3600)) AND (attempt_count >= 0))),
     CONSTRAINT app_tasks_scope_chk CHECK ((deployment_scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
@@ -5531,10 +5664,16 @@ CREATE TABLE public.crons (
     command_max_output_bytes integer DEFAULT 1048576 NOT NULL,
     retry_max integer DEFAULT 0 NOT NULL,
     retry_backoff_seconds integer DEFAULT 60 NOT NULL,
+    schedule_policy jsonb,
+    failure_rules jsonb,
+    schedule_revision bigint DEFAULT 1 NOT NULL,
     CONSTRAINT crons_command_output_check CHECK (((command_max_output_bytes >= 1024) AND (command_max_output_bytes <= 16777216))),
     CONSTRAINT crons_command_shape_check CHECK ((((cardinality(command) = 0) AND (NOT command_shell)) OR (((cardinality(command) >= 1) AND (cardinality(command) <= 64)) AND (array_position(command, NULL::text) IS NULL) AND ((octet_length(command[1]) >= 1) AND (octet_length(command[1]) <= 4096)) AND ((octet_length(array_to_string(command, ''::text)) >= 1) AND (octet_length(array_to_string(command, ''::text)) <= 16384)) AND ((NOT command_shell) OR (cardinality(command) = 1))))),
     CONSTRAINT crons_command_timeout_check CHECK (((command_timeout_seconds >= 1) AND (command_timeout_seconds <= 3600))),
+    CONSTRAINT crons_failure_rules_shape CHECK (((failure_rules IS NULL) OR ((jsonb_typeof(failure_rules) = 'object'::text) AND ((failure_rules ->> 'version'::text) = '1'::text)))),
     CONSTRAINT crons_retry_policy_check CHECK ((((retry_max >= 0) AND (retry_max <= 5)) AND ((retry_backoff_seconds >= 1) AND (retry_backoff_seconds <= 3600)) AND ((retry_max = 0) OR (cardinality(command) > 0)))),
+    CONSTRAINT crons_schedule_policy_shape CHECK (((schedule_policy IS NULL) OR ((jsonb_typeof(schedule_policy) = 'object'::text) AND ((schedule_policy ->> 'version'::text) = '1'::text)))),
+    CONSTRAINT crons_schedule_revision_check CHECK ((schedule_revision >= 1)),
     CONSTRAINT crons_suspended_reason_chk CHECK ((suspended_reason = ANY (ARRAY[''::text, 'no_live_deployment'::text, 'app_deleted'::text]))),
     CONSTRAINT crons_timezone_nonempty_check CHECK ((btrim(timezone) <> ''::text))
 );
@@ -7481,6 +7620,10 @@ CREATE TABLE public.invocations (
     platform_tenant_id uuid,
     deployment_scope text NOT NULL,
     queue_binding_id uuid,
+    failure_rules jsonb,
+    occurrence_id uuid,
+    start_deadline_at timestamp with time zone,
+    work_decision jsonb,
     CONSTRAINT invocation_deployment_scope_check CHECK ((deployment_scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
     CONSTRAINT invocation_platform_tenant_source CHECK (((platform_tenant_id IS NULL) OR (source = ANY (ARRAY['async_invoke'::text, 'replay'::text])))),
     CONSTRAINT invocation_queue_binding_source CHECK (((queue_binding_id IS NULL) OR (source = 'queue'::text))),
@@ -7718,6 +7861,9 @@ CREATE TABLE public.job_runs (
     source_run_id uuid,
     input_manifest_uri text,
     input_manifest_sha256 text,
+    failure_rules jsonb,
+    occurrence_id uuid,
+    start_deadline_at timestamp with time zone,
     CONSTRAINT job_runs_aggregate_status_check CHECK ((aggregate_status = ANY (ARRAY['queued'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text, 'dead_letter'::text]))),
     CONSTRAINT job_runs_command_shape_check CHECK (((command IS NULL) OR ((cardinality(command) >= 1) AND (cardinality(command) <= 64)))),
     CONSTRAINT job_runs_counters_check CHECK (((tasks >= 0) AND (tasks_succeeded >= 0) AND (tasks_failed >= 0) AND (tasks_cancelled >= 0) AND (tasks_running >= 0) AND (dead_letter_count >= 0) AND (dead_letter_count <= tasks) AND (dead_letter_count <= tasks_failed) AND ((((tasks_succeeded + tasks_failed) + tasks_cancelled) + tasks_running) <= tasks))),
@@ -7754,8 +7900,11 @@ CREATE TABLE public.job_task_attempts (
     log_content text DEFAULT ''::text NOT NULL,
     log_truncated boolean DEFAULT false NOT NULL,
     output_manifest jsonb,
+    work_decision jsonb,
+    outcome_code text DEFAULT ''::text NOT NULL,
     CONSTRAINT job_task_attempt_output_check CHECK (((output_manifest IS NULL) OR (status = 'succeeded'::text))),
     CONSTRAINT job_task_attempts_attempt_check CHECK ((attempt >= 1)),
+    CONSTRAINT job_task_attempts_outcome_code_check CHECK ((octet_length(outcome_code) <= 64)),
     CONSTRAINT job_task_attempts_status_check CHECK ((status = ANY (ARRAY['succeeded'::text, 'failed'::text, 'timeout'::text, 'cancelled'::text, 'oom'::text])))
 );
 
@@ -7786,11 +7935,14 @@ CREATE TABLE public.job_tasks (
     input_ref text,
     output_manifest jsonb,
     source_task_index integer,
+    work_decision jsonb,
+    outcome_code text DEFAULT ''::text NOT NULL,
     CONSTRAINT job_tasks_attempt_check CHECK (((attempt >= 1) AND (attempt <= 11))),
-    CONSTRAINT job_tasks_error_class_check CHECK (((error_class IS NULL) OR (error_class = ANY (ARRAY['timeout'::text, 'refused'::text, 'tls_handshake'::text, 'dns'::text, 'unreachable'::text, 'oom'::text, 'user_error'::text, 'infra'::text, 'success'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text, 'job_paused'::text, 'oom_or_killed'::text])))),
+    CONSTRAINT job_tasks_error_class_check CHECK (((error_class IS NULL) OR (error_class = ANY (ARRAY['timeout'::text, 'refused'::text, 'tls_handshake'::text, 'dns'::text, 'unreachable'::text, 'oom'::text, 'user_error'::text, 'infra'::text, 'success'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text, 'job_paused'::text, 'oom_or_killed'::text, 'uncertain'::text])))),
     CONSTRAINT job_tasks_input_binding_check CHECK ((((input_id IS NULL) AND (input_ref IS NULL)) OR ((input_id IS NOT NULL) AND (input_ref IS NOT NULL) AND ((length(input_id) >= 1) AND (length(input_id) <= 128)) AND ((length(input_ref) >= 1) AND (length(input_ref) <= 2048))))),
     CONSTRAINT job_tasks_instance_pair_chk CHECK ((((status = 'queued'::text) AND (instance_id IS NULL)) OR ((status = 'claimed'::text) AND (instance_id IS NOT NULL)) OR (status = ANY (ARRAY['succeeded'::text, 'failed'::text, 'timeout'::text, 'cancelled'::text, 'oom'::text])))),
     CONSTRAINT job_tasks_log_content_size_chk CHECK ((octet_length(log_content) <= 1048576)),
+    CONSTRAINT job_tasks_outcome_code_check CHECK ((octet_length(outcome_code) <= 64)),
     CONSTRAINT job_tasks_output_manifest_check CHECK (((output_manifest IS NULL) OR ((status = 'succeeded'::text) AND (jsonb_typeof(output_manifest) = 'object'::text) AND ((output_manifest ->> 'version'::text) = '1'::text) AND (jsonb_typeof((output_manifest -> 'artifacts'::text)) = 'array'::text)))),
     CONSTRAINT job_tasks_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'claimed'::text, 'succeeded'::text, 'failed'::text, 'timeout'::text, 'cancelled'::text, 'oom'::text]))),
     CONSTRAINT job_tasks_task_index_check CHECK ((task_index >= 0)),
@@ -7829,7 +7981,11 @@ CREATE TABLE public.jobs (
     cron_schedule text,
     cron_timezone text DEFAULT 'UTC'::text NOT NULL,
     last_scheduled_at timestamp with time zone,
+    schedule_policy jsonb,
+    failure_rules jsonb,
+    schedule_revision bigint DEFAULT 1 NOT NULL,
     CONSTRAINT jobs_command_min_chk CHECK (((array_length(command, 1) IS NULL) OR ((array_length(command, 1) >= 0) AND (array_length(command, 1) <= 64)))),
+    CONSTRAINT jobs_failure_rules_shape CHECK (((failure_rules IS NULL) OR ((jsonb_typeof(failure_rules) = 'object'::text) AND ((failure_rules ->> 'version'::text) = '1'::text)))),
     CONSTRAINT jobs_image_materialization_attempts_check CHECK ((image_materialization_attempts >= 0)),
     CONSTRAINT jobs_image_materialization_status_check CHECK ((image_materialization_status = ANY (ARRAY['pending'::text, 'verifying_legacy'::text, 'ready'::text, 'failed'::text]))),
     CONSTRAINT jobs_kind_check CHECK ((kind = ANY (ARRAY['batch'::text, 'recurring'::text]))),
@@ -7838,6 +7994,8 @@ CREATE TABLE public.jobs (
     CONSTRAINT jobs_ram_mb_check CHECK ((ram_mb > 0)),
     CONSTRAINT jobs_retry_max_check CHECK (((retry_max >= 0) AND (retry_max <= 10))),
     CONSTRAINT jobs_schedule_kind_check CHECK ((((kind = 'batch'::text) AND (cron_schedule IS NULL)) OR ((kind = 'recurring'::text) AND (cron_schedule IS NOT NULL) AND (btrim(cron_schedule) <> ''::text)))),
+    CONSTRAINT jobs_schedule_policy_shape CHECK (((schedule_policy IS NULL) OR ((jsonb_typeof(schedule_policy) = 'object'::text) AND ((schedule_policy ->> 'version'::text) = '1'::text)))),
+    CONSTRAINT jobs_schedule_revision_check CHECK ((schedule_revision >= 1)),
     CONSTRAINT jobs_status_check CHECK ((status = ANY (ARRAY['active'::text, 'paused'::text, 'deleted'::text]))),
     CONSTRAINT jobs_task_timeout_s_check CHECK (((task_timeout_s >= 1) AND (task_timeout_s <= 86400)))
 );
@@ -10693,6 +10851,38 @@ CREATE TABLE public.scenario_test_members (
     app_id uuid NOT NULL,
     CONSTRAINT scenario_test_members_run_id_check CHECK ((run_id ~ '^[0-9a-f]{32}$'::text)),
     CONSTRAINT scenario_test_members_workload_name_check CHECK ((workload_name ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text))
+);
+
+
+--
+-- Name: schedule_occurrences; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.schedule_occurrences (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    cron_id uuid,
+    job_id uuid,
+    schedule_revision bigint NOT NULL,
+    scheduled_for timestamp with time zone NOT NULL,
+    start_deadline_at timestamp with time zone,
+    schedule_policy jsonb NOT NULL,
+    status text NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    blocking_occurrence_id uuid,
+    invocation_id uuid,
+    app_task_id uuid,
+    job_run_id uuid,
+    started_at timestamp with time zone,
+    finished_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT schedule_occurrences_check CHECK (((((cron_id IS NOT NULL))::integer + ((job_id IS NOT NULL))::integer) = 1)),
+    CONSTRAINT schedule_occurrences_check1 CHECK (((start_deadline_at IS NULL) OR (start_deadline_at >= scheduled_for))),
+    CONSTRAINT schedule_occurrences_reason_check CHECK ((octet_length(reason) <= 4096)),
+    CONSTRAINT schedule_occurrences_schedule_policy_check CHECK (((jsonb_typeof(schedule_policy) = 'object'::text) AND ((schedule_policy ->> 'version'::text) = '1'::text))),
+    CONSTRAINT schedule_occurrences_schedule_revision_check CHECK ((schedule_revision >= 1)),
+    CONSTRAINT schedule_occurrences_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'queued'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text, 'skipped_overlap'::text, 'missed_deadline'::text, 'coalesced'::text, 'waiting_replacement'::text, 'uncertain'::text])))
 );
 
 
@@ -14444,6 +14634,14 @@ ALTER TABLE ONLY public.scenario_test_members
 
 ALTER TABLE ONLY public.scenario_test_members
     ADD CONSTRAINT scenario_test_members_pkey PRIMARY KEY (account_id, run_id, workload_name);
+
+
+--
+-- Name: schedule_occurrences schedule_occurrences_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.schedule_occurrences
+    ADD CONSTRAINT schedule_occurrences_pkey PRIMARY KEY (id);
 
 
 --
@@ -18725,6 +18923,48 @@ CREATE INDEX scenario_test_members_run_idx ON public.scenario_test_members USING
 
 
 --
+-- Name: schedule_occurrences_account_history; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX schedule_occurrences_account_history ON public.schedule_occurrences USING btree (account_id, scheduled_for DESC, id DESC);
+
+
+--
+-- Name: schedule_occurrences_cron_history; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX schedule_occurrences_cron_history ON public.schedule_occurrences USING btree (cron_id, scheduled_for DESC, id DESC) WHERE (cron_id IS NOT NULL);
+
+
+--
+-- Name: schedule_occurrences_cron_identity; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX schedule_occurrences_cron_identity ON public.schedule_occurrences USING btree (cron_id, schedule_revision, scheduled_for) WHERE (cron_id IS NOT NULL);
+
+
+--
+-- Name: schedule_occurrences_job_history; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX schedule_occurrences_job_history ON public.schedule_occurrences USING btree (job_id, scheduled_for DESC, id DESC) WHERE (job_id IS NOT NULL);
+
+
+--
+-- Name: schedule_occurrences_job_identity; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX schedule_occurrences_job_identity ON public.schedule_occurrences USING btree (job_id, schedule_revision, scheduled_for) WHERE (job_id IS NOT NULL);
+
+
+--
+-- Name: schedule_occurrences_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX schedule_occurrences_pending ON public.schedule_occurrences USING btree (status, scheduled_for, id) WHERE (status = ANY (ARRAY['pending'::text, 'waiting_replacement'::text]));
+
+
+--
 -- Name: service_caller_key_history_retire_after_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -19677,6 +19917,13 @@ CREATE TRIGGER app_secret_managed_postgres_owner_guard BEFORE INSERT OR UPDATE O
 
 
 --
+-- Name: app_tasks app_tasks_schedule_occurrence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_tasks_schedule_occurrence AFTER UPDATE OF status ON public.app_tasks FOR EACH ROW EXECUTE FUNCTION public.sync_app_task_schedule_occurrence();
+
+
+--
 -- Name: app_tasks app_tasks_status_transition; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -19835,6 +20082,13 @@ CREATE TRIGGER cors_presets_changed_notify_trg AFTER INSERT OR DELETE OR UPDATE 
 --
 
 CREATE TRIGGER cors_presets_set_updated_at_trg BEFORE UPDATE ON public.cors_presets FOR EACH ROW EXECUTE FUNCTION public.cors_presets_set_updated_at();
+
+
+--
+-- Name: crons crons_schedule_revision; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER crons_schedule_revision BEFORE UPDATE ON public.crons FOR EACH ROW EXECUTE FUNCTION public.revise_cron_schedule_policy();
 
 
 --
@@ -20139,6 +20393,13 @@ CREATE TRIGGER invocations_capture_dead_letter_event AFTER UPDATE OF state ON pu
 
 
 --
+-- Name: invocations invocations_schedule_occurrence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER invocations_schedule_occurrence AFTER UPDATE OF state ON public.invocations FOR EACH ROW EXECUTE FUNCTION public.sync_invocation_schedule_occurrence();
+
+
+--
 -- Name: jobs job_run_image_snapshot_binding; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -20153,6 +20414,13 @@ CREATE TRIGGER job_runs_capture_dead_letter_event AFTER UPDATE OF dead_letter_co
 
 
 --
+-- Name: job_runs job_runs_schedule_occurrence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER job_runs_schedule_occurrence AFTER UPDATE OF aggregate_status ON public.job_runs FOR EACH ROW EXECUTE FUNCTION public.sync_job_schedule_occurrence();
+
+
+--
 -- Name: job_tasks job_task_attempt_journal; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -20164,6 +20432,13 @@ CREATE TRIGGER job_task_attempt_journal AFTER UPDATE ON public.job_tasks FOR EAC
 --
 
 CREATE TRIGGER job_tasks_notify_trg AFTER INSERT OR UPDATE ON public.job_tasks FOR EACH ROW EXECUTE FUNCTION public.job_tasks_notify_v2();
+
+
+--
+-- Name: jobs jobs_schedule_revision; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER jobs_schedule_revision BEFORE UPDATE ON public.jobs FOR EACH ROW EXECUTE FUNCTION public.revise_job_schedule_policy();
 
 
 --
@@ -21216,6 +21491,14 @@ ALTER TABLE ONLY public.app_tasks
 
 ALTER TABLE ONLY public.app_tasks
     ADD CONSTRAINT app_tasks_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_tasks app_tasks_occurrence_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_tasks
+    ADD CONSTRAINT app_tasks_occurrence_id_fkey FOREIGN KEY (occurrence_id) REFERENCES public.schedule_occurrences(id) ON DELETE SET NULL;
 
 
 --
@@ -22451,6 +22734,14 @@ ALTER TABLE ONLY public.invocations
 
 
 --
+-- Name: invocations invocations_occurrence_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocations
+    ADD CONSTRAINT invocations_occurrence_id_fkey FOREIGN KEY (occurrence_id) REFERENCES public.schedule_occurrences(id) ON DELETE SET NULL;
+
+
+--
 -- Name: invocations invocations_on_failure_destination_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -22592,6 +22883,14 @@ ALTER TABLE ONLY public.job_runs
 
 ALTER TABLE ONLY public.job_runs
     ADD CONSTRAINT job_runs_job_id_fkey FOREIGN KEY (job_id) REFERENCES public.jobs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: job_runs job_runs_occurrence_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.job_runs
+    ADD CONSTRAINT job_runs_occurrence_id_fkey FOREIGN KEY (occurrence_id) REFERENCES public.schedule_occurrences(id) ON DELETE SET NULL;
 
 
 --
@@ -23960,6 +24259,62 @@ ALTER TABLE ONLY public.scenario_test_members
 
 ALTER TABLE ONLY public.scenario_test_members
     ADD CONSTRAINT scenario_test_members_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: schedule_occurrences schedule_occurrences_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.schedule_occurrences
+    ADD CONSTRAINT schedule_occurrences_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: schedule_occurrences schedule_occurrences_app_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.schedule_occurrences
+    ADD CONSTRAINT schedule_occurrences_app_task_id_fkey FOREIGN KEY (app_task_id) REFERENCES public.app_tasks(id) ON DELETE SET NULL;
+
+
+--
+-- Name: schedule_occurrences schedule_occurrences_blocking_occurrence_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.schedule_occurrences
+    ADD CONSTRAINT schedule_occurrences_blocking_occurrence_id_fkey FOREIGN KEY (blocking_occurrence_id) REFERENCES public.schedule_occurrences(id) ON DELETE SET NULL;
+
+
+--
+-- Name: schedule_occurrences schedule_occurrences_cron_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.schedule_occurrences
+    ADD CONSTRAINT schedule_occurrences_cron_id_fkey FOREIGN KEY (cron_id) REFERENCES public.crons(id) ON DELETE CASCADE;
+
+
+--
+-- Name: schedule_occurrences schedule_occurrences_invocation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.schedule_occurrences
+    ADD CONSTRAINT schedule_occurrences_invocation_id_fkey FOREIGN KEY (invocation_id) REFERENCES public.invocations(id) ON DELETE SET NULL;
+
+
+--
+-- Name: schedule_occurrences schedule_occurrences_job_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.schedule_occurrences
+    ADD CONSTRAINT schedule_occurrences_job_id_fkey FOREIGN KEY (job_id) REFERENCES public.jobs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: schedule_occurrences schedule_occurrences_job_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.schedule_occurrences
+    ADD CONSTRAINT schedule_occurrences_job_run_id_fkey FOREIGN KEY (job_run_id) REFERENCES public.job_runs(id) ON DELETE SET NULL;
 
 
 --
