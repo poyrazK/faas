@@ -1,6 +1,8 @@
 // adr: 206
 package gateway
 
+// adr: 377 — Service-call flag context is forwarded only after caller checks.
+
 import (
 	"bufio"
 	"context"

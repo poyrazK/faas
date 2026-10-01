@@ -1,5 +1,7 @@
 package gateway
 
+// adr: 377 — Synchronous inherited decisions retain their origin in request traces.
+
 import (
 	"context"
 	"encoding/base64"
