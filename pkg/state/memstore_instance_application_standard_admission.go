@@ -86,6 +86,13 @@ func (m *MemStore) standardRuntimeSnapshotLocked(ins Instance) ([]byte, error) {
 			return strings.Compare(a["sidecar_name"].(string), b["sidecar_name"].(string))
 		})
 		input["artifact"].(map[string]any)["sidecars"] = layers
+		identity, err := m.runtimeArtifactIdentityLocked(app, dep)
+		if err != nil {
+			return nil, err
+		}
+		if identity != nil {
+			input["runtime_artifacts"] = identity
+		}
 	}
 	return json.Marshal(input)
 }

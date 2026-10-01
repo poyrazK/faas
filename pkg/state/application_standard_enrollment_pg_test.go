@@ -19,7 +19,7 @@ import (
 
 func TestPgApplicationStandardEnrollment(t *testing.T) {
 	ctx := context.Background()
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestPgApplicationStandardEnrollment(t *testing.T) {
 
 func TestPgApplicationStandardProjectScopeFence(t *testing.T) {
 	ctx := context.Background()
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatal(err)
 	}

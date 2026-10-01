@@ -1021,6 +1021,33 @@ $$;
 
 
 --
+-- Name: application_standard_runtime_base_producer(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_runtime_base_producer(root_producer jsonb) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+DECLARE p base_image_producers%ROWTYPE; selected uuid;
+BEGIN
+ IF NOT root_producer ? 'base_producer_id' THEN RETURN NULL; END IF;
+ SELECT * INTO p FROM base_image_producers WHERE id=(root_producer->>'base_producer_id')::uuid FOR SHARE NOWAIT;
+ IF NOT FOUND OR p.input_hash IS DISTINCT FROM root_producer->>'base_input_hash' THEN
+  RAISE EXCEPTION 'runtime base producer changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ IF NOT pg_try_advisory_xact_lock(hashtextextended('gregale.base-producer.' || p.storage_key,0)) THEN
+  RAISE EXCEPTION 'runtime base producer is busy' USING ERRCODE='55P03',CONSTRAINT='application_standard_runtime_busy';
+ END IF;
+ SELECT producer_id INTO selected FROM base_image_producer_current WHERE storage_key=p.storage_key FOR SHARE NOWAIT;
+ IF selected IS DISTINCT FROM p.id OR p.storage_key IS NOT DISTINCT FROM root_producer->>'storage_key' THEN
+  RAISE EXCEPTION 'runtime base producer selection changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ RETURN jsonb_build_object('kind','base-image','workload_name','','producer_id',p.id::text,'producer_hash',p.input_hash,
+  'storage_key',p.storage_key,'digest',p.input_snapshot->'artifact'->>'digest','bytes',(p.input_snapshot->'artifact'->>'bytes')::bigint);
+END;
+$$;
+
+
+--
 -- Name: application_standard_runtime_capture_immutable(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1065,6 +1092,416 @@ $$;
 
 
 --
+-- Name: apps_streaming_plan_allowed(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.apps_streaming_plan_allowed(p_account_id uuid) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT EXISTS (
+        SELECT 1
+          FROM accounts
+         WHERE id = p_account_id
+           AND plan <> 'free'
+    );
+$$;
+
+
+SET default_table_access_method = heap;
+
+--
+-- Name: apps; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.apps (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    slug text NOT NULL,
+    type text DEFAULT 'app'::text NOT NULL,
+    runtime text,
+    ram_mb integer NOT NULL,
+    idle_timeout_s integer,
+    max_concurrency integer DEFAULT 1 NOT NULL,
+    status text DEFAULT 'active'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    manifest jsonb DEFAULT '{}'::jsonb NOT NULL,
+    github_install_id bigint,
+    github_repo_full_name text,
+    github_production_branch text,
+    min_instances integer DEFAULT 0 NOT NULL,
+    egress_allowlist cidr[] DEFAULT '{}'::cidr[] NOT NULL,
+    autoscale_target_rps integer,
+    autoscale_target_cpu_pct integer,
+    github_install_binding_id text,
+    github_install_account_id uuid,
+    github_install_linked_at timestamp with time zone,
+    project_id uuid,
+    root_dir text DEFAULT ''::text NOT NULL,
+    workload_name text DEFAULT ''::text NOT NULL,
+    workload_class text DEFAULT 'http'::text NOT NULL,
+    start_command text,
+    streaming_enabled boolean DEFAULT false NOT NULL,
+    scaling_policy jsonb DEFAULT '{}'::jsonb NOT NULL,
+    last_scale_out_at timestamp with time zone,
+    last_scale_in_at timestamp with time zone,
+    require_signed boolean DEFAULT false NOT NULL,
+    node_id uuid,
+    reassigned_at timestamp with time zone,
+    org_id uuid,
+    migrated_at timestamp with time zone,
+    warm_snapshot_enabled boolean DEFAULT false NOT NULL,
+    warm_snapshot_min_requests integer DEFAULT 5 NOT NULL,
+    warm_snapshot_min_ms integer DEFAULT 2000 NOT NULL,
+    eviction_priority text DEFAULT 'best_effort'::text NOT NULL,
+    require_authn boolean DEFAULT false NOT NULL,
+    public_auth_mode text DEFAULT 'open'::text NOT NULL,
+    public_auth_basic bytea,
+    websocket_enabled boolean DEFAULT false NOT NULL,
+    auth_default_flipped_at timestamp with time zone,
+    overflow_node uuid,
+    route_metrics_enabled boolean DEFAULT false NOT NULL,
+    preview_of_slug text,
+    preview_pr_number integer,
+    preview_pr_state text,
+    preview_expires_at timestamp with time zone,
+    cors_default_enabled boolean DEFAULT false NOT NULL,
+    cors_default_origins text[],
+    maintenance_mode boolean DEFAULT false NOT NULL,
+    public_auth_ip_allowlist cidr[] DEFAULT '{}'::cidr[] NOT NULL,
+    static_egress_ip inet,
+    static_egress_ip_set_at timestamp with time zone,
+    preview_destroy_commented_at timestamp with time zone,
+    app_protocol text DEFAULT 'http1'::text NOT NULL,
+    cpu_millicores integer DEFAULT 1000 NOT NULL,
+    last_deploy_failed_email_at timestamp with time zone,
+    deleted_at timestamp with time zone,
+    delete_grace_until timestamp with time zone,
+    consumer_auth_mode text DEFAULT 'optional'::text NOT NULL,
+    only_declared_routes boolean DEFAULT false NOT NULL,
+    declared_routes jsonb DEFAULT '[]'::jsonb NOT NULL,
+    purge_claimed_at timestamp with time zone,
+    visibility text DEFAULT 'public'::text NOT NULL,
+    retry_policy jsonb DEFAULT '{}'::jsonb NOT NULL,
+    warm_pool_size integer DEFAULT 0 NOT NULL,
+    security_policy text DEFAULT 'off'::text NOT NULL,
+    egress_allowlist_revision bigint DEFAULT 1 NOT NULL,
+    scaling_policy_revision bigint DEFAULT 1 NOT NULL,
+    app_cpu_policy_revision bigint DEFAULT 1 NOT NULL,
+    request_rate_limit_rps integer,
+    request_rate_limit_burst integer,
+    github_owner_id bigint,
+    github_repo_id bigint,
+    park_transition_id uuid,
+    wake_transition_id uuid,
+    egress_ports integer[] DEFAULT '{}'::integer[] NOT NULL,
+    platform_tenant_required boolean DEFAULT false NOT NULL,
+    CONSTRAINT apps_app_cpu_policy_revision_positive CHECK ((app_cpu_policy_revision > 0)),
+    CONSTRAINT apps_app_protocol_chk CHECK ((app_protocol = ANY (ARRAY['http1'::text, 'http2'::text, 'grpc'::text]))),
+    CONSTRAINT apps_autoscale_target_cpu_pct_range CHECK (((autoscale_target_cpu_pct IS NULL) OR ((autoscale_target_cpu_pct >= 0) AND (autoscale_target_cpu_pct <= 100)))),
+    CONSTRAINT apps_autoscale_target_rps_nonneg CHECK (((autoscale_target_rps IS NULL) OR (autoscale_target_rps >= 0))),
+    CONSTRAINT apps_consumer_auth_mode_chk CHECK ((consumer_auth_mode = ANY (ARRAY['optional'::text, 'required'::text]))),
+    CONSTRAINT apps_cpu_millicores_chk CHECK ((cpu_millicores = ANY (ARRAY[250, 500, 1000]))),
+    CONSTRAINT apps_declared_routes_array_chk CHECK ((jsonb_typeof(declared_routes) = 'array'::text)),
+    CONSTRAINT apps_egress_allowlist_revision_positive CHECK ((egress_allowlist_revision > 0)),
+    CONSTRAINT apps_egress_ports_valid CHECK (((cardinality(egress_ports) <= 64) AND (1 <= ALL (egress_ports)) AND (65535 >= ALL (egress_ports)))),
+    CONSTRAINT apps_eviction_priority_chk CHECK ((eviction_priority = ANY (ARRAY['best_effort'::text, 'reserved'::text]))),
+    CONSTRAINT apps_github_identity_ids_check CHECK ((((github_owner_id IS NULL) AND (github_repo_id IS NULL)) OR ((github_owner_id IS NOT NULL) AND (github_repo_id IS NOT NULL) AND (github_owner_id > 0) AND (github_repo_id > 0)))),
+    CONSTRAINT apps_idle_timeout_s_check CHECK (((idle_timeout_s IS NULL) OR (idle_timeout_s >= 10))),
+    CONSTRAINT apps_last_scale_in_at_le_now_chk CHECK (((last_scale_in_at IS NULL) OR (last_scale_in_at <= now()))),
+    CONSTRAINT apps_last_scale_out_at_le_now_chk CHECK (((last_scale_out_at IS NULL) OR (last_scale_out_at <= now()))),
+    CONSTRAINT apps_max_concurrency_check CHECK ((max_concurrency >= 1)),
+    CONSTRAINT apps_migrated_at_chk CHECK (((migrated_at IS NULL) OR (migrated_at <= (now() + '00:01:00'::interval)))),
+    CONSTRAINT apps_min_instances_check CHECK ((min_instances >= 0)),
+    CONSTRAINT apps_node_id_nonempty_chk CHECK ((node_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT apps_overflow_node_chk CHECK (((overflow_node IS NULL) OR (overflow_node <> '00000000-0000-0000-0000-000000000000'::uuid))),
+    CONSTRAINT apps_preview_pr_state_chk CHECK (((preview_pr_state = ANY (ARRAY['open'::text, 'closed'::text, 'stale'::text, 'tearing_down'::text, 'torn_down'::text])) OR (preview_pr_state IS NULL))),
+    CONSTRAINT apps_public_auth_mode_chk CHECK ((public_auth_mode = ANY (ARRAY['open'::text, 'bearer'::text, 'basic'::text, 'ip_allowlist'::text, 'internal_only'::text]))),
+    CONSTRAINT apps_ram_mb_check CHECK ((ram_mb > 0)),
+    CONSTRAINT apps_reassigned_at_chk CHECK (((reassigned_at IS NULL) OR (reassigned_at <= (now() + '00:01:00'::interval)))),
+    CONSTRAINT apps_request_rate_limit_burst_positive CHECK (((request_rate_limit_burst IS NULL) OR (request_rate_limit_burst > 0))),
+    CONSTRAINT apps_request_rate_limit_rps_positive CHECK (((request_rate_limit_rps IS NULL) OR (request_rate_limit_rps > 0))),
+    CONSTRAINT apps_retry_policy_object_chk CHECK ((jsonb_typeof(retry_policy) = 'object'::text)),
+    CONSTRAINT apps_runtime_check CHECK (((runtime IS NULL) OR (runtime = ANY (ARRAY['node22'::text, 'python312'::text, 'go124'::text, 'go124-alpine'::text, 'node24'::text, 'python313'::text])))),
+    CONSTRAINT apps_scaling_policy_revision_positive CHECK ((scaling_policy_revision > 0)),
+    CONSTRAINT apps_security_policy_chk CHECK ((security_policy = ANY (ARRAY['off'::text, 'warn'::text, 'enforce'::text]))),
+    CONSTRAINT apps_static_egress_ip_family_check CHECK (((static_egress_ip IS NULL) OR (family(static_egress_ip) = 4))),
+    CONSTRAINT apps_status_check CHECK ((status = ANY (ARRAY['active'::text, 'evicted_cold'::text, 'deleted'::text]))),
+    CONSTRAINT apps_streaming_enabled_plan_check CHECK (((NOT streaming_enabled) OR public.apps_streaming_plan_allowed(account_id))),
+    CONSTRAINT apps_type_check CHECK ((type = ANY (ARRAY['app'::text, 'function'::text]))),
+    CONSTRAINT apps_visibility_chk CHECK ((visibility = ANY (ARRAY['public'::text, 'internal'::text]))),
+    CONSTRAINT apps_warm_pool_size_chk CHECK (((warm_pool_size >= 0) AND (warm_pool_size <= max_concurrency))),
+    CONSTRAINT apps_warm_snapshot_min_ms_check CHECK (((warm_snapshot_min_ms >= 100) AND (warm_snapshot_min_ms <= 60000))),
+    CONSTRAINT apps_warm_snapshot_min_requests_check CHECK (((warm_snapshot_min_requests >= 1) AND (warm_snapshot_min_requests <= 100))),
+    CONSTRAINT apps_workload_class_chk CHECK ((workload_class = ANY (ARRAY['http'::text, 'graphql'::text, 'grpc'::text, 'job'::text, 'worker'::text])))
+);
+
+
+--
+-- Name: COLUMN apps.autoscale_target_rps; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.apps.autoscale_target_rps IS 'Per-instance RPS target. When live_request_count / live_instance_count exceeds this, schedd admits another instance (up to plan max_concurrency). Hobby/Pro/Scale only (plan gate). 0 / NULL = disabled (the trigger skips the app).';
+
+
+--
+-- Name: COLUMN apps.autoscale_target_cpu_pct; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.apps.autoscale_target_cpu_pct IS 'Per-instance CPU% target (1..100). Pro/Scale only (plan gate). 0 / NULL = disabled (the trigger skips the app). CPU target is unbounded above 100 inside the DB; the apid handler enforces [1, 100] via 422.';
+
+
+--
+-- Name: COLUMN apps.deleted_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.apps.deleted_at IS 'Customer-requested app soft-delete timestamp; NULL for live and legacy tombstones.';
+
+
+--
+-- Name: COLUMN apps.delete_grace_until; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.apps.delete_grace_until IS 'Deadline through which a deleted app may be restored; hard-delete sweeper runs after this instant.';
+
+
+--
+-- Name: COLUMN apps.request_rate_limit_rps; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.apps.request_rate_limit_rps IS 'Optional app-wide edge token-bucket refill override. NULL inherits the account plan.';
+
+
+--
+-- Name: COLUMN apps.request_rate_limit_burst; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.apps.request_rate_limit_burst IS 'Optional app-wide edge token-bucket burst override. NULL inherits the account plan.';
+
+
+--
+-- Name: deployments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployments (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    app_id uuid NOT NULL,
+    build_id uuid,
+    image_digest text NOT NULL,
+    rootfs_path text,
+    rootfs_bytes bigint,
+    status text NOT NULL,
+    error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    kind text DEFAULT 'image'::text NOT NULL,
+    source_path text,
+    source_bytes bigint,
+    handler text,
+    log_path text,
+    error_code text,
+    rootfs_key text DEFAULT ''::text NOT NULL,
+    source_url text,
+    commit_sha text,
+    override_entrypoint text[],
+    override_cmd text[],
+    override_env jsonb,
+    override_env_secrets jsonb,
+    override_port integer,
+    override_healthcheck jsonb,
+    sidecars jsonb DEFAULT '[]'::jsonb NOT NULL,
+    min_instances integer DEFAULT 0 NOT NULL,
+    scan_result jsonb,
+    scan_status text,
+    scanned_at timestamp with time zone,
+    override_liveness_probe jsonb,
+    parked_reason text,
+    parked_at timestamp with time zone,
+    traffic_percent integer DEFAULT 100 NOT NULL,
+    scope text DEFAULT 'default'::text NOT NULL,
+    secret_findings jsonb DEFAULT '[]'::jsonb NOT NULL,
+    secret_scanned_at timestamp with time zone,
+    error_hint text,
+    error_why text,
+    error_fix text,
+    error_relevant_logs jsonb,
+    stage_state jsonb DEFAULT '{"current": "source_download", "history": [], "current_started_at": null}'::jsonb NOT NULL,
+    deployed_by_user_id uuid,
+    deployed_via text DEFAULT 'api'::text NOT NULL,
+    deployed_from_ip inet,
+    pusher_login text,
+    reason text,
+    tag text,
+    deployed_by text,
+    pr_number integer,
+    rollback_on_5xx boolean DEFAULT false NOT NULL,
+    first_wake_at timestamp with time zone,
+    first_5xx_window_ends_at timestamp with time zone,
+    first_5xx_count integer DEFAULT 0 NOT NULL,
+    last_auto_rollback_at timestamp with time zone,
+    last_auto_rollback_reason text,
+    liveness_restart_count integer DEFAULT 0 NOT NULL,
+    canary_preset text DEFAULT 'none'::text NOT NULL,
+    canary_step integer DEFAULT 0 NOT NULL,
+    canary_total_steps integer DEFAULT 0 NOT NULL,
+    canary_step_started_at timestamp with time zone DEFAULT now() NOT NULL,
+    rollout_state text DEFAULT 'pending'::text NOT NULL,
+    rollout_started_at timestamp with time zone,
+    rollout_completed_at timestamp with time zone,
+    rollout_aborted_at timestamp with time zone,
+    rollout_aborted_reason text,
+    cancelled_at timestamp with time zone,
+    cancelled_by_principal text,
+    cancel_reason text,
+    deleted_at timestamp with time zone,
+    deleted_by_principal text,
+    priority integer DEFAULT 100 NOT NULL,
+    reordered_at timestamp with time zone,
+    reordered_by_principal text,
+    canary_stages jsonb,
+    snapshot_miss_count integer DEFAULT 0 NOT NULL,
+    snapshot_miss_last_at timestamp with time zone,
+    snapshot_miss_backoff_until timestamp with time zone,
+    workflows jsonb DEFAULT '[]'::jsonb NOT NULL,
+    source_root text,
+    full_rootfs_allow_auto boolean DEFAULT false NOT NULL,
+    full_rootfs_override boolean,
+    source_sha256 text,
+    api_hosting_receipt jsonb DEFAULT '{}'::jsonb NOT NULL,
+    inferred_profile jsonb,
+    traffic_percent_explicit boolean DEFAULT false NOT NULL,
+    revision integer DEFAULT 0 NOT NULL,
+    service_rollout_handoff jsonb DEFAULT '{}'::jsonb NOT NULL,
+    release_command text[] DEFAULT ARRAY[]::text[] NOT NULL,
+    release_command_shell boolean DEFAULT false NOT NULL,
+    disable_startup_cpu_boost boolean DEFAULT false NOT NULL,
+    override_main_depends_on jsonb DEFAULT '[]'::jsonb NOT NULL,
+    override_readiness_probe jsonb,
+    secret_reload_signal text,
+    github_source_ref text,
+    github_installation_id bigint,
+    CONSTRAINT deployments_canary_preset_chk CHECK ((canary_preset = ANY (ARRAY['none'::text, 'slow'::text, 'balanced'::text, 'aggressive'::text, '1-10-50-100'::text, 'custom'::text]))),
+    CONSTRAINT deployments_canary_stages_shape CHECK (((canary_preset <> 'custom'::text) OR ((canary_stages IS NOT NULL) AND (jsonb_typeof(canary_stages) = 'array'::text) AND (jsonb_array_length(canary_stages) > 0)))),
+    CONSTRAINT deployments_canary_step_nonneg_chk CHECK ((canary_step >= 0)),
+    CONSTRAINT deployments_canary_total_steps_nonneg_chk CHECK ((canary_total_steps >= 0)),
+    CONSTRAINT deployments_cancel_reason_check CHECK (((cancel_reason IS NULL) OR (cancel_reason = ANY (ARRAY['user'::text, 'auto_quota'::text, 'auto_health'::text, 'system'::text])))),
+    CONSTRAINT deployments_cancelled_release_fence_chk CHECK (((status <> 'cancelled'::text) OR ((traffic_percent = 0) AND (rollout_state = 'aborted'::text) AND (rollout_aborted_at IS NOT NULL) AND (COALESCE((stage_state ->> 'current'::text), ''::text) = ''::text)))),
+    CONSTRAINT deployments_commit_sha_shape_chk CHECK (((commit_sha IS NULL) OR (((char_length(commit_sha) >= 7) AND (char_length(commit_sha) <= 64)) AND (commit_sha ~ '^[0-9a-f]+$'::text)))),
+    CONSTRAINT deployments_deployed_via_set_chk CHECK ((deployed_via = ANY (ARRAY['api'::text, 'cli'::text, 'dashboard'::text, 'github'::text, 'operator'::text]))),
+    CONSTRAINT deployments_failed_stage_fence_chk CHECK (((status <> 'failed'::text) OR (COALESCE((stage_state ->> 'current'::text), ''::text) = ''::text))),
+    CONSTRAINT deployments_failed_traffic_fence_chk CHECK (((status <> 'failed'::text) OR ((traffic_percent = 0) AND (rollout_state = 'aborted'::text) AND (rollout_aborted_at IS NOT NULL)))),
+    CONSTRAINT deployments_github_source_ref_pair_chk CHECK ((((github_source_ref IS NULL) AND (github_installation_id IS NULL)) OR ((github_source_ref IS NOT NULL) AND (btrim(github_source_ref) <> ''::text) AND (github_installation_id IS NOT NULL) AND (github_installation_id > 0)))),
+    CONSTRAINT deployments_kind_check CHECK ((kind = ANY (ARRAY['image'::text, 'tarball'::text, 'dockerfile'::text, 'github'::text, 'preview'::text]))),
+    CONSTRAINT deployments_last_auto_rollback_reason_check CHECK (((last_auto_rollback_reason IS NULL) OR (last_auto_rollback_reason = ANY (ARRAY['threshold_exceeded'::text, 'first_window_expired'::text])))),
+    CONSTRAINT deployments_liveness_restart_count_nonneg_chk CHECK ((liveness_restart_count >= 0)),
+    CONSTRAINT deployments_main_depends_on_shape_chk CHECK (((jsonb_typeof(override_main_depends_on) = 'array'::text) AND (jsonb_array_length(override_main_depends_on) <= 6))),
+    CONSTRAINT deployments_min_instances_chk CHECK (((min_instances >= 0) AND (min_instances <= 100))),
+    CONSTRAINT deployments_parked_reason_check CHECK (((parked_reason IS NULL) OR (parked_reason = ANY (ARRAY['liveness_exhausted'::text, 'lifecycle_park'::text, 'admin_park'::text, 'security_scan_regressed'::text])))),
+    CONSTRAINT deployments_pr_number_positive_chk CHECK (((pr_number IS NULL) OR (pr_number > 0))),
+    CONSTRAINT deployments_priority_check CHECK (((priority >= 0) AND (priority <= 1000))),
+    CONSTRAINT deployments_reason_len_chk CHECK (((reason IS NULL) OR (length(reason) <= 280))),
+    CONSTRAINT deployments_release_command_chk CHECK ((((cardinality(release_command) = 0) AND (NOT release_command_shell)) OR (((cardinality(release_command) >= 1) AND (cardinality(release_command) <= 64)) AND (array_position(release_command, NULL::text) IS NULL) AND ((octet_length(btrim(release_command[1])) >= 1) AND (octet_length(btrim(release_command[1])) <= 4096)) AND ((octet_length(array_to_string(release_command, ''::text)) >= 1) AND (octet_length(array_to_string(release_command, ''::text)) <= 16384)) AND ((NOT release_command_shell) OR (cardinality(release_command) = 1))))),
+    CONSTRAINT deployments_revision_nonneg_chk CHECK ((revision >= 0)),
+    CONSTRAINT deployments_rollout_state_chk CHECK ((rollout_state = ANY (ARRAY['pending'::text, 'rolling_out'::text, 'complete'::text, 'aborted'::text]))),
+    CONSTRAINT deployments_scan_status_chk CHECK (((scan_status IS NULL) OR (scan_status = ANY (ARRAY['pending'::text, 'complete'::text, 'failed'::text, 'skipped'::text, 'complete_with_redactions'::text])))),
+    CONSTRAINT deployments_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
+    CONSTRAINT deployments_secret_reload_signal_chk CHECK (((secret_reload_signal IS NULL) OR (secret_reload_signal = ANY (ARRAY[''::text, 'SIGHUP'::text, 'SIGUSR1'::text, 'SIGUSR2'::text])))),
+    CONSTRAINT deployments_service_rollout_handoff_object_chk CHECK ((jsonb_typeof(service_rollout_handoff) = 'object'::text)),
+    CONSTRAINT deployments_service_rollout_handoff_size_chk CHECK ((octet_length((service_rollout_handoff)::text) <= 16384)),
+    CONSTRAINT deployments_service_rollout_handoff_state_chk CHECK (((service_rollout_handoff = '{}'::jsonb) OR (((service_rollout_handoff ->> 'action'::text) = ANY (ARRAY['promote'::text, 'abort'::text])) AND ((service_rollout_handoff ->> 'phase'::text) = ANY (ARRAY['pending'::text, 'routing'::text, 'draining'::text, 'complete'::text])) AND (COALESCE(((service_rollout_handoff ->> 'retry_count'::text))::integer, 0) >= 0)))),
+    CONSTRAINT deployments_sidecars_cap_chk CHECK ((jsonb_array_length(sidecars) <= 5)),
+    CONSTRAINT deployments_source_root_shape_chk CHECK (((source_root IS NULL) OR (source_root = ''::text) OR (source_root = '.'::text) OR ((source_root !~ '^/'::text) AND (source_root !~ '(^|/)\.\.(/|$)'::text)))),
+    CONSTRAINT deployments_source_sha256_shape_chk CHECK (((source_sha256 IS NULL) OR (source_sha256 ~ '^[0-9a-f]{64}$'::text))),
+    CONSTRAINT deployments_stage_state_current_check CHECK ((((stage_state ->> 'current'::text) IS NULL) OR ((stage_state ->> 'current'::text) = ''::text) OR ((stage_state ->> 'current'::text) = ANY (ARRAY['source_download'::text, 'dependency_restore'::text, 'image_build'::text, 'security_scan'::text, 'snapshot_prepare'::text, 'readiness'::text])))),
+    CONSTRAINT deployments_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'building'::text, 'imaging'::text, 'snapshotting'::text, 'live'::text, 'failed'::text, 'superseded'::text, 'cancelled'::text]))),
+    CONSTRAINT deployments_tag_set_chk CHECK (((tag IS NULL) OR (tag = ANY (ARRAY['incident_recovery'::text, 'hotfix'::text, 'scheduled_maintenance'::text, 'compliance_hold'::text, 'partner_request'::text])))),
+    CONSTRAINT deployments_traffic_percent_chk CHECK (((traffic_percent >= 0) AND (traffic_percent <= 100)))
+);
+
+
+--
+-- Name: application_standard_runtime_producers(public.apps, public.deployments); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_runtime_producers(a public.apps, d public.deployments) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE workloads text[]; workload text; root_producer jsonb; base_producer jsonb; artifacts jsonb:='[]'::jsonb;
+BEGIN
+ IF NOT EXISTS(SELECT 1 FROM deployment_registry_rootfs WHERE deployment_id=d.id) THEN RETURN NULL; END IF;
+ IF jsonb_typeof(d.sidecars) IS DISTINCT FROM 'array' OR EXISTS(
+  SELECT 1 FROM jsonb_array_elements(d.sidecars) x GROUP BY x->>'name'
+  HAVING count(*)<>1 OR coalesce(x->>'name','') !~ '^[a-z0-9][a-z0-9-]{0,62}$' OR x->>'name'='main') THEN
+  RAISE EXCEPTION 'runtime workload membership changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ workloads:=ARRAY[''] || ARRAY(SELECT x->>'name' FROM jsonb_array_elements(d.sidecars) x WHERE coalesce(x->>'image','')<>'' ORDER BY x->>'name');
+ FOREACH workload IN ARRAY workloads LOOP
+  root_producer:=application_standard_runtime_root_producer(a,d,workload);
+  artifacts:=artifacts || jsonb_build_array(root_producer);
+  base_producer:=application_standard_runtime_base_producer(root_producer);
+  IF base_producer IS NOT NULL AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(artifacts) x
+   WHERE x->>'kind'='base-image' AND x->>'producer_id'=base_producer->>'producer_id') THEN
+   artifacts:=artifacts || jsonb_build_array(base_producer);
+  END IF;
+ END LOOP;
+ SELECT jsonb_agg(x ORDER BY CASE WHEN x->>'kind'='base-image' THEN 0 ELSE 1 END,x->>'workload_name') INTO artifacts
+  FROM jsonb_array_elements(artifacts) x;
+ RETURN jsonb_build_object('format','gregale.runtime-artifact-input.v1','account_id',a.account_id::text,'org_id',a.org_id::text,
+  'app_id',a.id::text,'deployment_id',d.id::text,'scope',d.scope,'artifacts',artifacts);
+END;
+$_$;
+
+
+--
+-- Name: application_standard_runtime_root_producer(public.apps, public.deployments, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_runtime_root_producer(a public.apps, d public.deployments, workload text) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE p deployment_registry_rootfs%ROWTYPE; r deployment_registry_verifications%ROWTYPE;
+        l deployment_sidecar_layers%ROWTYPE; image_ref text; value jsonb;
+BEGIN
+ SELECT f.* INTO p FROM deployment_registry_rootfs_current c
+ JOIN deployment_registry_rootfs f ON f.id=c.artifact_id
+ WHERE c.deployment_id=d.id AND c.workload_name=workload FOR SHARE OF f NOWAIT;
+ IF NOT FOUND THEN
+  RAISE EXCEPTION 'runtime producer selection is incomplete' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ SELECT * INTO r FROM deployment_registry_verifications WHERE id=p.registry_verification_id FOR SHARE NOWAIT;
+ image_ref:=CASE WHEN workload='' AND d.kind='image' THEN d.image_digest ELSE
+  (SELECT CASE WHEN count(*)=1 THEN min(x->>'image') END FROM jsonb_array_elements(d.sidecars) x WHERE x->>'name'=workload) END;
+ IF (p.deployment_id=d.id AND p.workload_name=workload AND r.deployment_id=d.id AND r.workload_name=workload
+  AND r.app_id=a.id AND r.account_id=a.account_id AND p.input_snapshot->>'app_id'=a.id::text
+  AND p.input_snapshot->>'account_id'=a.account_id::text AND p.input_snapshot->>'org_id'=a.org_id::text
+  AND r.input_snapshot->>'org_id'=a.org_id::text AND p.input_snapshot->>'scope'=d.scope
+  AND p.input_snapshot->>'registry_input_hash'=r.input_hash AND r.input_snapshot->>'image_reference'=image_ref
+  AND p.input_snapshot->>'artifact_digest' ~ '^sha256:[a-f0-9]{64}$'
+  AND (p.input_snapshot->>'artifact_bytes')::bigint>0) IS NOT TRUE THEN
+  RAISE EXCEPTION 'runtime producer identity changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ IF workload='' THEN
+  IF (p.input_snapshot->>'kind' IN ('app-layer','full-rootfs') AND p.input_snapshot->>'storage_key'=d.rootfs_key
+   AND p.input_snapshot->>'rootfs_path'=d.rootfs_path AND (p.input_snapshot->>'content_bytes')::bigint=d.rootfs_bytes) IS NOT TRUE THEN
+   RAISE EXCEPTION 'runtime main producer changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+  END IF;
+ ELSE
+  SELECT * INTO l FROM deployment_sidecar_layers WHERE deployment_id=d.id AND sidecar_name=workload FOR SHARE NOWAIT;
+  IF (p.input_snapshot->>'kind'='sidecar-layer' AND p.input_snapshot->>'storage_key'=l.storage_key
+   AND (p.input_snapshot->>'content_bytes')::bigint=l.bytes AND r.input_snapshot->>'selected_reference'=l.content_digest) IS NOT TRUE THEN
+   RAISE EXCEPTION 'runtime sidecar producer changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+  END IF;
+ END IF;
+ value:=jsonb_build_object('kind',p.input_snapshot->>'kind','workload_name',workload,'producer_id',p.id::text,
+  'producer_hash',p.input_hash,'storage_key',p.input_snapshot->>'storage_key','digest',p.input_snapshot->>'artifact_digest',
+  'bytes',(p.input_snapshot->>'artifact_bytes')::bigint);
+ IF coalesce(p.input_snapshot->>'base_producer_id','')<>'' THEN
+  value:=value || jsonb_build_object('base_producer_id',p.input_snapshot->>'base_producer_id','base_input_hash',p.input_snapshot->>'base_input_hash');
+ END IF;
+ RETURN value;
+END;
+$_$;
+
+
+--
 -- Name: application_standard_runtime_snapshot(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1072,7 +1509,7 @@ CREATE FUNCTION public.application_standard_runtime_snapshot(application_id uuid
     LANGUAGE plpgsql
     AS $$
 DECLARE a apps%ROWTYPE; e app_application_standards%ROWTYPE;
-        acct accounts%ROWTYPE; o orgs%ROWTYPE; d deployments%ROWTYPE;
+        acct accounts%ROWTYPE; o orgs%ROWTYPE; d deployments%ROWTYPE; producers jsonb;
 BEGIN
  SELECT * INTO a FROM apps WHERE id=application_id FOR SHARE NOWAIT;
  IF NOT FOUND THEN
@@ -1099,6 +1536,7 @@ BEGIN
    RAISE EXCEPTION 'runtime artifact children are busy' USING ERRCODE='55P03',CONSTRAINT='application_standard_runtime_busy';
   END IF;
  END IF;
+ IF artifact_id IS NOT NULL THEN producers:=application_standard_runtime_producers(a,d); END IF;
  RETURN jsonb_build_object(
   'app_id',a.id::text,'org_id',a.org_id::text,'project_id',coalesce(a.project_id::text,''),'account_id',a.account_id::text,
   'account_plan',acct.plan,'account_egress_allowlist_extra',acct.egress_allowlist_extra,
@@ -1122,7 +1560,8 @@ BEGIN
     'scan_status',d.scan_status,'scan_result_hash',encode(sha256(convert_to(coalesce(d.scan_result::text,''),'UTF8')),'hex'),
     'sidecars',coalesce((SELECT jsonb_agg(jsonb_build_object('sidecar_name',r.sidecar_name,
       'storage_key',r.storage_key,'bytes',r.bytes,'content_digest',r.content_digest) ORDER BY r.sidecar_name)
-      FROM deployment_sidecar_layers r WHERE r.deployment_id=d.id),'[]'::jsonb)) END);
+      FROM deployment_sidecar_layers r WHERE r.deployment_id=d.id),'[]'::jsonb)) END)
+  || CASE WHEN producers IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('runtime_artifacts',producers) END;
 EXCEPTION WHEN lock_not_available THEN
  RAISE EXCEPTION 'runtime inputs are busy' USING ERRCODE='55P03',CONSTRAINT='application_standard_runtime_busy';
 END;
@@ -1550,22 +1989,6 @@ BEGIN
     END IF;
     RETURN NEW;
 END;
-$$;
-
-
---
--- Name: apps_streaming_plan_allowed(uuid); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.apps_streaming_plan_allowed(p_account_id uuid) RETURNS boolean
-    LANGUAGE sql STABLE
-    AS $$
-    SELECT EXISTS (
-        SELECT 1
-          FROM accounts
-         WHERE id = p_account_id
-           AND plan <> 'free'
-    );
 $$;
 
 
@@ -4627,8 +5050,6 @@ END;
 $$;
 
 
-SET default_table_access_method = heap;
-
 --
 -- Name: account_async_quota; Type: TABLE; Schema: public; Owner: -
 --
@@ -6019,175 +6440,6 @@ CREATE TABLE public.application_standards (
 
 
 --
--- Name: apps; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.apps (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    account_id uuid NOT NULL,
-    slug text NOT NULL,
-    type text DEFAULT 'app'::text NOT NULL,
-    runtime text,
-    ram_mb integer NOT NULL,
-    idle_timeout_s integer,
-    max_concurrency integer DEFAULT 1 NOT NULL,
-    status text DEFAULT 'active'::text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    manifest jsonb DEFAULT '{}'::jsonb NOT NULL,
-    github_install_id bigint,
-    github_repo_full_name text,
-    github_production_branch text,
-    min_instances integer DEFAULT 0 NOT NULL,
-    egress_allowlist cidr[] DEFAULT '{}'::cidr[] NOT NULL,
-    autoscale_target_rps integer,
-    autoscale_target_cpu_pct integer,
-    github_install_binding_id text,
-    github_install_account_id uuid,
-    github_install_linked_at timestamp with time zone,
-    project_id uuid,
-    root_dir text DEFAULT ''::text NOT NULL,
-    workload_name text DEFAULT ''::text NOT NULL,
-    workload_class text DEFAULT 'http'::text NOT NULL,
-    start_command text,
-    streaming_enabled boolean DEFAULT false NOT NULL,
-    scaling_policy jsonb DEFAULT '{}'::jsonb NOT NULL,
-    last_scale_out_at timestamp with time zone,
-    last_scale_in_at timestamp with time zone,
-    require_signed boolean DEFAULT false NOT NULL,
-    node_id uuid,
-    reassigned_at timestamp with time zone,
-    org_id uuid,
-    migrated_at timestamp with time zone,
-    warm_snapshot_enabled boolean DEFAULT false NOT NULL,
-    warm_snapshot_min_requests integer DEFAULT 5 NOT NULL,
-    warm_snapshot_min_ms integer DEFAULT 2000 NOT NULL,
-    eviction_priority text DEFAULT 'best_effort'::text NOT NULL,
-    require_authn boolean DEFAULT false NOT NULL,
-    public_auth_mode text DEFAULT 'open'::text NOT NULL,
-    public_auth_basic bytea,
-    websocket_enabled boolean DEFAULT false NOT NULL,
-    auth_default_flipped_at timestamp with time zone,
-    overflow_node uuid,
-    route_metrics_enabled boolean DEFAULT false NOT NULL,
-    preview_of_slug text,
-    preview_pr_number integer,
-    preview_pr_state text,
-    preview_expires_at timestamp with time zone,
-    cors_default_enabled boolean DEFAULT false NOT NULL,
-    cors_default_origins text[],
-    maintenance_mode boolean DEFAULT false NOT NULL,
-    public_auth_ip_allowlist cidr[] DEFAULT '{}'::cidr[] NOT NULL,
-    static_egress_ip inet,
-    static_egress_ip_set_at timestamp with time zone,
-    preview_destroy_commented_at timestamp with time zone,
-    app_protocol text DEFAULT 'http1'::text NOT NULL,
-    cpu_millicores integer DEFAULT 1000 NOT NULL,
-    last_deploy_failed_email_at timestamp with time zone,
-    deleted_at timestamp with time zone,
-    delete_grace_until timestamp with time zone,
-    consumer_auth_mode text DEFAULT 'optional'::text NOT NULL,
-    only_declared_routes boolean DEFAULT false NOT NULL,
-    declared_routes jsonb DEFAULT '[]'::jsonb NOT NULL,
-    purge_claimed_at timestamp with time zone,
-    visibility text DEFAULT 'public'::text NOT NULL,
-    retry_policy jsonb DEFAULT '{}'::jsonb NOT NULL,
-    warm_pool_size integer DEFAULT 0 NOT NULL,
-    security_policy text DEFAULT 'off'::text NOT NULL,
-    egress_allowlist_revision bigint DEFAULT 1 NOT NULL,
-    scaling_policy_revision bigint DEFAULT 1 NOT NULL,
-    app_cpu_policy_revision bigint DEFAULT 1 NOT NULL,
-    request_rate_limit_rps integer,
-    request_rate_limit_burst integer,
-    github_owner_id bigint,
-    github_repo_id bigint,
-    park_transition_id uuid,
-    wake_transition_id uuid,
-    egress_ports integer[] DEFAULT '{}'::integer[] NOT NULL,
-    platform_tenant_required boolean DEFAULT false NOT NULL,
-    CONSTRAINT apps_app_cpu_policy_revision_positive CHECK ((app_cpu_policy_revision > 0)),
-    CONSTRAINT apps_app_protocol_chk CHECK ((app_protocol = ANY (ARRAY['http1'::text, 'http2'::text, 'grpc'::text]))),
-    CONSTRAINT apps_autoscale_target_cpu_pct_range CHECK (((autoscale_target_cpu_pct IS NULL) OR ((autoscale_target_cpu_pct >= 0) AND (autoscale_target_cpu_pct <= 100)))),
-    CONSTRAINT apps_autoscale_target_rps_nonneg CHECK (((autoscale_target_rps IS NULL) OR (autoscale_target_rps >= 0))),
-    CONSTRAINT apps_consumer_auth_mode_chk CHECK ((consumer_auth_mode = ANY (ARRAY['optional'::text, 'required'::text]))),
-    CONSTRAINT apps_cpu_millicores_chk CHECK ((cpu_millicores = ANY (ARRAY[250, 500, 1000]))),
-    CONSTRAINT apps_declared_routes_array_chk CHECK ((jsonb_typeof(declared_routes) = 'array'::text)),
-    CONSTRAINT apps_egress_allowlist_revision_positive CHECK ((egress_allowlist_revision > 0)),
-    CONSTRAINT apps_egress_ports_valid CHECK (((cardinality(egress_ports) <= 64) AND (1 <= ALL (egress_ports)) AND (65535 >= ALL (egress_ports)))),
-    CONSTRAINT apps_eviction_priority_chk CHECK ((eviction_priority = ANY (ARRAY['best_effort'::text, 'reserved'::text]))),
-    CONSTRAINT apps_github_identity_ids_check CHECK ((((github_owner_id IS NULL) AND (github_repo_id IS NULL)) OR ((github_owner_id IS NOT NULL) AND (github_repo_id IS NOT NULL) AND (github_owner_id > 0) AND (github_repo_id > 0)))),
-    CONSTRAINT apps_idle_timeout_s_check CHECK (((idle_timeout_s IS NULL) OR (idle_timeout_s >= 10))),
-    CONSTRAINT apps_last_scale_in_at_le_now_chk CHECK (((last_scale_in_at IS NULL) OR (last_scale_in_at <= now()))),
-    CONSTRAINT apps_last_scale_out_at_le_now_chk CHECK (((last_scale_out_at IS NULL) OR (last_scale_out_at <= now()))),
-    CONSTRAINT apps_max_concurrency_check CHECK ((max_concurrency >= 1)),
-    CONSTRAINT apps_migrated_at_chk CHECK (((migrated_at IS NULL) OR (migrated_at <= (now() + '00:01:00'::interval)))),
-    CONSTRAINT apps_min_instances_check CHECK ((min_instances >= 0)),
-    CONSTRAINT apps_node_id_nonempty_chk CHECK ((node_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
-    CONSTRAINT apps_overflow_node_chk CHECK (((overflow_node IS NULL) OR (overflow_node <> '00000000-0000-0000-0000-000000000000'::uuid))),
-    CONSTRAINT apps_preview_pr_state_chk CHECK (((preview_pr_state = ANY (ARRAY['open'::text, 'closed'::text, 'stale'::text, 'tearing_down'::text, 'torn_down'::text])) OR (preview_pr_state IS NULL))),
-    CONSTRAINT apps_public_auth_mode_chk CHECK ((public_auth_mode = ANY (ARRAY['open'::text, 'bearer'::text, 'basic'::text, 'ip_allowlist'::text, 'internal_only'::text]))),
-    CONSTRAINT apps_ram_mb_check CHECK ((ram_mb > 0)),
-    CONSTRAINT apps_reassigned_at_chk CHECK (((reassigned_at IS NULL) OR (reassigned_at <= (now() + '00:01:00'::interval)))),
-    CONSTRAINT apps_request_rate_limit_burst_positive CHECK (((request_rate_limit_burst IS NULL) OR (request_rate_limit_burst > 0))),
-    CONSTRAINT apps_request_rate_limit_rps_positive CHECK (((request_rate_limit_rps IS NULL) OR (request_rate_limit_rps > 0))),
-    CONSTRAINT apps_retry_policy_object_chk CHECK ((jsonb_typeof(retry_policy) = 'object'::text)),
-    CONSTRAINT apps_runtime_check CHECK (((runtime IS NULL) OR (runtime = ANY (ARRAY['node22'::text, 'python312'::text, 'go124'::text, 'go124-alpine'::text, 'node24'::text, 'python313'::text])))),
-    CONSTRAINT apps_scaling_policy_revision_positive CHECK ((scaling_policy_revision > 0)),
-    CONSTRAINT apps_security_policy_chk CHECK ((security_policy = ANY (ARRAY['off'::text, 'warn'::text, 'enforce'::text]))),
-    CONSTRAINT apps_static_egress_ip_family_check CHECK (((static_egress_ip IS NULL) OR (family(static_egress_ip) = 4))),
-    CONSTRAINT apps_status_check CHECK ((status = ANY (ARRAY['active'::text, 'evicted_cold'::text, 'deleted'::text]))),
-    CONSTRAINT apps_streaming_enabled_plan_check CHECK (((NOT streaming_enabled) OR public.apps_streaming_plan_allowed(account_id))),
-    CONSTRAINT apps_type_check CHECK ((type = ANY (ARRAY['app'::text, 'function'::text]))),
-    CONSTRAINT apps_visibility_chk CHECK ((visibility = ANY (ARRAY['public'::text, 'internal'::text]))),
-    CONSTRAINT apps_warm_pool_size_chk CHECK (((warm_pool_size >= 0) AND (warm_pool_size <= max_concurrency))),
-    CONSTRAINT apps_warm_snapshot_min_ms_check CHECK (((warm_snapshot_min_ms >= 100) AND (warm_snapshot_min_ms <= 60000))),
-    CONSTRAINT apps_warm_snapshot_min_requests_check CHECK (((warm_snapshot_min_requests >= 1) AND (warm_snapshot_min_requests <= 100))),
-    CONSTRAINT apps_workload_class_chk CHECK ((workload_class = ANY (ARRAY['http'::text, 'graphql'::text, 'grpc'::text, 'job'::text, 'worker'::text])))
-);
-
-
---
--- Name: COLUMN apps.autoscale_target_rps; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.apps.autoscale_target_rps IS 'Per-instance RPS target. When live_request_count / live_instance_count exceeds this, schedd admits another instance (up to plan max_concurrency). Hobby/Pro/Scale only (plan gate). 0 / NULL = disabled (the trigger skips the app).';
-
-
---
--- Name: COLUMN apps.autoscale_target_cpu_pct; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.apps.autoscale_target_cpu_pct IS 'Per-instance CPU% target (1..100). Pro/Scale only (plan gate). 0 / NULL = disabled (the trigger skips the app). CPU target is unbounded above 100 inside the DB; the apid handler enforces [1, 100] via 422.';
-
-
---
--- Name: COLUMN apps.deleted_at; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.apps.deleted_at IS 'Customer-requested app soft-delete timestamp; NULL for live and legacy tombstones.';
-
-
---
--- Name: COLUMN apps.delete_grace_until; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.apps.delete_grace_until IS 'Deadline through which a deleted app may be restored; hard-delete sweeper runs after this instant.';
-
-
---
--- Name: COLUMN apps.request_rate_limit_rps; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.apps.request_rate_limit_rps IS 'Optional app-wide edge token-bucket refill override. NULL inherits the account plan.';
-
-
---
--- Name: COLUMN apps.request_rate_limit_burst; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.apps.request_rate_limit_burst IS 'Optional app-wide edge token-bucket burst override. NULL inherits the account plan.';
-
-
---
 -- Name: audit_event_outbox; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -7343,145 +7595,6 @@ CREATE TABLE public.deployment_sidecar_secret_reload_signals (
     signal text NOT NULL,
     CONSTRAINT deployment_sidecar_secret_reload_name_chk CHECK ((sidecar_name ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text)),
     CONSTRAINT deployment_sidecar_secret_reload_signal_chk CHECK ((signal = ANY (ARRAY[''::text, 'SIGHUP'::text, 'SIGUSR1'::text, 'SIGUSR2'::text])))
-);
-
-
---
--- Name: deployments; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.deployments (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    app_id uuid NOT NULL,
-    build_id uuid,
-    image_digest text NOT NULL,
-    rootfs_path text,
-    rootfs_bytes bigint,
-    status text NOT NULL,
-    error text,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    kind text DEFAULT 'image'::text NOT NULL,
-    source_path text,
-    source_bytes bigint,
-    handler text,
-    log_path text,
-    error_code text,
-    rootfs_key text DEFAULT ''::text NOT NULL,
-    source_url text,
-    commit_sha text,
-    override_entrypoint text[],
-    override_cmd text[],
-    override_env jsonb,
-    override_env_secrets jsonb,
-    override_port integer,
-    override_healthcheck jsonb,
-    sidecars jsonb DEFAULT '[]'::jsonb NOT NULL,
-    min_instances integer DEFAULT 0 NOT NULL,
-    scan_result jsonb,
-    scan_status text,
-    scanned_at timestamp with time zone,
-    override_liveness_probe jsonb,
-    parked_reason text,
-    parked_at timestamp with time zone,
-    traffic_percent integer DEFAULT 100 NOT NULL,
-    scope text DEFAULT 'default'::text NOT NULL,
-    secret_findings jsonb DEFAULT '[]'::jsonb NOT NULL,
-    secret_scanned_at timestamp with time zone,
-    error_hint text,
-    error_why text,
-    error_fix text,
-    error_relevant_logs jsonb,
-    stage_state jsonb DEFAULT '{"current": "source_download", "history": [], "current_started_at": null}'::jsonb NOT NULL,
-    deployed_by_user_id uuid,
-    deployed_via text DEFAULT 'api'::text NOT NULL,
-    deployed_from_ip inet,
-    pusher_login text,
-    reason text,
-    tag text,
-    deployed_by text,
-    pr_number integer,
-    rollback_on_5xx boolean DEFAULT false NOT NULL,
-    first_wake_at timestamp with time zone,
-    first_5xx_window_ends_at timestamp with time zone,
-    first_5xx_count integer DEFAULT 0 NOT NULL,
-    last_auto_rollback_at timestamp with time zone,
-    last_auto_rollback_reason text,
-    liveness_restart_count integer DEFAULT 0 NOT NULL,
-    canary_preset text DEFAULT 'none'::text NOT NULL,
-    canary_step integer DEFAULT 0 NOT NULL,
-    canary_total_steps integer DEFAULT 0 NOT NULL,
-    canary_step_started_at timestamp with time zone DEFAULT now() NOT NULL,
-    rollout_state text DEFAULT 'pending'::text NOT NULL,
-    rollout_started_at timestamp with time zone,
-    rollout_completed_at timestamp with time zone,
-    rollout_aborted_at timestamp with time zone,
-    rollout_aborted_reason text,
-    cancelled_at timestamp with time zone,
-    cancelled_by_principal text,
-    cancel_reason text,
-    deleted_at timestamp with time zone,
-    deleted_by_principal text,
-    priority integer DEFAULT 100 NOT NULL,
-    reordered_at timestamp with time zone,
-    reordered_by_principal text,
-    canary_stages jsonb,
-    snapshot_miss_count integer DEFAULT 0 NOT NULL,
-    snapshot_miss_last_at timestamp with time zone,
-    snapshot_miss_backoff_until timestamp with time zone,
-    workflows jsonb DEFAULT '[]'::jsonb NOT NULL,
-    source_root text,
-    full_rootfs_allow_auto boolean DEFAULT false NOT NULL,
-    full_rootfs_override boolean,
-    source_sha256 text,
-    api_hosting_receipt jsonb DEFAULT '{}'::jsonb NOT NULL,
-    inferred_profile jsonb,
-    traffic_percent_explicit boolean DEFAULT false NOT NULL,
-    revision integer DEFAULT 0 NOT NULL,
-    service_rollout_handoff jsonb DEFAULT '{}'::jsonb NOT NULL,
-    release_command text[] DEFAULT ARRAY[]::text[] NOT NULL,
-    release_command_shell boolean DEFAULT false NOT NULL,
-    disable_startup_cpu_boost boolean DEFAULT false NOT NULL,
-    override_main_depends_on jsonb DEFAULT '[]'::jsonb NOT NULL,
-    override_readiness_probe jsonb,
-    secret_reload_signal text,
-    github_source_ref text,
-    github_installation_id bigint,
-    CONSTRAINT deployments_canary_preset_chk CHECK ((canary_preset = ANY (ARRAY['none'::text, 'slow'::text, 'balanced'::text, 'aggressive'::text, '1-10-50-100'::text, 'custom'::text]))),
-    CONSTRAINT deployments_canary_stages_shape CHECK (((canary_preset <> 'custom'::text) OR ((canary_stages IS NOT NULL) AND (jsonb_typeof(canary_stages) = 'array'::text) AND (jsonb_array_length(canary_stages) > 0)))),
-    CONSTRAINT deployments_canary_step_nonneg_chk CHECK ((canary_step >= 0)),
-    CONSTRAINT deployments_canary_total_steps_nonneg_chk CHECK ((canary_total_steps >= 0)),
-    CONSTRAINT deployments_cancel_reason_check CHECK (((cancel_reason IS NULL) OR (cancel_reason = ANY (ARRAY['user'::text, 'auto_quota'::text, 'auto_health'::text, 'system'::text])))),
-    CONSTRAINT deployments_cancelled_release_fence_chk CHECK (((status <> 'cancelled'::text) OR ((traffic_percent = 0) AND (rollout_state = 'aborted'::text) AND (rollout_aborted_at IS NOT NULL) AND (COALESCE((stage_state ->> 'current'::text), ''::text) = ''::text)))),
-    CONSTRAINT deployments_commit_sha_shape_chk CHECK (((commit_sha IS NULL) OR (((char_length(commit_sha) >= 7) AND (char_length(commit_sha) <= 64)) AND (commit_sha ~ '^[0-9a-f]+$'::text)))),
-    CONSTRAINT deployments_deployed_via_set_chk CHECK ((deployed_via = ANY (ARRAY['api'::text, 'cli'::text, 'dashboard'::text, 'github'::text, 'operator'::text]))),
-    CONSTRAINT deployments_failed_stage_fence_chk CHECK (((status <> 'failed'::text) OR (COALESCE((stage_state ->> 'current'::text), ''::text) = ''::text))),
-    CONSTRAINT deployments_failed_traffic_fence_chk CHECK (((status <> 'failed'::text) OR ((traffic_percent = 0) AND (rollout_state = 'aborted'::text) AND (rollout_aborted_at IS NOT NULL)))),
-    CONSTRAINT deployments_github_source_ref_pair_chk CHECK ((((github_source_ref IS NULL) AND (github_installation_id IS NULL)) OR ((github_source_ref IS NOT NULL) AND (btrim(github_source_ref) <> ''::text) AND (github_installation_id IS NOT NULL) AND (github_installation_id > 0)))),
-    CONSTRAINT deployments_kind_check CHECK ((kind = ANY (ARRAY['image'::text, 'tarball'::text, 'dockerfile'::text, 'github'::text, 'preview'::text]))),
-    CONSTRAINT deployments_last_auto_rollback_reason_check CHECK (((last_auto_rollback_reason IS NULL) OR (last_auto_rollback_reason = ANY (ARRAY['threshold_exceeded'::text, 'first_window_expired'::text])))),
-    CONSTRAINT deployments_liveness_restart_count_nonneg_chk CHECK ((liveness_restart_count >= 0)),
-    CONSTRAINT deployments_main_depends_on_shape_chk CHECK (((jsonb_typeof(override_main_depends_on) = 'array'::text) AND (jsonb_array_length(override_main_depends_on) <= 6))),
-    CONSTRAINT deployments_min_instances_chk CHECK (((min_instances >= 0) AND (min_instances <= 100))),
-    CONSTRAINT deployments_parked_reason_check CHECK (((parked_reason IS NULL) OR (parked_reason = ANY (ARRAY['liveness_exhausted'::text, 'lifecycle_park'::text, 'admin_park'::text, 'security_scan_regressed'::text])))),
-    CONSTRAINT deployments_pr_number_positive_chk CHECK (((pr_number IS NULL) OR (pr_number > 0))),
-    CONSTRAINT deployments_priority_check CHECK (((priority >= 0) AND (priority <= 1000))),
-    CONSTRAINT deployments_reason_len_chk CHECK (((reason IS NULL) OR (length(reason) <= 280))),
-    CONSTRAINT deployments_release_command_chk CHECK ((((cardinality(release_command) = 0) AND (NOT release_command_shell)) OR (((cardinality(release_command) >= 1) AND (cardinality(release_command) <= 64)) AND (array_position(release_command, NULL::text) IS NULL) AND ((octet_length(btrim(release_command[1])) >= 1) AND (octet_length(btrim(release_command[1])) <= 4096)) AND ((octet_length(array_to_string(release_command, ''::text)) >= 1) AND (octet_length(array_to_string(release_command, ''::text)) <= 16384)) AND ((NOT release_command_shell) OR (cardinality(release_command) = 1))))),
-    CONSTRAINT deployments_revision_nonneg_chk CHECK ((revision >= 0)),
-    CONSTRAINT deployments_rollout_state_chk CHECK ((rollout_state = ANY (ARRAY['pending'::text, 'rolling_out'::text, 'complete'::text, 'aborted'::text]))),
-    CONSTRAINT deployments_scan_status_chk CHECK (((scan_status IS NULL) OR (scan_status = ANY (ARRAY['pending'::text, 'complete'::text, 'failed'::text, 'skipped'::text, 'complete_with_redactions'::text])))),
-    CONSTRAINT deployments_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
-    CONSTRAINT deployments_secret_reload_signal_chk CHECK (((secret_reload_signal IS NULL) OR (secret_reload_signal = ANY (ARRAY[''::text, 'SIGHUP'::text, 'SIGUSR1'::text, 'SIGUSR2'::text])))),
-    CONSTRAINT deployments_service_rollout_handoff_object_chk CHECK ((jsonb_typeof(service_rollout_handoff) = 'object'::text)),
-    CONSTRAINT deployments_service_rollout_handoff_size_chk CHECK ((octet_length((service_rollout_handoff)::text) <= 16384)),
-    CONSTRAINT deployments_service_rollout_handoff_state_chk CHECK (((service_rollout_handoff = '{}'::jsonb) OR (((service_rollout_handoff ->> 'action'::text) = ANY (ARRAY['promote'::text, 'abort'::text])) AND ((service_rollout_handoff ->> 'phase'::text) = ANY (ARRAY['pending'::text, 'routing'::text, 'draining'::text, 'complete'::text])) AND (COALESCE(((service_rollout_handoff ->> 'retry_count'::text))::integer, 0) >= 0)))),
-    CONSTRAINT deployments_sidecars_cap_chk CHECK ((jsonb_array_length(sidecars) <= 5)),
-    CONSTRAINT deployments_source_root_shape_chk CHECK (((source_root IS NULL) OR (source_root = ''::text) OR (source_root = '.'::text) OR ((source_root !~ '^/'::text) AND (source_root !~ '(^|/)\.\.(/|$)'::text)))),
-    CONSTRAINT deployments_source_sha256_shape_chk CHECK (((source_sha256 IS NULL) OR (source_sha256 ~ '^[0-9a-f]{64}$'::text))),
-    CONSTRAINT deployments_stage_state_current_check CHECK ((((stage_state ->> 'current'::text) IS NULL) OR ((stage_state ->> 'current'::text) = ''::text) OR ((stage_state ->> 'current'::text) = ANY (ARRAY['source_download'::text, 'dependency_restore'::text, 'image_build'::text, 'security_scan'::text, 'snapshot_prepare'::text, 'readiness'::text])))),
-    CONSTRAINT deployments_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'building'::text, 'imaging'::text, 'snapshotting'::text, 'live'::text, 'failed'::text, 'superseded'::text, 'cancelled'::text]))),
-    CONSTRAINT deployments_tag_set_chk CHECK (((tag IS NULL) OR (tag = ANY (ARRAY['incident_recovery'::text, 'hotfix'::text, 'scheduled_maintenance'::text, 'compliance_hold'::text, 'partner_request'::text])))),
-    CONSTRAINT deployments_traffic_percent_chk CHECK (((traffic_percent >= 0) AND (traffic_percent <= 100)))
 );
 
 

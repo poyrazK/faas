@@ -17,21 +17,21 @@ import (
 )
 
 func TestPgBaseProducerLifecycle(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if err := db.MigrateUp(t.Context(), pool); err != nil {
 		t.Fatal(err)
 	}
 	baseProducerLifecycle(t, NewPgStore(pool))
 }
 func TestPgBaseProducerRefusals(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if err := db.MigrateUp(t.Context(), pool); err != nil {
 		t.Fatal(err)
 	}
 	baseProducerRefusals(t, NewPgStore(pool))
 }
 func TestPgBaseProducerFencesAndGuards(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if err := db.MigrateUp(t.Context(), pool); err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestPgBaseProducerFencesAndGuards(t *testing.T) {
 }
 
 func TestPgRegistryRootfsBaseBinding(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if err := db.MigrateUp(t.Context(), pool); err != nil {
 		t.Fatal(err)
 	}

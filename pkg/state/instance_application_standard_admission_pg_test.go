@@ -17,7 +17,7 @@ import (
 
 func runtimeCapturePGStore(t *testing.T) (*PgStore, *pgxpool.Pool) {
 	t.Helper()
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if err := db.MigrateUp(t.Context(), pool); err != nil {
 		t.Fatal(err)
 	}

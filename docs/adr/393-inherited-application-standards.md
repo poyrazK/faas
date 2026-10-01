@@ -313,11 +313,32 @@ duplicate and inconsistent membership without changing historical evidence.
 
 The input read still supplies stored producer facts. It does not invent an
 unbound runtime-default base, scan the actual guest overlay, authorize a native
-boot or advance observed adoption. Durable native captures/grants must consume
-the stable identity and freshly recheck its approval leases. vmmd must verify
+boot or advance observed adoption. Native grants must freshly recheck its
+approval leases. vmmd must verify
 the actual consumed base, app and sidecar bytes and return the bound consumer
 acknowledgment before those release gates can pass. That integration remains
-pending; existing native captures still include compatibility scan metadata.
+pending; native captures still include compatibility scan metadata.
+
+New durable admission captures additionally retain that scoped producer identity
+under the runtime owner/control/artifact fences and nonwaiting shared-base key
+fences. Main, declared image sidecars and explicit bases retain distinct complete
+blob digests and byte counts. The PostgreSQL runtime snapshot and the MemStore
+compare current selections to the saved inputs before resident publication;
+replacing a producer at the same key with the same compatibility size still
+invalidates the earlier capture. Retained incomplete lineage cannot fall back
+to a capture without producers. Immutable captures expose a separate canonical
+producer-set hash that matches the fresh input read and survives evidence
+renewal. Reads copy the identities and never backfill historical captures.
+
+The complete native capture still conservatively binds the compatibility scan
+report. Renewal can therefore require a new native capture even though its
+producer-set hash is unchanged. That binding must be replaced only together
+with a separate fresh approval lease at grant issue, boot publication and warm
+promotion. Producer metadata alone neither authenticates current publisher
+approval nor proves actual file consumption. Runtime-default bases without an
+explicit producer binding remain unapproved, and source-build publisher
+authority, content-aware native grants and consumed-byte acknowledgments remain
+release gates. No consumer observation or public activation follows this change.
 
 The periodic live lease checker uses this private complete set when retained
 producer lineage exists. A missing sidecar, failed or replaced base, expired
@@ -345,7 +366,7 @@ This is a producer boundary under the existing imaged/database writer trust
 model. Source-build publisher approval, complete runtime scans and native boot
 consumption remain separate. Artifact keys remain mutable; later consumers must
 freshly validate the selected expected digest and size. Existing admission
-captures do not yet include these producer identities. Historical
+captures now retain these producer identities when private lineage is present. Historical
 current-selection reads may return expired or revoked registry evidence and
 must not be treated as runtime authority or observed adoption. Older rootfs
 records lacking a base binding retain their immutable hashes and acquire no

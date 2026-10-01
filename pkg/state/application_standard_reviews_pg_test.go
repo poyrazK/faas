@@ -18,7 +18,7 @@ import (
 
 func TestPgApplicationStandardReviewEmptyProject(t *testing.T) {
 	ctx := context.Background()
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +31,7 @@ func TestPgApplicationStandardReviewEmptyProject(t *testing.T) {
 
 func TestPgApplicationStandardReviewBatchAccountQuota(t *testing.T) {
 	ctx := context.Background()
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestPgApplicationStandardReviewBatchAccountQuota(t *testing.T) {
 
 func TestPgApplicationStandardReviewSavedAdoptions(t *testing.T) {
 	ctx := context.Background()
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestPgApplicationStandardReviewSavedAdoptions(t *testing.T) {
 
 func TestPgApplicationStandardReviews(t *testing.T) {
 	ctx := context.Background()
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatal(err)
 	}

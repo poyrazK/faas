@@ -4,8 +4,6 @@ package state
 
 import (
 	"context"
-	"slices"
-	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -68,24 +66,11 @@ func deploymentRuntimeArtifactInputs(evidence DeploymentArtifactScanEvidence) (D
 		return DeploymentRuntimeArtifactInputs{}, ErrApplicationStandardRuntimeStale
 	}
 	in := evidence.Components[0].Input
-	identity := deploymentRuntimeArtifactIdentity{Format: "gregale.runtime-artifact-input.v1", AccountID: in.AccountID, OrgID: in.OrgID, AppID: in.AppID, DeploymentID: in.DeploymentID, Scope: in.Scope, Artifacts: slices.Clone(evidence.Artifacts)}
-	if err := checkRuntimeArtifactIdentity(identity); err != nil {
-		return DeploymentRuntimeArtifactInputs{}, err
-	}
-	slices.SortFunc(identity.Artifacts, func(a, b DeploymentRuntimeArtifact) int {
-		if a.Kind == "base-image" && b.Kind != "base-image" {
-			return -1
-		}
-		if b.Kind == "base-image" && a.Kind != "base-image" {
-			return 1
-		}
-		return strings.Compare(a.WorkloadName, b.WorkloadName)
-	})
-	if err := checkRuntimeArtifactMembership(identity, evidence); err != nil {
-		return DeploymentRuntimeArtifactInputs{}, err
-	}
-	hash, err := standardReviewDigest(identity)
+	identity, hash, err := prepareRuntimeArtifactIdentity(deploymentRuntimeArtifactIdentity{Format: "gregale.runtime-artifact-input.v1", AccountID: in.AccountID, OrgID: in.OrgID, AppID: in.AppID, DeploymentID: in.DeploymentID, Scope: in.Scope, Artifacts: evidence.Artifacts})
 	if err != nil {
+		return DeploymentRuntimeArtifactInputs{}, err
+	}
+	if err := checkRuntimeArtifactMembership(identity, evidence); err != nil {
 		return DeploymentRuntimeArtifactInputs{}, err
 	}
 	expires, err := runtimeArtifactInputDeadline(evidence)

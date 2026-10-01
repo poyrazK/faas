@@ -24,6 +24,8 @@ type InstanceApplicationStandardAdmission struct {
 	PersistedRevision int64
 	EffectiveHash     string
 	InputHash         string
+	ArtifactInputHash string
+	RuntimeArtifacts  []DeploymentRuntimeArtifact
 	NativeInputHash   string
 	NodeID            string
 	AccountID         string
@@ -124,12 +126,15 @@ func standardRuntimeArtifact(dep Deployment) map[string]any {
 func decodeInstanceStandardAdmission(id string, raw []byte, capturedAt time.Time) (InstanceApplicationStandardAdmission, error) {
 	var input struct {
 		AppID              string            `json:"app_id"`
+		OrgID              string            `json:"org_id"`
 		AccountID          string            `json:"account_id"`
 		EgressRevision     int64             `json:"egress_revision"`
 		Adoptions          []json.RawMessage `json:"adoptions"`
 		MaterializedFields []string          `json:"materialized_fields"`
+		RuntimeArtifacts   json.RawMessage   `json:"runtime_artifacts"`
 		Artifact           struct {
-			ID string `json:"id"`
+			ID    string `json:"id"`
+			Scope string `json:"scope"`
 		} `json:"artifact"`
 		DesiredRevision   int64  `json:"desired_revision"`
 		PersistedRevision int64  `json:"persisted_revision"`
@@ -150,10 +155,12 @@ func decodeInstanceStandardAdmission(id string, raw []byte, capturedAt time.Time
 	if err != nil {
 		return InstanceApplicationStandardAdmission{}, err
 	}
-	return InstanceApplicationStandardAdmission{InstanceID: id, AppID: input.AppID, DeploymentID: input.Artifact.ID,
+	capture := InstanceApplicationStandardAdmission{InstanceID: id, AppID: input.AppID, DeploymentID: input.Artifact.ID,
 		AccountID: input.AccountID, EgressRevision: input.EgressRevision, Managed: len(input.Adoptions) > 0 || len(input.MaterializedFields) > 0,
 		DesiredRevision: input.DesiredRevision, PersistedRevision: input.PersistedRevision, EffectiveHash: input.EffectiveHash,
-		InputHash: hash, CapturedAt: capturedAt, inputs: append(json.RawMessage(nil), raw...)}, nil
+		InputHash: hash, CapturedAt: capturedAt, inputs: append(json.RawMessage(nil), raw...)}
+	capture.RuntimeArtifacts, capture.ArtifactInputHash, err = decodeRuntimeArtifactCapture(input.RuntimeArtifacts, input.AccountID, input.OrgID, input.AppID, input.Artifact.ID, input.Artifact.Scope)
+	return capture, err
 }
 
 func standardRuntimeAdmissionState(s string) bool {
