@@ -21,6 +21,7 @@ var queueBindingNameRE = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 
 func queueBindingResponse(row state.QueueBinding) api.QueueBindingResponse {
 	return api.QueueBindingResponseFromRow(api.QueueBindingRow{
+		Environment: row.DeploymentScope, EnvironmentID: row.EnvironmentID,
 		ID: row.ID, AppID: row.AppID, AccountID: row.AccountID,
 		Name: row.Name, QueueName: row.QueueName, Mode: row.Mode,
 		WorkloadClass: string(row.WorkloadClass), Enabled: row.Enabled,
@@ -159,6 +160,8 @@ func (s *server) getQueueBindingStatus(w http.ResponseWriter, r *http.Request, a
 	}
 
 	resp := api.QueueBindingStatusResponse{
+		Environment:      binding.DeploymentScope,
+		EnvironmentID:    binding.EnvironmentID,
 		BindingID:        binding.ID,
 		Name:             binding.Name,
 		QueueName:        binding.QueueName,
@@ -222,6 +225,16 @@ func (s *server) getQueueBindingStatus(w http.ResponseWriter, r *http.Request, a
 					resp.ConsumerLiveness = queueBindingConsumerLiveness(time.Now().UTC(), health)
 				}
 			}
+		}
+	}
+	if binding.DeploymentScope != "" {
+		available, problem := s.queueBindingEnvironmentAvailable(r.Context(), acct, app, binding)
+		if problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+		if !available {
+			resp.ConsumerState, resp.ConsumerStateReason, resp.ConsumerLiveness = "paused", "environment_unavailable", "not_observed"
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -308,7 +321,17 @@ func (s *server) createQueueBinding(w http.ResponseWriter, r *http.Request, acct
 	if !ok {
 		return
 	}
+	var environmentID string
+	if req.Environment != "" {
+		_, environment, problem := s.resolveQueueEnvironment(r.Context(), acct, app, req.Environment)
+		if problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+		environmentID = environment.ID
+	}
 	result, err := consumers.CreateQueueBindingWithConsumer(r.Context(), state.QueueBinding{
+		DeploymentScope: req.Environment, EnvironmentID: environmentID,
 		AccountID: acct.ID, AppID: app.ID, Name: req.Name, QueueName: req.QueueName,
 		Mode: mode, WorkloadClass: state.WorkloadClass(class), Enabled: enabled,
 		MaxConcurrency: concurrency, RetryPolicyJSON: policy,
@@ -319,7 +342,7 @@ func (s *server) createQueueBinding(w http.ResponseWriter, r *http.Request, acct
 	}
 	row := result.Binding
 	s.notifyQueueBindingConsumer(r.Context(), result)
-	s.audit.Emit(r.Context(), "queue.binding_created", &acct.ID, map[string]any{"binding_id": row.ID, "app_id": app.ID, "name": row.Name, "queue_name": row.QueueName, "mode": row.Mode})
+	s.audit.Emit(r.Context(), "queue.binding_created", &acct.ID, map[string]any{"binding_id": row.ID, "app_id": app.ID, "name": row.Name, "queue_name": row.QueueName, "mode": row.Mode, "environment": row.DeploymentScope, "environment_id": row.EnvironmentID})
 	writeJSON(w, http.StatusCreated, queueBindingResponse(row))
 }
 

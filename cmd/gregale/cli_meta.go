@@ -489,6 +489,7 @@ var cliCommands = []cliCommand{
 			{Name: "source", Short: "event source", Value: "SOURCE"},
 			{Name: "time", Short: "event time", Value: "RFC3339"},
 			{Name: "queue-name", Short: "target logical queue name", Value: "QUEUE"},
+			{Name: "environment", Short: "registered project environment with an enabled queue binding", Value: "ENV"},
 			{Name: "work-policy", Short: "named work policy for an unnamed queue", Value: "NAME"},
 			{Name: "work-key", Short: "JSON scalar identifying related work", Value: "JSON"},
 			{Name: "work-fairness-key", Short: "JSON scalar shared by related work keys", Value: "JSON"},
@@ -1918,6 +1919,7 @@ var cliCommands = []cliCommand{
 			{Name: "send", Short: "Enqueue a wake request", Flags: []cliFlag{
 				{Name: "payload", Short: "JSON payload (inline | @file | -)", Value: "J"},
 				{Name: "queue-name", Short: "logical queue name", Value: "QUEUE"},
+				{Name: "environment", Short: "registered project environment with an enabled queue binding", Value: "ENV"},
 				{Name: "work-policy", Short: "named work policy for an unnamed queue", Value: "NAME"},
 				{Name: "work-key", Short: "JSON scalar identifying related work", Value: "JSON"},
 				{Name: "work-fairness-key", Short: "JSON scalar shared by related work keys", Value: "JSON"},

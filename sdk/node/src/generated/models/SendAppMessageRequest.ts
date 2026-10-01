@@ -9,6 +9,10 @@ import type { RetryPolicyDTO } from './RetryPolicyDTO.js';
  */
 export type SendAppMessageRequest = {
   /**
+   * Registered project environment. Requires an enabled environment-owned queue binding; omitted uses the default environment and legacy shared queues.
+   */
+  environment?: string;
+  /**
    * Generated when omitted.
    */
   id?: string;
@@ -34,7 +38,7 @@ export type SendAppMessageRequest = {
   queue_name?: string;
   retry_policy?: RetryPolicyDTO;
   /**
-   * Optional application-keyed policy for an unnamed queue without an active queue consumer.
+   * Optional application-keyed policy. Environment-owned queue bindings require a scoped policy adapter and currently reject this option.
    */
   work?: InvokeWork;
 };

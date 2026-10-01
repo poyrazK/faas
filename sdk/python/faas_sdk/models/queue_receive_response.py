@@ -18,10 +18,14 @@ T = TypeVar("T", bound="QueueReceiveResponse")
 
 @_attrs_define
 class QueueReceiveResponse:
-    """200 — a dequeued row (the long-poll hit). 204 (no body) on timeout."""
+    """200 — a completed queue invocation observed by the long-poll feed. 204 (no body) on timeout."""
 
     id: str
     payload: QueueReceiveResponsePayload
+    environment: str | Unset = UNSET
+    """Deployment scope captured when the message was accepted."""
+    queue_binding_id: str | Unset = UNSET
+    """Immutable captured queue binding identity; omitted for legacy unbound work."""
     result: QueueReceiveResponseResult | Unset = UNSET
     trace_id: str | Unset = UNSET
     traceparent: str | Unset = UNSET
@@ -32,6 +36,10 @@ class QueueReceiveResponse:
         id = self.id
 
         payload = self.payload.to_dict()
+
+        environment = self.environment
+
+        queue_binding_id = self.queue_binding_id
 
         result: dict[str, Any] | Unset = UNSET
         if not isinstance(self.result, Unset):
@@ -49,6 +57,10 @@ class QueueReceiveResponse:
                 "payload": payload,
             }
         )
+        if environment is not UNSET:
+            field_dict["environment"] = environment
+        if queue_binding_id is not UNSET:
+            field_dict["queue_binding_id"] = queue_binding_id
         if result is not UNSET:
             field_dict["result"] = result
         if trace_id is not UNSET:
@@ -68,6 +80,10 @@ class QueueReceiveResponse:
 
         payload = QueueReceiveResponsePayload.from_dict(d.pop("payload"))
 
+        environment = d.pop("environment", UNSET)
+
+        queue_binding_id = d.pop("queue_binding_id", UNSET)
+
         _result = d.pop("result", UNSET)
         result: QueueReceiveResponseResult | Unset
         if isinstance(_result, Unset):
@@ -82,6 +98,8 @@ class QueueReceiveResponse:
         queue_receive_response = cls(
             id=id,
             payload=payload,
+            environment=environment,
+            queue_binding_id=queue_binding_id,
             result=result,
             trace_id=trace_id,
             traceparent=traceparent,

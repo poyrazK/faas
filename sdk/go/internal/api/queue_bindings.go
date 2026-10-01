@@ -1,9 +1,6 @@
 package api
 
-import (
-	"encoding/json"
-	"time"
-)
+import "time"
 
 // QueueBindingResponse is the durable app-scoped mapping between a logical
 // queue and a worker/job workload. It is intentionally independent of queue
@@ -76,61 +73,4 @@ type UpdateQueueBindingRequest struct {
 	Enabled        *bool           `json:"enabled,omitempty"`
 	MaxConcurrency *int            `json:"max_concurrency,omitempty"`
 	RetryPolicy    *RetryPolicyDTO `json:"retry_policy,omitempty"`
-}
-
-// QueueWorkloadProfileRequest configures the common queue worker profile in
-// one idempotent control-plane operation. Zero-valued fields use platform
-// defaults; advanced binding and scaling APIs remain available separately.
-type QueueWorkloadProfileRequest struct {
-	QueueName      string          `json:"queue_name,omitempty"`
-	WorkloadClass  string          `json:"workload_class,omitempty"`
-	MaxConcurrency int             `json:"max_concurrency,omitempty"`
-	TargetDepth    float64         `json:"target_depth,omitempty"`
-	RetryPolicy    *RetryPolicyDTO `json:"retry_policy,omitempty"`
-	Force          bool            `json:"force,omitempty"`
-}
-
-// QueueWorkloadProfileResponse is the converged queue binding and scaling
-// policy returned by the simple queue workload endpoint.
-type QueueWorkloadProfileResponse struct {
-	App           AppResponse          `json:"app"`
-	Binding       QueueBindingResponse `json:"binding"`
-	ScalingPolicy *ScalingPolicy       `json:"scaling_policy"`
-	Created       bool                 `json:"created"`
-}
-
-// QueueBindingResponseFromRow maps the state row without importing pkg/state
-// into pkg/api. Invalid persisted retry JSON is treated as an empty policy;
-// the write path and database CHECK keep production rows object-shaped.
-type QueueBindingRow struct {
-	Environment     string
-	EnvironmentID   string
-	ID              string
-	AppID           string
-	AccountID       string
-	Name            string
-	QueueName       string
-	Mode            string
-	WorkloadClass   string
-	Enabled         bool
-	MaxConcurrency  int
-	RetryPolicyJSON json.RawMessage
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-}
-
-func QueueBindingResponseFromRow(row QueueBindingRow) QueueBindingResponse {
-	var policy RetryPolicyDTO
-	var policyPtr *RetryPolicyDTO
-	if len(row.RetryPolicyJSON) > 0 && json.Unmarshal(row.RetryPolicyJSON, &policy) == nil {
-		policyPtr = &policy
-	}
-	return QueueBindingResponse{
-		Environment: row.Environment, EnvironmentID: row.EnvironmentID,
-		ID: row.ID, AppID: row.AppID, AccountID: row.AccountID,
-		Name: row.Name, QueueName: row.QueueName, Mode: row.Mode,
-		WorkloadClass: row.WorkloadClass, Enabled: row.Enabled,
-		MaxConcurrency: row.MaxConcurrency, RetryPolicy: policyPtr,
-		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
-	}
 }

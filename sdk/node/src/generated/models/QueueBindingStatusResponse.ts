@@ -6,6 +6,14 @@
  * Read-only queue binding consumer projection and queue counters.
  */
 export type QueueBindingStatusResponse = {
+  /**
+   * Immutable project environment slug; omitted for a shared legacy binding.
+   */
+  environment?: string;
+  /**
+   * Original catalog environment identity; omitted for a shared legacy binding.
+   */
+  environment_id?: string;
   binding_id: string;
   name: string;
   queue_name: string;

@@ -163,6 +163,7 @@ type PreviewEventResponse struct {
 // application's durable invocation queue. Source defaults to "gregale.send";
 // ID and Time default to server-generated values.
 type SendAppMessageRequest struct {
+	Environment     string          `json:"environment,omitempty"`
 	ID              string          `json:"id,omitempty"`
 	Source          string          `json:"source,omitempty"`
 	Type            string          `json:"type"`
@@ -203,12 +204,14 @@ func (r *SendAppMessageRequest) UnmarshalJSON(data []byte) error {
 // the invocation identifier used by the existing status, DLQ, and replay
 // surfaces; EventID is the CloudEvents id delivered in the payload.
 type SendAppMessageResponse struct {
-	ID        string `json:"id"`
-	EventID   string `json:"event_id"`
-	TargetApp string `json:"target_app"`
-	Status    string `json:"status"`
-	StatusURL string `json:"status_url"`
-	TraceID   string `json:"trace_id,omitempty"`
+	Environment    string `json:"environment,omitempty"`
+	QueueBindingID string `json:"queue_binding_id,omitempty"`
+	ID             string `json:"id"`
+	EventID        string `json:"event_id"`
+	TargetApp      string `json:"target_app"`
+	Status         string `json:"status"`
+	StatusURL      string `json:"status_url"`
+	TraceID        string `json:"trace_id,omitempty"`
 }
 
 // EventSubscriptionResponse is one manifest-declared subscription currently
@@ -5014,18 +5017,22 @@ type InvokeResponse struct {
 // 201 Created with the new id; the customer pairs this with the
 // /receive long-poll.
 type QueueSendResponse struct {
-	ID      string `json:"id"`
-	TraceID string `json:"trace_id,omitempty"`
+	Environment    string `json:"environment,omitempty"`
+	QueueBindingID string `json:"queue_binding_id,omitempty"`
+	ID             string `json:"id"`
+	TraceID        string `json:"trace_id,omitempty"`
 }
 
 // QueueReceiveResponse is returned on POST /v1/apps/{slug}/queues/invocations:receive.
 // 200 with the dequeued row's payload + result; 204 on timeout.
 type QueueReceiveResponse struct {
-	ID          string          `json:"id"`
-	Payload     json.RawMessage `json:"payload"`
-	Result      json.RawMessage `json:"result,omitempty"`
-	TraceID     string          `json:"trace_id,omitempty"`
-	Traceparent string          `json:"traceparent,omitempty"`
+	Environment    string          `json:"environment,omitempty"`
+	QueueBindingID string          `json:"queue_binding_id,omitempty"`
+	ID             string          `json:"id"`
+	Payload        json.RawMessage `json:"payload"`
+	Result         json.RawMessage `json:"result,omitempty"`
+	TraceID        string          `json:"trace_id,omitempty"`
+	Traceparent    string          `json:"traceparent,omitempty"`
 }
 
 // LogQueryEvent is the stable, source-neutral shape emitted by database-backed
@@ -5252,7 +5259,9 @@ func (p *RetryPolicyDTO) Validate() *Problem {
 // QueueSendRequest is the body for POST /v1/apps/{slug}/queues/send.
 // Cap-checked against MaxQueueDepth at the handler.
 type QueueSendRequest struct {
-	Payload json.RawMessage `json:"payload,omitempty"`
+	// Environment requires an enabled binding in this registered project environment.
+	Environment string          `json:"environment,omitempty"`
+	Payload     json.RawMessage `json:"payload,omitempty"`
 	// FlagContext carries decisions explicitly marked used by the producer.
 	// The queue handler validates it and retains the customer attribution.
 	FlagContext string          `json:"flag_context,omitempty"`

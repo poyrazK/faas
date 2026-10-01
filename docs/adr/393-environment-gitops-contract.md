@@ -431,8 +431,36 @@ memory/PostgreSQL cases cover deletion/recreation and tenant/scope isolation;
 real PostgreSQL scheduler checks cover separate caps, rename, replay and receipt
 retention. A populated-database migration check exercises the older-function
 interval and all twenty-one unreleased migrations, preserving captured identities
-and current leases. These checks qualify the internal scope contract; they do
-not enable customer selectors, queue ownership/recovery, or the full GitOps graph.
+and current leases. These checks qualify the internal scope contract. They do not establish
+GitOps queue ownership/recovery or complete environment graph support.
+
+
+Customer queue bindings can now select a registered project `environment` at
+creation. The response and binding status carry its original catalog identity;
+updates cannot move a binding between environments. Queue sends and application
+inbox messages accept the same selector and pin the observed binding before
+admission. An explicit environment requires an enabled environment-owned
+binding. Omitted selectors retain the default deployment scope and compatible
+shared queues; exact environment bindings take precedence, including retired
+bindings that hold work for recovery. Name inference considers only eligible
+bindings in the selected namespace. Admission rejects deletion/recreation races
+rather than accepting work against a replacement identity. Inherited Flags
+context retains the originating customer and decision evidence independently of
+the selected target environment.
+
+Go, generated Node/Python SDKs, and CLI sends preserve the selector and returned
+binding identity. The CLI lists each binding's environment, and application
+manifest deployment reconciliation ignores named-environment bindings when
+matching or pruning legacy queue declarations. Binding status reports a paused
+`environment_unavailable` consumer when the original catalog identity is gone.
+Queue completion notifications include the captured deployment scope and binding
+ID. Application-wide keyed-work policies currently reject named-environment
+bindings; environment-specific coalescing/fairness needs its own adapter before
+that gate can be enabled. HTTP tests cover default/explicit selection, immutable
+identity, release graph capture, retained backlog, retirement, and an admission
+race with inherited flag context. PostgreSQL-backed HTTP tests exercise the
+same catalog and admission guards; SDK tests use transport fixtures. These
+selectors do not start the approved-intent executor or transfer GitOps ownership.
 
 The branch's unreleased migrations are replay-safe as a complete set. Their
 rollback retains management intent, ownership, captured work and runtime

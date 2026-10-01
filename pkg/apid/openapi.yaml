@@ -31859,6 +31859,7 @@ components:
       additionalProperties: false
       required: [type, data]
       properties:
+        environment: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Registered project environment. Requires an enabled environment-owned queue binding; omitted uses the default environment and legacy shared queues." }
         id: { type: string, minLength: 1, maxLength: 256, description: Generated when omitted. }
         source: { type: string, minLength: 1, maxLength: 256, default: gregale.send }
         type: { type: string, minLength: 1, maxLength: 256 }
@@ -31871,7 +31872,7 @@ components:
         retry_policy: { $ref: '#/components/schemas/RetryPolicyDTO' }
         work:
           allOf: [{ $ref: '#/components/schemas/InvokeWork' }]
-          description: "Optional application-keyed policy for an unnamed queue without an active queue consumer."
+          description: "Optional application-keyed policy. Environment-owned queue bindings require a scoped policy adapter and currently reject this option."
 
     SendAppMessageResponse:
       description: Durable receipt for a queued app-to-app message.
@@ -31879,6 +31880,8 @@ components:
       additionalProperties: false
       required: [id, event_id, target_app, status, status_url]
       properties:
+        environment: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Deployment scope captured when the message was accepted." }
+        queue_binding_id: { type: string, description: "Immutable captured queue binding identity; omitted for legacy unbound work." }
         id: { type: string, description: Durable invocation identifier. }
         event_id: { type: string }
         target_app: { type: string }
@@ -40953,14 +40956,18 @@ components:
       type: object
       required: [id]
       properties:
+        environment: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Deployment scope captured when the message was accepted." }
+        queue_binding_id: { type: string, description: "Immutable captured queue binding identity; omitted for legacy unbound work." }
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         trace_id: { type: string, pattern: '^[a-f0-9]{32}$', description: "Canonical platform trace id when the request carried a valid trace context." }
 
     QueueReceiveResponse:
-      description: "200 — a dequeued row (the long-poll hit). 204 (no body) on timeout."
+      description: "200 — a completed queue invocation observed by the long-poll feed. 204 (no body) on timeout."
       type: object
       required: [id, payload]
       properties:
+        environment: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Deployment scope captured when the message was accepted." }
+        queue_binding_id: { type: string, description: "Immutable captured queue binding identity; omitted for legacy unbound work." }
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         payload: { type: object, additionalProperties: true }
         result: { type: object, additionalProperties: true }
@@ -41632,6 +41639,7 @@ components:
       description: "Body for POST /v1/apps/{slug}/queues/send. Cap-checked against MaxQueueDepth. Unkeyed messages retain legacy FIFO dispatch; keyed messages use per-key ordering."
       type: object
       properties:
+        environment: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Registered project environment. Requires an enabled environment-owned queue binding; omitted uses the default environment and legacy shared queues." }
         payload: { type: object, additionalProperties: true }
         flag_context: { type: string, maxLength: 12288, description: "Optional bounded Gregale Flags context produced by the Node SDK from decisions marked used. The platform validates the envelope, binds it to its active customer, and restores it on the queued request." }
         queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Optional logical queue name. Required when an app has multiple enabled queue consumers." }
@@ -41641,7 +41649,7 @@ components:
           description: Optional per-message retry curve override.
         work:
           allOf: [{ $ref: '#/components/schemas/InvokeWork' }]
-          description: "Optional policy for an unnamed queue send when the app has no active queue consumer."
+          description: "Optional application-keyed policy. Environment-owned queue bindings require a scoped policy adapter and currently reject this option."
 
     QueueWorkloadProfileRequest:
       description: |
@@ -41675,6 +41683,7 @@ components:
       type: object
       required: [name, queue_name]
       properties:
+        environment: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Immutable registered project environment. The binding captures its catalog UUID; omitted creates a shared legacy binding." }
         name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
         queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
         mode: { type: string, enum: [pull, push], default: pull }
@@ -41704,6 +41713,8 @@ components:
       type: object
       required: [id, app_id, account_id, name, queue_name, mode, workload_class, enabled, max_concurrency, created_at, updated_at]
       properties:
+        environment: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Immutable project environment slug; omitted for a shared legacy binding." }
+        environment_id: { type: string, format: uuid, description: "Original catalog environment identity; omitted for a shared legacy binding." }
         id: { type: string, pattern: '^[0-9a-f]{32}$' }
         app_id: { type: string, pattern: '^[0-9a-f]{32}$' }
         account_id: { type: string, format: uuid }
@@ -41723,6 +41734,8 @@ components:
       required: [binding_id, name, queue_name, mode, workload_class, enabled,
                  consumer_state, consumer_liveness, depth, in_flight, dead_letter, generated_at]
       properties:
+        environment: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Immutable project environment slug; omitted for a shared legacy binding." }
+        environment_id: { type: string, format: uuid, description: "Original catalog environment identity; omitted for a shared legacy binding." }
         binding_id: { type: string }
         name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
         queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }

@@ -66,6 +66,9 @@ func (s *server) enqueueVersionedInvocation(ctx context.Context, requestHeaders 
 	if errors.Is(err, state.ErrQueueBindingRetired) {
 		return state.Invocation{}, api.NewProblem(http.StatusConflict, "queue_binding_retired", "Queue binding retired", "this queue is held for explicit recovery")
 	}
+	if errors.Is(err, state.ErrQueueBindingEnvironmentUnavailable) || s.queueAdmissionEnvironmentUnavailable(ctx, inv, err) {
+		return state.Invocation{}, api.NewProblem(http.StatusConflict, "queue_binding_environment_unavailable", "Queue environment unavailable", "the captured queue environment is unavailable; review the queue selection before retrying")
+	}
 	if err != nil {
 		if errors.Is(err, state.ErrInvalidArgument) && inv.PlatformTenantID != "" {
 			return state.Invocation{}, api.ErrValidation("flag_context customer must be active in the app account")
@@ -76,6 +79,29 @@ func (s *server) enqueueVersionedInvocation(ctx context.Context, requestHeaders 
 		return state.Invocation{}, api.ErrCapacity(capacityDetail)
 	}
 	return created, nil
+}
+
+// Both stores can reject stale explicit binding IDs as invalid admission.
+// Inspect the captured identity before classifying a tenant validation error;
+// inherited flag context must not conceal a deleted/recreated environment.
+func (s *server) queueAdmissionEnvironmentUnavailable(ctx context.Context, inv state.Invocation, err error) bool {
+	if !errors.Is(err, state.ErrInvalidArgument) || inv.QueueBindingID == "" {
+		return false
+	}
+	history, ok := s.store.(state.QueueBindingHistoryStore)
+	if !ok {
+		return false
+	}
+	binding, lookupErr := history.QueueBindingHistoryByID(ctx, inv.AccountID, inv.AppID, inv.QueueBindingID)
+	if lookupErr != nil || binding.DeploymentScope == "" {
+		return false
+	}
+	app, lookupErr := s.store.AppByID(ctx, inv.AppID)
+	if lookupErr != nil {
+		return false
+	}
+	available, problem := s.queueBindingEnvironmentAvailable(ctx, state.Account{ID: inv.AccountID}, app, binding)
+	return problem == nil && !available
 }
 
 // The HTTP control headers and JSON invocation headers share one namespace.

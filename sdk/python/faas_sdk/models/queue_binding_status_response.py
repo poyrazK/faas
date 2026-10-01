@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 from collections.abc import Mapping
 from typing import Any, TypeVar, cast
+from uuid import UUID
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -44,6 +45,10 @@ class QueueBindingStatusResponse:
     in_flight: int
     dead_letter: int
     generated_at: datetime.datetime
+    environment: str | Unset = UNSET
+    """Immutable project environment slug; omitted for a shared legacy binding."""
+    environment_id: UUID | Unset = UNSET
+    """Original catalog environment identity; omitted for a shared legacy binding."""
     consumer_state_reason: str | Unset = UNSET
     trigger_id: str | Unset = UNSET
     last_poll_at: datetime.datetime | None | Unset = UNSET
@@ -80,6 +85,12 @@ class QueueBindingStatusResponse:
         dead_letter = self.dead_letter
 
         generated_at = self.generated_at.isoformat()
+
+        environment = self.environment
+
+        environment_id: str | Unset = UNSET
+        if not isinstance(self.environment_id, Unset):
+            environment_id = str(self.environment_id)
 
         consumer_state_reason = self.consumer_state_reason
 
@@ -155,6 +166,10 @@ class QueueBindingStatusResponse:
                 "generated_at": generated_at,
             }
         )
+        if environment is not UNSET:
+            field_dict["environment"] = environment
+        if environment_id is not UNSET:
+            field_dict["environment_id"] = environment_id
         if consumer_state_reason is not UNSET:
             field_dict["consumer_state_reason"] = consumer_state_reason
         if trigger_id is not UNSET:
@@ -204,6 +219,15 @@ class QueueBindingStatusResponse:
         dead_letter = d.pop("dead_letter")
 
         generated_at = datetime.datetime.fromisoformat(d.pop("generated_at"))
+
+        environment = d.pop("environment", UNSET)
+
+        _environment_id = d.pop("environment_id", UNSET)
+        environment_id: UUID | Unset
+        if isinstance(_environment_id, Unset):
+            environment_id = UNSET
+        else:
+            environment_id = UUID(_environment_id)
 
         consumer_state_reason = d.pop("consumer_state_reason", UNSET)
 
@@ -319,6 +343,8 @@ class QueueBindingStatusResponse:
             in_flight=in_flight,
             dead_letter=dead_letter,
             generated_at=generated_at,
+            environment=environment,
+            environment_id=environment_id,
             consumer_state_reason=consumer_state_reason,
             trigger_id=trigger_id,
             last_poll_at=last_poll_at,

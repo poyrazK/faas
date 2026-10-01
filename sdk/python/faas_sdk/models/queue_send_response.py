@@ -16,12 +16,20 @@ class QueueSendResponse:
     """201 — body of a freshly-enqueued queue row."""
 
     id: str
+    environment: str | Unset = UNSET
+    """Deployment scope captured when the message was accepted."""
+    queue_binding_id: str | Unset = UNSET
+    """Immutable captured queue binding identity; omitted for legacy unbound work."""
     trace_id: str | Unset = UNSET
     """Canonical platform trace id when the request carried a valid trace context."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         id = self.id
+
+        environment = self.environment
+
+        queue_binding_id = self.queue_binding_id
 
         trace_id = self.trace_id
 
@@ -32,6 +40,10 @@ class QueueSendResponse:
                 "id": id,
             }
         )
+        if environment is not UNSET:
+            field_dict["environment"] = environment
+        if queue_binding_id is not UNSET:
+            field_dict["queue_binding_id"] = queue_binding_id
         if trace_id is not UNSET:
             field_dict["trace_id"] = trace_id
 
@@ -42,10 +54,16 @@ class QueueSendResponse:
         d = dict(src_dict)
         id = d.pop("id")
 
+        environment = d.pop("environment", UNSET)
+
+        queue_binding_id = d.pop("queue_binding_id", UNSET)
+
         trace_id = d.pop("trace_id", UNSET)
 
         queue_send_response = cls(
             id=id,
+            environment=environment,
+            queue_binding_id=queue_binding_id,
             trace_id=trace_id,
         )
 

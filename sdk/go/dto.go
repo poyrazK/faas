@@ -304,3 +304,12 @@ type (
 	CreateIssueIngestTokenRequest = api.CreateIssueIngestTokenRequest
 	IssueIngestToken              = api.IssueIngestToken
 )
+
+// Queue bindings preserve their immutable project environment identity.
+type (
+	QueueBindingResponse       = api.QueueBindingResponse
+	QueueBindingStatusResponse = api.QueueBindingStatusResponse
+	CreateQueueBindingRequest  = api.CreateQueueBindingRequest
+	UpdateQueueBindingRequest  = api.UpdateQueueBindingRequest
+	InvokeWork                 = api.InvokeWork
+)

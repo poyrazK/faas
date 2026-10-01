@@ -3,9 +3,17 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * 200 — a dequeued row (the long-poll hit). 204 (no body) on timeout.
+ * 200 — a completed queue invocation observed by the long-poll feed. 204 (no body) on timeout.
  */
 export type QueueReceiveResponse = {
+  /**
+   * Deployment scope captured when the message was accepted.
+   */
+  environment?: string;
+  /**
+   * Immutable captured queue binding identity; omitted for legacy unbound work.
+   */
+  queue_binding_id?: string;
   id: string;
   payload: Record<string, any>;
   result?: Record<string, any>;
