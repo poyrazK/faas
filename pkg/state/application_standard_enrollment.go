@@ -37,6 +37,31 @@ type ApplicationStandardEnrollmentStore interface {
 	ListApplicationStandardAssignments(context.Context, string) ([]appstandards.Assignment, error)
 }
 
+// ApplicationStandardEnrollmentPermitsRuntime checks the persisted admission
+// envelope, not consumer convergence. Runtime may be needed to obtain actual
+// observations, so ObservedRevision is deliberately not a prerequisite here.
+func ApplicationStandardEnrollmentPermitsRuntime(app App, enrollment ApplicationStandardEnrollment) bool {
+	if !sameStandardUUID(app.ID, enrollment.AppID) || !sameStandardUUID(app.OrgID, enrollment.OrgID) {
+		return false
+	}
+	if app.ProjectID != "" || enrollment.ProjectID != "" {
+		if !sameStandardUUID(app.ProjectID, enrollment.ProjectID) {
+			return false
+		}
+	}
+	if enrollment.DesiredRevision <= 0 {
+		return false
+	}
+	switch enrollment.State {
+	case "unmanaged":
+		return len(enrollment.Adoptions) == 0 && len(enrollment.MaterializedFields) == 0
+	case "persisted", "observed":
+		return enrollment.PersistedRevision == enrollment.DesiredRevision && enrollment.EffectiveHash != ""
+	default:
+		return false
+	}
+}
+
 func applicationStandardBaseSettings(app App) appstandards.Settings {
 	cidrs := []string{}
 	for _, prefix := range app.EgressAllowlist {

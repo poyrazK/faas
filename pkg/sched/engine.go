@@ -1679,6 +1679,10 @@ func (e *Engine) Wake(ctx context.Context, appID, deploymentID, scope, trigger s
 	ctx = WithScope(ctx, scope)
 	// ── Phase 1: fast path under appMu ─────────────────────────────
 	release := e.lockApp(appID)
+	if err := e.checkApplicationStandardAdmissionByID(ctx, appID); err != nil {
+		release()
+		return WakeResult{}, err
+	}
 	if ins, err := e.runningInstanceForWake(ctx, appID, deploymentID, scope); err == nil && e.wakeInstanceModeMatchesApp(ctx, appID, ins) {
 		// PR-C (issue #460 / ADR-053): resolve the live deployment so
 		// the response's Port field is consistent with what
@@ -1928,6 +1932,9 @@ func (e *Engine) restartApp(ctx context.Context, appID, wakeID string, refreshRu
 		// Deleted or otherwise non-live apps cannot be restarted.
 		return CoordOutcome{}, nil
 	}
+	if err := e.checkApplicationStandardAdmission(ctx, app); err != nil {
+		return CoordOutcome{}, err
+	}
 	if refreshRuntimeConfig {
 		out, err = e.refreshRuntimeConfigRolling(ctx, appID, wakeID)
 		if err == nil && out.Instance != nil && wakeID != "" {
@@ -2166,6 +2173,9 @@ func (e *Engine) EnsureWakeCapacity(ctx context.Context, appID, trigger string, 
 	}
 	var loadedApp *state.App
 	if err == nil {
+		if checkErr := e.checkApplicationStandardAdmission(ctx, app); checkErr != nil {
+			return CoordOutcome{}, checkErr
+		}
 		loadedApp = &app
 	}
 	call, isLeader, err := e.wakeCoord.Enter(appID, e.wakeFanoutForApp(ctx, appID, loadedApp))
@@ -5244,6 +5254,9 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 	if err != nil {
 		return AppSpec{}, fmt.Errorf("sched: build app spec: app by id: %w", err)
 	}
+	if err := e.checkApplicationStandardAdmission(ctx, app); err != nil {
+		return AppSpec{}, err
+	}
 	var dep state.Deployment
 	if ins.DeploymentID != "" {
 		dep, err = e.store.DeploymentByID(ctx, ins.DeploymentID)
@@ -7799,6 +7812,9 @@ func (e *Engine) resolveAppForDeploy(ctx context.Context, appID string) (state.A
 	app, err := e.store.AppByID(ctx, appID)
 	if err != nil {
 		return state.App{}, state.Account{}, api.Limits{}, fmt.Errorf("sched: resolve app: %w", err)
+	}
+	if err := e.checkApplicationStandardAdmission(ctx, app); err != nil {
+		return state.App{}, state.Account{}, api.Limits{}, err
 	}
 	acct, err := e.store.AccountByID(ctx, app.AccountID)
 	if err != nil {

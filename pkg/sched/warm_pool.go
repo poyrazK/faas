@@ -44,6 +44,9 @@ func (e *Engine) ReconcileWarmPool(ctx context.Context, appID string) error {
 	if !e.ownsApp(app) {
 		return nil
 	}
+	if err := e.checkApplicationStandardAdmission(ctx, app); err != nil {
+		return err
+	}
 	acct, err := e.store.AccountByID(ctx, app.AccountID)
 	if err != nil {
 		return fmt.Errorf("sched: warm pool: load account: %w", err)

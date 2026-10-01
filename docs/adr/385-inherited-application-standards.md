@@ -172,6 +172,17 @@ fallback.
 
 Public review/activation, permitted local intent mutations, exceptions and
 consumer observation are still pending.
-The enrollment gate currently covers deployment admission;
-restore/wake and existing-runtime behavior remain part of the runtime acceptance
-work before public activation is enabled.
+Schedd now checks the persisted enrollment envelope before wake reuse, new
+admission, explicit-deployment prime/smoke, warm-pool creation, restart, app-task
+runtime setup and migration-spec construction. Pending, applying, blocked,
+missing or mismatched scope/revision envelopes refuse admission. An unavailable
+reader fails closed. A valid persisted projection may boot to obtain actual
+consumer evidence; these reads never fabricate observation. Tests use the real
+reviewed MemStore admission and automatic materializer, including a restored app
+that still has a running instance. Denied paths perform no VM lifecycle work.
+
+These read guards do not close the concurrent change window after a spec is
+captured. Raw instance/state-transition fences, revision-bound boot/migration
+tickets, post-boot publication checks and already-cached gateway routing remain
+required. Current image proofs and existing-runtime behavior remain part of the
+runtime acceptance work before public activation is enabled.
