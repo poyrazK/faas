@@ -24,6 +24,8 @@ jobs:
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
+      - name: Use the supported npm 11 client for tag repair
+        run: npm install --global npm@11.21.0 --ignore-scripts
       - name: Download and verify the existing release archives
         env:
           GH_TOKEN: ${{ github.token }}
@@ -44,6 +46,28 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           test -n "$NODE_AUTH_TOKEN"
+          npm --version
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const root = `${process.env.RUNNER_TEMP}/npm`;
+          const version = JSON.parse(readFileSync(`${root}/gregale/package.json`)).version;
+          const names = ['@gregale/cli-darwin-amd64', '@gregale/cli-darwin-arm64',
+            '@gregale/cli-linux-amd64', '@gregale/cli-linux-arm64', 'gregale'];
+          for (const name of names) {
+            const url = `https://registry.npmjs.org/-/package/${encodeURIComponent(name)}/dist-tags`;
+            const tags = await fetch(url, { signal: AbortSignal.timeout(10000) }).then(r => r.json());
+            if (tags.rc !== version) throw new Error(`Refusing diagnostic write: ${name} rc differs from ${version}`);
+            // Idempotent PUT of the already-public rc value; no version upload.
+            const response = await fetch(`${url}/rc`, {
+              method: 'PUT', headers: { 'content-type': 'application/json',
+                authorization: `Bearer ${process.env.NODE_AUTH_TOKEN}` },
+              body: JSON.stringify(version), signal: AbortSignal.timeout(10000),
+            });
+            const body = (await response.text()).replaceAll(process.env.NODE_AUTH_TOKEN, '[REDACTED]');
+            console.log(`${name}: unchanged rc PUT HTTP ${response.status}: ${body.slice(0, 500)}`);
+            if (!response.ok) throw new Error(`Tag-write diagnostic failed for ${name}`);
+          }
+          NODE
           node scripts/publish-npm-packages.mjs --packages-dir "$RUNNER_TEMP/npm" --repair-only
       - name: Verify anonymous installation and binary checksum
         run: node scripts/verify-npm-installation.mjs --packages-dir "$RUNNER_TEMP/npm" --prefix "$RUNNER_TEMP/npm-smoke"
