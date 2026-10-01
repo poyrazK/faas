@@ -977,3 +977,7 @@ The public gateway harness now builds its environment through `gatewaydPublicEnv
 ### Published native UDP harness wiring correction
 
 Public ingress draft PR #3992 commit `e47b267f2` includes the private scheduler target correction and portable environment regression. Three race-detector runs passed on that isolated branch, log `/tmp/gregale-udp-public-harness-tests.log`. Native execution and CI for the updated public head remain pending.
+
+### Public UDP database-backed startup and shutdown
+
+`TestUDPIngressPostgresStartupAndShutdown` passed three race-detector runs against an isolated migrated PostgreSQL schema. It calls production startup, verifies readiness with an empty enabled-listener set, calls shutdown twice, and requires startup to fail with no stop handle after the pool closes. Scoped lint found zero issues. Initial run lacked explicit fixture migration and failed; final log `/tmp/gregale-udp-public-pg-startup-final.log`, lint `/tmp/gregale-udp-public-pg-startup-lint.log`. The scheduler is a private absent Unix endpoint with lazy dialing; this does not prove scheduler availability, live socket traffic, daemon reconnection or native acceptance. Cluster stopped afterward.
