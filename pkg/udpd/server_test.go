@@ -3,6 +3,7 @@ package udpd
 import (
 	"bytes"
 	"context"
+	"errors"
 	"github.com/onebox-faas/faas/pkg/api"
 	"net"
 	"net/netip"
@@ -311,5 +312,129 @@ func TestServerDoesNotForwardCanceledAdmissionResult(t *testing.T) {
 	}
 	if forwarder.calls.Load() != 0 {
 		t.Fatal("canceled admission started forwarding")
+	}
+}
+
+func TestServerSharesAccountAdmissionAcrossSockets(t *testing.T) {
+	pool := NewPeerPool(2, 1)
+	rates := NewRateLimits()
+	var reported atomic.Int32
+	start := func(id string, port int) (*net.UDPConn, context.CancelFunc, chan error, *Metrics) {
+		t.Helper()
+		socket, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		metrics := NewMetrics(nil, id)
+		server := &Server{Socket: socket, Route: Route{AppID: "app", AccountID: "account", ListenerID: id, ListenerName: id, PublicPort: port, GuestPort: 5353}, Pool: pool, Rates: rates, Metrics: metrics, AllowedSources: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}, Forwarder: echoForwarder{}, ResolveTarget: func(context.Context, Route) (gateway.Target, error) {
+			return gateway.Target{AppID: "app", InstanceID: "instance", NodeID: "node"}, nil
+		}, OnError: func(error) { reported.Add(1) }}
+		done := make(chan error, 1)
+		go func() { done <- server.Serve(ctx) }()
+		t.Cleanup(func() { cancel(); _ = socket.Close() })
+		client, err := net.DialUDP("udp4", nil, socket.LocalAddr().(*net.UDPAddr))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = client.Close() })
+		return client, cancel, done, metrics
+	}
+	first, cancelFirst, firstDone, firstMetrics := start("first", 40100)
+	second, cancelSecond, secondDone, secondMetrics := start("second", 40101)
+	echo := func(client *net.UDPConn, payload string) {
+		t.Helper()
+		if _, err := client.Write([]byte(payload)); err != nil {
+			t.Fatal(err)
+		}
+		if err := client.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		var buffer [64]byte
+		n, err := client.Read(buffer[:])
+		if err != nil || string(buffer[:n]) != payload {
+			t.Fatalf("echo=%q/%v", buffer[:n], err)
+		}
+	}
+	echo(first, "first peer")
+	if _, err := second.Write([]byte("blocked peer")); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	var buffer [64]byte
+	if _, err := second.Read(buffer[:]); err == nil {
+		t.Fatal("another socket bypassed the shared account peer cap")
+	} else {
+		var timeout net.Error
+		if !errors.As(err, &timeout) || !timeout.Timeout() {
+			t.Fatal(err)
+		}
+	}
+	assertMetric(t, secondMetrics, "second_udp_datagrams_dropped_total", map[string]string{"reason": "peer_limit"}, 1)
+	stop := func(cancel context.CancelFunc, done chan error) {
+		t.Helper()
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("listener did not release its peers")
+		}
+	}
+	stop(cancelFirst, firstDone)
+	echo(second, "reused slot")
+	stop(cancelSecond, secondDone)
+	assertMetric(t, firstMetrics, "first_udp_active_peers", nil, 0)
+	assertMetric(t, secondMetrics, "second_udp_active_peers", nil, 0)
+	if reported.Load() != 0 {
+		t.Fatalf("clean shutdown reported %d errors", reported.Load())
+	}
+	for _, account := range []string{"one", "two"} {
+		release, ok := pool.Acquire(account)
+		if !ok {
+			t.Fatal("shutdown retained a global slot")
+		}
+		defer release()
+	}
+}
+
+func TestServerInvalidConfigClosesOwnedSocket(t *testing.T) {
+	for _, name := range []string{"route", "forwarder", "source", "parent"} {
+		t.Run(name, func(t *testing.T) {
+			socket, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = socket.Close() })
+			server := &Server{Socket: socket, Route: Route{AppID: "app", AccountID: "account", ListenerID: "listener", ListenerName: "echo", PublicPort: 40100, GuestPort: 5353}, Forwarder: echoForwarder{}, ResolveTarget: func(context.Context, Route) (gateway.Target, error) {
+				t.Fatal("invalid configuration attempted admission")
+				return gateway.Target{}, nil
+			}}
+			ctx := context.Background()
+			switch name {
+			case "route":
+				server.Route.ListenerID = ""
+			case "forwarder":
+				server.Forwarder = nil
+			case "source":
+				server.AllowedSources = []netip.Prefix{{}}
+			case "parent":
+				ctx = nil
+			}
+			if err := socket.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			if err := server.Serve(ctx); err == nil {
+				t.Fatal("invalid configuration accepted")
+			}
+			var buffer [1]byte
+			if _, err := socket.Read(buffer[:]); !errors.Is(err, net.ErrClosed) {
+				t.Fatalf("owned socket survived rejection: %v", err)
+			}
+		})
 	}
 }

@@ -40,7 +40,12 @@ type Server struct {
 	OnError func(error)
 }
 
+// Serve takes ownership of Socket, closing it on every exit, including
+// configuration rejection. Callers must bind a new socket before retrying.
 func (s *Server) Serve(parent context.Context) error {
+	if s != nil && s.Socket != nil {
+		defer func() { _ = s.Socket.Close() }()
+	}
 	if s == nil || parent == nil || s.Socket == nil || s.Socket.RemoteAddr() != nil || s.ResolveTarget == nil || s.Forwarder == nil {
 		return errors.New("UDP server requires context, listening socket, resolver and forwarder")
 	}
@@ -77,6 +82,9 @@ func (s *Server) Serve(parent context.Context) error {
 			case <-ctx.Done():
 				return
 			case reply := <-replies:
+				if ctx.Err() != nil {
+					return
+				}
 				if reply.Context.Err() != nil {
 					s.Metrics.drop("stale_reply")
 					continue
@@ -87,7 +95,9 @@ func (s *Server) Serve(parent context.Context) error {
 				}
 				if err := s.Socket.SetWriteDeadline(time.Now().Add(api.UDPWriteTimeout)); err != nil {
 					s.Metrics.drop("write_error")
-					s.report(err)
+					if ctx.Err() == nil {
+						s.report(err)
+					}
 					continue
 				}
 				_, _, err := s.Socket.WriteMsgUDPAddrPort(reply.Payload, nil, reply.Address)
