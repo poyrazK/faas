@@ -835,3 +835,9 @@ The real authenticated UDP API lifecycle fixture now creates an enabled foreign-
 ### UDP HTTP malformed-request state preservation (2026-10-01)
 
 The real authenticated UDP API fixture now rejects unknown create fields, trailing JSON, out-of-range public/guest ports and null creates, then proves no listener reservations exist. Invalid updates cover missing/null/string enabled values, unknown fields and trailing JSON, then compare the full stored listener record before/after. The lifecycle and quota-problem fixtures passed three race repetitions without skips (`/tmp/gregale-udp-api-validation-tests.log`); the launched handle is terminal and diff whitespace checking passed. No production decoder behavior changed. Customer API isolated publication and native/deployed acceptance remain pending.
+
+### UDP memory-store mutation cancellation (2026-10-01)
+
+Create, enabled-state update and deletion now check caller cancellation before acquiring the memory-store lock and again before mutation. A pre-canceled regression exercises all three operations, requires context.Canceled and verifies the complete existing reservation stays unchanged with no extra create. The full focused MemStore UDP listener suite passed three race repetitions without skips (`/tmp/gregale-udp-store-cancel-tests-final.log`) and scoped lint reported zero issues (`/tmp/gregale-udp-store-cancel-lint.log`). The regression directly covers pre-cancellation; the second under-lock guard is not claimed as a separately exercised contention case.
+
+The initial test link failed with no space left on device. After its test/lint handles were terminal and disk availability recovered to 2.1 GiB, the exact failed test command was rerun successfully. No shared cache was deleted. All launched handles are terminal. Isolated customer API review and native/deployed acceptance remain pending.
