@@ -7746,3 +7746,7 @@ func (p Plan) IssueLimits() IssueLimits {
 const IssueMaintenanceBatch = 1000
 const IssueMaintenanceInterval = time.Minute
 const IssueMaxBatchEvents = 32
+
+// UDP listener ports reserve an independent UDP namespace at the public edge.
+const UDPListenerPublicPortMin = 40000
+const UDPListenerPublicPortMax = 49999

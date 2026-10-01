@@ -22847,3 +22847,84 @@ ALTER TABLE ONLY public.workflow_steps
 
 --
 --
+
+--
+-- Name: app_udp_listeners; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_udp_listeners (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    listener_name text NOT NULL,
+    guest_port integer NOT NULL,
+    public_port integer NOT NULL,
+    protocol text DEFAULT 'udp'::text NOT NULL,
+    enabled boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_udp_listeners_guest_port_chk CHECK (((guest_port >= 1) AND (guest_port <= 65535))),
+    CONSTRAINT app_udp_listeners_name_len_chk CHECK (((char_length(listener_name) >= 1) AND (char_length(listener_name) <= 31))),
+    CONSTRAINT app_udp_listeners_name_shape_chk CHECK ((listener_name ~ '^[a-z0-9][a-z0-9-]{0,30}$'::text)),
+    CONSTRAINT app_udp_listeners_protocol_chk CHECK ((protocol = 'udp'::text)),
+    CONSTRAINT app_udp_listeners_public_port_chk CHECK (((public_port >= 40000) AND (public_port <= 49999)))
+);
+
+
+
+--
+-- Name: app_udp_listeners app_udp_listeners_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_udp_listeners
+    ADD CONSTRAINT app_udp_listeners_pkey PRIMARY KEY (id);
+
+
+
+--
+-- Name: app_udp_listeners_app_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_udp_listeners_app_created_idx ON public.app_udp_listeners USING btree (app_id, created_at DESC, id DESC);
+
+
+
+--
+-- Name: app_udp_listeners_app_name_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX app_udp_listeners_app_name_uniq ON public.app_udp_listeners USING btree (app_id, listener_name);
+
+
+
+--
+-- Name: app_udp_listeners_enabled_port_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_udp_listeners_enabled_port_idx ON public.app_udp_listeners USING btree (public_port) WHERE enabled;
+
+
+
+--
+-- Name: app_udp_listeners_public_port_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX app_udp_listeners_public_port_uniq ON public.app_udp_listeners USING btree (public_port);
+
+
+
+--
+-- Name: app_udp_listeners app_udp_listeners_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_udp_listeners
+    ADD CONSTRAINT app_udp_listeners_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+
+--
+-- Name: app_udp_listeners app_udp_listeners_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_udp_listeners
+    ADD CONSTRAINT app_udp_listeners_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
