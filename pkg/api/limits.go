@@ -4476,6 +4476,11 @@ const (
 	MigrateLiveLeaseSeconds = 180
 	MigrateLiveConcurrency  = 4
 
+	// MigrateLiveCommitRecoveryTimeout bounds a detached ownership resolution
+	// and source acknowledgement after the handoff request has expired. An
+	// unresolved database operation keeps the lease and VMs for later recovery.
+	MigrateLiveCommitRecoveryTimeout = 5 * time.Second
+
 	// Tier A6 (migrating-instance watchdog, ADR-067 follow-up to
 	// ADR-070): self-heal stuck state='migrating' rows that
 	// never committed (the new owner vmmd died mid-handoff, the

@@ -44,6 +44,35 @@ func (q *Queries) APIKeyByHash(ctx context.Context, db DBTX, keySha256 []byte) (
 	return i, err
 }
 
+const abortLockedInstanceMigration = `-- name: AbortLockedInstanceMigration :execrows
+UPDATE instances SET state = 'parked', lease_token = NULL, migration_started_at = NULL
+WHERE id = $1::uuid AND node_id = $2::uuid
+    AND state = $3::text AND lease_token = $4::text
+    AND wake_id IS NOT DISTINCT FROM $5::uuid
+`
+
+type AbortLockedInstanceMigrationParams struct {
+	InstanceID    pgtype.UUID
+	SourceNodeID  pgtype.UUID
+	ExpectedState string
+	LeaseToken    string
+	SourceWakeID  pgtype.UUID
+}
+
+func (q *Queries) AbortLockedInstanceMigration(ctx context.Context, db DBTX, arg AbortLockedInstanceMigrationParams) (int64, error) {
+	result, err := db.Exec(ctx, abortLockedInstanceMigration,
+		arg.InstanceID,
+		arg.SourceNodeID,
+		arg.ExpectedState,
+		arg.LeaseToken,
+		arg.SourceWakeID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const accountByEmail = `-- name: AccountByEmail :one
 select id, email, plan, status, coalesce(provider_customer_id, ''), created_at
 from accounts where email = $1
@@ -11185,6 +11214,34 @@ func (q *Queries) LockFeatureFlagEnvironment(ctx context.Context, db DBTX, arg L
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const lockInstanceMigrationCommit = `-- name: LockInstanceMigrationCommit :one
+SELECT id, node_id, state, wake_id, lease_token, migrated_from_node_id
+FROM instances WHERE id = $1::uuid FOR UPDATE
+`
+
+type LockInstanceMigrationCommitRow struct {
+	ID                 pgtype.UUID
+	NodeID             pgtype.UUID
+	State              string
+	WakeID             pgtype.UUID
+	LeaseToken         pgtype.Text
+	MigratedFromNodeID pgtype.UUID
+}
+
+func (q *Queries) LockInstanceMigrationCommit(ctx context.Context, db DBTX, instanceID pgtype.UUID) (LockInstanceMigrationCommitRow, error) {
+	row := db.QueryRow(ctx, lockInstanceMigrationCommit, instanceID)
+	var i LockInstanceMigrationCommitRow
+	err := row.Scan(
+		&i.ID,
+		&i.NodeID,
+		&i.State,
+		&i.WakeID,
+		&i.LeaseToken,
+		&i.MigratedFromNodeID,
+	)
+	return i, err
 }
 
 const lockInvoiceForRefund = `-- name: LockInvoiceForRefund :one

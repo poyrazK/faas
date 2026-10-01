@@ -226,6 +226,20 @@ Native migration and other runtime paths still require guest/serving evidence
 before full environment graph support can be claimed. Start times and scheduler
 notification success alone remain insufficient evidence.
 
+Migration ownership failures now resolve under the instance row lock before
+authorizing VM cleanup. A lost commit reply retains a committed destination and
+its runtime receipt; a still-owned source attempt is fenced against late commits
+before destination removal and source resume. Another destination wake or source
+lease grants no cleanup authority. Missing/obsolete ownership uses a lease-bound
+source acknowledgement rather than an unqualified instance destroy. Resolution
+and acknowledgements have a detached five-second budget; database errors retain
+both VMs, the destination reservation, and durable source lease. PostgreSQL tests
+observe a real lock wait against an uncommitted ownership/receipt transaction,
+cover commit and rollback outcomes, and reject cleanup authority on timeout.
+Scheduler transport tests cover lost replies, expired requests, unresolved
+database outages, newer wakes, and legacy ownership commits. Native acceptance
+must still verify lease expiry, orphan destination recovery, and serving behavior.
+
 The remaining full feature gates include protected-branch
 approval evidence; environment-scoped workload creation, source/runtime,
 secret-reference and queue/service-binding adapters; staged graph qualification

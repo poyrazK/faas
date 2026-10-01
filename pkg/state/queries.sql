@@ -5374,6 +5374,16 @@ RETURNING i.*;
 -- name: StampRuntimeMigrationApp :exec
 UPDATE apps SET migrated_at = now() WHERE id = sqlc.arg(app_id)::uuid;
 
+-- name: LockInstanceMigrationCommit :one
+SELECT id, node_id, state, wake_id, lease_token, migrated_from_node_id
+FROM instances WHERE id = sqlc.arg(instance_id)::uuid FOR UPDATE;
+
+-- name: AbortLockedInstanceMigration :execrows
+UPDATE instances SET state = 'parked', lease_token = NULL, migration_started_at = NULL
+WHERE id = sqlc.arg(instance_id)::uuid AND node_id = sqlc.arg(source_node_id)::uuid
+    AND state = sqlc.arg(expected_state)::text AND lease_token = sqlc.arg(lease_token)::text
+    AND wake_id IS NOT DISTINCT FROM sqlc.narg(source_wake_id)::uuid;
+
 -- name: PublishInstanceRuntimeConfig :one
 UPDATE instances i SET netns = sqlc.arg(netns), host_ip = sqlc.arg(host_ip)::text::inet,
     guest_uid = sqlc.arg(guest_uid), started_at = clock_timestamp(), state = 'running'
