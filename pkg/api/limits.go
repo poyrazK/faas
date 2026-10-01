@@ -7749,3 +7749,9 @@ const IssueMaxBatchEvents = 32
 
 // DeploymentTrafficPercentTotal is the complete serving traffic weight.
 const DeploymentTrafficPercentTotal = 100
+
+// TCPListenerTLSHandshakeTimeout bounds public listener TLS negotiation.
+const TCPListenerTLSHandshakeTimeout = 10 * time.Second
+
+const TCPListenerTLSHostnameMaxBytes = 253
+const TCPListenerTLSDNSLabelMaxBytes = 63
