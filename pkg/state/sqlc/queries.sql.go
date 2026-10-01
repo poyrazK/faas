@@ -14041,6 +14041,50 @@ func (q *Queries) RecordRequestIDJournal(ctx context.Context, db DBTX, arg Recor
 	return id, err
 }
 
+const recordTriggerConsumerHealth = `-- name: RecordTriggerConsumerHealth :exec
+INSERT INTO trigger_consumer_health (
+    trigger_id, last_poll_at, last_success_at, last_error_at, last_error,
+    lag_messages, lag_age_seconds
+) VALUES (
+    $1::uuid,
+    $2::timestamptz,
+    CASE WHEN $3::boolean THEN $2::timestamptz ELSE NULL END,
+    CASE WHEN $3::boolean THEN NULL ELSE $2::timestamptz END,
+    CASE WHEN $3::boolean THEN NULL ELSE NULLIF($4::text, '') END,
+    $5::bigint,
+    $6::double precision
+)
+ON CONFLICT (trigger_id) DO UPDATE SET
+    last_poll_at = EXCLUDED.last_poll_at,
+    last_success_at = CASE WHEN $3::boolean THEN EXCLUDED.last_poll_at ELSE trigger_consumer_health.last_success_at END,
+    last_error_at = CASE WHEN $3::boolean THEN trigger_consumer_health.last_error_at ELSE EXCLUDED.last_poll_at END,
+    last_error = CASE WHEN $3::boolean THEN trigger_consumer_health.last_error ELSE NULLIF($4::text, '') END,
+    lag_messages = EXCLUDED.lag_messages,
+    lag_age_seconds = EXCLUDED.lag_age_seconds,
+    updated_at = NOW()
+`
+
+type RecordTriggerConsumerHealthParams struct {
+	TriggerID     pgtype.UUID
+	PolledAt      pgtype.Timestamptz
+	Success       bool
+	ErrorDetail   string
+	LagMessages   pgtype.Int8
+	LagAgeSeconds pgtype.Float8
+}
+
+func (q *Queries) RecordTriggerConsumerHealth(ctx context.Context, db DBTX, arg RecordTriggerConsumerHealthParams) error {
+	_, err := db.Exec(ctx, recordTriggerConsumerHealth,
+		arg.TriggerID,
+		arg.PolledAt,
+		arg.Success,
+		arg.ErrorDetail,
+		arg.LagMessages,
+		arg.LagAgeSeconds,
+	)
+	return err
+}
+
 const recordUploadCommitOutcome = `-- name: RecordUploadCommitOutcome :one
 INSERT INTO upload_commit_outcomes (upload_id, deployment_id, build_id)
 VALUES ($1, $2, $3)
@@ -16569,6 +16613,36 @@ func (q *Queries) TriggerByID(ctx context.Context, db DBTX, id pgtype.UUID) (Tri
 		&i.FilterCriteria,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const triggerConsumerHealth = `-- name: TriggerConsumerHealth :one
+SELECT last_poll_at, last_success_at, last_error_at, last_error,
+       lag_messages, lag_age_seconds
+FROM trigger_consumer_health
+WHERE trigger_id = $1::uuid
+`
+
+type TriggerConsumerHealthRow struct {
+	LastPollAt    pgtype.Timestamptz
+	LastSuccessAt pgtype.Timestamptz
+	LastErrorAt   pgtype.Timestamptz
+	LastError     pgtype.Text
+	LagMessages   pgtype.Int8
+	LagAgeSeconds pgtype.Float8
+}
+
+func (q *Queries) TriggerConsumerHealth(ctx context.Context, db DBTX, triggerID pgtype.UUID) (TriggerConsumerHealthRow, error) {
+	row := db.QueryRow(ctx, triggerConsumerHealth, triggerID)
+	var i TriggerConsumerHealthRow
+	err := row.Scan(
+		&i.LastPollAt,
+		&i.LastSuccessAt,
+		&i.LastErrorAt,
+		&i.LastError,
+		&i.LagMessages,
+		&i.LagAgeSeconds,
 	)
 	return i, err
 }

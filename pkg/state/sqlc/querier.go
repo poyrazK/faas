@@ -1128,6 +1128,7 @@ type Querier interface {
 	// caller-generated record UUID makes an RPC retry idempotent without
 	// collapsing two customer requests that happen to reuse a public ID.
 	RecordRequestIDJournal(ctx context.Context, db DBTX, arg RecordRequestIDJournalParams) (pgtype.UUID, error)
+	RecordTriggerConsumerHealth(ctx context.Context, db DBTX, arg RecordTriggerConsumerHealthParams) error
 	// INSERT ON CONFLICT DO NOTHING for the upload_commit_outcomes
 	// companion table. The handler calls this AFTER a successful
 	// apidsource.Enqueue and BEFORE writing the 201 response. On
@@ -1320,6 +1321,7 @@ type Querier interface {
 	// distinct Row type that breaks the existing pgstore return
 	// type).
 	TriggerByID(ctx context.Context, db DBTX, id pgtype.UUID) (TriggerByIDRow, error)
+	TriggerConsumerHealth(ctx context.Context, db DBTX, triggerID pgtype.UUID) (TriggerConsumerHealthRow, error)
 	// Audit round 2 finding #1 (PR #910): deadLetterAll() is invoked
 	// with broker-side handles (kafka offset, NATS seq, SQS receipt
 	// handle, Redis entry-id, queue invocation_id) but the

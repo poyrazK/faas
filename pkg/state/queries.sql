@@ -5048,3 +5048,31 @@ LIMIT 1;
 UPDATE cron_fire_now_requests
 SET status = 'pending'
 WHERE id = sqlc.arg(id)::uuid AND status = 'running';
+
+-- name: RecordTriggerConsumerHealth :exec
+INSERT INTO trigger_consumer_health (
+    trigger_id, last_poll_at, last_success_at, last_error_at, last_error,
+    lag_messages, lag_age_seconds
+) VALUES (
+    sqlc.arg(trigger_id)::uuid,
+    sqlc.arg(polled_at)::timestamptz,
+    CASE WHEN sqlc.arg(success)::boolean THEN sqlc.arg(polled_at)::timestamptz ELSE NULL END,
+    CASE WHEN sqlc.arg(success)::boolean THEN NULL ELSE sqlc.arg(polled_at)::timestamptz END,
+    CASE WHEN sqlc.arg(success)::boolean THEN NULL ELSE NULLIF(sqlc.arg(error_detail)::text, '') END,
+    sqlc.narg(lag_messages)::bigint,
+    sqlc.narg(lag_age_seconds)::double precision
+)
+ON CONFLICT (trigger_id) DO UPDATE SET
+    last_poll_at = EXCLUDED.last_poll_at,
+    last_success_at = CASE WHEN sqlc.arg(success)::boolean THEN EXCLUDED.last_poll_at ELSE trigger_consumer_health.last_success_at END,
+    last_error_at = CASE WHEN sqlc.arg(success)::boolean THEN trigger_consumer_health.last_error_at ELSE EXCLUDED.last_poll_at END,
+    last_error = CASE WHEN sqlc.arg(success)::boolean THEN trigger_consumer_health.last_error ELSE NULLIF(sqlc.arg(error_detail)::text, '') END,
+    lag_messages = EXCLUDED.lag_messages,
+    lag_age_seconds = EXCLUDED.lag_age_seconds,
+    updated_at = NOW();
+
+-- name: TriggerConsumerHealth :one
+SELECT last_poll_at, last_success_at, last_error_at, last_error,
+       lag_messages, lag_age_seconds
+FROM trigger_consumer_health
+WHERE trigger_id = sqlc.arg(trigger_id)::uuid;
