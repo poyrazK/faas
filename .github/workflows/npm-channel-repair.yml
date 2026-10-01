@@ -27,6 +27,7 @@ jobs:
       - name: Use the supported npm 11 client for tag repair
         run: npm install --global npm@11.21.0 --ignore-scripts
       - name: Download and verify the existing release archives
+        id: stage
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag }}
@@ -66,8 +67,16 @@ jobs:
             const body = (await response.text()).replaceAll(process.env.NODE_AUTH_TOKEN, '[REDACTED]');
             console.log(`${name}: unchanged rc PUT HTTP ${response.status}: ${body.slice(0, 500)}`);
             if (!response.ok) throw new Error(`Tag-write diagnostic failed for ${name}`);
+            if (tags.latest !== version) throw new Error(`Refusing diagnostic deletion: ${name} latest differs from ${version}`);
+            const deletion = await fetch(`${url}/latest`, {
+              method: 'DELETE', headers: { authorization: `Bearer ${process.env.NODE_AUTH_TOKEN}` },
+              signal: AbortSignal.timeout(10000),
+            });
+            const deletionBody = (await deletion.text()).replaceAll(process.env.NODE_AUTH_TOKEN, '[REDACTED]');
+            console.log(`${name}: direct latest DELETE HTTP ${deletion.status}: ${deletionBody.slice(0, 500)}`);
           }
           NODE
           node scripts/publish-npm-packages.mjs --packages-dir "$RUNNER_TEMP/npm" --repair-only
       - name: Verify anonymous installation and binary checksum
+        if: ${{ !cancelled() && steps.stage.outcome == 'success' }}
         run: node scripts/verify-npm-installation.mjs --packages-dir "$RUNNER_TEMP/npm" --prefix "$RUNNER_TEMP/npm-smoke"
