@@ -194,7 +194,7 @@ func testDirectOCIFullRootfs(t *testing.T, options directOCIContractOptions) {
 
 	parkCtx, parkCancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer parkCancel()
-	if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/oci-fullrootfs/park", nil); status != http.StatusAccepted {
+	if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/oci-fullrootfs/park", nil); status != http.StatusNoContent {
 		t.Fatalf("park: status=%d", status)
 	}
 	if _, err := e2etest.WaitForInstanceState(parkCtx, t, pool, appID, state.StateParked, 45*time.Second); err != nil {
@@ -226,7 +226,7 @@ func testDirectOCIFullRootfs(t *testing.T, options directOCIContractOptions) {
 
 	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cleanupCancel()
-	if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/oci-fullrootfs/park", nil); status != http.StatusAccepted {
+	if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/oci-fullrootfs/park", nil); status != http.StatusNoContent {
 		t.Fatalf("cleanup park: status=%d", status)
 	}
 	if _, err := e2etest.WaitForInstanceState(cleanupCtx, t, pool, appID, state.StateParked, 45*time.Second); err != nil {
