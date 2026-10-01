@@ -1976,6 +1976,61 @@ func (q *Queries) CreateInstance(ctx context.Context, db DBTX, arg CreateInstanc
 	return i, err
 }
 
+const createInvocationEnvironmentQueueAdmission = `-- name: CreateInvocationEnvironmentQueueAdmission :execrows
+WITH admitted AS (
+    UPDATE invocations SET environment_id=$1::uuid,created_at=$12::timestamptz
+    WHERE id=$13::uuid AND app_id=$3::uuid AND account_id=$2::uuid
+        AND source='queue' AND queue_name=$11::text AND state='pending'
+    RETURNING id
+)
+INSERT INTO invocation_environment_queue_admissions
+    (invocation_id,environment_id,account_id,app_id,consumer_id,runtime_set_id,deployment_id,workload_spec_id,
+     pin_hash,settings_hash,definition_hash,queue_name,admitted_at)
+SELECT id,$1::uuid,$2::uuid,$3::uuid,
+    $4::uuid,$5::uuid,$6::uuid,$7::uuid,
+    $8::text,$9::text,$10::text,$11::text,$12::timestamptz
+FROM admitted
+`
+
+type CreateInvocationEnvironmentQueueAdmissionParams struct {
+	EnvironmentID  pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	ConsumerID     pgtype.UUID
+	RuntimeSetID   pgtype.UUID
+	DeploymentID   pgtype.UUID
+	WorkloadSpecID pgtype.UUID
+	PinHash        string
+	SettingsHash   string
+	DefinitionHash string
+	QueueName      string
+	AdmittedAt     pgtype.Timestamptz
+	InvocationID   pgtype.UUID
+}
+
+// ADR-375: queue ownership is operational evidence, never a cloned message.
+func (q *Queries) CreateInvocationEnvironmentQueueAdmission(ctx context.Context, db DBTX, arg CreateInvocationEnvironmentQueueAdmissionParams) (int64, error) {
+	result, err := db.Exec(ctx, createInvocationEnvironmentQueueAdmission,
+		arg.EnvironmentID,
+		arg.AccountID,
+		arg.AppID,
+		arg.ConsumerID,
+		arg.RuntimeSetID,
+		arg.DeploymentID,
+		arg.WorkloadSpecID,
+		arg.PinHash,
+		arg.SettingsHash,
+		arg.DefinitionHash,
+		arg.QueueName,
+		arg.AdmittedAt,
+		arg.InvocationID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const createInvocationWorkEnvironmentAdmission = `-- name: CreateInvocationWorkEnvironmentAdmission :execrows
 WITH admitted AS (
     UPDATE invocations SET created_at=$13::timestamptz,environment_id=$4::uuid
@@ -2866,6 +2921,27 @@ func (q *Queries) DomainByName(ctx context.Context, db DBTX, domain interface{})
 		&i.VerifiedAt,
 		&i.EnvironmentID,
 	)
+	return i, err
+}
+
+const environmentQueueClaimCapacity = `-- name: EnvironmentQueueClaimCapacity :one
+SELECT (SELECT count(*) FROM invocation_environment_queue_admissions other JOIN invocations i ON i.id=other.invocation_id
+    WHERE other.environment_id=p.environment_id AND other.app_id=p.app_id AND other.queue_name=p.queue_name
+        AND (i.state='dispatching' OR i.quota_reserved))::bigint AS active,
+    (c.definition->>'max_concurrency')::integer AS max_concurrency
+FROM invocation_environment_queue_admissions p JOIN project_environment_queue_consumers c ON c.id=p.consumer_id
+WHERE p.invocation_id=$1
+`
+
+type EnvironmentQueueClaimCapacityRow struct {
+	Active         int64
+	MaxConcurrency int32
+}
+
+func (q *Queries) EnvironmentQueueClaimCapacity(ctx context.Context, db DBTX, invocationID pgtype.UUID) (EnvironmentQueueClaimCapacityRow, error) {
+	row := db.QueryRow(ctx, environmentQueueClaimCapacity, invocationID)
+	var i EnvironmentQueueClaimCapacityRow
+	err := row.Scan(&i.Active, &i.MaxConcurrency)
 	return i, err
 }
 
@@ -8392,6 +8468,31 @@ func (q *Queries) ListEnabledTriggers(ctx context.Context, db DBTX) ([]ListEnabl
 	return items, nil
 }
 
+const listEnvironmentQueueCleanupInvocations = `-- name: ListEnvironmentQueueCleanupInvocations :many
+SELECT i.id FROM invocations i JOIN invocation_environment_queue_admissions p ON p.invocation_id=i.id
+WHERE i.environment_id=$1 OR p.environment_id=$1 ORDER BY i.id
+`
+
+func (q *Queries) ListEnvironmentQueueCleanupInvocations(ctx context.Context, db DBTX, environmentID pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, listEnvironmentQueueCleanupInvocations, environmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEventSubscriptionsForApp = `-- name: ListEventSubscriptionsForApp :many
 
 select id, account_id, app_id, source, type, filter, enabled,
@@ -10562,7 +10663,7 @@ JOIN project_environments e ON e.project_id=a.project_id AND e.account_id=a.acco
 JOIN deployments d ON d.app_id=a.id AND d.scope=e.slug
 WHERE e.account_id=$1::uuid AND e.project_id=$2::uuid
     AND e.id=$3::uuid AND d.id=$4::uuid
-    AND d.status='live' AND a.status<>'deleted' AND e.slug NOT IN ('production','default')
+    AND (NOT $5::boolean OR d.status='live') AND a.status<>'deleted' AND e.slug NOT IN ('production','default')
 FOR KEY SHARE OF a
 `
 
@@ -10571,6 +10672,7 @@ type LockProjectEnvironmentQueuePreparationAppParams struct {
 	ProjectID     pgtype.UUID
 	EnvironmentID pgtype.UUID
 	DeploymentID  pgtype.UUID
+	RequireLive   bool
 }
 
 func (q *Queries) LockProjectEnvironmentQueuePreparationApp(ctx context.Context, db DBTX, arg LockProjectEnvironmentQueuePreparationAppParams) (pgtype.UUID, error) {
@@ -10579,6 +10681,7 @@ func (q *Queries) LockProjectEnvironmentQueuePreparationApp(ctx context.Context,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.DeploymentID,
+		arg.RequireLive,
 	)
 	var id pgtype.UUID
 	err := row.Scan(&id)
@@ -10590,7 +10693,7 @@ SELECT e.id FROM project_environments e
 JOIN apps a ON a.project_id=e.project_id AND a.account_id=e.account_id
 JOIN deployments d ON d.app_id=a.id AND d.scope=e.slug
 WHERE e.account_id=$1::uuid AND e.project_id=$2::uuid
-    AND d.id=$3::uuid AND d.status='live' AND a.status<>'deleted'
+    AND d.id=$3::uuid AND (NOT $4::boolean OR d.status='live') AND a.status<>'deleted'
     AND e.slug NOT IN ('production','default')
 FOR KEY SHARE OF e
 `
@@ -10599,10 +10702,16 @@ type LockProjectEnvironmentQueuePreparationEnvironmentParams struct {
 	AccountID    pgtype.UUID
 	ProjectID    pgtype.UUID
 	DeploymentID pgtype.UUID
+	RequireLive  bool
 }
 
 func (q *Queries) LockProjectEnvironmentQueuePreparationEnvironment(ctx context.Context, db DBTX, arg LockProjectEnvironmentQueuePreparationEnvironmentParams) (pgtype.UUID, error) {
-	row := db.QueryRow(ctx, lockProjectEnvironmentQueuePreparationEnvironment, arg.AccountID, arg.ProjectID, arg.DeploymentID)
+	row := db.QueryRow(ctx, lockProjectEnvironmentQueuePreparationEnvironment,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.DeploymentID,
+		arg.RequireLive,
+	)
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
@@ -10618,7 +10727,7 @@ JOIN project_environments e ON e.id=s.environment_id AND e.slug=d.scope
 JOIN apps a ON a.id=s.app_id AND a.project_id=e.project_id AND a.account_id=e.account_id
 WHERE e.account_id=$1::uuid AND e.project_id=$2::uuid
     AND e.id=$3::uuid AND d.id=$4::uuid AND a.id=$5::uuid
-    AND d.status='live' AND a.status<>'deleted' AND e.slug NOT IN ('production','default')
+    AND (NOT $6::boolean OR d.status='live') AND a.status<>'deleted' AND e.slug NOT IN ('production','default')
 FOR UPDATE OF d FOR SHARE OF s,p
 `
 
@@ -10628,6 +10737,7 @@ type LockProjectEnvironmentQueuePreparationSpecParams struct {
 	EnvironmentID pgtype.UUID
 	DeploymentID  pgtype.UUID
 	AppID         pgtype.UUID
+	RequireLive   bool
 }
 
 type LockProjectEnvironmentQueuePreparationSpecRow struct {
@@ -10650,6 +10760,7 @@ func (q *Queries) LockProjectEnvironmentQueuePreparationSpec(ctx context.Context
 		arg.EnvironmentID,
 		arg.DeploymentID,
 		arg.AppID,
+		arg.RequireLive,
 	)
 	var i LockProjectEnvironmentQueuePreparationSpecRow
 	err := row.Scan(
@@ -14480,6 +14591,69 @@ func (q *Queries) ReadDeploymentLayerArtifactKeys(ctx context.Context, db DBTX, 
 	return items, nil
 }
 
+const readEnvironmentQueueAdmissionProject = `-- name: ReadEnvironmentQueueAdmissionProject :one
+SELECT project_id FROM project_environments WHERE id=$1
+`
+
+func (q *Queries) ReadEnvironmentQueueAdmissionProject(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, readEnvironmentQueueAdmissionProject, id)
+	var project_id pgtype.UUID
+	err := row.Scan(&project_id)
+	return project_id, err
+}
+
+const readEnvironmentQueueInvocation = `-- name: ReadEnvironmentQueueInvocation :one
+SELECT id, environment_id, app_id, account_id, source, state, payload, headers, due_at, method, path, cron_id, scheduled_at, ack_url, result, lease_expires_at, received_at, completed_at, instance_id, attempts, quota_reserved, last_error, created_at, org_id, outcome, deadline_at, retry_policy, result_retention_until, replayed_from_invocation_id, last_replayed_at, queue_name, on_success_destination_id, on_failure_destination_id, work_policy_name, work_key_digest, work_expires_at, work_sequence, work_policy_revision, work_fairness_digest, work_fairness_limit FROM invocations WHERE id=$1
+`
+
+func (q *Queries) ReadEnvironmentQueueInvocation(ctx context.Context, db DBTX, id pgtype.UUID) (Invocation, error) {
+	row := db.QueryRow(ctx, readEnvironmentQueueInvocation, id)
+	var i Invocation
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.AppID,
+		&i.AccountID,
+		&i.Source,
+		&i.State,
+		&i.Payload,
+		&i.Headers,
+		&i.DueAt,
+		&i.Method,
+		&i.Path,
+		&i.CronID,
+		&i.ScheduledAt,
+		&i.AckUrl,
+		&i.Result,
+		&i.LeaseExpiresAt,
+		&i.ReceivedAt,
+		&i.CompletedAt,
+		&i.InstanceID,
+		&i.Attempts,
+		&i.QuotaReserved,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.OrgID,
+		&i.Outcome,
+		&i.DeadlineAt,
+		&i.RetryPolicy,
+		&i.ResultRetentionUntil,
+		&i.ReplayedFromInvocationID,
+		&i.LastReplayedAt,
+		&i.QueueName,
+		&i.OnSuccessDestinationID,
+		&i.OnFailureDestinationID,
+		&i.WorkPolicyName,
+		&i.WorkKeyDigest,
+		&i.WorkExpiresAt,
+		&i.WorkSequence,
+		&i.WorkPolicyRevision,
+		&i.WorkFairnessDigest,
+		&i.WorkFairnessLimit,
+	)
+	return i, err
+}
+
 const readInvocationEnvironmentOwner = `-- name: ReadInvocationEnvironmentOwner :one
 SELECT coalesce(environment_id::text,'')::text AS environment_id,app_id,account_id FROM invocations WHERE id=$1::uuid
 `
@@ -14494,6 +14668,31 @@ func (q *Queries) ReadInvocationEnvironmentOwner(ctx context.Context, db DBTX, i
 	row := db.QueryRow(ctx, readInvocationEnvironmentOwner, invocationID)
 	var i ReadInvocationEnvironmentOwnerRow
 	err := row.Scan(&i.EnvironmentID, &i.AppID, &i.AccountID)
+	return i, err
+}
+
+const readInvocationEnvironmentQueueAdmission = `-- name: ReadInvocationEnvironmentQueueAdmission :one
+SELECT invocation_id, environment_id, account_id, app_id, consumer_id, runtime_set_id, deployment_id, workload_spec_id, pin_hash, settings_hash, definition_hash, queue_name, admitted_at FROM invocation_environment_queue_admissions WHERE invocation_id=$1 FOR SHARE
+`
+
+func (q *Queries) ReadInvocationEnvironmentQueueAdmission(ctx context.Context, db DBTX, invocationID pgtype.UUID) (InvocationEnvironmentQueueAdmission, error) {
+	row := db.QueryRow(ctx, readInvocationEnvironmentQueueAdmission, invocationID)
+	var i InvocationEnvironmentQueueAdmission
+	err := row.Scan(
+		&i.InvocationID,
+		&i.EnvironmentID,
+		&i.AccountID,
+		&i.AppID,
+		&i.ConsumerID,
+		&i.RuntimeSetID,
+		&i.DeploymentID,
+		&i.WorkloadSpecID,
+		&i.PinHash,
+		&i.SettingsHash,
+		&i.DefinitionHash,
+		&i.QueueName,
+		&i.AdmittedAt,
+	)
 	return i, err
 }
 
@@ -15977,7 +16176,7 @@ func (q *Queries) ReadProjectEnvironmentCloneWorkloads(ctx context.Context, db D
 }
 
 const readProjectEnvironmentQueueConsumers = `-- name: ReadProjectEnvironmentQueueConsumers :many
-SELECT id, runtime_set_id, name, queue_name, definition, definition_hash, created_at FROM project_environment_queue_consumers WHERE runtime_set_id=$1 ORDER BY name
+SELECT id, runtime_set_id, name, queue_name, definition, definition_hash, created_at FROM project_environment_queue_consumers WHERE runtime_set_id=$1 ORDER BY name FOR SHARE
 `
 
 func (q *Queries) ReadProjectEnvironmentQueueConsumers(ctx context.Context, db DBTX, runtimeSetID pgtype.UUID) ([]ProjectEnvironmentQueueConsumer, error) {
@@ -16009,7 +16208,7 @@ func (q *Queries) ReadProjectEnvironmentQueueConsumers(ctx context.Context, db D
 }
 
 const readProjectEnvironmentQueueRuntimeSet = `-- name: ReadProjectEnvironmentQueueRuntimeSet :one
-SELECT id, account_id, project_id, environment_id, app_id, deployment_id, workload_spec_id, settings_hash, queue_revision, binding_count, book_hash, state, created_at FROM project_environment_queue_runtime_sets WHERE deployment_id=$1
+SELECT id, account_id, project_id, environment_id, app_id, deployment_id, workload_spec_id, settings_hash, queue_revision, binding_count, book_hash, state, created_at FROM project_environment_queue_runtime_sets WHERE deployment_id=$1 FOR SHARE
 `
 
 func (q *Queries) ReadProjectEnvironmentQueueRuntimeSet(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (ProjectEnvironmentQueueRuntimeSet, error) {
@@ -19920,7 +20119,7 @@ SELECT
     EXISTS(SELECT 1 FROM invocations i WHERE i.environment_id=e.id AND (i.state='dispatching' OR i.quota_reserved)) AS busy,
     EXISTS(SELECT 1 FROM invocations i LEFT JOIN apps a ON a.id=i.app_id
         WHERE i.environment_id=e.id AND (a.id IS NULL OR a.project_id<>e.project_id OR a.account_id<>e.account_id OR i.account_id<>e.account_id
-            OR i.source NOT IN ('async_invoke','delayed_task') OR i.cron_id IS NOT NULL OR i.queue_name<>''
+            OR NOT ((i.source IN ('async_invoke','delayed_task') AND i.queue_name='') OR (i.source='queue' AND EXISTS(SELECT 1 FROM invocation_environment_queue_admissions q WHERE q.invocation_id=i.id AND q.environment_id=e.id AND q.app_id=i.app_id AND q.account_id=i.account_id AND q.queue_name=i.queue_name))) OR i.cron_id IS NOT NULL
             OR i.on_success_destination_id IS NOT NULL OR i.on_failure_destination_id IS NOT NULL
             OR (i.work_policy_name IS NULL AND EXISTS(SELECT 1 FROM invocation_work_environment_admissions p WHERE p.invocation_id=i.id))
             OR (i.work_policy_name IS NOT NULL AND NOT EXISTS(
@@ -19933,6 +20132,8 @@ SELECT
                     AND (p.fairness_limit=0 OR EXISTS(SELECT 1 FROM invocation_work_environment_domains f
                         WHERE f.environment_id=e.id AND f.app_id=p.app_id AND f.policy_name=p.policy_name AND f.kind='fairness' AND f.digest=p.fairness_digest))))))
     OR EXISTS(SELECT 1 FROM invocation_work_environment_admissions p JOIN invocations i ON i.id=p.invocation_id
+        WHERE p.environment_id=e.id AND i.environment_id IS DISTINCT FROM e.id)
+    OR EXISTS(SELECT 1 FROM invocation_environment_queue_admissions p JOIN invocations i ON i.id=p.invocation_id
         WHERE p.environment_id=e.id AND i.environment_id IS DISTINCT FROM e.id)
     OR EXISTS(SELECT 1 FROM invocation_work_environment_domains d LEFT JOIN apps a ON a.id=d.app_id
         WHERE d.environment_id=e.id AND (a.id IS NULL OR a.project_id<>e.project_id OR a.account_id<>e.account_id))
@@ -19982,6 +20183,32 @@ func (q *Queries) ValidateInvocationEnvironmentClaim(ctx context.Context, db DBT
 	var owner_valid bool
 	err := row.Scan(&owner_valid)
 	return owner_valid, err
+}
+
+const validateInvocationEnvironmentQueuePin = `-- name: ValidateInvocationEnvironmentQueuePin :one
+SELECT EXISTS(SELECT 1 FROM deployments d JOIN apps a ON a.id=d.app_id
+    JOIN project_environments e ON e.project_id=a.project_id AND e.account_id=a.account_id AND e.slug=d.scope
+    WHERE e.id=i.environment_id AND a.id=i.app_id AND a.account_id=i.account_id AND a.status<>'deleted'
+        AND e.slug NOT IN ('production','default') AND d.id=p.deployment_id
+        AND (NOT $1::boolean OR d.status='live')
+        AND ((d.id::text=lower(i.headers->>'X-Gregale-Revision') AND NOT i.headers ? 'X-Gregale-Release')
+            OR (NOT i.headers ? 'X-Gregale-Revision' AND EXISTS(SELECT 1 FROM project_release_sets r
+                JOIN project_release_members m ON m.release_id=r.id AND m.app_id=a.id AND m.deployment_id=d.id
+                WHERE r.id::text=lower(i.headers->>'X-Gregale-Release') AND r.account_id=e.account_id AND r.project_id=e.project_id
+                    AND r.environment_slug=e.slug AND (NOT $1::boolean OR r.expires_at IS NULL OR r.expires_at>now())))))::boolean AS pin_valid
+FROM invocations i JOIN invocation_environment_queue_admissions p ON p.invocation_id=i.id WHERE i.id=$2::uuid
+`
+
+type ValidateInvocationEnvironmentQueuePinParams struct {
+	RequireLive  bool
+	InvocationID pgtype.UUID
+}
+
+func (q *Queries) ValidateInvocationEnvironmentQueuePin(ctx context.Context, db DBTX, arg ValidateInvocationEnvironmentQueuePinParams) (bool, error) {
+	row := db.QueryRow(ctx, validateInvocationEnvironmentQueuePin, arg.RequireLive, arg.InvocationID)
+	var pin_valid bool
+	err := row.Scan(&pin_valid)
+	return pin_valid, err
 }
 
 const validateInvocationWorkEnvironmentClaim = `-- name: ValidateInvocationWorkEnvironmentClaim :one

@@ -5512,7 +5512,7 @@ SELECT e.id FROM project_environments e
 JOIN apps a ON a.project_id=e.project_id AND a.account_id=e.account_id
 JOIN deployments d ON d.app_id=a.id AND d.scope=e.slug
 WHERE e.account_id=sqlc.arg(account_id)::uuid AND e.project_id=sqlc.arg(project_id)::uuid
-    AND d.id=sqlc.arg(deployment_id)::uuid AND d.status='live' AND a.status<>'deleted'
+    AND d.id=sqlc.arg(deployment_id)::uuid AND (NOT sqlc.arg(require_live)::boolean OR d.status='live') AND a.status<>'deleted'
     AND e.slug NOT IN ('production','default')
 FOR KEY SHARE OF e;
 
@@ -5522,7 +5522,7 @@ JOIN project_environments e ON e.project_id=a.project_id AND e.account_id=a.acco
 JOIN deployments d ON d.app_id=a.id AND d.scope=e.slug
 WHERE e.account_id=sqlc.arg(account_id)::uuid AND e.project_id=sqlc.arg(project_id)::uuid
     AND e.id=sqlc.arg(environment_id)::uuid AND d.id=sqlc.arg(deployment_id)::uuid
-    AND d.status='live' AND a.status<>'deleted' AND e.slug NOT IN ('production','default')
+    AND (NOT sqlc.arg(require_live)::boolean OR d.status='live') AND a.status<>'deleted' AND e.slug NOT IN ('production','default')
 FOR KEY SHARE OF a;
 
 -- name: LockProjectEnvironmentQueuePreparationSpec :one
@@ -5535,14 +5535,14 @@ JOIN project_environments e ON e.id=s.environment_id AND e.slug=d.scope
 JOIN apps a ON a.id=s.app_id AND a.project_id=e.project_id AND a.account_id=e.account_id
 WHERE e.account_id=sqlc.arg(account_id)::uuid AND e.project_id=sqlc.arg(project_id)::uuid
     AND e.id=sqlc.arg(environment_id)::uuid AND d.id=sqlc.arg(deployment_id)::uuid AND a.id=sqlc.arg(app_id)::uuid
-    AND d.status='live' AND a.status<>'deleted' AND e.slug NOT IN ('production','default')
+    AND (NOT sqlc.arg(require_live)::boolean OR d.status='live') AND a.status<>'deleted' AND e.slug NOT IN ('production','default')
 FOR UPDATE OF d FOR SHARE OF s,p;
 
 -- name: ReadProjectEnvironmentQueueRuntimeSet :one
-SELECT * FROM project_environment_queue_runtime_sets WHERE deployment_id=$1;
+SELECT * FROM project_environment_queue_runtime_sets WHERE deployment_id=$1 FOR SHARE;
 
 -- name: ReadProjectEnvironmentQueueConsumers :many
-SELECT * FROM project_environment_queue_consumers WHERE runtime_set_id=$1 ORDER BY name;
+SELECT * FROM project_environment_queue_consumers WHERE runtime_set_id=$1 ORDER BY name FOR SHARE;
 
 -- name: InsertProjectEnvironmentQueueRuntimeSet :exec
 INSERT INTO project_environment_queue_runtime_sets
@@ -5679,7 +5679,7 @@ SELECT
     EXISTS(SELECT 1 FROM invocations i WHERE i.environment_id=e.id AND (i.state='dispatching' OR i.quota_reserved)) AS busy,
     EXISTS(SELECT 1 FROM invocations i LEFT JOIN apps a ON a.id=i.app_id
         WHERE i.environment_id=e.id AND (a.id IS NULL OR a.project_id<>e.project_id OR a.account_id<>e.account_id OR i.account_id<>e.account_id
-            OR i.source NOT IN ('async_invoke','delayed_task') OR i.cron_id IS NOT NULL OR i.queue_name<>''
+            OR NOT ((i.source IN ('async_invoke','delayed_task') AND i.queue_name='') OR (i.source='queue' AND EXISTS(SELECT 1 FROM invocation_environment_queue_admissions q WHERE q.invocation_id=i.id AND q.environment_id=e.id AND q.app_id=i.app_id AND q.account_id=i.account_id AND q.queue_name=i.queue_name))) OR i.cron_id IS NOT NULL
             OR i.on_success_destination_id IS NOT NULL OR i.on_failure_destination_id IS NOT NULL
             OR (i.work_policy_name IS NULL AND EXISTS(SELECT 1 FROM invocation_work_environment_admissions p WHERE p.invocation_id=i.id))
             OR (i.work_policy_name IS NOT NULL AND NOT EXISTS(
@@ -5692,6 +5692,8 @@ SELECT
                     AND (p.fairness_limit=0 OR EXISTS(SELECT 1 FROM invocation_work_environment_domains f
                         WHERE f.environment_id=e.id AND f.app_id=p.app_id AND f.policy_name=p.policy_name AND f.kind='fairness' AND f.digest=p.fairness_digest))))))
     OR EXISTS(SELECT 1 FROM invocation_work_environment_admissions p JOIN invocations i ON i.id=p.invocation_id
+        WHERE p.environment_id=e.id AND i.environment_id IS DISTINCT FROM e.id)
+    OR EXISTS(SELECT 1 FROM invocation_environment_queue_admissions p JOIN invocations i ON i.id=p.invocation_id
         WHERE p.environment_id=e.id AND i.environment_id IS DISTINCT FROM e.id)
     OR EXISTS(SELECT 1 FROM invocation_work_environment_domains d LEFT JOIN apps a ON a.id=d.app_id
         WHERE d.environment_id=e.id AND (a.id IS NULL OR a.project_id<>e.project_id OR a.account_id<>e.account_id))
@@ -6099,3 +6101,53 @@ update invocations i set state = 'dispatching',
 		        and not ((tr.state in ('pending','retry') and tr.next_fire_at <= clock_timestamp())
 		          or (tr.state = 'claimed' and tr.claim_expires_at <= clock_timestamp())))
 		returning i.*;
+
+-- ADR-375: queue ownership is operational evidence, never a cloned message.
+-- name: CreateInvocationEnvironmentQueueAdmission :execrows
+WITH admitted AS (
+    UPDATE invocations SET environment_id=sqlc.arg(environment_id)::uuid,created_at=sqlc.arg(admitted_at)::timestamptz
+    WHERE id=sqlc.arg(invocation_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND account_id=sqlc.arg(account_id)::uuid
+        AND source='queue' AND queue_name=sqlc.arg(queue_name)::text AND state='pending'
+    RETURNING id
+)
+INSERT INTO invocation_environment_queue_admissions
+    (invocation_id,environment_id,account_id,app_id,consumer_id,runtime_set_id,deployment_id,workload_spec_id,
+     pin_hash,settings_hash,definition_hash,queue_name,admitted_at)
+SELECT id,sqlc.arg(environment_id)::uuid,sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,
+    sqlc.arg(consumer_id)::uuid,sqlc.arg(runtime_set_id)::uuid,sqlc.arg(deployment_id)::uuid,sqlc.arg(workload_spec_id)::uuid,
+    sqlc.arg(pin_hash)::text,sqlc.arg(settings_hash)::text,sqlc.arg(definition_hash)::text,sqlc.arg(queue_name)::text,sqlc.arg(admitted_at)::timestamptz
+FROM admitted;
+
+-- name: ReadInvocationEnvironmentQueueAdmission :one
+SELECT * FROM invocation_environment_queue_admissions WHERE invocation_id=$1 FOR SHARE;
+
+-- name: ReadEnvironmentQueueInvocation :one
+SELECT * FROM invocations WHERE id=$1;
+
+-- name: ValidateInvocationEnvironmentQueuePin :one
+SELECT EXISTS(SELECT 1 FROM deployments d JOIN apps a ON a.id=d.app_id
+    JOIN project_environments e ON e.project_id=a.project_id AND e.account_id=a.account_id AND e.slug=d.scope
+    WHERE e.id=i.environment_id AND a.id=i.app_id AND a.account_id=i.account_id AND a.status<>'deleted'
+        AND e.slug NOT IN ('production','default') AND d.id=p.deployment_id
+        AND (NOT sqlc.arg(require_live)::boolean OR d.status='live')
+        AND ((d.id::text=lower(i.headers->>'X-Gregale-Revision') AND NOT i.headers ? 'X-Gregale-Release')
+            OR (NOT i.headers ? 'X-Gregale-Revision' AND EXISTS(SELECT 1 FROM project_release_sets r
+                JOIN project_release_members m ON m.release_id=r.id AND m.app_id=a.id AND m.deployment_id=d.id
+                WHERE r.id::text=lower(i.headers->>'X-Gregale-Release') AND r.account_id=e.account_id AND r.project_id=e.project_id
+                    AND r.environment_slug=e.slug AND (NOT sqlc.arg(require_live)::boolean OR r.expires_at IS NULL OR r.expires_at>now())))))::boolean AS pin_valid
+FROM invocations i JOIN invocation_environment_queue_admissions p ON p.invocation_id=i.id WHERE i.id=sqlc.arg(invocation_id)::uuid;
+
+-- name: EnvironmentQueueClaimCapacity :one
+SELECT (SELECT count(*) FROM invocation_environment_queue_admissions other JOIN invocations i ON i.id=other.invocation_id
+    WHERE other.environment_id=p.environment_id AND other.app_id=p.app_id AND other.queue_name=p.queue_name
+        AND (i.state='dispatching' OR i.quota_reserved))::bigint AS active,
+    (c.definition->>'max_concurrency')::integer AS max_concurrency
+FROM invocation_environment_queue_admissions p JOIN project_environment_queue_consumers c ON c.id=p.consumer_id
+WHERE p.invocation_id=$1;
+
+-- name: ListEnvironmentQueueCleanupInvocations :many
+SELECT i.id FROM invocations i JOIN invocation_environment_queue_admissions p ON p.invocation_id=i.id
+WHERE i.environment_id=$1 OR p.environment_id=$1 ORDER BY i.id;
+
+-- name: ReadEnvironmentQueueAdmissionProject :one
+SELECT project_id FROM project_environments WHERE id=$1;

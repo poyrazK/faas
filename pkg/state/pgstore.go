@@ -15357,6 +15357,11 @@ func (s *PgStore) ClaimInvocation(ctx context.Context, id, instanceID string, le
 	if err := lockInvocationEnvironmentClaimDB(ctx, tx, id); err != nil {
 		return Invocation{}, err
 	}
+	if _, err := readInvocationEnvironmentQueueAdmissionDB(ctx, tx, id); err == nil {
+		return Invocation{}, ErrConflict
+	} else if !errors.Is(err, ErrNotFound) {
+		return Invocation{}, err
+	}
 	// pgx v5.10's text-format encoder can't carry an int through a
 	// `||` text-concat in `text || text → interval`. Local Postgres
 	// accepts the implicit form, but the Postgres 15 image on GH
@@ -32030,6 +32035,12 @@ func (s *PgStore) ClaimInvocationWithCap(ctx context.Context, id, instanceID str
 	}
 	if err != nil {
 		return Invocation{}, fmt.Errorf("state: account_async_quota claim: %w", err)
+	}
+
+	// The quota row lock serializes all claims in this account, including
+	// different consumer generations of the same logical stage queue.
+	if err := queueClaimCapacityDB(ctx, tx, id); err != nil {
+		return Invocation{}, err
 	}
 
 	// Atomic state transition + lease stamp + attempts bump.

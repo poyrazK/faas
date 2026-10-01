@@ -28,24 +28,35 @@ func (s *PgStore) projectEnvironmentQueueConsumers(ctx context.Context, accountI
 		return ProjectEnvironmentQueueRuntimeSet{}, err
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	set, err := projectEnvironmentQueueConsumersDB(ctx, tx, accountID, projectID, deploymentID, prepare, true)
+	if err != nil {
+		return ProjectEnvironmentQueueRuntimeSet{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ProjectEnvironmentQueueRuntimeSet{}, err
+	}
+	return set, nil
+}
+
+func projectEnvironmentQueueConsumersDB(ctx context.Context, db sqlc.DBTX, accountID, projectID, deploymentID string, prepare, requireLive bool) (ProjectEnvironmentQueueRuntimeSet, error) {
 	queries := sqlc.New()
 	// Environment ownership is locked first, matching admission and deletion.
-	envID, err := queries.LockProjectEnvironmentQueuePreparationEnvironment(ctx, tx, sqlc.LockProjectEnvironmentQueuePreparationEnvironmentParams{
-		AccountID: mustPgUUID(accountID), ProjectID: mustPgUUID(projectID), DeploymentID: mustPgUUID(deploymentID),
+	envID, err := queries.LockProjectEnvironmentQueuePreparationEnvironment(ctx, db, sqlc.LockProjectEnvironmentQueuePreparationEnvironmentParams{
+		AccountID: mustPgUUID(accountID), ProjectID: mustPgUUID(projectID), DeploymentID: mustPgUUID(deploymentID), RequireLive: requireLive,
 	})
 	if err != nil {
 		return ProjectEnvironmentQueueRuntimeSet{}, mapErr(err)
 	}
 	// Deployment creation and cutover lock the app before a deployment. Take
 	// that ownership lock explicitly before serializing projection retries.
-	appID, err := queries.LockProjectEnvironmentQueuePreparationApp(ctx, tx, sqlc.LockProjectEnvironmentQueuePreparationAppParams{
-		AccountID: mustPgUUID(accountID), ProjectID: mustPgUUID(projectID), EnvironmentID: envID, DeploymentID: mustPgUUID(deploymentID),
+	appID, err := queries.LockProjectEnvironmentQueuePreparationApp(ctx, db, sqlc.LockProjectEnvironmentQueuePreparationAppParams{
+		AccountID: mustPgUUID(accountID), ProjectID: mustPgUUID(projectID), EnvironmentID: envID, DeploymentID: mustPgUUID(deploymentID), RequireLive: requireLive,
 	})
 	if err != nil {
 		return ProjectEnvironmentQueueRuntimeSet{}, mapErr(err)
 	}
-	row, err := queries.LockProjectEnvironmentQueuePreparationSpec(ctx, tx, sqlc.LockProjectEnvironmentQueuePreparationSpecParams{
-		AccountID: mustPgUUID(accountID), ProjectID: mustPgUUID(projectID), EnvironmentID: envID, DeploymentID: mustPgUUID(deploymentID), AppID: appID,
+	row, err := queries.LockProjectEnvironmentQueuePreparationSpec(ctx, db, sqlc.LockProjectEnvironmentQueuePreparationSpecParams{
+		AccountID: mustPgUUID(accountID), ProjectID: mustPgUUID(projectID), EnvironmentID: envID, DeploymentID: mustPgUUID(deploymentID), AppID: appID, RequireLive: requireLive,
 	})
 	if err != nil {
 		if errors.Is(mapErr(err), ErrNotFound) {
@@ -65,21 +76,18 @@ func (s *PgStore) projectEnvironmentQueueConsumers(ctx context.Context, accountI
 	if err != nil {
 		return ProjectEnvironmentQueueRuntimeSet{}, err
 	}
-	set, err := readQueueRuntimeSetDB(ctx, tx, spec.EnvironmentSlug, deploymentID)
+	set, err := readQueueRuntimeSetDB(ctx, db, spec.EnvironmentSlug, deploymentID)
 	if errors.Is(err, ErrNotFound) {
 		if !prepare {
 			return ProjectEnvironmentQueueRuntimeSet{}, ErrProjectEnvironmentQueuePreparationUnavailable
 		}
 		set = newQueueRuntimeSet(spec, deploymentID, book)
-		err = insertQueueRuntimeSetDB(ctx, tx, set)
+		err = insertQueueRuntimeSetDB(ctx, db, set)
 	}
 	if err != nil {
 		return ProjectEnvironmentQueueRuntimeSet{}, err
 	}
 	if err := validateQueueRuntimeSet(set, spec, deploymentID, book); err != nil {
-		return ProjectEnvironmentQueueRuntimeSet{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
 		return ProjectEnvironmentQueueRuntimeSet{}, err
 	}
 	return set, nil

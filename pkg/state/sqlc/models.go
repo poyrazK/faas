@@ -1363,6 +1363,22 @@ type Invocation struct {
 	WorkFairnessLimit        pgtype.Int4
 }
 
+type InvocationEnvironmentQueueAdmission struct {
+	InvocationID   pgtype.UUID
+	EnvironmentID  pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	ConsumerID     pgtype.UUID
+	RuntimeSetID   pgtype.UUID
+	DeploymentID   pgtype.UUID
+	WorkloadSpecID pgtype.UUID
+	PinHash        string
+	SettingsHash   string
+	DefinitionHash string
+	QueueName      string
+	AdmittedAt     pgtype.Timestamptz
+}
+
 type InvocationWorkEnvironmentAdmission struct {
 	InvocationID   pgtype.UUID
 	EnvironmentID  pgtype.UUID

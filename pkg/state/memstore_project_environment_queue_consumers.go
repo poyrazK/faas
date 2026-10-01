@@ -18,8 +18,12 @@ func (m *MemStore) projectEnvironmentQueueConsumers(accountID, projectID, deploy
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.projectEnvironmentQueueConsumersLocked(accountID, projectID, deploymentID, prepare, true)
+}
+
+func (m *MemStore) projectEnvironmentQueueConsumersLocked(accountID, projectID, deploymentID string, prepare, requireLive bool) (ProjectEnvironmentQueueRuntimeSet, error) {
 	dep, ok := m.deployments[deploymentID]
-	if !ok || dep.Status != DeployLive || !invocationStageScope(workloadEnvironmentSlug(dep.Scope)) {
+	if !ok || (requireLive && dep.Status != DeployLive) || !invocationStageScope(workloadEnvironmentSlug(dep.Scope)) {
 		return ProjectEnvironmentQueueRuntimeSet{}, ErrNotFound
 	}
 	env, err := m.workloadSpecEnvironmentLocked(accountID, projectID, workloadEnvironmentSlug(dep.Scope), dep.AppID)

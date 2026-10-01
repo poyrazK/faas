@@ -154,6 +154,9 @@ func lockInvocationEnvironmentClaimDB(ctx context.Context, db sqlc.DBTX, id stri
 	if err := lockInvocationEnvironmentDB(ctx, db, pgUUIDString(owner.AppID), pgUUIDString(owner.AccountID), owner.EnvironmentID); err != nil {
 		return err
 	}
+	if owned, err := validateInvocationQueueClaimDB(ctx, db, id, true); owned || err != nil {
+		return err
+	}
 	valid, err := sqlc.New().ValidateInvocationEnvironmentClaim(ctx, db, mustPgUUID(id))
 	if err != nil {
 		return mapErr(err)
@@ -165,6 +168,9 @@ func lockInvocationEnvironmentClaimDB(ctx context.Context, db sqlc.DBTX, id stri
 }
 
 func (m *MemStore) validateInvocationEnvironmentClaimLocked(inv Invocation) error {
+	if owned, err := m.validateInvocationQueueClaimLocked(inv, true); owned || err != nil {
+		return err
+	}
 	if inv.EnvironmentID == "" {
 		var pins map[string]string
 		if json.Unmarshal(inv.Headers, &pins) == nil {

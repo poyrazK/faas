@@ -27,6 +27,15 @@ func cleanupEnvironmentInvocationsDB(ctx context.Context, db sqlc.DBTX, accountI
 	if !check.Invalid.Valid || check.Invalid.Bool {
 		return ErrInvocationEnvironmentWorkIsolation
 	}
+	rows, err := q.ListEnvironmentQueueCleanupInvocations(ctx, db, id)
+	if err != nil {
+		return err
+	}
+	for _, invocationID := range rows {
+		if _, err := validateInvocationQueueClaimDB(ctx, db, pgUUIDString(invocationID), false); err != nil {
+			return err
+		}
+	}
 	if check.Busy {
 		return ErrEnvironmentInvocationWorkBusy
 	}
@@ -58,6 +67,10 @@ func (m *MemStore) validateEnvironmentInvocationCleanupLocked(environmentID stri
 	}
 	busy := false
 	for id, inv := range m.invocations {
+		queueOwner, queueAdmitted := m.invocationEnvironmentQueueAdmissions[id]
+		if queueAdmitted && queueOwner.EnvironmentID == environmentID && inv.EnvironmentID != environmentID {
+			return ErrInvocationEnvironmentWorkIsolation
+		}
 		owner, admitted := m.invocationWorkEnvironmentAdmissions[id]
 		if admitted && owner.EnvironmentID == environmentID && inv.EnvironmentID != environmentID {
 			return ErrInvocationEnvironmentWorkIsolation
@@ -68,6 +81,16 @@ func (m *MemStore) validateEnvironmentInvocationCleanupLocked(environmentID stri
 			}
 		}
 		if inv.EnvironmentID != environmentID {
+			continue
+		}
+		if queueAdmitted {
+			if admitted {
+				return ErrInvocationEnvironmentWorkIsolation
+			}
+			if _, err := m.validateInvocationQueueClaimLocked(inv, false); err != nil {
+				return err
+			}
+			busy = busy || inv.State == InvocationDispatching || inv.QuotaReserved
 			continue
 		}
 		app, owned := m.apps[inv.AppID]
@@ -114,6 +137,7 @@ func (m *MemStore) deleteEnvironmentInvocationsLocked(environmentID string) {
 		if inv.EnvironmentID == environmentID {
 			delete(m.invocations, id)
 			delete(m.invocationWorkEnvironmentAdmissions, id)
+			delete(m.invocationEnvironmentQueueAdmissions, id)
 		}
 	}
 	for key, ownerID := range m.invocationWorkEnvironmentDomains {

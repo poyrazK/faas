@@ -505,8 +505,9 @@ type MemStore struct {
 	triggerWorkBindings map[string]TriggerWorkBinding
 	workCancellations   map[string]WorkCancellation
 
-	invocationWorkEnvironmentAdmissions map[string]InvocationWorkEnvironmentAdmission
-	invocationWorkEnvironmentDomains    map[string]string
+	invocationEnvironmentQueueAdmissions map[string]InvocationEnvironmentQueueAdmission
+	invocationWorkEnvironmentAdmissions  map[string]InvocationWorkEnvironmentAdmission
+	invocationWorkEnvironmentDomains     map[string]string
 	// executions and executionPayloads mirror the ADR-171 durable intent
 	// split. Customer reads only touch executions; a payload is exposed solely
 	// by ClaimExecution after the in-memory lease CAS succeeds.
@@ -1203,8 +1204,9 @@ func NewMemStore() *MemStore {
 		deploymentLogs:          map[string][]LogEntry{},
 		deploymentSeq:           map[string]int64{},
 
-		invocationWorkEnvironmentAdmissions: map[string]InvocationWorkEnvironmentAdmission{},
-		invocationWorkEnvironmentDomains:    map[string]string{},
+		invocationEnvironmentQueueAdmissions: map[string]InvocationEnvironmentQueueAdmission{},
+		invocationWorkEnvironmentAdmissions:  map[string]InvocationWorkEnvironmentAdmission{},
+		invocationWorkEnvironmentDomains:     map[string]string{},
 		// Issue #463 / ADR-069 / PR-B — per-workload filesystem
 		// handles (mirrors migration 00119's PK + ON CONFLICT
 		// semantics).
@@ -12201,6 +12203,9 @@ func (m *MemStore) ClaimInvocation(_ context.Context, id, instanceID string, lea
 	}
 	if err := m.validateInvocationEnvironmentClaimLocked(inv); err != nil {
 		return Invocation{}, err
+	}
+	if _, owned := m.invocationEnvironmentQueueAdmissions[id]; owned {
+		return Invocation{}, ErrConflict
 	}
 	if inv.WorkPolicyName != "" {
 		return Invocation{}, ErrConflict
@@ -24449,6 +24454,9 @@ func (m *MemStore) ClaimInvocationWithCap(_ context.Context, id, instanceID stri
 	if err := m.validateInvocationEnvironmentClaimLocked(inv); err != nil {
 		return Invocation{}, err
 	}
+	if err := m.queueClaimCapacityLocked(inv); err != nil {
+		return Invocation{}, err
+	}
 	row, ok := m.accountAsyncQuota[inv.AccountID]
 	if !ok {
 		row = accountAsyncQuotaRow{MaxInflight: maxInflight}
@@ -24532,6 +24540,7 @@ func (m *MemStore) DeleteInvocationsByIDs(_ context.Context, ids []string) (int,
 		if _, ok := m.invocations[id]; ok {
 			delete(m.invocations, id)
 			delete(m.invocationWorkEnvironmentAdmissions, id)
+			delete(m.invocationEnvironmentQueueAdmissions, id)
 			n++
 		}
 	}

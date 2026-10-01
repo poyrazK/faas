@@ -14,12 +14,25 @@ func cloneInvocationWorkAdmission(owner InvocationWorkEnvironmentAdmission) Invo
 }
 
 func cloneInvocationWorkEnvelope(inv Invocation) Invocation {
+	inv.Payload = append(json.RawMessage(nil), inv.Payload...)
+	inv.Result = append(json.RawMessage(nil), inv.Result...)
+	inv.RetryPolicyJSON = append(json.RawMessage(nil), inv.RetryPolicyJSON...)
 	inv.Headers = append(json.RawMessage(nil), inv.Headers...)
 	inv.WorkKeyDigest = append([]byte(nil), inv.WorkKeyDigest...)
 	inv.WorkFairnessDigest = append([]byte(nil), inv.WorkFairnessDigest...)
-	if inv.WorkExpiresAt != nil {
-		expires := *inv.WorkExpiresAt
-		inv.WorkExpiresAt = &expires
+	for _, field := range []**time.Time{&inv.WorkExpiresAt, &inv.ScheduledAt, &inv.LeaseExpiresAt, &inv.ReceivedAt, &inv.CompletedAt, &inv.DeadlineAt, &inv.ResultRetentionUntil, &inv.LastReplayedAt} {
+		if *field != nil {
+			value := **field
+			*field = &value
+		}
+	}
+	if inv.CronID != nil {
+		value := *inv.CronID
+		inv.CronID = &value
+	}
+	if inv.Outcome != nil {
+		value := *inv.Outcome
+		inv.Outcome = &value
 	}
 	return inv
 }

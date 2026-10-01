@@ -193,6 +193,9 @@ func validateInvocationWorkEnvironmentAdmission(ctx context.Context, store invoc
 	if err := validateInvocationEnvironmentOwner(ctx, store, inv, version); err != nil {
 		return err
 	}
+	if err := validateInvocationEnvironmentQueueAdmission(ctx, store, inv, version); err != nil {
+		return err
+	}
 	reader, available := store.(InvocationWorkEnvironmentAdmissionReader)
 	var owner InvocationWorkEnvironmentAdmission
 	var err error

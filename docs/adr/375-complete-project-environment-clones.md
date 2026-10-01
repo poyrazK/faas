@@ -1538,3 +1538,62 @@ invocation ownership/cleanup, consumer preparation and generic drain checks pass
 The drain's simulated gateway/VM contract selects the pinned stage deployment;
 this is not native VM acceptance. Independent sqlc regeneration and the whitespace
 check pass. Complete stage queue dispatch and full cloning remain unverified.
+
+## Deployment-owned stage queue message admission (implementation increment)
+
+A private state-store admission path now requires an explicitly selected live
+stage deployment and a previously prepared complete queue runtime set. It resolves
+an enabled logical binding from the pinned workload specification, authenticates
+revision or release membership, freezes the binding's retry settings, and writes
+the message and its operational ownership record atomically. Generic enqueue
+continues to reject shared producers pointing at stages. The internal admission
+supports every valid worker/job pull/push and function HTTP push definition.
+
+The ownership record retains environment, account, app, deployment, runtime set,
+consumer, workload specification and configuration/definition hashes, together
+with the server admission clock, canonical revision/release pin hash and logical
+queue name. A different release graph reusing the same deployment cannot rewrite
+a previously admitted message’s graph. Delivery and claim verify
+that record against the complete pinned projection. Missing, stripped or changed
+ownership, source, queue, retry settings, pins or hashes cannot be treated as
+production or ordinary async work. These messages and records are operational
+state and are reset at clone; they never become copied production messages.
+
+Queue claims require the account-quota-aware path. Consumer concurrency counts
+all dispatching or quota-reserved messages in the environment/app/logical queue
+domain, including prior deployment generations and expired unreaped leases.
+PostgreSQL performs that count after reserving the account quota row, whose lock
+serializes competing claims across consumer generations. Any rejection rolls
+back the reservation and message transition. MemStore provides the same atomic
+checks under its mutex. Production and sibling environments have independent
+consumer limits and share the account's existing total quota.
+
+Idle environment deletion authenticates retained queue ownership and the complete
+pinned projection before removing messages and dependent operational consumer
+records. Retired deployments and expired release pins remain usable as cleanup
+evidence; claims and delivery require live, usable pins. Busy reservations block
+deleting the environment. Foreign or corrupted ownership blocks the entire
+cleanup. The cleanup query fetches queue-owned IDs, rather than collecting all
+stage message payloads in memory. MemStore copies envelope bytes and optional
+fields so returned values cannot rewrite stored delivery intent or leases.
+
+Public queue activation, class-specific consumer dispatch, clone qualification
+and full clone publication remain gated. This increment supplies message
+ownership and atomic concurrency admission, not complete stage queue execution
+or the full resource/data-copy orchestration. Native VM/provider acceptance,
+common database/object checkpoints, remaining resource isolation strategies and
+production promotion/rollback still require completion.
+
+
+MemStore and migrated PostgreSQL contracts cover atomic admission/rollback,
+namespace ownership, frozen workload/retry/revision/release inputs, all valid
+consumer classes/modes, fresh message identities across UUID spellings,
+concurrent consumer/account admission, cross-deployment logical domains,
+production/sibling separation, expired-lease recovery, completion/cancellation,
+retired-deployment cleanup and corrupted ownership without partial mutations.
+Existing consumer preparation, work-policy admission/lifecycle, environment
+ownership/cleanup, due-list, quota, schema coverage, production queue poller and
+generic drain contracts also pass. The final selected run completed state in
+154.530 seconds and scheduler in 18.526 seconds. Independent sqlc regeneration
+and the whitespace check pass. This evidence is local state/scheduler coverage;
+full VM/provider acceptance and full clone capability remain outstanding.
