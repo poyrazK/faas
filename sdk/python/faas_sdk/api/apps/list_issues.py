@@ -16,6 +16,7 @@ def _get_kwargs(
     *,
     state: str | Unset = UNSET,
     environment: str | Unset = UNSET,
+    assignee: str | Unset = UNSET,
     cursor: str | Unset = UNSET,
 ) -> dict[str, Any]:
 
@@ -24,6 +25,8 @@ def _get_kwargs(
     params["state"] = state
 
     params["environment"] = environment
+
+    params["assignee"] = assignee
 
     params["cursor"] = cursor
 
@@ -111,6 +114,7 @@ def sync_detailed(
     client: AuthenticatedClient,
     state: str | Unset = UNSET,
     environment: str | Unset = UNSET,
+    assignee: str | Unset = UNSET,
     cursor: str | Unset = UNSET,
 ) -> Response[ListIssuesResponse | Problem]:
     """List durable grouped application issues.
@@ -119,6 +123,7 @@ def sync_detailed(
         slug (str):
         state (str | Unset):
         environment (str | Unset):
+        assignee (str | Unset):
         cursor (str | Unset):
 
     Raises:
@@ -133,6 +138,7 @@ def sync_detailed(
         slug=slug,
         state=state,
         environment=environment,
+        assignee=assignee,
         cursor=cursor,
     )
 
@@ -149,6 +155,7 @@ def sync(
     client: AuthenticatedClient,
     state: str | Unset = UNSET,
     environment: str | Unset = UNSET,
+    assignee: str | Unset = UNSET,
     cursor: str | Unset = UNSET,
 ) -> ListIssuesResponse | Problem | None:
     """List durable grouped application issues.
@@ -157,6 +164,7 @@ def sync(
         slug (str):
         state (str | Unset):
         environment (str | Unset):
+        assignee (str | Unset):
         cursor (str | Unset):
 
     Raises:
@@ -172,6 +180,7 @@ def sync(
         client=client,
         state=state,
         environment=environment,
+        assignee=assignee,
         cursor=cursor,
     ).parsed
 
@@ -182,6 +191,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient,
     state: str | Unset = UNSET,
     environment: str | Unset = UNSET,
+    assignee: str | Unset = UNSET,
     cursor: str | Unset = UNSET,
 ) -> Response[ListIssuesResponse | Problem]:
     """List durable grouped application issues.
@@ -190,6 +200,7 @@ async def asyncio_detailed(
         slug (str):
         state (str | Unset):
         environment (str | Unset):
+        assignee (str | Unset):
         cursor (str | Unset):
 
     Raises:
@@ -204,6 +215,7 @@ async def asyncio_detailed(
         slug=slug,
         state=state,
         environment=environment,
+        assignee=assignee,
         cursor=cursor,
     )
 
@@ -218,6 +230,7 @@ async def asyncio(
     client: AuthenticatedClient,
     state: str | Unset = UNSET,
     environment: str | Unset = UNSET,
+    assignee: str | Unset = UNSET,
     cursor: str | Unset = UNSET,
 ) -> ListIssuesResponse | Problem | None:
     """List durable grouped application issues.
@@ -226,6 +239,7 @@ async def asyncio(
         slug (str):
         state (str | Unset):
         environment (str | Unset):
+        assignee (str | Unset):
         cursor (str | Unset):
 
     Raises:
@@ -242,6 +256,7 @@ async def asyncio(
             client=client,
             state=state,
             environment=environment,
+            assignee=assignee,
             cursor=cursor,
         )
     ).parsed
