@@ -825,6 +825,23 @@ cleanup. App, alias, revision and operator coverage is complete only after each
 writer and resolver path has matching evidence; native and fleet acceptance
 remain separate gates.
 
+### Follow-up: project and preview app batches
+
+Project reconciliation and PR preview replacement can withdraw several app
+bindings and publish others in one operation. They join the same global and
+sorted binding-owner coordination as direct app lifecycle writes and validate
+the final topology once before commit. Intermediate app order must not decide
+whether the final batch is safe. Native app cleanup, cron replacement, project
+metadata and preview receipts remain inside the guarded transaction.
+
+Memory batches stage their app map, quota counts, cron map and metadata under
+the existing mutex. App construction uses the proposed app map for uniqueness
+and quota, then the full proposal receives binding analysis before any map or
+receipt is published. Refusal and cancellation retain original app identities,
+leases, tombstone slugs, cleanup and receipts. Creation-only preview batches
+follow the same staging rule. Real fleet and native acceptance remain separate
+release gates.
+
 ### Follow-up: bounded request decision evidence
 
 Public-handler requests and managed HTTP service calls receive a separate,

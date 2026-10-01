@@ -700,7 +700,15 @@ domain selections, so a later foreign claim cannot inherit a deleted selection.
 A soft-deleted or pending hostname can still be a routing reservation until its
 row is removed.
 
-Project reconciliation, preview retirement, account/operator cleanup and the
-remaining alias/revision writers require separate coverage. VM, firewall,
+Project reconciliation and preview set replacement validate their combined final
+app topology through the same binding guard. A refused batch preserves its apps,
+leases, tombstone slugs, crons, project metadata, cleanup work and preview receipt.
+An intermediate deletion followed by restoration in the same batch is evaluated
+as the final restored binding. Memory batches stage changes before publication;
+native batches keep their existing cleanup inside the transaction. Preview
+retirement still hands resource cleanup to the preview janitor.
+
+Account/operator cleanup and the remaining alias/revision writers require
+separate coverage. VM, firewall,
 restore, process-death, leak, real fleet/load/recovery and staging acceptance
 remain pending.

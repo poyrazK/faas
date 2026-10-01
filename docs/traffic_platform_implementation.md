@@ -2044,3 +2044,66 @@ agreement and observations. Real daemon fleet/load/recovery, customer capability
 and staging qualification, and native Linux x86_64 KVM VM/firewall/restore/
 process-death/leak acceptance remain pending. The user has reported no acceptance
 host available; no new host request or unsupported local acceptance was substituted.
+
+### 2026-10-01 — project reconciliation and preview app batches
+
+Project reconciliation, PR preview set replacement and creation-only preview
+batches now use the shared cross-owner app binding guard. The native transaction
+validates its authoritative final app topology before committing existing cleanup,
+crons, project metadata or preview receipts. Discovery includes account-owned
+custom-domain languages and tenant hostname reservations, overlapping owners and
+enabled global route owners; both tenant-routing modes use the existing bounds.
+No schema, SQL query, generated SQLC output, API/SDK shape or limit value changed.
+
+Memory batches stage complete app and cron maps plus project/preview metadata
+under the existing mutex. Preview creation uses the shared app constructor and
+quota counter against the proposed app map. One final binding analysis precedes
+publication. Direct app creation keeps its existing constructor and publication
+validation. Existing preview quota-neutral swaps, collision precedence and shared
+member rules remain covered; preview resource cleanup still belongs to the janitor.
+
+The memory baseline reproduced both gaps: project removal and preview replacement
+accepted an oversized foreign wildcard fallback. Shared native and memory
+regressions now reject those withdrawals, retain the private binding-error marker,
+preserve app IDs, leases, tombstone slugs, crons, project metadata, invocations,
+reserved quota, builds, cleanup and preview receipts, and permit retry after policy
+repair. Cancellation also preserves that intent. A project batch that removes and
+restores the same workload succeeds despite its unsafe intermediate deletion:
+its final binding is unchanged. This batch covers routing publication and preserves
+existing accepted cleanup behavior. Broader memory/native cleanup parity remains
+open for project and preview resource-cleanup tables.
+
+The final 12,463-file freeze passed:
+
+- Full state, internal gateway, API, reconciliation and GitHub service unit runs:
+  6,899 named passes, 1,370 guarded/skipped results,
+  242.033 s; all five packages passed.
+- Selected real Postgres traffic/domain/tenant/project/preview/reconciliation runs:
+  620 named passes, zero skips, 388.176 s;
+  state 456, internal gateway 106, API 52, reconciliation 6.
+- After duplicate results are removed: 7,394 distinct named passes
+  (state 2,506, internal gateway 823, API 3,686, reconciliation 77,
+  GitHub service 302), with 951 guarded results without acceptance
+  evidence (state 928, gateway 7, API 16).
+- SQLC 1.31.1 reproduced all four generated files. GolangCI-Lint 2.4.0 checked
+  all five packages with tests and reported zero issues in 152.315 s.
+  Runbook SQL, text encoding, shell quoting and ADR numbering policy gates passed.
+  No overlays, exclusions or weaker assertions were used for accepted gates.
+- Source Postgres public schema remained empty; fsync, synchronous commit and
+  full-page writes stayed enabled. macOS Postgres supplies no native VM/network,
+  real daemon fleet, load or staging acceptance.
+
+The initial fixture compile failure, disk-pressure termination, expected failing
+baseline and focused runs are retained separately. Only older files from this
+task's own Go cache were removed during shared disk pressure. Failed or terminated
+runs contribute no accepted passes. Only the operations document and this tracker
+changed after the final gate freeze. Evidence is under
+`/Users/poyrazk/dev/Cloud/gregale/outputs/traffic-app-batches-20261001/`.
+
+All six release requirements above remain unchecked. Remaining software work
+includes account/operator cleanup, captured ownership and alias/revision writer
+and resolver coverage, then complete runtime/preview/synthetic/path agreement and
+observations. Real daemon fleet/load/restart/outage/recovery, customer capability
+and staging qualification, and Linux x86_64 KVM VM/firewall/restore/process-death/
+leak acceptance remain pending. The user reports no KVM acceptance host available;
+that availability remains recorded as pending acceptance.

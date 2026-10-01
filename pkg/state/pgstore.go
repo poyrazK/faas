@@ -2441,11 +2441,11 @@ func (s *PgStore) CreatePRPreviewAppsIfUnderQuota(ctx context.Context, apps []Ap
 			}
 		}
 	}
-	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(apps[0].AccountID))
+	tx, err := s.beginAccountAppTrafficMutation(ctx, apps[0].AccountID, "")
 	if err != nil {
 		return nil, fmt.Errorf("state: begin preview batch: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }() //nolint:errcheck // no-op after Commit
 	created := make([]App, 0, len(apps))
 	for _, app := range apps {
 		row, createErr := createAppIfUnderQuotaTx(ctx, tx, app, limits)
@@ -5652,11 +5652,11 @@ func (s *PgStore) ApplyProjectReconcile(
 	scanSource ProjectScanSource,
 	limits api.Limits,
 ) (ProjectReconcileResult, error) {
-	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(project.AccountID))
+	tx, err := s.beginAccountAppTrafficMutation(ctx, project.AccountID, "")
 	if err != nil {
 		return ProjectReconcileResult{}, fmt.Errorf("state: begin project reconcile: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 
 	var locked int
 	if err := tx.QueryRow(ctx, `select 1 from accounts where id = $1 for update`, project.AccountID).Scan(&locked); err != nil {
