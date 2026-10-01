@@ -15944,6 +15944,45 @@ func (q *Queries) QueueConsumerUpdateTrigger(ctx context.Context, db DBTX, arg Q
 	return result.RowsAffected(), nil
 }
 
+const queueStateInScope = `-- name: QueueStateInScope :one
+select
+  count(*) filter (where state in ('pending','dispatching'))::bigint as depth,
+  count(*) filter (where state='dispatching' and lease_expires_at > now())::bigint as in_flight,
+  count(*) filter (where state='dead_letter')::bigint as dead_letter,
+  min(created_at) filter (where state='pending')::timestamptz as oldest_pending_at
+from invocations
+where app_id=$1 and deployment_scope=$2
+  and source='queue' and state in ('pending','dispatching','dead_letter')
+  and ($3::text is null or queue_name=$3::text)
+`
+
+type QueueStateInScopeParams struct {
+	AppID           pgtype.UUID
+	DeploymentScope string
+	QueueName       pgtype.Text
+}
+
+type QueueStateInScopeRow struct {
+	Depth           int64
+	InFlight        int64
+	DeadLetter      int64
+	OldestPendingAt pgtype.Timestamptz
+}
+
+// One snapshot includes active work and dead letters. A NULL queue selects
+// every name in this scope; an empty string selects only legacy unnamed work.
+func (q *Queries) QueueStateInScope(ctx context.Context, db DBTX, arg QueueStateInScopeParams) (QueueStateInScopeRow, error) {
+	row := db.QueryRow(ctx, queueStateInScope, arg.AppID, arg.DeploymentScope, arg.QueueName)
+	var i QueueStateInScopeRow
+	err := row.Scan(
+		&i.Depth,
+		&i.InFlight,
+		&i.DeadLetter,
+		&i.OldestPendingAt,
+	)
+	return i, err
+}
+
 const readAccountCreditConsumption = `-- name: ReadAccountCreditConsumption :one
 SELECT coalesce(sum(-delta_cents) FILTER (WHERE provider = $1::text), 0)::bigint AS consumed_cents,
        coalesce(bool_or(delta_cents < 0) FILTER (WHERE provider = $1), false)::boolean AS has_prior,
@@ -20027,4 +20066,27 @@ func (q *Queries) UsageByMonth(ctx context.Context, db DBTX, arg UsageByMonthPar
 		return nil, err
 	}
 	return items, nil
+}
+
+const workerPoolHistory = `-- name: WorkerPoolHistory :one
+select max(started_at)::timestamptz as last_admission_at,
+       max(terminal_at)::timestamptz as last_termination_at
+from instances where app_id=$1 and deployment_id=$2 and mode='worker'
+`
+
+type WorkerPoolHistoryParams struct {
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+}
+
+type WorkerPoolHistoryRow struct {
+	LastAdmissionAt   pgtype.Timestamptz
+	LastTerminationAt pgtype.Timestamptz
+}
+
+func (q *Queries) WorkerPoolHistory(ctx context.Context, db DBTX, arg WorkerPoolHistoryParams) (WorkerPoolHistoryRow, error) {
+	row := db.QueryRow(ctx, workerPoolHistory, arg.AppID, arg.DeploymentID)
+	var i WorkerPoolHistoryRow
+	err := row.Scan(&i.LastAdmissionAt, &i.LastTerminationAt)
+	return i, err
 }

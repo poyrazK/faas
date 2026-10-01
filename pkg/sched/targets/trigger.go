@@ -117,6 +117,13 @@ type WorkerPoolEngine interface {
 	ReconcileWorkerPool(ctx context.Context, appID string, desired int, trigger string) error
 }
 
+// ScopedWorkerPoolEngine derives each environment's desired count from its
+// captured queue demand. The app-wide observation cannot be used as the target
+// for every live deployment. Production adapters must implement this surface.
+type ScopedWorkerPoolEngine interface {
+	ReconcileWorkerPools(ctx context.Context, appID, trigger string) error
+}
+
 // InstatsReader is the per-instance in-flight signal source (PR-C,
 // issue #462). Wraps the *instancestats.Reader accessor the sched
 // poller populates from the vmmd ActivityTracker wire shape.
@@ -707,6 +714,36 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		customTargets := customTargetsOf(policy)
 		if !haveInflightTarget && !haveQueueTarget && !haveQueueLagTarget && len(customTargets) == 0 {
 			continue
+		}
+		if (haveQueueTarget || haveQueueLagTarget) && (app.WorkloadClass == state.WorkloadClassWorker || app.Manifest.ExecutionMode == api.ExecutionModeWorker) {
+			if pool, ok := t.engine.(ScopedWorkerPoolEngine); ok {
+				// Keep existing app/binding gauges for visibility. These
+				// aggregate observations never authorize a scoped mutation.
+				if t.metrics != nil {
+					signal, have, err := t.readQueueState(ctx, app, now)
+					if err != nil {
+						t.log.Warn("targets: worker queue telemetry failed", "app_id", app.ID, "err", err)
+					} else if have {
+						queue := signal.queue
+						t.metrics.SetQueueState(app.ID, queue.Depth, queue.InFlight, queue.DeadLetter, queue.OldestPendingAt, now)
+						if haveQueueTarget {
+							for binding, demand := range signal.bindingWorkerDemand(queueTarget) {
+								t.metrics.SetQueueBindingWorkerDemand(app.ID, binding, demand)
+							}
+						}
+					}
+				}
+				if t.admissionBackoffActive(app.ID, now) {
+					continue
+				}
+				if err := pool.ReconcileWorkerPools(ctx, app.ID, workerPoolTriggerTargets); err != nil {
+					t.recordAdmissionFailure(app.ID, now)
+					t.log.Warn("targets: reconcile worker environments failed", "app_id", app.ID, "err", err)
+				} else {
+					t.clearAdmissionBackoff(app.ID)
+				}
+				continue
+			}
 		}
 		conc := 0
 		if t.ledger != nil {

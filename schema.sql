@@ -16844,6 +16844,13 @@ CREATE INDEX invocations_replayed_from_idx ON public.invocations USING btree (ac
 
 
 --
+-- Name: invocations_scoped_queue_demand_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocations_scoped_queue_demand_idx ON public.invocations USING btree (app_id, deployment_scope, queue_name) INCLUDE (state, lease_expires_at, created_at) WHERE ((source = 'queue'::text) AND (state = ANY (ARRAY['pending'::text, 'dispatching'::text, 'dead_letter'::text])));
+
+
+--
 -- Name: invocations_status_history_idx; Type: INDEX; Schema: public; Owner: -
 --
 

@@ -116,7 +116,6 @@ CreateCustomDomain
 CreateDeploymentScopeExclusion
 CreateEdgeRule
 CreateEdgeRuleIfUnderQuota
-CreateInstanceWithMode
 CreateOrgAPIKey
 CreateOrgAPIKeyWithProvenance
 CreateProjectEnvironmentApproval
@@ -582,7 +581,6 @@ UpdateDataUpstreamCircuitBreaker
 UpdateDeploymentMinInstances
 UpdateDeploymentTraffic
 UpdateEdgeRule
-UpdateInstanceStateToTerminal
 UpdateOrgMemberRole
 UpdateOrgName
 UpdateOrgPlan

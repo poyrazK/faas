@@ -1127,6 +1127,9 @@ type Querier interface {
 	QueueConsumerOwnedTriggers(ctx context.Context, db DBTX, arg QueueConsumerOwnedTriggersParams) ([]QueueConsumerOwnedTriggersRow, error)
 	QueueConsumerUpdateBinding(ctx context.Context, db DBTX, arg QueueConsumerUpdateBindingParams) (QueueBinding, error)
 	QueueConsumerUpdateTrigger(ctx context.Context, db DBTX, arg QueueConsumerUpdateTriggerParams) (int64, error)
+	// One snapshot includes active work and dead letters. A NULL queue selects
+	// every name in this scope; an empty string selects only legacy unnamed work.
+	QueueStateInScope(ctx context.Context, db DBTX, arg QueueStateInScopeParams) (QueueStateInScopeRow, error)
 	// An unqualified legacy row blocks the whole key; guessing could double-debit.
 	ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg ReadAccountCreditConsumptionParams) (ReadAccountCreditConsumptionRow, error)
 	// A single statement reads the pointer and its complete membership together.
@@ -1532,6 +1535,7 @@ type Querier interface {
 	// refreshed on every pass and backs the dashboard's since filter.
 	UpsertRegressionObservation(ctx context.Context, db DBTX, arg UpsertRegressionObservationParams) error
 	UsageByMonth(ctx context.Context, db DBTX, arg UsageByMonthParams) ([]UsageByMonthRow, error)
+	WorkerPoolHistory(ctx context.Context, db DBTX, arg WorkerPoolHistoryParams) (WorkerPoolHistoryRow, error)
 }
 
 var _ Querier = (*Queries)(nil)

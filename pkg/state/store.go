@@ -4218,6 +4218,11 @@ type Store interface {
 	// queue binding. Queue names are exact matches; the empty queue name is
 	// reserved for the legacy app-wide queue returned by QueueState.
 	QueueStateForQueue(ctx context.Context, appID, queueName string) (QueueStats, error)
+	// Scoped queue demand uses the environment captured at admission. Scope is
+	// required; an empty scope must not silently aggregate neighboring work.
+	QueueStateInScope(ctx context.Context, appID, scope string) (QueueStats, error)
+	QueueStateForQueueInScope(ctx context.Context, appID, queueName, scope string) (QueueStats, error)
+	WorkerPoolHistory(ctx context.Context, appID, deploymentID string) (WorkerPoolHistory, error)
 	// QueuePeek lists the oldest pending queue messages for an app
 	// without acquiring a lease or incrementing attempts. Paginated by
 	// `before` (a queue row id, uuid) — same cursor convention as

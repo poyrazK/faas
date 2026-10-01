@@ -101,14 +101,18 @@ func ResolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 	return inv, version, nil
 }
 
-// Empty is the legacy producer default, derived exactly once at admission.
-// Delivery uses the stored scope even if app membership has since changed.
+// DefaultInvocationDeploymentScope is the admission scope for producers that
+// have no explicit environment. It must never reinterpret already stored work.
+func DefaultInvocationDeploymentScope(app App) string {
+	if app.ProjectID != "" && app.PreviewOfSlug == "" {
+		return "production"
+	}
+	return DefaultEnvScope
+}
+
 func invocationDeploymentScope(app App, scope string) (string, error) {
 	if scope == "" {
-		scope = DefaultEnvScope
-		if app.ProjectID != "" && app.PreviewOfSlug == "" {
-			scope = "production"
-		}
+		scope = DefaultInvocationDeploymentScope(app)
 	}
 	if err := api.ValidateScope(scope); err != nil {
 		return "", ErrInvalidArgument

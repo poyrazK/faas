@@ -286,10 +286,44 @@ OpenAPI and the generated Node/Python clients expose the ownership conflict.
 Their pause/resume success contract now reflects the server's existing 200
 response containing the updated trigger.
 
+Worker queue demand now reads the environment captured on each invocation.
+The scheduler derives a separate target for each live environment, retains the
+newest worker generation in that scope, and drains only its surplus or retired
+workers. Explicit pool mutations require a valid scope; the legacy entry point
+is restricted to the producer's default environment. All scope/demand reads
+finish before teardown, so missing observations preserve the fleet. A selected
+migration holds reconciliation instead of granting the scaler VM ownership.
+App concurrency and node admission still use their shared ledgers, and account
+worker sizing credits only the selected pool's current workers. Durable atomic
+worker-account admission across competing applications remains required; the
+existing account count/read is not a reservation.
+Scale-out and scale-in cooldowns use retained admission and termination history
+in the selected generation, respectively,
+so a recently active neighbor cannot hold a cold environment. New generations
+can start without inheriting their predecessor's cooldown.
+
+The production targets adapter now exposes the worker reconciliation path;
+previously it could fall through to request admission, which rejects workers.
+Ticks and lifecycle notifications use the same scoped demand. Per-binding caps,
+worker replica bounds, and multiple queue targets apply to that demand. An
+app-wide broker lag reading applies only to the producer's default environment;
+other scopes need local queue depth or a future scoped broker signal. Missing
+lag is not an empty queue. Application-wide custom/in-flight signals do not
+authorize environment worker scaling through this path; their scoped signal
+contract remains open. Existing app/binding queue gauges remain aggregate
+telemetry, while winning-signal counters require an actual scoped admission.
+Shared memory/PostgreSQL cases cover exact name/scope matching, leases, retained
+backlog after project removal, completed-history exclusion, and retained worker
+cooldown history isolated by deployment generation. Scheduler tests
+cover per-scope scale-in/out, account-budget sharing, retired generations,
+observation failure, migration holds, scoped cooldowns, binding/replica caps,
+and real PostgreSQL intent through a VM transport fixture. Native guest and teardown proof is still
+required.
+
 The existing queue consumer index still allows one enabled trigger per
 app/source. Before enabling the queue adapter, binding and consumer identity
-must include the environment, and queue demand must select only the
-corresponding environment fleet while preserving app/account capacity limits.
+must include the environment. The scoped demand path does not scope the
+application-shared runtime/scaling policy or transfer queue ownership.
 Renaming or pruning a binding also needs an explicit disposition for queued
 work and existing trigger receipts; the current public delete/pull transition
 removes the consumer and its PostgreSQL receipts. GitOps pruning must preserve

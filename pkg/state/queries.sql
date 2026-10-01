@@ -5613,3 +5613,21 @@ and queue_name=sqlc.arg(queue_name) and enabled for update;
 select id from triggers where id=sqlc.arg(id) and app_id=sqlc.arg(app_id)
 and kind='queue' and source='queue' and slug=sqlc.arg(queue_name) and enabled
 and queue_binding_id is not distinct from sqlc.narg(binding_id)::uuid for share;
+
+-- name: QueueStateInScope :one
+-- One snapshot includes active work and dead letters. A NULL queue selects
+-- every name in this scope; an empty string selects only legacy unnamed work.
+select
+  count(*) filter (where state in ('pending','dispatching'))::bigint as depth,
+  count(*) filter (where state='dispatching' and lease_expires_at > now())::bigint as in_flight,
+  count(*) filter (where state='dead_letter')::bigint as dead_letter,
+  min(created_at) filter (where state='pending')::timestamptz as oldest_pending_at
+from invocations
+where app_id=sqlc.arg(app_id) and deployment_scope=sqlc.arg(deployment_scope)
+  and source='queue' and state in ('pending','dispatching','dead_letter')
+  and (sqlc.narg(queue_name)::text is null or queue_name=sqlc.narg(queue_name)::text);
+
+-- name: WorkerPoolHistory :one
+select max(started_at)::timestamptz as last_admission_at,
+       max(terminal_at)::timestamptz as last_termination_at
+from instances where app_id=sqlc.arg(app_id) and deployment_id=sqlc.arg(deployment_id) and mode='worker';
