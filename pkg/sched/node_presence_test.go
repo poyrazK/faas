@@ -1,4 +1,4 @@
-// adr: 381 — only fresh authoritative inventory may repair a missing service VM.
+// adr: 387 — only fresh authoritative inventory may repair a missing service VM.
 package sched
 
 import (
@@ -94,6 +94,11 @@ func newInventoryFixture(t *testing.T, service bool) *inventoryFixture {
 	vmm := &fakeVMM{}
 	notifier := &fakeNotifier{}
 	engine := newEngine(t, store, vmm, notifier, "1.10.0")
+	// Install the atomic clock before any VM work so asynchronous reconcile
+	// callbacks never observe engine.now being replaced.
+	f := &inventoryFixture{store: store, engine: engine, vmm: vmm, notifier: notifier, now: time.Now().UTC()}
+	f.clock.Store(f.now.UnixNano())
+	engine.now = func() time.Time { return time.Unix(0, f.clock.Load()) }
 	var ins state.Instance
 	if service {
 		manifest := state.AppManifest{ExecutionMode: api.ExecutionModeService, ServiceReplicas: &state.ServiceReplicas{Min: 1, Max: 1, Desired: 1}}
@@ -119,9 +124,9 @@ func newInventoryFixture(t *testing.T, service bool) *inventoryFixture {
 			t.Fatal(err)
 		}
 	}
-	f := &inventoryFixture{store: store, engine: engine, vmm: vmm, notifier: notifier, instance: ins, now: time.Now().UTC().Add(90 * time.Second)}
+	f.instance = ins
+	f.now = f.now.Add(90 * time.Second)
 	f.clock.Store(f.now.UnixNano())
-	engine.now = func() time.Time { return time.Unix(0, f.clock.Load()) }
 	return f
 }
 

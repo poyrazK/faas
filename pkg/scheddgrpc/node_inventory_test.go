@@ -1,4 +1,4 @@
-// adr: 381 — resource telemetry and legacy/unsigned frames cannot assert absence.
+// adr: 387 — resource telemetry and legacy/unsigned frames cannot assert absence.
 package scheddgrpc_test
 
 import (

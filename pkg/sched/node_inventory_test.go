@@ -1,4 +1,4 @@
-// adr: 381 — destructive inventory evidence is signed separately from capacity.
+// adr: 387 — destructive inventory evidence is signed separately from capacity.
 package sched
 
 import (

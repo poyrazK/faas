@@ -1,4 +1,4 @@
-// adr: 381 — inventory survives a failed optional metrics collection.
+// adr: 387 — inventory survives a failed optional metrics collection.
 package main
 
 import (
