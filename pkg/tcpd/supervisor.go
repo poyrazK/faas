@@ -25,12 +25,14 @@ type EnabledListenerSource interface {
 // control plane has enabled its listener, so disabled/deleted endpoints fail
 // closed without requiring a process restart.
 type Supervisor struct {
-	Certificates    CertificateProvider
 	BindHost        string
 	Source          EnabledListenerSource
 	Routes          RouteResolver
 	Targets         TargetResolver
 	Forwarder       Forwarder
+	Certificates    CertificateProvider
+	Observations    TLSObservationPublisher
+	EdgeID          string
 	RefreshInterval time.Duration
 	MaxConnections  int
 	// MaxConnectionsPerAccount bounds concurrent sessions for one account on
@@ -127,14 +129,19 @@ func (s *Supervisor) Serve(ctx context.Context) error {
 	defer func() {
 		closeAll()
 		servers.Wait()
+		s.Metrics.SetTLSReadiness(0, 0, time.Time{})
 	}()
 
+	publication := tlsObservationPublication{saved: make(map[string]state.TCPListenerTLSObservation)}
 	refresh := func() error {
 		rows, err := s.Source.ListEnabledTCPListeners(serveCtx)
 		if err != nil {
 			return fmt.Errorf("list enabled TCP listeners: %w", err)
 		}
 		desired := make(map[int]Route, len(rows))
+		readyTLS, notReadyTLS := 0, 0
+		var earliestExpiry time.Time
+		observations := make([]state.TCPListenerTLSObservation, 0, len(rows))
 		for _, row := range rows {
 			route, err := routeFromListener(row)
 			if err != nil {
@@ -144,6 +151,29 @@ func (s *Supervisor) Serve(ctx context.Context) error {
 				return fmt.Errorf("duplicate TCP listener public port %d", route.PublicPort)
 			}
 			desired[route.PublicPort] = route
+			if route.TLSHostname != "" {
+				expiry := observeTLSCertificateExpiry(serveCtx, s.Certificates, route.TLSHostname)
+				observedAt := time.Now()
+				if !expiry.After(observedAt) {
+					expiry = time.Time{}
+				}
+				if expiry.IsZero() {
+					notReadyTLS++
+				} else {
+					readyTLS++
+					if earliestExpiry.IsZero() || expiry.Before(earliestExpiry) {
+						earliestExpiry = expiry
+					}
+				}
+				observations = append(observations, state.TCPListenerTLSObservation{
+					ListenerID: row.ID, EdgeID: s.EdgeID, Hostname: row.TLSHostname,
+					IntentUpdatedAt: row.UpdatedAt, ObservedAt: observedAt, Ready: !expiry.IsZero(), NotAfter: expiry,
+				})
+			}
+		}
+		s.Metrics.SetTLSReadiness(readyTLS, notReadyTLS, earliestExpiry)
+		if err := publication.publish(serveCtx, s.Observations, observations); err != nil && serveCtx.Err() == nil && s.OnError != nil {
+			s.OnError(fmt.Errorf("publish TCP TLS certificate status: %w", err))
 		}
 
 		mu.Lock()
@@ -288,6 +318,8 @@ func (s *Supervisor) validate() error {
 		return errors.New("tcpd supervisor max connections cannot be negative")
 	case s.MaxConnectionsPerAccount < 0:
 		return errors.New("tcpd supervisor max connections per account cannot be negative")
+	case s.Observations != nil && state.ValidateTCPListenerTLSEdgeID(s.EdgeID) != nil:
+		return errors.New("tcpd supervisor requires a valid observation edge identity")
 	default:
 		return nil
 	}
