@@ -46,6 +46,24 @@ retries cannot re-execute work. Disabled/deleted destinations remain a visible
 configuration failure. Download access is checked against operation ownership;
 durable results contain object references/checksums, not expired signed URLs.
 
+New file attachments copy verified bytes into a unique platform-owned storage
+key before the fenced attachment transaction. A durable staging receipt is
+reserved before any write; concurrent retries use different keys. Only the
+winning report receipt pins a copy to the operation. The copy is private to
+apid and shares the configured platform artifact backend, rather than customer
+bucket write/delete permissions. Its retention follows the operation's result
+horizon, independent of deletion or mutation of the original object. Existing
+reference-only records remain readable through their earlier verification path.
+
+Staging, retained and deleting receipts have explicit state constraints and
+lease-fenced cleanup. Cleanup receipts deliberately have no cascading owner
+foreign keys: owner deletion, recovery and result projection GC must not lose
+the only record of external bytes. apid reconciles this bounded queue even while
+new admission is disabled. Account byte and object caps count uploads and
+deletion retries until physical cleanup succeeds, so an outage cannot turn
+failed requests into unbounded retained storage. Checksums remain verified on
+download; missing/corrupt storage is an availability error, not business failure.
+
 Uncertain outcomes after dispatch require reconciliation unless the definition
 explicitly declares safe repeat execution. Neither timeout nor cancellation
 proves that an external side effect did not happen. Recovery requires confirmed
