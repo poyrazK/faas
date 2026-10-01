@@ -160,7 +160,7 @@ func validPropagatedDecision(decision *FlagDecision, origin FlagDecisionOrigin) 
 		if decision.RuleID == "" {
 			return false
 		}
-	} else if decision.Reason != "flag_missing" && decision.Reason != "default" && decision.Reason != "disabled" && decision.Reason != "customer_missing" && decision.Reason != "configuration_stale" && decision.Reason != "type_mismatch" {
+	} else if decision.Reason != "flag_missing" && decision.Reason != "default" && decision.Reason != "disabled" && decision.Reason != "customer_missing" && decision.Reason != "subject_missing" && decision.Reason != "configuration_stale" && decision.Reason != "type_mismatch" {
 		return false
 	} else if decision.RuleID != "" || decision.Bucket != nil || decision.RolloutBucket != nil {
 		return false

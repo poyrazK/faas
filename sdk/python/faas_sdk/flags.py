@@ -18,7 +18,7 @@ import re
 import time
 from collections.abc import AsyncIterator, Iterable, Mapping
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
@@ -32,13 +32,15 @@ _CUSTOMER_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-
 _UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
 _FLAG_KEY = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 _FALLBACK_REASONS = {"flag_missing", "configuration_stale", "type_mismatch"}
-_DECISION_REASONS = _FALLBACK_REASONS | {"default", "disabled", "customer_missing", "rule_match"}
+_DECISION_REASONS = _FALLBACK_REASONS | {"default", "disabled", "customer_missing", "subject_missing", "rule_match"}
 _MAX_SAFE_INTEGER = 9_007_199_254_740_991
 _MAX_FLAGS = 100
 _MAX_GROUPS = 100
 _MAX_RULES = 32
 _MAX_VARIANTS = 16
 _MAX_CUSTOMERS = 1000
+_MAX_SUBJECTS = 1000
+_MAX_SUBJECT_ID_BYTES = 128
 _MAX_EVIDENCE = 32
 _MAX_BUNDLE_BYTES = 256 * 1024
 _MAX_IDENTITY_BYTES = 16 * 1024
@@ -89,6 +91,7 @@ class _RequestState:
     fresh: bool
     evidence: dict[str, dict[str, Any]]
     inherited: dict[str, tuple[dict[str, Any], dict[str, str]]]
+    subject: str | None = None
 
 
 def flag_bucket(seed: str, key: str, customer: str) -> int:
@@ -103,7 +106,30 @@ def flag_variant_bucket(seed: str, key: str, customer: str) -> int:
     return int.from_bytes(digest[:4], "big") % 10_000
 
 
-def evaluate_flag(bundle: Mapping[str, Any], key: str, customer: str | None, fallback: bool) -> FlagDecision:
+def flag_subject_bucket(seed: str, key: str, customer: str, subject: str) -> int:
+    """Return the stable 0..9999 allocation bucket for a tenant-scoped subject."""
+    digest = hashlib.sha256(f"{seed}\0{key}\0subject\0{customer}\0{subject}".encode()).digest()
+    return int.from_bytes(digest[:4], "big") % 10_000
+
+
+def flag_subject_variant_bucket(seed: str, key: str, customer: str, subject: str) -> int:
+    """Return the separate stable variant bucket for a tenant-scoped subject."""
+    digest = hashlib.sha256(f"{seed}\0{key}\0variant\0subject\0{customer}\0{subject}".encode()).digest()
+    return int.from_bytes(digest[:4], "big") % 10_000
+
+
+def _valid_subject_id(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and 1 <= len(value.encode("ascii", errors="ignore")) <= _MAX_SUBJECT_ID_BYTES
+        and value.isascii()
+        and all(0x21 <= ord(char) <= 0x7E for char in value)
+    )
+
+
+def evaluate_flag(
+    bundle: Mapping[str, Any], key: str, customer: str | None, fallback: bool, subject: str | None = None
+) -> FlagDecision:
     """Evaluate a boolean flag without I/O using trusted customer identity."""
     version = _bundle_version(bundle)
     if not isinstance(fallback, bool):
@@ -124,6 +150,9 @@ def evaluate_flag(bundle: Mapping[str, Any], key: str, customer: str | None, fal
         return _replace_decision(decision, reason="customer_missing")
 
     groups = bundle.get("groups", {})
+    if not _valid_subject_id(subject):
+        subject = None
+    subject_missing = False
     for rule in flag.get("rules", []):
         customers = rule.get("customers")
         if customers and customer not in customers:
@@ -131,10 +160,20 @@ def evaluate_flag(bundle: Mapping[str, Any], key: str, customer: str | None, fal
         group = rule.get("group")
         if group and customer not in groups.get(group, []):
             continue
+        subject_scoped = bool(rule.get("subjects")) or rule.get("rollout_unit") == "subject"
+        if subject_scoped and subject is None:
+            subject_missing = True
+            continue
+        if rule.get("subjects") and subject not in rule["subjects"]:
+            continue
         bucket = None
         rollout = rule.get("rollout")
         if rollout is not None:
-            bucket = flag_bucket(flag["seed"], flag["key"], customer)
+            bucket = (
+                flag_subject_bucket(flag["seed"], flag["key"], customer, subject)
+                if rule.get("rollout_unit") == "subject"
+                else flag_bucket(flag["seed"], flag["key"], customer)
+            )
             if bucket >= rollout:
                 continue
         value = rule.get("value")
@@ -147,10 +186,12 @@ def evaluate_flag(bundle: Mapping[str, Any], key: str, customer: str | None, fal
             rule_id=rule["id"],
             bucket=bucket,
         )
-    return decision
+    return _replace_decision(decision, reason="subject_missing") if subject_missing else decision
 
 
-def evaluate_variant(bundle: Mapping[str, Any], key: str, customer: str | None, fallback: str) -> FlagDecision:
+def evaluate_variant(
+    bundle: Mapping[str, Any], key: str, customer: str | None, fallback: str, subject: str | None = None
+) -> FlagDecision:
     """Evaluate a named variant with independent rollout and weight buckets."""
     version = _bundle_version(bundle)
     if not isinstance(fallback, str):
@@ -171,6 +212,9 @@ def evaluate_variant(bundle: Mapping[str, Any], key: str, customer: str | None, 
         return _replace_decision(decision, reason="customer_missing")
 
     groups = bundle.get("groups", {})
+    if not _valid_subject_id(subject):
+        subject = None
+    subject_missing = False
     for rule in flag.get("rules", []):
         customers = rule.get("customers")
         if customers and customer not in customers:
@@ -178,10 +222,20 @@ def evaluate_variant(bundle: Mapping[str, Any], key: str, customer: str | None, 
         group = rule.get("group")
         if group and customer not in groups.get(group, []):
             continue
+        subject_scoped = bool(rule.get("subjects")) or rule.get("rollout_unit") == "subject"
+        if subject_scoped and subject is None:
+            subject_missing = True
+            continue
+        if rule.get("subjects") and subject not in rule["subjects"]:
+            continue
         rollout_bucket = None
         rollout = rule.get("rollout")
         if rollout is not None:
-            rollout_bucket = flag_bucket(flag["seed"], flag["key"], customer)
+            rollout_bucket = (
+                flag_subject_bucket(flag["seed"], flag["key"], customer, subject)
+                if rule.get("rollout_unit") == "subject"
+                else flag_bucket(flag["seed"], flag["key"], customer)
+            )
             if rollout_bucket >= rollout:
                 continue
         value = rule.get("value")
@@ -193,7 +247,11 @@ def evaluate_variant(bundle: Mapping[str, Any], key: str, customer: str | None, 
                 rule_id=rule["id"],
                 rollout_bucket=rollout_bucket,
             )
-        bucket = flag_variant_bucket(flag["seed"], flag["key"], customer)
+        bucket = (
+            flag_subject_variant_bucket(flag["seed"], flag["key"], customer, subject)
+            if subject_scoped
+            else flag_variant_bucket(flag["seed"], flag["key"], customer)
+        )
         selected = _choose_variant(flag["variants"], bucket)
         return _replace_decision(
             decision,
@@ -203,7 +261,7 @@ def evaluate_variant(bundle: Mapping[str, Any], key: str, customer: str | None, 
             bucket=bucket,
             rollout_bucket=rollout_bucket,
         )
-    return decision
+    return _replace_decision(decision, reason="subject_missing") if subject_missing else decision
 
 
 def _replace_decision(decision: FlagDecision, **changes: Any) -> FlagDecision:
@@ -342,8 +400,11 @@ def validate_bundle(raw: Any) -> dict[str, Any]:
             rule_id = rule.get("id")
             customers = rule.get("customers")
             group = rule.get("group")
+            subjects = rule.get("subjects")
             rollout = rule.get("rollout")
+            rollout_unit = rule.get("rollout_unit")
             value = rule.get("value")
+            subject_scope = bool(subjects) or rollout_unit == "subject"
             valid_rule_value = (
                 "value" not in rule or (isinstance(value, str) and value in variant_keys)
                 if is_variant
@@ -355,7 +416,18 @@ def validate_bundle(raw: Any) -> dict[str, Any]:
                 or not valid_rule_value
                 or ("customers" in rule and not _valid_ids(customers))
                 or ("group" in rule and (not _valid_key(group) or group not in normalized_groups))
+                or (
+                    "subjects" in rule
+                    and (
+                        not isinstance(subjects, list)
+                        or not 1 <= len(subjects) <= _MAX_SUBJECTS
+                        or not all(_valid_subject_id(subject) for subject in subjects)
+                        or len(set(subjects)) != len(subjects)
+                    )
+                )
                 or ("rollout" in rule and (not _is_int(rollout) or not 0 <= rollout <= 10_000))
+                or ("rollout_unit" in rule and (rollout_unit not in ("customer", "subject") or rollout is None))
+                or (subject_scope and (not customers and not group))
                 or (not customers and not group and rollout is None)
             ):
                 raise ValueError("Invalid Flags rule")
@@ -652,7 +724,12 @@ class GregaleFlags:
         raw_bundle = await self._get_json(
             self._api_url,
             _MAX_BUNDLE_BYTES + 1024,
-            {"Authorization": f"Bearer {token}", "Accept": "application/json", "Cache-Control": "no-store"},
+            {
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+                "Cache-Control": "no-store",
+                "X-Faas-Flags-Capabilities": "subject-targeting-v1",
+            },
         )
         bundle = validate_bundle(raw_bundle)
         if self._bundle is not None and (
@@ -701,6 +778,18 @@ class GregaleFlags:
         finally:
             self._request.reset(token)
 
+    @asynccontextmanager
+    async def for_subject(self, subject_id: str) -> AsyncIterator[GregaleFlags]:
+        """Scope checks to an opaque application user ID after authentication."""
+        request = self._current_request()
+        if not _valid_subject_id(subject_id):
+            raise ValueError("Invalid opaque subject ID")
+        token = self._request.set(replace(request, subject=subject_id))
+        try:
+            yield self
+        finally:
+            self._request.reset(token)
+
     def boolean(self, key: str, fallback: bool) -> FlagDecision:
         """Evaluate a boolean flag inside run_request."""
         request = self._current_request()
@@ -720,7 +809,7 @@ class GregaleFlags:
                 decision = FlagDecision(key, fallback, version, "type_mismatch", "fallback")
         else:
             decision = (
-                evaluate_flag(request.bundle, key, request.customer, fallback)
+                evaluate_flag(request.bundle, key, request.customer, fallback, request.subject)
                 if request.fresh and request.bundle is not None
                 else FlagDecision(
                     key,
@@ -762,7 +851,7 @@ class GregaleFlags:
                 decision = FlagDecision(key, fallback, version, "type_mismatch", "fallback", type_="variant")
         else:
             decision = (
-                evaluate_variant(request.bundle, key, request.customer, fallback)
+                evaluate_variant(request.bundle, key, request.customer, fallback, request.subject)
                 if request.fresh and request.bundle is not None
                 else FlagDecision(
                     key,

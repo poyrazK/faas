@@ -23248,7 +23248,13 @@ paths:
       tags: [flags]
       operationId: getRuntimeFlags
       summary: Read the live workload’s project-environment flag bundle.
-      description: Requires an RS256 workload identity token with audience gregale:flags from an active app instance. Project and environment are derived from the deployment; query parameters cannot select another scope.
+      description: Requires an RS256 workload identity token with audience gregale:flags from an active app instance. Project and environment are derived from the deployment; query parameters cannot select another scope. Clients advertise runtime evaluation capabilities; a bundle using a capability is withheld from older clients that do not advertise it.
+      parameters:
+        - name: X-Faas-Flags-Capabilities
+          in: header
+          required: false
+          description: Comma-separated optional runtime SDK capabilities. Subject-aware SDKs advertise subject-targeting-v1.
+          schema: { type: string, maxLength: 256 }
       security:
         - flagsWorkloadIdentity: []
       responses:
@@ -23259,6 +23265,7 @@ paths:
               schema: { $ref: '#/components/schemas/FlagsBundle' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '426': { description: Runtime SDK does not support a capability used by the current flag bundle. }
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -23914,7 +23921,7 @@ components:
         created_at: { type: string, format: date-time }
         completed_at: { type: [string, 'null'], format: date-time }
     FlagRule:
-      description: Ordered customer targeting rule; supplied constraints combine with AND. Boolean flags require a boolean value; variant flags may omit value to use weighted assignment. Progressive rollout is limited to boolean true rules.
+      description: Ordered targeting rule; customer/group and subject constraints combine with AND. Subject rules require a customer or group constraint. Subject IDs are opaque application IDs and are evaluated only after application authentication. Boolean flags require a boolean value; variant flags may omit value to use weighted assignment. Progressive rollout is limited to boolean true rules.
       type: object
       additionalProperties: false
       required: [id]
@@ -23922,7 +23929,9 @@ components:
         id: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
         customers: { type: array, maxItems: 1000, uniqueItems: true, items: { type: string, format: uuid } }
         group: { type: string, description: Owner-managed customer group key. }
-        rollout: { type: integer, minimum: 0, maximum: 10000, description: Basis points of eligible customers; omitted means all eligible customers. }
+        subjects: { type: array, minItems: 1, maxItems: 1000, uniqueItems: true, items: { type: string, pattern: '^[!-~]{1,128}$' }, description: "Opaque application subject IDs, matched inside the selected customers/group. Use stable internal IDs, not emails or display names." }
+        rollout: { type: integer, minimum: 0, maximum: 10000, description: "Basis points of eligible customers by default, or eligible subjects when rollout_unit is subject; omitted means all eligible targets." }
+        rollout_unit: { type: string, enum: [customer, subject], description: Allocation unit for rollout percentages. Omitted preserves customer-level allocation. Subject rollout requires a customer or group constraint and an authenticated subject context. }
         progression: { $ref: '#/components/schemas/ProgressiveRollout' }
         value:
           oneOf:
@@ -24052,6 +24061,7 @@ components:
       additionalProperties: false
       properties:
         customer_id: { type: string, format: uuid, description: Omit for anonymous evaluation. }
+        subject_id: { type: string, pattern: '^[!-~]{1,128}$', description: Opaque application subject ID after authentication; requires customer_id and does not record the ID in evidence. }
         version: { type: integer, format: int64, minimum: 0, description: Zero or omitted selects current configuration. }
         fallback: { type: boolean, default: false }
         fallback_variant: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$', description: Fallback variant for an absent flag; configured variant flags use their own default. }
@@ -24068,7 +24078,7 @@ components:
         type: { type: string, enum: [boolean, variant], description: Present as variant for named-variant decisions; omitted for legacy boolean decisions. }
         config_version: { type: integer, format: int64, minimum: 0 }
         rule_id: { type: string }
-        reason: { type: string, enum: [flag_missing, default, disabled, customer_missing, rule_match, configuration_stale, type_mismatch] }
+        reason: { type: string, enum: [flag_missing, default, disabled, customer_missing, subject_missing, rule_match, configuration_stale, type_mismatch] }
         bucket: { type: integer, minimum: 0, maximum: 9999, description: Boolean rollout bucket or weighted variant assignment bucket. }
         rollout_bucket: { type: integer, minimum: 0, maximum: 9999, description: Eligibility bucket for rollout-gated variant rules. }
         source: { type: string, enum: [configuration, fallback, inherited] }

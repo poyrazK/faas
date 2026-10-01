@@ -814,6 +814,7 @@ from .flag_rollout_promotion_reason import FlagRolloutPromotionReason
 from .flag_rollout_promotion_request import FlagRolloutPromotionRequest
 from .flag_rollout_promotion_status import FlagRolloutPromotionStatus
 from .flag_rule import FlagRule
+from .flag_rule_rollout_unit import FlagRuleRolloutUnit
 from .flag_variant import FlagVariant
 from .flags_bundle import FlagsBundle
 from .flags_config import FlagsConfig
@@ -2808,6 +2809,7 @@ __all__ = (
     "FlagRolloutPromotionRequest",
     "FlagRolloutPromotionStatus",
     "FlagRule",
+    "FlagRuleRolloutUnit",
     "FlagsBundle",
     "FlagsConfig",
     "FlagsConfigGroups",

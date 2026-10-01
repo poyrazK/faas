@@ -50,6 +50,32 @@ func TestFlagAllocationMatchesSharedRuntimeVectors(t *testing.T) {
 	}
 }
 
+func TestSubjectAllocationMatchesSharedRuntimeVectors(t *testing.T) {
+	raw, err := os.ReadFile("../../pkg/flags/testdata/subject_allocation.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vectors []struct {
+		Seed          string `json:"seed"`
+		Key           string `json:"key"`
+		Customer      string `json:"customer"`
+		Subject       string `json:"subject"`
+		Bucket        int    `json:"bucket"`
+		VariantBucket int    `json:"variant_bucket"`
+	}
+	if err := json.Unmarshal(raw, &vectors); err != nil {
+		t.Fatal(err)
+	}
+	for _, vector := range vectors {
+		if got := flagSubjectBucket(vector.Seed, vector.Key, vector.Customer, vector.Subject); got != vector.Bucket {
+			t.Errorf("subject rollout bucket %d, want %d", got, vector.Bucket)
+		}
+		if got := flagSubjectVariantBucket(vector.Seed, vector.Key, vector.Customer, vector.Subject); got != vector.VariantBucket {
+			t.Errorf("subject variant bucket %d, want %d", got, vector.VariantBucket)
+		}
+	}
+}
+
 func TestRuntimeBundleEvaluatesOrderedCustomerAndVariantRules(t *testing.T) {
 	const raw = `{
 	  "environment_id":"22222222-2222-4222-8222-222222222222",
@@ -99,6 +125,9 @@ func TestRuntimeBundleRejectsMalformedConfiguration(t *testing.T) {
 		{name: "null group members", raw: strings.Replace(base, `"groups":{}`, `"groups":{"internal":null}`, 1)},
 		{name: "null boolean variants", raw: strings.Replace(base, `"rules":[]`, `"rules":[],"variants":null`, 1)},
 		{name: "invalid variant weights", raw: strings.Replace(base, `"default":false`, `"type":"variant","default":"a","variants":[{"key":"a","weight":4000},{"key":"b","weight":4000}]`, 1)},
+		{name: "subject requires tenant constraint", raw: strings.Replace(base, `"rules":[]`, `"rules":[{"id":"pilot","subjects":["user-17"],"value":true}]`, 1)},
+		{name: "empty subject list", raw: strings.Replace(base, `"rules":[]`, `"rules":[{"id":"pilot","customers":["`+testFlagCustomer+`"],"subjects":[],"value":true}]`, 1)},
+		{name: "invalid rollout unit", raw: strings.Replace(base, `"rules":[]`, `"rules":[{"id":"pilot","customers":["`+testFlagCustomer+`"],"rollout":5000,"rollout_unit":"user","value":true}]`, 1)},
 		{name: "trailing data", raw: base + `{}`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -106,6 +135,26 @@ func TestRuntimeBundleRejectsMalformedConfiguration(t *testing.T) {
 				t.Fatalf("accepted invalid bundle: %s", test.raw)
 			}
 		})
+	}
+}
+
+func TestRuntimeBundleSubjectEvaluationAndMissingSubject(t *testing.T) {
+	const raw = `{"environment_id":"22222222-2222-4222-8222-222222222222","version":2,"groups":{},"flags":[{"key":"new-export","enabled":true,"default":false,"seed":"stable","rules":[{"id":"pilot-users","customers":["00000000-0000-0000-0000-000000000001"],"rollout":6000,"rollout_unit":"subject","value":true}]}]}`
+	bundle, err := validateRuntimeBundle([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected := evaluateRuntimeBooleanForSubject(bundle, "new-export", testFlagCustomer, "user-18", false)
+	if selected.Value != true || selected.RuleID != "pilot-users" || selected.Bucket == nil || *selected.Bucket != 5279 {
+		t.Fatalf("unexpected subject rollout decision: %+v", selected)
+	}
+	unselected := evaluateRuntimeBooleanForSubject(bundle, "new-export", testFlagCustomer, "user-17", false)
+	if unselected.Value != false || unselected.Reason != "default" || unselected.Bucket != nil {
+		t.Fatalf("unexpected out-of-cohort decision: %+v", unselected)
+	}
+	missing := evaluateRuntimeBoolean(bundle, "new-export", testFlagCustomer, false)
+	if missing.Value != false || missing.Reason != "subject_missing" || missing.Source != "configuration" {
+		t.Fatalf("missing subject did not use the configured default: %+v", missing)
 	}
 }
 
@@ -176,6 +225,51 @@ func TestGregaleFlagsMiddlewareRefreshesAndAttachesEvidence(t *testing.T) {
 	}
 	if len(evidence) != 1 || evidence[0].Flag != "new-export" || !evidence[0].Used || evidence[0].Value != true || evidence[0].RuleID != "selected" {
 		t.Fatalf("response evidence = %+v", evidence)
+	}
+}
+
+func TestGregaleFlagsWithSubjectTargetsOnlyAuthenticatedSubject(t *testing.T) {
+	const raw = `{"environment_id":"22222222-2222-4222-8222-222222222222","version":2,"groups":{},"flags":[{"key":"new-export","enabled":true,"default":false,"seed":"stable","rules":[{"id":"pilot-users","customers":["00000000-0000-0000-0000-000000000001"],"rollout":6000,"rollout_unit":"subject","value":true}]}]}`
+	identity, api, flags := newTestFlagsServer(t, nil, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, raw)
+	})
+	defer identity.Close()
+	defer api.Close()
+	if err := flags.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer flags.Close()
+	if _, err := flags.WithSubject(context.Background(), "user-18"); !errors.Is(err, ErrFlagRequestMissing) {
+		t.Fatalf("WithSubject outside middleware error = %v", err)
+	}
+	handler := flags.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := flags.WithSubject(r.Context(), "bad subject"); err == nil {
+			t.Error("accepted a subject ID with whitespace")
+		}
+		ctx, err := flags.WithSubject(r.Context(), "user-18")
+		if err != nil {
+			t.Errorf("WithSubject: %v", err)
+			return
+		}
+		decision, err := flags.Boolean(ctx, "new-export", false)
+		if err != nil || decision.Value != true || decision.RuleID != "pilot-users" || decision.Bucket == nil || *decision.Bucket != 5279 {
+			t.Errorf("subject decision = %+v, %v", decision, err)
+		}
+		if err := flags.Used(ctx, "new-export"); err != nil {
+			t.Errorf("Used: %v", err)
+		}
+	}))
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set(GregaleFlagCustomerHeader, testFlagCustomer)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("subject request status=%d", response.Code)
+	}
+	evidence, err := base64.RawURLEncoding.DecodeString(response.Header().Get(GregaleFlagEvidenceHeader))
+	if err != nil || strings.Contains(string(evidence), "user-18") || !strings.Contains(string(evidence), "pilot-users") {
+		t.Fatalf("subject evidence leaked identity or lost decision: %s (%v)", evidence, err)
 	}
 }
 
@@ -444,6 +538,10 @@ func newTestFlagsServer(t *testing.T, now func() time.Time, apiHandler http.Hand
 		}
 		if r.Header.Get("Authorization") != "Bearer test-workload-token" || r.Header.Get("Cache-Control") != "no-store" {
 			http.Error(w, "missing workload auth or cache controls", http.StatusUnauthorized)
+			return
+		}
+		if r.Header.Get("X-Faas-Flags-Capabilities") != "subject-targeting-v1" {
+			http.Error(w, "missing Flags capability advertisement", http.StatusBadRequest)
 			return
 		}
 		apiHandler(w, r)
