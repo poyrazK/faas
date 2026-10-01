@@ -748,6 +748,18 @@ type AppTcpListener struct {
 	Enabled      bool
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
+	TlsMode      string
+	TlsHostname  string
+}
+
+type AppTcpListenerTlsObservation struct {
+	ListenerID      pgtype.UUID
+	EdgeID          string
+	Hostname        string
+	IntentUpdatedAt pgtype.Timestamptz
+	ObservedAt      pgtype.Timestamptz
+	Ready           bool
+	NotAfter        pgtype.Timestamptz
 }
 
 type AppTrustedSigner struct {
@@ -757,6 +769,19 @@ type AppTrustedSigner struct {
 	CosignPublicKey  []byte
 	AddedAt          pgtype.Timestamptz
 	AddedByAccountID pgtype.UUID
+}
+
+type AppUdpListener struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	ListenerName string
+	GuestPort    int32
+	PublicPort   int32
+	Protocol     string
+	Enabled      bool
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
 }
 
 type AppWakeTransition struct {
@@ -2241,6 +2266,7 @@ type Invocation struct {
 	DeploymentScope          string
 	QueueBindingID           pgtype.UUID
 	ReplayGeneration         int64
+	OutcomeCode              string
 }
 
 type InvocationWorkCancellation struct {
@@ -4163,6 +4189,8 @@ type ScheduleOccurrence struct {
 	FinishedAt           pgtype.Timestamptz
 	CreatedAt            pgtype.Timestamptz
 	UpdatedAt            pgtype.Timestamptz
+	OutcomeCode          string
+	WorkDecision         []byte
 }
 
 type ServiceCallerKey struct {

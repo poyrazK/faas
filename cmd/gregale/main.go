@@ -266,6 +266,12 @@ func run(args []string) (status int) {
 			}
 			return cmdAppsTCP(args[2], args[3:])
 		}
+		if len(args) > 1 && args[1] == subUDPListeners {
+			if len(args) < 3 {
+				return cmdAppsUDP("", nil)
+			}
+			return cmdAppsUDP(args[2], args[3:])
+		}
 		// `gregale apps streaming-cap <slug>` — ADR-102 D6 operator
 		// entry point. Same shape as the routes arm above: 3-token
 		// form (`apps streaming-cap <slug>`), placed BEFORE the
@@ -286,7 +292,7 @@ func run(args []string) (status int) {
 			return cmdAppsRm(args[1:])
 		}
 		if len(args) > 1 {
-			PrintUsage(os.Stderr, "usage: gregale apps [ls|restore <slug>|routes <slug>|tcp <slug>|streaming-cap <slug>|-q|--quiet <slug>]", "apps")
+			PrintUsage(os.Stderr, "usage: gregale apps [ls|restore <slug>|routes <slug>|tcp <slug>|udp <slug>|streaming-cap <slug>|-q|--quiet <slug>]", "apps")
 			return 1
 		}
 		return cmdApps()

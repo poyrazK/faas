@@ -533,8 +533,15 @@ func TestHostRestartIteratesServiceOrderInOrder(t *testing.T) {
 		"schedd",
 		"apid",
 	}
+	binaryDir := t.TempDir()
+	for _, service := range scrambled {
+		if err := os.WriteFile(filepath.Join(binaryDir, service), []byte("candidate"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
 	r := hostRuntime{
 		unitDir:           "/tmp/nonexistent",
+		binaryDir:         binaryDir,
 		databaseURL:       "",
 		serviceOrder:      scrambled,
 		readyTimeout:      100 * time.Millisecond,

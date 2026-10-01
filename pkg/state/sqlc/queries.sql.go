@@ -323,6 +323,32 @@ func (q *Queries) AcknowledgeEnvironmentGitOpsEffect(ctx context.Context, db DBT
 	return result.RowsAffected(), nil
 }
 
+const activeTCPListenerByPublicPort = `-- name: ActiveTCPListenerByPublicPort :one
+SELECT l.id, l.account_id, l.app_id, l.listener_name, l.guest_port, l.public_port, l.protocol, l.enabled, l.created_at, l.updated_at, l.tls_mode, l.tls_hostname FROM app_tcp_listeners l JOIN apps a ON a.id = l.app_id
+WHERE l.public_port = $1 AND l.enabled
+  AND a.status <> 'deleted' AND a.account_id = l.account_id
+`
+
+func (q *Queries) ActiveTCPListenerByPublicPort(ctx context.Context, db DBTX, publicPort int32) (AppTcpListener, error) {
+	row := db.QueryRow(ctx, activeTCPListenerByPublicPort, publicPort)
+	var i AppTcpListener
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.ListenerName,
+		&i.GuestPort,
+		&i.PublicPort,
+		&i.Protocol,
+		&i.Enabled,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.TlsMode,
+		&i.TlsHostname,
+	)
+	return i, err
+}
+
 const advanceEnvironmentGitOpsRuntimeBoundary = `-- name: AdvanceEnvironmentGitOpsRuntimeBoundary :one
 UPDATE environment_gitops_runtime_effects SET required_at = $1::timestamptz,
     wake_id = gen_random_uuid(), requested_at = NULL, next_request_at = now()
@@ -1389,6 +1415,17 @@ func (q *Queries) CountTriggersByApp(ctx context.Context, db DBTX, appID pgtype.
 	return count, err
 }
 
+const countUDPListenersForApp = `-- name: CountUDPListenersForApp :one
+SELECT count(*) FROM app_udp_listeners WHERE app_id = $1::text::uuid
+`
+
+func (q *Queries) CountUDPListenersForApp(ctx context.Context, db DBTX, appID string) (int64, error) {
+	row := db.QueryRow(ctx, countUDPListenersForApp, appID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createAPIKey = `-- name: CreateAPIKey :one
 insert into api_keys (account_id, key_sha256, label, scopes)
 values ($1, $2, $3, $4)
@@ -2245,6 +2282,53 @@ func (q *Queries) CreateTrigger(ctx context.Context, db DBTX, arg CreateTriggerP
 	return i, err
 }
 
+const createUDPListener = `-- name: CreateUDPListener :one
+INSERT INTO app_udp_listeners
+(id, app_id, account_id, listener_name, guest_port, public_port, protocol, enabled)
+VALUES ($1::text::uuid, $2::text::uuid,
+        $3::text::uuid, $4,
+        $5, $6, $7, $8)
+RETURNING id, account_id, app_id, listener_name, guest_port, public_port, protocol, enabled, created_at, updated_at
+`
+
+type CreateUDPListenerParams struct {
+	ID           string
+	AppID        string
+	AccountID    string
+	ListenerName string
+	GuestPort    int32
+	PublicPort   int32
+	Protocol     string
+	Enabled      bool
+}
+
+func (q *Queries) CreateUDPListener(ctx context.Context, db DBTX, arg CreateUDPListenerParams) (AppUdpListener, error) {
+	row := db.QueryRow(ctx, createUDPListener,
+		arg.ID,
+		arg.AppID,
+		arg.AccountID,
+		arg.ListenerName,
+		arg.GuestPort,
+		arg.PublicPort,
+		arg.Protocol,
+		arg.Enabled,
+	)
+	var i AppUdpListener
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.ListenerName,
+		&i.GuestPort,
+		&i.PublicPort,
+		&i.Protocol,
+		&i.Enabled,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const createUploadSession = `-- name: CreateUploadSession :one
 INSERT INTO upload_sessions (
     id, account_id, app_slug, total_size, chunk_size, sha256_hex, part_path, deploy_options
@@ -2687,6 +2771,18 @@ func (q *Queries) DeleteTrigger(ctx context.Context, db DBTX, arg DeleteTriggerP
 	return err
 }
 
+const deleteUDPListener = `-- name: DeleteUDPListener :execrows
+DELETE FROM app_udp_listeners WHERE id = $1::text::uuid
+`
+
+func (q *Queries) DeleteUDPListener(ctx context.Context, db DBTX, id string) (int64, error) {
+	result, err := db.Exec(ctx, deleteUDPListener, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deploymentAliasByHostLabel = `-- name: DeploymentAliasByHostLabel :many
 SELECT a.app_id, a.name, a.deployment_id, d.revision, a.created_at, a.updated_at
   FROM deployment_aliases a
@@ -2992,7 +3088,7 @@ INSERT INTO invocations (
   work_policy_name, work_key_digest, work_expires_at,
   work_sequence, work_policy_revision, work_fairness_digest,
   work_fairness_limit, platform_tenant_id, deployment_scope, queue_binding_id,
-  occurrence_id, start_deadline_at
+  occurrence_id, start_deadline_at, failure_rules
 ) VALUES (
   coalesce($1::uuid, gen_random_uuid()), $2, $3,
   $4, $5, coalesce(nullif($6::text, ''), 'pending'),
@@ -3004,8 +3100,8 @@ INSERT INTO invocations (
   $22, $23, $24,
   $25, $26, $27,
   $28, nullif($29::text, ''), $30,
-  $31::uuid, $32::timestamptz
-) RETURNING id, app_id, account_id, source, state, payload, headers, due_at, method, path, cron_id, scheduled_at, ack_url, result, lease_expires_at, received_at, completed_at, instance_id, attempts, last_error, created_at, org_id, outcome, deadline_at, retry_policy, result_retention_until, replayed_from_invocation_id, last_replayed_at, on_success_destination_id, on_failure_destination_id, queue_name, quota_reserved, work_policy_name, work_key_digest, work_expires_at, work_sequence, work_policy_revision, work_fairness_digest, work_fairness_limit, platform_tenant_id, failure_rules, occurrence_id, start_deadline_at, work_decision, deployment_scope, queue_binding_id, replay_generation
+  $31::uuid, $32::timestamptz, $33::jsonb
+) RETURNING id, app_id, account_id, source, state, payload, headers, due_at, method, path, cron_id, scheduled_at, ack_url, result, lease_expires_at, received_at, completed_at, instance_id, attempts, last_error, created_at, org_id, outcome, deadline_at, retry_policy, result_retention_until, replayed_from_invocation_id, last_replayed_at, on_success_destination_id, on_failure_destination_id, queue_name, quota_reserved, work_policy_name, work_key_digest, work_expires_at, work_sequence, work_policy_revision, work_fairness_digest, work_fairness_limit, platform_tenant_id, failure_rules, occurrence_id, start_deadline_at, work_decision, deployment_scope, queue_binding_id, replay_generation, outcome_code
 `
 
 type EnqueueInvocationRowParams struct {
@@ -3041,6 +3137,7 @@ type EnqueueInvocationRowParams struct {
 	QueueBindingID         pgtype.UUID
 	OccurrenceID           pgtype.UUID
 	StartDeadlineAt        pgtype.Timestamptz
+	FailureRules           []byte
 }
 
 func (q *Queries) EnqueueInvocationRow(ctx context.Context, db DBTX, arg EnqueueInvocationRowParams) (Invocation, error) {
@@ -3077,6 +3174,7 @@ func (q *Queries) EnqueueInvocationRow(ctx context.Context, db DBTX, arg Enqueue
 		arg.QueueBindingID,
 		arg.OccurrenceID,
 		arg.StartDeadlineAt,
+		arg.FailureRules,
 	)
 	var i Invocation
 	err := row.Scan(
@@ -3127,6 +3225,7 @@ func (q *Queries) EnqueueInvocationRow(ctx context.Context, db DBTX, arg Enqueue
 		&i.DeploymentScope,
 		&i.QueueBindingID,
 		&i.ReplayGeneration,
+		&i.OutcomeCode,
 	)
 	return i, err
 }
@@ -7874,6 +7973,56 @@ func (q *Queries) IssueImpact(ctx context.Context, db DBTX, arg IssueImpactParam
 	return i, err
 }
 
+const issueImpactSummaries = `-- name: IssueImpactSummaries :many
+SELECT issue_id,
+       count(*) AS observed_events,
+       count(DISTINCT COALESCE(verified_platform_tenant_id,verified_consumer_id)) AS identified_customers,
+       count(*) FILTER(WHERE verified_platform_tenant_id IS NULL AND verified_consumer_id IS NULL) AS unattributed_events
+FROM issue_events
+WHERE issue_id = ANY($1::uuid[])
+  AND occurred_at >= $2::timestamptz
+  AND occurred_at <= $3::timestamptz
+GROUP BY issue_id
+`
+
+type IssueImpactSummariesParams struct {
+	IssueIds []pgtype.UUID
+	Since    pgtype.Timestamptz
+	Until    pgtype.Timestamptz
+}
+
+type IssueImpactSummariesRow struct {
+	IssueID             pgtype.UUID
+	ObservedEvents      int64
+	IdentifiedCustomers int64
+	UnattributedEvents  int64
+}
+
+func (q *Queries) IssueImpactSummaries(ctx context.Context, db DBTX, arg IssueImpactSummariesParams) ([]IssueImpactSummariesRow, error) {
+	rows, err := db.Query(ctx, issueImpactSummaries, arg.IssueIds, arg.Since, arg.Until)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []IssueImpactSummariesRow{}
+	for rows.Next() {
+		var i IssueImpactSummariesRow
+		if err := rows.Scan(
+			&i.IssueID,
+			&i.ObservedEvents,
+			&i.IdentifiedCustomers,
+			&i.UnattributedEvents,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const issueInsertEvent = `-- name: IssueInsertEvent :exec
 INSERT INTO issue_events(app_id,deployment_id,event_id,issue_id,payload_hash,payload,occurred_at,received_at,verified_consumer_id,verified_platform_tenant_id)
 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
@@ -7975,17 +8124,21 @@ const issueList = `-- name: IssueList :many
 SELECT id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until FROM app_issues WHERE app_id = $1
 AND ($2::text = '' OR state = $2)
 AND ($3::text = '' OR environment = $3)
-AND ($4::timestamptz IS NULL OR (last_seen_at,id) < ($4,$5::uuid))
-ORDER BY last_seen_at DESC,id DESC LIMIT $6
+AND ($4::uuid IS NULL OR assignee_account_id = $4)
+AND (NOT $5::bool OR assignee_account_id IS NULL)
+AND ($6::timestamptz IS NULL OR (last_seen_at,id) < ($6,$7::uuid))
+ORDER BY last_seen_at DESC,id DESC LIMIT $8
 `
 
 type IssueListParams struct {
-	AppID       pgtype.UUID
-	State       string
-	Environment string
-	CursorTime  pgtype.Timestamptz
-	CursorID    pgtype.UUID
-	PageLimit   int32
+	AppID             pgtype.UUID
+	State             string
+	Environment       string
+	AssigneeAccountID pgtype.UUID
+	Unassigned        bool
+	CursorTime        pgtype.Timestamptz
+	CursorID          pgtype.UUID
+	PageLimit         int32
 }
 
 func (q *Queries) IssueList(ctx context.Context, db DBTX, arg IssueListParams) ([]AppIssue, error) {
@@ -7993,6 +8146,8 @@ func (q *Queries) IssueList(ctx context.Context, db DBTX, arg IssueListParams) (
 		arg.AppID,
 		arg.State,
 		arg.Environment,
+		arg.AssigneeAccountID,
+		arg.Unassigned,
 		arg.CursorTime,
 		arg.CursorID,
 		arg.PageLimit,
@@ -8840,6 +8995,45 @@ func (q *Queries) ListActiveRegressionsByApp(ctx context.Context, db DBTX, arg L
 			&i.AcknowledgedAt,
 			&i.DismissedUntil,
 			&i.ResolvedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listActiveTCPListeners = `-- name: ListActiveTCPListeners :many
+SELECT l.id, l.account_id, l.app_id, l.listener_name, l.guest_port, l.public_port, l.protocol, l.enabled, l.created_at, l.updated_at, l.tls_mode, l.tls_hostname FROM app_tcp_listeners l JOIN apps a ON a.id = l.app_id
+WHERE l.enabled AND a.status <> 'deleted' AND a.account_id = l.account_id
+ORDER BY l.public_port
+`
+
+func (q *Queries) ListActiveTCPListeners(ctx context.Context, db DBTX) ([]AppTcpListener, error) {
+	rows, err := db.Query(ctx, listActiveTCPListeners)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppTcpListener{}
+	for rows.Next() {
+		var i AppTcpListener
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.ListenerName,
+			&i.GuestPort,
+			&i.PublicPort,
+			&i.Protocol,
+			&i.Enabled,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.TlsMode,
+			&i.TlsHostname,
 		); err != nil {
 			return nil, err
 		}
@@ -10367,6 +10561,43 @@ func (q *Queries) ListEnabledTriggers(ctx context.Context, db DBTX) ([]ListEnabl
 	return items, nil
 }
 
+const listEnabledUDPListeners = `-- name: ListEnabledUDPListeners :many
+SELECT id, account_id, app_id, listener_name, guest_port, public_port, protocol, enabled, created_at, updated_at FROM app_udp_listeners l
+WHERE enabled AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted')
+ORDER BY public_port ASC
+`
+
+func (q *Queries) ListEnabledUDPListeners(ctx context.Context, db DBTX) ([]AppUdpListener, error) {
+	rows, err := db.Query(ctx, listEnabledUDPListeners)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppUdpListener{}
+	for rows.Next() {
+		var i AppUdpListener
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.ListenerName,
+			&i.GuestPort,
+			&i.PublicPort,
+			&i.Protocol,
+			&i.Enabled,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEnvironmentGitOpsRuns = `-- name: ListEnvironmentGitOpsRuns :many
 SELECT r.id, r.source_id, r.revision_id, r.generation, r.lease_token, r.status, r.plan, r.steps, r.error_code, r.started_at, r.completed_at FROM environment_gitops_runs r
 JOIN environment_git_sources s ON s.id = r.source_id
@@ -10648,6 +10879,65 @@ func (q *Queries) ListExclusiveWorkPolicies(ctx context.Context, db DBTX, accoun
 			&i.Retired,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFeatureFlagAutoRolloutCandidates = `-- name: ListFeatureFlagAutoRolloutCandidates :many
+SELECT pe.account_id, pe.project_id, pe.id AS environment_id,
+       p.slug AS project_slug, pe.slug AS environment_slug
+FROM project_environments pe
+JOIN projects p ON p.id = pe.project_id AND p.account_id = pe.account_id
+JOIN LATERAL (
+ SELECT v.config
+ FROM feature_flag_versions v
+ WHERE v.account_id = pe.account_id
+   AND v.project_id = pe.project_id
+   AND v.environment_id = pe.id
+ ORDER BY v.version DESC
+ LIMIT 1
+) current_config ON current_config.config @> '{"flags":[{"rules":[{"progression":{"auto_advance":true}}]}]}'::jsonb
+WHERE $1::uuid IS NULL
+   OR pe.id > $1::uuid
+ORDER BY pe.id
+LIMIT $2::int
+`
+
+type ListFeatureFlagAutoRolloutCandidatesParams struct {
+	AfterEnvironmentID pgtype.UUID
+	LimitRows          int32
+}
+
+type ListFeatureFlagAutoRolloutCandidatesRow struct {
+	AccountID       pgtype.UUID
+	ProjectID       pgtype.UUID
+	EnvironmentID   pgtype.UUID
+	ProjectSlug     string
+	EnvironmentSlug string
+}
+
+func (q *Queries) ListFeatureFlagAutoRolloutCandidates(ctx context.Context, db DBTX, arg ListFeatureFlagAutoRolloutCandidatesParams) ([]ListFeatureFlagAutoRolloutCandidatesRow, error) {
+	rows, err := db.Query(ctx, listFeatureFlagAutoRolloutCandidates, arg.AfterEnvironmentID, arg.LimitRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListFeatureFlagAutoRolloutCandidatesRow{}
+	for rows.Next() {
+		var i ListFeatureFlagAutoRolloutCandidatesRow
+		if err := rows.Scan(
+			&i.AccountID,
+			&i.ProjectID,
+			&i.EnvironmentID,
+			&i.ProjectSlug,
+			&i.EnvironmentSlug,
 		); err != nil {
 			return nil, err
 		}
@@ -12077,6 +12367,41 @@ func (q *Queries) ListSessions(ctx context.Context, db DBTX, accountID pgtype.UU
 	return items, nil
 }
 
+const listTCPListenerTLSObservations = `-- name: ListTCPListenerTLSObservations :many
+SELECT listener_id, edge_id, hostname, intent_updated_at, observed_at, ready, not_after
+FROM app_tcp_listener_tls_observations
+WHERE listener_id = $1::uuid
+ORDER BY edge_id
+`
+
+func (q *Queries) ListTCPListenerTLSObservations(ctx context.Context, db DBTX, listenerID pgtype.UUID) ([]AppTcpListenerTlsObservation, error) {
+	rows, err := db.Query(ctx, listTCPListenerTLSObservations, listenerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppTcpListenerTlsObservation{}
+	for rows.Next() {
+		var i AppTcpListenerTlsObservation
+		if err := rows.Scan(
+			&i.ListenerID,
+			&i.EdgeID,
+			&i.Hostname,
+			&i.IntentUpdatedAt,
+			&i.ObservedAt,
+			&i.Ready,
+			&i.NotAfter,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTerminalTriggerRecordItems = `-- name: ListTerminalTriggerRecordItems :many
 SELECT item_identifier FROM trigger_records
 WHERE trigger_id = $1
@@ -12281,6 +12606,42 @@ func (q *Queries) ListTriggersForApp(ctx context.Context, db DBTX, appID pgtype.
 			&i.PayloadMaxBytes,
 			&i.BrokerPoisonStrategy,
 			&i.FilterCriteria,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUDPListenersForApp = `-- name: ListUDPListenersForApp :many
+SELECT id, account_id, app_id, listener_name, guest_port, public_port, protocol, enabled, created_at, updated_at FROM app_udp_listeners
+WHERE app_id = $1::text::uuid ORDER BY created_at DESC, id DESC
+`
+
+func (q *Queries) ListUDPListenersForApp(ctx context.Context, db DBTX, appID string) ([]AppUdpListener, error) {
+	rows, err := db.Query(ctx, listUDPListenersForApp, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppUdpListener{}
+	for rows.Next() {
+		var i AppUdpListener
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.ListenerName,
+			&i.GuestPort,
+			&i.PublicPort,
+			&i.Protocol,
+			&i.Enabled,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -12794,6 +13155,19 @@ func (q *Queries) LockSnapshotRuntimeSource(ctx context.Context, db DBTX, instan
 	var i LockSnapshotRuntimeSourceRow
 	err := row.Scan(&i.AppID, &i.DeploymentID, &i.StartedAt)
 	return i, err
+}
+
+const lockUDPListenerAppOwner = `-- name: LockUDPListenerAppOwner :one
+SELECT account_id::text AS account_id FROM apps
+WHERE id = $1::text::uuid AND status <> 'deleted'
+FOR UPDATE
+`
+
+func (q *Queries) LockUDPListenerAppOwner(ctx context.Context, db DBTX, appID string) (string, error) {
+	row := db.QueryRow(ctx, lockUDPListenerAppOwner, appID)
+	var account_id string
+	err := row.Scan(&account_id)
+	return account_id, err
 }
 
 const markClaimedTriggerRecordDeadLetter = `-- name: MarkClaimedTriggerRecordDeadLetter :execrows
@@ -16630,6 +17004,19 @@ func (q *Queries) PruneDevBridgeSessions(ctx context.Context, db DBTX, arg Prune
 	return err
 }
 
+const pruneTCPListenerTLSObservations = `-- name: PruneTCPListenerTLSObservations :execrows
+DELETE FROM app_tcp_listener_tls_observations
+WHERE observed_at <= $1::timestamptz
+`
+
+func (q *Queries) PruneTCPListenerTLSObservations(ctx context.Context, db DBTX, beforeAt pgtype.Timestamptz) (int64, error) {
+	result, err := db.Exec(ctx, pruneTCPListenerTLSObservations, beforeAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const publicPatchTrigger = `-- name: PublicPatchTrigger :one
 update triggers set enabled=coalesce($1::boolean,enabled),
 config=coalesce($2::jsonb,config),
@@ -16871,6 +17258,48 @@ func (q *Queries) PutEnvironmentGitOpsVariable(ctx context.Context, db DBTX, arg
 	return err
 }
 
+const putTCPListenerTLSObservation = `-- name: PutTCPListenerTLSObservation :execrows
+INSERT INTO app_tcp_listener_tls_observations
+    (listener_id, edge_id, hostname, intent_updated_at, observed_at, ready, not_after)
+SELECT l.id, $1::text, $2::text,
+       $3::timestamptz, $4::timestamptz,
+       $5::boolean, $6::timestamptz
+FROM app_tcp_listeners l
+WHERE l.id = $7::uuid AND l.enabled
+  AND l.tls_mode = 'terminate' AND l.tls_hostname = $2::text
+  AND l.updated_at = $3::timestamptz
+ON CONFLICT (listener_id, edge_id) DO UPDATE
+SET hostname = EXCLUDED.hostname, intent_updated_at = EXCLUDED.intent_updated_at,
+    observed_at = EXCLUDED.observed_at, ready = EXCLUDED.ready, not_after = EXCLUDED.not_after
+WHERE app_tcp_listener_tls_observations.observed_at < EXCLUDED.observed_at
+`
+
+type PutTCPListenerTLSObservationParams struct {
+	EdgeID          string
+	Hostname        string
+	IntentUpdatedAt pgtype.Timestamptz
+	ObservedAt      pgtype.Timestamptz
+	Ready           bool
+	NotAfter        pgtype.Timestamptz
+	ListenerID      pgtype.UUID
+}
+
+func (q *Queries) PutTCPListenerTLSObservation(ctx context.Context, db DBTX, arg PutTCPListenerTLSObservationParams) (int64, error) {
+	result, err := db.Exec(ctx, putTCPListenerTLSObservation,
+		arg.EdgeID,
+		arg.Hostname,
+		arg.IntentUpdatedAt,
+		arg.ObservedAt,
+		arg.Ready,
+		arg.NotAfter,
+		arg.ListenerID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const queueBindingHistoryByID = `-- name: QueueBindingHistoryByID :one
 select id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at, retired_at, deployment_scope, environment_id from queue_bindings where id=$1
 and app_id=$2 and account_id=$3
@@ -17051,7 +17480,7 @@ where i.id=$2::uuid and i.app_id=$3::uuid and i.source='queue'
     and tr.item_identifier=i.id::text
     and not ((tr.state in ('pending','retry') and tr.next_fire_at<=clock_timestamp())
       or (tr.state='claimed' and tr.claim_expires_at<=clock_timestamp())))
-returning i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.deployment_scope, i.queue_binding_id, i.replay_generation
+returning i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code
 `
 
 type QueueClaimPendingInvocationParams struct {
@@ -17123,6 +17552,7 @@ func (q *Queries) QueueClaimPendingInvocation(ctx context.Context, db DBTX, arg 
 		&i.DeploymentScope,
 		&i.QueueBindingID,
 		&i.ReplayGeneration,
+		&i.OutcomeCode,
 	)
 	return i, err
 }
@@ -17583,7 +18013,7 @@ func (q *Queries) QueueFinishDeliveryClaims(ctx context.Context, db DBTX, arg Qu
 }
 
 const queueInvocationForTriggerReceipt = `-- name: QueueInvocationForTriggerReceipt :one
-select i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.deployment_scope, i.queue_binding_id, i.replay_generation from trigger_records r join triggers t on t.id=r.trigger_id
+select i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code from trigger_records r join triggers t on t.id=r.trigger_id
 join invocations i on i.id::text=r.item_identifier and i.app_id=t.app_id and i.account_id=t.account_id
   and i.source=t.source
 where r.id=$1::uuid and t.kind='queue' and t.source in ('queue','delayed_task')
@@ -17642,6 +18072,7 @@ func (q *Queries) QueueInvocationForTriggerReceipt(ctx context.Context, db DBTX,
 		&i.DeploymentScope,
 		&i.QueueBindingID,
 		&i.ReplayGeneration,
+		&i.OutcomeCode,
 	)
 	return i, err
 }
@@ -20312,7 +20743,7 @@ update invocations set state='pending', attempts=0, last_error=null, outcome=nul
   due_at=clock_timestamp(), lease_expires_at=null, instance_id=null,
   last_replayed_at=clock_timestamp(), completed_at=null, result=null
 where id=$1::uuid and account_id=$2::uuid and state='dead_letter'
-returning id, app_id, account_id, source, state, payload, headers, due_at, method, path, cron_id, scheduled_at, ack_url, result, lease_expires_at, received_at, completed_at, instance_id, attempts, last_error, created_at, org_id, outcome, deadline_at, retry_policy, result_retention_until, replayed_from_invocation_id, last_replayed_at, on_success_destination_id, on_failure_destination_id, queue_name, quota_reserved, work_policy_name, work_key_digest, work_expires_at, work_sequence, work_policy_revision, work_fairness_digest, work_fairness_limit, platform_tenant_id, failure_rules, occurrence_id, start_deadline_at, work_decision, deployment_scope, queue_binding_id, replay_generation
+returning id, app_id, account_id, source, state, payload, headers, due_at, method, path, cron_id, scheduled_at, ack_url, result, lease_expires_at, received_at, completed_at, instance_id, attempts, last_error, created_at, org_id, outcome, deadline_at, retry_policy, result_retention_until, replayed_from_invocation_id, last_replayed_at, on_success_destination_id, on_failure_destination_id, queue_name, quota_reserved, work_policy_name, work_key_digest, work_expires_at, work_sequence, work_policy_revision, work_fairness_digest, work_fairness_limit, platform_tenant_id, failure_rules, occurrence_id, start_deadline_at, work_decision, deployment_scope, queue_binding_id, replay_generation, outcome_code
 `
 
 type RetryQueueDeadLetterInvocationParams struct {
@@ -20371,6 +20802,7 @@ func (q *Queries) RetryQueueDeadLetterInvocation(ctx context.Context, db DBTX, a
 		&i.DeploymentScope,
 		&i.QueueBindingID,
 		&i.ReplayGeneration,
+		&i.OutcomeCode,
 	)
 	return i, err
 }
@@ -21218,6 +21650,34 @@ func (q *Queries) SetServiceCapacityProtection(ctx context.Context, db DBTX, ena
 	return snapshot, err
 }
 
+const setUDPListenerEnabled = `-- name: SetUDPListenerEnabled :one
+UPDATE app_udp_listeners SET enabled = $1, updated_at = now()
+WHERE id = $2::text::uuid RETURNING id, account_id, app_id, listener_name, guest_port, public_port, protocol, enabled, created_at, updated_at
+`
+
+type SetUDPListenerEnabledParams struct {
+	Enabled bool
+	ID      string
+}
+
+func (q *Queries) SetUDPListenerEnabled(ctx context.Context, db DBTX, arg SetUDPListenerEnabledParams) (AppUdpListener, error) {
+	row := db.QueryRow(ctx, setUDPListenerEnabled, arg.Enabled, arg.ID)
+	var i AppUdpListener
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.ListenerName,
+		&i.GuestPort,
+		&i.PublicPort,
+		&i.Protocol,
+		&i.Enabled,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const snapshotLocalityNodes = `-- name: SnapshotLocalityNodes :many
 SELECT node_id::text AS node_id, true AS is_origin
 FROM snapshot_origins
@@ -21852,6 +22312,80 @@ func (q *Queries) TryEdgeRuleMutationLock(ctx context.Context, db DBTX, appID st
 	var locked bool
 	err := row.Scan(&locked)
 	return locked, err
+}
+
+const uDPListenerByAppAndName = `-- name: UDPListenerByAppAndName :one
+SELECT id, account_id, app_id, listener_name, guest_port, public_port, protocol, enabled, created_at, updated_at FROM app_udp_listeners
+WHERE app_id = $1::text::uuid AND listener_name = $2
+`
+
+type UDPListenerByAppAndNameParams struct {
+	AppID        string
+	ListenerName string
+}
+
+func (q *Queries) UDPListenerByAppAndName(ctx context.Context, db DBTX, arg UDPListenerByAppAndNameParams) (AppUdpListener, error) {
+	row := db.QueryRow(ctx, uDPListenerByAppAndName, arg.AppID, arg.ListenerName)
+	var i AppUdpListener
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.ListenerName,
+		&i.GuestPort,
+		&i.PublicPort,
+		&i.Protocol,
+		&i.Enabled,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const uDPListenerByID = `-- name: UDPListenerByID :one
+SELECT id, account_id, app_id, listener_name, guest_port, public_port, protocol, enabled, created_at, updated_at FROM app_udp_listeners WHERE id = $1::text::uuid
+`
+
+func (q *Queries) UDPListenerByID(ctx context.Context, db DBTX, id string) (AppUdpListener, error) {
+	row := db.QueryRow(ctx, uDPListenerByID, id)
+	var i AppUdpListener
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.ListenerName,
+		&i.GuestPort,
+		&i.PublicPort,
+		&i.Protocol,
+		&i.Enabled,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const uDPListenerByPublicPort = `-- name: UDPListenerByPublicPort :one
+SELECT id, account_id, app_id, listener_name, guest_port, public_port, protocol, enabled, created_at, updated_at FROM app_udp_listeners l
+WHERE public_port = $1 AND enabled
+AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted')
+`
+
+func (q *Queries) UDPListenerByPublicPort(ctx context.Context, db DBTX, publicPort int32) (AppUdpListener, error) {
+	row := db.QueryRow(ctx, uDPListenerByPublicPort, publicPort)
+	var i AppUdpListener
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.ListenerName,
+		&i.GuestPort,
+		&i.PublicPort,
+		&i.Protocol,
+		&i.Enabled,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const updateAccountPlan = `-- name: UpdateAccountPlan :exec

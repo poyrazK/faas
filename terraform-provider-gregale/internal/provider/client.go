@@ -198,6 +198,7 @@ type cronRequest struct {
 	Timezone       string              `json:"timezone,omitempty"`
 	SkipIfRunning  *bool               `json:"skip_if_running,omitempty"`
 	SchedulePolicy *cronSchedulePolicy `json:"schedule_policy,omitempty"`
+	FailureRules   json.RawMessage     `json:"failure_rules,omitempty"`
 }
 
 type cronPatch struct {
@@ -207,6 +208,7 @@ type cronPatch struct {
 	Timezone       *string             `json:"timezone,omitempty"`
 	SkipIfRunning  *bool               `json:"skip_if_running,omitempty"`
 	SchedulePolicy *cronSchedulePolicy `json:"schedule_policy,omitempty"`
+	FailureRules   json.RawMessage     `json:"failure_rules,omitempty"`
 }
 
 type cronResponse struct {
@@ -221,6 +223,7 @@ type cronResponse struct {
 	CreatedAt       string              `json:"created_at"`
 	LastFiredAt     string              `json:"last_fired_at,omitempty"`
 	SchedulePolicy  *cronSchedulePolicy `json:"schedule_policy,omitempty"`
+	FailureRules    json.RawMessage     `json:"failure_rules,omitempty"`
 }
 
 type cronSchedulePolicy struct {

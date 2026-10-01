@@ -142,11 +142,12 @@ for name in bin/sh bin/ash bin/cat; do
   ln -s /bin/busybox "${base_skeleton}/${name}"
 done
 # Production app artifacts live beneath drive1's /upper directory. The M0 app
-# runs as UID 1000 and only needs to listen; platform-owned /etc/faas stays
+# runs as UID 1000 and serves a successful readiness response; platform-owned /etc/faas stays
 # read-only to it after guest-init assembles the overlay.
 printf '%s\n' \
   '{"entrypoint":["/bin/busybox","httpd","-f","-p","8080","-h","/"],"port":8080}' \
   > "${layer_skeleton}/upper/etc/faas/app.json"
+printf '%s\n' 'metal smoke ready' > "${layer_skeleton}/upper/index.html"
 
 truncate -s 64M "${base_path}"
 mkfs.ext4 -q -O '^has_journal' -d "${base_skeleton}" -L faas-metal-smoke -F "${base_path}"
@@ -162,9 +163,9 @@ fi
 for service in "${services[@]}"; do
   if systemctl is-active --quiet "${service}"; then
     printf '%s\n' "${service}" >> "${active_services}"
+    systemctl stop "${service}"
   fi
 done
-systemctl stop "${services[@]}"
 
 PATH="$(dirname "${FAAS_METAL_GO}"):/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 export PATH
@@ -215,6 +216,13 @@ if [[ "${passed}" -eq 0 ]]; then
   echo "native metal smoke: no metal test executed; the fixtures or the build tag are wrong" >&2
   metal_rc=1
 fi
+# Companion qualification cannot silently pass with missing fixtures or skips.
+source "${repo_root}/scripts/ci/native-e2e-verdict.sh"
+companion_names="$(native_container_companion_tests "${repo_root}")"
+companion_tests=()
+while IFS= read -r test_name; do companion_tests+=("${test_name}"); done <<<"${companion_names}"
+native_e2e_lane_verdict "${metal_log}" companion-memory-isolation "${companion_tests[@]}" || metal_rc=1
+
 # Second pass: the six tests that need private mount + network namespaces.
 #
 # They gate on FAAS_TEST_NETWORK_BATCH and skipped in the pass above because

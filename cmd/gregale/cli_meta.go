@@ -749,7 +749,7 @@ var cliCommands = []cliCommand{
 				{Name: "retry-max", Short: "additional command attempts after failure or timeout"},
 				{Name: "retry-backoff-seconds", Short: "base retry delay; doubles per attempt"},
 				{Name: "schedule-policy", Short: "versioned schedule policy JSON", Value: "JSON"},
-				{Name: "failure-rules", Short: "versioned retry rules JSON (command crons only)", Value: "JSON"},
+				{Name: "failure-rules", Short: "versioned failure and outcome-code rules JSON", Value: "JSON"},
 			}},
 			{Name: "info", Short: "Show one cron rule"},
 			{Name: "update", Short: "Update one cron rule", Flags: []cliFlag{
@@ -763,7 +763,7 @@ var cliCommands = []cliCommand{
 				{Name: "retry-max", Short: "additional command attempts after failure or timeout"},
 				{Name: "retry-backoff-seconds", Short: "base retry delay; doubles per attempt", Value: "N"},
 				{Name: "schedule-policy", Short: "replace versioned schedule policy JSON", Value: "JSON"},
-				{Name: "failure-rules", Short: "replace versioned retry rules JSON (command crons only)", Value: "JSON"},
+				{Name: "failure-rules", Short: "replace versioned failure and outcome-code rules JSON", Value: "JSON"},
 			}},
 			{Name: "rm", Short: "Delete one cron rule"},
 			{Name: "run", Short: "Fire one cron immediately"},
@@ -1655,9 +1655,9 @@ var cliCommands = []cliCommand{
 		},
 		Positionals: []string{"<id>"},
 	},
-	{Name: "issues", DocSlug: "issues", Short: "Group failures and track ownership and release-aware resolution", Examples: []string{"gregale issues list --app my-api", "gregale issues get ISSUE_ID --app my-api", "gregale issues resolve ISSUE_ID --app my-api --deployment DEPLOYMENT_ID"}, Subcommands: []cliSub{
+	{Name: "issues", DocSlug: "issues", Short: "Group failures and track ownership and release-aware resolution", Examples: []string{"gregale issues list --app my-api", "gregale issues list --app my-api --assignee me", "gregale issues list --app my-api --assignee unassigned", "gregale issues get ISSUE_ID --app my-api", "gregale issues resolve ISSUE_ID --app my-api --deployment DEPLOYMENT_ID"}, Subcommands: []cliSub{
 		{Name: "list", Short: "List grouped issues"}, {Name: "get", Short: "Read evidence and release history"}, {Name: "assign", Short: "Assign an issue to an account"}, {Name: "resolve", Short: "Resolve in a deployment"}, {Name: "reopen", Short: "Reopen an issue"}, {Name: "ignore", Short: "Ignore until a timestamp"}, {Name: "tokens", Short: "List ingest credentials"}, {Name: "create-token", Short: "Create a deployment-bound ingest credential"}, {Name: "revoke-token", Short: "Revoke an ingest credential"},
-	}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "application slug"}, {Name: "deployment", Value: "UUID", Short: "fixed or token-bound deployment"}, {Name: "state", Value: "STATE", Short: "filter issue state"}, {Name: "environment", Value: "ENV", Short: "environment filter"}, {Name: "cursor", Value: "CURSOR", Short: "issue-list or occurrence cursor"}, {Name: "release-cursor", Value: "CURSOR", Short: "release history cursor"}, {Name: "activity-cursor", Value: "CURSOR", Short: "activity history cursor"}, {Name: "assignee", Value: "UUID", Short: "owner account"}, {Name: "since", Value: "RFC3339", Short: "impact window start"}, {Name: "until", Value: "RFC3339", Short: "ignore until"}, {Name: "name", Value: "NAME", Short: "credential name"}, {Name: "expires-in", Value: "D", Short: "credential lifetime"}}},
+	}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "application slug"}, {Name: "deployment", Value: "UUID", Short: "fixed or token-bound deployment"}, {Name: "state", Value: "STATE", Short: "filter issue state"}, {Name: "environment", Value: "ENV", Short: "environment filter"}, {Name: "cursor", Value: "CURSOR", Short: "issue-list or occurrence cursor"}, {Name: "release-cursor", Value: "CURSOR", Short: "release history cursor"}, {Name: "activity-cursor", Value: "CURSOR", Short: "activity history cursor"}, {Name: "assignee", Value: "OWNER", Short: "list filter me, unassigned, or account UUID; assignment owner UUID"}, {Name: "since", Value: "RFC3339", Short: "impact window start"}, {Name: "until", Value: "RFC3339", Short: "ignore until"}, {Name: "name", Value: "NAME", Short: "credential name"}, {Name: "expires-in", Value: "D", Short: "credential lifetime"}}},
 
 	{
 		Name:    "operations",

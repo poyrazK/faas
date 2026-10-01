@@ -469,6 +469,8 @@ from .create_trigger_request_broker_poison_strategy_type_3_type_1 import (
     CreateTriggerRequestBrokerPoisonStrategyType3Type1,
 )
 from .create_trigger_request_config import CreateTriggerRequestConfig
+from .create_udp_listener_request import CreateUDPListenerRequest
+from .create_udp_listener_request_public_port_type_0 import CreateUDPListenerRequestPublicPortType0
 from .create_workflow_callback_webhook_binding_request import CreateWorkflowCallbackWebhookBindingRequest
 from .cron_response import CronResponse
 from .cron_response_kind import CronResponseKind
@@ -985,6 +987,7 @@ from .issue_event import IssueEvent
 from .issue_event_response import IssueEventResponse
 from .issue_frame import IssueFrame
 from .issue_impact import IssueImpact
+from .issue_impact_summary import IssueImpactSummary
 from .issue_ingest_token import IssueIngestToken
 from .issue_occurrence import IssueOccurrence
 from .issue_release import IssueRelease
@@ -1191,6 +1194,7 @@ from .obs_health_response_operator_intent_outcome_missing_total import (
 )
 from .obs_health_response_trace_id_completeness_ratio import ObsHealthResponseTraceIdCompletenessRatio
 from .obs_node_operation_preflight import ObsNodeOperationPreflight
+from .oci_healthcheck_timing import OCIHealthcheckTiming
 from .oidc_exchange_request import OIDCExchangeRequest
 from .oidc_exchange_request_capability import OIDCExchangeRequestCapability
 from .oidc_exchange_response import OIDCExchangeResponse
@@ -1715,6 +1719,9 @@ from .rotate_managed_realtime_auth_response_auth_mode import RotateManagedRealti
 from .rotate_org_api_key_request import RotateOrgAPIKeyRequest
 from .rotate_org_api_key_response import RotateOrgAPIKeyResponse
 from .route_row import RouteRow
+from .runtime_config_restart_status_response import RuntimeConfigRestartStatusResponse
+from .runtime_config_restart_status_response_failure_reason import RuntimeConfigRestartStatusResponseFailureReason
+from .runtime_config_restart_status_response_status import RuntimeConfigRestartStatusResponseStatus
 from .runtime_policy_component_status import RuntimePolicyComponentStatus
 from .runtime_policy_component_status_scope import RuntimePolicyComponentStatusScope
 from .runtime_policy_component_status_state import RuntimePolicyComponentStatusState
@@ -1847,6 +1854,12 @@ from .stream_deployment_logs_follow import StreamDeploymentLogsFollow
 from .sweep_stuck_builds_response import SweepStuckBuildsResponse
 from .tcp_listener_response import TCPListenerResponse
 from .tcp_listener_response_protocol import TCPListenerResponseProtocol
+from .tcp_listener_tls_certificate_status import TCPListenerTLSCertificateStatus
+from .tcp_listener_tls_certificate_status_status import TCPListenerTLSCertificateStatusStatus
+from .tcp_listener_tls_config import TCPListenerTLSConfig
+from .tcp_listener_tls_config_mode import TCPListenerTLSConfigMode
+from .tcp_listener_tls_status_response import TCPListenerTLSStatusResponse
+from .tcp_listener_tls_status_response_scope import TCPListenerTLSStatusResponseScope
 from .template_view import TemplateView
 from .template_view_category import TemplateViewCategory
 from .tenant_hostname_response import TenantHostnameResponse
@@ -1880,6 +1893,8 @@ from .trigger_source_type_2_type_1 import TriggerSourceType2Type1
 from .trigger_source_type_3_type_1 import TriggerSourceType3Type1
 from .trigger_work_binding import TriggerWorkBinding
 from .trusted_signer import TrustedSigner
+from .udp_listener_response import UDPListenerResponse
+from .udp_listener_response_protocol import UDPListenerResponseProtocol
 from .update_account_billing_info_request import UpdateAccountBillingInfoRequest
 from .update_account_release_webhook_request import UpdateAccountReleaseWebhookRequest
 from .update_account_release_webhook_request_delivery_format import UpdateAccountReleaseWebhookRequestDeliveryFormat
@@ -1980,6 +1995,7 @@ from .update_trigger_request_broker_poison_strategy_type_3_type_1 import (
     UpdateTriggerRequestBrokerPoisonStrategyType3Type1,
 )
 from .update_trigger_request_config_type_0 import UpdateTriggerRequestConfigType0
+from .update_udp_listener_request import UpdateUDPListenerRequest
 from .update_upstream_circuit_breaker_request import UpdateUpstreamCircuitBreakerRequest
 from .upload_deploy_options import UploadDeployOptions
 from .upload_session_response import UploadSessionResponse
@@ -2497,6 +2513,8 @@ __all__ = (
     "CreateTriggerRequestBrokerPoisonStrategyType2Type1",
     "CreateTriggerRequestBrokerPoisonStrategyType3Type1",
     "CreateTriggerRequestConfig",
+    "CreateUDPListenerRequest",
+    "CreateUDPListenerRequestPublicPortType0",
     "CreateWorkflowCallbackWebhookBindingRequest",
     "CronResponse",
     "CronResponseKind",
@@ -3011,6 +3029,7 @@ __all__ = (
     "IssueEventResponse",
     "IssueFrame",
     "IssueImpact",
+    "IssueImpactSummary",
     "IssueIngestToken",
     "IssueOccurrence",
     "IssueRelease",
@@ -3213,6 +3232,7 @@ __all__ = (
     "ObsHealthResponseOperatorIntentOutcomeMissingTotal",
     "ObsHealthResponseTraceIdCompletenessRatio",
     "ObsNodeOperationPreflight",
+    "OCIHealthcheckTiming",
     "OIDCExchangeRequest",
     "OIDCExchangeRequestCapability",
     "OIDCExchangeResponse",
@@ -3695,6 +3715,9 @@ __all__ = (
     "RotateOrgAPIKeyRequest",
     "RotateOrgAPIKeyResponse",
     "RouteRow",
+    "RuntimeConfigRestartStatusResponse",
+    "RuntimeConfigRestartStatusResponseFailureReason",
+    "RuntimeConfigRestartStatusResponseStatus",
     "RuntimePolicyComponentStatus",
     "RuntimePolicyComponentStatusScope",
     "RuntimePolicyComponentStatusState",
@@ -3821,6 +3844,12 @@ __all__ = (
     "SweepStuckBuildsResponse",
     "TCPListenerResponse",
     "TCPListenerResponseProtocol",
+    "TCPListenerTLSCertificateStatus",
+    "TCPListenerTLSCertificateStatusStatus",
+    "TCPListenerTLSConfig",
+    "TCPListenerTLSConfigMode",
+    "TCPListenerTLSStatusResponse",
+    "TCPListenerTLSStatusResponseScope",
     "TemplateView",
     "TemplateViewCategory",
     "TenantHostnameResponse",
@@ -3854,6 +3883,8 @@ __all__ = (
     "TriggerSourceType3Type1",
     "TriggerWorkBinding",
     "TrustedSigner",
+    "UDPListenerResponse",
+    "UDPListenerResponseProtocol",
     "UpdateAccountBillingInfoRequest",
     "UpdateAccountReleaseWebhookRequest",
     "UpdateAccountReleaseWebhookRequestDeliveryFormat",
@@ -3942,6 +3973,7 @@ __all__ = (
     "UpdateTriggerRequestBrokerPoisonStrategyType2Type1",
     "UpdateTriggerRequestBrokerPoisonStrategyType3Type1",
     "UpdateTriggerRequestConfigType0",
+    "UpdateUDPListenerRequest",
     "UpdateUpstreamCircuitBreakerRequest",
     "UploadDeployOptions",
     "UploadSessionResponse",

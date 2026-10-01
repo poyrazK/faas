@@ -7,6 +7,8 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 T = TypeVar("T", bound="EnvironmentGitProtectedBranchEvidence")
 
 
@@ -22,6 +24,8 @@ class EnvironmentGitProtectedBranchEvidence:
     policy_digest: str
     required_review_count: int
     checked_at: datetime.datetime
+    reason: str | Unset = UNSET
+    """Qualification failure reason; absent from persisted approval evidence."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -45,6 +49,8 @@ class EnvironmentGitProtectedBranchEvidence:
 
         checked_at = self.checked_at.isoformat()
 
+        reason = self.reason
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -61,6 +67,8 @@ class EnvironmentGitProtectedBranchEvidence:
                 "checked_at": checked_at,
             }
         )
+        if reason is not UNSET:
+            field_dict["reason"] = reason
 
         return field_dict
 
@@ -87,6 +95,8 @@ class EnvironmentGitProtectedBranchEvidence:
 
         checked_at = datetime.datetime.fromisoformat(d.pop("checked_at"))
 
+        reason = d.pop("reason", UNSET)
+
         environment_git_protected_branch_evidence = cls(
             qualified=qualified,
             profile=profile,
@@ -98,6 +108,7 @@ class EnvironmentGitProtectedBranchEvidence:
             policy_digest=policy_digest,
             required_review_count=required_review_count,
             checked_at=checked_at,
+            reason=reason,
         )
 
         environment_git_protected_branch_evidence.additional_properties = d

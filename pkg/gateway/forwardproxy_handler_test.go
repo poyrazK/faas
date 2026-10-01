@@ -810,3 +810,7 @@ func rawStreamForwarder(t *testing.T, cli *stubVmmdClient, w http.ResponseWriter
 		_, _ = w.Write(body.GetBodyChunk())
 	}
 }
+
+func (s *stubVmmdClient) ForwardUDPStream(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.ForwardUDPRequest, vmmdpb.ForwardUDPResponse], error) {
+	return nil, status.Error(codes.Unimplemented, "ForwardUDPStream is not used by HTTP gateway tests")
+}

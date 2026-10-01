@@ -102,8 +102,8 @@ def sync_detailed(
     Args:
         idempotency_key (str | Unset):
         body (CreateCronRequest): Create an HTTP-path cron or deployment-attached app command
-            schedule. Schedule policies apply to both kinds; failure rules apply to command Crons
-            only.
+            schedule. Schedule policies apply to both kinds. HTTP Crons accept outcome-code failure
+            rules; command Crons also accept exit-code rules.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -136,8 +136,8 @@ def sync(
     Args:
         idempotency_key (str | Unset):
         body (CreateCronRequest): Create an HTTP-path cron or deployment-attached app command
-            schedule. Schedule policies apply to both kinds; failure rules apply to command Crons
-            only.
+            schedule. Schedule policies apply to both kinds. HTTP Crons accept outcome-code failure
+            rules; command Crons also accept exit-code rules.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -165,8 +165,8 @@ async def asyncio_detailed(
     Args:
         idempotency_key (str | Unset):
         body (CreateCronRequest): Create an HTTP-path cron or deployment-attached app command
-            schedule. Schedule policies apply to both kinds; failure rules apply to command Crons
-            only.
+            schedule. Schedule policies apply to both kinds. HTTP Crons accept outcome-code failure
+            rules; command Crons also accept exit-code rules.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -197,8 +197,8 @@ async def asyncio(
     Args:
         idempotency_key (str | Unset):
         body (CreateCronRequest): Create an HTTP-path cron or deployment-attached app command
-            schedule. Schedule policies apply to both kinds; failure rules apply to command Crons
-            only.
+            schedule. Schedule policies apply to both kinds. HTTP Crons accept outcome-code failure
+            rules; command Crons also accept exit-code rules.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

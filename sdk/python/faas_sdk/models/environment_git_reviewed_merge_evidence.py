@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.environment_git_protected_branch_evidence import EnvironmentGitProtectedBranchEvidence
     from ..models.environment_git_review_evidence import EnvironmentGitReviewEvidence
@@ -33,6 +35,8 @@ class EnvironmentGitReviewedMergeEvidence:
     merged_at: datetime.datetime
     reviews: list[EnvironmentGitReviewEvidence]
     checked_at: datetime.datetime
+    reason: str | Unset = UNSET
+    """Qualification failure reason; absent from persisted approval evidence."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -61,6 +65,8 @@ class EnvironmentGitReviewedMergeEvidence:
 
         checked_at = self.checked_at.isoformat()
 
+        reason = self.reason
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -78,6 +84,8 @@ class EnvironmentGitReviewedMergeEvidence:
                 "checked_at": checked_at,
             }
         )
+        if reason is not UNSET:
+            field_dict["reason"] = reason
 
         return field_dict
 
@@ -114,6 +122,8 @@ class EnvironmentGitReviewedMergeEvidence:
 
         checked_at = datetime.datetime.fromisoformat(d.pop("checked_at"))
 
+        reason = d.pop("reason", UNSET)
+
         environment_git_reviewed_merge_evidence = cls(
             reviewed_definition_digest=reviewed_definition_digest,
             qualified=qualified,
@@ -126,6 +136,7 @@ class EnvironmentGitReviewedMergeEvidence:
             merged_at=merged_at,
             reviews=reviews,
             checked_at=checked_at,
+            reason=reason,
         )
 
         environment_git_reviewed_merge_evidence.additional_properties = d

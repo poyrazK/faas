@@ -5669,7 +5669,10 @@ paths:
       operationId: createAppTCPListener
       summary: Expose one app port over raw TCP.
       description: |
-        Creates an enabled TCP listener. `public_port` is optional; when it
+        Creates a TCP listener. Passthrough is enabled immediately; TLS
+        termination starts disabled and requires a verified app-owned domain
+        and an explicitly provisioned edge certificate before enabling.
+        `public_port` is optional; when it
         is omitted Gregale allocates a free port from the reserved
         40000–49999 range. Public ports remain stable across instance wake,
         migration, and redeployments. `name` and `guest_port` must match an
@@ -5705,8 +5708,8 @@ paths:
     patch:
       tags: [apps]
       operationId: updateAppTCPListener
-      summary: Enable or disable an app TCP listener.
-      description: Disabling a listener fail-closes new connections without releasing its stable public port.
+      summary: Change serving state or TLS policy of an app TCP listener.
+      description: Supply exactly one of enabled or tls. TLS policy changes atomically disable the endpoint and cancel existing sessions; provision the selected certificate policy before explicitly re-enabling. Disabling retains the stable public port.
       requestBody:
         required: true
         content:
@@ -5731,6 +5734,125 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/tcp-listeners/{name}/tls-status:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: name
+        in: path
+        required: true
+        description: TCP endpoint whose observed certificates are requested.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,30}$' }
+    get:
+      tags: [apps]
+      operationId: appTCPListenerTLSStatus
+      summary: Read observed edge certificate status for a TCP listener.
+      description: |
+        Returns customer-safe certificate evidence for each observed edge.
+        Missing evidence, evidence at least sixty seconds old, and changed or
+        disabled TLS intent have unknown status. This does not establish fleet
+        coverage, client trust, public routing or guest availability.
+      responses:
+        '200':
+          description: Certificate evidence from observed edges only.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TCPListenerTLSStatusResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Certificate observation storage is unavailable.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/udp-listeners:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: listAppUDPListeners
+      summary: List an app's public UDP listeners.
+      responses:
+        '200':
+          description: Stable app-owned datagram endpoints.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/UDPListenerResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    post:
+      tags: [apps]
+      operationId: createAppUDPListener
+      summary: Reserve an app-owned public UDP endpoint.
+      description: Requires a matching declared UDP workload port. New endpoints start disabled and require an explicit enable request plus the operator's source-CIDR rollout.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateUDPListenerRequest' }
+      responses:
+        '201':
+          description: The reserved disabled UDP endpoint.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UDPListenerResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/udp-listeners/{name}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: name
+        in: path
+        required: true
+        description: UDP workload listener selected for mutation.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,30}$' }
+    patch:
+      tags: [apps]
+      operationId: updateAppUDPListener
+      summary: Enable or disable a public UDP listener.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateUDPListenerRequest' }
+      responses:
+        '200':
+          description: The UDP endpoint's updated serving state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UDPListenerResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      tags: [apps]
+      operationId: deleteAppUDPListener
+      summary: Delete a public UDP listener.
+      responses:
+        '204': { description: The datagram endpoint was removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /v1/apps/{slug}/consumers/{consumer_id}:
     parameters:
@@ -7449,6 +7571,10 @@ paths:
           schema: { type: string }
         - name: environment
           description: Exact issue environment namespace.
+          in: query
+          schema: { type: string }
+        - name: assignee
+          description: Filter by me, unassigned, or an owner account UUID.
           in: query
           schema: { type: string }
         - name: cursor
@@ -9530,6 +9656,10 @@ paths:
         `fresh=true`, destroys live instances without capturing process memory,
         invalidates cached snapshots, and cold-boots with the latest environment
         and secrets. The fresh path is durably queued.
+        For `fresh=true`, use the returned `wake_id` with
+        `GET /v1/apps/{slug}/runtime-config-restarts/{wake_id}` to inspect
+        queued, running, retrying, completed, or failed status and any safe
+        failure reason.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
         - name: fresh
@@ -9552,6 +9682,35 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
         '402': { $ref: '#/components/responses/AdmissionRefused' }
+
+  /v1/apps/{slug}/runtime-config-restarts/{wake_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: wake_id
+        in: path
+        required: true
+        description: Wake ID returned by POST /v1/apps/{slug}/restart?fresh=true.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [apps]
+      operationId: getRuntimeConfigRestartStatus
+      summary: Get the status of a fresh runtime-configuration restart.
+      description: |
+        Returns the durable scheduler handoff state for a fresh restart.
+        `completed` means the replacement operation finished successfully;
+        `failed` means the durable handoff exhausted its retry budget. A
+        failure_reason is a stable, safe category and does not expose internal
+        error details.
+      responses:
+        '200':
+          description: Current durable restart status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RuntimeConfigRestartStatusResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
   /v1/apps/{slug}/prewarm:
     parameters:
@@ -24030,6 +24189,7 @@ components:
           type: string
           enum:
           - manual
+          - protected_branch
           default: manual
         prune:
           type: boolean
@@ -24102,6 +24262,8 @@ components:
       type: object
       description: Source authority and the twenty most recent durable reconciliation attempts.
       properties:
+        approval:
+          $ref: '#/components/schemas/EnvironmentGitRevisionApproval'
         source:
           $ref: '#/components/schemas/EnvironmentGitSource'
         runs:
@@ -24111,6 +24273,114 @@ components:
       required:
       - source
       - runs
+    EnvironmentGitRevisionApproval:
+      type: object
+      description: Immutable reviewed-merge evidence bound to the approved definition and source generation.
+      properties:
+        id:
+          type: string
+          format: uuid
+        source_id:
+          type: string
+          format: uuid
+        revision_id:
+          type: string
+          format: uuid
+        generation:
+          type: integer
+          format: int64
+        definition_digest:
+          type: string
+        evidence:
+          $ref: '#/components/schemas/EnvironmentGitReviewedMergeEvidence'
+        recorded_at:
+          type: string
+          format: date-time
+      required: [id, source_id, revision_id, generation, definition_digest, evidence, recorded_at]
+    EnvironmentGitReviewedMergeEvidence:
+      type: object
+      description: Reviews of the final PR head before merge. Permissions and protection describe the check time, not historical policy.
+      properties:
+        reviewed_definition_digest:
+          type: string
+        qualified:
+          type: boolean
+        reason:
+          type: string
+          description: Qualification failure reason; absent from persisted approval evidence.
+        profile:
+          type: string
+        policy:
+          $ref: '#/components/schemas/EnvironmentGitProtectedBranchEvidence'
+        pull_request_id:
+          type: integer
+          format: int64
+        pull_request_number:
+          type: integer
+          format: int64
+        author_id:
+          type: integer
+          format: int64
+        head_sha:
+          type: string
+        merged_at:
+          type: string
+          format: date-time
+        reviews:
+          type: array
+          items:
+            $ref: '#/components/schemas/EnvironmentGitReviewEvidence'
+        checked_at:
+          type: string
+          format: date-time
+      required: [reviewed_definition_digest, qualified, profile, policy, pull_request_id, pull_request_number, author_id, head_sha, merged_at, reviews, checked_at]
+    EnvironmentGitProtectedBranchEvidence:
+      type: object
+      properties:
+        qualified:
+          type: boolean
+        reason:
+          type: string
+          description: Qualification failure reason; absent from persisted approval evidence.
+        profile:
+          type: string
+        installation_id:
+          type: integer
+          format: int64
+        repository_id:
+          type: integer
+          format: int64
+        repository:
+          type: string
+        branch:
+          type: string
+        commit_sha:
+          type: string
+        policy_digest:
+          type: string
+        required_review_count:
+          type: integer
+        checked_at:
+          type: string
+          format: date-time
+      required: [qualified, profile, installation_id, repository_id, repository, branch, commit_sha, policy_digest, required_review_count, checked_at]
+    EnvironmentGitReviewEvidence:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        reviewer_id:
+          type: integer
+          format: int64
+        reviewer:
+          type: string
+        head_sha:
+          type: string
+        submitted_at:
+          type: string
+          format: date-time
+      required: [id, reviewer_id, reviewer, head_sha, submitted_at]
     AdoptEnvironmentGitOpsRequest:
       type: object
       description: Hash of the reviewed adoption plan; stale observations are rejected.
@@ -24725,13 +24995,14 @@ components:
             - { type: boolean }
             - { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$', description: Directly select a configured variant. }
     ProgressiveRollout:
-      description: Health-gated, operator-promoted stages for a boolean true rule. The rule rollout must equal stages[current_stage]; stages must strictly increase and end at 10000 basis points.
+      description: Health-gated stages for a boolean true rule. Promotion is manual by default; auto_advance opts into server-managed promotion after a full healthy evidence window. The rule rollout must equal stages[current_stage]; stages must strictly increase and end at 10000 basis points.
       type: object
       additionalProperties: false
       required: [stages, current_stage, minimum_used_requests, maximum_http_5xx_rate_basis_points, maximum_p95_latency_ms, window_seconds]
       properties:
         stages: { type: array, minItems: 2, maxItems: 8, items: { type: integer, minimum: 1, maximum: 10000 }, description: Strictly increasing rollout percentages in basis points, ending at 10000. }
         current_stage: { type: integer, minimum: 0, maximum: 7, description: Zero-based active stage index. }
+        auto_advance: { type: boolean, default: false, description: "When true, the platform automatically advances one stage after the full observation window passes all evidence gates. Omitted or false keeps promotion manual." }
         minimum_used_requests: { type: integer, format: int64, minimum: 1, maximum: 100000000, description: Minimum application-reported used requests for the targeted rule before promotion. }
         maximum_http_5xx_rate_basis_points: { type: integer, minimum: 0, maximum: 10000, description: Highest allowed 5xx rate for the targeted rule; 100 basis points is one percent. }
         maximum_p95_latency_ms: { type: integer, minimum: 1, maximum: 600000, description: Highest allowed conservative p95 latency bucket bound for the targeted rule. }
@@ -29110,6 +29381,23 @@ components:
       properties:
         wake_id: { type: string, format: uuid, description: "Wake id stamped on the replacement instance and wake timeline." }
 
+    RuntimeConfigRestartStatusResponse:
+      description: "Durable status for an accepted fresh runtime-configuration restart."
+      type: object
+      required: [wake_id, status, attempts, requested_at]
+      properties:
+        wake_id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [queued, running, retrying, completed, failed]
+        attempts: { type: integer, minimum: 0, description: Number of scheduler handling attempts so far. }
+        failure_reason:
+          type: string
+          enum: [telemetry_missing, requests_active, quiet_period_not_elapsed, restart_attempt_failed]
+          description: Stable safe reason from the most recent unsuccessful attempt, when available.
+        requested_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+
     AppWakeResponse:
       description: "Correlation handle for an accepted explicit app wake."
       type: object
@@ -30584,7 +30872,7 @@ components:
       description: "One app-owned raw TCP listener with a stable public endpoint."
       type: object
       additionalProperties: false
-      required: [id, name, guest_port, public_port, protocol, enabled, created_at, updated_at]
+      required: [id, name, guest_port, public_port, protocol, enabled, created_at, updated_at, tls]
       properties:
         id: { type: string, description: "Stable listener identifier." }
         name:
@@ -30608,6 +30896,7 @@ components:
           description: "Whether the edge accepts new TCP connections."
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        tls: { $ref: '#/components/schemas/TCPListenerTLSConfig' }
 
     CreateTCPListenerRequest:
       description: "Request to expose one workload TCP port."
@@ -30627,19 +30916,64 @@ components:
           minimum: 40000
           maximum: 49999
           description: "Optional stable public port; Gregale allocates one when omitted."
+        tls: { $ref: '#/components/schemas/TCPListenerTLSConfig' }
 
     UpdateTCPListenerRequest:
-      description: "Request to change whether an app TCP listener accepts connections."
+      description: "Supply exactly one serving-state or TLS-policy mutation. TLS changes disable the listener."
       type: object
       additionalProperties: false
-      required: [enabled]
+      oneOf:
+        - required: [enabled]
+        - required: [tls]
       properties:
         enabled: { type: boolean }
+        tls: { $ref: '#/components/schemas/TCPListenerTLSConfig' }
+
+    TCPListenerTLSConfig:
+      description: "Listener TLS intent. Termination requires a verified app-owned ASCII DNS hostname; passthrough forbids a hostname."
+      type: object
+      additionalProperties: false
+      required: [mode]
+      properties:
+        mode:
+          type: string
+          enum: [passthrough, terminate]
+          default: passthrough
+        hostname:
+          type: string
+          maxLength: 253
+          description: "Normalized DNS hostname for termination. IP-shaped names and wildcards are forbidden."
+
+    TCPListenerTLSStatusResponse:
+      description: "Certificate evidence from observed edges; empty observations mean unknown status, never fleet-wide readiness."
+      type: object
+      additionalProperties: false
+      required: [name, tls, enabled, scope, observations]
+      properties:
+        name: { type: string }
+        tls: { $ref: '#/components/schemas/TCPListenerTLSConfig' }
+        enabled: { type: boolean }
+        scope: { type: string, enum: [observed_edges] }
+        observations:
+          type: array
+          items: { $ref: '#/components/schemas/TCPListenerTLSCertificateStatus' }
+
+    TCPListenerTLSCertificateStatus:
+      description: "Certificate evidence for one edge. Unknown evidence omits certificate expiry."
+      type: object
+      additionalProperties: false
+      required: [edge_id, status, observed_at]
+      properties:
+        edge_id: { type: string, maxLength: 128 }
+        status: { type: string, enum: [ready, not_ready, unknown] }
+        observed_at: { type: string, format: date-time }
+        not_after: { type: string, format: date-time }
 
     AppManifestHealthcheck:
       description: "AppManifest-level healthcheck shape: OCI HEALTHCHECK fields plus typed deployment probe overrides. Durations are integer seconds at the JSON boundary to match OCI/Docker conventions."
       type: object
       properties:
+        image_timing: { $ref: '#/components/schemas/OCIHealthcheckTiming' }
         test:
           type: array
           items: { type: string }
@@ -30685,6 +31019,53 @@ components:
         start_period_s:
           type: [integer, "null"]
           description: "Startup grace during which failures don't count (Docker 17.05+, default 0s)."
+
+    OCIHealthcheckTiming:
+      description: "Exact OCI image healthcheck durations in nanoseconds, preserved without rounding to whole seconds."
+      type: object
+      additionalProperties: false
+      properties:
+        interval_ns: { type: integer, format: int64, minimum: 0 }
+        timeout_ns: { type: integer, format: int64, minimum: 0 }
+        start_period_ns: { type: integer, format: int64, minimum: 0 }
+        start_interval_ns: { type: integer, format: int64, minimum: 0 }
+
+    UDPListenerResponse:
+      description: "One app-owned public datagram listener with a reserved stable port."
+      type: object
+      additionalProperties: false
+      required: [id, name, guest_port, public_port, protocol, enabled, created_at, updated_at]
+      properties:
+        id: { type: string }
+        name: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,30}$' }
+        guest_port: { type: integer, minimum: 1, maximum: 65535 }
+        public_port: { type: integer, minimum: 40000, maximum: 49999 }
+        protocol: { type: string, enum: [udp] }
+        enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    CreateUDPListenerRequest:
+      description: "Reserve a disabled public datagram endpoint for a declared workload port."
+      type: object
+      additionalProperties: false
+      required: [name, guest_port]
+      properties:
+        name: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,30}$' }
+        guest_port: { type: integer, minimum: 1, maximum: 65535 }
+        public_port:
+          description: Omit or set to zero for automatic allocation; otherwise reserve a port in the public UDP range.
+          oneOf:
+            - { type: integer, enum: [0] }
+            - { type: integer, minimum: 40000, maximum: 49999 }
+
+    UpdateUDPListenerRequest:
+      description: "Set whether an existing datagram endpoint accepts peers."
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
 
     SidecarExecProbe:
       description: "Exec probe command passed as argv inside the container; no shell is implied."
@@ -33688,8 +34069,8 @@ components:
         duration_ms: { type: [integer, "null"], description: "completed_at - started_at in milliseconds, computed server-side. Null while the run is still in flight." }
         outcome:
           type: string
-          enum: [success, failed, timeout, dead_letter, running, cancelled]
-          description: "Normalized result. `timeout` means the dispatch exceeded its deadline; `dead_letter` means the retry budget was exhausted; `running` means the run has not reached a terminal state yet. Branch on this, never on `error`."
+          enum: [success, failed, timeout, dead_letter, running, cancelled, uncertain]
+          description: "Normalized result. `timeout` means the dispatch exceeded its deadline; `dead_letter` means the retry budget was exhausted; `running` means the run has not reached a terminal state yet; `uncertain` means delivery may have reached the app without a completion receipt. Branch on this, never on `error`."
         attempts: { type: integer, description: "Dispatch attempts for this run; greater than 1 means it was retried." }
         instance_id: { type: [string, "null"], pattern: '^[a-f0-9]{32}$', description: "The instance that served the run; null if the fire never reached one." }
         task_id: { type: string, format: uuid, description: "Deployment-attached app-task receipt for command crons." }
@@ -33716,6 +34097,8 @@ components:
         schedule_policy: { $ref: '#/components/schemas/SchedulePolicy' }
         status: { type: string, enum: [pending, queued, running, succeeded, failed, cancelled, skipped_overlap, missed_deadline, coalesced, waiting_replacement, uncertain] }
         reason: { type: string }
+        work_decision: { $ref: '#/components/schemas/WorkDecision' }
+        outcome_code: { type: string, maxLength: 64, pattern: '^[a-z0-9_.-]*$' }
         blocking_occurrence_id: { type: string, format: uuid }
         job_run_id: { type: string, format: uuid }
         invocation_id: { type: string, format: uuid }
@@ -33776,7 +34159,7 @@ components:
         account_id: { type: string, format: uuid }
 
     CreateCronRequest:
-      description: "Create an HTTP-path cron or deployment-attached app command schedule. Schedule policies apply to both kinds; failure rules apply to command Crons only."
+      description: "Create an HTTP-path cron or deployment-attached app command schedule. Schedule policies apply to both kinds. HTTP Crons accept outcome-code failure rules; command Crons also accept exit-code rules."
       type: object
       required: [app_id, schedule]
       properties:
@@ -33796,7 +34179,7 @@ components:
         failure_rules: { $ref: '#/components/schemas/FailureRules' }
 
     UpdateCronRequest:
-      description: "Partial cron update. Schedule policies apply to HTTP and command Crons; failure rules are command-Cron only."
+      description: "Partial cron update. Schedule policies apply to HTTP and command Crons. HTTP Cron failure rules match outcome codes; command Cron rules may also match exit codes."
       type: object
       properties:
         schedule: { type: [string, "null"] , example: "*/5 * * * *"}
@@ -33824,7 +34207,7 @@ components:
         missed_runs: { type: string, enum: [coalesce_latest, skip], description: "On scheduler recovery, coalesce the due backlog into its latest occurrence or record stale occurrences as skipped." }
 
     FailureRules:
-      description: Versioned explicit classification policy for failed Job partitions and command-Cron executions. HTTP Crons do not accept failure rules.
+      description: Versioned explicit classification policy for failed Job partitions, command-Cron executions, and HTTP Cron outcome codes. HTTP status is not a business outcome matcher.
       type: object
       required: [version, rules, unmatched_failure, uncertain_outcome]
       properties:
@@ -33837,7 +34220,7 @@ components:
         uncertain_outcome: { type: string, enum: [hold, retry], description: "Choose whether a missing completion receipt stays held for reconciliation or is retried with possible duplicate execution." }
 
     FailureRule:
-      description: A guest exit-code or structured application-outcome matcher and the action for that confirmed result. HTTP status evidence is not available on the scheduled-job execution path.
+      description: A guest exit-code or structured application-outcome matcher and the action for that confirmed result. HTTP Crons support outcome_codes; exit_codes apply to Jobs and command Crons.
       type: object
       required: [action]
       additionalProperties: false
@@ -45807,10 +46190,20 @@ components:
         last_seen_at: { type: string, format: date-time }
         event_count: { type: integer }
         regression_count: { type: integer }
+        impact_24h: { $ref: '#/components/schemas/IssueImpactSummary' }
         resolved_at: { type: string, format: date-time }
         fixed_deployment_id: { type: string, format: uuid }
         fixed_deployment_created_at: { type: string, format: date-time }
         ignored_until: { type: string, format: date-time }
+
+    IssueImpactSummary:
+      description: "Observed retained occurrences, verified distinct customers, and unattributed events from the previous 24 hours."
+      type: object
+      required: [identified_customers, observed_events, unattributed_events]
+      properties:
+        identified_customers: { type: integer }
+        observed_events: { type: integer }
+        unattributed_events: { type: integer }
 
     IssueOccurrence:
       description: "Retained sanitized occurrence with verified platform attribution and optional debugger correlation."

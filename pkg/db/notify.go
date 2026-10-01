@@ -455,6 +455,12 @@ func (p PoolNotifier) Notify(ctx context.Context, channel, payload string) error
 	return Notify(ctx, p.Pool, channel, payload)
 }
 
+// RuntimeConfigRestartStatus returns the durable status projection used by
+// the customer-facing restart-status endpoint.
+func (p PoolNotifier) RuntimeConfigRestartStatus(ctx context.Context, appID, wakeID string) (RuntimeConfigRestartStatus, error) {
+	return GetRuntimeConfigRestartStatus(ctx, p.Pool, appID, wakeID)
+}
+
 // NotifyChannels are the pg_notify channel names used across the platform.
 // Keep this list aligned with the LISTEN calls in cmd/schedd, cmd/imaged,
 // cmd/apid (verifier goroutine), and the producer side of every Store

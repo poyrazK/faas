@@ -772,6 +772,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// surface can be dark-launched with the ginstal kill-switch
 		// that the apid gRPC receiver (Stage 4) already honors.
 		startDebugRegressionCron(ctx, srv, log, deps.getenv)
+		startFeatureFlagAutoAdvancer(ctx, srv, log)
 		srv.startIssuesMaintenance(ctx)
 		// G6 grace timer (spec §17 G6, ADR-021): the 30-day deletion
 		// grace sweep lives in apid (not meterd) because the write
@@ -2395,8 +2396,14 @@ type pgNotifier struct {
 	log  *slog.Logger
 }
 
+var _ runtimeConfigRestartStatusReader = pgNotifier{}
+
 func (p pgNotifier) Notify(ctx context.Context, channel, payload string) error {
 	return db.Notify(ctx, p.pool, channel, payload)
+}
+
+func (p pgNotifier) RuntimeConfigRestartStatus(ctx context.Context, appID, wakeID string) (db.RuntimeConfigRestartStatus, error) {
+	return db.GetRuntimeConfigRestartStatus(ctx, p.pool, appID, wakeID)
 }
 
 // Subscribe hands long-lived SSE handlers a reconnecting LISTEN stream. A

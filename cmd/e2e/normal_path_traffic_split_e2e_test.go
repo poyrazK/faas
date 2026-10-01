@@ -94,16 +94,19 @@ func waitForNormalPathTrafficInstance(
 	deadline := time.Now().Add(timeout)
 	var lastInstance string
 	var lastStatus int
-	attempts := 0
+	attempts, successfulPicks := 0, 0
 	for i := 0; time.Now().Before(deadline); i++ {
-		attempts++
 		path := fmt.Sprintf("/%s/probe/%d", strings.TrimPrefix(prefix, "/"), i)
 		_, body, statusCode := doReqHeaders(t, f.h, f.host, http.MethodGet, path, nil,
 			map[string]string{"Authorization": "Bearer " + f.key})
+		attempts++
 		lastStatus = statusCode
 		capture, ok := normalPathCaptureForURI(f.vmmd, path)
 		if ok {
 			lastInstance = capture.Init.GetInstance()
+			if statusCode == http.StatusOK {
+				successfulPicks++
+			}
 			if statusCode == http.StatusOK && lastInstance == wantInstanceID {
 				return
 			}
@@ -113,14 +116,19 @@ func waitForNormalPathTrafficInstance(
 		if statusCode != http.StatusOK && len(body) == 0 {
 			lastInstance = fmt.Sprintf("<status %d>", statusCode)
 		}
-		// The weighted stride can send the first 75 requests to stable after
-		// a 25% candidate update. Keep polling fast enough to observe that
-		// bucket within the deadline, even when the durable refresh uses its
-		// two-second fallback. Distribution is asserted separately below.
-		time.Sleep(10 * time.Millisecond)
+		// A 25% candidate can follow 75 stable picks in the 100-slot
+		// stride. A 100ms pause consumes 7.5s of this 10s budget before
+		// request latency or policy propagation. Sample at up to 100/s,
+		// within the Pro fixture's configured request budget, and back
+		// off on errors so rate-limit/convergence failures stay bounded.
+		delay := 10 * time.Millisecond
+		if statusCode != http.StatusOK {
+			delay = 100 * time.Millisecond
+		}
+		time.Sleep(delay)
 	}
-	t.Fatalf("traffic probe %q did not reach instance %q within %s after %d requests; last status=%d instance=%q",
-		prefix, wantInstanceID, timeout, attempts, lastStatus, lastInstance)
+	t.Fatalf("traffic probe %q did not reach instance %q within %s; attempts=%d successful picks=%d last status=%d instance=%q",
+		prefix, wantInstanceID, timeout, attempts, successfulPicks, lastStatus, lastInstance)
 }
 
 func assertNormalPathTrafficSample(

@@ -3925,7 +3925,10 @@ CREATE FUNCTION public.revise_cron_schedule_policy() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
- IF NEW.schedule IS DISTINCT FROM OLD.schedule OR NEW.timezone IS DISTINCT FROM OLD.timezone OR NEW.schedule_policy IS DISTINCT FROM OLD.schedule_policy THEN
+ IF NEW.schedule IS DISTINCT FROM OLD.schedule
+    OR NEW.timezone IS DISTINCT FROM OLD.timezone
+    OR NEW.schedule_policy IS DISTINCT FROM OLD.schedule_policy
+    OR NEW.failure_rules IS DISTINCT FROM OLD.failure_rules THEN
   NEW.schedule_revision := OLD.schedule_revision + 1;
  END IF;
  RETURN NEW;
@@ -4400,6 +4403,7 @@ BEGIN
    FROM schedule_occurrences o WHERE o.id = NEW.occurrence_id;
  UPDATE schedule_occurrences o SET
    status = CASE
+     WHEN NEW.state = 'failed' AND NEW.work_decision->>'classification' = 'uncertain' THEN 'uncertain'
      WHEN COALESCE(missed_deadline, false) AND NEW.state = 'failed' THEN 'missed_deadline'
      WHEN NEW.state = 'pending' THEN CASE WHEN o.started_at IS NULL THEN 'queued' ELSE 'running' END
      WHEN NEW.state = 'dispatching' THEN 'running'
@@ -4408,8 +4412,14 @@ BEGIN
      WHEN NEW.state = 'cancelled' THEN 'cancelled'
      WHEN NEW.state = 'dead_letter' THEN 'failed'
      ELSE o.status END,
-   reason = CASE WHEN COALESCE(missed_deadline, false) AND NEW.state = 'failed'
-       THEN 'invocation did not start before the occurrence start deadline' ELSE o.reason END,
+   reason = CASE
+     WHEN NEW.state = 'failed' AND NEW.work_decision->>'classification' = 'uncertain'
+       THEN COALESCE(NEW.work_decision->>'reason', 'completion_unknown')
+     WHEN COALESCE(missed_deadline, false) AND NEW.state = 'failed'
+       THEN 'invocation did not start before the occurrence start deadline'
+     ELSE o.reason END,
+   outcome_code = COALESCE(NEW.outcome_code, o.outcome_code),
+   work_decision = COALESCE(NEW.work_decision, o.work_decision),
    started_at = CASE WHEN NEW.state = 'dispatching' THEN COALESCE(o.started_at, clock_timestamp()) ELSE o.started_at END,
    finished_at = CASE WHEN NEW.state IN ('completed','failed','cancelled','dead_letter') THEN COALESCE(NEW.completed_at, clock_timestamp()) ELSE NULL END,
    updated_at = clock_timestamp()
@@ -5502,6 +5512,25 @@ CREATE TABLE public.app_tasks (
 
 
 --
+-- Name: app_tcp_listener_tls_observations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_tcp_listener_tls_observations (
+    listener_id uuid NOT NULL,
+    edge_id text NOT NULL,
+    hostname text NOT NULL,
+    intent_updated_at timestamp with time zone NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    ready boolean NOT NULL,
+    not_after timestamp with time zone,
+    CONSTRAINT app_tcp_listener_tls_observations_check CHECK ((observed_at >= intent_updated_at)),
+    CONSTRAINT app_tcp_listener_tls_observations_check1 CHECK (((ready AND (not_after IS NOT NULL) AND (not_after > observed_at)) OR ((NOT ready) AND (not_after IS NULL)))),
+    CONSTRAINT app_tcp_listener_tls_observations_edge_id_check CHECK ((((octet_length(edge_id) >= 1) AND (octet_length(edge_id) <= 128)) AND (edge_id = btrim(edge_id)) AND (edge_id !~ '[[:cntrl:]]'::text))),
+    CONSTRAINT app_tcp_listener_tls_observations_hostname_check CHECK ((((char_length(hostname) >= 1) AND (char_length(hostname) <= 253)) AND (hostname ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$'::text) AND (hostname !~ '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'::text)))
+);
+
+
+--
 -- Name: app_tcp_listeners; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -5516,11 +5545,15 @@ CREATE TABLE public.app_tcp_listeners (
     enabled boolean DEFAULT true NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    tls_mode text DEFAULT 'passthrough'::text NOT NULL,
+    tls_hostname text DEFAULT ''::text NOT NULL,
     CONSTRAINT app_tcp_listeners_guest_port_chk CHECK (((guest_port >= 1) AND (guest_port <= 65535))),
     CONSTRAINT app_tcp_listeners_name_len_chk CHECK (((char_length(listener_name) >= 1) AND (char_length(listener_name) <= 31))),
     CONSTRAINT app_tcp_listeners_name_shape_chk CHECK ((listener_name ~ '^[a-z0-9][a-z0-9-]{0,30}$'::text)),
     CONSTRAINT app_tcp_listeners_protocol_chk CHECK ((protocol = 'tcp'::text)),
-    CONSTRAINT app_tcp_listeners_public_port_chk CHECK (((public_port >= 40000) AND (public_port <= 49999)))
+    CONSTRAINT app_tcp_listeners_public_port_chk CHECK (((public_port >= 40000) AND (public_port <= 49999))),
+    CONSTRAINT app_tcp_listeners_tls_hostname_chk CHECK ((((tls_mode = 'passthrough'::text) AND (tls_hostname = ''::text)) OR ((tls_mode = 'terminate'::text) AND ((char_length(tls_hostname) >= 1) AND (char_length(tls_hostname) <= 253)) AND (tls_hostname ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$'::text) AND (tls_hostname !~ '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'::text)))),
+    CONSTRAINT app_tcp_listeners_tls_mode_chk CHECK ((tls_mode = ANY (ARRAY['passthrough'::text, 'terminate'::text])))
 );
 
 
@@ -5537,6 +5570,29 @@ CREATE TABLE public.app_trusted_signers (
     added_by_account_id uuid NOT NULL,
     CONSTRAINT app_trusted_signers_name_shape CHECK ((signer_name ~ '^[a-z0-9][a-z0-9_-]{0,63}$'::text)),
     CONSTRAINT app_trusted_signers_pem_shape CHECK (((octet_length(cosign_public_key) >= 64) AND (octet_length(cosign_public_key) <= 1024)))
+);
+
+
+--
+-- Name: app_udp_listeners; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_udp_listeners (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    listener_name text NOT NULL,
+    guest_port integer NOT NULL,
+    public_port integer NOT NULL,
+    protocol text DEFAULT 'udp'::text NOT NULL,
+    enabled boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_udp_listeners_guest_port_chk CHECK (((guest_port >= 1) AND (guest_port <= 65535))),
+    CONSTRAINT app_udp_listeners_name_len_chk CHECK (((char_length(listener_name) >= 1) AND (char_length(listener_name) <= 31))),
+    CONSTRAINT app_udp_listeners_name_shape_chk CHECK ((listener_name ~ '^[a-z0-9][a-z0-9-]{0,30}$'::text)),
+    CONSTRAINT app_udp_listeners_protocol_chk CHECK ((protocol = 'udp'::text)),
+    CONSTRAINT app_udp_listeners_public_port_chk CHECK (((public_port >= 40000) AND (public_port <= 49999)))
 );
 
 
@@ -8592,10 +8648,12 @@ CREATE TABLE public.invocations (
     deployment_scope text NOT NULL,
     queue_binding_id uuid,
     replay_generation bigint DEFAULT 0 NOT NULL,
+    outcome_code text DEFAULT ''::text NOT NULL,
     CONSTRAINT invocation_deployment_scope_check CHECK ((deployment_scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
     CONSTRAINT invocation_platform_tenant_source CHECK (((platform_tenant_id IS NULL) OR (source = ANY (ARRAY['async_invoke'::text, 'replay'::text, 'queue'::text])))),
     CONSTRAINT invocation_queue_binding_source CHECK (((queue_binding_id IS NULL) OR (source = 'queue'::text))),
-    CONSTRAINT invocations_outcome_check CHECK (((outcome IS NULL) OR (outcome = ANY (ARRAY['success'::text, 'failed'::text, 'timeout'::text, 'dead_letter'::text, 'superseded'::text, 'expired'::text])))),
+    CONSTRAINT invocations_outcome_check CHECK (((outcome IS NULL) OR (outcome = ANY (ARRAY['success'::text, 'failed'::text, 'timeout'::text, 'dead_letter'::text, 'superseded'::text, 'expired'::text, 'uncertain'::text])))),
+    CONSTRAINT invocations_outcome_code_check CHECK ((octet_length(outcome_code) <= 64)),
     CONSTRAINT invocations_queue_name_shape CHECK (((queue_name = ''::text) OR (queue_name ~ '^[a-z][a-z0-9-]{0,62}$'::text))),
     CONSTRAINT invocations_replay_generation_check CHECK ((replay_generation >= 0)),
     CONSTRAINT invocations_source_check CHECK ((source = ANY (ARRAY['async_invoke'::text, 'inbound_webhook'::text, 'queue'::text, 'delayed_task'::text, 'cron'::text, 'replay'::text, 'esm'::text]))),
@@ -11858,8 +11916,11 @@ CREATE TABLE public.schedule_occurrences (
     finished_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    outcome_code text DEFAULT ''::text NOT NULL,
+    work_decision jsonb,
     CONSTRAINT schedule_occurrences_check CHECK (((((cron_id IS NOT NULL))::integer + ((job_id IS NOT NULL))::integer) = 1)),
     CONSTRAINT schedule_occurrences_check1 CHECK (((start_deadline_at IS NULL) OR (start_deadline_at >= scheduled_for))),
+    CONSTRAINT schedule_occurrences_outcome_code_check CHECK ((octet_length(outcome_code) <= 64)),
     CONSTRAINT schedule_occurrences_reason_check CHECK ((octet_length(reason) <= 4096)),
     CONSTRAINT schedule_occurrences_schedule_policy_check CHECK (((jsonb_typeof(schedule_policy) = 'object'::text) AND ((schedule_policy ->> 'version'::text) = '1'::text))),
     CONSTRAINT schedule_occurrences_schedule_revision_check CHECK ((schedule_revision >= 1)),
@@ -13221,6 +13282,14 @@ ALTER TABLE ONLY public.app_tasks
 
 
 --
+-- Name: app_tcp_listener_tls_observations app_tcp_listener_tls_observations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_tcp_listener_tls_observations
+    ADD CONSTRAINT app_tcp_listener_tls_observations_pkey PRIMARY KEY (listener_id, edge_id);
+
+
+--
 -- Name: app_tcp_listeners app_tcp_listeners_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -13234,6 +13303,14 @@ ALTER TABLE ONLY public.app_tcp_listeners
 
 ALTER TABLE ONLY public.app_trusted_signers
     ADD CONSTRAINT app_trusted_signers_pkey PRIMARY KEY (app_id, signer_name);
+
+
+--
+-- Name: app_udp_listeners app_udp_listeners_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_udp_listeners
+    ADD CONSTRAINT app_udp_listeners_pkey PRIMARY KEY (id);
 
 
 --
@@ -16408,6 +16485,13 @@ CREATE UNIQUE INDEX app_errors_dedupe_uniq ON public.app_errors USING btree (acc
 
 
 --
+-- Name: app_issues_assignee_list_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_issues_assignee_list_idx ON public.app_issues USING btree (app_id, assignee_account_id, last_seen_at DESC, id DESC);
+
+
+--
 -- Name: app_issues_list_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -16618,6 +16702,13 @@ CREATE INDEX app_tasks_retry_due_idx ON public.app_tasks USING btree (retry_at, 
 
 
 --
+-- Name: app_tcp_listener_tls_observations_observed_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_tcp_listener_tls_observations_observed_at_idx ON public.app_tcp_listener_tls_observations USING btree (observed_at);
+
+
+--
 -- Name: app_tcp_listeners_app_created_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -16650,6 +16741,34 @@ CREATE UNIQUE INDEX app_tcp_listeners_public_port_uniq ON public.app_tcp_listene
 --
 
 CREATE INDEX app_trusted_signers_app_idx ON public.app_trusted_signers USING btree (app_id);
+
+
+--
+-- Name: app_udp_listeners_app_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_udp_listeners_app_created_idx ON public.app_udp_listeners USING btree (app_id, created_at DESC, id DESC);
+
+
+--
+-- Name: app_udp_listeners_app_name_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX app_udp_listeners_app_name_uniq ON public.app_udp_listeners USING btree (app_id, listener_name);
+
+
+--
+-- Name: app_udp_listeners_enabled_port_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_udp_listeners_enabled_port_idx ON public.app_udp_listeners USING btree (public_port) WHERE enabled;
+
+
+--
+-- Name: app_udp_listeners_public_port_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX app_udp_listeners_public_port_uniq ON public.app_udp_listeners USING btree (public_port);
 
 
 --
@@ -19212,6 +19331,13 @@ CREATE INDEX notification_outbox_claim_idx ON public.notification_outbox USING b
 --
 
 CREATE INDEX notification_outbox_retention_idx ON public.notification_outbox USING btree (state, created_at) WHERE (state = ANY (ARRAY['delivered'::text, 'dead_letter'::text]));
+
+
+--
+-- Name: notification_outbox_runtime_config_status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX notification_outbox_runtime_config_status_idx ON public.notification_outbox USING btree ((((payload)::jsonb ->> 'app_id'::text)), (((payload)::jsonb ->> 'wake_id'::text)), id DESC) WHERE (channel = 'runtime_config_restart'::text);
 
 
 --
@@ -22971,6 +23097,14 @@ ALTER TABLE ONLY public.app_tasks
 
 
 --
+-- Name: app_tcp_listener_tls_observations app_tcp_listener_tls_observations_listener_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_tcp_listener_tls_observations
+    ADD CONSTRAINT app_tcp_listener_tls_observations_listener_id_fkey FOREIGN KEY (listener_id) REFERENCES public.app_tcp_listeners(id) ON DELETE CASCADE;
+
+
+--
 -- Name: app_tcp_listeners app_tcp_listeners_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -22992,6 +23126,22 @@ ALTER TABLE ONLY public.app_tcp_listeners
 
 ALTER TABLE ONLY public.app_trusted_signers
     ADD CONSTRAINT app_trusted_signers_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_udp_listeners app_udp_listeners_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_udp_listeners
+    ADD CONSTRAINT app_udp_listeners_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_udp_listeners app_udp_listeners_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_udp_listeners
+    ADD CONSTRAINT app_udp_listeners_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

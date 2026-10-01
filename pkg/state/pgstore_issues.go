@@ -284,8 +284,12 @@ func issueActivity(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, row sqlc.App
 	return q.IssueAddTransition(ctx, tx, sqlc.IssueAddTransitionParams{ActivityID: activity.ID, AccountID: row.AccountID, AppID: row.AppID, Payload: payload})
 }
 
-func (s *PgStore) ListIssues(ctx context.Context, app, state, environment string, cur IssueCursor) (api.ListIssuesResponse, error) {
-	rows, err := sqlc.New().IssueList(ctx, s.pool, sqlc.IssueListParams{AppID: issueUUID(app), State: state, Environment: environment, CursorTime: issueTime(cur.Time), CursorID: issueUUID(cur.ID), PageLimit: api.IssuePageSize + 1})
+func (s *PgStore) ListIssues(ctx context.Context, app string, filter IssueListFilter, cur IssueCursor) (api.ListIssuesResponse, error) {
+	rows, err := sqlc.New().IssueList(ctx, s.pool, sqlc.IssueListParams{
+		AppID: issueUUID(app), State: filter.State, Environment: filter.Environment,
+		AssigneeAccountID: issueUUID(filter.AssigneeAccountID), Unassigned: filter.Unassigned,
+		CursorTime: issueTime(cur.Time), CursorID: issueUUID(cur.ID), PageLimit: api.IssuePageSize + 1,
+	})
 	if err != nil {
 		return api.ListIssuesResponse{}, err
 	}
@@ -299,6 +303,33 @@ func (s *PgStore) ListIssues(ctx context.Context, app, state, environment string
 	if len(rows) > api.IssuePageSize {
 		last := out.Items[len(out.Items)-1]
 		out.NextCursor = EncodeIssueCursor(IssueCursor{last.LastSeenAt, last.ID})
+	}
+	if len(out.Items) == 0 {
+		return out, nil
+	}
+	issueIDs := make([]pgtype.UUID, 0, len(out.Items))
+	for _, item := range out.Items {
+		issueIDs = append(issueIDs, issueUUID(item.ID))
+	}
+	windowEnd := time.Now().UTC()
+	windowStart := windowEnd.Add(-api.IssueImpactSummaryWindow)
+	impactRows, err := sqlc.New().IssueImpactSummaries(ctx, s.pool, sqlc.IssueImpactSummariesParams{
+		IssueIds: issueIDs, Since: issueTime(windowStart), Until: issueTime(windowEnd),
+	})
+	if err != nil {
+		return api.ListIssuesResponse{}, err
+	}
+	impacts := make(map[string]api.IssueImpactSummary, len(impactRows))
+	for _, row := range impactRows {
+		impacts[issueID(row.IssueID)] = api.IssueImpactSummary{
+			IdentifiedCustomers: row.IdentifiedCustomers,
+			ObservedEvents:      row.ObservedEvents,
+			UnattributedEvents:  row.UnattributedEvents,
+		}
+	}
+	for i := range out.Items {
+		impact := impacts[out.Items[i].ID]
+		out.Items[i].Impact24h = &impact
 	}
 	return out, nil
 }

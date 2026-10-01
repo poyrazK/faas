@@ -4,6 +4,10 @@
 /* eslint-disable */
 export type EnvironmentGitProtectedBranchEvidence = {
   qualified: boolean;
+  /**
+   * Qualification failure reason; absent from persisted approval evidence.
+   */
+  reason?: string;
   profile: string;
   installation_id: number;
   repository_id: number;

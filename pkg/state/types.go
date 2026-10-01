@@ -3687,6 +3687,8 @@ type TCPListener struct {
 	Enabled      bool
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+	TLSMode      api.TCPListenerTLSMode
+	TLSHostname  string
 }
 
 // AppWebhookClaimLease is the recovery deadline assigned to each claimed row.
@@ -3990,6 +3992,16 @@ type Invocation struct {
 	// nil while the row is non-terminal (pending / dispatching); the
 	// read surfaces render nil as "running". See InvocationOutcome.
 	Outcome *InvocationOutcome `json:"outcome,omitempty"`
+	// FailureRules is the immutable policy snapshot pinned when a scheduled
+	// HTTP Cron occurrence is created. WorkDecision and OutcomeCode record the
+	// most recent confirmed application result used by that policy.
+	FailureRules *workpolicy.FailureRules `json:"-"`
+	WorkDecision *workpolicy.Decision     `json:"-"`
+	OutcomeCode  string                   `json:"-"`
+	// ResponseStatusCode is returned by the internal gateway dispatch RPC and
+	// is never persisted. It distinguishes a confirmed HTTP response from a
+	// missing completion receipt.
+	ResponseStatusCode int `json:"-"`
 	// DeadlineAt is the absolute hard-stop time for this invocation
 	// (ADR-134 PR-B). NULL means "use the plan default"
 	// (MaxAsyncInvocationDeadlineSeconds from pkg/api.Limits). The
@@ -4215,6 +4227,9 @@ const (
 	OutcomeDeadLetter InvocationOutcome = "dead_letter"
 	OutcomeSuperseded InvocationOutcome = "superseded"
 	OutcomeExpired    InvocationOutcome = "expired"
+	// OutcomeUncertain records that delivery may have reached the app but no
+	// completion receipt was received and policy selected hold.
+	OutcomeUncertain InvocationOutcome = "uncertain"
 )
 
 // FailOptions carries the optional, non-breaking extras for
@@ -4231,6 +4246,11 @@ type FailOptions struct {
 	// ClaimAttempt fences a keyed dispatch against a newer lease of the
 	// same invocation. Zero is valid only for pre-claim or unkeyed work.
 	ClaimAttempt int
+	WorkDecision *workpolicy.Decision
+	OutcomeCode  string
+	// HasWorkClassification distinguishes an explicit empty outcome code from
+	// a call site that does not update scheduled-work classification.
+	HasWorkClassification bool
 }
 
 // FailOption mutates FailOptions. See WithOutcome.
@@ -4246,6 +4266,16 @@ func WithOutcome(o InvocationOutcome) FailOption {
 
 func WithClaimAttempt(attempt int) FailOption {
 	return func(f *FailOptions) { f.ClaimAttempt = attempt }
+}
+
+// WithWorkClassification persists the application result and policy decision
+// with the invocation transition so occurrence history cannot disagree with it.
+func WithWorkClassification(decision workpolicy.Decision, outcomeCode string) FailOption {
+	return func(f *FailOptions) {
+		f.WorkDecision = &decision
+		f.OutcomeCode = outcomeCode
+		f.HasWorkClassification = true
+	}
 }
 
 // ApplyFailOptions folds opts over the defaults. Exported so both
@@ -8665,4 +8695,19 @@ const (
 
 func (e *AppLogDrainQuotaError) Error() string {
 	return fmt.Sprintf("state: app log drain quota exceeded (scope=%s, limit=%d, observed=%d)", e.Scope, e.Limit, e.Observed)
+}
+
+// UDPListener is an app-owned UDP endpoint with a stable public port.
+// Its port namespace is independent from TCP listener endpoints.
+type UDPListener struct {
+	ID           string
+	AppID        string
+	AccountID    string
+	ListenerName string
+	GuestPort    int
+	PublicPort   int
+	Protocol     string
+	Enabled      bool
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }

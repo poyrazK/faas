@@ -76,6 +76,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/tcpmetrics"
 	"github.com/onebox-faas/faas/pkg/trace"
+	"github.com/onebox-faas/faas/pkg/udpd"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -237,6 +238,16 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 	defer tcpStop()
+	udpMetrics := udpd.NewMetrics(prometheus.NewRegistry(), "gatewayd_public")
+	udpStop, err := startUDPIngress(ctx, log, pgStore, udpMetrics)
+	if err != nil {
+		return err
+	}
+	defer udpStop()
+	rawIngressDrain := func(drainCtx context.Context) error {
+		udpStop()
+		return tcpDrain(drainCtx)
+	}
 	publicStorageRegistry, err := loadPublicStorageRegistry(os.Getenv)
 	if err != nil {
 		return fmt.Errorf("gatewayd-public: load object storage: %w", err)
@@ -631,7 +642,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// Pass drainTracker so every control request is counted
 	// during graceful shutdown.
 	controlMux := gateway.ControlMuxWithExtra(gatewayMetrics,
-		prometheus.Gatherers{opsMetrics.Registry(), budgetReg, tcpMetrics.Registry()},
+		prometheus.Gatherers{opsMetrics.Registry(), budgetReg, tcpMetrics.Registry(), udpMetrics.Registry()},
 		probe.ReadyFunc(), drainTracker)
 	controlAddr := envOr("FAAS_PUBLIC_CONTROL_ADDR", defaultPublicControlAddr)
 	listenAddr := envOr("FAAS_PUBLIC_LISTEN_ADDR", defaultListenAddr)
@@ -669,7 +680,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	defer wire.StartWatchdog(ctx, wire.NewLiveness(), opsMetrics, log)()
 
 	// Drain orchestration.
-	if err := runDrain(ctx, log, publicSrv, controlSrv, pgProbeSig, pgStop, traceSetup, drainTracker, gatewayMetrics, tcpDrain); err != nil {
+	if err := runDrain(ctx, log, publicSrv, controlSrv, pgProbeSig, pgStop, traceSetup, drainTracker, gatewayMetrics, rawIngressDrain); err != nil {
 		return err
 	}
 	return nil

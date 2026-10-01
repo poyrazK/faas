@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/workpolicy"
@@ -11,6 +12,8 @@ import (
 // Its policy snapshot and reason make a skipped, late, or replaced occurrence
 // explainable after the schedule itself has changed.
 type ScheduleOccurrence struct {
+	WorkDecision         *workpolicy.Decision
+	OutcomeCode          string
 	ID                   string
 	AccountID            string
 	CronID               string
@@ -29,6 +32,19 @@ type ScheduleOccurrence struct {
 	FinishedAt           *time.Time
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
+}
+
+// InvocationWorkClassification is attached atomically to a terminal or retry
+// transition for an invocation governed by explicit FailureRules.
+type InvocationWorkClassification struct {
+	Decision    *workpolicy.Decision
+	OutcomeCode string
+}
+
+// ClassifiedInvocationCompletionStore persists a confirmed application
+// result and its policy decision with invocation completion.
+type ClassifiedInvocationCompletionStore interface {
+	CompleteInvocationWithWorkClassification(ctx context.Context, id string, result json.RawMessage, decision workpolicy.Decision, outcomeCode string) error
 }
 
 // JobScheduledOccurrenceOptions pins the nominal occurrence time and the

@@ -27,8 +27,11 @@ type Rule struct {
 	Value any `json:"value,omitempty"`
 }
 type ProgressiveRollout struct {
-	Stages                        []int `json:"stages"`
-	CurrentStage                  int   `json:"current_stage"`
+	Stages       []int `json:"stages"`
+	CurrentStage int   `json:"current_stage"`
+	// AutoAdvance opts this plan into server-managed, one-stage-at-a-time
+	// promotion after a full healthy observation window. The default is manual.
+	AutoAdvance                   bool  `json:"auto_advance,omitempty"`
 	MinimumUsedRequests           int64 `json:"minimum_used_requests"`
 	MaximumHTTP5xxRateBasisPoints int   `json:"maximum_http_5xx_rate_basis_points"`
 	MaximumP95LatencyMS           int   `json:"maximum_p95_latency_ms"`

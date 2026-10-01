@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -107,6 +108,20 @@ func TestIssueEndToEndPostgres(t *testing.T) {
 	if len(list.Items) != 1 {
 		t.Fatal("one failure became multiple issues")
 	}
+	if list.Items[0].AssigneeAccountID != e.acct.ID || list.Items[0].RegressionCount != 1 {
+		t.Fatalf("issue list omitted triage fields: %+v", list.Items[0])
+	}
+	mine := issueDecode[api.ListIssuesResponse](t, e.do(t, "GET", "/v1/apps/"+app.Slug+"/issues?assignee=me", nil, nil), 200)
+	if len(mine.Items) != 1 || mine.Items[0].ID != first.IssueID {
+		t.Fatalf("mine filter = %+v", mine.Items)
+	}
+	unassigned := issueDecode[api.ListIssuesResponse](t, e.do(t, "GET", "/v1/apps/"+app.Slug+"/issues?assignee=unassigned", nil, nil), 200)
+	if len(unassigned.Items) != 0 {
+		t.Fatalf("unassigned filter = %+v", unassigned.Items)
+	}
+	if w := e.do(t, "GET", "/v1/apps/"+app.Slug+"/issues?assignee=not-an-account", nil, nil); w.Code != 400 {
+		t.Fatalf("invalid assignee filter status = %d", w.Code)
+	}
 	other := seedPGApp(t, e, "issue-other")
 	if w := issueSend(t, e, other.Slug, fixedToken, event); w.Code != 401 {
 		t.Fatal("ingest token crossed app boundary")
@@ -188,6 +203,13 @@ func TestIssueVerifiedCustomerImpactAndWebhookRecovery(t *testing.T) {
 	detail := issueDecode[api.IssueDetail](t, e.do(t, "GET", "/v1/apps/"+app.Slug+"/issues/"+issueID, nil, nil), 200)
 	if detail.Impact.IdentifiedCustomers != 2 || detail.Impact.UnattributedEvents != 1 {
 		t.Fatalf("impact = %+v", detail.Impact)
+	}
+	list := issueDecode[api.ListIssuesResponse](t, e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/issues", nil, nil), http.StatusOK)
+	if len(list.Items) != 1 || list.Items[0].Impact24h == nil {
+		t.Fatalf("issue inbox impact summary = %+v", list.Items)
+	}
+	if got := list.Items[0].Impact24h; got.IdentifiedCustomers != 2 || got.ObservedEvents != 3 || got.UnattributedEvents != 1 {
+		t.Fatalf("issue inbox impact summary = %+v", got)
 	}
 	relay := e.store.(state.AppWebhookEventOutboxStore)
 	if n, err := relay.DrainAppWebhookEventOutbox(t.Context(), 10); err != nil || n != 1 {

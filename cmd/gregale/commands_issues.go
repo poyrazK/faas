@@ -31,7 +31,7 @@ func cmdIssues(args []string) int {
 	activityCursor := fs.String("activity-cursor", "", "activity history cursor")
 	since := fs.String("since", "", "impact window start (RFC3339)")
 	deployment := fs.String("deployment", "", "fixed or token-bound deployment UUID")
-	assignee := fs.String("assignee", "", "account UUID (empty unassigns)")
+	assignee := fs.String("assignee", "", "list filter: me, unassigned, or account UUID; assignment owner UUID (empty unassigns)")
 	until := fs.String("until", "", "ignore until (RFC3339)")
 	name := fs.String("name", "issues", "ingest token name")
 	expires := fs.Duration("expires-in", 24*time.Hour, "ingest token lifetime (max 90 days)")
@@ -53,7 +53,7 @@ func cmdIssues(args []string) int {
 		if len(positionals) != 0 {
 			return issueCLIUsage()
 		}
-		out, err := c.ListIssues(ctx, *app, *stateFilter, *environment, *cursor)
+		out, err := c.ListIssuesFiltered(ctx, *app, *stateFilter, *environment, *assignee, *cursor)
 		if err != nil {
 			return printErr("Could not list issues", err)
 		}
@@ -61,11 +61,21 @@ func cmdIssues(args []string) int {
 			return jsonOut(writeJSON(out))
 		}
 		w := tabwriter.NewWriter(osStdout, 0, 4, 2, ' ', 0)
-		if _, err := fmt.Fprintln(w, "ID\tSTATE\tEVENTS\tLAST SEEN\tTITLE"); err != nil {
+		if _, err := fmt.Fprintln(w, "ID\tSTATE\tOWNER\tVERIFIED CUSTOMERS (24H)\tEVENTS (24H)\tUNATTRIBUTED (24H)\tEVENTS\tRECURRENCES\tLAST SEEN\tTITLE"); err != nil {
 			return printErr("Could not write issues", err)
 		}
 		for _, i := range out.Items {
-			if _, err := fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\n", i.ID, i.State, i.EventCount, i.LastSeenAt.Format(time.RFC3339), i.Title); err != nil {
+			owner := i.AssigneeAccountID
+			if owner == "" {
+				owner = "unassigned"
+			}
+			identified, observed, unattributed := "—", "—", "—"
+			if i.Impact24h != nil {
+				identified = fmt.Sprint(i.Impact24h.IdentifiedCustomers)
+				observed = fmt.Sprint(i.Impact24h.ObservedEvents)
+				unattributed = fmt.Sprint(i.Impact24h.UnattributedEvents)
+			}
+			if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\t%s\n", i.ID, i.State, owner, identified, observed, unattributed, i.EventCount, i.RegressionCount, i.LastSeenAt.Format(time.RFC3339), i.Title); err != nil {
 				return printErr("Could not write issues", err)
 			}
 		}

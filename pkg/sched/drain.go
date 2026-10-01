@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // Compile-time guarantee the unified invocations drain depends on
@@ -903,6 +905,19 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	} else {
 		dispatched, err = d.gateway.Invoke(ctx, inv.AppID, inv)
 	}
+	if inv.Source == state.InvocationCron && inv.FailureRules != nil {
+		if err == nil && dispatched.ResponseStatusCode == 0 {
+			dispatched.ResponseStatusCode = http.StatusOK
+		}
+		if dispatched.ResponseStatusCode > 0 {
+			d.settleCronWorkPolicyResponse(ctx, inv, dispatched, err)
+			return
+		}
+		if err != nil && !errors.Is(err, ErrPermanentInvoke) {
+			d.settleCronWorkPolicyUncertain(ctx, inv, err)
+			return
+		}
+	}
 	if err != nil {
 		// Permanent invoke errors (4xx) terminal-fail; transient
 		// (network / 5xx) retry. The gateway is the source of
@@ -933,6 +948,83 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	}
 	d.observeDelayedTaskDispatch(inv, wire.DelayedTaskDispatchSuccess)
 	d.emitDone(ctx, inv)
+}
+
+func (d *Drain) settleCronWorkPolicyResponse(ctx context.Context, inv, response state.Invocation, dispatchErr error) {
+	status := response.ResponseStatusCode
+	decision := workpolicy.Evaluate(inv.FailureRules, workpolicy.Evidence{
+		Succeeded:   status < http.StatusBadRequest,
+		OutcomeCode: response.OutcomeCode,
+		HTTPStatus:  status,
+	})
+	if decision.Action == "complete" {
+		store, ok := d.store.(state.ClassifiedInvocationCompletionStore)
+		if !ok {
+			d.log.Error("drain: classified cron completion is unsupported by store", "inv", inv.ID)
+			if err := d.store.CompleteInvocation(ctx, inv.ID, response.Result); err != nil {
+				d.log.Warn("drain: complete classified cron invocation fallback", "inv", inv.ID, "err", err)
+			}
+			d.emitDone(ctx, inv)
+			return
+		}
+		if err := store.CompleteInvocationWithWorkClassification(ctx, inv.ID, response.Result, decision, response.OutcomeCode); err != nil {
+			d.log.Warn("drain: complete classified cron invocation", "inv", inv.ID, "err", err)
+			return
+		}
+		d.emitDone(ctx, inv)
+		return
+	}
+
+	retryAfter := time.Duration(0)
+	budget := 0
+	var message string
+	if dispatchErr != nil {
+		message = "invoke: " + dispatchErr.Error()
+	} else {
+		message = fmt.Sprintf("scheduled outcome %q classified as %s", response.OutcomeCode, decision.Action)
+	}
+	if decision.Action == "retry" {
+		retryAfter = d.invocationRetryDelay(inv)
+		budget = d.invocationAttemptBudget(ctx, inv)
+	}
+	options := []state.FailOption{
+		state.WithClaimAttempt(inv.Attempts),
+		state.WithWorkClassification(decision, response.OutcomeCode),
+	}
+	if err := d.store.FailInvocation(ctx, inv.ID, message, retryAfter, budget, options...); err != nil {
+		d.log.Warn("drain: fail classified cron invocation", "inv", inv.ID, "action", decision.Action, "err", err)
+		return
+	}
+	if retryAfter == 0 {
+		d.emitDone(ctx, inv, state.InvocationFailed)
+	} else if budget > 0 && inv.Attempts >= budget {
+		d.emitDeadLetter(ctx, inv, "dead_letter")
+	}
+}
+
+func (d *Drain) settleCronWorkPolicyUncertain(ctx context.Context, inv state.Invocation, dispatchErr error) {
+	decision := workpolicy.Evaluate(inv.FailureRules, workpolicy.Evidence{Uncertain: true})
+	retryAfter, budget := time.Duration(0), 0
+	if decision.Action == "retry" {
+		retryAfter = d.invocationRetryDelay(inv)
+		budget = d.invocationAttemptBudget(ctx, inv)
+	}
+	options := []state.FailOption{
+		state.WithClaimAttempt(inv.Attempts),
+		state.WithWorkClassification(decision, ""),
+	}
+	if decision.Action == "hold" {
+		options = append(options, state.WithOutcome(state.OutcomeUncertain))
+	}
+	if err := d.store.FailInvocation(ctx, inv.ID, "invoke receipt uncertain: "+dispatchErr.Error(), retryAfter, budget, options...); err != nil {
+		d.log.Warn("drain: settle uncertain cron invocation", "inv", inv.ID, "action", decision.Action, "err", err)
+		return
+	}
+	if decision.Action == "hold" {
+		d.emitDone(ctx, inv, state.InvocationFailed)
+	} else if budget > 0 && inv.Attempts >= budget {
+		d.emitDeadLetter(ctx, inv, "dead_letter")
+	}
 }
 
 func completeClaimedInvocation(ctx context.Context, store state.Store, inv state.Invocation, result json.RawMessage) error {

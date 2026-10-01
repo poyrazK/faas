@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 export interface ProgressiveRollout {
-  stages: number[]; current_stage: number; minimum_used_requests: number;
+  stages: number[]; current_stage: number; auto_advance?: boolean; minimum_used_requests: number;
   maximum_http_5xx_rate_basis_points: number; maximum_p95_latency_ms: number; window_seconds: number;
 }
 export interface FlagRule { id: string; customers?: string[]; group?: string; rollout?: number; value: boolean; progression?: ProgressiveRollout }

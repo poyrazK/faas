@@ -165,6 +165,39 @@ func TestSynthAdapterForwardInvocationMarksHandlerErrorFailed(t *testing.T) {
 	}
 }
 
+func TestSynthAdapterReturnsBoundedScheduledOutcomeCode(t *testing.T) {
+	a := &synthAdapter{forward: func(gateway.Target) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set(api.ScheduledOutcomeCodeHeader, "invalid_record")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		})
+	}}
+	out, status, err := a.forwardInvocationWithStatus(context.Background(), gateway.Target{
+		InstanceID: "instance-1", NodeID: "node-1",
+	}, state.Invocation{ID: "inv-cron", AppID: "app-1", Source: state.InvocationCron})
+	if err != nil || status != http.StatusOK || out.OutcomeCode != "invalid_record" {
+		t.Fatalf("scheduled response = code %q status %d err %v", out.OutcomeCode, status, err)
+	}
+}
+
+func TestScheduledInvocationOutcomeCodeRejectsMalformedOrAmbiguousHeaders(t *testing.T) {
+	for name, values := range map[string][]string{
+		"missing": {}, "uppercase": {"Invalid"}, "whitespace": {" invalid"},
+		"too long": {strings.Repeat("a", 65)}, "multiple": {"one", "two"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			header := make(http.Header)
+			for _, value := range values {
+				header.Add(api.ScheduledOutcomeCodeHeader, value)
+			}
+			if got := scheduledInvocationOutcomeCode(header); got != "" {
+				t.Fatalf("scheduledInvocationOutcomeCode = %q; want empty", got)
+			}
+		})
+	}
+}
+
 func TestSynthAdapterForwardInvocationKeepsOrdinaryServerErrorRetryable(t *testing.T) {
 	var forwarded gateway.Target
 	a := &synthAdapter{forward: func(target gateway.Target) http.Handler {

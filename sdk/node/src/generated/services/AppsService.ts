@@ -19,6 +19,7 @@ import type { CreateAppRequest } from '../models/CreateAppRequest.js';
 import type { CreateDeployTokenRequest } from '../models/CreateDeployTokenRequest.js';
 import type { CreateIssueIngestTokenRequest } from '../models/CreateIssueIngestTokenRequest.js';
 import type { CreateTCPListenerRequest } from '../models/CreateTCPListenerRequest.js';
+import type { CreateUDPListenerRequest } from '../models/CreateUDPListenerRequest.js';
 import type { CustomMetricListResponse } from '../models/CustomMetricListResponse.js';
 import type { CustomMetricRequest } from '../models/CustomMetricRequest.js';
 import type { DebugCompareRequest } from '../models/DebugCompareRequest.js';
@@ -55,11 +56,15 @@ import type { RequestAnalyticsTimeseriesResponse } from '../models/RequestAnalyt
 import type { RequestAuditListResponse } from '../models/RequestAuditListResponse.js';
 import type { RotateDeployTokenRequest } from '../models/RotateDeployTokenRequest.js';
 import type { RotateDeployTokenResponse } from '../models/RotateDeployTokenResponse.js';
+import type { RuntimeConfigRestartStatusResponse } from '../models/RuntimeConfigRestartStatusResponse.js';
 import type { RuntimePolicyStatusResponse } from '../models/RuntimePolicyStatusResponse.js';
 import type { SidecarTimelineResponse } from '../models/SidecarTimelineResponse.js';
 import type { TCPListenerResponse } from '../models/TCPListenerResponse.js';
+import type { TCPListenerTLSStatusResponse } from '../models/TCPListenerTLSStatusResponse.js';
+import type { UDPListenerResponse } from '../models/UDPListenerResponse.js';
 import type { UpdateAppRequest } from '../models/UpdateAppRequest.js';
 import type { UpdateTCPListenerRequest } from '../models/UpdateTCPListenerRequest.js';
+import type { UpdateUDPListenerRequest } from '../models/UpdateUDPListenerRequest.js';
 import type { WakeTimelineResponse } from '../models/WakeTimelineResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -312,7 +317,10 @@ export class AppsService {
   }
   /**
    * Expose one app port over raw TCP.
-   * Creates an enabled TCP listener. `public_port` is optional; when it
+   * Creates a TCP listener. Passthrough is enabled immediately; TLS
+   * termination starts disabled and requires a verified app-owned domain
+   * and an explicitly provisioned edge certificate before enabling.
+   * `public_port` is optional; when it
    * is omitted Gregale allocates a free port from the reserved
    * 40000–49999 range. Public ports remain stable across instance wake,
    * migration, and redeployments. `name` and `guest_port` must match an
@@ -363,8 +371,8 @@ export class AppsService {
     });
   }
   /**
-   * Enable or disable an app TCP listener.
-   * Disabling a listener fail-closes new connections without releasing its stable public port.
+   * Change serving state or TLS policy of an app TCP listener.
+   * Supply exactly one of enabled or tls. TLS policy changes atomically disable the endpoint and cancel existing sessions; provision the selected certificate policy before explicitly re-enabling. Disabling retains the stable public port.
    * @returns TCPListenerResponse The updated TCP listener.
    * @throws ApiError
    */
@@ -434,6 +442,217 @@ export class AppsService {
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read observed edge certificate status for a TCP listener.
+   * Returns customer-safe certificate evidence for each observed edge.
+   * Missing evidence, evidence at least sixty seconds old, and changed or
+   * disabled TLS intent have unknown status. This does not establish fleet
+   * coverage, client trust, public routing or guest availability.
+   *
+   * @returns TCPListenerTLSStatusResponse Certificate evidence from observed edges only.
+   * @throws ApiError
+   */
+  public static appTcpListenerTlsStatus({
+    slug,
+    name,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * TCP endpoint whose observed certificates are requested.
+     */
+    name: string,
+  }): CancelablePromise<TCPListenerTLSStatusResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/tcp-listeners/{name}/tls-status',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Certificate observation storage is unavailable.`,
+      },
+    });
+  }
+  /**
+   * List an app's public UDP listeners.
+   * @returns UDPListenerResponse Stable app-owned datagram endpoints.
+   * @throws ApiError
+   */
+  public static listAppUdpListeners({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<Array<UDPListenerResponse>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/udp-listeners',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Reserve an app-owned public UDP endpoint.
+   * Requires a matching declared UDP workload port. New endpoints start disabled and require an explicit enable request plus the operator's source-CIDR rollout.
+   * @returns UDPListenerResponse The reserved disabled UDP endpoint.
+   * @throws ApiError
+   */
+  public static createAppUdpListener({
+    slug,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: CreateUDPListenerRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<UDPListenerResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/udp-listeners',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Enable or disable a public UDP listener.
+   * @returns UDPListenerResponse The UDP endpoint's updated serving state.
+   * @throws ApiError
+   */
+  public static updateAppUdpListener({
+    slug,
+    name,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * UDP workload listener selected for mutation.
+     */
+    name: string,
+    requestBody: UpdateUDPListenerRequest,
+  }): CancelablePromise<UDPListenerResponse> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/apps/{slug}/udp-listeners/{name}',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Delete a public UDP listener.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteAppUdpListener({
+    slug,
+    name,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * UDP workload listener selected for mutation.
+     */
+    name: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/udp-listeners/{name}',
+      path: {
+        'slug': slug,
+        'name': name,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
         `,
       },
     });
@@ -1478,6 +1697,7 @@ export class AppsService {
     slug,
     state,
     environment,
+    assignee,
     cursor,
   }: {
     /**
@@ -1493,6 +1713,10 @@ export class AppsService {
      */
     environment?: string,
     /**
+     * Filter by me, unassigned, or an owner account UUID.
+     */
+    assignee?: string,
+    /**
      * Opaque next_cursor from the previous issue page.
      */
     cursor?: string,
@@ -1506,6 +1730,7 @@ export class AppsService {
       query: {
         'state': state,
         'environment': environment,
+        'assignee': assignee,
         'cursor': cursor,
       },
       errors: {
@@ -2684,6 +2909,10 @@ export class AppsService {
    * `fresh=true`, destroys live instances without capturing process memory,
    * invalidates cached snapshots, and cold-boots with the latest environment
    * and secrets. The fresh path is durably queued.
+   * For `fresh=true`, use the returned `wake_id` with
+   * `GET /v1/apps/{slug}/runtime-config-restarts/{wake_id}` to inspect
+   * queued, running, retrying, completed, or failed status and any safe
+   * failure reason.
    *
    * @returns AppRestartResponse Restart accepted.
    * @throws ApiError
@@ -2730,6 +2959,48 @@ export class AppsService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Get the status of a fresh runtime-configuration restart.
+   * Returns the durable scheduler handoff state for a fresh restart.
+   * `completed` means the replacement operation finished successfully;
+   * `failed` means the durable handoff exhausted its retry budget. A
+   * failure_reason is a stable, safe category and does not expose internal
+   * error details.
+   *
+   * @returns RuntimeConfigRestartStatusResponse Current durable restart status.
+   * @throws ApiError
+   */
+  public static getRuntimeConfigRestartStatus({
+    slug,
+    wakeId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Wake ID returned by POST /v1/apps/{slug}/restart?fresh=true.
+     */
+    wakeId: string,
+  }): CancelablePromise<RuntimeConfigRestartStatusResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/runtime-config-restarts/{wake_id}',
+      path: {
+        'slug': slug,
+        'wake_id': wakeId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
         when enabled bare-metal service protection needs more recovery headroom.

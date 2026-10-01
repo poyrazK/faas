@@ -490,9 +490,10 @@ out-of-order replay replaces older admission/retirement functions. Shared
 memory/PostgreSQL cases cover deletion/recreation and tenant/scope isolation;
 real PostgreSQL scheduler checks cover separate caps, rename, replay and receipt
 retention. A populated-database migration check exercises the older-function
-interval and all twenty-three unreleased migrations, preserving captured identities
-and current leases. These checks qualify the internal scope contract. They do not establish
-GitOps queue ownership/recovery or complete environment graph support.
+interval and replays the twenty-three GitOps migrations alongside six additive
+migrations merged from main, preserving captured identities and current leases.
+These checks qualify the internal scope contract. They do not establish GitOps
+queue ownership/recovery or complete environment graph support.
 
 
 Customer queue bindings can now select a registered project `environment` at
@@ -556,7 +557,10 @@ rollback retains management intent, ownership, captured work and runtime
 receipts. Historical capture runs only during initial installation; replay
 cannot reinterpret an invocation's environment or adopt a later consumer
 marker, and polling backfill preserves existing claims and schedules. A
-populated-database recovery check verifies these identities through full replay.
+populated-database recovery check verifies these identities through replay of
+the GitOps set together with the six additive migrations merged from main. The
+combined-tree invocation check retains environment identity, pinned failure rules,
+and completion classification through admission, claim, and completion.
 
 The remaining full feature gates include native qualification of protected-branch
 approval with the complete serving flow; environment-scoped workload creation, source/runtime,

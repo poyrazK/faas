@@ -1093,19 +1093,25 @@ func startGatewaydPublic(t *testing.T, h *Harness, bin, dbURL string, extraEnv [
 	publicAddr := freeTCPAddr(t)
 	controlAddr := freeTCPAddr(t)
 	internalSocket := filepath.Join(h.SockDir, "gatewayd-internal.sock")
+	env := gatewaydPublicEnv(dbURL, publicAddr, controlAddr, internalSocket, h.ScheddSock, extraEnv)
+	h.procs = append(h.procs, startProc(t, bin, "gatewayd-public", env))
+	h.GatewayPublicURL = "http://" + publicAddr
+	h.GatewayPublicControlURL = "http://" + controlAddr
+	waitReadyz(t, controlAddr, 30*time.Second)
+}
+
+func gatewaydPublicEnv(dbURL, publicAddr, controlAddr, internalSocket, scheddSock string, extraEnv []string) []string {
 	env := append(testEnvCommon(dbURL),
 		"FAAS_PUBLIC_LISTEN_ADDR="+publicAddr,
 		"FAAS_PUBLIC_CONTROL_ADDR="+controlAddr,
 		"FAAS_INTERNAL_SOCKET="+internalSocket,
 		"FAAS_OTEL_SPANS_WRITER_ENABLED=false",
-		"FAAS_TCPD_SCHEDD_TARGET=unix://"+h.ScheddSock,
+		"FAAS_TCPD_SCHEDD_TARGET=unix://"+scheddSock,
+		"FAAS_UDPD_SCHEDD_TARGET=unix://"+scheddSock,
 		"FAAS_APPS_DOMAIN="+testDomain,
 	)
 	env = append(env, extraEnv...)
-	h.procs = append(h.procs, startProc(t, bin, "gatewayd-public", env))
-	h.GatewayPublicURL = "http://" + publicAddr
-	h.GatewayPublicControlURL = "http://" + controlAddr
-	waitReadyz(t, controlAddr, 30*time.Second)
+	return env
 }
 
 // reserveGatewayAddresses chooses and holds the public and control ports
@@ -1298,6 +1304,7 @@ func vmmdEnv(dbURL, cfgPath, scheddSock string) []string {
 	)
 	if currentHarness != nil {
 		env = append(env, "FAAS_VMMD_TCP_BRIDGE_PATH="+filepath.Join(currentHarness.BinDir, "vmmd-tcp-bridge"))
+		env = append(env, "FAAS_VMMD_UDP_BRIDGE_PATH="+filepath.Join(currentHarness.BinDir, "vmmd-udp-bridge"))
 	}
 	if scheddSock != "" {
 		env = append(env, "FAAS_VMMD_SCHEDD_TARGET=unix://"+scheddSock)
@@ -1675,7 +1682,7 @@ func (h *Harness) RestartAPID() error {
 // Tier A7 (ADR-070) PR-A: the legacy 'gatewayd' binary is gone (its source
 // moved into cmd/gatewayd-internal/). gatewayd-public and the TCP bridge are
 // included so the raw-TCP metal acceptance can boot the production path.
-var DaemonBinaries = []string{"apid", "schedd", "vmmd", "imaged", "gatewayd-internal", "gatewayd-public", "meterd", "builderd", "vmmd-tcp-bridge"}
+var DaemonBinaries = []string{"apid", "schedd", "vmmd", "imaged", "gatewayd-internal", "gatewayd-public", "meterd", "builderd", "vmmd-tcp-bridge", "vmmd-udp-bridge"}
 
 // StaticHelperBinaries are built alongside the daemons but with CGO_ENABLED=0,
 // because they execute inside a jailer chroot that contains no dynamic loader

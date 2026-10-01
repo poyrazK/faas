@@ -17,6 +17,7 @@ package imaged
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -110,6 +111,9 @@ func applyOverrides(manifest api.AppManifest, dep state.Deployment) (api.AppMani
 		if hc.Path != "" {
 			manifest.Healthz = hc.Path
 		}
+		if hc.StartPeriodS < 0 || int64(hc.StartPeriodS) > api.OCIHealthcheckDurationMaxSeconds {
+			return api.AppManifest{}, fmt.Errorf("healthcheck start_period_s cannot be represented as a runtime duration")
+		}
 		// M-1 (ADR-136) surfaces Test + StartPeriodS onto AppManifest.Healthcheck
 		// when the override declares them, so the OCI HEALTHCHECK shape flows
 		// through to the per-VM manifest alongside the Path projection above.
@@ -120,12 +124,20 @@ func applyOverrides(manifest api.AppManifest, dep state.Deployment) (api.AppMani
 			mh := manifest.Healthcheck
 			if mh == nil {
 				mh = &api.AppManifestHealthcheck{}
+			} else {
+				copyCheck := *mh
+				mh = &copyCheck
 			}
 			if len(hc.Test) > 0 {
 				mh.Test = append([]string(nil), hc.Test...)
 			}
 			if hc.StartPeriodS > 0 {
 				mh.StartPeriodS = hc.StartPeriodS
+				if mh.ImageTiming != nil {
+					timing := *mh.ImageTiming
+					timing.StartPeriodNS = int64(time.Duration(hc.StartPeriodS) * time.Second)
+					mh.ImageTiming = &timing
+				}
 			}
 			manifest.Healthcheck = mh
 		}

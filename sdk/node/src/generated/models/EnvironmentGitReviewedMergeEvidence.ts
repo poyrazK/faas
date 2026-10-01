@@ -10,6 +10,10 @@ import type { EnvironmentGitReviewEvidence } from './EnvironmentGitReviewEvidenc
 export type EnvironmentGitReviewedMergeEvidence = {
   reviewed_definition_digest: string;
   qualified: boolean;
+  /**
+   * Qualification failure reason; absent from persisted approval evidence.
+   */
+  reason?: string;
   profile: string;
   policy: EnvironmentGitProtectedBranchEvidence;
   pull_request_id: number;

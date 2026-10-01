@@ -410,8 +410,10 @@ func (e *Engine) retireRuntimeConfigInstance(ctx context.Context, appID, deploym
 	if !converged {
 		return fmt.Errorf("sched: runtime config restart: route convergence failed for instance %s", fresh.ID)
 	}
-	if fleetBarrier && !e.waitForRuntimeConfigInstanceDrain(ctx, appID, fresh.ID, acknowledgedAt) {
-		return fmt.Errorf("sched: runtime config restart: in-flight requests did not drain for instance %s", fresh.ID)
+	if fleetBarrier {
+		if err := e.waitForRuntimeConfigInstanceDrain(ctx, appID, fresh.ID, acknowledgedAt); err != nil {
+			return err
+		}
 	}
 	if err := e.timedDestroy(context.WithoutCancel(ctx), fresh.NodeID, fresh.ID, DestroyTimeout); err != nil {
 		return fmt.Errorf("sched: runtime config restart: destroy withdrawn instance %s: %w", fresh.ID, err)
@@ -434,33 +436,132 @@ func (e *Engine) retireRuntimeConfigInstance(ctx context.Context, appID, deploym
 	return nil
 }
 
-func (e *Engine) waitForRuntimeConfigInstanceDrain(ctx context.Context, appID, instanceID string, acknowledgedAt time.Time) bool {
+const runtimeConfigDrainStatsRPCTimeout = 2 * time.Second
+
+type runtimeConfigDrainReason string
+
+const (
+	runtimeConfigDrainReasonRequestsActive   runtimeConfigDrainReason = "requests_active"
+	runtimeConfigDrainReasonTelemetryMissing runtimeConfigDrainReason = "telemetry_missing"
+	runtimeConfigDrainReasonQuietPeriod      runtimeConfigDrainReason = "quiet_period_not_elapsed"
+)
+
+type runtimeConfigDrainFailure struct {
+	instanceID string
+	nodeID     string
+	reason     runtimeConfigDrainReason
+	inflight   int64
+	cause      error
+}
+
+func (f runtimeConfigDrainFailure) Error() string {
+	return fmt.Sprintf(
+		"sched: runtime config restart: drain incomplete instance=%s node=%s reason=%s inflight_requests=%d: %v",
+		f.instanceID, f.nodeID, f.reason, f.inflight, f.cause,
+	)
+}
+
+func (f runtimeConfigDrainFailure) Unwrap() error { return f.cause }
+
+// waitForRuntimeConfigInstanceDrain queries vmmd on the node that physically
+// hosts the withdrawn instance. The local ReportCapacity cache is scoped to a
+// schedd receiver; after app ownership moves, it may not contain the old
+// physical node's reports. Each routed Stats RPC is initiated after the
+// gateway route barrier, so its local receipt time provides the freshness
+// boundary without comparing clocks between hosts.
+func (e *Engine) waitForRuntimeConfigInstanceDrain(ctx context.Context, appID, instanceID string, acknowledgedAt time.Time) error {
 	drainCtx, cancel := context.WithTimeout(ctx, time.Duration(api.ServiceReplicaDrainTimeoutSeconds)*time.Second)
 	defer cancel()
 	quietFor := time.Duration(api.ServiceReplicaDrainQuietSeconds) * time.Second
 	ticker := time.NewTicker(time.Duration(api.ServiceReplicaDrainPollMilliseconds) * time.Millisecond)
 	defer ticker.Stop()
-	var zeroSince time.Time
+	var (
+		zeroSince        time.Time
+		lastZeroObserved time.Time
+		lastNodeID       string
+		lastReason       runtimeConfigDrainReason
+		lastInflight     int64
+		lastStatsErr     error
+	)
 	for {
 		instance, err := e.store.InstanceByID(drainCtx, instanceID)
 		if errors.Is(err, state.ErrNotFound) || (err == nil && state.State(instance.State) != state.StateDraining) {
-			return true
+			return nil
 		}
-		now := time.Now()
-		inflight, receivedAt, observed := e.telemetryCache.LookupInflightRequests(instanceID, now)
-		if err == nil && observed && receivedAt.After(acknowledgedAt) && inflight == 0 {
-			if zeroSince.IsZero() {
-				zeroSince = receivedAt
-			} else if receivedAt.Sub(zeroSince) >= quietFor {
-				return true
+		if err != nil {
+			return fmt.Errorf("sched: runtime config restart: drain state unavailable instance=%s: %w", instanceID, err)
+		}
+		lastNodeID = e.nodeForRoute(instance.NodeID)
+		statsCtx, statsCancel := context.WithTimeout(drainCtx, runtimeConfigDrainStatsRPCTimeout)
+		stats, statsErr := e.vmm.Stats(statsCtx, lastNodeID)
+		statsCancel()
+		receivedAt := time.Now()
+		var (
+			inflight int64
+			observed bool
+		)
+		if statsErr == nil && stats != nil {
+			for _, row := range stats.Instances {
+				if row.InstanceID == instanceID {
+					inflight = row.InflightRequests
+					observed = true
+					break
+				}
 			}
-		} else {
+		}
+		if statsErr != nil || !observed || !receivedAt.After(acknowledgedAt) {
+			lastReason = runtimeConfigDrainReasonTelemetryMissing
+			lastInflight = 0
+			lastStatsErr = statsErr
+			if statsErr == nil && !observed {
+				lastStatsErr = errors.New("vmmd stats did not report the resident instance")
+			} else if statsErr == nil && !receivedAt.After(acknowledgedAt) {
+				lastStatsErr = errors.New("vmmd stats receipt predates route acknowledgement")
+			}
 			zeroSince = time.Time{}
+			lastZeroObserved = time.Time{}
+		} else if inflight > 0 {
+			lastReason = runtimeConfigDrainReasonRequestsActive
+			lastInflight = inflight
+			lastStatsErr = nil
+			zeroSince = time.Time{}
+			lastZeroObserved = time.Time{}
+		} else if inflight < 0 {
+			lastReason = runtimeConfigDrainReasonTelemetryMissing
+			lastInflight = inflight
+			lastStatsErr = errors.New("vmmd reported a negative in-flight request count")
+			zeroSince = time.Time{}
+			lastZeroObserved = time.Time{}
+		} else {
+			lastReason = runtimeConfigDrainReasonQuietPeriod
+			lastInflight = 0
+			lastStatsErr = nil
+			if zeroSince.IsZero() || (!lastZeroObserved.IsZero() && receivedAt.Sub(lastZeroObserved) > TelemetryFreshness) {
+				zeroSince = receivedAt
+			}
+			lastZeroObserved = receivedAt
+			if receivedAt.Sub(zeroSince) >= quietFor {
+				return nil
+			}
 		}
 		select {
 		case <-drainCtx.Done():
-			e.log.Warn("sched: runtime config request drain incomplete", "app", appID, "instance", instanceID)
-			return false
+			failure := runtimeConfigDrainFailure{
+				instanceID: instanceID,
+				nodeID:     lastNodeID,
+				reason:     lastReason,
+				inflight:   lastInflight,
+				cause:      drainCtx.Err(),
+			}
+			if e.log != nil {
+				fields := []any{"app", appID, "instance", instanceID, "node_id", lastNodeID,
+					"drain_reason", lastReason, "inflight_requests", lastInflight, "err", drainCtx.Err()}
+				if lastStatsErr != nil {
+					fields = append(fields, "telemetry_error", lastStatsErr)
+				}
+				e.log.Warn("sched: runtime config request drain incomplete", fields...)
+			}
+			return failure
 		case <-ticker.C:
 		}
 	}

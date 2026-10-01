@@ -1836,6 +1836,18 @@ type AppRestartResponse struct {
 	WakeID string `json:"wake_id"`
 }
 
+// RuntimeConfigRestartStatusResponse reports the durable outbox outcome for
+// an accepted fresh app restart. FailureReason is a stable actionable code,
+// not the scheduler's internal error string.
+type RuntimeConfigRestartStatusResponse struct {
+	WakeID        string     `json:"wake_id"`
+	Status        string     `json:"status"`
+	Attempts      int        `json:"attempts"`
+	FailureReason string     `json:"failure_reason,omitempty"`
+	RequestedAt   time.Time  `json:"requested_at"`
+	CompletedAt   *time.Time `json:"completed_at,omitempty"`
+}
+
 // AppWakeResponse is returned when an explicit pre-warm request has been
 // durably queued for the scheduler.
 type AppWakeResponse struct {
@@ -2452,6 +2464,10 @@ func (o *CreateDeploymentOverrides) Validate(limits Limits) *Problem {
 			return NewProblem(http.StatusBadRequest, CodeValidation,
 				"Invalid override",
 				fmt.Sprintf("healthcheck.grpc.service must be at most %d characters.", GRPCHealthcheckServiceMaxLength))
+		}
+		if o.Healthcheck.StartPeriodS < 0 || int64(o.Healthcheck.StartPeriodS) > OCIHealthcheckDurationMaxSeconds {
+			return NewProblem(http.StatusBadRequest, CodeValidation, "Invalid healthcheck",
+				fmt.Sprintf("healthcheck.start_period_s must be between 0 and %d.", OCIHealthcheckDurationMaxSeconds))
 		}
 		if o.Healthcheck.IntervalS < 0 {
 			return NewProblem(http.StatusBadRequest, CodeValidation,
@@ -5370,6 +5386,9 @@ const (
 	CronRunDeadLetter CronRunOutcome = "dead_letter"
 	// CronRunCancelled — a deployment-attached command was cancelled.
 	CronRunCancelled CronRunOutcome = "cancelled"
+	// CronRunUncertain — delivery may have reached the app, but no
+	// completion receipt arrived and the policy held the result.
+	CronRunUncertain CronRunOutcome = "uncertain"
 	// CronRunRunning — the fire is still in flight (the underlying
 	// invocation row is non-terminal and carries no outcome).
 	CronRunRunning CronRunOutcome = "running"
@@ -7461,6 +7480,9 @@ func validateSidecarProbe(name, field string, probe *SidecarProbe) *Problem {
 		return NewProblem(http.StatusBadRequest, CodeValidation,
 			"Invalid sidecar probe",
 			fmt.Sprintf("sidecar[%q].%s %s", name, field, detail))
+	}
+	if probe.ImageTiming != nil {
+		return invalid("image_timing is reserved for image metadata; use second-based probe timing overrides.")
 	}
 	actions := 0
 	if len(probe.Test) > 0 {
@@ -11415,6 +11437,8 @@ type ListJobRunsResponse struct {
 // coalesced, late, or replaced occurrence.
 type ScheduleOccurrenceResponse struct {
 	SchedulePolicy       *workpolicy.SchedulePolicy `json:"schedule_policy"`
+	WorkDecision         *workpolicy.Decision       `json:"work_decision,omitempty"`
+	OutcomeCode          string                     `json:"outcome_code,omitempty"`
 	ID                   string                     `json:"id"`
 	ScheduleRevision     int64                      `json:"schedule_revision"`
 	ScheduledFor         time.Time                  `json:"scheduled_for"`

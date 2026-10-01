@@ -231,23 +231,44 @@ func (s *server) listIssues(w http.ResponseWriter, r *http.Request, acct state.A
 	if !ok {
 		return
 	}
-	q := r.URL.Query()
-	filter := q.Get("state")
-	if filter != "" && filter != "open" && filter != "resolved" && filter != "ignored" {
-		api.WriteProblem(w, api.ErrValidation("state must be open, resolved, or ignored"))
+	filter, err := parseIssueListFilter(r, acct.ID)
+	if err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
 		return
 	}
-	cur, err := state.DecodeIssueCursor(q.Get("cursor"))
+	cur, err := state.DecodeIssueCursor(r.URL.Query().Get("cursor"))
 	if err != nil {
 		api.WriteProblem(w, api.ErrValidation("invalid issue cursor"))
 		return
 	}
-	out, err := st.ListIssues(r.Context(), app.ID, filter, q.Get("environment"), cur)
+	out, err := st.ListIssues(r.Context(), app.ID, filter, cur)
 	if err != nil {
 		writeIssueError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func parseIssueListFilter(r *http.Request, accountID string) (state.IssueListFilter, error) {
+	q := r.URL.Query()
+	filter := state.IssueListFilter{State: q.Get("state"), Environment: q.Get("environment")}
+	if filter.State != "" && filter.State != "open" && filter.State != "resolved" && filter.State != "ignored" {
+		return state.IssueListFilter{}, errors.New("state must be open, resolved, or ignored")
+	}
+	switch assignee := strings.TrimSpace(q.Get("assignee")); assignee {
+	case "":
+	case "me":
+		filter.AssigneeAccountID = accountID
+	case "unassigned":
+		filter.Unassigned = true
+	default:
+		id, err := uuid.Parse(assignee)
+		if err != nil {
+			return state.IssueListFilter{}, errors.New("assignee must be me, unassigned, or an account UUID")
+		}
+		filter.AssigneeAccountID = id.String()
+	}
+	return filter, nil
 }
 func (s *server) getIssue(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))

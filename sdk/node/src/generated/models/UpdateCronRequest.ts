@@ -5,7 +5,7 @@
 import type { FailureRules } from './FailureRules.js';
 import type { SchedulePolicy } from './SchedulePolicy.js';
 /**
- * Partial cron update. Schedule policies apply to HTTP and command Crons; failure rules are command-Cron only.
+ * Partial cron update. Schedule policies apply to HTTP and command Crons. HTTP Cron failure rules match outcome codes; command Cron rules may also match exit codes.
  */
 export type UpdateCronRequest = {
   schedule?: string | null;

@@ -394,6 +394,8 @@ type MemStore struct {
 	realtimeChannelRouteGeneration  int64
 	realtimeChannelRouteLocks       map[string]chan struct{}
 	tcpListeners                    map[string]TCPListener
+	tcpTLSObservations              map[string]map[string]TCPListenerTLSObservation
+	udpListeners                    map[string]UDPListener
 	managedRealtimeDrainOperations  map[string]ManagedRealtimeDrainOperation
 	managedRealtimeOwners           map[string]ManagedRealtimeConnectionOwner
 	appLogDrains                    map[string]AppLogDrain
@@ -1143,6 +1145,7 @@ func NewMemStore() *MemStore {
 		realtimeChannelRouteRevisions:   map[string]ManagedRealtimeChannelRouteSnapshotRevision{},
 		realtimeChannelRouteLocks:       map[string]chan struct{}{},
 		tcpListeners:                    map[string]TCPListener{},
+		tcpTLSObservations:              map[string]map[string]TCPListenerTLSObservation{},
 		managedRealtimeOwners:           map[string]ManagedRealtimeConnectionOwner{},
 		managedRealtimeDrainOperations:  map[string]ManagedRealtimeDrainOperation{},
 		appLogDrains:                    map[string]AppLogDrain{},
@@ -5766,6 +5769,9 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 	if p.MaxConcurrency != nil {
 		a.MaxConcurrency = *p.MaxConcurrency
 	}
+	if p.MaintenanceMode != nil {
+		a.MaintenanceMode = *p.MaintenanceMode
+	}
 	if p.Status != nil {
 		a.Status = *p.Status
 		if *p.Status != AppEvictedCold {
@@ -6462,6 +6468,19 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	for key := range m.discoveredAPIRoutes {
 		if strings.HasPrefix(key, a.AccountID+"\x00"+id+"\x00") {
 			delete(m.discoveredAPIRoutes, key)
+		}
+	}
+	// Match PostgreSQL's ON DELETE CASCADE after the restore window ends.
+	// Tombstoning retains intent; only final purge releases public ports.
+	for listenerID, listener := range m.tcpListeners {
+		if listener.AppID == id {
+			delete(m.tcpListeners, listenerID)
+			delete(m.tcpTLSObservations, listenerID)
+		}
+	}
+	for listenerID, listener := range m.udpListeners {
+		if listener.AppID == id {
+			delete(m.udpListeners, listenerID)
 		}
 	}
 	delete(m.serviceRecovery, id)
@@ -11516,8 +11535,9 @@ func (m *MemStore) UpdateCronWithOptions(_ context.Context, id string, schedule,
 			c.SchedulePolicy = workpolicy.Clone(opts.SchedulePolicy)
 			scheduleChanged = true
 		}
-		if opts.FailureRules != nil {
+		if opts.FailureRules != nil && !sameWorkPolicy(c.FailureRules, opts.FailureRules) {
 			c.FailureRules = workpolicy.Clone(opts.FailureRules)
+			scheduleChanged = true
 		}
 	}
 	if scheduleChanged || timezoneChanged {
@@ -12489,6 +12509,8 @@ func (m *MemStore) EnqueueInvocation(_ context.Context, inv Invocation) (Invocat
 	if _, exists := m.invocations[inv.ID]; exists {
 		return Invocation{}, ErrConflict
 	}
+	inv.FailureRules = workpolicy.Clone(inv.FailureRules)
+	inv.WorkDecision = workpolicy.Clone(inv.WorkDecision)
 	if inv.State == "" {
 		inv.State = InvocationPending
 	}
@@ -12705,6 +12727,10 @@ func (m *MemStore) CompleteInvocation(_ context.Context, id string, result json.
 	return m.completeInvocation(id, 0, result)
 }
 
+func (m *MemStore) CompleteInvocationWithWorkClassification(_ context.Context, id string, result json.RawMessage, decision workpolicy.Decision, outcomeCode string) error {
+	return m.completeInvocation(id, 0, result, InvocationWorkClassification{Decision: &decision, OutcomeCode: outcomeCode})
+}
+
 func (m *MemStore) CompleteKeyedInvocation(_ context.Context, id string, attempt int, result json.RawMessage) error {
 	if attempt <= 0 {
 		return ErrNotFound
@@ -12712,7 +12738,14 @@ func (m *MemStore) CompleteKeyedInvocation(_ context.Context, id string, attempt
 	return m.completeInvocation(id, attempt, result)
 }
 
-func (m *MemStore) completeInvocation(id string, attempt int, result json.RawMessage) error {
+func (m *MemStore) CompleteKeyedInvocationWithWorkClassification(_ context.Context, id string, attempt int, result json.RawMessage, decision workpolicy.Decision, outcomeCode string) error {
+	if attempt <= 0 {
+		return ErrNotFound
+	}
+	return m.completeInvocation(id, attempt, result, InvocationWorkClassification{Decision: &decision, OutcomeCode: outcomeCode})
+}
+
+func (m *MemStore) completeInvocation(id string, attempt int, result json.RawMessage, classification ...InvocationWorkClassification) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	inv, ok := m.invocations[id]
@@ -12729,6 +12762,10 @@ func (m *MemStore) completeInvocation(id string, attempt int, result json.RawMes
 	inv.LastError = ""
 	if len(result) > 0 {
 		inv.Result = result
+	}
+	if len(classification) > 0 {
+		inv.WorkDecision = workpolicy.Clone(classification[0].Decision)
+		inv.OutcomeCode = classification[0].OutcomeCode
 	}
 	now := time.Now()
 	inv.CompletedAt = &now
@@ -12806,6 +12843,10 @@ func (m *MemStore) FailInvocation(_ context.Context, id string, lastError string
 		return ErrNotFound
 	}
 	failOpts := ApplyFailOptions(opts)
+	if failOpts.HasWorkClassification {
+		inv.WorkDecision = workpolicy.Clone(failOpts.WorkDecision)
+		inv.OutcomeCode = failOpts.OutcomeCode
+	}
 	if inv.WorkPolicyName != "" {
 		if inv.State == InvocationPending && failOpts.ClaimAttempt != 0 {
 			return ErrNotFound

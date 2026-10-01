@@ -16,7 +16,7 @@ type IssueStore interface {
 	ListIssueTokens(context.Context, string) ([]api.IssueIngestToken, error)
 	RevokeIssueToken(context.Context, string, string) error
 	RecordIssue(context.Context, RecordIssueParams) (api.IssueEventResponse, error)
-	ListIssues(context.Context, string, string, string, IssueCursor) (api.ListIssuesResponse, error)
+	ListIssues(context.Context, string, IssueListFilter, IssueCursor) (api.ListIssuesResponse, error)
 	GetIssueDetail(context.Context, string, string, time.Time, time.Time, IssueDetailCursors) (api.IssueDetail, error)
 	ActOnIssue(context.Context, string, string, string, api.IssueActionRequest, time.Time) (api.Issue, error)
 }
@@ -37,6 +37,14 @@ type RecordIssueParams struct {
 type IssueCursor struct {
 	Time time.Time
 	ID   string
+}
+
+// IssueListFilter scopes an issue inbox without changing its pagination shape.
+type IssueListFilter struct {
+	State             string
+	Environment       string
+	AssigneeAccountID string
+	Unassigned        bool
 }
 
 var ErrIssueEventConflict = errors.New("issue event ID reused with another payload")

@@ -2,6 +2,10 @@ package api
 
 import "time"
 
+// IssueImpactSummaryWindow is the fixed window used for list-level triage
+// summaries. Detailed issue views can still request a plan-bounded window.
+const IssueImpactSummaryWindow = 24 * time.Hour
+
 // IssueEvent is the instrumentation envelope. Identity and deployment fields
 // are resolved from the ingest credential, never accepted from this body.
 type IssueEvent struct {
@@ -30,22 +34,31 @@ type IssueFrame struct {
 }
 
 type Issue struct {
-	ID                       string     `json:"id"`
-	AppID                    string     `json:"app_id"`
-	Environment              string     `json:"environment"`
-	Fingerprint              string     `json:"fingerprint"`
-	GroupingVersion          int        `json:"grouping_version"`
-	Title                    string     `json:"title"`
-	State                    string     `json:"state"`
-	AssigneeAccountID        string     `json:"assignee_account_id,omitempty"`
-	FirstSeenAt              time.Time  `json:"first_seen_at"`
-	LastSeenAt               time.Time  `json:"last_seen_at"`
-	EventCount               int64      `json:"event_count"`
-	RegressionCount          int64      `json:"regression_count"`
-	ResolvedAt               *time.Time `json:"resolved_at,omitempty"`
-	FixedDeploymentCreatedAt *time.Time `json:"fixed_deployment_created_at,omitempty"`
-	FixedDeploymentID        string     `json:"fixed_deployment_id,omitempty"`
-	IgnoredUntil             *time.Time `json:"ignored_until,omitempty"`
+	ID                       string              `json:"id"`
+	AppID                    string              `json:"app_id"`
+	Environment              string              `json:"environment"`
+	Fingerprint              string              `json:"fingerprint"`
+	GroupingVersion          int                 `json:"grouping_version"`
+	Title                    string              `json:"title"`
+	State                    string              `json:"state"`
+	AssigneeAccountID        string              `json:"assignee_account_id,omitempty"`
+	FirstSeenAt              time.Time           `json:"first_seen_at"`
+	LastSeenAt               time.Time           `json:"last_seen_at"`
+	EventCount               int64               `json:"event_count"`
+	RegressionCount          int64               `json:"regression_count"`
+	Impact24h                *IssueImpactSummary `json:"impact_24h,omitempty"`
+	ResolvedAt               *time.Time          `json:"resolved_at,omitempty"`
+	FixedDeploymentCreatedAt *time.Time          `json:"fixed_deployment_created_at,omitempty"`
+	FixedDeploymentID        string              `json:"fixed_deployment_id,omitempty"`
+	IgnoredUntil             *time.Time          `json:"ignored_until,omitempty"`
+}
+
+// IssueImpactSummary reports verified and unattributed retained occurrences
+// in the standard 24-hour inbox window.
+type IssueImpactSummary struct {
+	IdentifiedCustomers int64 `json:"identified_customers"`
+	ObservedEvents      int64 `json:"observed_events"`
+	UnattributedEvents  int64 `json:"unattributed_events"`
 }
 
 type IssueOccurrence struct {

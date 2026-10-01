@@ -95,7 +95,10 @@ func (s *PgStore) ClaimQueueTriggerInvocation(ctx context.Context, id, triggerID
 	if err != nil {
 		return Invocation{}, fmt.Errorf("state: queue trigger claim update: %w", mapErr(err))
 	}
-	claimed := invocationFromSQL(row)
+	claimed, err := invocationFromSQL(row)
+	if err != nil {
+		return Invocation{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Invocation{}, fmt.Errorf("state: queue trigger claim commit: %w", err)
 	}

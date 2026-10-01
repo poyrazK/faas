@@ -128,12 +128,23 @@ Open an app's **Issues** page, or use:
 
 ```sh
 gregale issues list --app exports --state open
+gregale issues list --app exports --assignee me
+gregale issues list --app exports --assignee unassigned
 gregale issues get ISSUE_ID --app exports
 gregale issues assign ISSUE_ID --app exports --assignee ACCOUNT_ID
 gregale issues resolve ISSUE_ID --app exports --deployment FIXED_DEPLOYMENT_ID
 gregale issues reopen ISSUE_ID --app exports
 gregale issues ignore ISSUE_ID --app exports --until 2026-10-02T12:00:00Z
 ```
+
+Use `--assignee me`, `--assignee unassigned`, or an account UUID to narrow
+the CLI list. The dashboard provides Mine and Unassigned owner views and shows
+each issue's owner and recurrence count.
+
+The inbox also reports retained events, verified distinct customers, and
+unattributed events from the previous 24 hours. These counts are an observed,
+bounded view of instrumented failures and do not estimate customer impact
+outside retained and attributable events.
 
 Issue identity survives deployments. Grouping removes line numbers and known
 container/build roots but preserves source directories and function names.

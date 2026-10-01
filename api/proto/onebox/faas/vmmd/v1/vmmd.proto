@@ -349,6 +349,11 @@ service Vmmd {
   // half-closes the gRPC stream to half-close the guest socket.
   rpc ForwardTCPStream(stream ForwardTCPRequest) returns (stream ForwardTCPResponse);
 
+  // ForwardUDPStream carries one datagram per frame for an admitted peer.
+  // The edge validates declared listener ownership before opening the RPC.
+  // Closing the stream ends the peer session; UDP has no half-close.
+  rpc ForwardUDPStream(stream ForwardUDPRequest) returns (stream ForwardUDPResponse);
+
   // MountParentExt4ReadOnly (ADR-053) is the staging-only path that
   // lets imaged compose the per-runtime base ext4 from a shared
   // debian:12-slim parent. imaged is not root (User=faas-imaged +
@@ -2246,4 +2251,33 @@ message AllowResolvedEgressRequest {
 message AllowResolvedEgressAck {
   // matched is false when no live instance owns source_ip.
   bool matched = 1;
+}
+
+// ForwardUDPRequestInit targets one admitted instance-local UDP listener.
+// Optional caps may tighten the receiver defaults; they cannot raise them.
+message ForwardUDPRequestInit {
+  string instance = 1;
+  uint32 port = 2;
+  int64 max_bytes = 3;
+  uint64 max_datagrams = 4;
+}
+
+message ForwardUDPRequest {
+  oneof frame {
+    ForwardUDPRequestInit init = 1;
+    // Presence is significant: empty bytes are a real empty datagram.
+    bytes datagram = 2;
+  }
+}
+
+message ForwardUDPResponseInit {
+  // Reports helper readiness, not application receipt of a UDP packet.
+  string error = 1;
+}
+
+message ForwardUDPResponse {
+  oneof frame {
+    ForwardUDPResponseInit init = 1;
+    bytes datagram = 2;
+  }
 }

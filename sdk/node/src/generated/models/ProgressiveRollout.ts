@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Health-gated, operator-promoted stages for a boolean true rule. The rule rollout must equal stages[current_stage]; stages must strictly increase and end at 10000 basis points.
+ * Health-gated stages for a boolean true rule. Promotion is manual by default; auto_advance opts into server-managed promotion after a full healthy evidence window. The rule rollout must equal stages[current_stage]; stages must strictly increase and end at 10000 basis points.
  */
 export type ProgressiveRollout = {
   /**
@@ -14,6 +14,10 @@ export type ProgressiveRollout = {
    * Zero-based active stage index.
    */
   current_stage: number;
+  /**
+   * When true, the platform automatically advances one stage after the full observation window passes all evidence gates. Omitted or false keeps promotion manual.
+   */
+  auto_advance?: boolean;
   /**
    * Minimum application-reported used requests for the targeted rule before promotion.
    */

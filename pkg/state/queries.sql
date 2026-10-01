@@ -1,3 +1,28 @@
+-- name: PutTCPListenerTLSObservation :execrows
+INSERT INTO app_tcp_listener_tls_observations
+    (listener_id, edge_id, hostname, intent_updated_at, observed_at, ready, not_after)
+SELECT l.id, sqlc.arg(edge_id)::text, sqlc.arg(hostname)::text,
+       sqlc.arg(intent_updated_at)::timestamptz, sqlc.arg(observed_at)::timestamptz,
+       sqlc.arg(ready)::boolean, sqlc.narg(not_after)::timestamptz
+FROM app_tcp_listeners l
+WHERE l.id = sqlc.arg(listener_id)::uuid AND l.enabled
+  AND l.tls_mode = 'terminate' AND l.tls_hostname = sqlc.arg(hostname)::text
+  AND l.updated_at = sqlc.arg(intent_updated_at)::timestamptz
+ON CONFLICT (listener_id, edge_id) DO UPDATE
+SET hostname = EXCLUDED.hostname, intent_updated_at = EXCLUDED.intent_updated_at,
+    observed_at = EXCLUDED.observed_at, ready = EXCLUDED.ready, not_after = EXCLUDED.not_after
+WHERE app_tcp_listener_tls_observations.observed_at < EXCLUDED.observed_at;
+
+-- name: ListTCPListenerTLSObservations :many
+SELECT listener_id, edge_id, hostname, intent_updated_at, observed_at, ready, not_after
+FROM app_tcp_listener_tls_observations
+WHERE listener_id = sqlc.arg(listener_id)::uuid
+ORDER BY edge_id;
+
+-- name: PruneTCPListenerTLSObservations :execrows
+DELETE FROM app_tcp_listener_tls_observations
+WHERE observed_at <= sqlc.arg(before_at)::timestamptz;
+
 -- name: ReadAccountCreditConsumption :one
 -- An unqualified legacy row blocks the whole key; guessing could double-debit.
 SELECT coalesce(sum(-delta_cents) FILTER (WHERE provider = sqlc.arg(provider)::text), 0)::bigint AS consumed_cents,
@@ -4862,8 +4887,20 @@ VALUES(sqlc.arg(account_id),sqlc.arg(app_id),sqlc.arg(environment),sqlc.arg(fing
 SELECT * FROM app_issues WHERE app_id = sqlc.arg(app_id)
 AND (sqlc.arg(state)::text = '' OR state = sqlc.arg(state))
 AND (sqlc.arg(environment)::text = '' OR environment = sqlc.arg(environment))
+AND (sqlc.narg(assignee_account_id)::uuid IS NULL OR assignee_account_id = sqlc.narg(assignee_account_id))
+AND (NOT sqlc.arg(unassigned)::bool OR assignee_account_id IS NULL)
 AND (sqlc.narg(cursor_time)::timestamptz IS NULL OR (last_seen_at,id) < (sqlc.narg(cursor_time),sqlc.narg(cursor_id)::uuid))
 ORDER BY last_seen_at DESC,id DESC LIMIT sqlc.arg(page_limit);
+-- name: IssueImpactSummaries :many
+SELECT issue_id,
+       count(*) AS observed_events,
+       count(DISTINCT COALESCE(verified_platform_tenant_id,verified_consumer_id)) AS identified_customers,
+       count(*) FILTER(WHERE verified_platform_tenant_id IS NULL AND verified_consumer_id IS NULL) AS unattributed_events
+FROM issue_events
+WHERE issue_id = ANY(sqlc.arg(issue_ids)::uuid[])
+  AND occurred_at >= sqlc.arg(since)::timestamptz
+  AND occurred_at <= sqlc.arg(until)::timestamptz
+GROUP BY issue_id;
 -- name: IssueCount :one
 SELECT count(*) FROM app_issues WHERE app_id = sqlc.arg(app_id);
 -- name: IssueCountEvents :one
@@ -5048,6 +5085,25 @@ VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *;
 -- name: FeatureFlagCustomerOwned :one
 SELECT EXISTS(SELECT 1 FROM platform_tenants
  WHERE account_id = sqlc.arg(account_id)::uuid AND id = sqlc.arg(tenant_id)::uuid) AS owned;
+
+-- name: ListFeatureFlagAutoRolloutCandidates :many
+SELECT pe.account_id, pe.project_id, pe.id AS environment_id,
+       p.slug AS project_slug, pe.slug AS environment_slug
+FROM project_environments pe
+JOIN projects p ON p.id = pe.project_id AND p.account_id = pe.account_id
+JOIN LATERAL (
+ SELECT v.config
+ FROM feature_flag_versions v
+ WHERE v.account_id = pe.account_id
+   AND v.project_id = pe.project_id
+   AND v.environment_id = pe.id
+ ORDER BY v.version DESC
+ LIMIT 1
+) current_config ON current_config.config @> '{"flags":[{"rules":[{"progression":{"auto_advance":true}}]}]}'::jsonb
+WHERE sqlc.narg(after_environment_id)::uuid IS NULL
+   OR pe.id > sqlc.narg(after_environment_id)::uuid
+ORDER BY pe.id
+LIMIT sqlc.arg(limit_rows)::int;
 
 -- name: ListFeatureFlagRequestEvidence :many
 SELECT t.id, t.app_id, t.deployment_id, t.platform_tenant_id, t.received_at, t.route, t.method,
@@ -5697,7 +5753,7 @@ INSERT INTO invocations (
   work_policy_name, work_key_digest, work_expires_at,
   work_sequence, work_policy_revision, work_fairness_digest,
   work_fairness_limit, platform_tenant_id, deployment_scope, queue_binding_id,
-  occurrence_id, start_deadline_at
+  occurrence_id, start_deadline_at, failure_rules
 ) VALUES (
   coalesce(sqlc.narg(id)::uuid, gen_random_uuid()), sqlc.arg(app_id), sqlc.arg(account_id),
   sqlc.arg(source), sqlc.arg(queue_name), coalesce(nullif(sqlc.arg(state)::text, ''), 'pending'),
@@ -5709,7 +5765,7 @@ INSERT INTO invocations (
   sqlc.narg(work_key_digest), sqlc.narg(work_expires_at), sqlc.narg(work_sequence),
   sqlc.narg(work_policy_revision), sqlc.narg(work_fairness_digest), sqlc.narg(work_fairness_limit),
   sqlc.narg(platform_tenant_id), nullif(sqlc.arg(deployment_scope)::text, ''), sqlc.narg(queue_binding_id),
-  sqlc.narg(occurrence_id)::uuid, sqlc.narg(start_deadline_at)::timestamptz
+  sqlc.narg(occurrence_id)::uuid, sqlc.narg(start_deadline_at)::timestamptz, sqlc.narg(failure_rules)::jsonb
 ) RETURNING *;
 
 -- Queue binding/consumer publication (ADR-393). Parent locks also serialize
@@ -6074,6 +6130,59 @@ where id=sqlc.arg(id)::uuid and account_id=sqlc.arg(account_id)::uuid
 delete from trigger_dead_letter d using trigger_records r, triggers t
 where d.record_id=sqlc.arg(record_id)::uuid and r.id=d.record_id and t.id=r.trigger_id
   and not (t.kind='queue' and coalesce(t.source in ('queue','delayed_task'),false));
+-- name: LockUDPListenerAppOwner :one
+SELECT account_id::text AS account_id FROM apps
+WHERE id = sqlc.arg(app_id)::text::uuid AND status <> 'deleted'
+FOR UPDATE;
+
+-- name: CreateUDPListener :one
+INSERT INTO app_udp_listeners
+(id, app_id, account_id, listener_name, guest_port, public_port, protocol, enabled)
+VALUES (sqlc.arg(id)::text::uuid, sqlc.arg(app_id)::text::uuid,
+        sqlc.arg(account_id)::text::uuid, sqlc.arg(listener_name),
+        sqlc.arg(guest_port), sqlc.arg(public_port), sqlc.arg(protocol), sqlc.arg(enabled))
+RETURNING *;
+
+-- name: UDPListenerByID :one
+SELECT * FROM app_udp_listeners WHERE id = sqlc.arg(id)::text::uuid;
+
+-- name: UDPListenerByAppAndName :one
+SELECT * FROM app_udp_listeners
+WHERE app_id = sqlc.arg(app_id)::text::uuid AND listener_name = sqlc.arg(listener_name);
+
+-- name: UDPListenerByPublicPort :one
+SELECT * FROM app_udp_listeners l
+WHERE public_port = sqlc.arg(public_port) AND enabled
+AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted');
+
+-- name: ListUDPListenersForApp :many
+SELECT * FROM app_udp_listeners
+WHERE app_id = sqlc.arg(app_id)::text::uuid ORDER BY created_at DESC, id DESC;
+
+-- name: ListEnabledUDPListeners :many
+SELECT * FROM app_udp_listeners l
+WHERE enabled AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted')
+ORDER BY public_port ASC;
+
+-- name: SetUDPListenerEnabled :one
+UPDATE app_udp_listeners SET enabled = sqlc.arg(enabled), updated_at = now()
+WHERE id = sqlc.arg(id)::text::uuid RETURNING *;
+
+-- name: DeleteUDPListener :execrows
+DELETE FROM app_udp_listeners WHERE id = sqlc.arg(id)::text::uuid;
+
+-- name: CountUDPListenersForApp :one
+SELECT count(*) FROM app_udp_listeners WHERE app_id = sqlc.arg(app_id)::text::uuid;
+
+-- name: ActiveTCPListenerByPublicPort :one
+SELECT l.* FROM app_tcp_listeners l JOIN apps a ON a.id = l.app_id
+WHERE l.public_port = sqlc.arg(public_port) AND l.enabled
+  AND a.status <> 'deleted' AND a.account_id = l.account_id;
+
+-- name: ListActiveTCPListeners :many
+SELECT l.* FROM app_tcp_listeners l JOIN apps a ON a.id = l.app_id
+WHERE l.enabled AND a.status <> 'deleted' AND a.account_id = l.account_id
+ORDER BY l.public_port;
 -- name: LockExclusiveWorkAccount :one
 SELECT id::text,plan FROM accounts WHERE id=sqlc.arg(account_id)::text::uuid
 AND status='active' FOR UPDATE;

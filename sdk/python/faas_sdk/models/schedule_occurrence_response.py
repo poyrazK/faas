@@ -16,6 +16,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.schedule_policy import SchedulePolicy
+    from ..models.work_decision import WorkDecision
 
 
 T = TypeVar("T", bound="ScheduleOccurrenceResponse")
@@ -36,6 +37,9 @@ class ScheduleOccurrenceResponse:
     created_at: datetime.datetime
     start_deadline_at: datetime.datetime | Unset = UNSET
     reason: str | Unset = UNSET
+    work_decision: WorkDecision | Unset = UNSET
+    """Persisted classifier decision for one execution result."""
+    outcome_code: str | Unset = UNSET
     blocking_occurrence_id: UUID | Unset = UNSET
     job_run_id: UUID | Unset = UNSET
     invocation_id: UUID | Unset = UNSET
@@ -62,6 +66,12 @@ class ScheduleOccurrenceResponse:
             start_deadline_at = self.start_deadline_at.isoformat()
 
         reason = self.reason
+
+        work_decision: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.work_decision, Unset):
+            work_decision = self.work_decision.to_dict()
+
+        outcome_code = self.outcome_code
 
         blocking_occurrence_id: str | Unset = UNSET
         if not isinstance(self.blocking_occurrence_id, Unset):
@@ -103,6 +113,10 @@ class ScheduleOccurrenceResponse:
             field_dict["start_deadline_at"] = start_deadline_at
         if reason is not UNSET:
             field_dict["reason"] = reason
+        if work_decision is not UNSET:
+            field_dict["work_decision"] = work_decision
+        if outcome_code is not UNSET:
+            field_dict["outcome_code"] = outcome_code
         if blocking_occurrence_id is not UNSET:
             field_dict["blocking_occurrence_id"] = blocking_occurrence_id
         if job_run_id is not UNSET:
@@ -121,6 +135,7 @@ class ScheduleOccurrenceResponse:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.schedule_policy import SchedulePolicy
+        from ..models.work_decision import WorkDecision
 
         d = dict(src_dict)
         id = UUID(d.pop("id"))
@@ -143,6 +158,15 @@ class ScheduleOccurrenceResponse:
             start_deadline_at = datetime.datetime.fromisoformat(_start_deadline_at)
 
         reason = d.pop("reason", UNSET)
+
+        _work_decision = d.pop("work_decision", UNSET)
+        work_decision: WorkDecision | Unset
+        if isinstance(_work_decision, Unset):
+            work_decision = UNSET
+        else:
+            work_decision = WorkDecision.from_dict(_work_decision)
+
+        outcome_code = d.pop("outcome_code", UNSET)
 
         _blocking_occurrence_id = d.pop("blocking_occurrence_id", UNSET)
         blocking_occurrence_id: UUID | Unset
@@ -195,6 +219,8 @@ class ScheduleOccurrenceResponse:
             created_at=created_at,
             start_deadline_at=start_deadline_at,
             reason=reason,
+            work_decision=work_decision,
+            outcome_code=outcome_code,
             blocking_occurrence_id=blocking_occurrence_id,
             job_run_id=job_run_id,
             invocation_id=invocation_id,

@@ -7,9 +7,16 @@ import (
 
 func issueAppPath(slug string) string { return "/v1/apps/" + url.PathEscape(slug) }
 func (c *Client) ListIssues(ctx context.Context, slug, state, environment, cursor string) (ListIssuesResponse, error) {
+	return c.ListIssuesFiltered(ctx, slug, state, environment, "", cursor)
+}
+
+func (c *Client) ListIssuesFiltered(ctx context.Context, slug, state, environment, assignee, cursor string) (ListIssuesResponse, error) {
 	q := url.Values{}
 	q.Set("state", state)
 	q.Set("environment", environment)
+	if assignee != "" {
+		q.Set("assignee", assignee)
+	}
 	q.Set("cursor", cursor)
 	var out ListIssuesResponse
 	err := c.do(ctx, "GET", issueAppPath(slug)+"/issues?"+q.Encode(), nil, &out)

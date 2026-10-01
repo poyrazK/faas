@@ -3577,9 +3577,10 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 		return inv, 0, err
 	}
 	var out struct {
-		State      string          `json:"state"`
-		Result     json.RawMessage `json:"result"`
-		StatusCode int             `json:"status_code"`
+		State       string          `json:"state"`
+		Result      json.RawMessage `json:"result"`
+		StatusCode  int             `json:"status_code"`
+		OutcomeCode string          `json:"outcome_code"`
 	}
 	if err := httpjson.Decode(resp.Body, gatewayInvocationResponseMaxBytes, &out); err != nil {
 		return inv, 0, fmt.Errorf("sched: invocation response: %w", err)
@@ -3592,9 +3593,11 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 	if len(out.Result) > 0 {
 		inv.Result = append(json.RawMessage(nil), out.Result...)
 	}
+	inv.OutcomeCode = out.OutcomeCode
 	if out.StatusCode == 0 {
 		out.StatusCode = http.StatusOK
 	}
+	inv.ResponseStatusCode = out.StatusCode
 	return inv, out.StatusCode, nil
 }
 
@@ -4512,14 +4515,15 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 		return CronRun{}, true
 	}
 	inv := state.Invocation{
-		AppID:     c.AppID,
-		AccountID: acct.ID,
-		Source:    state.InvocationCron,
-		Method:    "POST",
-		Path:      c.Path,
-		CronID:    &cronID,
-		Headers:   cronHeaders,
-		DueAt:     dueAt,
+		AppID:        c.AppID,
+		AccountID:    acct.ID,
+		Source:       state.InvocationCron,
+		Method:       "POST",
+		Path:         c.Path,
+		CronID:       &cronID,
+		Headers:      cronHeaders,
+		DueAt:        dueAt,
+		FailureRules: workpolicy.Clone(c.FailureRules),
 	}
 	enq, err := l.engine.Store().EnqueueInvocation(ctx, inv)
 	if err != nil {
@@ -4538,12 +4542,14 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 	// the drain's next tick (which filters state='pending').
 	if enq.ID != "" {
 		maxInflight := api.MustLimitsFor(acct.Plan).MaxAsyncInvocationsPerAccount
-		if _, err := l.engine.Store().ClaimInvocationWithCap(ctx, enq.ID, "", 60, maxInflight); err != nil {
+		claimed, claimErr := l.engine.Store().ClaimInvocationWithCap(ctx, enq.ID, "", 60, maxInflight)
+		if claimErr != nil {
 			// The general drain won pending -> dispatching. It now owns
 			// delivery, so invoking from this path would duplicate the fire.
-			l.log.Debug("cron: invocation handed to drain", "cron_id", c.ID, "invocation_id", enq.ID, "err", err)
+			l.log.Debug("cron: invocation handed to drain", "cron_id", c.ID, "invocation_id", enq.ID, "err", claimErr)
 			return CronRun{InvocationID: enq.ID}, true
 		}
+		inv = claimed
 	}
 	if l.gateway != nil {
 		// Invoke delivers the synthetic HTTP envelope through the
@@ -4552,6 +4558,23 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 		// (cmd/gatewayd-internal) does its own always-Wake internally and
 		// returns the live instance id on the echoed Invocation.
 		invokeOut, ierr := l.gateway.Invoke(ctx, c.AppID, inv)
+		classificationStamped := false
+		if c.FailureRules != nil && invokeOut.InstanceID != "" {
+			if err := l.engine.Store().StampInstanceInvocation(ctx, enq.ID, invokeOut.InstanceID); err != nil {
+				l.log.Warn("cron: stamp classified invocation", "cron_id", c.ID, "inv", enq.ID, "err", err)
+			} else {
+				classificationStamped = true
+			}
+		}
+		if c.FailureRules != nil && l.settleCronWorkClassification(ctx, acct.Plan, inv, invokeOut, ierr) {
+			if ierr == nil && invokeOut.ResponseStatusCode < http.StatusBadRequest &&
+				workpolicy.Evaluate(c.FailureRules, workpolicy.Evidence{Succeeded: true, OutcomeCode: invokeOut.OutcomeCode}).Action == "complete" {
+				fireSucceeded = true
+				invocationID = enq.ID
+				instanceID = invokeOut.InstanceID
+			}
+			return CronRun{InvocationID: enq.ID, InstanceID: invokeOut.InstanceID, Success: fireSucceeded}, true
+		}
 		if ierr != nil {
 			l.log.Warn("cron: invoke", "cron_id", c.ID, "err", ierr)
 			// issue #791 — terminate the row. Before this, a failed
@@ -4586,8 +4609,10 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 			// so the drain's per-tick (state='pending' filter)
 			// never picks it up. The meter join counts this row
 			// once, against the live instance.
-			if err := l.engine.Store().StampInstanceInvocation(ctx, enq.ID, invokeOut.InstanceID); err != nil {
-				l.log.Warn("cron: stamp instance", "cron_id", c.ID, "err", err)
+			if !classificationStamped {
+				if err := l.engine.Store().StampInstanceInvocation(ctx, enq.ID, invokeOut.InstanceID); err != nil {
+					l.log.Warn("cron: stamp instance", "cron_id", c.ID, "err", err)
+				}
 			}
 			if err := l.engine.Store().CompleteInvocation(ctx, enq.ID, nil); err != nil {
 				l.log.Warn("cron: complete", "cron_id", c.ID, "err", err)
@@ -4616,6 +4641,66 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 		l.log.Warn("cron: notify cron_fired", "err", err)
 	}
 	return CronRun{InvocationID: invocationID, InstanceID: instanceID, Success: fireSucceeded}, true
+}
+
+// settleCronWorkClassification applies a Cron's explicit application-outcome
+// policy to manual HTTP fires as well as scheduled invocations. A missing
+// response receipt stays distinct from a confirmed application response.
+func (l *Loop) settleCronWorkClassification(ctx context.Context, plan api.Plan, inv, response state.Invocation, dispatchErr error) bool {
+	if inv.FailureRules == nil {
+		return false
+	}
+	uncertain := response.ResponseStatusCode == 0 && dispatchErr != nil && !errors.Is(dispatchErr, ErrPermanentInvoke)
+	if response.ResponseStatusCode == 0 && !uncertain {
+		return false
+	}
+	evidence := workpolicy.Evidence{OutcomeCode: response.OutcomeCode}
+	if uncertain {
+		evidence.Uncertain = true
+	} else {
+		evidence.Succeeded = response.ResponseStatusCode < http.StatusBadRequest
+		evidence.HTTPStatus = response.ResponseStatusCode
+	}
+	decision := workpolicy.Evaluate(inv.FailureRules, evidence)
+	if decision.Action == "complete" {
+		store, ok := l.engine.Store().(state.ClassifiedInvocationCompletionStore)
+		if !ok {
+			l.log.Error("cron: classified completion is unsupported by store", "inv", inv.ID)
+			if err := l.engine.Store().CompleteInvocation(ctx, inv.ID, response.Result); err != nil {
+				l.log.Warn("cron: complete invocation fallback", "inv", inv.ID, "err", err)
+			}
+			return true
+		}
+		if err := store.CompleteInvocationWithWorkClassification(ctx, inv.ID, response.Result, decision, response.OutcomeCode); err != nil {
+			l.log.Warn("cron: complete classified invocation", "inv", inv.ID, "err", err)
+		}
+		return true
+	}
+
+	retryAfter, budget := time.Duration(0), 0
+	if decision.Action == "retry" {
+		retryAfter = inv.RetryPolicy().Backoff(inv.Attempts)
+		if retryAfter <= 0 {
+			retryAfter = 5 * time.Second
+		}
+		budget = api.EffectiveRetryMaxAttempts(inv.RetryPolicy().MaxAttempts, api.MustLimitsFor(plan).MaxQueueAttempts)
+	}
+	message := fmt.Sprintf("scheduled outcome %q classified as %s", response.OutcomeCode, decision.Action)
+	if dispatchErr != nil {
+		if uncertain {
+			message = "invoke receipt uncertain: " + dispatchErr.Error()
+		} else {
+			message = "invoke: " + dispatchErr.Error()
+		}
+	}
+	options := []state.FailOption{state.WithWorkClassification(decision, response.OutcomeCode)}
+	if uncertain && decision.Action == "hold" {
+		options = append(options, state.WithOutcome(state.OutcomeUncertain))
+	}
+	if err := l.engine.Store().FailInvocation(ctx, inv.ID, message, retryAfter, budget, options...); err != nil {
+		l.log.Warn("cron: settle classified invocation", "inv", inv.ID, "action", decision.Action, "err", err)
+	}
+	return true
 }
 
 // ErrCronDisabled is the typed error returned by RunCronNow when

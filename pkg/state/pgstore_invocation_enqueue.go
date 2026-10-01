@@ -2,12 +2,14 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 func enqueueInvocationRow(ctx context.Context, db sqlc.DBTX, inv Invocation) (Invocation, error) {
@@ -38,6 +40,12 @@ func enqueueInvocationRow(ctx context.Context, db sqlc.DBTX, inv Invocation) (In
 		WorkFairnessLimit:  pgtype.Int4{Int32: int32(inv.WorkFairnessLimit), Valid: inv.WorkFairnessLimit != 0},
 		DeploymentScope:    inv.DeploymentScope,
 		StartDeadlineAt:    nullableTimestamptzPtr(inv.StartDeadlineAt),
+	}
+	if inv.FailureRules != nil {
+		params.FailureRules, err = json.Marshal(inv.FailureRules)
+		if err != nil {
+			return Invocation{}, fmt.Errorf("state: encode invocation failure rules: %w", err)
+		}
 	}
 	if len(params.RetryPolicy) == 0 {
 		params.RetryPolicy = nil
@@ -75,7 +83,10 @@ func enqueueInvocationRow(ctx context.Context, db sqlc.DBTX, inv Invocation) (In
 	if err != nil {
 		return Invocation{}, mapErr(err)
 	}
-	out := invocationFromSQL(row)
+	out, err := invocationFromSQL(row)
+	if err != nil {
+		return Invocation{}, err
+	}
 	// Preserve historical support for synthetic result fields on the returned
 	// object; these fields are not persisted by admission.
 	if len(inv.Result) > 0 {
@@ -90,7 +101,7 @@ func enqueueInvocationRow(ctx context.Context, db sqlc.DBTX, inv Invocation) (In
 	return out, nil
 }
 
-func invocationFromSQL(row sqlc.Invocation) Invocation {
+func invocationFromSQL(row sqlc.Invocation) (Invocation, error) {
 	inv := Invocation{
 		ID: uuidString(row.ID), AppID: uuidString(row.AppID), AccountID: uuidString(row.AccountID),
 		DeploymentScope: row.DeploymentScope, PlatformTenantID: uuidString(row.PlatformTenantID),
@@ -119,5 +130,20 @@ func invocationFromSQL(row sqlc.Invocation) Invocation {
 		outcome := InvocationOutcome(row.Outcome.String)
 		inv.Outcome = &outcome
 	}
-	return inv
+	if len(row.FailureRules) > 0 {
+		var rules workpolicy.FailureRules
+		if err := json.Unmarshal(row.FailureRules, &rules); err != nil {
+			return Invocation{}, fmt.Errorf("state: decode invocation failure rules: %w", err)
+		}
+		inv.FailureRules = &rules
+	}
+	if len(row.WorkDecision) > 0 {
+		var decision workpolicy.Decision
+		if err := json.Unmarshal(row.WorkDecision, &decision); err != nil {
+			return Invocation{}, fmt.Errorf("state: decode invocation work decision: %w", err)
+		}
+		inv.WorkDecision = &decision
+	}
+	inv.OutcomeCode = row.OutcomeCode
+	return inv, nil
 }

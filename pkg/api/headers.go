@@ -63,6 +63,11 @@ const (
 	// admitted request. It is customer-facing diagnostic metadata; Server-
 	// Timing carries the same value for browser tooling.
 	QueueWaitHeader = "X-Gregale-Queue-Wait-Ms"
+	// ScheduledOutcomeCodeHeader is an application-supplied structured result
+	// for scheduled HTTP Cron invocations. Gregale uses it only when an explicit
+	// FailureRules policy is configured; HTTP status alone never selects a
+	// business retry action.
+	ScheduledOutcomeCodeHeader = "X-Gregale-Outcome-Code"
 	// VersionKeyHeader carries a customer-provided rollout cohort key. The
 	// gateway hashes it to a weighted deployment bucket; it is not a direct
 	// deployment selector and grants no access to otherwise unroutable code.

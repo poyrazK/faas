@@ -22,13 +22,16 @@ configuration refresh and verified customer evidence after a real VM restore.
 The catalog points to this test as the capability qualification evidence; the
 database-backed `make test-flags` gate continues to cover management and
 application-level acceptance.
-The initial runtime client is the server-only Node SDK. It retrieves configuration
-with the existing loopback workload identity endpoint and an RS256 assertion for
-`gregale:flags`. apid derives account, project and environment from the live
-instance and its deployment. Account API keys cannot use the runtime endpoint;
-app-scoped deploy keys cannot use project management endpoints. Preview apps
-are excluded until their independent configuration scope is defined. Operators
-install public JWKS on apid; no remote key discovery occurs on the request path.
+The first runtime client was the server-only Node SDK. Runtime clients retrieve
+configuration with the existing loopback workload identity endpoint and an
+RS256 assertion for `gregale:flags`. apid derives account, project and environment
+from the live instance and its deployment. Account API keys cannot use the runtime
+endpoint; app-scoped deploy keys cannot use project management endpoints. Preview
+apps are excluded until their independent configuration scope is defined.
+Operators install public JWKS on apid; no remote key discovery occurs on the
+request path. The Python SDK exposes the same runtime contract through an async
+client, ASGI request middleware, and an HTTPX transport. Its evaluator and bounded
+evidence/context envelopes use the same cross-language allocation vectors.
 
 Each request uses one immutable snapshot. A resumed process detects elapsed or
 regressed wall time before evaluation; if configuration is older than its bounded
@@ -65,10 +68,12 @@ changed by this decision. SDK allocation vectors and
 rollout monotonicity, optimistic concurrency, tenant ownership, history, rollback,
 workload-token audience and scope, and evidence stripping are separate gates.
 
-Arbitrary user attributes and automatic stage advancement are future extensions;
-the current staged rollout plan uses explicit operator promotions guarded by
-retained per-rule request evidence. For synchronous managed service calls, the Node
-SDK can explicitly propagate only decisions marked used. The service proxy
+Arbitrary user attributes remain a future extension. Staged rollout plans allow
+explicit, health-gated promotion, with opt-in automatic advancement after a full
+healthy evidence window. For managed service calls, the Node fetch helper and
+Python HTTPX transport propagate only decisions marked used. The Python ASGI
+middleware pins the verified request context and writes evidence before response
+headers are sent. The service proxy
 forwards a bounded, canonical envelope only after its existing caller identity
 and binding checks; public ingress removes caller-supplied copies. Downstream
 SDK evidence records the original app, environment, config version and rule

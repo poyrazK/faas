@@ -1044,12 +1044,33 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "platform_tenant_consumer_policy.go"),
 		filepath.Join(root, "pkg", "api", "platform_tenant_invocations.go"),
 		filepath.Join(root, "pkg", "api", "tcp_listeners.go"),
+		filepath.Join(root, "pkg", "api", "tcp_listener_tls.go"),
+		filepath.Join(root, "pkg", "api", "udp_listeners.go"),
 		filepath.Join(root, "pkg", "api", "preflight.go"),
 		filepath.Join(root, "pkg", "api", "exclusive_operations.go"),
 	}
 	dtos, err := scanDTOs(files)
 	if err != nil {
 		t.Fatalf("scan DTOs: %v", err)
+	}
+
+	// Git approval evidence is shared with githubd and the state transaction
+	// without importing pkg/api there. Check its actual JSON fields under the
+	// public schema names rather than exempting the nested evidence contracts.
+	approvalDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "gitapproval", "evidence.go")})
+	if err != nil {
+		t.Fatalf("scan Git approval DTOs: %v", err)
+	}
+	for goName, schemaName := range map[string]string{
+		"PolicyEvidence": "EnvironmentGitProtectedBranchEvidence",
+		"ReviewEvidence": "EnvironmentGitReviewEvidence",
+		"MergeEvidence":  "EnvironmentGitReviewedMergeEvidence",
+	} {
+		fields, ok := approvalDTOs[goName]
+		if !ok {
+			t.Fatalf("Git approval DTO %s is missing", goName)
+		}
+		dtos[schemaName] = fields
 	}
 
 	var missingInSpec []string

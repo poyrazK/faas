@@ -144,6 +144,53 @@ Disabling a defined flag uses its configured default; use `default: false` for a
 off switch. Changes do not interrupt requests already using an earlier version.
 Do not use this mechanism for an instantaneous security revocation.
 
+### Use flags in a Python ASGI application
+
+The Python runtime SDK evaluates the same immutable bundles and stable
+allocations as the Node SDK. Start the client with Gregale's public API URL,
+then wrap an ASGI app with the middleware. It reads customer and inherited
+decision headers from Gregale's gateway, pins one bundle for the request, and
+replaces the response evidence header before response headers are sent:
+
+~~~python
+from faas_sdk import GregaleFlags, GregaleFlagsMiddleware
+
+flags = GregaleFlags(api_url="https://api.gregale.dev")
+async def on_startup():
+    await flags.start()
+
+async def on_shutdown():
+    await flags.close()
+
+# Wrap your existing ASGI application.
+app = GregaleFlagsMiddleware(existing_app, flags)
+
+async def handle_request():
+    decision = flags.boolean("new-export", False)
+    flags.used("new-export")
+    if decision.value:
+        ...
+~~~
+
+Use the asynchronous HTTPX transport to forward only explicitly used decisions
+to managed services. For queued work, put flags.propagation_header() in the
+message's flag_context field, following the Node example below. Close the flags
+client during ASGI shutdown with await flags.close(). By default, the client
+uses the workload identity endpoint in FAAS_WORKLOAD_IDENTITY_ENDPOINT and the
+gregale:flags audience.
+
+These headers are trusted only when Gregale's gateway supplies them. Do not
+use caller-provided customer or flag-context headers from arbitrary public
+requests. Evidence is application-reported exposure; it is not authorization
+or proof of a business side effect.
+
+~~~python
+import httpx
+from faas_sdk import AsyncGregaleFlagsTransport
+
+service_client = httpx.AsyncClient(transport=AsyncGregaleFlagsTransport(flags))
+~~~
+
 ### Carry decisions across managed service calls
 
 Pass the `GregaleFlags` instance to `createGregaleFetch(fetch, { flags })` to
@@ -297,7 +344,16 @@ refresh the flag version before trying again. `complete` means the final stage i
 already active. Promotion requires debugger telemetry entitlement and retention
 at least as long as the configured window. These thresholds are operational
 signals, not proof that the flag caused an outcome; promotion is always an
-explicit operator action.
+explicit operator action when `auto_advance` is omitted or false.
+
+Set `auto_advance: true` on the progression plan to opt this rule into
+server-managed promotion. The platform waits for a complete configured window
+after the active configuration version was published, checks evidence from
+that exact version and rule, and advances at most one stage when all gates
+pass. Insufficient or unhealthy evidence holds the stage; the reconciler logs
+the reason and retries on a later pass. Automatic promotion respects debugger
+telemetry entitlement and retention, and uses a version-checked write so a
+concurrent operator edit wins. Rules without explicit opt-in remain manual.
 
 The SDK does not add flags to cache keys automatically. Avoid shared caches for
 customer-dependent behavior unless their keys include the relevant customer and
@@ -358,7 +414,8 @@ entries and 16 KiB decoded evidence per request.
 
 Synchronous decision inheritance is available for managed service calls when
 the Node SDK fetch helper is explicitly configured. Producers can also carry
-marked decisions into `queues/send` and the app inbox. Arbitrary user attributes,
-automatic stage advancement, and propagation through cron, delayed tasks, and
-external broker deliveries remain future work; those workloads otherwise
-evaluate flags using their own environment and verified customer identity.
+marked decisions into `queues/send` and the app inbox. Arbitrary user attributes
+and propagation through cron, delayed tasks, and external broker deliveries
+remain future work; those workloads otherwise evaluate flags using their own
+environment and verified customer identity. Automatic advancement runs as a
+bounded apid reconciliation loop and remains opt-in per rule.

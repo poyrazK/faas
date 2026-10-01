@@ -85,8 +85,39 @@ times without creating runs. These decisions retain their policy snapshot and
 reason and can be inspected with `gregale jobs occurrences <name>` or
 `GET /v1/jobs/{name}/occurrences`. Command Crons expose the same occurrence
 history with `gregale crons occurrences <id>` and
-`GET /v1/crons/{id}/occurrences`. HTTP request Crons retain their existing
-dispatch contract and do not accept the new policy objects yet.
+`GET /v1/crons/{id}/occurrences`. HTTP request Crons also accept schedule
+policies and explicit failure rules. An HTTP handler can return a bounded
+business outcome code in `X-Gregale-Outcome-Code`; Gregale applies only the
+configured code mapping and does not infer business retry safety from HTTP
+status. A missing completion receipt follows `uncertain_outcome`, and an
+explicit retry uses the account plan's finite durable invocation retry budget.
+Occurrence history includes the last `outcome_code` and `work_decision`.
+
+For example, retry an explicitly reported transient result, stop on invalid
+customer data, and hold a request whose completion receipt was lost:
+
+```json
+{
+  "version": 1,
+  "rules": [
+    {"outcome_codes": ["upstream_unavailable"], "action": "retry"},
+    {"outcome_codes": ["invalid_record"], "action": "fail_partition"}
+  ],
+  "unmatched_failure": "fail_partition",
+  "uncertain_outcome": "hold"
+}
+```
+
+Return the corresponding code from the scheduled HTTP handler:
+
+```http
+HTTP/1.1 200 OK
+X-Gregale-Outcome-Code: upstream_unavailable
+```
+
+Configure these rules with `gregale crons add --failure-rules JSON` or
+`gregale crons update --failure-rules JSON`. Exit-code matchers remain
+specific to command Crons and Jobs.
 
 Command Crons use one task per occurrence and select the app's live deployment
 when the occurrence is admitted. Their result manifest can also carry a

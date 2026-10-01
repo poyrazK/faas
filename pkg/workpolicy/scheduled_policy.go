@@ -88,13 +88,8 @@ func (p FailureRules) Validate() error {
 			exits[code] = true
 		}
 		for _, code := range r.OutcomeCodes {
-			if code == "" || len(code) > 64 || strings.TrimSpace(code) != code || codes[code] {
+			if !ValidOutcomeCode(code) || codes[code] {
 				return errors.New("outcome codes must be unique nonempty tokens of at most 64 bytes")
-			}
-			for _, c := range code {
-				if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '_' && c != '-' && c != '.' {
-					return errors.New("outcome codes must use lowercase letters, digits, underscore, dash, or dot")
-				}
 			}
 			codes[code] = true
 		}
@@ -106,6 +101,20 @@ func (p FailureRules) Validate() error {
 		}
 	}
 	return nil
+}
+
+// ValidOutcomeCode accepts the bounded token format used by FailureRules
+// and by an application's X-Gregale-Outcome-Code response header.
+func ValidOutcomeCode(code string) bool {
+	if code == "" || len(code) > 64 || strings.TrimSpace(code) != code {
+		return false
+	}
+	for _, c := range code {
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '_' && c != '-' && c != '.' {
+			return false
+		}
+	}
+	return true
 }
 
 func failureAction(action string) bool { return action == "retry" || action == "fail_partition" }

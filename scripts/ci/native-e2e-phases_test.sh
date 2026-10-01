@@ -109,6 +109,24 @@ native_e2e_is_selector nonsense && fail "runner selector gate accepted a bogus n
 grep -q 'native_e2e_is_selector "${phase}"' "${repo_root}/scripts/ci/run-native-e2e.sh" ||
   fail "run-native-e2e.sh does not validate FAAS_E2E_PHASE with native_e2e_is_selector; a lane would be rejected as an unknown phase"
 
+# Container qualification derives complete files and rejects lost coverage.
+container_tests="$(native_e2e_lane_tests containers "${repo_root}")"
+for must in TestDirectOCIFullRootfsMetal TestDirectOCIProcessContractMetal TestDirectOCIPort3000Metal \
+  TestDirectOCIAutoscaleScaleToZeroMetal TestAfterRestoreMetal \
+  TestBeforeCheckpointMetal TestTCPIngressMetal TestDeployHealthcheckMetal \
+  TestE2E_Streaming_Metal_H2CInnerLeg \
+  TestSec11_MemoryMaxFenceEnforced_CrossProcess TestSec11_SeccompFilterEnforced_CrossProcess; do
+  printf '%s\n' "${container_tests}" | grep -qx "${must}" || fail "container lane lost ${must}"
+done
+rx="$(native_e2e_lane_regex containers "${repo_root}")"
+[[ "${rx}" == ^\(*\)\$ ]] || fail "container lane regex is not anchored"
+# A new test in a selected file must be included automatically.
+container_probe="${probe}/container"
+mkdir -p "${container_probe}/cmd"
+cp -R "${repo_root}/cmd/e2e" "${container_probe}/cmd/e2e"
+printf '\nfunc TestContainerAddedProbe(t *testing.T) {}\n' >> "${container_probe}/cmd/e2e/direct_oci_fullrootfs_metal_test.go"
+native_e2e_lane_tests containers "${container_probe}" | grep -qx TestContainerAddedProbe || fail "new container test was omitted"
+
 # 10. The stale-jail reaper removes app-instance chroots as well as build ones,
 #     and nothing outside firecracker-v*/. Two app chroots that survived a node
 #     reboot blocked smoke run 35206846279 before a single test ran.
