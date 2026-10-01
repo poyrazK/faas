@@ -97,6 +97,7 @@ func cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifest(ctx context.Con
 }
 
 type sourceRefAppPolicy struct {
+	AppProtocol            *string
 	PlatformTenantRequired *bool
 	RequireAuthn           *bool
 	PublicAuth             *api.PublicAuthBlock
@@ -184,13 +185,14 @@ func ensureSourceRefApp(ctx context.Context, client *Client, slug string, appPol
 		policy = appPolicy[0]
 	}
 	configure := func(app api.AppResponse) (api.AppResponse, error) {
-		if policy.PlatformTenantRequired == nil && policy.RequireAuthn == nil && policy.PublicAuth == nil {
+		if policy.PlatformTenantRequired == nil && policy.RequireAuthn == nil && policy.PublicAuth == nil && policy.AppProtocol == nil {
 			return app, nil
 		}
 		return client.UpdateApp(ctx, slug, api.UpdateAppRequest{
 			PlatformTenantRequired: policy.PlatformTenantRequired,
 			RequireAuthn:           policy.RequireAuthn,
 			PublicAuth:             policy.PublicAuth,
+			AppProtocol:            policy.AppProtocol,
 		})
 	}
 	if app, err := client.GetApp(ctx, slug); err == nil {
@@ -198,7 +200,7 @@ func ensureSourceRefApp(ctx context.Context, client *Client, slug string, appPol
 	} else if !isNotFound(err) {
 		return api.AppResponse{}, err
 	}
-	createReq := buildCreateRequest(slug, shapeApp, "", nil, nil)
+	createReq := buildCreateRequest(slug, shapeApp, "", nil, policy.AppProtocol)
 	createReq.PlatformTenantRequired = policy.PlatformTenantRequired
 	createReq.RequireAuthn = policy.RequireAuthn
 	if app, err := client.CreateApp(ctx, createReq); err == nil {

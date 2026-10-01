@@ -1063,7 +1063,6 @@ func validateRepoDeployFlags(explicit map[string]bool) error {
 	var unsupported []string
 	for _, name := range []string{
 		"function", "app", "runtime", "handler", "dockerfile", "vcpu",
-		"app-protocol",
 		"execution-mode", "restart-policy", "startup-deadline-s", "max-retries",
 		"doctor-strict", "no-doctor", "secret-scan",
 	} {
@@ -1082,7 +1081,7 @@ func validateSourceRefPreviewFlags(explicit map[string]bool, sourceBranch string
 	for _, name := range []string{
 		"traffic-percent", "no-traffic", "canary-preset", "canary-stages", "safe", "rollback-on-5xx", "disable-startup-cpu-boost",
 		"reason", "tag", "deployed-by", "pr-number", "idempotency-key",
-		"wait", "no-wait", "timeout",
+		"wait", "no-wait", "timeout", "app-protocol",
 	} {
 		if explicit[name] {
 			unsupported = append(unsupported, "--"+name)
@@ -2851,7 +2850,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			}, *diffJSON, !*diffLenient, *noTriggers)
 		}
 		refIntent := deployIdempotencyIntent{
-			Slug: slug, Repo: *repo, Ref: *ref, SourceBranch: *sourceBranch, Reason: *reason, Tag: *tag,
+			Slug: slug, Repo: *repo, Ref: *ref, SourceBranch: *sourceBranch, Reason: *reason, Tag: *tag, AppProtocol: *appProtocol,
 			DeployedBy: resolveDeployedBy(*deployedBy), PRNumber: *prNumber,
 			TrafficPercent: *trafficPercent, CanaryPreset: *canaryPreset,
 			CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr, Healthcheck: healthcheck,
@@ -2889,7 +2888,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			RollbackOn5xx:          rollbackOn5xxPtr,
 			DisableStartupCPUBoost: disableStartupCPUBoostPtr, Healthcheck: healthcheck,
 		}, waitForDeploy, jsonWait, refKey, time.Duration(*waitTimeoutSeconds)*time.Second, *noTriggers, *safeDeploy, *noTraffic,
-			sourceRefAppPolicy{PlatformTenantRequired: platformTenantRequiredPtr, RequireAuthn: requireAuthnPtr, PublicAuth: publicAuthPtr})
+			sourceRefAppPolicy{PlatformTenantRequired: platformTenantRequiredPtr, RequireAuthn: requireAuthnPtr, PublicAuth: publicAuthPtr, AppProtocol: appProtocolPtr})
 		return code
 	}
 

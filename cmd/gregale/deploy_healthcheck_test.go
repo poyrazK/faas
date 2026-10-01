@@ -28,6 +28,7 @@ func TestDeployHealthcheckFlagsBeforeNetwork(t *testing.T) {
 		{"--healthcheck-grpc", "--project"},
 		{"--healthcheck-grpc", "--dry-run"},
 		{"--healthcheck-grpc", "--create-only"},
+		{"--repo", "owner/repo", "--ref", "main", "--app-protocol", "grpc", "--dry-run"},
 	} {
 		if code := cmdDeployTarball(args); code != 1 {
 			t.Errorf("args=%v code=%d want1", args, code)
@@ -40,27 +41,36 @@ func TestDeployHealthcheckFlagsBeforeNetwork(t *testing.T) {
 
 // adr: 053 — source-ref CLI request retains named and whole-server gRPC readiness.
 func TestDeployHealthcheckSourceRefCLI(t *testing.T) {
-	for _, service := range []string{"", "audit.Echo"} {
-		t.Run(service, func(t *testing.T) {
-			sink := &sourceRefSink{existingApp: true, status: http.StatusAccepted, body: api.DeploymentResponse{ID: "dep-health", Status: "queued"}}
-			srv := httptest.NewServer(sink)
-			defer srv.Close()
-			t.Setenv("FAAS_API", srv.URL)
-			t.Setenv("FAAS_TOKEN", "fp_live_x")
-			withResetJSONOutput(t, false)
-			args := []string{"--name", "hello", "--repo", "owner/repo", "--ref", "main", "--no-wait", "--healthcheck-grpc", "--healthcheck-grpc-service", service}
-			if code := cmdDeployTarball(args); code != 0 {
-				t.Fatalf("code=%d", code)
-			}
-			var req api.SourceRefDeployRequest
-			if err := json.Unmarshal(sink.capturedBody, &req); err != nil {
-				t.Fatal(err)
-			}
-			want := &api.DeploymentHealthcheck{GRPC: &api.DeploymentGRPCHealthcheck{Service: service}}
-			if !reflect.DeepEqual(req.Healthcheck, want) {
-				t.Fatalf("probe=%+v want=%+v", req.Healthcheck, want)
-			}
-		})
+	for _, existing := range []bool{false, true} {
+		for _, service := range []string{"", "audit.Echo"} {
+			t.Run(strconv.FormatBool(existing)+"/"+service, func(t *testing.T) {
+				sink := &sourceRefSink{existingApp: existing, status: http.StatusAccepted, body: api.DeploymentResponse{ID: "dep-health", Status: "queued"}}
+				srv := httptest.NewServer(sink)
+				defer srv.Close()
+				t.Setenv("FAAS_API", srv.URL)
+				t.Setenv("FAAS_TOKEN", "fp_live_x")
+				withResetJSONOutput(t, false)
+				args := []string{"--name", "hello", "--repo", "owner/repo", "--ref", "main", "--no-wait", "--app-protocol", "grpc", "--healthcheck-grpc", "--healthcheck-grpc-service", service}
+				if code := cmdDeployTarball(args); code != 0 {
+					t.Fatalf("code=%d", code)
+				}
+				protocol := sink.createRequest.AppProtocol
+				if existing {
+					protocol = sink.patchRequest.AppProtocol
+				}
+				if protocol == nil || *protocol != "grpc" {
+					t.Fatalf("source-ref dropped app protocol: create=%+v patch=%+v", sink.createRequest, sink.patchRequest)
+				}
+				var req api.SourceRefDeployRequest
+				if err := json.Unmarshal(sink.capturedBody, &req); err != nil {
+					t.Fatal(err)
+				}
+				want := &api.DeploymentHealthcheck{GRPC: &api.DeploymentGRPCHealthcheck{Service: service}}
+				if !reflect.DeepEqual(req.Healthcheck, want) {
+					t.Fatalf("probe=%+v want=%+v", req.Healthcheck, want)
+				}
+			})
+		}
 	}
 }
 
