@@ -97,10 +97,11 @@ relies on the gateway replacing reserved headers. It does not authenticate an
 arbitrary public request by itself.
 
 ```ts
-import { GregaleFlags, GREGALE_FLAG_EVIDENCE_HEADER } from '@gregale/sdk-node';
+import { createGregaleFetch, GregaleFlags, GREGALE_FLAG_EVIDENCE_HEADER } from '@gregale/sdk-node';
 
 const flags = new GregaleFlags({ apiURL: 'https://api.gregale.dev' });
 await flags.start();
+const serviceFetch = createGregaleFetch(fetch, { flags });
 
 async function handle(request: Request): Promise<Response> {
   return flags.runRequest(request.headers, async () => {
@@ -142,6 +143,37 @@ Startup during a configuration outage also permits explicit fallback behavior.
 Disabling a defined flag uses its configured default; use `default: false` for an
 off switch. Changes do not interrupt requests already using an earlier version.
 Do not use this mechanism for an instantaneous security revocation.
+
+### Carry decisions across managed service calls
+
+Pass the `GregaleFlags` instance to `createGregaleFetch(fetch, { flags })` to
+opt in. While `runRequest` is active, the helper attaches only decisions marked
+with `used()` to calls targeting `*.svc.gregale`. The downstream SDK reuses a
+matching inherited decision before checking its local configuration, so a
+config refresh between service hops does not change the selected behavior.
+The service proxy accepts a bounded envelope only after its existing caller
+identity and binding checks, then stamps the customer context for the target.
+Public ingress clears caller-supplied copies, malformed or duplicate envelopes
+are dropped, and the helper removes the context header from external requests.
+
+For example, call a managed service inside the request scope after marking the
+selected behavior:
+
+```ts
+await flags.runRequest(request.headers, async () => {
+  const decision = flags.variant('export-pipeline', 'legacy');
+  flags.used('export-pipeline');
+  return serviceFetch('http://billing.svc.gregale/exports', {
+    method: 'POST',
+    body: JSON.stringify({ implementation: decision.value }),
+  });
+});
+```
+
+Downstream evidence reports `source: "inherited"` and the originating app and
+environment under `inherited_from`; its configuration version and rule ID refer
+to the original decision. The envelope carries behavior context, not permission
+or entitlement. It does not propagate through queues or background jobs yet.
 
 ## Inspect decisions and request outcomes
 
@@ -233,7 +265,8 @@ Safeguards from `pkg/api/limits.go`: 100 flags and 100 groups per environment,
 32 rules and 16 variants per flag, 1000 customer IDs per list, 256 KiB configuration, 32 evidence
 entries and 16 KiB decoded evidence per request.
 
-Arbitrary user attributes, automatic rollout progression, and authenticated
-decision inheritance across downstream services/queued work are not included in
-this implementation. Those workloads currently reevaluate
-using their own environment and existing verified customer identity.
+Synchronous decision inheritance is available for managed service calls when
+the Node SDK fetch helper is explicitly configured. Arbitrary user attributes,
+automatic rollout progression, and propagation through queues or background
+jobs remain future work; those workloads reevaluate with their own environment
+and verified customer identity.

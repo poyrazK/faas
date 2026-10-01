@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { evaluateFlag, evaluateVariant, flagBucket, flagVariantBucket, GregaleFlags, type FlagsBundle } from '../src/flags.js';
+import { evaluateFlag, evaluateVariant, flagBucket, flagVariantBucket, GregaleFlags, GREGALE_FLAG_PROPAGATION_HEADER, type FlagsBundle } from '../src/flags.js';
+import { createGregaleFetch } from '../src/release-context.js';
 const customer = '00000000-0000-0000-0000-000000000001';
 const bundle = (): FlagsBundle => ({environment_id: customer, version: 1, groups: { internal: [customer] }, flags: [{key: 'export', enabled: true, default: false, seed: 'seed', rules: [{id: 'selected', group: 'internal', value: true}]}]});
 test('cross-language allocation vectors', () => {
@@ -77,5 +78,76 @@ test('cold startup during an API outage uses fallback behavior', async () => {
  const flags = new GregaleFlags({apiURL:'https://api.example.com',identityEndpoint:'http://127.0.0.1/token',fetch:async()=>{throw new Error('offline')}});
  await flags.start();
  await flags.runRequest({},()=>{const d=flags.boolean('export',false);assert.equal(d.value,false);assert.equal(d.reason,'configuration_stale')});
+ flags.close();
+});
+
+test('managed service fetch forwards only used decisions and strips context from external origins', async () => {
+ const priorAppID = process.env.FAAS_APP_ID;
+ process.env.FAAS_APP_ID = '00000000-0000-0000-0000-000000000002';
+ const flags = new GregaleFlags({apiURL:'https://api.example.com',identityEndpoint:'http://127.0.0.1/token',fetch:async input=>new Response(JSON.stringify(String(input).includes('127.0.0.1')?{access_token:'token'}:bundle()))});
+ const calls: Array<{url:string;headers:Headers}> = [];
+ const fetcher = createGregaleFetch(async (input, init) => {
+  calls.push({url:input instanceof Request?input.url:String(input),headers:new Headers(init?.headers)});
+  return new Response(null,{status:204});
+ },{flags});
+ try {
+  await flags.refresh();
+  await flags.runRequest({'X-Faas-Platform-Tenant-Id':customer},async()=>{
+   flags.boolean('export',false);flags.used('export');
+   flags.boolean('not-used',true);
+   await fetcher('http://billing.svc.gregale/charge',{headers:{[GREGALE_FLAG_PROPAGATION_HEADER]:'forged'}});
+   await fetcher('https://payments.example.test/charge',{headers:{[GREGALE_FLAG_PROPAGATION_HEADER]:'forged'}});
+  });
+  const propagated = calls[0]?.headers.get(GREGALE_FLAG_PROPAGATION_HEADER);
+  assert.ok(propagated);
+  const context = JSON.parse(Buffer.from(propagated,'base64url').toString('utf8')) as {customer_id:string;decisions:Array<{flag:string;value:boolean;config_version:number;origin:{app_id:string;environment_id:string}}>;version:number};
+  assert.equal(context.version,1);assert.equal(context.customer_id,customer);
+  assert.deepEqual(context.decisions.map(decision=>decision.flag),['export']);
+  assert.equal(context.decisions[0]?.value,true);assert.equal(context.decisions[0]?.config_version,1);
+  assert.equal(context.decisions[0]?.origin.app_id,process.env.FAAS_APP_ID);
+  assert.equal(context.decisions[0]?.origin.environment_id,customer);
+  assert.equal(calls[1]?.headers.has(GREGALE_FLAG_PROPAGATION_HEADER),false);
+ } finally {
+  flags.close();
+  if(priorAppID===undefined) delete process.env.FAAS_APP_ID; else process.env.FAAS_APP_ID=priorAppID;
+ }
+});
+
+test('propagated decisions override downstream config and retain their origin', async () => {
+ const originApp='00000000-0000-0000-0000-000000000002';
+ const originEnvironment='00000000-0000-0000-0000-000000000003';
+ const downstream: FlagsBundle = {...variants(),version:99,flags:[
+  {key:'export',enabled:false,default:false,seed:'downstream',rules:[]},
+  {key:'checkout',type:'variant',enabled:true,default:'control',seed:'downstream',variants:[{key:'control',weight:5000},{key:'treatment',weight:5000}],rules:[{id:'local',rollout:10000}]},
+ ]};
+ const context=Buffer.from(JSON.stringify({version:1,customer_id:customer,decisions:[
+  {flag:'export',value:true,config_version:7,rule_id:'selected',reason:'rule_match',source:'configuration',origin:{app_id:originApp,environment_id:originEnvironment}},
+  {flag:'checkout',type:'variant',value:'treatment',config_version:8,rule_id:'variant-rule',reason:'rule_match',source:'configuration',origin:{app_id:originApp,environment_id:originEnvironment}},
+ ]})).toString('base64url');
+ const flags=new GregaleFlags({apiURL:'https://api.example.com',identityEndpoint:'http://127.0.0.1/token',fetch:async input=>new Response(JSON.stringify(String(input).includes('127.0.0.1')?{access_token:'token'}:downstream))});
+ await flags.refresh();
+ await flags.runRequest({'X-Faas-Platform-Tenant-Id':customer,[GREGALE_FLAG_PROPAGATION_HEADER]:context},()=>{
+  const boolean=flags.boolean('export',false);flags.used('export');
+  assert.equal(boolean.value,true);assert.equal(boolean.source,'inherited');assert.equal(boolean.config_version,7);
+  assert.deepEqual(boolean.inherited_from,{app_id:originApp,environment_id:originEnvironment});
+  const variant=flags.variant('checkout','control');flags.used('checkout');
+  assert.equal(variant.value,'treatment');assert.equal(variant.source,'inherited');assert.equal(variant.config_version,8);
+  assert.deepEqual(variant.inherited_from,{app_id:originApp,environment_id:originEnvironment});
+  assert.equal(flags.evidence().length,2);
+ });
+ flags.close();
+});
+
+test('a customer mismatch disables inherited flag context', async () => {
+ const originApp='00000000-0000-0000-0000-000000000002';
+ const context=Buffer.from(JSON.stringify({version:1,customer_id:customer,decisions:[
+  {flag:'export',value:true,config_version:7,reason:'default',source:'configuration',origin:{app_id:originApp,environment_id:customer}},
+ ]})).toString('base64url');
+ const flags=new GregaleFlags({apiURL:'https://api.example.com',identityEndpoint:'http://127.0.0.1/token',fetch:async input=>new Response(JSON.stringify(String(input).includes('127.0.0.1')?{access_token:'token'}:bundle()))});
+ await flags.refresh();
+ await flags.runRequest({'X-Faas-Platform-Tenant-Id':'00000000-0000-0000-0000-000000000004',[GREGALE_FLAG_PROPAGATION_HEADER]:context},()=>{
+  const decision=flags.boolean('export',false);
+  assert.equal(decision.value,false);assert.equal(decision.source,'configuration');
+ });
  flags.close();
 });
