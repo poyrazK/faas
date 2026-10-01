@@ -33091,6 +33091,7 @@ components:
         work_decision: { $ref: '#/components/schemas/WorkDecision' }
         outcome_code: { type: string, maxLength: 64, pattern: '^[a-z0-9_.-]*$' }
         blocking_occurrence_id: { type: string, format: uuid }
+        exclusive_operation_id: { type: string, format: uuid }
         job_run_id: { type: string, format: uuid }
         invocation_id: { type: string, format: uuid }
         app_task_id: { type: string, format: uuid }

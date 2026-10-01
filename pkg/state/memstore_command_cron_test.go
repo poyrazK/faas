@@ -1,12 +1,109 @@
 package state
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
+
+func TestMemStoreExclusiveCommandCronAdmissionAndTaskGeneration(t *testing.T) {
+	store, ctx, account, app, _ := memCoverageFixture(t)
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	store.exclusiveNow = func() time.Time { return now }
+	deployment, err := store.CreateDeployment(ctx, Deployment{
+		AppID: app.ID, ImageDigest: "sha256:exclusive-command", Status: DeployLive,
+		Kind: DeploymentKindImage, CreatedAt: now,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+	if err := store.SetDeploymentRootfs(ctx, deployment.ID, "/rootfs/command", "apps/command.ext4", 4096); err != nil {
+		t.Fatalf("SetDeploymentRootfs: %v", err)
+	}
+	cron, err := store.CreateCronWithOptions(ctx, app.ID, "* * * * *", "", true, CronOptions{
+		Command:        []string{"bin/synchronize", "--incremental"},
+		SchedulePolicy: &workpolicy.SchedulePolicy{Version: workpolicy.Version, Overlap: "skip", MissedRuns: "skip"},
+	})
+	if err != nil {
+		t.Fatalf("CreateCronWithOptions: %v", err)
+	}
+	owners := ExclusiveWorkStore(store)
+	if _, err := owners.UpsertExclusiveWorkPolicy(ctx, account.ID, exclusivework.Policy{
+		Name: "crm-sync", Scope: "account", MemberAppIDs: []string{app.ID},
+		Contention: "queue", LeaseSeconds: 5, MaxAttemptSeconds: 60,
+	}); err != nil {
+		t.Fatalf("UpsertExclusiveWorkPolicy: %v", err)
+	}
+	if _, err := store.UpsertExclusiveTriggerBinding(ctx, ExclusiveTriggerBinding{
+		Source: "cron", TriggerID: cron.ID, AccountID: account.ID, PolicyName: "crm-sync",
+		Key: json.RawMessage(`"customer:acme:crm-sync"`),
+	}); err != nil {
+		t.Fatalf("UpsertExclusiveTriggerBinding(command cron): %v", err)
+	}
+	request, _ := json.Marshal(struct {
+		Kind   string `json:"kind"`
+		CronID string `json:"cron_id"`
+	}{Kind: "command_cron", CronID: cron.ID})
+	firedAt := now.Add(time.Minute)
+	admission := ExclusiveAdmission{
+		AccountID: account.ID, AppID: app.ID, PolicyName: "crm-sync",
+		Key: json.RawMessage(`"customer:acme:crm-sync"`), Request: request,
+		IdempotencyKey: "command-cron:" + cron.ID + ":" + firedAt.Format(time.RFC3339Nano),
+	}
+	_, occurrence, created, err := store.CreateScheduledCronAppTaskOccurrence(ctx, cron.ID, nil, firedAt,
+		CronScheduledOccurrenceOptions{ScheduledFor: firedAt, ScheduleRevision: cron.ScheduleRevision, ExclusiveAdmission: &admission})
+	if err != nil || !created || occurrence.Status != "pending" || occurrence.ExclusiveOperationID == "" || occurrence.AppTaskID != "" {
+		t.Fatalf("managed occurrence=%+v created=%t err=%v; want pending operation without an unowned task", occurrence, created, err)
+	}
+	storedCron, err := store.CronByID(ctx, cron.ID)
+	if err != nil || !storedCron.LastFiredAt.Equal(firedAt) {
+		t.Fatalf("cron cursor=%v err=%v; want atomic advance to %v", storedCron.LastFiredAt, err, firedAt)
+	}
+	op, err := owners.ExclusiveOperationByID(ctx, account.ID, occurrence.ExclusiveOperationID)
+	if err != nil || op.State != "pending" {
+		t.Fatalf("operation=%+v err=%v; want admitted pending operation", op, err)
+	}
+	claim, err := owners.ClaimExclusiveOperation(ctx, account.ID, op.ID, "test-command-cron")
+	if err != nil || claim.Generation != 1 {
+		t.Fatalf("ClaimExclusiveOperation=%+v err=%v; want generation 1", claim, err)
+	}
+	firstTask, err := store.CreateExclusiveCommandCronAppTask(ctx, account.ID, app.ID, op.ID, claim.Generation, cron.ID, now)
+	if err != nil || firstTask.ExclusiveOperationID != op.ID || firstTask.ExclusiveGeneration != claim.Generation ||
+		firstTask.OccurrenceID != occurrence.ID || firstTask.ScheduledFor == nil || !firstTask.ScheduledFor.Equal(firedAt) {
+		t.Fatalf("first owned task=%+v err=%v; want generation-fenced occurrence task", firstTask, err)
+	}
+	now = now.Add(6 * time.Second)
+	secondClaim, err := owners.ClaimExclusiveOperation(ctx, account.ID, op.ID, "replacement-command-cron")
+	if err != nil || secondClaim.Generation != 2 {
+		t.Fatalf("replacement claim=%+v err=%v; want generation 2", secondClaim, err)
+	}
+	if _, err := store.CreateExclusiveCommandCronAppTask(ctx, account.ID, app.ID, op.ID, claim.Generation, cron.ID, now); !errors.Is(err, exclusivework.ErrStaleOwner) {
+		t.Fatalf("stale task creation error=%v; want ErrStaleOwner", err)
+	}
+	secondTask, err := store.CreateExclusiveCommandCronAppTask(ctx, account.ID, app.ID, op.ID, secondClaim.Generation, cron.ID, now)
+	if err != nil || secondTask.ExclusiveGeneration != 2 || secondTask.OccurrenceID != occurrence.ID {
+		t.Fatalf("replacement task=%+v err=%v; want the newer generation on the same occurrence", secondTask, err)
+	}
+	history, err := store.ScheduleOccurrenceListByCron(ctx, cron.ID, 10, "")
+	if err != nil || len(history) != 1 || history[0].AppTaskID != secondTask.ID || history[0].ExclusiveOperationID != op.ID {
+		t.Fatalf("occurrence history=%+v err=%v; want latest fenced task and operation link", history, err)
+	}
+
+	// The cron's legacy overlap=skip setting must not bypass a managed queue
+	// policy when the active task already belongs to the same exclusive lane.
+	nextScheduledFor := firedAt.Add(time.Minute)
+	nextAdmission := admission
+	nextAdmission.IdempotencyKey = "command-cron:" + cron.ID + ":" + nextScheduledFor.Format(time.RFC3339Nano)
+	_, nextOccurrence, nextCreated, err := store.CreateScheduledCronAppTaskOccurrence(ctx, cron.ID, &firedAt, nextScheduledFor,
+		CronScheduledOccurrenceOptions{ScheduledFor: nextScheduledFor, ScheduleRevision: cron.ScheduleRevision, ExclusiveAdmission: &nextAdmission})
+	if err != nil || !nextCreated || nextOccurrence.Status != "pending" || nextOccurrence.ExclusiveOperationID == "" || nextOccurrence.ExclusiveOperationID == op.ID {
+		t.Fatalf("next managed occurrence=%+v created=%t err=%v; want a queued operation despite active same-cron task", nextOccurrence, nextCreated, err)
+	}
+}
 
 // adr: 099 — scheduled commands select the current live deployment once per fire.
 func TestMemStoreScheduledCommandCronUsesCurrentLiveDeploymentOnce(t *testing.T) {
