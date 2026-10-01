@@ -1,4 +1,4 @@
-# ADR-387 · Image healthcheck nanosecond timing
+# ADR-414 · Image healthcheck nanosecond timing
 
 - **Status:** accepted
 - **Date:** 2026-09-30

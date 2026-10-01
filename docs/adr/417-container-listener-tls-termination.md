@@ -1,4 +1,4 @@
-# ADR-390 · TLS termination for container TCP listeners
+# ADR-417 · TLS termination for container TCP listeners
 
 - **Status:** proposed; implemented locally, native qualification incomplete
 - **Date:** 2026-09-30

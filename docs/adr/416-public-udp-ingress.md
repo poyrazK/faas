@@ -1,4 +1,4 @@
-# ADR-389 · Public UDP ingress
+# ADR-416 · Public UDP ingress
 
 - **Status:** proposed
 - **Date:** 2026-09-30
@@ -199,7 +199,7 @@ routing recovery after maintenance is cleared. Established sessions retain their
 normal bounded lifetime; disable the listener to cancel them immediately.
 
 New UDP peer sessions now select a live deployment by persisted traffic weight
-under [ADR-391](391-raw-ingress-deployment-traffic.md). A session remains pinned
+under [ADR-418](418-raw-ingress-deployment-traffic.md). A session remains pinned
 to that deployment's instance; subsequent datagrams do not draw another bucket.
 Cold admission names the chosen deployment rather than silently using the newest
 row or another warm instance.

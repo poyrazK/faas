@@ -1,4 +1,4 @@
-# ADR-388 · Companion aggregate VM memory
+# ADR-415 · Companion aggregate VM memory
 
 - **Status:** accepted
 - **Date:** 2026-09-30
