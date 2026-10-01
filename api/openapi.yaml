@@ -24248,7 +24248,13 @@ components:
         reason: { type: string, enum: [flag_missing, default, disabled, customer_missing, rule_match, configuration_stale, type_mismatch] }
         bucket: { type: integer, minimum: 0, maximum: 9999, description: Boolean rollout bucket or weighted variant assignment bucket. }
         rollout_bucket: { type: integer, minimum: 0, maximum: 9999, description: Eligibility bucket for rollout-gated variant rules. }
-        source: { type: string, enum: [configuration, fallback] }
+        source: { type: string, enum: [configuration, fallback, inherited] }
+        inherited_from:
+          type: object
+          required: [app_id, environment_id]
+          properties:
+            app_id: { type: string, format: uuid }
+            environment_id: { type: string, format: uuid }
     FlagEvidence:
       description: Application-reported evaluation and exposure, attributed by the gateway.
       allOf:
