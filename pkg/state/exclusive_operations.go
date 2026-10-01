@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
+	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
@@ -644,7 +645,7 @@ func commitExclusive(ctx context.Context, atomic exclusiveAtomic, claim exclusiv
 
 func finishExclusiveFailure(ctx context.Context, atomic exclusiveAtomic, claim exclusivework.Claim, reason string, retry bool) error {
 	if len(reason) > api.MaxExclusiveErrorBytes {
-		reason = reason[:api.MaxExclusiveErrorBytes]
+		reason = safetext.Truncate(reason, api.MaxExclusiveErrorBytes)
 	}
 	return atomic(ctx, func(tx exclusiveTransaction) error {
 		op, now, err := validateExclusiveOwner(tx, claim)
@@ -667,7 +668,7 @@ func retryExclusive(ctx context.Context, atomic exclusiveAtomic, claim exclusive
 
 func failPendingExclusive(ctx context.Context, atomic exclusiveAtomic, account, id, reason string) error {
 	if len(reason) > api.MaxExclusiveErrorBytes {
-		reason = reason[:api.MaxExclusiveErrorBytes]
+		reason = safetext.Truncate(reason, api.MaxExclusiveErrorBytes)
 	}
 	return atomic(ctx, func(tx exclusiveTransaction) error {
 		if err := tx.lockAccount(account); err != nil {
@@ -694,7 +695,7 @@ func failPendingExclusive(ctx context.Context, atomic exclusiveAtomic, account, 
 
 func deferPendingExclusive(ctx context.Context, atomic exclusiveAtomic, account, id, reason string) error {
 	if len(reason) > api.MaxExclusiveErrorBytes {
-		reason = reason[:api.MaxExclusiveErrorBytes]
+		reason = safetext.Truncate(reason, api.MaxExclusiveErrorBytes)
 	}
 	return atomic(ctx, func(tx exclusiveTransaction) error {
 		if err := tx.lockAccount(account); err != nil {
