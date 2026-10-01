@@ -4341,12 +4341,14 @@ func (s placementSnapshot) choose(r Request) (Placement, error) {
 
 func (e *Engine) loadPlacementSnapshot(ctx context.Context, r Request) (placementSnapshot, error) {
 	var app state.App
+	requiredRegion := r.RequiredRegion // jobs carry immutable definition intent
 	if r.AppID != "" {
 		var err error
 		app, err = e.store.AppByID(ctx, r.AppID)
 		if err != nil {
 			return placementSnapshot{}, fmt.Errorf("sched: placement: read app region: %w", err)
 		}
+		requiredRegion = app.ComputeRegion
 	}
 	// Phase 2 / Gate A: authorize the app against this schedd's owner and
 	// prefer that node for locality. Capacity remains fleet-wide: a saturated
@@ -4385,7 +4387,7 @@ func (e *Engine) loadPlacementSnapshot(ctx context.Context, r Request) (placemen
 	}
 	eligibleRegionalNodes := 0
 	for _, node := range nodes {
-		if app.ComputeRegion != "" && state.ComputeRegionAllowsNode(app.ComputeRegion, node) && state.ComputeNodePlacementEligible(node) {
+		if requiredRegion != "" && state.ComputeRegionAllowsNode(requiredRegion, node) && state.ComputeNodePlacementEligible(node) {
 			eligibleRegionalNodes++
 		}
 	}
@@ -4418,7 +4420,7 @@ func (e *Engine) loadPlacementSnapshot(ctx context.Context, r Request) (placemen
 		usedVCPU[n.ID] = int64(e.ledger.UsedVCPUForNode(n.ID))
 	}
 	return placementSnapshot{
-		requiredRegion: app.ComputeRegion, eligibleRegionalNodes: eligibleRegionalNodes, nodes: nodes, usedMB: usedMB, usedVCPU: usedVCPU,
+		requiredRegion: requiredRegion, eligibleRegionalNodes: eligibleRegionalNodes, nodes: nodes, usedMB: usedMB, usedVCPU: usedVCPU,
 		usedCPUMillicores: usedCPUMillicores,
 	}, nil
 }

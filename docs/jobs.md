@@ -37,6 +37,18 @@ The first execution on a compute node can take longer while that artifact
 fills its local cache. Job tasks use their own timeout and lease reaper during
 this phase; the shorter HTTP-app cold-boot watchdog does not apply.
 
+On fleets with regional compute enabled, add `--region REGION` when creating
+a job to keep every task, scheduled run, retry, and linked replay inside that
+compute region. Use `gregale regions` to discover registered choices and
+`gregale jobs info NAME` to inspect placement. The choice is immutable; create
+a new job to relocate it. Existing jobs without a choice retain unconstrained
+placement. A regional capacity shortage or outage leaves tasks queued without
+running them elsewhere; flexible start windows and deadlines still apply.
+Pausing the region's `accepting_new_apps` policy blocks new regional job
+definitions while existing definitions remain usable. This feature is internal
+pending native fleet qualification; compute placement does not imply regional
+storage or control-plane independence. See [ADR-427](adr/427-regional-managed-jobs.md).
+
 ```bash
 gregale jobs add nightly --image registry.example/nightly@sha256:DIGEST --timeout 900 --retries 2
 gregale jobs run nightly --tasks 10 --parallelism 3

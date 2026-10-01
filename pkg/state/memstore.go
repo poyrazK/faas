@@ -5341,7 +5341,7 @@ func (m *MemStore) MigrateInstanceOwner(_ context.Context, instanceID, fromNodeI
 	// 'running' does), so the ceiling applies to the transfer exactly as it
 	// does to an admission. m.mu is held, which is what makes the
 	// check-then-move atomic here.
-	if err := m.checkComputeRegionLocked(m.apps[ins.AppID], toNodeID); err != nil {
+	if err := m.checkInstanceComputeRegionLocked(ins, toNodeID); err != nil {
 		return err
 	}
 	if err := m.checkNodeReservationLocked(toNodeID, string(StateRunning), ins.RAMMB); err != nil {
@@ -13589,6 +13589,9 @@ func (m *MemStore) CreateJobInstance(_ context.Context, instanceID, jobID, runID
 	defer m.mu.Unlock()
 	if _, ok := m.jobs[jobID]; !ok {
 		return Instance{}, ErrNotFound
+	}
+	if err := m.checkJobComputeRegionLocked(m.jobs[jobID], nodeID); err != nil {
+		return Instance{}, err
 	}
 	if instanceID == "" {
 		instanceID = newID()

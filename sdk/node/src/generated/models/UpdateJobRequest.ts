@@ -8,6 +8,10 @@ import type { SchedulePolicy } from './SchedulePolicy.js';
  * Partial job update. nil pointer fields leave the column untouched.
  */
 export type UpdateJobRequest = {
+  /**
+   * Placement is immutable; only the current value is accepted.
+   */
+  compute_region?: string;
   image_ref?: string;
   command?: Array<string>;
   env_overrides?: Record<string, string>;

@@ -5118,6 +5118,15 @@ ORDER BY version DESC LIMIT 100;
 INSERT INTO feature_flag_versions (account_id, project_id, environment_id, version, config, actor, restored_from)
 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *;
 
+-- name: CreateJobDefinitionWithComputeRegion :one
+INSERT INTO jobs (account_id, kind, name, image_ref, ram_mb, task_timeout_s, max_parallelism, retry_max,
+                  env_overrides, command, cron_schedule, cron_timezone, schedule_policy, failure_rules, compute_region)
+VALUES (sqlc.arg(account_id), sqlc.arg(kind), sqlc.arg(name), sqlc.arg(image_ref), sqlc.arg(ram_mb),
+        sqlc.arg(task_timeout_s), sqlc.arg(max_parallelism), sqlc.arg(retry_max), sqlc.arg(env_overrides),
+        sqlc.arg(command), nullif(sqlc.arg(cron_schedule)::text, ''), sqlc.arg(cron_timezone),
+        sqlc.arg(schedule_policy), sqlc.arg(failure_rules), sqlc.arg(compute_region))
+RETURNING *;
+
 -- name: FeatureFlagCustomerOwned :one
 SELECT EXISTS(SELECT 1 FROM platform_tenants
  WHERE account_id = sqlc.arg(account_id)::uuid AND id = sqlc.arg(tenant_id)::uuid) AS owned;

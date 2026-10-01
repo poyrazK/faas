@@ -22,6 +22,8 @@ T = TypeVar("T", bound="UpdateJobRequest")
 class UpdateJobRequest:
     """Partial job update. nil pointer fields leave the column untouched."""
 
+    compute_region: str | Unset = UNSET
+    """Placement is immutable; only the current value is accepted."""
     image_ref: str | Unset = UNSET
     command: list[str] | Unset = UNSET
     env_overrides: UpdateJobRequestEnvOverrides | Unset = UNSET
@@ -44,6 +46,8 @@ class UpdateJobRequest:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        compute_region = self.compute_region
+
         image_ref = self.image_ref
 
         command: list[str] | Unset = UNSET
@@ -81,6 +85,8 @@ class UpdateJobRequest:
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
+        if compute_region is not UNSET:
+            field_dict["compute_region"] = compute_region
         if image_ref is not UNSET:
             field_dict["image_ref"] = image_ref
         if command is not UNSET:
@@ -115,6 +121,8 @@ class UpdateJobRequest:
         from ..models.update_job_request_env_overrides import UpdateJobRequestEnvOverrides
 
         d = dict(src_dict)
+        compute_region = d.pop("compute_region", UNSET)
+
         image_ref = d.pop("image_ref", UNSET)
 
         command = cast(list[str], d.pop("command", UNSET))
@@ -160,6 +168,7 @@ class UpdateJobRequest:
             failure_rules = FailureRules.from_dict(_failure_rules)
 
         update_job_request = cls(
+            compute_region=compute_region,
             image_ref=image_ref,
             command=command,
             env_overrides=env_overrides,

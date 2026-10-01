@@ -2964,6 +2964,7 @@ BEGIN
     END IF;
     IF EXISTS (SELECT 1 FROM apps WHERE compute_region = OLD.id) OR
        EXISTS (SELECT 1 FROM projects WHERE compute_region = OLD.id) OR
+       EXISTS (SELECT 1 FROM jobs WHERE compute_region = OLD.id) OR
        EXISTS (SELECT 1 FROM compute_nodes WHERE region = OLD.id) THEN
         RAISE EXCEPTION 'compute region is in use' USING ERRCODE = '23514', CONSTRAINT = 'compute_region_in_use';
     END IF;
@@ -7408,7 +7409,13 @@ CREATE TABLE public.jobs (
     cron_schedule text,
     cron_timezone text DEFAULT 'UTC'::text NOT NULL,
     last_scheduled_at timestamp with time zone,
+    schedule_policy jsonb,
+    failure_rules jsonb,
+    schedule_revision bigint DEFAULT 1 NOT NULL,
+    compute_region text DEFAULT ''::text NOT NULL,
     CONSTRAINT jobs_command_min_chk CHECK (((array_length(command, 1) IS NULL) OR ((array_length(command, 1) >= 0) AND (array_length(command, 1) <= 64)))),
+    CONSTRAINT jobs_compute_region_check CHECK (((compute_region = ''::text) OR (((length(compute_region) >= 1) AND (length(compute_region) <= 63)) AND (compute_region ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'::text)))),
+    CONSTRAINT jobs_failure_rules_shape CHECK (((failure_rules IS NULL) OR ((jsonb_typeof(failure_rules) = 'object'::text) AND ((failure_rules ->> 'version'::text) = '1'::text)))),
     CONSTRAINT jobs_image_materialization_attempts_check CHECK ((image_materialization_attempts >= 0)),
     CONSTRAINT jobs_image_materialization_status_check CHECK ((image_materialization_status = ANY (ARRAY['pending'::text, 'verifying_legacy'::text, 'ready'::text, 'failed'::text]))),
     CONSTRAINT jobs_kind_check CHECK ((kind = ANY (ARRAY['batch'::text, 'recurring'::text]))),
@@ -7417,6 +7424,8 @@ CREATE TABLE public.jobs (
     CONSTRAINT jobs_ram_mb_check CHECK ((ram_mb > 0)),
     CONSTRAINT jobs_retry_max_check CHECK (((retry_max >= 0) AND (retry_max <= 10))),
     CONSTRAINT jobs_schedule_kind_check CHECK ((((kind = 'batch'::text) AND (cron_schedule IS NULL)) OR ((kind = 'recurring'::text) AND (cron_schedule IS NOT NULL) AND (btrim(cron_schedule) <> ''::text)))),
+    CONSTRAINT jobs_schedule_policy_shape CHECK (((schedule_policy IS NULL) OR ((jsonb_typeof(schedule_policy) = 'object'::text) AND ((schedule_policy ->> 'version'::text) = '1'::text)))),
+    CONSTRAINT jobs_schedule_revision_check CHECK ((schedule_revision >= 1)),
     CONSTRAINT jobs_status_check CHECK ((status = ANY (ARRAY['active'::text, 'paused'::text, 'deleted'::text]))),
     CONSTRAINT jobs_task_timeout_s_check CHECK (((task_timeout_s >= 1) AND (task_timeout_s <= 86400)))
 );
@@ -24079,3 +24088,101 @@ CREATE TRIGGER apps_compute_region_admission_guard BEFORE INSERT ON apps
 
 CREATE TRIGGER compute_regions_identity_guard BEFORE UPDATE OF id OR DELETE ON compute_regions
     FOR EACH ROW EXECUTE FUNCTION protect_compute_region_identity();
+
+--
+-- Name: enforce_job_compute_region(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enforce_job_compute_region() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE accepting boolean;
+BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        IF NEW.compute_region IS DISTINCT FROM OLD.compute_region THEN
+            RAISE EXCEPTION 'job compute region is immutable' USING ERRCODE = '23514', CONSTRAINT = 'jobs_compute_region_immutable';
+        END IF;
+    ELSIF NEW.compute_region <> '' THEN
+        SELECT accepting_new_apps INTO accepting FROM compute_regions WHERE id = NEW.compute_region FOR SHARE;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'unknown compute region' USING ERRCODE = '23514', CONSTRAINT = 'compute_region_unknown', DETAIL = NEW.compute_region;
+        END IF;
+        IF NOT accepting THEN
+            RAISE EXCEPTION 'compute region admission paused' USING ERRCODE = '23514', CONSTRAINT = 'compute_region_admission_paused', DETAIL = NEW.compute_region;
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+
+--
+-- Name: enforce_job_instance_compute_region(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enforce_job_instance_compute_region() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE required_region text; node_region text;
+BEGIN
+    SELECT compute_region INTO required_region FROM jobs WHERE id = NEW.job_id;
+    IF coalesce(required_region, '') <> '' THEN
+        SELECT region INTO node_region FROM compute_nodes WHERE id = NEW.node_id FOR SHARE;
+        IF node_region IS DISTINCT FROM required_region THEN
+            RAISE EXCEPTION 'job instance is outside selected compute region' USING ERRCODE = '23514', CONSTRAINT = 'instances_compute_region';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+
+--
+-- Name: enforce_bound_job_node_region(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enforce_bound_job_node_region() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.region IS DISTINCT FROM OLD.region AND
+       EXISTS (SELECT 1 FROM jobs WHERE compute_region = OLD.region AND compute_region <> '') THEN
+        RAISE EXCEPTION 'node region is in use by region-bound jobs' USING ERRCODE = '23514', CONSTRAINT = 'compute_nodes_region_in_use';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+
+--
+-- Name: jobs jobs_compute_region_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER jobs_compute_region_guard BEFORE INSERT OR UPDATE OF compute_region ON public.jobs FOR EACH ROW EXECUTE FUNCTION public.enforce_job_compute_region();
+
+
+
+--
+-- Name: instances instances_job_compute_region_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER instances_job_compute_region_guard BEFORE INSERT OR UPDATE OF job_id, node_id ON public.instances FOR EACH ROW EXECUTE FUNCTION public.enforce_job_instance_compute_region();
+
+
+
+--
+-- Name: compute_nodes compute_nodes_bound_job_region_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER compute_nodes_bound_job_region_guard BEFORE UPDATE OF region ON public.compute_nodes FOR EACH ROW EXECUTE FUNCTION public.enforce_bound_job_node_region();
+
+
+
+--
+-- Name: jobs_compute_region_in_use_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX jobs_compute_region_in_use_idx ON public.jobs USING btree (compute_region) WHERE (compute_region <> ''::text);

@@ -864,6 +864,7 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List jobs in this account"},
 			{Name: "add", Short: "Create a new job", Flags: []cliFlag{
+				{Name: "region", Value: "REGION", Short: "immutable compute region for every task and retry"},
 				{Name: "image", Value: "REF", Short: "OCI image (required)", Req: true},
 				{Name: "schedule", Value: "EXPR", Short: "recurring five-field cron schedule"},
 				{Name: "timezone", Value: "TZ", Short: "IANA timezone for the recurring schedule"},

@@ -2225,6 +2225,10 @@ type Job struct {
 	CronSchedule                      pgtype.Text
 	CronTimezone                      string
 	LastScheduledAt                   pgtype.Timestamptz
+	SchedulePolicy                    []byte
+	FailureRules                      []byte
+	ScheduleRevision                  int64
+	ComputeRegion                     string
 }
 
 type JobRegistryCredential struct {

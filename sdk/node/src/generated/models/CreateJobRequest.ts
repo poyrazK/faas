@@ -8,6 +8,10 @@ import type { SchedulePolicy } from './SchedulePolicy.js';
  * Job creation payload — name + image + command + caps; schedule enables recurring runs.
  */
 export type CreateJobRequest = {
+  /**
+   * Immutable compute region for every task, retry, and replay. Empty preserves legacy unconstrained placement.
+   */
+  compute_region?: string;
   name: string;
   kind?: 'batch' | 'recurring';
   /**

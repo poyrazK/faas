@@ -167,6 +167,7 @@ func cmdJobsAdd(args []string) int {
 		return 1
 	}
 	fs := newFlagSet("jobs-add", flag.ContinueOnError)
+	computeRegion := fs.String("region", "", "immutable compute region for every task and retry")
 	image := fs.String("image", "", "OCI image name[:tag | @digest] (required)")
 	command := fs.String("command", "", "comma-separated entrypoint (e.g. /bin/sh,-c,echo hi)")
 	ram := fs.Int("ram", 0, "billable memory in MB (0 = plan default)")
@@ -184,11 +185,17 @@ func cmdJobsAdd(args []string) int {
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
+	regionExplicit := false
+	fs.Visit(func(f *flag.Flag) { regionExplicit = regionExplicit || f.Name == "region" })
+	if regionExplicit && (*computeRegion == "" || !api.ValidComputeRegion(*computeRegion)) {
+		return printErr("Invalid --region", fmt.Errorf("use a canonical region from gregale regions list"))
+	}
 	if *image == "" {
 		PrintUsage(os.Stderr, "usage: gregale jobs add <name> --image REF [--schedule EXPR [--timezone TZ]] [--command A,B,C] [--ram N] [--timeout S] [--parallelism N] [--retries N] [--env K=V ...]", "jobs")
 		return 1
 	}
 	req := api.CreateJobRequest{
+		ComputeRegion:  *computeRegion,
 		Name:           name,
 		Kind:           "batch",
 		Schedule:       *schedule,
@@ -892,6 +899,9 @@ func renderJobsTable(w io.Writer, jobs []api.JobResponse) {
 // job. Mirrors the renderCronState (commands2.go:1852) shape.
 func renderJobState(w io.Writer, j api.JobResponse) {
 	_, _ = fmt.Fprintf(w, "  %-10s %s\n", "name:", j.Name)
+	if j.ComputeRegion != "" {
+		_, _ = fmt.Fprintf(w, "  %-10s %s\n", "region:", j.ComputeRegion)
+	}
 	if j.Schedule != "" {
 		_, _ = fmt.Fprintf(w, "  %-10s %s (%s)\n", "schedule:", j.Schedule, j.Timezone)
 		if j.LastScheduledAt != "" {

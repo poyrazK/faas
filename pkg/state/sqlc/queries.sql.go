@@ -1702,6 +1702,88 @@ func (q *Queries) CreateInstance(ctx context.Context, db DBTX, arg CreateInstanc
 	return i, err
 }
 
+const createJobDefinitionWithComputeRegion = `-- name: CreateJobDefinitionWithComputeRegion :one
+INSERT INTO jobs (account_id, kind, name, image_ref, ram_mb, task_timeout_s, max_parallelism, retry_max,
+                  env_overrides, command, cron_schedule, cron_timezone, schedule_policy, failure_rules, compute_region)
+VALUES ($1, $2, $3, $4, $5,
+        $6, $7, $8, $9,
+        $10, nullif($11::text, ''), $12,
+        $13, $14, $15)
+RETURNING id, account_id, kind, name, image_ref, ram_mb, task_timeout_s, max_parallelism, retry_max, env_overrides, status, created_at, updated_at, command, image_resolved_digest, image_storage_key, image_materialization_status, image_materialization_error, image_materialized_at, image_materialization_attempts, image_materialization_next_attempt_at, image_materialization_lease_owner, image_materialization_lease_until, cron_schedule, cron_timezone, last_scheduled_at, schedule_policy, failure_rules, schedule_revision, compute_region
+`
+
+type CreateJobDefinitionWithComputeRegionParams struct {
+	AccountID      pgtype.UUID
+	Kind           string
+	Name           string
+	ImageRef       string
+	RamMb          int32
+	TaskTimeoutS   int32
+	MaxParallelism int32
+	RetryMax       int32
+	EnvOverrides   []byte
+	Command        []string
+	CronSchedule   string
+	CronTimezone   string
+	SchedulePolicy []byte
+	FailureRules   []byte
+	ComputeRegion  string
+}
+
+func (q *Queries) CreateJobDefinitionWithComputeRegion(ctx context.Context, db DBTX, arg CreateJobDefinitionWithComputeRegionParams) (Job, error) {
+	row := db.QueryRow(ctx, createJobDefinitionWithComputeRegion,
+		arg.AccountID,
+		arg.Kind,
+		arg.Name,
+		arg.ImageRef,
+		arg.RamMb,
+		arg.TaskTimeoutS,
+		arg.MaxParallelism,
+		arg.RetryMax,
+		arg.EnvOverrides,
+		arg.Command,
+		arg.CronSchedule,
+		arg.CronTimezone,
+		arg.SchedulePolicy,
+		arg.FailureRules,
+		arg.ComputeRegion,
+	)
+	var i Job
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Kind,
+		&i.Name,
+		&i.ImageRef,
+		&i.RamMb,
+		&i.TaskTimeoutS,
+		&i.MaxParallelism,
+		&i.RetryMax,
+		&i.EnvOverrides,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Command,
+		&i.ImageResolvedDigest,
+		&i.ImageStorageKey,
+		&i.ImageMaterializationStatus,
+		&i.ImageMaterializationError,
+		&i.ImageMaterializedAt,
+		&i.ImageMaterializationAttempts,
+		&i.ImageMaterializationNextAttemptAt,
+		&i.ImageMaterializationLeaseOwner,
+		&i.ImageMaterializationLeaseUntil,
+		&i.CronSchedule,
+		&i.CronTimezone,
+		&i.LastScheduledAt,
+		&i.SchedulePolicy,
+		&i.FailureRules,
+		&i.ScheduleRevision,
+		&i.ComputeRegion,
+	)
+	return i, err
+}
+
 const createOrg = `-- name: CreateOrg :one
 
 insert into orgs (

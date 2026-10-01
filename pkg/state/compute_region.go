@@ -30,6 +30,11 @@ func (m *MemStore) checkNodeRegionChangeLocked(old, next ComputeNode) error {
 			return ErrConflict
 		}
 	}
+	for _, job := range m.jobs {
+		if job.ComputeRegion != "" && job.ComputeRegion == derefString(old.Region) {
+			return ErrConflict
+		}
+	}
 	for _, instance := range m.instances {
 		if instance.NodeID == old.ID && m.apps[instance.AppID].ComputeRegion != "" &&
 			(instance.State == "waking" || instance.State == "cold_booting" || instance.State == "running" ||
@@ -38,4 +43,18 @@ func (m *MemStore) checkNodeRegionChangeLocked(old, next ComputeNode) error {
 		}
 	}
 	return nil
+}
+
+func (m *MemStore) checkJobComputeRegionLocked(job Job, nodeID string) error {
+	if job.ComputeRegion != "" && nodeID == "" {
+		return ErrConflict
+	}
+	return m.checkComputeRegionLocked(App{ComputeRegion: job.ComputeRegion}, nodeID)
+}
+
+func (m *MemStore) checkInstanceComputeRegionLocked(instance Instance, nodeID string) error {
+	if instance.JobID != "" {
+		return m.checkJobComputeRegionLocked(m.jobs[instance.JobID], nodeID)
+	}
+	return m.checkComputeRegionLocked(m.apps[instance.AppID], nodeID)
 }

@@ -127,6 +127,12 @@ func (m *MemStore) JobCreateIfUnderQuota(_ context.Context, accountID, name, kin
 func (m *MemStore) JobCreateScheduledIfUnderQuota(_ context.Context, job Job, limit int) (Job, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if !api.ValidComputeRegion(job.ComputeRegion) {
+		return Job{}, ErrInvalidArgument
+	}
+	if err := m.checkNewAppComputeRegionLocked(App{ComputeRegion: job.ComputeRegion}); err != nil {
+		return Job{}, err
+	}
 	count := 0
 	for _, existing := range m.jobs {
 		if existing.AccountID == job.AccountID && existing.Status != "deleted" {
@@ -142,6 +148,7 @@ func (m *MemStore) JobCreateScheduledIfUnderQuota(_ context.Context, job Job, li
 		return Job{}, err
 	}
 	created.SchedulePolicy = workpolicy.Clone(job.SchedulePolicy)
+	created.ComputeRegion = job.ComputeRegion
 	created.FailureRules = workpolicy.Clone(job.FailureRules)
 	created.ScheduleRevision = 1
 	created.CronSchedule = job.CronSchedule
@@ -1595,6 +1602,9 @@ func (m *MemStore) CreateAndClaimJobInstance(_ context.Context, instanceID, jobI
 	job, ok := m.jobs[jobID]
 	if !ok {
 		return Instance{}, ErrNotFound
+	}
+	if err := m.checkJobComputeRegionLocked(job, computeNodeID); err != nil {
+		return Instance{}, err
 	}
 	run, ok := m.jobRuns[runID]
 	if !ok || run.JobID != jobID || run.AccountID != job.AccountID {

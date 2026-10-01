@@ -1,0 +1,80 @@
+# ADR-427: Regional managed jobs
+
+Date: 2026-10-02
+
+Status: Internal implementation; native fleet qualification pending.
+
+## Context
+
+ADR-424 constrains app execution, and ADR-426 carries placement through project
+deployment. Account-scoped managed Jobs have no app owner. Their dispatcher
+previously selected any admitting compute node, so app placement alone could
+not provide a consistent regional execution contract.
+
+## Decision
+
+Persist immutable `jobs.compute_region`. Empty retains legacy unconstrained
+placement. `gregale jobs add NAME --region REGION` and `CreateJobRequest` select
+placement once when admitting a definition. Job reads and SDKs return the
+persisted choice. PATCH accepts the same region and refuses changes, including
+clearing it, before updating other intent. Create a new job to relocate it.
+
+New regional definitions use the same default-off apid operator gate and
+durable registry admission as apps and projects. The existing
+`accepting_new_apps` policy now also governs new job definitions. It does not
+stop runs, scheduled occurrences, retries, or replays of existing definitions.
+Definition insertion locks registry policy within the account-locked quota
+transaction, so a policy pause racing API preflight cannot admit a new job.
+
+WakeJob loads the definition's immutable region and supplies it to the shared
+capacity chooser. Jobs carry their own placement intent because they have no
+app row. For apps, the persisted app region remains authoritative. Node-local
+scheduler affinity cannot override either placement contract. Lack of regional
+capacity or available nodes leaves a job task queued without consuming a retry
+or creating a VM; the dispatcher may retry when capacity returns.
+
+All runs reference the same immutable job definition. Manual runs, recurring
+occurrences, flexible scheduling, retries after guest failures and node loss,
+and linked replays therefore use the same region without a redundant per-run
+placement snapshot or an override API. Existing flexible start deadlines still
+apply during outages.
+
+PostgreSQL independently checks every job instance insertion and node/job
+assignment against the definition. It serializes placement with node relabeling
+through a shared node-row lock. Every node in a referenced job region retains
+its label, including idle peers and tombstoned definitions. Registry deletion
+and down migration refuse to discard job placement constraints. MemStore
+mirrors admission, instance placement, and node-label guards.
+
+## Boundaries
+
+This constrains compute execution in the shared fleet. Image artifacts, job
+inputs/results, managed objects, billing and the control plane retain their
+existing storage and routing topology. Compute-region selection does not
+promise regional data residency or independence from control-plane outages.
+Project app.yaml jobs remain app workloads under ADR-426; account-scoped
+managed Jobs use this definition contract.
+
+## Validation and rollout
+
+Apply the migration and upgrade apid, schedd, and SDK/CLI clients. Retain the
+default-off admission gate until native Linux x86_64/KVM qualification. Do not
+run old schedulers against regional jobs: database guards refuse misplaced
+instances, but an old scheduler cannot select the eligible regional peer.
+
+Portable tests cover API admission and immutable updates, a pause racing job
+insertion, region selection despite local affinity, regional capacity/outage
+refusal, retry fencing, and legacy placement. PostgreSQL tests cover definition
+persistence, direct SQL bypasses, idle-node relabeling, atomic claim rollback,
+and paused admission. SDK and CLI tests verify region transport and display.
+
+Native acceptance must execute a digest-pinned image on the selected region,
+lose a worker and retry on an in-region peer, then lose every worker in the
+region and verify no task instance or boot RPC reaches a remote worker. Inspect
+every `instances.job_id` placement against `jobs.compute_region`, run the
+affected `test-metal` suite and `leakcheck`, and retain fleet evidence before
+promoting this capability. That qualification remains pending.
+
+Independent regional control planes, artifact/data boundaries, geographic
+ingress, and a global identity with multiple regional targets remain further
+work in the end-to-end multi-region goal.

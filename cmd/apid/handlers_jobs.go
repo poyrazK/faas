@@ -48,6 +48,7 @@ import (
 // API).
 func jobResponse(j state.Job) api.JobResponse {
 	resp := api.JobResponse{
+		ComputeRegion:  j.ComputeRegion,
 		SchedulePolicy: j.SchedulePolicy, FailureRules: j.FailureRules,
 		ID:                         j.ID,
 		AccountID:                  j.AccountID,
@@ -801,6 +802,7 @@ func (s *server) buildJob(acct state.Account, req api.CreateJobRequest) (state.J
 		return state.Job{}, prob
 	}
 	return state.Job{
+		ComputeRegion:  req.ComputeRegion,
 		SchedulePolicy: req.SchedulePolicy, FailureRules: req.FailureRules,
 		AccountID:      acct.ID,
 		Name:           req.Name,
@@ -849,13 +851,17 @@ func (s *server) createJob(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, prob)
 		return
 	}
+	if prob := s.validateComputeRegionAvailable(r.Context(), job.ComputeRegion); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	limit := api.JobMaxPerAccount[acct.Plan.PlanIndex()]
 	var created state.Job
 	var err error
-	if job.CronSchedule != "" || job.SchedulePolicy != nil || job.FailureRules != nil {
+	if job.ComputeRegion != "" || job.CronSchedule != "" || job.SchedulePolicy != nil || job.FailureRules != nil {
 		creator, ok := s.store.(state.JobScheduleCreateStore)
 		if !ok {
-			api.WriteProblem(w, api.ErrCapacity("scheduled jobs are unavailable"))
+			api.WriteProblem(w, api.ErrCapacity("job definition admission is unavailable"))
 			return
 		}
 		created, err = creator.JobCreateScheduledIfUnderQuota(r.Context(), job, limit)
@@ -893,6 +899,10 @@ func (s *server) createJob(w http.ResponseWriter, r *http.Request, acct state.Ac
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
 				"Name taken", fmt.Sprintf("job name %q is already in use", job.Name)))
 		default:
+			if problem := api.AsProblem(err); problem != nil {
+				api.WriteProblem(w, problem)
+				return
+			}
 			s.log.Error("create job: insert failed", "account", acct.ID, "err", err)
 			api.WriteProblem(w, api.ErrCapacity("could not create job"))
 		}
@@ -935,6 +945,18 @@ func (s *server) updateJob(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if !ok {
 		s.notFound(w, "no such job")
 		return
+	}
+	if req.ComputeRegion != nil {
+		if !api.ValidComputeRegion(*req.ComputeRegion) {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid compute region", "compute_region must be canonical"))
+			return
+		}
+		if *req.ComputeRegion != j.ComputeRegion {
+			prob := api.NewProblem(http.StatusConflict, api.CodeConflict, "Immutable job compute region", "create a new job to select a different compute region")
+			prob.ComputeRegion = *req.ComputeRegion
+			api.WriteProblem(w, prob)
+			return
+		}
 	}
 	// Re-clamp RAM / task_timeout / parallelism / retry against
 	// the plan caps so a downgrade + PATCH can't escalate a

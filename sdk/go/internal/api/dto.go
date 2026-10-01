@@ -2249,6 +2249,7 @@ type TriggerMetricsResponse struct {
 
 // CreateJobRequest is the body of POST /v1/jobs.
 type CreateJobRequest struct {
+	ComputeRegion  string            `json:"compute_region,omitempty"`
 	SchedulePolicy *SchedulePolicy   `json:"schedule_policy,omitempty"`
 	FailureRules   *FailureRules     `json:"failure_rules,omitempty"`
 	Name           string            `json:"name"`
@@ -2266,6 +2267,7 @@ type CreateJobRequest struct {
 
 // UpdateJobRequest is the body of PATCH /v1/jobs/{name}.
 type UpdateJobRequest struct {
+	ComputeRegion  *string           `json:"compute_region,omitempty"`
 	SchedulePolicy *SchedulePolicy   `json:"schedule_policy,omitempty"`
 	FailureRules   *FailureRules     `json:"failure_rules,omitempty"`
 	ImageRef       *string           `json:"image_ref,omitempty"`
@@ -2305,6 +2307,7 @@ type JobRunInput struct {
 
 // JobResponse is the wire projection of state.Job.
 type JobResponse struct {
+	ComputeRegion   string            `json:"compute_region,omitempty"`
 	SchedulePolicy  *SchedulePolicy   `json:"schedule_policy,omitempty"`
 	FailureRules    *FailureRules     `json:"failure_rules,omitempty"`
 	ID              string            `json:"id"`

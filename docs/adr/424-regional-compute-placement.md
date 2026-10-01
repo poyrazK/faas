@@ -139,7 +139,7 @@ purging those apps requires a separate deliberate migration or cleanup.
 ## Follow-on milestones
 
 ADR-425 adds the durable region registry, new-app admission policy, and
-availability diagnostics. Next, regionalize project plans and managed jobs. Build independent regional control
+availability diagnostics. ADR-426 and ADR-427 regionalize project plans and managed jobs. Build independent regional control
 planes and storage boundaries before promising regional fault isolation or
 residency. A later multi-target app model can attach per-region deployments,
 capacity and health to a global identity, followed by explicit ingress routing

@@ -25,6 +25,8 @@ class CreateJobRequest:
     name: str
     image_ref: str
     command: list[str]
+    compute_region: str | Unset = UNSET
+    """Immutable compute region for every task, retry, and replay. Empty preserves legacy unconstrained placement."""
     kind: CreateJobRequestKind | Unset = "batch"
     schedule: str | Unset = UNSET
     """Optional five-field cron expression. When present, the job becomes recurring and schedd creates one single-
@@ -51,6 +53,8 @@ class CreateJobRequest:
         image_ref = self.image_ref
 
         command = self.command
+
+        compute_region = self.compute_region
 
         kind: str | Unset = UNSET
         if not isinstance(self.kind, Unset):
@@ -89,6 +93,8 @@ class CreateJobRequest:
                 "command": command,
             }
         )
+        if compute_region is not UNSET:
+            field_dict["compute_region"] = compute_region
         if kind is not UNSET:
             field_dict["kind"] = kind
         if schedule is not UNSET:
@@ -124,6 +130,8 @@ class CreateJobRequest:
         image_ref = d.pop("image_ref")
 
         command = cast(list[str], d.pop("command"))
+
+        compute_region = d.pop("compute_region", UNSET)
 
         _kind = d.pop("kind", UNSET)
         kind: CreateJobRequestKind | Unset
@@ -169,6 +177,7 @@ class CreateJobRequest:
             name=name,
             image_ref=image_ref,
             command=command,
+            compute_region=compute_region,
             kind=kind,
             schedule=schedule,
             timezone=timezone,

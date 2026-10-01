@@ -43,6 +43,9 @@ class JobResponse:
     status: JobResponseStatus
     created_at: datetime.datetime
     updated_at: datetime.datetime
+    compute_region: str | Unset = UNSET
+    """Persisted placement of this job definition, applied to all runs and retries. An empty value retains
+    unconstrained placement."""
     schedule: str | Unset = UNSET
     """Recurring five-field cron expression, when configured."""
     timezone: str | Unset = UNSET
@@ -95,6 +98,8 @@ class JobResponse:
 
         updated_at = self.updated_at.isoformat()
 
+        compute_region = self.compute_region
+
         schedule = self.schedule
 
         timezone = self.timezone
@@ -145,6 +150,8 @@ class JobResponse:
                 "updated_at": updated_at,
             }
         )
+        if compute_region is not UNSET:
+            field_dict["compute_region"] = compute_region
         if schedule is not UNSET:
             field_dict["schedule"] = schedule
         if timezone is not UNSET:
@@ -204,6 +211,8 @@ class JobResponse:
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
+
+        compute_region = d.pop("compute_region", UNSET)
 
         schedule = d.pop("schedule", UNSET)
 
@@ -265,6 +274,7 @@ class JobResponse:
             status=status,
             created_at=created_at,
             updated_at=updated_at,
+            compute_region=compute_region,
             schedule=schedule,
             timezone=timezone,
             last_scheduled_at=last_scheduled_at,

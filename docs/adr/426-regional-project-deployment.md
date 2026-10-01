@@ -68,8 +68,9 @@ latency nor regional managed-data placement is promised. Region declarations
 on external image-only Compose managed resources are rejected rather than
 suggesting that Gregale relocates them.
 
-Standalone managed Jobs, independent regional control planes and artifact/data
-stores, geographic ingress, regional fault isolation, and a global app with
+ADR-427 extends the contract to standalone managed Jobs. Independent regional
+control planes and artifact/data stores, geographic ingress, regional fault
+isolation, and a global app with
 multiple regional deployment targets still require further implementation.
 The end-to-end multi-region goal remains incomplete until its runtime and
 operational acceptance evidence is available.

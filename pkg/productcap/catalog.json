@@ -335,7 +335,7 @@
       "id": "regional-compute-placement",
       "name": "Regional compute placement",
       "category": "runtime",
-      "description": "Keep apps, project workloads, recovery, and migration inside their selected compute regions. The control plane and managed data remain shared.",
+      "description": "Keep apps, project workloads, managed jobs, recovery, and migration inside their selected compute regions. The control plane and managed data remain shared.",
       "maturity": "internal",
       "plans": [],
       "docs_url": "/docs/adr/424-regional-compute-placement",

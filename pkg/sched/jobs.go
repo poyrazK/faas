@@ -159,14 +159,15 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 	}
 	instanceID := uuid.NewString()
 	req := Request{
-		Instance:      instanceID,
-		AppID:         "", // jobs have no appID
-		Plan:          plan,
-		RAMMB:         ramMB,
-		VCPU:          1, // jobs are single-vCPU today (M5); future SxS uses more
-		CPUMillicores: api.DefaultAppCPUMillicores,
-		Kind:          KindJob,
-		Flexible:      run.ExecutionClass == "flexible",
+		RequiredRegion: job.ComputeRegion,
+		Instance:       instanceID,
+		AppID:          "", // jobs have no appID
+		Plan:           plan,
+		RAMMB:          ramMB,
+		VCPU:           1, // jobs are single-vCPU today (M5); future SxS uses more
+		CPUMillicores:  api.DefaultAppCPUMillicores,
+		Kind:           KindJob,
+		Flexible:       run.ExecutionClass == "flexible",
 	}
 	// Jobs submitted to the control-plane fleet scheduler have no app row
 	// whose owner can drive routing. Select an admitting compute node through

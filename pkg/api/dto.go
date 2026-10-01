@@ -11131,6 +11131,7 @@ type RolloutTransitionResponse struct {
 
 // CreateJobRequest is the POST /v1/jobs body.
 type CreateJobRequest struct {
+	ComputeRegion  string                     `json:"compute_region,omitempty"`
 	SchedulePolicy *workpolicy.SchedulePolicy `json:"schedule_policy,omitempty"`
 	FailureRules   *workpolicy.FailureRules   `json:"failure_rules,omitempty"`
 	// Name is the customer slug (jobs.name UNIQUE per
@@ -11186,6 +11187,7 @@ type CreateJobRequest struct {
 // pointers leave the column untouched (mirrors the app PATCH
 // convention; see api.UpdateAppRequest).
 type UpdateJobRequest struct {
+	ComputeRegion  *string                    `json:"compute_region,omitempty"` // only the persisted value is accepted
 	SchedulePolicy *workpolicy.SchedulePolicy `json:"schedule_policy,omitempty"`
 	FailureRules   *workpolicy.FailureRules   `json:"failure_rules,omitempty"`
 	ImageRef       *string                    `json:"image_ref,omitempty"`
@@ -11260,6 +11262,7 @@ type JobRunInput struct {
 // single type. CreatedAt / UpdatedAt are RFC 3339 strings
 // (matches the AppResponse convention).
 type JobResponse struct {
+	ComputeRegion   string                     `json:"compute_region,omitempty"`
 	SchedulePolicy  *workpolicy.SchedulePolicy `json:"schedule_policy,omitempty"`
 	FailureRules    *workpolicy.FailureRules   `json:"failure_rules,omitempty"`
 	ID              string                     `json:"id"`

@@ -1162,6 +1162,7 @@ Create a new job
 
 | Flag | Meaning | |
 |---|---|---|
+| `--region <REGION>` | immutable compute region for every task and retry |  |
 | `--image <REF>` | OCI image (required) | required |
 | `--schedule <EXPR>` | recurring five-field cron schedule |  |
 | `--timezone <TZ>` | IANA timezone for the recurring schedule |  |

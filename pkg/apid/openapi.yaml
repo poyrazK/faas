@@ -3925,14 +3925,16 @@ paths:
       tags: [apps]
       operationId: updateComputeRegion
       summary: Declare compute region policy.
-      description: "Operator-only complete policy update. Requires an allowlisted operator session, fresh MFA step-up, same-origin protection, and an Idempotency-Key. Pausing admission blocks new apps and previews; existing apps retain their region and may wake, recover, migrate within that region, or restore. Does not evict instances."
+      description: "Operator-only complete policy update. Requires an allowlisted operator session, fresh MFA step-up, same-origin protection, and an Idempotency-Key. Pausing admission blocks new apps, previews, projects, and managed job definitions; existing workloads retain their region and may execute or recover within it. Does not evict instances."
       parameters:
         - name: id
           in: path
+          description: Canonical identifier of the compute region whose admission policy is being declared.
           required: true
           schema: { type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$' }
         - name: Idempotency-Key
           in: header
+          description: Replay key for this complete region policy update.
           required: true
           schema: { type: string }
       requestBody:
@@ -33294,6 +33296,7 @@ components:
       type: object
       required: [name, image_ref, command]
       properties:
+        compute_region: { type: string, maxLength: 63, pattern: '^$|^[a-z0-9]([a-z0-9-]*[a-z0-9])?$', description: "Immutable compute region for every task, retry, and replay. Empty preserves legacy unconstrained placement.", example: "eu-fsn" }
         name: { type: string, minLength: 3, maxLength: 40, pattern: '^[a-z0-9][a-z0-9-]*[a-z0-9]$', example: "nightly-export" }
         kind: { type: string, enum: [batch, recurring], default: batch }
         schedule: { type: string, description: "Optional five-field cron expression. When present, the job becomes recurring and schedd creates one single-task run per occurrence.", example: "0 3 * * *" }
@@ -33319,6 +33322,7 @@ components:
       description: "Partial job update. nil pointer fields leave the column untouched."
       type: object
       properties:
+        compute_region: { type: string, maxLength: 63, pattern: '^$|^[a-z0-9]([a-z0-9-]*[a-z0-9])?$', description: "Placement is immutable; only the current value is accepted.", example: "eu-fsn" }
         image_ref: { type: string }
         command:
           type: array
@@ -33391,6 +33395,7 @@ components:
       type: object
       required: [id, account_id, name, kind, image_ref, image_materialization_status, command, ram_mb, task_timeout_sec, max_parallelism, retry_max, status, created_at, updated_at]
       properties:
+        compute_region: { type: string, maxLength: 63, pattern: '^$|^[a-z0-9]([a-z0-9-]*[a-z0-9])?$', description: "Persisted placement of this job definition, applied to all runs and retries. An empty value retains unconstrained placement.", example: "eu-fsn" }
         id: { type: string, format: uuid }
         account_id: { type: string, format: uuid }
         name: { type: string, example: "nightly-export" }

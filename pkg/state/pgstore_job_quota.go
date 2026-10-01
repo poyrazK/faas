@@ -7,6 +7,8 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // JobCreateIfUnderQuota serializes the JobMaxPerAccount check and insert on
@@ -61,11 +63,18 @@ func (s *PgStore) JobCreateIfUnderQuota(ctx context.Context, accountID, name, ki
 // JobCreateScheduledIfUnderQuota persists the recurring definition together
 // with the job while holding the same account lock used for quota admission.
 func (s *PgStore) JobCreateScheduledIfUnderQuota(ctx context.Context, job Job, limit int) (Job, error) {
+	if !api.ValidComputeRegion(job.ComputeRegion) {
+		return Job{}, ErrInvalidArgument
+	}
 	if len(job.EnvOverrides) == 0 {
 		job.EnvOverrides = json.RawMessage("{}")
 	}
 	if job.CronTimezone == "" {
 		job.CronTimezone = "UTC"
+	}
+	params, err := jobDefinitionSQLParams(job)
+	if err != nil {
+		return Job{}, err
 	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -89,18 +98,13 @@ func (s *PgStore) JobCreateScheduledIfUnderQuota(ctx context.Context, job Job, l
 	if count >= limit {
 		return Job{}, &JobQuotaError{Scope: JobQuotaScopePerAccount, Limit: limit, Observed: count}
 	}
-	row := tx.QueryRow(ctx,
-		`insert into jobs (account_id, kind, name, image_ref, ram_mb,
-		                  task_timeout_s, max_parallelism, retry_max,
-		                  env_overrides, command, cron_schedule, cron_timezone, schedule_policy, failure_rules)
-		 values ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, nullif($11, ''), $12, $13::jsonb, $14::jsonb)
-		 returning `+jobSelectCols,
-		job.AccountID, job.Kind, job.Name, job.ImageRef, job.RAMMB,
-		job.TaskTimeoutS, job.MaxParallelism, job.RetryMax,
-		[]byte(job.EnvOverrides), job.Command, job.CronSchedule, job.CronTimezone, policyJSON(job.SchedulePolicy), policyJSON(job.FailureRules))
-	created, err := scanJob(row)
+	record, err := (&sqlc.Queries{}).CreateJobDefinitionWithComputeRegion(ctx, tx, params)
 	if err != nil {
 		return Job{}, mapErr(err)
+	}
+	created, err := jobDefinitionFromSQL(record)
+	if err != nil {
+		return Job{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Job{}, fmt.Errorf("state: commit scheduled job create: %w", err)

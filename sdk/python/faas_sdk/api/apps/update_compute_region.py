@@ -101,9 +101,9 @@ def sync_detailed(
     """Declare compute region policy.
 
      Operator-only complete policy update. Requires an allowlisted operator session, fresh MFA step-up,
-    same-origin protection, and an Idempotency-Key. Pausing admission blocks new apps and previews;
-    existing apps retain their region and may wake, recover, migrate within that region, or restore.
-    Does not evict instances.
+    same-origin protection, and an Idempotency-Key. Pausing admission blocks new apps, previews,
+    projects, and managed job definitions; existing workloads retain their region and may execute or
+    recover within it. Does not evict instances.
 
     Args:
         id (str):
@@ -141,9 +141,9 @@ def sync(
     """Declare compute region policy.
 
      Operator-only complete policy update. Requires an allowlisted operator session, fresh MFA step-up,
-    same-origin protection, and an Idempotency-Key. Pausing admission blocks new apps and previews;
-    existing apps retain their region and may wake, recover, migrate within that region, or restore.
-    Does not evict instances.
+    same-origin protection, and an Idempotency-Key. Pausing admission blocks new apps, previews,
+    projects, and managed job definitions; existing workloads retain their region and may execute or
+    recover within it. Does not evict instances.
 
     Args:
         id (str):
@@ -176,9 +176,9 @@ async def asyncio_detailed(
     """Declare compute region policy.
 
      Operator-only complete policy update. Requires an allowlisted operator session, fresh MFA step-up,
-    same-origin protection, and an Idempotency-Key. Pausing admission blocks new apps and previews;
-    existing apps retain their region and may wake, recover, migrate within that region, or restore.
-    Does not evict instances.
+    same-origin protection, and an Idempotency-Key. Pausing admission blocks new apps, previews,
+    projects, and managed job definitions; existing workloads retain their region and may execute or
+    recover within it. Does not evict instances.
 
     Args:
         id (str):
@@ -214,9 +214,9 @@ async def asyncio(
     """Declare compute region policy.
 
      Operator-only complete policy update. Requires an allowlisted operator session, fresh MFA step-up,
-    same-origin protection, and an Idempotency-Key. Pausing admission blocks new apps and previews;
-    existing apps retain their region and may wake, recover, migrate within that region, or restore.
-    Does not evict instances.
+    same-origin protection, and an Idempotency-Key. Pausing admission blocks new apps, previews,
+    projects, and managed job definitions; existing workloads retain their region and may execute or
+    recover within it. Does not evict instances.
 
     Args:
         id (str):

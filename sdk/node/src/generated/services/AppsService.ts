@@ -98,7 +98,7 @@ export class AppsService {
   }
   /**
    * Declare compute region policy.
-   * Operator-only complete policy update. Requires an allowlisted operator session, fresh MFA step-up, same-origin protection, and an Idempotency-Key. Pausing admission blocks new apps and previews; existing apps retain their region and may wake, recover, migrate within that region, or restore. Does not evict instances.
+   * Operator-only complete policy update. Requires an allowlisted operator session, fresh MFA step-up, same-origin protection, and an Idempotency-Key. Pausing admission blocks new apps, previews, projects, and managed job definitions; existing workloads retain their region and may execute or recover within it. Does not evict instances.
    * @returns ComputeRegionResponse Declared region policy and observed node state.
    * @throws ApiError
    */
@@ -107,7 +107,13 @@ export class AppsService {
     idempotencyKey,
     requestBody,
   }: {
+    /**
+     * Canonical identifier of the compute region whose admission policy is being declared.
+     */
     id: string,
+    /**
+     * Replay key for this complete region policy update.
+     */
     idempotencyKey: string,
     requestBody: UpdateComputeRegionRequest,
   }): CancelablePromise<ComputeRegionResponse> {

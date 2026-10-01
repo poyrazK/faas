@@ -48,6 +48,7 @@ import (
 // All UUID columns are exposed as string to match the Cron precedent
 // (Cron.ID is string; the pgx conversion lives inside PgStore).
 type Job struct {
+	ComputeRegion    string // immutable; empty preserves legacy unconstrained placement
 	SchedulePolicy   *workpolicy.SchedulePolicy
 	FailureRules     *workpolicy.FailureRules
 	ScheduleRevision int64
@@ -100,9 +101,8 @@ type JobScheduleStore interface {
 	JobScheduleAdvanceOccurrence(ctx context.Context, jobID, schedule, timezone string, expectedLastScheduledAt *time.Time, firedAt time.Time) (bool, error)
 }
 
-// JobScheduleCreateStore is the schedule-aware job admission seam. It keeps
-// schedule persistence in the same account-locked transaction as job quota
-// admission and row creation.
+// JobScheduleCreateStore admits complete job definitions, including schedules
+// and compute placement, in the same account-locked quota transaction.
 type JobScheduleCreateStore interface {
 	JobCreateScheduledIfUnderQuota(ctx context.Context, job Job, limit int) (Job, error)
 }

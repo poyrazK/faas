@@ -8,6 +8,10 @@ import type { SchedulePolicy } from './SchedulePolicy.js';
  * Wire projection of state.Job.
  */
 export type JobResponse = {
+  /**
+   * Persisted placement of this job definition, applied to all runs and retries. An empty value retains unconstrained placement.
+   */
+  compute_region?: string;
   id: string;
   account_id: string;
   name: string;

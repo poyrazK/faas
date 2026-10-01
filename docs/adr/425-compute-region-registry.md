@@ -147,5 +147,6 @@ remains in place.
 
 ADR-426 carries region intent through project scan, plan identity tokens,
 apply/reconcile, and environment cloning. Plans expose immutable-region
-conflicts before mutation. Next, extend placement to standalone managed Jobs. Regional control-plane independence, geographic ingress, data residency,
+conflicts before mutation. ADR-427 extends placement to standalone managed Jobs.
+Regional control-plane independence, geographic ingress, data residency,
 and a global app identity with multiple regional deployments remain later work.
