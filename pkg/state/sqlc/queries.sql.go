@@ -8681,6 +8681,56 @@ func (q *Queries) ListTriggersForApp(ctx context.Context, db DBTX, appID pgtype.
 	return items, nil
 }
 
+const liveServiceProxyIdentitiesByHostIP = `-- name: LiveServiceProxyIdentitiesByHostIP :many
+SELECT i.app_id::text AS app_id,
+       COALESCE(CASE WHEN COUNT(DISTINCT i.deployment_id) = 1
+                          AND COUNT(i.deployment_id) = COUNT(*)
+                     THEN MIN(i.deployment_id::text)
+                     ELSE '' END, '')::text AS deployment_id
+FROM instances i
+WHERE i.host_ip = $1::text::inet
+  AND i.state IN ('running', 'draining')
+  AND i.app_id IS NOT NULL
+  AND ($2::text = '' OR EXISTS (
+      SELECT 1 FROM compute_nodes n
+      WHERE n.id = i.node_id AND n.name = $2::text
+  ))
+GROUP BY i.app_id
+LIMIT 2
+`
+
+type LiveServiceProxyIdentitiesByHostIPParams struct {
+	HostIp   string
+	NodeName string
+}
+
+type LiveServiceProxyIdentitiesByHostIPRow struct {
+	AppID        string
+	DeploymentID string
+}
+
+// Collapse deployment overlap before limiting distinct app owners. Two release
+// identities from one app must not hide a different owner of the same source.
+func (q *Queries) LiveServiceProxyIdentitiesByHostIP(ctx context.Context, db DBTX, arg LiveServiceProxyIdentitiesByHostIPParams) ([]LiveServiceProxyIdentitiesByHostIPRow, error) {
+	rows, err := db.Query(ctx, liveServiceProxyIdentitiesByHostIP, arg.HostIp, arg.NodeName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LiveServiceProxyIdentitiesByHostIPRow{}
+	for rows.Next() {
+		var i LiveServiceProxyIdentitiesByHostIPRow
+		if err := rows.Scan(&i.AppID, &i.DeploymentID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockCreditConsumption = `-- name: LockCreditConsumption :exec
 SELECT pg_advisory_xact_lock(hashtextextended('consume-account-credit:' || $1::text, 0))
 `

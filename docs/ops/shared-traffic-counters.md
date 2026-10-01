@@ -126,6 +126,31 @@ These internal calls leave public app/account rate counters untouched. Listener
 binds and guest source addresses are local fixtures; this is not native network,
 DNS, VM, node-admission or cross-host acceptance.
 
+### Guest DNS and managed HTTP caller agreement
+
+The guest DNS listener now uses the same fresh indexed HostIP caller reader as
+managed HTTP, with the configured node name resolved through Postgres. Ordinary
+instance inventory uses node UUIDs and is unsuitable for that name filter;
+source identities must also refresh immediately when a network slot is reused.
+Every identity-dependent DNS query reads current running/draining ownership
+within the existing resolver timeout. Client DNS answer caches retain their TTL.
+
+The SQLC reader groups records by app before limiting to two owners, so two
+releases of one app cannot hide another live app at the same source address.
+Overlapping or missing deployment identity clears the graph identity; a unique
+deployment is returned after overlap resolves. The Postgres regression checks
+both sorted and hash aggregation, same-app overlap and recovery.
+
+`TestTrafficFleetDaemonDNSUsesFreshCallerIdentity` compares the configured UDP,
+TCP and managed HTTP listeners in two real gateway processes. It verifies A and
+AAAA behavior, node-scoped address reuse without a TTL sleep or restart,
+ambiguous ownership, live-state changes, binding removal and source lookup
+outage/recovery. Bound aliases answer authoritatively at the private bridge;
+unknown or unbound aliases use an explicit local upstream. Source lookup errors
+return SERVFAIL without an upstream query. Refused HTTP calls make no forwarding
+RPC. The test supplies source addresses, local binds, DNS upstream answers and
+VM forwarding; native networking and DNS-gated egress remain pending.
+
 Run `go test ./cmd/gatewayd-internal -run '^TestTrafficFleetDaemon'` with an
 unmigrated disposable `DATABASE_URL` and `FAAS_PGTEST_TEMPLATE_DATABASE=1`.
 The test helper itself is guarded when invoked without its subprocess spec.

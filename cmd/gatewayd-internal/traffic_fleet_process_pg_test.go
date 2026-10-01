@@ -32,11 +32,14 @@ type fleetDaemonSpec struct {
 	Database, SearchPath, ConfigPath, NodeID string
 	Apps                                     []fleetDaemonApp
 	Managed                                  bool
+	DNSUpstream                              string
 }
 
 type fleetDaemonReady struct {
 	Endpoint        string
 	ServiceEndpoint string
+	DNSUDP          string
+	DNSTCP          string
 	state.ServingGatewayTrafficRuntime
 }
 
@@ -96,7 +99,11 @@ func TestTrafficFleetDaemonProcess(t *testing.T) {
 	deps.backend, deps.metrics, deps.edgeRulesMatcher, deps.responseCache = backend, metrics, matcher, cache
 	deps.nodeCache = newNodeCache(store, nil, log, metrics)
 	deps.capCheck = func() error { return nil }
+	if spec.DNSUpstream != "" {
+		deps.serviceDNSUpstreams = func() []string { return []string{spec.DNSUpstream} }
+	}
 	serviceEndpoint := make(chan string, 1)
+	dnsUDP, dnsTCP := make(chan string, 1), make(chan string, 1)
 	deps.listen = func(network, address string) (net.Listener, error) {
 		if address == "127.0.0.1:0" {
 			return listener, nil
@@ -106,9 +113,20 @@ func TestTrafficFleetDaemonProcess(t *testing.T) {
 			serviceEndpoint <- "http://" + local.Addr().String()
 			return fleetManagedSourceListener{Listener: local}, nil
 		}
+		if err == nil && address == "10.100.0.1:53" {
+			dnsTCP <- local.Addr().String()
+			return fleetManagedSourceListener{Listener: local}, nil
+		}
 		return local, err
 	}
-	deps.listenPacket = func(network, _ string) (net.PacketConn, error) { return net.ListenPacket(network, "127.0.0.1:0") }
+	deps.listenPacket = func(network, address string) (net.PacketConn, error) {
+		local, err := net.ListenPacket(network, "127.0.0.1:0")
+		if err == nil && address == "10.100.0.1:53" {
+			dnsUDP <- local.LocalAddr().String()
+			return &fleetManagedSourcePacketConn{PacketConn: local, peers: make(map[string]net.Addr)}, nil
+		}
+		return local, err
+	}
 	deps.controlAddr = "127.0.0.1:0"
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -143,6 +161,16 @@ func TestTrafficFleetDaemonProcess(t *testing.T) {
 		case ready.ServiceEndpoint = <-serviceEndpoint:
 		default:
 			t.Fatal("configured managed listener was not constructed")
+		}
+		select {
+		case ready.DNSUDP = <-dnsUDP:
+		default:
+			t.Fatal("configured UDP DNS listener was not constructed")
+		}
+		select {
+		case ready.DNSTCP = <-dnsTCP:
+		default:
+			t.Fatal("configured TCP DNS listener was not constructed")
 		}
 	}
 	if err := json.NewEncoder(os.Stdout).Encode(ready); err != nil {
@@ -193,6 +221,11 @@ func startFleetDaemon(t *testing.T, pool *pgxpool.Pool, apps []fleetDaemonApp, n
 
 func startFleetDaemonMode(t *testing.T, pool *pgxpool.Pool, apps []fleetDaemonApp, nodeID, nodeName, usageSocket string, managed bool) *fleetDaemonProcess {
 	t.Helper()
+	return startFleetDaemonDNS(t, pool, apps, nodeID, nodeName, usageSocket, managed, "")
+}
+
+func startFleetDaemonDNS(t *testing.T, pool *pgxpool.Pool, apps []fleetDaemonApp, nodeID, nodeName, usageSocket string, managed bool, dnsUpstream string) *fleetDaemonProcess {
+	t.Helper()
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "gatewayd.toml")
 	// Omit ratelimit.mode deliberately: LoadConfig's production default must
@@ -205,7 +238,7 @@ func startFleetDaemonMode(t *testing.T, pool *pgxpool.Pool, apps []fleetDaemonAp
 		t.Fatal(err)
 	}
 	spec := fleetDaemonSpec{Database: pool.Config().ConnConfig.Database, SearchPath: pool.Config().ConnConfig.RuntimeParams["search_path"],
-		ConfigPath: configPath, NodeID: nodeID, Apps: apps, Managed: managed}
+		ConfigPath: configPath, NodeID: nodeID, Apps: apps, Managed: managed, DNSUpstream: dnsUpstream}
 	encoded, err := json.Marshal(spec)
 	if err != nil {
 		t.Fatal(err)

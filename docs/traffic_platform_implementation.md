@@ -3,6 +3,75 @@
 Objective: implement the six delivery steps in the 2026-09-29 gap-closure plan.
 Base: `56618879c`; branch: `codex/traffic-platform-gaps`; decision: ADR-375.
 
+## Fresh guest DNS identity and distinct source owners — 2026-10-02
+
+The original DNS caller wiring reproduced a declared `.internal` alias being
+forwarded to an ordinary upstream. Its cached instance inventory carries node
+UUIDs, while the configured filter used the node name. DNS now shares managed
+HTTP's fresh indexed caller reader, scoped by that name. Every identity-dependent
+lookup reads current running/draining ownership within the existing resolver
+budget, without falling back to the inventory cache.
+
+A second Postgres baseline reproduced two releases of one app hiding another
+live app at the same source address under sorted DISTINCT. The SQLC reader now
+groups by app before limiting to two distinct owners. Overlapping or missing
+deployment identity retains only the app identity; unique deployment identity
+recovers after overlap ends. Sorted and hash aggregation are both exercised.
+
+Two real gateway processes exercise their configured UDP/TCP DNS and managed
+HTTP listeners against Postgres. Normal A/AAAA queries use an explicit local
+upstream, and query counts distinguish authoritative private answers, ordinary
+forwarding and SERVFAIL. Exact address reuse is observed without a TTL sleep or
+restart, including a transition on one node while the same address remains
+ambiguous on the other. State changes, binding removal and lookup outage/recovery
+are covered. Refused HTTP requests make no forwarding RPC. Source addresses,
+listener binds, the ordinary DNS upstream and VM forwarding remain local fixtures.
+Client DNS answer caches retain their TTL; HTTP remains authoritative for access.
+
+Verification against the final 12,515-file source freeze:
+
+- All nine complete unit packages pass in 189.888 s. Raw events contain 9,547
+  named passes and 1,440 skips; 46 passed parents with entirely guarded children
+  are excluded: 9,501 named results are accepted and 1,486 are guarded. Accepted
+  package counts are state 2,124, internal gateway 789, scheduler 1,778, gateway
+  2,321, trafficrevocation 33, schedd 85, public gateway 93, API 1,813 and wire 465.
+- The selected Postgres profile passes 153 named results with no skips in
+  103.467 s: 39 results under 22 actual Postgres fixture roots and 114 memory/
+  transport checks. It retains the prior complete profile and adds the DNS
+  daemon matrix and the distinct-owner regression. Guarded parent-only unit
+  passes are not counted as Postgres acceptance.
+- Across both profiles, 9,540 distinct named results are accepted; 1,462 guarded
+  results remain without acceptance. Pinned lint 2.4.0 checks all nine complete
+  packages with tests and reports zero issues in 96.533 s. SQLC 1.31.1 reproduces
+  all four generated files exactly. Runbook SQL, text encoding, shell quoting
+  and ADR uniqueness gates pass in 17.782 s, retaining 71 pre-existing duplicate
+  groups. Only this tracker changes after the final source freeze.
+- Accepted Go/lint gates run serially with CGO disabled, GOMAXPROCS=2, GOGC=50,
+  one package/analysis worker, disabled inlining/DWARF and stripped test binaries.
+  Lint uses its task-owned cache and emits all diagnostics. No new suppressions,
+  source exclusions, overlays or weakened assertions were added. The disposable
+  source database remains unmigrated with all three durability settings enabled.
+
+The fixture type compile diagnostic, rejected multi-question packet and corrected
+normal-query baseline are preserved. The initial complete nine-package gates
+passed before the stronger owner regression was added; their snapshot is retained
+as diagnostic and excluded from final acceptance. The disk-full owner-regression
+build and actual sorted-owner failure are also retained whole. A final launcher
+started before the focused runner's terminal receipt was confirmed and was
+canceled; no result from that launch is accepted. Final gates began after both
+runners had returned terminal results.
+
+After owned heavy processes terminated, cache cleanup removed 91 obsolete
+repository archives totaling 3,122,793,404 bytes, then two obsolete pre-correction
+state test archives totaling 1,189,279,906 bytes and the interrupted launch's
+79,100,987-byte work directory. Exact receipts identify every removed path.
+Sibling caches, processes and Postgres clusters were not changed.
+Evidence: `outputs/traffic-dns-identity-20261002/` relative to the checkout's parent.
+
+All six release requirements remain open. No native Linux x86_64 KVM host is
+available; namespace/NAT/firewall/DNS-gated egress and leak acceptance, complete
+path qualification, deployed load/recovery and staging remain pending.
+
 ## Managed attempt identity and forwarding correlation — 2026-10-01
 
 The unchanged-runtime baseline reproduced managed retries retaining the caller's

@@ -5893,3 +5893,22 @@ WHERE d.id=sqlc.arg(deployment_id)::uuid;
 
 -- name: LockTrafficDeploymentApp :one
 SELECT app_id FROM deployments WHERE id=sqlc.arg(deployment_id)::uuid FOR UPDATE;
+
+-- name: LiveServiceProxyIdentitiesByHostIP :many
+-- Collapse deployment overlap before limiting distinct app owners. Two release
+-- identities from one app must not hide a different owner of the same source.
+SELECT i.app_id::text AS app_id,
+       COALESCE(CASE WHEN COUNT(DISTINCT i.deployment_id) = 1
+                          AND COUNT(i.deployment_id) = COUNT(*)
+                     THEN MIN(i.deployment_id::text)
+                     ELSE '' END, '')::text AS deployment_id
+FROM instances i
+WHERE i.host_ip = sqlc.arg(host_ip)::text::inet
+  AND i.state IN ('running', 'draining')
+  AND i.app_id IS NOT NULL
+  AND (sqlc.arg(node_name)::text = '' OR EXISTS (
+      SELECT 1 FROM compute_nodes n
+      WHERE n.id = i.node_id AND n.name = sqlc.arg(node_name)::text
+  ))
+GROUP BY i.app_id
+LIMIT 2;

@@ -1161,6 +1161,40 @@ RPC/guest identity, shared retry debt and replacement behavior. Guest source
 address and VM endpoints remain explicit local fixtures; native networking,
 node lifecycle, fleet/load and staging acceptance remain separate requirements.
 
+### Follow-up: fresh guest DNS caller identity
+
+The guest DNS and HTTP listeners share the same fresh indexed HostIP identity
+reader, scoped by the configured compute-node name. The ordinary instance
+inventory stores node UUIDs, so filtering that inventory with a configured name
+cannot establish caller ownership. A time-based source cache can also retain a
+previous guest when a network slot is reused. Production DNS must not use that
+inventory cache; each identity-dependent lookup reads current running/draining
+ownership within the existing resolver deadline.
+
+The SQLC source query groups deployment overlap by app before limiting the
+result to two distinct app owners. Two deployments of one app cannot hide a
+third row belonging to another app. An app with multiple or missing deployment
+identities retains only its app identity; a deployment is returned only when
+all eligible records agree. This keeps DNS discoverability scoped to the app
+while release-graph dispatch requires its separate verified deployment identity.
+Postgres checks cover sorted and hash aggregation, overlap and recovery.
+
+Declared `.internal` aliases receive the private bridge answer only for the
+current unambiguous caller and its current bindings. Unknown, ambiguous and
+unbound aliases retain ordinary upstream DNS behavior. A source-store error
+returns SERVFAIL without forwarding the private alias upstream; recovery reads
+current ownership. HTTP independently authenticates the source and authorizes
+the binding before dispatch. Guests may retain a DNS answer until its TTL
+expires, so binding removal remains enforced by HTTP even with a cached answer.
+
+Configured daemon-process tests exercise UDP and TCP DNS alongside managed HTTP
+against Postgres, including different node UUIDs/names, exact address reuse,
+node-scoped transitions, ambiguous ownership, running/draining versus inactive
+states, binding removal and lookup outage/recovery. Source addresses, listener
+binds, an ordinary DNS upstream and VM forwarding are explicit local fixtures.
+These checks do not establish native namespace/NAT/firewall or DNS-gated egress
+acceptance, outer daemon discovery, cross-host transport, deployed load or staging.
+
 The implementation tracker is `docs/traffic_platform_implementation.md`.
 Each guarantee needs configuration-to-runtime tests, cancellation/recovery
 tests and customer documentation. VM lifecycle changes require native x86_64

@@ -887,8 +887,10 @@ func isHandlerErrorResult(body []byte) bool {
 type runDeps struct {
 	listen       func(network, addr string) (net.Listener, error)
 	listenPacket func(network, addr string) (net.PacketConn, error)
-	newSrv       func(addr string, handler http.Handler) *http.Server
-	backend      gateway.Backend
+	// Nil reads the system resolver configuration; tests can supply a local upstream.
+	serviceDNSUpstreams func() []string
+	newSrv              func(addr string, handler http.Handler) *http.Server
+	backend             gateway.Backend
 	// drain (issue #587 / PR-A) is the per-request WaitGroup-backed
 	// drain tracker the graceful-shutdown path waits on. ONE
 	// tracker per daemon, shared by Handler + InternalReverseProxy +
@@ -3533,10 +3535,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		managedCircuitWired = serviceProxyConfig.Breaker != nil
 		controlMux.Handle("/v1/internal/services/", gateway.NewServiceProxy(serviceProxyConfig))
 		if strings.TrimSpace(cfg.ServiceProxyListen) != "" {
-			guestServiceCallerResolver = newServiceProxyCallerResolver(pgStore.ListAllInstances, cfg.NodeName)
-			serviceProxyConfig.ResolveCaller = guestServiceCallerResolver
-			identityResolver := newServiceProxyCallerIdentityResolver(pgStore.ListAllInstances, cfg.NodeName)
+			// DNS and HTTP must use the same fresh source lookup. Ordinary
+			// instance inventory carries node UUIDs rather than cfg.NodeName,
+			// and cached HostIPs can belong to another guest after teardown.
+			identityResolver := newServiceProxyCallerIdentityResolver(nil, cfg.NodeName)
 			identityResolver.lookup = pgStore.LiveInstancesByHostIP
+			guestServiceCallerResolver = identityResolver.Resolve
+			serviceProxyConfig.ResolveCaller = guestServiceCallerResolver
 			serviceProxyConfig.ResolveCallerIdentity = identityResolver.ResolveIdentity
 			guestServiceProxy = gateway.NewServiceProxy(serviceProxyConfig)
 		}
@@ -3776,7 +3781,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if bridgeErr != nil {
 				return fmt.Errorf("gatewayd: service discovery DNS bridge address: %w", bridgeErr)
 			}
-			dnsHandler, dnsErr := gateway.NewServiceDiscoveryDNSHandler(bridgeIP, serviceDiscoveryUpstreams(), log, guestServiceCallerResolver, guestServiceAliasAllowed)
+			upstreams := deps.serviceDNSUpstreams
+			if upstreams == nil {
+				upstreams = serviceDiscoveryUpstreams
+			}
+			dnsHandler, dnsErr := gateway.NewServiceDiscoveryDNSHandler(bridgeIP, upstreams(), log, guestServiceCallerResolver, guestServiceAliasAllowed)
 			if dnsErr != nil {
 				return fmt.Errorf("gatewayd: service discovery DNS: %w", dnsErr)
 			}
