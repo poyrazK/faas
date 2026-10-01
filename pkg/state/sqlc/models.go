@@ -1073,6 +1073,11 @@ type DeploymentOpenapiSnapshot struct {
 	CapturedAt    pgtype.Timestamptz
 }
 
+type DeploymentRuntimeEnvironmentOwner struct {
+	DeploymentID  pgtype.UUID
+	EnvironmentID pgtype.UUID
+}
+
 type DeploymentScopeExclusion struct {
 	ID        pgtype.UUID
 	AccountID pgtype.UUID

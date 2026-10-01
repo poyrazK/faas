@@ -1765,3 +1765,47 @@ API regressions passed in 1.434 seconds and scheduler queue/drain regressions in
 17.119 seconds. Final independent SQLC 1.31.1 regeneration matches checked-in
 output and the whitespace check passes. These are selected local tests; full
 suite, lint and native VM/provider acceptance remain open for the full feature.
+
+### Deployment-scoped live environment reads
+
+The guest metadata environment endpoint derives its deployment, app and account
+from the accepted instance-bound Firecracker stream. Its existing `default`
+request selector means the running deployment's values. It cannot select another
+deployment or environment. Named production, legacy default and stage values
+remain separate row sets, including when a selected row set is empty.
+
+The store reads deployment ownership and plaintext environment values in one
+PostgreSQL statement snapshot (or one MemStore critical section). App deletion,
+failed/cancelled deployments, incompatible project ownership and broken pins
+reject the read. Pinned deployments retain their original environment UUID in
+`deployment_runtime_environment_owners`. This operational marker survives
+environment/spec/pin deletion and cannot be rebound to a recreated environment
+with the same slug. It cascades only when deployment history is removed. The
+migration backfills existing pins and rejects rollback while owners remain.
+Legacy project deployments without pins require an environment that predates
+the deployment; they cannot adopt a later replacement stage.
+
+Live environment reads no longer use an application-wide cache or rely on
+notification delivery for isolation and freshness. Each request revalidates
+ownership and reads the current selected values. An opaque content revision
+includes deployment, scope and environment lifetime and changes when any key
+is removed, including a key older than the latest modification timestamp.
+The framing, request dispatch and secret-reload helpers are shared across build
+targets so their protocol contracts run without KVM; Linux retains the native
+Firecracker listener registration.
+
+This increment covers the plaintext live environment endpoint. Secret lifetime
+fences, boot/restore consumers and native stage queue adapters still require
+integration and acceptance. It does not open public full-clone activation or
+establish a coordinated database/object-data checkpoint.
+
+Verification: the final focused MemStore/PostgreSQL state run passed in 67.386
+seconds, covering scope separation, empty projections, ownership, stage
+deletion/recreation, one-snapshot reads, lost pins, immutable rebinding, migration
+backfill/rollback, deployment-history purge, schema coverage, queue receipts and
+workload clone/promotion regressions. Shared runtime environment and existing
+secret-reload protocol tests passed in 0.787 seconds. Independent SQLC 1.31.1
+regeneration matches checked-in output, and the whitespace check passes. The
+vmmd test binary cross-compiles for native Linux x86_64; it was not executed on
+a KVM host. Full suite, lint, test-metal, leakcheck and VM/provider acceptance
+remain open for the complete feature.

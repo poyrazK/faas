@@ -165,6 +165,8 @@
     "columns": ["app_id", "captured_at", "deployment_id", "schema_version", "scope", "sha256", "snapshot"]},
   {"table": "deployment_revision_pins", "kind": "operational",
     "columns": ["app_id", "created_at", "deployment_id", "expires_at"]},
+  {"table": "deployment_runtime_environment_owners", "kind": "operational",
+    "columns": ["deployment_id", "environment_id"]},
   {"table": "deployment_scope_exclusions", "kind": "configuration",
     "columns": ["account_id", "app_id", "created_at", "created_by", "id", "project_id", "reason", "slug", "updated_at"]},
   {"table": "deployment_sidecar_layers", "kind": "configuration",

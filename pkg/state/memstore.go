@@ -813,6 +813,7 @@ type MemStore struct {
 	projectEnvironmentWorkloadSpecs           map[string]ProjectEnvironmentWorkloadSpec
 	projectEnvironmentWorkloadHeads           map[string]string
 	projectEnvironmentWorkloadDeploymentSpecs map[string]string
+	deploymentRuntimeEnvironmentOwners        map[string]string
 	projectEnvironmentQueueRuntimeSets        map[string]ProjectEnvironmentQueueRuntimeSet
 	projectEnvironmentCleanupJobs             map[string]ProjectEnvironmentCleanupJob
 	projectEnvironmentCloneOperations         map[string]ProjectEnvironmentCloneOperation
@@ -1327,6 +1328,7 @@ func NewMemStore() *MemStore {
 		projectEnvironmentWorkloadSpecs:           map[string]ProjectEnvironmentWorkloadSpec{},
 		projectEnvironmentWorkloadHeads:           map[string]string{},
 		projectEnvironmentWorkloadDeploymentSpecs: map[string]string{},
+		deploymentRuntimeEnvironmentOwners:        map[string]string{},
 		projectEnvironmentQueueRuntimeSets:        map[string]ProjectEnvironmentQueueRuntimeSet{},
 		projectReleaseSets:                        map[string]ProjectReleaseSet{},
 		activeProjectReleaseSets:                  map[string]string{},
@@ -6040,6 +6042,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 		if d.AppID == id {
 			depIDs[key] = struct{}{}
 			delete(m.deployments, key)
+			delete(m.deploymentRuntimeEnvironmentOwners, key)
 		}
 	}
 	for key, layer := range m.deploymentSidecarLayers {
@@ -6712,6 +6715,7 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity, promoti
 		if env, err := m.workloadSpecEnvironmentLocked(app.AccountID, app.ProjectID, workloadEnvironmentSlug(d.Scope), app.ID); err == nil {
 			if specID := m.projectEnvironmentWorkloadHeads[workloadSpecHeadKey(env.ID, app.ID)]; specID != "" {
 				m.projectEnvironmentWorkloadDeploymentSpecs[d.ID] = specID
+				m.deploymentRuntimeEnvironmentOwners[d.ID] = env.ID
 			}
 		}
 	}
@@ -6719,11 +6723,13 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity, promoti
 		if capture.legacyPreviousSpec.ID != "" {
 			m.projectEnvironmentWorkloadSpecs[capture.legacyPreviousSpec.ID] = capture.legacyPreviousSpec
 			m.projectEnvironmentWorkloadDeploymentSpecs[capture.legacyPreviousDeploymentID] = capture.legacyPreviousSpec.ID
+			m.deploymentRuntimeEnvironmentOwners[capture.legacyPreviousDeploymentID] = capture.legacyPreviousSpec.EnvironmentID
 			capture.legacyPreviousSpec = ProjectEnvironmentWorkloadSpec{}
 			capture.legacyPreviousDeploymentID = ""
 		}
 		m.projectEnvironmentWorkloadSpecs[prepared.ID] = prepared
 		m.projectEnvironmentWorkloadDeploymentSpecs[d.ID] = prepared.ID
+		m.deploymentRuntimeEnvironmentOwners[d.ID] = prepared.EnvironmentID
 		capture.DeploymentID = d.ID
 		m.projectEnvironmentPromotionWorkloadSpecs[workloadSpecHeadKey(capture.PromotionID, app.ID)] = capture
 	}
@@ -20419,6 +20425,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 		if app, ok := m.apps[d.AppID]; ok && app.AccountID == id {
 			deletedDeployments[did] = struct{}{}
 			delete(m.deployments, did)
+			delete(m.deploymentRuntimeEnvironmentOwners, did)
 		}
 	}
 	for i := len(m.snapshots) - 1; i >= 0; i-- {
