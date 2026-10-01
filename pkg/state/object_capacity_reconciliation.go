@@ -29,7 +29,7 @@ type ObjectCapacityReconciliation struct {
 
 type objectWriteAdmission struct {
 	BucketID, KeyHash, MultipartID string
-	Settled                        bool
+	Settled, Route                 bool
 }
 
 func objectCapacityActive(s string) bool { return s == "waiting" || s == "scanning" }

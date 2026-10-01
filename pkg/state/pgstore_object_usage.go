@@ -70,8 +70,16 @@ func (s *PgStore) admitObjectURL(ctx context.Context, account, bucket, key strin
 		return err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
+	if err = admitObjectURLTx(ctx, tx, account, bucket, key, size, put, p, token, false); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// The caller owns the transaction; intent creation and admission commit together.
+func admitObjectURLTx(ctx context.Context, tx pgx.Tx, account, bucket, key string, size int64, put bool, p api.ObjectStoragePolicy, token string, route bool) error {
 	q := sqlc.New()
-	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(account)); err != nil {
+	if _, err := q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(account)); err != nil {
 		return mapErr(err)
 	}
 	now := time.Now().UTC()
@@ -97,7 +105,7 @@ func (s *PgStore) admitObjectURL(ctx context.Context, account, bucket, key strin
 			return ErrConflict
 		}
 		if token != "" {
-			if err = q.ObjectWriteInsert(ctx, tx, sqlc.ObjectWriteInsertParams{ID: mustPgUUID(token), BucketID: mustPgUUID(bucket), KeyHash: objectKeyHash(key), Kind: "proxy"}); err != nil {
+			if err = q.ObjectWriteInsert(ctx, tx, sqlc.ObjectWriteInsertParams{ID: mustPgUUID(token), BucketID: mustPgUUID(bucket), KeyHash: objectKeyHash(key), Kind: "proxy", RouteReceipt: route}); err != nil {
 				return mapErr(err)
 			}
 			err = q.ObjectTrackedGrantUpsert(ctx, tx, sqlc.ObjectTrackedGrantUpsertParams{BucketID: mustPgUUID(bucket), KeyHash: objectKeyHash(key), MaxBytes: size, LastWriteID: mustPgUUID(token)})
@@ -114,7 +122,7 @@ func (s *PgStore) admitObjectURL(ctx context.Context, account, bucket, key strin
 	if err = q.ObjectUsageAuthorize(ctx, tx, sqlc.ObjectUsageAuthorizeParams{AccountID: mustPgUUID(account), PeriodStart: objectUsageTime(ObjectStoragePeriod(now))}); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	return nil
 }
 
 func (s *PgStore) RecordObjectUsageReport(ctx context.Context, r api.ObjectStorageUsageReport) error {

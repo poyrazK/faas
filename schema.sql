@@ -8123,7 +8123,7 @@ CREATE TABLE public.object_storage_usage_reports (
 
 CREATE TABLE public.object_upload_completions (
     id uuid NOT NULL,
-    route_id uuid NOT NULL,
+    route_id uuid,
     account_id uuid NOT NULL,
     app_id uuid NOT NULL,
     bucket_id uuid NOT NULL,
@@ -8138,12 +8138,20 @@ CREATE TABLE public.object_upload_completions (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     idempotency_key text DEFAULT ''::text NOT NULL,
     request_fingerprint text DEFAULT ''::text NOT NULL,
+    write_phase text DEFAULT 'untracked'::text NOT NULL,
+    recovery_token text DEFAULT ''::text NOT NULL,
+    recovery_lease_until timestamp with time zone,
+    recovery_retry_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT object_upload_completions_bytes_check CHECK ((bytes >= 0)),
     CONSTRAINT object_upload_completions_idempotency_key_check CHECK ((length(idempotency_key) <= 128)),
     CONSTRAINT object_upload_completions_object_key_check CHECK (((length(object_key) >= 1) AND (length(object_key) <= 1024))),
     CONSTRAINT object_upload_completions_request_fingerprint_check CHECK ((length(request_fingerprint) <= 64)),
     CONSTRAINT object_upload_completions_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'completed'::text, 'rejected'::text, 'failed'::text]))),
-    CONSTRAINT object_upload_completions_subject_id_check CHECK (((length(subject_id) >= 1) AND (length(subject_id) <= 128)))
+    CONSTRAINT object_upload_completions_subject_id_check CHECK (((length(subject_id) >= 1) AND (length(subject_id) <= 128))),
+    CONSTRAINT object_upload_completions_write_phase_check CHECK ((write_phase = ANY (ARRAY['untracked'::text, 'prepared'::text, 'dispatched'::text, 'settled'::text]))),
+    CONSTRAINT object_upload_recovery_lease CHECK (((recovery_token = ''::text) = (recovery_lease_until IS NULL))),
+    CONSTRAINT object_upload_recovery_pending CHECK (((recovery_lease_until IS NULL) OR (write_phase = 'dispatched'::text))),
+    CONSTRAINT object_upload_tracked_status CHECK (((write_phase = 'untracked'::text) OR (((write_phase = 'settled'::text) = (status = ANY (ARRAY['completed'::text, 'failed'::text]))) AND (status <> 'rejected'::text))))
 );
 
 
@@ -21760,7 +21768,7 @@ ALTER TABLE ONLY public.object_upload_completions
 --
 
 ALTER TABLE ONLY public.object_upload_completions
-    ADD CONSTRAINT object_upload_completions_route_id_fkey FOREIGN KEY (route_id) REFERENCES public.object_upload_routes(id) ON DELETE CASCADE;
+    ADD CONSTRAINT object_upload_completions_route_id_fkey FOREIGN KEY (route_id) REFERENCES public.object_upload_routes(id) ON DELETE SET NULL;
 
 
 --
@@ -23000,11 +23008,13 @@ CREATE TABLE public.object_storage_write_admissions (
     multipart_upload_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     settled_at timestamp with time zone,
+    route_receipt boolean DEFAULT false NOT NULL,
     CONSTRAINT object_storage_write_admissions_check CHECK (((kind = 'multipart'::text) = (multipart_upload_id IS NOT NULL))),
     CONSTRAINT object_storage_write_admissions_check1 CHECK (((state = 'settled'::text) = (settled_at IS NOT NULL))),
     CONSTRAINT object_storage_write_admissions_key_hash_check CHECK ((length(key_hash) = 64)),
     CONSTRAINT object_storage_write_admissions_kind_check CHECK ((kind = ANY (ARRAY['proxy'::text, 'multipart'::text]))),
-    CONSTRAINT object_storage_write_admissions_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'settled'::text])))
+    CONSTRAINT object_storage_write_admissions_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'settled'::text]))),
+    CONSTRAINT object_write_route_proxy CHECK (((NOT route_receipt) OR (kind = 'proxy'::text)))
 );
 
 
@@ -23096,3 +23106,5 @@ ALTER TABLE ONLY public.object_storage_write_admissions
 
 ALTER TABLE ONLY public.object_storage_write_admissions
     ADD CONSTRAINT object_storage_write_admissions_multipart_upload_id_fkey FOREIGN KEY (multipart_upload_id) REFERENCES public.object_storage_multipart_uploads(id) ON DELETE CASCADE;
+
+CREATE INDEX object_upload_recovery_due_idx ON public.object_upload_completions USING btree (recovery_retry_at, id) WHERE (write_phase = ANY (ARRAY['prepared'::text, 'dispatched'::text]));

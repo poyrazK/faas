@@ -128,7 +128,7 @@ func (s *PgStore) UpdateObjectUploadCompletion(ctx context.Context, completion O
 	return scanObjectUploadCompletion(s.pool.QueryRow(ctx, `
 		UPDATE object_upload_completions
 		   SET etag=$2, status=$3, error_code=$4, request_id=$5
-		 WHERE id=$1 AND idempotency_key <> ''
+		 WHERE id=$1 AND idempotency_key <> '' AND write_phase='untracked'
 		RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key,
 		          bytes, content_type, etag, status, error_code, request_id, idempotency_key, request_fingerprint, created_at`,
 		mustPgUUID(completion.ID), completion.ETag, completion.Status, completion.ErrorCode, completion.RequestID))

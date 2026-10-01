@@ -560,9 +560,9 @@ per-key grants, or the latest observed bytes/keys, whichever is larger. An
 overwrite of a pre-existing baseline key may reserve its size again. Deleting
 an object, letting a URL expire, or observing an empty bucket does not reclaim
 granted capacity: an accepted in-flight PUT may finish later. Confirmed bucket
-deletion releases capacity; empty/delete/recreate the bucket to reclaim it in
-this version. Do not manually edit counters. A non-destructive quiescence and
-capacity-rebase workflow remains deferred.
+deletion releases capacity. Qualified tracked writes can also reclaim grants
+through a complete fenced capacity reconciliation, described below. Historical
+or untracked grants remain conservative. Do not manually edit counters.
 
 Every apid runs a bounded inventory worker at startup and once a minute after
 the previous sweep. It claims up to ten ready buckets, with two-minute leases,
@@ -750,24 +750,48 @@ runtime, declare an edge route with `POST /v1/apps/{slug}/upload-routes`:
 }
 ```
 
-The public app hostname then accepts `POST /uploads/avatar`. Gregale requires a
-Bearer API key belonging to the app account, requires `Content-Length`, checks
-the route byte and content-type policy, and streams the body directly to the
-selected provider. Without an idempotency key, the generated key is
-`key_prefix/{api-key-id}/{uuid}`; the caller receives an object reference and
-an opaque completion ID. A durable completion receipt is written for
-completed, rejected, and failed attempts.
+The public app hostname accepts `POST /uploads/avatar`. Gregale requires a
+Bearer API key belonging to an active app account, with `storage:write` or
+`admin` scope and a matching app binding when present. It requires
+`Content-Length`, checks the route byte and content-type policy, and streams the
+bounded body to the selected provider. Without an idempotency key, the generated
+key is `key_prefix/{api-key-id}/{uuid}`. Successful uploads return the object
+reference and completion ID.
 
-Clients that may retry a request can send an `Idempotency-Key` (up to 128
-bytes). The key is scoped to the upload route and authenticated API-key
-subject. Gregale persists a pending intent before writing the object, then
-replays the same completion response after a successful write; a retry with
-different request metadata returns `409 Conflict`, and a retry while the first
-write is still pending also returns `409`. Provider failures are persisted and
-replayed as `502 Bad Gateway`. The request fingerprint covers the route,
-subject, byte count, normalized content type, and optional `Content-MD5` or
-`Digest` headers; applications that need body-level equivalence should supply
-one of those digest headers.
+Clients that retry should send an `Idempotency-Key` (up to 128 bytes), scoped to
+the route and authenticated API-key subject. S3 routes commit a durable receipt
+and tracked quota reservation together before one provider write attempt.
+Concurrent retries spend no additional quota or authorization. Completed retries
+return the same response; different request metadata or pending outcomes return
+`409 Conflict`. A pending response includes `Retry-After: 30`. The fingerprint
+covers route, subject, byte count, normalized content type and optional
+`Content-MD5` or `Digest` headers. Those headers participate in request matching;
+the route does not validate them against the streamed body.
+
+`X-Gregale-Upload-ID` identifies an admitted S3 upload even after an error.
+Use the same API key to read `GET /uploads/avatar/receipts/{id}` for its object
+reference and `pending`, `completed` or `failed` status. Another API-key subject
+receives 404. Receipt reads remain available when uploads or the route are
+disabled. Definitive provider rejections become failed receipts and replay as
+502. Lost responses, 5xx, timeouts and missing acknowledgments remain pending;
+retry with the same idempotency key or poll the receipt instead of starting a
+new upload.
+
+The recovery worker confirms an S3 upload only when HEAD shows its internal
+receipt marker, exact size and an ETag. It never resends the body. Confirmation
+and quota settlement commit together, making the grant eligible for capacity
+reconciliation. A missing object or elapsed time cannot prove settlement; an
+object deleted or overwritten before confirmation may remain pending. Prepared
+intents that were never dispatched close after one minute, fencing late callers.
+The worker processes up to ten intents per sweep with one-minute leases,
+ten-second probes and thirty-second retry intervals; receipt settlement has a
+five-second deadline. It runs with uploads disabled or budgets exhausted.
+Route deletion preserves recovery records until the owning bucket is removed.
+See [ADR-392](adr/392-recoverable-application-object-uploads.md).
+
+GCS and third-party writers without the tracked capability retain conservative
+admissions and the previous failure-receipt behavior. Historical/direct signed
+uploads, copies and uncertain writes still cannot be force-refunded.
 
 The route policy is provider-neutral. It uses the registry's optional streaming
 writer, so switching an immutable bucket placement between OVH, R2, AWS, GCS,
@@ -890,13 +914,13 @@ separate tenant IAM adapter; never hand out the operator-wide credential.
   Do not bypass these guards and orphan customer data.
 
 Deferred: the S3 compatibility gaps listed above, production edge/service
-activation, lifecycle/version management, general object-capacity rebasing,
+activation, lifecycle/version management, untracked object-capacity rebasing,
 historical untracked multipart reclamation, and automatic migrations.
 
 ## Reclaim reserved capacity
 
-For buckets using tracked branded S3 PUTs or public multipart completion, request
-an inventory and capacity reconciliation after deleting or shrinking objects:
+For buckets using tracked branded S3 PUTs, S3 application upload routes or public
+multipart completion, request an inventory and capacity reconciliation after deleting or shrinking objects:
 
 ```sh
 gregale bucket reconcile start <app> <bucket-id>
@@ -920,8 +944,8 @@ uses a two-minute lease, scans for up to 45 seconds and 1,000 pages, retries aft
 30 seconds, and stops waiting after one hour. Cancellation releases the write
 pause immediately without changing reservations.
 
-`blocked/untracked_writes` means legacy, native/direct signed uploads or copies
-have conservative grants. `waiting/unsettled_writes` means a tracked request has
+`blocked/untracked_writes` means legacy, direct signed uploads, untracked native
+uploads or copies have conservative grants. `waiting/unsettled_writes` means a tracked request has
 no confirmed outcome. An expired URL or elapsed deadline cannot settle an
 uncertain write. Those cases retain capacity; this release does not offer a force
 refund. Use dedicated managed buckets with versioning disabled, ordered complete

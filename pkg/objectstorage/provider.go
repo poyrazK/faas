@@ -18,6 +18,7 @@ import (
 )
 
 var (
+	ErrWriteRejected       = errors.New("object storage write was rejected")
 	ErrPreconditionFailed  = errors.New("object storage precondition failed")
 	ErrConditionalConflict = errors.New("object storage conditional completion requires a new upload")
 	ErrConditionalNotFound = errors.New("object storage conditional destination not found")
@@ -80,6 +81,16 @@ type ObjectReader interface {
 // the complete request in memory.
 type ObjectWriter interface {
 	WriteObject(context.Context, string, string, io.Reader, int64, ObjectMetadata) (UploadResult, error)
+}
+
+// TrackedObjectWriter binds a private receipt to exactly one provider write
+// attempt. It must not retry writes after dispatch. ErrWriteRejected proves
+// that no object was committed; all other errors are uncertain. Confirmation
+// requires that receipt, exact size and a valid ETag on the stored object.
+// Absence or elapsed time never proves settlement.
+type TrackedObjectWriter interface {
+	WriteTrackedObject(context.Context, string, string, string, io.Reader, int64, ObjectMetadata) (UploadResult, error)
+	ConfirmTrackedObject(context.Context, string, string, string, int64) (UploadResult, error)
 }
 
 type UploadResult struct {
@@ -337,6 +348,7 @@ const (
 	// ReservedMultipartSessionMetadataKey fences the provider-private recovery
 	// marker written when Gregale initiates a multipart upload.
 	ReservedMultipartSessionMetadataKey = "gregale-upload-id"
+	ReservedUploadReceiptMetadataKey    = "gregale-upload-receipt"
 )
 
 // ValidateObjectMetadata applies the portable S3 metadata/tag limits before
@@ -352,7 +364,7 @@ func ValidateObjectMetadata(metadata ObjectMetadata) error {
 		return ErrInvalid
 	}
 	for key, value := range metadata.Metadata {
-		if key == "" || len(key) > maxObjectMetadataKey || len(value) > maxObjectMetadataValue || !utf8.ValidString(key) || !utf8.ValidString(value) || strings.ContainsAny(key, "\r\n") || strings.ContainsAny(value, "\r\n") || strings.EqualFold(key, ReservedObjectTagsMetadataKey) || strings.EqualFold(key, ReservedMultipartSessionMetadataKey) {
+		if key == "" || len(key) > maxObjectMetadataKey || len(value) > maxObjectMetadataValue || !utf8.ValidString(key) || !utf8.ValidString(value) || strings.ContainsAny(key, "\r\n") || strings.ContainsAny(value, "\r\n") || strings.EqualFold(key, ReservedObjectTagsMetadataKey) || strings.EqualFold(key, ReservedMultipartSessionMetadataKey) || strings.EqualFold(key, ReservedUploadReceiptMetadataKey) {
 			return ErrInvalid
 		}
 	}

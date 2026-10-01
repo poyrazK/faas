@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
@@ -233,30 +234,61 @@ func (p *S3) ReadObject(ctx context.Context, bucket, key string) (io.ReadCloser,
 // routes. The SDK receives the caller's reader directly; no request-sized
 // buffer is created here.
 func (p *S3) WriteObject(ctx context.Context, bucket, key string, body io.Reader, size int64, metadata ObjectMetadata) (UploadResult, error) {
+	return p.writeObject(ctx, bucket, key, body, size, metadata, "")
+}
+
+func (p *S3) writeObject(ctx context.Context, bucket, key string, body io.Reader, size int64, metadata ObjectMetadata, receipt string) (UploadResult, error) {
 	if !ValidKey(key) || size < 0 || size > api.MaxObjectSinglePutBytes {
-		return UploadResult{}, ErrInvalid
+		return UploadResult{}, invalidS3Write(receipt)
 	}
 	if err := ValidateObjectMetadata(metadata); err != nil {
+		if receipt != "" {
+			return UploadResult{}, ErrWriteRejected
+		}
 		return UploadResult{}, err
 	}
 	tagging, err := EncodeObjectTags(metadata.Tags)
 	if err != nil {
+		if receipt != "" {
+			return UploadResult{}, ErrWriteRejected
+		}
 		return UploadResult{}, err
 	}
+	objectMetadata := metadata.Metadata
+	if receipt != "" {
+		objectMetadata = cloneMetadata(metadata.Metadata)
+		if objectMetadata == nil {
+			objectMetadata = map[string]string{}
+		}
+		objectMetadata[ReservedUploadReceiptMetadataKey] = receipt
+	}
 	in := &s3.PutObjectInput{
-		Bucket: aws.String(bucket), Key: aws.String(key), Body: body, ContentLength: aws.Int64(size),
+		Bucket: aws.String(bucket), Key: aws.String(key), Body: io.LimitReader(body, size), ContentLength: aws.Int64(size),
 		ContentType: stringPtrOrNil(metadata.ContentType), ContentEncoding: stringPtrOrNil(metadata.ContentEncoding),
 		ContentLanguage: stringPtrOrNil(metadata.ContentLanguage), CacheControl: stringPtrOrNil(metadata.CacheControl),
-		ContentDisposition: stringPtrOrNil(metadata.ContentDisposition), Metadata: metadata.Metadata,
+		ContentDisposition: stringPtrOrNil(metadata.ContentDisposition), Metadata: objectMetadata,
 	}
 	if tagging != "" {
 		in.Tagging = aws.String(tagging)
 	}
-	out, err := p.client.PutObject(ctx, in)
+	out, err := p.client.PutObject(ctx, in, func(o *s3.Options) {
+		o.APIOptions = append(o.APIOptions, v4.SwapComputePayloadSHA256ForUnsignedPayloadMiddleware)
+		if client, ok := p.client.Options().HTTPClient.(*http.Client); ok {
+			streamClient := *client
+			streamClient.Timeout = api.ObjectTransferTimeout
+			o.HTTPClient = &streamClient
+		}
+		if receipt != "" {
+			o.RetryMaxAttempts = 1
+		}
+	})
 	if err != nil {
+		if receipt != "" && definiteS3WriteRejection(err) {
+			return UploadResult{}, ErrWriteRejected
+		}
 		return UploadResult{}, normalize(err)
 	}
-	if out == nil {
+	if out == nil || !validUploadETag(aws.ToString(out.ETag)) {
 		return UploadResult{}, ErrUnavailable
 	}
 	return UploadResult{ETag: aws.ToString(out.ETag)}, nil

@@ -124,6 +124,12 @@ const (
 	MaxObjectUploadSpoolBytes           int64 = 5 << 30
 	ObjectUploadSpoolMinFreeBytes       int64 = 1 << 30
 	ObjectTransferTimeout                     = 30 * time.Minute
+	ObjectUploadRecoveryBatch                 = 10
+	ObjectUploadPreparationTimeout            = time.Minute
+	ObjectUploadRecoveryRetry                 = 30 * time.Second
+	ObjectUploadRecoveryLease                 = time.Minute
+	ObjectUploadRecoveryProbeTimeout          = 10 * time.Second
+	ObjectUploadSettlementTimeout             = 5 * time.Second
 	ObjectMultipartCleanupGrace               = 5 * time.Minute
 	ObjectMultipartCleanupRetry               = 30 * time.Second
 	ObjectMultipartPartURLTTLSeconds          = 60

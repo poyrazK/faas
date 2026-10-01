@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -78,5 +79,23 @@ func TestGatewayWriteSettlement(t *testing.T) {
 				t.Fatalf("calls=%d settles=%d begins=%d", calls, st.settled, st.began)
 			}
 		})
+	}
+}
+
+func TestCopyObjectHeadersHidesRecoveryMetadata(t *testing.T) {
+	src := http.Header{}
+	src.Set("X-Amz-Meta-Owner", "customer")
+	for _, key := range []string{objectstorage.ReservedObjectTagsMetadataKey, objectstorage.ReservedMultipartSessionMetadataKey, objectstorage.ReservedUploadReceiptMetadataKey} {
+		src.Set("X-Amz-Meta-"+key, "private")
+	}
+	dst := http.Header{}
+	copyObjectHeaders(dst, src)
+	if dst.Get("X-Amz-Meta-Owner") != "customer" {
+		t.Fatal("customer metadata removed")
+	}
+	for _, key := range []string{objectstorage.ReservedObjectTagsMetadataKey, objectstorage.ReservedMultipartSessionMetadataKey, objectstorage.ReservedUploadReceiptMetadataKey} {
+		if dst.Get("X-Amz-Meta-"+key) != "" {
+			t.Fatal("recovery marker exposed", key)
+		}
 	}
 }

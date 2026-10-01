@@ -5122,12 +5122,12 @@ WHERE id=$1 AND lease_token=$2 AND state='completing_conditional';
 SELECT EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations WHERE bucket_id=$1 AND state IN ('waiting','scanning'));
 
 -- name: ObjectWriteInsert :exec
-INSERT INTO object_storage_write_admissions(id,bucket_id,key_hash,kind,multipart_upload_id)
-VALUES($1,$2,$3,$4,$5);
+INSERT INTO object_storage_write_admissions(id,bucket_id,key_hash,kind,multipart_upload_id,route_receipt)
+VALUES($1,$2,$3,$4,$5,$6);
 
 -- name: ObjectWriteSettle :execrows
 UPDATE object_storage_write_admissions w SET state='settled',settled_at=coalesce(settled_at,now())
-WHERE w.id=$1 AND w.bucket_id=$2 AND w.kind='proxy'
+WHERE w.id=$1 AND w.bucket_id=$2 AND w.kind='proxy' AND NOT w.route_receipt
 AND EXISTS (SELECT 1 FROM object_buckets b WHERE b.id=w.bucket_id AND b.account_id=$3);
 
 -- name: ObjectTrackedGrantUpsert :exec
@@ -5177,3 +5177,45 @@ DELETE FROM object_storage_write_admissions WHERE bucket_id=$1;
 
 -- name: ObjectCapacityLockBucket :one
 SELECT * FROM object_buckets WHERE id=$1 AND account_id=$2 AND app_id=$3 AND state='ready' FOR NO KEY UPDATE;
+
+
+-- name: ObjectUploadRouteForWrite :one
+SELECT * FROM object_upload_routes WHERE id=$1 AND account_id=$2 AND app_id=$3 AND bucket_id=$4 AND enabled FOR SHARE;
+
+-- name: ObjectTrackedUploadInsert :one
+INSERT INTO object_upload_completions
+ (id,route_id,account_id,app_id,bucket_id,subject_id,object_key,bytes,content_type,request_id,idempotency_key,request_fingerprint,status,write_phase,recovery_retry_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending','prepared',now()+make_interval(secs=>sqlc.arg(retry_seconds)::int)) RETURNING *;
+
+-- name: ObjectTrackedUploadGet :one
+SELECT * FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND bucket_id=$3 FOR UPDATE;
+
+-- name: ObjectTrackedUploadReplay :one
+SELECT * FROM object_upload_completions WHERE route_id=$1 AND subject_id=$2 AND idempotency_key=$3 AND account_id=$4 AND app_id=$5;
+
+-- name: ObjectTrackedUploadDispatch :one
+UPDATE object_upload_completions SET write_phase='dispatched', recovery_retry_at=now()+make_interval(secs=>sqlc.arg(retry_seconds)::int)
+ WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND write_phase='prepared' RETURNING *;
+
+-- name: ObjectTrackedUploadFinish :one
+UPDATE object_upload_completions SET status=$2,etag=$3,error_code=$4,write_phase='settled',recovery_token='',recovery_lease_until=NULL
+ WHERE id=$1 RETURNING *;
+
+-- name: ObjectRouteWriteSettle :execrows
+UPDATE object_storage_write_admissions SET state='settled',settled_at=coalesce(settled_at,now()) WHERE id=$1 AND bucket_id=$2 AND kind='proxy' AND route_receipt;
+
+-- name: ObjectTrackedUploadDue :many
+SELECT * FROM object_upload_completions WHERE write_phase IN ('prepared','dispatched') AND recovery_retry_at<=now()
+ AND (recovery_lease_until IS NULL OR recovery_lease_until<=now()) ORDER BY recovery_retry_at,id LIMIT $1;
+
+-- name: ObjectTrackedUploadClaim :one
+UPDATE object_upload_completions SET recovery_token=$2,recovery_lease_until=now()+make_interval(secs=>sqlc.arg(lease_seconds)::int)
+ WHERE id=$1 RETURNING *;
+
+-- name: ObjectTrackedUploadRetry :exec
+UPDATE object_upload_completions SET recovery_token='',recovery_lease_until=NULL,
+ recovery_retry_at=now()+make_interval(secs=>sqlc.arg(retry_seconds)::int),error_code=$2 WHERE id=$1;
+
+
+-- name: ObjectUploadReceiptGet :one
+SELECT * FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND app_id=$3 AND route_id=$4 AND subject_id=$5;

@@ -50,7 +50,7 @@ func (m *MemStore) SettleObjectWrite(_ context.Context, account, bucket, token s
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	w, ok := m.objectWriteAdmissions[token]
-	if !ok || w.BucketID != bucket || m.objectBuckets[bucket].AccountID != account || w.MultipartID != "" {
+	if !ok || w.BucketID != bucket || m.objectBuckets[bucket].AccountID != account || (w.MultipartID != "" || w.Route) {
 		return ErrNotFound
 	}
 	w.Settled = true

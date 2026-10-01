@@ -66,6 +66,12 @@ func (m *MemStore) DeleteObjectUploadRoute(_ context.Context, accountID, appID, 
 	for id, route := range m.objectUploadRoutes {
 		if route.AccountID == accountID && route.AppID == appID && route.Name == name {
 			delete(m.objectUploadRoutes, id)
+			for receiptID, receipt := range m.objectUploadCompletions {
+				if receipt.RouteID == id {
+					receipt.RouteID = ""
+					m.objectUploadCompletions[receiptID] = receipt
+				}
+			}
 			return nil
 		}
 	}
@@ -78,6 +84,9 @@ func (m *MemStore) RecordObjectUploadCompletion(_ context.Context, completion Ob
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if _, exists := m.objectUploadCompletions[completion.ID]; exists {
+		return ObjectUploadCompletion{}, ErrConflict
+	}
 	if completion.CreatedAt.IsZero() {
 		completion.CreatedAt = time.Now().UTC()
 	}
@@ -91,6 +100,9 @@ func (m *MemStore) CreateObjectUploadIntent(_ context.Context, intent ObjectUplo
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if _, exists := m.objectUploadCompletions[intent.ID]; exists {
+		return ObjectUploadCompletion{}, ErrConflict
+	}
 	for _, existing := range m.objectUploadCompletions {
 		if existing.RouteID == intent.RouteID && existing.SubjectID == intent.SubjectID && existing.IdempotencyKey == intent.IdempotencyKey {
 			return ObjectUploadCompletion{}, ErrConflict
@@ -124,7 +136,7 @@ func (m *MemStore) UpdateObjectUploadCompletion(_ context.Context, completion Ob
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	existing, ok := m.objectUploadCompletions[completion.ID]
-	if !ok || existing.IdempotencyKey == "" {
+	if !ok || existing.IdempotencyKey == "" || existing.WritePhase != "" && existing.WritePhase != "untracked" {
 		return ObjectUploadCompletion{}, ErrNotFound
 	}
 	existing.ETag = completion.ETag

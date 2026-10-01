@@ -2858,6 +2858,7 @@ type ObjectStorageWriteAdmission struct {
 	MultipartUploadID pgtype.UUID
 	CreatedAt         pgtype.Timestamptz
 	SettledAt         pgtype.Timestamptz
+	RouteReceipt      bool
 }
 
 type ObjectUploadCompletion struct {
@@ -2877,6 +2878,10 @@ type ObjectUploadCompletion struct {
 	CreatedAt          pgtype.Timestamptz
 	IdempotencyKey     string
 	RequestFingerprint string
+	WritePhase         string
+	RecoveryToken      string
+	RecoveryLeaseUntil pgtype.Timestamptz
+	RecoveryRetryAt    pgtype.Timestamptz
 }
 
 type ObjectUploadRoute struct {

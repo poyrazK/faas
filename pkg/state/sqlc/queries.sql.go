@@ -12786,6 +12786,23 @@ func (q *Queries) ObjectMultipartTransfersPending(ctx context.Context, db DBTX, 
 	return pending, err
 }
 
+const objectRouteWriteSettle = `-- name: ObjectRouteWriteSettle :execrows
+UPDATE object_storage_write_admissions SET state='settled',settled_at=coalesce(settled_at,now()) WHERE id=$1 AND bucket_id=$2 AND kind='proxy' AND route_receipt
+`
+
+type ObjectRouteWriteSettleParams struct {
+	ID       pgtype.UUID
+	BucketID pgtype.UUID
+}
+
+func (q *Queries) ObjectRouteWriteSettle(ctx context.Context, db DBTX, arg ObjectRouteWriteSettleParams) (int64, error) {
+	result, err := db.Exec(ctx, objectRouteWriteSettle, arg.ID, arg.BucketID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const objectS3BindingDeleteSecrets = `-- name: ObjectS3BindingDeleteSecrets :execrows
 DELETE FROM app_secrets WHERE managed_object_storage_credential_id=$1
 `
@@ -13792,6 +13809,426 @@ func (q *Queries) ObjectTrackedGrantUpsert(ctx context.Context, db DBTX, arg Obj
 	return err
 }
 
+const objectTrackedUploadClaim = `-- name: ObjectTrackedUploadClaim :one
+UPDATE object_upload_completions SET recovery_token=$2,recovery_lease_until=now()+make_interval(secs=>$3::int)
+ WHERE id=$1 RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at
+`
+
+type ObjectTrackedUploadClaimParams struct {
+	ID            pgtype.UUID
+	RecoveryToken string
+	LeaseSeconds  int32
+}
+
+func (q *Queries) ObjectTrackedUploadClaim(ctx context.Context, db DBTX, arg ObjectTrackedUploadClaimParams) (ObjectUploadCompletion, error) {
+	row := db.QueryRow(ctx, objectTrackedUploadClaim, arg.ID, arg.RecoveryToken, arg.LeaseSeconds)
+	var i ObjectUploadCompletion
+	err := row.Scan(
+		&i.ID,
+		&i.RouteID,
+		&i.AccountID,
+		&i.AppID,
+		&i.BucketID,
+		&i.SubjectID,
+		&i.ObjectKey,
+		&i.Bytes,
+		&i.ContentType,
+		&i.Etag,
+		&i.Status,
+		&i.ErrorCode,
+		&i.RequestID,
+		&i.CreatedAt,
+		&i.IdempotencyKey,
+		&i.RequestFingerprint,
+		&i.WritePhase,
+		&i.RecoveryToken,
+		&i.RecoveryLeaseUntil,
+		&i.RecoveryRetryAt,
+	)
+	return i, err
+}
+
+const objectTrackedUploadDispatch = `-- name: ObjectTrackedUploadDispatch :one
+UPDATE object_upload_completions SET write_phase='dispatched', recovery_retry_at=now()+make_interval(secs=>$4::int)
+ WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND write_phase='prepared' RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at
+`
+
+type ObjectTrackedUploadDispatchParams struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	BucketID     pgtype.UUID
+	RetrySeconds int32
+}
+
+func (q *Queries) ObjectTrackedUploadDispatch(ctx context.Context, db DBTX, arg ObjectTrackedUploadDispatchParams) (ObjectUploadCompletion, error) {
+	row := db.QueryRow(ctx, objectTrackedUploadDispatch,
+		arg.ID,
+		arg.AccountID,
+		arg.BucketID,
+		arg.RetrySeconds,
+	)
+	var i ObjectUploadCompletion
+	err := row.Scan(
+		&i.ID,
+		&i.RouteID,
+		&i.AccountID,
+		&i.AppID,
+		&i.BucketID,
+		&i.SubjectID,
+		&i.ObjectKey,
+		&i.Bytes,
+		&i.ContentType,
+		&i.Etag,
+		&i.Status,
+		&i.ErrorCode,
+		&i.RequestID,
+		&i.CreatedAt,
+		&i.IdempotencyKey,
+		&i.RequestFingerprint,
+		&i.WritePhase,
+		&i.RecoveryToken,
+		&i.RecoveryLeaseUntil,
+		&i.RecoveryRetryAt,
+	)
+	return i, err
+}
+
+const objectTrackedUploadDue = `-- name: ObjectTrackedUploadDue :many
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at FROM object_upload_completions WHERE write_phase IN ('prepared','dispatched') AND recovery_retry_at<=now()
+ AND (recovery_lease_until IS NULL OR recovery_lease_until<=now()) ORDER BY recovery_retry_at,id LIMIT $1
+`
+
+func (q *Queries) ObjectTrackedUploadDue(ctx context.Context, db DBTX, limit int32) ([]ObjectUploadCompletion, error) {
+	rows, err := db.Query(ctx, objectTrackedUploadDue, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectUploadCompletion{}
+	for rows.Next() {
+		var i ObjectUploadCompletion
+		if err := rows.Scan(
+			&i.ID,
+			&i.RouteID,
+			&i.AccountID,
+			&i.AppID,
+			&i.BucketID,
+			&i.SubjectID,
+			&i.ObjectKey,
+			&i.Bytes,
+			&i.ContentType,
+			&i.Etag,
+			&i.Status,
+			&i.ErrorCode,
+			&i.RequestID,
+			&i.CreatedAt,
+			&i.IdempotencyKey,
+			&i.RequestFingerprint,
+			&i.WritePhase,
+			&i.RecoveryToken,
+			&i.RecoveryLeaseUntil,
+			&i.RecoveryRetryAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const objectTrackedUploadFinish = `-- name: ObjectTrackedUploadFinish :one
+UPDATE object_upload_completions SET status=$2,etag=$3,error_code=$4,write_phase='settled',recovery_token='',recovery_lease_until=NULL
+ WHERE id=$1 RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at
+`
+
+type ObjectTrackedUploadFinishParams struct {
+	ID        pgtype.UUID
+	Status    string
+	Etag      string
+	ErrorCode string
+}
+
+func (q *Queries) ObjectTrackedUploadFinish(ctx context.Context, db DBTX, arg ObjectTrackedUploadFinishParams) (ObjectUploadCompletion, error) {
+	row := db.QueryRow(ctx, objectTrackedUploadFinish,
+		arg.ID,
+		arg.Status,
+		arg.Etag,
+		arg.ErrorCode,
+	)
+	var i ObjectUploadCompletion
+	err := row.Scan(
+		&i.ID,
+		&i.RouteID,
+		&i.AccountID,
+		&i.AppID,
+		&i.BucketID,
+		&i.SubjectID,
+		&i.ObjectKey,
+		&i.Bytes,
+		&i.ContentType,
+		&i.Etag,
+		&i.Status,
+		&i.ErrorCode,
+		&i.RequestID,
+		&i.CreatedAt,
+		&i.IdempotencyKey,
+		&i.RequestFingerprint,
+		&i.WritePhase,
+		&i.RecoveryToken,
+		&i.RecoveryLeaseUntil,
+		&i.RecoveryRetryAt,
+	)
+	return i, err
+}
+
+const objectTrackedUploadGet = `-- name: ObjectTrackedUploadGet :one
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND bucket_id=$3 FOR UPDATE
+`
+
+type ObjectTrackedUploadGetParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	BucketID  pgtype.UUID
+}
+
+func (q *Queries) ObjectTrackedUploadGet(ctx context.Context, db DBTX, arg ObjectTrackedUploadGetParams) (ObjectUploadCompletion, error) {
+	row := db.QueryRow(ctx, objectTrackedUploadGet, arg.ID, arg.AccountID, arg.BucketID)
+	var i ObjectUploadCompletion
+	err := row.Scan(
+		&i.ID,
+		&i.RouteID,
+		&i.AccountID,
+		&i.AppID,
+		&i.BucketID,
+		&i.SubjectID,
+		&i.ObjectKey,
+		&i.Bytes,
+		&i.ContentType,
+		&i.Etag,
+		&i.Status,
+		&i.ErrorCode,
+		&i.RequestID,
+		&i.CreatedAt,
+		&i.IdempotencyKey,
+		&i.RequestFingerprint,
+		&i.WritePhase,
+		&i.RecoveryToken,
+		&i.RecoveryLeaseUntil,
+		&i.RecoveryRetryAt,
+	)
+	return i, err
+}
+
+const objectTrackedUploadInsert = `-- name: ObjectTrackedUploadInsert :one
+INSERT INTO object_upload_completions
+ (id,route_id,account_id,app_id,bucket_id,subject_id,object_key,bytes,content_type,request_id,idempotency_key,request_fingerprint,status,write_phase,recovery_retry_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending','prepared',now()+make_interval(secs=>$13::int)) RETURNING id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at
+`
+
+type ObjectTrackedUploadInsertParams struct {
+	ID                 pgtype.UUID
+	RouteID            pgtype.UUID
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	BucketID           pgtype.UUID
+	SubjectID          string
+	ObjectKey          string
+	Bytes              int64
+	ContentType        string
+	RequestID          string
+	IdempotencyKey     string
+	RequestFingerprint string
+	RetrySeconds       int32
+}
+
+func (q *Queries) ObjectTrackedUploadInsert(ctx context.Context, db DBTX, arg ObjectTrackedUploadInsertParams) (ObjectUploadCompletion, error) {
+	row := db.QueryRow(ctx, objectTrackedUploadInsert,
+		arg.ID,
+		arg.RouteID,
+		arg.AccountID,
+		arg.AppID,
+		arg.BucketID,
+		arg.SubjectID,
+		arg.ObjectKey,
+		arg.Bytes,
+		arg.ContentType,
+		arg.RequestID,
+		arg.IdempotencyKey,
+		arg.RequestFingerprint,
+		arg.RetrySeconds,
+	)
+	var i ObjectUploadCompletion
+	err := row.Scan(
+		&i.ID,
+		&i.RouteID,
+		&i.AccountID,
+		&i.AppID,
+		&i.BucketID,
+		&i.SubjectID,
+		&i.ObjectKey,
+		&i.Bytes,
+		&i.ContentType,
+		&i.Etag,
+		&i.Status,
+		&i.ErrorCode,
+		&i.RequestID,
+		&i.CreatedAt,
+		&i.IdempotencyKey,
+		&i.RequestFingerprint,
+		&i.WritePhase,
+		&i.RecoveryToken,
+		&i.RecoveryLeaseUntil,
+		&i.RecoveryRetryAt,
+	)
+	return i, err
+}
+
+const objectTrackedUploadReplay = `-- name: ObjectTrackedUploadReplay :one
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at FROM object_upload_completions WHERE route_id=$1 AND subject_id=$2 AND idempotency_key=$3 AND account_id=$4 AND app_id=$5
+`
+
+type ObjectTrackedUploadReplayParams struct {
+	RouteID        pgtype.UUID
+	SubjectID      string
+	IdempotencyKey string
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+}
+
+func (q *Queries) ObjectTrackedUploadReplay(ctx context.Context, db DBTX, arg ObjectTrackedUploadReplayParams) (ObjectUploadCompletion, error) {
+	row := db.QueryRow(ctx, objectTrackedUploadReplay,
+		arg.RouteID,
+		arg.SubjectID,
+		arg.IdempotencyKey,
+		arg.AccountID,
+		arg.AppID,
+	)
+	var i ObjectUploadCompletion
+	err := row.Scan(
+		&i.ID,
+		&i.RouteID,
+		&i.AccountID,
+		&i.AppID,
+		&i.BucketID,
+		&i.SubjectID,
+		&i.ObjectKey,
+		&i.Bytes,
+		&i.ContentType,
+		&i.Etag,
+		&i.Status,
+		&i.ErrorCode,
+		&i.RequestID,
+		&i.CreatedAt,
+		&i.IdempotencyKey,
+		&i.RequestFingerprint,
+		&i.WritePhase,
+		&i.RecoveryToken,
+		&i.RecoveryLeaseUntil,
+		&i.RecoveryRetryAt,
+	)
+	return i, err
+}
+
+const objectTrackedUploadRetry = `-- name: ObjectTrackedUploadRetry :exec
+UPDATE object_upload_completions SET recovery_token='',recovery_lease_until=NULL,
+ recovery_retry_at=now()+make_interval(secs=>$3::int),error_code=$2 WHERE id=$1
+`
+
+type ObjectTrackedUploadRetryParams struct {
+	ID           pgtype.UUID
+	ErrorCode    string
+	RetrySeconds int32
+}
+
+func (q *Queries) ObjectTrackedUploadRetry(ctx context.Context, db DBTX, arg ObjectTrackedUploadRetryParams) error {
+	_, err := db.Exec(ctx, objectTrackedUploadRetry, arg.ID, arg.ErrorCode, arg.RetrySeconds)
+	return err
+}
+
+const objectUploadReceiptGet = `-- name: ObjectUploadReceiptGet :one
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND app_id=$3 AND route_id=$4 AND subject_id=$5
+`
+
+type ObjectUploadReceiptGetParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	RouteID   pgtype.UUID
+	SubjectID string
+}
+
+func (q *Queries) ObjectUploadReceiptGet(ctx context.Context, db DBTX, arg ObjectUploadReceiptGetParams) (ObjectUploadCompletion, error) {
+	row := db.QueryRow(ctx, objectUploadReceiptGet,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+		arg.RouteID,
+		arg.SubjectID,
+	)
+	var i ObjectUploadCompletion
+	err := row.Scan(
+		&i.ID,
+		&i.RouteID,
+		&i.AccountID,
+		&i.AppID,
+		&i.BucketID,
+		&i.SubjectID,
+		&i.ObjectKey,
+		&i.Bytes,
+		&i.ContentType,
+		&i.Etag,
+		&i.Status,
+		&i.ErrorCode,
+		&i.RequestID,
+		&i.CreatedAt,
+		&i.IdempotencyKey,
+		&i.RequestFingerprint,
+		&i.WritePhase,
+		&i.RecoveryToken,
+		&i.RecoveryLeaseUntil,
+		&i.RecoveryRetryAt,
+	)
+	return i, err
+}
+
+const objectUploadRouteForWrite = `-- name: ObjectUploadRouteForWrite :one
+SELECT id, account_id, app_id, name, bucket_id, key_prefix, max_bytes, allowed_content_types, enabled, created_at, updated_at FROM object_upload_routes WHERE id=$1 AND account_id=$2 AND app_id=$3 AND bucket_id=$4 AND enabled FOR SHARE
+`
+
+type ObjectUploadRouteForWriteParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	BucketID  pgtype.UUID
+}
+
+func (q *Queries) ObjectUploadRouteForWrite(ctx context.Context, db DBTX, arg ObjectUploadRouteForWriteParams) (ObjectUploadRoute, error) {
+	row := db.QueryRow(ctx, objectUploadRouteForWrite,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+		arg.BucketID,
+	)
+	var i ObjectUploadRoute
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.BucketID,
+		&i.KeyPrefix,
+		&i.MaxBytes,
+		&i.AllowedContentTypes,
+		&i.Enabled,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const objectUsageAuthorizationCount = `-- name: ObjectUsageAuthorizationCount :one
 SELECT count FROM object_storage_authorizations WHERE account_id=$1 AND period_start=$2
 `
@@ -14121,8 +14558,8 @@ func (q *Queries) ObjectUsageReports(ctx context.Context, db DBTX, arg ObjectUsa
 }
 
 const objectWriteInsert = `-- name: ObjectWriteInsert :exec
-INSERT INTO object_storage_write_admissions(id,bucket_id,key_hash,kind,multipart_upload_id)
-VALUES($1,$2,$3,$4,$5)
+INSERT INTO object_storage_write_admissions(id,bucket_id,key_hash,kind,multipart_upload_id,route_receipt)
+VALUES($1,$2,$3,$4,$5,$6)
 `
 
 type ObjectWriteInsertParams struct {
@@ -14131,6 +14568,7 @@ type ObjectWriteInsertParams struct {
 	KeyHash           string
 	Kind              string
 	MultipartUploadID pgtype.UUID
+	RouteReceipt      bool
 }
 
 func (q *Queries) ObjectWriteInsert(ctx context.Context, db DBTX, arg ObjectWriteInsertParams) error {
@@ -14140,13 +14578,14 @@ func (q *Queries) ObjectWriteInsert(ctx context.Context, db DBTX, arg ObjectWrit
 		arg.KeyHash,
 		arg.Kind,
 		arg.MultipartUploadID,
+		arg.RouteReceipt,
 	)
 	return err
 }
 
 const objectWriteSettle = `-- name: ObjectWriteSettle :execrows
 UPDATE object_storage_write_admissions w SET state='settled',settled_at=coalesce(settled_at,now())
-WHERE w.id=$1 AND w.bucket_id=$2 AND w.kind='proxy'
+WHERE w.id=$1 AND w.bucket_id=$2 AND w.kind='proxy' AND NOT w.route_receipt
 AND EXISTS (SELECT 1 FROM object_buckets b WHERE b.id=w.bucket_id AND b.account_id=$3)
 `
 

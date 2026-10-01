@@ -20458,6 +20458,17 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			}
 		}
 	}
+	for receiptID, receipt := range m.objectUploadCompletions {
+		if receipt.AccountID == id {
+			delete(m.objectUploadCompletions, receiptID)
+		}
+	}
+	for routeID, route := range m.objectUploadRoutes {
+		if route.AccountID == id {
+			delete(m.objectUploadRoutes, routeID)
+		}
+	}
+
 	for jobID, j := range m.objectCapacityJobs {
 		if j.AccountID == id {
 			delete(m.objectCapacityJobs, jobID)
