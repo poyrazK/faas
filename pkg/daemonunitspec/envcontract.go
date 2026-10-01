@@ -538,7 +538,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_TWO_NODE_REMOTE", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "native two-node acceptance fixture; must never be set on a production daemon"},
 	{Name: "FAAS_TWO_NODE_SSH_", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "native two-node acceptance fixture; must never be set on a production daemon"},
 	{Name: "FAAS_UDPD_ALLOWED_SOURCE_CIDRS", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault, Note: "opt-in UDP ingress; delivered by udpd.env"},
-	{Name: "FAAS_UDPD_BIND_HOST", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault, Note: "opt-in UDP ingress; delivered by udpd.env"},
+	{Name: "FAAS_UDPD_BIND_HOST", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault, Note: "IPv4 literal (default 0.0.0.0); hostnames and IPv6 rejected before dependency dialing; delivered by udpd.env"},
 	{Name: "FAAS_UDPD_ENABLED", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault, Note: "opt-in UDP ingress; delivered by udpd.env"},
 	{Name: "FAAS_UDPD_SCHEDD_TARGET", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault, Note: "opt-in UDP ingress; delivered by udpd.env"},
 	{Name: "FAAS_UDPD_SCHEDD_TLS_CA_PATH", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault, Note: "opt-in UDP ingress; delivered by udpd.env"},

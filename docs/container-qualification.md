@@ -1013,3 +1013,7 @@ Monitoring/public CI exposed plain-Jinja2 E2E rendering failure from the Ansible
 ### Downstream CI prerequisite propagation
 
 Public PR #3992 commit `bcc6d87e7` includes the standard-Jinja firewall fix; seven deployment tests and seven egress matrix rows passed on that branch. Monitoring PR #3998 commits `b37f42b44`/`10d709ac3` include the missing UDP environment registry/canonical-unit correction and firewall fix; `make generate-check env-contract-check egress-render-matrix` passed. Logs `/tmp/gregale-udp-public-firewall-{tests,matrix}.log` and `/tmp/gregale-udp-monitoring-prerequisite-gates.log`. Updated remote CI remains pending, and earlier failures remain historical evidence.
+
+### Integrated environment registry and unit consistency
+
+Full `make generate-check env-contract-check` passed on the integration tree after correcting the canonical UDP environment-file spec. The bind-host catalog wording was previously edited only in generated Markdown; its IPv4 validation description now lives in the source registry and regenerates identically. Log `/tmp/gregale-udp-integrated-env-gates-final.log`. This proves local generation/delivery declarations, not deployed startup or native qualification.
