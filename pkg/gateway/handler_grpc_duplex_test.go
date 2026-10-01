@@ -128,15 +128,20 @@ func TestHandlerOrdinaryBodiesWaitForRequestEOF(t *testing.T) {
 			}
 			req.Host = "app.example.com"
 			req.Header.Set("Content-Type", tc.mediaType)
-			response := make(chan *http.Response, 1)
-			failed := make(chan error, 1)
+			type responseResult struct {
+				body []byte
+				err  error
+			}
+			response := make(chan responseResult, 1)
 			go func() {
 				r, err := edge.Client().Do(req)
 				if err != nil {
-					failed <- err
+					response <- responseResult{err: err}
 					return
 				}
-				response <- r
+				defer r.Body.Close()
+				body, err := io.ReadAll(r.Body)
+				response <- responseResult{body: body, err: err}
 			}()
 			if _, err := upload.Write([]byte("ping")); err != nil {
 				t.Fatal(err)
@@ -149,13 +154,9 @@ func TestHandlerOrdinaryBodiesWaitForRequestEOF(t *testing.T) {
 			_ = upload.Close()
 			select {
 			case resp := <-response:
-				defer resp.Body.Close()
-				got, err := io.ReadAll(resp.Body)
-				if err != nil || string(got) != "ping" {
-					t.Fatalf("admitted response=%q err=%v", got, err)
+				if resp.err != nil || string(resp.body) != "ping" {
+					t.Fatalf("admitted response=%q err=%v", resp.body, resp.err)
 				}
-			case err := <-failed:
-				t.Fatal(err)
 			case <-ctx.Done():
 				t.Fatal(ctx.Err())
 			}
