@@ -76,6 +76,7 @@ type Querier interface {
 	// non-active observation starts a new detection lifecycle so the transition
 	// webhook gets its own stable id.
 	ApplyRegressionAction(ctx context.Context, db DBTX, arg ApplyRegressionActionParams) (DebugRegressionObservation, error)
+	BootstrapFencedGatewayCachePurgeCursor(ctx context.Context, db DBTX, arg BootstrapFencedGatewayCachePurgeCursorParams) (int64, error)
 	BuildByDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (BuildByDeploymentRow, error)
 	BuildByID(ctx context.Context, db DBTX, id pgtype.UUID) (BuildByIDRow, error)
 	// issue #667 / ADR-078 — atomically apply delta to the instance's
@@ -768,6 +769,7 @@ type Querier interface {
 	// partition, then interleaved so one high-volume revision cannot crowd all
 	// prior deployments out of the bounded comparison window.
 	ListRequestTelemetryDependencySpans(ctx context.Context, db DBTX, arg ListRequestTelemetryDependencySpansParams) ([]ListRequestTelemetryDependencySpansRow, error)
+	ListServingGatewayPolicyProgress(ctx context.Context, db DBTX, arg ListServingGatewayPolicyProgressParams) ([]ListServingGatewayPolicyProgressRow, error)
 	ListServingGatewayTrafficRuntime(ctx context.Context, db DBTX, rowLimit int32) ([]ListServingGatewayTrafficRuntimeRow, error)
 	// Active rows only, newest first. Partial index keeps the scan tight.
 	ListSessions(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListSessionsRow, error)
@@ -995,6 +997,10 @@ type Querier interface {
 	// partition tail (rows in the default partition or
 	// the current month that are older than cutoff).
 	PruneDataUpstreamProbesOlderThan(ctx context.Context, db DBTX, sampledAt pgtype.Timestamptz) error
+	PruneFencedControlPlaneChangeLog(ctx context.Context, db DBTX, arg PruneFencedControlPlaneChangeLogParams) (int64, error)
+	PruneFencedCorsPresetChangeLog(ctx context.Context, db DBTX, arg PruneFencedCorsPresetChangeLogParams) (int64, error)
+	PruneFencedEdgeRuleChangeLog(ctx context.Context, db DBTX, arg PruneFencedEdgeRuleChangeLogParams) (int64, error)
+	PruneFencedResponseCachePurgeChangeLog(ctx context.Context, db DBTX, arg PruneFencedResponseCachePurgeChangeLogParams) (int64, error)
 	PruneTrafficRetryCounters(ctx context.Context, db DBTX) (int64, error)
 	PutAppEgressCircuits(ctx context.Context, db DBTX, arg PutAppEgressCircuitsParams) (PutAppEgressCircuitsRow, error)
 	// An unqualified legacy row blocks the whole key; guessing could double-debit.
@@ -1139,6 +1145,9 @@ type Querier interface {
 	RecordUploadCommitOutcome(ctx context.Context, db DBTX, arg RecordUploadCommitOutcomeParams) (UploadCommitOutcome, error)
 	RegisterGatewayTrafficRuntimeEpoch(ctx context.Context, db DBTX, arg RegisterGatewayTrafficRuntimeEpochParams) (int64, error)
 	RegisterGatewayUsageEvent(ctx context.Context, db DBTX, arg RegisterGatewayUsageEventParams) (bool, error)
+	// ADR-375: only the current process may acknowledge durable policy replay.
+	// Lock the node before its epoch, matching registration and FK deletion order.
+	ReportGatewayPolicyProgress(ctx context.Context, db DBTX, arg ReportGatewayPolicyProgressParams) (int64, error)
 	ReportGatewayTrafficRuntime(ctx context.Context, db DBTX, arg ReportGatewayTrafficRuntimeParams) (int64, error)
 	// Bounded deployment cost allocation for the customer request analytics
 	// window. Request counts are weighted by the publisher's collapsed `count`.

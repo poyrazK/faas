@@ -4811,13 +4811,16 @@ FROM traffic_security_epochs e JOIN requested r
 SELECT generation, boot_id FROM gateway_traffic_runtime_observations WHERE node_name = sqlc.arg(node_name)::text;
 
 -- name: RegisterGatewayTrafficRuntimeEpoch :one
+WITH live_node AS MATERIALIZED (
+    SELECT n.name FROM compute_nodes n
+    WHERE n.name = sqlc.arg(node_name)::text AND n.active
+      AND n.role IN ('compute-only', 'compute-node')
+      AND n.gateway_target_url IS NOT NULL AND btrim(n.gateway_target_url) <> ''
+    FOR KEY SHARE
+)
 INSERT INTO gateway_traffic_runtime_observations (node_name, boot_id)
-SELECT n.name, sqlc.arg(boot_id)::uuid
-FROM compute_nodes n
-WHERE n.name = sqlc.arg(node_name)::text AND n.active
-  AND n.role IN ('compute-only', 'compute-node')
-  AND n.gateway_target_url IS NOT NULL AND btrim(n.gateway_target_url) <> ''
-  AND (sqlc.arg(expected_generation)::bigint = 0 OR EXISTS (
+SELECT n.name, sqlc.arg(boot_id)::uuid FROM live_node n
+WHERE (sqlc.arg(expected_generation)::bigint = 0 OR EXISTS (
       SELECT 1 FROM gateway_traffic_runtime_observations old
       WHERE old.node_name = n.name AND old.generation = sqlc.arg(expected_generation)::bigint))
 ON CONFLICT (node_name) DO UPDATE SET
@@ -5573,3 +5576,136 @@ WHERE id=sqlc.arg(deployment_id)::uuid
 
 -- name: ReadTrafficDeploymentStatus :one
 SELECT status FROM deployments WHERE id=sqlc.arg(deployment_id)::uuid;
+
+
+-- ADR-375: only the current process may acknowledge durable policy replay.
+-- Lock the node before its epoch, matching registration and FK deletion order.
+-- name: ReportGatewayPolicyProgress :execrows
+WITH live_node AS MATERIALIZED (
+    SELECT n.name FROM compute_nodes n
+    WHERE n.name = sqlc.arg(node_name)::text AND n.active
+      AND n.role IN ('compute-only', 'compute-node')
+      AND n.gateway_target_url IS NOT NULL AND btrim(n.gateway_target_url) <> ''
+    FOR KEY SHARE
+), owned AS MATERIALIZED (
+    SELECT o.node_name, o.generation, o.boot_id
+    FROM gateway_traffic_runtime_observations o JOIN live_node n ON n.name = o.node_name
+    WHERE o.generation = sqlc.arg(generation)::bigint AND o.boot_id = sqlc.arg(boot_id)::uuid
+    FOR SHARE OF o
+)
+INSERT INTO gateway_traffic_policy_observations (node_name, policy_kind, generation, boot_id, last_change_id, observed_at)
+SELECT node_name, sqlc.arg(policy_kind)::text, generation, boot_id, sqlc.arg(last_change_id)::bigint, clock_timestamp()
+FROM owned
+ON CONFLICT (node_name, policy_kind) DO UPDATE SET
+    generation = EXCLUDED.generation, boot_id = EXCLUDED.boot_id,
+    last_change_id = CASE WHEN gateway_traffic_policy_observations.generation = EXCLUDED.generation
+        AND gateway_traffic_policy_observations.boot_id = EXCLUDED.boot_id
+        THEN GREATEST(gateway_traffic_policy_observations.last_change_id, EXCLUDED.last_change_id)
+        ELSE EXCLUDED.last_change_id END,
+    observed_at = EXCLUDED.observed_at;
+
+-- name: ListServingGatewayPolicyProgress :many
+WITH db_clock AS MATERIALIZED (SELECT clock_timestamp() AS now)
+SELECT n.name AS node_name,
+       COALESCE(w.last_change_id, 0)::bigint AS last_change_id, w.observed_at,
+       COALESCE(e.last_change_id, 0)::bigint AS edge_rule_change_id, e.observed_at AS edge_rules_observed_at,
+       COALESCE(c.last_change_id, 0)::bigint AS cors_preset_change_id, c.observed_at AS cors_presets_observed_at,
+       COALESCE(r.last_change_id, 0)::bigint AS cache_purge_change_id, r.observed_at AS cache_purges_observed_at,
+       db_clock.now::timestamptz AS database_now
+FROM compute_nodes n CROSS JOIN db_clock
+LEFT JOIN gateway_traffic_runtime_observations o ON o.node_name = n.name
+    AND o.reported_at BETWEEN db_clock.now - make_interval(secs => sqlc.arg(freshness_seconds)::double precision) AND db_clock.now
+LEFT JOIN gateway_traffic_policy_observations w ON w.node_name = n.name AND w.policy_kind = 'control_plane' AND w.generation = o.generation AND w.boot_id = o.boot_id
+LEFT JOIN gateway_traffic_policy_observations e ON e.node_name = n.name AND e.policy_kind = 'edge_rules' AND e.generation = o.generation AND e.boot_id = o.boot_id
+LEFT JOIN gateway_traffic_policy_observations c ON c.node_name = n.name AND c.policy_kind = 'cors_presets' AND c.generation = o.generation AND c.boot_id = o.boot_id
+LEFT JOIN gateway_traffic_policy_observations r ON r.node_name = n.name AND r.policy_kind = 'cache_purge' AND r.generation = o.generation AND r.boot_id = o.boot_id
+WHERE n.active AND n.role IN ('compute-only', 'compute-node')
+  AND n.gateway_target_url IS NOT NULL AND btrim(n.gateway_target_url) <> ''
+ORDER BY n.name LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: BootstrapFencedGatewayCachePurgeCursor :one
+WITH db_clock AS MATERIALIZED (SELECT clock_timestamp() AS now)
+SELECT COALESCE(
+    (SELECT last_change_id FROM gateway_traffic_policy_observations
+     WHERE node_name = sqlc.arg(node_name)::text AND policy_kind = 'cache_purge'),
+    (SELECT MAX(p.last_change_id) FROM compute_nodes n CROSS JOIN db_clock
+     JOIN gateway_traffic_runtime_observations o ON o.node_name = n.name
+     JOIN gateway_traffic_policy_observations p ON p.node_name = n.name AND p.policy_kind = 'cache_purge'
+         AND p.generation = o.generation AND p.boot_id = o.boot_id
+     WHERE n.name <> sqlc.arg(node_name)::text AND n.active AND n.role IN ('compute-only', 'compute-node')
+       AND n.gateway_target_url IS NOT NULL AND btrim(n.gateway_target_url) <> ''
+       AND o.reported_at BETWEEN db_clock.now - make_interval(secs => sqlc.arg(freshness_seconds)::double precision) AND db_clock.now
+       AND p.observed_at BETWEEN db_clock.now - make_interval(secs => sqlc.arg(freshness_seconds)::double precision) AND db_clock.now),
+    0)::bigint AS last_change_id;
+
+-- name: PruneFencedControlPlaneChangeLog :execrows
+WITH db_clock AS MATERIALIZED (SELECT clock_timestamp() AS now)
+DELETE FROM control_plane_change_log
+WHERE created_at < sqlc.arg(before)::timestamptz
+  AND id <= COALESCE((
+      SELECT MIN(CASE WHEN o.reported_at BETWEEN db_clock.now - make_interval(secs => sqlc.arg(freshness_seconds)::double precision) AND db_clock.now
+                       AND p.observed_at BETWEEN db_clock.now - make_interval(secs => sqlc.arg(freshness_seconds)::double precision) AND db_clock.now
+                      THEN p.last_change_id ELSE 0 END)
+      FROM compute_nodes n CROSS JOIN db_clock
+      LEFT JOIN gateway_traffic_runtime_observations o ON o.node_name = n.name
+      LEFT JOIN gateway_traffic_policy_observations p ON p.node_name = n.name AND p.policy_kind = 'control_plane'
+          AND p.generation = o.generation AND p.boot_id = o.boot_id
+      WHERE n.active AND n.role IN ('compute-only', 'compute-node')
+        AND n.gateway_target_url IS NOT NULL AND btrim(n.gateway_target_url) <> ''
+  ), 9223372036854775807::bigint)
+  AND (NOT EXISTS (SELECT 1 FROM apps a WHERE a.id = control_plane_change_log.app_id)
+       OR EXISTS (SELECT 1 FROM control_plane_change_log newer
+                  WHERE newer.app_id = control_plane_change_log.app_id
+                    AND newer.resource_type = control_plane_change_log.resource_type AND newer.id > control_plane_change_log.id));
+
+-- name: PruneFencedEdgeRuleChangeLog :execrows
+WITH db_clock AS MATERIALIZED (SELECT clock_timestamp() AS now)
+DELETE FROM edge_rule_change_log
+WHERE created_at < sqlc.arg(before)::timestamptz
+  AND id <= COALESCE((
+      SELECT MIN(CASE WHEN o.reported_at BETWEEN db_clock.now - make_interval(secs => sqlc.arg(freshness_seconds)::double precision) AND db_clock.now
+                       AND p.observed_at BETWEEN db_clock.now - make_interval(secs => sqlc.arg(freshness_seconds)::double precision) AND db_clock.now
+                      THEN p.last_change_id ELSE 0 END)
+      FROM compute_nodes n CROSS JOIN db_clock
+      LEFT JOIN gateway_traffic_runtime_observations o ON o.node_name = n.name
+      LEFT JOIN gateway_traffic_policy_observations p ON p.node_name = n.name AND p.policy_kind = 'edge_rules'
+          AND p.generation = o.generation AND p.boot_id = o.boot_id
+      WHERE n.active AND n.role IN ('compute-only', 'compute-node')
+        AND n.gateway_target_url IS NOT NULL AND btrim(n.gateway_target_url) <> ''
+  ), 9223372036854775807::bigint)
+  ;
+
+-- name: PruneFencedCorsPresetChangeLog :execrows
+WITH db_clock AS MATERIALIZED (SELECT clock_timestamp() AS now)
+DELETE FROM cors_preset_change_log
+WHERE created_at < sqlc.arg(before)::timestamptz
+  AND id <= COALESCE((
+      SELECT MIN(CASE WHEN o.reported_at BETWEEN db_clock.now - make_interval(secs => sqlc.arg(freshness_seconds)::double precision) AND db_clock.now
+                       AND p.observed_at BETWEEN db_clock.now - make_interval(secs => sqlc.arg(freshness_seconds)::double precision) AND db_clock.now
+                      THEN p.last_change_id ELSE 0 END)
+      FROM compute_nodes n CROSS JOIN db_clock
+      LEFT JOIN gateway_traffic_runtime_observations o ON o.node_name = n.name
+      LEFT JOIN gateway_traffic_policy_observations p ON p.node_name = n.name AND p.policy_kind = 'cors_presets'
+          AND p.generation = o.generation AND p.boot_id = o.boot_id
+      WHERE n.active AND n.role IN ('compute-only', 'compute-node')
+        AND n.gateway_target_url IS NOT NULL AND btrim(n.gateway_target_url) <> ''
+  ), 9223372036854775807::bigint)
+  AND (NOT EXISTS (SELECT 1 FROM accounts a WHERE a.id = cors_preset_change_log.account_id)
+       OR id < (SELECT MAX(current.id) FROM cors_preset_change_log current WHERE current.account_id = cors_preset_change_log.account_id));
+
+-- name: PruneFencedResponseCachePurgeChangeLog :execrows
+WITH db_clock AS MATERIALIZED (SELECT clock_timestamp() AS now)
+DELETE FROM response_cache_purge_change_log
+WHERE created_at < sqlc.arg(before)::timestamptz
+  AND id <= COALESCE((
+      SELECT MIN(CASE WHEN o.reported_at BETWEEN db_clock.now - make_interval(secs => sqlc.arg(freshness_seconds)::double precision) AND db_clock.now
+                       AND p.observed_at BETWEEN db_clock.now - make_interval(secs => sqlc.arg(freshness_seconds)::double precision) AND db_clock.now
+                      THEN p.last_change_id ELSE 0 END)
+      FROM compute_nodes n CROSS JOIN db_clock
+      LEFT JOIN gateway_traffic_runtime_observations o ON o.node_name = n.name
+      LEFT JOIN gateway_traffic_policy_observations p ON p.node_name = n.name AND p.policy_kind = 'cache_purge'
+          AND p.generation = o.generation AND p.boot_id = o.boot_id
+      WHERE n.active AND n.role IN ('compute-only', 'compute-node')
+        AND n.gateway_target_url IS NOT NULL AND btrim(n.gateway_target_url) <> ''
+  ), 9223372036854775807::bigint)
+  AND id < (SELECT MAX(current.id) FROM response_cache_purge_change_log current WHERE current.app_id = response_cache_purge_change_log.app_id);

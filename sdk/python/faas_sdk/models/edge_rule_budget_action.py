@@ -32,11 +32,11 @@ class EdgeRuleBudgetAction:
     """
 
     budget_ms: int
-    """ Execution allowance in milliseconds, after upload/wake/admission. """
+    """Execution allowance in milliseconds, after upload/wake/admission."""
     total_deadline_ms: int | Unset = 0
-    """ Optional total deadline from trusted public ingress; zero leaves it unset. """
+    """Optional total deadline from trusted public ingress; zero leaves it unset."""
     allow_override_header: str | Unset = UNSET
-    """ Header for the execution override; default x-faas-budget-ms. It never increases total_deadline_ms. """
+    """Header for the execution override; default x-faas-budget-ms. It never increases total_deadline_ms."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

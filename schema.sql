@@ -11114,3 +11114,182 @@ ALTER TABLE ONLY public.gateway_traffic_runtime_observations
 
 ALTER TABLE ONLY public.gateway_traffic_runtime_observations
     ADD CONSTRAINT gateway_traffic_runtime_observations_node_name_fkey FOREIGN KEY (node_name) REFERENCES public.compute_nodes(name) ON DELETE CASCADE;
+
+--
+-- Name: gateway_traffic_policy_observations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.gateway_traffic_policy_observations (
+    node_name text NOT NULL,
+    policy_kind text NOT NULL,
+    generation bigint NOT NULL,
+    boot_id uuid NOT NULL,
+    last_change_id bigint NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    CONSTRAINT gateway_traffic_policy_observations_generation_check CHECK ((generation > 0)),
+    CONSTRAINT gateway_traffic_policy_observations_last_change_id_check CHECK ((last_change_id >= 0)),
+    CONSTRAINT gateway_traffic_policy_observations_policy_kind_check CHECK ((policy_kind = ANY (ARRAY['control_plane'::text, 'edge_rules'::text, 'cors_presets'::text, 'cache_purge'::text])))
+);
+
+
+--
+-- Name: gateway_traffic_policy_observations gateway_traffic_policy_observations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.gateway_traffic_policy_observations
+    ADD CONSTRAINT gateway_traffic_policy_observations_pkey PRIMARY KEY (node_name, policy_kind);
+
+
+--
+-- Name: gateway_traffic_policy_observations gateway_traffic_policy_observations_node_name_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.gateway_traffic_policy_observations
+    ADD CONSTRAINT gateway_traffic_policy_observations_node_name_fkey FOREIGN KEY (node_name) REFERENCES public.compute_nodes(name) ON DELETE CASCADE;
+
+
+
+--
+-- Name: control_plane_change_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.control_plane_change_log (
+    id bigint NOT NULL,
+    resource_type text NOT NULL,
+    resource_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    operation text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT control_plane_change_log_operation_check CHECK ((operation = ANY (ARRAY['created'::text, 'updated'::text, 'deleted'::text]))),
+    CONSTRAINT control_plane_change_log_resource_type_check CHECK ((resource_type <> ''::text))
+);
+
+
+--
+-- Name: control_plane_change_log_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.control_plane_change_log ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.control_plane_change_log_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: cors_preset_change_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.cors_preset_change_log (
+    id bigint NOT NULL,
+    account_id uuid NOT NULL,
+    preset_id uuid NOT NULL,
+    operation text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT cors_preset_change_log_operation_check CHECK ((operation = ANY (ARRAY['created'::text, 'updated'::text, 'deleted'::text])))
+);
+
+
+--
+-- Name: cors_preset_change_log_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.cors_preset_change_log ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.cors_preset_change_log_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: edge_rule_change_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.edge_rule_change_log (
+    id bigint NOT NULL,
+    app_id uuid NOT NULL,
+    rule_id uuid NOT NULL,
+    operation text NOT NULL,
+    match_hosts text[] DEFAULT '{}'::text[] NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT edge_rule_change_log_operation_check CHECK ((operation = ANY (ARRAY['created'::text, 'updated'::text, 'deleted'::text])))
+);
+
+
+--
+-- Name: edge_rule_change_log_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.edge_rule_change_log ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.edge_rule_change_log_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: control_plane_change_log control_plane_change_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.control_plane_change_log
+    ADD CONSTRAINT control_plane_change_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: cors_preset_change_log cors_preset_change_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cors_preset_change_log
+    ADD CONSTRAINT cors_preset_change_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: edge_rule_change_log edge_rule_change_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.edge_rule_change_log
+    ADD CONSTRAINT edge_rule_change_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: control_plane_change_log_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX control_plane_change_log_app_idx ON public.control_plane_change_log USING btree (resource_type, app_id, id);
+
+
+--
+-- Name: control_plane_change_log_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX control_plane_change_log_created_idx ON public.control_plane_change_log USING btree (created_at, id);
+
+
+--
+-- Name: cors_preset_change_log_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX cors_preset_change_log_account_idx ON public.cors_preset_change_log USING btree (account_id, id);
+
+
+--
+-- Name: cors_preset_change_log_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX cors_preset_change_log_created_idx ON public.cors_preset_change_log USING btree (created_at, id);
+
+
+--
+-- Name: edge_rule_change_log_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX edge_rule_change_log_created_idx ON public.edge_rule_change_log USING btree (created_at, id);

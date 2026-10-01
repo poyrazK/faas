@@ -617,6 +617,34 @@ func (q *Queries) ApplyRegressionAction(ctx context.Context, db DBTX, arg ApplyR
 	return i, err
 }
 
+const bootstrapFencedGatewayCachePurgeCursor = `-- name: BootstrapFencedGatewayCachePurgeCursor :one
+WITH db_clock AS MATERIALIZED (SELECT clock_timestamp() AS now)
+SELECT COALESCE(
+    (SELECT last_change_id FROM gateway_traffic_policy_observations
+     WHERE node_name = $1::text AND policy_kind = 'cache_purge'),
+    (SELECT MAX(p.last_change_id) FROM compute_nodes n CROSS JOIN db_clock
+     JOIN gateway_traffic_runtime_observations o ON o.node_name = n.name
+     JOIN gateway_traffic_policy_observations p ON p.node_name = n.name AND p.policy_kind = 'cache_purge'
+         AND p.generation = o.generation AND p.boot_id = o.boot_id
+     WHERE n.name <> $1::text AND n.active AND n.role IN ('compute-only', 'compute-node')
+       AND n.gateway_target_url IS NOT NULL AND btrim(n.gateway_target_url) <> ''
+       AND o.reported_at BETWEEN db_clock.now - make_interval(secs => $2::double precision) AND db_clock.now
+       AND p.observed_at BETWEEN db_clock.now - make_interval(secs => $2::double precision) AND db_clock.now),
+    0)::bigint AS last_change_id
+`
+
+type BootstrapFencedGatewayCachePurgeCursorParams struct {
+	NodeName         string
+	FreshnessSeconds float64
+}
+
+func (q *Queries) BootstrapFencedGatewayCachePurgeCursor(ctx context.Context, db DBTX, arg BootstrapFencedGatewayCachePurgeCursorParams) (int64, error) {
+	row := db.QueryRow(ctx, bootstrapFencedGatewayCachePurgeCursor, arg.NodeName, arg.FreshnessSeconds)
+	var last_change_id int64
+	err := row.Scan(&last_change_id)
+	return last_change_id, err
+}
+
 const buildByDeployment = `-- name: BuildByDeployment :one
 select id, deployment_id, kind, source_bytes, status, failure_class, log_path, started_at, finished_at, enqueued_at, cache_status, cache_key_sha256
 from builds where deployment_id = $1 order by started_at desc nulls last limit 1
@@ -8104,6 +8132,75 @@ func (q *Queries) ListRequestTelemetryDependencySpans(ctx context.Context, db DB
 	return items, nil
 }
 
+const listServingGatewayPolicyProgress = `-- name: ListServingGatewayPolicyProgress :many
+WITH db_clock AS MATERIALIZED (SELECT clock_timestamp() AS now)
+SELECT n.name AS node_name,
+       COALESCE(w.last_change_id, 0)::bigint AS last_change_id, w.observed_at,
+       COALESCE(e.last_change_id, 0)::bigint AS edge_rule_change_id, e.observed_at AS edge_rules_observed_at,
+       COALESCE(c.last_change_id, 0)::bigint AS cors_preset_change_id, c.observed_at AS cors_presets_observed_at,
+       COALESCE(r.last_change_id, 0)::bigint AS cache_purge_change_id, r.observed_at AS cache_purges_observed_at,
+       db_clock.now::timestamptz AS database_now
+FROM compute_nodes n CROSS JOIN db_clock
+LEFT JOIN gateway_traffic_runtime_observations o ON o.node_name = n.name
+    AND o.reported_at BETWEEN db_clock.now - make_interval(secs => $1::double precision) AND db_clock.now
+LEFT JOIN gateway_traffic_policy_observations w ON w.node_name = n.name AND w.policy_kind = 'control_plane' AND w.generation = o.generation AND w.boot_id = o.boot_id
+LEFT JOIN gateway_traffic_policy_observations e ON e.node_name = n.name AND e.policy_kind = 'edge_rules' AND e.generation = o.generation AND e.boot_id = o.boot_id
+LEFT JOIN gateway_traffic_policy_observations c ON c.node_name = n.name AND c.policy_kind = 'cors_presets' AND c.generation = o.generation AND c.boot_id = o.boot_id
+LEFT JOIN gateway_traffic_policy_observations r ON r.node_name = n.name AND r.policy_kind = 'cache_purge' AND r.generation = o.generation AND r.boot_id = o.boot_id
+WHERE n.active AND n.role IN ('compute-only', 'compute-node')
+  AND n.gateway_target_url IS NOT NULL AND btrim(n.gateway_target_url) <> ''
+ORDER BY n.name LIMIT $2::integer
+`
+
+type ListServingGatewayPolicyProgressParams struct {
+	FreshnessSeconds float64
+	RowLimit         int32
+}
+
+type ListServingGatewayPolicyProgressRow struct {
+	NodeName              string
+	LastChangeID          int64
+	ObservedAt            pgtype.Timestamptz
+	EdgeRuleChangeID      int64
+	EdgeRulesObservedAt   pgtype.Timestamptz
+	CorsPresetChangeID    int64
+	CorsPresetsObservedAt pgtype.Timestamptz
+	CachePurgeChangeID    int64
+	CachePurgesObservedAt pgtype.Timestamptz
+	DatabaseNow           pgtype.Timestamptz
+}
+
+func (q *Queries) ListServingGatewayPolicyProgress(ctx context.Context, db DBTX, arg ListServingGatewayPolicyProgressParams) ([]ListServingGatewayPolicyProgressRow, error) {
+	rows, err := db.Query(ctx, listServingGatewayPolicyProgress, arg.FreshnessSeconds, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListServingGatewayPolicyProgressRow{}
+	for rows.Next() {
+		var i ListServingGatewayPolicyProgressRow
+		if err := rows.Scan(
+			&i.NodeName,
+			&i.LastChangeID,
+			&i.ObservedAt,
+			&i.EdgeRuleChangeID,
+			&i.EdgeRulesObservedAt,
+			&i.CorsPresetChangeID,
+			&i.CorsPresetsObservedAt,
+			&i.CachePurgeChangeID,
+			&i.CachePurgesObservedAt,
+			&i.DatabaseNow,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listServingGatewayTrafficRuntime = `-- name: ListServingGatewayTrafficRuntime :many
 SELECT n.name AS node_name, COALESCE(o.generation, 0)::bigint AS generation, o.reported_at,
        COALESCE(o.retry_enabled, false)::boolean AS retry_enabled,
@@ -12113,6 +12210,133 @@ func (q *Queries) PruneDataUpstreamProbesOlderThan(ctx context.Context, db DBTX,
 	return err
 }
 
+const pruneFencedControlPlaneChangeLog = `-- name: PruneFencedControlPlaneChangeLog :execrows
+WITH db_clock AS MATERIALIZED (SELECT clock_timestamp() AS now)
+DELETE FROM control_plane_change_log
+WHERE created_at < $1::timestamptz
+  AND id <= COALESCE((
+      SELECT MIN(CASE WHEN o.reported_at BETWEEN db_clock.now - make_interval(secs => $2::double precision) AND db_clock.now
+                       AND p.observed_at BETWEEN db_clock.now - make_interval(secs => $2::double precision) AND db_clock.now
+                      THEN p.last_change_id ELSE 0 END)
+      FROM compute_nodes n CROSS JOIN db_clock
+      LEFT JOIN gateway_traffic_runtime_observations o ON o.node_name = n.name
+      LEFT JOIN gateway_traffic_policy_observations p ON p.node_name = n.name AND p.policy_kind = 'control_plane'
+          AND p.generation = o.generation AND p.boot_id = o.boot_id
+      WHERE n.active AND n.role IN ('compute-only', 'compute-node')
+        AND n.gateway_target_url IS NOT NULL AND btrim(n.gateway_target_url) <> ''
+  ), 9223372036854775807::bigint)
+  AND (NOT EXISTS (SELECT 1 FROM apps a WHERE a.id = control_plane_change_log.app_id)
+       OR EXISTS (SELECT 1 FROM control_plane_change_log newer
+                  WHERE newer.app_id = control_plane_change_log.app_id
+                    AND newer.resource_type = control_plane_change_log.resource_type AND newer.id > control_plane_change_log.id))
+`
+
+type PruneFencedControlPlaneChangeLogParams struct {
+	Before           pgtype.Timestamptz
+	FreshnessSeconds float64
+}
+
+func (q *Queries) PruneFencedControlPlaneChangeLog(ctx context.Context, db DBTX, arg PruneFencedControlPlaneChangeLogParams) (int64, error) {
+	result, err := db.Exec(ctx, pruneFencedControlPlaneChangeLog, arg.Before, arg.FreshnessSeconds)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const pruneFencedCorsPresetChangeLog = `-- name: PruneFencedCorsPresetChangeLog :execrows
+WITH db_clock AS MATERIALIZED (SELECT clock_timestamp() AS now)
+DELETE FROM cors_preset_change_log
+WHERE created_at < $1::timestamptz
+  AND id <= COALESCE((
+      SELECT MIN(CASE WHEN o.reported_at BETWEEN db_clock.now - make_interval(secs => $2::double precision) AND db_clock.now
+                       AND p.observed_at BETWEEN db_clock.now - make_interval(secs => $2::double precision) AND db_clock.now
+                      THEN p.last_change_id ELSE 0 END)
+      FROM compute_nodes n CROSS JOIN db_clock
+      LEFT JOIN gateway_traffic_runtime_observations o ON o.node_name = n.name
+      LEFT JOIN gateway_traffic_policy_observations p ON p.node_name = n.name AND p.policy_kind = 'cors_presets'
+          AND p.generation = o.generation AND p.boot_id = o.boot_id
+      WHERE n.active AND n.role IN ('compute-only', 'compute-node')
+        AND n.gateway_target_url IS NOT NULL AND btrim(n.gateway_target_url) <> ''
+  ), 9223372036854775807::bigint)
+  AND (NOT EXISTS (SELECT 1 FROM accounts a WHERE a.id = cors_preset_change_log.account_id)
+       OR id < (SELECT MAX(current.id) FROM cors_preset_change_log current WHERE current.account_id = cors_preset_change_log.account_id))
+`
+
+type PruneFencedCorsPresetChangeLogParams struct {
+	Before           pgtype.Timestamptz
+	FreshnessSeconds float64
+}
+
+func (q *Queries) PruneFencedCorsPresetChangeLog(ctx context.Context, db DBTX, arg PruneFencedCorsPresetChangeLogParams) (int64, error) {
+	result, err := db.Exec(ctx, pruneFencedCorsPresetChangeLog, arg.Before, arg.FreshnessSeconds)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const pruneFencedEdgeRuleChangeLog = `-- name: PruneFencedEdgeRuleChangeLog :execrows
+WITH db_clock AS MATERIALIZED (SELECT clock_timestamp() AS now)
+DELETE FROM edge_rule_change_log
+WHERE created_at < $1::timestamptz
+  AND id <= COALESCE((
+      SELECT MIN(CASE WHEN o.reported_at BETWEEN db_clock.now - make_interval(secs => $2::double precision) AND db_clock.now
+                       AND p.observed_at BETWEEN db_clock.now - make_interval(secs => $2::double precision) AND db_clock.now
+                      THEN p.last_change_id ELSE 0 END)
+      FROM compute_nodes n CROSS JOIN db_clock
+      LEFT JOIN gateway_traffic_runtime_observations o ON o.node_name = n.name
+      LEFT JOIN gateway_traffic_policy_observations p ON p.node_name = n.name AND p.policy_kind = 'edge_rules'
+          AND p.generation = o.generation AND p.boot_id = o.boot_id
+      WHERE n.active AND n.role IN ('compute-only', 'compute-node')
+        AND n.gateway_target_url IS NOT NULL AND btrim(n.gateway_target_url) <> ''
+  ), 9223372036854775807::bigint)
+`
+
+type PruneFencedEdgeRuleChangeLogParams struct {
+	Before           pgtype.Timestamptz
+	FreshnessSeconds float64
+}
+
+func (q *Queries) PruneFencedEdgeRuleChangeLog(ctx context.Context, db DBTX, arg PruneFencedEdgeRuleChangeLogParams) (int64, error) {
+	result, err := db.Exec(ctx, pruneFencedEdgeRuleChangeLog, arg.Before, arg.FreshnessSeconds)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const pruneFencedResponseCachePurgeChangeLog = `-- name: PruneFencedResponseCachePurgeChangeLog :execrows
+WITH db_clock AS MATERIALIZED (SELECT clock_timestamp() AS now)
+DELETE FROM response_cache_purge_change_log
+WHERE created_at < $1::timestamptz
+  AND id <= COALESCE((
+      SELECT MIN(CASE WHEN o.reported_at BETWEEN db_clock.now - make_interval(secs => $2::double precision) AND db_clock.now
+                       AND p.observed_at BETWEEN db_clock.now - make_interval(secs => $2::double precision) AND db_clock.now
+                      THEN p.last_change_id ELSE 0 END)
+      FROM compute_nodes n CROSS JOIN db_clock
+      LEFT JOIN gateway_traffic_runtime_observations o ON o.node_name = n.name
+      LEFT JOIN gateway_traffic_policy_observations p ON p.node_name = n.name AND p.policy_kind = 'cache_purge'
+          AND p.generation = o.generation AND p.boot_id = o.boot_id
+      WHERE n.active AND n.role IN ('compute-only', 'compute-node')
+        AND n.gateway_target_url IS NOT NULL AND btrim(n.gateway_target_url) <> ''
+  ), 9223372036854775807::bigint)
+  AND id < (SELECT MAX(current.id) FROM response_cache_purge_change_log current WHERE current.app_id = response_cache_purge_change_log.app_id)
+`
+
+type PruneFencedResponseCachePurgeChangeLogParams struct {
+	Before           pgtype.Timestamptz
+	FreshnessSeconds float64
+}
+
+func (q *Queries) PruneFencedResponseCachePurgeChangeLog(ctx context.Context, db DBTX, arg PruneFencedResponseCachePurgeChangeLogParams) (int64, error) {
+	result, err := db.Exec(ctx, pruneFencedResponseCachePurgeChangeLog, arg.Before, arg.FreshnessSeconds)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const pruneTrafficRetryCounters = `-- name: PruneTrafficRetryCounters :execrows
 WITH stale AS (
     SELECT app_id FROM traffic_retry_counters
@@ -14023,32 +14247,35 @@ func (q *Queries) RecordUploadCommitOutcome(ctx context.Context, db DBTX, arg Re
 }
 
 const registerGatewayTrafficRuntimeEpoch = `-- name: RegisterGatewayTrafficRuntimeEpoch :one
+WITH live_node AS MATERIALIZED (
+    SELECT n.name FROM compute_nodes n
+    WHERE n.name = $3::text AND n.active
+      AND n.role IN ('compute-only', 'compute-node')
+      AND n.gateway_target_url IS NOT NULL AND btrim(n.gateway_target_url) <> ''
+    FOR KEY SHARE
+)
 INSERT INTO gateway_traffic_runtime_observations (node_name, boot_id)
-SELECT n.name, $1::uuid
-FROM compute_nodes n
-WHERE n.name = $2::text AND n.active
-  AND n.role IN ('compute-only', 'compute-node')
-  AND n.gateway_target_url IS NOT NULL AND btrim(n.gateway_target_url) <> ''
-  AND ($3::bigint = 0 OR EXISTS (
+SELECT n.name, $1::uuid FROM live_node n
+WHERE ($2::bigint = 0 OR EXISTS (
       SELECT 1 FROM gateway_traffic_runtime_observations old
-      WHERE old.node_name = n.name AND old.generation = $3::bigint))
+      WHERE old.node_name = n.name AND old.generation = $2::bigint))
 ON CONFLICT (node_name) DO UPDATE SET
     generation = EXCLUDED.generation, boot_id = EXCLUDED.boot_id, reported_at = NULL,
     retry_enabled = false, rate_counter_mode = 'unwired', retry_counter_mode = 'unwired', retry_backend_id = '',
     deadline_signing = false, policy_snapshot = false, security_revocation = false, managed_http = false, managed_circuit = false
-WHERE gateway_traffic_runtime_observations.generation = $3::bigint
+WHERE gateway_traffic_runtime_observations.generation = $2::bigint
   AND gateway_traffic_runtime_observations.boot_id <> EXCLUDED.boot_id
 RETURNING generation
 `
 
 type RegisterGatewayTrafficRuntimeEpochParams struct {
 	BootID             pgtype.UUID
-	NodeName           string
 	ExpectedGeneration int64
+	NodeName           string
 }
 
 func (q *Queries) RegisterGatewayTrafficRuntimeEpoch(ctx context.Context, db DBTX, arg RegisterGatewayTrafficRuntimeEpochParams) (int64, error) {
-	row := db.QueryRow(ctx, registerGatewayTrafficRuntimeEpoch, arg.BootID, arg.NodeName, arg.ExpectedGeneration)
+	row := db.QueryRow(ctx, registerGatewayTrafficRuntimeEpoch, arg.BootID, arg.ExpectedGeneration, arg.NodeName)
 	var generation int64
 	err := row.Scan(&generation)
 	return generation, err
@@ -14081,6 +14308,55 @@ func (q *Queries) RegisterGatewayUsageEvent(ctx context.Context, db DBTX, arg Re
 	var inserted bool
 	err := row.Scan(&inserted)
 	return inserted, err
+}
+
+const reportGatewayPolicyProgress = `-- name: ReportGatewayPolicyProgress :execrows
+WITH live_node AS MATERIALIZED (
+    SELECT n.name FROM compute_nodes n
+    WHERE n.name = $3::text AND n.active
+      AND n.role IN ('compute-only', 'compute-node')
+      AND n.gateway_target_url IS NOT NULL AND btrim(n.gateway_target_url) <> ''
+    FOR KEY SHARE
+), owned AS MATERIALIZED (
+    SELECT o.node_name, o.generation, o.boot_id
+    FROM gateway_traffic_runtime_observations o JOIN live_node n ON n.name = o.node_name
+    WHERE o.generation = $4::bigint AND o.boot_id = $5::uuid
+    FOR SHARE OF o
+)
+INSERT INTO gateway_traffic_policy_observations (node_name, policy_kind, generation, boot_id, last_change_id, observed_at)
+SELECT node_name, $1::text, generation, boot_id, $2::bigint, clock_timestamp()
+FROM owned
+ON CONFLICT (node_name, policy_kind) DO UPDATE SET
+    generation = EXCLUDED.generation, boot_id = EXCLUDED.boot_id,
+    last_change_id = CASE WHEN gateway_traffic_policy_observations.generation = EXCLUDED.generation
+        AND gateway_traffic_policy_observations.boot_id = EXCLUDED.boot_id
+        THEN GREATEST(gateway_traffic_policy_observations.last_change_id, EXCLUDED.last_change_id)
+        ELSE EXCLUDED.last_change_id END,
+    observed_at = EXCLUDED.observed_at
+`
+
+type ReportGatewayPolicyProgressParams struct {
+	PolicyKind   string
+	LastChangeID int64
+	NodeName     string
+	Generation   int64
+	BootID       pgtype.UUID
+}
+
+// ADR-375: only the current process may acknowledge durable policy replay.
+// Lock the node before its epoch, matching registration and FK deletion order.
+func (q *Queries) ReportGatewayPolicyProgress(ctx context.Context, db DBTX, arg ReportGatewayPolicyProgressParams) (int64, error) {
+	result, err := db.Exec(ctx, reportGatewayPolicyProgress,
+		arg.PolicyKind,
+		arg.LastChangeID,
+		arg.NodeName,
+		arg.Generation,
+		arg.BootID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const reportGatewayTrafficRuntime = `-- name: ReportGatewayTrafficRuntime :execrows

@@ -4,6 +4,10 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // EdgeRuleChange is one durable edge-rule mutation. The gateway repair loop
@@ -106,21 +110,11 @@ func (s *PgStore) PruneEdgeRuleChangeLog(ctx context.Context, before time.Time) 
 	if before.IsZero() {
 		return 0, fmt.Errorf("state: edge-rule change log prune requires cutoff")
 	}
-	tag, err := s.pool.Exec(ctx, `
-		DELETE FROM edge_rule_change_log
-		WHERE created_at < $1
-		  AND id <= COALESCE((
-		      SELECT MIN(COALESCE(w.last_change_id, 0))
-		      FROM compute_nodes n
-		      LEFT JOIN gateway_edge_rule_watermarks w ON w.node_name = n.name
-		      WHERE n.active = true
-		        AND n.role IN ('compute-only', 'compute-node')
-		        AND n.gateway_target_url IS NOT NULL
-		        AND btrim(n.gateway_target_url) <> ''
-		  ), 9223372036854775807::bigint)
-	`, before.UTC())
+	n, err := sqlc.New().PruneFencedEdgeRuleChangeLog(ctx, s.pool, sqlc.PruneFencedEdgeRuleChangeLogParams{
+		Before: pgtype.Timestamptz{Time: before.UTC(), Valid: true}, FreshnessSeconds: api.TrafficRuntimeObservationFreshness.Seconds(),
+	})
 	if err != nil {
 		return 0, fmt.Errorf("state: prune edge-rule change log: %w", err)
 	}
-	return tag.RowsAffected(), nil
+	return n, nil
 }

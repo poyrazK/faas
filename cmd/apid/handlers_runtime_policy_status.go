@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	runtimePolicyGatewayFreshness = 10 * time.Second
+	runtimePolicyGatewayFreshness = api.TrafficRuntimeObservationFreshness
 	runtimePolicyWaitMax          = 10 * time.Second
 	runtimePolicyWaitPoll         = 250 * time.Millisecond
 )
@@ -52,7 +52,11 @@ func summarizeRuntimePolicyComponent(
 	}
 	for _, gateway := range gateways {
 		observed := observedAt(gateway)
-		if observed.IsZero() || observed.Before(now.Add(-runtimePolicyGatewayFreshness)) {
+		databaseNow := now
+		if !gateway.DatabaseNow.IsZero() {
+			databaseNow = gateway.DatabaseNow
+		}
+		if observed.IsZero() || observed.Before(databaseNow.Add(-runtimePolicyGatewayFreshness)) || observed.After(databaseNow) {
 			status.StaleGateways++
 			status.PendingGateways++
 			continue

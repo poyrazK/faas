@@ -699,6 +699,8 @@ from .edge_rule_validate_action_schema import EdgeRuleValidateActionSchema
 from .edge_rule_validate_action_validate_mode import EdgeRuleValidateActionValidateMode
 from .egress_circuit_breaker_policy import EgressCircuitBreakerPolicy
 from .egress_circuit_breaker_policy_state import EgressCircuitBreakerPolicyState
+from .egress_flow_log_entry import EgressFlowLogEntry
+from .egress_flow_log_response import EgressFlowLogResponse
 from .enable_alert_preset_request import EnableAlertPresetRequest
 from .enable_alert_preset_request_action import EnableAlertPresetRequestAction
 from .env_diff_cell import EnvDiffCell
@@ -1708,6 +1710,13 @@ from .trace import Trace
 from .trace_span import TraceSpan
 from .trace_span_attributes import TraceSpanAttributes
 from .trace_span_status import TraceSpanStatus
+from .traffic_runtime_feature_status import TrafficRuntimeFeatureStatus
+from .traffic_runtime_feature_status_mode import TrafficRuntimeFeatureStatusMode
+from .traffic_runtime_feature_status_state import TrafficRuntimeFeatureStatusState
+from .traffic_runtime_status import TrafficRuntimeStatus
+from .traffic_runtime_status_enforcement_status import TrafficRuntimeStatusEnforcementStatus
+from .traffic_runtime_status_scope import TrafficRuntimeStatusScope
+from .traffic_runtime_status_state import TrafficRuntimeStatusState
 from .transfer_ownership_request import TransferOwnershipRequest
 from .trigger import Trigger
 from .trigger_broker_poison_strategy import TriggerBrokerPoisonStrategy
@@ -2568,6 +2577,8 @@ __all__ = (
     "EdgeRuleValidateActionValidateMode",
     "EgressCircuitBreakerPolicy",
     "EgressCircuitBreakerPolicyState",
+    "EgressFlowLogEntry",
+    "EgressFlowLogResponse",
     "EnableAlertPresetRequest",
     "EnableAlertPresetRequestAction",
     "EnvDiffCell",
@@ -3525,6 +3536,13 @@ __all__ = (
     "TraceSpan",
     "TraceSpanAttributes",
     "TraceSpanStatus",
+    "TrafficRuntimeFeatureStatus",
+    "TrafficRuntimeFeatureStatusMode",
+    "TrafficRuntimeFeatureStatusState",
+    "TrafficRuntimeStatus",
+    "TrafficRuntimeStatusEnforcementStatus",
+    "TrafficRuntimeStatusScope",
+    "TrafficRuntimeStatusState",
     "TransferOwnershipRequest",
     "Trigger",
     "TriggerBrokerPoisonStrategy",

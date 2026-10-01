@@ -90,10 +90,19 @@ func waitRuntimeObserverEvent(t *testing.T, events <-chan string, want string) {
 	}
 }
 
+func runtimeObserverSession(t *testing.T, store trafficRuntimeObservationStore) *trafficRuntimeSession {
+	t.Helper()
+	session, err := newTrafficRuntimeSession(t.Context(), store, "node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return session
+}
+
 func TestTrafficRuntimeObserverBoundsReportingAndRetiresOnStop(t *testing.T) {
 	store := &runtimeObserverTestStore{events: make(chan string, 20)}
 	features := state.GatewayTrafficFeatures{RateCounterMode: "central", RetryCounterMode: "shared", RetryBackendID: "0123456789abcdef"}
-	stop := startTrafficRuntimeObserver(t.Context(), store, "node", features, func() bool { return true }, discardLogger())
+	stop := startTrafficRuntimeObserver(t.Context(), runtimeObserverSession(t, store), features, func() bool { return true }, discardLogger())
 	t.Cleanup(stop)
 	waitRuntimeObserverEvent(t, store.events, "report")
 	stop()
@@ -106,7 +115,7 @@ func TestTrafficRuntimeObserverBoundsReportingAndRetiresOnStop(t *testing.T) {
 
 func TestTrafficRuntimeObserverDoesNotPublishBeforeReady(t *testing.T) {
 	store := &runtimeObserverTestStore{events: make(chan string, 20)}
-	stop := startTrafficRuntimeObserver(t.Context(), store, "node", state.GatewayTrafficFeatures{RateCounterMode: "local", RetryCounterMode: "local"}, func() bool { return false }, discardLogger())
+	stop := startTrafficRuntimeObserver(t.Context(), runtimeObserverSession(t, store), state.GatewayTrafficFeatures{RateCounterMode: "local", RetryCounterMode: "local"}, func() bool { return false }, discardLogger())
 	t.Cleanup(stop)
 	waitRuntimeObserverEvent(t, store.events, "retire")
 	stop()
@@ -119,7 +128,7 @@ func TestTrafficRuntimeObserverDoesNotPublishBeforeReady(t *testing.T) {
 
 func TestTrafficRuntimeObserverKeepsBaselineAfterAmbiguousRegistration(t *testing.T) {
 	store := &runtimeObserverTestStore{events: make(chan string, 20), registerErrors: []error{errors.New("committed response lost"), nil}}
-	stop := startTrafficRuntimeObserver(t.Context(), store, "node", state.GatewayTrafficFeatures{RateCounterMode: "local", RetryCounterMode: "local"}, func() bool { return true }, discardLogger())
+	stop := startTrafficRuntimeObserver(t.Context(), runtimeObserverSession(t, store), state.GatewayTrafficFeatures{RateCounterMode: "local", RetryCounterMode: "local"}, func() bool { return true }, discardLogger())
 	t.Cleanup(stop)
 	waitRuntimeObserverEvent(t, store.events, "report")
 	stop()
@@ -132,7 +141,7 @@ func TestTrafficRuntimeObserverKeepsBaselineAfterAmbiguousRegistration(t *testin
 
 func TestTrafficRuntimeObserverStopsAfterOwnershipLoss(t *testing.T) {
 	store := &runtimeObserverTestStore{events: make(chan string, 20), reportError: state.ErrGatewayTrafficEpochLost}
-	stop := startTrafficRuntimeObserver(t.Context(), store, "node", state.GatewayTrafficFeatures{RateCounterMode: "local", RetryCounterMode: "local"}, func() bool { return true }, discardLogger())
+	stop := startTrafficRuntimeObserver(t.Context(), runtimeObserverSession(t, store), state.GatewayTrafficFeatures{RateCounterMode: "local", RetryCounterMode: "local"}, func() bool { return true }, discardLogger())
 	t.Cleanup(stop)
 	waitRuntimeObserverEvent(t, store.events, "retire")
 	stop()

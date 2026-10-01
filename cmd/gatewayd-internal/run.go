@@ -958,7 +958,8 @@ type runDeps struct {
 	// for the issue #294 replay dedupe and by the gatewayd audit
 	// emitter. nil in tests (the githubdProxy then skips the
 	// replay check).
-	pgStore *state.PgStore
+	pgStore        *state.PgStore
+	trafficSession *trafficRuntimeSession
 	// authMw is the pkg/auth.Middleware that powers the AppLogsHandler
 	// (issue #254 / Move 4 PR-2). It hosts the bearer / session / MFA
 	// / scope checks + the IDOR-safe LoadApp + the shared per-IP
@@ -2055,14 +2056,19 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// matcher here (rather than leaving a typed-nil interface in PGBackend),
 	// then start the durable repair loop alongside LISTEN/NOTIFY.
 	backend.WithEdgeRules(deps.edgeRulesMatcher)
-	go watchDurableEdgeRuleChanges(ctx, pgStore, backend, log, osGetenv("FAAS_NODE_NAME"))
-	go watchDurableCorsPresetChanges(ctx, pgStore, backend, log, osGetenv("FAAS_NODE_NAME"))
-	go watchDurableResponseCachePurges(ctx, pgStore, backend, log, osGetenv("FAAS_NODE_NAME"))
+	deps.trafficSession, err = newTrafficRuntimeSession(ctx, pgStore, cfg.NodeName)
+	if err != nil {
+		return err
+	}
+	repairStore := &gatewayPolicyRepairStore{PgStore: pgStore, session: deps.trafficSession}
+	go watchDurableEdgeRuleChanges(ctx, repairStore, backend, log, cfg.NodeName)
+	go watchDurableCorsPresetChanges(ctx, repairStore, backend, log, cfg.NodeName)
+	go watchDurableResponseCachePurges(ctx, repairStore, backend, log, cfg.NodeName)
 	// App and traffic mutations still use notifications as their low-latency
 	// signal. The durable broadcast ledger closes the reconnect gap for every
 	// gateway replica without turning the shared notification outbox into a
 	// single-consumer queue.
-	go watchDurableControlPlaneChanges(ctx, pgStore, backend, log, osGetenv("FAAS_NODE_NAME"))
+	go watchDurableControlPlaneChanges(ctx, repairStore, backend, log, cfg.NodeName)
 	deps.declaredRoutesMatcher = newDeclaredRoutesMatcher(pgStore)
 	deps.edgeRulesAudit = newGatewaydEdgeRulesAud(newGatewaydAuditor(deps.pgStore, log))
 	// ADR-091 D21 — build the pkg/geoip.Reader backed by the
@@ -2299,6 +2305,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	if err := capCheck(); err != nil {
 		return err
+	}
+	if deps.pgStore != nil && deps.trafficSession == nil {
+		var err error
+		deps.trafficSession, err = newTrafficRuntimeSession(ctx, deps.pgStore, cfg.NodeName)
+		if err != nil {
+			return err
+		}
 	}
 	var metricsRegisterer prometheus.Registerer
 	var metricPrefix string
@@ -3836,7 +3849,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	if deps.pgStore != nil && servingListenerReady {
 		managedHTTP := guestServiceProxy != nil && serviceProxyAddr != ""
-		stopTrafficObserver := startTrafficRuntimeObserver(ctx, deps.pgStore, cfg.NodeName, state.GatewayTrafficFeatures{
+		stopTrafficObserver := startTrafficRuntimeObserver(ctx, deps.trafficSession, state.GatewayTrafficFeatures{
 			RetryEnabled: publicRetryEnabled, RateCounterMode: mode,
 			RetryCounterMode: retryBudget.CounterMode(), RetryBackendID: retryBudget.BackendID(),
 			DeadlineSigning: deps.trafficDeadlines != nil, PolicySnapshot: deps.pool != nil,

@@ -772,6 +772,15 @@ type ConsumerKey struct {
 	UpdatedAt    pgtype.Timestamptz
 }
 
+type ControlPlaneChangeLog struct {
+	ID           int64
+	ResourceType string
+	ResourceID   pgtype.UUID
+	AppID        pgtype.UUID
+	Operation    string
+	CreatedAt    pgtype.Timestamptz
+}
+
 type CorsPreset struct {
 	ID               pgtype.UUID
 	AccountID        pgtype.UUID
@@ -786,6 +795,14 @@ type CorsPreset struct {
 	MaxAgeSeconds    int32
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
+}
+
+type CorsPresetChangeLog struct {
+	ID        int64
+	AccountID pgtype.UUID
+	PresetID  pgtype.UUID
+	Operation string
+	CreatedAt pgtype.Timestamptz
 }
 
 type CreditLedger struct {
@@ -1112,6 +1129,15 @@ type EdgeRule struct {
 	ManifestKey  pgtype.Text
 }
 
+type EdgeRuleChangeLog struct {
+	ID         int64
+	AppID      pgtype.UUID
+	RuleID     pgtype.UUID
+	Operation  string
+	MatchHosts []string
+	CreatedAt  pgtype.Timestamptz
+}
+
 type EgressPolicy struct {
 	ID                                 string
 	PublicIface                        string
@@ -1212,6 +1238,15 @@ type ExecutionUsageLedger struct {
 
 type GatewayResponseCachePurgeWatermark struct {
 	NodeName     string
+	LastChangeID int64
+	ObservedAt   pgtype.Timestamptz
+}
+
+type GatewayTrafficPolicyObservation struct {
+	NodeName     string
+	PolicyKind   string
+	Generation   int64
+	BootID       pgtype.UUID
 	LastChangeID int64
 	ObservedAt   pgtype.Timestamptz
 }

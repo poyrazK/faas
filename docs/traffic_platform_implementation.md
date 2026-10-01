@@ -1673,3 +1673,76 @@ synthetic-path agreement, feature observations for the public hop and VM
 consumers, backend-operation evidence, load/recovery/customer/staging and
 native VM/firewall/process-death/leak acceptance remain pending. No dedicated
 Linux x86_64 KVM host is currently available.
+
+## 2026-10-01 — policy acknowledgements bound to serving processes
+
+The four durable gateway repair consumers now share the traffic runtime
+process session. Its registration baseline is captured before consumers
+start; listener binding precedes registration and serving reports. A replaced
+process cannot rebase that session or publish progress for its successor.
+
+An additive, bounded `gateway_traffic_policy_observations` table keeps separate
+app/traffic, edge-rule, CORS-preset and response-cache-purge positions. SQLC
+publishers lock the node and current epoch before writing. Positions are
+monotonic within an epoch and reset independently in a new one. Status and
+convergence waits join only matching generation/process tokens and require a
+fresh serving report. Component freshness uses the database clock and rejects
+future observations. The roster reader refuses truncation beyond the existing
+4,096-node limit.
+
+All four pruning paths require fresh current-process acknowledgements. Legacy,
+missing, stale and retired serving members hold pruning at zero; prior legacy
+watermarks cannot overwrite the new ledger. Existing latest app/account/purge
+retention rules remain in force. Cache-purge bootstrap can resume a known
+node's applied fenced position across restart, or a fresh serving peer's
+position under the existing shared-cache assumption. The new process must
+still replay before publishing its own acknowledgement.
+
+The broader API gate exposed missing schemas for the preceding wiring-status
+slice. The canonical OpenAPI specification and embedded copy now include
+`traffic_runtime` and both status DTOs. The new response field is optional in
+the SDK contract so older API-server responses remain readable. Pinned Node
+and Python generators were rerun; Python's barrel template now preserves the
+existing request-deadline helpers. Regeneration also reconciles previously
+stale Python egress-flow models and abuse-reason values with the canonical
+specification, and synchronizes the prior execution/total-deadline documentation.
+
+Verification on Go 1.25.13, CGO disabled:
+
+- 6,504 distinct passing named Go cases across state, internal gateway, API,
+  embedded API and migrations. The repaired complete API/internal packages
+  were rerun; the initial combined profile's API parity failure is retained
+  as a diagnostic and is not accepted as a green package verdict.
+- Focused PostgreSQL evidence covers generation replacement, a publisher
+  blocked behind a replacement transaction, legacy writes, stale/future
+  serving reports, durable cache bootstrap, all four pruners, real repair-loop
+  mutations, delayed process registration and actual daemon listener/retirement.
+- 1,562 guarded named cases remain without acceptance in these profiles;
+  broader PostgreSQL, host and external integration coverage is not claimed.
+- All five affected Go packages, including their test sources, pass
+  golangci-lint 2.4.0 with zero issues.
+- Node build and 51 unit cases pass. Python has 89 passing cases, one default
+  regen-test deselection and two existing collection warnings. Typed current
+  and older API responses round-trip; deadline exports survive regeneration.
+- SQLC's four generated Go files reproduce. Node's 1,027 generated files and
+  Python's 2,567 non-cache generated files reproduce. Canonical OpenAPI and
+  the embedded copy match; pinned vacuum reports zero errors, with 1,542
+  warnings and 106 informs remaining in the existing specification.
+
+The new migration was applied in a private PostgreSQL database. Canonical
+pg_dump blocks for the new table and the three existing repair-ledger tables
+were added to the SQLC snapshot; unrelated pre-existing schema baseline drift
+remains recorded. The test source database's public schema remains unmigrated.
+Initial duplicate-import, missing-app fixture, API-parity and redundant-selector
+lint diagnostics were fixed in source without overlays, exclusions or weaker
+assertions. Only old entries in this chat's own Go cache were removed when disk
+space became tight. Generator-only formatting in two unchanged Python test
+files was restored to its original content before final SDK verification.
+
+Receipts, source hashes, compressed logs, canonical schema and generator
+evidence are in
+`/Users/poyrazk/dev/Cloud/gregale/outputs/traffic-policy-process-fencing-20261001/`.
+All six release guarantees remain unchecked. Complete-path and broader policy
+transition evidence, public-hop/VM wiring and backend-operation observations,
+load/recovery/customer/staging and native VM/firewall/process-death/leak
+acceptance remain pending. No dedicated Linux x86_64 KVM host is available.

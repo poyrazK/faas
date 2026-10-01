@@ -16,7 +16,7 @@ import (
 
 func TestPgCorsPresetWatermarkTracksBootsAndProtectsReplayHistory(t *testing.T) {
 	ctx := context.Background()
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestPgCorsPresetWatermarkTracksBootsAndProtectsReplayHistory(t *testing.T) 
 		t.Fatalf("prune before CORS observation = %d, %v; want 0, nil", removed, err)
 	}
 	bootA, bootB := uuid.NewString(), uuid.NewString()
-	if err := store.UpsertGatewayCorsPresetWatermark(ctx, node.Name, bootA, ids[0]); err != nil {
+	if err := reportPolicyTestProgress(t, ctx, store, state.GatewayPolicyCorsPresets, node.Name, bootA, ids[0]); err != nil {
 		t.Fatalf("upsert first CORS watermark: %v", err)
 	}
 	if got := find(); got.LastCorsPresetChangeID != ids[0] || got.CorsPresetsObservedAt.IsZero() {
@@ -100,7 +100,7 @@ func TestPgCorsPresetWatermarkTracksBootsAndProtectsReplayHistory(t *testing.T) 
 	if got, err := store.LatestAccountCorsPresetChangeID(ctx, accountA); err != nil || got != ids[1] {
 		t.Fatalf("account desired revision after pruning = %d, %v; want retained latest %d", got, err, ids[1])
 	}
-	if err := store.UpsertGatewayCorsPresetWatermark(ctx, node.Name, bootB, ids[2]); err != nil {
+	if err := reportPolicyTestProgress(t, ctx, store, state.GatewayPolicyCorsPresets, node.Name, bootB, ids[2]); err != nil {
 		t.Fatalf("upsert new-boot CORS watermark: %v", err)
 	}
 	if got := find(); got.LastCorsPresetChangeID != ids[2] {

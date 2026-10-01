@@ -63,7 +63,7 @@ export type AppEffectiveLimits = {
    */
   account_request_rate_rpm: number;
   /**
-   * Default end-to-end request budget before a route override, in milliseconds.
+   * Default execution budget after upload, wake and admission, before a route override, in milliseconds.
    */
   request_budget_ms: number;
   /**

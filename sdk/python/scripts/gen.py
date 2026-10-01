@@ -651,12 +651,15 @@ from .idempotency import (
 from .pre_auth_target import PRE_AUTH_TARGET_HEADER, pre_auth_target_digest
 from .release_context import (
     GREGALE_RELEASE_HEADER,
+    GREGALE_REQUEST_DEADLINE_HEADER,
     GREGALE_REVISION_HEADER,
     AsyncGregaleReleaseTransport,
     GregaleReleaseMiddleware,
     GregaleReleaseTransport,
     current_gregale_release,
+    current_gregale_request_deadline,
     with_gregale_release,
+    with_gregale_request_context,
 )
 from .webhook import (
     DEFAULT_WEBHOOK_TIMESTAMP_TOLERANCE,
@@ -683,6 +686,9 @@ __all__ = (
     "mint_idempotency_key",
     "current_idempotency_key",
     "GREGALE_RELEASE_HEADER",
+    "GREGALE_REQUEST_DEADLINE_HEADER",
+    "current_gregale_request_deadline",
+    "with_gregale_request_context",
     "GREGALE_REVISION_HEADER",
     "GregaleReleaseMiddleware",
     "GregaleReleaseTransport",

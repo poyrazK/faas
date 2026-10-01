@@ -322,6 +322,22 @@ authorized app owner. `gregale app <slug> traffic-status` renders the same
 response; `--json` preserves policy revisions and observation fields together.
 The existing optional API `wait` waits for policy convergence only.
 
+App/traffic, edge-rule, CORS-preset and response-cache-purge acknowledgements
+share that process generation and keep separate ledger positions. Status and
+convergence waits accept only the current generation with a fresh serving
+report and a fresh component acknowledgement. They use the database clock and
+reject future timestamps. Replacement removes the prior process's convergence
+until the new consumers replay and acknowledge their positions.
+
+Ledger pruning uses the same ownership and freshness conditions. A missing,
+stale, retired or older daemon holds pruning at zero while it remains in the
+serving roster. Upgrade named gateways promptly and investigate prolonged
+missing progress to prevent retained history from growing. Legacy watermarks
+cannot prove convergence or authorize pruning. Cache-purge restart bootstrap
+can resume a previously applied position from the fenced ledger; the new
+process still replays before acknowledging it. A new node can resume a fresh
+serving peer's purge position under the existing shared-cache assumption.
+
 Named compute gateways report after handler construction and listener binding.
 The database assigns a new generation at registration; replacement clears the
 old report. Updates and shutdown retirement require that generation and process

@@ -315,6 +315,23 @@ maturity or infer a successful counter operation, public-hop enforcement,
 node admission, clock/key agreement, or native acceptance from wiring alone.
 Those observations and complete-path checks remain required for release.
 
+Policy acknowledgements must use that same process generation. A separate
+bounded row per node/component records app/traffic, edge-rule, CORS-preset and
+response-cache-purge progress. Publishers lock the current epoch before writing;
+a replaced process cannot update its successor's progress. Readers, convergence
+barriers and ledger pruning accept only the current generation, with a fresh
+serving-process report. Legacy unfenced watermarks cannot prove convergence or
+authorize pruning. No legacy cursor is relabeled as a new process acknowledgement.
+
+The daemon captures its registration baseline before starting repair consumers;
+it registers and reports serving wiring only after binding listeners. Repair
+consumers may replay before registration, but publish only through the shared
+process session. Each component keeps its independent ledger position. Cache
+purge restart bootstrap may resume a previously applied durable position from
+the fenced ledger; the new process must still replay before publishing its own
+acknowledgement. Older daemons remain unverified during the upgrade and hold
+pruning rather than manufacturing fresh progress.
+
 Read-only policy preview uses the runtime's numeric budget resolution and
 stored retry compilation. API write-time defaults remain distinct from
 compiling an existing row. Request-header selectors use the immutable ingress
