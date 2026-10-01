@@ -289,6 +289,18 @@ func exclusiveIdentityDigest(value string) []byte {
 }
 
 func admitExclusive(ctx context.Context, atomic exclusiveAtomic, req ExclusiveAdmission) (out ExclusiveOperation, joined bool, err error) {
+	err = atomic(ctx, func(tx exclusiveTransaction) error {
+		var admitErr error
+		out, joined, admitErr = admitExclusiveTransaction(tx, req)
+		return admitErr
+	})
+	return
+}
+
+// admitExclusiveTransaction performs the admission transition on a caller's
+// transaction. Cron occurrence and fire-now stores use it to commit the
+// operation receipt together with their own durable cursor or request receipt.
+func admitExclusiveTransaction(tx exclusiveTransaction, req ExclusiveAdmission) (out ExclusiveOperation, joined bool, err error) {
 	if (req.AppID == "") == (req.JobID == "") {
 		return out, false, ErrInvalidArgument
 	}
@@ -315,107 +327,109 @@ func admitExclusive(ctx context.Context, atomic exclusiveAtomic, req ExclusiveAd
 		target = "job:" + req.JobID
 	}
 	requestHash := sha256.Sum256(append([]byte(target+"\x00"), request...))
-	err = atomic(ctx, func(tx exclusiveTransaction) error {
-		if err := tx.lockAccount(req.AccountID); err != nil {
-			return err
-		}
-		p, err := tx.policy(req.AccountID, req.PolicyName)
+	if err := tx.lockAccount(req.AccountID); err != nil {
+		return out, false, err
+	}
+	p, err := tx.policy(req.AccountID, req.PolicyName)
+	if err != nil {
+		return out, false, err
+	}
+	if p.Retired || (req.AppID != "" && !slices.Contains(p.Policy.MemberAppIDs, req.AppID)) ||
+		(req.JobID != "" && !slices.Contains(p.Policy.MemberJobIDs, req.JobID)) {
+		return out, false, ErrNotFound
+	}
+	if req.AppID != "" {
+		project, err := tx.appScope(req.AccountID, req.AppID)
 		if err != nil {
-			return err
+			return out, false, err
 		}
-		if p.Retired || (req.AppID != "" && !slices.Contains(p.Policy.MemberAppIDs, req.AppID)) ||
-			(req.JobID != "" && !slices.Contains(p.Policy.MemberJobIDs, req.JobID)) {
-			return ErrNotFound
-		}
-		if req.AppID != "" {
-			project, err := tx.appScope(req.AccountID, req.AppID)
-			if err != nil {
-				return err
-			}
-			if p.Policy.EnvironmentID != "" {
-				if err := tx.environmentScope(req.AccountID, project, p.Policy.EnvironmentID); err != nil {
-					return err
-				}
-			}
-		} else {
-			if p.Policy.EnvironmentID != "" {
-				return ErrInvalidArgument
-			}
-			if err := tx.jobScope(req.AccountID, req.JobID); err != nil {
-				return err
+		if p.Policy.EnvironmentID != "" {
+			if err := tx.environmentScope(req.AccountID, project, p.Policy.EnvironmentID); err != nil {
+				return out, false, err
 			}
 		}
-		scopeID := req.AccountID
-		if p.Policy.Scope == "platform_tenant" {
-			if req.PlatformTenantID == "" {
-				return ErrInvalidArgument
+	} else {
+		if p.Policy.EnvironmentID != "" {
+			return out, false, ErrInvalidArgument
+		}
+		if err := tx.jobScope(req.AccountID, req.JobID); err != nil {
+			return out, false, err
+		}
+	}
+	scopeID := req.AccountID
+	if p.Policy.Scope == "platform_tenant" {
+		if req.PlatformTenantID == "" {
+			return out, false, ErrInvalidArgument
+		}
+		if err := tx.tenantScope(req.AccountID, req.PlatformTenantID); err != nil {
+			return out, false, err
+		}
+		scopeID = req.PlatformTenantID
+	} else if req.PlatformTenantID != "" {
+		return out, false, ErrInvalidArgument
+	}
+	key, err := tx.ensureKey(exclusiveKey{ID: uuid.NewString(), AccountID: req.AccountID,
+		PolicyID: p.ID, ScopeID: scopeID, EnvironmentID: p.Policy.EnvironmentID, Digest: keyDigest[:]})
+	if err != nil {
+		return out, false, err
+	}
+	idem := exclusiveIdentityDigest(req.IdempotencyKey)
+	if idem != nil {
+		out, err = tx.replay(key.ID, idem)
+		if err == nil {
+			if !bytes.Equal(out.RequestDigest, requestHash[:]) {
+				return ExclusiveOperation{}, false, exclusivework.ErrIdentityConflict
 			}
-			if err := tx.tenantScope(req.AccountID, req.PlatformTenantID); err != nil {
-				return err
-			}
-			scopeID = req.PlatformTenantID
-		} else if req.PlatformTenantID != "" {
-			return ErrInvalidArgument
+			out.Replayed = true
+			return out, false, nil
 		}
-		key, err := tx.ensureKey(exclusiveKey{ID: uuid.NewString(), AccountID: req.AccountID,
-			PolicyID: p.ID, ScopeID: scopeID, EnvironmentID: p.Policy.EnvironmentID, Digest: keyDigest[:]})
-		if err != nil {
-			return err
+		if !errors.Is(err, ErrNotFound) {
+			return out, false, err
 		}
-		idem := exclusiveIdentityDigest(req.IdempotencyKey)
-		if idem != nil {
-			out, err = tx.replay(key.ID, idem)
-			if err == nil {
-				if !bytes.Equal(out.RequestDigest, requestHash[:]) {
-					return exclusivework.ErrIdentityConflict
-				}
-				out.Replayed = true
-				return nil
-			}
-			if !errors.Is(err, ErrNotFound) {
-				return err
-			}
-		}
-		active, err := tx.active(key.ID)
-		if err != nil {
-			return err
-		}
-		equiv := exclusiveIdentityDigest(req.EquivalenceKey)
-		if p.Policy.Contention == "join_existing" && equiv == nil {
-			return ErrInvalidArgument
-		}
-		if len(active) > 0 && p.Policy.Contention != "queue" {
-			if p.Policy.Contention == "join_existing" {
-				for _, row := range active {
-					if bytes.Equal(equiv, row.EquivalenceDigest) && bytes.Equal(row.RequestDigest, requestHash[:]) {
-						out, joined = row, true
-						return tx.bindSubmission(key.ID, idem, row.ID)
+	}
+	active, err := tx.active(key.ID)
+	if err != nil {
+		return out, false, err
+	}
+	equiv := exclusiveIdentityDigest(req.EquivalenceKey)
+	if p.Policy.Contention == "join_existing" && equiv == nil {
+		return out, false, ErrInvalidArgument
+	}
+	if len(active) > 0 && p.Policy.Contention != "queue" {
+		if p.Policy.Contention == "join_existing" {
+			for _, row := range active {
+				if bytes.Equal(equiv, row.EquivalenceDigest) && bytes.Equal(row.RequestDigest, requestHash[:]) {
+					if err := tx.bindSubmission(key.ID, idem, row.ID); err != nil {
+						return out, false, err
 					}
+					return row, true, nil
 				}
 			}
-			return exclusivework.ErrBusy
 		}
-		count, err := tx.pendingCount(req.AccountID)
-		if err != nil {
-			return err
-		}
-		if count >= api.MaxExclusivePendingPerAccount {
-			return ErrQuotaExceeded
-		}
-		out, err = tx.insert(ExclusiveOperation{ID: uuid.NewString(), AccountID: req.AccountID,
-			KeyID: key.ID, AppID: req.AppID, JobID: req.JobID, PlatformTenantID: req.PlatformTenantID,
-			Sequence: key.NextSequence, State: "pending", PolicyRevision: p.Revision, Policy: p.Policy,
-			Request: request, RequestDigest: requestHash[:], EquivalenceDigest: equiv, IdempotencyDigest: idem})
-		if err != nil {
-			return err
-		}
-		if err := tx.bindSubmission(key.ID, idem, out.ID); err != nil {
-			return err
-		}
-		key.NextSequence++
-		return tx.saveKey(key)
-	})
-	return
+		return out, false, exclusivework.ErrBusy
+	}
+	count, err := tx.pendingCount(req.AccountID)
+	if err != nil {
+		return out, false, err
+	}
+	if count >= api.MaxExclusivePendingPerAccount {
+		return out, false, ErrQuotaExceeded
+	}
+	out, err = tx.insert(ExclusiveOperation{ID: uuid.NewString(), AccountID: req.AccountID,
+		KeyID: key.ID, AppID: req.AppID, JobID: req.JobID, PlatformTenantID: req.PlatformTenantID,
+		Sequence: key.NextSequence, State: "pending", PolicyRevision: p.Revision, Policy: p.Policy,
+		Request: request, RequestDigest: requestHash[:], EquivalenceDigest: equiv, IdempotencyDigest: idem})
+	if err != nil {
+		return out, false, err
+	}
+	if err := tx.bindSubmission(key.ID, idem, out.ID); err != nil {
+		return out, false, err
+	}
+	key.NextSequence++
+	if err := tx.saveKey(key); err != nil {
+		return out, false, err
+	}
+	return out, false, nil
 }
 
 func exclusiveClaimFor(op ExclusiveOperation) exclusivework.Claim {
@@ -573,7 +587,7 @@ func validateExclusiveClaimTarget(tx exclusiveTransaction, op ExclusiveOperation
 	var requestKind struct {
 		Kind string `json:"kind"`
 	}
-	if json.Unmarshal(op.Request, &requestKind) == nil && requestKind.Kind == "app_task" {
+	if json.Unmarshal(op.Request, &requestKind) == nil && (requestKind.Kind == "app_task" || requestKind.Kind == "command_cron") {
 		if !claimed {
 			return nil
 		}

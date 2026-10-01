@@ -27,6 +27,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/vmmdgrpc"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"github.com/onebox-faas/faas/pkg/workloadidentity"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
@@ -36,6 +37,7 @@ import (
 // resource shape of pkg/fcvm.Manager so the handlers take no test-only branch.
 type fakeVMM struct {
 	wakeFn             func(ctx context.Context, req fcvm.WakeRequest) (*fcvm.Instance, error)
+	wakeExecutionFn    func(ctx context.Context, req fcvm.ExecutionWakeRequest) (*fcvm.Instance, error)
 	fallbackReason     string
 	parkFn             func(ctx context.Context, instance string, spec fcvm.SnapshotSpec) (fcvm.SnapshotInfo, error)
 	destFn             func(ctx context.Context, instance string) error
@@ -74,6 +76,13 @@ func (f *fakeVMM) Wake(ctx context.Context, req fcvm.WakeRequest) (*fcvm.Instanc
 		Method:                fcvm.WakeColdBoot,
 		RestoreFallbackReason: f.fallbackReason,
 	}, nil
+}
+
+func (f *fakeVMM) WakeExecution(ctx context.Context, req fcvm.ExecutionWakeRequest) (*fcvm.Instance, error) {
+	if f.wakeExecutionFn != nil {
+		return f.wakeExecutionFn(ctx, req)
+	}
+	return &fcvm.Instance{Lease: fcvm.Lease{Instance: req.Instance, UID: 21001, Networkless: true}, Method: fcvm.WakeColdBoot}, nil
 }
 
 func (f *fakeVMM) Park(ctx context.Context, instance string, spec fcvm.SnapshotSpec) (fcvm.SnapshotInfo, error) {
@@ -255,9 +264,17 @@ func (f *fakeVMM) MarkInstanceFrameworkReady(_ context.Context, _ string, _ int6
 // newClient stands up a vmmdgrpc.Server on bufconn and returns a sched.VMMClient
 // dialed to it.
 func newClient(t *testing.T, fake vmmdgrpc.VmmdAPI) *sched.VMMClient {
+	return newClientWithSigner(t, fake, nil)
+}
+
+func newClientWithSigner(t *testing.T, fake vmmdgrpc.VmmdAPI, signer *workloadidentity.Signer) *sched.VMMClient {
 	t.Helper()
 	srv := grpc.NewServer()
-	vmmdgrpc.New(fake, wire.NewOpsMetrics("sched_test"), "1.10.0", nil).Register(srv)
+	server := vmmdgrpc.New(fake, wire.NewOpsMetrics("sched_test"), "1.10.0", nil)
+	if signer != nil {
+		server.WithExecutionIdentitySigner(signer)
+	}
+	server.Register(srv)
 
 	lis := bufconn.Listen(1024 * 1024)
 	go func() { _ = srv.Serve(lis) }()
@@ -294,6 +311,32 @@ func TestVMMClient_CreateColdBoot(t *testing.T) {
 	}
 	if out.RestoreFallbackReason != "" {
 		t.Errorf("planned cold boot leaked restore fallback reason = %q", out.RestoreFallbackReason)
+	}
+}
+
+func TestVMMClient_RestoreExecutionCarriesOutboundMetadata(t *testing.T) {
+	var got fcvm.ExecutionWakeRequest
+	fake := &fakeVMM{wakeExecutionFn: func(_ context.Context, req fcvm.ExecutionWakeRequest) (*fcvm.Instance, error) {
+		got = req
+		return &fcvm.Instance{Lease: fcvm.Lease{Instance: req.Instance, UID: 21001, Networkless: true}, Method: fcvm.WakeColdBoot}, nil
+	}}
+	c := newClient(t, fake)
+	out, err := c.RestoreExecution(context.Background(), sched.ExecutionRestoreRequest{
+		ID: "exec-1", AccountID: "acct-1", Plan: api.PlanPro, Runtime: api.ExecutionRuntimeNode22,
+		KernelKey: "kernel/node22", BaseKey: "base/node22", LayerKey: "layer/execution",
+		VcpuCount: 2, MemSizeMiB: 256, CPUMillicores: 500,
+		LeaseToken:             "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+		OutboundIntegrationIDs: []string{"22222222-2222-4222-8222-222222222222", "11111111-1111-4111-8111-111111111111"},
+	})
+	if err != nil {
+		t.Fatalf("RestoreExecution: %v", err)
+	}
+	if out.Instance != "exec-1" || got.Instance != "exec-1" || got.LeaseToken != "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" {
+		t.Fatalf("restore outcome/request = %+v / %+v", out, got)
+	}
+	if len(got.OutboundIntegrationIDs) != 2 || got.OutboundIntegrationIDs[0] != "11111111-1111-4111-8111-111111111111" ||
+		got.OutboundIntegrationIDs[1] != "22222222-2222-4222-8222-222222222222" {
+		t.Fatalf("integration IDs = %v", got.OutboundIntegrationIDs)
 	}
 }
 

@@ -4282,13 +4282,15 @@ WHERE account_id = sqlc.arg(account_id)
 INSERT INTO executions (
   account_id, runtime, profile, status, network_mode, timeout_ms, memory_mb,
   cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max,
-  source_bytes, input_bytes, deadline_at, created_at, updated_at
+  source_bytes, input_bytes, deadline_at, created_at, updated_at, runs_principal_id,
+  workflow_id, step_label
 ) VALUES (
   sqlc.arg(account_id), sqlc.arg(runtime), sqlc.arg(profile), 'queued', sqlc.arg(network_mode),
   sqlc.arg(timeout_ms), sqlc.arg(memory_mb), sqlc.arg(cpu_millicores),
   sqlc.arg(ephemeral_disk_mb), sqlc.arg(max_output_bytes), sqlc.arg(pids_max),
   sqlc.arg(source_bytes), sqlc.arg(input_bytes), sqlc.arg(deadline_at),
-  sqlc.arg(admitted_at), sqlc.arg(admitted_at)
+  sqlc.arg(admitted_at), sqlc.arg(admitted_at), sqlc.narg(runs_principal_id)::uuid,
+  sqlc.narg(workflow_id), sqlc.narg(step_label)
 )
 RETURNING *;
 
@@ -4306,12 +4308,55 @@ WHERE account_id = sqlc.arg(account_id)
 ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg(page_limit)::int OFFSET sqlc.arg(page_offset)::int;
 
+-- name: ExecutionListForAccountPrincipal :many
+SELECT * FROM executions
+WHERE account_id = sqlc.arg(account_id)
+  AND runs_principal_id = sqlc.arg(runs_principal_id)
+ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg(page_limit)::int OFFSET sqlc.arg(page_offset)::int;
+
+-- name: ExecutionListForAccountPrincipalStatus :many
+SELECT * FROM executions
+WHERE account_id = sqlc.arg(account_id)
+  AND runs_principal_id = sqlc.arg(runs_principal_id)
+  AND status = sqlc.arg(status)
+ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg(page_limit)::int OFFSET sqlc.arg(page_offset)::int;
+
 -- name: ExecutionListForAccountStatus :many
 SELECT * FROM executions
 WHERE account_id = sqlc.arg(account_id)
   AND status = sqlc.arg(status)
 ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg(page_limit)::int OFFSET sqlc.arg(page_offset)::int;
+
+-- name: ExecutionListForWorkflow :many
+SELECT * FROM executions
+WHERE account_id = sqlc.arg(account_id)::uuid
+  AND workflow_id = sqlc.arg(workflow_id)::text
+  AND (sqlc.narg(runs_principal_id)::uuid IS NULL OR runs_principal_id = sqlc.narg(runs_principal_id)::uuid)
+  AND (sqlc.arg(status)::text = '' OR status = sqlc.arg(status)::text)
+ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg(page_limit)::int OFFSET sqlc.arg(page_offset)::int;
+
+-- name: ExecutionWorkflowSummary :one
+SELECT count(*)::bigint AS run_count,
+       count(*) FILTER (WHERE status = 'queued')::bigint AS queued,
+       count(*) FILTER (WHERE status = 'restoring')::bigint AS restoring,
+       count(*) FILTER (WHERE status = 'running')::bigint AS running,
+       count(*) FILTER (WHERE status = 'succeeded')::bigint AS succeeded,
+       count(*) FILTER (WHERE status = 'failed')::bigint AS failed,
+       count(*) FILTER (WHERE status = 'timed_out')::bigint AS timed_out,
+       count(*) FILTER (WHERE status = 'out_of_memory')::bigint AS out_of_memory,
+       count(*) FILTER (WHERE status = 'cancelled')::bigint AS cancelled,
+       coalesce(sum(wall_time_ms) FILTER (WHERE status IN ('succeeded', 'failed', 'timed_out', 'out_of_memory', 'cancelled')), 0)::bigint AS wall_time_ms,
+       coalesce(sum(cpu_time_ms) FILTER (WHERE status IN ('succeeded', 'failed', 'timed_out', 'out_of_memory', 'cancelled')), 0)::bigint AS cpu_time_ms,
+       coalesce(max(peak_memory_mb) FILTER (WHERE status IN ('succeeded', 'failed', 'timed_out', 'out_of_memory', 'cancelled')), 0)::bigint AS peak_memory_mb,
+       coalesce(sum(result_bytes + octet_length(stdout) + octet_length(stderr) + octet_length(artifacts)) FILTER (WHERE status IN ('succeeded', 'failed', 'timed_out', 'out_of_memory', 'cancelled')), 0)::bigint AS output_bytes
+FROM executions
+WHERE account_id = sqlc.arg(account_id)::uuid
+  AND workflow_id = sqlc.arg(workflow_id)::text
+  AND (sqlc.narg(runs_principal_id)::uuid IS NULL OR runs_principal_id = sqlc.narg(runs_principal_id)::uuid);
 
 -- name: ExecutionClaimNext :one
 WITH candidate AS (

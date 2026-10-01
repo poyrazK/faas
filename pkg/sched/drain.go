@@ -443,7 +443,7 @@ func (d *Drain) dispatchExclusiveOperation(ctx context.Context, owners state.Exc
 	var requestKind struct {
 		Kind string `json:"kind"`
 	}
-	if json.Unmarshal(op.Request, &requestKind) == nil && requestKind.Kind == "app_task" {
+	if json.Unmarshal(op.Request, &requestKind) == nil && (requestKind.Kind == "app_task" || requestKind.Kind == "command_cron") {
 		dispatchOutcome = d.dispatchExclusiveAppTaskOperation(ctx, owners, op)
 		return
 	}

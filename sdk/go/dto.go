@@ -132,27 +132,37 @@ type (
 
 	// Disposable agent executions. Source and input are accepted only by
 	// CreateExecutionRequest and are never returned in execution receipts.
-	ExecutionRuntime         = api.ExecutionRuntime
-	ExecutionProfile         = api.ExecutionProfile
-	ExecutionNetworkMode     = api.ExecutionNetworkMode
-	ExecutionNetworkPolicy   = api.ExecutionNetworkPolicy
-	ExecutionLimitRequest    = api.ExecutionLimitRequest
-	ExecutionFile            = api.ExecutionFile
-	ExecutionArtifact        = api.ExecutionArtifact
-	CreateExecutionRequest   = api.CreateExecutionRequest
-	ResolvedExecutionLimits  = api.ResolvedExecutionLimits
-	ExecutionUsage           = api.ExecutionUsage
-	ExecutionFailure         = api.ExecutionFailure
-	ExecutionStatus          = api.ExecutionStatus
-	ExecutionResponse        = api.ExecutionResponse
-	ExecutionListResponse    = api.ExecutionListResponse
-	ExecutionEventType       = api.ExecutionEventType
-	ExecutionEventData       = api.ExecutionEventData
-	ExecutionEvent           = api.ExecutionEvent
-	ExecutionEventParseError = api.ExecutionEventParseError
-	WatchExecutionOptions    = api.WatchExecutionOptions
-	ExecutionWatcher         = api.ExecutionWatcher
-	RunOptions               = api.RunOptions
+	ExecutionRuntime                     = api.ExecutionRuntime
+	ExecutionProfile                     = api.ExecutionProfile
+	ExecutionNetworkMode                 = api.ExecutionNetworkMode
+	ExecutionNetworkPolicy               = api.ExecutionNetworkPolicy
+	ExecutionLimitRequest                = api.ExecutionLimitRequest
+	ExecutionFile                        = api.ExecutionFile
+	ExecutionArtifactInput               = api.ExecutionArtifactInput
+	ExecutionArtifact                    = api.ExecutionArtifact
+	CreateExecutionArtifactGrantRequest  = api.CreateExecutionArtifactGrantRequest
+	ExecutionArtifactGrantResponse       = api.ExecutionArtifactGrantResponse
+	RevokeExecutionArtifactGrantResponse = api.RevokeExecutionArtifactGrantResponse
+	CreateExecutionRequest               = api.CreateExecutionRequest
+	ResolvedExecutionLimits              = api.ResolvedExecutionLimits
+	ExecutionProfileCapability           = api.ExecutionProfileCapability
+	ExecutionCapabilityLimits            = api.ExecutionCapabilityLimits
+	ExecutionCapabilitiesResponse        = api.ExecutionCapabilitiesResponse
+	ExecutionUsage                       = api.ExecutionUsage
+	ExecutionFailure                     = api.ExecutionFailure
+	ExecutionStatus                      = api.ExecutionStatus
+	ExecutionResponse                    = api.ExecutionResponse
+	ExecutionListResponse                = api.ExecutionListResponse
+	ExecutionWorkflowResponse            = api.ExecutionWorkflowResponse
+	ExecutionWorkflowStatusCounts        = api.ExecutionWorkflowStatusCounts
+	ExecutionWorkflowUsage               = api.ExecutionWorkflowUsage
+	ExecutionEventType                   = api.ExecutionEventType
+	ExecutionEventData                   = api.ExecutionEventData
+	ExecutionEvent                       = api.ExecutionEvent
+	ExecutionEventParseError             = api.ExecutionEventParseError
+	WatchExecutionOptions                = api.WatchExecutionOptions
+	ExecutionWatcher                     = api.ExecutionWatcher
+	RunOptions                           = api.RunOptions
 
 	// Auth (password).
 	PasswordLoginRequest  = api.PasswordLoginRequest

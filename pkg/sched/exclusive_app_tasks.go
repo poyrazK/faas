@@ -18,12 +18,16 @@ const exclusiveAppTaskIncarnationPrefix = "app-task-operation/"
 type exclusiveAppTaskWorkRequest struct {
 	Kind         string                   `json:"kind"`
 	DeploymentID string                   `json:"deployment_id"`
+	CronID       string                   `json:"cron_id"`
 	Task         api.CreateAppTaskRequest `json:"task"`
 }
 
 func (d *Drain) dispatchExclusiveAppTaskOperation(ctx context.Context, owners state.ExclusiveWorkStore, op state.ExclusiveOperation) string {
 	var accepted exclusiveAppTaskWorkRequest
-	if err := json.Unmarshal(op.Request, &accepted); err != nil || accepted.Kind != "app_task" || accepted.DeploymentID == "" {
+	if err := json.Unmarshal(op.Request, &accepted); err != nil ||
+		(accepted.Kind != "app_task" && accepted.Kind != "command_cron") ||
+		(accepted.Kind == "app_task" && accepted.DeploymentID == "") ||
+		(accepted.Kind == "command_cron" && accepted.CronID == "") {
 		_ = owners.FailPendingExclusiveOperation(ctx, op.AccountID, op.ID, "accepted app task request is invalid")
 		return "failed"
 	}
@@ -36,10 +40,24 @@ func (d *Drain) dispatchExclusiveAppTaskOperation(ctx context.Context, owners st
 		_ = owners.FailPendingExclusiveOperation(ctx, op.AccountID, op.ID, "app task store is unavailable")
 		return "failed"
 	}
-	resolved, problem := accepted.Task.Resolve()
-	if problem != nil {
-		_ = owners.FailPendingExclusiveOperation(ctx, op.AccountID, op.ID, "accepted app task request is invalid")
-		return "failed"
+	createTask := func(claim exclusivework.Claim) (state.AppTask, error) {
+		if accepted.Kind == "command_cron" {
+			cronTasks, ok := d.store.(state.ExclusiveCommandCronTaskStore)
+			if !ok {
+				return state.AppTask{}, errors.New("exclusive command-cron task store is unavailable")
+			}
+			return cronTasks.CreateExclusiveCommandCronAppTask(ctx, op.AccountID, op.AppID, op.ID, claim.Generation, accepted.CronID, d.now().UTC())
+		}
+		resolved, problem := accepted.Task.Resolve()
+		if problem != nil {
+			return state.AppTask{}, state.ErrAppTaskInvalid
+		}
+		return tasks.CreateAppTask(ctx, state.CreateAppTaskParams{
+			AccountID: op.AccountID, AppID: op.AppID, DeploymentID: accepted.DeploymentID,
+			ExclusiveOperationID: op.ID, ExclusiveGeneration: claim.Generation,
+			Kind: state.AppTaskKindManual, Command: resolved.Command, CommandShell: resolved.CommandShell,
+			TimeoutSeconds: resolved.TimeoutSeconds, MaxOutputBytes: resolved.MaxOutputBytes, CreatedAt: d.now().UTC(),
+		})
 	}
 	app, err := d.store.AppByID(ctx, op.AppID)
 	if err != nil || app.AccountID != op.AccountID || app.Status == state.AppDeleted {
@@ -68,17 +86,14 @@ func (d *Drain) dispatchExclusiveAppTaskOperation(ctx context.Context, owners st
 		}
 		d.cancelExclusiveAppTask(ctx, tasks, task)
 	}
-	task, err := tasks.CreateAppTask(ctx, state.CreateAppTaskParams{
-		AccountID: op.AccountID, AppID: op.AppID, DeploymentID: accepted.DeploymentID,
-		ExclusiveOperationID: op.ID, ExclusiveGeneration: claim.Generation,
-		Kind: state.AppTaskKindManual, Command: resolved.Command, CommandShell: resolved.CommandShell,
-		TimeoutSeconds: resolved.TimeoutSeconds, MaxOutputBytes: resolved.MaxOutputBytes, CreatedAt: d.now().UTC(),
-	})
+	task, err := createTask(claim)
 	if err != nil {
 		if errors.Is(err, exclusivework.ErrStaleOwner) {
 			return "lost_owner"
 		}
-		if errors.Is(err, state.ErrAppTaskInvalid) || errors.Is(err, state.ErrAppTaskDeploymentUnavailable) || errors.Is(err, state.ErrNotFound) {
+		if errors.Is(err, state.ErrAppTaskInvalid) || errors.Is(err, state.ErrAppTaskDeploymentUnavailable) ||
+			errors.Is(err, state.ErrAppTaskCronDisabled) || errors.Is(err, state.ErrAppTaskCronSuspended) ||
+			errors.Is(err, state.ErrAppTaskCronOverlap) || errors.Is(err, state.ErrNotFound) {
 			_ = owners.FailExclusiveOperation(ctx, claim, "deployment-attached task could not be created")
 			return "failed"
 		}

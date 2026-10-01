@@ -25,6 +25,7 @@ type ScheduleOccurrence struct {
 	Status               string
 	Reason               string
 	BlockingOccurrenceID string
+	ExclusiveOperationID string
 	InvocationID         string
 	AppTaskID            string
 	JobRunID             string
@@ -65,6 +66,9 @@ type CronScheduledOccurrenceOptions struct {
 	ScheduleRevision int64
 	Disposition      string
 	Reason           string
+	// ExclusiveAdmission opts a command cron into the managed operation lane.
+	// Admission and the occurrence cursor commit in the same store transaction.
+	ExclusiveAdmission *ExclusiveAdmission
 }
 
 type JobScheduleOccurrenceStore interface {

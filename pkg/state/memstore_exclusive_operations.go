@@ -35,6 +35,21 @@ func (s *MemStore) exclusiveAtomic(ctx context.Context, run func(exclusiveTransa
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// Copy-on-write gives the memory adapter transaction rollback semantics.
+	tx := s.exclusiveMemoryTxLocked()
+	if err := run(tx); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.commitExclusiveMemoryTxLocked(tx)
+	return nil
+}
+
+// exclusiveMemoryTxLocked and commitExclusiveMemoryTxLocked are also used by
+// state transitions that atomically combine operation admission with another
+// MemStore record while already holding s.mu.
+func (s *MemStore) exclusiveMemoryTxLocked() *exclusiveMemoryTx {
 	tx := &exclusiveMemoryTx{quotas: maps.Clone(s.accountAsyncQuota), submissions: maps.Clone(s.exclusiveSubmissions), store: s, policiesByName: maps.Clone(s.exclusivePolicies),
 		keys: maps.Clone(s.exclusiveKeys), operations: maps.Clone(s.exclusiveOperations), committedEffects: maps.Clone(s.exclusiveEffects)}
 	if tx.submissions == nil {
@@ -55,16 +70,13 @@ func (s *MemStore) exclusiveAtomic(ctx context.Context, run func(exclusiveTransa
 	if tx.committedEffects == nil {
 		tx.committedEffects = map[string][]exclusivework.Effect{}
 	}
-	if err := run(tx); err != nil {
-		return err
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
+	return tx
+}
+
+func (s *MemStore) commitExclusiveMemoryTxLocked(tx *exclusiveMemoryTx) {
 	s.exclusiveSubmissions = tx.submissions
 	s.accountAsyncQuota = tx.quotas
 	s.exclusivePolicies, s.exclusiveKeys, s.exclusiveOperations, s.exclusiveEffects = tx.policiesByName, tx.keys, tx.operations, tx.committedEffects
-	return nil
 }
 
 func (tx *exclusiveMemoryTx) lockAccount(id string) error {
