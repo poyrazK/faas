@@ -6352,6 +6352,17 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 			delete(m.discoveredAPIRoutes, key)
 		}
 	}
+	// Match PostgreSQL's ON DELETE CASCADE after the restore window ends.
+	for listenerID, listener := range m.tcpListeners {
+		if listener.AppID == id {
+			delete(m.tcpListeners, listenerID)
+		}
+	}
+	for listenerID, listener := range m.udpListeners {
+		if listener.AppID == id {
+			delete(m.udpListeners, listenerID)
+		}
+	}
 	delete(m.apps, id)
 	return nil
 }

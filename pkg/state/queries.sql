@@ -5092,3 +5092,13 @@ DELETE FROM app_udp_listeners WHERE id = sqlc.arg(id)::text::uuid;
 
 -- name: CountUDPListenersForApp :one
 SELECT count(*) FROM app_udp_listeners WHERE app_id = sqlc.arg(app_id)::text::uuid;
+
+-- name: ActiveTCPListenerByPublicPort :one
+SELECT l.* FROM app_tcp_listeners l JOIN apps a ON a.id = l.app_id
+WHERE l.public_port = sqlc.arg(public_port) AND l.enabled
+  AND a.status <> 'deleted' AND a.account_id = l.account_id;
+
+-- name: ListActiveTCPListeners :many
+SELECT l.* FROM app_tcp_listeners l JOIN apps a ON a.id = l.app_id
+WHERE l.enabled AND a.status <> 'deleted' AND a.account_id = l.account_id
+ORDER BY l.public_port;
