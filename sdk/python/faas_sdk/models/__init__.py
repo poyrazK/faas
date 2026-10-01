@@ -461,6 +461,8 @@ from .create_trigger_request_broker_poison_strategy_type_3_type_1 import (
     CreateTriggerRequestBrokerPoisonStrategyType3Type1,
 )
 from .create_trigger_request_config import CreateTriggerRequestConfig
+from .create_udp_listener_request import CreateUDPListenerRequest
+from .create_udp_listener_request_public_port_type_0 import CreateUDPListenerRequestPublicPortType0
 from .create_workflow_callback_webhook_binding_request import CreateWorkflowCallbackWebhookBindingRequest
 from .cron_response import CronResponse
 from .cron_response_kind import CronResponseKind
@@ -1788,6 +1790,8 @@ from .trigger_source_type_2_type_1 import TriggerSourceType2Type1
 from .trigger_source_type_3_type_1 import TriggerSourceType3Type1
 from .trigger_work_binding import TriggerWorkBinding
 from .trusted_signer import TrustedSigner
+from .udp_listener_response import UDPListenerResponse
+from .udp_listener_response_protocol import UDPListenerResponseProtocol
 from .update_account_billing_info_request import UpdateAccountBillingInfoRequest
 from .update_account_release_webhook_request import UpdateAccountReleaseWebhookRequest
 from .update_account_release_webhook_request_delivery_format import UpdateAccountReleaseWebhookRequestDeliveryFormat
@@ -1888,6 +1892,7 @@ from .update_trigger_request_broker_poison_strategy_type_3_type_1 import (
     UpdateTriggerRequestBrokerPoisonStrategyType3Type1,
 )
 from .update_trigger_request_config_type_0 import UpdateTriggerRequestConfigType0
+from .update_udp_listener_request import UpdateUDPListenerRequest
 from .update_upstream_circuit_breaker_request import UpdateUpstreamCircuitBreakerRequest
 from .upload_deploy_options import UploadDeployOptions
 from .upload_session_response import UploadSessionResponse
@@ -2394,6 +2399,8 @@ __all__ = (
     "CreateTriggerRequestBrokerPoisonStrategyType2Type1",
     "CreateTriggerRequestBrokerPoisonStrategyType3Type1",
     "CreateTriggerRequestConfig",
+    "CreateUDPListenerRequest",
+    "CreateUDPListenerRequestPublicPortType0",
     "CreateWorkflowCallbackWebhookBindingRequest",
     "CronResponse",
     "CronResponseKind",
@@ -3669,6 +3676,8 @@ __all__ = (
     "TriggerSourceType3Type1",
     "TriggerWorkBinding",
     "TrustedSigner",
+    "UDPListenerResponse",
+    "UDPListenerResponseProtocol",
     "UpdateAccountBillingInfoRequest",
     "UpdateAccountReleaseWebhookRequest",
     "UpdateAccountReleaseWebhookRequestDeliveryFormat",
@@ -3757,6 +3766,7 @@ __all__ = (
     "UpdateTriggerRequestBrokerPoisonStrategyType2Type1",
     "UpdateTriggerRequestBrokerPoisonStrategyType3Type1",
     "UpdateTriggerRequestConfigType0",
+    "UpdateUDPListenerRequest",
     "UpdateUpstreamCircuitBreakerRequest",
     "UploadDeployOptions",
     "UploadSessionResponse",
