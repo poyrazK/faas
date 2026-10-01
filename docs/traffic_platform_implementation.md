@@ -3,6 +3,63 @@
 Objective: implement the six delivery steps in the 2026-09-29 gap-closure plan.
 Base: `56618879c`; branch: `codex/traffic-platform-gaps`; decision: ADR-375.
 
+## Configured gateway policies connected to node admission — 2026-10-02
+
+The earlier configured gateway cases used a forwarding stub, while the node
+process case supplied policy and identity fixtures. A new Postgres integration
+connects two configured `runWithDeps` gateway processes and a replacement to a
+separate test process running the production vmmd gRPC server, fcvm admission
+owner and reusable bridge. The gateway package does not import VM lifecycle
+code. The node fixture accepts the actual selected instance/deployment IDs and
+supplies its guest listener port to warm placement.
+
+Actual stores resolve public routing, account/app policy, declared service
+bindings, fresh source identity and reliability snapshots. Four mixed public/
+managed exchanges, including bodies open after response headers, fill a Free
+VM's trusted cap despite the account's Pro plan and forged instance/plan/cap
+headers. Both gateways exercise structured full/untrusted HTTP and Upgrade
+refusals, including limit 4/observed 5 and retry hints. Each refusal makes one
+RPC and no guest call. Replacement advances its serving generation and retains
+the cap. Client cancellation is followed through bridge cleanup; both paths
+subsequently serve new work. A forged declared caller is refused before the
+node receives a forwarding RPC.
+
+Warm placement, listener/source-address translation, VM startup, namespace
+selection and guest serving remain fixtures. This test does not run outer
+gateway discovery, the separate public edge daemon, cross-host authentication
+or native/deployed acceptance. It adds integration evidence without changing
+production admission behavior.
+
+Verification against the final 12,518-file source freeze:
+
+- All 12 complete unit packages pass in 159.958 s. Raw events contain 10,884
+  named passes and 1,449 skips. Excluding 46 passed parents with entirely
+  guarded children leaves 10,838 accepted and 1,495 guarded results. Accepted
+  package counts match the preceding handler qualification; the new configured
+  case needs Postgres and the new node helper is guarded outside a subprocess.
+- The selected Postgres profile passes 172 named results with no skips in
+  60.784 s: 40 under 23 actual Postgres fixture roots and 132 memory/transport
+  checks. It retains the preceding profile and adds the configured node case.
+  Across both profiles, 10,877 distinct named results are accepted; 1,470
+  guarded results remain without acceptance.
+- Pinned lint 2.4.0 checks all 12 complete packages with tests and reports zero
+  issues in 3.306 s. SQLC 1.31.1 reproduces all four generated files exactly.
+  Runbook SQL, text encoding, shell quoting and ADR uniqueness pass in 17.502 s,
+  retaining 71 pre-existing duplicate groups. Only this tracker changes after
+  the source freeze; all owned heavy gates return terminal success first.
+- Heavy gates run serially with the preceding runtime settings and task-owned
+  caches. No new suppressions, exclusions, overlays or weakened assertions were
+  added. The original node cases retain their assertions. The disposable source
+  database remains unmigrated with all three durability settings enabled.
+
+The focused three-case process pass and preliminary lint pass are retained as
+preliminary evidence. All final gates pass without a repair or cache cleanup.
+Evidence: `outputs/traffic-node-daemon-20261002/` relative to the checkout's parent.
+
+All six release requirements remain open. No native Linux x86_64 KVM host is
+available; native lifecycle/process fences/network enforcement/leaks, complete
+path qualification, deployed load/recovery and staging remain pending.
+
 ## Node admission through public and managed handlers — 2026-10-02
 
 The existing process test used the forwarding proxy directly. The added case

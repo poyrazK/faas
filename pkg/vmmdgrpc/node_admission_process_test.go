@@ -234,6 +234,19 @@ type nodeAdmissionProcessFixture struct {
 
 func newNodeAdmissionProcessFixture(t *testing.T) nodeAdmissionProcessFixture {
 	t.Helper()
+	return newNodeAdmissionProcessFixtureWith(t, []nodeAdmissionFixtureInstance{
+		{ID: "vm", Deployment: "dep", Plan: api.PlanFree},
+		{ID: "untrusted", Deployment: "dep-untrusted"},
+	}, false)
+}
+
+type nodeAdmissionFixtureInstance struct {
+	ID, Deployment string
+	Plan           api.Plan
+}
+
+func newNodeAdmissionProcessFixtureWith(t *testing.T, instances []nodeAdmissionFixtureInstance, unix bool) nodeAdmissionProcessFixture {
+	t.Helper()
 	t.Setenv("FAAS_STREAM_BRIDGE_VERSION", "v2")
 	t.Setenv(streamBridgePersistentEnv, "1")
 	shortDir, err := os.MkdirTemp("/tmp", "gregale-node-")
@@ -269,16 +282,15 @@ func newNodeAdmissionProcessFixture(t *testing.T) nodeAdmissionProcessFixture {
 	t.Cleanup(guest.Close)
 	_, guestPort, _ := net.SplitHostPort(strings.TrimPrefix(guest.URL, "http://"))
 	port, _ := strconv.Atoi(guestPort)
-	owner := fcvm.NewManager(nil, nil, fcvm.Paths{}, "test", nil, nil).RegisterInstanceForTest("vm", "dep")
+	owner := fcvm.NewManager(nil, nil, fcvm.Paths{}, "test", nil, nil)
 	// Initialize the routing fixture before serving; subsequent admission uses
 	// the Manager's immutable trusted instance plan and generation.
-	inst := owner.LiveInstances()["vm"]
-	inst.Plan = api.PlanFree
-	inst.Lease = fcvm.Lease{Instance: "vm", Netns: "fc-vm", Plan: api.PlanFree}
-	owner.RegisterInstanceForTest("untrusted", "dep-untrusted")
-	untrusted := owner.LiveInstances()["untrusted"]
-	untrusted.Plan = ""
-	untrusted.Lease = fcvm.Lease{Instance: "untrusted", Netns: "fc-untrusted"}
+	for _, spec := range instances {
+		owner.RegisterInstanceForTest(spec.ID, spec.Deployment)
+		inst := owner.LiveInstances()[spec.ID]
+		inst.Plan = spec.Plan
+		inst.Lease = fcvm.Lease{Instance: spec.ID, Netns: "fc-" + spec.ID, Plan: spec.Plan}
+	}
 	s := New(nodeAdmissionProcessVMM{owner: owner}, nil, "test", nil)
 	var sockets sync.Map
 	s.streamBridges.spawn = func(ctx context.Context, bin, _, socket, _ string, port uint32, deadline string, env []string) (*exec.Cmd, *bytes.Buffer, error) {
@@ -300,7 +312,11 @@ func newNodeAdmissionProcessFixture(t *testing.T) nodeAdmissionProcessFixture {
 			return (&net.Dialer{}).DialContext(ctx, "unix", local.(string))
 		}}
 	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	network, address := "tcp", "127.0.0.1:0"
+	if unix {
+		network, address = "unix", filepath.Join(shortDir, "vmmd.sock")
+	}
+	listener, err := net.Listen(network, address)
 	if err != nil {
 		t.Fatal(err)
 	}

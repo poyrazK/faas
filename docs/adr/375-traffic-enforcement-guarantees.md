@@ -200,6 +200,19 @@ caller identity, authorization, placement, namespace and VM startup remain
 fixtures in this test. Configured daemon, native lifecycle and deployed
 acceptance retain their separate requirements.
 
+A further integration case connects configured compute gateway processes to
+Postgres routing, declared caller/binding and reliability policy and a separate
+vmmd process using the production admission owner and reusable bridge. Two
+gateways and a replacement share the cap for mixed public and managed exchanges,
+including response bodies held open after headers. Full/untrusted HTTP and
+Upgrade refusals preserve the node's structured error without extra observed
+RPCs or guest execution; a forged declared caller never reaches forwarding.
+Client cancellation is followed through node cleanup and subsequent successful
+work. Warm placement, listener/source translation, VM startup, namespace and
+guest serving are fixtures. Outer discovery, the separate public edge daemon,
+cross-host authentication and native/deployed acceptance are not established by
+this case.
+
 ## Effective request policy
 
 The public routing handler pins the entire compiled host policy before route

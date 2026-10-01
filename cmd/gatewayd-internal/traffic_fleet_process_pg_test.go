@@ -26,6 +26,7 @@ import (
 type fleetDaemonApp struct {
 	ID, Deployment, Host string
 	Instances            []string
+	Port                 int
 }
 
 type fleetDaemonSpec struct {
@@ -84,9 +85,13 @@ func TestTrafficFleetDaemonProcess(t *testing.T) {
 	backend := gateway.NewPGBackend(router, gateway.NewFakeScheduler(""), log).
 		WithStore(weightsStoreAdapter{store: store}).WithEdgeRules(matcher).WithResponseCache(cache)
 	for _, app := range spec.Apps {
+		port := app.Port
+		if port == 0 {
+			port = 8080
+		}
 		for _, instance := range app.Instances {
 			backend.RecordTarget(app.ID, gateway.Target{AppID: app.ID, DeploymentID: app.Deployment,
-				InstanceID: instance, NodeID: spec.NodeID, Port: 8080, AddedAt: time.Now()})
+				InstanceID: instance, NodeID: spec.NodeID, Port: port, AddedAt: time.Now()})
 		}
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

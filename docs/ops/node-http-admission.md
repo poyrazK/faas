@@ -59,3 +59,18 @@ managed work succeeds.
 This test supplies app policy, caller identity, authorization, warm placement,
 namespace and VM startup fixtures. It does not run configured gateway daemons,
 stored declared policies, native guest networking or deployed load acceptance.
+
+A configured gateway test now connects those components: two `runWithDeps`
+processes and a replacement read actual Postgres public routing, account/app
+policy, declared bindings, source identity and reliability snapshots, then dial
+a separate vmmd process over its Unix socket. The production node owner and
+reusable bridge preserve the same four-exchange cap despite the account's Pro
+plan and forged request headers. HTTP and Upgrade full/untrusted refusals make
+one RPC each and no guest call. Mixed public/managed streaming requests retain
+capacity until cancellation cleanup; both routes subsequently serve new work.
+A forged managed caller is refused before the node receives an RPC.
+
+Warm placement, listener/source-address translation, VM startup, namespace
+selection and the guest HTTP server remain fixtures. This case uses configured
+compute gateway startup; outer discovery, the separate public edge daemon,
+cross-host authentication and native/deployed acceptance remain separate.
