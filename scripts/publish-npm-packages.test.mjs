@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -233,4 +233,15 @@ fs.mkdirSync(path.join(prefix, 'bin'), {recursive:true}); fs.symlinkSync(binary,
       NPM_CONFIG_USERCONFIG: "/fixture-auth-config", npm_config_token: "fixture-token" } });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /binary SHA256: PASS/);
+  // Reject a corrupted payload before executing version or help.
+  const marker = resolve(f.dir, "unverified-binary-executed");
+  writeFileSync(resolve(tools, "npm"), readFileSync(resolve(tools, "npm"), "utf8") +
+    `\nfs.appendFileSync(binary, ${JSON.stringify("\ntouch '" + marker + "'\n")});\n`);
+  const corrupt = spawnSync(process.execPath, ["scripts/verify-npm-installation.mjs",
+    "--packages-dir", f.dir, "--prefix", resolve(f.dir, "corrupt-install")], {
+    encoding: "utf8", env: { ...process.env, PATH: `${tools}:${process.env.PATH}` },
+  });
+  assert.notEqual(corrupt.status, 0);
+  assert.match(corrupt.stderr, /differs from the verified release archive/);
+  assert.equal(existsSync(marker), false, "unverified binary must never execute");
 });

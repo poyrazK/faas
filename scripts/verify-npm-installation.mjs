@@ -32,9 +32,6 @@ console.log(run("npm", ["install", "--global", "--prefix", prefix, "--cache", re
   "--userconfig", userConfig, "--globalconfig", globalConfig, "--ignore-scripts", "--include=optional",
   "--registry=https://registry.npmjs.org/", `gregale@${version}`]).trim());
 const cli = resolve(prefix, "bin/gregale");
-const output = run(cli, ["version"]);
-if (!output.includes(`v${version}`)) throw new Error(`Installed CLI reports the wrong version: ${output}`);
-run(cli, ["--help"]);
 const arch = process.arch === "x64" ? "amd64" : process.arch;
 const name = `@gregale/cli-${process.platform}-${arch}`;
 const staged = packages.find(pkg => pkg.manifest.name === name);
@@ -45,5 +42,8 @@ const sha256 = path => createHash("sha256").update(readFileSync(path)).digest("h
 if (sha256(installed) !== sha256(resolve(staged.dir, "bin/gregale"))) {
   throw new Error("Installed npm binary differs from the verified release archive");
 }
+const output = run(cli, ["version"]);
+if (!output.includes(`v${version}`)) throw new Error(`Installed CLI reports the wrong version: ${output}`);
+run(cli, ["--help"]);
 console.log(output.trim());
 console.log("Anonymous npm install, version, help and release binary SHA256: PASS");
