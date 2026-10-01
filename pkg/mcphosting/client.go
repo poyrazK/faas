@@ -296,7 +296,9 @@ func (c *Client) Tools(ctx context.Context) ([]Tool, Exchange, error) {
 			Tools      *[]Tool `json:"tools"`
 			NextCursor string  `json:"nextCursor"`
 		}
-		if err := json.Unmarshal(x.Result, &result); err != nil {
+		decoder := json.NewDecoder(bytes.NewReader(x.Result))
+		decoder.UseNumber() // Preserve exact numbers in discovered schema constraints.
+		if err := decoder.Decode(&result); err != nil {
 			return nil, first, fmt.Errorf("decode tools/list: %w", err)
 		}
 		if result.Tools == nil {
