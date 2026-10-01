@@ -37,6 +37,7 @@ Keep `provisioning_enabled` false outside an isolated provider qualification
 environment. The lifecycle service and background discovery also require all
 of the following runtime gates before they will provision: `FAAS_ENVIRONMENT`
 must be `staging`, `FAAS_MANAGED_POSTGRES_QUALIFIED=true`,
+`FAAS_MANAGED_POSTGRES_QUALIFIED_VERSION=3`,
 `FAAS_MANAGED_POSTGRES_QUALIFIED_UNTIL` must be a future RFC3339 timestamp,
 and the exact qualified backend ID and fingerprint must be supplied through
 `FAAS_MANAGED_POSTGRES_QUALIFIED_BACKEND` and
@@ -74,8 +75,9 @@ attempts cleanup after an intermediate failure and emits a JSON report with
 only stable check codes and restore evidence (without provider IDs). The
 command also emits a versioned `approval`
 envelope, an `approval_env` block when all rollout checks pass, and a
-machine-readable `readiness` result. Version 2 requires the data-recovery
-checks; version 1 artifacts must be replaced by a new qualification run.
+machine-readable `readiness` result. Version 3 requires SQL permission probes,
+data recovery, and rejection of inherited source logins on the restore target.
+Versions 1 and 2 must be replaced by a new qualification run.
 The approval is bound to the report digest, exact backend fingerprint, expiry,
 and the current canary allowlist. A provider-only run remains useful evidence
 but is not rollout-ready until the lifecycle smoke has passed.
@@ -201,21 +203,51 @@ concurrent reservation either commits first and blocks deletion, or observes the
 database in `deleting` and fails without creating a dependent. The provider is
 never contacted after a dependency conflict.
 
-Each app binding uses a deterministic Neon role. Repeating credential
-issuance retrieves the stored role password rather than resetting it. Revoking
-a binding deletes that role. The adapter returns credential material only in
-memory and provider errors never include response bodies, connection strings,
-endpoint hosts, or API keys.
+Each binding uses a deterministic SQL-created Neon login with a random password.
+Repeating issuance verifies its privileges and recovers the stored password
+without resetting it. The control plane keeps `gregale_owner` credentials
+private; they never reach the app-secret sink. Provider errors contain stable
+codes without response bodies, connection strings, endpoint hosts, or API keys.
 
-Neon currently supports `read_write` bindings only. The sink prefers a pooled
-endpoint and falls back to a direct endpoint. A `read_only` binding requires an
-adapter-provided read-only endpoint and therefore fails closed as unsupported
-with the initial Neon adapter. Gregale checks the selected backend's declared
-credential modes before reserving a binding, so unsupported requests do not
-leave failed catalog rows or reach the provider and secret sink. Reconciliation
-repeats the check for bindings written by older releases. Provider-supplied
-root-certificate PEM also fails closed until the portable binding contract can
-deliver a separate sealed certificate file; it is never silently discarded.
+| Binding access | Connection | Permissions |
+| --- | --- | --- |
+| `read_write` (default) | Pooled, with direct fallback | Public-schema SELECT, INSERT, UPDATE, DELETE; sequence usage; RLS enforced |
+| `migration` | Direct required | Schema changes through a stable non-login schema owner; no role/database administration or replication |
+| `read_only` | Read-only endpoint required | Not advertised by the current Neon adapter |
+
+Runtime logins cannot create tables, temporary objects, schemas, or roles,
+truncate tables, or bypass row-level security. Runtime grants cover existing
+public tables/sequences and future objects created by the schema owner.
+Custom schemas and function execution require explicit migration-owner grants.
+Existing PUBLIC-executable SECURITY DEFINER functions block credential issuance;
+review their execution grants before adoption. New owner functions do not
+receive PUBLIC execution privileges by default.
+
+Use a separate environment key for migration tooling:
+
+```sh
+gregale postgres attach DATABASE APP_SLUG --access migration --env MIGRATION_DATABASE_URL
+```
+
+Migration sessions automatically switch to the schema owner. `SET ROLE NONE`
+removes DDL access until that owner is selected again, so normal migrations do
+not assign ownership to a disposable login. Both runtime and migration
+credentials rotate through the existing binding workflow. Retirement disables
+login and terminates sessions before deleting grants and the role. It refuses
+to delete a role that owns objects, preserving application data for operator
+repair. Stable schema objects survive migration credential retirement.
+
+Existing preview administrator bindings require deliberate rotation to adopt
+restricted credentials. Existing table ownership is preserved; an operator may
+need to transfer application objects to the stable schema owner before migration
+credentials can alter them. A restored branch disables inherited managed logins
+before reporting ready; target bindings receive branch-scoped identities.
+
+Gregale checks backend-supported access before reserving a binding and again
+during reconciliation. Provider-supplied root-certificate PEM fails closed
+until the binding contract can deliver a separate sealed certificate file.
+The new privilege and Neon SQL password-recovery behavior require live version
+3 qualification before enabling a staging canary.
 
 Neon's consumption-history API maps compute and network transfer directly to
 Gregale's `compute_unit_seconds` and `egress_bytes` meters. Neon reports root

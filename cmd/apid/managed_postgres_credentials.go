@@ -162,6 +162,14 @@ func selectManagedPostgresEndpoint(access managedpostgres.CredentialAccess, endp
 		}
 		return managedpostgres.Endpoint{}, false
 	}
+	if access == managedpostgres.CredentialMigration {
+		for _, endpoint := range endpoints {
+			if endpoint.Role == managedpostgres.EndpointDirect {
+				return endpoint, true
+			}
+		}
+		return managedpostgres.Endpoint{}, false
+	}
 	if access != managedpostgres.CredentialReadWrite {
 		return managedpostgres.Endpoint{}, false
 	}

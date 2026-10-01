@@ -49,17 +49,21 @@ Verification is read-only: it checks the report digest, expiry, lifecycle
 checks, provider-neutral spec, exact configured backend fingerprint, and
 canary allowlist without contacting Neon. A non-zero exit or any readiness
 reason blocks rollout. Treat the artifact as expired when its `expires_at`
-passes; rerun qualification instead of extending it by hand. Version 2
-artifacts require a restore timestamp inside the disposable source's lifetime,
-target readiness, SQL verification of data committed before that point, and
-completed target deletion. Version 1 artifacts cannot authorize this release.
+passes; rerun qualification instead of extending it by hand. Version 3
+artifacts require runtime DML and RLS enforcement, denied DDL/administration,
+stable migration ownership, and preserved data after migration login retirement.
+They also require a restore timestamp inside the disposable source's lifetime,
+target readiness, earlier committed data, rejection of source credentials on
+the target, and completed deletion. Versions 1 and 2 cannot authorize this release.
 
 When `FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_PATH` is configured on `apid`,
 the provisioning gate loads that artifact at startup and validates it against
 the configured backend and current canary list. The artifact is authoritative:
 missing, malformed, stale, tampered, or mismatched approval keeps provisioning
 disabled even if the legacy `FAAS_MANAGED_POSTGRES_QUALIFIED*` variables look
-valid. Those variables are a fallback only when no approval path is set.
+valid. Those variables are a fallback only when no approval path is set and
+`FAAS_MANAGED_POSTGRES_QUALIFIED_VERSION=3` matches the current contract.
+Unversioned environment approvals remain blocked.
 Restart `apid` after replacing the artifact so the new document is loaded.
 
 ## Staging canary rollout
@@ -145,3 +149,22 @@ so a stale source keeps its descendants stale without multiplying usage.
 Recorded usage remains in account monthly totals after database deletion.
 If provider history is outside its retention period, investigate and reconcile
 that gap before enabling further reservations.
+
+## Credential privilege adoption
+
+Apply `20261001105914375_managed_postgres_migration_credentials.sql` before
+using `migration` bindings. Keep the staging provisioning gate closed until a
+fresh version 3 live Neon qualification passes. Local PostgreSQL tests establish
+SQL behavior; they do not establish Neon password recovery or branch isolation.
+
+Rotate existing preview administrator bindings deliberately. The new runtime
+login receives public-schema data access, while migrations use a separate direct
+connection and the stable schema-owner role. Review existing object ownership
+before adopting migration credentials; transfer only application objects, never
+provider objects, and review SECURITY DEFINER execution grants. Existing object
+ownership is not automatically reassigned.
+
+A revocation conflict on owned objects disables the login and terminates its
+sessions while preserving those objects. Repair ownership and retry cleanup;
+never drop application data to unblock credential deletion. New migration
+objects normally belong to the stable owner and survive rotation.

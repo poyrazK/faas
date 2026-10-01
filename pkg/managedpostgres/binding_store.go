@@ -291,7 +291,7 @@ func (s *MemoryStore) FinishBindingDelete(_ context.Context, bindingID, leaseTok
 func validateBindingReservation(binding Binding) error {
 	if binding.ID == "" || binding.AccountID == "" || binding.DatabaseID == "" || binding.AppID == "" ||
 		!validBindingScope(binding.Scope) || !validEnvironmentKey(binding.EnvironmentKey) ||
-		(binding.Access != CredentialReadWrite && binding.Access != CredentialReadOnly) ||
+		(binding.Access != CredentialReadWrite && binding.Access != CredentialReadOnly && binding.Access != CredentialMigration) ||
 		binding.CredentialGeneration != 1 || binding.State != BindingStateProvisioning ||
 		binding.ProviderIdentityID != "" || binding.CredentialRef != "" || binding.LastErrorCode != "" ||
 		binding.LeaseToken != "" || !binding.LeaseUntil.IsZero() || binding.AttemptCount != 0 ||

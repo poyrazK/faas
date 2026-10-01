@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -40,22 +41,38 @@ type ScaleToZeroEvidence struct {
 // a mutating qualification run. It contains no provider resource ID; the
 // target is deleted before the source resource is cleaned up.
 type RestoreEvidence struct {
-	Restored     bool `json:"restored"`
-	DataVerified bool `json:"data_verified"`
-	Deleted      bool `json:"deleted"`
+	Restored            bool `json:"restored"`
+	DataVerified        bool `json:"data_verified"`
+	Deleted             bool `json:"deleted"`
+	CredentialsIsolated bool `json:"credentials_isolated"`
+}
+
+// CredentialPrivilegeEvidence contains no identities, SQL, or secrets.
+type CredentialPrivilegeEvidence struct {
+	RuntimeRestricted     bool `json:"runtime_restricted"`
+	MigrationSeparated    bool `json:"migration_separated"`
+	RotationPreservesData bool `json:"rotation_preserves_data"`
+}
+
+func (e CredentialPrivilegeEvidence) Validate() error {
+	if !e.RuntimeRestricted || !e.MigrationSeparated || !e.RotationPreservesData {
+		return ErrUnavailable
+	}
+	return nil
 }
 
 // QualificationReport is safe to persist in an operator audit log. It does
 // not contain provider resource IDs, endpoint hosts, passwords, or URLs.
 type QualificationReport struct {
-	Provider    string               `json:"provider"`
-	ResourceID  string               `json:"resource_id"`
-	Mutating    bool                 `json:"mutating"`
-	StartedAt   time.Time            `json:"started_at"`
-	CompletedAt time.Time            `json:"completed_at"`
-	Checks      []QualificationCheck `json:"checks"`
-	ScaleToZero *ScaleToZeroEvidence `json:"scale_to_zero,omitempty"`
-	Restore     *RestoreEvidence     `json:"restore,omitempty"`
+	Provider             string                       `json:"provider"`
+	ResourceID           string                       `json:"resource_id"`
+	Mutating             bool                         `json:"mutating"`
+	StartedAt            time.Time                    `json:"started_at"`
+	CompletedAt          time.Time                    `json:"completed_at"`
+	Checks               []QualificationCheck         `json:"checks"`
+	ScaleToZero          *ScaleToZeroEvidence         `json:"scale_to_zero,omitempty"`
+	Restore              *RestoreEvidence             `json:"restore,omitempty"`
+	CredentialPrivileges *CredentialPrivilegeEvidence `json:"credential_privileges,omitempty"`
 }
 
 // LifecycleQualificationReport contains the non-sensitive evidence from a
@@ -68,20 +85,20 @@ type LifecycleQualificationReport struct {
 
 // QualificationArtifactVersion is bumped whenever the approval document
 // shape or validation semantics change incompatibly.
-const QualificationArtifactVersion = 2
+const QualificationArtifactVersion = 3
 
 const qualificationArtifactVersion = QualificationArtifactVersion
 
 var requiredProviderQualificationChecks = [...]string{
 	"provider_present", "resource_identity", "spec_valid", "capabilities_valid", "spec_supported",
 	"provision", "provision_observed", "provision_idempotent", "provision_idempotent_identity",
-	"inspect", "inspect_observed", "usage", "usage_valid", "credentials_issue", "credentials_valid",
-	"scale_to_zero_probe", "credentials_revoke", "delete", "delete_recovery", "delete_complete", "delete_recovery_complete",
+	"inspect", "inspect_observed", "usage", "usage_valid", "credentials_issue", "credentials_valid", "credentials_idempotent",
+	"scale_to_zero_probe", "credential_privileges_probe", "credentials_revoke", "delete", "delete_recovery", "delete_complete", "delete_recovery_complete",
 }
 
 var restoreQualificationChecks = [...]string{
 	"restore_prepare", "restore", "restore_observed", "restore_ready",
-	"restore_credentials_issue", "restore_credentials_valid", "restore_data_verified", "restore_credentials_revoke",
+	"restore_credentials_issue", "restore_credentials_valid", "restore_data_verified", "restore_credentials_isolated", "restore_credentials_revoke",
 	"restore_delete", "restore_delete_complete", "restore_cleanup",
 }
 
@@ -234,7 +251,10 @@ func ValidateQualificationReport(report QualificationReport) error {
 	if report.ScaleToZero == nil || !report.ScaleToZero.Suspended || !report.ScaleToZero.Resumed || report.ScaleToZero.WakeLatencyMS < 0 {
 		return ErrUnavailable
 	}
-	if report.Restore != nil && (!report.Restore.Restored || !report.Restore.DataVerified || !report.Restore.Deleted) {
+	if report.CredentialPrivileges == nil || report.CredentialPrivileges.Validate() != nil {
+		return ErrUnavailable
+	}
+	if report.Restore != nil && (!report.Restore.Restored || !report.Restore.DataVerified || !report.Restore.Deleted || !report.Restore.CredentialsIsolated) {
 		return ErrUnavailable
 	}
 	return nil
@@ -310,7 +330,9 @@ func EvaluateQualificationArtifact(artifact QualificationArtifact, expectedBacke
 		case errors.Is(err, ErrQualificationFailed):
 			add("provider_checks_failed")
 		case errors.Is(err, ErrUnavailable):
-			if artifact.Report.Restore != nil && (!artifact.Report.Restore.Restored || !artifact.Report.Restore.Deleted) {
+			if artifact.Report.CredentialPrivileges == nil || artifact.Report.CredentialPrivileges.Validate() != nil {
+				add("credential_privileges_evidence_missing")
+			} else if artifact.Report.Restore != nil && (!artifact.Report.Restore.Restored || !artifact.Report.Restore.DataVerified || !artifact.Report.Restore.CredentialsIsolated || !artifact.Report.Restore.Deleted) {
 				add("restore_evidence_missing")
 			} else {
 				add("scale_to_zero_evidence_missing")
@@ -349,7 +371,7 @@ func EvaluateQualificationArtifact(artifact QualificationArtifact, expectedBacke
 		add("canary_accounts_mismatch")
 	}
 	if len(artifact.ApprovalEnv) > 0 {
-		if artifact.ApprovalEnv[QualificationEnv] != "true" || artifact.ApprovalEnv[QualificationBackendEnv] != approval.BackendID || artifact.ApprovalEnv[QualificationFingerprintEnv] != approval.BackendFingerprint || artifact.ApprovalEnv[QualificationUntilEnv] != approval.ExpiresAt.UTC().Format(time.RFC3339) {
+		if artifact.ApprovalEnv[QualificationEnv] != "true" || artifact.ApprovalEnv[QualificationVersionEnv] != strconv.Itoa(qualificationArtifactVersion) || artifact.ApprovalEnv[QualificationBackendEnv] != approval.BackendID || artifact.ApprovalEnv[QualificationFingerprintEnv] != approval.BackendFingerprint || artifact.ApprovalEnv[QualificationUntilEnv] != approval.ExpiresAt.UTC().Format(time.RFC3339) {
 			add("approval_env_mismatch")
 		}
 		if len(approval.CanaryAccounts) > 0 && artifact.ApprovalEnv[CanaryAccountsEnv] != strings.Join(approval.CanaryAccounts, ",") {
@@ -652,6 +674,13 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 	if err := material.Validate(); !record("credentials_valid", err) {
 		return report, resultErr
 	}
+	retriedMaterial, retryErr := provider.IssueCredentials(ctx, credentialRequest)
+	if retryErr == nil && (retriedMaterial.Validate() != nil || retriedMaterial.ProviderIdentityID != material.ProviderIdentityID || retriedMaterial.Username != material.Username || retriedMaterial.Password != material.Password || retriedMaterial.Database != material.Database || retriedMaterial.TLSMode != material.TLSMode) {
+		retryErr = ErrUnavailable
+	}
+	if !record("credentials_idempotent", retryErr) {
+		return report, resultErr
+	}
 	if options.Spec.ScaleToZero {
 		prober, ok := provider.(ScaleToZeroProber)
 		if !ok {
@@ -670,6 +699,19 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 		if !record("scale_to_zero_probe", probeErr) {
 			return report, resultErr
 		}
+	}
+	privilegeProber, hasPrivilegeProber := provider.(CredentialPrivilegeProber)
+	if !hasPrivilegeProber {
+		record("credential_privileges_probe", ErrUnsupported)
+		return report, resultErr
+	}
+	privileges, privilegeErr := privilegeProber.ProbeCredentialPrivileges(ctx, providerResourceID, material)
+	report.CredentialPrivileges = &privileges
+	if privilegeErr == nil {
+		privilegeErr = privileges.Validate()
+	}
+	if !record("credential_privileges_probe", privilegeErr) {
+		return report, resultErr
 	}
 	if options.Spec.RestoreWindowSeconds > 0 {
 		restoreAttempted = true
@@ -728,6 +770,15 @@ func QualifyProvider(parent context.Context, provider Provider, options Qualific
 			return report, resultErr
 		}
 		report.Restore.DataVerified = true
+		isolationProber, ok := provider.(RestoreCredentialIsolationProber)
+		isolationErr := ErrUnsupported
+		if ok {
+			isolationErr = isolationProber.VerifyRestoreCredentialIsolation(ctx, material, restoreMaterial)
+		}
+		if !record("restore_credentials_isolated", isolationErr) {
+			return report, resultErr
+		}
+		report.Restore.CredentialsIsolated = true
 		if !record("restore_credentials_revoke", provider.RevokeCredentials(ctx, restoreCredentialRequest)) {
 			return report, resultErr
 		}
@@ -806,7 +857,7 @@ func QualifyLifecycle(parent context.Context, service *Service, bindings *Bindin
 		recordQualificationFailure(&report, "lifecycle_identity", ErrInvalid, &resultErr)
 		return report, resultErr
 	}
-	if options.Access != CredentialReadWrite && options.Access != CredentialReadOnly {
+	if options.Access != CredentialReadWrite && options.Access != CredentialReadOnly && options.Access != CredentialMigration {
 		recordQualificationFailure(&report, "lifecycle_access", ErrInvalid, &resultErr)
 		return report, resultErr
 	}

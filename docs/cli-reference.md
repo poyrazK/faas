@@ -151,7 +151,7 @@ Provision or attach PostgreSQL and inject DATABASE_URL
 | `--availability <MODE>` | availability mode | one of `single_zone` · `high_availability` |
 | `--scale-to-zero` | suspend compute when idle |  |
 | `--environment-key <KEY>` | connection environment variable |  |
-| `--access <MODE>` | credential access | one of `read_write` · `read_only` |
+| `--access <MODE>` | credential access | one of `read_write` · `read_only` · `migration` |
 | `--wait-timeout <DURATION>` | readiness timeout |  |
 
 ### add bucket

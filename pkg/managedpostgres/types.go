@@ -165,6 +165,7 @@ type CredentialAccess string
 const (
 	CredentialReadWrite CredentialAccess = "read_write"
 	CredentialReadOnly  CredentialAccess = "read_only"
+	CredentialMigration CredentialAccess = "migration"
 )
 
 type EndpointRole string
@@ -525,7 +526,7 @@ func (c Capabilities) Validate() error {
 		}
 	}
 	for _, access := range c.CredentialAccess {
-		if access != CredentialReadWrite && access != CredentialReadOnly {
+		if access != CredentialReadWrite && access != CredentialReadOnly && access != CredentialMigration {
 			return ErrInvalid
 		}
 	}
@@ -542,7 +543,7 @@ func (c Capabilities) Validate() error {
 // the backend prevents Gregale from reserving work that the provider can never
 // reconcile.
 func (c Capabilities) SupportsCredentialAccess(access CredentialAccess) error {
-	if access != CredentialReadWrite && access != CredentialReadOnly {
+	if access != CredentialReadWrite && access != CredentialReadOnly && access != CredentialMigration {
 		return ErrInvalid
 	}
 	if !contains(c.CredentialAccess, access) {
@@ -592,6 +593,18 @@ type Provider interface {
 // is never used during customer reconciliation.
 type ScaleToZeroProber interface {
 	ProbeScaleToZero(context.Context, string, CredentialMaterial) (ScaleToZeroProbeResult, error)
+}
+
+// CredentialPrivilegeProber checks actual SQL permissions on disposable
+// qualification resources, including migration credential retirement.
+type CredentialPrivilegeProber interface {
+	ProbeCredentialPrivileges(context.Context, string, CredentialMaterial) (CredentialPrivilegeEvidence, error)
+}
+
+// RestoreCredentialIsolationProber verifies that the source login cannot
+// authenticate against the restored target.
+type RestoreCredentialIsolationProber interface {
+	VerifyRestoreCredentialIsolation(context.Context, CredentialMaterial, CredentialMaterial) error
 }
 
 // RestoreProbe is held only during an isolated qualification run. The marker

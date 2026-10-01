@@ -130,6 +130,22 @@ func TestManagedPostgresConnectionURLUsesAccessSpecificEndpoint(t *testing.T) {
 			{Role: managedpostgres.EndpointReadOnly, Host: "replica.example.test", Port: 5432},
 		},
 	}
+	// Migration tools always connect directly, even when pooling is available.
+	material.Endpoints = append(material.Endpoints, managedpostgres.Endpoint{Role: managedpostgres.EndpointPooled, Host: "pool.example.test", Port: 6432})
+	migrationURL, err := managedPostgresConnectionURL(managedpostgres.CredentialMigration, material)
+	if err != nil {
+		t.Fatal(err)
+	}
+	migrationParsed, err := url.Parse(migrationURL)
+	if err != nil || migrationParsed.Hostname() != "primary.example.test" {
+		t.Fatalf("migration URL endpoint=%s err=%v", migrationParsed.Hostname(), err)
+	}
+	pooledOnly := material
+	pooledOnly.Endpoints = material.Endpoints[2:]
+	if _, err := managedPostgresConnectionURL(managedpostgres.CredentialMigration, pooledOnly); !errors.Is(err, managedpostgres.ErrUnsupported) {
+		t.Fatalf("pooled-only migration accepted: %v", err)
+	}
+	material.Endpoints = material.Endpoints[:2]
 	value, err := managedPostgresConnectionURL(managedpostgres.CredentialReadOnly, material)
 	if err != nil {
 		t.Fatal(err)

@@ -7235,7 +7235,7 @@ CREATE TABLE public.managed_postgres_bindings (
     rotation_previous_generation bigint,
     rotation_wake_id uuid,
     rotation_cleanup_ready boolean DEFAULT false NOT NULL,
-    CONSTRAINT managed_postgres_bindings_access_check CHECK ((access = ANY (ARRAY['read_write'::text, 'read_only'::text]))),
+    CONSTRAINT managed_postgres_bindings_access_check CHECK ((access = ANY (ARRAY['read_write'::text, 'read_only'::text, 'migration'::text]))),
     CONSTRAINT managed_postgres_bindings_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
     CONSTRAINT managed_postgres_bindings_check CHECK (((state <> 'ready'::text) OR ((provider_identity_id IS NOT NULL) AND (credential_ref IS NOT NULL)))),
     CONSTRAINT managed_postgres_bindings_check1 CHECK (((state = 'deleted'::text) = (deleted_at IS NOT NULL))),

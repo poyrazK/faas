@@ -675,6 +675,7 @@ func TestPostgresBindingServiceCommitsSecretBeforeReadyAndRemovesItBeforeTombsto
 	}
 	provider := &bindingProvider{}
 	provider.capabilities = testCapabilities()
+	provider.capabilities.CredentialAccess = append(provider.capabilities.CredentialAccess, CredentialMigration)
 	provider.material = bindingTestMaterial()
 	registry := testRegistry(t, provider, func(config *Config) { config.ProvisioningEnabled = true })
 	backend, err := registry.Default("us-east-1")
@@ -713,7 +714,7 @@ func TestPostgresBindingServiceCommitsSecretBeforeReadyAndRemovesItBeforeTombsto
 	}
 	binding, err := service.Create(ctx, CreateBindingRequest{
 		AccountID: accountID, DatabaseID: database.ID, AppID: app.ID,
-		Scope: "default", EnvironmentKey: "DATABASE_URL", Access: CredentialReadWrite,
+		Scope: "default", EnvironmentKey: "MIGRATION_DATABASE_URL", Access: CredentialMigration,
 	})
 	if err != nil || binding.State != BindingStateReady || provider.issueCalls != 1 {
 		t.Fatalf("create binding: binding=%+v issue_calls=%d err=%v", binding, provider.issueCalls, err)

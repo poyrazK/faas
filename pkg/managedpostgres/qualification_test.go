@@ -12,19 +12,22 @@ import (
 )
 
 type qualificationProvider struct {
-	capabilities Capabilities
-	resourceID   string
-	deleted      bool
-	provision    int
-	inspect      int
-	usage        int
-	restore      int
-	issue        int
-	revoke       int
-	delete       int
-	issueErr     error
-	spec         Spec
-	pointInTime  time.Time
+	capabilities      Capabilities
+	resourceID        string
+	deleted           bool
+	provision         int
+	inspect           int
+	usage             int
+	restore           int
+	issue             int
+	revoke            int
+	delete            int
+	issueErr          error
+	spec              Spec
+	pointInTime       time.Time
+	privilegeErr      error
+	privilegeEvidence *CredentialPrivilegeEvidence
+	isolationErr      error
 }
 
 func (p *qualificationProvider) Capabilities() Capabilities { return p.capabilities }
@@ -86,6 +89,16 @@ func (*qualificationProvider) ProbeScaleToZero(context.Context, string, Credenti
 	return ScaleToZeroProbeResult{Suspended: true, Resumed: true, WakeLatency: 250 * time.Millisecond}, nil
 }
 
+func (p *qualificationProvider) ProbeCredentialPrivileges(context.Context, string, CredentialMaterial) (CredentialPrivilegeEvidence, error) {
+	if p.privilegeEvidence != nil {
+		return *p.privilegeEvidence, p.privilegeErr
+	}
+	return CredentialPrivilegeEvidence{RuntimeRestricted: true, MigrationSeparated: true, RotationPreservesData: true}, p.privilegeErr
+}
+func (p *qualificationProvider) VerifyRestoreCredentialIsolation(context.Context, CredentialMaterial, CredentialMaterial) error {
+	return p.isolationErr
+}
+
 func (p *qualificationProvider) Usage(_ context.Context, _ string, window UsageWindow) (Usage, error) {
 	p.usage++
 	return Usage{Window: window, Readings: []MeterReading{{Meter: MeterComputeUnitSeconds, Quantity: 1}}}, nil
@@ -135,10 +148,10 @@ func TestQualifyProviderExercisesLifecycleAndCleansUp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("QualifyProvider: %v", err)
 	}
-	if !provider.deleted || provider.provision != 2 || provider.inspect != 2 || provider.usage != 1 || provider.restore != 1 || provider.issue != 2 || provider.revoke != 2 || provider.delete != 3 {
+	if !provider.deleted || provider.provision != 2 || provider.inspect != 2 || provider.usage != 1 || provider.restore != 1 || provider.issue != 3 || provider.revoke != 2 || provider.delete != 3 {
 		t.Fatalf("provider calls = %+v", provider)
 	}
-	if len(report.Checks) != 32 {
+	if len(report.Checks) != 35 {
 		t.Fatalf("checks = %d (%+v)", len(report.Checks), report.Checks)
 	}
 	if report.ScaleToZero == nil || !report.ScaleToZero.Suspended || !report.ScaleToZero.Resumed || report.ScaleToZero.WakeLatencyMS != 250 {
@@ -178,6 +191,7 @@ func TestNewStagingProvisioningGateRequiresExactQualification(t *testing.T) {
 	values := map[string]string{
 		EnvironmentEnv:              "staging",
 		QualificationEnv:            "true",
+		QualificationVersionEnv:     "3",
 		QualificationBackendEnv:     backend.ID,
 		QualificationFingerprintEnv: backend.Fingerprint,
 		QualificationUntilEnv:       now.Add(time.Hour).Format(time.RFC3339),
@@ -187,8 +201,10 @@ func TestNewStagingProvisioningGateRequiresExactQualification(t *testing.T) {
 		t.Fatal("fully qualified staging gate stayed closed")
 	}
 	tests := map[string]func(map[string]string){
-		"production": func(values map[string]string) { values[EnvironmentEnv] = "production" },
-		"approval":   func(values map[string]string) { values[QualificationEnv] = "false" },
+		"production":        func(values map[string]string) { values[EnvironmentEnv] = "production" },
+		"approval":          func(values map[string]string) { values[QualificationEnv] = "false" },
+		"unversioned":       func(values map[string]string) { delete(values, QualificationVersionEnv) },
+		"previous contract": func(values map[string]string) { values[QualificationVersionEnv] = "2" },
 		"expired": func(values map[string]string) {
 			values[QualificationUntilEnv] = now.Add(-time.Minute).Format(time.RFC3339)
 		},
@@ -367,6 +383,7 @@ func TestBuildAndEvaluateQualificationApproval(t *testing.T) {
 		Approval:           &approval,
 		ApprovalEnv: map[string]string{
 			QualificationEnv:            "true",
+			QualificationVersionEnv:     "3",
 			QualificationBackendEnv:     approval.BackendID,
 			QualificationFingerprintEnv: approval.BackendFingerprint,
 			QualificationUntilEnv:       approval.ExpiresAt.UTC().Format(time.RFC3339),
@@ -606,5 +623,56 @@ func TestQualificationCleansUpLostProvisionResponseByLogicalIdentity(t *testing.
 	_, err := QualifyProvider(context.Background(), provider, QualificationOptions{ProviderName: "fake", ResourceID: "lost-create-response", Spec: testSpec(), Mutating: true})
 	if !errors.Is(err, ErrQualificationFailed) || !provider.deleted || provider.delete != 1 {
 		t.Fatalf("lost create cleanup = %+v, %v", provider, err)
+	}
+}
+
+func TestQualificationRequiresCredentialPrivilegesAndRestoreIsolation(t *testing.T) {
+	for _, kind := range []string{"privilege error", "privilege evidence", "restore isolation"} {
+		t.Run(kind, func(t *testing.T) {
+			provider := &qualificationProvider{capabilities: testCapabilities()}
+			want := "credential_privileges_probe"
+			switch kind {
+			case "privilege error":
+				provider.privilegeErr = ErrUnavailable
+			case "privilege evidence":
+				provider.privilegeEvidence = &CredentialPrivilegeEvidence{RuntimeRestricted: true}
+			case "restore isolation":
+				provider.isolationErr = ErrUnavailable
+				want = "restore_credentials_isolated"
+			}
+			report, err := QualifyProvider(context.Background(), provider, QualificationOptions{ProviderName: "fake", ResourceID: "credential-qualification", Spec: testSpec(), Mutating: true, Timeout: time.Minute})
+			if !errors.Is(err, ErrQualificationFailed) || !provider.deleted {
+				t.Fatalf("qualification cleanup: deleted=%v err=%v", provider.deleted, err)
+			}
+			if report.Checks[len(report.Checks)-1].Name != want || report.Checks[len(report.Checks)-1].Passed {
+				t.Fatalf("failed checks=%+v", report.Checks)
+			}
+			if _, err := BuildQualificationApproval(report, nil, "backend", "fingerprint", nil, time.Now(), time.Hour); err == nil {
+				t.Fatal("failed privileges generated approval")
+			}
+		})
+	}
+}
+
+func TestQualificationRejectsPreviousPrivilegeContractAndMissingEvidence(t *testing.T) {
+	provider := &qualificationProvider{capabilities: testCapabilities()}
+	report, err := QualifyProvider(context.Background(), provider, QualificationOptions{ProviderName: "fake", ResourceID: "credential-qualification", Spec: testSpec(), Mutating: true, Timeout: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := report.CompletedAt.Add(time.Minute)
+	approval, err := BuildQualificationApproval(report, nil, "backend", "fingerprint", nil, now, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := QualificationArtifact{Version: 2, BackendID: "backend", BackendFingerprint: "fingerprint", Spec: testSpec(), Report: report, Approval: &approval}
+	artifact.Approval.Version = 2
+	result := EvaluateQualificationArtifact(artifact, "backend", "fingerprint", nil, now)
+	if result.Ready || !strings.Contains(strings.Join(result.Reasons, ","), "artifact_version_invalid") {
+		t.Fatalf("old contract accepted: %+v", result)
+	}
+	report.CredentialPrivileges = nil
+	if !errors.Is(ValidateQualificationReport(report), ErrUnavailable) {
+		t.Fatal("missing credential evidence accepted")
 	}
 }

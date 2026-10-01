@@ -138,7 +138,7 @@ func (p *Provider) Capabilities() managedpostgres.Capabilities {
 		PostgresMajors:               []int{14, 15, 16, 17, 18},
 		ServiceClasses:               []managedpostgres.ServiceClass{managedpostgres.ClassDevelopment, managedpostgres.ClassBurstable, managedpostgres.ClassProduction},
 		Availability:                 []managedpostgres.Availability{managedpostgres.AvailabilitySingleZone},
-		CredentialAccess:             []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite},
+		CredentialAccess:             []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite, managedpostgres.CredentialMigration},
 		ScaleToZero:                  true,
 		PooledConnections:            true,
 		PointInTimeRestore:           p.maxRestoreWindow > 0,
@@ -289,16 +289,28 @@ func (p *Provider) Inspect(ctx context.Context, providerResourceID string) (mana
 	}
 	selectedBranch, primaryEndpoint, resourcesReady := selectBranch(branchesResult.Branches, endpointsResult.Endpoints, ref.branchID)
 	status := operationStatus(operationsResult.Operations, resourcesReady)
+	observedComputeState := computeState(primaryEndpoint.CurrentState)
 	observedSpec := p.observedSpec(projectResult.Project, primaryEndpoint)
 	if selectedBranch.ID == "" {
 		status = managedpostgres.ProviderStatusPending
 	}
-	return managedpostgres.ObservedDatabase{ProviderResourceID: providerResourceID, Status: status, ComputeState: computeState(primaryEndpoint.CurrentState), Spec: observedSpec}, nil
+	if ref.branchID != "" && status == managedpostgres.ProviderStatusReady {
+		owner, err := p.ownerCredentials(ctx, ref.projectID, ref.branchID)
+		if err != nil {
+			return managedpostgres.ObservedDatabase{}, err
+		}
+		role := p.credentialRole(managedpostgres.CredentialRequest{ProviderResourceID: providerResourceID, Access: managedpostgres.CredentialReadWrite})
+		if err := p.roles.RestrictInherited(ctx, owner, role.scope); err != nil {
+			return managedpostgres.ObservedDatabase{}, credentialSQLError(err)
+		}
+		observedComputeState = managedpostgres.ComputeStateActive
+	}
+	return managedpostgres.ObservedDatabase{ProviderResourceID: providerResourceID, Status: status, ComputeState: observedComputeState, Spec: observedSpec}, nil
 }
 
 // ProbeScaleToZero is used only by the isolated operator qualification run.
 // It proves the configured endpoint actually suspends and wakes; lifecycle
-// reconciliation never opens customer connections.
+// routine source lifecycle reconciliation never opens customer connections.
 func (p *Provider) ProbeScaleToZero(ctx context.Context, providerResourceID string, material managedpostgres.CredentialMaterial) (managedpostgres.ScaleToZeroProbeResult, error) {
 	dsn, err := probeDSN(material)
 	if err != nil {
@@ -482,7 +494,7 @@ func (p *Provider) projectPayload(name string, spec managedpostgres.Spec) create
 	request.Project.DefaultEndpointSettings = endpointSettings{MinimumCU: profile.minimumCU, MaximumCU: profile.maximumCU, SuspendTimeoutSecond: suspendTimeout}
 	request.Project.Settings.Quota.LogicalSizeBytes = &spec.StorageLimitBytes
 	request.Project.Branch.Name = "production"
-	request.Project.Branch.RoleName = "gregale_owner"
+	request.Project.Branch.RoleName = ownerLogin
 	request.Project.Branch.DatabaseName = p.databaseName
 	return request
 }

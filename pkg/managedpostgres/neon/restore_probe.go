@@ -14,12 +14,8 @@ var _ managedpostgres.RestoreDataProber = (*Provider)(nil)
 // PrepareRestore writes only to the disposable database created by explicit
 // operator qualification. The database clock supplies a point after the first
 // commit and before a distinct second commit, within the resource's lifetime.
-func (*Provider) PrepareRestore(ctx context.Context, _ string, material managedpostgres.CredentialMaterial) (managedpostgres.RestoreProbe, error) {
-	dsn, err := probeDSN(material)
-	if err != nil {
-		return managedpostgres.RestoreProbe{}, err
-	}
-	conn, err := pgx.Connect(ctx, dsn)
+func (p *Provider) PrepareRestore(ctx context.Context, id string, _ managedpostgres.CredentialMaterial) (managedpostgres.RestoreProbe, error) {
+	conn, err := p.qualificationOwnerConnection(ctx, id)
 	if err != nil {
 		return managedpostgres.RestoreProbe{}, managedpostgres.ErrUnavailable
 	}
@@ -71,14 +67,9 @@ func verifyRestoreProbe(ctx context.Context, conn *pgx.Conn, probe managedpostgr
 	return nil
 }
 
-// Remove the fixture before revoking its owner role. Otherwise PostgreSQL's
-// object dependencies could make credential cleanup fail.
-func (*Provider) CleanupRestore(ctx context.Context, _ string, material managedpostgres.CredentialMaterial) error {
-	dsn, err := probeDSN(material)
-	if err != nil {
-		return err
-	}
-	conn, err := pgx.Connect(ctx, dsn)
+// The fixture is owned by the stable schema owner, never by a runtime login.
+func (p *Provider) CleanupRestore(ctx context.Context, id string, _ managedpostgres.CredentialMaterial) error {
+	conn, err := p.qualificationOwnerConnection(ctx, id)
 	if err != nil {
 		return managedpostgres.ErrUnavailable
 	}

@@ -296,7 +296,7 @@ var cliCommands = []cliCommand{
 				{Name: "availability", Short: "availability mode", Value: "MODE", ClosedSet: []string{"single_zone", "high_availability"}},
 				{Name: "scale-to-zero", Short: "suspend compute when idle"},
 				{Name: "environment-key", Short: "connection environment variable", Value: "KEY"},
-				{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only"}},
+				{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only", "migration"}},
 				{Name: "wait-timeout", Short: "readiness timeout", Value: "DURATION"},
 			}},
 			{Name: "bucket", Short: "Provision or attach object storage and inject sealed S3 settings", Flags: []cliFlag{
@@ -1885,7 +1885,7 @@ var cliCommands = []cliCommand{
 			{Name: "attach", Short: "Attach a database to an app", Flags: []cliFlag{
 				{Name: "scope", Short: "environment scope (defaults to linked project environment, otherwise production)", Value: "SCOPE"},
 				{Name: "env", Short: "connection environment variable", Value: "KEY"},
-				{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only"}},
+				{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only", "migration"}},
 			}},
 		},
 	},

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -90,6 +91,7 @@ func testProvider(t *testing.T, handler http.Handler) *Provider {
 		regionID: "aws-eu-central-1", databaseName: "gregale",
 		maxStorageBytes: 100 << 30, maxRestoreWindow: 604800,
 	})
+	p.roles = &fakeCredentialRoles{}
 	p.credentialPollInterval = time.Millisecond
 	return p
 }
@@ -120,6 +122,9 @@ func TestNewValidatesBackendAndAdvertisesConservativeCapabilities(t *testing.T) 
 	}
 	if err := capabilities.SupportsCredentialAccess(managedpostgres.CredentialReadWrite); err != nil {
 		t.Fatalf("expected read-write binding support: %v", err)
+	}
+	if err := capabilities.SupportsCredentialAccess(managedpostgres.CredentialMigration); err != nil {
+		t.Fatalf("migration capability: %v", err)
 	}
 	if err := capabilities.SupportsCredentialAccess(managedpostgres.CredentialReadOnly); !errors.Is(err, managedpostgres.ErrUnsupported) {
 		t.Fatalf("read-only binding support = %v, want ErrUnsupported", err)
@@ -234,6 +239,8 @@ func TestInspectRoutesRestoredResourceToBranch(t *testing.T) {
 				"id": "quiet-river-12345678", "region_id": "aws-eu-central-1", "pg_version": 17,
 				"history_retention_seconds": 86400, "settings": map[string]any{"quota": map[string]any{"logical_size_bytes": 10 << 30}},
 			}})
+		case "/api/v2/projects/quiet-river-12345678/connection_uri":
+			writeResponse(t, writer, http.StatusOK, map[string]any{"uri": "postgres://gregale_owner:secret@owner.example/gregale?sslmode=require"})
 		case "/api/v2/projects/quiet-river-12345678/branches":
 			writeResponse(t, writer, http.StatusOK, map[string]any{"branches": []map[string]any{{"id": "br-restore-123", "name": "restore", "current_state": "ready"}}})
 		case "/api/v2/projects/quiet-river-12345678/endpoints":
@@ -427,81 +434,112 @@ func TestOperationStatusRequiresReadyResourcesAndFinishedOperations(t *testing.T
 
 func TestIssueCredentialsIsIdempotentAndRevokeDeletesRole(t *testing.T) {
 	var mu sync.Mutex
-	roleExists := false
-	postCount := 0
 	deleteCount := 0
-	provider := testProvider(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	provider := testProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
 		switch {
-		case request.URL.Path == "/api/v2/projects/quiet-river-123/branches":
-			writeResponse(t, writer, http.StatusOK, map[string]any{"branches": []map[string]any{{"id": "br-main-123", "default": true, "current_state": "ready"}}})
-		case strings.HasSuffix(request.URL.Path, "/roles") && request.Method == http.MethodPost:
-			postCount++
-			roleExists = true
-			writeResponse(t, writer, http.StatusCreated, map[string]any{"role": map[string]any{"name": roleFromRequest(t, request)}, "operations": []map[string]any{{"id": "11111111-1111-1111-1111-111111111111", "status": "running"}}})
-		case strings.Contains(request.URL.Path, "/roles/") && request.Method == http.MethodGet:
-			if !roleExists {
-				writeResponse(t, writer, http.StatusNotFound, map[string]any{"message": "missing"})
-				return
-			}
-			writeResponse(t, writer, http.StatusOK, map[string]any{"role": map[string]any{"name": pathLast(request.URL.Path)}})
-		case strings.Contains(request.URL.Path, "/roles/") && request.Method == http.MethodDelete:
+		case strings.HasSuffix(r.URL.Path, "/branches"):
+			writeResponse(t, w, http.StatusOK, map[string]any{"branches": []map[string]any{{"id": "br-main-123", "default": true}}})
+		case strings.Contains(r.URL.Path, "/roles/") && r.Method == http.MethodDelete:
 			deleteCount++
-			roleExists = false
-			writer.WriteHeader(http.StatusNoContent)
-		case strings.Contains(request.URL.Path, "/operations/"):
-			writeResponse(t, writer, http.StatusOK, map[string]any{"operation": map[string]any{"id": pathLast(request.URL.Path), "status": "finished"}})
-		case strings.HasSuffix(request.URL.Path, "/connection_uri"):
+			w.WriteHeader(http.StatusNotFound)
+		case strings.HasSuffix(r.URL.Path, "/connection_uri"):
 			host := "direct.db.example"
-			if request.URL.Query().Get("pooled") == "true" {
+			if r.URL.Query().Get("pooled") == "true" {
 				host = "pooler.db.example"
 			}
-			roleName := request.URL.Query().Get("role_name")
-			uri := "postgres://" + url.UserPassword(roleName, "p@ss:word").String() + "@" + host + ":5432/gregale?sslmode=require"
-			writeResponse(t, writer, http.StatusOK, map[string]any{"uri": uri})
+			uri := "postgres://" + url.UserPassword(r.URL.Query().Get("role_name"), "p@ss:word").String() + "@" + host + ":5432/gregale?sslmode=require"
+			writeResponse(t, w, http.StatusOK, map[string]any{"uri": uri})
 		default:
-			t.Errorf("unexpected request: %s %s", request.Method, request.URL.String())
-			writeResponse(t, writer, http.StatusNotFound, nil)
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.String())
+			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
+	roles := provider.roles.(*fakeCredentialRoles)
 	request := managedpostgres.CredentialRequest{ProviderResourceID: "quiet-river-123", IdentityKey: "binding-123", Access: managedpostgres.CredentialReadWrite, IdempotencyKey: "credentials-binding-123-1"}
 	first, err := provider.IssueCredentials(context.Background(), request)
 	if err != nil {
-		t.Fatalf("IssueCredentials: %v", err)
+		t.Fatal(err)
 	}
 	second, err := provider.IssueCredentials(context.Background(), request)
 	if err != nil {
-		t.Fatalf("IssueCredentials retry: %v", err)
+		t.Fatal(err)
 	}
-	if first.Username != second.Username || first.ProviderIdentityID != first.Username || first.Password != "p@ss:word" || len(first.Endpoints) != 2 || first.Endpoints[0].Role != managedpostgres.EndpointPooled || postCount != 1 {
-		t.Fatalf("credentials = %+v / %+v; posts=%d", first, second, postCount)
+	if first.Username != second.Username || first.Username != provider.credentialRole(request).name || first.Password != "p@ss:word" || len(first.Endpoints) != 2 || roles.ensures != 2 {
+		t.Fatalf("credential retry: username=%s ensures=%d", first.Username, roles.ensures)
 	}
 	if err := provider.RevokeCredentials(context.Background(), request); err != nil {
-		t.Fatalf("RevokeCredentials: %v", err)
+		t.Fatal(err)
 	}
-	if deleteCount != 1 {
-		t.Fatalf("role deletes = %d", deleteCount)
+	if roles.revokes != 1 || deleteCount != 1 {
+		t.Fatalf("revokes=%d legacy deletes=%d", roles.revokes, deleteCount)
 	}
-	readOnly := request
-	readOnly.Access = managedpostgres.CredentialReadOnly
-	if _, err := provider.IssueCredentials(context.Background(), readOnly); !errors.Is(err, managedpostgres.ErrUnsupported) {
-		t.Fatalf("read-only error = %v", err)
+	request.Access = managedpostgres.CredentialMigration
+	migration, err := provider.IssueCredentials(context.Background(), request)
+	if err != nil || !strings.HasPrefix(migration.Username, "gregale_mig_") || migration.Username == first.Username || len(migration.Endpoints) != 1 || migration.Endpoints[0].Role != managedpostgres.EndpointDirect {
+		t.Fatalf("migration separation: %v", err)
+	}
+	request.Access = managedpostgres.CredentialReadOnly
+	if _, err := provider.IssueCredentials(context.Background(), request); !errors.Is(err, managedpostgres.ErrUnsupported) {
+		t.Fatalf("read-only: %v", err)
 	}
 }
 
-func roleFromRequest(t *testing.T, request *http.Request) string {
-	t.Helper()
-	var payload createRoleRequest
-	if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
-		t.Errorf("decode role: %v", err)
+func TestCredentialIssuanceFailsClosedWithoutReturningOwnerOrProviderErrors(t *testing.T) {
+	for _, kind := range []string{"SQL failure", "SQL conflict", "owner response", "wrong database"} {
+		t.Run(kind, func(t *testing.T) {
+			provider := testProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, "/branches") {
+					writeResponse(t, w, http.StatusOK, map[string]any{"branches": []map[string]any{{"id": "br-main", "default": true}}})
+					return
+				}
+				if !strings.HasSuffix(r.URL.Path, "/connection_uri") {
+					t.Errorf("unexpected request: %s", r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				name := r.URL.Query().Get("role_name")
+				database := "gregale"
+				if kind == "owner response" {
+					name = ownerLogin
+				}
+				if kind == "wrong database" {
+					database = "other"
+				}
+				writeResponse(t, w, http.StatusOK, map[string]any{"uri": "postgres://" + url.UserPassword(name, "private-password").String() + "@db.example/" + database + "?sslmode=require"})
+			}))
+			roles := provider.roles.(*fakeCredentialRoles)
+			if kind == "SQL failure" {
+				roles.err = errors.New("private-password")
+			}
+			if kind == "SQL conflict" {
+				roles.err = fmt.Errorf("private-password: %w", managedpostgres.ErrConflict)
+			}
+			material, err := provider.IssueCredentials(context.Background(), managedpostgres.CredentialRequest{ProviderResourceID: "project-123", IdentityKey: "binding", IdempotencyKey: "issue", Access: managedpostgres.CredentialReadWrite})
+			if err == nil || strings.Contains(err.Error(), "private-password") || material.Password != "" || material.Username != "" {
+				t.Fatalf("unsafe issuance error=%v username=%s", err, material.Username)
+			}
+		})
 	}
-	return payload.Role.Name
 }
 
-func pathLast(path string) string {
-	parts := strings.Split(strings.TrimSuffix(path, "/"), "/")
-	return parts[len(parts)-1]
+func TestRestoredBranchReadinessFailsClosedWhenCredentialIsolationFails(t *testing.T) {
+	var posts atomic.Int32
+	base := readyProjectHandler(t, &posts)
+	provider := testProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/connection_uri") {
+			writeResponse(t, w, http.StatusOK, map[string]any{"uri": "postgres://gregale_owner:secret@db.example/gregale?sslmode=require"})
+			return
+		}
+		base.ServeHTTP(w, r)
+	}))
+	provider.roles.(*fakeCredentialRoles).err = managedpostgres.ErrUnavailable
+	// The helper's default branch is the requested restored branch for this check.
+	observed, err := provider.Inspect(context.Background(), "quiet-river-12345678/br-main-123")
+	if !errors.Is(err, managedpostgres.ErrUnavailable) || observed.Status == managedpostgres.ProviderStatusReady {
+		t.Fatalf("unsafe restore readiness=%s err=%v", observed.Status, err)
+	}
 }
 
 func TestUsageNormalizesComputeAndNetworkMeters(t *testing.T) {
