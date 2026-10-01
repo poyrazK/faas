@@ -56,7 +56,7 @@ func trafficDomainClaimsOverlap(a, b string) bool {
 	}
 }
 
-func trafficDomainRemovalAccounts(claims []trafficDomainClaim, domain string) []string {
+func trafficDomainOverlappingAccounts(claims []trafficDomainClaim, domain string) []string {
 	owners := make(map[string]bool)
 	for _, claim := range claims {
 		if claim.Account != "" && trafficDomainClaimsOverlap(domain, claim.Domain) {

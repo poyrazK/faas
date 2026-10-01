@@ -716,6 +716,27 @@ when enabled; an active tenant shadow may therefore cause a conservative
 refusal until the exposed policy fits. This does not establish the complete
 tenant-binding projection or its release acceptance.
 
+### Follow-up: custom-domain publication and claim handoff
+
+Creation, expired-claim reclamation and verification use the same bounded
+binding transition as removal. A pending claim reserves its name and blocks
+fallback even before it can serve traffic. Every transition therefore takes
+the global route lock followed by sorted locks for overlapping claim owners,
+the destination account and global route owners. Discovery is repeated after
+locking, and the before projection starts only after those locks are held.
+Each affected owner's policy is checked against the authoritative exact and
+most-specific wildcard claim selection; a newly serving binding receives zero
+prior allowance. A safe shadowing change may reduce existing exposure.
+
+Verification retains the original app identity and challenge-token predicate
+through a lock wait. It cannot rebase to a reclaimed claim. Creation retains
+its destination app account and repeats that ownership check under the locks.
+Quota checks, claim publication and optional activity remain in the guarded
+transaction; refusal rolls them back together. The in-memory store applies
+the same before/after projections before publishing a row or activity entry,
+and observes cancellation. This closes custom-domain writer coordination;
+other reservation writers and real daemon acceptance remain separate gates.
+
 ### Follow-up: bounded request decision evidence
 
 Public-handler requests and managed HTTP service calls receive a separate,

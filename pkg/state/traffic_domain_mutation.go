@@ -20,7 +20,10 @@ func (s *PgStore) markTrafficDomainVerified(ctx context.Context, domain, token s
 	if err != nil {
 		return false, mapErr(err)
 	}
-	tx, err := s.beginTrafficPolicyMutation(ctx, owner.AccountID)
+	tx, err := s.beginTrafficDomainBinding(ctx, domain, owner.AccountID, owner.AppID, true)
+	if errors.Is(err, ErrNotFound) && challengeBound {
+		return false, nil
+	}
 	if err != nil {
 		return false, err
 	}
@@ -44,13 +47,5 @@ func (s *PgStore) markTrafficDomainVerified(ctx context.Context, domain, token s
 }
 
 func (m *MemStore) checkMemTrafficDomainChangeLocked(ctx context.Context, domain CustomDomain) error {
-	app, found := m.apps[domain.AppID]
-	if !found {
-		// Missing parents cannot route. Preserve the existing in-memory
-		// domain behavior without inventing a serving scope.
-		return ctx.Err()
-	}
-	return m.validateMemTrafficPolicyChangeLocked(ctx, app.AccountID, memTrafficPolicyChange{
-		Domains: map[string]CustomDomain{domain.Domain: domain},
-	})
+	return m.checkMemTrafficDomainBindingLocked(ctx, domain.Domain, domain)
 }

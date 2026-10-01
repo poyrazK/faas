@@ -10880,7 +10880,7 @@ func (m *MemStore) RequeueBuildIfClaim(_ context.Context, claim Build) error {
 
 // --- Custom domains ---------------------------------------------------------
 
-func (m *MemStore) CreateCustomDomain(_ context.Context, domain, appID, token string) (CustomDomain, error) {
+func (m *MemStore) CreateCustomDomain(ctx context.Context, domain, appID, token string) (CustomDomain, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := time.Now()
@@ -10893,6 +10893,9 @@ func (m *MemStore) CreateCustomDomain(_ context.Context, domain, appID, token st
 		Domain: domain, AppID: appID, ChallengeToken: token,
 		CertStatus: CustomDomainCertPending, VerificationNextCheckAt: now,
 		VerificationExpiresAt: now.Add(7 * 24 * time.Hour),
+	}
+	if err := m.checkMemTrafficDomainChangeLocked(ctx, d); err != nil {
+		return CustomDomain{}, err
 	}
 	m.domains[domain] = d
 	return d, nil

@@ -168,7 +168,13 @@ func TestPgTrafficDomainRemovalOwnerReclaimDuringLockWait(t *testing.T) {
 				}
 			}()
 			awaitDomainRemovalSessionWait(t, pool, application)
-			reclaimed, err := store.CreateCustomDomainIfUnderQuota(t.Context(), domain, peer.ID, "new-private-token", 100, 500)
+			// Model the previous account-lock holder's legacy handoff. Current
+			// creation now shares this lock with removal, so a second guarded
+			// creator cannot reclaim while this holder is still active.
+			if _, err := pool.Exec(t.Context(), `UPDATE custom_domains SET app_id=$2,challenge_token='new-private-token',verification_expires_at=clock_timestamp()+interval '7 days' WHERE domain=$1`, domain, peer.ID); err != nil {
+				t.Fatal(err)
+			}
+			reclaimed, err := store.DomainByName(t.Context(), domain)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -2944,7 +2944,7 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 				"Domain taken", err.Error()))
 			return
 		}
-		api.WriteProblem(w, api.ErrCapacity("could not create domain"))
+		api.WriteProblem(w, domainPublicationWriteProblem(err))
 		return
 	}
 	if activityOutboxID > 0 {

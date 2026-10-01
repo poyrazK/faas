@@ -128,7 +128,7 @@ func TestTrafficDomainRemovalSelectsWinningBinding(t *testing.T) {
 			}
 			before := append(append([]trafficDomainClaim{removed, fallback}, retained...), trafficDomainClaim{Domain: "irrelevant.test", App: "irrelevant"})
 			after := append([]trafficDomainClaim{fallback}, retained...)
-			err := checkTrafficDomainRemovalOwner(t.Context(), view, before, after, "owner", trafficHostAnalysis{}, trafficHostAnalysis{})
+			err := checkTrafficDomainBindingOwner(t.Context(), view, before, after, "owner", trafficHostAnalysis{}, trafficHostAnalysis{})
 			var aggregate *TrafficPolicyAggregateError
 			if wantRefusal {
 				if !errors.As(err, &aggregate) || aggregate.Host != host || aggregate.Scope != "host_compiled_projection_estimate" {

@@ -1746,3 +1746,67 @@ All six release guarantees remain unchecked. Complete-path and broader policy
 transition evidence, public-hop/VM wiring and backend-operation observations,
 load/recovery/customer/staging and native VM/firewall/process-death/leak
 acceptance remain pending. No dedicated Linux x86_64 KVM host is available.
+
+## 2026-10-01 — shared custom-domain publication transitions
+
+Creation, expired-claim reclamation and verification now use the same bounded
+binding transaction as removal. It takes the global route lock and sorted
+locks for overlapping claim owners, the destination account and global route
+owners before its repeatable-read projection. Discovery and destination
+ownership are repeated after locking. Each affected owner's policy is checked
+against exact and most-specific wildcard claim selection across accounts,
+including pending claims that reserve a name and block fallback.
+
+Safe shadowing changes remain publishable. Verification of a wildcard hidden
+by a foreign exact or narrower wildcard claim no longer treats that hidden
+hostname as selected. A new serving domain/app/environment binding cannot
+inherit an old owner's overload allowance. Plain verification retains its
+original app identity; challenge verification also repeats the observed token
+and current expiry predicate. A stale waiter cannot approve a reclaimed claim.
+
+Native and quota creation, including environment and activity variants, commit
+the claim and optional activity through this guard. Cancellation/refusal
+preserves the previous claim and consumes no destination quota slot. The
+in-memory store checks the same before/after projections under its mutex before
+publishing a row or activity and now observes creation cancellation. Creation
+analysis failures return the existing structured 422 codes with proven lower
+bounds and no foreign hostname or exact policy counts. Refusal emits no creation
+audit or notification.
+
+Verification on Go 1.25.13 with CGO disabled:
+
+- Complete state, internal gateway and API unit suites passed; selected private
+  PostgreSQL state coverage passed all 461 named cases with no skips.
+- 6,696 distinct named cases passed across the accepted profiles: 2,222 state,
+  821 internal gateway and 3,653 API. Another 1,082 guarded named cases remain
+  without acceptance in these profiles (1,059 state, seven gateway, 16 API).
+- All three affected Go packages, including their test sources, passed
+  golangci-lint 2.4.0 with zero issues.
+- PostgreSQL cases check all creation forms, cross-account exact/narrow wildcard
+  shadows, unchanged activity on activation refusal, repair, actual owner/global
+  locks, same-app token and foreign-app replacement during waits, cancellation
+  and reuse of a one-connection pool and the sole pending-domain quota slot.
+- Two in-process HTTP peers exercise HTTP/1.1 and negotiated HTTP/2 through the
+  actual PostgreSQL routing and policy reads. A pending exact claim blocks the
+  previous wildcard owner, refused activation stays blocked, and repair reaches
+  the new owner without notifications. Old dispatch is refused and admitted
+  policy remains immutable. Forwarding and the scheduler use test seams; this
+  is not real daemon, VM, fleet or staging acceptance.
+
+The first HTTP diagnostic assumed a nonexistent problem-response scope field;
+the corrected assertion checks the existing contract, lower-bound counts and
+unchanged-claim detail. An older PostgreSQL race test assumed creation could
+bypass the original account lock and observed an idle try-lock query. Its setup
+now identifies the real worker's released lock set and models a prior holder's
+legacy handoff; stale plain/challenge assertions and the verified replacement
+comparison remain. The corrected complete state profile was rerun. No source
+overlays, exclusions or weaker acceptance assertions were used.
+
+Receipts, frozen source hashes and compressed logs are in
+`/Users/poyrazk/dev/Cloud/gregale/outputs/traffic-domain-publication-20261001/`.
+No schema, SQLC query, SDK or limit changes were needed. The PostgreSQL source
+database's public schema remains unmigrated. All six release guarantees remain
+unchecked. Tenant/alias/revision/operator reservation transitions, broader
+runtime/preview agreement and observations, load/recovery/customer/staging and
+native VM/firewall/process-death/leak acceptance remain pending. No dedicated
+Linux x86_64 KVM host is available.

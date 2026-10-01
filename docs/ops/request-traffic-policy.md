@@ -62,7 +62,7 @@ rule and referenced-preset bound.
 
 Rule and preset creates/updates, environment edge overlays, new environment
 registration, environment clones, alias publication, positive deployment
-status writes and custom-domain verification share account serialization. A session
+status writes share account serialization. A session
 advisory lock on a pinned direct-pool connection precedes the repeatable-read
 transaction; its account row lock then precedes app/FK/policy-row locks and is
 retained through commit. Route creates/updates first take the shared global
@@ -146,7 +146,7 @@ retain their repair baseline. Builderd, imaged and schedd receive `apps_domain`
 through TOML, `FAAS_APPS_DOMAIN` and the manifest renderer. Managed host roles
 supply the same configured DNS value to their units.
 
-Ordinary custom-domain verification validates all matched account rules and
+Ordinary custom-domain verification validates all matched owner rules and
 distinct presets before publishing the verified binding. This covers exact
 and wildcard domains; wildcard analysis follows strict suffix routing,
 including nested subdomains and excluding the apex and literal asterisks.
@@ -158,7 +158,18 @@ is empty. Refusal leaves verification and certificate intent unchanged; the
 DNS poller reports the failure and can retry after policy repair. Challenge
 verification repeats the observed token, current app owner and unexpired
 deadline in the write; a stale challenge cannot publish a reclaimed domain.
-Quota claims take the account row before the app row to match this lock order.
+Creation, expired-claim reclamation and verification take the global route
+session lock and sorted account locks for overlapping claim owners, the
+destination account and global route owners. The same binding transition guard
+is used for deletion. Its bounded before projection begins after locking,
+repeats owner discovery and uses exact and most-specific wildcard selection
+across accounts. Pending claims reserve their hostname and block fallback;
+safe shadowing changes can reduce existing exposure. Quota checks take the
+account row before the app row and commit the claim and optional activity
+together. Cancellation/refusal preserves the prior claim and emits no creation
+audit or notification. Creation analysis failures use the existing structured
+422 codes and a proven lower bound, without
+foreign hostname witnesses or exact policy counts.
 The DNS poller's `*_domain_verification_publications_total{outcome}` counter
 distinguishes `success`, `stale`, `refused` and `error`. Existing
 `*_domain_verification_results_total` reports TXT probe outcomes; a successful
@@ -191,8 +202,7 @@ preserve the database's case-insensitive domain identity.
 
 This initial projection includes potential legacy tag-prefixed primary URLs
 conservatively. Exact legacy alias shadowing, deletion/fallback transitions,
-immutable revision URL activation, tenant-surface publication, complete positive
-custom-domain shadowing transitions across accounts and operator
+immutable revision URL activation, tenant-surface publication and operator
 namespace changes still need the complete binding projection and acceptance.
 
 Custom-domain deletion now checks newly exposed exact/wildcard fallback owners,
@@ -282,7 +292,8 @@ compiler bytes measure actual Go JSON and distinct referenced presets. Compact
 RawMessage numbers are not expanded for the Go compiler. Rejected changes
 preserve related project, cron, preview-set and activity intent.
 
-MemStore also checks route-only global aggregates and domain removal under that mutex.
+MemStore also checks route-only global aggregates and domain creation,
+verification and removal under that mutex before publishing intent or activity.
 Complete alias/positive-domain/tenant binding transitions and namespace changes, global binding/synthetic
 path agreement and recovery acceptance remain rollout requirements. These
 write checks do not establish release acceptance.

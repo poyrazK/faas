@@ -25,7 +25,7 @@ type CustomDomainRemovalOwnerStore interface {
 	DeleteCustomDomainForAppWithActivity(context.Context, string, string, OrgActivity) (int64, error)
 }
 
-type trafficDomainRemovalTx struct {
+type trafficDomainBindingTx struct {
 	pgx.Tx
 	beforeClaims []trafficDomainClaim
 	globalBefore trafficHostAnalysis
@@ -35,8 +35,8 @@ type trafficDomainRemovalTx struct {
 	release      func(context.Context)
 }
 
-func trafficDomainRemovalOwners(ctx context.Context, reader sqlc.DBTX, claims []trafficDomainClaim, domain, originalAccount string) ([]string, error) {
-	owners := trafficDomainRemovalAccounts(claims, domain)
+func trafficDomainBindingOwners(ctx context.Context, reader sqlc.DBTX, claims []trafficDomainClaim, domain, originalAccount string) ([]string, error) {
+	owners := trafficDomainOverlappingAccounts(claims, domain)
 	owners = append(owners, originalAccount)
 	routes, err := sqlc.New().ReadTrafficGlobalRouteAccounts(ctx, reader, api.TrafficPolicyMaxAnalysisInputs)
 	if err != nil {
@@ -53,7 +53,7 @@ func trafficDomainRemovalOwners(ctx context.Context, reader sqlc.DBTX, claims []
 	return owners, nil
 }
 
-func (s *PgStore) beginTrafficDomainRemoval(ctx context.Context, domain, expectedApp string) (*trafficDomainRemovalTx, error) {
+func (s *PgStore) beginTrafficDomainRemoval(ctx context.Context, domain, expectedApp string) (*trafficDomainBindingTx, error) {
 	owner, err := sqlc.New().ReadDomainTrafficVerificationOwner(ctx, s.pool, sqlc.ReadDomainTrafficVerificationOwnerParams{Domain: domain})
 	if err != nil {
 		return nil, mapErr(err)
@@ -61,8 +61,26 @@ func (s *PgStore) beginTrafficDomainRemoval(ctx context.Context, domain, expecte
 	if expectedApp != "" && owner.AppID != uuidToPgtype(expectedApp) {
 		return nil, ErrNotFound
 	}
+	return s.beginTrafficDomainBinding(ctx, domain, owner.AccountID, owner.AppID, true)
+}
+
+func (s *PgStore) beginTrafficDomainPublication(ctx context.Context, domain, app string) (*trafficDomainBindingTx, error) {
+	appID := mustPgUUID(app)
+	var account pgtype.UUID
+	err := boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
+		var err error
+		account, err = sqlc.New().ReadAppTrafficAccount(bounded, s.pool, appID)
+		return mapErr(err)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.beginTrafficDomainBinding(ctx, domain, account, appID, false)
+}
+
+func (s *PgStore) beginTrafficDomainBinding(ctx context.Context, domain string, account, app pgtype.UUID, requireClaim bool) (*trafficDomainBindingTx, error) {
 	for {
-		guarded, retry, err := s.tryBeginTrafficDomainRemoval(ctx, domain, owner.AccountID, owner.AppID)
+		guarded, retry, err := s.tryBeginTrafficDomainBinding(ctx, domain, account, app, requireClaim)
 		if err != nil || !retry {
 			return guarded, err
 		}
@@ -76,14 +94,14 @@ func (s *PgStore) beginTrafficDomainRemoval(ctx context.Context, domain, expecte
 	}
 }
 
-func (s *PgStore) tryBeginTrafficDomainRemoval(ctx context.Context, domain string, originalAccount, originalApp pgtype.UUID) (*trafficDomainRemovalTx, bool, error) {
+func (s *PgStore) tryBeginTrafficDomainBinding(ctx context.Context, domain string, originalAccount, originalApp pgtype.UUID, requireClaim bool) (*trafficDomainBindingTx, bool, error) {
 	var accounts []string
 	err := boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
 		claims, err := readTrafficDomainClaims(bounded, s.pool)
 		if err != nil {
 			return err
 		}
-		accounts, err = trafficDomainRemovalOwners(bounded, s.pool, claims, domain, originalAccount.String())
+		accounts, err = trafficDomainBindingOwners(bounded, s.pool, claims, domain, originalAccount.String())
 		return err
 	})
 	if err != nil {
@@ -93,16 +111,16 @@ func (s *PgStore) tryBeginTrafficDomainRemoval(ctx context.Context, domain strin
 	for _, account := range accounts {
 		keys = append(keys, "gregale.traffic.account.v1:"+account)
 	}
-	conn, release, busy, err := s.acquireTrafficDomainRemovalSession(ctx, keys)
+	conn, release, busy, err := s.acquireTrafficDomainBindingSession(ctx, keys)
 	if err != nil || busy {
 		return nil, busy, err
 	}
 	tx, err := conn.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		release(ctx)
-		return nil, false, fmt.Errorf("state: begin domain removal: %w", err)
+		return nil, false, fmt.Errorf("state: begin domain binding change: %w", err)
 	}
-	guarded := &trafficDomainRemovalTx{Tx: tx, accounts: accounts, appsSuffix: s.trafficAppsSuffix, appID: originalApp, release: release}
+	guarded := &trafficDomainBindingTx{Tx: tx, accounts: accounts, appsSuffix: s.trafficAppsSuffix, appID: originalApp, release: release}
 	retry := false
 	err = boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
 		for _, account := range accounts {
@@ -115,11 +133,20 @@ func (s *PgStore) tryBeginTrafficDomainRemoval(ctx context.Context, domain strin
 		if err != nil {
 			return err
 		}
-		claim, found := trafficDomainClaimByName(guarded.beforeClaims, domain)
-		if !found || claim.App != originalApp.String() {
+		account, err := sqlc.New().ReadAppTrafficAccount(bounded, tx, originalApp)
+		if err != nil {
+			return err
+		}
+		if account != originalAccount {
 			return ErrNotFound
 		}
-		fresh, err := trafficDomainRemovalOwners(bounded, tx, guarded.beforeClaims, domain, originalAccount.String())
+		if requireClaim {
+			claim, found := trafficDomainClaimByName(guarded.beforeClaims, domain)
+			if !found || claim.App != originalApp.String() || claim.Account != originalAccount.String() {
+				return ErrNotFound
+			}
+		}
+		fresh, err := trafficDomainBindingOwners(bounded, tx, guarded.beforeClaims, domain, originalAccount.String())
 		if err != nil {
 			return err
 		}
@@ -146,7 +173,7 @@ func (s *PgStore) tryBeginTrafficDomainRemoval(ctx context.Context, domain strin
 	return guarded, false, nil
 }
 
-func (tx *trafficDomainRemovalTx) Commit(ctx context.Context) error {
+func (tx *trafficDomainBindingTx) Commit(ctx context.Context) error {
 	var claims []trafficDomainClaim
 	var globalAfter trafficHostAnalysis
 	if err := boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
@@ -172,7 +199,7 @@ func (tx *trafficDomainRemovalTx) Commit(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			if err := checkTrafficDomainRemovalOwner(bounded, view, tx.beforeClaims, claims, account, tx.globalBefore, globalAfter); err != nil {
+			if err := checkTrafficDomainBindingOwner(bounded, view, tx.beforeClaims, claims, account, tx.globalBefore, globalAfter); err != nil {
 				return err
 			}
 		}
@@ -184,7 +211,7 @@ func (tx *trafficDomainRemovalTx) Commit(ctx context.Context) error {
 	return tx.Tx.Commit(ctx)
 }
 
-func (s *PgStore) acquireTrafficDomainRemovalSession(ctx context.Context, keys []string) (conn *pgxpool.Conn, release func(context.Context), busy bool, err error) {
+func (s *PgStore) acquireTrafficDomainBindingSession(ctx context.Context, keys []string) (conn *pgxpool.Conn, release func(context.Context), busy bool, err error) {
 	err = boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
 		var acquireErr error
 		conn, release, busy, acquireErr = s.tryAcquireTrafficPolicySessionKeys(bounded, keys)
@@ -196,12 +223,12 @@ func (s *PgStore) acquireTrafficDomainRemovalSession(ctx context.Context, keys [
 	return
 }
 
-func (tx *trafficDomainRemovalTx) Rollback(ctx context.Context) error {
+func (tx *trafficDomainBindingTx) Rollback(ctx context.Context) error {
 	defer tx.release(ctx)
 	return tx.Tx.Rollback(ctx)
 }
 
-func checkTrafficDomainRemovalOwner(ctx context.Context, view trafficHostAnalysis, before, after []trafficDomainClaim, account string, globalBefore, globalAfter trafficHostAnalysis) error {
+func checkTrafficDomainBindingOwner(ctx context.Context, view trafficHostAnalysis, before, after []trafficDomainClaim, account string, globalBefore, globalAfter trafficHostAnalysis) error {
 	prior, next := trafficDomainOwnerView(view, before, account), trafficDomainOwnerView(view, after, account)
 	prior.AllowGlobalRoutes, next.AllowGlobalRoutes = true, true
 	prior.Reservations, next.Reservations = globalBefore.Reservations, globalAfter.Reservations

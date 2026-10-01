@@ -12155,7 +12155,12 @@ func (s *PgStore) RequeueBuildIfClaim(ctx context.Context, claim Build) error {
 // --- custom domains ---------------------------------------------------------
 
 func (s *PgStore) CreateCustomDomain(ctx context.Context, domain, appID, token string) (CustomDomain, error) {
-	row := s.pool.QueryRow(ctx,
+	tx, err := s.beginTrafficDomainPublication(ctx, domain, appID)
+	if err != nil {
+		return CustomDomain{}, err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	row := tx.QueryRow(ctx,
 		`insert into custom_domains (domain, app_id, challenge_token) values ($1, $2, $3)
 		 on conflict (domain) do update
 		 set app_id = excluded.app_id,
@@ -12186,6 +12191,9 @@ func (s *PgStore) CreateCustomDomain(ctx context.Context, domain, appID, token s
 			return CustomDomain{}, ErrConflict
 		}
 		return CustomDomain{}, mapErr(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return CustomDomain{}, err
 	}
 	return d, nil
 }

@@ -9,8 +9,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-func (m *MemStore) checkMemTrafficDomainRemovalLocked(ctx context.Context, domain string) error {
-	change := memTrafficPolicyChange{Domains: map[string]CustomDomain{domain: {}}}
+func (m *MemStore) checkMemTrafficDomainBindingLocked(ctx context.Context, domain string, proposed CustomDomain) error {
+	change := memTrafficPolicyChange{Domains: map[string]CustomDomain{domain: proposed}}
 	var before, after []trafficDomainClaim
 	var globalBefore, globalAfter trafficHostAnalysis
 	if err := boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
@@ -41,8 +41,11 @@ func (m *MemStore) checkMemTrafficDomainRemovalLocked(ctx context.Context, domai
 		return err
 	}
 	owners := make(map[string]bool)
-	for _, account := range trafficDomainRemovalAccounts(before, domain) {
+	for _, account := range trafficDomainOverlappingAccounts(before, domain) {
 		owners[account] = true
+	}
+	if app, found := m.apps[proposed.AppID]; found {
+		owners[app.AccountID] = true
 	}
 	for _, rule := range m.edgeRules {
 		if err := ctx.Err(); err != nil {
@@ -66,7 +69,7 @@ func (m *MemStore) checkMemTrafficDomainRemovalLocked(ctx context.Context, domai
 			if err != nil {
 				return err
 			}
-			if err := checkTrafficDomainRemovalOwner(bounded, view, before, after, account, globalBefore, globalAfter); err != nil {
+			if err := checkTrafficDomainBindingOwner(bounded, view, before, after, account, globalBefore, globalAfter); err != nil {
 				return err
 			}
 		}
@@ -79,7 +82,7 @@ func (m *MemStore) deleteTrafficCustomDomainLocked(ctx context.Context, domain, 
 	if !found || expectedApp != "" && claim.AppID != expectedApp {
 		return 0, ErrNotFound
 	}
-	if err := m.checkMemTrafficDomainRemovalLocked(ctx, domain); err != nil {
+	if err := m.checkMemTrafficDomainBindingLocked(ctx, domain, CustomDomain{}); err != nil {
 		return 0, err
 	}
 	if err := m.deleteCustomDomainLocked(domain); err != nil {

@@ -71,41 +71,23 @@ func TestPgTrafficDomainOwnerFenceDuringAccountWait(t *testing.T) {
 					_, _ = queries.UnlockTrafficPolicySession(context.WithoutCancel(ctx), lock, key)
 				}
 			}()
+			waiting, application := domainRemovalWaitingStore(t, pool)
 			result := make(chan error, 1)
 			go func() {
 				if challengeBound {
-					matched, err := store.MarkDomainVerifiedIfChallenge(ctx, domain.Domain, domain.ChallengeToken)
+					matched, err := waiting.MarkDomainVerifiedIfChallenge(ctx, domain.Domain, domain.ChallengeToken)
 					if matched && err == nil {
 						err = errors.New("old challenge verified reclaimed domain")
 					}
 					result <- err
 				} else {
-					result <- store.MarkDomainVerified(ctx, domain.Domain)
+					result <- waiting.MarkDomainVerified(ctx, domain.Domain)
 				}
 			}()
-			// Observe the real worker's try-lock query before reclaiming. The
-			// fixture database has no other lock waiters; setup's sessions end
-			// their mutations on an unlock query.
-			for {
-				var waiting bool
-				if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND pid<>$1 AND query LIKE '%pg_try_advisory_lock%' AND state='idle')`, lock.Conn().PgConn().PID()).Scan(&waiting); err != nil {
-					t.Fatal(err)
-				}
-				if waiting {
-					break
-				}
-				select {
-				case err := <-result:
-					t.Fatalf("verification did not wait: %v", err)
-				case <-ctx.Done():
-					t.Fatal(ctx.Err())
-				case <-time.After(5 * time.Millisecond):
-				}
-			}
-			if _, err := pool.Exec(ctx, `UPDATE custom_domains SET verification_expires_at=now()-interval '1 second' WHERE domain=$1`, domain.Domain); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := store.CreateCustomDomain(ctx, domain.Domain, target.ID, "new-token"); err != nil {
+			awaitDomainRemovalSessionWait(t, pool, application)
+			// Emulate the previous lock holder's legacy handoff. Current
+			// guarded creation shares the old owner's lock and cannot race it.
+			if _, err := pool.Exec(ctx, `UPDATE custom_domains SET app_id=$2,challenge_token='new-token',verification_expires_at=clock_timestamp()+interval '7 days' WHERE domain=$1`, domain.Domain, target.ID); err != nil {
 				t.Fatal(err)
 			}
 			if matched, err := store.MarkDomainVerifiedIfChallenge(ctx, domain.Domain, "new-token"); err != nil || !matched {
