@@ -707,6 +707,20 @@ jobs:
         if: ${{ matrix.state_coverage }}
         run: make check-state-coverage COVERFILE=coverage/${{ matrix.coverage_file }}
 
+      - name: require PostgreSQL operation-policy retirement
+        if: matrix.id == 'a'
+        run: |
+          set -o pipefail
+          python3 scripts/ci/operation-policy-postgres-check.py 2>&1 | tee operation-policy-postgres-contract.log
+
+      - name: upload PostgreSQL operation-policy retirement log
+        if: always() && matrix.id == 'a'
+        uses: actions/upload-artifact@v4
+        with:
+          name: operation-policy-postgres-contract
+          path: operation-policy-postgres-contract.log
+          if-no-files-found: ignore
+
       - name: require PostgreSQL UDP contracts
         if: matrix.id == 'a'
         env:
