@@ -1275,6 +1275,7 @@ jobs:
               https://github.com/ansible-collections/community.postgresql.git \
               "${COLLECTIONS_PATH}/ansible_collections/community/postgresql"
           fi
+          ansible-playbook -i localhost, -c local tests/tcp_tls_config.yml
           # Gate-A: parse the complete-inventory safety preflight.
           ansible-playbook --syntax-check preflight.yml
           # Gate-B: syntax-check the only production bootstrap playbook

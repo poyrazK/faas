@@ -20,6 +20,7 @@ tests:
               family: tcp_ingress
             exp_annotations:
               summary: "Enabled TCP TLS listeners lack valid certificates"
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTCPIngress.md"
               description: "Inspect the configured certificate directory, bundle permissions, hostname and validity. Provision complete bundles atomically or disable affected listeners. Socket readiness does not establish certificate readiness."
   - interval: 1m
     input_series:
@@ -38,6 +39,7 @@ tests:
               family: tcp_ingress
             exp_annotations:
               summary: "TCP TLS certificate expires within seven days"
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTCPIngress.md"
               description: "Renew the earliest-expiring enabled listener certificate and replace its complete PEM bundle atomically. Existing sessions retain their negotiated certificate; new handshakes use the replacement."
   - interval: 1m
     input_series:

@@ -1385,3 +1385,7 @@ udp-contract-check: udp-deployment-check udp-alert-check ## Require portable UDP
 .PHONY: test-companion-scratch-contract
 test-companion-scratch-contract: ## Linux/x86_64 root acceptance for ephemeral companion scratch capacity and isolation
 	@GO="$(GO)" bash scripts/ci/companion-scratch-contract.sh
+
+.PHONY: tcp-tls-deployment-check
+tcp-tls-deployment-check: ## Verify TCP TLS path validation and environment rendering locally
+	ansible-playbook -i localhost, -c local deploy/ansible/tests/tcp_tls_config.yml

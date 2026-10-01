@@ -89,8 +89,10 @@ when the listener changes.
 
 TLS termination is opt-in per listener. Set `FAAS_TCPD_TLS_CERT_DIR` (Ansible:
 `faas_tcpd_tls_cert_dir`) to an absolute directory, preferably beneath `/etc/faas`.
-The role creates the configured directory as root:faas with mode 0750; it does not
-issue or copy certificates. Provision `<normalized-hostname>.pem` containing the
+The role validates existing real, root-owned directories without changing ownership
+or mode. Only missing directories are created root:faas 0750. Paths containing
+controls or dot components, and filesystem root, are rejected. The path is quoted
+in the managed systemd environment file. The role does not issue or copy certificates. Provision `<normalized-hostname>.pem` containing the
 certificate chain and matching private key with mode 0640 or 0600 and read access
 for gatewayd-public. Replace complete bundles by atomic rename for rotation.
 The provider pins the directory opened at startup. Replacing or renaming the

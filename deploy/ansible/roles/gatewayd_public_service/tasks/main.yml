@@ -13,20 +13,8 @@
 #   - enable the unit (`systemctl enable --now faas-gatewayd-public`)
 #   - run the daemon (Caddy reverse-proxy upstream is the trigger)
 
-- name: gatewayd_public_service — validate optional TCP TLS directory
-  ansible.builtin.assert:
-    that:
-      - faas_tcpd_tls_cert_dir | default('') == '' or faas_tcpd_tls_cert_dir is match('^/')
-    fail_msg: "faas_tcpd_tls_cert_dir must be empty or an absolute path"
-
-- name: gatewayd_public_service — prepare optional TCP TLS certificate directory
-  ansible.builtin.file:
-    path: "{{ faas_tcpd_tls_cert_dir }}"
-    state: directory
-    owner: root
-    group: faas
-    mode: "0750"
-  when: faas_tcpd_tls_cert_dir | default('') | length > 0
+- name: gatewayd_public_service — configure optional TCP certificate directory
+  ansible.builtin.import_tasks: tcp_tls.yml
 
 - name: gatewayd_public_service — install systemd unit
   notify: restart faas-gatewayd-public
