@@ -169,7 +169,7 @@ func TestGatewayCopyRecoveryPG(t *testing.T) {
 				t.Fatal(j, err)
 			}
 			usage, err := restarted.ObjectUsage(ctx, f.account.ID, time.Now())
-			if err != nil || usage.Authorizations != 1 || usage.Reports[0].CostMillicents != f.policy.MaxMonthlyCostMillicents {
+			if err != nil || usage.Authorizations != 2 || usage.Reports[0].CostMillicents != f.policy.MaxMonthlyCostMillicents {
 				t.Fatal("copy recovery changed monthly ledger", usage, err)
 			}
 			f.registry.Accounting.MaxMonthlyCostMillicents *= 2

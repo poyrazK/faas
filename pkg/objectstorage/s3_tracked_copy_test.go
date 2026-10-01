@@ -124,7 +124,7 @@ func TestS3TrackedCopyReplaceAndValidation(t *testing.T) {
 
 func TestS3CopySourceRequiresProof(t *testing.T) {
 	for _, tc := range []struct{ name, size, etag, version string }{
-		{"missing size", "", `"source"`, ""}, {"missing etag", "0", "", ""}, {"weak etag", "0", `W/"source"`, ""}, {"versioned source", "5", `"source"`, "version"},
+		{"missing size", "", `"source"`, ""}, {"missing etag", "0", "", ""}, {"weak etag", "0", `W/"source"`, ""}, {"unquoted etag", "0", "source", ""}, {"wildcard etag", "0", "*", ""}, {"versioned source", "5", `"source"`, "version"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

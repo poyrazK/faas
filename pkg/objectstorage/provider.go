@@ -236,6 +236,28 @@ type TrackedObjectCopier interface {
 	CopyTrackedObject(context.Context, string, string, CopyObjectRequest, CopySourceSnapshot) (CopyObjectResult, error)
 }
 
+// ConditionalTrackedObjectCopier also enforces customer source conditions.
+// Older copy adapters must decline these conditions instead of ignoring them.
+type ConditionalTrackedObjectCopier interface {
+	TrackedObjectCopier
+	CopyConditionalTrackedObject(context.Context, string, string, CopyObjectRequest, CopySourceSnapshot, CopySourceConditions) (CopyObjectResult, error)
+}
+
+// MultipartPartCopier copies a measured source (or its inclusive byte range)
+// into an existing upload with an atomic source ETag fence and one attempt.
+// Only ErrWriteRejected proves that the part write did not take place.
+type MultipartPartCopier interface {
+	SnapshotMultipartCopySource(context.Context, string, string) (CopySourceSnapshot, error)
+	CopyMultipartPart(context.Context, string, MultipartPartCopyRequest, CopySourceSnapshot) (CopyObjectResult, error)
+}
+
+type MultipartPartCopyRequest struct {
+	SourceKey, Key, ProviderUploadID string
+	PartNumber                       int32
+	Range                            *CopySourceRange
+	Conditions                       CopySourceConditions
+}
+
 // CrossBucketObjectCopier is the optional provider capability used when an
 // environment clone needs an isolated bucket. Providers must copy server-side
 // and preserve the same metadata and tag directives as CopyObject.

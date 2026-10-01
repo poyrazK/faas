@@ -23,6 +23,56 @@ func (p *gatewayReceiptProvider) SnapshotCopySource(context.Context, string, str
 func (p *gatewayReceiptProvider) CopyTrackedObject(ctx context.Context, _ string, id string, r objectstorage.CopyObjectRequest, source objectstorage.CopySourceSnapshot) (objectstorage.CopyObjectResult, error) {
 	return p.copyFn(ctx, id, r, source)
 }
+func (p *gatewayReceiptProvider) CopyConditionalTrackedObject(ctx context.Context, bucket, id string, r objectstorage.CopyObjectRequest, source objectstorage.CopySourceSnapshot, conditions objectstorage.CopySourceConditions) (objectstorage.CopyObjectResult, error) {
+	if err := conditions.Check(source); err != nil {
+		return objectstorage.CopyObjectResult{}, errors.Join(objectstorage.ErrWriteRejected, err)
+	}
+	return p.CopyTrackedObject(ctx, bucket, id, r, source)
+}
+
+func TestGatewayCustomerCopyETagConditions(t *testing.T) {
+	for _, tc := range []struct {
+		match, none   string
+		status, calls int
+	}{
+		{`"source"`, `"other"`, 200, 1}, {`"other"`, "", 412, 0}, {"", `"source"`, 412, 0}, {"", "*", 412, 0}, {"unquoted", "", 400, 0},
+	} {
+		t.Run(tc.match+tc.none, func(t *testing.T) {
+			h, st, p := newGatewayReceiptHandler(t, func(*http.Request) (*http.Response, error) { t.Fatal("copy used PUT transport"); return nil, nil })
+			p.copySource = objectstorage.CopySourceSnapshot{SizeBytes: 5, ETag: `"source"`}
+			calls := 0
+			p.copyFn = func(context.Context, string, objectstorage.CopyObjectRequest, objectstorage.CopySourceSnapshot) (objectstorage.CopyObjectResult, error) {
+				calls++
+				return objectstorage.CopyObjectResult{ETag: `"copied"`}, nil
+			}
+			r := signedCopyTestRequest(t)
+			if tc.match != "" {
+				r.Header.Set("X-Amz-Copy-Source-If-Match", tc.match)
+			}
+			if tc.none != "" {
+				r.Header.Set("X-Amz-Copy-Source-If-None-Match", tc.none)
+			}
+			if err := awsv4.NewSigner(func(o *awsv4.SignerOptions) { o.DisableURIPathEscaping = true }).SignHTTP(t.Context(), aws.Credentials{AccessKeyID: testAccess, SecretAccessKey: testSecret}, r, "UNSIGNED-PAYLOAD", "s3", "us-east-1", h.now()); err != nil {
+				t.Fatal(err)
+			}
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			if w.Code != tc.status || calls != tc.calls {
+				t.Fatal(w.Code, w.Body.String(), calls)
+			}
+			if tc.calls == 0 {
+				usage, err := st.ObjectUsage(t.Context(), st.bucket.AccountID, time.Now())
+				wantAuthorizations := int64(1)
+				if tc.status == 400 {
+					wantAuthorizations = 0
+				}
+				if err != nil || usage.Authorizations != wantAuthorizations || usage.Buckets[0].GrantedBytes != 0 {
+					t.Fatal("failed source predicate admitted destination", usage, err)
+				}
+			}
+		})
+	}
+}
 func signedCopyTestRequest(t *testing.T) *http.Request {
 	t.Helper()
 	r := httptest.NewRequest(http.MethodPut, "http://s3.gregale.dev/assets/destination", nil)
@@ -97,16 +147,32 @@ func TestGatewayTrackedCopyOutcomes(t *testing.T) {
 			}
 			id := w.Header().Get("X-Gregale-Upload-ID")
 			if tc.phase == "" {
-				if id != "" || usage.Authorizations != 0 {
+				if id != "" || usage.Authorizations != 1 {
 					t.Fatal("failed admission persisted", id, usage)
 				}
 				return
 			}
 			c, err := st.GetObjectUploadReceipt(t.Context(), st.bucket.AccountID, st.bucket.AppID, "", st.credential.ID, id)
-			if err != nil || c.Origin != "gateway_copy" || c.SourceKey != "source" || c.SourceETag != `"source"` || c.WritePhase != tc.phase || c.Status != tc.receipt || usage.Authorizations != 1 {
+			if err != nil || c.Origin != "gateway_copy" || c.SourceKey != "source" || c.SourceETag != `"source"` || c.WritePhase != tc.phase || c.Status != tc.receipt || usage.Authorizations != 2 {
 				t.Fatal(c, usage, err)
 			}
 		})
+	}
+}
+
+func TestGatewayCopyBudgetBlocksSourceProbe(t *testing.T) {
+	h, st, p := newGatewayReceiptHandler(t, func(*http.Request) (*http.Response, error) { t.Fatal("copy used PUT transport"); return nil, nil })
+	h.registry.Accounting.MaxMonthlyAuthorizations = 1
+	if err := st.AdmitObjectURL(t.Context(), st.bucket.AccountID, st.bucket.ID, "existing", 0, false, h.registry.Accounting); err != nil {
+		t.Fatal(err)
+	}
+	metrics := &gatewayRequestMetrics{}
+	h.requestMetrics = metrics
+	p.sourceErr = errors.New("source must not be inspected after budget exhaustion")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, signedCopyTestRequest(t))
+	if w.Code != http.StatusPaymentRequired || metrics.calls != 0 || w.Header().Get("X-Gregale-Upload-ID") != "" {
+		t.Fatal(w.Code, w.Body.String(), metrics.calls)
 	}
 }
 

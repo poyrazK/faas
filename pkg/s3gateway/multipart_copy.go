@@ -1,0 +1,148 @@
+package s3gateway
+
+import (
+	"context"
+	"encoding/xml"
+	"errors"
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/state"
+)
+
+func (h *Handler) copyMultipartPart(w http.ResponseWriter, r *http.Request, req requestContext, key, uploadID, rawPart string) {
+	if !h.require(w, req, state.ObjectBucketPermissionRead, r.URL.Path) || !h.require(w, req, state.ObjectBucketPermissionWrite, r.URL.Path) {
+		return
+	}
+	c, ok := h.multipartCopyRequest(w, r, req, key, rawPart)
+	if !ok {
+		return
+	}
+	upload, _, ok := h.loadPublicMultipart(w, r, req, uploadID, key)
+	if !ok {
+		return
+	}
+	if upload.State != state.ObjectMultipartActive || !upload.ExpiresAt.After(h.now()) {
+		h.writeMultipartError(w, r, req, state.ErrConflict, "NoSuchUpload")
+		return
+	}
+	c.ProviderUploadID = upload.ProviderUploadID
+	copier, capable := req.provider.(objectstorage.MultipartPartCopier)
+	transfers, fenced := h.multipartStore.(state.ObjectMultipartTransferStore)
+	if !capable || !fenced {
+		h.unsupported(w, r, req.requestID)
+		return
+	}
+	select {
+	case h.putSlots <- struct{}{}:
+		defer func() { <-h.putSlots }()
+	default:
+		writeS3Error(w, http.StatusServiceUnavailable, "SlowDown", "Please reduce your request rate.", r.URL.Path, req.requestID)
+		return
+	}
+	h.forwardMultipartCopy(w, r, req, upload, c, copier, transfers)
+}
+
+func (h *Handler) multipartCopyRequest(w http.ResponseWriter, r *http.Request, req requestContext, key, rawPart string) (objectstorage.MultipartPartCopyRequest, bool) {
+	c := objectstorage.MultipartPartCopyRequest{Key: key}
+	part, err := strconv.ParseInt(rawPart, 10, 32)
+	if err != nil || part < 1 || part > api.MaxMultipartParts {
+		h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "InvalidArgument")
+		return c, false
+	}
+	if !h.validCopyBody(w, r, req) {
+		return c, false
+	}
+	c.PartNumber = int32(part)
+	bucket, source, err := parseCopySource(r.Header.Get("X-Amz-Copy-Source"))
+	if err != nil || bucket != req.bucket.Name {
+		writeS3Error(w, http.StatusNotFound, "NoSuchKey", "The specified copy source does not exist.", r.URL.Path, req.requestID)
+		return c, false
+	}
+	c.SourceKey = source
+	c.Range, err = objectstorage.ParseCopySourceRange(r.Header.Get("X-Amz-Copy-Source-Range"))
+	values, present := r.Header[http.CanonicalHeaderKey("X-Amz-Copy-Source-Range")]
+	if err != nil || present && (len(values) != 1 || values[0] == "") {
+		h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "InvalidArgument")
+		return c, false
+	}
+	// Part copies use metadata/tags from initiation, never per-part directives.
+	for _, name := range []string{"X-Amz-Metadata-Directive", "X-Amz-Tagging-Directive", "X-Amz-Tagging"} {
+		if r.Header.Get(name) != "" {
+			h.unsupported(w, r, req.requestID)
+			return c, false
+		}
+	}
+	var ok bool
+	c.Conditions, ok = gatewayCopyConditions(w, r, req)
+	return c, ok
+}
+
+func (h *Handler) forwardMultipartCopy(w http.ResponseWriter, r *http.Request, req requestContext, upload state.ObjectMultipartUpload, c objectstorage.MultipartPartCopyRequest, copier objectstorage.MultipartPartCopier, transfers state.ObjectMultipartTransferStore) {
+	ctx, cancel := context.WithTimeout(r.Context(), api.ObjectTransferTimeout)
+	defer cancel()
+	if !h.admit(w, r, req, upload.Key, 0, false) || !h.recordProviderRequest(w, r, req) {
+		return
+	}
+	source, err := copier.SnapshotMultipartCopySource(ctx, req.bucket.PhysicalName, c.SourceKey)
+	if err != nil {
+		h.providerError(w, r, req, err, c.SourceKey)
+		return
+	}
+	if err = c.Conditions.Check(source); err != nil {
+		h.providerHTTPError(w, r, req, http.StatusPreconditionFailed, c.SourceKey)
+		return
+	}
+	size, err := objectstorage.MultipartCopySize(source, c.Range)
+	if err != nil || size > h.registry.MaxPartBytes {
+		h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "InvalidArgument")
+		return
+	}
+	token := uuid.NewString()
+	if !h.writeMultipartAdmissionError(w, r, req, transfers.BeginObjectMultipartPart(ctx, req.bucket.AccountID, req.bucket.ID, upload.ID, token, c.PartNumber, size, h.registry.MaxUploadBytes, h.registry.Accounting)) {
+		return
+	}
+	safeToSettle := true
+	defer func() {
+		if safeToSettle {
+			h.settleMultipartTransfer(ctx, req, upload.ID, c.PartNumber, token, transfers)
+		}
+	}()
+	if !h.recordProviderRequest(w, r, req) {
+		return
+	}
+	safeToSettle = false
+	result, err := copier.CopyMultipartPart(ctx, req.bucket.PhysicalName, c, source)
+	if err != nil {
+		safeToSettle = errors.Is(err, objectstorage.ErrWriteRejected)
+		if !safeToSettle {
+			h.providerError(w, r, req, objectstorage.ErrUnavailable, upload.Key)
+		} else if errors.Is(err, objectstorage.ErrPreconditionFailed) {
+			h.providerHTTPError(w, r, req, http.StatusPreconditionFailed, c.SourceKey)
+		} else {
+			h.providerError(w, r, req, err, c.SourceKey)
+		}
+		return
+	}
+	if !validGatewayETag(result.ETag) {
+		h.providerError(w, r, req, objectstorage.ErrUnavailable, upload.Key)
+		return
+	}
+	safeToSettle = true
+	lastModified := ""
+	if !result.LastModified.IsZero() {
+		lastModified = result.LastModified.UTC().Format(time.RFC3339Nano)
+	}
+	writeS3XML(w, http.StatusOK, req.requestID, copyMultipartPartResult{XMLNS: s3XMLNamespace, ETag: result.ETag, LastModified: lastModified})
+}
+
+type copyMultipartPartResult struct {
+	XMLName      xml.Name `xml:"CopyPartResult"`
+	XMLNS        string   `xml:"xmlns,attr"`
+	ETag         string   `xml:"ETag"`
+	LastModified string   `xml:"LastModified,omitempty"`
+}

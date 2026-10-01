@@ -341,7 +341,7 @@ This endpoint supports ListBuckets for the credential's one bucket,
 HeadBucket, GetBucketLocation, ListObjectsV2 with delimiter/common-prefix
 listing, `start-after`, URL encoding, ETags, and zero-key pages, GetObject/HeadObject/PutObject/DeleteObject, multi-object
 `DeleteObjects` (up to 1,000 keys), and the standard multipart
-initiate/list-parts/upload-part/complete/abort operations, plus CopyObject with
+initiate/list-parts/upload-part/part-copy/complete/abort operations, plus CopyObject with
 COPY/REPLACE metadata and tagging directives. It validates AWS
 Signature V4 in both the `Authorization` header and presigned query form.
 Presigned GET, HEAD, PUT, and DELETE capabilities are limited to seven days and
@@ -373,7 +373,12 @@ when available; Gregale does not synthesize checksums for older objects or
 providers without that capability. Ordinary PUTs and multipart completion preserve
 `If-Match` and `If-None-Match: *` atomically on S3 backends. Conditions are mutually
 exclusive; If-Match is limited to 256 bytes and rejects control characters.
-GCS conditional PUTs/completion and branded conditional CopyObject return 501 explicitly.
+GCS conditional PUTs/completion and source-conditional copies return 501 explicitly.
+S3 copies support `x-amz-copy-source-if-match` and
+`x-amz-copy-source-if-none-match`, each with one strong ETag or `*`. Copy source,
+range and condition headers must be signed. Date-based copy conditions remain
+unsupported; they return 501 rather than silently changing S3 condition
+precedence when applying the internal source ETag fence.
 Multipart listing uses standard key/upload
 markers and excludes completed history. Unsupported listing options return 501.
 
@@ -954,8 +959,16 @@ copies exceeding the existing 5 GiB single-write limit fail closed.
 Metadata COPY preserves the captured source HTTP/customer metadata and Expires
 while replacing private markers with a fresh receipt. REPLACE uses customer
 metadata; tag COPY/REPLACE stays independent. Metadata-only source changes
-that preserve its ETag do not change the captured metadata snapshot. Client
-copy-condition headers and multipart part-copy remain unsupported.
+that preserve its ETag do not change the captured metadata snapshot. Customer
+copy ETag conditions are checked against the source snapshot and preserved by
+the atomic provider copy. A failed predicate returns 412 before destination
+admission. Providers without the conditional tracked-copy capability return
+501 for these headers. Date-based copy conditions remain unsupported.
+
+The source probe passes read admission before HEAD. A successful tracked copy
+consumes two monthly safety authorizations (probe and destination admission);
+a failed source predicate consumes only the probe authorization and reserves
+no destination capacity. Spent budgets or stale usage block the probe itself.
 
 Admitted copies return `X-Gregale-Upload-ID`. Each request uses one provider
 copy attempt. Lost, truncated or invalid acknowledgments, HTTP 408/5xx and
@@ -967,6 +980,43 @@ transfer limits apply. GCS, older copies, environment-clone/cross-bucket copies
 and providers without the capability remain conservative.
 Apply the additive migration before upgrading gateways and API workers.
 See [ADR-394](adr/394-recoverable-s3-gateway-copies.md).
+
+## Multipart server-side copy
+
+S3 backends implement `UploadPartCopy` within the credential's logical bucket.
+The credential needs both read and write permissions. Initiate the destination
+multipart upload normally, then copy a whole source or an inclusive
+`x-amz-copy-source-range: bytes=first-last` into a numbered part. Complete the
+upload with the returned part ETags. Listing and aborting use the same Gregale
+upload ID as ordinary uploaded parts. Metadata and tags come from initiation;
+part-copy metadata/tag directives are rejected.
+
+```sh
+aws --endpoint-url https://s3.gregale.dev s3api upload-part-copy \
+  --bucket assets --key archive.bin --upload-id "$GREGALE_UPLOAD_ID" \
+  --part-number 1 --copy-source assets/source.bin \
+  --copy-source-range bytes=0-10485759
+```
+
+The part must fit `max_part_bytes` and the total upload must fit
+`max_upload_bytes`. Range copies can read a source larger than 5 GiB without
+copying its entire body through the gateway; their source may be at most the
+existing 5 TiB total-object ceiling. A range source must exceed 5 MiB. Open-ended,
+suffix and multiple ranges are invalid. Every completed part except the last
+must meet the 5 MiB multipart minimum. Sources with provider version IDs remain
+unsupported until versioning is implemented.
+
+Gregale measures the source, reserves only the copied bytes and atomically
+requires the measured ETag at the provider. Customer source ETag conditions
+also apply. A source change returns 412. One provider request attempts the
+copy; a valid full `CopyPartResult` acknowledges it. An uncertain response
+retains the transfer fence and reserved capacity, preventing immediate
+overwrite/completion/abort races. It does not automatically replay the copy or
+refund capacity. Definitive rejections settle the fence; verified abort cleanup
+reclaims tracked part grants. Providers without the optional part-copy
+capability return 501. See
+[ADR-396](adr/396-s3-multipart-copy-and-source-etag-conditions.md) and the
+[remaining implementation scope](s3-implementation-gaps.md).
 
 ## Inspect write receipts
 

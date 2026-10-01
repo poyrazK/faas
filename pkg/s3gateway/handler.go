@@ -419,7 +419,11 @@ func (h *Handler) routeObject(w http.ResponseWriter, r *http.Request, req reques
 				h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "InvalidArgument")
 				return
 			}
-			h.uploadMultipartPart(w, r, req, key, uploadID, query.Get("partNumber"))
+			if r.Header.Get("X-Amz-Copy-Source") != "" {
+				h.copyMultipartPart(w, r, req, key, uploadID, query.Get("partNumber"))
+			} else {
+				h.uploadMultipartPart(w, r, req, key, uploadID, query.Get("partNumber"))
+			}
 		case http.MethodGet:
 			if !queryKeysOnly(query, "uploadId", "part-number-marker", "max-parts") {
 				h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "InvalidArgument")
@@ -632,8 +636,7 @@ func (h *Handler) copyObject(w http.ResponseWriter, r *http.Request, req request
 	if !h.require(w, req, state.ObjectBucketPermissionRead, r.URL.Path) || !h.require(w, req, state.ObjectBucketPermissionWrite, r.URL.Path) {
 		return
 	}
-	if r.ContentLength != 0 {
-		writeS3Error(w, http.StatusBadRequest, "InvalidRequest", "CopyObject does not accept a request body.", r.URL.Path, req.requestID)
+	if !h.validCopyBody(w, r, req) {
 		return
 	}
 	sourceBucket, sourceKey, err := parseCopySource(r.Header.Get("X-Amz-Copy-Source"))
@@ -645,8 +648,7 @@ func (h *Handler) copyObject(w http.ResponseWriter, r *http.Request, req request
 	if !ok {
 		return
 	}
-	if copier, ok := req.provider.(objectstorage.TrackedObjectCopier); ok {
-		h.performTrackedGatewayCopy(w, r, req, copier, copy)
+	if h.tryTrackedGatewayCopy(w, r, req, copy) {
 		return
 	}
 	copier, ok := req.provider.(objectstorage.ObjectCopier)
@@ -900,11 +902,14 @@ func readVerifiedRequestBody(w http.ResponseWriter, r *http.Request, payloadHash
 }
 
 func hasUnsupportedS3Semantics(r *http.Request) bool {
+	if len(r.Header.Values("X-Amz-Copy-Source")) != 0 && !isCopyRequest(r) {
+		return true
+	}
 	if r.Header.Get("X-Amz-Copy-Source") == "" && (r.Header.Get("X-Amz-Metadata-Directive") != "" || r.Header.Get("X-Amz-Tagging-Directive") != "") {
 		return true
 	}
 	for name := range r.Header {
-		if unsupportedS3SemanticName(name) {
+		if unsupportedS3SemanticName(name) && !supportedCopyHeader(r, name) {
 			return true
 		}
 	}
@@ -921,6 +926,7 @@ func unsupportedS3SemanticName(name string) bool {
 	return name == "x-amz-acl" ||
 		strings.HasPrefix(name, "x-amz-grant-") ||
 		strings.HasPrefix(name, "x-amz-server-side-encryption") ||
+		strings.HasPrefix(name, "x-amz-copy-source-server-side-encryption") ||
 		name == "x-amz-storage-class" ||
 		strings.HasPrefix(name, "x-amz-object-lock-") ||
 		name == "x-amz-website-redirect-location" ||

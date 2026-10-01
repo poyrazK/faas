@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func (h *Handler) performTrackedGatewayCopy(w http.ResponseWriter, r *http.Request, req requestContext, copier objectstorage.TrackedObjectCopier, copy objectstorage.CopyObjectRequest) {
+func (h *Handler) performTrackedGatewayCopy(w http.ResponseWriter, r *http.Request, req requestContext, copier objectstorage.TrackedObjectCopier, copy objectstorage.CopyObjectRequest, conditions objectstorage.CopySourceConditions) {
 	st, ok := h.store.(state.ObjectTrackedGatewayCopyStore)
 	if !ok {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, copy.DestinationKey)
@@ -19,12 +19,16 @@ func (h *Handler) performTrackedGatewayCopy(w http.ResponseWriter, r *http.Reque
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), api.ObjectTransferTimeout)
 	defer cancel()
-	if !h.recordProviderRequest(w, r, req) {
+	if !h.admit(w, r, req, copy.SourceKey, 0, false) || !h.recordProviderRequest(w, r, req) {
 		return
 	}
 	source, err := copier.SnapshotCopySource(ctx, req.bucket.PhysicalName, copy.SourceKey)
 	if err != nil {
 		h.providerError(w, r, req, err, copy.SourceKey)
+		return
+	}
+	if err = conditions.Check(source); err != nil {
+		h.providerHTTPError(w, r, req, http.StatusPreconditionFailed, copy.SourceKey)
 		return
 	}
 	c, err := st.BeginTrackedGatewayCopy(ctx, state.ObjectUploadCompletion{ID: uuid.NewString(), AccountID: req.bucket.AccountID, AppID: req.bucket.AppID, BucketID: req.bucket.ID, SubjectID: req.credential.ID, Key: copy.DestinationKey, Bytes: source.SizeBytes, SourceKey: copy.SourceKey, SourceETag: source.ETag, ContentType: gatewayCopyContentType(copy, source), RequestID: req.requestID, Status: "pending"}, h.registry.Accounting)
@@ -44,7 +48,12 @@ func (h *Handler) performTrackedGatewayCopy(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	c, dispatched = intent, true
-	result, err := copier.CopyTrackedObject(ctx, req.bucket.PhysicalName, c.ID, copy, source)
+	var result objectstorage.CopyObjectResult
+	if conditions.Empty() {
+		result, err = copier.CopyTrackedObject(ctx, req.bucket.PhysicalName, c.ID, copy, source)
+	} else {
+		result, err = copier.(objectstorage.ConditionalTrackedObjectCopier).CopyConditionalTrackedObject(ctx, req.bucket.PhysicalName, c.ID, copy, source, conditions)
+	}
 	h.completeGatewayCopy(w, r, req, st, c, result, err)
 }
 

@@ -14,8 +14,13 @@ import (
 )
 
 var _ TrackedObjectCopier = (*S3)(nil)
+var _ ConditionalTrackedObjectCopier = (*S3)(nil)
 
 func (p *S3) SnapshotCopySource(ctx context.Context, bucket, key string) (CopySourceSnapshot, error) {
+	return p.snapshotCopySource(ctx, bucket, key, api.MaxObjectSinglePutBytes)
+}
+
+func (p *S3) snapshotCopySource(ctx context.Context, bucket, key string, maxBytes int64) (CopySourceSnapshot, error) {
 	if !ValidKey(key) {
 		return CopySourceSnapshot{}, ErrInvalid
 	}
@@ -30,7 +35,7 @@ func (p *S3) SnapshotCopySource(ctx context.Context, bucket, key string) (CopySo
 		return CopySourceSnapshot{}, ErrUnsupported
 	}
 	snapshot := CopySourceSnapshot{SizeBytes: *out.ContentLength, ETag: aws.ToString(out.ETag), Metadata: ObjectMetadata{ContentType: aws.ToString(out.ContentType), CacheControl: aws.ToString(out.CacheControl), ContentDisposition: aws.ToString(out.ContentDisposition), ContentEncoding: aws.ToString(out.ContentEncoding), ContentLanguage: aws.ToString(out.ContentLanguage), Metadata: copyCustomerMetadata(out.Metadata)}}
-	if !validCopySource(snapshot) {
+	if !validCopySourceSize(snapshot, maxBytes) {
 		return CopySourceSnapshot{}, ErrInvalid
 	}
 	if raw := aws.ToString(out.ExpiresString); raw != "" {
@@ -44,7 +49,11 @@ func (p *S3) SnapshotCopySource(ctx context.Context, bucket, key string) (CopySo
 }
 
 func validCopySource(s CopySourceSnapshot) bool {
-	return s.SizeBytes >= 0 && s.SizeBytes <= api.MaxObjectSinglePutBytes && validUploadETag(s.ETag) && !strings.HasPrefix(s.ETag, "W/") && (ObjectWriteConditions{IfMatch: s.ETag}).Valid() && ValidateObjectMetadata(s.Metadata) == nil
+	return validCopySourceSize(s, api.MaxObjectSinglePutBytes)
+}
+
+func validCopySourceSize(s CopySourceSnapshot, maxBytes int64) bool {
+	return s.SizeBytes >= 0 && s.SizeBytes <= maxBytes && s.ETag != "" && s.ETag != "*" && validCopyETagCondition(s.ETag) && ValidateObjectMetadata(s.Metadata) == nil
 }
 
 func copyCustomerMetadata(source map[string]string) map[string]string {
@@ -58,8 +67,15 @@ func copyCustomerMetadata(source map[string]string) map[string]string {
 }
 
 func (p *S3) CopyTrackedObject(ctx context.Context, bucket, receipt string, r CopyObjectRequest, source CopySourceSnapshot) (CopyObjectResult, error) {
+	return p.CopyConditionalTrackedObject(ctx, bucket, receipt, r, source, CopySourceConditions{})
+}
+
+func (p *S3) CopyConditionalTrackedObject(ctx context.Context, bucket, receipt string, r CopyObjectRequest, source CopySourceSnapshot, conditions CopySourceConditions) (CopyObjectResult, error) {
 	if _, err := uuid.Parse(receipt); err != nil || ctx.Err() != nil || !validCopySource(source) || ValidateObjectMetadata(r.Metadata) != nil {
 		return CopyObjectResult{}, errors.Join(ErrWriteRejected, ErrInvalid)
+	}
+	if err := conditions.Check(source); err != nil {
+		return CopyObjectResult{}, errors.Join(ErrWriteRejected, err)
 	}
 	copyMetadata := r.MetadataDirective == "" || r.MetadataDirective == "COPY"
 	if copyMetadata {
@@ -78,6 +94,7 @@ func (p *S3) CopyTrackedObject(ctx context.Context, bucket, receipt string, r Co
 	}
 	in.Metadata[ReservedUploadReceiptMetadataKey] = receipt
 	in.CopySourceIfMatch = aws.String(source.ETag)
+	in.CopySourceIfNoneMatch = stringPtrOrNil(conditions.IfNoneMatch)
 	if copyMetadata {
 		in.Expires = source.Expires
 	}
