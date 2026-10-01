@@ -98,4 +98,3 @@ func waitHealthcheckMarker(t *testing.T, path, want string) {
 	body, err := os.ReadFile(path)
 	t.Fatalf("probe runtime contract: got %q (err=%v), want %q", body, err, want)
 }
-
