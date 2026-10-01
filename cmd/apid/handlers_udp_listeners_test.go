@@ -34,6 +34,20 @@ func TestUDPListenerAPI(t *testing.T) {
 		return w
 	}
 	path := "/v1/apps/udp-api/udp-listeners"
+	for _, body := range []string{
+		`{"name":"dns","guest_port":5353,"enabled":true}`,
+		`{"name":"dns","guest_port":5353} {}`,
+		`{"name":"dns","guest_port":5353,"public_port":39999}`,
+		`{"name":"dns","guest_port":5353,"public_port":50000}`,
+		`{"name":"dns","guest_port":65536}`,
+		`null`,
+	} {
+		request(http.MethodPost, path, body, 400)
+	}
+	rows, err := store.ListUDPListenersForApp(ctx, app.ID)
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("invalid create reserved listeners: rows=%+v err=%v", rows, err)
+	}
 	request(http.MethodPost, path, `{"name":"dns","guest_port":53}`, 400)
 	w := request(http.MethodPost, path, `{"name":"dns","guest_port":5353}`, 201)
 	var listener api.UDPListenerResponse
@@ -44,6 +58,17 @@ func TestUDPListenerAPI(t *testing.T) {
 		t.Fatalf("unexpected listener: %+v", listener)
 	}
 	request(http.MethodPost, path, `{"name":"dns","guest_port":5353}`, 409)
+	before, err := store.UDPListenerByAppAndName(ctx, app.ID, "dns")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, body := range []string{`{}`, `null`, `{"enabled":null}`, `{"enabled":"true"}`, `{"enabled":true,"guest_port":53}`, `{"enabled":true} false`} {
+		request(http.MethodPatch, path+"/dns", body, 400)
+	}
+	after, err := store.UDPListenerByAppAndName(ctx, app.ID, "dns")
+	if err != nil || after != before {
+		t.Fatalf("invalid update changed listener: before=%+v after=%+v err=%v", before, after, err)
+	}
 	request(http.MethodPatch, path+"/dns", `{"enabled":true}`, 200)
 	request(http.MethodGet, path, "", 200)
 	// Manifest changes must prevent re-enabling a stale public route.

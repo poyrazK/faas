@@ -831,3 +831,7 @@ Isolated UDP configuration tests passed three race repetitions without skips and
 ### UDP HTTP foreign-owner mutation rejection (2026-10-01)
 
 The real authenticated UDP API lifecycle fixture now creates an enabled foreign-account listener and attempts enable, disable and delete through the requesting account. Each request returns 404 and the full foreign listener record remains unchanged, complementing existing foreign list/create rejection. The fixture passed three race repetitions without skips (`/tmp/gregale-udp-api-ownership-tests.log`); the launched handle is terminal. Shared bounded JSON decoding already rejects unknown fields and trailing values; no decoder change was needed. Isolated customer API review, broader acceptance and native/deployed qualification remain pending.
+
+### UDP HTTP malformed-request state preservation (2026-10-01)
+
+The real authenticated UDP API fixture now rejects unknown create fields, trailing JSON, out-of-range public/guest ports and null creates, then proves no listener reservations exist. Invalid updates cover missing/null/string enabled values, unknown fields and trailing JSON, then compare the full stored listener record before/after. The lifecycle and quota-problem fixtures passed three race repetitions without skips (`/tmp/gregale-udp-api-validation-tests.log`); the launched handle is terminal and diff whitespace checking passed. No production decoder behavior changed. Customer API isolated publication and native/deployed acceptance remain pending.
