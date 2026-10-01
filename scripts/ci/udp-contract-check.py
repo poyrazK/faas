@@ -14,7 +14,7 @@ FILES = {
     "pkg/udpwire": "*_test.go",
     "cmd/vmmd-udp-bridge": "main_test.go",
     "pkg/gateway": "udpforward_test.go",
-    "pkg/vmmdgrpc": ["forward_udp_test.go", "bridge_readiness_test.go"],
+    "pkg/vmmdgrpc": ["forward_udp_test.go", "forward_udp_grpc_test.go", "bridge_readiness_test.go"],
     "cmd/apid": "handlers_udp_listeners_test.go",
     "cmd/gregale": "commands_app_udp_test.go",
     "cmd/gatewayd-public": "udp_ingress_test.go",

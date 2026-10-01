@@ -16,12 +16,18 @@ import (
 
 // ForwardUDPStream serves one admitted peer. Listener ownership is validated
 // by the edge; vmmd resolves only the live instance namespace and guest socket.
-func (s *Server) ForwardUDPStream(stream grpc.BidiStreamingServer[vmmdpb.ForwardUDPRequest, vmmdpb.ForwardUDPResponse]) error {
+func (s *Server) ForwardUDPStream(stream grpc.BidiStreamingServer[vmmdpb.ForwardUDPRequest, vmmdpb.ForwardUDPResponse]) (retErr error) {
 	start := time.Now()
-	defer func() { s.ops.Observe("ForwardUDPStream", time.Since(start), nil) }()
+	defer func() { s.ops.Observe("ForwardUDPStream", time.Since(start), retErr) }()
 	frame, err := stream.Recv()
 	if err != nil {
-		return status.Errorf(codes.InvalidArgument, "expected UDP init frame: %v", err)
+		if stream.Context().Err() != nil {
+			return status.FromContextError(stream.Context().Err()).Err()
+		}
+		if !errors.Is(err, io.EOF) {
+			return err
+		}
+		return status.Error(codes.InvalidArgument, "expected UDP init frame before EOF")
 	}
 	init := frame.GetInit()
 	if init == nil || init.Instance == "" || init.Port == 0 || init.Port > 65535 || init.MaxBytes < 0 {
@@ -46,22 +52,26 @@ func (s *Server) ForwardUDPStream(stream grpc.BidiStreamingServer[vmmdpb.Forward
 	if err := stream.Send(&vmmdpb.ForwardUDPResponse{Frame: &vmmdpb.ForwardUDPResponse_Init{Init: &vmmdpb.ForwardUDPResponseInit{}}}); err != nil {
 		return err
 	}
+	return udpBridgeFrames(stream, input, output, init)
+}
+
+// Either direction must be able to end the handler even if the other is
+// blocked in gRPC flow control. Returning cancels the server stream through
+// gRPC; joining its Send/Recv goroutines before returning would deadlock.
+// The caller closes helper pipes and kills/reaps its process on every return.
+func udpBridgeFrames(stream grpc.BidiStreamingServer[vmmdpb.ForwardUDPRequest, vmmdpb.ForwardUDPResponse], input io.Writer, output io.Reader, init *vmmdpb.ForwardUDPRequestInit) error {
 	requests := make(chan error, 1)
-	go func() {
-		err := udpRequestFrames(stream, input, newUDPBudget(init))
-		requests <- err
-		_ = input.Close()
-		cancel()
-	}()
-	responseErr := udpResponseFrames(stream, output, newUDPBudget(init))
+	responses := make(chan error, 1)
+	go func() { requests <- udpRequestFrames(stream, input, newUDPBudget(init)) }()
+	go func() { responses <- udpResponseFrames(stream, output, newUDPBudget(init)) }()
 	select {
-	case requestErr := <-requests:
-		if requestErr != nil {
-			return requestErr
-		}
-	default:
+	case err := <-requests:
+		return err
+	case err := <-responses:
+		return err
+	case <-stream.Context().Done():
+		return status.FromContextError(stream.Context().Err()).Err()
 	}
-	return responseErr
 }
 
 type udpBudget struct {
@@ -100,7 +110,7 @@ func udpRequestFrames(stream grpc.BidiStreamingServer[vmmdpb.ForwardUDPRequest, 
 			return err
 		}
 		datagram, ok := frame.GetFrame().(*vmmdpb.ForwardUDPRequest_Datagram)
-		if !ok {
+		if !ok || datagram == nil {
 			return status.Error(codes.InvalidArgument, "UDP datagram frame expected")
 		}
 		if err := budget.consume(datagram.Datagram); err != nil {
