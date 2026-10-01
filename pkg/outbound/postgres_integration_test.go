@@ -973,7 +973,7 @@ func TestPostgresExecutionAuthorizerRechecksLeaseAndRunsGrant(t *testing.T) {
 	if err := store.SetOutboundIntegrationRunsEnabled(ctx, account.ID, offer.ID, true); err != nil {
 		t.Fatalf("restore Runs grant for expiry check: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE executions SET lease_expires_at = clock_timestamp() - interval '1 second' WHERE id = $1::uuid`, claim.ID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE executions SET updated_at = started_at + interval '1 microsecond', lease_expires_at = started_at + interval '2 microseconds' WHERE id = $1::uuid`, claim.ID); err != nil {
 		t.Fatalf("expire execution lease: %v", err)
 	}
 	if allowed, err := authorizer.AuthorizeExecution(ctx, identity, offer.ID); err != nil || allowed {
