@@ -11570,3 +11570,13 @@ CREATE TRIGGER clone_secret_publication_fence BEFORE INSERT OR DELETE OR UPDATE 
 account_id,app_id,scope,key,ciphertext,kid,value_hash,secret_class,secret_version,delivery_version,created_at,
 managed_postgres_binding_id,managed_object_storage_credential_id,managed_credential_ref,managed_credential_generation ON app_secrets
 FOR EACH ROW EXECUTE FUNCTION serialize_clone_value_publication();
+
+-- ADR-375: retain the original target lifetime after a materialization crash.
+-- No environment FK: deletion must not erase the identity and permit adoption
+-- of a new environment which happens to have the same slug.
+CREATE TABLE project_environment_clone_materializations (
+    operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_operations(id) ON DELETE CASCADE,
+    environment_id uuid NOT NULL UNIQUE CHECK (environment_id<>'00000000-0000-0000-0000-000000000000'::uuid),
+    workload_settings jsonb NOT NULL CHECK (jsonb_typeof(workload_settings)='object' AND workload_settings<>'{}'::jsonb),
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);

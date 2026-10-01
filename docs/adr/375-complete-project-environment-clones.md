@@ -129,9 +129,9 @@ projection: workload configuration promotion updates that projection atomically,
 and ordinary App edits advance an existing production desired head.
 
 Remaining work includes a complete source inventory and consistent capture
-barrier, connecting the PostgreSQL and object copy workers to one durable clone,
-connecting captured deployments to the durable clone worker, environment ownership of
-the remaining policies/triggers/integrations, scope-specific capacity and
+barrier, independent data-resource publication proofs, complete compensation,
+environment ownership of the remaining policies/triggers/integrations,
+scope-specific capacity and
 reconciliation, source-manifest/reconcile writes, and qualification plus atomic
 promotion/rollback of the complete effective state. Production ingress still
 needs request-specific settings for retained release/revision selections. Native x86_64 KVM
@@ -2407,3 +2407,64 @@ PostgreSQL/object data capture, one-command orchestration, full qualification an
 promotion/rollback remain open. Public complete cloning stays unavailable.
 Repository-wide tests/lint, native x86_64 KVM test-metal/leakcheck and provider
 acceptance remain unverified.
+
+### Durable copying coordinator and target materialization (2026-10-01)
+
+apid now polls the durable clone queue and drives an authenticated configuration
+capture through database restoration, version-manifest object copying, fresh
+PostgreSQL bindings and object credentials, target configuration materialization,
+dark deployment creation, schedd prime notifications and publication checks.
+Successful resource checkpoints retain the current operation revision for the
+next step and lease release. Provider calls retain their lease deadlines. Errors
+and readiness waits release the claim with a delayed retry; an unknown commit
+outcome waits for lease expiry rather than adopting another worker's revision.
+The worker logs stable reason codes without arbitrary provider error text.
+
+The coordinator checks the frozen workload/configuration inventory and common
+database/object capture point before provider copying. Pending/capturing work
+still returns `data_checkpoint_unavailable`; it does not choose a wall-clock
+point and call it a coordinated checkpoint. Compensation remains explicitly
+unavailable. These phases do not materialize a target or publish a release.
+
+A private materialization receipt commits in the same transaction as the target
+configuration. It retains the original environment UUID and each workload's
+original desired specification identity and hash. A retry reuses that lifetime
+without recopying configuration. It rejects an edited desired head, corrupted
+settings, or a deleted/recreated environment with the same slug. Deletion cannot
+cascade away the receipt's original environment identity. Lease authority is
+rechecked after lock waits before both first materialization and replay commit.
+Publication also checks the receipt before app/resource locks and in its final
+graph transaction.
+
+Copying-phase checkpoints now allow `copying` and `verifying` resource statuses
+while waiting for providers or schedd. Entering copying still requires captured
+or ready resources. The resource set and captured source/version identities
+remain immutable, and assigned target identities cannot be replaced. The new
+integration path exposed this distinction: the previous gate rejected every
+pending deployment's durable readiness checkpoint.
+
+The schema registry now includes this operational receipt and the prior runtime
+instance configuration proof table. Real migrated-schema capture had previously
+rejected that unregistered runtime table; registering it does not assert a
+customer configuration copy strategy or open complete admission.
+
+Verification: the new coordinator/inventory/checkpoint tests and five real
+PostgreSQL coordinator contracts pass (12.293 s), including committed-but-lost
+materialization acknowledgement, failed prime handoff, worker takeover,
+independent shared-database/bucket preparation, original object-version copying,
+no duplicate targets, mixed capture points rejected before provider copy,
+partial workload readiness, developer edits, environment recreation and delayed
+checkpoint waits. Existing API clone worker/admission regressions pass (6.525 s).
+Four unchanged state test files also pass against the working-tree store through
+a task-owned focused runner (5.033 s): MemStore/PostgreSQL resource publication
+fences, migrated-schema coverage and atomic configuration capture. This runner
+is not the full state suite. Independent sqlc regeneration and `git diff --check`
+pass.
+
+The tests use real PostgreSQL for control-plane transactions and fake database
+and object providers. Complete-mode admission remains closed. Even fully primed
+targets stay in copying when independent data-resource or work-policy activation
+proofs are unavailable; the coordinator does not bypass those existing guards.
+Coordinated data capture, complete resource/policy strategies, compensation,
+qualified full promotion/rollback, real-provider acceptance and native x86_64 KVM
+`test-metal`/`leakcheck` remain required before the requested feature is complete.

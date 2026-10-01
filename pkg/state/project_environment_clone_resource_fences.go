@@ -38,7 +38,14 @@ func validateCloneResourceTransition(op ProjectEnvironmentCloneOperation, nextSt
 	}
 	if nextStatus == CloneOperationCopying {
 		for _, resource := range resources {
-			if !cloneResourceHasImplementedStrategy(resource.Kind) || resource.Status != "captured" && resource.Status != "ready" {
+			statusOK := resource.Status == "captured" || resource.Status == "ready"
+			if op.Status == CloneOperationCopying {
+				// Capture is complete before entering copying. Durable provider
+				// and VM readiness checkpoints remain in that phase while they
+				// wait; they cannot add or rebind captured dependencies.
+				statusOK = statusOK || resource.Status == "copying" || resource.Status == "verifying"
+			}
+			if !cloneResourceHasImplementedStrategy(resource.Kind) || !statusOK {
 				return ErrConflict
 			}
 		}

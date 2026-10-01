@@ -6105,6 +6105,21 @@ func (q *Queries) InsertProjectEnvironmentCloneLayerPin(ctx context.Context, db 
 	return err
 }
 
+const insertProjectEnvironmentCloneMaterialization = `-- name: InsertProjectEnvironmentCloneMaterialization :exec
+INSERT INTO project_environment_clone_materializations(operation_id,environment_id,workload_settings) VALUES($1,$2,$3)
+`
+
+type InsertProjectEnvironmentCloneMaterializationParams struct {
+	OperationID      pgtype.UUID
+	EnvironmentID    pgtype.UUID
+	WorkloadSettings []byte
+}
+
+func (q *Queries) InsertProjectEnvironmentCloneMaterialization(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneMaterializationParams) error {
+	_, err := db.Exec(ctx, insertProjectEnvironmentCloneMaterialization, arg.OperationID, arg.EnvironmentID, arg.WorkloadSettings)
+	return err
+}
+
 const insertProjectEnvironmentCloneObjectCredentialPreparation = `-- name: InsertProjectEnvironmentCloneObjectCredentialPreparation :exec
 INSERT INTO project_environment_clone_object_credentials
 (operation_id, source_credential_id, target_credential_id, preparation_hash, preparation)
@@ -11046,6 +11061,37 @@ func (q *Queries) LockProjectEnvironmentCloneDatabaseAccount(ctx context.Context
 	var id_2 pgtype.UUID
 	err := row.Scan(&id_2)
 	return id_2, err
+}
+
+const lockProjectEnvironmentCloneMaterializedEnvironment = `-- name: LockProjectEnvironmentCloneMaterializedEnvironment :one
+SELECT id, account_id, project_id, slug, protected, created_at, updated_at FROM project_environments WHERE id=$1 AND account_id=$2 AND project_id=$3 AND slug=$4 FOR UPDATE
+`
+
+type LockProjectEnvironmentCloneMaterializedEnvironmentParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	ProjectID pgtype.UUID
+	Slug      string
+}
+
+func (q *Queries) LockProjectEnvironmentCloneMaterializedEnvironment(ctx context.Context, db DBTX, arg LockProjectEnvironmentCloneMaterializedEnvironmentParams) (ProjectEnvironment, error) {
+	row := db.QueryRow(ctx, lockProjectEnvironmentCloneMaterializedEnvironment,
+		arg.ID,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.Slug,
+	)
+	var i ProjectEnvironment
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.ProjectID,
+		&i.Slug,
+		&i.Protected,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const lockProjectEnvironmentClonePostgresBinding = `-- name: LockProjectEnvironmentClonePostgresBinding :one
@@ -16446,6 +16492,61 @@ func (q *Queries) ReadProjectEnvironmentCloneLegacySettings(ctx context.Context,
 	var i ReadProjectEnvironmentCloneLegacySettingsRow
 	err := row.Scan(&i.App, &i.Route)
 	return i, err
+}
+
+const readProjectEnvironmentCloneMaterialization = `-- name: ReadProjectEnvironmentCloneMaterialization :one
+SELECT operation_id, environment_id, workload_settings, created_at FROM project_environment_clone_materializations WHERE operation_id=$1
+`
+
+func (q *Queries) ReadProjectEnvironmentCloneMaterialization(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneMaterialization, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentCloneMaterialization, operationID)
+	var i ProjectEnvironmentCloneMaterialization
+	err := row.Scan(
+		&i.OperationID,
+		&i.EnvironmentID,
+		&i.WorkloadSettings,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const readProjectEnvironmentCloneMaterializedWorkloads = `-- name: ReadProjectEnvironmentCloneMaterializedWorkloads :many
+SELECT h.app_id,h.spec_id,s.config_hash,s.settings
+FROM project_environment_workload_heads h
+JOIN project_environment_workload_specs s ON s.id=h.spec_id AND s.environment_id=h.environment_id AND s.app_id=h.app_id
+WHERE h.environment_id=$1 ORDER BY h.app_id FOR SHARE OF h,s
+`
+
+type ReadProjectEnvironmentCloneMaterializedWorkloadsRow struct {
+	AppID      pgtype.UUID
+	SpecID     pgtype.UUID
+	ConfigHash string
+	Settings   []byte
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneMaterializedWorkloads(ctx context.Context, db DBTX, environmentID pgtype.UUID) ([]ReadProjectEnvironmentCloneMaterializedWorkloadsRow, error) {
+	rows, err := db.Query(ctx, readProjectEnvironmentCloneMaterializedWorkloads, environmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadProjectEnvironmentCloneMaterializedWorkloadsRow{}
+	for rows.Next() {
+		var i ReadProjectEnvironmentCloneMaterializedWorkloadsRow
+		if err := rows.Scan(
+			&i.AppID,
+			&i.SpecID,
+			&i.ConfigHash,
+			&i.Settings,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const readProjectEnvironmentCloneObjectBucket = `-- name: ReadProjectEnvironmentCloneObjectBucket :one

@@ -5528,6 +5528,21 @@ WHERE (b.state='deleting' OR (sqlc.arg(include_provisioning)::boolean AND b.stat
           AND r->>'source_id'=d.restore_source_database_id::text AND r->>'target_id'=d.id::text AND r->>'status'='ready')))
 ORDER BY b.retry_at,b.id LIMIT sqlc.arg(batch_limit)::int;
 
+-- name: ReadProjectEnvironmentCloneMaterialization :one
+SELECT * FROM project_environment_clone_materializations WHERE operation_id=$1;
+
+-- name: InsertProjectEnvironmentCloneMaterialization :exec
+INSERT INTO project_environment_clone_materializations(operation_id,environment_id,workload_settings) VALUES($1,$2,$3);
+
+-- name: LockProjectEnvironmentCloneMaterializedEnvironment :one
+SELECT * FROM project_environments WHERE id=$1 AND account_id=$2 AND project_id=$3 AND slug=$4 FOR UPDATE;
+
+-- name: ReadProjectEnvironmentCloneMaterializedWorkloads :many
+SELECT h.app_id,h.spec_id,s.config_hash,s.settings
+FROM project_environment_workload_heads h
+JOIN project_environment_workload_specs s ON s.id=h.spec_id AND s.environment_id=h.environment_id AND s.app_id=h.app_id
+WHERE h.environment_id=$1 ORDER BY h.app_id FOR SHARE OF h,s;
+
 -- name: ReadProjectEnvironmentCloneOperationIDByKey :one
 SELECT id FROM project_environment_clone_operations WHERE account_id=$1 AND project_id=$2 AND idempotency_key=$3;
 

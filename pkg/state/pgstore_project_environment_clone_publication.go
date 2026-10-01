@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -97,6 +98,12 @@ func cloneWorkloadProofsTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironment
 }
 
 func verifyClonePublicationTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation, resources []ProjectEnvironmentCloneResource) error {
+	// A coordinator retry may have waited for VM readiness after materializing
+	// configuration. Recheck its original environment and desired heads before
+	// acquiring app/resource locks, and again at the final graph transaction.
+	if _, err := replayCloneMaterializationTx(ctx, tx, op); err != nil && !errors.Is(err, ErrNotFound) {
+		return err
+	}
 	rows, err := new(sqlc.Queries).ReadProjectEnvironmentCloneObjectCopyProofs(ctx, tx, mustPgUUID(op.ID))
 	if err != nil {
 		return mapErr(err)

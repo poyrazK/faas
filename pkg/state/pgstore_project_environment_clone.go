@@ -11,6 +11,10 @@ import (
 )
 
 func (s *PgStore) CloneProjectEnvironment(ctx context.Context, clone ProjectEnvironmentClone, limits api.Limits) (ProjectEnvironment, ProjectEnvironmentCloneResult, error) {
+	return s.cloneProjectEnvironment(ctx, clone, limits, nil)
+}
+
+func (s *PgStore) cloneProjectEnvironment(ctx context.Context, clone ProjectEnvironmentClone, limits api.Limits, lease *ProjectEnvironmentCloneLease) (ProjectEnvironment, ProjectEnvironmentCloneResult, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, fmt.Errorf("state: begin project environment clone: %w", err)
@@ -18,6 +22,28 @@ func (s *PgStore) CloneProjectEnvironment(ctx context.Context, clone ProjectEnvi
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	if err := lockProjectEnvironmentCloneReservationTx(ctx, tx, clone); err != nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, mapProjectCloneSnapshotErr(err)
+	}
+	if lease != nil {
+		op, err := lockCloneWorkloadOperationTx(ctx, tx, clone.AccountID, clone.ProjectID, clone.CloneOperationID)
+		if err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+		if err := authorizeCloneObjectMutationTx(ctx, tx, op, lease); err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+		if err := requireCloneMaterializationCaptureTx(ctx, tx, op); err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+		created, err := replayCloneMaterializationTx(ctx, tx, op)
+		if err == nil {
+			if err := authorizeCloneObjectMutationTx(ctx, tx, op, lease); err != nil {
+				return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+			}
+			return created, ProjectEnvironmentCloneResult{}, tx.Commit(ctx)
+		}
+		if !errors.Is(err, ErrNotFound) {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
 	}
 	if err := lockProjectEnvironmentCloneSource(ctx, tx, clone); err != nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, mapProjectCloneSnapshotErr(err)
@@ -84,6 +110,15 @@ func (s *PgStore) CloneProjectEnvironment(ctx context.Context, clone ProjectEnvi
 	result, err := copyProjectEnvironmentRows(ctx, tx, clone)
 	if err != nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+	}
+	if lease != nil {
+		if err := saveCloneMaterializationTx(ctx, tx, lease.Operation, created); err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+		// Waiting on intent/resource locks cannot extend an expired worker.
+		if err := authorizeCloneObjectMutationTx(ctx, tx, lease.Operation, lease); err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, fmt.Errorf("state: commit project environment clone: %w", mapProjectCloneSnapshotErr(err))

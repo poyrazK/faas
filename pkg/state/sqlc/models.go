@@ -2196,6 +2196,13 @@ type ProjectEnvironmentCloneLayerPin struct {
 	Bytes       int64
 }
 
+type ProjectEnvironmentCloneMaterialization struct {
+	OperationID      pgtype.UUID
+	EnvironmentID    pgtype.UUID
+	WorkloadSettings []byte
+	CreatedAt        pgtype.Timestamptz
+}
+
 type ProjectEnvironmentCloneObjectCredential struct {
 	OperationID        pgtype.UUID
 	SourceCredentialID pgtype.UUID

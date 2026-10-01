@@ -482,6 +482,7 @@ type Querier interface {
 	InsertProjectEnvironmentCloneConfigurationCapture(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneConfigurationCaptureParams) error
 	InsertProjectEnvironmentCloneDatabase(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneDatabaseParams) (ManagedPostgresDatabase, error)
 	InsertProjectEnvironmentCloneLayerPin(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneLayerPinParams) error
+	InsertProjectEnvironmentCloneMaterialization(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneMaterializationParams) error
 	InsertProjectEnvironmentCloneObjectCredentialPreparation(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneObjectCredentialPreparationParams) error
 	InsertProjectEnvironmentCloneObjectManifestEntries(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneObjectManifestEntriesParams) (int64, error)
 	InsertProjectEnvironmentCloneObjectManifestHeader(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneObjectManifestHeaderParams) error
@@ -889,6 +890,7 @@ type Querier interface {
 	LockProjectEnvironmentCloneConfigurationCapture(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneConfigurationCapture, error)
 	LockProjectEnvironmentCloneCredentialBucket(ctx context.Context, db DBTX, arg LockProjectEnvironmentCloneCredentialBucketParams) (ObjectBucket, error)
 	LockProjectEnvironmentCloneDatabaseAccount(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
+	LockProjectEnvironmentCloneMaterializedEnvironment(ctx context.Context, db DBTX, arg LockProjectEnvironmentCloneMaterializedEnvironmentParams) (ProjectEnvironment, error)
 	LockProjectEnvironmentClonePostgresBinding(ctx context.Context, db DBTX, arg LockProjectEnvironmentClonePostgresBindingParams) (ManagedPostgresBinding, error)
 	LockProjectEnvironmentClonePreparedObjectCredential(ctx context.Context, db DBTX, arg LockProjectEnvironmentClonePreparedObjectCredentialParams) (ObjectStorageS3Credential, error)
 	LockProjectEnvironmentCloneProject(ctx context.Context, db DBTX, arg LockProjectEnvironmentCloneProjectParams) (string, error)
@@ -1150,6 +1152,8 @@ type Querier interface {
 	ReadProjectEnvironmentCloneDeployedSettings(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (ReadProjectEnvironmentCloneDeployedSettingsRow, error)
 	ReadProjectEnvironmentCloneEnvironmentPresence(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneEnvironmentPresenceParams) (ReadProjectEnvironmentCloneEnvironmentPresenceRow, error)
 	ReadProjectEnvironmentCloneLegacySettings(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneLegacySettingsParams) (ReadProjectEnvironmentCloneLegacySettingsRow, error)
+	ReadProjectEnvironmentCloneMaterialization(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneMaterialization, error)
+	ReadProjectEnvironmentCloneMaterializedWorkloads(ctx context.Context, db DBTX, environmentID pgtype.UUID) ([]ReadProjectEnvironmentCloneMaterializedWorkloadsRow, error)
 	ReadProjectEnvironmentCloneObjectBucket(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneObjectBucketParams) (ObjectBucket, error)
 	ReadProjectEnvironmentCloneObjectBuckets(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneObjectBucketsParams) ([]ReadProjectEnvironmentCloneObjectBucketsRow, error)
 	ReadProjectEnvironmentCloneObjectCopyProofs(ctx context.Context, db DBTX, operationID pgtype.UUID) ([]ReadProjectEnvironmentCloneObjectCopyProofsRow, error)
