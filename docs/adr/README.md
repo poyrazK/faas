@@ -13,9 +13,11 @@ and whichever merges second keeps it. The renumber trail through the table
 below ("renumbered 066→067→068→069", "through 6 hops") is what that costs.
 
 `make adr-number-uniqueness-check` (also part of `make lint` and CI) fails on
-any **newly** duplicated number. The 71 numbers already duplicated on `main` are
+any **newly** duplicated number. The 72 numbers already duplicated on `main` are
 frozen in [`DUPLICATE_NUMBERS_BASELINE.txt`](DUPLICATE_NUMBERS_BASELINE.txt);
-the gate holds that set and stops it growing. Never add a line to that file.
+the gate holds that set and stops it growing. Do not add a line for a collision
+introduced by this PR; refresh the baseline from `main` when `main` independently
+gains duplicate ADR numbers.
 
 Before claiming a number, check both the directory **and** open PRs — a PR can
 claim a number between your check and your merge:
