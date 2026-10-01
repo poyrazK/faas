@@ -400,3 +400,22 @@ Remote checks have started and are pending; no remote green claim is made.
 Native process execution, preparation/restore and leak qualification remain
 unexecuted without a designated Linux/amd64 KVM host. No persistent disks or
 ARM64 support are included, and neither review PR has been merged.
+
+### Isolated atomic cgroup launch review — 2026-10-01
+
+Draft [PR #3955](https://github.com/poyrazK/faas/pull/3955) independently isolates
+main/companion clone3 placement and rooted control-file writes. Base
+`f2893f798736f803a842bcdd8f3e7a0d3d3e7d45`, head
+`880fe9438` (short commit); worktree `/tmp/gregale-container-cgroup-20261001`.
+The isolated decision is ADR-386, reserving ADR-385 for the separate identity PR.
+The Linux/amd64 metal-tagged guest test binary cross-compiles and scoped Linux
+guest lint reports zero issues. Logs: `/tmp/gregale-cgroup-isolated-compile.log`
+and `/tmp/gregale-cgroup-isolated-lint.log`.
+
+Current CI's pure-Go light shard enumerates `go list ./...` and does not exclude
+`guest/init`; therefore ordinary Linux guest regressions are scheduled there.
+The explicitly delegated cgroup acceptance test is metal-tagged and requires
+`FAAS_TEST_CGROUP_PARENT`; it is not proven by ordinary CI. No Linux execution,
+VM/OOM/restore or leak acceptance claim is made yet. PR #3954 currently has four
+successful checks, one skipped and one neutral result, with nineteen checks
+still running and no reported failure. Neither new PR has been merged.
