@@ -23762,13 +23762,14 @@ components:
             - { type: boolean }
             - { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$', description: Directly select a configured variant. }
     ProgressiveRollout:
-      description: Health-gated, operator-promoted stages for a boolean true rule. The rule rollout must equal stages[current_stage]; stages must strictly increase and end at 10000 basis points.
+      description: Health-gated stages for a boolean true rule. Promotion is manual by default; auto_advance opts into server-managed promotion after a full healthy evidence window. The rule rollout must equal stages[current_stage]; stages must strictly increase and end at 10000 basis points.
       type: object
       additionalProperties: false
       required: [stages, current_stage, minimum_used_requests, maximum_http_5xx_rate_basis_points, maximum_p95_latency_ms, window_seconds]
       properties:
         stages: { type: array, minItems: 2, maxItems: 8, items: { type: integer, minimum: 1, maximum: 10000 }, description: Strictly increasing rollout percentages in basis points, ending at 10000. }
         current_stage: { type: integer, minimum: 0, maximum: 7, description: Zero-based active stage index. }
+        auto_advance: { type: boolean, default: false, description: "When true, the platform automatically advances one stage after the full observation window passes all evidence gates. Omitted or false keeps promotion manual." }
         minimum_used_requests: { type: integer, format: int64, minimum: 1, maximum: 100000000, description: Minimum application-reported used requests for the targeted rule before promotion. }
         maximum_http_5xx_rate_basis_points: { type: integer, minimum: 0, maximum: 10000, description: Highest allowed 5xx rate for the targeted rule; 100 basis points is one percent. }
         maximum_p95_latency_ms: { type: integer, minimum: 1, maximum: 600000, description: Highest allowed conservative p95 latency bucket bound for the targeted rule. }

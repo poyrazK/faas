@@ -297,7 +297,16 @@ refresh the flag version before trying again. `complete` means the final stage i
 already active. Promotion requires debugger telemetry entitlement and retention
 at least as long as the configured window. These thresholds are operational
 signals, not proof that the flag caused an outcome; promotion is always an
-explicit operator action.
+explicit operator action when `auto_advance` is omitted or false.
+
+Set `auto_advance: true` on the progression plan to opt this rule into
+server-managed promotion. The platform waits for a complete configured window
+after the active configuration version was published, checks evidence from
+that exact version and rule, and advances at most one stage when all gates
+pass. Insufficient or unhealthy evidence holds the stage; the reconciler logs
+the reason and retries on a later pass. Automatic promotion respects debugger
+telemetry entitlement and retention, and uses a version-checked write so a
+concurrent operator edit wins. Rules without explicit opt-in remain manual.
 
 The SDK does not add flags to cache keys automatically. Avoid shared caches for
 customer-dependent behavior unless their keys include the relevant customer and
@@ -358,7 +367,8 @@ entries and 16 KiB decoded evidence per request.
 
 Synchronous decision inheritance is available for managed service calls when
 the Node SDK fetch helper is explicitly configured. Producers can also carry
-marked decisions into `queues/send` and the app inbox. Arbitrary user attributes,
-automatic stage advancement, and propagation through cron, delayed tasks, and
-external broker deliveries remain future work; those workloads otherwise
-evaluate flags using their own environment and verified customer identity.
+marked decisions into `queues/send` and the app inbox. Arbitrary user attributes
+and propagation through cron, delayed tasks, and external broker deliveries
+remain future work; those workloads otherwise evaluate flags using their own
+environment and verified customer identity. Automatic advancement runs as a
+bounded apid reconciliation loop and remains opt-in per rule.

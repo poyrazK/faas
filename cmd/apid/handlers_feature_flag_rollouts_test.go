@@ -19,6 +19,19 @@ type rolloutEvidenceStore struct {
 	query sqlc.FeatureFlagRequestOutcomesParams
 }
 
+type rolloutStageClockStore struct {
+	*rolloutEvidenceStore
+	stageStartedAt time.Time
+}
+
+func (s *rolloutStageClockStore) GetFeatureFlags(ctx context.Context, scope state.FeatureFlagScope, version int64) (state.FeatureFlagVersion, error) {
+	v, err := s.rolloutEvidenceStore.GetFeatureFlags(ctx, scope, version)
+	if err == nil && version == 0 {
+		v.CreatedAt = s.stageStartedAt
+	}
+	return v, err
+}
+
 func (s *rolloutEvidenceStore) FeatureFlagRequestOutcomes(_ context.Context, query sqlc.FeatureFlagRequestOutcomesParams) ([]sqlc.FeatureFlagRequestOutcomesRow, error) {
 	s.query = query
 	return s.rows, nil
@@ -159,5 +172,106 @@ func TestFeatureFlagRolloutPromotionReportsCompletedPlan(t *testing.T) {
 	}
 	if response.Status != "complete" || response.Reason != "all_stages_complete" || response.ConfigVersion != 2 || response.WindowStart != nil || evidenceStore.query.FlagKey != "" {
 		t.Fatalf("completed response=%+v query=%+v", response, evidenceStore.query)
+	}
+}
+
+func setupAutomaticProgressiveRollout(t *testing.T, evidence []sqlc.FeatureFlagRequestOutcomesRow, stageStartedAt time.Time) (testEnv, state.FeatureFlagScope, *rolloutStageClockStore) {
+	t.Helper()
+	e, scope, evidenceStore := setupProgressiveRollout(t, evidence)
+	current, err := e.store.GetFeatureFlags(context.Background(), scope, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current.Flags[0].Rules[0].Progression.AutoAdvance = true
+	if _, err := e.store.UpdateFeatureFlags(context.Background(), state.FeatureFlagUpdate{Scope: scope, ExpectedVersion: current.Version, Config: current.Config, Actor: e.acct.ID}); err != nil {
+		t.Fatal(err)
+	}
+	clockStore := &rolloutStageClockStore{rolloutEvidenceStore: evidenceStore, stageStartedAt: stageStartedAt}
+	e.s.store = clockStore
+	return e, scope, clockStore
+}
+
+func TestFeatureFlagAutoAdvanceWaitsForFullWindowAndAdvancesOneStage(t *testing.T) {
+	now := time.Now().UTC()
+	e, scope, evidenceStore := setupAutomaticProgressiveRollout(t, []sqlc.FeatureFlagRequestOutcomesRow{
+		{DecisionType: "boolean", DecisionValue: "true", RequestCount: 50, UsedCount: 50, ErrorCount: 0, P95LatencyMs: 300},
+	}, now.Add(-4*time.Minute))
+	candidate := state.FeatureFlagAutoRolloutCandidate{Scope: scope, ProjectSlug: "rollouts", EnvironmentSlug: "production"}
+	if err := e.s.autoAdvanceFeatureFlagRollout(context.Background(), candidate, now); err != nil {
+		t.Fatal(err)
+	}
+	current, err := e.store.GetFeatureFlags(context.Background(), scope, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Version != 2 || current.Flags[0].Rules[0].Progression.CurrentStage != 0 || *current.Flags[0].Rules[0].Rollout != 100 {
+		t.Fatalf("advanced before full evidence window: %+v", current)
+	}
+	if evidenceStore.query.FlagKey != "" {
+		t.Fatalf("queried evidence before the full window: %+v", evidenceStore.query)
+	}
+
+	evidenceStore.stageStartedAt = now.Add(-5 * time.Minute)
+	if err := e.s.autoAdvanceFeatureFlagRollout(context.Background(), candidate, now); err != nil {
+		t.Fatal(err)
+	}
+	current, err = e.store.GetFeatureFlags(context.Background(), scope, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rule := current.Flags[0].Rules[0]
+	if current.Version != 3 || rule.Progression.CurrentStage != 1 || *rule.Rollout != 1000 || current.Actor != featureFlagAutoAdvanceActor {
+		t.Fatalf("automatic promotion=%+v actor=%q", rule, current.Actor)
+	}
+	if evidenceStore.query.FlagKey != "new-export" || evidenceStore.query.RuleID != "selected" || evidenceStore.query.ConfigVersion != 2 || evidenceStore.query.ReceivedUntil.Time.Sub(evidenceStore.query.ReceivedFrom.Time) != 5*time.Minute {
+		t.Fatalf("automatic evidence query=%+v", evidenceStore.query)
+	}
+}
+
+func TestFeatureFlagAutoAdvanceHoldsOnUnhealthyEvidenceAndDefaultsToManual(t *testing.T) {
+	now := time.Now().UTC()
+	tests := []struct {
+		name      string
+		rows      []sqlc.FeatureFlagRequestOutcomesRow
+		automatic bool
+	}{
+		{name: "unhealthy evidence", rows: []sqlc.FeatureFlagRequestOutcomesRow{{DecisionType: "boolean", DecisionValue: "true", RequestCount: 20, UsedCount: 20, ErrorCount: 1, P95LatencyMs: 100}}, automatic: true},
+		{name: "manual remains default", rows: []sqlc.FeatureFlagRequestOutcomesRow{{DecisionType: "boolean", DecisionValue: "true", RequestCount: 50, UsedCount: 50, P95LatencyMs: 100}}, automatic: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e, scope, evidenceStore := setupAutomaticProgressiveRollout(t, tt.rows, now.Add(-5*time.Minute))
+			if !tt.automatic {
+				current, err := e.store.GetFeatureFlags(context.Background(), scope, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				current.Flags[0].Rules[0].Progression.AutoAdvance = false
+				if _, err := e.store.UpdateFeatureFlags(context.Background(), state.FeatureFlagUpdate{Scope: scope, ExpectedVersion: current.Version, Config: current.Config, Actor: e.acct.ID}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			candidate := state.FeatureFlagAutoRolloutCandidate{Scope: scope, ProjectSlug: "rollouts", EnvironmentSlug: "production"}
+			if err := e.s.autoAdvanceFeatureFlagRollout(context.Background(), candidate, now); err != nil {
+				t.Fatal(err)
+			}
+			current, err := e.store.GetFeatureFlags(context.Background(), scope, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantVersion := int64(2)
+			if !tt.automatic {
+				wantVersion = 3
+			}
+			if current.Version != wantVersion || current.Flags[0].Rules[0].Progression.CurrentStage != 0 || *current.Flags[0].Rules[0].Rollout != 100 {
+				t.Fatalf("held rollout changed configuration: %+v", current)
+			}
+			if tt.automatic && evidenceStore.query.FlagKey != "new-export" {
+				t.Fatalf("expected unhealthy rule to be evaluated, query=%+v", evidenceStore.query)
+			}
+			if !tt.automatic && evidenceStore.query.FlagKey != "" {
+				t.Fatalf("manual rule should not be evaluated automatically, query=%+v", evidenceStore.query)
+			}
+		})
 	}
 }

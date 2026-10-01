@@ -5,13 +5,16 @@ from typing import Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 
+from ..types import UNSET, Unset
+
 T = TypeVar("T", bound="ProgressiveRollout")
 
 
 @_attrs_define
 class ProgressiveRollout:
-    """Health-gated, operator-promoted stages for a boolean true rule. The rule rollout must equal stages[current_stage];
-    stages must strictly increase and end at 10000 basis points.
+    """Health-gated stages for a boolean true rule. Promotion is manual by default; auto_advance opts into server-managed
+    promotion after a full healthy evidence window. The rule rollout must equal stages[current_stage]; stages must
+    strictly increase and end at 10000 basis points.
 
     """
 
@@ -27,6 +30,9 @@ class ProgressiveRollout:
     """Highest allowed conservative p95 latency bucket bound for the targeted rule."""
     window_seconds: int
     """Evidence lookback window; must fit within debugger retention."""
+    auto_advance: bool | Unset = False
+    """When true, the platform automatically advances one stage after the full observation window passes all
+    evidence gates. Omitted or false keeps promotion manual."""
 
     def to_dict(self) -> dict[str, Any]:
         stages = self.stages
@@ -41,6 +47,8 @@ class ProgressiveRollout:
 
         window_seconds = self.window_seconds
 
+        auto_advance = self.auto_advance
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -53,6 +61,8 @@ class ProgressiveRollout:
                 "window_seconds": window_seconds,
             }
         )
+        if auto_advance is not UNSET:
+            field_dict["auto_advance"] = auto_advance
 
         return field_dict
 
@@ -71,6 +81,8 @@ class ProgressiveRollout:
 
         window_seconds = d.pop("window_seconds")
 
+        auto_advance = d.pop("auto_advance", UNSET)
+
         progressive_rollout = cls(
             stages=stages,
             current_stage=current_stage,
@@ -78,6 +90,7 @@ class ProgressiveRollout:
             maximum_http_5xx_rate_basis_points=maximum_http_5xx_rate_basis_points,
             maximum_p95_latency_ms=maximum_p95_latency_ms,
             window_seconds=window_seconds,
+            auto_advance=auto_advance,
         )
 
         return progressive_rollout

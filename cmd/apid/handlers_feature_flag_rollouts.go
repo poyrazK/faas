@@ -7,6 +7,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 type promoteFeatureFlagRolloutRequest struct {
@@ -35,6 +36,42 @@ type featureFlagRolloutPromotionResponse struct {
 	MaximumP95LatencyMS           int        `json:"maximum_p95_latency_ms"`
 	WindowStart                   *time.Time `json:"window_start,omitempty"`
 	WindowEnd                     *time.Time `json:"window_end,omitempty"`
+}
+
+type featureFlagRolloutHealth struct {
+	RequestCount     int64
+	UsedCount        int64
+	HTTP5xxCount     int64
+	HTTP5xxRate      float64
+	P95LatencyMS     int32
+	LatencyQuantized bool
+	HoldReason       string
+}
+
+func evaluateFeatureFlagRolloutHealth(progression flags.ProgressiveRollout, rows []sqlc.FeatureFlagRequestOutcomesRow) featureFlagRolloutHealth {
+	health := featureFlagRolloutHealth{}
+	for _, row := range rows {
+		if row.DecisionType == "boolean" && row.DecisionValue == "true" {
+			health.RequestCount = row.RequestCount
+			health.UsedCount = row.UsedCount
+			health.HTTP5xxCount = row.ErrorCount
+			health.P95LatencyMS = row.P95LatencyMs
+			health.LatencyQuantized = true
+			if row.RequestCount > 0 {
+				health.HTTP5xxRate = float64(row.ErrorCount) / float64(row.RequestCount)
+			}
+			break
+		}
+	}
+	switch {
+	case health.UsedCount < progression.MinimumUsedRequests:
+		health.HoldReason = "insufficient_used_requests"
+	case health.HTTP5xxRate > float64(progression.MaximumHTTP5xxRateBasisPoints)/10000:
+		health.HoldReason = "http_5xx_rate_exceeded"
+	case int(health.P95LatencyMS) > progression.MaximumP95LatencyMS:
+		health.HoldReason = "p95_latency_exceeded"
+	}
+	return health
 }
 
 func (s *server) promoteFeatureFlagRollout(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -136,28 +173,17 @@ func (s *server) promoteFeatureFlagRollout(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	response.WindowStart, response.WindowEnd = &start, &end
-	for _, row := range rows {
-		if row.DecisionType == "boolean" && row.DecisionValue == "true" {
-			response.RequestCount = row.RequestCount
-			response.UsedCount = row.UsedCount
-			response.HTTP5xxCount = row.ErrorCount
-			response.P95LatencyMS = row.P95LatencyMs
-			response.LatencyQuantized = true
-			if row.RequestCount > 0 {
-				response.HTTP5xxRate = float64(row.ErrorCount) / float64(row.RequestCount)
-			}
-			break
-		}
-	}
-	switch {
-	case response.UsedCount < progression.MinimumUsedRequests:
-		response.Reason = "insufficient_used_requests"
-	case response.HTTP5xxRate > float64(progression.MaximumHTTP5xxRateBasisPoints)/10000:
-		response.Reason = "http_5xx_rate_exceeded"
-	case int(response.P95LatencyMS) > progression.MaximumP95LatencyMS:
-		response.Reason = "p95_latency_exceeded"
-	default:
+	health := evaluateFeatureFlagRolloutHealth(progression, rows)
+	response.RequestCount = health.RequestCount
+	response.UsedCount = health.UsedCount
+	response.HTTP5xxCount = health.HTTP5xxCount
+	response.HTTP5xxRate = health.HTTP5xxRate
+	response.P95LatencyMS = health.P95LatencyMS
+	response.LatencyQuantized = health.LatencyQuantized
+	if health.HoldReason == "" {
 		response.Status = "promoted"
+	} else {
+		response.Reason = health.HoldReason
 	}
 	if response.Status == "held" {
 		s.audit.Emit(r.Context(), "flags.rollout_held", &scope.AccountID, map[string]any{

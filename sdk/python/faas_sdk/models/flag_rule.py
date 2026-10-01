@@ -29,8 +29,9 @@ class FlagRule:
     rollout: int | Unset = UNSET
     """Basis points of eligible customers; omitted means all eligible customers."""
     progression: ProgressiveRollout | Unset = UNSET
-    """Health-gated, operator-promoted stages for a boolean true rule. The rule rollout must equal
-    stages[current_stage]; stages must strictly increase and end at 10000 basis points."""
+    """Health-gated stages for a boolean true rule. Promotion is manual by default; auto_advance opts into server-
+    managed promotion after a full healthy evidence window. The rule rollout must equal stages[current_stage];
+    stages must strictly increase and end at 10000 basis points."""
     value: bool | str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
