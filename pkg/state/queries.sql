@@ -5548,7 +5548,7 @@ INSERT INTO invocations (
   sqlc.narg(platform_tenant_id), nullif(sqlc.arg(deployment_scope)::text, ''), sqlc.narg(queue_binding_id)
 ) RETURNING *;
 
--- Queue binding/consumer publication (ADR-386). Parent locks also serialize
+-- Queue binding/consumer publication (ADR-387). Parent locks also serialize
 -- trigger admission, so quota checks and the projection share the same commit.
 -- name: QueueConsumerLockApp :one
 select id, account_id, type, workload_class from apps

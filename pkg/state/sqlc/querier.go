@@ -1124,7 +1124,7 @@ type Querier interface {
 	QueueConsumerDisableTrigger(ctx context.Context, db DBTX, arg QueueConsumerDisableTriggerParams) (int64, error)
 	QueueConsumerInsertBinding(ctx context.Context, db DBTX, arg QueueConsumerInsertBindingParams) (QueueBinding, error)
 	QueueConsumerLockAccount(ctx context.Context, db DBTX, id pgtype.UUID) (QueueConsumerLockAccountRow, error)
-	// Queue binding/consumer publication (ADR-386). Parent locks also serialize
+	// Queue binding/consumer publication (ADR-387). Parent locks also serialize
 	// trigger admission, so quota checks and the projection share the same commit.
 	QueueConsumerLockApp(ctx context.Context, db DBTX, arg QueueConsumerLockAppParams) (QueueConsumerLockAppRow, error)
 	QueueConsumerNotify(ctx context.Context, db DBTX, payload string) error

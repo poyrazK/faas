@@ -16109,7 +16109,7 @@ type QueueConsumerLockAppRow struct {
 	WorkloadClass string
 }
 
-// Queue binding/consumer publication (ADR-386). Parent locks also serialize
+// Queue binding/consumer publication (ADR-387). Parent locks also serialize
 // trigger admission, so quota checks and the projection share the same commit.
 func (q *Queries) QueueConsumerLockApp(ctx context.Context, db DBTX, arg QueueConsumerLockAppParams) (QueueConsumerLockAppRow, error) {
 	row := db.QueryRow(ctx, queueConsumerLockApp, arg.AppID, arg.AccountID)

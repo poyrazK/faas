@@ -20,7 +20,7 @@
 # implicitly anchored, so the regex MUST match the case exactly.
 
 groups:
-  # ADR-386: source discovery health is separate from approved-intent/runtime
+  # ADR-387: source discovery health is separate from approved-intent/runtime
   # convergence. Counts come from one durable fleet observation per scrape;
   # max avoids counting the same sources again on every apid replica.
   - name: faas_environment_git_sources

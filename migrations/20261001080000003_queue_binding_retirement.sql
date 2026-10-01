@@ -1,7 +1,7 @@
 -- filename: 20261001080000003_queue_binding_retirement.sql
 
 -- +goose Up
--- Queue pruning retains durable consumer and delivery identity (ADR-386).
+-- Queue pruning retains durable consumer and delivery identity (ADR-387).
 -- Existing bindings remain active; no legacy scope or ownership is inferred.
 ALTER TABLE queue_bindings ADD COLUMN IF NOT EXISTS retired_at timestamptz;
 -- +goose StatementBegin
