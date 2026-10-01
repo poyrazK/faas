@@ -15,6 +15,8 @@ import (
 // InstanceSource is the authoritative instance projection needed by the raw
 // TCP edge. Keeping it narrow lets tcpd use either PgStore or MemStore.
 type InstanceSource interface {
+	AppByID(context.Context, string) (state.App, error)
+	TCPListenerByAppAndName(context.Context, string, string) (state.TCPListener, error)
 	LiveDeployments(context.Context, string) ([]state.Deployment, error)
 	ListInstancesForApp(ctx context.Context, appID string) ([]state.Instance, error)
 }
@@ -46,6 +48,27 @@ func (r *StoreTargetResolver) ResolveTarget(ctx context.Context, route Route) (g
 	}
 	if err := ValidateRoute(route); err != nil {
 		return gateway.Target{}, err
+	}
+	if route.ListenerID == "" {
+		return gateway.Target{}, errors.New("TCP durable route requires a listener identity")
+	}
+	app, err := r.Instances.AppByID(ctx, route.AppID)
+	if err != nil {
+		return gateway.Target{}, fmt.Errorf("read TCP app: %w", err)
+	}
+	if app.Status == state.AppDeleted || (route.AccountID != "" && app.AccountID != route.AccountID) {
+		return gateway.Target{}, errors.New("TCP app ownership no longer matches listener")
+	}
+	if app.MaintenanceMode {
+		return gateway.Target{}, errors.New("TCP app is in maintenance mode")
+	}
+	intent, err := r.Instances.TCPListenerByAppAndName(ctx, route.AppID, route.ListenerName)
+	if err != nil {
+		return gateway.Target{}, fmt.Errorf("read TCP listener intent: %w", err)
+	}
+	if intent.ID != route.ListenerID || !intent.Enabled || intent.AppID != route.AppID || intent.AccountID != app.AccountID ||
+		intent.PublicPort != route.PublicPort || intent.GuestPort != route.GuestPort || intent.Protocol != "tcp" {
+		return gateway.Target{}, errors.New("TCP listener is disabled or changed")
 	}
 	selectedDeploymentID, err := ingressroute.Deployment(ctx, r.Instances, route.AppID, rand.Uint64())
 	if err != nil {

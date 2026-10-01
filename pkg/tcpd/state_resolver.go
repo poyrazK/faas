@@ -27,7 +27,16 @@ func (r ListenerStoreResolver) Resolve(ctx context.Context, publicPort int) (Rou
 	if err != nil {
 		return Route{}, false, fmt.Errorf("resolve TCP listener on public port %d: %w", publicPort, err)
 	}
+	route, err := routeFromListener(listener)
+	if err != nil {
+		return Route{}, false, err
+	}
+	return route, true, nil
+}
+
+func routeFromListener(listener state.TCPListener) (Route, error) {
 	route := Route{
+		ListenerID:   listener.ID,
 		PublicPort:   listener.PublicPort,
 		AppID:        listener.AppID,
 		AccountID:    listener.AccountID,
@@ -36,7 +45,7 @@ func (r ListenerStoreResolver) Resolve(ctx context.Context, publicPort int) (Rou
 		Protocol:     listener.Protocol,
 	}
 	if err := ValidateRoute(route); err != nil {
-		return Route{}, false, err
+		return Route{}, err
 	}
-	return route, true, nil
+	return route, nil
 }
