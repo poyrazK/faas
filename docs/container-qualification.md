@@ -877,3 +877,7 @@ UDP list/create/update/delete operations now document HTTP403 scope/MFA rejectio
 ### UDP schema-driven Node/Python regeneration (2026-10-01)
 
 Node and Python SDKs were regenerated from the corrected UDP schema. Node compilation passed; four Python container-listener tests passed, including explicit public_port=0 request encoding and model round-trip alongside omission behavior (`/tmp/gregale-udp-schema-{node-gen,node-build,python-gen,python-tests-final}.log`). Final generated diffs are confined to UDP request model/types and operation response handling. A transient issues.py diff during Python generation disappeared when its generator completed; no unrelated source was reverted. All launched handles are terminal. Isolated schema/SDK publication and regeneration determinism checks remain pending, as do native/deployed acceptance.
+
+### UDP schema SDK regeneration determinism (2026-10-01)
+
+Both Node and Python SDKs were regenerated twice in sequence from the committed corrected schema. Each completed regenerate-and-diff check left its generated tree unchanged; final whole-worktree status was clean before this evidence entry. Logs are `/tmp/gregale-udp-sdk-{node,python}-determinism.log`. Python rebuilds its tree during generation, so intermediate differences were not used as final results or reverted. All launched handles are terminal. This verifies committed generator output stability, not a new runtime SDK qualification. Isolated schema/SDK publication and native/deployed acceptance remain pending.
