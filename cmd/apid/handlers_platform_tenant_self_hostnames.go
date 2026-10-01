@@ -79,7 +79,7 @@ func (s *server) createPlatformTenantSelfHostname(w http.ResponseWriter, r *http
 			api.WriteProblem(w, api.ErrTenantHostnameQuota(acct.Plan, surfaceQuota.SurfaceID, surfaceQuota.Limit, surfaceQuota.Observed))
 			return
 		}
-		api.WriteProblem(w, api.ErrCapacity("could not add delegated tenant hostname"))
+		api.WriteProblem(w, tenantBindingWriteProblem(err, api.ErrCapacity("could not add delegated tenant hostname")))
 		return
 	}
 	if result.Action == "created" {

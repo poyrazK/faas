@@ -164,3 +164,84 @@ func TestTrafficTenantHTTPPublicationRefusalAndRepair(t *testing.T) {
 		}
 	}
 }
+
+func (s *refusingTrafficTenantStore) DeleteTenantHostnameForSurface(ctx context.Context, host, surface string) error {
+	s.calls++
+	if s.refusal != nil {
+		return fmt.Errorf("private transition witness: %w", s.refusal)
+	}
+	return s.MemStore.DeleteTenantHostnameForSurface(ctx, host, surface)
+}
+
+func (s *refusingTrafficTenantStore) DeleteTenantSurfaceWithHostnames(ctx context.Context, surface, account string) error {
+	s.calls++
+	if s.refusal != nil {
+		return fmt.Errorf("private transition witness: %w", s.refusal)
+	}
+	return s.MemStore.DeleteTenantSurfaceWithHostnames(ctx, surface, account)
+}
+
+func TestTrafficTenantAPIRemovalRefusalPrivacyAndRepair(t *testing.T) {
+	for _, mode := range []string{"hostname", "cascade", "missing-seam"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Setenv("FAAS_TENANT_SURFACES_ENABLED", "true")
+			e, _ := newTestServerWithCapturingNotifier(t, api.PlanPro)
+			surface, host := trafficTenantAPIFixture(t, e)
+			refusal := &state.TrafficPolicyAggregateError{Scope: "private_owner_scope", Host: "private.foreign.example", Unit: "bytes", Limit: api.TrafficPolicyMaxHostBytes, Observed: api.TrafficPolicyMaxHostBytes + 8123}
+			refusing := &refusingTrafficTenantStore{MemStore: e.store, refusal: refusal}
+			e.s.store = refusing
+			path := "/v1/apps/traffic-tenant-api/tenant-surfaces/" + surface.ID
+			if mode == "hostname" {
+				path += "/hostnames/" + host.Hostname
+			}
+			if mode == "missing-seam" {
+				e.s.store = struct{ state.Store }{e.store}
+			}
+			before, err := e.store.ListEvents(t.Context(), "", 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			response := e.do(t, http.MethodDelete, path, nil, nil)
+			if mode == "missing-seam" {
+				if response.Code != http.StatusInternalServerError && response.Code != http.StatusServiceUnavailable {
+					t.Fatalf("missing atomic seam: %d", response.Code)
+				}
+			} else {
+				var body map[string]any
+				if response.Code != http.StatusUnprocessableEntity || json.Unmarshal(response.Body.Bytes(), &body) != nil || body["code"] != api.CodeTrafficPolicyTooLarge || body["observed"] != float64(refusal.Limit+1) || body["docs_url"] == nil || strings.Contains(response.Body.String(), "private.") || strings.Contains(response.Body.String(), "private_owner_scope") {
+					t.Fatalf("private binding refusal: status=%d body=%s", response.Code, response.Body.String())
+				}
+			}
+			after, err := e.store.ListEvents(t.Context(), "", 0)
+			if err != nil || len(after) != len(before) {
+				t.Fatal("refusal emitted audit")
+			}
+			if rows, err := e.store.ListTenantHostnamesForSurface(t.Context(), surface.ID); err != nil || len(rows) != 1 || rows[0].ID != host.ID {
+				t.Fatal("refusal removed a hostname")
+			}
+			e.s.store = refusing
+			refusing.refusal = nil
+			if response := e.do(t, http.MethodDelete, path, nil, nil); response.Code != http.StatusNoContent {
+				t.Fatalf("repair: %d %s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestTrafficTenantBindingProblemRedactsForeignCounts(t *testing.T) {
+	for _, refusal := range []error{
+		&state.TrafficPolicyProjectionError{Scope: "private_scope", Limit: 100, Observed: 999},
+		&state.TrafficPolicyAggregateError{Scope: "private_scope", Host: "private.example", Unit: "rules", Limit: 100, Observed: 999},
+		&state.TrafficPolicyAnalysisError{Scope: "private_scope", Unit: "states", Limit: 100, Observed: 999},
+	} {
+		problem := tenantBindingWriteProblem(fmt.Errorf("private owner: %w", refusal), api.ErrInternal("fallback"))
+		encoded, err := json.Marshal(problem)
+		if err != nil || strings.Contains(string(encoded), "private") || strings.Contains(string(encoded), "999") {
+			t.Fatalf("binding problem disclosed another owner: %s", encoded)
+		}
+		var body map[string]any
+		if json.Unmarshal(encoded, &body) != nil || body["observed"] != float64(101) || body["docs_url"] == nil {
+			t.Fatalf("binding problem omitted lower bound: %s", encoded)
+		}
+	}
+}

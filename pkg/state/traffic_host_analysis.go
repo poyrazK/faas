@@ -67,6 +67,9 @@ type trafficHostAnalysis struct {
 	SelectDomains     bool                 `json:"-"`
 	AllowGlobalRoutes bool                 `json:"-"`
 	DomainClaims      []trafficDomainClaim `json:"-"`
+	TenantClaims      []trafficTenantClaim `json:"-"`
+	SelectTenants     bool                 `json:"-"`
+	TenantSurfaces    bool                 `json:"-"`
 }
 
 // Binding identity gives a new publication no legacy selector allowance.
@@ -188,7 +191,7 @@ func (v trafficHostTotals) exceeds() bool {
 type hostAnalysisRef struct {
 	side, group                                                 int
 	ordinary                                                    bool
-	domain, tenant                                              bool
+	domain, tenant, tenantClaim                                 bool
 	claim, reservation, primaryReservation, platform, syntactic bool
 }
 
@@ -595,6 +598,7 @@ func checkTrafficHostAnalysisWithBudgets(ctx context.Context, before, after traf
 		accepted := [2]map[int]bool{make(map[int]bool), make(map[int]bool)}
 		bindings := [2]map[trafficHostDomain]*trafficHostEnvironment{make(map[trafficHostDomain]*trafficHostEnvironment), make(map[trafficHostDomain]*trafficHostEnvironment)}
 		var claims [2]*trafficDomainClaim
+		var tenantClaims [2]*trafficTenantClaim
 		var reserved, primaryReserved, platform, syntactic [2]bool
 		for _, position := range positions {
 			for _, ref := range machine.nodes[position].accepted {
@@ -604,6 +608,8 @@ func checkTrafficHostAnalysisWithBudgets(ctx context.Context, before, after traf
 					if claims[ref.side] == nil || trafficDomainClaimPrecedes(*claim, *claims[ref.side]) {
 						claims[ref.side] = claim
 					}
+				case ref.tenantClaim:
+					tenantClaims[ref.side] = &views[ref.side].TenantClaims[ref.group]
 				case ref.reservation:
 					reserved[ref.side] = true
 				case ref.primaryReservation:
@@ -638,6 +644,9 @@ func checkTrafficHostAnalysisWithBudgets(ctx context.Context, before, after traf
 			}
 			if view.SelectDomains {
 				selectTrafficDomainBindings(bindings[side], claims[side], platform[side] || syntactic[side])
+			}
+			if view.SelectTenants {
+				selectTrafficTenantBindings(bindings[side], tenantClaims[side], view.TenantSurfaces, platform[side] || syntactic[side])
 			}
 			reserved[side] = syntactic[side] || platform[side] && primaryReserved[side] || !platform[side] && reserved[side]
 			if view.AllowGlobalRoutes && !reserved[side] && trafficAcceptedRoute(view, accepted[side]) {

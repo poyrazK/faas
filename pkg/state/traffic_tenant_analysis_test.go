@@ -15,7 +15,7 @@ import (
 
 var trafficTenantActivationModes = []string{"plain", "challenge", "surface", "tenant", "link", "namespace", "uppercase", "unchanged", "stale", "canceled", "foreign"}
 
-func trafficTenantClaim(t *testing.T, store Store, account Account, app App, hostname string) (TenantSurface, TenantHostname) {
+func newTrafficTenantClaim(t *testing.T, store Store, account Account, app App, hostname string) (TenantSurface, TenantHostname) {
 	t.Helper()
 	limits := api.MustLimitsFor(account.Plan)
 	surface, err := store.CreateTenantSurfaceIfUnderQuota(t.Context(), CreateTenantSurfaceParams{AccountID: account.ID, AppID: app.ID, Name: "traffic-tenant"}, limits)
@@ -37,7 +37,7 @@ func testTrafficTenantActivation(t *testing.T, store Store, account Account, app
 	} else if mode == "uppercase" {
 		hostname = strings.ToUpper(hostname)
 	}
-	surface, host := trafficTenantClaim(t, store, account, app, hostname)
+	surface, host := newTrafficTenantClaim(t, store, account, app, hostname)
 	platform := store.(PlatformTenantStore)
 	var tenant PlatformTenant
 	if mode == "tenant" || mode == "link" {
@@ -165,7 +165,7 @@ func TestMemTrafficTenantActivationRefusalAndRepair(t *testing.T) {
 
 func TestMemTrafficTenantMetadataCaseAliasesAndVisibility(t *testing.T) {
 	m, account, _, app, _ := memTrafficFixture(t)
-	surface, host := trafficTenantClaim(t, m, account, app, "UPPER.TENANT.EXAMPLE.TEST")
+	surface, host := newTrafficTenantClaim(t, m, account, app, "UPPER.TENANT.EXAMPLE.TEST")
 	if err := m.UpdateTenantSurfaceStatus(t.Context(), surface.ID, SurfaceStatusActive); err != nil {
 		t.Fatal(err)
 	}

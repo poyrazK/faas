@@ -285,24 +285,6 @@ func (q *Queries) ActivateTrafficPlatformTenant(ctx context.Context, db DBTX, ar
 	return data, err
 }
 
-const activateTrafficTenantSurface = `-- name: ActivateTrafficTenantSurface :execrows
-UPDATE tenant_surfaces SET status='active',updated_at=now()
-WHERE id=$1::uuid AND account_id=$2::uuid
-`
-
-type ActivateTrafficTenantSurfaceParams struct {
-	SurfaceID pgtype.UUID
-	AccountID pgtype.UUID
-}
-
-func (q *Queries) ActivateTrafficTenantSurface(ctx context.Context, db DBTX, arg ActivateTrafficTenantSurfaceParams) (int64, error) {
-	result, err := db.Exec(ctx, activateTrafficTenantSurface, arg.SurfaceID, arg.AccountID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const admitTrafficRetry = `-- name: AdmitTrafficRetry :one
 UPDATE traffic_retry_counters SET retries = retries + 1
 WHERE app_id = $1::uuid
@@ -2233,6 +2215,60 @@ func (q *Queries) DeleteTrafficCustomDomain(ctx context.Context, db DBTX, arg De
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const deleteTrafficTenantHostname = `-- name: DeleteTrafficTenantHostname :execrows
+DELETE FROM tenant_hostnames WHERE hostname=$1::text::citext
+  AND id=$2::uuid AND surface_id=$3::uuid
+`
+
+type DeleteTrafficTenantHostnameParams struct {
+	Hostname   string
+	HostnameID pgtype.UUID
+	SurfaceID  pgtype.UUID
+}
+
+func (q *Queries) DeleteTrafficTenantHostname(ctx context.Context, db DBTX, arg DeleteTrafficTenantHostnameParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteTrafficTenantHostname, arg.Hostname, arg.HostnameID, arg.SurfaceID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteTrafficTenantSurface = `-- name: DeleteTrafficTenantSurface :execrows
+UPDATE tenant_surfaces SET status = 'deleted', updated_at = now()
+WHERE id = $1::uuid AND account_id = $2::uuid
+AND status <> 'deleted'
+`
+
+type DeleteTrafficTenantSurfaceParams struct {
+	SurfaceID pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) DeleteTrafficTenantSurface(ctx context.Context, db DBTX, arg DeleteTrafficTenantSurfaceParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteTrafficTenantSurface, arg.SurfaceID, arg.AccountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteTrafficTenantSurfaceHostnames = `-- name: DeleteTrafficTenantSurfaceHostnames :exec
+DELETE FROM tenant_hostnames h USING tenant_surfaces s
+WHERE h.surface_id = s.id AND s.id = $1::uuid
+AND s.account_id = $2::uuid
+`
+
+type DeleteTrafficTenantSurfaceHostnamesParams struct {
+	SurfaceID pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) DeleteTrafficTenantSurfaceHostnames(ctx context.Context, db DBTX, arg DeleteTrafficTenantSurfaceHostnamesParams) error {
+	_, err := db.Exec(ctx, deleteTrafficTenantSurfaceHostnames, arg.SurfaceID, arg.AccountID)
+	return err
 }
 
 const deleteTrigger = `-- name: DeleteTrigger :exec
@@ -13697,6 +13733,59 @@ func (q *Queries) ReadTrafficAliasHostnameConflict(ctx context.Context, db DBTX,
 	return conflict, err
 }
 
+const readTrafficBindingClaims = `-- name: ReadTrafficBindingClaims :one
+WITH domains AS (
+    SELECT jsonb_build_object('Domain',d.domain,'App',d.app_id,
+        'Environment',coalesce(d.environment_id::text,''),'Account',a.account_id,
+        'Eligible',d.verified_at IS NOT NULL AND a.status<>'deleted' AND a.visibility<>'internal'
+            AND (d.environment_id IS NULL OR EXISTS (
+                SELECT 1 FROM project_environments e WHERE e.id=d.environment_id
+                  AND e.account_id=a.account_id AND e.project_id=a.project_id))) AS data
+    FROM custom_domains d JOIN apps a ON a.id=d.app_id
+    ORDER BY d.domain::text COLLATE "C" LIMIT ($1::integer+1)
+), tenants AS (
+    SELECT jsonb_build_object('Host',lower(h.hostname::text),'ID',h.id,
+        'Surface',s.id,'App',s.app_id,'Account',s.account_id,
+        'PlatformTenant',coalesce(s.platform_tenant_id::text,''),'Status',s.status,
+        'Verified',h.verified_at IS NOT NULL,
+        'Public',coalesce(a.account_id=s.account_id AND a.status<>'deleted' AND a.visibility<>'internal',false),
+        'Suspended',coalesce(t.status='suspended',false)) AS data
+    FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id=h.surface_id
+    LEFT JOIN apps a ON a.id=s.app_id
+    LEFT JOIN platform_tenants t ON t.id=s.platform_tenant_id
+    ORDER BY h.hostname::text COLLATE "C" LIMIT ($1::integer+1)
+), bounds AS (
+    SELECT (SELECT count(*) FROM domains)+(SELECT count(*) FROM tenants) AS inputs,
+        (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM domains)+
+        (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM tenants)+
+        octet_length(jsonb_build_object('Domains','[]'::jsonb,'Tenants','[]'::jsonb)::text) AS bytes
+)
+SELECT CASE WHEN inputs<=$1::integer AND bytes<=$2::bigint
+    THEN jsonb_build_object('Domains',(SELECT coalesce(jsonb_agg(data),'[]'::jsonb) FROM domains),
+        'Tenants',(SELECT coalesce(jsonb_agg(data),'[]'::jsonb) FROM tenants)) ELSE NULL::jsonb END::jsonb AS data,
+    inputs::bigint,bytes::bigint FROM bounds
+`
+
+type ReadTrafficBindingClaimsParams struct {
+	MaxInputs int32
+	MaxBytes  int64
+}
+
+type ReadTrafficBindingClaimsRow struct {
+	Data   []byte
+	Inputs int64
+	Bytes  int64
+}
+
+// All hostname reservations, including inactive/deleted surfaces. Discovery
+// transfers only identities and routing eligibility; no challenge or cert data.
+func (q *Queries) ReadTrafficBindingClaims(ctx context.Context, db DBTX, arg ReadTrafficBindingClaimsParams) (ReadTrafficBindingClaimsRow, error) {
+	row := db.QueryRow(ctx, readTrafficBindingClaims, arg.MaxInputs, arg.MaxBytes)
+	var i ReadTrafficBindingClaimsRow
+	err := row.Scan(&i.Data, &i.Inputs, &i.Bytes)
+	return i, err
+}
+
 const readTrafficDeploymentStatus = `-- name: ReadTrafficDeploymentStatus :one
 SELECT status FROM deployments WHERE id=$1::uuid
 `
@@ -16449,6 +16538,25 @@ type SetDeploymentSecretReloadSignalParams struct {
 // the state query keeps legacy NULL rows distinct from explicit opt-outs.
 func (q *Queries) SetDeploymentSecretReloadSignal(ctx context.Context, db DBTX, arg SetDeploymentSecretReloadSignalParams) (int64, error) {
 	result, err := db.Exec(ctx, setDeploymentSecretReloadSignal, arg.Signal, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setTrafficTenantSurfaceStatus = `-- name: SetTrafficTenantSurfaceStatus :execrows
+UPDATE tenant_surfaces SET status=$1::text,updated_at=now()
+WHERE id=$2::uuid AND account_id=$3::uuid
+`
+
+type SetTrafficTenantSurfaceStatusParams struct {
+	Status    string
+	SurfaceID pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) SetTrafficTenantSurfaceStatus(ctx context.Context, db DBTX, arg SetTrafficTenantSurfaceStatusParams) (int64, error) {
+	result, err := db.Exec(ctx, setTrafficTenantSurfaceStatus, arg.Status, arg.SurfaceID, arg.AccountID)
 	if err != nil {
 		return 0, err
 	}

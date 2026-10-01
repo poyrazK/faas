@@ -27,16 +27,22 @@ type CustomDomainRemovalOwnerStore interface {
 
 type trafficDomainBindingTx struct {
 	pgx.Tx
-	beforeClaims []trafficDomainClaim
-	globalBefore trafficHostAnalysis
-	accounts     []string
-	appsSuffix   string
-	appID        pgtype.UUID
-	release      func(context.Context)
+	beforeClaims  []trafficDomainClaim
+	beforeTenants []trafficTenantClaim
+	globalBefore  trafficHostAnalysis
+	accounts      []string
+	appsSuffix    string
+	appID         pgtype.UUID
+	release       func(context.Context)
 }
 
-func trafficDomainBindingOwners(ctx context.Context, reader sqlc.DBTX, claims []trafficDomainClaim, domain, originalAccount string) ([]string, error) {
+func trafficDomainBindingOwners(ctx context.Context, reader sqlc.DBTX, claims []trafficDomainClaim, tenants []trafficTenantClaim, domain, originalAccount string) ([]string, error) {
 	owners := trafficDomainOverlappingAccounts(claims, domain)
+	for _, tenant := range tenants {
+		if trafficDomainClaimsOverlap(domain, tenant.Host) {
+			owners = append(owners, tenant.Account)
+		}
+	}
 	owners = append(owners, originalAccount)
 	routes, err := sqlc.New().ReadTrafficGlobalRouteAccounts(ctx, reader, api.TrafficPolicyMaxAnalysisInputs)
 	if err != nil {
@@ -97,11 +103,11 @@ func (s *PgStore) beginTrafficDomainBinding(ctx context.Context, domain string, 
 func (s *PgStore) tryBeginTrafficDomainBinding(ctx context.Context, domain string, originalAccount, originalApp pgtype.UUID, requireClaim bool) (*trafficDomainBindingTx, bool, error) {
 	var accounts []string
 	err := boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
-		claims, err := readTrafficDomainClaims(bounded, s.pool)
+		claims, err := readTrafficBindingClaims(bounded, s.pool)
 		if err != nil {
 			return err
 		}
-		accounts, err = trafficDomainBindingOwners(bounded, s.pool, claims, domain, originalAccount.String())
+		accounts, err = trafficDomainBindingOwners(bounded, s.pool, claims.Domains, claims.Tenants, domain, originalAccount.String())
 		return err
 	})
 	if err != nil {
@@ -129,10 +135,11 @@ func (s *PgStore) tryBeginTrafficDomainBinding(ctx context.Context, domain strin
 			}
 		}
 		var err error
-		guarded.beforeClaims, err = readTrafficDomainClaims(bounded, tx)
+		claims, err := readTrafficBindingClaims(bounded, tx)
 		if err != nil {
 			return err
 		}
+		guarded.beforeClaims, guarded.beforeTenants = claims.Domains, claims.Tenants
 		account, err := sqlc.New().ReadAppTrafficAccount(bounded, tx, originalApp)
 		if err != nil {
 			return err
@@ -146,7 +153,7 @@ func (s *PgStore) tryBeginTrafficDomainBinding(ctx context.Context, domain strin
 				return ErrNotFound
 			}
 		}
-		fresh, err := trafficDomainBindingOwners(bounded, tx, guarded.beforeClaims, domain, originalAccount.String())
+		fresh, err := trafficDomainBindingOwners(bounded, tx, guarded.beforeClaims, guarded.beforeTenants, domain, originalAccount.String())
 		if err != nil {
 			return err
 		}
@@ -174,11 +181,11 @@ func (s *PgStore) tryBeginTrafficDomainBinding(ctx context.Context, domain strin
 }
 
 func (tx *trafficDomainBindingTx) Commit(ctx context.Context) error {
-	var claims []trafficDomainClaim
+	var claims trafficBindingClaims
 	var globalAfter trafficHostAnalysis
 	if err := boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
 		var err error
-		claims, err = readTrafficDomainClaims(bounded, tx.Tx)
+		claims, err = readTrafficBindingClaims(bounded, tx.Tx)
 		return err
 	}); err != nil {
 		return err
@@ -199,7 +206,7 @@ func (tx *trafficDomainBindingTx) Commit(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			if err := checkTrafficDomainBindingOwner(bounded, view, tx.beforeClaims, claims, account, tx.globalBefore, globalAfter); err != nil {
+			if err := checkTrafficTenantBindingOwner(bounded, view, view, tx.beforeClaims, claims.Domains, tx.beforeTenants, claims.Tenants, account, tx.globalBefore, globalAfter); err != nil {
 				return err
 			}
 		}

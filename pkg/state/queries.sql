@@ -5524,6 +5524,40 @@ SELECT CASE WHEN inputs<=sqlc.arg(max_inputs)::integer AND bytes<=sqlc.arg(max_b
     THEN (SELECT coalesce(jsonb_agg(data),'[]'::jsonb) FROM claims) ELSE NULL::jsonb END::jsonb AS data,
     inputs,bytes FROM bounds;
 
+-- name: ReadTrafficBindingClaims :one
+-- All hostname reservations, including inactive/deleted surfaces. Discovery
+-- transfers only identities and routing eligibility; no challenge or cert data.
+WITH domains AS (
+    SELECT jsonb_build_object('Domain',d.domain,'App',d.app_id,
+        'Environment',coalesce(d.environment_id::text,''),'Account',a.account_id,
+        'Eligible',d.verified_at IS NOT NULL AND a.status<>'deleted' AND a.visibility<>'internal'
+            AND (d.environment_id IS NULL OR EXISTS (
+                SELECT 1 FROM project_environments e WHERE e.id=d.environment_id
+                  AND e.account_id=a.account_id AND e.project_id=a.project_id))) AS data
+    FROM custom_domains d JOIN apps a ON a.id=d.app_id
+    ORDER BY d.domain::text COLLATE "C" LIMIT (sqlc.arg(max_inputs)::integer+1)
+), tenants AS (
+    SELECT jsonb_build_object('Host',lower(h.hostname::text),'ID',h.id,
+        'Surface',s.id,'App',s.app_id,'Account',s.account_id,
+        'PlatformTenant',coalesce(s.platform_tenant_id::text,''),'Status',s.status,
+        'Verified',h.verified_at IS NOT NULL,
+        'Public',coalesce(a.account_id=s.account_id AND a.status<>'deleted' AND a.visibility<>'internal',false),
+        'Suspended',coalesce(t.status='suspended',false)) AS data
+    FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id=h.surface_id
+    LEFT JOIN apps a ON a.id=s.app_id
+    LEFT JOIN platform_tenants t ON t.id=s.platform_tenant_id
+    ORDER BY h.hostname::text COLLATE "C" LIMIT (sqlc.arg(max_inputs)::integer+1)
+), bounds AS (
+    SELECT (SELECT count(*) FROM domains)+(SELECT count(*) FROM tenants) AS inputs,
+        (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM domains)+
+        (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM tenants)+
+        octet_length(jsonb_build_object('Domains','[]'::jsonb,'Tenants','[]'::jsonb)::text) AS bytes
+)
+SELECT CASE WHEN inputs<=sqlc.arg(max_inputs)::integer AND bytes<=sqlc.arg(max_bytes)::bigint
+    THEN jsonb_build_object('Domains',(SELECT coalesce(jsonb_agg(data),'[]'::jsonb) FROM domains),
+        'Tenants',(SELECT coalesce(jsonb_agg(data),'[]'::jsonb) FROM tenants)) ELSE NULL::jsonb END::jsonb AS data,
+    inputs::bigint,bytes::bigint FROM bounds;
+
 -- name: DeleteTrafficCustomDomain :execrows
 DELETE FROM custom_domains WHERE domain=sqlc.arg(domain)::text::citext AND app_id=sqlc.arg(app_id)::uuid;
 
@@ -5551,9 +5585,23 @@ WHERE hostname=sqlc.arg(hostname)::text::citext AND id=sqlc.arg(hostname_id)::uu
     (NOT sqlc.arg(challenge_bound)::boolean OR
         challenge_token=sqlc.arg(token)::text AND verified_at IS NULL);
 
--- name: ActivateTrafficTenantSurface :execrows
-UPDATE tenant_surfaces SET status='active',updated_at=now()
+-- name: SetTrafficTenantSurfaceStatus :execrows
+UPDATE tenant_surfaces SET status=sqlc.arg(status)::text,updated_at=now()
 WHERE id=sqlc.arg(surface_id)::uuid AND account_id=sqlc.arg(account_id)::uuid;
+
+-- name: DeleteTrafficTenantSurfaceHostnames :exec
+DELETE FROM tenant_hostnames h USING tenant_surfaces s
+WHERE h.surface_id = s.id AND s.id = sqlc.arg(surface_id)::uuid
+AND s.account_id = sqlc.arg(account_id)::uuid;
+
+-- name: DeleteTrafficTenantSurface :execrows
+UPDATE tenant_surfaces SET status = 'deleted', updated_at = now()
+WHERE id = sqlc.arg(surface_id)::uuid AND account_id = sqlc.arg(account_id)::uuid
+AND status <> 'deleted';
+
+-- name: DeleteTrafficTenantHostname :execrows
+DELETE FROM tenant_hostnames WHERE hostname=sqlc.arg(hostname)::text::citext
+  AND id=sqlc.arg(hostname_id)::uuid AND surface_id=sqlc.arg(surface_id)::uuid;
 
 -- name: ActivateTrafficPlatformTenant :one
 UPDATE platform_tenants SET status='active',updated_at=now()

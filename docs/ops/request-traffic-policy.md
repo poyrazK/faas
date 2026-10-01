@@ -633,3 +633,42 @@ selector-host generation changes, compile refusal and protected response
 evidence. A representative snapshot freeze benchmark measured 22.4 microseconds
 and 12.1 KB per request on the local M3 Pro; this is not deployed load evidence.
 These checks do not establish native or deployed acceptance.
+
+## Tenant binding changes
+
+Hostname creation, verification and removal, surface status changes and linking,
+tenant reactivation, bulk onboarding, reconciliation and offboarding validate
+both tenant-enabled and tenant-disabled routing before publishing intent. This
+includes overlapping custom-domain owners and global-route owners. A pending
+hostname or a hostname on a soft-deleted surface still reserves global routing
+until its row is removed. Active verified public tenant surfaces precede domain
+fallback; a suspended tenant blocks it while retaining its claims. Platform
+namespaces retain precedence.
+
+A deletion or suspension can expose an oversized domain policy owned by another
+account. These changes return the existing `traffic_policy_too_large` or
+`traffic_policy_too_complex` problem with HTTP 422. The response gives the cap
+and a proven lower bound, excluding foreign hostnames, policy scopes and exact
+counts. Repair the affected policy and retry; an operator may be needed for
+another account's policy. Refused bulk operations preserve links, credentials,
+webhooks and receipts. Dry runs and reconciliation plans validate the complete
+proposed topology without publishing it. The HTTP surface deletion cascade
+removes the surface and hostname rows atomically.
+
+Immediate platform-tenant suspension remains available independently of
+cleanup. It retains claims and blocks dispatch. Offboarding additionally
+releases managed claims and can refuse an unsafe fallback; repair that policy
+before retrying cleanup.
+
+PostgreSQL transactions discover owners, acquire the global routing lock and
+sorted account locks before a repeatable-read snapshot, and repeat discovery
+before writing. Lock retries release the connection between attempts.
+Verification binds the observed challenge and hostname row; removal binds the
+HTTP-authorized surface and original row. The memory store stages and validates
+its final topology before publishing maps or side effects.
+
+This coordination is local software evidence. App/alias/revision/operator binding
+transitions, complete preview/runtime/path agreement, real daemon fleet load and
+recovery, customer/staging acceptance, and native VM/firewall/leak acceptance
+remain release gates. No dedicated Linux x86_64 KVM acceptance host is currently
+available.

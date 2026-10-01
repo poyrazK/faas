@@ -140,8 +140,11 @@ func (m *MemStore) SetPlatformTenantStatus(ctx context.Context, accountID, tenan
 	}
 	tenant.Status = status
 	tenant.UpdatedAt = time.Now().UTC()
+	if err := ctx.Err(); err != nil {
+		return PlatformTenant{}, err
+	}
 	if status == PlatformTenantActive {
-		if err := m.validateMemTrafficPolicyChangeLocked(ctx, accountID, memTrafficPolicyChange{PlatformTenants: map[string]PlatformTenant{tenantID: tenant}}); err != nil {
+		if err := m.checkMemTrafficTenantBindingLocked(ctx, accountID, nil, memTrafficPolicyChange{PlatformTenants: map[string]PlatformTenant{tenantID: tenant}}); err != nil {
 			return PlatformTenant{}, err
 		}
 	}
@@ -187,7 +190,7 @@ func (m *MemStore) LinkPlatformTenantSurface(ctx context.Context, accountID, ten
 	if attached := m.platformTenantBySurface[surfaceID]; attached != "" && attached != tenantID {
 		return TenantSurface{}, ErrConflict
 	}
-	if err := m.validateMemTrafficPolicyChangeLocked(ctx, accountID, memTrafficPolicyChange{TenantSurfaceLinks: map[string]string{surfaceID: tenantID}}); err != nil {
+	if err := m.checkMemTrafficTenantBindingLocked(ctx, accountID, nil, memTrafficPolicyChange{TenantSurfaceLinks: map[string]string{surfaceID: tenantID}}); err != nil {
 		return TenantSurface{}, err
 	}
 	m.platformTenantBySurface[surfaceID] = tenantID

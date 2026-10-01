@@ -9,37 +9,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
-
-func readTrafficDomainClaims(ctx context.Context, reader sqlc.DBTX) ([]trafficDomainClaim, error) {
-	bounded, cancel := context.WithTimeout(ctx, api.TrafficPolicyAnalysisSQLTimeout)
-	defer cancel()
-	row, err := sqlc.New().ReadTrafficDomainClaims(bounded, reader, sqlc.ReadTrafficDomainClaimsParams{
-		MaxInputs: api.TrafficPolicyMaxAnalysisInputs, MaxBytes: api.TrafficPolicyMaxAnalysisMetadataBytes,
-	})
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		if bounded.Err() != nil {
-			limit := api.TrafficPolicyAnalysisSQLTimeout.Milliseconds()
-			return nil, analysisLimit("database_time", "milliseconds", limit, limit+1)
-		}
-		return nil, fmt.Errorf("state: read domain binding metadata: %w", mapErr(err))
-	}
-	if row.Inputs > api.TrafficPolicyMaxAnalysisInputs {
-		return nil, analysisLimit("inputs", "bindings", api.TrafficPolicyMaxAnalysisInputs, row.Inputs)
-	}
-	if row.Bytes > api.TrafficPolicyMaxAnalysisMetadataBytes {
-		return nil, analysisLimit("metadata", "bytes", api.TrafficPolicyMaxAnalysisMetadataBytes, row.Bytes)
-	}
-	var claims []trafficDomainClaim
-	if err := json.Unmarshal(row.Data, &claims); err != nil {
-		return nil, fmt.Errorf("state: decode domain binding metadata: %w", err)
-	}
-	return claims, nil
-}
 
 func trafficDomainClaimsOverlap(a, b string) bool {
 	as, aw := WildcardDomainSuffix(a)
@@ -148,13 +118,10 @@ func (m *MemStore) appendMemTrafficReservationsLocked(ctx context.Context, view 
 	if err := visitMemTrafficRows(ctx, m.domains, change.Domains, func(domain CustomDomain) error { return add("domain", domain.Domain) }); err != nil {
 		return err
 	}
-	for _, hostname := range m.tenantHostnames {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if err := add("tenant", hostname.Hostname); err != nil {
-			return err
-		}
+	if err := visitMemTrafficTenantHostnames(ctx, m.tenantHostnames, change.TenantHostnames, func(hostname TenantHostname) error {
+		return add("tenant", strings.ToLower(hostname.Hostname))
+	}); err != nil {
+		return err
 	}
 	sort.Slice(view.Reservations, func(i, j int) bool {
 		a, b := view.Reservations[i], view.Reservations[j]

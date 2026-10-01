@@ -1877,3 +1877,87 @@ tenant shadow/removal/reservation writers remain pending, along with complete
 alias/revision/operator transitions, runtime/preview agreement, observations,
 load/recovery/customer/staging and native VM/firewall/process-death/leak
 acceptance. No dedicated Linux x86_64 KVM host is available.
+
+### 2026-10-01 — tenant writers across binding owners
+
+Tenant hostname creation, verification and removal, surface status changes and
+linking, tenant reactivation, delegated hostname registration, bulk onboarding,
+reconciliation and offboarding now share bounded binding coordination. Native
+transactions discover overlapping domain and tenant owners plus global-route
+owners, acquire the global routing lock and sorted account locks before their
+repeatable-read snapshot, then repeat discovery. They wait without retaining a
+pool connection. Domain publication/removal includes overlapping tenant owners
+in the same lock set.
+
+Both tenant-enabled and tenant-disabled routing are checked. Active verified
+public tenant bindings precede exact/wildcard domains; suspended tenants block
+fallback while retaining their claims. Pending/inactive/unverified claims fall
+through to domains but still reserve global routing, including hostname rows on
+soft-deleted surfaces. Platform namespaces retain precedence. Newly exposed
+binding identities receive no legacy allowance.
+
+Bulk apply and reconciliation validate the final topology before publishing
+links, credentials, webhooks or receipts. Dry runs and plans preserve empty
+creation IDs and stable plan hashes. The memory store stages IDs and proposed
+links/claims before publishing maps or side effects. Offboarding checks its
+cleanup proposal before changing credentials or delegation policies. Immediate
+tenant suspension remains independently available when cleanup would expose an
+unsafe fallback. The HTTP surface deletion cascade now removes the authorized
+surface and its hostname reservations atomically. Hostname removal repeats the
+authorized surface and original row identity after lock waits.
+
+Tenant API problems retain the existing HTTP 422 codes, limit/observed and docs
+fields. A refusal caused by another owner's policy reports only a proven lower
+bound, without the foreign hostname, scope or exact count. Missing owner-bound
+HTTP removal seams refuse without changing intent or emitting an audit event.
+
+Local evidence:
+
+- Full affected state, internal gateway and API unit suites passed 6,485 named
+  cases: 2,077 state, 740 internal gateway and 3,668 API.
+- Selected private PostgreSQL coverage passed all 527 named cases with no skips:
+  371 state, 104 internal gateway and 52 API.
+- Across accepted profiles, 6,892 distinct named cases passed: 2,401 state,
+  823 internal gateway and 3,668 API. Another 1,010 guarded named cases remain
+  without acceptance: 987 state, seven gateway and 16 API.
+- All three affected packages, including tests, passed golangci-lint 2.4.0 with
+  zero issues. SQLC 1.31.1 reproduces all four generated Go files.
+- Frozen gate sources cover 12,456 files. The source database public schema
+  remains unmigrated; fsync, synchronous commit and full-page writes are on.
+
+Regressions cover foreign wildcard fallback, pending/deleted reservations,
+refusal/repair and cancellation, bulk linking, plan/apply agreement, preserved
+credentials/delegation/webhooks/receipts, immediate suspension, complete final
+reconciliation topology, case-insensitive claims, observed lock waits, stale
+removal authorization and single-connection recovery. Two PostgreSQL-backed
+in-process HTTP peers check tenant-to-domain fallback over HTTP/1.1 and
+negotiated HTTP/2 without notifications, immutable admitted policy and refused
+stale dispatch. Their scheduler and forwarding remain test seams.
+
+Diagnostics are preserved. Fixtures now use valid canonical bulk requests and
+intent enumeration to inspect reservations on deleted surfaces. API assertions
+use the existing RFC problem fields. Local disk exhaustion interrupted one run;
+only old entries from this task's Go cache were cleared before unchanged checks
+were rerun. A later interrupted PostgreSQL run was confirmed stopped by both
+its missing handle and absent process; its partial log is retained and excluded
+from acceptance. The safe final-topology regression found and fixed a memory
+ownership check so an owned unlinked managed surface can be adopted and cleaned
+in the same operation. No assertions were weakened, sources excluded or overlays
+used.
+
+Final lint identified an unused private domain reader after callers moved to
+the combined claim reader. Only that dead helper and its unused import were
+removed after the full gates; the previous gate file is exactly reconstructible
+from the removal receipt. The post-removal tenant transition checks and full
+lint passed. SQL, tests and assertions were unchanged by this removal. Remaining
+post-freeze edits finalize documentation and remaining-scope wording.
+
+Receipts, frozen hashes and compressed logs are in
+`/Users/poyrazk/dev/Cloud/gregale/outputs/traffic-tenant-transitions-20261001/`.
+No schema, SDK or limit values changed. All six release guarantees remain
+unchecked. App visibility/retirement/purge and broader alias/revision/operator
+binding transitions remain to be audited and guarded across owners, together
+with complete runtime/preview/synthetic/path agreement and observations, real
+daemon fleet load/recovery, customer/staging acceptance and native
+VM/restore/firewall/process-death/leak checks. No dedicated Linux x86_64 KVM
+acceptance host is available.

@@ -209,7 +209,7 @@ func (s *PgStore) LinkPlatformTenantConsumer(ctx context.Context, accountID, ten
 }
 
 func (s *PgStore) LinkPlatformTenantSurface(ctx context.Context, accountID, tenantID, surfaceID string) (TenantSurface, error) {
-	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(accountID))
+	tx, err := s.beginTrafficTenantBinding(ctx, accountID, nil)
 	if err != nil {
 		return TenantSurface{}, err
 	}

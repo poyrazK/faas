@@ -765,6 +765,45 @@ writers still need the shared complete binding projection and acceptance.
 Security withdrawal and negative transitions retain their existing semantics
 until those writers are guarded; this change does not accept the release gate.
 
+### Follow-up: tenant binding transitions across owners
+
+Tenant hostname creation, verification and removal, surface state changes and
+linking, tenant reactivation, bulk onboarding, reconciliation and offboarding
+share a bounded binding transaction. It discovers overlapping custom-domain
+and tenant owners plus global route owners, acquires the global routing lock
+and sorted account locks before its repeatable-read snapshot, then repeats the
+discovery. A changed owner/hostname set retries before writing intent. Domain
+publication/removal joins this coordination for overlapping tenant owners.
+
+The projection checks both tenant-enabled and tenant-disabled routing. With
+tenants enabled, an active verified public tenant binding precedes ordinary
+and wildcard domains; a suspended tenant claims its hostname and blocks those
+fallbacks. Pending/inactive/unverified tenant surfaces retain global hostname
+reservation but allow domain fallback, matching the router. Platform namespaces
+precede all tenant claims. A newly exposed owner/app/surface/hostname/tenant
+identity has zero old binding allowance. Foreign action bodies, tokens and
+display names never enter binding discovery or customer errors.
+
+Bulk changes validate their final proposed topology before committing links,
+credentials, quotas, webhooks or receipts. Dry runs and reconciliation plans
+evaluate that topology without publishing it. Memory stores stage the same
+proposal under their mutex; refusal and cancellation preserve all related
+intent. Hostname deletion repeats the HTTP-authorized surface and originally
+observed hostname row identity after lock waits.
+
+Direct platform-tenant suspension remains the immediate security withdrawal:
+it retains its hostname claims and blocks tenant/domain dispatch. Atomic
+offboarding also releases managed hostnames and can therefore refuse a newly
+exposed oversized fallback. Suspension remains available independently of that
+cleanup. Broader app/alias/revision/operator and real daemon/native acceptance are
+still separate release requirements.
+
+The HTTP surface deletion cascade is one guarded transaction: soft deletion and
+hostname removal are validated as the final topology and commit together. An
+additive owner-bound store seam carries the authorized account and surface;
+authoritative HTTP writers refuse when that seam is unavailable. A refused
+cascade publishes neither partial hostname cleanup nor an audit event.
+
 ### Follow-up: bounded request decision evidence
 
 Public-handler requests and managed HTTP service calls receive a separate,

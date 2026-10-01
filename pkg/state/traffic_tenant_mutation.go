@@ -28,7 +28,7 @@ func (s *PgStore) markTrafficTenantHostnameVerified(ctx context.Context, hostnam
 	if err != nil {
 		return false, mapErr(err)
 	}
-	tx, err := s.beginTrafficPolicyMutation(ctx, owner.AccountID)
+	tx, err := s.beginTrafficTenantBinding(ctx, owner.AccountID.String(), []string{hostname})
 	if err != nil {
 		return false, err
 	}
@@ -55,18 +55,18 @@ func (s *PgStore) MarkTenantHostnameVerifiedIfChallenge(ctx context.Context, hos
 	return s.markTrafficTenantHostnameVerified(ctx, hostname, token, true)
 }
 
-func (s *PgStore) activateTrafficTenantSurface(ctx context.Context, surface string) error {
+func (s *PgStore) setTrafficTenantSurfaceStatus(ctx context.Context, surface string, status SurfaceStatus) error {
 	queries := sqlc.New()
 	account, err := queries.ReadTenantSurfaceTrafficAccount(ctx, s.pool, uuidToPgtype(surface))
 	if err != nil {
 		return mapErr(err)
 	}
-	tx, err := s.beginTrafficPolicyMutation(ctx, account)
+	tx, err := s.beginTrafficTenantBinding(ctx, account.String(), nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	changed, err := queries.ActivateTrafficTenantSurface(ctx, tx, sqlc.ActivateTrafficTenantSurfaceParams{SurfaceID: uuidToPgtype(surface), AccountID: account})
+	changed, err := queries.SetTrafficTenantSurfaceStatus(ctx, tx, sqlc.SetTrafficTenantSurfaceStatusParams{SurfaceID: uuidToPgtype(surface), AccountID: account, Status: string(status)})
 	if err != nil {
 		return mapErr(err)
 	}
@@ -77,7 +77,7 @@ func (s *PgStore) activateTrafficTenantSurface(ctx context.Context, surface stri
 }
 
 func (s *PgStore) activateTrafficPlatformTenant(ctx context.Context, account, tenant string) (PlatformTenant, error) {
-	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(account))
+	tx, err := s.beginTrafficTenantBinding(ctx, account, nil)
 	if err != nil {
 		return PlatformTenant{}, err
 	}
@@ -94,4 +94,64 @@ func (s *PgStore) activateTrafficPlatformTenant(ctx context.Context, account, te
 		return PlatformTenant{}, err
 	}
 	return result, nil
+}
+
+// TenantHostnameRemovalOwnerStore carries the surface authorized by HTTP
+// through the transaction's lock wait and original hostname row predicate.
+type TenantHostnameRemovalOwnerStore interface {
+	DeleteTenantHostnameForSurface(context.Context, string, string) error
+}
+
+func (s *PgStore) deleteTrafficTenantHostname(ctx context.Context, hostname, expectedSurface string) error {
+	queries := sqlc.New()
+	owner, err := queries.ReadTenantHostnameTrafficOwner(ctx, s.pool, sqlc.ReadTenantHostnameTrafficOwnerParams{Hostname: hostname})
+	if err != nil {
+		return mapErr(err)
+	}
+	if expectedSurface != "" && owner.SurfaceID != uuidToPgtype(expectedSurface) {
+		return ErrNotFound
+	}
+	tx, err := s.beginTrafficTenantBinding(ctx, owner.AccountID.String(), []string{hostname})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	changed, err := queries.DeleteTrafficTenantHostname(ctx, tx, sqlc.DeleteTrafficTenantHostnameParams{Hostname: hostname, HostnameID: owner.ID, SurfaceID: owner.SurfaceID})
+	if err != nil {
+		return mapErr(err)
+	}
+	if changed == 0 {
+		return ErrNotFound
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *PgStore) DeleteTenantHostnameForSurface(ctx context.Context, hostname, surface string) error {
+	return s.deleteTrafficTenantHostname(ctx, hostname, surface)
+}
+
+// TenantSurfaceRemovalOwnerStore atomically deletes the authorized surface and
+// its hostname reservations. Refusal cannot leave a partial cascade.
+type TenantSurfaceRemovalOwnerStore interface {
+	DeleteTenantSurfaceWithHostnames(context.Context, string, string) error
+}
+
+func (s *PgStore) DeleteTenantSurfaceWithHostnames(ctx context.Context, surface, account string) error {
+	tx, err := s.beginTrafficTenantBinding(ctx, account, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	args := sqlc.DeleteTrafficTenantSurfaceParams{SurfaceID: uuidToPgtype(surface), AccountID: uuidToPgtype(account)}
+	changed, err := sqlc.New().DeleteTrafficTenantSurface(ctx, tx, args)
+	if err != nil {
+		return mapErr(err)
+	}
+	if changed == 0 {
+		return ErrNotFound
+	}
+	if err := sqlc.New().DeleteTrafficTenantSurfaceHostnames(ctx, tx, sqlc.DeleteTrafficTenantSurfaceHostnamesParams(args)); err != nil {
+		return mapErr(err)
+	}
+	return tx.Commit(ctx)
 }

@@ -10,33 +10,9 @@ import (
 )
 
 func (m *MemStore) appendMemTrafficTenantHostsLocked(ctx context.Context, account string, change memTrafficPolicyChange, view *trafficHostAnalysis, baseInputs int) error {
-	seen := make(map[string]bool)
-	visit := func(host TenantHostname) error {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if host.ID != "" && seen[host.ID] {
-			return nil
-		}
-		if host.ID != "" {
-			seen[host.ID] = true
-		}
-		if proposed, found := change.TenantHostnames[host.ID]; found {
-			host = proposed
-		}
+	return visitMemTrafficTenantHostnames(ctx, m.tenantHostnames, change.TenantHostnames, func(host TenantHostname) error {
 		return m.appendMemTrafficTenantHostLocked(host, account, change, view, baseInputs)
-	}
-	for _, host := range m.tenantHostnames {
-		if err := visit(host); err != nil {
-			return err
-		}
-	}
-	for _, host := range change.TenantHostnames {
-		if err := visit(host); err != nil {
-			return err
-		}
-	}
-	return nil
+	})
 }
 
 func (m *MemStore) appendMemTrafficTenantHostLocked(host TenantHostname, account string, change memTrafficPolicyChange, view *trafficHostAnalysis, baseInputs int) error {
@@ -92,7 +68,7 @@ func (m *MemStore) markTrafficTenantHostnameVerifiedLocked(ctx context.Context, 
 	}
 	host.VerifiedAt = time.Now().UTC()
 	host.LastCheckAt, host.LastError = host.VerifiedAt, ""
-	if err := m.validateMemTrafficPolicyChangeLocked(ctx, surface.AccountID, memTrafficPolicyChange{TenantHostnames: map[string]TenantHostname{host.ID: host}}); err != nil {
+	if err := m.checkMemTrafficTenantBindingLocked(ctx, surface.AccountID, []string{hostname}, memTrafficPolicyChange{TenantHostnames: map[string]TenantHostname{host.ID: host}}); err != nil {
 		return false, err
 	}
 	// Keep both case aliases coherent; policy metadata deduplicates their ID.

@@ -66,6 +66,16 @@ func (m *hostAnalysisMachine) addTrafficBindingLanguages(ctx context.Context, si
 			}
 		}
 	}
+	if view.SelectTenants && view.TenantSurfaces {
+		for i, claim := range view.TenantClaims {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if err := m.addTokens([]rune(claim.Host), hostAnalysisRef{side: side, group: i, tenantClaim: true}); err != nil {
+				return err
+			}
+		}
+	}
 	for _, reservation := range view.Reservations {
 		if err := ctx.Err(); err != nil {
 			return err

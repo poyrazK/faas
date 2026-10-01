@@ -3,78 +3,15 @@ package state
 
 import (
 	"context"
-	"sort"
 	"time"
-
-	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func (m *MemStore) checkMemTrafficDomainBindingLocked(ctx context.Context, domain string, proposed CustomDomain) error {
-	change := memTrafficPolicyChange{Domains: map[string]CustomDomain{domain: proposed}}
-	var before, after []trafficDomainClaim
-	var globalBefore, globalAfter trafficHostAnalysis
-	if err := boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
-		var err error
-		before, err = m.memTrafficDomainClaimsLocked(bounded, memTrafficPolicyChange{})
-		if err != nil {
-			return err
-		}
-		after, err = m.memTrafficDomainClaimsLocked(bounded, change)
-		return err
-	}); err != nil {
-		return err
-	}
-	if err := globalTrafficPolicyError(boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
-		var err error
-		globalBefore, err = m.readMemTrafficHostAnalysisLocked(bounded, "", memTrafficPolicyChange{GlobalRoutes: true})
-		if err != nil {
-			return err
-		}
-		globalChange := change
-		globalChange.GlobalRoutes = true
-		globalAfter, err = m.readMemTrafficHostAnalysisLocked(bounded, "", globalChange)
-		if err != nil {
-			return err
-		}
-		return checkTrafficHostAnalysis(bounded, globalBefore, globalAfter)
-	})); err != nil {
-		return err
-	}
-	owners := make(map[string]bool)
-	for _, account := range trafficDomainOverlappingAccounts(before, domain) {
-		owners[account] = true
-	}
+	account := m.apps[m.domains[domain].AppID].AccountID
 	if app, found := m.apps[proposed.AppID]; found {
-		owners[app.AccountID] = true
+		account = app.AccountID
 	}
-	for _, rule := range m.edgeRules {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if rule.Enabled && rule.Kind == EdgeRuleKindRoute {
-			owners[rule.AccountID] = true
-		}
-	}
-	if len(owners) > api.TrafficPolicyMaxAnalysisInputs {
-		return analysisLimit("inputs", "owners", api.TrafficPolicyMaxAnalysisInputs, int64(len(owners)))
-	}
-	accounts := make([]string, 0, len(owners))
-	for account := range owners {
-		accounts = append(accounts, account)
-	}
-	sort.Strings(accounts)
-	return boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
-		for _, account := range accounts {
-			view, err := m.readMemTrafficHostAnalysisLocked(bounded, account, memTrafficPolicyChange{})
-			if err != nil {
-				return err
-			}
-			if err := checkTrafficDomainBindingOwner(bounded, view, before, after, account, globalBefore, globalAfter); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	return m.checkMemTrafficTenantBindingLocked(ctx, account, []string{domain}, memTrafficPolicyChange{Domains: map[string]CustomDomain{domain: proposed}})
 }
 
 func (m *MemStore) deleteTrafficCustomDomainLocked(ctx context.Context, domain, expectedApp string, activity *OrgActivity) (int64, error) {

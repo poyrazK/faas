@@ -49,7 +49,7 @@ func (s *server) applyPlatformTenantOffboarding(w http.ResponseWriter, r *http.R
 			s.notFound(w, "no such platform tenant")
 			return
 		}
-		api.WriteProblem(w, api.ErrInternal("could not apply platform tenant offboarding"))
+		api.WriteProblem(w, tenantBindingWriteProblem(err, api.ErrInternal("could not apply platform tenant offboarding")))
 		return
 	}
 	s.audit.Emit(r.Context(), "platform_tenant.offboarded", &acct.ID, map[string]any{

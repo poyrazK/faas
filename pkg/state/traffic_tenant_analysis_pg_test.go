@@ -27,7 +27,7 @@ func TestPgTrafficTenantActivationRefusalAndRepair(t *testing.T) {
 
 func TestPgTrafficTenantMetadataEligibilityAndBounds(t *testing.T) {
 	store, pool, account, app := trafficHostPGFixture(t)
-	surface, host := trafficTenantClaim(t, store, account, app, "UPPER.TENANT.EXAMPLE.TEST")
+	surface, host := newTrafficTenantClaim(t, store, account, app, "UPPER.TENANT.EXAMPLE.TEST")
 	if err := store.UpdateTenantSurfaceStatus(t.Context(), surface.ID, SurfaceStatusActive); err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestPgTrafficTenantVerificationClaimReplacementDuringLockWait(t *testing.T)
 	for _, mode := range []string{"reused-token", "new-token", "plain"} {
 		t.Run(mode, func(t *testing.T) {
 			store, pool, account, app := trafficHostPGFixture(t)
-			surface, host := trafficTenantClaim(t, store, account, app, "replacement.tenant.example.test")
+			surface, host := newTrafficTenantClaim(t, store, account, app, "replacement.tenant.example.test")
 			if err := store.UpdateTenantSurfaceStatus(t.Context(), surface.ID, SurfaceStatusActive); err != nil {
 				t.Fatal(err)
 			}
@@ -169,30 +169,17 @@ func TestPgTrafficTenantVerificationClaimReplacementDuringLockWait(t *testing.T)
 				}
 				result <- err
 			}()
-			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
-			defer cancel()
-			for {
-				var waiting bool
-				if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE application_name=$1 AND state='idle' AND query LIKE '%pg_try_advisory_lock%')`, application).Scan(&waiting); err != nil {
-					t.Fatal(err)
-				}
-				if waiting {
-					break
-				}
-				select {
-				case <-ctx.Done():
-					t.Fatal("verifier did not reach an observed account-session wait")
-				case <-time.After(5 * time.Millisecond):
-				}
-			}
-			if err := store.DeleteTenantHostname(t.Context(), host.Hostname); err != nil {
+			awaitDomainRemovalSessionWait(t, pool, application)
+			// Simulate a legacy writer handing off the claim while the canonical
+			// verifier waits. Current removals participate in the same lock.
+			if _, err := pool.Exec(t.Context(), `DELETE FROM tenant_hostnames WHERE id=$1::uuid`, host.ID); err != nil {
 				t.Fatal(err)
 			}
 			token := host.ChallengeToken
 			if mode == "new-token" {
 				token = "replacement-private-token"
 			}
-			replacement, err := store.CreateTenantHostnameIfUnderQuota(t.Context(), CreateTenantHostnameParams{SurfaceID: surface.ID, Hostname: host.Hostname, ChallengeToken: token}, api.MustLimitsFor(account.Plan))
+			replacement, err := scanTenantHostname(pool.QueryRow(t.Context(), `INSERT INTO tenant_hostnames (surface_id,hostname,challenge_token) VALUES($1::uuid,$2,$3) RETURNING `+tenantHostnameCols, surface.ID, host.Hostname, token))
 			if err != nil || replacement.ID == host.ID {
 				t.Fatalf("replacement row: id=%q err=%v", replacement.ID, err)
 			}
