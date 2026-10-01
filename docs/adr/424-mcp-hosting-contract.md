@@ -1,4 +1,4 @@
-# ADR-423: MCP hosting on the application lifecycle
+# ADR-424: MCP hosting on the application lifecycle
 
 Status: Proposed (implementation and qualification in progress)
 

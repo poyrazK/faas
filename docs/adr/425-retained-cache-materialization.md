@@ -1,4 +1,4 @@
-# ADR-423 · Retain opened cache artifacts during VM materialization
+# ADR-425 · Retain opened cache artifacts during VM materialization
 
 - **Status:** proposed; native KVM acceptance pending
 - **Date:** 2026-10-01

@@ -53,7 +53,7 @@ func (r *observedMaterializationReader) LinkTo(path string) error {
 	return r.ReadCloser.(storage.LocalFileLinker).LinkTo(path)
 }
 
-// adr: 423
+// adr: 425
 func TestMaterializeStorageRetainsCacheFileOrCopiesOpenedStream(t *testing.T) {
 	for _, mode := range []string{"cache-miss", "oversized", "cross-device", "evicted"} {
 		t.Run(mode, func(t *testing.T) {
