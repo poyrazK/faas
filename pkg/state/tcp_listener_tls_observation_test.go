@@ -47,3 +47,27 @@ func TestTCPListenerTLSObservationStatus(t *testing.T) {
 		}
 	}
 }
+
+func TestTCPListenerTLSObservationEdgeIDBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		name, id string
+		valid    bool
+	}{
+		{"ascii-limit", strings.Repeat("a", 128), true},
+		{"utf8-byte-limit", strings.Repeat("é", 64), true},
+		{"ascii-over-limit", strings.Repeat("a", 129), false},
+		{"utf8-over-limit", strings.Repeat("é", 65), false},
+		{"empty", "", false},
+		{"leading-space", " edge", false},
+		{"trailing-space", "edge ", false},
+		{"ascii-control", "edge\nname", false},
+		{"unicode-control", "edge\u0085name", false},
+		{"invalid-utf8", string([]byte{0xff}), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := ValidateTCPListenerTLSEdgeID(tc.id); (err == nil) != tc.valid {
+				t.Fatalf("edge ID validation=%v expected valid=%v", err, tc.valid)
+			}
+		})
+	}
+}
