@@ -3465,6 +3465,60 @@ func (q *Queries) EnvironmentSecretReferenceQuota(ctx context.Context, db DBTX, 
 	return i, err
 }
 
+const environmentSecretReferenceSourcePresent = `-- name: EnvironmentSecretReferenceSourcePresent :one
+SELECT EXISTS(SELECT 1 FROM app_secrets WHERE account_id=$1::uuid AND app_id=$2::uuid
+ AND scope=$3::text AND key=$4::text) AS present
+`
+
+type EnvironmentSecretReferenceSourcePresentParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	Scope     string
+	Key       string
+}
+
+func (q *Queries) EnvironmentSecretReferenceSourcePresent(ctx context.Context, db DBTX, arg EnvironmentSecretReferenceSourcePresentParams) (bool, error) {
+	row := db.QueryRow(ctx, environmentSecretReferenceSourcePresent,
+		arg.AccountID,
+		arg.AppID,
+		arg.Scope,
+		arg.Key,
+	)
+	var present bool
+	err := row.Scan(&present)
+	return present, err
+}
+
+const environmentSecretReferenceWriteOwned = `-- name: EnvironmentSecretReferenceWriteOwned :one
+SELECT EXISTS(SELECT 1 FROM environment_git_sources s JOIN environment_gitops_resources r ON r.source_id=s.id
+ JOIN environment_managed_fields f ON f.source_id=s.id AND f.resource=r.logical_name
+ WHERE s.account_id=$1::uuid AND s.environment_id=$2::uuid
+ AND r.app_id=$3::uuid AND s.mode='enforce' AND f.field_path='secret_refs/'||$4::text
+ AND NOT EXISTS(SELECT 1 FROM environment_management_overrides o WHERE o.environment_id=f.environment_id
+  AND o.resource=f.resource AND o.field_path=f.field_path AND o.expires_at>clock_timestamp())) AS owned
+`
+
+type EnvironmentSecretReferenceWriteOwnedParams struct {
+	AccountID     pgtype.UUID
+	EnvironmentID pgtype.UUID
+	AppID         pgtype.UUID
+	Key           string
+}
+
+// Public controls check authority before source/quota checks, including a
+// no-op delete. The storage trigger still checks authority at the write.
+func (q *Queries) EnvironmentSecretReferenceWriteOwned(ctx context.Context, db DBTX, arg EnvironmentSecretReferenceWriteOwnedParams) (bool, error) {
+	row := db.QueryRow(ctx, environmentSecretReferenceWriteOwned,
+		arg.AccountID,
+		arg.EnvironmentID,
+		arg.AppID,
+		arg.Key,
+	)
+	var owned bool
+	err := row.Scan(&owned)
+	return owned, err
+}
+
 const exclusiveWorkAppScope = `-- name: ExclusiveWorkAppScope :one
 SELECT id::text, coalesce(project_id::text,'')::text AS project_id
 FROM apps WHERE id=$1::text::uuid
@@ -18828,6 +18882,35 @@ func (q *Queries) ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg
 	row := db.QueryRow(ctx, readAccountCreditConsumption, arg.Provider, arg.AccountID, arg.ProviderInvoiceID)
 	var i ReadAccountCreditConsumptionRow
 	err := row.Scan(&i.ConsumedCents, &i.HasPrior, &i.HasUnqualified)
+	return i, err
+}
+
+const readAppEnvironmentSecretReferenceSnapshot = `-- name: ReadAppEnvironmentSecretReferenceSnapshot :one
+SELECT e.id AS environment_id,environment_scoped_secret_refs(a.id,e.slug)::jsonb AS refs,
+ ((SELECT count(*) FROM app_envs v WHERE v.app_id=a.id)
+ +(SELECT count(*) FROM app_environment_secret_refs r WHERE r.app_id=a.id))::bigint AS count
+FROM apps a JOIN project_environments e ON e.project_id=a.project_id AND e.account_id=a.account_id
+WHERE a.id=$1::uuid AND a.account_id=$2::uuid AND a.status<>'deleted'
+ AND e.slug=$3::text
+`
+
+type ReadAppEnvironmentSecretReferenceSnapshotParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	Scope     string
+}
+
+type ReadAppEnvironmentSecretReferenceSnapshotRow struct {
+	EnvironmentID pgtype.UUID
+	Refs          []byte
+	Count         int64
+}
+
+// A customer projection includes only names and one catalog/intent snapshot.
+func (q *Queries) ReadAppEnvironmentSecretReferenceSnapshot(ctx context.Context, db DBTX, arg ReadAppEnvironmentSecretReferenceSnapshotParams) (ReadAppEnvironmentSecretReferenceSnapshotRow, error) {
+	row := db.QueryRow(ctx, readAppEnvironmentSecretReferenceSnapshot, arg.AppID, arg.AccountID, arg.Scope)
+	var i ReadAppEnvironmentSecretReferenceSnapshotRow
+	err := row.Scan(&i.EnvironmentID, &i.Refs, &i.Count)
 	return i, err
 }
 

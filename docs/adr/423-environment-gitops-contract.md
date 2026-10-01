@@ -597,9 +597,9 @@ serving convergence fences. Scheduler transport fixtures cover aliases, legacy
 inputs, sidecar isolation, wake, prime and migration evidence. Populated replay
 preserves references, ownership, receipts and active controller leases across the
 complete additive migration set. These checks qualify the internal reference
-contract; native guest delivery and lifecycle acceptance remain required. Public
-reference editing and explicit adoption of legacy deployment reference
-configuration remain part of the complete adapter gate.
+contract; native guest delivery and lifecycle acceptance remain required. Explicit
+adoption of legacy deployment reference configuration remains part of the complete
+adapter gate.
 
 Environment clones now copy the current destination-to-source references under
 the new catalog environment UUID alongside their scoped sealed sources. They
@@ -618,15 +618,58 @@ independent ownership and rollback/recreation. PostgreSQL cases exercise an
 uncommitted source write, a forced copy failure and concurrent quota admission;
 HTTP and SDK checks cover the public count and transport compatibility.
 
+Public reference controls now expose GET/PUT/DELETE under
+`/v1/apps/{slug}/secret-references`, with an explicit `environment` query parameter.
+Responses contain the catalog UUID, destination/source names and shared quota
+usage; they never read sealed values. A mutation captures the catalog identity
+within its request, and the store checks it under the write locks. Replacing the
+environment under the same slug during that request returns a conflict. Writes
+require an existing source in the exact scope, reject plaintext shadows, preserve
+sealed values and use the same Git ownership/temporary override contract as the
+internal adapter. Quota problems report the actual attempted count.
+
+The CLI offers `gregale secrets refs list|set|unset` with explicit `--app` and
+`--environment` flags. The app environment dashboard lists names and forwards its
+CSRF-protected forms through the authenticated JSON handler. Its verified session
+identity is preserved, with the API's scope/MFA checks. The Go, Node and Python
+SDKs expose the same operations. Routed HTTP, dashboard session/CSRF, CLI and SDK
+transport checks cover this customer flow; memory/PostgreSQL checks cover catalog
+replacement, exact source scope, ownership and temporary overrides. OpenAPI AST
+parity and the Go SDK coverage gate include the new contracts. SQLC regeneration
+matches the committed query output. The repository-wide OpenAPI lint still has
+14 pre-existing errors, also present before these paths were added.
+
+These controls currently accept environment names of 3–33 characters, matching
+the intersection of the catalog and sealed-secret scope contracts. Catalog names
+of one or two characters remain an integration gate; the dashboard identifies
+those unavailable names without hiding supported environments. Removing an
+ordinary reference removes only its overlay and preserves its sealed source. A
+legacy deployment mapping or automatic secret delivery can supply that key on a
+future wake. Explicit adoption and owned-reference pruning must resolve that
+baseline before the complete GitOps executor is enabled.
+
 The remaining full feature gates include native qualification of protected-branch
 approval with the complete serving flow; environment-scoped workload creation, source/runtime,
-complete secret-reference integration and service-binding adapters; reviewed queue pruning/recovery
+legacy secret-reference adoption/pruning, short catalog-name scope support and
+service-binding adapters; reviewed queue pruning/recovery
 and projection repair; staged graph qualification
 and release activation; native serving-fleet and guest runtime evidence;
 full staged graph/runtime operational status integration; and native runtime acceptance.
 Unsupported resource fields currently block the complete plan. The approved-intent
 worker is not started from apid until these integration contracts are wired;
 candidate discovery is running independently.
+
+For an existing scoped secret, the public reference commands are:
+
+```sh
+gregale secrets refs set --app shop-api --environment production DATABASE_URL=secret:DATABASE_PRIMARY
+gregale secrets refs list --app shop-api --environment production
+gregale secrets refs unset --app shop-api --environment production DATABASE_URL
+```
+
+Reference edits invalidate the selected environment's snapshot cache and apply
+on a future cold wake. These commands do not assert that existing serving
+processes have switched their runtime configuration.
 
 Workload membership must be explicit. `workloads: {}` represents an empty
 environment or one that manages only environment configuration; a missing or

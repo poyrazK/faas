@@ -10607,6 +10607,85 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/secret-references:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/SecretReferenceEnvironment'
+    get:
+      tags: [secrets]
+      operationId: listAppSecretReferences
+      summary: List destination-to-source secret references in a registered environment.
+      description: Requires the same read permission and MFA posture as secret metadata. Returns names only and shared variable/reference quota usage.
+      responses:
+        '200':
+          description: References and the current catalog environment identity.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppSecretReferenceListResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/secret-references/{key}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/SecretKey'
+      - $ref: '#/components/parameters/SecretReferenceEnvironment'
+    put:
+      tags: [secrets]
+      operationId: setAppSecretReference
+      summary: Select a scoped secret source for a destination environment key.
+      description: |
+        Requires secrets write permission and the same MFA posture as sealed secret writes. The named source must exist in
+        the exact environment and a plaintext variable cannot shadow the destination.
+        References share the cross-environment variable quota. The write retains the
+        observed catalog identity, invalidates scoped snapshots and applies on a future
+        cold wake. Git-owned fields require an active temporary override in enforce mode.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutAppSecretReferenceRequest' }
+      responses:
+        '200':
+          description: Stored reference names and catalog identity.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppSecretReferenceResponse' }
+        '400':
+          description: 'code: validation_failed | env_var_invalid_key | secret_not_found'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: 'Reference update rejected. code: environment_field_git_managed | secret_reference_conflict'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [secrets]
+      operationId: deleteAppSecretReference
+      summary: Remove scoped reference intent while preserving the sealed source.
+      description: Requires secrets write permission and the same MFA posture as sealed secret writes. Uses the observed catalog identity and the same Git ownership/override contract as PUT. An absent unowned reference is an idempotent success. Removing this overlay preserves the sealed value and can reveal an original deployment reference or automatic secret delivery on future wakes.
+      responses:
+        '204': { description: Reference removed; the sealed source value is retained. }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: 'Reference removal rejected. code: environment_field_git_managed | secret_reference_conflict'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/secrets/{key}:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -23991,6 +24070,16 @@ components:
         example: '</v1/uploads>; rel="successor-version", <https://github.com/poyrazK/faas/blob/main/docs/adr/115-local-tarball-deploy-trust-root.md>; rel="deprecation"'
 
   parameters:
+    SecretReferenceEnvironment:
+      name: environment
+      in: query
+      required: true
+      description: Registered project environment owning these references; default and __all__ are unavailable.
+      schema:
+        type: string
+        minLength: 3
+        maxLength: 33
+        pattern: '^[a-z0-9][a-z0-9-]*[a-z0-9]$'
     EnvironmentGitOpsProjectSlug:
       name: slug
       in: path
@@ -35198,6 +35287,40 @@ components:
         updated_at: { type: string, format: date-time }
         cloned_from: { type: string }
         clone: { $ref: '#/components/schemas/ProjectEnvironmentCloneResponse' }
+
+    PutAppSecretReferenceRequest:
+      description: Named sealed source selected within the exact registered project environment; contains no secret value.
+      type: object
+      additionalProperties: false
+      required: [reference]
+      properties:
+        reference:
+          type: string
+          pattern: '^secret:[A-Z][A-Z0-9_]*$'
+          example: 'secret:DATABASE_PRIMARY'
+
+    AppSecretReferenceListResponse:
+      description: Current environment identity, destination-to-source names and shared variable/reference quota usage.
+      type: object
+      required: [environment_id, environment, references, count, quota]
+      properties:
+        environment_id: { type: string, format: uuid }
+        environment: { type: string }
+        references:
+          type: object
+          additionalProperties: { type: string, pattern: '^secret:[A-Z][A-Z0-9_]*$' }
+        count: { type: integer, minimum: 0, description: Shared variable/reference quota usage across all environments. }
+        quota: { type: integer, minimum: 0 }
+
+    AppSecretReferenceResponse:
+      description: Stored destination and sealed source names under the catalog environment identity captured for the write.
+      type: object
+      required: [environment_id, environment, key, reference]
+      properties:
+        environment_id: { type: string, format: uuid }
+        environment: { type: string }
+        key: { type: string }
+        reference: { type: string, pattern: '^secret:[A-Z][A-Z0-9_]*$' }
 
     ProjectEnvironmentCloneResponse:
       description: Non-secret copy counts for an environment clone. Managed database or bucket data appears as shared only after explicit opt-in.
@@ -46435,6 +46558,12 @@ components:
 
     BadRequest:
       description: 'code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as `source_too_large`) ship as the `code` field.'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    ValidationError:
+      description: 'code: validation_failed | env_var_invalid_key'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

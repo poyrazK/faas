@@ -430,20 +430,28 @@ type LogInstanceItem struct {
 // because env is explicitly non-sensitive configuration; secret values are
 // never projected and can only be supplied to a write or rotation form.
 type EnvSecretsData struct {
-	AppSlug       string
-	AppStatus     string
-	SelectedScope string
-	WriteScope    string
-	ScopeOptions  []string
-	Env           []EnvItem
-	Secrets       []SecretItem
-	EnvCount      int
-	EnvQuota      int
-	SecretCount   int
-	SecretQuota   int
-	EnvCSRF       string
-	SecretCSRF    string
-	Flash         string
+	AppSlug                                string
+	AppStatus                              string
+	SelectedScope                          string
+	WriteScope                             string
+	ScopeOptions                           []string
+	Env                                    []EnvItem
+	Secrets                                []SecretItem
+	EnvCount                               int
+	EnvQuota                               int
+	SecretCount                            int
+	SecretQuota                            int
+	EnvCSRF                                string
+	SecretCSRF                             string
+	Flash                                  string
+	SecretReferences                       []SecretReferenceItem
+	SecretReferenceEnvironments            []string
+	SecretReferenceUnsupportedEnvironments []string
+	SecretReferenceError                   string
+}
+
+type SecretReferenceItem struct {
+	Environment, Key, Reference string
 }
 
 // EnvItem is one editable, non-sensitive app environment variable.

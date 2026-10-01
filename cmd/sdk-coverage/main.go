@@ -166,16 +166,18 @@ var routeExclude = map[string]bool{
 	// is GitHub-side state — programmatic consumers shouldn't bind
 	// apps via API. Mirrors the "browser-only dashboard routes"
 	// exclusion above.
-	"POST /v1/install/repos/list":                       true, // bind picker hydrates from this; browser-only
-	"POST /v1/apps/{slug}/install/bind":                 true, // bind picker writes through this; browser-only
-	"GET /v1/apps/{slug}/install/bind":                  true, // dashboard connection status; session-cookie-only
-	"GET /v1/apps/{slug}/install":                       true, // canonical dashboard connection status; session-cookie-only
-	"DELETE /v1/apps/{slug}/install/bind":               true, // dashboard disconnect; session-cookie + CSRF-only
-	"POST /v1/apps/{slug}/install/sync":                 true, // dashboard repair action; session-cookie + CSRF-only
-	"POST /v1/apps/{slug}/install/activity/retry":       true, // dashboard activity recovery action; session-cookie + CSRF-only
-	"POST /dashboard/apps/{slug}/github/sync":           true, // dashboard repair form; session-cookie + CSRF-only
-	"POST /dashboard/apps/{slug}/github/disconnect":     true, // dashboard disconnect form; session-cookie + CSRF-only
-	"POST /dashboard/apps/{slug}/github/activity/retry": true, // dashboard activity recovery form; session-cookie + CSRF-only
+	"POST /v1/install/repos/list":                                true, // bind picker hydrates from this; browser-only
+	"POST /v1/apps/{slug}/install/bind":                          true, // bind picker writes through this; browser-only
+	"GET /v1/apps/{slug}/install/bind":                           true, // dashboard connection status; session-cookie-only
+	"GET /v1/apps/{slug}/install":                                true, // canonical dashboard connection status; session-cookie-only
+	"DELETE /v1/apps/{slug}/install/bind":                        true, // dashboard disconnect; session-cookie + CSRF-only
+	"POST /v1/apps/{slug}/install/sync":                          true, // dashboard repair action; session-cookie + CSRF-only
+	"POST /v1/apps/{slug}/install/activity/retry":                true, // dashboard activity recovery action; session-cookie + CSRF-only
+	"POST /dashboard/apps/{slug}/github/sync":                    true, // dashboard repair form; session-cookie + CSRF-only
+	"POST /dashboard/apps/{slug}/github/disconnect":              true, // dashboard disconnect form; session-cookie + CSRF-only
+	"POST /dashboard/apps/{slug}/github/activity/retry":          true, // dashboard activity recovery form; session-cookie + CSRF-only
+	"POST /dashboard/apps/{slug}/secret-references":              true, // HTML reference form; public SDK uses the JSON PUT route
+	"POST /dashboard/apps/{slug}/secret-references/{key}/delete": true, // HTML reference removal; public SDK uses DELETE
 
 	// Issue #961 / Mega-B PR-3 / ADR-116. The dashboard's
 	// /dashboard/apps/new wizard renders GET /v1/templates as the
@@ -375,6 +377,9 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/apps/{slug}/secrets/{key}":                                      "UnsetSecret",
 	"GET /v1/apps/{slug}/secret-revocations/{revocation_id}":                    "GetSecretRevocation",
 	"PUT /v1/apps/{slug}/secrets/{key}":                                         "SetSecret",
+	"GET /v1/apps/{slug}/secret-references":                                     "ListAppSecretReferences",
+	"PUT /v1/apps/{slug}/secret-references/{key}":                               "SetAppSecretReference",
+	"DELETE /v1/apps/{slug}/secret-references/{key}":                            "DeleteAppSecretReference",
 	"POST /v1/apps/{slug}/secrets/{key}/rotate":                                 "RotateSecret",
 	"PATCH /v1/apps/{slug}":                                                     "UpdateApp",
 	"POST /v1/apps/{slug}/rename":                                               "RenameApp",

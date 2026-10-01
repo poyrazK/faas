@@ -6475,3 +6475,26 @@ WITH copied AS (
  RETURNING 1
 )
 SELECT count(*) FROM copied;
+
+-- A customer projection includes only names and one catalog/intent snapshot.
+-- name: ReadAppEnvironmentSecretReferenceSnapshot :one
+SELECT e.id AS environment_id,environment_scoped_secret_refs(a.id,e.slug)::jsonb AS refs,
+ ((SELECT count(*) FROM app_envs v WHERE v.app_id=a.id)
+ +(SELECT count(*) FROM app_environment_secret_refs r WHERE r.app_id=a.id))::bigint AS count
+FROM apps a JOIN project_environments e ON e.project_id=a.project_id AND e.account_id=a.account_id
+WHERE a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted'
+ AND e.slug=sqlc.arg(scope)::text;
+
+-- name: EnvironmentSecretReferenceSourcePresent :one
+SELECT EXISTS(SELECT 1 FROM app_secrets WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+ AND scope=sqlc.arg(scope)::text AND key=sqlc.arg(key)::text) AS present;
+
+-- Public controls check authority before source/quota checks, including a
+-- no-op delete. The storage trigger still checks authority at the write.
+-- name: EnvironmentSecretReferenceWriteOwned :one
+SELECT EXISTS(SELECT 1 FROM environment_git_sources s JOIN environment_gitops_resources r ON r.source_id=s.id
+ JOIN environment_managed_fields f ON f.source_id=s.id AND f.resource=r.logical_name
+ WHERE s.account_id=sqlc.arg(account_id)::uuid AND s.environment_id=sqlc.arg(environment_id)::uuid
+ AND r.app_id=sqlc.arg(app_id)::uuid AND s.mode='enforce' AND f.field_path='secret_refs/'||sqlc.arg(key)::text
+ AND NOT EXISTS(SELECT 1 FROM environment_management_overrides o WHERE o.environment_id=f.environment_id
+  AND o.resource=f.resource AND o.field_path=f.field_path AND o.expires_at>clock_timestamp())) AS owned;

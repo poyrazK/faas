@@ -117,6 +117,8 @@ export type { ApproveEnvironmentGitRevisionRequest } from './models/ApproveEnvir
 export type { ApproveEnvironmentGitRevisionResponse } from './models/ApproveEnvironmentGitRevisionResponse.js';
 export type { AppSecretExportResponse } from './models/AppSecretExportResponse.js';
 export type { AppSecretListResponse } from './models/AppSecretListResponse.js';
+export type { AppSecretReferenceListResponse } from './models/AppSecretReferenceListResponse.js';
+export type { AppSecretReferenceResponse } from './models/AppSecretReferenceResponse.js';
 export type { AppSecretResponse } from './models/AppSecretResponse.js';
 export type { AppSecretRevocationResponse } from './models/AppSecretRevocationResponse.js';
 export type { AppSecurityFinding } from './models/AppSecurityFinding.js';
@@ -844,6 +846,7 @@ export type { PublishEventResponse } from './models/PublishEventResponse.js';
 export type { PublishProjectReleaseSetRequest } from './models/PublishProjectReleaseSetRequest.js';
 export type { PutAppEnvRequest } from './models/PutAppEnvRequest.js';
 export type { PutAppRegistryCredentialRequest } from './models/PutAppRegistryCredentialRequest.js';
+export type { PutAppSecretReferenceRequest } from './models/PutAppSecretReferenceRequest.js';
 export type { PutAppSecretRequest } from './models/PutAppSecretRequest.js';
 export type { PutDataUpstreamRequest } from './models/PutDataUpstreamRequest.js';
 export type { PutJobRegistryCredentialRequest } from './models/PutJobRegistryCredentialRequest.js';
@@ -938,6 +941,7 @@ export type { ScopedAppSecretResponse } from './models/ScopedAppSecretResponse.j
 export type { SeatUsageResponse } from './models/SeatUsageResponse.js';
 export type { SecretFinding } from './models/SecretFinding.js';
 export type { SecretKey } from './models/SecretKey.js';
+export type { SecretReferenceEnvironment } from './models/SecretReferenceEnvironment.js';
 export type { SecretRevocationTarget } from './models/SecretRevocationTarget.js';
 export type { SecretRuntimeReloadObservation } from './models/SecretRuntimeReloadObservation.js';
 export type { SecretScanResult } from './models/SecretScanResult.js';

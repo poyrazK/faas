@@ -183,6 +183,9 @@ from .app_routes_response_source import AppRoutesResponseSource
 from .app_secret_export_response import AppSecretExportResponse
 from .app_secret_list_response import AppSecretListResponse
 from .app_secret_list_response_secrets_by_scope import AppSecretListResponseSecretsByScope
+from .app_secret_reference_list_response import AppSecretReferenceListResponse
+from .app_secret_reference_list_response_references import AppSecretReferenceListResponseReferences
+from .app_secret_reference_response import AppSecretReferenceResponse
 from .app_secret_response import AppSecretResponse
 from .app_secret_response_delivery_status import AppSecretResponseDeliveryStatus
 from .app_secret_response_last_delivery_error_code import AppSecretResponseLastDeliveryErrorCode
@@ -1605,6 +1608,7 @@ from .publish_project_release_set_request import PublishProjectReleaseSetRequest
 from .publish_project_release_set_request_deployments import PublishProjectReleaseSetRequestDeployments
 from .put_app_env_request import PutAppEnvRequest
 from .put_app_registry_credential_request import PutAppRegistryCredentialRequest
+from .put_app_secret_reference_request import PutAppSecretReferenceRequest
 from .put_app_secret_request import PutAppSecretRequest
 from .put_app_secret_request_secret_class import PutAppSecretRequestSecretClass
 from .put_data_upstream_request import PutDataUpstreamRequest
@@ -2265,6 +2269,9 @@ __all__ = (
     "AppSecretExportResponse",
     "AppSecretListResponse",
     "AppSecretListResponseSecretsByScope",
+    "AppSecretReferenceListResponse",
+    "AppSecretReferenceListResponseReferences",
+    "AppSecretReferenceResponse",
     "AppSecretResponse",
     "AppSecretResponseDeliveryStatus",
     "AppSecretResponseLastDeliveryErrorCode",
@@ -3603,6 +3610,7 @@ __all__ = (
     "PublishProjectReleaseSetRequestDeployments",
     "PutAppEnvRequest",
     "PutAppRegistryCredentialRequest",
+    "PutAppSecretReferenceRequest",
     "PutAppSecretRequest",
     "PutAppSecretRequestSecretClass",
     "PutDataUpstreamRequest",

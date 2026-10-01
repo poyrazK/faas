@@ -78,6 +78,8 @@ func cmdSecrets(args []string) int {
 		return secretsAudit(args[1:])
 	case subRotate:
 		return secretsRotate(args[1:])
+	case "refs":
+		return cmdSecretReferences(args[1:])
 	}
 	fmt.Fprintf(os.Stderr, "unknown secrets subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)

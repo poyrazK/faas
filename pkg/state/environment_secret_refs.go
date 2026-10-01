@@ -74,7 +74,11 @@ func (m *MemStore) AppEnvironmentSecretReferences(_ context.Context, accountID, 
 	return m.environmentSecretRefsLocked(appID, scope), nil
 }
 
-func (m *MemStore) PutAppEnvironmentSecretReference(_ context.Context, accountID, appID, scope, key, ref string) error {
+func (m *MemStore) PutAppEnvironmentSecretReference(ctx context.Context, accountID, appID, scope, key, ref string) error {
+	return m.putAppEnvironmentSecretReference(ctx, accountID, appID, scope, "", key, ref)
+}
+
+func (m *MemStore) putAppEnvironmentSecretReference(_ context.Context, accountID, appID, scope, expectedEnvironmentID, key, ref string) error {
 	if api.ValidateScope(scope) != nil || api.ValidateEnvKey(key) != nil || !ValidSecretReference(ref) {
 		return ErrInvalidArgument
 	}
@@ -88,9 +92,17 @@ func (m *MemStore) PutAppEnvironmentSecretReference(_ context.Context, accountID
 	if err != nil {
 		return err
 	}
+	if expectedEnvironmentID != "" && expectedEnvironmentID != env.ID {
+		return ErrConflict
+	}
 	source, err := m.gitOpsGuardScopedWriteLocked(accountID, appID, scope, []string{"secret_refs/" + key})
 	if err != nil {
 		return err
+	}
+	if expectedEnvironmentID != "" {
+		if _, exists := m.secrets[secretKey{AppID: appID, Scope: scope, Key: strings.TrimPrefix(ref, api.SecretRefPrefix)}]; !exists {
+			return ErrEnvironmentSecretReferenceSourceNotFound
+		}
 	}
 	if _, exists := m.envs[envKey{AppID: appID, Scope: scope, Key: key}]; exists {
 		return ErrConflict
@@ -115,7 +127,7 @@ func (m *MemStore) PutAppEnvironmentSecretReference(_ context.Context, accountID
 		count++
 	}
 	if !exists && count > limits.EnvVarsMax {
-		return ErrQuotaExceeded
+		return &EnvironmentSecretReferenceQuotaError{Observed: count}
 	}
 	if m.appEnvironmentSecretRefs == nil {
 		m.appEnvironmentSecretRefs = map[environmentSecretRefKey]environmentSecretRef{}
@@ -126,7 +138,11 @@ func (m *MemStore) PutAppEnvironmentSecretReference(_ context.Context, accountID
 	return nil
 }
 
-func (m *MemStore) DeleteAppEnvironmentSecretReference(_ context.Context, accountID, appID, scope, key string) error {
+func (m *MemStore) DeleteAppEnvironmentSecretReference(ctx context.Context, accountID, appID, scope, key string) error {
+	return m.deleteAppEnvironmentSecretReference(ctx, accountID, appID, scope, "", key)
+}
+
+func (m *MemStore) deleteAppEnvironmentSecretReference(_ context.Context, accountID, appID, scope, expectedEnvironmentID, key string) error {
 	if api.ValidateScope(scope) != nil || api.ValidateEnvKey(key) != nil {
 		return ErrInvalidArgument
 	}
@@ -139,6 +155,9 @@ func (m *MemStore) DeleteAppEnvironmentSecretReference(_ context.Context, accoun
 	env, err := m.projectEnvironmentBySlugLocked(app.ProjectID, scope)
 	if err != nil {
 		return err
+	}
+	if expectedEnvironmentID != "" && expectedEnvironmentID != env.ID {
+		return ErrConflict
 	}
 	source, err := m.gitOpsGuardScopedWriteLocked(accountID, appID, scope, []string{"secret_refs/" + key})
 	if err != nil {
@@ -171,12 +190,12 @@ func (s *PgStore) AppEnvironmentSecretReferences(ctx context.Context, accountID,
 }
 
 func (s *PgStore) PutAppEnvironmentSecretReference(ctx context.Context, accountID, appID, scope, key, ref string) error {
-	return s.writeAppEnvironmentSecretReference(ctx, accountID, appID, scope, key, ref, false)
+	return s.writeAppEnvironmentSecretReference(ctx, accountID, appID, scope, "", key, ref, false)
 }
 func (s *PgStore) DeleteAppEnvironmentSecretReference(ctx context.Context, accountID, appID, scope, key string) error {
-	return s.writeAppEnvironmentSecretReference(ctx, accountID, appID, scope, key, "", true)
+	return s.writeAppEnvironmentSecretReference(ctx, accountID, appID, scope, "", key, "", true)
 }
-func (s *PgStore) writeAppEnvironmentSecretReference(ctx context.Context, accountID, appID, scope, key, ref string, remove bool) error {
+func (s *PgStore) writeAppEnvironmentSecretReference(ctx context.Context, accountID, appID, scope, expectedEnvironmentID, key, ref string, remove bool) error {
 	if api.ValidateScope(scope) != nil || api.ValidateEnvKey(key) != nil || !remove && !ValidSecretReference(ref) {
 		return ErrInvalidArgument
 	}
@@ -195,7 +214,32 @@ func (s *PgStore) writeAppEnvironmentSecretReference(ctx context.Context, accoun
 	if err != nil {
 		return mapErr(err)
 	}
+	if expectedEnvironmentID != "" && pgUUIDString(env.ID) != expectedEnvironmentID {
+		return ErrConflict
+	}
+	if expectedEnvironmentID != "" {
+		owned, err := q.EnvironmentSecretReferenceWriteOwned(ctx, tx, sqlc.EnvironmentSecretReferenceWriteOwnedParams{
+			AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), EnvironmentID: env.ID, Key: key,
+		})
+		if err != nil {
+			return mapErr(err)
+		}
+		if owned {
+			return ErrEnvironmentGitManaged
+		}
+	}
 	if !remove {
+		if expectedEnvironmentID != "" {
+			present, err := q.EnvironmentSecretReferenceSourcePresent(ctx, tx, sqlc.EnvironmentSecretReferenceSourcePresentParams{
+				AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), Scope: scope, Key: strings.TrimPrefix(ref, api.SecretRefPrefix),
+			})
+			if err != nil {
+				return mapErr(err)
+			}
+			if !present {
+				return ErrEnvironmentSecretReferenceSourceNotFound
+			}
+		}
 		account, err := q.QueueConsumerLockAccount(ctx, tx, mustPgUUID(accountID))
 		if err != nil {
 			return mapErr(err)
@@ -212,7 +256,7 @@ func (s *PgStore) writeAppEnvironmentSecretReference(ctx context.Context, accoun
 			return ErrConflict
 		}
 		if count.Total+1 > int64(limits.EnvVarsMax) && !count.RefExists {
-			return ErrQuotaExceeded
+			return &EnvironmentSecretReferenceQuotaError{Observed: int(count.Total + 1)}
 		}
 	}
 	if remove {
