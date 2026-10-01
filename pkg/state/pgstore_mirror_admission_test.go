@@ -30,7 +30,7 @@ VALUES ($1::uuid, $2::uuid, $3, 128, 5, 'active', now())`, appID, accountID, "mi
 		if _, err := pool.Exec(ctx, `
 INSERT INTO deployments (id, app_id, scope, image_digest, status, created_at)
 VALUES ($1::uuid, $2::uuid, $3, $4, 'live', now())`, deploymentID, appID,
-			"mirror-"+deploymentID, "sha256:"+deploymentID); err != nil {
+			"mirror-test", "sha256:"+deploymentID); err != nil {
 			t.Fatalf("insert deployment: %v", err)
 		}
 	}
