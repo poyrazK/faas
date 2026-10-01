@@ -471,8 +471,14 @@ barrier. Queued tasks wait, subject to their usual start deadlines; a task fence
 during restoration is destroyed before command dispatch and records
 `database_cutover_fenced`. VM destruction now cancels
 and waits for boots already inside vmmd, including snapshot restores and task VMs.
-See [ADR-393](adr/393-managed-postgres-cutover-task-and-boot-barriers.md) for the
-remaining delayed-RPC and drain-receipt requirements.
+On nodes configured with the authoritative control-plane DB URL, vmmd also
+checks this durable fence inside the registered boot flight before allocating
+resources. Delayed boot RPCs must read the fence again, including after a daemon
+restart. Warm and migration resume/capture operations use the same admission check
+and destruction join. Default-local nodes honor a configured `db_url` or
+`FAAS_VMMD_DBURL`; DB-less nodes cannot participate in cutover drains.
+See [ADR-394](adr/394-managed-postgres-vmmd-admission.md). Confirmed destruction,
+all-node capability/ownership checks and durable drain receipts remain pending.
 Prepare and Verify never install this fence. Existing VMs and SQL sessions still
 require scheduler drain; atomic publication and customer activation remain
 unavailable. Lifecycle acceptance requires native x86_64 KVM tests and leakcheck.

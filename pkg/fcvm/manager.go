@@ -759,10 +759,10 @@ type Manager struct {
 	// that began with an older app config but has not yet published as live.
 	appCPUPolicyUpdates sync.Mutex
 	appCPUPolicies      map[string]appCPUPolicy
-	// instanceBoots covers the artifact restore and VMM boot interval before a VM
-	// enters live. Destroy/Stop must cancel and join this interval; otherwise a
-	// late boot can publish a VM after its task was already cancelled.
-	instanceBoots map[string]*instanceBootFlight
+	// instanceFlights covers boots and live operations that can resume a guest.
+	// Destroy/Stop cancel and join them before looking up the VM for teardown.
+	instanceFlights   map[string]*instanceFlight
+	appAdmissionGuard func(context.Context, string) error // configured before serving
 	// pendingProcessExits closes the small hand-off race between
 	// JailerVMM reporting a child exit and Wake publishing the
 	// instance into live. A process can pass readiness and exit
@@ -1146,7 +1146,7 @@ func NewManager(run Runner, vmm VMM, paths Paths, fcVersion string, log *slog.Lo
 		live:                 make(map[string]*Instance),
 		readinessLoopCancels: make(map[string]context.CancelFunc),
 		appCPUPolicies:       make(map[string]appCPUPolicy),
-		instanceBoots:        make(map[string]*instanceBootFlight),
+		instanceFlights:      make(map[string]*instanceFlight),
 		pendingProcessExits:  make(map[string]int),
 		waking:               make(map[string]struct{}),
 		exportDirs:           make(map[string]string),
@@ -3607,7 +3607,7 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	if err != nil {
 		return nil, err
 	}
-	defer m.finishInstanceBoot(req.Instance, flight)
+	defer m.finishInstanceFlight(req.Instance, flight)
 	if err = bootCtx.Err(); err != nil {
 		return nil, fmt.Errorf("manager: BootJob %s: cancelled before lease: %w", req.Instance, err)
 	}
@@ -3796,9 +3796,12 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	if err != nil {
 		return nil, err
 	}
-	defer m.finishInstanceBoot(req.Instance, flight)
+	defer m.finishInstanceFlight(req.Instance, flight)
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("wake %s: cancelled before lease: %w", req.Instance, err)
+	}
+	if err := m.checkWakeAdmission(ctx, req); err != nil {
+		return nil, fmt.Errorf("wake %s: %w", req.Instance, err)
 	}
 	var wakeID string
 	if fields, ok := wire.FromContext(ctx); ok {
@@ -5008,11 +5011,13 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 // engine owns the destroy so the audit/state-machine transitions
 // stay in one place.
 func (m *Manager) WarmSnapshot(ctx context.Context, instance string, spec SnapshotSpec) (SnapshotInfo, error) {
-	m.mu.Lock()
-	inst, ok := m.live[instance]
-	m.mu.Unlock()
-	if !ok {
-		return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: not live", instance)
+	ctx, inst, flight, err := m.beginLiveInstanceFlight(ctx, instance)
+	if err != nil {
+		return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: %w", instance, err)
+	}
+	defer m.finishInstanceFlight(instance, flight)
+	if err := m.checkLiveAdmission(ctx, inst); err != nil {
+		return SnapshotInfo{}, err
 	}
 	if inst.AppTaskOnly {
 		return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: app task instances cannot be snapshotted", instance)
@@ -5023,13 +5028,22 @@ func (m *Manager) WarmSnapshot(ctx context.Context, instance string, spec Snapsh
 		// A failure before the early resume may leave the VM paused;
 		// a publication failure occurs after it is already running.
 		// ResumeVM is idempotent across both cases.
+		if cancelled := ctx.Err(); cancelled != nil {
+			return SnapshotInfo{}, errors.Join(err, cancelled)
+		}
 		if rerr := m.vmm.ResumeVM(ctx, inst.Lease); rerr != nil {
 			return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: %w", instance, errors.Join(err, fmt.Errorf("resume after snapshot failure: %w", rerr)))
 		}
 		return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: snapshot: %w", instance, err)
 	}
+	if err := ctx.Err(); err != nil {
+		return SnapshotInfo{}, err
+	}
 	if err := m.vmm.ResumeVM(ctx, inst.Lease); err != nil {
 		return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: resume: %w", instance, err)
+	}
+	if err := ctx.Err(); err != nil {
+		return SnapshotInfo{}, err
 	}
 	m.log.Info("warm_snapshot", "instance", instance, "mem_bytes", info.MemBytes)
 	return info, nil
@@ -5078,11 +5092,13 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 	if m == nil {
 		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: nil manager", instance)
 	}
-	m.mu.Lock()
-	inst, ok := m.live[instance]
-	m.mu.Unlock()
-	if !ok {
-		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: not live", instance)
+	ctx, inst, flight, err := m.beginLiveInstanceFlight(ctx, instance)
+	if err != nil {
+		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: %w", instance, err)
+	}
+	defer m.finishInstanceFlight(instance, flight)
+	if err := m.checkLiveAdmission(ctx, inst); err != nil {
+		return SnapshotInfo{}, err
 	}
 	if inst.AppTaskOnly {
 		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: app task instances cannot be snapshotted", instance)
@@ -5098,12 +5114,20 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 	if err == nil {
 		return info, nil
 	}
-	resumeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	// Preserve best-effort recovery after an expired RPC, but let Destroy
+	// cancel and join that recovery through the same registered flight.
+	resumeCtx, cancel := context.WithTimeout(flight.recoveryCtx, 5*time.Second)
+	defer cancel()
+	if cancelled := resumeCtx.Err(); cancelled != nil {
+		return SnapshotInfo{}, errors.Join(err, cancelled)
+	}
 	resumeErr := m.vmm.ResumeVM(resumeCtx, inst.Lease)
-	cancel()
 	if resumeErr != nil {
 		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: %w", instance,
 			errors.Join(err, fmt.Errorf("resume after snapshot failure: %w", resumeErr)))
+	}
+	if cancelled := resumeCtx.Err(); cancelled != nil {
+		return SnapshotInfo{}, errors.Join(err, cancelled)
 	}
 	m.startLivenessLoop(context.WithoutCancel(ctx), instance, inst.Lease.Slot, inst.LivenessProbe)
 	m.startReadinessLoop(context.WithoutCancel(ctx), instance, inst.Lease.Slot, inst.ReadinessProbe)
@@ -5140,11 +5164,13 @@ func (m *Manager) ResumeVM(ctx context.Context, instance string) error {
 	if m == nil {
 		return fmt.Errorf("resume_vm %s: nil manager", instance)
 	}
-	m.mu.Lock()
-	inst, ok := m.live[instance]
-	m.mu.Unlock()
-	if !ok {
-		return fmt.Errorf("resume_vm %s: not live", instance)
+	ctx, inst, flight, err := m.beginLiveInstanceFlight(ctx, instance)
+	if err != nil {
+		return fmt.Errorf("resume_vm %s: %w", instance, err)
+	}
+	defer m.finishInstanceFlight(instance, flight)
+	if err := m.checkLiveAdmission(ctx, inst); err != nil {
+		return err
 	}
 	if inst.AppTaskOnly {
 		return fmt.Errorf("resume_vm %s: app task instances are never resumable", instance)
@@ -5153,6 +5179,9 @@ func (m *Manager) ResumeVM(ctx context.Context, instance string) error {
 		return fmt.Errorf("resume_vm %s: nil vmm", instance)
 	}
 	if err := m.vmm.ResumeVM(ctx, inst.Lease); err != nil {
+		return fmt.Errorf("resume_vm %s: %w", instance, err)
+	}
+	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("resume_vm %s: %w", instance, err)
 	}
 	m.startLivenessLoop(context.WithoutCancel(ctx), instance, inst.Lease.Slot, inst.LivenessProbe)
@@ -5198,9 +5227,11 @@ func (m *Manager) Destroy(ctx context.Context, instance string) error {
 // Returns (false, 0, nil) when the instance is unknown to the
 // Manager — same idempotent-on-unknown contract as Destroy.
 func (m *Manager) SignalAndKill(ctx context.Context, instance string, signal syscall.Signal, grace time.Duration) (killSignalSent bool, exitCode int32, err error) {
-	if err := m.cancelInFlightInstanceBoot(ctx, instance); err != nil {
+	if err := m.cancelInFlightInstance(ctx, instance); err != nil {
 		return false, 0, err
 	}
+	m.cancelLivenessLoop(instance)
+	m.cancelReadinessLoop(instance)
 	m.cancelFrameworkReadyLoop(instance)
 	m.mu.Lock()
 	// Builder Destroy removes live before waiting. Keep its export registration
@@ -5257,7 +5288,7 @@ func (m *Manager) SignalAndKill(ctx context.Context, instance string, signal sys
 }
 
 func (m *Manager) DestroyWithExport(ctx context.Context, instance, exportDir string) (int, error) {
-	if err := m.cancelInFlightInstanceBoot(ctx, instance); err != nil {
+	if err := m.cancelInFlightInstance(ctx, instance); err != nil {
 		return 0, err
 	}
 	// Stop background liveness work before removing the live entry or

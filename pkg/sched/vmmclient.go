@@ -28,6 +28,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
 	"github.com/onebox-faas/faas/pkg/overlay"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -1675,6 +1676,9 @@ func characterizationFromStruct(s *structpb.Struct) api.CharacterizationReport {
 // status-shaped (e.g. a dial failure) pass through unchanged.
 func liftErr(err error) error {
 	if p, ok := grpcerr.FromStatus(err); ok && p != nil {
+		if p.Code == api.CodeDatabaseCutoverFenced {
+			return errors.Join(p, state.ErrManagedPostgresAdmissionFenced)
+		}
 		return p
 	}
 	return err

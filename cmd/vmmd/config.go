@@ -121,7 +121,8 @@ type Config struct {
 	// DBURL is the Postgres DSN vmmd uses for the
 	// compute_nodes self-registration upsert at startup. Required
 	// when [compute_node].name is set; optional when NodeName is
-	// empty (the legacy default-local path doesn't need DB access).
+	// empty. Configure it on default-local nodes to enforce managed
+	// PostgreSQL cutover admission; DB-less nodes cannot participate in drains.
 	// Default empty; FAAS_VMMD_DBURL env var overrides for the
 	// containerised deployments that prefer env-only config.
 	DBURL string `toml:"db_url"`

@@ -310,8 +310,8 @@ type runDeps struct {
 	configPath string                                                                                                // defaults to /etc/faas/vmmd.toml
 	detectFC   func(context.Context) (string, error)                                                                 // defaults to fcvm.DetectFirecrackerVersion
 	listen     func(ctx context.Context, target string, tlsCfg *tls.Config, daemonUser string) (net.Listener, error) // defaults to wire.ListenAs (issue #95 / ADR-025)
-	// openDB / openStore: only invoked when [compute_node].name is set;
-	// the legacy default-local path skips the DB entirely (no upsert).
+	// openDB / openStore: invoked when a DB URL is configured, including
+	// default-local nodes that need durable managed PostgreSQL admission.
 	openDB    func(context.Context, string) (*pgxpool.Pool, error)
 	openStore func(*pgxpool.Pool) *state.PgStore
 	// detectOverlayIP — best-effort, default shelles out to
@@ -700,20 +700,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// before the gRPC listener binds. Fail-closed: if the upsert
 	// fails (Postgres down, schema drift), vmmd exits rather than
 	// serving traffic with no identity. The legacy default-local
-	// path (NodeName empty) skips the DB entirely — no migration
-	// is required on a fresh single-box dev install beyond what
-	// already exists.
+	// path skips self-registration. A configured DB URL also enables
+	// durable app admission on that node (ADR-394).
 	var nodeID string
 	var pool *pgxpool.Pool
 	var store state.Store
-	if cfg.ComputeNode.NodeName != "" {
-		dbURL := cfg.DBURL
-		if dbURL == "" {
-			dbURL = envOr("FAAS_VMMD_DBURL", "")
-		}
-		if dbURL == "" {
-			return errors.New("vmmd: [compute_node].name set but [db_url] (or FAAS_VMMD_DBURL) is empty")
-		}
+	dbURL := cfg.DBURL
+	if dbURL == "" {
+		dbURL = envOr("FAAS_VMMD_DBURL", "")
+	}
+	if cfg.ComputeNode.NodeName != "" && dbURL == "" {
+		return errors.New("vmmd: [compute_node].name set but [db_url] (or FAAS_VMMD_DBURL) is empty")
+	}
+	if dbURL != "" {
 		// Issue #938 / PR-A Blocker 2: the original code was
 		// `pool, err := deps.openDB(ctx, dbURL)` — Go 1.22's shadowing
 		// rules treated `err` as already declared (from the outer
@@ -727,10 +726,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		var err error
 		pool, err = deps.openDB(ctx, dbURL)
 		if err != nil {
-			return fmt.Errorf("vmmd: open db for self-registration: %w", err)
+			return fmt.Errorf("vmmd: open db for admission and self-registration: %w", err)
 		}
 		defer pool.Close()
 		store = deps.openStore(pool)
+	}
+	if cfg.ComputeNode.NodeName != "" {
 		cn, err := registerComputeNode(ctx, store, cfg.ComputeNode, targetURL,
 			func(ctx context.Context) (string, error) {
 				return defaultDetectOverlayIP(ctx, cfg.ComputeNode)
@@ -943,6 +944,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Wake RPC contexts are canceled when the request returns and
 	// must not own either background activity.
 	mgr.WithLifecycleContext(ctx)
+	mgr.WithAppAdmissionGuard(managedPostgresAdmissionGuard(store))
 	// ADR-373: DNS-gated egress is on unless the operator turns it off for
 	// this node, e.g. while the node's resolver hook is unavailable.
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("FAAS_EGRESS_DNS_GATING")), "off") {

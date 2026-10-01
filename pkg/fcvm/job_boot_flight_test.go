@@ -119,7 +119,7 @@ func TestBootJobStopCancelsInFlightAndFencesLateSuccess(t *testing.T) {
 				t.Fatalf("allocator leases = %d, want zero", got)
 			}
 			m.mu.Lock()
-			flights := len(m.instanceBoots)
+			flights := len(m.instanceFlights)
 			m.mu.Unlock()
 			if flights != 0 {
 				t.Fatalf("in-flight job boots = %d, want zero", flights)

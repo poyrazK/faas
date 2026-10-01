@@ -114,7 +114,7 @@ func TestWakeStopJoinsBootAndFencesLateSuccess(t *testing.T) {
 					t.Fatalf("live=%d leases=%d", m.LiveCount(), m.alloc.InUse())
 				}
 				m.mu.Lock()
-				flights, waking := len(m.instanceBoots), len(m.waking)
+				flights, waking := len(m.instanceFlights), len(m.waking)
 				m.mu.Unlock()
 				if flights != 0 || waking != 0 {
 					t.Fatalf("flights=%d waking=%d", flights, waking)
