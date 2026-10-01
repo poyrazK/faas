@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 )
 
@@ -36,7 +35,11 @@ func (m *MemStore) GetInstanceApplicationStandardWarmParent(ctx context.Context,
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	_, _, parent, err := m.lockNativePromotionLocked(id, false)
+	_, capture, parent, err := m.lockNativePromotionLocked(id, false)
+	if err != nil {
+		return runtimeadmission.Receipt{}, err
+	}
+	_, err = m.standardNativeArtifactDeadlineLocked(capture)
 	return parent, err
 }
 
@@ -49,18 +52,22 @@ func (m *MemStore) IssueInstanceApplicationStandardPromotion(ctx context.Context
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	_, _, parent, err := m.lockNativePromotionLocked(p.Binding.InstanceID, false)
+	_, capture, parent, err := m.lockNativePromotionLocked(p.Binding.InstanceID, false)
 	if err != nil {
 		return runtimeadmission.Promotion{}, err
 	}
 	if p.Parent != parent {
 		return runtimeadmission.Promotion{}, ErrApplicationStandardRuntimeStale
 	}
+	deadline, err := m.standardNativeArtifactDeadlineLocked(capture)
+	if err != nil {
+		return runtimeadmission.Promotion{}, err
+	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	if old, ok := m.instanceApplicationStandardPromotions[p.Binding.Token]; ok {
 		copy := p
 		copy.Binding.IssuedAtUnixNano, copy.Binding.ExpiresAtUnixNano = old.Grant.Binding.IssuedAtUnixNano, old.Grant.Binding.ExpiresAtUnixNano
-		if copy != old.Grant || old.Grant.Validate(now) != nil {
+		if copy != old.Grant || old.Grant.Validate(now) != nil || !standardNativeGrantWithinArtifactLease(old.Grant.Binding.ExpiresAtUnixNano, deadline) {
 			return runtimeadmission.Promotion{}, ErrConflict
 		}
 		return old.Grant, nil
@@ -70,7 +77,11 @@ func (m *MemStore) IssueInstanceApplicationStandardPromotion(ctx context.Context
 			return runtimeadmission.Promotion{}, ErrConflict
 		}
 	}
-	p.Binding.IssuedAtUnixNano, p.Binding.ExpiresAtUnixNano = now.UnixNano(), now.Add(api.ApplicationStandardRuntimeAdmissionTTL).UnixNano()
+	expires, err := standardNativeGrantExpiry(now, deadline)
+	if err != nil {
+		return runtimeadmission.Promotion{}, err
+	}
+	p.Binding.IssuedAtUnixNano, p.Binding.ExpiresAtUnixNano = now.UnixNano(), expires.UnixNano()
 	if m.instanceApplicationStandardPromotions == nil {
 		m.instanceApplicationStandardPromotions = map[string]instanceStandardPromotion{}
 	}
@@ -87,7 +98,7 @@ func (m *MemStore) PublishInstanceApplicationStandardPromotion(ctx context.Conte
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	ins, _, parent, err := m.lockNativePromotionLocked(r.Binding.InstanceID, true)
+	ins, capture, parent, err := m.lockNativePromotionLocked(r.Binding.InstanceID, true)
 	if err != nil {
 		return Instance{}, err
 	}
@@ -100,6 +111,13 @@ func (m *MemStore) PublishInstanceApplicationStandardPromotion(ctx context.Conte
 			return Instance{}, ErrConflict
 		}
 		return ins, nil // Retry a committed publication without reusing its grant.
+	}
+	deadline, err := m.standardNativeArtifactDeadlineLocked(capture)
+	if err != nil {
+		return Instance{}, err
+	}
+	if !standardNativeGrantWithinArtifactLease(r.Binding.ExpiresAtUnixNano, deadline) {
+		return Instance{}, ErrApplicationStandardRuntimeStale
 	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	if p.Grant.CheckReceipt(r, now) != nil {

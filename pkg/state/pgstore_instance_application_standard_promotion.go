@@ -8,20 +8,22 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 var _ InstanceApplicationStandardPromotionStore = (*PgStore)(nil)
 
-func lockStandardNativePromotion(ctx context.Context, db sqlc.DBTX, id string, allowRunning bool) (nativePromotionLockedInputs, error) {
-	raw, err := sqlc.New().LockInstanceApplicationStandardPromotion(ctx, db, sqlc.LockInstanceApplicationStandardPromotionParams{InstanceID: mustPgUUID(id), AllowRunning: allowRunning})
+func lockStandardNativePromotion(ctx context.Context, tx pgx.Tx, id string, allowRunning bool) (nativePromotionLockedInputs, error) {
+	raw, err := sqlc.New().LockInstanceApplicationStandardPromotion(ctx, tx, sqlc.LockInstanceApplicationStandardPromotionParams{InstanceID: mustPgUUID(id), AllowRunning: allowRunning})
 	if err != nil {
 		return nativePromotionLockedInputs{}, mapErr(err)
 	}
 	var input nativePromotionLockedInputs
-	err = json.Unmarshal(raw, &input)
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return input, err
+	}
+	err = lockStandardNativeArtifactInputs(ctx, tx, &input.nativeBootLockedInputs, id, input.State == string(StateRunning))
 	return input, err
 }
 
@@ -82,7 +84,7 @@ func (s *PgStore) IssueInstanceApplicationStandardPromotion(ctx context.Context,
 		}
 		copy := p
 		copy.Binding.IssuedAtUnixNano, copy.Binding.ExpiresAtUnixNano = old.Grant.Binding.IssuedAtUnixNano, old.Grant.Binding.ExpiresAtUnixNano
-		if copy != old.Grant || old.Grant.Validate(now) != nil {
+		if copy != old.Grant || old.Grant.Validate(now) != nil || !standardNativeGrantWithinArtifactLease(old.Grant.Binding.ExpiresAtUnixNano, input.artifactDeadline()) {
 			return runtimeadmission.Promotion{}, ErrConflict
 		}
 		return old.Grant, tx.Commit(ctx)
@@ -90,7 +92,11 @@ func (s *PgStore) IssueInstanceApplicationStandardPromotion(ctx context.Context,
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return runtimeadmission.Promotion{}, mapErr(err)
 	}
-	p.Binding.IssuedAtUnixNano, p.Binding.ExpiresAtUnixNano = now.UnixNano(), now.Add(api.ApplicationStandardRuntimeAdmissionTTL).UnixNano()
+	expires, err := standardNativeGrantExpiry(now, input.artifactDeadline())
+	if err != nil {
+		return runtimeadmission.Promotion{}, err
+	}
+	p.Binding.IssuedAtUnixNano, p.Binding.ExpiresAtUnixNano = now.UnixNano(), expires.UnixNano()
 	raw, err := json.Marshal(p.Binding)
 	if err != nil {
 		return runtimeadmission.Promotion{}, err
@@ -138,6 +144,9 @@ func (s *PgStore) PublishInstanceApplicationStandardPromotion(ctx context.Contex
 			return Instance{}, ErrConflict
 		}
 	} else {
+		if !standardNativeGrantWithinArtifactLease(r.Binding.ExpiresAtUnixNano, input.artifactDeadline()) {
+			return Instance{}, ErrApplicationStandardRuntimeStale
+		}
 		if p.Grant.CheckReceipt(r, time.Unix(0, input.ClockUnixNano)) != nil {
 			return Instance{}, ErrApplicationStandardRuntimeStale
 		}

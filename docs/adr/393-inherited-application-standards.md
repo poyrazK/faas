@@ -313,7 +313,7 @@ duplicate and inconsistent membership without changing historical evidence.
 
 The input read still supplies stored producer facts. It does not invent an
 unbound runtime-default base, scan the actual guest overlay, authorize a native
-boot or advance observed adoption. Native grants must freshly recheck its
+boot or advance observed adoption. Native grant storage now freshly rechecks its
 approval leases. vmmd must verify
 the actual consumed base, app and sidecar bytes and return the bound consumer
 acknowledgment before those release gates can pass. That integration remains
@@ -332,13 +332,36 @@ renewal. Reads copy the identities and never backfill historical captures.
 
 The complete native capture still conservatively binds the compatibility scan
 report. Renewal can therefore require a new native capture even though its
-producer-set hash is unchanged. That binding must be replaced only together
-with a separate fresh approval lease at grant issue, boot publication and warm
-promotion. Producer metadata alone neither authenticates current publisher
+producer-set hash is unchanged. Removing that compatibility binding remains a
+separate change, with historical captures preserved and a safe native handoff.
+Producer metadata alone neither authenticates current publisher
 approval nor proves actual file consumption. Runtime-default bases without an
 explicit producer binding remain unapproved, and source-build publisher
 authority, content-aware native grants and consumed-byte acknowledgments remain
 release gates. No consumer observation or public activation follows this change.
+
+Native initial boot and warm promotion now recheck current component evidence
+inside their existing owner/control/artifact and explicit-base fences. Go
+reverifies retained publisher signatures against the current scoped keys. The
+database guards independently bind private proof provenance, current keys and
+producer/scan selections, exact ownership and source, complete scan status,
+storage-owned lease limits and scanner-database age. Enforce posture refuses
+high, critical and unknown findings in main, declared image sidecars and explicit
+bases; off/warn posture keeps those complete findings advisory. A signing
+requirement cannot acquire a grant from compatibility metadata without a private
+producer. Unsigned/source-build producer authority still needs its own boundary.
+
+Storage caps new grants at the earliest component/base evidence or database-age
+deadline and the existing ten-minute admission limit. Its final advancing clock
+refuses an approval that expires during a slow locked read. Exact token retries
+preserve the original issuance and expiry. Boot receipt recording, first runtime
+publication and warm promotion recheck fresh approval; saving a receipt alone
+cannot authorize later publication after base approval changes. An expired
+initial grant remains paused identity history, while resume requires a new grant
+and fresh evidence. Recovering the exact acknowledgment of an already committed
+promotion does not issue new authority or require an old approval to be renewed.
+These checks neither scan the guest overlay nor verify physical bytes consumed
+by vmmd, and they never advance observed standard adoption.
 
 The periodic live lease checker uses this private complete set when retained
 producer lineage exists. A missing sidecar, failed or replaced base, expired

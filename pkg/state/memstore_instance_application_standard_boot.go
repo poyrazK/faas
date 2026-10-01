@@ -8,7 +8,6 @@ import (
 	"slices"
 	"time"
 
-	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 )
 
@@ -103,6 +102,10 @@ func (m *MemStore) IssueInstanceApplicationStandardBoot(ctx context.Context, exp
 	if err != nil {
 		return runtimeadmission.Binding{}, err
 	}
+	deadline, err := m.standardNativeArtifactDeadlineLocked(capture)
+	if err != nil {
+		return runtimeadmission.Binding{}, err
+	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	if err := validateStandardBootBinding(binding, capture, m.computeNodeRuntimeIncarnations[capture.NodeID], now); err != nil {
 		return runtimeadmission.Binding{}, err
@@ -110,7 +113,7 @@ func (m *MemStore) IssueInstanceApplicationStandardBoot(ctx context.Context, exp
 	if old, ok := m.instanceApplicationStandardBoots[binding.Token]; ok {
 		copy := binding
 		copy.IssuedAtUnixNano, copy.ExpiresAtUnixNano = old.Binding.IssuedAtUnixNano, old.Binding.ExpiresAtUnixNano
-		if copy != old.Binding || old.ExpectedState != expectedState || old.Binding.Validate(now) != nil {
+		if copy != old.Binding || old.ExpectedState != expectedState || old.Binding.Validate(now) != nil || !standardNativeGrantWithinArtifactLease(old.Binding.ExpiresAtUnixNano, deadline) {
 			return runtimeadmission.Binding{}, ErrConflict
 		}
 		return old.Binding, nil
@@ -120,7 +123,11 @@ func (m *MemStore) IssueInstanceApplicationStandardBoot(ctx context.Context, exp
 			return runtimeadmission.Binding{}, ErrConflict
 		}
 	}
-	binding.IssuedAtUnixNano, binding.ExpiresAtUnixNano = now.UnixNano(), now.Add(api.ApplicationStandardRuntimeAdmissionTTL).UnixNano()
+	expires, err := standardNativeGrantExpiry(now, deadline)
+	if err != nil {
+		return runtimeadmission.Binding{}, err
+	}
+	binding.IssuedAtUnixNano, binding.ExpiresAtUnixNano = now.UnixNano(), expires.UnixNano()
 	if m.instanceApplicationStandardBoots == nil {
 		m.instanceApplicationStandardBoots = map[string]instanceStandardBoot{}
 	}
@@ -143,6 +150,13 @@ func (m *MemStore) PublishInstanceApplicationStandardRuntime(ctx context.Context
 	ins, capture, err := m.lockNativeBootInputsLocked(receipt.Binding.InstanceID, expectedState)
 	if err != nil {
 		return Instance{}, err
+	}
+	deadline, err := m.standardNativeArtifactDeadlineLocked(capture)
+	if err != nil {
+		return Instance{}, err
+	}
+	if !standardNativeGrantWithinArtifactLease(receipt.Binding.ExpiresAtUnixNano, deadline) {
+		return Instance{}, ErrApplicationStandardRuntimeStale
 	}
 	boot, ok := m.instanceApplicationStandardBoots[receipt.Binding.Token]
 	if !ok || boot.ExpectedState != expectedState || boot.Binding != receipt.Binding {

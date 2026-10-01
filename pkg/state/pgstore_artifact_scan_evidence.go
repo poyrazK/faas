@@ -108,7 +108,7 @@ func (s *PgStore) GetFreshDeploymentArtifactScanEvidence(ctx context.Context, ac
 	if err := finishArtifactEvidenceTransaction(ctx, tx, &value, parents); err != nil {
 		return DeploymentArtifactScanEvidence{}, err
 	}
-	return value, nil
+	return value, tx.Commit(ctx)
 }
 
 func readArtifactEvidenceOwner(ctx context.Context, tx pgx.Tx, accountID, appID, depID string) (sqlc.GetDeploymentArtifactWorkloadsRow, error) {
@@ -175,5 +175,5 @@ func finishArtifactEvidenceTransaction(ctx context.Context, tx pgx.Tx, value *De
 	if err := finishArtifactScanEvidence(value, now.Time); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	return nil // Caller owns the transaction; native admission retains these fences.
 }

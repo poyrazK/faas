@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -31,19 +30,17 @@ func (s *PgStore) RegisterComputeNodeRuntimeIdentity(ctx context.Context, identi
 	return nil
 }
 
-func lockStandardNativeBoot(ctx context.Context, db sqlc.DBTX, id, expectedState string) (InstanceApplicationStandardAdmission, string, time.Time, error) {
-	raw, err := sqlc.New().LockInstanceApplicationStandardBoot(ctx, db, sqlc.LockInstanceApplicationStandardBootParams{InstanceID: mustPgUUID(id), ExpectedState: expectedState})
+func lockStandardNativeBoot(ctx context.Context, tx pgx.Tx, id, expectedState string) (nativeBootLockedInputs, error) {
+	raw, err := sqlc.New().LockInstanceApplicationStandardBoot(ctx, tx, sqlc.LockInstanceApplicationStandardBootParams{InstanceID: mustPgUUID(id), ExpectedState: expectedState})
 	if err != nil {
-		return InstanceApplicationStandardAdmission{}, "", time.Time{}, mapErr(err)
+		return nativeBootLockedInputs{}, mapErr(err)
 	}
 	var input nativeBootLockedInputs
 	if err := json.Unmarshal(raw, &input); err != nil {
-		return InstanceApplicationStandardAdmission{}, "", time.Time{}, err
+		return input, err
 	}
-	now := time.Unix(0, input.ClockUnixNano).UTC()
-	capture, err := decodeInstanceStandardAdmission(id, input.Snapshot, now)
-	capture.NodeID, capture.NativeInputHash = input.NodeID, input.CapturedInputHash
-	return capture, input.Incarnation, now, err
+	err = lockStandardNativeArtifactInputs(ctx, tx, &input, id, false)
+	return input, err
 }
 
 func decodeStandardNativeBoot(row sqlc.GetInstanceApplicationStandardBootRow) (instanceStandardBoot, error) {
@@ -73,11 +70,12 @@ func (s *PgStore) IssueInstanceApplicationStandardBoot(ctx context.Context, expe
 		return runtimeadmission.Binding{}, err
 	}
 	defer tx.Rollback(ctx)
-	capture, incarnation, now, err := lockStandardNativeBoot(ctx, tx, binding.InstanceID, expectedState)
+	input, err := lockStandardNativeBoot(ctx, tx, binding.InstanceID, expectedState)
 	if err != nil {
 		return runtimeadmission.Binding{}, fmt.Errorf("lock native boot inputs: %w", err)
 	}
-	if err := validateStandardBootBinding(binding, capture, incarnation, now); err != nil {
+	now := time.Unix(0, input.ClockUnixNano).UTC()
+	if err := validateStandardBootBinding(binding, input.capture, input.Incarnation, now); err != nil {
 		return runtimeadmission.Binding{}, err
 	}
 	q := sqlc.New()
@@ -89,7 +87,7 @@ func (s *PgStore) IssueInstanceApplicationStandardBoot(ctx context.Context, expe
 		}
 		candidate := binding
 		candidate.IssuedAtUnixNano, candidate.ExpiresAtUnixNano = old.Binding.IssuedAtUnixNano, old.Binding.ExpiresAtUnixNano
-		if candidate != old.Binding || old.ExpectedState != expectedState || old.Binding.Validate(now) != nil {
+		if candidate != old.Binding || old.ExpectedState != expectedState || old.Binding.Validate(now) != nil || !standardNativeGrantWithinArtifactLease(old.Binding.ExpiresAtUnixNano, input.artifactDeadline()) {
 			return runtimeadmission.Binding{}, ErrConflict
 		}
 		return old.Binding, tx.Commit(ctx)
@@ -97,7 +95,11 @@ func (s *PgStore) IssueInstanceApplicationStandardBoot(ctx context.Context, expe
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return runtimeadmission.Binding{}, mapErr(err)
 	}
-	binding.IssuedAtUnixNano, binding.ExpiresAtUnixNano = now.UnixNano(), now.Add(api.ApplicationStandardRuntimeAdmissionTTL).UnixNano()
+	expires, err := standardNativeGrantExpiry(now, input.artifactDeadline())
+	if err != nil {
+		return runtimeadmission.Binding{}, err
+	}
+	binding.IssuedAtUnixNano, binding.ExpiresAtUnixNano = now.UnixNano(), expires.UnixNano()
 	raw, err := json.Marshal(binding)
 	if err != nil {
 		return runtimeadmission.Binding{}, err
@@ -123,12 +125,16 @@ func (s *PgStore) PublishInstanceApplicationStandardRuntime(ctx context.Context,
 		return Instance{}, err
 	}
 	defer tx.Rollback(ctx)
-	capture, incarnation, now, err := lockStandardNativeBoot(ctx, tx, receipt.Binding.InstanceID, expectedState)
+	input, err := lockStandardNativeBoot(ctx, tx, receipt.Binding.InstanceID, expectedState)
 	if err != nil {
 		return Instance{}, fmt.Errorf("lock native publication inputs: %w", err)
 	}
-	if err := validateStandardBootBinding(receipt.Binding, capture, incarnation, now); err != nil {
+	now := time.Unix(0, input.ClockUnixNano).UTC()
+	if err := validateStandardBootBinding(receipt.Binding, input.capture, input.Incarnation, now); err != nil {
 		return Instance{}, err
+	}
+	if !standardNativeGrantWithinArtifactLease(receipt.Binding.ExpiresAtUnixNano, input.artifactDeadline()) {
+		return Instance{}, ErrApplicationStandardRuntimeStale
 	}
 	q := sqlc.New()
 	row, err := q.GetInstanceApplicationStandardBoot(ctx, tx, mustPgUUID(receipt.Binding.Token))

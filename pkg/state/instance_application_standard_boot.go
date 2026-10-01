@@ -28,11 +28,13 @@ type instanceStandardBoot struct {
 }
 
 type nativeBootLockedInputs struct {
-	Snapshot          json.RawMessage `json:"input_snapshot"`
-	CapturedInputHash string          `json:"captured_input_hash"`
-	NodeID            string          `json:"node_id"`
-	Incarnation       string          `json:"incarnation"`
-	ClockUnixNano     int64           `json:"clock_unix_nano"`
+	Snapshot                  json.RawMessage `json:"input_snapshot"`
+	CapturedInputHash         string          `json:"captured_input_hash"`
+	NodeID                    string          `json:"node_id"`
+	Incarnation               string          `json:"incarnation"`
+	ClockUnixNano             int64           `json:"clock_unix_nano"`
+	ArtifactExpiresAtUnixNano int64           `json:"artifact_expires_at_unix_nano"`
+	capture                   InstanceApplicationStandardAdmission
 }
 
 func validateStandardBootBinding(binding runtimeadmission.Binding, capture InstanceApplicationStandardAdmission, incarnation string, now time.Time) error {
