@@ -10,21 +10,23 @@ import (
 // MemoryStore is useful for unit tests and local wiring. Production adapters
 // should enforce the same transitions transactionally in PostgreSQL.
 type MemoryStore struct {
-	mu        sync.Mutex
-	databases map[string]Database
-	names     map[string]string
-	bindings  map[string]Binding
-	targets   map[string]string
-	usage     map[usageKey]UsageRecord
+	mu            sync.Mutex
+	databases     map[string]Database
+	names         map[string]string
+	bindings      map[string]Binding
+	targets       map[string]string
+	usage         map[usageKey]UsageRecord
+	usageProgress map[usageProgressKey]UsageProgress
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		databases: map[string]Database{},
-		names:     map[string]string{},
-		bindings:  map[string]Binding{},
-		targets:   map[string]string{},
-		usage:     map[usageKey]UsageRecord{},
+		databases:     map[string]Database{},
+		names:         map[string]string{},
+		bindings:      map[string]Binding{},
+		targets:       map[string]string{},
+		usage:         map[usageKey]UsageRecord{},
+		usageProgress: map[usageProgressKey]UsageProgress{},
 	}
 }
 

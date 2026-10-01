@@ -7326,6 +7326,24 @@ CREATE TABLE public.managed_postgres_usage (
 
 
 --
+-- Name: managed_postgres_usage_coverage; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_usage_coverage (
+    database_id uuid NOT NULL,
+    window_seconds bigint NOT NULL,
+    collected_from timestamp with time zone,
+    collected_until timestamp with time zone,
+    observed_at timestamp with time zone,
+    source_database_id uuid,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT managed_postgres_usage_coverage_check CHECK ((source_database_id IS DISTINCT FROM database_id)),
+    CONSTRAINT managed_postgres_usage_coverage_check1 CHECK ((((source_database_id IS NULL) AND (collected_from IS NOT NULL) AND (collected_until IS NOT NULL) AND (collected_until > collected_from) AND (observed_at IS NOT NULL)) OR ((source_database_id IS NOT NULL) AND (collected_from IS NULL) AND (collected_until IS NULL) AND (observed_at IS NULL)))),
+    CONSTRAINT managed_postgres_usage_coverage_window_seconds_check CHECK (((window_seconds >= 3600) AND (window_seconds <= 86400)))
+);
+
+
+--
 -- Name: managed_realtime_channel_heads; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -12298,6 +12316,14 @@ ALTER TABLE ONLY public.managed_postgres_bindings
 
 ALTER TABLE ONLY public.managed_postgres_databases
     ADD CONSTRAINT managed_postgres_databases_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: managed_postgres_usage_coverage managed_postgres_usage_coverage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_usage_coverage
+    ADD CONSTRAINT managed_postgres_usage_coverage_pkey PRIMARY KEY (database_id, window_seconds);
 
 
 --
@@ -21307,6 +21333,22 @@ ALTER TABLE ONLY public.managed_postgres_databases
 
 ALTER TABLE ONLY public.managed_postgres_usage
     ADD CONSTRAINT managed_postgres_usage_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_usage_coverage managed_postgres_usage_coverage_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_usage_coverage
+    ADD CONSTRAINT managed_postgres_usage_coverage_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_usage_coverage managed_postgres_usage_coverage_source_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_usage_coverage
+    ADD CONSTRAINT managed_postgres_usage_coverage_source_database_id_fkey FOREIGN KEY (source_database_id) REFERENCES public.managed_postgres_databases(id);
 
 
 --

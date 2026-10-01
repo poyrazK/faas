@@ -230,9 +230,29 @@ storage, and egress; history is optional because providers may not expose
 point-in-time or snapshot storage. Rates use integer millicents per CU-hour,
 GiB-hour of storage/history, or GiB of egress.
 
+`managed_postgres_usage_coverage` commits a contiguous completed-window
+checkpoint atomically with each window's meter readings. Collection begins in
+the window containing database creation and resumes from that checkpoint after
+an outage or process restart. Each sweep backfills at most 24 windows per
+database; remaining backlog is deferred to the next sweep. Missing advertised
+meters or a failed window do not advance coverage. Once caught up, the latest
+completed window is refreshed so newer provider corrections replace its values;
+older observations cannot overwrite newer readings. Historical corrections
+outside that latest window still require explicit reconciliation.
+
+The migration does not infer coverage from old ledger rows, because those rows
+may contain gaps. Existing databases replay from creation, replacing identical
+window keys without increasing totals. Admission stays stale until recovery
+reaches the latest completed policy window for every ready database. Provider
+history that is no longer available must be reconciled by an operator; it is
+never silently skipped. Keep `usage.window_seconds` unchanged for databases
+with recorded usage: changing its duration fails closed to prevent overlapping
+windows from counting consumption twice and requires an accounting migration.
+Deleting a database retains its recorded consumption in monthly account totals.
+
 When enabled, a new database reservation is admitted only if the account has a
-fresh usage observation and has not crossed its monthly cost, compute, storage,
-history (when configured), or egress ceiling. Missing or stale observations fail
+complete, fresh usage coverage for each ready database and has not crossed its
+monthly cost, compute, storage, history (when configured), or egress ceiling. Missing or stale observations fail
 closed; an existing named database remains idempotent and can still be
 reconciled. The plan's per-database storage entitlement is multiplied by the
 plan's database-count allowance, converted to the canonical byte-second meter,
@@ -294,7 +314,8 @@ format. Credentials, inspection, usage, and deletion route to the branch.
 Neon reports consumption at project scope rather than per branch. With usage
 guardrails enabled, Gregale therefore collects that project aggregate once
 against the source database and skips direct usage collection for every restore
-descendant. This keeps account-level COGS ceilings effective without claiming
+descendant. Descendants share the root source's coverage; a source with missing
+windows keeps its targets stale. This keeps account-level COGS ceilings effective without claiming
 per-target usage isolation; the usage collector exposes skipped descendants as
 `included_in_source` rather than as independently metered databases. Providers
 that can meter restores independently may instead declare that capability.

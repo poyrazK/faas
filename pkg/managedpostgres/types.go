@@ -383,6 +383,21 @@ type UsageSnapshot struct {
 	HistoryByteSeconds int64
 	EgressBytes        int64
 	CostMillicents     int64
+	// Databases carries completeness for every ready database. Restores whose
+	// usage is included in a source resolve to that source's coverage.
+	Databases []UsageProgress
+}
+
+// UsageProgress is a contiguous series of complete provider windows. Keeping
+// it separate from observations prevents a newly refreshed old window from
+// making an incomplete account look current.
+type UsageProgress struct {
+	Window           time.Duration
+	CollectedFrom    time.Time
+	CollectedUntil   time.Time
+	ObservedAt       time.Time
+	SourceDatabaseID string
+	UpdatedAt        time.Time
 }
 
 // UsageLineItem is a normalized, provider-neutral meter line. It is an
@@ -434,6 +449,16 @@ func (p UsagePolicy) LineItems(snapshot UsageSnapshot) ([]UsageLineItem, error) 
 func (s UsageSnapshot) Stale(policy UsagePolicy, now time.Time) bool {
 	if !policy.Enabled || s.ReadyDatabases == 0 {
 		return false
+	}
+	if len(s.Databases) > 0 && len(s.Databases) != s.ReadyDatabases {
+		return true
+	}
+	for _, progress := range s.Databases {
+		if progress.Window != policy.Window || progress.ObservedAt.IsZero() ||
+			now.Sub(progress.ObservedAt) > policy.StaleAfter ||
+			progress.CollectedUntil.Before(now.UTC().Truncate(policy.Window)) {
+			return true
+		}
 	}
 	return s.LastObservedAt.IsZero() || now.Sub(s.LastObservedAt) > policy.StaleAfter
 }
@@ -676,7 +701,13 @@ type UsageStore interface {
 	// (updated_at, id), strictly after the cursor. The zero cursor starts
 	// from the beginning; a sweep pages until a short page.
 	ListUsageDatabases(ctx context.Context, after UsageDatabaseCursor, limit int) ([]Database, error)
+	Get(context.Context, string, string) (Database, error)
+	UsageProgress(context.Context, string, string, time.Duration) (UsageProgress, error)
+	// RecordUsage atomically replaces one complete window and advances coverage
+	// only when the window is contiguous with the previously committed series.
 	RecordUsage(context.Context, []UsageRecord) error
+	// RecordSharedUsage links a restore to its independently metered root.
+	RecordSharedUsage(context.Context, string, string, string, time.Duration) error
 	UsageSnapshot(context.Context, string, time.Time) (UsageSnapshot, error)
 }
 

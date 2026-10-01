@@ -2369,6 +2369,16 @@ type ManagedPostgresUsage struct {
 	CostMillicents     int64
 }
 
+type ManagedPostgresUsageCoverage struct {
+	DatabaseID       pgtype.UUID
+	WindowSeconds    int64
+	CollectedFrom    pgtype.Timestamptz
+	CollectedUntil   pgtype.Timestamptz
+	ObservedAt       pgtype.Timestamptz
+	SourceDatabaseID pgtype.UUID
+	UpdatedAt        pgtype.Timestamptz
+}
+
 type ManagedRealtimeChannelHead struct {
 	EndpointID     pgtype.UUID
 	Channel        string

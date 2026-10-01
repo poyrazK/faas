@@ -124,3 +124,21 @@ Prometheus `managed_postgres` rule group. Use the
 runbook for reconciliation failures, deferred work, stale usage, and recovery
 validation. The provisioning gate metric is informational: it is expected to
 be zero outside an approved staging canary.
+
+## Metering recovery after rollout
+
+Apply the usage-coverage migration before starting the collector. Existing
+ledger rows do not establish contiguous coverage: databases replay from their
+creation window in batches of at most 24 windows per sweep. Preserve the
+configured collection-window duration. Do not reset checkpoints or change
+`usage.window_seconds` to bypass a stale guardrail.
+
+Check `apid_managed_postgres_usage_collection_databases_total` outcomes and the account usage
+API until each account returns `guardrail_state=healthy` (or `reached` when a
+ceiling is exhausted). A provider error or missing meter defers the failing
+window and keeps admission stale; later windows cannot conceal that gap.
+Shared Neon restore targets use their root source's coverage and consumption,
+so a stale source keeps its descendants stale without multiplying usage.
+Recorded usage remains in account monthly totals after database deletion.
+If provider history is outside its retention period, investigate and reconcile
+that gap before enabling further reservations.
