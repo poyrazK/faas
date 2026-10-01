@@ -502,11 +502,11 @@ func runAppWithRAMAndWorkloadEnv(m api.AppManifest, secrets, apiEnv map[string]s
 	} else {
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	}
-	if uid := lookupUID(m.EffectiveUser()); uid > 0 {
-		cmd.SysProcAttr = &syscall.SysProcAttr{
-			Credential: &syscall.Credential{Uid: uint32(uid), Gid: uint32(uid)},
-		}
+	credential, err := processCredential("", m.EffectiveUser())
+	if err != nil {
+		return fmt.Errorf("run app: %w", err)
 	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: execProcessCredential(credential)}
 	// ADR-051 Phase 4: expose the forked cmd to the supervisor so
 	// runCharacterizationForSup can read the PID via LastAppPID().
 	// The supervisor's Run() loop captures the cmd at every
@@ -2454,7 +2454,8 @@ func pivotInto(root string) error {
 // two-drive legacy path is unaffected.
 //
 // ADR-142 §Decision 3 (binary-search reader).
-func lookupUID(user string) int {
+func legacyLookupUID(user string) int {
+	user, _, _ = strings.Cut(user, ":")
 	if user == api.DefaultAppUser {
 		return api.DefaultAppUID
 	}

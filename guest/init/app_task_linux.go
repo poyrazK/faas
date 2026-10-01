@@ -177,9 +177,11 @@ func executeAppTaskCommand(ctx context.Context, req apptaskproto.Request, manife
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if uid := lookupUID(manifest.EffectiveUser()); uid > 0 {
-		cmd.SysProcAttr.Credential = &syscall.Credential{Uid: uint32(uid), Gid: uint32(uid)}
+	credential, err := processCredential("", manifest.EffectiveUser())
+	if err != nil {
+		return appTaskInfraFailure("command_identity_invalid", "command identity could not be resolved", 126), nil //nolint:nilerr // identity errors are terminal protocol results
 	}
+	cmd.SysProcAttr.Credential = execProcessCredential(credential)
 	if err := cmd.Start(); err != nil {
 		exitCode := 126
 		failureCode := "command_start_failed"

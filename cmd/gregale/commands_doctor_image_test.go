@@ -110,7 +110,7 @@ func TestDoctorImageCommand(t *testing.T) {
 			if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 				t.Fatalf("invalid JSON: %v: %s", err, out.String())
 			}
-			if len(report.Image.EffectiveArgv) != 2 || report.Image.User != "1000" {
+			if len(report.Image.EffectiveArgv) != 2 || report.Image.User != "1000:1000" {
 				t.Fatalf("incorrect runtime projection: %+v", report.Image)
 			}
 			if strings.Contains(out.String()+stderr.String(), "secret-token") {
