@@ -574,6 +574,7 @@ from .delayed_task_response import DelayedTaskResponse
 from .delayed_task_response_state import DelayedTaskResponseState
 from .delete_account_session_body import DeleteAccountSessionBody
 from .delete_deployment_scope_exclusion_response_200 import DeleteDeploymentScopeExclusionResponse200
+from .delete_exclusive_operation_trigger_binding_source import DeleteExclusiveOperationTriggerBindingSource
 from .delete_secret_prefer import DeleteSecretPrefer
 from .deliver_app_event_request import DeliverAppEventRequest
 from .deliver_app_event_response import DeliverAppEventResponse
@@ -743,6 +744,20 @@ from .event_subscription_list_response import EventSubscriptionListResponse
 from .event_subscription_response import EventSubscriptionResponse
 from .event_subscription_response_filter import EventSubscriptionResponseFilter
 from .event_subscription_response_work_action import EventSubscriptionResponseWorkAction
+from .exclusive_app_task_operation_request import ExclusiveAppTaskOperationRequest
+from .exclusive_job_operation_request import ExclusiveJobOperationRequest
+from .exclusive_operation_accepted import ExclusiveOperationAccepted
+from .exclusive_operation_record import ExclusiveOperationRecord
+from .exclusive_operation_record_state import ExclusiveOperationRecordState
+from .exclusive_operation_request import ExclusiveOperationRequest
+from .exclusive_operation_request_invocation import ExclusiveOperationRequestInvocation
+from .exclusive_operation_request_invocation_headers import ExclusiveOperationRequestInvocationHeaders
+from .exclusive_operation_request_invocation_payload import ExclusiveOperationRequestInvocationPayload
+from .exclusive_trigger_binding_record import ExclusiveTriggerBindingRecord
+from .exclusive_trigger_binding_record_source import ExclusiveTriggerBindingRecordSource
+from .exclusive_trigger_binding_request import ExclusiveTriggerBindingRequest
+from .exclusive_work_policy_list import ExclusiveWorkPolicyList
+from .exclusive_work_policy_record import ExclusiveWorkPolicyRecord
 from .execution_artifact import ExecutionArtifact
 from .execution_failure import ExecutionFailure
 from .execution_file import ExecutionFile
@@ -820,6 +835,7 @@ from .get_deployment_stages_response_200_current import GetDeploymentStagesRespo
 from .get_deployment_stages_response_200_history_item import GetDeploymentStagesResponse200HistoryItem
 from .get_deployment_stages_response_200_history_item_name import GetDeploymentStagesResponse200HistoryItemName
 from .get_deployment_stages_response_200_history_item_status import GetDeploymentStagesResponse200HistoryItemStatus
+from .get_exclusive_operation_trigger_binding_source import GetExclusiveOperationTriggerBindingSource
 from .get_github_recovery_status_status import GetGithubRecoveryStatusStatus
 from .get_mirror_rule_summary_window import GetMirrorRuleSummaryWindow
 from .get_open_api_spec_json_response_200 import GetOpenAPISpecJSONResponse200
@@ -1917,6 +1933,7 @@ from .upload_start_response import UploadStartResponse
 from .upsert_dev_session_request import UpsertDevSessionRequest
 from .upsert_dev_session_request_runtime import UpsertDevSessionRequestRuntime
 from .upsert_dev_session_request_type import UpsertDevSessionRequestType
+from .upsert_exclusive_operation_trigger_binding_source import UpsertExclusiveOperationTriggerBindingSource
 from .upsert_work_policy_request import UpsertWorkPolicyRequest
 from .upsert_work_policy_request_max_running_per_key import UpsertWorkPolicyRequestMaxRunningPerKey
 from .upsert_work_policy_request_pending_updates import UpsertWorkPolicyRequestPendingUpdates
@@ -2529,6 +2546,7 @@ __all__ = (
     "DelayedTaskResponseState",
     "DeleteAccountSessionBody",
     "DeleteDeploymentScopeExclusionResponse200",
+    "DeleteExclusiveOperationTriggerBindingSource",
     "DeleteSecretPrefer",
     "DeliverAppEventRequest",
     "DeliverAppEventResponse",
@@ -2698,6 +2716,20 @@ __all__ = (
     "EventSubscriptionResponse",
     "EventSubscriptionResponseFilter",
     "EventSubscriptionResponseWorkAction",
+    "ExclusiveAppTaskOperationRequest",
+    "ExclusiveJobOperationRequest",
+    "ExclusiveOperationAccepted",
+    "ExclusiveOperationRecord",
+    "ExclusiveOperationRecordState",
+    "ExclusiveOperationRequest",
+    "ExclusiveOperationRequestInvocation",
+    "ExclusiveOperationRequestInvocationHeaders",
+    "ExclusiveOperationRequestInvocationPayload",
+    "ExclusiveTriggerBindingRecord",
+    "ExclusiveTriggerBindingRecordSource",
+    "ExclusiveTriggerBindingRequest",
+    "ExclusiveWorkPolicyList",
+    "ExclusiveWorkPolicyRecord",
     "ExecutionArtifact",
     "ExecutionFailure",
     "ExecutionFile",
@@ -2775,6 +2807,7 @@ __all__ = (
     "GetDeploymentStagesResponse200HistoryItem",
     "GetDeploymentStagesResponse200HistoryItemName",
     "GetDeploymentStagesResponse200HistoryItemStatus",
+    "GetExclusiveOperationTriggerBindingSource",
     "GetGithubRecoveryStatusStatus",
     "GetMirrorRuleSummaryWindow",
     "GetOpenAPISpecJSONResponse200",
@@ -3808,6 +3841,7 @@ __all__ = (
     "UpsertDevSessionRequest",
     "UpsertDevSessionRequestRuntime",
     "UpsertDevSessionRequestType",
+    "UpsertExclusiveOperationTriggerBindingSource",
     "UpsertWorkPolicyRequest",
     "UpsertWorkPolicyRequestMaxRunningPerKey",
     "UpsertWorkPolicyRequestPendingUpdates",
