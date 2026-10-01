@@ -986,6 +986,18 @@ message CapacityReport {
   // it on the persistent capacity stream removes the schedd-side 200 ms
   // fresh-dial fan-out across the fleet.
   repeated InstanceTelemetry instances = 10;
+  // Authoritative process inventory, independent of optional resource metrics.
+  // Absence means an older producer; complete=false means unknown. A complete
+  // empty inventory explicitly asserts that this node has no running VMs.
+  NodeInstanceInventory instance_inventory = 11;
+}
+
+// Inherits node_id, sampled_at_unix_ms and node_key_id from CapacityReport.
+// Its separate signature preserves the v1 capacity signature during upgrades.
+message NodeInstanceInventory {
+  bool complete = 1;
+  repeated string instance_ids = 2;
+  bytes node_signature = 3;
 }
 
 // InstanceTelemetry is the vmmd-side Stats row carried in CapacityReport.

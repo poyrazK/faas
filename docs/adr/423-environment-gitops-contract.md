@@ -1,9 +1,10 @@
-# ADR-393 · Git-owned environment intent and continuous reconciliation
+# ADR-423 · Git-owned environment intent and continuous reconciliation
 
 - **Status:** implementation in progress
 - **Date:** 2026-09-30
 - **Migration reference:** Earlier unreleased GitOps migration comments using
-  ADR-387 refer to this contract; the published ADR-387 covers FOCUS invoices.
+  ADR-387 and this branch's earlier ADR-393 document refer to this contract.
+  Published ADR-387 covers FOCUS invoices; ADR-393 covers exclusive operations.
 - **Decision:** A registered project environment may bind one approved,
   immutable Git definition to a durable management source. The contract owns
   explicit intent fields, not runtime instances or provider-generated state.

@@ -19,9 +19,20 @@ type Rule struct {
 	Group     string   `json:"group,omitempty"`
 	// Rollout is basis points (0..10000) of eligible customers. Nil is 100%.
 	Rollout *int `json:"rollout,omitempty"`
+	// Progression pins a boolean true rollout to one of a finite set of
+	// percentage stages. Only the management API advances CurrentStage.
+	Progression *ProgressiveRollout `json:"progression,omitempty"`
 	// Value is a boolean for boolean flags, or a variant key for variant flags.
 	// Variant rules may omit it to use the configured weighted allocation.
 	Value any `json:"value,omitempty"`
+}
+type ProgressiveRollout struct {
+	Stages                        []int `json:"stages"`
+	CurrentStage                  int   `json:"current_stage"`
+	MinimumUsedRequests           int64 `json:"minimum_used_requests"`
+	MaximumHTTP5xxRateBasisPoints int   `json:"maximum_http_5xx_rate_basis_points"`
+	MaximumP95LatencyMS           int   `json:"maximum_p95_latency_ms"`
+	WindowSeconds                 int   `json:"window_seconds"`
 }
 type Flag struct {
 	Key         string `json:"key"`
@@ -292,6 +303,27 @@ func Validate(c Config) error {
 			}
 			if r.Rollout != nil && (*r.Rollout < 0 || *r.Rollout > 10000) {
 				return fmt.Errorf("rollout must be 0..10000 basis points")
+			}
+			if r.Progression != nil {
+				value, isBoolean := r.Value.(bool)
+				if typ != "boolean" || !isBoolean || !value || r.Rollout == nil {
+					return fmt.Errorf("progressive rollout requires a boolean true rule with an explicit rollout")
+				}
+				p := r.Progression
+				if len(p.Stages) < 2 || len(p.Stages) > api.FlagsMaxProgressiveStages || p.CurrentStage < 0 || p.CurrentStage >= len(p.Stages) {
+					return fmt.Errorf("progressive rollout requires 2..%d stages and a valid current_stage", api.FlagsMaxProgressiveStages)
+				}
+				if p.Stages[len(p.Stages)-1] != 10000 || *r.Rollout != p.Stages[p.CurrentStage] {
+					return fmt.Errorf("progressive rollout must end at 10000 basis points and match the active stage")
+				}
+				for i, stage := range p.Stages {
+					if stage < 1 || stage > 10000 || i > 0 && stage <= p.Stages[i-1] {
+						return fmt.Errorf("progressive rollout stages must increase from 1 to 10000 basis points")
+					}
+				}
+				if p.MinimumUsedRequests < 1 || p.MinimumUsedRequests > api.FlagsMaxProgressiveMinimumRequests || p.MaximumHTTP5xxRateBasisPoints < 0 || p.MaximumHTTP5xxRateBasisPoints > 10000 || p.MaximumP95LatencyMS < 1 || p.MaximumP95LatencyMS > api.FlagsMaxProgressiveLatencyMS || p.WindowSeconds < api.FlagsMinProgressiveWindowSeconds || p.WindowSeconds > api.FlagsMaxProgressiveWindowSeconds {
+					return fmt.Errorf("invalid progressive rollout evidence thresholds")
+				}
 			}
 			if len(r.Customers) == 0 && r.Group == "" && r.Rollout == nil {
 				return fmt.Errorf("rule requires customer, group, or rollout targeting")

@@ -61,6 +61,14 @@ func (c *Client) ProjectFlagOutcomes(ctx context.Context, project, environment, 
 	return out, err
 }
 
+// PromoteProjectFlagRollout evaluates a rule's evidence gates and publishes its next stage when healthy.
+func (c *Client) PromoteProjectFlagRollout(ctx context.Context, project, environment, key string, body json.RawMessage) (json.RawMessage, error) {
+	var out json.RawMessage
+	path := flagsPath(project, environment) + "/" + url.PathEscape(key) + "/rollout/promote"
+	err := c.do(ctx, http.MethodPost, path, body, &out)
+	return out, err
+}
+
 // RuntimeFlags requires a Client constructed with a workload JWT for gregale:flags.
 // Account API keys cannot read this endpoint.
 func (c *Client) RuntimeFlags(ctx context.Context) (json.RawMessage, error) {

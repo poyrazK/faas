@@ -1,7 +1,11 @@
 import { createHash } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 
-export interface FlagRule { id: string; customers?: string[]; group?: string; rollout?: number; value: boolean }
+export interface ProgressiveRollout {
+  stages: number[]; current_stage: number; minimum_used_requests: number;
+  maximum_http_5xx_rate_basis_points: number; maximum_p95_latency_ms: number; window_seconds: number;
+}
+export interface FlagRule { id: string; customers?: string[]; group?: string; rollout?: number; value: boolean; progression?: ProgressiveRollout }
 export interface VariantFlagRule { id: string; customers?: string[]; group?: string; rollout?: number; value?: string }
 export interface WeightedVariant { key: string; weight: number }
 export interface FeatureFlag { key: string; description?: string; type?: 'boolean'; enabled: boolean; default: boolean; seed: string; rules: FlagRule[]; variants?: never }

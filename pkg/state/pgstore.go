@@ -16437,7 +16437,7 @@ func scanCreatedInstance(row pgx.Row, wakeID, appID string) (Instance, error) {
 				ErrConcurrentWake, wakeID, appID,
 			)
 		}
-		return Instance{}, fmt.Errorf("state: create instance %q (app=%s): %w", wakeID, appID, err)
+		return Instance{}, fmt.Errorf("state: create instance %q (app=%s): %w", wakeID, appID, mapErr(err))
 	}
 	return inst, nil
 }
@@ -16769,7 +16769,7 @@ func (s *PgStore) ListLatestInstancePerApp(ctx context.Context, accountID string
 func (s *PgStore) UpdateInstanceState(ctx context.Context, id, state string) error {
 	tag, err := s.pool.Exec(ctx, `update instances set state = $2 where id = $1`, id, state)
 	if err != nil {
-		return err
+		return mapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -16791,7 +16791,7 @@ func (s *PgStore) UpdateInstanceStateIf(ctx context.Context, id, expectedState, 
 		  where id = $1
 		    and state = $2`, id, expectedState, nextState)
 	if err != nil {
-		return err
+		return mapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrConflict
@@ -16809,7 +16809,7 @@ func (s *PgStore) UpdateInstanceStateWithTimestamp(ctx context.Context, id, stat
 		`update instances set state = $2, parked_at = $3 where id = $1`,
 		id, state, parkedAt)
 	if err != nil {
-		return err
+		return mapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -25246,6 +25246,9 @@ func mapErr(err error) error {
 			}
 			if pgErr.ConstraintName == "environment_gitops_field_owned" {
 				return ErrEnvironmentGitManaged
+			}
+			if pgErr.ConstraintName == "service_capacity_protection" {
+				return &ServiceCapacityError{}
 			}
 			if pgErr.ConstraintName == "invocation_platform_tenant_active" {
 				return ErrPlatformTenantSuspended

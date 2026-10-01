@@ -1464,6 +1464,87 @@ type InvokeRequest struct {
 	Path    string          `json:"path,omitempty"`
 }
 
+type ExclusiveOperationRequest struct {
+	Policy         string          `json:"policy"`
+	Key            json.RawMessage `json:"key"`
+	EquivalenceKey string          `json:"equivalence_key,omitempty"`
+	Invocation     InvokeRequest   `json:"invocation"`
+}
+type ExclusiveJobOperationRequest struct {
+	Policy         string              `json:"policy"`
+	Key            json.RawMessage     `json:"key"`
+	EquivalenceKey string              `json:"equivalence_key,omitempty"`
+	Run            CreateJobRunRequest `json:"run"`
+}
+type ExclusiveAppTaskOperationRequest struct {
+	Policy         string               `json:"policy"`
+	Key            json.RawMessage      `json:"key"`
+	EquivalenceKey string               `json:"equivalence_key,omitempty"`
+	Task           CreateAppTaskRequest `json:"task"`
+}
+type ExclusiveTriggerBindingRequest struct {
+	Policy           string          `json:"policy"`
+	Key              json.RawMessage `json:"key"`
+	PlatformTenantID string          `json:"platform_tenant_id,omitempty"`
+	EquivalenceKey   string          `json:"equivalence_key,omitempty"`
+}
+type ExclusiveTriggerBindingRecord struct {
+	Source           string          `json:"source"`
+	TriggerID        string          `json:"trigger_id"`
+	AppID            string          `json:"app_id,omitempty"`
+	JobID            string          `json:"job_id,omitempty"`
+	Policy           string          `json:"policy"`
+	PlatformTenantID string          `json:"platform_tenant_id,omitempty"`
+	Key              json.RawMessage `json:"key"`
+	EquivalenceKey   string          `json:"equivalence_key,omitempty"`
+	CreatedAt        time.Time       `json:"created_at"`
+	UpdatedAt        time.Time       `json:"updated_at"`
+}
+type ExclusiveOperationAccepted struct {
+	ID        string `json:"id"`
+	Joined    bool   `json:"joined"`
+	StatusURL string `json:"status_url"`
+}
+type ExclusiveOperationPolicy struct {
+	Name              string   `json:"name"`
+	Scope             string   `json:"scope"`
+	EnvironmentID     string   `json:"environment_id,omitempty"`
+	MemberAppIDs      []string `json:"member_app_ids,omitempty"`
+	MemberJobIDs      []string `json:"member_job_ids,omitempty"`
+	Contention        string   `json:"contention"`
+	LeaseSeconds      int      `json:"lease_seconds"`
+	MaxAttemptSeconds int      `json:"max_attempt_seconds"`
+	MaxAttempts       int      `json:"max_attempts,omitempty"`
+	RetryAfterSeconds int      `json:"retry_after_seconds,omitempty"`
+}
+type ExclusiveWorkPolicyRecord struct {
+	ID        string                   `json:"id"`
+	Revision  int64                    `json:"revision"`
+	Policy    ExclusiveOperationPolicy `json:"policy"`
+	Retired   bool                     `json:"retired"`
+	CreatedAt time.Time                `json:"created_at"`
+	UpdatedAt time.Time                `json:"updated_at"`
+}
+type ExclusiveWorkPolicyList struct {
+	Policies []ExclusiveWorkPolicyRecord `json:"policies"`
+}
+type ExclusiveOperationRecord struct {
+	ID               string          `json:"id"`
+	AppID            string          `json:"app_id,omitempty"`
+	JobID            string          `json:"job_id,omitempty"`
+	PlatformTenantID string          `json:"platform_tenant_id,omitempty"`
+	Sequence         int64           `json:"sequence"`
+	State            string          `json:"state"`
+	PolicyRevision   int64           `json:"policy_revision"`
+	Generation       int64           `json:"generation"`
+	LeaseExpiresAt   *time.Time      `json:"lease_expires_at,omitempty"`
+	AttemptDeadline  *time.Time      `json:"attempt_deadline,omitempty"`
+	Result           json.RawMessage `json:"result,omitempty"`
+	LastError        string          `json:"last_error,omitempty"`
+	CreatedAt        time.Time       `json:"created_at"`
+	CompletedAt      *time.Time      `json:"completed_at,omitempty"`
+}
+
 // QueueSendRequest is the body for POST /v1/apps/{slug}/queues/send.
 // Cap-checked against MaxQueueDepth at the handler.
 type QueueSendRequest struct {

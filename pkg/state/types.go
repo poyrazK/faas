@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dispatch"
+	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/publicstatus"
 )
 
@@ -3023,6 +3024,7 @@ type FireNowRequest struct {
 	RequestedAt  time.Time
 	Status       FireNowStatus
 	InvocationID *string // nil while pending/running; set on terminal
+	OperationID  *string // set when this cron fire was admitted as managed work
 	TaskID       *string // nil for HTTP crons; set when a command-cron task is queued
 	Error        *string // nil until status=failed
 	FinishedAt   *time.Time
@@ -3876,7 +3878,8 @@ func (e *CorsPresetQuotaError) Is(target error) bool {
 type InvocationSource string
 
 const (
-	InvocationAsyncInvoke InvocationSource = "async_invoke"
+	InvocationAsyncInvoke        InvocationSource = "async_invoke"
+	InvocationExclusiveOperation InvocationSource = "exclusive_operation"
 	// InvocationInboundWebhook is a provider-verified public callback that
 	// apid accepted durably before acknowledgement. Keeping it distinct from
 	// async_invoke gives the guest an unspoofable platform-owned source marker.
@@ -3929,12 +3932,15 @@ const (
 // meter reads it via CountInstanceInvocationsInMinute to set
 // usage_minutes.requests.
 type Invocation struct {
-	ID        string `json:"id"`
-	AppID     string `json:"app_id"`
-	AccountID string `json:"account_id"`
+	// ExclusiveClaim is short-lived schedd-to-gateway capability metadata. It
+	// is never stored in the invocation ledger or exposed by the customer API.
+	ExclusiveClaim *exclusivework.Claim `json:"-"`
+	ID             string               `json:"id"`
+	AppID          string               `json:"app_id"`
+	AccountID      string               `json:"account_id"`
 	// DeploymentScope is captured when work is accepted and never changes on
-	// retry or replay. It is an internal routing identity until scoped queue
-	// producers and consumers expose an environment contract together.
+	// retry or replay. Queue producers expose it through their environment
+	// contract; the ledger keeps the routing field internal.
 	DeploymentScope string `json:"-"`
 	// PlatformTenantID is immutable admission identity, never read from guest headers.
 	PlatformTenantID string           `json:"platform_tenant_id,omitempty"`

@@ -26,6 +26,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/cursor"
 	"github.com/onebox-faas/faas/pkg/devbridge"
+	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/hostport"
 	"github.com/onebox-faas/faas/pkg/publicstatus"
 	"github.com/onebox-faas/faas/pkg/safetext"
@@ -137,6 +138,16 @@ type jobRegistryCredentialKey struct {
 
 type MemStore struct {
 	environmentGitOps           map[string]*environmentGitOpsMemory
+	exclusivePolicies           map[string]ExclusiveWorkPolicy
+	exclusiveTriggerBindings    map[string]ExclusiveTriggerBinding
+	exclusiveKeys               map[string]exclusiveKey
+	exclusiveOperations         map[string]ExclusiveOperation
+	exclusiveEffects            map[string][]exclusivework.Effect
+	exclusiveNow                func() time.Time
+	exclusiveSubmissions        map[string]string
+	capacityInstanceResources   map[string]capacityResources
+	serviceCapacityProtection   bool
+	serviceRecovery             map[string]ServiceRecovery
 	devBridgeSessions           map[string]devbridge.Session
 	devBridgeWebhookReplays     map[string]devbridge.WebhookReplay
 	featureFlagVersions         map[string][]FeatureFlagVersion
@@ -539,6 +550,7 @@ type MemStore struct {
 	// ClaimInvocationWithCap / DecrementAccountAsyncInflight.
 	accountAsyncQuota map[string]accountAsyncQuotaRow
 	instances         map[string]Instance
+	exclusiveCaptures map[string]bool
 	// hostPorts mirrors the durable container_host_port_leases registry. It is
 	// initialized lazily as well so zero-value MemStore fixtures remain valid.
 	hostPorts *hostport.Allocator
@@ -1812,6 +1824,17 @@ func (m *MemStore) UpdateAccountPlan(_ context.Context, id string, plan api.Plan
 	a, ok := m.accounts[id]
 	if !ok {
 		return ErrNotFound
+	}
+	if m.serviceCapacityProtection {
+		prior := m.serviceCapacitySnapshotLocked()
+		proposal := a
+		proposal.Plan = plan
+		m.accounts[id] = proposal
+		err := m.checkServiceCapacityChangeLocked(prior, false)
+		m.accounts[id] = a
+		if err != nil {
+			return err
+		}
 	}
 	if plan == api.PlanFree {
 		// Keep the in-memory backend aligned with PgStore's database
@@ -3525,6 +3548,30 @@ func (m *MemStore) ApplyProjectPlan(
 		}
 	}
 
+	if m.serviceCapacityProtection {
+		before := m.serviceCapacitySnapshotLocked()
+		backup := make(map[string]App, len(m.apps))
+		for id, a := range m.apps {
+			backup[id] = a
+		}
+		for _, a := range apps {
+			if a.ID == "" {
+				a.ID = uuid.NewString()
+			}
+			if a.AccountID == "" {
+				a.AccountID = project.AccountID
+			}
+			if a.Status == "" {
+				a.Status = AppActive
+			}
+			m.apps[a.ID] = a
+		}
+		err := m.checkServiceCapacityChangeLocked(before, false)
+		m.apps = backup
+		if err != nil {
+			return Project{}, nil, nil, err
+		}
+	}
 	// 5. Insert project.
 	if project.ID == "" {
 		project.ID = uuid.NewString()
@@ -3600,6 +3647,7 @@ func (m *MemStore) ApplyProjectReconcile(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	capacityBefore := m.serviceCapacitySnapshotLocked()
 	storedProject, ok := m.projects[project.ID]
 	if !ok || storedProject.AccountID != project.AccountID {
 		return ProjectReconcileResult{}, ErrNotFound
@@ -3697,6 +3745,9 @@ func (m *MemStore) ApplyProjectReconcile(
 		return rollback(&QuotaError{Kind: QuotaErrorKindApps, Limit: limits.DeployedApps, Observed: observedApps - removes + creates})
 	}
 
+	if err := m.checkServiceCapacityChangeLocked(capacityBefore, false); err != nil {
+		return rollback(err)
+	}
 	if desiredCrons != nil {
 		desiredPerWorkload := make(map[string]int)
 		for _, cron := range desiredCrons {
@@ -3966,6 +4017,9 @@ func (m *MemStore) CreateApp(_ context.Context, app App) (App, error) {
 	if app.WorkloadClass == "" {
 		app.WorkloadClass = WorkloadClassHTTP
 	}
+	if err := m.checkServiceCapacityAppLocked(app); err != nil {
+		return App{}, err
+	}
 	m.ensureAppOrgLocked(&app)
 	m.apps[app.ID] = app
 	return app, nil
@@ -4121,6 +4175,9 @@ func (m *MemStore) createAppIfUnderQuotaLocked(app App, limits api.Limits) (App,
 	// an omitted workload class is the canonical HTTP default.
 	if app.WorkloadClass == "" {
 		app.WorkloadClass = WorkloadClassHTTP
+	}
+	if err := m.checkServiceCapacityAppLocked(app); err != nil {
+		return App{}, err
 	}
 	m.ensureAppOrgLocked(&app)
 	m.apps[app.ID] = app
@@ -4994,6 +5051,9 @@ func (m *MemStore) FailRunningInstanceIfOwnedByNode(_ context.Context, id, nodeI
 		return ErrConflict
 	}
 	ins.State = string(StateFailed)
+	if err := m.exclusiveRuntimeTransitionLocked(m.instances[id], ins); err != nil {
+		return err
+	}
 	ts := terminalAt
 	ins.TerminalAt = &ts
 	m.instances[id] = ins
@@ -5221,6 +5281,9 @@ func (m *MemStore) MarkInstanceMigrating(_ context.Context, instanceID, currentN
 		return ErrConflict
 	}
 	ins.State = string(StateMigrating)
+	if err := m.exclusiveRuntimeTransitionLocked(m.instances[instanceID], ins); err != nil {
+		return err
+	}
 	ins.LeaseToken = leaseToken
 	now := time.Now().UTC()
 	ins.MigrationStartedAt = &now
@@ -5266,6 +5329,12 @@ func (m *MemStore) MigrateInstanceOwner(_ context.Context, instanceID, fromNodeI
 	ins.LeaseToken = leaseToken
 	ins.MigrationStartedAt = nil
 	ins.State = string(StateRunning)
+	if err := m.checkServiceCapacityInstanceLocked(ins); err != nil {
+		return err
+	}
+	if err := m.exclusiveRuntimeTransitionLocked(m.instances[instanceID], ins); err != nil {
+		return err
+	}
 	m.instances[instanceID] = ins
 	// Stamp apps.migrated_at to match the SQL transaction's
 	// second UPDATE.
@@ -5298,6 +5367,9 @@ func (m *MemStore) CancelInstanceMigration(_ context.Context, instanceID, origin
 		return ErrConflict
 	}
 	ins.State = "parked"
+	if err := m.exclusiveRuntimeTransitionLocked(m.instances[instanceID], ins); err != nil {
+		return err
+	}
 	ins.LeaseToken = ""
 	ins.MigrationStartedAt = nil
 	m.instances[instanceID] = ins
@@ -5372,6 +5444,9 @@ func (m *MemStore) ReinviteMigratingInstance(_ context.Context, instanceID, leas
 		return ErrConflict
 	}
 	ins.State = string(StateRunning)
+	if err := m.exclusiveRuntimeTransitionLocked(m.instances[instanceID], ins); err != nil {
+		return err
+	}
 	now := time.Now().UTC()
 	ins.MigratedAt = &now
 	ins.LeaseToken = ""
@@ -5405,6 +5480,9 @@ func (m *MemStore) AbortMigratingInstance(_ context.Context, instanceID, leaseTo
 		return ErrConflict
 	}
 	ins.State = string(StateParked)
+	if err := m.exclusiveRuntimeTransitionLocked(m.instances[instanceID], ins); err != nil {
+		return err
+	}
 	ins.LeaseToken = ""
 	ins.MigrationStartedAt = nil
 	m.instances[instanceID] = ins
@@ -5506,6 +5584,9 @@ func (m *MemStore) FailRunningInstanceOnDeadNode(_ context.Context, instanceID, 
 		}
 	}
 	ins.State = string(StateFailed)
+	if err := m.exclusiveRuntimeTransitionLocked(m.instances[instanceID], ins); err != nil {
+		return err
+	}
 	now := m.clock()
 	ins.TerminalAt = &now
 	m.instances[instanceID] = ins
@@ -6003,6 +6084,9 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 			recordActivity = true
 		}
 	}
+	if err := m.checkServiceCapacityAppLocked(a); err != nil {
+		return App{}, err
+	}
 	m.apps[id] = a
 	if ramChanged {
 		m.markAppSnapshotsStaleLocked(id)
@@ -6027,6 +6111,9 @@ func (m *MemStore) CompareAndSetAppStatus(_ context.Context, id string, from, to
 		return false, nil
 	}
 	a.Status = to
+	if err := m.checkServiceCapacityAppLocked(a); err != nil {
+		return false, err
+	}
 	if to != AppEvictedCold {
 		m.clearCurrentAppParkTransitionLocked(id)
 	}
@@ -6141,6 +6228,9 @@ func (m *MemStore) restoreAppLocked(id string, limits api.Limits) (App, error) {
 	a.Status = AppActive
 	a.DeletedAt = nil
 	a.DeleteGraceUntil = nil
+	if err := m.checkServiceCapacityAppLocked(a); err != nil {
+		return App{}, err
+	}
 	m.apps[id] = a
 	delete(m.appDeletionClaims, id)
 	for cronID, cron := range m.crons {
@@ -6305,6 +6395,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 		if v.AppID == id {
 			delete(m.instances, key)
 			delete(m.instanceRuntimeConfigReceipts, key)
+			delete(m.capacityInstanceResources, key)
 		}
 	}
 	depIDs := make(map[string]struct{})
@@ -6373,6 +6464,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 			delete(m.discoveredAPIRoutes, key)
 		}
 	}
+	delete(m.serviceRecovery, id)
 	delete(m.apps, id)
 	return nil
 }
@@ -6863,6 +6955,14 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity) (Deploy
 	if serviceRollout && d.RolloutStartedAt == nil {
 		now := time.Now().UTC()
 		d.RolloutStartedAt = &now
+	}
+
+	proposal := d
+	if proposal.Status == "" {
+		proposal.Status = DeployPending
+	}
+	if err := m.checkServiceCapacityDeploymentLocked(proposal); err != nil {
+		return Deployment{}, 0, err
 	}
 
 	// Find the most-recent non-terminal deployment row for this app and
@@ -8111,6 +8211,11 @@ func (m *MemStore) UpdateDeploymentStatus(_ context.Context, id string, status D
 	if d.Status == DeployCancelled && status != DeployCancelled {
 		return ErrInvalidStateTransition
 	}
+	proposal := d
+	proposal.Status = status
+	if err := m.checkServiceCapacityDeploymentLocked(proposal); err != nil {
+		return err
+	}
 	previousStatus := d.Status
 	if status == DeployFailed {
 		m.failDeploymentLocked(d, errMsg)
@@ -8229,6 +8334,11 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceGitDr
 	d, ok := m.deployments[id]
 	if !ok {
 		return ErrNotFound
+	}
+	proposal := d
+	proposal.Status = DeployLive
+	if err := m.checkServiceCapacityDeploymentLocked(proposal); err != nil {
+		return err
 	}
 	before := d
 	previousStatus := d.Status
@@ -11425,6 +11535,7 @@ func (m *MemStore) DeleteCron(_ context.Context, id, appID string) error {
 		return ErrNotFound
 	}
 	delete(m.crons, id)
+	delete(m.exclusiveTriggerBindings, "cron\x00"+id)
 	return nil
 }
 
@@ -11538,7 +11649,7 @@ func (m *MemStore) RequeueFireNowRequest(_ context.Context, requestID string) er
 	return nil
 }
 
-func (m *MemStore) MarkFireNowRequestSucceeded(_ context.Context, requestID, invocationID string) error {
+func (m *MemStore) MarkFireNowRequestSucceeded(_ context.Context, requestID, invocationID, operationID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	r, ok := m.fireNowRequests[requestID]
@@ -11546,7 +11657,16 @@ func (m *MemStore) MarkFireNowRequestSucceeded(_ context.Context, requestID, inv
 		return ErrFireNowRequestNotFound
 	}
 	r.Status = FireNowStatusSucceeded
-	r.InvocationID = &invocationID
+	if invocationID == "" {
+		r.InvocationID = nil
+	} else {
+		r.InvocationID = &invocationID
+	}
+	if operationID == "" {
+		r.OperationID = nil
+	} else {
+		r.OperationID = &operationID
+	}
 	r.TaskID = nil
 	now := time.Now().UTC()
 	r.FinishedAt = &now
@@ -11964,9 +12084,13 @@ func (m *MemStore) CreateTriggerIfUnderQuota(_ context.Context, appID, kind, slu
 	if brokerPoisonStrategy == "" {
 		brokerPoisonStrategy = "commit"
 	}
+	accountID := ""
+	if app, ok := m.apps[exclusiveMemUUIDMapKey(appID)]; ok {
+		accountID = app.AccountID
+	}
 	t := sqlc.Trigger{
 		ID:                   pgtype.UUID{Bytes: memNewUUID(), Valid: true},
-		AccountID:            pgtype.UUID{Bytes: memNewUUID(), Valid: true},
+		AccountID:            pgtype.UUID{Bytes: parseMemUUIDString(accountID), Valid: accountID != ""},
 		AppID:                pgtype.UUID{Bytes: parseMemUUIDString(appID), Valid: true},
 		Kind:                 kind,
 		Slug:                 slug,
@@ -12066,6 +12190,7 @@ func (m *MemStore) DeleteTrigger(_ context.Context, id, appID string) error {
 		}
 	}
 	delete(m.triggerWorkBindings, id)
+	delete(m.exclusiveTriggerBindings, "broker\x00"+id)
 	delete(m.triggers, id)
 	return nil
 }
@@ -13401,6 +13526,10 @@ func (m *MemStore) CreateInstance(_ context.Context, appID, deploymentID, state 
 		// a non-empty, parseable value.
 		ins.WakeID = uuid.NewString()
 	}
+	if err := m.checkServiceCapacityInstanceLocked(ins); err != nil {
+		return Instance{}, err
+	}
+	m.recordInstanceCapacityLocked(ins)
 	m.instances[ins.ID] = ins
 	return ins, nil
 }
@@ -13454,6 +13583,10 @@ func (m *MemStore) CreateInstanceWithMode(_ context.Context, appID, deploymentID
 	} else {
 		ins.WakeID = uuid.NewString()
 	}
+	if err := m.checkServiceCapacityInstanceLocked(ins); err != nil {
+		return Instance{}, err
+	}
+	m.recordInstanceCapacityLocked(ins)
 	m.instances[ins.ID] = ins
 	return ins, nil
 }
@@ -13497,6 +13630,10 @@ func (m *MemStore) CreateJobInstance(_ context.Context, instanceID, jobID, runID
 	} else {
 		ins.WakeID = uuid.NewString()
 	}
+	if err := m.checkServiceCapacityInstanceLocked(ins); err != nil {
+		return Instance{}, err
+	}
+	m.recordInstanceCapacityLocked(ins)
 	m.instances[ins.ID] = ins
 	return ins, nil
 }
@@ -13916,6 +14053,12 @@ func (m *MemStore) UpdateInstanceState(_ context.Context, id, state string) erro
 		return err
 	}
 	ins.State = state
+	if err := m.checkServiceCapacityInstanceLocked(ins); err != nil {
+		return err
+	}
+	if err := m.exclusiveRuntimeTransitionLocked(m.instances[id], ins); err != nil {
+		return err
+	}
 	m.instances[id] = ins
 	return nil
 }
@@ -13940,6 +14083,12 @@ func (m *MemStore) UpdateInstanceStateIf(_ context.Context, id, expectedState, n
 	ins.State = nextState
 	if State(nextState) == StateParked {
 		ins.ParkedAt = time.Now().UTC()
+	}
+	if err := m.checkServiceCapacityInstanceLocked(ins); err != nil {
+		return err
+	}
+	if err := m.exclusiveRuntimeTransitionLocked(m.instances[id], ins); err != nil {
+		return err
 	}
 	m.instances[id] = ins
 	return nil
@@ -13982,6 +14131,12 @@ func (m *MemStore) UpdateInstanceStateWithTimestamp(_ context.Context, id, state
 	}
 	ins.State = state
 	ins.ParkedAt = parkedAt
+	if err := m.checkServiceCapacityInstanceLocked(ins); err != nil {
+		return err
+	}
+	if err := m.exclusiveRuntimeTransitionLocked(m.instances[id], ins); err != nil {
+		return err
+	}
 	m.instances[id] = ins
 	return nil
 }
@@ -14004,6 +14159,9 @@ func (m *MemStore) UpdateInstanceStateToTerminal(_ context.Context, id, state st
 		return err
 	}
 	ins.State = state
+	if err := m.exclusiveRuntimeTransitionLocked(m.instances[id], ins); err != nil {
+		return err
+	}
 	ts := terminalAt
 	ins.TerminalAt = &ts
 	m.instances[id] = ins
@@ -14198,6 +14356,7 @@ func (m *MemStore) DeleteParkedInstancesOlderThan(_ context.Context, threshold t
 	for _, row := range candidates {
 		delete(m.instances, row.id)
 		delete(m.instanceRuntimeConfigReceipts, row.id)
+		delete(m.capacityInstanceResources, row.id)
 	}
 	return int64(len(candidates)), nil
 }
@@ -14214,6 +14373,7 @@ func (m *MemStore) DeleteInstance(_ context.Context, id string) error {
 	}
 	delete(m.instances, id)
 	delete(m.instanceRuntimeConfigReceipts, id)
+	delete(m.capacityInstanceResources, id)
 	return nil
 }
 
@@ -14279,6 +14439,9 @@ func (m *MemStore) PublishInstanceRuntime(_ context.Context, id, expectedState, 
 	ins.GuestUID = guestUID
 	ins.StartedAt = time.Now().UTC()
 	ins.State = string(StateRunning)
+	if err := m.exclusiveRuntimeTransitionLocked(m.instances[id], ins); err != nil {
+		return Instance{}, err
+	}
 	m.instances[id] = ins
 	return ins, nil
 }
@@ -20662,6 +20825,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 		if app, ok := m.apps[ins.AppID]; ok && app.AccountID == id {
 			delete(m.instances, iid)
 			delete(m.instanceRuntimeConfigReceipts, iid)
+			delete(m.capacityInstanceResources, iid)
 		}
 	}
 	for taskID, task := range m.appTasks {
@@ -20762,6 +20926,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	}
 	for aid, a := range m.apps {
 		if a.AccountID == id {
+			delete(m.serviceRecovery, aid)
 			delete(m.apps, aid)
 			delete(m.githubBindings, aid)
 		}

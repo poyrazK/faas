@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
@@ -30,7 +31,7 @@ const appTaskSelectColumns = `id, account_id, app_id, deployment_id, kind,
        stdout_tail, stderr_tail, output_truncated, exit_code,
        failure_code, failure_message, started_at, finished_at,
        created_at, updated_at, cron_id, scheduled_for,
-       failure_rules, occurrence_id, start_deadline_at, work_decision, outcome_code`
+       failure_rules, occurrence_id, start_deadline_at, work_decision, outcome_code, exclusive_operation_id, exclusive_generation`
 
 type appTaskRowScanner interface {
 	Scan(dest ...any) error
@@ -41,6 +42,8 @@ func scanAppTask(row appTaskRowScanner) (AppTask, error) {
 	var id, accountID, appID, deploymentID pgtype.UUID
 	var cronID pgtype.UUID
 	var occurrenceID pgtype.UUID
+	var exclusiveOperationID pgtype.UUID
+	var exclusiveGeneration pgtype.Int8
 	var leaseToken pgtype.UUID
 	var leaseOwner, failureCode, failureMessage pgtype.Text
 	var leaseExpiresAt, cancelRequestedAt, startedAt, finishedAt, scheduledFor, retryAt, startDeadlineAt pgtype.Timestamptz
@@ -56,6 +59,7 @@ func scanAppTask(row appTaskRowScanner) (AppTask, error) {
 		&failureCode, &failureMessage, &startedAt, &finishedAt,
 		&task.CreatedAt, &task.UpdatedAt, &cronID, &scheduledFor,
 		&failureRules, &occurrenceID, &startDeadlineAt, &workDecision, &task.OutcomeCode,
+		&exclusiveOperationID, &exclusiveGeneration,
 	); err != nil {
 		return AppTask{}, err
 	}
@@ -65,6 +69,12 @@ func scanAppTask(row appTaskRowScanner) (AppTask, error) {
 	task.DeploymentID = pgUUIDString(deploymentID)
 	if cronID.Valid {
 		task.CronID = pgUUIDString(cronID)
+	}
+	if exclusiveOperationID.Valid {
+		task.ExclusiveOperationID = pgUUIDString(exclusiveOperationID)
+	}
+	if exclusiveGeneration.Valid {
+		task.ExclusiveGeneration = exclusiveGeneration.Int64
 	}
 	task.ScheduledFor = timestamptzToTimePtr(scheduledFor)
 	if len(failureRules) > 0 {
@@ -118,11 +128,12 @@ func (s *PgStore) CreateAppTask(ctx context.Context, params CreateAppTaskParams)
 			account_id, app_id, deployment_id, kind, command, command_shell,
 			deployment_scope, artifact_key, image_digest, timeout_seconds,
 			max_output_bytes, created_at, updated_at, cron_id, scheduled_for,
-			failure_rules, occurrence_id, start_deadline_at
+			failure_rules, occurrence_id, start_deadline_at, exclusive_operation_id, exclusive_generation
 		)
 		select $1, a.id, d.id, $4, $5, $6,
 		       coalesce(nullif(d.scope, ''), 'default'), d.rootfs_key, d.image_digest,
-		       $7, $8, $9, $9, $10::uuid, $11::timestamptz, $12::jsonb, $13::uuid, $14::timestamptz
+		       $7, $8, $9, $9, $10::uuid, $11::timestamptz,
+		       $12::jsonb, $13::uuid, $14::timestamptz, $15::uuid, $16::bigint
 		  from apps a
 		  join deployments d on d.app_id = a.id
 		 where a.id = $2
@@ -133,19 +144,49 @@ func (s *PgStore) CreateAppTask(ctx context.Context, params CreateAppTaskParams)
 		   and d.rootfs_key <> ''
 		   and d.image_digest <> ''
 		   and d.status in ('imaging', 'snapshotting', 'live', 'superseded')
+		   and ($15::uuid is null or exists (
+		       select 1 from exclusive_work_operations operation
+		        where operation.id = $15::uuid and operation.account_id = a.account_id
+		          and operation.app_id = a.id and operation.state = 'running'
+		          and operation.generation = $16::bigint
+		          and operation.lease_expires_at > clock_timestamp()
+		          and operation.attempt_deadline > clock_timestamp()
+		   ))
 		returning `+appTaskSelectColumns,
 		resolved.AccountID, resolved.AppID, resolved.DeploymentID, string(resolved.Kind),
 		resolved.Command, resolved.CommandShell, resolved.TimeoutSeconds,
 		resolved.MaxOutputBytes, resolved.CreatedAt, nullableCronID(resolved.CronID), resolved.ScheduledFor,
-		policyJSON(resolved.FailureRules), nullableCronID(resolved.OccurrenceID), resolved.StartDeadlineAt)
+		policyJSON(resolved.FailureRules), nullableCronID(resolved.OccurrenceID), resolved.StartDeadlineAt,
+		nullableCronID(resolved.ExclusiveOperationID), nullableGeneration(resolved.ExclusiveGeneration))
 	task, err := scanAppTask(row)
 	if errors.Is(err, pgx.ErrNoRows) {
+		if resolved.ExclusiveOperationID != "" {
+			return AppTask{}, exclusivework.ErrStaleOwner
+		}
 		return AppTask{}, ErrAppTaskDeploymentUnavailable
 	}
 	if err != nil {
 		return AppTask{}, mapErr(err)
 	}
 	return task, nil
+}
+
+func nullableGeneration(generation int64) any {
+	if generation <= 0 {
+		return nil
+	}
+	return generation
+}
+
+func (s *PgStore) ListAppTasksByExclusiveOperation(ctx context.Context, accountID, operationID string) ([]AppTask, error) {
+	rows, err := s.pool.Query(ctx, `select `+appTaskSelectColumns+`
+	  from app_tasks where account_id = $1 and exclusive_operation_id = $2
+	 order by exclusive_generation, created_at, id`, accountID, operationID)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer rows.Close()
+	return scanAppTaskRows(rows)
 }
 
 // CreateScheduledCronAppTask atomically advances a command cron's cursor,
@@ -659,6 +700,16 @@ func (s *PgStore) ClaimNextAppTask(ctx context.Context, owner string, claimedAt 
 			   and (start_deadline_at is null or start_deadline_at >= $2 or exists (
 			       select 1 from schedule_occurrences occurrence
 			        where occurrence.id = app_tasks.occurrence_id and occurrence.started_at is not null))
+			   and (exclusive_operation_id is null or exists (
+			       select 1 from exclusive_work_operations operation
+			        where operation.id = app_tasks.exclusive_operation_id
+			          and operation.account_id = app_tasks.account_id
+			          and operation.app_id = app_tasks.app_id
+			          and operation.state = 'running'
+			          and operation.generation = app_tasks.exclusive_generation
+			          and operation.lease_expires_at > clock_timestamp()
+			          and operation.attempt_deadline > clock_timestamp()
+			   ))
 			 order by coalesce(retry_at, created_at), created_at, id
 			 for update skip locked
 			 limit 1
@@ -689,7 +740,20 @@ func (s *PgStore) MarkAppTaskRunning(ctx context.Context, taskID, leaseToken str
 		return AppTask{}, ErrAppTaskInvalid
 	}
 	startedAt = startedAt.UTC()
-	task, err := scanAppTask(s.pool.QueryRow(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return AppTask{}, mapErr(err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	current, err := scanAppTask(tx.QueryRow(ctx, `select `+appTaskSelectColumns+` from app_tasks where id = $1 for update`, taskID))
+	if err != nil || current.Status != AppTaskRestoring || current.LeaseToken == nil || *current.LeaseToken != leaseToken ||
+		current.CancelRequested != nil || current.LeaseExpiresAt == nil || !current.LeaseExpiresAt.After(startedAt) {
+		return AppTask{}, ErrAppTaskLeaseLost
+	}
+	if err := lockAppTaskExclusiveOwner(ctx, tx, current); err != nil {
+		return AppTask{}, ErrAppTaskLeaseLost
+	}
+	task, err := scanAppTask(tx.QueryRow(ctx, `
 		update app_tasks
 		   set status = 'running', started_at = $3, attempt_count = attempt_count + 1,
 		       retry_at = null, stdout_tail = '', stderr_tail = '', output_truncated = false,
@@ -726,6 +790,9 @@ func (s *PgStore) MarkAppTaskRunning(ctx context.Context, taskID, leaseToken str
 	if err != nil {
 		return AppTask{}, mapErr(err)
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return AppTask{}, mapErr(err)
+	}
 	return task, nil
 }
 
@@ -734,7 +801,20 @@ func (s *PgStore) RenewAppTaskLease(ctx context.Context, taskID, leaseToken stri
 		return ErrAppTaskInvalid
 	}
 	renewedAt = renewedAt.UTC()
-	commandTag, err := s.pool.Exec(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return mapErr(err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	current, err := scanAppTask(tx.QueryRow(ctx, `select `+appTaskSelectColumns+` from app_tasks where id = $1 for update`, taskID))
+	if err != nil || (current.Status != AppTaskRestoring && current.Status != AppTaskRunning) || current.LeaseToken == nil ||
+		*current.LeaseToken != leaseToken || current.CancelRequested != nil || current.LeaseExpiresAt == nil || !current.LeaseExpiresAt.After(renewedAt) {
+		return ErrAppTaskLeaseLost
+	}
+	if err := lockAppTaskExclusiveOwner(ctx, tx, current); err != nil {
+		return ErrAppTaskLeaseLost
+	}
+	commandTag, err := tx.Exec(ctx, `
 		update app_tasks
 		   set lease_expires_at = $4, updated_at = $3
 		 where id = $1
@@ -749,7 +829,25 @@ func (s *PgStore) RenewAppTaskLease(ctx context.Context, taskID, leaseToken stri
 	if commandTag.RowsAffected() == 0 {
 		return ErrAppTaskLeaseLost
 	}
-	return nil
+	return mapErr(tx.Commit(ctx))
+}
+
+func lockAppTaskExclusiveOwner(ctx context.Context, tx pgx.Tx, task AppTask) error {
+	if task.ExclusiveOperationID == "" {
+		return nil
+	}
+	var id string
+	err := tx.QueryRow(ctx, `
+		select id::text from exclusive_work_operations
+		 where id = $1 and account_id = $2 and app_id = $3
+		   and state = 'running' and generation = $4
+		   and lease_expires_at > clock_timestamp()
+		   and attempt_deadline > clock_timestamp()
+		 for update`, task.ExclusiveOperationID, task.AccountID, task.AppID, task.ExclusiveGeneration).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return exclusivework.ErrStaleOwner
+	}
+	return mapErr(err)
 }
 
 func (s *PgStore) RequestAppTaskCancellation(ctx context.Context, accountID, appID, taskID string, requestedAt time.Time) (AppTask, error) {
@@ -827,6 +925,9 @@ func (s *PgStore) CompleteAppTask(ctx context.Context, params CompleteAppTaskPar
 	}
 	if current.LeaseToken == nil || *current.LeaseToken != params.LeaseToken ||
 		current.LeaseExpiresAt == nil || !current.LeaseExpiresAt.After(params.FinishedAt) {
+		return AppTask{}, ErrAppTaskLeaseLost
+	}
+	if err := lockAppTaskExclusiveOwner(ctx, tx, current); err != nil {
 		return AppTask{}, ErrAppTaskLeaseLost
 	}
 	if params.FinishedAt.Before(current.CreatedAt) {
@@ -1048,5 +1149,6 @@ func prefixedAppTaskColumns(alias string) string {
        ` + alias + `.failure_code, ` + alias + `.failure_message, ` + alias + `.started_at, ` + alias + `.finished_at,
        ` + alias + `.created_at, ` + alias + `.updated_at, ` + alias + `.cron_id, ` + alias + `.scheduled_for,
        ` + alias + `.failure_rules, ` + alias + `.occurrence_id, ` + alias + `.start_deadline_at,
-       ` + alias + `.work_decision, ` + alias + `.outcome_code`
+       ` + alias + `.work_decision, ` + alias + `.outcome_code,
+       ` + alias + `.exclusive_operation_id, ` + alias + `.exclusive_generation`
 }

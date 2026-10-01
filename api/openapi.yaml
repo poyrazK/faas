@@ -165,6 +165,7 @@ tags:
     description: Typed operator runtime configuration and fleet controls.
   - name: invocations
     description: Sync / async function invocations (event-driven surface, Move 2).
+  - name: exclusive-operations
   - name: jobs
     description: |
       Run-to-completion batch jobs (issue #1184 Workstream A, Mega-1).
@@ -14062,6 +14063,43 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/jobs/{name}/operations:
+    post:
+      tags: [jobs]
+      operationId: submitExclusiveJobOperation
+      summary: Submit a Job run through managed exclusive ownership.
+      description: The account and Job identity come from the authenticated route. The key is namespaced by the selected policy and is not an authorization boundary.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$' }
+          description: Account-owned Job name.
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ExclusiveJobOperationRequest' }
+      responses:
+        '202':
+          description: Job run accepted for managed ownership or joined to an equivalent operation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExclusiveOperationAccepted' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanLimit' }
+        '403': { $ref: '#/components/responses/PlanLimit' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The policy rejected the request, the Job is paused, or the policy does not include this Job.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/jobs/{name}/runs/{id}:
     parameters:
       - name: name
@@ -14716,7 +14754,8 @@ paths:
           required: false
           description: |
             Optional DLQ reason filter (poison_record / max_attempts /
-            broker_error / rate_limited / payload_too_large).
+            broker_error / rate_limited / payload_too_large /
+            exclusive_operation_rejected).
           schema: { $ref: '#/components/schemas/TriggerDeadLetterReason' }
         - name: limit
           in: query
@@ -23349,9 +23388,11 @@ paths:
       tags: [flags]
       operationId: getProjectFlagOutcomes
       summary: Compare retained request outcomes by evaluated flag value.
-      description: Debugger entitlement and retention apply. Counts weight collapsed telemetry rows; used is application-reported. HTTP 5xx rates and request-weighted latency percentiles are operational observations, not causal experiment results. Latencies use conservative bucket upper bounds.
+      description: Debugger entitlement and retention apply. Counts weight collapsed telemetry rows; used is application-reported. Optional rule and configuration-version filters isolate a targeting decision. HTTP 5xx rates and request-weighted latency percentiles are operational observations, not causal experiment results. Latencies use conservative bucket upper bounds.
       parameters:
         - { name: customer_id, in: query, description: Restrict the rollup to one gateway-attributed customer UUID., schema: { type: string, format: uuid } }
+        - { name: rule_id, in: query, description: Restrict the rollup to decisions matched by one targeting rule., schema: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' } }
+        - { name: config_version, in: query, description: Restrict the rollup to one immutable flag configuration version., schema: { type: integer, format: int64, minimum: 1 } }
         - { name: since, in: query, description: Aggregation duration capped by the account's debugger retention., schema: { type: string, default: 24h } }
       responses:
         '200':
@@ -23362,6 +23403,34 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/flags/{key}/rollout/promote:
+    parameters:
+      - { $ref: '#/components/parameters/FlagsProjectSlug' }
+      - { $ref: '#/components/parameters/FlagsEnvironment' }
+      - { $ref: '#/components/parameters/FlagsKey' }
+    post:
+      tags: [flags]
+      operationId: promoteProjectFlagRollout
+      summary: Promote one progressive flag rollout stage when its health gates pass.
+      description: Requires deploy-write scope and MFA. Evidence is isolated to the target rule and its configured window. A held result is a successful evaluation with no configuration change; latency is the conservative upper bound of retained telemetry buckets.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FlagRolloutPromotionRequest' }
+      responses:
+        '200':
+          description: Stage promotion, health hold, or completed rollout with evidence summary.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlagRolloutPromotion' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -23384,6 +23453,328 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/account/operation-policies:
+    get:
+      tags: [exclusive-operations]
+      operationId: listExclusiveOperationPolicies
+      summary: List account-managed exclusive operation policies.
+      responses:
+        '200':
+          description: Account policies and current revisions.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExclusiveWorkPolicyList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/account/operation-policies/{name}:
+    put:
+      tags: [exclusive-operations]
+      operationId: upsertExclusiveOperationPolicy
+      summary: Create or revise a named exclusive operation policy.
+      description: |
+        The policy explicitly chooses account or platform-tenant scope and
+        queue, reject, or join_existing contention. Member app IDs and the
+        optional project environment are validated against this account.
+        Account and customer identity are derived from authentication; the
+        business key never selects a security scope.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: Account-owned policy name to create or replace.
+          schema: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ExclusiveOperationPolicy' }
+      responses:
+        '200':
+          description: Saved policy revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExclusiveWorkPolicyRecord' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/account/operation-trigger-bindings/{source}/{id}:
+    parameters:
+      - name: source
+        in: path
+        required: true
+        description: Account-owned cron, inbound webhook, broker/queue trigger, or recurring Job schedule whose exclusive-operation binding is being inspected or changed.
+        schema: { type: string, enum: [cron, inbound_webhook, broker, job_schedule] }
+      - name: id
+        in: path
+        required: true
+        description: Account-owned trigger ID; for broker bindings this is a non-cron trigger resource.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [exclusive-operations]
+      operationId: getExclusiveOperationTriggerBinding
+      summary: Inspect the operation policy attached to an account-owned trigger.
+      responses:
+        '200':
+          description: Trigger binding and configured business key.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExclusiveTriggerBindingRecord' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [exclusive-operations]
+      operationId: upsertExclusiveOperationTriggerBinding
+      summary: Route an account-owned trigger through a managed operation policy.
+      description: App triggers and recurring Job schedules are resolved from account-owned state. A tenant-scoped policy requires an active tenant-to-app link; tenant identity is not read from the business key. Job schedules require an account-scoped policy that explicitly includes the Job.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ExclusiveTriggerBindingRequest' }
+      responses:
+        '200':
+          description: Saved trigger binding.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExclusiveTriggerBindingRecord' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [exclusive-operations]
+      operationId: deleteExclusiveOperationTriggerBinding
+      summary: Remove exclusive-operation routing from a trigger.
+      responses:
+        '204': { description: Trigger routing was removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/operations:
+    post:
+      tags: [exclusive-operations]
+      operationId: submitExclusiveOperation
+      summary: Submit app work through a named exclusive-operation policy.
+      description: The account scope is authenticated. For platform-tenant policies use the account tenant route or the tenant-self route so the customer scope comes from trusted platform context.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/GregaleRevision'
+        - $ref: '#/components/parameters/GregaleRelease'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ExclusiveOperationRequest' }
+      responses:
+        '202':
+          description: The durable operation was accepted or joined to an equivalent active operation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExclusiveOperationAccepted' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PlanSourceBytes' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/operations/tasks:
+    post:
+      tags: [exclusive-operations]
+      operationId: submitExclusiveAppTaskOperation
+      summary: Submit a deployment-attached command through managed exclusive ownership.
+      description: The authenticated account and app identify the target; deployment selection and ownership generation are platform-controlled.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ExclusiveAppTaskOperationRequest' }
+      responses:
+        '202':
+          description: The task operation was accepted or joined to equivalent active work.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExclusiveOperationAccepted' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PlanSourceBytes' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/account/platform-tenants/{tenant_id}/apps/{slug}/operations:
+    post:
+      tags: [exclusive-operations]
+      operationId: submitTenantExclusiveOperation
+      summary: Submit work for an account-authorized platform customer.
+      description: The account credential must own the selected tenant. The tenant ID is checked against account state and never inferred from the concurrency key.
+      parameters:
+        - name: tenant_id
+          in: path
+          required: true
+          description: Platform tenant owned by the authenticated account.
+          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/Slug'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/GregaleRevision'
+        - $ref: '#/components/parameters/GregaleRelease'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ExclusiveOperationRequest' }
+      responses:
+        '202':
+          description: The operation was accepted or joined for the customer tenant selected by the account owner.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExclusiveOperationAccepted' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PlanSourceBytes' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/platform-tenant-self/apps/{slug}/operations:
+    post:
+      tags: [exclusive-operations]
+      operationId: submitPlatformTenantSelfExclusiveOperation
+      summary: Submit work for the customer bound to this tenant credential.
+      description: Requires platform_tenant:invocations:manage. The tenant is derived from the bearer token; callers cannot choose another tenant.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/GregaleRevision'
+        - $ref: '#/components/parameters/GregaleRelease'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ExclusiveOperationRequest' }
+      responses:
+        '202':
+          description: The operation was accepted or joined for the customer identified by this tenant credential.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExclusiveOperationAccepted' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PlanSourceBytes' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/operations/{id}:
+    get:
+      tags: [exclusive-operations]
+      operationId: getExclusiveOperation
+      summary: Read an account-owned operation and its committed result.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Operation receipt ID.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Operation receipt; claim tokens and accepted request contents are never returned.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExclusiveOperationRecord' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/operations/{id}/cancel:
+    post:
+      tags: [exclusive-operations]
+      operationId: cancelExclusiveOperation
+      summary: Cancel pending or active account-owned work.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Operation receipt ID to cancel.
+          schema: { type: string, format: uuid }
+      responses:
+        '204': { description: Cancellation was accepted for this account-owned operation. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/platform-tenant-self/operations/{id}:
+    get:
+      tags: [exclusive-operations]
+      operationId: getPlatformTenantSelfExclusiveOperation
+      summary: Read an operation belonging to the authenticated platform customer.
+      description: Requires platform_tenant:invocations:read. The tenant is derived from the bearer token.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Operation receipt ID owned by the authenticated tenant.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Customer-owned operation receipt; claim tokens and request contents are never returned.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExclusiveOperationRecord' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/platform-tenant-self/operations/{id}/cancel:
+    post:
+      tags: [exclusive-operations]
+      operationId: cancelPlatformTenantSelfExclusiveOperation
+      summary: Cancel work belonging to the authenticated platform customer.
+      description: Requires platform_tenant:invocations:manage. The tenant is derived from the bearer token.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Tenant-owned operation receipt ID to cancel.
+          schema: { type: string, format: uuid }
+      responses:
+        '204': { description: Cancellation was accepted for this tenant-owned operation. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
 components:
 
@@ -24318,7 +24709,7 @@ components:
         created_at: { type: string, format: date-time }
         completed_at: { type: [string, 'null'], format: date-time }
     FlagRule:
-      description: Ordered customer targeting rule; supplied constraints combine with AND. Boolean flags require a boolean value; variant flags may omit value to use weighted assignment.
+      description: Ordered customer targeting rule; supplied constraints combine with AND. Boolean flags require a boolean value; variant flags may omit value to use weighted assignment. Progressive rollout is limited to boolean true rules.
       type: object
       additionalProperties: false
       required: [id]
@@ -24327,10 +24718,56 @@ components:
         customers: { type: array, maxItems: 1000, uniqueItems: true, items: { type: string, format: uuid } }
         group: { type: string, description: Owner-managed customer group key. }
         rollout: { type: integer, minimum: 0, maximum: 10000, description: Basis points of eligible customers; omitted means all eligible customers. }
+        progression: { $ref: '#/components/schemas/ProgressiveRollout' }
         value:
           oneOf:
             - { type: boolean }
             - { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$', description: Directly select a configured variant. }
+    ProgressiveRollout:
+      description: Health-gated, operator-promoted stages for a boolean true rule. The rule rollout must equal stages[current_stage]; stages must strictly increase and end at 10000 basis points.
+      type: object
+      additionalProperties: false
+      required: [stages, current_stage, minimum_used_requests, maximum_http_5xx_rate_basis_points, maximum_p95_latency_ms, window_seconds]
+      properties:
+        stages: { type: array, minItems: 2, maxItems: 8, items: { type: integer, minimum: 1, maximum: 10000 }, description: Strictly increasing rollout percentages in basis points, ending at 10000. }
+        current_stage: { type: integer, minimum: 0, maximum: 7, description: Zero-based active stage index. }
+        minimum_used_requests: { type: integer, format: int64, minimum: 1, maximum: 100000000, description: Minimum application-reported used requests for the targeted rule before promotion. }
+        maximum_http_5xx_rate_basis_points: { type: integer, minimum: 0, maximum: 10000, description: Highest allowed 5xx rate for the targeted rule; 100 basis points is one percent. }
+        maximum_p95_latency_ms: { type: integer, minimum: 1, maximum: 600000, description: Highest allowed conservative p95 latency bucket bound for the targeted rule. }
+        window_seconds: { type: integer, minimum: 60, maximum: 604800, description: Evidence lookback window; must fit within debugger retention. }
+    FlagRolloutPromotionRequest:
+      description: Optimistic stage promotion request; an expected-version conflict requires a fresh read.
+      type: object
+      additionalProperties: false
+      required: [expected_version, rule_id]
+      properties:
+        expected_version: { type: integer, format: int64, minimum: 0 }
+        rule_id: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+    FlagRolloutPromotion:
+      description: Health-gate evaluation for a progressive rollout stage. A held or complete status does not publish a new configuration version.
+      type: object
+      required: [status, flag, rule_id, config_version, current_stage, stage_count, rollout_basis_points, request_count, used_count, http_5xx_count, http_5xx_rate, p95_latency_ms, latency_quantized, minimum_used_requests, maximum_http_5xx_rate_basis_points, maximum_p95_latency_ms]
+      properties:
+        status: { type: string, enum: [held, promoted, complete] }
+        reason: { type: string, enum: [insufficient_used_requests, http_5xx_rate_exceeded, p95_latency_exceeded, all_stages_complete] }
+        flag: { type: string }
+        rule_id: { type: string }
+        config_version: { type: integer, format: int64, minimum: 0, description: Current version after promotion, unchanged when held or complete. }
+        current_stage: { type: integer, minimum: 1, description: "One-based ordinal of the currently configured stage." }
+        stage_count: { type: integer, minimum: 2 }
+        rollout_basis_points: { type: integer, minimum: 1, maximum: 10000, description: "Active rollout percentage in basis points." }
+        next_rollout_basis_points: { type: integer, minimum: 1, maximum: 10000, description: "Next configured percentage after promotion, omitted when already at the final stage." }
+        request_count: { type: integer, format: int64, minimum: 0 }
+        used_count: { type: integer, format: int64, minimum: 0 }
+        http_5xx_count: { type: integer, format: int64, minimum: 0 }
+        http_5xx_rate: { type: number, minimum: 0, maximum: 1, description: "Observed 5xx count divided by the target rule request count." }
+        p95_latency_ms: { type: integer, minimum: 0 }
+        latency_quantized: { type: boolean, description: True when p95 came from stored bucket bounds; false when no matching evidence was available. }
+        minimum_used_requests: { type: integer, format: int64, minimum: 1 }
+        maximum_http_5xx_rate_basis_points: { type: integer, minimum: 0, maximum: 10000 }
+        maximum_p95_latency_ms: { type: integer, minimum: 1 }
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
     FlagVariant:
       description: Variant allocation weight in basis points; all weights on a flag total 10000.
       type: object
@@ -33332,6 +33769,7 @@ components:
         requested_at: { type: string, format: date-time }
         finished_at: { type: [string, "null"], format: date-time }
         invocation_id: { type: [string, "null"], format: uuid }
+        operation_id: { type: [string, "null"], format: uuid, description: "Managed exclusive operation admitted by this fire-now request." }
         task_id: { type: [string, "null"], format: uuid, description: "Command task created by this request; absent for HTTP crons or before queueing." }
         error: { type: [string, "null"] }
         account_id: { type: string, format: uuid }
@@ -34221,7 +34659,8 @@ components:
       type: string
       enum:
         [rate_limited, poison_record, max_attempts, broker_error,
-         plan_quota, payload_too_large, customer_disabled]
+         plan_quota, payload_too_large, customer_disabled,
+         exclusive_operation_rejected]
 
     TriggerRoutedTo:
       description: "Where a dead-lettered record was routed."
@@ -45157,6 +45596,167 @@ components:
           type: boolean
           description: "True when neither source status nor source body hash was supplied, or the mirror produced no response."
 
+    ExclusiveOperationPolicy:
+      type: object
+      additionalProperties: false
+      description: Account-owned policy for managed exclusive operations. Apps and selected Jobs share the account policy namespace; Jobs require account scope and cannot use an app project environment.
+      required: [scope, contention, lease_seconds, max_attempt_seconds]
+      anyOf:
+        - required: [member_app_ids]
+        - required: [member_job_ids]
+      properties:
+        name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        scope: { type: string, enum: [account, platform_tenant] }
+        environment_id: { type: string, format: uuid }
+        member_app_ids: { type: array, minItems: 1, maxItems: 100, uniqueItems: true, items: { type: string, format: uuid } }
+        member_job_ids: { type: array, minItems: 1, maxItems: 100, uniqueItems: true, items: { type: string, format: uuid } }
+        contention: { type: string, enum: [queue, reject, join_existing] }
+        lease_seconds: { type: integer, minimum: 5, maximum: 300 }
+        max_attempt_seconds: { type: integer, minimum: 5, maximum: 86400 }
+        max_attempts: { type: integer, minimum: 1, maximum: 100 }
+        retry_after_seconds: { type: integer, minimum: 1, maximum: 3600 }
+
+    ExclusiveWorkPolicyRecord:
+      type: object
+      description: Persisted policy revision and lifecycle metadata.
+      required: [id, revision, policy, retired, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        revision: { type: integer, format: int64, minimum: 1 }
+        policy: { $ref: '#/components/schemas/ExclusiveOperationPolicy' }
+        retired: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ExclusiveWorkPolicyList:
+      type: object
+      description: Account-owned exclusive-operation policies.
+      required: [policies]
+      properties:
+        policies:
+          type: array
+          items: { $ref: '#/components/schemas/ExclusiveWorkPolicyRecord' }
+
+    ExclusiveOperationRequest:
+      type: object
+      description: Work request admitted under a named exclusive-operation policy.
+      additionalProperties: false
+      required: [policy, key, invocation]
+      properties:
+        policy: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        key:
+          description: JSON scalar used only as a business coordination key; account and tenant scope come from authenticated platform context.
+          oneOf:
+            - { type: string, maxLength: 128 }
+            - { type: number }
+            - { type: boolean }
+        equivalence_key: { type: string, maxLength: 128, description: Optional identity for joining accepted app invocations only when their invocation intents are equivalent. }
+        invocation:
+          type: object
+          additionalProperties: false
+          properties:
+            payload: { type: object, additionalProperties: true }
+            headers: { type: object, additionalProperties: { type: string } }
+            method: { type: string, default: POST }
+            path: { type: string, default: '/' }
+
+    ExclusiveJobOperationRequest:
+      type: object
+      description: Job run intent admitted under a named exclusive-operation policy. The account and Job identity are derived from the authenticated route.
+      additionalProperties: false
+      required: [policy, key, run]
+      properties:
+        policy: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        key:
+          description: Business identifier for this Job run lane; account authorization scope is derived from the authenticated route.
+          oneOf:
+            - { type: string, maxLength: 128 }
+            - { type: number }
+            - { type: boolean }
+        equivalence_key: { type: string, maxLength: 128, description: Optional identity for joining accepted Job runs only when their run intents are equivalent. }
+        run: { $ref: '#/components/schemas/CreateJobRunRequest' }
+
+    ExclusiveAppTaskOperationRequest:
+      type: object
+      description: Deployment-attached app task intent admitted under a named exclusive-operation policy.
+      additionalProperties: false
+      required: [policy, key, task]
+      properties:
+        policy: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        key:
+          description: Business identifier for this deployment-attached task lane; account and customer authorization scope comes from trusted platform context.
+          oneOf:
+            - { type: string, maxLength: 128 }
+            - { type: number }
+            - { type: boolean }
+        equivalence_key: { type: string, maxLength: 128, description: Optional identity for joining accepted app tasks only when their task intents are equivalent. }
+        task: { $ref: '#/components/schemas/CreateAppTaskRequest' }
+
+    ExclusiveTriggerBindingRequest:
+      type: object
+      description: Configuration that routes one trusted trigger through an exclusive-operation policy.
+      additionalProperties: false
+      required: [policy, key]
+      properties:
+        policy: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        key:
+          description: Business coordination key; it never sets account or customer security scope.
+          oneOf:
+            - { type: string, minLength: 1, maxLength: 128 }
+            - { type: number }
+            - { type: boolean }
+        platform_tenant_id: { type: string, format: uuid, description: Account-owner configured trusted tenant identity for tenant-scoped triggers. }
+        equivalence_key: { type: string, maxLength: 128, description: Required by join_existing policies; used to distinguish equivalent requests. }
+
+    ExclusiveTriggerBindingRecord:
+      type: object
+      description: Persisted binding between an account-owned trigger or recurring Job schedule and its exclusive-operation policy. Exactly one of app_id or job_id is present.
+      required: [source, trigger_id, policy, key, created_at, updated_at]
+      properties:
+        source: { type: string, enum: [cron, inbound_webhook, broker, job_schedule] }
+        trigger_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid, description: Present for app-owned triggers. }
+        job_id: { type: string, format: uuid, description: Present for a recurring Job schedule. }
+        policy: { type: string }
+        platform_tenant_id: { type: string, format: uuid }
+        key:
+          oneOf:
+            - { type: string }
+            - { type: number }
+            - { type: boolean }
+        equivalence_key: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ExclusiveOperationAccepted:
+      type: object
+      description: Receipt returned when an operation is durably accepted or joined.
+      required: [id, joined, status_url]
+      properties:
+        id: { type: string, format: uuid }
+        joined: { type: boolean, description: True only when an equivalent active operation was linked under join_existing. }
+        status_url: { type: string, description: Scoped status endpoint for the submitting credential. }
+
+    ExclusiveOperationRecord:
+      type: object
+      description: Public receipt. Accepted request contents, claim tokens, and renewal credentials are never returned.
+      required: [id, sequence, state, policy_revision, generation, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        job_id: { type: string, format: uuid }
+        platform_tenant_id: { type: string, format: uuid }
+        sequence: { type: integer, format: int64 }
+        state: { type: string, enum: [pending, running, completed, failed, cancelled] }
+        policy_revision: { type: integer, format: int64 }
+        generation: { type: integer, format: int64, minimum: 0, description: Monotonically increasing fencing generation for this coordination key. }
+        lease_expires_at: { type: string, format: date-time }
+        attempt_deadline: { type: string, format: date-time }
+        result: { description: Platform-committed invocation result; arbitrary JSON value. }
+        last_error: { type: string, maxLength: 1024 }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+
 
     IssueFrame:
       description: "A sanitized application stack frame used by grouping version 1."
@@ -45743,7 +46343,10 @@ components:
           schema: { $ref: '#/components/schemas/Problem' }
 
     CapacityUnavailable:
-      description: 'code: capacity_unavailable — no host headroom (alerting; should be near-impossible).'
+      description: |
+        code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

@@ -1474,7 +1474,11 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		updated, err = s.store.UpdateApp(r.Context(), app.ID, params)
 	}
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not update app"))
+		if problem := state.ServiceCapacityProblem(err); problem != nil {
+			api.WriteProblem(w, problem)
+		} else {
+			api.WriteProblem(w, api.ErrCapacity("could not update app"))
+		}
 		return
 	}
 	if req.BeforeCheckpoint != nil {

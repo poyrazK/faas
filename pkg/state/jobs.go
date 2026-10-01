@@ -97,6 +97,7 @@ type Job struct {
 type JobScheduleStore interface {
 	JobListScheduled(ctx context.Context) ([]Job, error)
 	JobRunCreateScheduled(ctx context.Context, jobID, schedule, timezone string, expectedLastScheduledAt *time.Time, firedAt time.Time) (JobRun, bool, error)
+	JobScheduleAdvanceOccurrence(ctx context.Context, jobID, schedule, timezone string, expectedLastScheduledAt *time.Time, firedAt time.Time) (bool, error)
 }
 
 // JobScheduleCreateStore is the schedule-aware job admission seam. It keeps
@@ -146,6 +147,8 @@ type JobRun struct {
 	ID                   string
 	JobID                string
 	AccountID            string
+	ExclusiveOperationID string
+	ExclusiveGeneration  int64
 	TriggerKind          string // 'manual' | 'scheduled' | 'triggered'
 	EnvOverrides         json.RawMessage
 	Tasks                int
@@ -185,15 +188,21 @@ type JobRun struct {
 // pointer uses the job's complete command; a pointer to an empty slice runs
 // the executable with no trailing arguments.
 type JobRunOptions struct {
-	FailureRules        *workpolicy.FailureRules
-	CommandArgs         *[]string
-	Inputs              []JobInput
-	InputManifestURI    string
-	InputManifestSHA256 string
-	ExecutionClass      string
-	FailurePolicy       string
-	EligibleAt          *time.Time
-	LatestStartAt       *time.Time
+	FailureRules *workpolicy.FailureRules
+	// ID and ownership identify an operation-controlled run. They are only
+	// set by the managed operation dispatcher; ordinary JobRun callers leave
+	// them empty and receive a generated run ID.
+	ID                   string
+	ExclusiveOperationID string
+	ExclusiveGeneration  int64
+	CommandArgs          *[]string
+	Inputs               []JobInput
+	InputManifestURI     string
+	InputManifestSHA256  string
+	ExecutionClass       string
+	FailurePolicy        string
+	EligibleAt           *time.Time
+	LatestStartAt        *time.Time
 }
 
 // JobInput binds an ordered input identity to one task. InputRef is passed to
@@ -561,6 +570,10 @@ type JobStore interface {
 	// slice call JobTaskList separately so the read paths stay
 	// independently cacheable.
 	JobRunGetByID(ctx context.Context, id string) (JobRun, error)
+	// JobRunListByExclusiveOperation returns the durable incarnations owned by
+	// an operation. A replacement generation cancels older runs before it is
+	// dispatched, while task commits remain generation-fenced in storage.
+	JobRunListByExclusiveOperation(ctx context.Context, accountID, operationID string) ([]JobRun, error)
 	// JobRunListByJob paginates the per-job run list
 	// (job_runs_job_idx: (job_id, created_at DESC)). Used by the
 	// job-detail page on the dashboard.

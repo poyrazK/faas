@@ -2350,18 +2350,20 @@ type DebugCompareRouteView struct {
 // comparison envelope; raw request payloads and customer headers are never
 // rendered here.
 type DebugReplayView struct {
-	ID               string
-	State            string
-	LastError        string
-	CreatedAt        string
-	CompletedAt      string
-	HasResult        bool
-	SourceStatusCode int
-	MirrorStatusCode int
-	SourceLatencyMS  int
-	MirrorLatencyMS  int
-	StatusDiff       bool
-	Crashed          bool
+	ID                 string
+	State              string
+	LastError          string
+	CreatedAt          string
+	CompletedAt        string
+	HasResult          bool
+	SourceDeploymentID string
+	MirrorDeploymentID string
+	SourceStatusCode   int
+	MirrorStatusCode   int
+	SourceLatencyMS    int
+	MirrorLatencyMS    int
+	StatusDiff         bool
+	Crashed            bool
 }
 
 // DebugRegressionView carries the bounded regression observation plus a

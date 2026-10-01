@@ -2614,6 +2614,14 @@ func (c *Client) CreateJobRun(ctx context.Context, name string, req CreateJobRun
 	return out, c.do(ctx, "POST", "/v1/jobs/"+name+"/runs", req, &out)
 }
 
+// SubmitExclusiveJobOperation admits a JobRun to an account-scoped policy.
+// Idempotency-Key makes retries safe when the response is lost.
+func (c *Client) SubmitExclusiveJobOperation(ctx context.Context, name string, request ExclusiveJobOperationRequest, idempotencyKey string) (ExclusiveOperationAccepted, error) {
+	var out ExclusiveOperationAccepted
+	path := "/v1/jobs/" + url.PathEscape(name) + "/operations"
+	return out, c.doWithIdempotencyKey(ctx, http.MethodPost, path, request, &out, idempotencyKey)
+}
+
 // ListJobRuns returns a page of the job's run history
 // (issue #1184 Workstream A). newest-first by created_at desc.
 // Server clamps limit to [1,200] and surfaces a 400 Problem on
@@ -3566,6 +3574,77 @@ func (c *Client) ListInvocations(ctx context.Context, before string, limit int) 
 func (c *Client) GetInvocation(ctx context.Context, id string) (Invocation, error) {
 	var out Invocation
 	return out, c.do(ctx, "GET", "/v1/invocations/"+id, nil, &out)
+}
+
+func (c *Client) ListExclusiveWorkPolicies(ctx context.Context) (ExclusiveWorkPolicyList, error) {
+	var out ExclusiveWorkPolicyList
+	return out, c.do(ctx, http.MethodGet, "/v1/account/operation-policies", nil, &out)
+}
+
+func (c *Client) UpsertExclusiveWorkPolicy(ctx context.Context, name string, policy ExclusivePolicyRequest) (ExclusiveWorkPolicyRecord, error) {
+	var out ExclusiveWorkPolicyRecord
+	return out, c.do(ctx, http.MethodPut, "/v1/account/operation-policies/"+url.PathEscape(name), policy, &out)
+}
+
+func (c *Client) UpsertExclusiveTriggerBinding(ctx context.Context, source, triggerID string, binding ExclusiveTriggerBindingRequest) (ExclusiveTriggerBindingRecord, error) {
+	var out ExclusiveTriggerBindingRecord
+	path := "/v1/account/operation-trigger-bindings/" + url.PathEscape(source) + "/" + url.PathEscape(triggerID)
+	return out, c.do(ctx, http.MethodPut, path, binding, &out)
+}
+
+func (c *Client) GetExclusiveTriggerBinding(ctx context.Context, source, triggerID string) (ExclusiveTriggerBindingRecord, error) {
+	var out ExclusiveTriggerBindingRecord
+	path := "/v1/account/operation-trigger-bindings/" + url.PathEscape(source) + "/" + url.PathEscape(triggerID)
+	return out, c.do(ctx, http.MethodGet, path, nil, &out)
+}
+
+func (c *Client) DeleteExclusiveTriggerBinding(ctx context.Context, source, triggerID string) error {
+	path := "/v1/account/operation-trigger-bindings/" + url.PathEscape(source) + "/" + url.PathEscape(triggerID)
+	return c.do(ctx, http.MethodDelete, path, nil, nil)
+}
+
+// SubmitExclusiveOperation uses an account-authorized tenant selection when
+// tenantID is set. A downstream tenant credential should use
+// SubmitPlatformTenantExclusiveOperation so identity comes from that token.
+func (c *Client) SubmitExclusiveOperation(ctx context.Context, slug, tenantID string, request ExclusiveOperationRequest, idempotencyKey string) (ExclusiveOperationAccepted, error) {
+	var out ExclusiveOperationAccepted
+	path := "/v1/apps/" + url.PathEscape(slug) + "/operations"
+	if tenantID != "" {
+		path = "/v1/account/platform-tenants/" + url.PathEscape(tenantID) + "/apps/" + url.PathEscape(slug) + "/operations"
+	}
+	return out, c.doWithIdempotencyKey(ctx, http.MethodPost, path, request, &out, idempotencyKey)
+}
+
+// SubmitExclusiveAppTaskOperation admits a deployment-attached command to an
+// app's account-scoped exclusive-operation lane.
+func (c *Client) SubmitExclusiveAppTaskOperation(ctx context.Context, slug string, request ExclusiveAppTaskOperationRequest, idempotencyKey string) (ExclusiveOperationAccepted, error) {
+	var out ExclusiveOperationAccepted
+	path := "/v1/apps/" + url.PathEscape(slug) + "/operations/tasks"
+	return out, c.doWithIdempotencyKey(ctx, http.MethodPost, path, request, &out, idempotencyKey)
+}
+
+func (c *Client) SubmitPlatformTenantExclusiveOperation(ctx context.Context, slug string, request ExclusiveOperationRequest, idempotencyKey string) (ExclusiveOperationAccepted, error) {
+	var out ExclusiveOperationAccepted
+	path := "/v1/platform-tenant-self/apps/" + url.PathEscape(slug) + "/operations"
+	return out, c.doWithIdempotencyKey(ctx, http.MethodPost, path, request, &out, idempotencyKey)
+}
+
+func (c *Client) GetExclusiveOperation(ctx context.Context, id string) (ExclusiveOperationRecord, error) {
+	var out ExclusiveOperationRecord
+	return out, c.do(ctx, http.MethodGet, "/v1/operations/"+url.PathEscape(id), nil, &out)
+}
+
+func (c *Client) CancelExclusiveOperation(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodPost, "/v1/operations/"+url.PathEscape(id)+"/cancel", nil, nil)
+}
+
+func (c *Client) GetPlatformTenantExclusiveOperation(ctx context.Context, id string) (ExclusiveOperationRecord, error) {
+	var out ExclusiveOperationRecord
+	return out, c.do(ctx, http.MethodGet, "/v1/platform-tenant-self/operations/"+url.PathEscape(id), nil, &out)
+}
+
+func (c *Client) CancelPlatformTenantExclusiveOperation(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodPost, "/v1/platform-tenant-self/operations/"+url.PathEscape(id)+"/cancel", nil, nil)
 }
 
 // ReplayInvocation re-issues a failed invocation. The server
