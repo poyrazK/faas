@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from ..models.environment_policy import EnvironmentPolicy
     from ..models.environment_route_contract import EnvironmentRouteContract
     from ..models.environment_workload_queue_bindings import EnvironmentWorkloadQueueBindings
+    from ..models.environment_workload_queue_recoveries import EnvironmentWorkloadQueueRecoveries
     from ..models.environment_workload_secret_refs import EnvironmentWorkloadSecretRefs
     from ..models.environment_workload_service_bindings import EnvironmentWorkloadServiceBindings
     from ..models.environment_workload_source import EnvironmentWorkloadSource
@@ -44,6 +45,10 @@ class EnvironmentWorkload:
     """Atomic environment-scoped declared-route collection."""
     policies: list[EnvironmentPolicy] | Unset = UNSET
     queue_bindings: EnvironmentWorkloadQueueBindings | Unset = UNSET
+    queue_recoveries: EnvironmentWorkloadQueueRecoveries | Unset = UNSET
+    """Explicit recovery of retained queues, keyed by a declared binding name and pinned to its original scoped
+    binding UUID. Requires reviewed adoption before reconciliation can resume retained work; adoption itself
+    preserves the retirement hold."""
     service_bindings: EnvironmentWorkloadServiceBindings | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
@@ -80,6 +85,10 @@ class EnvironmentWorkload:
         if not isinstance(self.queue_bindings, Unset):
             queue_bindings = self.queue_bindings.to_dict()
 
+        queue_recoveries: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.queue_recoveries, Unset):
+            queue_recoveries = self.queue_recoveries.to_dict()
+
         service_bindings: dict[str, Any] | Unset = UNSET
         if not isinstance(self.service_bindings, Unset):
             service_bindings = self.service_bindings.to_dict()
@@ -103,6 +112,8 @@ class EnvironmentWorkload:
             field_dict["policies"] = policies
         if queue_bindings is not UNSET:
             field_dict["queue_bindings"] = queue_bindings
+        if queue_recoveries is not UNSET:
+            field_dict["queue_recoveries"] = queue_recoveries
         if service_bindings is not UNSET:
             field_dict["service_bindings"] = service_bindings
 
@@ -114,6 +125,7 @@ class EnvironmentWorkload:
         from ..models.environment_policy import EnvironmentPolicy
         from ..models.environment_route_contract import EnvironmentRouteContract
         from ..models.environment_workload_queue_bindings import EnvironmentWorkloadQueueBindings
+        from ..models.environment_workload_queue_recoveries import EnvironmentWorkloadQueueRecoveries
         from ..models.environment_workload_secret_refs import EnvironmentWorkloadSecretRefs
         from ..models.environment_workload_service_bindings import EnvironmentWorkloadServiceBindings
         from ..models.environment_workload_source import EnvironmentWorkloadSource
@@ -173,6 +185,13 @@ class EnvironmentWorkload:
         else:
             queue_bindings = EnvironmentWorkloadQueueBindings.from_dict(_queue_bindings)
 
+        _queue_recoveries = d.pop("queue_recoveries", UNSET)
+        queue_recoveries: EnvironmentWorkloadQueueRecoveries | Unset
+        if isinstance(_queue_recoveries, Unset):
+            queue_recoveries = UNSET
+        else:
+            queue_recoveries = EnvironmentWorkloadQueueRecoveries.from_dict(_queue_recoveries)
+
         _service_bindings = d.pop("service_bindings", UNSET)
         service_bindings: EnvironmentWorkloadServiceBindings | Unset
         if isinstance(_service_bindings, Unset):
@@ -189,6 +208,7 @@ class EnvironmentWorkload:
             routes=routes,
             policies=policies,
             queue_bindings=queue_bindings,
+            queue_recoveries=queue_recoveries,
             service_bindings=service_bindings,
         )
 

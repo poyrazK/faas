@@ -540,8 +540,8 @@ restore approved queue intent when removed or expired. API mutations acquire the
 source lock before app/account/binding locks, and return the existing
 `environment_field_git_managed` conflict for rejected writes. Retired bindings,
 missing original identities and inconsistent private projections are blockers;
-Git cannot implicitly recover them. Queue pruning remains blocked until a
-reviewed disposition defines retained work and receipt recovery. The approved
+Git cannot implicitly recover them. Reviewed queue retirement and recovery are
+described below. The approved
 intent executor remains disabled in apid pending complete graph integration.
 
 Shared memory/PostgreSQL tests cover scoped adoption, report drift, stale
@@ -551,6 +551,66 @@ a real source-lock wait against a competing API mutation. Migration replay
 preserves queue ownership, accepted work, receipts and current controller leases.
 HTTP checks cover the public ownership conflict. These tests qualify queue
 customer intent; native dispatch and full staged graph acceptance remain open.
+
+An approved definition can now explicitly select `queue_pruning_policy: retain`.
+With source pruning enabled, removal of an owned queue retires admission and
+dispatch in the same transaction as its consumer disablement and ownership
+release. The original binding, consumer, accepted work, replay generations and
+receipt namespace survive. Neighbors and application-shared queues remain
+unmanaged. Already retired rows preserve their original retirement timestamp;
+report mode and active overrides do not release or retire work.
+
+Restoring a retained queue requires `queue_recoveries`, keyed by its declared
+binding name and containing its original canonical scoped binding UUID. The
+retirement appears as `null` in the adoption preview, so adoption transfers
+ownership while preserving the hold. Subsequent enforce-mode reconciliation
+checks the exact approved revision, source generation, controller lease, catalog
+identity and ownership before releasing it. A missing/wrong UUID, replaced
+catalog identity, or inconsistent consumer projection blocks the complete plan.
+Recovery preserves the original private consumer and receipts; it does not
+reinterpret queued data. Recovery metadata contributes to the reviewed definition
+digest, without inventing a managed setting or perpetual drift after activation.
+
+Retirement and recovery reuse atomic binding/consumer publication and committed
+scheduler notifications. Retiring removed consumers precedes admission of new
+ones in the same transaction. Recovery rechecks application/account trigger
+quotas before releasing the hold. A later quota, projection or field failure
+rolls back the complete intent transaction. PostgreSQL guards require the live
+approved controller lease even for direct SQL recovery, reject superseded
+generations, and permit only hold release in that guard transition; ordinary
+PATCH/recreation cannot recover a retired queue. Native delivery and the complete
+staged environment release remain separate gates.
+
+Retrieve its original identity with
+`gregale queue bindings list shop-worker --include-retired` or
+`GET /v1/apps/shop-worker/queue-bindings?include_retired=true`. This read-only history
+view uses the normal app read authorization and includes `retired_at`; default
+listing continues to include only active bindings. Copy the retained binding ID
+into `queue_recoveries` in the reviewed definition. Valid compact UUIDs returned
+by the memory implementation are normalized before computing the review digest.
+
+For example, a reviewed recovery definition retains the original delivery lane:
+
+```yaml
+api_version: gregale.dev/environment/v1
+project: shop
+environment: production
+queue_pruning_policy: retain
+workloads:
+  worker:
+    app: shop-worker
+    queue_bindings:
+      orders:
+        queue_name: orders
+        mode: push
+        workload_class: worker
+    queue_recoveries:
+      orders: 11111111-2222-4333-8444-555555555555
+```
+
+The UUID comes from the retained binding history; an arbitrary UUID cannot
+qualify. Review and adopt the plan before reconciliation can resume the queue.
+Omitting `queue_pruning_policy` continues to block queue removals.
 
 The branch's unreleased migrations are replay-safe as a complete set. Their
 rollback retains management intent, ownership, captured work and runtime
@@ -705,13 +765,23 @@ evidence; native guest delivery and lifecycle acceptance remain outstanding.
 The remaining full feature gates include native qualification of protected-branch
 approval with the complete serving flow; environment-scoped workload creation, source/runtime,
 short catalog-name scope support and
-service-binding adapters; reviewed queue pruning/recovery
-and projection repair; staged graph qualification
+service-binding adapters; queue projection repair; staged graph qualification
 and release activation; native serving-fleet and guest runtime evidence;
 full staged graph/runtime operational status integration; and native runtime acceptance.
 Unsupported resource fields currently block the complete plan. The approved-intent
 worker is not started from apid until these integration contracts are wired;
 candidate discovery is running independently.
+
+The reviewed queue retention/recovery checkpoint passes shared memory and
+PostgreSQL reconciliation, raw-SQL authority and supersession fences, quota and
+projection rollback, and populated migration replay with retained work, receipts,
+ownership and a current controller lease. Routed API history checks cover the
+explicit selector, original timestamp, authentication, read scope and neighboring
+tenants/apps. CLI and Go/Node/Python SDK checks preserve the recovery identity and
+timestamp. Isolated SQLC regeneration and the embedded OpenAPI copy match. The
+public Go checks used the internal linker after the normal external linker ran
+out of workspace disk; native guest/lifecycle and staged graph acceptance remain
+outstanding, and this checkpoint does not enable the approved-intent executor.
 
 For an existing scoped secret, the public reference commands are:
 

@@ -2019,7 +2019,14 @@ var cliCommands = []cliCommand{
 				{Name: "retry-jitter-seconds", Short: "retry jitter in seconds (0..1)", Value: "N"},
 				{Name: "force", Short: "replace an existing default binding on another queue"},
 			}},
-			{Name: "bindings", Short: "Manage queue bindings"},
+			{Name: "bindings", Short: "Manage queue bindings", Subcommands: []cliSub{
+				{Name: "list", Short: "List app queue bindings", Flags: []cliFlag{
+					{Name: "include-retired", Short: "include retained binding UUIDs for reviewed recovery"},
+				}},
+				{Name: "create", Short: "Create a queue binding"},
+				{Name: "update", Short: "Update a queue binding"},
+				{Name: "rm", Short: "Retire a queue binding"},
+			}},
 		},
 	},
 	{

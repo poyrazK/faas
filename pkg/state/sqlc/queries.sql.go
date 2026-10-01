@@ -3428,6 +3428,47 @@ func (q *Queries) EnsureExclusiveWorkQuota(ctx context.Context, db DBTX, arg Ens
 	return err
 }
 
+const environmentGitOpsQueueForUpdate = `-- name: EnvironmentGitOpsQueueForUpdate :one
+select id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at, retired_at, deployment_scope, environment_id from queue_bindings where id=$1 and app_id=$2
+and account_id=$3 and environment_id=$4 for update
+`
+
+type EnvironmentGitOpsQueueForUpdateParams struct {
+	ID            pgtype.UUID
+	AppID         pgtype.UUID
+	AccountID     pgtype.UUID
+	EnvironmentID pgtype.UUID
+}
+
+// The approved-intent transaction holds source/app/account before this row.
+func (q *Queries) EnvironmentGitOpsQueueForUpdate(ctx context.Context, db DBTX, arg EnvironmentGitOpsQueueForUpdateParams) (QueueBinding, error) {
+	row := db.QueryRow(ctx, environmentGitOpsQueueForUpdate,
+		arg.ID,
+		arg.AppID,
+		arg.AccountID,
+		arg.EnvironmentID,
+	)
+	var i QueueBinding
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.QueueName,
+		&i.Mode,
+		&i.WorkloadClass,
+		&i.Enabled,
+		&i.MaxConcurrency,
+		&i.RetryPolicy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RetiredAt,
+		&i.DeploymentScope,
+		&i.EnvironmentID,
+	)
+	return i, err
+}
+
 const environmentGitSourceHealth = `-- name: EnvironmentGitSourceHealth :one
 SELECT count(*) FILTER (WHERE NOT s.suspended)::bigint AS active,
     count(*) FILTER (WHERE s.suspended)::bigint AS suspended,
@@ -20232,6 +20273,48 @@ func (q *Queries) RecordUploadCommitOutcome(ctx context.Context, db DBTX, arg Re
 		&i.DeploymentID,
 		&i.BuildID,
 		&i.FinalizedAt,
+	)
+	return i, err
+}
+
+const recoverEnvironmentGitOpsQueue = `-- name: RecoverEnvironmentGitOpsQueue :one
+update queue_bindings set retired_at=null,updated_at=now()
+where id=$1 and app_id=$2 and account_id=$3
+and environment_id=$4 and retired_at is not null returning id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at, retired_at, deployment_scope, environment_id
+`
+
+type RecoverEnvironmentGitOpsQueueParams struct {
+	ID            pgtype.UUID
+	AppID         pgtype.UUID
+	AccountID     pgtype.UUID
+	EnvironmentID pgtype.UUID
+}
+
+// Only the retirement guard's current approved lease may release this hold.
+func (q *Queries) RecoverEnvironmentGitOpsQueue(ctx context.Context, db DBTX, arg RecoverEnvironmentGitOpsQueueParams) (QueueBinding, error) {
+	row := db.QueryRow(ctx, recoverEnvironmentGitOpsQueue,
+		arg.ID,
+		arg.AppID,
+		arg.AccountID,
+		arg.EnvironmentID,
+	)
+	var i QueueBinding
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.QueueName,
+		&i.Mode,
+		&i.WorkloadClass,
+		&i.Enabled,
+		&i.MaxConcurrency,
+		&i.RetryPolicy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RetiredAt,
+		&i.DeploymentScope,
+		&i.EnvironmentID,
 	)
 	return i, err
 }

@@ -6,10 +6,13 @@ import "encoding/json"
 // Omitted fields are unmanaged. Collection ownership is explicit: routes and
 // policies are replaced as a whole, while maps own only their declared keys.
 type EnvironmentDefinition struct {
-	APIVersion    string                     `json:"api_version"`
-	Project       string                     `json:"project"`
-	Environment   string                     `json:"environment"`
-	Configuration map[string]json.RawMessage `json:"configuration,omitempty"`
+	APIVersion  string `json:"api_version"`
+	Project     string `json:"project"`
+	Environment string `json:"environment"`
+	// Retain is the only supported queue pruning disposition. It retires
+	// admission/dispatch while preserving accepted work and receipt identity.
+	QueuePruningPolicy string                     `json:"queue_pruning_policy,omitempty"`
+	Configuration      map[string]json.RawMessage `json:"configuration,omitempty"`
 	// An explicit empty map represents an empty environment. Missing or null
 	// membership is invalid; deletion still requires a reviewed prune plan.
 	Workloads map[string]EnvironmentWorkload `json:"workloads"`
@@ -18,14 +21,17 @@ type EnvironmentDefinition struct {
 type EnvironmentWorkload struct {
 	// App is an existing Gregale slug for adoption. New workloads may omit it;
 	// the persisted identity mapping determines their eventual app ID.
-	App             string                               `json:"app,omitempty"`
-	Source          *EnvironmentWorkloadSource           `json:"source,omitempty"`
-	Runtime         json.RawMessage                      `json:"runtime,omitempty"`
-	Variables       map[string]string                    `json:"variables,omitempty"`
-	SecretRefs      map[string]string                    `json:"secret_refs,omitempty"`
-	Routes          *EnvironmentRouteContract            `json:"routes,omitempty"`
-	Policies        *[]EnvironmentPolicy                 `json:"policies,omitempty"`
-	QueueBindings   map[string]EnvironmentQueueBinding   `json:"queue_bindings,omitempty"`
+	App           string                             `json:"app,omitempty"`
+	Source        *EnvironmentWorkloadSource         `json:"source,omitempty"`
+	Runtime       json.RawMessage                    `json:"runtime,omitempty"`
+	Variables     map[string]string                  `json:"variables,omitempty"`
+	SecretRefs    map[string]string                  `json:"secret_refs,omitempty"`
+	Routes        *EnvironmentRouteContract          `json:"routes,omitempty"`
+	Policies      *[]EnvironmentPolicy               `json:"policies,omitempty"`
+	QueueBindings map[string]EnvironmentQueueBinding `json:"queue_bindings,omitempty"`
+	// Recovery pins an original retained binding UUID. Reviewed adoption
+	// preserves its hold; subsequent reconciliation may resume that identity.
+	QueueRecoveries map[string]string                    `json:"queue_recoveries,omitempty"`
 	ServiceBindings map[string]EnvironmentServiceBinding `json:"service_bindings,omitempty"`
 }
 

@@ -28,7 +28,14 @@ def test_reviewed_authority_and_override_identity() -> None:
         "api_version": "gregale.dev/environment/v1",
         "project": "shop",
         "environment": "production",
-        "workloads": {"api": {"app": "shop-api"}},
+        "queue_pruning_policy": "retain",
+        "workloads": {
+            "api": {
+                "app": "shop-api",
+                "queue_bindings": {"orders": {"queue_name": "orders", "workload_class": "worker"}},
+                "queue_recoveries": {"orders": "11111111-2222-4333-8444-555555555555"},
+            }
+        },
     }
     source = {
         "id": "source",
@@ -138,6 +145,7 @@ def test_reviewed_authority_and_override_identity() -> None:
             "my project", "production", client=client.inner, body=PreviewEnvironmentGitRevisionRequest(commit_sha=sha)
         )
         assert isinstance(review, PreviewEnvironmentGitRevisionResponse)
+        assert review.definition.to_dict() == definition
         approved = approve_environment_git_revision.sync_detailed(
             "my project",
             "production",

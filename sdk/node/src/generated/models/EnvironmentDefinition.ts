@@ -10,6 +10,10 @@ export type EnvironmentDefinition = {
   api_version: 'gregale.dev/environment/v1';
   project: string;
   environment: string;
+  /**
+   * Explicit reviewed disposition for removed owned queues when pruning is enabled. Retires admission and dispatch while preserving binding IDs, accepted work and delivery receipts. Omit to block queue pruning.
+   */
+  queue_pruning_policy?: 'retain';
   configuration?: Record<string, any>;
   workloads: Record<string, EnvironmentWorkload>;
 };

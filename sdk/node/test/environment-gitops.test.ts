@@ -12,7 +12,7 @@ test('GitOps services preserve reviewed authority and override identity', async 
       calls.push({ url, method: init?.method ?? 'GET', body: init?.body ? JSON.parse(String(init.body)) : null, headers: new Headers(init?.headers) });
       if (url.endsWith('/preview')) {
         return Response.json({ commit_sha: sha, definition_digest: digest, generation: 7,
-          definition: { api_version: 'gregale.dev/environment/v1', project: 'shop', environment: 'production', workloads: { api: { app: 'shop-api' } } } });
+          definition: { api_version: 'gregale.dev/environment/v1', project: 'shop', environment: 'production', queue_pruning_policy: 'retain', workloads: { api: { app: 'shop-api', queue_bindings: { orders: { queue_name: 'orders', workload_class: 'worker' } }, queue_recoveries: { orders: '11111111-2222-4333-8444-555555555555' } } } } });
       }
       if (url.endsWith('/approve')) return Response.json({}, { status: 202 });
       if (url.endsWith('/gitops')) return Response.json({ source: {
@@ -31,6 +31,8 @@ test('GitOps services preserve reviewed authority and override identity', async 
   });
   try {
     const review = await ProjectsService.previewEnvironmentGitRevision({ slug: 'my project', environment: 'production', requestBody: { commit_sha: sha } });
+    assert.equal(review.definition.queue_pruning_policy, 'retain');
+    assert.equal(review.definition.workloads.api?.queue_recoveries?.orders, '11111111-2222-4333-8444-555555555555');
     await ProjectsService.approveEnvironmentGitRevision({ slug: 'my project', environment: 'production', requestBody: {
       commit_sha: review.commit_sha, definition_digest: review.definition_digest, expected_generation: review.generation,
     } });

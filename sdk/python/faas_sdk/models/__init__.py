@@ -745,6 +745,7 @@ from .env_diff_row_cells import EnvDiffRowCells
 from .environment_definition import EnvironmentDefinition
 from .environment_definition_api_version import EnvironmentDefinitionApiVersion
 from .environment_definition_configuration import EnvironmentDefinitionConfiguration
+from .environment_definition_queue_pruning_policy import EnvironmentDefinitionQueuePruningPolicy
 from .environment_definition_workloads import EnvironmentDefinitionWorkloads
 from .environment_desired_revision import EnvironmentDesiredRevision
 from .environment_git_ops_change import EnvironmentGitOpsChange
@@ -773,6 +774,7 @@ from .environment_route_contract import EnvironmentRouteContract
 from .environment_service_binding import EnvironmentServiceBinding
 from .environment_workload import EnvironmentWorkload
 from .environment_workload_queue_bindings import EnvironmentWorkloadQueueBindings
+from .environment_workload_queue_recoveries import EnvironmentWorkloadQueueRecoveries
 from .environment_workload_secret_refs import EnvironmentWorkloadSecretRefs
 from .environment_workload_service_bindings import EnvironmentWorkloadServiceBindings
 from .environment_workload_source import EnvironmentWorkloadSource
@@ -2818,6 +2820,7 @@ __all__ = (
     "EnvironmentDefinition",
     "EnvironmentDefinitionApiVersion",
     "EnvironmentDefinitionConfiguration",
+    "EnvironmentDefinitionQueuePruningPolicy",
     "EnvironmentDefinitionWorkloads",
     "EnvironmentDesiredRevision",
     "EnvironmentGitOpsChange",
@@ -2846,6 +2849,7 @@ __all__ = (
     "EnvironmentServiceBinding",
     "EnvironmentWorkload",
     "EnvironmentWorkloadQueueBindings",
+    "EnvironmentWorkloadQueueRecoveries",
     "EnvironmentWorkloadSecretRefs",
     "EnvironmentWorkloadServiceBindings",
     "EnvironmentWorkloadSource",

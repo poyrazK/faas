@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -37,6 +38,9 @@ func Compile(input api.EnvironmentDefinition) (DesiredState, error) {
 	}
 	if d.Workloads == nil {
 		return DesiredState{}, fmt.Errorf("environment definition must explicitly declare its workloads map")
+	}
+	if d.QueuePruningPolicy != "" && d.QueuePruningPolicy != "retain" {
+		return DesiredState{}, fmt.Errorf("queue_pruning_policy must be retain or omitted")
 	}
 	var fields []Field
 	if d.Configuration != nil {
@@ -172,6 +176,13 @@ func compileWorkload(resource, name string, w *api.EnvironmentWorkload, workload
 		}
 		w.QueueBindings[key] = binding
 		add("queue_bindings/"+key, binding)
+	}
+	for name, id := range w.QueueRecoveries {
+		parsed, err := uuid.Parse(id)
+		if _, declared := w.QueueBindings[name]; !declared || err != nil || parsed == uuid.Nil {
+			return nil, fmt.Errorf("queue recovery %q requires a declared queue and its canonical original binding UUID", name)
+		}
+		w.QueueRecoveries[name] = parsed.String()
 	}
 	bindingEnvKeys := make(map[string]bool)
 	for key, binding := range w.ServiceBindings {

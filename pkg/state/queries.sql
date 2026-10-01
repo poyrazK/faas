@@ -5894,6 +5894,17 @@ and app_id=sqlc.arg(app_id) and account_id=sqlc.arg(account_id);
 select * from queue_bindings where app_id=sqlc.arg(app_id) and account_id=sqlc.arg(account_id)
 order by created_at, id;
 
+-- The approved-intent transaction holds source/app/account before this row.
+-- name: EnvironmentGitOpsQueueForUpdate :one
+select * from queue_bindings where id=sqlc.arg(id) and app_id=sqlc.arg(app_id)
+and account_id=sqlc.arg(account_id) and environment_id=sqlc.arg(environment_id) for update;
+
+-- Only the retirement guard's current approved lease may release this hold.
+-- name: RecoverEnvironmentGitOpsQueue :one
+update queue_bindings set retired_at=null,updated_at=now()
+where id=sqlc.arg(id) and app_id=sqlc.arg(app_id) and account_id=sqlc.arg(account_id)
+and environment_id=sqlc.arg(environment_id) and retired_at is not null returning *;
+
 -- name: QueueConsumerInsertBinding :one
 insert into queue_bindings (id,account_id,app_id,name,queue_name,mode,workload_class,enabled,max_concurrency,retry_policy,deployment_scope,environment_id)
 values (sqlc.arg(id),sqlc.arg(account_id),sqlc.arg(app_id),sqlc.arg(name),sqlc.arg(queue_name),

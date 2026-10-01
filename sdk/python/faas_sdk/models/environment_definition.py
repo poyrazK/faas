@@ -9,6 +9,10 @@ from ..models.environment_definition_api_version import (
     EnvironmentDefinitionApiVersion,
     check_environment_definition_api_version,
 )
+from ..models.environment_definition_queue_pruning_policy import (
+    EnvironmentDefinitionQueuePruningPolicy,
+    check_environment_definition_queue_pruning_policy,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -30,6 +34,9 @@ class EnvironmentDefinition:
     project: str
     environment: str
     workloads: EnvironmentDefinitionWorkloads
+    queue_pruning_policy: EnvironmentDefinitionQueuePruningPolicy | Unset = UNSET
+    """Explicit reviewed disposition for removed owned queues when pruning is enabled. Retires admission and
+    dispatch while preserving binding IDs, accepted work and delivery receipts. Omit to block queue pruning."""
     configuration: EnvironmentDefinitionConfiguration | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
@@ -40,6 +47,10 @@ class EnvironmentDefinition:
         environment = self.environment
 
         workloads = self.workloads.to_dict()
+
+        queue_pruning_policy: str | Unset = UNSET
+        if not isinstance(self.queue_pruning_policy, Unset):
+            queue_pruning_policy = self.queue_pruning_policy
 
         configuration: dict[str, Any] | Unset = UNSET
         if not isinstance(self.configuration, Unset):
@@ -55,6 +66,8 @@ class EnvironmentDefinition:
                 "workloads": workloads,
             }
         )
+        if queue_pruning_policy is not UNSET:
+            field_dict["queue_pruning_policy"] = queue_pruning_policy
         if configuration is not UNSET:
             field_dict["configuration"] = configuration
 
@@ -74,6 +87,13 @@ class EnvironmentDefinition:
 
         workloads = EnvironmentDefinitionWorkloads.from_dict(d.pop("workloads"))
 
+        _queue_pruning_policy = d.pop("queue_pruning_policy", UNSET)
+        queue_pruning_policy: EnvironmentDefinitionQueuePruningPolicy | Unset
+        if isinstance(_queue_pruning_policy, Unset):
+            queue_pruning_policy = UNSET
+        else:
+            queue_pruning_policy = check_environment_definition_queue_pruning_policy(_queue_pruning_policy)
+
         _configuration = d.pop("configuration", UNSET)
         configuration: EnvironmentDefinitionConfiguration | Unset
         if isinstance(_configuration, Unset):
@@ -86,6 +106,7 @@ class EnvironmentDefinition:
             project=project,
             environment=environment,
             workloads=workloads,
+            queue_pruning_policy=queue_pruning_policy,
             configuration=configuration,
         )
 

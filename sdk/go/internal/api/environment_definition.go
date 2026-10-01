@@ -6,11 +6,12 @@ import "encoding/json"
 // Omitted fields are unmanaged. Collection ownership is explicit: routes and
 // policies are replaced as a whole, while maps own only their declared keys.
 type EnvironmentDefinition struct {
-	APIVersion    string                         `json:"api_version"`
-	Project       string                         `json:"project"`
-	Environment   string                         `json:"environment"`
-	Configuration map[string]json.RawMessage     `json:"configuration,omitempty"`
-	Workloads     map[string]EnvironmentWorkload `json:"workloads"`
+	APIVersion         string                         `json:"api_version"`
+	Project            string                         `json:"project"`
+	Environment        string                         `json:"environment"`
+	QueuePruningPolicy string                         `json:"queue_pruning_policy,omitempty"`
+	Configuration      map[string]json.RawMessage     `json:"configuration,omitempty"`
+	Workloads          map[string]EnvironmentWorkload `json:"workloads"`
 }
 
 type EnvironmentWorkload struct {
@@ -24,6 +25,7 @@ type EnvironmentWorkload struct {
 	Routes          *EnvironmentRouteContract            `json:"routes,omitempty"`
 	Policies        *[]EnvironmentPolicy                 `json:"policies,omitempty"`
 	QueueBindings   map[string]EnvironmentQueueBinding   `json:"queue_bindings,omitempty"`
+	QueueRecoveries map[string]string                    `json:"queue_recoveries,omitempty"`
 	ServiceBindings map[string]EnvironmentServiceBinding `json:"service_bindings,omitempty"`
 }
 

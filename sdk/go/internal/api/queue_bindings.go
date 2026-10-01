@@ -20,6 +20,7 @@ type QueueBindingResponse struct {
 	RetryPolicy    *RetryPolicyDTO `json:"retry_policy,omitempty"`
 	CreatedAt      time.Time       `json:"created_at"`
 	UpdatedAt      time.Time       `json:"updated_at"`
+	RetiredAt      *time.Time      `json:"retired_at,omitempty"`
 }
 
 // QueueBindingStatusResponse is the read-only control-plane projection for a

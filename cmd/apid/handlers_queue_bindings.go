@@ -27,6 +27,7 @@ func queueBindingResponse(row state.QueueBinding) api.QueueBindingResponse {
 		WorkloadClass: string(row.WorkloadClass), Enabled: row.Enabled,
 		MaxConcurrency: row.MaxConcurrency, RetryPolicyJSON: row.RetryPolicyJSON,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		RetiredAt: row.RetiredAt,
 	})
 }
 
@@ -124,7 +125,23 @@ func (s *server) listQueueBindings(w http.ResponseWriter, r *http.Request, acct 
 	if !ok {
 		return
 	}
-	rows, err := s.store.ListQueueBindingsForApp(r.Context(), acct.ID, app.ID)
+	selector := r.URL.Query().Get("include_retired")
+	if selector != "" && selector != "true" && selector != "false" {
+		api.WriteProblem(w, queueBindingProblem("include_retired must be true or false"))
+		return
+	}
+	var rows []state.QueueBinding
+	var err error
+	if selector == "true" {
+		history, supported := s.store.(state.QueueBindingHistoryStore)
+		if !supported {
+			api.WriteProblem(w, api.ErrCapacity("queue binding history is unavailable"))
+			return
+		}
+		rows, err = history.ListQueueBindingHistoryForApp(r.Context(), acct.ID, app.ID)
+	} else {
+		rows, err = s.store.ListQueueBindingsForApp(r.Context(), acct.ID, app.ID)
+	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not list queue bindings"))
 		return

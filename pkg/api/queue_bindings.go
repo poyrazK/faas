@@ -23,6 +23,7 @@ type QueueBindingResponse struct {
 	RetryPolicy    *RetryPolicyDTO `json:"retry_policy,omitempty"`
 	CreatedAt      time.Time       `json:"created_at"`
 	UpdatedAt      time.Time       `json:"updated_at"`
+	RetiredAt      *time.Time      `json:"retired_at,omitempty"`
 }
 
 // QueueBindingStatusResponse is the read-only control-plane projection for a
@@ -117,6 +118,7 @@ type QueueBindingRow struct {
 	RetryPolicyJSON json.RawMessage
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
+	RetiredAt       *time.Time
 }
 
 func QueueBindingResponseFromRow(row QueueBindingRow) QueueBindingResponse {
@@ -132,5 +134,6 @@ func QueueBindingResponseFromRow(row QueueBindingRow) QueueBindingResponse {
 		WorkloadClass: row.WorkloadClass, Enabled: row.Enabled,
 		MaxConcurrency: row.MaxConcurrency, RetryPolicy: policyPtr,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		RetiredAt: row.RetiredAt,
 	}
 }

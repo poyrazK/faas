@@ -27,5 +27,9 @@ export type QueueBindingResponse = {
   retry_policy?: RetryPolicyDTO;
   created_at: string;
   updated_at: string;
+  /**
+   * Retirement hold timestamp; present only for a retained retired binding.
+   */
+  retired_at?: string;
 };
 

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
 )
@@ -78,7 +79,14 @@ func observeGitOpsQueues(out *EnvironmentGitOpsObservation, snapshot gitOpsInten
 			out.State.ResourceIDs[gitOpsQueueResource(resource, path)+"/consumer"] = binding.Consumers[0].ID
 		}
 		if binding.RetiredAt != nil {
-			if gitOpsQueueWantedOrOwned(snapshot, desired, resource, path) {
+			if gitOpsQueueRetirementReviewed(snapshot, desired, resource, path, binding.ID) {
+				// Explicit absence still requires adoption before recovery. Merely
+				// putting the old name back in Git cannot release accepted work.
+				out.State.Fields = append(out.State.Fields, environmentsync.Field{Resource: resource, Path: path, Value: json.RawMessage("null")})
+				if _, recovering := desired.Definition.Workloads[strings.TrimPrefix(resource, "workload/")].QueueBindings[name]; recovering && !gitOpsRetiredQueueProjectionMatches(binding, snapshot.Plan) {
+					out.State.Unsupported = append(out.State.Unsupported, resource+"#"+path+": retained queue consumer projection requires repair")
+				}
+			} else if gitOpsQueueWantedOrOwned(snapshot, desired, resource, path) {
 				out.State.Unsupported = append(out.State.Unsupported, resource+"#"+path+": queue is retired; reviewed recovery is required")
 			}
 			continue
@@ -94,6 +102,30 @@ func observeGitOpsQueues(out *EnvironmentGitOpsObservation, snapshot gitOpsInten
 		}
 	}
 	validateGitOpsDesiredQueues(out, snapshot, desired, resource, app)
+}
+
+func gitOpsQueueRetirementReviewed(snapshot gitOpsIntentSnapshot, desired environmentsync.DesiredState, resource, path, id string) bool {
+	workload := desired.Definition.Workloads[strings.TrimPrefix(resource, "workload/")]
+	name := strings.TrimPrefix(path, "queue_bindings/")
+	if _, wanted := workload.QueueBindings[name]; wanted {
+		return gitOpsQueueRecoveryMatches(workload.QueueRecoveries[name], id)
+	}
+	return snapshot.Prune && desired.Definition.QueuePruningPolicy == "retain"
+}
+
+func gitOpsQueueRecoveryMatches(recovery, id string) bool {
+	parsed, err := uuid.Parse(id)
+	return err == nil && recovery == parsed.String()
+}
+
+func gitOpsRetiredQueueProjectionMatches(binding gitOpsQueueIntent, plan api.Plan) bool {
+	// Retirement changes only Enabled. Keep the original consumer namespace
+	// and require its full projection before it may deliver retained work again.
+	if len(binding.Consumers) == 1 && binding.Consumers[0].Enabled {
+		return false
+	}
+	binding.Intent.Enabled = new(bool)
+	return gitOpsQueueProjectionMatches(binding, plan)
 }
 
 func gitOpsQueueWantedOrOwned(snapshot gitOpsIntentSnapshot, desired environmentsync.DesiredState, resource, path string) bool {
@@ -113,6 +145,9 @@ func gitOpsQueueWantedOrOwned(snapshot gitOpsIntentSnapshot, desired environment
 func validateGitOpsDesiredQueues(out *EnvironmentGitOpsObservation, snapshot gitOpsIntentSnapshot, desired environmentsync.DesiredState, resource string, app gitOpsIntentApp) {
 	workload := desired.Definition.Workloads[strings.TrimPrefix(resource, "workload/")]
 	for name, intent := range workload.QueueBindings {
+		if id := workload.QueueRecoveries[name]; id != "" && !gitOpsQueueRecoveryMatches(id, out.State.ResourceIDs[gitOpsQueueResource(resource, "queue_bindings/"+name)]) {
+			out.State.Unsupported = append(out.State.Unsupported, resource+"#queue_bindings/"+name+": recovery must name the original scoped binding UUID")
+		}
 		binding, err := decodeGitOpsQueue("queue_bindings/"+name, mustGitOpsJSON(intent), snapshot.EnvironmentID, snapshot.Environment, app.ID, "")
 		if err == nil {
 			err = validateQueueBindingConsumer(binding, app.Type, app.WorkloadClass)
@@ -129,7 +164,7 @@ func validateGitOpsDesiredQueues(out *EnvironmentGitOpsObservation, snapshot git
 		if owner.Resource != resource || owner.Manager != snapshot.SourceID || !strings.HasPrefix(owner.Path, "queue_bindings/") {
 			continue
 		}
-		if _, wanted := workload.QueueBindings[strings.TrimPrefix(owner.Path, "queue_bindings/")]; !wanted {
+		if _, wanted := workload.QueueBindings[strings.TrimPrefix(owner.Path, "queue_bindings/")]; !wanted && desired.Definition.QueuePruningPolicy != "retain" {
 			out.State.Unsupported = append(out.State.Unsupported, owner.Key()+": queue pruning requires a reviewed disposition for retained work")
 		}
 	}
@@ -187,11 +222,31 @@ func gitOpsQueueProjectionMatches(binding gitOpsQueueIntent, plan api.Plan) bool
 		consumer.BatchWindow == definition.BatchWindow && consumer.MaxAttempts == definition.MaxAttempts && consumer.PayloadMax == definition.PayloadMax
 }
 
-func gitOpsQueueMutationAllowed(change environmentsync.Change) error {
+func gitOpsQueueMutationAllowed(change environmentsync.Change, definition api.EnvironmentDefinition) error {
+	if change.Action == "remove" && definition.QueuePruningPolicy == "retain" {
+		return nil
+	}
 	if change.Action != "create" && change.Action != "update" {
 		return fmt.Errorf("%w: queue removal requires reviewed retention", ErrConflict)
 	}
 	return nil
+}
+
+// Retire removed consumers before admitting replacements. All operations still
+// commit as one intent transaction, including quota checks and notifications.
+func gitOpsQueueRetireFirst(changes []environmentsync.Change) []environmentsync.Change {
+	out := make([]environmentsync.Change, 0, len(changes))
+	for _, change := range changes {
+		if change.Action == "remove" && strings.HasPrefix(change.Path, "queue_bindings/") {
+			out = append(out, change)
+		}
+	}
+	for _, change := range changes {
+		if change.Action != "remove" || !strings.HasPrefix(change.Path, "queue_bindings/") {
+			out = append(out, change)
+		}
+	}
+	return out
 }
 
 func gitOpsQueuePatch(binding QueueBinding) UpdateQueueBindingParams {

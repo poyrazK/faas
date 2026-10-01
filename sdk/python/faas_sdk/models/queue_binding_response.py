@@ -50,6 +50,8 @@ class QueueBindingResponse:
     downgrades. Lives in pkg/api so the SDK can type the policy
     without importing pkg/dispatch directly.
     """
+    retired_at: datetime.datetime | Unset = UNSET
+    """Retirement hold timestamp; present only for a retained retired binding."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -85,6 +87,10 @@ class QueueBindingResponse:
         if not isinstance(self.retry_policy, Unset):
             retry_policy = self.retry_policy.to_dict()
 
+        retired_at: str | Unset = UNSET
+        if not isinstance(self.retired_at, Unset):
+            retired_at = self.retired_at.isoformat()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -108,6 +114,8 @@ class QueueBindingResponse:
             field_dict["environment_id"] = environment_id
         if retry_policy is not UNSET:
             field_dict["retry_policy"] = retry_policy
+        if retired_at is not UNSET:
+            field_dict["retired_at"] = retired_at
 
         return field_dict
 
@@ -154,6 +162,13 @@ class QueueBindingResponse:
         else:
             retry_policy = RetryPolicyDTO.from_dict(_retry_policy)
 
+        _retired_at = d.pop("retired_at", UNSET)
+        retired_at: datetime.datetime | Unset
+        if isinstance(_retired_at, Unset):
+            retired_at = UNSET
+        else:
+            retired_at = datetime.datetime.fromisoformat(_retired_at)
+
         queue_binding_response = cls(
             id=id,
             app_id=app_id,
@@ -169,6 +184,7 @@ class QueueBindingResponse:
             environment=environment,
             environment_id=environment_id,
             retry_policy=retry_policy,
+            retired_at=retired_at,
         )
 
         queue_binding_response.additional_properties = d

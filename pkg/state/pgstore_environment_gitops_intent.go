@@ -488,7 +488,7 @@ func (s *PgStore) applyEnvironmentGitOps(ctx context.Context, lease EnvironmentG
 	}
 	steps := []EnvironmentGitOpsStep{}
 	configChanged := false
-	for _, change := range plan.Changes {
+	for _, change := range gitOpsQueueRetireFirst(plan.Changes) {
 		if change.Action == "keep" || change.Action == "retain_unmanaged" || change.Action == "overridden" {
 			continue
 		}
@@ -504,7 +504,7 @@ func (s *PgStore) applyEnvironmentGitOps(ctx context.Context, lease EnvironmentG
 			}
 			configChanged = true
 		} else if strings.HasPrefix(change.Path, "queue_bindings/") {
-			if err := s.applyGitOpsQueue(ctx, tx, lease.Source, observed.State.ResourceIDs, change); err != nil {
+			if err := s.applyGitOpsQueue(ctx, tx, lease.Source, desired.Definition, observed.State.ResourceIDs, change); err != nil {
 				return nil, mapErr(err)
 			}
 		} else if err := applyEnvironmentGitOpsScopedField(ctx, tx, lease.Source, observed.State.ResourceIDs[change.Resource], change); err != nil {

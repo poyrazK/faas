@@ -20,6 +20,10 @@ export type EnvironmentWorkload = {
   routes?: EnvironmentRouteContract;
   policies?: Array<EnvironmentPolicy>;
   queue_bindings?: Record<string, EnvironmentQueueBinding>;
+  /**
+   * Explicit recovery of retained queues, keyed by a declared binding name and pinned to its original scoped binding UUID. Requires reviewed adoption before reconciliation can resume retained work; adoption itself preserves the retirement hold.
+   */
+  queue_recoveries?: Record<string, string>;
   service_bindings?: Record<string, EnvironmentServiceBinding>;
 };
 

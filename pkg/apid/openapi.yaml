@@ -19596,8 +19596,15 @@ paths:
         Returns the durable mappings between logical queues and worker/job
         workloads. Bindings are the configuration source for push consumers
         and queue-depth autoscaling; queue messages remain under /queues/*.
+        Active bindings are returned by default. Set include_retired=true to
+        retrieve retained identities and retirement timestamps for reviewed recovery.
       parameters:
         - $ref: '#/components/parameters/Slug'
+        - name: include_retired
+          in: query
+          required: false
+          description: Include retained retired bindings belonging to this app.
+          schema: { type: boolean, default: false }
       responses:
         '200':
           description: Queue bindings.
@@ -19606,6 +19613,7 @@ paths:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/QueueBindingResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -25056,6 +25064,10 @@ components:
           type: string
         environment:
           type: string
+        queue_pruning_policy:
+          type: string
+          enum: [retain]
+          description: Explicit reviewed disposition for removed owned queues when pruning is enabled. Retires admission and dispatch while preserving binding IDs, accepted work and delivery receipts. Omit to block queue pruning.
         configuration:
           type: object
           additionalProperties: {}
@@ -25097,6 +25109,12 @@ components:
           type: object
           additionalProperties:
             $ref: '#/components/schemas/EnvironmentQueueBinding'
+        queue_recoveries:
+          type: object
+          description: Explicit recovery of retained queues, keyed by a declared binding name and pinned to its original scoped binding UUID. Requires reviewed adoption before reconciliation can resume retained work; adoption itself preserves the retirement hold.
+          additionalProperties:
+            type: string
+            format: uuid
         service_bindings:
           type: object
           additionalProperties:
@@ -43191,6 +43209,7 @@ components:
         retry_policy: { $ref: '#/components/schemas/RetryPolicyDTO' }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        retired_at: { type: string, format: date-time, description: "Retirement hold timestamp; present only for a retained retired binding." }
 
     QueueBindingStatusResponse:
       description: Read-only queue binding consumer projection and queue counters.

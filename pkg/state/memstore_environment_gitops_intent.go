@@ -315,7 +315,7 @@ func (m *MemStore) applyEnvironmentGitOps(_ context.Context, lease EnvironmentGi
 			}
 		}
 	}
-	queueState, queueIdentities, err := m.prepareGitOpsQueuesLocked(memory.source, plan, observed.State.ResourceIDs)
+	queueState, queueIdentities, err := m.prepareGitOpsQueuesLocked(memory.source, desired.Definition, plan, observed.State.ResourceIDs)
 	if err != nil {
 		return nil, err
 	}

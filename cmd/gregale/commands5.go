@@ -1185,21 +1185,7 @@ func cmdQueueBindings(args []string) int {
 	}
 	switch args[0] {
 	case "list":
-		if len(args) != 2 {
-			PrintUsage(os.Stderr, "usage: gregale queue bindings list <slug>", "queue")
-			return 1
-		}
-		rows, err := client.ListQueueBindings(context.Background(), args[1])
-		if err != nil {
-			return printErr("Queue binding list failed", err)
-		}
-		if jsonOutput {
-			return jsonOut(writeJSON(rows))
-		}
-		for _, row := range rows {
-			fmt.Printf("%-32s %-16s %-6s %-6s environment=%s enabled=%t max=%d\n", row.ID, row.Name, row.Mode, row.WorkloadClass, queueEnvironmentLabel(row.Environment), row.Enabled, row.MaxConcurrency)
-		}
-		return 0
+		return cmdQueueBindingList(client, args[1:])
 	case "create":
 		return cmdQueueBindingCreate(client, args[1:])
 	case "update":
