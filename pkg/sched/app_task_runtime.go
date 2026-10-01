@@ -16,6 +16,8 @@ var ErrAppTaskAccountInactive = errors.New("sched: app task account is not activ
 const (
 	accountInactiveFailureCode    = "account_inactive"
 	accountInactiveFailureMessage = "the account is suspended; resolve billing to run work again"
+	appTaskCutoverFailureCode     = "database_cutover_fenced"
+	appTaskCutoverFailureMessage  = "the app task was stopped before command dispatch because a database cutover is in progress"
 )
 
 // ResolveAppTaskRuntime resolves the immutable deployment pin captured when
@@ -31,6 +33,9 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	}
 	release := e.lockApp(request.AppID)
 	defer release()
+	if err := e.checkManagedPostgresAdmission(ctx, request.AppID); err != nil {
+		return ResolvedAppTaskRuntime{}, err
+	}
 
 	app, err := e.store.AppByID(ctx, request.AppID)
 	if err != nil {

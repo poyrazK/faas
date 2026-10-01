@@ -466,6 +466,13 @@ The next cutover prerequisite is an internal, durable app-wide admission fence
 verification and blocks new instance admission and running-state publication,
 including worker, job, mirror, and warm-pool paths. It persists through retries
 and credential verification refresh, and completed cancellation releases it.
+Release, manual and command-cron task claims and command dispatch also honor this
+barrier. Queued tasks wait, subject to their usual start deadlines; a task fenced
+during restoration is destroyed before command dispatch and records
+`database_cutover_fenced`. VM destruction now cancels
+and waits for boots already inside vmmd, including snapshot restores and task VMs.
+See [ADR-393](adr/393-managed-postgres-cutover-task-and-boot-barriers.md) for the
+remaining delayed-RPC and drain-receipt requirements.
 Prepare and Verify never install this fence. Existing VMs and SQL sessions still
 require scheduler drain; atomic publication and customer activation remain
 unavailable. Lifecycle acceptance requires native x86_64 KVM tests and leakcheck.

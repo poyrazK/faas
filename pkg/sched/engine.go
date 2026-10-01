@@ -5905,6 +5905,9 @@ func (e *Engine) verifyPrimeLayer(ctx context.Context, appID, layer string) erro
 func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	release := e.lockApp(appID)
 	defer release()
+	if err := e.checkManagedPostgresAdmission(ctx, appID); err != nil {
+		return err
+	}
 
 	app, acct, limits, err := e.resolveAppForDeploy(ctx, appID)
 	if err != nil {

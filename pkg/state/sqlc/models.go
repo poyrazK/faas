@@ -724,6 +724,11 @@ type AppTask struct {
 	RetryBackoffSeconds int32
 	AttemptCount        int32
 	RetryAt             pgtype.Timestamptz
+	FailureRules        []byte
+	OccurrenceID        pgtype.UUID
+	StartDeadlineAt     pgtype.Timestamptz
+	WorkDecision        []byte
+	OutcomeCode         string
 }
 
 type AppTcpListener struct {
@@ -3905,6 +3910,27 @@ type ScenarioTestMember struct {
 	RunID        string
 	WorkloadName string
 	AppID        pgtype.UUID
+}
+
+type ScheduleOccurrence struct {
+	ID                   pgtype.UUID
+	AccountID            pgtype.UUID
+	CronID               pgtype.UUID
+	JobID                pgtype.UUID
+	ScheduleRevision     int64
+	ScheduledFor         pgtype.Timestamptz
+	StartDeadlineAt      pgtype.Timestamptz
+	SchedulePolicy       []byte
+	Status               string
+	Reason               string
+	BlockingOccurrenceID pgtype.UUID
+	InvocationID         pgtype.UUID
+	AppTaskID            pgtype.UUID
+	JobRunID             pgtype.UUID
+	StartedAt            pgtype.Timestamptz
+	FinishedAt           pgtype.Timestamptz
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
 }
 
 type ServiceCallerKey struct {

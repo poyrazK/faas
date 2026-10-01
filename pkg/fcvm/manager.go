@@ -759,10 +759,10 @@ type Manager struct {
 	// that began with an older app config but has not yet published as live.
 	appCPUPolicyUpdates sync.Mutex
 	appCPUPolicies      map[string]appCPUPolicy
-	// jobBoots covers the artifact restore and VMM boot interval before a job
+	// instanceBoots covers the artifact restore and VMM boot interval before a VM
 	// enters live. Destroy/Stop must cancel and join this interval; otherwise a
 	// late boot can publish a VM after its task was already cancelled.
-	jobBoots map[string]*jobBootFlight
+	instanceBoots map[string]*instanceBootFlight
 	// pendingProcessExits closes the small hand-off race between
 	// JailerVMM reporting a child exit and Wake publishing the
 	// instance into live. A process can pass readiness and exit
@@ -1146,7 +1146,7 @@ func NewManager(run Runner, vmm VMM, paths Paths, fcVersion string, log *slog.Lo
 		live:                 make(map[string]*Instance),
 		readinessLoopCancels: make(map[string]context.CancelFunc),
 		appCPUPolicies:       make(map[string]appCPUPolicy),
-		jobBoots:             make(map[string]*jobBootFlight),
+		instanceBoots:        make(map[string]*instanceBootFlight),
 		pendingProcessExits:  make(map[string]int),
 		waking:               make(map[string]struct{}),
 		exportDirs:           make(map[string]string),
@@ -3603,11 +3603,11 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	if m.vmm == nil {
 		return nil, fmt.Errorf("manager: BootJob: nil vmm")
 	}
-	bootCtx, flight, err := m.beginJobBoot(ctx, req.Instance)
+	bootCtx, flight, err := m.beginInstanceBoot(ctx, req.Instance)
 	if err != nil {
 		return nil, err
 	}
-	defer m.finishJobBoot(req.Instance, flight)
+	defer m.finishInstanceBoot(req.Instance, flight)
 	if err = bootCtx.Err(); err != nil {
 		return nil, fmt.Errorf("manager: BootJob %s: cancelled before lease: %w", req.Instance, err)
 	}
@@ -3791,6 +3791,14 @@ func (m *Manager) WakeWithNetworkReady(ctx context.Context, req WakeRequest, hoo
 func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNetworkReadyHook) (_ *Instance, err error) {
 	if err := validateMainWorkloadDependencyTargets(req.MainDependsOn, req.Sidecars); err != nil {
 		return nil, fmt.Errorf("wake %s: primary workload dependencies: %w", req.Instance, err)
+	}
+	ctx, flight, err := m.beginInstanceBoot(ctx, req.Instance)
+	if err != nil {
+		return nil, err
+	}
+	defer m.finishInstanceBoot(req.Instance, flight)
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("wake %s: cancelled before lease: %w", req.Instance, err)
 	}
 	var wakeID string
 	if fields, ok := wire.FromContext(ctx); ok {
@@ -4470,6 +4478,10 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 
 		m.mu.Lock()
 		currentPolicy, currentHasPolicy := m.appCPUPolicies[req.AppID]
+		if flight.cancelled || ctx.Err() != nil {
+			m.mu.Unlock()
+			return nil, fmt.Errorf("wake %s: cancelled before publication: %w", req.Instance, context.Canceled)
+		}
 		if currentHasPolicy != hasPolicy || (hasPolicy && currentPolicy.revision != policy.revision) {
 			m.mu.Unlock()
 			continue
@@ -5186,7 +5198,7 @@ func (m *Manager) Destroy(ctx context.Context, instance string) error {
 // Returns (false, 0, nil) when the instance is unknown to the
 // Manager — same idempotent-on-unknown contract as Destroy.
 func (m *Manager) SignalAndKill(ctx context.Context, instance string, signal syscall.Signal, grace time.Duration) (killSignalSent bool, exitCode int32, err error) {
-	if err := m.cancelInFlightJobBoot(ctx, instance); err != nil {
+	if err := m.cancelInFlightInstanceBoot(ctx, instance); err != nil {
 		return false, 0, err
 	}
 	m.cancelFrameworkReadyLoop(instance)
@@ -5245,7 +5257,7 @@ func (m *Manager) SignalAndKill(ctx context.Context, instance string, signal sys
 }
 
 func (m *Manager) DestroyWithExport(ctx context.Context, instance, exportDir string) (int, error) {
-	if err := m.cancelInFlightJobBoot(ctx, instance); err != nil {
+	if err := m.cancelInFlightInstanceBoot(ctx, instance); err != nil {
 		return 0, err
 	}
 	// Stop background liveness work before removing the live entry or

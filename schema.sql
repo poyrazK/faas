@@ -2145,6 +2145,30 @@ $$;
 
 
 --
+-- Name: guard_managed_postgres_app_task_admission(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_managed_postgres_app_task_admission() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE pinned uuid;
+BEGIN
+ IF NEW.status NOT IN ('restoring','running') THEN RETURN NEW; END IF;
+ IF TG_OP='UPDATE' AND ROW(NEW.app_id,NEW.status) IS NOT DISTINCT FROM ROW(OLD.app_id,OLD.status) THEN
+  RETURN NEW;
+ END IF;
+ -- Same tuple barrier as ordinary instances; old repeatable-read claims
+ -- abort rather than admitting commands from a pre-fence snapshot.
+ SELECT managed_postgres_admission_cutover_id INTO pinned FROM apps WHERE id=NEW.app_id FOR SHARE;
+ IF pinned IS NOT NULL THEN
+  RAISE EXCEPTION 'app task admission is fenced by a database cutover' USING ERRCODE='23514', CONSTRAINT='managed_postgres_cutover_admission_fenced';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_managed_postgres_binding_owner(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -4249,6 +4273,11 @@ CREATE TABLE public.app_tasks (
     retry_backoff_seconds integer DEFAULT 60 NOT NULL,
     attempt_count integer DEFAULT 0 NOT NULL,
     retry_at timestamp with time zone,
+    failure_rules jsonb,
+    occurrence_id uuid,
+    start_deadline_at timestamp with time zone,
+    work_decision jsonb,
+    outcome_code text DEFAULT ''::text NOT NULL,
     CONSTRAINT app_tasks_artifact_key_chk CHECK (((octet_length(artifact_key) >= 1) AND (octet_length(artifact_key) <= 2048))),
     CONSTRAINT app_tasks_command_chk CHECK ((((cardinality(command) >= 1) AND (cardinality(command) <= 64)) AND (array_position(command, NULL::text) IS NULL) AND ((octet_length(command[1]) >= 1) AND (octet_length(command[1]) <= 4096)) AND ((octet_length(array_to_string(command, ''::text)) >= 1) AND (octet_length(array_to_string(command, ''::text)) <= 16384)) AND ((NOT command_shell) OR (cardinality(command) = 1)))),
     CONSTRAINT app_tasks_exit_code_chk CHECK (((exit_code IS NULL) OR ((exit_code >= 0) AND (exit_code <= 255)))),
@@ -4258,6 +4287,7 @@ CREATE TABLE public.app_tasks (
     CONSTRAINT app_tasks_lease_shape_chk CHECK ((((lease_token IS NULL) AND (lease_owner IS NULL) AND (lease_expires_at IS NULL)) OR ((lease_token IS NOT NULL) AND (lease_owner IS NOT NULL) AND (lease_expires_at IS NOT NULL)))),
     CONSTRAINT app_tasks_lease_status_chk CHECK (((status = ANY (ARRAY['restoring'::text, 'running'::text])) = (lease_token IS NOT NULL))),
     CONSTRAINT app_tasks_lifecycle_order_chk CHECK (((updated_at >= created_at) AND ((started_at IS NULL) OR (started_at >= created_at)) AND ((finished_at IS NULL) OR (finished_at >= created_at)) AND ((started_at IS NULL) OR (finished_at IS NULL) OR (finished_at >= started_at)) AND ((cancel_requested_at IS NULL) OR (cancel_requested_at >= created_at)) AND ((lease_expires_at IS NULL) OR (lease_expires_at > created_at)))),
+    CONSTRAINT app_tasks_outcome_code_check CHECK ((octet_length(outcome_code) <= 64)),
     CONSTRAINT app_tasks_output_budget_chk CHECK ((((max_output_bytes >= 1024) AND (max_output_bytes <= 16777216)) AND ((octet_length(stdout_tail) + octet_length(stderr_tail)) <= max_output_bytes))),
     CONSTRAINT app_tasks_retry_policy_check CHECK ((((retry_max >= 0) AND (retry_max <= 5)) AND ((retry_backoff_seconds >= 1) AND (retry_backoff_seconds <= 3600)) AND (attempt_count >= 0))),
     CONSTRAINT app_tasks_scope_chk CHECK ((deployment_scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
@@ -10098,6 +10128,38 @@ CREATE TABLE public.scenario_test_members (
     app_id uuid NOT NULL,
     CONSTRAINT scenario_test_members_run_id_check CHECK ((run_id ~ '^[0-9a-f]{32}$'::text)),
     CONSTRAINT scenario_test_members_workload_name_check CHECK ((workload_name ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text))
+);
+
+
+--
+-- Name: schedule_occurrences; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.schedule_occurrences (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    cron_id uuid,
+    job_id uuid,
+    schedule_revision bigint NOT NULL,
+    scheduled_for timestamp with time zone NOT NULL,
+    start_deadline_at timestamp with time zone,
+    schedule_policy jsonb NOT NULL,
+    status text NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    blocking_occurrence_id uuid,
+    invocation_id uuid,
+    app_task_id uuid,
+    job_run_id uuid,
+    started_at timestamp with time zone,
+    finished_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT schedule_occurrences_check CHECK (((((cron_id IS NOT NULL))::integer + ((job_id IS NOT NULL))::integer) = 1)),
+    CONSTRAINT schedule_occurrences_check1 CHECK (((start_deadline_at IS NULL) OR (start_deadline_at >= scheduled_for))),
+    CONSTRAINT schedule_occurrences_reason_check CHECK ((octet_length(reason) <= 4096)),
+    CONSTRAINT schedule_occurrences_schedule_policy_check CHECK (((jsonb_typeof(schedule_policy) = 'object'::text) AND ((schedule_policy ->> 'version'::text) = '1'::text))),
+    CONSTRAINT schedule_occurrences_schedule_revision_check CHECK ((schedule_revision >= 1)),
+    CONSTRAINT schedule_occurrences_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'queued'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text, 'skipped_overlap'::text, 'missed_deadline'::text, 'coalesced'::text, 'waiting_replacement'::text, 'uncertain'::text])))
 );
 
 
@@ -19311,6 +19373,13 @@ CREATE TRIGGER job_tasks_notify_trg AFTER INSERT OR UPDATE ON public.job_tasks F
 --
 
 CREATE TRIGGER managed_postgres_admission_fence_guard BEFORE INSERT OR UPDATE ON public.apps FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_admission_fence();
+
+
+--
+-- Name: app_tasks managed_postgres_app_task_admission_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_app_task_admission_guard BEFORE INSERT OR UPDATE OF app_id, status ON public.app_tasks FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_app_task_admission();
 
 
 --

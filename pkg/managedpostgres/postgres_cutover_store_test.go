@@ -254,6 +254,10 @@ func TestPostgresCutoverPinsStageAndCancel(t *testing.T) {
 	// Later migrations own dependent app fences. Roll back in version order
 	// rather than dropping the preparation table out from under its foreign key.
 	fenceUp, fenceDown := cutoverMigrationStatements(t, "20261001175350459_managed_postgres_cutover_admission_fence.sql")
+	taskFenceUp, taskFenceDown := cutoverMigrationStatements(t, "20261001184558948_managed_postgres_cutover_task_fence.sql")
+	if _, err = pool.Exec(ctx, taskFenceDown); err != nil {
+		t.Fatalf("rollback task admission fence after cleanup: %v", err)
+	}
 	if _, err = pool.Exec(ctx, fenceDown); err != nil {
 		t.Fatalf("rollback admission fence after cleanup: %v", err)
 	}
@@ -265,7 +269,7 @@ func TestPostgresCutoverPinsStageAndCancel(t *testing.T) {
 		t.Fatalf("reapply migration: %v", err)
 	}
 	verificationUp, _ := cutoverMigrationStatements(t, "20261001155101225_managed_postgres_cutover_verification.sql")
-	for _, forward := range []string{verificationUp, fenceUp} {
+	for _, forward := range []string{verificationUp, fenceUp, taskFenceUp} {
 		if _, err = pool.Exec(ctx, forward); err != nil {
 			t.Fatalf("reapply dependent migration: %v", err)
 		}
