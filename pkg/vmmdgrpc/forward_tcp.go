@@ -1,7 +1,6 @@
 package vmmdgrpc
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -145,7 +144,7 @@ func namespaceBridgeSpawn(ctx context.Context, instancePID int, port uint32, pat
 	_ = stdoutW.Close()
 	_ = readyW.Close()
 
-	ready, readErr := bufio.NewReader(readyR).ReadString('\n')
+	ready, readErr := namespaceBridgeReadiness(ctx, readyR)
 	if readErr != nil {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
@@ -155,6 +154,7 @@ func namespaceBridgeSpawn(ctx context.Context, instancePID int, port uint32, pat
 		return nil, nil, nil, nil, nil, status.Errorf(codes.Unavailable, "namespace bridge readiness: %v (stderr=%q)", readErr, stderr.String())
 	}
 	if strings.HasPrefix(ready, "ERR ") {
+		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
 		_ = stdinW.Close()
 		_ = stdoutR.Close()

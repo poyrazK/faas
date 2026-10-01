@@ -14,7 +14,7 @@ FILES = {
     "pkg/udpwire": "*_test.go",
     "cmd/vmmd-udp-bridge": "main_test.go",
     "pkg/gateway": "udpforward_test.go",
-    "pkg/vmmdgrpc": "forward_udp_test.go",
+    "pkg/vmmdgrpc": ["forward_udp_test.go", "bridge_readiness_test.go"],
     "cmd/apid": "handlers_udp_listeners_test.go",
     "cmd/gregale": "commands_app_udp_test.go",
     "cmd/gatewayd-public": "udp_ingress_test.go",
@@ -26,10 +26,13 @@ FILES = {
 def required_tests():
     expected = set()
     module = re.search(r"^module (\S+)", (ROOT / "go.mod").read_text(), re.M).group(1)
-    for package, pattern in FILES.items():
-        files = sorted((ROOT / package).glob(pattern))
-        if not files:
-            raise SystemExit(f"udp-contract-check: missing test sources: {package}/{pattern}")
+    for package, patterns in FILES.items():
+        files = []
+        for pattern in ([patterns] if isinstance(patterns, str) else patterns):
+            selected = sorted((ROOT / package).glob(pattern))
+            if not selected:
+                raise SystemExit(f"udp-contract-check: missing test sources: {package}/{pattern}")
+            files.extend(selected)
         for source in files:
             names = re.findall(r"^func\s+(Test\w+)\s*\(\s*(?:\w+\s+)?\*testing\.T\s*,?\s*\)", source.read_text(), re.M)
             if not names:
