@@ -43,6 +43,14 @@ ANSIBLE_PLAYBOOK = ANSIBLE_CONFIG="$(ANSIBLE_CONFIG)" ansible-playbook
 .DEFAULT_GOAL := help
 
 .PHONY: test-customer-platform
+.PHONY: test-commit
+test-commit: ## Run strict PostgreSQL and Linux process acceptance for Gregale Commit
+	@GO="$(GO)" sh scripts/test-commit.sh
+
+.PHONY: test-commit-native
+test-commit-native: ## Run native x86 KVM Commit snapshot and cold-boot completion gates
+	@GO="$(GO)" sh scripts/test-commit-native.sh
+
 test-customer-platform: ## Run the two-customer starter acceptance with disposable PostgreSQL databases (no KVM)
 	@GO="$(GO)" sh scripts/test-customer-platform.sh
 
@@ -1403,3 +1411,7 @@ tcp-tls-deployment-check: ## Verify TCP TLS path validation and environment rend
 issues-smoke: ## Send controlled Gregale Issues failures to an explicitly confirmed staging API
 	@npm run build --prefix sdk/node
 	@node tests/issues-smoke/run.mjs
+
+.PHONY: test-commit-sdk
+test-commit-sdk:
+	sh scripts/test-commit-sdk.sh

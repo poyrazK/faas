@@ -19079,6 +19079,212 @@ paths:
         '413': { $ref: '#/components/responses/PlanSourceBytes' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/commit-sources:
+    post:
+      tags: [queues]
+      operationId: createCommitSource
+      summary: Register an internal PostgreSQL outbox source.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 128 }
+      responses:
+        '201':
+          description: Successful Commit request.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CommitSourceResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/commit-sources/{source}:
+    get:
+      tags: [queues]
+      operationId: getCommitSource
+      summary: Inspect source health and its last observed pending/blocked backlog.
+      parameters:
+        - name: source
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Source and last relay observation; no credential material.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CommitSourceResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    patch:
+      tags: [queues]
+      operationId: setCommitSourceEnabled
+      summary: Pause or resume new source acceptance; existing receipts remain recoverable.
+      parameters:
+        - name: source
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        '200':
+          description: Successful Commit request.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CommitSourceResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/commit-sources/{source}/connection:
+    put:
+      tags: [queues]
+      operationId: putCommitSourceConnection
+      summary: Seal a verified-TLS database connection; credentials are never returned.
+      parameters:
+        - name: source
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [connection_url]
+              properties:
+                connection_url: { type: string, maxLength: 8192, writeOnly: true }
+      responses:
+        '204':
+          description: Successful Commit request.
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/commit-sources/{source}/events:
+    post:
+      tags: [queues]
+      operationId: acceptCommitEvent
+      summary: Durably accept committed work; source/event identity has no expiry.
+      parameters:
+        - name: source
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommitEventRequest'
+      responses:
+        '202':
+          description: Successful Commit request.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CommitReceiptResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/commit-sources/{source}/blocked-events:
+    get:
+      tags: [queues]
+      operationId: listCommitBlockedEvents
+      summary: Read the latest bounded blocked-event snapshot without payloads.
+      parameters:
+        - name: source
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Up to 32 observed blocked events; source info reports the full count.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CommitBlockedEventsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/commit-sources/{source}/events/{event}/replay:
+    post:
+      tags: [queues]
+      operationId: replayCommitBlockedEvent
+      summary: Request durable replay after correcting an unaccepted source event.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - name: source
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: event
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '202':
+          description: Replay request persisted; this is not downstream acceptance or completion.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/commit-sources/{source}/events/{event}:
+    get:
+      tags: [queues]
+      operationId: getCommitReceipt
+      summary: Recover acceptance independently of execution completion.
+      parameters:
+        - name: source
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: event
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Successful Commit request.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CommitReceiptResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/apps/{slug}/inbox:
     post:
       tags: [queues]
@@ -23787,7 +23993,10 @@ paths:
             Cache-Control: { schema: { type: string, const: no-store } }
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ExclusiveOperationRecord' }
+              schema:
+                oneOf:
+                  - { $ref: '#/components/schemas/ExclusiveOperationRecord' }
+                  - { $ref: '#/components/schemas/CommitOperationResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -24413,6 +24622,67 @@ components:
         p50_latency_ms: { type: integer, minimum: 0, description: Request-weighted nearest-rank p50 from stored latency bucket upper bounds. }
         p95_latency_ms: { type: integer, minimum: 0, description: Request-weighted nearest-rank p95 from stored latency bucket upper bounds. }
         latency_quantized: { type: boolean, enum: [true], description: Latency values are conservative bucket upper bounds. }
+    CommitSourceResponse:
+      type: object
+      required: [id, app_id, name, enabled]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        name: { type: string }
+        enabled: { type: boolean }
+        relay_status: { type: string }
+        last_checked_at: { type: string, format: date-time }
+        pending_events: { type: integer, format: int64 }
+        blocked_events: { type: integer, format: int64 }
+        oldest_pending_at: { type: string, format: date-time }
+    CommitBlockedEventsResponse:
+      type: object
+      required: [items, limit, observation]
+      properties:
+        items:
+          type: array
+          maxItems: 32
+          items: { $ref: '#/components/schemas/CommitBlockedEventResponse' }
+        limit: { type: integer }
+        observation: { type: string }
+    CommitBlockedEventResponse:
+      type: object
+      required: [event_id, type, blocked_code, created_at, observed_at]
+      properties:
+        event_id: { type: string, format: uuid }
+        type: { type: string }
+        blocked_code: { type: string }
+        created_at: { type: string, format: date-time }
+        observed_at: { type: string, format: date-time }
+    CommitEventRequest:
+      type: object
+      required: [id, type, data]
+      description: At-least-once handoff. Repeating the identity with identical JSON data returns the original receipt; changed type or data conflicts.
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string, minLength: 1, maxLength: 256 }
+        data: {}
+    CommitReceiptResponse:
+      type: object
+      required: [receipt_id, source_id, event_id, invocation_id, accepted_at, operation_url]
+      properties:
+        receipt_id: { type: string, format: uuid }
+        source_id: { type: string, format: uuid }
+        event_id: { type: string, format: uuid }
+        invocation_id: { type: string, format: uuid }
+        accepted_at: { type: string, format: date-time }
+        operation_url: { type: string }
+    CommitOperationResponse:
+      type: object
+      required: [id, receipt_id, source_id, event_id, state, accepted_at]
+      properties:
+        id: { type: string, format: uuid }
+        receipt_id: { type: string, format: uuid }
+        source_id: { type: string, format: uuid }
+        event_id: { type: string, format: uuid }
+        state: { type: string, enum: [accepted, running, completed, cancelled, failed, unknown] }
+        accepted_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
     OutboundIntegrationOffer:
       type: object
       description: Account-owned managed integration metadata; never contains a provider key or gateway token.

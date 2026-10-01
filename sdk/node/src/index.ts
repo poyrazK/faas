@@ -153,3 +153,4 @@ export {
 } from './dev-bridge.js';
 
 export { decodeExecutionArtifact } from './execution-artifacts.js';
+export { insertCommitEvent, type CommitEvent, type CommitTransaction } from "./commit.js";

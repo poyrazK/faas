@@ -500,6 +500,8 @@ func run(args []string) (status int) {
 	case "workflows":
 		// ADR-081: durable execution workflows (list|run|status|steps|cancel|events).
 		return cmdWorkflows(args[1:])
+	case "commit":
+		return cmdCommit(args[1:])
 	case "events":
 		// EPIC #1278: publish a tenant-scoped CloudEvents envelope into
 		// the internal matcher and async fan-out path.

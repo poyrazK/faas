@@ -397,6 +397,12 @@ func (s *server) getExclusiveOperation(w http.ResponseWriter, r *http.Request, a
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	op, err := store.ExclusiveOperationByID(r.Context(), acct.ID, r.PathValue("id"))
+	if errors.Is(err, state.ErrNotFound) {
+		if _, supportsCommit := s.store.(state.CommitStore); supportsCommit {
+			s.getCommitOperation(w, r, acct)
+			return
+		}
+	}
 	if err != nil {
 		writeExclusiveError(w, err)
 		return

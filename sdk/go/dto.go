@@ -344,3 +344,10 @@ type (
 	CreateIssueIngestTokenRequest       = api.CreateIssueIngestTokenRequest
 	IssueIngestToken                    = api.IssueIngestToken
 )
+type CommitSourceResponse = api.CommitSourceResponse
+type CommitReceiptResponse = api.CommitReceiptResponse
+type CommitOperationResponse = api.CommitOperationResponse
+type CommitEventRequest = api.CommitEventRequest
+
+type CommitBlockedEventResponse = api.CommitBlockedEventResponse
+type CommitBlockedEventsResponse = api.CommitBlockedEventsResponse

@@ -46,7 +46,6 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -55,7 +54,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
+	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storage"
 )
 
 // sourceDeployHelloBody is the marker the fixture's index.js returns; the
@@ -115,7 +116,7 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 	// Full metal set: deploy_wake_metal_test.go uses DeployWake
 	// (no builderd) but the source-deploy path needs builderd to claim
 	// the build_queued pg_notify and spin up a builder microVM. Use All.
-	h := e2etest.Start(t, pool, e2etest.All)
+	h := e2etest.Start(t, pool, e2etest.All, "FAAS_COMMIT_API_ENABLED=true")
 	key := h.SeedAccount(context.Background(), api.PlanHobby)
 
 	// Hobby defaults to require_authn=true post #695 / ADR-080. The wake
@@ -126,6 +127,11 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 		t.Fatalf("create app: status=%d", got)
 	}
 	appID := mustGetAppID(t, h, key, "srcdeploy")
+	t.Cleanup(func() {
+		if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/srcdeploy/park", nil); status != http.StatusNoContent {
+			t.Errorf("cleanup park: status=%d", status)
+		}
+	})
 
 	// Idle timeout dialed down to spec §4.3 floor so the reaper settles
 	// each subtest's idle-repark within one tick — same trick
@@ -139,7 +145,7 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 	// Drive the multipart deploy. Capture deploymentID + buildID so the
 	// later subtests can wait on state.DeployLive / state.BuildSucceeded
 	// without re-fetching the deployment row.
-	depBody, depStatus := postMultipartDeployment(t, h, key, "srcdeploy", sourceTar, false, "")
+	depBody, depStatus := postMultipartDeployment(t, h, key, "srcdeploy", sourceTar, false, fixedIdempotencyKey())
 	if depStatus != http.StatusAccepted {
 		t.Fatalf("create deployment: status=%d body=%s", depStatus, depBody)
 	}
@@ -193,10 +199,10 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 	t.Run("first-park", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/srcdeploy/park", nil); status != http.StatusAccepted {
+		if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/srcdeploy/park", nil); status != http.StatusNoContent {
 			t.Fatalf("park request: status=%d", status)
 		}
-		ins, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, 25*time.Second)
+		ins, err := waitForSourceAppParked(ctx, h, appID, 25*time.Second)
 		if err != nil {
 			t.Fatalf("no parked instance: %v", err)
 		}
@@ -254,7 +260,7 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 	t.Run("idle-repark", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		ins, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, 25*time.Second)
+		ins, err := waitForSourceAppParked(ctx, h, appID, 25*time.Second)
 		if err != nil {
 			t.Fatalf("instance did not re-park: %v", err)
 		}
@@ -270,9 +276,15 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 	// seam is a direct SQL UPDATE — the partial unique index from
 	// migrations/00110_snapshots_tier.sql only constrains stale=false
 	// rows, so flipping fc_version on the active snapshot survives.
+	var snapshotFCVersion string
 	t.Run("force-stale-snapshot", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		snapshot, err := state.NewPgStore(pool).LatestSnapshotForTier(ctx, depID, state.SnapshotTierInit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		snapshotFCVersion = snapshot.FCVersion
 		tag, err := pool.Exec(ctx, `
 			update snapshots
 			   set fc_version = $2
@@ -301,6 +313,11 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 	// should exercise the authoritative completion signal).
 	t.Run("wake-from-cold-boot", func(t *testing.T) {
 		defer h.DumpLogs(t)
+		t.Cleanup(func() {
+			if _, err := pool.Exec(context.Background(), `UPDATE snapshots SET fc_version=$2 WHERE deployment_id=$1 AND fc_version='test-incompatible-fc-version'`, depID, snapshotFCVersion); err != nil {
+				t.Error(err)
+			}
+		})
 		url := gatewayAppURL(h, "srcdeploy")
 		client := h.HTTPClient()
 		body, wakeID, status := doGetWithHostCapturingWakeID(t, client, url, "srcdeploy.apps.test.example", 60*time.Second)
@@ -327,20 +344,23 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 		}
 		t.Logf("wake-from-cold-boot: wake_id=%s method=cold_boot instance=%s", wakeID, instanceIDFromEvent(ev))
 
-		// Independent confirmation that schedd invoked MarkSnapshotStale
-		// on the bad snapshot (pkg/sched/engine.go:1568-1578). The
-		// engine sets stale=true on the original snapshot ID; we read
-		// it back to assert the side effect landed.
-		sctx, scancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer scancel()
-		var staleCount int
-		if err := pool.QueryRow(sctx,
-			`select count(*) from snapshots where deployment_id = $1 and stale = true`, depID,
-		).Scan(&staleCount); err != nil {
-			t.Fatalf("query snapshots.stale: %v", err)
+		// Version mismatches are planner rejection, not failed restores. They
+		// remain usable on a compatible node; assert the recorded reason.
+		wakeEvents, err := state.NewPgStore(pool).ListEventsByWakeID(wctx, wakeID, time.Time{}, 100)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if staleCount == 0 {
-			t.Error("no snapshot rows marked stale after cold-boot fallback; MarkSnapshotStale didn't fire")
+		foundReason := false
+		for _, event := range wakeEvents {
+			var payload struct {
+				ColdReason string `json:"cold_reason"`
+			}
+			if event.Kind == events.WakeBootStarted && json.Unmarshal(event.Data, &payload) == nil && payload.ColdReason == "fc_version_mismatch" {
+				foundReason = true
+			}
+		}
+		if !foundReason {
+			t.Error("cold boot did not record fc_version_mismatch")
 		}
 	})
 	// Note: subtest 6 leaves the instance RUNNING. Subtest 7 needs it
@@ -361,13 +381,8 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 	// MarkSnapshotStale on the bad snapshot. Two distinct fallback paths
 	// must both succeed — only one is the "intended" ADR-005 path.
 	//
-	// Path layout: snapshots.storage_key carries "snap/<depID>/mem" and
-	// the LocalStorageBackend joins it under <root>/<key>, so the
-	// harness's h.ImagedTmp + "snap/" + depID + "/mem" is the file we
-	// corrupt. After subtest 6's cold-boot wake, schedd re-snapshotted
-	// the freshly-booted VM (engine.go:3154 emits the new snapshot_written
-	// payload), so the on-disk file is fresh and non-empty — perfect
-	// target for a truncate.
+	// Resolve the immutable capture selected by the planner and corrupt its
+	// vmstate header. Snapshot memory is raw guest RAM, not device metadata.
 	t.Run("vmmd-restore-fail-fallback", func(t *testing.T) {
 		defer h.DumpLogs(t)
 
@@ -376,16 +391,15 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 		// explicit park + 25s wait mirrors subtest 2.
 		pctx, pcancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer pcancel()
-		if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/srcdeploy/park", nil); status != http.StatusAccepted {
+		if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/srcdeploy/park", nil); status != http.StatusNoContent {
 			t.Fatalf("park: status=%d", status)
 		}
-		if _, err := e2etest.WaitForInstanceState(pctx, t, pool, appID, state.StateParked, 25*time.Second); err != nil {
+		if _, err := waitForSourceAppParked(pctx, h, appID, 25*time.Second); err != nil {
 			t.Fatalf("instance did not park after subtest 6 wake: %v", err)
 		}
 
-		// The cold-boot re-prime (engine.go:3154) wrote a fresh
-		// non-stale snapshots row; planner will pick it on the next
-		// wake unless the file is corrupt. Sanity-check the planner
+		// Parking the cold-booted instance supplies a usable snapshot;
+		// the planner will pick it unless the file is corrupt. Check it
 		// state BEFORE we corrupt the file, so the test's diagnosis is
 		// clear if a future seam regresses (e.g. sched stops re-priming
 		// after cold-boot, leaving the planner with no row to pick).
@@ -398,37 +412,45 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 			t.Fatalf("count non-stale snapshots: %v", err)
 		}
 		if preCount == 0 {
-			t.Fatal("no non-stale snapshots before corrupt; subtest 6's cold-boot re-prime didn't fire — test cannot proceed")
+			t.Fatal("no non-stale snapshots after parking the cold-booted instance")
 		}
 
-		// Corrupt the on-disk mem file. The key the planner will hand
-		// to vmmd is "snap/<depID>/mem" — see pkg/state/keys.go:55
-		// (SnapMemKey). LocalStorageBackend.join (pkg/storage/local.go:85)
-		// resolves keys under root, so the absolute path is
-		// <h.ImagedTmp>/snap/<depID>/mem.
-		//
-		// We write a partial block of garbage (not 0 bytes — LocalStorageBackend.Get
-		// at pkg/storage/local.go:209 treats a 0-byte file as not-found
-		// and we'd get a different error path: "no usable snapshot" at
-		// the planner layer, NOT the vmmd restore-fail branch we're
-		// pinning). The Firecracker snapshot loader parses the header
-		// and bails out with a non-recognisable magic number.
-		snapPath := filepath.Join(h.ImagedTmp, "snap", depID, "mem")
+		// Hobby uses the init tier. Resolve the actual immutable capture's
+		// device-state object; the memory blob has no Firecracker header.
+		snapshot, err := state.NewPgStore(pool).LatestSnapshotForTier(sctx, depID, state.SnapshotTierInit)
+		if err != nil {
+			t.Fatalf("snapshot selected for corruption: %v", err)
+		}
+		backend, err := storage.BackendFromEnv()
+		if err != nil {
+			t.Fatal(err)
+		}
+		resolver, ok := backend.(storage.LocalPathResolver)
+		if !ok {
+			t.Fatal("restore-failure injection requires a local snapshot backend")
+		}
+		snapPath, local, err := resolver.LocalPath(state.SnapshotVMStateKey(snapshot))
+		if err != nil || !local {
+			t.Fatalf("resolve snapshot device state: local=%v err=%v", local, err)
+		}
 		preStat, err := os.Stat(snapPath)
 		if err != nil {
 			t.Fatalf("stat snapshot file before corrupt: %v (path=%s)", err, snapPath)
 		}
 		if preStat.Size() == 0 {
-			t.Fatalf("snapshot file is empty (%s); subtest 6's cold-boot re-prime didn't write a snapshot — test cannot proceed", snapPath)
+			t.Fatalf("snapshot file is empty (%s); parking did not capture device state", snapPath)
 		}
-		// Overwrite the first 4 KiB with non-zero garbage so Firecracker's
-		// snapshot loader fails its magic-number / version check on the
-		// very first read. We don't truncate the file — Firecracker reads
-		// metadata at the tail (snapshot layout depends on the page count,
-		// which the loader computes from file size); a 4 KiB garbage
-		// header is enough to trip the magic check, and keeping the rest
-		// of the bytes intact means the failure is unambiguously a header
-		// parse error rather than a truncated-file stat error.
+		originalState, err := os.ReadFile(snapPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if err := os.WriteFile(snapPath, originalState, preStat.Mode().Perm()); err != nil {
+				t.Error(err)
+			}
+		})
+		// Keep the object present and its length unchanged, so the VMM sees
+		// invalid device-state metadata rather than a missing artifact.
 		if err := writeGarbage(snapPath, 4096); err != nil {
 			t.Fatalf("write garbage to snapshot file %s: %v", snapPath, err)
 		}
@@ -475,14 +497,22 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 			t.Errorf("vmmd log missing 'restore failed, falling back to cold boot' line; the warn at pkg/fcvm/manager.go:2368 didn't fire — fallback path regressed")
 		}
 
-		// Independent DB confirmation: MarkSnapshotStale flipped the
-		// bad snapshot's stale flag. After this subtest there should be
-		// at least one stale row for the deployment (the bad one) AND
-		// at least one non-stale row (the re-prime after the
-		// cold-boot that vmmd just did — engine.go:3154 fires after
-		// every successful cold-boot wake).
-		mctx, mcancel := context.WithTimeout(context.Background(), 5*time.Second)
+		// The failed capture is quarantined immediately. A healthy replacement
+		// is captured at the next park, rather than during the serving wake.
+		mctx, mcancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer mcancel()
+		var badStale bool
+		if err := pool.QueryRow(mctx, `select stale from snapshots where id=$1`, snapshot.ID).Scan(&badStale); err != nil || !badStale {
+			t.Fatalf("failed capture was not marked stale: stale=%v err=%v", badStale, err)
+		}
+		if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/srcdeploy/park", nil); status != http.StatusNoContent {
+			t.Fatalf("park replacement: status=%d", status)
+		}
+		if _, err := waitForSourceAppParked(mctx, h, appID, 25*time.Second); err != nil {
+			t.Fatalf("replacement did not park: %v", err)
+		}
+		// Snapshot publication follows the PARKED transition asynchronously.
+		waitAfterRestoreSnapshot(t, state.NewPgStore(pool), depID, snapshot.ID)
 		var staleAfter, freshAfter int
 		if err := pool.QueryRow(mctx,
 			`select count(*) from snapshots where deployment_id = $1 and stale = true`, depID,
@@ -498,9 +528,18 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 			t.Errorf("no stale snapshot rows after restore-fail wake; schedd's MarkSnapshotStale branch at engine.go:1568-1578 didn't fire")
 		}
 		if freshAfter == 0 {
-			t.Errorf("no fresh non-stale snapshot rows after cold-boot wake; engine.go:3154 re-prime didn't fire")
+			t.Error("no fresh non-stale snapshot rows after parking the replacement")
 		}
 		t.Logf("vmmd-restore-fail-fallback: snapshots stale=%d fresh=%d", staleAfter, freshAfter)
+		body, repairedWakeID, status := doGetWithHostCapturingWakeID(t, client, url, "srcdeploy.apps.test.example", 60*time.Second)
+		if status != http.StatusOK || strings.TrimSpace(string(body)) != sourceDeployHelloBody || repairedWakeID == "" || repairedWakeID == wakeID {
+			t.Fatalf("replacement snapshot wake: status=%d wake_id=%q body=%s", status, repairedWakeID, body)
+		}
+		rctx, rcancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer rcancel()
+		if _, err := e2etest.WaitForWakeMethod(rctx, t, pool, repairedWakeID, "restore", 15*time.Second); err != nil {
+			t.Fatalf("replacement capture did not restore: %v", err)
+		}
 	})
 
 	// -- 8. idempotent-replay --------------------------------------------
@@ -523,9 +562,8 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 			t.Fatalf("count deployments before: %v", err)
 		}
 
-		// Two POSTs with the SAME Idempotency-Key. The first seeds
-		// the cache (handler runs once), the second must replay
-		// (handler does NOT run). postMultipartDeployment doesn't
+		// Both POSTs reuse the initial deployment's Idempotency-Key and
+		// must replay without invoking the handler. postMultipartDeployment doesn't
 		// return response headers, so we hand-build the requests to
 		// capture Idempotent-Replayed. The SDK's
 		// Client.DeployMultipart (pkg/api/client.go:460-501)
@@ -536,8 +574,8 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 		if status1 != http.StatusAccepted {
 			t.Fatalf("first POST: status=%d body=%s", status1, body1)
 		}
-		if replayed1 {
-			t.Errorf("first POST marked as replay; idempotency cache should be cold")
+		if !replayed1 {
+			t.Errorf("first retry did not replay the original deployment")
 		}
 		body2, status2, replayed2 := postMultipartCapturingHeaders(t, h, key, "srcdeploy", sourceTar, false, idemKey)
 		if status2 != http.StatusAccepted {
@@ -572,6 +610,44 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 		}
 		t.Logf("idempotent-replay: same dep=%s; deployments=%d before, %d after", depID, beforeCount, afterCount)
 	})
+
+	// Commit must wake the actual deployed microVM after the customer producer
+	// dies. Exercise both runtime paths independently of public HTTP probes.
+	for _, profile := range []struct {
+		name, method string
+		stale        bool
+	}{
+		{"commit-snapshot-wake", "restore", false},
+		{"commit-cold-boot-wake", "cold_boot", true},
+	} {
+		t.Run(profile.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+			defer cancel()
+			if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/srcdeploy/park", nil); status != http.StatusNoContent {
+				t.Fatalf("park: %d", status)
+			}
+			if _, err := waitForSourceAppParked(ctx, h, appID, 30*time.Second); err != nil {
+				t.Fatal(err)
+			}
+			if profile.stale {
+				tag, err := pool.Exec(ctx, `UPDATE snapshots SET fc_version='commit-incompatible-version' WHERE deployment_id=$1 AND NOT stale`, depID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if tag.RowsAffected() == 0 {
+					t.Fatal("no usable snapshot to force incompatible for Commit cold boot")
+				}
+			}
+			completed := runCommitProducerHandoff(t, h, state.NewPgStore(pool), key, appID, profile.name)
+			var wakeID string
+			if err := pool.QueryRow(ctx, `SELECT wake_id::text FROM instances WHERE id=$1`, completed.InstanceID).Scan(&wakeID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := e2etest.WaitForWakeMethod(ctx, t, pool, wakeID, profile.method, 10*time.Second); err != nil {
+				t.Fatalf("Commit wake method: %v", err)
+			}
+		})
+	}
 
 	// -- 9. auto-pick-function-from-handler-js -------------------------
 	// Issue #737 / ADR-083 acceptance: a function-shaped tarball
@@ -675,6 +751,11 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 		if respEnv.ID == "" {
 			t.Fatalf("function deploy response missing id; body=%s", raw)
 		}
+		// This subtest qualifies upload admission only. Cancel its queued
+		// build while builderd and VMMD are both alive to process teardown.
+		if body, status := doReq(t, h, key, http.MethodPost, "/v1/apps/srcfunc/deployments/"+respEnv.ID+"/cancel", nil); status != http.StatusOK {
+			t.Fatalf("cancel function fixture: status=%d body=%s", status, body)
+		}
 		var appType string
 		if err := pool.QueryRow(context.Background(),
 			`select type::text from apps where id = $1`, funcAppID,
@@ -688,11 +769,41 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 	})
 }
 
-// fixedIdempotencyKey returns a stable UUID-shaped string used as the
-// Idempotency-Key for subtest 8's replay. Stable (not time-based) so the
-// test is deterministic across runs against the same schema; the apid
-// idempotency table is keyed on (account_id, key) with a 24h TTL, so a
-// fresh key per run is correct.
+// waitForSourceAppParked requires zero resident instances. An older parked row
+// must not satisfy the wait while the current VM is still serving requests.
+func waitForSourceAppParked(ctx context.Context, h *e2etest.Harness, appID string, deadline time.Duration) ([]state.Instance, error) {
+	ctx, cancel := context.WithTimeout(ctx, deadline)
+	defer cancel()
+	store := state.NewPgStore(h.Pool)
+	var lastResident int
+	for {
+		instances, err := store.ListInstancesForApp(ctx, appID)
+		if err != nil {
+			return nil, err
+		}
+		parked := []state.Instance{}
+		lastResident = 0
+		for _, instance := range instances {
+			if state.State(instance.State).CountsForRAM() {
+				lastResident++
+			}
+			if instance.State == string(state.StateParked) {
+				parked = append(parked, instance)
+			}
+		}
+		if len(parked) > 0 && lastResident == 0 {
+			return parked, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("app %s did not park with zero resident instances (resident=%d): %w", appID, lastResident, ctx.Err())
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+// fixedIdempotencyKey is shared by the initial deployment and its retries.
+// Each test has an isolated account, so the fixed value cannot cross runs.
 func fixedIdempotencyKey() string {
 	return "11111111-2222-3333-4444-555555555555"
 }

@@ -965,7 +965,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			log.Error("vmmd: prepared network cleanup", "err", err)
 		}
 	}()
-	jailer.WithProcessExitSink(mgr.ProcessExited)
+	jailer.WithProcessExitAttemptSink(mgr.ProcessExitedAttempt)
 	// Issue #554 / ADR-078 / PR review fix: wire the per-instance
 	// liveness probe registry + starter so the Manager's bringUp /
 	// Park hooks actually launch + cancel the probe loops. The

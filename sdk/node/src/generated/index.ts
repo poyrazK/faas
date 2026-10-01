@@ -171,6 +171,12 @@ export type { ChangeMemberRoleRequest } from './models/ChangeMemberRoleRequest.j
 export type { ChangePlanRequest } from './models/ChangePlanRequest.js';
 export type { ClaimAPIConsumerUsageStatementRequest } from './models/ClaimAPIConsumerUsageStatementRequest.js';
 export type { ClearObsoleteReport } from './models/ClearObsoleteReport.js';
+export type { CommitBlockedEventResponse } from './models/CommitBlockedEventResponse.js';
+export type { CommitBlockedEventsResponse } from './models/CommitBlockedEventsResponse.js';
+export type { CommitEventRequest } from './models/CommitEventRequest.js';
+export type { CommitOperationResponse } from './models/CommitOperationResponse.js';
+export type { CommitReceiptResponse } from './models/CommitReceiptResponse.js';
+export type { CommitSourceResponse } from './models/CommitSourceResponse.js';
 export type { CompleteObjectMultipartUploadRequest } from './models/CompleteObjectMultipartUploadRequest.js';
 export type { CompleteWorkflowCallbackResponse } from './models/CompleteWorkflowCallbackResponse.js';
 export type { ConsumedCreditRow } from './models/ConsumedCreditRow.js';
