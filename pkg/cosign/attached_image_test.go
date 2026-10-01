@@ -1,6 +1,6 @@
 package cosign
 
-// ADR-386: real keyed signatures authenticate exact payload bytes and the
+// ADR-387: real keyed signatures authenticate exact payload bytes and the
 // resolved immutable subject. These are cryptographic checks, not native KVM
 // acceptance or a durable proof of the converted rootfs.
 

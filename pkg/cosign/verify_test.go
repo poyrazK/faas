@@ -1,6 +1,6 @@
 // verify_test.go — pkg/cosign.VerifyImageSignature + TrustedPublishersFromDir
 // round-trip of ADR-058's legacy raw primitive and mirrored keys. Registry
-// deployment verification now uses ADR-386 simple-signing attachments, tested
+// deployment verification now uses ADR-387 simple-signing attachments, tested
 // in attached_image_test.go; these raw signatures are not that wire format.
 //
 // The shape under test:

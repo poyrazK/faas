@@ -1,6 +1,6 @@
 package oci
 
-// ADR-386: attachment transport obeys registry content addressing, bounds and
+// ADR-387: attachment transport obeys registry content addressing, bounds and
 // repository-scoped authentication before any publisher claim can be trusted.
 
 import (

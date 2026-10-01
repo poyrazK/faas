@@ -944,7 +944,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Wake RPC contexts are canceled when the request returns and
 	// must not own either background activity.
 	mgr.WithLifecycleContext(ctx)
-	// ADR-386: publish the same startup incarnation exposed by the native
+	// ADR-387: publish the same startup incarnation exposed by the native
 	// capability before accepting grants. Only this node's own registration is
 	// read/written here; inherited customer intent remains owned by apid/schedd.
 	if store != nil {

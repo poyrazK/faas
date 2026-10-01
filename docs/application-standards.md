@@ -9,7 +9,7 @@ The implementation is in progress. Candidate version and resource management,
 plus automatic enrollment repair and private reviewed control installation,
 are implemented. Public
 assignment activation, runtime enforcement and controlled rollout
-must pass the acceptance checklist in [ADR-386](adr/386-inherited-application-standards.md)
+must pass the acceptance checklist in [ADR-387](adr/387-inherited-application-standards.md)
 before this feature is declared available.
 
 ## Enrollment boundary
