@@ -147,17 +147,23 @@ func TestIssueDashboardReplayQueuesMetadataOnlyMirrorInvocation(t *testing.T) {
 	app := seedPGApp(t, e, "issue-replay")
 	source, err := e.store.CreateDeployment(t.Context(), state.Deployment{
 		AppID: app.ID, ImageDigest: "sha256:" + strings.Repeat("a", 64), Kind: state.DeploymentKindImage,
-		Status: state.DeployLive, CreatedAt: time.Now().UTC(), Revision: 42,
+		Status: state.DeployPending, CreatedAt: time.Now().UTC(), Revision: 42,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := e.store.MarkDeploymentLive(t.Context(), source.ID); err != nil {
+		t.Fatalf("MarkDeploymentLive(source): %v", err)
+	}
 	target, err := e.store.CreateDeployment(t.Context(), state.Deployment{
 		AppID: app.ID, ImageDigest: "sha256:" + strings.Repeat("b", 64), Kind: state.DeploymentKindImage,
-		Status: state.DeployLive, CreatedAt: time.Now().UTC(), Revision: 43,
+		Status: state.DeployPending, CreatedAt: time.Now().UTC(), Revision: 43, Scope: "mirror-replay",
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if err := e.store.MarkDeploymentLive(t.Context(), target.ID); err != nil {
+		t.Fatalf("MarkDeploymentLive(target): %v", err)
 	}
 	rule, err := e.store.CreateMirrorRuleIfUnderQuota(t.Context(), state.CreateMirrorRuleParams{
 		AccountID: e.acct.ID, AppID: app.ID, SourceDeploymentID: source.ID,
