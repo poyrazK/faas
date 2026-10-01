@@ -137,6 +137,9 @@ func (s *Server) Serve(parent context.Context) error {
 			if err != nil {
 				release()
 				mu.Unlock()
+				if ctx.Err() != nil {
+					return nil
+				}
 				return err
 			}
 			peers[address] = peer

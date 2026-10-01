@@ -33,6 +33,9 @@ func NewPeer(parent context.Context, address netip.AddrPort, replies chan<- Repl
 	if parent == nil || !address.IsValid() || address.Port() == 0 || replies == nil {
 		return nil, errors.New("UDP peer requires context, client address and reply queue")
 	}
+	if err := parent.Err(); err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithCancel(parent)
 	return &Peer{ctx: ctx, cancel: cancel, address: address, inbound: make(chan []byte, api.UDPPeerQueueDepth), replies: replies}, nil
 }
@@ -54,6 +57,9 @@ func (p *Peer) Enqueue(payload []byte) bool {
 	}
 }
 func (p *Peer) Receive(ctx context.Context) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := p.ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -67,6 +73,9 @@ func (p *Peer) Receive(ctx context.Context) ([]byte, error) {
 	}
 }
 func (p *Peer) Send(ctx context.Context, payload []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if len(payload) > api.UDPDatagramMaxBytes {
 		return udpwire.ErrDatagramTooLarge
 	}
