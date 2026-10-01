@@ -1278,7 +1278,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:     "test",
 		DocSlug:  "test",
-		Short:    "Run scenario suites and bounded local HTTP load tests",
+		Short:    "Run scenario suites, lifecycle profiles, and bounded local HTTP load tests",
 		Examples: []string{"gregale test init --from openapi.yaml --project my-api", "gregale test import --from collection.json --project my-api", "gregale test --validate", "gregale test --suite smoke --engine local --fail-fast --junit test-results.xml", "gregale test --suite smoke --engine local --report test-results.json --junit test-results.xml --html test-results.html", "gregale test compare baseline.json current.json --budget test-budget.yaml --html comparison.html", "gregale test --suite regression --validate", "gregale test --scenario customer-export --preflight", "gregale test --scenario customer-export --profile restored --repeat 3 --max-workload-minutes 135 --report test-results.json --junit test-results.xml", "gregale test --scenario api-smoke --engine local", "gregale test --scenario api-smoke --engine local --load --baseline baseline.json --report current.json --junit current.xml", "gregale test --scenario customer-export --engine local --base-url http://localhost:3000 --data cases.json", "gregale test --scenario api-smoke --engine local --base-url http://localhost:3000 --load --vus 5 --duration 30s --pacing 100ms --progress", "gregale test --scenario api-smoke --engine local --load --rate 20 --duration 30s --vus 10 --progress", "gregale test --scenario customer-export --engine simulated"},
 		Subcommands: []cliSub{{Name: "init", Short: "Create public GET smoke checks from a local OpenAPI document", Examples: []string{"gregale test init --from openapi.yaml --project my-api --source ."}, Flags: []cliFlag{
 			{Name: "from", Short: "local OpenAPI 3.0 or 3.1 document", Value: "PATH", Req: true},
@@ -1338,6 +1338,26 @@ var cliCommands = []cliCommand{
 			{Name: "junit", Short: "write a JUnit XML report", Value: "PATH"},
 			{Name: "html", Short: "write a standalone HTML report", Value: "PATH"},
 		},
+	},
+	{
+		Name:    "chaos",
+		DocSlug: "chaos",
+		Short:   "Inject bounded faults into isolated real-VM scenario tests",
+		Subcommands: []cliSub{{Name: "inject", Short: "Run one scenario profile with a scoped service fault", Examples: []string{
+			"gregale chaos inject --scenario customer-export --target inventory --error 503 --percent 10 --duration 5m",
+			"gregale chaos inject --scenario customer-export --target payment --latency 1500ms --percent 20 --from worker --profile restored",
+		}, Flags: []cliFlag{
+			{Name: "scenario", Short: "scenario declared in gregale-test.yaml", Req: true, Value: "NAME"},
+			{Name: "manifest", Short: "scenario manifest path", Value: "PATH"},
+			{Name: "target", Short: "scenario service workload to affect", Req: true, Value: "SERVICE"},
+			{Name: "from", Short: "only affect calls from this workload", Value: "SERVICE"},
+			{Name: "latency", Short: "add this delay to selected requests, such as 1500ms", Value: "DURATION"},
+			{Name: "error", Short: "return this synthetic HTTP 5xx status", Value: "CODE"},
+			{Name: "percent", Short: "fraction of matching requests affected (1..100)", Value: "N"},
+			{Name: "duration", Short: "maximum fault lease duration (1s..5m)", Value: "DURATION"},
+			{Name: "profile", Short: "real-VM lifecycle profile", Value: "PROFILE", ClosedSet: []string{"warm", "cold", "restored"}},
+			{Name: "seed", Short: "deterministic fault-selection seed", Value: "N"},
+		}}},
 	},
 	{
 		Name:    "preview",

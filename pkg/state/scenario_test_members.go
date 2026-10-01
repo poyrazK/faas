@@ -2,12 +2,15 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/chaos"
 )
 
 // ScenarioTestMember is one app's logical service name in a single test run.
@@ -151,6 +154,189 @@ func (m *MemStore) ScenarioTestAppByWorkload(_ context.Context, accountID, runID
 	return App{}, ErrNotFound
 }
 
+func (s *PgStore) SetScenarioTestChaosPlan(ctx context.Context, accountID, runID string, plan chaos.Plan) (chaos.Lease, error) {
+	if accountID == "" || !scenarioTestRunPattern.MatchString(runID) {
+		return chaos.Lease{}, ErrConflict
+	}
+	if err := plan.Validate(); err != nil {
+		return chaos.Lease{}, fmt.Errorf("%w: %v", ErrConflict, err)
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return chaos.Lease{}, fmt.Errorf("begin scenario chaos plan: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	rows, err := tx.Query(ctx, `select m.workload_name
+		from scenario_test_members m
+		join apps a on a.id = m.app_id
+		where m.account_id = $1 and m.run_id = $2
+		and a.status <> 'deleted' and a.preview_pr_state = 'open' and a.preview_expires_at > now()
+		order by m.workload_name
+		for update of m`, accountID, runID)
+	if err != nil {
+		return chaos.Lease{}, fmt.Errorf("list scenario chaos workloads: %w", err)
+	}
+	workloads := make(map[string]struct{}, 16)
+	for rows.Next() {
+		var workload string
+		if err := rows.Scan(&workload); err != nil {
+			rows.Close()
+			return chaos.Lease{}, fmt.Errorf("scan scenario chaos workload: %w", err)
+		}
+		workloads[workload] = struct{}{}
+	}
+	rowsErr := rows.Err()
+	rows.Close()
+	if rowsErr != nil {
+		return chaos.Lease{}, fmt.Errorf("read scenario chaos workloads: %w", rowsErr)
+	}
+	if len(workloads) == 0 {
+		return chaos.Lease{}, ErrNotFound
+	}
+	if err := plan.ValidateWorkloads(workloads); err != nil {
+		return chaos.Lease{}, fmt.Errorf("%w: %v", ErrConflict, err)
+	}
+	var live bool
+	if err := tx.QueryRow(ctx, `select exists(
+		select 1 from scenario_test_members m join apps a on a.id = m.app_id
+		where m.account_id = $1 and m.run_id = $2 and a.status <> 'deleted'
+		and a.preview_pr_state = 'open' and a.preview_expires_at > now())`, accountID, runID).Scan(&live); err != nil {
+		return chaos.Lease{}, fmt.Errorf("check scenario chaos run: %w", err)
+	}
+	if !live {
+		return chaos.Lease{}, ErrNotFound
+	}
+	rawRules, err := json.Marshal(plan.Rules)
+	if err != nil {
+		return chaos.Lease{}, fmt.Errorf("encode scenario chaos rules: %w", err)
+	}
+	expiresAt := time.Now().UTC().Add(time.Duration(plan.DurationMS) * time.Millisecond)
+	if _, err := tx.Exec(ctx, `update scenario_test_members
+		set chaos_rules = $3::jsonb, chaos_expires_at = $4
+		where account_id = $1 and run_id = $2`, accountID, runID, rawRules, expiresAt); err != nil {
+		return chaos.Lease{}, fmt.Errorf("store scenario chaos plan: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return chaos.Lease{}, fmt.Errorf("commit scenario chaos plan: %w", err)
+	}
+	return chaos.Lease{Rules: append([]chaos.Rule(nil), plan.Rules...), ExpiresAt: expiresAt}, nil
+}
+
+func (s *PgStore) ScenarioTestChaosForCall(ctx context.Context, runID, callerAppID, targetWorkload string) (chaos.Lease, error) {
+	var lease chaos.Lease
+	var rawRules []byte
+	var expiresAt pgtype.Timestamptz
+	err := s.pool.QueryRow(ctx, `select member_caller.workload_name, member_caller.chaos_rules, member_caller.chaos_expires_at
+		from scenario_test_members member_caller
+		join scenario_test_members member_target on member_target.account_id = member_caller.account_id
+			and member_target.run_id = member_caller.run_id and member_target.workload_name = $3
+		where member_caller.run_id = $1 and member_caller.app_id = $2`, runID, callerAppID, targetWorkload).
+		Scan(&lease.CallerWorkload, &rawRules, &expiresAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return chaos.Lease{}, nil
+	}
+	if err != nil {
+		return chaos.Lease{}, fmt.Errorf("load scenario chaos plan: %w", err)
+	}
+	if !expiresAt.Valid || !expiresAt.Time.After(time.Now()) {
+		return chaos.Lease{}, nil
+	}
+	if err := json.Unmarshal(rawRules, &lease.Rules); err != nil {
+		return chaos.Lease{}, fmt.Errorf("decode scenario chaos plan: %w", err)
+	}
+	lease.ExpiresAt = expiresAt.Time
+	filtered := lease.Rules[:0]
+	for _, rule := range lease.Rules {
+		if rule.To == targetWorkload && (rule.From == "" || rule.From == lease.CallerWorkload) {
+			filtered = append(filtered, rule)
+		}
+	}
+	lease.Rules = filtered
+	if len(lease.Rules) == 0 {
+		return chaos.Lease{}, nil
+	}
+	return lease, nil
+}
+
+func (m *MemStore) SetScenarioTestChaosPlan(_ context.Context, accountID, runID string, plan chaos.Plan) (chaos.Lease, error) {
+	if accountID == "" || !scenarioTestRunPattern.MatchString(runID) {
+		return chaos.Lease{}, ErrConflict
+	}
+	if err := plan.Validate(); err != nil {
+		return chaos.Lease{}, fmt.Errorf("%w: %v", ErrConflict, err)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	workloads := make(map[string]struct{}, 16)
+	for _, member := range m.scenarioTestMembers {
+		if member.AccountID == accountID && member.RunID == runID {
+			workloads[member.Workload] = struct{}{}
+		}
+	}
+	if len(workloads) == 0 {
+		return chaos.Lease{}, ErrNotFound
+	}
+	if err := plan.ValidateWorkloads(workloads); err != nil {
+		return chaos.Lease{}, fmt.Errorf("%w: %v", ErrConflict, err)
+	}
+	active := false
+	for _, member := range m.scenarioTestMembers {
+		if member.AccountID != accountID || member.RunID != runID {
+			continue
+		}
+		if app, ok := m.apps[member.AppID]; ok && eligibleScenarioTestApp(app, accountID) {
+			active = true
+			break
+		}
+	}
+	if !active {
+		return chaos.Lease{}, ErrNotFound
+	}
+	expiresAt := time.Now().UTC().Add(time.Duration(plan.DurationMS) * time.Millisecond)
+	if m.scenarioTestChaosPlans == nil {
+		m.scenarioTestChaosPlans = make(map[string]chaos.Lease)
+	}
+	key := accountID + "\x00" + runID
+	lease := chaos.Lease{Rules: append([]chaos.Rule(nil), plan.Rules...), ExpiresAt: expiresAt}
+	m.scenarioTestChaosPlans[key] = lease
+	return lease, nil
+}
+
+func (m *MemStore) ScenarioTestChaosForCall(_ context.Context, runID, callerAppID, targetWorkload string) (chaos.Lease, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	caller, ok := m.scenarioTestMembers[callerAppID]
+	if !ok || caller.RunID != runID {
+		return chaos.Lease{}, nil
+	}
+	targetFound := false
+	for _, member := range m.scenarioTestMembers {
+		if member.AccountID == caller.AccountID && member.RunID == runID && member.Workload == targetWorkload {
+			targetFound = true
+			break
+		}
+	}
+	if !targetFound {
+		return chaos.Lease{}, nil
+	}
+	lease, ok := m.scenarioTestChaosPlans[caller.AccountID+"\x00"+runID]
+	if !ok || !lease.ExpiresAt.After(time.Now()) {
+		return chaos.Lease{}, nil
+	}
+	lease.CallerWorkload = caller.Workload
+	filtered := make([]chaos.Rule, 0, len(lease.Rules))
+	for _, rule := range lease.Rules {
+		if rule.To == targetWorkload && (rule.From == "" || rule.From == caller.Workload) {
+			filtered = append(filtered, rule)
+		}
+	}
+	lease.Rules = filtered
+	if len(lease.Rules) == 0 {
+		return chaos.Lease{}, nil
+	}
+	return lease, nil
+}
+
 func (m *MemStore) DeleteScenarioTestMembers(_ context.Context, accountID, runID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -171,6 +357,7 @@ func (m *MemStore) DeleteScenarioTestMembers(_ context.Context, accountID, runID
 			delete(m.scenarioTestMembers, appID)
 		}
 	}
+	delete(m.scenarioTestChaosPlans, accountID+"\x00"+runID)
 	return nil
 }
 
@@ -259,6 +446,7 @@ func (m *MemStore) PruneScenarioTestMembers(_ context.Context, maxRuns int) (int
 			}
 			if !remaining {
 				prunedGroups++
+				delete(m.scenarioTestChaosPlans, key)
 			}
 		}
 	}

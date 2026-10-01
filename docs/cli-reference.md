@@ -36,7 +36,8 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`domains`](#domains) | Manage custom domains |
 | [`dev`](#dev) | Sync local changes to a developer environment |
 | [`diff`](#diff) | Compare two named environments in the linked project |
-| [`test`](#test) | Run scenario suites and bounded local HTTP load tests |
+| [`test`](#test) | Run scenario suites, lifecycle profiles, and bounded local HTTP load tests |
+| [`chaos`](#chaos) | Inject bounded faults into isolated real-VM scenario tests |
 | [`preview`](#preview) | Manage preview environments for pull requests |
 | [`flags`](#flags) | Release application behavior to selected customers |
 | [`platform-tenants`](#platform-tenants) | Manage one customer across app consumers and tenant hostnames |
@@ -1797,7 +1798,7 @@ Compare two named environments in the linked project
 
 ## test
 
-Run scenario suites and bounded local HTTP load tests
+Run scenario suites, lifecycle profiles, and bounded local HTTP load tests
 
 `gregale test [<subcommand>] [--scenario <NAME>] [--suite <NAME>] [--fail-fast] [--validate] [--preflight] [--engine <ENGINE>] [--base-url <URL>] [--data <PATH>] [--load] [--vus <N>] [--rate <N>] [--iterations <N>] [--duration <DURATION>] [--pacing <DURATION>] [--progress] [--baseline <PATH>] [--profile <PROFILE>] [--repeat <N>] [--max-workload-minutes <N>] [--manifest <PATH>] [--report <PATH>] [--junit <PATH>] [--html <PATH>]`
 
@@ -1938,6 +1939,37 @@ Examples:
 ```sh
 gregale test import --from collection.json --project my-api
 gregale test import --from collection.json --project my-api --requests-only --status 202
+```
+
+
+## chaos
+
+Inject bounded faults into isolated real-VM scenario tests
+
+`gregale chaos [<subcommand>]`
+
+### chaos inject
+
+Run one scenario profile with a scoped service fault
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scenario <NAME>` | scenario declared in gregale-test.yaml | required |
+| `--manifest <PATH>` | scenario manifest path |  |
+| `--target <SERVICE>` | scenario service workload to affect | required |
+| `--from <SERVICE>` | only affect calls from this workload |  |
+| `--latency <DURATION>` | add this delay to selected requests, such as 1500ms |  |
+| `--error <CODE>` | return this synthetic HTTP 5xx status |  |
+| `--percent <N>` | fraction of matching requests affected (1..100) |  |
+| `--duration <DURATION>` | maximum fault lease duration (1s..5m) |  |
+| `--profile <PROFILE>` | real-VM lifecycle profile | one of `warm` · `cold` · `restored` |
+| `--seed <N>` | deterministic fault-selection seed |  |
+
+Examples:
+
+```sh
+gregale chaos inject --scenario customer-export --target inventory --error 503 --percent 10 --duration 5m
+gregale chaos inject --scenario customer-export --target payment --latency 1500ms --percent 20 --from worker --profile restored
 ```
 
 

@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api/canary"
+	"github.com/onebox-faas/faas/pkg/chaos"
 	"github.com/onebox-faas/faas/pkg/statefuldenylist"
 )
 
@@ -690,6 +691,19 @@ type RegisterScenarioTestRequest struct {
 type ScenarioTestWorkload struct {
 	Workload string `json:"workload"`
 	AppSlug  string `json:"app_slug"`
+}
+
+// InjectScenarioTestChaosRequest installs bounded request faults on service
+// calls within one registered scenario run. The server supplies the expiry;
+// callers cannot choose an absolute timestamp or target an unregistered app.
+type InjectScenarioTestChaosRequest struct {
+	DurationMS int64        `json:"duration_ms"`
+	Rules      []chaos.Rule `json:"rules"`
+}
+
+type InjectScenarioTestChaosResponse struct {
+	ExpiresAt      time.Time `json:"expires_at"`
+	RulesInstalled int       `json:"rules_installed"`
 }
 
 // UpdateAppRequest is the partial-update payload for PATCH /v1/apps/{slug}.

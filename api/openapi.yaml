@@ -6657,7 +6657,7 @@ paths:
       - name: run_id
         in: path
         required: true
-        description: Random lowercase hexadecimal identity shared by the run's developer sessions.
+        description: Lowercase hexadecimal ID shared only by sessions in this test run.
         schema: { type: string, pattern: '^[a-f0-9]{32}$' }
     put:
       tags: [dev]
@@ -6684,6 +6684,33 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/dev/test-runs/{run_id}/chaos:
+    parameters:
+      - name: run_id
+        in: path
+        required: true
+        description: Random lowercase hexadecimal identity shared by the run's developer sessions.
+        schema: { type: string, pattern: '^[a-f0-9]{32}$' }
+    put:
+      tags: [dev]
+      operationId: injectScenarioTestChaos
+      summary: Install a bounded request-level fault plan for an isolated scenario run.
+      description: Rules apply only to authenticated internal service calls between registered members, expire automatically, and cannot affect production or public traffic.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InjectScenarioTestChaosRequest' }
+      responses:
+        '200':
+          description: Fault plan installed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InjectScenarioTestChaosResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /v1/dev/sessions/{project}/syncs:
     parameters:
@@ -28796,6 +28823,39 @@ components:
       properties:
         workload: { type: string, minLength: 3, maxLength: 40 }
         app_slug: { type: string, minLength: 3, maxLength: 40 }
+
+    InjectScenarioTestChaosRequest:
+      description: Bounded fault plan applied only to service calls within one scenario test namespace.
+      type: object
+      required: [duration_ms, rules]
+      properties:
+        duration_ms: { type: integer, minimum: 1000, maximum: 300000 }
+        rules:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items: { $ref: '#/components/schemas/ScenarioTestChaosRule' }
+
+    ScenarioTestChaosRule:
+      description: One bounded latency or synthetic server-error fault for matching internal service calls.
+      type: object
+      required: [to, kind, percent, seed]
+      properties:
+        from: { type: string, minLength: 3, maxLength: 40 }
+        to: { type: string, minLength: 3, maxLength: 40 }
+        kind: { type: string, enum: [latency, http_status] }
+        percent: { type: integer, minimum: 1, maximum: 100 }
+        latency_ms: { type: integer, minimum: 1, maximum: 30000 }
+        status_code: { type: integer, minimum: 500, maximum: 599 }
+        seed: { type: integer, minimum: 0 }
+
+    InjectScenarioTestChaosResponse:
+      description: Receipt confirming the number of rules installed and the automatic expiry time.
+      type: object
+      required: [expires_at, rules_installed]
+      properties:
+        expires_at: { type: string, format: date-time }
+        rules_installed: { type: integer, minimum: 1, maximum: 16 }
 
     DevPostgresRequest:
       description: Opts the developer environment into an isolated managed PostgreSQL database.
