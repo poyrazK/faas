@@ -739,6 +739,16 @@ type AppTcpListener struct {
 	TlsHostname  string
 }
 
+type AppTcpListenerTlsObservation struct {
+	ListenerID      pgtype.UUID
+	EdgeID          string
+	Hostname        string
+	IntentUpdatedAt pgtype.Timestamptz
+	ObservedAt      pgtype.Timestamptz
+	Ready           bool
+	NotAfter        pgtype.Timestamptz
+}
+
 type AppTrustedSigner struct {
 	AccountID        pgtype.UUID
 	AppID            pgtype.UUID

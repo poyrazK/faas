@@ -4153,6 +4153,25 @@ CREATE TABLE public.app_tasks (
 
 
 --
+-- Name: app_tcp_listener_tls_observations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_tcp_listener_tls_observations (
+    listener_id uuid NOT NULL,
+    edge_id text NOT NULL,
+    hostname text NOT NULL,
+    intent_updated_at timestamp with time zone NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    ready boolean NOT NULL,
+    not_after timestamp with time zone,
+    CONSTRAINT app_tcp_listener_tls_observations_check CHECK ((observed_at >= intent_updated_at)),
+    CONSTRAINT app_tcp_listener_tls_observations_check1 CHECK (((ready AND (not_after IS NOT NULL) AND (not_after > observed_at)) OR ((NOT ready) AND (not_after IS NULL)))),
+    CONSTRAINT app_tcp_listener_tls_observations_edge_id_check CHECK ((((octet_length(edge_id) >= 1) AND (octet_length(edge_id) <= 128)) AND (edge_id = btrim(edge_id)) AND (edge_id !~ '[[:cntrl:]]'::text))),
+    CONSTRAINT app_tcp_listener_tls_observations_hostname_check CHECK ((((char_length(hostname) >= 1) AND (char_length(hostname) <= 253)) AND (hostname ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$'::text) AND (hostname !~ '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'::text)))
+);
+
+
+--
 -- Name: app_tcp_listeners; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -11201,6 +11220,14 @@ ALTER TABLE ONLY public.app_tasks
 
 
 --
+-- Name: app_tcp_listener_tls_observations app_tcp_listener_tls_observations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_tcp_listener_tls_observations
+    ADD CONSTRAINT app_tcp_listener_tls_observations_pkey PRIMARY KEY (listener_id, edge_id);
+
+
+--
 -- Name: app_tcp_listeners app_tcp_listeners_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -14252,6 +14279,13 @@ CREATE UNIQUE INDEX app_tasks_one_release_per_deployment_uniq ON public.app_task
 --
 
 CREATE INDEX app_tasks_retry_due_idx ON public.app_tasks USING btree (retry_at, created_at, id) WHERE ((status = 'queued'::text) AND (retry_at IS NOT NULL));
+
+
+--
+-- Name: app_tcp_listener_tls_observations_observed_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_tcp_listener_tls_observations_observed_at_idx ON public.app_tcp_listener_tls_observations USING btree (observed_at);
 
 
 --
@@ -20007,6 +20041,14 @@ ALTER TABLE ONLY public.app_tasks
 
 ALTER TABLE ONLY public.app_tasks
     ADD CONSTRAINT app_tasks_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_tcp_listener_tls_observations app_tcp_listener_tls_observations_listener_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_tcp_listener_tls_observations
+    ADD CONSTRAINT app_tcp_listener_tls_observations_listener_id_fkey FOREIGN KEY (listener_id) REFERENCES public.app_tcp_listeners(id) ON DELETE CASCADE;
 
 
 --

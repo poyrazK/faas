@@ -7758,3 +7758,9 @@ const TCPListenerTLSDNSLabelMaxBytes = 63
 
 // TCPListenerTLSBundleMaxBytes bounds a certificate chain plus private key.
 const TCPListenerTLSBundleMaxBytes = 64 * 1024
+
+// TCPListenerTLSObservationMaxAge bounds the lifetime of edge certificate evidence.
+const TCPListenerTLSObservationMaxAge = 60 * time.Second
+const TCPListenerTLSObservationEdgeIDMaxBytes = 128
+const TCPListenerTLSObservationRefreshInterval = 15 * time.Second
+const TCPListenerTLSObservationWriteTimeout = 2 * time.Second

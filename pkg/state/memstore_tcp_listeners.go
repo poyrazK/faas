@@ -131,5 +131,6 @@ func (m *MemStore) DeleteTCPListener(_ context.Context, id string) error {
 		return ErrNotFound
 	}
 	delete(m.tcpListeners, id)
+	delete(m.tcpTLSObservations, id)
 	return nil
 }
