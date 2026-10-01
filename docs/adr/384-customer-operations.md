@@ -104,7 +104,7 @@ Code retention derives from an owned operation and its immutable definition.
 Accepted/running work retains its deployment and all verified release members
 past timestamp expiry; stopped work retains them only through its result/recovery
 window. Cutover and rollback remove weighted traffic while preserving this code.
-These references do not extend public revision-header deadlines. Pin cleanup
+These references do not bypass public revision-header timestamp validation. Pin cleanup
 locks apps before deployments, then rechecks references in a fresh transaction
 statement after app-lock acquisition. A page removes at most
 `RevisionPinCleanupPageMax` (500) pins, excluding retained references before
