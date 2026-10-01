@@ -275,6 +275,9 @@ func (s *PgStore) CountTenantSurfacesForAccount(ctx context.Context, accountID s
 // UpdateTenantSurfaceStatus — apid sets status (pending/active/suspended/deleted).
 // Returns ErrNotFound if the row is gone.
 func (s *PgStore) UpdateTenantSurfaceStatus(ctx context.Context, id string, status SurfaceStatus) error {
+	if status == SurfaceStatusActive {
+		return s.activateTrafficTenantSurface(ctx, id)
+	}
 	tag, err := s.pool.Exec(ctx,
 		`update tenant_surfaces set status = $1, updated_at = now() where id = $2`,
 		string(status), id)
@@ -581,20 +584,8 @@ func (s *PgStore) CountTenantHostnamesForSurface(ctx context.Context, surfaceID 
 // last_error. Idempotent: a second call with last_error stays
 // unchanged.
 func (s *PgStore) MarkTenantHostnameVerified(ctx context.Context, hostname string) error {
-	tag, err := s.pool.Exec(ctx,
-		`update tenant_hostnames
-		    set verified_at = now(),
-		        last_check_at = now(),
-		        last_error = ''
-		  where hostname = $1`,
-		hostname)
-	if err != nil {
-		return mapErr(err)
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+	_, err := s.markTrafficTenantHostnameVerified(ctx, hostname, "", false)
+	return err
 }
 
 // MarkTenantHostnameCheckFailed — the dns_poller path. Preserves

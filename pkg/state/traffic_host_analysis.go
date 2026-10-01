@@ -60,6 +60,7 @@ type trafficHostAnalysis struct {
 	PrimaryHosts      []string
 	AliasHosts        []string
 	Domains           []trafficHostDomain
+	Tenants           []trafficHostTenant
 	Reservations      []trafficHostReservation
 	GlobalRoutes      bool
 	AppsSuffix        string               `json:"-"`
@@ -70,7 +71,9 @@ type trafficHostAnalysis struct {
 
 // Binding identity gives a new publication no legacy selector allowance.
 // An empty Environment retains ordinary account-wide compilation.
-type trafficHostDomain struct{ Domain, App, Environment string }
+type trafficHostDomain struct{ Domain, App, Environment, Tenant string }
+
+type trafficHostTenant struct{ Host, App, Surface, ID, PlatformTenant string }
 
 type trafficHostEnvironment struct {
 	ID, App, Host              string
@@ -185,7 +188,7 @@ func (v trafficHostTotals) exceeds() bool {
 type hostAnalysisRef struct {
 	side, group                                                 int
 	ordinary                                                    bool
-	domain                                                      bool
+	domain, tenant                                              bool
 	claim, reservation, primaryReservation, platform, syntactic bool
 }
 
@@ -567,6 +570,14 @@ func checkTrafficHostAnalysisWithBudgets(ctx context.Context, before, after traf
 				}
 			}
 		}
+		for i, tenant := range view.Tenants {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if err := machine.addTokens([]rune(tenant.Host), hostAnalysisRef{side: side, group: i, tenant: true}); err != nil {
+				return err
+			}
+		}
 	}
 	initial := machine.closure([]int{0})
 	states := []hostAnalysisState{{positions: initial, parent: -1}}
@@ -604,6 +615,9 @@ func checkTrafficHostAnalysisWithBudgets(ctx context.Context, before, after traf
 				case ref.domain:
 					domain := views[ref.side].Domains[ref.group]
 					bindings[ref.side][domain] = scopes[ref.side].environments[trafficHostDomain{App: domain.App, Environment: domain.Environment}]
+				case ref.tenant:
+					tenant := views[ref.side].Tenants[ref.group]
+					bindings[ref.side][trafficHostDomain{Domain: tenant.Host, App: tenant.App, Tenant: tenant.Surface + "/" + tenant.ID + "/" + tenant.PlatformTenant}] = nil
 				case ref.ordinary:
 					bindings[ref.side][trafficHostDomain{}] = nil
 				case ref.group < 0:
@@ -615,6 +629,13 @@ func checkTrafficHostAnalysisWithBudgets(ctx context.Context, before, after traf
 			}
 		}
 		for side, view := range views {
+			if platform[side] || syntactic[side] {
+				for binding := range bindings[side] {
+					if binding.Tenant != "" {
+						delete(bindings[side], binding)
+					}
+				}
+			}
 			if view.SelectDomains {
 				selectTrafficDomainBindings(bindings[side], claims[side], platform[side] || syntactic[side])
 			}

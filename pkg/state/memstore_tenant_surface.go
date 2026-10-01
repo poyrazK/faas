@@ -164,7 +164,7 @@ func (m *MemStore) CountTenantSurfacesForAccount(_ context.Context, accountID st
 // UpdateTenantSurfaceStatus — mirrors the status flip but doesn't
 // touch updated_at at the time.Now() level; we update it so the
 // (apiserver) audit + dashboard see the change.
-func (m *MemStore) UpdateTenantSurfaceStatus(_ context.Context, id string, status SurfaceStatus) error {
+func (m *MemStore) UpdateTenantSurfaceStatus(ctx context.Context, id string, status SurfaceStatus) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	s, ok := m.tenantSurfaces[id]
@@ -173,6 +173,11 @@ func (m *MemStore) UpdateTenantSurfaceStatus(_ context.Context, id string, statu
 	}
 	s.Status = status
 	s.UpdatedAt = nextTenantSurfaceTime(s.UpdatedAt)
+	if status == SurfaceStatusActive {
+		if err := m.validateMemTrafficPolicyChangeLocked(ctx, s.AccountID, memTrafficPolicyChange{TenantSurfaces: map[string]TenantSurface{id: s}}); err != nil {
+			return err
+		}
+	}
 	m.tenantSurfaces[id] = s
 	return nil
 }
@@ -443,19 +448,11 @@ func (m *MemStore) CountTenantHostnamesForSurface(_ context.Context, surfaceID s
 
 // MarkTenantHostnameVerified — sets VerifiedAt + LastCheckAt, clears
 // LastError.
-func (m *MemStore) MarkTenantHostnameVerified(_ context.Context, hostname string) error {
+func (m *MemStore) MarkTenantHostnameVerified(ctx context.Context, hostname string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	h, ok := m.tenantHostnames[hostname]
-	if !ok {
-		return ErrNotFound
-	}
-	now := time.Now().UTC()
-	h.VerifiedAt = now
-	h.LastCheckAt = now
-	h.LastError = ""
-	m.tenantHostnames[hostname] = h
-	return nil
+	_, err := m.markTrafficTenantHostnameVerifiedLocked(ctx, hostname, "", false)
+	return err
 }
 
 // MarkTenantHostnameCheckFailed — dns_poller path; preserves

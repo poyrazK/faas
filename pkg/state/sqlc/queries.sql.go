@@ -266,6 +266,43 @@ func (q *Queries) AccountsByIDs(ctx context.Context, db DBTX, dollar_1 []pgtype.
 	return items, nil
 }
 
+const activateTrafficPlatformTenant = `-- name: ActivateTrafficPlatformTenant :one
+UPDATE platform_tenants SET status='active',updated_at=now()
+WHERE id=$1::uuid AND account_id=$2::uuid
+RETURNING jsonb_build_object('ID',id,'AccountID',account_id,'ExternalRef',external_ref,
+    'Name',name,'Status',status,'CreatedAt',created_at,'UpdatedAt',updated_at)::jsonb AS data
+`
+
+type ActivateTrafficPlatformTenantParams struct {
+	TenantID  pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) ActivateTrafficPlatformTenant(ctx context.Context, db DBTX, arg ActivateTrafficPlatformTenantParams) ([]byte, error) {
+	row := db.QueryRow(ctx, activateTrafficPlatformTenant, arg.TenantID, arg.AccountID)
+	var data []byte
+	err := row.Scan(&data)
+	return data, err
+}
+
+const activateTrafficTenantSurface = `-- name: ActivateTrafficTenantSurface :execrows
+UPDATE tenant_surfaces SET status='active',updated_at=now()
+WHERE id=$1::uuid AND account_id=$2::uuid
+`
+
+type ActivateTrafficTenantSurfaceParams struct {
+	SurfaceID pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) ActivateTrafficTenantSurface(ctx context.Context, db DBTX, arg ActivateTrafficTenantSurfaceParams) (int64, error) {
+	result, err := db.Exec(ctx, activateTrafficTenantSurface, arg.SurfaceID, arg.AccountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const admitTrafficRetry = `-- name: AdmitTrafficRetry :one
 UPDATE traffic_retry_counters SET retries = retries + 1
 WHERE app_id = $1::uuid
@@ -8717,6 +8754,36 @@ func (q *Queries) MarkTrafficDomainVerified(ctx context.Context, db DBTX, arg Ma
 	return result.RowsAffected(), nil
 }
 
+const markTrafficTenantHostnameVerified = `-- name: MarkTrafficTenantHostnameVerified :execrows
+UPDATE tenant_hostnames SET verified_at=now(),last_check_at=now(),last_error=''
+WHERE hostname=$1::text::citext AND id=$2::uuid
+  AND surface_id=$3::uuid AND
+    (NOT $4::boolean OR
+        challenge_token=$5::text AND verified_at IS NULL)
+`
+
+type MarkTrafficTenantHostnameVerifiedParams struct {
+	Hostname       string
+	HostnameID     pgtype.UUID
+	SurfaceID      pgtype.UUID
+	ChallengeBound bool
+	Token          string
+}
+
+func (q *Queries) MarkTrafficTenantHostnameVerified(ctx context.Context, db DBTX, arg MarkTrafficTenantHostnameVerifiedParams) (int64, error) {
+	result, err := db.Exec(ctx, markTrafficTenantHostnameVerified,
+		arg.Hostname,
+		arg.HostnameID,
+		arg.SurfaceID,
+		arg.ChallengeBound,
+		arg.Token,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const markTriggerRecordDeadLetter = `-- name: MarkTriggerRecordDeadLetter :exec
 update trigger_records
    set state = 'dead_letter',
@@ -12922,7 +12989,7 @@ SELECT (
                           AND strpos($4::text,'*')=0
                           AND right($4,length(lower(btrim(domain,$3)))-1)=substr(lower(btrim(domain,$3)),2)
                           AND $4<>substr(lower(btrim(domain,$3)),3))))
-    OR EXISTS (SELECT 1 FROM tenant_hostnames WHERE hostname = nullif($2::text, ''))
+    OR EXISTS (SELECT 1 FROM tenant_hostnames WHERE hostname = nullif($2::text, '')::citext)
 )::boolean AS reserved
 `
 
@@ -13001,7 +13068,7 @@ SELECT jsonb_build_object(
 )::jsonb AS data
 FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id = h.surface_id
 LEFT JOIN platform_tenants t ON t.id = s.platform_tenant_id
-WHERE h.hostname = $1::text AND s.status <> 'deleted'
+WHERE h.hostname = $1::text::citext AND s.status <> 'deleted'
 `
 
 func (q *Queries) ReadPublicHostTenantBinding(ctx context.Context, db DBTX, host string) ([]byte, error) {
@@ -13018,7 +13085,7 @@ SELECT jsonb_build_object(
     'VerifiedAt', h.verified_at
 )::jsonb AS data
 FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id = h.surface_id
-WHERE h.hostname = $1::text AND s.status <> 'deleted'
+WHERE h.hostname = $1::text::citext AND s.status <> 'deleted'
 `
 
 func (q *Queries) ReadPublicHostTenantHostname(ctx context.Context, db DBTX, host string) ([]byte, error) {
@@ -13036,7 +13103,7 @@ SELECT jsonb_build_object(
     'Status', s.status
 )::jsonb AS data
 FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id = h.surface_id
-WHERE h.hostname = $1::text AND s.status <> 'deleted'
+WHERE h.hostname = $1::text::citext AND s.status <> 'deleted'
 `
 
 func (q *Queries) ReadPublicHostTenantSurface(ctx context.Context, db DBTX, host string) ([]byte, error) {
@@ -13580,6 +13647,44 @@ func (q *Queries) ReadServicePolicyTestMember(ctx context.Context, db DBTX, appI
 	return i, err
 }
 
+const readTenantHostnameTrafficOwner = `-- name: ReadTenantHostnameTrafficOwner :one
+SELECT h.id,s.account_id,h.surface_id
+FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id=h.surface_id
+WHERE h.hostname=$1::text::citext AND
+    (NOT $2::boolean OR
+        h.challenge_token=$3::text AND h.verified_at IS NULL)
+`
+
+type ReadTenantHostnameTrafficOwnerParams struct {
+	Hostname       string
+	ChallengeBound bool
+	Token          string
+}
+
+type ReadTenantHostnameTrafficOwnerRow struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	SurfaceID pgtype.UUID
+}
+
+func (q *Queries) ReadTenantHostnameTrafficOwner(ctx context.Context, db DBTX, arg ReadTenantHostnameTrafficOwnerParams) (ReadTenantHostnameTrafficOwnerRow, error) {
+	row := db.QueryRow(ctx, readTenantHostnameTrafficOwner, arg.Hostname, arg.ChallengeBound, arg.Token)
+	var i ReadTenantHostnameTrafficOwnerRow
+	err := row.Scan(&i.ID, &i.AccountID, &i.SurfaceID)
+	return i, err
+}
+
+const readTenantSurfaceTrafficAccount = `-- name: ReadTenantSurfaceTrafficAccount :one
+SELECT account_id FROM tenant_surfaces WHERE id=$1::uuid
+`
+
+func (q *Queries) ReadTenantSurfaceTrafficAccount(ctx context.Context, db DBTX, surfaceID pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, readTenantSurfaceTrafficAccount, surfaceID)
+	var account_id pgtype.UUID
+	err := row.Scan(&account_id)
+	return account_id, err
+}
+
 const readTrafficAliasHostnameConflict = `-- name: ReadTrafficAliasHostnameConflict :one
 SELECT EXISTS(SELECT 1 FROM apps WHERE slug=$1::text)::boolean AS conflict
 `
@@ -13795,6 +13900,16 @@ WITH environment_policies AS MATERIALIZED (
       AND d.status IN ('pending','building','imaging','snapshotting','live','superseded')
       AND $6::text<>''
     ORDER BY a.id,z.name LIMIT ($1::integer+1)
+), tenant_hosts AS (
+    SELECT jsonb_build_object('Host',lower(h.hostname::text),'App',a.id,'Surface',s.id,'ID',h.id,
+        'PlatformTenant',coalesce(s.platform_tenant_id::text,'')) AS data
+    FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id=h.surface_id
+    JOIN apps a ON a.id=s.app_id AND a.account_id=s.account_id
+    LEFT JOIN platform_tenants t ON t.id=s.platform_tenant_id
+    WHERE s.account_id=$3::uuid AND s.status='active'
+      AND h.verified_at IS NOT NULL AND a.status<>'deleted' AND a.visibility<>'internal'
+      AND coalesce(t.status<>'suspended',true)
+    ORDER BY h.hostname::text COLLATE "C" LIMIT ($1::integer+1)
 ), domain_hosts AS (
     SELECT jsonb_build_object('Domain',d.domain,'App',a.id,'Environment',coalesce(d.environment_id::text,'')) AS data
     FROM custom_domains d JOIN apps a ON a.id=d.app_id
@@ -13814,17 +13929,18 @@ WITH environment_policies AS MATERIALIZED (
         WHERE $3::uuid IS NULL
     ) claim ORDER BY data->>'Kind',data->>'Host' LIMIT ($1::integer+1)
 ), bounds AS (
-    SELECT (SELECT count(*) FROM groups)+(SELECT count(*) FROM assets)+(SELECT count(*) FROM environments)+(SELECT count(*) FROM primary_hosts)+(SELECT count(*) FROM alias_hosts)+(SELECT count(*) FROM domain_hosts)+(SELECT count(*) FROM reservations) AS inputs,
+    SELECT (SELECT count(*) FROM groups)+(SELECT count(*) FROM assets)+(SELECT count(*) FROM environments)+(SELECT count(*) FROM primary_hosts)+(SELECT count(*) FROM alias_hosts)+(SELECT count(*) FROM domain_hosts)+(SELECT count(*) FROM tenant_hosts)+(SELECT count(*) FROM reservations) AS inputs,
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM groups)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM assets)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM environments)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM primary_hosts)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM alias_hosts)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM domain_hosts)+
+        (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM tenant_hosts)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM reservations)+
         octet_length(jsonb_build_object('Groups','[]'::jsonb,'Assets','[]'::jsonb,
             'Environments','[]'::jsonb,'PrimaryHosts','[]'::jsonb,'AliasHosts','[]'::jsonb,'Domains','[]'::jsonb,
-            'Reservations','[]'::jsonb,'GlobalRoutes',false)::text) AS bytes
+            'Tenants','[]'::jsonb,'Reservations','[]'::jsonb,'GlobalRoutes',false)::text) AS bytes
 )
 SELECT CASE WHEN inputs <= $1::integer AND bytes <= $2::bigint
     THEN jsonb_build_object('Groups',(SELECT coalesce(jsonb_agg(data),'[]') FROM groups),
@@ -13833,6 +13949,7 @@ SELECT CASE WHEN inputs <= $1::integer AND bytes <= $2::bigint
         'PrimaryHosts',(SELECT coalesce(jsonb_agg(data),'[]') FROM primary_hosts),
         'AliasHosts',(SELECT coalesce(jsonb_agg(data),'[]') FROM alias_hosts),
         'Domains',(SELECT coalesce(jsonb_agg(data),'[]') FROM domain_hosts),
+        'Tenants',(SELECT coalesce(jsonb_agg(data),'[]') FROM tenant_hosts),
         'Reservations',(SELECT coalesce(jsonb_agg(data),'[]') FROM reservations),
         'GlobalRoutes',$3::uuid IS NULL) ELSE NULL::jsonb END::jsonb AS data,
     inputs::bigint, bytes::bigint FROM bounds

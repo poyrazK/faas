@@ -16,15 +16,19 @@ import (
 // Only proposed rows differ from the store. Callers hold m.mu until the
 // verdict and publication, including related intent and activity bookkeeping.
 type memTrafficPolicyChange struct {
-	GlobalRoutes bool
-	Rules        map[string]EdgeRule
-	Presets      map[string]CorsPreset
-	Apps         map[string]App
-	Environments map[string]ProjectEnvironment
-	Policies     map[string]ProjectEnvironmentEdgePolicy
-	Aliases      map[string]DeploymentAlias
-	Deployments  map[string]Deployment
-	Domains      map[string]CustomDomain
+	GlobalRoutes       bool
+	Rules              map[string]EdgeRule
+	Presets            map[string]CorsPreset
+	Apps               map[string]App
+	Environments       map[string]ProjectEnvironment
+	Policies           map[string]ProjectEnvironmentEdgePolicy
+	Aliases            map[string]DeploymentAlias
+	Deployments        map[string]Deployment
+	Domains            map[string]CustomDomain
+	TenantSurfaces     map[string]TenantSurface
+	TenantHostnames    map[string]TenantHostname // keyed by row ID, not case aliases
+	PlatformTenants    map[string]PlatformTenant
+	TenantSurfaceLinks map[string]string
 }
 
 func visitMemTrafficRows[T any](ctx context.Context, rows, proposed map[string]T, visit func(T) error) error {
@@ -203,6 +207,11 @@ func (m *MemStore) readMemTrafficHostAnalysisLocked(ctx context.Context, account
 	}); err != nil {
 		return view, err
 	}
+	if !change.GlobalRoutes {
+		if err := m.appendMemTrafficTenantHostsLocked(ctx, account, change, &view, len(groups)+len(view.Environments)+len(view.PrimaryHosts)+len(view.AliasHosts)+len(view.Domains)); err != nil {
+			return view, err
+		}
+	}
 	for _, group := range groups {
 		view.Groups = append(view.Groups, group)
 		if group.Preset != "" {
@@ -218,7 +227,7 @@ func (m *MemStore) readMemTrafficHostAnalysisLocked(ctx context.Context, account
 			return fmt.Errorf("state: encode in-memory traffic preset: %w", err)
 		}
 		view.Assets = append(view.Assets, trafficHostAsset{ID: preset.ID, Compiled: int64(len(encoded))})
-		return checkMemTrafficAnalysisInputs(len(view.Groups) + len(view.Environments) + len(view.PrimaryHosts) + len(view.AliasHosts) + len(view.Domains) + len(view.Assets))
+		return checkMemTrafficAnalysisInputs(len(view.Groups) + len(view.Environments) + len(view.PrimaryHosts) + len(view.AliasHosts) + len(view.Domains) + len(view.Tenants) + len(view.Assets))
 	})
 	if err != nil {
 		return view, err
@@ -241,6 +250,7 @@ func (m *MemStore) readMemTrafficHostAnalysisLocked(ctx context.Context, account
 	sort.Strings(view.PrimaryHosts)
 	sort.Strings(view.AliasHosts)
 	sort.Slice(view.Domains, func(i, j int) bool { return view.Domains[i].Domain < view.Domains[j].Domain })
+	sort.Slice(view.Tenants, func(i, j int) bool { return view.Tenants[i].Host < view.Tenants[j].Host })
 	metadata, err := json.Marshal(view)
 	if err != nil {
 		return view, fmt.Errorf("state: encode in-memory traffic metadata: %w", err)

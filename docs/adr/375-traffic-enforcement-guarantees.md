@@ -737,6 +737,34 @@ the same before/after projections before publishing a row or activity entry,
 and observes cancellation. This closes custom-domain writer coordination;
 other reservation writers and real daemon acceptance remain separate gates.
 
+### Follow-up: serving tenant-host policy bounds
+
+Owned host analysis includes verified hostnames on active tenant surfaces whose
+app belongs to the same account, is public and is not deleted. A suspended
+platform tenant contributes no serving scope. The binding identity includes
+the hostname row, surface, app and optional platform tenant; new activation
+cannot inherit a primary URL, custom-domain or earlier tenant binding allowance.
+Tenant hostnames are exact, case-insensitive claims, with platform URL parsers
+taking precedence. Bounds cover the potential tenant-enabled serving path;
+configuration-off does not permit publishing a policy that cannot later serve.
+Public snapshot tenant surface, hostname, binding and reservation reads retain
+the database's case-insensitive hostname operator. Explicit text parameters
+must be converted to citext so the snapshot agrees with native routing reads.
+
+Direct hostname verification, surface activation, tenant reactivation and
+surface linking use the existing account transaction and before/after bound.
+Challenge verification additionally carries the observed token and original
+hostname/surface identity through lock waits. The DNS poller requires that
+challenge-aware seam before publishing and emits no verification notification
+for stale or refused publication. Stored challenge proofs never enter policy
+analysis metadata. The in-memory mirror validates proposed rows before writes.
+
+This is a prerequisite for complete tenant transitions. Bulk apply,
+reconciliation, offboarding and all cross-account shadow/removal/reservation
+writers still need the shared complete binding projection and acceptance.
+Security withdrawal and negative transitions retain their existing semantics
+until those writers are guarded; this change does not accept the release gate.
+
 ### Follow-up: bounded request decision evidence
 
 Public-handler requests and managed HTTP service calls receive a separate,

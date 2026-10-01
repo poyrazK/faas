@@ -31,6 +31,8 @@ type Querier interface {
 	// subject behavior.
 	AccountIDByGitHubOIDCRepositoryIdentity(ctx context.Context, db DBTX, arg AccountIDByGitHubOIDCRepositoryIdentityParams) (pgtype.UUID, error)
 	AccountsByIDs(ctx context.Context, db DBTX, dollar_1 []pgtype.UUID) ([]AccountsByIDsRow, error)
+	ActivateTrafficPlatformTenant(ctx context.Context, db DBTX, arg ActivateTrafficPlatformTenantParams) ([]byte, error)
+	ActivateTrafficTenantSurface(ctx context.Context, db DBTX, arg ActivateTrafficTenantSurfaceParams) (int64, error)
 	AdmitTrafficRetry(ctx context.Context, db DBTX, arg AdmitTrafficRetryParams) (int64, error)
 	AppByID(ctx context.Context, db DBTX, id pgtype.UUID) (AppByIDRow, error)
 	AppBySlug(ctx context.Context, db DBTX, slug string) (AppBySlugRow, error)
@@ -798,6 +800,7 @@ type Querier interface {
 	MarkDeploymentSuperseded(ctx context.Context, db DBTX, id pgtype.UUID) error
 	MarkDomainVerified(ctx context.Context, db DBTX, domain interface{}) error
 	MarkTrafficDomainVerified(ctx context.Context, db DBTX, arg MarkTrafficDomainVerifiedParams) (int64, error)
+	MarkTrafficTenantHostnameVerified(ctx context.Context, db DBTX, arg MarkTrafficTenantHostnameVerifiedParams) (int64, error)
 	MarkTriggerRecordDeadLetter(ctx context.Context, db DBTX, arg MarkTriggerRecordDeadLetterParams) error
 	MarkTriggerRecordRetry(ctx context.Context, db DBTX, arg MarkTriggerRecordRetryParams) error
 	MarkTriggerRecordSucceeded(ctx context.Context, db DBTX, id pgtype.UUID) error
@@ -1050,6 +1053,8 @@ type Querier interface {
 	ReadServicePolicyReleaseCandidates(ctx context.Context, db DBTX, arg ReadServicePolicyReleaseCandidatesParams) ([]ReadServicePolicyReleaseCandidatesRow, error)
 	ReadServicePolicyTestApp(ctx context.Context, db DBTX, arg ReadServicePolicyTestAppParams) (ReadServicePolicyTestAppRow, error)
 	ReadServicePolicyTestMember(ctx context.Context, db DBTX, appID pgtype.UUID) (ScenarioTestMember, error)
+	ReadTenantHostnameTrafficOwner(ctx context.Context, db DBTX, arg ReadTenantHostnameTrafficOwnerParams) (ReadTenantHostnameTrafficOwnerRow, error)
+	ReadTenantSurfaceTrafficAccount(ctx context.Context, db DBTX, surfaceID pgtype.UUID) (pgtype.UUID, error)
 	// Existing slug reservations, including tombstones/internal apps, keep their key.
 	ReadTrafficAliasHostnameConflict(ctx context.Context, db DBTX, hostLabel string) (bool, error)
 	ReadTrafficDeploymentStatus(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (string, error)

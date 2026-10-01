@@ -27,7 +27,7 @@ func trafficDomainClaimPrecedes(a, b trafficDomainClaim) bool {
 
 func selectTrafficDomainBindings(bindings map[trafficHostDomain]*trafficHostEnvironment, claim *trafficDomainClaim, blocked bool) {
 	for binding := range bindings {
-		if binding.Domain != "" && (blocked || !IsWildcardCustomDomain(binding.Domain) && strings.ContainsRune(binding.Domain, '*') || claim == nil || !claim.Eligible ||
+		if binding.Tenant == "" && binding.Domain != "" && (blocked || !IsWildcardCustomDomain(binding.Domain) && strings.ContainsRune(binding.Domain, '*') || claim == nil || !claim.Eligible ||
 			binding != (trafficHostDomain{Domain: claim.Domain, App: claim.App, Environment: claim.Environment})) {
 			delete(bindings, binding)
 		}
@@ -51,7 +51,7 @@ func checkTrafficBoundHost(ctx context.Context, views [2]trafficHostAnalysis, sc
 }
 
 func (m *hostAnalysisMachine) addTrafficBindingLanguages(ctx context.Context, side int, view trafficHostAnalysis) error {
-	if view.GlobalRoutes || view.SelectDomains || view.AllowGlobalRoutes {
+	if view.GlobalRoutes || view.SelectDomains || view.AllowGlobalRoutes || len(view.Tenants) > 0 {
 		if err := m.addTrafficNamespaces(side, view.AppsSuffix); err != nil {
 			return err
 		}

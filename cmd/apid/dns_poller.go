@@ -161,8 +161,13 @@ func (s *server) runVerifyOnce(ctx context.Context, log *slog.Logger) {
 	}
 	for _, h := range pendingHostnames {
 		if checkTXT(ctx, h.Hostname, h.ChallengeToken) {
-			if err := s.store.MarkTenantHostnameVerified(ctx, h.Hostname); err != nil {
+			matched, err := s.verifyTenantHostnameChallenge(ctx, h.Hostname, h.ChallengeToken)
+			if err != nil {
 				log.Warn("dns_poller: mark tenant hostname verified failed", "hostname", h.Hostname, "err", err)
+				continue
+			}
+			if !matched {
+				log.Info("dns_poller: stale tenant hostname challenge ignored", "hostname", h.Hostname)
 				continue
 			}
 			// tenant_surface_changed fires on the tenant_hostnames

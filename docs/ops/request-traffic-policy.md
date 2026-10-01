@@ -186,6 +186,22 @@ retained presets and the selected overlay. Overlapping potential owned bindings
 are checked separately. A new domain/app/environment binding has no prior
 overload allowance.
 
+Owned analysis also includes verified hostnames on active tenant surfaces with
+a public, non-deleted app in the same account and no suspended platform tenant.
+The potential tenant-enabled path is bounded even while its runtime flag is
+off. Hostname row, surface, app and platform tenant form the binding identity;
+verification, surface activation, direct tenant reactivation and surface linking
+cannot inherit an earlier binding's overload allowance. Platform URL namespaces
+take precedence over tenant claims. Challenge tokens and tenant display names
+never enter the bounded analysis metadata.
+
+Those direct writers use the existing account transaction and commit guard.
+The DNS poller repeats its observed challenge and captured hostname/surface
+identity through account-lock waits. Stale or refused verification leaves the
+claim unchanged and emits no verification audit. Direct platform tenant status
+and link APIs return the existing structured 422 policy errors on bound refusal.
+Repair the matching policy before retrying publication.
+
 The public compiler resolves the actual binding using the captured router
 namespace in the same snapshot. Exact ordinary domains, aliases and tenant
 routes do not inherit an environment from a shadowed domain. Fresh requests
@@ -202,7 +218,8 @@ preserve the database's case-insensitive domain identity.
 
 This initial projection includes potential legacy tag-prefixed primary URLs
 conservatively. Exact legacy alias shadowing, deletion/fallback transitions,
-immutable revision URL activation, tenant-surface publication and operator
+immutable revision URL activation, bulk tenant apply/reconciliation/offboarding,
+cross-account tenant shadow/removal/reservation transitions and operator
 namespace changes still need the complete binding projection and acceptance.
 
 Custom-domain deletion now checks newly exposed exact/wildcard fallback owners,
@@ -294,9 +311,11 @@ preserve related project, cron, preview-set and activity intent.
 
 MemStore also checks route-only global aggregates and domain creation,
 verification and removal under that mutex before publishing intent or activity.
-Complete alias/positive-domain/tenant binding transitions and namespace changes, global binding/synthetic
-path agreement and recovery acceptance remain rollout requirements. These
-write checks do not establish release acceptance.
+Direct tenant verification, activation, reactivation and linking also check
+proposed rows before publication. Complete alias and bulk/cross-account tenant
+binding transitions and namespace changes, global binding/synthetic path
+agreement and recovery acceptance remain rollout requirements. These write
+checks do not establish release acceptance.
 
 Before dispatch, the public routing transaction re-resolves the host projection
 and compares its private content fingerprint. Changed settings, alias/domain

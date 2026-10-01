@@ -5150,7 +5150,7 @@ SELECT jsonb_build_object(
     'Status', s.status
 )::jsonb AS data
 FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id = h.surface_id
-WHERE h.hostname = sqlc.arg(host)::text AND s.status <> 'deleted';
+WHERE h.hostname = sqlc.arg(host)::text::citext AND s.status <> 'deleted';
 
 -- name: ReadPublicHostTenantHostname :one
 SELECT jsonb_build_object(
@@ -5159,7 +5159,7 @@ SELECT jsonb_build_object(
     'VerifiedAt', h.verified_at
 )::jsonb AS data
 FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id = h.surface_id
-WHERE h.hostname = sqlc.arg(host)::text AND s.status <> 'deleted';
+WHERE h.hostname = sqlc.arg(host)::text::citext AND s.status <> 'deleted';
 
 -- name: ReadPublicHostTenantBinding :one
 SELECT jsonb_build_object(
@@ -5173,7 +5173,7 @@ SELECT jsonb_build_object(
 )::jsonb AS data
 FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id = h.surface_id
 LEFT JOIN platform_tenants t ON t.id = s.platform_tenant_id
-WHERE h.hostname = sqlc.arg(host)::text AND s.status <> 'deleted';
+WHERE h.hostname = sqlc.arg(host)::text::citext AND s.status <> 'deleted';
 
 -- name: ReadPublicHostReservation :one
 -- A routing miss is not a free hostname while customer intent still reserves
@@ -5189,7 +5189,7 @@ SELECT (
                           AND strpos(sqlc.arg(wildcard_host)::text,'*')=0
                           AND right(sqlc.arg(wildcard_host),length(lower(btrim(domain,sqlc.arg(trim_characters))))-1)=substr(lower(btrim(domain,sqlc.arg(trim_characters))),2)
                           AND sqlc.arg(wildcard_host)<>substr(lower(btrim(domain,sqlc.arg(trim_characters))),3))))
-    OR EXISTS (SELECT 1 FROM tenant_hostnames WHERE hostname = nullif(sqlc.arg(host)::text, ''))
+    OR EXISTS (SELECT 1 FROM tenant_hostnames WHERE hostname = nullif(sqlc.arg(host)::text, '')::citext)
 )::boolean AS reserved;
 
 -- name: ReadPublicHostRoutePolicy :one
@@ -5432,6 +5432,16 @@ WITH environment_policies AS MATERIALIZED (
       AND d.status IN ('pending','building','imaging','snapshotting','live','superseded')
       AND sqlc.arg(apps_suffix)::text<>''
     ORDER BY a.id,z.name LIMIT (sqlc.arg(max_inputs)::integer+1)
+), tenant_hosts AS (
+    SELECT jsonb_build_object('Host',lower(h.hostname::text),'App',a.id,'Surface',s.id,'ID',h.id,
+        'PlatformTenant',coalesce(s.platform_tenant_id::text,'')) AS data
+    FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id=h.surface_id
+    JOIN apps a ON a.id=s.app_id AND a.account_id=s.account_id
+    LEFT JOIN platform_tenants t ON t.id=s.platform_tenant_id
+    WHERE s.account_id=sqlc.narg(account_id)::uuid AND s.status='active'
+      AND h.verified_at IS NOT NULL AND a.status<>'deleted' AND a.visibility<>'internal'
+      AND coalesce(t.status<>'suspended',true)
+    ORDER BY h.hostname::text COLLATE "C" LIMIT (sqlc.arg(max_inputs)::integer+1)
 ), domain_hosts AS (
     SELECT jsonb_build_object('Domain',d.domain,'App',a.id,'Environment',coalesce(d.environment_id::text,'')) AS data
     FROM custom_domains d JOIN apps a ON a.id=d.app_id
@@ -5451,17 +5461,18 @@ WITH environment_policies AS MATERIALIZED (
         WHERE sqlc.narg(account_id)::uuid IS NULL
     ) claim ORDER BY data->>'Kind',data->>'Host' LIMIT (sqlc.arg(max_inputs)::integer+1)
 ), bounds AS (
-    SELECT (SELECT count(*) FROM groups)+(SELECT count(*) FROM assets)+(SELECT count(*) FROM environments)+(SELECT count(*) FROM primary_hosts)+(SELECT count(*) FROM alias_hosts)+(SELECT count(*) FROM domain_hosts)+(SELECT count(*) FROM reservations) AS inputs,
+    SELECT (SELECT count(*) FROM groups)+(SELECT count(*) FROM assets)+(SELECT count(*) FROM environments)+(SELECT count(*) FROM primary_hosts)+(SELECT count(*) FROM alias_hosts)+(SELECT count(*) FROM domain_hosts)+(SELECT count(*) FROM tenant_hosts)+(SELECT count(*) FROM reservations) AS inputs,
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM groups)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM assets)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM environments)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM primary_hosts)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM alias_hosts)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM domain_hosts)+
+        (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM tenant_hosts)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM reservations)+
         octet_length(jsonb_build_object('Groups','[]'::jsonb,'Assets','[]'::jsonb,
             'Environments','[]'::jsonb,'PrimaryHosts','[]'::jsonb,'AliasHosts','[]'::jsonb,'Domains','[]'::jsonb,
-            'Reservations','[]'::jsonb,'GlobalRoutes',false)::text) AS bytes
+            'Tenants','[]'::jsonb,'Reservations','[]'::jsonb,'GlobalRoutes',false)::text) AS bytes
 )
 SELECT CASE WHEN inputs <= sqlc.arg(max_inputs)::integer AND bytes <= sqlc.arg(max_bytes)::bigint
     THEN jsonb_build_object('Groups',(SELECT coalesce(jsonb_agg(data),'[]') FROM groups),
@@ -5470,6 +5481,7 @@ SELECT CASE WHEN inputs <= sqlc.arg(max_inputs)::integer AND bytes <= sqlc.arg(m
         'PrimaryHosts',(SELECT coalesce(jsonb_agg(data),'[]') FROM primary_hosts),
         'AliasHosts',(SELECT coalesce(jsonb_agg(data),'[]') FROM alias_hosts),
         'Domains',(SELECT coalesce(jsonb_agg(data),'[]') FROM domain_hosts),
+        'Tenants',(SELECT coalesce(jsonb_agg(data),'[]') FROM tenant_hosts),
         'Reservations',(SELECT coalesce(jsonb_agg(data),'[]') FROM reservations),
         'GlobalRoutes',sqlc.narg(account_id)::uuid IS NULL) ELSE NULL::jsonb END::jsonb AS data,
     inputs::bigint, bytes::bigint FROM bounds;
@@ -5521,6 +5533,33 @@ ORDER BY account_id LIMIT (sqlc.arg(max_inputs)::integer+1);
 
 -- name: LockCustomDomainQuotaAccount :one
 SELECT id FROM accounts WHERE id=sqlc.arg(account_id)::uuid FOR UPDATE;
+
+-- name: ReadTenantSurfaceTrafficAccount :one
+SELECT account_id FROM tenant_surfaces WHERE id=sqlc.arg(surface_id)::uuid;
+
+-- name: ReadTenantHostnameTrafficOwner :one
+SELECT h.id,s.account_id,h.surface_id
+FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id=h.surface_id
+WHERE h.hostname=sqlc.arg(hostname)::text::citext AND
+    (NOT sqlc.arg(challenge_bound)::boolean OR
+        h.challenge_token=sqlc.arg(token)::text AND h.verified_at IS NULL);
+
+-- name: MarkTrafficTenantHostnameVerified :execrows
+UPDATE tenant_hostnames SET verified_at=now(),last_check_at=now(),last_error=''
+WHERE hostname=sqlc.arg(hostname)::text::citext AND id=sqlc.arg(hostname_id)::uuid
+  AND surface_id=sqlc.arg(surface_id)::uuid AND
+    (NOT sqlc.arg(challenge_bound)::boolean OR
+        challenge_token=sqlc.arg(token)::text AND verified_at IS NULL);
+
+-- name: ActivateTrafficTenantSurface :execrows
+UPDATE tenant_surfaces SET status='active',updated_at=now()
+WHERE id=sqlc.arg(surface_id)::uuid AND account_id=sqlc.arg(account_id)::uuid;
+
+-- name: ActivateTrafficPlatformTenant :one
+UPDATE platform_tenants SET status='active',updated_at=now()
+WHERE id=sqlc.arg(tenant_id)::uuid AND account_id=sqlc.arg(account_id)::uuid
+RETURNING jsonb_build_object('ID',id,'AccountID',account_id,'ExternalRef',external_ref,
+    'Name',name,'Status',status,'CreatedAt',created_at,'UpdatedAt',updated_at)::jsonb AS data;
 
 -- name: CompareAndSetTrafficAppStatus :execrows
 UPDATE apps SET status=sqlc.arg(next)::text,

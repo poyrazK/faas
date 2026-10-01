@@ -164,6 +164,9 @@ func (s *PgStore) SetPlatformTenantStatus(ctx context.Context, accountID, tenant
 	if !validPlatformTenantStatus(status) {
 		return PlatformTenant{}, ErrInvalidArgument
 	}
+	if status == PlatformTenantActive {
+		return s.activateTrafficPlatformTenant(ctx, accountID, tenantID)
+	}
 	return scanPlatformTenant(s.pool.QueryRow(ctx, `
 		update platform_tenants set status = $3, updated_at = now()
 		where account_id = $1::uuid and id = $2::uuid
@@ -206,11 +209,11 @@ func (s *PgStore) LinkPlatformTenantConsumer(ctx context.Context, accountID, ten
 }
 
 func (s *PgStore) LinkPlatformTenantSurface(ctx context.Context, accountID, tenantID, surfaceID string) (TenantSurface, error) {
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(accountID))
 	if err != nil {
 		return TenantSurface{}, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	if err := lockPlatformTenantAccount(ctx, tx, accountID); err != nil {
 		return TenantSurface{}, err
 	}

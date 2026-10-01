@@ -128,7 +128,7 @@ func (m *MemStore) ListPlatformTenantsPage(_ context.Context, accountID string, 
 	return out, encodePageToken(last.CreatedAt, last.ID), nil
 }
 
-func (m *MemStore) SetPlatformTenantStatus(_ context.Context, accountID, tenantID, status string) (PlatformTenant, error) {
+func (m *MemStore) SetPlatformTenantStatus(ctx context.Context, accountID, tenantID, status string) (PlatformTenant, error) {
 	if !validPlatformTenantStatus(status) {
 		return PlatformTenant{}, ErrInvalidArgument
 	}
@@ -140,6 +140,11 @@ func (m *MemStore) SetPlatformTenantStatus(_ context.Context, accountID, tenantI
 	}
 	tenant.Status = status
 	tenant.UpdatedAt = time.Now().UTC()
+	if status == PlatformTenantActive {
+		if err := m.validateMemTrafficPolicyChangeLocked(ctx, accountID, memTrafficPolicyChange{PlatformTenants: map[string]PlatformTenant{tenantID: tenant}}); err != nil {
+			return PlatformTenant{}, err
+		}
+	}
 	m.platformTenants[tenant.ID] = tenant
 	return tenant, nil
 }
@@ -168,7 +173,7 @@ func (m *MemStore) LinkPlatformTenantConsumer(_ context.Context, accountID, tena
 	return consumer, nil
 }
 
-func (m *MemStore) LinkPlatformTenantSurface(_ context.Context, accountID, tenantID, surfaceID string) (TenantSurface, error) {
+func (m *MemStore) LinkPlatformTenantSurface(ctx context.Context, accountID, tenantID, surfaceID string) (TenantSurface, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	tenant, ok := m.platformTenants[tenantID]
@@ -181,6 +186,9 @@ func (m *MemStore) LinkPlatformTenantSurface(_ context.Context, accountID, tenan
 	}
 	if attached := m.platformTenantBySurface[surfaceID]; attached != "" && attached != tenantID {
 		return TenantSurface{}, ErrConflict
+	}
+	if err := m.validateMemTrafficPolicyChangeLocked(ctx, accountID, memTrafficPolicyChange{TenantSurfaceLinks: map[string]string{surfaceID: tenantID}}); err != nil {
+		return TenantSurface{}, err
 	}
 	m.platformTenantBySurface[surfaceID] = tenantID
 	return surface, nil
@@ -295,7 +303,7 @@ func (m *MemStore) PlatformTenantHostBinding(_ context.Context, host string) (Pl
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, hostname := range m.tenantHostnames {
-		if hostname.Hostname != host {
+		if !strings.EqualFold(hostname.Hostname, host) {
 			continue
 		}
 		surface, ok := m.tenantSurfaces[hostname.SurfaceID]

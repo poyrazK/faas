@@ -1810,3 +1810,70 @@ unchecked. Tenant/alias/revision/operator reservation transitions, broader
 runtime/preview agreement and observations, load/recovery/customer/staging and
 native VM/firewall/process-death/leak acceptance remain pending. No dedicated
 Linux x86_64 KVM host is available.
+
+## 2026-10-01 — serving tenant-host policy bounds
+
+Owned analysis now includes verified hostnames on active tenant surfaces with
+a public, non-deleted app in the same account and no suspended platform tenant.
+It checks the potential tenant-enabled path even when the runtime flag is off.
+Hostname row, surface, app and platform tenant identify each serving binding;
+a newly verified/activated/linked binding has zero prior overload allowance.
+Platform URL namespaces take precedence. Challenge tokens and tenant names do
+not enter the bounded metadata transfer.
+
+Direct hostname verification, surface activation, tenant reactivation and
+surface linking use the account transaction's before/after bound. The memory
+store checks proposed rows before publishing. Challenge verification repeats
+the observed token and captured hostname/surface IDs after lock waits, so a
+stale waiter cannot verify a replacement row, even with a reused token.
+The DNS poller requires that seam and emits no verification audit for stale or
+refused publication. Direct platform tenant status/link APIs return the existing
+structured 422 policy problems. Repair leaves publication retryable.
+
+Memory verification keeps hostname case aliases coherent. Public snapshot
+tenant surface, hostname, binding and reservation reads now explicitly retain
+citext comparison, correcting their former case-sensitive text operator.
+
+Verification on Go 1.25.13 with CGO disabled:
+
+- Complete state, internal gateway and API unit suites passed. Selected private
+  PostgreSQL coverage passed all 482 named cases with no skips: 336 state,
+  99 internal gateway and 47 API.
+- 6,839 distinct named cases passed across the accepted profiles: 2,354 state,
+  822 internal gateway and 3,663 API. Another 1,021 guarded named cases remain
+  without acceptance in these profiles (998 state, seven gateway, 16 API).
+- All three affected Go packages, including test sources, passed golangci-lint
+  2.4.0 with zero issues. SQLC 1.31.1 reproduces all four generated Go files.
+- The source database's public schema remains unmigrated. No native host,
+  external daemon, fleet or staging acceptance is claimed.
+
+Focused regressions cover direct writer refusal/repair, stale challenges,
+cancellation, namespace and foreign-account isolation, case aliases, app
+visibility, skinny metadata eligibility/privacy/bounds, observed lock waits,
+claim replacement and single-connection reuse. Actual DNS passes check
+stale/refused audit suppression and missing-seam refusal. Two in-process HTTP
+peers use PostgreSQL routing/policy reads over HTTP/1.1 and negotiated HTTP/2,
+including an uppercase stored claim, activation/repair, suspension and refused
+reactivation without notifications. Their scheduler and forwarding are test
+seams; this is not daemon, VM, fleet or staging acceptance.
+
+The first API build diagnostic had passed a private poller row to a helper that
+expected a state row; the helper now accepts the observed hostname/token.
+The first serving HTTP fixture seeded a default deployment for a project-backed
+app that dispatches in production. The corrected fixture retains admission and
+HTTP assertions. A separate uppercase snapshot regression demonstrated the
+case-sensitive SQL error before the citext fix. No source overlays, exclusions
+or weaker acceptance assertions were used. Initial lint found two test callback
+context-inheritance issues. The callback now uses its supplied context; all ten
+affected named API cases and full lint passed again. Production and assertions
+were unchanged after the full unit/PostgreSQL gates. Only this test callback and
+the tracker finalization differ from the initial frozen sources.
+
+Receipts, frozen source hashes and compressed logs are in
+`/Users/poyrazk/dev/Cloud/gregale/outputs/traffic-tenant-serving-bounds-20261001/`.
+No schema, SDK or limit changes are needed. All six release guarantees remain
+unchecked. Bulk tenant apply/reconciliation/offboarding and cross-account
+tenant shadow/removal/reservation writers remain pending, along with complete
+alias/revision/operator transitions, runtime/preview agreement, observations,
+load/recovery/customer/staging and native VM/firewall/process-death/leak
+acceptance. No dedicated Linux x86_64 KVM host is available.
