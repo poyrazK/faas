@@ -34,7 +34,7 @@ curl -fsSL https://get.gregale.dev | sh -s -- --version v0.1.18 --dir /usr/local
 
 | Flag | Environment variable | Default |
 |---|---|---|
-| `--version <tag>` | `GREGALE_VERSION` | newest stable release |
+| `--version <tag>` | `GREGALE_VERSION` | newest stable with matching CLI assets; otherwise newest compatible release |
 | `--dir <path>` | `GREGALE_INSTALL_DIR` | `$HOME/.local/bin`, or `/usr/local/bin` as root |
 
 Upgrading is re-running the script; it replaces the binary in place. A
@@ -66,10 +66,13 @@ sha256sum --ignore-missing -c CLI-SHA256SUMS
 
 ### Release candidates
 
-Every tag so far is a prerelease (`v0.1.18-rc.119`). The installer resolves
-the newest *stable* release; while none exists it falls back to the newest
-prerelease and says so on stderr. Once a stable tag ships, `curl | sh`
-silently starts preferring it — pass `--version` to stay on a specific rc.
+The installer prefers the newest *stable* release when it has the archive
+for your platform and a checksum asset. Older releases such as `v0.1.17`
+predate that format. If the newest stable release cannot be installed, the
+installer checks recent published releases for matching CLI assets and warns
+before selecting a prerelease. Releases still uploading their assets are
+skipped. Pass `--version` to select an exact tag; an explicit install fails
+if that tag or its assets are unavailable.
 
 ## npm
 
