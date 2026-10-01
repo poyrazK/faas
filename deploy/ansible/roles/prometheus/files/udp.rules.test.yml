@@ -68,3 +68,22 @@ tests:
             exp_annotations:
               summary: "UDP peer resource limits are ending sessions"
               description: "UDP peer byte/message or transport resource limits are being reached repeatedly. Inspect client traffic and configured limits; this is distinct from an admission or forwarding failure."
+  - interval: 1m
+    input_series:
+      - series: 'gatewayd_public_udp_reconciliation_errors_total{instance="edge-1"}'
+        values: '0+1x10 10+0x20'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: FaasUDPListenerReconciliationFailing
+        exp_alerts:
+          - exp_labels:
+              instance: edge-1
+              severity: warn
+              component: gatewayd-public
+              family: udp_ingress
+            exp_annotations:
+              summary: "Public UDP listener reconciliation is failing"
+              description: "Inspect gatewayd-public errors for durable-state reads, invalid endpoint identities or bind failures. Check enabled UDP intents and reserved port ownership before restarting the gateway."
+      - eval_time: 22m
+        alertname: FaasUDPListenerReconciliationFailing
+        exp_alerts: []

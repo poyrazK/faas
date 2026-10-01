@@ -905,3 +905,7 @@ Final TestSpecCompliance passed routes, schemas and error-code cases, and make s
 ### Combined UDP store-cancellation follow-up (2026-10-01)
 
 Draft #3997 now includes memory-store cancellation changes and both regression fixtures at head `9fc534704`. The cherry-picks omitted integration-only qualification-document changes, retaining that history here. On the exact combined candidate, pre-canceled and deterministic lock-contention create/update/delete tests passed three race repetitions without skips and scoped state lint found zero issues (`/tmp/gregale-udp-stack-store-cancel-{tests,lint}.log`). The follow-up was pushed and the draft description updated. All launched handles are terminal. Full refreshed CI, operational/recovery qualification and native VM/load/leak acceptance remain pending; no merge or rollout occurred.
+
+### UDP reconciliation alert recovery contract (2026-10-01)
+
+Prometheus rule fixtures now cover sustained UDP reconciliation errors firing the existing reconciliation alert and its resolution after the error counter stops increasing and the lookback expires. The complete UDP alert fixture passed with promtool (`/tmp/gregale-udp-alert-recovery-tests.log`), retaining peer/resource failure and normal cancellation/source-denial exclusion cases. This verifies synthetic rule behavior rather than a deployed Prometheus scrape or node recovery. The current #3997 CI snapshot reported three in-progress checks; no terminal result was inferred or rerun requested. Operational slice publication and native/deployed acceptance remain pending.
