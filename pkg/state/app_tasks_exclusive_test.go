@@ -55,7 +55,7 @@ func TestExclusiveAppTaskGenerationFencesStaleCompletion(t *testing.T) {
 	task, err := store.CreateAppTask(ctx, CreateAppTaskParams{
 		AccountID: account.ID, AppID: app.ID, DeploymentID: deployment.ID,
 		ExclusiveOperationID: op.ID, ExclusiveGeneration: firstOwner.Generation,
-		Kind: AppTaskKindManual, Command: []string{"bin/migrate"}, TimeoutSeconds: 30,
+		Kind: AppTaskKindManual, Command: []string{"bin/migrate"}, TimeoutSeconds: 30, CreatedAt: now,
 	})
 	if err != nil {
 		t.Fatal(err)
