@@ -909,3 +909,7 @@ Draft #3997 now includes memory-store cancellation changes and both regression f
 ### UDP reconciliation alert recovery contract (2026-10-01)
 
 Prometheus rule fixtures now cover sustained UDP reconciliation errors firing the existing reconciliation alert and its resolution after the error counter stops increasing and the lookback expires. The complete UDP alert fixture passed with promtool (`/tmp/gregale-udp-alert-recovery-tests.log`), retaining peer/resource failure and normal cancellation/source-denial exclusion cases. This verifies synthetic rule behavior rather than a deployed Prometheus scrape or node recovery. The current #3997 CI snapshot reported three in-progress checks; no terminal result was inferred or rerun requested. Operational slice publication and native/deployed acceptance remain pending.
+
+### Isolated UDP operational monitoring review (2026-10-01)
+
+Draft [#3998](https://github.com/poyrazK/faas/pull/3998), commit `c5ed6963d`, stacks on public wiring #3992 and isolates four UDP alert rules, fixed-label metrics/runbook guidance and make udp-alert-check. On this exact tree promtool validated all 239 rules and passed the UDP fixture, including reconciliation failure/recovery, peer/resource failures and normal cancellation/source-denial exclusions (`/tmp/gregale-udp-monitoring-isolated-tests.log`). An extraction-only trailing blank line was removed before final whitespace verification. All launched handles are terminal. Deployed scraping/recovery and native VM/load/leak acceptance remain pending; no merge or deployment occurred.
