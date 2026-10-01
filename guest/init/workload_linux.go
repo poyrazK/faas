@@ -867,13 +867,11 @@ func runSidecar(spec workloadSpec, apiEnv, workloadEnv map[string]string, sup *S
 	}
 	if manifestErr == nil {
 		cmd.Dir = baked.EffectiveWorkingDir()
-		uid := lookupUID(baked.EffectiveUser())
-		if directRoot != "" {
-			uid = lookupUIDInRoot(directRoot, baked.EffectiveUser())
+		credential, err := processCredential(directRoot, baked.EffectiveUser())
+		if err != nil {
+			return fmt.Errorf("run sidecar %s: %w", spec.Name, err)
 		}
-		if uid > 0 {
-			procAttr.Credential = &syscall.Credential{Uid: uint32(uid), Gid: uint32(uid)}
-		}
+		procAttr.Credential = execProcessCredential(credential)
 	}
 	if directRoot != "" || procAttr.Credential != nil {
 		cmd.SysProcAttr = &procAttr

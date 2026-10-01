@@ -302,6 +302,13 @@ func PlanMeetsFullRootfs(p Plan) bool {
 	return false
 }
 
+// OCI identity resolution shares the existing image ownership trust boundary
+// and guest passwd read budget across main, companion, probe, and task launch.
+const (
+	OCIIdentityIDMax        = 65534
+	OCIIdentityFileMaxBytes = 1 << 20
+)
+
 // UserUIDOverrideMax (M-3 / ADR-142 §Decision 4) is the per-plan
 // cap on the number of /etc/passwd entries BuildFullRootfs merges
 // into /etc/faas/app_passwd. Hobby 16 / Pro 64 / Scale 256 — the

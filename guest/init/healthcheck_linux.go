@@ -655,7 +655,12 @@ func runHealthcheckPoll(ctx context.Context, manifest api.AppManifest, log *slog
 // The loop exits on ctx.Done() — the boot context the supervisor
 // Stop hook cancels.
 func runHealthcheckPollLoop(ctx context.Context, sock int, argv []string, manifest api.AppManifest, interval, timeout, startPeriod time.Duration, retries int, log *slog.Logger) {
-	uid := lookupUID(manifest.EffectiveUser())
+	credential, err := processCredential("", manifest.EffectiveUser())
+	if err != nil {
+		log.Error("healthcheck identity resolution failed", "err", err)
+		return
+	}
+	procAttr := &syscall.SysProcAttr{Credential: execProcessCredential(credential)}
 	var seq uint32
 	bootAt := time.Now()
 	for {
@@ -673,7 +678,7 @@ func runHealthcheckPollLoop(ctx context.Context, sock int, argv []string, manife
 		case <-time.After(nextDelay):
 		}
 
-		report := execHealthcheck(ctx, argv, timeout, uid, log)
+		report := execHealthcheckWithOptions(ctx, argv, timeout, int(credential.Uid), nil, "", procAttr, log)
 		report.Seq = seq
 		report.TsUnixMs = time.Now().UnixMilli()
 		report.StartPeriodS = int(startPeriod / time.Second)

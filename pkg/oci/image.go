@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/ociidentity"
 )
 
 // This package models just enough of the OCI image spec to power the two-drive
@@ -239,6 +240,9 @@ func LayersAboveBase(baseDiffIDs, appDiffIDs []string) ([]string, error) {
 // A single valid TCP ExposedPorts entry also seeds the serving port; callers
 // may replace it later with an explicit deployment override.
 func ManifestFromConfig(cfg Config) (api.AppManifest, error) {
+	if err := ociidentity.ValidateSpec(cfg.User); err != nil {
+		return api.AppManifest{}, fmt.Errorf("%w: process identity: %w", ErrImageManifestInvalid, err)
+	}
 	if len(cfg.Entrypoint) == 0 && len(cfg.Cmd) == 0 {
 		return api.AppManifest{}, fmt.Errorf("%w: image declares neither Entrypoint nor Cmd", ErrImageManifestInvalid)
 	}
@@ -355,10 +359,6 @@ func normalizeUser(user string) string {
 	}
 	if n, err := strconv.Atoi(user); err == nil && n == api.DefaultAppUID {
 		return api.DefaultAppUser
-	}
-	// Strip an optional group ("user:group") — guest-init only needs the user.
-	if u, _, ok := strings.Cut(user, ":"); ok {
-		return u
 	}
 	return user
 }
