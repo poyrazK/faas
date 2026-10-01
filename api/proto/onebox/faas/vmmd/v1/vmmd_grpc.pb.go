@@ -56,6 +56,7 @@ const (
 	Vmmd_ForwardHTTPStream_FullMethodName             = "/onebox.faas.vmmd.v1.Vmmd/ForwardHTTPStream"
 	Vmmd_ForwardRawStream_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/ForwardRawStream"
 	Vmmd_ForwardTCPStream_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/ForwardTCPStream"
+	Vmmd_ForwardUDPStream_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/ForwardUDPStream"
 	Vmmd_MountParentExt4ReadOnly_FullMethodName       = "/onebox.faas.vmmd.v1.Vmmd/MountParentExt4ReadOnly"
 	Vmmd_MaterializeParentExt4_FullMethodName         = "/onebox.faas.vmmd.v1.Vmmd/MaterializeParentExt4"
 	Vmmd_UmountParentExt4_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/UmountParentExt4"
@@ -362,6 +363,10 @@ type VmmdClient interface {
 	// first frame addresses a live instance and guest listener; the client
 	// half-closes the gRPC stream to half-close the guest socket.
 	ForwardTCPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardTCPRequest, ForwardTCPResponse], error)
+	// ForwardUDPStream carries one datagram per frame for an admitted peer.
+	// The edge validates declared listener ownership before opening the RPC.
+	// Closing the stream ends the peer session; UDP has no half-close.
+	ForwardUDPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardUDPRequest, ForwardUDPResponse], error)
 	// MountParentExt4ReadOnly (ADR-053) is the staging-only path that
 	// lets imaged compose the per-runtime base ext4 from a shared
 	// debian:12-slim parent. imaged is not root (User=faas-imaged +
@@ -869,6 +874,19 @@ func (c *vmmdClient) ForwardTCPStream(ctx context.Context, opts ...grpc.CallOpti
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Vmmd_ForwardTCPStreamClient = grpc.BidiStreamingClient[ForwardTCPRequest, ForwardTCPResponse]
 
+func (c *vmmdClient) ForwardUDPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardUDPRequest, ForwardUDPResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[6], Vmmd_ForwardUDPStream_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ForwardUDPRequest, ForwardUDPResponse]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_ForwardUDPStreamClient = grpc.BidiStreamingClient[ForwardUDPRequest, ForwardUDPResponse]
+
 func (c *vmmdClient) MountParentExt4ReadOnly(ctx context.Context, in *MountParentExt4ReadOnlyRequest, opts ...grpc.CallOption) (*MountParentExt4ReadOnlyResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(MountParentExt4ReadOnlyResponse)
@@ -1254,6 +1272,10 @@ type VmmdServer interface {
 	// first frame addresses a live instance and guest listener; the client
 	// half-closes the gRPC stream to half-close the guest socket.
 	ForwardTCPStream(grpc.BidiStreamingServer[ForwardTCPRequest, ForwardTCPResponse]) error
+	// ForwardUDPStream carries one datagram per frame for an admitted peer.
+	// The edge validates declared listener ownership before opening the RPC.
+	// Closing the stream ends the peer session; UDP has no half-close.
+	ForwardUDPStream(grpc.BidiStreamingServer[ForwardUDPRequest, ForwardUDPResponse]) error
 	// MountParentExt4ReadOnly (ADR-053) is the staging-only path that
 	// lets imaged compose the per-runtime base ext4 from a shared
 	// debian:12-slim parent. imaged is not root (User=faas-imaged +
@@ -1486,6 +1508,9 @@ func (UnimplementedVmmdServer) ForwardRawStream(grpc.BidiStreamingServer[Forward
 }
 func (UnimplementedVmmdServer) ForwardTCPStream(grpc.BidiStreamingServer[ForwardTCPRequest, ForwardTCPResponse]) error {
 	return status.Error(codes.Unimplemented, "method ForwardTCPStream not implemented")
+}
+func (UnimplementedVmmdServer) ForwardUDPStream(grpc.BidiStreamingServer[ForwardUDPRequest, ForwardUDPResponse]) error {
+	return status.Error(codes.Unimplemented, "method ForwardUDPStream not implemented")
 }
 func (UnimplementedVmmdServer) MountParentExt4ReadOnly(context.Context, *MountParentExt4ReadOnlyRequest) (*MountParentExt4ReadOnlyResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method MountParentExt4ReadOnly not implemented")
@@ -2093,6 +2118,13 @@ func _Vmmd_ForwardTCPStream_Handler(srv interface{}, stream grpc.ServerStream) e
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Vmmd_ForwardTCPStreamServer = grpc.BidiStreamingServer[ForwardTCPRequest, ForwardTCPResponse]
 
+func _Vmmd_ForwardUDPStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(VmmdServer).ForwardUDPStream(&grpc.GenericServerStream[ForwardUDPRequest, ForwardUDPResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_ForwardUDPStreamServer = grpc.BidiStreamingServer[ForwardUDPRequest, ForwardUDPResponse]
+
 func _Vmmd_MountParentExt4ReadOnly_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(MountParentExt4ReadOnlyRequest)
 	if err := dec(in); err != nil {
@@ -2442,6 +2474,12 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "ForwardTCPStream",
 			Handler:       _Vmmd_ForwardTCPStream_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "ForwardUDPStream",
+			Handler:       _Vmmd_ForwardUDPStream_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},
