@@ -953,3 +953,7 @@ The PostgreSQL state matrix shard now invokes `make udp-postgres-check` with rac
 ### Published combined database acceptance wiring
 
 Combined PR #3997 now includes retirement fix `5f59d97b8` and the strict PostgreSQL gate/CI wiring. All seven PostgreSQL contracts passed with race detection and no skips on the candidate; the memory retirement fixture passed three race-detector runs. Workflow syntax and standalone shellcheck passed. Logs `/tmp/gregale-udp-stack-postgres-gate.log` and `/tmp/gregale-udp-stack-retirement-tests.log`. The owned cluster was stopped. Remote CI for this updated candidate remains pending.
+
+### Combined customer/storage review audit
+
+PR #3997 title and description now describe the current client, cancellation, retirement, embedded-schema and strict database acceptance scope, with validation scopes and remaining native/deployed gaps explicit. Post-retirement `sqlc generate` left the candidate generated SQL unchanged, log `/tmp/gregale-udp-stack-sqlc-drift.log`; complete candidate diff whitespace check passed. Runtime PR #3992 remains a separate review dependency.
