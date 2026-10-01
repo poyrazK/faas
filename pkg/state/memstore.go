@@ -5667,6 +5667,9 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 	if p.MaxConcurrency != nil {
 		a.MaxConcurrency = *p.MaxConcurrency
 	}
+	if p.MaintenanceMode != nil {
+		a.MaintenanceMode = *p.MaintenanceMode
+	}
 	if p.Status != nil {
 		a.Status = *p.Status
 		if *p.Status != AppEvictedCold {

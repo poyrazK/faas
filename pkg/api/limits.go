@@ -7793,3 +7793,6 @@ const UDPListenerRefreshInterval = 2 * time.Second
 
 // UDPListenerReadTimeout bounds each durable intent refresh.
 const UDPListenerReadTimeout = 5 * time.Second
+
+// DeploymentTrafficPercentTotal is the total serving deployment weight.
+const DeploymentTrafficPercentTotal = 100
