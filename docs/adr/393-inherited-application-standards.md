@@ -202,8 +202,51 @@ are bounded at 16 GiB, keys at 512 bytes and materialization paths at 2,048 byte
 in `pkg/api/limits.go`; cleanup uses the central five-second deadline. These
 platform producer records confer no company key approval or scan authority.
 
+Private component scans now bind the selected rootfs producer ID and input
+hash, its exact complete artifact digest and byte size, workload, deployment,
+tenant and scope. imaged copies the bounded storage stream into a private
+0600 scratch file for local and remote backends, hashes the same bytes it
+writes, and verifies the protected file and canonical storage bytes again
+after scanning. Main and declared sidecars receive separate scans. Grype
+extracts ext4 read-only with debugfs, checks the root inode and extraction
+diagnostics, and refuses missing match arrays or oversized output. The scanner
+name, version and vulnerability database metadata come from the result;
+neither caller-supplied completion times nor inconsistent severity counts can
+be published as complete evidence.
+
+Publication rechecks the selected producer, original workload reference,
+current company publisher key, signed layer chain and any current shared-base
+binding under the existing nonwaiting owner fences. Immutable scan creation,
+current selection and the main compatibility report update are one transaction.
+Sidecar reports never replace the main report. A failed attempt selects explicit
+failed component evidence when current inputs permit publication. Revoked,
+expired or replaced producer inputs cannot publish or renew a scan; historical
+reads remain available without asserting authority. Exact retries retain the
+original storage clock and cannot reactivate an older selection. Complete
+high/critical/unknown findings remain visible evidence and block enforce mode;
+a sidecar scan failure or unsafe result also uses the live quarantine path.
+
+Component scans have a storage-owned five-minute lease clamped to the producer
+expiry. The scan pass has a five-minute deadline, and vulnerability databases
+may be at most 30 days old and cannot be future-dated. Central bounds are 8 MiB
+per retained report, 16 MiB scanner stdout, 64 KiB per diagnostic stream,
+100,000 findings, 256-byte version metadata, 128 paths per finding and 4,096
+bytes per path. Complete artifact reads use the existing 16 GiB cap. Subprocess
+diagnostics are bounded and are not echoed into logs or reports.
+
+These are component producer facts under the existing trusted imaged/database
+writer boundary. Portable fixtures verify real byte copies, real layer
+consumption, PostgreSQL atomicity and refusal behavior; injected mkfs and Grype
+fixtures do not establish native scanner execution or consumer ACKs. Scans of
+the shared base, complete two-drive approval, immutable-source refresh after
+registry verification expiry, native capture/consumption and dedicated Linux
+Grype/KVM/leakcheck acceptance remain pending. Ext4 extraction resource and
+cleanup behavior also requires native acceptance. The existing six-hour legacy
+re-scan schedule is not a renewal mechanism for the new five-minute component
+lease. Public activation remains disabled.
+
 This is a producer boundary under the existing imaged/database writer trust
-model. Source-build publisher approval, current workload scans and native boot
+model. Source-build publisher approval, complete runtime scans and native boot
 consumption remain separate. Artifact keys remain mutable; later consumers must
 freshly validate the selected expected digest and size. Existing admission
 captures do not yet include these producer identities. Historical

@@ -5678,3 +5678,58 @@ SELECT * FROM base_image_producers WHERE id=sqlc.arg(id);
 -- name: GetCurrentBaseImageProducer :one
 SELECT p.* FROM base_image_producers p JOIN base_image_producer_current c ON c.producer_id=p.id AND c.storage_key=p.storage_key
 WHERE c.storage_key=sqlc.arg(storage_key);
+
+-- name: LockDeploymentArtifactScan :one
+SELECT lock_deployment_artifact_scan(sqlc.arg(producer_id)::uuid)::jsonb AS inputs;
+
+-- name: AuthorizeDeploymentArtifactScanInsert :exec
+SELECT set_config('gregale.artifact_scan_insert',sqlc.arg(id)::uuid::text,true);
+
+-- name: InsertDeploymentArtifactScan :one
+WITH storage_clock AS MATERIALIZED (SELECT clock_timestamp() AS now),
+inputs AS MATERIALIZED (SELECT sqlc.arg(input_snapshot)::jsonb AS value)
+INSERT INTO deployment_artifact_scans(id,rootfs_producer_id,deployment_id,workload_name,input_snapshot,input_hash,result_snapshot,scanned_at,expires_at)
+SELECT sqlc.arg(id)::uuid,f.id,f.deployment_id,f.workload_name,inputs.value,sqlc.arg(input_hash)::text,
+ (CASE WHEN inputs.value->>'status'='complete' THEN inputs.value->'report'
+ ELSE jsonb_build_object('image_digest',inputs.value->>'image_reference','artifact_digest',inputs.value->>'artifact_digest',
+ 'vulnerabilities','[]'::jsonb,'severity_counts',jsonb_build_object('critical',0,'high',0,'medium',0,'low',0,'unknown',0),'error',inputs.value->>'failure') END)
+ || jsonb_build_object('status',inputs.value->>'status','scanned_at',to_char(now AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')),
+ now,least(f.expires_at,now+make_interval(secs=>sqlc.arg(ttl_seconds)::double precision))
+FROM deployment_registry_rootfs f CROSS JOIN storage_clock CROSS JOIN inputs
+WHERE f.id=sqlc.arg(producer_id)::uuid AND f.expires_at>now
+ AND (inputs.value->>'status'='failed' OR
+ ((inputs.value->'report'->>'scanner_db_built_at')::timestamptz<=now
+ AND (inputs.value->'report'->>'scanner_db_built_at')::timestamptz>=now-make_interval(secs=>sqlc.arg(db_max_age_seconds)::double precision)))
+RETURNING deployment_artifact_scans.*;
+
+-- name: GetDeploymentArtifactScanByID :one
+SELECT * FROM deployment_artifact_scans WHERE id=sqlc.arg(id)::uuid;
+
+-- name: GetDeploymentArtifactScanPointer :one
+SELECT scan_id FROM deployment_artifact_scan_current WHERE deployment_id=sqlc.arg(deployment_id)::uuid AND workload_name=sqlc.arg(workload_name)::text;
+
+-- name: SelectDeploymentArtifactScan :exec
+INSERT INTO deployment_artifact_scan_current(deployment_id,workload_name,scan_id)
+VALUES(sqlc.arg(deployment_id)::uuid,sqlc.arg(workload_name)::text,sqlc.arg(id)::uuid)
+ON CONFLICT(deployment_id,workload_name) DO UPDATE SET scan_id=EXCLUDED.scan_id;
+
+-- name: PublishDeploymentArtifactMainScan :execrows
+UPDATE deployments SET scan_result=sqlc.arg(result_snapshot)::jsonb,scan_status=sqlc.arg(status)::text,scanned_at=sqlc.arg(scanned_at)::timestamptz
+WHERE id=sqlc.arg(deployment_id)::uuid;
+
+-- name: GetCurrentDeploymentArtifactScan :one
+SELECT s.* FROM deployment_artifact_scan_current c JOIN deployment_artifact_scans s ON s.id=c.scan_id
+JOIN deployment_registry_rootfs_current p ON p.deployment_id=c.deployment_id AND p.workload_name=c.workload_name AND p.artifact_id=s.rootfs_producer_id
+JOIN deployment_registry_rootfs f ON f.id=s.rootfs_producer_id
+JOIN deployment_registry_verifications r ON r.id=f.registry_verification_id
+JOIN deployments d ON d.id=c.deployment_id AND d.app_id=r.app_id
+JOIN apps a ON a.id=d.app_id AND a.account_id=r.account_id
+LEFT JOIN deployment_sidecar_layers l ON l.deployment_id=d.id AND l.sidecar_name=c.workload_name
+WHERE a.account_id=sqlc.arg(account_id)::uuid AND a.id=sqlc.arg(app_id)::uuid AND d.id=sqlc.arg(deployment_id)::uuid
+ AND c.workload_name=sqlc.arg(workload_name)::text AND a.status<>'deleted'
+ AND s.input_snapshot->>'org_id'=coalesce(a.org_id::text,'') AND s.input_snapshot->>'scope'=d.scope
+ AND s.input_snapshot->>'rootfs_input_hash'=f.input_hash AND f.input_snapshot->>'registry_input_hash'=r.input_hash
+ AND s.input_snapshot->>'image_reference'=CASE WHEN c.workload_name='' AND d.kind='image' THEN d.image_digest
+ ELSE (SELECT CASE WHEN count(*)=1 THEN min(x->>'image') END FROM jsonb_array_elements(d.sidecars) x WHERE x->>'name'=c.workload_name) END
+ AND ((c.workload_name='' AND f.input_snapshot->>'storage_key'=d.rootfs_key AND f.input_snapshot->>'rootfs_path'=d.rootfs_path AND (f.input_snapshot->>'content_bytes')::bigint=d.rootfs_bytes)
+ OR (c.workload_name<>'' AND f.input_snapshot->>'storage_key'=l.storage_key AND (f.input_snapshot->>'content_bytes')::bigint=l.bytes AND r.input_snapshot->>'selected_reference'=l.content_digest));

@@ -143,6 +143,8 @@ type MemStore struct {
 	deploymentRegistryVerifications            map[string]DeploymentRegistryVerification
 	deploymentRegistryRootfs                   map[string]DeploymentRegistryRootfs
 	deploymentRegistryRootfsCurrent            map[string]string
+	deploymentArtifactScans                    map[string]DeploymentArtifactScan
+	deploymentArtifactScanCurrent              map[string]string
 	instanceApplicationStandardAdmissions      map[string]InstanceApplicationStandardAdmission
 	instanceApplicationStandardBoots           map[string]instanceStandardBoot
 	instanceApplicationStandardBootTokens      map[string]string
@@ -6370,6 +6372,13 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 		if sameStandardUUID(proof.Input.AppID, id) {
 			delete(m.deploymentRegistryRootfs, key)
 			delete(m.deploymentRegistryRootfsCurrent, proof.Input.DeploymentID+"\x00"+proof.Input.WorkloadName)
+		}
+	}
+
+	for key, scan := range m.deploymentArtifactScans {
+		if sameStandardUUID(scan.Input.AppID, id) {
+			delete(m.deploymentArtifactScans, key)
+			delete(m.deploymentArtifactScanCurrent, scan.Input.DeploymentID+"\x00"+scan.Input.WorkloadName)
 		}
 	}
 	for key, proof := range m.deploymentRegistryVerifications {

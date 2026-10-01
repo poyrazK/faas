@@ -51,8 +51,9 @@ func (l *Loop) reconcileSecurityScans(ctx context.Context, now time.Time, every 
 		}
 		previousStatus := dep.ScanStatus
 		previous := decodeScanEvidence(dep.ScanResult)
-		if err := l.handler.runDeployScan(ctx, app, dep); err != nil {
-			l.log.Warn("imaged: security re-scan failed", "deployment", dep.ID, "app", app.Slug, "err", err)
+		scanErr := l.handler.runDeployScan(ctx, app, dep)
+		if scanErr != nil {
+			l.log.Warn("imaged: security re-scan failed", "deployment", dep.ID, "app", app.Slug, "err", scanErr)
 		}
 		current, readErr := l.store.DeploymentByID(ctx, dep.ID)
 		if readErr != nil {
@@ -60,7 +61,7 @@ func (l *Loop) reconcileSecurityScans(ctx context.Context, now time.Time, every 
 			continue
 		}
 		currentResult := decodeScanEvidence(current.ScanResult)
-		if app.SecurityPolicy != api.AppSecurityPolicyEnforce || !securityScanNeedsQuarantine(current.ScanStatus, currentResult) {
+		if app.SecurityPolicy != api.AppSecurityPolicyEnforce || scanErr == nil && !securityScanNeedsQuarantine(current.ScanStatus, currentResult) {
 			continue
 		}
 		if securityScanRegression(previousStatus, previous, current.ScanStatus, currentResult) {

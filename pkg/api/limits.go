@@ -56,6 +56,20 @@ const (
 	ApplicationStandardRuntimeCleanupTimeout       = 5 * time.Second
 )
 
+// Private artifact scans are fresh evidence about one retained producer.
+const (
+	ApplicationStandardArtifactScanTTL      = 5 * time.Minute
+	ApplicationStandardScannerDBMaxAge      = 30 * 24 * time.Hour
+	ApplicationStandardArtifactScanTimeout  = 5 * time.Minute
+	ApplicationStandardScanMaxReportBytes   = 8 << 20
+	ApplicationStandardScanMaxOutputBytes   = 16 << 20
+	ApplicationStandardScanMaxErrorBytes    = 64 << 10
+	ApplicationStandardScanMaxFindings      = 100000
+	ApplicationStandardScanMaxMetadataBytes = 256
+	ApplicationStandardScanMaxPathBytes     = 4096
+	ApplicationStandardScanMaxPaths         = 128
+)
+
 // Source-build OCI verification bounds the intermediate image, including its
 // builder base. Final app layers still obey the creating account's plan limit.
 const (

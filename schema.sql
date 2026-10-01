@@ -1839,6 +1839,37 @@ $$;
 
 
 --
+-- Name: deployment_artifact_scan_current_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.deployment_artifact_scan_current_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='DELETE' AND NOT EXISTS(SELECT 1 FROM deployments WHERE id=OLD.deployment_id) THEN RETURN OLD; END IF;
+ IF TG_OP<>'DELETE' AND current_setting('gregale.artifact_scan_insert',true)=NEW.scan_id::text
+   AND (TG_OP='INSERT' OR (NEW.deployment_id=OLD.deployment_id AND NEW.workload_name=OLD.workload_name)) THEN RETURN NEW; END IF;
+ RAISE EXCEPTION 'artifact scan selection is private' USING ERRCODE='23514',CONSTRAINT='deployment_artifact_scan_immutable';
+END;
+$$;
+
+
+--
+-- Name: deployment_artifact_scan_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.deployment_artifact_scan_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='INSERT' AND current_setting('gregale.artifact_scan_insert',true)=NEW.id::text THEN RETURN NEW; END IF;
+ IF TG_OP='DELETE' AND NOT EXISTS(SELECT 1 FROM deployments WHERE id=OLD.deployment_id) THEN RETURN OLD; END IF;
+ RAISE EXCEPTION 'artifact scan evidence is immutable/private' USING ERRCODE='23514',CONSTRAINT='deployment_artifact_scan_immutable';
+END;
+$$;
+
+
+--
 -- Name: deployment_openapi_docs_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3522,6 +3553,28 @@ BEGIN
 
     PERFORM pg_notify(channel, payload::text);
     RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: lock_deployment_artifact_scan(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.lock_deployment_artifact_scan(producer_id uuid) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+DECLARE f deployment_registry_rootfs%ROWTYPE; r deployment_registry_verifications%ROWTYPE; d deployments%ROWTYPE; owner_inputs jsonb;
+BEGIN
+ SELECT * INTO f FROM deployment_registry_rootfs WHERE id=producer_id;
+ IF NOT FOUND THEN RAISE EXCEPTION 'rootfs producer missing' USING ERRCODE='23514',CONSTRAINT='deployment_registry_verification_missing'; END IF;
+ SELECT * INTO r FROM deployment_registry_verifications WHERE id=f.registry_verification_id;
+ SELECT * INTO d FROM deployments WHERE id=f.deployment_id FOR UPDATE NOWAIT;
+ IF NOT FOUND THEN RAISE EXCEPTION 'scan deployment missing' USING ERRCODE='23514',CONSTRAINT='deployment_registry_verification_missing'; END IF;
+ owner_inputs:=lock_deployment_registry_verification(r.app_id,r.deployment_id,r.account_id,r.workload_name,r.input_snapshot->'proof'->>'PublisherName');
+ RETURN owner_inputs || jsonb_build_object('scope',d.scope,'status',d.status,'storage_now',clock_timestamp());
+EXCEPTION WHEN lock_not_available THEN
+ RAISE EXCEPTION 'artifact scan inputs busy' USING ERRCODE='55P03',CONSTRAINT='deployment_registry_verification_busy';
 END;
 $$;
 
@@ -6894,6 +6947,42 @@ CREATE TABLE public.deployment_aliases (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT deployment_aliases_name_format_chk CHECK ((name ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'::text))
+);
+
+
+--
+-- Name: deployment_artifact_scan_current; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_artifact_scan_current (
+    deployment_id uuid NOT NULL,
+    workload_name text NOT NULL,
+    scan_id uuid NOT NULL,
+    CONSTRAINT deployment_artifact_scan_current_workload_name_check CHECK (((workload_name = ''::text) OR ((workload_name <> 'main'::text) AND (workload_name ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text))))
+);
+
+
+--
+-- Name: deployment_artifact_scans; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_artifact_scans (
+    id uuid NOT NULL,
+    rootfs_producer_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    workload_name text NOT NULL,
+    input_snapshot jsonb NOT NULL,
+    input_hash text NOT NULL,
+    result_snapshot jsonb NOT NULL,
+    scanned_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT deployment_artifact_scans_check CHECK (((expires_at > scanned_at) AND (expires_at <= (scanned_at + '00:05:00'::interval)))),
+    CONSTRAINT deployment_artifact_scans_check1 CHECK ((((input_snapshot ->> 'rootfs_producer_id'::text) = (rootfs_producer_id)::text) AND ((input_snapshot ->> 'deployment_id'::text) = (deployment_id)::text) AND ((input_snapshot ->> 'workload_name'::text) = workload_name))),
+    CONSTRAINT deployment_artifact_scans_check2 CHECK ((((input_snapshot ->> 'status'::text) = ANY (ARRAY['complete'::text, 'failed'::text])) AND ((result_snapshot ->> 'status'::text) = (input_snapshot ->> 'status'::text)))),
+    CONSTRAINT deployment_artifact_scans_input_hash_check CHECK ((input_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT deployment_artifact_scans_input_snapshot_check CHECK ((jsonb_typeof(input_snapshot) = 'object'::text)),
+    CONSTRAINT deployment_artifact_scans_result_snapshot_check CHECK ((jsonb_typeof(result_snapshot) = 'object'::text)),
+    CONSTRAINT deployment_artifact_scans_workload_name_check CHECK (((workload_name = ''::text) OR ((workload_name <> 'main'::text) AND (workload_name ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text))))
 );
 
 
@@ -13588,6 +13677,30 @@ ALTER TABLE ONLY public.deploy_tokens
 
 ALTER TABLE ONLY public.deployment_aliases
     ADD CONSTRAINT deployment_aliases_pkey PRIMARY KEY (app_id, name);
+
+
+--
+-- Name: deployment_artifact_scan_current deployment_artifact_scan_current_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_artifact_scan_current
+    ADD CONSTRAINT deployment_artifact_scan_current_pkey PRIMARY KEY (deployment_id, workload_name);
+
+
+--
+-- Name: deployment_artifact_scans deployment_artifact_scans_id_deployment_id_workload_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_artifact_scans
+    ADD CONSTRAINT deployment_artifact_scans_id_deployment_id_workload_name_key UNIQUE (id, deployment_id, workload_name);
+
+
+--
+-- Name: deployment_artifact_scans deployment_artifact_scans_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_artifact_scans
+    ADD CONSTRAINT deployment_artifact_scans_pkey PRIMARY KEY (id);
 
 
 --
@@ -20830,6 +20943,20 @@ CREATE TRIGGER application_standard_artifact_identity_guard BEFORE UPDATE OF app
 
 
 --
+-- Name: deployment_artifact_scans application_standard_artifact_scan_child_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_artifact_scan_child_guard BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_artifact_scans FOR EACH ROW EXECUTE FUNCTION public.application_standard_artifact_child_guard();
+
+
+--
+-- Name: deployment_artifact_scan_current application_standard_artifact_scan_current_child_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_artifact_scan_current_child_guard BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_artifact_scan_current FOR EACH ROW EXECUTE FUNCTION public.application_standard_artifact_child_guard();
+
+
+--
 -- Name: application_standard_assignments application_standard_assignment_retention_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -21198,6 +21325,20 @@ CREATE TRIGGER apps_streaming_plan_app_guard_trg BEFORE INSERT OR UPDATE OF acco
 --
 
 CREATE TRIGGER apps_visibility_notify_trg AFTER UPDATE OF visibility ON public.apps FOR EACH ROW EXECUTE FUNCTION public.apps_visibility_notify();
+
+
+--
+-- Name: deployment_artifact_scan_current artifact_scan_current_private_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER artifact_scan_current_private_guard BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_artifact_scan_current FOR EACH ROW EXECUTE FUNCTION public.deployment_artifact_scan_current_guard();
+
+
+--
+-- Name: deployment_artifact_scans artifact_scan_private_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER artifact_scan_private_guard BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_artifact_scans FOR EACH ROW EXECUTE FUNCTION public.deployment_artifact_scan_guard();
 
 
 --
@@ -23174,6 +23315,38 @@ ALTER TABLE ONLY public.deployment_aliases
 
 ALTER TABLE ONLY public.deployment_aliases
     ADD CONSTRAINT deployment_aliases_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_artifact_scan_current deployment_artifact_scan_curr_scan_id_deployment_id_worklo_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_artifact_scan_current
+    ADD CONSTRAINT deployment_artifact_scan_curr_scan_id_deployment_id_worklo_fkey FOREIGN KEY (scan_id, deployment_id, workload_name) REFERENCES public.deployment_artifact_scans(id, deployment_id, workload_name) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_artifact_scan_current deployment_artifact_scan_current_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_artifact_scan_current
+    ADD CONSTRAINT deployment_artifact_scan_current_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_artifact_scans deployment_artifact_scans_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_artifact_scans
+    ADD CONSTRAINT deployment_artifact_scans_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_artifact_scans deployment_artifact_scans_rootfs_producer_id_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_artifact_scans
+    ADD CONSTRAINT deployment_artifact_scans_rootfs_producer_id_deployment_id_fkey FOREIGN KEY (rootfs_producer_id, deployment_id, workload_name) REFERENCES public.deployment_registry_rootfs(id, deployment_id, workload_name) ON DELETE CASCADE;
 
 
 --

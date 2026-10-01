@@ -967,6 +967,9 @@ func (h *Handler) stageScanExt4(ctx context.Context, be storage.StorageBackend, 
 // has a filesystem path to scan. The legacy appsRootPath is
 // preserved as the SetDeploymentRootfs DB column, untouched.
 func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.Deployment) error {
+	if handled, err := h.routeProducedDeploymentScan(ctx, app, dep); handled {
+		return err
+	}
 	if h.store == nil || h.log == nil {
 		// Defensive: tests that build a Handler without wiring
 		// store/log skip the scan entirely (no row to write, no
