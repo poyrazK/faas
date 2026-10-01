@@ -30,10 +30,15 @@ func (m *MemStore) BeginTrackedObjectUpload(_ context.Context, c ObjectUploadCom
 	if c.Bytes > route.MaxBytes {
 		return c, false, ErrConflict
 	}
-	if _, ok = m.objectUploadCompletions[c.ID]; ok {
+	c.Origin = "route"
+	return m.beginTrackedUploadLocked(c, p)
+}
+
+func (m *MemStore) beginTrackedUploadLocked(c ObjectUploadCompletion, p api.ObjectStoragePolicy) (ObjectUploadCompletion, bool, error) {
+	if _, ok := m.objectUploadCompletions[c.ID]; ok {
 		return c, false, ErrConflict
 	}
-	if _, ok = m.objectWriteAdmissions[c.ID]; ok {
+	if _, ok := m.objectWriteAdmissions[c.ID]; ok {
 		return c, false, ErrConflict
 	}
 	if err := m.admitObjectURLLocked(c.AccountID, c.BucketID, c.Key, c.Bytes, true, p, c.ID); err != nil {
@@ -180,4 +185,24 @@ func (m *MemStore) GetObjectUploadReceipt(_ context.Context, account, app, route
 		return ObjectUploadCompletion{}, ErrNotFound
 	}
 	return c, nil
+}
+
+var _ ObjectTrackedGatewayUploadStore = (*MemStore)(nil)
+
+func (m *MemStore) BeginTrackedGatewayUpload(_ context.Context, c ObjectUploadCompletion, p api.ObjectStoragePolicy) (ObjectUploadCompletion, error) {
+	if !validTrackedGatewayUpload(c) {
+		return c, ErrConflict
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b, ok := m.objectBuckets[c.BucketID]
+	if !ok || b.AccountID != c.AccountID || b.AppID != c.AppID {
+		return c, ErrNotFound
+	}
+	if b.State != "ready" {
+		return c, ErrConflict
+	}
+	c.Origin = "gateway"
+	out, _, err := m.beginTrackedUploadLocked(c, p)
+	return out, err
 }

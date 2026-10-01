@@ -111,3 +111,67 @@ func TestS3TrackedUploadRequiresExactProof(t *testing.T) {
 		t.Fatal("client can forge receipt", e)
 	}
 }
+
+// adr: 393
+func TestS3TrackedGatewayPresign(t *testing.T) {
+	receipt := uuid.NewString()
+	provider, err := NewS3(testBackend(), testCredentials)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer := provider.(TrackedObjectPresigner)
+	size := int64(3)
+	r := SignRequest{Method: http.MethodPut, Key: "key", SizeBytes: &size, ExpiresIn: 60, ContentType: "text/plain", Metadata: map[string]string{"owner": "customer"}, Tags: map[string]string{"kind": "test"}}
+	signed, err := signer.PresignTrackedPut(t.Context(), "bucket", r, ObjectWriteConditions{IfNoneMatch: "*"}, receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPut, signed.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for k, v := range signed.Headers {
+		request.Header.Set(k, v)
+	}
+	marker := request.Header.Get("X-Amz-Meta-" + ReservedUploadReceiptMetadataKey)
+	if marker == "" {
+		marker = request.URL.Query().Get("X-Amz-Meta-" + ReservedUploadReceiptMetadataKey)
+	}
+	if marker != receipt || request.Header.Get("If-None-Match") != "*" {
+		t.Fatal("receipt/condition binding missing")
+	}
+	if _, ok := r.Metadata[ReservedUploadReceiptMetadataKey]; ok {
+		t.Fatal("caller metadata mutated")
+	}
+	forged := r
+	forged.Metadata = map[string]string{ReservedUploadReceiptMetadataKey: receipt}
+	if _, err = signer.PresignTrackedPut(t.Context(), "bucket", forged, ObjectWriteConditions{}, receipt); !errors.Is(err, ErrInvalid) {
+		t.Fatal("caller marker accepted", err)
+	}
+	if _, err = provider.Presign(t.Context(), "bucket", forged); !errors.Is(err, ErrInvalid) {
+		t.Fatal("ordinary signing allowed reserved marker", err)
+	}
+	if _, err = signer.PresignTrackedPut(t.Context(), "bucket", r, ObjectWriteConditions{}, "bad-id"); !errors.Is(err, ErrInvalid) {
+		t.Fatal(err)
+	}
+}
+
+func TestS3TrackedZeroByteConfirmationRequiresSize(t *testing.T) {
+	receipt := uuid.NewString()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Transfer-Encoding", "chunked")
+		w.Header().Set("ETag", `"etag"`)
+		w.Header().Set("X-Amz-Meta-"+ReservedUploadReceiptMetadataKey, receipt)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+	config := testBackend()
+	config.Endpoint = upstream.URL
+	p, err := NewS3(config, testCredentials)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = p.(ObjectWriteConfirmer).ConfirmTrackedObject(t.Context(), "bucket", "key", receipt, 0); err == nil {
+		t.Fatal("missing size treated as zero-byte proof")
+	}
+}

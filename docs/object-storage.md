@@ -917,6 +917,31 @@ Deferred: the S3 compatibility gaps listed above, production edge/service
 activation, lifecycle/version management, untracked object-capacity rebasing,
 historical untracked multipart reclamation, and automatic migrations.
 
+## Recoverable branded PUTs
+
+New PUT requests through `s3.gregale.dev` on S3 backends persist a receipt with
+the quota reservation and use one provider attempt. `X-Gregale-Upload-ID`
+identifies the admitted request. Every client PUT remains an independent S3
+write; sharing a key does not deduplicate requests. Conditional writes and
+customer metadata/tags retain their existing behavior.
+
+After a lost provider acknowledgment or gateway restart, the shared upload
+worker verifies the exact private receipt marker, size and ETag through HEAD.
+Only positive proof settles the write and allows fenced capacity reconciliation
+to proceed. Recovery does not replay the staged body. Missing/overwritten
+objects remain pending; older hash-only admissions and providers without the
+capability cannot gain recovery proof retroactively.
+
+A missing or invalid ETag on a provider 2xx returns `ServiceUnavailable`, and
+HTTP 408 remains uncertain. Known pre-dispatch failures and definitive service
+rejections close the receipt and journal together. Recovery continues when
+signing is disabled or monthly budgets are spent, without resetting monthly
+authorizations or billing. The shared limits are ten receipts per sweep, a
+one-minute preparation timeout and recovery lease, ten-second probes,
+thirty-second retries, five-second detached settlement, and thirty-minute
+transfers. Gateway-owned provider PUT URLs expire after one minute and stay
+private. See [ADR-393](adr/393-recoverable-s3-gateway-puts.md).
+
 ## Reclaim reserved capacity
 
 For buckets using tracked branded S3 PUTs, S3 application upload routes or public

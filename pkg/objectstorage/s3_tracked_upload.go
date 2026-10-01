@@ -45,7 +45,7 @@ func (p *S3) ConfirmTrackedObject(ctx context.Context, bucket, key, receipt stri
 	if err != nil {
 		return UploadResult{}, normalize(err)
 	}
-	if out == nil || aws.ToInt64(out.ContentLength) != size || out.Metadata[ReservedUploadReceiptMetadataKey] != receipt || !validUploadETag(aws.ToString(out.ETag)) {
+	if out == nil || out.ContentLength == nil || *out.ContentLength != size || out.Metadata[ReservedUploadReceiptMetadataKey] != receipt || !validUploadETag(aws.ToString(out.ETag)) {
 		return UploadResult{}, ErrConflict
 	}
 	return UploadResult{ETag: aws.ToString(out.ETag)}, nil
@@ -56,4 +56,13 @@ func invalidS3Write(receipt string) error {
 		return ErrWriteRejected
 	}
 	return ErrInvalid
+}
+
+var _ TrackedObjectPresigner = (*S3)(nil)
+
+func (p *S3) PresignTrackedPut(ctx context.Context, bucket string, r SignRequest, c ObjectWriteConditions, receipt string) (SignedRequest, error) {
+	if _, err := uuid.Parse(receipt); err != nil || r.Method != http.MethodPut || !c.Valid() {
+		return SignedRequest{}, ErrInvalid
+	}
+	return p.presign(ctx, bucket, r, c, receipt)
 }

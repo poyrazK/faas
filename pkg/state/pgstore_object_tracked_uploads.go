@@ -13,7 +13,7 @@ import (
 var _ ObjectTrackedUploadStore = (*PgStore)(nil)
 
 func objectTrackedUploadFromSQL(r sqlc.ObjectUploadCompletion) ObjectUploadCompletion {
-	return ObjectUploadCompletion{ID: pgUUIDString(r.ID), RouteID: pgUUIDString(r.RouteID), AccountID: pgUUIDString(r.AccountID), AppID: pgUUIDString(r.AppID), BucketID: pgUUIDString(r.BucketID), SubjectID: r.SubjectID, Key: r.ObjectKey, Bytes: r.Bytes, ContentType: r.ContentType, ETag: r.Etag, Status: r.Status, ErrorCode: r.ErrorCode, RequestID: r.RequestID, IdempotencyKey: r.IdempotencyKey, RequestFingerprint: r.RequestFingerprint, CreatedAt: r.CreatedAt.Time, WritePhase: r.WritePhase, RecoveryToken: r.RecoveryToken, RecoveryLeaseUntil: r.RecoveryLeaseUntil.Time, RecoveryRetryAt: r.RecoveryRetryAt.Time}
+	return ObjectUploadCompletion{ID: pgUUIDString(r.ID), RouteID: pgUUIDString(r.RouteID), AccountID: pgUUIDString(r.AccountID), AppID: pgUUIDString(r.AppID), BucketID: pgUUIDString(r.BucketID), SubjectID: r.SubjectID, Key: r.ObjectKey, Bytes: r.Bytes, ContentType: r.ContentType, ETag: r.Etag, Status: r.Status, ErrorCode: r.ErrorCode, RequestID: r.RequestID, IdempotencyKey: r.IdempotencyKey, RequestFingerprint: r.RequestFingerprint, CreatedAt: r.CreatedAt.Time, Origin: r.Origin, WritePhase: r.WritePhase, RecoveryToken: r.RecoveryToken, RecoveryLeaseUntil: r.RecoveryLeaseUntil.Time, RecoveryRetryAt: r.RecoveryRetryAt.Time}
 }
 func (s *PgStore) BeginTrackedObjectUpload(ctx context.Context, c ObjectUploadCompletion, p api.ObjectStoragePolicy) (ObjectUploadCompletion, bool, error) {
 	if !validTrackedObjectUpload(c) {
@@ -185,4 +185,37 @@ func (s *PgStore) RetryTrackedObjectUploadRecovery(ctx context.Context, c Object
 func (s *PgStore) GetObjectUploadReceipt(ctx context.Context, account, app, route, subject, id string) (ObjectUploadCompletion, error) {
 	r, err := sqlc.New().ObjectUploadReceiptGet(ctx, s.pool, sqlc.ObjectUploadReceiptGetParams{ID: mustPgUUID(id), AccountID: mustPgUUID(account), AppID: mustPgUUID(app), RouteID: mustPgUUID(route), SubjectID: subject})
 	return objectTrackedUploadFromSQL(r), mapErr(err)
+}
+
+var _ ObjectTrackedGatewayUploadStore = (*PgStore)(nil)
+
+func (s *PgStore) BeginTrackedGatewayUpload(ctx context.Context, c ObjectUploadCompletion, p api.ObjectStoragePolicy) (ObjectUploadCompletion, error) {
+	if !validTrackedGatewayUpload(c) {
+		return c, ErrConflict
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return c, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	q := sqlc.New()
+	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(c.AccountID)); err != nil {
+		return c, mapErr(err)
+	}
+	b, err := q.ObjectBucketGet(ctx, tx, sqlc.ObjectBucketGetParams{ID: mustPgUUID(c.BucketID), AccountID: mustPgUUID(c.AccountID), AppID: mustPgUUID(c.AppID)})
+	if err != nil {
+		return c, mapErr(err)
+	}
+	if b.State != "ready" {
+		return c, ErrConflict
+	}
+	// Receipt-owned proxy journals keep old capacity workers aware of pending writes.
+	if err = admitObjectURLTx(ctx, tx, c.AccountID, c.BucketID, c.Key, c.Bytes, true, p, c.ID, true); err != nil {
+		return c, err
+	}
+	r, err := q.ObjectGatewayUploadInsert(ctx, tx, sqlc.ObjectGatewayUploadInsertParams{ID: mustPgUUID(c.ID), AccountID: mustPgUUID(c.AccountID), AppID: mustPgUUID(c.AppID), BucketID: mustPgUUID(c.BucketID), SubjectID: c.SubjectID, ObjectKey: c.Key, Bytes: c.Bytes, ContentType: c.ContentType, RequestID: c.RequestID, RetrySeconds: int32(api.ObjectUploadPreparationTimeout / time.Second)})
+	if err != nil {
+		return c, mapErr(err)
+	}
+	return objectTrackedUploadFromSQL(r), tx.Commit(ctx)
 }

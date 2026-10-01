@@ -550,7 +550,7 @@ func TestGatewayPutMetadataAndObjectTags(t *testing.T) {
 	var upstreamHeaders http.Header
 	handler, _, provider := newGatewayTestHandler(t, state.ObjectBucketPermissionReadWrite, func(r *http.Request) (*http.Response, error) {
 		upstreamHeaders = r.Header.Clone()
-		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"ETag": {`"etag"`}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Etag": {`"etag"`}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
 	})
 	body := []byte("hello")
 	sum := sha256.Sum256(body)
@@ -707,7 +707,7 @@ func TestGatewayPermissionAndUnsupportedMultipart(t *testing.T) {
 func TestGatewayRejectsTamperedSignatureAndAcceptsPresignedRequests(t *testing.T) {
 	handler, _, _ := newGatewayTestHandler(t, state.ObjectBucketPermissionReadWrite, func(r *http.Request) (*http.Response, error) {
 		if r.Method == http.MethodPut {
-			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Etag": []string{`"etag"`}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
 		}
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Length": {"5"}}, Body: io.NopCloser(strings.NewReader("hello")), Request: r}, nil
 	})
@@ -749,7 +749,7 @@ func TestGatewayAcceptsAWSChunkedChecksumTrailer(t *testing.T) {
 	var uploaded []byte
 	handler, _, provider := newGatewayTestHandler(t, state.ObjectBucketPermissionReadWrite, func(r *http.Request) (*http.Response, error) {
 		uploaded, _ = io.ReadAll(r.Body)
-		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"ETag": {`"etag"`}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Etag": {`"etag"`}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
 	})
 	encoded := []byte("b\r\nhello world\r\n0\r\nx-amz-checksum-crc32:DUoRhQ==\r\n\r\n")
 	request := awsChunkedGatewayRequest(t, "https://s3.gregale.dev/assets/chunked.txt", streamingUnsignedTrailer, "x-amz-checksum-crc32", 11, encoded)
@@ -775,7 +775,7 @@ func TestGatewayAcceptsSignedAWSChunkedPayload(t *testing.T) {
 	var uploaded []byte
 	handler, _, _ := newGatewayTestHandler(t, state.ObjectBucketPermissionReadWrite, func(r *http.Request) (*http.Response, error) {
 		uploaded, _ = io.ReadAll(r.Body)
-		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Etag": []string{`"etag"`}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
 	})
 	body := []byte("hello world")
 	placeholder := []byte("b;chunk-signature=" + strings.Repeat("0", 64) + "\r\nhello world\r\n0;chunk-signature=" + strings.Repeat("0", 64) + "\r\n\r\n")
@@ -807,7 +807,7 @@ func TestGatewayAcceptsSignedAWSChunkedTrailer(t *testing.T) {
 	var uploaded []byte
 	handler, _, _ := newGatewayTestHandler(t, state.ObjectBucketPermissionReadWrite, func(r *http.Request) (*http.Response, error) {
 		uploaded, _ = io.ReadAll(r.Body)
-		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Etag": []string{`"etag"`}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
 	})
 	body := []byte("hello world")
 	checksumValue := "DUoRhQ=="
@@ -938,7 +938,7 @@ func TestGatewayAcceptsBotocoreCanonicalHeaderFixture(t *testing.T) {
 
 func TestGatewayAcceptsSDKWritesWithUnsignedContentLength(t *testing.T) {
 	handler, _, _ := newGatewayTestHandler(t, state.ObjectBucketPermissionReadWrite, func(r *http.Request) (*http.Response, error) {
-		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Etag": []string{`"etag"`}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
 	})
 
 	body := []byte("hello")

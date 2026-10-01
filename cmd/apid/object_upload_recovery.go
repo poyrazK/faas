@@ -39,7 +39,11 @@ func (s *server) reconcileObjectUploads(ctx context.Context, observe func(string
 			}
 		}
 		if observe != nil {
-			observe("upload", outcome)
+			operation := "upload"
+			if c.Origin == "gateway" {
+				operation = "gateway_put"
+			}
+			observe(operation, outcome)
 		}
 	}
 	return nil
@@ -86,7 +90,7 @@ func (s *server) probeObjectUpload(ctx context.Context, c state.ObjectUploadComp
 	if err != nil {
 		return objectstorage.UploadResult{}, objectstorage.ErrConfiguration
 	}
-	writer, ok := backend.Provider.(objectstorage.TrackedObjectWriter)
+	writer, ok := backend.Provider.(objectstorage.ObjectWriteConfirmer)
 	if !ok {
 		return objectstorage.UploadResult{}, objectstorage.ErrUnsupported
 	}

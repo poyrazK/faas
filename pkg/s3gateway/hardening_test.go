@@ -66,7 +66,7 @@ func TestGatewayConditionalPutPreserved(t *testing.T) {
 				if r.Header.Get("If-None-Match") != "*" {
 					t.Fatal("lost write condition")
 				}
-				return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(""))}, nil
+				return &http.Response{StatusCode: status, Header: http.Header{"Etag": []string{`"etag"`}}, Body: io.NopCloser(strings.NewReader(""))}, nil
 			})
 			r := signedGatewayRequest(t, http.MethodPut, "https://s3.gregale.dev/assets/key", []byte("data"), "UNSIGNED-PAYLOAD")
 			r.Header.Set("If-None-Match", "*")

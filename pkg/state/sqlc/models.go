@@ -2882,6 +2882,7 @@ type ObjectUploadCompletion struct {
 	RecoveryToken      string
 	RecoveryLeaseUntil pgtype.Timestamptz
 	RecoveryRetryAt    pgtype.Timestamptz
+	Origin             string
 }
 
 type ObjectUploadRoute struct {

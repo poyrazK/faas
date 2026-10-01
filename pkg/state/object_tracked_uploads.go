@@ -30,8 +30,24 @@ type ObjectTrackedUploadStore interface {
 	RetryTrackedObjectUploadRecovery(context.Context, ObjectUploadCompletion, string) error
 }
 
+// ObjectTrackedGatewayUploadStore shares dispatch, settlement and recovery with
+// route receipts. Every client PUT is a distinct intent; keys are not idempotency keys.
+type ObjectTrackedGatewayUploadStore interface {
+	ObjectTrackedUploadStore
+	BeginTrackedGatewayUpload(context.Context, ObjectUploadCompletion, api.ObjectStoragePolicy) (ObjectUploadCompletion, error)
+}
+
 func validTrackedObjectUpload(c ObjectUploadCompletion) bool {
-	for _, id := range []string{c.ID, c.RouteID, c.AccountID, c.AppID, c.BucketID} {
+	if _, err := uuid.Parse(c.RouteID); err != nil || c.Origin != "" && c.Origin != "route" {
+		return false
+	}
+	return validTrackedUploadIdentity(c)
+}
+func validTrackedGatewayUpload(c ObjectUploadCompletion) bool {
+	return c.RouteID == "" && c.IdempotencyKey == "" && c.RequestFingerprint == "" && (c.Origin == "" || c.Origin == "gateway") && validTrackedUploadIdentity(c)
+}
+func validTrackedUploadIdentity(c ObjectUploadCompletion) bool {
+	for _, id := range []string{c.ID, c.AccountID, c.AppID, c.BucketID} {
 		if _, err := uuid.Parse(id); err != nil {
 			return false
 		}

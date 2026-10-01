@@ -83,14 +83,27 @@ type ObjectWriter interface {
 	WriteObject(context.Context, string, string, io.Reader, int64, ObjectMetadata) (UploadResult, error)
 }
 
+// ObjectWriteConfirmer requires the exact private receipt, size and a valid ETag.
+// Absence or elapsed time cannot prove settlement.
+type ObjectWriteConfirmer interface {
+	ConfirmTrackedObject(context.Context, string, string, string, int64) (UploadResult, error)
+}
+
+// TrackedObjectPresigner binds a private receipt to a gateway-owned PUT. The
+// signed capability must stay inside Gregale and be used for one attempt only.
+type TrackedObjectPresigner interface {
+	ObjectWriteConfirmer
+	PresignTrackedPut(context.Context, string, SignRequest, ObjectWriteConditions, string) (SignedRequest, error)
+}
+
 // TrackedObjectWriter binds a private receipt to exactly one provider write
 // attempt. It must not retry writes after dispatch. ErrWriteRejected proves
 // that no object was committed; all other errors are uncertain. Confirmation
 // requires that receipt, exact size and a valid ETag on the stored object.
 // Absence or elapsed time never proves settlement.
 type TrackedObjectWriter interface {
+	ObjectWriteConfirmer
 	WriteTrackedObject(context.Context, string, string, string, io.Reader, int64, ObjectMetadata) (UploadResult, error)
-	ConfirmTrackedObject(context.Context, string, string, string, int64) (UploadResult, error)
 }
 
 type UploadResult struct {

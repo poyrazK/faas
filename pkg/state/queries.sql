@@ -5218,4 +5218,9 @@ UPDATE object_upload_completions SET recovery_token='',recovery_lease_until=NULL
 
 
 -- name: ObjectUploadReceiptGet :one
-SELECT * FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND app_id=$3 AND route_id=$4 AND subject_id=$5;
+SELECT * FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND app_id=$3 AND route_id IS NOT DISTINCT FROM $4 AND subject_id=$5;
+
+-- name: ObjectGatewayUploadInsert :one
+INSERT INTO object_upload_completions
+ (id,account_id,app_id,bucket_id,subject_id,object_key,bytes,content_type,request_id,status,write_phase,origin,recovery_retry_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending','prepared','gateway',now()+make_interval(secs=>sqlc.arg(retry_seconds)::int)) RETURNING *;

@@ -309,17 +309,17 @@ func (p *S3) ObjectSize(ctx context.Context, bucket, key string) (int64, error) 
 }
 
 func (p *S3) Presign(ctx context.Context, bucket string, r SignRequest) (SignedRequest, error) {
-	return p.presign(ctx, bucket, r, ObjectWriteConditions{})
+	return p.presign(ctx, bucket, r, ObjectWriteConditions{}, "")
 }
 
 func (p *S3) PresignConditionalPut(ctx context.Context, bucket string, r SignRequest, conditions ObjectWriteConditions) (SignedRequest, error) {
 	if r.Method != http.MethodPut {
 		return SignedRequest{}, ErrInvalid
 	}
-	return p.presign(ctx, bucket, r, conditions)
+	return p.presign(ctx, bucket, r, conditions, "")
 }
 
-func (p *S3) presign(ctx context.Context, bucket string, r SignRequest, conditions ObjectWriteConditions) (SignedRequest, error) {
+func (p *S3) presign(ctx context.Context, bucket string, r SignRequest, conditions ObjectWriteConditions, receipt string) (SignedRequest, error) {
 	if err := r.Validate(api.MaxObjectSinglePutBytes); err != nil {
 		return SignedRequest{}, err
 	}
@@ -339,11 +339,19 @@ func (p *S3) presign(ctx context.Context, bucket string, r SignRequest, conditio
 		if err != nil {
 			return SignedRequest{}, err
 		}
+		metadata := r.Metadata
+		if receipt != "" {
+			metadata = cloneMetadata(metadata)
+			if metadata == nil {
+				metadata = map[string]string{}
+			}
+			metadata[ReservedUploadReceiptMetadataKey] = receipt
+		}
 		in := &s3.PutObjectInput{
 			Bucket: aws.String(bucket), Key: aws.String(r.Key), ContentLength: r.SizeBytes, ContentType: aws.String(contentType),
 			CacheControl: stringPtrOrNil(r.CacheControl), ContentDisposition: stringPtrOrNil(r.ContentDisposition),
 			ContentEncoding: stringPtrOrNil(r.ContentEncoding), ContentLanguage: stringPtrOrNil(r.ContentLanguage),
-			Metadata: r.Metadata,
+			Metadata: metadata,
 			IfMatch:  stringPtrOrNil(conditions.IfMatch), IfNoneMatch: stringPtrOrNil(conditions.IfNoneMatch),
 		}
 		if tagging != "" {

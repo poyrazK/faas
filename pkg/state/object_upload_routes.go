@@ -46,6 +46,7 @@ type ObjectUploadCompletion struct {
 	RequestFingerprint string
 	CreatedAt          time.Time
 	// Provider dispatch and recovery fields are internal; uploadResponse projects only the receipt.
+	Origin             string
 	WritePhase         string
 	RecoveryToken      string
 	RecoveryLeaseUntil time.Time

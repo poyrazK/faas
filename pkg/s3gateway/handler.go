@@ -523,8 +523,8 @@ func (h *Handler) writeAdmissionError(w http.ResponseWriter, r *http.Request, re
 }
 
 func (h *Handler) upload(w http.ResponseWriter, r *http.Request, req requestContext, key string) {
-	metadata, metadataErr := objectMetadataFromHeaders(r)
-	if metadataErr != nil {
+	metadata, err := objectMetadataFromHeaders(r)
+	if err != nil {
 		writeS3Error(w, http.StatusBadRequest, "InvalidRequest", "The object metadata or tags are invalid.", r.URL.Path, req.requestID)
 		return
 	}
@@ -536,125 +536,16 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, req requestCont
 		writeS3Error(w, http.StatusBadRequest, "EntityTooLarge", "Your proposed upload exceeds the maximum allowed object size for a single PUT.", r.URL.Path, req.requestID)
 		return
 	}
-	select {
-	case h.putSlots <- struct{}{}:
-		defer func() { <-h.putSlots }()
-	default:
-		writeS3Error(w, http.StatusServiceUnavailable, "SlowDown", "Please reduce your request rate.", r.URL.Path, req.requestID)
+	file, cleanup, ok := h.stageUpload(w, r, req)
+	if !ok {
 		return
 	}
-	if !h.reserveSpool(r.ContentLength) {
-		writeS3Error(w, http.StatusServiceUnavailable, "SlowDown", "The upload spool does not have enough reserved capacity.", r.URL.Path, req.requestID)
+	defer cleanup()
+	if _, ok := req.provider.(objectstorage.TrackedObjectPresigner); ok {
+		h.performTrackedGatewayPut(w, r, req, key, file, metadata)
 		return
 	}
-	defer h.releaseSpool(r.ContentLength)
-	file, err := os.CreateTemp(h.spoolDir, "gregale-s3-put-*")
-	if err != nil {
-		writeS3Error(w, http.StatusServiceUnavailable, "ServiceUnavailable", "Gregale could not stage this upload.", r.URL.Path, req.requestID)
-		return
-	}
-	name := file.Name()
-	defer func() {
-		_ = file.Close()
-		if removeErr := os.Remove(name); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
-			h.log.Warn("S3 upload spool cleanup failed", "request_id", req.requestID)
-		}
-	}()
-	checksum, expectedChecksum, checksumErr := requestChecksum(r.Header)
-	if checksumErr != nil {
-		h.writeAWSChunkedError(w, r, req.requestID, checksumErr)
-		return
-	}
-	sha := sha256.New()
-	md5sum := md5.New() // #nosec G401 -- S3 Content-MD5 compatibility.
-	writers := []io.Writer{file, sha, md5sum}
-	if checksum != nil {
-		writers = append(writers, checksum)
-	}
-	written, err := io.Copy(io.MultiWriter(writers...), io.LimitReader(r.Body, r.ContentLength+1))
-	if err != nil || written != r.ContentLength {
-		if err != nil && h.writeAWSChunkedError(w, r, req.requestID, err) {
-			return
-		}
-		writeS3Error(w, http.StatusBadRequest, "IncompleteBody", "You did not provide the number of bytes specified by Content-Length.", r.URL.Path, req.requestID)
-		return
-	}
-	if req.signature.PayloadHash != "UNSIGNED-PAYLOAD" && !isStreamingPayloadHash(req.signature.PayloadHash) {
-		actual := hex.EncodeToString(sha.Sum(nil))
-		if subtle.ConstantTimeCompare([]byte(actual), []byte(req.signature.PayloadHash)) != 1 {
-			writeS3Error(w, http.StatusBadRequest, "XAmzContentSHA256Mismatch", "The provided x-amz-content-sha256 does not match the request body.", r.URL.Path, req.requestID)
-			return
-		}
-	}
-	if expected := r.Header.Get("Content-MD5"); expected != "" {
-		decoded, decodeErr := base64.StdEncoding.DecodeString(expected)
-		if decodeErr != nil || len(decoded) != md5.Size || subtle.ConstantTimeCompare(decoded, md5sum.Sum(nil)) != 1 {
-			writeS3Error(w, http.StatusBadRequest, "BadDigest", "The Content-MD5 you specified did not match what Gregale received.", r.URL.Path, req.requestID)
-			return
-		}
-	}
-	if checksum != nil && subtle.ConstantTimeCompare(expectedChecksum, checksum.Sum(nil)) != 1 {
-		writeS3Error(w, http.StatusBadRequest, "BadDigest", "The checksum you specified did not match what Gregale received.", r.URL.Path, req.requestID)
-		return
-	}
-	if _, err = file.Seek(0, io.SeekStart); err != nil {
-		writeS3Error(w, http.StatusServiceUnavailable, "ServiceUnavailable", "Gregale could not stage this upload.", r.URL.Path, req.requestID)
-		return
-	}
-	settle, admitted := h.beginTrackedWrite(w, r, req, key, r.ContentLength)
-	if !admitted {
-		return
-	}
-	dispatched := false
-	defer func(parent context.Context) {
-		if !dispatched {
-			settle(parent)
-		}
-	}(r.Context())
-	transferCtx, cancel := context.WithTimeout(r.Context(), api.ObjectTransferTimeout)
-	defer cancel()
-	contentType := r.Header.Get("Content-Type")
-	signed, err := presignConditionalPut(r.Context(), req.provider, req.bucket.PhysicalName, objectstorage.SignRequest{
-		Method: http.MethodPut, Key: key, SizeBytes: &r.ContentLength, ContentType: contentType, ExpiresIn: 60,
-		CacheControl: metadata.CacheControl, ContentDisposition: metadata.ContentDisposition,
-		ContentEncoding: metadata.ContentEncoding, ContentLanguage: metadata.ContentLanguage,
-		Metadata: metadata.Metadata, Tags: metadata.Tags,
-	}, writeConditions(r))
-	if err != nil {
-		h.providerError(w, r, req, err, key)
-		return
-	}
-	upstream, err := http.NewRequestWithContext(transferCtx, http.MethodPut, signed.URL, file)
-	if err != nil {
-		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
-		return
-	}
-	upstream.ContentLength = r.ContentLength
-	for name, value := range signed.Headers {
-		upstream.Header.Set(name, value)
-	}
-	if !h.recordProviderRequest(w, r, req) {
-		return
-	}
-	dispatched = true
-	response, err := h.client.Do(upstream)
-	if err != nil {
-		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
-		return
-	}
-	defer h.closeResponseBody(response.Body, req.requestID)
-	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		if response.StatusCode >= 400 && response.StatusCode < 500 {
-			settle(r.Context())
-		}
-		h.providerHTTPError(w, r, req, response.StatusCode, key)
-		return
-	}
-	if etag := response.Header.Get("ETag"); etag != "" {
-		settle(r.Context())
-		w.Header().Set("ETag", etag)
-	}
-	w.WriteHeader(http.StatusOK)
+	h.performLegacyGatewayPut(w, r, req, key, file, metadata)
 }
 
 func (h *Handler) deleteObjects(w http.ResponseWriter, r *http.Request, req requestContext) {
