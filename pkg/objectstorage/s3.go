@@ -71,7 +71,7 @@ func (p *S3) CreateBucket(ctx context.Context, bucket string) error {
 	// No ACL is sent: the S3 default is private, and R2 does not implement
 	// canned ACLs. The dedicated operator identity must not expose buckets.
 	if len(p.origins) > 0 {
-		_, err = p.client.PutBucketCors(ctx, &s3.PutBucketCorsInput{Bucket: aws.String(bucket), CORSConfiguration: &types.CORSConfiguration{CORSRules: []types.CORSRule{{AllowedOrigins: p.origins, AllowedMethods: []string{"GET", "HEAD", "PUT"}, AllowedHeaders: []string{"content-type", "content-length", "content-md5"}, ExposeHeaders: []string{"ETag"}, MaxAgeSeconds: aws.Int32(3600)}}}}, func(o *s3.Options) { o.APIOptions = append(o.APIOptions, corsMD5Checksum) })
+		_, err = p.client.PutBucketCors(ctx, &s3.PutBucketCorsInput{Bucket: aws.String(bucket), CORSConfiguration: &types.CORSConfiguration{CORSRules: []types.CORSRule{{AllowedOrigins: p.origins, AllowedMethods: []string{"GET", "HEAD", "PUT"}, AllowedHeaders: []string{"*"}, ExposeHeaders: []string{"ETag", "x-amz-checksum-crc32", "x-amz-checksum-crc32c", "x-amz-checksum-crc64nvme", "x-amz-checksum-sha1", "x-amz-checksum-sha256"}, MaxAgeSeconds: aws.Int32(3600)}}}}, func(o *s3.Options) { o.APIOptions = append(o.APIOptions, corsMD5Checksum) })
 	}
 	return normalize(err)
 }
@@ -114,10 +114,18 @@ func (p *S3) ListObjects(ctx context.Context, bucket, prefix, cursor string, lim
 }
 
 func (p *S3) ListObjectsDelimited(ctx context.Context, bucket, prefix, delimiter, cursor string, limit int32) (ObjectPage, error) {
+	return p.ListObjectsV2(ctx, bucket, ObjectListRequest{Prefix: prefix, Delimiter: delimiter, Cursor: cursor, Limit: limit})
+}
+
+func (p *S3) ListObjectsV2(ctx context.Context, bucket string, request ObjectListRequest) (ObjectPage, error) {
+	prefix, delimiter, cursor, limit := request.Prefix, request.Delimiter, request.Cursor, request.Limit
 	if limit < 1 || limit > 1000 {
 		return ObjectPage{}, ErrInvalid
 	}
 	in := &s3.ListObjectsV2Input{Bucket: aws.String(bucket), Prefix: aws.String(prefix), Delimiter: aws.String(delimiter), MaxKeys: aws.Int32(limit)}
+	if request.StartAfter != "" {
+		in.StartAfter = aws.String(request.StartAfter)
+	}
 	if cursor != "" {
 		in.ContinuationToken = aws.String(cursor)
 	}
@@ -127,7 +135,7 @@ func (p *S3) ListObjectsDelimited(ctx context.Context, bucket, prefix, delimiter
 	}
 	page := ObjectPage{Items: make([]Object, 0, len(out.Contents)), CommonPrefixes: make([]string, 0, len(out.CommonPrefixes))}
 	for _, o := range out.Contents {
-		page.Items = append(page.Items, Object{Key: aws.ToString(o.Key), Size: aws.ToInt64(o.Size), LastModified: aws.ToTime(o.LastModified)})
+		page.Items = append(page.Items, Object{Key: aws.ToString(o.Key), ETag: aws.ToString(o.ETag), Size: aws.ToInt64(o.Size), LastModified: aws.ToTime(o.LastModified)})
 	}
 	for _, prefix := range out.CommonPrefixes {
 		if value := aws.ToString(prefix.Prefix); value != "" {
@@ -269,6 +277,17 @@ func (p *S3) ObjectSize(ctx context.Context, bucket, key string) (int64, error) 
 }
 
 func (p *S3) Presign(ctx context.Context, bucket string, r SignRequest) (SignedRequest, error) {
+	return p.presign(ctx, bucket, r, ObjectWriteConditions{})
+}
+
+func (p *S3) PresignConditionalPut(ctx context.Context, bucket string, r SignRequest, conditions ObjectWriteConditions) (SignedRequest, error) {
+	if r.Method != http.MethodPut {
+		return SignedRequest{}, ErrInvalid
+	}
+	return p.presign(ctx, bucket, r, conditions)
+}
+
+func (p *S3) presign(ctx context.Context, bucket string, r SignRequest, conditions ObjectWriteConditions) (SignedRequest, error) {
 	if err := r.Validate(api.MaxObjectSinglePutBytes); err != nil {
 		return SignedRequest{}, err
 	}
@@ -293,6 +312,7 @@ func (p *S3) Presign(ctx context.Context, bucket string, r SignRequest) (SignedR
 			CacheControl: stringPtrOrNil(r.CacheControl), ContentDisposition: stringPtrOrNil(r.ContentDisposition),
 			ContentEncoding: stringPtrOrNil(r.ContentEncoding), ContentLanguage: stringPtrOrNil(r.ContentLanguage),
 			Metadata: r.Metadata,
+			IfMatch:  stringPtrOrNil(conditions.IfMatch), IfNoneMatch: stringPtrOrNil(conditions.IfNoneMatch),
 		}
 		if tagging != "" {
 			in.Tagging = aws.String(tagging)
@@ -357,6 +377,44 @@ func (p *S3) PresignObjectRead(ctx context.Context, bucket, method, key string, 
 		return SignedRequest{}, ErrUnavailable
 	}
 	result.URL = out.URL
+	return result, nil
+}
+
+// PresignChecksumRead signs the checksum request along with the read. A
+// checksum header added after signing is not portable across S3 providers.
+func (p *S3) PresignChecksumRead(ctx context.Context, bucket, method, key string, expiresIn int64) (SignedRequest, error) {
+	if err := (SignRequest{Method: method, Key: key, ExpiresIn: expiresIn}).Validate(api.MaxObjectSinglePutBytes); err != nil {
+		return SignedRequest{}, err
+	}
+	ttl := time.Duration(expiresIn) * time.Second
+	if ttl == 0 {
+		ttl = 5 * time.Minute
+	}
+	options := func(o *s3.PresignOptions) { o.Expires = ttl }
+	var value string
+	var headers http.Header
+	switch method {
+	case http.MethodGet:
+		out, err := p.signer.PresignGetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(bucket), Key: aws.String(key), ChecksumMode: types.ChecksumModeEnabled}, options)
+		if err != nil {
+			return SignedRequest{}, ErrUnavailable
+		}
+		value, headers = out.URL, out.SignedHeader
+	case http.MethodHead:
+		out, err := p.signer.PresignHeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(bucket), Key: aws.String(key), ChecksumMode: types.ChecksumModeEnabled}, options)
+		if err != nil {
+			return SignedRequest{}, ErrUnavailable
+		}
+		value, headers = out.URL, out.SignedHeader
+	default:
+		return SignedRequest{}, ErrInvalid
+	}
+	result := SignedRequest{URL: value, Method: method, Headers: map[string]string{}, ExpiresAt: time.Now().UTC().Add(ttl)}
+	for name, values := range headers {
+		if !strings.EqualFold(name, "Host") {
+			result.Headers[name] = strings.Join(values, ",")
+		}
+	}
 	return result, nil
 }
 

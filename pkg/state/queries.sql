@@ -3868,7 +3868,10 @@ SELECT account_id FROM object_buckets WHERE id=$1;
 
 -- name: ObjectUsageBuckets :many
 SELECT b.*, u.baseline_bytes, u.baseline_keys, u.granted_bytes, u.granted_keys,
-u.observed_bytes, u.observed_keys, u.observed_at, u.attempt_at, u.lease_until AS inventory_lease_until, u.token
+u.observed_bytes, u.observed_keys, u.observed_at, u.attempt_at, u.lease_until AS inventory_lease_until, u.token,
+COALESCE((SELECT sum(g.max_bytes)::bigint FROM object_storage_multipart_part_grants g
+JOIN object_storage_multipart_uploads m ON m.id=g.upload_id
+WHERE m.bucket_id=b.id AND m.state <> 'completed'),0)::bigint AS multipart_bytes
 FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id = b.id
 WHERE b.account_id = $1;
 
@@ -5048,3 +5051,27 @@ LIMIT 1;
 UPDATE cron_fire_now_requests
 SET status = 'pending'
 WHERE id = sqlc.arg(id)::uuid AND status = 'running';
+
+-- name: ObjectMultipartCapacityLock :one
+SELECT * FROM object_storage_multipart_uploads
+WHERE id=$1 AND account_id=$2 AND bucket_id=$3 FOR UPDATE;
+
+-- name: ObjectMultipartPartGrant :one
+SELECT max_bytes FROM object_storage_multipart_part_grants WHERE upload_id=$1 AND part_number=$2;
+
+-- name: ObjectMultipartPartTotal :one
+SELECT coalesce(sum(max_bytes),0)::bigint FROM object_storage_multipart_part_grants WHERE upload_id=$1;
+
+-- name: ObjectMultipartPartGrantUpsert :exec
+INSERT INTO object_storage_multipart_part_grants (upload_id,part_number,max_bytes) VALUES ($1,$2,$3)
+ON CONFLICT (upload_id,part_number) DO UPDATE
+SET max_bytes=greatest(object_storage_multipart_part_grants.max_bytes,EXCLUDED.max_bytes);
+
+-- name: ObjectS3MultipartList :many
+SELECT * FROM object_storage_multipart_uploads
+WHERE account_id=sqlc.arg(account_id) AND app_id=sqlc.arg(app_id) AND bucket_id=sqlc.arg(bucket_id)
+AND part_count=0 AND state IN ('active','completing','aborting')
+AND starts_with(object_key,sqlc.arg(prefix)::text)
+AND (sqlc.arg(key_marker)::text='' OR object_key COLLATE "C">sqlc.arg(key_marker)::text
+ OR (object_key=sqlc.arg(key_marker)::text AND sqlc.arg(upload_marker)::text<>'' AND id::text>sqlc.arg(upload_marker)::text))
+ORDER BY object_key COLLATE "C",id LIMIT sqlc.arg(page_limit)::int;

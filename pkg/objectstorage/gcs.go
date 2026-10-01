@@ -192,7 +192,12 @@ func (s *googleGCSStore) DeleteBucket(ctx context.Context, bucket string) error 
 }
 
 func (s *googleGCSStore) ListObjects(ctx context.Context, bucket, prefix, delimiter, cursor string, limit int32) ([]gcsObjectState, []string, string, error) {
-	iter := s.client.Bucket(bucket).Objects(ctx, &storage.Query{Prefix: prefix, Delimiter: delimiter, Projection: storage.ProjectionNoACL})
+	return s.ListObjectsStartingAfter(ctx, bucket, ObjectListRequest{Prefix: prefix, Delimiter: delimiter, Cursor: cursor, Limit: limit})
+}
+
+func (s *googleGCSStore) ListObjectsStartingAfter(ctx context.Context, bucket string, request ObjectListRequest) ([]gcsObjectState, []string, string, error) {
+	prefix, delimiter, cursor, limit := request.Prefix, request.Delimiter, request.Cursor, request.Limit
+	iter := s.client.Bucket(bucket).Objects(ctx, &storage.Query{Prefix: prefix, Delimiter: delimiter, StartOffset: request.StartAfter, Projection: storage.ProjectionNoACL})
 	pager := iterator.NewPager(iter, int(limit), cursor)
 	var attrs []*storage.ObjectAttrs
 	next, err := pager.NextPage(&attrs)
@@ -202,6 +207,9 @@ func (s *googleGCSStore) ListObjects(ctx context.Context, bucket, prefix, delimi
 	objects := make([]gcsObjectState, 0, len(attrs))
 	prefixes := make([]string, 0)
 	for _, attr := range attrs {
+		if request.StartAfter != "" && (attr.Prefix == "" && attr.Name <= request.StartAfter || attr.Prefix != "" && attr.Prefix <= request.StartAfter) {
+			continue
+		}
 		if attr.Prefix != "" {
 			prefixes = append(prefixes, attr.Prefix)
 			continue
@@ -357,7 +365,30 @@ func (p *GCS) ListObjectsDelimited(ctx context.Context, bucket, prefix, delimite
 	if limit < 1 || limit > 1000 {
 		return ObjectPage{}, ErrInvalid
 	}
-	objects, prefixes, next, err := p.store.ListObjects(ctx, bucket, prefix, delimiter, cursor, limit)
+	return p.ListObjectsV2(ctx, bucket, ObjectListRequest{Prefix: prefix, Delimiter: delimiter, Cursor: cursor, Limit: limit})
+}
+
+type gcsStartAfterLister interface {
+	ListObjectsStartingAfter(context.Context, string, ObjectListRequest) ([]gcsObjectState, []string, string, error)
+}
+
+func (p *GCS) ListObjectsV2(ctx context.Context, bucket string, request ObjectListRequest) (ObjectPage, error) {
+	var objects []gcsObjectState
+	var prefixes []string
+	var next string
+	var err error
+	if request.Limit < 1 || request.Limit > 1000 {
+		return ObjectPage{}, ErrInvalid
+	}
+	if request.StartAfter != "" {
+		lister, ok := p.store.(gcsStartAfterLister)
+		if !ok {
+			return ObjectPage{}, ErrUnsupported
+		}
+		objects, prefixes, next, err = lister.ListObjectsStartingAfter(ctx, bucket, request)
+	} else {
+		objects, prefixes, next, err = p.store.ListObjects(ctx, bucket, request.Prefix, request.Delimiter, request.Cursor, request.Limit)
+	}
 	if err != nil {
 		return ObjectPage{}, normalizeGCS(err)
 	}
@@ -366,7 +397,7 @@ func (p *GCS) ListObjectsDelimited(ctx context.Context, bucket, prefix, delimite
 		if !ValidKey(object.Key) || object.Size < 0 {
 			return ObjectPage{}, ErrUnavailable
 		}
-		page.Items = append(page.Items, Object{Key: object.Key, Size: object.Size, LastModified: object.LastModified})
+		page.Items = append(page.Items, Object{Key: object.Key, ETag: object.ETag, Size: object.Size, LastModified: object.LastModified})
 	}
 	return page, nil
 }

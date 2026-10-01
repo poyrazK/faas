@@ -21,7 +21,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -116,9 +115,9 @@ func New(c Config) (*Handler, error) {
 		c.SpoolDir = os.TempDir()
 	}
 	if c.MaxPutBytes == 0 {
-		c.MaxPutBytes = min(c.Registry.MaxUploadBytes, api.MaxObjectSinglePutBytes)
+		c.MaxPutBytes = c.Registry.MaxSinglePutBytes
 	}
-	if c.MaxPutBytes < 1 || c.MaxPutBytes > api.MaxObjectSinglePutBytes {
+	if c.MaxPutBytes < 1 || c.MaxPutBytes > c.Registry.MaxSinglePutBytes {
 		return nil, errors.New("s3 gateway: invalid single PUT limit")
 	}
 	if c.MaxConcurrentPuts == 0 {
@@ -221,12 +220,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	requestID := strings.ReplaceAll(uuid.NewString(), "-", "")
 	w.Header().Set("Server", "Gregale")
 	w.Header().Set("x-amz-request-id", requestID)
-	if !h.enabled() {
-		writeS3Error(w, http.StatusServiceUnavailable, "ServiceUnavailable", "Gregale Object Storage is temporarily disabled.", r.URL.Path, requestID)
-		return
-	}
 	if strings.ToLower(r.Host) != h.host {
 		writeS3Error(w, http.StatusBadRequest, "InvalidRequest", "Use the configured Gregale S3 endpoint with path-style addressing.", r.URL.Path, requestID)
+		return
+	}
+	if h.handleCORS(w, r, requestID) {
 		return
 	}
 	var parsed sigV4Request
@@ -258,7 +256,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeS3Error(w, http.StatusForbidden, "SignatureDoesNotMatch", "The request signature we calculated does not match the signature you provided.", r.URL.Path, requestID)
 		return
 	}
-	streaming, err := prepareAWSChunkedBody(r, parsed, secret, h.region, h.maxPutBytes)
+	bodyLimit := h.maxPutBytes
+	if r.Method == http.MethodPut && r.URL.Query().Get("uploadId") != "" {
+		bodyLimit = h.registry.MaxPartBytes
+	}
+	streaming, err := prepareAWSChunkedBody(r, parsed, secret, h.region, bodyLimit)
 	if err != nil {
 		h.writeAWSChunkedError(w, r, requestID, err)
 		return
@@ -292,6 +294,13 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request, req requestConte
 	bucketName, key, hasBucket, hasKey, err := parsePath(r.URL.EscapedPath())
 	if err != nil {
 		writeS3Error(w, http.StatusBadRequest, "InvalidURI", "Could not parse the specified URI.", r.URL.Path, req.requestID)
+		return
+	}
+	if !h.enabled() && !isCleanupRequest(r, query, hasBucket, hasKey) {
+		writeS3Error(w, http.StatusServiceUnavailable, "ServiceUnavailable", "Gregale Object Storage is temporarily disabled.", r.URL.Path, req.requestID)
+		return
+	}
+	if !h.validateRequestSemantics(w, r, req, hasKey, query) {
 		return
 	}
 	if hasUnsupportedS3Semantics(r) {
@@ -373,39 +382,10 @@ func (h *Handler) routeBucket(w http.ResponseWriter, r *http.Request, req reques
 		return
 	}
 	if r.Method == http.MethodGet && query.Get("list-type") == "2" {
-		if !h.require(w, req, state.ObjectBucketPermissionRead, r.URL.Path) || !h.admit(w, r, req, "__list__", 0, false) {
-			return
-		}
-		prefix, cursor := query.Get("prefix"), query.Get("continuation-token")
-		limit := int64(1000)
-		var err error
-		if raw := query.Get("max-keys"); raw != "" {
-			limit, err = strconv.ParseInt(raw, 10, 32)
-		}
-		delimiter := query.Get("delimiter")
-		if err != nil || limit < 1 || limit > 1000 || len(prefix) > 1024 || !utf8.ValidString(prefix) || len(cursor) > 8192 || !validDelimiter(delimiter) {
-			writeS3Error(w, http.StatusBadRequest, "InvalidArgument", "A query parameter is invalid or unsupported.", r.URL.Path, req.requestID)
-			return
-		}
-		if !h.recordProviderRequest(w, r, req) {
-			return
-		}
-		var page objectstorage.ObjectPage
-		if delimiter == "" {
-			page, err = req.provider.ListObjects(r.Context(), req.bucket.PhysicalName, prefix, cursor, int32(limit))
-		} else if lister, ok := req.provider.(objectstorage.DelimitedObjectLister); ok {
-			page, err = lister.ListObjectsDelimited(r.Context(), req.bucket.PhysicalName, prefix, delimiter, cursor, int32(limit))
-		} else {
-			writeS3Error(w, http.StatusNotImplemented, "NotImplemented", "Delimiter listing is not implemented by this storage provider.", r.URL.Path, req.requestID)
-			return
-		}
-		if err != nil {
-			h.providerError(w, r, req, err, "")
-			return
-		}
-		writeS3XML(w, http.StatusOK, req.requestID, listObjectsResult(req.bucket.Name, prefix, int32(limit), page))
+		h.listObjectsV2(w, r, req, query)
 		return
 	}
+
 	h.unsupported(w, r, req.requestID)
 }
 
@@ -496,13 +476,13 @@ func (h *Handler) routeObject(w http.ResponseWriter, r *http.Request, req reques
 		}
 		h.upload(w, r, req, key)
 	case http.MethodDelete:
-		if !h.require(w, req, state.ObjectBucketPermissionWrite, r.URL.Path) || !h.admit(w, r, req, key, 0, false) {
+		if !h.require(w, req, state.ObjectBucketPermissionWrite, r.URL.Path) {
 			return
 		}
 		if !h.recordProviderRequest(w, r, req) {
 			return
 		}
-		if err := req.provider.DeleteObject(r.Context(), req.bucket.PhysicalName, key); err != nil {
+		if err := req.provider.DeleteObject(r.Context(), req.bucket.PhysicalName, key); err != nil && !errors.Is(err, objectstorage.ErrNotFound) {
 			h.providerError(w, r, req, err, key)
 			return
 		}
@@ -525,7 +505,11 @@ func (h *Handler) require(w http.ResponseWriter, req requestContext, permission,
 }
 
 func (h *Handler) admit(w http.ResponseWriter, r *http.Request, req requestContext, key string, size int64, put bool) bool {
-	if err := h.store.AdmitObjectURL(r.Context(), req.bucket.AccountID, req.bucket.ID, key, size, put, h.registry.Accounting); err != nil {
+	return h.writeAdmissionError(w, r, req, h.store.AdmitObjectURL(r.Context(), req.bucket.AccountID, req.bucket.ID, key, size, put, h.registry.Accounting))
+}
+
+func (h *Handler) writeAdmissionError(w http.ResponseWriter, r *http.Request, req requestContext, err error) bool {
+	if err != nil {
 		status, code, message := http.StatusServiceUnavailable, "ServiceUnavailable", "Object storage accounting is temporarily unavailable."
 		if errors.Is(err, state.ErrObjectBudget) {
 			status, code, message = http.StatusPaymentRequired, "AccountProblem", "The object storage safety budget has been reached."
@@ -620,12 +604,12 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, req requestCont
 		return
 	}
 	contentType := r.Header.Get("Content-Type")
-	signed, err := req.provider.Presign(r.Context(), req.bucket.PhysicalName, objectstorage.SignRequest{
+	signed, err := presignConditionalPut(r.Context(), req.provider, req.bucket.PhysicalName, objectstorage.SignRequest{
 		Method: http.MethodPut, Key: key, SizeBytes: &r.ContentLength, ContentType: contentType, ExpiresIn: 60,
 		CacheControl: metadata.CacheControl, ContentDisposition: metadata.ContentDisposition,
 		ContentEncoding: metadata.ContentEncoding, ContentLanguage: metadata.ContentLanguage,
 		Metadata: metadata.Metadata, Tags: metadata.Tags,
-	})
+	}, writeConditions(r))
 	if err != nil {
 		h.providerError(w, r, req, err, key)
 		return
@@ -699,9 +683,6 @@ func (h *Handler) deleteObjects(w http.ResponseWriter, r *http.Request, req requ
 	for _, object := range request.Objects {
 		if !objectstorage.ValidKey(object.Key) || object.VersionID != "" {
 			writeS3Error(w, http.StatusBadRequest, "InvalidRequest", "DeleteObjects contains an invalid key or unsupported version ID.", r.URL.Path, req.requestID)
-			return
-		}
-		if !h.admit(w, r, req, object.Key, 0, false) {
 			return
 		}
 	}
@@ -899,7 +880,7 @@ func objectMetadataFromHeaders(r *http.Request) (objectstorage.ObjectMetadata, e
 }
 
 func (h *Handler) download(w http.ResponseWriter, r *http.Request, req requestContext, key string) {
-	signed, err := objectstorage.PresignObjectRead(r.Context(), req.provider, req.bucket.PhysicalName, r.Method, key, 60)
+	signed, err := presignChecksumRead(r.Context(), req.provider, req.bucket.PhysicalName, r.Method, key, headerOrQueryValue(r, "x-amz-checksum-mode"))
 	if err != nil {
 		h.providerError(w, r, req, err, key)
 		return
@@ -1086,7 +1067,6 @@ func unsupportedS3SemanticName(name string) bool {
 		name == "x-amz-source-expected-bucket-owner" ||
 		strings.HasPrefix(name, "x-amz-copy-source-if-") ||
 		name == "x-amz-copy-source-range" ||
-		name == "x-amz-checksum-mode" ||
 		name == "x-amz-checksum-algorithm" ||
 		name == "x-amz-bypass-governance-retention" ||
 		name == "x-amz-mfa"
@@ -1117,7 +1097,7 @@ func (h *Handler) closeResponseBody(body io.Closer, requestID string) {
 }
 
 func copyObjectHeaders(dst, src http.Header) {
-	for _, name := range []string{"Accept-Ranges", "Cache-Control", "Content-Disposition", "Content-Encoding", "Content-Language", "Content-Length", "Content-Range", "Content-Type", "ETag", "Expires", "Last-Modified"} {
+	for _, name := range []string{"Accept-Ranges", "Cache-Control", "Content-Disposition", "Content-Encoding", "Content-Language", "Content-Length", "Content-Range", "Content-Type", "ETag", "Expires", "Last-Modified", "X-Amz-Checksum-Crc32", "X-Amz-Checksum-Crc32c", "X-Amz-Checksum-Crc64nvme", "X-Amz-Checksum-Sha1", "X-Amz-Checksum-Sha256", "X-Amz-Checksum-Type"} {
 		if value := src.Get(name); value != "" {
 			dst.Set(name, value)
 		}
@@ -1137,6 +1117,9 @@ func copyObjectHeaders(dst, src http.Header) {
 			continue
 		}
 		dst.Set("x-amz-meta-"+key, values[0])
+		if dst.Get("Access-Control-Allow-Origin") != "" {
+			dst.Set("Access-Control-Expose-Headers", dst.Get("Access-Control-Expose-Headers")+", x-amz-meta-"+key)
+		}
 	}
 }
 
@@ -1165,6 +1148,10 @@ func (h *Handler) providerHTTPError(w http.ResponseWriter, r *http.Request, req 
 	switch status {
 	case http.StatusNotFound:
 		h.providerError(w, r, req, objectstorage.ErrNotFound, key)
+	case http.StatusPreconditionFailed:
+		writeS3Error(w, status, "PreconditionFailed", "At least one of the preconditions you specified did not hold.", r.URL.Path, req.requestID)
+	case http.StatusConflict:
+		writeS3Error(w, status, "ConditionalRequestConflict", "A conflicting operation occurred. Retry the request.", r.URL.Path, req.requestID)
 	case http.StatusRequestedRangeNotSatisfiable:
 		writeS3Error(w, status, "InvalidRange", "The requested range is not satisfiable.", r.URL.Path, req.requestID)
 	case http.StatusBadRequest:

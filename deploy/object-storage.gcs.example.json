@@ -4,7 +4,9 @@
   "public_region": "us-east-1",
   "defaults": { "us-east-1": "gcs-us-east1-v1" },
   "max_buckets_per_app": 10,
-  "max_upload_bytes": 67108864,
+  "max_upload_bytes": 104857600,
+  "max_single_put_bytes": 67108864,
+  "max_part_bytes": 67108864,
   "accounting": null,
   "backends": [
     {

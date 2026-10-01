@@ -35,6 +35,14 @@ func (m *MemStore) objectUsageLockedForPeriod(account string, periodStart time.T
 		if b.AccountID == account {
 			u := m.objectUsage[b.ID]
 			u.Bucket = b
+			u.MultipartBytes = 0
+			for id, upload := range m.objectMultipartUploads {
+				if upload.BucketID == b.ID && upload.State != ObjectMultipartCompleted {
+					for _, size := range m.objectMultipartPartGrants[id] {
+						u.MultipartBytes = boundedObjectAdd(u.MultipartBytes, size)
+					}
+				}
+			}
 			out.Buckets = append(out.Buckets, u)
 		}
 	}

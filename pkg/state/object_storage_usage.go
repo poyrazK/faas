@@ -33,6 +33,7 @@ type ObjectBucketUsage struct {
 	Bucket                                                 ObjectBucket
 	BaselineBytes, BaselineKeys, GrantedBytes, GrantedKeys int64
 	ObservedBytes, ObservedKeys                            int64
+	MultipartBytes                                         int64
 	ObservedAt, AttemptAt, LeaseUntil                      time.Time
 	Token                                                  string
 }
@@ -96,7 +97,7 @@ func SummarizeObjectUsage(s ObjectUsageSnapshot, p api.ObjectStoragePolicy, now 
 			continue
 		}
 		u.ObservedBytes = boundedObjectAdd(u.ObservedBytes, b.ObservedBytes)
-		u.CapacityBytes = boundedObjectAdd(u.CapacityBytes, max(b.ObservedBytes, boundedObjectAdd(b.BaselineBytes, b.GrantedBytes)))
+		u.CapacityBytes = boundedObjectAdd(u.CapacityBytes, boundedObjectAdd(max(b.ObservedBytes, boundedObjectAdd(b.BaselineBytes, b.GrantedBytes)), b.MultipartBytes))
 		u.CapacityKeys = boundedObjectAdd(u.CapacityKeys, max(b.ObservedKeys, boundedObjectAdd(b.BaselineKeys, b.GrantedKeys)))
 		if b.ObservedAt.IsZero() || b.ObservedAt.After(now) || now.Sub(b.ObservedAt) > time.Duration(api.ObjectStorageInventoryMaxAgeSeconds)*time.Second {
 			u.Fresh = false
@@ -219,7 +220,7 @@ func checkObjectAdmission(s ObjectUsageSnapshot, bucketID string, size, oldSize 
 	if !exists {
 		keys = 1
 	}
-	bucketCapacity := max(found.ObservedBytes, boundedObjectAdd(found.BaselineBytes, found.GrantedBytes))
+	bucketCapacity := boundedObjectAdd(max(found.ObservedBytes, boundedObjectAdd(found.BaselineBytes, found.GrantedBytes)), found.MultipartBytes)
 	for _, limit := range []struct {
 		name          string
 		observed, max int64

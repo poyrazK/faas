@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/aws/smithy-go"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func testCredentials(name string) string {
@@ -496,5 +497,95 @@ func TestPublicS3EndpointDefaultsAndValidation(t *testing.T) {
 	registry, err = NewRegistry(base, testCredentials, map[string]Factory{"s3": NewS3})
 	if err != nil || registry.PublicEndpoint != "https://storage.gregale.dev" || registry.PublicRegion != "eu-west-3" {
 		t.Fatalf("custom public endpoint = %#v, %v", registry, err)
+	}
+}
+
+func TestS3ConditionalAndChecksumPresigning(t *testing.T) {
+	p, err := NewS3(testBackend(), testCredentials)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, condition := range []ObjectWriteConditions{{IfNoneMatch: "*"}, {IfMatch: `"etag"`}} {
+		size := int64(4)
+		out, e := p.(ConditionalObjectPresigner).PresignConditionalPut(context.Background(), "gregale-test", SignRequest{Method: http.MethodPut, Key: "key", SizeBytes: &size}, condition)
+		if e != nil {
+			t.Fatal(e)
+		}
+		u, _ := url.Parse(out.URL)
+		name, value := "If-None-Match", condition.IfNoneMatch
+		if condition.IfMatch != "" {
+			name, value = "If-Match", condition.IfMatch
+		}
+		if http.Header(mapHeaders(out.Headers)).Get(name) != value || !strings.Contains(u.Query().Get("X-Amz-SignedHeaders"), strings.ToLower(name)) {
+			t.Fatalf("condition not signed: headers=%v query=%v", out.Headers, u.Query())
+		}
+	}
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		out, e := p.(ObjectChecksumReadPresigner).PresignChecksumRead(context.Background(), "gregale-test", method, "key", 60)
+		if e != nil {
+			t.Fatal(e)
+		}
+		u, _ := url.Parse(out.URL)
+		mode := http.Header(mapHeaders(out.Headers)).Get("X-Amz-Checksum-Mode")
+		if mode == "" {
+			mode = u.Query().Get("X-Amz-Checksum-Mode")
+		}
+		if mode != "ENABLED" {
+			t.Fatalf("checksum mode lost: %v %v", out.Headers, u.Query())
+		}
+		if strings.Contains(u.Query().Get("response-content-disposition"), "attachment") {
+			t.Fatal("gateway read forced attachment")
+		}
+	}
+}
+func mapHeaders(headers map[string]string) map[string][]string {
+	out := map[string][]string{}
+	for k, v := range headers {
+		out[http.CanonicalHeaderKey(k)] = []string{v}
+	}
+	return out
+}
+
+func TestS3ListStartAfterAndETag(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("start-after") != "folder/hello 世界.txt" || r.URL.Query().Get("delimiter") != "/" {
+			t.Error("listing parameters were dropped", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = io.WriteString(w, `<ListBucketResult><Contents><Key>folder/next.txt</Key><ETag>&quot;etag&quot;</ETag><Size>4</Size></Contents></ListBucketResult>`)
+	}))
+	defer upstream.Close()
+	c := testBackend()
+	c.Endpoint = upstream.URL
+	p, e := NewS3(c, testCredentials)
+	if e != nil {
+		t.Fatal(e)
+	}
+	out, e := p.(ObjectV2Lister).ListObjectsV2(context.Background(), "gregale-test", ObjectListRequest{Prefix: "folder/", Delimiter: "/", StartAfter: "folder/hello 世界.txt", Limit: 1})
+	if e != nil || len(out.Items) != 1 || out.Items[0].ETag != `"etag"` {
+		t.Fatalf("%+v %v", out, e)
+	}
+}
+
+func TestRegistrySeparatesUploadLimits(t *testing.T) {
+	config := Config{DefaultRegion: "us-east-1", Defaults: map[string]string{"us-east-1": "external-a"}, MaxUploadBytes: 100 << 20, Backends: []BackendConfig{testBackend()}}
+	registry, err := NewRegistry(config, testCredentials, map[string]Factory{"s3": NewS3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if registry.MaxUploadBytes != 100<<20 || registry.MaxSinglePutBytes != 100<<20 || registry.MaxPartBytes != 64<<20 {
+		t.Fatalf("limits=%d/%d/%d", registry.MaxUploadBytes, registry.MaxSinglePutBytes, registry.MaxPartBytes)
+	}
+	config.MaxSinglePutBytes = 64 << 20
+	config.MaxPartBytes = 32 << 20
+	registry, err = NewRegistry(config, testCredentials, map[string]Factory{"s3": NewS3})
+	if err != nil || registry.MaxSinglePutBytes != 64<<20 || registry.MaxPartBytes != 32<<20 {
+		t.Fatalf("registry=%+v err=%v", registry, err)
+	}
+	for _, size := range []int64{-1, 101 << 20, api.MaxObjectSinglePutBytes + 1} {
+		config.MaxPartBytes = size
+		if _, err = NewRegistry(config, testCredentials, map[string]Factory{"s3": NewS3}); err == nil {
+			t.Fatalf("accepted invalid part limit %d", size)
+		}
 	}
 }

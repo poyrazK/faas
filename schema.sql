@@ -22847,3 +22847,31 @@ ALTER TABLE ONLY public.workflow_steps
 
 --
 --
+
+--
+-- Name: object_storage_multipart_part_grants; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_storage_multipart_part_grants (
+    upload_id uuid NOT NULL,
+    part_number integer NOT NULL,
+    max_bytes bigint NOT NULL,
+    CONSTRAINT object_storage_multipart_part_grants_max_bytes_check CHECK (((max_bytes > 0) AND (max_bytes <= '5368709120'::bigint))),
+    CONSTRAINT object_storage_multipart_part_grants_part_number_check CHECK (((part_number >= 1) AND (part_number <= 10000)))
+);
+
+
+--
+-- Name: object_storage_multipart_part_grants object_storage_multipart_part_grants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_multipart_part_grants
+    ADD CONSTRAINT object_storage_multipart_part_grants_pkey PRIMARY KEY (upload_id, part_number);
+
+
+--
+-- Name: object_storage_multipart_part_grants object_storage_multipart_part_grants_upload_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_multipart_part_grants
+    ADD CONSTRAINT object_storage_multipart_part_grants_upload_id_fkey FOREIGN KEY (upload_id) REFERENCES public.object_storage_multipart_uploads(id) ON DELETE CASCADE;

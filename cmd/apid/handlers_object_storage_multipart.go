@@ -18,15 +18,19 @@ import (
 )
 
 func multipartLayout(size int64) (int64, int32, error) {
-	if size < 1 || size > api.MaxObjectUploadBytes {
+	return multipartLayoutWithLimit(size, api.MaxObjectSinglePutBytes)
+}
+
+func multipartLayoutWithLimit(size, maxPart int64) (int64, int32, error) {
+	if size < 1 || size > api.MaxObjectUploadBytes || maxPart < 1 || maxPart > api.MaxObjectSinglePutBytes {
 		return 0, 0, objectstorage.ErrInvalid
 	}
-	partSize := api.DefaultMultipartPartBytes
+	partSize := min(api.DefaultMultipartPartBytes, maxPart)
 	if needed := (size + api.MaxMultipartParts - 1) / api.MaxMultipartParts; needed > partSize {
 		const mib = int64(1 << 20)
 		partSize = ((needed + mib - 1) / mib) * mib
 	}
-	if partSize < api.MinMultipartPartBytes || partSize > api.MaxObjectSinglePutBytes {
+	if partSize < api.MinMultipartPartBytes && size > partSize || partSize > maxPart {
 		return 0, 0, objectstorage.ErrInvalid
 	}
 	count := int32((size + partSize - 1) / partSize)
@@ -132,7 +136,7 @@ func (s *server) createObjectMultipartUpload(w http.ResponseWriter, r *http.Requ
 		bucketProblem(w, objectstorage.ErrInvalid)
 		return
 	}
-	partSize, partCount, err := multipartLayout(req.SizeBytes)
+	partSize, partCount, err := multipartLayoutWithLimit(req.SizeBytes, s.objectStorage.MaxPartBytes)
 	if err != nil {
 		bucketProblem(w, err)
 		return

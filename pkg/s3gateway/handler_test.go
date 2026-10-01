@@ -67,6 +67,8 @@ type gatewayTestProvider struct {
 	objectSize       int64
 	copyRequests     []objectstorage.CopyObjectRequest
 	presignRequests  []objectstorage.SignRequest
+	conditions       []objectstorage.ObjectWriteConditions
+	listRequests     []objectstorage.ObjectListRequest
 	tags             map[string]string
 	deleted          []string
 	deleteErrors     map[string]error
@@ -178,8 +180,11 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 type gatewayMultipartStore struct {
-	mu      sync.Mutex
-	uploads map[string]state.ObjectMultipartUpload
+	mu               sync.Mutex
+	uploads          map[string]state.ObjectMultipartUpload
+	partGrants       []int64
+	completionGrants []int64
+	capacityError    error
 }
 
 func newGatewayMultipartStore() *gatewayMultipartStore {
@@ -294,7 +299,7 @@ func newGatewayTestHandler(t *testing.T, permission string, roundTrip roundTripF
 	provider := &gatewayTestProvider{objects: objectstorage.ObjectPage{Items: []objectstorage.Object{{Key: "folder/a.txt", Size: 3, LastModified: time.Date(2026, 9, 7, 1, 2, 3, 0, time.UTC)}}}}
 	registry, err := objectstorage.NewRegistry(objectstorage.Config{
 		DefaultRegion: "us-east-1", Defaults: map[string]string{"us-east-1": "test"}, MaxUploadBytes: 16 << 20,
-		Backends: []objectstorage.BackendConfig{{ID: "test", Driver: "test", Region: "us-east-1", Namespace: "fixture"}},
+		Backends: []objectstorage.BackendConfig{{ID: "test", Driver: "test", Region: "us-east-1", Namespace: "fixture", AllowedOrigins: []string{"https://console.example.test"}}},
 	}, func(string) string { return "" }, map[string]objectstorage.Factory{"test": func(objectstorage.BackendConfig, func(string) string) (objectstorage.Provider, error) {
 		return provider, nil
 	}})
@@ -336,7 +341,7 @@ func signedGatewayRequest(t *testing.T, method, target string, body []byte, payl
 	if method == http.MethodPut {
 		request.Header.Set("Content-Type", "application/octet-stream")
 	}
-	if err := awsv4.NewSigner().SignHTTP(context.Background(), aws.Credentials{AccessKeyID: testAccess, SecretAccessKey: testSecret}, request, payloadHash, "s3", "us-east-1", time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)); err != nil {
+	if err := awsv4.NewSigner(func(o *awsv4.SignerOptions) { o.DisableURIPathEscaping = true }).SignHTTP(context.Background(), aws.Credentials{AccessKeyID: testAccess, SecretAccessKey: testSecret}, request, payloadHash, "s3", "us-east-1", time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatal(err)
 	}
 	return request
@@ -380,7 +385,7 @@ func awsChunkedGatewayRequest(t *testing.T, target, payloadHash, trailer string,
 	if trailer != "" {
 		request.Header.Set("X-Amz-Trailer", trailer)
 	}
-	if err := awsv4.NewSigner().SignHTTP(context.Background(), aws.Credentials{AccessKeyID: testAccess, SecretAccessKey: testSecret}, request, payloadHash, "s3", "us-east-1", time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)); err != nil {
+	if err := awsv4.NewSigner(func(o *awsv4.SignerOptions) { o.DisableURIPathEscaping = true }).SignHTTP(context.Background(), aws.Credentials{AccessKeyID: testAccess, SecretAccessKey: testSecret}, request, payloadHash, "s3", "us-east-1", time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatal(err)
 	}
 	return request
@@ -487,7 +492,7 @@ func TestGatewayCopyObjectWithReplacementMetadata(t *testing.T) {
 	request.Header.Set("Content-Type", "text/plain")
 	request.Header.Set("X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD")
 	request.Header.Set("X-Amz-Date", "20260907T120000Z")
-	if err := awsv4.NewSigner().SignHTTP(context.Background(), aws.Credentials{AccessKeyID: testAccess, SecretAccessKey: testSecret}, request, "UNSIGNED-PAYLOAD", "s3", "us-east-1", time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)); err != nil {
+	if err := awsv4.NewSigner(func(o *awsv4.SignerOptions) { o.DisableURIPathEscaping = true }).SignHTTP(context.Background(), aws.Credentials{AccessKeyID: testAccess, SecretAccessKey: testSecret}, request, "UNSIGNED-PAYLOAD", "s3", "us-east-1", time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatal(err)
 	}
 	recorder := httptest.NewRecorder()
@@ -520,7 +525,7 @@ func TestGatewayPutMetadataAndObjectTags(t *testing.T) {
 	request.Header.Set("X-Amz-Tagging", "env=prod&team=core")
 	request.Header.Set("X-Amz-Content-Sha256", hex.EncodeToString(sum[:]))
 	request.Header.Set("X-Amz-Date", "20260907T120000Z")
-	if err := awsv4.NewSigner().SignHTTP(context.Background(), aws.Credentials{AccessKeyID: testAccess, SecretAccessKey: testSecret}, request, hex.EncodeToString(sum[:]), "s3", "us-east-1", time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)); err != nil {
+	if err := awsv4.NewSigner(func(o *awsv4.SignerOptions) { o.DisableURIPathEscaping = true }).SignHTTP(context.Background(), aws.Credentials{AccessKeyID: testAccess, SecretAccessKey: testSecret}, request, hex.EncodeToString(sum[:]), "s3", "us-east-1", time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatal(err)
 	}
 	recorder := httptest.NewRecorder()
@@ -617,7 +622,7 @@ func TestGatewayRejectsUnsupportedSemanticHeaders(t *testing.T) {
 			}
 		})
 	}
-	request := signedGatewayRequest(t, http.MethodGet, "https://s3.gregale.dev/assets/key?x-amz-checksum-mode=ENABLED", nil, "UNSIGNED-PAYLOAD")
+	request := signedGatewayRequest(t, http.MethodGet, "https://s3.gregale.dev/assets/key?x-amz-checksum-mode=INVALID", nil, "UNSIGNED-PAYLOAD")
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusNotImplemented || len(provider.presignRequests) != 0 {
@@ -816,7 +821,7 @@ func TestGatewayDeleteObjects(t *testing.T) {
 	_, _ = checksum.Write(body)
 	request.Header.Set("X-Amz-Checksum-Crc32", base64.StdEncoding.EncodeToString(checksum.Sum(nil)))
 	request.Header.Set("X-Amz-Sdk-Checksum-Algorithm", "CRC32")
-	if err := awsv4.NewSigner().SignHTTP(context.Background(), aws.Credentials{AccessKeyID: testAccess, SecretAccessKey: testSecret}, request, hex.EncodeToString(sum[:]), "s3", "us-east-1", time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)); err != nil {
+	if err := awsv4.NewSigner(func(o *awsv4.SignerOptions) { o.DisableURIPathEscaping = true }).SignHTTP(context.Background(), aws.Credentials{AccessKeyID: testAccess, SecretAccessKey: testSecret}, request, hex.EncodeToString(sum[:]), "s3", "us-east-1", time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -912,7 +917,7 @@ func TestGatewayAcceptsSDKWritesWithUnsignedContentLength(t *testing.T) {
 	headerRequest.Header.Set("Content-Type", "text/plain")
 	headerRequest.Header.Set("X-Amz-Content-Sha256", hex.EncodeToString(sum[:]))
 	headerRequest.Header.Set("X-Amz-Date", "20260907T120000Z")
-	if err := awsv4.NewSigner().SignHTTP(context.Background(), aws.Credentials{AccessKeyID: testAccess, SecretAccessKey: testSecret}, headerRequest, hex.EncodeToString(sum[:]), "s3", "us-east-1", signedAt); err != nil {
+	if err := awsv4.NewSigner(func(o *awsv4.SignerOptions) { o.DisableURIPathEscaping = true }).SignHTTP(context.Background(), aws.Credentials{AccessKeyID: testAccess, SecretAccessKey: testSecret}, headerRequest, hex.EncodeToString(sum[:]), "s3", "us-east-1", signedAt); err != nil {
 		t.Fatal(err)
 	}
 	headerRequest.ContentLength = int64(len(body))

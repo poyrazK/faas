@@ -61,13 +61,15 @@ health-gate an enabled gateway after switching `/opt/faas/current`.
 
 Before running the role, create a **proxied** Cloudflare record for
 `s3.gregale.dev` pointing at the public Caddy edge. The beta profile deliberately
-caps `max_upload_bytes` and multipart part size at 64 MiB, below Cloudflare's
+caps `max_single_put_bytes` and `max_part_bytes` at 64 MiB, below Cloudflare's
 Free/Pro request-body ceiling. Configure a dedicated cache-bypass rule for this
 hostname and disable URL normalization, redirects, response transforms, and
 interactive bot challenges on the S3 API path. Treat Cloudflare's write/read
 timeouts as part of the beta endpoint contract. A future large-object profile
 must use a separate direct-upload origin or a provider-native signed-upload path
-instead of silently raising this proxied limit.
+instead of silently raising this proxied limit. `max_upload_bytes` is the total
+object ceiling; multipart can exceed 64 MiB while every part stays within the
+edge ceiling. The examples allow 100 MiB total with 64 MiB requests.
 
 The daemon being healthy does not enable customer storage. Keep the global
 `s3_enabled` runtime configuration false until provider qualification passes,
@@ -162,7 +164,10 @@ completion/abort, and expired-upload cleanup remain available under their
 existing authorization rules. Background deletion also continues. Keep the
 provider config/credentials loaded for cleanup. The bucket-list endpoint reports
 `enabled: false` while still returning metadata and configured limits. Enabling
-without a loaded registry does not make storage usable.
+without a loaded registry does not make storage usable. On the branded S3
+endpoint, authenticated DeleteObject, DeleteObjects, and AbortMultipartUpload
+also bypass new-work budgets and the disable flag. Reads, listing, and multipart
+completion on that endpoint remain blocked while disabled.
 
 Rollout: apply the recovery migration, then update every apid replica before
 relying on this flag. Older binaries treat a loaded registry as enabled and do
@@ -334,7 +339,7 @@ credential, and bucket even when a check fails.
 
 This endpoint supports ListBuckets for the credential's one bucket,
 HeadBucket, GetBucketLocation, ListObjectsV2 with delimiter/common-prefix
-listing, GetObject/HeadObject/PutObject/DeleteObject, multi-object
+listing, `start-after`, URL encoding, ETags, and zero-key pages, GetObject/HeadObject/PutObject/DeleteObject, multi-object
 `DeleteObjects` (up to 1,000 keys), and the standard multipart
 initiate/list-parts/upload-part/complete/abort operations, plus CopyObject with
 COPY/REPLACE metadata and tagging directives. It validates AWS
@@ -362,6 +367,28 @@ spool disk. Multipart parts are streamed through the gateway to the selected
 provider and are limited by the configured per-part upload ceiling. Use
 `s3api put-object` for simple uploads; the high-level `aws s3 cp` command can
 automatically select multipart uploads.
+
+Current SDK `x-amz-checksum-mode: ENABLED` reads return provider checksum headers
+when available; Gregale does not synthesize checksums for older objects or
+providers without that capability. Ordinary conditional PUTs preserve
+`If-Match` and `If-None-Match: *` atomically on S3 backends, including 412/409
+outcomes. GCS conditional PUTs, conditional CopyObject, and conditional multipart
+completion return 501 explicitly. Multipart listing uses standard key/upload
+markers and excludes completed history. Unsupported listing options return 501.
+
+Branded CORS preflights accept explicit configured backend origins and SigV4,
+metadata, tagging, checksum, and conditional headers. Subsequent requests require
+normal SigV4 authentication. Existing provider buckets still need CORS updates
+when provider CORS configuration changes.
+
+Every streamed part reserves capacity durably before its provider request.
+Retries preserve the largest admitted size for each part. Failed writes retain
+capacity; completion converts the reservation to an object grant after confirmed
+provider completion. Aborted sessions retain capacity pending safe provider
+reconciliation, because in-flight parts may succeed after abort. Drain all active
+branded sessions before applying the part-ledger migration; it refuses to run
+while sessions with unreserved parts remain. See
+[ADR-388](adr/388-s3-compatibility-and-multipart-capacity.md) for rollout and rollback.
 
 Conditional GET/HEAD requests forward the standard validators and preserve S3
 `304 Not Modified` and `412 Precondition Failed` outcomes without exposing a
@@ -817,8 +844,10 @@ separate tenant IAM adapter; never hand out the operator-wide credential.
 - Add a second backend and switch the default. Old/new buckets must use their
   respective backends; removing the old config must fail closed.
 - Keep operator monitoring/budgets in place. Defaults are 10 buckets/app and
-  100 MiB/upload, configurable up to 100 and 5 TiB. A single signed PUT remains
-  capped at 5 GiB; larger objects use multipart. These alone do **not** cap total
+  100 MiB/object, configurable up to 100 buckets and 5 TiB objects. Omitted
+  `max_single_put_bytes` retains the previous ceiling (at most 5 GiB); omitted
+  `max_part_bytes` defaults to at most 64 MiB. Configure both explicitly for
+  a proxied endpoint. A single signed PUT remains capped at 5 GiB; larger objects use multipart. These alone do **not** cap total
   bytes or costs; configure and qualify the accounting controls above. Presign
   counts cannot meter actual usage. The optional rate card is only an estimate;
   plan allowances and invoice lines do not ship here.

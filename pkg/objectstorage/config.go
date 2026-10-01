@@ -20,15 +20,17 @@ const minimumOVHAccessLogReportAgeSeconds int64 = 2 * 60 * 60
 // Config contains only non-secret settings and environment variable names.
 // Backend IDs are permanent: retain an old entry while buckets reference it.
 type Config struct {
-	Accounting       *api.ObjectStoragePolicy  `json:"accounting,omitempty"`
-	Pricing          *api.ObjectStoragePricing `json:"pricing,omitempty"`
-	DefaultRegion    string                    `json:"default_region"`
-	Defaults         map[string]string         `json:"defaults"`
-	MaxBucketsPerApp int                       `json:"max_buckets_per_app"`
-	MaxUploadBytes   int64                     `json:"max_upload_bytes"`
-	PublicEndpoint   string                    `json:"public_endpoint,omitempty"`
-	PublicRegion     string                    `json:"public_region,omitempty"`
-	Backends         []BackendConfig           `json:"backends"`
+	Accounting        *api.ObjectStoragePolicy  `json:"accounting,omitempty"`
+	Pricing           *api.ObjectStoragePricing `json:"pricing,omitempty"`
+	DefaultRegion     string                    `json:"default_region"`
+	Defaults          map[string]string         `json:"defaults"`
+	MaxBucketsPerApp  int                       `json:"max_buckets_per_app"`
+	MaxUploadBytes    int64                     `json:"max_upload_bytes"`
+	MaxSinglePutBytes int64                     `json:"max_single_put_bytes,omitempty"`
+	MaxPartBytes      int64                     `json:"max_part_bytes,omitempty"`
+	PublicEndpoint    string                    `json:"public_endpoint,omitempty"`
+	PublicRegion      string                    `json:"public_region,omitempty"`
+	Backends          []BackendConfig           `json:"backends"`
 }
 
 type BackendConfig struct {
@@ -68,16 +70,18 @@ type UsageConfig struct {
 }
 
 type Registry struct {
-	usageReportPaths map[string]string
-	Accounting       api.ObjectStoragePolicy
-	Pricing          *api.ObjectStoragePricing
-	DefaultRegion    string
-	MaxBucketsPerApp int
-	MaxUploadBytes   int64
-	PublicEndpoint   string
-	PublicRegion     string
-	backends         map[string]Backend
-	defaults         map[string]string
+	usageReportPaths  map[string]string
+	Accounting        api.ObjectStoragePolicy
+	Pricing           *api.ObjectStoragePricing
+	DefaultRegion     string
+	MaxBucketsPerApp  int
+	MaxUploadBytes    int64
+	MaxSinglePutBytes int64
+	MaxPartBytes      int64
+	PublicEndpoint    string
+	PublicRegion      string
+	backends          map[string]Backend
+	defaults          map[string]string
 }
 
 type Factory func(BackendConfig, func(string) string) (Provider, error)
@@ -90,6 +94,15 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 	}
 	if c.MaxUploadBytes == 0 {
 		c.MaxUploadBytes = api.DefaultObjectUploadBytes
+	}
+	if c.MaxSinglePutBytes == 0 {
+		c.MaxSinglePutBytes = min(c.MaxUploadBytes, api.MaxObjectSinglePutBytes)
+	}
+	if c.MaxPartBytes == 0 {
+		c.MaxPartBytes = min(c.MaxUploadBytes, api.DefaultMultipartPartBytes)
+	}
+	if c.MaxSinglePutBytes < 1 || c.MaxSinglePutBytes > min(c.MaxUploadBytes, api.MaxObjectSinglePutBytes) || c.MaxPartBytes < 1 || c.MaxPartBytes > min(c.MaxUploadBytes, api.MaxObjectSinglePutBytes) {
+		return nil, errors.New("object storage: invalid single PUT or multipart part limit")
 	}
 	if c.PublicEndpoint == "" {
 		c.PublicEndpoint = "https://s3.gregale.dev"
@@ -109,6 +122,7 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 		return nil, errors.New("object storage: invalid public_region")
 	}
 	r := &Registry{DefaultRegion: c.DefaultRegion, MaxBucketsPerApp: c.MaxBucketsPerApp, MaxUploadBytes: c.MaxUploadBytes, PublicEndpoint: strings.TrimRight(c.PublicEndpoint, "/"), PublicRegion: c.PublicRegion, backends: map[string]Backend{}, defaults: map[string]string{}}
+	r.MaxSinglePutBytes, r.MaxPartBytes = c.MaxSinglePutBytes, c.MaxPartBytes
 	r.usageReportPaths = map[string]string{}
 	if c.Accounting != nil {
 		if !c.Accounting.Valid() {
@@ -193,7 +207,7 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 		if err != nil {
 			return nil, fmt.Errorf("object storage: backend %s configuration failed: %w", b.ID, err)
 		}
-		r.backends[b.ID] = Backend{ID: b.ID, Region: b.Region, Namespace: b.Namespace, Fingerprint: fingerprint(b), Provider: p, UsageReportsPath: b.UsageReportsPath, Usage: b.Usage}
+		r.backends[b.ID] = Backend{AllowedOrigins: append([]string(nil), b.AllowedOrigins...), ID: b.ID, Region: b.Region, Namespace: b.Namespace, Fingerprint: fingerprint(b), Provider: p, UsageReportsPath: b.UsageReportsPath, Usage: b.Usage}
 	}
 	for region, id := range c.Defaults {
 		b, ok := r.backends[id]
@@ -216,6 +230,7 @@ func (r *Registry) Backends() []Backend {
 	}
 	out := make([]Backend, 0, len(r.backends))
 	for _, backend := range r.backends {
+		backend.AllowedOrigins = append([]string(nil), backend.AllowedOrigins...)
 		out = append(out, backend)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })

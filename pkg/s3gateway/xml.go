@@ -53,10 +53,15 @@ type listBucketResult struct {
 	IsTruncated           bool           `xml:"IsTruncated"`
 	Contents              []listedObject `xml:"Contents"`
 	CommonPrefixes        []commonPrefix `xml:"CommonPrefixes,omitempty"`
+	Delimiter             string         `xml:"Delimiter,omitempty"`
+	ContinuationToken     string         `xml:"ContinuationToken,omitempty"`
+	StartAfter            string         `xml:"StartAfter,omitempty"`
+	EncodingType          string         `xml:"EncodingType,omitempty"`
 	NextContinuationToken string         `xml:"NextContinuationToken,omitempty"`
 }
 
 type listedObject struct {
+	ETag         string `xml:"ETag,omitempty"`
 	Key          string `xml:"Key"`
 	LastModified string `xml:"LastModified"`
 	Size         int64  `xml:"Size"`
@@ -82,6 +87,7 @@ type listedMultipartUpload struct {
 }
 
 type listMultipartUploadsResult struct {
+	EncodingType     string                  `xml:"EncodingType,omitempty"`
 	XMLName          xml.Name                `xml:"ListMultipartUploadsResult"`
 	XMLNS            string                  `xml:"xmlns,attr"`
 	Bucket           string                  `xml:"Bucket"`
@@ -199,7 +205,7 @@ func listObjectsResult(bucket, prefix string, limit int32, page objectstorage.Ob
 	for _, object := range page.Items {
 		result.Contents = append(result.Contents, listedObject{
 			Key: object.Key, LastModified: object.LastModified.UTC().Format(time.RFC3339Nano),
-			Size: object.Size, StorageClass: "STANDARD",
+			ETag: object.ETag, Size: object.Size, StorageClass: "STANDARD",
 		})
 	}
 	for _, value := range page.CommonPrefixes {

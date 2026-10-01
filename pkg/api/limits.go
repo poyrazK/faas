@@ -7754,3 +7754,12 @@ const (
 	WorkPolicyMaxRules                = 64
 	WorkPolicyMaxStartDeadlineSeconds = 30 * 24 * 60 * 60
 )
+
+// S3 protocol and browser-policy bounds shared by the branded gateway and stores.
+const (
+	ObjectS3CORSMaxAgeSeconds    = 3600
+	MaxObjectS3ListItems         = 1000
+	MaxObjectS3ListTextBytes     = 1024
+	MaxObjectS3ListCursorBytes   = 8192
+	MaxObjectS3UploadMarkerBytes = 128
+)

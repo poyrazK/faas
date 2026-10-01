@@ -581,7 +581,7 @@ func (s *server) signBucketObject(w http.ResponseWriter, r *http.Request, acct s
 		if !ok {
 			return
 		}
-		if err := req.Validate(min(s.objectStorage.MaxUploadBytes, api.MaxObjectSinglePutBytes)); err != nil {
+		if err := req.Validate(s.objectStorage.MaxSinglePutBytes); err != nil {
 			bucketProblem(w, err)
 			return
 		}

@@ -971,6 +971,7 @@ type Querier interface {
 	ObjectInventorySample(ctx context.Context, db DBTX, arg ObjectInventorySampleParams) error
 	ObjectMultipartActivate(ctx context.Context, db DBTX, arg ObjectMultipartActivateParams) (int64, error)
 	ObjectMultipartByKey(ctx context.Context, db DBTX, arg ObjectMultipartByKeyParams) (ObjectStorageMultipartUpload, error)
+	ObjectMultipartCapacityLock(ctx context.Context, db DBTX, arg ObjectMultipartCapacityLockParams) (ObjectStorageMultipartUpload, error)
 	ObjectMultipartClaim(ctx context.Context, db DBTX, arg ObjectMultipartClaimParams) (ObjectStorageMultipartUpload, error)
 	ObjectMultipartCount(ctx context.Context, db DBTX, bucketID pgtype.UUID) (int64, error)
 	ObjectMultipartDue(ctx context.Context, db DBTX, batchLimit int32) ([]ObjectStorageMultipartUpload, error)
@@ -979,6 +980,9 @@ type Querier interface {
 	ObjectMultipartInsert(ctx context.Context, db DBTX, arg ObjectMultipartInsertParams) (ObjectStorageMultipartUpload, error)
 	ObjectMultipartList(ctx context.Context, db DBTX, arg ObjectMultipartListParams) ([]ObjectStorageMultipartUpload, error)
 	ObjectMultipartLockBucket(ctx context.Context, db DBTX, arg ObjectMultipartLockBucketParams) (pgtype.UUID, error)
+	ObjectMultipartPartGrant(ctx context.Context, db DBTX, arg ObjectMultipartPartGrantParams) (int64, error)
+	ObjectMultipartPartGrantUpsert(ctx context.Context, db DBTX, arg ObjectMultipartPartGrantUpsertParams) error
+	ObjectMultipartPartTotal(ctx context.Context, db DBTX, uploadID pgtype.UUID) (int64, error)
 	ObjectMultipartRetry(ctx context.Context, db DBTX, arg ObjectMultipartRetryParams) (int64, error)
 	ObjectMultipartSetSize(ctx context.Context, db DBTX, arg ObjectMultipartSetSizeParams) (int64, error)
 	ObjectS3BindingDeleteSecrets(ctx context.Context, db DBTX, managedObjectStorageCredentialID pgtype.UUID) (int64, error)
@@ -1005,6 +1009,7 @@ type Querier interface {
 	ObjectS3CredentialRotationStampApp(ctx context.Context, db DBTX, arg ObjectS3CredentialRotationStampAppParams) error
 	ObjectS3CredentialRotationStampStage(ctx context.Context, db DBTX, arg ObjectS3CredentialRotationStampStageParams) (pgtype.Timestamptz, error)
 	ObjectS3CredentialTouch(ctx context.Context, db DBTX, arg ObjectS3CredentialTouchParams) (int64, error)
+	ObjectS3MultipartList(ctx context.Context, db DBTX, arg ObjectS3MultipartListParams) ([]ObjectStorageMultipartUpload, error)
 	ObjectStorageManagedSecretRotate(ctx context.Context, db DBTX, arg ObjectStorageManagedSecretRotateParams) (int64, error)
 	ObjectStorageProviderBuckets(ctx context.Context, db DBTX, arg ObjectStorageProviderBucketsParams) ([]ObjectBucket, error)
 	ObjectStorageProviderEgressIncrement(ctx context.Context, db DBTX, arg ObjectStorageProviderEgressIncrementParams) error

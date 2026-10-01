@@ -2741,6 +2741,12 @@ type ObjectStorageKeyGrant struct {
 	MaxBytes int64
 }
 
+type ObjectStorageMultipartPartGrant struct {
+	UploadID   pgtype.UUID
+	PartNumber int32
+	MaxBytes   int64
+}
+
 type ObjectStorageMultipartUpload struct {
 	ID               pgtype.UUID
 	AccountID        pgtype.UUID

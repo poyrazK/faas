@@ -135,56 +135,6 @@ func (h *Handler) initiateMultipart(w http.ResponseWriter, r *http.Request, req 
 	writeS3XML(w, http.StatusOK, req.requestID, initiateMultipartResult{XMLNS: s3XMLNamespace, Bucket: req.bucket.Name, Key: key, UploadID: upload.ID})
 }
 
-func (h *Handler) listMultipartUploads(w http.ResponseWriter, r *http.Request, req requestContext) {
-	if !h.require(w, req, state.ObjectBucketPermissionRead, r.URL.Path) {
-		return
-	}
-	query := operationQuery(r.URL.Query())
-	if !queryKeysOnly(query, "uploads", "prefix", "max-uploads") || !query.Has("uploads") {
-		h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "InvalidArgument")
-		return
-	}
-	limit := int64(1000)
-	if raw := query.Get("max-uploads"); raw != "" {
-		parsed, err := strconv.ParseInt(raw, 10, 32)
-		if err != nil || parsed < 1 || parsed > 1000 {
-			h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "InvalidArgument")
-			return
-		}
-		limit = parsed
-	}
-	store, ok := h.publicMultipartStore(w, r, req)
-	if !ok {
-		return
-	}
-	prefix := query.Get("prefix")
-	items := make([]listedMultipartUpload, 0, limit)
-	cursor := ""
-	truncated := false
-	for page := 0; page < 20 && int64(len(items)) < limit; page++ {
-		pageLimit := int32(min(int64(100), limit-int64(len(items))))
-		rows, next, err := store.ListObjectMultipartUploads(r.Context(), req.credential.AccountID, req.bucket.AppID, req.bucket.ID, pageLimit, cursor)
-		if err != nil {
-			h.writeMultipartError(w, r, req, err, "ServiceUnavailable")
-			return
-		}
-		for _, upload := range rows {
-			if upload.PartCount == 0 && (upload.State == state.ObjectMultipartActive || upload.State == state.ObjectMultipartCompleting || upload.State == state.ObjectMultipartAborting) && strings.HasPrefix(upload.Key, prefix) {
-				items = append(items, listedMultipartUpload{Key: upload.Key, UploadID: upload.ID, Initiated: upload.CreatedAt.UTC().Format(time.RFC3339Nano)})
-				if int64(len(items)) == limit {
-					break
-				}
-			}
-		}
-		if next == "" {
-			cursor = ""
-			break
-		}
-		cursor, truncated = next, true
-	}
-	writeS3XML(w, http.StatusOK, req.requestID, listMultipartUploadsResult{XMLNS: s3XMLNamespace, Bucket: req.bucket.Name, Prefix: prefix, MaxUploads: int32(limit), IsTruncated: truncated, NextUploadMarker: cursor, Uploads: items})
-}
-
 func (h *Handler) uploadMultipartPart(w http.ResponseWriter, r *http.Request, req requestContext, key, uploadID, rawPart string) {
 	if !h.require(w, req, state.ObjectBucketPermissionWrite, r.URL.Path) {
 		return
@@ -198,11 +148,8 @@ func (h *Handler) uploadMultipartPart(w http.ResponseWriter, r *http.Request, re
 		return
 	}
 	part64, err := strconv.ParseInt(rawPart, 10, 32)
-	if err != nil || part64 < 1 || part64 > api.MaxMultipartParts || r.ContentLength < 1 || r.ContentLength > min(h.registry.MaxUploadBytes, api.MaxObjectSinglePutBytes) {
+	if err != nil || part64 < 1 || part64 > api.MaxMultipartParts || r.ContentLength < 1 || r.ContentLength > h.registry.MaxPartBytes {
 		h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "InvalidArgument")
-		return
-	}
-	if !h.admit(w, r, req, key, 0, false) {
 		return
 	}
 	integrity, err := newRequestIntegrityReader(r.Body, r.ContentLength, req.signature.PayloadHash, r.Header)
@@ -210,6 +157,22 @@ func (h *Handler) uploadMultipartPart(w http.ResponseWriter, r *http.Request, re
 		h.writeAWSChunkedError(w, r, req.requestID, err)
 		return
 	}
+	capacity, ok := h.multipartStore.(state.ObjectMultipartCapacityStore)
+	if !ok {
+		h.unsupported(w, r, req.requestID)
+		return
+	}
+	select {
+	case h.putSlots <- struct{}{}:
+		defer func() { <-h.putSlots }()
+	default:
+		writeS3Error(w, http.StatusServiceUnavailable, "SlowDown", "Please reduce your request rate.", r.URL.Path, req.requestID)
+		return
+	}
+	if !h.writeAdmissionError(w, r, req, capacity.AdmitObjectMultipartPart(r.Context(), req.bucket.AccountID, req.bucket.ID, upload.ID, int32(part64), r.ContentLength, h.registry.MaxUploadBytes, h.registry.Accounting)) {
+		return
+	}
+
 	if !h.recordProviderRequest(w, r, req) {
 		return
 	}
@@ -365,7 +328,12 @@ func (h *Handler) completeMultipart(w http.ResponseWriter, r *http.Request, req 
 		h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "EntityTooLarge")
 		return
 	}
-	if !h.admit(w, r, req, key, total, true) {
+	capacity, ok := h.multipartStore.(state.ObjectMultipartCapacityStore)
+	if !ok {
+		h.unsupported(w, r, req.requestID)
+		return
+	}
+	if !h.writeAdmissionError(w, r, req, capacity.AdmitObjectMultipartCompletion(r.Context(), req.bucket.AccountID, req.bucket.ID, upload.ID, key, total, h.registry.Accounting)) {
 		return
 	}
 	token := uuid.NewString()

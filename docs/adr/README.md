@@ -392,6 +392,8 @@ concurrently). The log above already contains several such pairs (157, 158, 167,
 - [ADR-286: runtime freshness for object-storage binding creation](286-object-storage-binding-create-runtime-freshness.md) — stamp runtime configuration and stale snapshots in the binding creation transaction
 - [ADR-287: atomic object-storage binding revocation](287-atomic-object-storage-binding-revocation.md) — revoke both keys, remove managed secrets, and invalidate runtime snapshots in one transaction
 
+- [ADR-388: S3 compatibility and multipart capacity admission](388-s3-compatibility-and-multipart-capacity.md)
+
 ## Snapshot restore optimization decisions
 
 - [ADR-147: request activity flush cadence](147-request-activity-flush-cadence.md)

@@ -86,3 +86,34 @@ func equalObjectMultipartMetadata(a, b ObjectMultipartMetadata) bool {
 		a.ContentLanguage == b.ContentLanguage &&
 		maps.Equal(a.UserMetadata, b.UserMetadata) && maps.Equal(a.Tags, b.Tags)
 }
+
+// ObjectMultipartCapacityStore reserves incomplete parts before provider writes.
+// Reservations survive failures and are released only after confirmed completion. Abort reclamation requires provider reconciliation.
+type ObjectMultipartCapacityStore interface {
+	AdmitObjectMultipartPart(context.Context, string, string, string, int32, int64, int64, api.ObjectStoragePolicy) error
+	AdmitObjectMultipartCompletion(context.Context, string, string, string, string, int64, api.ObjectStoragePolicy) error
+}
+
+// ObjectS3MultipartLister excludes terminal history and uses S3 key/upload markers.
+type ObjectS3MultipartLister interface {
+	ListObjectS3MultipartUploads(context.Context, string, string, string, string, string, string, int32) ([]ObjectMultipartUpload, error)
+}
+
+func validMultipartCapacityUpload(u ObjectMultipartUpload, account, bucket string, completion bool, now time.Time) bool {
+	if u.AccountID != account || u.BucketID != bucket || u.PartCount != 0 {
+		return false
+	}
+	if completion {
+		return u.State == ObjectMultipartActive || u.State == ObjectMultipartCompleting
+	}
+	return u.State == ObjectMultipartActive && u.ExpiresAt.After(now)
+}
+
+func withoutMultipartReservation(s ObjectUsageSnapshot, bucket string, reserved int64) ObjectUsageSnapshot {
+	for i := range s.Buckets {
+		if s.Buckets[i].Bucket.ID == bucket {
+			s.Buckets[i].MultipartBytes -= reserved
+		}
+	}
+	return s
+}

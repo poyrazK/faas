@@ -172,6 +172,7 @@ type MemStore struct {
 	objectAccessGrants        map[string]ObjectBucketAccessGrant
 	objectS3Credentials       map[string]ObjectS3Credential
 	objectMultipartUploads    map[string]ObjectMultipartUpload
+	objectMultipartPartGrants map[string]map[int32]int64
 	objectUploadRoutes        map[string]ObjectUploadRoute
 	objectUploadCompletions   map[string]ObjectUploadCompletion
 	outboundIntegrationOffers map[string]OutboundIntegrationOffer
@@ -20461,6 +20462,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for uploadID, upload := range m.objectMultipartUploads {
 		if upload.AccountID == id {
 			delete(m.objectMultipartUploads, uploadID)
+			delete(m.objectMultipartPartGrants, uploadID)
 		}
 	}
 	reports := m.objectReports[:0]

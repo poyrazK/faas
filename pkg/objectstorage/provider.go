@@ -85,6 +85,7 @@ type UploadResult struct {
 
 type Object struct {
 	Key          string    `json:"key"`
+	ETag         string    `json:"etag,omitempty"`
 	Size         int64     `json:"size_bytes"`
 	LastModified time.Time `json:"last_modified"`
 }
@@ -100,6 +101,31 @@ type ObjectPage struct {
 // used by accounting and older drivers.
 type DelimitedObjectLister interface {
 	ListObjectsDelimited(context.Context, string, string, string, string, int32) (ObjectPage, error)
+}
+
+type ObjectListRequest struct {
+	Prefix, Delimiter, Cursor, StartAfter string
+	Limit                                 int32
+}
+
+// ObjectV2Lister preserves the S3 start-after boundary without scanning an
+// entire bucket in the gateway. Older drivers explicitly decline this option.
+type ObjectV2Lister interface {
+	ListObjectsV2(context.Context, string, ObjectListRequest) (ObjectPage, error)
+}
+
+type ObjectWriteConditions struct {
+	IfMatch, IfNoneMatch string
+}
+
+// ConditionalObjectPresigner must bind the condition into the provider's
+// atomic write. A HEAD followed by an unconditional PUT is not equivalent.
+type ConditionalObjectPresigner interface {
+	PresignConditionalPut(context.Context, string, SignRequest, ObjectWriteConditions) (SignedRequest, error)
+}
+
+type ObjectChecksumReadPresigner interface {
+	PresignChecksumRead(context.Context, string, string, string, int64) (SignedRequest, error)
 }
 
 // ObjectMetadata contains the portable HTTP metadata that S3 CopyObject can
@@ -313,6 +339,7 @@ func ValidateObjectMetadata(metadata ObjectMetadata) error {
 }
 
 type Backend struct {
+	AllowedOrigins   []string
 	ID               string
 	Region           string
 	Namespace        string
