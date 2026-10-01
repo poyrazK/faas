@@ -353,6 +353,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/tcp-listeners":                                        "CreateAppTCPListener",
 	"PATCH /v1/apps/{slug}/tcp-listeners/{name}":                                "UpdateAppTCPListener",
 	"DELETE /v1/apps/{slug}/tcp-listeners/{name}":                               "DeleteAppTCPListener",
+	"GET /v1/apps/{slug}/tcp-listeners/{name}/tls-status":                       "AppTCPListenerTLSStatus",
 	"POST /v1/apps/{slug}/previews":                                             "CreatePreview",
 	"GET /v1/apps/{slug}/instances":                                             "ListInstances",
 	"POST /v1/apps/{slug}/park":                                                 "Park",

@@ -5731,6 +5731,38 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/tcp-listeners/{name}/tls-status:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: name
+        in: path
+        required: true
+        description: TCP endpoint whose observed certificates are requested.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,30}$' }
+    get:
+      tags: [apps]
+      operationId: appTCPListenerTLSStatus
+      summary: Read observed edge certificate status for a TCP listener.
+      description: |
+        Returns customer-safe certificate evidence for each observed edge.
+        Missing evidence, evidence at least sixty seconds old, and changed or
+        disabled TLS intent have unknown status. This does not establish fleet
+        coverage, client trust, public routing or guest availability.
+      responses:
+        '200':
+          description: Certificate evidence from observed edges only.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TCPListenerTLSStatusResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Certificate observation storage is unavailable.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/consumers/{consumer_id}:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -29007,6 +29039,31 @@ components:
           type: string
           maxLength: 253
           description: "Normalized DNS hostname for termination. IP-shaped names and wildcards are forbidden."
+
+    TCPListenerTLSStatusResponse:
+      description: "Certificate evidence from observed edges; empty observations mean unknown status, never fleet-wide readiness."
+      type: object
+      additionalProperties: false
+      required: [name, tls, enabled, scope, observations]
+      properties:
+        name: { type: string }
+        tls: { $ref: '#/components/schemas/TCPListenerTLSConfig' }
+        enabled: { type: boolean }
+        scope: { type: string, enum: [observed_edges] }
+        observations:
+          type: array
+          items: { $ref: '#/components/schemas/TCPListenerTLSCertificateStatus' }
+
+    TCPListenerTLSCertificateStatus:
+      description: "Certificate evidence for one edge. Unknown evidence omits certificate expiry."
+      type: object
+      additionalProperties: false
+      required: [edge_id, status, observed_at]
+      properties:
+        edge_id: { type: string, maxLength: 128 }
+        status: { type: string, enum: [ready, not_ready, unknown] }
+        observed_at: { type: string, format: date-time }
+        not_after: { type: string, format: date-time }
 
     AppManifestHealthcheck:
       description: "AppManifest-level healthcheck shape: OCI HEALTHCHECK fields plus typed deployment probe overrides. Durations are integer seconds at the JSON boundary to match OCI/Docker conventions."

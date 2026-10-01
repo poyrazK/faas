@@ -1441,6 +1441,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/tcp-listeners", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAppTCPListener)))))
 	mux.HandleFunc("PATCH /v1/apps/{slug}/tcp-listeners/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateAppTCPListener))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/tcp-listeners/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteAppTCPListener))))
+	mux.HandleFunc("GET /v1/apps/{slug}/tcp-listeners/{name}/tls-status", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.appTCPListenerTLSStatus))))
 	// ADR-120: end-customer identity and credential management. Reads use
 	// the normal app-read scope; mutations require deploy-write + MFA and
 	// are idempotency-aware so a retry never mints a second plaintext key.

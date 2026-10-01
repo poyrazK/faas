@@ -33,7 +33,7 @@ For split-box deployments, set the `faas_tcpd_schedd_target` and the optional
 use the local schedd Unix socket by default.
 
 After convergence, verify the daemon log contains `raw TCP ingress enabled`,
-then create a listener through `gregale app tcp create` (or the API) and test
+then create a listener through `gregale apps tcp APP add --name NAME --guest-port PORT` (or the API) and test
 the allocated port from an allowed source. If an enabled listener cannot bind
 at daemon startup, the daemon now fails startup and logs the port error. Do not
 set `0.0.0.0/0` in staging.
@@ -48,3 +48,13 @@ both directions, while `gatewayd_public_tcp_session_duration_seconds` and
 The fleet dashboard panels 418-419 graph these signals, and Prometheus alerts
 on sustained account-quota rejection or idle-timeout spikes; see
 `docs/runbooks/FaasTCPIngress.md` for triage.
+
+## TLS termination and certificate status
+
+Create a disabled terminating listener with `gregale apps tcp APP add --name NAME --guest-port PORT --tls-mode terminate --tls-hostname HOST`. HOST must be a verified app-wide domain owned by APP. Configure the public gateway's absolute `FAAS_TCPD_TLS_CERT_DIR` and provision `HOST.pem` containing its certificate chain and matching private key before enabling with `gregale apps tcp APP enable NAME`. The runtime does not issue certificates. Certificate provisioning and native acceptance require separate operational qualification.
+
+Change the policy with `gregale apps tcp APP tls NAME --tls-mode terminate --tls-hostname HOST`, or select `--tls-mode passthrough`. A policy change disables the listener; enable it separately after provisioning. Missing or unusable certificates and incorrect SNI reject sessions before workload selection. Existing sessions keep their negotiated certificate during rotation.
+
+Run `gregale apps tcp APP tls-status NAME` or add `--json` to read the authenticated status endpoint, `GET /v1/apps/{slug}/tcp-listeners/{name}/tls-status`. Each observed edge reports certificate evidence as `ready`, `not_ready`, or `unknown`. Missing observations establish no readiness. Evidence at least 60 seconds old, disabled or changed intent, and invalid observations produce unknown status and omit expiry. Fresh evidence whose certificate has expired reports not_ready.
+
+The response scope is `observed_edges`. It does not prove fleet coverage, client trust, public routing, or guest availability. Edges publish changed evidence immediately and heartbeat unchanged evidence every 15 seconds; storage failure can cause previously observed evidence to expire. Aggregate `gatewayd_public_tcp_tls_listeners_ready`, `gatewayd_public_tcp_tls_listeners_not_ready`, and `gatewayd_public_tcp_tls_certificate_expiry_seconds` gauges describe local certificate material and reset on shutdown.
