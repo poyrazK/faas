@@ -873,3 +873,7 @@ Draft [#3995](https://github.com/poyrazK/faas/pull/3995), commit `c9d7607f8`, st
 ### UDP OpenAPI response/allocation alignment (2026-10-01)
 
 UDP list/create/update/delete operations now document HTTP403 scope/MFA rejection and HTTP503 capacity/store-unavailable failures returned by their existing wrappers/handlers. Create public_port accepts zero as automatic allocation as well as the explicit 40000..49999 range, matching the implementation's zero sentinel; omission remains allowed. Vacuum schema lint completed successfully with its repository-wide 1,620 warnings and 108 informs (`/tmp/gregale-udp-schema-lint.log`); this is not claimed as warning-free lint. Whitespace checking passed. SDK regeneration/schema isolated publication and native/deployed acceptance remain pending.
+
+### UDP schema-driven Node/Python regeneration (2026-10-01)
+
+Node and Python SDKs were regenerated from the corrected UDP schema. Node compilation passed; four Python container-listener tests passed, including explicit public_port=0 request encoding and model round-trip alongside omission behavior (`/tmp/gregale-udp-schema-{node-gen,node-build,python-gen,python-tests-final}.log`). Final generated diffs are confined to UDP request model/types and operation response handling. A transient issues.py diff during Python generation disappeared when its generator completed; no unrelated source was reverted. All launched handles are terminal. Isolated schema/SDK publication and regeneration determinism checks remain pending, as do native/deployed acceptance.

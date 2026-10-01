@@ -8,6 +8,9 @@
 export type CreateUDPListenerRequest = {
   name: string;
   guest_port: number;
-  public_port?: number;
+  /**
+   * Omit or set to zero for automatic allocation; otherwise reserve a port in the public UDP range.
+   */
+  public_port?: (0 | number);
 };
 

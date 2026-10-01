@@ -462,6 +462,7 @@ from .create_trigger_request_broker_poison_strategy_type_3_type_1 import (
 )
 from .create_trigger_request_config import CreateTriggerRequestConfig
 from .create_udp_listener_request import CreateUDPListenerRequest
+from .create_udp_listener_request_public_port_type_0 import CreateUDPListenerRequestPublicPortType0
 from .create_workflow_callback_webhook_binding_request import CreateWorkflowCallbackWebhookBindingRequest
 from .cron_response import CronResponse
 from .cron_response_kind import CronResponseKind
@@ -2406,6 +2407,7 @@ __all__ = (
     "CreateTriggerRequestBrokerPoisonStrategyType3Type1",
     "CreateTriggerRequestConfig",
     "CreateUDPListenerRequest",
+    "CreateUDPListenerRequestPublicPortType0",
     "CreateWorkflowCallbackWebhookBindingRequest",
     "CronResponse",
     "CronResponseKind",

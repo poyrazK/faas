@@ -55,3 +55,10 @@ def test_tls_status_parses_unknown_without_inventing_expiry():
     assert result.scope == "observed_edges"
     assert result.observations[0].status == "unknown"
     assert result.observations[0].not_after is UNSET
+
+
+def test_udp_create_preserves_explicit_automatic_allocation():
+    body = CreateUDPListenerRequest(name="dns", guest_port=5353, public_port=0)
+    kwargs = create_app_udp_listener._get_kwargs("app", body=body)
+    assert kwargs["json"] == {"name": "dns", "guest_port": 5353, "public_port": 0}
+    assert CreateUDPListenerRequest.from_dict(kwargs["json"]).public_port == 0
