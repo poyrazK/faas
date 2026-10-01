@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { SchedulePolicy } from './SchedulePolicy.js';
+import type { WorkDecision } from './WorkDecision.js';
 /**
  * Durable decision and lifecycle snapshot for one nominal schedule time.
  */
@@ -14,6 +15,8 @@ export type ScheduleOccurrenceResponse = {
   schedule_policy: SchedulePolicy;
   status: 'pending' | 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'skipped_overlap' | 'missed_deadline' | 'coalesced' | 'waiting_replacement' | 'uncertain';
   reason?: string;
+  work_decision?: WorkDecision;
+  outcome_code?: string;
   blocking_occurrence_id?: string;
   job_run_id?: string;
   invocation_id?: string;

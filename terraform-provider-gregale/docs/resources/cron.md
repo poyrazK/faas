@@ -22,6 +22,15 @@ resource "gregale_cron" "sync" {
     start_deadline_seconds = 120
     missed_runs            = "coalesce_latest"
   }
+  failure_rules_json = jsonencode({
+    version = 1
+    rules = [
+      { outcome_codes = ["upstream_unavailable"], action = "retry" },
+      { outcome_codes = ["invalid_record"], action = "fail_partition" },
+    ]
+    unmatched_failure = "fail_partition"
+    uncertain_outcome = "hold"
+  })
 }
 ```
 
@@ -35,6 +44,7 @@ resource "gregale_cron" "sync" {
 ### Optional
 
 - `enabled` (Boolean) Whether the scheduler evaluates this cron.
+- `failure_rules_json` (String) Optional versioned failure policy encoded as JSON. HTTP Crons match `outcome_codes` returned by the handler in `X-Gregale-Outcome-Code`; HTTP status and exit-code matchers are not supported. Retries use the account plan's finite durable invocation budget.
 - `path` (String) App path to POST. Defaults to `/`.
 - `skip_if_running` (Boolean) Skip a fire while the previous invocation is still running.
 - `schedule_policy` (Object) Optional recurring-work policy. `overlap` accepts `allow`, `skip`, or `replace`; `start_deadline_seconds` sets the maximum delay before first start (zero disables it); `missed_runs` accepts `skip` or `coalesce_latest`. Replacement waits for an in-flight HTTP request to finish because Gregale cannot confirm that an already delivered request has stopped.

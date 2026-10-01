@@ -586,10 +586,11 @@ func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Re
 	// Echo the post-dispatch state + result back so the drain can
 	// call CompleteInvocation(result) on the same transaction.
 	_ = json.NewEncoder(w).Encode(struct {
-		State      string          `json:"state"`
-		Result     json.RawMessage `json:"result,omitempty"`
-		StatusCode int             `json:"status_code,omitempty"`
-	}{string(out.State), out.Result, statusCode})
+		State       string          `json:"state"`
+		Result      json.RawMessage `json:"result,omitempty"`
+		StatusCode  int             `json:"status_code,omitempty"`
+		OutcomeCode string          `json:"outcome_code,omitempty"`
+	}{string(out.State), out.Result, statusCode, out.OutcomeCode})
 }
 
 func jsonOrEmpty(m map[string]string) json.RawMessage {

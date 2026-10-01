@@ -932,7 +932,7 @@ Schedule an HTTP request or deployment command
 | `--retry-max` | additional command attempts after failure or timeout |  |
 | `--retry-backoff-seconds` | base retry delay; doubles per attempt |  |
 | `--schedule-policy <JSON>` | versioned schedule policy JSON |  |
-| `--failure-rules <JSON>` | versioned retry rules JSON (command crons only) |  |
+| `--failure-rules <JSON>` | versioned failure and outcome-code rules JSON |  |
 
 ### crons info
 
@@ -954,7 +954,7 @@ Update one cron rule
 | `--retry-max` | additional command attempts after failure or timeout |  |
 | `--retry-backoff-seconds <N>` | base retry delay; doubles per attempt |  |
 | `--schedule-policy <JSON>` | replace versioned schedule policy JSON |  |
-| `--failure-rules <JSON>` | replace versioned retry rules JSON (command crons only) |  |
+| `--failure-rules <JSON>` | replace versioned failure and outcome-code rules JSON |  |
 
 ### crons rm
 

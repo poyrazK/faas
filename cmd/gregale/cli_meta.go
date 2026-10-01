@@ -748,7 +748,7 @@ var cliCommands = []cliCommand{
 				{Name: "retry-max", Short: "additional command attempts after failure or timeout"},
 				{Name: "retry-backoff-seconds", Short: "base retry delay; doubles per attempt"},
 				{Name: "schedule-policy", Short: "versioned schedule policy JSON", Value: "JSON"},
-				{Name: "failure-rules", Short: "versioned retry rules JSON (command crons only)", Value: "JSON"},
+				{Name: "failure-rules", Short: "versioned failure and outcome-code rules JSON", Value: "JSON"},
 			}},
 			{Name: "info", Short: "Show one cron rule"},
 			{Name: "update", Short: "Update one cron rule", Flags: []cliFlag{
@@ -762,7 +762,7 @@ var cliCommands = []cliCommand{
 				{Name: "retry-max", Short: "additional command attempts after failure or timeout"},
 				{Name: "retry-backoff-seconds", Short: "base retry delay; doubles per attempt", Value: "N"},
 				{Name: "schedule-policy", Short: "replace versioned schedule policy JSON", Value: "JSON"},
-				{Name: "failure-rules", Short: "replace versioned retry rules JSON (command crons only)", Value: "JSON"},
+				{Name: "failure-rules", Short: "replace versioned failure and outcome-code rules JSON", Value: "JSON"},
 			}},
 			{Name: "rm", Short: "Delete one cron rule"},
 			{Name: "run", Short: "Fire one cron immediately"},

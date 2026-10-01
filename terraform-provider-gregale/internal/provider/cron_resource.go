@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -22,17 +23,18 @@ type cronResource struct {
 }
 
 type cronModel struct {
-	CronID          types.String `tfsdk:"cron_id"`
-	AppID           types.String `tfsdk:"app_id"`
-	Schedule        types.String `tfsdk:"schedule"`
-	Path            types.String `tfsdk:"path"`
-	Enabled         types.Bool   `tfsdk:"enabled"`
-	Timezone        types.String `tfsdk:"timezone"`
-	SkipIfRunning   types.Bool   `tfsdk:"skip_if_running"`
-	SchedulePolicy  types.Object `tfsdk:"schedule_policy"`
-	SuspendedReason types.String `tfsdk:"suspended_reason"`
-	CreatedAt       types.String `tfsdk:"created_at"`
-	LastFiredAt     types.String `tfsdk:"last_fired_at"`
+	CronID           types.String `tfsdk:"cron_id"`
+	AppID            types.String `tfsdk:"app_id"`
+	Schedule         types.String `tfsdk:"schedule"`
+	Path             types.String `tfsdk:"path"`
+	Enabled          types.Bool   `tfsdk:"enabled"`
+	Timezone         types.String `tfsdk:"timezone"`
+	SkipIfRunning    types.Bool   `tfsdk:"skip_if_running"`
+	SchedulePolicy   types.Object `tfsdk:"schedule_policy"`
+	FailureRulesJSON types.String `tfsdk:"failure_rules_json"`
+	SuspendedReason  types.String `tfsdk:"suspended_reason"`
+	CreatedAt        types.String `tfsdk:"created_at"`
+	LastFiredAt      types.String `tfsdk:"last_fired_at"`
 }
 
 type cronSchedulePolicyModel struct {
@@ -123,6 +125,12 @@ func (r *cronResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 					},
 				},
 			},
+			"failure_rules_json": schema.StringAttribute{
+				Optional:            true,
+				Computed:            true,
+				Description:         "Versioned HTTP Cron outcome-code classification rules as JSON.",
+				MarkdownDescription: "Versioned HTTP Cron outcome-code classification rules as JSON. Matchers use `outcome_codes`; HTTP status and exit-code matchers are not supported for HTTP Crons.",
+			},
 			"suspended_reason": schema.StringAttribute{
 				Computed:            true,
 				Description:         "Why Gregale suspended the schedule, when applicable.",
@@ -184,6 +192,11 @@ func (r *cronResource) Create(ctx context.Context, req resource.CreateRequest, r
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	failureRules, rulesDiags := cronFailureRulesFromModel(plan.FailureRulesJSON)
+	resp.Diagnostics.Append(rulesDiags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	out, err := r.client.createCron(ctx, cronRequest{
 		AppID:          plan.AppID.ValueString(),
 		Schedule:       plan.Schedule.ValueString(),
@@ -192,6 +205,7 @@ func (r *cronResource) Create(ctx context.Context, req resource.CreateRequest, r
 		Timezone:       stringValue(plan.Timezone),
 		SkipIfRunning:  boolPointer(plan.SkipIfRunning),
 		SchedulePolicy: schedulePolicy,
+		FailureRules:   failureRules,
 	})
 	if err != nil {
 		appendClientError(&resp.Diagnostics, "Could not create Gregale cron", err)
@@ -237,6 +251,11 @@ func (r *cronResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	failureRules, rulesDiags := cronFailureRulesFromModel(plan.FailureRulesJSON)
+	resp.Diagnostics.Append(rulesDiags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	out, err := r.client.updateCron(ctx, plan.CronID.ValueString(), cronPatch{
 		Schedule:       stringPointer(plan.Schedule),
 		Path:           stringPointer(plan.Path),
@@ -244,6 +263,7 @@ func (r *cronResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		Timezone:       stringPointer(plan.Timezone),
 		SkipIfRunning:  boolPointer(plan.SkipIfRunning),
 		SchedulePolicy: schedulePolicy,
+		FailureRules:   failureRules,
 	})
 	if err != nil {
 		appendClientError(&resp.Diagnostics, "Could not update Gregale cron", err)
@@ -276,20 +296,56 @@ func setCronModel(ctx context.Context, state *tfsdk.State, out cronResponse, fal
 	var diags diag.Diagnostics
 	diags.Append(policyDiags...)
 	model := cronModel{
-		CronID:          types.StringValue(cronID),
-		AppID:           remoteString(out.AppID, fallback.AppID),
-		Schedule:        remoteString(out.Schedule, fallback.Schedule),
-		Path:            remoteString(out.Path, fallback.Path),
-		Enabled:         types.BoolValue(out.Enabled),
-		Timezone:        remoteString(out.Timezone, fallback.Timezone),
-		SkipIfRunning:   types.BoolValue(out.SkipIfRunning),
-		SchedulePolicy:  schedulePolicy,
-		SuspendedReason: types.StringValue(out.SuspendedReason),
-		CreatedAt:       types.StringValue(out.CreatedAt),
-		LastFiredAt:     types.StringValue(out.LastFiredAt),
+		CronID:           types.StringValue(cronID),
+		AppID:            remoteString(out.AppID, fallback.AppID),
+		Schedule:         remoteString(out.Schedule, fallback.Schedule),
+		Path:             remoteString(out.Path, fallback.Path),
+		Enabled:          types.BoolValue(out.Enabled),
+		Timezone:         remoteString(out.Timezone, fallback.Timezone),
+		SkipIfRunning:    types.BoolValue(out.SkipIfRunning),
+		SchedulePolicy:   schedulePolicy,
+		FailureRulesJSON: cronFailureRulesValue(out.FailureRules),
+		SuspendedReason:  types.StringValue(out.SuspendedReason),
+		CreatedAt:        types.StringValue(out.CreatedAt),
+		LastFiredAt:      types.StringValue(out.LastFiredAt),
 	}
 	diags.Append(state.Set(ctx, &model)...)
 	return diags
+}
+
+func cronFailureRulesFromModel(value types.String) (json.RawMessage, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	if value.IsNull() || value.IsUnknown() || value.ValueString() == "" {
+		return nil, diags
+	}
+	canonical, err := canonicalJSONObject([]byte(value.ValueString()))
+	if err != nil {
+		diags.AddError("Invalid cron failure rules JSON", err.Error())
+		return nil, diags
+	}
+	return json.RawMessage(canonical), diags
+}
+
+func cronFailureRulesValue(raw json.RawMessage) types.String {
+	if len(raw) == 0 || string(raw) == "null" {
+		return types.StringNull()
+	}
+	canonical, err := canonicalJSONObject(raw)
+	if err != nil {
+		return types.StringValue(string(raw))
+	}
+	return types.StringValue(string(canonical))
+}
+
+func canonicalJSONObject(raw []byte) ([]byte, error) {
+	var value map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, fmt.Errorf("must be one valid JSON object: %w", err)
+	}
+	if value == nil {
+		return nil, fmt.Errorf("must be a JSON object")
+	}
+	return json.Marshal(value)
 }
 
 func cronSchedulePolicyFromModel(ctx context.Context, value types.Object) (*cronSchedulePolicy, diag.Diagnostics) {

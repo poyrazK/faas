@@ -5361,6 +5361,9 @@ const (
 	CronRunDeadLetter CronRunOutcome = "dead_letter"
 	// CronRunCancelled — a deployment-attached command was cancelled.
 	CronRunCancelled CronRunOutcome = "cancelled"
+	// CronRunUncertain — delivery may have reached the app, but no
+	// completion receipt arrived and the policy held the result.
+	CronRunUncertain CronRunOutcome = "uncertain"
 	// CronRunRunning — the fire is still in flight (the underlying
 	// invocation row is non-terminal and carries no outcome).
 	CronRunRunning CronRunOutcome = "running"
@@ -11406,6 +11409,8 @@ type ListJobRunsResponse struct {
 // coalesced, late, or replaced occurrence.
 type ScheduleOccurrenceResponse struct {
 	SchedulePolicy       *workpolicy.SchedulePolicy `json:"schedule_policy"`
+	WorkDecision         *workpolicy.Decision       `json:"work_decision,omitempty"`
+	OutcomeCode          string                     `json:"outcome_code,omitempty"`
 	ID                   string                     `json:"id"`
 	ScheduleRevision     int64                      `json:"schedule_revision"`
 	ScheduledFor         time.Time                  `json:"scheduled_for"`

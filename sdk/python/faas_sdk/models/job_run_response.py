@@ -53,8 +53,8 @@ class JobRunResponse:
     start_deadline_at: datetime.datetime | Unset = UNSET
     """Latest permitted first task start for this scheduled occurrence."""
     failure_rules: FailureRules | Unset = UNSET
-    """Versioned explicit classification policy for failed Job partitions and command-Cron executions. HTTP Crons
-    do not accept failure rules."""
+    """Versioned explicit classification policy for failed Job partitions, command-Cron executions, and HTTP Cron
+    outcome codes. HTTP status is not a business outcome matcher."""
     env_overrides: JobRunResponseEnvOverrides | Unset = UNSET
     input_manifest_version: int | Unset = UNSET
     """0 for numeric fan-out, 1 for an ordered inline or external input manifest."""

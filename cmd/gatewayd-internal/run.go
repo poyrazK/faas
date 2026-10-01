@@ -83,6 +83,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/usageoutbox"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // scheddSocket is schedd's gRPC unix socket (ADR-018). Phase 2 /
@@ -841,6 +842,7 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 	if rec.Code == 0 {
 		rec.Code = http.StatusOK
 	}
+	inv.OutcomeCode = scheduledInvocationOutcomeCode(rec.Header())
 	body := rec.Body.Bytes()
 	if len(body) > 0 {
 		// Function handlers conventionally return JSON. Preserve valid JSON
@@ -867,6 +869,14 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 		inv.State = state.InvocationDispatching
 	}
 	return inv, rec.Code, append([]byte(nil), body...), nil
+}
+
+func scheduledInvocationOutcomeCode(headers http.Header) string {
+	values := headers.Values(api.ScheduledOutcomeCodeHeader)
+	if len(values) != 1 || !workpolicy.ValidOutcomeCode(values[0]) {
+		return ""
+	}
+	return values[0]
 }
 
 func defaultsSyntheticJSONContentType(source state.InvocationSource) bool {

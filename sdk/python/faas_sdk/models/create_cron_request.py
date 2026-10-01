@@ -18,8 +18,8 @@ T = TypeVar("T", bound="CreateCronRequest")
 
 @_attrs_define
 class CreateCronRequest:
-    """Create an HTTP-path cron or deployment-attached app command schedule. Schedule policies apply to both kinds; failure
-    rules apply to command Crons only.
+    """Create an HTTP-path cron or deployment-attached app command schedule. Schedule policies apply to both kinds. HTTP
+    Crons accept outcome-code failure rules; command Crons also accept exit-code rules.
 
     """
 
@@ -50,8 +50,8 @@ class CreateCronRequest:
     a prior dispatched request to complete because the scheduler has no stop acknowledgement for a request already
     delivered to the app."""
     failure_rules: FailureRules | Unset = UNSET
-    """Versioned explicit classification policy for failed Job partitions and command-Cron executions. HTTP Crons
-    do not accept failure rules."""
+    """Versioned explicit classification policy for failed Job partitions, command-Cron executions, and HTTP Cron
+    outcome codes. HTTP status is not a business outcome matcher."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -54,8 +54,8 @@ class JobResponse:
     a prior dispatched request to complete because the scheduler has no stop acknowledgement for a request already
     delivered to the app."""
     failure_rules: FailureRules | Unset = UNSET
-    """Versioned explicit classification policy for failed Job partitions and command-Cron executions. HTTP Crons
-    do not accept failure rules."""
+    """Versioned explicit classification policy for failed Job partitions, command-Cron executions, and HTTP Cron
+    outcome codes. HTTP status is not a business outcome matcher."""
     image_resolved_digest: str | Unset = UNSET
     """Immutable OCI manifest digest selected from image_ref."""
     image_storage_key: str | Unset = UNSET

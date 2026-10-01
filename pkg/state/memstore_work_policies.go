@@ -9,6 +9,7 @@ import (
 
 func cloneScheduleOccurrence(o ScheduleOccurrence) ScheduleOccurrence {
 	o.SchedulePolicy = *workpolicy.Clone(&o.SchedulePolicy)
+	o.WorkDecision = workpolicy.Clone(o.WorkDecision)
 	o.StartDeadlineAt = cloneTimePtr(o.StartDeadlineAt)
 	o.StartedAt = cloneTimePtr(o.StartedAt)
 	o.FinishedAt = cloneTimePtr(o.FinishedAt)

@@ -32646,8 +32646,8 @@ components:
         duration_ms: { type: [integer, "null"], description: "completed_at - started_at in milliseconds, computed server-side. Null while the run is still in flight." }
         outcome:
           type: string
-          enum: [success, failed, timeout, dead_letter, running, cancelled]
-          description: "Normalized result. `timeout` means the dispatch exceeded its deadline; `dead_letter` means the retry budget was exhausted; `running` means the run has not reached a terminal state yet. Branch on this, never on `error`."
+          enum: [success, failed, timeout, dead_letter, running, cancelled, uncertain]
+          description: "Normalized result. `timeout` means the dispatch exceeded its deadline; `dead_letter` means the retry budget was exhausted; `running` means the run has not reached a terminal state yet; `uncertain` means delivery may have reached the app without a completion receipt. Branch on this, never on `error`."
         attempts: { type: integer, description: "Dispatch attempts for this run; greater than 1 means it was retried." }
         instance_id: { type: [string, "null"], pattern: '^[a-f0-9]{32}$', description: "The instance that served the run; null if the fire never reached one." }
         task_id: { type: string, format: uuid, description: "Deployment-attached app-task receipt for command crons." }
@@ -32674,6 +32674,8 @@ components:
         schedule_policy: { $ref: '#/components/schemas/SchedulePolicy' }
         status: { type: string, enum: [pending, queued, running, succeeded, failed, cancelled, skipped_overlap, missed_deadline, coalesced, waiting_replacement, uncertain] }
         reason: { type: string }
+        work_decision: { $ref: '#/components/schemas/WorkDecision' }
+        outcome_code: { type: string, maxLength: 64, pattern: '^[a-z0-9_.-]*$' }
         blocking_occurrence_id: { type: string, format: uuid }
         job_run_id: { type: string, format: uuid }
         invocation_id: { type: string, format: uuid }
@@ -32734,7 +32736,7 @@ components:
         account_id: { type: string, format: uuid }
 
     CreateCronRequest:
-      description: "Create an HTTP-path cron or deployment-attached app command schedule. Schedule policies apply to both kinds; failure rules apply to command Crons only."
+      description: "Create an HTTP-path cron or deployment-attached app command schedule. Schedule policies apply to both kinds. HTTP Crons accept outcome-code failure rules; command Crons also accept exit-code rules."
       type: object
       required: [app_id, schedule]
       properties:
@@ -32754,7 +32756,7 @@ components:
         failure_rules: { $ref: '#/components/schemas/FailureRules' }
 
     UpdateCronRequest:
-      description: "Partial cron update. Schedule policies apply to HTTP and command Crons; failure rules are command-Cron only."
+      description: "Partial cron update. Schedule policies apply to HTTP and command Crons. HTTP Cron failure rules match outcome codes; command Cron rules may also match exit codes."
       type: object
       properties:
         schedule: { type: [string, "null"] , example: "*/5 * * * *"}
@@ -32782,7 +32784,7 @@ components:
         missed_runs: { type: string, enum: [coalesce_latest, skip], description: "On scheduler recovery, coalesce the due backlog into its latest occurrence or record stale occurrences as skipped." }
 
     FailureRules:
-      description: Versioned explicit classification policy for failed Job partitions and command-Cron executions. HTTP Crons do not accept failure rules.
+      description: Versioned explicit classification policy for failed Job partitions, command-Cron executions, and HTTP Cron outcome codes. HTTP status is not a business outcome matcher.
       type: object
       required: [version, rules, unmatched_failure, uncertain_outcome]
       properties:
@@ -32795,7 +32797,7 @@ components:
         uncertain_outcome: { type: string, enum: [hold, retry], description: "Choose whether a missing completion receipt stays held for reconciliation or is retried with possible duplicate execution." }
 
     FailureRule:
-      description: A guest exit-code or structured application-outcome matcher and the action for that confirmed result. HTTP status evidence is not available on the scheduled-job execution path.
+      description: A guest exit-code or structured application-outcome matcher and the action for that confirmed result. HTTP Crons support outcome_codes; exit_codes apply to Jobs and command Crons.
       type: object
       required: [action]
       additionalProperties: false

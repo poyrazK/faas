@@ -73,7 +73,7 @@ func TestMemStoreScheduledCommandCronUsesCurrentLiveDeploymentOnce(t *testing.T)
 	}
 }
 
-func TestMemStoreHTTPCronAcceptsSchedulePolicyAndRejectsFailureRules(t *testing.T) {
+func TestMemStoreHTTPCronAcceptsStructuredFailureRules(t *testing.T) {
 	store, ctx, _, app, _ := memCoverageFixture(t)
 	cron, err := store.CreateCronWithOptions(ctx, app.ID, "* * * * *", "/sync", true, CronOptions{
 		SchedulePolicy: &workpolicy.SchedulePolicy{Version: workpolicy.Version, Overlap: "replace", MissedRuns: "skip"},
@@ -81,11 +81,24 @@ func TestMemStoreHTTPCronAcceptsSchedulePolicyAndRejectsFailureRules(t *testing.
 	if err != nil || cron.SchedulePolicy == nil || cron.SchedulePolicy.Overlap != "replace" {
 		t.Fatalf("CreateCronWithOptions(HTTP with schedule policy) = %+v, %v; want stored policy", cron, err)
 	}
-	_, err = store.CreateCronWithOptions(ctx, app.ID, "* * * * *", "/sync-failure", true, CronOptions{
-		FailureRules: &workpolicy.FailureRules{Version: workpolicy.Version},
+	rules := &workpolicy.FailureRules{
+		Version:          workpolicy.Version,
+		Rules:            []workpolicy.FailureRule{{OutcomeCodes: []string{"invalid_record"}, Action: "fail_partition"}},
+		UnmatchedFailure: "retry", UncertainOutcome: "hold",
+	}
+	classified, err := store.CreateCronWithOptions(ctx, app.ID, "* * * * *", "/sync-failure", true, CronOptions{
+		FailureRules: rules,
+	})
+	if err != nil || classified.FailureRules == nil || classified.FailureRules.Rules[0].OutcomeCodes[0] != "invalid_record" {
+		t.Fatalf("CreateCronWithOptions(HTTP with structured failure rules) = %+v, %v", classified, err)
+	}
+	_, err = store.CreateCronWithOptions(ctx, app.ID, "* * * * *", "/sync-exit-code", true, CronOptions{
+		FailureRules: &workpolicy.FailureRules{Version: workpolicy.Version,
+			Rules:            []workpolicy.FailureRule{{ExitCodes: []int{65}, Action: "fail_partition"}},
+			UnmatchedFailure: "retry", UncertainOutcome: "hold"},
 	})
 	if !errors.Is(err, ErrInvalidArgument) {
-		t.Fatalf("CreateCronWithOptions(HTTP with failure rules) = %v; want ErrInvalidArgument", err)
+		t.Fatalf("CreateCronWithOptions(HTTP with exit code rule) = %v; want ErrInvalidArgument", err)
 	}
 }
 
