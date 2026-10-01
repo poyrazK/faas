@@ -982,6 +982,33 @@ Full equivalence with public HTTP edge policy, shared public rate accounting,
 managed realtime and trigger batches needs separate path evidence. Full
 daemon/customer/staging and native VM/network acceptance remain required.
 
+### Follow-up: synthetic target ownership and security lifetime
+
+Normal managed synthetic HTTP delivery verifies the saved account, app version,
+instance, node and scoped live deployment in the same committed invocation view.
+Every target is checked, including unpinned standalone invocations. A scheduler
+target is a claim until verified; a mismatch or failed snapshot refuses delivery
+and cannot publish that target into the shared placement cache.
+Standalone unpinned delivery retains scheduler selection rather than selecting a
+new public traffic roster. Selected project graphs and revision pins remain fixed
+across wake and are checked again with the returned target.
+
+The gateway's existing security registry owns synthetic account/app scopes before
+gateway-owned wake and deployment scope before forwarding. Pre-woken delivery
+enrolls after the scheduler returns its target; the scheduler's wake lifetime
+still needs separate complete-path acceptance. Nested target delivery joins that
+lifetime and cannot release it early. Cancellation, missed revoke/release pairs
+and store outages fence the exchange through forwarding cleanup; a late transport
+success cannot turn a revoked invocation into a successful result. Production
+wires this registry before starting the synthetic listener. Trigger batch envelopes
+carry the trigger's saved account into every record, with the existing optional
+field compatibility for older trusted callers.
+
+Debug mirror replay retains its separately validated mirror target owner. This
+change does not advertise public edge rules or public rate accounting for durable
+background work. Node admission still applies to the synthetic HTTP forwarding
+RPC. Complete path, fleet, staging and native VM/network evidence remain required.
+
 The implementation tracker is `docs/traffic_platform_implementation.md`.
 Each guarantee needs configuration-to-runtime tests, cancellation/recovery
 tests and customer documentation. VM lifecycle changes require native x86_64

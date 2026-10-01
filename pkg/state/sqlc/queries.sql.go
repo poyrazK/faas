@@ -5353,6 +5353,38 @@ func (q *Queries) InstanceListByNodeForRecovery(ctx context.Context, db DBTX, no
 	return items, nil
 }
 
+const invocationTargetAllowed = `-- name: InvocationTargetAllowed :one
+SELECT EXISTS (
+    SELECT 1 FROM instances i JOIN deployments d ON d.id = i.deployment_id
+    WHERE i.id = $1::uuid AND i.app_id = $2::uuid
+      AND i.node_id = $3::uuid AND i.deployment_id = $4::uuid
+      AND i.state = 'running' AND d.app_id = $2::uuid
+      AND d.scope = $5::text AND d.status = 'live' AND d.deleted_at IS NULL
+)::boolean AS allowed
+`
+
+type InvocationTargetAllowedParams struct {
+	InstanceID   pgtype.UUID
+	AppID        pgtype.UUID
+	NodeID       pgtype.UUID
+	DeploymentID pgtype.UUID
+	Scope        string
+}
+
+// ADR-375: verify every synthetic target in the invocation version snapshot.
+func (q *Queries) InvocationTargetAllowed(ctx context.Context, db DBTX, arg InvocationTargetAllowedParams) (bool, error) {
+	row := db.QueryRow(ctx, invocationTargetAllowed,
+		arg.InstanceID,
+		arg.AppID,
+		arg.NodeID,
+		arg.DeploymentID,
+		arg.Scope,
+	)
+	var allowed bool
+	err := row.Scan(&allowed)
+	return allowed, err
+}
+
 const isMailSuppressed = `-- name: IsMailSuppressed :one
 SELECT EXISTS (
     SELECT 1 FROM mail_suppressions

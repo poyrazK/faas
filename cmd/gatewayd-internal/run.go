@@ -432,12 +432,13 @@ func dnsTokenLookupFromEnv(provider string) string {
 // wake-only path left cron traffic invisible to the runner and the
 // meter (spec §4.4, M7).
 type synthAdapter struct {
-	backend          gateway.Backend
-	store            state.Store
-	log              *slog.Logger
-	wake             func(ctx context.Context, appID string) error
-	invoke           func(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, error)
-	invokeWithStatus func(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, int, error)
+	backend            gateway.Backend
+	store              state.Store
+	log                *slog.Logger
+	wake               func(ctx context.Context, appID string) error
+	invoke             func(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, error)
+	invokeWithStatus   func(ctx context.Context, appID string, inv state.Invocation, version state.InvocationVersion) (state.Invocation, int, error)
+	trafficRevocations *trafficrevocation.Registry
 	// forward is the same HTTP→vmmd bridge installed on the public
 	// gateway handler. Synthetic invocations must use that bridge too;
 	// waking an instance without delivering the envelope leaves the row
@@ -458,25 +459,34 @@ func (a *synthAdapter) Invoke(ctx context.Context, appID string, inv state.Invoc
 		out, _, err := a.replayMirror(ctx, appID, inv)
 		return out, err
 	}
-	if a.invokeWithStatus != nil {
-		out, _, err := a.InvokeWithStatus(ctx, appID, inv)
-		return out, err
-	}
-	if a.invoke == nil {
-		return inv, fmt.Errorf("gateway synth: invoke is not wired (legacy wake-only adapter)")
-	}
-	return a.invoke(ctx, appID, inv)
+	out, _, err := a.InvokeWithStatus(ctx, appID, inv)
+	return out, err
 }
 
 func (a *synthAdapter) InvokeWithStatus(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, int, error) {
 	if isDebugMirrorReplayInvocation(inv) {
 		return a.replayMirror(ctx, appID, inv)
 	}
-	if a.invokeWithStatus != nil {
-		return a.invokeWithStatus(ctx, appID, inv)
+	inv.AppID = appID
+	ctx, inv, version, cleanup, err := a.prepareInvocation(ctx, inv, nil)
+	if err != nil {
+		return inv, 0, err
 	}
-	out, err := a.Invoke(ctx, appID, inv)
-	return out, http.StatusOK, err
+	defer cleanup()
+	var out state.Invocation
+	var status int
+	if a.invokeWithStatus != nil {
+		out, status, err = a.invokeWithStatus(ctx, appID, inv, version)
+	} else if a.invoke != nil {
+		out, err = a.invoke(ctx, appID, inv)
+		status = http.StatusOK
+	} else {
+		return inv, 0, fmt.Errorf("gateway synth: invoke is not wired (legacy wake-only adapter)")
+	}
+	if cause := context.Cause(ctx); cause != nil {
+		return inv, 0, cause
+	}
+	return out, status, err
 }
 
 // replayMirror executes either a metadata-only debugger replay or an
@@ -689,8 +699,8 @@ func debugReplayMetadata(inv state.Invocation) (map[string]string, error) {
 
 // InvokeWithTarget is the pre-woken synthetic invocation path. Schedd owns
 // admission, so gatewayd-internal must not resolve the app and issue another
-// Wake RPC for the same invocation. The target is forwarded directly to the
-// existing node-client path, so the handler needs no second app lookup.
+// Wake RPC for the same invocation. The target claim is verified before it is
+// forwarded through the existing node-client path.
 func (a *synthAdapter) InvokeWithTarget(ctx context.Context, appID string, inv state.Invocation, target gateway.Target) (state.Invocation, error) {
 	out, _, err := a.InvokeWithTargetStatus(ctx, appID, inv, target)
 	return out, err
@@ -707,23 +717,6 @@ func (a *synthAdapter) InvokeWithTargetStatus(ctx context.Context, appID string,
 		return inv, 0, fmt.Errorf("gateway synth: invocation forwarder is not wired")
 	}
 	inv.AppID = appID
-	if a.store != nil {
-		var version state.InvocationVersion
-		var err error
-		inv, version, err = state.ResolveInvocationVersion(ctx, a.store, inv)
-		if err != nil {
-			return inv, 0, fmt.Errorf("gateway synth: resolve invocation version: %w", err)
-		}
-		if version.DeploymentID != "" && target.DeploymentID != version.DeploymentID {
-			return inv, 0, fmt.Errorf("gateway synth: pre-woken deployment does not match release pin")
-		}
-		if version.DeploymentID != "" {
-			instance, lookupErr := a.store.InstanceByID(ctx, target.InstanceID)
-			if lookupErr != nil || instance.AppID != appID || instance.DeploymentID != version.DeploymentID || instance.NodeID != target.NodeID || instance.State != string(state.StateRunning) {
-				return inv, 0, fmt.Errorf("gateway synth: pre-woken instance does not belong to pinned deployment")
-			}
-		}
-	}
 	// Schedd's pre-woken response identifies the instance and node, while the
 	// invocation request remains authoritative for the app. Keep that identity
 	// on the target so the shared forwarding path can attribute
@@ -744,8 +737,49 @@ func (a *synthAdapter) forwardInvocation(ctx context.Context, target gateway.Tar
 }
 
 func (a *synthAdapter) forwardInvocationWithStatus(ctx context.Context, target gateway.Target, inv state.Invocation) (state.Invocation, int, error) {
+	claim := state.InvocationTarget{InstanceID: target.InstanceID, NodeID: target.NodeID, DeploymentID: target.DeploymentID}
+	ctx, inv, _, cleanup, err := a.prepareInvocation(ctx, inv, &claim)
+	if err != nil {
+		return inv, 0, err
+	}
+	defer cleanup()
+	// A wake response must pass the same owner/target/security checks before it
+	// can enter the shared placement cache used by later public requests.
+	if recorder, ok := a.backend.(interface{ RecordTarget(string, gateway.Target) }); ok {
+		recorder.RecordTarget(inv.AppID, target)
+	}
 	out, status, _, err := a.forwardInvocationWithStatusAndBody(ctx, target, inv)
+	if cause := context.Cause(ctx); cause != nil {
+		return inv, 0, cause
+	}
 	return out, status, err
+}
+
+func (a *synthAdapter) prepareInvocation(ctx context.Context, inv state.Invocation, target *state.InvocationTarget) (context.Context, state.Invocation, state.InvocationVersion, func(), error) {
+	noop := func() {}
+	if a.store == nil { // Legacy in-process adapters have no durable state.
+		if a.trafficRevocations != nil {
+			return ctx, inv, state.InvocationVersion{}, noop, trafficrevocation.ErrUnavailable
+		}
+		return ctx, inv, state.InvocationVersion{}, noop, nil
+	}
+	prepared, version, owner, err := state.ResolveInvocationDispatch(ctx, a.store, inv, target)
+	if err != nil {
+		return ctx, inv, state.InvocationVersion{}, noop, fmt.Errorf("gateway synth: verify invocation dispatch: %w", err)
+	}
+	scopes := []trafficrevocation.Scope{{Kind: "account", ID: owner}, {Kind: "app", ID: inv.AppID}}
+	deployment := version.DeploymentID
+	if target != nil {
+		deployment = target.DeploymentID
+	}
+	if deployment != "" {
+		scopes = append(scopes, trafficrevocation.Scope{Kind: "deployment", ID: deployment})
+	}
+	ctx, cleanup, err := gateway.AdmitSyntheticTraffic(ctx, a.trafficRevocations, scopes...)
+	if err != nil {
+		return ctx, inv, state.InvocationVersion{}, noop, fmt.Errorf("gateway synth: admit invocation security: %w", err)
+	}
+	return ctx, prepared, version, cleanup, nil
 }
 
 func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, target gateway.Target, inv state.Invocation) (state.Invocation, int, []byte, error) {
@@ -885,7 +919,8 @@ type runDeps struct {
 	// synth is the internal unix-socket RPC server schedd dials for cron
 	// dispatch (spec §4.4, M7). nil in tests; production wires it after
 	// the schedd client is dialed.
-	synth *gateway.SynthServer
+	synth               *gateway.SynthServer
+	syntheticDispatcher *synthAdapter
 	// egressGRPC is the ADR-046 PR-2 producer channel — a
 	// *grpc.Server on a second unix socket dedicated to the egress
 	// stream (one unix socket can serve either HTTP or gRPC, not
@@ -1693,19 +1728,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 				DeploymentCreatedAt: identity.DeploymentCreatedAt,
 				ImageDigest:         identity.ImageDigest,
 			}
-			backend.RecordTarget(appID, target)
 			inv.InstanceID = instanceID
 			return synth.forwardInvocation(ctx, target, inv)
 		},
-		invokeWithStatus: func(ctx context.Context, appID string, inv state.Invocation) (state.Invocation, int, error) {
+		invokeWithStatus: func(ctx context.Context, appID string, inv state.Invocation, version state.InvocationVersion) (state.Invocation, int, error) {
 			acceptedAt := time.Now()
 			ctx = gateway.WithStartTime(ctx, acceptedAt)
 			ctx = gateway.WithWakeTimelineStart(ctx, acceptedAt)
 			inv.AppID = appID
-			inv, version, err := state.ResolveInvocationVersion(ctx, pgStore, inv)
-			if err != nil {
-				return inv, 0, fmt.Errorf("synth invoke resolve version: %w", err)
-			}
 			app, err := pgStore.AppByID(ctx, appID)
 			if err != nil {
 				return inv, 0, fmt.Errorf("synth invoke resolve app %s: %w", appID, err)
@@ -1734,22 +1764,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			if version.DeploymentID != "" && deploymentID != version.DeploymentID {
 				return inv, 0, fmt.Errorf("synth invoke woke deployment %s instead of pinned %s", deploymentID, version.DeploymentID)
 			}
-			if version.DeploymentID != "" {
-				_, checked, checkErr := state.ResolveInvocationVersion(ctx, pgStore, inv)
-				if checkErr != nil {
-					return inv, 0, fmt.Errorf("synth invoke release changed during wake: %w", checkErr)
-				}
-				if checked.DeploymentID != version.DeploymentID || checked.ReleaseID != version.ReleaseID {
-					return inv, 0, fmt.Errorf("synth invoke release changed during wake: expected %s/%s, got %s/%s",
-						version.ReleaseID, version.DeploymentID, checked.ReleaseID, checked.DeploymentID)
-				}
-				instance, lookupErr := pgStore.InstanceByID(ctx, instanceID)
-				if lookupErr != nil || instance.AppID != appID || instance.DeploymentID != version.DeploymentID || instance.NodeID != nodeID || instance.State != string(state.StateRunning) {
-					return inv, 0, fmt.Errorf("synth invoke woke instance outside selected release")
-				}
-			}
 			target := gateway.Target{AppID: appID, InstanceID: instanceID, NodeID: nodeID, DeploymentID: deploymentID, WakeID: wakeID, Port: port, Region: identity.Region, CommitSHA: identity.CommitSHA, DeploymentTag: identity.DeploymentTag, DeploymentCreatedAt: identity.DeploymentCreatedAt, ImageDigest: identity.ImageDigest}
-			backend.RecordTarget(appID, target)
 			inv.InstanceID = instanceID
 			return synth.forwardInvocationWithStatus(ctx, target, inv)
 		},
@@ -1762,6 +1777,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// of the synthAdapter struct literal, which broke the compile.
 	// Restoring the off-the-brace call keeps both sides readable.
 	deps.synth = gateway.NewSynthServer(gatewaydInternalSocket, synth, log)
+	deps.syntheticDispatcher = synth
 	// ADR-119 — wire the synth-side metrics, audit emitter, and app-mode
 	// lookup here. The verifier itself is loaded later from the cluster key or
 	// environment fallback and is attached after that load completes.
@@ -2440,6 +2456,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		go deps.trafficRevocations.Run(counterCtx)
 		if backend, ok := deps.backend.(*gateway.PGBackend); ok {
 			backend.WithTrafficRevocations(deps.trafficRevocations)
+		}
+		if deps.syntheticDispatcher != nil {
+			deps.syntheticDispatcher.trafficRevocations = deps.trafficRevocations
 		}
 	}
 	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log).WithRetryBudget(retryBudget).

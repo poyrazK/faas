@@ -18,6 +18,12 @@ type InvocationVersion struct {
 	Scope        string
 }
 
+// InvocationTarget is a scheduler delivery claim, verified against its running
+// instance and scoped live deployment before forwarding.
+type InvocationTarget struct {
+	InstanceID, NodeID, DeploymentID string
+}
+
 type invocationAppReader interface {
 	AppByID(context.Context, string) (App, error)
 }
@@ -29,21 +35,57 @@ type invocationAppReader interface {
 // from silently moving to a newer graph after the old one expires.
 func ResolveInvocationVersion(ctx context.Context, store invocationAppReader, inv Invocation) (Invocation, InvocationVersion, error) {
 	if snapshot, ok := store.(InvocationVersionSnapshotStore); ok {
-		var prepared Invocation
-		var version InvocationVersion
-		err := snapshot.WithInvocationVersionSnapshot(ctx, func(reader InvocationVersionReader) error {
-			var err error
-			prepared, version, err = resolveInvocationVersion(ctx, reader, inv)
-			return err
-		})
-		if err != nil {
-			return inv, InvocationVersion{}, err
-		}
-		return prepared, version, nil
+		prepared, version, _, err := resolveInvocationDispatch(ctx, snapshot, inv, nil)
+		return prepared, version, err
 	}
 	// Compatibility for minimal unpinned adapters. Hide optional pool resolvers:
 	// a pin requires a committed snapshot and cannot use independent reads.
 	return resolveInvocationVersion(ctx, struct{ invocationAppReader }{store}, inv)
+}
+
+// ResolveInvocationDispatch reads owner, version and optional delivery target in
+// one committed view. No selection or resolved owner escapes a failed snapshot.
+// Passing nil checks before wake; passing a target checks again before delivery.
+func ResolveInvocationDispatch(ctx context.Context, store invocationAppReader, inv Invocation, target *InvocationTarget) (Invocation, InvocationVersion, string, error) {
+	snapshot, ok := store.(InvocationVersionSnapshotStore)
+	if !ok {
+		return inv, InvocationVersion{}, "", ErrConflict
+	}
+	return resolveInvocationDispatch(ctx, snapshot, inv, target)
+}
+
+func resolveInvocationDispatch(ctx context.Context, snapshot InvocationVersionSnapshotStore, inv Invocation, target *InvocationTarget) (Invocation, InvocationVersion, string, error) {
+	var prepared Invocation
+	var version InvocationVersion
+	var owner string
+	err := snapshot.WithInvocationVersionSnapshot(ctx, func(reader InvocationVersionReader) error {
+		app, err := reader.AppByID(ctx, inv.AppID)
+		if err != nil {
+			return err
+		}
+		prepared, version, err = resolveInvocationVersionForApp(ctx, reader, inv, app)
+		if err != nil {
+			return err
+		}
+		if target != nil {
+			if target.InstanceID == "" || target.NodeID == "" || target.DeploymentID == "" || version.DeploymentID != "" && target.DeploymentID != version.DeploymentID {
+				return ErrNotFound
+			}
+			allowed, err := reader.InvocationTargetAllowed(ctx, app.ID, version.Scope, *target)
+			if err != nil {
+				return err
+			}
+			if !allowed {
+				return ErrNotFound
+			}
+		}
+		owner = app.AccountID
+		return nil
+	})
+	if err != nil {
+		return inv, InvocationVersion{}, "", err
+	}
+	return prepared, version, owner, nil
 }
 
 func resolveInvocationVersion(ctx context.Context, store invocationAppReader, inv Invocation) (Invocation, InvocationVersion, error) {
@@ -51,6 +93,10 @@ func resolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 	if err != nil {
 		return inv, InvocationVersion{}, err
 	}
+	return resolveInvocationVersionForApp(ctx, store, inv, app)
+}
+
+func resolveInvocationVersionForApp(ctx context.Context, store invocationAppReader, inv Invocation, app App) (Invocation, InvocationVersion, error) {
 	if app.Status == AppDeleted || app.DeletedAt != nil || inv.AccountID != "" && inv.AccountID != app.AccountID {
 		return inv, InvocationVersion{}, ErrNotFound
 	}
@@ -91,6 +137,7 @@ func resolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 		}
 		version.DeploymentID = dep.ID
 	} else {
+		var err error
 		version.ReleaseID, version.DeploymentID, err = resolver.ResolveProjectRelease(ctx, app.ID, scope, release)
 		if err != nil {
 			return inv, InvocationVersion{}, err
@@ -109,10 +156,11 @@ func resolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 	} else {
 		headers[api.RevisionHeader] = version.DeploymentID
 	}
-	inv.Headers, err = json.Marshal(headers)
+	encoded, err := json.Marshal(headers)
 	if err != nil {
 		return inv, InvocationVersion{}, err
 	}
+	inv.Headers = encoded
 	return inv, version, nil
 }
 

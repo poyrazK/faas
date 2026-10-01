@@ -27,6 +27,40 @@ type trafficEnrollment struct {
 	closed   bool
 }
 
+// AdmitSyntheticTraffic joins the ordinary request security lifetime without an
+// HTTP response owner. The first caller owns cleanup; nested delivery only adds
+// scopes and cannot release registrations before forwarding has stopped.
+func AdmitSyntheticTraffic(ctx context.Context, registry *trafficrevocation.Registry, scopes ...trafficrevocation.Scope) (context.Context, func(), error) {
+	noop := func() {}
+	if registry == nil { // Optional only for legacy in-process fixtures.
+		return ctx, noop, nil
+	}
+	if err := context.Cause(ctx); err != nil {
+		return ctx, noop, err
+	}
+	enrollment, _ := ctx.Value(trafficEnrollmentKey{}).(*trafficEnrollment)
+	cleanup := noop
+	if enrollment == nil {
+		var cancel context.CancelCauseFunc
+		ctx, cancel = reqbudget.WithCancellationFence(ctx)
+		enrollment = &trafficEnrollment{registry: registry, cancel: cancel, scopes: make(map[trafficrevocation.Scope]trafficrevocation.State)}
+		ctx = context.WithValue(ctx, trafficEnrollmentKey{}, enrollment)
+		cleanup = enrollment.close
+	} else if enrollment.registry != registry {
+		return ctx, noop, trafficrevocation.ErrUnavailable
+	}
+	if err := enrollment.add(ctx, scopes); err != nil {
+		enrollment.cancel(err)
+		cleanup()
+		return ctx, noop, context.Cause(ctx)
+	}
+	if err := context.Cause(ctx); err != nil {
+		cleanup()
+		return ctx, noop, err
+	}
+	return ctx, cleanup, nil
+}
+
 func (h *Handler) WithTrafficRevocations(registry *trafficrevocation.Registry) *Handler {
 	h.trafficRevocations = registry
 	return h

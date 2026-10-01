@@ -102,6 +102,62 @@ func TestSynthAdapterPrewokenInvocationRechecksVersionAndOwner(t *testing.T) {
 
 type retiredAsyncSnapshotStore struct{ *state.MemStore }
 
+type syntheticTargetRecorder struct {
+	gateway.Backend
+	targets []gateway.Target
+}
+
+func (r *syntheticTargetRecorder) RecordTarget(_ string, target gateway.Target) {
+	r.targets = append(r.targets, target)
+}
+
+func TestSynthAdapterUnpinnedTargetMustMatchCommittedInstance(t *testing.T) {
+	for _, kind := range []string{"valid", "missing instance", "wrong node", "wrong deployment", "stopped instance", "superseded deployment"} {
+		t.Run(kind, func(t *testing.T) {
+			store, app, dep, target := invocationDeliveryFixture(t)
+			switch kind {
+			case "missing instance":
+				target.InstanceID = uuid.NewString()
+			case "wrong node":
+				target.NodeID = "node-foreign"
+			case "wrong deployment":
+				target.DeploymentID = uuid.NewString()
+			case "stopped instance":
+				if err := store.UpdateInstanceState(t.Context(), target.InstanceID, string(state.StateStopped)); err != nil {
+					t.Fatal(err)
+				}
+			case "superseded deployment":
+				if err := store.UpdateDeploymentStatus(t.Context(), dep.ID, state.DeploySuperseded, ""); err != nil {
+					t.Fatal(err)
+				}
+			}
+			forwards := 0
+			recorder := &syntheticTargetRecorder{}
+			adapter := &synthAdapter{store: store, backend: recorder, forward: func(gateway.Target) http.Handler {
+				forwards++
+				return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{"ok":true}`)) })
+			}}
+			body, err := json.Marshal(map[string]any{"invocation_id": uuid.NewString(), "app_id": app.ID, "account_id": app.AccountID,
+				"source": state.InvocationAsyncInvoke, "instance_id": target.InstanceID, "node_id": target.NodeID, "deployment_id": target.DeploymentID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec := httptest.NewRecorder()
+			gateway.NewSynthServer("", adapter, nil).Mux().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/invocations:dispatch", bytes.NewReader(body)))
+			if kind == "valid" {
+				if forwards != 1 || rec.Code != http.StatusOK {
+					t.Fatalf("valid target: forwards=%d status=%d body=%s", forwards, rec.Code, rec.Body)
+				}
+			} else if forwards != 0 || rec.Code != http.StatusBadGateway {
+				t.Fatalf("unsafe target: forwards=%d status=%d body=%s", forwards, rec.Code, rec.Body)
+			}
+			if len(recorder.targets) != forwards {
+				t.Fatalf("unverified target entered placement cache: records=%d forwards=%d", len(recorder.targets), forwards)
+			}
+		})
+	}
+}
+
 func (s retiredAsyncSnapshotStore) WithInvocationVersionSnapshot(ctx context.Context, read func(state.InvocationVersionReader) error) error {
 	app, err := s.AppBySlug(ctx, "inv-delivery")
 	if err != nil {

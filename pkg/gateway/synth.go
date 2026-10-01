@@ -610,6 +610,7 @@ func base64Decode(s string) ([]byte, error) {
 type batchDispatchRequest struct {
 	InvocationID string                `json:"invocation_id"`
 	AppID        string                `json:"app_id"`
+	AccountID    string                `json:"account_id,omitempty"`
 	Source       string                `json:"source"`
 	TriggerID    string                `json:"trigger_id"`
 	Records      []batchDispatchRecord `json:"records"`
@@ -900,13 +901,14 @@ func (s *SynthServer) dispatchBatchRecord(ctx context.Context, req batchDispatch
 	// decoder so the headers / metadata land on the runner
 	// envelope unchanged.
 	inv := state.Invocation{
-		ID:      req.InvocationID + "-" + rec.ItemIdentifier,
-		AppID:   req.AppID,
-		Source:  state.InvocationSource(req.Source),
-		Method:  http.MethodPost,
-		Path:    "/_triggers/" + req.Source + "/" + req.TriggerID,
-		Payload: payload,
-		Headers: jsonOrEmpty(rec.Headers),
+		ID:        req.InvocationID + "-" + rec.ItemIdentifier,
+		AppID:     req.AppID,
+		AccountID: req.AccountID,
+		Source:    state.InvocationSource(req.Source),
+		Method:    http.MethodPost,
+		Path:      "/_triggers/" + req.Source + "/" + req.TriggerID,
+		Payload:   payload,
+		Headers:   jsonOrEmpty(rec.Headers),
 	}
 	var (
 		out        state.Invocation

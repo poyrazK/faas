@@ -2450,3 +2450,82 @@ agreement, preview and runtime observations, real daemon fleet/load/restart/
 outage/recovery, customer capability/staging qualification, and Linux x86_64 KVM
 VM/firewall/restore/process-death/leak acceptance remain pending. No KVM host is
 currently available; another host request is unnecessary until that changes.
+
+## Synthetic target verification and security lifetime — 2026-10-01
+
+Normal synthetic HTTP now checks every target claim, including unpinned
+standalone invocations. Account ownership, app version, running instance,
+node membership and scoped live deployment are read in one committed view.
+PostgreSQL uses the existing read-only repeatable-read transaction; memory
+holds its mutex. Snapshot or target failure publishes no version/owner and
+cannot enter the shared placement cache. Cache publication follows the owner,
+target and security checks. Scheduler-selected unpinned delivery remains
+unchanged; project/revision headers retain their selected graph through wake.
+
+The internal gateway wires its existing security registry into synthetic
+dispatch before listener startup. Account/app scopes enroll before gateway-owned
+wake; deployment scope enrolls before forwarding. Nested delivery joins the
+outer lifetime and cannot release its registrations early. Revocation, missed
+revoke/release pairs and store failure cancel the exchange while registrations
+remain owned through forwarding cleanup. A late forwarding success or partial
+gRPC response cannot publish an invocation result after cancellation. Trigger
+batch production and decoding preserve the trigger's saved account in every
+record; older trusted account-free envelopes remain supported.
+
+Pre-woken delivery enrolls after the scheduler returns its target. Scheduler
+wake fencing still requires complete-path work and acceptance. Debug mirror
+replay keeps its separate validated mirror owner. Public edge rules and public
+request rate accounting are not newly advertised for background work. Node
+admission remains on the synthetic forwarding RPC; this batch adds no node or
+VM lifecycle changes and does not establish full synthetic node-cap acceptance.
+
+Verification against the final 12,482-file source freeze:
+
+- Complete state, internal gateway, scheduler and gateway unit scope: 6,906 named
+  passes and 1,401 guarded/skipped results in 121.650 s. Package passes are
+  state 2,156, internal gateway 783, scheduler 1,741 and gateway 2,226.
+- Selected PostgreSQL profile: 52 named passes, no skips, 11.832 s. Five real
+  PostgreSQL fixture roots account for 25 named results; 27 memory/transport
+  cases share that profile. Target membership/refusal and concurrent committed
+  target mutation retain one snapshot, while fresh delivery sees the new state.
+  Connection ownership ends with the snapshot.
+- Two actual synthetic HTTP endpoints use independent pools/registries against
+  one PostgreSQL fixture. With notifications absent, a missed suspension/release
+  pair cancels both active exchanges and fresh released requests succeed. Closing
+  one endpoint's pool cancels it and refuses new delivery while its peer serves.
+  Forwarding is a fixture and both endpoints share a test process; this is not
+  deployed fleet or KVM evidence.
+- Direct and actual batch HTTP tests check before-wake refusal, saved account,
+  target/cache refusal, account/app/deployment revocation, store outage, missed
+  pairs, late-success rejection and registration ownership through cleanup.
+  A real gRPC transport through the production forwarding proxy cancels and
+  discards its partial result. Its vmmd server and security store are fixtures.
+  The existing real daemon startup test verifies synthetic registry wiring.
+- Deduplicated acceptance: 6,931 named passes, with 1,396 guarded results without
+  acceptance. Guards do not count as native VM/network acceptance.
+- SQLC v1.31.1 reproduces all four generated files. Lint v2.4.0 checks all four
+  complete packages with tests and reports zero issues in 111.984 s. Repository
+  SQL, encoding, quoting and ADR-number gates pass in 36.887 s. PostgreSQL's source
+  database remains unmigrated in public, with fsync, synchronous_commit and
+  full_page_writes enabled. No schema, plan quota, test overlay, source exclusion
+  or change to an existing assertion.
+
+The baseline reproduced five unsafe unpinned HTTP deliveries: missing instance,
+wrong node/deployment, stopped instance and superseded deployment. One new batch
+test initially expected an obsolete broker-error status; it now asserts the
+existing retry/invoke_error contract and zero wakes/forwards. One new startup
+assertion initially compared the registry against a copied dependency struct;
+it now checks the originally empty adapter pointer was wired by startup. Entire
+failed runs and preliminary source iterations remain diagnostics, excluded from
+accepted counts. Only final frozen-source runs enter acceptance.
+
+Only this tracker changed after the gate freeze. Evidence and source/commit
+receipts are under
+`/Users/poyrazk/dev/Cloud/gregale/outputs/traffic-synthetic-lifetime-20261001/`.
+
+All six release requirements remain unchecked. Remaining operator/alias/revision
+writer/resolver coverage, scheduler wake lifetime, complete synthetic/trigger/
+public control contracts and node admission evidence, decision observations,
+preview/runtime agreement, deployed daemon fleet/load/restart/outage/recovery,
+customer/staging qualification and native Linux x86_64 KVM VM/firewall/restore/
+process-death/leak acceptance remain pending. The user has no KVM host available.

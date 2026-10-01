@@ -4870,6 +4870,16 @@ ORDER BY n.name LIMIT sqlc.arg(row_limit)::integer;
 SELECT id, account_id, project_id, preview_of_slug, status, deleted_at
 FROM apps WHERE id = sqlc.arg(id)::uuid;
 
+-- ADR-375: verify every synthetic target in the invocation version snapshot.
+-- name: InvocationTargetAllowed :one
+SELECT EXISTS (
+    SELECT 1 FROM instances i JOIN deployments d ON d.id = i.deployment_id
+    WHERE i.id = sqlc.arg(instance_id)::uuid AND i.app_id = sqlc.arg(app_id)::uuid
+      AND i.node_id = sqlc.arg(node_id)::uuid AND i.deployment_id = sqlc.arg(deployment_id)::uuid
+      AND i.state = 'running' AND d.app_id = sqlc.arg(app_id)::uuid
+      AND d.scope = sqlc.arg(scope)::text AND d.status = 'live' AND d.deleted_at IS NULL
+)::boolean AS allowed;
+
 -- ADR-375: minimal credential-free projection for one read-only service-policy snapshot.
 -- name: ReadServicePolicyAppByID :one
 SELECT id, account_id, slug, status, project_id, preview_of_slug,

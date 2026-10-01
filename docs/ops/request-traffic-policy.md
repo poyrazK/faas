@@ -19,12 +19,16 @@ standalone unpinned adapters remain supported. A failed snapshot cannot publish 
 partial header selection or retry through independent reads.
 
 Enqueue captures a canonical release/revision header; delivery revalidates it.
-The pre-woken gateway also verifies the selected deployment and its running
-instance before forwarding. Expired or disabled pins refuse instead of selecting
+The gateway verifies every claimed instance, node and scoped live deployment in
+the same snapshot, including unpinned targets. Invalid targets never enter the
+shared placement cache. Expired or disabled pins refuse instead of selecting
 newer code. Unpinned standalone invocations retain their scheduler selection
 semantics. These checks establish version selection and owner validation. Full
-synthetic equivalence with public edge policy, admission, revocation and request
-decision observations still needs separate acceptance evidence.
+public edge policy, public rate accounting, scheduler wake fencing and request
+decision observations still need separate synthetic-path acceptance evidence.
+Normal synthetic HTTP now joins the account/app/deployment revocation lifetime
+through gateway-owned wake and forwarding cleanup; see
+`traffic-security-revocation.md` for coverage and exclusions.
 
 ## Public request policy
 

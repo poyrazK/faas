@@ -70,6 +70,7 @@ func TestRunWithDepsPublishesActualTrafficWiringAndRetires(t *testing.T) {
 			deps := defaultDeps()
 			deps.config = &Config{NodeName: node.Name, RateLimit: TOMLRateLimitConfig{Mode: tc.mode}}
 			deps.pool, deps.pgStore = pool, store
+			deps.syntheticDispatcher = &synthAdapter{store: store}
 			deps.capCheck = func() error { return nil }
 			deps.backend = &fixedBackend{}
 			deps.edgeRulesMatcher = newGatewaydEdgeRules(&fakeEdgeRuleStore{}, nil, nil, nil)
@@ -112,6 +113,9 @@ func TestRunWithDepsPublishesActualTrafficWiringAndRetires(t *testing.T) {
 				}
 			}
 			requestCtx, cancelRequest := context.WithTimeout(t.Context(), 2*time.Second)
+			if deps.syntheticDispatcher.trafficRevocations == nil {
+				t.Fatal("synthetic dispatch did not receive the startup security registry")
+			}
 			request, err := http.NewRequestWithContext(requestCtx, http.MethodGet, "http://"+listener.Addr().String()+"/anything", nil)
 			if err != nil {
 				cancelRequest()

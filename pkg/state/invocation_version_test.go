@@ -124,6 +124,10 @@ func TestResolveInvocationVersionSnapshotFailurePublishesNoSelection(t *testing.
 		if !errors.Is(err, failure) || version != (InvocationVersion{}) || !reflect.DeepEqual(out, inv) {
 			t.Fatalf("partial selection after=%v: %+v %+v %v", after, out, version, err)
 		}
+		out, version, owner, err := ResolveInvocationDispatch(ctx, invocationSnapshotFailure{MemStore: store, failure: failure, after: after}, inv, nil)
+		if !errors.Is(err, failure) || version != (InvocationVersion{}) || owner != "" || !reflect.DeepEqual(out, inv) {
+			t.Fatalf("partial dispatch after=%v: %+v %+v %q %v", after, out, version, owner, err)
+		}
 	}
 }
 

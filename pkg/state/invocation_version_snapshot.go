@@ -16,6 +16,7 @@ type InvocationVersionReader interface {
 	AppByID(context.Context, string) (App, error)
 	ResolveProjectRelease(context.Context, string, string, string) (string, string, error)
 	ResolveRevisionPin(context.Context, string, string, string) (Deployment, error)
+	InvocationTargetAllowed(context.Context, string, string, InvocationTarget) (bool, error)
 }
 
 type InvocationVersionSnapshotStore interface {
@@ -32,6 +33,13 @@ func (s *PgStore) WithInvocationVersionSnapshot(ctx context.Context, read func(I
 }
 
 type invocationVersionPolicyReader struct{ servicePolicyReader }
+
+func (s invocationVersionPolicyReader) InvocationTargetAllowed(ctx context.Context, app, scope string, target InvocationTarget) (bool, error) {
+	return sqlc.New().InvocationTargetAllowed(ctx, s.tx, sqlc.InvocationTargetAllowedParams{
+		AppID: uuidToPgtype(app), Scope: normalizedDeploymentScope(scope),
+		InstanceID: uuidToPgtype(target.InstanceID), NodeID: uuidToPgtype(target.NodeID), DeploymentID: uuidToPgtype(target.DeploymentID),
+	})
+}
 
 func (s invocationVersionPolicyReader) AppByID(ctx context.Context, id string) (App, error) {
 	row, err := sqlc.New().ReadInvocationVersionApp(ctx, s.tx, uuidToPgtype(id))
@@ -89,6 +97,15 @@ func (m *MemStore) WithInvocationVersionSnapshot(ctx context.Context, read func(
 }
 
 type memInvocationVersionReader struct{ store *MemStore }
+
+func (s memInvocationVersionReader) InvocationTargetAllowed(_ context.Context, app, scope string, target InvocationTarget) (bool, error) {
+	instance, exists := s.store.instances[target.InstanceID]
+	if !exists || instance.AppID != app || instance.DeploymentID != target.DeploymentID || instance.NodeID != target.NodeID || instance.State != string(StateRunning) {
+		return false, nil
+	}
+	dep, exists := s.store.deployments[target.DeploymentID]
+	return exists && dep.AppID == app && dep.Status == DeployLive && dep.DeletedAt == nil && normalizedDeploymentScope(dep.Scope) == normalizedDeploymentScope(scope), nil
+}
 
 func (s memInvocationVersionReader) AppByID(_ context.Context, id string) (App, error) {
 	app, err := s.store.appByIDLocked(id)

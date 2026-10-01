@@ -202,3 +202,89 @@ func TestPgInvocationVersionSnapshotRevisionOwnerAndProjection(t *testing.T) {
 		t.Fatalf("failed snapshot retained %d connections", got)
 	}
 }
+
+func TestPgInvocationDispatchSnapshotTargetMembership(t *testing.T) {
+	store, ctx, pool := pgWithPool(t)
+	account, app, dep := seedLiveDeploy(t, store, ctx, uuid.NewString(), uuid.NewString()[:8])
+	node := resolveDefaultLocal(t, ctx, store)
+	instance, err := store.CreateInstance(ctx, app, dep, string(state.StateRunning), 128, node, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreignAccount, foreignApp, foreignDep := seedLiveDeploy(t, store, ctx, uuid.NewString(), uuid.NewString()[:8])
+	foreignInstance, err := store.CreateInstance(ctx, foreignApp, foreignDep, string(state.StateRunning), 128, node, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim := state.InvocationTarget{InstanceID: instance.ID, NodeID: node, DeploymentID: dep}
+	inv := state.Invocation{AppID: app, AccountID: account}
+	for _, kind := range []string{"valid", "legacy account", "missing instance", "wrong node", "wrong deployment", "foreign instance", "foreign account", "stopped", "superseded", "scope", "deleted deployment"} {
+		t.Run(kind, func(t *testing.T) {
+			if _, err := pool.Exec(ctx, `UPDATE instances SET state='running' WHERE id=$1`, instance.ID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := pool.Exec(ctx, `UPDATE deployments SET status='live', scope='default', deleted_at=NULL WHERE id=$1`, dep); err != nil {
+				t.Fatal(err)
+			}
+			request, target := inv, claim
+			switch kind {
+			case "legacy account":
+				request.AccountID = ""
+			case "missing instance":
+				target.InstanceID = uuid.NewString()
+			case "wrong node":
+				target.NodeID = uuid.NewString()
+			case "wrong deployment":
+				target.DeploymentID = foreignDep
+			case "foreign instance":
+				target.InstanceID, target.DeploymentID = foreignInstance.ID, foreignDep
+			case "foreign account":
+				request.AccountID = foreignAccount
+			case "stopped":
+				if err := store.UpdateInstanceState(ctx, instance.ID, string(state.StateStopped)); err != nil {
+					t.Fatal(err)
+				}
+			case "superseded":
+				if err := store.UpdateDeploymentStatus(ctx, dep, state.DeploySuperseded, ""); err != nil {
+					t.Fatal(err)
+				}
+			case "scope":
+				if _, err := pool.Exec(ctx, `UPDATE deployments SET scope='staging' WHERE id=$1`, dep); err != nil {
+					t.Fatal(err)
+				}
+			case "deleted deployment":
+				if _, err := pool.Exec(ctx, `UPDATE deployments SET deleted_at=now() WHERE id=$1`, dep); err != nil {
+					t.Fatal(err)
+				}
+			}
+			prepared, version, owner, err := state.ResolveInvocationDispatch(ctx, store, request, &target)
+			if kind == "valid" || kind == "legacy account" {
+				if err != nil || owner != account || version.Scope != "default" || !reflect.DeepEqual(prepared, request) {
+					t.Fatalf("valid dispatch: %+v %+v %q %v", prepared, version, owner, err)
+				}
+			} else if !errors.Is(err, state.ErrNotFound) || owner != "" || version != (state.InvocationVersion{}) || !reflect.DeepEqual(prepared, request) {
+				t.Fatalf("unsafe dispatch escaped snapshot: %+v %+v %q %v", prepared, version, owner, err)
+			}
+		})
+	}
+	if _, err := pool.Exec(ctx, `UPDATE deployments SET status='live', scope='default', deleted_at=NULL WHERE id=$1`, dep); err != nil {
+		t.Fatal(err)
+	}
+	mutating := invocationVersionMutationStore{PgStore: store, after: func() {
+		if err := store.UpdateInstanceState(ctx, instance.ID, string(state.StateStopped)); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.UpdateDeploymentStatus(ctx, dep, state.DeploySuperseded, ""); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	if _, _, owner, err := state.ResolveInvocationDispatch(ctx, mutating, inv, &claim); err != nil || owner != account {
+		t.Fatalf("mixed target snapshot: owner=%q err=%v", owner, err)
+	}
+	if _, _, owner, err := state.ResolveInvocationDispatch(ctx, store, inv, &claim); !errors.Is(err, state.ErrNotFound) || owner != "" {
+		t.Fatalf("fresh target view: owner=%q err=%v", owner, err)
+	}
+	if got := pool.Stat().AcquiredConns(); got != 0 {
+		t.Fatalf("target snapshot retained %d connections", got)
+	}
+}

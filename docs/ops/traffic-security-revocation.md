@@ -22,6 +22,18 @@ follow tenant authorization, before wake. Each selected target deployment is
 checked before forwarding. Identity comes from routing, tenant authorization
 and node source-instance resolution, never an arbitrary scope header.
 
+Normal managed synthetic HTTP uses this registry as well. The gateway verifies
+the saved account, app version and every claimed running instance/node/scoped
+live deployment in one committed view, including unpinned invocations. Account
+and app enroll before gateway-owned wake, and the deployment before forwarding.
+A nested delivery shares that lifetime through cleanup. Trigger batches carry
+the trigger's saved account to every record. Older trusted account-free envelopes
+keep compatibility; the verified app supplies the security account scope.
+Pre-woken delivery enrolls after the scheduler returns its target. The scheduler
+wake lifetime still needs separate complete-path acceptance. Debug mirror replay
+retains its separate mirror target owner. This does not apply public edge rules
+or public request rate accounting to background work.
+
 An independent lifetime fence survives successful streaming/gRPC/Upgrade
 handshake detachment. Changing any enrolled generation cancels the exchange,
 including a revoke/release pair missed between reads. Store failure or
@@ -95,6 +107,13 @@ Local tests cover account/app/deployment cancellation, initial refusal, upload
 spool removal, wake cancellation with real HTTP/1 and HTTP/2 error delivery,
 public and service retry-deployment checks, scope capacity, cleanup ownership,
 and real gRPC cancellation after successful handshake-budget detachment.
+Synthetic endpoint tests verify every target claim, before-wake refusal,
+account/app/deployment cancellation, missed revoke/release pairs, store failure,
+late-success rejection and registration ownership through forwarding cleanup.
+Two synthetic HTTP endpoints with independent PostgreSQL pools/registries verify
+missed suspension/release without notifications, fresh recovery and a one-pool
+outage while the peer continues. They share a test process and fixture forwarding;
+they do not establish deployed fleet or native VM/network acceptance.
 Blocked ordinary and streaming compute response writes use a 64 MiB body and
 an open unread client over HTTP/1 and HTTP/2; both handlers and upstream RPCs
 must finish before the test closes the client.

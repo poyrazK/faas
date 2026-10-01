@@ -124,6 +124,7 @@ type triggerDispatchRecord struct {
 type triggerDispatchRequest struct {
 	InvocationID string                  `json:"invocation_id"`
 	AppID        string                  `json:"app_id"`
+	AccountID    string                  `json:"account_id,omitempty"`
 	Source       string                  `json:"source"`
 	TriggerID    string                  `json:"trigger_id"`
 	Records      []triggerDispatchRecord `json:"records"`
@@ -1111,6 +1112,7 @@ func buildDispatchEnvelope(t sqlc.Trigger, batch []SourceRecord) triggerDispatch
 	return triggerDispatchRequest{
 		InvocationID: "trigger-" + t.ID.String(),
 		AppID:        t.AppID.String(),
+		AccountID:    t.AccountID.String(),
 		Source:       "esm",
 		TriggerID:    t.ID.String(),
 		Records:      recs,
