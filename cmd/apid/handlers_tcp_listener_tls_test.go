@@ -31,6 +31,18 @@ func TestTCPListenerTLSAPI(t *testing.T) {
 		return w
 	}
 	path := "/v1/apps/tcp-tls-api/tcp-listeners"
+	other, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "tcp-tls-other", RAMMB: 256, Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateCustomDomain(ctx, "foreign.example", other.ID, "foreign-token"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDomainVerified(ctx, "foreign.example"); err != nil {
+		t.Fatal(err)
+	}
+	request(http.MethodPost, path, `{"name":"echo","guest_port":9000,"public_port":40142,"tls":{"mode":"terminate","hostname":"foreign.example"}}`, http.StatusBadRequest)
+
 	body := `{"name":"echo","guest_port":9000,"public_port":40142,"tls":{"mode":"terminate","hostname":"Echo.Example"}}`
 	request(http.MethodPost, path, body, 400)
 	if _, err := store.CreateCustomDomain(ctx, "echo.example", app.ID, "token"); err != nil {
@@ -50,6 +62,8 @@ func TestTCPListenerTLSAPI(t *testing.T) {
 	}
 	request(http.MethodPost, path, `{"name":"echo","guest_port":9000,"tls":{"mode":"terminate","hostname":"echo.example"}}`, http.StatusConflict)
 	request(http.MethodPatch, path+"/echo", `{"enabled":true}`, 200)
+	request(http.MethodPatch, path+"/echo", `{}`, http.StatusBadRequest)
+	request(http.MethodPatch, path+"/echo", `{"tls":{"mode":"unknown"}}`, http.StatusBadRequest)
 	request(http.MethodPatch, path+"/echo", `{"enabled":true,"tls":{"mode":"passthrough"}}`, 400)
 	w = request(http.MethodPatch, path+"/echo", `{"tls":{"mode":"passthrough"}}`, 200)
 	listener = api.TCPListenerResponse{}
