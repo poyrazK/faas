@@ -1381,3 +1381,7 @@ udp-postgres-check: ## Require real PostgreSQL passes for UDP store/migration te
 udp-contract-check: udp-deployment-check udp-alert-check ## Require portable UDP socket, transport, intent, API and CLI race contracts; rejects skips
 	@python3 scripts/ci/container-contract-check_test.py
 	python3 scripts/ci/udp-contract-check.py
+
+.PHONY: test-companion-scratch-contract
+test-companion-scratch-contract: ## Linux/x86_64 root acceptance for ephemeral companion scratch capacity and isolation
+	@GO="$(GO)" bash scripts/ci/companion-scratch-contract.sh

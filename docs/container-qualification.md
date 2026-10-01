@@ -511,3 +511,29 @@ At last observation #3955 had only its builder image job outstanding. #3954
 still had builder image, lint/build, CodeQL Go and migration jobs running, with
 no reported failure. Existing image CI builds multiple architecture artifacts;
 this work adds no ARM64 container-service support or qualification scope.
+
+### Formatting repair and isolated scratch gate — 2026-10-01
+
+Health-runtime PR #3956's Linux lint/build job exposed a trailing blank line in
+the extracted runtime test. Golangci-lint itself reported zero issues; gofmt
+failed. Commit `1610b3639` removes that line, and all changed Go files are now
+formatted. Timing #3957 was rebased onto the correction (head `e7a9e34aa`);
+its append-only timing-test conflict was resolved retaining all tests and
+formatting the result. Remote checks on these updated heads are pending.
+Failed-head evidence: `/tmp/gregale-health-runtime-ci-lint.log`.
+
+Independent draft [PR #3959](https://github.com/poyrazK/faas/pull/3959), head
+`c2d2554eb`, isolates the real scratch mount fixture and production helper,
+plus a strict `make test-companion-scratch-contract` runner and operations note.
+The runner requires Linux/x86_64 root and rejects skips/missing results; this
+mount contract does not require KVM. Linux/amd64 metal-tagged guest tests
+cross-compile, scoped metal-tagged lint is clean, shell syntax/ShellCheck with
+sources pass, existing native wrapper/verdict regressions pass, and the guard
+rejects this Mac. Evidence: `/tmp/gregale-scratch-isolated-compile.log`,
+`/tmp/gregale-scratch-isolated-lint.log`,
+`/tmp/gregale-scratch-isolated-host-guard.log`,
+`/tmp/gregale-scratch-verdict-regressions.log`.
+Actual capacity/isolation/reclamation/teardown execution remains unexecuted
+until a designated Linux host is available. No VM or native leak qualification
+is inferred; PRs remain drafts and unmerged. The independent runner and note
+are also retained in this implementation branch.
