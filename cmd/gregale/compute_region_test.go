@@ -59,7 +59,7 @@ func TestComputeRegionDeployCreationAndRedeploy(t *testing.T) {
 }
 
 func TestComputeRegionUnsupportedFlowsFailBeforeRemoteChanges(t *testing.T) {
-	for _, flag := range []string{"--dry-run", "--diff", "--server-diff", "--plan", "--github"} {
+	for _, flag := range []string{"--github"} {
 		t.Run(flag, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				t.Errorf("unexpected remote request: %s %s", r.Method, r.URL.Path)

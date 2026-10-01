@@ -62,9 +62,10 @@ descriptive metadata in this milestone.
 sets the region when creating a standalone app, including source-ref deploys.
 Redeploying with a different region fails before configuration changes; omitting
 the flag preserves the choice. Existing unconstrained apps cannot be repinned.
-Create a new app to choose a different region. ADR-426 extends project deploys and their scan/dry-run/diff plans with locality.
-Single-app diff/plan and workflow snippets still reject this flag until those
-representations carry locality.
+Create a new app to choose a different region. ADR-426 extends project deploys
+and their scan/dry-run/diff plans with locality. ADR-428 carries placement
+through standalone diff and local simple-app plans. Workflow snippets still
+reject region selection until a supporting deploy Action can be pinned.
 Pull-request previews derived from a region-bound app inherit its region.
 
 Operators declare `region` and optional `zone` per fleet host. The renderer
@@ -79,7 +80,7 @@ PostgreSQL, API admission, gateways, builders, artifact storage, managed data,
 secrets, and observability retain their existing topology. It does not establish
 data residency, regional control-plane independence, geographic ingress routing,
 cross-region replication, automatic regional failover, or an active-active app.
-Standalone managed jobs remain outside this app placement contract.
+ADR-427 extends compute placement to standalone managed Jobs.
 
 Account quotas, billing identity, per-node admission ceilings, service recovery
 capacity, snapshot compatibility, and cold-boot fallback remain authoritative.
@@ -139,7 +140,8 @@ purging those apps requires a separate deliberate migration or cleanup.
 ## Follow-on milestones
 
 ADR-425 adds the durable region registry, new-app admission policy, and
-availability diagnostics. ADR-426 and ADR-427 regionalize project plans and managed jobs. Build independent regional control
+availability diagnostics. ADR-426, ADR-427, and ADR-428 regionalize project plans,
+managed jobs, and standalone previews. Build independent regional control
 planes and storage boundaries before promising regional fault isolation or
 residency. A later multi-target app model can attach per-region deployments,
 capacity and health to a global identity, followed by explicit ingress routing

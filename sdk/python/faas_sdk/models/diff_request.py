@@ -33,6 +33,9 @@ class DiffRequest:
 
     """
 
+    compute_region: None | str | Unset = UNSET
+    """Placement intent for this preview. Omit to preserve an existing app region; a different value blocks
+    deployment. New app placement checks current operator admission without reserving capacity."""
     app_config: DiffAppConfigPatch | Unset = UNSET
     """Per-app scalar patch. Pointer-aware: nil = "don't touch";
     explicit zero / explicit value = "set to this". Matches
@@ -80,6 +83,12 @@ class DiffRequest:
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.canary_preset_spec import CanaryPresetSpec
+
+        compute_region: None | str | Unset
+        if isinstance(self.compute_region, Unset):
+            compute_region = UNSET
+        else:
+            compute_region = self.compute_region
 
         app_config: dict[str, Any] | Unset = UNSET
         if not isinstance(self.app_config, Unset):
@@ -143,6 +152,8 @@ class DiffRequest:
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
+        if compute_region is not UNSET:
+            field_dict["compute_region"] = compute_region
         if app_config is not UNSET:
             field_dict["app_config"] = app_config
         if image is not UNSET:
@@ -180,6 +191,16 @@ class DiffRequest:
         from ..models.workflow_spec import WorkflowSpec
 
         d = dict(src_dict)
+
+        def _parse_compute_region(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        compute_region = _parse_compute_region(d.pop("compute_region", UNSET))
+
         _app_config = d.pop("app_config", UNSET)
         app_config: DiffAppConfigPatch | Unset
         if isinstance(_app_config, Unset):
@@ -273,6 +294,7 @@ class DiffRequest:
                 workflows.append(workflows_item)
 
         diff_request = cls(
+            compute_region=compute_region,
             app_config=app_config,
             image=image,
             manifest=manifest,

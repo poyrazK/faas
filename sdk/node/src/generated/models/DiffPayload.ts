@@ -12,6 +12,10 @@ import type { DiffChange } from './DiffChange.js';
  *
  */
 export type DiffPayload = {
+  /**
+   * Effective immutable compute region, taken from the existing app or the proposed creation intent. Empty retains legacy unconstrained placement.
+   */
+  compute_region?: string;
   slug: string;
   /**
    * Customer's subscription tier (echoed from acct.Plan).

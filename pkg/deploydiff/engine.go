@@ -42,6 +42,7 @@ func Compute(slug string, plan Plan, baseline Baseline, pending Pending) Diff {
 	}
 
 	// 1. App-level scalars.
+	diffComputeRegion(&out, baseline.App, pending.ComputeRegion)
 	diffAppConfig(&out, baseline.App, pending.AppConfig)
 
 	// 1b. Source/workload intent. Resource defaults are intentionally

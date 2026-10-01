@@ -43,12 +43,13 @@ import (
 // into cmdDiff. Kept small so the diff path doesn't grow a
 // second flag-set surface.
 type diffCLIOptions struct {
-	Slug     string
-	AppShape shape
-	Runtime  string
-	Handler  string
-	Image    string
-	Cwd      string
+	ComputeRegion *string
+	Slug          string
+	AppShape      shape
+	Runtime       string
+	Handler       string
+	Image         string
+	Cwd           string
 	// AppConfigPatch mirrors the CLI flags that affect app-level
 	// fields the diff should project (memory, concurrency,
 	// require_authn, …). nil = "no change".
@@ -242,7 +243,9 @@ func runDiff(ctx context.Context, client *api.Client, opts diffCLIOptions) int {
 	// --server-diff routes through apid's POST /v1/apps/{slug}/diff
 	// (PR-1). The local SDK path (PR-0) is the default; --server-diff
 	// is for CI / headless environments that don't ship the CLI.
-	if opts.ServerDiff {
+	// Explicit region intent needs the operator admission gate and registry
+	// policy, which only apid can evaluate authoritatively.
+	if opts.ServerDiff || opts.ComputeRegion != nil {
 		return runServerDiff(ctx, client, opts)
 	}
 
@@ -407,7 +410,8 @@ func buildBaseline(ctx context.Context, client *api.Client, slug string) (deploy
 // [deployManifestTriggers] but reads rather than writes.
 func buildPending(ctx context.Context, client *api.Client, opts diffCLIOptions, baseline deploydiff.Baseline) deploydiff.Pending {
 	p := deploydiff.Pending{
-		AppConfig: opts.AppConfig, BuildPlan: opts.BuildPlan,
+		ComputeRegion: opts.ComputeRegion,
+		AppConfig:     opts.AppConfig, BuildPlan: opts.BuildPlan,
 		TrafficPercent: opts.TrafficPercent, Canary: opts.Canary,
 		Workflows: opts.Workflows,
 	}
@@ -627,7 +631,8 @@ func appendDeployPreviewAnnotationIntent(d *deploydiff.Diff, opts diffCLIOptions
 // as new deploy flags are added.
 func diffRequestFromCLI(opts diffCLIOptions) api.DiffRequest {
 	req := api.DiffRequest{
-		ImageRef: opts.Image, BuildPlan: opts.BuildPlan,
+		ComputeRegion: opts.ComputeRegion,
+		ImageRef:      opts.Image, BuildPlan: opts.BuildPlan,
 		TrafficPercent: opts.TrafficPercent, Canary: opts.Canary,
 	}
 	if opts.Workflows != nil {
@@ -693,10 +698,11 @@ func diffAppConfigPatchFromCLI(p deploydiff.AppConfigPatch) *api.DiffAppConfigPa
 // anyJSON's Value via json.Unmarshal.
 func syntheticDiffFromResponse(resp api.DiffResponse) deploydiff.Diff {
 	out := deploydiff.Diff{
-		Slug:    resp.Diff.Slug,
-		Plan:    deploydiff.Plan(resp.Plan),
-		Changes: make([]deploydiff.Change, 0, len(resp.Diff.Changes)),
-		Breaks:  make([]deploydiff.Break, 0, len(resp.Diff.Breaks)),
+		ComputeRegion: resp.Diff.ComputeRegion,
+		Slug:          resp.Diff.Slug,
+		Plan:          deploydiff.Plan(resp.Plan),
+		Changes:       make([]deploydiff.Change, 0, len(resp.Diff.Changes)),
+		Breaks:        make([]deploydiff.Break, 0, len(resp.Diff.Breaks)),
 	}
 	for _, c := range resp.Diff.Changes {
 		before := decodeRaw(c.Before)

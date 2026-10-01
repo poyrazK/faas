@@ -29,6 +29,9 @@ class DiffPayload:
     slug: str
     changes: list[DiffChange]
     breaks: list[DiffBreak]
+    compute_region: str | Unset = UNSET
+    """Effective immutable compute region, taken from the existing app or the proposed creation intent. Empty
+    retains legacy unconstrained placement."""
     plan: DiffPayloadPlan | Unset = UNSET
     """Customer's subscription tier (echoed from acct.Plan)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -46,6 +49,8 @@ class DiffPayload:
             breaks_item = breaks_item_data.to_dict()
             breaks.append(breaks_item)
 
+        compute_region = self.compute_region
+
         plan: str | Unset = UNSET
         if not isinstance(self.plan, Unset):
             plan = self.plan
@@ -59,6 +64,8 @@ class DiffPayload:
                 "breaks": breaks,
             }
         )
+        if compute_region is not UNSET:
+            field_dict["compute_region"] = compute_region
         if plan is not UNSET:
             field_dict["plan"] = plan
 
@@ -86,6 +93,8 @@ class DiffPayload:
 
             breaks.append(breaks_item)
 
+        compute_region = d.pop("compute_region", UNSET)
+
         _plan = d.pop("plan", UNSET)
         plan: DiffPayloadPlan | Unset
         if isinstance(_plan, Unset):
@@ -97,6 +106,7 @@ class DiffPayload:
             slug=slug,
             changes=changes,
             breaks=breaks,
+            compute_region=compute_region,
             plan=plan,
         )
 

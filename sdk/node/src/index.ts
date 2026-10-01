@@ -28,6 +28,7 @@ export { AuthService } from './generated/services/AuthService.js';
 export { CronsService } from './generated/services/CronsService.js';
 export { DelayedTasksService } from './generated/services/DelayedTasksService.js';
 export { DeploymentsService } from './generated/services/DeploymentsService.js';
+export { DeploydiffService } from './generated/services/DeploydiffService.js';
 export { DomainsService } from './generated/services/DomainsService.js';
 export { GithubService } from './generated/services/GithubService.js';
 export { InstancesService } from './generated/services/InstancesService.js';

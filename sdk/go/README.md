@@ -214,6 +214,25 @@ A 410 expired-release response is returned unchanged, without a retry or
 fallback to the active release. Configure CORS to allow
 `X-Gregale-Release` and expose it when the native client is cross-origin.
 
+## Read-only deployment previews
+
+Preview region selection before creating an app:
+
+```go
+region := "eu-fsn"
+preview, err := c.Diff(ctx, "my-api", faas.DiffRequest{ComputeRegion: &region})
+if err != nil {
+    return err
+}
+if preview.Blocking {
+    // Inspect preview.Diff.Breaks before deploying.
+}
+```
+
+Omit `ComputeRegion` to preserve an existing app's choice. Changing or clearing
+that immutable choice produces a blocking conflict. Fresh regional apps check
+current operator admission; the preview changes no state and reserves no capacity.
+
 ## Errors
 
 Every 4xx/5xx with a Problem-shaped body returns `*faas.APIError`:

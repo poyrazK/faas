@@ -46,6 +46,9 @@ func RenderText(w io.Writer, d Diff) {
 	if d.Slug != "" {
 		_, _ = fmt.Fprintf(w, "Deployment diff for %q\n\n", d.Slug)
 	}
+	if d.ComputeRegion != "" {
+		_, _ = fmt.Fprintf(w, "Compute region: %s (immutable)\n\n", d.ComputeRegion)
+	}
 	if d.SafeRelease != nil {
 		renderSafeReleaseText(w, *d.SafeRelease)
 	}

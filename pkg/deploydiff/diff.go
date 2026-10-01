@@ -92,6 +92,9 @@ type Baseline struct {
 // nil = "don't touch", non-nil = "set to this value". Slice fields
 // are full-replacement semantics — an empty slice means "clear".
 type Pending struct {
+	// ComputeRegion is creation intent, not a mutable app patch. Omission
+	// preserves an existing app's region; a different choice blocks deploy.
+	ComputeRegion *string
 	// AppConfig mirrors [api.UpdateAppRequest]. Every field is a
 	// pointer; the diff only emits a [Change] for non-nil fields.
 	AppConfig AppConfigPatch
@@ -291,10 +294,11 @@ type SafeReleaseHealthRule struct {
 // Diff is the engine's output. Renders the human / JSON view; the
 // gate (exit 1) reads [Diff.HasBlockingBreaks].
 type Diff struct {
-	Slug        string              `json:"slug"`
-	Changes     []Change            `json:"changes"`
-	Breaks      []Break             `json:"breaks"`
-	SafeRelease *SafeReleasePreview `json:"safe_release,omitempty"`
+	ComputeRegion string              `json:"compute_region,omitempty"`
+	Slug          string              `json:"slug"`
+	Changes       []Change            `json:"changes"`
+	Breaks        []Break             `json:"breaks"`
+	SafeRelease   *SafeReleasePreview `json:"safe_release,omitempty"`
 	// Plan is echoed back so the renderer can show plan-tier
 	// context ("Hobby plan: 256 MB cap").
 	Plan Plan `json:"plan"`
@@ -357,10 +361,11 @@ func (d Diff) ToWire() api.DiffResponse {
 	}
 	plan := string(d.Plan)
 	payload := api.DiffPayload{
-		Slug:    d.Slug,
-		Changes: wireChanges,
-		Breaks:  wireBreaks,
-		Plan:    plan,
+		ComputeRegion: d.ComputeRegion,
+		Slug:          d.Slug,
+		Changes:       wireChanges,
+		Breaks:        wireBreaks,
+		Plan:          plan,
 	}
 	return api.DiffResponse{
 		Diff:     payload,

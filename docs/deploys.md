@@ -60,6 +60,15 @@ release, use `gregale rollback APP`; rollback reuses the previous live
 artifact instead of rebuilding it. See [deployment history](deployments.md)
 for annotations and receipts.
 
+On fleets with regional compute enabled, `gregale deploy --region eu-fsn`
+selects immutable placement when creating an app. Omit the flag on redeploy to
+preserve its choice; create a new app to change it. Add `--dry-run` or `--diff`
+to review placement and current admission through the read-only server planner.
+`--plan --region eu-fsn` shows local simple-app creation intent without login;
+it does not check existing app placement, remote admission, or reserve capacity.
+This capability remains internal pending native fleet qualification. See
+[ADR-428](adr/428-regional-deployment-previews.md).
+
 ## Revisions
 
 Every deploy creates an immutable revision, numbered per app and shown as

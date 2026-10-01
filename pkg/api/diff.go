@@ -40,6 +40,9 @@ import (
 // "no change proposed" (matches the engine's pointer semantics:
 // every nested field is *T; nil = "don't touch").
 type DiffRequest struct {
+	// ComputeRegion selects placement for a fresh app or confirms an existing
+	// app's immutable choice. Nil preserves the current region.
+	ComputeRegion *string `json:"compute_region,omitempty"`
 	// AppConfig is the per-app scalar patch. Optional — omit for
 	// a pure deployment-shape diff.
 	AppConfig *DiffAppConfigPatch `json:"app_config,omitempty"`
@@ -172,10 +175,11 @@ type DiffBreak struct {
 // consumer reading `.diff.changes` and a CLI consumer reading the
 // top-level keys agree.
 type DiffPayload struct {
-	Slug    string       `json:"slug"`
-	Changes []DiffChange `json:"changes"`
-	Breaks  []DiffBreak  `json:"breaks"`
-	Plan    string       `json:"plan,omitempty"`
+	ComputeRegion string       `json:"compute_region,omitempty"`
+	Slug          string       `json:"slug"`
+	Changes       []DiffChange `json:"changes"`
+	Breaks        []DiffBreak  `json:"breaks"`
+	Plan          string       `json:"plan,omitempty"`
 }
 
 // DiffResponse is the canonical wire envelope for POST

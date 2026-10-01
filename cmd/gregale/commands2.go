@@ -2415,8 +2415,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// through to the single-app upload path and were ignored.
 	projectRequested := *deployOnly != "" || *deployExclude != "" ||
 		*deployPersistExclude || *deployShowAffected || explicit["project-slug"] || *projectDeploy
-	if *computeRegion != "" && (!projectRequested && (*diff || *dryRun || *serverDiff) || *simplePlan || *githubSnippet) {
-		return printErr("Invalid --region", fmt.Errorf("--region supports standalone deployment and project scan/apply; single-app diff, plan, and snippet flows are not region-aware"))
+	if *computeRegion != "" && *githubSnippet {
+		return printErr("Invalid --region", fmt.Errorf("the pinned GitHub deploy Action does not support region selection; create the regional app first and deploy to its existing identity"))
 	}
 	if *waitTimeoutSeconds <= 0 {
 		return printErr("Invalid --timeout", fmt.Errorf("must be greater than zero seconds"))
@@ -2880,6 +2880,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		// app creation, trigger reconciliation, or the source-ref POST.
 		if !jsonOutput {
 			renderDeployPreflight(osStdout, deployPreflightSummary{
+				ComputeRegion:     *computeRegion,
 				Slug:              slug,
 				Source:            deployPreflightRepoSource(*repo, *ref),
 				RuntimeResolution: "detected remotely after checkout",
@@ -3187,7 +3188,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if *image != "" {
 			sourceKind = simpleapp.SourceImage
 		}
-		plan, planErr := resolveSimpleAppPlan(sourceDir, slug, *profile, sourceKind, *app, *function)
+		plan, planErr := resolveSimpleAppPlan(sourceDir, slug, *profile, sourceKind, *app, *function, *computeRegion)
 		if planErr != nil {
 			return printErr("Could not resolve simple app plan", planErr)
 		}
@@ -3464,7 +3465,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if *image != "" {
 			sourceKind = simpleapp.SourceImage
 		}
-		plan, planErr := resolveSimpleAppPlan(sourceDir, slug, *profile, sourceKind, true, false)
+		plan, planErr := resolveSimpleAppPlan(sourceDir, slug, *profile, sourceKind, true, false, *computeRegion)
 		if planErr != nil {
 			return printErr("Could not resolve simple app plan", planErr)
 		}
@@ -3482,6 +3483,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		)
 		buildPlan := buildPreviewBuildPlan(sourceDir, resolvedShape, deployRuntime, deployHandler, "", *image != "", *dockerfile)
 		renderDeployPreflight(osStdout, deployPreflightSummary{
+			ComputeRegion:   *computeRegion,
 			Slug:            slug,
 			Source:          source,
 			LocalChanges:    localChanges,
@@ -3584,6 +3586,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				*diffStrict || !*diffLenient, *noTriggers, *environment, *computeRegion, platformTenantRequiredPtr)
 		}
 		opts := buildDiffOptionsWithLifecycle(slug, resolvedShape, deployRuntime, deployHandler, *image, sourceDir, requireAuthnPtr, appProtocolPtr, *profile, *vcpu, *executionMode, *restartPolicy, *startupDeadlineS, *maxRetries)
+		if explicit["region"] {
+			opts.ComputeRegion = computeRegion
+		}
 		opts.BuildPlan = buildPreviewBuildPlan(sourceDir, resolvedShape, deployRuntime, deployHandler, sourceSHA256, *image != "", *dockerfile)
 		opts.TrafficPercent = optTrafficPercent(*trafficPercent)
 		opts.Canary = canarySpec

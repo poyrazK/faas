@@ -35219,6 +35219,12 @@ components:
         optional; null = "don't touch").
       type: object
       properties:
+        compute_region:
+          type: [string, "null"]
+          maxLength: 63
+          pattern: '^$|^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+          description: "Placement intent for this preview. Omit to preserve an existing app region; a different value blocks deployment. New app placement checks current operator admission without reserving capacity."
+          example: "eu-fsn"
         app_config:
           $ref: '#/components/schemas/DiffAppConfigPatch'
         image:
@@ -35391,6 +35397,12 @@ components:
       type: object
       required: [slug, changes, breaks]
       properties:
+        compute_region:
+          type: string
+          maxLength: 63
+          pattern: '^$|^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+          description: "Effective immutable compute region, taken from the existing app or the proposed creation intent. Empty retains legacy unconstrained placement."
+          example: "eu-fsn"
         slug: { type: string }
         plan:
           type: string

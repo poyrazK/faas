@@ -23,18 +23,20 @@ const (
 // the platform defaults; advanced lifecycle modes intentionally do not belong
 // in this contract.
 type Spec struct {
-	Slug       string
-	Source     SourceKind
-	Framework  string
-	Profile    string
-	Port       int
-	HealthPath string
+	ComputeRegion string
+	Slug          string
+	Source        SourceKind
+	Framework     string
+	Profile       string
+	Port          int
+	HealthPath    string
 }
 
 // Plan is the resolved stateless application contract shown by the CLI. The
 // state fields are explicit so users understand that local disk is disposable
 // and durable state must be supplied through a binding or an external service.
 type Plan struct {
+	ComputeRegion   string     `json:"compute_region,omitempty"`
 	Slug            string     `json:"slug"`
 	Source          SourceKind `json:"source"`
 	Framework       string     `json:"framework,omitempty"`
@@ -56,6 +58,7 @@ type Plan struct {
 // in the CLI.
 func (p Plan) CreateRequest() api.CreateAppRequest {
 	req := api.CreateAppRequest{
+		ComputeRegion: p.ComputeRegion,
 		Slug:          p.Slug,
 		Type:          "app",
 		ExecutionMode: p.ExecutionMode,
@@ -78,6 +81,9 @@ const (
 // It does not contact the API or inspect the filesystem, which makes it safe
 // for previews, local tooling, and future dashboard clients to share.
 func Resolve(spec Spec) (Plan, error) {
+	if !api.ValidComputeRegion(spec.ComputeRegion) {
+		return Plan{}, fmt.Errorf("compute region must be a canonical lowercase identifier")
+	}
 	slug := strings.TrimSpace(spec.Slug)
 	if !api.ValidAppSlug(slug) {
 		return Plan{}, fmt.Errorf("slug must be 3–40 chars, lowercase letters, digits, and hyphens")
@@ -136,6 +142,7 @@ func Resolve(spec Spec) (Plan, error) {
 		defaults = append(defaults, fmt.Sprintf("port=%d", port))
 	}
 	return Plan{
+		ComputeRegion:   spec.ComputeRegion,
 		Slug:            slug,
 		Source:          source,
 		Framework:       framework,

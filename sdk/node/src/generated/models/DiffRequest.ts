@@ -20,6 +20,10 @@ import type { WorkflowSpec } from './WorkflowSpec.js';
  *
  */
 export type DiffRequest = {
+  /**
+   * Placement intent for this preview. Omit to preserve an existing app region; a different value blocks deployment. New app placement checks current operator admission without reserving capacity.
+   */
+  compute_region?: string | null;
   app_config?: DiffAppConfigPatch;
   /**
    * Would-write image reference. Empty = no image deploy

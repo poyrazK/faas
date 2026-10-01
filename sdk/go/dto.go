@@ -55,6 +55,28 @@ type (
 	ResourceProfile                          = api.ResourceProfile
 	ResourceProfileSpec                      = api.ResourceProfileSpec
 
+	// Read-only deployment previews.
+	DiffRequest           = api.DiffRequest
+	DiffAppConfigPatch    = api.DiffAppConfigPatch
+	DiffEnvRow            = api.DiffEnvRow
+	DiffChange            = api.DiffChange
+	DiffBreak             = api.DiffBreak
+	DiffPayload           = api.DiffPayload
+	DiffResponse          = api.DiffResponse
+	BuildPlan             = api.BuildPlan
+	CanaryPresetSpec      = api.CanaryPresetSpec
+	CustomStage           = api.CustomStage
+	MirrorCleanCondition  = api.MirrorCleanCondition
+	WorkflowSpec          = api.WorkflowSpec
+	WorkflowTriggerSpec   = api.WorkflowTriggerSpec
+	WorkflowStepSpec      = api.WorkflowStepSpec
+	WorkflowConditionSpec = api.WorkflowConditionSpec
+	WorkflowRetrySpec     = api.WorkflowRetrySpec
+	CreateEdgeRuleRequest = api.CreateEdgeRuleRequest
+	ScalingPolicy         = api.ScalingPolicy
+	ScalingTarget         = api.ScalingTarget
+	ScalingSchedule       = api.ScalingSchedule
+
 	// Deployments.
 	CreateDeploymentRequest          = api.CreateDeploymentRequest
 	DeploymentResponse               = api.DeploymentResponse

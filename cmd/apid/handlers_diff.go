@@ -139,6 +139,7 @@ func (s *server) diffApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 	// who called this endpoint), not from the baseline's app —
 	// which has no plan field (dto.go).
 	d := deploydiff.Compute(slug, acct.Plan, baseline, pending)
+	s.addComputeRegionAdmissionToDiff(r.Context(), baseline, pending, &d)
 
 	// Per-account cron count for the per-account quota branch
 	// (CronLimitPerAccount). The CLI does the same via
@@ -296,7 +297,7 @@ func (s *server) envListForApp(ctx context.Context, appID, accountID string) (ap
 // Crons / EdgeRules: pass-through (api.CreateCronRequest /
 // api.CreateEdgeRuleRequest are wire-stable per ADR-091).
 func diffPendingFromRequest(req *api.DiffRequest) deploydiff.Pending {
-	p := deploydiff.Pending{}
+	p := deploydiff.Pending{ComputeRegion: req.ComputeRegion}
 	if req.AppConfig != nil {
 		p.AppConfig = deploydiff.AppConfigPatch{
 			RAMMB:               req.AppConfig.RAMMB,

@@ -15,6 +15,7 @@ import (
 // uploads source. It deliberately contains no environment values, credentials,
 // source contents, or local absolute paths.
 type deployPreflightSummary struct {
+	ComputeRegion     string
 	Slug              string
 	Source            string
 	LocalChanges      string
@@ -132,6 +133,9 @@ func renderDeployPreflight(w io.Writer, summary deployPreflightSummary) {
 	_, _ = fmt.Fprintln(w, "Deployment plan:")
 	_, _ = fmt.Fprintf(w, "  %-14s %s\n", "app:", summary.Slug)
 	_, _ = fmt.Fprintf(w, "  %-14s %s\n", "source:", summary.Source)
+	if summary.ComputeRegion != "" {
+		_, _ = fmt.Fprintf(w, "  %-14s %s (immutable)\n", "compute region:", summary.ComputeRegion)
+	}
 	if summary.LocalChanges != "" {
 		_, _ = fmt.Fprintf(w, "  %-14s %s\n", "local changes:", summary.LocalChanges)
 	}

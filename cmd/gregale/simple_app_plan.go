@@ -13,7 +13,7 @@ import (
 // `gregale deploy --plan`. It intentionally shares the same source detector
 // and hosting override file as the real deploy path, while keeping the
 // resulting contract independent of authentication and remote state.
-func resolveSimpleAppPlan(sourceDir, slug, profile string, source simpleapp.SourceKind, explicitApp, explicitFunction bool) (simpleapp.Plan, error) {
+func resolveSimpleAppPlan(sourceDir, slug, profile string, source simpleapp.SourceKind, explicitApp, explicitFunction bool, region string) (simpleapp.Plan, error) {
 	frameworkName := ""
 	port, health := 0, ""
 	if source == simpleapp.SourceDirectory {
@@ -33,12 +33,13 @@ func resolveSimpleAppPlan(sourceDir, slug, profile string, source simpleapp.Sour
 		health = inferred.HealthPath
 	}
 	return simpleapp.Resolve(simpleapp.Spec{
-		Slug:       slug,
-		Source:     source,
-		Framework:  frameworkName,
-		Profile:    profile,
-		Port:       port,
-		HealthPath: health,
+		ComputeRegion: region,
+		Slug:          slug,
+		Source:        source,
+		Framework:     frameworkName,
+		Profile:       profile,
+		Port:          port,
+		HealthPath:    health,
 	})
 }
 
@@ -50,6 +51,7 @@ func applySimpleAppPlanToCreateRequest(req *api.CreateAppRequest, plan simpleapp
 		return
 	}
 	planned := plan.CreateRequest()
+	req.ComputeRegion = planned.ComputeRegion
 	req.Type = planned.Type
 	req.ExecutionMode = planned.ExecutionMode
 	req.HealthPath = planned.HealthPath
@@ -63,6 +65,10 @@ func renderSimpleAppPlan(w io.Writer, plan simpleapp.Plan, jsonMode bool) int {
 		return jsonOut(writeJSONTo(w, plan))
 	}
 	_, _ = fmt.Fprintf(w, "Simple app plan for %s\n", plan.Slug)
+	if plan.ComputeRegion != "" {
+		_, _ = fmt.Fprintf(w, "  compute region:     %s (immutable on creation)\n", plan.ComputeRegion)
+		_, _ = fmt.Fprintln(w, "  region admission:   checked remotely by deploy; no capacity reserved")
+	}
 	_, _ = fmt.Fprintf(w, "  source:             %s\n", plan.Source)
 	if plan.Framework != "" {
 		_, _ = fmt.Fprintf(w, "  framework:          %s\n", plan.Framework)
