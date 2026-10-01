@@ -1437,6 +1437,10 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getApp))))
 	// App-owned raw TCP listeners. The public port is stable and the
 	// listener can be fail-closed without changing the app deployment.
+	mux.HandleFunc("GET /v1/apps/{slug}/udp-listeners", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAppUDPListeners))))
+	mux.HandleFunc("POST /v1/apps/{slug}/udp-listeners", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAppUDPListener)))))
+	mux.HandleFunc("PATCH /v1/apps/{slug}/udp-listeners/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateAppUDPListener))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/udp-listeners/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteAppUDPListener))))
 	mux.HandleFunc("GET /v1/apps/{slug}/tcp-listeners", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAppTCPListeners))))
 	mux.HandleFunc("POST /v1/apps/{slug}/tcp-listeners", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAppTCPListener)))))
 	mux.HandleFunc("PATCH /v1/apps/{slug}/tcp-listeners/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateAppTCPListener))))
