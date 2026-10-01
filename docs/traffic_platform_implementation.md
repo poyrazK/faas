@@ -3,6 +3,73 @@
 Objective: implement the six delivery steps in the 2026-09-29 gap-closure plan.
 Base: `56618879c`; branch: `codex/traffic-platform-gaps`; decision: ADR-375.
 
+## Daemon fleet accounting and retry target identity — 2026-10-01
+
+Two local OS processes now exercise parsed daemon defaults and `runWithDeps`
+against independent Postgres pools. Stored app limits and cache/retry rules
+drive the actual handler. Serving observations identify the selected central
+rate backend and shared retry backend, and record replacement generations.
+The production node client forwards over a Unix socket to a fixture VM endpoint
+and one real HTTP origin. Placement, VM-side forwarding and telemetry service
+endpoints remain fixtures; outer `run()` discovery is outside this acceptance.
+
+The baseline reproduced a public retry dispatch bug: both RPCs named the failed
+first instance even though the picker selected a sibling. One retry was spent,
+no guest request ran, and the client received 503. Every public attempt now owns
+a cloned header map and restamps the selected target's guest identity and
+correlation context. The new regression also checks empty provenance clears
+stale values and prior attempt headers remain unchanged.
+
+The fleet fixtures cover the shared burst across two gateways, no forwarding
+after rate refusal, store outage and bounded row-lock waits, preserved debt
+after recovery and replacement, cache-hit app/account charging, warm-cache
+outage refusal, account sharing across apps, and sequential scope accounting.
+One finite retry minimum is shared by replicas and replacement within one
+unchanged ten-second database window. Additional attempts do not cause another
+app/account debit. Application 500 responses run once. Failure to observe an
+original during a retry-store outage refuses replay, and recovery retains the
+shared budget contract.
+
+The final complete unit scope passed 7,224 named checks in 121.874 s:
+state 2,159, internal gateway 795, scheduler 1,778, gateway 2,280, traffic
+revocation 33, scheduler daemon 86 and public gateway 93. The 1,433 guarded
+results are not counted as passes. The selected Postgres profile passed 87
+named checks in 40.464 s without skips: 30 named results under 15 actual
+Postgres fixture roots, plus 57 memory/transport checks. Deduplicated across
+both profiles, 7,253 named checks passed and 1,417 guards remain unaccepted.
+
+The daemon fleet admitted four of sixteen concurrent requests. Local p50 was
+51.657 ms and p95 was 54.674 ms; these fixture measurements do not establish a
+deployed SLO. Three daemon generations retained one spent retry for four
+eligible originals, including one application 500. App and account balances
+each fell by four rather than by the five forwarding attempts. Recovery and
+replacement stayed within the same live database-owned retry window.
+
+All 12,499 tracked and untracked source files were frozen before the accepted
+gates. Pinned golangci-lint 2.4.0 reported zero issues for all seven complete
+packages with tests in 37.106 s. SQLC 1.31.1 regenerated all four files exactly.
+Runbook SQL, text encoding, shell quoting and ADR uniqueness gates passed in
+20.963 s; the 71 pre-existing ADR duplicate groups remain at their baseline.
+Go and lint ran serially with CGO disabled, one package worker, GOMAXPROCS=2,
+GOGC=50, disabled inlining/DWARF and stripped test binaries. There were no
+source exclusions, package-scope reductions, overlays or assertion changes
+after the final freeze. Only this tracker was updated after the gates.
+
+Earlier fixture runs retained import, workload-name, release-retention,
+request-journal, TCP-without-mTLS, cleanup and global-generation diagnostics.
+The unchanged runtime baseline retained the duplicate failed-instance RPCs.
+Two lint diagnostics prompted explicit inheritance of the request context;
+pre-context-fix unit/Postgres runs and earlier freezes remain recorded and
+are excluded from accepted evidence. Two obsolete task-owned archives totaling
+315,370,972 bytes were reclaimed only after owned Go sessions terminated.
+Current build artifacts, other task caches, processes and Postgres were kept.
+The disposable source database remained unmigrated, with durability settings on.
+
+Evidence directory: `outputs/traffic-daemon-fleet-20261001/` relative to the
+checkout's parent. All six release requirements below remain open. No native
+Linux x86_64 KVM acceptance host is available; deployed load, full path coverage
+and staging qualification remain pending.
+
 ## Requirements and acceptance
 
 Public response ownership must independently verify the exact security

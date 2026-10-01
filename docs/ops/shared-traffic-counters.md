@@ -71,6 +71,31 @@ requests in one shared app burst; measured local p50 was 5.9 ms and p95 was
 8.0 ms. Both gateways refused store outages; replacement/recovery preserved
 debt, and blocked admission timed out without forwarding.
 
+The daemon fleet fixture now runs two independent OS processes through
+`LoadConfig` and `runWithDeps`, leaving the counter mode unset to exercise the
+production central default. App limits and cache/retry rules are read from
+Postgres. Actual serving observations identify both gateways and their shared
+backend. The production node client and forwarding RPC connect to a fixture
+VM endpoint over a Unix socket and then one real HTTP origin. This checks
+shared app admission, app/account charging on cache hits, bounded row-lock
+waiting, counter outages, recovery and process replacement. Additional retry
+attempts do not create additional app/account debits. Retry minimums remain
+spent across replicas and replacement within the same ten-second database
+window. Application 500 responses run once; retry-store failures refuse replay.
+
+The fixture exposed a public retry dispatch bug: the picker chose a sibling,
+but the forwarding RPC retained the first instance's transport header. Public
+attempts now clone and restamp target identity in headers and correlation
+metadata. The regression checks actual RPC instance IDs and guest executions,
+plus removal of stale provenance and preservation of earlier attempt headers.
+
+Run `go test ./cmd/gatewayd-internal -run '^TestTrafficFleetDaemon'` with an
+unmigrated disposable `DATABASE_URL` and `FAAS_PGTEST_TEMPLATE_DATABASE=1`.
+The test helper itself is guarded when invoked without its subprocess spec.
+Placement, VM-side forwarding and telemetry receivers are local fixtures;
+outer daemon discovery, cross-host mTLS, node admission and native VM execution
+are separate acceptance work.
+
 These are local fixture measurements. Native VM paths, complete policy and
 traffic coverage, production load, staging recovery and rollout are separate
 acceptance requirements tracked in `docs/traffic_platform_implementation.md`.

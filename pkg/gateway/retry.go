@@ -477,10 +477,12 @@ func (h *Handler) proxyAttempt(
 ) {
 	unguarded := forward
 	forward = func(dst http.ResponseWriter, req *http.Request, selected Target) {
+		ctx := req.Context()
+		req = requestForTarget(ctx, req, app, selected)
 		if enrollTrafficScopes(dst, req, h.trafficRevocations, trafficrevocation.Scope{Kind: "deployment", ID: selected.DeploymentID}) {
 			return
 		}
-		recordTrafficAttempt(req.Context())
+		recordTrafficAttempt(ctx)
 		unguarded(dst, req, selected)
 	}
 	if isStreaming {

@@ -1060,6 +1060,31 @@ revocation retains its separate exchange lifetime. Public edge/rate/deadline
 equivalence, per-record batch policy changes and full daemon/fleet/customer/staging
 and native VM/network acceptance remain separate requirements.
 
+### Follow-up: daemon fleet accounting acceptance
+
+Local fleet acceptance must construct the handler through `runWithDeps`, using
+parsed daemon configuration, real app/rule/public-policy reads and independent
+Postgres pools in separate OS processes. It must observe the actual serving
+generations and selected counter backends rather than manually arming a limiter
+inside the test. Stored policy remains the source of rate and retry settings.
+
+The local fixture uses the production node-client cache and forwarding RPC
+client, with a fixture VM endpoint and one real HTTP origin. It verifies shared
+app/account admission, charged cache hits, finite retry amplification, outage,
+bounded lock waiting, recovery and process replacement. RPC transport failures
+are injected before reaching the origin; application status errors retain their
+separate no-replay contract. Placement, VM-side forwarding and guest execution
+are fixtures, so this does not establish node admission, VM lifecycle, public
+gateway transport, native network/KVM, deployed load or staging rollout.
+
+Every public attempt must restamp the selected target's identity in its own
+request headers and correlation context before invoking the forwarder. The
+forwarding RPC reads the instance transport header, so selecting a sibling in
+the picker alone is insufficient. Each attempt owns a cloned header map; app,
+account, request and verified platform-tenant identity remain tied to the
+admitted request while instance/node/deployment provenance comes from that
+attempt's target. Empty provenance clears stale values from the first target.
+
 The implementation tracker is `docs/traffic_platform_implementation.md`.
 Each guarantee needs configuration-to-runtime tests, cancellation/recovery
 tests and customer documentation. VM lifecycle changes require native x86_64
