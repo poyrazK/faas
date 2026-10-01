@@ -357,6 +357,8 @@ func boot() error {
 	// assignment. The wiring below is the canonical fix.
 	policy, maxRestarts := supervisorPolicyFromManifest(manifest)
 	supRef := &Supervisor{Max: maxRestarts, Policy: policy}
+	mainStarted := make(chan struct{})
+	supRef.onStart = func() { close(mainStarted) }
 	var rotatingSecrets *runtimeSecretsState
 	if manifest.SecretReloadSignal != "" {
 		rotatingSecrets = newRuntimeSecretsState(secrets)
@@ -407,7 +409,16 @@ func boot() error {
 	// Soft-fail on bind (e.g. guest kernel without AF_VSOCK) —
 	// the engine's existing :8080 TCP-accept probe continues to
 	// gate readiness, so the customer doesn't lose the boot.
-	if err := runHealthcheckPoll(bootCtx, manifest, slog.Default()); err != nil {
+	if err := runHealthcheckPoll(bootCtx, manifest, slog.Default(), healthcheckPollOptions{
+		Started: mainStarted,
+		Environment: func() []string {
+			currentSecrets := secrets
+			if rotatingSecrets != nil {
+				currentSecrets = rotatingSecrets.snapshot()
+			}
+			return BuildEnvWithSecrets(os.Environ(), manifest, currentSecrets, apiEnv)
+		},
+	}); err != nil {
 		slog.Default().Warn("healthcheck poll unavailable", "err", err)
 	}
 	// M-2 / ADR-138 §Decision 1 / issue #474 — install the PID 1
