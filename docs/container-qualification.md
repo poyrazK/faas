@@ -945,3 +945,7 @@ The strict PostgreSQL gate now requires `pgstore_udp_recovery_test.go` in additi
 ### Review candidate PostgreSQL read recovery
 
 Combined draft PR #3997 commit `5a61ae755` now includes the read-stall recovery fixture. Three race-detector runs passed without skips on that exact branch against the owned PostgreSQL cluster, log `/tmp/gregale-udp-stack-pg-read-recovery.log`. Cluster stopped after qualification. CI for the newly pushed head remains pending.
+
+### Required PostgreSQL UDP CI qualification
+
+The PostgreSQL state matrix shard now invokes `make udp-postgres-check` with race detection and retains its output as an artifact even on failure. The gate rejects skips and requires all seven source-selected database contracts. Workflow syntax validation and standalone gate shellcheck passed. Full workflow shellcheck still reports existing findings outside the added steps; no blanket lint-clean claim is made. Remote execution of the new wiring remains unverified.
