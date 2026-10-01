@@ -549,6 +549,11 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 					w.Header().Add("Trailer", name)
 				}
 			}
+			// H2 gRPC can carry trailers that are unknown at header time.
+			// Its HTTP/1 translation must remain eligible for chunked framing.
+			if strings.HasPrefix(strings.ToLower(w.Header().Get("Content-Type")), "application/grpc") {
+				w.Header().Del("Content-Length")
+			}
 			w.WriteHeader(int(init.GetStatus()))
 			wroteHeader = true
 			// The initial response headers are the first response byte for
@@ -596,9 +601,14 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			continue
 		}
 		if init := frame.GetInit(); init != nil && wroteHeader {
+			if len(init.GetTrailers()) > 0 {
+				// Commit a chunked response before handler completion can select
+				// Content-Length for a small body and discard late trailers.
+				flushSafe(w)
+			}
 			for _, trailer := range init.GetTrailers() {
 				if name := strings.TrimSpace(trailer.GetName()); name != "" {
-					forwardedResponseHeader(r.Context(), w.Header(), name, trailer.GetValue())
+					forwardedResponseTrailer(r.Context(), w.Header(), name, trailer.GetValue())
 				}
 			}
 			continue
@@ -626,6 +636,18 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	// distinguish a clean bidi close from a client-disconnect
 	// (which surfaces as a Send error).
 	<-bodyErrCh
+}
+
+// H2 can reveal trailer names only after body EOF. Apply the normal guest
+// header policy before using Go's late-trailer convention on the HTTP hop.
+func forwardedResponseTrailer(ctx context.Context, dst http.Header, name, value string) {
+	filtered := make(http.Header)
+	forwardedResponseHeader(ctx, filtered, name, value)
+	for key, values := range filtered {
+		for _, item := range values {
+			dst.Add(http.TrailerPrefix+key, item)
+		}
+	}
 }
 
 // rawStreamSessionDeadline is the wall-clock ceiling for a single
