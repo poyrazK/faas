@@ -7749,3 +7749,16 @@ const IssueMaxBatchEvents = 32
 
 // UDPDatagramMaxBytes bounds IPv4 payloads after the minimum IP and UDP headers.
 const UDPDatagramMaxBytes = 65507
+
+// UDP peer queues drop the newest datagram when full, without blocking a socket.
+const UDPPeerQueueDepth = 4
+const UDPMaxPeersDefault = 64
+const UDPMaxPeersPerAccountDefault = 16
+
+// UDP account budgets are shared across listeners, separately per direction.
+const UDPPacketsPerSecondPerAccount = 1000
+const UDPPacketBurstPerAccount = 200
+const UDPBytesPerSecondPerAccount = 4 * 1024 * 1024
+const UDPByteBurstPerAccount = 4 * UDPDatagramMaxBytes
+const UDPRateLimitMaxAccounts = 4096
+const UDPRateLimitIdleTTL = 2 * time.Minute
