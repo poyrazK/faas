@@ -441,3 +441,31 @@ on these updated heads are pending. Earlier failed-head evidence remains in
 `/tmp/gregale-identity-daemon-ci.log`; no blanket remote-green claim is made.
 The PRs remain drafts and unmerged. No production host or persistent storage
 was used.
+
+### Exact image timing review — 2026-10-01
+
+Draft [PR #3957](https://github.com/poyrazK/faas/pull/3957), head `34b8f2a8c`,
+is stacked on #3956 and isolates image nanosecond decoding, exact manifest
+metadata, deployment-grace precedence, guest startup/retry/grace semantics,
+and generated Node/Python models. Its decision is ADR-388. No native fixture
+execution is implied by this isolated review.
+
+Full `pkg/api` and `pkg/oci` race suites pass; focused imaged timing/override
+race tests pass. Linux/amd64 metal-tagged guest tests cross-compile and portable
+and Linux guest scoped lint report zero issues. Both pinned SDK generators
+complete; Node SDK builds and Python exact-timing model round-trip passes.
+Canonical and embedded OpenAPI match. The Python generator removed handwritten
+helpers and modified unrelated scaffold tests; those unrelated outputs were
+restored after generation completed. Only timing models/exports are retained.
+Evidence: `/tmp/gregale-health-timing-full-api-oci.log`,
+`/tmp/gregale-health-timing-portable.log`, `/tmp/gregale-health-timing-compile.log`,
+`/tmp/gregale-health-timing-lint.log`, `/tmp/gregale-health-timing-guest-lint.log`,
+`/tmp/gregale-health-timing-node-gen.log`, `/tmp/gregale-health-timing-node-build.log`,
+`/tmp/gregale-health-timing-python-gen.log`.
+
+Remote checks are pending. Local compilation does not establish Linux process
+execution, native VM health reporting before/after restore or leak acceptance.
+The stack remains draft and unmerged; stateless economics and Linux/amd64 scope
+remain unchanged. At last observation, corrected identity PR #3954 had six
+successes, sixteen running checks, one queued, one neutral and one skipped,
+with no reported failure on the updated head.
