@@ -6357,7 +6357,8 @@ func moveOut(src, dst string) (int64, error) {
 }
 
 // materializeFromStorage pulls the bytes for key via the configured
-// StorageBackend and writes them into a fresh tmp file. Returns the
+// StorageBackend and retains its immutable file or copies the stream into a
+// fresh tmp file. Returns the
 // absolute path the caller should substitute into MemPath. The tmp
 // path is registered against instanceID so Kill / DestroyWithExport
 // Remove it during teardown; without the registration the file
@@ -6388,6 +6389,13 @@ func (v *JailerVMM) materializeFromStorage(ctx context.Context, instanceID, key 
 		return "", fmt.Errorf("vmm: storage get %q: %w", key, err)
 	}
 	defer func() { _ = rc.Close() }()
+	if linker, ok := rc.(storage.LocalFileLinker); ok {
+		if path, linked, err := v.retainStorageFile(instanceID, linker); err != nil {
+			return "", fmt.Errorf("vmm: retain %q: %w", key, err)
+		} else if linked {
+			return path, nil
+		}
+	}
 	tmp, err := os.CreateTemp("", "faas-snap-*.bin")
 	if err != nil {
 		return "", fmt.Errorf("vmm: create tmp for %q: %w", key, err)
@@ -6404,6 +6412,30 @@ func (v *JailerVMM) materializeFromStorage(ctx context.Context, instanceID, key 
 	}
 	v.trackMaterialised(instanceID, tmpPath)
 	return tmpPath, nil
+}
+
+// retainStorageFile gives a file-backed Get result an instance-owned name.
+// Never borrow its cache path: eviction or refresh can remove/replace it after
+// Get returns. An inode-verified hardlink survives those operations and is
+// swept alongside ordinary materializations. Link errors (including EXDEV)
+// retain the existing streaming fallback without another remote fetch.
+func (v *JailerVMM) retainStorageFile(instanceID string, linker storage.LocalFileLinker) (string, bool, error) {
+	reserved, err := os.CreateTemp("", "faas-snap-*.bin")
+	if err != nil {
+		return "", false, err
+	}
+	defer func() { _ = os.Remove(reserved.Name()) }()
+	if err := reserved.Close(); err != nil {
+		return "", false, err
+	}
+	// Link to a fresh sibling instead of unlinking/reopening the reservation.
+	// LinkTo must not overwrite a destination, including a competing file.
+	path := reserved.Name() + ".linked"
+	if err := linker.LinkTo(path); err != nil {
+		return "", false, nil
+	}
+	v.trackMaterialised(instanceID, path)
+	return path, true, nil
 }
 
 // restoreSourceFromStorage resolves a restore input without copying when the
