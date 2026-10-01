@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/api"
 
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -35,6 +36,10 @@ func (r ListenerStoreResolver) Resolve(ctx context.Context, publicPort int) (Rou
 }
 
 func routeFromListener(listener state.TCPListener) (Route, error) {
+	policy, err := (api.TCPListenerTLSConfig{Mode: listener.TLSMode, Hostname: listener.TLSHostname}).Normalize()
+	if err != nil {
+		return Route{}, err
+	}
 	route := Route{
 		ListenerID:   listener.ID,
 		PublicPort:   listener.PublicPort,
@@ -43,6 +48,7 @@ func routeFromListener(listener state.TCPListener) (Route, error) {
 		ListenerName: listener.ListenerName,
 		GuestPort:    listener.GuestPort,
 		Protocol:     listener.Protocol,
+		TLSHostname:  policy.Hostname,
 	}
 	if err := ValidateRoute(route); err != nil {
 		return Route{}, err

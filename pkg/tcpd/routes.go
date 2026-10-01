@@ -40,6 +40,8 @@ type Route struct {
 	ListenerName string
 	GuestPort    int
 	Protocol     string
+	// TLSHostname opts into server-side TLS; empty preserves passthrough.
+	TLSHostname string
 }
 
 // ValidateRoute enforces the route contract used by the listener and route

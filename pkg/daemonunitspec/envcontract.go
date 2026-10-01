@@ -508,6 +508,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_TCPD_SCHEDD_TLS_CA_PATH", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},
 	{Name: "FAAS_TCPD_SCHEDD_TLS_CERT_PATH", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},
 	{Name: "FAAS_TCPD_SCHEDD_TLS_KEY_PATH", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},
+	{Name: "FAAS_TCPD_TLS_CERT_DIR", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault, Note: "optional absolute directory of atomically provisioned hostname.pem certificate/key bundles for raw TCP TLS termination"},
 	{Name: "FAAS_TCPD_VMMD_TLS_CA_PATH", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},
 	{Name: "FAAS_TCPD_VMMD_TLS_CERT_PATH", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},
 	{Name: "FAAS_TCPD_VMMD_TLS_KEY_PATH", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},

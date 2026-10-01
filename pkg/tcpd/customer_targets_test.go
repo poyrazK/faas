@@ -118,3 +118,7 @@ func (s *customerTargetSource) AppByID(context.Context, string) (state.App, erro
 func (s *customerTargetSource) TCPListenerByAppAndName(context.Context, string, string) (state.TCPListener, error) {
 	return state.TCPListener{ID: "listener", AppID: "app", AccountID: "account", ListenerName: "echo", PublicPort: 40100, GuestPort: 9000, Protocol: "tcp", Enabled: true}, nil
 }
+
+func (*customerTargetSource) DomainByName(context.Context, string) (state.CustomDomain, error) {
+	return state.CustomDomain{}, state.ErrNotFound
+}
