@@ -15008,108 +15008,13 @@ const invocationSelectCols = `id, app_id, account_id, source, queue_name, state,
        last_replayed_at, on_success_destination_id,
        on_failure_destination_id, work_policy_name, work_key_digest,
        work_expires_at, work_sequence, work_policy_revision,
-       work_fairness_digest, work_fairness_limit, platform_tenant_id`
+       work_fairness_digest, work_fairness_limit, platform_tenant_id, deployment_scope`
 
 func (s *PgStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invocation, error) {
 	if inv.WorkPolicyName != "" {
 		return Invocation{}, fmt.Errorf("state: use EnqueueKeyedInvocation for policy work")
 	}
 	return enqueueInvocationRow(ctx, s.pool, inv)
-}
-
-type invocationRowWriter interface {
-	QueryRow(context.Context, string, ...any) pgx.Row
-}
-
-func enqueueInvocationRow(ctx context.Context, q invocationRowWriter, inv Invocation) (Invocation, error) {
-	// Preserve caller-supplied IDs for idempotent producers (event fanout). An
-	// empty ID keeps the historical database-generated UUID behavior.
-	var invocationID any
-	if inv.ID != "" {
-		parsedID, err := uuid.Parse(inv.ID)
-		if err != nil {
-			return Invocation{}, fmt.Errorf("state: invocation id: %w", err)
-		}
-		invocationID = parsedID
-	}
-	payload, err := jsonOrEmpty(inv.Payload)
-	if err != nil {
-		return Invocation{}, fmt.Errorf("state: invocations payload: %w", err)
-	}
-	headers, err := jsonOrEmpty(inv.Headers)
-	if err != nil {
-		return Invocation{}, fmt.Errorf("state: invocations headers: %w", err)
-	}
-	var scheduledAt, leaseExpires any
-	if inv.ScheduledAt != nil {
-		scheduledAt = inv.ScheduledAt.UTC()
-	}
-	if inv.LeaseExpiresAt != nil {
-		leaseExpires = inv.LeaseExpiresAt.UTC()
-	}
-	var cronID any
-	if inv.CronID != nil && *inv.CronID != "" {
-		cronID = *inv.CronID
-	}
-	var deadlineAt, retentionUntil any
-	if inv.DeadlineAt != nil {
-		deadlineAt = inv.DeadlineAt.UTC()
-	}
-	if inv.ResultRetentionUntil != nil {
-		retentionUntil = inv.ResultRetentionUntil.UTC()
-	}
-	var retryPolicy any
-	if len(inv.RetryPolicyJSON) > 0 {
-		retryPolicy = inv.RetryPolicyJSON
-	}
-	var onSuccessDestination, onFailureDestination any
-	if inv.OnSuccessDestinationID != "" {
-		onSuccessDestination = inv.OnSuccessDestinationID
-	}
-	if inv.OnFailureDestinationID != "" {
-		onFailureDestination = inv.OnFailureDestinationID
-	}
-	row := q.QueryRow(ctx, `
-		insert into invocations
-			(id, app_id, account_id, source, queue_name, state, method, path,
-			 payload, headers, due_at, scheduled_at, cron_id,
-			 ack_url, lease_expires_at,
-			 deadline_at, retry_policy, result_retention_until,
-			 on_success_destination_id, on_failure_destination_id,
-			 work_policy_name, work_key_digest, work_expires_at,
-			 work_sequence, work_policy_revision, work_fairness_digest,
-			 work_fairness_limit, platform_tenant_id)
-		values
-			(coalesce($1::uuid, gen_random_uuid()), $2, $3, $4, $5,
-			 coalesce(nullif($6,''),'pending'), $7, $8,
-			 $9, $10, $11, $12, $13,
-			 nullif($14,''), $15,
-			 $16, $17, $18, $19, $20, nullif($21,''), $22, $23, $24, $25, $26, $27, nullif($28, '')::uuid)
-		returning `+invocationSelectCols,
-		invocationID, inv.AppID, inv.AccountID, string(inv.Source), inv.QueueName, string(inv.State),
-		inv.Method, inv.Path, payload, headers, inv.DueAt.UTC(),
-		scheduledAt, cronID, inv.AckURL, leaseExpires,
-		deadlineAt, retryPolicy, retentionUntil,
-		onSuccessDestination, onFailureDestination, inv.WorkPolicyName,
-		inv.WorkKeyDigest, inv.WorkExpiresAt, nullableWorkSequence(inv.WorkSequence),
-		nullableWorkSequence(inv.WorkPolicyRevision), inv.WorkFairnessDigest,
-		nullableWorkFairnessLimit(inv.WorkFairnessLimit), inv.PlatformTenantID)
-	out, err := scanInvocation(row)
-	if err != nil {
-		return Invocation{}, mapErr(err)
-	}
-	// Allow the caller to bind result/last_error before insert (rare,
-	// mainly used by tests).
-	if len(inv.Result) > 0 {
-		out.Result = inv.Result
-	}
-	if inv.LastError != "" {
-		out.LastError = inv.LastError
-	}
-	if inv.CompletedAt != nil {
-		out.CompletedAt = inv.CompletedAt
-	}
-	return out, nil
 }
 
 func (s *PgStore) InvocationByID(ctx context.Context, id string) (Invocation, error) {
@@ -16320,7 +16225,7 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 		&deadlineAt, &retryPolicy, &retentionUntil,
 		&lastReplayedAt, &onSuccessDestination, &onFailureDestination,
 		&workPolicyName, &workKeyDigest, &workExpiresAt, &workSequence, &workPolicyRevision,
-		&workFairnessDigest, &workFairnessLimit, &platformTenantID,
+		&workFairnessDigest, &workFairnessLimit, &platformTenantID, &inv.DeploymentScope,
 	); err != nil {
 		return Invocation{}, err
 	}

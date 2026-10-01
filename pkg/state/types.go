@@ -3925,6 +3925,10 @@ type Invocation struct {
 	ID        string `json:"id"`
 	AppID     string `json:"app_id"`
 	AccountID string `json:"account_id"`
+	// DeploymentScope is captured when work is accepted and never changes on
+	// retry or replay. It is an internal routing identity until scoped queue
+	// producers and consumers expose an environment contract together.
+	DeploymentScope string `json:"-"`
 	// PlatformTenantID is immutable admission identity, never read from guest headers.
 	PlatformTenantID string           `json:"platform_tenant_id,omitempty"`
 	InstanceID       string           `json:"instance_id,omitempty"`

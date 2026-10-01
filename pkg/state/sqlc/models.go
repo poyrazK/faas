@@ -2117,6 +2117,7 @@ type Invocation struct {
 	WorkFairnessDigest       []byte
 	WorkFairnessLimit        pgtype.Int4
 	PlatformTenantID         pgtype.UUID
+	DeploymentScope          string
 }
 
 type InvocationWorkCancellation struct {

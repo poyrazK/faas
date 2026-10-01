@@ -126,6 +126,8 @@ func Run(t *testing.T, open Open) {
 		{"queue_binding_state_is_scoped_by_name", testQueueBindingState},
 		{"invocation_claim_preserves_stored_cap", testInvocationClaimPreservesStoredCap},
 		{"invocation_retry_releases_reserved_slot", testInvocationRetryReleasesReservedSlot},
+		{"invocation_environment_survives_membership_retry_and_replay", testInvocationDeploymentScope},
+		{"keyed_invocation_environment_identity_is_idempotent", testKeyedInvocationDeploymentScope},
 		{"legacy_claim_does_not_release_another_rows_slot", testLegacyClaimDoesNotReleaseReservedSlot},
 		{"lease_requeue_releases_each_slot", testLeaseRequeueReleasesEachSlot},
 		{"deadline_force_only_releases_transitions", testDeadlineForceOnlyReleasesTransitions},

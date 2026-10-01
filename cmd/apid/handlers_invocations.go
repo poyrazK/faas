@@ -1146,6 +1146,7 @@ func (s *server) replayInvocation(w http.ResponseWriter, r *http.Request, acct s
 	inv, versionProblem := s.enqueueVersionedInvocation(r.Context(), nil, state.Invocation{
 		AppID:                orig.AppID,
 		AccountID:            acct.ID,
+		DeploymentScope:      orig.DeploymentScope,
 		PlatformTenantID:     orig.PlatformTenantID,
 		Source:               state.InvocationReplay,
 		Method:               orig.Method,

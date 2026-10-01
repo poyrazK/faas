@@ -163,7 +163,6 @@ DeleteMirrorRule
 DeleteOIDCExchangedToken
 DeleteOldEvents
 DeleteOldLoginTokens
-DeleteProject
 DeleteQueueBinding
 DeleteSnapshotsStaleOlderThan
 DeleteTenantHostname
@@ -520,7 +519,6 @@ ResolveStaleRegressionObservations
 ResolveStatusIncident
 RetireRuntimeSnapshot
 RetryDeploymentFromStage
-RetryQueueDeadLetter
 RetryTriggerRecordByOperator
 RevokeConsumerKey
 RevokeOrgAPIKey

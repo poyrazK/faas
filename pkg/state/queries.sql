@@ -5510,3 +5510,25 @@ GROUP BY totals.decision_type, totals.decision_value, totals.request_count, tota
 -- the bounded response can display. Most flags have at most 16 live variants.
 ORDER BY totals.request_count DESC, totals.decision_type, totals.decision_value
 LIMIT 101;
+
+-- name: EnqueueInvocationRow :one
+INSERT INTO invocations (
+  id, app_id, account_id, source, queue_name, state, method, path,
+  payload, headers, due_at, scheduled_at, cron_id, ack_url, lease_expires_at,
+  deadline_at, retry_policy, result_retention_until,
+  on_success_destination_id, on_failure_destination_id,
+  work_policy_name, work_key_digest, work_expires_at,
+  work_sequence, work_policy_revision, work_fairness_digest,
+  work_fairness_limit, platform_tenant_id, deployment_scope
+) VALUES (
+  coalesce(sqlc.narg(id)::uuid, gen_random_uuid()), sqlc.arg(app_id), sqlc.arg(account_id),
+  sqlc.arg(source), sqlc.arg(queue_name), coalesce(nullif(sqlc.arg(state)::text, ''), 'pending'),
+  sqlc.arg(method), sqlc.arg(path), sqlc.arg(payload), sqlc.arg(headers), sqlc.arg(due_at),
+  sqlc.narg(scheduled_at), sqlc.narg(cron_id), nullif(sqlc.arg(ack_url)::text, ''),
+  sqlc.narg(lease_expires_at), sqlc.narg(deadline_at), sqlc.narg(retry_policy),
+  sqlc.narg(result_retention_until), sqlc.narg(on_success_destination_id),
+  sqlc.narg(on_failure_destination_id), nullif(sqlc.arg(work_policy_name)::text, ''),
+  sqlc.narg(work_key_digest), sqlc.narg(work_expires_at), sqlc.narg(work_sequence),
+  sqlc.narg(work_policy_revision), sqlc.narg(work_fairness_digest), sqlc.narg(work_fairness_limit),
+  sqlc.narg(platform_tenant_id), nullif(sqlc.arg(deployment_scope)::text, '')
+) RETURNING *;

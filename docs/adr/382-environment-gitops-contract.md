@@ -240,6 +240,24 @@ Scheduler transport tests cover lost replies, expired requests, unresolved
 database outages, newer wakes, and legacy ownership commits. Native acceptance
 must still verify lease expiry, orphan destination recovery, and serving behavior.
 
+Durable invocations capture their deployment scope at admission, including
+legacy producers, and the database rejects later scope changes. Project
+adoption or removal cannot reinterpret pending work as another environment.
+Retries, queue dead-letter replay, and API replay preserve this identity;
+keyed producer retries cannot replace it. Version pins and project release
+selection use the stored scope. Scoped wakes select only matching deployments
+and instances, and the wake coordinator shares results only within a scope.
+App deletion still releases every scope, and app/account admission limits
+remain shared. Automatic rollout overlap requires a counted predecessor
+revision in the same scope. Ledger admission, warm promotion, and restart
+reconstruction retain that scope without adding database reads to the wake
+hot path. The single-invocation gateway recovers the internal scope from durable admission
+after the HTTP hop and verifies the target deployment, instance, and wake
+before forwarding. Queue bindings and trigger/scaler projections remain
+app-scoped, and queue-batch delivery still needs its durable invocation identity
+carried across the batch transport. This routing prerequisite does not enable
+their GitOps adapter.
+
 The remaining full feature gates include protected-branch
 approval evidence; environment-scoped workload creation, source/runtime,
 secret-reference and queue/service-binding adapters; staged graph qualification

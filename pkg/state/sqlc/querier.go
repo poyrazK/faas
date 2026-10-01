@@ -255,6 +255,7 @@ type Querier interface {
 	DevBridgeWebhookReplayByKey(ctx context.Context, db DBTX, arg DevBridgeWebhookReplayByKeyParams) (DevBridgeWebhookReplay, error)
 	DomainByName(ctx context.Context, db DBTX, domain interface{}) (DomainByNameRow, error)
 	EnqueueEnvironmentGitOps(ctx context.Context, db DBTX, arg EnqueueEnvironmentGitOpsParams) error
+	EnqueueInvocationRow(ctx context.Context, db DBTX, arg EnqueueInvocationRowParams) (Invocation, error)
 	EnvironmentGitSourceHealth(ctx context.Context, db DBTX, arg EnvironmentGitSourceHealthParams) (EnvironmentGitSourceHealthRow, error)
 	ExecutionClaimNext(ctx context.Context, db DBTX, arg ExecutionClaimNextParams) (Execution, error)
 	ExecutionClaimNextForAccount(ctx context.Context, db DBTX, arg ExecutionClaimNextForAccountParams) (Execution, error)

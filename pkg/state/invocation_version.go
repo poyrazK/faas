@@ -52,11 +52,13 @@ func ResolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 	if err != nil {
 		return inv, InvocationVersion{}, err
 	}
-	scope := DefaultEnvScope
 	projectApp := app.ProjectID != "" && app.PreviewOfSlug == ""
-	if projectApp {
-		scope = "production"
-	} else if release != "" {
+	scope, err := invocationDeploymentScope(app, inv.DeploymentScope)
+	if err != nil {
+		return inv, InvocationVersion{}, err
+	}
+	inv.DeploymentScope = scope
+	if !projectApp && release != "" {
 		return inv, InvocationVersion{}, ErrNotFound
 	}
 	version := InvocationVersion{Scope: scope}
@@ -97,6 +99,21 @@ func ResolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 		return inv, InvocationVersion{}, err
 	}
 	return inv, version, nil
+}
+
+// Empty is the legacy producer default, derived exactly once at admission.
+// Delivery uses the stored scope even if app membership has since changed.
+func invocationDeploymentScope(app App, scope string) (string, error) {
+	if scope == "" {
+		scope = DefaultEnvScope
+		if app.ProjectID != "" && app.PreviewOfSlug == "" {
+			scope = "production"
+		}
+	}
+	if err := api.ValidateScope(scope); err != nil {
+		return "", ErrInvalidArgument
+	}
+	return scope, nil
 }
 
 func invocationPinHeaders(headers map[string]string) (revision, release string, err error) {

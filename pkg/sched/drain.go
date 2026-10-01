@@ -622,7 +622,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 			err = fmt.Errorf("%w: selected deployment is no longer wakeable", ErrPermanentWake)
 		}
 	} else {
-		coord, wakeErr := d.engine.EnsureWake(ctx, inv.AppID, TriggerMeterd)
+		coord, wakeErr := d.engine.EnsureWake(WithScope(ctx, version.Scope), inv.AppID, TriggerMeterd)
 		err = wakeErr
 		if err == nil && coord.Err != nil {
 			err = coord.Err

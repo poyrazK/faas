@@ -56,12 +56,13 @@ type nodeReservation struct {
 // the box-wide counter in that case so the migration is non-breaking
 // for tests that don't plumb node IDs.
 type reservation struct {
-	appID         string
-	deploymentID  string // empty = legacy pre-#557 reservations (test seams); populated post-#557 via Admit's DeploymentID field
-	nodeID        string // empty = legacy box-wide accounting (test seams)
-	admissionMB   int    // ram_mb + PerVMOverheadMB
-	vcpu          int
-	cpuMillicores int
+	appID           string
+	deploymentID    string // empty = legacy pre-#557 reservations (test seams); populated post-#557 via Admit's DeploymentID field
+	deploymentScope string
+	nodeID          string // empty = legacy box-wide accounting (test seams)
+	admissionMB     int    // ram_mb + PerVMOverheadMB
+	vcpu            int
+	cpuMillicores   int
 	// cpuBoostMillicores is the temporary delta above the sustained quota.
 	// It remains reserved until cpuBoostUntil (readiness + bounded tail).
 	cpuBoostMillicores int
@@ -159,8 +160,11 @@ type Request struct {
 	// (test seams + pre-#557 reservations); the per-deployment
 	// concurrency counter is only incremented when this is non-empty.
 	DeploymentID string
-	Plan         api.Plan
-	RAMMB        int // the app's ram_mb (already validated ≤ plan cap)
+	// DeploymentScope restricts automatic rollout overlap to one environment.
+	// Empty retains the legacy default scope; global app quotas still apply.
+	DeploymentScope string
+	Plan            api.Plan
+	RAMMB           int // the app's ram_mb (already validated ≤ plan cap)
 	// SidecarMBs (issue #463 / ADR-070 §Decision 6 / PR-C) is the
 	// per-sidecar RAM slice sourced from the deployment's
 	// `sidecars jsonb` column at Admit time. Each entry adds to the
@@ -431,7 +435,8 @@ func (l *NodeLedger) Admit(r Request) error {
 
 	l.entries[r.Instance] = &reservation{
 		appID: r.AppID, deploymentID: r.DeploymentID, nodeID: r.NodeID,
-		admissionMB: r.admissionMB(), vcpu: r.VCPU, cpuMillicores: r.CPUMillicores,
+		deploymentScope: normalizedDeploymentScope(r.DeploymentScope),
+		admissionMB:     r.admissionMB(), vcpu: r.VCPU, cpuMillicores: r.CPUMillicores,
 		cpuBoostMillicores: boostCPU, cpuBoostUntil: r.CPUStartupBoostUntil,
 		countsConc: kindCountsConcurrency(r.Kind),
 	}
@@ -743,6 +748,21 @@ func (l *NodeLedger) ConcurrencyForDeployment(appID, deploymentID string) int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.perAppDeployment[appID+"\x00"+deploymentID]
+}
+
+// HasOtherRevisionInScope checks only counted reservations, so snapshot primes,
+// parked rows, and migration destination memory cannot authorize an overlap.
+func (l *NodeLedger) HasOtherRevisionInScope(appID, deploymentID, scope string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	scope = normalizedDeploymentScope(scope)
+	for _, entry := range l.entries {
+		if entry.countsConc && entry.appID == appID && entry.deploymentID != "" &&
+			entry.deploymentID != deploymentID && entry.deploymentScope == scope {
+			return true
+		}
+	}
+	return false
 }
 
 // UsedVCPU returns reserved vCPU slots (global sum across nodes).

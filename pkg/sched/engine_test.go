@@ -825,7 +825,7 @@ func TestAdmitGate_Outcomes(t *testing.T) {
 		ops := wire.NewOpsMetrics("schedd")
 		e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0").WithOpsMetrics(ops)
 		limits := api.MustLimitsFor(api.PlanPro)
-		got, _, _, _, _ := e.admitGate(context.Background(), &app, limits, "")
+		got, _, _, _, _ := e.admitGate(context.Background(), &app, limits, "", "")
 		if got != wakeAdmit {
 			t.Errorf("admitGate = %v, want wakeAdmit", got)
 		}
@@ -850,7 +850,7 @@ func TestAdmitGate_Outcomes(t *testing.T) {
 		e.ledger.Admit(Request{Instance: uuid.NewString(), AppID: app.ID, RAMMB: 128, Plan: api.PlanPro})
 		e.ledger.Admit(Request{Instance: uuid.NewString(), AppID: app.ID, RAMMB: 128, Plan: api.PlanPro})
 		limits := api.MustLimitsFor(api.PlanPro)
-		got, _, _, _, _ := e.admitGate(context.Background(), &app, limits, "")
+		got, _, _, _, _ := e.admitGate(context.Background(), &app, limits, "", "")
 		if got != wakeRejectAtCap {
 			t.Errorf("admitGate = %v, want wakeRejectAtCap", got)
 		}
@@ -877,7 +877,7 @@ func TestAdmitGate_Outcomes(t *testing.T) {
 			t.Fatalf("GetApp: %v", err)
 		}
 		limits := api.MustLimitsFor(api.PlanPro)
-		got, _, _, _, _ := e.admitGate(context.Background(), &reloaded, limits, "")
+		got, _, _, _, _ := e.admitGate(context.Background(), &reloaded, limits, "", "")
 		if got != wakeCooldownHeld {
 			t.Errorf("admitGate = %v, want wakeCooldownHeld", got)
 		}
@@ -902,7 +902,7 @@ func TestAdmitGate_Outcomes(t *testing.T) {
 			t.Fatalf("GetApp: %v", err)
 		}
 		limits := api.MustLimitsFor(api.PlanPro)
-		got, _, _, _, _ := e.admitGate(context.Background(), &reloaded, limits, "")
+		got, _, _, _, _ := e.admitGate(context.Background(), &reloaded, limits, "", "")
 		if got != wakeMinFloorAlready {
 			t.Errorf("admitGate = %v, want wakeMinFloorAlready", got)
 		}
@@ -927,7 +927,7 @@ func TestAdmitGate_Outcomes(t *testing.T) {
 			t.Fatalf("GetApp: %v", err)
 		}
 		limits := api.MustLimitsFor(api.PlanPro)
-		got, _, _, _, _ := e.admitGate(context.Background(), &reloaded, limits, "")
+		got, _, _, _, _ := e.admitGate(context.Background(), &reloaded, limits, "", "")
 		if got != wakeAdmit {
 			t.Errorf("admitGate = %v, want wakeAdmit (cold-start bypass)", got)
 		}
@@ -964,7 +964,7 @@ func TestAdmitGate_Outcomes(t *testing.T) {
 			WithOpsMetrics(ops).
 			WithOverageChecker(checker)
 		limits := api.MustLimitsFor(api.PlanPro)
-		got, obs, cap, _, _ := e.admitGate(context.Background(), &app, limits, "")
+		got, obs, cap, _, _ := e.admitGate(context.Background(), &app, limits, "", "")
 		if got != wakeOverageCapReached {
 			t.Errorf("admitGate = %v, want wakeOverageCapReached", got)
 		}
@@ -3061,6 +3061,29 @@ func TestEngineSeedLedger(t *testing.T) {
 	}
 	if got := e.Ledger().UsedCPUMillicoresForNode(ins.NodeID); got != api.DefaultAppCPUMillicores {
 		t.Errorf("CPU reservation after restart = %d, want active startup peak %d", got, api.DefaultAppCPUMillicores)
+	}
+}
+
+func TestEngineSeedLedgerPreservesDeploymentScope(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	_, app, _ := seedApp(t, store, api.PlanPro, 256, 5)
+	dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "staging", ImageDigest: "sha256:scoped-ledger"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateRunning), 256, state.DefaultLocalNodeName, ""); err != nil {
+		t.Fatal(err)
+	}
+	engine := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	if err := engine.SeedLedger(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := engine.ledger.ConcurrencyForDeployment(app.ID, dep.ID); got != 1 {
+		t.Fatalf("deployment concurrency after recovery = %d, want 1", got)
+	}
+	if !engine.ledger.HasOtherRevisionInScope(app.ID, "next-revision", "staging") || engine.ledger.HasOtherRevisionInScope(app.ID, "next-revision", "production") {
+		t.Fatal("ledger recovery lost environment identity")
 	}
 }
 

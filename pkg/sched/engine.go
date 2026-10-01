@@ -1670,6 +1670,9 @@ type WakeResult struct {
 // skips Phase 1 explicitly so a gateway can demand a new instance
 // even when others are already RUNNING.
 func (e *Engine) Wake(ctx context.Context, appID, deploymentID, scope, trigger string) (WakeResult, error) {
+	if scope == "" {
+		scope = ScopeFrom(ctx)
+	}
 	// PR-B (issue #272 / ADR-095): scope-aware Wake. Stamp the
 	// scope on the ctx so every downstream helper (resolveApp,
 	// loadAPIEnv, LiveDeployment lookup, ledger admit) threads the
@@ -1806,7 +1809,14 @@ func (e *Engine) Wake(ctx context.Context, appID, deploymentID, scope, trigger s
 // it cannot serve retained revisions; inspect the app's instances instead.
 func (e *Engine) runningInstanceForWake(ctx context.Context, appID, deploymentID, scope string) (state.Instance, error) {
 	if deploymentID == "" {
-		return e.store.RunningInstanceForApp(ctx, appID)
+		if scope == "" {
+			return e.store.RunningInstanceForApp(ctx, appID)
+		}
+		dep, err := e.store.LiveDeploymentForScope(ctx, appID, scope)
+		if err != nil {
+			return state.Instance{}, err
+		}
+		deploymentID = dep.ID
 	}
 	dep, err := e.store.DeploymentByID(ctx, deploymentID)
 	if err != nil {
@@ -2182,7 +2192,7 @@ func (e *Engine) EnsureWakeCapacity(ctx context.Context, appID, trigger string, 
 	if err == nil {
 		loadedApp = &app
 	}
-	call, isLeader, err := e.wakeCoord.Enter(appID, e.wakeFanoutForApp(ctx, appID, loadedApp))
+	call, isLeader, err := e.wakeCoord.EnterScoped(appID, ScopeFrom(ctx), e.wakeFanoutForApp(ctx, appID, loadedApp))
 	if err != nil {
 		return CoordOutcome{}, err
 	}
@@ -2852,14 +2862,14 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// healthy cold wakes keep the existing zero-query fast path.
 		// ADR-199: compare against the rollout-aware ceiling so a canary
 		// overlap does not trigger a reconcile sweep on every wake.
-		if e.ledger.Concurrency(app.ID) >= e.maxConcurrencyForWake(app, limits, dep.ID) {
+		if e.ledger.Concurrency(app.ID) >= e.maxConcurrencyForWake(app, limits, dep.ID, dep.Scope) {
 			if repaired, reconcileErr := e.reconcileAppAdmission(ctx, app.ID); reconcileErr != nil {
 				e.log.Warn("sched: reconcile stale admission before cap decision", "app", app.ID, "err", reconcileErr)
 			} else if repaired > 0 {
 				e.log.Info("sched: released stale admission before cap decision", "app", app.ID, "instances", repaired)
 			}
 		}
-		outcome, obsCents, capCents, concurrency, atCapacity = e.admitGate(ctx, &app, limits, dep.ID)
+		outcome, obsCents, capCents, concurrency, atCapacity = e.admitGate(ctx, &app, limits, dep.ID, dep.Scope)
 	}
 	if outcome != wakeAdmit {
 		release()
@@ -2869,7 +2879,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 				e.IncAtCapacity(appID, "wake")
 				return WakeResult{AtCapacity: true}, nil
 			}
-			return WakeResult{}, api.ErrPlanLimitConcurrencyAt(limits, e.maxConcurrencyForWake(app, limits, dep.ID), e.ledger.Concurrency(app.ID))
+			return WakeResult{}, api.ErrPlanLimitConcurrencyAt(limits, e.maxConcurrencyForWake(app, limits, dep.ID, dep.Scope), e.ledger.Concurrency(app.ID))
 		case wakeCooldownHeld:
 			// PR-D: 503 + Retry-After with the cooldown remaining
 			// seconds. The customer's plan is fine; their
@@ -2886,7 +2896,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			// at the floor). 429 is the right wire shape — the
 			// customer is asking for a wake that the floor already
 			// satisfies. PR-D keeps CodePlanLimitConcur here.
-			return WakeResult{}, api.ErrPlanLimitConcurrencyAt(limits, e.maxConcurrencyForWake(app, limits, dep.ID), e.ledger.Concurrency(app.ID))
+			return WakeResult{}, api.ErrPlanLimitConcurrencyAt(limits, e.maxConcurrencyForWake(app, limits, dep.ID, dep.Scope), e.ledger.Concurrency(app.ID))
 		case wakeOverageCapReached:
 			// Issue #561: customer's spend cap is at/over the
 			// configured monthly ceiling. Lift to
@@ -3174,7 +3184,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	e.emitInstanceChanged(ctx, ins.ID, appID, initState, wakeID)
 
 	if err := e.ledger.Admit(Request{
-		Instance: ins.ID, AppID: appID, DeploymentID: dep.ID, Plan: acct.Plan,
+		Instance: ins.ID, AppID: appID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan,
 		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: configuredCPU, CPUStartupBoostMillicores: startupCPU, CPUStartupBoostUntil: provisionalCPUBoostUntil, MaxConcurrency: app.MaxConcurrency,
 		// ADR-199 widens this from the deployment verifier to any rollout
 		// overlap: a traffic split or canary stage bringing up a second
@@ -3182,7 +3192,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// max+1 allowance the smoke verifier has always had. The ledger
 		// enforces the +1 bound (admission.go), and per-node RAM/vCPU
 		// ceilings are unaffected either way.
-		AllowConcurrencyOverlap: trigger == TriggerDeploymentSmoke || trigger == TriggerRuntimeConfigRestart || e.rolloutGrantApplies(appID, dep.ID),
+		AllowConcurrencyOverlap: trigger == TriggerDeploymentSmoke || trigger == TriggerRuntimeConfigRestart || e.rolloutGrantApplies(appID, dep.ID, dep.Scope),
 		NodeID:                  placement.NodeID,
 		NodeCeilingMB:           placement.CeilingMB,
 		VCPUBudget:              placement.VCPUBudget,
@@ -6041,7 +6051,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	e.emitInstanceChanged(ctx, ins.ID, appID, state.StateColdBooting, primeWakeID)
 
 	if err := e.ledger.Admit(Request{
-		Instance: ins.ID, AppID: appID, DeploymentID: deploymentID, Plan: acct.Plan,
+		Instance: ins.ID, AppID: appID, DeploymentID: deploymentID, DeploymentScope: dep.Scope, Plan: acct.Plan,
 		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: primeConfiguredCPU, CPUStartupBoostMillicores: primeStartupCPU, CPUStartupBoostUntil: provisionalPrimeCPUBoostUntil, MaxConcurrency: app.MaxConcurrency,
 		Kind:                KindSnapshotPrime,
 		NodeID:              placement.NodeID,
@@ -7202,7 +7212,7 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 				kind = KindWarmPool
 			}
 			request := Request{
-				Instance: ins.ID, AppID: app.ID, Plan: acct.Plan,
+				Instance: ins.ID, AppID: app.ID, DeploymentID: ins.DeploymentID, Plan: acct.Plan,
 				RAMMB: ins.RAMMB, VCPU: limits.VCPU, CPUMillicores: effectiveAppCPUMillicores(app), MaxConcurrency: app.MaxConcurrency,
 				// Recovery must account for the one candidate/stable overlap
 				// that deployment smoke may have admitted before a restart.
@@ -7216,6 +7226,13 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 				AllowCPUOvercommitRecovery: true,
 				Kind:                       kind,
 			}
+			// Preserve resident accounting even if scope recovery fails. Unknown
+			// scope cannot authorize an automatic rollout allowance.
+			request.DeploymentScope = "__unknown__"
+			if dep, depErr := e.store.DeploymentByID(ctx, ins.DeploymentID); depErr == nil && dep.AppID == app.ID {
+				request.DeploymentScope = dep.Scope
+			}
+
 			if until, ok := startupCPUBoosts[ins.ID]; ok {
 				request.CPUStartupBoostMillicores = startupCPUBoostQuota(acct.Plan, request.CPUMillicores)
 				request.CPUStartupBoostUntil = until
@@ -9544,11 +9561,11 @@ func effectiveMaxConcurrency(app state.App, limits api.Limits) int {
 // traffic split or canary stage — a second deployment coming up alongside
 // the one already serving (ADR-199).
 //
-// The test is two O(1) ledger reads, deliberately: this runs on the wake hot
-// path and must not add a query. The shape it detects is exactly:
+// The test uses the in-memory ledger without adding database reads to the
+// wake hot path. The shape it detects is exactly:
 //
 //	the target deployment currently has NO instances   (it is the new revision)
-//	AND the app has at least one instance              (an older revision is serving)
+//	AND another revision in the same scope has a counted instance
 //
 // which is true only while two revisions overlap. Once the rollout completes
 // and the old deployment's instances are reaped, the target deployment holds
@@ -9557,14 +9574,14 @@ func effectiveMaxConcurrency(app state.App, limits api.Limits) int {
 //
 // Returns false for an empty deploymentID: without a target we cannot tell a
 // rollout from ordinary scale-out, and the safe answer is the plan cap.
-func (e *Engine) rolloutGrantApplies(appID, deploymentID string) bool {
+func (e *Engine) rolloutGrantApplies(appID, deploymentID, scope string) bool {
 	if deploymentID == "" || e.ledger == nil {
 		return false
 	}
 	if e.ledger.ConcurrencyForDeployment(appID, deploymentID) != 0 {
 		return false
 	}
-	return e.ledger.Concurrency(appID) >= 1
+	return e.ledger.HasOtherRevisionInScope(appID, deploymentID, scope)
 }
 
 // maxConcurrencyForWake is effectiveMaxConcurrency plus the ADR-199 rollout
@@ -9582,15 +9599,15 @@ func (e *Engine) rolloutGrantApplies(appID, deploymentID string) bool {
 // ledger, the per-node ceiling (ADR-193) and vCPU, so the grant can never
 // push a node past its physical budget — under pressure the extra instance
 // is refused and the ladder simply holds at its current stage.
-func (e *Engine) maxConcurrencyForWake(app state.App, limits api.Limits, deploymentID string) int {
+func (e *Engine) maxConcurrencyForWake(app state.App, limits api.Limits, deploymentID, scope string) int {
 	max := effectiveMaxConcurrency(app, limits)
-	if e.rolloutGrantApplies(app.ID, deploymentID) {
+	if e.rolloutGrantApplies(app.ID, deploymentID, scope) {
 		max += api.RolloutConcurrencyGrant
 	}
 	return max
 }
 
-func (e *Engine) admitGate(ctx context.Context, app *state.App, limits api.Limits, deploymentID string) (wakeOutcome, int64, int64, int, bool) {
+func (e *Engine) admitGate(ctx context.Context, app *state.App, limits api.Limits, deploymentID, scope string) (wakeOutcome, int64, int64, int, bool) {
 	concurrency := e.ledger.Concurrency(app.ID)
 	// Mirror admission.go:149-152: apps created via store.CreateApp
 	// without a subsequent UpdateApp leave MaxConcurrency at 0.
@@ -9602,7 +9619,7 @@ func (e *Engine) admitGate(ctx context.Context, app *state.App, limits api.Limit
 	// second deployment is coming up alongside the one already serving, so
 	// a canary can overlap two revisions on a plan whose cap equals its
 	// steady-state instance count (Free = 1).
-	maxConc := e.maxConcurrencyForWake(*app, limits, deploymentID)
+	maxConc := e.maxConcurrencyForWake(*app, limits, deploymentID, scope)
 	if concurrency >= maxConc {
 		if e.ops != nil {
 			e.ops.ObserveScaleUp(app.ID, "reject_at_cap")

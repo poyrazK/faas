@@ -2804,6 +2804,140 @@ func (q *Queries) EnqueueEnvironmentGitOps(ctx context.Context, db DBTX, arg Enq
 	return err
 }
 
+const enqueueInvocationRow = `-- name: EnqueueInvocationRow :one
+INSERT INTO invocations (
+  id, app_id, account_id, source, queue_name, state, method, path,
+  payload, headers, due_at, scheduled_at, cron_id, ack_url, lease_expires_at,
+  deadline_at, retry_policy, result_retention_until,
+  on_success_destination_id, on_failure_destination_id,
+  work_policy_name, work_key_digest, work_expires_at,
+  work_sequence, work_policy_revision, work_fairness_digest,
+  work_fairness_limit, platform_tenant_id, deployment_scope
+) VALUES (
+  coalesce($1::uuid, gen_random_uuid()), $2, $3,
+  $4, $5, coalesce(nullif($6::text, ''), 'pending'),
+  $7, $8, $9, $10, $11,
+  $12, $13, nullif($14::text, ''),
+  $15, $16, $17,
+  $18, $19,
+  $20, nullif($21::text, ''),
+  $22, $23, $24,
+  $25, $26, $27,
+  $28, nullif($29::text, '')
+) RETURNING id, app_id, account_id, source, state, payload, headers, due_at, method, path, cron_id, scheduled_at, ack_url, result, lease_expires_at, received_at, completed_at, instance_id, attempts, last_error, created_at, org_id, outcome, deadline_at, retry_policy, result_retention_until, replayed_from_invocation_id, last_replayed_at, on_success_destination_id, on_failure_destination_id, queue_name, quota_reserved, work_policy_name, work_key_digest, work_expires_at, work_sequence, work_policy_revision, work_fairness_digest, work_fairness_limit, platform_tenant_id, deployment_scope
+`
+
+type EnqueueInvocationRowParams struct {
+	ID                     pgtype.UUID
+	AppID                  pgtype.UUID
+	AccountID              pgtype.UUID
+	Source                 string
+	QueueName              string
+	State                  string
+	Method                 string
+	Path                   string
+	Payload                []byte
+	Headers                []byte
+	DueAt                  pgtype.Timestamptz
+	ScheduledAt            pgtype.Timestamptz
+	CronID                 pgtype.UUID
+	AckUrl                 string
+	LeaseExpiresAt         pgtype.Timestamptz
+	DeadlineAt             pgtype.Timestamptz
+	RetryPolicy            []byte
+	ResultRetentionUntil   pgtype.Timestamptz
+	OnSuccessDestinationID pgtype.UUID
+	OnFailureDestinationID pgtype.UUID
+	WorkPolicyName         string
+	WorkKeyDigest          []byte
+	WorkExpiresAt          pgtype.Timestamptz
+	WorkSequence           pgtype.Int8
+	WorkPolicyRevision     pgtype.Int8
+	WorkFairnessDigest     []byte
+	WorkFairnessLimit      pgtype.Int4
+	PlatformTenantID       pgtype.UUID
+	DeploymentScope        string
+}
+
+func (q *Queries) EnqueueInvocationRow(ctx context.Context, db DBTX, arg EnqueueInvocationRowParams) (Invocation, error) {
+	row := db.QueryRow(ctx, enqueueInvocationRow,
+		arg.ID,
+		arg.AppID,
+		arg.AccountID,
+		arg.Source,
+		arg.QueueName,
+		arg.State,
+		arg.Method,
+		arg.Path,
+		arg.Payload,
+		arg.Headers,
+		arg.DueAt,
+		arg.ScheduledAt,
+		arg.CronID,
+		arg.AckUrl,
+		arg.LeaseExpiresAt,
+		arg.DeadlineAt,
+		arg.RetryPolicy,
+		arg.ResultRetentionUntil,
+		arg.OnSuccessDestinationID,
+		arg.OnFailureDestinationID,
+		arg.WorkPolicyName,
+		arg.WorkKeyDigest,
+		arg.WorkExpiresAt,
+		arg.WorkSequence,
+		arg.WorkPolicyRevision,
+		arg.WorkFairnessDigest,
+		arg.WorkFairnessLimit,
+		arg.PlatformTenantID,
+		arg.DeploymentScope,
+	)
+	var i Invocation
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.AccountID,
+		&i.Source,
+		&i.State,
+		&i.Payload,
+		&i.Headers,
+		&i.DueAt,
+		&i.Method,
+		&i.Path,
+		&i.CronID,
+		&i.ScheduledAt,
+		&i.AckUrl,
+		&i.Result,
+		&i.LeaseExpiresAt,
+		&i.ReceivedAt,
+		&i.CompletedAt,
+		&i.InstanceID,
+		&i.Attempts,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.OrgID,
+		&i.Outcome,
+		&i.DeadlineAt,
+		&i.RetryPolicy,
+		&i.ResultRetentionUntil,
+		&i.ReplayedFromInvocationID,
+		&i.LastReplayedAt,
+		&i.OnSuccessDestinationID,
+		&i.OnFailureDestinationID,
+		&i.QueueName,
+		&i.QuotaReserved,
+		&i.WorkPolicyName,
+		&i.WorkKeyDigest,
+		&i.WorkExpiresAt,
+		&i.WorkSequence,
+		&i.WorkPolicyRevision,
+		&i.WorkFairnessDigest,
+		&i.WorkFairnessLimit,
+		&i.PlatformTenantID,
+		&i.DeploymentScope,
+	)
+	return i, err
+}
+
 const environmentGitSourceHealth = `-- name: EnvironmentGitSourceHealth :one
 SELECT count(*) FILTER (WHERE NOT s.suspended)::bigint AS active,
     count(*) FILTER (WHERE s.suspended)::bigint AS suspended,

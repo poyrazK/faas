@@ -12235,6 +12235,11 @@ func (m *MemStore) EnqueueInvocation(_ context.Context, inv Invocation) (Invocat
 	if _, ok := m.apps[inv.AppID]; !ok {
 		return Invocation{}, fmt.Errorf("state: invocation for unknown app %q", inv.AppID)
 	}
+	scope, err := invocationDeploymentScope(m.apps[inv.AppID], inv.DeploymentScope)
+	if err != nil {
+		return Invocation{}, err
+	}
+	inv.DeploymentScope = scope
 	if err := m.platformTenantInvocationAllowedLocked(inv); err != nil {
 		return Invocation{}, err
 	}

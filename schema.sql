@@ -2242,6 +2242,27 @@ $$;
 
 
 --
+-- Name: guard_invocation_deployment_scope(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_invocation_deployment_scope() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF TG_OP = 'INSERT' AND (NEW.deployment_scope IS NULL OR NEW.deployment_scope = '') THEN
+    SELECT CASE WHEN a.project_id IS NOT NULL AND coalesce(a.preview_of_slug, '') = ''
+      THEN 'production' ELSE 'default' END INTO NEW.deployment_scope
+      FROM apps a WHERE a.id = NEW.app_id FOR SHARE OF a;
+  ELSIF TG_OP = 'UPDATE' AND NEW.deployment_scope IS DISTINCT FROM OLD.deployment_scope THEN
+    RAISE EXCEPTION 'invocation deployment scope is immutable'
+      USING ERRCODE = '23514', CONSTRAINT = 'invocation_deployment_scope_identity';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_invocation_platform_tenant(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7234,6 +7255,8 @@ CREATE TABLE public.invocations (
     work_fairness_digest bytea,
     work_fairness_limit integer,
     platform_tenant_id uuid,
+    deployment_scope text NOT NULL,
+    CONSTRAINT invocation_deployment_scope_check CHECK ((deployment_scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
     CONSTRAINT invocation_platform_tenant_source CHECK (((platform_tenant_id IS NULL) OR (source = ANY (ARRAY['async_invoke'::text, 'replay'::text])))),
     CONSTRAINT invocations_outcome_check CHECK (((outcome IS NULL) OR (outcome = ANY (ARRAY['success'::text, 'failed'::text, 'timeout'::text, 'dead_letter'::text, 'superseded'::text, 'expired'::text])))),
     CONSTRAINT invocations_queue_name_shape CHECK (((queue_name = ''::text) OR (queue_name ~ '^[a-z][a-z0-9-]{0,62}$'::text))),
@@ -19789,6 +19812,13 @@ CREATE TRIGGER instances_billing_interval_trigger AFTER INSERT OR UPDATE OF stat
 --
 
 CREATE TRIGGER instances_started_at_set_trg BEFORE INSERT ON public.instances FOR EACH ROW EXECUTE FUNCTION public.instances_started_at_set();
+
+
+--
+-- Name: invocations invocation_deployment_scope_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER invocation_deployment_scope_guard BEFORE INSERT OR UPDATE ON public.invocations FOR EACH ROW EXECUTE FUNCTION public.guard_invocation_deployment_scope();
 
 
 --

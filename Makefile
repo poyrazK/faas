@@ -1357,7 +1357,12 @@ test-environment-gitops-controls: test-environment-gitops-core ## API/CLI/dashbo
 	@promtool check rules deploy/ansible/roles/prometheus/files/faas.rules.yml
 	@promtool test rules pkg/promqlrules/testdata/environment_git_sources.test.yml
 	@$(GO) test -p 1 ./pkg/state -run '^TestPgStoreEdgeRule(Batch|MutationLock)' -count=1
-	@$(GO) test -p 1 ./pkg/state -run '^Test(Mem|Pg)StoreConformance$$/^(runtime_input_receipt.*|scoped_runtime_changes.*|snapshot_publication_fences_runtime_config_changes)$$' -count=1
+	@$(GO) test -p 1 ./pkg/state -run '^Test(Mem|Pg)StoreConformance$$/^(runtime_input_receipt.*|scoped_runtime_changes.*|snapshot_publication_fences_runtime_config_changes|invocation_environment.*|keyed_invocation_environment.*)$$' -count=1
+	@$(GO) test -p 1 ./migrations -run '^TestMigrationInvocationDeploymentScope.*$$' -count=1
+	@$(GO) test -p 1 ./pkg/state -run '^(TestPg_InvocationScope.*|TestResolveInvocationVersionUsesCapturedProjectScope)$$' -count=1
+	@$(GO) test -p 1 ./pkg/sched -run '^(TestDrain_StoredScope.*|TestWakeCoord_Scope.*|TestEnsureWake_SeparateScopes.*|TestLedgerRolloutScope.*|TestEngineSeedLedgerPreservesDeploymentScope)$$' -count=1
+	@$(GO) test -p 1 ./cmd/gatewayd-internal -run '^(TestSynthAdapterStoredScope.*|TestSynthAdapterPlatformTenant.*)$$' -count=1
+	@$(GO) test -p 1 ./cmd/apid -run '^TestReplayInvocation_PreservesCapturedEnvironment$$' -count=1
 	@$(GO) test -p 1 ./pkg/state/conformance -run '^TestConformanceCoverage$$' -count=1
 	@$(GO) test -p 1 ./pkg/sched -run '^(TestRefreshRuntimeConfig.*|TestRuntimeConfig.*)$$' -count=1
 	@$(GO) test -p 1 ./pkg/vmmdgrpc -run '^TestMigrationAdoptionAcknowledges.*$$' -count=1

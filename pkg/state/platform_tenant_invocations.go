@@ -48,6 +48,12 @@ func AdmitPlatformTenantInvocation(ctx context.Context, store interface {
 		return inv, err
 	}
 	if stored.PlatformTenantID == "" && inv.PlatformTenantID == "" {
+		if stored.AppID != appID || inv.DeploymentScope != "" && inv.DeploymentScope != stored.DeploymentScope {
+			return inv, fmt.Errorf("%w: invocation deployment scope admission", ErrConflict)
+		}
+		// DeploymentScope is internal and is omitted from the HTTP envelope.
+		// Recover it from durable admission before resolving a wake or target.
+		inv.DeploymentScope = stored.DeploymentScope
 		return inv, nil
 	}
 	if stored.PlatformTenantID == "" || stored.PlatformTenantID != inv.PlatformTenantID ||
