@@ -87,6 +87,7 @@ class PreflightTests(unittest.TestCase):
             "scanned_at": "2026-10-01T00:00:00Z"}))
         self.digest = self.host.put("/srv/fc/base/runner-builder-amd64.ext4.digest",
             "source-ref=ghcr.io/example/builder@sha256:" + "a" * 64 + "\nlayout-v3\n")
+        self.host.path("/srv/fc/snap").mkdir()
         self.env = patch.dict(os.environ, {"FAAS_STORAGE_BACKEND": "local",
             "FAAS_STORAGE_ROOT": "/srv/fc", "FAAS_E2E_DATABASE_URL": "postgres://faas:secret@localhost/test"})
         self.env.start()
@@ -122,6 +123,17 @@ class PreflightTests(unittest.TestCase):
     def test_wrong_kernel_at_canonical_key_blocks(self):
         self.host.put("/srv/fc/kernel/1.7.0", "wrong kernel")
         self.assertEqual("failed", self.check(self.collect(), "canonical_kernel")["status"])
+
+    def test_snapshot_root_must_be_an_existing_directory_without_mutation(self):
+        path = self.host.path("/srv/fc/snap")
+        path.rmdir()
+        report = self.collect()
+        self.assertEqual("blocked", report["preflight"])
+        self.assertEqual("failed", self.check(report, "snapshot_directory")["status"])
+        self.assertFalse(path.exists())
+        path.write_text("not a directory")
+        self.assertEqual("failed", self.check(self.collect(), "snapshot_directory")["status"])
+        self.assertEqual("not a directory", path.read_text())
 
     def test_scan_absence_mismatch_malformed_and_fixable_critical_block(self):
         original = self.scan.read_text()

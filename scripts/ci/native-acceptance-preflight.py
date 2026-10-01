@@ -180,6 +180,12 @@ def collect(args, host=None):
         check("storage_backend", backend in {"local", "oci", "gcs"},
               "Use FAAS_STORAGE_BACKEND=local, oci, or gcs as supported by pkg/storage.")
         if backend == "local":
+            # VMMD inherits this directory's shared GC group when capturing
+            # snapshots; it cannot create the absent root itself.
+            snapshot_root = host.path(str(root / "snap"))
+            check("snapshot_directory", snapshot_root.is_dir(),
+                  "Provision " + str(root / "snap") + " using compute_only_service's "
+                  "create imaged runtime dirs task (root:faas, mode 2770).")
             # kernel_path in the harness TOML is deprecated; VMMD uses this
             # storage key. Checking only FAAS_TEST_KERNEL concealed a missing key.
             key = "kernel/" + args.fc_version
