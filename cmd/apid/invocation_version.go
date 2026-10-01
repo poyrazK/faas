@@ -20,7 +20,9 @@ func (s *server) enqueueVersionedInvocation(ctx context.Context, requestHeaders 
 	if err != nil {
 		return state.Invocation{}, api.ErrValidation("revision and release headers must be unique UUIDs")
 	}
-	inv, _, err = state.ResolveInvocationVersion(ctx, s.store, inv)
+	// These endpoints still select the default environment. A pin cannot move
+	// them into a stage before their config/producer admission is scoped.
+	inv, _, err = state.ResolveInvocationVersionForEnvironment(ctx, s.store, inv, "")
 	if err != nil {
 		switch {
 		case errors.Is(err, state.ErrInvalidArgument):

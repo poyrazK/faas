@@ -148,6 +148,9 @@ func (m *MemStore) ExpirePendingKeyedInvocations(_ context.Context, now time.Tim
 // repeated producer ID returns its original row without replacing later work.
 // The selector is resolved by the producer; only its digest reaches storage.
 func (s *PgStore) EnqueueKeyedInvocation(ctx context.Context, inv Invocation, policy workpolicy.Policy, canonicalKey string, fairnessKeys ...string) (Invocation, error) {
+	if err := validateInvocationWorkEnvironment(ctx, s, inv, true); err != nil {
+		return Invocation{}, err
+	}
 	if err := policy.Validate(); err != nil {
 		return Invocation{}, err
 	}
@@ -356,7 +359,10 @@ func lockFairnessClaimTx(ctx context.Context, tx pgx.Tx, appID, policyName strin
 	return nil
 }
 
-func (m *MemStore) EnqueueKeyedInvocation(_ context.Context, inv Invocation, policy workpolicy.Policy, canonicalKey string, fairnessKeys ...string) (Invocation, error) {
+func (m *MemStore) EnqueueKeyedInvocation(ctx context.Context, inv Invocation, policy workpolicy.Policy, canonicalKey string, fairnessKeys ...string) (Invocation, error) {
+	if err := validateInvocationWorkEnvironment(ctx, m, inv, true); err != nil {
+		return Invocation{}, err
+	}
 	if err := policy.Validate(); err != nil {
 		return Invocation{}, err
 	}

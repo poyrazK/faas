@@ -1,0 +1,69 @@
+// adr: 375
+package sched
+
+import (
+	"encoding/json"
+	"testing"
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
+)
+
+func TestDrain_StageInvocationWakesPinnedStageDeployment(t *testing.T) {
+	ctx := t.Context()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "stage-drain@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "stage-drain"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: account.ID, ProjectID: project.ID, Slug: "staging"}); err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "stage-drain-api", Type: state.AppTypeApp,
+		RAMMB: 256, MaxConcurrency: 4, Manifest: state.AppManifest{RevisionPinTTLSeconds: 3600}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stage state.Deployment
+	for _, scope := range []string{"production", "staging"} {
+		dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: scope, Kind: state.DeploymentKindImage, ImageDigest: "sha256:abc"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.MarkDeploymentLive(ctx, dep.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.PublishProjectReleaseSet(ctx, account.ID, project.ID, scope, 1800, []state.ProjectReleaseMember{{AppID: app.ID, DeploymentID: dep.ID}}); err != nil {
+			t.Fatal(err)
+		}
+		if scope == "staging" {
+			stage = dep
+		}
+	}
+	prepared, _, err := state.ResolveInvocationVersionForEnvironment(ctx, store, state.Invocation{AppID: app.ID, AccountID: account.ID,
+		Source: state.InvocationAsyncInvoke, Method: "POST", Path: "/work", Payload: json.RawMessage(`{}`), DueAt: time.Now().Add(-time.Second)}, "staging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv, err := store.EnqueueInvocation(ctx, prepared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vmm, notifier, synth := &fakeVMM{}, &fakeNotifier{}, &drainSynth{}
+	engine := newEngine(t, store, vmm, notifier, "1.10.0")
+	drain := NewDrain(store, engine, WithDrainGatewaySynth(synth))
+	drain.Tick(ctx)
+	completed, err := store.InvocationByID(ctx, inv.ID)
+	if err != nil || completed.State != state.InvocationCompleted || completed.InstanceID == "" || synth.calls.Load() != 1 {
+		t.Fatalf("stage dispatch = %+v, calls=%d, %v", completed, synth.calls.Load(), err)
+	}
+	instance, err := store.InstanceByID(ctx, completed.InstanceID)
+	if err != nil || instance.DeploymentID != stage.ID {
+		t.Fatalf("stage invocation woke production: %+v, %v", instance, err)
+	}
+}

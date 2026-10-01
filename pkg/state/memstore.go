@@ -12018,9 +12018,12 @@ func (m *MemStore) DropTriggerRecordByOperator(_ context.Context, id string) err
 //   the returned slice at the caller's limit so the drain's batching
 //   shape matches PgStore.
 
-func (m *MemStore) EnqueueInvocation(_ context.Context, inv Invocation) (Invocation, error) {
+func (m *MemStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invocation, error) {
 	if inv.WorkPolicyName != "" {
 		return Invocation{}, fmt.Errorf("state: use EnqueueKeyedInvocation for policy work")
+	}
+	if err := validateInvocationWorkEnvironment(ctx, m, inv, false); err != nil {
+		return Invocation{}, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()

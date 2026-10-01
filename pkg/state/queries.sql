@@ -4872,6 +4872,18 @@ WHERE kind IN ('wake.sidecar_health', 'wake.app_readiness')
   AND data->>'instance_id' = ANY(sqlc.arg(instance_ids)::text[])
 ORDER BY CAST(data->>'instance_id' AS text), at DESC, id DESC;
 
+-- name: ReadInvocationPinScope :one
+SELECT d.scope::text AS scope
+FROM deployments d JOIN apps a ON a.id = d.app_id
+WHERE a.id = sqlc.arg(app_id)::uuid AND a.status <> 'deleted'
+  AND d.id = sqlc.narg(revision_id)::uuid
+UNION ALL
+SELECT rs.environment_slug::text AS scope
+FROM project_release_sets rs JOIN apps a
+  ON a.project_id = rs.project_id AND a.account_id = rs.account_id
+WHERE a.id = sqlc.arg(app_id)::uuid AND a.status <> 'deleted'
+  AND rs.id = sqlc.narg(release_id)::uuid;
+
 -- name: ReadProjectReleaseSet :one
 -- A single statement reads the pointer and its complete membership together.
 SELECT (to_jsonb(rs) || jsonb_build_object('environment', rs.environment_slug,

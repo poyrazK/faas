@@ -1122,7 +1122,70 @@ Independent sqlc regeneration matches.
 Runtime integration still requires scoped policy definitions and edits, scoped
 producer configuration, admission and retained-release routing that select the
 requested environment, independent replacement/fairness/cancellation lanes,
-and complete qualification/promotion/rollback proofs. The current invocation
-version resolver selects production for project apps; work lanes are currently
+and complete qualification/promotion/rollback proofs. Work lanes are currently
 keyed by app/policy/key and do not establish stage isolation. Full-copy admission
 remains closed while these and the previously listed requirements are completed.
+
+### Stage selection for durable request invocations (2026-10-01)
+
+The gateway async envelope now carries the environment selected by host routing
+as a separate internal field. An admission resolver compares any client release
+or deployment pin with that environment. Unpinned stage requests select the
+stage's active release and persist its immutable pin. A stage with no active
+graph cannot fall back to production or an unscoped wake. Standalone named
+environments remain unavailable through this path. The current APId invocation
+endpoints explicitly select the default environment and reject stage pins until
+their configuration and producer admission support scoped selection.
+
+Delivery recovers the environment from the owned identity of the persisted
+release/deployment pin. A new sqlc query reads only that identity; the existing
+resolvers still enforce retention, membership and live deployment status. Stage
+resolution additionally checks the published environment's account/project
+identity and the selected deployment's actual app, scope and live status. A
+missing or expired graph, foreign pin, malformed stage-to-production member or
+unavailable stage reader cannot select production. No new customer header,
+invocation column or migration is needed. Older delivery code rejects the stage
+pin against its production lookup, so newly admitted stage work cannot become a
+production invocation during a rolling upgrade.
+
+Async route receipts have independent namespaces for each stage. Production
+keeps its committed receipt IDs, including the legacy default alias. Conflicting
+existing receipts must resolve to the same logical environment. Stage request
+admission reads retry defaults and request-listener compatibility from the
+selected deployment's immutable workload settings, so a desired-head edit does
+not change a retained deployment's retry configuration.
+
+Queue consumers, keyed policy lanes and completion destinations still have
+application-wide ownership. Stage use of these resources returns a named work
+isolation conflict. Both state stores reject queue/destination admission and
+keyed admission before insertion or lane mutation, and delivery rechecks the
+same restriction. The async HTTP surface returns the stable
+invocation_environment_work_isolation_unavailable conflict code for this guard.
+A delayed rejection alone would permit keep_latest to replace
+an existing production row before failing delivery.
+
+MemStore and PostgreSQL contracts cover stage admission and frozen delivery
+after active-graph changes, explicit revision pins, both directions of ingress
+scope mismatch, absent graphs, invalid scope/account/foreign-app pins, and
+rejection before production replacement. PostgreSQL contracts also cover an
+expired release and a malformed graph member. Gateway/enqueuer contracts cover
+host-derived scope, independent and conflicting receipts, legacy receipt
+identity, and pinned retry defaults after desired settings edits. The scheduler
+component contract verifies that draining an admitted stage invocation selects
+the stage deployment. These checks use fake lifecycle components and do not
+establish native KVM acceptance.
+
+Selected state, gateway, gateway-internal, scheduler and APId regressions pass.
+Independent sqlc regeneration matches the generated files.
+
+The API regression run exposed a pre-existing inventory assertion expecting a
+newer deployment outside the active release. It failed identically against the
+previous commit through a source overlay. The assertion now follows the active
+release member, consistent with the existing environment-state implementation
+and the release selection decision above.
+
+This routing contract does not establish scoped policy definitions, producer
+ownership, work lanes, complete runtime configuration/binding isolation or
+qualification/promotion/rollback coverage. Full-copy admission and the captured
+work-policy publication guard remain closed while those requirements and the
+previously listed resource/provider and native acceptance requirements remain.

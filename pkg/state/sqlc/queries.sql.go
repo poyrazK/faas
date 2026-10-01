@@ -13421,6 +13421,32 @@ func (q *Queries) ReadDeploymentLayerArtifactKeys(ctx context.Context, db DBTX, 
 	return items, nil
 }
 
+const readInvocationPinScope = `-- name: ReadInvocationPinScope :one
+SELECT d.scope::text AS scope
+FROM deployments d JOIN apps a ON a.id = d.app_id
+WHERE a.id = $1::uuid AND a.status <> 'deleted'
+  AND d.id = $2::uuid
+UNION ALL
+SELECT rs.environment_slug::text AS scope
+FROM project_release_sets rs JOIN apps a
+  ON a.project_id = rs.project_id AND a.account_id = rs.account_id
+WHERE a.id = $1::uuid AND a.status <> 'deleted'
+  AND rs.id = $3::uuid
+`
+
+type ReadInvocationPinScopeParams struct {
+	AppID      pgtype.UUID
+	RevisionID pgtype.UUID
+	ReleaseID  pgtype.UUID
+}
+
+func (q *Queries) ReadInvocationPinScope(ctx context.Context, db DBTX, arg ReadInvocationPinScopeParams) (string, error) {
+	row := db.QueryRow(ctx, readInvocationPinScope, arg.AppID, arg.RevisionID, arg.ReleaseID)
+	var scope string
+	err := row.Scan(&scope)
+	return scope, err
+}
+
 const readProjectEnvironmentCloneConfigurationCaptureIdentity = `-- name: ReadProjectEnvironmentCloneConfigurationCaptureIdentity :one
 SELECT o.configuration_capture_version,o.source_revision_hash,o.source_environment,coalesce(o.source_release_set_id::text,'')::text AS source_release_set_id,
     EXISTS(SELECT 1 FROM project_environment_clone_configuration_captures c WHERE c.operation_id=o.id)::boolean AS has_capture

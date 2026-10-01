@@ -15136,6 +15136,9 @@ func (s *PgStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invoca
 	if inv.WorkPolicyName != "" {
 		return Invocation{}, fmt.Errorf("state: use EnqueueKeyedInvocation for policy work")
 	}
+	if err := validateInvocationWorkEnvironment(ctx, s, inv, false); err != nil {
+		return Invocation{}, err
+	}
 	return enqueueInvocationRow(ctx, s.pool, inv)
 }
 
