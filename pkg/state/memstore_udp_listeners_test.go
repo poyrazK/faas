@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -210,5 +212,72 @@ func TestMemStoreUDPListenerCanceledMutationsPreserveIntent(t *testing.T) {
 	rows, err := store.ListUDPListenersForApp(ctx, app.ID)
 	if err != nil || len(rows) != 1 || rows[0] != listener {
 		t.Fatalf("intent changed: rows=%+v err=%v", rows, err)
+	}
+}
+
+// Signal after capturing the first Err result, before the mutation acquires mu.
+type udpMutationContext struct {
+	context.Context
+	calls   atomic.Int32
+	checked chan struct{}
+}
+
+func (c *udpMutationContext) Err() error {
+	err := c.Context.Err()
+	if c.calls.Add(1) == 1 {
+		close(c.checked)
+	}
+	return err
+}
+func TestMemStoreUDPListenerCancellationWhileWaitingForLock(t *testing.T) {
+	for _, action := range []string{"create", "update", "delete"} {
+		t.Run(action, func(t *testing.T) {
+			store, base, account, app := udpListenerFixture(t)
+			listener, err := store.CreateUDPListener(base, UDPListener{AppID: app.ID, AccountID: account.ID, ListenerName: "dns", GuestPort: 5353, PublicPort: 40100, Enabled: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			parent, cancel := context.WithCancel(base)
+			defer cancel()
+			ctx := &udpMutationContext{Context: parent, checked: make(chan struct{})}
+			store.mu.Lock()
+			done := make(chan error, 1)
+			go func() {
+				switch action {
+				case "create":
+					candidate := listener
+					candidate.ID = ""
+					candidate.ListenerName = "other"
+					candidate.PublicPort++
+					_, err := store.CreateUDPListener(ctx, candidate)
+					done <- err
+				case "update":
+					_, err := store.SetUDPListenerEnabled(ctx, listener.ID, false)
+					done <- err
+				case "delete":
+					done <- store.DeleteUDPListener(ctx, listener.ID)
+				}
+			}()
+			select {
+			case <-ctx.checked:
+			case <-time.After(time.Second):
+				store.mu.Unlock()
+				t.Fatal("mutation never checked context")
+			}
+			cancel()
+			store.mu.Unlock()
+			select {
+			case err := <-done:
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("mutation: %v", err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("mutation hung")
+			}
+			rows, err := store.ListUDPListenersForApp(base, app.ID)
+			if err != nil || len(rows) != 1 || rows[0] != listener {
+				t.Fatalf("intent changed: rows=%+v err=%v", rows, err)
+			}
+		})
 	}
 }
