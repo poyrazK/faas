@@ -1,5 +1,7 @@
 package cosign
 
+// adr: 387
+
 // ADR-387: real keyed signatures authenticate exact payload bytes and the
 // resolved immutable subject. These are cryptographic checks, not native KVM
 // acceptance or a durable proof of the converted rootfs.
@@ -80,6 +82,60 @@ func TestAttachedImageProofAuthenticatesContentAndKey(t *testing.T) {
 	// content digest copied to a different repository remains the same content.
 	if _, err := VerifyImageSignatureAttachments(context.Background(), p, "other.example/copied@"+digest, []TrustedPublisher{{Name: "renamed", PublicKey: &key.PublicKey}}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRetainedImageSignatureProofRequiresCurrentKeyAndExactBytes(t *testing.T) {
+	key := attachedTestKey(t)
+	digest := "sha256:" + strings.Repeat("a", 64)
+	attachment := attachedTestSign(t, key, attachedTestPayload(digest))
+	proof, err := VerifyImageSignatureAttachments(t.Context(), &attachedTestPuller{digest: digest, attachments: []ImageSignatureAttachment{attachment}},
+		"registry.example/team/service@"+digest, []TrustedPublisher{{Name: "company", PublicKey: &key.PublicKey}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The producer cannot alter evidence after verification by mutating its
+	// attachment buffers. Retained bytes own their storage.
+	attachment.Payload[0] ^= 1
+	attachment.Signature[0] ^= 1
+	if err := ReverifyImageSignatureProof(proof, der); err != nil {
+		t.Fatalf("producer aliased retained bytes: %v", err)
+	}
+	other, err := x509.MarshalPKIXPublicKey(&attachedTestKey(t).PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"rotated key", "missing bytes", "payload", "signature", "fingerprint", "signature digest", "subject", "payload digest"} {
+		t.Run(field, func(t *testing.T) {
+			candidate := proof
+			candidate.Evidence = &ImageSignatureEvidence{Payload: append([]byte(nil), proof.Evidence.Payload...), Signature: append([]byte(nil), proof.Evidence.Signature...)}
+			currentKey := der
+			switch field {
+			case "rotated key":
+				currentKey = other
+			case "missing bytes":
+				candidate.Evidence = nil
+			case "payload":
+				candidate.Evidence.Payload[0] ^= 1
+			case "signature":
+				candidate.Evidence.Signature[0] ^= 1
+			case "fingerprint":
+				candidate.PublisherKeySHA256 = strings.Repeat("f", 64)
+			case "signature digest":
+				candidate.SignatureDigest = "sha256:" + strings.Repeat("f", 64)
+			case "subject":
+				candidate.SubjectDigest = "sha256:" + strings.Repeat("f", 64)
+			case "payload digest":
+				candidate.PayloadDigest = "sha256:" + strings.Repeat("f", 64)
+			}
+			if !errors.Is(ReverifyImageSignatureProof(candidate, currentKey), ErrSignatureInvalid) {
+				t.Fatal("accepted substituted evidence or stale key")
+			}
+		})
 	}
 }
 

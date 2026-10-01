@@ -1545,6 +1545,20 @@ type DeploymentOpenapiSnapshot struct {
 	CapturedAt    pgtype.Timestamptz
 }
 
+type DeploymentRegistryVerification struct {
+	ID            pgtype.UUID
+	DeploymentID  pgtype.UUID
+	AppID         pgtype.UUID
+	AccountID     pgtype.UUID
+	WorkloadName  string
+	InputSnapshot []byte
+	InputHash     string
+	Payload       []byte
+	Signature     []byte
+	VerifiedAt    pgtype.Timestamptz
+	ExpiresAt     pgtype.Timestamptz
+}
+
 type DeploymentRevisionPin struct {
 	DeploymentID pgtype.UUID
 	AppID        pgtype.UUID

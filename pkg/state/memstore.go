@@ -138,6 +138,7 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	deploymentRegistryVerifications            map[string]DeploymentRegistryVerification
 	instanceApplicationStandardAdmissions      map[string]InstanceApplicationStandardAdmission
 	instanceApplicationStandardBoots           map[string]instanceStandardBoot
 	instanceApplicationStandardBootTokens      map[string]string
@@ -6360,6 +6361,11 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 		}
 	}
 	delete(m.appDeletionClaims, id)
+	for key, proof := range m.deploymentRegistryVerifications {
+		if sameStandardUUID(proof.Input.AppID, id) {
+			delete(m.deploymentRegistryVerifications, key)
+		}
+	}
 	for key, v := range m.envs {
 		if v.AppID == id {
 			delete(m.envs, key)
@@ -20481,7 +20487,7 @@ func (m *MemStore) UpsertAppTrustedSigner(_ context.Context, accountID, appID, s
 		if existing.AccountID != accountID {
 			return time.Time{}, false, ErrNotFound
 		}
-		existing.CosignPublicKey = pubKey
+		existing.CosignPublicKey = append([]byte(nil), pubKey...)
 		existing.AddedByAccountID = addedByAccountID
 		m.trustedSigners[k] = existing
 		return existing.AddedAt, true, nil
@@ -20491,7 +20497,7 @@ func (m *MemStore) UpsertAppTrustedSigner(_ context.Context, accountID, appID, s
 		AccountID:        accountID,
 		AppID:            appID,
 		SignerName:       signerName,
-		CosignPublicKey:  pubKey,
+		CosignPublicKey:  append([]byte(nil), pubKey...),
 		AddedAt:          now,
 		AddedByAccountID: addedByAccountID,
 	}
@@ -20527,6 +20533,7 @@ func (m *MemStore) ListAppTrustedSigners(_ context.Context, accountID, appID str
 		if r.AppID != appID || r.AccountID != accountID {
 			continue
 		}
+		r.CosignPublicKey = append([]byte(nil), r.CosignPublicKey...)
 		out = append(out, r)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].SignerName < out[j].SignerName })
@@ -20546,6 +20553,7 @@ func (m *MemStore) ListAppTrustedSignersForApp(_ context.Context, appID string) 
 		if r.AppID != appID {
 			continue
 		}
+		r.CosignPublicKey = append([]byte(nil), r.CosignPublicKey...)
 		out = append(out, r)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].SignerName < out[j].SignerName })

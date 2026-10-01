@@ -1,5 +1,7 @@
 package imaged
 
+// adr: 387
+
 // ADR-387: exercise the production RegistryClient and real P256 verifier as
 // one deploy admission path. A signed index covers only its digest-verified
 // selected child; mutable tags and registry headers cannot substitute content.
@@ -12,6 +14,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -68,6 +71,15 @@ func TestPrepareContainerImageRealSignedIndexRegistry(t *testing.T) {
 			th := newTestHarness(t, state.DeploymentKindImage, "pro", "")
 			th.app.SecurityPolicy = api.AppSecurityPolicyEnforce
 			th.dep.ImageDigest = "registry.example/team/service:latest"
+			th.createReplacementDeployment(t)
+			keyDER, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := th.store.UpsertAppTrustedSigner(t.Context(), th.app.AccountID, th.app.ID, "company", keyDER, th.app.AccountID); err != nil {
+				t.Fatal(err)
+			}
+
 			signedDigest := indexDigest
 			if mode == "signed child only" {
 				signedDigest = childDigest

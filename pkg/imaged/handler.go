@@ -407,7 +407,7 @@ func (h *Handler) checkImageSignature(ctx context.Context, app state.App, ref st
 	if err != nil {
 		return "", err
 	}
-	auth, err := h.resolveRegistryAuth(ctx, app, r.Registry)
+	auth, err := h.resolveRegistryAuth(ctx, app, r.APIHost())
 	if err != nil {
 		return "", err
 	}
@@ -450,7 +450,6 @@ func (h *Handler) verifyImageSignature(ctx context.Context, app state.App, dep s
 		err = fmt.Errorf("%w: verified subject differs from selected source", cosign.ErrSignatureInvalid)
 	}
 	if err == nil {
-		h.log.Info("image signature verified", "app", app.Slug, "deployment", dep.ID, "signer", proof.PublisherName, "publisher_key_sha256", proof.PublisherKeySHA256, "subject_digest", proof.SubjectDigest)
 		return proof, nil
 	}
 	switch {
@@ -2291,7 +2290,11 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 			// (telemetry, retries) cannot bypass the gate.
 			//
 			if errors.Is(err, oci.ErrLayersNotAboveBase) {
-				fullErr := h.dispatchFullRootfs(ctx, app, dep, acct, manifest, appAuth)
+				// Conversion must use the already resolved child. Keep the
+				// stored customer reference for intent and scan attribution.
+				conversion := dep
+				conversion.ImageDigest = ref
+				fullErr := h.dispatchFullRootfs(ctx, app, conversion, acct, manifest, appAuth)
 				if fullErr != nil {
 					_ = h.markDeployFailed(ctx, dep.ID, fullErr, "imaged: full-rootfs dispatch")
 					return fullErr
@@ -2521,7 +2524,18 @@ func (h *Handler) buildSidecarLayers(ctx context.Context, app state.App, dep sta
 		// main image, keyed on the sidecar ref's host.
 		var auth *oci.BasicAuth
 		if parsedRef, parseErr := oci.ParseReference(sc.Image); parseErr == nil {
-			auth, _ = h.resolveRegistryAuth(ctx, app, parsedRef.APIHost())
+			auth, parseErr = h.resolveRegistryAuth(ctx, app, parsedRef.APIHost())
+			if parseErr != nil {
+				_ = h.markDeployFailed(ctx, dep.ID, parseErr, "sidecar registry auth")
+				return findings, fmt.Errorf("imaged: sidecar %q registry auth: %w", sc.Name, parseErr)
+			}
+		}
+		if auth != nil {
+			defer func() { auth.Password = "" }()
+		}
+		selected, err := h.prepareContainerWorkloadImage(ctx, app, dep, sc.Name, sc.Image, auth)
+		if err != nil {
+			return findings, fmt.Errorf("imaged: sidecar %q image admission: %w", sc.Name, err)
 		}
 		// Sidecar pull: use the M5 stream path (pullLayersWithAuth)
 		// rather than the two-drive base-diff path. Sidecars are
@@ -2531,7 +2545,7 @@ func (h *Handler) buildSidecarLayers(ctx context.Context, app state.App, dep sta
 		// in buildImageLayer and keeps the sidecar semantics
 		// independent of the main image's runtime selection.
 		start := time.Now()
-		pulled, err := pullLayersWithAuth(ctx, h.oci, sc.Image, auth)
+		pulled, err := pullLayersWithAuth(ctx, h.oci, selected.Reference, auth)
 		h.ops.ObserveImagedOCIPull("sidecar_blob", pullResult(err), time.Since(start))
 		if err != nil {
 			_ = h.markDeployFailed(ctx, dep.ID, err, fmt.Sprintf("sidecar %q pull", sc.Name))
@@ -2576,7 +2590,7 @@ func (h *Handler) buildSidecarLayers(ctx context.Context, app state.App, dep sta
 			SidecarName:   sc.Name,
 			StorageKey:    layerKey,
 			Bytes:         result.ContentBytes,
-			ContentDigest: sc.Image,
+			ContentDigest: selected.Reference,
 		}); err != nil {
 			_ = h.markDeployFailed(ctx, dep.ID, err, fmt.Sprintf("sidecar %q stamp", sc.Name))
 			return findings, fmt.Errorf("imaged: sidecar %q stamp: %w", sc.Name, err)

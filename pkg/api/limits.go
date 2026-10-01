@@ -77,6 +77,7 @@ const (
 	ImageSignatureMaxEntries             = 64
 	ImageSignatureMaxDERBytes            = 80
 	ImageSignatureMaxJSONDepth           = 32
+	ImageSignatureVerificationTTL        = 24 * time.Hour
 )
 
 // A restore hook is on the wake critical path. Keep its customer timeout

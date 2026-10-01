@@ -1,5 +1,7 @@
 package imaged
 
+// adr: 387
+
 // ADR-387: publisher verification binds the immutable resolved source and
 // preserves repository-scoped credentials before executable build reads.
 
@@ -9,6 +11,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -83,6 +86,15 @@ func TestPrepareContainerImageSignatureBindsSource(t *testing.T) {
 			th := newTestHarness(t, state.DeploymentKindImage, "pro", "")
 			th.app.SecurityPolicy = api.AppSecurityPolicyEnforce
 			th.dep.ImageDigest = "example.com/org/service:latest"
+			th.createReplacementDeployment(t)
+			keyDER, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := th.store.UpsertAppTrustedSigner(t.Context(), th.app.AccountID, th.app.ID, "publisher", keyDER, th.app.AccountID); err != nil {
+				t.Fatal(err)
+			}
+
 			p := &resolvingTestPuller{fakeManifestPuller: &fakeManifestPuller{}, resolution: oci.ImageResolution{
 				SourceDigest: source, SourceReference: "example.com/org/service@" + source,
 				Digest: child, Reference: "example.com/org/service@" + child}}

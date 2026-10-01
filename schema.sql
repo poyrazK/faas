@@ -1824,6 +1824,26 @@ $$;
 
 
 --
+-- Name: deployment_registry_verification_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.deployment_registry_verification_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='INSERT' THEN
+  IF current_setting('gregale.registry_verification_insert',true) IS DISTINCT FROM NEW.id::text THEN
+   RAISE EXCEPTION 'registry verification must use private store' USING ERRCODE='23514',CONSTRAINT='deployment_registry_verification_immutable';
+  END IF;
+  RETURN NEW;
+ END IF;
+ IF TG_OP='DELETE' AND NOT EXISTS(SELECT 1 FROM deployments WHERE id=OLD.deployment_id) THEN RETURN OLD; END IF;
+ RAISE EXCEPTION 'registry verification is immutable' USING ERRCODE='23514',CONSTRAINT='deployment_registry_verification_immutable';
+END;
+$$;
+
+
+--
 -- Name: deployment_scope_exclusions_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3442,6 +3462,49 @@ BEGIN
 
     PERFORM pg_notify(channel, payload::text);
     RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: lock_deployment_registry_verification(uuid, uuid, uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.lock_deployment_registry_verification(application_id uuid, artifact_id uuid, owner_id uuid, workload text, publisher text) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+DECLARE a apps%ROWTYPE; d deployments%ROWTYPE; image_ref text; key_der bytea; matches integer;
+BEGIN
+ SELECT * INTO d FROM deployments WHERE id=artifact_id FOR SHARE NOWAIT;
+ IF NOT FOUND THEN
+  RAISE EXCEPTION 'registry artifact missing' USING ERRCODE='23514',CONSTRAINT='deployment_registry_verification_missing';
+ END IF;
+ SELECT * INTO a FROM apps WHERE id=application_id FOR SHARE NOWAIT;
+ IF NOT FOUND THEN
+  RAISE EXCEPTION 'registry application missing' USING ERRCODE='23514',CONSTRAINT='deployment_registry_verification_missing';
+ END IF;
+ IF a.id IS DISTINCT FROM d.app_id OR a.account_id IS DISTINCT FROM owner_id OR a.status='deleted'
+   OR d.status NOT IN ('pending','building','imaging','snapshotting','live','superseded') THEN
+  RAISE EXCEPTION 'registry artifact scope changed' USING ERRCODE='23514',CONSTRAINT='deployment_registry_verification_stale';
+ END IF;
+ IF NOT pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.controls.' || a.id::text,0))
+   OR NOT pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.artifact-children.' || d.id::text,0)) THEN
+  RAISE EXCEPTION 'registry verification inputs busy' USING ERRCODE='55P03',CONSTRAINT='deployment_registry_verification_busy';
+ END IF;
+ IF workload='' AND d.kind='image' THEN
+  image_ref := d.image_digest;
+ ELSIF workload <> '' THEN
+  SELECT count(*),min(s->>'image') INTO matches,image_ref FROM jsonb_array_elements(d.sidecars) s WHERE s->>'name'=workload;
+  IF matches <> 1 THEN image_ref := NULL; END IF;
+ END IF;
+ IF image_ref IS NULL OR image_ref='' THEN
+  RAISE EXCEPTION 'registry workload missing' USING ERRCODE='23514',CONSTRAINT='deployment_registry_verification_stale';
+ END IF;
+ SELECT cosign_public_key INTO key_der FROM app_trusted_signers WHERE app_id=a.id AND signer_name=publisher AND account_id=a.account_id;
+ RETURN jsonb_build_object('app_id',a.id::text,'account_id',a.account_id::text,'org_id',coalesce(a.org_id::text,''),
+   'image_reference',image_ref,'key_der',coalesce(encode(key_der,'base64'),''));
+EXCEPTION WHEN lock_not_available THEN
+ RAISE EXCEPTION 'registry verification inputs busy' USING ERRCODE='55P03',CONSTRAINT='deployment_registry_verification_busy';
 END;
 $$;
 
@@ -6808,6 +6871,32 @@ CREATE TABLE public.deployment_openapi_snapshots (
     CONSTRAINT deployment_openapi_snapshots_schema_version_positive CHECK ((schema_version >= 1)),
     CONSTRAINT deployment_openapi_snapshots_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
     CONSTRAINT deployment_openapi_snapshots_sha256_shape CHECK ((sha256 ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: deployment_registry_verifications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_registry_verifications (
+    id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    workload_name text NOT NULL,
+    input_snapshot jsonb NOT NULL,
+    input_hash text NOT NULL,
+    payload bytea NOT NULL,
+    signature bytea NOT NULL,
+    verified_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT deployment_registry_verifications_check CHECK (((expires_at > verified_at) AND (expires_at <= (verified_at + '24:00:00'::interval)))),
+    CONSTRAINT deployment_registry_verifications_check1 CHECK ((((input_snapshot ->> 'deployment_id'::text) = (deployment_id)::text) AND ((input_snapshot ->> 'app_id'::text) = (app_id)::text) AND ((input_snapshot ->> 'account_id'::text) = (account_id)::text) AND ((input_snapshot ->> 'workload_name'::text) = workload_name))),
+    CONSTRAINT deployment_registry_verifications_input_hash_check CHECK ((input_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT deployment_registry_verifications_input_snapshot_check CHECK ((jsonb_typeof(input_snapshot) = 'object'::text)),
+    CONSTRAINT deployment_registry_verifications_payload_check CHECK (((octet_length(payload) >= 1) AND (octet_length(payload) <= 65536))),
+    CONSTRAINT deployment_registry_verifications_signature_check CHECK (((octet_length(signature) >= 1) AND (octet_length(signature) <= 80))),
+    CONSTRAINT deployment_registry_verifications_workload_name_check CHECK (((workload_name = ''::text) OR ((workload_name <> 'main'::text) AND (workload_name ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text))))
 );
 
 
@@ -13345,6 +13434,14 @@ ALTER TABLE ONLY public.deployment_openapi_snapshots
 
 
 --
+-- Name: deployment_registry_verifications deployment_registry_verifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_registry_verifications
+    ADD CONSTRAINT deployment_registry_verifications_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: deployment_revision_pins deployment_revision_pins_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -16891,6 +16988,13 @@ CREATE INDEX deployment_openapi_docs_app_id_idx ON public.deployment_openapi_doc
 --
 
 CREATE INDEX deployment_openapi_snapshots_app_scope_idx ON public.deployment_openapi_snapshots USING btree (app_id, scope, captured_at DESC);
+
+
+--
+-- Name: deployment_registry_verifications_latest; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_registry_verifications_latest ON public.deployment_registry_verifications USING btree (deployment_id, workload_name, verified_at DESC, id DESC);
 
 
 --
@@ -20660,6 +20764,13 @@ CREATE TRIGGER application_standard_reenroll_app AFTER UPDATE OF org_id, project
 
 
 --
+-- Name: deployment_registry_verifications application_standard_registry_artifact_input_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_registry_artifact_input_guard BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_registry_verifications FOR EACH ROW EXECUTE FUNCTION public.application_standard_artifact_child_guard();
+
+
+--
 -- Name: application_standard_review_plans application_standard_review_immutable; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -20944,6 +21055,13 @@ CREATE TRIGGER deployment_aliases_app_changed AFTER INSERT OR DELETE OR UPDATE O
 --
 
 CREATE TRIGGER deployment_openapi_docs_set_updated_at_trg BEFORE UPDATE ON public.deployment_openapi_docs FOR EACH ROW EXECUTE FUNCTION public.deployment_openapi_docs_set_updated_at();
+
+
+--
+-- Name: deployment_registry_verifications deployment_registry_verification_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployment_registry_verification_immutable BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_registry_verifications FOR EACH ROW EXECUTE FUNCTION public.deployment_registry_verification_guard();
 
 
 --
@@ -22833,6 +22951,14 @@ ALTER TABLE ONLY public.deployment_openapi_snapshots
 
 ALTER TABLE ONLY public.deployment_openapi_snapshots
     ADD CONSTRAINT deployment_openapi_snapshots_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_registry_verifications deployment_registry_verifications_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_registry_verifications
+    ADD CONSTRAINT deployment_registry_verifications_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --

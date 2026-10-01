@@ -123,7 +123,29 @@ expiry. Native admission must require those proofs. Live revalidation must use
 the retained immutable subject rather than the customer's mutable tag. Source
 builds need scoped source/rootfs evidence from an explicitly approved build
 publisher; the platform signer is not automatically an approved company key.
-These requirements remain pending and public standard activation stays disabled.
+Converted-rootfs, current scan and native-consumer bindings remain pending,
+and public standard activation stays disabled.
+
+Registry verification now retains the exact signed payload and DER signature in
+private immutable deployment/workload records. The store rechecks cryptography
+against the current account-scoped `app_trusted_signers` key under nonwaiting
+ownership, control and artifact fences. A stale publisher mirror cannot approve
+a rotated or deleted key. Records bind persisted customer intent, organization,
+account, app and deployment identity, signed source and selected child; they
+receive a storage-owned 24-hour expiry (`ImageSignatureVerificationTTL`). Exact
+ID retries preserve the original clock and binding, and changed inputs conflict.
+Main and sidecar images share this gate; the full-rootfs fallback consumes the
+resolved child rather than resolving the customer tag again. Sidecar compatibility
+metadata retains that immutable child reference.
+
+Historical record retrieval deliberately does not assert current approval or
+freshness: it retains the immutable source needed for a future refresh, including
+after key revocation or expiry. These records do not independently authenticate
+the index-to-child mapping, converted ext4 bytes, source-build publisher or scan.
+Those require the next artifact binding and native-admission work. Raw inserts
+and mutations are guarded against accidental alternate writers; the trusted
+imaged/database writer boundary is not a cryptographic database attestation.
+Parent erasure cascades delete the retained evidence.
 
 ## Acceptance checklist
 

@@ -267,3 +267,18 @@ valid source builds keep using the existing container and function paths. This
 content check does not prove an approved company publisher. Durable proofs bound
 to the rootfs and sidecars that actually run, current publisher keys and scan
 expiry remain part of the image-policy acceptance work.
+
+
+Direct registry image and sidecar preparation retain private immutable publisher
+verification records. Storage authenticates the exact signed payload against the
+current trusted key, binds the persisted customer reference and selected child,
+and assigns a 24-hour expiry. Key rotation/deletion, scope/reference changes and
+substituted signed bytes refuse publication. Exact record retries retain their
+original expiry; these records cannot be updated in place. Registry credentials
+are absent from the evidence. The full-rootfs fallback and sidecars use the
+resolved immutable child for conversion.
+
+These are registry-source records. Historical reads can return revoked or expired
+evidence and therefore do not authorize runtime admission. Converted rootfs bytes,
+source-build approval, per-workload scan evidence, live immutable-subject refresh
+and native proof consumption remain acceptance work before standard activation.

@@ -595,6 +595,15 @@ func (q *Queries) ApplyRegressionAction(ctx context.Context, db DBTX, arg ApplyR
 	return i, err
 }
 
+const authorizeDeploymentRegistryVerificationInsert = `-- name: AuthorizeDeploymentRegistryVerificationInsert :exec
+SELECT set_config('gregale.registry_verification_insert',$1::uuid::text,true)
+`
+
+func (q *Queries) AuthorizeDeploymentRegistryVerificationInsert(ctx context.Context, db DBTX, id pgtype.UUID) error {
+	_, err := db.Exec(ctx, authorizeDeploymentRegistryVerificationInsert, id)
+	return err
+}
+
 const blockApplicationStandardEnrollmentWorker = `-- name: BlockApplicationStandardEnrollmentWorker :execrows
 UPDATE app_application_standards SET state='blocked',error_code=$1::text,updated_at=clock_timestamp(),lease_owner='',lease_until=NULL
 WHERE app_id=$2::uuid AND org_id=$3::uuid
@@ -4759,6 +4768,29 @@ func (q *Queries) GetDataUpstreamByID(ctx context.Context, db DBTX, id pgtype.UU
 	return i, err
 }
 
+const getDeploymentRegistryVerificationByID = `-- name: GetDeploymentRegistryVerificationByID :one
+SELECT id, deployment_id, app_id, account_id, workload_name, input_snapshot, input_hash, payload, signature, verified_at, expires_at FROM deployment_registry_verifications WHERE id=$1::uuid
+`
+
+func (q *Queries) GetDeploymentRegistryVerificationByID(ctx context.Context, db DBTX, id pgtype.UUID) (DeploymentRegistryVerification, error) {
+	row := db.QueryRow(ctx, getDeploymentRegistryVerificationByID, id)
+	var i DeploymentRegistryVerification
+	err := row.Scan(
+		&i.ID,
+		&i.DeploymentID,
+		&i.AppID,
+		&i.AccountID,
+		&i.WorkloadName,
+		&i.InputSnapshot,
+		&i.InputHash,
+		&i.Payload,
+		&i.Signature,
+		&i.VerifiedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
 const getFeatureFlagVersion = `-- name: GetFeatureFlagVersion :one
 SELECT account_id, project_id, environment_id, version, config, actor, restored_from, created_at FROM feature_flag_versions
 WHERE environment_id = $1::uuid
@@ -4895,6 +4927,49 @@ func (q *Queries) GetInstanceTailCount(ctx context.Context, db DBTX, id pgtype.U
 	var tail_count int32
 	err := row.Scan(&tail_count)
 	return tail_count, err
+}
+
+const getLatestDeploymentRegistryVerification = `-- name: GetLatestDeploymentRegistryVerification :one
+SELECT v.id, v.deployment_id, v.app_id, v.account_id, v.workload_name, v.input_snapshot, v.input_hash, v.payload, v.signature, v.verified_at, v.expires_at FROM deployment_registry_verifications v
+JOIN deployments d ON d.id=v.deployment_id AND d.app_id=v.app_id
+JOIN apps a ON a.id=v.app_id AND a.account_id=v.account_id
+WHERE v.account_id=$1::uuid AND v.app_id=$2::uuid
+ AND v.deployment_id=$3::uuid AND v.workload_name=$4::text
+ AND a.status <> 'deleted' AND v.input_snapshot->>'org_id'=coalesce(a.org_id::text,'')
+ AND v.input_snapshot->>'image_reference'=CASE WHEN v.workload_name='' AND d.kind='image' THEN d.image_digest
+ ELSE (SELECT CASE WHEN count(*)=1 THEN min(s->>'image') END FROM jsonb_array_elements(d.sidecars) s WHERE s->>'name'=v.workload_name) END
+ORDER BY v.verified_at DESC,v.id DESC LIMIT 1
+`
+
+type GetLatestDeploymentRegistryVerificationParams struct {
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	WorkloadName string
+}
+
+func (q *Queries) GetLatestDeploymentRegistryVerification(ctx context.Context, db DBTX, arg GetLatestDeploymentRegistryVerificationParams) (DeploymentRegistryVerification, error) {
+	row := db.QueryRow(ctx, getLatestDeploymentRegistryVerification,
+		arg.AccountID,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.WorkloadName,
+	)
+	var i DeploymentRegistryVerification
+	err := row.Scan(
+		&i.ID,
+		&i.DeploymentID,
+		&i.AppID,
+		&i.AccountID,
+		&i.WorkloadName,
+		&i.InputSnapshot,
+		&i.InputHash,
+		&i.Payload,
+		&i.Signature,
+		&i.VerifiedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
 }
 
 const getOIDCExchangedTokenByHash = `-- name: GetOIDCExchangedTokenByHash :one
@@ -5887,6 +5962,58 @@ func (q *Queries) InsertDataUpstreamProbe(ctx context.Context, db DBTX, arg Inse
 		arg.ProbeNode,
 	)
 	return err
+}
+
+const insertDeploymentRegistryVerification = `-- name: InsertDeploymentRegistryVerification :one
+WITH storage_clock AS MATERIALIZED (SELECT clock_timestamp() AS now)
+INSERT INTO deployment_registry_verifications(id,deployment_id,app_id,account_id,workload_name,input_snapshot,input_hash,payload,signature,verified_at,expires_at)
+SELECT $1::uuid,$2::uuid,$3::uuid,$4::uuid,
+ $5::text,$6::jsonb,$7::text,$8::bytea,
+ $9::bytea,now,now+make_interval(secs=>$10::double precision) FROM storage_clock
+RETURNING id, deployment_id, app_id, account_id, workload_name, input_snapshot, input_hash, payload, signature, verified_at, expires_at
+`
+
+type InsertDeploymentRegistryVerificationParams struct {
+	ID            pgtype.UUID
+	DeploymentID  pgtype.UUID
+	AppID         pgtype.UUID
+	AccountID     pgtype.UUID
+	WorkloadName  string
+	InputSnapshot []byte
+	InputHash     string
+	Payload       []byte
+	Signature     []byte
+	TtlSeconds    float64
+}
+
+func (q *Queries) InsertDeploymentRegistryVerification(ctx context.Context, db DBTX, arg InsertDeploymentRegistryVerificationParams) (DeploymentRegistryVerification, error) {
+	row := db.QueryRow(ctx, insertDeploymentRegistryVerification,
+		arg.ID,
+		arg.DeploymentID,
+		arg.AppID,
+		arg.AccountID,
+		arg.WorkloadName,
+		arg.InputSnapshot,
+		arg.InputHash,
+		arg.Payload,
+		arg.Signature,
+		arg.TtlSeconds,
+	)
+	var i DeploymentRegistryVerification
+	err := row.Scan(
+		&i.ID,
+		&i.DeploymentID,
+		&i.AppID,
+		&i.AccountID,
+		&i.WorkloadName,
+		&i.InputSnapshot,
+		&i.InputHash,
+		&i.Payload,
+		&i.Signature,
+		&i.VerifiedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
 }
 
 const insertFeatureFlagVersion = `-- name: InsertFeatureFlagVersion :one
@@ -11675,6 +11802,32 @@ SELECT pg_advisory_xact_lock(hashtextextended('consume-account-credit:' || $1::t
 func (q *Queries) LockCreditConsumption(ctx context.Context, db DBTX, providerInvoiceID string) error {
 	_, err := db.Exec(ctx, lockCreditConsumption, providerInvoiceID)
 	return err
+}
+
+const lockDeploymentRegistryVerification = `-- name: LockDeploymentRegistryVerification :one
+SELECT lock_deployment_registry_verification($1::uuid,$2::uuid,
+ $3::uuid,$4::text,$5::text)::jsonb AS inputs
+`
+
+type LockDeploymentRegistryVerificationParams struct {
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	AccountID    pgtype.UUID
+	WorkloadName string
+	Publisher    string
+}
+
+func (q *Queries) LockDeploymentRegistryVerification(ctx context.Context, db DBTX, arg LockDeploymentRegistryVerificationParams) ([]byte, error) {
+	row := db.QueryRow(ctx, lockDeploymentRegistryVerification,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.AccountID,
+		arg.WorkloadName,
+		arg.Publisher,
+	)
+	var inputs []byte
+	err := row.Scan(&inputs)
+	return inputs, err
 }
 
 const lockDevBridgeAccount = `-- name: LockDevBridgeAccount :one

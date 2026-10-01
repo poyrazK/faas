@@ -5505,3 +5505,32 @@ WHERE token=sqlc.arg(token)::uuid AND receipt IS NULL;
 -- name: PublishInstanceApplicationStandardPromotion :execrows
 UPDATE instances SET application_standard_promotion_token=sqlc.arg(token)::uuid,state='running',started_at=clock_timestamp()
 WHERE id=sqlc.arg(instance_id)::uuid AND state='warm';
+
+-- name: LockDeploymentRegistryVerification :one
+SELECT lock_deployment_registry_verification(sqlc.arg(app_id)::uuid,sqlc.arg(deployment_id)::uuid,
+ sqlc.arg(account_id)::uuid,sqlc.arg(workload_name)::text,sqlc.arg(publisher)::text)::jsonb AS inputs;
+
+-- name: AuthorizeDeploymentRegistryVerificationInsert :exec
+SELECT set_config('gregale.registry_verification_insert',sqlc.arg(id)::uuid::text,true);
+
+-- name: InsertDeploymentRegistryVerification :one
+WITH storage_clock AS MATERIALIZED (SELECT clock_timestamp() AS now)
+INSERT INTO deployment_registry_verifications(id,deployment_id,app_id,account_id,workload_name,input_snapshot,input_hash,payload,signature,verified_at,expires_at)
+SELECT sqlc.arg(id)::uuid,sqlc.arg(deployment_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(account_id)::uuid,
+ sqlc.arg(workload_name)::text,sqlc.arg(input_snapshot)::jsonb,sqlc.arg(input_hash)::text,sqlc.arg(payload)::bytea,
+ sqlc.arg(signature)::bytea,now,now+make_interval(secs=>sqlc.arg(ttl_seconds)::double precision) FROM storage_clock
+RETURNING *;
+
+-- name: GetDeploymentRegistryVerificationByID :one
+SELECT * FROM deployment_registry_verifications WHERE id=sqlc.arg(id)::uuid;
+
+-- name: GetLatestDeploymentRegistryVerification :one
+SELECT v.* FROM deployment_registry_verifications v
+JOIN deployments d ON d.id=v.deployment_id AND d.app_id=v.app_id
+JOIN apps a ON a.id=v.app_id AND a.account_id=v.account_id
+WHERE v.account_id=sqlc.arg(account_id)::uuid AND v.app_id=sqlc.arg(app_id)::uuid
+ AND v.deployment_id=sqlc.arg(deployment_id)::uuid AND v.workload_name=sqlc.arg(workload_name)::text
+ AND a.status <> 'deleted' AND v.input_snapshot->>'org_id'=coalesce(a.org_id::text,'')
+ AND v.input_snapshot->>'image_reference'=CASE WHEN v.workload_name='' AND d.kind='image' THEN d.image_digest
+ ELSE (SELECT CASE WHEN count(*)=1 THEN min(s->>'image') END FROM jsonb_array_elements(d.sidecars) s WHERE s->>'name'=v.workload_name) END
+ORDER BY v.verified_at DESC,v.id DESC LIMIT 1;

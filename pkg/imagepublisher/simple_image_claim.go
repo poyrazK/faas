@@ -1,4 +1,4 @@
-package cosign
+package imagepublisher
 
 import (
 	"bytes"

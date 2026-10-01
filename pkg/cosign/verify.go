@@ -7,7 +7,6 @@ package cosign
 
 import (
 	"context"
-	"crypto/ecdsa"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -18,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/imagepublisher"
 )
 
 // DefaultTrustedPublishersDir is the canonical location for the
@@ -32,7 +32,7 @@ const DefaultTrustedPublishersDir = "/etc/faas/secrets/trusted-publishers"
 // because the operator action is different (either onboard a
 // publisher if they're expecting a signed deploy, or relax the
 // apps.require_signed flag if they aren't).
-var ErrSignatureMissing = errors.New("cosign: image signature missing")
+var ErrSignatureMissing = imagepublisher.ErrSignatureMissing
 
 // ErrSignatureInvalid is returned by VerifyImageSignature when a
 // signature exists but doesn't verify against any trusted publisher
@@ -40,15 +40,12 @@ var ErrSignatureMissing = errors.New("cosign: image signature missing")
 // the operator action is different (the signature is there, but the
 // publisher isn't trusted — either the wrong key was used, or the
 // trust list needs to be updated).
-var ErrSignatureInvalid = errors.New("cosign: image signature invalid")
+var ErrSignatureInvalid = imagepublisher.ErrSignatureInvalid
 
 // TrustedPublisher is one entry in the per-app trust list. Name is
 // the apid-side label (matches app_trusted_signers.signer_name);
 // PublicKey is the parsed ECDSA P-256 SPKI.
-type TrustedPublisher struct {
-	Name      string
-	PublicKey *ecdsa.PublicKey
-}
+type TrustedPublisher = imagepublisher.TrustedPublisher
 
 // TrustedPublishersFromDir reads every *.pem in dir and parses each
 // as an ECDSA P-256 public key. Missing dir → (nil, nil) so callers
