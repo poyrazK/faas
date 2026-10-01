@@ -102,6 +102,9 @@ func (l *Loop) recoverPrimeCandidate(ctx context.Context, deploymentID string, c
 	if err != nil {
 		return err
 	}
+	if !changed {
+		changedAt = time.Unix(0, 0).UTC()
+	}
 	for _, ins := range instances {
 		// A PARKED instance means capture finished and imaged may still be
 		// handling snapshot_written. A guest older than the config stamp
@@ -110,7 +113,7 @@ func (l *Loop) recoverPrimeCandidate(ctx context.Context, deploymentID string, c
 		// protect the new attempt.
 		if ins.DeploymentID == dep.ID && ins.StartedAt.After(*stage.CurrentStartedAt) &&
 			(state.State(ins.State).CountsForRAM() ||
-				(state.State(ins.State) == state.StateParked && (!changed || ins.StartedAt.After(changedAt)))) {
+				(state.State(ins.State) == state.StateParked && !l.engine.runtimeConfigReceiptStale(ctx, ins, changedAt, dep.Scope))) {
 			return nil
 		}
 	}

@@ -110,7 +110,7 @@ func testSnapshotPublicationFencesRuntimeConfigChanges(t *testing.T, fx *Fixture
 }
 
 // Named scopes have independent variable boundaries. A shared credential or
-// default overlay still fences every scope, including a delayed warm capture.
+// default-scope edit still fences every scope, including a delayed warm capture.
 func testScopedRuntimeChangesPreserveNeighborSnapshots(t *testing.T, fx *Fixture) {
 	type capture struct {
 		deployment state.Deployment
@@ -173,7 +173,7 @@ func testScopedRuntimeChangesPreserveNeighborSnapshots(t *testing.T, fx *Fixture
 		t.Fatalf("neighbor publication: %v", err)
 	}
 	if count, err := state.InvalidateAppSnapshotsInScope(fx.Ctx, fx.Store, fx.App.ID, "default"); err != nil || count != 2 {
-		t.Fatalf("default overlay invalidation = (%d, %v), want two neighbor captures", count, err)
+		t.Fatalf("default-scope invalidation = (%d, %v), want two neighbor captures", count, err)
 	}
 	if err := warm(staging, "shared-stale"); !errors.Is(err, state.ErrSnapshotRuntimeStale) {
 		t.Fatalf("shared change accepted neighbor publication: %v", err)

@@ -3322,6 +3322,12 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		})
 	}
 
+	runtimeInputs, runtimeAPIEnv, err := e.prepareRuntimeConfigInputs(ctx, acct.ID, appID, dep.Scope)
+	if err != nil {
+		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "wake_runtime_inputs_invalid")
+		release()
+		return WakeResult{}, fmt.Errorf("sched: wake: load runtime inputs: %w", err)
+	}
 	sealedEnv, err := e.loadSealedEnvDeliveryFor(ctx, acct.ID, appID, dep.Scope, envSecretsFromDep(dep))
 	if err != nil {
 		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "wake_sealed_env_invalid")
@@ -3339,6 +3345,19 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "wake_secret_version_changed")
 		release()
 		return WakeResult{}, fmt.Errorf("sched: wake: sidecar secret versions changed during preparation: %w", err)
+	}
+	addRuntimeSecretVersions(&runtimeInputs, sealedEnv.Candidates, len(envSecretsFromDep(dep)) == 0)
+	var snapshotInputs *state.RuntimeConfigInputs
+	if receipts, ok := e.store.(state.RuntimeConfigReceiptStore); ok && haveSnap {
+		captured, exists, err := receipts.SnapshotRuntimeConfigReceipt(ctx, snap.ID)
+		if err != nil {
+			e.rollbackAdmittedInstance(ctx, ins.ID, appID, "wake_snapshot_receipt_unavailable")
+			release()
+			return WakeResult{}, fmt.Errorf("sched: wake: read snapshot inputs: %w", err)
+		}
+		if exists {
+			snapshotInputs = &captured
+		}
 	}
 	mainDependencies, err := mainWorkloadDependenciesForDeployment(dep, sidecars)
 	if err != nil {
@@ -3367,7 +3386,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// config. Precedence at the guest layer is "secrets >
 		// api_env > manifest_env > os.environ".
 		APIEnv: appendPlatformIdentity(
-			e.loadAPIEnv(ctx, acct.ID, appID, dep.Scope),
+			runtimeAPIEnv,
 			app, dep, acct, placement.NodeID, ins.ID, placement.Region,
 		),
 		// ADR-031: surface the per-app egress allowlist on the
@@ -3451,6 +3470,8 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		identity:         platformIdentity(app, dep, acct, placement.NodeID, ins.ID, placement.Region),
 		spec:             spec,
 		secretDeliveries: sealedEnv.Candidates,
+		runtimeInputs:    &runtimeInputs,
+		snapshotInputs:   snapshotInputs,
 		accountID:        acct.ID,
 		// wakeID is the per-wake-attempt correlation handle (gaps
 		// analysis 2026-07-23). Carried across the unlocked Phase 3
@@ -3791,7 +3812,11 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// control-plane latency after a fast SSD restore, that load-then-write shape
 	// left a race between the watchdog check and the state update. The CAS makes
 	// a stolen state a failure without adding a read to the successful path.
-	fresh, publishErr := e.store.PublishInstanceRuntime(ctx, bootInput.insID, string(bootInput.initState), out.Netns, out.HostIP, int(out.LeaseUID))
+	confirmedInputs := bootInput.runtimeInputs
+	if bootInput.haveSnap && out.Method != vmmdpb.WakeMethod_WAKE_COLD_BOOT {
+		confirmedInputs = bootInput.snapshotInputs
+	}
+	fresh, publishErr := e.publishRuntimeConfigReceipt(ctx, bootInput.insID, string(bootInput.initState), out.Netns, out.HostIP, int(out.LeaseUID), bootInput.wakeID, confirmedInputs)
 	if errors.Is(publishErr, state.ErrConflict) {
 		e.ledger.Release(bootInput.insID)
 		e.bestEffortDestroy(ctx, bootInput.nodeID, bootInput.insID)
@@ -4047,6 +4072,8 @@ type bootInput struct {
 	identity         api.PlatformIdentity
 	spec             AppSpec
 	secretDeliveries []state.AppSecretDeliveryCandidate
+	runtimeInputs    *state.RuntimeConfigInputs
+	snapshotInputs   *state.RuntimeConfigInputs
 	// wakeID is the per-wake-attempt correlation handle (gaps analysis
 	// 2026-07-23). UUIDv7 minted at Phase 2 under the lock, persisted
 	// on the instances row in CreateInstance, and carried across the
@@ -6022,6 +6049,11 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	// filtering — see Wake builder for the full contract. ColdBoot /
 	// Prime shares the wake path; the dep row is the same one Wake
 	// loaded (so no extra DB read).
+	runtimeInputs, runtimeAPIEnv, err := e.prepareRuntimeConfigInputs(ctx, acct.ID, appID, dep.Scope)
+	if err != nil {
+		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "prime_runtime_inputs_invalid")
+		return fmt.Errorf("sched: prime: load runtime inputs: %w", err)
+	}
 	sealedEnv, err := e.loadSealedEnvDeliveryFor(ctx, acct.ID, appID, dep.Scope, envSecretsFromDep(dep))
 	if err != nil {
 		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "prime_sealed_env_invalid")
@@ -6037,6 +6069,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "prime_secret_version_changed")
 		return fmt.Errorf("sched: prime: sidecar secret versions changed during preparation: %w", err)
 	}
+	addRuntimeSecretVersions(&runtimeInputs, sealedEnv.Candidates, len(envSecretsFromDep(dep)) == 0)
 	mainDependencies, err := mainWorkloadDependenciesForDeployment(dep, sidecars)
 	if err != nil {
 		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "prime_main_dependencies_invalid")
@@ -6063,7 +6096,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		// config. Precedence at the guest layer is "secrets >
 		// api_env > manifest_env > os.environ".
 		APIEnv: appendPlatformIdentity(
-			e.loadAPIEnv(ctx, acct.ID, appID, dep.Scope),
+			runtimeAPIEnv,
 			app, dep, acct, placement.NodeID, ins.ID, placement.Region,
 		),
 		// ADR-031: see the Wake builder above. Prime is the
@@ -6152,7 +6185,8 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		}
 		e.ledger.SetCPUStartupBoostUntil(ins.ID, boostUntil)
 	}
-	if err := e.store.SetInstanceRuntime(ctx, ins.ID, out.Netns, out.HostIP, int(out.LeaseUID)); err != nil {
+	acknowledged, err := e.publishRuntimeConfigReceipt(ctx, ins.ID, ins.State, out.Netns, out.HostIP, int(out.LeaseUID), primeWakeID, &runtimeInputs)
+	if err != nil {
 		// Best-effort destroy; same rationale as Wake above. Uses a
 		// detached context so a cancelled caller ctx doesn't make the
 		// destroy fire-and-forget (it would still need its own
@@ -6162,11 +6196,11 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "prime_record_runtime_failed")
 		return fmt.Errorf("sched: prime: record runtime: %w", err)
 	}
-	e.transition(ctx, ins.ID, appID, state.StateRunning)
+	e.recordCommittedInstanceTransition(ctx, acknowledged, state.State(ins.State), state.StateRunning, appID, "state_transition", "")
 	e.recordAppSecretDelivery(ctx, primeDelivery, state.SecretDeliveryDelivered, "")
 	deliveryFinalized = true
 
-	ins.AppID, ins.DeploymentID = appID, deploymentID
+	ins = acknowledged
 	if executionModeForApp(app) == api.ExecutionModeWorker {
 		if err := e.emitDeploymentReady(ctx, deploymentID, api.ExecutionModeWorker, ins.ID, ""); err != nil {
 			e.bestEffortDestroy(ctx, placement.NodeID, ins.ID)
@@ -8142,6 +8176,12 @@ func (e *Engine) snapshotRejection(ctx context.Context, snap state.Snapshot, exp
 	if (appProtocol == api.AppProtocolHTTP2 || appProtocol == api.AppProtocolGRPC) &&
 		snap.BaseImageVersion != fcvm.FAAS_BASE_IMAGE_VERSION {
 		return ColdReasonBaseImage
+	}
+	if fresh, err := e.snapshotRuntimeConfigFresh(ctx, snap); err != nil {
+		return ColdReasonLookupFailed
+	} else if !fresh {
+		e.retireUnrestorableSnapshot(ctx, snap, ColdReasonStale)
+		return ColdReasonStale
 	}
 	return ""
 }

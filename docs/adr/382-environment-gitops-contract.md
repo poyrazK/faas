@@ -138,7 +138,7 @@ boundary comes from committed rows, remains stable across polling, and advances
 with a new wake identity when configuration changes again. PostgreSQL enqueues
 the scoped scheduler request in the same transaction as its durable effect;
 notification delivery alone cannot complete the work. Recovery checks resident
-process start boundaries, boot readiness, and restorable scoped snapshots before
+acknowledged boot inputs, boot readiness, and restorable scoped snapshots before
 completing an effect. Publishing convergence rejects pending runtime work or
 freshly observed runtime drift. The apid backend also performs this verification
 when intent already equals Git, and report mode exposes runtime drift without
@@ -154,7 +154,7 @@ recovery in a fresh controller. Scheduler tests drive the scoped event decoder
 and assert fresh capacity before retirement and zero stale snapshot captures.
 These checks use a VM transport fixture; native runtime acceptance remains open.
 Named environment variable changes now carry independent freshness stamps and
-invalidate only that environment's snapshots. Default variable overlays and
+invalidate only that environment's snapshots. Default-scope variable edits and
 application-shared credential changes retain a shared boundary. Snapshot
 publication serializes with both kinds of stamp through the application row;
 the scheduler consults the combined shared/scoped boundary before capture,
@@ -162,15 +162,38 @@ recovery, and refresh. Ordinary scoped variable edits use the same invalidation
 contract. PostgreSQL checks cover two managed environments on one application,
 delayed warm captures, and a publication waiting behind an uncommitted scoped
 stamp. Shared memory/PostgreSQL conformance checks cover the same isolation and
-default-overlay behavior.
+default-scope behavior. Scope reads remain strict; the shared invalidation
+boundary does not inject default-scope variables into named environments.
 
-Instance start time remains an indirect runtime freshness signal. A boot can
-read old inputs while a configuration transaction is uncommitted even if its
-instance row was created after the transaction's timestamp. Before runtime
-convergence is a launch claim, schedd must persist an acknowledgement tied to
-the committed boot inputs and carry that evidence through snapshot publication
-and restore; native tests must prove the guest used those inputs. Start times
-and scheduler notification success alone are insufficient evidence.
+Cold boots and deployment primes now publish readiness together with an
+immutable receipt of the non-secret variables sent to vmmd, the delivery
+versions of staged sealed secrets, and the configuration boundary read before
+loading those inputs. Receipts contain no secret plaintext or ciphertext and
+are kept out of API, audit, and notification payloads. Runtime verification
+compares the receipt against current committed variables and secret versions;
+an instance becoming ready after a config change cannot prove freshness by its
+start time. An explicit secret allowlist checks its staged references, while
+the legacy stage-all path checks the complete scoped secret set. Host-key
+resealing preserves delivery versions and does not invalidate input equality.
+
+Snapshot publication locks the application and source instance, rejects an old
+capture frame or stale receipt, and stores the captured receipt in the same
+transaction as the snapshot. Snapshot receipts survive source-instance cleanup.
+A restored process inherits its snapshot's inputs; a cold-boot fallback records
+the new payload. Capture guards, rolling refresh, prime recovery, and GitOps
+convergence require matching input evidence. A managed variable scope refuses
+legacy snapshots or ready instances without a receipt. Memory/PostgreSQL
+contract tests cover immutable acknowledgements, wrong-wake fences, atomic
+readiness, actual value/version comparisons, and receipt retention. A real
+PostgreSQL race admits a boot inside an uncommitted configuration window and
+rejects convergence and delayed publication despite later readiness. Scheduler
+transport tests cover that readiness race, inherited restore inputs, rolling
+replacement, and preparation failures that release admission.
+
+Native tests must still prove that the guest used the acknowledged payload.
+Migration and other runtime paths require their own evidence audit before
+full environment graph support can be claimed. Start times and scheduler
+notification success alone remain insufficient evidence.
 
 The remaining full feature gates include protected-branch
 approval evidence; environment-scoped workload creation, source/runtime,

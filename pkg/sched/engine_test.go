@@ -48,6 +48,7 @@ type fakeVMM struct {
 	restoreFallbackReason string
 	wakeErr               error
 	coldBootHook          func()
+	restoreHook           func()
 	snapErr               error
 	snapErrSequence       []error
 	// snapDeadline / snapHasDeadline capture the ctx deadline seen by
@@ -161,6 +162,9 @@ func (f *fakeVMM) CreateColdBoot(ctx context.Context, _, instance string, app Ap
 }
 
 func (f *fakeVMM) CreateFromSnapshot(ctx context.Context, _, instance string, app AppSpec, ref SnapshotRef) (*WakeOutcome, error) {
+	if f.restoreHook != nil {
+		f.restoreHook()
+	}
 	if d := f.sleepFor; d > 0 {
 		select {
 		case <-time.After(d):

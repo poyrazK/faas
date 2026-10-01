@@ -1882,6 +1882,46 @@ END $$;
 
 
 --
+-- Name: environment_runtime_inputs_fresh(uuid, text, timestamp with time zone, jsonb, jsonb, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_runtime_inputs_fresh(target_app uuid, target_scope text, boundary timestamp with time zone, observed_variables jsonb, observed_secrets jsonb, observed_all_secrets boolean) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+SELECT
+    NOT EXISTS (SELECT 1 FROM app_runtime_config_changes c WHERE c.app_id = target_app AND c.changed_at > boundary)
+    AND NOT EXISTS (SELECT 1 FROM app_runtime_config_scope_changes c WHERE c.app_id = target_app
+        AND c.scope IN ('default', target_scope) AND c.changed_at > boundary)
+    AND observed_variables = coalesce((SELECT jsonb_object_agg(v.key, v.value) FROM app_envs v
+        WHERE v.app_id = target_app AND v.scope = target_scope), '{}'::jsonb)
+    AND NOT EXISTS (SELECT 1 FROM jsonb_each_text(observed_secrets) r WHERE NOT EXISTS (
+        SELECT 1 FROM app_secrets v WHERE v.app_id = target_app AND v.scope = target_scope
+        AND v.scope || '/' || v.key = r.key AND v.delivery_version::text = r.value))
+    AND (NOT observed_all_secrets OR observed_secrets = coalesce((SELECT jsonb_object_agg(v.scope || '/' || v.key, v.delivery_version)
+        FROM app_secrets v WHERE v.app_id = target_app AND v.scope = target_scope), '{}'::jsonb));
+$$;
+
+
+--
+-- Name: environment_runtime_receipt_required(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_runtime_receipt_required(target_app uuid, target_scope text) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+SELECT EXISTS (
+    SELECT 1 FROM environment_git_sources s JOIN project_environments e ON e.id = s.environment_id
+    JOIN environment_gitops_resources r ON r.source_id = s.id
+    WHERE r.app_id = target_app AND e.slug = target_scope
+    AND (EXISTS (SELECT 1 FROM environment_managed_fields f WHERE f.source_id = s.id
+        AND f.resource = r.logical_name AND f.field_path LIKE 'variables/%')
+      OR EXISTS (SELECT 1 FROM environment_gitops_runtime_effects x WHERE x.source_id = s.id
+        AND x.app_id = r.app_id AND x.completed_at IS NULL))
+);
+$$;
+
+
+--
 -- Name: event_fanout_pattern_matches(text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -6229,6 +6269,26 @@ CREATE TABLE public.environment_managed_fields (
 
 
 --
+-- Name: instance_runtime_config_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.instance_runtime_config_receipts (
+    instance_id uuid NOT NULL,
+    wake_id uuid NOT NULL,
+    scope text NOT NULL,
+    boundary_at timestamp with time zone NOT NULL,
+    variables jsonb NOT NULL,
+    secret_versions jsonb NOT NULL,
+    all_secrets boolean NOT NULL,
+    acknowledged_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT instance_runtime_config_receipts_boundary_at_check CHECK ((boundary_at >= '1970-01-01 02:00:00+02'::timestamp with time zone)),
+    CONSTRAINT instance_runtime_config_receipts_scope_check CHECK (((scope <> ''::text) AND (length(scope) <= 64))),
+    CONSTRAINT instance_runtime_config_receipts_secret_versions_check CHECK (((jsonb_typeof(secret_versions) = 'object'::text) AND (octet_length((secret_versions)::text) <= 1048576))),
+    CONSTRAINT instance_runtime_config_receipts_variables_check CHECK (((jsonb_typeof(variables) = 'object'::text) AND (octet_length((variables)::text) <= 1048576)))
+);
+
+
+--
 -- Name: instances; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -6280,6 +6340,24 @@ CREATE TABLE public.project_environments (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT project_environments_slug_shape CHECK ((slug ~ '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$'::text))
+);
+
+
+--
+-- Name: snapshot_runtime_config_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.snapshot_runtime_config_receipts (
+    snapshot_id uuid NOT NULL,
+    scope text NOT NULL,
+    boundary_at timestamp with time zone NOT NULL,
+    variables jsonb NOT NULL,
+    secret_versions jsonb NOT NULL,
+    all_secrets boolean NOT NULL,
+    CONSTRAINT snapshot_runtime_config_receipts_boundary_at_check CHECK ((boundary_at >= '1970-01-01 02:00:00+02'::timestamp with time zone)),
+    CONSTRAINT snapshot_runtime_config_receipts_scope_check CHECK (((scope <> ''::text) AND (length(scope) <= 64))),
+    CONSTRAINT snapshot_runtime_config_receipts_secret_versions_check CHECK (((jsonb_typeof(secret_versions) = 'object'::text) AND (octet_length((secret_versions)::text) <= 1048576))),
+    CONSTRAINT snapshot_runtime_config_receipts_variables_check CHECK (((jsonb_typeof(variables) = 'object'::text) AND (octet_length((variables)::text) <= 1048576)))
 );
 
 
@@ -6366,7 +6444,9 @@ CREATE VIEW public.environment_gitops_runtime_targets AS
     ( SELECT count(*) AS count
            FROM (public.instances i
              JOIN public.deployments d ON ((d.id = i.deployment_id)))
-          WHERE ((i.app_id = b.app_id) AND (d.scope = b.environment_slug) AND (i.state = ANY (ARRAY['waking'::text, 'cold_booting'::text, 'running'::text, 'warm'::text, 'draining'::text])) AND ((i.started_at IS NULL) OR (i.started_at <= b.required_at)))) AS stale_residents,
+          WHERE ((i.app_id = b.app_id) AND (d.scope = b.environment_slug) AND (i.state = ANY (ARRAY['waking'::text, 'cold_booting'::text, 'running'::text, 'warm'::text, 'draining'::text])) AND (NOT (EXISTS ( SELECT 1
+                   FROM public.instance_runtime_config_receipts r
+                  WHERE ((r.instance_id = i.id) AND (r.wake_id = i.wake_id) AND (r.scope = b.environment_slug) AND (r.boundary_at >= b.required_at) AND public.environment_runtime_inputs_fresh(b.app_id, r.scope, r.boundary_at, r.variables, r.secret_versions, r.all_secrets))))))) AS stale_residents,
     ( SELECT count(*) AS count
            FROM (public.instances i
              JOIN public.deployments d ON ((d.id = i.deployment_id)))
@@ -6374,7 +6454,9 @@ CREATE VIEW public.environment_gitops_runtime_targets AS
     ( SELECT count(*) AS count
            FROM (public.snapshots p
              JOIN public.deployments d ON ((d.id = p.deployment_id)))
-          WHERE ((d.app_id = b.app_id) AND (d.scope = b.environment_slug) AND (NOT p.stale) AND (NOT p.delete_pending) AND (p.created_at <= b.required_at))) AS stale_snapshots
+          WHERE ((d.app_id = b.app_id) AND (d.scope = b.environment_slug) AND (NOT p.stale) AND (NOT p.delete_pending) AND (NOT (EXISTS ( SELECT 1
+                   FROM public.snapshot_runtime_config_receipts r
+                  WHERE ((r.snapshot_id = p.id) AND (r.scope = b.environment_slug) AND (r.boundary_at >= b.required_at) AND public.environment_runtime_inputs_fresh(b.app_id, r.scope, r.boundary_at, r.variables, r.secret_versions, r.all_secrets))))))) AS stale_snapshots
    FROM boundaries b;
 
 
@@ -12686,6 +12768,14 @@ ALTER TABLE ONLY public.instance_billing_intervals
 
 
 --
+-- Name: instance_runtime_config_receipts instance_runtime_config_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.instance_runtime_config_receipts
+    ADD CONSTRAINT instance_runtime_config_receipts_pkey PRIMARY KEY (instance_id);
+
+
+--
 -- Name: instances instances_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -14163,6 +14253,14 @@ ALTER TABLE ONLY public.snapshot_replicas
 
 ALTER TABLE ONLY public.snapshot_restore_pressure_leases
     ADD CONSTRAINT snapshot_restore_pressure_leases_pkey PRIMARY KEY (lease_id);
+
+
+--
+-- Name: snapshot_runtime_config_receipts snapshot_runtime_config_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.snapshot_runtime_config_receipts
+    ADD CONSTRAINT snapshot_runtime_config_receipts_pkey PRIMARY KEY (snapshot_id);
 
 
 --
@@ -21879,6 +21977,14 @@ ALTER TABLE ONLY public.instance_billing_intervals
 
 
 --
+-- Name: instance_runtime_config_receipts instance_runtime_config_receipts_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.instance_runtime_config_receipts
+    ADD CONSTRAINT instance_runtime_config_receipts_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.instances(id) ON DELETE CASCADE;
+
+
+--
 -- Name: instances instances_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -23556,6 +23662,14 @@ ALTER TABLE ONLY public.snapshot_replicas
 
 ALTER TABLE ONLY public.snapshot_restore_pressure_leases
     ADD CONSTRAINT snapshot_restore_pressure_leases_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: snapshot_runtime_config_receipts snapshot_runtime_config_receipts_snapshot_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.snapshot_runtime_config_receipts
+    ADD CONSTRAINT snapshot_runtime_config_receipts_snapshot_id_fkey FOREIGN KEY (snapshot_id) REFERENCES public.snapshots(id) ON DELETE CASCADE;
 
 
 --

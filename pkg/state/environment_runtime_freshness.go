@@ -9,7 +9,7 @@ import (
 
 // EnvironmentRuntimeFreshnessStore distinguishes scoped variables from
 // changes to shared credentials. Its result includes the shared stamp and
-// default-scope overlays, so those still invalidate every affected guest.
+// default-scope changes, so those still invalidate every affected guest.
 type EnvironmentRuntimeFreshnessStore interface {
 	AppRuntimeConfigChangedAtInScope(context.Context, string, string) (time.Time, bool, error)
 }
@@ -18,8 +18,8 @@ type EnvironmentRuntimeInvalidationStore interface {
 	InvalidateAppSnapshotsInScope(context.Context, string, string) (int, error)
 }
 
-// A default-scope value overlays every environment and retains the existing
-// application-wide boundary. Named environments invalidate only their cache.
+// Default-scope changes retain the existing application-wide invalidation
+// boundary. Named environments invalidate only their cache.
 func InvalidateAppSnapshotsInScope(ctx context.Context, store Store, appID, scope string) (int, error) {
 	scope = normalizedDeploymentScope(scope)
 	if api.ValidateScope(scope) != nil {
@@ -76,7 +76,12 @@ func (m *MemStore) markEnvironmentRuntimeChangedAndSnapshotsLocked(appID, scope 
 	invalidated := 0
 	for id, snapshot := range m.snapshots {
 		deployment := m.deployments[snapshot.DeploymentID]
-		if deployment.AppID == appID && normalizedDeploymentScope(deployment.Scope) == scope && !snapshot.Stale && !snapshot.CreatedAt.After(at) {
+		if deployment.AppID != appID || normalizedDeploymentScope(deployment.Scope) != scope || snapshot.Stale {
+			continue
+		}
+		inputs, exists := m.snapshotRuntimeConfigReceipts[snapshot.ID]
+		proofStale := m.runtimeConfigReceiptRequiredLocked(appID, scope) && (!exists || inputs.Scope != scope || inputs.Boundary.Before(at) || !m.runtimeConfigInputsFreshLocked(appID, inputs))
+		if !snapshot.CreatedAt.After(at) || proofStale {
 			snapshot.Stale = true
 			m.snapshots[id] = snapshot
 			invalidated++

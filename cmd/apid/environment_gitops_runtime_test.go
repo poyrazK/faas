@@ -83,6 +83,24 @@ func TestEnvironmentGitOpsBackendWaitsForRuntimeReadinessAfterIntentAndFleetConv
 	if err := store.UpdateInstanceState(t.Context(), fresh.ID, string(state.StateRunning)); err != nil {
 		t.Fatal(err)
 	}
+	boundary, stamped, err := state.RuntimeConfigChangedAtForScope(t.Context(), store, app.ID, deployment.Scope)
+	if err != nil || !stamped {
+		t.Fatalf("runtime boundary: %v %v", stamped, err)
+	}
+	variables, err := store.ListAppEnvInScope(t.Context(), app.AccountID, app.ID, deployment.Scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputs := state.RuntimeConfigInputs{Scope: deployment.Scope, Boundary: boundary, Variables: map[string]string{}, AllSecrets: true}
+	for _, row := range variables {
+		inputs.Variables[row.Key] = row.Value
+		if row.UpdatedAt.After(inputs.Boundary) {
+			inputs.Boundary = row.UpdatedAt
+		}
+	}
+	if err := store.RecordInstanceRuntimeConfigReceipt(t.Context(), fresh.ID, fresh.WakeID, inputs); err != nil {
+		t.Fatal(err)
+	}
 	worker.Now = func() time.Time { return time.Now().Add(4 * time.Second) }
 	if worked, err := worker.RunOnce(t.Context()); err != nil || !worked {
 		t.Fatalf("ready recovery: %v %v", worked, err)

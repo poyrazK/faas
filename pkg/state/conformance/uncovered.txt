@@ -156,7 +156,6 @@ DeleteDeploymentOpenAPIDoc
 DeleteDeploymentScopeExclusion
 DeleteEdgeRule
 DeleteGithubInstallBinding
-DeleteInstance
 DeleteInvocationsByIDs
 DeleteManagedObjectStorageSecrets
 DeleteManagedPostgresSecret
@@ -431,7 +430,6 @@ MarkRuntimeConfigApplied
 MarkRuntimeConfigOperationBlocked
 MarkRuntimeConfigOperationFailed
 MarkRuntimeConfigOperationSucceeded
-MarkSnapshotStale
 MarkSnapshotStaleByAppProtocol
 MarkTenantHostnameCheckFailed
 MarkTenantHostnameVerified
@@ -613,7 +611,6 @@ UpdateTenantSurfaceStatus
 UpdateTrigger
 UpsertAccountSpendSnapshot
 UpsertAppEnv
-UpsertAppEnvInScope
 UpsertAppLogDrainHealth
 UpsertAppOpenAPIDoc
 UpsertAppOpenAPIDocIfUnderQuota

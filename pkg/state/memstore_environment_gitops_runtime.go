@@ -54,15 +54,19 @@ func (m *MemStore) gitOpsRuntimeTargetsLocked(memory *environmentGitOpsMemory) [
 				target.StartingResidents++
 			}
 			if state == StateWaking || state == StateColdBooting || state == StateRunning || state == StateWarm || state == StateDraining {
-				if !instance.StartedAt.After(required) {
+				inputs, exists := m.instanceRuntimeConfigInputsLocked(instance.ID)
+				if !exists || inputs.Scope != target.Environment || inputs.Boundary.Before(required) || !m.runtimeConfigInputsFreshLocked(appID, inputs) {
 					target.StaleResidents++
 				}
 			}
 		}
 		for _, snapshot := range m.snapshots {
 			deployment := m.deployments[snapshot.DeploymentID]
-			if deployment.AppID == appID && deployment.Scope == target.Environment && !snapshot.Stale && !snapshot.DeletePending && !snapshot.CreatedAt.After(required) {
-				target.StaleSnapshots++
+			if deployment.AppID == appID && deployment.Scope == target.Environment && !snapshot.Stale && !snapshot.DeletePending {
+				inputs, exists := m.snapshotRuntimeConfigReceipts[snapshot.ID]
+				if !exists || inputs.Scope != target.Environment || inputs.Boundary.Before(required) || !m.runtimeConfigInputsFreshLocked(appID, inputs) {
+					target.StaleSnapshots++
+				}
 			}
 		}
 		targets = append(targets, target)

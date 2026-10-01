@@ -2,12 +2,13 @@ package sched
 
 import (
 	"context"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// runtimeConfigStale reports whether the app's secrets or environment changed
-// after ins's process started (issue #3360). Guest-init reads the environment
+// runtimeConfigStale verifies the inputs acknowledged for this process, rather
+// than inferring them from readiness time. Guest-init reads the environment
 // once at boot, so such a process still holds the previous values. Capturing
 // it would publish a fresh snapshot of the old environment after apid already
 // invalidated every existing one, and the next wake would restore it: a
@@ -27,5 +28,8 @@ func (e *Engine) runtimeConfigStale(ctx context.Context, ins state.Instance) boo
 			"instance", ins.ID, "app", ins.AppID, "err", err)
 		return true
 	}
-	return ok && !ins.StartedAt.After(changedAt)
+	if !ok {
+		changedAt = time.Unix(0, 0).UTC()
+	}
+	return e.runtimeConfigReceiptStale(ctx, ins, changedAt, deployment.Scope)
 }

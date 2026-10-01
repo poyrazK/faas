@@ -17448,16 +17448,17 @@ func (s *PgStore) PublishSnapshotIfRuntimeFresh(ctx context.Context, snap Snapsh
 	appID := pgUUIDString(scope.AppID)
 	var currentStartedAt *time.Time
 	if sourceInstanceID != "" {
-		var sourceAppID, sourceDeploymentID string
-		err = tx.QueryRow(ctx, `select app_id::text, deployment_id::text, started_at
-			from instances where id = $1`, sourceInstanceID).Scan(&sourceAppID, &sourceDeploymentID, &currentStartedAt)
+		source, err := sqlc.New().LockSnapshotRuntimeSource(ctx, tx, mustPgUUID(sourceInstanceID))
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Snapshot{}, ErrSnapshotRuntimeStale
 		}
 		if err != nil {
 			return Snapshot{}, err
 		}
-		if sourceAppID != appID || sourceDeploymentID != snap.DeploymentID || sourceStartedAt.IsZero() ||
+		if source.StartedAt.Valid {
+			currentStartedAt = &source.StartedAt.Time
+		}
+		if pgUUIDString(source.AppID) != appID || pgUUIDString(source.DeploymentID) != snap.DeploymentID || sourceStartedAt.IsZero() ||
 			currentStartedAt == nil || currentStartedAt.IsZero() || sourceStartedAt.After(*currentStartedAt) {
 			return Snapshot{}, ErrSnapshotRuntimeStale
 		}
@@ -17466,12 +17467,37 @@ func (s *PgStore) PublishSnapshotIfRuntimeFresh(ctx context.Context, snap Snapsh
 	if err != nil {
 		return Snapshot{}, err
 	}
-	if changed && !sourceStartedAt.After(changedAt) {
+	inputs, haveReceipt, err := readInstanceRuntimeConfigReceipt(ctx, tx, sourceInstanceID)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	required, err := sqlc.New().RuntimeConfigReceiptRequired(ctx, tx, sqlc.RuntimeConfigReceiptRequiredParams{AppID: scope.AppID, Scope: scope.Scope})
+	if err != nil {
+		return Snapshot{}, mapErr(err)
+	}
+	if haveReceipt {
+		fresh, err := readRuntimeConfigInputsFresh(ctx, tx, appID, inputs)
+		if err != nil {
+			return Snapshot{}, err
+		}
+		if currentStartedAt == nil || !sourceStartedAt.Equal(*currentStartedAt) || inputs.Scope != scope.Scope || !fresh {
+			return Snapshot{}, ErrSnapshotRuntimeStale
+		}
+	} else if required || changed && !sourceStartedAt.After(changedAt) {
 		return Snapshot{}, ErrSnapshotRuntimeStale
 	}
 	stored, err := createSnapshotWithQuerier(ctx, tx, snap)
 	if err != nil {
 		return Snapshot{}, err
+	}
+	if haveReceipt {
+		variables, secrets := runtimeConfigInputsJSON(inputs)
+		if err := sqlc.New().InsertSnapshotRuntimeConfigReceipt(ctx, tx, sqlc.InsertSnapshotRuntimeConfigReceiptParams{
+			SnapshotID: mustPgUUID(stored.ID), Scope: inputs.Scope, BoundaryAt: gitOpsTime(inputs.Boundary),
+			Variables: variables, SecretVersions: secrets, AllSecrets: inputs.AllSecrets,
+		}); err != nil {
+			return Snapshot{}, mapErr(err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Snapshot{}, err

@@ -2065,6 +2065,17 @@ type InstanceBillingInterval struct {
 	EndedAt    pgtype.Timestamptz
 }
 
+type InstanceRuntimeConfigReceipt struct {
+	InstanceID     pgtype.UUID
+	WakeID         pgtype.UUID
+	Scope          string
+	BoundaryAt     pgtype.Timestamptz
+	Variables      []byte
+	SecretVersions []byte
+	AllSecrets     bool
+	AcknowledgedAt pgtype.Timestamptz
+}
+
 type Invocation struct {
 	ID                       pgtype.UUID
 	AppID                    pgtype.UUID
@@ -4073,6 +4084,15 @@ type SnapshotRestorePressureLease struct {
 	LeaseID   pgtype.UUID
 	NodeID    pgtype.UUID
 	ExpiresAt pgtype.Timestamptz
+}
+
+type SnapshotRuntimeConfigReceipt struct {
+	SnapshotID     pgtype.UUID
+	Scope          string
+	BoundaryAt     pgtype.Timestamptz
+	Variables      []byte
+	SecretVersions []byte
+	AllSecrets     bool
 }
 
 // Per-(account, app, day) byte totals from snapshots.mem_bytes + disk_bytes + overlay staging. Source: pkg/meter/storage.go cron tick. ADR-049 §B.3. Informational only — not billed today; the future "Pro plan 1 GB included" PR consumes this surface.

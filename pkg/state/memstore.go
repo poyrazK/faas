@@ -154,6 +154,8 @@ type MemStore struct {
 	// runtimeConfigChangedAt mirrors app_runtime_config_changes (issue #3360).
 	runtimeConfigChangedAt            map[string]time.Time
 	environmentRuntimeConfigChangedAt map[environmentRuntimeKey]time.Time
+	instanceRuntimeConfigReceipts     map[string]instanceRuntimeConfigReceipt
+	snapshotRuntimeConfigReceipts     map[string]RuntimeConfigInputs
 	// serviceCallerKeys mirrors service_caller_keys: one published
 	// public key per node (ADR-206). Rotated keys remain trusted only for
 	// the assertion maximum TTL so requests already in flight can finish.
@@ -6297,6 +6299,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	for key, v := range m.instances {
 		if v.AppID == id {
 			delete(m.instances, key)
+			delete(m.instanceRuntimeConfigReceipts, key)
 		}
 	}
 	depIDs := make(map[string]struct{})
@@ -6325,6 +6328,8 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	for _, snap := range m.snapshots {
 		if _, ok := depIDs[snap.DeploymentID]; !ok {
 			filtered = append(filtered, snap)
+		} else {
+			delete(m.snapshotRuntimeConfigReceipts, snap.ID)
 		}
 	}
 	m.snapshots = filtered
@@ -14027,6 +14032,7 @@ func (m *MemStore) DeleteParkedInstancesOlderThan(_ context.Context, threshold t
 	}
 	for _, row := range candidates {
 		delete(m.instances, row.id)
+		delete(m.instanceRuntimeConfigReceipts, row.id)
 	}
 	return int64(len(candidates)), nil
 }
@@ -14042,6 +14048,7 @@ func (m *MemStore) DeleteInstance(_ context.Context, id string) error {
 		return ErrNotFound
 	}
 	delete(m.instances, id)
+	delete(m.instanceRuntimeConfigReceipts, id)
 	return nil
 }
 
@@ -14226,8 +14233,10 @@ func (m *MemStore) PublishSnapshotIfRuntimeFresh(_ context.Context, snap Snapsho
 		return Snapshot{}, ErrNotFound
 	}
 	changedAt, changed := m.environmentRuntimeChangedAtLocked(dep.AppID, dep.Scope)
+	inputs, haveReceipt := m.instanceRuntimeConfigInputsLocked(sourceInstanceID)
+	required := m.runtimeConfigReceiptRequiredLocked(dep.AppID, dep.Scope)
 	if sourceInstanceID == "" {
-		if changed {
+		if changed || required {
 			return Snapshot{}, ErrSnapshotRuntimeStale
 		}
 	} else {
@@ -14236,11 +14245,22 @@ func (m *MemStore) PublishSnapshotIfRuntimeFresh(_ context.Context, snap Snapsho
 			ins.StartedAt.IsZero() || sourceStartedAt.After(ins.StartedAt) {
 			return Snapshot{}, ErrSnapshotRuntimeStale
 		}
-		if changed && !sourceStartedAt.After(changedAt) {
+		if haveReceipt {
+			if !sourceStartedAt.Equal(ins.StartedAt) || inputs.Scope != normalizedDeploymentScope(dep.Scope) || !m.runtimeConfigInputsFreshLocked(dep.AppID, inputs) {
+				return Snapshot{}, ErrSnapshotRuntimeStale
+			}
+		} else if required || changed && !sourceStartedAt.After(changedAt) {
 			return Snapshot{}, ErrSnapshotRuntimeStale
 		}
 	}
-	return m.createSnapshotLocked(snap)
+	stored, err := m.createSnapshotLocked(snap)
+	if err == nil && haveReceipt {
+		if m.snapshotRuntimeConfigReceipts == nil {
+			m.snapshotRuntimeConfigReceipts = map[string]RuntimeConfigInputs{}
+		}
+		m.snapshotRuntimeConfigReceipts[stored.ID] = cloneRuntimeConfigInputs(inputs)
+	}
+	return stored, err
 }
 
 func (m *MemStore) createSnapshotLocked(snap Snapshot) (Snapshot, error) {
@@ -14550,6 +14570,7 @@ func (m *MemStore) DeleteSnapshotsByID(_ context.Context, ids []string) (int64, 
 	var removed int64
 	for _, s := range m.snapshots {
 		if _, drop := idSet[s.ID]; drop {
+			delete(m.snapshotRuntimeConfigReceipts, s.ID)
 			removed++
 			continue
 		}
@@ -14707,6 +14728,7 @@ func (m *MemStore) DeleteSnapshotsStaleOlderThan(_ context.Context, retention ti
 	kept := m.snapshots[:0]
 	for i := range m.snapshots {
 		if m.snapshots[i].Stale && m.snapshots[i].CreatedAt.Before(cutoff) {
+			delete(m.snapshotRuntimeConfigReceipts, m.snapshots[i].ID)
 			n++
 			continue
 		}
@@ -20447,6 +20469,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for iid, ins := range m.instances {
 		if app, ok := m.apps[ins.AppID]; ok && app.AccountID == id {
 			delete(m.instances, iid)
+			delete(m.instanceRuntimeConfigReceipts, iid)
 		}
 	}
 	for taskID, task := range m.appTasks {
@@ -20536,6 +20559,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	}
 	for i := len(m.snapshots) - 1; i >= 0; i-- {
 		if _, ok := deletedDeployments[m.snapshots[i].DeploymentID]; ok {
+			delete(m.snapshotRuntimeConfigReceipts, m.snapshots[i].ID)
 			m.snapshots = append(m.snapshots[:i], m.snapshots[i+1:]...)
 		}
 	}

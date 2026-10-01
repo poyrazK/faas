@@ -6033,6 +6033,33 @@ func (q *Queries) InsertRequestTelemetry(ctx context.Context, db DBTX, arg Inser
 	return err
 }
 
+const insertSnapshotRuntimeConfigReceipt = `-- name: InsertSnapshotRuntimeConfigReceipt :exec
+INSERT INTO snapshot_runtime_config_receipts(snapshot_id, scope, boundary_at, variables, secret_versions, all_secrets)
+VALUES ($1::uuid, $2::text, $3::timestamptz, $4::jsonb,
+    $5::jsonb, $6::boolean)
+`
+
+type InsertSnapshotRuntimeConfigReceiptParams struct {
+	SnapshotID     pgtype.UUID
+	Scope          string
+	BoundaryAt     pgtype.Timestamptz
+	Variables      []byte
+	SecretVersions []byte
+	AllSecrets     bool
+}
+
+func (q *Queries) InsertSnapshotRuntimeConfigReceipt(ctx context.Context, db DBTX, arg InsertSnapshotRuntimeConfigReceiptParams) error {
+	_, err := db.Exec(ctx, insertSnapshotRuntimeConfigReceipt,
+		arg.SnapshotID,
+		arg.Scope,
+		arg.BoundaryAt,
+		arg.Variables,
+		arg.SecretVersions,
+		arg.AllSecrets,
+	)
+	return err
+}
+
 const insertTriggerDeadLetter = `-- name: InsertTriggerDeadLetter :exec
 insert into trigger_dead_letter (record_id, trigger_id, reason, routed_to, detail)
 values ($1, $2, $3, $4, $5::jsonb)
@@ -6199,6 +6226,27 @@ func (q *Queries) InstanceListByNodeForRecovery(ctx context.Context, db DBTX, no
 	return items, nil
 }
 
+const instanceRuntimeConfigReceipt = `-- name: InstanceRuntimeConfigReceipt :one
+SELECT r.instance_id, r.wake_id, r.scope, r.boundary_at, r.variables, r.secret_versions, r.all_secrets, r.acknowledged_at FROM instance_runtime_config_receipts r JOIN instances i ON i.id = r.instance_id AND i.wake_id = r.wake_id
+WHERE r.instance_id = $1::uuid
+`
+
+func (q *Queries) InstanceRuntimeConfigReceipt(ctx context.Context, db DBTX, instanceID pgtype.UUID) (InstanceRuntimeConfigReceipt, error) {
+	row := db.QueryRow(ctx, instanceRuntimeConfigReceipt, instanceID)
+	var i InstanceRuntimeConfigReceipt
+	err := row.Scan(
+		&i.InstanceID,
+		&i.WakeID,
+		&i.Scope,
+		&i.BoundaryAt,
+		&i.Variables,
+		&i.SecretVersions,
+		&i.AllSecrets,
+		&i.AcknowledgedAt,
+	)
+	return i, err
+}
+
 const invalidateEnvironmentGitOpsRuntimeAtBoundary = `-- name: InvalidateEnvironmentGitOpsRuntimeAtBoundary :exec
 WITH stamped AS (
     INSERT INTO app_runtime_config_scope_changes(app_id, scope, changed_at)
@@ -6208,7 +6256,9 @@ WITH stamped AS (
 )
 UPDATE snapshots p SET stale = true FROM deployments d, stamped c
 WHERE p.deployment_id = d.id AND d.app_id = c.app_id AND d.scope = c.scope
-AND p.created_at <= c.changed_at AND NOT p.stale
+AND NOT p.stale AND (p.created_at <= c.changed_at OR NOT EXISTS (
+    SELECT 1 FROM snapshot_runtime_config_receipts r WHERE r.snapshot_id = p.id AND r.scope = d.scope AND r.boundary_at >= c.changed_at
+    AND environment_runtime_inputs_fresh(d.app_id, r.scope, r.boundary_at, r.variables, r.secret_versions, r.all_secrets)))
 `
 
 type InvalidateEnvironmentGitOpsRuntimeAtBoundaryParams struct {
@@ -6231,7 +6281,10 @@ WITH stamped AS (
 )
 UPDATE snapshots SET stale = true FROM deployments d, stamped
 WHERE snapshots.deployment_id = d.id AND d.app_id = stamped.app_id AND d.scope = stamped.scope
-AND snapshots.created_at <= stamped.changed_at AND NOT snapshots.stale
+AND NOT snapshots.stale AND (snapshots.created_at <= stamped.changed_at OR
+    (environment_runtime_receipt_required(d.app_id, d.scope) AND NOT EXISTS (
+        SELECT 1 FROM snapshot_runtime_config_receipts r WHERE r.snapshot_id = snapshots.id
+        AND r.scope = d.scope AND r.boundary_at >= stamped.changed_at AND environment_runtime_inputs_fresh(d.app_id, r.scope, r.boundary_at, r.variables, r.secret_versions, r.all_secrets))))
 `
 
 type InvalidateEnvironmentGitOpsRuntimeConfigParams struct {
@@ -11121,6 +11174,24 @@ func (q *Queries) LockSnapshotRuntimePublicationScope(ctx context.Context, db DB
 	return i, err
 }
 
+const lockSnapshotRuntimeSource = `-- name: LockSnapshotRuntimeSource :one
+SELECT app_id, deployment_id, started_at FROM instances
+WHERE id = $1::uuid FOR UPDATE
+`
+
+type LockSnapshotRuntimeSourceRow struct {
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	StartedAt    pgtype.Timestamptz
+}
+
+func (q *Queries) LockSnapshotRuntimeSource(ctx context.Context, db DBTX, instanceID pgtype.UUID) (LockSnapshotRuntimeSourceRow, error) {
+	row := db.QueryRow(ctx, lockSnapshotRuntimeSource, instanceID)
+	var i LockSnapshotRuntimeSourceRow
+	err := row.Scan(&i.AppID, &i.DeploymentID, &i.StartedAt)
+	return i, err
+}
+
 const markClaimedTriggerRecordDeadLetter = `-- name: MarkClaimedTriggerRecordDeadLetter :execrows
 UPDATE trigger_records
    SET state = 'dead_letter', attempts = attempts + 1, last_error = $3,
@@ -14866,6 +14937,66 @@ func (q *Queries) PruneDevBridgeSessions(ctx context.Context, db DBTX, arg Prune
 	return err
 }
 
+const publishInstanceRuntimeConfig = `-- name: PublishInstanceRuntimeConfig :one
+UPDATE instances i SET netns = $1, host_ip = $2::text::inet,
+    guest_uid = $3, started_at = clock_timestamp(), state = 'running'
+WHERE i.id = $4::uuid AND i.state = $5::text AND i.wake_id = $6::uuid
+AND EXISTS (SELECT 1 FROM deployments d WHERE d.id = i.deployment_id AND d.scope = $7::text)
+RETURNING i.id, i.app_id, i.deployment_id, i.state, i.netns, i.guest_uid, i.host_ip, i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.terminal_at, i.node_id, i.wake_id, i.org_id, i.migrated_from_node_id, i.migrated_at, i.lease_token, i.framework_ready_at, i.tail_count, i.request_count, i.kind, i.job_id, i.mode, i.migration_started_at, i.startup_cpu_boost_until
+`
+
+type PublishInstanceRuntimeConfigParams struct {
+	Netns         pgtype.Text
+	HostIp        string
+	GuestUid      pgtype.Int4
+	InstanceID    pgtype.UUID
+	ExpectedState string
+	WakeID        pgtype.UUID
+	Scope         string
+}
+
+func (q *Queries) PublishInstanceRuntimeConfig(ctx context.Context, db DBTX, arg PublishInstanceRuntimeConfigParams) (Instance, error) {
+	row := db.QueryRow(ctx, publishInstanceRuntimeConfig,
+		arg.Netns,
+		arg.HostIp,
+		arg.GuestUid,
+		arg.InstanceID,
+		arg.ExpectedState,
+		arg.WakeID,
+		arg.Scope,
+	)
+	var i Instance
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.State,
+		&i.Netns,
+		&i.GuestUid,
+		&i.HostIp,
+		&i.RamMb,
+		&i.StartedAt,
+		&i.LastRequestAt,
+		&i.ParkedAt,
+		&i.TerminalAt,
+		&i.NodeID,
+		&i.WakeID,
+		&i.OrgID,
+		&i.MigratedFromNodeID,
+		&i.MigratedAt,
+		&i.LeaseToken,
+		&i.FrameworkReadyAt,
+		&i.TailCount,
+		&i.RequestCount,
+		&i.Kind,
+		&i.JobID,
+		&i.Mode,
+		&i.MigrationStartedAt,
+		&i.StartupCpuBoostUntil,
+	)
+	return i, err
+}
+
 const putEnvironmentGitOpsOverride = `-- name: PutEnvironmentGitOpsOverride :execrows
 INSERT INTO environment_management_overrides(environment_id, resource, field_path, authorized_by, reason, expires_at)
 SELECT f.environment_id, f.resource, f.field_path, $1::text, $2::text, $3::timestamptz
@@ -15244,6 +15375,47 @@ func (q *Queries) RecordEnvironmentGitSourcePoll(ctx context.Context, db DBTX, a
 		arg.SourceID,
 	)
 	return err
+}
+
+const recordInstanceRuntimeConfigReceipt = `-- name: RecordInstanceRuntimeConfigReceipt :execrows
+INSERT INTO instance_runtime_config_receipts(instance_id, wake_id, scope, boundary_at, variables, secret_versions, all_secrets)
+SELECT i.id, i.wake_id, d.scope, $1::timestamptz, $2::jsonb, $3::jsonb, $4::boolean
+FROM instances i JOIN deployments d ON d.id = i.deployment_id
+WHERE i.id = $5::uuid AND i.wake_id = $6::uuid AND i.state = 'running'
+AND d.scope = $7::text FOR UPDATE OF i
+ON CONFLICT (instance_id) DO UPDATE SET wake_id = excluded.wake_id, scope = excluded.scope,
+    boundary_at = excluded.boundary_at, variables = excluded.variables, secret_versions = excluded.secret_versions,
+    all_secrets = excluded.all_secrets, acknowledged_at = now()
+WHERE instance_runtime_config_receipts.wake_id <> excluded.wake_id OR
+    (instance_runtime_config_receipts.scope = excluded.scope AND instance_runtime_config_receipts.boundary_at = excluded.boundary_at
+     AND instance_runtime_config_receipts.variables = excluded.variables AND instance_runtime_config_receipts.secret_versions = excluded.secret_versions
+     AND instance_runtime_config_receipts.all_secrets = excluded.all_secrets)
+`
+
+type RecordInstanceRuntimeConfigReceiptParams struct {
+	BoundaryAt     pgtype.Timestamptz
+	Variables      []byte
+	SecretVersions []byte
+	AllSecrets     bool
+	InstanceID     pgtype.UUID
+	WakeID         pgtype.UUID
+	Scope          string
+}
+
+func (q *Queries) RecordInstanceRuntimeConfigReceipt(ctx context.Context, db DBTX, arg RecordInstanceRuntimeConfigReceiptParams) (int64, error) {
+	result, err := db.Exec(ctx, recordInstanceRuntimeConfigReceipt,
+		arg.BoundaryAt,
+		arg.Variables,
+		arg.SecretVersions,
+		arg.AllSecrets,
+		arg.InstanceID,
+		arg.WakeID,
+		arg.Scope,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const recordMailSuppression = `-- name: RecordMailSuppression :one
@@ -17154,6 +17326,50 @@ func (q *Queries) RollupMirrorResults(ctx context.Context, db DBTX, arg RollupMi
 	return result.RowsAffected(), nil
 }
 
+const runtimeConfigInputsFresh = `-- name: RuntimeConfigInputsFresh :one
+SELECT environment_runtime_inputs_fresh($1::uuid, $2::text, $3::timestamptz,
+    $4::jsonb, $5::jsonb, $6::boolean)::boolean AS fresh
+`
+
+type RuntimeConfigInputsFreshParams struct {
+	AppID          pgtype.UUID
+	Scope          string
+	BoundaryAt     pgtype.Timestamptz
+	Variables      []byte
+	SecretVersions []byte
+	AllSecrets     bool
+}
+
+func (q *Queries) RuntimeConfigInputsFresh(ctx context.Context, db DBTX, arg RuntimeConfigInputsFreshParams) (bool, error) {
+	row := db.QueryRow(ctx, runtimeConfigInputsFresh,
+		arg.AppID,
+		arg.Scope,
+		arg.BoundaryAt,
+		arg.Variables,
+		arg.SecretVersions,
+		arg.AllSecrets,
+	)
+	var fresh bool
+	err := row.Scan(&fresh)
+	return fresh, err
+}
+
+const runtimeConfigReceiptRequired = `-- name: RuntimeConfigReceiptRequired :one
+SELECT environment_runtime_receipt_required($1::uuid, $2::text)::boolean AS required
+`
+
+type RuntimeConfigReceiptRequiredParams struct {
+	AppID pgtype.UUID
+	Scope string
+}
+
+func (q *Queries) RuntimeConfigReceiptRequired(ctx context.Context, db DBTX, arg RuntimeConfigReceiptRequiredParams) (bool, error) {
+	row := db.QueryRow(ctx, runtimeConfigReceiptRequired, arg.AppID, arg.Scope)
+	var required bool
+	err := row.Scan(&required)
+	return required, err
+}
+
 const runtimeSnapshotByCatalogKey = `-- name: RuntimeSnapshotByCatalogKey :one
 SELECT id, catalog_key, runtime, architecture, kernel_digest, guest_executor_digest, base_image_digest, memory_mb, ephemeral_disk_mb, format_version, storage_key, snapshot_digest, mem_bytes, vm_state_bytes, sanitized, payload_free, state, created_at, published_at, retired_at FROM runtime_snapshots
 WHERE catalog_key = $1
@@ -17560,6 +17776,24 @@ func (q *Queries) SnapshotLocalityNodes(ctx context.Context, db DBTX, dollar_1 p
 		return nil, err
 	}
 	return items, nil
+}
+
+const snapshotRuntimeConfigReceipt = `-- name: SnapshotRuntimeConfigReceipt :one
+SELECT snapshot_id, scope, boundary_at, variables, secret_versions, all_secrets FROM snapshot_runtime_config_receipts WHERE snapshot_id = $1::uuid
+`
+
+func (q *Queries) SnapshotRuntimeConfigReceipt(ctx context.Context, db DBTX, snapshotID pgtype.UUID) (SnapshotRuntimeConfigReceipt, error) {
+	row := db.QueryRow(ctx, snapshotRuntimeConfigReceipt, snapshotID)
+	var i SnapshotRuntimeConfigReceipt
+	err := row.Scan(
+		&i.SnapshotID,
+		&i.Scope,
+		&i.BoundaryAt,
+		&i.Variables,
+		&i.SecretVersions,
+		&i.AllSecrets,
+	)
+	return i, err
 }
 
 const snapshotStorageKeys = `-- name: SnapshotStorageKeys :many

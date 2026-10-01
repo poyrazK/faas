@@ -5230,7 +5230,10 @@ WITH stamped AS (
 )
 UPDATE snapshots SET stale = true FROM deployments d, stamped
 WHERE snapshots.deployment_id = d.id AND d.app_id = stamped.app_id AND d.scope = stamped.scope
-AND snapshots.created_at <= stamped.changed_at AND NOT snapshots.stale;
+AND NOT snapshots.stale AND (snapshots.created_at <= stamped.changed_at OR
+    (environment_runtime_receipt_required(d.app_id, d.scope) AND NOT EXISTS (
+        SELECT 1 FROM snapshot_runtime_config_receipts r WHERE r.snapshot_id = snapshots.id
+        AND r.scope = d.scope AND r.boundary_at >= stamped.changed_at AND environment_runtime_inputs_fresh(d.app_id, r.scope, r.boundary_at, r.variables, r.secret_versions, r.all_secrets))));
 
 -- name: InsertEnvironmentGitOpsEffect :exec
 INSERT INTO environment_gitops_effects(source_id, revision_id, generation, intent_version, plan_hash,
@@ -5318,7 +5321,9 @@ WITH stamped AS (
 )
 UPDATE snapshots p SET stale = true FROM deployments d, stamped c
 WHERE p.deployment_id = d.id AND d.app_id = c.app_id AND d.scope = c.scope
-AND p.created_at <= c.changed_at AND NOT p.stale;
+AND NOT p.stale AND (p.created_at <= c.changed_at OR NOT EXISTS (
+    SELECT 1 FROM snapshot_runtime_config_receipts r WHERE r.snapshot_id = p.id AND r.scope = d.scope AND r.boundary_at >= c.changed_at
+    AND environment_runtime_inputs_fresh(d.app_id, r.scope, r.boundary_at, r.variables, r.secret_versions, r.all_secrets)));
 
 -- name: AppRuntimeConfigChangedAtInScope :one
 SELECT max(boundary.changed_at)::timestamptz AS changed_at FROM (
@@ -5331,6 +5336,50 @@ SELECT max(boundary.changed_at)::timestamptz AS changed_at FROM (
 -- name: LockSnapshotRuntimePublicationScope :one
 SELECT a.id AS app_id, d.scope FROM apps a JOIN deployments d ON d.app_id = a.id
 WHERE d.id = sqlc.arg(deployment_id)::uuid FOR UPDATE OF a;
+
+-- name: LockSnapshotRuntimeSource :one
+SELECT app_id, deployment_id, started_at FROM instances
+WHERE id = sqlc.arg(instance_id)::uuid FOR UPDATE;
+
+-- name: RecordInstanceRuntimeConfigReceipt :execrows
+INSERT INTO instance_runtime_config_receipts(instance_id, wake_id, scope, boundary_at, variables, secret_versions, all_secrets)
+SELECT i.id, i.wake_id, d.scope, sqlc.arg(boundary_at)::timestamptz, sqlc.arg(variables)::jsonb, sqlc.arg(secret_versions)::jsonb, sqlc.arg(all_secrets)::boolean
+FROM instances i JOIN deployments d ON d.id = i.deployment_id
+WHERE i.id = sqlc.arg(instance_id)::uuid AND i.wake_id = sqlc.arg(wake_id)::uuid AND i.state = 'running'
+AND d.scope = sqlc.arg(scope)::text FOR UPDATE OF i
+ON CONFLICT (instance_id) DO UPDATE SET wake_id = excluded.wake_id, scope = excluded.scope,
+    boundary_at = excluded.boundary_at, variables = excluded.variables, secret_versions = excluded.secret_versions,
+    all_secrets = excluded.all_secrets, acknowledged_at = now()
+WHERE instance_runtime_config_receipts.wake_id <> excluded.wake_id OR
+    (instance_runtime_config_receipts.scope = excluded.scope AND instance_runtime_config_receipts.boundary_at = excluded.boundary_at
+     AND instance_runtime_config_receipts.variables = excluded.variables AND instance_runtime_config_receipts.secret_versions = excluded.secret_versions
+     AND instance_runtime_config_receipts.all_secrets = excluded.all_secrets);
+
+-- name: PublishInstanceRuntimeConfig :one
+UPDATE instances i SET netns = sqlc.arg(netns), host_ip = sqlc.arg(host_ip)::text::inet,
+    guest_uid = sqlc.arg(guest_uid), started_at = clock_timestamp(), state = 'running'
+WHERE i.id = sqlc.arg(instance_id)::uuid AND i.state = sqlc.arg(expected_state)::text AND i.wake_id = sqlc.arg(wake_id)::uuid
+AND EXISTS (SELECT 1 FROM deployments d WHERE d.id = i.deployment_id AND d.scope = sqlc.arg(scope)::text)
+RETURNING i.*;
+
+-- name: InstanceRuntimeConfigReceipt :one
+SELECT r.* FROM instance_runtime_config_receipts r JOIN instances i ON i.id = r.instance_id AND i.wake_id = r.wake_id
+WHERE r.instance_id = sqlc.arg(instance_id)::uuid;
+
+-- name: SnapshotRuntimeConfigReceipt :one
+SELECT * FROM snapshot_runtime_config_receipts WHERE snapshot_id = sqlc.arg(snapshot_id)::uuid;
+
+-- name: RuntimeConfigInputsFresh :one
+SELECT environment_runtime_inputs_fresh(sqlc.arg(app_id)::uuid, sqlc.arg(scope)::text, sqlc.arg(boundary_at)::timestamptz,
+    sqlc.arg(variables)::jsonb, sqlc.arg(secret_versions)::jsonb, sqlc.arg(all_secrets)::boolean)::boolean AS fresh;
+
+-- name: RuntimeConfigReceiptRequired :one
+SELECT environment_runtime_receipt_required(sqlc.arg(app_id)::uuid, sqlc.arg(scope)::text)::boolean AS required;
+
+-- name: InsertSnapshotRuntimeConfigReceipt :exec
+INSERT INTO snapshot_runtime_config_receipts(snapshot_id, scope, boundary_at, variables, secret_versions, all_secrets)
+VALUES (sqlc.arg(snapshot_id)::uuid, sqlc.arg(scope)::text, sqlc.arg(boundary_at)::timestamptz, sqlc.arg(variables)::jsonb,
+    sqlc.arg(secret_versions)::jsonb, sqlc.arg(all_secrets)::boolean);
 
 -- name: ClaimEnvironmentGitSourcePoll :one
 WITH candidate AS (
