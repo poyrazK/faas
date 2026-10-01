@@ -52,13 +52,24 @@ class UDPDeploymentTest(unittest.TestCase):
         self.assertEqual(values['FAAS_UDPD_VMMD_TLS_KEY_PATH'], path)
 
     def test_source_validation_rejects_firewall_injection(self):
-        tasks = yaml.safe_load((ROLE / 'tasks/main.yml').read_text())
+        tasks = yaml.safe_load((ROOT / 'deploy/ansible/tasks/validate_udp_policy.yml').read_text())
         task = next(t for t in tasks if 'validate each UDP source CIDR' in t.get('name', ''))
         pattern = task['vars']['udp_cidr_pattern']
         for value in ['192.0.2.1/32', '0.0.0.0/0', '255.255.255.255/32']:
             self.assertIsNotNone(re.fullmatch(pattern, value))
         for value in ['999.0.0.1/8', '192.0.2.0/33', '::/0', '192.0.2.0/24\naccept', '192.0.2.0/24; accept', '01.2.3.4/8']:
             self.assertIsNone(re.fullmatch(pattern, value))
+
+    def test_both_roles_validate_policy_before_rendering(self):
+        for role in ['gatewayd_public_service', 'nftables']:
+            tasks = yaml.safe_load((ROOT / 'deploy/ansible/roles' / role / 'tasks/main.yml').read_text())
+            index = next(i for i, task in enumerate(tasks) if task.get('ansible.builtin.include_tasks', '').endswith('/validate_udp_policy.yml'))
+            writes = [i for i, task in enumerate(tasks) if 'ansible.builtin.template' in task]
+            self.assertTrue(writes)
+            # The gateway may render unrelated TCP configuration first.
+            if role == 'gatewayd_public_service':
+                writes = [i for i in writes if tasks[i]['ansible.builtin.template']['src'] == 'udpd.env.j2']
+            self.assertTrue(all(index < i for i in writes))
 
     def test_systemd_units_load_same_environment(self):
         installed = (ROLE / 'files/faas-gatewayd-public.service').read_text()
