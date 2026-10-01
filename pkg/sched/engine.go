@@ -5175,35 +5175,40 @@ func (e *Engine) resolveNodeCPUBudgetMillicores(ctx context.Context, nodeID stri
 // treats this as a Phase 3 setup failure and rolls back
 // Phase 2 + Phase 4.
 func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string) (AppSpec, error) {
+	spec, _, err := e.buildAppSpecForMigrationWithValues(ctx, instanceID)
+	return spec, err
+}
+
+func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanceID string) (AppSpec, state.RuntimeAppValuesSnapshot, error) {
 	ins, err := e.store.InstanceByID(ctx, instanceID)
 	if err != nil {
-		return AppSpec{}, fmt.Errorf("sched: build app spec: instance by id: %w", err)
+		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, fmt.Errorf("sched: build app spec: instance by id: %w", err)
 	}
 	app, err := e.store.AppByID(ctx, ins.AppID)
 	if err != nil {
-		return AppSpec{}, fmt.Errorf("sched: build app spec: app by id: %w", err)
+		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, fmt.Errorf("sched: build app spec: app by id: %w", err)
 	}
 	var dep state.Deployment
 	if ins.DeploymentID != "" {
 		dep, err = e.store.DeploymentByID(ctx, ins.DeploymentID)
 		if err != nil {
-			return AppSpec{}, fmt.Errorf("sched: build app spec: instance deployment by id: %w", err)
+			return AppSpec{}, state.RuntimeAppValuesSnapshot{}, fmt.Errorf("sched: build app spec: instance deployment by id: %w", err)
 		}
 	} else {
 		// Legacy instance rows created before deployment correlation was
 		// required retain the previous best-effort live-deployment lookup.
 		dep, err = state.ResolveProductionDeployment(ctx, e.store, ins.AppID)
 		if err != nil {
-			return AppSpec{}, fmt.Errorf("sched: build app spec: live deployment: %w", err)
+			return AppSpec{}, state.RuntimeAppValuesSnapshot{}, fmt.Errorf("sched: build app spec: live deployment: %w", err)
 		}
 	}
 	acct, err := e.store.AccountByID(ctx, app.AccountID)
 	if err != nil {
-		return AppSpec{}, fmt.Errorf("sched: build app spec: account by id: %w", err)
+		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, fmt.Errorf("sched: build app spec: account by id: %w", err)
 	}
 	app, err = state.ResolveAppForDeployment(ctx, e.store, app, dep)
 	if err != nil {
-		return AppSpec{}, fmt.Errorf("sched: build app spec: workload settings: %w", err)
+		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, fmt.Errorf("sched: build app spec: workload settings: %w", err)
 	}
 	limits := api.MustLimitsFor(acct.Plan)
 	// Sealed env is filtered through dep.OverrideEnvSecrets
@@ -5215,19 +5220,19 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 	// preserved when OverrideEnvSecrets is nil).
 	runtimeValues, err := e.loadRuntimeDeploymentValues(ctx, app.AccountID, dep)
 	if err != nil {
-		return AppSpec{}, fmt.Errorf("sched: build app spec: sealed env: %w", err)
+		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, fmt.Errorf("sched: build app spec: sealed env: %w", err)
 	}
 	sealedEnv := runtimeValues.MainSecrets
 	sidecars, sidecarCandidates, err := e.sidecarsForDeploymentWithValues(ctx, dep, app.AccountID, &runtimeValues.Snapshot)
 	if err != nil {
-		return AppSpec{}, fmt.Errorf("sched: build app spec: sidecars: %w", err)
+		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, fmt.Errorf("sched: build app spec: sidecars: %w", err)
 	}
 	if _, err := mergeSecretDeliveryCandidates(sealedEnv.Candidates, sidecarCandidates); err != nil {
-		return AppSpec{}, fmt.Errorf("sched: build app spec: sidecar secret versions changed during preparation: %w", err)
+		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, fmt.Errorf("sched: build app spec: sidecar secret versions changed during preparation: %w", err)
 	}
 	mainDependencies, err := mainWorkloadDependenciesForDeployment(dep, sidecars)
 	if err != nil {
-		return AppSpec{}, fmt.Errorf("sched: build app spec: primary workload dependencies: %w", err)
+		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, fmt.Errorf("sched: build app spec: primary workload dependencies: %w", err)
 	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
 	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
@@ -5292,7 +5297,7 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 		// falls back to "unknown" in the histogram observer.
 		Runtime:     app.Runtime,
 		AppProtocol: app.AppProtocol,
-	}, nil
+	}, runtimeValues.Snapshot, nil
 }
 
 // MigrateLiveInstances (Tier A5 / ADR-066) is the live-instance
@@ -7681,27 +7686,17 @@ func (e *Engine) captureWarmSnapshotLocked(ctx context.Context, ins state.Instan
 }
 
 func (e *Engine) hasEphemeralSecretForInstance(ctx context.Context, ins state.Instance, app state.App) (bool, error) {
-	dep, err := e.store.DeploymentByID(ctx, ins.DeploymentID)
+	if ins.AppID != app.ID {
+		return false, state.ErrConflict
+	}
+	values, err := e.store.RuntimeAppValuesForDeployment(ctx, app.AccountID, app.ID, ins.DeploymentID)
 	if err != nil {
-		return false, fmt.Errorf("load deployment %s: %w", ins.DeploymentID, err)
+		return false, fmt.Errorf("read owned snapshot policy for deployment %s: %w", ins.DeploymentID, err)
 	}
-	return e.hasEphemeralSecretForDeployment(ctx, app.AccountID, app.ID, dep.Scope)
-}
-
-func (e *Engine) hasEphemeralSecretForDeployment(ctx context.Context, accountID, appID, scope string) (bool, error) {
-	if scope == "" {
-		scope = api.DefaultEnvScope
+	if values.AccountID != app.AccountID || values.AppID != app.ID || values.DeploymentID != ins.DeploymentID {
+		return false, state.ErrConflict
 	}
-	secrets, err := e.store.ListAppSecretsInScope(ctx, accountID, appID, scope)
-	if err != nil {
-		return false, fmt.Errorf("list secrets for scope %s: %w", scope, err)
-	}
-	for _, secret := range secrets {
-		if secret.SecretClass == state.SecretClassEphemeral {
-			return true, nil
-		}
-	}
-	return false, nil
+	return runtimeValuesHaveEphemeralSecrets(values), nil
 }
 
 // resolveApp loads the app, account, plan limits, and current live deployment a

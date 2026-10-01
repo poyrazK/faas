@@ -84,3 +84,17 @@ func sameRuntimeJSON(a, b []byte) bool {
 	right, re := normalize(b)
 	return le == nil && re == nil && bytes.Equal(left, right)
 }
+
+// sameRuntimeValuesSnapshot compares the owned configuration selected for a
+// paused restore, excluding mutable observations. Plaintext is compared only
+// in memory and is never included in an error or log.
+func sameRuntimeValuesSnapshot(a, b state.RuntimeAppValuesSnapshot) bool {
+	left, leftErr := state.NewRuntimeAppSecretFence(a)
+	right, rightErr := state.NewRuntimeAppSecretFence(b)
+	if leftErr != nil || rightErr != nil || left != right {
+		return false
+	}
+	leftValues, leftErr := json.Marshal(a.Values)
+	rightValues, rightErr := json.Marshal(b.Values)
+	return leftErr == nil && rightErr == nil && bytes.Equal(leftValues, rightValues)
+}

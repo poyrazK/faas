@@ -10498,6 +10498,42 @@ func (q *Queries) ListTriggersForApp(ctx context.Context, db DBTX, appID pgtype.
 	return items, nil
 }
 
+const listWarmPoolReconciliationAppIDs = `-- name: ListWarmPoolReconciliationAppIDs :many
+SELECT a.id::text AS app_id FROM apps a
+WHERE a.status <> 'deleted'
+  AND ($1::text = '' OR a.node_id = nullif($1::text, '')::uuid)
+  AND (a.warm_pool_size > 0
+       OR EXISTS (SELECT 1 FROM instances i WHERE i.app_id = a.id AND i.state = 'warm')
+       OR EXISTS (
+           SELECT 1 FROM deployments d
+           JOIN project_environment_workload_deployment_specs p ON p.deployment_id = d.id
+           JOIN project_environment_workload_specs s ON s.id = p.spec_id AND s.app_id = d.app_id
+           WHERE d.app_id = a.id AND d.status = 'live' AND d.scope IN ('default', 'production')
+             AND (s.settings -> 'warm_pool_size')::jsonb > '0'::jsonb
+       ))
+ORDER BY a.id
+`
+
+func (q *Queries) ListWarmPoolReconciliationAppIDs(ctx context.Context, db DBTX, nodeID string) ([]string, error) {
+	rows, err := db.Query(ctx, listWarmPoolReconciliationAppIDs, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var app_id string
+		if err := rows.Scan(&app_id); err != nil {
+			return nil, err
+		}
+		items = append(items, app_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockCreditConsumption = `-- name: LockCreditConsumption :exec
 SELECT pg_advisory_xact_lock(hashtextextended('consume-account-credit:' || $1::text, 0))
 `

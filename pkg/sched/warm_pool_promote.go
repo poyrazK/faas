@@ -25,6 +25,10 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 		// consume a warm row or emit a misleading "missing" outcome.
 		return WakeResult{}, false, nil
 	}
+	values, err := e.loadRuntimeDeploymentValues(ctx, acct.ID, dep)
+	if err != nil {
+		return WakeResult{}, false, fmt.Errorf("sched: warm pool: owned promotion inputs: %w", err)
+	}
 	instances, err := e.store.ListInstancesForApp(ctx, app.ID)
 	if err != nil {
 		return WakeResult{}, false, fmt.Errorf("sched: warm pool: list promotion candidates: %w", err)
@@ -36,7 +40,13 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 			continue
 		}
 		warmCount++
-		if ins.DeploymentID != dep.ID || !instanceModeMatchesApp(app, ins) {
+		if ins.DeploymentID != dep.ID {
+			continue
+		}
+		if ins.RAMMB != app.RAMMB || !instanceModeMatchesApp(app, ins) {
+			if e.discardWarmPromotion(ctx, ins, "resource_shape_changed") {
+				warmCount--
+			}
 			continue
 		}
 		candidates = append(candidates, ins)
@@ -50,6 +60,14 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 	})
 	if len(candidates) == 0 {
 		e.observeWarmResume("missing")
+		return WakeResult{}, false, nil
+	}
+	if runtimeValuesHaveEphemeralSecrets(values.Snapshot) {
+		for _, warm := range candidates {
+			if e.discardWarmPromotion(ctx, warm, "ephemeral_secret") {
+				warmCount--
+			}
+		}
 		return WakeResult{}, false, nil
 	}
 

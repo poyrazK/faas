@@ -1,3 +1,18 @@
+-- name: ListWarmPoolReconciliationAppIDs :many
+SELECT a.id::text AS app_id FROM apps a
+WHERE a.status <> 'deleted'
+  AND (sqlc.arg(node_id)::text = '' OR a.node_id = nullif(sqlc.arg(node_id)::text, '')::uuid)
+  AND (a.warm_pool_size > 0
+       OR EXISTS (SELECT 1 FROM instances i WHERE i.app_id = a.id AND i.state = 'warm')
+       OR EXISTS (
+           SELECT 1 FROM deployments d
+           JOIN project_environment_workload_deployment_specs p ON p.deployment_id = d.id
+           JOIN project_environment_workload_specs s ON s.id = p.spec_id AND s.app_id = d.app_id
+           WHERE d.app_id = a.id AND d.status = 'live' AND d.scope IN ('default', 'production')
+             AND (s.settings -> 'warm_pool_size')::jsonb > '0'::jsonb
+       ))
+ORDER BY a.id;
+
 -- name: LockProjectEnvironmentCloneApps :many
 SELECT id::text AS app_id FROM apps
 WHERE account_id = sqlc.arg(account_id)::uuid

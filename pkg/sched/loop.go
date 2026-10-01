@@ -2326,12 +2326,26 @@ func (l *Loop) runReaper(ctx context.Context) {
 	}
 	// Warm-pool capacity is a durable desired count, so a missed app_changed
 	// notification must not leave an app below its configured resident pool.
-	// Apps with a zero target are handled by the notification path when the
-	// setting is disabled; skipping them here avoids an extra per-app query on
-	// every reaper tick.
+	// The bulk candidate read includes pinned production targets and retained
+	// paused rows. Shared App settings alone cannot decide whether to retry a
+	// pool fill or cleanup. An unavailable candidate read retries all owned apps.
+	var warmPoolApps map[string]struct{}
+	if reader, ok := store.(state.WarmPoolReconciliationStore); ok {
+		ids, err := reader.WarmPoolReconciliationAppIDs(ctx, l.engine.OwnerNodeID())
+		if err != nil {
+			l.log.Warn("reaper: warm pool candidates", "err", err)
+		} else {
+			warmPoolApps = make(map[string]struct{}, len(ids))
+			for _, id := range ids {
+				warmPoolApps[id] = struct{}{}
+			}
+		}
+	}
 	for _, app := range apps {
-		if app.WarmPoolSize <= 0 {
-			continue
+		if warmPoolApps != nil {
+			if _, candidate := warmPoolApps[app.ID]; !candidate {
+				continue
+			}
 		}
 		if err := l.engine.ReconcileWarmPool(ctx, app.ID); err != nil {
 			l.log.Warn("reaper: warm pool reconcile", "app", app.ID, "err", err)
@@ -2430,6 +2444,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 		if err != nil {
 			continue
 		}
+		warmTargets := map[string]int{}
 		for _, ins := range instances {
 			// ListInstancesForApp is also used by dashboard and audit
 			// surfaces, so it intentionally returns terminal rows. The
@@ -2440,6 +2455,27 @@ func (l *Loop) runReaper(ctx context.Context) {
 			// snapshot_prime notifications.
 			if !reaperInstanceState(state.State(ins.State)) {
 				continue
+			}
+			warmPoolSize := a.WarmPoolSize
+			if state.State(ins.State) == state.StateWarm && ins.DeploymentID != "" {
+				var cached bool
+				warmPoolSize, cached = warmTargets[ins.DeploymentID]
+				if !cached {
+					deployment, policyErr := store.DeploymentByID(ctx, ins.DeploymentID)
+					var settings state.App
+					if policyErr == nil {
+						settings, policyErr = state.ResolveAppForDeployment(ctx, store, a, deployment)
+					}
+					if policyErr != nil {
+						// Keep a transient read failure from authorizing retirement.
+						// Park still verifies lifetime ownership before capturing.
+						warmPoolSize = len(instances)
+						l.log.Warn("reaper: paused workload settings", "app", a.ID, "deployment", ins.DeploymentID, "err", policyErr)
+					} else {
+						warmPoolSize = settings.WarmPoolSize
+					}
+					warmTargets[ins.DeploymentID] = warmPoolSize
+				}
 			}
 			lastRequest := ins.LastRequestAt
 			var inflightRequests int64
@@ -2504,7 +2540,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 				// is billed for 3 warm instances but reaped to 0
 				// — a paid warm/park flap on every tick.
 				MinInstances:           appDeploymentFloor[a.ID],
-				WarmPoolSize:           a.WarmPoolSize,
+				WarmPoolSize:           warmPoolSize,
 				ConfiguredMinInstances: appConfiguredFloor[a.ID],
 				PrewarmMinInstances:    appPrewarmFloor[a.ID],
 				OpenConns:              open,

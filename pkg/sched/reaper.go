@@ -316,7 +316,13 @@ func ReapIdle(now time.Time, instances []InstanceInfo, metrics *wire.OpsMetrics,
 			}
 			continue
 		}
-		g, ok := byApp[in.AppID]
+		groupKey := in.AppID
+		if in.State == state.StateWarm {
+			// A paused pool belongs to the exact deployment whose payload it
+			// contains. Sibling stages cannot satisfy or consume its target.
+			groupKey += "\x00" + in.DeploymentID
+		}
+		g, ok := byApp[groupKey]
 		if !ok {
 			g = &appGroup{
 				floor:           in.MinInstances,
@@ -325,7 +331,7 @@ func ReapIdle(now time.Time, instances []InstanceInfo, metrics *wire.OpsMetrics,
 				scaleInCooldown: time.Duration(in.ScaleInCooldownS) * time.Second,
 				appID:           in.AppID,
 			}
-			byApp[in.AppID] = g
+			byApp[groupKey] = g
 		}
 		if in.State == state.StateWarm {
 			g.warm++

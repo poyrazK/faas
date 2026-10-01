@@ -55,76 +55,66 @@ func (e *Engine) ReconcileWarmPool(ctx context.Context, appID string) error {
 	if err != nil {
 		return fmt.Errorf("sched: warm pool: list instances: %w", err)
 	}
-	warm := make([]state.Instance, 0, len(instances))
-	for _, ins := range instances {
-		if state.State(ins.State) == state.StateWarm {
-			warm = append(warm, ins)
+	// Resolve the production release and its tested settings before computing
+	// its desired pool. Paused instances from a sibling stage do not count
+	// toward this target and must never enter this reconciler's cleanup set.
+	dep, depErr := state.ResolveProductionDeployment(ctx, e.store, appID)
+	if depErr != nil && !errors.Is(depErr, state.ErrNotFound) {
+		return fmt.Errorf("sched: warm pool: live deployment: %w", depErr)
+	}
+	if depErr == nil {
+		app, err = state.ResolveAppForDeployment(ctx, e.store, app, dep)
+		if err != nil {
+			return fmt.Errorf("sched: warm pool: workload settings: %w", err)
 		}
 	}
-
+	warm, obsolete, err := e.productionWarmPoolInstances(ctx, app, dep.ID, instances)
+	if err != nil {
+		return err
+	}
 	desired := app.WarmPoolSize
 	if desired < 0 {
 		desired = 0
 	}
 	if desired > warmPoolRestoreMaxPerTick+len(warm) {
-		// The API already bounds the field by max_concurrency. This keeps
-		// malformed legacy rows from asking one tick to allocate an
-		// unbounded number of VMs while retaining the configured target for
-		// subsequent passes.
 		desired = warmPoolRestoreMaxPerTick + len(warm)
 	}
-
-	// Disabled, deleted, evicted, or suspended apps must not retain paused
-	// resident VMs. Park handles warm rows with a direct destroy (no second
-	// snapshot), and is idempotent across repeated notifications/ticks.
-	if desired == 0 || app.Status != state.AppActive {
-		return e.reclaimWarmPool(ctx, warm, desired)
+	if desired == 0 || app.Status != state.AppActive || !acct.Active() || !api.Plan(acct.Plan).WarmPoolAllowed() ||
+		!instanceModeUsesSnapshots(instanceModeForApp(app)) {
+		return e.reclaimWarmPool(ctx, append(warm, obsolete...), 0)
 	}
-
-	if !acct.Active() || !api.Plan(acct.Plan).WarmPoolAllowed() {
-		return e.reclaimWarmPool(ctx, warm, 0)
+	if depErr != nil {
+		// A missing current release cannot authorize replacing a retained
+		// production pool. A later reconciliation retries the release read.
+		return nil
 	}
-	// Worker and job instances are request-driven and do not have a
-	// resumable snapshot lifecycle. If an app changes mode while warm rows
-	// remain, drain those rows instead of restoring them as the wrong kind.
-	if !instanceModeUsesSnapshots(instanceModeForApp(app)) {
-		return e.reclaimWarmPool(ctx, warm, 0)
+	values, err := e.loadRuntimeDeploymentValues(ctx, acct.ID, dep)
+	if err != nil {
+		return fmt.Errorf("sched: warm pool: owned runtime values: %w", err)
+	}
+	if securityQuarantineErr(dep) != nil || runtimeValuesHaveEphemeralSecrets(values.Snapshot) {
+		return e.reclaimWarmPool(ctx, append(warm, obsolete...), 0)
+	}
+	if err := e.reclaimWarmPool(ctx, obsolete, 0); err != nil {
+		return err
 	}
 	if len(warm) > desired {
 		if err := e.reclaimWarmPool(ctx, warm, desired); err != nil {
 			return err
 		}
-		// Refresh the count after deliberate scale-in before considering
-		// scale-out. Park may have lost a race with a request/reaper.
 		instances, err = e.store.ListInstancesForApp(ctx, appID)
 		if err != nil {
 			return fmt.Errorf("sched: warm pool: refresh instances: %w", err)
 		}
-		warm = warm[:0]
-		for _, ins := range instances {
-			if state.State(ins.State) == state.StateWarm {
-				warm = append(warm, ins)
-			}
+		warm, _, err = e.productionWarmPoolInstances(ctx, app, dep.ID, instances)
+		if err != nil {
+			return err
 		}
 	}
 	if len(warm) >= desired {
 		return nil
 	}
 
-	dep, err := state.ResolveProductionDeployment(ctx, e.store, appID)
-	if err != nil {
-		if errors.Is(err, state.ErrNotFound) {
-			return nil
-		}
-		return fmt.Errorf("sched: warm pool: live deployment: %w", err)
-	}
-	app, err = state.ResolveAppForDeployment(ctx, e.store, app, dep)
-	if err != nil {
-		return fmt.Errorf("sched: warm pool: workload settings: %w", err)
-	}
-	if securityQuarantineErr(dep) != nil {
-		return e.reclaimWarmPool(ctx, warm, 0)
-	}
 	limits, ok := api.LimitsFor(acct.Plan)
 	if !ok {
 		return fmt.Errorf("sched: warm pool: unknown plan %q", acct.Plan)
@@ -153,6 +143,44 @@ func (e *Engine) ReconcileWarmPool(ctx context.Context, appID string) error {
 		}
 	}
 	return nil
+}
+
+// productionWarmPoolInstances retains physical ownership when the app has
+// several stage pools. Unknown deployment rows fail the reconciliation instead
+// of being treated as production cleanup candidates.
+func (e *Engine) productionWarmPoolInstances(ctx context.Context, app state.App, deploymentID string, instances []state.Instance) ([]state.Instance, []state.Instance, error) {
+	var current, obsolete []state.Instance
+	deployments := map[string]state.Deployment{}
+	for _, instance := range instances {
+		if state.State(instance.State) != state.StateWarm {
+			continue
+		}
+		if instance.AppID != app.ID || instance.DeploymentID == "" {
+			return nil, nil, fmt.Errorf("sched: warm pool: invalid paused instance owner: %w", state.ErrConflict)
+		}
+		dep, ok := deployments[instance.DeploymentID]
+		if !ok {
+			var err error
+			dep, err = e.store.DeploymentByID(ctx, instance.DeploymentID)
+			if err != nil {
+				return nil, nil, fmt.Errorf("sched: warm pool: paused deployment owner: %w", err)
+			}
+			deployments[instance.DeploymentID] = dep
+		}
+		if dep.AppID != app.ID {
+			return nil, nil, fmt.Errorf("sched: warm pool: paused app owner: %w", state.ErrConflict)
+		}
+		scope := normalizedDeploymentScope(dep.Scope)
+		if scope != api.DefaultEnvScope && scope != "production" {
+			continue
+		}
+		if dep.ID == deploymentID && instance.RAMMB == app.RAMMB && instanceModeMatchesApp(app, instance) {
+			current = append(current, instance)
+		} else {
+			obsolete = append(obsolete, instance)
+		}
+	}
+	return current, obsolete, nil
 }
 
 // refreshWarmPoolSizeGauge projects durable resident WARM rows into the
@@ -254,10 +282,18 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 		_ = e.store.DeleteInstance(ctx, ins.ID)
 		return err
 	}
-	spec, err := e.BuildAppSpecForMigration(ctx, ins.ID)
+	spec, values, err := e.buildAppSpecForMigrationWithValues(ctx, ins.ID)
 	if err != nil {
 		cleanup("build_spec_failed")
 		return err
+	}
+	if runtimeValuesHaveEphemeralSecrets(values) {
+		cleanup("ephemeral_secret")
+		return fmt.Errorf("warm restore selected ephemeral secrets: %w", state.ErrConflict)
+	}
+	if int(spec.MemSizeMiB) != ins.RAMMB || int(spec.CPUMillicores) != effectiveAppCPUMillicores(app) {
+		cleanup("resource_shape_changed")
+		return fmt.Errorf("warm restore resource shape changed: %w", state.ErrConflict)
 	}
 	vmstatePath, vmstateStorageKey := e.snapshotStateLocators(placement.NodeID, snap)
 	restoreCtx, cancel := context.WithTimeout(ctx, e.budgetForWake(bootInput{haveSnap: true, snapKey: snap.StorageKey}))
@@ -273,6 +309,14 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 	if out == nil {
 		cleanup("paused_restore_empty")
 		return errors.New("vmmd returned an empty paused restore outcome")
+	}
+	current, err := e.store.RuntimeAppValuesForDeployment(ctx, acct.ID, app.ID, dep.ID)
+	if err != nil || !sameRuntimeValuesSnapshot(values, current) {
+		cleanup("runtime_values_changed")
+		if err != nil {
+			return fmt.Errorf("warm restore runtime owner changed: %w", err)
+		}
+		return fmt.Errorf("warm restore runtime values changed: %w", state.ErrConflict)
 	}
 	if err := e.store.SetInstanceRuntime(ctx, ins.ID, out.Netns, out.HostIP, int(out.LeaseUID)); err != nil {
 		cleanup("record_runtime_failed")

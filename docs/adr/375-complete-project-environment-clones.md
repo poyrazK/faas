@@ -1943,3 +1943,46 @@ seconds. Independent SQLC 1.31.1 generation matches the checked-in output and
 the whitespace check passes. Scheduler and vmmd test binaries cross-compile
 as Linux x86_64 ELF files; neither was executed on KVM. Full suite, lint,
 test-metal, leakcheck and provider acceptance remain open.
+
+### Owned snapshot parking and isolated production pools
+
+Parking now checks the deployment's owned runtime values when evaluating
+ephemeral secrets and at each existing capture freshness boundary. A deleted
+or recreated environment cannot supply policy for an older VM. Migration and
+paused restore share the owned configuration snapshot used to construct their
+payload; paused restore checks that configuration again after the VM RPC and
+rejects changed plaintext, sealed values, grants or environment ownership.
+
+Production warm-pool reconciliation resolves the selected production/default
+release and its pinned settings before computing its target. Sibling stage
+rows neither satisfy that target nor enter production cleanup. Obsolete
+production releases and incompatible RAM/mode rows are retired; ephemeral
+production values retire only production paused capacity. Warm promotion reads
+owned inputs before resuming, rejects recreated stage ownership and retires
+selected incompatible or ephemeral candidates without touching sibling pools.
+
+Periodic recovery uses a conservative bulk SQLC candidate read for shared
+positive targets, live production deployment pins and retained paused rows,
+filtered by scheduler ownership. A zero shared target cannot hide a positive
+pinned target or cleanup after a missed notification. A failed candidate read
+falls back to reconciling the owned app list. Idle paused-pool counts are now
+separate for each deployment and use its pinned target, preventing production
+recovery from being undone by the subsequent idle pass.
+
+These checks are not transactional runtime or snapshot publication fences.
+Delayed imaged publication, changes after a paused restore recheck, stored
+paused-payload revisions, scope-specific configuration stamps and serving
+floors/billing remain open. Native stage pool fills, remaining configuration
+and customer-data strategies, full-clone activation/qualification and native
+VM/provider acceptance are also unfinished; the public one-command full clone
+remains unavailable.
+
+Verification: scheduler parking, prime, migration, boot-delivery, warm-pool,
+promotion and reaper regressions passed in 1.425 seconds. The shared MemStore
+and real PostgreSQL candidate contracts passed in 3.571 seconds, including
+pinned targets after desired-head edits, retained stage rows, deleted apps,
+superseded production pins and scheduler node ownership. Independent SQLC
+1.31.1 generation matches the checked-in output and the whitespace check
+passes. The scheduler test binary cross-compiles as a Linux x86_64 ELF; it was
+not executed on KVM. Full suite, lint, test-metal, leakcheck and provider
+acceptance remain open.
