@@ -5,6 +5,7 @@ package state_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
@@ -58,6 +59,12 @@ func TestPgCapturedCloneConfigurationIsAtomicAndRecoverable(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := state.ProjectEnvironmentCloneCaptureRequest{AccountID: a.ID, ProjectID: p.ID, SourceEnvironment: "production", TargetEnvironment: "stage", IdempotencyKey: "atomic"}
+	sourceEnvironment, err := s.ProjectEnvironmentBySlug(ctx, a.ID, p.ID, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	flagScope := state.FeatureFlagScope{AccountID: a.ID, ProjectID: p.ID, EnvironmentID: sourceEnvironment.ID}
+	sourceFlags, customerID := cloneFlagFixture(t, s, flagScope)
 	op, err := s.CreateCapturedProjectEnvironmentCloneOperation(ctx, request)
 	if err != nil || op.Status != state.CloneOperationPending || len(op.SourceRevisionHash) != 64 || op.Revision != 1 {
 		t.Fatalf("atomic capture: %+v, %v", op, err)
@@ -70,8 +77,12 @@ func TestPgCapturedCloneConfigurationIsAtomicAndRecoverable(t *testing.T) {
 	if err := pool.QueryRow(ctx, "select configuration from project_environment_clone_configuration_captures where operation_id=$1", op.ID).Scan(&root); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(root), "customer-data") || strings.Contains(string(root), "sealed-private") || strings.Contains(string(root), "age1-test") || strings.Contains(string(root), "region") {
+	if strings.Contains(string(root), "customer-data") || strings.Contains(string(root), "sealed-private") || strings.Contains(string(root), "age1-test") || strings.Contains(string(root), "region") || strings.Contains(string(root), "captured-description") || strings.Contains(string(root), customerID) {
 		t.Fatal("configuration root exposed values or encrypted content")
+	}
+	var rootFields map[string]json.RawMessage
+	if err := json.Unmarshal(root, &rootFields); err != nil || len(rootFields["feature_flags_hash"]) != 66 {
+		t.Fatalf("root omitted flag snapshot identity: %v", err)
 	}
 	if _, err := s.ProjectEnvironmentBySlug(ctx, a.ID, p.ID, "stage"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("capture created target environment: %v", err)
@@ -80,6 +91,15 @@ func TestPgCapturedCloneConfigurationIsAtomicAndRecoverable(t *testing.T) {
 	same.TargetEnvironment, same.IdempotencyKey = "stage-same", "same"
 	if equivalent, err := s.CreateCapturedProjectEnvironmentCloneOperation(ctx, same); err != nil || equivalent.ID == op.ID || equivalent.SourceRevisionHash != op.SourceRevisionHash {
 		t.Fatalf("equivalent source changed revision with operation/target identity: %+v, %v", equivalent, err)
+	}
+	sourceFlags.Flags[0].Description = "changed-source-flags"
+	if _, err := s.UpdateFeatureFlags(ctx, state.FeatureFlagUpdate{Scope: flagScope, ExpectedVersion: sourceFlags.Version, Config: sourceFlags.Config, Actor: "developer"}); err != nil {
+		t.Fatal(err)
+	}
+	flagsOnly := request
+	flagsOnly.TargetEnvironment, flagsOnly.IdempotencyKey = "flags-only", "flags-only"
+	if changed, err := s.CreateCapturedProjectEnvironmentCloneOperation(ctx, flagsOnly); err != nil || changed.SourceRevisionHash == op.SourceRevisionHash {
+		t.Fatalf("flag-only edit did not change captured revision: %v", err)
 	}
 	for i, app := range apps {
 		scope := []string{"production", "default"}[i]

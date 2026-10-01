@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 
 type cloneWorkloadTestStore interface {
 	cloneReservationStore
+	cloneFlagFixtureStore
 	state.ProjectEnvironmentCloneWorkloadStore
 	state.ProjectEnvironmentWorkloadSpecStore
 	state.ProjectEnvironmentClonePublicationStore
@@ -128,6 +130,12 @@ func projectEnvironmentClonePublicationContract(t *testing.T, s cloneWorkloadTes
 	if err != nil {
 		t.Fatal(err)
 	}
+	sourceEnvironment, err := s.ProjectEnvironmentBySlug(ctx, a.ID, p.ID, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	flagScope := state.FeatureFlagScope{AccountID: a.ID, ProjectID: p.ID, EnvironmentID: sourceEnvironment.ID}
+	sourceFlags, _ := cloneFlagFixture(t, s, flagScope)
 	op, err := s.CreateProjectEnvironmentCloneOperation(ctx, state.ProjectEnvironmentCloneOperation{AccountID: a.ID, ProjectID: p.ID,
 		SourceEnvironment: "production", TargetEnvironment: "stage", IdempotencyKey: "capture", SourceRevisionHash: strings.Repeat("a", 64)})
 	if err != nil {
@@ -166,6 +174,14 @@ func projectEnvironmentClonePublicationContract(t *testing.T, s cloneWorkloadTes
 		t.Fatal("public clone capture metadata exposed source values")
 	}
 	// Edit the desired source without rebuilding; the deployed pin is truth.
+	newFlags, err := s.GetFeatureFlags(ctx, flagScope, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newFlags.Flags[0].Description = "source-after-capture"
+	if _, err := s.UpdateFeatureFlags(ctx, state.FeatureFlagUpdate{Scope: flagScope, ExpectedVersion: newFlags.Version, Config: newFlags.Config, Actor: "developer"}); err != nil {
+		t.Fatal(err)
+	}
 	current, err := s.ProjectEnvironmentWorkloadSpec(ctx, a.ID, p.ID, "production", apps[0].ID)
 	if err != nil {
 		t.Fatal(err)
@@ -261,6 +277,23 @@ func projectEnvironmentClonePublicationContract(t *testing.T, s cloneWorkloadTes
 	_, result, err := s.CloneProjectEnvironment(ctx, clone, api.MustLimitsFor(a.Plan))
 	if err != nil {
 		t.Fatal(err)
+	}
+	targetEnvironment, err := s.ProjectEnvironmentBySlug(ctx, a.ID, p.ID, "stage")
+	if err != nil {
+		t.Fatal(err)
+	}
+	flagScope.EnvironmentID = targetEnvironment.ID
+	copiedFlags, err := s.GetFeatureFlags(ctx, flagScope, 0)
+	if err != nil || copiedFlags.Version != 1 || !reflect.DeepEqual(copiedFlags.Config, sourceFlags.Config) {
+		t.Fatalf("target flags reread mutable source instead of frozen capture: %v", err)
+	}
+	mutateFlags := func(sameConfig bool) error {
+		config := copiedFlags.Config
+		if !sameConfig {
+			config.Flags[0].Description = "target-after-materialization"
+		}
+		_, err := s.UpdateFeatureFlags(ctx, state.FeatureFlagUpdate{Scope: flagScope, ExpectedVersion: copiedFlags.Version, Config: config, Actor: "developer"})
+		return err
 	}
 	if result.VariablesCopied != 2 || result.SecretsCopied != 2 {
 		t.Fatalf("frozen scoped value counts: %+v", result)
@@ -383,6 +416,11 @@ func projectEnvironmentClonePublicationContract(t *testing.T, s cloneWorkloadTes
 			t.Fatal(err)
 		}
 	}
+	if fault == "before_flags" {
+		if err := mutateFlags(false); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if fault == "before_edge_policy" {
 		if _, err := s.PutProjectEnvironmentEdgePolicy(ctx, cloneWorkloadEdgePolicy(a.ID, p.ID, apps[0].ID, "stage", "changed-private-target-policy")); err != nil {
 			t.Fatal(err)
@@ -447,6 +485,8 @@ func projectEnvironmentClonePublicationContract(t *testing.T, s cloneWorkloadTes
 	if strings.HasPrefix(fault, "after_") {
 		var mutationErr error
 		switch fault {
+		case "after_flags", "after_flags_same_config":
+			mutationErr = mutateFlags(fault == "after_flags_same_config")
 		case "after_variable":
 			mutationErr = s.UpsertAppEnvInScope(ctx, a.ID, apps[0].ID, "stage", "CAPTURED", "changed-private-target-value")
 		case "after_extra_variable":

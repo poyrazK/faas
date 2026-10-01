@@ -3175,6 +3175,7 @@ func (m *MemStore) DeleteProject(_ context.Context, projectID string) error {
 			}
 			m.deleteEnvironmentWorkloadSpecsLocked(environmentID)
 			m.deleteRuntimeScalingEnvironmentLocked(environmentID)
+			delete(m.featureFlagVersions, environmentID)
 			delete(m.projectEnvironments, environmentID)
 		}
 	}
@@ -3381,6 +3382,7 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 		}
 	}
 	m.deleteRuntimeScalingEnvironmentLocked(environmentID)
+	delete(m.featureFlagVersions, environmentID)
 	delete(m.projectEnvironments, environmentID)
 	m.deleteEnvironmentWorkloadSpecsLocked(environmentID)
 	delete(m.projectEnvironmentConfigs, projectEnvironmentConfigKey(projectID, slug))

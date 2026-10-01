@@ -33,5 +33,16 @@ func verifyCloneProjectConfigTx(ctx context.Context, tx pgx.Tx, op ProjectEnviro
 	if err != nil {
 		return err
 	}
-	return validateCloneProjectConfigProof(op, resources, records, target)
+	if err := validateCloneProjectConfigProof(op, resources, records, target); err != nil {
+		return err
+	}
+	captured, err := capturedCloneProjectConfig(records)
+	if err != nil {
+		return err
+	}
+	flags, err := readCloneFeatureFlagsTx(ctx, tx, op.AccountID, op.ProjectID, op.TargetEnvironment)
+	if err != nil {
+		return err
+	}
+	return validateCloneFeatureFlagsProof(captured.FeatureFlags, flags)
 }

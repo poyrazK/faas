@@ -7,7 +7,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -37,6 +39,22 @@ func projectEnvironmentCloneReservationOwnership(t *testing.T, s cloneReservatio
 	}
 	input := state.ProjectEnvironmentCloneOperation{AccountID: acct.ID, ProjectID: project.ID,
 		SourceEnvironment: "production", TargetEnvironment: "stage", IdempotencyKey: "create", SourceRevisionHash: strings.Repeat("a", 64)}
+	// Materialization now requires a frozen flag/config capture, even when the
+	// source has no configured flags. Give this reservation contract a workload.
+	app, err := s.CreateApp(ctx, state.App{AccountID: acct.ID, ProjectID: project.ID, Slug: "reserved-app", Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployment, err := s.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "production", Kind: state.DeploymentKindImage, ImageDigest: "sha256:reserved"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetDeploymentRootfs(ctx, deployment.ID, "/reserved.ext4", "layers/reserved.ext4", 4096); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkDeploymentLive(ctx, deployment.ID); err != nil {
+		t.Fatal(err)
+	}
 	op, err := s.CreateProjectEnvironmentCloneOperation(ctx, input)
 	if err != nil {
 		t.Fatal(err)
@@ -52,10 +70,20 @@ func projectEnvironmentCloneReservationOwnership(t *testing.T, s cloneReservatio
 	if _, _, err := s.CloneProjectEnvironment(ctx, clone, api.MustLimitsFor(acct.Plan)); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("pending owner materialized target: %v", err)
 	}
+	lease, err := s.(state.ProjectEnvironmentCloneWorkerLeaseStore).ClaimNextProjectEnvironmentClone(ctx, uuid.NewString(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op = lease.Operation
 	for _, phase := range []string{state.CloneOperationCapturing, state.CloneOperationCopying} {
 		op, err = s.AdvanceProjectEnvironmentCloneOperation(ctx, acct.ID, project.ID, op.ID, op.Status, phase, op.Revision, nil, "")
 		if err != nil {
 			t.Fatal(err)
+		}
+		if phase == state.CloneOperationCapturing {
+			if _, err := s.(state.ProjectEnvironmentCloneWorkloadStore).CaptureProjectEnvironmentCloneWorkloads(ctx, acct.ID, project.ID, op.ID, op.Revision); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 	if _, _, err := s.CloneProjectEnvironment(ctx, clone, api.MustLimitsFor(acct.Plan)); !errors.Is(err, state.ErrConflict) {

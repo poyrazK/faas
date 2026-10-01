@@ -107,7 +107,21 @@ func (m *MemStore) verifyClonePublicationLocked(op ProjectEnvironmentCloneOperat
 	if err := m.verifyCloneScopedPolicyPublicationLocked(op, records); err != nil {
 		return err
 	}
-	return validateCloneProjectConfigProof(op, resources, records, m.projectEnvironmentConfigLatestLocked(op.ProjectID, op.TargetEnvironment))
+	if err := validateCloneProjectConfigProof(op, resources, records, m.projectEnvironmentConfigLatestLocked(op.ProjectID, op.TargetEnvironment)); err != nil {
+		return err
+	}
+	if len(records) == 0 {
+		return nil
+	}
+	config, err := capturedCloneProjectConfig(records)
+	if err != nil {
+		return err
+	}
+	target, err := m.projectEnvironmentBySlugLocked(op.ProjectID, op.TargetEnvironment)
+	if err != nil {
+		return err
+	}
+	return validateCloneFeatureFlagsProof(config.FeatureFlags, m.latestFeatureFlagsLocked(FeatureFlagScope{AccountID: op.AccountID, ProjectID: op.ProjectID, EnvironmentID: target.ID}))
 }
 
 func (m *MemStore) PublishProjectEnvironmentCloneReleaseSet(_ context.Context, accountID, projectID, operationID string, revision int64, ttl int) (ProjectReleaseSet, error) {

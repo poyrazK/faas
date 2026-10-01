@@ -48,10 +48,23 @@ func (s *PgStore) cloneProjectEnvironment(ctx context.Context, clone ProjectEnvi
 	if err := lockProjectEnvironmentCloneSource(ctx, tx, clone); err != nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, mapProjectCloneSnapshotErr(err)
 	}
+	var flagSnapshot projectCloneFeatureFlags
 	if clone.CloneOperationID != "" {
 		records, err := cloneWorkloadRecordsDB(ctx, tx, clone.AccountID, clone.ProjectID, clone.CloneOperationID)
 		if err != nil {
 			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+		config, err := capturedCloneProjectConfig(records)
+		if err != nil || config.FeatureFlags == nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrConflict
+		}
+		flagSnapshot = *config.FeatureFlags
+		// Authenticate the original environment identity without rereading flags.
+		id, err := sqlc.New().ReadProjectEnvironmentCloneFlagScope(ctx, tx, sqlc.ReadProjectEnvironmentCloneFlagScopeParams{
+			AccountID: mustPgUUID(clone.AccountID), ProjectID: mustPgUUID(clone.ProjectID), Environment: clone.SourceSlug,
+		})
+		if err != nil || uuidString(id) != flagSnapshot.SourceEnvironmentID {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrConflict
 		}
 		clone.capturedValueScopes = map[string]string{}
 		for _, record := range records {
@@ -62,6 +75,15 @@ func (s *PgStore) cloneProjectEnvironment(ctx context.Context, clone ProjectEnvi
 			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
 		}
 		clone.capturedPolicies, err = capturedCloneScopedPolicies(records)
+		if err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+	} else {
+		source, err := readCloneFeatureFlagsTx(ctx, tx, clone.AccountID, clone.ProjectID, clone.SourceSlug)
+		if err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+		flagSnapshot, err = captureCloneFeatureFlags(source)
 		if err != nil {
 			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
 		}
@@ -102,6 +124,9 @@ func (s *PgStore) cloneProjectEnvironment(ctx context.Context, clone ProjectEnvi
 	}
 	created, err := insertClonedProjectEnvironment(ctx, tx, clone)
 	if err != nil {
+		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+	}
+	if err := copyCloneFeatureFlagsTx(ctx, tx, created, flagSnapshot); err != nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
 	}
 	if err := copyProjectEnvironmentWorkloadSpecs(ctx, tx, clone, created); err != nil {

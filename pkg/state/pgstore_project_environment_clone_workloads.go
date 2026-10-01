@@ -156,7 +156,15 @@ func captureCloneWorkloadTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmen
 	if err != nil {
 		return snapshot, err
 	}
-	projectConfig, err := normalizeCloneProjectConfig(projectCloneProjectConfig{Hash: config.ConfigHash, Values: config.Values})
+	flagSource, err := readCloneFeatureFlagsTx(ctx, tx, op.AccountID, op.ProjectID, op.SourceEnvironment)
+	if err != nil {
+		return snapshot, err
+	}
+	flagSnapshot, err := captureCloneFeatureFlags(flagSource)
+	if err != nil {
+		return snapshot, err
+	}
+	projectConfig, err := normalizeCloneProjectConfig(projectCloneProjectConfig{Hash: config.ConfigHash, Values: config.Values, FeatureFlags: &flagSnapshot})
 	if err != nil {
 		return snapshot, err
 	}

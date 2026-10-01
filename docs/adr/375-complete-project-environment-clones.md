@@ -2599,3 +2599,58 @@ Verification for this merge used a task-owned local PostgreSQL instance:
 
 These are local contracts and mocked provider tests, not native x86 Linux KVM,
 `test-metal`/`leakcheck`, or real PostgreSQL/object-storage provider acceptance.
+
+### Captured and isolated feature flag configuration (2026-10-02)
+
+Environment cloning now includes feature flags in both stores. The private
+project-configuration snapshot records the original environment identity, its
+selected flag version, and the complete flag configuration. Rules, customer
+groups, subjects, variant weights, progressive rollout settings, and stable
+rollout seeds are retained. Captured operations materialize this immutable
+payload without rereading later source flag edits. Each workload capture must
+agree on the same flag snapshot, and the authenticated configuration root
+includes its hash without exposing the targeting configuration.
+
+The cloned environment starts its own flag history at version one with actor
+`environment-clone`. Source history and same-environment restore pointers are
+not copied. Existing flag seeds remain unchanged so percentage, variant, and
+subject allocations remain comparable during testing. Subsequent edits use the
+ordinary version compare-and-swap API; new flags get seeds derived from the
+target environment, while copied flags retain their original immutable seeds.
+Production and stage edits are independent. An empty source flag configuration
+is explicitly captured and copied rather than represented by missing evidence.
+
+Flag insertion commits with target environment/configuration materialization.
+A materialization retry returns its original environment receipt and preserves
+developer flag edits. Both publication proof boundaries require the original
+target flag version, clone actor, and exact configuration. Even a later version
+with identical contents fails the initial clone proof. PostgreSQL holds the
+flag writer's environment lock through graph publication. Flag writers acquire
+their project foreign-key lock before the environment lock, matching clone
+capture order and avoiding a clone/writer deadlock. Environment deletion and
+clone compensation remove the independent flag history in both stores.
+
+The optional snapshot/root fields retain the encoding of older captures for
+authentication. An older capture without flag evidence cannot materialize or
+publish by falling back to current source flags; it requires a fresh capture.
+Materialization also verifies that the source slug still identifies the original
+environment lifetime.
+
+This increment does not qualify feature flags as a complete resource strategy.
+The schema registry retains `isolated_strategy_unavailable` for
+`feature_flag_versions` until promotion and rollback can atomically activate
+the selected tested flag configuration with durable version fences. Full-mode
+admission and publication remain closed while those strategies, coordinated
+database/object checkpoints, compensation, and provider/native acceptance are
+unfinished.
+
+Verification on the final source used the task-owned local PostgreSQL 16
+instance. Environment-clone, captured-configuration, flag isolation/publication,
+flag lock-order, and schema coverage contracts passed (`pkg/state`, 18.184 s).
+API clone coordinator/materialization and feature flag regressions passed
+(`cmd/apid`, 14.653 s), including preservation of developer flag edits after a
+lost/retried materialization response. Independent SQLC regeneration matched
+the generated sources, and whitespace checks passed. An earlier API attempt
+failed when the host ran out of disk space during test database creation; the
+final suites passed after reclaiming stale task-owned build artifacts. No real
+provider or native KVM acceptance was run for this increment.

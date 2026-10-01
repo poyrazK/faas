@@ -36,6 +36,7 @@ type projectCloneConfigurationRoot struct {
 	SourceReleaseSetID      string                              `json:"source_release_set_id"`
 	ProjectConfigHash       string                              `json:"project_config_hash"`
 	ProjectConfigValuesHash string                              `json:"project_config_values_hash"`
+	FeatureFlagsHash        string                              `json:"feature_flags_hash,omitempty"`
 	Workloads               []projectCloneConfigurationWorkload `json:"workloads"`
 }
 
@@ -70,7 +71,7 @@ func cloneConfigurationRoot(op ProjectEnvironmentCloneOperation, records []proje
 		return ProjectEnvironmentCloneConfigurationCapture{}, nil, ErrConflict
 	}
 	root := projectCloneConfigurationRoot{Version: 1, AccountID: op.AccountID, ProjectID: op.ProjectID, SourceEnvironment: op.SourceEnvironment,
-		SourceReleaseSetID: op.SourceReleaseSetID, ProjectConfigHash: config.Hash, ProjectConfigValuesHash: configValuesHash,
+		SourceReleaseSetID: op.SourceReleaseSetID, ProjectConfigHash: config.Hash, ProjectConfigValuesHash: configValuesHash, FeatureFlagsHash: cloneFeatureFlagsHash(config.FeatureFlags),
 		Workloads: make([]projectCloneConfigurationWorkload, 0, len(records))}
 	apps, names := map[string]bool{}, map[string]bool{}
 	for _, record := range records {

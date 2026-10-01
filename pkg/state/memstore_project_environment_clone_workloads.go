@@ -27,7 +27,8 @@ func (m *MemStore) CaptureProjectEnvironmentCloneWorkloads(_ context.Context, ac
 	if len(apps) == 0 {
 		return nil, ErrConflict
 	}
-	if _, err := m.projectEnvironmentBySlugLocked(projectID, op.SourceEnvironment); err != nil {
+	sourceEnvironment, err := m.projectEnvironmentBySlugLocked(projectID, op.SourceEnvironment)
+	if err != nil {
 		return nil, err
 	}
 	scopes, err := m.projectCloneValueScopesLocked(apps, ProjectEnvironmentClone{ProjectID: projectID, SourceSlug: op.SourceEnvironment})
@@ -36,7 +37,11 @@ func (m *MemStore) CaptureProjectEnvironmentCloneWorkloads(_ context.Context, ac
 	}
 	records := map[string]projectCloneWorkloadRecord{}
 	config := m.projectEnvironmentConfigLatestLocked(projectID, op.SourceEnvironment)
-	projectConfig, err := normalizeCloneProjectConfig(projectCloneProjectConfig{Hash: config.ConfigHash, Values: config.Values})
+	flagSnapshot, err := captureCloneFeatureFlags(m.latestFeatureFlagsLocked(FeatureFlagScope{AccountID: accountID, ProjectID: projectID, EnvironmentID: sourceEnvironment.ID}))
+	if err != nil {
+		return nil, err
+	}
+	projectConfig, err := normalizeCloneProjectConfig(projectCloneProjectConfig{Hash: config.ConfigHash, Values: config.Values, FeatureFlags: &flagSnapshot})
 	if err != nil {
 		return nil, err
 	}

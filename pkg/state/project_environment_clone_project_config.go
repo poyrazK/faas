@@ -10,8 +10,9 @@ import (
 // numeric spellings, so the workload snapshot separately authenticates the
 // actual stored values rather than deriving a new source version identity.
 type projectCloneProjectConfig struct {
-	Hash   string          `json:"hash"`
-	Values json.RawMessage `json:"values"`
+	Hash         string                    `json:"hash"`
+	Values       json.RawMessage           `json:"values"`
+	FeatureFlags *projectCloneFeatureFlags `json:"feature_flags,omitempty"`
 }
 
 func normalizeCloneProjectConfig(config projectCloneProjectConfig) (projectCloneProjectConfig, error) {
@@ -23,6 +24,13 @@ func normalizeCloneProjectConfig(config projectCloneProjectConfig) (projectClone
 		return projectCloneProjectConfig{}, ErrConflict
 	}
 	config.Values = values
+	if config.FeatureFlags != nil {
+		snapshot, err := normalizeCloneFeatureFlags(*config.FeatureFlags)
+		if err != nil {
+			return projectCloneProjectConfig{}, err
+		}
+		config.FeatureFlags = &snapshot
+	}
 	return config, nil
 }
 
@@ -40,7 +48,8 @@ func capturedCloneProjectConfig(records []projectCloneWorkloadRecord) (projectCl
 			return projectCloneProjectConfig{}, ErrConflict
 		}
 		_, hash, err := api.NormalizeProjectEnvironmentConfig(record.snapshot.ProjectConfig.Values)
-		if err != nil || hash != expectedValuesHash {
+		normalized, normalizeErr := normalizeCloneProjectConfig(*record.snapshot.ProjectConfig)
+		if err != nil || hash != expectedValuesHash || normalizeErr != nil || cloneFeatureFlagsHash(normalized.FeatureFlags) != cloneFeatureFlagsHash(captured.FeatureFlags) {
 			return projectCloneProjectConfig{}, ErrConflict
 		}
 	}

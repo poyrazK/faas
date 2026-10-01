@@ -14545,6 +14545,24 @@ func (q *Queries) LockFeatureFlagEnvironment(ctx context.Context, db DBTX, arg L
 	return id, err
 }
 
+const lockFeatureFlagProject = `-- name: LockFeatureFlagProject :one
+SELECT id FROM projects
+WHERE id = $1::uuid AND account_id = $2::uuid
+FOR KEY SHARE
+`
+
+type LockFeatureFlagProjectParams struct {
+	ProjectID pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) LockFeatureFlagProject(ctx context.Context, db DBTX, arg LockFeatureFlagProjectParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockFeatureFlagProject, arg.ProjectID, arg.AccountID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockInvocationEnvironmentAdmission = `-- name: LockInvocationEnvironmentAdmission :one
 SELECT e.id FROM project_environments e JOIN apps a ON a.project_id=e.project_id AND a.account_id=e.account_id
 WHERE e.id=$1::uuid AND e.slug NOT IN ('production','default')
@@ -20756,6 +20774,26 @@ func (q *Queries) ReadProjectEnvironmentCloneEnvironmentPresence(ctx context.Con
 	var i ReadProjectEnvironmentCloneEnvironmentPresenceRow
 	err := row.Scan(&i.SourceExists, &i.TargetExists)
 	return i, err
+}
+
+const readProjectEnvironmentCloneFlagScope = `-- name: ReadProjectEnvironmentCloneFlagScope :one
+SELECT e.id FROM project_environments e
+JOIN projects p ON p.id = e.project_id AND p.account_id = e.account_id
+WHERE e.project_id = $1::uuid AND e.account_id = $2::uuid
+ AND e.slug = $3::text
+`
+
+type ReadProjectEnvironmentCloneFlagScopeParams struct {
+	ProjectID   pgtype.UUID
+	AccountID   pgtype.UUID
+	Environment string
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneFlagScope(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneFlagScopeParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentCloneFlagScope, arg.ProjectID, arg.AccountID, arg.Environment)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const readProjectEnvironmentCloneLegacySettings = `-- name: ReadProjectEnvironmentCloneLegacySettings :one

@@ -271,6 +271,18 @@ func (m *MemStore) CloneProjectEnvironment(_ context.Context, clone ProjectEnvir
 		}
 		frozenConfig = &config
 	}
+	var flagSnapshot projectCloneFeatureFlags
+	if clone.CloneOperationID != "" {
+		if frozenConfig == nil || frozenConfig.FeatureFlags == nil || frozenConfig.FeatureFlags.SourceEnvironmentID != source.ID {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, ErrConflict
+		}
+		flagSnapshot = *frozenConfig.FeatureFlags
+	} else {
+		flagSnapshot, err = captureCloneFeatureFlags(m.latestFeatureFlagsLocked(FeatureFlagScope{AccountID: clone.AccountID, ProjectID: clone.ProjectID, EnvironmentID: source.ID}))
+		if err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+	}
 	now := time.Now().UTC()
 	created := ProjectEnvironment{
 		ID: newID(), AccountID: clone.AccountID, ProjectID: clone.ProjectID,
@@ -278,6 +290,7 @@ func (m *MemStore) CloneProjectEnvironment(_ context.Context, clone ProjectEnvir
 		CreatedAt: now, UpdatedAt: now,
 	}
 	m.projectEnvironments[created.ID] = created
+	m.copyCloneFeatureFlagsLocked(created, flagSnapshot)
 	for appID, captured := range settings {
 		hash, _ := WorkloadSettingsHash(captured) // validated before any target writes
 		spec := ProjectEnvironmentWorkloadSpec{

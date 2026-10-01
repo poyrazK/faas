@@ -104,6 +104,10 @@ func verifyClonePublicationTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironm
 	if _, err := replayCloneMaterializationTx(ctx, tx, op); err != nil && !errors.Is(err, ErrNotFound) {
 		return err
 	}
+	// Take the flag writer's environment lock before app/resource locks.
+	if _, err := readCloneFeatureFlagsTx(ctx, tx, op.AccountID, op.ProjectID, op.TargetEnvironment); err != nil {
+		return err
+	}
 	rows, err := new(sqlc.Queries).ReadProjectEnvironmentCloneObjectCopyProofs(ctx, tx, mustPgUUID(op.ID))
 	if err != nil {
 		return mapErr(err)

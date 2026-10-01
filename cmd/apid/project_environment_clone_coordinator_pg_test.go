@@ -18,6 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -418,6 +419,34 @@ func TestPGCloneMaterializationRejectsEditedHeadsAndRecreatedEnvironment(t *test
 	}
 	if _, err := f.store.MaterializeProjectEnvironmentCloneForLease(ctx, f.lease, nil, 0, api.MustLimitsFor(api.PlanPro)); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("recreated target adopted old capture: %v", err)
+	}
+}
+
+func TestPGCloneMaterializationRetainsFlagEditsOnReplay(t *testing.T) {
+	f := newCloneCoordinatorFixture(t, false)
+	ctx := t.Context()
+	op := f.lease.Operation
+	env, err := f.store.MaterializeProjectEnvironmentCloneForLease(ctx, f.lease, nil, 0, api.MustLimitsFor(api.PlanPro))
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := state.FeatureFlagScope{AccountID: op.AccountID, ProjectID: op.ProjectID, EnvironmentID: env.ID}
+	initial, err := f.store.GetFeatureFlags(ctx, scope, 0)
+	if err != nil || initial.Version != 1 {
+		t.Fatalf("initial flag copy: %v", err)
+	}
+	edited, err := f.store.UpdateFeatureFlags(ctx, state.FeatureFlagUpdate{Scope: scope, ExpectedVersion: initial.Version,
+		Config: flags.Config{Flags: []flags.Flag{{Key: "stage_edit", Enabled: true, Default: true}}}, Actor: "developer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := f.store.MaterializeProjectEnvironmentCloneForLease(ctx, f.lease, nil, 0, api.MustLimitsFor(api.PlanPro))
+	if err != nil || replayed.ID != env.ID {
+		t.Fatalf("materialization replay: %v", err)
+	}
+	current, err := f.store.GetFeatureFlags(ctx, scope, 0)
+	if err != nil || current.Version != edited.Version || len(current.Flags) != 1 || current.Flags[0].Key != "stage_edit" {
+		t.Fatalf("replay overwrote stage flags: %v", err)
 	}
 }
 

@@ -7172,12 +7172,23 @@ WHERE id=sqlc.arg(id) AND account_id=sqlc.arg(account_id) AND state='dispatching
 
 -- name: DevBridgeWebhookReplayByID :one
 SELECT * FROM dev_bridge_webhook_replays WHERE id=$1 AND account_id=$2 AND session_id=$3;
+-- name: LockFeatureFlagProject :one
+SELECT id FROM projects
+WHERE id = sqlc.arg(project_id)::uuid AND account_id = sqlc.arg(account_id)::uuid
+FOR KEY SHARE;
+
 -- name: LockFeatureFlagEnvironment :one
 SELECT e.id FROM project_environments e
 JOIN projects p ON p.id = e.project_id AND p.account_id = e.account_id
 WHERE e.id = sqlc.arg(environment_id)::uuid AND e.project_id = sqlc.arg(project_id)::uuid
  AND e.account_id = sqlc.arg(account_id)::uuid
 FOR UPDATE OF e;
+
+-- name: ReadProjectEnvironmentCloneFlagScope :one
+SELECT e.id FROM project_environments e
+JOIN projects p ON p.id = e.project_id AND p.account_id = e.account_id
+WHERE e.project_id = sqlc.arg(project_id)::uuid AND e.account_id = sqlc.arg(account_id)::uuid
+ AND e.slug = sqlc.arg(environment)::text;
 
 -- name: GetFeatureFlagVersion :one
 SELECT * FROM feature_flag_versions
