@@ -1170,6 +1170,9 @@ type CustomerOperation struct {
 	Record              []byte
 	ExpiresAt           pgtype.Timestamptz
 	CreatedAt           pgtype.Timestamptz
+	CurrentExecutionID  pgtype.UUID
+	ExecutionKind       string
+	ExecutionGeneration int32
 }
 
 type CustomerOperationDefinition struct {
@@ -1196,10 +1199,14 @@ type CustomerOperationEvent struct {
 }
 
 type CustomerOperationExecution struct {
-	OperationID  pgtype.UUID
-	Generation   int32
-	InvocationID pgtype.UUID
-	CreatedAt    pgtype.Timestamptz
+	OperationID   pgtype.UUID
+	Generation    int32
+	InvocationID  pgtype.UUID
+	CreatedAt     pgtype.Timestamptz
+	WorkflowRunID pgtype.UUID
+	JobRunID      pgtype.UUID
+	ExecutionID   pgtype.UUID
+	ExecutionKind string
 }
 
 type CustomerOperationIdempotency struct {
@@ -2240,6 +2247,7 @@ type JobRun struct {
 	SourceRunID                 pgtype.UUID
 	InputManifestUri            pgtype.Text
 	InputManifestSha256         pgtype.Text
+	OperationID                 pgtype.UUID
 }
 
 type JobTask struct {
@@ -4314,6 +4322,7 @@ type WorkflowRun struct {
 	CreatedAt          pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
 	LeaseUntil         pgtype.Timestamptz
+	OperationID        pgtype.UUID
 }
 
 type WorkflowStep struct {

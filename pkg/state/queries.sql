@@ -5059,8 +5059,14 @@ FROM customer_operation_definitions WHERE app_id=sqlc.arg(app_id)::uuid AND acco
 AND deployment_id=sqlc.arg(deployment_id)::uuid AND name=sqlc.arg(name)::text;
 
 -- name: GetCustomerOperationIdempotency :one
-SELECT operation_id::text,fingerprint,expires_at FROM customer_operation_idempotency
+SELECT operation_id::text,fingerprint,expires_at,
+ EXISTS(SELECT 1 FROM customer_operations o WHERE o.id=customer_operation_idempotency.operation_id AND o.state IN ('accepted','running')) AS active
+FROM customer_operation_idempotency
 WHERE scope_digest=sqlc.arg(scope_digest)::text AND account_id=sqlc.arg(account_id)::uuid;
+
+-- name: RetainCustomerOperationIdempotency :exec
+UPDATE customer_operation_idempotency SET expires_at=greatest(expires_at,sqlc.arg(expires_at)::timestamptz)
+WHERE operation_id=sqlc.arg(operation_id)::uuid;
 
 -- name: PutCustomerOperationIdempotency :exec
 INSERT INTO customer_operation_idempotency(scope_digest,account_id,app_id,operation_id,fingerprint,expires_at)
@@ -5075,7 +5081,7 @@ AND state IN ('accepted','running','requires_reconciliation');
 -- name: InsertCustomerOperation :exec
 INSERT INTO customer_operations(id,account_id,app_id,platform_tenant_id,definition_id,current_invocation_id,state,record,expires_at,created_at)
 VALUES(sqlc.arg(id)::uuid,sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(tenant_id)::uuid,
-       sqlc.arg(definition_id)::uuid,sqlc.arg(invocation_id)::uuid,sqlc.arg(state)::text,
+       sqlc.arg(definition_id)::uuid,sqlc.narg(invocation_id)::uuid,sqlc.arg(state)::text,
        sqlc.arg(record)::jsonb,sqlc.arg(expires_at)::timestamptz,sqlc.arg(created_at)::timestamptz);
 
 -- name: InsertCustomerOperationExecution :exec
@@ -5102,9 +5108,38 @@ SELECT o.record FROM customer_operations o JOIN customer_operation_executions e 
 WHERE e.invocation_id=sqlc.arg(invocation_id)::uuid FOR UPDATE OF o;
 
 -- name: UpdateCustomerOperation :exec
-UPDATE customer_operations SET current_invocation_id=sqlc.arg(invocation_id)::uuid,
+UPDATE customer_operations SET current_invocation_id=sqlc.narg(invocation_id)::uuid,
  state=sqlc.arg(state)::text,record=sqlc.arg(record)::jsonb,expires_at=sqlc.arg(expires_at)::timestamptz
 WHERE id=sqlc.arg(id)::uuid;
+
+-- Backend rows are locked first by the adapter; this is the common operation
+-- lock after that. HTTP continues to use its invocation-specific seam above.
+-- name: LockCustomerOperationBackendExecution :one
+SELECT o.record,e.generation,e.execution_kind FROM customer_operations o
+JOIN customer_operation_executions e ON e.operation_id=o.id
+WHERE e.execution_id=sqlc.arg(execution_id)::uuid FOR UPDATE OF o;
+
+-- name: SetCustomerOperationWorkflowIdentity :execrows
+UPDATE workflow_runs w SET operation_id=o.id FROM customer_operations o
+WHERE w.id=sqlc.arg(run_id)::uuid AND o.id=sqlc.arg(operation_id)::uuid AND w.app_id=o.app_id AND o.execution_kind='workflow'
+AND (w.operation_id IS NULL OR w.operation_id=o.id);
+
+-- name: InsertCustomerOperationWorkflowExecution :execrows
+INSERT INTO customer_operation_executions(operation_id,generation,workflow_run_id)
+SELECT o.id,sqlc.arg(generation)::integer,w.id FROM customer_operations o
+JOIN workflow_runs w ON w.id=sqlc.arg(run_id)::uuid AND w.app_id=o.app_id AND w.operation_id=o.id
+WHERE o.id=sqlc.arg(operation_id)::uuid AND o.execution_kind='workflow';
+
+-- name: SetCustomerOperationJobIdentity :execrows
+UPDATE job_runs j SET operation_id=o.id FROM customer_operations o
+WHERE j.id=sqlc.arg(run_id)::uuid AND o.id=sqlc.arg(operation_id)::uuid AND j.account_id=o.account_id AND o.execution_kind='job'
+AND (j.operation_id IS NULL OR j.operation_id=o.id);
+
+-- name: InsertCustomerOperationJobExecution :execrows
+INSERT INTO customer_operation_executions(operation_id,generation,job_run_id)
+SELECT o.id,sqlc.arg(generation)::integer,j.id FROM customer_operations o
+JOIN job_runs j ON j.id=sqlc.arg(run_id)::uuid AND j.account_id=o.account_id AND j.operation_id=o.id
+WHERE o.id=sqlc.arg(operation_id)::uuid AND o.execution_kind='job';
 
 -- name: GetCustomerOperationReport :one
 SELECT fingerprint FROM customer_operation_reports
@@ -5169,7 +5204,8 @@ WITH doomed AS (SELECT id FROM customer_operations
 DELETE FROM customer_operations o USING doomed d WHERE o.id=d.id;
 
 -- name: PruneCustomerOperationIdempotency :execrows
-WITH doomed AS (SELECT scope_digest FROM customer_operation_idempotency WHERE expires_at<=sqlc.arg(now)::timestamptz
+WITH doomed AS (SELECT scope_digest FROM customer_operation_idempotency i WHERE expires_at<=sqlc.arg(now)::timestamptz
+ AND NOT EXISTS(SELECT 1 FROM customer_operations o WHERE o.id=i.operation_id AND o.state IN ('accepted','running'))
  ORDER BY expires_at,scope_digest LIMIT sqlc.arg(page_limit)::integer)
 DELETE FROM customer_operation_idempotency i USING doomed d WHERE i.scope_digest=d.scope_digest;
 
@@ -5242,7 +5278,7 @@ FROM invocations WHERE id = sqlc.arg(id) FOR UPDATE;
 
 -- name: CustomerOperationStateMetrics :many
 SELECT state,count(*)::bigint AS retained_count,min(created_at)::timestamptz AS oldest_created_at
-FROM customer_operations WHERE expires_at>sqlc.arg(now)::timestamptz
+FROM customer_operations WHERE expires_at>sqlc.arg(now)::timestamptz OR state IN ('accepted','running')
 GROUP BY state ORDER BY state;
 
 -- name: CustomerOperationStreamMetric :one
