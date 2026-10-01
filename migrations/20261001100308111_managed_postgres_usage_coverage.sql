@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
-CREATE TABLE managed_postgres_usage_coverage (
+CREATE TABLE IF NOT EXISTS managed_postgres_usage_coverage (
     database_id uuid NOT NULL REFERENCES managed_postgres_databases(id) ON DELETE CASCADE,
     window_seconds bigint NOT NULL CHECK (window_seconds BETWEEN 3600 AND 86400),
     collected_from timestamptz,
@@ -26,5 +26,5 @@ CREATE TABLE managed_postgres_usage_coverage (
 
 -- +goose Down
 -- +goose StatementBegin
-DROP TABLE managed_postgres_usage_coverage;
+DROP TABLE IF EXISTS managed_postgres_usage_coverage;
 -- +goose StatementEnd
