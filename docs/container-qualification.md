@@ -537,3 +537,22 @@ Actual capacity/isolation/reclamation/teardown execution remains unexecuted
 until a designated Linux host is available. No VM or native leak qualification
 is inferred; PRs remain drafts and unmerged. The independent runner and note
 are also retained in this implementation branch.
+
+### Identity CI completion and customer-only TCP review — 2026-10-01
+
+PR #3954 head `4b1febd8f1279a6428e94c40bb4d0f6c8c5e4aa0` has completed all
+remote checks: 26 successes and one conditional skip, no running/queued/failing
+checks. It remains draft, mergeable and unmerged against base `f2893f798`.
+This validates only the isolated identity change; native VM qualification and
+the remaining implementation branch are not proven by its green checks.
+
+Independent draft [PR #3960](https://github.com/poyrazK/faas/pull/3960), head
+`e020c3e16`, isolates exclusion of mirror and foreign-app instances from raw
+TCP warm routing. Mirror/foreign-only sources require normal admission and
+cannot suppress a customer wake. New regression covers repeated warm selection,
+all supported customer modes, admission, missing-admitter failure and listener
+port preservation. Full portable TCP/public-gateway race suites pass and scoped
+TCP lint reports zero issues. Logs `/tmp/gregale-tcp-customer-race.log` and
+`/tmp/gregale-tcp-customer-lint.log`. Remote checks are pending.
+Weighted deployments, durable listener identity, UDP and TLS remain in the
+larger branch and require their own focused reviews. No PR has been merged.
