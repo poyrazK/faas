@@ -771,6 +771,22 @@ func (r *VMMRouter) UpdateEgressAllowlist(ctx context.Context, nodeID, appID str
 	return cli.UpdateEgressAllowlist(ctx, appID, allowlist, egressPorts)
 }
 
+// UpdateAppEgressPolicy routes a complete policy without falling back to an
+// unrevisioned update on nodes that cannot fence physical writes.
+func (r *VMMRouter) UpdateAppEgressPolicy(ctx context.Context, nodeID, appID string, revision int64, allowlist []netip.Prefix, ports []int) error {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return err
+	}
+	updater, ok := cli.(interface {
+		UpdateAppEgressPolicy(context.Context, string, int64, []netip.Prefix, []int) error
+	})
+	if !ok {
+		return fmt.Errorf("vmm router: revisioned egress unsupported by node %q", nodeID)
+	}
+	return updater.UpdateAppEgressPolicy(ctx, appID, revision, allowlist, ports)
+}
+
 // UpdateAppCPULimit routes a live app CPU policy to the owning vmmd. Kept
 // outside RoutedVMM so existing scheduler lifecycle fakes remain source
 // compatible; the durable CPU-policy subscriber opts into this capability.

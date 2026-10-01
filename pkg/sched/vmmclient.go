@@ -1004,6 +1004,30 @@ func (c *VMMClient) UpdateEgressAllowlist(ctx context.Context, appID string, all
 	return nil
 }
 
+// UpdateAppEgressPolicy sends a complete revisioned projection. An old node
+// refuses the distinct RPC, and a missing or mismatched acknowledgment fails.
+func (c *VMMClient) UpdateAppEgressPolicy(ctx context.Context, appID string, revision int64, allowlist []netip.Prefix, ports []int) error {
+	wirePorts := make([]uint32, len(ports))
+	for i, port := range ports {
+		if _, forbidden := api.TenantEgressForbiddenPort(port); port < 1 || port > 65535 || forbidden {
+			return fmt.Errorf("invalid revisioned egress policy port")
+		}
+		wirePorts[i] = uint32(port)
+	}
+	ss := make([]string, len(allowlist))
+	for i, prefix := range allowlist {
+		ss[i] = prefix.String()
+	}
+	ack, err := c.cli.UpdateAppEgressPolicy(ctx, &vmmdpb.UpdateAppEgressPolicyRequest{AppId: appID, Revision: revision, EgressAllowlist: ss, EgressPorts: wirePorts})
+	if err != nil {
+		return liftErr(err)
+	}
+	if ack.GetRevision() != revision {
+		return fmt.Errorf("vmmd egress acknowledgment does not match requested revision")
+	}
+	return nil
+}
+
 // UpdateAppCPULimit pushes a validated, complete app CPU quota to vmmd. The
 // gRPC operation updates live host cgroups without guest restart; RAM and vCPU
 // topology remain cold-boot attributes.

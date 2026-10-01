@@ -148,6 +148,28 @@ review precedence and worker replacement; PostgreSQL expiry after physical write
 rolls the entire installation back. Persisted installation does not acknowledge
 any runtime consumer.
 
+The durable schedd egress consumer now sends the complete CIDR/extra-port tuple
+and its actual revision through a separate `UpdateAppEgressPolicy` RPC. Old
+nodes refuse the method before network mutation. New clients require an exact
+echoed revision before recording success. Within a vmmd process, a cancellable
+per-app gate orders writes and denies older, conflicting or legacy updates once
+a revisioned policy has been accepted. Failed physical writes retain the newer
+accepted intent for retry. Wakes share that gate, use the latest accepted tuple,
+and publish before an update enumerates live instances. Different apps and
+ordinary simultaneous wakes still progress independently. A live plan that
+cannot represent the complete port projection is rejected rather than silently
+truncated and acknowledged. Unit and wire tests cover these orderings and
+failures; the native network gate remains open.
+
+The revision cache is process-local. Boot/migration admission and vmmd restart
+freshness still need revision-bound evidence. Existing native CIDR patch failure
+recovery, established-connection tightening and host firewall reload outcomes
+must be verified before these RPC acknowledgments can advance standard rollout
+observation. This addition does not advance any standard observed revision or
+enable public activation. Upgrade vmmd before deploying the revisioned schedd
+consumer; unsupported nodes remain pending rather than receiving an unversioned
+fallback.
+
 Public review/activation, permitted local intent mutations, exceptions and
 consumer observation are still pending.
 The enrollment gate currently covers deployment admission;

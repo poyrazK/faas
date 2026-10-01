@@ -210,6 +210,9 @@ service Vmmd {
   // uses pg_notify as the delivery mechanism (cmd/schedd egress
   // drift subscriber, pkg/sched/egress_drift.go).
   rpc UpdateEgressAllowlist(UpdateEgressAllowlistRequest) returns (UpdateEgressAllowlistAck);
+  // A separate method makes old nodes refuse revision-aware updates before
+  // touching the network. Acknowledgments echo the successfully applied revision.
+  rpc UpdateAppEgressPolicy(UpdateAppEgressPolicyRequest) returns (UpdateAppEgressPolicyAck);
   // AllowResolvedEgress (ADR-373): the node's bridge resolver reports the
   // addresses a guest just resolved; vmmd lets that guest open TCP to them
   // for the answer's TTL before the resolver replies. source_ip is the
@@ -2243,3 +2246,13 @@ message AllowResolvedEgressAck {
   // matched is false when no live instance owns source_ip.
   bool matched = 1;
 }
+
+// Complete app CIDR/extra-port projection, ordered on the node by revision.
+message UpdateAppEgressPolicyRequest {
+  string app_id = 1;
+  int64 revision = 2;
+  repeated string egress_allowlist = 3;
+  repeated uint32 egress_ports = 4;
+}
+
+message UpdateAppEgressPolicyAck { int64 revision = 1; }

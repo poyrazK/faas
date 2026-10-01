@@ -16,8 +16,11 @@ package sched
 // app_changed feed, filters to kind="updated", looks up the
 // current EgressAllowlist on the apps row, enumerates every
 // live instance of the app (across all compute nodes), and
-// pushes the new allowlist to each owning vmmd via
-// RoutedVMM.UpdateEgressAllowlist. vmmd applies the patch
+// pushes the complete CIDR/extra-port tuple and durable revision to each
+// owning vmmd via UpdateAppEgressPolicy. Old nodes refuse before mutation;
+// the scheduler records success only for an exact echoed revision. Stores
+// without durable revisions retain the legacy UpdateEgressAllowlist path.
+// vmmd applies the patch
 // in-place via incremental nft delete-by-handle + add (no
 // netns teardown, no cold-wake tax).
 //
@@ -34,6 +37,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/netip"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/db"
@@ -227,7 +231,15 @@ func (e *EgressDriftSubscriber) reconcileApp(ctx context.Context, appID string) 
 }
 
 func (e *EgressDriftSubscriber) applyTarget(ctx context.Context, store state.AppEgressPolicyConvergenceStore, target state.AppEgressPolicyApplyTarget) {
-	applyErr := e.router.UpdateEgressAllowlist(ctx, target.NodeID, target.AppID, target.Allowlist, target.EgressPorts)
+	var applyErr error
+	updater, ok := e.router.(interface {
+		UpdateAppEgressPolicy(context.Context, string, string, int64, []netip.Prefix, []int) error
+	})
+	if !ok {
+		applyErr = errors.New("runtime cannot order revisioned egress policy updates")
+	} else {
+		applyErr = updater.UpdateAppEgressPolicy(ctx, target.NodeID, target.AppID, target.Revision, target.Allowlist, target.EgressPorts)
+	}
 	if err := store.RecordAppEgressPolicyApply(ctx, target.AppID, target.NodeID, target.Revision, applyErr); err != nil {
 		e.log.Warn("schedd: record app egress policy apply failed",
 			"app", target.AppID, "slug", target.Slug, "node", target.NodeID,

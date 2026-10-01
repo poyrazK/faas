@@ -757,8 +757,10 @@ type Manager struct {
 	// older request cannot finish after a newer one and leave existing VMs at
 	// the stale quota. appCPUPolicies is guarded by mu and also fences a Wake
 	// that began with an older app config but has not yet published as live.
-	appCPUPolicyUpdates sync.Mutex
-	appCPUPolicies      map[string]appCPUPolicy
+	appCPUPolicyUpdates  sync.Mutex
+	appCPUPolicies       map[string]appCPUPolicy
+	appEgressPolicyLocks sync.Map                   // app ID -> cancellable read/write gate
+	appEgressPolicies    map[string]appEgressPolicy // guarded by mu
 	// jobBoots covers the artifact restore and VMM boot interval before a job
 	// enters live. Destroy/Stop must cancel and join this interval; otherwise a
 	// late boot can publish a VM after its task was already cancelled.
@@ -3789,6 +3791,23 @@ func (m *Manager) WakeWithNetworkReady(ctx context.Context, req WakeRequest, hoo
 }
 
 func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNetworkReadyHook) (_ *Instance, err error) {
+	unlockPolicy, err := m.lockAppEgressPolicyForWake(ctx, req.AppID)
+	if err != nil {
+		return nil, err
+	}
+	defer unlockPolicy()
+	// Keep the accepted projection stable until publication. A wake prepared
+	// before a live update must receive the node's newest complete projection.
+	m.mu.Lock()
+	if policy, ok := m.appEgressPolicies[req.AppID]; ok {
+		if err := validateAppEgressPolicyPlan(req.Plan, policy); err != nil {
+			m.mu.Unlock()
+			return nil, err
+		}
+		req.EgressAllowlist = egressPrefixStrings(policy.allowlist)
+		req.EgressPorts = append([]uint16{}, policy.ports...)
+	}
+	m.mu.Unlock()
 	if err := validateMainWorkloadDependencyTargets(req.MainDependsOn, req.Sidecars); err != nil {
 		return nil, fmt.Errorf("wake %s: primary workload dependencies: %w", req.Instance, err)
 	}
@@ -5567,23 +5586,20 @@ func (m *Manager) SetEgressOperatorBundle(cidrs []netip.Prefix) {
 	m.operatorBundle = cidrs
 	m.operatorBundleMu.Unlock()
 
-	// Snapshot the authoritative per-app slice map under a
-	// single read-lock acquisition. One lock, no per-appID
-	// re-entry.
+	// Snapshot application identities only. Each tenant projection is reread
+	// after taking that app's gate so an intervening update cannot be undone.
 	m.perAppAllowlistMu.RLock()
-	perAppByID := make(map[string][]netip.Prefix, len(m.perAppAllowlist))
-	for appID, slice := range m.perAppAllowlist {
-		cp := make([]netip.Prefix, len(slice))
-		copy(cp, slice)
-		perAppByID[appID] = cp
+	appIDs := make([]string, 0, len(m.perAppAllowlist))
+	for appID := range m.perAppAllowlist {
+		appIDs = append(appIDs, appID)
 	}
 	m.perAppAllowlistMu.RUnlock()
 
-	if len(perAppByID) == 0 {
+	if len(appIDs) == 0 {
 		return
 	}
-	for appID, perApp := range perAppByID {
-		if err := m.UpdateEgressAllowlist(context.Background(), appID, perApp); err != nil {
+	for _, appID := range appIDs {
+		if err := m.reapplyAppEgressOperatorBundle(context.Background(), appID); err != nil {
 			m.log.Warn("fcvm: SetEgressOperatorBundle patch failed; live netns may be stale until next reconcile",
 				"app_id", appID, "err", err)
 		}
@@ -5755,8 +5771,8 @@ func dedupSortedPrefixes(in []netip.Prefix) []netip.Prefix {
 // Idempotency: identical allowlist re-pushed → samePrefixSet
 // fast-path returns nil without running nft. The next cold boot
 // re-reads the column, so a snapshot-restore Wake always sees the
-// current allowlist — there is no `egressAllowlistVersion` column
-// to keep in sync.
+// current allowlist. Durable scheduler repair uses UpdateAppEgressPolicy,
+// which also fences the physical CIDR/port projection by revision.
 //
 // Lock order:
 //   - m.mu held briefly to snapshot targets and to update the
@@ -5875,6 +5891,18 @@ func (m *Manager) UpdateAppCPULimit(ctx context.Context, appID string, revision 
 }
 
 func (m *Manager) UpdateEgressAllowlist(ctx context.Context, appID string, allowlist []netip.Prefix) error {
+	unlock, err := m.lockAppEgressPolicy(ctx, appID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if m.hasRevisionedAppEgressPolicy(appID) {
+		return fmt.Errorf("fcvm: legacy egress update cannot replace revisioned policy")
+	}
+	return m.updateEgressAllowlist(ctx, appID, allowlist)
+}
+
+func (m *Manager) updateEgressAllowlist(ctx context.Context, appID string, allowlist []netip.Prefix) error {
 	if appID == "" {
 		return fmt.Errorf("fcvm: UpdateEgressAllowlist: empty app_id")
 	}
@@ -7324,6 +7352,18 @@ func layerKeyForColdBoot(req WakeRequest) string {
 // transaction per instance. New wakes read the ports from their request.
 // Instances whose set already matches are skipped.
 func (m *Manager) UpdateEgressPorts(ctx context.Context, appID string, extra []uint16) error {
+	unlock, err := m.lockAppEgressPolicy(ctx, appID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if m.hasRevisionedAppEgressPolicy(appID) {
+		return fmt.Errorf("fcvm: legacy egress ports update cannot replace revisioned policy")
+	}
+	return m.updateEgressPorts(ctx, appID, extra)
+}
+
+func (m *Manager) updateEgressPorts(ctx context.Context, appID string, extra []uint16) error {
 	if appID == "" {
 		return fmt.Errorf("fcvm: UpdateEgressPorts: empty app_id")
 	}
