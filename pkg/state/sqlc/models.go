@@ -758,6 +758,19 @@ type AppTrustedSigner struct {
 	AddedByAccountID pgtype.UUID
 }
 
+type AppUdpListener struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	ListenerName string
+	GuestPort    int32
+	PublicPort   int32
+	Protocol     string
+	Enabled      bool
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
 type AppWakeTransition struct {
 	ID           pgtype.UUID
 	AppID        pgtype.UUID

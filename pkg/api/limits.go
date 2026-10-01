@@ -7764,3 +7764,7 @@ const TCPListenerTLSObservationMaxAge = 60 * time.Second
 const TCPListenerTLSObservationEdgeIDMaxBytes = 128
 const TCPListenerTLSObservationRefreshInterval = 15 * time.Second
 const TCPListenerTLSObservationWriteTimeout = 2 * time.Second
+
+// UDP listener ports reserve an independent UDP namespace at the public edge.
+const UDPListenerPublicPortMin = 40000
+const UDPListenerPublicPortMax = 49999

@@ -6758,3 +6758,14 @@ type IdempotencyReservation struct {
 	Status   int
 	Body     []byte
 }
+
+// UDPListenerStore is optional so unrelated Store adapters stay narrow.
+type UDPListenerStore interface {
+	CreateUDPListener(context.Context, UDPListener) (UDPListener, error)
+	UDPListenerByID(context.Context, string) (UDPListener, error)
+	UDPListenerByAppAndName(context.Context, string, string) (UDPListener, error)
+	UDPListenerByPublicPort(context.Context, int) (UDPListener, error)
+	ListUDPListenersForApp(context.Context, string) ([]UDPListener, error)
+	SetUDPListenerEnabled(context.Context, string, bool) (UDPListener, error)
+	DeleteUDPListener(context.Context, string) error
+}

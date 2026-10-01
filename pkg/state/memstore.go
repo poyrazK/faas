@@ -378,6 +378,7 @@ type MemStore struct {
 	realtimeChannelRouteLocks       map[string]chan struct{}
 	tcpListeners                    map[string]TCPListener
 	tcpTLSObservations              map[string]map[string]TCPListenerTLSObservation
+	udpListeners                    map[string]UDPListener
 	managedRealtimeDrainOperations  map[string]ManagedRealtimeDrainOperation
 	managedRealtimeOwners           map[string]ManagedRealtimeConnectionOwner
 	appLogDrains                    map[string]AppLogDrain
