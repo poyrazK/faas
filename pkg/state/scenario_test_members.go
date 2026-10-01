@@ -159,7 +159,7 @@ func (s *PgStore) SetScenarioTestChaosPlan(ctx context.Context, accountID, runID
 		return chaos.Lease{}, ErrConflict
 	}
 	if err := plan.Validate(); err != nil {
-		return chaos.Lease{}, fmt.Errorf("%w: %v", ErrConflict, err)
+		return chaos.Lease{}, fmt.Errorf("%w: %w", ErrConflict, err)
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -194,7 +194,7 @@ func (s *PgStore) SetScenarioTestChaosPlan(ctx context.Context, accountID, runID
 		return chaos.Lease{}, ErrNotFound
 	}
 	if err := plan.ValidateWorkloads(workloads); err != nil {
-		return chaos.Lease{}, fmt.Errorf("%w: %v", ErrConflict, err)
+		return chaos.Lease{}, fmt.Errorf("%w: %w", ErrConflict, err)
 	}
 	var live bool
 	if err := tx.QueryRow(ctx, `select exists(
@@ -263,7 +263,7 @@ func (m *MemStore) SetScenarioTestChaosPlan(_ context.Context, accountID, runID 
 		return chaos.Lease{}, ErrConflict
 	}
 	if err := plan.Validate(); err != nil {
-		return chaos.Lease{}, fmt.Errorf("%w: %v", ErrConflict, err)
+		return chaos.Lease{}, fmt.Errorf("%w: %w", ErrConflict, err)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -277,7 +277,7 @@ func (m *MemStore) SetScenarioTestChaosPlan(_ context.Context, accountID, runID 
 		return chaos.Lease{}, ErrNotFound
 	}
 	if err := plan.ValidateWorkloads(workloads); err != nil {
-		return chaos.Lease{}, fmt.Errorf("%w: %v", ErrConflict, err)
+		return chaos.Lease{}, fmt.Errorf("%w: %w", ErrConflict, err)
 	}
 	active := false
 	for _, member := range m.scenarioTestMembers {

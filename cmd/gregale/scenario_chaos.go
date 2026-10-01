@@ -70,6 +70,14 @@ func validateScenarioChaos(scenario testScenario) error {
 	return plan.ValidateWorkloads(workloads)
 }
 
+func scenarioChaosAPIRules(rules []chaos.Rule) []api.ScenarioTestChaosRule {
+	result := make([]api.ScenarioTestChaosRule, len(rules))
+	for i, rule := range rules {
+		result[i] = api.ScenarioTestChaosRule(rule)
+	}
+	return result
+}
+
 func cmdChaos(args []string) int {
 	if len(args) == 0 || args[0] != "inject" {
 		PrintUsage(osStderr, "usage: gregale chaos inject --scenario NAME --target SERVICE (--latency D|--error CODE) --percent N [--duration D] [--from SERVICE] [--profile warm|cold|restored]", "chaos")

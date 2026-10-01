@@ -43,7 +43,7 @@ func TestScenarioTestRegistrationRequiresSameRunAndCleanup(t *testing.T) {
 	chaosPath := path + "/chaos"
 	installed := e.do(t, "PUT", chaosPath, api.InjectScenarioTestChaosRequest{
 		DurationMS: 30_000,
-		Rules:      []chaos.Rule{{From: "api", To: "worker", Kind: chaos.KindHTTPStatus, Percent: 10, StatusCode: 503, Seed: 17}},
+		Rules:      []api.ScenarioTestChaosRule{{From: "api", To: "worker", Kind: chaos.KindHTTPStatus, Percent: 10, StatusCode: 503, Seed: 17}},
 	}, nil)
 	if installed.Code != http.StatusOK {
 		t.Fatalf("install chaos plan: %d %s", installed.Code, installed.Body.String())
@@ -54,7 +54,7 @@ func TestScenarioTestRegistrationRequiresSameRunAndCleanup(t *testing.T) {
 	}
 	invalidPlan := e.do(t, "PUT", chaosPath, api.InjectScenarioTestChaosRequest{
 		DurationMS: 30_000,
-		Rules:      []chaos.Rule{{From: "api", To: "production", Kind: chaos.KindHTTPStatus, Percent: 10, StatusCode: 503}},
+		Rules:      []api.ScenarioTestChaosRule{{From: "api", To: "production", Kind: chaos.KindHTTPStatus, Percent: 10, StatusCode: 503}},
 	}, nil)
 	if invalidPlan.Code != http.StatusBadRequest {
 		t.Fatalf("unregistered chaos target: %d %s", invalidPlan.Code, invalidPlan.Body.String())

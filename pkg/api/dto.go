@@ -18,7 +18,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api/canary"
-	"github.com/onebox-faas/faas/pkg/chaos"
 	"github.com/onebox-faas/faas/pkg/statefuldenylist"
 )
 
@@ -697,8 +696,19 @@ type ScenarioTestWorkload struct {
 // calls within one registered scenario run. The server supplies the expiry;
 // callers cannot choose an absolute timestamp or target an unregistered app.
 type InjectScenarioTestChaosRequest struct {
-	DurationMS int64        `json:"duration_ms"`
-	Rules      []chaos.Rule `json:"rules"`
+	DurationMS int64                   `json:"duration_ms"`
+	Rules      []ScenarioTestChaosRule `json:"rules"`
+}
+
+// ScenarioTestChaosRule describes one bounded fault for scenario service calls.
+type ScenarioTestChaosRule struct {
+	From       string `json:"from,omitempty"`
+	To         string `json:"to"`
+	Kind       string `json:"kind"`
+	Percent    int    `json:"percent"`
+	LatencyMS  int64  `json:"latency_ms,omitempty"`
+	StatusCode int    `json:"status_code,omitempty"`
+	Seed       uint64 `json:"seed"`
 }
 
 type InjectScenarioTestChaosResponse struct {

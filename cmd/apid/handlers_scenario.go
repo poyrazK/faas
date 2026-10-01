@@ -84,7 +84,11 @@ func (s *server) injectScenarioTestChaos(w http.ResponseWriter, r *http.Request,
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
-	lease, err := s.store.SetScenarioTestChaosPlan(r.Context(), acct.ID, runID, chaos.Plan{DurationMS: req.DurationMS, Rules: req.Rules})
+	rules := make([]chaos.Rule, len(req.Rules))
+	for i, rule := range req.Rules {
+		rules[i] = chaos.Rule(rule)
+	}
+	lease, err := s.store.SetScenarioTestChaosPlan(r.Context(), acct.ID, runID, chaos.Plan{DurationMS: req.DurationMS, Rules: rules})
 	if err != nil {
 		if errors.Is(err, state.ErrConflict) {
 			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid chaos plan", err.Error()))

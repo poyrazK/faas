@@ -1209,7 +1209,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		advancePhase("inject_chaos")
 		installed, err := client.InjectScenarioTestChaos(ctx, receipt.RunID, api.InjectScenarioTestChaosRequest{
 			DurationMS: plan.DurationMS,
-			Rules:      plan.Rules,
+			Rules:      scenarioChaosAPIRules(plan.Rules),
 		})
 		if err != nil {
 			receipt.Error = fmt.Sprintf("install scenario chaos plan: %v", err)
