@@ -83,11 +83,11 @@ func TestEdgeRuleConvergenceAcrossPublicGatewaysE2E(t *testing.T) {
 		}
 	}()
 	time.Sleep(40 * time.Millisecond)
-	failedCreate, failedBody := edgeRuleAPIRequest(t, f, http.MethodPost, "/v1/apps/"+slug+"/edge-rules", create)
+	_, failedStatus, failedBody := edgeRuleAPIRequest(t, f, http.MethodPost, "/v1/apps/"+slug+"/edge-rules", create)
 	stopProbeLoop()
 	<-probeDone
-	if failedCreate.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("create with an unavailable registered gateway: status=%d body=%s, want 503", failedCreate.StatusCode, failedBody)
+	if failedStatus != http.StatusServiceUnavailable {
+		t.Fatalf("create with an unavailable registered gateway: status=%d body=%s, want 503", failedStatus, failedBody)
 	}
 	select {
 	case <-fenceSeen:
@@ -111,11 +111,11 @@ func TestEdgeRuleConvergenceAcrossPublicGatewaysE2E(t *testing.T) {
 	}
 	frontends := []string{f.h.EdgeURL(), secondaryPublicURL}
 
-	created, createBody := edgeRuleAPIRequest(t, f, http.MethodPost, "/v1/apps/"+slug+"/edge-rules", create)
-	if created.StatusCode != http.StatusCreated {
-		t.Fatalf("create edge rule: status=%d body=%s", created.StatusCode, createBody)
+	createdHeaders, createdStatus, createBody := edgeRuleAPIRequest(t, f, http.MethodPost, "/v1/apps/"+slug+"/edge-rules", create)
+	if createdStatus != http.StatusCreated {
+		t.Fatalf("create edge rule: status=%d body=%s", createdStatus, createBody)
 	}
-	lastGeneration := assertEdgeRuleMutationActive(t, created, 0)
+	lastGeneration := assertEdgeRuleMutationActive(t, createdHeaders, 0)
 	var rule api.EdgeRuleResponse
 	if err := json.Unmarshal(createBody, &rule); err != nil {
 		t.Fatalf("decode created edge rule: %v body=%s", err, createBody)
@@ -128,21 +128,21 @@ func TestEdgeRuleConvergenceAcrossPublicGatewaysE2E(t *testing.T) {
 	}
 
 	allowUnreachable := edgeRuleIPAction(t, "192.0.2.10/32")
-	updated, updateBody := edgeRuleAPIRequest(t, f, http.MethodPatch, "/v1/edge-rules/"+rule.ID,
+	updatedHeaders, updatedStatus, updateBody := edgeRuleAPIRequest(t, f, http.MethodPatch, "/v1/edge-rules/"+rule.ID,
 		api.UpdateEdgeRuleRequest{Action: &allowUnreachable})
-	if updated.StatusCode != http.StatusOK {
-		t.Fatalf("update edge rule: status=%d body=%s", updated.StatusCode, updateBody)
+	if updatedStatus != http.StatusOK {
+		t.Fatalf("update edge rule: status=%d body=%s", updatedStatus, updateBody)
 	}
-	lastGeneration = assertEdgeRuleMutationActive(t, updated, lastGeneration)
+	lastGeneration = assertEdgeRuleMutationActive(t, updatedHeaders, lastGeneration)
 	for _, frontend := range frontends {
 		assertEdgeRuleForbidden(t, frontend, f.host)
 	}
 
-	deleted, deleteBody := edgeRuleAPIRequest(t, f, http.MethodDelete, "/v1/edge-rules/"+rule.ID, nil)
-	if deleted.StatusCode != http.StatusNoContent {
-		t.Fatalf("delete edge rule: status=%d body=%s", deleted.StatusCode, deleteBody)
+	deletedHeaders, deletedStatus, deleteBody := edgeRuleAPIRequest(t, f, http.MethodDelete, "/v1/edge-rules/"+rule.ID, nil)
+	if deletedStatus != http.StatusNoContent {
+		t.Fatalf("delete edge rule: status=%d body=%s", deletedStatus, deleteBody)
 	}
-	assertEdgeRuleMutationActive(t, deleted, lastGeneration)
+	assertEdgeRuleMutationActive(t, deletedHeaders, lastGeneration)
 	for _, frontend := range frontends {
 		assertEdgeRuleFallthrough(t, frontend, f.host)
 	}
@@ -173,7 +173,7 @@ func edgeRuleIPAction(t *testing.T, allowCIDR string) json.RawMessage {
 	return raw
 }
 
-func edgeRuleAPIRequest(t *testing.T, f *normalPathFixture, method, path string, body any) (*http.Response, []byte) {
+func edgeRuleAPIRequest(t *testing.T, f *normalPathFixture, method, path string, body any) (http.Header, int, []byte) {
 	t.Helper()
 	var requestBody io.Reader
 	if body != nil {
@@ -200,17 +200,17 @@ func edgeRuleAPIRequest(t *testing.T, f *normalPathFixture, method, path string,
 	if err != nil {
 		t.Fatalf("read %s %s response: %v", method, path, err)
 	}
-	return resp, bodyBytes
+	return resp.Header.Clone(), resp.StatusCode, bodyBytes
 }
 
-func assertEdgeRuleMutationActive(t *testing.T, resp *http.Response, previousGeneration int64) int64 {
+func assertEdgeRuleMutationActive(t *testing.T, headers http.Header, previousGeneration int64) int64 {
 	t.Helper()
-	if got := resp.Header.Get("X-Faas-Edge-Rules-State"); got != "active" {
+	if got := headers.Get("X-Faas-Edge-Rules-State"); got != "active" {
 		t.Fatalf("mutation state header=%q, want active", got)
 	}
-	generation, err := strconv.ParseInt(resp.Header.Get("X-Faas-Edge-Rules-Generation"), 10, 64)
+	generation, err := strconv.ParseInt(headers.Get("X-Faas-Edge-Rules-Generation"), 10, 64)
 	if err != nil || generation <= previousGeneration {
-		t.Fatalf("mutation generation=%q, want integer greater than %d", resp.Header.Get("X-Faas-Edge-Rules-Generation"), previousGeneration)
+		t.Fatalf("mutation generation=%q, want integer greater than %d", headers.Get("X-Faas-Edge-Rules-Generation"), previousGeneration)
 	}
 	return generation
 }
