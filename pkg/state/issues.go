@@ -37,6 +37,13 @@ type RecordIssueParams struct {
 type IssueCursor struct {
 	Time time.Time
 	ID   string
+
+	// Impact fields are present only on list cursors whose query ranks or
+	// filters by the fixed 24-hour customer-impact window.
+	Sort            string     `json:"sort,omitempty"`
+	MinCustomers    int64      `json:"min_customers,omitempty"`
+	ImpactCustomers int64      `json:"impact_customers,omitempty"`
+	ImpactWindowEnd *time.Time `json:"impact_window_end,omitempty"`
 }
 
 // IssueListFilter scopes an issue inbox without changing its pagination shape.
@@ -45,6 +52,8 @@ type IssueListFilter struct {
 	Environment       string
 	AssigneeAccountID string
 	Unassigned        bool
+	Sort              string
+	MinCustomers      int64
 }
 
 var ErrIssueEventConflict = errors.New("issue event ID reused with another payload")

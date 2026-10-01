@@ -56,6 +56,7 @@ import type { RequestAnalyticsTimeseriesResponse } from '../models/RequestAnalyt
 import type { RequestAuditListResponse } from '../models/RequestAuditListResponse.js';
 import type { RotateDeployTokenRequest } from '../models/RotateDeployTokenRequest.js';
 import type { RotateDeployTokenResponse } from '../models/RotateDeployTokenResponse.js';
+import type { RuntimeConfigRestartStatusResponse } from '../models/RuntimeConfigRestartStatusResponse.js';
 import type { RuntimePolicyStatusResponse } from '../models/RuntimePolicyStatusResponse.js';
 import type { SidecarTimelineResponse } from '../models/SidecarTimelineResponse.js';
 import type { TCPListenerResponse } from '../models/TCPListenerResponse.js';
@@ -1697,6 +1698,8 @@ export class AppsService {
     state,
     environment,
     assignee,
+    sort = 'recent',
+    minCustomers,
     cursor,
   }: {
     /**
@@ -1716,6 +1719,14 @@ export class AppsService {
      */
     assignee?: string,
     /**
+     * Issue ordering; impact ranks by verified distinct customers in the fixed 24-hour window.
+     */
+    sort?: 'recent' | 'impact',
+    /**
+     * Return issues affecting at least this many verified distinct customers in the fixed 24-hour window.
+     */
+    minCustomers?: number,
+    /**
      * Opaque next_cursor from the previous issue page.
      */
     cursor?: string,
@@ -1730,6 +1741,8 @@ export class AppsService {
         'state': state,
         'environment': environment,
         'assignee': assignee,
+        'sort': sort,
+        'min_customers': minCustomers,
         'cursor': cursor,
       },
       errors: {
@@ -2908,6 +2921,10 @@ export class AppsService {
    * `fresh=true`, destroys live instances without capturing process memory,
    * invalidates cached snapshots, and cold-boots with the latest environment
    * and secrets. The fresh path is durably queued.
+   * For `fresh=true`, use the returned `wake_id` with
+   * `GET /v1/apps/{slug}/runtime-config-restarts/{wake_id}` to inspect
+   * queued, running, retrying, completed, or failed status and any safe
+   * failure reason.
    *
    * @returns AppRestartResponse Restart accepted.
    * @throws ApiError
@@ -2954,6 +2971,48 @@ export class AppsService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Get the status of a fresh runtime-configuration restart.
+   * Returns the durable scheduler handoff state for a fresh restart.
+   * `completed` means the replacement operation finished successfully;
+   * `failed` means the durable handoff exhausted its retry budget. A
+   * failure_reason is a stable, safe category and does not expose internal
+   * error details.
+   *
+   * @returns RuntimeConfigRestartStatusResponse Current durable restart status.
+   * @throws ApiError
+   */
+  public static getRuntimeConfigRestartStatus({
+    slug,
+    wakeId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Wake ID returned by POST /v1/apps/{slug}/restart?fresh=true.
+     */
+    wakeId: string,
+  }): CancelablePromise<RuntimeConfigRestartStatusResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/runtime-config-restarts/{wake_id}',
+      path: {
+        'slug': slug,
+        'wake_id': wakeId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
         when enabled bare-metal service protection needs more recovery headroom.

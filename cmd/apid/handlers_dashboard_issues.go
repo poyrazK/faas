@@ -28,6 +28,8 @@ type dashboardIssuesData struct {
 	StateFilter         string
 	EnvironmentFilter   string
 	AssigneeFilter      string
+	SortFilter          string
+	MinCustomersFilter  string
 	OwnerLabels         map[string]string
 	CSRF                string
 	ReplayCSRF          string
@@ -157,9 +159,15 @@ func populateIssueDashboardList(w http.ResponseWriter, r *http.Request, app stat
 	data.StateFilter = filter.State
 	data.EnvironmentFilter = filter.Environment
 	data.AssigneeFilter = r.URL.Query().Get("assignee")
+	data.SortFilter = filter.Sort
+	data.MinCustomersFilter = strings.TrimSpace(r.URL.Query().Get("min_customers"))
 	cur, err := state.DecodeIssueCursor(r.URL.Query().Get("cursor"))
 	if err != nil {
 		api.WriteProblem(w, api.ErrValidation("invalid issue cursor"))
+		return false
+	}
+	if err := state.ValidateIssueListCursor(filter, cur); err != nil {
+		api.WriteProblem(w, api.ErrValidation("issue cursor does not match the selected sort and customer filter"))
 		return false
 	}
 	list, err := st.ListIssues(r.Context(), app.ID, filter, cur)

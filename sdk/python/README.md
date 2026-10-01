@@ -233,6 +233,34 @@ destination cannot inherit session authority. Application authentication remains
 subject to HTTPX's normal redirect policy. Gregale authorizes scope at every hop.
 See [the Dev Bridge guide](../../docs/dev-bridge.md) for local execution.
 
+## Runtime feature flags
+
+Managed Python ASGI applications can use Gregale's customer-aware runtime flag
+client. It evaluates locally against a bounded configuration snapshot and adds
+used decisions to response evidence. The HTTPX transport forwards only used
+decisions to managed Gregale services:
+
+~~~python
+import httpx
+from faas_sdk import (
+    AsyncGregaleFlagsTransport,
+    GregaleFlags,
+    GregaleFlagsMiddleware,
+)
+
+flags = GregaleFlags(api_url="https://api.gregale.dev")
+# Call await flags.start() in the application's async startup hook.
+# Call await flags.close() in its shutdown hook.
+app = GregaleFlagsMiddleware(app, flags)
+service_client = httpx.AsyncClient(transport=AsyncGregaleFlagsTransport(flags))
+~~~
+
+Inside a request handler, call flags.boolean(key, fallback) or
+flags.variant(key, fallback), then flags.used(key) when the selected behavior
+is entered. Close both clients during application shutdown. See the
+[feature flags guide](../../docs/flags.md) for workload identity, fallback,
+propagation and trust-boundary details.
+
 ## Project release context
 
 For app-to-app calls, wrap the ASGI application in

@@ -36,7 +36,7 @@ func phaseOuterBudgets(t *testing.T) map[string]time.Duration {
 	if err != nil {
 		t.Fatalf("read e2e-native workflow: %v", err)
 	}
-	phaseRe := regexp.MustCompile(`PHASE:\s*(\w+)`)
+	phaseRe := regexp.MustCompile(`PHASE:\s*([\w-]+)`)
 	maxRe := regexp.MustCompile(`RuntimeMaxSec=(\w+)`)
 
 	out := map[string]time.Duration{}
@@ -152,7 +152,11 @@ func TestJobTimeoutCoversEveryPhaseCap(t *testing.T) {
 	// A lane never runs in the same job as the phases (the steps are gated on
 	// inputs.lane either way), so it must not be added to their sum — but it
 	// must fit on its own.
-	lanes := map[string]bool{"smoke": true, "containers": true}
+	lanes := map[string]bool{
+		"smoke":                     true,
+		"containers":                true,
+		"exclusive-operations-only": true,
+	}
 	var sum, laneMax time.Duration
 	for phase, d := range phaseOuterBudgets(t) {
 		if lanes[phase] {

@@ -2395,8 +2395,14 @@ type pgNotifier struct {
 	log  *slog.Logger
 }
 
+var _ runtimeConfigRestartStatusReader = pgNotifier{}
+
 func (p pgNotifier) Notify(ctx context.Context, channel, payload string) error {
 	return db.Notify(ctx, p.pool, channel, payload)
+}
+
+func (p pgNotifier) RuntimeConfigRestartStatus(ctx context.Context, appID, wakeID string) (db.RuntimeConfigRestartStatus, error) {
+	return db.GetRuntimeConfigRestartStatus(ctx, p.pool, appID, wakeID)
 }
 
 // Subscribe hands long-lived SSE handlers a reconnecting LISTEN stream. A

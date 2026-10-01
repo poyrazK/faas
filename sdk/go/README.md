@@ -19,6 +19,8 @@ The package exposes:
 - cursor pagination helpers (`ListDeploymentsAll`),
 - SSE streaming via `Decoder` for app logs, deployment logs, dashboard events,
   and typed resumable disposable executions,
+- server-side runtime flags with request middleware, bounded evidence, and
+  managed-service propagation,
 - functional `Option` for HTTP transport, retry, and logger.
 
 ## Install
@@ -35,6 +37,10 @@ toolchain can still consume it.
 The SDK also verifies inbound Gregale webhook deliveries. See
 [`docs/webhook-receiver-verification.md`](../../docs/webhook-receiver-verification.md)
 for raw-body handling and delivery-ID deduplication guidance.
+
+Managed Go workloads can use the runtime Flags client, request middleware, and
+service transport. See [the Go Flags guide](../../docs/flags.md#use-flags-in-a-go-http-application)
+for customer targeting, decision evidence, and propagation examples.
 
 ## Quick start
 

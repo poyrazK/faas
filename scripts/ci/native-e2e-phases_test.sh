@@ -93,6 +93,17 @@ done
 # And it must stay SMALL: the lane is the answer to the hour-long matrix.
 n="$(printf '%s\n' "${smoke_tests}" | grep -c .)"
 [[ "${n}" -le 12 ]] || fail "smoke lane has ${n} tests; it is growing back into the full matrix"
+
+exclusive_tests="$(native_e2e_lane_tests exclusive-operations-only "${repo_root}")"
+[[ "${exclusive_tests}" == "TestExclusiveOperationFencesRestoredKVMOwnerMetal" ]] ||
+  fail "exclusive-operations-only must select exactly the stale-owner KVM test"
+[[ "$(native_e2e_lane_regex exclusive-operations-only "${repo_root}")" == \
+  '^(TestExclusiveOperationFencesRestoredKVMOwnerMetal)$' ]] ||
+  fail "exclusive-operations-only does not build an anchored test filter"
+printf '%s\n' "$(native_e2e_phase_tests wake "${repo_root}")" | grep -qx \
+  'TestExclusiveOperationFencesRestoredKVMOwnerMetal' ||
+  fail "exclusive-owner KVM test is no longer included in the wake phase"
+native_e2e_is_lane exclusive-operations-only || fail "exclusive-operations-only is not recognised as a lane"
 # The assert must actually bite: a bogus name fails it.
 ( NATIVE_E2E_SMOKE_TESTS+=(TestDoesNotExistAnywhere); native_e2e_assert_lanes "${repo_root}" ) 2>/dev/null &&
   fail "native_e2e_assert_lanes accepted a lane naming a nonexistent test"
@@ -212,4 +223,4 @@ grep -qx kill-fallback "${reap_probe}/calls" || fail "reaper has no exact-name k
 grep -qx "mount ${reap_probe}/jail/firecracker/app/root/snap-in-mem" "${reap_probe}/calls" || fail "reaper misses unversioned jail mounts"
 ! grep -qE 'inspection|vmmd|/other/' "${reap_probe}/calls" || fail "reaper selected unrelated resources"
 
-echo "native e2e phase contracts OK (${#NATIVE_E2E_PHASES[@]} phases, ${#NATIVE_E2E_LANES[@]} lane)"
+echo "native e2e phase contracts OK (${#NATIVE_E2E_PHASES[@]} phases, ${#NATIVE_E2E_LANES[@]} lanes)"

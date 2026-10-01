@@ -939,6 +939,7 @@ from .issue_event import IssueEvent
 from .issue_event_response import IssueEventResponse
 from .issue_frame import IssueFrame
 from .issue_impact import IssueImpact
+from .issue_impact_summary import IssueImpactSummary
 from .issue_ingest_token import IssueIngestToken
 from .issue_occurrence import IssueOccurrence
 from .issue_release import IssueRelease
@@ -997,6 +998,7 @@ from .list_instances_response import ListInstancesResponse
 from .list_invocations_response import ListInvocationsResponse
 from .list_issue_ingest_tokens_response import ListIssueIngestTokensResponse
 from .list_issues_response import ListIssuesResponse
+from .list_issues_sort import ListIssuesSort
 from .list_job_runs_response import ListJobRunsResponse
 from .list_job_task_attempts_response import ListJobTaskAttemptsResponse
 from .list_job_tasks_response import ListJobTasksResponse
@@ -1667,6 +1669,9 @@ from .rotate_managed_realtime_auth_response_auth_mode import RotateManagedRealti
 from .rotate_org_api_key_request import RotateOrgAPIKeyRequest
 from .rotate_org_api_key_response import RotateOrgAPIKeyResponse
 from .route_row import RouteRow
+from .runtime_config_restart_status_response import RuntimeConfigRestartStatusResponse
+from .runtime_config_restart_status_response_failure_reason import RuntimeConfigRestartStatusResponseFailureReason
+from .runtime_config_restart_status_response_status import RuntimeConfigRestartStatusResponseStatus
 from .runtime_policy_component_status import RuntimePolicyComponentStatus
 from .runtime_policy_component_status_scope import RuntimePolicyComponentStatusScope
 from .runtime_policy_component_status_state import RuntimePolicyComponentStatusState
@@ -2928,6 +2933,7 @@ __all__ = (
     "IssueEventResponse",
     "IssueFrame",
     "IssueImpact",
+    "IssueImpactSummary",
     "IssueIngestToken",
     "IssueOccurrence",
     "IssueRelease",
@@ -2986,6 +2992,7 @@ __all__ = (
     "ListInvocationsResponse",
     "ListIssueIngestTokensResponse",
     "ListIssuesResponse",
+    "ListIssuesSort",
     "ListJobRunsResponse",
     "ListJobsResponse",
     "ListJobTaskAttemptsResponse",
@@ -3610,6 +3617,9 @@ __all__ = (
     "RotateOrgAPIKeyRequest",
     "RotateOrgAPIKeyResponse",
     "RouteRow",
+    "RuntimeConfigRestartStatusResponse",
+    "RuntimeConfigRestartStatusResponseFailureReason",
+    "RuntimeConfigRestartStatusResponseStatus",
     "RuntimePolicyComponentStatus",
     "RuntimePolicyComponentStatusScope",
     "RuntimePolicyComponentStatusState",

@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -203,6 +205,13 @@ func TestIssueVerifiedCustomerImpactAndWebhookRecovery(t *testing.T) {
 	if detail.Impact.IdentifiedCustomers != 2 || detail.Impact.UnattributedEvents != 1 {
 		t.Fatalf("impact = %+v", detail.Impact)
 	}
+	list := issueDecode[api.ListIssuesResponse](t, e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/issues", nil, nil), http.StatusOK)
+	if len(list.Items) != 1 || list.Items[0].Impact24h == nil {
+		t.Fatalf("issue inbox impact summary = %+v", list.Items)
+	}
+	if got := list.Items[0].Impact24h; got.IdentifiedCustomers != 2 || got.ObservedEvents != 3 || got.UnattributedEvents != 1 {
+		t.Fatalf("issue inbox impact summary = %+v", got)
+	}
 	relay := e.store.(state.AppWebhookEventOutboxStore)
 	if n, err := relay.DrainAppWebhookEventOutbox(t.Context(), 10); err != nil || n != 1 {
 		t.Fatalf("recovery relay = %d %v", n, err)
@@ -220,6 +229,74 @@ func TestIssueVerifiedCustomerImpactAndWebhookRecovery(t *testing.T) {
 	}
 	if _, err := e.store.(state.IssueStore).ActOnIssue(t.Context(), app.ID, issueID, e.acct.ID, api.IssueActionRequest{Action: "assign", AssigneeAccountID: other.ID}, time.Now()); !errors.Is(err, state.ErrNotFound) {
 		t.Fatal("foreign assignee accepted")
+	}
+}
+
+func TestIssueImpactSortAndThresholdPaginationPostgres(t *testing.T) {
+	e := setupPGHandler(t, api.PlanScale)
+	app := seedPGApp(t, e, "issue-impact-sort")
+	dep := issueSeedDeployment(t, e, app, 1)
+	token := issueCreateToken(t, e, app.Slug, dep)
+	baseTime := time.Now().UTC().Add(-4 * time.Minute)
+	issueIDs := make([]string, api.IssuePageSize+1)
+	for i := range issueIDs {
+		event := api.IssueEvent{
+			EventID: uuid.NewString(), OccurredAt: baseTime.Add(time.Duration(i) * time.Second),
+			ExceptionType: "RankedError", Message: "issue for impact ordering",
+			FingerprintOverride: fmt.Sprintf("ranked-%02d", i),
+		}
+		out := issueDecode[api.IssueEventResponse](t, issueSend(t, e, app.Slug, token, event), http.StatusAccepted)
+		issueIDs[i] = out.IssueID
+		if _, err := e.pool.Exec(t.Context(), `UPDATE issue_events SET verified_consumer_id=$1 WHERE app_id=$2 AND deployment_id=$3 AND event_id=$4`, uuid.NewString(), app.ID, dep.ID, event.EventID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := range 2 {
+		event := api.IssueEvent{
+			EventID: uuid.NewString(), OccurredAt: baseTime.Add(time.Duration(i+1) * 100 * time.Millisecond),
+			ExceptionType: "RankedError", Message: "higher customer impact",
+			FingerprintOverride: "ranked-00",
+		}
+		out := issueDecode[api.IssueEventResponse](t, issueSend(t, e, app.Slug, token, event), http.StatusAccepted)
+		if out.IssueID != issueIDs[0] {
+			t.Fatalf("additional event grouped into %s, want %s", out.IssueID, issueIDs[0])
+		}
+		if _, err := e.pool.Exec(t.Context(), `UPDATE issue_events SET verified_consumer_id=$1 WHERE app_id=$2 AND deployment_id=$3 AND event_id=$4`, uuid.NewString(), app.ID, dep.ID, event.EventID); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	base := "/v1/apps/" + app.Slug + "/issues"
+	firstPage := issueDecode[api.ListIssuesResponse](t, e.do(t, http.MethodGet, base+"?sort=impact", nil, nil), http.StatusOK)
+	if len(firstPage.Items) != api.IssuePageSize || firstPage.NextCursor == "" {
+		t.Fatalf("impact first page = len %d cursor %t", len(firstPage.Items), firstPage.NextCursor != "")
+	}
+	if firstPage.Items[0].ID != issueIDs[0] {
+		t.Fatalf("highest impact issue = %s, want %s", firstPage.Items[0].ID, issueIDs[0])
+	}
+	if got := firstPage.Items[0].Impact24h; got == nil || got.IdentifiedCustomers != 3 || got.ObservedEvents != 3 {
+		t.Fatalf("highest-impact issue summary = %+v", got)
+	}
+
+	filtered := issueDecode[api.ListIssuesResponse](t, e.do(t, http.MethodGet, base+"?min_customers=2", nil, nil), http.StatusOK)
+	if len(filtered.Items) != 1 || filtered.Items[0].ID != issueIDs[0] {
+		t.Fatalf("minimum-customer filter = %+v", filtered.Items)
+	}
+
+	query := url.Values{"sort": {"impact"}, "cursor": {firstPage.NextCursor}}
+	secondPage := issueDecode[api.ListIssuesResponse](t, e.do(t, http.MethodGet, base+"?"+query.Encode(), nil, nil), http.StatusOK)
+	if len(secondPage.Items) != 1 || secondPage.Items[0].ID != issueIDs[1] || secondPage.NextCursor != "" {
+		t.Fatalf("impact second page = %+v", secondPage)
+	}
+	firstCursor, err := state.DecodeIssueCursor(firstPage.NextCursor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstCursor.Sort != "impact" || firstCursor.ImpactWindowEnd == nil {
+		t.Fatalf("impact cursor omitted its window: %+v", firstCursor)
+	}
+	if w := e.do(t, http.MethodGet, base+"?sort=recent&cursor="+url.QueryEscape(firstPage.NextCursor), nil, nil); w.Code != http.StatusBadRequest {
+		t.Fatalf("cursor reused under different sort = %d, want 400", w.Code)
 	}
 }
 

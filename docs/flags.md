@@ -4,7 +4,8 @@ Gregale Flags releases already deployed application behavior to selected platfor
 customers without a new deployment. The initial operator qualification supports boolean flags,
 named string variants, explicit customer lists, owner-managed customer groups,
 sticky weighted allocation and percentage rollout, versioned configuration,
-rollback, a decision inspector, a Node SDK and request cohort evidence. Business
+rollback, a decision inspector, Node, Python and Go runtime SDKs, and request
+cohort evidence. Business
 logic must explicitly check a flag. Flags do not grant
 permissions or paid entitlements and are independent from deployment traffic splits.
 
@@ -143,6 +144,112 @@ Startup during a configuration outage also permits explicit fallback behavior.
 Disabling a defined flag uses its configured default; use `default: false` for an
 off switch. Changes do not interrupt requests already using an earlier version.
 Do not use this mechanism for an instantaneous security revocation.
+
+### Use flags in a Python ASGI application
+
+The Python runtime SDK evaluates the same immutable bundles and stable
+allocations as the Node SDK. Start the client with Gregale's public API URL,
+then wrap an ASGI app with the middleware. It reads customer and inherited
+decision headers from Gregale's gateway, pins one bundle for the request, and
+replaces the response evidence header before response headers are sent:
+
+~~~python
+from faas_sdk import GregaleFlags, GregaleFlagsMiddleware
+
+flags = GregaleFlags(api_url="https://api.gregale.dev")
+async def on_startup():
+    await flags.start()
+
+async def on_shutdown():
+    await flags.close()
+
+# Wrap your existing ASGI application.
+app = GregaleFlagsMiddleware(existing_app, flags)
+
+async def handle_request():
+    decision = flags.boolean("new-export", False)
+    flags.used("new-export")
+    if decision.value:
+        ...
+~~~
+
+Use the asynchronous HTTPX transport to forward only explicitly used decisions
+to managed services. For queued work, put flags.propagation_header() in the
+message's flag_context field, following the Node example below. Close the flags
+client during ASGI shutdown with await flags.close(). By default, the client
+uses the workload identity endpoint in FAAS_WORKLOAD_IDENTITY_ENDPOINT and the
+gregale:flags audience.
+
+These headers are trusted only when Gregale's gateway supplies them. Do not
+use caller-provided customer or flag-context headers from arbitrary public
+requests. Evidence is application-reported exposure; it is not authorization
+or proof of a business side effect.
+
+~~~python
+import httpx
+from faas_sdk import AsyncGregaleFlagsTransport
+
+service_client = httpx.AsyncClient(transport=AsyncGregaleFlagsTransport(flags))
+~~~
+
+### Use flags in a Go HTTP application
+
+The Go runtime SDK evaluates the same immutable bundles and stable allocations
+as the Node and Python clients. Start it with Gregale's HTTPS API URL and apply
+its middleware to handlers served behind the Gregale gateway:
+
+```go
+flags, err := faas.NewGregaleFlags(faas.GregaleFlagsOptions{
+    APIURL: "https://api.gregale.dev",
+})
+if err != nil {
+    return err
+}
+if err := flags.Start(ctx); err != nil {
+    return err
+}
+defer flags.Close()
+
+app := flags.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+    decision, err := flags.Boolean(r.Context(), "new-export", false)
+    if err != nil {
+        http.Error(w, "flag context unavailable", http.StatusInternalServerError)
+        return
+    }
+    if err := flags.Used(r.Context(), "new-export"); err != nil {
+        http.Error(w, "flag evidence unavailable", http.StatusInternalServerError)
+        return
+    }
+    if decision.Value.(bool) {
+        // Run the new implementation.
+    } else {
+        // Run the existing implementation.
+    }
+}))
+```
+
+Use `flags.Variant(ctx, key, fallback)` for named variants. The middleware pins
+one configuration version per request and writes bounded decision evidence
+before response headers are committed. `Start` performs a best-effort initial
+refresh and refreshes every 15 seconds by default. Configuration is considered
+fresh for at most 60 seconds; after that the middleware attempts a bounded
+refresh and flag checks use the application's explicit fallback if it fails.
+The loopback identity endpoint defaults to `FAAS_WORKLOAD_IDENTITY_ENDPOINT`.
+
+Pass the request context through the standard `net/http` client to carry only
+decisions marked used into managed service calls:
+
+```go
+serviceHTTP := &http.Client{Transport: faas.GregaleFlagsTransport{Flags: flags}}
+request, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
+    "http://billing.svc.gregale/exports", body)
+```
+
+For queued work, set `flags.PropagationHeader(r.Context())` as the message's
+`flag_context`. Caller-provided customer and flag-context headers are trusted
+only when Gregale's gateway replaces them; do not use the middleware on arbitrary
+public ingress. Decision evidence is application-reported behavior, not
+authorization or proof of a business side effect.
 
 ### Carry decisions across managed service calls
 

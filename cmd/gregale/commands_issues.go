@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const issuesCmdUsage = "usage: gregale issues <list|get|assign|resolve|reopen|ignore|tokens|create-token|revoke-token> --app <slug> [<issue-id>] [flags]"
+const issuesCmdUsage = "usage: gregale issues <list|get|assign|resolve|reopen|ignore|tokens|create-token|revoke-token> --app <slug> [<issue-id>] [--sort recent|impact] [--min-customers N] [flags]"
 
 func cmdIssues(args []string) int {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
@@ -32,10 +32,12 @@ func cmdIssues(args []string) int {
 	since := fs.String("since", "", "impact window start (RFC3339)")
 	deployment := fs.String("deployment", "", "fixed or token-bound deployment UUID")
 	assignee := fs.String("assignee", "", "list filter: me, unassigned, or account UUID; assignment owner UUID (empty unassigns)")
+	sortBy := fs.String("sort", "", "list order: recent (default) or impact by verified customers in 24h")
+	minCustomers := fs.Int64("min-customers", 0, "list filter: minimum verified customers affected in 24h")
 	until := fs.String("until", "", "ignore until (RFC3339)")
 	name := fs.String("name", "issues", "ingest token name")
 	expires := fs.Duration("expires-in", 24*time.Hour, "ingest token lifetime (max 90 days)")
-	flags, positionals := normalizeDebugFlagArgs(args[1:], map[string]bool{"app": true, "state": true, "environment": true, "cursor": true, "release-cursor": true, "activity-cursor": true, "since": true, "deployment": true, "assignee": true, "until": true, "name": true, "expires-in": true})
+	flags, positionals := normalizeDebugFlagArgs(args[1:], map[string]bool{"app": true, "state": true, "environment": true, "cursor": true, "release-cursor": true, "activity-cursor": true, "since": true, "deployment": true, "assignee": true, "sort": true, "min-customers": true, "until": true, "name": true, "expires-in": true})
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
@@ -53,7 +55,16 @@ func cmdIssues(args []string) int {
 		if len(positionals) != 0 {
 			return issueCLIUsage()
 		}
-		out, err := c.ListIssuesFiltered(ctx, *app, *stateFilter, *environment, *assignee, *cursor)
+		if *sortBy != "" && *sortBy != "recent" && *sortBy != "impact" {
+			return printErr("Invalid issue sort", fmt.Errorf("sort must be recent or impact"))
+		}
+		if *minCustomers < 0 {
+			return printErr("Invalid customer threshold", fmt.Errorf("min-customers must be non-negative"))
+		}
+		out, err := c.ListIssuesWithOptions(ctx, *app, api.IssueListOptions{
+			State: *stateFilter, Environment: *environment, Assignee: *assignee,
+			Sort: *sortBy, MinCustomers: *minCustomers, Cursor: *cursor,
+		})
 		if err != nil {
 			return printErr("Could not list issues", err)
 		}
@@ -61,7 +72,7 @@ func cmdIssues(args []string) int {
 			return jsonOut(writeJSON(out))
 		}
 		w := tabwriter.NewWriter(osStdout, 0, 4, 2, ' ', 0)
-		if _, err := fmt.Fprintln(w, "ID\tSTATE\tOWNER\tEVENTS\tRECURRENCES\tLAST SEEN\tTITLE"); err != nil {
+		if _, err := fmt.Fprintln(w, "ID\tSTATE\tOWNER\tVERIFIED CUSTOMERS (24H)\tEVENTS (24H)\tUNATTRIBUTED (24H)\tEVENTS\tRECURRENCES\tLAST SEEN\tTITLE"); err != nil {
 			return printErr("Could not write issues", err)
 		}
 		for _, i := range out.Items {
@@ -69,7 +80,13 @@ func cmdIssues(args []string) int {
 			if owner == "" {
 				owner = "unassigned"
 			}
-			if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\t%s\t%s\n", i.ID, i.State, owner, i.EventCount, i.RegressionCount, i.LastSeenAt.Format(time.RFC3339), i.Title); err != nil {
+			identified, observed, unattributed := "—", "—", "—"
+			if i.Impact24h != nil {
+				identified = fmt.Sprint(i.Impact24h.IdentifiedCustomers)
+				observed = fmt.Sprint(i.Impact24h.ObservedEvents)
+				unattributed = fmt.Sprint(i.Impact24h.UnattributedEvents)
+			}
+			if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\t%s\n", i.ID, i.State, owner, identified, observed, unattributed, i.EventCount, i.RegressionCount, i.LastSeenAt.Format(time.RFC3339), i.Title); err != nil {
 				return printErr("Could not write issues", err)
 			}
 		}

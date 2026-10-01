@@ -473,6 +473,7 @@ export type { IssueEvent } from './IssueEvent.js';
 export type { IssueEventResponse } from './IssueEventResponse.js';
 export type { IssueFrame } from './IssueFrame.js';
 export type { IssueImpact } from './IssueImpact.js';
+export type { IssueImpactSummary } from './IssueImpactSummary.js';
 export type { IssueIngestToken } from './IssueIngestToken.js';
 export type { IssueOccurrence } from './IssueOccurrence.js';
 export type { IssueRelease } from './IssueRelease.js';
@@ -884,6 +885,7 @@ export type { RotateManagedRealtimeAuthResponse } from './RotateManagedRealtimeA
 export type { RotateOrgAPIKeyRequest } from './RotateOrgAPIKeyRequest.js';
 export type { RotateOrgAPIKeyResponse } from './RotateOrgAPIKeyResponse.js';
 export type { RouteRow } from './RouteRow.js';
+export type { RuntimeConfigRestartStatusResponse } from './RuntimeConfigRestartStatusResponse.js';
 export type { RuntimePolicyComponentStatus } from './RuntimePolicyComponentStatus.js';
 export type { RuntimePolicyNodeStatus } from './RuntimePolicyNodeStatus.js';
 export type { RuntimePolicySchedulerStatus } from './RuntimePolicySchedulerStatus.js';
