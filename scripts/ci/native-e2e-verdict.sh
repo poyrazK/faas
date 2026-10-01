@@ -55,6 +55,7 @@ NATIVE_E2E_REQUIRED_TESTS=(
   TestWakeTimelineMetal
   TestDeployHealthcheckMetal
   TestCatalogRuntimeParityMetal
+  TestFeatureFlagsNativeParkRestoreMetal
   TestSec11_MemoryMaxFenceEnforced_CrossProcess
   TestSec11_SeccompFilterEnforced_CrossProcess
 )
@@ -159,7 +160,7 @@ native_e2e_lane_verdict() {
 # native_e2e_phase_tally reports one phase's result.
 #
 # Deliberately NOT native_e2e_verdict: the required-test contract is a
-# whole-suite claim (its eight tests span several phases), so applying it per
+# whole-suite claim (its nine tests span several phases), so applying it per
 # phase would fail every phase for tests it was never asked to run. The
 # workflow's final verdict step owns that contract across the phases' logs.
 #

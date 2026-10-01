@@ -258,8 +258,18 @@ DATABASE_URL=postgres://... make test-flags
 This gate builds the Node SDK and runs evaluator, SDK, gateway, API and real
 PostgreSQL coverage. The integrated scenario targets three of four customers,
 checks forged context replacement, filters their errors, and observes disablement
-in the same Node process after simulated inactivity. It does not claim native KVM
-park/restore acceptance. VM lifecycle behavior is unchanged.
+in the same Node process after simulated inactivity. This is application and
+configuration acceptance; it does not exercise a native VM restore.
+
+The `e2e-native.yml` hardware gate also runs
+`TestFeatureFlagsNativeParkRestoreMetal` as a required test. It deploys a real
+Node app, changes its configuration while parked, waits past the SDK freshness
+bound, then verifies that the restored VM refreshes configuration and persists
+the new decision with verified customer attribution. A skip fails the native
+gate. The full runner needs the dedicated KVM host and fixtures described in
+[`docs/ops/e2e-native-ci.md`](ops/e2e-native-ci.md); the focused target is
+`make test-flags-metal` on a suitably provisioned host. Flags remain internal
+until this native qualification has a green run.
 
 Safeguards from `pkg/api/limits.go`: 100 flags and 100 groups per environment,
 32 rules and 16 variants per flag, 1000 customer IDs per list, 256 KiB configuration, 32 evidence
