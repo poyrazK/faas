@@ -12,8 +12,8 @@ import (
 
 func TestPublicRetryRefreshesTargetIdentityWithoutMutatingPriorAttempt(t *testing.T) {
 	app := App{ID: "app", AccountID: "account"}
-	original := Target{AppID: app.ID, DeploymentID: "revision", InstanceID: "original", NodeID: "old-node", ImageDigest: "old-image", Region: "old-region"}
-	sibling := Target{AppID: app.ID, DeploymentID: "revision", InstanceID: "sibling", NodeID: "new-node"}
+	original := Target{AppID: app.ID, DeploymentID: "revision", InstanceID: "original", NodeID: "old-node", ImageDigest: "old-image", Region: "old-region", WakeID: "causal-wake"}
+	sibling := Target{AppID: app.ID, DeploymentID: "revision", InstanceID: "sibling", NodeID: "new-node", WakeID: "historical-wake"}
 	request := httptest.NewRequest(http.MethodGet, "http://app.test/work", nil)
 	request.Header.Set(api.RequestIDHeader, "request")
 	ctx := wire.WithContext(request.Context(), wire.CorrelationFields{WakeID: "wake", InvocationID: "invocation", TraceID: "trace"})
@@ -28,7 +28,7 @@ func TestPublicRetryRefreshesTargetIdentityWithoutMutatingPriorAttempt(t *testin
 	}
 	handler := NewHandlerWith(backend, nil, nil).WithRetryEnabled(true).WithRetryDefault(RetryPolicy{MaxAttempts: 2})
 	response := httptest.NewRecorder()
-	handler.proxyAttempt(response, first, original, false, func(Target) {},
+	completion := handler.proxyAttempt(response, first, original, false, func(Target) {},
 		func(w http.ResponseWriter, r *http.Request, selected Target) {
 			if selected.InstanceID == original.InstanceID {
 				markStaleTarget(r.Context())
@@ -40,6 +40,9 @@ func TestPublicRetryRefreshesTargetIdentityWithoutMutatingPriorAttempt(t *testin
 		}, app)
 	if response.Code != http.StatusOK || replay == nil {
 		t.Fatalf("replay did not reach sibling: status=%d replay=%v", response.Code, replay != nil)
+	}
+	if completion.InstanceID != sibling.InstanceID || completion.WakeID != original.WakeID {
+		t.Fatalf("completion=%+v lost original wake cause", completion)
 	}
 	for header, want := range map[string]string{
 		api.InstanceIDHeader: sibling.InstanceID, "X-Faas-Instance": sibling.InstanceID,

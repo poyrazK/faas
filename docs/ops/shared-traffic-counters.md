@@ -89,6 +89,23 @@ attempts now clone and restamp target identity in headers and correlation
 metadata. The regression checks actual RPC instance IDs and guest executions,
 plus removal of stale provenance and preservation of earlier attempt headers.
 
+Logical completion now follows the last target whose forwarder ran. Successful
+activity, instance request/egress records, debugger telemetry and completion
+logs/spans name that target. Selecting a sibling that is refused before dispatch
+does not change the completion owner. The original request's wake cause, cold
+outcome and wake node remain tied to admission; a cached sibling wake ID is not
+a new wake. Affinity cookies are set per dispatch, and buffered retries preserve
+original platform cookies with the final guest's cookies. Discarded attempts
+cannot contribute cookies. Rate and logical request charges remain once per
+request; retry attempts retain their separate accounting.
+
+`TestTrafficFleetDaemonRetryCompletionTelemetry` observes the production
+publisher's five-second cycle from both daemon processes. It compares emitted
+completion identities with RPC targets and actual guest request headers, and
+checks two logical records for three forwarding attempts. The receiver captures
+the emitted records as a fixture; this does not establish production telemetry
+persistence or shutdown delivery.
+
 Run `go test ./cmd/gatewayd-internal -run '^TestTrafficFleetDaemon'` with an
 unmigrated disposable `DATABASE_URL` and `FAAS_PGTEST_TEMPLATE_DATABASE=1`.
 The test helper itself is guarded when invoked without its subprocess spec.

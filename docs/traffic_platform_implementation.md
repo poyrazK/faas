@@ -3,6 +3,65 @@
 Objective: implement the six delivery steps in the 2026-09-29 gap-closure plan.
 Base: `56618879c`; branch: `codex/traffic-platform-gaps`; decision: ADR-375.
 
+## Retry completion ownership — 2026-10-01
+
+The unchanged-runtime baseline reproduced a second retry ownership bug. The
+healthy sibling received the RPC and served the request, but successful activity,
+per-instance usage, completion logs/spans and the real daemon publisher's 200
+record still named the failed first instance. Buffered guest cookies also replaced
+platform and affinity cookies.
+
+The retry wrapper now returns the last target whose forwarder actually ran.
+Completion uses that owner; a sibling refused before dispatch cannot replace it.
+The original target stays immutable for detached mirrors, streaming hooks and
+wake metrics. The request's wake cause and cold outcome survive replay without
+adopting a sibling's cached historical wake. Empty final provenance clears stale
+completion span attributes. Affinity is stamped per dispatch, and buffered
+attempts inherit the original headers so platform and final guest cookies survive
+while discarded failure cookies remain private.
+
+Regressions cover successful and failed replay, an application error, disabled
+retry, missing sibling provenance, security refusal, cancellation and streaming.
+Two OS daemon processes use the production node client and debugger publisher;
+the test observes its normal five-second tick and compares two logical records
+with three RPC attempts and the one successful guest's identity. Placement,
+VM forwarding and telemetry receivers remain explicit fixtures. This acceptance
+does not prove production telemetry persistence or shutdown delivery.
+
+The final complete unit scope passed 7,234 named checks in 143.008 s:
+state 2,159, internal gateway 795, scheduler 1,778, gateway 2,290, traffic
+revocation 33, scheduler daemon 86 and public gateway 93. The 1,434 guarded
+results are not counted as passes. The selected Postgres profile passed 98
+named checks in 74.280 s without skips: 31 named results under 16 actual
+Postgres fixture roots, plus 67 memory/transport checks. Across both profiles,
+7,264 distinct named checks passed and 1,417 guards remain unaccepted.
+
+All 12,502 tracked and untracked source files were frozen before the accepted
+gates. Pinned golangci-lint 2.4.0 reported zero issues for all seven complete
+packages with tests in 40.710 s. SQLC 1.31.1 regenerated all four files exactly.
+Runbook SQL, text encoding, shell quoting and ADR uniqueness gates passed in
+34.574 s; the 71 pre-existing ADR duplicate groups remain at their baseline.
+Go and lint ran serially with CGO disabled, one package worker, GOMAXPROCS=2,
+GOGC=50, disabled inlining/DWARF and stripped test binaries. There were no
+source exclusions, package-scope reductions, overlays or assertion changes
+after the freeze. Only this tracker was updated after the accepted gates.
+
+Diagnostics remain outside the accepted results. The initial daemon fixture
+canceled the publisher before its normal tick and captured zero rows; the final
+fixture observes that tick before shutdown. A combined baseline build-failure
+event, earlier baselines and focused verification runs are retained. Preliminary
+lint found a wrapped EOF comparison and an unused initializer; both were fixed
+before freezing without suppressions. Two complete unit runs retained failures
+at existing compiler analysis bounds and one real RPC's 100 ms handshake budget.
+The unchanged-source third complete run passed. The diagnostic tests and direct
+forwarding path were verified unchanged from the parent commit. The disposable
+source database remained unmigrated, with durability settings on.
+
+Evidence directory: `outputs/traffic-retry-completion-20261001/` relative to the
+checkout's parent. All six release requirements below remain open. No native
+Linux x86_64 KVM acceptance host is available; deployed load and staging remain
+pending.
+
 ## Daemon fleet accounting and retry target identity — 2026-10-01
 
 Two local OS processes now exercise parsed daemon defaults and `runWithDeps`

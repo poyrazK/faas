@@ -105,7 +105,7 @@ type retryWriter struct {
 }
 
 func newRetryWriter(dst http.ResponseWriter) *retryWriter {
-	return &retryWriter{dst: dst, header: make(http.Header)}
+	return &retryWriter{dst: dst, header: dst.Header().Clone()}
 }
 
 func (w *retryWriter) Header() http.Header { return w.header }
@@ -168,7 +168,7 @@ func (w *retryWriter) commit() {
 func (w *retryWriter) discard() {
 	w.buffer.Reset()
 	w.status = 0
-	w.header = make(http.Header)
+	w.header = w.dst.Header().Clone()
 }
 
 // retryAttempt runs one proxy attempt against target.
@@ -458,7 +458,8 @@ func (h *Handler) retryPolicyFor(app App, r *http.Request) RetryPolicy {
 }
 
 // proxyAttempt runs the forwarder for one request, replaying against a fresh
-// target when ADR-201 §1 permits.
+// target when ADR-201 §1 permits. It returns the last dispatched target for
+// logical completion accounting, preserving the original request's wake cause.
 //
 // Streaming is excluded outright rather than left to rule 1. A streaming
 // response commits on its first flush, so a replay is impossible by
@@ -474,7 +475,8 @@ func (h *Handler) proxyAttempt(
 	retire func(Target),
 	forward retryAttempt,
 	app App,
-) {
+) Target {
+	completed := target
 	unguarded := forward
 	forward = func(dst http.ResponseWriter, req *http.Request, selected Target) {
 		ctx := req.Context()
@@ -482,17 +484,25 @@ func (h *Handler) proxyAttempt(
 		if enrollTrafficScopes(dst, req, h.trafficRevocations, trafficrevocation.Scope{Kind: "deployment", ID: selected.DeploymentID}) {
 			return
 		}
+		// WakeID is a cause of this request, not the sibling's cached history.
+		selected.WakeID = target.WakeID
+		completed = selected
+		if app.SessionAffinity {
+			if _, ok := h.backend.(affinityPicker); ok {
+				h.setSessionAffinityCookie(dst, app.ID, selected.InstanceID)
+			}
+		}
 		recordTrafficAttempt(ctx)
 		unguarded(dst, req, selected)
 	}
 	if isStreaming {
 		forward(w, r, target)
-		return
+		return completed
 	}
 	policy := h.retryPolicyFor(app, r)
 	if !policy.Enabled {
 		forward(w, r, target)
-		return
+		return completed
 	}
 	routing, hasRouting := publicRoutingSnapshot(r.Context())
 	repick := func() (Target, bool) {
@@ -523,4 +533,5 @@ func (h *Handler) proxyAttempt(
 	}
 	runWithRetry(w, r, target, policy, retire, forward, repick, obs,
 		retryBudgetAdmission{budget: h.retryBudget, scope: app.ID})
+	return completed
 }

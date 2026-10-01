@@ -6928,11 +6928,6 @@ haveApp:
 	if !deploymentSmoke && app.RevisionPinTTLSeconds > 0 && target.DeploymentID != "" {
 		w.Header().Set(api.RevisionHeader, target.DeploymentID)
 	}
-	if app.SessionAffinity {
-		if _, ok := h.backend.(affinityPicker); ok {
-			h.setSessionAffinityCookie(w, app.ID, target.InstanceID)
-		}
-	}
 	// This is platform-authored deployment evidence and is exposed only to an
 	// authenticated hosting smoke. Guest response headers with the same name
 	// are stripped by forwardedResponseHeader.
@@ -6968,11 +6963,7 @@ haveApp:
 	// the per-node vmmd forwarder (issue #98 / ADR-028) can attribute
 	// the HTTP bytes to this exact instance. ApplyGuestHeaders first clears
 	// customer-supplied claims, then stamps the scheduler-selected identity.
-	identity := target.PlatformIdentity(app.AccountID, requestIDFrom(r))
-	identity.PlatformTenantID = authenticatedFrom(r.Context()).PlatformTenantID
-	if identity.AppID == "" {
-		identity.AppID = app.ID
-	}
+	identity := platformIdentityForTarget(r.Context(), r, app, target)
 	identity.ApplyGuestHeaders(r.Header)
 	// Keep the same scheduler-authored identity on the request context so
 	// request-scoped logs and any subsequent schedd/vmmd metadata hop cannot
@@ -7287,6 +7278,11 @@ haveApp:
 		// without re-deriving from Connection/Upgrade.
 		r.Header.Set("x-faas-upgrade", "true")
 		platformWakeTrace.markProxyStarted(time.Now())
+		if app.SessionAffinity {
+			if _, ok := h.backend.(affinityPicker); ok {
+				h.setSessionAffinityCookie(w, app.ID, target.InstanceID)
+			}
+		}
 		recordTrafficAttempt(r.Context())
 		h.rawByNode(target).ServeHTTP(w, r)
 		// Per-request accounting still fires for the raw path
@@ -7305,6 +7301,9 @@ haveApp:
 		h.recordUsageRequest(target, cold && wakeMethod == WakeMethodColdBoot)
 		return
 	}
+	// Keep the original target immutable: wake metrics, streaming hooks and
+	// detached mirrors retain it. Completion belongs to the last dispatch.
+	var completionTarget Target
 	if h.proxyByNode != nil {
 		platformWakeTrace.markProxyStarted(time.Now())
 		// Issue #98 / ADR-028: Target.NodeID is the compute_node.id;
@@ -7346,7 +7345,7 @@ haveApp:
 		// construction, and wrapping it would put a buffering writer in front
 		// of the very path whose point is not to buffer. Upgrade requests
 		// returned above and never reach here.
-		h.proxyAttempt(capped, r, target, isStreaming, retireStaleTarget,
+		completionTarget = h.proxyAttempt(capped, r, target, isStreaming, retireStaleTarget,
 			func(w http.ResponseWriter, req *http.Request, tgt Target) {
 				h.proxyByNode(tgt).ServeHTTP(w, req)
 			}, app)
@@ -7361,11 +7360,16 @@ haveApp:
 		// branch above for the onCap-vs-connection-reset contract.
 		planCap := app.Plan.MaxResponseBodyBytes()
 		capped := h.setupBufferedCapWriter(w, app, planCap)
-		h.proxyAttempt(capped, r, target, isStreaming, retireStaleTarget,
+		completionTarget = h.proxyAttempt(capped, r, target, isStreaming, retireStaleTarget,
 			func(w http.ResponseWriter, req *http.Request, tgt Target) {
 				h.proxyFor(tgt.NodeID, planCap).ServeHTTP(w, req)
 			}, app)
 	}
+	identity = platformIdentityForTarget(r.Context(), r, app, completionTarget)
+	r = r.WithContext(wire.WithPlatformIdentity(r.Context(), identity))
+	completionAttrs := completionTargetAttributes(completionTarget)
+	requestSpan.SetAttributes(completionAttrs...)
+	forwardSpan.SetAttributes(completionAttrs...)
 	// Issue #471 / ADR-047 PR-A buffered-fallback AC. The
 	// per-app streaming_enabled flag (ap.StreamingEnabled,
 	// propagated through pgRouter.toApp) is the load-bearing
@@ -7411,8 +7415,8 @@ haveApp:
 	h.cacheHeadResponse(app.ID, rec)
 	h.recordPreAuthFailedResponse(r, rec.status)
 	h.recordPreAuthTargetResponse(r, rec, app)
-	h.observe(r, rec.status, app.ID, string(app.Plan), cold, target)
-	h.recordUsageRequest(target, cold && wakeMethod == WakeMethodColdBoot)
+	h.observe(r, rec.status, app.ID, string(app.Plan), cold, completionTarget)
+	h.recordUsageRequest(completionTarget, cold && wakeMethod == WakeMethodColdBoot)
 	// PR-B residual capture. On the streaming path the per-flush
 	// deltas already attributed every byte that hit the wire; the
 	// one outstanding delta is the trailing slice between the
@@ -7434,7 +7438,7 @@ haveApp:
 	// wire (it short-circuited on the upstream reject) — billing
 	// bytes that didn't egress would be wrong on both ends of the
 	// financial model. nil-safe for unit tests.
-	h.recordEgress(rec, target, app)
+	h.recordEgress(rec, completionTarget, app)
 	if cold && h.metrics != nil {
 		// Wake latency is "request-received to first upstream byte". The
 		// wake-timing RoundTripper stamps the inbound request's recorder at

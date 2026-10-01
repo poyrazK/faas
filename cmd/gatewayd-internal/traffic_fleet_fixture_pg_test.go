@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -24,15 +25,17 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 type fleetDaemonVMFixture struct {
 	vmmdpb.UnimplementedVmmdServer
-	guest       string
-	badInstance string
-	mu          sync.Mutex
-	requests    map[string][]string
-	origins     map[string]int
+	guest        string
+	badInstance  string
+	mu           sync.Mutex
+	requests     map[string][]string
+	origins      map[string]int
+	guestHeaders map[string][]http.Header
 }
 
 func (v *fleetDaemonVMFixture) calls(path string) []string {
@@ -94,15 +97,46 @@ func (v *fleetDaemonVMFixture) ForwardHTTPStream(stream grpc.BidiStreamingServer
 
 type fleetDaemonFixture struct {
 	publicRoutingPGFixture
-	apps  []fleetDaemonApp
-	nodes []state.ComputeNode
-	usage string
-	vm    *fleetDaemonVMFixture
+	apps      []fleetDaemonApp
+	nodes     []state.ComputeNode
+	usage     string
+	vm        *fleetDaemonVMFixture
+	telemetry *fleetDaemonTelemetryFixture
 }
 
 type fleetDaemonTelemetryFixture struct {
 	usageReceiverForTest
 	store *state.PgStore
+	mu    sync.Mutex
+	rows  map[string]*apidpb.IncrementRequestTelemetryRequest
+}
+
+func (r *fleetDaemonTelemetryFixture) IncrementRequestTelemetry(stream grpc.BidiStreamingServer[apidpb.IncrementRequestTelemetryRequest, apidpb.IncrementRequestTelemetryResponse]) error {
+	for {
+		row, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		r.mu.Lock()
+		r.rows[row.EventId] = proto.Clone(row).(*apidpb.IncrementRequestTelemetryRequest)
+		r.mu.Unlock()
+		if err := stream.Send(&apidpb.IncrementRequestTelemetryResponse{Outcome: "inserted"}); err != nil {
+			return err
+		}
+	}
+}
+
+func (r *fleetDaemonTelemetryFixture) records() []*apidpb.IncrementRequestTelemetryRequest {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rows := make([]*apidpb.IncrementRequestTelemetryRequest, 0, len(r.rows))
+	for _, row := range r.rows {
+		rows = append(rows, proto.Clone(row).(*apidpb.IncrementRequestTelemetryRequest))
+	}
+	return rows
 }
 
 func (r *fleetDaemonTelemetryFixture) RecordRequestIDJournal(ctx context.Context, request *apidpb.RecordRequestIDJournalRequest) (*apidpb.RecordRequestIDJournalResponse, error) {
@@ -119,10 +153,11 @@ func (r *fleetDaemonTelemetryFixture) RecordRequestIDJournal(ctx context.Context
 func newFleetDaemonFixture(t *testing.T) fleetDaemonFixture {
 	t.Helper()
 	f := fleetDaemonFixture{publicRoutingPGFixture: newPublicRoutingPGFixture(t)}
-	f.vm = &fleetDaemonVMFixture{requests: make(map[string][]string), origins: make(map[string]int)}
+	f.vm = &fleetDaemonVMFixture{requests: make(map[string][]string), origins: make(map[string]int), guestHeaders: make(map[string][]http.Header)}
 	guest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.vm.mu.Lock()
 		f.vm.origins[r.URL.RequestURI()]++
+		f.vm.guestHeaders[r.URL.RequestURI()] = append(f.vm.guestHeaders[r.URL.RequestURI()], r.Header.Clone())
 		f.vm.mu.Unlock()
 		w.Header().Set("Content-Type", "text/plain")
 		if r.URL.Query().Get("application") == "error" {
@@ -152,8 +187,10 @@ func newFleetDaemonFixture(t *testing.T) fleetDaemonFixture {
 		t.Fatal(err)
 	}
 	usage := grpc.NewServer()
-	apidpb.RegisterRequestTelemetryServer(usage, &fleetDaemonTelemetryFixture{
-		usageReceiverForTest: usageReceiverForTest{events: make(map[string]int)}, store: f.store})
+	f.telemetry = &fleetDaemonTelemetryFixture{
+		usageReceiverForTest: usageReceiverForTest{events: make(map[string]int)}, store: f.store,
+		rows: make(map[string]*apidpb.IncrementRequestTelemetryRequest)}
+	apidpb.RegisterRequestTelemetryServer(usage, f.telemetry)
 	go func() { _ = usage.Serve(usageListener) }()
 	t.Cleanup(usage.Stop)
 	role, gatewayURL := "compute-only", "tcp://127.0.0.1:9090"

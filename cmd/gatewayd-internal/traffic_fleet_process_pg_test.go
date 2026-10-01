@@ -190,7 +190,8 @@ func startFleetDaemon(t *testing.T, pool *pgxpool.Pool, apps []fleetDaemonApp, n
 	c.Env = fleetDaemonEnvironment(map[string]string{
 		"GREGALE_TRAFFIC_DAEMON_SPEC": specPath, "FAAS_CONSUMER_USAGE_OUTBOX_ROOT": filepath.Join(dir, "usage"),
 		"FAAS_APID_REQUEST_TELEMETRY_SOCKET": usageSocket, "FAAS_APID_REQUEST_TELEMETRY_TARGET": "",
-		"FAAS_GATEWAY_RETRY": "true", "FAAS_GATEWAY_RETRY_BUDGET_REDIS_URL": "", "FAAS_GATEWAY_RETRY_BUDGET_REDIS_URL_FILE": "",
+		"FAAS_REQUEST_TELEMETRY_ENABLED": "true",
+		"FAAS_GATEWAY_RETRY":             "true", "FAAS_GATEWAY_RETRY_BUDGET_REDIS_URL": "", "FAAS_GATEWAY_RETRY_BUDGET_REDIS_URL_FILE": "",
 		"FAAS_GATEWAY_LISTEN": "127.0.0.1:0", "FAAS_GATEWAY_CIRCUIT_BREAKER": "false",
 		"FAAS_GATEWAY_EGRESS_SOCKET": egressSocket,
 		"FAAS_EGRESS_SOCKET":         egressSocket,

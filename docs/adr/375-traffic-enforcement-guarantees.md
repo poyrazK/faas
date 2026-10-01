@@ -1085,6 +1085,28 @@ account, request and verified platform-tenant identity remain tied to the
 admitted request while instance/node/deployment provenance comes from that
 attempt's target. Empty provenance clears stale values from the first target.
 
+### Follow-up: retry completion ownership
+
+Public retry completion belongs to the last target whose forwarder actually
+ran. A selected sibling refused before dispatch must not replace that owner.
+Activity, per-instance request/egress records, debugger rows, completion logs
+and logical request/forward spans use this completion target. The original
+request remains one customer request and one app/account admission; forwarding
+attempts retain their separate retry accounting.
+
+The wake cause and cold outcome belong to the original admission. A sibling's
+cached historical wake ID cannot replace that cause. Wake latency retains the
+original wake node, while completion provenance identifies the last dispatched
+instance. Streaming and upgrades remain single-dispatch paths.
+
+Session affinity is stamped immediately before each actual dispatch so the
+response selects the instance that served it. Buffered attempts inherit the
+original response headers; discarding a failed attempt restores that baseline.
+This preserves platform cookies alongside the final guest's cookies and prevents
+cookies from a discarded failure from reaching the client. Local daemon fleet
+tests must inspect the real debugger publisher's emitted RPC records as well as
+guest dispatch. The receiver and VM endpoint remain explicit fixtures.
+
 The implementation tracker is `docs/traffic_platform_implementation.md`.
 Each guarantee needs configuration-to-runtime tests, cancellation/recovery
 tests and customer documentation. VM lifecycle changes require native x86_64
