@@ -768,6 +768,14 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 			"FAAS_SCAN_SPOOL_ROOT="+scanRoot,
 		)
 		env = append(env, extraEnv...)
+		// Keep the named-control-plane acceptance knob scoped to apid. The
+		// surrounding harness shares extraEnv across daemons, while setting
+		// FAAS_NODE_NAME globally would change schedd/gateway ownership too.
+		for _, entry := range extraEnv {
+			if nodeName, ok := strings.CutPrefix(entry, "FAAS_E2E_APID_NODE_NAME="); ok && nodeName != "" {
+				env = append(env, "FAAS_NODE_NAME="+nodeName)
+			}
+		}
 		h.apidEnv = append([]string(nil), env...)
 		h.apidListen = addr
 		h.requestTelemetrySock = requestTelemetrySock
@@ -877,6 +885,11 @@ func startAPID(t *testing.T, h *Harness, bin, dbURL string, extraEnv ...string) 
 		"FAAS_SCAN_SPOOL_ROOT="+scanRoot,
 	)
 	env = append(env, extraEnv...)
+	for _, entry := range extraEnv {
+		if nodeName, ok := strings.CutPrefix(entry, "FAAS_E2E_APID_NODE_NAME="); ok && nodeName != "" {
+			env = append(env, "FAAS_NODE_NAME="+nodeName)
+		}
+	}
 	h.apidEnv = append([]string(nil), env...)
 	h.apidListen = addr
 	h.requestTelemetrySock = requestTelemetrySock
@@ -1038,6 +1051,30 @@ func (h *Harness) StartAdditionalGateway(nodeName string, extraEnv ...string) st
 // service-proxy API or inspect its metrics. The process is owned by
 // Harness.Stop like the primary gateway.
 func (h *Harness) StartAdditionalGatewayWithControl(nodeName string, extraEnv ...string) (string, string) {
+	publicURL, controlURL, _ := h.startAdditionalGatewayWithControl(nodeName, extraEnv...)
+	return publicURL, controlURL
+}
+
+// StartAdditionalGatewayPublic starts a second real gatewayd-public in front
+// of an additional gatewayd-internal. It returns the customer-facing URL,
+// internal URL so multi-node acceptance tests can route traffic through each
+// public edge and publish the right registry target.
+func (h *Harness) StartAdditionalGatewayPublic(nodeName string, extraEnv ...string) (string, string) {
+	internalURL, _, internalSocket := h.startAdditionalGatewayWithControl(nodeName, extraEnv...)
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		dbURL = "postgres:///faas?host=/run/postgresql&user=faas"
+	}
+	dbURL = daemonDSN(dbURL, h.Pool)
+	publicAddr := freeTCPAddr(h.T)
+	controlAddr := freeTCPAddr(h.T)
+	env := gatewaydPublicEnv(dbURL, publicAddr, controlAddr, internalSocket, h.ScheddSock, extraEnv)
+	h.procs = append(h.procs, startProc(h.T, h.BinDir, "gatewayd-public", env))
+	waitReadyz(h.T, controlAddr, 30*time.Second)
+	return "http://" + publicAddr, internalURL
+}
+
+func (h *Harness) startAdditionalGatewayWithControl(nodeName string, extraEnv ...string) (string, string, string) {
 	if h == nil || h.T == nil {
 		panic("e2etest: nil harness")
 	}
@@ -1079,7 +1116,7 @@ func (h *Harness) StartAdditionalGatewayWithControl(nodeName string, extraEnv ..
 	env = append(env, extraEnv...)
 	h.procs = append(h.procs, startProc(t, h.BinDir, "gatewayd-internal", env))
 	waitReadyz(t, controlAddr, 30*time.Second)
-	return "http://" + publicAddr, "http://" + controlAddr
+	return "http://" + publicAddr, "http://" + controlAddr, filepath.Join(dir, "gatewayd-internal.sock")
 }
 
 // startGatewaydPublic boots the public edge next to gatewayd-internal. It is
