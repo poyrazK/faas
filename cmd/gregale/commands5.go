@@ -969,6 +969,8 @@ func cmdAppDispatch(args []string) int {
 			return cmdAppsRoutes(slug, args[2:])
 		case subTCPListeners:
 			return cmdAppsTCP(slug, args[2:])
+		case subUDPListeners:
+			return cmdAppsUDP(slug, args[2:])
 		case subStreamingCap:
 			return cmdAppsStreamingCap(slug, args[2:])
 		case subStaticEgressIP:
