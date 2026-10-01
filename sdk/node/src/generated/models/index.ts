@@ -555,6 +555,7 @@ export type { OAuthProviderCapability } from './OAuthProviderCapability.js';
 export type { OAuthTokenExchangeError } from './OAuthTokenExchangeError.js';
 export type { OAuthTokenExchangeRequest } from './OAuthTokenExchangeRequest.js';
 export type { OAuthTokenExchangeResponse } from './OAuthTokenExchangeResponse.js';
+export type { OCIHealthcheckTiming } from './OCIHealthcheckTiming.js';
 export type { OIDCExchangeRequest } from './OIDCExchangeRequest.js';
 export type { OIDCExchangeResponse } from './OIDCExchangeResponse.js';
 export type { ObjectBucket } from './ObjectBucket.js';

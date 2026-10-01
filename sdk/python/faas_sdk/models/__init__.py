@@ -1109,6 +1109,7 @@ from .obs_health_response_operator_intent_outcome_missing_total import (
 )
 from .obs_health_response_trace_id_completeness_ratio import ObsHealthResponseTraceIdCompletenessRatio
 from .obs_node_operation_preflight import ObsNodeOperationPreflight
+from .oci_healthcheck_timing import OCIHealthcheckTiming
 from .oidc_exchange_request import OIDCExchangeRequest
 from .oidc_exchange_request_capability import OIDCExchangeRequestCapability
 from .oidc_exchange_response import OIDCExchangeResponse
@@ -3038,6 +3039,7 @@ __all__ = (
     "ObsHealthResponseOperatorIntentOutcomeMissingTotal",
     "ObsHealthResponseTraceIdCompletenessRatio",
     "ObsNodeOperationPreflight",
+    "OCIHealthcheckTiming",
     "OIDCExchangeRequest",
     "OIDCExchangeRequestCapability",
     "OIDCExchangeResponse",

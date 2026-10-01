@@ -28992,6 +28992,7 @@ components:
       description: "AppManifest-level healthcheck shape: OCI HEALTHCHECK fields plus typed deployment probe overrides. Durations are integer seconds at the JSON boundary to match OCI/Docker conventions."
       type: object
       properties:
+        image_timing: { $ref: '#/components/schemas/OCIHealthcheckTiming' }
         test:
           type: array
           items: { type: string }
@@ -43969,6 +43970,16 @@ components:
       required: [items]
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/IssueIngestToken' } }
+
+    OCIHealthcheckTiming:
+      description: "Exact OCI image healthcheck durations in nanoseconds, preserved without rounding to whole seconds."
+      type: object
+      additionalProperties: false
+      properties:
+        interval_ns: { type: integer, format: int64, minimum: 0 }
+        timeout_ns: { type: integer, format: int64, minimum: 0 }
+        start_period_ns: { type: integer, format: int64, minimum: 0 }
+        start_interval_ns: { type: integer, format: int64, minimum: 0 }
 
   responses:
 

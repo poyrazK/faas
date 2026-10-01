@@ -141,21 +141,40 @@ func healthcheckDefaults(hc *api.AppManifestHealthcheck) (interval, timeout, sta
 	if hc == nil {
 		return 0, 0, 0, 0
 	}
-	interval = time.Duration(hc.IntervalS) * time.Second
+	if hc.ImageTiming != nil {
+		interval = time.Duration(hc.ImageTiming.IntervalNS)
+		timeout = time.Duration(hc.ImageTiming.TimeoutNS)
+		startPeriod = time.Duration(hc.ImageTiming.StartPeriodNS)
+	} else {
+		interval = time.Duration(hc.IntervalS) * time.Second
+		timeout = time.Duration(hc.TimeoutS) * time.Second
+		startPeriod = time.Duration(hc.StartPeriodS) * time.Second
+	}
 	if interval == 0 {
 		interval = 30 * time.Second
 	}
-	timeout = time.Duration(hc.TimeoutS) * time.Second
 	if timeout == 0 {
 		timeout = 30 * time.Second
 	}
-	startPeriod = time.Duration(hc.StartPeriodS) * time.Second
 	if hc.Retries == 0 {
 		retries = 3
 	} else {
 		retries = hc.Retries
 	}
 	return interval, timeout, startPeriod, retries
+}
+
+// imageHealthcheckPollDelay preserves image StartInterval precision during
+// startup. Legacy manifests/typed deployment probes keep their established
+// cadence; new image metadata uses Docker's default when omitted.
+func imageHealthcheckPollDelay(hc *api.AppManifestHealthcheck, elapsed, interval, startPeriod time.Duration) time.Duration {
+	if hc == nil || hc.ImageTiming == nil || elapsed >= startPeriod {
+		return interval
+	}
+	if hc.ImageTiming.StartIntervalNS > 0 {
+		return time.Duration(hc.ImageTiming.StartIntervalNS)
+	}
+	return api.OCIHealthcheckDefaultStartInterval
 }
 
 // runStartupHealthcheck performs the first bounded probe for a workload that
@@ -165,6 +184,9 @@ func healthcheckDefaults(hc *api.AppManifestHealthcheck) (interval, timeout, sta
 func runStartupHealthcheck(manifest api.AppManifest, env []string, dir, root string, uid int, procAttr *syscall.SysProcAttr, log *slog.Logger) error {
 	if manifest.Healthcheck == nil {
 		return nil
+	}
+	if manifest.Healthcheck.ImageTiming != nil {
+		return runStartupProbe(sidecarProbeFromHealthcheck(manifest.Healthcheck), manifest.EffectivePort(), env, dir, root, uid, procAttr, log)
 	}
 	argv, _ := parseHealthcheckTest(manifest.Healthcheck.Test)
 	if len(argv) == 0 {
@@ -212,7 +234,7 @@ func monitorSidecarHealth(ctx context.Context, manifest api.AppManifest, env []s
 	}
 	startedAt := time.Now()
 	consecutiveFailures := 0
-	timer := time.NewTimer(interval)
+	timer := time.NewTimer(imageHealthcheckPollDelay(manifest.Healthcheck, 0, interval, startPeriod))
 	defer timer.Stop()
 	for {
 		select {
@@ -221,13 +243,14 @@ func monitorSidecarHealth(ctx context.Context, manifest api.AppManifest, env []s
 		case <-timer.C:
 		}
 
+		probeStartedAt := time.Now()
 		report := execHealthcheckWithOptions(ctx, argv, timeout, uid, env, dir, procAttr, log)
 		if ctx.Err() != nil {
 			return
 		}
 		if report.Status == healthcheckStatusPass {
 			consecutiveFailures = 0
-		} else if time.Since(startedAt) < startPeriod {
+		} else if healthcheckWithinStartupGrace(manifest.Healthcheck, startedAt, probeStartedAt, startPeriod) {
 			// Startup failures are tolerated during StartPeriod, but a
 			// passing probe still resets the steady-state failure count.
 			consecutiveFailures = 0
@@ -241,7 +264,7 @@ func monitorSidecarHealth(ctx context.Context, manifest api.AppManifest, env []s
 				return
 			}
 		}
-		timer.Reset(interval)
+		timer.Reset(imageHealthcheckPollDelay(manifest.Healthcheck, time.Since(startedAt), interval, startPeriod))
 	}
 }
 
@@ -255,6 +278,7 @@ func sidecarProbeFromHealthcheck(hc *api.AppManifestHealthcheck) *api.SidecarPro
 		TimeoutS:     hc.TimeoutS,
 		Retries:      hc.Retries,
 		StartPeriodS: hc.StartPeriodS,
+		ImageTiming:  hc.ImageTiming,
 	}
 }
 
@@ -297,7 +321,11 @@ func sidecarProbeSettings(probe *api.SidecarProbe) (period, timeout, initialDela
 	}
 	initialDelay = time.Duration(probe.InitialDelayS) * time.Second
 	startPeriod = time.Duration(probe.StartPeriodS) * time.Second
-	return time.Duration(periodSeconds) * time.Second, time.Duration(timeoutSeconds) * time.Second, initialDelay, startPeriod, failures, successes
+	period, timeout = time.Duration(periodSeconds)*time.Second, time.Duration(timeoutSeconds)*time.Second
+	if probe.ImageTiming != nil {
+		period, timeout, startPeriod, _ = healthcheckDefaults(probe)
+	}
+	return period, timeout, initialDelay, startPeriod, failures, successes
 }
 
 func waitProbeDelay(ctx context.Context, delay time.Duration) bool {
@@ -322,13 +350,15 @@ func runStartupProbe(probe *api.SidecarProbe, port int, env []string, dir, root 
 	if sidecarProbeDisabled(probe) {
 		return nil
 	}
-	period, timeout, initialDelay, _, failures, successes := sidecarProbeSettings(probe)
+	period, timeout, initialDelay, startPeriod, failures, successes := sidecarProbeSettings(probe)
 	ctx := context.Background()
+	startedAt := time.Now()
 	if !waitProbeDelay(ctx, initialDelay) {
 		return ctx.Err()
 	}
 	consecutiveFailures, consecutivePasses := 0, 0
 	for {
+		probeStartedAt := time.Now()
 		report := runSidecarProbeOnce(ctx, probe, port, timeout, env, dir, root, uid, procAttr, log)
 		if report.Status == healthcheckStatusPass {
 			consecutivePasses++
@@ -338,12 +368,14 @@ func runStartupProbe(probe *api.SidecarProbe, port int, env []string, dir, root 
 			}
 		} else {
 			consecutivePasses = 0
-			consecutiveFailures++
-			if consecutiveFailures >= failures {
-				return fmt.Errorf("startup probe failed after %d consecutive attempts", consecutiveFailures)
+			if !healthcheckWithinStartupGrace(probe, startedAt, probeStartedAt, startPeriod) {
+				consecutiveFailures++
+				if consecutiveFailures >= failures {
+					return fmt.Errorf("startup probe failed after %d consecutive attempts", consecutiveFailures)
+				}
 			}
 		}
-		if !waitProbeDelay(ctx, period) {
+		if !waitProbeDelay(ctx, imageHealthcheckPollDelay(probe, time.Since(startedAt), period, startPeriod)) {
 			return ctx.Err()
 		}
 	}
@@ -363,6 +395,7 @@ func monitorSidecarProbe(ctx context.Context, probe *api.SidecarProbe, port int,
 	startedAt := time.Now()
 	consecutiveFailures, consecutivePasses := 0, 0
 	for {
+		probeStartedAt := time.Now()
 		report := runSidecarProbeOnce(ctx, probe, port, timeout, env, dir, root, uid, procAttr, log)
 		if ctx.Err() != nil {
 			return
@@ -374,7 +407,7 @@ func monitorSidecarProbe(ctx context.Context, probe *api.SidecarProbe, port int,
 			}
 		} else {
 			consecutivePasses = 0
-			if time.Since(startedAt) >= startPeriod {
+			if !healthcheckWithinStartupGrace(probe, startedAt, probeStartedAt, startPeriod) {
 				consecutiveFailures++
 				log.Warn("sidecar liveness probe failed", "probe_type", sidecarProbeType(probe), "consecutive_failures", consecutiveFailures, "failure_threshold", failures)
 				if consecutiveFailures >= failures {
@@ -385,7 +418,7 @@ func monitorSidecarProbe(ctx context.Context, probe *api.SidecarProbe, port int,
 				}
 			}
 		}
-		if !waitProbeDelay(ctx, period) {
+		if !waitProbeDelay(ctx, imageHealthcheckPollDelay(probe, time.Since(startedAt), period, startPeriod)) {
 			return
 		}
 	}
@@ -413,7 +446,7 @@ func monitorSidecarReadiness(ctx context.Context, probe *api.SidecarProbe, port 
 	lastReport := time.Now()
 	consecutiveFailures, consecutivePasses := 0, 0
 	for {
-		if !waitProbeDelay(ctx, period) {
+		if !waitProbeDelay(ctx, imageHealthcheckPollDelay(probe, time.Since(startedAt), period, startPeriod)) {
 			return
 		}
 		report := runSidecarProbeOnce(ctx, probe, port, timeout, env, dir, root, uid, procAttr, log)
@@ -705,6 +738,9 @@ func runHealthcheckPollLoop(ctx context.Context, sock int, argv []string, manife
 		nextDelay := interval
 		if time.Since(bootAt) < startPeriod {
 			nextDelay = 1 * time.Second
+			if manifest.Healthcheck != nil && manifest.Healthcheck.ImageTiming != nil {
+				nextDelay = imageHealthcheckPollDelay(manifest.Healthcheck, time.Since(bootAt), interval, startPeriod)
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -719,6 +755,7 @@ func runHealthcheckPollLoop(ctx context.Context, sock int, argv []string, manife
 		env = StampOverridePortEnv(env, manifest.EffectivePort())
 		probeArgv := append([]string(nil), argv...)
 		probeArgv[0] = resolveWorkloadCommandPath("/", probeArgv[0], env)
+		probeStartedAt := time.Now()
 		report := execHealthcheckWithOptions(ctx, probeArgv, timeout, int(credential.Uid), env, manifest.EffectiveWorkingDir(), launch.SysProcAttr, log)
 		report.Seq = seq
 		report.TsUnixMs = time.Now().UnixMilli()
@@ -729,7 +766,7 @@ func runHealthcheckPollLoop(ctx context.Context, sock int, argv []string, manife
 		// Retries. Without this, a slow-starting container
 		// (e.g. JVM warmup, database migration) would trip
 		// liveness before the workload was actually broken.
-		if report.Status == healthcheckStatusFail && time.Since(bootAt) < startPeriod {
+		if report.Status == healthcheckStatusFail && healthcheckWithinStartupGrace(manifest.Healthcheck, bootAt, probeStartedAt, startPeriod) {
 			report.Status = healthcheckStatusStarting
 		}
 
@@ -864,3 +901,12 @@ func decodeHealthcheckReport(b []byte) (HealthcheckReport, error) {
 // Kept so a future boot-log upgrade can dump the JSON form
 // without re-importing encoding/json in main_linux.go.
 var _ = json.Marshal
+
+// Image grace is evaluated at probe start, even if the result arrives later.
+// Legacy manifests retain their result-time grace behavior.
+func healthcheckWithinStartupGrace(check *api.AppManifestHealthcheck, startedAt, probeStartedAt time.Time, grace time.Duration) bool {
+	if check != nil && check.ImageTiming != nil {
+		return probeStartedAt.Sub(startedAt) < grace
+	}
+	return time.Since(startedAt) < grace
+}
