@@ -31,7 +31,10 @@ apps are excluded until their independent configuration scope is defined.
 Operators install public JWKS on apid; no remote key discovery occurs on the
 request path. The Python SDK exposes the same runtime contract through an async
 client, ASGI request middleware, and an HTTPX transport. Its evaluator and bounded
-evidence/context envelopes use the same cross-language allocation vectors.
+evidence/context envelopes use the same cross-language allocation vectors. The
+Go SDK exposes the contract through a standard-library client, `net/http`
+middleware, and a `RoundTripper`; it uses the shared allocation vectors and wire
+envelopes as Node and Python.
 
 Each request uses one immutable snapshot. A resumed process detects elapsed or
 regressed wall time before evaluation; if configuration is older than its bounded
