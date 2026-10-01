@@ -51,7 +51,7 @@ func UnitGatewaydPublic() daemonunit.Unit {
 
 		Slice:           "faas-cp.slice",
 		MemoryMax:       "512M",
-		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/secrets/object-storage/provider.env -/etc/faas/otel.env -/etc/faas/tcpd.env",
+		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/secrets/object-storage/provider.env -/etc/faas/otel.env -/etc/faas/tcpd.env -/etc/faas/udpd.env",
 
 		AmbientCapabilities: []string{""}, // explicit empty body: "no caps elevated"
 
