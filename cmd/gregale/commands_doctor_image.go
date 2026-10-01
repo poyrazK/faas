@@ -165,6 +165,11 @@ func doctorImageHealthcheck(hc *oci.ImageHealthcheck) doctorCheck {
 	if hc == nil || len(hc.Test) == 0 || hc.Test[0] == "NONE" {
 		return doctorCheck{Name: "healthcheck", Status: "skipped", Reason: "No enabled image HEALTHCHECK; application readiness still needs runtime verification."}
 	}
+	if hc.ImageTiming != nil {
+		if err := hc.ImageTiming.Validate(); err != nil {
+			return doctorCheck{Name: "healthcheck", Status: "warn", Hint: err.Error(), Fix: "Use zero for runtime defaults or durations of at least one millisecond."}
+		}
+	}
 	validCommand := (hc.Test[0] == "CMD" && len(hc.Test) > 1 && hc.Test[1] != "") || (hc.Test[0] == "CMD-SHELL" && len(hc.Test) == 2 && strings.TrimSpace(hc.Test[1]) != "")
 	if !validCommand || hc.IntervalS < 0 || hc.TimeoutS < 0 || hc.StartPeriodS < 0 || hc.Retries < 0 {
 		return doctorCheck{Name: "healthcheck", Status: "warn", Hint: "HEALTHCHECK has an invalid command shape or negative timing/retry values.", Fix: "Use CMD with an executable or CMD-SHELL with one command string, and nonnegative timing/retry values."}
@@ -188,7 +193,7 @@ func describeDoctorImage(result oci.ImageInspection) *doctorImage {
 	m := &doctorImage{Reference: result.Reference, Digest: result.Digest, OS: cfg.OS, Architecture: cfg.Architecture, Entrypoint: cfg.Entrypoint, Command: cfg.Cmd, EffectiveArgv: append(append([]string{}, cfg.Entrypoint...), cfg.Cmd...), User: cfg.User, WorkingDir: cfg.WorkingDir, StopSignal: cfg.StopSignal}
 	m.InputReference, m.SourceReference = result.InputReference, result.SourceReference
 	if hc := cfg.Healthcheck; hc != nil {
-		m.Healthcheck = &api.AppManifestHealthcheck{Test: hc.Test, IntervalS: hc.IntervalS, TimeoutS: hc.TimeoutS, Retries: hc.Retries, StartPeriodS: hc.StartPeriodS}
+		m.Healthcheck = &api.AppManifestHealthcheck{Test: hc.Test, IntervalS: hc.IntervalS, TimeoutS: hc.TimeoutS, Retries: hc.Retries, StartPeriodS: hc.StartPeriodS, ImageTiming: hc.ImageTiming}
 	}
 	if m.User == "" || m.User == "1000" {
 		m.User = api.DefaultAppUser
@@ -220,6 +225,29 @@ func renderDoctorImage(w io.Writer, img *doctorImage) {
 	_, _ = fmt.Fprintf(w, "  platform: %q\n  entrypoint: %q\n  command: %q\n  effective argv: %q\n  user: %q  working directory: %q\n  stop signal: %q\n  declared ports: %q\n", img.OS+"/"+img.Architecture, img.Entrypoint, img.Command, img.EffectiveArgv, img.User, img.WorkingDir, img.StopSignal, img.ExposedPorts)
 	if img.Healthcheck != nil {
 		_, _ = fmt.Fprintf(w, "  healthcheck: %q\n", img.Healthcheck.Test)
+		hc := img.Healthcheck
+		if timing := hc.ImageTiming; timing != nil {
+			_, _ = fmt.Fprintf(w, "    interval: %s  timeout: %s  startup grace: %s  startup interval: %s  retries: %s\n",
+				doctorImageDuration(timing.IntervalNS), doctorImageDuration(timing.TimeoutNS), time.Duration(timing.StartPeriodNS), doctorImageDuration(timing.StartIntervalNS), doctorImageRetries(hc.Retries))
+		} else {
+			_, _ = fmt.Fprintf(w, "    interval: %s  timeout: %s  startup grace: %s  retries: %s\n",
+				doctorImageDuration(int64(hc.IntervalS)*int64(time.Second)), doctorImageDuration(int64(hc.TimeoutS)*int64(time.Second)), time.Duration(hc.StartPeriodS)*time.Second, doctorImageRetries(hc.Retries))
+		}
+
 	}
 	_, _ = fmt.Fprintln(w, "Metadata checks only; no layers downloaded or containers executed. Values precede deployment overrides.")
+}
+
+func doctorImageDuration(ns int64) string {
+	if ns == 0 {
+		return "runtime default"
+	}
+	return time.Duration(ns).String()
+}
+
+func doctorImageRetries(retries int) string {
+	if retries == 0 {
+		return "runtime default"
+	}
+	return fmt.Sprint(retries)
 }
