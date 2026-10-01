@@ -142,11 +142,12 @@ for name in bin/sh bin/ash bin/cat; do
   ln -s /bin/busybox "${base_skeleton}/${name}"
 done
 # Production app artifacts live beneath drive1's /upper directory. The M0 app
-# runs as UID 1000 and only needs to listen; platform-owned /etc/faas stays
+# runs as UID 1000 and serves a successful readiness response; platform-owned /etc/faas stays
 # read-only to it after guest-init assembles the overlay.
 printf '%s\n' \
   '{"entrypoint":["/bin/busybox","httpd","-f","-p","8080","-h","/"],"port":8080}' \
   > "${layer_skeleton}/upper/etc/faas/app.json"
+printf '%s\n' 'metal smoke ready' > "${layer_skeleton}/upper/index.html"
 
 truncate -s 64M "${base_path}"
 mkfs.ext4 -q -O '^has_journal' -d "${base_skeleton}" -L faas-metal-smoke -F "${base_path}"
