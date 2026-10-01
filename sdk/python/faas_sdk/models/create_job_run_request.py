@@ -40,7 +40,8 @@ class CreateJobRunRequest:
 
     tasks: int | Unset = UNSET
     failure_rules: FailureRules | Unset = UNSET
-    """Versioned explicit classification policy for failed partition attempts."""
+    """Versioned explicit classification policy for failed Job partitions and command-Cron executions. HTTP Crons
+    do not accept failure rules."""
     inputs: list[JobRunInput] | Unset = UNSET
     """Ordered input set. Creates one task per entry; tasks may be omitted or must match the input count.
     References are opaque and fetched by the customer image."""

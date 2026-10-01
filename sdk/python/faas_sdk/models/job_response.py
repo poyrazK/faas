@@ -50,9 +50,12 @@ class JobResponse:
     last_scheduled_at: datetime.datetime | Unset = UNSET
     """Most recent scheduled occurrence that created a run."""
     schedule_policy: SchedulePolicy | Unset = UNSET
-    """Versioned recurring-work scheduling policy."""
+    """Versioned recurring-work scheduling policy for Jobs and both HTTP and command Crons. HTTP replace waits for
+    a prior dispatched request to complete because the scheduler has no stop acknowledgement for a request already
+    delivered to the app."""
     failure_rules: FailureRules | Unset = UNSET
-    """Versioned explicit classification policy for failed partition attempts."""
+    """Versioned explicit classification policy for failed Job partitions and command-Cron executions. HTTP Crons
+    do not accept failure rules."""
     image_resolved_digest: str | Unset = UNSET
     """Immutable OCI manifest digest selected from image_ref."""
     image_storage_key: str | Unset = UNSET

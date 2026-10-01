@@ -3937,21 +3937,23 @@ type Invocation struct {
 	Source           InvocationSource `json:"source"`
 	// QueueName scopes queue-source invocations to a first-class queue
 	// binding. Empty preserves the legacy single per-app queue behavior.
-	QueueName      string          `json:"queue_name,omitempty"`
-	State          InvocationState `json:"state"`
-	Method         string          `json:"method"`
-	Path           string          `json:"path"`
-	Payload        json.RawMessage `json:"payload"`
-	Headers        json.RawMessage `json:"headers"`
-	DueAt          time.Time       `json:"due_at"`
-	ScheduledAt    *time.Time      `json:"scheduled_at,omitempty"`
-	CronID         *string         `json:"cron_id,omitempty"`
-	AckURL         string          `json:"ack_url,omitempty"`
-	Result         json.RawMessage `json:"result,omitempty"`
-	LeaseExpiresAt *time.Time      `json:"lease_expires_at,omitempty"`
-	ReceivedAt     *time.Time      `json:"received_at,omitempty"`
-	CompletedAt    *time.Time      `json:"completed_at,omitempty"`
-	Attempts       int             `json:"attempts"`
+	QueueName       string          `json:"queue_name,omitempty"`
+	State           InvocationState `json:"state"`
+	Method          string          `json:"method"`
+	Path            string          `json:"path"`
+	Payload         json.RawMessage `json:"payload"`
+	Headers         json.RawMessage `json:"headers"`
+	DueAt           time.Time       `json:"due_at"`
+	ScheduledAt     *time.Time      `json:"scheduled_at,omitempty"`
+	CronID          *string         `json:"cron_id,omitempty"`
+	OccurrenceID    string          `json:"-"`
+	StartDeadlineAt *time.Time      `json:"-"`
+	AckURL          string          `json:"ack_url,omitempty"`
+	Result          json.RawMessage `json:"result,omitempty"`
+	LeaseExpiresAt  *time.Time      `json:"lease_expires_at,omitempty"`
+	ReceivedAt      *time.Time      `json:"received_at,omitempty"`
+	CompletedAt     *time.Time      `json:"completed_at,omitempty"`
+	Attempts        int             `json:"attempts"`
 	// QuotaReserved records whether ClaimInvocationWithCap acquired one
 	// account_async_quota slot for this dispatch. It is internal lifecycle
 	// state, not part of the customer invocation representation.

@@ -46,7 +46,8 @@ func projectDashboardScheduleOccurrences(rows []state.ScheduleOccurrence) []dash
 			ScheduledFor: dashboardJobsTime(occurrence.ScheduledFor), Status: occurrence.Status,
 			StatusClass: dashboardOccurrenceStatusClass(occurrence.Status), Reason: occurrence.Reason,
 			RunID: occurrence.JobRunID, TaskID: occurrence.AppTaskID,
-			BlockingID: occurrence.BlockingOccurrenceID,
+			InvocationID: occurrence.InvocationID,
+			BlockingID:   occurrence.BlockingOccurrenceID,
 		}
 		if occurrence.StartDeadlineAt != nil {
 			item.DeadlineAt = dashboardJobsTime(*occurrence.StartDeadlineAt)
@@ -184,7 +185,7 @@ func (s *server) dashboardUpdateCronSchedulePolicy(w http.ResponseWriter, r *htt
 		return
 	}
 	cron, err := s.store.CronByID(r.Context(), id)
-	if err != nil || cron.AppID != app.ID || len(cron.Command) == 0 {
+	if err != nil || cron.AppID != app.ID {
 		dashboardRedirectScheduledWork(w, r, "/dashboard/apps/"+url.PathEscape(slug), "error")
 		return
 	}
@@ -193,11 +194,15 @@ func (s *server) dashboardUpdateCronSchedulePolicy(w http.ResponseWriter, r *htt
 		http.Redirect(w, r, redirectPath, http.StatusSeeOther)
 		return
 	}
+	if len(cron.Command) == 0 && rules != nil {
+		http.Redirect(w, r, redirectPath, http.StatusSeeOther)
+		return
+	}
 	options := state.CronOptions{RetryMax: cron.RetryMax, RetryBackoffSeconds: cron.RetryBackoffSeconds,
 		SchedulePolicy: &policy, FailureRules: rules}
 	updated, err := s.store.UpdateCronWithOptions(r.Context(), cron.ID, nil, nil, nil, nil, nil, nil, options)
 	if err != nil {
-		s.log.Warn("dashboard update command cron schedule policy failed", "account_id", acct.ID, "app_id", app.ID, "cron_id", cron.ID, "err", err)
+		s.log.Warn("dashboard update cron schedule policy failed", "account_id", acct.ID, "app_id", app.ID, "cron_id", cron.ID, "err", err)
 		http.Redirect(w, r, redirectPath, http.StatusSeeOther)
 		return
 	}

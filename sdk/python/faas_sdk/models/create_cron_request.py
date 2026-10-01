@@ -18,7 +18,10 @@ T = TypeVar("T", bound="CreateCronRequest")
 
 @_attrs_define
 class CreateCronRequest:
-    """Create an HTTP-path cron or deployment-attached app command schedule."""
+    """Create an HTTP-path cron or deployment-attached app command schedule. Schedule policies apply to both kinds; failure
+    rules apply to command Crons only.
+
+    """
 
     app_id: str
     """App id or slug."""
@@ -43,9 +46,12 @@ class CreateCronRequest:
     retry_backoff_seconds: int | Unset = UNSET
     """Base retry delay in seconds; doubles per retry and is capped at 24 hours. Command crons only."""
     schedule_policy: SchedulePolicy | Unset = UNSET
-    """Versioned recurring-work scheduling policy."""
+    """Versioned recurring-work scheduling policy for Jobs and both HTTP and command Crons. HTTP replace waits for
+    a prior dispatched request to complete because the scheduler has no stop acknowledgement for a request already
+    delivered to the app."""
     failure_rules: FailureRules | Unset = UNSET
-    """Versioned explicit classification policy for failed partition attempts."""
+    """Versioned explicit classification policy for failed Job partitions and command-Cron executions. HTTP Crons
+    do not accept failure rules."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

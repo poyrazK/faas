@@ -17,7 +17,11 @@ resource "gregale_cron" "sync" {
   schedule        = "*/15 * * * *"
   path            = "/internal/sync"
   timezone        = "UTC"
-  skip_if_running = true
+  schedule_policy = {
+    overlap                = "skip"
+    start_deadline_seconds = 120
+    missed_runs            = "coalesce_latest"
+  }
 }
 ```
 
@@ -33,6 +37,7 @@ resource "gregale_cron" "sync" {
 - `enabled` (Boolean) Whether the scheduler evaluates this cron.
 - `path` (String) App path to POST. Defaults to `/`.
 - `skip_if_running` (Boolean) Skip a fire while the previous invocation is still running.
+- `schedule_policy` (Object) Optional recurring-work policy. `overlap` accepts `allow`, `skip`, or `replace`; `start_deadline_seconds` sets the maximum delay before first start (zero disables it); `missed_runs` accepts `skip` or `coalesce_latest`. Replacement waits for an in-flight HTTP request to finish because Gregale cannot confirm that an already delivered request has stopped.
 - `timezone` (String) IANA timezone used to interpret the schedule. Defaults to `UTC`.
 
 ### Read-only

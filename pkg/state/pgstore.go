@@ -15045,7 +15045,8 @@ const invocationSelectCols = `id, app_id, account_id, source, queue_name, state,
        last_replayed_at, on_success_destination_id,
        on_failure_destination_id, work_policy_name, work_key_digest,
        work_expires_at, work_sequence, work_policy_revision,
-       work_fairness_digest, work_fairness_limit, platform_tenant_id`
+       work_fairness_digest, work_fairness_limit, platform_tenant_id,
+       occurrence_id, start_deadline_at`
 
 func (s *PgStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invocation, error) {
 	if inv.WorkPolicyName != "" {
@@ -15077,16 +15078,22 @@ func enqueueInvocationRow(ctx context.Context, q invocationRowWriter, inv Invoca
 	if err != nil {
 		return Invocation{}, fmt.Errorf("state: invocations headers: %w", err)
 	}
-	var scheduledAt, leaseExpires any
+	var scheduledAt, leaseExpires, startDeadlineAt any
 	if inv.ScheduledAt != nil {
 		scheduledAt = inv.ScheduledAt.UTC()
+	}
+	if inv.StartDeadlineAt != nil {
+		startDeadlineAt = inv.StartDeadlineAt.UTC()
 	}
 	if inv.LeaseExpiresAt != nil {
 		leaseExpires = inv.LeaseExpiresAt.UTC()
 	}
-	var cronID any
+	var cronID, occurrenceID any
 	if inv.CronID != nil && *inv.CronID != "" {
 		cronID = *inv.CronID
+	}
+	if inv.OccurrenceID != "" {
+		occurrenceID = inv.OccurrenceID
 	}
 	var deadlineAt, retentionUntil any
 	if inv.DeadlineAt != nil {
@@ -15115,13 +15122,15 @@ func enqueueInvocationRow(ctx context.Context, q invocationRowWriter, inv Invoca
 			 on_success_destination_id, on_failure_destination_id,
 			 work_policy_name, work_key_digest, work_expires_at,
 			 work_sequence, work_policy_revision, work_fairness_digest,
-			 work_fairness_limit, platform_tenant_id)
+			 work_fairness_limit, platform_tenant_id, occurrence_id,
+			 start_deadline_at)
 		values
 			(coalesce($1::uuid, gen_random_uuid()), $2, $3, $4, $5,
 			 coalesce(nullif($6,''),'pending'), $7, $8,
 			 $9, $10, $11, $12, $13,
 			 nullif($14,''), $15,
-			 $16, $17, $18, $19, $20, nullif($21,''), $22, $23, $24, $25, $26, $27, nullif($28, '')::uuid)
+			 $16, $17, $18, $19, $20, nullif($21,''), $22, $23, $24, $25, $26, $27, nullif($28, '')::uuid,
+			 nullif($29, '')::uuid, $30)
 		returning `+invocationSelectCols,
 		invocationID, inv.AppID, inv.AccountID, string(inv.Source), inv.QueueName, string(inv.State),
 		inv.Method, inv.Path, payload, headers, inv.DueAt.UTC(),
@@ -15130,7 +15139,8 @@ func enqueueInvocationRow(ctx context.Context, q invocationRowWriter, inv Invoca
 		onSuccessDestination, onFailureDestination, inv.WorkPolicyName,
 		inv.WorkKeyDigest, inv.WorkExpiresAt, nullableWorkSequence(inv.WorkSequence),
 		nullableWorkSequence(inv.WorkPolicyRevision), inv.WorkFairnessDigest,
-		nullableWorkFairnessLimit(inv.WorkFairnessLimit), inv.PlatformTenantID)
+		nullableWorkFairnessLimit(inv.WorkFairnessLimit), inv.PlatformTenantID,
+		occurrenceID, startDeadlineAt)
 	out, err := scanInvocation(row)
 	if err != nil {
 		return Invocation{}, mapErr(err)
@@ -15347,6 +15357,7 @@ func (s *PgStore) ClaimInvocation(ctx context.Context, id, instanceID string, le
 		       attempts = attempts + 1
 		 where id = $1 and state = 'pending'
 		   and work_policy_name is null
+		   and (start_deadline_at is null or received_at is not null or start_deadline_at >= clock_timestamp())
 		 returning `+invocationSelectCols, id, instanceID, leaseText)
 	inv, err := scanInvocation(row)
 	if err != nil {
@@ -16334,9 +16345,9 @@ func scanInvocations(rows pgx.Rows) ([]Invocation, error) {
 func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 	inv := Invocation{}
 	var source, state string
-	var scheduledAt, leaseExpires, receivedAt, completedAt *time.Time
+	var scheduledAt, leaseExpires, receivedAt, completedAt, startDeadlineAt *time.Time
 	var queueName string
-	var cronID, ackURL, lastErr, instanceID, onSuccessDestination, onFailureDestination *string
+	var cronID, ackURL, lastErr, instanceID, onSuccessDestination, onFailureDestination, occurrenceID *string
 	var payload, headers, result []byte
 	var outcome *string
 	var deadlineAt, retentionUntil, lastReplayedAt *time.Time
@@ -16357,7 +16368,7 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 		&deadlineAt, &retryPolicy, &retentionUntil,
 		&lastReplayedAt, &onSuccessDestination, &onFailureDestination,
 		&workPolicyName, &workKeyDigest, &workExpiresAt, &workSequence, &workPolicyRevision,
-		&workFairnessDigest, &workFairnessLimit, &platformTenantID,
+		&workFairnessDigest, &workFairnessLimit, &platformTenantID, &occurrenceID, &startDeadlineAt,
 	); err != nil {
 		return Invocation{}, err
 	}
@@ -16406,6 +16417,12 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 	if cronID != nil {
 		id := *cronID
 		inv.CronID = &id
+	}
+	if occurrenceID != nil {
+		inv.OccurrenceID = *occurrenceID
+	}
+	if startDeadlineAt != nil {
+		inv.StartDeadlineAt = startDeadlineAt
 	}
 	if ackURL != nil {
 		inv.AckURL = *ackURL
@@ -32040,14 +32057,15 @@ func (s *PgStore) ClaimInvocationWithCap(ctx context.Context, id, instanceID str
 
 	// Atomic state transition + lease stamp + attempts bump.
 	row := tx.QueryRow(ctx, `
-		update invocations
-		   set state = 'dispatching',
+		 update invocations
+		    set state = 'dispatching',
 		       quota_reserved = true,
 		       lease_expires_at = now() + $3::interval,
 		       instance_id = coalesce(nullif($2, ''), instance_id),
 		       received_at = now(),
 		       attempts = attempts + 1
 		 where id = $1 and state = 'pending'
+		   and (start_deadline_at is null or received_at is not null or start_deadline_at >= clock_timestamp())
 		 returning `+invocationSelectCols, id, instanceID, leaseText)
 	inv, err := scanInvocation(row)
 	if err != nil {

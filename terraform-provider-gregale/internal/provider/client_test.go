@@ -276,21 +276,22 @@ func TestClientCronLifecycleUsesPublicContract(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatalf("decode create request: %v", err)
 			}
-			if request.AppID != "app-1" || request.Schedule != "*/15 * * * *" || request.Path != "/internal/sync" || request.Timezone != "UTC" {
+			if request.AppID != "app-1" || request.Schedule != "*/15 * * * *" || request.Path != "/internal/sync" || request.Timezone != "UTC" ||
+				request.SchedulePolicy == nil || request.SchedulePolicy.Overlap != "skip" {
 				t.Fatalf("create request = %+v", request)
 			}
-			_, _ = w.Write([]byte(`{"id":"cron-1","app_id":"app-1","schedule":"*/15 * * * *","path":"/internal/sync","enabled":true,"timezone":"UTC","skip_if_running":true,"created_at":"2026-09-18T10:00:00Z"}`))
+			_, _ = w.Write([]byte(`{"id":"cron-1","app_id":"app-1","schedule":"*/15 * * * *","path":"/internal/sync","enabled":true,"timezone":"UTC","skip_if_running":true,"schedule_policy":{"version":1,"overlap":"skip","start_deadline_seconds":120,"missed_runs":"coalesce_latest"},"created_at":"2026-09-18T10:00:00Z"}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/crons/cron-1":
-			_, _ = w.Write([]byte(`{"id":"cron-1","app_id":"app-1","schedule":"*/15 * * * *","path":"/internal/sync","enabled":true,"timezone":"UTC","skip_if_running":true,"created_at":"2026-09-18T10:00:00Z","last_fired_at":"2026-09-18T10:15:00Z"}`))
+			_, _ = w.Write([]byte(`{"id":"cron-1","app_id":"app-1","schedule":"*/15 * * * *","path":"/internal/sync","enabled":true,"timezone":"UTC","skip_if_running":true,"schedule_policy":{"version":1,"overlap":"skip","start_deadline_seconds":120,"missed_runs":"coalesce_latest"},"created_at":"2026-09-18T10:00:00Z","last_fired_at":"2026-09-18T10:15:00Z"}`))
 		case r.Method == http.MethodPatch && r.URL.Path == "/v1/crons/cron-1":
 			var patch cronPatch
 			if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
 				t.Fatalf("decode update request: %v", err)
 			}
-			if patch.Schedule == nil || *patch.Schedule != "0 * * * *" {
+			if patch.Schedule == nil || *patch.Schedule != "0 * * * *" || patch.SchedulePolicy == nil || patch.SchedulePolicy.Overlap != "replace" {
 				t.Fatalf("update request = %+v", patch)
 			}
-			_, _ = w.Write([]byte(`{"id":"cron-1","app_id":"app-1","schedule":"0 * * * *","path":"/internal/sync","enabled":true,"timezone":"UTC","skip_if_running":true,"created_at":"2026-09-18T10:00:00Z"}`))
+			_, _ = w.Write([]byte(`{"id":"cron-1","app_id":"app-1","schedule":"0 * * * *","path":"/internal/sync","enabled":true,"timezone":"UTC","skip_if_running":true,"schedule_policy":{"version":1,"overlap":"replace","missed_runs":"skip"},"created_at":"2026-09-18T10:00:00Z"}`))
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/crons/cron-1":
 			w.WriteHeader(http.StatusNoContent)
 		default:
@@ -304,17 +305,19 @@ func TestClientCronLifecycleUsesPublicContract(t *testing.T) {
 		t.Fatalf("newClient: %v", err)
 	}
 	skipIfRunning := true
+	policy := &cronSchedulePolicy{Version: 1, Overlap: "skip", StartDeadlineSeconds: 120, MissedRuns: "coalesce_latest"}
 	created, err := client.createCron(context.Background(), cronRequest{
-		AppID:         "app-1",
-		Schedule:      "*/15 * * * *",
-		Path:          "/internal/sync",
-		Timezone:      "UTC",
-		SkipIfRunning: &skipIfRunning,
+		AppID:          "app-1",
+		Schedule:       "*/15 * * * *",
+		Path:           "/internal/sync",
+		Timezone:       "UTC",
+		SkipIfRunning:  &skipIfRunning,
+		SchedulePolicy: policy,
 	})
 	if err != nil {
 		t.Fatalf("createCron: %v", err)
 	}
-	if created.ID != "cron-1" || created.AppID != "app-1" {
+	if created.ID != "cron-1" || created.AppID != "app-1" || created.SchedulePolicy == nil || created.SchedulePolicy.StartDeadlineSeconds != 120 {
 		t.Fatalf("create response = %+v", created)
 	}
 
@@ -325,13 +328,17 @@ func TestClientCronLifecycleUsesPublicContract(t *testing.T) {
 	if read.LastFiredAt != "2026-09-18T10:15:00Z" {
 		t.Fatalf("read response = %+v", read)
 	}
+	if read.SchedulePolicy == nil || read.SchedulePolicy.MissedRuns != "coalesce_latest" {
+		t.Fatalf("read schedule policy = %+v", read.SchedulePolicy)
+	}
 
 	updatedSchedule := "0 * * * *"
-	updated, err := client.updateCron(context.Background(), "cron-1", cronPatch{Schedule: &updatedSchedule})
+	updatedPolicy := &cronSchedulePolicy{Version: 1, Overlap: "replace", MissedRuns: "skip"}
+	updated, err := client.updateCron(context.Background(), "cron-1", cronPatch{Schedule: &updatedSchedule, SchedulePolicy: updatedPolicy})
 	if err != nil {
 		t.Fatalf("updateCron: %v", err)
 	}
-	if updated.Schedule != "0 * * * *" {
+	if updated.Schedule != "0 * * * *" || updated.SchedulePolicy == nil || updated.SchedulePolicy.Overlap != "replace" {
 		t.Fatalf("update response = %+v", updated)
 	}
 

@@ -12427,13 +12427,16 @@ func (m *MemStore) ClaimInvocation(_ context.Context, id, instanceID string, lea
 	if inv.State != InvocationPending {
 		return Invocation{}, ErrNotFound
 	}
+	now := time.Now()
+	if inv.ReceivedAt == nil && inv.StartDeadlineAt != nil && inv.StartDeadlineAt.Before(now) {
+		return Invocation{}, ErrNotFound
+	}
 	if inv.WorkPolicyName != "" {
 		return Invocation{}, ErrConflict
 	}
 	if err := m.platformTenantInvocationAllowedLocked(inv); err != nil {
 		return Invocation{}, ErrNotFound
 	}
-	now := time.Now()
 	exp := now.Add(time.Duration(leaseSeconds) * time.Second)
 	inv.State = InvocationDispatching
 	inv.QuotaReserved = false
@@ -12442,6 +12445,7 @@ func (m *MemStore) ClaimInvocation(_ context.Context, id, instanceID string, lea
 	inv.ReceivedAt = &now
 	inv.Attempts++
 	m.invocations[id] = inv
+	m.syncInvocationOccurrenceLocked(inv, now)
 	return inv, nil
 }
 
@@ -12521,6 +12525,7 @@ func (m *MemStore) completeInvocation(id string, attempt int, result json.RawMes
 		return err
 	}
 	m.invocations[id] = inv
+	m.syncInvocationOccurrenceLocked(inv, now)
 	// PR-B fixup (code-review #1185 finding #6): MemStore parity
 	// with PgStore. Without the decrement, ClaimInvocationWithCap
 	// monotonically grows the counter and the 11th claim returns
@@ -12655,6 +12660,7 @@ func (m *MemStore) FailInvocation(_ context.Context, id string, lastError string
 		}
 	}
 	m.invocations[id] = inv
+	m.syncInvocationOccurrenceLocked(inv, time.Now())
 	// A slot belongs to the dispatching lease. Release it on every
 	// transition away from a cap-aware dispatch, including retries.
 	if quotaReserved {
@@ -12707,6 +12713,7 @@ func (m *MemStore) CancelInvocation(_ context.Context, id string) error {
 	now := time.Now()
 	inv.CompletedAt = &now
 	m.invocations[id] = inv
+	m.syncInvocationOccurrenceLocked(inv, now)
 	// PR-B fixup (code-review #1185 finding #6): MemStore parity.
 	// Cancel is always terminal; the row leaves the in-flight set.
 	if quotaReserved {
@@ -12730,6 +12737,7 @@ func (m *MemStore) CancelPendingInvocation(_ context.Context, id string) (Invoca
 	now := time.Now()
 	inv.CompletedAt = &now
 	m.invocations[id] = inv
+	m.syncInvocationOccurrenceLocked(inv, now)
 	return inv.State, nil
 }
 
@@ -24641,6 +24649,13 @@ func (m *MemStore) ClaimInvocationWithCap(_ context.Context, id, instanceID stri
 	if !ok {
 		return Invocation{}, ErrNotFound
 	}
+	if inv.State != InvocationPending {
+		return Invocation{}, ErrNotFound
+	}
+	now := time.Now()
+	if inv.ReceivedAt == nil && inv.StartDeadlineAt != nil && inv.StartDeadlineAt.Before(now) {
+		return Invocation{}, ErrNotFound
+	}
 	if err := m.platformTenantInvocationAllowedLocked(inv); err != nil {
 		return Invocation{}, ErrNotFound
 	}
@@ -24652,10 +24667,6 @@ func (m *MemStore) ClaimInvocationWithCap(_ context.Context, id, instanceID stri
 	if row.CurrentInflight >= row.MaxInflight {
 		return Invocation{}, ErrQuotaExceeded
 	}
-	if inv.State != InvocationPending {
-		return Invocation{}, ErrNotFound
-	}
-	now := time.Now()
 	if err := m.keyedClaimAllowedLocked(inv, now); err != nil {
 		return Invocation{}, err
 	}
@@ -24672,6 +24683,7 @@ func (m *MemStore) ClaimInvocationWithCap(_ context.Context, id, instanceID stri
 	inv.ReceivedAt = &now
 	inv.Attempts++
 	m.invocations[id] = inv
+	m.syncInvocationOccurrenceLocked(inv, now)
 	row.CurrentInflight++
 	m.accountAsyncQuota[inv.AccountID] = row
 	return inv, nil

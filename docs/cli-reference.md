@@ -886,7 +886,7 @@ Schedule an HTTP request or deployment command
 | `--skip-if-running` | skip fires while the previous run is active |  |
 | `--retry-max` | additional command attempts after failure or timeout |  |
 | `--retry-backoff-seconds` | base retry delay; doubles per attempt |  |
-| `--schedule-policy <JSON>` | versioned schedule policy JSON (command crons only) |  |
+| `--schedule-policy <JSON>` | versioned schedule policy JSON |  |
 | `--failure-rules <JSON>` | versioned retry rules JSON (command crons only) |  |
 
 ### crons info
@@ -908,7 +908,7 @@ Update one cron rule
 | `--allow-overlap` | allow scheduled fires to overlap |  |
 | `--retry-max` | additional command attempts after failure or timeout |  |
 | `--retry-backoff-seconds <N>` | base retry delay; doubles per attempt |  |
-| `--schedule-policy <JSON>` | replace versioned schedule policy JSON (command crons only) |  |
+| `--schedule-policy <JSON>` | replace versioned schedule policy JSON |  |
 | `--failure-rules <JSON>` | replace versioned retry rules JSON (command crons only) |  |
 
 ### crons rm

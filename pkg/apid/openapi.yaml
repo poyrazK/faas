@@ -32168,7 +32168,7 @@ components:
         account_id: { type: string, format: uuid }
 
     CreateCronRequest:
-      description: "Create an HTTP-path cron or deployment-attached app command schedule."
+      description: "Create an HTTP-path cron or deployment-attached app command schedule. Schedule policies apply to both kinds; failure rules apply to command Crons only."
       type: object
       required: [app_id, schedule]
       properties:
@@ -32188,7 +32188,7 @@ components:
         failure_rules: { $ref: '#/components/schemas/FailureRules' }
 
     UpdateCronRequest:
-      description: "Partial cron update."
+      description: "Partial cron update. Schedule policies apply to HTTP and command Crons; failure rules are command-Cron only."
       type: object
       properties:
         schedule: { type: [string, "null"] , example: "*/5 * * * *"}
@@ -32202,17 +32202,21 @@ components:
         failure_rules: { $ref: '#/components/schemas/FailureRules' }
 
     SchedulePolicy:
-      description: Versioned recurring-work scheduling policy.
+      description: >-
+        Versioned recurring-work scheduling policy for Jobs and both HTTP and
+        command Crons. HTTP replace waits for a prior dispatched request to
+        complete because the scheduler has no stop acknowledgement for a
+        request already delivered to the app.
       type: object
       required: [version, overlap, missed_runs]
       properties:
         version: { type: integer, enum: [1] }
-        overlap: { type: string, enum: [allow, skip, replace], description: "Allow concurrent occurrences, record-and-skip while one is active, or stop prior scheduled work before replacement." }
+        overlap: { type: string, enum: [allow, skip, replace], description: "Allow concurrent occurrences, record-and-skip while one is active, or replace when previous work can be stopped safely. HTTP Crons wait for a dispatched request to finish." }
         start_deadline_seconds: { type: integer, minimum: 0, maximum: 2592000, description: "Maximum delay from the nominal schedule time to the first task start; zero or omitted disables the deadline." }
         missed_runs: { type: string, enum: [coalesce_latest, skip], description: "On scheduler recovery, coalesce the due backlog into its latest occurrence or record stale occurrences as skipped." }
 
     FailureRules:
-      description: Versioned explicit classification policy for failed partition attempts.
+      description: Versioned explicit classification policy for failed Job partitions and command-Cron executions. HTTP Crons do not accept failure rules.
       type: object
       required: [version, rules, unmatched_failure, uncertain_outcome]
       properties:
