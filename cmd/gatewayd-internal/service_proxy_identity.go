@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -19,8 +20,9 @@ const (
 	// Keep this value aligned with pkg/netns.ServiceProxyPort. The daemon
 	// owns the listener and cannot import the netns renderer package because
 	// that package is vmmd-owned by the repository's dependency policy.
-	serviceProxyPort      = 10080
-	serviceProxyHTTPSPort = 443
+	serviceProxyPort       = api.ServiceBindingPort
+	serviceProxyLegacyPort = api.ServiceBindingLegacyPort
+	serviceProxyHTTPSPort  = 443
 )
 
 // serviceProxyCallerResolver maps the source address seen on the tenant

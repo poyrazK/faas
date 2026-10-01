@@ -27,7 +27,8 @@ const (
 	// neighbour, so a short interval costs a handful of tiny frames.
 	TapARPRetransMs         = 50
 	AppPort                 = 8080         // the :8080 contract (spec §2)
-	ServiceProxyPort        = 10080        // guest-to-guest service proxy on HostBridgeIP (ADR-169)
+	ServiceProxyPort        = 10081        // Fetch-compatible service proxy on HostBridgeIP (ADR-384)
+	LegacyServiceProxyPort  = 10080        // compatibility for persisted bindings (ADR-169)
 	ServiceProxyHTTPSPort   = 443          // opt-in private HTTPS service proxy on HostBridgeIP
 	ServiceDiscoveryDNSPort = 53           // guest service-name resolver on HostBridgeIP (ADR-170)
 	TenantBridge            = "br-tenants" // root-ns bridge the veth host-side enslaves to
@@ -544,13 +545,15 @@ func (c Config) NftCommands() [][]string {
 	// guest already has in flight, which would convert a recoverable blip
 	// into a guaranteed failure for every in-flight request.
 	cmds = append(cmds, c.egressCircuitRules(nft, "ip")...)
-	// ADR-169: admit only the reserved service-proxy port on this host's
+	// ADR-169/384: admit only the reserved service-proxy ports on this host's
 	// bridge address. The listener binds HostBridgeIP, so this rule gives
 	// guests a cross-VM path without opening the rest of the host namespace;
 	// replies are covered by the established/related rule above.
 	if c.HostBridgeIP.IsValid() {
-		add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
-			"ip", "daddr", c.HostBridgeIP.String(), "tcp", "dport", strconv.Itoa(ServiceProxyPort), "accept")
+		for _, port := range []int{ServiceProxyPort, LegacyServiceProxyPort} {
+			add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
+				"ip", "daddr", c.HostBridgeIP.String(), "tcp", "dport", strconv.Itoa(port), "accept")
+		}
 		if c.ServiceProxyHTTPS {
 			add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
 				"ip", "daddr", c.HostBridgeIP.String(), "tcp", "dport", strconv.Itoa(ServiceProxyHTTPSPort), "accept")
