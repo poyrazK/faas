@@ -339,3 +339,17 @@ TCP, UDP and public-gateway race tests passed, changed-code lint passed, and
 the strict UDP gate passed all 44 portable contracts. Deployment traffic-weight
 alignment and native rollout/recovery qualification still require review and
 evidence before claiming complete raw-ingress release qualification.
+
+Raw-ingress deployment traffic alignment is now implemented under ADR-391.
+New TCP connections and UDP peers select positive-weight live deployments,
+filter running instances to the chosen deployment, and pin cold admission to
+that exact deployment. Invalid weight sets and scheduler substitution fail
+closed. Existing sessions retain their instance. Shared selector tests cover
+80/20 bucket coverage, order stability, zero/superseded/foreign rows, malformed
+weights and read failure. TCP/UDP resolver regressions cover warm and cold paths;
+real UDP/gRPC replacement and TCP socket E2E tests passed after seeding fixtures
+with live deployment intent. TCP/UDP/public-gateway race tests and changed-code
+lint passed. The strict UDP gate passed 48 portable contracts, including the
+shared deployment selector. The native E2E suite cross-compiled for Linux/amd64.
+Native weighted canary/rollback, cold-bucket wake and recovery runs remain
+outstanding; portable evidence does not qualify them.

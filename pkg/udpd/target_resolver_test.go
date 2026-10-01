@@ -17,10 +17,10 @@ type testUDPAdmitter struct {
 
 func (a *testUDPAdmitter) AdmitInstance(_ context.Context, app, deployment, scope, trigger string) (string, string, string, string, int32, bool, int, error) {
 	a.calls++
-	if app == "" || deployment != "" || scope != "" || trigger != "gateway" {
+	if app == "" || deployment == "" || scope != "" || trigger != "gateway" {
 		return "", "", "", "", 0, false, 0, errors.New("incorrect admission request")
 	}
-	return "woken", "node", "deployment", "wake", 0, a.capacity, 8080, a.err
+	return "woken", "node", deployment, "wake", 0, a.capacity, 8080, a.err
 }
 func TestUDPTargetResolverValidatesIntentBeforeWake(t *testing.T) {
 	ctx := context.Background()
@@ -36,6 +36,9 @@ func TestUDPTargetResolverValidatesIntentBeforeWake(t *testing.T) {
 	}
 	intent, err := store.CreateUDPListener(ctx, state.UDPListener{AppID: app.ID, AccountID: acct.ID, ListenerName: "dns", GuestPort: 5353, PublicPort: 40100, Enabled: true})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateDeployment(ctx, state.Deployment{ID: "deployment", AppID: app.ID, Status: state.DeployLive}); err != nil {
 		t.Fatal(err)
 	}
 	admit := &testUDPAdmitter{}
@@ -167,6 +170,9 @@ func TestUDPTargetResolverRejectsRecreatedListenerSocket(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			if _, err := store.CreateDeployment(ctx, state.Deployment{ID: "deployment", AppID: app.ID, Status: state.DeployLive}); err != nil {
+				t.Fatal(err)
+			}
 			admit := &testUDPAdmitter{}
 			resolver := &StoreTargetResolver{Store: store, Admitter: admit}
 			for _, stale := range []Route{route, func() Route { r := route; r.ListenerID = replacement.ID; return r }(), func() Route { r := route; r.PublicPort = replacement.PublicPort; return r }()} {
@@ -205,6 +211,9 @@ func TestUDPTargetResolverNeverSelectsMirrorInstances(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := store.CreateDeployment(ctx, state.Deployment{ID: "deployment", AppID: app.ID, Status: state.DeployLive}); err != nil {
+		t.Fatal(err)
+	}
 	admit := &testUDPAdmitter{}
 	resolver := &StoreTargetResolver{Store: store, Admitter: admit}
 	route := Route{AppID: app.ID, AccountID: acct.ID, ListenerName: "dns", GuestPort: 5353, ListenerID: intent.ID, PublicPort: intent.PublicPort}
@@ -212,7 +221,7 @@ func TestUDPTargetResolverNeverSelectsMirrorInstances(t *testing.T) {
 	if err != nil || target.InstanceID == mirror.ID || target.InstanceID != "woken" || admit.calls != 1 {
 		t.Fatalf("mirror-only route: target=%+v err=%v admissions=%d", target, err, admit.calls)
 	}
-	customer, err := store.CreateInstanceWithMode(ctx, app.ID, "customer-deployment", string(state.StateRunning), 256, "node", "customer-wake", string(state.InstanceModeNormal))
+	customer, err := store.CreateInstanceWithMode(ctx, app.ID, "deployment", string(state.StateRunning), 256, "node", "customer-wake", string(state.InstanceModeNormal))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,5 +230,51 @@ func TestUDPTargetResolverNeverSelectsMirrorInstances(t *testing.T) {
 		if err != nil || target.InstanceID != customer.ID || admit.calls != 1 {
 			t.Fatalf("target=%+v err=%v admissions=%d", target, err, admit.calls)
 		}
+	}
+}
+
+type udpDeploymentFixture struct {
+	*state.MemStore
+	instances []state.Instance
+}
+
+func (s *udpDeploymentFixture) ListInstancesForApp(context.Context, string) ([]state.Instance, error) {
+	return s.instances, nil
+}
+
+func TestUDPTargetResolverPinsServingDeploymentOnWarmAndColdPaths(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct, err := store.CreateAccount(ctx, "udp-rollout@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "udp-rollout", Status: state.AppActive, RAMMB: 256, Manifest: state.AppManifest{Ports: []api.WorkloadPort{{Name: "dns", Port: 5353, Protocol: api.WorkloadPortUDP}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent, err := store.CreateUDPListener(ctx, state.UDPListener{AppID: app.ID, AccountID: acct.ID, ListenerName: "dns", GuestPort: 5353, PublicPort: 40100, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, dep := range []state.Deployment{{ID: "old", AppID: app.ID, Status: state.DeployLive, TrafficPercentExplicit: true}, {ID: "current", AppID: app.ID, Status: state.DeployLive, TrafficPercent: 100}} {
+		if _, err := store.CreateDeployment(ctx, dep); err != nil {
+			t.Fatal(err)
+		}
+	}
+	source := &udpDeploymentFixture{MemStore: store, instances: []state.Instance{{ID: "old-instance", AppID: app.ID, DeploymentID: "old", NodeID: "node", State: string(state.StateRunning)}, {ID: "current-instance", AppID: app.ID, DeploymentID: "current", NodeID: "node", State: string(state.StateRunning)}}}
+	admit := &testUDPAdmitter{}
+	resolver := &StoreTargetResolver{Store: source, Admitter: admit}
+	route := Route{AppID: app.ID, AccountID: acct.ID, ListenerName: "dns", GuestPort: 5353, ListenerID: intent.ID, PublicPort: intent.PublicPort}
+	for range 8 {
+		target, err := resolver.ResolveTarget(ctx, route)
+		if err != nil || target.InstanceID != "current-instance" || target.DeploymentID != "current" || admit.calls != 0 {
+			t.Fatalf("warm target=%+v err=%v calls=%d", target, err, admit.calls)
+		}
+	}
+	source.instances = source.instances[:1]
+	target, err := resolver.ResolveTarget(ctx, route)
+	if err != nil || target.DeploymentID != "current" || target.InstanceID != "woken" || admit.calls != 1 {
+		t.Fatalf("cold target=%+v err=%v calls=%d", target, err, admit.calls)
 	}
 }

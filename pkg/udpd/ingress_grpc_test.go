@@ -79,11 +79,11 @@ type udpGRPCAdmitter struct {
 
 func (a *udpGRPCAdmitter) AdmitInstance(ctx context.Context, app, deployment, scope, trigger string) (string, string, string, string, int32, bool, int, error) {
 	a.calls.Add(1)
-	if deployment != "" || scope != "" || trigger != "gateway" {
+	if deployment == "" || scope != "" || trigger != "gateway" {
 		return "", "", "", "", 0, false, 0, errors.New("incorrect admission context")
 	}
-	instance, err := a.store.CreateInstance(ctx, app, "deployment", string(state.StateRunning), 256, "node", "wake")
-	return instance.ID, "node", "deployment", "wake", 0, false, 8080, err
+	instance, err := a.store.CreateInstance(ctx, app, deployment, string(state.StateRunning), 256, "node", "wake")
+	return instance.ID, "node", deployment, "wake", 0, false, 8080, err
 }
 
 // This composes real public sockets, in-memory intents, target selection and
@@ -129,6 +129,9 @@ func TestUDPIngressGRPCAdmissionAndDisable(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer connection.Close()
+	if _, err := store.CreateDeployment(ctx, state.Deployment{ID: "deployment", AppID: app.ID, Status: state.DeployLive}); err != nil {
+		t.Fatal(err)
+	}
 	admit := &udpGRPCAdmitter{store: store}
 	resolver := &udpd.StoreTargetResolver{Store: store, Admitter: admit}
 	errorsReported := make(chan error, 4)
@@ -244,6 +247,9 @@ func TestUDPIngressGRPCAdmissionAndDisable(t *testing.T) {
 	// must end before traffic from the same client can enter the new app.
 	replacement, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "udp-replacement", Status: state.AppActive, RAMMB: 256, Manifest: state.AppManifest{Ports: []api.WorkloadPort{{Name: "echo", Port: 5353, Protocol: api.WorkloadPortUDP}}}})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateDeployment(ctx, state.Deployment{ID: "replacement-deployment", AppID: replacement.ID, Status: state.DeployLive}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.DeleteUDPListener(ctx, intent.ID); err != nil {

@@ -7818,3 +7818,6 @@ func (p Plan) IssueLimits() IssueLimits {
 const IssueMaintenanceBatch = 1000
 const IssueMaintenanceInterval = time.Minute
 const IssueMaxBatchEvents = 32
+
+// DeploymentTrafficPercentTotal is the complete serving traffic weight.
+const DeploymentTrafficPercentTotal = 100

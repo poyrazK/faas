@@ -10,10 +10,11 @@ import (
 )
 
 type targetSourceFixture struct {
-	app       state.App
-	instances []state.Instance
-	intent    state.TCPListener
-	domain    state.CustomDomain
+	app         state.App
+	instances   []state.Instance
+	deployments []state.Deployment
+	intent      state.TCPListener
+	domain      state.CustomDomain
 }
 
 func (s *targetSourceFixture) AppByID(context.Context, string) (state.App, error) { return s.app, nil }
@@ -50,11 +51,17 @@ func (s *targetSourceFixture) ListInstancesForApp(context.Context, string) ([]st
 	return s.instances, nil
 }
 
-type targetAdmitterFixture struct{ calls int }
+type targetAdmitterFixture struct {
+	calls              int
+	returnedDeployment string
+}
 
-func (a *targetAdmitterFixture) AdmitInstance(context.Context, string, string, string, string) (string, string, string, string, int32, bool, int, error) {
+func (a *targetAdmitterFixture) AdmitInstance(_ context.Context, _, deployment, _, _ string) (string, string, string, string, int32, bool, int, error) {
 	a.calls++
-	return "new", "node", "deployment", "wake", 0, false, 8080, nil
+	if a.returnedDeployment != "" {
+		deployment = a.returnedDeployment
+	}
+	return "new", "node", deployment, "wake", 0, false, 8080, nil
 }
 
 func TestTCPResolverMaintenanceAndOwnership(t *testing.T) {
@@ -66,7 +73,7 @@ func TestTCPResolverMaintenanceAndOwnership(t *testing.T) {
 	source.intent = state.TCPListener{ID: "listener", AppID: "app", AccountID: "account", ListenerName: "echo", GuestPort: 9000, PublicPort: 40100, Protocol: "tcp", Enabled: true}
 	for _, running := range []bool{false, true} {
 		if running {
-			source.instances = []state.Instance{{ID: "live", AppID: "app", NodeID: "node", State: string(state.StateRunning)}}
+			source.instances = []state.Instance{{ID: "live", DeploymentID: "deployment", AppID: "app", NodeID: "node", State: string(state.StateRunning)}}
 		}
 		source.app.MaintenanceMode = true
 		if _, err := resolver.ResolveTarget(ctx, route); err == nil || admit.calls != 0 {
@@ -127,7 +134,7 @@ func TestTCPResolverNeverSelectsMirrorInstances(t *testing.T) {
 		t.Run("customer-mode-"+mode, func(t *testing.T) {
 			source := &targetSourceFixture{app: state.App{ID: "app", AccountID: "account", Status: state.AppActive}, intent: state.TCPListener{ID: "listener", AppID: "app", AccountID: "account", PublicPort: 40100, GuestPort: 9000, Protocol: "tcp", Enabled: true}, instances: []state.Instance{
 				{ID: "mirror", AppID: "app", NodeID: "node", State: string(state.StateRunning), Mode: string(state.InstanceModeMirror)},
-				{ID: "customer", AppID: "app", NodeID: "node", State: string(state.StateRunning), Mode: mode},
+				{ID: "customer", DeploymentID: "deployment", AppID: "app", NodeID: "node", State: string(state.StateRunning), Mode: mode},
 			}}
 			admit := &targetAdmitterFixture{}
 			resolver := &StoreTargetResolver{Instances: source, Admitter: admit}
@@ -144,5 +151,38 @@ func TestTCPResolverNeverSelectsMirrorInstances(t *testing.T) {
 				t.Fatalf("mirror-only route: target=%+v err=%v admissions=%d", target, err, admit.calls)
 			}
 		})
+	}
+}
+
+func (s *targetSourceFixture) LiveDeployments(context.Context, string) ([]state.Deployment, error) {
+	if s.deployments != nil {
+		return s.deployments, nil
+	}
+	return []state.Deployment{{ID: "deployment", AppID: s.app.ID, Status: state.DeployLive, TrafficPercent: 100}}, nil
+}
+
+func TestTCPResolverPinsServingDeploymentOnWarmAndColdPaths(t *testing.T) {
+	source := &targetSourceFixture{app: state.App{ID: "app", AccountID: "account", Status: state.AppActive}, intent: state.TCPListener{ID: "listener", AppID: "app", AccountID: "account", PublicPort: 40100, GuestPort: 9000, Protocol: "tcp", Enabled: true}, deployments: []state.Deployment{{ID: "old", AppID: "app", Status: state.DeployLive}, {ID: "current", AppID: "app", Status: state.DeployLive, TrafficPercent: 100}}, instances: []state.Instance{{ID: "old-instance", AppID: "app", DeploymentID: "old", NodeID: "node", State: string(state.StateRunning)}, {ID: "current-instance", AppID: "app", DeploymentID: "current", NodeID: "node", State: string(state.StateRunning)}}}
+	admit := &targetAdmitterFixture{}
+	resolver := &StoreTargetResolver{Instances: source, Admitter: admit}
+	route := Route{ListenerID: "listener", AppID: "app", AccountID: "account", ListenerName: "echo", GuestPort: 9000, PublicPort: 40100, Protocol: "tcp"}
+	for range 8 {
+		target, err := resolver.ResolveTarget(context.Background(), route)
+		if err != nil || target.InstanceID != "current-instance" || target.DeploymentID != "current" || admit.calls != 0 {
+			t.Fatalf("warm target=%+v err=%v calls=%d", target, err, admit.calls)
+		}
+	}
+	source.instances = source.instances[:1]
+	target, err := resolver.ResolveTarget(context.Background(), route)
+	if err != nil || target.DeploymentID != "current" || target.InstanceID != "new" || admit.calls != 1 {
+		t.Fatalf("cold target=%+v err=%v calls=%d", target, err, admit.calls)
+	}
+	admit.returnedDeployment = "old"
+	if _, err := resolver.ResolveTarget(context.Background(), route); err == nil {
+		t.Fatal("scheduler substitution accepted")
+	}
+	source.deployments = []state.Deployment{}
+	if _, err := resolver.ResolveTarget(context.Background(), route); err == nil || admit.calls != 2 {
+		t.Fatalf("empty serving set admitted: err=%v calls=%d", err, admit.calls)
 	}
 }

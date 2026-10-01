@@ -118,6 +118,9 @@ func TestTLSIngressRotationAndDisable(t *testing.T) {
 			time.Sleep(time.Millisecond)
 		}
 	}
+	if _, err := store.CreateDeployment(ctx, state.Deployment{ID: "deployment", AppID: app.ID, Status: state.DeployLive}); err != nil {
+		t.Fatal(err)
+	}
 	admit := &tlsIngressAdmitter{store: store}
 	ready := make(chan struct{})
 	done := make(chan error, 1)

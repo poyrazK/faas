@@ -9,6 +9,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 FILES = {
+    "pkg/ingressroute": "*_test.go",
     "pkg/udpd": "*_test.go",
     "pkg/udpwire": "*_test.go",
     "pkg/gateway": "udpforward_test.go",

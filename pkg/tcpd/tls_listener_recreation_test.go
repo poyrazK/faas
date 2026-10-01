@@ -79,6 +79,9 @@ func TestTLSListenerRecreationDuringHandshakeDoesNotWake(t *testing.T) {
 	roots := x509.NewCertPool()
 	roots.AddCert(leaf)
 	provider := &gatedListenerCertificate{certificate: certificate, entered: make(chan struct{}), release: make(chan struct{})}
+	if _, err := store.CreateDeployment(ctx, state.Deployment{ID: "deployment", AppID: app.ID, Status: state.DeployLive}); err != nil {
+		t.Fatal(err)
+	}
 	admit := &tlsIngressAdmitter{store: store}
 	reported := make(chan error, 2)
 	server := &Server{Listener: &aliasedTCPListener{Listener: base, port: port}, Routes: ListenerStoreResolver{Store: store}, Targets: &StoreTargetResolver{Instances: store, Admitter: admit}, Certificates: provider, MaxConnections: 1, connectionSlots: make(chan struct{}, 1), Limiter: NewConnectionLimiter(1), OnError: func(err error) { reported <- err }, Forwarder: forwarderFunc(func(_ context.Context, conn net.Conn, _ gateway.Target) error {

@@ -152,3 +152,10 @@ instance admission. Deleting and recreating a listener with the same app, port
 and TLS settings invalidates in-flight routes from the deleted row. The edge
 rejects them before selecting or waking an instance. Reconciliation also treats
 a changed listener ID as a replacement and cancels the old listener's sessions.
+
+New raw TCP connections select a live deployment using its persisted traffic
+weight, then choose a running non-mirror instance within that deployment. A cold
+bucket is admitted by explicit deployment ID. Zero-weight and superseded rows
+receive no new sessions, even while their instances remain running. Existing
+connections retain their instance until normal teardown. Invalid serving weight
+sets fail closed; see [ADR-391](../adr/391-raw-ingress-deployment-traffic.md).

@@ -197,3 +197,9 @@ selection or scheduler admission. Portable regressions verify no wake while
 maintenance is enabled, rejection even with an existing running instance, and
 routing recovery after maintenance is cleared. Established sessions retain their
 normal bounded lifetime; disable the listener to cancel them immediately.
+
+New UDP peer sessions now select a live deployment by persisted traffic weight
+under [ADR-391](391-raw-ingress-deployment-traffic.md). A session remains pinned
+to that deployment's instance; subsequent datagrams do not draw another bucket.
+Cold admission names the chosen deployment rather than silently using the newest
+row or another warm instance.

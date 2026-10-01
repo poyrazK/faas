@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/ingressroute"
+	"math/rand/v2"
 	"strings"
 	"sync/atomic"
 
@@ -17,6 +19,7 @@ import (
 type TargetSource interface {
 	AppByID(context.Context, string) (state.App, error)
 	UDPListenerByAppAndName(context.Context, string, string) (state.UDPListener, error)
+	LiveDeployments(context.Context, string) ([]state.Deployment, error)
 	ListInstancesForApp(context.Context, string) ([]state.Instance, error)
 }
 type Admitter interface {
@@ -69,13 +72,17 @@ func (r *StoreTargetResolver) ResolveTarget(ctx context.Context, route Route) (g
 	if !declared {
 		return gateway.Target{}, errors.New("UDP listener is not declared by current app manifest")
 	}
+	deploymentID, err := ingressroute.Deployment(ctx, r.Store, route.AppID, rand.Uint64())
+	if err != nil {
+		return gateway.Target{}, fmt.Errorf("select raw ingress deployment: %w", err)
+	}
 	instances, err := r.Store.ListInstancesForApp(ctx, route.AppID)
 	if err != nil {
 		return gateway.Target{}, err
 	}
 	running := make([]state.Instance, 0, len(instances))
 	for _, instance := range instances {
-		if instance.AppID == route.AppID && instance.State == string(state.StateRunning) && instance.Mode != string(state.InstanceModeMirror) && instance.ID != "" && instance.NodeID != "" {
+		if instance.AppID == route.AppID && instance.DeploymentID == deploymentID && instance.State == string(state.StateRunning) && instance.Mode != string(state.InstanceModeMirror) && instance.ID != "" && instance.NodeID != "" {
 			running = append(running, instance)
 		}
 	}
@@ -86,11 +93,11 @@ func (r *StoreTargetResolver) ResolveTarget(ctx context.Context, route Route) (g
 	if r.Admitter == nil {
 		return gateway.Target{}, errors.New("UDP app has no running instance and admission is unavailable")
 	}
-	instance, node, deployment, wake, _, capacity, _, err := r.Admitter.AdmitInstance(ctx, route.AppID, "", "", "gateway")
+	instance, node, deployment, wake, _, capacity, _, err := r.Admitter.AdmitInstance(ctx, route.AppID, deploymentID, "", "gateway")
 	if err != nil {
 		return gateway.Target{}, fmt.Errorf("admit UDP app: %w", err)
 	}
-	if capacity || instance == "" || node == "" {
+	if capacity || instance == "" || node == "" || deployment != deploymentID {
 		return gateway.Target{}, errors.New("UDP admission produced no routable instance")
 	}
 	return gateway.Target{AppID: route.AppID, InstanceID: instance, NodeID: node, DeploymentID: deployment, WakeID: wake, Port: route.GuestPort}, nil
