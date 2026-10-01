@@ -380,3 +380,91 @@ func TestSupervisorInvalidRefreshPreservesSocketThenRecovers(t *testing.T) {
 		t.Fatal("shutdown hung")
 	}
 }
+
+// A failed socket must be joined and rebound without restarting the daemon.
+func TestSupervisorRecoversClosedSocket(t *testing.T) {
+	source := &udpIntentSource{}
+	source.set(udpIntent("listener", "app", "account", api.UDPListenerPublicPortMin))
+	bound := make(chan *net.UDPConn, 4)
+	observations := make(chan peerObservation, 4)
+	address := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)}
+	supervisor := &Supervisor{Source: source, RefreshInterval: 5 * time.Millisecond,
+		AllowedSources: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")},
+		Forwarder:      observingUDPForwarder{observations},
+		ResolveTarget: func(_ context.Context, r Route) (gateway.Target, error) {
+			return gateway.Target{AppID: r.AppID, InstanceID: "guest", NodeID: "node"}, nil
+		}, Listen: func(_ string, _ *net.UDPAddr) (*net.UDPConn, error) {
+			socket, err := net.ListenUDP("udp4", address)
+			if err == nil {
+				address = socket.LocalAddr().(*net.UDPAddr)
+				bound <- socket
+			}
+			return socket, err
+		}}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- supervisor.Serve(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Error(err)
+			}
+		case <-time.After(time.Second):
+			t.Error("shutdown hung")
+		}
+	})
+	next := func() *net.UDPConn {
+		t.Helper()
+		select {
+		case socket := <-bound:
+			return socket
+		case <-time.After(time.Second):
+			t.Fatal("socket not rebound")
+			return nil
+		}
+	}
+	first := next()
+	client, err := net.DialUDP("udp4", nil, first.LocalAddr().(*net.UDPAddr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	exchange := func(payload string) peerObservation {
+		t.Helper()
+		if err := client.SetDeadline(time.Now().Add(time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := client.Write([]byte(payload)); err != nil {
+			t.Fatal(err)
+		}
+		buffer := make([]byte, 64)
+		n, err := client.Read(buffer)
+		if err != nil || string(buffer[:n]) != payload {
+			t.Fatalf("echo=%q err=%v", buffer[:n], err)
+		}
+		select {
+		case observation := <-observations:
+			return observation
+		case <-time.After(time.Second):
+			t.Fatal("peer not observed")
+			return peerObservation{}
+		}
+	}
+	old := exchange("before failure")
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	replacement := next()
+	if replacement.LocalAddr().String() != first.LocalAddr().String() {
+		t.Fatal("public address changed")
+	}
+	if old.ctx.Err() == nil {
+		t.Fatal("failed socket retained old peer")
+	}
+	fresh := exchange("after recovery")
+	if fresh.ctx.Err() != nil || fresh.target.AppID != "app" {
+		t.Fatal("recovered peer is invalid")
+	}
+}
