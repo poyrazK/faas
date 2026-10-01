@@ -185,3 +185,30 @@ func TestMemStoreUDPListenerReservationConcurrency(t *testing.T) {
 		t.Fatalf("another app inherited quota: %v", err)
 	}
 }
+
+func TestMemStoreUDPListenerCanceledMutationsPreserveIntent(t *testing.T) {
+	store, ctx, account, app := udpListenerFixture(t)
+	listener, err := store.CreateUDPListener(ctx, UDPListener{AppID: app.ID, AccountID: account.ID, ListenerName: "dns", GuestPort: 5353, PublicPort: 40100, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	candidate := listener
+	candidate.ID = ""
+	candidate.ListenerName = "other"
+	candidate.PublicPort++
+	if _, err := store.CreateUDPListener(canceled, candidate); !errors.Is(err, context.Canceled) {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := store.SetUDPListenerEnabled(canceled, listener.ID, false); !errors.Is(err, context.Canceled) {
+		t.Fatalf("update: %v", err)
+	}
+	if err := store.DeleteUDPListener(canceled, listener.ID); !errors.Is(err, context.Canceled) {
+		t.Fatalf("delete: %v", err)
+	}
+	rows, err := store.ListUDPListenersForApp(ctx, app.ID)
+	if err != nil || len(rows) != 1 || rows[0] != listener {
+		t.Fatalf("intent changed: rows=%+v err=%v", rows, err)
+	}
+}
