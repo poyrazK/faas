@@ -196,6 +196,9 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv ...string) *H
 	if err := os.MkdirAll(appsRoot, 0o755); err != nil {
 		t.Fatalf("e2etest: mkdir apps: %v", err)
 	}
+	// imaged, schedd's signature verifier and vmmd must resolve the same
+	// app artifacts. Keep explicit caller overrides last, as for other env.
+	extraEnv = append([]string{"FAAS_APPS_ROOT=" + appsRoot}, extraEnv...)
 
 	// Socket dir lives outside t.TempDir() because macOS's t.TempDir() is
 	// under /var/folders/.../T/<random> and a test name + random suffix
@@ -712,6 +715,8 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 	if err := os.MkdirAll(appsRoot, 0o755); err != nil {
 		t.Fatalf("e2etest: mkdir apps: %v", err)
 	}
+	// Match Start: share imaged's app store with every harness daemon.
+	extraEnv = append([]string{"FAAS_APPS_ROOT=" + appsRoot}, extraEnv...)
 	// See Start for why sockDir lives outside t.TempDir() — macOS sun_path
 	// limit, and `/tmp/faas-e2e-sock-*` is short and stable everywhere.
 	sockDir, err := os.MkdirTemp("", "faas-e2e-sock-*")
