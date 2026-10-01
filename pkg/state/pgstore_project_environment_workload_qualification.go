@@ -6,6 +6,7 @@ import (
 	"errors"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func (s *PgStore) ProjectEnvironmentWorkloadConfigHashes(ctx context.Context, accountID, projectID, environment, releaseSetID string) (map[string]string, bool, error) {
@@ -30,6 +31,21 @@ func projectEnvironmentWorkloadConfigHashesTx(ctx context.Context, tx pgx.Tx, ac
 		where account_id = $1 and project_id = $2 and slug = $3 for share`, accountID, projectID, environment).Scan(&environmentID); err != nil {
 		return nil, false, mapErr(err)
 	}
+	// The environment SHARE lock excludes flag publishers and deletion through
+	// the qualification commit; use its existing identity without upgrading it.
+	scope := FeatureFlagScope{AccountID: accountID, ProjectID: projectID, EnvironmentID: environmentID}
+	params, err := flagPGScope(scope)
+	if err != nil {
+		return nil, false, err
+	}
+	flagVersion, err := flagPGGet(ctx, tx, scope, params, 0)
+	if err != nil {
+		return nil, false, err
+	}
+	flagHash, err := FeatureFlagsQualificationHash(flagVersion)
+	if err != nil {
+		return nil, false, err
+	}
 	var found int
 	if err := tx.QueryRow(ctx, `select 1 from project_release_sets
 		where id = $1 and account_id = $2 and project_id = $3 and environment_slug = $4 and active for share`,
@@ -52,7 +68,7 @@ func projectEnvironmentWorkloadConfigHashesTx(ctx context.Context, tx pgx.Tx, ac
 		return nil, false, err
 	}
 	hashes := make(map[string]string, len(apps))
-	scoped := false
+	scoped := flagHash != ""
 	for _, app := range apps {
 		desired, err := workloadSpecOrZero(scanWorkloadSpec(tx.QueryRow(ctx, workloadSpecSelect+`
 			join project_environment_workload_heads h on h.spec_id = s.id
@@ -78,7 +94,10 @@ func projectEnvironmentWorkloadConfigHashesTx(ctx context.Context, tx pgx.Tx, ac
 		if err != nil {
 			return nil, false, err
 		}
-		hashes[app.Slug] = hash
+		hashes[app.Slug], err = api.QualificationWorkloadConfigHash(hash, flagHash)
+		if err != nil {
+			return nil, false, ErrConflict
+		}
 		scoped = scoped || desired.ID != ""
 	}
 	if len(hashes) == 0 {

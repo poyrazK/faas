@@ -34932,6 +34932,10 @@ components:
       type: object
       required: [project_slug, environment, protected, configuration, workloads, shared_resources, generated_at]
       properties:
+        feature_flags_hash:
+          description: Fingerprint of the environment identity, current flag version, and configuration observed before qualification probes. Omitted only for the legacy identity with no published flags. Combine with each released workload settings hash when submitting workload_config_hashes.
+          type: string
+          pattern: '^[a-f0-9]{64}$'
         active_release_set:
           description: Active graph, or null when no graph has been published. Its selected members may differ from the per-workload live deployments below.
           oneOf:

@@ -176,10 +176,17 @@ func qualifyProjectEnvironmentWithProfileAndHTTPClient(ctx context.Context, clie
 		if !api.ValidProjectEnvironmentConfigHash(workload.WorkloadConfigHash) || workload.WorkloadConfigHash != workload.Release.WorkloadConfigHash {
 			return api.ProjectEnvironmentQualificationResponse{}, fmt.Errorf("workload %q has untested desired settings; deploy them before qualification", slug)
 		}
-		workloadConfigHashes[slug] = workload.Release.WorkloadConfigHash
+		qualifiedHash, err := api.QualificationWorkloadConfigHash(workload.Release.WorkloadConfigHash, snapshot.FeatureFlagsHash)
+		if err != nil {
+			return api.ProjectEnvironmentQualificationResponse{}, fmt.Errorf("workload %q has an invalid qualification configuration identity", slug)
+		}
+		workloadConfigHashes[slug] = qualifiedHash
 	}
 	if len(workloadConfigHashes) != 0 && len(workloadConfigHashes) != len(workloadBySlug) {
 		return api.ProjectEnvironmentQualificationResponse{}, errors.New("environment state is missing workload configuration fingerprints")
+	}
+	if snapshot.FeatureFlagsHash != "" && len(workloadConfigHashes) != len(workloadBySlug) {
+		return api.ProjectEnvironmentQualificationResponse{}, errors.New("environment flags require workload configuration fingerprints before qualification")
 	}
 
 	slugs := make([]string, 0, len(workloadBySlug))

@@ -63,7 +63,7 @@ func (s *server) createProjectEnvironmentQualification(w http.ResponseWriter, r 
 		return
 	case errors.Is(err, state.ErrConflict):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
-			"Qualification snapshot is stale", "the active release set, environment configuration, or secret revisions changed while probes were running, or workload settings no longer match the tested deployment; rerun qualification"))
+			"Qualification snapshot is stale", "the active release set, environment configuration, feature flags, or secret revisions changed while probes were running, or workload settings no longer match the tested deployment; rerun qualification"))
 		return
 	case errors.Is(err, state.ErrNotFound):
 		api.WriteProblem(w, projectEnvironmentNotFound(projectSlug, environment))

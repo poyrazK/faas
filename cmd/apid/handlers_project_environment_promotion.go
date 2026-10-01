@@ -260,7 +260,7 @@ func (s *server) buildProjectEnvironmentPromotionPlan(ctx context.Context, acct 
 			workloadHashes, scoped, err := workloadStore.ProjectEnvironmentWorkloadConfigHashes(ctx, acct.ID, project.ID, fromEnvironment, plan.FromReleaseSet.ID)
 			if errors.Is(err, state.ErrConflict) || (err == nil && (scoped || len(qualification.WorkloadConfigHashes) != 0) &&
 				!sameProjectEnvironmentSecretRevisionHashes(qualification.WorkloadConfigHashes, workloadHashes)) {
-				blockingReasons = append(blockingReasons, "source workload settings changed after qualification; deploy and rerun health and smoke checks")
+				blockingReasons = append(blockingReasons, "source workload settings changed after qualification, or feature flags have a new revision; rerun health and smoke checks")
 			} else if err != nil {
 				return plan, api.ErrCapacity("could not inspect source workload settings")
 			}

@@ -8,10 +8,21 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestCreateProjectEnvironmentQualificationAndGatePreview(t *testing.T) {
+	testCreateProjectEnvironmentQualificationAndGatePreview(t, false)
+}
+
+// adr: 375
+func TestCreateProjectEnvironmentQualificationPinsFlagsAndGatePreview(t *testing.T) {
+	testCreateProjectEnvironmentQualificationAndGatePreview(t, true)
+}
+
+func testCreateProjectEnvironmentQualificationAndGatePreview(t *testing.T, withFlags bool) {
+	t.Helper()
 	srv, store, acct, project, app := newProjectLifecycleFixture(t)
 	ctx := context.Background()
 	if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: acct.ID, ProjectID: project.ID, Slug: "staging"}); err != nil {
@@ -45,6 +56,31 @@ func TestCreateProjectEnvironmentQualificationAndGatePreview(t *testing.T) {
 		t.Fatal(err)
 	}
 	httpStatus := http.StatusNoContent
+	var flagVersion state.FeatureFlagVersion
+	var flagScope state.FeatureFlagScope
+	if withFlags {
+		env, err := store.ProjectEnvironmentBySlug(ctx, acct.ID, project.ID, "staging")
+		if err != nil {
+			t.Fatal(err)
+		}
+		flagScope = state.FeatureFlagScope{AccountID: acct.ID, ProjectID: project.ID, EnvironmentID: env.ID}
+		flagVersion, err = store.UpdateFeatureFlags(ctx, state.FeatureFlagUpdate{Scope: flagScope,
+			Config: flags.Config{Flags: []flags.Flag{{Key: "checkout", Enabled: true, Default: true}}}, Actor: "developer"})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	snapshot, problem := srv.loadProjectEnvironmentState(ctx, acct, "shop", "staging")
+	if problem != nil || len(snapshot.Workloads) != 1 || snapshot.Workloads[0].WorkloadConfigHash != spec.Hash {
+		t.Fatalf("state changed deployment settings identity: %v", problem)
+	}
+	if withFlags && !api.ValidProjectEnvironmentConfigHash(snapshot.FeatureFlagsHash) {
+		t.Fatal("state omitted observed flag identity")
+	}
+	qualifiedHash, err := api.QualificationWorkloadConfigHash(spec.Hash, snapshot.FeatureFlagsHash)
+	if err != nil {
+		t.Fatal(err)
+	}
 	probeResult := api.ProjectEnvironmentQualificationResult{
 		WorkloadSlug: app.Slug, DeploymentID: deployment.ID, Status: "passed", HTTPStatus: &httpStatus,
 	}
@@ -56,7 +92,7 @@ func TestCreateProjectEnvironmentQualificationAndGatePreview(t *testing.T) {
 		ReleaseSetID: release.ID, ConfigurationVersion: 0,
 		ConfigurationHash:    api.EmptyProjectEnvironmentConfigHash(),
 		SecretRevisionHashes: map[string]string{app.Slug: emptySecretHash},
-		WorkloadConfigHashes: map[string]string{app.Slug: spec.Hash},
+		WorkloadConfigHashes: map[string]string{app.Slug: qualifiedHash},
 		Checks: []api.ProjectEnvironmentQualificationCheck{
 			{Name: "smoke", Status: "passed", Results: []api.ProjectEnvironmentQualificationResult{probeResult}},
 			{Name: "health", Status: "passed", Results: []api.ProjectEnvironmentQualificationResult{probeResult}},
@@ -93,6 +129,15 @@ func TestCreateProjectEnvironmentQualificationAndGatePreview(t *testing.T) {
 	}
 	if !preview.CanPromote || !preview.QualificationRequired || preview.Qualification == nil || preview.Qualification.ID != qualification.ID {
 		t.Fatalf("promotion preview=%+v", preview)
+	}
+	if withFlags {
+		if _, err := store.UpdateFeatureFlags(ctx, state.FeatureFlagUpdate{Scope: flagScope, ExpectedVersion: flagVersion.Version, Config: flagVersion.Config, Actor: "developer"}); err != nil {
+			t.Fatal(err)
+		}
+		changed, problem := srv.buildProjectEnvironmentPromotionPlan(ctx, acct, "shop", "staging", "production", false)
+		if problem != nil || changed.Preview.CanPromote || !strings.Contains(strings.Join(changed.Preview.BlockingReasons, ";"), "feature flags") {
+			t.Fatalf("flag-only publish retained qualification: %v", problem)
+		}
 	}
 	settings.RAMMB = 1024
 	if _, err := store.PutProjectEnvironmentWorkloadSpec(ctx, acct.ID, project.ID, "staging", app.ID, spec.Revision, settings); err != nil {

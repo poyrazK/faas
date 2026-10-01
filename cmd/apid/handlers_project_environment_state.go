@@ -55,6 +55,10 @@ func (s *server) loadProjectEnvironmentState(ctx context.Context, acct state.Acc
 	if problem != nil {
 		return api.ProjectEnvironmentStateResponse{}, problem
 	}
+	flagHash, err := s.projectEnvironmentFeatureFlagsQualificationHash(ctx, environment)
+	if err != nil {
+		return api.ProjectEnvironmentStateResponse{}, api.ErrCapacity("could not fingerprint environment feature flags")
+	}
 	apps, err := s.store.AppsForProject(ctx, acct.ID, project.ID)
 	if err != nil {
 		return api.ProjectEnvironmentStateResponse{}, api.ErrCapacity("could not list project workloads")
@@ -77,12 +81,25 @@ func (s *server) loadProjectEnvironmentState(ctx context.Context, acct state.Acc
 		status = "active"
 	}
 	return api.ProjectEnvironmentStateResponse{
+		FeatureFlagsHash: flagHash,
 		ActiveReleaseSet: release, ReleaseSetStatus: status,
 		ProjectSlug: project.Slug, Environment: environment.Slug, Protected: environment.Protected,
 		Configuration: projectEnvironmentConfigResponse(project.Slug, environment.Slug, config),
 		Workloads:     workloads, SharedResources: projectEnvironmentSharedResources(workloads),
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339Nano),
 	}, nil
+}
+
+func (s *server) projectEnvironmentFeatureFlagsQualificationHash(ctx context.Context, environment state.ProjectEnvironment) (string, error) {
+	store, ok := s.store.(state.FeatureFlagStore)
+	if !ok {
+		return "", nil // Stores without flags retain the legacy receipt contract.
+	}
+	version, err := store.GetFeatureFlags(ctx, state.FeatureFlagScope{AccountID: environment.AccountID, ProjectID: environment.ProjectID, EnvironmentID: environment.ID}, 0)
+	if err != nil {
+		return "", err
+	}
+	return state.FeatureFlagsQualificationHash(version)
 }
 
 func (s *server) loadProjectEnvironmentWorkloadState(ctx context.Context, accountID string, environment state.ProjectEnvironment, app state.App) (api.ProjectEnvironmentStateWorkloadResponse, *api.Problem) {

@@ -182,6 +182,22 @@ func TestQualifyProjectEnvironmentRunsAgainstExactReleaseMembers(t *testing.T) {
 		}
 	}
 	client.created = false
+	// ADR-375: flags are observed before probes and included in the submitted
+	// fingerprint without changing the deployment's settings hash.
+	client.snapshot.FeatureFlagsHash = strings.Repeat("a", 64)
+	qualifiedHash, err := api.QualificationWorkloadConfigHash(api.EmptyProjectEnvironmentConfigHash(), client.snapshot.FeatureFlagsHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := qualifyProjectEnvironmentWithProfileAndHTTPClient(context.Background(), client, "shop", "staging", profile, server.Client()); err != nil || client.request.WorkloadConfigHashes["api"] != qualifiedHash {
+		t.Fatalf("observed flags omitted from qualification: %v", err)
+	}
+	client.created = false
+	client.snapshot.FeatureFlagsHash = "invalid"
+	if _, err := qualifyProjectEnvironmentWithProfileAndHTTPClient(context.Background(), client, "shop", "staging", profile, server.Client()); err == nil || client.created {
+		t.Fatal("invalid observed flag identity accepted")
+	}
+	client.snapshot.FeatureFlagsHash = ""
 	client.snapshot.Workloads[0].WorkloadConfigHash = strings.Repeat("1", 64)
 	if _, err := qualifyProjectEnvironmentWithProfileAndHTTPClient(context.Background(), client, "shop", "staging", profile, server.Client()); err == nil || !strings.Contains(err.Error(), "untested desired settings") || client.created {
 		t.Fatalf("untested desired settings accepted: created=%v err=%v", client.created, err)

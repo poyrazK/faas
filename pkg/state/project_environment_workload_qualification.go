@@ -3,10 +3,13 @@ package state
 import (
 	"context"
 	"errors"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// ProjectEnvironmentWorkloadQualificationStore fingerprints the exact runtime
-// settings of every active release member, rejecting undeployed desired edits.
+// ProjectEnvironmentWorkloadQualificationStore fingerprints runtime settings
+// and the observed flag revision for every active release member, rejecting
+// undeployed desired edits and flags changed since the qualification probes.
 type ProjectEnvironmentWorkloadQualificationStore interface {
 	ProjectEnvironmentWorkloadConfigHashes(context.Context, string, string, string, string) (map[string]string, bool, error)
 }
@@ -39,7 +42,8 @@ func qualificationWorkloadHash(desired, pinned ProjectEnvironmentWorkloadSpec, l
 
 func validateQualificationWorkloadHashes(expected, actual map[string]string, scoped bool) error {
 	// Legacy receipts remain usable only while no environment-owned settings
-	// exist. New clients always send the hashes observed before their probes.
+	// or published flag revision exists. New clients send the identities
+	// observed before their probes.
 	if len(expected) == 0 && !scoped {
 		return nil
 	}
@@ -63,8 +67,16 @@ func (m *MemStore) ProjectEnvironmentWorkloadConfigHashes(_ context.Context, acc
 }
 
 func (m *MemStore) projectEnvironmentWorkloadConfigHashesLocked(accountID, projectID, environment string, members []ProjectReleaseMember) (map[string]string, bool, error) {
+	source, err := m.projectEnvironmentBySlugLocked(projectID, environment)
+	if err != nil || source.AccountID != accountID {
+		return nil, false, ErrNotFound
+	}
+	flagHash, err := FeatureFlagsQualificationHash(m.latestFeatureFlagsLocked(FeatureFlagScope{AccountID: accountID, ProjectID: projectID, EnvironmentID: source.ID}))
+	if err != nil {
+		return nil, false, err
+	}
 	hashes := make(map[string]string, len(members))
-	scoped := false
+	scoped := flagHash != ""
 	for _, member := range members {
 		app, ok := m.apps[member.AppID]
 		if !ok || app.Status == AppDeleted || app.AccountID != accountID || app.ProjectID != projectID {
@@ -90,7 +102,10 @@ func (m *MemStore) projectEnvironmentWorkloadConfigHashesLocked(accountID, proje
 		if err != nil {
 			return nil, false, err
 		}
-		hashes[app.Slug] = hash
+		hashes[app.Slug], err = api.QualificationWorkloadConfigHash(hash, flagHash)
+		if err != nil {
+			return nil, false, ErrConflict
+		}
 		scoped = scoped || desired.ID != ""
 	}
 	if len(hashes) == 0 {

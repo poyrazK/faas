@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 const ProjectEnvironmentQualificationTTL = 24 * time.Hour
@@ -240,6 +241,11 @@ func (s *PgStore) CreateProjectEnvironmentQualification(ctx context.Context, acc
 		return ProjectEnvironmentQualification{}, fmt.Errorf("state: begin environment qualification: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// Receipt insertion takes this parent FK lock. Acquire it before the
+	// environment lock, matching clone/promotion capture and flag writers.
+	if _, err := sqlc.New().LockFeatureFlagProject(ctx, tx, sqlc.LockFeatureFlagProjectParams{AccountID: mustPgUUID(accountID), ProjectID: mustPgUUID(projectID)}); err != nil {
+		return ProjectEnvironmentQualification{}, mapErr(err)
+	}
 	var environmentID string
 	err = tx.QueryRow(ctx, `select id::text
 		from project_environments

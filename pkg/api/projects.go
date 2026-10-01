@@ -251,6 +251,7 @@ type ProjectEnvironmentSharedResourceResponse struct {
 // ProjectEnvironmentStateResponse is the canonical read model used by future
 // clone operations and by the unified environment diff.
 type ProjectEnvironmentStateResponse struct {
+	FeatureFlagsHash string                                     `json:"feature_flags_hash,omitempty"`
 	ActiveReleaseSet *ProjectReleaseSetResponse                 `json:"active_release_set"`
 	ReleaseSetStatus string                                     `json:"release_set_status"`
 	ProjectSlug      string                                     `json:"project_slug"`

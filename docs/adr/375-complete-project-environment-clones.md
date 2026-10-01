@@ -2654,3 +2654,55 @@ the generated sources, and whitespace checks passed. An earlier API attempt
 failed when the host ran out of disk space during test database creation; the
 final suites passed after reclaiming stale task-owned build artifacts. No real
 provider or native KVM acceptance was run for this increment.
+
+### Qualification pins the observed flag revision (2026-10-02)
+
+The existing qualification receipt's per-workload fingerprints now include
+the complete flag snapshot whenever the environment has published a flag
+version. The flag fingerprint authenticates environment lifetime, version,
+and configuration contents. It includes empty configurations published as a
+version, and distinguishes a new version containing identical configuration.
+An environment that has never published flags retains the legacy workload
+fingerprint. Legacy or missing fingerprints cannot certify an environment
+with a published flag revision.
+
+The environment-state API exposes `feature_flags_hash` as opaque metadata.
+Deployment settings hashes remain their existing identities; their values
+are not replaced by qualification fingerprints. Before health and smoke
+probes, the CLI captures the environment's flag hash and combines it with
+each selected deployment's settings hash. The wire fingerprint is lowercase
+hex SHA-256 of UTF-8 `gregale.dev/environment-workload-qualification/v1`, NUL,
+the settings hash, NUL, and the flag hash. With no published flag version,
+the settings hash is sent unchanged. This algorithm is shared by the CLI
+and state stores through `api.QualificationWorkloadConfigHash`.
+
+Receipt creation verifies those fingerprints under the environment lock.
+PostgreSQL acquires the project foreign-key lock before the environment lock
+so receipt insertion cannot deadlock with a clone holding the project row.
+Promotion preview and the final cutover transaction both revalidate the
+recorded fingerprints. A flag publish during probes or after qualification
+is rejected without changing the target release graph. Fresh probes can
+qualify the unchanged deployment against the new flag version; flag edits
+do not require rebuilding that deployment. A stored flag payload changed
+without advancing its version also invalidates the receipt.
+
+The OpenAPI source/embed copy and generated Node and Python state models
+include the optional metadata field. Both SDK generators reproduced their
+output on a second run. Flag contents and targeting lists remain absent from
+the qualification fingerprint metadata.
+
+Verification used real task-owned PostgreSQL 16 and both state stores:
+qualification, promotion, environment-state, flag-clone, and OpenAPI contract
+regressions passed in `pkg/state` (22.647 s). API qualification/promotion/state
+contracts passed (1.841 s), and CLI qualification/promotion contracts passed
+(0.802 s). An initial combined build ran out of host disk space after the
+state tests passed; API and CLI verification passed after reclaiming this
+task's completed test archive. Full `pkg/api` testing from that initial
+attempt did not complete. Spec source/embed copies match and whitespace
+checks pass.
+
+This establishes the flag qualification fence required by full promotion.
+Atomic copying of the tested flags into the target release graph and rollback
+to its retained previous flags are still required. The complete-clone feature
+and the flag schema strategy remain unqualified until that activation contract
+and the remaining data/resource/native acceptance gates are implemented.
