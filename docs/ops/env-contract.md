@@ -429,6 +429,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_TCPD_SCHEDD_TLS_CA_PATH` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_TCPD_SCHEDD_TLS_CERT_PATH` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_TCPD_SCHEDD_TLS_KEY_PATH` | gatewayd-public | `default` |  |  | `` |  |
+| `FAAS_TCPD_TLS_CERT_DIR` | gatewayd-public | `default` |  |  | `` | optional absolute directory of atomically provisioned hostname.pem certificate/key bundles for raw TCP TLS termination |
 | `FAAS_TCPD_VMMD_TLS_CA_PATH` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_TCPD_VMMD_TLS_CERT_PATH` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_TCPD_VMMD_TLS_KEY_PATH` | gatewayd-public | `default` |  |  | `` |  |
