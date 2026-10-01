@@ -10,7 +10,7 @@ import (
 var ErrExclusivePolicyInUse = errors.New("operation policy has active work or trigger bindings")
 
 // Retirement preserves policy identity, receipts and ownership generations.
-// adr: 425
+// adr: 427
 func retireExclusivePolicy(ctx context.Context, atomic exclusiveAtomic, account, name string) (out ExclusiveWorkPolicy, err error) {
 	if !exclusivework.NamePattern.MatchString(name) {
 		return out, ErrInvalidArgument

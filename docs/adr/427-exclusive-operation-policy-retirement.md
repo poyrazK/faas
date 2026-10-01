@@ -1,4 +1,4 @@
-# ADR-425 · Exclusive operation policy retirement
+# ADR-427 · Exclusive operation policy retirement
 
 - **Status:** accepted
 - **Date:** 2026-10-01
