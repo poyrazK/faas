@@ -469,3 +469,22 @@ The stack remains draft and unmerged; stateless economics and Linux/amd64 scope
 remain unchanged. At last observation, corrected identity PR #3954 had six
 successes, sixteen running checks, one queued, one neutral and one skipped,
 with no reported failure on the updated head.
+
+### Aggregate VM memory review — 2026-10-01
+
+Independent draft [PR #3958](https://github.com/poyrazK/faas/pull/3958), head
+`793d2361f`, base `f2893f798`, isolates physical guest RAM and early/post-boot
+host fences aligned with existing main-plus-companion admission/billing.
+Unknown or mismatched companion snapshot logical memory falls back to cold
+boot. Workload manifest and inner leaf allocations remain individual.
+The isolated decision is ADR-389.
+
+Full portable `pkg/fcvm` race suite passes. A subsequent focused regression also
+captures the lease before the VMM to prove its early memory fence receives the
+aggregate allocation; physical size, post-boot fence and snapshot decisions
+are covered. Scoped lint reports zero issues. Linux/amd64 metal-tagged test
+binary cross-compiles. Evidence: `/tmp/gregale-memory-isolated-race.log`,
+`/tmp/gregale-memory-isolated-fences.log`, `/tmp/gregale-memory-isolated-lint.log`,
+`/tmp/gregale-memory-isolated-compile.log`. Native OOM, VM park/restore and leak
+acceptance remain pending; remote checks are pending and the PR is unmerged.
+The early-fence regression is also retained in this implementation branch.
