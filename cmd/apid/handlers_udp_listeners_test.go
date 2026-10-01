@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -106,5 +107,46 @@ func TestContainerListenerReadOnlyScope(t *testing.T) {
 	udp, err := e.store.ListUDPListenersForApp(t.Context(), app.ID)
 	if err != nil || len(udp) != 0 {
 		t.Fatalf("read-only key created UDP intent: listeners=%+v err=%v", udp, err)
+	}
+}
+
+func TestUDPListenerQuotaProblem(t *testing.T) {
+	h, key, store, account := buildTestServer(t)
+	ctx := context.Background()
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "udp-quota", RAMMB: 256, Status: state.AppActive, Manifest: state.AppManifest{Ports: []api.WorkloadPort{{Name: "current", Port: 5353, Protocol: api.WorkloadPortUDP}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Model reservations retained from older manifests; none is enabled.
+	for i := 0; i < api.UDPListenerReservationsPerAppMax; i++ {
+		if _, err := store.CreateUDPListener(ctx, state.UDPListener{AccountID: account.ID, AppID: app.ID, ListenerName: fmt.Sprintf("reserved-%d", i), GuestPort: 1000 + i, PublicPort: 41000 + i}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	request := func(method, path, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.Header.Set("Authorization", "Bearer "+key)
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+	path := "/v1/apps/udp-quota/udp-listeners"
+	for _, body := range []string{`{"name":"current","guest_port":5353}`, `{"name":"current","guest_port":5353,"public_port":43000}`} {
+		w := request(http.MethodPost, path, body)
+		var problem api.Problem
+		if err := json.Unmarshal(w.Body.Bytes(), &problem); err != nil {
+			t.Fatal(err)
+		}
+		if w.Code != http.StatusConflict || problem.Code != api.CodeUDPListenerLimit || problem.Limit == nil || *problem.Limit != int64(api.UDPListenerReservationsPerAppMax) || problem.Observed == nil || *problem.Observed != int64(api.UDPListenerReservationsPerAppMax+1) || !strings.HasSuffix(problem.DocsURL, "/containers#udp-listeners") {
+			t.Fatalf("status=%d quota problem=%+v", w.Code, problem)
+		}
+	}
+	if w := request(http.MethodDelete, path+"/reserved-0", ""); w.Code != http.StatusNoContent {
+		t.Fatalf("delete: %d %s", w.Code, w.Body.String())
+	}
+	if w := request(http.MethodPost, path, `{"name":"current","guest_port":5353}`); w.Code != http.StatusCreated {
+		t.Fatalf("create after delete: %d %s", w.Code, w.Body.String())
 	}
 }

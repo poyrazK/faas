@@ -2,8 +2,11 @@ package state_test
 
 import (
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -155,5 +158,77 @@ func TestPgStoreUDPListenerSQLConstraintsPreserveEnabledIntent(t *testing.T) {
 				t.Fatalf("rejected SQL changed enabled intent: got=%+v err=%v", got, err)
 			}
 		})
+	}
+}
+
+func TestPgStoreUDPListenerReservationConcurrency(t *testing.T) {
+	store, ctx := pgStore(t)
+	accountID, appID, _ := seedLiveDeploy(t, store, ctx, "-udp-quota")
+
+	for i := 0; i < api.UDPListenerReservationsPerAppMax-1; i++ {
+		if _, err := store.CreateUDPListener(ctx, state.UDPListener{AccountID: accountID, AppID: appID, ListenerName: fmt.Sprintf("slot-%d", i), GuestPort: 1000 + i, PublicPort: 40000 + i}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	type result struct {
+		listener state.UDPListener
+		err      error
+	}
+	results := make(chan result, 8)
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			listener, err := store.CreateUDPListener(ctx, state.UDPListener{AccountID: accountID, AppID: appID, ListenerName: fmt.Sprintf("racing-%d", i), GuestPort: 2000 + i, PublicPort: 41000 + i})
+			results <- result{listener, err}
+		}(i)
+	}
+	wg.Wait()
+	close(results)
+	var winner state.UDPListener
+	successes := 0
+	for r := range results {
+		if r.err == nil {
+			successes++
+			winner = r.listener
+			continue
+		}
+		var quota *state.UDPListenerLimitError
+		if !errors.Is(r.err, state.ErrUDPListenerLimit) || !errors.As(r.err, &quota) || quota.Limit != api.UDPListenerReservationsPerAppMax || quota.Observed != api.UDPListenerReservationsPerAppMax+1 {
+			t.Fatalf("unexpected creation result: %v", r.err)
+		}
+	}
+	if successes != 1 {
+		t.Fatalf("last slot admitted %d creators", successes)
+	}
+	rows, err := store.ListUDPListenersForApp(ctx, appID)
+	if err != nil || len(rows) != api.UDPListenerReservationsPerAppMax {
+		t.Fatalf("reservation count=%d error=%v", len(rows), err)
+	}
+	if _, err := store.CreateUDPListener(ctx, state.UDPListener{AccountID: accountID, AppID: appID, ListenerName: "slot-0", GuestPort: 3000, PublicPort: 42000}); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("duplicate name at quota=%v", err)
+	}
+	if _, err := store.SetUDPListenerEnabled(ctx, winner.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	candidate := state.UDPListener{AccountID: accountID, AppID: appID, ListenerName: "replacement", GuestPort: 3001, PublicPort: 42001}
+	if _, err := store.CreateUDPListener(ctx, candidate); !errors.Is(err, state.ErrUDPListenerLimit) {
+		t.Fatalf("disable freed a reservation: %v", err)
+	}
+	if err := store.DeleteUDPListener(ctx, winner.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateUDPListener(ctx, candidate); err != nil {
+		t.Fatalf("delete did not free a reservation: %v", err)
+	}
+	other, err := store.CreateApp(ctx, state.App{AccountID: accountID, Slug: "udp-quota-other", Status: state.AppActive, RAMMB: 256})
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate.AppID = other.ID
+	candidate.PublicPort = 42002
+	if _, err := store.CreateUDPListener(ctx, candidate); err != nil {
+		t.Fatalf("another app inherited quota: %v", err)
 	}
 }

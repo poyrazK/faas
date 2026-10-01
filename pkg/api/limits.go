@@ -7829,3 +7829,11 @@ const NamespaceBridgeReadinessTimeout = 35 * time.Second
 // NamespaceBridgeReadinessMaxBytes bounds the helper's newline-terminated
 // readiness record, including its delimiter and any diagnostic text.
 const NamespaceBridgeReadinessMaxBytes = 4096
+
+// WorkloadPortCapMax bounds image metadata and the guest endpoint environment.
+// Listeners are a local workload contract, not an unbounded service registry.
+const WorkloadPortCapMax = 16
+
+// UDPListenerReservationsPerAppMax bounds all durable reservations, including
+// disabled ones and reservations retained across manifest changes.
+const UDPListenerReservationsPerAppMax = WorkloadPortCapMax

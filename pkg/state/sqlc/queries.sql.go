@@ -968,6 +968,17 @@ func (q *Queries) CountTriggersByApp(ctx context.Context, db DBTX, appID pgtype.
 	return count, err
 }
 
+const countUDPListenersForApp = `-- name: CountUDPListenersForApp :one
+SELECT count(*) FROM app_udp_listeners WHERE app_id = $1::text::uuid
+`
+
+func (q *Queries) CountUDPListenersForApp(ctx context.Context, db DBTX, appID string) (int64, error) {
+	row := db.QueryRow(ctx, countUDPListenersForApp, appID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createAPIKey = `-- name: CreateAPIKey :one
 insert into api_keys (account_id, key_sha256, label, scopes)
 values ($1, $2, $3, $4)

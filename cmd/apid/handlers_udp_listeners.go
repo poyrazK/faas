@@ -48,6 +48,11 @@ func appDeclaresUDPListener(app state.App, name string, guestPort int) bool {
 }
 
 func writeUDPListenerStoreError(w http.ResponseWriter, action string, err error) {
+	var quota *state.UDPListenerLimitError
+	if errors.As(err, &quota) {
+		api.WriteProblem(w, api.ErrUDPListenerLimit(quota.Limit, quota.Observed))
+		return
+	}
 	switch {
 	case errors.Is(err, state.ErrNotFound):
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
