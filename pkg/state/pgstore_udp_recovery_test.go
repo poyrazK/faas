@@ -47,3 +47,34 @@ func TestPgStoreUDPListenerReadDeadlineAndRecovery(t *testing.T) {
 		t.Fatalf("disable after recovery rows=%v err=%v", rows, err)
 	}
 }
+
+func TestPgStoreUDPListenerBackendLossRecovery(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	account, app, _ := seedLiveDeploy(t, s, ctx, "-udp-backend-recovery")
+	listener, err := s.CreateUDPListener(ctx, state.UDPListener{AccountID: account, AppID: app, ListenerName: "echo", GuestPort: 5353, PublicPort: 40130, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Release()
+	pid := conn.Conn().PgConn().PID()
+	var terminated bool
+	if err := pool.QueryRow(ctx, "SELECT pg_terminate_backend($1)", pid).Scan(&terminated); err != nil || !terminated {
+		t.Fatalf("terminate owned backend=%v err=%v", terminated, err)
+	}
+	failedCtx, cancelFailed := context.WithTimeout(ctx, time.Second)
+	defer cancelFailed()
+	if err := conn.Conn().Ping(failedCtx); err == nil {
+		t.Fatal("terminated backend still responds")
+	}
+	conn.Release()
+	recoveryCtx, cancelRecovery := context.WithTimeout(ctx, time.Second)
+	defer cancelRecovery()
+	rows, err := s.ListEnabledUDPListeners(recoveryCtx)
+	if err != nil || len(rows) != 1 || rows[0].ID != listener.ID {
+		t.Fatalf("read after backend loss rows=%v err=%v", rows, err)
+	}
+}

@@ -957,3 +957,7 @@ Combined PR #3997 now includes retirement fix `5f59d97b8` and the strict Postgre
 ### Combined customer/storage review audit
 
 PR #3997 title and description now describe the current client, cancellation, retirement, embedded-schema and strict database acceptance scope, with validation scopes and remaining native/deployed gaps explicit. Post-retirement `sqlc generate` left the candidate generated SQL unchanged, log `/tmp/gregale-udp-stack-sqlc-drift.log`; complete candidate diff whitespace check passed. Runtime PR #3992 remains a separate review dependency.
+
+### PostgreSQL backend loss recovery
+
+`TestPgStoreUDPListenerBackendLossRecovery` terminates only a backend acquired by its private fixture pool, verifies that connection no longer responds, releases it and reads the unchanged enabled-listener projection through the pool. Three real PostgreSQL race-detector runs passed without skips; scoped lint reported zero issues. Logs `/tmp/gregale-udp-backend-recovery.log` and `/tmp/gregale-udp-backend-recovery-lint.log`. The strict database gate discovers the added case automatically; its previous seven-case result predates this change. Cluster stopped after qualification. Whole-server restart and deployed daemon/native recovery remain unverified.
