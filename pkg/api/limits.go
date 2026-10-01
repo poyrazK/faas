@@ -7755,3 +7755,6 @@ const TCPListenerTLSHandshakeTimeout = 10 * time.Second
 
 const TCPListenerTLSHostnameMaxBytes = 253
 const TCPListenerTLSDNSLabelMaxBytes = 63
+
+// TCPListenerTLSBundleMaxBytes bounds a certificate chain plus private key.
+const TCPListenerTLSBundleMaxBytes = 64 * 1024
