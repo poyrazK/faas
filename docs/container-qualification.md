@@ -913,3 +913,7 @@ Prometheus rule fixtures now cover sustained UDP reconciliation errors firing th
 ### Isolated UDP operational monitoring review (2026-10-01)
 
 Draft [#3998](https://github.com/poyrazK/faas/pull/3998), commit `c5ed6963d`, stacks on public wiring #3992 and isolates four UDP alert rules, fixed-label metrics/runbook guidance and make udp-alert-check. On this exact tree promtool validated all 239 rules and passed the UDP fixture, including reconciliation failure/recovery, peer/resource failures and normal cancellation/source-denial exclusions (`/tmp/gregale-udp-monitoring-isolated-tests.log`). An extraction-only trailing blank line was removed before final whitespace verification. All launched handles are terminal. Deployed scraping/recovery and native VM/load/leak acceptance remain pending; no merge or deployment occurred.
+
+### Public UDP transport review regression coverage
+
+Draft PR #3992, commit `9dd6a8910`, now includes the portable real-socket/protobuf-gRPC admission, reassignment and disable fixture. The isolated public branch passed three race-detector runs of `TestUDPIngressGRPCAdmissionAndDisable`; scoped lint reported zero issues. Logs: `/tmp/gregale-udp-public-grpc-tests.log` and `/tmp/gregale-udp-public-grpc-lint.log`. Scheduler RPC and guest namespace execution are substituted; this does not qualify native KVM lifecycle or deployed dependency recovery.
