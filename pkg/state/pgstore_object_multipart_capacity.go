@@ -3,9 +3,11 @@ package state
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -16,16 +18,16 @@ func (s *PgStore) AdmitObjectMultipartPart(ctx context.Context, account, bucket,
 	if part < 1 || part > api.MaxMultipartParts || size < 1 || size > api.MaxObjectSinglePutBytes || maxObject < 1 || maxObject > api.MaxObjectUploadBytes {
 		return ErrConflict
 	}
-	return s.admitMultipartCapacity(ctx, account, bucket, id, "", part, size, maxObject, p)
+	return s.admitMultipartCapacity(ctx, account, bucket, id, "", part, size, maxObject, p, "", nil)
 }
 func (s *PgStore) AdmitObjectMultipartCompletion(ctx context.Context, account, bucket, id, key string, size int64, p api.ObjectStoragePolicy) error {
 	if size < 1 || size > api.MaxObjectUploadBytes {
 		return ErrConflict
 	}
-	return s.admitMultipartCapacity(ctx, account, bucket, id, key, 0, size, 0, p)
+	return s.admitMultipartCapacity(ctx, account, bucket, id, key, 0, size, 0, p, "", nil)
 }
 
-func (s *PgStore) admitMultipartCapacity(ctx context.Context, account, bucket, id, key string, part int32, size, maxObject int64, p api.ObjectStoragePolicy) error {
+func (s *PgStore) admitMultipartCapacity(ctx context.Context, account, bucket, id, key string, part int32, size, maxObject int64, p api.ObjectStoragePolicy, token string, preparation *multipartCompletionPreparation) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -47,6 +49,24 @@ func (s *PgStore) admitMultipartCapacity(ctx context.Context, account, bucket, i
 	completion := part == 0
 	if !validMultipartCapacityUpload(u, account, bucket, completion, now) || completion && u.Key != key {
 		return ErrConflict
+	}
+	if preparation != nil {
+		pending, e := q.ObjectMultipartTransfersPending(ctx, tx, mustPgUUID(id))
+		if e != nil {
+			return e
+		}
+		if pending || u.PartRevision != preparation.revision || u.State == ObjectMultipartCompleting && !slices.Equal(u.Parts, preparation.parts) {
+			return ErrConflict
+		}
+	}
+	if part != 0 && token != "" {
+		transfer, e := q.ObjectMultipartPartTransfer(ctx, tx, sqlc.ObjectMultipartPartTransferParams{UploadID: mustPgUUID(id), PartNumber: part})
+		if e != nil && !errors.Is(e, pgx.ErrNoRows) {
+			return e
+		}
+		if transfer.TransferToken.Valid && transfer.UnsafeUntil.Time.After(now) {
+			return ErrConflict
+		}
 	}
 	total, err := q.ObjectMultipartPartTotal(ctx, tx, mustPgUUID(id))
 	if err != nil {
@@ -84,12 +104,45 @@ func (s *PgStore) admitMultipartCapacity(ctx context.Context, account, bucket, i
 		if _, _, err = checkObjectAdmission(snapshot, bucket, delta, 0, true, true, p, now); err != nil {
 			return err
 		}
-		if err = q.ObjectMultipartPartGrantUpsert(ctx, tx, sqlc.ObjectMultipartPartGrantUpsertParams{UploadID: mustPgUUID(id), PartNumber: part, MaxBytes: size}); err != nil {
+		if token == "" {
+			err = q.ObjectMultipartPartGrantUpsert(ctx, tx, sqlc.ObjectMultipartPartGrantUpsertParams{UploadID: mustPgUUID(id), PartNumber: part, MaxBytes: size})
+		} else {
+			err = q.ObjectMultipartPartBegin(ctx, tx, sqlc.ObjectMultipartPartBeginParams{UploadID: mustPgUUID(id), PartNumber: part, MaxBytes: size, TransferToken: pgtype.Text{String: token, Valid: true}, Column5: int32(multipartTransferWindow() / time.Second)})
+		}
+		if err != nil {
+			return err
+		}
+		if err = q.ObjectMultipartPartRevision(ctx, tx, mustPgUUID(id)); err != nil {
 			return err
 		}
 	}
 	if err = q.ObjectUsageAuthorize(ctx, tx, sqlc.ObjectUsageAuthorizeParams{AccountID: mustPgUUID(account), PeriodStart: objectUsageTime(ObjectStoragePeriod(now))}); err != nil {
 		return err
+	}
+	if preparation != nil {
+		raw, e := multipartPartsJSON(preparation.parts)
+		if e != nil {
+			return e
+		}
+		row, e := q.ObjectMultipartClaim(ctx, tx, sqlc.ObjectMultipartClaimParams{ID: mustPgUUID(id), AccountID: mustPgUUID(account), AppID: mustPgUUID(u.AppID), BucketID: mustPgUUID(bucket), Operation: ObjectMultipartCompleting, Token: pgtype.Text{String: preparation.token, Valid: true}, LeaseSeconds: int32(ObjectMultipartLeaseDuration / time.Second), CompletionParts: raw})
+		if errors.Is(e, pgx.ErrNoRows) {
+			return ErrConflict
+		}
+		if e != nil {
+			return e
+		}
+		preparation.upload, e = objectMultipartFromSQL(row)
+		if e != nil {
+			return e
+		}
+		n, e := q.ObjectMultipartSetSize(ctx, tx, sqlc.ObjectMultipartSetSizeParams{ID: mustPgUUID(id), LeaseToken: pgtype.Text{String: preparation.token, Valid: true}, SizeBytes: size})
+		if e != nil {
+			return e
+		}
+		if n != 1 {
+			return ErrConflict
+		}
+		preparation.upload.SizeBytes = size
 	}
 	return tx.Commit(ctx)
 }

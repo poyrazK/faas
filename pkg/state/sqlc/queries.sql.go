@@ -11697,6 +11697,27 @@ func (q *Queries) ObjectInventorySample(ctx context.Context, db DBTX, arg Object
 	return err
 }
 
+const objectMultipartAbortOwner = `-- name: ObjectMultipartAbortOwner :one
+SELECT account_id,bucket_id FROM object_storage_multipart_uploads WHERE id=$1 AND lease_token=$2 AND state='aborting'
+`
+
+type ObjectMultipartAbortOwnerParams struct {
+	ID         pgtype.UUID
+	LeaseToken pgtype.Text
+}
+
+type ObjectMultipartAbortOwnerRow struct {
+	AccountID pgtype.UUID
+	BucketID  pgtype.UUID
+}
+
+func (q *Queries) ObjectMultipartAbortOwner(ctx context.Context, db DBTX, arg ObjectMultipartAbortOwnerParams) (ObjectMultipartAbortOwnerRow, error) {
+	row := db.QueryRow(ctx, objectMultipartAbortOwner, arg.ID, arg.LeaseToken)
+	var i ObjectMultipartAbortOwnerRow
+	err := row.Scan(&i.AccountID, &i.BucketID)
+	return i, err
+}
+
 const objectMultipartActivate = `-- name: ObjectMultipartActivate :execrows
 UPDATE object_storage_multipart_uploads SET state='active',provider_upload_id=$3,
 lease_token=NULL,lease_until=NULL,attempt_count=0,last_error_code='',retry_at=now(),updated_at=now()
@@ -11718,7 +11739,7 @@ func (q *Queries) ObjectMultipartActivate(ctx context.Context, db DBTX, arg Obje
 }
 
 const objectMultipartByKey = `-- name: ObjectMultipartByKey :one
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision FROM object_storage_multipart_uploads
 WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND object_key=$4
 AND state IN ('initiating','active','completing','aborting')
 `
@@ -11760,12 +11781,13 @@ func (q *Queries) ObjectMultipartByKey(ctx context.Context, db DBTX, arg ObjectM
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ObjectMetadata,
+		&i.PartRevision,
 	)
 	return i, err
 }
 
 const objectMultipartCapacityLock = `-- name: ObjectMultipartCapacityLock :one
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision FROM object_storage_multipart_uploads
 WHERE id=$1 AND account_id=$2 AND bucket_id=$3 FOR UPDATE
 `
 
@@ -11800,6 +11822,7 @@ func (q *Queries) ObjectMultipartCapacityLock(ctx context.Context, db DBTX, arg 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ObjectMetadata,
+		&i.PartRevision,
 	)
 	return i, err
 }
@@ -11825,7 +11848,7 @@ AND (
     AND (state<>'active' OR expires_at>now())
     AND (state<>'active' OR jsonb_array_length($4::jsonb)>0)) OR
   ($1::text='aborting' AND state IN ('active','aborting') AND provider_upload_id<>'')
-) RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata
+) RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision
 `
 
 type ObjectMultipartClaimParams struct {
@@ -11875,8 +11898,18 @@ func (q *Queries) ObjectMultipartClaim(ctx context.Context, db DBTX, arg ObjectM
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ObjectMetadata,
+		&i.PartRevision,
 	)
 	return i, err
+}
+
+const objectMultipartClearTransfers = `-- name: ObjectMultipartClearTransfers :exec
+UPDATE object_storage_multipart_part_grants SET transfer_token=NULL,unsafe_until=NULL WHERE upload_id=$1
+`
+
+func (q *Queries) ObjectMultipartClearTransfers(ctx context.Context, db DBTX, uploadID pgtype.UUID) error {
+	_, err := db.Exec(ctx, objectMultipartClearTransfers, uploadID)
+	return err
 }
 
 const objectMultipartCount = `-- name: ObjectMultipartCount :one
@@ -11892,7 +11925,7 @@ func (q *Queries) ObjectMultipartCount(ctx context.Context, db DBTX, bucketID pg
 }
 
 const objectMultipartDue = `-- name: ObjectMultipartDue :many
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision FROM object_storage_multipart_uploads
 WHERE (((state IN ('initiating','completing','aborting')) AND retry_at<=now())
   OR (state='active' AND expires_at<=now()))
 AND (lease_until IS NULL OR lease_until<now())
@@ -11930,6 +11963,7 @@ func (q *Queries) ObjectMultipartDue(ctx context.Context, db DBTX, batchLimit in
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.ObjectMetadata,
+			&i.PartRevision,
 		); err != nil {
 			return nil, err
 		}
@@ -11963,7 +11997,7 @@ func (q *Queries) ObjectMultipartFinish(ctx context.Context, db DBTX, arg Object
 }
 
 const objectMultipartGet = `-- name: ObjectMultipartGet :one
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision FROM object_storage_multipart_uploads
 WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND id=$4
 `
 
@@ -12004,6 +12038,7 @@ func (q *Queries) ObjectMultipartGet(ctx context.Context, db DBTX, arg ObjectMul
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ObjectMetadata,
+		&i.PartRevision,
 	)
 	return i, err
 }
@@ -12011,7 +12046,7 @@ func (q *Queries) ObjectMultipartGet(ctx context.Context, db DBTX, arg ObjectMul
 const objectMultipartInsert = `-- name: ObjectMultipartInsert :one
 INSERT INTO object_storage_multipart_uploads
 (id,account_id,app_id,bucket_id,object_key,size_bytes,part_size_bytes,part_count,content_type,object_metadata,expires_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision
 `
 
 type ObjectMultipartInsertParams struct {
@@ -12065,12 +12100,13 @@ func (q *Queries) ObjectMultipartInsert(ctx context.Context, db DBTX, arg Object
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ObjectMetadata,
+		&i.PartRevision,
 	)
 	return i, err
 }
 
 const objectMultipartList = `-- name: ObjectMultipartList :many
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision FROM object_storage_multipart_uploads
 WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND id>$4
 ORDER BY id LIMIT $5::int
 `
@@ -12120,6 +12156,7 @@ func (q *Queries) ObjectMultipartList(ctx context.Context, db DBTX, arg ObjectMu
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.ObjectMetadata,
+			&i.PartRevision,
 		); err != nil {
 			return nil, err
 		}
@@ -12149,6 +12186,33 @@ func (q *Queries) ObjectMultipartLockBucket(ctx context.Context, db DBTX, arg Ob
 	return id, err
 }
 
+const objectMultipartPartBegin = `-- name: ObjectMultipartPartBegin :exec
+INSERT INTO object_storage_multipart_part_grants (upload_id,part_number,max_bytes,cleanup_tracked,transfer_token,unsafe_until)
+VALUES ($1,$2,$3,true,$4,clock_timestamp()+($5::int * interval '1 second'))
+ON CONFLICT (upload_id,part_number) DO UPDATE
+SET max_bytes=greatest(object_storage_multipart_part_grants.max_bytes,EXCLUDED.max_bytes),
+transfer_token=EXCLUDED.transfer_token,unsafe_until=EXCLUDED.unsafe_until
+`
+
+type ObjectMultipartPartBeginParams struct {
+	UploadID      pgtype.UUID
+	PartNumber    int32
+	MaxBytes      int64
+	TransferToken pgtype.Text
+	Column5       int32
+}
+
+func (q *Queries) ObjectMultipartPartBegin(ctx context.Context, db DBTX, arg ObjectMultipartPartBeginParams) error {
+	_, err := db.Exec(ctx, objectMultipartPartBegin,
+		arg.UploadID,
+		arg.PartNumber,
+		arg.MaxBytes,
+		arg.TransferToken,
+		arg.Column5,
+	)
+	return err
+}
+
 const objectMultipartPartGrant = `-- name: ObjectMultipartPartGrant :one
 SELECT max_bytes FROM object_storage_multipart_part_grants WHERE upload_id=$1 AND part_number=$2
 `
@@ -12168,7 +12232,7 @@ func (q *Queries) ObjectMultipartPartGrant(ctx context.Context, db DBTX, arg Obj
 const objectMultipartPartGrantUpsert = `-- name: ObjectMultipartPartGrantUpsert :exec
 INSERT INTO object_storage_multipart_part_grants (upload_id,part_number,max_bytes) VALUES ($1,$2,$3)
 ON CONFLICT (upload_id,part_number) DO UPDATE
-SET max_bytes=greatest(object_storage_multipart_part_grants.max_bytes,EXCLUDED.max_bytes)
+SET max_bytes=greatest(object_storage_multipart_part_grants.max_bytes,EXCLUDED.max_bytes), cleanup_tracked=false
 `
 
 type ObjectMultipartPartGrantUpsertParams struct {
@@ -12182,6 +12246,41 @@ func (q *Queries) ObjectMultipartPartGrantUpsert(ctx context.Context, db DBTX, a
 	return err
 }
 
+const objectMultipartPartRevision = `-- name: ObjectMultipartPartRevision :exec
+UPDATE object_storage_multipart_uploads SET part_revision=part_revision+1,updated_at=clock_timestamp() WHERE id=$1
+`
+
+func (q *Queries) ObjectMultipartPartRevision(ctx context.Context, db DBTX, id pgtype.UUID) error {
+	_, err := db.Exec(ctx, objectMultipartPartRevision, id)
+	return err
+}
+
+const objectMultipartPartSettle = `-- name: ObjectMultipartPartSettle :execrows
+UPDATE object_storage_multipart_part_grants SET transfer_token=NULL,unsafe_until=NULL
+WHERE upload_id=$1 AND part_number=$2 AND transfer_token=$3
+AND EXISTS (SELECT 1 FROM object_storage_multipart_uploads u WHERE u.id=$1 AND u.account_id=$4)
+`
+
+type ObjectMultipartPartSettleParams struct {
+	UploadID      pgtype.UUID
+	PartNumber    int32
+	TransferToken pgtype.Text
+	AccountID     pgtype.UUID
+}
+
+func (q *Queries) ObjectMultipartPartSettle(ctx context.Context, db DBTX, arg ObjectMultipartPartSettleParams) (int64, error) {
+	result, err := db.Exec(ctx, objectMultipartPartSettle,
+		arg.UploadID,
+		arg.PartNumber,
+		arg.TransferToken,
+		arg.AccountID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const objectMultipartPartTotal = `-- name: ObjectMultipartPartTotal :one
 SELECT coalesce(sum(max_bytes),0)::bigint FROM object_storage_multipart_part_grants WHERE upload_id=$1
 `
@@ -12191,6 +12290,36 @@ func (q *Queries) ObjectMultipartPartTotal(ctx context.Context, db DBTX, uploadI
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const objectMultipartPartTransfer = `-- name: ObjectMultipartPartTransfer :one
+SELECT transfer_token,unsafe_until FROM object_storage_multipart_part_grants WHERE upload_id=$1 AND part_number=$2
+`
+
+type ObjectMultipartPartTransferParams struct {
+	UploadID   pgtype.UUID
+	PartNumber int32
+}
+
+type ObjectMultipartPartTransferRow struct {
+	TransferToken pgtype.Text
+	UnsafeUntil   pgtype.Timestamptz
+}
+
+func (q *Queries) ObjectMultipartPartTransfer(ctx context.Context, db DBTX, arg ObjectMultipartPartTransferParams) (ObjectMultipartPartTransferRow, error) {
+	row := db.QueryRow(ctx, objectMultipartPartTransfer, arg.UploadID, arg.PartNumber)
+	var i ObjectMultipartPartTransferRow
+	err := row.Scan(&i.TransferToken, &i.UnsafeUntil)
+	return i, err
+}
+
+const objectMultipartReleaseTrackedParts = `-- name: ObjectMultipartReleaseTrackedParts :exec
+DELETE FROM object_storage_multipart_part_grants WHERE upload_id=$1 AND cleanup_tracked
+`
+
+func (q *Queries) ObjectMultipartReleaseTrackedParts(ctx context.Context, db DBTX, uploadID pgtype.UUID) error {
+	_, err := db.Exec(ctx, objectMultipartReleaseTrackedParts, uploadID)
+	return err
 }
 
 const objectMultipartRetry = `-- name: ObjectMultipartRetry :execrows
@@ -12236,6 +12365,18 @@ func (q *Queries) ObjectMultipartSetSize(ctx context.Context, db DBTX, arg Objec
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const objectMultipartTransfersPending = `-- name: ObjectMultipartTransfersPending :one
+SELECT EXISTS (SELECT 1 FROM object_storage_multipart_part_grants
+WHERE upload_id=$1 AND transfer_token IS NOT NULL AND unsafe_until>clock_timestamp()) AS pending
+`
+
+func (q *Queries) ObjectMultipartTransfersPending(ctx context.Context, db DBTX, uploadID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, objectMultipartTransfersPending, uploadID)
+	var pending bool
+	err := row.Scan(&pending)
+	return pending, err
 }
 
 const objectS3BindingDeleteSecrets = `-- name: ObjectS3BindingDeleteSecrets :execrows
@@ -12969,7 +13110,7 @@ func (q *Queries) ObjectS3CredentialTouch(ctx context.Context, db DBTX, arg Obje
 }
 
 const objectS3MultipartList = `-- name: ObjectS3MultipartList :many
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision FROM object_storage_multipart_uploads
 WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3
 AND part_count=0 AND state IN ('active','completing','aborting')
 AND starts_with(object_key,$4::text)
@@ -13027,6 +13168,7 @@ func (q *Queries) ObjectS3MultipartList(ctx context.Context, db DBTX, arg Object
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.ObjectMetadata,
+			&i.PartRevision,
 		); err != nil {
 			return nil, err
 		}

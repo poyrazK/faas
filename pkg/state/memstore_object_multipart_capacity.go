@@ -14,8 +14,16 @@ var _ ObjectMultipartCapacityStore = (*MemStore)(nil)
 func (m *MemStore) AdmitObjectMultipartPart(_ context.Context, account, bucket, id string, part int32, size, maxObject int64, p api.ObjectStoragePolicy) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.admitMultipartPartLocked(account, bucket, id, "", part, size, maxObject, p)
+}
+
+func (m *MemStore) admitMultipartPartLocked(account, bucket, id, token string, part int32, size, maxObject int64, p api.ObjectStoragePolicy) error {
 	now := time.Now().UTC()
 	if !validMultipartCapacityUpload(m.objectMultipartUploads[id], account, bucket, false, now) || part < 1 || part > api.MaxMultipartParts || size < 1 || size > api.MaxObjectSinglePutBytes || maxObject < 1 || maxObject > api.MaxObjectUploadBytes {
+		return ErrConflict
+	}
+	transfer, exists := m.objectMultipartTransfers[id][part]
+	if token != "" && transfer.token != "" && transfer.unsafeUntil.After(now) {
 		return ErrConflict
 	}
 	old := m.objectMultipartPartGrants[id][part]
@@ -37,6 +45,25 @@ func (m *MemStore) AdmitObjectMultipartPart(_ context.Context, account, bucket, 
 		m.objectMultipartPartGrants[id] = map[int32]int64{}
 	}
 	m.objectMultipartPartGrants[id][part] = max(old, size)
+	if m.objectMultipartTransfers == nil {
+		m.objectMultipartTransfers = map[string]map[int32]multipartPartTransfer{}
+	}
+	if m.objectMultipartTransfers[id] == nil {
+		m.objectMultipartTransfers[id] = map[int32]multipartPartTransfer{}
+	}
+	if token != "" {
+		transfer.token, transfer.unsafeUntil = token, now.Add(multipartTransferWindow())
+		if !exists && old == 0 {
+			transfer.tracked = true
+		}
+	} else {
+		transfer.tracked = false
+	}
+	m.objectMultipartTransfers[id][part] = transfer
+	upload := m.objectMultipartUploads[id]
+	upload.PartRevision++
+	upload.UpdatedAt = now
+	m.objectMultipartUploads[id] = upload
 	m.authorizeMultipartLocked(account, now)
 	return nil
 }
@@ -51,6 +78,10 @@ func (m *MemStore) authorizeMultipartLocked(account string, now time.Time) {
 func (m *MemStore) AdmitObjectMultipartCompletion(_ context.Context, account, bucket, id, key string, size int64, p api.ObjectStoragePolicy) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.admitMultipartCompletionLocked(account, bucket, id, key, size, p)
+}
+
+func (m *MemStore) admitMultipartCompletionLocked(account, bucket, id, key string, size int64, p api.ObjectStoragePolicy) error {
 	now := time.Now().UTC()
 	upload := m.objectMultipartUploads[id]
 	if !validMultipartCapacityUpload(upload, account, bucket, true, now) || upload.Key != key || size < 1 || size > api.MaxObjectUploadBytes {

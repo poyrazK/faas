@@ -381,14 +381,29 @@ metadata, tagging, checksum, and conditional headers. Subsequent requests requir
 normal SigV4 authentication. Existing provider buckets still need CORS updates
 when provider CORS configuration changes.
 
-Every streamed part reserves capacity durably before its provider request.
-Retries preserve the largest admitted size for each part. Failed writes retain
-capacity; completion converts the reservation to an object grant after confirmed
-provider completion. Aborted sessions retain capacity pending safe provider
-reconciliation, because in-flight parts may succeed after abort. Drain all active
-branded sessions before applying the part-ledger migration; it refuses to run
-while sessions with unreserved parts remain. See
-[ADR-388](adr/388-s3-compatibility-and-multipart-capacity.md) for rollout and rollback.
+Every streamed part reserves capacity and a transfer token durably before its
+provider request. Retries preserve the largest admitted size for each part;
+concurrent writes to the same part return 409. Different parts remain concurrent.
+Successful verified transfers settle their token. Failed or uncertain transfers
+block finalization for a conservative 36-minute window (30-minute transfer
+context, 60-second internal URL, five-minute grace). Expiry alone releases no
+capacity. Completion checks the part revision and absence of in-flight writes,
+then atomically persists its size, exact part list, and final-object grant.
+
+Abort fences new parts immediately. A 204 response can mean cleanup is accepted
+while the upload remains `aborting` and its capacity remains charged. The existing
+recovery worker repeats aborts and verifies an empty provider ListParts response
+(or NoSuchUpload) after transfer fences settle or expire. Only that verification
+releases newly tracked part grants. Cleanup remains available while storage is
+disabled or budgets are exhausted. Older untracked reservations and management
+API object grants remain conservative.
+
+Pause branded multipart writes and drain all nonterminal branded sessions before
+applying either part-ledger or transfer-fencing migrations; both refuse unsafe
+upgrades. Deploy every gateway and API replica before reopening writes. Rollback
+refuses to discard unsettled transfer tokens. Keep abort and ListParts provider
+permissions available. See [ADR-388](adr/388-s3-compatibility-and-multipart-capacity.md)
+and [ADR-389](adr/389-s3-multipart-transfer-fencing-and-cleanup.md).
 
 Conditional GET/HEAD requests forward the standard validators and preserve S3
 `304 Not Modified` and `412 Precondition Failed` outcomes without exposing a
@@ -858,5 +873,5 @@ separate tenant IAM adapter; never hand out the operator-wide credential.
   Do not bypass these guards and orphan customer data.
 
 Deferred: the S3 compatibility gaps listed above, production edge/service
-activation, lifecycle/version management, non-destructive capacity reclamation
-and automatic migrations.
+activation, lifecycle/version management, general object-capacity rebasing,
+historical untracked multipart reclamation, and automatic migrations.

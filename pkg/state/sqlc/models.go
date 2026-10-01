@@ -2742,9 +2742,12 @@ type ObjectStorageKeyGrant struct {
 }
 
 type ObjectStorageMultipartPartGrant struct {
-	UploadID   pgtype.UUID
-	PartNumber int32
-	MaxBytes   int64
+	UploadID       pgtype.UUID
+	PartNumber     int32
+	MaxBytes       int64
+	CleanupTracked bool
+	TransferToken  pgtype.Text
+	UnsafeUntil    pgtype.Timestamptz
 }
 
 type ObjectStorageMultipartUpload struct {
@@ -2769,6 +2772,7 @@ type ObjectStorageMultipartUpload struct {
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
 	ObjectMetadata   []byte
+	PartRevision     int64
 }
 
 type ObjectStorageRequestMetric struct {

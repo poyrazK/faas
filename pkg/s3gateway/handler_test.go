@@ -63,6 +63,10 @@ func (s *gatewayTestStore) AdmitObjectURL(_ context.Context, _, _, key string, _
 }
 
 type gatewayTestProvider struct {
+	multipartMu      sync.Mutex
+	keepPartsOnAbort bool
+	multipartListErr error
+	multipartSignErr error
 	objects          objectstorage.ObjectPage
 	objectSize       int64
 	copyRequests     []objectstorage.CopyObjectRequest
@@ -129,6 +133,8 @@ func (p *gatewayTestProvider) DeleteObjectTags(context.Context, string, string) 
 	return nil
 }
 func (p *gatewayTestProvider) EnsureMultipartUpload(_ context.Context, _ string, r objectstorage.MultipartCreateRequest) (string, error) {
+	p.multipartMu.Lock()
+	defer p.multipartMu.Unlock()
 	p.multipartCreates = append(p.multipartCreates, r)
 	if p.multipart == nil {
 		p.multipart = map[string]map[int32]objectstorage.MultipartPart{}
@@ -140,6 +146,11 @@ func (p *gatewayTestProvider) EnsureMultipartUpload(_ context.Context, _ string,
 	return id, nil
 }
 func (p *gatewayTestProvider) PresignMultipartPart(_ context.Context, _ string, r objectstorage.MultipartPartRequest) (objectstorage.SignedRequest, error) {
+	p.multipartMu.Lock()
+	defer p.multipartMu.Unlock()
+	if p.multipartSignErr != nil {
+		return objectstorage.SignedRequest{}, p.multipartSignErr
+	}
 	if p.multipart == nil {
 		p.multipart = map[string]map[int32]objectstorage.MultipartPart{}
 	}
@@ -153,6 +164,11 @@ func (p *gatewayTestProvider) PresignMultipartPart(_ context.Context, _ string, 
 	return objectstorage.SignedRequest{URL: "https://provider.invalid/upload/" + r.ProviderUploadID + "/" + strconv.FormatInt(int64(r.PartNumber), 10), Method: http.MethodPut, Headers: map[string]string{"Content-Length": strconv.FormatInt(r.SizeBytes, 10)}}, nil
 }
 func (p *gatewayTestProvider) ListMultipartParts(_ context.Context, _ string, r objectstorage.MultipartListPartsRequest) (objectstorage.MultipartPartsPage, error) {
+	p.multipartMu.Lock()
+	defer p.multipartMu.Unlock()
+	if p.multipartListErr != nil {
+		return objectstorage.MultipartPartsPage{}, p.multipartListErr
+	}
 	parts := make([]objectstorage.MultipartPart, 0, len(p.multipart[r.ProviderUploadID]))
 	for _, part := range p.multipart[r.ProviderUploadID] {
 		if part.PartNumber > r.PartNumberMarker {
@@ -167,11 +183,18 @@ func (p *gatewayTestProvider) ListMultipartParts(_ context.Context, _ string, r 
 	return objectstorage.MultipartPartsPage{Items: parts}, nil
 }
 func (p *gatewayTestProvider) CompleteMultipartUpload(_ context.Context, _ string, r objectstorage.MultipartCompleteRequest) error {
+	p.multipartMu.Lock()
+	defer p.multipartMu.Unlock()
 	p.completedUploads = append(p.completedUploads, r.ProviderUploadID)
 	return nil
 }
 func (p *gatewayTestProvider) AbortMultipartUpload(_ context.Context, _ string, r objectstorage.MultipartAbortRequest) error {
+	p.multipartMu.Lock()
+	defer p.multipartMu.Unlock()
 	p.abortedUploads = append(p.abortedUploads, r.ProviderUploadID)
+	if !p.keepPartsOnAbort {
+		delete(p.multipart, r.ProviderUploadID)
+	}
 	return nil
 }
 
@@ -180,6 +203,7 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 type gatewayMultipartStore struct {
+	pending          map[string]map[int32]string
 	mu               sync.Mutex
 	uploads          map[string]state.ObjectMultipartUpload
 	partGrants       []int64
@@ -188,7 +212,7 @@ type gatewayMultipartStore struct {
 }
 
 func newGatewayMultipartStore() *gatewayMultipartStore {
-	return &gatewayMultipartStore{uploads: map[string]state.ObjectMultipartUpload{}}
+	return &gatewayMultipartStore{uploads: map[string]state.ObjectMultipartUpload{}, pending: map[string]map[int32]string{}}
 }
 
 func (s *gatewayMultipartStore) ReserveObjectMultipartUpload(_ context.Context, upload state.ObjectMultipartUpload, _ int) (state.ObjectMultipartUpload, error) {
@@ -239,7 +263,7 @@ func (s *gatewayMultipartStore) ClaimObjectMultipartUpload(_ context.Context, ac
 	if !ok || upload.AccountID != account || upload.AppID != app || upload.BucketID != bucket || token == "" {
 		return state.ObjectMultipartUpload{}, state.ErrConflict
 	}
-	if operation == state.ObjectMultipartInitiating && upload.State != state.ObjectMultipartInitiating || operation == state.ObjectMultipartCompleting && upload.State != state.ObjectMultipartActive || operation == state.ObjectMultipartAborting && upload.State != state.ObjectMultipartActive {
+	if operation == state.ObjectMultipartInitiating && upload.State != state.ObjectMultipartInitiating || operation == state.ObjectMultipartCompleting && upload.State != state.ObjectMultipartActive || operation == state.ObjectMultipartAborting && upload.State != state.ObjectMultipartActive && upload.State != state.ObjectMultipartAborting {
 		return state.ObjectMultipartUpload{}, state.ErrConflict
 	}
 	upload.State, upload.LeaseToken = operation, token
@@ -286,8 +310,18 @@ func (s *gatewayMultipartStore) FinishObjectMultipartUpload(_ context.Context, i
 	return nil
 }
 
-func (*gatewayMultipartStore) RetryObjectMultipartUpload(context.Context, string, string, string, time.Duration) error {
-	return state.ErrConflict
+func (s *gatewayMultipartStore) RetryObjectMultipartUpload(_ context.Context, id, token, code string, delay time.Duration) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u := s.uploads[id]
+	if u.LeaseToken != token {
+		return state.ErrConflict
+	}
+	u.LeaseToken = ""
+	u.LastErrorCode = code
+	u.RetryAt = time.Now().Add(delay)
+	s.uploads[id] = u
+	return nil
 }
 
 func (*gatewayMultipartStore) DueObjectMultipartUploads(context.Context, int32) ([]state.ObjectMultipartUpload, error) {
@@ -1077,4 +1111,61 @@ func TestGatewayPublicMultipartLifecycle(t *testing.T) {
 	if recorder.Code != http.StatusNoContent || len(provider.abortedUploads) != 1 {
 		t.Fatalf("abort = %d %s aborted=%v", recorder.Code, recorder.Body.String(), provider.abortedUploads)
 	}
+}
+
+func (s *gatewayMultipartStore) BeginObjectMultipartPart(ctx context.Context, account, bucket, id, token string, part int32, size, maxObject int64, p api.ObjectStoragePolicy) error {
+	if err := s.AdmitObjectMultipartPart(ctx, account, bucket, id, part, size, maxObject, p); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u := s.uploads[id]
+	if u.State != state.ObjectMultipartActive || s.pending[id][part] != "" {
+		return state.ErrConflict
+	}
+	if s.pending[id] == nil {
+		s.pending[id] = map[int32]string{}
+	}
+	s.pending[id][part] = token
+	u.PartRevision++
+	s.uploads[id] = u
+	return nil
+}
+func (s *gatewayMultipartStore) SettleObjectMultipartPart(_ context.Context, account, id string, part int32, token string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.uploads[id].AccountID != account || s.pending[id][part] != token {
+		return state.ErrConflict
+	}
+	delete(s.pending[id], part)
+	return nil
+}
+func (s *gatewayMultipartStore) PrepareObjectMultipartCompletion(ctx context.Context, u state.ObjectMultipartUpload, token string, size int64, parts []api.ObjectMultipartCompletedPart, p api.ObjectStoragePolicy) (state.ObjectMultipartUpload, error) {
+	s.mu.Lock()
+	pending := len(s.pending[u.ID]) != 0 || s.uploads[u.ID].PartRevision != u.PartRevision
+	s.mu.Unlock()
+	if pending {
+		return state.ObjectMultipartUpload{}, state.ErrConflict
+	}
+	if err := s.AdmitObjectMultipartCompletion(ctx, u.AccountID, u.BucketID, u.ID, u.Key, size, p); err != nil {
+		return state.ObjectMultipartUpload{}, err
+	}
+	claimed, err := s.ClaimObjectMultipartUpload(ctx, u.AccountID, u.AppID, u.BucketID, u.ID, token, state.ObjectMultipartCompleting, parts, false)
+	if err == nil {
+		err = s.SetObjectMultipartUploadSize(ctx, u.ID, token, size)
+		claimed.SizeBytes = size
+	}
+	return claimed, err
+}
+func (s *gatewayMultipartStore) ObjectMultipartAbortReady(_ context.Context, id, token string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u := s.uploads[id]
+	if u.State != state.ObjectMultipartAborting || u.LeaseToken != token {
+		return false, state.ErrConflict
+	}
+	return len(s.pending[id]) == 0, nil
+}
+func (s *gatewayMultipartStore) FinishVerifiedObjectMultipartAbort(ctx context.Context, id, token string) error {
+	return s.FinishObjectMultipartUpload(ctx, id, token, state.ObjectMultipartAborted)
 }

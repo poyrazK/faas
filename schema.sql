@@ -7979,6 +7979,7 @@ CREATE TABLE public.object_storage_multipart_uploads (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     object_metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    part_revision bigint DEFAULT 0 NOT NULL,
     CONSTRAINT object_storage_multipart_uploads_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
     CONSTRAINT object_storage_multipart_uploads_check CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
     CONSTRAINT object_storage_multipart_uploads_check1 CHECK (((state = 'initiating'::text) OR (provider_upload_id <> ''::text))),
@@ -7990,6 +7991,7 @@ CREATE TABLE public.object_storage_multipart_uploads (
     CONSTRAINT object_storage_multipart_uploads_object_metadata_check CHECK ((jsonb_typeof(object_metadata) = 'object'::text)),
     CONSTRAINT object_storage_multipart_uploads_object_metadata_check1 CHECK ((octet_length((object_metadata)::text) <= 32768)),
     CONSTRAINT object_storage_multipart_uploads_part_count_check CHECK (((part_count >= 0) AND (part_count <= 10000))),
+    CONSTRAINT object_storage_multipart_uploads_part_revision_check CHECK ((part_revision >= 0)),
     CONSTRAINT object_storage_multipart_uploads_part_size_bytes_check CHECK (((part_size_bytes >= 0) AND (part_size_bytes <= '5368709120'::bigint))),
     CONSTRAINT object_storage_multipart_uploads_provider_upload_id_check CHECK ((length(provider_upload_id) <= 4096)),
     CONSTRAINT object_storage_multipart_uploads_size_bytes_check CHECK (((size_bytes >= 0) AND (size_bytes <= '5497558138880'::bigint))),
@@ -22856,6 +22858,10 @@ CREATE TABLE public.object_storage_multipart_part_grants (
     upload_id uuid NOT NULL,
     part_number integer NOT NULL,
     max_bytes bigint NOT NULL,
+    cleanup_tracked boolean DEFAULT false NOT NULL,
+    transfer_token text,
+    unsafe_until timestamp with time zone,
+    CONSTRAINT object_multipart_transfer_pair CHECK ((((transfer_token IS NULL) AND (unsafe_until IS NULL)) OR ((transfer_token IS NOT NULL) AND ((length(transfer_token) >= 1) AND (length(transfer_token) <= 128)) AND (unsafe_until IS NOT NULL) AND isfinite(unsafe_until)))),
     CONSTRAINT object_storage_multipart_part_grants_max_bytes_check CHECK (((max_bytes > 0) AND (max_bytes <= '5368709120'::bigint))),
     CONSTRAINT object_storage_multipart_part_grants_part_number_check CHECK (((part_number >= 1) AND (part_number <= 10000)))
 );

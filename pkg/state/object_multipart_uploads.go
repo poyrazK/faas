@@ -37,6 +37,7 @@ type ObjectMultipartUpload struct {
 	Key                             string
 	SizeBytes, PartSizeBytes        int64
 	PartCount                       int32
+	PartRevision                    int64
 	ContentType                     string
 	Metadata                        ObjectMultipartMetadata
 	ProviderUploadID                string
@@ -116,4 +117,25 @@ func withoutMultipartReservation(s ObjectUsageSnapshot, bucket string, reserved 
 		}
 	}
 	return s
+}
+
+// ObjectMultipartTransferStore fences provider writes and atomically releases
+// tracked reservations only after the caller verifies provider cleanup.
+// Failed/uncertain writes retain a deadline; expiry alone never releases quota.
+type ObjectMultipartTransferStore interface {
+	BeginObjectMultipartPart(context.Context, string, string, string, string, int32, int64, int64, api.ObjectStoragePolicy) error
+	SettleObjectMultipartPart(context.Context, string, string, int32, string) error
+	PrepareObjectMultipartCompletion(context.Context, ObjectMultipartUpload, string, int64, []api.ObjectMultipartCompletedPart, api.ObjectStoragePolicy) (ObjectMultipartUpload, error)
+	ObjectMultipartAbortReady(context.Context, string, string) (bool, error)
+	FinishVerifiedObjectMultipartAbort(context.Context, string, string) error
+}
+
+type multipartPartTransfer struct {
+	token       string
+	unsafeUntil time.Time
+	tracked     bool
+}
+
+func multipartTransferWindow() time.Duration {
+	return api.ObjectTransferTimeout + time.Duration(api.ObjectMultipartPartURLTTLSeconds)*time.Second + api.ObjectMultipartCleanupGrace
 }

@@ -33,10 +33,14 @@ func (p *gatewayTestProvider) ListObjectsV2(_ context.Context, _ string, r objec
 	return p.objects, nil
 }
 func (s *gatewayMultipartStore) AdmitObjectMultipartPart(_ context.Context, _, _, _ string, _ int32, size, _ int64, _ api.ObjectStoragePolicy) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.partGrants = append(s.partGrants, size)
 	return s.capacityError
 }
 func (s *gatewayMultipartStore) AdmitObjectMultipartCompletion(_ context.Context, _, _, _, _ string, size int64, _ api.ObjectStoragePolicy) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.completionGrants = append(s.completionGrants, size)
 	return s.capacityError
 }

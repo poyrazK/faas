@@ -5065,7 +5065,7 @@ SELECT coalesce(sum(max_bytes),0)::bigint FROM object_storage_multipart_part_gra
 -- name: ObjectMultipartPartGrantUpsert :exec
 INSERT INTO object_storage_multipart_part_grants (upload_id,part_number,max_bytes) VALUES ($1,$2,$3)
 ON CONFLICT (upload_id,part_number) DO UPDATE
-SET max_bytes=greatest(object_storage_multipart_part_grants.max_bytes,EXCLUDED.max_bytes);
+SET max_bytes=greatest(object_storage_multipart_part_grants.max_bytes,EXCLUDED.max_bytes), cleanup_tracked=false;
 
 -- name: ObjectS3MultipartList :many
 SELECT * FROM object_storage_multipart_uploads
@@ -5075,3 +5075,36 @@ AND starts_with(object_key,sqlc.arg(prefix)::text)
 AND (sqlc.arg(key_marker)::text='' OR object_key COLLATE "C">sqlc.arg(key_marker)::text
  OR (object_key=sqlc.arg(key_marker)::text AND sqlc.arg(upload_marker)::text<>'' AND id::text>sqlc.arg(upload_marker)::text))
 ORDER BY object_key COLLATE "C",id LIMIT sqlc.arg(page_limit)::int;
+
+
+-- name: ObjectMultipartPartTransfer :one
+SELECT transfer_token,unsafe_until FROM object_storage_multipart_part_grants WHERE upload_id=$1 AND part_number=$2;
+
+-- name: ObjectMultipartPartBegin :exec
+INSERT INTO object_storage_multipart_part_grants (upload_id,part_number,max_bytes,cleanup_tracked,transfer_token,unsafe_until)
+VALUES ($1,$2,$3,true,$4,clock_timestamp()+($5::int * interval '1 second'))
+ON CONFLICT (upload_id,part_number) DO UPDATE
+SET max_bytes=greatest(object_storage_multipart_part_grants.max_bytes,EXCLUDED.max_bytes),
+transfer_token=EXCLUDED.transfer_token,unsafe_until=EXCLUDED.unsafe_until;
+
+-- name: ObjectMultipartPartRevision :exec
+UPDATE object_storage_multipart_uploads SET part_revision=part_revision+1,updated_at=clock_timestamp() WHERE id=$1;
+
+-- name: ObjectMultipartPartSettle :execrows
+UPDATE object_storage_multipart_part_grants SET transfer_token=NULL,unsafe_until=NULL
+WHERE upload_id=$1 AND part_number=$2 AND transfer_token=$3
+AND EXISTS (SELECT 1 FROM object_storage_multipart_uploads u WHERE u.id=$1 AND u.account_id=$4);
+
+-- name: ObjectMultipartTransfersPending :one
+SELECT EXISTS (SELECT 1 FROM object_storage_multipart_part_grants
+WHERE upload_id=$1 AND transfer_token IS NOT NULL AND unsafe_until>clock_timestamp()) AS pending;
+
+-- name: ObjectMultipartAbortOwner :one
+SELECT account_id,bucket_id FROM object_storage_multipart_uploads WHERE id=$1 AND lease_token=$2 AND state='aborting';
+
+-- name: ObjectMultipartReleaseTrackedParts :exec
+DELETE FROM object_storage_multipart_part_grants WHERE upload_id=$1 AND cleanup_tracked;
+
+
+-- name: ObjectMultipartClearTransfers :exec
+UPDATE object_storage_multipart_part_grants SET transfer_token=NULL,unsafe_until=NULL WHERE upload_id=$1;

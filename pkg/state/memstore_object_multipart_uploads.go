@@ -92,6 +92,10 @@ func (m *MemStore) GetObjectMultipartUpload(_ context.Context, account, app, buc
 func (m *MemStore) ClaimObjectMultipartUpload(_ context.Context, account, app, bucket, id, token, operation string, parts []api.ObjectMultipartCompletedPart, recovery bool) (ObjectMultipartUpload, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.claimObjectMultipartLocked(account, app, bucket, id, token, operation, parts, recovery)
+}
+
+func (m *MemStore) claimObjectMultipartLocked(account, app, bucket, id, token, operation string, parts []api.ObjectMultipartCompletedPart, recovery bool) (ObjectMultipartUpload, error) {
 	upload, ok := m.objectMultipartUploads[id]
 	now := time.Now()
 	if !ok || upload.AccountID != account || upload.AppID != app || upload.BucketID != bucket {
@@ -110,6 +114,9 @@ func (m *MemStore) ClaimObjectMultipartUpload(_ context.Context, account, app, b
 			return ObjectMultipartUpload{}, ErrConflict
 		}
 	case ObjectMultipartCompleting:
+		if m.multipartTransfersPendingLocked(id) {
+			return ObjectMultipartUpload{}, ErrConflict
+		}
 		if oldState != ObjectMultipartActive && oldState != ObjectMultipartCompleting || oldState == ObjectMultipartActive && !upload.ExpiresAt.After(now) {
 			return ObjectMultipartUpload{}, ErrConflict
 		}

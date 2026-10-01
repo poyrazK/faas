@@ -432,12 +432,7 @@ func (s *server) executeObjectMultipartOperation(ctx context.Context, store stat
 				})
 			}
 		case state.ObjectMultipartAborting:
-			err = backend.Provider.AbortMultipartUpload(callCtx, bucket.PhysicalName, objectstorage.MultipartAbortRequest{Key: upload.Key, ProviderUploadID: upload.ProviderUploadID})
-			if err == nil {
-				err = finishObjectMultipartOperation(ctx, func(finishCtx context.Context) error {
-					return store.FinishObjectMultipartUpload(finishCtx, upload.ID, upload.LeaseToken, state.ObjectMultipartAborted)
-				})
-			}
+			err = s.executeObjectMultipartAbort(callCtx, store, bucket, upload, backend.Provider)
 		default:
 			err = state.ErrConflict
 		}
@@ -475,4 +470,33 @@ func (s *server) retryObjectMultipartOperation(ctx context.Context, store state.
 	}
 	s.log.Warn("object storage multipart operation deferred", "bucket_id", upload.BucketID, "upload_id", upload.ID, "operation", upload.State, "error_code", code, "attempt", upload.AttemptCount, "retry_in", delay, "needs_attention", upload.AttemptCount >= 5 || code == "configuration" || code == "invalid")
 	return cause
+}
+
+func (s *server) executeObjectMultipartAbort(ctx context.Context, store state.ObjectMultipartUploadStore, bucket state.ObjectBucket, u state.ObjectMultipartUpload, provider objectstorage.Provider) error {
+	request := objectstorage.MultipartAbortRequest{Key: u.Key, ProviderUploadID: u.ProviderUploadID}
+	if err := provider.AbortMultipartUpload(ctx, bucket.PhysicalName, request); err != nil {
+		return err
+	}
+	if u.PartCount != 0 {
+		return finishObjectMultipartOperation(ctx, func(finishCtx context.Context) error {
+			return store.FinishObjectMultipartUpload(finishCtx, u.ID, u.LeaseToken, state.ObjectMultipartAborted)
+		})
+	}
+	transfers, ok := store.(state.ObjectMultipartTransferStore)
+	if !ok {
+		return objectstorage.ErrConfiguration
+	}
+	ready, err := transfers.ObjectMultipartAbortReady(ctx, u.ID, u.LeaseToken)
+	if err != nil {
+		return err
+	}
+	if !ready {
+		return objectstorage.ErrConflict
+	}
+	if err = objectstorage.VerifyMultipartAbort(ctx, provider, bucket.PhysicalName, request); err != nil {
+		return err
+	}
+	return finishObjectMultipartOperation(ctx, func(finishCtx context.Context) error {
+		return transfers.FinishVerifiedObjectMultipartAbort(finishCtx, u.ID, u.LeaseToken)
+	})
 }

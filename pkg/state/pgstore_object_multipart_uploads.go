@@ -17,7 +17,7 @@ var _ ObjectMultipartUploadStore = (*PgStore)(nil)
 func objectMultipartFromSQL(row sqlc.ObjectStorageMultipartUpload) (ObjectMultipartUpload, error) {
 	upload := ObjectMultipartUpload{
 		ID: pgUUIDString(row.ID), AccountID: pgUUIDString(row.AccountID), AppID: pgUUIDString(row.AppID), BucketID: pgUUIDString(row.BucketID),
-		Key: row.ObjectKey, SizeBytes: row.SizeBytes, PartSizeBytes: row.PartSizeBytes, PartCount: row.PartCount,
+		Key: row.ObjectKey, SizeBytes: row.SizeBytes, PartSizeBytes: row.PartSizeBytes, PartCount: row.PartCount, PartRevision: row.PartRevision,
 		ContentType: row.ContentType, ProviderUploadID: row.ProviderUploadID, State: row.State,
 		ExpiresAt: row.ExpiresAt.Time, CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time,
 		LeaseToken: row.LeaseToken.String, LeaseUntil: row.LeaseUntil.Time, RetryAt: row.RetryAt.Time,
@@ -157,7 +157,25 @@ func (s *PgStore) ClaimObjectMultipartUpload(ctx context.Context, account, app, 
 	if err != nil {
 		return ObjectMultipartUpload{}, ErrConflict
 	}
-	row, err := sqlc.New().ObjectMultipartClaim(ctx, s.pool, sqlc.ObjectMultipartClaimParams{
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return ObjectMultipartUpload{}, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	q := sqlc.New()
+	if _, err = q.ObjectMultipartCapacityLock(ctx, tx, sqlc.ObjectMultipartCapacityLockParams{ID: mustPgUUID(id), AccountID: mustPgUUID(account), BucketID: mustPgUUID(bucket)}); err != nil {
+		return ObjectMultipartUpload{}, mapErr(err)
+	}
+	if operation == ObjectMultipartCompleting {
+		pending, e := q.ObjectMultipartTransfersPending(ctx, tx, mustPgUUID(id))
+		if e != nil {
+			return ObjectMultipartUpload{}, e
+		}
+		if pending {
+			return ObjectMultipartUpload{}, ErrConflict
+		}
+	}
+	row, err := q.ObjectMultipartClaim(ctx, tx, sqlc.ObjectMultipartClaimParams{
 		Operation: operation, Token: pgtype.Text{String: token, Valid: true}, LeaseSeconds: int32(ObjectMultipartLeaseDuration / time.Second),
 		CompletionParts: rawParts, AccountID: mustPgUUID(account), AppID: mustPgUUID(app), BucketID: mustPgUUID(bucket), ID: mustPgUUID(id), Recovery: recovery,
 	})
@@ -166,6 +184,9 @@ func (s *PgStore) ClaimObjectMultipartUpload(ctx context.Context, account, app, 
 	}
 	if err != nil {
 		return ObjectMultipartUpload{}, mapErr(err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return ObjectMultipartUpload{}, err
 	}
 	return objectMultipartFromSQL(row)
 }
