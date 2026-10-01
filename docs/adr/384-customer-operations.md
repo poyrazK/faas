@@ -39,6 +39,27 @@ operation projection GC. Native run retention skips operation-bound history
 while recovery can still need its confirmed step results. These admission and
 isolation controls do not substitute for the controlled execution adapter.
 
+Workflow coordinators acquire a separate scheduler custody capability, bound
+to the operation, real native run, generation and monotonic claim attempt. Only
+its digest is stored; it never grants guest reporting authority. Claims and
+renewals lock the native run before the operation. A fresh custody read after
+the run lock prevents a joined candidate snapshot from stealing a just-renewed
+lease. The lease is bounded by `OperationExecutionLeaseMax` (two minutes); the
+counter is bounded by `OperationWorkflowClaimsMaxPerRun` (2,147,483,647), matching
+the positive PostgreSQL integer representation. Both limits live in
+`pkg/api/limits.go`.
+
+Parking releases custody only when no native step is running, preserving an
+earlier callback wake. Safe idle expiry or a callback wake obtains a fresh
+capability without changing the run identity or erasing confirmed steps. An
+expired coordinator with any unresolved running step instead records
+`requires_reconciliation`, revokes custody and stops native dispatch without
+resetting step evidence. This also applies to suspended tenants. Idle suspended
+work remains logically running and parks until tenant activation; a running
+event records the pause reason without adding a new business state. These
+custody controls still require fenced step execution and instance-bound guest
+authority before public workflow admission can be enabled.
+
 Admission, idempotency receipt, operation, execution association, and initial
 event commit atomically. Keys are scoped to account, app, environment, verified
 owner, and operation name. Equivalent JSON inputs replay the original receipt;

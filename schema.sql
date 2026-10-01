@@ -5520,6 +5520,26 @@ CREATE TABLE public.customer_operation_stream_leases (
 
 
 --
+-- Name: customer_operation_workflow_claims; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_workflow_claims (
+    workflow_run_id uuid NOT NULL,
+    operation_id uuid NOT NULL,
+    generation integer NOT NULL,
+    execution_kind text DEFAULT 'workflow'::text NOT NULL,
+    attempt integer NOT NULL,
+    capability_digest text NOT NULL,
+    lease_until timestamp with time zone NOT NULL,
+    CONSTRAINT customer_operation_workflow_claims_attempt_check CHECK ((attempt > 0)),
+    CONSTRAINT customer_operation_workflow_claims_capability_digest_check CHECK ((capability_digest ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT customer_operation_workflow_claims_execution_kind_check CHECK ((execution_kind = 'workflow'::text)),
+    CONSTRAINT customer_operation_workflow_claims_generation_check CHECK ((generation > 0)),
+    CONSTRAINT customer_operation_workflow_claims_lease_until_check CHECK (isfinite(lease_until))
+);
+
+
+--
 -- Name: data_upstream_probes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -11880,6 +11900,14 @@ ALTER TABLE ONLY public.customer_operation_stream_leases
 
 
 --
+-- Name: customer_operation_workflow_claims customer_operation_workflow_claims_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_workflow_claims
+    ADD CONSTRAINT customer_operation_workflow_claims_pkey PRIMARY KEY (workflow_run_id);
+
+
+--
 -- Name: customer_operations customer_operations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -15389,6 +15417,13 @@ CREATE INDEX customer_operation_stream_leases_retention_idx ON public.customer_o
 
 
 --
+-- Name: customer_operation_workflow_claim_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operation_workflow_claim_expiry_idx ON public.customer_operation_workflow_claims USING btree (lease_until, workflow_run_id);
+
+
+--
 -- Name: customer_operations_definition_retention_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -18581,6 +18616,13 @@ CREATE INDEX workflow_runs_dispatch_idx ON public.workflow_runs USING btree (sch
 
 
 --
+-- Name: workflow_runs_operation_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_runs_operation_due_idx ON public.workflow_runs USING btree (operation_id, status, scheduled_for) WHERE (operation_id IS NOT NULL);
+
+
+--
 -- Name: workflow_runs_running_lease_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -21013,6 +21055,22 @@ ALTER TABLE ONLY public.customer_operation_stream_leases
 
 ALTER TABLE ONLY public.customer_operation_stream_leases
     ADD CONSTRAINT customer_operation_stream_leases_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.customer_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_workflow_claims customer_operation_workflow_c_operation_id_generation_work_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_workflow_claims
+    ADD CONSTRAINT customer_operation_workflow_c_operation_id_generation_work_fkey FOREIGN KEY (operation_id, generation, workflow_run_id, execution_kind) REFERENCES public.customer_operation_executions(operation_id, generation, execution_id, execution_kind) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_workflow_claims customer_operation_workflow_claims_workflow_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_workflow_claims
+    ADD CONSTRAINT customer_operation_workflow_claims_workflow_run_id_fkey FOREIGN KEY (workflow_run_id) REFERENCES public.workflow_runs(id) ON DELETE CASCADE;
 
 
 --
