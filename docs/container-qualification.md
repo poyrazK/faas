@@ -965,3 +965,7 @@ PR #3997 title and description now describe the current client, cancellation, re
 ### Expanded candidate database recovery gate
 
 Combined PR #3997 now includes backend-loss recovery. The strict database gate passed all eight required cases with race detection on the candidate, rejecting skips; log `/tmp/gregale-udp-stack-postgres-gate-eight.log`. This supersedes the prior seven-case candidate result. The owned cluster was stopped. Remote CI for the newly updated head remains pending; native/deployed acceptance is unchanged.
+
+### Native UDP harness scheduler target correction
+
+Inspection of `startGatewaydPublic` found that it supplied only `FAAS_TCPD_SCHEDD_TARGET`; UDP admission would use `/run/faas/schedd.sock` rather than the private harness scheduler. The harness now supplies `FAAS_UDPD_SCHEDD_TARGET` using the same per-test Unix socket. Related portable VMMD environment fixtures passed with race detection, log `/tmp/gregale-udp-harness-wiring-tests.log`; those tests are not UDP cold-admission evidence. `TestUDPIngressMetal` still requires a designated native KVM host.

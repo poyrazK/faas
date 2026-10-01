@@ -1099,6 +1099,7 @@ func startGatewaydPublic(t *testing.T, h *Harness, bin, dbURL string, extraEnv [
 		"FAAS_INTERNAL_SOCKET="+internalSocket,
 		"FAAS_OTEL_SPANS_WRITER_ENABLED=false",
 		"FAAS_TCPD_SCHEDD_TARGET=unix://"+h.ScheddSock,
+		"FAAS_UDPD_SCHEDD_TARGET=unix://"+h.ScheddSock,
 		"FAAS_APPS_DOMAIN="+testDomain,
 	)
 	env = append(env, extraEnv...)
