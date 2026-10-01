@@ -5165,8 +5165,18 @@ CREATE TABLE public.customer_operation_events (
 CREATE TABLE public.customer_operation_executions (
     operation_id uuid NOT NULL,
     generation integer NOT NULL,
-    invocation_id uuid NOT NULL,
+    invocation_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    workflow_run_id uuid,
+    job_run_id uuid,
+    execution_id uuid GENERATED ALWAYS AS (COALESCE(invocation_id, workflow_run_id, job_run_id)) STORED NOT NULL,
+    execution_kind text GENERATED ALWAYS AS (
+CASE
+    WHEN (invocation_id IS NOT NULL) THEN 'http'::text
+    WHEN (workflow_run_id IS NOT NULL) THEN 'workflow'::text
+    ELSE 'job'::text
+END) STORED NOT NULL,
+    CONSTRAINT customer_operation_executions_backend_check CHECK (((num_nonnulls(invocation_id, workflow_run_id, job_run_id) = 1) AND (execution_kind = ANY (ARRAY['http'::text, 'workflow'::text, 'job'::text])))),
     CONSTRAINT customer_operation_executions_generation_check CHECK ((generation > 0))
 );
 
@@ -5271,11 +5281,15 @@ CREATE TABLE public.customer_operations (
     app_id uuid NOT NULL,
     platform_tenant_id uuid NOT NULL,
     definition_id uuid NOT NULL,
-    current_invocation_id uuid NOT NULL,
+    current_invocation_id uuid,
     state text NOT NULL,
     record jsonb NOT NULL,
     expires_at timestamp with time zone NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    current_execution_id uuid GENERATED ALWAYS AS (COALESCE(((record ->> 'current_execution_id'::text))::uuid, current_invocation_id)) STORED NOT NULL,
+    execution_kind text GENERATED ALWAYS AS (COALESCE((record ->> 'execution_kind'::text), 'http'::text)) STORED NOT NULL,
+    execution_generation integer GENERATED ALWAYS AS (((record ->> 'generation'::text))::integer) STORED NOT NULL,
+    CONSTRAINT customer_operations_backend_check CHECK (((execution_kind = ANY (ARRAY['http'::text, 'workflow'::text, 'job'::text])) AND (((execution_kind = 'http'::text) AND (current_invocation_id IS NOT NULL) AND (current_execution_id = current_invocation_id)) OR ((execution_kind = ANY (ARRAY['workflow'::text, 'job'::text])) AND (current_invocation_id IS NULL))))),
     CONSTRAINT customer_operations_check CHECK (((record ->> 'id'::text) = (id)::text)),
     CONSTRAINT customer_operations_check1 CHECK (((record ->> 'state'::text) = state)),
     CONSTRAINT customer_operations_check2 CHECK (((record ->> 'account_id'::text) = (account_id)::text)),
@@ -7028,6 +7042,7 @@ CREATE TABLE public.job_runs (
     source_run_id uuid,
     input_manifest_uri text,
     input_manifest_sha256 text,
+    operation_id uuid,
     CONSTRAINT job_runs_aggregate_status_check CHECK ((aggregate_status = ANY (ARRAY['queued'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text, 'dead_letter'::text]))),
     CONSTRAINT job_runs_command_shape_check CHECK (((command IS NULL) OR ((cardinality(command) >= 1) AND (cardinality(command) <= 64)))),
     CONSTRAINT job_runs_counters_check CHECK (((tasks >= 0) AND (tasks_succeeded >= 0) AND (tasks_failed >= 0) AND (tasks_cancelled >= 0) AND (tasks_running >= 0) AND (dead_letter_count >= 0) AND (dead_letter_count <= tasks) AND (dead_letter_count <= tasks_failed) AND ((((tasks_succeeded + tasks_failed) + tasks_cancelled) + tasks_running) <= tasks))),
@@ -10788,6 +10803,7 @@ CREATE TABLE public.workflow_runs (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     lease_until timestamp with time zone,
+    operation_id uuid,
     CONSTRAINT workflow_runs_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'awaiting_event'::text, 'succeeded'::text, 'failed'::text, 'dead'::text])))
 );
 
@@ -15209,6 +15225,34 @@ CREATE INDEX custom_domains_verification_due_idx ON public.custom_domains USING 
 --
 
 CREATE UNIQUE INDEX customer_operation_definitions_route_idx ON public.customer_operation_definitions USING btree (deployment_id, ((spec ->> 'method'::text)), ((spec ->> 'path'::text)));
+
+
+--
+-- Name: customer_operation_executions_current_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX customer_operation_executions_current_idx ON public.customer_operation_executions USING btree (operation_id, generation, execution_id, execution_kind);
+
+
+--
+-- Name: customer_operation_executions_identity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX customer_operation_executions_identity_idx ON public.customer_operation_executions USING btree (execution_id);
+
+
+--
+-- Name: customer_operation_executions_owner_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX customer_operation_executions_owner_idx ON public.customer_operation_executions USING btree (operation_id, execution_id);
+
+
+--
+-- Name: customer_operation_idempotency_operation_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operation_idempotency_operation_idx ON public.customer_operation_idempotency USING btree (operation_id);
 
 
 --
@@ -20740,11 +20784,11 @@ ALTER TABLE ONLY public.customer_operation_definitions
 
 
 --
--- Name: customer_operation_events customer_operation_events_execution_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: customer_operation_events customer_operation_events_execution_owner_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.customer_operation_events
-    ADD CONSTRAINT customer_operation_events_execution_id_fkey FOREIGN KEY (execution_id) REFERENCES public.invocations(id) ON DELETE RESTRICT;
+    ADD CONSTRAINT customer_operation_events_execution_owner_fkey FOREIGN KEY (operation_id, execution_id) REFERENCES public.customer_operation_executions(operation_id, execution_id) DEFERRABLE INITIALLY DEFERRED;
 
 
 --
@@ -20764,11 +20808,27 @@ ALTER TABLE ONLY public.customer_operation_executions
 
 
 --
+-- Name: customer_operation_executions customer_operation_executions_job_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_executions
+    ADD CONSTRAINT customer_operation_executions_job_run_id_fkey FOREIGN KEY (job_run_id) REFERENCES public.job_runs(id) ON DELETE RESTRICT;
+
+
+--
 -- Name: customer_operation_executions customer_operation_executions_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.customer_operation_executions
     ADD CONSTRAINT customer_operation_executions_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.customer_operations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_executions customer_operation_executions_workflow_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_executions
+    ADD CONSTRAINT customer_operation_executions_workflow_run_id_fkey FOREIGN KEY (workflow_run_id) REFERENCES public.workflow_runs(id) ON DELETE RESTRICT;
 
 
 --
@@ -20796,11 +20856,11 @@ ALTER TABLE ONLY public.customer_operation_recoveries
 
 
 --
--- Name: customer_operation_reports customer_operation_reports_execution_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: customer_operation_reports customer_operation_reports_execution_owner_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.customer_operation_reports
-    ADD CONSTRAINT customer_operation_reports_execution_id_fkey FOREIGN KEY (execution_id) REFERENCES public.invocations(id) ON DELETE RESTRICT;
+    ADD CONSTRAINT customer_operation_reports_execution_owner_fkey FOREIGN KEY (operation_id, execution_id) REFERENCES public.customer_operation_executions(operation_id, execution_id) DEFERRABLE INITIALLY DEFERRED;
 
 
 --
@@ -20841,6 +20901,14 @@ ALTER TABLE ONLY public.customer_operations
 
 ALTER TABLE ONLY public.customer_operations
     ADD CONSTRAINT customer_operations_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operations customer_operations_current_execution_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operations
+    ADD CONSTRAINT customer_operations_current_execution_fkey FOREIGN KEY (id, execution_generation, current_execution_id, execution_kind) REFERENCES public.customer_operation_executions(operation_id, generation, execution_id, execution_kind) DEFERRABLE INITIALLY DEFERRED;
 
 
 --

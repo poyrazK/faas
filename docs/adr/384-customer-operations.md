@@ -71,6 +71,26 @@ success, confirmed failure, or affirmative authorization of a safe new execution
 Successful workflow steps and Job partitions are reusable only under their
 existing adapter contracts. An operation does not imply exactly-once effects.
 
+Each operation generation binds exactly one real backend execution: an HTTP
+invocation, workflow run, or Job run. The ledger derives its execution ID and
+kind from mutually exclusive backend foreign keys. The current projection must
+match the binding's operation, generation, ID and kind. Events and report
+receipts reference a binding owned by the same operation. Workflow/Job runs
+retain permanent operation markers after projection GC; binding queries also
+check their app/account ownership. Backend adapters must lock their execution
+row before the common operation row. HTTP writers that predate the common
+identity fields retain their invocation identity through generated-column
+fallbacks. This schema seam does not itself enable workflow or Job admission.
+
+Active work retains its customer projection and submission key even when an
+initial result or identity window has elapsed. Result/event windows reset when
+work settles or stops for reconciliation; the full idempotency window is
+reserved from that settlement in the same transaction. Event history remains
+bounded and may require snapshot resynchronization during a long wait. Once
+work is stopped, ordinary projection/tombstone retention can release capacity.
+Adapters must also preserve usable deployment/release pins across long waits;
+an unlimited timestamp pin is not a substitute for checking active ownership.
+
 All bounds live in pkg/api/limits.go. Qualification covers concurrent admission,
 input conflicts, cross-tenant denial, pinned revisions, stale reports, durable
 stream replay, retention, artifact authorization, delivery outages, uncertainty,
