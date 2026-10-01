@@ -7746,3 +7746,11 @@ func (p Plan) IssueLimits() IssueLimits {
 const IssueMaintenanceBatch = 1000
 const IssueMaintenanceInterval = time.Minute
 const IssueMaxBatchEvents = 32
+
+// NamespaceBridgeReadinessTimeout allows the TCP helper's 30-second guest dial
+// plus launcher overhead, while bounding an unresponsive TCP or UDP helper.
+const NamespaceBridgeReadinessTimeout = 35 * time.Second
+
+// NamespaceBridgeReadinessMaxBytes bounds the helper's newline-terminated
+// readiness record, including its delimiter and any diagnostic text.
+const NamespaceBridgeReadinessMaxBytes = 4096

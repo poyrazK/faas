@@ -1,7 +1,6 @@
 package vmmdgrpc
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -141,7 +140,7 @@ func tcpBridgeSpawn(ctx context.Context, instancePID int, port uint32) (*exec.Cm
 	_ = stdoutW.Close()
 	_ = readyW.Close()
 
-	ready, readErr := bufio.NewReader(readyR).ReadString('\n')
+	ready, readErr := namespaceBridgeReadiness(ctx, readyR)
 	if readErr != nil {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
@@ -151,6 +150,7 @@ func tcpBridgeSpawn(ctx context.Context, instancePID int, port uint32) (*exec.Cm
 		return nil, nil, nil, nil, nil, status.Errorf(codes.Unavailable, "TCP bridge readiness: %v (stderr=%q)", readErr, stderr.String())
 	}
 	if strings.HasPrefix(ready, "ERR ") {
+		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
 		_ = stdinW.Close()
 		_ = stdoutR.Close()
