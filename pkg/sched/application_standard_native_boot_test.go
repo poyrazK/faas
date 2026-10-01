@@ -1,3 +1,5 @@
+// adr: 386 — save a native grant before boot and publish only its matching receipt.
+
 package sched
 
 import (

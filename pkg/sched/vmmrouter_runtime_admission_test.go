@@ -1,3 +1,5 @@
+// adr: 386 — route managed native grants to their exact configured node.
+
 package sched
 
 import (

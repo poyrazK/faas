@@ -1,3 +1,5 @@
+// adr: 386 — native boot clients validate backend receipts and complete payload bindings.
+
 package sched_test
 
 import (

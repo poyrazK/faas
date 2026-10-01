@@ -1,3 +1,5 @@
+// adr: 386 — single-use native grants bind actual boot identity and cancellation.
+
 package fcvm
 
 import (

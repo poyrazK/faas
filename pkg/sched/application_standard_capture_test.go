@@ -1,3 +1,5 @@
+// adr: 386 — captured intent fences scheduler runtime publication.
+
 package sched
 
 import (

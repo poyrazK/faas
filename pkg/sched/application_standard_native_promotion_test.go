@@ -1,3 +1,5 @@
+// adr: 386 — warm promotion uses fresh authority and cleanup cannot destroy a winner.
+
 package sched
 
 import (
