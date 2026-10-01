@@ -1,5 +1,7 @@
 package migrations
 
+// adr: 142, 393
+
 // Static migration-ID checks. The legacy set remains contiguous through
 // LegacyMigrationMaxVersion; post-cutover migrations use sortable UTC
 // timestamp IDs and may be merged or applied out of order.
@@ -133,6 +135,8 @@ func TestMigrationsLegacyContiguous(t *testing.T) {
 // TestMigrationsVersionNamespaces prevents the old coordination scheme from
 // returning. Five-digit migrations stop at 00590; every later migration must
 // be a valid 17-digit UTC YYYYMMDDHHMMSSmmm timestamp at or after the cutover.
+// Three already-applied IDs retain their immutable names and exact contents;
+// issued_timestamp_test.go freezes that closed compatibility set (ADR-393).
 func TestMigrationsVersionNamespaces(t *testing.T) {
 	for _, f := range LoadMigrations(t) {
 		prefix := strings.SplitN(f.Name, "_", 2)[0]
@@ -151,6 +155,10 @@ func TestMigrationsVersionNamespaces(t *testing.T) {
 			continue
 		}
 		if _, err := time.Parse("20060102150405", prefix[:14]); err != nil {
+			body, readErr := fs.ReadFile(FS, f.Name)
+			if readErr == nil && isFrozenIssuedTimestamp(f.Name, body) {
+				continue
+			}
 			t.Errorf("timestamp migration %s has invalid UTC date/time: %v", f.Name, err)
 		}
 	}

@@ -21,6 +21,14 @@ Versions `00001` through `00590` are the frozen legacy namespace. They remain
 contiguous and strict. Never add another five-digit migration or a
 `reserve_slot` file; ADR-142 supersedes ADR-041 for all new work.
 
+Three already-applied application-standard migrations were issued with invalid
+seconds in their timestamp names: `20261001000061001`, `20261001000071001`, and
+`20261001000081001`. Their ledger IDs, filenames and SQL remain immutable.
+`issued_timestamp_test.go` freezes the exact three filenames and SHA-256 contents;
+any content change or new invalid timestamp fails validation. This compatibility
+set must not be extended to new migrations. Continue using the generator and
+valid UTC timestamps for every new file.
+
 ## Authoring contract
 
 - Prefer additive expand migrations. Backfill separately, deploy compatible
