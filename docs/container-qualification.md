@@ -419,3 +419,25 @@ The explicitly delegated cgroup acceptance test is metal-tagged and requires
 VM/OOM/restore or leak acceptance claim is made yet. PR #3954 currently has four
 successful checks, one skipped and one neutral result, with nineteen checks
 still running and no reported failure. Neither new PR has been merged.
+
+### Health runtime stack and CLI projection correction — 2026-10-01
+
+Draft [PR #3956](https://github.com/poyrazK/faas/pull/3956) adds main-image
+health polling to companion orchestration and carries startup gating, scoped
+environment callbacks, effective PORT/PATH/working directory, credentials and
+atomic cgroup placement. Its five-file diff is stacked on #3955, now based on
+#3954; the decision is ADR-387. These isolated ADR numbers differ from the
+older implementation-branch numbering. Linux/amd64 metal-tagged guest tests
+cross-compile and scoped lint reports zero issues. Evidence:
+`/tmp/gregale-health-runtime-compile.log`, `/tmp/gregale-health-runtime-lint.log`.
+Native execution and integrated reporting remain pending.
+
+Remote #3954 daemon-shard execution exposed an old doctor-image expectation
+that reduced `1000:1000` to `1000`. The assertion now requires preservation
+of the complete OCI identity. The affected CLI doctor race regressions pass
+(`/tmp/gregale-identity-doctor-regression.log`); correction commit `4b1febd8f`
+was pushed and both downstream branches rebased to include it. Remote checks
+on these updated heads are pending. Earlier failed-head evidence remains in
+`/tmp/gregale-identity-daemon-ci.log`; no blanket remote-green claim is made.
+The PRs remain drafts and unmerged. No production host or persistent storage
+was used.
