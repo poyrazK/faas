@@ -761,6 +761,12 @@ from .execution_response_status import ExecutionResponseStatus
 from .execution_usage import ExecutionUsage
 from .execution_usage_summary_response import ExecutionUsageSummaryResponse
 from .export_app_debug_requests_format import ExportAppDebugRequestsFormat
+from .failure_rule import FailureRule
+from .failure_rule_action import FailureRuleAction
+from .failure_rules import FailureRules
+from .failure_rules_uncertain_outcome import FailureRulesUncertainOutcome
+from .failure_rules_unmatched_failure import FailureRulesUnmatchedFailure
+from .failure_rules_version import FailureRulesVersion
 from .feature_flag import FeatureFlag
 from .feature_flag_type import FeatureFlagType
 from .feature_flag_version import FeatureFlagVersion
@@ -972,6 +978,7 @@ from .list_org_activity_actor_type import ListOrgActivityActorType
 from .list_org_activity_response import ListOrgActivityResponse
 from .list_org_api_keys_response import ListOrgAPIKeysResponse
 from .list_project_environment_promotions_status import ListProjectEnvironmentPromotionsStatus
+from .list_schedule_occurrences_response import ListScheduleOccurrencesResponse
 from .list_secrets_for_account_response import ListSecretsForAccountResponse
 from .list_tenant_surfaces_response import ListTenantSurfacesResponse
 from .list_trigger_dead_letter_response import ListTriggerDeadLetterResponse
@@ -1648,6 +1655,12 @@ from .scaling_target_metric import ScalingTargetMetric
 from .scan_result import ScanResult
 from .scan_result_status import ScanResultStatus
 from .scenario_test_workload import ScenarioTestWorkload
+from .schedule_occurrence_response import ScheduleOccurrenceResponse
+from .schedule_occurrence_response_status import ScheduleOccurrenceResponseStatus
+from .schedule_policy import SchedulePolicy
+from .schedule_policy_missed_runs import SchedulePolicyMissedRuns
+from .schedule_policy_overlap import SchedulePolicyOverlap
+from .schedule_policy_version import SchedulePolicyVersion
 from .scoped_app_env_response import ScopedAppEnvResponse
 from .scoped_app_secret_response import ScopedAppSecretResponse
 from .scoped_app_secret_response_delivery_status import ScopedAppSecretResponseDeliveryStatus
@@ -1914,6 +1927,8 @@ from .wake_timeline_json_row_kind import WakeTimelineJSONRowKind
 from .wake_timeline_json_row_tier import WakeTimelineJSONRowTier
 from .wake_timeline_json_row_trigger_class import WakeTimelineJSONRowTriggerClass
 from .wake_timeline_response import WakeTimelineResponse
+from .work_decision import WorkDecision
+from .work_decision_action import WorkDecisionAction
 from .work_policy_list_response import WorkPolicyListResponse
 from .work_policy_response import WorkPolicyResponse
 from .work_policy_response_max_running_per_key import WorkPolicyResponseMaxRunningPerKey
@@ -2694,6 +2709,12 @@ __all__ = (
     "ExecutionUsage",
     "ExecutionUsageSummaryResponse",
     "ExportAppDebugRequestsFormat",
+    "FailureRule",
+    "FailureRuleAction",
+    "FailureRules",
+    "FailureRulesUncertainOutcome",
+    "FailureRulesUnmatchedFailure",
+    "FailureRulesVersion",
     "FeatureFlag",
     "FeatureFlagType",
     "FeatureFlagVersion",
@@ -2905,6 +2926,7 @@ __all__ = (
     "ListOrgActivityResponse",
     "ListOrgAPIKeysResponse",
     "ListProjectEnvironmentPromotionsStatus",
+    "ListScheduleOccurrencesResponse",
     "ListSecretsForAccountResponse",
     "ListTenantSurfacesResponse",
     "ListTriggerDeadLetterResponse",
@@ -3535,6 +3557,12 @@ __all__ = (
     "ScanResult",
     "ScanResultStatus",
     "ScenarioTestWorkload",
+    "ScheduleOccurrenceResponse",
+    "ScheduleOccurrenceResponseStatus",
+    "SchedulePolicy",
+    "SchedulePolicyMissedRuns",
+    "SchedulePolicyOverlap",
+    "SchedulePolicyVersion",
     "ScopedAppEnvResponse",
     "ScopedAppSecretResponse",
     "ScopedAppSecretResponseDeliveryStatus",
@@ -3783,6 +3811,8 @@ __all__ = (
     "WakeTimelineJSONRowTier",
     "WakeTimelineJSONRowTriggerClass",
     "WakeTimelineResponse",
+    "WorkDecision",
+    "WorkDecisionAction",
     "WorkerScaling",
     "WorkerScalingMetric",
     "WorkflowCallbackResponse",

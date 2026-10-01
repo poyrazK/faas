@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { CanaryPresetSpec } from './CanaryPresetSpec.js';
+import type { DeploymentHealthcheck } from './DeploymentHealthcheck.js';
 /**
  * JSON body for POST /v1/apps/{slug}/deployments/source-ref
  * (DEPLOY-PROV-4 / ADR-092, issue #739). The headless CI deploy
@@ -12,6 +13,10 @@ import type { CanaryPresetSpec } from './CanaryPresetSpec.js';
  *
  */
 export type SourceRefDeployRequest = {
+  /**
+   * Explicit startup readiness probe. Exactly one HTTP path or standard gRPC health selector; omitted preserves source inference.
+   */
+  healthcheck?: DeploymentHealthcheck;
   /**
    * GitHub owner/name slug, e.g. `onebox-faas/hello`.
    */

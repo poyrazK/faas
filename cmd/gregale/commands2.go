@@ -2255,6 +2255,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// Empty value = no change (the Set bit in UpdateAppParams
 	// is unset, so the SQL keeps the existing value).
 	appProtocol := fs.String("app-protocol", "", "wire-protocol selector: http1|http2|grpc (omit to leave unchanged)")
+	healthcheckPath := fs.String("healthcheck-path", "", "startup readiness HTTP path (for example /readyz)")
+	healthcheckGRPC := fs.Bool("healthcheck-grpc", false, "use standard gRPC health for startup readiness")
+	healthcheckGRPCService := fs.String("healthcheck-grpc-service", "", "service name for --healthcheck-grpc; empty checks the overall server")
 	// Issue #556 PR-A: per-deployment traffic-split weight. Sentinel
 	// value -1 = "unset" — `fs.Int` doesn't have a
 	// pointer type, so the explicit `fs.Visit` check below
@@ -2538,6 +2541,13 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	if *vcpu < 0 {
 		return printErr("Invalid --vcpu", fmt.Errorf("must be zero (plan default) or greater; got %d", *vcpu))
+	}
+	healthcheck, healthErr := resolveDeployHealthcheck(*healthcheckPath, *healthcheckGRPC, *healthcheckGRPCService, explicit)
+	if healthErr != nil {
+		return printErr("Invalid startup healthcheck", healthErr)
+	}
+	if healthcheck != nil && (*diff || *dryRun || *simplePlan || projectRequested || *githubSnippet || *createOnly) {
+		return printErr("Invalid flags", errors.New("startup healthcheck flags require a single-app deployment; they cannot be combined with preview, --github, --project, or --create-only"))
 	}
 	if explicit["app-protocol"] && !api.IsValidAppProtocol(*appProtocol) {
 		problem := api.NewProblem(http.StatusBadRequest, api.CodeAppProtocolInvalid,
@@ -2844,7 +2854,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			Slug: slug, Repo: *repo, Ref: *ref, SourceBranch: *sourceBranch, Reason: *reason, Tag: *tag,
 			DeployedBy: resolveDeployedBy(*deployedBy), PRNumber: *prNumber,
 			TrafficPercent: *trafficPercent, CanaryPreset: *canaryPreset,
-			CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr,
+			CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr, Healthcheck: healthcheck,
 		}
 		refKey, keyErr := deployIdempotencyKey(*idempotencyKey, refIntent)
 		if keyErr != nil {
@@ -2877,7 +2887,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			TrafficPercent:         optTrafficPercent(*trafficPercent),
 			Canary:                 canarySpec,
 			RollbackOn5xx:          rollbackOn5xxPtr,
-			DisableStartupCPUBoost: disableStartupCPUBoostPtr,
+			DisableStartupCPUBoost: disableStartupCPUBoostPtr, Healthcheck: healthcheck,
 		}, waitForDeploy, jsonWait, refKey, time.Duration(*waitTimeoutSeconds)*time.Second, *noTriggers, *safeDeploy, *noTraffic,
 			sourceRefAppPolicy{PlatformTenantRequired: platformTenantRequiredPtr, RequireAuthn: requireAuthnPtr, PublicAuth: publicAuthPtr})
 		return code
@@ -3523,7 +3533,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		StartupDeadlineS: *startupDeadlineS, MaxRetries: *maxRetries, Reason: *reason, Tag: *tag,
 		DeployedBy: resolveDeployedBy(*deployedBy), PRNumber: *prNumber,
 		TrafficPercent: *trafficPercent, CanaryPreset: *canaryPreset,
-		CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr, NoTriggers: *noTriggers,
+		CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr, Healthcheck: healthcheck, NoTriggers: *noTriggers,
 		ProjectSlug: *projectSlug, DeployOnly: *deployOnly, DeployExclude: *deployExclude,
 	}
 	deployKey, keyErr := deployIdempotencyKey(*idempotencyKey, deployIntent)
@@ -3863,9 +3873,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			TrafficPercent:         optTrafficPercent(*trafficPercent),
 			Canary:                 canarySpec,
 			RollbackOn5xx:          rollbackOn5xxPtr,
-			DisableStartupCPUBoost: disableStartupCPUBoostPtr,
-			NoTriggers:             *noTriggers,
-			Companions:             sidecarDefs,
+			DisableStartupCPUBoost: disableStartupCPUBoostPtr, Healthcheck: healthcheck,
+			NoTriggers: *noTriggers,
+			Companions: sidecarDefs,
 		}
 		var (
 			dep           api.DeploymentResponse
@@ -3892,7 +3902,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			uploadOptions := api.UploadDeployOptions{
 				Runtime: deployRuntime, Handler: deployHandler, Dockerfile: *dockerfile,
 				SourceRoot: sourceRoot, Scope: ann.Scope, SourceURL: ann.SourceURL, CommitSHA: ann.CommitSHA,
-				Environment: ann.Environment, RollbackOn5xx: ann.RollbackOn5xx, DisableStartupCPUBoost: ann.DisableStartupCPUBoost,
+				Environment: ann.Environment, RollbackOn5xx: ann.RollbackOn5xx, DisableStartupCPUBoost: ann.DisableStartupCPUBoost, Healthcheck: ann.Healthcheck,
 				Reason: ann.Reason, Tag: ann.Tag,
 				DeployedBy: ann.DeployedBy, PRNumber: ann.PRNumber, Workflows: workflowDefs, Companions: sidecarDefs,
 				NoTriggers: ann.NoTriggers,
@@ -4022,6 +4032,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		Environment:            *environment,
 		RollbackOn5xx:          rollbackOn5xxPtr,
 		DisableStartupCPUBoost: disableStartupCPUBoostPtr,
+		Overrides:              deployHealthcheckOverrides(healthcheck),
 		Workflows:              workflowDefs,
 		Companions:             sidecarDefs,
 		TrafficPercent:         optTrafficPercent(*trafficPercent),

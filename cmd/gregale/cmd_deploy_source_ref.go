@@ -130,6 +130,7 @@ func cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifestAndRollout(ctx c
 		NoTriggers:             noTriggers,
 		RollbackOn5xx:          ann.RollbackOn5xx,
 		DisableStartupCPUBoost: ann.DisableStartupCPUBoost,
+		Healthcheck:            ann.Healthcheck,
 	}
 	deployCtx := ctx
 	if idempotencyKey != "" {
