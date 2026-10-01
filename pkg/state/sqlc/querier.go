@@ -1105,6 +1105,7 @@ type Querier interface {
 	// after the index scan.
 	PerAccountRateLimitAggregate(ctx context.Context, db DBTX, arg PerAccountRateLimitAggregateParams) ([]PerAccountRateLimitAggregateRow, error)
 	ProjectEnvironmentCloneSecretTargetExists(ctx context.Context, db DBTX, arg ProjectEnvironmentCloneSecretTargetExistsParams) (bool, error)
+	ProjectProductionScalingState(ctx context.Context, db DBTX, arg ProjectProductionScalingStateParams) error
 	// Retention purge. The meterd cron calls this
 	// hourly with `cutoff = now() - interval '30 days'`
 	// (matches the §12 prom_retention_days:15 floor +
@@ -1185,6 +1186,7 @@ type Querier interface {
 	ReadProjectReleaseSet(ctx context.Context, db DBTX, arg ReadProjectReleaseSetParams) ([]byte, error)
 	ReadRuntimeAppEnvForDeployment(ctx context.Context, db DBTX, arg ReadRuntimeAppEnvForDeploymentParams) (ReadRuntimeAppEnvForDeploymentRow, error)
 	ReadRuntimeAppValuesForDeployment(ctx context.Context, db DBTX, arg ReadRuntimeAppValuesForDeploymentParams) (ReadRuntimeAppValuesForDeploymentRow, error)
+	ReadRuntimeScalingStateForDeployment(ctx context.Context, db DBTX, arg ReadRuntimeScalingStateForDeploymentParams) (ReadRuntimeScalingStateForDeploymentRow, error)
 	ReadRuntimeSecretDeliveryVersions(ctx context.Context, db DBTX, arg ReadRuntimeSecretDeliveryVersionsParams) ([]ReadRuntimeSecretDeliveryVersionsRow, error)
 	ReadSnapshotGarbageCollection(ctx context.Context, db DBTX, arg ReadSnapshotGarbageCollectionParams) ([]ReadSnapshotGarbageCollectionRow, error)
 	ReadSnapshotPublicationConfigChange(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.Timestamptz, error)
@@ -1400,6 +1402,8 @@ type Querier interface {
 	SnapshotStorageKeys(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]string, error)
 	SoftDeleteOrg(ctx context.Context, db DBTX, id pgtype.UUID) error
 	StampDeadLetterEventReplay(ctx context.Context, db DBTX, arg StampDeadLetterEventReplayParams) error
+	StampLegacyProductionScaleIn(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
+	StampLegacyProductionScaleOut(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
 	StampSafeReleaseWorkerLease(ctx context.Context, db DBTX, ttlSeconds int64) error
 	SumAccountCreditRefundReversal(ctx context.Context, db DBTX, arg SumAccountCreditRefundReversalParams) (int64, error)
 	// Per-account open-spool budget check (4 × SourceTarballMaxMB cap
@@ -1594,6 +1598,7 @@ type Querier interface {
 	ValidateInvocationEnvironmentClaim(ctx context.Context, db DBTX, invocationID pgtype.UUID) (bool, error)
 	ValidateInvocationEnvironmentQueuePin(ctx context.Context, db DBTX, arg ValidateInvocationEnvironmentQueuePinParams) (bool, error)
 	ValidateInvocationWorkEnvironmentClaim(ctx context.Context, db DBTX, invocationID pgtype.UUID) (ValidateInvocationWorkEnvironmentClaimRow, error)
+	WriteRuntimeScalingState(ctx context.Context, db DBTX, arg WriteRuntimeScalingStateParams) error
 }
 
 var _ Querier = (*Queries)(nil)

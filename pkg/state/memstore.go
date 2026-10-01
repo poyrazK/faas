@@ -147,7 +147,8 @@ type MemStore struct {
 	snapshotRestoreLeaseMu    sync.Mutex
 	snapshotRestoreLeases     map[string]snapshotRestorePressureLease
 	// runtimeConfigChangedAt mirrors app_runtime_config_changes (issue #3360).
-	runtimeConfigChangedAt map[string]time.Time
+	runtimeConfigChangedAt          map[string]time.Time
+	runtimeEnvironmentScalingStates map[string]RuntimeScalingState
 	// serviceCallerKeys mirrors service_caller_keys: one published
 	// public key per node (ADR-206). Rotated keys remain trusted only for
 	// the assertion maximum TTL so requests already in flight can finish.
@@ -3123,6 +3124,7 @@ func (m *MemStore) DeleteProject(_ context.Context, projectID string) error {
 				}
 			}
 			m.deleteEnvironmentWorkloadSpecsLocked(environmentID)
+			m.deleteRuntimeScalingEnvironmentLocked(environmentID)
 			delete(m.projectEnvironments, environmentID)
 		}
 	}
@@ -3328,6 +3330,7 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 			delete(m.domains, domain)
 		}
 	}
+	m.deleteRuntimeScalingEnvironmentLocked(environmentID)
 	delete(m.projectEnvironments, environmentID)
 	m.deleteEnvironmentWorkloadSpecsLocked(environmentID)
 	delete(m.projectEnvironmentConfigs, projectEnvironmentConfigKey(projectID, slug))
@@ -13214,6 +13217,7 @@ func (m *MemStore) StampAppScaleOut(_ context.Context, appID string) error {
 	now := time.Now()
 	app.LastScaleOutAt = &now
 	m.apps[appID] = app
+	m.stampLegacyProductionScalingLocked(appID, "out", *app.LastScaleOutAt)
 	return nil
 }
 
@@ -13229,6 +13233,7 @@ func (m *MemStore) StampAppScaleIn(_ context.Context, appID string) error {
 	now := time.Now()
 	app.LastScaleInAt = &now
 	m.apps[appID] = app
+	m.stampLegacyProductionScalingLocked(appID, "in", *app.LastScaleInAt)
 	return nil
 }
 
@@ -13249,6 +13254,7 @@ func (m *MemStore) SetLastScaleOutAt(appID string, ts time.Time) error {
 	tsCopy := ts
 	app.LastScaleOutAt = &tsCopy
 	m.apps[appID] = app
+	m.stampLegacyProductionScalingLocked(appID, "out", *app.LastScaleOutAt)
 	return nil
 }
 
@@ -13265,6 +13271,7 @@ func (m *MemStore) SetLastScaleInAt(appID string, ts time.Time) error {
 	tsCopy := ts
 	app.LastScaleInAt = &tsCopy
 	m.apps[appID] = app
+	m.stampLegacyProductionScalingLocked(appID, "in", *app.LastScaleInAt)
 	return nil
 }
 

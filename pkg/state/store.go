@@ -965,6 +965,7 @@ type DeploymentActivationLocker interface {
 type Store interface {
 	// Boot and restore read one owned configuration/secret snapshot.
 	RuntimeAppValuesStore
+	RuntimeScalingStateStore
 	LayerArtifactRetentionStore
 	// Ping tests store/database connectivity.
 	Ping(ctx context.Context) error

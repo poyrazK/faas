@@ -65,6 +65,7 @@ func (m *MemStore) RollbackProjectEnvironmentClone(_ context.Context, accountID,
 		}
 	}
 	m.deleteEnvironmentWorkloadSpecsLocked(environmentID)
+	m.deleteRuntimeScalingEnvironmentLocked(environmentID)
 	delete(m.projectEnvironments, environmentID)
 	delete(m.projectEnvironmentConfigs, projectEnvironmentConfigKey(projectID, slug))
 	for key, policy := range m.projectEnvironmentRoutePolicies {

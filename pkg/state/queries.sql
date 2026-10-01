@@ -6397,7 +6397,8 @@ WITH owner AS (
     LEFT JOIN project_environments bound ON bound.id=runtime_owner.environment_id
         AND bound.account_id=a.account_id AND bound.project_id=a.project_id
         AND bound.slug=CASE WHEN COALESCE(NULLIF(d.scope,''),'default')='default' THEN 'production' ELSE d.scope END
-    LEFT JOIN project_environments legacy ON runtime_owner.deployment_id IS NULL
+    LEFT JOIN project_environments legacy ON runtime_owner.deployment_id IS NULL AND pin.deployment_id IS NULL
+        AND COALESCE(NULLIF(d.scope,''),'default') NOT IN ('default','production')
         AND legacy.account_id=a.account_id AND legacy.project_id=a.project_id AND legacy.slug=d.scope
         AND legacy.created_at<=d.created_at
     WHERE a.account_id=sqlc.arg(account_id)::uuid AND a.id=sqlc.arg(app_id)::uuid
@@ -6525,7 +6526,8 @@ WITH owner AS (
     LEFT JOIN project_environments bound ON bound.id=runtime_owner.environment_id
         AND bound.account_id=a.account_id AND bound.project_id=a.project_id
         AND bound.slug=CASE WHEN COALESCE(NULLIF(d.scope,''),'default')='default' THEN 'production' ELSE d.scope END
-    LEFT JOIN project_environments legacy ON runtime_owner.deployment_id IS NULL
+    LEFT JOIN project_environments legacy ON runtime_owner.deployment_id IS NULL AND pin.deployment_id IS NULL
+        AND COALESCE(NULLIF(d.scope,''),'default') NOT IN ('default','production')
         AND legacy.account_id=a.account_id AND legacy.project_id=a.project_id AND legacy.slug=d.scope
         AND legacy.created_at<=d.created_at
     WHERE a.account_id=sqlc.arg(account_id)::uuid AND a.id=sqlc.arg(app_id)::uuid
@@ -6588,3 +6590,66 @@ WHERE (sqlc.arg(mode)::text='active' AND (NOT stale OR runtime_owner_invalid))
 ORDER BY CASE WHEN sqlc.arg(mode)::text='active' THEN created_at END DESC,
     CASE WHEN sqlc.arg(mode)::text<>'active' THEN created_at END ASC, id ASC
 LIMIT 10000;
+
+-- name: ReadRuntimeScalingStateForDeployment :one
+WITH owner AS (
+    SELECT d.id, a.id AS app_id, a.account_id,
+        COALESCE(NULLIF(d.scope,''),'default')::text AS scope,
+        COALESCE(bound.id::text,legacy.id::text,'')::text AS environment_id
+    FROM deployments d
+    JOIN apps a ON a.id=d.app_id
+    LEFT JOIN projects project ON project.id=a.project_id AND project.account_id=a.account_id
+    LEFT JOIN deployment_runtime_environment_owners runtime_owner ON runtime_owner.deployment_id=d.id
+    LEFT JOIN project_environment_workload_deployment_specs pin ON pin.deployment_id=d.id
+    LEFT JOIN project_environment_workload_specs spec ON spec.id=pin.spec_id AND spec.app_id=a.id
+    LEFT JOIN project_environments bound ON bound.id=runtime_owner.environment_id
+        AND bound.account_id=a.account_id AND bound.project_id=a.project_id
+        AND bound.slug=CASE WHEN COALESCE(NULLIF(d.scope,''),'default')='default' THEN 'production' ELSE d.scope END
+    LEFT JOIN project_environments legacy ON runtime_owner.deployment_id IS NULL AND pin.deployment_id IS NULL
+        AND COALESCE(NULLIF(d.scope,''),'default') NOT IN ('default','production')
+        AND legacy.account_id=a.account_id AND legacy.project_id=a.project_id AND legacy.slug=d.scope
+        AND legacy.created_at<=d.created_at
+    WHERE a.account_id=sqlc.arg(account_id)::uuid AND a.id=sqlc.arg(app_id)::uuid
+        AND d.id=sqlc.arg(deployment_id)::uuid AND a.status<>'deleted'
+        AND (a.project_id IS NULL OR project.id IS NOT NULL)
+        AND d.status IN ('pending','building','imaging','snapshotting','live','superseded')
+        AND ((runtime_owner.deployment_id IS NOT NULL AND bound.id IS NOT NULL AND spec.environment_id=bound.id)
+            OR (runtime_owner.deployment_id IS NULL AND pin.deployment_id IS NULL
+                AND (COALESCE(NULLIF(d.scope,''),'default') IN ('default','production') OR a.project_id IS NULL OR legacy.id IS NOT NULL)))
+)
+SELECT owner.scope,owner.environment_id,
+    CASE WHEN scaling.app_id IS NOT NULL THEN scaling.last_scale_in_at
+        WHEN owner.scope IN ('default','production') THEN a.last_scale_in_at END::timestamptz AS last_scale_in_at,
+    CASE WHEN scaling.app_id IS NOT NULL THEN scaling.last_scale_out_at
+        WHEN owner.scope IN ('default','production') THEN a.last_scale_out_at END::timestamptz AS last_scale_out_at
+FROM owner JOIN apps a ON a.id=owner.app_id
+LEFT JOIN runtime_environment_scaling_states scaling ON scaling.app_id=owner.app_id
+    AND scaling.environment_key=CASE WHEN owner.environment_id<>'' THEN 'environment:'||owner.environment_id
+        ELSE 'scope:'||CASE WHEN owner.scope='default' THEN 'production' ELSE owner.scope END END;
+
+-- name: WriteRuntimeScalingState :exec
+INSERT INTO runtime_environment_scaling_states(app_id,environment_key,environment_id,scope,last_scale_in_at,last_scale_out_at)
+VALUES (sqlc.arg(app_id)::uuid,sqlc.arg(environment_key)::text,sqlc.narg(environment_id)::uuid,sqlc.arg(scope)::text,
+    CASE WHEN sqlc.arg(direction)::text='in' THEN now() ELSE sqlc.narg(prior_scale_in)::timestamptz END,
+    CASE WHEN sqlc.arg(direction)::text='out' THEN now() ELSE sqlc.narg(prior_scale_out)::timestamptz END)
+ON CONFLICT(app_id,environment_key) DO UPDATE
+SET last_scale_in_at=CASE WHEN sqlc.arg(direction)::text='in' THEN now() ELSE runtime_environment_scaling_states.last_scale_in_at END,
+    last_scale_out_at=CASE WHEN sqlc.arg(direction)::text='out' THEN now() ELSE runtime_environment_scaling_states.last_scale_out_at END;
+
+-- name: ProjectProductionScalingState :exec
+UPDATE apps a SET last_scale_in_at=scaling.last_scale_in_at,last_scale_out_at=scaling.last_scale_out_at
+FROM runtime_environment_scaling_states scaling
+WHERE a.id=sqlc.arg(app_id)::uuid AND scaling.app_id=a.id AND scaling.environment_key=sqlc.arg(environment_key)::text
+    AND scaling.scope='production';
+
+-- name: StampLegacyProductionScaleOut :one
+WITH app_stamp AS (UPDATE apps SET last_scale_out_at=now() WHERE id=$1 RETURNING id,last_scale_out_at),
+    scaling_stamp AS (UPDATE runtime_environment_scaling_states scaling SET last_scale_out_at=app_stamp.last_scale_out_at
+        FROM app_stamp WHERE scaling.app_id=app_stamp.id AND scaling.scope='production')
+SELECT id FROM app_stamp;
+
+-- name: StampLegacyProductionScaleIn :one
+WITH app_stamp AS (UPDATE apps SET last_scale_in_at=now() WHERE id=$1 RETURNING id,last_scale_in_at),
+    scaling_stamp AS (UPDATE runtime_environment_scaling_states scaling SET last_scale_in_at=app_stamp.last_scale_in_at
+        FROM app_stamp WHERE scaling.app_id=app_stamp.id AND scaling.scope='production')
+SELECT id FROM app_stamp;

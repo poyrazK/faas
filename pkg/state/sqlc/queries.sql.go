@@ -15541,6 +15541,23 @@ func (q *Queries) ProjectEnvironmentCloneSecretTargetExists(ctx context.Context,
 	return column_1, err
 }
 
+const projectProductionScalingState = `-- name: ProjectProductionScalingState :exec
+UPDATE apps a SET last_scale_in_at=scaling.last_scale_in_at,last_scale_out_at=scaling.last_scale_out_at
+FROM runtime_environment_scaling_states scaling
+WHERE a.id=$1::uuid AND scaling.app_id=a.id AND scaling.environment_key=$2::text
+    AND scaling.scope='production'
+`
+
+type ProjectProductionScalingStateParams struct {
+	AppID          pgtype.UUID
+	EnvironmentKey string
+}
+
+func (q *Queries) ProjectProductionScalingState(ctx context.Context, db DBTX, arg ProjectProductionScalingStateParams) error {
+	_, err := db.Exec(ctx, projectProductionScalingState, arg.AppID, arg.EnvironmentKey)
+	return err
+}
+
 const pruneDataUpstreamProbesOlderThan = `-- name: PruneDataUpstreamProbesOlderThan :exec
 DELETE FROM data_upstream_probes WHERE sampled_at < $1
 `
@@ -17479,7 +17496,8 @@ WITH owner AS (
     LEFT JOIN project_environments bound ON bound.id=runtime_owner.environment_id
         AND bound.account_id=a.account_id AND bound.project_id=a.project_id
         AND bound.slug=CASE WHEN COALESCE(NULLIF(d.scope,''),'default')='default' THEN 'production' ELSE d.scope END
-    LEFT JOIN project_environments legacy ON runtime_owner.deployment_id IS NULL
+    LEFT JOIN project_environments legacy ON runtime_owner.deployment_id IS NULL AND pin.deployment_id IS NULL
+        AND COALESCE(NULLIF(d.scope,''),'default') NOT IN ('default','production')
         AND legacy.account_id=a.account_id AND legacy.project_id=a.project_id AND legacy.slug=d.scope
         AND legacy.created_at<=d.created_at
     WHERE a.account_id=$1::uuid AND a.id=$2::uuid
@@ -17530,7 +17548,8 @@ WITH owner AS (
     LEFT JOIN project_environments bound ON bound.id=runtime_owner.environment_id
         AND bound.account_id=a.account_id AND bound.project_id=a.project_id
         AND bound.slug=CASE WHEN COALESCE(NULLIF(d.scope,''),'default')='default' THEN 'production' ELSE d.scope END
-    LEFT JOIN project_environments legacy ON runtime_owner.deployment_id IS NULL
+    LEFT JOIN project_environments legacy ON runtime_owner.deployment_id IS NULL AND pin.deployment_id IS NULL
+        AND COALESCE(NULLIF(d.scope,''),'default') NOT IN ('default','production')
         AND legacy.account_id=a.account_id AND legacy.project_id=a.project_id AND legacy.slug=d.scope
         AND legacy.created_at<=d.created_at
     WHERE a.account_id=$1::uuid AND a.id=$2::uuid
@@ -17584,6 +17603,68 @@ func (q *Queries) ReadRuntimeAppValuesForDeployment(ctx context.Context, db DBTX
 		&i.Values,
 		&i.Secrets,
 		&i.ReloadSignals,
+	)
+	return i, err
+}
+
+const readRuntimeScalingStateForDeployment = `-- name: ReadRuntimeScalingStateForDeployment :one
+WITH owner AS (
+    SELECT d.id, a.id AS app_id, a.account_id,
+        COALESCE(NULLIF(d.scope,''),'default')::text AS scope,
+        COALESCE(bound.id::text,legacy.id::text,'')::text AS environment_id
+    FROM deployments d
+    JOIN apps a ON a.id=d.app_id
+    LEFT JOIN projects project ON project.id=a.project_id AND project.account_id=a.account_id
+    LEFT JOIN deployment_runtime_environment_owners runtime_owner ON runtime_owner.deployment_id=d.id
+    LEFT JOIN project_environment_workload_deployment_specs pin ON pin.deployment_id=d.id
+    LEFT JOIN project_environment_workload_specs spec ON spec.id=pin.spec_id AND spec.app_id=a.id
+    LEFT JOIN project_environments bound ON bound.id=runtime_owner.environment_id
+        AND bound.account_id=a.account_id AND bound.project_id=a.project_id
+        AND bound.slug=CASE WHEN COALESCE(NULLIF(d.scope,''),'default')='default' THEN 'production' ELSE d.scope END
+    LEFT JOIN project_environments legacy ON runtime_owner.deployment_id IS NULL AND pin.deployment_id IS NULL
+        AND COALESCE(NULLIF(d.scope,''),'default') NOT IN ('default','production')
+        AND legacy.account_id=a.account_id AND legacy.project_id=a.project_id AND legacy.slug=d.scope
+        AND legacy.created_at<=d.created_at
+    WHERE a.account_id=$1::uuid AND a.id=$2::uuid
+        AND d.id=$3::uuid AND a.status<>'deleted'
+        AND (a.project_id IS NULL OR project.id IS NOT NULL)
+        AND d.status IN ('pending','building','imaging','snapshotting','live','superseded')
+        AND ((runtime_owner.deployment_id IS NOT NULL AND bound.id IS NOT NULL AND spec.environment_id=bound.id)
+            OR (runtime_owner.deployment_id IS NULL AND pin.deployment_id IS NULL
+                AND (COALESCE(NULLIF(d.scope,''),'default') IN ('default','production') OR a.project_id IS NULL OR legacy.id IS NOT NULL)))
+)
+SELECT owner.scope,owner.environment_id,
+    CASE WHEN scaling.app_id IS NOT NULL THEN scaling.last_scale_in_at
+        WHEN owner.scope IN ('default','production') THEN a.last_scale_in_at END::timestamptz AS last_scale_in_at,
+    CASE WHEN scaling.app_id IS NOT NULL THEN scaling.last_scale_out_at
+        WHEN owner.scope IN ('default','production') THEN a.last_scale_out_at END::timestamptz AS last_scale_out_at
+FROM owner JOIN apps a ON a.id=owner.app_id
+LEFT JOIN runtime_environment_scaling_states scaling ON scaling.app_id=owner.app_id
+    AND scaling.environment_key=CASE WHEN owner.environment_id<>'' THEN 'environment:'||owner.environment_id
+        ELSE 'scope:'||CASE WHEN owner.scope='default' THEN 'production' ELSE owner.scope END END
+`
+
+type ReadRuntimeScalingStateForDeploymentParams struct {
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+}
+
+type ReadRuntimeScalingStateForDeploymentRow struct {
+	Scope          string
+	EnvironmentID  string
+	LastScaleInAt  pgtype.Timestamptz
+	LastScaleOutAt pgtype.Timestamptz
+}
+
+func (q *Queries) ReadRuntimeScalingStateForDeployment(ctx context.Context, db DBTX, arg ReadRuntimeScalingStateForDeploymentParams) (ReadRuntimeScalingStateForDeploymentRow, error) {
+	row := db.QueryRow(ctx, readRuntimeScalingStateForDeployment, arg.AccountID, arg.AppID, arg.DeploymentID)
+	var i ReadRuntimeScalingStateForDeploymentRow
+	err := row.Scan(
+		&i.Scope,
+		&i.EnvironmentID,
+		&i.LastScaleInAt,
+		&i.LastScaleOutAt,
 	)
 	return i, err
 }
@@ -20693,6 +20774,34 @@ func (q *Queries) StampDeadLetterEventReplay(ctx context.Context, db DBTX, arg S
 	return err
 }
 
+const stampLegacyProductionScaleIn = `-- name: StampLegacyProductionScaleIn :one
+WITH app_stamp AS (UPDATE apps SET last_scale_in_at=now() WHERE id=$1 RETURNING id,last_scale_in_at),
+    scaling_stamp AS (UPDATE runtime_environment_scaling_states scaling SET last_scale_in_at=app_stamp.last_scale_in_at
+        FROM app_stamp WHERE scaling.app_id=app_stamp.id AND scaling.scope='production')
+SELECT id FROM app_stamp
+`
+
+func (q *Queries) StampLegacyProductionScaleIn(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, stampLegacyProductionScaleIn, id)
+	var id_2 pgtype.UUID
+	err := row.Scan(&id_2)
+	return id_2, err
+}
+
+const stampLegacyProductionScaleOut = `-- name: StampLegacyProductionScaleOut :one
+WITH app_stamp AS (UPDATE apps SET last_scale_out_at=now() WHERE id=$1 RETURNING id,last_scale_out_at),
+    scaling_stamp AS (UPDATE runtime_environment_scaling_states scaling SET last_scale_out_at=app_stamp.last_scale_out_at
+        FROM app_stamp WHERE scaling.app_id=app_stamp.id AND scaling.scope='production')
+SELECT id FROM app_stamp
+`
+
+func (q *Queries) StampLegacyProductionScaleOut(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, stampLegacyProductionScaleOut, id)
+	var id_2 pgtype.UUID
+	err := row.Scan(&id_2)
+	return id_2, err
+}
+
 const stampSafeReleaseWorkerLease = `-- name: StampSafeReleaseWorkerLease :exec
 INSERT INTO safe_release_worker_lease (singleton, healthy_at, expires_at)
 VALUES (true, now(), now() + ($1::bigint * interval '1 second'))
@@ -22129,4 +22238,37 @@ func (q *Queries) ValidateInvocationWorkEnvironmentClaim(ctx context.Context, db
 	var i ValidateInvocationWorkEnvironmentClaimRow
 	err := row.Scan(&i.StagePin, &i.AdmissionValid)
 	return i, err
+}
+
+const writeRuntimeScalingState = `-- name: WriteRuntimeScalingState :exec
+INSERT INTO runtime_environment_scaling_states(app_id,environment_key,environment_id,scope,last_scale_in_at,last_scale_out_at)
+VALUES ($1::uuid,$2::text,$3::uuid,$4::text,
+    CASE WHEN $5::text='in' THEN now() ELSE $6::timestamptz END,
+    CASE WHEN $5::text='out' THEN now() ELSE $7::timestamptz END)
+ON CONFLICT(app_id,environment_key) DO UPDATE
+SET last_scale_in_at=CASE WHEN $5::text='in' THEN now() ELSE runtime_environment_scaling_states.last_scale_in_at END,
+    last_scale_out_at=CASE WHEN $5::text='out' THEN now() ELSE runtime_environment_scaling_states.last_scale_out_at END
+`
+
+type WriteRuntimeScalingStateParams struct {
+	AppID          pgtype.UUID
+	EnvironmentKey string
+	EnvironmentID  pgtype.UUID
+	Scope          string
+	Direction      string
+	PriorScaleIn   pgtype.Timestamptz
+	PriorScaleOut  pgtype.Timestamptz
+}
+
+func (q *Queries) WriteRuntimeScalingState(ctx context.Context, db DBTX, arg WriteRuntimeScalingStateParams) error {
+	_, err := db.Exec(ctx, writeRuntimeScalingState,
+		arg.AppID,
+		arg.EnvironmentKey,
+		arg.EnvironmentID,
+		arg.Scope,
+		arg.Direction,
+		arg.PriorScaleIn,
+		arg.PriorScaleOut,
+	)
+	return err
 }

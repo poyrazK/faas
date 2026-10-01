@@ -2615,6 +2615,15 @@ type RuntimeConfigRevision struct {
 	CreatedAt pgtype.Timestamptz
 }
 
+type RuntimeEnvironmentScalingState struct {
+	AppID          pgtype.UUID
+	EnvironmentKey string
+	EnvironmentID  pgtype.UUID
+	Scope          string
+	LastScaleInAt  pgtype.Timestamptz
+	LastScaleOutAt pgtype.Timestamptz
+}
+
 type RuntimeSnapshot struct {
 	ID                  pgtype.UUID
 	CatalogKey          string

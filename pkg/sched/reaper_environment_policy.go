@@ -63,6 +63,9 @@ func (l *Loop) enrichReaperEnvironmentPolicies(ctx context.Context, apps []state
 					}
 					policy.environmentID = owner.EnvironmentID
 				}
+				if policy.err == nil {
+					policy.app, policy.err = l.engine.resolveRuntimeScalingPolicy(ctx, policy.app, policy.deployment)
+				}
 				policies[row.DeploymentID] = policy
 				if policy.err != nil {
 					l.log.Warn("reaper: original workload policy unavailable", "app", app.ID, "deployment", row.DeploymentID, "err", policy.err)
@@ -83,6 +86,7 @@ func (l *Loop) enrichReaperEnvironmentPolicies(ctx context.Context, apps []state
 		row.WarmPoolSize = app.WarmPoolSize
 		row.WorkloadClass = app.WorkloadClass
 		row.EvictionPriority = app.EvictionPriority
+		row.LastScaleInAt, row.LastScaleOutAt = app.LastScaleInAt, app.LastScaleOutAt
 		row.ScaleInCooldownS = state.ScalingPolicyOrDefault(app.ScalingPolicy).ScaleInCooldownS
 		row.ConfiguredMinInstances = app.EffectiveMinInstances()
 		row.MinInstances = max(row.MinInstances, row.ConfiguredMinInstances)

@@ -237,6 +237,10 @@ func TestStageIdleParkDoesNotStampProductionScaleIn(t *testing.T) {
 	if err != nil || app.LastScaleInAt != nil {
 		t.Fatalf("stage park changed production scale-in telemetry: %+v %v", app.LastScaleInAt, err)
 	}
+	history, err := f.store.RuntimeScalingStateForDeployment(ctx, f.account.ID, f.app.ID, f.stage.ID)
+	if err != nil || history.LastScaleInAt == nil {
+		t.Fatalf("stage park did not retain its own scale-in history: %+v %v", history, err)
+	}
 }
 
 type stageReaperPrewarmStore struct{ *state.MemStore }

@@ -2676,6 +2676,9 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		dep = explicitDep
 	}
 	app, err = state.ResolveAppForDeployment(ctx, e.store, app, dep)
+	if err == nil {
+		app, err = e.resolveRuntimeScalingPolicy(ctx, app, dep)
+	}
 	if err != nil {
 		release()
 		return WakeResult{}, fmt.Errorf("sched: resolve deployment settings: %w", err)
@@ -3194,8 +3197,9 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// everything for the app" behaviour so tarball/dockerfile paths
 	// keep working unchanged.
 	//
-	// PR-C (issue #462): stamp apps.last_scale_out_at = now() on
-	// every successful wake admit. Best-effort: a stamp failure
+	// ADR-375: stamp the deployment's original environment on each successful
+	// ordinary wake admission. Production also updates its App projection.
+	// Best-effort: a stamp failure
 	// logs a warning but does NOT roll back the wake — the wake
 	// is committed and the next cycle repopulates the stamp. The
 	// "stamp miss" direction (stamp UPDATEs after the instance
@@ -3203,8 +3207,8 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// is the SAFE direction: the wake-gate admitGate consults the
 	// stamp BEFORE the insert and bypasses cooldown on NULL.
 	if !bypassGates {
-		if err := e.store.StampAppScaleOut(ctx, appID); err != nil {
-			e.log.Warn("sched: stamp apps.last_scale_out_at failed", "app", appID, "err", err)
+		if err := e.store.StampDeploymentScaleOut(ctx, dep.ID); err != nil {
+			e.log.Warn("sched: stamp original environment scale-out failed", "app", appID, "err", err)
 		}
 	}
 
@@ -7733,6 +7737,9 @@ func (e *Engine) resolveApp(ctx context.Context, appID string) (state.App, state
 			fmt.Errorf("sched: resolve app: live deployment: %w", err)
 	}
 	app, err = state.ResolveAppForDeployment(ctx, e.store, app, dep)
+	if err == nil {
+		app, err = e.resolveRuntimeScalingPolicy(ctx, app, dep)
+	}
 	if err != nil {
 		return state.App{}, state.Account{}, api.Limits{}, state.Deployment{}, fmt.Errorf("sched: resolve workload settings: %w", err)
 	}
@@ -9369,14 +9376,14 @@ const (
 //
 //   - wakeAdmit: per-app cap has headroom, no cooldown in effect,
 //     and no min-floor collision. Caller proceeds to ledger.Admit
-//     and instances INSERT. The caller stamps apps.last_scale_out_at
-//     after a successful insert (StampAppScaleOut, best-effort).
+//     and instances INSERT. The caller stamps the original environment
+//     after a successful insert (StampDeploymentScaleOut, best-effort).
 //
 //   - wakeRejectAtCap: per-app cap reached (Concurrency >= MaxConcur).
 //     Caller short-circuits with no INSERT and returns AtCapacity=true
 //     (AdmitInstance) or *api.Problem CodePlanLimitConcur (Wake).
 //
-//   - wakeCooldownHeld: now - apps.last_scale_out_at <
+//   - wakeCooldownHeld: now - original environment last_scale_out_at <
 //     ScalingPolicy.ScaleOutCooldownS AND Concurrency(appID) > 0.
 //     Cold-start wakes (concurrency == 0) bypass cooldown — the
 //     discriminator is load-bearing for the customer's "scale on
@@ -9533,8 +9540,8 @@ func (e *Engine) admitGate(ctx context.Context, app *state.App, limits api.Limit
 }
 
 // isOnScaleOutCooldown (PR-C, issue #462) returns true when
-// (a) apps.LastScaleOutAt is non-NIL, (b) Concurrency(appID) > 0,
-// and (c) time.Since(*apps.LastScaleOutAt) < ScaleOutCooldownS.
+// (a) the resolved environment LastScaleOutAt is non-NIL,
+// (b) Concurrency(appID) > 0, and (c) the stamp is within ScaleOutCooldownS.
 //
 // The Concurrency > 0 discriminator is load-bearing: it lets a
 // cold start (zero concurrency) bypass cooldown even when

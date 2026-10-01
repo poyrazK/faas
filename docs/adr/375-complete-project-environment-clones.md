@@ -2116,3 +2116,43 @@ adapters, coordinated customer-data capture and full-clone activation and
 qualification also remain open. The public complete-clone command remains
 unavailable. Repository-wide tests/lint and native test-metal, leakcheck and
 provider acceptance remain unverified.
+
+### Scaling history belongs to the original environment
+
+Operational scale-in and scale-out clocks are now persisted per app and
+original environment UUID. They reset for a cloned or recreated environment;
+deployment generations in one lifetime share them. A stage never reads or
+writes the production App clock projection. Pinned default/production aliases
+share their production environment, and genuinely unpinned legacy aliases
+share a production scope key. PostgreSQL legacy runtime-value ownership now
+matches MemStore for those aliases, without inferring a production UUID from
+a desired environment created independently of the deployment.
+
+Stamp writers lock the original environment, app, deployment and retained pin,
+then recheck ownership before publishing history. Lost pins or owners,
+terminal deployments and deleted/recreated environments reject writes.
+Environment deletion removes its operational clock rows. Production-only
+compatibility stamps update existing production rows and the App projection.
+Ordinary native wake admissions consult and stamp the actual deployment's
+history. Idle and aggressive reaping use environment clocks and stamp the
+actual parked instance's deployment once per environment.
+
+Verification: the focused scheduler gate passed in 1.026 seconds and the full
+scheduler package passed in 18.020 seconds on macOS. The combined MemStore and
+real PostgreSQL scaling, runtime-value ownership, snapshot-publication and
+clone-schema coverage gate passed in 35.472 seconds. Tests cover independent
+stage/production cooldowns, retained history across generations, fresh
+replacement history, compatibility aliases/stamps, caller pointer isolation,
+foreign identities, lost owner/pin rejection and a PostgreSQL writer blocked
+on deletion of its original environment. Independent SQLC 1.31.1 regeneration
+matches; the whitespace check passes. Scheduler VM calls use test fakes.
+
+Admission counters and their cold-start discriminator still use app-wide
+concurrency. Explicit deployment reconciliation retains its existing gate
+bypass. These paths, minimum/warm replica fills, load/prewarm feeds, billing,
+debugger/audit aggregation and stage resource cleanup still need environment
+ownership. Captured configuration/warm publication fences, remaining native
+adapters and configuration/data strategies, coordinated customer-data capture
+and full-clone activation/qualification remain open. The public complete-clone
+command remains unavailable; repository-wide tests/lint and native x86_64 KVM
+test-metal, leakcheck and provider acceptance remain unverified.

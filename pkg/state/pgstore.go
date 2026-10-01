@@ -13042,30 +13042,16 @@ func (s *PgStore) CountActiveCronInvocations(ctx context.Context, cronID string)
 // row matches appID (defensive — schedd never calls this for an
 // unknown app); callers should log and continue.
 func (s *PgStore) StampAppScaleOut(ctx context.Context, appID string) error {
-	tag, err := s.pool.Exec(ctx,
-		`update apps set last_scale_out_at = now() where id = $1`, appID)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+	_, err := sqlc.New().StampLegacyProductionScaleOut(ctx, s.pool, mustPgUUID(appID))
+	return mapErr(err)
 }
 
 // StampAppScaleIn (PR-C, issue #462) writes the apps
 // last_scale_in_at column to now(). Same shape as
 // StampAppScaleOut.
 func (s *PgStore) StampAppScaleIn(ctx context.Context, appID string) error {
-	tag, err := s.pool.Exec(ctx,
-		`update apps set last_scale_in_at = now() where id = $1`, appID)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+	_, err := sqlc.New().StampLegacyProductionScaleIn(ctx, s.pool, mustPgUUID(appID))
+	return mapErr(err)
 }
 
 func (s *PgStore) ListCronsForApp(ctx context.Context, appID string) ([]Cron, error) {

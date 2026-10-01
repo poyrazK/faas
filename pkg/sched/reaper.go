@@ -138,23 +138,21 @@ type InstanceInfo struct {
 	// compute 0 and want to park them. RAM pressure (SelectEvictions)
 	// still wins — invariant §6.2-2 is the ceiling.
 	WorkloadClass state.WorkloadClass
-	// LastScaleInAt is the apps-row last_scale_in_at stamp
-	// (PR-C, issue #462). Carrier semantics: every row of the same
-	// app carries the SAME value (sourced from app.LastScaleInAt in
-	// runReaper; nil if the customer has never had a scale-in event).
+	// LastScaleInAt is the original environment's last scale-in stamp.
+	// Carrier semantics: every row in the same environment lifetime carries
+	// the same history; legacy production rows use the App projection.
 	// ReapIdle and ReapAggressive combine it with LastScaleOutAt and use
 	// the later timestamp as the cooldown anchor. Selecting the FIRST
-	// row's stamps and consulting once per app is the loop-side contract.
+	// row's stamps and consulting once per environment is the loop contract.
 	LastScaleInAt *time.Time
-	// LastScaleOutAt is the apps-row last_scale_out_at stamp. Scale-in uses the
+	// LastScaleOutAt is the original environment's scale-out stamp. Scale-in uses the
 	// later of LastScaleInAt and LastScaleOutAt as its cooldown anchor so a
 	// freshly admitted burst replica cannot be parked again before the
 	// scale-in stabilization window elapses.
 	LastScaleOutAt *time.Time
-	// ScaleInCooldownS is the per-app scale-in cooldown in seconds
-	// (PR-C, issue #462). Same carrier semantics as MinInstances —
-	// sourced from app.ScalingPolicy.ScaleInCooldownS via
-	// ScalingPolicyOrDefault; identical across rows of one app. Zero
+	// ScaleInCooldownS is the pinned deployment's scale-in cooldown in seconds.
+	// It is sourced from ScalingPolicyOrDefault after resolving the deployed
+	// workload settings. Zero
 	// disables cooldown enforcement (the customer has not opted in).
 	ScaleInCooldownS int
 	// Mode (issue #72 / ADR-125) is the instance's mode — sourced

@@ -531,6 +531,8 @@
     "columns": ["key_id", "node_id", "public_key_pem", "retire_after"]},
   {"table": "service_caller_keys", "kind": "platform_configuration",
     "columns": ["created_at", "key_id", "node_id", "public_key_pem", "rotated_at"]},
+  {"table": "runtime_environment_scaling_states", "kind": "operational",
+    "columns": ["app_id", "environment_id", "environment_key", "last_scale_in_at", "last_scale_out_at", "scope"]},
   {"table": "sessions", "kind": "account_identity",
     "columns": ["account_id", "binding_hash", "id", "issued_at", "issued_ip", "issued_ua", "last_seen_at", "revoked_at"]},
   {"table": "snapshot_fanout_events", "kind": "operational",

@@ -2534,7 +2534,9 @@ func (l *Loop) runReaper(ctx context.Context) {
 	// locally — hoisting here is O(N+M) for the whole reaper.
 	instanceToApp := make(map[string]string, len(snapshot))
 	instanceIsProduction := make(map[string]bool, len(snapshot))
+	instanceInfoByID := make(map[string]InstanceInfo, len(snapshot))
 	for _, s := range snapshot {
+		instanceInfoByID[s.Instance] = s
 		instanceToApp[s.Instance] = s.AppID
 		instanceIsProduction[s.Instance] = reaperProductionScope(s.Scope) && !s.PolicyUnavailable
 	}
@@ -2551,11 +2553,15 @@ func (l *Loop) runReaper(ctx context.Context) {
 	// same app in the same tick is counted once. See reaper.go for
 	// the load-bearing contract.
 	idleParkByApp := map[string]struct{}{}
+	idleParkByEnvironment := map[string]InstanceInfo{}
 	cooldownHeldByApp := map[string]struct{}{}
 	for _, id := range ReapIdle(now, snapshot, l.ops, cooldownHeldByApp) {
 		if err := l.reaperShutdown(ctx, snapshot, id); err != nil {
 			l.log.Warn("reaper: idle park", "instance", id, "err", err)
 			continue
+		}
+		if instance, ok := instanceInfoByID[id]; ok {
+			idleParkByEnvironment[reaperEnvironmentKey(instance)] = instance
 		}
 		// Issue #475: per-tier eviction counter. The idle path is
 		// the per-app floor's friend — both 'best_effort' and
@@ -2580,10 +2586,10 @@ func (l *Loop) runReaper(ctx context.Context) {
 			idleParkByApp[appID] = struct{}{}
 		}
 	}
+	for _, instance := range idleParkByEnvironment {
+		l.stampReaperScaleIn(ctx, instance)
+	}
 	for appID := range idleParkByApp {
-		if err := l.engine.Store().StampAppScaleIn(ctx, appID); err != nil {
-			l.log.Warn("reaper: stamp scale-in", "app", appID, "err", err)
-		}
 		// Issue #557 closure / ADR-072: emit a
 		// `instances.parked_min_instances_released` audit row when
 		// the app-wide max floor (post-enrichment) has dropped
@@ -2945,7 +2951,7 @@ func (l *Loop) runReaperAggressive(ctx context.Context, apps []state.App, snapsh
 		// The audit now lives in runReaper's ReapIdle branch,
 		// keyed on the lastFloorByApp carrier and the
 		// post-enrichment app-wide max floor.
-		aggressiveParkOK := false
+		aggressiveParkByEnvironment := map[string]InstanceInfo{}
 		for _, id := range ids {
 			if err := l.reaperShutdown(ctx, snapshot, id); err != nil {
 				l.log.Warn("reaper: aggressive park", "instance", id, "err", err)
@@ -2967,15 +2973,18 @@ func (l *Loop) runReaperAggressive(ctx context.Context, apps []state.App, snapsh
 					counter.Inc()
 				}
 			}
-			aggressiveParkOK = true
+			for _, instance := range snapshot {
+				if instance.Instance == id {
+					aggressiveParkByEnvironment[reaperEnvironmentKey(instance)] = instance
+					break
+				}
+			}
 		}
 		// PR-C (issue #462): stamp last_scale_in_at after a
 		// successful aggressive park. Best-effort — a stamp failure
 		// logs a warning but does not roll back the parks.
-		if aggressiveParkOK {
-			if err := l.engine.Store().StampAppScaleIn(ctx, appID); err != nil {
-				l.log.Warn("reaper: stamp scale-in (aggressive)", "app", appID, "err", err)
-			}
+		for _, instance := range aggressiveParkByEnvironment {
+			l.stampReaperScaleIn(ctx, instance)
 		}
 	}
 }
