@@ -865,3 +865,7 @@ Draft [#3994](https://github.com/poyrazK/faas/pull/3994), commit `e110dee0e`, st
 ### UDP CLI local port validation (2026-10-01)
 
 The UDP add command now applies the shared workload-port validator and public reservation range before HTTP create. CLI fixtures cover negative/oversized guest ports and both public-range boundaries and prove no requests occur for invalid input, alongside existing routing, create/list/enable/disable/delete and JSON output cases. The real-HTTP CLI fixture passed three race repetitions without skips and scoped lint reported zero issues (`/tmp/gregale-udp-cli-{tests,lint}.log`). All launched handles are terminal. CLI isolated publication, schema/SDK review and native/deployed acceptance remain pending.
+
+### Isolated UDP CLI review (2026-10-01)
+
+Draft [#3995](https://github.com/poyrazK/faas/pull/3995), commit `c9d7607f8`, stacks on Go client #3994 and isolates app/apps UDP listener command dispatch, create/list/enable/disable/delete, text/JSON output and local shared port validation. The isolated real-HTTP CLI fixture passed three race repetitions without skips and scoped lint found zero issues (`/tmp/gregale-udp-cli-isolated-{tests,lint}.log`). All launched handles are terminal. Schema/other SDK publication and native/deployed acceptance remain pending; no rollout or merge occurred.
