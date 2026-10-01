@@ -1348,3 +1348,7 @@ test-flags-metal: ## Validate Node Flags refresh after native VM restore (root, 
 .PHONY: test-issues
 test-issues: ## Real PostgreSQL and SDK process acceptance for Gregale Issues
 	@bash scripts/test-issues.sh
+
+.PHONY: udp-postgres-check
+udp-postgres-check: ## Require actual PostgreSQL UDP contracts without skips
+	bash scripts/ci/udp-postgres-check.sh
