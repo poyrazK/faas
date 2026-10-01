@@ -276,6 +276,10 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
+	"GET /v1/execution-workflows/{workflow_id}":             "GetExecutionWorkflow",
+	"GET /v1/executions/capabilities":                       "GetExecutionCapabilities",
+	"POST /v1/executions/{id}/artifact-grants":              "CreateExecutionArtifactGrant",
+	"DELETE /v1/execution-artifact-grants/{id}":             "RevokeExecutionArtifactGrant",
 	"POST /v1/apps/{slug}/issue-events":                     "IngestIssueEvent",
 	"POST /v1/apps/{slug}/issue-events/otlp/{signal}":       "IngestIssueOTLP",
 	"GET /v1/apps/{slug}/issues":                            "ListIssues",

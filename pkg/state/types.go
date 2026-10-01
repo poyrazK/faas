@@ -953,6 +953,10 @@ func (k ConsumerKey) Active(now time.Time) bool {
 type APIKey struct {
 	ID        string
 	AccountID string
+	// RunsPrincipalID is a stable, internal key-family identity used to
+	// partition disposable execution receipts between narrow Runs agents.
+	// It is preserved across key rotation and never returned in API DTOs.
+	RunsPrincipalID string `json:"-"`
 	// PlatformTenantID is set only on the synthetic APIKey projection for a
 	// tenant-bound self-service bearer. Persisted account keys leave it empty.
 	PlatformTenantID string

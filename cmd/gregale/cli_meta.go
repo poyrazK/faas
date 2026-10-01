@@ -1605,6 +1605,8 @@ var cliCommands = []cliCommand{
 		DocSlug: "run",
 		Short:   "Run untrusted code in an isolated disposable microVM",
 		Flags: []cliFlag{
+			{Name: "workflow-id", Short: "caller-generated workflow grouping id", Value: "ID"},
+			{Name: "step-label", Short: "short label for this step within --workflow-id", Value: "LABEL"},
 			{Name: "profile", Short: "preinstalled dependencies (data requires python313)", Value: "P", ClosedSet: []string{"standard", "python-data-v1"}},
 			{Name: "runtime", Short: "runtime (node22|node24|python312|python313)", Value: "R", ClosedSet: []string{"node22", "node24", "python312", "python313"}},
 			{Name: "source", Short: "inline source code", Value: "CODE"},
@@ -1632,6 +1634,14 @@ var cliCommands = []cliCommand{
 				{Name: "limit", Short: "maximum number of runs (1..200)", Value: "N"},
 				{Name: "offset", Short: "number of matching runs to skip", Value: "N"},
 				{Name: "status", Short: "filter by lifecycle status", Value: "STATUS", ClosedSet: []string{"queued", "restoring", "running", "succeeded", "failed", "timed_out", "out_of_memory", "cancelled"}},
+				{Name: "workflow-id", Short: "filter by caller-generated workflow id", Value: "ID"},
+			}},
+			{Name: "workflow", Short: "Show workflow status or resume a sequential Runs plan", Positionals: []string{"<workflow-id>"}, Subcommands: []cliSub{
+				{Name: "run", Short: "Run or resume a sequential disposable Runs plan", Flags: []cliFlag{
+					{Name: "manifest", Short: "JSON workflow plan file", Req: true, Value: "PLAN.json"},
+					{Name: "poll-interval", Short: "status polling interval", Value: "D"},
+					{Name: "wait-timeout", Short: "maximum client wait duration", Value: "D"},
+				}, Examples: []string{"gregale runs workflow run --manifest incident.json --json"}},
 			}},
 			{Name: "artifacts", Short: "Save output artifacts from a successful run", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "output-dir", Short: "local destination (required)", Value: "DIR"}}},
 			{Name: "get", Short: "Show one run"},
@@ -1745,7 +1755,9 @@ var cliCommands = []cliCommand{
 		Short:   "Manage API keys (keys list|add|rm|rotate|grace-window)",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List API keys"},
-			{Name: "add", Short: "Mint a new API key", Positionals: []string{"<label>"}},
+			{Name: "add", Short: "Mint a new API key", Positionals: []string{"<label>"}, Flags: []cliFlag{
+				{Name: "scopes", Short: "comma-separated API key scopes; omit for full admin access", Value: "SCOPE,..."},
+			}, Examples: []string{"gregale keys add agent-runner --scopes runs:write"}},
 			{Name: "rm", Short: "Revoke an API key"},
 			{Name: subRotate, Short: "Rotate an API key"},
 			{Name: "grace-window", Short: "Set the rotation grace window"},

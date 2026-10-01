@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -887,6 +888,96 @@ func TestPostgresGatewayKeepsManagedCredentialBehindIdentityAndRouteChecks(t *te
 		bytes.Contains([]byte(allowed.Header().Get("X-Provider-Result")), []byte(providerAuthorization)) ||
 		allowed.Header().Get("Authorization") != "" {
 		t.Fatal("provider credential leaked in the gateway response")
+	}
+}
+
+func TestPostgresExecutionAuthorizerRechecksLeaseAndRunsGrant(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	ctx := context.Background()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewPgStore(pool)
+	account, err := store.CreateAccount(ctx, "outbound-run-auth-"+uuid.NewString()+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	integrationID := uuid.NewString()
+	offer, err := store.CreateOutboundIntegration(ctx, state.OutboundIntegrationOffer{
+		ID: integrationID, AccountID: account.ID, Name: "run-auth",
+		Origin: "https://api.example.com", AllowedMethods: []string{http.MethodGet},
+		AllowedPathPrefixes: []string{"/v1"}, Enabled: true,
+		CredentialSource: outbound.CredentialSourceCustomerSealed, OwnerKind: outbound.IntegrationOwnerCustomer,
+		RequestPolicy: api.DefaultOutboundRequestPolicy(),
+	})
+	if err != nil {
+		t.Fatalf("CreateOutboundIntegration: %v", err)
+	}
+	if err := store.SetOutboundCredential(ctx, account.ID, offer.ID, []byte("sealed-provider-credential")); err != nil {
+		t.Fatalf("SetOutboundCredential: %v", err)
+	}
+	if err := store.SetOutboundIntegrationRunsEnabled(ctx, account.ID, offer.ID, true); err != nil {
+		t.Fatalf("SetOutboundIntegrationRunsEnabled: %v", err)
+	}
+	request := api.CreateExecutionRequest{
+		Runtime: api.ExecutionRuntimePython313,
+		Source:  "def main(input, context):\n    return input",
+		Input:   []byte(`{"value":1}`),
+		Limits:  &api.ExecutionLimitRequest{TimeoutMS: 60_000},
+	}
+	resolved, problem := request.Resolve(api.PlanPro)
+	if problem != nil {
+		t.Fatalf("resolve execution: %v", problem)
+	}
+	admittedAt := time.Now().UTC().Add(-time.Second)
+	created, err := store.CreateExecution(ctx, state.CreateExecutionParams{
+		AccountID: account.ID, Request: resolved, SourceBytes: len(request.Source), InputBytes: len(request.Input),
+		AdmittedAt: admittedAt, DeadlineAt: admittedAt.Add(time.Duration(resolved.Limits.TimeoutMS) * time.Millisecond),
+		SealedPayload: []byte("sealed-run-request"), PayloadKID: "run-auth-test",
+		OutboundIntegrationIDs: []string{offer.ID},
+	})
+	if err != nil {
+		t.Fatalf("CreateExecution: %v", err)
+	}
+	claimedAt := time.Now().UTC()
+	claim, err := store.ClaimExecution(ctx, "outbound-run-auth-test", claimedAt, time.Minute)
+	if err != nil || claim.ID != created.ID || claim.LeaseToken == nil {
+		t.Fatalf("ClaimExecution = %+v, %v", claim, err)
+	}
+	digest := "sha256:" + strings.Repeat("a", 64)
+	if _, err := store.PinExecutionRuntime(ctx, claim.ID, *claim.LeaseToken, digest, claimedAt.Add(time.Millisecond)); err != nil {
+		t.Fatalf("PinExecutionRuntime: %v", err)
+	}
+	if _, err := store.MarkExecutionRunning(ctx, claim.ID, *claim.LeaseToken, claimedAt.Add(2*time.Millisecond)); err != nil {
+		t.Fatalf("MarkExecutionRunning: %v", err)
+	}
+	authorizer, err := outbound.NewPostgresExecutionAuthorizer(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := outbound.ExecutionIdentity{AccountID: account.ID, ExecutionID: claim.ID, LeaseToken: *claim.LeaseToken}
+	if allowed, err := authorizer.AuthorizeExecution(ctx, identity, offer.ID); err != nil || !allowed {
+		t.Fatalf("active Run authorization = %v, %v; want allowed", allowed, err)
+	}
+	stale := identity
+	stale.LeaseToken = uuid.NewString()
+	if allowed, err := authorizer.AuthorizeExecution(ctx, stale, offer.ID); err != nil || allowed {
+		t.Fatalf("stale lease authorization = %v, %v; want denied", allowed, err)
+	}
+	if err := store.SetOutboundIntegrationRunsEnabled(ctx, account.ID, offer.ID, false); err != nil {
+		t.Fatalf("revoke Runs grant: %v", err)
+	}
+	if allowed, err := authorizer.AuthorizeExecution(ctx, identity, offer.ID); err != nil || allowed {
+		t.Fatalf("revoked Runs authorization = %v, %v; want denied", allowed, err)
+	}
+	if err := store.SetOutboundIntegrationRunsEnabled(ctx, account.ID, offer.ID, true); err != nil {
+		t.Fatalf("restore Runs grant for expiry check: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE executions SET lease_expires_at = clock_timestamp() - interval '1 second' WHERE id = $1::uuid`, claim.ID); err != nil {
+		t.Fatalf("expire execution lease: %v", err)
+	}
+	if allowed, err := authorizer.AuthorizeExecution(ctx, identity, offer.ID); err != nil || allowed {
+		t.Fatalf("expired lease authorization = %v, %v; want denied", allowed, err)
 	}
 }
 

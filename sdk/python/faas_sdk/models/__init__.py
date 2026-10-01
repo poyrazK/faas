@@ -384,6 +384,7 @@ from .create_edge_rule_request import CreateEdgeRuleRequest
 from .create_edge_rule_request_kind import CreateEdgeRuleRequestKind
 from .create_edge_rule_request_match_headers import CreateEdgeRuleRequestMatchHeaders
 from .create_edge_rule_request_validate_mode import CreateEdgeRuleRequestValidateMode
+from .create_execution_artifact_grant_request import CreateExecutionArtifactGrantRequest
 from .create_inbound_webhook_endpoint_request import CreateInboundWebhookEndpointRequest
 from .create_inbound_webhook_endpoint_request_provider import CreateInboundWebhookEndpointRequestProvider
 from .create_issue_ingest_token_request import CreateIssueIngestTokenRequest
@@ -761,6 +762,15 @@ from .exclusive_trigger_binding_request import ExclusiveTriggerBindingRequest
 from .exclusive_work_policy_list import ExclusiveWorkPolicyList
 from .exclusive_work_policy_record import ExclusiveWorkPolicyRecord
 from .execution_artifact import ExecutionArtifact
+from .execution_artifact_grant_response import ExecutionArtifactGrantResponse
+from .execution_artifact_input import ExecutionArtifactInput
+from .execution_capabilities_response import ExecutionCapabilitiesResponse
+from .execution_capabilities_response_network_modes_item import ExecutionCapabilitiesResponseNetworkModesItem
+from .execution_capabilities_response_runtimes_item import ExecutionCapabilitiesResponseRuntimesItem
+from .execution_capabilities_response_unavailable_reasons_item import (
+    ExecutionCapabilitiesResponseUnavailableReasonsItem,
+)
+from .execution_capability_limits import ExecutionCapabilityLimits
 from .execution_failure import ExecutionFailure
 from .execution_file import ExecutionFile
 from .execution_limit_request import ExecutionLimitRequest
@@ -770,6 +780,10 @@ from .execution_limit_request_memory_mb import ExecutionLimitRequestMemoryMb
 from .execution_list_response import ExecutionListResponse
 from .execution_network_policy import ExecutionNetworkPolicy
 from .execution_network_policy_mode import ExecutionNetworkPolicyMode
+from .execution_profile_capability import ExecutionProfileCapability
+from .execution_profile_capability_packages import ExecutionProfileCapabilityPackages
+from .execution_profile_capability_profile import ExecutionProfileCapabilityProfile
+from .execution_profile_capability_runtimes_item import ExecutionProfileCapabilityRuntimesItem
 from .execution_response import ExecutionResponse
 from .execution_response_packages import ExecutionResponsePackages
 from .execution_response_profile import ExecutionResponseProfile
@@ -777,6 +791,9 @@ from .execution_response_runtime import ExecutionResponseRuntime
 from .execution_response_status import ExecutionResponseStatus
 from .execution_usage import ExecutionUsage
 from .execution_usage_summary_response import ExecutionUsageSummaryResponse
+from .execution_workflow_response import ExecutionWorkflowResponse
+from .execution_workflow_status_counts import ExecutionWorkflowStatusCounts
+from .execution_workflow_usage import ExecutionWorkflowUsage
 from .export_app_debug_requests_format import ExportAppDebugRequestsFormat
 from .export_focus_invoices_format import ExportFOCUSInvoicesFormat
 from .failure_rule import FailureRule
@@ -1564,6 +1581,7 @@ from .put_outbound_binding_daily_request_budget_request import PutOutboundBindin
 from .put_outbound_credential_request import PutOutboundCredentialRequest
 from .put_outbound_daily_request_budget_request import PutOutboundDailyRequestBudgetRequest
 from .put_outbound_request_policy_request import PutOutboundRequestPolicyRequest
+from .put_outbound_runs_binding_request import PutOutboundRunsBindingRequest
 from .queue_binding_response import QueueBindingResponse
 from .queue_binding_response_mode import QueueBindingResponseMode
 from .queue_binding_response_workload_class import QueueBindingResponseWorkloadClass
@@ -1641,6 +1659,7 @@ from .retry_deployment_request_from_stage import RetryDeploymentRequestFromStage
 from .retry_github_check_update_confirm import RetryGithubCheckUpdateConfirm
 from .retry_github_webhook_delivery_confirm import RetryGithubWebhookDeliveryConfirm
 from .retry_policy_dto import RetryPolicyDTO
+from .revoke_execution_artifact_grant_response import RevokeExecutionArtifactGrantResponse
 from .revoke_platform_tenant_self_consumers_request import RevokePlatformTenantSelfConsumersRequest
 from .rollback_feature_flags_request import RollbackFeatureFlagsRequest
 from .rollback_operator_runtime_config_request import RollbackOperatorRuntimeConfigRequest
@@ -2384,6 +2403,7 @@ __all__ = (
     "CreateEdgeRuleRequestKind",
     "CreateEdgeRuleRequestMatchHeaders",
     "CreateEdgeRuleRequestValidateMode",
+    "CreateExecutionArtifactGrantRequest",
     "CreateInboundWebhookEndpointRequest",
     "CreateInboundWebhookEndpointRequestProvider",
     "CreateIssueIngestTokenRequest",
@@ -2751,6 +2771,13 @@ __all__ = (
     "ExclusiveWorkPolicyList",
     "ExclusiveWorkPolicyRecord",
     "ExecutionArtifact",
+    "ExecutionArtifactGrantResponse",
+    "ExecutionArtifactInput",
+    "ExecutionCapabilitiesResponse",
+    "ExecutionCapabilitiesResponseNetworkModesItem",
+    "ExecutionCapabilitiesResponseRuntimesItem",
+    "ExecutionCapabilitiesResponseUnavailableReasonsItem",
+    "ExecutionCapabilityLimits",
     "ExecutionFailure",
     "ExecutionFile",
     "ExecutionLimitRequest",
@@ -2760,6 +2787,10 @@ __all__ = (
     "ExecutionListResponse",
     "ExecutionNetworkPolicy",
     "ExecutionNetworkPolicyMode",
+    "ExecutionProfileCapability",
+    "ExecutionProfileCapabilityPackages",
+    "ExecutionProfileCapabilityProfile",
+    "ExecutionProfileCapabilityRuntimesItem",
     "ExecutionResponse",
     "ExecutionResponsePackages",
     "ExecutionResponseProfile",
@@ -2767,6 +2798,9 @@ __all__ = (
     "ExecutionResponseStatus",
     "ExecutionUsage",
     "ExecutionUsageSummaryResponse",
+    "ExecutionWorkflowResponse",
+    "ExecutionWorkflowStatusCounts",
+    "ExecutionWorkflowUsage",
     "ExportAppDebugRequestsFormat",
     "ExportFOCUSInvoicesFormat",
     "FailureRule",
@@ -3510,6 +3544,7 @@ __all__ = (
     "PutOutboundCredentialRequest",
     "PutOutboundDailyRequestBudgetRequest",
     "PutOutboundRequestPolicyRequest",
+    "PutOutboundRunsBindingRequest",
     "QueueBindingResponse",
     "QueueBindingResponseMode",
     "QueueBindingResponseWorkloadClass",
@@ -3587,6 +3622,7 @@ __all__ = (
     "RetryGithubCheckUpdateConfirm",
     "RetryGithubWebhookDeliveryConfirm",
     "RetryPolicyDTO",
+    "RevokeExecutionArtifactGrantResponse",
     "RevokePlatformTenantSelfConsumersRequest",
     "RollbackFeatureFlagsRequest",
     "RollbackOperatorRuntimeConfigRequest",

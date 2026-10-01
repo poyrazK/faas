@@ -15,6 +15,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -25,15 +26,39 @@ const (
 	executionWaitTimeoutDefault  = 5 * time.Minute
 )
 
+type executionArtifactInputFlags []api.ExecutionArtifactInput
+
+func (f *executionArtifactInputFlags) String() string { return "" }
+
+func (f *executionArtifactInputFlags) Set(value string) error {
+	if len(*f) >= api.ExecutionArtifactInputMaxFiles {
+		return fmt.Errorf("at most %d artifact inputs are allowed", api.ExecutionArtifactInputMaxFiles)
+	}
+	colon, equal := strings.IndexByte(value, ':'), strings.LastIndexByte(value, '=')
+	if colon <= 0 || equal <= colon+1 || equal == len(value)-1 {
+		return fmt.Errorf("expected RUN_ID:ARTIFACT_NAME=DESTINATION_PATH")
+	}
+	*f = append(*f, api.ExecutionArtifactInput{
+		ExecutionID: value[:colon],
+		Name:        value[colon+1 : equal],
+		Path:        value[equal+1:],
+	})
+	return nil
+}
+
 func cmdRun(args []string) int {
 	fs := newFlagSet("run", flag.ContinueOnError)
 	runtimeName := fs.String("runtime", string(api.ExecutionRuntimeNode22), "isolated runtime (node22|node24|python312|python313)")
 	profile := fs.String("profile", string(api.ExecutionProfileStandard), "dependency profile (standard|python-data-v1; data requires python313)")
+	workflowID := fs.String("workflow-id", "", "caller-generated workflow grouping id")
+	stepLabel := fs.String("step-label", "", "short label for this step within --workflow-id")
 	source := fs.String("source", "", "source code (use --file for a local file)")
 	file := fs.String("file", "", "read source from a local regular file")
 	dir := fs.String("dir", "", "read a bounded ephemeral source bundle from a local directory")
 	var outputFiles executionOutputFileFlags
 	fs.Var(&outputFiles, "output-file", "file below context.output_dir to export (repeatable)")
+	var artifactInputs executionArtifactInputFlags
+	fs.Var(&artifactInputs, "artifact-input", "stage RUN_ID:ARTIFACT_NAME at DESTINATION_PATH from a successful run (repeatable; requires --dir)")
 	outputDir := fs.String("output-dir", "", "save exported artifacts locally; implies --wait")
 	entrypoint := fs.String("entrypoint", "", "normalized bundle path to execute (required with --dir)")
 	input := fs.String("input", "", "JSON input (inline | @file | - for stdin)")
@@ -58,9 +83,12 @@ func cmdRun(args []string) int {
 	}
 	legacyMode := *source != "" || *file != ""
 	bundleMode := *dir != ""
-	if len(positional) != 0 || (legacyMode && bundleMode) || (!legacyMode && !bundleMode) || (*source != "" && *file != "") || (bundleMode && *entrypoint == "") || (!bundleMode && *entrypoint != "") {
-		PrintUsage(osStderr, "usage: gregale run --runtime R (--source CODE | --file PATH | --dir PATH --entrypoint FILE) [--input J|@file|-] [--wait|--watch]", "run")
+	if len(positional) != 0 || (legacyMode && bundleMode) || (!legacyMode && !bundleMode) || (*source != "" && *file != "") || (bundleMode && *entrypoint == "") || (!bundleMode && *entrypoint != "") || (!bundleMode && len(artifactInputs) != 0) {
+		PrintUsage(osStderr, "usage: gregale run --runtime R (--source CODE | --file PATH | --dir PATH --entrypoint FILE) [--workflow-id ID --step-label LABEL] [--artifact-input RUN_ID:NAME=PATH]... [--input J|@file|-] [--wait|--watch]", "run")
 		return 1
+	}
+	if err := api.ValidateExecutionWorkflowMetadata(*workflowID, *stepLabel); err != nil {
+		return printErr("Invalid workflow metadata", err)
 	}
 	if *pollInterval <= 0 || *waitTimeout <= 0 {
 		PrintUsage(osStderr, "usage: gregale run ... [--poll-interval D] [--wait-timeout D]", "run")
@@ -86,9 +114,11 @@ func cmdRun(args []string) int {
 		return printErr("Invalid input", err)
 	}
 	req := api.CreateExecutionRequest{
+		WorkflowID: *workflowID, StepLabel: *stepLabel,
 		Profile: api.ExecutionProfile(*profile),
 		Runtime: api.ExecutionRuntime(*runtimeName), Source: string(sourceBytes),
-		Entrypoint: *entrypoint, Files: files, Input: inputBytes, OutputFiles: outputFiles,
+		Entrypoint: *entrypoint, Files: files, ArtifactInputs: artifactInputs,
+		Input: inputBytes, OutputFiles: outputFiles,
 		Limits: &api.ExecutionLimitRequest{
 			TimeoutMS:       *timeoutMS,
 			MemoryMB:        *memoryMB,
@@ -170,23 +200,29 @@ func cmdRun(args []string) int {
 
 func cmdRuns(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(osStderr, "usage: gregale runs <list|get|status|cancel|artifacts> [<id>]", "runs")
+		PrintUsage(osStderr, "usage: gregale runs <list|get|status|cancel|artifacts|workflow|capabilities> [<id>]", "runs")
 		return 1
 	}
 	verb := args[0]
+	if verb == "capabilities" {
+		return cmdRunsCapabilities(args[1:])
+	}
 	if verb == "artifacts" {
 		return cmdRunsArtifacts(args[1:])
+	}
+	if verb == "workflow" {
+		return cmdRunsWorkflow(args[1:])
 	}
 	if verb == "list" {
 		return cmdRunsList(args[1:])
 	}
 	if verb != "get" && verb != statusLiteral && verb != "cancel" {
-		PrintUsage(osStderr, "usage: gregale runs <list|get|status|cancel|artifacts> [<id>]", "runs")
+		PrintUsage(osStderr, "usage: gregale runs <list|get|status|cancel|artifacts|workflow|capabilities> [<id>]", "runs")
 		return 1
 	}
 	flags, positional := splitArgsForFlags(args[1:])
 	if len(flags) != 0 || len(positional) != 1 {
-		PrintUsage(osStderr, "usage: gregale runs <list|get|status|cancel|artifacts> [<id>]", "runs")
+		PrintUsage(osStderr, "usage: gregale runs <list|get|status|cancel|artifacts|capabilities> [<id>]", "runs")
 		return 1
 	}
 	client, err := authedClient()
@@ -217,29 +253,175 @@ func cmdRuns(args []string) int {
 	return 0
 }
 
-func cmdRunsList(args []string) int {
-	fs := newFlagSet("runs-list", flag.ContinueOnError)
-	limit := fs.Int("limit", 50, "maximum number of runs (1..200)")
-	offset := fs.Int("offset", 0, "number of matching runs to skip")
-	status := fs.String("status", "", "filter by lifecycle status")
+func cmdRunsWorkflow(args []string) int {
+	if len(args) > 0 && args[0] == "run" {
+		return cmdRunsWorkflowRun(args[1:])
+	}
 	flags, positional := splitArgsForFlags(args)
-	if err := fs.Parse(flags); err != nil {
-		return 1
-	}
-	if len(positional) != 0 || validateCLILimit("limit", *limit, 200) != nil || *offset < 0 {
-		PrintUsage(osStderr, "usage: gregale runs list [--limit N] [--offset N] [--status STATUS]", "runs")
-		return 1
-	}
-	filter := api.ExecutionStatus(*status)
-	if filter != "" && !filter.Valid() {
-		PrintUsage(osStderr, "usage: gregale runs list [--limit N] [--offset N] [--status STATUS]", "runs")
+	if len(flags) != 0 || len(positional) != 1 {
+		PrintUsage(osStderr, "usage: gregale runs workflow <workflow-id> [--json]", "runs")
 		return 1
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.ListExecutions(context.Background(), *limit, *offset, filter)
+	resp, err := client.GetExecutionWorkflow(context.Background(), positional[0])
+	if err != nil {
+		return printErr("Could not get run workflow", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(resp))
+	}
+	counts := resp.StatusCounts
+	usage := resp.Usage
+	PrintOK(osStdout, "Workflow %s: runs=%d queued=%d restoring=%d running=%d succeeded=%d failed=%d timed_out=%d out_of_memory=%d cancelled=%d", resp.WorkflowID, resp.RunCount, counts.Queued, counts.Restoring, counts.Running, counts.Succeeded, counts.Failed, counts.TimedOut, counts.OutOfMemory, counts.Cancelled)
+	PrintProgress(osStdout, "Terminal usage: wall=%dms cpu=%dms peak-memory=%dMB output=%d bytes.", usage.WallTimeMS, usage.CPUTimeMS, usage.PeakMemoryMB, usage.OutputBytes)
+	return 0
+}
+
+func cmdRunsWorkflowRun(args []string) int {
+	fs := newFlagSet("runs workflow run", flag.ContinueOnError)
+	manifestPath := fs.String("manifest", "", "JSON file describing sequential Run steps")
+	pollInterval := fs.Duration("poll-interval", executionPollIntervalDefault, "status polling interval")
+	waitTimeout := fs.Duration("wait-timeout", 30*time.Minute, "maximum client wait duration")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if *manifestPath == "" || len(fs.Args()) != 0 || *pollInterval <= 0 || *waitTimeout <= 0 {
+		PrintUsage(osStderr, "usage: gregale runs workflow run --manifest PLAN.json [--poll-interval D] [--wait-timeout D]", "runs")
+		return 1
+	}
+	plan, err := loadExecutionWorkflowPlan(*manifestPath)
+	if err != nil {
+		return printErr("Could not read workflow manifest", err)
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	waitContext, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	ctx, cancel := context.WithTimeout(waitContext, *waitTimeout)
+	defer cancel()
+	result, runErr := runExecutionWorkflow(ctx, client, plan, *pollInterval)
+	if jsonOutput {
+		if code := jsonOut(writeJSON(result)); code != 0 {
+			return code
+		}
+	} else {
+		for _, step := range result.Steps {
+			PrintOK(osStdout, "Step %q: Run %s (status=%s).", step.Label, step.Run.ID, step.Run.Status)
+		}
+	}
+	if runErr != nil {
+		if errors.Is(runErr, context.Canceled) && waitContext.Err() != nil {
+			if !jsonOutput {
+				PrintProgress(osStdout, "Workflow progress is saved; rerun the same manifest to resume.")
+			}
+			return 130
+		}
+		if errors.Is(runErr, context.DeadlineExceeded) {
+			return printErr("Workflow wait timed out", runErr)
+		}
+		return printErr("Workflow stopped", runErr)
+	}
+	if !jsonOutput {
+		PrintOK(osStdout, "Workflow %s completed (%d steps).", result.WorkflowID, len(result.Steps))
+	}
+	return 0
+}
+
+func cmdRunsCapabilities(args []string) int {
+	if len(args) != 0 {
+		PrintUsage(osStderr, "usage: gregale runs capabilities [--json]", "runs")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	resp, err := client.GetExecutionCapabilities(context.Background())
+	if err != nil {
+		return printErr("Could not get Runs capabilities", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(resp))
+	}
+
+	availability := "unavailable"
+	if resp.AdmissionAvailable {
+		availability = "available"
+	}
+	_, _ = fmt.Fprintf(osStdout, "Admission API: %s (plan=%s)\n", availability, resp.Plan)
+	_, _ = fmt.Fprintf(osStdout, "Runtimes: %s\n", joinExecutionRuntimes(resp.Runtimes))
+	for _, profile := range resp.Profiles {
+		_, _ = fmt.Fprintf(osStdout, "Profile %s: %s\n", profile.Profile, joinExecutionRuntimes(profile.Runtimes))
+	}
+	_, _ = fmt.Fprintf(osStdout, "Network modes: %s\n", strings.Join(networkModeStrings(resp.NetworkModes), ", "))
+	if len(resp.UnavailableReasons) > 0 {
+		_, _ = fmt.Fprintf(osStdout, "Unavailable reasons: %s\n", strings.Join(resp.UnavailableReasons, ", "))
+	}
+	if limits := resp.Limits; limits != nil {
+		_, _ = fmt.Fprintf(osStdout, "Limits: concurrent=%d source=%dB input=%dB output=%d..%dB timeout=%d..%dms memory=%d..%dMB cpu=%d..%dmillicores ephemeral_disk=%d..%dMB pids=%d\n",
+			limits.MaxConcurrentRuns, limits.MaxSourceBytes, limits.MaxInputBytes,
+			limits.DefaultOutputBytes, limits.MaxOutputBytes,
+			limits.DefaultTimeoutMS, limits.MaxTimeoutMS,
+			limits.DefaultMemoryMB, limits.MaxMemoryMB,
+			limits.DefaultCPUMillicores, limits.MaxCPUMillicores,
+			limits.DefaultEphemeralDiskMB, limits.MaxEphemeralDiskMB, limits.PIDsMax)
+		_, _ = fmt.Fprintf(osStdout, "Request caps: bundle_files=%d artifact_inputs=%d output_files=%d artifact_path=%dB\n",
+			limits.MaxBundleFiles, limits.MaxArtifactInputs, limits.MaxOutputFiles, limits.MaxArtifactPathBytes)
+	}
+	_, _ = fmt.Fprintln(osStdout, "Availability covers account entitlement and the control-plane admission gate; it does not guarantee scheduler or profile-image readiness.")
+	return 0
+}
+
+func joinExecutionRuntimes(runtimes []api.ExecutionRuntime) string {
+	values := make([]string, len(runtimes))
+	for i, runtime := range runtimes {
+		values[i] = string(runtime)
+	}
+	return strings.Join(values, ", ")
+}
+
+func networkModeStrings(modes []api.ExecutionNetworkMode) []string {
+	values := make([]string, len(modes))
+	for i, mode := range modes {
+		values[i] = string(mode)
+	}
+	return values
+}
+
+func cmdRunsList(args []string) int {
+	fs := newFlagSet("runs-list", flag.ContinueOnError)
+	limit := fs.Int("limit", 50, "maximum number of runs (1..200)")
+	offset := fs.Int("offset", 0, "number of matching runs to skip")
+	status := fs.String("status", "", "filter by lifecycle status")
+	workflowID := fs.String("workflow-id", "", "filter by caller-generated workflow id")
+	flags, positional := splitArgsForFlags(args)
+	if err := fs.Parse(flags); err != nil {
+		return 1
+	}
+	if len(positional) != 0 || validateCLILimit("limit", *limit, 200) != nil || *offset < 0 {
+		PrintUsage(osStderr, "usage: gregale runs list [--limit N] [--offset N] [--status STATUS] [--workflow-id ID]", "runs")
+		return 1
+	}
+	filter := api.ExecutionStatus(*status)
+	if filter != "" && !filter.Valid() {
+		PrintUsage(osStderr, "usage: gregale runs list [--limit N] [--offset N] [--status STATUS] [--workflow-id ID]", "runs")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	var resp api.ExecutionListResponse
+	if *workflowID == "" {
+		resp, err = client.ListExecutions(context.Background(), *limit, *offset, filter)
+	} else {
+		resp, err = client.ListExecutionsForWorkflow(context.Background(), *workflowID, *limit, *offset, filter)
+	}
 	if err != nil {
 		return printErr("Could not list runs", err)
 	}

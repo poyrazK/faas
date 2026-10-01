@@ -3655,7 +3655,8 @@ CREATE TABLE public.api_keys (
     created_ip inet,
     created_ua text,
     parent_key_id uuid,
-    CONSTRAINT api_keys_scopes_vocab_chk CHECK (((scopes <@ ARRAY['admin'::text, 'apps:read'::text, 'deploy:write'::text, 'secrets:read'::text, 'secrets:write'::text, 'usage:read'::text, 'env:read'::text, 'env:write'::text, 'registry_credentials:read'::text, 'registry_credentials:write'::text, 'upstreams:write'::text, 'metrics:write'::text, 'delayed_tasks:read'::text, 'delayed_tasks:write'::text, 'storage:manage'::text, 'storage:read'::text, 'storage:write'::text, 'postgres:manage'::text, 'postgres:read'::text, 'github:manage'::text, 'project_environments:read'::text, 'project_environments:qualify'::text]) AND (cardinality(scopes) > 0))),
+    runs_principal_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    CONSTRAINT api_keys_scopes_vocab_chk CHECK (((scopes <@ ARRAY['admin'::text, 'apps:read'::text, 'deploy:write'::text, 'secrets:read'::text, 'secrets:write'::text, 'usage:read'::text, 'env:read'::text, 'env:write'::text, 'registry_credentials:read'::text, 'registry_credentials:write'::text, 'upstreams:write'::text, 'metrics:write'::text, 'delayed_tasks:read'::text, 'delayed_tasks:write'::text, 'events:publish'::text, 'queues:send'::text, 'storage:manage'::text, 'storage:read'::text, 'storage:write'::text, 'postgres:manage'::text, 'postgres:read'::text, 'github:manage'::text, 'project_environments:read'::text, 'project_environments:qualify'::text, 'runs:read'::text, 'runs:write'::text]) AND (cardinality(scopes) > 0))),
     CONSTRAINT api_keys_status_check CHECK ((status = ANY (ARRAY['active'::text, 'grace'::text, 'revoked'::text])))
 );
 
@@ -6314,6 +6315,16 @@ CREATE TABLE public.execution_events (
 
 
 --
+-- Name: execution_outbound_integrations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.execution_outbound_integrations (
+    execution_id uuid NOT NULL,
+    integration_id uuid NOT NULL
+);
+
+
+--
 -- Name: execution_events_id_seq; Type: SEQUENCE; Schema: public; Owner: -
 --
 
@@ -6343,6 +6354,29 @@ CREATE TABLE public.execution_payloads (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT execution_payloads_kid_check CHECK (((length(kid) >= 1) AND (length(kid) <= 255))),
     CONSTRAINT execution_payloads_sealed_payload_check CHECK (((octet_length(sealed_payload) >= 1) AND (octet_length(sealed_payload) <= 3145728)))
+);
+
+
+--
+-- Name: execution_artifact_grants; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.execution_artifact_grants (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    source_execution_id uuid NOT NULL,
+    artifact_name text NOT NULL,
+    creator_principal_id uuid,
+    token_hash bytea NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    redeemed_at timestamp with time zone,
+    redeemed_execution_id uuid,
+    revoked_at timestamp with time zone,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT execution_artifact_grants_artifact_name_check CHECK (((length(artifact_name) >= 1) AND (length(artifact_name) <= 256))),
+    CONSTRAINT execution_artifact_grants_expiry_check CHECK ((expires_at > created_at)),
+    CONSTRAINT execution_artifact_grants_redeemed_pair_check CHECK (((redeemed_at IS NULL) = (redeemed_execution_id IS NULL))),
+    CONSTRAINT execution_artifact_grants_token_hash_check CHECK ((octet_length(token_hash) = 32))
 );
 
 
@@ -6412,6 +6446,9 @@ CREATE TABLE public.executions (
     artifacts bytea DEFAULT '\x'::bytea NOT NULL,
     profile text DEFAULT 'standard'::text NOT NULL,
     runtime_image_digest text,
+    runs_principal_id uuid,
+    workflow_id text,
+    step_label text,
     CONSTRAINT executions_artifacts_check CHECK (((octet_length(artifacts) = 0) OR ((status = 'succeeded'::text) AND (octet_length(artifacts) <= max_output_bytes)))),
     CONSTRAINT executions_cpu_millicores_check CHECK ((cpu_millicores = ANY (ARRAY[250, 500, 1000]))),
     CONSTRAINT executions_deadline_check CHECK ((deadline_at > created_at)),
@@ -6440,7 +6477,9 @@ CREATE TABLE public.executions (
     CONSTRAINT executions_timeout_ms_check CHECK (((timeout_ms >= 100) AND (timeout_ms <= 30000))),
     CONSTRAINT executions_timestamps_check CHECK ((((status = 'queued'::text) AND (started_at IS NULL) AND (finished_at IS NULL)) OR ((status = 'restoring'::text) AND (started_at IS NULL) AND (finished_at IS NULL)) OR ((status = 'running'::text) AND (started_at IS NOT NULL) AND (finished_at IS NULL)) OR ((status = ANY (ARRAY['succeeded'::text, 'failed'::text, 'timed_out'::text, 'out_of_memory'::text, 'cancelled'::text])) AND (finished_at IS NOT NULL)))),
     CONSTRAINT executions_updated_at_check CHECK ((updated_at >= created_at)),
-    CONSTRAINT executions_usage_check CHECK (((wall_time_ms >= 0) AND (cpu_time_ms >= 0) AND (peak_memory_mb >= 0)))
+    CONSTRAINT executions_usage_check CHECK (((wall_time_ms >= 0) AND (cpu_time_ms >= 0) AND (peak_memory_mb >= 0))),
+    CONSTRAINT executions_workflow_id_check CHECK (workflow_id IS NULL OR workflow_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$'),
+    CONSTRAINT executions_step_label_check CHECK (step_label IS NULL OR (workflow_id IS NOT NULL AND octet_length(step_label) BETWEEN 1 AND 128 AND length(btrim(step_label)) = length(step_label) AND step_label !~ '[[:cntrl:]]'))
 );
 
 
@@ -8773,6 +8812,7 @@ CREATE TABLE public.outbound_integrations (
     circuit_breaker_open_seconds integer DEFAULT 0 NOT NULL,
     retry_budget_per_minute integer DEFAULT 0 NOT NULL,
     response_cache_ttl_seconds integer DEFAULT 0 NOT NULL,
+    runs_enabled boolean DEFAULT false NOT NULL,
     CONSTRAINT outbound_customer_integration_policy_chk CHECK (((owner_kind <> 'customer'::text) OR ((provider_auth_mode = 'managed'::text) AND (credential_source = 'customer_sealed'::text) AND ((cardinality(allowed_methods) >= 1) AND (cardinality(allowed_methods) <= 6)) AND ((cardinality(allowed_path_prefixes) >= 1) AND (cardinality(allowed_path_prefixes) <= 32))))),
     CONSTRAINT outbound_integrations_allowed_methods_count_chk CHECK ((cardinality(allowed_methods) <= 6)),
     CONSTRAINT outbound_integrations_allowed_path_prefixes_count_chk CHECK ((cardinality(allowed_path_prefixes) <= 32)),
@@ -12317,11 +12357,33 @@ ALTER TABLE ONLY public.execution_events
 
 
 --
+-- Name: execution_outbound_integrations execution_outbound_integrations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.execution_outbound_integrations
+    ADD CONSTRAINT execution_outbound_integrations_pkey PRIMARY KEY (execution_id, integration_id);
+
+
+--
 -- Name: execution_payloads execution_payloads_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.execution_payloads
     ADD CONSTRAINT execution_payloads_pkey PRIMARY KEY (execution_id);
+
+--
+-- Name: execution_artifact_grants execution_artifact_grants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.execution_artifact_grants
+    ADD CONSTRAINT execution_artifact_grants_pkey PRIMARY KEY (id);
+
+--
+-- Name: execution_artifact_grants execution_artifact_grants_token_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.execution_artifact_grants
+    ADD CONSTRAINT execution_artifact_grants_token_hash_key UNIQUE (token_hash);
 
 
 --
@@ -16097,6 +16159,12 @@ CREATE INDEX execution_events_created_at_idx ON public.execution_events USING bt
 
 CREATE INDEX execution_events_execution_id_idx ON public.execution_events USING btree (execution_id, id);
 
+--
+-- Name: execution_artifact_grants_account_source_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX execution_artifact_grants_account_source_idx ON public.execution_artifact_grants USING btree (account_id, source_execution_id, created_at DESC);
+
 
 --
 -- Name: execution_usage_ledger_account_finished_idx; Type: INDEX; Schema: public; Owner: -
@@ -16117,6 +16185,18 @@ CREATE INDEX executions_account_active_idx ON public.executions USING btree (acc
 --
 
 CREATE INDEX executions_account_created_idx ON public.executions USING btree (account_id, created_at DESC, id DESC);
+
+-- Name: executions_account_principal_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+CREATE INDEX executions_account_principal_created_idx ON public.executions USING btree (account_id, runs_principal_id, created_at DESC, id DESC) WHERE (runs_principal_id IS NOT NULL);
+
+-- Name: executions_account_workflow_principal_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+CREATE INDEX executions_account_workflow_principal_created_idx ON public.executions USING btree (account_id, workflow_id, runs_principal_id, created_at DESC, id DESC) WHERE (workflow_id IS NOT NULL);
+
+-- Name: executions_account_agent_workflow_step_uniq; Type: INDEX; Schema: public; Owner: -
+--
+CREATE UNIQUE INDEX executions_account_agent_workflow_step_uniq ON public.executions USING btree (account_id, runs_principal_id, workflow_id, step_label) WHERE ((runs_principal_id IS NOT NULL) AND (workflow_id IS NOT NULL) AND (step_label ~~ 'gwf:%'::text));
 
 
 --
@@ -21542,6 +21622,27 @@ ALTER TABLE ONLY public.execution_events
 ALTER TABLE ONLY public.execution_events
     ADD CONSTRAINT execution_events_execution_id_fkey FOREIGN KEY (execution_id) REFERENCES public.executions(id) ON DELETE CASCADE;
 
+--
+-- Name: execution_outbound_integrations execution_outbound_integrations_execution_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.execution_outbound_integrations
+    ADD CONSTRAINT execution_outbound_integrations_execution_id_fkey FOREIGN KEY (execution_id) REFERENCES public.executions(id) ON DELETE CASCADE;
+
+--
+-- Name: execution_artifact_grants execution_artifact_grants_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.execution_artifact_grants
+    ADD CONSTRAINT execution_artifact_grants_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+--
+-- Name: execution_artifact_grants execution_artifact_grants_source_execution_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.execution_artifact_grants
+    ADD CONSTRAINT execution_artifact_grants_source_execution_id_fkey FOREIGN KEY (source_execution_id) REFERENCES public.executions(id) ON DELETE CASCADE;
+
 
 --
 -- Name: execution_payloads execution_payloads_execution_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
@@ -23595,6 +23696,31 @@ ALTER TABLE ONLY public.workflow_step_attempts
 
 ALTER TABLE ONLY public.workflow_steps
     ADD CONSTRAINT workflow_steps_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.workflow_runs(id) ON DELETE CASCADE;
+
+
+-- Keep this trigger alongside migrations/20261001110000001_runs_execution_principals.sql.
+CREATE FUNCTION public.preserve_api_key_runs_principal() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  predecessor_principal uuid;
+BEGIN
+  IF NEW.rotated_from_id IS NOT NULL THEN
+    SELECT runs_principal_id INTO predecessor_principal
+      FROM api_keys
+     WHERE id = NEW.rotated_from_id;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'rotated API key predecessor % does not exist', NEW.rotated_from_id;
+    END IF;
+    NEW.runs_principal_id := predecessor_principal;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER api_keys_preserve_runs_principal
+    BEFORE INSERT ON public.api_keys
+    FOR EACH ROW EXECUTE FUNCTION public.preserve_api_key_runs_principal();
 
 
 --
