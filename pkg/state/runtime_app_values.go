@@ -18,8 +18,10 @@ type RuntimeAppSecretGrants struct {
 // inputs for one deployment. Delivery observations are not configuration.
 type RuntimeAppValuesSnapshot struct {
 	RuntimeAppEnvSnapshot
-	Secrets      []AppSecret
-	SecretGrants RuntimeAppSecretGrants
+	Secrets       []AppSecret
+	SecretGrants  RuntimeAppSecretGrants
+	Configuration RuntimeAppConfiguration
+	SidecarLayers []DeploymentSidecarLayer
 }
 
 type RuntimeAppValuesStore interface {

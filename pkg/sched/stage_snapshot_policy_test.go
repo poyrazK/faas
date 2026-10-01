@@ -62,6 +62,10 @@ func seedStageSnapshotPolicy(t *testing.T, productionPool int, warmSnapshots boo
 		if err := f.store.SetDeploymentRootfs(ctx, target.ID, "/local/"+scope+".ext4", "apps/stage-snapshot/"+scope+".ext4", 4096); err != nil {
 			t.Fatal(err)
 		}
+		*target, err = f.store.DeploymentByID(ctx, target.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	return f
 }

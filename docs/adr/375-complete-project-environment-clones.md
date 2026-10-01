@@ -2342,15 +2342,68 @@ failures, changes after the restore read and changes during warm resume.
 Independent SQLC generation matches and whitespace checks pass. VM calls use
 macOS fakes; this is not native KVM or provider acceptance.
 
-Plaintext values are still reread before warm publication rather than fenced
-atomically with their writers. A paused VM lacks a durable captured-config
-fingerprint for detecting later edits before resume. Complete input fencing,
-including insertion races and workload settings, remains required. Ordinary
-scoped wake selection still has its earlier direct-deployment fallback and
+The following section closes the plaintext publication and paused-runtime
+configuration proof gaps identified at this step. Ordinary scoped wake
+selection still has its earlier direct-deployment fallback and
 needs alignment with graph selection where applicable. Producer load/prewarm
 feeds, floor aggregation, billing/audit/resource cleanup, remaining adapters,
 all configuration/resource clone strategies, coordinated isolated PostgreSQL
 and object-data capture, durable one-command orchestration and qualified
 promotion/rollback remain open. Public complete cloning stays unavailable.
 Repository-wide tests/lint, native x86_64 KVM test-metal, leakcheck and provider
+acceptance remain unverified.
+
+### Runtime publication retains captured environment configuration (2026-10-01)
+
+The owned runtime snapshot now includes the deployed workload specification,
+its validated settings, deployment artifact inputs and built sidecar layers.
+PostgreSQL reads these with scoped variables and sealed secrets in one statement;
+MemStore uses one mutex window. Boot builders compare their loaded App and
+Deployment inputs against that snapshot and use its sidecar layers directly.
+Desired revision heads and delivery observations do not enter the fingerprint.
+Unknown or hash-mismatched pinned settings fail closed. Empty App collections
+with equivalent runtime semantics are normalized for SQL/JSON hydration; owned
+work and queue pointers retain their explicit-empty behavior.
+
+Wake, prime and paused restore require a configuration fingerprint at runtime
+publication. It covers plaintext keys/values and row lifetimes, sealed inputs,
+deployed settings, artifacts and sidecar configuration. The original environment,
+app, deployment and retained specification remain protected through the instance
+CAS. Variable/secret writers serialize on the app; deployment child writers
+serialize on their deployment, including insertion into an empty set. Publication
+reads committed value rows without taking tuple locks that could wait behind a
+writer already blocked on those parents.
+
+Publication stores the captured fingerprint with the physical instance, wake ID
+and node in the same transaction as runtime identity and lifecycle state. A warm
+resume must match that stored capture and the current owned inputs. Supplying a
+new fingerprint cannot bless an old paused VM. Reconciliation retires stale or
+unproved paused rows; promotion checks before the resume RPC and rechecks during
+its atomic WARM-to-RUNNING publication. Missing historical proofs are not backfilled
+from current configuration. Instance retention deletes its proof as well.
+
+Focused MemStore and real PostgreSQL contracts pass through an isolated harness
+containing eleven unchanged repository contract files and the original pool
+fixture, importing the actual working-tree Store implementation. They cover
+plaintext insertion/edit/deletion/recreation, sibling isolation, artifact and
+sidecar changes, corrupted settings, durable proof reconstruction and refusal to
+adopt new values. Blocking-query observations prove writer/publication ordering
+in both directions, including secret, variable and sidecar tuples whose writers
+wait on their parent. Legacy contracts also verify actual route, CIDR, egress-port and retry inputs,
+including mutable App settings for deployments without a pin. The final focused
+harness passed in 73.081 seconds. The full scheduler tree passed (scheduler
+18.945 seconds and all eight child packages); schedd daemon tests passed in
+1.042 seconds. These include missing/stale paused proofs before resume, edits
+during resume and after the restore read, and production/stage isolation.
+Independent SQLC generation matches and whitespace checks pass. The full state
+package binary hit local disk exhaustion before linking; this harness is focused
+evidence and does not stand in for the full state suite.
+
+The global runtime-config timestamp and snapshot publication/cache invalidation
+still require environment qualification; a stored VM proof is not a complete
+snapshot lineage or migration handoff protocol. Ordinary scoped wake graph
+selection, remaining resource/configuration adapters, coordinated isolated
+PostgreSQL/object data capture, one-command orchestration, full qualification and
+promotion/rollback remain open. Public complete cloning stays unavailable.
+Repository-wide tests/lint, native x86_64 KVM test-metal/leakcheck and provider
 acceptance remain unverified.

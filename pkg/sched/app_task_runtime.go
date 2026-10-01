@@ -79,7 +79,7 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	if err := e.verifyPrimeLayer(ctx, app.ID, request.ArtifactKey); err != nil {
 		return ResolvedAppTaskRuntime{}, fmt.Errorf("sched: resolve app task artifact: %w", err)
 	}
-	runtimeValues, err := e.loadRuntimeDeploymentValues(ctx, app.AccountID, dep)
+	runtimeValues, err := e.loadRuntimeDeploymentValues(ctx, app, dep)
 	if err != nil {
 		return ResolvedAppTaskRuntime{}, fmt.Errorf("sched: resolve app task sealed env: %w", err)
 	}

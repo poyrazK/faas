@@ -33,11 +33,36 @@ func stagePoolInstance(t *testing.T, f stageSnapshotFixture, dep state.Deploymen
 	if err != nil {
 		t.Fatal(err)
 	}
-	instance, err := f.store.CreateInstanceWithMode(t.Context(), f.app.ID, dep.ID, string(state.StateWarm), 256, node.ID, "", string(state.InstanceModeNormal))
+	instance, err := f.store.CreateInstanceWithMode(t.Context(), f.app.ID, dep.ID, string(state.StateWaking), 256, node.ID, "", string(state.InstanceModeNormal))
 	if err != nil {
 		t.Fatal(err)
 	}
-	return instance
+	return publishWarmFixture(t, f.store, instance)
+}
+
+func publishWarmFixture(t *testing.T, store state.Store, instance state.Instance) state.Instance {
+	t.Helper()
+	app, err := store.AppByID(t.Context(), instance.AppID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := store.RuntimeAppValuesForDeployment(t.Context(), app.AccountID, app.ID, instance.DeploymentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fence, err := state.NewRuntimeAppConfigFence(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	warm, err := store.PublishOwnedInstanceRuntime(t.Context(), state.RuntimeInstancePublication{
+		AccountID: app.AccountID, AppID: app.ID, InstanceID: instance.ID, NodeID: instance.NodeID, WakeID: instance.WakeID,
+		ExpectedState: string(state.StateWaking), TargetState: string(state.StateWarm), Fence: fence.SecretFence, ConfigFence: fence,
+		Netns: "fc-" + instance.ID, HostIP: "10.100.0.2", GuestUID: 20001,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return warm
 }
 
 func TestProductionWarmPoolUsesPinnedTargetWithoutStageCleanup(t *testing.T) {

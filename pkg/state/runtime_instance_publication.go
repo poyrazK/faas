@@ -15,14 +15,16 @@ type RuntimeInstancePublication struct {
 	ExpectedState, TargetState, Netns, HostIP    string
 	GuestUID                                     int
 	Fence                                        RuntimeAppSecretFence
+	ConfigFence                                  RuntimeAppConfigFence
 }
 
 type RuntimeInstancePublicationStore interface {
 	PublishOwnedInstanceRuntime(context.Context, RuntimeInstancePublication) (Instance, error)
+	InstanceRuntimeConfigFence(context.Context, string, string, string) (RuntimeAppConfigFence, error)
 }
 
 func validateRuntimeInstancePublication(p RuntimeInstancePublication) error {
-	if p.Fence.empty() || !validRuntimeAppSecretFence(p.Fence) || p.Netns == "" || p.GuestUID <= 0 ||
+	if p.Fence.empty() || !validRuntimeAppSecretFence(p.Fence) || !validRuntimeAppConfigFence(p.ConfigFence) || p.Netns == "" || p.GuestUID <= 0 ||
 		!validRuntimePublicationTransition(p.ExpectedState, p.targetState()) {
 		return ErrInvalidArgument
 	}

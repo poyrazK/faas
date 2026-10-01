@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -20,14 +21,11 @@ func (s *admissionSpecFailureStore) RuntimeAppValuesForDeployment(ctx context.Co
 	if s.secretErr != nil {
 		return state.RuntimeAppValuesSnapshot{}, s.secretErr
 	}
-	return s.Store.RuntimeAppValuesForDeployment(ctx, accountID, appID, deploymentID)
-}
-
-func (s *admissionSpecFailureStore) ListDeploymentSidecarLayers(ctx context.Context, deploymentID string) ([]state.DeploymentSidecarLayer, error) {
-	if s.sidecarErr != nil {
-		return nil, s.sidecarErr
+	snapshot, err := s.Store.RuntimeAppValuesForDeployment(ctx, accountID, appID, deploymentID)
+	if err == nil && s.sidecarErr != nil {
+		snapshot.SidecarLayers = nil
 	}
-	return s.Store.ListDeploymentSidecarLayers(ctx, deploymentID)
+	return snapshot, err
 }
 
 func TestAdmissionSpecFailureReleasesAppLockAndAllowsRetry(t *testing.T) {
@@ -70,7 +68,8 @@ func TestAdmissionSpecFailureReleasesAppLockAndAllowsRetry(t *testing.T) {
 						return e.AdmitInstance(ctx, app.ID, "", "", TriggerGateway)
 					}
 				}
-				if _, err := admit(); !errors.Is(err, injected) {
+				if _, err := admit(); (failure == "secrets" && !errors.Is(err, injected)) ||
+					(failure == "sidecars" && (err == nil || !strings.Contains(err.Error(), "has no built layer"))) {
 					t.Fatalf("first admission error = %v", err)
 				}
 				if got := e.Ledger().Concurrency(app.ID); got != 0 {

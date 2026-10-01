@@ -20,9 +20,17 @@ func seedRuntimeInstancePublication(t *testing.T, store runtimeAppEnvTestStore, 
 	if err != nil {
 		t.Fatal(err)
 	}
+	snapshot, err := store.RuntimeAppValuesForDeployment(t.Context(), f.account.ID, f.app.ID, dep.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configFence, err := state.NewRuntimeAppConfigFence(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return state.RuntimeInstancePublication{AccountID: f.account.ID, AppID: f.app.ID, InstanceID: instance.ID, NodeID: instance.NodeID, WakeID: instance.WakeID,
 		ExpectedState: instance.State, Netns: "fc-" + instance.ID, HostIP: "10.100.0.8", GuestUID: 20008,
-		Fence: runtimeSecretFenceForTest(t, store, f, dep)}
+		Fence: configFence.SecretFence, ConfigFence: configFence}
 }
 
 func assertRuntimePublicationUnchanged(t *testing.T, store state.Store, p state.RuntimeInstancePublication) {

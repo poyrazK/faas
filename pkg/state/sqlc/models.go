@@ -2624,6 +2624,17 @@ type RuntimeEnvironmentScalingState struct {
 	LastScaleOutAt pgtype.Timestamptz
 }
 
+type RuntimeInstanceConfigProof struct {
+	InstanceID        pgtype.UUID
+	WakeID            pgtype.UUID
+	NodeID            pgtype.UUID
+	DeploymentID      pgtype.UUID
+	EnvironmentID     pgtype.UUID
+	Scope             string
+	SecretFingerprint string
+	ConfigFingerprint string
+}
+
 type RuntimeSnapshot struct {
 	ID                  pgtype.UUID
 	CatalogKey          string

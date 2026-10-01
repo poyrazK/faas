@@ -571,6 +571,8 @@ type MemStore struct {
 	deploymentLogs map[string][]LogEntry
 	deploymentSeq  map[string]int64
 	logEvents      []LogEvent
+	// Captured boot inputs belong to the instance wake and physical node.
+	runtimeInstanceConfigProofs map[string]runtimeInstanceConfigProof
 	// deploymentSidecarLayers (issue #463 / ADR-069 / PR-B)
 	// mirrors the per-workload filesystem handle table. Keyed by
 	// "<deploymentID>\x00<sidecarName>" to give O(1) upsert +
@@ -1211,6 +1213,7 @@ func NewMemStore() *MemStore {
 		invocationEnvironmentQueueReceipts:   map[string]environmentQueueReceipt{},
 		invocationWorkEnvironmentAdmissions:  map[string]InvocationWorkEnvironmentAdmission{},
 		invocationWorkEnvironmentDomains:     map[string]string{},
+		runtimeInstanceConfigProofs:          map[string]runtimeInstanceConfigProof{},
 		// Issue #463 / ADR-069 / PR-B — per-workload filesystem
 		// handles (mirrors migration 00119's PK + ON CONFLICT
 		// semantics).
@@ -6038,6 +6041,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	for key, v := range m.instances {
 		if v.AppID == id {
 			delete(m.instances, key)
+			delete(m.runtimeInstanceConfigProofs, key)
 		}
 	}
 	depIDs := make(map[string]struct{})
@@ -13903,6 +13907,7 @@ func (m *MemStore) DeleteParkedInstancesOlderThan(_ context.Context, threshold t
 	}
 	for _, row := range candidates {
 		delete(m.instances, row.id)
+		delete(m.runtimeInstanceConfigProofs, row.id)
 	}
 	return int64(len(candidates)), nil
 }
@@ -13918,6 +13923,7 @@ func (m *MemStore) DeleteInstance(_ context.Context, id string) error {
 		return ErrNotFound
 	}
 	delete(m.instances, id)
+	delete(m.runtimeInstanceConfigProofs, id)
 	return nil
 }
 
@@ -20226,6 +20232,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for iid, ins := range m.instances {
 		if app, ok := m.apps[ins.AppID]; ok && app.AccountID == id {
 			delete(m.instances, iid)
+			delete(m.runtimeInstanceConfigProofs, iid)
 		}
 	}
 	for taskID, task := range m.appTasks {

@@ -45,6 +45,30 @@ func (m *MemStore) runtimeAppValuesLocked(accountID, appID, deploymentID string)
 		})
 	}
 	sort.Slice(result.Secrets, func(i, j int) bool { return result.Secrets[i].Key < result.Secrets[j].Key })
+	settings, err := WorkloadSettingsFromApp(m.apps[appID])
+	if err != nil {
+		return RuntimeAppValuesSnapshot{}, err
+	}
+	specID := m.projectEnvironmentWorkloadDeploymentSpecs[deploymentID]
+	if specID != "" {
+		spec, ok := m.projectEnvironmentWorkloadSpecs[specID]
+		hash, hashErr := WorkloadSettingsHash(spec.Settings)
+		if !ok || hashErr != nil || hash != spec.Hash {
+			return RuntimeAppValuesSnapshot{}, ErrConflict
+		}
+		settings = spec.Settings
+	}
+	result.SidecarLayers = []DeploymentSidecarLayer{}
+	for _, layer := range m.deploymentSidecarLayers {
+		if layer.DeploymentID == deploymentID {
+			result.SidecarLayers = append(result.SidecarLayers, layer)
+		}
+	}
+	sort.Slice(result.SidecarLayers, func(i, j int) bool { return result.SidecarLayers[i].SidecarName < result.SidecarLayers[j].SidecarName })
+	result.Configuration, err = runtimeAppConfiguration(settings, specID, projectCloneArtifactFromDeployment(d), result.SidecarLayers)
+	if err != nil {
+		return RuntimeAppValuesSnapshot{}, err
+	}
 	return result, nil
 }
 

@@ -20,7 +20,7 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 	if app.Status != state.AppActive || app.WarmPoolSize <= 0 || !instanceModeUsesSnapshots(mode) || !api.Plan(acct.Plan).WarmPoolAllowed() {
 		return WakeResult{}, false, nil
 	}
-	values, err := e.loadRuntimeDeploymentValues(ctx, acct.ID, dep)
+	values, err := e.loadRuntimeDeploymentValues(ctx, app, dep)
 	if err != nil {
 		return WakeResult{}, false, fmt.Errorf("sched: warm pool: owned promotion inputs: %w", err)
 	}
@@ -93,6 +93,17 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 			e.observeWarmResume("stale")
 			continue
 		}
+		captured, proofErr := e.store.InstanceRuntimeConfigFence(ctx, acct.ID, app.ID, warm.ID)
+		if proofErr != nil && !errors.Is(proofErr, state.ErrNotFound) {
+			return WakeResult{}, false, fmt.Errorf("sched: warm pool: captured config: %w", proofErr)
+		}
+		if proofErr != nil || captured != values.ConfigFence {
+			if e.discardWarmPromotion(ctx, warm, "captured_config_changed") {
+				warmCount--
+			}
+			e.observeWarmResume("stale")
+			continue
+		}
 		if !e.ledger.ResidentFor(warm.ID) {
 			ceiling, vcpuBudget, ceilingErr := e.resolveNodeCeiling(ctx, warm.NodeID)
 			cpuBudgetMillicores := e.resolveNodeCPUBudgetMillicores(ctx, warm.NodeID)
@@ -135,7 +146,7 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 
 		fresh, publishErr := e.store.PublishOwnedInstanceRuntime(ctx, state.RuntimeInstancePublication{
 			AccountID: acct.ID, AppID: app.ID, InstanceID: warm.ID, NodeID: warm.NodeID, WakeID: warm.WakeID,
-			ExpectedState: string(state.StateWarm), Fence: values.MainSecrets.Fence,
+			ExpectedState: string(state.StateWarm), Fence: captured.SecretFence, ConfigFence: captured,
 			Netns: warm.Netns, HostIP: warm.HostIP, GuestUID: warm.GuestUID,
 		})
 		if publishErr != nil {

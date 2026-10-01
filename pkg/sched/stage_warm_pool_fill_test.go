@@ -238,7 +238,7 @@ func (s *stagePoolPublicationStore) PublishOwnedInstanceRuntime(ctx context.Cont
 }
 
 func TestStageWarmPoolPublicationRejectsChangesAfterRestoreRead(t *testing.T) {
-	for _, change := range []string{"secret", "owner", "state"} {
+	for _, change := range []string{"variable", "secret", "owner", "state"} {
 		t.Run(change, func(t *testing.T) {
 			ctx := t.Context()
 			f := seedStageSnapshotPolicy(t, 1, false)
@@ -252,6 +252,10 @@ func TestStageWarmPoolPublicationRejectsChangesAfterRestoreRead(t *testing.T) {
 				switch change {
 				case "owner":
 					f.recreateStage(t)
+				case "variable":
+					if err := f.store.UpsertAppEnvInScope(ctx, f.account.ID, f.app.ID, "stage", "MODE", "changed"); err != nil {
+						t.Fatal(err)
+					}
 				case "secret":
 					if err := f.store.UpsertAppSecretInScope(ctx, f.account.ID, f.app.ID, "stage", "TOKEN", []byte("changed")); err != nil {
 						t.Fatal(err)
@@ -332,7 +336,7 @@ func (v *stagePoolResumeVMM) ResumeWarmInstance(context.Context, string, string)
 }
 
 func TestStageWarmPromotionRejectsChangedOwnerOrInputsDuringResume(t *testing.T) {
-	for _, change := range []string{"secret", "owner"} {
+	for _, change := range []string{"variable", "secret", "owner"} {
 		t.Run(change, func(t *testing.T) {
 			ctx := t.Context()
 			f := seedStageSnapshotPolicy(t, 1, false)
@@ -349,6 +353,10 @@ func TestStageWarmPromotionRejectsChangedOwnerOrInputsDuringResume(t *testing.T)
 			vmm.resumeHook = func() {
 				if change == "owner" {
 					f.recreateStage(t)
+				} else if change == "variable" {
+					if err := f.store.UpsertAppEnvInScope(ctx, f.account.ID, f.app.ID, "stage", "MODE", "changed"); err != nil {
+						t.Fatal(err)
+					}
 				} else if err := f.store.UpsertAppSecretInScope(ctx, f.account.ID, f.app.ID, "stage", "TOKEN", []byte("changed")); err != nil {
 					t.Fatal(err)
 				}

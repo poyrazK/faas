@@ -69,9 +69,15 @@ func (e *Engine) sidecarsForDeploymentWithValues(ctx context.Context, dep state.
 	if len(dep.Sidecars) == 0 || string(dep.Sidecars) == "null" || string(dep.Sidecars) == "[]" {
 		return nil, nil, nil
 	}
-	layers, err := e.store.ListDeploymentSidecarLayers(ctx, dep.ID)
-	if err != nil {
-		return nil, nil, fmt.Errorf("list sidecar layers: %w", err)
+	var layers []state.DeploymentSidecarLayer
+	var err error
+	if values != nil {
+		layers = values.SidecarLayers
+	} else {
+		layers, err = e.store.ListDeploymentSidecarLayers(ctx, dep.ID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("list sidecar layers: %w", err)
+		}
 	}
 	specs, err := sidecarSpecsFromDeployment(dep.Sidecars, layers)
 	if err != nil {

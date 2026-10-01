@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"time"
@@ -46,6 +47,27 @@ func runtimeAppValuesDB(ctx context.Context, db sqlc.DBTX, accountID, appID, dep
 			ManagedPostgresBindingID: value.ManagedPostgresBindingID, ManagedCredentialRef: value.ManagedCredentialRef,
 			ManagedCredentialGeneration: value.ManagedCredentialGeneration, ManagedObjectStorageCredentialID: value.ManagedObjectStorageCredentialID,
 		})
+	}
+	var settings ProjectEnvironmentWorkloadSettings
+	var artifact projectCloneArtifact
+	result.SidecarLayers = []DeploymentSidecarLayer{}
+	decoder := json.NewDecoder(bytes.NewReader(row.Settings))
+	if row.SpecID != "" {
+		decoder.DisallowUnknownFields()
+	}
+	if decoder.Decode(&settings) != nil || json.Unmarshal(row.Artifact, &artifact) != nil ||
+		json.Unmarshal(row.Layers, &result.SidecarLayers) != nil {
+		return RuntimeAppValuesSnapshot{}, ErrConflict
+	}
+	if row.SpecID != "" {
+		hash, err := WorkloadSettingsHash(settings)
+		if err != nil || hash != row.SettingsHash {
+			return RuntimeAppValuesSnapshot{}, ErrConflict
+		}
+	}
+	result.Configuration, err = runtimeAppConfiguration(settings, row.SpecID, artifact, result.SidecarLayers)
+	if err != nil {
+		return RuntimeAppValuesSnapshot{}, err
 	}
 	return result, nil
 }

@@ -16,6 +16,7 @@ type runtimeDeploymentValues struct {
 	Snapshot    state.RuntimeAppValuesSnapshot
 	APIEnv      []fcvm.APIEnvEntry
 	MainSecrets sealedEnvDelivery
+	ConfigFence state.RuntimeAppConfigFence
 }
 
 func runtimeValuesHaveEphemeralSecrets(snapshot state.RuntimeAppValuesSnapshot) bool {
@@ -27,12 +28,13 @@ func runtimeValuesHaveEphemeralSecrets(snapshot state.RuntimeAppValuesSnapshot) 
 	return false
 }
 
-func (e *Engine) loadRuntimeDeploymentValues(ctx context.Context, accountID string, dep state.Deployment) (runtimeDeploymentValues, error) {
+func (e *Engine) loadRuntimeDeploymentValues(ctx context.Context, app state.App, dep state.Deployment) (runtimeDeploymentValues, error) {
+	accountID := app.AccountID
 	snapshot, err := e.store.RuntimeAppValuesForDeployment(ctx, accountID, dep.AppID, dep.ID)
 	if err != nil {
 		return runtimeDeploymentValues{}, fmt.Errorf("read owned deployment values: %w", err)
 	}
-	if snapshot.AccountID != accountID || snapshot.AppID != dep.AppID || snapshot.DeploymentID != dep.ID ||
+	if !snapshot.MatchesRuntimeInputs(app, dep) || snapshot.AccountID != accountID || snapshot.AppID != dep.AppID || snapshot.DeploymentID != dep.ID ||
 		snapshot.Scope != normalizedDeploymentScope(dep.Scope) || api.ValidateScope(snapshot.Scope) != nil ||
 		!sameRuntimeJSON(snapshot.SecretGrants.OverrideEnvSecrets, dep.OverrideEnvSecrets) ||
 		!sameRuntimeJSON(snapshot.SecretGrants.Sidecars, dep.Sidecars) || snapshot.SecretGrants.ReloadSignal != dep.SecretReloadSignal {
@@ -66,6 +68,10 @@ func (e *Engine) loadRuntimeDeploymentValues(ctx context.Context, accountID stri
 	if err != nil {
 		return runtimeDeploymentValues{}, fmt.Errorf("capture runtime secret delivery owner: %w", err)
 	}
+	result.ConfigFence, err = state.NewRuntimeAppConfigFence(snapshot)
+	if err != nil {
+		return runtimeDeploymentValues{}, fmt.Errorf("capture runtime configuration: %w", err)
+	}
 	return result, nil
 }
 
@@ -89,12 +95,7 @@ func sameRuntimeJSON(a, b []byte) bool {
 // paused restore, excluding mutable observations. Plaintext is compared only
 // in memory and is never included in an error or log.
 func sameRuntimeValuesSnapshot(a, b state.RuntimeAppValuesSnapshot) bool {
-	left, leftErr := state.NewRuntimeAppSecretFence(a)
-	right, rightErr := state.NewRuntimeAppSecretFence(b)
-	if leftErr != nil || rightErr != nil || left != right {
-		return false
-	}
-	leftValues, leftErr := json.Marshal(a.Values)
-	rightValues, rightErr := json.Marshal(b.Values)
-	return leftErr == nil && rightErr == nil && bytes.Equal(leftValues, rightValues)
+	left, leftErr := state.NewRuntimeAppConfigFence(a)
+	right, rightErr := state.NewRuntimeAppConfigFence(b)
+	return leftErr == nil && rightErr == nil && left == right
 }

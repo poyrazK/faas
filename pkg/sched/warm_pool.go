@@ -166,13 +166,26 @@ func (e *Engine) reconcileWarmPoolLocked(ctx context.Context, appID string, budg
 		// A missing release cannot replace a retained, still-owned pool.
 		return e.reclaimWarmPool(ctx, obsolete, 0)
 	}
-	values, err := e.loadRuntimeDeploymentValues(ctx, acct.ID, dep)
+	values, err := e.loadRuntimeDeploymentValues(ctx, app, dep)
 	if err != nil {
 		return fmt.Errorf("sched: warm pool: owned runtime values: %w", err)
 	}
 	if securityQuarantineErr(dep) != nil || runtimeValuesHaveEphemeralSecrets(values.Snapshot) {
 		return e.reclaimWarmPool(ctx, append(warm, obsolete...), 0)
 	}
+	var freshWarm []state.Instance
+	for _, instance := range warm {
+		proof, readErr := e.store.InstanceRuntimeConfigFence(ctx, app.AccountID, app.ID, instance.ID)
+		if readErr != nil && !errors.Is(readErr, state.ErrNotFound) {
+			return fmt.Errorf("sched: warm pool: read captured config: %w", readErr)
+		}
+		if readErr == nil && proof == values.ConfigFence {
+			freshWarm = append(freshWarm, instance)
+		} else {
+			obsolete = append(obsolete, instance)
+		}
+	}
+	warm = freshWarm
 	if err := e.reclaimWarmPool(ctx, obsolete, 0); err != nil {
 		return err
 	}
@@ -419,14 +432,14 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 		}
 		return fmt.Errorf("warm restore runtime values changed: %w", state.ErrConflict)
 	}
-	fence, err := state.NewRuntimeAppSecretFence(values)
+	fence, err := state.NewRuntimeAppConfigFence(values)
 	if err != nil {
 		cleanup("runtime_fence_failed")
 		return err
 	}
 	fresh, err := e.store.PublishOwnedInstanceRuntime(ctx, state.RuntimeInstancePublication{
 		AccountID: acct.ID, AppID: app.ID, InstanceID: ins.ID, NodeID: ins.NodeID, WakeID: ins.WakeID,
-		ExpectedState: string(state.StateWaking), TargetState: string(state.StateWarm), Fence: fence,
+		ExpectedState: string(state.StateWaking), TargetState: string(state.StateWarm), Fence: fence.SecretFence, ConfigFence: fence,
 		Netns: out.Netns, HostIP: out.HostIP, GuestUID: int(out.LeaseUID),
 	})
 	if err != nil {

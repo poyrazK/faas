@@ -11440,6 +11440,32 @@ func (q *Queries) LockProjectEnvironmentQueuePreparationSpec(ctx context.Context
 	return i, err
 }
 
+const lockRuntimeConfigWorkloadSpec = `-- name: LockRuntimeConfigWorkloadSpec :many
+SELECT s.id FROM project_environment_workload_specs s
+JOIN project_environment_workload_deployment_specs p ON p.spec_id=s.id
+WHERE p.deployment_id=$1::uuid FOR SHARE OF s
+`
+
+func (q *Queries) LockRuntimeConfigWorkloadSpec(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, lockRuntimeConfigWorkloadSpec, deploymentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockRuntimeSecretApp = `-- name: LockRuntimeSecretApp :one
 SELECT id FROM apps WHERE account_id=$1::uuid AND id=$2::uuid AND status<>'deleted'
 FOR SHARE
@@ -15583,6 +15609,11 @@ UPDATE instances SET netns=$1::text, host_ip=$2::inet,
 WHERE id=$5::uuid AND app_id=$6::uuid
     AND deployment_id=$7::uuid AND node_id=$8::uuid
     AND wake_id=$9::uuid AND state=$10::text
+    AND ($10::text<>'warm' OR EXISTS (
+        SELECT 1 FROM runtime_instance_config_proofs proof WHERE proof.instance_id=instances.id
+            AND proof.wake_id=instances.wake_id AND proof.node_id=instances.node_id
+            AND proof.deployment_id=instances.deployment_id
+            AND proof.config_fingerprint=$11::text))
 RETURNING id::text AS id, app_id::text AS app_id, deployment_id::text AS deployment_id,
     state, coalesce(netns,'')::text AS netns, coalesce(guest_uid,0)::integer AS guest_uid,
     coalesce(host(host_ip),'')::text AS host_ip, ram_mb, started_at, last_request_at, parked_at,
@@ -15590,16 +15621,17 @@ RETURNING id::text AS id, app_id::text AS app_id, deployment_id::text AS deploym
 `
 
 type PublishOwnedInstanceRuntimeParams struct {
-	Netns         string
-	HostIp        netip.Addr
-	GuestUid      int32
-	TargetState   string
-	InstanceID    pgtype.UUID
-	AppID         pgtype.UUID
-	DeploymentID  pgtype.UUID
-	NodeID        pgtype.UUID
-	WakeID        pgtype.UUID
-	ExpectedState string
+	Netns             string
+	HostIp            netip.Addr
+	GuestUid          int32
+	TargetState       string
+	InstanceID        pgtype.UUID
+	AppID             pgtype.UUID
+	DeploymentID      pgtype.UUID
+	NodeID            pgtype.UUID
+	WakeID            pgtype.UUID
+	ExpectedState     string
+	ConfigFingerprint string
 }
 
 type PublishOwnedInstanceRuntimeRow struct {
@@ -15634,6 +15666,7 @@ func (q *Queries) PublishOwnedInstanceRuntime(ctx context.Context, db DBTX, arg 
 		arg.NodeID,
 		arg.WakeID,
 		arg.ExpectedState,
+		arg.ConfigFingerprint,
 	)
 	var i PublishOwnedInstanceRuntimeRow
 	err := row.Scan(
@@ -17619,7 +17652,12 @@ WITH owner AS (
     SELECT d.id, a.id AS app_id, a.account_id,
         COALESCE(NULLIF(d.scope,''),'default')::text AS scope,
         COALESCE(bound.id::text,legacy.id::text,'')::text AS environment_id,
-        d.override_env_secrets,d.sidecars,COALESCE(d.secret_reload_signal,'')::text AS reload_signal
+        d.override_env_secrets,d.sidecars,COALESCE(d.secret_reload_signal,'')::text AS reload_signal,
+        COALESCE(spec.id::text,'')::text AS spec_id,COALESCE(spec.config_hash,'')::text AS settings_hash,
+        COALESCE(spec.settings,(to_jsonb(a)||jsonb_build_object(
+            'public_auth_basic_sealed',encode(a.public_auth_basic,'base64'),
+            'only_allow_declared_routes',a.only_declared_routes,'retry_policy_json',a.retry_policy))::json)::json AS settings,
+        (to_jsonb(d)||jsonb_build_object('secret_reload_signal_known',d.secret_reload_signal IS NOT NULL))::jsonb AS artifact
     FROM deployments d
     JOIN apps a ON a.id=d.app_id
     LEFT JOIN projects project ON project.id=a.project_id AND project.account_id=a.account_id
@@ -17642,6 +17680,9 @@ WITH owner AS (
                 AND (COALESCE(NULLIF(d.scope,''),'default') IN ('default','production') OR a.project_id IS NULL OR legacy.id IS NOT NULL)))
 )
 SELECT owner.scope,owner.environment_id,owner.override_env_secrets,owner.sidecars,owner.reload_signal,
+    owner.spec_id,owner.settings_hash,owner.settings,owner.artifact,
+    COALESCE((SELECT jsonb_agg(to_jsonb(layer) ORDER BY layer.sidecar_name)
+        FROM deployment_sidecar_layers layer WHERE layer.deployment_id=owner.id),'[]'::jsonb)::jsonb AS layers,
     COALESCE((SELECT jsonb_agg(jsonb_build_object('key',v.key,'value',v.value,'created_at',v.created_at,'updated_at',v.updated_at) ORDER BY v.key)
         FROM app_envs v WHERE v.account_id=owner.account_id AND v.app_id=owner.app_id AND v.scope=owner.scope),'[]'::jsonb)::jsonb AS values,
     COALESCE((SELECT jsonb_agg(jsonb_build_object('key',s.key,'ciphertext',encode(s.ciphertext,'base64'),
@@ -17667,6 +17708,11 @@ type ReadRuntimeAppValuesForDeploymentRow struct {
 	OverrideEnvSecrets []byte
 	Sidecars           []byte
 	ReloadSignal       string
+	SpecID             string
+	SettingsHash       string
+	Settings           []byte
+	Artifact           []byte
+	Layers             []byte
 	Values             []byte
 	Secrets            []byte
 	ReloadSignals      []byte
@@ -17681,9 +17727,50 @@ func (q *Queries) ReadRuntimeAppValuesForDeployment(ctx context.Context, db DBTX
 		&i.OverrideEnvSecrets,
 		&i.Sidecars,
 		&i.ReloadSignal,
+		&i.SpecID,
+		&i.SettingsHash,
+		&i.Settings,
+		&i.Artifact,
+		&i.Layers,
 		&i.Values,
 		&i.Secrets,
 		&i.ReloadSignals,
+	)
+	return i, err
+}
+
+const readRuntimeInstanceConfigProof = `-- name: ReadRuntimeInstanceConfigProof :one
+SELECT proof.deployment_id::text AS deployment_id,COALESCE(proof.environment_id::text,'')::text AS environment_id,
+    proof.scope,proof.secret_fingerprint,proof.config_fingerprint
+FROM runtime_instance_config_proofs proof
+JOIN instances i ON i.id=proof.instance_id AND i.wake_id=proof.wake_id AND i.node_id=proof.node_id AND i.deployment_id=proof.deployment_id
+JOIN apps a ON a.id=i.app_id
+WHERE i.id=$1::uuid AND a.id=$2::uuid AND a.account_id=$3::uuid AND a.status<>'deleted'
+`
+
+type ReadRuntimeInstanceConfigProofParams struct {
+	InstanceID pgtype.UUID
+	AppID      pgtype.UUID
+	AccountID  pgtype.UUID
+}
+
+type ReadRuntimeInstanceConfigProofRow struct {
+	DeploymentID      string
+	EnvironmentID     string
+	Scope             string
+	SecretFingerprint string
+	ConfigFingerprint string
+}
+
+func (q *Queries) ReadRuntimeInstanceConfigProof(ctx context.Context, db DBTX, arg ReadRuntimeInstanceConfigProofParams) (ReadRuntimeInstanceConfigProofRow, error) {
+	row := db.QueryRow(ctx, readRuntimeInstanceConfigProof, arg.InstanceID, arg.AppID, arg.AccountID)
+	var i ReadRuntimeInstanceConfigProofRow
+	err := row.Scan(
+		&i.DeploymentID,
+		&i.EnvironmentID,
+		&i.Scope,
+		&i.SecretFingerprint,
+		&i.ConfigFingerprint,
 	)
 	return i, err
 }
@@ -20628,6 +20715,35 @@ func (q *Queries) SafeReleaseWorkerLeaseReady(ctx context.Context, db DBTX) (boo
 	var ready bool
 	err := row.Scan(&ready)
 	return ready, err
+}
+
+const saveRuntimeInstanceConfigProof = `-- name: SaveRuntimeInstanceConfigProof :exec
+INSERT INTO runtime_instance_config_proofs(instance_id,wake_id,node_id,deployment_id,environment_id,scope,secret_fingerprint,config_fingerprint)
+SELECT id,wake_id,node_id,deployment_id,$1::uuid,$2::text,
+    $3::text,$4::text
+FROM instances WHERE id=$5::uuid
+ON CONFLICT(instance_id) DO UPDATE SET wake_id=excluded.wake_id,node_id=excluded.node_id,
+    deployment_id=excluded.deployment_id,environment_id=excluded.environment_id,scope=excluded.scope,
+    secret_fingerprint=excluded.secret_fingerprint,config_fingerprint=excluded.config_fingerprint
+`
+
+type SaveRuntimeInstanceConfigProofParams struct {
+	EnvironmentID     pgtype.UUID
+	Scope             string
+	SecretFingerprint string
+	ConfigFingerprint string
+	InstanceID        pgtype.UUID
+}
+
+func (q *Queries) SaveRuntimeInstanceConfigProof(ctx context.Context, db DBTX, arg SaveRuntimeInstanceConfigProofParams) error {
+	_, err := db.Exec(ctx, saveRuntimeInstanceConfigProof,
+		arg.EnvironmentID,
+		arg.Scope,
+		arg.SecretFingerprint,
+		arg.ConfigFingerprint,
+		arg.InstanceID,
+	)
+	return err
 }
 
 const setAppManifest = `-- name: SetAppManifest :exec

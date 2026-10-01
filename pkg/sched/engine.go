@@ -2924,7 +2924,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// The snapshot policy and boot payload use the same owned value snapshot.
 	// A separate secret-policy read could allow restore and subsequently load
 	// an ephemeral secret into an older persistent capture.
-	runtimeValues, err := e.loadRuntimeDeploymentValues(ctx, acct.ID, dep)
+	runtimeValues, err := e.loadRuntimeDeploymentValues(ctx, app, dep)
 	if err != nil {
 		release()
 		return WakeResult{}, fmt.Errorf("sched: wake: load runtime values: %w", err)
@@ -3424,6 +3424,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		spec:             spec,
 		secretDeliveries: sealedEnv.Candidates,
 		secretFence:      sealedEnv.Fence,
+		configFence:      runtimeValues.ConfigFence,
 		accountID:        acct.ID,
 		// wakeID is the per-wake-attempt correlation handle (gaps
 		// analysis 2026-07-23). Carried across the unlocked Phase 3
@@ -3766,7 +3767,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// a stolen state a failure without adding a read to the successful path.
 	fresh, publishErr := e.store.PublishOwnedInstanceRuntime(ctx, state.RuntimeInstancePublication{
 		AccountID: bootInput.accountID, AppID: bootInput.appID, InstanceID: bootInput.insID,
-		NodeID: bootInput.nodeID, WakeID: bootInput.wakeID, Fence: bootInput.secretFence,
+		NodeID: bootInput.nodeID, WakeID: bootInput.wakeID, Fence: bootInput.secretFence, ConfigFence: bootInput.configFence,
 		ExpectedState: string(bootInput.initState), Netns: out.Netns, HostIP: out.HostIP, GuestUID: int(out.LeaseUID),
 	})
 	if errors.Is(publishErr, state.ErrConflict) {
@@ -4031,6 +4032,7 @@ type bootInput struct {
 	spec             AppSpec
 	secretDeliveries []state.AppSecretDeliveryCandidate
 	secretFence      state.RuntimeAppSecretFence
+	configFence      state.RuntimeAppConfigFence
 	// wakeID is the per-wake-attempt correlation handle (gaps analysis
 	// 2026-07-23). UUIDv7 minted at Phase 2 under the lock, persisted
 	// on the instances row in CreateInstance, and carried across the
@@ -5277,7 +5279,7 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 	// ships only the requested env_keys. A missing-required
 	// key fails loud (the legacy "stage everything" path is
 	// preserved when OverrideEnvSecrets is nil).
-	runtimeValues, err := e.loadRuntimeDeploymentValues(ctx, app.AccountID, dep)
+	runtimeValues, err := e.loadRuntimeDeploymentValues(ctx, app, dep)
 	if err != nil {
 		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, fmt.Errorf("sched: build app spec: sealed env: %w", err)
 	}
@@ -6015,7 +6017,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	// filtering — see Wake builder for the full contract. ColdBoot /
 	// Prime shares the wake path; the dep row is the same one Wake
 	// loaded (so no extra DB read).
-	runtimeValues, err := e.loadRuntimeDeploymentValues(ctx, acct.ID, dep)
+	runtimeValues, err := e.loadRuntimeDeploymentValues(ctx, app, dep)
 	if err != nil {
 		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "prime_sealed_env_invalid")
 		return fmt.Errorf("sched: prime: load sealed env: %w", err)
@@ -6100,6 +6102,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		insID: ins.ID, appID: appID, accountID: acct.ID, wakeID: primeWakeID,
 		secretDeliveries: sealedEnv.Candidates,
 		secretFence:      sealedEnv.Fence,
+		configFence:      runtimeValues.ConfigFence,
 	}
 	deliveryFinalized := false
 	defer func() {
@@ -6149,7 +6152,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	}
 	primed, err := e.store.PublishOwnedInstanceRuntime(ctx, state.RuntimeInstancePublication{
 		AccountID: acct.ID, AppID: appID, InstanceID: ins.ID, NodeID: placement.NodeID, WakeID: primeWakeID,
-		ExpectedState: string(state.StateColdBooting), Netns: out.Netns, HostIP: out.HostIP, GuestUID: int(out.LeaseUID), Fence: sealedEnv.Fence,
+		ExpectedState: string(state.StateColdBooting), Netns: out.Netns, HostIP: out.HostIP, GuestUID: int(out.LeaseUID), Fence: sealedEnv.Fence, ConfigFence: runtimeValues.ConfigFence,
 	})
 	if err != nil {
 		// Best-effort destroy; same rationale as Wake above. Uses a
