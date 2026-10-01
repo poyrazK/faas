@@ -16621,7 +16621,7 @@ SELECT jsonb_build_object(
       WHEN 'project' THEN EXISTS (SELECT 1 FROM projects p WHERE p.id = $2::uuid
         AND (p.account_id = o.personal_owner_account_id OR EXISTS (SELECT 1 FROM org_memberships m
           WHERE m.org_id = o.id AND m.account_id = p.account_id AND m.removed_at IS NULL)))
-        AND NOT EXISTS (SELECT 1 FROM apps a WHERE a.project_id = $2::uuid AND a.status <> 'deleted' AND a.org_id <> o.id)
+        AND NOT EXISTS (SELECT 1 FROM apps a WHERE a.project_id = $2::uuid AND a.status <> 'deleted' AND a.org_id IS DISTINCT FROM o.id)
       ELSE false END,
     'assignments', coalesce((SELECT jsonb_agg(jsonb_build_object(
         'id', a.id::text, 'org_id', a.org_id::text, 'scope', a.scope, 'scope_id', a.scope_id::text,

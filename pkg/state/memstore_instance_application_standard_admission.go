@@ -90,12 +90,15 @@ func (m *MemStore) standardRuntimeSnapshotLocked(ins Instance) ([]byte, error) {
 	return json.Marshal(input)
 }
 
-// Called under m.mu before the instance mutation. Only test fixtures with no
-// persisted organization retain the legacy permissive behaviour.
+// Called under m.mu before the instance mutation. Unowned legacy apps retain
+// residency compatibility without obtaining company or native grant authority.
 func (m *MemStore) guardInstanceStandardRuntimeLocked(ins Instance, creating bool) error {
 	app, exists := m.apps[ins.AppID]
-	if !exists || app.OrgID == "" || ins.Kind == "job_task" || ins.Kind == "build" || !standardRuntimeAdmissionState(ins.State) {
+	if !exists || ins.Kind == "job_task" || ins.Kind == "build" || !standardRuntimeAdmissionState(ins.State) {
 		return nil
+	}
+	if app.OrgID == "" {
+		return m.guardUnownedStandardRuntimeLocked(app)
 	}
 	input, err := m.standardRuntimeSnapshotLocked(ins)
 	if err != nil {
@@ -136,4 +139,18 @@ func (m *MemStore) guardInstanceStandardRuntimeLocked(ins Instance, creating boo
 		}
 	}
 	return m.guardNativeRuntimeReceiptLocked(ins, capture)
+}
+
+func (m *MemStore) guardUnownedStandardRuntimeLocked(app App) error {
+	account, exists := m.accounts[app.AccountID]
+	if app.Status == AppDeleted || !exists || !account.Active() {
+		return ErrApplicationStandardsPending
+	}
+	if _, retained := m.applicationStandardEnrollments[app.ID]; retained {
+		return ErrApplicationStandardsPending
+	}
+	if _, err := m.applicationStandardAdmissionPinsLocked(app); err != nil {
+		return ErrApplicationStandardsPending
+	}
+	return nil
 }

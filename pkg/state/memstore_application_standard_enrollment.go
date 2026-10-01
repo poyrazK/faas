@@ -70,25 +70,13 @@ func sameStandardUUID(a, b string) bool {
 // fixtures without an org retain their legacy behavior; API-created apps and
 // all org-owned fixtures participate in the same enrollment boundary as PG.
 func (m *MemStore) initializeApplicationStandardEnrollmentLocked(app App) error {
+	pins, err := m.applicationStandardAdmissionPinsLocked(app)
+	if err != nil {
+		return err
+	}
 	if app.OrgID == "" {
 		return nil
 	}
-	pins := []appstandards.Adoption{}
-	for _, record := range m.applicationStandardAssignments {
-		if !record.Active {
-			continue
-		}
-		assignment := record.Assignment
-		matches := assignment.Scope == "organization" && sameStandardUUID(assignment.ScopeID, app.OrgID) || assignment.Scope == "project" && sameStandardUUID(assignment.ScopeID, app.ProjectID) || assignment.Scope == "application" && sameStandardUUID(assignment.ScopeID, app.ID)
-		if !matches {
-			continue
-		}
-		if !sameStandardUUID(assignment.OrgID, app.OrgID) {
-			return fmt.Errorf("assigned app scope belongs to another organization: %w", ErrInvalidArgument)
-		}
-		pins = append(pins, appstandards.Adoption{AssignmentID: assignment.ID, Version: assignment.AdmissionVersion})
-	}
-	slices.SortFunc(pins, func(a, b appstandards.Adoption) int { return strings.Compare(a.AssignmentID, b.AssignmentID) })
 	if m.applicationStandardEnrollments == nil {
 		m.applicationStandardEnrollments = map[string]ApplicationStandardEnrollment{}
 	}
@@ -108,6 +96,29 @@ func (m *MemStore) initializeApplicationStandardEnrollmentLocked(app App) error 
 	}
 	m.applicationStandardEnrollments[app.ID] = cloneApplicationStandardEnrollment(value)
 	return nil
+}
+
+func (m *MemStore) applicationStandardAdmissionPinsLocked(app App) ([]appstandards.Adoption, error) {
+	if before, exists := m.apps[app.ID]; exists && before.OrgID != "" && app.OrgID == "" {
+		return nil, fmt.Errorf("application organization owner cannot be removed: %w", ErrInvalidArgument)
+	}
+	pins := []appstandards.Adoption{}
+	for _, record := range m.applicationStandardAssignments {
+		if !record.Active {
+			continue
+		}
+		assignment := record.Assignment
+		matches := assignment.Scope == "organization" && sameStandardUUID(assignment.ScopeID, app.OrgID) || assignment.Scope == "project" && sameStandardUUID(assignment.ScopeID, app.ProjectID) || assignment.Scope == "application" && sameStandardUUID(assignment.ScopeID, app.ID)
+		if !matches {
+			continue
+		}
+		if !sameStandardUUID(assignment.OrgID, app.OrgID) {
+			return nil, fmt.Errorf("assigned app scope belongs to another organization: %w", ErrInvalidArgument)
+		}
+		pins = append(pins, appstandards.Adoption{AssignmentID: assignment.ID, Version: assignment.AdmissionVersion})
+	}
+	slices.SortFunc(pins, func(a, b appstandards.Adoption) int { return strings.Compare(a.AssignmentID, b.AssignmentID) })
+	return pins, nil
 }
 
 func (m *MemStore) cloneApplicationStandardEnrollmentsLocked() map[string]ApplicationStandardEnrollment {

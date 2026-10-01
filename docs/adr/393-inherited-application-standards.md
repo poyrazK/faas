@@ -465,12 +465,22 @@ standard revision.
 
 ### Enrollment evidence
 
-A wider PostgreSQL migration-fixture run found an open legacy compatibility gap:
-raw app inserts without an organization try to create an enrollment with a null
-`org_id`, violating its required owner. MemStore preserves unowned legacy apps.
-This boundary needs an explicit compatible policy and regression coverage while
-retaining company ownership and assignment enforcement. The wider migration
-fixture suite is not green, and these failures remain acceptance blockers.
+Unowned legacy app inserts outside assigned scopes retain their compatibility
+without inventing a company enrollment. Project review and assignment reject
+every current unowned member; nullable ownership cannot escape that check.
+An organization owner cannot be cleared, even before any standard is assigned.
+Attaching a verified owner captures its admission pins and requires installation
+before deployment or resident runtime transitions. Restoration and application
+UUID reuse revalidate retained project and application assignments.
+
+Unowned runtime compatibility is limited to nondeleted apps of active or
+past-due accounts without an abuse hold or retained company intent. It creates
+no application-standard capture, native grant, receipt or observed adoption.
+Direct native authorization still requires a verified owner and enrollment.
+Owner attachment and runtime admission share the persisted app row fence;
+unowned legacy residency cannot become company runtime authority. Portable
+MemStore and real PostgreSQL tests cover these ownership and residency
+boundaries, while native consumer and full release acceptance remain pending.
 
 The storage boundary now captures admission pins at every app insert, including
 raw project/reconcile/preview inserts, and revalidates restore and scope changes.

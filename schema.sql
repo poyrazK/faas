@@ -244,13 +244,19 @@ CREATE FUNCTION public.application_standard_app_scope_guard() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        IF OLD.org_id IS NOT NULL AND NEW.org_id IS NULL THEN
+            RAISE EXCEPTION 'application organization owner cannot be removed'
+                USING ERRCODE = '23514', CONSTRAINT = 'application_standard_scope_owner';
+        END IF;
+    END IF;
     PERFORM 1 FROM orgs WHERE id = NEW.org_id FOR SHARE;
     IF NEW.project_id IS NOT NULL THEN
         PERFORM 1 FROM projects WHERE id = NEW.project_id FOR SHARE;
     END IF;
     IF EXISTS (
         SELECT 1 FROM application_standard_assignments a
-        WHERE a.active AND a.org_id <> NEW.org_id
+        WHERE a.active AND a.org_id IS DISTINCT FROM NEW.org_id
           AND ((a.scope = 'project' AND a.scope_id = NEW.project_id)
             OR (a.scope = 'application' AND a.scope_id = NEW.id))
     ) THEN
@@ -351,7 +357,7 @@ BEGIN
     ELSIF NEW.scope = 'project' THEN
         PERFORM 1 FROM projects WHERE id = NEW.scope_id FOR UPDATE;
         IF EXISTS (SELECT 1 FROM application_standard_assignments
-                   WHERE active AND scope = 'project' AND scope_id = NEW.scope_id AND org_id <> NEW.org_id) THEN
+                   WHERE active AND scope = 'project' AND scope_id = NEW.scope_id AND org_id IS DISTINCT FROM NEW.org_id) THEN
             RAISE EXCEPTION 'project scope is already assigned to another organization'
                 USING ERRCODE = '23514', CONSTRAINT = 'application_standard_scope_owner';
         END IF;
@@ -361,7 +367,7 @@ BEGIN
               (o.personal_owner_account_id = creator OR EXISTS (
                 SELECT 1 FROM org_memberships m WHERE m.org_id = o.id AND m.account_id = creator AND m.removed_at IS NULL
               ))
-        ) OR EXISTS (SELECT 1 FROM apps WHERE project_id = NEW.scope_id AND status <> 'deleted' AND org_id <> NEW.org_id) THEN
+        ) OR EXISTS (SELECT 1 FROM apps WHERE project_id = NEW.scope_id AND status <> 'deleted' AND org_id IS DISTINCT FROM NEW.org_id) THEN
             RAISE EXCEPTION 'project standard scope has no verified organization owner'
                 USING ERRCODE = '23514', CONSTRAINT = 'application_standard_scope_owner';
         END IF;
@@ -492,6 +498,9 @@ CREATE FUNCTION public.application_standard_enroll_app() RETURNS trigger
     AS $$
 DECLARE pins jsonb;
 BEGIN
+    IF NEW.org_id IS NULL THEN
+        RETURN NEW;
+    END IF;
     SELECT coalesce(jsonb_agg(jsonb_build_object('assignment_id', id::text, 'version', admission_version) ORDER BY id), '[]'::jsonb)
     INTO pins FROM application_standard_assignments WHERE active AND org_id = NEW.org_id
       AND ((scope = 'organization' AND scope_id = NEW.org_id)
@@ -548,6 +557,7 @@ CREATE FUNCTION public.application_standard_instance_runtime_capture() RETURNS t
     AS $$
 BEGIN
  IF NEW.app_id IS NOT NULL AND NEW.kind='wake' AND NEW.state IN ('waking','cold_booting','running','warm','migrating') THEN
+  IF application_standard_runtime_is_unowned(NEW.app_id) THEN RETURN NEW; END IF;
   INSERT INTO instance_application_standard_admissions(instance_id,app_id,deployment_id,node_id,input_snapshot)
   VALUES(NEW.id,NEW.app_id,NEW.deployment_id,NEW.node_id,
    application_standard_native_runtime_snapshot(NEW.app_id,NEW.deployment_id) || jsonb_build_object('instance_ram_mb',NEW.ram_mb,'instance_mode',NEW.mode));
@@ -575,6 +585,7 @@ BEGIN
  -- Cleanup, bookkeeping and nonresident fixtures remain possible while the
  -- standard is pending. Entry into boot, serving, warm and migration is gated.
  IF NEW.state NOT IN ('waking','cold_booting','running','warm','migrating') THEN RETURN NEW; END IF;
+ IF application_standard_runtime_is_unowned(NEW.app_id) THEN RETURN NEW; END IF;
  current_input := application_standard_native_runtime_snapshot(NEW.app_id,NEW.deployment_id) ||
    jsonb_build_object('instance_ram_mb',NEW.ram_mb,'instance_mode',NEW.mode);
  IF TG_OP='INSERT' THEN
@@ -1025,6 +1036,30 @@ BEGIN
   AND NEW.input_snapshot IS NOT DISTINCT FROM OLD.input_snapshot AND NEW.captured_at IS NOT DISTINCT FROM OLD.captured_at THEN RETURN NEW; END IF;
  IF TG_OP='DELETE' AND NOT EXISTS(SELECT 1 FROM instances WHERE id=OLD.instance_id) THEN RETURN OLD; END IF;
  RAISE EXCEPTION 'runtime admission capture is immutable' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_capture_immutable';
+END;
+$$;
+
+
+--
+-- Name: application_standard_runtime_is_unowned(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_runtime_is_unowned(application_id uuid) RETURNS boolean
+    LANGUAGE plpgsql
+    AS $$
+DECLARE a apps%ROWTYPE; acct accounts%ROWTYPE;
+BEGIN
+ SELECT * INTO a FROM apps WHERE id=application_id FOR SHARE NOWAIT;
+ IF NOT FOUND OR a.org_id IS NOT NULL OR a.status='deleted' THEN RETURN false; END IF;
+ SELECT * INTO acct FROM accounts WHERE id=a.account_id FOR SHARE NOWAIT;
+ IF NOT FOUND OR acct.status NOT IN ('active','past_due') OR acct.abuse_hold_at IS NOT NULL THEN RETURN false; END IF;
+ -- Legacy residency creates no company enrollment, capture, grant or receipt.
+ -- Retained company intent must never acquire this compatibility allowance.
+ RETURN NOT EXISTS (SELECT 1 FROM app_application_standards WHERE app_id=a.id)
+  AND NOT EXISTS (SELECT 1 FROM application_standard_assignments s WHERE s.active
+    AND ((s.scope='application' AND s.scope_id=a.id) OR (s.scope='project' AND s.scope_id=a.project_id)));
+EXCEPTION WHEN lock_not_available THEN
+ RAISE EXCEPTION 'runtime inputs are busy' USING ERRCODE='55P03',CONSTRAINT='application_standard_runtime_busy';
 END;
 $$;
 
