@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -580,7 +581,29 @@ func testServiceCapacityWarmDemotion(t *testing.T, fx *Fixture) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	owners := fx.Store.(state.ExclusiveWorkStore)
+	if _, err := owners.UpsertExclusiveWorkPolicy(fx.Ctx, fx.Account.ID, exclusivework.Policy{
+		Name: "capacity-demotion", Scope: "account", MemberAppIDs: []string{a.ID},
+		Contention: "queue", LeaseSeconds: 30, MaxAttemptSeconds: 60, MaxAttempts: 2, RetryAfterSeconds: 2,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	op, _, err := owners.AdmitExclusiveOperation(fx.Ctx, state.ExclusiveAdmission{
+		AccountID: fx.Account.ID, AppID: a.ID, PolicyName: "capacity-demotion",
+		Key: []byte(`"demotion"`), Request: []byte(`{"kind":"sync"}`), IdempotencyKey: "capacity-demotion",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := owners.ClaimExclusiveOperation(fx.Ctx, fx.Account.ID, op.ID, state.ExclusiveIncarnation(ins))
+	if err != nil {
+		t.Fatal(err)
+	}
 	refuseCapacityTransition(t, fx, ins, state.StateWarm)
+	// Refusal must roll back ownership side effects as well as residency.
+	if current, err := owners.ValidateExclusiveOperation(fx.Ctx, claim); err != nil || current.State != "running" || !current.QuotaReserved {
+		t.Fatalf("capacity refusal revoked the operation owner: %+v %v", current, err)
+	}
 	manifest := a.Manifest
 	target := *manifest.ServiceReplicas
 	target.Desired = 7
@@ -590,6 +613,9 @@ func testServiceCapacityWarmDemotion(t *testing.T, fx *Fixture) {
 	}
 	if err := fx.Store.UpdateInstanceState(fx.Ctx, ins.ID, string(state.StateWarm)); err != nil {
 		t.Fatalf("protected warm demotion refused: %v", err)
+	}
+	if current, err := owners.ExclusiveOperationByID(fx.Ctx, fx.Account.ID, op.ID); err != nil || current.State != "pending" || current.QuotaReserved {
+		t.Fatalf("committed demotion retained the old operation owner: %+v %v", current, err)
 	}
 	r, err := fx.Store.ServiceCapacityProtection(fx.Ctx)
 	if err != nil || r.State != "protected" || r.ReservedReplicas != 7 || r.FailoverSlots != 7 {
