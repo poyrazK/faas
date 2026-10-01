@@ -1176,16 +1176,17 @@ type CustomerOperation struct {
 }
 
 type CustomerOperationDefinition struct {
-	ID           pgtype.UUID
-	AccountID    pgtype.UUID
-	AppID        pgtype.UUID
-	Scope        string
-	Name         string
-	Revision     string
-	DeploymentID pgtype.UUID
-	ReleaseID    string
-	Spec         []byte
-	CreatedAt    pgtype.Timestamptz
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	Scope            string
+	Name             string
+	Revision         string
+	DeploymentID     pgtype.UUID
+	ReleaseID        string
+	Spec             []byte
+	CreatedAt        pgtype.Timestamptz
+	WorkflowSnapshot []byte
 }
 
 type CustomerOperationEvent struct {
