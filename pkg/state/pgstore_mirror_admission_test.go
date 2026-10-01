@@ -26,11 +26,14 @@ INSERT INTO apps (id, account_id, slug, ram_mb, max_concurrency, status, created
 VALUES ($1::uuid, $2::uuid, $3, 128, 5, 'active', now())`, appID, accountID, "mirror-outcome-"+appID); err != nil {
 		t.Fatalf("insert app: %v", err)
 	}
-	for _, deploymentID := range []string{sourceDeploymentID, mirrorDeploymentID} {
+	for _, deployment := range []struct {
+		id    string
+		scope string
+	}{{sourceDeploymentID, "source"}, {mirrorDeploymentID, "mirror"}} {
 		if _, err := pool.Exec(ctx, `
 INSERT INTO deployments (id, app_id, scope, image_digest, status, created_at)
-VALUES ($1::uuid, $2::uuid, $3, $4, 'live', now())`, deploymentID, appID,
-			"mirror-test", "sha256:"+deploymentID); err != nil {
+VALUES ($1::uuid, $2::uuid, $3, $4, 'live', now())`, deployment.id, appID,
+			deployment.scope, "sha256:"+deployment.id); err != nil {
 			t.Fatalf("insert deployment: %v", err)
 		}
 	}
