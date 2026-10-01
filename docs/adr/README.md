@@ -407,6 +407,7 @@ concurrently). The log above already contains several such pairs (157, 158, 167,
 - [ADR-148: nonblocking resume hardware entropy](148-nonblocking-resume-hardware-entropy.md)
 - [ADR-149: prepared unused network cache](149-prepared-unused-network-cache.md)
 - [ADR-150: firecracker tsc restore order canary](150-firecracker-tsc-restore-order-canary.md)
+- [ADR-423: retained cache materialization](423-retained-cache-materialization.md) — avoid the redundant copy while retaining the opened artifact through eviction
 
 ## Managed service recovery decisions
 
