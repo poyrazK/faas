@@ -997,3 +997,7 @@ The public startup fixture now also creates enabled listener intent, requires th
 ### Published database-backed socket ownership acceptance
 
 Public PR #3992 commit `cb4062a95` requires enabled listener socket ownership at readiness and releases the endpoint on shutdown. Three race-detector runs passed on the isolated public branch, log `/tmp/gregale-udp-public-socket-startup-review.log`; the owned cluster was stopped. Combined #3997 CI snapshot had 23 successes, one skip and two live jobs (migration application and builder-base); no full CI pass is claimed. Public updated-head CI and native/deployed acceptance remain pending.
+
+### Current database gate with enabled socket ownership
+
+Full strict `make udp-postgres-check` passed all nine required cases with race detection after the enabled-socket startup/shutdown extension. No skips were accepted. Log `/tmp/gregale-udp-postgres-gate-socket-final.log`. Owned cluster stopped. Combined PR #3997 CI snapshot reached 25 successes, one skip and one live full migration-suite job `110269229264`; no full remote completion claim is made. Native and deployed recovery remain unverified.
