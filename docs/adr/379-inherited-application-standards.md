@@ -125,7 +125,20 @@ Tests cover both project membership orderings, duplicate approvals, injected
 audit failure rollback, existing-pin preservation and restore lease revocation.
 No approval advances a persisted or observed application revision.
 
-Public review/activation, the projection worker and consumer observation
-are still pending. The enrollment gate currently covers deployment admission;
+The private PostgreSQL/MemStore materializer now claims operations with expiring
+worker generations and installs each frozen target atomically into actual app
+settings, log drains and trusted signer rows. Logical resource bindings keep
+physical identifiers out of inheritance; private ciphertext backups preserve
+legacy controls for reviewed removal. Installation rechecks the approved app,
+current entitlements and resolver projection. Managed writes are protected at
+both store and raw SQL boundaries, with nonwaiting child-row acquisition.
+Persistence advances only persisted revisions. A later wave waits for actual
+observation; no consumer acknowledgment is fabricated. Tests cover all six
+controls, sealed baseline restoration, stale inputs, lease replacement, restart
+wave gates, raw SQL protection, child-row contention and transaction rollback.
+
+Public review/activation, background worker wiring, automatic enrollment repair,
+permitted local intent mutations and consumer observation are still pending.
+The enrollment gate currently covers deployment admission;
 restore/wake and existing-runtime behavior remain part of the runtime acceptance
 work before public activation is enabled.

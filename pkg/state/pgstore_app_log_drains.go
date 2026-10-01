@@ -23,7 +23,7 @@ func (s *PgStore) CreateAppLogDrain(ctx context.Context, in AppLogDrain) (AppLog
 		if isUniqueViolation(err) {
 			return AppLogDrain{}, ErrConflict
 		}
-		return AppLogDrain{}, fmt.Errorf("state: insert app_log_drain: %w", err)
+		return AppLogDrain{}, fmt.Errorf("state: insert app_log_drain: %w", mapErr(err))
 	}
 	return drain, nil
 }
@@ -80,7 +80,7 @@ func (s *PgStore) CreateAppLogDrainIfUnderQuota(ctx context.Context, in AppLogDr
 		if isUniqueViolation(err) {
 			return AppLogDrain{}, ErrConflict
 		}
-		return AppLogDrain{}, fmt.Errorf("state: insert app_log_drain: %w", err)
+		return AppLogDrain{}, fmt.Errorf("state: insert app_log_drain: %w", mapErr(err))
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return AppLogDrain{}, fmt.Errorf("state: commit app_log_drain: %w", err)
@@ -137,7 +137,7 @@ func (s *PgStore) UpdateAppLogDrain(ctx context.Context, id string, p UpdateAppL
 		if isUniqueViolation(err) {
 			return AppLogDrain{}, ErrConflict
 		}
-		return AppLogDrain{}, fmt.Errorf("state: update app_log_drain: %w", err)
+		return AppLogDrain{}, fmt.Errorf("state: update app_log_drain: %w", mapErr(err))
 	}
 	return drain, nil
 }
@@ -145,7 +145,7 @@ func (s *PgStore) UpdateAppLogDrain(ctx context.Context, id string, p UpdateAppL
 func (s *PgStore) DeleteAppLogDrain(ctx context.Context, id string) error {
 	tag, err := s.pool.Exec(ctx, `delete from app_log_drains where id = $1`, id)
 	if err != nil {
-		return fmt.Errorf("state: delete app_log_drain: %w", err)
+		return fmt.Errorf("state: delete app_log_drain: %w", mapErr(err))
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound

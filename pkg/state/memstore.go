@@ -25,6 +25,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/appstandards"
 	"github.com/onebox-faas/faas/pkg/cursor"
 	"github.com/onebox-faas/faas/pkg/devbridge"
 	"github.com/onebox-faas/faas/pkg/hostport"
@@ -143,6 +144,9 @@ type MemStore struct {
 	applicationStandardEnrollments     map[string]ApplicationStandardEnrollment
 	applicationStandardReviewPlans     map[string]ApplicationStandardReviewPlan
 	applicationStandardOperations      map[string]ApplicationStandardOperation
+	applicationStandardWorkerClaims    map[string]ApplicationStandardWorkerClaim
+	applicationStandardControlBindings map[string]standardControlBinding
+	applicationStandardControlBackups  map[string]standardControlBackup
 	devBridgeSessions                  map[string]devbridge.Session
 	devBridgeWebhookReplays            map[string]devbridge.WebhookReplay
 	featureFlagVersions                map[string][]FeatureFlagVersion
@@ -4051,6 +4055,7 @@ func (m *MemStore) CreatePRPreviewAppsIfUnderQuota(_ context.Context, apps []App
 		for _, id := range insertedIDs {
 			delete(m.apps, id)
 			delete(m.applicationStandardEnrollments, id)
+			m.deleteStandardMaterializationControlsLocked(id)
 		}
 		return nil, err
 	}
@@ -5686,6 +5691,12 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 	if !ok {
 		return App{}, ErrNotFound
 	}
+	if (p.SetRequireSigned && boolOrFalse(p.RequireSigned) != a.RequireSigned && m.standardManagedControlLocked(a.ID, appstandards.RequireSigned)) ||
+		(p.SetSecurityPolicy && p.SecurityPolicy != nil && *p.SecurityPolicy != a.SecurityPolicy && m.standardManagedControlLocked(a.ID, appstandards.SecurityPolicy)) ||
+		(p.SetEgressAllowlist && !slices.Equal(derefPrefixes(p.EgressAllowlist), a.EgressAllowlist) && m.standardManagedControlLocked(a.ID, appstandards.EgressCIDRs)) ||
+		(p.SetEgressPorts && !slices.Equal(p.EgressPorts, a.EgressPorts) && m.standardManagedControlLocked(a.ID, appstandards.EgressExtraPorts)) {
+		return App{}, ErrApplicationStandardManagedControl
+	}
 	before := a
 	if a.ScalingPolicyRevision <= 0 {
 		a.ScalingPolicyRevision = 1
@@ -6440,6 +6451,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	}
 	delete(m.apps, id)
 	delete(m.applicationStandardEnrollments, id)
+	m.deleteStandardMaterializationControlsLocked(id)
 	return nil
 }
 
@@ -20336,6 +20348,13 @@ func (m *MemStore) UpsertAppTrustedSigner(_ context.Context, accountID, appID, s
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	k := trustedSignerKey{AppID: appID, SignerName: signerName}
+	current, exists := m.trustedSigners[k]
+	if exists && current.AccountID != accountID {
+		return time.Time{}, false, ErrNotFound
+	}
+	if m.standardManagedControlLocked(appID, appstandards.TrustedPublishers) && (!exists || !bytes.Equal(current.CosignPublicKey, pubKey)) {
+		return time.Time{}, false, ErrApplicationStandardManagedControl
+	}
 	if existing, ok := m.trustedSigners[k]; ok {
 		if existing.AccountID != accountID {
 			return time.Time{}, false, ErrNotFound
@@ -20367,6 +20386,9 @@ func (m *MemStore) DeleteAppTrustedSigner(_ context.Context, accountID, appID, s
 	row, ok := m.trustedSigners[k]
 	if !ok || row.AccountID != accountID {
 		return ErrNotFound
+	}
+	if m.standardManagedControlLocked(appID, appstandards.TrustedPublishers) {
+		return ErrApplicationStandardManagedControl
 	}
 	delete(m.trustedSigners, k)
 	return nil
@@ -20633,6 +20655,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 		if a.AccountID == id {
 			delete(m.apps, aid)
 			delete(m.applicationStandardEnrollments, aid)
+			m.deleteStandardMaterializationControlsLocked(aid)
 			delete(m.githubBindings, aid)
 		}
 	}

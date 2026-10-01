@@ -24194,7 +24194,7 @@ func (s *PgStore) UpsertAppTrustedSigner(ctx context.Context, accountID, appID, 
 		 returning added_at, (xmax = 0) AS is_new`,
 		accountID, appID, signerName, pubKey, addedByAccountID).Scan(&addedAt, &isNewRow)
 	if err != nil {
-		return time.Time{}, false, err
+		return time.Time{}, false, mapErr(err)
 	}
 	// isNewRow=true means inserted now; rotated = !isNewRow.
 	return addedAt, !isNewRow, nil
@@ -24208,7 +24208,7 @@ func (s *PgStore) DeleteAppTrustedSigner(ctx context.Context, accountID, appID, 
 		`delete from app_trusted_signers where account_id = $1 and app_id = $2 and signer_name = $3`,
 		accountID, appID, signerName)
 	if err != nil {
-		return err
+		return mapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -25422,6 +25422,10 @@ var checkViolationMappedToInvalid = map[string]struct{}{
 }
 
 func mapErr(err error) error {
+	var managed *pgconn.PgError
+	if errors.As(err, &managed) && managed.ConstraintName == "application_standard_managed_control" {
+		return ErrApplicationStandardManagedControl
+	}
 	if err == nil {
 		return nil
 	}

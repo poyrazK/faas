@@ -173,7 +173,7 @@ func (m *MemStore) standardReviewSnapshotLocked(orgID, actorID string, r Applica
 		if !sameStandardUUID(app.OrgID, org.ID) || app.Status == AppDeleted || (r.Scope == "project" && !sameStandardUUID(app.ProjectID, r.ScopeID)) || (r.Scope == "application" && !sameStandardUUID(app.ID, r.ScopeID)) {
 			continue
 		}
-		a := standardReviewAppSnapshot{AppID: canonicalStandardUUID(app.ID), OrgID: s.OrgID, AccountID: canonicalStandardUUID(app.AccountID), Slug: app.Slug, Status: string(app.Status), Type: string(app.Type), WorkloadClass: string(app.WorkloadClass), Settings: applicationStandardBaseSettings(app), Drains: []standardReviewDrain{}, Signers: []standardReviewSigner{}, Artifacts: []standardReviewArtifact{}}
+		a := standardReviewAppSnapshot{AppID: canonicalStandardUUID(app.ID), OrgID: s.OrgID, AccountID: canonicalStandardUUID(app.AccountID), Slug: app.Slug, Status: string(app.Status), Type: string(app.Type), WorkloadClass: string(app.WorkloadClass), Settings: applicationStandardBaseSettings(app), Drains: []standardReviewDrain{}, Signers: []standardReviewSigner{}, Artifacts: []standardReviewArtifact{}, ArchivedResources: []standardReviewArchivedResource{}}
 		a.AccountDrainCount = accountDrainCounts[a.AccountID]
 		if app.ProjectID != "" {
 			a.ProjectID = canonicalStandardUUID(app.ProjectID)
@@ -195,12 +195,29 @@ func (m *MemStore) standardReviewSnapshotLocked(orgID, actorID string, r Applica
 		}
 		for _, d := range m.appLogDrains {
 			if sameStandardUUID(d.AppID, app.ID) {
-				a.Drains = append(a.Drains, standardReviewDrain{ID: canonicalStandardUUID(d.ID), Kind: string(d.Kind), TargetHash: standardReviewBytesDigest([]byte(d.TargetURL)), AuthHash: standardReviewBytesDigest(d.AuthHeaderSealed), Enabled: d.Enabled})
+				resourceID := ""
+				for _, b := range m.applicationStandardControlBindings {
+					if sameStandardUUID(b.AppID, app.ID) && b.Field == appstandards.LogDestinations && b.PhysicalID == d.ID {
+						resourceID = b.ResourceID
+					}
+				}
+				a.Drains = append(a.Drains, standardReviewDrain{ResourceID: resourceID, ID: canonicalStandardUUID(d.ID), Kind: string(d.Kind), TargetHash: standardReviewBytesDigest([]byte(d.TargetURL)), AuthHash: standardReviewBytesDigest(d.AuthHeaderSealed), Enabled: d.Enabled})
 			}
 		}
 		for _, signer := range m.trustedSigners {
 			if sameStandardUUID(signer.AppID, app.ID) {
-				a.Signers = append(a.Signers, standardReviewSigner{Name: signer.SignerName, Fingerprint: standardReviewBytesDigest(signer.CosignPublicKey)})
+				resourceID := ""
+				for _, b := range m.applicationStandardControlBindings {
+					if sameStandardUUID(b.AppID, app.ID) && b.Field == appstandards.TrustedPublishers && b.PhysicalID == signer.SignerName {
+						resourceID = b.ResourceID
+					}
+				}
+				a.Signers = append(a.Signers, standardReviewSigner{ResourceID: resourceID, Name: signer.SignerName, Fingerprint: standardReviewBytesDigest(signer.CosignPublicKey)})
+			}
+		}
+		for _, b := range m.applicationStandardControlBackups {
+			if sameStandardUUID(b.AppID, app.ID) {
+				a.ArchivedResources = append(a.ArchivedResources, standardReviewArchivedResource{Field: b.Field, ID: b.ID, ConfigHash: b.ConfigHash})
 			}
 		}
 		for _, deployment := range m.deployments {

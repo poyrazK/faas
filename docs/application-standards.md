@@ -196,3 +196,26 @@ settings retain every contributing standard, version, scope and applicable
 exception identifier. Approved exceptions affect only the named field and
 immutable version; at their exact expiry boundary the ordinary requirement
 applies again. Independent requirements remain enforceable.
+
+
+## Private rollout materialization
+
+Implementation now includes a private control-plane materializer for approved
+operations. It installs actual log destinations, publisher keys, image settings
+and outbound settings transactionally with a persisted target checkpoint.
+Company resources retain logical identities through private physical bindings.
+Removed legacy drains and signer keys have private backups, including sealed
+credentials, so a reviewed removal can restore their original configuration.
+Backup bodies are excluded from effective views, reviews, audit and operations.
+
+Worker claims expire and carry a generation that rejects an old process after
+replacement. Each target must still match its approved inputs and current plan
+limits. A changed target is blocked without overwriting its settings. Managed
+controls reject legacy patches that change the resolved projection. The shared
+intent path for permitted overrides is still pending.
+
+Saved settings produce a `persisted` target, with no observed revision. The next
+wave waits for actual consumer verification. Public activation, automatic
+onboarding repair, worker wiring, runtime proofs, exceptions and complete rollback
+operations remain acceptance work; these private paths are not a released
+application-standards feature.

@@ -727,6 +727,102 @@ func (q *Queries) CancelUploadSession(ctx context.Context, db DBTX, arg CancelUp
 	return err
 }
 
+const checkpointApplicationStandardTarget = `-- name: CheckpointApplicationStandardTarget :exec
+UPDATE application_standard_operation_targets SET state = $1::text,
+ desired_revision = $2::bigint, error_code = $3::text, updated_at = clock_timestamp()
+WHERE operation_id = $4::uuid AND app_id = $5::uuid
+`
+
+type CheckpointApplicationStandardTargetParams struct {
+	State           string
+	DesiredRevision int64
+	ErrorCode       string
+	OperationID     pgtype.UUID
+	AppID           pgtype.UUID
+}
+
+func (q *Queries) CheckpointApplicationStandardTarget(ctx context.Context, db DBTX, arg CheckpointApplicationStandardTargetParams) error {
+	_, err := db.Exec(ctx, checkpointApplicationStandardTarget,
+		arg.State,
+		arg.DesiredRevision,
+		arg.ErrorCode,
+		arg.OperationID,
+		arg.AppID,
+	)
+	return err
+}
+
+const checkpointApplicationStandardWorkerOperation = `-- name: CheckpointApplicationStandardWorkerOperation :execrows
+UPDATE application_standard_operations SET state = $1::text, updated_at = clock_timestamp(),
+ lease_owner = CASE WHEN $1::text = 'running' THEN lease_owner ELSE '' END,
+ lease_until = CASE WHEN $1::text = 'running' THEN lease_until ELSE NULL END
+WHERE id = $2::uuid AND org_id = $3::uuid
+ AND lease_owner = $4::text AND lease_generation = $5::bigint
+ AND lease_until > clock_timestamp()
+`
+
+type CheckpointApplicationStandardWorkerOperationParams struct {
+	State       string
+	OperationID pgtype.UUID
+	OrgID       pgtype.UUID
+	Owner       string
+	Generation  int64
+}
+
+func (q *Queries) CheckpointApplicationStandardWorkerOperation(ctx context.Context, db DBTX, arg CheckpointApplicationStandardWorkerOperationParams) (int64, error) {
+	result, err := db.Exec(ctx, checkpointApplicationStandardWorkerOperation,
+		arg.State,
+		arg.OperationID,
+		arg.OrgID,
+		arg.Owner,
+		arg.Generation,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const claimApplicationStandardOperation = `-- name: ClaimApplicationStandardOperation :one
+WITH candidate AS (
+ SELECT id FROM application_standard_operations
+ WHERE state IN ('queued','running','waiting') AND (lease_until IS NULL OR lease_until <= clock_timestamp())
+ ORDER BY updated_at,created_at,id FOR UPDATE SKIP LOCKED LIMIT 1
+)
+UPDATE application_standard_operations o SET lease_owner = $1::text,
+ lease_generation = o.lease_generation + 1,
+ lease_until = clock_timestamp() + make_interval(secs => $2::double precision),
+ updated_at = clock_timestamp()
+FROM candidate c WHERE o.id = c.id
+RETURNING o.id,o.org_id,o.lease_owner,o.lease_generation,o.lease_until
+`
+
+type ClaimApplicationStandardOperationParams struct {
+	Owner        string
+	LeaseSeconds float64
+}
+
+type ClaimApplicationStandardOperationRow struct {
+	ID              pgtype.UUID
+	OrgID           pgtype.UUID
+	LeaseOwner      string
+	LeaseGeneration int64
+	LeaseUntil      pgtype.Timestamptz
+}
+
+func (q *Queries) ClaimApplicationStandardOperation(ctx context.Context, db DBTX, arg ClaimApplicationStandardOperationParams) (ClaimApplicationStandardOperationRow, error) {
+	row := db.QueryRow(ctx, claimApplicationStandardOperation, arg.Owner, arg.LeaseSeconds)
+	var i ClaimApplicationStandardOperationRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.LeaseOwner,
+		&i.LeaseGeneration,
+		&i.LeaseUntil,
+	)
+	return i, err
+}
+
 const claimTriggerRecords = `-- name: ClaimTriggerRecords :many
 WITH due AS MATERIALIZED (
     SELECT candidate.id FROM trigger_records candidate
@@ -890,6 +986,15 @@ func (q *Queries) ClaimTriggerRecordsByItems(ctx context.Context, db DBTX, arg C
 		return nil, err
 	}
 	return items, nil
+}
+
+const clearApplicationStandardControlBindings = `-- name: ClearApplicationStandardControlBindings :exec
+DELETE FROM application_standard_control_bindings WHERE app_id = $1::uuid
+`
+
+func (q *Queries) ClearApplicationStandardControlBindings(ctx context.Context, db DBTX, appID pgtype.UUID) error {
+	_, err := db.Exec(ctx, clearApplicationStandardControlBindings, appID)
+	return err
 }
 
 const clearUploadSessionPartPath = `-- name: ClearUploadSessionPartPath :exec
@@ -5017,6 +5122,28 @@ func (q *Queries) InsertApplicationStandardApprovedAssignment(ctx context.Contex
 	return err
 }
 
+const insertApplicationStandardControlBinding = `-- name: InsertApplicationStandardControlBinding :exec
+INSERT INTO application_standard_control_bindings (app_id,field,resource_id,physical_id)
+VALUES ($1::uuid,$2::text,$3::uuid,$4::text)
+`
+
+type InsertApplicationStandardControlBindingParams struct {
+	AppID      pgtype.UUID
+	Field      string
+	ResourceID pgtype.UUID
+	PhysicalID string
+}
+
+func (q *Queries) InsertApplicationStandardControlBinding(ctx context.Context, db DBTX, arg InsertApplicationStandardControlBindingParams) error {
+	_, err := db.Exec(ctx, insertApplicationStandardControlBinding,
+		arg.AppID,
+		arg.Field,
+		arg.ResourceID,
+		arg.PhysicalID,
+	)
+	return err
+}
+
 const insertApplicationStandardOperation = `-- name: InsertApplicationStandardOperation :exec
 INSERT INTO application_standard_operations
 (id, org_id, plan_id, assignment_id, approval_hash, approved_by, batch_size, created_at, updated_at)
@@ -5646,6 +5773,131 @@ func (q *Queries) InsertTriggerRecord(ctx context.Context, db DBTX, arg InsertTr
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const installApplicationStandardDrain = `-- name: InstallApplicationStandardDrain :exec
+INSERT INTO app_log_drains (id,app_id,account_id,kind,target_url,auth_header_sealed,enabled,created_at,updated_at)
+VALUES ($1::uuid,$2::uuid,$3::uuid,$4::text,
+ $5::text,$6::bytea,$7::boolean,$8::timestamptz,$9::timestamptz)
+ON CONFLICT (id) DO UPDATE SET kind=excluded.kind,target_url=excluded.target_url,
+ auth_header_sealed=excluded.auth_header_sealed,enabled=excluded.enabled,updated_at=excluded.updated_at
+`
+
+type InstallApplicationStandardDrainParams struct {
+	ID               pgtype.UUID
+	AppID            pgtype.UUID
+	AccountID        pgtype.UUID
+	Kind             string
+	TargetUrl        string
+	AuthHeaderSealed []byte
+	Enabled          bool
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
+func (q *Queries) InstallApplicationStandardDrain(ctx context.Context, db DBTX, arg InstallApplicationStandardDrainParams) error {
+	_, err := db.Exec(ctx, installApplicationStandardDrain,
+		arg.ID,
+		arg.AppID,
+		arg.AccountID,
+		arg.Kind,
+		arg.TargetUrl,
+		arg.AuthHeaderSealed,
+		arg.Enabled,
+		arg.CreatedAt,
+		arg.UpdatedAt,
+	)
+	return err
+}
+
+const installApplicationStandardEnrollmentIntent = `-- name: InstallApplicationStandardEnrollmentIntent :execrows
+UPDATE app_application_standards SET base_settings = $1::jsonb,
+ local_settings = $2::jsonb, additional_log_destinations = $3::uuid[],
+ adoptions = $4::jsonb, effective = $5::jsonb, effective_hash = $6::text,
+ desired_revision = desired_revision + 1, observed_revision = 0, state = 'applying',error_code = '',updated_at = clock_timestamp()
+WHERE app_id = $7::uuid AND org_id = $8::uuid AND desired_revision = $9::bigint
+`
+
+type InstallApplicationStandardEnrollmentIntentParams struct {
+	BaseSettings     []byte
+	LocalSettings    []byte
+	Additional       []pgtype.UUID
+	Adoptions        []byte
+	Effective        []byte
+	EffectiveHash    string
+	AppID            pgtype.UUID
+	OrgID            pgtype.UUID
+	ExpectedRevision int64
+}
+
+func (q *Queries) InstallApplicationStandardEnrollmentIntent(ctx context.Context, db DBTX, arg InstallApplicationStandardEnrollmentIntentParams) (int64, error) {
+	result, err := db.Exec(ctx, installApplicationStandardEnrollmentIntent,
+		arg.BaseSettings,
+		arg.LocalSettings,
+		arg.Additional,
+		arg.Adoptions,
+		arg.Effective,
+		arg.EffectiveHash,
+		arg.AppID,
+		arg.OrgID,
+		arg.ExpectedRevision,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const installApplicationStandardScalarControls = `-- name: InstallApplicationStandardScalarControls :exec
+UPDATE apps SET require_signed = $1::boolean,security_policy = $2::text,
+ egress_allowlist = $3::cidr[],egress_ports = $4::integer[]
+WHERE id = $5::uuid
+`
+
+type InstallApplicationStandardScalarControlsParams struct {
+	RequireSigned  bool
+	SecurityPolicy string
+	Cidrs          []netip.Prefix
+	Ports          []int32
+	AppID          pgtype.UUID
+}
+
+func (q *Queries) InstallApplicationStandardScalarControls(ctx context.Context, db DBTX, arg InstallApplicationStandardScalarControlsParams) error {
+	_, err := db.Exec(ctx, installApplicationStandardScalarControls,
+		arg.RequireSigned,
+		arg.SecurityPolicy,
+		arg.Cidrs,
+		arg.Ports,
+		arg.AppID,
+	)
+	return err
+}
+
+const installApplicationStandardSigner = `-- name: InstallApplicationStandardSigner :exec
+INSERT INTO app_trusted_signers (app_id,account_id,signer_name,cosign_public_key,added_at,added_by_account_id)
+VALUES ($1::uuid,$2::uuid,$3::text,$4::bytea,$5::timestamptz,$6::uuid)
+ON CONFLICT (app_id,signer_name) DO UPDATE SET cosign_public_key=excluded.cosign_public_key
+`
+
+type InstallApplicationStandardSignerParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	Name      string
+	Key       []byte
+	AddedAt   pgtype.Timestamptz
+	AddedBy   pgtype.UUID
+}
+
+func (q *Queries) InstallApplicationStandardSigner(ctx context.Context, db DBTX, arg InstallApplicationStandardSignerParams) error {
+	_, err := db.Exec(ctx, installApplicationStandardSigner,
+		arg.AppID,
+		arg.AccountID,
+		arg.Name,
+		arg.Key,
+		arg.AddedAt,
+		arg.AddedBy,
+	)
+	return err
 }
 
 const instanceByID = `-- name: InstanceByID :one
@@ -6637,6 +6889,65 @@ func (q *Queries) ListApplicationStandardAssignments(ctx context.Context, db DBT
 			&i.ScopeID,
 			&i.StandardID,
 			&i.AdmissionVersion,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listApplicationStandardControlBackups = `-- name: ListApplicationStandardControlBackups :many
+SELECT app_id, field, logical_id, body, config_hash FROM application_standard_control_backups WHERE app_id = $1::uuid ORDER BY field,logical_id
+`
+
+func (q *Queries) ListApplicationStandardControlBackups(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ApplicationStandardControlBackup, error) {
+	rows, err := db.Query(ctx, listApplicationStandardControlBackups, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ApplicationStandardControlBackup{}
+	for rows.Next() {
+		var i ApplicationStandardControlBackup
+		if err := rows.Scan(
+			&i.AppID,
+			&i.Field,
+			&i.LogicalID,
+			&i.Body,
+			&i.ConfigHash,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listApplicationStandardControlBindings = `-- name: ListApplicationStandardControlBindings :many
+SELECT app_id, field, resource_id, physical_id FROM application_standard_control_bindings WHERE app_id = $1::uuid ORDER BY field,resource_id
+`
+
+func (q *Queries) ListApplicationStandardControlBindings(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ApplicationStandardControlBinding, error) {
+	rows, err := db.Query(ctx, listApplicationStandardControlBindings, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ApplicationStandardControlBinding{}
+	for rows.Next() {
+		var i ApplicationStandardControlBinding
+		if err := rows.Scan(
+			&i.AppID,
+			&i.Field,
+			&i.ResourceID,
+			&i.PhysicalID,
 		); err != nil {
 			return nil, err
 		}
@@ -9389,6 +9700,40 @@ func (q *Queries) LockApplicationStandardApprovalProjects(ctx context.Context, d
 	return items, nil
 }
 
+const lockApplicationStandardDrainRows = `-- name: LockApplicationStandardDrainRows :many
+SELECT id, app_id, account_id, kind, target_url, auth_header_sealed, enabled, created_at, updated_at FROM app_log_drains WHERE app_id = $1::uuid ORDER BY id FOR UPDATE NOWAIT
+`
+
+func (q *Queries) LockApplicationStandardDrainRows(ctx context.Context, db DBTX, appID pgtype.UUID) ([]AppLogDrain, error) {
+	rows, err := db.Query(ctx, lockApplicationStandardDrainRows, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppLogDrain{}
+	for rows.Next() {
+		var i AppLogDrain
+		if err := rows.Scan(
+			&i.ID,
+			&i.AppID,
+			&i.AccountID,
+			&i.Kind,
+			&i.TargetUrl,
+			&i.AuthHeaderSealed,
+			&i.Enabled,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockApplicationStandardOrg = `-- name: LockApplicationStandardOrg :one
 SELECT o.id FROM orgs o WHERE o.id = $1::uuid AND o.deleted_pending = false
 AND EXISTS (SELECT 1 FROM accounts WHERE id = $2::uuid) FOR UPDATE OF o
@@ -9432,6 +9777,64 @@ func (q *Queries) LockApplicationStandardReviewPlan(ctx context.Context, db DBTX
 		&i.ExpiresAt,
 	)
 	return i, err
+}
+
+const lockApplicationStandardSignerRows = `-- name: LockApplicationStandardSignerRows :many
+SELECT account_id, app_id, signer_name, cosign_public_key, added_at, added_by_account_id FROM app_trusted_signers WHERE app_id = $1::uuid ORDER BY signer_name FOR UPDATE NOWAIT
+`
+
+func (q *Queries) LockApplicationStandardSignerRows(ctx context.Context, db DBTX, appID pgtype.UUID) ([]AppTrustedSigner, error) {
+	rows, err := db.Query(ctx, lockApplicationStandardSignerRows, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppTrustedSigner{}
+	for rows.Next() {
+		var i AppTrustedSigner
+		if err := rows.Scan(
+			&i.AccountID,
+			&i.AppID,
+			&i.SignerName,
+			&i.CosignPublicKey,
+			&i.AddedAt,
+			&i.AddedByAccountID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockApplicationStandardWorkerOperation = `-- name: LockApplicationStandardWorkerOperation :one
+SELECT id FROM application_standard_operations
+WHERE id = $1::uuid AND org_id = $2::uuid
+ AND lease_owner = $3::text AND lease_generation = $4::bigint
+ AND lease_until > clock_timestamp() AND state IN ('queued','running','waiting')
+FOR UPDATE NOWAIT
+`
+
+type LockApplicationStandardWorkerOperationParams struct {
+	OperationID pgtype.UUID
+	OrgID       pgtype.UUID
+	Owner       string
+	Generation  int64
+}
+
+func (q *Queries) LockApplicationStandardWorkerOperation(ctx context.Context, db DBTX, arg LockApplicationStandardWorkerOperationParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockApplicationStandardWorkerOperation,
+		arg.OperationID,
+		arg.OrgID,
+		arg.Owner,
+		arg.Generation,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const lockCreditConsumption = `-- name: LockCreditConsumption :exec
@@ -10299,6 +10702,15 @@ func (q *Queries) NodeSetLifecycle(ctx context.Context, db DBTX, arg NodeSetLife
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const notifyApplicationStandardControlsChanged = `-- name: NotifyApplicationStandardControlsChanged :exec
+SELECT pg_notify('trusted_signer_changed',json_build_object('app_id',$1::text,'action','standard_projection')::text)
+`
+
+func (q *Queries) NotifyApplicationStandardControlsChanged(ctx context.Context, db DBTX, appID string) error {
+	_, err := db.Exec(ctx, notifyApplicationStandardControlsChanged, appID)
+	return err
 }
 
 const objectBucketAccessCheck = `-- name: ObjectBucketAccessCheck :one
@@ -13041,6 +13453,25 @@ func (q *Queries) PerAccountRateLimitAggregate(ctx context.Context, db DBTX, arg
 	return items, nil
 }
 
+const persistApplicationStandardEnrollment = `-- name: PersistApplicationStandardEnrollment :execrows
+UPDATE app_application_standards SET persisted_revision = desired_revision,state='persisted',updated_at=clock_timestamp()
+WHERE app_id = $1::uuid AND org_id = $2::uuid AND desired_revision = $3::bigint
+`
+
+type PersistApplicationStandardEnrollmentParams struct {
+	AppID           pgtype.UUID
+	OrgID           pgtype.UUID
+	DesiredRevision int64
+}
+
+func (q *Queries) PersistApplicationStandardEnrollment(ctx context.Context, db DBTX, arg PersistApplicationStandardEnrollmentParams) (int64, error) {
+	result, err := db.Exec(ctx, persistApplicationStandardEnrollment, arg.AppID, arg.OrgID, arg.DesiredRevision)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const pruneDataUpstreamProbesOlderThan = `-- name: PruneDataUpstreamProbesOlderThan :exec
 DELETE FROM data_upstream_probes WHERE sampled_at < $1
 `
@@ -13177,11 +13608,14 @@ SELECT jsonb_build_object(
         'enrollment', jsonb_build_object('org_id', e.org_id::text, 'project_id', coalesce(e.project_id::text, ''), 'base_settings', e.base_settings, 'local_settings', e.local_settings,
             'additional_log_destinations', to_jsonb(e.additional_log_destinations::text[]), 'adoptions', e.adoptions,
             'desired_revision', e.desired_revision, 'effective', e.effective, 'effective_hash', e.effective_hash),
+        'archived_resources', coalesce((SELECT jsonb_agg(jsonb_build_object('field', b.field, 'id', b.logical_id::text, 'config_hash', b.config_hash) ORDER BY b.field,b.logical_id) FROM application_standard_control_backups b WHERE b.app_id = a.id), '[]'::jsonb),
         'drains', coalesce((SELECT jsonb_agg(jsonb_build_object('id', d.id::text, 'kind', d.kind,
+            'resource_id', coalesce((SELECT resource_id::text FROM application_standard_control_bindings b WHERE b.app_id = a.id AND b.field = 'log_destinations' AND b.physical_id = d.id::text), ''),
             'target_hash', encode(sha256(convert_to(d.target_url, 'UTF8')), 'hex'),
             'auth_hash', encode(sha256(coalesce(d.auth_header_sealed, ''::bytea)), 'hex'), 'enabled', d.enabled) ORDER BY d.id)
             FROM app_log_drains d WHERE d.app_id = a.id), '[]'::jsonb),
         'signers', coalesce((SELECT jsonb_agg(jsonb_build_object('name', s.signer_name,
+            'resource_id', coalesce((SELECT resource_id::text FROM application_standard_control_bindings b WHERE b.app_id = a.id AND b.field = 'trusted_publishers' AND b.physical_id = s.signer_name), ''),
             'fingerprint', encode(sha256(s.cosign_public_key), 'hex')) ORDER BY s.signer_name)
             FROM app_trusted_signers s WHERE s.app_id = a.id), '[]'::jsonb),
         'artifacts', coalesce((SELECT jsonb_agg(jsonb_build_object('id', d.id::text, 'scope', d.scope,
@@ -13588,6 +14022,34 @@ func (q *Queries) RegisterGatewayUsageEvent(ctx context.Context, db DBTX, arg Re
 	var inserted bool
 	err := row.Scan(&inserted)
 	return inserted, err
+}
+
+const removeApplicationStandardUnselectedDrains = `-- name: RemoveApplicationStandardUnselectedDrains :exec
+DELETE FROM app_log_drains WHERE app_id = $1::uuid AND NOT (id = ANY($2::uuid[]))
+`
+
+type RemoveApplicationStandardUnselectedDrainsParams struct {
+	AppID    pgtype.UUID
+	DrainIds []pgtype.UUID
+}
+
+func (q *Queries) RemoveApplicationStandardUnselectedDrains(ctx context.Context, db DBTX, arg RemoveApplicationStandardUnselectedDrainsParams) error {
+	_, err := db.Exec(ctx, removeApplicationStandardUnselectedDrains, arg.AppID, arg.DrainIds)
+	return err
+}
+
+const removeApplicationStandardUnselectedSigners = `-- name: RemoveApplicationStandardUnselectedSigners :exec
+DELETE FROM app_trusted_signers WHERE app_id = $1::uuid AND NOT (signer_name = ANY($2::text[]))
+`
+
+type RemoveApplicationStandardUnselectedSignersParams struct {
+	AppID pgtype.UUID
+	Names []string
+}
+
+func (q *Queries) RemoveApplicationStandardUnselectedSigners(ctx context.Context, db DBTX, arg RemoveApplicationStandardUnselectedSignersParams) error {
+	_, err := db.Exec(ctx, removeApplicationStandardUnselectedSigners, arg.AppID, arg.Names)
+	return err
 }
 
 const requestTelemetryAnalyticsByDeployment = `-- name: RequestTelemetryAnalyticsByDeployment :many
@@ -15392,6 +15854,31 @@ func (q *Queries) SafeReleaseWorkerLeaseReady(ctx context.Context, db DBTX) (boo
 	var ready bool
 	err := row.Scan(&ready)
 	return ready, err
+}
+
+const saveApplicationStandardControlBackup = `-- name: SaveApplicationStandardControlBackup :exec
+INSERT INTO application_standard_control_backups (app_id,field,logical_id,body,config_hash)
+VALUES ($1::uuid,$2::text,$3::uuid,$4::jsonb,$5::text)
+ON CONFLICT (app_id,field,logical_id) DO UPDATE SET body=excluded.body,config_hash=excluded.config_hash
+`
+
+type SaveApplicationStandardControlBackupParams struct {
+	AppID      pgtype.UUID
+	Field      string
+	LogicalID  pgtype.UUID
+	Body       []byte
+	ConfigHash string
+}
+
+func (q *Queries) SaveApplicationStandardControlBackup(ctx context.Context, db DBTX, arg SaveApplicationStandardControlBackupParams) error {
+	_, err := db.Exec(ctx, saveApplicationStandardControlBackup,
+		arg.AppID,
+		arg.Field,
+		arg.LogicalID,
+		arg.Body,
+		arg.ConfigHash,
+	)
+	return err
 }
 
 const setAppManifest = `-- name: SetAppManifest :exec

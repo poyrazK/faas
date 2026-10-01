@@ -854,6 +854,21 @@ type ApplicationStandardAssignment struct {
 	UpdatedAt        pgtype.Timestamptz
 }
 
+type ApplicationStandardControlBackup struct {
+	AppID      pgtype.UUID
+	Field      string
+	LogicalID  pgtype.UUID
+	Body       []byte
+	ConfigHash string
+}
+
+type ApplicationStandardControlBinding struct {
+	AppID      pgtype.UUID
+	Field      string
+	ResourceID pgtype.UUID
+	PhysicalID string
+}
+
 type ApplicationStandardLogDestination struct {
 	ID               pgtype.UUID
 	OrgID            pgtype.UUID

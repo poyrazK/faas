@@ -134,11 +134,14 @@ SELECT jsonb_build_object(
         'enrollment', jsonb_build_object('org_id', e.org_id::text, 'project_id', coalesce(e.project_id::text, ''), 'base_settings', e.base_settings, 'local_settings', e.local_settings,
             'additional_log_destinations', to_jsonb(e.additional_log_destinations::text[]), 'adoptions', e.adoptions,
             'desired_revision', e.desired_revision, 'effective', e.effective, 'effective_hash', e.effective_hash),
+        'archived_resources', coalesce((SELECT jsonb_agg(jsonb_build_object('field', b.field, 'id', b.logical_id::text, 'config_hash', b.config_hash) ORDER BY b.field,b.logical_id) FROM application_standard_control_backups b WHERE b.app_id = a.id), '[]'::jsonb),
         'drains', coalesce((SELECT jsonb_agg(jsonb_build_object('id', d.id::text, 'kind', d.kind,
+            'resource_id', coalesce((SELECT resource_id::text FROM application_standard_control_bindings b WHERE b.app_id = a.id AND b.field = 'log_destinations' AND b.physical_id = d.id::text), ''),
             'target_hash', encode(sha256(convert_to(d.target_url, 'UTF8')), 'hex'),
             'auth_hash', encode(sha256(coalesce(d.auth_header_sealed, ''::bytea)), 'hex'), 'enabled', d.enabled) ORDER BY d.id)
             FROM app_log_drains d WHERE d.app_id = a.id), '[]'::jsonb),
         'signers', coalesce((SELECT jsonb_agg(jsonb_build_object('name', s.signer_name,
+            'resource_id', coalesce((SELECT resource_id::text FROM application_standard_control_bindings b WHERE b.app_id = a.id AND b.field = 'trusted_publishers' AND b.physical_id = s.signer_name), ''),
             'fingerprint', encode(sha256(s.cosign_public_key), 'hex')) ORDER BY s.signer_name)
             FROM app_trusted_signers s WHERE s.app_id = a.id), '[]'::jsonb),
         'artifacts', coalesce((SELECT jsonb_agg(jsonb_build_object('id', d.id::text, 'scope', d.scope,
@@ -5088,3 +5091,97 @@ FROM application_standards s
 JOIN LATERAL (SELECT * FROM application_standard_versions WHERE standard_id = s.id AND org_id = s.org_id ORDER BY version DESC LIMIT 1) v ON true
 WHERE s.org_id = sqlc.arg(org_id)::uuid AND s.slug > sqlc.arg(after_slug)::text
 ORDER BY s.slug ASC LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: ClaimApplicationStandardOperation :one
+WITH candidate AS (
+ SELECT id FROM application_standard_operations
+ WHERE state IN ('queued','running','waiting') AND (lease_until IS NULL OR lease_until <= clock_timestamp())
+ ORDER BY updated_at,created_at,id FOR UPDATE SKIP LOCKED LIMIT 1
+)
+UPDATE application_standard_operations o SET lease_owner = sqlc.arg(owner)::text,
+ lease_generation = o.lease_generation + 1,
+ lease_until = clock_timestamp() + make_interval(secs => sqlc.arg(lease_seconds)::double precision),
+ updated_at = clock_timestamp()
+FROM candidate c WHERE o.id = c.id
+RETURNING o.id,o.org_id,o.lease_owner,o.lease_generation,o.lease_until;
+
+-- name: LockApplicationStandardWorkerOperation :one
+SELECT id FROM application_standard_operations
+WHERE id = sqlc.arg(operation_id)::uuid AND org_id = sqlc.arg(org_id)::uuid
+ AND lease_owner = sqlc.arg(owner)::text AND lease_generation = sqlc.arg(generation)::bigint
+ AND lease_until > clock_timestamp() AND state IN ('queued','running','waiting')
+FOR UPDATE NOWAIT;
+
+-- name: CheckpointApplicationStandardWorkerOperation :execrows
+UPDATE application_standard_operations SET state = sqlc.arg(state)::text, updated_at = clock_timestamp(),
+ lease_owner = CASE WHEN sqlc.arg(state)::text = 'running' THEN lease_owner ELSE '' END,
+ lease_until = CASE WHEN sqlc.arg(state)::text = 'running' THEN lease_until ELSE NULL END
+WHERE id = sqlc.arg(operation_id)::uuid AND org_id = sqlc.arg(org_id)::uuid
+ AND lease_owner = sqlc.arg(owner)::text AND lease_generation = sqlc.arg(generation)::bigint
+ AND lease_until > clock_timestamp();
+
+-- name: CheckpointApplicationStandardTarget :exec
+UPDATE application_standard_operation_targets SET state = sqlc.arg(state)::text,
+ desired_revision = sqlc.arg(desired_revision)::bigint, error_code = sqlc.arg(error_code)::text, updated_at = clock_timestamp()
+WHERE operation_id = sqlc.arg(operation_id)::uuid AND app_id = sqlc.arg(app_id)::uuid;
+
+-- name: LockApplicationStandardDrainRows :many
+SELECT * FROM app_log_drains WHERE app_id = sqlc.arg(app_id)::uuid ORDER BY id FOR UPDATE NOWAIT;
+
+-- name: LockApplicationStandardSignerRows :many
+SELECT * FROM app_trusted_signers WHERE app_id = sqlc.arg(app_id)::uuid ORDER BY signer_name FOR UPDATE NOWAIT;
+
+-- name: ListApplicationStandardControlBindings :many
+SELECT * FROM application_standard_control_bindings WHERE app_id = sqlc.arg(app_id)::uuid ORDER BY field,resource_id;
+
+-- name: ListApplicationStandardControlBackups :many
+SELECT * FROM application_standard_control_backups WHERE app_id = sqlc.arg(app_id)::uuid ORDER BY field,logical_id;
+
+-- name: SaveApplicationStandardControlBackup :exec
+INSERT INTO application_standard_control_backups (app_id,field,logical_id,body,config_hash)
+VALUES (sqlc.arg(app_id)::uuid,sqlc.arg(field)::text,sqlc.arg(logical_id)::uuid,sqlc.arg(body)::jsonb,sqlc.arg(config_hash)::text)
+ON CONFLICT (app_id,field,logical_id) DO UPDATE SET body=excluded.body,config_hash=excluded.config_hash;
+
+-- name: ClearApplicationStandardControlBindings :exec
+DELETE FROM application_standard_control_bindings WHERE app_id = sqlc.arg(app_id)::uuid;
+
+-- name: InsertApplicationStandardControlBinding :exec
+INSERT INTO application_standard_control_bindings (app_id,field,resource_id,physical_id)
+VALUES (sqlc.arg(app_id)::uuid,sqlc.arg(field)::text,sqlc.arg(resource_id)::uuid,sqlc.arg(physical_id)::text);
+
+-- name: InstallApplicationStandardEnrollmentIntent :execrows
+UPDATE app_application_standards SET base_settings = sqlc.arg(base_settings)::jsonb,
+ local_settings = sqlc.arg(local_settings)::jsonb, additional_log_destinations = sqlc.arg(additional)::uuid[],
+ adoptions = sqlc.arg(adoptions)::jsonb, effective = sqlc.arg(effective)::jsonb, effective_hash = sqlc.arg(effective_hash)::text,
+ desired_revision = desired_revision + 1, observed_revision = 0, state = 'applying',error_code = '',updated_at = clock_timestamp()
+WHERE app_id = sqlc.arg(app_id)::uuid AND org_id = sqlc.arg(org_id)::uuid AND desired_revision = sqlc.arg(expected_revision)::bigint;
+
+-- name: PersistApplicationStandardEnrollment :execrows
+UPDATE app_application_standards SET persisted_revision = desired_revision,state='persisted',updated_at=clock_timestamp()
+WHERE app_id = sqlc.arg(app_id)::uuid AND org_id = sqlc.arg(org_id)::uuid AND desired_revision = sqlc.arg(desired_revision)::bigint;
+
+-- name: InstallApplicationStandardScalarControls :exec
+UPDATE apps SET require_signed = sqlc.arg(require_signed)::boolean,security_policy = sqlc.arg(security_policy)::text,
+ egress_allowlist = sqlc.arg(cidrs)::cidr[],egress_ports = sqlc.arg(ports)::integer[]
+WHERE id = sqlc.arg(app_id)::uuid;
+
+-- name: RemoveApplicationStandardUnselectedDrains :exec
+DELETE FROM app_log_drains WHERE app_id = sqlc.arg(app_id)::uuid AND NOT (id = ANY(sqlc.arg(drain_ids)::uuid[]));
+
+-- name: InstallApplicationStandardDrain :exec
+INSERT INTO app_log_drains (id,app_id,account_id,kind,target_url,auth_header_sealed,enabled,created_at,updated_at)
+VALUES (sqlc.arg(id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(account_id)::uuid,sqlc.arg(kind)::text,
+ sqlc.arg(target_url)::text,sqlc.arg(auth_header_sealed)::bytea,sqlc.arg(enabled)::boolean,sqlc.arg(created_at)::timestamptz,sqlc.arg(updated_at)::timestamptz)
+ON CONFLICT (id) DO UPDATE SET kind=excluded.kind,target_url=excluded.target_url,
+ auth_header_sealed=excluded.auth_header_sealed,enabled=excluded.enabled,updated_at=excluded.updated_at;
+
+-- name: RemoveApplicationStandardUnselectedSigners :exec
+DELETE FROM app_trusted_signers WHERE app_id = sqlc.arg(app_id)::uuid AND NOT (signer_name = ANY(sqlc.arg(names)::text[]));
+
+-- name: InstallApplicationStandardSigner :exec
+INSERT INTO app_trusted_signers (app_id,account_id,signer_name,cosign_public_key,added_at,added_by_account_id)
+VALUES (sqlc.arg(app_id)::uuid,sqlc.arg(account_id)::uuid,sqlc.arg(name)::text,sqlc.arg(key)::bytea,sqlc.arg(added_at)::timestamptz,sqlc.arg(added_by)::uuid)
+ON CONFLICT (app_id,signer_name) DO UPDATE SET cosign_public_key=excluded.cosign_public_key;
+
+-- name: NotifyApplicationStandardControlsChanged :exec
+SELECT pg_notify('trusted_signer_changed',json_build_object('app_id',sqlc.arg(app_id)::text,'action','standard_projection')::text);

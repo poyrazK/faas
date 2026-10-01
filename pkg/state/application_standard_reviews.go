@@ -46,6 +46,7 @@ type ApplicationStandardReviewBlocker struct {
 
 type ApplicationStandardReviewedApp struct {
 	AppID                     string                  `json:"app_id"`
+	AccountID                 string                  `json:"account_id"`
 	Slug                      string                  `json:"slug"`
 	ProjectID                 string                  `json:"project_id,omitempty"`
 	DesiredRevision           int64                   `json:"desired_revision"`
@@ -114,23 +115,29 @@ type standardReviewResource struct {
 	Fingerprint string `json:"fingerprint,omitempty"`
 }
 type standardReviewAppSnapshot struct {
-	AppID             string                   `json:"app_id"`
-	OrgID             string                   `json:"org_id"`
-	ProjectID         string                   `json:"project_id"`
-	AccountID         string                   `json:"account_id"`
-	Slug              string                   `json:"slug"`
-	Status            string                   `json:"status"`
-	Type              string                   `json:"type"`
-	WorkloadClass     string                   `json:"workload_class"`
-	AccountPlan       api.Plan                 `json:"account_plan"`
-	AccountStatus     string                   `json:"account_status"`
-	AccountDrainCount int                      `json:"account_drain_count"`
-	Settings          appstandards.Settings    `json:"settings"`
-	HasEnrollment     bool                     `json:"has_enrollment"`
-	Enrollment        standardReviewEnrollment `json:"enrollment"`
-	Drains            []standardReviewDrain    `json:"drains"`
-	Signers           []standardReviewSigner   `json:"signers"`
-	Artifacts         []standardReviewArtifact `json:"artifacts"`
+	AppID             string                           `json:"app_id"`
+	OrgID             string                           `json:"org_id"`
+	ProjectID         string                           `json:"project_id"`
+	AccountID         string                           `json:"account_id"`
+	Slug              string                           `json:"slug"`
+	Status            string                           `json:"status"`
+	Type              string                           `json:"type"`
+	WorkloadClass     string                           `json:"workload_class"`
+	AccountPlan       api.Plan                         `json:"account_plan"`
+	AccountStatus     string                           `json:"account_status"`
+	AccountDrainCount int                              `json:"account_drain_count"`
+	Settings          appstandards.Settings            `json:"settings"`
+	HasEnrollment     bool                             `json:"has_enrollment"`
+	Enrollment        standardReviewEnrollment         `json:"enrollment"`
+	Drains            []standardReviewDrain            `json:"drains"`
+	Signers           []standardReviewSigner           `json:"signers"`
+	Artifacts         []standardReviewArtifact         `json:"artifacts"`
+	ArchivedResources []standardReviewArchivedResource `json:"archived_resources"`
+}
+type standardReviewArchivedResource struct {
+	Field      appstandards.Field `json:"field"`
+	ID         string             `json:"id"`
+	ConfigHash string             `json:"config_hash"`
 }
 type standardReviewEnrollment struct {
 	OrgID                     string                  `json:"org_id"`
@@ -145,6 +152,7 @@ type standardReviewEnrollment struct {
 }
 type standardReviewDrain struct {
 	ID         string `json:"id"`
+	ResourceID string `json:"resource_id,omitempty"`
 	Kind       string `json:"kind"`
 	TargetHash string `json:"target_hash"`
 	AuthHash   string `json:"auth_hash"`
@@ -152,6 +160,7 @@ type standardReviewDrain struct {
 }
 type standardReviewSigner struct {
 	Name        string `json:"name"`
+	ResourceID  string `json:"resource_id,omitempty"`
 	Fingerprint string `json:"fingerprint"`
 }
 type standardReviewArtifact struct {
@@ -279,7 +288,7 @@ func buildStandardReview(snapshot standardReviewSnapshot, request ApplicationSta
 		}
 		approvalApps = append(approvalApps, appstandards.ApplicationApprovalInput{AppID: app.AppID, OrgID: app.OrgID, ProjectID: app.ProjectID, DesiredRevision: app.Enrollment.DesiredRevision, SnapshotHash: appHash, BeforeAdoptions: prior.Adoptions, AfterAdoptions: next.Adoptions, EffectiveHash: effectiveHash})
 		p.Applications = append(p.Applications, reviewed)
-		p.Blockers = append(p.Blockers, bindStandardReviewAppResources(snapshot, reviewed, resources)...)
+		p.Blockers = append(p.Blockers, bindStandardReviewAppResources(snapshot, app, reviewed, resources)...)
 		p.Blockers = append(p.Blockers, standardReviewAppBlockers(app, reviewed)...)
 		if _, managed := reviewed.Effective.Sources[appstandards.LogDestinations]; managed || len(prior.Layers) != 0 {
 			accountDelta[app.AccountID] += len(standardReviewStrings(reviewed.Effective.Values[appstandards.LogDestinations])) - len(app.Drains)
@@ -451,7 +460,7 @@ func markStandardReviewResources(resources map[appstandards.Field]map[string]boo
 	}
 }
 
-func bindStandardReviewAppResources(s standardReviewSnapshot, app ApplicationStandardReviewedApp, refs map[appstandards.Field]map[string]bool) []ApplicationStandardReviewBlocker {
+func bindStandardReviewAppResources(s standardReviewSnapshot, before standardReviewAppSnapshot, app ApplicationStandardReviewedApp, refs map[appstandards.Field]map[string]bool) []ApplicationStandardReviewBlocker {
 	out := []ApplicationStandardReviewBlocker{}
 	available := map[appstandards.Field]map[string]bool{appstandards.LogDestinations: {}, appstandards.TrustedPublishers: {}}
 	for _, d := range s.Destinations {
@@ -462,6 +471,11 @@ func bindStandardReviewAppResources(s standardReviewSnapshot, app ApplicationSta
 	}
 	for field, owned := range available {
 		legacy := standardReviewStrings(app.BeforeSettings[field])
+		for _, archived := range before.ArchivedResources {
+			if archived.Field == field {
+				legacy = append(legacy, archived.ID)
+			}
+		}
 		missing := false
 		for _, id := range standardReviewStrings(app.Effective.Values[field]) {
 			if owned[id] {
@@ -546,10 +560,18 @@ func resolveStandardReviewedApp(app standardReviewAppSnapshot, prior, next appst
 	current := cloneStandardSettings(app.Settings)
 	logIDs, signerIDs := []string{}, []string{}
 	for _, d := range app.Drains {
-		logIDs = append(logIDs, d.ID)
+		id := d.ID
+		if d.ResourceID != "" {
+			id = d.ResourceID
+		}
+		logIDs = append(logIDs, id)
 	}
 	for _, signer := range app.Signers {
-		signerIDs = append(signerIDs, uuid.NewSHA1(uuid.MustParse(app.AppID), []byte("gregale.legacy-signer\x00"+signer.Name+"\x00"+signer.Fingerprint)).String())
+		id := signer.ResourceID
+		if id == "" {
+			id = standardLegacySignerID(app.AppID, signer.Name, signer.Fingerprint)
+		}
+		signerIDs = append(signerIDs, id)
 	}
 	slices.Sort(logIDs)
 	slices.Sort(signerIDs)
@@ -619,7 +641,7 @@ func resolveStandardReviewedApp(app standardReviewAppSnapshot, prior, next appst
 		}
 	}
 	slices.Sort(changes)
-	return ApplicationStandardReviewedApp{AppID: app.AppID, Slug: app.Slug, ProjectID: app.ProjectID, DesiredRevision: app.Enrollment.DesiredRevision, BeforeSettings: current, BeforeAdoptions: prior.Adoptions, AfterAdoptions: next.Adoptions, BaseSettings: base, LocalSettings: local, AdditionalLogDestinations: additional, Effective: effective, ChangedFields: changes}, nil
+	return ApplicationStandardReviewedApp{AppID: app.AppID, AccountID: app.AccountID, Slug: app.Slug, ProjectID: app.ProjectID, DesiredRevision: app.Enrollment.DesiredRevision, BeforeSettings: current, BeforeAdoptions: prior.Adoptions, AfterAdoptions: next.Adoptions, BaseSettings: base, LocalSettings: local, AdditionalLogDestinations: additional, Effective: effective, ChangedFields: changes}, nil
 }
 
 func cloneStandardSettings(in appstandards.Settings) appstandards.Settings {
@@ -764,6 +786,12 @@ func normalizeStandardReviewSnapshot(s standardReviewSnapshot) (standardReviewSn
 			}
 			*settings.target = normalized.Values
 		}
+		if a.ArchivedResources == nil {
+			a.ArchivedResources = []standardReviewArchivedResource{}
+		}
+		slices.SortFunc(a.ArchivedResources, func(a, b standardReviewArchivedResource) int {
+			return strings.Compare(string(a.Field)+a.ID, string(b.Field)+b.ID)
+		})
 		// Metadata may be ordered differently by memory fixtures and PostgreSQL.
 		slices.SortFunc(a.Drains, func(a, b standardReviewDrain) int { return strings.Compare(a.ID, b.ID) })
 		slices.SortFunc(a.Signers, func(a, b standardReviewSigner) int { return strings.Compare(a.Name, b.Name) })

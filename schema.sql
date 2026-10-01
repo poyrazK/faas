@@ -414,6 +414,57 @@ $$;
 
 
 --
+-- Name: application_standard_drain_projection_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_drain_projection_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE app uuid; logical uuid; e jsonb; expected record; backup jsonb; desired jsonb;
+BEGIN
+    IF TG_OP = 'DELETE' THEN app := OLD.app_id; ELSE app := NEW.app_id; END IF;
+    IF NOT EXISTS (SELECT 1 FROM apps WHERE id = app AND status <> 'deleted') THEN
+        IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+        RETURN NEW;
+    END IF;
+    SELECT effective INTO e FROM app_application_standards WHERE app_id = app;
+    IF coalesce(jsonb_array_length(e->'sources'->'log_destinations'), 0) = 0 THEN
+        IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+        RETURN NEW;
+    END IF;
+    IF TG_OP = 'DELETE' THEN logical := OLD.id; ELSE logical := NEW.id; END IF;
+    SELECT resource_id INTO logical FROM application_standard_control_bindings
+    WHERE app_id = app AND field = 'log_destinations' AND physical_id = logical::text;
+    IF logical IS NULL THEN
+        IF TG_OP = 'DELETE' THEN logical := OLD.id; ELSE logical := NEW.id; END IF;
+    END IF;
+    desired := coalesce(e->'values'->'log_destinations', '[]'::jsonb);
+    IF TG_OP = 'DELETE' THEN
+        IF NOT desired ? logical::text THEN RETURN OLD; END IF;
+    ELSIF desired ? logical::text THEN
+        SELECT d.* INTO expected FROM application_standard_log_destinations d
+        JOIN apps a ON a.org_id = d.org_id AND a.id = app
+        JOIN application_standard_control_bindings b ON b.app_id = app AND b.field = 'log_destinations'
+            AND b.resource_id = d.id AND b.physical_id = NEW.id::text
+        WHERE d.id = logical;
+        IF FOUND AND NEW.app_id = app AND NEW.account_id = (SELECT account_id FROM apps WHERE id = app)
+            AND NEW.kind = expected.kind AND NEW.target_url = expected.target_url
+            AND coalesce(NEW.auth_header_sealed, ''::bytea) = coalesce(expected.auth_header_sealed, ''::bytea)
+            AND NEW.enabled THEN RETURN NEW; END IF;
+        SELECT body INTO backup FROM application_standard_control_backups
+        WHERE app_id = app AND field = 'log_destinations' AND logical_id = logical;
+        IF backup IS NOT NULL AND NEW.id::text = backup->>'ID' AND NEW.app_id::text = backup->>'AppID'
+            AND NEW.account_id::text = backup->>'AccountID' AND NEW.kind = backup->>'Kind'
+            AND NEW.target_url = backup->>'TargetURL' AND NEW.enabled = (backup->>'Enabled')::boolean
+            AND coalesce(NEW.auth_header_sealed, ''::bytea) = decode(coalesce(backup->>'AuthHeaderSealed', ''), 'base64') THEN RETURN NEW; END IF;
+    END IF;
+    RAISE EXCEPTION 'application standard manages this control'
+        USING ERRCODE = '23514', CONSTRAINT = 'application_standard_managed_control';
+END;
+$$;
+
+
+--
 -- Name: application_standard_enroll_app(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -476,6 +527,26 @@ $$;
 
 
 --
+-- Name: application_standard_managed_control_identity_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_managed_control_identity_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF (NEW.app_id IS DISTINCT FROM OLD.app_id OR NEW.account_id IS DISTINCT FROM OLD.account_id
+        OR to_jsonb(NEW)->TG_ARGV[1] IS DISTINCT FROM to_jsonb(OLD)->TG_ARGV[1])
+       AND EXISTS (SELECT 1 FROM app_application_standards e WHERE e.app_id IN (OLD.app_id,NEW.app_id)
+         AND coalesce(jsonb_array_length(e.effective->'sources'->TG_ARGV[0]),0) > 0) THEN
+        RAISE EXCEPTION 'application standard manages this control'
+            USING ERRCODE = '23514', CONSTRAINT = 'application_standard_managed_control';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: application_standard_operation_intent_immutable(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -524,6 +595,83 @@ BEGIN
     END IF;
     RAISE EXCEPTION 'application standard review plans are immutable'
         USING ERRCODE = '23514', CONSTRAINT = 'application_standard_review_immutable';
+END;
+$$;
+
+
+--
+-- Name: application_standard_scalar_control_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_scalar_control_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE e jsonb;
+BEGIN
+    SELECT effective INTO e FROM app_application_standards WHERE app_id = OLD.id;
+    IF (coalesce(jsonb_array_length(e->'sources'->'require_signed'), 0) > 0
+        AND to_jsonb(NEW.require_signed) IS DISTINCT FROM e->'values'->'require_signed')
+       OR (coalesce(jsonb_array_length(e->'sources'->'security_policy'), 0) > 0
+        AND to_jsonb(NEW.security_policy) IS DISTINCT FROM e->'values'->'security_policy')
+       OR (coalesce(jsonb_array_length(e->'sources'->'egress_cidrs'), 0) > 0
+        AND to_jsonb(NEW.egress_allowlist::text[]) IS DISTINCT FROM e->'values'->'egress_cidrs')
+       OR (coalesce(jsonb_array_length(e->'sources'->'egress_extra_ports'), 0) > 0
+        AND to_jsonb(NEW.egress_ports) IS DISTINCT FROM e->'values'->'egress_extra_ports') THEN
+        RAISE EXCEPTION 'application standard manages this control'
+            USING ERRCODE = '23514', CONSTRAINT = 'application_standard_managed_control';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_signer_projection_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_signer_projection_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE app uuid; control_name text; logical uuid; e jsonb; expected record; backup jsonb; desired jsonb;
+BEGIN
+    IF TG_OP = 'DELETE' THEN app := OLD.app_id; control_name := OLD.signer_name;
+    ELSE app := NEW.app_id; control_name := NEW.signer_name; END IF;
+    IF NOT EXISTS (SELECT 1 FROM apps WHERE id = app AND status <> 'deleted') THEN
+        IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+        RETURN NEW;
+    END IF;
+    SELECT effective INTO e FROM app_application_standards WHERE app_id = app;
+    IF coalesce(jsonb_array_length(e->'sources'->'trusted_publishers'), 0) = 0 THEN
+        IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+        RETURN NEW;
+    END IF;
+    SELECT resource_id INTO logical FROM application_standard_control_bindings
+    WHERE app_id = app AND field = 'trusted_publishers' AND physical_id = control_name;
+    IF logical IS NULL THEN
+        SELECT logical_id INTO logical FROM application_standard_control_backups
+        WHERE app_id = app AND field = 'trusted_publishers' AND body->>'SignerName' = control_name
+          AND decode(coalesce(body->>'CosignPublicKey', ''), 'base64') = CASE WHEN TG_OP = 'DELETE' THEN OLD.cosign_public_key ELSE NEW.cosign_public_key END
+        ORDER BY logical_id LIMIT 1;
+    END IF;
+    desired := coalesce(e->'values'->'trusted_publishers', '[]'::jsonb);
+    IF TG_OP = 'DELETE' THEN
+        IF logical IS NULL OR NOT desired ? logical::text THEN RETURN OLD; END IF;
+    ELSIF logical IS NOT NULL AND desired ? logical::text THEN
+        SELECT p.* INTO expected FROM application_standard_publishers p
+        JOIN apps a ON a.org_id = p.org_id AND a.id = app
+        JOIN application_standard_control_bindings b ON b.app_id = app AND b.field = 'trusted_publishers'
+            AND b.resource_id = p.id AND b.physical_id = control_name
+        WHERE p.id = logical;
+        IF FOUND AND NEW.app_id = app AND NEW.account_id = (SELECT account_id FROM apps WHERE id = app)
+            AND NEW.cosign_public_key = expected.public_key_der THEN RETURN NEW; END IF;
+        SELECT body INTO backup FROM application_standard_control_backups
+        WHERE app_id = app AND field = 'trusted_publishers' AND logical_id = logical;
+        IF backup IS NOT NULL AND NEW.app_id::text = backup->>'AppID' AND NEW.account_id::text = backup->>'AccountID'
+            AND NEW.signer_name = backup->>'SignerName'
+            AND NEW.cosign_public_key = decode(coalesce(backup->>'CosignPublicKey', ''), 'base64') THEN RETURN NEW; END IF;
+    END IF;
+    RAISE EXCEPTION 'application standard manages this control'
+        USING ERRCODE = '23514', CONSTRAINT = 'application_standard_managed_control';
 END;
 $$;
 
@@ -4704,6 +4852,36 @@ CREATE TABLE public.application_standard_assignments (
     CONSTRAINT application_standard_assignments_check CHECK (((scope <> 'organization'::text) OR (scope_id = org_id))),
     CONSTRAINT application_standard_assignments_revision_check CHECK ((revision > 0)),
     CONSTRAINT application_standard_assignments_scope_check CHECK ((scope = ANY (ARRAY['organization'::text, 'project'::text, 'application'::text])))
+);
+
+
+--
+-- Name: application_standard_control_backups; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.application_standard_control_backups (
+    app_id uuid NOT NULL,
+    field text NOT NULL,
+    logical_id uuid NOT NULL,
+    body jsonb NOT NULL,
+    config_hash text NOT NULL,
+    CONSTRAINT application_standard_control_backups_body_check CHECK ((jsonb_typeof(body) = 'object'::text)),
+    CONSTRAINT application_standard_control_backups_config_hash_check CHECK ((config_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT application_standard_control_backups_field_check CHECK ((field = ANY (ARRAY['log_destinations'::text, 'trusted_publishers'::text])))
+);
+
+
+--
+-- Name: application_standard_control_bindings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.application_standard_control_bindings (
+    app_id uuid NOT NULL,
+    field text NOT NULL,
+    resource_id uuid NOT NULL,
+    physical_id text NOT NULL,
+    CONSTRAINT application_standard_control_bindings_field_check CHECK ((field = ANY (ARRAY['log_destinations'::text, 'trusted_publishers'::text]))),
+    CONSTRAINT application_standard_control_bindings_physical_id_check CHECK (((octet_length(physical_id) >= 1) AND (octet_length(physical_id) <= 128)))
 );
 
 
@@ -11717,6 +11895,30 @@ ALTER TABLE ONLY public.application_standard_assignments
 
 ALTER TABLE ONLY public.application_standard_assignments
     ADD CONSTRAINT application_standard_assignments_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: application_standard_control_backups application_standard_control_backups_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_control_backups
+    ADD CONSTRAINT application_standard_control_backups_pkey PRIMARY KEY (app_id, field, logical_id);
+
+
+--
+-- Name: application_standard_control_bindings application_standard_control_bindi_app_id_field_physical_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_control_bindings
+    ADD CONSTRAINT application_standard_control_bindi_app_id_field_physical_id_key UNIQUE (app_id, field, physical_id);
+
+
+--
+-- Name: application_standard_control_bindings application_standard_control_bindings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_control_bindings
+    ADD CONSTRAINT application_standard_control_bindings_pkey PRIMARY KEY (app_id, field, resource_id);
 
 
 --
@@ -19197,6 +19399,20 @@ CREATE TRIGGER application_standard_assignment_scope_guard BEFORE INSERT OR UPDA
 
 
 --
+-- Name: application_standard_control_backups application_standard_backup_input_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_backup_input_guard BEFORE INSERT OR DELETE OR UPDATE ON public.application_standard_control_backups FOR EACH ROW EXECUTE FUNCTION public.application_standard_control_input_guard();
+
+
+--
+-- Name: application_standard_control_bindings application_standard_binding_input_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_binding_input_guard BEFORE INSERT OR DELETE OR UPDATE ON public.application_standard_control_bindings FOR EACH ROW EXECUTE FUNCTION public.application_standard_control_input_guard();
+
+
+--
 -- Name: deployments application_standard_deployment_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -19274,6 +19490,13 @@ CREATE TRIGGER application_standard_review_immutable BEFORE DELETE OR UPDATE ON 
 
 
 --
+-- Name: apps application_standard_scalar_control_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_scalar_control_guard BEFORE UPDATE OF require_signed, security_policy, egress_allowlist, egress_ports ON public.apps FOR EACH ROW EXECUTE FUNCTION public.application_standard_scalar_control_guard();
+
+
+--
 -- Name: deployment_sidecar_layers application_standard_sidecar_input_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -19299,6 +19522,34 @@ CREATE TRIGGER application_standard_target_intent_immutable BEFORE DELETE OR UPD
 --
 
 CREATE TRIGGER application_standard_version_immutable BEFORE DELETE OR UPDATE ON public.application_standard_versions FOR EACH ROW EXECUTE FUNCTION public.application_standard_version_immutable();
+
+
+--
+-- Name: app_log_drains application_standard_y_drain_identity_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_y_drain_identity_guard BEFORE UPDATE ON public.app_log_drains FOR EACH ROW EXECUTE FUNCTION public.application_standard_managed_control_identity_guard('log_destinations', 'id');
+
+
+--
+-- Name: app_trusted_signers application_standard_y_signer_identity_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_y_signer_identity_guard BEFORE UPDATE ON public.app_trusted_signers FOR EACH ROW EXECUTE FUNCTION public.application_standard_managed_control_identity_guard('trusted_publishers', 'signer_name');
+
+
+--
+-- Name: app_log_drains application_standard_z_drain_projection_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_z_drain_projection_guard BEFORE INSERT OR DELETE OR UPDATE ON public.app_log_drains FOR EACH ROW EXECUTE FUNCTION public.application_standard_drain_projection_guard();
+
+
+--
+-- Name: app_trusted_signers application_standard_z_signer_projection_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_z_signer_projection_guard BEFORE INSERT OR DELETE OR UPDATE ON public.app_trusted_signers FOR EACH ROW EXECUTE FUNCTION public.application_standard_signer_projection_guard();
 
 
 --
@@ -20807,6 +21058,22 @@ ALTER TABLE ONLY public.application_standard_assignments
 
 ALTER TABLE ONLY public.application_standard_assignments
     ADD CONSTRAINT application_standard_assignments_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_control_backups application_standard_control_backups_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_control_backups
+    ADD CONSTRAINT application_standard_control_backups_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: application_standard_control_bindings application_standard_control_bindings_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_standard_control_bindings
+    ADD CONSTRAINT application_standard_control_bindings_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

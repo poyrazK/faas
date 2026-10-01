@@ -1,7 +1,9 @@
 package state
 
 import (
+	"bytes"
 	"context"
+	"github.com/onebox-faas/faas/pkg/appstandards"
 	"sort"
 	"time"
 
@@ -47,6 +49,9 @@ func (m *MemStore) CreateAppLogDrainIfUnderQuota(_ context.Context, in AppLogDra
 }
 
 func (m *MemStore) createAppLogDrainLocked(in AppLogDrain) (AppLogDrain, error) {
+	if m.standardManagedControlLocked(in.AppID, appstandards.LogDestinations) {
+		return AppLogDrain{}, ErrApplicationStandardManagedControl
+	}
 	for _, existing := range m.appLogDrains {
 		if existing.AppID == in.AppID && existing.TargetURL == in.TargetURL {
 			return AppLogDrain{}, ErrConflict
@@ -82,6 +87,11 @@ func (m *MemStore) UpdateAppLogDrain(_ context.Context, id string, p UpdateAppLo
 	if !ok {
 		return AppLogDrain{}, ErrNotFound
 	}
+	if m.standardManagedControlLocked(drain.AppID, appstandards.LogDestinations) &&
+		((p.Kind != nil && *p.Kind != drain.Kind) || (p.TargetURL != nil && *p.TargetURL != drain.TargetURL) ||
+			(p.AuthHeaderSealed != nil && !bytes.Equal(*p.AuthHeaderSealed, drain.AuthHeaderSealed)) || (p.Enabled != nil && *p.Enabled != drain.Enabled)) {
+		return AppLogDrain{}, ErrApplicationStandardManagedControl
+	}
 	if p.Kind != nil {
 		drain.Kind = *p.Kind
 	}
@@ -107,8 +117,12 @@ func (m *MemStore) UpdateAppLogDrain(_ context.Context, id string, p UpdateAppLo
 func (m *MemStore) DeleteAppLogDrain(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.appLogDrains[id]; !ok {
+	drain, ok := m.appLogDrains[id]
+	if !ok {
 		return ErrNotFound
+	}
+	if m.standardManagedControlLocked(drain.AppID, appstandards.LogDestinations) {
+		return ErrApplicationStandardManagedControl
 	}
 	delete(m.appLogDrains, id)
 	delete(m.appLogDrainHealth, id)
