@@ -357,9 +357,28 @@ func (e *Engine) workerQueueDemandForScope(ctx context.Context, app state.App, s
 		return int(math.Ceil(float64(stats.Depth) / target)), err
 	}
 	desired := 0
+	var environment *state.ProjectEnvironment
 	for _, binding := range bindings {
-		if !binding.Enabled || binding.RetiredAt != nil {
+		if !binding.Enabled || binding.RetiredAt != nil || binding.DeploymentScope != "" && binding.DeploymentScope != scope {
 			continue
+		}
+		if binding.DeploymentScope != "" {
+			if app.ProjectID == "" {
+				continue
+			}
+			if environment == nil {
+				found, err := e.store.ProjectEnvironmentBySlug(ctx, app.AccountID, app.ProjectID, scope)
+				if errors.Is(err, state.ErrNotFound) {
+					continue
+				}
+				if err != nil {
+					return 0, err
+				}
+				environment = &found
+			}
+			if environment.ID != binding.EnvironmentID {
+				continue
+			}
 		}
 		stats, err := e.store.QueueStateForBindingInScope(ctx, app.ID, binding.ID, scope)
 		if err != nil {

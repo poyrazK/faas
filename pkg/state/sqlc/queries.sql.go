@@ -9610,7 +9610,7 @@ func (q *Queries) ListEnabledEventSubscriptionsForAccount(ctx context.Context, d
 }
 
 const listEnabledTriggers = `-- name: ListEnabledTriggers :many
-select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id,
+select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
        filter_criteria,
@@ -9619,24 +9619,26 @@ from triggers where enabled = true
 `
 
 type ListEnabledTriggersRow struct {
-	ID                   pgtype.UUID
-	AccountID            pgtype.UUID
-	AppID                pgtype.UUID
-	Kind                 string
-	Slug                 string
-	Enabled              bool
-	Config               []byte
-	QueueBindingID       pgtype.UUID
-	BatchSizeMax         int32
-	BatchWindowMs        int32
-	MaxAttempts          int32
-	CronID               pgtype.UUID
-	Source               pgtype.Text
-	PayloadMaxBytes      int32
-	BrokerPoisonStrategy string
-	FilterCriteria       []byte
-	CreatedAt            pgtype.Timestamptz
-	UpdatedAt            pgtype.Timestamptz
+	ID                        pgtype.UUID
+	AccountID                 pgtype.UUID
+	AppID                     pgtype.UUID
+	Kind                      string
+	Slug                      string
+	Enabled                   bool
+	Config                    []byte
+	QueueBindingID            pgtype.UUID
+	QueueBindingScope         string
+	QueueBindingEnvironmentID pgtype.UUID
+	BatchSizeMax              int32
+	BatchWindowMs             int32
+	MaxAttempts               int32
+	CronID                    pgtype.UUID
+	Source                    pgtype.Text
+	PayloadMaxBytes           int32
+	BrokerPoisonStrategy      string
+	FilterCriteria            []byte
+	CreatedAt                 pgtype.Timestamptz
+	UpdatedAt                 pgtype.Timestamptz
 }
 
 // Pulled by schedd's runTriggerTick on each 1-second cadence. The
@@ -9665,6 +9667,8 @@ func (q *Queries) ListEnabledTriggers(ctx context.Context, db DBTX) ([]ListEnabl
 			&i.Enabled,
 			&i.Config,
 			&i.QueueBindingID,
+			&i.QueueBindingScope,
+			&i.QueueBindingEnvironmentID,
 			&i.BatchSizeMax,
 			&i.BatchWindowMs,
 			&i.MaxAttempts,
@@ -10610,7 +10614,7 @@ func (q *Queries) ListProjectReleaseSetsBefore(ctx context.Context, db DBTX, arg
 }
 
 const listQueueBindingHistoryForApp = `-- name: ListQueueBindingHistoryForApp :many
-select id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at, retired_at from queue_bindings where app_id=$1 and account_id=$2
+select id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at, retired_at, deployment_scope, environment_id from queue_bindings where app_id=$1 and account_id=$2
 order by created_at, id
 `
 
@@ -10642,6 +10646,8 @@ func (q *Queries) ListQueueBindingHistoryForApp(ctx context.Context, db DBTX, ar
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.RetiredAt,
+			&i.DeploymentScope,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -11265,7 +11271,7 @@ func (q *Queries) ListTriggerRecordsForTrigger(ctx context.Context, db DBTX, arg
 }
 
 const listTriggersForApp = `-- name: ListTriggersForApp :many
-select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id,
+select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
        filter_criteria,
@@ -11274,24 +11280,26 @@ from triggers where app_id = $1 order by created_at desc
 `
 
 type ListTriggersForAppRow struct {
-	ID                   pgtype.UUID
-	AccountID            pgtype.UUID
-	AppID                pgtype.UUID
-	Kind                 string
-	Slug                 string
-	Enabled              bool
-	Config               []byte
-	QueueBindingID       pgtype.UUID
-	BatchSizeMax         int32
-	BatchWindowMs        int32
-	MaxAttempts          int32
-	CronID               pgtype.UUID
-	Source               pgtype.Text
-	PayloadMaxBytes      int32
-	BrokerPoisonStrategy string
-	FilterCriteria       []byte
-	CreatedAt            pgtype.Timestamptz
-	UpdatedAt            pgtype.Timestamptz
+	ID                        pgtype.UUID
+	AccountID                 pgtype.UUID
+	AppID                     pgtype.UUID
+	Kind                      string
+	Slug                      string
+	Enabled                   bool
+	Config                    []byte
+	QueueBindingID            pgtype.UUID
+	QueueBindingScope         string
+	QueueBindingEnvironmentID pgtype.UUID
+	BatchSizeMax              int32
+	BatchWindowMs             int32
+	MaxAttempts               int32
+	CronID                    pgtype.UUID
+	Source                    pgtype.Text
+	PayloadMaxBytes           int32
+	BrokerPoisonStrategy      string
+	FilterCriteria            []byte
+	CreatedAt                 pgtype.Timestamptz
+	UpdatedAt                 pgtype.Timestamptz
 }
 
 // Same rationale as TriggerByID — full Trigger projection so
@@ -11315,6 +11323,8 @@ func (q *Queries) ListTriggersForApp(ctx context.Context, db DBTX, appID pgtype.
 			&i.Enabled,
 			&i.Config,
 			&i.QueueBindingID,
+			&i.QueueBindingScope,
+			&i.QueueBindingEnvironmentID,
 			&i.BatchSizeMax,
 			&i.BatchWindowMs,
 			&i.MaxAttempts,
@@ -15466,7 +15476,7 @@ payload_max_bytes=coalesce($6::integer,payload_max_bytes),
 broker_poison_strategy=coalesce($7::text,broker_poison_strategy),
 filter_criteria=coalesce($8::jsonb,filter_criteria),
 source=coalesce($9::text,source)
-where id=$10 and queue_binding_id is null returning id, account_id, app_id, kind, slug, enabled, config, batch_size_max, batch_window_ms, max_attempts, cron_id, source, created_at, updated_at, payload_max_bytes, broker_poison_strategy, filter_criteria, queue_binding_id
+where id=$10 and queue_binding_id is null returning id, account_id, app_id, kind, slug, enabled, config, batch_size_max, batch_window_ms, max_attempts, cron_id, source, created_at, updated_at, payload_max_bytes, broker_poison_strategy, filter_criteria, queue_binding_id, queue_binding_scope, queue_binding_environment_id
 `
 
 type PublicPatchTriggerParams struct {
@@ -15515,6 +15525,8 @@ func (q *Queries) PublicPatchTrigger(ctx context.Context, db DBTX, arg PublicPat
 		&i.BrokerPoisonStrategy,
 		&i.FilterCriteria,
 		&i.QueueBindingID,
+		&i.QueueBindingScope,
+		&i.QueueBindingEnvironmentID,
 	)
 	return i, err
 }
@@ -15692,7 +15704,7 @@ func (q *Queries) PutEnvironmentGitOpsVariable(ctx context.Context, db DBTX, arg
 }
 
 const queueBindingHistoryByID = `-- name: QueueBindingHistoryByID :one
-select id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at, retired_at from queue_bindings where id=$1
+select id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at, retired_at, deployment_scope, environment_id from queue_bindings where id=$1
 and app_id=$2 and account_id=$3
 `
 
@@ -15719,6 +15731,8 @@ func (q *Queries) QueueBindingHistoryByID(ctx context.Context, db DBTX, arg Queu
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.RetiredAt,
+		&i.DeploymentScope,
+		&i.EnvironmentID,
 	)
 	return i, err
 }
@@ -15726,24 +15740,27 @@ func (q *Queries) QueueBindingHistoryByID(ctx context.Context, db DBTX, arg Queu
 const queueClaimActiveCount = `-- name: QueueClaimActiveCount :one
 select count(*)::bigint from invocations
 where app_id=$1::uuid and source='queue'
-  and (queue_binding_id=$2::uuid
-    or (queue_binding_id is null and (queue_name=$3 or (queue_name=''
+  and ($2::text='' or deployment_scope=$2::text)
+  and (queue_binding_id=$3::uuid
+    or ($2::text='' and queue_binding_id is null and (queue_name=$4 or (queue_name=''
       and work_policy_name is null and not exists (select 1 from triggers other
-      where other.app_id=$1::uuid and other.kind='queue' and other.enabled
-        and other.source='queue' and other.id<>$4::uuid)))))
+      where other.app_id=$1::uuid and other.kind='queue' and other.queue_binding_scope='' and other.enabled
+        and other.source='queue' and other.id<>$5::uuid)))))
   and state='dispatching' and lease_expires_at > clock_timestamp()
 `
 
 type QueueClaimActiveCountParams struct {
-	AppID     pgtype.UUID
-	BindingID pgtype.UUID
-	QueueName string
-	TriggerID pgtype.UUID
+	AppID        pgtype.UUID
+	BindingScope string
+	BindingID    pgtype.UUID
+	QueueName    string
+	TriggerID    pgtype.UUID
 }
 
 func (q *Queries) QueueClaimActiveCount(ctx context.Context, db DBTX, arg QueueClaimActiveCountParams) (int64, error) {
 	row := db.QueryRow(ctx, queueClaimActiveCount,
 		arg.AppID,
+		arg.BindingScope,
 		arg.BindingID,
 		arg.QueueName,
 		arg.TriggerID,
@@ -15754,7 +15771,7 @@ func (q *Queries) QueueClaimActiveCount(ctx context.Context, db DBTX, arg QueueC
 }
 
 const queueClaimConsumerIdentity = `-- name: QueueClaimConsumerIdentity :one
-select queue_binding_id, (config ? 'queue_binding_id')::boolean as has_marker from triggers
+select queue_binding_id, queue_binding_scope, (config ? 'queue_binding_id')::boolean as has_marker from triggers
 where id=$1 and app_id=$2 and kind='queue' and source='queue'
 `
 
@@ -15764,20 +15781,21 @@ type QueueClaimConsumerIdentityParams struct {
 }
 
 type QueueClaimConsumerIdentityRow struct {
-	QueueBindingID pgtype.UUID
-	HasMarker      bool
+	QueueBindingID    pgtype.UUID
+	QueueBindingScope string
+	HasMarker         bool
 }
 
 func (q *Queries) QueueClaimConsumerIdentity(ctx context.Context, db DBTX, arg QueueClaimConsumerIdentityParams) (QueueClaimConsumerIdentityRow, error) {
 	row := db.QueryRow(ctx, queueClaimConsumerIdentity, arg.ID, arg.AppID)
 	var i QueueClaimConsumerIdentityRow
-	err := row.Scan(&i.QueueBindingID, &i.HasMarker)
+	err := row.Scan(&i.QueueBindingID, &i.QueueBindingScope, &i.HasMarker)
 	return i, err
 }
 
 const queueClaimLegacyBindingCap = `-- name: QueueClaimLegacyBindingCap :one
 select b.id, b.max_concurrency from queue_bindings b where b.app_id=$1
-and b.queue_name=$2 and b.mode='push' and b.enabled and b.retired_at is null
+and b.deployment_scope='' and b.queue_name=$2 and b.mode='push' and b.enabled and b.retired_at is null
 and not exists (select 1 from triggers owned where owned.queue_binding_id=b.id) for update
 `
 
@@ -15799,18 +15817,26 @@ func (q *Queries) QueueClaimLegacyBindingCap(ctx context.Context, db DBTX, arg Q
 }
 
 const queueClaimLockBinding = `-- name: QueueClaimLockBinding :one
-select max_concurrency from queue_bindings where id=$1 and app_id=$2
-and queue_name=$3 and mode='push' and enabled and retired_at is null for update
+select b.max_concurrency from queue_bindings b where b.id=$1 and b.app_id=$2
+and b.deployment_scope=$3 and b.queue_name=$4 and b.mode='push' and b.enabled and b.retired_at is null
+and (b.deployment_scope='' or exists (select 1 from apps a join project_environments e on e.project_id=a.project_id and e.account_id=a.account_id
+  where a.id=b.app_id and e.id=b.environment_id and e.slug=b.deployment_scope)) for update
 `
 
 type QueueClaimLockBindingParams struct {
-	ID        pgtype.UUID
-	AppID     pgtype.UUID
-	QueueName string
+	ID           pgtype.UUID
+	AppID        pgtype.UUID
+	BindingScope string
+	QueueName    string
 }
 
 func (q *Queries) QueueClaimLockBinding(ctx context.Context, db DBTX, arg QueueClaimLockBindingParams) (int32, error) {
-	row := db.QueryRow(ctx, queueClaimLockBinding, arg.ID, arg.AppID, arg.QueueName)
+	row := db.QueryRow(ctx, queueClaimLockBinding,
+		arg.ID,
+		arg.AppID,
+		arg.BindingScope,
+		arg.QueueName,
+	)
 	var max_concurrency int32
 	err := row.Scan(&max_concurrency)
 	return max_concurrency, err
@@ -15847,12 +15873,13 @@ update invocations i set state='dispatching',
   received_at=coalesce(i.received_at,clock_timestamp()), attempts=i.attempts+1
 where i.id=$2::uuid and i.app_id=$3::uuid and i.source='queue'
   and i.state='pending' and i.due_at<=clock_timestamp()
-  and (i.queue_binding_id=$4::uuid or (i.queue_binding_id is null
-    and (i.queue_name=$5 or (i.queue_name='' and i.work_policy_name is null
+  and ($4::text='' or i.deployment_scope=$4::text)
+  and (i.queue_binding_id=$5::uuid or ($4::text='' and i.queue_binding_id is null
+    and (i.queue_name=$6 or (i.queue_name='' and i.work_policy_name is null
       and not exists (select 1 from triggers other where other.app_id=i.app_id
-        and other.kind='queue' and other.enabled and other.source='queue'
-        and other.id<>$6::uuid)))))
-  and not exists (select 1 from trigger_records tr where tr.trigger_id=$6::uuid
+        and other.kind='queue' and other.queue_binding_scope='' and other.enabled and other.source='queue'
+        and other.id<>$7::uuid)))))
+  and not exists (select 1 from trigger_records tr where tr.trigger_id=$7::uuid
     and tr.item_identifier=i.id::text
     and not ((tr.state in ('pending','retry') and tr.next_fire_at<=clock_timestamp())
       or (tr.state='claimed' and tr.claim_expires_at<=clock_timestamp())))
@@ -15863,6 +15890,7 @@ type QueueClaimPendingInvocationParams struct {
 	LeaseSeconds int32
 	ID           pgtype.UUID
 	AppID        pgtype.UUID
+	BindingScope string
 	BindingID    pgtype.UUID
 	QueueName    string
 	TriggerID    pgtype.UUID
@@ -15873,6 +15901,7 @@ func (q *Queries) QueueClaimPendingInvocation(ctx context.Context, db DBTX, arg 
 		arg.LeaseSeconds,
 		arg.ID,
 		arg.AppID,
+		arg.BindingScope,
 		arg.BindingID,
 		arg.QueueName,
 		arg.TriggerID,
@@ -15931,7 +15960,7 @@ func (q *Queries) QueueClaimPendingInvocation(ctx context.Context, db DBTX, arg 
 }
 
 const queueConsumerBindingForUpdate = `-- name: QueueConsumerBindingForUpdate :one
-select id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at, retired_at from queue_bindings where id=$1
+select id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at, retired_at, deployment_scope, environment_id from queue_bindings where id=$1
 and app_id=$2 and account_id=$3 and retired_at is null for update
 `
 
@@ -15958,6 +15987,8 @@ func (q *Queries) QueueConsumerBindingForUpdate(ctx context.Context, db DBTX, ar
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.RetiredAt,
+		&i.DeploymentScope,
+		&i.EnvironmentID,
 	)
 	return i, err
 }
@@ -15967,7 +15998,7 @@ insert into triggers (account_id,app_id,queue_binding_id,kind,source,slug,enable
 batch_size_max,batch_window_ms,max_attempts,payload_max_bytes,broker_poison_strategy)
 values ($1,$2,$3::uuid,'queue','queue',$4,
 $5,$6::jsonb,$7,$8,
-$9,$10,'commit') returning id, account_id, app_id, kind, slug, enabled, config, batch_size_max, batch_window_ms, max_attempts, cron_id, source, created_at, updated_at, payload_max_bytes, broker_poison_strategy, filter_criteria, queue_binding_id
+$9,$10,'commit') returning id, account_id, app_id, kind, slug, enabled, config, batch_size_max, batch_window_ms, max_attempts, cron_id, source, created_at, updated_at, payload_max_bytes, broker_poison_strategy, filter_criteria, queue_binding_id, queue_binding_scope, queue_binding_environment_id
 `
 
 type QueueConsumerCreateTriggerParams struct {
@@ -16016,6 +16047,8 @@ func (q *Queries) QueueConsumerCreateTrigger(ctx context.Context, db DBTX, arg Q
 		&i.BrokerPoisonStrategy,
 		&i.FilterCriteria,
 		&i.QueueBindingID,
+		&i.QueueBindingScope,
+		&i.QueueBindingEnvironmentID,
 	)
 	return i, err
 }
@@ -16040,22 +16073,24 @@ func (q *Queries) QueueConsumerDisableTrigger(ctx context.Context, db DBTX, arg 
 }
 
 const queueConsumerInsertBinding = `-- name: QueueConsumerInsertBinding :one
-insert into queue_bindings (id,account_id,app_id,name,queue_name,mode,workload_class,enabled,max_concurrency,retry_policy)
+insert into queue_bindings (id,account_id,app_id,name,queue_name,mode,workload_class,enabled,max_concurrency,retry_policy,deployment_scope,environment_id)
 values ($1,$2,$3,$4,$5,
-$6,$7,$8,$9,$10::jsonb) returning id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at, retired_at
+$6,$7,$8,$9,$10::jsonb,$11,$12::uuid) returning id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at, retired_at, deployment_scope, environment_id
 `
 
 type QueueConsumerInsertBindingParams struct {
-	ID             pgtype.UUID
-	AccountID      pgtype.UUID
-	AppID          pgtype.UUID
-	Name           string
-	QueueName      string
-	Mode           string
-	WorkloadClass  string
-	Enabled        bool
-	MaxConcurrency int32
-	RetryPolicy    []byte
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	Name            string
+	QueueName       string
+	Mode            string
+	WorkloadClass   string
+	Enabled         bool
+	MaxConcurrency  int32
+	RetryPolicy     []byte
+	DeploymentScope string
+	EnvironmentID   pgtype.UUID
 }
 
 func (q *Queries) QueueConsumerInsertBinding(ctx context.Context, db DBTX, arg QueueConsumerInsertBindingParams) (QueueBinding, error) {
@@ -16070,6 +16105,8 @@ func (q *Queries) QueueConsumerInsertBinding(ctx context.Context, db DBTX, arg Q
 		arg.Enabled,
 		arg.MaxConcurrency,
 		arg.RetryPolicy,
+		arg.DeploymentScope,
+		arg.EnvironmentID,
 	)
 	var i QueueBinding
 	err := row.Scan(
@@ -16086,6 +16123,8 @@ func (q *Queries) QueueConsumerInsertBinding(ctx context.Context, db DBTX, arg Q
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.RetiredAt,
+		&i.DeploymentScope,
+		&i.EnvironmentID,
 	)
 	return i, err
 }
@@ -16184,7 +16223,7 @@ func (q *Queries) QueueConsumerOwnedTriggers(ctx context.Context, db DBTX, arg Q
 
 const queueConsumerRetireBinding = `-- name: QueueConsumerRetireBinding :one
 update queue_bindings set retired_at=now(), enabled=false, updated_at=now()
-where id=$1 and app_id=$2 and account_id=$3 and retired_at is null returning id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at, retired_at
+where id=$1 and app_id=$2 and account_id=$3 and retired_at is null returning id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at, retired_at, deployment_scope, environment_id
 `
 
 type QueueConsumerRetireBindingParams struct {
@@ -16210,6 +16249,8 @@ func (q *Queries) QueueConsumerRetireBinding(ctx context.Context, db DBTX, arg Q
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.RetiredAt,
+		&i.DeploymentScope,
+		&i.EnvironmentID,
 	)
 	return i, err
 }
@@ -16217,7 +16258,7 @@ func (q *Queries) QueueConsumerRetireBinding(ctx context.Context, db DBTX, arg Q
 const queueConsumerUpdateBinding = `-- name: QueueConsumerUpdateBinding :one
 update queue_bindings set queue_name=$1,mode=$2,workload_class=$3,
 enabled=$4,max_concurrency=$5,retry_policy=$6::jsonb,updated_at=now()
-where id=$7 and app_id=$8 and account_id=$9 and retired_at is null returning id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at, retired_at
+where id=$7 and app_id=$8 and account_id=$9 and retired_at is null returning id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at, retired_at, deployment_scope, environment_id
 `
 
 type QueueConsumerUpdateBindingParams struct {
@@ -16259,6 +16300,8 @@ func (q *Queries) QueueConsumerUpdateBinding(ctx context.Context, db DBTX, arg Q
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.RetiredAt,
+		&i.DeploymentScope,
+		&i.EnvironmentID,
 	)
 	return i, err
 }
@@ -16438,9 +16481,11 @@ func (q *Queries) QueueInvocationForTriggerReceipt(ctx context.Context, db DBTX,
 const queuePollCandidates = `-- name: QueuePollCandidates :many
 with consumer as (
  select coalesce(t.queue_binding_id, (select b.id from queue_bindings b
-   where b.app_id=t.app_id and b.queue_name=t.slug
-     and not exists (select 1 from triggers owned where owned.queue_binding_id=b.id))) as binding_id
+   where b.app_id=t.app_id and b.deployment_scope='' and b.queue_name=t.slug
+     and not exists (select 1 from triggers owned where owned.queue_binding_id=b.id))) as binding_id, t.queue_binding_scope as binding_scope
  from triggers t where t.id=$1::uuid and t.app_id=$2::uuid
+ and (t.queue_binding_scope='' or exists (select 1 from apps a join project_environments e on e.project_id=a.project_id and e.account_id=a.account_id
+   where a.id=t.app_id and e.id=t.queue_binding_environment_id and e.slug=t.queue_binding_scope))
 )
 select i.id::text from invocations i cross join consumer
 		left join trigger_records tr on tr.trigger_id = $1::uuid
@@ -16481,10 +16526,11 @@ select i.id::text from invocations i cross join consumer
 		        and active.state='claimed'
 		        and active.claim_expires_at > clock_timestamp()
 		  ) < i.work_fairness_limit)
-		  and (i.queue_binding_id=consumer.binding_id or (i.queue_binding_id is null
+		  and (consumer.binding_scope='' or i.deployment_scope=consumer.binding_scope)
+		  and (i.queue_binding_id=consumer.binding_id or (consumer.binding_scope='' and i.queue_binding_id is null
     and (i.queue_name=$3::text or (i.queue_name='' and i.work_policy_name is null
       and not exists (select 1 from triggers other where other.app_id=$2::uuid
-        and other.kind='queue' and other.enabled and other.source='queue' and other.id<>$1::uuid)))))
+        and other.kind='queue' and other.queue_binding_scope='' and other.enabled and other.source='queue' and other.id<>$1::uuid)))))
 		order by i.created_at, i.id limit $4::integer
 `
 
@@ -16530,12 +16576,13 @@ with claimed as (
 			 where i.app_id = $2::uuid
 			   and i.source = $3::text
 			   and i.queue_binding_id is null
+               and exists (select 1 from triggers live where live.id=$1::uuid and live.queue_binding_scope='')
 			   and (i.queue_name = $4::text or (
 				       i.queue_name = ''
 				   and not exists (
 				       select 1 from triggers other
 				        where other.app_id = $2::uuid
-				          and other.kind = 'queue'
+				          and other.kind = 'queue' and other.queue_binding_scope=''
 				          and other.enabled
 				          and other.source = $3::text
 				          and other.id <> $1::uuid
@@ -16696,7 +16743,8 @@ from invocations i join queue_bindings b on b.app_id=i.app_id and b.account_id=i
 where b.id=$1::uuid and b.app_id=$2::uuid
   and ($3::text is null or i.deployment_scope=$3::text)
   and i.source='queue' and i.state in ('pending','dispatching','dead_letter')
-  and (i.queue_binding_id=b.id or (i.queue_binding_id is null and i.queue_name=b.queue_name))
+  and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
+  and (i.queue_binding_id=b.id or (b.deployment_scope='' and i.queue_binding_id is null and i.queue_name=b.queue_name))
 `
 
 type QueueStateForBindingParams struct {
@@ -20056,7 +20104,7 @@ func (q *Queries) TrafficAnomalyAggregateByNode(ctx context.Context, db DBTX, ar
 }
 
 const triggerByID = `-- name: TriggerByID :one
-select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id,
+select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
        filter_criteria,
@@ -20065,24 +20113,26 @@ from triggers where id = $1
 `
 
 type TriggerByIDRow struct {
-	ID                   pgtype.UUID
-	AccountID            pgtype.UUID
-	AppID                pgtype.UUID
-	Kind                 string
-	Slug                 string
-	Enabled              bool
-	Config               []byte
-	QueueBindingID       pgtype.UUID
-	BatchSizeMax         int32
-	BatchWindowMs        int32
-	MaxAttempts          int32
-	CronID               pgtype.UUID
-	Source               pgtype.Text
-	PayloadMaxBytes      int32
-	BrokerPoisonStrategy string
-	FilterCriteria       []byte
-	CreatedAt            pgtype.Timestamptz
-	UpdatedAt            pgtype.Timestamptz
+	ID                        pgtype.UUID
+	AccountID                 pgtype.UUID
+	AppID                     pgtype.UUID
+	Kind                      string
+	Slug                      string
+	Enabled                   bool
+	Config                    []byte
+	QueueBindingID            pgtype.UUID
+	QueueBindingScope         string
+	QueueBindingEnvironmentID pgtype.UUID
+	BatchSizeMax              int32
+	BatchWindowMs             int32
+	MaxAttempts               int32
+	CronID                    pgtype.UUID
+	Source                    pgtype.Text
+	PayloadMaxBytes           int32
+	BrokerPoisonStrategy      string
+	FilterCriteria            []byte
+	CreatedAt                 pgtype.Timestamptz
+	UpdatedAt                 pgtype.Timestamptz
 }
 
 // ADR-118 / commit 6 of the issue #757 mega-PR: filter_criteria
@@ -20103,6 +20153,8 @@ func (q *Queries) TriggerByID(ctx context.Context, db DBTX, id pgtype.UUID) (Tri
 		&i.Enabled,
 		&i.Config,
 		&i.QueueBindingID,
+		&i.QueueBindingScope,
+		&i.QueueBindingEnvironmentID,
 		&i.BatchSizeMax,
 		&i.BatchWindowMs,
 		&i.MaxAttempts,

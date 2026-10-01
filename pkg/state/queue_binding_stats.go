@@ -79,7 +79,8 @@ func (m *MemStore) queueStateForBinding(appID, bindingID, scope string) (QueueSt
 	for _, inv := range m.invocations {
 		if inv.AppID != appID || inv.AccountID != binding.AccountID || inv.Source != InvocationQueue ||
 			scope != "" && inv.DeploymentScope != scope ||
-			!(inv.QueueBindingID == binding.ID || inv.QueueBindingID == "" && inv.QueueName == binding.QueueName) {
+			binding.DeploymentScope != "" && inv.DeploymentScope != binding.DeploymentScope ||
+			!(inv.QueueBindingID == binding.ID || inv.QueueBindingID == "" && binding.DeploymentScope == "" && inv.QueueName == binding.QueueName) {
 			continue
 		}
 		switch inv.State {

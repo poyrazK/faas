@@ -13,6 +13,11 @@ import (
 )
 
 func (s *PgStore) CreateQueueBindingWithConsumer(ctx context.Context, in QueueBinding) (QueueBindingConsumerResult, error) {
+	if in.EnvironmentID != "" {
+		if _, err := uuid.Parse(in.EnvironmentID); err != nil {
+			return QueueBindingConsumerResult{}, ErrInvalidArgument
+		}
+	}
 	if in.ID == "" {
 		in.ID = uuid.NewString()
 	}
@@ -98,7 +103,7 @@ func (s *PgStore) mutateQueueBindingConsumer(ctx context.Context, accountID, app
 	if create != nil {
 		row, err := q.QueueConsumerInsertBinding(ctx, tx, sqlc.QueueConsumerInsertBindingParams{ID: bindingUUID, AccountID: accountUUID, AppID: appUUID,
 			Name: binding.Name, QueueName: binding.QueueName, Mode: binding.Mode, WorkloadClass: string(binding.WorkloadClass), Enabled: binding.Enabled,
-			MaxConcurrency: int32(binding.MaxConcurrency), RetryPolicy: binding.RetryPolicyJSON})
+			MaxConcurrency: int32(binding.MaxConcurrency), RetryPolicy: binding.RetryPolicyJSON, DeploymentScope: binding.DeploymentScope, EnvironmentID: mustPgUUID(binding.EnvironmentID)})
 		if err != nil {
 			return QueueBindingConsumerResult{}, mapErr(err)
 		}
@@ -186,7 +191,7 @@ func queueConsumerCheckQuota(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, ap
 }
 
 func queueConsumerBindingFromSQL(row sqlc.QueueBinding) QueueBinding {
-	return QueueBinding{ID: row.ID.String(), AccountID: row.AccountID.String(), AppID: row.AppID.String(), Name: row.Name, QueueName: row.QueueName,
+	return QueueBinding{EnvironmentID: uuidString(row.EnvironmentID), DeploymentScope: row.DeploymentScope, ID: row.ID.String(), AccountID: row.AccountID.String(), AppID: row.AppID.String(), Name: row.Name, QueueName: row.QueueName,
 		Mode: row.Mode, WorkloadClass: WorkloadClass(row.WorkloadClass), Enabled: row.Enabled, MaxConcurrency: int(row.MaxConcurrency),
 		RetiredAt:       timestamptzToTimePtr(row.RetiredAt),
 		RetryPolicyJSON: append([]byte(nil), row.RetryPolicy...), CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time}

@@ -145,7 +145,7 @@ func (s *server) configureQueueWorkload(w http.ResponseWriter, r *http.Request, 
 	}
 	var existing *state.QueueBinding
 	for i := range bindings {
-		if bindings[i].Name != queueWorkloadProfileName {
+		if bindings[i].DeploymentScope != "" || bindings[i].Name != queueWorkloadProfileName {
 			continue
 		}
 		if existing != nil {

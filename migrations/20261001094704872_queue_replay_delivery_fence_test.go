@@ -27,10 +27,7 @@ func TestMigrationQueueReplayDeliveryFenceRetainsHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding, err := store.CreateQueueBindingWithConsumer(ctx, state.QueueBinding{AccountID: account.ID, AppID: app.ID, Name: "jobs", QueueName: "jobs", Mode: "push", Enabled: true, WorkloadClass: state.WorkloadClassWorker, MaxConcurrency: 1})
-	if err != nil {
-		t.Fatal(err)
-	}
+	binding := seedLegacyQueueBindingConsumer(t, pool, account.ID, app.ID, "jobs", true)
 	var id string
 	if err := pool.QueryRow(ctx, `insert into invocations(account_id,app_id,source,queue_name,deployment_scope,state,attempts,last_replayed_at,lease_expires_at,payload)
 values($1,$2,'queue','jobs','staging','dispatching',1,now()-interval '1 hour',now()+interval '1 hour','{"job":"history"}') returning id`, account.ID, app.ID).Scan(&id); err != nil {

@@ -61,11 +61,16 @@ func (m *MemStore) mutateQueueBindingConsumer(accountID, appID, id string, creat
 		}
 	}
 	if !remove {
+		if create != nil {
+			if err := m.captureQueueBindingScopeLocked(app, &binding); err != nil {
+				return QueueBindingConsumerResult{}, err
+			}
+		}
 		if err := validateQueueBindingConsumer(binding, app.Type, app.WorkloadClass); err != nil {
 			return QueueBindingConsumerResult{}, err
 		}
 		for otherID, other := range m.queueBindings {
-			if otherID != id && other.AppID == appID && (other.Name == binding.Name || other.QueueName == binding.QueueName) {
+			if otherID != id && other.AppID == appID && other.EnvironmentID == binding.EnvironmentID && (other.Name == binding.Name || other.QueueName == binding.QueueName) {
 				return QueueBindingConsumerResult{}, ErrConflict
 			}
 		}
@@ -92,8 +97,8 @@ func (m *MemStore) mutateQueueBindingConsumer(accountID, appID, id string, creat
 				if m.triggerConsumesQuotaLocked(trigger) {
 					appCount++
 				}
-				if triggerID != owned.ID.String() && (trigger.Slug == binding.QueueName ||
-					(binding.Enabled && trigger.Kind == "queue" && trigger.Enabled && trigger.Source.Valid && trigger.Source.String == "queue")) {
+				if trigger.QueueBindingEnvironmentID.String() == canonicalMemUUID(binding.EnvironmentID) && triggerID != owned.ID.String() && (trigger.Slug == binding.QueueName ||
+					(binding.DeploymentScope == "" && binding.Enabled && trigger.Kind == "queue" && trigger.Enabled && trigger.Source.Valid && trigger.Source.String == "queue")) {
 					return QueueBindingConsumerResult{}, ErrConflict
 				}
 			}
@@ -117,6 +122,8 @@ func (m *MemStore) mutateQueueBindingConsumer(accountID, appID, id string, creat
 				AppID: pgtype.UUID{Bytes: parseMemUUIDString(appID), Valid: true}, QueueBindingID: pgtype.UUID{Bytes: parseMemUUIDString(id), Valid: true}, Kind: "queue", Source: nullableTriggerSource("queue"), BrokerPoisonStrategy: "commit",
 				CreatedAt: pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}}
 		}
+		projected.QueueBindingScope = binding.DeploymentScope
+		projected.QueueBindingEnvironmentID = pgtype.UUID{Bytes: parseMemUUIDString(binding.EnvironmentID), Valid: binding.EnvironmentID != ""}
 		projected.Slug, projected.Enabled, projected.Config = binding.QueueName, binding.Enabled, definition.Config
 		projected.BatchSizeMax, projected.BatchWindowMs, projected.MaxAttempts, projected.PayloadMaxBytes = definition.BatchSize, definition.BatchWindow, definition.MaxAttempts, definition.PayloadMax
 		projected.UpdatedAt = pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}

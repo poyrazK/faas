@@ -15073,7 +15073,7 @@ func (s *PgStore) ListDueInvocations(ctx context.Context, now time.Time, limit i
 		 where i.state = 'pending' and i.due_at <= $1
            and not exists (select 1 from queue_bindings b
                where i.source='queue' and b.app_id=i.app_id
-                 and b.queue_name=i.queue_name and b.retired_at is not null)
+                 and (b.id=i.queue_binding_id or (i.queue_binding_id is null and b.deployment_scope='' and b.queue_name=i.queue_name)) and b.retired_at is not null)
 		   and (i.source <> 'queue' or (i.queue_name = '' and i.queue_binding_id is null))
 		   and (i.work_policy_name is not null or not exists (
 		       select 1
@@ -15167,7 +15167,7 @@ func (s *PgStore) ListDueInvocationsAfter(ctx context.Context, now time.Time, af
 		 where i.state = 'pending' and i.due_at <= $1
            and not exists (select 1 from queue_bindings b
                where i.source='queue' and b.app_id=i.app_id
-                 and b.queue_name=i.queue_name and b.retired_at is not null)
+                 and (b.id=i.queue_binding_id or (i.queue_binding_id is null and b.deployment_scope='' and b.queue_name=i.queue_name)) and b.retired_at is not null)
 		   and (i.source <> 'queue' or (i.queue_name = '' and i.queue_binding_id is null))
 		   and (i.work_policy_name is not null or not exists (
 		       select 1
@@ -25417,10 +25417,13 @@ func mapErr(err error) error {
 		case pgerrcode.UniqueViolation:
 			return fmt.Errorf("%w: %s", ErrConflict, pgErr.ConstraintName)
 		case pgerrcode.CheckViolation:
+			if pgErr.ConstraintName == "queue_binding_environment_unavailable" {
+				return ErrQueueBindingEnvironmentUnavailable
+			}
 			if pgErr.ConstraintName == "queue_binding_retired" {
 				return ErrQueueBindingRetired
 			}
-			if pgErr.ConstraintName == "queue_binding_retirement_identity" || pgErr.ConstraintName == "queue_consumer_durable_identity" || pgErr.ConstraintName == "invocation_queue_binding_identity" {
+			if pgErr.ConstraintName == "queue_binding_retirement_identity" || pgErr.ConstraintName == "queue_consumer_durable_identity" || pgErr.ConstraintName == "invocation_queue_binding_identity" || pgErr.ConstraintName == "queue_binding_scope_identity" || pgErr.ConstraintName == "queue_consumer_scope_identity" {
 				return ErrConflict
 			}
 			if pgErr.ConstraintName == "environment_gitops_field_owned" {
@@ -25429,7 +25432,7 @@ func mapErr(err error) error {
 			if pgErr.ConstraintName == "invocation_platform_tenant_active" {
 				return ErrPlatformTenantSuspended
 			}
-			if pgErr.ConstraintName == "invocation_queue_binding_source" || pgErr.ConstraintName == "invocation_queue_binding_tenant" {
+			if pgErr.ConstraintName == "invocation_queue_binding_source" || pgErr.ConstraintName == "invocation_queue_binding_tenant" || pgErr.ConstraintName == "queue_binding_environment_membership" || pgErr.ConstraintName == "queue_consumer_receipt_scope" || pgErr.ConstraintName == "queue_binding_scope_shape" {
 				return ErrInvalidArgument
 			}
 			if pgErr.ConstraintName == "invocation_platform_tenant_identity" ||
@@ -29810,7 +29813,7 @@ func (s *PgStore) InsertTriggerRecord(ctx context.Context, triggerID, itemIdenti
 			}
 			return existing, nil
 		}
-		return "", fmt.Errorf("state: insert trigger_record: %w", err)
+		return "", fmt.Errorf("state: insert trigger_record: %w", mapErr(err))
 	}
 	return pgUUIDString(id), nil
 }
@@ -29952,24 +29955,26 @@ func (s *PgStore) triggerQueries() *sqlc.Queries { return sqlc.New() }
 // Row → Model automatically.
 func triggerRowToTrigger(r sqlc.TriggerByIDRow) sqlc.Trigger {
 	return sqlc.Trigger{
-		ID:                   r.ID,
-		QueueBindingID:       r.QueueBindingID,
-		AccountID:            r.AccountID,
-		AppID:                r.AppID,
-		Kind:                 r.Kind,
-		Slug:                 r.Slug,
-		Enabled:              r.Enabled,
-		Config:               r.Config,
-		BatchSizeMax:         r.BatchSizeMax,
-		BatchWindowMs:        r.BatchWindowMs,
-		MaxAttempts:          r.MaxAttempts,
-		CronID:               r.CronID,
-		Source:               r.Source,
-		CreatedAt:            r.CreatedAt,
-		UpdatedAt:            r.UpdatedAt,
-		PayloadMaxBytes:      r.PayloadMaxBytes,
-		BrokerPoisonStrategy: r.BrokerPoisonStrategy,
-		FilterCriteria:       r.FilterCriteria,
+		ID:                        r.ID,
+		QueueBindingID:            r.QueueBindingID,
+		QueueBindingScope:         r.QueueBindingScope,
+		QueueBindingEnvironmentID: r.QueueBindingEnvironmentID,
+		AccountID:                 r.AccountID,
+		AppID:                     r.AppID,
+		Kind:                      r.Kind,
+		Slug:                      r.Slug,
+		Enabled:                   r.Enabled,
+		Config:                    r.Config,
+		BatchSizeMax:              r.BatchSizeMax,
+		BatchWindowMs:             r.BatchWindowMs,
+		MaxAttempts:               r.MaxAttempts,
+		CronID:                    r.CronID,
+		Source:                    r.Source,
+		CreatedAt:                 r.CreatedAt,
+		UpdatedAt:                 r.UpdatedAt,
+		PayloadMaxBytes:           r.PayloadMaxBytes,
+		BrokerPoisonStrategy:      r.BrokerPoisonStrategy,
+		FilterCriteria:            r.FilterCriteria,
 	}
 }
 
@@ -29979,24 +29984,26 @@ func triggerRowToTrigger(r sqlc.TriggerByIDRow) sqlc.Trigger {
 // emits one Row struct per :many query.
 func triggerListRowToTrigger(r sqlc.ListTriggersForAppRow) sqlc.Trigger {
 	return sqlc.Trigger{
-		ID:                   r.ID,
-		QueueBindingID:       r.QueueBindingID,
-		AccountID:            r.AccountID,
-		AppID:                r.AppID,
-		Kind:                 r.Kind,
-		Slug:                 r.Slug,
-		Enabled:              r.Enabled,
-		Config:               r.Config,
-		BatchSizeMax:         r.BatchSizeMax,
-		BatchWindowMs:        r.BatchWindowMs,
-		MaxAttempts:          r.MaxAttempts,
-		CronID:               r.CronID,
-		Source:               r.Source,
-		CreatedAt:            r.CreatedAt,
-		UpdatedAt:            r.UpdatedAt,
-		PayloadMaxBytes:      r.PayloadMaxBytes,
-		BrokerPoisonStrategy: r.BrokerPoisonStrategy,
-		FilterCriteria:       r.FilterCriteria,
+		ID:                        r.ID,
+		QueueBindingID:            r.QueueBindingID,
+		QueueBindingScope:         r.QueueBindingScope,
+		QueueBindingEnvironmentID: r.QueueBindingEnvironmentID,
+		AccountID:                 r.AccountID,
+		AppID:                     r.AppID,
+		Kind:                      r.Kind,
+		Slug:                      r.Slug,
+		Enabled:                   r.Enabled,
+		Config:                    r.Config,
+		BatchSizeMax:              r.BatchSizeMax,
+		BatchWindowMs:             r.BatchWindowMs,
+		MaxAttempts:               r.MaxAttempts,
+		CronID:                    r.CronID,
+		Source:                    r.Source,
+		CreatedAt:                 r.CreatedAt,
+		UpdatedAt:                 r.UpdatedAt,
+		PayloadMaxBytes:           r.PayloadMaxBytes,
+		BrokerPoisonStrategy:      r.BrokerPoisonStrategy,
+		FilterCriteria:            r.FilterCriteria,
 	}
 }
 
@@ -30004,24 +30011,26 @@ func triggerListRowToTrigger(r sqlc.ListTriggersForAppRow) sqlc.Trigger {
 // ListEnabledTriggers query.
 func triggerEnabledRowToTrigger(r sqlc.ListEnabledTriggersRow) sqlc.Trigger {
 	return sqlc.Trigger{
-		ID:                   r.ID,
-		QueueBindingID:       r.QueueBindingID,
-		AccountID:            r.AccountID,
-		AppID:                r.AppID,
-		Kind:                 r.Kind,
-		Slug:                 r.Slug,
-		Enabled:              r.Enabled,
-		Config:               r.Config,
-		BatchSizeMax:         r.BatchSizeMax,
-		BatchWindowMs:        r.BatchWindowMs,
-		MaxAttempts:          r.MaxAttempts,
-		CronID:               r.CronID,
-		Source:               r.Source,
-		CreatedAt:            r.CreatedAt,
-		UpdatedAt:            r.UpdatedAt,
-		PayloadMaxBytes:      r.PayloadMaxBytes,
-		BrokerPoisonStrategy: r.BrokerPoisonStrategy,
-		FilterCriteria:       r.FilterCriteria,
+		ID:                        r.ID,
+		QueueBindingID:            r.QueueBindingID,
+		QueueBindingScope:         r.QueueBindingScope,
+		QueueBindingEnvironmentID: r.QueueBindingEnvironmentID,
+		AccountID:                 r.AccountID,
+		AppID:                     r.AppID,
+		Kind:                      r.Kind,
+		Slug:                      r.Slug,
+		Enabled:                   r.Enabled,
+		Config:                    r.Config,
+		BatchSizeMax:              r.BatchSizeMax,
+		BatchWindowMs:             r.BatchWindowMs,
+		MaxAttempts:               r.MaxAttempts,
+		CronID:                    r.CronID,
+		Source:                    r.Source,
+		CreatedAt:                 r.CreatedAt,
+		UpdatedAt:                 r.UpdatedAt,
+		PayloadMaxBytes:           r.PayloadMaxBytes,
+		BrokerPoisonStrategy:      r.BrokerPoisonStrategy,
+		FilterCriteria:            r.FilterCriteria,
 	}
 }
 

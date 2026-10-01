@@ -27,6 +27,11 @@ func queueBindingIdentity(accountID, appID, id string) (pgtype.UUID, pgtype.UUID
 // CreateQueueBinding is the legacy intent-only seam. Consumer publication uses
 // CreateQueueBindingWithConsumer; retirement always uses its atomic counterpart.
 func (s *PgStore) CreateQueueBinding(ctx context.Context, in QueueBinding) (QueueBinding, error) {
+	if in.EnvironmentID != "" {
+		if _, err := uuid.Parse(in.EnvironmentID); err != nil {
+			return QueueBinding{}, ErrInvalidArgument
+		}
+	}
 	if in.RetiredAt != nil {
 		return QueueBinding{}, ErrInvalidArgument
 	}
@@ -41,7 +46,7 @@ func (s *PgStore) CreateQueueBinding(ctx context.Context, in QueueBinding) (Queu
 	row, err := sqlc.New().QueueConsumerInsertBinding(ctx, s.pool, sqlc.QueueConsumerInsertBindingParams{
 		ID: id, AccountID: account, AppID: app, Name: in.Name, QueueName: in.QueueName,
 		Mode: in.Mode, WorkloadClass: string(in.WorkloadClass), Enabled: in.Enabled,
-		MaxConcurrency: int32(in.MaxConcurrency), RetryPolicy: in.RetryPolicyJSON,
+		MaxConcurrency: int32(in.MaxConcurrency), RetryPolicy: in.RetryPolicyJSON, DeploymentScope: in.DeploymentScope, EnvironmentID: mustPgUUID(in.EnvironmentID),
 	})
 	if err != nil {
 		return QueueBinding{}, fmt.Errorf("state: insert queue binding: %w", mapErr(err))

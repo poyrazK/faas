@@ -130,6 +130,7 @@ func Run(t *testing.T, open Open) {
 		{"worker_account_capacity_is_shared_and_released", testWorkerAccountCapacity},
 		{"worker_admission_identity_cannot_be_reinterpreted", testWorkerAdmissionIdentity},
 		{"queue_binding_consumer_publication_is_atomic", testQueueBindingConsumerPublication},
+		{"queue_binding_environment_identity_is_scoped_and_retained", testQueueBindingEnvironmentIdentity},
 		{"queue_binding_retirement_holds_work_and_retains_receipts", testQueueBindingRetirement},
 		{"queue_binding_identity_survives_rename_replacement_and_replay", testInvocationQueueBindingIdentity},
 		{"queue_dead_letter_replay_rearms_original_receipt", testQueueReplayReceipt},

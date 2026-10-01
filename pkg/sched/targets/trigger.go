@@ -256,7 +256,7 @@ func (s queueDepthSignal) bindingWorkerDemand(target float64) map[string]int {
 				workers = sample.binding.MaxConcurrency
 			}
 		}
-		demand[sample.binding.QueueName] = workers
+		demand[sample.binding.QueueName] += workers
 	}
 	return demand
 }
@@ -598,6 +598,7 @@ func (t *Trigger) readQueueState(ctx context.Context, app state.App, now time.Ti
 		}
 		if len(bindings) > 0 {
 			signal := queueDepthSignal{bindings: make([]queueBindingDepth, 0, len(bindings))}
+			byName := map[string]state.QueueStats{}
 			for _, binding := range bindings {
 				var queue state.QueueStats
 				if binding.Enabled {
@@ -613,8 +614,18 @@ func (t *Trigger) readQueueState(ctx context.Context, app state.App, now time.Ti
 					}
 				}
 				signal.bindings = append(signal.bindings, queueBindingDepth{binding: binding, queue: queue})
-				if t.metrics != nil {
-					t.metrics.SetQueueBindingState(app.ID, binding.QueueName, queue.Depth, queue.InFlight, queue.DeadLetter, queue.OldestPendingAt, now)
+				aggregate := byName[binding.QueueName]
+				aggregate.Depth += queue.Depth
+				aggregate.InFlight += queue.InFlight
+				aggregate.DeadLetter += queue.DeadLetter
+				if !queue.OldestPendingAt.IsZero() && (aggregate.OldestPendingAt.IsZero() || queue.OldestPendingAt.Before(aggregate.OldestPendingAt)) {
+					aggregate.OldestPendingAt = queue.OldestPendingAt
+				}
+				byName[binding.QueueName] = aggregate
+			}
+			if t.metrics != nil {
+				for name, queue := range byName {
+					t.metrics.SetQueueBindingState(app.ID, name, queue.Depth, queue.InFlight, queue.DeadLetter, queue.OldestPendingAt, now)
 				}
 			}
 			return withBroker(signal, true, nil)

@@ -9,6 +9,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+// ErrQueueBindingEnvironmentUnavailable holds work until the original environment is restored.
+var ErrQueueBindingEnvironmentUnavailable = fmt.Errorf("%w: captured queue binding environment is unavailable", ErrConflict)
+
 // ErrQueueBindingRetired rejects new work or claims for a retained queue.
 var ErrQueueBindingRetired = fmt.Errorf("%w: queue binding is retired", ErrConflict)
 
@@ -67,7 +70,7 @@ func applyQueueBindingPatch(row QueueBinding, p UpdateQueueBindingParams) QueueB
 }
 
 func validateQueueBindingConsumer(row QueueBinding, appType AppType, appClass WorkloadClass) error {
-	if row.RetiredAt != nil {
+	if row.RetiredAt != nil || row.DeploymentScope != "" && !api.ValidProjectEnvironmentSlug(row.DeploymentScope) {
 		return ErrInvalidArgument
 	}
 	if !queueBindingNameRE.MatchString(row.Name) || !queueBindingNameRE.MatchString(row.QueueName) ||

@@ -334,9 +334,13 @@ observation failure, migration holds, scoped cooldowns, binding/replica caps,
 and real PostgreSQL intent through a VM transport fixture. Native guest and teardown proof is still
 required.
 
-The existing queue consumer index still allows one enabled trigger per
-app/source. Before enabling the queue adapter, binding and consumer identity
-must include the environment. The scoped demand path does not scope the
+Named queue bindings and their private consumers now retain the immutable
+catalog environment UUID and deployment scope. Their name uniqueness includes
+that UUID, so production and staging can use the same names, and one environment
+can have several independent consumers. Historical bindings keep the empty,
+application-shared scope and its existing singleton consumer contract. Public
+scope selectors and the reviewed ownership adapter remain required before
+enabling the queue adapter. The scoped demand path does not scope the
 application-shared runtime/scaling policy or transfer queue ownership.
 Renaming or pruning a binding also needs an explicit disposition for queued
 work and existing trigger receipts. Public binding deletion now retires its
@@ -364,7 +368,7 @@ retain their existing invocation retention requirements. Ordinary PATCH and
 recreation cannot silently release a retirement hold or give another consumer
 the old backlog. Tenant-scoped internal history reads expose retained identity
 to the future adapter; an explicit reviewed recovery/adoption operation,
-environment-scoped producers and consumers, and a reviewed retention policy
+public environment selectors for producers and bindings, and a reviewed retention policy
 remain gates before enabling GitOps queue pruning. Binding retirement alone does not grant GitOps ownership.
 
 Accepted queue messages now retain an immutable binding ID plus their original
@@ -401,9 +405,32 @@ private consumer receipt or a current name whose last binding update predates
 admission. Conflicting proofs and ambiguous history stay unassigned. Neither
 migration replay nor ordinary SQL updates can adopt those rows later. Unassigned
 legacy work retains the current name-based compatibility path and diagnostics;
-a future environment-scoped consumer must require reviewed adoption instead of
-using that fallback. These IDs do not grant GitOps field ownership or release
+named environment consumers require an exact captured binding ID and never
+use that fallback. These IDs do not grant GitOps field ownership or release
 retirement; the scoped source-of-truth contract and explicit recovery remain open.
+
+Admission prefers a binding in the current catalog environment over a legacy
+shared binding. An unnamed message captures the unique applicable consumer;
+unavailable original environments do not create ambiguity for a new consumer.
+Scoped receipt insertion rejects work owned by another binding or legacy work
+without an ID. Candidate enumeration, concurrency caps, direct invocation
+claims, receipt claims, and worker demand use the same scope contract. Existing
+aggregate queue gauges sum same-name bindings rather than overwriting a neighbor.
+The legacy queue-workload profile selects only its application-shared default.
+
+Deleting an environment retains its bindings, captured work, and receipts.
+Recreating the same slug produces a new UUID and cannot release that work or
+give a new consumer its backlog. New binding and consumer UUID fields are
+immutable; dispatch and new receipt generations hold when the original catalog
+identity is unavailable. Admission and receipt claims lock the live catalog
+identity to serialize with removal. Independent guards remain installed while
+out-of-order replay replaces older admission/retirement functions. Shared
+memory/PostgreSQL cases cover deletion/recreation and tenant/scope isolation;
+real PostgreSQL scheduler checks cover separate caps, rename, replay and receipt
+retention. A populated-database migration check exercises the older-function
+interval and all twenty-one unreleased migrations, preserving captured identities
+and current leases. These checks qualify the internal scope contract; they do
+not enable customer selectors, queue ownership/recovery, or the full GitOps graph.
 
 The branch's unreleased migrations are replay-safe as a complete set. Their
 rollback retains management intent, ownership, captured work and runtime

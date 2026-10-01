@@ -4289,6 +4289,10 @@ type QueueStats struct {
 // rows: push consumers and queue-depth autoscaling can reconcile from this
 // stable configuration without scanning customer messages.
 type QueueBinding struct {
+	// Empty retains the historical app-wide contract. Named scopes are immutable.
+	DeploymentScope string
+	// EnvironmentID retains the original catalog identity through removal/recreation.
+	EnvironmentID   string
 	ID              string
 	AccountID       string
 	AppID           string

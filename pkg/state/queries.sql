@@ -1698,7 +1698,7 @@ delete from triggers where id = $1 and app_id = $2 and queue_binding_id is null;
 -- the same Go struct; projections that omit a column produce a
 -- distinct Row type that breaks the existing pgstore return
 -- type).
-select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id,
+select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
        filter_criteria,
@@ -1709,7 +1709,7 @@ from triggers where id = $1;
 -- Same rationale as TriggerByID — full Trigger projection so
 -- sqlc's generated Row type matches the existing pgstore return
 -- type. (commit 6 of the issue #757 mega-PR.)
-select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id,
+select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
        filter_criteria,
@@ -1725,7 +1725,7 @@ from triggers where app_id = $1 order by created_at desc;
 -- ADR-118 / issue #757: filter_criteria is included so the dispatch
 -- tick can evaluate per-record predicates without a second round-trip
 -- (the column is JSONB; empty/null means "no filter").
-select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id,
+select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
        filter_criteria,
@@ -5570,9 +5570,9 @@ select * from queue_bindings where app_id=sqlc.arg(app_id) and account_id=sqlc.a
 order by created_at, id;
 
 -- name: QueueConsumerInsertBinding :one
-insert into queue_bindings (id,account_id,app_id,name,queue_name,mode,workload_class,enabled,max_concurrency,retry_policy)
+insert into queue_bindings (id,account_id,app_id,name,queue_name,mode,workload_class,enabled,max_concurrency,retry_policy,deployment_scope,environment_id)
 values (sqlc.arg(id),sqlc.arg(account_id),sqlc.arg(app_id),sqlc.arg(name),sqlc.arg(queue_name),
-sqlc.arg(mode),sqlc.arg(workload_class),sqlc.arg(enabled),sqlc.arg(max_concurrency),sqlc.arg(retry_policy)::jsonb) returning *;
+sqlc.arg(mode),sqlc.arg(workload_class),sqlc.arg(enabled),sqlc.arg(max_concurrency),sqlc.arg(retry_policy)::jsonb,sqlc.arg(deployment_scope),sqlc.narg(environment_id)::uuid) returning *;
 
 -- name: QueueConsumerUpdateBinding :one
 update queue_bindings set queue_name=sqlc.arg(queue_name),mode=sqlc.arg(mode),workload_class=sqlc.arg(workload_class),
@@ -5622,16 +5622,18 @@ where id=sqlc.arg(id) and queue_binding_id is null returning *;
 select pg_notify('trigger_changed',sqlc.arg(payload)::text);
 
 -- name: QueueClaimConsumerIdentity :one
-select queue_binding_id, (config ? 'queue_binding_id')::boolean as has_marker from triggers
+select queue_binding_id, queue_binding_scope, (config ? 'queue_binding_id')::boolean as has_marker from triggers
 where id=sqlc.arg(id) and app_id=sqlc.arg(app_id) and kind='queue' and source='queue';
 
 -- name: QueueClaimLockBinding :one
-select max_concurrency from queue_bindings where id=sqlc.arg(id) and app_id=sqlc.arg(app_id)
-and queue_name=sqlc.arg(queue_name) and mode='push' and enabled and retired_at is null for update;
+select b.max_concurrency from queue_bindings b where b.id=sqlc.arg(id) and b.app_id=sqlc.arg(app_id)
+and b.deployment_scope=sqlc.arg(binding_scope) and b.queue_name=sqlc.arg(queue_name) and b.mode='push' and b.enabled and b.retired_at is null
+and (b.deployment_scope='' or exists (select 1 from apps a join project_environments e on e.project_id=a.project_id and e.account_id=a.account_id
+  where a.id=b.app_id and e.id=b.environment_id and e.slug=b.deployment_scope)) for update;
 
 -- name: QueueClaimLegacyBindingCap :one
 select b.id, b.max_concurrency from queue_bindings b where b.app_id=sqlc.arg(app_id)
-and b.queue_name=sqlc.arg(queue_name) and b.mode='push' and b.enabled and b.retired_at is null
+and b.deployment_scope='' and b.queue_name=sqlc.arg(queue_name) and b.mode='push' and b.enabled and b.retired_at is null
 and not exists (select 1 from triggers owned where owned.queue_binding_id=b.id) for update;
 
 -- name: QueueClaimLockLiveConsumer :one
@@ -5696,15 +5698,17 @@ from invocations i join queue_bindings b on b.app_id=i.app_id and b.account_id=i
 where b.id=sqlc.arg(binding_id)::uuid and b.app_id=sqlc.arg(app_id)::uuid
   and (sqlc.narg(deployment_scope)::text is null or i.deployment_scope=sqlc.narg(deployment_scope)::text)
   and i.source='queue' and i.state in ('pending','dispatching','dead_letter')
-  and (i.queue_binding_id=b.id or (i.queue_binding_id is null and i.queue_name=b.queue_name));
+  and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
+  and (i.queue_binding_id=b.id or (b.deployment_scope='' and i.queue_binding_id is null and i.queue_name=b.queue_name));
 
 -- name: QueueClaimActiveCount :one
 select count(*)::bigint from invocations
 where app_id=sqlc.arg(app_id)::uuid and source='queue'
+  and (sqlc.arg(binding_scope)::text='' or deployment_scope=sqlc.arg(binding_scope)::text)
   and (queue_binding_id=sqlc.narg(binding_id)::uuid
-    or (queue_binding_id is null and (queue_name=sqlc.arg(queue_name) or (queue_name=''
+    or (sqlc.arg(binding_scope)::text='' and queue_binding_id is null and (queue_name=sqlc.arg(queue_name) or (queue_name=''
       and work_policy_name is null and not exists (select 1 from triggers other
-      where other.app_id=sqlc.arg(app_id)::uuid and other.kind='queue' and other.enabled
+      where other.app_id=sqlc.arg(app_id)::uuid and other.kind='queue' and other.queue_binding_scope='' and other.enabled
         and other.source='queue' and other.id<>sqlc.arg(trigger_id)::uuid)))))
   and state='dispatching' and lease_expires_at > clock_timestamp();
 
@@ -5714,10 +5718,11 @@ update invocations i set state='dispatching',
   received_at=coalesce(i.received_at,clock_timestamp()), attempts=i.attempts+1
 where i.id=sqlc.arg(id)::uuid and i.app_id=sqlc.arg(app_id)::uuid and i.source='queue'
   and i.state='pending' and i.due_at<=clock_timestamp()
-  and (i.queue_binding_id=sqlc.narg(binding_id)::uuid or (i.queue_binding_id is null
+  and (sqlc.arg(binding_scope)::text='' or i.deployment_scope=sqlc.arg(binding_scope)::text)
+  and (i.queue_binding_id=sqlc.narg(binding_id)::uuid or (sqlc.arg(binding_scope)::text='' and i.queue_binding_id is null
     and (i.queue_name=sqlc.arg(queue_name) or (i.queue_name='' and i.work_policy_name is null
       and not exists (select 1 from triggers other where other.app_id=i.app_id
-        and other.kind='queue' and other.enabled and other.source='queue'
+        and other.kind='queue' and other.queue_binding_scope='' and other.enabled and other.source='queue'
         and other.id<>sqlc.arg(trigger_id)::uuid)))))
   and not exists (select 1 from trigger_records tr where tr.trigger_id=sqlc.arg(trigger_id)::uuid
     and tr.item_identifier=i.id::text
@@ -5738,9 +5743,11 @@ where i.id::text=targets.id and i.attempts=targets.attempt and i.replay_generati
 -- name: QueuePollCandidates :many
 with consumer as (
  select coalesce(t.queue_binding_id, (select b.id from queue_bindings b
-   where b.app_id=t.app_id and b.queue_name=t.slug
-     and not exists (select 1 from triggers owned where owned.queue_binding_id=b.id))) as binding_id
+   where b.app_id=t.app_id and b.deployment_scope='' and b.queue_name=t.slug
+     and not exists (select 1 from triggers owned where owned.queue_binding_id=b.id))) as binding_id, t.queue_binding_scope as binding_scope
  from triggers t where t.id=sqlc.arg(trigger_id)::uuid and t.app_id=sqlc.arg(app_id)::uuid
+ and (t.queue_binding_scope='' or exists (select 1 from apps a join project_environments e on e.project_id=a.project_id and e.account_id=a.account_id
+   where a.id=t.app_id and e.id=t.queue_binding_environment_id and e.slug=t.queue_binding_scope))
 )
 select i.id::text from invocations i cross join consumer
 		left join trigger_records tr on tr.trigger_id = sqlc.arg(trigger_id)::uuid
@@ -5781,10 +5788,11 @@ select i.id::text from invocations i cross join consumer
 		        and active.state='claimed'
 		        and active.claim_expires_at > clock_timestamp()
 		  ) < i.work_fairness_limit)
-		  and (i.queue_binding_id=consumer.binding_id or (i.queue_binding_id is null
+		  and (consumer.binding_scope='' or i.deployment_scope=consumer.binding_scope)
+		  and (i.queue_binding_id=consumer.binding_id or (consumer.binding_scope='' and i.queue_binding_id is null
     and (i.queue_name=sqlc.arg(queue_name)::text or (i.queue_name='' and i.work_policy_name is null
       and not exists (select 1 from triggers other where other.app_id=sqlc.arg(app_id)::uuid
-        and other.kind='queue' and other.enabled and other.source='queue' and other.id<>sqlc.arg(trigger_id)::uuid)))))
+        and other.kind='queue' and other.queue_binding_scope='' and other.enabled and other.source='queue' and other.id<>sqlc.arg(trigger_id)::uuid)))))
 		order by i.created_at, i.id limit sqlc.arg(candidate_limit)::integer;
 
 
@@ -5855,12 +5863,13 @@ with claimed as (
 			 where i.app_id = sqlc.arg(app_id)::uuid
 			   and i.source = sqlc.arg(source)::text
 			   and i.queue_binding_id is null
+               and exists (select 1 from triggers live where live.id=sqlc.arg(trigger_id)::uuid and live.queue_binding_scope='')
 			   and (i.queue_name = sqlc.arg(queue_name)::text or (
 				       i.queue_name = ''
 				   and not exists (
 				       select 1 from triggers other
 				        where other.app_id = sqlc.arg(app_id)::uuid
-				          and other.kind = 'queue'
+				          and other.kind = 'queue' and other.queue_binding_scope=''
 				          and other.enabled
 				          and other.source = sqlc.arg(source)::text
 				          and other.id <> sqlc.arg(trigger_id)::uuid

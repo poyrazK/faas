@@ -30,10 +30,7 @@ func TestMigrationInvocationQueueBindingIdentity(t *testing.T) {
 	}
 	binding := func(name string) state.QueueBindingConsumerResult {
 		t.Helper()
-		b, err := store.CreateQueueBindingWithConsumer(ctx, state.QueueBinding{AppID: app.ID, AccountID: account.ID, Name: name, QueueName: name, Mode: "push", WorkloadClass: state.WorkloadClassWorker, Enabled: false, MaxConcurrency: 1})
-		if err != nil {
-			t.Fatal(err)
-		}
+		b := seedLegacyQueueBindingConsumer(t, pool, account.ID, app.ID, name, false)
 		return b
 	}
 	stable, renamed, conflict := binding("stable"), binding("before"), binding("conflict")
@@ -60,7 +57,10 @@ func TestMigrationInvocationQueueBindingIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	newName := "after"
-	if _, err := store.UpdateQueueBindingWithConsumer(ctx, account.ID, app.ID, renamed.Binding.ID, state.UpdateQueueBindingParams{QueueName: &newName}); err != nil {
+	if _, err := pool.Exec(ctx, `update queue_bindings set queue_name=$2,updated_at=now() where id=$1;`, renamed.Binding.ID, newName); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `update triggers set slug=$2 where id=$1`, renamed.Changes[0].TriggerID, newName); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.MigrateUp(ctx, pool); err != nil {

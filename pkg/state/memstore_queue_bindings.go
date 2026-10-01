@@ -20,8 +20,11 @@ func (m *MemStore) CreateQueueBinding(_ context.Context, in QueueBinding) (Queue
 	if !ok || app.Status == AppDeleted || app.AccountID != in.AccountID {
 		return QueueBinding{}, ErrNotFound
 	}
+	if err := m.captureQueueBindingScopeLocked(app, &in); err != nil {
+		return QueueBinding{}, err
+	}
 	for _, existing := range m.queueBindings {
-		if existing.AppID == in.AppID && (existing.Name == in.Name || existing.QueueName == in.QueueName) {
+		if existing.EnvironmentID == in.EnvironmentID && existing.AppID == in.AppID && (existing.Name == in.Name || existing.QueueName == in.QueueName) {
 			return QueueBinding{}, ErrConflict
 		}
 	}
@@ -125,7 +128,7 @@ func (m *MemStore) UpdateQueueBinding(_ context.Context, accountID, appID, id st
 		b.RetryPolicyJSON = append([]byte(nil), (*p.RetryPolicyJSON)...)
 	}
 	for otherID, other := range m.queueBindings {
-		if otherID == id || other.AppID != appID {
+		if otherID == id || other.AppID != appID || other.EnvironmentID != b.EnvironmentID {
 			continue
 		}
 		if other.Name == b.Name || other.QueueName == b.QueueName {
@@ -171,7 +174,7 @@ func (m *MemStore) queueBindingRetiredLocked(inv Invocation) bool {
 	}
 	for _, binding := range m.queueBindings {
 		if binding.AppID == inv.AppID && binding.AccountID == inv.AccountID &&
-			(inv.QueueBindingID == binding.ID || inv.QueueBindingID == "" && binding.QueueName == inv.QueueName) && binding.RetiredAt != nil {
+			(inv.QueueBindingID == binding.ID || inv.QueueBindingID == "" && binding.DeploymentScope == "" && binding.QueueName == inv.QueueName) && binding.RetiredAt != nil {
 			return true
 		}
 	}
@@ -187,7 +190,7 @@ func (m *MemStore) queueConsumerCanClaimLocked(triggerID string) bool {
 	}
 	for _, binding := range m.queueBindings {
 		if canonicalMemUUID(binding.ID) == trigger.QueueBindingID.String() {
-			return binding.Enabled && binding.RetiredAt == nil && binding.Mode == "push"
+			return binding.Enabled && binding.RetiredAt == nil && binding.Mode == "push" && m.queueBindingEnvironmentAvailableLocked(binding)
 		}
 	}
 	return false
@@ -207,6 +210,9 @@ func (m *MemStore) captureInvocationQueueBindingLocked(inv *Invocation) error {
 		}
 		for _, binding := range m.queueBindings {
 			if canonicalMemUUID(binding.ID) == id.String() && binding.AppID == inv.AppID && binding.AccountID == inv.AccountID {
+				if binding.DeploymentScope != "" && (binding.DeploymentScope != inv.DeploymentScope || !m.queueBindingEnvironmentAvailableLocked(binding)) {
+					return ErrInvalidArgument
+				}
 				inv.QueueBindingID = binding.ID
 				if binding.RetiredAt != nil {
 					return ErrQueueBindingRetired
@@ -219,38 +225,45 @@ func (m *MemStore) captureInvocationQueueBindingLocked(inv *Invocation) error {
 	if inv.Source != InvocationQueue {
 		return nil
 	}
+	var selected QueueBinding
 	for _, binding := range m.queueBindings {
-		if binding.AppID != inv.AppID || binding.AccountID != inv.AccountID {
+		if binding.AppID != inv.AppID || binding.AccountID != inv.AccountID ||
+			binding.DeploymentScope != "" && (binding.DeploymentScope != inv.DeploymentScope || !m.queueBindingEnvironmentAvailableLocked(binding)) {
 			continue
 		}
 		if inv.QueueName != "" {
 			if binding.QueueName != inv.QueueName {
 				continue
 			}
-		} else {
-			if inv.WorkPolicyName != "" || !binding.Enabled || binding.Mode != "push" || binding.RetiredAt != nil {
+			if selected.ID == "" || binding.DeploymentScope != "" {
+				selected = binding
+			}
+			continue
+		}
+		if inv.WorkPolicyName != "" || !binding.Enabled || binding.Mode != "push" || binding.RetiredAt != nil {
+			continue
+		}
+		owned, other := false, false
+		for _, trigger := range m.triggers {
+			if trigger.AppID.String() != canonicalMemUUID(inv.AppID) || !trigger.Enabled || trigger.Kind != "queue" || trigger.Source.String != "queue" ||
+				trigger.QueueBindingScope != "" && (trigger.QueueBindingScope != inv.DeploymentScope || !m.queueConsumerCanClaimLocked(trigger.ID.String())) {
 				continue
 			}
-			owned, other := false, false
-			for _, trigger := range m.triggers {
-				if trigger.AppID.String() != canonicalMemUUID(inv.AppID) || !trigger.Enabled || trigger.Kind != "queue" || trigger.Source.String != "queue" {
-					continue
-				}
-				if trigger.QueueBindingID.Valid && trigger.QueueBindingID.String() == canonicalMemUUID(binding.ID) {
-					owned = true
-				} else {
-					other = true
-				}
-			}
-			if !owned || other {
-				continue
+			if trigger.QueueBindingID.Valid && trigger.QueueBindingID.String() == canonicalMemUUID(binding.ID) {
+				owned = true
+			} else {
+				other = true
 			}
 		}
-		if binding.RetiredAt != nil {
+		if owned && !other {
+			selected = binding
+		}
+	}
+	if selected.ID != "" {
+		if selected.RetiredAt != nil {
 			return ErrQueueBindingRetired
 		}
-		inv.QueueBindingID = binding.ID
-		return nil
+		inv.QueueBindingID = selected.ID
 	}
 	return nil
 }

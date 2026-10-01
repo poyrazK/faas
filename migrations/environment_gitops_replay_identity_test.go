@@ -82,17 +82,37 @@ func TestEnvironmentGitOpsMigrationsReplayRetainsIdentityAndLeases(t *testing.T)
 	if _, err := pool.Exec(ctx, `update apps set project_id=$2 where id=$1`, app.ID, project.ID); err != nil {
 		t.Fatal(err)
 	}
+	scoped, err := store.CreateQueueBindingWithConsumer(ctx, state.QueueBinding{AccountID: account.ID, AppID: app.ID, DeploymentScope: "production", Name: "scoped", QueueName: "scoped", Mode: "push", WorkloadClass: state.WorkloadClassWorker, Enabled: true, MaxConcurrency: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scopedWork, err := store.EnqueueInvocation(ctx, state.Invocation{AccountID: account.ID, AppID: app.ID, Source: state.InvocationQueue, QueueName: "scoped", DueAt: time.Now().Add(-time.Second)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scopedClaim, err := store.ClaimQueueTriggerInvocation(ctx, scopedWork.ID, scoped.Changes[0].TriggerID, app.ID, "scoped", 60)
+	if err != nil {
+		t.Fatal(err)
+	}
 	versions := []int64{
 		20260930183000001, 20260930183000002, 20260930183000003, 20260930183000004, 20260930183000005, 20260930183000006,
 		20261001010000001, 20261001020000001, 20261001020000002, 20261001030000001, 20261001040000001, 20261001050000001,
 		20261001060000001, 20261001070000001, 20261001070000002, 20261001080000001, 20261001080000002, 20261001080000003, 20261001081007501,
-		20261001094704872,
+		20261001094704872, 20261001110831601,
 	}
 	if _, err := pool.Exec(ctx, `delete from goose_db_version where version_id=any($1::bigint[])`, versions); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatal(err)
+	}
+	retained, err := store.InvocationByID(ctx, scopedWork.ID)
+	if err != nil || retained.QueueBindingID != scoped.Binding.ID || retained.DeploymentScope != "production" || retained.State != state.InvocationDispatching || retained.Attempts != scopedClaim.Attempts || retained.LeaseExpiresAt == nil || !retained.LeaseExpiresAt.Equal(*scopedClaim.LeaseExpiresAt) {
+		t.Fatalf("full replay changed scoped claim: %+v %v", retained, err)
+	}
+	scopedConsumer, err := store.TriggerByID(ctx, scoped.Changes[0].TriggerID)
+	if err != nil || scopedConsumer.QueueBindingScope != "production" || scopedConsumer.QueueBindingEnvironmentID.String() != scoped.Binding.EnvironmentID {
+		t.Fatalf("full replay lost scoped consumer: %+v %v", scopedConsumer, err)
 	}
 	for _, want := range []state.Invocation{pinned, unassigned} {
 		row, err := store.InvocationByID(ctx, want.ID)

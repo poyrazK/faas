@@ -11928,7 +11928,7 @@ func (m *MemStore) CreateTriggerIfUnderQuota(_ context.Context, appID, kind, slu
 	canonicalAppID := canonicalMemUUID(appID)
 	for _, t := range m.triggers {
 		if t.AppID.String() == canonicalAppID {
-			if t.Slug == slug {
+			if t.QueueBindingScope == "" && t.Slug == slug {
 				return sqlc.Trigger{}, ErrConflict
 			}
 			if m.triggerConsumesQuotaLocked(t) {
@@ -11936,7 +11936,7 @@ func (m *MemStore) CreateTriggerIfUnderQuota(_ context.Context, appID, kind, slu
 			}
 		}
 		if kind == "queue" && enabled && source != "" && t.Kind == "queue" && t.Enabled &&
-			t.AppID.String() == canonicalAppID && t.Source.Valid && t.Source.String == source {
+			t.QueueBindingScope == "" && t.AppID.String() == canonicalAppID && t.Source.Valid && t.Source.String == source {
 			return sqlc.Trigger{}, ErrConflict
 		}
 	}
@@ -12044,7 +12044,7 @@ func (m *MemStore) UpdateTrigger(_ context.Context, id string, enabled *bool, co
 	if t.Kind == "queue" && t.Enabled && t.Source.Valid {
 		for otherID, other := range m.triggers {
 			if otherID != id && other.Kind == "queue" && other.Enabled &&
-				other.AppID == t.AppID && other.Source.Valid && other.Source.String == t.Source.String {
+				other.AppID == t.AppID && other.QueueBindingScope == t.QueueBindingScope && other.Source.Valid && other.Source.String == t.Source.String {
 				return sqlc.Trigger{}, ErrConflict
 			}
 		}
@@ -12167,6 +12167,13 @@ func (m *MemStore) claimTriggerRecordsLocked(triggerID string, limit int, allowe
 func (m *MemStore) InsertTriggerRecord(_ context.Context, triggerID, itemIdentifier string, payload, headers, metadata []byte) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if trigger, ok := m.triggers[triggerID]; ok && trigger.QueueBindingScope != "" {
+		inv, exists := m.invocations[itemIdentifier]
+		if !exists || canonicalMemUUID(inv.AppID) != trigger.AppID.String() || canonicalMemUUID(inv.AccountID) != trigger.AccountID.String() ||
+			inv.Source != InvocationQueue || canonicalMemUUID(inv.QueueBindingID) != trigger.QueueBindingID.String() || inv.DeploymentScope != trigger.QueueBindingScope {
+			return "", ErrInvalidArgument
+		}
+	}
 	// Dedup probe — mirrors ON CONFLICT DO NOTHING on the
 	// (trigger_id, item_identifier) unique pair.
 	for id, r := range m.records {
@@ -12444,7 +12451,7 @@ func (m *MemStore) dueInvocationsLocked(now time.Time) []Invocation {
 		if inv.DueAt.After(now) {
 			continue
 		}
-		if m.queueBindingRetiredLocked(inv) {
+		if m.queueBindingRetiredLocked(inv) || m.queueBindingEnvironmentHeldLocked(inv) {
 			continue
 		}
 		if inv.WorkPolicyName != "" {
@@ -12510,6 +12517,9 @@ func (m *MemStore) ClaimInvocation(_ context.Context, id, instanceID string, lea
 	}
 	if m.queueBindingRetiredLocked(inv) {
 		return Invocation{}, ErrQueueBindingRetired
+	}
+	if m.queueBindingEnvironmentHeldLocked(inv) {
+		return Invocation{}, ErrQueueBindingEnvironmentUnavailable
 	}
 	now := time.Now()
 	exp := now.Add(time.Duration(leaseSeconds) * time.Second)
@@ -24758,6 +24768,9 @@ func (m *MemStore) ClaimInvocationWithCap(_ context.Context, id, instanceID stri
 	}
 	if m.queueBindingRetiredLocked(inv) {
 		return Invocation{}, ErrQueueBindingRetired
+	}
+	if m.queueBindingEnvironmentHeldLocked(inv) {
+		return Invocation{}, ErrQueueBindingEnvironmentUnavailable
 	}
 	row, ok := m.accountAsyncQuota[inv.AccountID]
 	if !ok {
