@@ -941,3 +941,7 @@ Integration commit `05d46cfff` expands the required gate to include both Go clie
 ### Expanded PostgreSQL UDP acceptance gate
 
 The strict PostgreSQL gate now requires `pgstore_udp_recovery_test.go` in addition to store, retirement and migration fixtures. Full `make udp-postgres-check` passed all seven required cases with race detection enabled via GOFLAGS against the owned local PostgreSQL 16 cluster; skips are rejected. Log `/tmp/gregale-udp-current-postgres-gate.log`. The test cluster was stopped afterward. Native and deployed recovery acceptance remain pending.
+
+### Review candidate PostgreSQL read recovery
+
+Combined draft PR #3997 commit `5a61ae755` now includes the read-stall recovery fixture. Three race-detector runs passed without skips on that exact branch against the owned PostgreSQL cluster, log `/tmp/gregale-udp-stack-pg-read-recovery.log`. Cluster stopped after qualification. CI for the newly pushed head remains pending.
