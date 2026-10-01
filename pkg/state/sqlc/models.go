@@ -1253,6 +1253,14 @@ type CustomerOperationResultBlob struct {
 	LeaseUntil    pgtype.Timestamptz
 }
 
+type CustomerOperationRetainedDeploymentRef struct {
+	DeploymentID pgtype.UUID
+}
+
+type CustomerOperationRetainedReleaseRef struct {
+	ReleaseID pgtype.UUID
+}
+
 type CustomerOperationStreamLease struct {
 	ID          pgtype.UUID
 	AccountID   pgtype.UUID
