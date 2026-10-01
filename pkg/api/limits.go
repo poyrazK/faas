@@ -7778,3 +7778,10 @@ const UDPBytesPerSecondPerAccount = 4 * 1024 * 1024
 const UDPByteBurstPerAccount = 4 * UDPDatagramMaxBytes
 const UDPRateLimitMaxAccounts = 4096
 const UDPRateLimitIdleTTL = 2 * time.Minute
+
+// UDPReplyQueueDepth bounds retained replies per public listener socket.
+const UDPReplyQueueDepth = 64
+const UDPWriteTimeout = time.Second
+const UDPAdmissionTimeout = 30 * time.Second
+const UDPListenerPublicPortMin = 40000
+const UDPListenerPublicPortMax = 49999
