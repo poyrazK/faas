@@ -1,4 +1,4 @@
-# ADR-385 · Provider invoice history discovery and backfill
+# ADR-391 · Provider invoice history discovery and backfill
 
 - **Status:** accepted
 - **Date:** 2026-10-01

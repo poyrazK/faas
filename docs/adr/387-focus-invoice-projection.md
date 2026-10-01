@@ -1,4 +1,4 @@
-# ADR-380 · FOCUS invoice projection
+# ADR-387 · FOCUS invoice projection
 
 - **Status:** accepted
 - **Date:** 2026-09-30

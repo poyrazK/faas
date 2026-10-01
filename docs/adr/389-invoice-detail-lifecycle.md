@@ -1,10 +1,10 @@
-# ADR-382 · Invoice detail lifecycle tracking
+# ADR-389 · Invoice detail lifecycle tracking
 
 - **Status:** accepted
 - **Date:** 2026-10-01
 - **Decision:** Persist bounded lifecycle history for each exported invoice
   charge/tax record, using fingerprints of its actual non-timestamp values.
-- **Why:** ADR-381's provider-line timestamps cannot describe shared invoice
+- **Why:** ADR-388's provider-line timestamps cannot describe shared invoice
   changes or the separate creation of tax records required by FOCUS 1.4.
 
 A pure `pkg/focus/invoicedetail` renderer owns the Invoice Detail row values.

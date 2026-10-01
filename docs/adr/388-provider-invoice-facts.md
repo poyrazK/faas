@@ -1,10 +1,10 @@
-# ADR-381 · Provider invoice facts for FOCUS
+# ADR-388 · Provider invoice facts for FOCUS
 
 - **Status:** accepted
 - **Date:** 2026-09-30
 - **Decision:** Persist bounded, provider-neutral invoice facts in an atomic
   JSONB snapshot and use reconciled, classified line items in FOCUS exports.
-- **Why:** ADR-380's aggregate projection discarded provider line items and
+- **Why:** ADR-387's aggregate projection discarded provider line items and
   settlement details, preventing accurate purchase/consumption classification.
 
 `state.Invoice.Details` and `billing.InvoiceData.Details` carry issuer name,
@@ -57,7 +57,7 @@ work. No provider API calls occur during export.
 Detail timestamps currently track local provider-line facts. Shared invoice
 field changes and the later creation of a separate tax component do not have
 independent detail timestamps; metadata declares this lifecycle coverage gap.
-[ADR-382](382-invoice-detail-lifecycle.md) supersedes this timestamp mapping
+[ADR-389](389-invoice-detail-lifecycle.md) supersedes this timestamp mapping
 with per-export-record history; historical creation uncertainty remains explicit.
 
 Limits live in `pkg/api/limits.go`: 1,000 invoices, 1,000 items per invoice,

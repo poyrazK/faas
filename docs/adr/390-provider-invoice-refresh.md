@@ -1,4 +1,4 @@
-# ADR-383 · Authenticated provider invoice refresh
+# ADR-390 · Authenticated provider invoice refresh
 
 - **Status:** accepted
 - **Date:** 2026-10-01
