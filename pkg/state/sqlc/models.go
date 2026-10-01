@@ -2121,6 +2121,7 @@ type Invocation struct {
 	WorkFairnessLimit        pgtype.Int4
 	PlatformTenantID         pgtype.UUID
 	DeploymentScope          string
+	QueueBindingID           pgtype.UUID
 }
 
 type InvocationWorkCancellation struct {

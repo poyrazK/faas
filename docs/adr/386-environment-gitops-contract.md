@@ -1,4 +1,4 @@
-# ADR-385 · Git-owned environment intent and continuous reconciliation
+# ADR-386 · Git-owned environment intent and continuous reconciliation
 
 - **Status:** implementation in progress
 - **Date:** 2026-09-30
@@ -364,9 +364,30 @@ retain their existing invocation retention requirements. Ordinary PATCH and
 recreation cannot silently release a retirement hold or give another consumer
 the old backlog. Tenant-scoped internal history reads expose retained identity
 to the future adapter; an explicit reviewed recovery/adoption operation,
-message-to-binding identity across renames, environment-scoped producers and
-consumers, and a reviewed retention policy remain gates before enabling GitOps
-queue pruning. Binding retirement alone does not grant GitOps ownership.
+environment-scoped producers and consumers, and a reviewed retention policy
+remain gates before enabling GitOps queue pruning. Binding retirement alone does not grant GitOps ownership.
+
+Accepted queue messages now retain an immutable binding ID plus their original
+queue label. Admission captures the observed tenant-matched binding, then locks
+its immutable ID so a concurrent rename or disable cannot orphan that work; ordinary unnamed work captures its unique active private consumer when
+one exists. Keyed unnamed work remains unassigned. Retry and durable queue
+replay preserve identity, and binding caps, status, worker demand and retirement
+lease holds include work accepted under earlier names. A replacement that reuses
+a renamed label cannot claim messages pinned to the original binding. Cached
+consumer claims still require the live parent and current consumer projection;
+partial batch release also fences the original invocation attempt and owner.
+Generic HTTP replay rejects bound queue messages with
+`queue_replay_requires_binding`; the app queue dead-letter replay endpoint
+retains the original row and work policy instead of orphaning its delivery lane.
+
+The additive migration captures historical ownership only from an existing
+private consumer receipt or a current name whose last binding update predates
+admission. Conflicting proofs and ambiguous history stay unassigned. Neither
+migration replay nor ordinary SQL updates can adopt those rows later. Unassigned
+legacy work retains the current name-based compatibility path and diagnostics;
+a future environment-scoped consumer must require reviewed adoption instead of
+using that fallback. These IDs do not grant GitOps field ownership or release
+retirement; the scoped source-of-truth contract and explicit recovery remain open.
 
 The remaining full feature gates include protected-branch
 approval evidence; environment-scoped workload creation, source/runtime,

@@ -76,6 +76,27 @@ func TestQueueBindingStatusReportsProjectionAndQueueState(t *testing.T) {
 		t.Fatal("oldest pending fields are missing")
 	}
 
+	// Renaming keeps the accepted queue ledger visible through binding identity.
+	name := "payments"
+	result, err = e.store.UpdateQueueBindingWithConsumer(ctx, e.acct.ID, app.ID, binding.ID, state.UpdateQueueBindingParams{QueueName: &name})
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := e.store.CreateQueueBinding(ctx, state.QueueBinding{AccountID: e.acct.ID, AppID: app.ID, Name: "replacement", QueueName: "orders", Mode: "pull", WorkloadClass: state.WorkloadClassWorker, Enabled: true, MaxConcurrency: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []struct {
+		id    string
+		depth int
+	}{{binding.ID, 1}, {replacement.ID, 0}} {
+		rec = e.do(t, http.MethodGet, "/v1/apps/queue-status/queue-bindings/"+item.id+"/status", nil, nil)
+		var status api.QueueBindingStatusResponse
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &status) != nil || status.Depth != item.depth {
+			t.Fatalf("renamed status depth=%d want=%d code=%d", status.Depth, item.depth, rec.Code)
+		}
+	}
+
 	disabled := false
 	result, err = e.store.UpdateQueueBindingWithConsumer(ctx, e.acct.ID, app.ID, binding.ID, state.UpdateQueueBindingParams{Enabled: &disabled})
 	if err != nil {

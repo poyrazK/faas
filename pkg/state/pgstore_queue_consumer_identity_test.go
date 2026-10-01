@@ -55,9 +55,15 @@ func TestPgQueueConsumerClaimsRequireLiveBinding(t *testing.T) {
 		t.Fatalf("stale consumer changed invocation: state=%s attempts=%d err=%v", row.State, row.Attempts, err)
 	}
 	current := enqueue("payments")
-	claimed, err := store.ClaimQueueTriggerInvocation(ctx, current.ID, triggerID, app.ID, name, 60)
+	claimed, err := store.ClaimQueueTriggerInvocation(ctx, old.ID, triggerID, app.ID, name, 60)
 	if err != nil || claimed.State != state.InvocationDispatching || claimed.Attempts != 1 {
 		t.Fatalf("live binding claim: state=%s attempts=%d err=%v", claimed.State, claimed.Attempts, err)
+	}
+	if claimed.QueueBindingID != created.Binding.ID || claimed.QueueName != "jobs" {
+		t.Fatal("rename rewrote admission identity")
+	}
+	if _, err := store.ClaimQueueTriggerInvocation(ctx, current.ID, triggerID, app.ID, name, 60); !errors.Is(err, state.ErrQuotaExceeded) {
+		t.Fatalf("renamed backlog bypassed cap: %v", err)
 	}
 	pending := enqueue("payments")
 	pull := "pull"

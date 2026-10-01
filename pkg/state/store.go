@@ -4224,6 +4224,9 @@ type Store interface {
 	// required; an empty scope must not silently aggregate neighboring work.
 	QueueStateInScope(ctx context.Context, appID, scope string) (QueueStats, error)
 	QueueStateForQueueInScope(ctx context.Context, appID, queueName, scope string) (QueueStats, error)
+	// Binding readers follow immutable message identity through rename/retirement.
+	QueueStateForBinding(ctx context.Context, appID, bindingID string) (QueueStats, error)
+	QueueStateForBindingInScope(ctx context.Context, appID, bindingID, scope string) (QueueStats, error)
 	WorkerPoolHistory(ctx context.Context, appID, deploymentID string) (WorkerPoolHistory, error)
 	// QueuePeek lists the oldest pending queue messages for an app
 	// without acquiring a lease or incrementing attempts. Paginated by

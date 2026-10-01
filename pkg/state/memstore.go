@@ -12317,8 +12317,8 @@ func (m *MemStore) EnqueueInvocation(_ context.Context, inv Invocation) (Invocat
 	if err := m.platformTenantInvocationAllowedLocked(inv); err != nil {
 		return Invocation{}, err
 	}
-	if m.queueBindingRetiredLocked(inv) {
-		return Invocation{}, ErrQueueBindingRetired
+	if err := m.captureInvocationQueueBindingLocked(&inv); err != nil {
+		return Invocation{}, err
 	}
 	if inv.ID == "" {
 		inv.ID = newID()
@@ -12406,7 +12406,7 @@ func (m *MemStore) dueInvocationsLocked(now time.Time) []Invocation {
 		// Explicitly named queue rows belong to their first-class binding,
 		// even while that binding is disabled or waiting for a consumer
 		// projection. The legacy drain only owns empty-name queue rows.
-		if inv.Source == InvocationQueue && inv.QueueName != "" {
+		if inv.Source == InvocationQueue && (inv.QueueName != "" || inv.QueueBindingID != "") {
 			continue
 		}
 		if inv.DueAt.After(now) {

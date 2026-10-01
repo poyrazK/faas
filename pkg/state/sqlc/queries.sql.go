@@ -2815,7 +2815,7 @@ INSERT INTO invocations (
   on_success_destination_id, on_failure_destination_id,
   work_policy_name, work_key_digest, work_expires_at,
   work_sequence, work_policy_revision, work_fairness_digest,
-  work_fairness_limit, platform_tenant_id, deployment_scope
+  work_fairness_limit, platform_tenant_id, deployment_scope, queue_binding_id
 ) VALUES (
   coalesce($1::uuid, gen_random_uuid()), $2, $3,
   $4, $5, coalesce(nullif($6::text, ''), 'pending'),
@@ -2826,8 +2826,8 @@ INSERT INTO invocations (
   $20, nullif($21::text, ''),
   $22, $23, $24,
   $25, $26, $27,
-  $28, nullif($29::text, '')
-) RETURNING id, app_id, account_id, source, state, payload, headers, due_at, method, path, cron_id, scheduled_at, ack_url, result, lease_expires_at, received_at, completed_at, instance_id, attempts, last_error, created_at, org_id, outcome, deadline_at, retry_policy, result_retention_until, replayed_from_invocation_id, last_replayed_at, on_success_destination_id, on_failure_destination_id, queue_name, quota_reserved, work_policy_name, work_key_digest, work_expires_at, work_sequence, work_policy_revision, work_fairness_digest, work_fairness_limit, platform_tenant_id, deployment_scope
+  $28, nullif($29::text, ''), $30
+) RETURNING id, app_id, account_id, source, state, payload, headers, due_at, method, path, cron_id, scheduled_at, ack_url, result, lease_expires_at, received_at, completed_at, instance_id, attempts, last_error, created_at, org_id, outcome, deadline_at, retry_policy, result_retention_until, replayed_from_invocation_id, last_replayed_at, on_success_destination_id, on_failure_destination_id, queue_name, quota_reserved, work_policy_name, work_key_digest, work_expires_at, work_sequence, work_policy_revision, work_fairness_digest, work_fairness_limit, platform_tenant_id, deployment_scope, queue_binding_id
 `
 
 type EnqueueInvocationRowParams struct {
@@ -2860,6 +2860,7 @@ type EnqueueInvocationRowParams struct {
 	WorkFairnessLimit      pgtype.Int4
 	PlatformTenantID       pgtype.UUID
 	DeploymentScope        string
+	QueueBindingID         pgtype.UUID
 }
 
 func (q *Queries) EnqueueInvocationRow(ctx context.Context, db DBTX, arg EnqueueInvocationRowParams) (Invocation, error) {
@@ -2893,6 +2894,7 @@ func (q *Queries) EnqueueInvocationRow(ctx context.Context, db DBTX, arg Enqueue
 		arg.WorkFairnessLimit,
 		arg.PlatformTenantID,
 		arg.DeploymentScope,
+		arg.QueueBindingID,
 	)
 	var i Invocation
 	err := row.Scan(
@@ -2937,6 +2939,7 @@ func (q *Queries) EnqueueInvocationRow(ctx context.Context, db DBTX, arg Enqueue
 		&i.WorkFairnessLimit,
 		&i.PlatformTenantID,
 		&i.DeploymentScope,
+		&i.QueueBindingID,
 	)
 	return i, err
 }
@@ -15703,6 +15706,36 @@ func (q *Queries) QueueBindingHistoryByID(ctx context.Context, db DBTX, arg Queu
 	return i, err
 }
 
+const queueClaimActiveCount = `-- name: QueueClaimActiveCount :one
+select count(*)::bigint from invocations
+where app_id=$1::uuid and source='queue'
+  and (queue_binding_id=$2::uuid
+    or (queue_binding_id is null and (queue_name=$3 or (queue_name=''
+      and work_policy_name is null and not exists (select 1 from triggers other
+      where other.app_id=$1::uuid and other.kind='queue' and other.enabled
+        and other.source='queue' and other.id<>$4::uuid)))))
+  and state='dispatching' and lease_expires_at > clock_timestamp()
+`
+
+type QueueClaimActiveCountParams struct {
+	AppID     pgtype.UUID
+	BindingID pgtype.UUID
+	QueueName string
+	TriggerID pgtype.UUID
+}
+
+func (q *Queries) QueueClaimActiveCount(ctx context.Context, db DBTX, arg QueueClaimActiveCountParams) (int64, error) {
+	row := db.QueryRow(ctx, queueClaimActiveCount,
+		arg.AppID,
+		arg.BindingID,
+		arg.QueueName,
+		arg.TriggerID,
+	)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const queueClaimConsumerIdentity = `-- name: QueueClaimConsumerIdentity :one
 select queue_binding_id, (config ? 'queue_binding_id')::boolean as has_marker from triggers
 where id=$1 and app_id=$2 and kind='queue' and source='queue'
@@ -15726,8 +15759,9 @@ func (q *Queries) QueueClaimConsumerIdentity(ctx context.Context, db DBTX, arg Q
 }
 
 const queueClaimLegacyBindingCap = `-- name: QueueClaimLegacyBindingCap :one
-select max_concurrency from queue_bindings where app_id=$1
-and queue_name=$2 and enabled and retired_at is null for update
+select b.id, b.max_concurrency from queue_bindings b where b.app_id=$1
+and b.queue_name=$2 and b.mode='push' and b.enabled and b.retired_at is null
+and not exists (select 1 from triggers owned where owned.queue_binding_id=b.id) for update
 `
 
 type QueueClaimLegacyBindingCapParams struct {
@@ -15735,11 +15769,16 @@ type QueueClaimLegacyBindingCapParams struct {
 	QueueName string
 }
 
-func (q *Queries) QueueClaimLegacyBindingCap(ctx context.Context, db DBTX, arg QueueClaimLegacyBindingCapParams) (int32, error) {
+type QueueClaimLegacyBindingCapRow struct {
+	ID             pgtype.UUID
+	MaxConcurrency int32
+}
+
+func (q *Queries) QueueClaimLegacyBindingCap(ctx context.Context, db DBTX, arg QueueClaimLegacyBindingCapParams) (QueueClaimLegacyBindingCapRow, error) {
 	row := db.QueryRow(ctx, queueClaimLegacyBindingCap, arg.AppID, arg.QueueName)
-	var max_concurrency int32
-	err := row.Scan(&max_concurrency)
-	return max_concurrency, err
+	var i QueueClaimLegacyBindingCapRow
+	err := row.Scan(&i.ID, &i.MaxConcurrency)
+	return i, err
 }
 
 const queueClaimLockBinding = `-- name: QueueClaimLockBinding :one
@@ -15783,6 +15822,90 @@ func (q *Queries) QueueClaimLockLiveConsumer(ctx context.Context, db DBTX, arg Q
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const queueClaimPendingInvocation = `-- name: QueueClaimPendingInvocation :one
+update invocations i set state='dispatching',
+  lease_expires_at=clock_timestamp() + make_interval(secs=>$1::integer),
+  received_at=coalesce(i.received_at,clock_timestamp()), attempts=i.attempts+1
+where i.id=$2::uuid and i.app_id=$3::uuid and i.source='queue'
+  and i.state='pending' and i.due_at<=clock_timestamp()
+  and (i.queue_binding_id=$4::uuid or (i.queue_binding_id is null
+    and (i.queue_name=$5 or (i.queue_name='' and i.work_policy_name is null
+      and not exists (select 1 from triggers other where other.app_id=i.app_id
+        and other.kind='queue' and other.enabled and other.source='queue'
+        and other.id<>$6::uuid)))))
+  and not exists (select 1 from trigger_records tr where tr.trigger_id=$6::uuid
+    and tr.item_identifier=i.id::text
+    and not ((tr.state in ('pending','retry') and tr.next_fire_at<=clock_timestamp())
+      or (tr.state='claimed' and tr.claim_expires_at<=clock_timestamp())))
+returning i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.deployment_scope, i.queue_binding_id
+`
+
+type QueueClaimPendingInvocationParams struct {
+	LeaseSeconds int32
+	ID           pgtype.UUID
+	AppID        pgtype.UUID
+	BindingID    pgtype.UUID
+	QueueName    string
+	TriggerID    pgtype.UUID
+}
+
+func (q *Queries) QueueClaimPendingInvocation(ctx context.Context, db DBTX, arg QueueClaimPendingInvocationParams) (Invocation, error) {
+	row := db.QueryRow(ctx, queueClaimPendingInvocation,
+		arg.LeaseSeconds,
+		arg.ID,
+		arg.AppID,
+		arg.BindingID,
+		arg.QueueName,
+		arg.TriggerID,
+	)
+	var i Invocation
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.AccountID,
+		&i.Source,
+		&i.State,
+		&i.Payload,
+		&i.Headers,
+		&i.DueAt,
+		&i.Method,
+		&i.Path,
+		&i.CronID,
+		&i.ScheduledAt,
+		&i.AckUrl,
+		&i.Result,
+		&i.LeaseExpiresAt,
+		&i.ReceivedAt,
+		&i.CompletedAt,
+		&i.InstanceID,
+		&i.Attempts,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.OrgID,
+		&i.Outcome,
+		&i.DeadlineAt,
+		&i.RetryPolicy,
+		&i.ResultRetentionUntil,
+		&i.ReplayedFromInvocationID,
+		&i.LastReplayedAt,
+		&i.OnSuccessDestinationID,
+		&i.OnFailureDestinationID,
+		&i.QueueName,
+		&i.QuotaReserved,
+		&i.WorkPolicyName,
+		&i.WorkKeyDigest,
+		&i.WorkExpiresAt,
+		&i.WorkSequence,
+		&i.WorkPolicyRevision,
+		&i.WorkFairnessDigest,
+		&i.WorkFairnessLimit,
+		&i.PlatformTenantID,
+		&i.DeploymentScope,
+		&i.QueueBindingID,
+	)
+	return i, err
 }
 
 const queueConsumerBindingForUpdate = `-- name: QueueConsumerBindingForUpdate :one
@@ -15978,7 +16101,7 @@ type QueueConsumerLockAppRow struct {
 	WorkloadClass string
 }
 
-// Queue binding/consumer publication (ADR-385). Parent locks also serialize
+// Queue binding/consumer publication (ADR-386). Parent locks also serialize
 // trigger admission, so quota checks and the projection share the same commit.
 func (q *Queries) QueueConsumerLockApp(ctx context.Context, db DBTX, arg QueueConsumerLockAppParams) (QueueConsumerLockAppRow, error) {
 	row := db.QueryRow(ctx, queueConsumerLockApp, arg.AppID, arg.AccountID)
@@ -16156,6 +16279,160 @@ func (q *Queries) QueueConsumerUpdateTrigger(ctx context.Context, db DBTX, arg Q
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const queuePollCandidates = `-- name: QueuePollCandidates :many
+with consumer as (
+ select coalesce(t.queue_binding_id, (select b.id from queue_bindings b
+   where b.app_id=t.app_id and b.queue_name=t.slug
+     and not exists (select 1 from triggers owned where owned.queue_binding_id=b.id))) as binding_id
+ from triggers t where t.id=$1::uuid and t.app_id=$2::uuid
+)
+select i.id::text from invocations i cross join consumer
+		left join trigger_records tr on tr.trigger_id = $1::uuid
+		  and tr.item_identifier = i.id::text
+		where i.app_id = $2::uuid and i.source = 'queue' and i.state = 'pending'
+		  and i.due_at <= clock_timestamp()
+		  and (tr.id is null
+		    or (tr.state in ('pending','retry') and tr.next_fire_at <= clock_timestamp())
+		    or (tr.state = 'claimed' and tr.claim_expires_at <= clock_timestamp()))
+		  and (i.work_policy_name is null or not exists (
+		      select 1 from invocations older
+		      where older.app_id = i.app_id
+		        and older.work_policy_name = i.work_policy_name
+		        and older.work_key_digest = i.work_key_digest
+		        and older.work_sequence < i.work_sequence
+		        and older.state in ('pending','dispatching')))
+		  and (i.work_policy_name is null or not exists (
+		      select 1 from trigger_records older
+		      join triggers source on source.id=older.trigger_id
+		      where source.app_id=i.app_id
+		        and older.work_policy_name=i.work_policy_name
+		        and older.work_key_digest=i.work_key_digest
+		        and older.work_sequence<i.work_sequence
+		        and older.state in ('pending','retry','claimed')))
+		  and (i.work_fairness_limit is null or (
+		      select count(*) from invocations active
+		      where active.app_id = i.app_id
+		        and active.work_policy_name = i.work_policy_name
+		        and active.work_fairness_digest = i.work_fairness_digest
+		        and active.state = 'dispatching'
+		        and active.lease_expires_at > clock_timestamp()
+		  ) + (
+		      select count(*) from trigger_records active
+		      join triggers source on source.id=active.trigger_id
+		      where source.app_id=i.app_id
+		        and active.work_policy_name=i.work_policy_name
+		        and active.work_fairness_digest=i.work_fairness_digest
+		        and active.state='claimed'
+		        and active.claim_expires_at > clock_timestamp()
+		  ) < i.work_fairness_limit)
+		  and (i.queue_binding_id=consumer.binding_id or (i.queue_binding_id is null
+    and (i.queue_name=$3::text or (i.queue_name='' and i.work_policy_name is null
+      and not exists (select 1 from triggers other where other.app_id=$2::uuid
+        and other.kind='queue' and other.enabled and other.source='queue' and other.id<>$1::uuid)))))
+		order by i.created_at, i.id limit $4::integer
+`
+
+type QueuePollCandidatesParams struct {
+	TriggerID      pgtype.UUID
+	AppID          pgtype.UUID
+	QueueName      string
+	CandidateLimit int32
+}
+
+func (q *Queries) QueuePollCandidates(ctx context.Context, db DBTX, arg QueuePollCandidatesParams) ([]string, error) {
+	rows, err := db.Query(ctx, queuePollCandidates,
+		arg.TriggerID,
+		arg.AppID,
+		arg.QueueName,
+		arg.CandidateLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var i_id string
+		if err := rows.Scan(&i_id); err != nil {
+			return nil, err
+		}
+		items = append(items, i_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const queueReleasePendingBatchClaims = `-- name: QueueReleasePendingBatchClaims :exec
+with targets as (
+  select unnest($4::text[]) as id, unnest($5::integer[]) as attempt
+) update invocations i set state='pending',lease_expires_at=null from targets
+where i.id::text=targets.id and i.attempts=targets.attempt
+  and i.app_id=$1::uuid and i.source='queue' and i.state='dispatching'
+  and ($2::uuid is null or i.queue_binding_id=$2::uuid
+    or (i.queue_binding_id is null and i.queue_name in ($3,'')))
+`
+
+type QueueReleasePendingBatchClaimsParams struct {
+	AppID     pgtype.UUID
+	BindingID pgtype.UUID
+	QueueName string
+	Ids       []string
+	Attempts  []int32
+}
+
+func (q *Queries) QueueReleasePendingBatchClaims(ctx context.Context, db DBTX, arg QueueReleasePendingBatchClaimsParams) error {
+	_, err := db.Exec(ctx, queueReleasePendingBatchClaims,
+		arg.AppID,
+		arg.BindingID,
+		arg.QueueName,
+		arg.Ids,
+		arg.Attempts,
+	)
+	return err
+}
+
+const queueStateForBinding = `-- name: QueueStateForBinding :one
+select
+  count(*) filter (where i.state in ('pending','dispatching'))::bigint as depth,
+  count(*) filter (where i.state='dispatching' and i.lease_expires_at > now())::bigint as in_flight,
+  count(*) filter (where i.state='dead_letter')::bigint as dead_letter,
+  min(i.created_at) filter (where i.state='pending')::timestamptz as oldest_pending_at
+from invocations i join queue_bindings b on b.app_id=i.app_id and b.account_id=i.account_id
+where b.id=$1::uuid and b.app_id=$2::uuid
+  and ($3::text is null or i.deployment_scope=$3::text)
+  and i.source='queue' and i.state in ('pending','dispatching','dead_letter')
+  and (i.queue_binding_id=b.id or (i.queue_binding_id is null and i.queue_name=b.queue_name))
+`
+
+type QueueStateForBindingParams struct {
+	BindingID       pgtype.UUID
+	AppID           pgtype.UUID
+	DeploymentScope pgtype.Text
+}
+
+type QueueStateForBindingRow struct {
+	Depth           int64
+	InFlight        int64
+	DeadLetter      int64
+	OldestPendingAt pgtype.Timestamptz
+}
+
+// Legacy unassigned work remains visible under its historical name; pinned
+// work never follows a replacement binding that reuses that name.
+func (q *Queries) QueueStateForBinding(ctx context.Context, db DBTX, arg QueueStateForBindingParams) (QueueStateForBindingRow, error) {
+	row := db.QueryRow(ctx, queueStateForBinding, arg.BindingID, arg.AppID, arg.DeploymentScope)
+	var i QueueStateForBindingRow
+	err := row.Scan(
+		&i.Depth,
+		&i.InFlight,
+		&i.DeadLetter,
+		&i.OldestPendingAt,
+	)
+	return i, err
 }
 
 const queueStateInScope = `-- name: QueueStateInScope :one

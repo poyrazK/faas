@@ -152,7 +152,7 @@ func (s *server) getQueueBindingStatus(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, api.ErrInternal("could not load queue binding status"))
 		return
 	}
-	stats, err := s.store.QueueStateForQueue(r.Context(), app.ID, binding.QueueName)
+	stats, err := s.store.QueueStateForBinding(r.Context(), app.ID, binding.ID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrInternal("could not load queue binding queue state"))
 		return

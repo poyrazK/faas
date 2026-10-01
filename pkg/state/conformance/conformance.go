@@ -131,6 +131,7 @@ func Run(t *testing.T, open Open) {
 		{"worker_admission_identity_cannot_be_reinterpreted", testWorkerAdmissionIdentity},
 		{"queue_binding_consumer_publication_is_atomic", testQueueBindingConsumerPublication},
 		{"queue_binding_retirement_holds_work_and_retains_receipts", testQueueBindingRetirement},
+		{"queue_binding_identity_survives_rename_replacement_and_replay", testInvocationQueueBindingIdentity},
 		{"queue_consumer_and_trigger_share_account_quota", testQueueConsumerAccountQuota},
 		{"invocation_claim_preserves_stored_cap", testInvocationClaimPreservesStoredCap},
 		{"invocation_retry_releases_reserved_slot", testInvocationRetryReleasesReservedSlot},

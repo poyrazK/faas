@@ -58,6 +58,7 @@ func enqueueInvocationRow(ctx context.Context, db sqlc.DBTX, inv Invocation) (In
 		{"on_success_destination_id", inv.OnSuccessDestinationID, false, &params.OnSuccessDestinationID},
 		{"on_failure_destination_id", inv.OnFailureDestinationID, false, &params.OnFailureDestinationID},
 		{"platform_tenant_id", inv.PlatformTenantID, false, &params.PlatformTenantID},
+		{"queue_binding_id", inv.QueueBindingID, false, &params.QueueBindingID},
 	} {
 		if input.value == "" && !input.required {
 			continue
@@ -92,7 +93,7 @@ func invocationFromSQL(row sqlc.Invocation) Invocation {
 		ID: uuidString(row.ID), AppID: uuidString(row.AppID), AccountID: uuidString(row.AccountID),
 		DeploymentScope: row.DeploymentScope, PlatformTenantID: uuidString(row.PlatformTenantID),
 		InstanceID: row.InstanceID.String, Source: InvocationSource(row.Source),
-		QueueName: row.QueueName, State: InvocationState(row.State),
+		QueueBindingID: uuidString(row.QueueBindingID), QueueName: row.QueueName, State: InvocationState(row.State),
 		Method: row.Method, Path: row.Path, Payload: row.Payload, Headers: row.Headers,
 		DueAt: timestamptzToTime(row.DueAt), ScheduledAt: timestamptzToTimePtr(row.ScheduledAt),
 		AckURL: row.AckUrl.String, Result: row.Result,

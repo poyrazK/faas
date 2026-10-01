@@ -154,7 +154,7 @@ func (e *Engine) retiredQueueHasInFlightWork(ctx context.Context, app state.App,
 		if binding.RetiredAt == nil {
 			continue
 		}
-		stats, err := e.store.QueueStateForQueueInScope(ctx, app.ID, binding.QueueName, scope)
+		stats, err := e.store.QueueStateForBindingInScope(ctx, app.ID, binding.ID, scope)
 		if err != nil {
 			return false, err
 		}
@@ -361,7 +361,7 @@ func (e *Engine) workerQueueDemandForScope(ctx context.Context, app state.App, s
 		if !binding.Enabled || binding.RetiredAt != nil {
 			continue
 		}
-		stats, err := e.store.QueueStateForQueueInScope(ctx, app.ID, binding.QueueName, scope)
+		stats, err := e.store.QueueStateForBindingInScope(ctx, app.ID, binding.ID, scope)
 		if err != nil {
 			return 0, err
 		}

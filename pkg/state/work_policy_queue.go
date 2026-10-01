@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -17,7 +16,7 @@ import (
 // takes the queue binding lock used to enforce its consumer concurrency cap.
 // The trigger receipt remains responsible for delivery retries and batching.
 func (s *PgStore) ClaimQueueTriggerInvocation(ctx context.Context, id, triggerID, appID, queueName string, leaseSeconds int) (Invocation, error) {
-	if queueName == "" || leaseSeconds <= 0 {
+	if queueName == "" || leaseSeconds <= 0 || int64(leaseSeconds) > 2147483647 {
 		return Invocation{}, ErrInvalidArgument
 	}
 	var appUUID, triggerUUID pgtype.UUID
@@ -74,71 +73,59 @@ func (s *PgStore) ClaimQueueTriggerInvocation(ctx context.Context, id, triggerID
 	if err != nil {
 		return Invocation{}, fmt.Errorf("state: queue trigger row lock: %w", err)
 	}
-	maxConcurrency, err := queueConsumerClaimCapTx(ctx, tx, appUUID, triggerUUID, queueName)
+	maxConcurrency, bindingID, err := queueConsumerClaimCapTx(ctx, tx, appUUID, triggerUUID, queueName)
 	if err != nil {
 		return Invocation{}, err
 	}
 	if maxConcurrency > 0 {
-		var active int
-		if err := tx.QueryRow(ctx, `select count(*) from invocations
-			where app_id = $1 and source = 'queue' and queue_name = $2
-			  and state = 'dispatching' and lease_expires_at > clock_timestamp()`,
-			appID, queueName).Scan(&active); err != nil {
+		active, err := sqlc.New().QueueClaimActiveCount(ctx, tx, sqlc.QueueClaimActiveCountParams{
+			AppID: appUUID, TriggerID: triggerUUID, BindingID: bindingID, QueueName: queueName,
+		})
+		if err != nil {
 			return Invocation{}, fmt.Errorf("state: queue trigger active count: %w", err)
 		}
-		if active >= maxConcurrency {
+		if active >= int64(maxConcurrency) {
 			return Invocation{}, ErrQuotaExceeded
 		}
 	}
-	lease := strconv.Itoa(leaseSeconds) + " seconds"
-	row := tx.QueryRow(ctx, `update invocations i set state = 'dispatching',
-		lease_expires_at = clock_timestamp() + $5::interval,
-		received_at = coalesce(i.received_at, clock_timestamp()),
-		attempts = i.attempts + 1
-		where i.id = $1 and i.app_id = $2 and i.source = 'queue'
-		  and i.state = 'pending' and i.due_at <= clock_timestamp()
-		  and (i.queue_name = $3 or (i.queue_name = ''
-		      and i.work_policy_name is null and not exists (
-		      select 1 from triggers other where other.app_id = $2
-		        and other.kind = 'queue' and other.enabled and other.source = 'queue'
-		        and other.id <> $4)))
-		  and not exists (select 1 from trigger_records tr
-		      where tr.trigger_id = $4 and tr.item_identifier = i.id::text
-		        and not ((tr.state in ('pending','retry') and tr.next_fire_at <= clock_timestamp())
-		          or (tr.state = 'claimed' and tr.claim_expires_at <= clock_timestamp())))
-		returning `+invocationSelectCols, id, appID, queueName, triggerID, lease)
-	claimed, err := scanInvocation(row)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Invocation{}, ErrNotFound
-	}
+	row, err := sqlc.New().QueueClaimPendingInvocation(ctx, tx, sqlc.QueueClaimPendingInvocationParams{
+		ID: pgtype.UUID{Bytes: uuid.MustParse(id), Valid: true}, AppID: appUUID, TriggerID: triggerUUID,
+		QueueName: queueName, BindingID: bindingID, LeaseSeconds: int32(leaseSeconds),
+	})
 	if err != nil {
-		return Invocation{}, fmt.Errorf("state: queue trigger claim update: %w", err)
+		return Invocation{}, fmt.Errorf("state: queue trigger claim update: %w", mapErr(err))
 	}
+	claimed := invocationFromSQL(row)
 	if err := tx.Commit(ctx); err != nil {
 		return Invocation{}, fmt.Errorf("state: queue trigger claim commit: %w", err)
 	}
 	return claimed, nil
 }
 
-func queueConsumerClaimCapTx(ctx context.Context, tx pgx.Tx, appID, triggerID pgtype.UUID, queueName string) (int, error) {
+func queueConsumerClaimCapTx(ctx context.Context, tx pgx.Tx, appID, triggerID pgtype.UUID, queueName string) (int, pgtype.UUID, error) {
 	q := sqlc.New()
 	identity, err := q.QueueClaimConsumerIdentity(ctx, tx, sqlc.QueueClaimConsumerIdentityParams{ID: triggerID, AppID: appID})
 	if err != nil {
-		return 0, mapErr(err)
+		return 0, pgtype.UUID{}, mapErr(err)
 	}
 	var cap int32
+	bindingID := identity.QueueBindingID
 	if identity.QueueBindingID.Valid {
 		cap, err = q.QueueClaimLockBinding(ctx, tx, sqlc.QueueClaimLockBindingParams{ID: identity.QueueBindingID, AppID: appID, QueueName: queueName})
 		if err != nil {
-			return 0, mapErr(err)
+			return 0, pgtype.UUID{}, mapErr(err)
 		}
 	} else {
 		if identity.HasMarker {
-			return 0, ErrConflict
+			return 0, pgtype.UUID{}, ErrConflict
 		}
-		cap, err = q.QueueClaimLegacyBindingCap(ctx, tx, sqlc.QueueClaimLegacyBindingCapParams{AppID: appID, QueueName: queueName})
+		var legacy sqlc.QueueClaimLegacyBindingCapRow
+		legacy, err = q.QueueClaimLegacyBindingCap(ctx, tx, sqlc.QueueClaimLegacyBindingCapParams{AppID: appID, QueueName: queueName})
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return 0, err
+			return 0, pgtype.UUID{}, err
+		}
+		if err == nil {
+			cap, bindingID = legacy.MaxConcurrency, legacy.ID
 		}
 	}
 	// Match mutation lock order: binding before trigger. Recheck the live
@@ -147,7 +134,7 @@ func queueConsumerClaimCapTx(ctx context.Context, tx pgx.Tx, appID, triggerID pg
 	_, err = q.QueueClaimLockLiveConsumer(ctx, tx, sqlc.QueueClaimLockLiveConsumerParams{ID: triggerID, AppID: appID,
 		QueueName: queueName, BindingID: identity.QueueBindingID})
 	if err != nil {
-		return 0, mapErr(err)
+		return 0, pgtype.UUID{}, mapErr(err)
 	}
-	return int(cap), nil
+	return int(cap), bindingID, nil
 }

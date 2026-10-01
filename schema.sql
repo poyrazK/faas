@@ -2362,6 +2362,57 @@ $$;
 
 
 --
+-- Name: guard_invocation_queue_binding(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_invocation_queue_binding() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF TG_OP='UPDATE' THEN
+    IF NEW.queue_binding_id IS DISTINCT FROM OLD.queue_binding_id OR
+      (OLD.queue_binding_id IS NOT NULL AND (NEW.app_id IS DISTINCT FROM OLD.app_id
+        OR NEW.account_id IS DISTINCT FROM OLD.account_id OR NEW.source IS DISTINCT FROM OLD.source
+        OR NEW.queue_name IS DISTINCT FROM OLD.queue_name)) THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='invocation_queue_binding_identity',
+        MESSAGE='accepted queue binding identity is immutable';
+    END IF;
+    RETURN NEW;
+  END IF;
+  IF NEW.queue_binding_id IS NOT NULL AND NEW.source<>'queue' THEN
+    RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='invocation_queue_binding_source',
+      MESSAGE='binding identity requires a queue invocation';
+  END IF;
+  IF NEW.source='queue' THEN
+    IF NEW.queue_binding_id IS NULL AND NEW.queue_name<>'' THEN
+      SELECT b.id INTO NEW.queue_binding_id FROM queue_bindings b
+        WHERE b.app_id=NEW.app_id AND b.account_id=NEW.account_id AND b.queue_name=NEW.queue_name;
+    ELSIF NEW.queue_binding_id IS NULL AND NEW.work_policy_name IS NULL THEN
+      SELECT b.id INTO NEW.queue_binding_id FROM queue_bindings b
+        JOIN triggers t ON t.queue_binding_id=b.id
+        WHERE b.app_id=NEW.app_id AND b.account_id=NEW.account_id AND b.enabled
+          AND b.mode='push' AND b.retired_at IS NULL AND t.enabled AND t.kind='queue' AND t.source='queue'
+          AND NOT EXISTS (SELECT 1 FROM triggers other WHERE other.app_id=NEW.app_id
+            AND other.kind='queue' AND other.source='queue' AND other.enabled AND other.id<>t.id)
+        ;
+    END IF;
+    -- Lock by the observed immutable ID. Rechecking the mutable name/enabled
+    -- predicate after waiting would turn an owned message into legacy work.
+    IF NEW.queue_binding_id IS NOT NULL THEN
+      PERFORM 1 FROM queue_bindings b WHERE b.id=NEW.queue_binding_id
+        AND b.app_id=NEW.app_id AND b.account_id=NEW.account_id FOR SHARE;
+      IF NOT FOUND THEN
+        RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='invocation_queue_binding_tenant',
+          MESSAGE='queue binding must belong to the admitted app and account';
+      END IF;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_managed_postgres_binding_owner(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2611,7 +2662,8 @@ BEGIN
   IF NEW.source='queue' AND (TG_OP='INSERT' OR
     (NEW.state='dispatching' AND OLD.state IS DISTINCT FROM 'dispatching')) THEN
     SELECT b.retired_at INTO binding_retired_at FROM queue_bindings b
-      WHERE b.app_id=NEW.app_id AND b.queue_name=NEW.queue_name FOR SHARE;
+      WHERE b.app_id=NEW.app_id AND b.account_id=NEW.account_id AND
+        (b.id=NEW.queue_binding_id OR (NEW.queue_binding_id IS NULL AND b.queue_name=NEW.queue_name)) FOR SHARE;
     IF binding_retired_at IS NOT NULL THEN
       RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='queue_binding_retired',
         MESSAGE='queue binding is retired';
@@ -7428,8 +7480,10 @@ CREATE TABLE public.invocations (
     work_fairness_limit integer,
     platform_tenant_id uuid,
     deployment_scope text NOT NULL,
+    queue_binding_id uuid,
     CONSTRAINT invocation_deployment_scope_check CHECK ((deployment_scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
     CONSTRAINT invocation_platform_tenant_source CHECK (((platform_tenant_id IS NULL) OR (source = ANY (ARRAY['async_invoke'::text, 'replay'::text])))),
+    CONSTRAINT invocation_queue_binding_source CHECK (((queue_binding_id IS NULL) OR (source = 'queue'::text))),
     CONSTRAINT invocations_outcome_check CHECK (((outcome IS NULL) OR (outcome = ANY (ARRAY['success'::text, 'failed'::text, 'timeout'::text, 'dead_letter'::text, 'superseded'::text, 'expired'::text])))),
     CONSTRAINT invocations_queue_name_shape CHECK (((queue_name = ''::text) OR (queue_name ~ '^[a-z][a-z0-9-]{0,62}$'::text))),
     CONSTRAINT invocations_source_check CHECK ((source = ANY (ARRAY['async_invoke'::text, 'inbound_webhook'::text, 'queue'::text, 'delayed_task'::text, 'cron'::text, 'replay'::text, 'esm'::text]))),
@@ -16991,6 +17045,13 @@ CREATE INDEX invocations_platform_tenant_idx ON public.invocations USING btree (
 
 
 --
+-- Name: invocations_queue_binding_scope_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocations_queue_binding_scope_idx ON public.invocations USING btree (app_id, queue_binding_id, deployment_scope, state, created_at) WHERE ((source = 'queue'::text) AND (state = ANY (ARRAY['pending'::text, 'dispatching'::text, 'dead_letter'::text])));
+
+
+--
 -- Name: invocations_replayed_from_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -20057,6 +20118,13 @@ CREATE TRIGGER invocation_platform_tenant_guard BEFORE INSERT OR UPDATE ON publi
 
 
 --
+-- Name: invocations invocation_queue_binding_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER invocation_queue_binding_guard BEFORE INSERT OR UPDATE ON public.invocations FOR EACH ROW EXECUTE FUNCTION public.guard_invocation_queue_binding();
+
+
+--
 -- Name: invocations invocation_retired_queue_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -22324,6 +22392,14 @@ ALTER TABLE ONLY public.instances
 
 ALTER TABLE ONLY public.invocations
     ADD CONSTRAINT invocation_platform_tenant_fk FOREIGN KEY (account_id, platform_tenant_id) REFERENCES public.platform_tenants(account_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: invocations invocation_queue_binding_tenant; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocations
+    ADD CONSTRAINT invocation_queue_binding_tenant FOREIGN KEY (queue_binding_id, app_id, account_id) REFERENCES public.queue_bindings(id, app_id, account_id) DEFERRABLE INITIALLY DEFERRED;
 
 
 --

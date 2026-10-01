@@ -200,7 +200,8 @@ func (s *PgStore) EnqueueKeyedInvocation(ctx context.Context, inv Invocation, po
 	existing, err := scanInvocation(tx.QueryRow(ctx, `select `+invocationSelectCols+` from invocations where id = $1`, inv.ID))
 	if err == nil {
 		if existing.AppID != inv.AppID || existing.PlatformTenantID != inv.PlatformTenantID || existing.WorkPolicyName != policy.Name ||
-			!bytes.Equal(existing.WorkKeyDigest, digest[:]) || inv.DeploymentScope != "" && existing.DeploymentScope != inv.DeploymentScope {
+			!bytes.Equal(existing.WorkKeyDigest, digest[:]) || inv.DeploymentScope != "" && existing.DeploymentScope != inv.DeploymentScope ||
+			inv.QueueBindingID != "" && canonicalMemUUID(existing.QueueBindingID) != canonicalMemUUID(inv.QueueBindingID) {
 			return Invocation{}, ErrConflict
 		}
 		return existing, nil
@@ -394,13 +395,15 @@ func (m *MemStore) EnqueueKeyedInvocation(_ context.Context, inv Invocation, pol
 	}
 	if existing, ok := m.invocations[inv.ID]; ok {
 		if existing.AppID != inv.AppID || existing.PlatformTenantID != inv.PlatformTenantID || existing.WorkPolicyName != policy.Name ||
-			!bytes.Equal(existing.WorkKeyDigest, digest[:]) || requestedScope != "" && existing.DeploymentScope != requestedScope {
+			!bytes.Equal(existing.WorkKeyDigest, digest[:]) || requestedScope != "" && existing.DeploymentScope != requestedScope ||
+			inv.QueueBindingID != "" && canonicalMemUUID(existing.QueueBindingID) != canonicalMemUUID(inv.QueueBindingID) {
 			return Invocation{}, ErrConflict
 		}
 		return existing, nil
 	}
-	if m.queueBindingRetiredLocked(inv) {
-		return Invocation{}, ErrQueueBindingRetired
+	inv.WorkPolicyName = policy.Name
+	if err := m.captureInvocationQueueBindingLocked(&inv); err != nil {
+		return Invocation{}, err
 	}
 	now := time.Now().UTC()
 	inv.WorkPolicyName = policy.Name

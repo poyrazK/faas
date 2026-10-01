@@ -15008,7 +15008,7 @@ const invocationSelectCols = `id, app_id, account_id, source, queue_name, state,
        last_replayed_at, on_success_destination_id,
        on_failure_destination_id, work_policy_name, work_key_digest,
        work_expires_at, work_sequence, work_policy_revision,
-       work_fairness_digest, work_fairness_limit, platform_tenant_id, deployment_scope`
+       work_fairness_digest, work_fairness_limit, platform_tenant_id, deployment_scope, queue_binding_id`
 
 func (s *PgStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invocation, error) {
 	if inv.WorkPolicyName != "" {
@@ -15043,7 +15043,7 @@ func (s *PgStore) ListDueInvocations(ctx context.Context, now time.Time, limit i
            and not exists (select 1 from queue_bindings b
                where i.source='queue' and b.app_id=i.app_id
                  and b.queue_name=i.queue_name and b.retired_at is not null)
-		   and (i.source <> 'queue' or i.queue_name = '')
+		   and (i.source <> 'queue' or (i.queue_name = '' and i.queue_binding_id is null))
 		   and (i.work_policy_name is not null or not exists (
 		       select 1
 		         from triggers t
@@ -15137,7 +15137,7 @@ func (s *PgStore) ListDueInvocationsAfter(ctx context.Context, now time.Time, af
            and not exists (select 1 from queue_bindings b
                where i.source='queue' and b.app_id=i.app_id
                  and b.queue_name=i.queue_name and b.retired_at is not null)
-		   and (i.source <> 'queue' or i.queue_name = '')
+		   and (i.source <> 'queue' or (i.queue_name = '' and i.queue_binding_id is null))
 		   and (i.work_policy_name is not null or not exists (
 		       select 1
 		         from triggers t
@@ -16222,7 +16222,7 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 	var workPolicyRevision *int64
 	var workFairnessDigest []byte
 	var workFairnessLimit *int
-	var platformTenantID *string
+	var platformTenantID, queueBindingID *string
 	if err := scan(
 		&inv.ID, &inv.AppID, &inv.AccountID, &source, &queueName, &state, &inv.Method, &inv.Path,
 		&payload, &headers, &inv.DueAt, &scheduledAt, &cronID, &ackURL,
@@ -16231,7 +16231,7 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 		&deadlineAt, &retryPolicy, &retentionUntil,
 		&lastReplayedAt, &onSuccessDestination, &onFailureDestination,
 		&workPolicyName, &workKeyDigest, &workExpiresAt, &workSequence, &workPolicyRevision,
-		&workFairnessDigest, &workFairnessLimit, &platformTenantID, &inv.DeploymentScope,
+		&workFairnessDigest, &workFairnessLimit, &platformTenantID, &inv.DeploymentScope, &queueBindingID,
 	); err != nil {
 		return Invocation{}, err
 	}
@@ -16240,6 +16240,9 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 		inv.PlatformTenantID = *platformTenantID
 	}
 	inv.QueueName = queueName
+	if queueBindingID != nil {
+		inv.QueueBindingID = *queueBindingID
+	}
 	if workPolicyName != nil {
 		inv.WorkPolicyName = *workPolicyName
 	}
@@ -25371,7 +25374,7 @@ func mapErr(err error) error {
 			if pgErr.ConstraintName == "queue_binding_retired" {
 				return ErrQueueBindingRetired
 			}
-			if pgErr.ConstraintName == "queue_binding_retirement_identity" || pgErr.ConstraintName == "queue_consumer_durable_identity" {
+			if pgErr.ConstraintName == "queue_binding_retirement_identity" || pgErr.ConstraintName == "queue_consumer_durable_identity" || pgErr.ConstraintName == "invocation_queue_binding_identity" {
 				return ErrConflict
 			}
 			if pgErr.ConstraintName == "environment_gitops_field_owned" {
@@ -25379,6 +25382,9 @@ func mapErr(err error) error {
 			}
 			if pgErr.ConstraintName == "invocation_platform_tenant_active" {
 				return ErrPlatformTenantSuspended
+			}
+			if pgErr.ConstraintName == "invocation_queue_binding_source" || pgErr.ConstraintName == "invocation_queue_binding_tenant" {
+				return ErrInvalidArgument
 			}
 			if pgErr.ConstraintName == "invocation_platform_tenant_identity" ||
 				pgErr.ConstraintName == "invocation_platform_tenant_source" {

@@ -148,7 +148,7 @@ type QueueStatsReader interface {
 // enabled binding's sample so its concurrency cap contributes to the target.
 type QueueBindingStatsReader interface {
 	ListQueueBindingsForApp(ctx context.Context, accountID, appID string) ([]state.QueueBinding, error)
-	QueueStateForQueue(ctx context.Context, appID, queueName string) (state.QueueStats, error)
+	QueueStateForBinding(ctx context.Context, appID, bindingID string) (state.QueueStats, error)
 }
 
 // BrokerLagReader supplies broker-reported consumer lag / queue depth for an app.
@@ -601,7 +601,7 @@ func (t *Trigger) readQueueState(ctx context.Context, app state.App, now time.Ti
 			for _, binding := range bindings {
 				var queue state.QueueStats
 				if binding.Enabled {
-					queue, err = t.queueBindings.QueueStateForQueue(ctx, app.ID, binding.QueueName)
+					queue, err = t.queueBindings.QueueStateForBinding(ctx, app.ID, binding.ID)
 					if err != nil {
 						return queueDepthSignal{}, false, fmt.Errorf("queue binding %q: %w", binding.QueueName, err)
 					}

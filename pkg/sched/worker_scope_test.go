@@ -368,6 +368,12 @@ func TestWorkerScopedDemandRetirementHoldsBacklogWithoutAdmittingWorkers(t *test
 			}
 		}
 	}
+	// A historical label must not hide a live lease after rename and retirement.
+	name := "payments"
+	if _, err := store.UpdateQueueBindingWithConsumer(ctx, acct.ID, app.ID, binding.Binding.ID, state.UpdateQueueBindingParams{QueueName: &name}); err != nil {
+		t.Fatal(err)
+	}
+
 	if _, err := store.DeleteQueueBindingWithConsumer(ctx, acct.ID, app.ID, binding.Binding.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -394,7 +400,7 @@ func TestWorkerScopedDemandRetirementHoldsBacklogWithoutAdmittingWorkers(t *test
 		t.Fatalf("completed lease did not release retirement hold: counts=%v stops=%d boots=%d", counts, vmm.stopInstanceOnNodeN, vmm.coldBoots)
 	}
 	for _, scope := range []string{"default", "staging"} {
-		stats, err := store.QueueStateForQueueInScope(ctx, app.ID, "orders", scope)
+		stats, err := store.QueueStateForBindingInScope(ctx, app.ID, binding.Binding.ID, scope)
 		wantDepth := 50
 		if scope == "default" {
 			wantDepth--

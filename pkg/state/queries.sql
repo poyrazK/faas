@@ -5534,7 +5534,7 @@ INSERT INTO invocations (
   on_success_destination_id, on_failure_destination_id,
   work_policy_name, work_key_digest, work_expires_at,
   work_sequence, work_policy_revision, work_fairness_digest,
-  work_fairness_limit, platform_tenant_id, deployment_scope
+  work_fairness_limit, platform_tenant_id, deployment_scope, queue_binding_id
 ) VALUES (
   coalesce(sqlc.narg(id)::uuid, gen_random_uuid()), sqlc.arg(app_id), sqlc.arg(account_id),
   sqlc.arg(source), sqlc.arg(queue_name), coalesce(nullif(sqlc.arg(state)::text, ''), 'pending'),
@@ -5545,10 +5545,10 @@ INSERT INTO invocations (
   sqlc.narg(on_failure_destination_id), nullif(sqlc.arg(work_policy_name)::text, ''),
   sqlc.narg(work_key_digest), sqlc.narg(work_expires_at), sqlc.narg(work_sequence),
   sqlc.narg(work_policy_revision), sqlc.narg(work_fairness_digest), sqlc.narg(work_fairness_limit),
-  sqlc.narg(platform_tenant_id), nullif(sqlc.arg(deployment_scope)::text, '')
+  sqlc.narg(platform_tenant_id), nullif(sqlc.arg(deployment_scope)::text, ''), sqlc.narg(queue_binding_id)
 ) RETURNING *;
 
--- Queue binding/consumer publication (ADR-385). Parent locks also serialize
+-- Queue binding/consumer publication (ADR-386). Parent locks also serialize
 -- trigger admission, so quota checks and the projection share the same commit.
 -- name: QueueConsumerLockApp :one
 select id, account_id, type, workload_class from apps
@@ -5630,8 +5630,9 @@ select max_concurrency from queue_bindings where id=sqlc.arg(id) and app_id=sqlc
 and queue_name=sqlc.arg(queue_name) and mode='push' and enabled and retired_at is null for update;
 
 -- name: QueueClaimLegacyBindingCap :one
-select max_concurrency from queue_bindings where app_id=sqlc.arg(app_id)
-and queue_name=sqlc.arg(queue_name) and enabled and retired_at is null for update;
+select b.id, b.max_concurrency from queue_bindings b where b.app_id=sqlc.arg(app_id)
+and b.queue_name=sqlc.arg(queue_name) and b.mode='push' and b.enabled and b.retired_at is null
+and not exists (select 1 from triggers owned where owned.queue_binding_id=b.id) for update;
 
 -- name: QueueClaimLockLiveConsumer :one
 select id from triggers where id=sqlc.arg(id) and app_id=sqlc.arg(app_id)
@@ -5682,3 +5683,105 @@ where a.id=sqlc.arg(app_id) for update of acct;
 select count(*)::bigint from instances i join apps a on a.id=i.app_id
 where a.account_id=sqlc.arg(account_id) and i.mode='worker'
 and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm');
+
+-- name: QueueStateForBinding :one
+-- Legacy unassigned work remains visible under its historical name; pinned
+-- work never follows a replacement binding that reuses that name.
+select
+  count(*) filter (where i.state in ('pending','dispatching'))::bigint as depth,
+  count(*) filter (where i.state='dispatching' and i.lease_expires_at > now())::bigint as in_flight,
+  count(*) filter (where i.state='dead_letter')::bigint as dead_letter,
+  min(i.created_at) filter (where i.state='pending')::timestamptz as oldest_pending_at
+from invocations i join queue_bindings b on b.app_id=i.app_id and b.account_id=i.account_id
+where b.id=sqlc.arg(binding_id)::uuid and b.app_id=sqlc.arg(app_id)::uuid
+  and (sqlc.narg(deployment_scope)::text is null or i.deployment_scope=sqlc.narg(deployment_scope)::text)
+  and i.source='queue' and i.state in ('pending','dispatching','dead_letter')
+  and (i.queue_binding_id=b.id or (i.queue_binding_id is null and i.queue_name=b.queue_name));
+
+-- name: QueueClaimActiveCount :one
+select count(*)::bigint from invocations
+where app_id=sqlc.arg(app_id)::uuid and source='queue'
+  and (queue_binding_id=sqlc.narg(binding_id)::uuid
+    or (queue_binding_id is null and (queue_name=sqlc.arg(queue_name) or (queue_name=''
+      and work_policy_name is null and not exists (select 1 from triggers other
+      where other.app_id=sqlc.arg(app_id)::uuid and other.kind='queue' and other.enabled
+        and other.source='queue' and other.id<>sqlc.arg(trigger_id)::uuid)))))
+  and state='dispatching' and lease_expires_at > clock_timestamp();
+
+-- name: QueueClaimPendingInvocation :one
+update invocations i set state='dispatching',
+  lease_expires_at=clock_timestamp() + make_interval(secs=>sqlc.arg(lease_seconds)::integer),
+  received_at=coalesce(i.received_at,clock_timestamp()), attempts=i.attempts+1
+where i.id=sqlc.arg(id)::uuid and i.app_id=sqlc.arg(app_id)::uuid and i.source='queue'
+  and i.state='pending' and i.due_at<=clock_timestamp()
+  and (i.queue_binding_id=sqlc.narg(binding_id)::uuid or (i.queue_binding_id is null
+    and (i.queue_name=sqlc.arg(queue_name) or (i.queue_name='' and i.work_policy_name is null
+      and not exists (select 1 from triggers other where other.app_id=i.app_id
+        and other.kind='queue' and other.enabled and other.source='queue'
+        and other.id<>sqlc.arg(trigger_id)::uuid)))))
+  and not exists (select 1 from trigger_records tr where tr.trigger_id=sqlc.arg(trigger_id)::uuid
+    and tr.item_identifier=i.id::text
+    and not ((tr.state in ('pending','retry') and tr.next_fire_at<=clock_timestamp())
+      or (tr.state='claimed' and tr.claim_expires_at<=clock_timestamp())))
+returning i.*;
+
+-- name: QueueReleasePendingBatchClaims :exec
+with targets as (
+  select unnest(sqlc.arg(ids)::text[]) as id, unnest(sqlc.arg(attempts)::integer[]) as attempt
+) update invocations i set state='pending',lease_expires_at=null from targets
+where i.id::text=targets.id and i.attempts=targets.attempt
+  and i.app_id=sqlc.arg(app_id)::uuid and i.source='queue' and i.state='dispatching'
+  and (sqlc.narg(binding_id)::uuid is null or i.queue_binding_id=sqlc.narg(binding_id)::uuid
+    or (i.queue_binding_id is null and i.queue_name in (sqlc.arg(queue_name),'')));
+
+-- name: QueuePollCandidates :many
+with consumer as (
+ select coalesce(t.queue_binding_id, (select b.id from queue_bindings b
+   where b.app_id=t.app_id and b.queue_name=t.slug
+     and not exists (select 1 from triggers owned where owned.queue_binding_id=b.id))) as binding_id
+ from triggers t where t.id=sqlc.arg(trigger_id)::uuid and t.app_id=sqlc.arg(app_id)::uuid
+)
+select i.id::text from invocations i cross join consumer
+		left join trigger_records tr on tr.trigger_id = sqlc.arg(trigger_id)::uuid
+		  and tr.item_identifier = i.id::text
+		where i.app_id = sqlc.arg(app_id)::uuid and i.source = 'queue' and i.state = 'pending'
+		  and i.due_at <= clock_timestamp()
+		  and (tr.id is null
+		    or (tr.state in ('pending','retry') and tr.next_fire_at <= clock_timestamp())
+		    or (tr.state = 'claimed' and tr.claim_expires_at <= clock_timestamp()))
+		  and (i.work_policy_name is null or not exists (
+		      select 1 from invocations older
+		      where older.app_id = i.app_id
+		        and older.work_policy_name = i.work_policy_name
+		        and older.work_key_digest = i.work_key_digest
+		        and older.work_sequence < i.work_sequence
+		        and older.state in ('pending','dispatching')))
+		  and (i.work_policy_name is null or not exists (
+		      select 1 from trigger_records older
+		      join triggers source on source.id=older.trigger_id
+		      where source.app_id=i.app_id
+		        and older.work_policy_name=i.work_policy_name
+		        and older.work_key_digest=i.work_key_digest
+		        and older.work_sequence<i.work_sequence
+		        and older.state in ('pending','retry','claimed')))
+		  and (i.work_fairness_limit is null or (
+		      select count(*) from invocations active
+		      where active.app_id = i.app_id
+		        and active.work_policy_name = i.work_policy_name
+		        and active.work_fairness_digest = i.work_fairness_digest
+		        and active.state = 'dispatching'
+		        and active.lease_expires_at > clock_timestamp()
+		  ) + (
+		      select count(*) from trigger_records active
+		      join triggers source on source.id=active.trigger_id
+		      where source.app_id=i.app_id
+		        and active.work_policy_name=i.work_policy_name
+		        and active.work_fairness_digest=i.work_fairness_digest
+		        and active.state='claimed'
+		        and active.claim_expires_at > clock_timestamp()
+		  ) < i.work_fairness_limit)
+		  and (i.queue_binding_id=consumer.binding_id or (i.queue_binding_id is null
+    and (i.queue_name=sqlc.arg(queue_name)::text or (i.queue_name='' and i.work_policy_name is null
+      and not exists (select 1 from triggers other where other.app_id=sqlc.arg(app_id)::uuid
+        and other.kind='queue' and other.enabled and other.source='queue' and other.id<>sqlc.arg(trigger_id)::uuid)))))
+		order by i.created_at, i.id limit sqlc.arg(candidate_limit)::integer;

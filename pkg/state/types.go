@@ -3933,8 +3933,11 @@ type Invocation struct {
 	PlatformTenantID string           `json:"platform_tenant_id,omitempty"`
 	InstanceID       string           `json:"instance_id,omitempty"`
 	Source           InvocationSource `json:"source"`
-	// QueueName scopes queue-source invocations to a first-class queue
-	// binding. Empty preserves the legacy single per-app queue behavior.
+	// QueueBindingID is captured at admission and retained on retry/replay.
+	// It is internal until scoped producers and consumers expose one contract.
+	QueueBindingID string `json:"-"`
+	// QueueName records the label accepted from the producer. Routing follows
+	// QueueBindingID when present, including after a binding rename.
 	QueueName      string          `json:"queue_name,omitempty"`
 	State          InvocationState `json:"state"`
 	Method         string          `json:"method"`

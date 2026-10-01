@@ -5,6 +5,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -168,7 +170,8 @@ func (m *MemStore) queueBindingRetiredLocked(inv Invocation) bool {
 		return false
 	}
 	for _, binding := range m.queueBindings {
-		if binding.AppID == inv.AppID && binding.QueueName == inv.QueueName && binding.RetiredAt != nil {
+		if binding.AppID == inv.AppID && binding.AccountID == inv.AccountID &&
+			(inv.QueueBindingID == binding.ID || inv.QueueBindingID == "" && binding.QueueName == inv.QueueName) && binding.RetiredAt != nil {
 			return true
 		}
 	}
@@ -188,4 +191,66 @@ func (m *MemStore) queueConsumerCanClaimLocked(triggerID string) bool {
 		}
 	}
 	return false
+}
+
+// captureInvocationQueueBindingLocked pins ownership before any admission side
+// effect. An empty binding ID remains explicit legacy work, never auto-adopted
+// later merely because someone creates or renames a binding.
+func (m *MemStore) captureInvocationQueueBindingLocked(inv *Invocation) error {
+	if inv.QueueBindingID != "" {
+		if inv.Source != InvocationQueue {
+			return ErrInvalidArgument
+		}
+		id, err := uuid.Parse(inv.QueueBindingID)
+		if err != nil {
+			return ErrInvalidArgument
+		}
+		for _, binding := range m.queueBindings {
+			if canonicalMemUUID(binding.ID) == id.String() && binding.AppID == inv.AppID && binding.AccountID == inv.AccountID {
+				inv.QueueBindingID = binding.ID
+				if binding.RetiredAt != nil {
+					return ErrQueueBindingRetired
+				}
+				return nil
+			}
+		}
+		return ErrInvalidArgument
+	}
+	if inv.Source != InvocationQueue {
+		return nil
+	}
+	for _, binding := range m.queueBindings {
+		if binding.AppID != inv.AppID || binding.AccountID != inv.AccountID {
+			continue
+		}
+		if inv.QueueName != "" {
+			if binding.QueueName != inv.QueueName {
+				continue
+			}
+		} else {
+			if inv.WorkPolicyName != "" || !binding.Enabled || binding.Mode != "push" || binding.RetiredAt != nil {
+				continue
+			}
+			owned, other := false, false
+			for _, trigger := range m.triggers {
+				if trigger.AppID.String() != canonicalMemUUID(inv.AppID) || !trigger.Enabled || trigger.Kind != "queue" || trigger.Source.String != "queue" {
+					continue
+				}
+				if trigger.QueueBindingID.Valid && trigger.QueueBindingID.String() == canonicalMemUUID(binding.ID) {
+					owned = true
+				} else {
+					other = true
+				}
+			}
+			if !owned || other {
+				continue
+			}
+		}
+		if binding.RetiredAt != nil {
+			return ErrQueueBindingRetired
+		}
+		inv.QueueBindingID = binding.ID
+		return nil
+	}
+	return nil
 }

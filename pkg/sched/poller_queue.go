@@ -122,67 +122,11 @@ func (q *queuePoller) pollNamedQueue(ctx context.Context, t sqlc.Trigger) PollRe
 		pollLimit = int(t.BatchSizeMax)
 	}
 	const candidateLimit = 1024
-	rows, err := q.pool.Query(ctx, `select i.id::text from invocations i
-		left join trigger_records tr on tr.trigger_id = $3
-		  and tr.item_identifier = i.id::text
-		where i.app_id = $1 and i.source = 'queue' and i.state = 'pending'
-		  and i.due_at <= clock_timestamp()
-		  and (tr.id is null
-		    or (tr.state in ('pending','retry') and tr.next_fire_at <= clock_timestamp())
-		    or (tr.state = 'claimed' and tr.claim_expires_at <= clock_timestamp()))
-		  and (i.work_policy_name is null or not exists (
-		      select 1 from invocations older
-		      where older.app_id = i.app_id
-		        and older.work_policy_name = i.work_policy_name
-		        and older.work_key_digest = i.work_key_digest
-		        and older.work_sequence < i.work_sequence
-		        and older.state in ('pending','dispatching')))
-		  and (i.work_policy_name is null or not exists (
-		      select 1 from trigger_records older
-		      join triggers source on source.id=older.trigger_id
-		      where source.app_id=i.app_id
-		        and older.work_policy_name=i.work_policy_name
-		        and older.work_key_digest=i.work_key_digest
-		        and older.work_sequence<i.work_sequence
-		        and older.state in ('pending','retry','claimed')))
-		  and (i.work_fairness_limit is null or (
-		      select count(*) from invocations active
-		      where active.app_id = i.app_id
-		        and active.work_policy_name = i.work_policy_name
-		        and active.work_fairness_digest = i.work_fairness_digest
-		        and active.state = 'dispatching'
-		        and active.lease_expires_at > clock_timestamp()
-		  ) + (
-		      select count(*) from trigger_records active
-		      join triggers source on source.id=active.trigger_id
-		      where source.app_id=i.app_id
-		        and active.work_policy_name=i.work_policy_name
-		        and active.work_fairness_digest=i.work_fairness_digest
-		        and active.state='claimed'
-		        and active.claim_expires_at > clock_timestamp()
-		  ) < i.work_fairness_limit)
-		  and (i.queue_name = $2 or (i.queue_name = ''
-		      and i.work_policy_name is null and not exists (
-		      select 1 from triggers other where other.app_id = $1
-		        and other.kind = 'queue' and other.enabled and other.source = 'queue'
-		        and other.id <> $3)))
-		order by i.created_at, i.id limit $4`, t.AppID, t.Slug, t.ID, candidateLimit)
+	ids, err := sqlc.New().QueuePollCandidates(ctx, q.pool, sqlc.QueuePollCandidatesParams{
+		AppID: t.AppID, TriggerID: t.ID, QueueName: t.Slug, CandidateLimit: candidateLimit,
+	})
 	if err != nil {
 		return PollResult{Error: fmt.Errorf("poller_queue: list named candidates: %w", err)}
-	}
-	ids := make([]string, 0, candidateLimit)
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return PollResult{Error: fmt.Errorf("poller_queue: scan named candidate: %w", err)}
-		}
-		ids = append(ids, id)
-	}
-	readErr := rows.Err()
-	rows.Close()
-	if readErr != nil {
-		return PollResult{Error: fmt.Errorf("poller_queue: list named candidates: %w", readErr)}
 	}
 	store := state.NewPgStore(q.pool)
 	out := make([]SourceRecord, 0, min(pollLimit, len(ids)))
@@ -244,17 +188,14 @@ func (q *queuePoller) releaseNamedClaims(ctx context.Context, attemptsByID map[s
 		return nil
 	}
 	ids := make([]string, 0, len(attemptsByID))
-	attempts := make([]int, 0, len(attemptsByID))
+	attempts := make([]int32, 0, len(attemptsByID))
 	for id, attempt := range attemptsByID {
 		ids = append(ids, id)
-		attempts = append(attempts, attempt)
+		attempts = append(attempts, int32(attempt))
 	}
-	_, err := q.pool.Exec(ctx, `with targets as (
-		select * from unnest($1::text[], $2::int[]) as target(id, attempt)
-	) update invocations i set state = 'pending', lease_expires_at = null
-	  from targets where i.id::text = targets.id and i.attempts = targets.attempt
-	    and i.app_id = $3 and i.source = 'queue' and i.queue_name in ($4, '')
-	    and i.state = 'dispatching'`, ids, attempts, t.AppID, t.Slug)
+	err := sqlc.New().QueueReleasePendingBatchClaims(ctx, q.pool, sqlc.QueueReleasePendingBatchClaimsParams{
+		Ids: ids, Attempts: attempts, AppID: t.AppID, BindingID: t.QueueBindingID, QueueName: t.Slug,
+	})
 	if err != nil {
 		return fmt.Errorf("poller_queue: release partial named claims: %w", err)
 	}
@@ -278,6 +219,7 @@ func (q *queuePoller) pollLegacyQueue(ctx context.Context, t sqlc.Trigger) PollR
 			   and tr.item_identifier = i.id::text
 			 where i.app_id = $2
 			   and i.source = $3
+			   and i.queue_binding_id is null
 			   and (i.queue_name = $5 or (
 				       i.queue_name = ''
 				   and not exists (
