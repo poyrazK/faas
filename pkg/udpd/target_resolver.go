@@ -41,36 +41,8 @@ func (r *StoreTargetResolver) ResolveTarget(ctx context.Context, route Route) (g
 	if route.AppID == "" || route.AccountID == "" || route.ListenerName == "" || route.ListenerID == "" || route.PublicPort < api.UDPListenerPublicPortMin || route.PublicPort > api.UDPListenerPublicPortMax || route.GuestPort < 1 || route.GuestPort > 65535 {
 		return gateway.Target{}, errors.New("invalid UDP app route")
 	}
-	app, err := r.Store.AppByID(ctx, route.AppID)
-	if err != nil {
+	if err := r.validateIntent(ctx, route); err != nil {
 		return gateway.Target{}, err
-	}
-	if app.Status == state.AppDeleted || app.AccountID != route.AccountID {
-		return gateway.Target{}, errors.New("UDP app ownership no longer matches listener")
-	}
-	if app.MaintenanceMode {
-		return gateway.Target{}, errors.New("UDP app is in maintenance mode")
-	}
-	intent, err := r.Store.UDPListenerByAppAndName(ctx, route.AppID, route.ListenerName)
-	if err != nil {
-		return gateway.Target{}, err
-	}
-	if intent.ID != route.ListenerID || intent.PublicPort != route.PublicPort || intent.AppID != route.AppID || intent.ListenerName != route.ListenerName || !intent.Enabled || intent.Protocol != "udp" || intent.AccountID != route.AccountID || intent.GuestPort != route.GuestPort {
-		return gateway.Target{}, errors.New("UDP listener is disabled or changed")
-	}
-	declared := false
-	for _, port := range app.Manifest.Ports {
-		name := strings.ToLower(strings.TrimSpace(port.Name))
-		if name == "" {
-			name = fmt.Sprintf("udp-%d", port.Port)
-		}
-		if port.EffectiveProtocol() == api.WorkloadPortUDP && port.Port == route.GuestPort && name == route.ListenerName {
-			declared = true
-			break
-		}
-	}
-	if !declared {
-		return gateway.Target{}, errors.New("UDP listener is not declared by current app manifest")
 	}
 	deploymentID, err := ingressroute.Deployment(ctx, r.Store, route.AppID, rand.Uint64())
 	if err != nil {
@@ -100,5 +72,47 @@ func (r *StoreTargetResolver) ResolveTarget(ctx context.Context, route Route) (g
 	if capacity || instance == "" || node == "" || deployment != deploymentID {
 		return gateway.Target{}, errors.New("UDP admission produced no routable instance")
 	}
+	// Waking may outlast an intent change; never admit a peer from stale intent.
+	if err := r.validateIntent(ctx, route); err != nil {
+		return gateway.Target{}, err
+	}
 	return gateway.Target{AppID: route.AppID, InstanceID: instance, NodeID: node, DeploymentID: deployment, WakeID: wake, Port: route.GuestPort}, nil
+}
+
+func (r *StoreTargetResolver) validateIntent(ctx context.Context, route Route) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	app, err := r.Store.AppByID(ctx, route.AppID)
+	if err != nil {
+		return err
+	}
+	if app.Status == state.AppDeleted || app.AccountID != route.AccountID {
+		return errors.New("UDP app ownership no longer matches listener")
+	}
+	if app.MaintenanceMode {
+		return errors.New("UDP app is in maintenance mode")
+	}
+	intent, err := r.Store.UDPListenerByAppAndName(ctx, route.AppID, route.ListenerName)
+	if err != nil {
+		return err
+	}
+	if intent.ID != route.ListenerID || intent.PublicPort != route.PublicPort || intent.AppID != route.AppID || intent.ListenerName != route.ListenerName || !intent.Enabled || intent.Protocol != "udp" || intent.AccountID != route.AccountID || intent.GuestPort != route.GuestPort {
+		return errors.New("UDP listener is disabled or changed")
+	}
+	declared := false
+	for _, port := range app.Manifest.Ports {
+		name := strings.ToLower(strings.TrimSpace(port.Name))
+		if name == "" {
+			name = fmt.Sprintf("udp-%d", port.Port)
+		}
+		if port.EffectiveProtocol() == api.WorkloadPortUDP && port.Port == route.GuestPort && name == route.ListenerName {
+			declared = true
+			break
+		}
+	}
+	if !declared {
+		return errors.New("UDP listener is not declared by current app manifest")
+	}
+	return ctx.Err()
 }

@@ -278,3 +278,38 @@ func TestUDPTargetResolverPinsServingDeploymentOnWarmAndColdPaths(t *testing.T) 
 		t.Fatalf("cold target=%+v err=%v calls=%d", target, err, admit.calls)
 	}
 }
+
+type changingUDPAdmitter struct{ change func() }
+
+func (a changingUDPAdmitter) AdmitInstance(_ context.Context, _, deployment, _, _ string) (string, string, string, string, int32, bool, int, error) {
+	a.change()
+	return "woken", "node", deployment, "wake", 0, false, 8080, nil
+}
+func TestUDPTargetResolverRechecksIntentAfterWake(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct, err := store.CreateAccount(ctx, "udp-wake-change@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "udp-wake-change", Status: state.AppActive, RAMMB: 256, Manifest: state.AppManifest{Ports: []api.WorkloadPort{{Name: "dns", Port: 5353, Protocol: api.WorkloadPortUDP}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent, err := store.CreateUDPListener(ctx, state.UDPListener{AppID: app.ID, AccountID: acct.ID, ListenerName: "dns", GuestPort: 5353, PublicPort: 40100, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateDeployment(ctx, state.Deployment{ID: "deployment", AppID: app.ID, Status: state.DeployLive}); err != nil {
+		t.Fatal(err)
+	}
+	resolver := &StoreTargetResolver{Store: store, Admitter: changingUDPAdmitter{change: func() {
+		if _, err := store.SetUDPListenerEnabled(ctx, intent.ID, false); err != nil {
+			t.Fatal(err)
+		}
+	}}}
+	route := Route{AppID: app.ID, AccountID: acct.ID, ListenerID: intent.ID, ListenerName: "dns", GuestPort: 5353, PublicPort: intent.PublicPort}
+	if target, err := resolver.ResolveTarget(ctx, route); err == nil || target.InstanceID != "" {
+		t.Fatalf("disabled-during-wake target=%+v err=%v", target, err)
+	}
+}
