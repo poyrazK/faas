@@ -108,3 +108,9 @@ func (m *Metrics) listener(delta float64) {
 		m.listeners.Add(delta)
 	}
 }
+
+func (m *Metrics) reconcileError() {
+	if m != nil {
+		m.reconcileErrors.Inc()
+	}
+}
