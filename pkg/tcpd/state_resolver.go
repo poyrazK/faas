@@ -41,6 +41,7 @@ func routeFromListener(listener state.TCPListener) (Route, error) {
 		return Route{}, err
 	}
 	route := Route{
+		ListenerID:   listener.ID,
 		PublicPort:   listener.PublicPort,
 		AppID:        listener.AppID,
 		AccountID:    listener.AccountID,

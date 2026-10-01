@@ -47,6 +47,9 @@ func (r *StoreTargetResolver) ResolveTarget(ctx context.Context, route Route) (g
 	if err := ValidateRoute(route); err != nil {
 		return gateway.Target{}, err
 	}
+	if route.ListenerID == "" {
+		return gateway.Target{}, errors.New("TCP durable route requires a listener identity")
+	}
 	app, err := r.Instances.AppByID(ctx, route.AppID)
 	if err != nil {
 		return gateway.Target{}, fmt.Errorf("read TCP app: %w", err)
@@ -61,7 +64,7 @@ func (r *StoreTargetResolver) ResolveTarget(ctx context.Context, route Route) (g
 	if err != nil {
 		return gateway.Target{}, fmt.Errorf("read TCP listener intent: %w", err)
 	}
-	if !intent.Enabled || intent.AppID != route.AppID || intent.AccountID != app.AccountID ||
+	if intent.ID != route.ListenerID || !intent.Enabled || intent.AppID != route.AppID || intent.AccountID != app.AccountID ||
 		intent.PublicPort != route.PublicPort || intent.GuestPort != route.GuestPort || intent.Protocol != "tcp" {
 		return gateway.Target{}, errors.New("TCP listener is disabled or changed")
 	}

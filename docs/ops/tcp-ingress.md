@@ -146,3 +146,9 @@ minutes when the earliest ready certificate expires within seven days. The
 expiry alert requires at least one ready TLS endpoint, so disabled/passthrough
 edges with zero expiry do not trigger it. Run `make tcp-tls-alert-check` to verify
 the rules and healthy/disabled cases before rollout.
+
+Durable TCP routes retain the listener row ID through TLS negotiation and
+instance admission. Deleting and recreating a listener with the same app, port
+and TLS settings invalidates in-flight routes from the deleted row. The edge
+rejects them before selecting or waking an instance. Reconciliation also treats
+a changed listener ID as a replacement and cancels the old listener's sessions.

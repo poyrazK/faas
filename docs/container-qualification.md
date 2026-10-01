@@ -321,3 +321,12 @@ nor wake parked apps, while the replacement route remains usable. The full
 UDP package passed race testing, changed-code lint passed, and the strict UDP
 gate passed all 43 portable contracts. This covers admission against stale
 socket identity; native reassignment and cleanup acceptance remains required.
+
+TCP durable routes also carry the listener row ID through TLS negotiation.
+A real socket regression pauses certificate lookup during the handshake, deletes
+and recreates otherwise identical listener intent, then verifies the stale
+connection closes without instance admission, connection credit is released,
+and a fresh trusted TLS connection to the replacement succeeds. Five
+race-enabled repetitions passed, the full TCP/public-gateway package race tests
+passed, and changed-code lint passed after correcting the test's wrapped-error
+timeout check. Native listener replacement qualification remains outstanding.
