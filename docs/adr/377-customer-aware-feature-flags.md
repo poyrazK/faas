@@ -16,7 +16,12 @@
   combine with AND. Anonymous requests do not match customer rules.
 
 The capability is internal until operational and native restore qualification;
-`FAAS_FLAGS_ENABLED=1` enables owner access for operator qualification.
+`FAAS_FLAGS_ENABLED=1` enables owner access for operator qualification. The
+native e2e gate requires `TestFeatureFlagsNativeParkRestoreMetal`, which checks
+configuration refresh and verified customer evidence after a real VM restore.
+The catalog points to this test as the capability qualification evidence; the
+database-backed `make test-flags` gate continues to cover management and
+application-level acceptance.
 The initial runtime client is the server-only Node SDK. It retrieves configuration
 with the existing loopback workload identity endpoint and an RS256 assertion for
 `gregale:flags`. apid derives account, project and environment from the live
@@ -54,8 +59,9 @@ The first acceptance gate runs the real Node SDK, apid, gateway and PostgreSQL
 with four customers: three select the new implementation, one retains the old
 implementation; forged customer headers are replaced, new-path errors are
 filterable, and the same process refreshes disablement after simulated inactivity.
-This is application/configuration acceptance, not native KVM park/restore proof.
-No VM lifecycle behavior is changed by this decision. SDK allocation vectors and
+This is application/configuration acceptance; the native KVM park/restore proof
+is a separate required test in the hardware gate. No VM lifecycle behavior is
+changed by this decision. SDK allocation vectors and
 rollout monotonicity, optimistic concurrency, tenant ownership, history, rollback,
 workload-token audience and scope, and evidence stripping are separate gates.
 

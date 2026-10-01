@@ -339,3 +339,25 @@ Three flavors of "what was deployed", pinned differently:
   pinned at the GitHub ref. SHA-pinned refs (`--ref
   $(git rev-parse HEAD)`) are byte-identical upstream; branch refs
   are not. See [`docs/source-ref.md`](../source-ref.md).
+
+## Startup readiness probes
+
+Source deployments infer an HTTP readiness path by default. For a pure HTTP/2
+gRPC app, select the standard gRPC health service explicitly:
+
+```sh
+gregale deploy --app --app-protocol grpc --healthcheck-grpc
+# Check a named service instead of overall server health:
+gregale deploy --app --app-protocol grpc --healthcheck-grpc --healthcheck-grpc-service audit.Echo
+# Override inferred HTTP readiness:
+gregale deploy --app --healthcheck-path /readyz
+```
+
+Exactly one HTTP path or gRPC selector is allowed. The selected service must
+implement `grpc.health.v1.Health/Check` and return `SERVING` before startup
+readiness succeeds. Omitting both selectors preserves source inference.
+These flags work with local directories, archives, resumable uploads,
+`--repo`/`--ref`, and image deployments. They configure startup admission;
+steady-state readiness and liveness remain separate API settings.
+They require a single-app deployment and cannot be combined with project
+selection, preview (`--plan`, `--diff`, `--dry-run`), `--github`, or `--create-only`.

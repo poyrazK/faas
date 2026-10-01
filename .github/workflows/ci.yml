@@ -1421,6 +1421,8 @@ jobs:
       - name: unit tests
         working-directory: sdk/node
         run: npm run test:unit
+      - name: Gregale Issues staging smoke contract
+        run: node --test tests/issues-smoke/run.test.mjs
 
   # ADR-377: exercise the actual runtime SDK, control plane, gateway and
   # telemetry persistence together; the small fakeapid fixture cannot prove

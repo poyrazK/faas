@@ -31,8 +31,11 @@ source "${verdict}"
 # shellcheck source=scripts/ci/native-e2e-phases.sh
 source "${phases}"
 
-[[ "${#NATIVE_E2E_REQUIRED_TESTS[@]}" -ge 8 ]] ||
+[[ "${#NATIVE_E2E_REQUIRED_TESTS[@]}" -ge 9 ]] ||
   fail "the required-test contract shrank to ${#NATIVE_E2E_REQUIRED_TESTS[@]} tests"
+
+printf '%s\n' "${NATIVE_E2E_REQUIRED_TESTS[@]}" | grep -qx 'TestFeatureFlagsNativeParkRestoreMetal' ||
+  fail "the native Flags park/restore qualification is not required"
 
 for required in "${NATIVE_E2E_REQUIRED_TESTS[@]}"; do
   # A typo'd requirement could never match a PASS line: the gate would fail for
@@ -75,7 +78,7 @@ grep -Fq 'no test executed' "${work}/empty.out" ||
 #    Postgres/kernel/builder-base regression shape: hundreds of other tests
 #    still pass, so the tally alone stays plausible.
 all_pass_log "${work}/skip.log"
-victim="${NATIVE_E2E_REQUIRED_TESTS[0]}"
+victim="TestFeatureFlagsNativeParkRestoreMetal"
 grep -v -- "--- PASS: ${victim} " "${work}/skip.log" > "${work}/skip.tmp"
 printf -- '--- SKIP: %s (0.00s)\n' "${victim}" >> "${work}/skip.tmp"
 mv "${work}/skip.tmp" "${work}/skip.log"
@@ -441,7 +444,7 @@ grep -Fq 'native_e2e_assert_phase_partition' "${runner}" ||
 # link costs; the Go build cache does not cover the final link.
 grep -Fq 'FAAS_E2E_BIN_DIR' "${runner}" ||
   fail "the wrapper does not share compiled daemons across phases"
-# Whole-suite contract must NOT be applied per phase: no phase holds all eight
+# Whole-suite contract must NOT be applied per phase: no phase holds all nine
 # required tests, so it would fail every phase for tests it never ran.
 grep -Fq 'native_e2e_phase_tally' "${runner}" ||
   fail "the wrapper applies the whole-suite verdict to a single phase"

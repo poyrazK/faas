@@ -94,7 +94,9 @@ func waitForNormalPathTrafficInstance(
 	deadline := time.Now().Add(timeout)
 	var lastInstance string
 	var lastStatus int
+	attempts := 0
 	for i := 0; time.Now().Before(deadline); i++ {
+		attempts++
 		path := fmt.Sprintf("/%s/probe/%d", strings.TrimPrefix(prefix, "/"), i)
 		_, body, statusCode := doReqHeaders(t, f.h, f.host, http.MethodGet, path, nil,
 			map[string]string{"Authorization": "Bearer " + f.key})
@@ -111,10 +113,14 @@ func waitForNormalPathTrafficInstance(
 		if statusCode != http.StatusOK && len(body) == 0 {
 			lastInstance = fmt.Sprintf("<status %d>", statusCode)
 		}
-		time.Sleep(100 * time.Millisecond)
+		// The weighted stride can send the first 75 requests to stable after
+		// a 25% candidate update. Keep polling fast enough to observe that
+		// bucket within the deadline, even when the durable refresh uses its
+		// two-second fallback. Distribution is asserted separately below.
+		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("traffic probe %q did not reach instance %q within %s; last status=%d instance=%q",
-		prefix, wantInstanceID, timeout, lastStatus, lastInstance)
+	t.Fatalf("traffic probe %q did not reach instance %q within %s after %d requests; last status=%d instance=%q",
+		prefix, wantInstanceID, timeout, attempts, lastStatus, lastInstance)
 }
 
 func assertNormalPathTrafficSample(

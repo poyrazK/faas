@@ -8434,6 +8434,9 @@ paths:
                 runtime:
                   type: string
                   enum: [node22, python312, go124, go124-alpine, node24, python313]
+                healthcheck:
+                  type: string
+                  description: "JSON startup readiness probe: exactly one HTTP path or standard gRPC health selector."
                 source_root:
                   type: string
                   maxLength: 256
@@ -8571,6 +8574,9 @@ paths:
                   enum: [node22, python312, go124, go124-alpine, node24, python313]
                 handler:
                   type: string
+                healthcheck:
+                  type: string
+                  description: "Startup readiness for this developer-source deployment, encoded as JSON with one HTTP path or standard gRPC health selector."
                 source_root:
                   type: string
                   maxLength: 256
@@ -30270,6 +30276,9 @@ components:
       additionalProperties: false
       description: "Deployment metadata persisted with the upload session and applied at commit."
       properties:
+        healthcheck:
+          $ref: '#/components/schemas/DeploymentHealthcheck'
+          description: "Startup readiness for this resumable upload. Select exactly one HTTP path or standard gRPC health probe; omitted preserves source inference."
         runtime: { type: string }
         handler: { type: string }
         dockerfile: { type: boolean }
@@ -30692,6 +30701,9 @@ components:
       description: "Body for the informational `sidecar` form field on POST /v1/apps/{slug}/deployments/source-tarball (issue #961 / Mega-A PR-1, ADR-115). The CLI is the trust root for this deploy path; apid does NOT consult `github_installations` and does NOT attempt a server-side git fetch. The sidecar fields are recorded on the build row for provenance only — the build pipeline does NOT use them to fetch upstream."
       type: object
       properties:
+        healthcheck:
+          $ref: '#/components/schemas/DeploymentHealthcheck'
+          description: "Startup readiness for this source-tarball deployment. Select exactly one HTTP path or standard gRPC health probe; omitted preserves source inference."
         repo:
           type: [string, "null"]
           pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]/[a-z0-9._-]{1,100}$'
@@ -35038,6 +35050,9 @@ components:
       type: object
       required: [repo, ref]
       properties:
+        healthcheck:
+          $ref: '#/components/schemas/DeploymentHealthcheck'
+          description: "Startup readiness for this source-ref deployment. Select exactly one HTTP path or standard gRPC health probe; omitted preserves source inference."
         repo:
           type: string
           pattern: '^[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+$'

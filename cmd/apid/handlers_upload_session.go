@@ -154,7 +154,11 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 		return
 	}
 	if req.DeployOptions != nil {
-		rollbackReq := &api.CreateDeploymentRequest{RollbackOn5xx: req.DeployOptions.RollbackOn5xx, DisableStartupCPUBoost: req.DeployOptions.DisableStartupCPUBoost}
+		rollbackReq := &api.CreateDeploymentRequest{RollbackOn5xx: req.DeployOptions.RollbackOn5xx, DisableStartupCPUBoost: req.DeployOptions.DisableStartupCPUBoost, Overrides: sourceHealthcheckOverrides(req.DeployOptions.Healthcheck)}
+		if _, prob := validateOverrides(rollbackReq, limits, acct.Plan); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
 		if prob := validateDeploymentRollbackOptions(rollbackReq, acct.Plan); prob != nil {
 			api.WriteProblem(w, prob)
 			return
@@ -599,8 +603,14 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 			s.log.Warn("upload-session manifest rollback incomplete", "app_id", app.ID, "err", rollbackErr)
 		}
 	}(r.Context())
-	rolloutReq := &api.CreateDeploymentRequest{Scope: opts.Scope, Environment: opts.Environment, RollbackOn5xx: opts.RollbackOn5xx, DisableStartupCPUBoost: opts.DisableStartupCPUBoost, Companions: opts.Companions, Sidecars: opts.Sidecars}
 	limits := api.MustLimitsFor(acct.Plan)
+	rolloutReq := &api.CreateDeploymentRequest{Scope: opts.Scope, Environment: opts.Environment, RollbackOn5xx: opts.RollbackOn5xx, DisableStartupCPUBoost: opts.DisableStartupCPUBoost, Companions: opts.Companions, Sidecars: opts.Sidecars}
+	rolloutReq.Overrides = sourceHealthcheckOverrides(opts.Healthcheck)
+	healthOverrides, healthProblem := validateOverrides(rolloutReq, limits, acct.Plan)
+	if healthProblem != nil {
+		api.WriteProblem(w, healthProblem)
+		return
+	}
 	if prob := s.applyDeploymentEnvironment(r.Context(), acct, app, rolloutReq); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -645,7 +655,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, prob)
 		return
 	}
-	rollout, prob := buildDeploymentForInsert(app, rolloutReq, nil, limits, acct.Plan)
+	rollout, prob := buildDeploymentForInsert(app, rolloutReq, healthOverrides, limits, acct.Plan)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -764,6 +774,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		DisableStartupCPUBoost: rollout.DisableStartupCPUBoost,
 		Workflows:              marshalWorkflowDefinitions(opts.Workflows),
 		Sidecars:               append(json.RawMessage(nil), rollout.Sidecars...),
+		OverrideHealthcheck:    append(json.RawMessage(nil), rollout.OverrideHealthcheck...),
 		OverrideMainDependsOn:  append(json.RawMessage(nil), rollout.OverrideMainDependsOn...),
 		ReleaseCommand:         releaseCommand.command,
 		ReleaseCommandShell:    releaseCommand.shell,
