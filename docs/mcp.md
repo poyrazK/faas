@@ -47,6 +47,10 @@ time. `--stream-tool` explicitly runs the named tool and checks spaced progress
 events; use a harmless probe tool. Discovery alone cannot establish unbuffered
 delivery. MCP JSON-RPC errors, truncated streams and `isError` tool results fail
 the appropriate command even when HTTP returns 200. Calls are never retried.
+Tools with invalid parameter-header annotations are excluded from discovery;
+`tools` and `doctor` report their names and rejection reasons in `rejected_tools`.
+Other valid tools remain available. A malformed response or duplicate tool name
+still fails discovery.
 
 ## External OAuth
 
