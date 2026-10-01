@@ -264,14 +264,14 @@ func applyEntry(base, target string, hdr *tar.Header, tr io.Reader, res Resolver
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return err
 		}
-		// A later OCI layer may replace a symlink from a lower layer with a
-		// regular file. Remove the link before opening the destination so
-		// OpenFile cannot follow its guest-side target into the host filesystem
-		// (for example /bin/busybox under systemd ProtectSystem=strict).
+		// Replace the lower inode instead of truncating it: the new layer owns
+		// the file's mode, and a lower hardlink must retain its old contents.
+		// Removing symlinks also prevents following a guest-side target into
+		// the host filesystem (for example /bin/busybox).
 		if info, err := os.Lstat(target); err == nil {
-			if info.Mode()&os.ModeSymlink != 0 {
+			if info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 				if err := os.Remove(target); err != nil {
-					return fmt.Errorf("rootfs: replace symlink %s: %w", target, err)
+					return fmt.Errorf("rootfs: replace file %s: %w", target, err)
 				}
 			}
 		} else if !os.IsNotExist(err) {
@@ -286,6 +286,12 @@ func applyEntry(base, target string, hdr *tar.Header, tr io.Reader, res Resolver
 		if _, err := io.CopyN(f, tr, hdr.Size); err != nil && !errors.Is(err, io.EOF) {
 			_ = f.Close()
 			return fmt.Errorf("rootfs: write %s: %w", target, err)
+		}
+		// OpenFile's creation mode is filtered by the daemon's umask; OCI
+		// permissions belong to the image, not the assembler's environment.
+		if err := f.Chmod(os.FileMode(hdr.Mode) & os.ModePerm); err != nil {
+			_ = f.Close()
+			return fmt.Errorf("rootfs: file mode %s: %w", target, err)
 		}
 		if err := f.Close(); err != nil {
 			return err
@@ -578,6 +584,17 @@ func resolveLinkSource(root, linkname string) (string, error) {
 // access. If staging ever becomes shared or concurrently written, this must
 // move to openat2(RESOLVE_IN_ROOT).
 func resolveWithin(root, rel string) (string, error) {
+	return resolveWithinPath(root, rel, false)
+}
+
+// resolveExistingWithin uses the same image-root symlink rules as extraction,
+// but requires every component to exist. Launch checks must not accept a path
+// such as missing/../app or file/../app that the guest kernel cannot traverse.
+func resolveExistingWithin(root, rel string) (string, error) {
+	return resolveWithinPath(root, rel, true)
+}
+
+func resolveWithinPath(root, rel string, existing bool) (string, error) {
 	cur := root
 	// Remaining components to consume, innermost-first.
 	todo := splitPath(rel)
@@ -599,7 +616,7 @@ func resolveWithin(root, rel string) (string, error) {
 		next := filepath.Join(cur, comp)
 		fi, err := os.Lstat(next)
 		if err != nil {
-			if os.IsNotExist(err) {
+			if os.IsNotExist(err) && !existing {
 				// Nothing on disk yet — the caller will MkdirAll it.
 				cur = next
 				continue
@@ -607,6 +624,9 @@ func resolveWithin(root, rel string) (string, error) {
 			return "", err
 		}
 		if fi.Mode()&os.ModeSymlink == 0 {
+			if existing && len(todo) > 0 && !fi.IsDir() {
+				return "", fmt.Errorf("non-directory path component")
+			}
 			cur = next
 			continue
 		}

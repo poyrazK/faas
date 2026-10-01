@@ -4848,6 +4848,7 @@ func (h *Handler) buildFullRootfsLayer(
 		StorageKey:     appsKey,
 		SBOMRun:        sbomRun,
 		SBOMStorageKey: sbomKey,
+		CommandPATH:    fullRootfsCommandPATH(ctx, h.store, app, dep, manifest),
 		// BuildFullRootfs derives the image's merged /etc/passwd resolver
 		// while applying the pulled layers; no host-side passwd data is used.
 		Resolver: nil,

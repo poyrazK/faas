@@ -72,6 +72,31 @@ companions and worker pools are preview.
 
 ## Image preflight
 
+During self-contained full-rootfs assembly, Gregale checks the effective startup
+command after applying all image layers and deployment command overrides. An
+explicit command path must resolve to a regular file with an execute bit;
+relative paths resolve from the image working directory. Shell-form startup
+commands therefore require their selected shell (usually `/bin/sh`) in the
+image. Missing commands, invalid symlinks, directories, and non-executable files
+fail the deployment with `image_manifest_invalid` before ext4 publication or VM
+boot. The failure identifies the command without exposing arguments or
+environment values.
+
+For bare commands, assembly uses the image/deployment `PATH` plus the current
+scoped app environment, with the same absolute-directory lookup as guest-init.
+A sealed `PATH` or unavailable runtime environment defers that lookup to the
+guest. Assembly never decrypts secrets or copies runtime `PATH` into the image.
+Later environment changes remain subject to guest launch validation.
+Commands under guest-provided mounts (`/dev`, `/proc`, `/sys`, `/tmp`, and
+companion roots), including image symlinks to those paths, also defer to launch
+because their contents are supplied or replaced at boot.
+
+This check does not run image code or prove ELF/script interpreter compatibility,
+user permissions, healthcheck execution, shell command contents, or readiness.
+It applies to the complete full-rootfs main image; the shared-base upper-layer
+path cannot prove whether a command exists in its base and retains its guest
+validation. The metadata-only doctor command below retains its fast path.
+
 `gregale doctor --image REF --json` reports `image.serving_port` as inferred
 from image metadata before deployment overrides. Human output shows the same
 port. A listener finding warns when multiple TCP ports leave the default
