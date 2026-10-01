@@ -5190,6 +5190,66 @@ func (q *Queries) InsertFeatureFlagVersion(ctx context.Context, db DBTX, arg Ins
 	return i, err
 }
 
+const insertInvoiceHistorySnapshot = `-- name: InsertInvoiceHistorySnapshot :one
+INSERT INTO invoices (
+  account_id, provider, provider_invoice_id, provider_charge_id, number, status,
+  period_start, period_end, subtotal_cents, tax_cents, total_cents,
+  amount_paid_cents, plan, currency, pdf_available, details, detail_lifecycle
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+ON CONFLICT (account_id, provider, provider_invoice_id) DO NOTHING
+RETURNING id, updated_at
+`
+
+type InsertInvoiceHistorySnapshotParams struct {
+	AccountID         pgtype.UUID
+	Provider          string
+	ProviderInvoiceID string
+	ProviderChargeID  string
+	Number            string
+	Status            string
+	PeriodStart       pgtype.Timestamptz
+	PeriodEnd         pgtype.Timestamptz
+	SubtotalCents     int64
+	TaxCents          int64
+	TotalCents        int64
+	AmountPaidCents   int64
+	Plan              string
+	Currency          string
+	PdfAvailable      bool
+	Details           []byte
+	DetailLifecycle   []byte
+}
+
+type InsertInvoiceHistorySnapshotRow struct {
+	ID        pgtype.UUID
+	UpdatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) InsertInvoiceHistorySnapshot(ctx context.Context, db DBTX, arg InsertInvoiceHistorySnapshotParams) (InsertInvoiceHistorySnapshotRow, error) {
+	row := db.QueryRow(ctx, insertInvoiceHistorySnapshot,
+		arg.AccountID,
+		arg.Provider,
+		arg.ProviderInvoiceID,
+		arg.ProviderChargeID,
+		arg.Number,
+		arg.Status,
+		arg.PeriodStart,
+		arg.PeriodEnd,
+		arg.SubtotalCents,
+		arg.TaxCents,
+		arg.TotalCents,
+		arg.AmountPaidCents,
+		arg.Plan,
+		arg.Currency,
+		arg.PdfAvailable,
+		arg.Details,
+		arg.DetailLifecycle,
+	)
+	var i InsertInvoiceHistorySnapshotRow
+	err := row.Scan(&i.ID, &i.UpdatedAt)
+	return i, err
+}
+
 const insertOIDCExchangedToken = `-- name: InsertOIDCExchangedToken :one
 insert into oidc_exchanged_tokens
     (account_id, token_hash, expires_at, issuer_url, subject,

@@ -674,6 +674,17 @@ Examples:
 gregale billing refresh-invoice INVOICE_ID
 ```
 
+### billing backfill-invoices
+
+Import one page of missing provider invoices
+
+Examples:
+
+```sh
+gregale billing backfill-invoices
+gregale billing backfill-invoices --cursor TOKEN
+```
+
 ### billing export
 
 Export a partial FOCUS 1.4 invoice projection

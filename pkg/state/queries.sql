@@ -288,6 +288,15 @@ RETURNING id, account_id, provider, provider_invoice_id, provider_charge_id, num
           plan, amount_refunded_cents, amount_refund_pending_cents, credits_applied_cents,
           currency, pdf_available, created_at, updated_at, details, detail_lifecycle;
 
+-- name: InsertInvoiceHistorySnapshot :one
+INSERT INTO invoices (
+  account_id, provider, provider_invoice_id, provider_charge_id, number, status,
+  period_start, period_end, subtotal_cents, tax_cents, total_cents,
+  amount_paid_cents, plan, currency, pdf_available, details, detail_lifecycle
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+ON CONFLICT (account_id, provider, provider_invoice_id) DO NOTHING
+RETURNING id, updated_at;
+
 -- name: SetInvoiceDetailLifecycle :exec
 -- The caller retains the natural-key upsert's row lock in the same transaction.
 UPDATE invoices SET detail_lifecycle = $2 WHERE id = $1;

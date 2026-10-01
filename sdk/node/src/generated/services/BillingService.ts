@@ -6,6 +6,7 @@ import type { BillingCancelResponse } from '../models/BillingCancelResponse.js';
 import type { BillingPortalResponse } from '../models/BillingPortalResponse.js';
 import type { BillingRetryResponse } from '../models/BillingRetryResponse.js';
 import type { BillingStatusResponse } from '../models/BillingStatusResponse.js';
+import type { InvoiceHistoryBackfillResponse } from '../models/InvoiceHistoryBackfillResponse.js';
 import type { InvoiceRefreshResponse } from '../models/InvoiceRefreshResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -54,6 +55,56 @@ export class BillingService {
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
         501: `Configured provider does not implement invoice refresh.`,
+        503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
+      },
+    });
+  }
+  /**
+   * Import one bounded page of missing provider invoices.
+   * Requires usage:read and invoice-history session MFA. Scans at most 25
+   * invoices for the authenticated account's provider-qualified customer.
+   * The opaque next_cursor resumes the next page for the same provider
+   * customer. Existing natural-key matches are skipped without modifying
+   * webhook data. Imported documents preserve provider financial facts and
+   * carry an unknown historical Gregale plan, so credit proration fails
+   * closed until that plan is independently established. Unsupported
+   * currencies, statuses, incomplete totals, and absent billing periods are
+   * counted as skipped. has_more reports provider pagination at request time;
+   * it is not a stable snapshot guarantee. Each page commits atomically.
+   *
+   * @returns InvoiceHistoryBackfillResponse One imported provider-history page.
+   * @throws ApiError
+   */
+  public static backfillInvoiceHistory({
+    cursor,
+    limit = 25,
+  }: {
+    /**
+     * Provider and customer bound token emitted by the preceding response.
+     */
+    cursor?: string,
+    /**
+     * Maximum provider records to scan in this page.
+     */
+    limit?: number,
+  }): CancelablePromise<InvoiceHistoryBackfillResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/invoices/backfill',
+      query: {
+        'cursor': cursor,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+        501: `Configured provider does not implement invoice history discovery.`,
         503: `code: capacity_unavailable — no host headroom (alerting; should be near-impossible).`,
       },
     });

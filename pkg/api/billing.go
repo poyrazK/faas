@@ -25,6 +25,16 @@ type InvoiceRefreshResponse struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// InvoiceHistoryBackfillResponse reports one bounded provider history page.
+type InvoiceHistoryBackfillResponse struct {
+	Provider   string `json:"provider"`
+	Scanned    int    `json:"scanned"`
+	Imported   int    `json:"imported"`
+	Skipped    int    `json:"skipped"`
+	HasMore    bool   `json:"has_more"`
+	NextCursor string `json:"next_cursor,omitempty"`
+}
+
 // UpdateAccountBillingInfoRequest is the partial update payload for
 // PATCH /v1/account/billing. A nil field leaves its existing value unchanged;
 // an explicitly empty string clears it.

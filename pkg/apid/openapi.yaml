@@ -20707,6 +20707,52 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/invoices/backfill:
+    post:
+      tags: [billing]
+      operationId: backfillInvoiceHistory
+      summary: Import one bounded page of missing provider invoices.
+      description: |
+        Requires usage:read and invoice-history session MFA. Scans at most 25
+        invoices for the authenticated account's provider-qualified customer.
+        The opaque next_cursor resumes the next page for the same provider
+        customer. Existing natural-key matches are skipped without modifying
+        webhook data. Imported documents preserve provider financial facts and
+        carry an unknown historical Gregale plan, so credit proration fails
+        closed until that plan is independently established. Unsupported
+        currencies, statuses, incomplete totals, and absent billing periods are
+        counted as skipped. has_more reports provider pagination at request time;
+        it is not a stable snapshot guarantee. Each page commits atomically.
+      parameters:
+        - name: cursor
+          in: query
+          schema: { type: string, maxLength: 2048 }
+          description: Provider and customer bound token emitted by the preceding response.
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 25, default: 25 }
+          description: Maximum provider records to scan in this page.
+      responses:
+        '200':
+          description: One imported provider-history page.
+          headers:
+            Cache-Control:
+              schema: { type: string, const: 'private, no-store' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InvoiceHistoryBackfillResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501':
+          description: Configured provider does not implement invoice history discovery.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/billing/focus:
     get:
       tags: [billing]
@@ -21215,6 +21261,11 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Invoice was imported from history without a verifiable historical Gregale plan; credit proration is not available.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   # ─── Operator billing surface (PR-P3) ────────────────────────────────────
@@ -30149,6 +30200,18 @@ components:
           enum: [unavailable, incomplete, empty, unclassified, tax_in_non_tax_lines, totals_mismatch]
           description: Reason for aggregate fallback; omitted when detailed is true.
         updated_at: { type: string, format: date-time }
+
+    InvoiceHistoryBackfillResponse:
+      description: Counts and cursor for one provider invoice-history page.
+      type: object
+      required: [provider, scanned, imported, skipped, has_more]
+      properties:
+        provider: { type: string, enum: [stripe, paddle, polar] }
+        scanned: { type: integer, minimum: 0, maximum: 25 }
+        imported: { type: integer, minimum: 0, maximum: 25 }
+        skipped: { type: integer, minimum: 0, maximum: 25 }
+        has_more: { type: boolean }
+        next_cursor: { type: string, maxLength: 2048 }
 
     BillingStatusResponse:
       description: Provider-independent customer billing status (issue #2302).

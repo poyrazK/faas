@@ -134,9 +134,41 @@ lifecycle dates. Unknown classifications and unavailable issuer/terms/dates
 remain source gaps; refresh never substitutes buyer identity or order creation
 for invoice issuer or issue date.
 
-Refresh enriches known invoices only. It does not enumerate provider history or
-import documents absent from Gregale. Provider reads happen only during refresh,
-so exports remain a projection of stored facts.
+Refresh enriches known invoices. Provider history is discovered separately by
+the backfill operation below; exports remain a projection of stored facts.
+
+### Discover missing invoice history
+
+Run one bounded provider page at a time:
+
+```bash
+gregale billing backfill-invoices
+gregale billing backfill-invoices --cursor NEXT_CURSOR
+```
+
+`POST /v1/invoices/backfill` uses the same `usage:read` and session MFA gate as
+invoice history. `--limit` accepts 1–25 provider records per page. The response
+reports `scanned`, `imported`, and `skipped`; pass `next_cursor` to resume. The
+cursor is bound to the active provider customer. Stripe, Paddle, and Polar
+history is read with that provider-qualified customer identity, and every
+returned document must name the same customer before import.
+
+Import inserts missing documents only. An existing invoice or webhook record
+with the same account, provider, and document ID is skipped unchanged. Each
+page is one database transaction, so provider or persistence errors do not
+partially import that page. Replaying a page is safe. Provider pagination is a
+best-effort view rather than a frozen snapshot; `has_more: false` means the
+provider reported no further page at that time. Repeat backfill later to find
+newly surfaced or recently created documents.
+
+Imports require EUR totals and tax, a supported invoice state, and an explicit
+billing period. Rows without enough information are counted as skipped rather
+than assigned guessed dates or amounts. Imported invoices have an explicit
+unknown historical Gregale plan because provider history does not reliably
+prove the plan that governed past usage. Credit-based proration for those rows
+fails closed until the plan can be independently established. Refresh imported
+documents with `gregale billing refresh-invoice INVOICE_ID` to retrieve their
+provider line facts for FOCUS exports.
 
 ### Remaining gaps
 
@@ -152,9 +184,9 @@ are retained and flagged; exports count both untracked and legacy records and
 declare this historical gap when present. Facts and lifecycle history are
 updated in one transaction so downloads cannot see mismatched snapshots.
 
-The next invoice steps are provider history discovery/backfill, remaining
-price classifications and legal issuer coverage, and correction-document
-lineage. A historical cost ledger with
+The next invoice steps are remaining price classifications and legal issuer
+coverage, correction-document lineage, and conditional FX/PO fields. A
+historical cost ledger with
 service/resource identifiers, quantities, units, and price snapshots is then
 needed for the **Cost and Usage** dataset. Current plan prices
 cannot reliably reconstruct past list, contracted, or effective costs.

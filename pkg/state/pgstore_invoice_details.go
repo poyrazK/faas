@@ -113,7 +113,7 @@ func (s *PgStore) UpsertInvoice(ctx context.Context, inv Invoice) error {
 	if inv.Status == "" {
 		inv.Status = "open"
 	}
-	if !inv.Plan.Valid() {
+	if !inv.Plan.Valid() && inv.Plan != InvoicePlanUnknown {
 		inv.Plan = api.PlanFree
 	}
 	initialLifecycle, err := json.Marshal(newInvoiceLifecycle(time.Now().UTC()))

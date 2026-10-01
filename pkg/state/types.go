@@ -5501,6 +5501,10 @@ type Invoice struct {
 	UpdatedAt                time.Time
 }
 
+// InvoicePlanUnknown marks provider-history imports whose old billing plan
+// cannot be proven from the provider document. It is not a valid account plan.
+const InvoicePlanUnknown api.Plan = "unknown"
+
 // InvoiceRefund is the durable local projection of a provider refund. The
 // provider handle and caller idempotency key are independently unique per
 // invoice so both webhook redelivery and an ambiguous API response collapse

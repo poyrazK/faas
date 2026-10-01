@@ -889,6 +889,8 @@ from .invocation_source import InvocationSource
 from .invocation_state import InvocationState
 from .invoice import Invoice
 from .invoice_currency import InvoiceCurrency
+from .invoice_history_backfill_response import InvoiceHistoryBackfillResponse
+from .invoice_history_backfill_response_provider import InvoiceHistoryBackfillResponseProvider
 from .invoice_list_response import InvoiceListResponse
 from .invoice_provider import InvoiceProvider
 from .invoice_refresh_response import InvoiceRefreshResponse
@@ -2842,6 +2844,8 @@ __all__ = (
     "InvocationState",
     "Invoice",
     "InvoiceCurrency",
+    "InvoiceHistoryBackfillResponse",
+    "InvoiceHistoryBackfillResponseProvider",
     "InvoiceListResponse",
     "InvoiceProvider",
     "InvoiceRefreshResponse",

@@ -624,6 +624,7 @@ var cliCommands = []cliCommand{
 			{Name: "payment-method", Short: "Show the card on file"},
 			{Name: "status", Short: "Show subscription status"},
 			{Name: "refresh-invoice", Short: "Refresh provider facts for an existing invoice", Positionals: []string{"ID"}, Examples: []string{"gregale billing refresh-invoice INVOICE_ID"}},
+			{Name: "backfill-invoices", Short: "Import one page of missing provider invoices", Examples: []string{"gregale billing backfill-invoices", "gregale billing backfill-invoices --cursor TOKEN"}},
 			{Name: "export", Short: "Export a partial FOCUS 1.4 invoice projection", Flags: []cliFlag{
 				{Name: "month", Short: "invoice period-end month (required)", Value: "YYYY-MM"},
 				{Name: "format", Short: "export encoding (default zip with CSV and metadata)", Value: "FORMAT", ClosedSet: []string{"zip", "csv", "metadata"}},

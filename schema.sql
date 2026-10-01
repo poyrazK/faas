@@ -6734,7 +6734,7 @@ CREATE TABLE public.invoices (
     CONSTRAINT invoices_detail_lifecycle_records_check CHECK (((NOT (detail_lifecycle ? 'records'::text)) OR ((jsonb_typeof((detail_lifecycle -> 'records'::text)) = 'object'::text) AND (jsonb_array_length(jsonb_path_query_array(detail_lifecycle, '$."records".keyvalue()'::jsonpath)) <= 20002)))),
     CONSTRAINT invoices_details_object_check CHECK ((jsonb_typeof(details) = 'object'::text)),
     CONSTRAINT invoices_details_seen_line_limit_check CHECK ((jsonb_array_length(jsonb_path_query_array(details, '$."line_first_seen".keyvalue()'::jsonpath)) <= 10000)),
-    CONSTRAINT invoices_plan_check CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
+    CONSTRAINT invoices_plan_check CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text, 'unknown'::text]))),
     CONSTRAINT invoices_provider_check CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'polar'::text]))),
     CONSTRAINT invoices_refund_totals_within_paid_check CHECK (((amount_refunded_cents + amount_refund_pending_cents) <= GREATEST(amount_paid_cents, total_cents))),
     CONSTRAINT invoices_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'open'::text, 'paid'::text, 'uncollectible'::text, 'void'::text]))),

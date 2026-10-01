@@ -452,6 +452,7 @@ export type { InviteMemberRequest } from './models/InviteMemberRequest.js';
 export type { Invocation } from './models/Invocation.js';
 export type { InvocationDestinations } from './models/InvocationDestinations.js';
 export type { Invoice } from './models/Invoice.js';
+export type { InvoiceHistoryBackfillResponse } from './models/InvoiceHistoryBackfillResponse.js';
 export type { InvoiceListResponse } from './models/InvoiceListResponse.js';
 export type { InvoiceRefreshResponse } from './models/InvoiceRefreshResponse.js';
 export type { InvokeRequest } from './models/InvokeRequest.js';

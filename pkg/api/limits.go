@@ -152,12 +152,16 @@ const (
 	MaxInvoiceSeenLineIDs     = 10000
 	MaxInvoiceDetailTextBytes = 4096
 	// Independent charge/tax records plus both aggregate fallback records.
-	MaxInvoiceLifecycleRecords      = 2*MaxInvoiceSeenLineIDs + 2
-	MaxInvoiceRefreshRequests       = 32
+	MaxInvoiceLifecycleRecords = 2*MaxInvoiceSeenLineIDs + 2
+	MaxInvoiceRefreshRequests  = 32
+	// MaxInvoiceHistoryPageSize caps one authenticated provider discovery read.
+	MaxInvoiceHistoryPageSize       = 25
 	StripeInvoicePageSize           = 100
 	MaxInvoiceProviderResponseBytes = 4 << 20
 	InvoiceProviderRequestTimeout   = 20 * time.Second
 	InvoiceRefreshTimeout           = 2 * time.Minute
+	// InvoiceHistoryTimeout bounds one provider page and its local import.
+	InvoiceHistoryTimeout = 2 * time.Minute
 	// Keep artifacts below the Go SDK's 4 MiB response-body bound.
 	MaxFOCUSExportBytes = 3 << 20
 )

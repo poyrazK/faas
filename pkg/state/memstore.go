@@ -17041,7 +17041,7 @@ func (m *MemStore) UpsertInvoice(_ context.Context, inv Invoice) error {
 	if inv.Status == "" {
 		inv.Status = "open"
 	}
-	if !inv.Plan.Valid() {
+	if !inv.Plan.Valid() && inv.Plan != InvoicePlanUnknown {
 		inv.Plan = api.PlanFree
 	}
 	for id, existing := range m.invoices {
