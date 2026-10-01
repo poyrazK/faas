@@ -53,6 +53,53 @@ than 255 characters, or lists larger than 100 accounts fail closed. Reads and
 all deletion/revocation paths remain available outside the allowlist so an
 operator can drain a canary safely before expanding it.
 
+## Provider health
+
+`gregale postgres get <database>` and database GET/list responses include cached
+`health`: `healthy`, `degraded`, `stale`, `unknown`, or `disabled`. Lifecycle
+`state` stays separate. A provider outage or deleted upstream resource does
+not turn a ready catalog row into a provisioning request.
+
+Health reads provider metadata only. Suspended compute is healthy when the
+resource is ready and its configuration matches. A healthy signal does not
+prove SQL connectivity; use `gregale bindings verify <app> --postgres DATABASE_URL`
+for the existing application connection check. Monitoring does not wake compute,
+retrieve credentials, repair roles, or recreate resources. API GET/list never
+contact the provider.
+
+The optional registry policy is:
+
+```json
+"health": {
+  "enabled": true,
+  "interval_seconds": 60,
+  "stale_after_seconds": 300
+}
+```
+
+These are the defaults when the policy is omitted. Collection continues for
+existing ready databases with provisioning disabled. Set `enabled` to false to
+opt out; the API then reports disabled and suppresses retained observations.
+Intervals must be 60–3600 seconds; freshness must be 120–86400 seconds and at
+least twice the interval. Restart `apid` after changing the configuration.
+Apply the health migration before starting the updated binaries.
+
+`checked_at` is the latest attempt, including provider API failures. `fresh`
+means that attempt is recent. `last_success_at` is the latest valid metadata
+response, which may itself describe a degraded resource. `last_error_code`
+is sanitized; provider IDs and credentials stay private. Without an observation,
+health is unknown. Non-ready databases are not polled; mutation responses may
+omit health until the next GET/list.
+
+Collectors share durable per-database leases across replicas. Each process
+checks at most 20 rows per sweep with one-second spacing and a ten-second
+provider timeout. Provider request failures back off to fifteen minutes, so a
+persistent outage can become stale. Replicas do not share a global provider
+rate limit. Monitor stale counts and sweep age when growing the catalog; do
+not interpret cached observations as a guaranteed real-time availability SLO.
+See [ADR-389](adr/389-managed-postgres-provider-health.md) and the
+[health runbook](runbooks/FaasManagedPostgresDegraded.md).
+
 ## Provider qualification
 
 Qualification is a separate operator action and is never started by `apid`.

@@ -528,6 +528,7 @@ export type { ManagedPostgresBinding } from './ManagedPostgresBinding.js';
 export type { ManagedPostgresBindingList } from './ManagedPostgresBindingList.js';
 export type { ManagedPostgresDatabase } from './ManagedPostgresDatabase.js';
 export type { ManagedPostgresDatabaseList } from './ManagedPostgresDatabaseList.js';
+export type { ManagedPostgresHealth } from './ManagedPostgresHealth.js';
 export type { ManagedPostgresID } from './ManagedPostgresID.js';
 export type { ManagedPostgresUsageLineItem } from './ManagedPostgresUsageLineItem.js';
 export type { ManagedPostgresUsageOperatorResponse } from './ManagedPostgresUsageOperatorResponse.js';

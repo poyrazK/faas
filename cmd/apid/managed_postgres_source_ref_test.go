@@ -166,7 +166,7 @@ func configureSourceRefManagedPostgres(t *testing.T, env sourceRefTestEnv) (*man
 	if err != nil {
 		t.Fatalf("managed postgres binding service: %v", err)
 	}
-	env.srv.WithManagedPostgres(service, nil, bindingService, nil, nil)
+	env.srv.WithManagedPostgres(service, nil, bindingService, nil, nil, nil)
 	return store, sink, database.ID
 }
 

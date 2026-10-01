@@ -14,8 +14,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"golang.org/x/sync/errgroup"
-
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 )
 
@@ -262,35 +260,17 @@ func (p *Provider) Inspect(ctx context.Context, providerResourceID string) (mana
 	if err != nil {
 		return managedpostgres.ObservedDatabase{}, err
 	}
-	projectPath := "/projects/" + url.PathEscape(ref.projectID)
-	var projectResult projectResponse
-	var branchesResult branchesResponse
-	var endpointsResult endpointsResponse
-	var operationsResult operationsResponse
-	group, groupContext := errgroup.WithContext(ctx)
-	group.Go(func() error {
-		return p.doJSON(groupContext, http.MethodGet, projectPath, nil, nil, &projectResult, http.StatusOK)
-	})
-	group.Go(func() error {
-		return p.doJSON(groupContext, http.MethodGet, projectPath+"/branches", nil, nil, &branchesResult, http.StatusOK)
-	})
-	group.Go(func() error {
-		return p.doJSON(groupContext, http.MethodGet, projectPath+"/endpoints", nil, nil, &endpointsResult, http.StatusOK)
-	})
-	group.Go(func() error {
-		query := url.Values{"limit": {"1000"}}
-		return p.doJSON(groupContext, http.MethodGet, projectPath+"/operations", query, nil, &operationsResult, http.StatusOK)
-	})
-	if err := group.Wait(); err != nil {
+	metadata, err := p.readDatabaseMetadata(ctx, ref, true)
+	if err != nil {
 		return managedpostgres.ObservedDatabase{}, err
 	}
-	if projectResult.Project.ID != ref.projectID || operationsResult.Pagination.Cursor != "" {
+	if metadata.operations.Pagination.Cursor != "" {
 		return managedpostgres.ObservedDatabase{}, managedpostgres.ErrUnavailable
 	}
-	selectedBranch, primaryEndpoint, resourcesReady := selectBranch(branchesResult.Branches, endpointsResult.Endpoints, ref.branchID)
-	status := operationStatus(operationsResult.Operations, resourcesReady)
+	selectedBranch, primaryEndpoint, resourcesReady := selectBranch(metadata.branches.Branches, metadata.endpoints.Endpoints, ref.branchID)
+	status := operationStatus(metadata.operations.Operations, resourcesReady)
 	observedComputeState := computeState(primaryEndpoint.CurrentState)
-	observedSpec := p.observedSpec(projectResult.Project, primaryEndpoint)
+	observedSpec := p.observedSpec(metadata.project.Project, primaryEndpoint)
 	if selectedBranch.ID == "" {
 		status = managedpostgres.ProviderStatusPending
 	}

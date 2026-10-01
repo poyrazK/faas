@@ -536,6 +536,19 @@ func renderPostgresDatabase(w io.Writer, database api.ManagedPostgresDatabase) {
 	_, _ = fmt.Fprintf(w, "  storage_limit:    %s\n", formatPostgresStorage(database.StorageLimitBytes))
 	_, _ = fmt.Fprintf(w, "  restore_window:   %s\n", formatPostgresDuration(database.RestoreWindowSeconds))
 	_, _ = fmt.Fprintf(w, "  state:            %s\n", database.State)
+	if health := database.Health; health != nil {
+		_, _ = fmt.Fprintf(w, "  provider_health:  %s (fresh=%t)\n", health.Status, health.Fresh)
+		_, _ = fmt.Fprintf(w, "  compute_state:    %s\n", health.ComputeState)
+		if health.CheckedAt != "" {
+			_, _ = fmt.Fprintf(w, "  health_checked:   %s\n", health.CheckedAt)
+		}
+		if health.LastSuccessAt != "" {
+			_, _ = fmt.Fprintf(w, "  health_success:   %s\n", health.LastSuccessAt)
+		}
+		if health.LastErrorCode != "" {
+			_, _ = fmt.Fprintf(w, "  health_error:     %s\n", health.LastErrorCode)
+		}
+	}
 	if database.LastErrorCode != "" {
 		_, _ = fmt.Fprintf(w, "  last_error_code:  %s\n", database.LastErrorCode)
 	}

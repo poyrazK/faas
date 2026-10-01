@@ -7303,6 +7303,38 @@ CREATE TABLE public.managed_postgres_databases (
 
 
 --
+-- Name: managed_postgres_health; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_health (
+    database_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    provider_resource_id text NOT NULL,
+    desired_generation bigint NOT NULL,
+    provider_status text DEFAULT 'unknown'::text NOT NULL,
+    compute_state text DEFAULT 'unknown'::text NOT NULL,
+    checked_at timestamp with time zone,
+    last_success_at timestamp with time zone,
+    last_error_code text,
+    next_check_at timestamp with time zone NOT NULL,
+    lease_token text,
+    lease_until timestamp with time zone,
+    attempt_count integer DEFAULT 0 NOT NULL,
+    CONSTRAINT managed_postgres_health_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 20))),
+    CONSTRAINT managed_postgres_health_backend_fingerprint_check CHECK ((length(backend_fingerprint) = 64)),
+    CONSTRAINT managed_postgres_health_check CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
+    CONSTRAINT managed_postgres_health_check1 CHECK (((last_success_at IS NULL) OR ((checked_at IS NOT NULL) AND (last_success_at <= checked_at)))),
+    CONSTRAINT managed_postgres_health_compute_state_check CHECK ((compute_state = ANY (ARRAY['unknown'::text, 'active'::text, 'suspended'::text, 'waking'::text]))),
+    CONSTRAINT managed_postgres_health_desired_generation_check CHECK ((desired_generation > 0)),
+    CONSTRAINT managed_postgres_health_last_error_code_check CHECK ((last_error_code = ANY (ARRAY['resource_missing'::text, 'observer_unsupported'::text, 'provider_unavailable'::text, 'backend_unavailable'::text, 'observation_invalid'::text, 'spec_mismatch'::text, 'provider_failed'::text]))),
+    CONSTRAINT managed_postgres_health_provider_resource_id_check CHECK ((length(provider_resource_id) > 0)),
+    CONSTRAINT managed_postgres_health_provider_status_check CHECK ((provider_status = ANY (ARRAY['unknown'::text, 'missing'::text, 'pending'::text, 'ready'::text, 'deleting'::text, 'failed'::text])))
+);
+
+
+--
 -- Name: managed_postgres_usage; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -12319,6 +12351,14 @@ ALTER TABLE ONLY public.managed_postgres_databases
 
 
 --
+-- Name: managed_postgres_health managed_postgres_health_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_health
+    ADD CONSTRAINT managed_postgres_health_pkey PRIMARY KEY (database_id);
+
+
+--
 -- Name: managed_postgres_usage_coverage managed_postgres_usage_coverage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -16570,6 +16610,20 @@ CREATE INDEX managed_postgres_databases_reconcile_idx ON public.managed_postgres
 --
 
 CREATE INDEX managed_postgres_databases_restore_source_idx ON public.managed_postgres_databases USING btree (restore_source_database_id) WHERE (restore_source_database_id IS NOT NULL);
+
+
+--
+-- Name: managed_postgres_health_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_postgres_health_account_idx ON public.managed_postgres_health USING btree (account_id);
+
+
+--
+-- Name: managed_postgres_health_next_check_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_postgres_health_next_check_idx ON public.managed_postgres_health USING btree (next_check_at, database_id);
 
 
 --
@@ -21325,6 +21379,22 @@ ALTER TABLE ONLY public.managed_postgres_databases
 
 ALTER TABLE ONLY public.managed_postgres_databases
     ADD CONSTRAINT managed_postgres_restore_source_database_fk FOREIGN KEY (restore_source_database_id) REFERENCES public.managed_postgres_databases(id);
+
+
+--
+-- Name: managed_postgres_health managed_postgres_health_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_health
+    ADD CONSTRAINT managed_postgres_health_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_health managed_postgres_health_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_health
+    ADD CONSTRAINT managed_postgres_health_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
 
 
 --

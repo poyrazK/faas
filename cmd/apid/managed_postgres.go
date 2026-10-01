@@ -17,21 +17,21 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *slog.Logger, registerers ...prometheus.Registerer) (*managedpostgres.Service, *managedpostgres.Reconciler, *managedpostgres.BindingService, *managedpostgres.BindingReconciler, *managedpostgres.UsageCollector, error) {
+func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *slog.Logger, registerers ...prometheus.Registerer) (*managedpostgres.Service, *managedpostgres.Reconciler, *managedpostgres.BindingService, *managedpostgres.BindingReconciler, *managedpostgres.UsageCollector, *managedpostgres.HealthCollector, error) {
 	registry, err := managedpostgres.Load(getenv, map[string]managedpostgres.Factory{"neon": neon.New})
 	if err != nil || registry == nil {
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 	store, err := managedpostgres.NewPostgresStore(pool)
 	if err != nil {
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 	accountStore := state.NewPgStore(pool)
 	var metrics *managedpostgres.Metrics
 	if len(registerers) > 0 {
 		metrics, err = managedpostgres.NewMetrics(registerers[0], "apid", registry.UsagePolicy().Enabled)
 		if err != nil {
-			return nil, nil, nil, nil, nil, err
+			return nil, nil, nil, nil, nil, nil, err
 		}
 	}
 	usageOptions := managedpostgres.UsageCollectorOptions{Logger: log}
@@ -41,7 +41,7 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 	}
 	usageCollector, err := managedpostgres.NewUsageCollector(registry, store, usageOptions)
 	if err != nil {
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 	baseProvisioningGate := managedpostgres.NewStagingProvisioningGate(registry, getenv, time.Now)
 	provisioningGate := func() bool {
@@ -104,7 +104,7 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 		},
 	})
 	if err != nil {
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 	reconciler, err := managedpostgres.NewReconciler(service, managedpostgres.ReconcilerOptions{
 		IncludeProvisioning: provisioningGate,
@@ -116,7 +116,7 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 		Logger: log,
 	})
 	if err != nil {
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 	secretSink, err := newAppSecretCredentialSink(
 		accountStore,
@@ -134,14 +134,14 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 		},
 	)
 	if err != nil {
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 	bindingService, err := managedpostgres.NewBindingService(registry, store, store, secretSink, managedpostgres.BindingServiceOptions{
 		ProvisioningEnabled: provisioningGate,
 		ProvisioningAllowed: provisioningAllowed,
 	})
 	if err != nil {
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 	bindingReconciler, err := managedpostgres.NewBindingReconciler(bindingService, managedpostgres.BindingReconcilerOptions{
 		IncludeProvisioning: provisioningGate,
@@ -153,9 +153,21 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 		Logger: log,
 	})
 	if err != nil {
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
-	return service, reconciler, bindingService, bindingReconciler, usageCollector, nil
+	healthOptions := managedpostgres.HealthCollectorOptions{Logger: log}
+	if len(registerers) > 0 {
+		healthMetrics, metricsErr := managedpostgres.NewHealthMetrics(registerers[0], "apid", registry.HealthPolicy())
+		if metricsErr != nil {
+			return nil, nil, nil, nil, nil, nil, metricsErr
+		}
+		healthOptions.Observe, healthOptions.ObserveSweep = healthMetrics.Observe, healthMetrics.ObserveSweep
+	}
+	healthCollector, err := managedpostgres.NewHealthCollector(registry, store, healthOptions)
+	if err != nil {
+		return nil, nil, nil, nil, nil, nil, err
+	}
+	return service, reconciler, bindingService, bindingReconciler, usageCollector, healthCollector, nil
 }
 
 // managedPostgresUsageCeilings converts customer-facing storage entitlements
@@ -178,12 +190,13 @@ func managedPostgresUsageCeilings(limits api.ManagedPostgresPlanLimits) managedp
 	return managedpostgres.UsageCeilings{MaxMonthlyStorageByteSeconds: accountStorageBytes * secondsPerBillingMonth}
 }
 
-func (s *server) WithManagedPostgres(service *managedpostgres.Service, reconciler *managedpostgres.Reconciler, bindingService *managedpostgres.BindingService, bindingReconciler *managedpostgres.BindingReconciler, usageCollector *managedpostgres.UsageCollector) *server {
+func (s *server) WithManagedPostgres(service *managedpostgres.Service, reconciler *managedpostgres.Reconciler, bindingService *managedpostgres.BindingService, bindingReconciler *managedpostgres.BindingReconciler, usageCollector *managedpostgres.UsageCollector, healthCollector *managedpostgres.HealthCollector) *server {
 	s.managedPostgres = service
 	s.managedPostgresReconciler = reconciler
 	s.managedPostgresBindings = bindingService
 	s.managedPostgresBindingReconciler = bindingReconciler
 	s.managedPostgresUsageCollector = usageCollector
+	s.managedPostgresHealthCollector = healthCollector
 	return s
 }
 

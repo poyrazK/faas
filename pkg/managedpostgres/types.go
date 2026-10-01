@@ -624,6 +624,8 @@ type RestoreDataProber interface {
 }
 
 type Database struct {
+	// Health is a non-persistent read projection populated by Service.Get/List.
+	Health                  *HealthSummary
 	ID                      string
 	AccountID               string
 	Name                    string

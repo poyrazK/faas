@@ -63,6 +63,7 @@ type server struct {
 	managedPostgresBindings          *managedpostgres.BindingService
 	managedPostgresBindingReconciler *managedpostgres.BindingReconciler
 	managedPostgresUsageCollector    *managedpostgres.UsageCollector
+	managedPostgresHealthCollector   *managedpostgres.HealthCollector
 	store                            state.Store
 	domainVerificationMetrics        *domainVerificationMetrics
 	log                              *slog.Logger

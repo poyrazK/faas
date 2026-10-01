@@ -820,6 +820,94 @@ func (q *Queries) ClaimManagedPostgresBindingRetirement(ctx context.Context, db 
 	return i, err
 }
 
+const claimManagedPostgresHealthCheck = `-- name: ClaimManagedPostgresHealthCheck :one
+WITH candidate AS (
+ SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time FROM managed_postgres_databases d
+ LEFT JOIN managed_postgres_health h ON h.database_id = d.id
+ WHERE d.state = 'ready' AND d.provider_resource_id IS NOT NULL
+ AND (h.database_id IS NULL OR h.next_check_at <= $1::timestamptz
+  OR h.provider_resource_id <> d.provider_resource_id OR h.backend_fingerprint <> d.backend_fingerprint
+  OR h.backend_id <> d.backend_id OR h.desired_generation <> d.desired_generation)
+ AND (h.lease_until IS NULL OR h.lease_until <= $1)
+ ORDER BY coalesce(h.next_check_at, d.created_at), d.id
+ LIMIT 1 FOR UPDATE OF d SKIP LOCKED
+), claimed AS (
+ INSERT INTO managed_postgres_health AS h
+ (database_id, account_id, backend_id, backend_fingerprint, provider_resource_id, desired_generation, next_check_at, lease_token, lease_until)
+ SELECT id, account_id, backend_id, backend_fingerprint, provider_resource_id, desired_generation,
+ $1, $2::text, $3::timestamptz FROM candidate
+ ON CONFLICT (database_id) DO UPDATE SET
+ account_id = EXCLUDED.account_id, backend_id = EXCLUDED.backend_id,
+ backend_fingerprint = EXCLUDED.backend_fingerprint, provider_resource_id = EXCLUDED.provider_resource_id,
+ desired_generation = EXCLUDED.desired_generation, next_check_at = EXCLUDED.next_check_at,
+ lease_token = EXCLUDED.lease_token, lease_until = EXCLUDED.lease_until,
+ provider_status = CASE WHEN (h.backend_id,h.backend_fingerprint,h.provider_resource_id,h.desired_generation)
+  IS DISTINCT FROM (EXCLUDED.backend_id,EXCLUDED.backend_fingerprint,EXCLUDED.provider_resource_id,EXCLUDED.desired_generation) THEN 'unknown' ELSE h.provider_status END,
+ compute_state = CASE WHEN (h.backend_id,h.backend_fingerprint,h.provider_resource_id,h.desired_generation)
+  IS DISTINCT FROM (EXCLUDED.backend_id,EXCLUDED.backend_fingerprint,EXCLUDED.provider_resource_id,EXCLUDED.desired_generation) THEN 'unknown' ELSE h.compute_state END,
+ checked_at = CASE WHEN (h.backend_id,h.backend_fingerprint,h.provider_resource_id,h.desired_generation)
+  IS DISTINCT FROM (EXCLUDED.backend_id,EXCLUDED.backend_fingerprint,EXCLUDED.provider_resource_id,EXCLUDED.desired_generation) THEN NULL ELSE h.checked_at END,
+ last_success_at = CASE WHEN (h.backend_id,h.backend_fingerprint,h.provider_resource_id,h.desired_generation)
+  IS DISTINCT FROM (EXCLUDED.backend_id,EXCLUDED.backend_fingerprint,EXCLUDED.provider_resource_id,EXCLUDED.desired_generation) THEN NULL ELSE h.last_success_at END,
+ last_error_code = CASE WHEN (h.backend_id,h.backend_fingerprint,h.provider_resource_id,h.desired_generation)
+  IS DISTINCT FROM (EXCLUDED.backend_id,EXCLUDED.backend_fingerprint,EXCLUDED.provider_resource_id,EXCLUDED.desired_generation) THEN NULL ELSE h.last_error_code END,
+ attempt_count = CASE WHEN (h.backend_id,h.backend_fingerprint,h.provider_resource_id,h.desired_generation)
+  IS DISTINCT FROM (EXCLUDED.backend_id,EXCLUDED.backend_fingerprint,EXCLUDED.provider_resource_id,EXCLUDED.desired_generation) THEN 0 ELSE h.attempt_count END
+ WHERE h.lease_until IS NULL OR h.lease_until <= $1
+ RETURNING database_id, attempt_count
+)
+SELECT d.id::text AS id, d.account_id::text AS account_id, d.backend_id, d.backend_fingerprint,
+ d.provider_resource_id::text AS provider_resource_id, d.desired_generation,
+ d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes,
+ d.restore_window_seconds, c.attempt_count
+FROM candidate d JOIN claimed c ON c.database_id = d.id
+`
+
+type ClaimManagedPostgresHealthCheckParams struct {
+	Now        pgtype.Timestamptz
+	LeaseToken string
+	LeaseUntil pgtype.Timestamptz
+}
+
+type ClaimManagedPostgresHealthCheckRow struct {
+	ID                   string
+	AccountID            string
+	BackendID            string
+	BackendFingerprint   string
+	ProviderResourceID   string
+	DesiredGeneration    int64
+	Region               string
+	PostgresMajor        int16
+	ServiceClass         string
+	Availability         string
+	ScaleToZero          bool
+	StorageLimitBytes    int64
+	RestoreWindowSeconds int64
+	AttemptCount         int32
+}
+
+func (q *Queries) ClaimManagedPostgresHealthCheck(ctx context.Context, db DBTX, arg ClaimManagedPostgresHealthCheckParams) (ClaimManagedPostgresHealthCheckRow, error) {
+	row := db.QueryRow(ctx, claimManagedPostgresHealthCheck, arg.Now, arg.LeaseToken, arg.LeaseUntil)
+	var i ClaimManagedPostgresHealthCheckRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.ProviderResourceID,
+		&i.DesiredGeneration,
+		&i.Region,
+		&i.PostgresMajor,
+		&i.ServiceClass,
+		&i.Availability,
+		&i.ScaleToZero,
+		&i.StorageLimitBytes,
+		&i.RestoreWindowSeconds,
+		&i.AttemptCount,
+	)
+	return i, err
+}
+
 const claimTriggerRecords = `-- name: ClaimTriggerRecords :many
 WITH due AS MATERIALIZED (
     SELECT candidate.id FROM trigger_records candidate
@@ -1011,6 +1099,49 @@ func (q *Queries) CountDeployedApps(ctx context.Context, db DBTX, accountID pgty
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const countManagedPostgresHealth = `-- name: CountManagedPostgresHealth :one
+WITH statuses AS (
+ SELECT CASE
+ WHEN h.checked_at IS NULL AND d.created_at >= $1::timestamptz THEN 'unknown'
+ WHEN h.checked_at IS NULL OR h.checked_at < $1 OR h.checked_at > $2::timestamptz THEN 'stale'
+ WHEN h.last_error_code IS NOT NULL OR h.provider_status <> 'ready' OR h.compute_state = 'unknown' THEN 'degraded'
+ ELSE 'healthy' END AS status
+ FROM managed_postgres_databases d LEFT JOIN managed_postgres_health h ON h.database_id = d.id
+ AND h.account_id = d.account_id
+ AND (d.backend_id,d.backend_fingerprint,d.provider_resource_id,d.desired_generation)
+ = (h.backend_id,h.backend_fingerprint,h.provider_resource_id,h.desired_generation)
+ WHERE d.state = 'ready'
+)
+SELECT count(*) FILTER (WHERE status='healthy') AS healthy,
+ count(*) FILTER (WHERE status='degraded') AS degraded,
+ count(*) FILTER (WHERE status='unknown') AS unknown,
+ count(*) FILTER (WHERE status='stale') AS stale FROM statuses
+`
+
+type CountManagedPostgresHealthParams struct {
+	Cutoff pgtype.Timestamptz
+	Now    pgtype.Timestamptz
+}
+
+type CountManagedPostgresHealthRow struct {
+	Healthy  int64
+	Degraded int64
+	Unknown  int64
+	Stale    int64
+}
+
+func (q *Queries) CountManagedPostgresHealth(ctx context.Context, db DBTX, arg CountManagedPostgresHealthParams) (CountManagedPostgresHealthRow, error) {
+	row := db.QueryRow(ctx, countManagedPostgresHealth, arg.Cutoff, arg.Now)
+	var i CountManagedPostgresHealthRow
+	err := row.Scan(
+		&i.Healthy,
+		&i.Degraded,
+		&i.Unknown,
+		&i.Stale,
+	)
+	return i, err
 }
 
 const countOpenUploadSessionsByAccountApp = `-- name: CountOpenUploadSessionsByAccountApp :one
@@ -4288,6 +4419,53 @@ func (q *Queries) FinishManagedPostgresBindingProvision(ctx context.Context, db 
 		&i.DeletedAt,
 	)
 	return i, err
+}
+
+const finishManagedPostgresHealthCheck = `-- name: FinishManagedPostgresHealthCheck :execrows
+WITH target AS (
+ SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time FROM managed_postgres_databases d
+ WHERE d.id = $7::text::uuid AND d.state = 'ready' FOR SHARE
+)
+UPDATE managed_postgres_health h SET
+ provider_status = $1::text, compute_state = $2::text,
+ checked_at = $3::timestamptz,
+ last_success_at = CASE WHEN $4::boolean THEN $3 ELSE h.last_success_at END,
+ last_error_code = nullif($5::text, ''), next_check_at = $6::timestamptz,
+ attempt_count = CASE WHEN $4 THEN 0 ELSE least(h.attempt_count + 1,20) END,
+ lease_token = NULL, lease_until = NULL
+FROM target d
+WHERE h.database_id = $7::text::uuid AND h.database_id = d.id AND d.state = 'ready'
+ AND h.lease_token = $8::text AND h.lease_until > $3
+ AND (d.account_id,d.backend_id,d.backend_fingerprint,d.provider_resource_id,d.desired_generation)
+ = (h.account_id,h.backend_id,h.backend_fingerprint,h.provider_resource_id,h.desired_generation)
+`
+
+type FinishManagedPostgresHealthCheckParams struct {
+	ProviderStatus string
+	ComputeState   string
+	CheckedAt      pgtype.Timestamptz
+	Succeeded      bool
+	ErrorCode      string
+	NextCheckAt    pgtype.Timestamptz
+	DatabaseID     string
+	LeaseToken     string
+}
+
+func (q *Queries) FinishManagedPostgresHealthCheck(ctx context.Context, db DBTX, arg FinishManagedPostgresHealthCheckParams) (int64, error) {
+	result, err := db.Exec(ctx, finishManagedPostgresHealthCheck,
+		arg.ProviderStatus,
+		arg.ComputeState,
+		arg.CheckedAt,
+		arg.Succeeded,
+		arg.ErrorCode,
+		arg.NextCheckAt,
+		arg.DatabaseID,
+		arg.LeaseToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const getAppErrorSample = `-- name: GetAppErrorSample :one
@@ -14139,6 +14317,57 @@ func (q *Queries) ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg
 	var i ReadAccountCreditConsumptionRow
 	err := row.Scan(&i.ConsumedCents, &i.HasPrior, &i.HasUnqualified)
 	return i, err
+}
+
+const readManagedPostgresHealthSnapshots = `-- name: ReadManagedPostgresHealthSnapshots :many
+SELECT h.database_id::text AS database_id, h.provider_status, h.compute_state,
+ h.checked_at, h.last_success_at, coalesce(h.last_error_code,'')::text AS last_error_code
+FROM managed_postgres_health h JOIN managed_postgres_databases d ON d.id = h.database_id
+WHERE d.account_id = $1::text::uuid AND h.account_id = d.account_id AND d.state = 'ready'
+ AND h.database_id::text = ANY($2::text[])
+ AND (d.backend_id,d.backend_fingerprint,d.provider_resource_id,d.desired_generation)
+ = (h.backend_id,h.backend_fingerprint,h.provider_resource_id,h.desired_generation)
+`
+
+type ReadManagedPostgresHealthSnapshotsParams struct {
+	AccountID   string
+	DatabaseIds []string
+}
+
+type ReadManagedPostgresHealthSnapshotsRow struct {
+	DatabaseID     string
+	ProviderStatus string
+	ComputeState   string
+	CheckedAt      pgtype.Timestamptz
+	LastSuccessAt  pgtype.Timestamptz
+	LastErrorCode  string
+}
+
+func (q *Queries) ReadManagedPostgresHealthSnapshots(ctx context.Context, db DBTX, arg ReadManagedPostgresHealthSnapshotsParams) ([]ReadManagedPostgresHealthSnapshotsRow, error) {
+	rows, err := db.Query(ctx, readManagedPostgresHealthSnapshots, arg.AccountID, arg.DatabaseIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadManagedPostgresHealthSnapshotsRow{}
+	for rows.Next() {
+		var i ReadManagedPostgresHealthSnapshotsRow
+		if err := rows.Scan(
+			&i.DatabaseID,
+			&i.ProviderStatus,
+			&i.ComputeState,
+			&i.CheckedAt,
+			&i.LastSuccessAt,
+			&i.LastErrorCode,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const readProjectReleaseSet = `-- name: ReadProjectReleaseSet :one

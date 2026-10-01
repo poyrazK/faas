@@ -11,6 +11,43 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+// adr: 389 — customer health survives safe CLI decoding in both formats.
+func TestCmdPostgresGetHealth(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/postgres/databases/db-1" {
+			t.Errorf("request = %s %s", r.Method, r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"id":"db-1","name":"orders","state":"ready","provider_resource_id":"private-upstream","connection_url":"private-password","health":{"enabled":true,"status":"degraded","fresh":true,"provider_status":"missing","compute_state":"unknown","checked_at":"2026-10-01T12:00:00Z","last_success_at":"2026-10-01T11:00:00Z","last_error_code":"resource_missing","stale_after_seconds":300}}`))
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	previousOut, previousJSON := osStdout, jsonOutput
+	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+	for _, asJSON := range []bool{true, false} {
+		var out bytes.Buffer
+		osStdout, jsonOutput = &out, asJSON
+		if code := cmdPostgresGet([]string{"db-1"}); code != 0 {
+			t.Fatalf("exit = %d", code)
+		}
+		if strings.Contains(out.String(), "private-") {
+			t.Fatal("CLI exposed private provider material")
+		}
+		if asJSON {
+			var database api.ManagedPostgresDatabase
+			if err := json.Unmarshal(out.Bytes(), &database); err != nil || database.Health == nil || database.Health.Status != "degraded" || database.Health.LastErrorCode != "resource_missing" {
+				t.Fatalf("health JSON: %s %v", out.String(), err)
+			}
+		} else {
+			for _, value := range []string{"provider_health:", "degraded", "compute_state:", "unknown", "health_checked:", "health_success:", "resource_missing"} {
+				if !strings.Contains(out.String(), value) {
+					t.Fatalf("human health output missing %q: %s", value, out.String())
+				}
+			}
+		}
+	}
+}
+
 func TestCmdPostgresListJSONUsesSafeEnvelope(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/postgres/databases" {

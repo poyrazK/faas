@@ -1006,6 +1006,11 @@ from .managed_postgres_database_availability import ManagedPostgresDatabaseAvail
 from .managed_postgres_database_list import ManagedPostgresDatabaseList
 from .managed_postgres_database_service_class import ManagedPostgresDatabaseServiceClass
 from .managed_postgres_database_state import ManagedPostgresDatabaseState
+from .managed_postgres_health import ManagedPostgresHealth
+from .managed_postgres_health_compute_state import ManagedPostgresHealthComputeState
+from .managed_postgres_health_last_error_code import ManagedPostgresHealthLastErrorCode
+from .managed_postgres_health_provider_status import ManagedPostgresHealthProviderStatus
+from .managed_postgres_health_status import ManagedPostgresHealthStatus
 from .managed_postgres_usage_line_item import ManagedPostgresUsageLineItem
 from .managed_postgres_usage_line_item_code import ManagedPostgresUsageLineItemCode
 from .managed_postgres_usage_operator_response import ManagedPostgresUsageOperatorResponse
@@ -2955,6 +2960,11 @@ __all__ = (
     "ManagedPostgresDatabaseList",
     "ManagedPostgresDatabaseServiceClass",
     "ManagedPostgresDatabaseState",
+    "ManagedPostgresHealth",
+    "ManagedPostgresHealthComputeState",
+    "ManagedPostgresHealthLastErrorCode",
+    "ManagedPostgresHealthProviderStatus",
+    "ManagedPostgresHealthStatus",
     "ManagedPostgresUsageLineItem",
     "ManagedPostgresUsageLineItemCode",
     "ManagedPostgresUsageOperatorResponse",

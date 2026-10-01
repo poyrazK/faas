@@ -2356,6 +2356,24 @@ type ManagedPostgresDatabase struct {
 	RestorePointInTime      pgtype.Timestamptz
 }
 
+type ManagedPostgresHealth struct {
+	DatabaseID         pgtype.UUID
+	AccountID          pgtype.UUID
+	BackendID          string
+	BackendFingerprint string
+	ProviderResourceID string
+	DesiredGeneration  int64
+	ProviderStatus     string
+	ComputeState       string
+	CheckedAt          pgtype.Timestamptz
+	LastSuccessAt      pgtype.Timestamptz
+	LastErrorCode      pgtype.Text
+	NextCheckAt        pgtype.Timestamptz
+	LeaseToken         pgtype.Text
+	LeaseUntil         pgtype.Timestamptz
+	AttemptCount       int32
+}
+
 type ManagedPostgresUsage struct {
 	AccountID          pgtype.UUID
 	DatabaseID         pgtype.UUID

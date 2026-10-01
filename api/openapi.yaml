@@ -23874,6 +23874,7 @@ components:
       type: object
       required: [id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, state, created_at, updated_at]
       properties:
+        health: { $ref: '#/components/schemas/ManagedPostgresHealth' }
         id: { type: string, minLength: 1, maxLength: 128 }
         name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
         region: { type: string }
@@ -23896,6 +23897,20 @@ components:
       required: [items]
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/ManagedPostgresDatabase' } }
+    ManagedPostgresHealth:
+      description: Cached read-only provider observation, separate from lifecycle state. Healthy does not prove SQL connectivity. Failed checks update checked_at while retaining last_success_at; stale observations must not imply current availability.
+      type: object
+      required: [enabled, status, fresh, provider_status, compute_state, stale_after_seconds]
+      properties:
+        enabled: { type: boolean }
+        status: { type: string, enum: [disabled, unknown, healthy, degraded, stale] }
+        fresh: { type: boolean }
+        provider_status: { type: string, enum: [unknown, missing, pending, ready, deleting, failed] }
+        compute_state: { type: string, enum: [unknown, active, suspended, waking] }
+        stale_after_seconds: { type: integer, format: int64, minimum: 0 }
+        checked_at: { type: string, format: date-time, description: "Latest metadata attempt, including provider request failures." }
+        last_success_at: { type: string, format: date-time, description: "Latest valid metadata response, including responses describing degraded resources." }
+        last_error_code: { type: string, enum: [resource_missing, observer_unsupported, provider_unavailable, backend_unavailable, observation_invalid, spec_mismatch, provider_failed] }
     ManagedPostgresUsageResponse:
       description: Customer-safe current UTC-month managed PostgreSQL usage and guardrail state.
       type: object

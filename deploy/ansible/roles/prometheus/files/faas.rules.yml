@@ -3562,6 +3562,49 @@ groups:
           description: "At least one managed PostgreSQL usage sweep was degraded or failed during the last 15m. The collector preserves complete-window accounting and leaves incomplete resources for retry; inspect deferred counts before changing COGS ceilings."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md"
 
+      # Each replica reports the whole catalog. max avoids counting tenants twice.
+      - alert: FaasManagedPostgresHealthDegraded
+        expr: max(apid_managed_postgres_health_databases{status="degraded"} and on(job, instance) (apid_managed_postgres_health_enabled == 1)) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: managed_postgres
+        annotations:
+          summary: "Managed PostgreSQL provider health is degraded"
+          description: "At least one ready database has a fresh provider failure, missing resource, or specification mismatch. Inspect cached customer health and provider metadata; suspended compute is healthy and health collection never opens SQL connections or repairs resources."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md"
+
+      - alert: FaasManagedPostgresHealthStale
+        expr: max(apid_managed_postgres_health_databases{status="stale"} and on(job, instance) (apid_managed_postgres_health_enabled == 1)) > 0
+        for: 10m
+        labels:
+          severity: warn
+          component: apid
+          family: managed_postgres
+        annotations:
+          summary: "Managed PostgreSQL health observations are stale"
+          description: "At least one ready database has no recent metadata check. Check collector capacity, provider backoff, and apid catalog connectivity before relying on cached health."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md"
+
+      - alert: FaasManagedPostgresHealthCollectorStalled
+        expr: |
+          apid_managed_postgres_health_enabled == 1
+          and
+          (
+            apid_managed_postgres_health_last_sweep_timestamp_seconds == 0
+            or time() - apid_managed_postgres_health_last_sweep_timestamp_seconds > apid_managed_postgres_health_stale_after_seconds
+          )
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: managed_postgres
+        annotations:
+          summary: "Managed PostgreSQL health collector is stalled"
+          description: "An enabled apid health collector has not completed a catalog sweep within its freshness window. Check apid logs and catalog connectivity; provider failures are recorded as degraded checks and do not stop successful sweeps."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md"
+
   - name: faas_stale_deployments
     interval: 30s
     rules:
