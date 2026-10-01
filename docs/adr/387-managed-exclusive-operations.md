@@ -1,4 +1,4 @@
-# ADR-385 · Managed exclusive operations
+# ADR-387 · Managed exclusive operations
 
 - **Status:** implementation in progress; internal until all acceptance gates pass
 - **Date:** 2026-09-30

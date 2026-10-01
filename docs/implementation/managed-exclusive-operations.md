@@ -1,7 +1,7 @@
 # Managed exclusive operations implementation
 
 Working branch: `codex/exclusive-operations-01a0f345`.
-Contract: [ADR-385](../adr/385-managed-exclusive-operations.md).
+Contract: [ADR-387](../adr/387-managed-exclusive-operations.md).
 
 The feature contract and database acceptance checklist:
 
