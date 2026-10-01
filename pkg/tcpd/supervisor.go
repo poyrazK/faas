@@ -25,6 +25,7 @@ type EnabledListenerSource interface {
 // control plane has enabled its listener, so disabled/deleted endpoints fail
 // closed without requiring a process restart.
 type Supervisor struct {
+	Certificates    CertificateProvider
 	BindHost        string
 	Source          EnabledListenerSource
 	Routes          RouteResolver
@@ -173,6 +174,7 @@ func (s *Supervisor) Serve(ctx context.Context) error {
 				Routes:          s.Routes,
 				Targets:         s.Targets,
 				Forwarder:       s.Forwarder,
+				Certificates:    s.Certificates,
 				Limiter:         limiter,
 				Metrics:         s.Metrics,
 				MaxConnections:  s.MaxConnections,

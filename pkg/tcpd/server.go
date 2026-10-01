@@ -21,13 +21,14 @@ type Forwarder interface {
 // and forwards them to a selected workload instance.
 type Server struct {
 	// BoundRoute identifies the intent for which a supervised socket was bound.
-	BoundRoute *Route
-	Listener   net.Listener
-	Routes     RouteResolver
-	Targets    TargetResolver
-	Forwarder  Forwarder
-	Limiter    *ConnectionLimiter
-	Metrics    *tcpmetrics.Metrics
+	BoundRoute   *Route
+	Listener     net.Listener
+	Routes       RouteResolver
+	Targets      TargetResolver
+	Forwarder    Forwarder
+	Limiter      *ConnectionLimiter
+	Metrics      *tcpmetrics.Metrics
+	Certificates CertificateProvider
 
 	// MaxConnections bounds concurrent sessions. Zero means unlimited.
 	MaxConnections int
@@ -174,6 +175,14 @@ func (s *Server) handle(ctx context.Context, conn net.Conn, session *tcpmetrics.
 			return fmt.Errorf("%w for %q", ErrConnectionLimit, key)
 		}
 		defer release()
+	}
+	if route.TLSHostname != "" {
+		secure, err := TerminateTLS(ctx, conn, route.TLSHostname, s.Certificates)
+		if err != nil {
+			session.Reject("tls_handshake")
+			return err
+		}
+		conn = secure
 	}
 	target, err := s.Targets.ResolveTarget(ctx, route)
 	if err != nil {

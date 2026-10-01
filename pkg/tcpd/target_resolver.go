@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/ingressroute"
 	"math/rand/v2"
 	"sync"
@@ -15,6 +16,7 @@ import (
 // InstanceSource is the authoritative instance projection needed by the raw
 // TCP edge. Keeping it narrow lets tcpd use either PgStore or MemStore.
 type InstanceSource interface {
+	DomainByName(context.Context, string) (state.CustomDomain, error)
 	AppByID(context.Context, string) (state.App, error)
 	TCPListenerByAppAndName(context.Context, string, string) (state.TCPListener, error)
 	LiveDeployments(context.Context, string) ([]state.Deployment, error)
@@ -69,6 +71,19 @@ func (r *StoreTargetResolver) ResolveTarget(ctx context.Context, route Route) (g
 	if intent.ID != route.ListenerID || !intent.Enabled || intent.AppID != route.AppID || intent.AccountID != app.AccountID ||
 		intent.PublicPort != route.PublicPort || intent.GuestPort != route.GuestPort || intent.Protocol != "tcp" {
 		return gateway.Target{}, errors.New("TCP listener is disabled or changed")
+	}
+	policy, err := (api.TCPListenerTLSConfig{Mode: intent.TLSMode, Hostname: intent.TLSHostname}).Normalize()
+	if err != nil || policy.Hostname != route.TLSHostname {
+		return gateway.Target{}, errors.New("TCP listener TLS intent is invalid or changed")
+	}
+	if policy.Mode == api.TCPListenerTLSTerminate {
+		domain, err := r.Instances.DomainByName(ctx, policy.Hostname)
+		if err != nil {
+			return gateway.Target{}, errors.New("TCP TLS domain unavailable")
+		}
+		if err := state.ValidateTCPListenerTLSDomain(route.AppID, policy.Hostname, domain); err != nil {
+			return gateway.Target{}, err
+		}
 	}
 	selectedDeploymentID, err := ingressroute.Deployment(ctx, r.Instances, route.AppID, rand.Uint64())
 	if err != nil {
