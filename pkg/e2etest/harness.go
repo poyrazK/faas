@@ -205,11 +205,7 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv ...string) *H
 	// can exceed sun_path's 104-byte cap. /tmp is short and stable on
 	// every runner; we own the directory exclusively so cleanup is just
 	// an os.RemoveAll (registered via t.Cleanup).
-	sockDir, err := os.MkdirTemp("", "faas-e2e-sock-*")
-	if err != nil {
-		t.Fatalf("e2etest: mkdir sock dir: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
+	sockDir := newHarnessSocketDir(t)
 
 	h := &Harness{T: t, Pool: pool, TmpDir: tmp, BinDir: bin, ImagedTmp: appsRoot, SockDir: sockDir, RecoveryHMACKeyHex: newRecoveryHMACKeyHex(t), HostHMACKeyPath: newHostHMACKeyFile(t, tmp)}
 	currentHarness = h
@@ -719,11 +715,7 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 	extraEnv = append([]string{"FAAS_APPS_ROOT=" + appsRoot}, extraEnv...)
 	// See Start for why sockDir lives outside t.TempDir() — macOS sun_path
 	// limit, and `/tmp/faas-e2e-sock-*` is short and stable everywhere.
-	sockDir, err := os.MkdirTemp("", "faas-e2e-sock-*")
-	if err != nil {
-		t.Fatalf("e2etest: mkdir sock dir: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
+	sockDir := newHarnessSocketDir(t)
 	h := &Harness{T: t, Pool: pool, TmpDir: tmp, BinDir: bin, ImagedTmp: appsRoot, SockDir: sockDir, RecoveryHMACKeyHex: newRecoveryHMACKeyHex(t), HostHMACKeyPath: newHostHMACKeyFile(t, tmp)}
 	currentHarness = h
 	if which&Gatewayd != 0 {
