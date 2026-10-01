@@ -102,11 +102,56 @@ func cmdCronsRuns(args []string) int {
 	return 0
 }
 
+func cmdCronsOccurrences(args []string) int {
+	fs := newFlagSet("crons-occurrences", flag.ContinueOnError)
+	before := fs.String("before", "", "pagination cursor (last occurrence id of the prior page)")
+	limit := fs.Int("limit", 50, "max occurrence decisions (1..200)")
+	flags, pos := splitArgsForFlags(args)
+	if err := fs.Parse(flags); err != nil {
+		return 1
+	}
+	if len(pos) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: gregale crons occurrences <id> [--before C] [--limit N]")
+		return 1
+	}
+	if err := validateCLILimit("limit", *limit, 200); err != nil {
+		fmt.Fprintln(os.Stderr, "usage: gregale crons occurrences <id> [--before C] [--limit N] (1 <= N <= 200)")
+		return 1
+	}
+	id := pos[0]
+	if !cronIDPattern.MatchString(id) {
+		fmt.Fprintln(os.Stderr, "usage: gregale crons occurrences <id> [--before C] [--limit N]")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	page, err := client.ListCronScheduleOccurrences(context.Background(), id, *limit, *before)
+	if err != nil {
+		return printErr("Could not list cron occurrences", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(page))
+	}
+	renderScheduleOccurrences(osStdout, page.Occurrences)
+	if page.NextBefore != "" {
+		_, _ = fmt.Fprintf(osStdout, "next page: gregale crons occurrences %s --before %s\n", id, page.NextBefore)
+	}
+	return 0
+}
+
 func renderCronCommandRunDetails(stdout, stderr io.Writer, task api.AppTaskResponse) {
 	_, _ = fmt.Fprintf(stdout, "task: %s\nstatus: %s\ndeployment: %s\nattempts: %d/%d\n",
 		task.ID, task.Status, task.DeploymentID, task.AttemptCount, task.RetryMax+1)
 	if task.ExitCode != nil {
 		_, _ = fmt.Fprintf(stdout, "exit_code: %d\n", *task.ExitCode)
+	}
+	if task.OutcomeCode != "" {
+		_, _ = fmt.Fprintf(stdout, "outcome_code: %s\n", task.OutcomeCode)
+	}
+	if task.WorkDecision != nil {
+		_, _ = fmt.Fprintf(stdout, "work_decision: %s/%s (%s)\n", task.WorkDecision.Classification, task.WorkDecision.Action, task.WorkDecision.Reason)
 	}
 	if task.RetryAt != nil {
 		_, _ = fmt.Fprintf(stdout, "retry_at: %s\n", *task.RetryAt)
