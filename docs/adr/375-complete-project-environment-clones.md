@@ -1459,3 +1459,45 @@ Selected API/CLI, scope, idempotency and generated-reference contracts pass.
 OpenAPI lint passes with warnings, the Node SDK builds, and nine selected Python
 SDK contracts pass. These local gates do not establish full native/provider
 acceptance or complete configuration coverage.
+
+### 2026-10-01: atomic preparation of owned queue consumers
+
+A stage deployment can prepare its complete pinned queue collection through
+`PrepareProjectEnvironmentQueueConsumers`. Preparation verifies the account,
+project, registered environment, active workload, live deployment and immutable
+workload settings. PostgreSQL locks environment ownership before app ownership
+and the deployment; retries serialize on that deployment. The complete parent
+record and all consumer rows commit together. An explicit empty collection gets
+its own record, while an uninitialized collection cannot inherit production.
+
+Each deployment and sibling environment gets fresh physical consumer IDs. A
+retry of the same preparation returns the persisted IDs. Disabled definitions,
+delivery mode, workload class, concurrency and retry policy are preserved. The
+parent authenticates the complete collection revision, count, settings hash and
+logical book hash; every consumer authenticates its definition. Reads reject
+missing children, damaged definitions, unknown fields, altered hashes and
+foreign ownership. A damaged persisted projection cannot be repaired implicitly
+by re-running preparation. Later desired edits retain older deployment settings
+and consumer identities, and the next deployment receives a fresh projection.
+
+The new runtime-set and consumer tables are operational reset boundaries in the
+clone schema registry. Production queue binding rows and triggers are untouched.
+Environment deletion removes prepared consumers with the owned workload specs;
+the existing live-deployment guard still applies. Ordinary workload edits now
+preserve the owned queue collection, including explicit empty collections.
+
+The only supported runtime-set state is `prepared`. Preparation does not admit
+queue messages, activate a worker, reserve account capacity or establish queue
+dispatch isolation. Qualification and clone publication remain unavailable until
+message partitions, producer ownership, quota-aware claims, delivery and recovery
+checks exist. The public queue API continues to report activation as unavailable.
+
+Selected MemStore and migrated PostgreSQL contracts pass for owned/pinned
+preparation, concurrent retries, complete empty collections, new deployment
+identities, configuration edits, environment deletion locks, idle cleanup,
+injected partial-write rollback and damaged/unknown-field rejection. Existing
+queue configuration/capture, invocation ownership/cleanup and migrated schema
+coverage contracts also pass. Independent sqlc regeneration matches the generated
+files and `git diff --check` is clean. These local contracts do not establish
+message dispatch, full configuration coverage, provider copying or native VM
+acceptance.

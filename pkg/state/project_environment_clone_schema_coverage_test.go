@@ -21,6 +21,7 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"managed_realtime_channel_messages": CloneSchemaData, "managed_realtime_channel_heads": CloneSchemaData,
 		"instances": CloneSchemaOperational, "invocations": CloneSchemaOperational, "app_tasks": CloneSchemaOperational,
 		"invocation_work_environment_domains": CloneSchemaOperational, "invocation_work_environment_admissions": CloneSchemaOperational,
+		"project_environment_queue_runtime_sets": CloneSchemaOperational, "project_environment_queue_consumers": CloneSchemaOperational,
 		"accounts": CloneSchemaIdentity, "orgs": CloneSchemaIdentity, "api_keys": CloneSchemaIdentity,
 		"egress_policy": CloneSchemaPlatform, "compute_nodes": CloneSchemaPlatform,
 	}

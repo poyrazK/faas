@@ -2181,6 +2181,32 @@ type ProjectEnvironmentQualification struct {
 	ExpiresAt            pgtype.Timestamptz
 }
 
+type ProjectEnvironmentQueueConsumer struct {
+	ID             pgtype.UUID
+	RuntimeSetID   pgtype.UUID
+	Name           string
+	QueueName      string
+	Definition     []byte
+	DefinitionHash string
+	CreatedAt      pgtype.Timestamptz
+}
+
+type ProjectEnvironmentQueueRuntimeSet struct {
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	ProjectID      pgtype.UUID
+	EnvironmentID  pgtype.UUID
+	AppID          pgtype.UUID
+	DeploymentID   pgtype.UUID
+	WorkloadSpecID pgtype.UUID
+	SettingsHash   string
+	QueueRevision  int64
+	BindingCount   int32
+	BookHash       string
+	State          string
+	CreatedAt      pgtype.Timestamptz
+}
+
 type ProjectEnvironmentRoutePolicy struct {
 	AccountID               pgtype.UUID
 	ProjectID               pgtype.UUID

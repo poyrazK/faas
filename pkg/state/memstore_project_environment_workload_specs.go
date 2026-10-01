@@ -145,6 +145,7 @@ func (m *MemStore) deleteEnvironmentWorkloadSpecsLocked(environmentID string) {
 		for deploymentID, specID := range m.projectEnvironmentWorkloadDeploymentSpecs {
 			if specID == id {
 				delete(m.projectEnvironmentWorkloadDeploymentSpecs, deploymentID)
+				delete(m.projectEnvironmentQueueRuntimeSets, deploymentID)
 			}
 		}
 	}

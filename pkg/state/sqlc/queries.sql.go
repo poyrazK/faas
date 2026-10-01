@@ -5715,6 +5715,77 @@ func (q *Queries) InsertProjectEnvironmentCloneWorkload(ctx context.Context, db 
 	return err
 }
 
+const insertProjectEnvironmentQueueConsumer = `-- name: InsertProjectEnvironmentQueueConsumer :exec
+INSERT INTO project_environment_queue_consumers
+    (id,runtime_set_id,name,queue_name,definition,definition_hash,created_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7)
+`
+
+type InsertProjectEnvironmentQueueConsumerParams struct {
+	ID             pgtype.UUID
+	RuntimeSetID   pgtype.UUID
+	Name           string
+	QueueName      string
+	Definition     []byte
+	DefinitionHash string
+	CreatedAt      pgtype.Timestamptz
+}
+
+func (q *Queries) InsertProjectEnvironmentQueueConsumer(ctx context.Context, db DBTX, arg InsertProjectEnvironmentQueueConsumerParams) error {
+	_, err := db.Exec(ctx, insertProjectEnvironmentQueueConsumer,
+		arg.ID,
+		arg.RuntimeSetID,
+		arg.Name,
+		arg.QueueName,
+		arg.Definition,
+		arg.DefinitionHash,
+		arg.CreatedAt,
+	)
+	return err
+}
+
+const insertProjectEnvironmentQueueRuntimeSet = `-- name: InsertProjectEnvironmentQueueRuntimeSet :exec
+INSERT INTO project_environment_queue_runtime_sets
+    (id,account_id,project_id,environment_id,app_id,deployment_id,workload_spec_id,
+     settings_hash,queue_revision,binding_count,book_hash,state,created_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+`
+
+type InsertProjectEnvironmentQueueRuntimeSetParams struct {
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	ProjectID      pgtype.UUID
+	EnvironmentID  pgtype.UUID
+	AppID          pgtype.UUID
+	DeploymentID   pgtype.UUID
+	WorkloadSpecID pgtype.UUID
+	SettingsHash   string
+	QueueRevision  int64
+	BindingCount   int32
+	BookHash       string
+	State          string
+	CreatedAt      pgtype.Timestamptz
+}
+
+func (q *Queries) InsertProjectEnvironmentQueueRuntimeSet(ctx context.Context, db DBTX, arg InsertProjectEnvironmentQueueRuntimeSetParams) error {
+	_, err := db.Exec(ctx, insertProjectEnvironmentQueueRuntimeSet,
+		arg.ID,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.WorkloadSpecID,
+		arg.SettingsHash,
+		arg.QueueRevision,
+		arg.BindingCount,
+		arg.BookHash,
+		arg.State,
+		arg.CreatedAt,
+	)
+	return err
+}
+
 const insertRequestTelemetry = `-- name: InsertRequestTelemetry :exec
 
 INSERT INTO request_telemetry (
@@ -9813,6 +9884,117 @@ func (q *Queries) LockProjectEnvironmentCloneWorkloadOperation(ctx context.Conte
 		&i.ErrorCode,
 		&i.TargetReleaseSetID,
 		&i.LeaseLive,
+	)
+	return i, err
+}
+
+const lockProjectEnvironmentQueuePreparationApp = `-- name: LockProjectEnvironmentQueuePreparationApp :one
+SELECT a.id FROM apps a
+JOIN project_environments e ON e.project_id=a.project_id AND e.account_id=a.account_id
+JOIN deployments d ON d.app_id=a.id AND d.scope=e.slug
+WHERE e.account_id=$1::uuid AND e.project_id=$2::uuid
+    AND e.id=$3::uuid AND d.id=$4::uuid
+    AND d.status='live' AND a.status<>'deleted' AND e.slug NOT IN ('production','default')
+FOR KEY SHARE OF a
+`
+
+type LockProjectEnvironmentQueuePreparationAppParams struct {
+	AccountID     pgtype.UUID
+	ProjectID     pgtype.UUID
+	EnvironmentID pgtype.UUID
+	DeploymentID  pgtype.UUID
+}
+
+func (q *Queries) LockProjectEnvironmentQueuePreparationApp(ctx context.Context, db DBTX, arg LockProjectEnvironmentQueuePreparationAppParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockProjectEnvironmentQueuePreparationApp,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.DeploymentID,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockProjectEnvironmentQueuePreparationEnvironment = `-- name: LockProjectEnvironmentQueuePreparationEnvironment :one
+SELECT e.id FROM project_environments e
+JOIN apps a ON a.project_id=e.project_id AND a.account_id=e.account_id
+JOIN deployments d ON d.app_id=a.id AND d.scope=e.slug
+WHERE e.account_id=$1::uuid AND e.project_id=$2::uuid
+    AND d.id=$3::uuid AND d.status='live' AND a.status<>'deleted'
+    AND e.slug NOT IN ('production','default')
+FOR KEY SHARE OF e
+`
+
+type LockProjectEnvironmentQueuePreparationEnvironmentParams struct {
+	AccountID    pgtype.UUID
+	ProjectID    pgtype.UUID
+	DeploymentID pgtype.UUID
+}
+
+func (q *Queries) LockProjectEnvironmentQueuePreparationEnvironment(ctx context.Context, db DBTX, arg LockProjectEnvironmentQueuePreparationEnvironmentParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockProjectEnvironmentQueuePreparationEnvironment, arg.AccountID, arg.ProjectID, arg.DeploymentID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockProjectEnvironmentQueuePreparationSpec = `-- name: LockProjectEnvironmentQueuePreparationSpec :one
+SELECT s.id,e.account_id,e.project_id,e.id AS environment_id,e.slug AS environment_slug,
+    s.app_id,s.revision,s.config_hash,s.settings,s.created_at
+FROM project_environment_workload_deployment_specs p
+JOIN deployments d ON d.id=p.deployment_id
+JOIN project_environment_workload_specs s ON s.id=p.spec_id AND s.app_id=d.app_id
+JOIN project_environments e ON e.id=s.environment_id AND e.slug=d.scope
+JOIN apps a ON a.id=s.app_id AND a.project_id=e.project_id AND a.account_id=e.account_id
+WHERE e.account_id=$1::uuid AND e.project_id=$2::uuid
+    AND e.id=$3::uuid AND d.id=$4::uuid AND a.id=$5::uuid
+    AND d.status='live' AND a.status<>'deleted' AND e.slug NOT IN ('production','default')
+FOR UPDATE OF d FOR SHARE OF s,p
+`
+
+type LockProjectEnvironmentQueuePreparationSpecParams struct {
+	AccountID     pgtype.UUID
+	ProjectID     pgtype.UUID
+	EnvironmentID pgtype.UUID
+	DeploymentID  pgtype.UUID
+	AppID         pgtype.UUID
+}
+
+type LockProjectEnvironmentQueuePreparationSpecRow struct {
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	ProjectID       pgtype.UUID
+	EnvironmentID   pgtype.UUID
+	EnvironmentSlug string
+	AppID           pgtype.UUID
+	Revision        int64
+	ConfigHash      string
+	Settings        []byte
+	CreatedAt       pgtype.Timestamptz
+}
+
+func (q *Queries) LockProjectEnvironmentQueuePreparationSpec(ctx context.Context, db DBTX, arg LockProjectEnvironmentQueuePreparationSpecParams) (LockProjectEnvironmentQueuePreparationSpecRow, error) {
+	row := db.QueryRow(ctx, lockProjectEnvironmentQueuePreparationSpec,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.DeploymentID,
+		arg.AppID,
+	)
+	var i LockProjectEnvironmentQueuePreparationSpecRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.EnvironmentSlug,
+		&i.AppID,
+		&i.Revision,
+		&i.ConfigHash,
+		&i.Settings,
+		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -15057,6 +15239,63 @@ func (q *Queries) ReadProjectEnvironmentCloneWorkloads(ctx context.Context, db D
 		return nil, err
 	}
 	return items, nil
+}
+
+const readProjectEnvironmentQueueConsumers = `-- name: ReadProjectEnvironmentQueueConsumers :many
+SELECT id, runtime_set_id, name, queue_name, definition, definition_hash, created_at FROM project_environment_queue_consumers WHERE runtime_set_id=$1 ORDER BY name
+`
+
+func (q *Queries) ReadProjectEnvironmentQueueConsumers(ctx context.Context, db DBTX, runtimeSetID pgtype.UUID) ([]ProjectEnvironmentQueueConsumer, error) {
+	rows, err := db.Query(ctx, readProjectEnvironmentQueueConsumers, runtimeSetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ProjectEnvironmentQueueConsumer{}
+	for rows.Next() {
+		var i ProjectEnvironmentQueueConsumer
+		if err := rows.Scan(
+			&i.ID,
+			&i.RuntimeSetID,
+			&i.Name,
+			&i.QueueName,
+			&i.Definition,
+			&i.DefinitionHash,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readProjectEnvironmentQueueRuntimeSet = `-- name: ReadProjectEnvironmentQueueRuntimeSet :one
+SELECT id, account_id, project_id, environment_id, app_id, deployment_id, workload_spec_id, settings_hash, queue_revision, binding_count, book_hash, state, created_at FROM project_environment_queue_runtime_sets WHERE deployment_id=$1
+`
+
+func (q *Queries) ReadProjectEnvironmentQueueRuntimeSet(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (ProjectEnvironmentQueueRuntimeSet, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentQueueRuntimeSet, deploymentID)
+	var i ProjectEnvironmentQueueRuntimeSet
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.WorkloadSpecID,
+		&i.SettingsHash,
+		&i.QueueRevision,
+		&i.BindingCount,
+		&i.BookHash,
+		&i.State,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const readProjectReleaseSet = `-- name: ReadProjectReleaseSet :one

@@ -5507,6 +5507,54 @@ SELECT jsonb_build_object(
         WHERE b.app_id=a.id AND (t.id IS NULL OR t.app_id<>a.id OR t.account_id<>a.account_id)))::bigint AS ownership_violations
 FROM apps a WHERE a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted';
 
+-- name: LockProjectEnvironmentQueuePreparationEnvironment :one
+SELECT e.id FROM project_environments e
+JOIN apps a ON a.project_id=e.project_id AND a.account_id=e.account_id
+JOIN deployments d ON d.app_id=a.id AND d.scope=e.slug
+WHERE e.account_id=sqlc.arg(account_id)::uuid AND e.project_id=sqlc.arg(project_id)::uuid
+    AND d.id=sqlc.arg(deployment_id)::uuid AND d.status='live' AND a.status<>'deleted'
+    AND e.slug NOT IN ('production','default')
+FOR KEY SHARE OF e;
+
+-- name: LockProjectEnvironmentQueuePreparationApp :one
+SELECT a.id FROM apps a
+JOIN project_environments e ON e.project_id=a.project_id AND e.account_id=a.account_id
+JOIN deployments d ON d.app_id=a.id AND d.scope=e.slug
+WHERE e.account_id=sqlc.arg(account_id)::uuid AND e.project_id=sqlc.arg(project_id)::uuid
+    AND e.id=sqlc.arg(environment_id)::uuid AND d.id=sqlc.arg(deployment_id)::uuid
+    AND d.status='live' AND a.status<>'deleted' AND e.slug NOT IN ('production','default')
+FOR KEY SHARE OF a;
+
+-- name: LockProjectEnvironmentQueuePreparationSpec :one
+SELECT s.id,e.account_id,e.project_id,e.id AS environment_id,e.slug AS environment_slug,
+    s.app_id,s.revision,s.config_hash,s.settings,s.created_at
+FROM project_environment_workload_deployment_specs p
+JOIN deployments d ON d.id=p.deployment_id
+JOIN project_environment_workload_specs s ON s.id=p.spec_id AND s.app_id=d.app_id
+JOIN project_environments e ON e.id=s.environment_id AND e.slug=d.scope
+JOIN apps a ON a.id=s.app_id AND a.project_id=e.project_id AND a.account_id=e.account_id
+WHERE e.account_id=sqlc.arg(account_id)::uuid AND e.project_id=sqlc.arg(project_id)::uuid
+    AND e.id=sqlc.arg(environment_id)::uuid AND d.id=sqlc.arg(deployment_id)::uuid AND a.id=sqlc.arg(app_id)::uuid
+    AND d.status='live' AND a.status<>'deleted' AND e.slug NOT IN ('production','default')
+FOR UPDATE OF d FOR SHARE OF s,p;
+
+-- name: ReadProjectEnvironmentQueueRuntimeSet :one
+SELECT * FROM project_environment_queue_runtime_sets WHERE deployment_id=$1;
+
+-- name: ReadProjectEnvironmentQueueConsumers :many
+SELECT * FROM project_environment_queue_consumers WHERE runtime_set_id=$1 ORDER BY name;
+
+-- name: InsertProjectEnvironmentQueueRuntimeSet :exec
+INSERT INTO project_environment_queue_runtime_sets
+    (id,account_id,project_id,environment_id,app_id,deployment_id,workload_spec_id,
+     settings_hash,queue_revision,binding_count,book_hash,state,created_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13);
+
+-- name: InsertProjectEnvironmentQueueConsumer :exec
+INSERT INTO project_environment_queue_consumers
+    (id,runtime_set_id,name,queue_name,definition,definition_hash,created_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7);
+
 -- name: RegisterInvocationWorkEnvironmentDomain :one
 INSERT INTO invocation_work_environment_domains AS current (app_id,environment_id,policy_name,kind,digest)
 SELECT a.id,e.id,sqlc.arg(policy_name)::text,sqlc.arg(kind)::text,sqlc.arg(digest)::bytea
