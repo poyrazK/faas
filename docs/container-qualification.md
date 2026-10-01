@@ -604,3 +604,26 @@ Corrected health-runtime PR #3956 now has 25 successful checks and one
 conditional skip, with no pending or failed checks. Timing #3957 still has
 one running check, 25 successes and one conditional skip. These are CI scopes,
 not native VM or leak evidence. All PRs remain drafts and unmerged.
+
+### Supervisor-wide capacity review and completed CI — 2026-10-01
+
+Stacked draft [PR #3964](https://github.com/poyrazK/faas/pull/3964), head
+`9b78ff96e`, isolates one global TCP connection semaphore per supervisor,
+shared across all listener ports. The real-supervisor regression uses different
+accounts to distinguish the global cap from account limits, verifies rejection
+before target selection/wake, and observes released capacity through a socket.
+Full TCP/public-gateway race suites pass; the strengthened supervisor regression
+passes five race-enabled repetitions; scoped lint, formatting and whitespace
+checks pass. Evidence `/tmp/gregale-tcp-capacity-race.log`,
+`/tmp/gregale-tcp-capacity-supervisor.log`, `/tmp/gregale-tcp-capacity-lint.log`.
+The same regression is retained in this large branch and passes five race runs
+against its existing TLS/shared-cap implementation
+(`/tmp/gregale-tcp-capacity-integrated.log`). Remote #3964 checks are pending.
+Native load/VM wake/leak acceptance is not inferred.
+
+Scratch #3959 head `c2d2554eb43c09578d1e799400b2ebcc1281d1b7` completed remote
+CI with 26 successes and one conditional skip. Customer-routing #3960 head
+`e020c3e16cebe712f39ff302641df2ad1af365cf` completed with 24 successes and two
+conditional skips. No pending/failing checks were observed on those heads;
+actual scratch mount execution still requires a designated Linux host.
+All PRs remain drafts and unmerged.
