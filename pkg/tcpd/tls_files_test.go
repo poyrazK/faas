@@ -7,6 +7,7 @@ import (
 	"encoding/pem"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
@@ -161,5 +162,27 @@ func TestFileCertificateDirectoryReplacementKeepsAnchoredRoot(t *testing.T) {
 	}
 	if _, err := provider.Certificate(t.Context(), "echo.example"); err == nil {
 		t.Fatal("lookup checked replacement directory permissions instead of anchored root")
+	}
+}
+
+func TestFileCertificateFIFOIsRejectedWithoutBlocking(t *testing.T) {
+	directory := t.TempDir()
+	if err := syscall.Mkfifo(filepath.Join(directory, "echo.example.pem"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	provider, err := NewFileCertificateProvider(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer provider.Close()
+	done := make(chan error, 1)
+	go func() { _, err := provider.Certificate(t.Context(), "echo.example"); done <- err }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("FIFO accepted as certificate bundle")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("certificate lookup blocked opening FIFO")
 	}
 }
