@@ -93,6 +93,10 @@ func (s *Supervisor) Serve(ctx context.Context) error {
 		s.lifecycleMu.Unlock()
 	}()
 	limiter := NewConnectionLimiter(s.MaxConnectionsPerAccount)
+	var connectionSlots chan struct{}
+	if s.MaxConnections > 0 {
+		connectionSlots = make(chan struct{}, s.MaxConnections)
+	}
 
 	listeners := make(map[int]supervisedListener)
 	var mu sync.Mutex
@@ -164,14 +168,15 @@ func (s *Supervisor) Serve(ctx context.Context) error {
 			}
 			childCtx, cancel := context.WithCancel(serveCtx)
 			server := &Server{
-				Listener:       listener,
-				BoundRoute:     &route,
-				Routes:         s.Routes,
-				Targets:        s.Targets,
-				Forwarder:      s.Forwarder,
-				Limiter:        limiter,
-				Metrics:        s.Metrics,
-				MaxConnections: s.MaxConnections,
+				Listener:        listener,
+				BoundRoute:      &route,
+				Routes:          s.Routes,
+				Targets:         s.Targets,
+				Forwarder:       s.Forwarder,
+				Limiter:         limiter,
+				Metrics:         s.Metrics,
+				MaxConnections:  s.MaxConnections,
+				connectionSlots: connectionSlots,
 				OnError: func(err error) {
 					if s.OnError != nil && !isDraining() {
 						s.OnError(fmt.Errorf("TCP port %d: %w", port, err))

@@ -31,6 +31,8 @@ type Server struct {
 
 	// MaxConnections bounds concurrent sessions. Zero means unlimited.
 	MaxConnections int
+	// connectionSlots shares the supervisor-wide cap across listener ports.
+	connectionSlots chan struct{}
 	// OnError receives per-connection errors. It is optional; connection
 	// errors do not stop the accept loop.
 	OnError func(error)
@@ -57,8 +59,8 @@ func (s *Server) Serve(ctx context.Context) error {
 		active.CloseAll()
 	}()
 
-	var slots chan struct{}
-	if s.MaxConnections > 0 {
+	slots := s.connectionSlots
+	if slots == nil && s.MaxConnections > 0 {
 		slots = make(chan struct{}, s.MaxConnections)
 	}
 	for {
