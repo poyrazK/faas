@@ -206,7 +206,7 @@ func (m *MemStore) standardReviewSnapshotLocked(orgID, actorID string, r Applica
 		for _, deployment := range m.deployments {
 			retained := !slices.Contains([]string{"failed", "superseded", "cancelled"}, string(deployment.Status))
 			for _, instance := range m.instances {
-				if sameStandardUUID(instance.DeploymentID, deployment.ID) && instance.TerminalAt == nil && instance.State != "STOPPED" && instance.State != "FAILED" {
+				if sameStandardUUID(instance.DeploymentID, deployment.ID) && instance.TerminalAt == nil && instance.State != "stopped" && instance.State != "failed" {
 					retained = true
 				}
 			}

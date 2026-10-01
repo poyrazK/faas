@@ -52,6 +52,12 @@ environment standards require explicit environment-aware enforcement; the API
 must reject unsupported scope/control combinations rather than quietly affecting
 staging. Application-level production scope remains supported.
 
+App creating-account attribution and deployment app identity are retained.
+Organization/project moves reenroll the existing app; cloning for a different
+creating account creates a new app. Artifact and control writers participate in
+advisory input fences so approval can take a stable cut without adding reverse
+parent-row waits to legacy child updates or deletion.
+
 ## Updates and recovery
 
 A preview captures target membership, current adoption, effective/local values,
@@ -108,6 +114,16 @@ for future services and empty projects, preserve explicit defaults/logging extra
 and reject aggregate quota or unverified artifact changes. Tests exercise
 PostgreSQL/MemStore parity, input mutation, cross-organization scope denial,
 immutable operation history and account/organization erasure boundaries.
+
+Private atomic approval now advances the explicit admission pointer and saves
+the operation, frozen per-app inputs/projections and audit in one transaction.
+Current actor authorization is required even for an idempotent retry. Expiry,
+staleness, blockers and overlapping operations cause no intent writes. Parent
+input fences cover controls, account quota, artifact children and retained live
+artifacts; bounded nonwaiting lock acquisition avoids legacy lock-order cycles.
+Tests cover both project membership orderings, duplicate approvals, injected
+audit failure rollback, existing-pin preservation and restore lease revocation.
+No approval advances a persisted or observed application revision.
 
 Public review/activation, the projection worker and consumer observation
 are still pending. The enrollment gate currently covers deployment admission;

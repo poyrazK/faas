@@ -67,11 +67,25 @@ deletion, with private fenced lease fields for subsequent worker integration.
 Company attribution survives account erasure; owning organization erasure
 removes its review and operation history.
 
-These review methods are internal storage interfaces. Public review/approval
-endpoints, projection workers, consumer verification, exceptions, and rollback
-are still being implemented. A successful read-only freshness check does not
-authorize an unlocked mutation: activation must repeat the same reads under its
-mutation locks and commit the approved operation atomically.
+The private approval path now locks and rereads the complete input set, checks
+the exact digest and current approving authority, and commits the admission
+pointer, frozen rollout targets and audit event in one transaction. A stale,
+expired or blocked review writes none of them. Repeating the same approval
+returns the original operation; another unfinished operation on the same
+assignment blocks an overlapping change. Input locks use bounded retries so
+concurrent legacy control writers cannot deadlock an approval's parent locks.
+Restoring or reenrolling a service revokes its previous worker lease authority.
+
+Approval leaves existing adoption pins and actual settings unchanged until the
+service's rollout batch. New services capture the new admission version and
+remain pending until materialization. Disabling admission likewise retains
+existing pins until their approved removal. Saving an operation does not mark
+any service persisted or observed.
+
+These methods are internal storage interfaces. Public review/approval endpoints,
+projection workers, consumer verification, exceptions, and rollback are still
+being implemented. A successful read-only freshness check does not authorize an
+unlocked mutation; writes must use the atomic approval path.
 
 ## Publish and inspect candidates
 

@@ -4807,6 +4807,18 @@ func (q *Queries) GetUploadSession(ctx context.Context, db DBTX, id string) (Upl
 	return i, err
 }
 
+const hasApplicationStandardActiveOperation = `-- name: HasApplicationStandardActiveOperation :one
+SELECT EXISTS (SELECT 1 FROM application_standard_operations WHERE assignment_id = $1::uuid
+  AND state IN ('queued', 'running', 'waiting', 'paused'))::boolean AS active
+`
+
+func (q *Queries) HasApplicationStandardActiveOperation(ctx context.Context, db DBTX, assignmentID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, hasApplicationStandardActiveOperation, assignmentID)
+	var active bool
+	err := row.Scan(&active)
+	return active, err
+}
+
 const incrementAppError = `-- name: IncrementAppError :one
 
 INSERT INTO app_errors (
@@ -4966,6 +4978,121 @@ func (q *Queries) InsertAppErrorRequest(ctx context.Context, db DBTX, arg Insert
 		arg.DeploymentTag,
 		arg.DeploymentCreatedAt,
 		arg.ImageDigest,
+	)
+	return err
+}
+
+const insertApplicationStandardApprovedAssignment = `-- name: InsertApplicationStandardApprovedAssignment :exec
+INSERT INTO application_standard_assignments
+(id, org_id, scope, scope_id, standard_id, admission_version, revision, active, created_by, created_at, updated_at)
+VALUES ($1::uuid, $2::uuid, $3::text, $4::uuid,
+  $5::uuid, $6::bigint, 1, $7::boolean,
+  $8::uuid, $9::timestamptz, $9::timestamptz)
+`
+
+type InsertApplicationStandardApprovedAssignmentParams struct {
+	ID               pgtype.UUID
+	OrgID            pgtype.UUID
+	Scope            string
+	ScopeID          pgtype.UUID
+	StandardID       pgtype.UUID
+	AdmissionVersion int64
+	Active           bool
+	ActorID          pgtype.UUID
+	Now              pgtype.Timestamptz
+}
+
+func (q *Queries) InsertApplicationStandardApprovedAssignment(ctx context.Context, db DBTX, arg InsertApplicationStandardApprovedAssignmentParams) error {
+	_, err := db.Exec(ctx, insertApplicationStandardApprovedAssignment,
+		arg.ID,
+		arg.OrgID,
+		arg.Scope,
+		arg.ScopeID,
+		arg.StandardID,
+		arg.AdmissionVersion,
+		arg.Active,
+		arg.ActorID,
+		arg.Now,
+	)
+	return err
+}
+
+const insertApplicationStandardOperation = `-- name: InsertApplicationStandardOperation :exec
+INSERT INTO application_standard_operations
+(id, org_id, plan_id, assignment_id, approval_hash, approved_by, batch_size, created_at, updated_at)
+VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
+  $5::text, $6::uuid, $7::integer,
+  $8::timestamptz, $8::timestamptz)
+`
+
+type InsertApplicationStandardOperationParams struct {
+	ID           pgtype.UUID
+	OrgID        pgtype.UUID
+	PlanID       pgtype.UUID
+	AssignmentID pgtype.UUID
+	ApprovalHash string
+	ApprovedBy   pgtype.UUID
+	BatchSize    int32
+	Now          pgtype.Timestamptz
+}
+
+func (q *Queries) InsertApplicationStandardOperation(ctx context.Context, db DBTX, arg InsertApplicationStandardOperationParams) error {
+	_, err := db.Exec(ctx, insertApplicationStandardOperation,
+		arg.ID,
+		arg.OrgID,
+		arg.PlanID,
+		arg.AssignmentID,
+		arg.ApprovalHash,
+		arg.ApprovedBy,
+		arg.BatchSize,
+		arg.Now,
+	)
+	return err
+}
+
+const insertApplicationStandardOperationAudit = `-- name: InsertApplicationStandardOperationAudit :exec
+INSERT INTO audit_log (id, kind, received_at, data)
+VALUES ($1::uuid, $2::text, $3::timestamptz, $4::jsonb)
+`
+
+type InsertApplicationStandardOperationAuditParams struct {
+	ID   pgtype.UUID
+	Kind string
+	Now  pgtype.Timestamptz
+	Data []byte
+}
+
+func (q *Queries) InsertApplicationStandardOperationAudit(ctx context.Context, db DBTX, arg InsertApplicationStandardOperationAuditParams) error {
+	_, err := db.Exec(ctx, insertApplicationStandardOperationAudit,
+		arg.ID,
+		arg.Kind,
+		arg.Now,
+		arg.Data,
+	)
+	return err
+}
+
+const insertApplicationStandardOperationTarget = `-- name: InsertApplicationStandardOperationTarget :exec
+INSERT INTO application_standard_operation_targets (operation_id, app_id, position, approved_app, updated_at)
+VALUES ($1::uuid, $2::uuid, $3::integer,
+  $4::jsonb, $5::timestamptz)
+`
+
+type InsertApplicationStandardOperationTargetParams struct {
+	OperationID pgtype.UUID
+	AppID       pgtype.UUID
+	Position    int32
+	ApprovedApp []byte
+	Now         pgtype.Timestamptz
+}
+
+func (q *Queries) InsertApplicationStandardOperationTarget(ctx context.Context, db DBTX, arg InsertApplicationStandardOperationTargetParams) error {
+	_, err := db.Exec(ctx, insertApplicationStandardOperationTarget,
+		arg.OperationID,
+		arg.AppID,
+		arg.Position,
+		arg.ApprovedApp,
+		arg.Now,
 	)
 	return err
 }
@@ -9090,6 +9217,178 @@ func (q *Queries) ListTriggersForApp(ctx context.Context, db DBTX, appID pgtype.
 	return items, nil
 }
 
+const lockApplicationStandardApprovalAccounts = `-- name: LockApplicationStandardApprovalAccounts :many
+SELECT a.id FROM accounts a WHERE a.id = ANY($1::uuid[])
+ORDER BY a.id FOR UPDATE NOWAIT
+`
+
+func (q *Queries) LockApplicationStandardApprovalAccounts(ctx context.Context, db DBTX, accountIds []pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, lockApplicationStandardApprovalAccounts, accountIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockApplicationStandardApprovalApps = `-- name: LockApplicationStandardApprovalApps :many
+SELECT a.id FROM apps a WHERE a.org_id = $1::uuid AND a.status <> 'deleted'
+AND (($2::text = 'organization' AND $3::uuid = a.org_id)
+  OR ($2::text = 'project' AND $3::uuid = a.project_id)
+  OR ($2::text = 'application' AND $3::uuid = a.id))
+ORDER BY a.id FOR UPDATE NOWAIT
+`
+
+type LockApplicationStandardApprovalAppsParams struct {
+	OrgID   pgtype.UUID
+	Scope   string
+	ScopeID pgtype.UUID
+}
+
+func (q *Queries) LockApplicationStandardApprovalApps(ctx context.Context, db DBTX, arg LockApplicationStandardApprovalAppsParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, lockApplicationStandardApprovalApps, arg.OrgID, arg.Scope, arg.ScopeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockApplicationStandardApprovalArtifacts = `-- name: LockApplicationStandardApprovalArtifacts :many
+SELECT id FROM deployments WHERE app_id = ANY($1::uuid[])
+ORDER BY id FOR UPDATE NOWAIT
+`
+
+func (q *Queries) LockApplicationStandardApprovalArtifacts(ctx context.Context, db DBTX, appIds []pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, lockApplicationStandardApprovalArtifacts, appIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockApplicationStandardApprovalEnrollments = `-- name: LockApplicationStandardApprovalEnrollments :many
+SELECT app_id FROM app_application_standards WHERE app_id = ANY($1::uuid[])
+ORDER BY app_id FOR UPDATE NOWAIT
+`
+
+func (q *Queries) LockApplicationStandardApprovalEnrollments(ctx context.Context, db DBTX, appIds []pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, lockApplicationStandardApprovalEnrollments, appIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var app_id pgtype.UUID
+		if err := rows.Scan(&app_id); err != nil {
+			return nil, err
+		}
+		items = append(items, app_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockApplicationStandardApprovalMemberships = `-- name: LockApplicationStandardApprovalMemberships :many
+SELECT account_id FROM org_memberships WHERE org_id = $1::uuid
+ORDER BY account_id FOR SHARE NOWAIT
+`
+
+func (q *Queries) LockApplicationStandardApprovalMemberships(ctx context.Context, db DBTX, orgID pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, lockApplicationStandardApprovalMemberships, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var account_id pgtype.UUID
+		if err := rows.Scan(&account_id); err != nil {
+			return nil, err
+		}
+		items = append(items, account_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockApplicationStandardApprovalOrg = `-- name: LockApplicationStandardApprovalOrg :one
+SELECT id FROM orgs WHERE id = $1::uuid FOR UPDATE NOWAIT
+`
+
+// Older writers acquire their parent locks in differing orders. Approval
+// aborts/retries the whole attempt instead of waiting while holding an org.
+func (q *Queries) LockApplicationStandardApprovalOrg(ctx context.Context, db DBTX, orgID pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockApplicationStandardApprovalOrg, orgID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockApplicationStandardApprovalProjects = `-- name: LockApplicationStandardApprovalProjects :many
+SELECT p.id FROM projects p WHERE p.id = ANY($1::uuid[])
+ORDER BY p.id FOR UPDATE NOWAIT
+`
+
+func (q *Queries) LockApplicationStandardApprovalProjects(ctx context.Context, db DBTX, projectIds []pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, lockApplicationStandardApprovalProjects, projectIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockApplicationStandardOrg = `-- name: LockApplicationStandardOrg :one
 SELECT o.id FROM orgs o WHERE o.id = $1::uuid AND o.deleted_pending = false
 AND EXISTS (SELECT 1 FROM accounts WHERE id = $2::uuid) FOR UPDATE OF o
@@ -9109,7 +9408,7 @@ func (q *Queries) LockApplicationStandardOrg(ctx context.Context, db DBTX, arg L
 
 const lockApplicationStandardReviewPlan = `-- name: LockApplicationStandardReviewPlan :one
 SELECT id, org_id, created_by, request, approval_inputs, approval_hash, applications, blockers, created_at, expires_at FROM application_standard_review_plans
-WHERE org_id = $1::uuid AND id = $2::uuid FOR UPDATE
+WHERE org_id = $1::uuid AND id = $2::uuid FOR UPDATE NOWAIT
 `
 
 type LockApplicationStandardReviewPlanParams struct {
@@ -9133,24 +9432,6 @@ func (q *Queries) LockApplicationStandardReviewPlan(ctx context.Context, db DBTX
 		&i.ExpiresAt,
 	)
 	return i, err
-}
-
-const lockApplicationStandardReviewScope = `-- name: LockApplicationStandardReviewScope :one
-SELECT p.id FROM projects p
-WHERE p.id = $1::uuid AND $2::text = 'project'
-FOR UPDATE
-`
-
-type LockApplicationStandardReviewScopeParams struct {
-	ScopeID pgtype.UUID
-	Scope   string
-}
-
-func (q *Queries) LockApplicationStandardReviewScope(ctx context.Context, db DBTX, arg LockApplicationStandardReviewScopeParams) (pgtype.UUID, error) {
-	row := db.QueryRow(ctx, lockApplicationStandardReviewScope, arg.ScopeID, arg.Scope)
-	var id pgtype.UUID
-	err := row.Scan(&id)
-	return id, err
 }
 
 const lockCreditConsumption = `-- name: LockCreditConsumption :exec
@@ -12822,6 +13103,32 @@ func (q *Queries) ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg
 	return i, err
 }
 
+const readApplicationStandardOperation = `-- name: ReadApplicationStandardOperation :one
+SELECT jsonb_build_object('id', o.id::text, 'org_id', o.org_id::text, 'plan_id', o.plan_id::text,
+  'assignment_id', o.assignment_id::text, 'approval_hash', o.approval_hash, 'approved_by', o.approved_by::text,
+  'batch_size', o.batch_size, 'state', o.state, 'error_code', o.error_code, 'created_at', o.created_at, 'updated_at', o.updated_at,
+  'targets', coalesce((SELECT jsonb_agg(jsonb_build_object('app_id', t.app_id::text, 'position', t.position,
+    'approved_app', t.approved_app->'application', 'input', t.approved_app->'input', 'state', t.state,
+    'desired_revision', t.desired_revision, 'error_code', t.error_code, 'updated_at', t.updated_at) ORDER BY t.position)
+    FROM application_standard_operation_targets t WHERE t.operation_id = o.id), '[]'::jsonb))::jsonb AS operation
+FROM application_standard_operations o WHERE o.org_id = $1::uuid
+AND (($2::text <> '' AND o.id = nullif($2::text, '')::uuid)
+  OR ($3::text <> '' AND o.plan_id = nullif($3::text, '')::uuid))
+`
+
+type ReadApplicationStandardOperationParams struct {
+	OrgID       pgtype.UUID
+	OperationID string
+	PlanID      string
+}
+
+func (q *Queries) ReadApplicationStandardOperation(ctx context.Context, db DBTX, arg ReadApplicationStandardOperationParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readApplicationStandardOperation, arg.OrgID, arg.OperationID, arg.PlanID)
+	var operation []byte
+	err := row.Scan(&operation)
+	return operation, err
+}
+
 const readApplicationStandardReviewSnapshot = `-- name: ReadApplicationStandardReviewSnapshot :one
 SELECT jsonb_build_object(
     'org_id', o.id::text,
@@ -12887,7 +13194,7 @@ SELECT jsonb_build_object(
                 FROM deployment_sidecar_layers layer WHERE layer.deployment_id = d.id), ''), 'UTF8')), 'hex')) ORDER BY d.id)
             FROM deployments d WHERE d.app_id = a.id AND (d.status NOT IN ('failed', 'superseded', 'cancelled')
                 OR EXISTS (SELECT 1 FROM instances i WHERE i.deployment_id = d.id AND i.terminal_at IS NULL
-                    AND i.state NOT IN ('STOPPED', 'FAILED')))), '[]'::jsonb)) ORDER BY a.id)
+                    AND i.state NOT IN ('stopped', 'failed')))), '[]'::jsonb)) ORDER BY a.id)
         FROM apps a JOIN accounts acct ON acct.id = a.account_id LEFT JOIN app_application_standards e ON e.app_id = a.id
         WHERE a.org_id = o.id AND a.status <> 'deleted'
           AND (($1::text = 'organization' AND $2::uuid = o.id)
@@ -15738,6 +16045,42 @@ func (q *Queries) TriggerRecordIDByItemIdentifier(ctx context.Context, db DBTX, 
 	return id, err
 }
 
+const tryLockApplicationStandardApprovalArtifactChildren = `-- name: TryLockApplicationStandardApprovalArtifactChildren :one
+SELECT coalesce(bool_and(pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.artifact-children.' || id::text, 0))), true)::boolean AS locked
+FROM (SELECT DISTINCT id FROM unnest($1::uuid[]) id ORDER BY id) artifacts
+`
+
+func (q *Queries) TryLockApplicationStandardApprovalArtifactChildren(ctx context.Context, db DBTX, deploymentIds []pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, tryLockApplicationStandardApprovalArtifactChildren, deploymentIds)
+	var locked bool
+	err := row.Scan(&locked)
+	return locked, err
+}
+
+const tryLockApplicationStandardApprovalControls = `-- name: TryLockApplicationStandardApprovalControls :one
+SELECT coalesce(bool_and(pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.controls.' || id::text, 0))), true)::boolean AS locked
+FROM (SELECT DISTINCT id FROM unnest($1::uuid[]) id ORDER BY id) controls
+`
+
+func (q *Queries) TryLockApplicationStandardApprovalControls(ctx context.Context, db DBTX, appIds []pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, tryLockApplicationStandardApprovalControls, appIds)
+	var locked bool
+	err := row.Scan(&locked)
+	return locked, err
+}
+
+const tryLockApplicationStandardApprovalQuotas = `-- name: TryLockApplicationStandardApprovalQuotas :one
+SELECT coalesce(bool_and(pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.account-quota.' || id::text, 0))), true)::boolean AS locked
+FROM (SELECT DISTINCT id FROM unnest($1::uuid[]) id ORDER BY id) owners
+`
+
+func (q *Queries) TryLockApplicationStandardApprovalQuotas(ctx context.Context, db DBTX, accountIds []pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, tryLockApplicationStandardApprovalQuotas, accountIds)
+	var locked bool
+	err := row.Scan(&locked)
+	return locked, err
+}
+
 const updateAccountPlan = `-- name: UpdateAccountPlan :exec
 update accounts set plan = $2 where id = $1
 `
@@ -15824,6 +16167,36 @@ func (q *Queries) UpdateApp(ctx context.Context, db DBTX, arg UpdateAppParams) (
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const updateApplicationStandardApprovedAssignment = `-- name: UpdateApplicationStandardApprovedAssignment :execrows
+UPDATE application_standard_assignments SET admission_version = $1::bigint,
+active = $2::boolean, revision = revision + 1, updated_at = $3::timestamptz
+WHERE id = $4::uuid AND org_id = $5::uuid AND revision = $6::bigint
+`
+
+type UpdateApplicationStandardApprovedAssignmentParams struct {
+	AdmissionVersion int64
+	Active           bool
+	Now              pgtype.Timestamptz
+	ID               pgtype.UUID
+	OrgID            pgtype.UUID
+	ExpectedRevision int64
+}
+
+func (q *Queries) UpdateApplicationStandardApprovedAssignment(ctx context.Context, db DBTX, arg UpdateApplicationStandardApprovedAssignmentParams) (int64, error) {
+	result, err := db.Exec(ctx, updateApplicationStandardApprovedAssignment,
+		arg.AdmissionVersion,
+		arg.Active,
+		arg.Now,
+		arg.ID,
+		arg.OrgID,
+		arg.ExpectedRevision,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const updateBuildStatus = `-- name: UpdateBuildStatus :exec

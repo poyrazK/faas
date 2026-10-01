@@ -173,7 +173,7 @@ func prepareStandardReview(orgID, actorID string, r ApplicationStandardReviewReq
 	if !validStandardResourceRead(orgID, actorID) || !validStandardResourceRead(r.ScopeID, r.StandardID) ||
 		!slices.Contains([]string{"organization", "project", "application"}, r.Scope) ||
 		r.AdmissionVersion < 1 || r.AdmissionVersion > api.ApplicationStandardMaxVersion ||
-		r.ExpectedRevision < 0 || r.BatchSize < 1 || r.BatchSize > api.ApplicationStandardMaxRolloutBatch ||
+		r.ExpectedRevision < 0 || r.ExpectedRevision >= api.ApplicationStandardMaxVersion || r.BatchSize < 1 || r.BatchSize > api.ApplicationStandardMaxRolloutBatch ||
 		(r.Scope == "organization" && !sameStandardUUID(orgID, r.ScopeID)) {
 		return r, ErrInvalidArgument
 	}

@@ -1,7 +1,90 @@
--- name: LockApplicationStandardReviewScope :one
-SELECT p.id FROM projects p
-WHERE p.id = sqlc.arg(scope_id)::uuid AND sqlc.arg(scope)::text = 'project'
-FOR UPDATE;
+-- Older writers acquire their parent locks in differing orders. Approval
+-- aborts/retries the whole attempt instead of waiting while holding an org.
+-- name: LockApplicationStandardApprovalOrg :one
+SELECT id FROM orgs WHERE id = sqlc.arg(org_id)::uuid FOR UPDATE NOWAIT;
+
+-- name: LockApplicationStandardApprovalProjects :many
+SELECT p.id FROM projects p WHERE p.id = ANY(sqlc.arg(project_ids)::uuid[])
+ORDER BY p.id FOR UPDATE NOWAIT;
+
+-- name: LockApplicationStandardApprovalAccounts :many
+SELECT a.id FROM accounts a WHERE a.id = ANY(sqlc.arg(account_ids)::uuid[])
+ORDER BY a.id FOR UPDATE NOWAIT;
+
+-- name: TryLockApplicationStandardApprovalQuotas :one
+SELECT coalesce(bool_and(pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.account-quota.' || id::text, 0))), true)::boolean AS locked
+FROM (SELECT DISTINCT id FROM unnest(sqlc.arg(account_ids)::uuid[]) id ORDER BY id) owners;
+
+-- name: LockApplicationStandardApprovalMemberships :many
+SELECT account_id FROM org_memberships WHERE org_id = sqlc.arg(org_id)::uuid
+ORDER BY account_id FOR SHARE NOWAIT;
+
+-- name: LockApplicationStandardApprovalApps :many
+SELECT a.id FROM apps a WHERE a.org_id = sqlc.arg(org_id)::uuid AND a.status <> 'deleted'
+AND ((sqlc.arg(scope)::text = 'organization' AND sqlc.arg(scope_id)::uuid = a.org_id)
+  OR (sqlc.arg(scope)::text = 'project' AND sqlc.arg(scope_id)::uuid = a.project_id)
+  OR (sqlc.arg(scope)::text = 'application' AND sqlc.arg(scope_id)::uuid = a.id))
+ORDER BY a.id FOR UPDATE NOWAIT;
+
+-- name: LockApplicationStandardApprovalEnrollments :many
+SELECT app_id FROM app_application_standards WHERE app_id = ANY(sqlc.arg(app_ids)::uuid[])
+ORDER BY app_id FOR UPDATE NOWAIT;
+
+-- name: TryLockApplicationStandardApprovalControls :one
+SELECT coalesce(bool_and(pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.controls.' || id::text, 0))), true)::boolean AS locked
+FROM (SELECT DISTINCT id FROM unnest(sqlc.arg(app_ids)::uuid[]) id ORDER BY id) controls;
+
+-- name: LockApplicationStandardApprovalArtifacts :many
+SELECT id FROM deployments WHERE app_id = ANY(sqlc.arg(app_ids)::uuid[])
+ORDER BY id FOR UPDATE NOWAIT;
+
+-- name: TryLockApplicationStandardApprovalArtifactChildren :one
+SELECT coalesce(bool_and(pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.artifact-children.' || id::text, 0))), true)::boolean AS locked
+FROM (SELECT DISTINCT id FROM unnest(sqlc.arg(deployment_ids)::uuid[]) id ORDER BY id) artifacts;
+
+-- name: InsertApplicationStandardApprovedAssignment :exec
+INSERT INTO application_standard_assignments
+(id, org_id, scope, scope_id, standard_id, admission_version, revision, active, created_by, created_at, updated_at)
+VALUES (sqlc.arg(id)::uuid, sqlc.arg(org_id)::uuid, sqlc.arg(scope)::text, sqlc.arg(scope_id)::uuid,
+  sqlc.arg(standard_id)::uuid, sqlc.arg(admission_version)::bigint, 1, sqlc.arg(active)::boolean,
+  sqlc.arg(actor_id)::uuid, sqlc.arg(now)::timestamptz, sqlc.arg(now)::timestamptz);
+
+-- name: UpdateApplicationStandardApprovedAssignment :execrows
+UPDATE application_standard_assignments SET admission_version = sqlc.arg(admission_version)::bigint,
+active = sqlc.arg(active)::boolean, revision = revision + 1, updated_at = sqlc.arg(now)::timestamptz
+WHERE id = sqlc.arg(id)::uuid AND org_id = sqlc.arg(org_id)::uuid AND revision = sqlc.arg(expected_revision)::bigint;
+
+-- name: InsertApplicationStandardOperation :exec
+INSERT INTO application_standard_operations
+(id, org_id, plan_id, assignment_id, approval_hash, approved_by, batch_size, created_at, updated_at)
+VALUES (sqlc.arg(id)::uuid, sqlc.arg(org_id)::uuid, sqlc.arg(plan_id)::uuid, sqlc.arg(assignment_id)::uuid,
+  sqlc.arg(approval_hash)::text, sqlc.arg(approved_by)::uuid, sqlc.arg(batch_size)::integer,
+  sqlc.arg(now)::timestamptz, sqlc.arg(now)::timestamptz);
+
+-- name: InsertApplicationStandardOperationTarget :exec
+INSERT INTO application_standard_operation_targets (operation_id, app_id, position, approved_app, updated_at)
+VALUES (sqlc.arg(operation_id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(position)::integer,
+  sqlc.arg(approved_app)::jsonb, sqlc.arg(now)::timestamptz);
+
+-- name: InsertApplicationStandardOperationAudit :exec
+INSERT INTO audit_log (id, kind, received_at, data)
+VALUES (sqlc.arg(id)::uuid, sqlc.arg(kind)::text, sqlc.arg(now)::timestamptz, sqlc.arg(data)::jsonb);
+
+-- name: ReadApplicationStandardOperation :one
+SELECT jsonb_build_object('id', o.id::text, 'org_id', o.org_id::text, 'plan_id', o.plan_id::text,
+  'assignment_id', o.assignment_id::text, 'approval_hash', o.approval_hash, 'approved_by', o.approved_by::text,
+  'batch_size', o.batch_size, 'state', o.state, 'error_code', o.error_code, 'created_at', o.created_at, 'updated_at', o.updated_at,
+  'targets', coalesce((SELECT jsonb_agg(jsonb_build_object('app_id', t.app_id::text, 'position', t.position,
+    'approved_app', t.approved_app->'application', 'input', t.approved_app->'input', 'state', t.state,
+    'desired_revision', t.desired_revision, 'error_code', t.error_code, 'updated_at', t.updated_at) ORDER BY t.position)
+    FROM application_standard_operation_targets t WHERE t.operation_id = o.id), '[]'::jsonb))::jsonb AS operation
+FROM application_standard_operations o WHERE o.org_id = sqlc.arg(org_id)::uuid
+AND ((sqlc.arg(operation_id)::text <> '' AND o.id = nullif(sqlc.arg(operation_id)::text, '')::uuid)
+  OR (sqlc.arg(plan_id)::text <> '' AND o.plan_id = nullif(sqlc.arg(plan_id)::text, '')::uuid));
+
+-- name: HasApplicationStandardActiveOperation :one
+SELECT EXISTS (SELECT 1 FROM application_standard_operations WHERE assignment_id = sqlc.arg(assignment_id)::uuid
+  AND state IN ('queued', 'running', 'waiting', 'paused'))::boolean AS active;
 
 -- name: ReadApplicationStandardReviewSnapshot :one
 SELECT jsonb_build_object(
@@ -68,7 +151,7 @@ SELECT jsonb_build_object(
                 FROM deployment_sidecar_layers layer WHERE layer.deployment_id = d.id), ''), 'UTF8')), 'hex')) ORDER BY d.id)
             FROM deployments d WHERE d.app_id = a.id AND (d.status NOT IN ('failed', 'superseded', 'cancelled')
                 OR EXISTS (SELECT 1 FROM instances i WHERE i.deployment_id = d.id AND i.terminal_at IS NULL
-                    AND i.state NOT IN ('STOPPED', 'FAILED')))), '[]'::jsonb)) ORDER BY a.id)
+                    AND i.state NOT IN ('stopped', 'failed')))), '[]'::jsonb)) ORDER BY a.id)
         FROM apps a JOIN accounts acct ON acct.id = a.account_id LEFT JOIN app_application_standards e ON e.app_id = a.id
         WHERE a.org_id = o.id AND a.status <> 'deleted'
           AND ((sqlc.arg(scope)::text = 'organization' AND sqlc.arg(scope_id)::uuid = o.id)
@@ -90,7 +173,7 @@ WHERE org_id = sqlc.arg(org_id)::uuid AND id = sqlc.arg(plan_id)::uuid;
 
 -- name: LockApplicationStandardReviewPlan :one
 SELECT * FROM application_standard_review_plans
-WHERE org_id = sqlc.arg(org_id)::uuid AND id = sqlc.arg(plan_id)::uuid FOR UPDATE;
+WHERE org_id = sqlc.arg(org_id)::uuid AND id = sqlc.arg(plan_id)::uuid FOR UPDATE NOWAIT;
 
 -- name: GetApplicationStandardEnrollment :one
 SELECT app_id::text, org_id::text, coalesce(project_id::text, '')::text AS project_id,

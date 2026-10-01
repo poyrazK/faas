@@ -34,6 +34,8 @@ const (
 	ApplicationStandardMaxRolloutBatch                = 100
 	ApplicationStandardReviewTTL                      = 30 * time.Minute
 	ApplicationStandardWorkerLease                    = 30 * time.Second
+	ApplicationStandardApprovalLockAttempts           = 6
+	ApplicationStandardApprovalLockRetry              = 20 * time.Millisecond
 	ApplicationStandardMaxListPage                    = 100
 	ApplicationStandardMaxVersion               int64 = 9007199254740991
 )

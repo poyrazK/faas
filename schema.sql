@@ -204,6 +204,39 @@ $$;
 
 
 --
+-- Name: application_standard_account_input_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_account_input_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE account_ids uuid[] := '{}';
+BEGIN
+    IF TG_OP <> 'INSERT' THEN account_ids := array_append(account_ids, OLD.account_id); END IF;
+    IF TG_OP <> 'DELETE' THEN account_ids := array_append(account_ids, NEW.account_id); END IF;
+    PERFORM pg_advisory_xact_lock_shared(hashtextextended('gregale.application-standard.account-quota.' || id::text, 0))
+    FROM (SELECT DISTINCT id FROM unnest(account_ids) id ORDER BY id) owners;
+    IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_app_account_identity_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_app_account_identity_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    RAISE EXCEPTION 'application creating account identity is immutable'
+        USING ERRCODE = '23514', CONSTRAINT = 'application_standard_app_account_identity';
+END;
+$$;
+
+
+--
 -- Name: application_standard_app_scope_guard(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -225,6 +258,39 @@ BEGIN
             USING ERRCODE = '23514', CONSTRAINT = 'application_standard_scope_owner';
     END IF;
     RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_artifact_child_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_artifact_child_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE deployment_ids uuid[] := '{}';
+BEGIN
+    IF TG_OP <> 'INSERT' THEN deployment_ids := array_append(deployment_ids, OLD.deployment_id); END IF;
+    IF TG_OP <> 'DELETE' THEN deployment_ids := array_append(deployment_ids, NEW.deployment_id); END IF;
+    PERFORM pg_advisory_xact_lock_shared(hashtextextended('gregale.application-standard.artifact-children.' || id::text, 0))
+    FROM (SELECT DISTINCT id FROM unnest(deployment_ids) id WHERE id IS NOT NULL ORDER BY id) artifacts;
+    IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_artifact_identity_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_artifact_identity_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    RAISE EXCEPTION 'deployment application identity is immutable'
+        USING ERRCODE = '23514', CONSTRAINT = 'application_standard_artifact_identity';
 END;
 $$;
 
@@ -306,6 +372,29 @@ $$;
 
 
 --
+-- Name: application_standard_control_input_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_control_input_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE app_ids uuid[] := '{}';
+BEGIN
+    IF TG_OP <> 'INSERT' THEN app_ids := array_append(app_ids, OLD.app_id); END IF;
+    IF TG_OP <> 'DELETE' THEN app_ids := array_append(app_ids, NEW.app_id); END IF;
+    PERFORM pg_advisory_xact_lock_shared(hashtextextended('gregale.application-standard.controls.' || id::text, 0))
+    FROM (SELECT DISTINCT id FROM unnest(app_ids) id WHERE id IS NOT NULL ORDER BY id) controls;
+    IF TG_NARGS > 0 AND TG_ARGV[0] = 'account_quota' THEN
+        PERFORM pg_advisory_xact_lock_shared(hashtextextended('gregale.application-standard.account-quota.' || account_id::text, 0))
+        FROM (SELECT DISTINCT account_id FROM apps WHERE id = ANY(app_ids) ORDER BY account_id) owners;
+    END IF;
+    IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: application_standard_deployment_guard(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -351,6 +440,36 @@ BEGIN
         state = EXCLUDED.state, desired_revision = app_application_standards.desired_revision + 1,
         effective = '{}'::jsonb, effective_hash = '', persisted_revision = 0, observed_revision = 0,
         error_code = '', updated_at = now();
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_enrollment_generation_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_enrollment_generation_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.lease_generation < OLD.lease_generation THEN
+        RAISE EXCEPTION 'application standard enrollment generation regressed'
+            USING ERRCODE = '23514', CONSTRAINT = 'application_standard_enrollment_generation';
+    END IF;
+    IF NEW.app_id IS DISTINCT FROM OLD.app_id THEN
+        RAISE EXCEPTION 'application standard enrollment identity changed'
+            USING ERRCODE = '23514', CONSTRAINT = 'application_standard_enrollment_identity';
+    END IF;
+    IF NEW.org_id IS DISTINCT FROM OLD.org_id OR NEW.project_id IS DISTINCT FROM OLD.project_id
+       OR NEW.base_settings IS DISTINCT FROM OLD.base_settings OR NEW.local_settings IS DISTINCT FROM OLD.local_settings
+       OR NEW.additional_log_destinations IS DISTINCT FROM OLD.additional_log_destinations
+       OR NEW.adoptions IS DISTINCT FROM OLD.adoptions OR NEW.desired_revision IS DISTINCT FROM OLD.desired_revision
+       OR NEW.effective IS DISTINCT FROM OLD.effective OR NEW.effective_hash IS DISTINCT FROM OLD.effective_hash THEN
+        NEW.lease_owner := '';
+        NEW.lease_until := NULL;
+        NEW.lease_generation := greatest(NEW.lease_generation, OLD.lease_generation + 1);
+    END IF;
     RETURN NEW;
 END;
 $$;
@@ -19015,6 +19134,27 @@ CREATE TRIGGER app_webhook_deliveries_capture_dead_letter AFTER UPDATE OF status
 
 
 --
+-- Name: apps application_standard_account_insert_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_account_insert_guard BEFORE INSERT OR DELETE ON public.apps FOR EACH ROW EXECUTE FUNCTION public.application_standard_account_input_guard();
+
+
+--
+-- Name: apps application_standard_account_update_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_account_update_guard BEFORE UPDATE OF account_id, status ON public.apps FOR EACH ROW WHEN (((old.account_id IS DISTINCT FROM new.account_id) OR ((old.status = 'deleted'::text) <> (new.status = 'deleted'::text)))) EXECUTE FUNCTION public.application_standard_account_input_guard();
+
+
+--
+-- Name: apps application_standard_app_account_identity_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_app_account_identity_guard BEFORE UPDATE OF account_id ON public.apps FOR EACH ROW WHEN ((old.account_id IS DISTINCT FROM new.account_id)) EXECUTE FUNCTION public.application_standard_app_account_identity_guard();
+
+
+--
 -- Name: apps application_standard_app_scope_insert_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -19026,6 +19166,13 @@ CREATE TRIGGER application_standard_app_scope_insert_guard BEFORE INSERT ON publ
 --
 
 CREATE TRIGGER application_standard_app_scope_update_guard BEFORE UPDATE OF org_id, project_id, status ON public.apps FOR EACH ROW WHEN (((old.org_id IS DISTINCT FROM new.org_id) OR (old.project_id IS DISTINCT FROM new.project_id) OR ((old.status = 'deleted'::text) AND (new.status <> 'deleted'::text)))) EXECUTE FUNCTION public.application_standard_app_scope_guard();
+
+
+--
+-- Name: deployments application_standard_artifact_identity_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_artifact_identity_guard BEFORE UPDATE OF app_id ON public.deployments FOR EACH ROW WHEN ((old.app_id IS DISTINCT FROM new.app_id)) EXECUTE FUNCTION public.application_standard_artifact_identity_guard();
 
 
 --
@@ -19057,6 +19204,13 @@ CREATE TRIGGER application_standard_deployment_guard BEFORE INSERT ON public.dep
 
 
 --
+-- Name: app_log_drains application_standard_drain_input_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_drain_input_guard BEFORE INSERT OR DELETE OR UPDATE ON public.app_log_drains FOR EACH ROW EXECUTE FUNCTION public.application_standard_control_input_guard('account_quota');
+
+
+--
 -- Name: apps application_standard_enroll_app; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -19064,10 +19218,24 @@ CREATE TRIGGER application_standard_enroll_app AFTER INSERT ON public.apps FOR E
 
 
 --
+-- Name: app_application_standards application_standard_enrollment_generation_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_enrollment_generation_guard BEFORE UPDATE ON public.app_application_standards FOR EACH ROW EXECUTE FUNCTION public.application_standard_enrollment_generation_guard();
+
+
+--
 -- Name: application_standards application_standard_identity_immutable; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER application_standard_identity_immutable BEFORE DELETE OR UPDATE ON public.application_standards FOR EACH ROW EXECUTE FUNCTION public.application_standard_version_immutable();
+
+
+--
+-- Name: instances application_standard_instance_input_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_instance_input_guard BEFORE INSERT OR DELETE OR UPDATE OF deployment_id, state, terminal_at ON public.instances FOR EACH ROW EXECUTE FUNCTION public.application_standard_artifact_child_guard();
 
 
 --
@@ -19103,6 +19271,20 @@ CREATE TRIGGER application_standard_reenroll_app AFTER UPDATE OF org_id, project
 --
 
 CREATE TRIGGER application_standard_review_immutable BEFORE DELETE OR UPDATE ON public.application_standard_review_plans FOR EACH ROW EXECUTE FUNCTION public.application_standard_review_immutable();
+
+
+--
+-- Name: deployment_sidecar_layers application_standard_sidecar_input_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_sidecar_input_guard BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_sidecar_layers FOR EACH ROW EXECUTE FUNCTION public.application_standard_artifact_child_guard();
+
+
+--
+-- Name: app_trusted_signers application_standard_signer_input_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_signer_input_guard BEFORE INSERT OR DELETE OR UPDATE ON public.app_trusted_signers FOR EACH ROW EXECUTE FUNCTION public.application_standard_control_input_guard();
 
 
 --
