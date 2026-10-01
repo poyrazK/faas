@@ -51,6 +51,7 @@ type Supervisor struct {
 }
 
 type supervisedListener struct {
+	route    Route
 	listener net.Listener
 	cancel   context.CancelFunc
 }
@@ -130,14 +131,8 @@ func (s *Supervisor) Serve(ctx context.Context) error {
 		}
 		desired := make(map[int]Route, len(rows))
 		for _, row := range rows {
-			route := Route{
-				PublicPort:   row.PublicPort,
-				AppID:        row.AppID,
-				ListenerName: row.ListenerName,
-				GuestPort:    row.GuestPort,
-				Protocol:     row.Protocol,
-			}
-			if err := ValidateRoute(route); err != nil {
+			route, err := routeFromListener(row)
+			if err != nil {
 				return err
 			}
 			if _, exists := desired[route.PublicPort]; exists {
@@ -148,7 +143,7 @@ func (s *Supervisor) Serve(ctx context.Context) error {
 
 		mu.Lock()
 		for port, entry := range listeners {
-			if _, keep := desired[port]; !keep {
+			if route, keep := desired[port]; !keep || route != entry.route {
 				delete(listeners, port)
 				entry.cancel()
 				_ = entry.listener.Close()
@@ -170,6 +165,7 @@ func (s *Supervisor) Serve(ctx context.Context) error {
 			childCtx, cancel := context.WithCancel(serveCtx)
 			server := &Server{
 				Listener:       listener,
+				BoundRoute:     &route,
 				Routes:         s.Routes,
 				Targets:        s.Targets,
 				Forwarder:      s.Forwarder,
@@ -183,7 +179,7 @@ func (s *Supervisor) Serve(ctx context.Context) error {
 				},
 			}
 			mu.Lock()
-			listeners[port] = supervisedListener{listener: listener, cancel: cancel}
+			listeners[port] = supervisedListener{listener: listener, cancel: cancel, route: route}
 			mu.Unlock()
 			servers.Add(1)
 			go func(port int, route Route, srv *Server, childCtx context.Context) {

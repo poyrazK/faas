@@ -45,7 +45,7 @@ func TestTCPResolverUsesOnlyCustomerInstances(t *testing.T) {
 			}}
 			admit := &customerTargetAdmitter{}
 			resolver := &StoreTargetResolver{Instances: source, Admitter: admit}
-			route := Route{AppID: "app", ListenerName: "echo", GuestPort: 9000, PublicPort: 40100, Protocol: "tcp"}
+			route := Route{ListenerID: "listener", AppID: "app", ListenerName: "echo", GuestPort: 9000, PublicPort: 40100, Protocol: "tcp"}
 			for range 8 {
 				target, err := resolver.ResolveTarget(context.Background(), route)
 				if err != nil || target.InstanceID != "customer" || target.Port != 9000 || admit.calls != 0 {
@@ -86,7 +86,7 @@ func TestTCPResolverPinsTrafficBucketOnWarmAndColdPaths(t *testing.T) {
 	}}
 	admit := &customerTargetAdmitter{}
 	resolver := &StoreTargetResolver{Instances: source, Admitter: admit}
-	route := Route{AppID: "app", ListenerName: "echo", GuestPort: 9000, PublicPort: 40100, Protocol: "tcp"}
+	route := Route{ListenerID: "listener", AppID: "app", ListenerName: "echo", GuestPort: 9000, PublicPort: 40100, Protocol: "tcp"}
 	target, err := resolver.ResolveTarget(context.Background(), route)
 	if err != nil || target.InstanceID != "current-instance" || admit.calls != 0 {
 		t.Fatalf("warm target=%+v err=%v admissions=%d", target, err, admit.calls)
@@ -110,4 +110,11 @@ func TestTCPResolverPinsTrafficBucketOnWarmAndColdPaths(t *testing.T) {
 	if _, err := resolver.ResolveTarget(context.Background(), route); !errors.Is(err, unavailable) || admit.calls != before {
 		t.Fatalf("deployment read error=%v admissions=%d", err, admit.calls)
 	}
+}
+
+func (s *customerTargetSource) AppByID(context.Context, string) (state.App, error) {
+	return state.App{ID: "app", AccountID: "account", Status: state.AppActive}, nil
+}
+func (s *customerTargetSource) TCPListenerByAppAndName(context.Context, string, string) (state.TCPListener, error) {
+	return state.TCPListener{ID: "listener", AppID: "app", AccountID: "account", ListenerName: "echo", PublicPort: 40100, GuestPort: 9000, Protocol: "tcp", Enabled: true}, nil
 }
