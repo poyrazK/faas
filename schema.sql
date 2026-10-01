@@ -2413,6 +2413,27 @@ $$;
 
 
 --
+-- Name: guard_invocation_replay_generation(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_invocation_replay_generation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF TG_OP='INSERT' THEN
+    NEW.replay_generation=0;
+  ELSIF OLD.state='dead_letter' AND NEW.state='pending' THEN
+    NEW.replay_generation=OLD.replay_generation+1;
+  ELSIF NEW.replay_generation IS DISTINCT FROM OLD.replay_generation THEN
+    RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='invocation_replay_generation_identity',
+      MESSAGE='invocation replay generation is owned by the delivery ledger';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_managed_postgres_binding_owner(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3211,6 +3232,29 @@ $$;
 
 
 --
+-- Name: rearm_queue_replay_receipts(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.rearm_queue_replay_receipts() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF OLD.state='dead_letter' AND NEW.state='pending' AND NEW.source IN ('queue','delayed_task') THEN
+    -- Preserve the original receipt UUID, payload, work lane and failure audit.
+    -- A renamed private binding is addressed only by its immutable identity.
+    UPDATE trigger_records r SET state='pending', attempts=0, last_error=NULL,
+      next_fire_at=clock_timestamp(), claim_generation=r.claim_generation+1, claim_expires_at=NULL
+      FROM triggers t WHERE t.id=r.trigger_id AND t.app_id=NEW.app_id AND t.account_id=NEW.account_id
+        AND t.kind='queue' AND t.source=NEW.source AND r.item_identifier=NEW.id::text
+        AND (NEW.queue_binding_id IS NULL OR t.queue_binding_id=NEW.queue_binding_id)
+        AND r.state NOT IN ('superseded','cancelled','expired');
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: reconcile_queue_work_receipt(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3355,6 +3399,28 @@ CREATE FUNCTION public.reserved_ip_leases_set_updated_at() RETURNS trigger
     AS $$
 BEGIN
   NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: retain_queue_dead_letter_failures(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.retain_queue_dead_letter_failures() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM triggers t WHERE t.id=NEW.trigger_id AND t.kind='queue'
+    AND t.source IN ('queue','delayed_task')) THEN
+    UPDATE trigger_dead_letter d SET reason=NEW.reason,routed_to=NEW.routed_to,
+      detail=NEW.detail,created_at=NEW.created_at,
+      failure_history=d.failure_history || jsonb_build_array(jsonb_build_object(
+        'reason',d.reason,'routed_to',d.routed_to,'detail',d.detail,'created_at',d.created_at))
+      WHERE d.record_id=NEW.record_id AND d.trigger_id=NEW.trigger_id;
+    IF FOUND THEN RETURN NULL; END IF;
+  END IF;
   RETURN NEW;
 END;
 $$;
@@ -7624,11 +7690,13 @@ CREATE TABLE public.invocations (
     work_decision jsonb,
     deployment_scope text NOT NULL,
     queue_binding_id uuid,
+    replay_generation bigint DEFAULT 0 NOT NULL,
     CONSTRAINT invocation_deployment_scope_check CHECK ((deployment_scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
     CONSTRAINT invocation_platform_tenant_source CHECK (((platform_tenant_id IS NULL) OR (source = ANY (ARRAY['async_invoke'::text, 'replay'::text])))),
     CONSTRAINT invocation_queue_binding_source CHECK (((queue_binding_id IS NULL) OR (source = 'queue'::text))),
     CONSTRAINT invocations_outcome_check CHECK (((outcome IS NULL) OR (outcome = ANY (ARRAY['success'::text, 'failed'::text, 'timeout'::text, 'dead_letter'::text, 'superseded'::text, 'expired'::text])))),
     CONSTRAINT invocations_queue_name_shape CHECK (((queue_name = ''::text) OR (queue_name ~ '^[a-z][a-z0-9-]{0,62}$'::text))),
+    CONSTRAINT invocations_replay_generation_check CHECK ((replay_generation >= 0)),
     CONSTRAINT invocations_source_check CHECK ((source = ANY (ARRAY['async_invoke'::text, 'inbound_webhook'::text, 'queue'::text, 'delayed_task'::text, 'cron'::text, 'replay'::text, 'esm'::text]))),
     CONSTRAINT invocations_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'dispatching'::text, 'completed'::text, 'failed'::text, 'cancelled'::text, 'dead_letter'::text, 'superseded'::text, 'expired'::text]))),
     CONSTRAINT invocations_work_fairness_check CHECK ((((work_fairness_digest IS NULL) AND (work_fairness_limit IS NULL)) OR ((work_policy_name IS NOT NULL) AND (work_fairness_digest IS NOT NULL) AND (work_fairness_limit IS NOT NULL) AND (length(work_fairness_digest) = 32) AND ((work_fairness_limit >= 1) AND (work_fairness_limit <= 1000))))),
@@ -11239,6 +11307,8 @@ CREATE TABLE public.trigger_dead_letter (
     routed_to text NOT NULL,
     detail jsonb DEFAULT '{}'::jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    failure_history jsonb DEFAULT '[]'::jsonb NOT NULL,
+    CONSTRAINT trigger_dead_letter_failure_history_array CHECK ((jsonb_typeof(failure_history) = 'array'::text)),
     CONSTRAINT trigger_dead_letter_reason_check CHECK ((reason = ANY (ARRAY['rate_limited'::text, 'poison_record'::text, 'max_attempts'::text, 'broker_error'::text, 'plan_quota'::text, 'payload_too_large'::text, 'customer_disabled'::text]))),
     CONSTRAINT trigger_dead_letter_routed_to_check CHECK ((routed_to = ANY (ARRAY['drop'::text, 'manual_retry'::text, 'customer_dlq'::text])))
 );
@@ -20379,6 +20449,13 @@ CREATE TRIGGER invocation_queue_binding_guard BEFORE INSERT OR UPDATE ON public.
 
 
 --
+-- Name: invocations invocation_replay_generation_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER invocation_replay_generation_guard BEFORE INSERT OR UPDATE ON public.invocations FOR EACH ROW EXECUTE FUNCTION public.guard_invocation_replay_generation();
+
+
+--
 -- Name: invocations invocation_retired_queue_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -20670,6 +20747,27 @@ CREATE TRIGGER queue_binding_retirement_guard BEFORE DELETE OR UPDATE ON public.
 --
 
 CREATE TRIGGER queue_consumer_binding_identity_guard BEFORE UPDATE ON public.triggers FOR EACH ROW EXECUTE FUNCTION public.guard_queue_consumer_binding_identity();
+
+
+--
+-- Name: trigger_dead_letter queue_dead_letter_failure_history; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER queue_dead_letter_failure_history BEFORE INSERT ON public.trigger_dead_letter FOR EACH ROW EXECUTE FUNCTION public.retain_queue_dead_letter_failures();
+
+
+--
+-- Name: trigger_dead_letter queue_dead_letter_recapture_event; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER queue_dead_letter_recapture_event AFTER UPDATE ON public.trigger_dead_letter FOR EACH ROW EXECUTE FUNCTION public.faas_capture_trigger_dead_letter_event();
+
+
+--
+-- Name: invocations queue_replay_receipt_rearm; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER queue_replay_receipt_rearm AFTER UPDATE OF state ON public.invocations FOR EACH ROW EXECUTE FUNCTION public.rearm_queue_replay_receipts();
 
 
 --

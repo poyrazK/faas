@@ -15039,7 +15039,7 @@ const invocationSelectCols = `id, app_id, account_id, source, queue_name, state,
        last_replayed_at, on_success_destination_id,
        on_failure_destination_id, work_policy_name, work_key_digest,
        work_expires_at, work_sequence, work_policy_revision,
-       work_fairness_digest, work_fairness_limit, platform_tenant_id, deployment_scope, queue_binding_id`
+       work_fairness_digest, work_fairness_limit, platform_tenant_id, deployment_scope, queue_binding_id, replay_generation`
 
 func (s *PgStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invocation, error) {
 	if inv.WorkPolicyName != "" {
@@ -16262,7 +16262,7 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 		&deadlineAt, &retryPolicy, &retentionUntil,
 		&lastReplayedAt, &onSuccessDestination, &onFailureDestination,
 		&workPolicyName, &workKeyDigest, &workExpiresAt, &workSequence, &workPolicyRevision,
-		&workFairnessDigest, &workFairnessLimit, &platformTenantID, &inv.DeploymentScope, &queueBindingID,
+		&workFairnessDigest, &workFairnessLimit, &platformTenantID, &inv.DeploymentScope, &queueBindingID, &inv.ReplayGeneration,
 	); err != nil {
 		return Invocation{}, err
 	}
@@ -30101,29 +30101,15 @@ func pgUUIDString(id pgtype.UUID) string {
 // record from clean". Returns state.ErrNotFound when the row does
 // not exist so the handler can emit a 404.
 func (s *PgStore) RetryTriggerRecordByOperator(ctx context.Context, id string) error {
-	tag, err := s.pool.Exec(ctx,
-		`update trigger_records
-		   set state = 'pending',
-		       attempts = 0,
-		       last_error = null,
-		       next_fire_at = now()
-		 where id = $1
-		   and not exists (
-		       select 1 from triggers t
-		       join invocations i on i.app_id = t.app_id
-		         and i.id::text = trigger_records.item_identifier
-		       where t.id = trigger_records.trigger_id
-		         and t.kind = 'queue' and i.source = 'queue'
-		         and i.state in ('superseded', 'cancelled', 'expired')
-		   )`,
-		id)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("state: retry trigger_record %s: %w", id, err)
+		return err
 	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := retryTriggerReceiptTx(ctx, tx, id, "", ""); err != nil {
+		return err
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 // RetryQueueDeadLetter (ADR-134 PR-C) is the queue counterpart to
@@ -30145,29 +30131,19 @@ func (s *PgStore) RetryTriggerRecordByOperator(ctx context.Context, id string) e
 // state='dead_letter'). The dashboard renders this as
 // "already replayed".
 func (s *PgStore) RetryQueueDeadLetter(ctx context.Context, accountID, invocationID string) (Invocation, error) {
-	row := s.pool.QueryRow(ctx, `
-		update invocations
-		   set state = 'pending',
-		       attempts = 0,
-		       last_error = null,
-		       outcome = null,
-		       due_at = now(),
-		       lease_expires_at = null,
-		       instance_id = null,
-		       last_replayed_at = now(),
-		       completed_at = null
-		 where id = $1
-		   and account_id = $2
-		   and state = 'dead_letter'
-		 returning `+invocationSelectCols, invocationID, accountID)
-	inv, err := scanInvocation(row)
+	id, err := parsePgUUID(invocationID)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Invocation{}, ErrNotFound
-		}
-		return Invocation{}, fmt.Errorf("state: retry queue dead_letter %s: %w", invocationID, err)
+		return Invocation{}, ErrNotFound
 	}
-	return inv, nil
+	account, err := parsePgUUID(accountID)
+	if err != nil {
+		return Invocation{}, ErrNotFound
+	}
+	row, err := sqlc.New().RetryQueueDeadLetterInvocation(ctx, s.pool, sqlc.RetryQueueDeadLetterInvocationParams{ID: id, AccountID: account})
+	if err != nil {
+		return Invocation{}, fmt.Errorf("state: retry queue dead_letter %s: %w", invocationID, mapErr(err))
+	}
+	return invocationFromSQL(row), nil
 }
 
 // ListDeadLetterEvents returns the unified, app-scoped DLQ projection. The
@@ -30414,8 +30390,8 @@ func (s *PgStore) DeadLetterEventByID(ctx context.Context, appID, eventID string
 }
 
 // ReplayDeadLetterEvent atomically resets the source row and stamps the
-// unified event. Trigger dead-letter rows are removed so a subsequent failure
-// can create a fresh trigger_dead_letter row for the same record.
+// unified event. Queue receipts retain failure history across repeated replay;
+// external broker receipts retain their existing reset behavior.
 func (s *PgStore) ReplayDeadLetterEvent(ctx context.Context, accountID, appID, eventID string) (DeadLetterEvent, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -30594,25 +30570,16 @@ func replayDeadLetterEventTx(ctx context.Context, tx pgx.Tx, accountID, appID st
 	var err error
 	switch ev.Source {
 	case "invocation":
-		tag, err = tx.Exec(ctx, `
-			update invocations
-			   set state = 'pending', attempts = 0, last_error = null,
-			       outcome = null, due_at = now(), lease_expires_at = null,
-			       instance_id = null, last_replayed_at = now(), completed_at = null
-			 where id = $1 and account_id = $2 and app_id = $3
-			   and state = 'dead_letter'`, ev.SourceID, accountID, appID)
+		var affected int64
+		affected, err = sqlc.New().ReplayDeadLetterInvocation(ctx, tx, sqlc.ReplayDeadLetterInvocationParams{ID: mustPgUUID(ev.SourceID), AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID)})
+		if affected > 0 {
+			tag = pgconn.NewCommandTag("UPDATE 1")
+		}
 	case "trigger_record":
-		tag, err = tx.Exec(ctx, `
-			update trigger_records r
-			   set state = 'pending', attempts = 0, last_error = null,
-			       next_fire_at = now()
-			 where r.id = $1 and r.state = 'dead_letter'
-			   and exists (select 1 from triggers t
-			                 where t.id = r.trigger_id
-			                   and t.app_id = $2 and t.account_id = $3)`,
-			ev.SourceID, appID, accountID)
+		err = retryTriggerReceiptTx(ctx, tx, ev.SourceID, accountID, appID)
 		if err == nil {
-			_, err = tx.Exec(ctx, `delete from trigger_dead_letter where record_id = $1`, ev.SourceID)
+			tag = pgconn.NewCommandTag("UPDATE 1")
+			err = sqlc.New().DeleteExternalTriggerDeadLetterAudit(ctx, tx, mustPgUUID(ev.SourceID))
 		}
 	case "webhook_delivery":
 		tag, err = tx.Exec(ctx, `

@@ -12246,7 +12246,7 @@ func (m *MemStore) InsertTriggerDeadLetter(_ context.Context, recordID, triggerI
 			detail = encoded
 		}
 	}
-	m.triggerDeadLetters = append(m.triggerDeadLetters, sqlc.TriggerDeadLetter{
+	m.retainQueueDeadLetterLocked(sqlc.TriggerDeadLetter{
 		RecordID:  pgtype.UUID{Bytes: parseMemUUIDString(recordID), Valid: true},
 		TriggerID: pgtype.UUID{Bytes: parseMemUUIDString(triggerID), Valid: true},
 		Reason:    reason,
@@ -12308,14 +12308,7 @@ func (m *MemStore) ListTriggerRecordsForTrigger(_ context.Context, triggerID str
 func (m *MemStore) RetryTriggerRecordByOperator(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	r, ok := m.records[id]
-	if !ok {
-		return ErrNotFound
-	}
-	r.State = "pending"
-	r.Attempts = 0
-	m.records[id] = r
-	return nil
+	return m.retryTriggerReceiptLocked(id, time.Now().UTC())
 }
 
 func (m *MemStore) DropTriggerRecordByOperator(_ context.Context, id string) error {
@@ -12370,6 +12363,7 @@ func (m *MemStore) EnqueueInvocation(_ context.Context, inv Invocation) (Invocat
 	if inv.CreatedAt.IsZero() {
 		inv.CreatedAt = time.Now()
 	}
+	inv.ReplayGeneration = 0
 	m.invocations[inv.ID] = inv
 	return inv, nil
 }
@@ -24935,29 +24929,7 @@ func (m *MemStore) forceDeadlineBreachedInvocations(ids []string) ([]Invocation,
 func (m *MemStore) RetryQueueDeadLetter(_ context.Context, accountID, invocationID string) (Invocation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	inv, ok := m.invocations[invocationID]
-	if !ok {
-		return Invocation{}, ErrNotFound
-	}
-	if inv.AccountID != accountID {
-		return Invocation{}, ErrNotFound
-	}
-	if inv.State != InvocationDeadLetter {
-		return Invocation{}, ErrNotFound
-	}
-	inv.State = InvocationPending
-	inv.QuotaReserved = false
-	inv.Attempts = 0
-	inv.LastError = ""
-	inv.Outcome = nil
-	inv.DueAt = time.Now()
-	inv.LeaseExpiresAt = nil
-	inv.InstanceID = ""
-	now := time.Now()
-	inv.LastReplayedAt = &now
-	inv.CompletedAt = nil
-	m.invocations[invocationID] = inv
-	return inv, nil
+	return m.retryQueueDeadLetterLocked(accountID, invocationID, time.Now().UTC())
 }
 
 func unifiedDeadLetterEventID(source, sourceID string) string {
@@ -25008,7 +24980,7 @@ func (m *MemStore) deadLetterEventsLocked(appID string) []DeadLetterEvent {
 			continue
 		}
 		trigger, ok := m.triggers[dl.TriggerID.String()]
-		if !ok || trigger.AppID.String() != appID {
+		if !ok || !sameMemUUID(trigger.AppID.String(), appID) {
 			continue
 		}
 		createdAt := time.Time{}
@@ -25021,8 +24993,8 @@ func (m *MemStore) deadLetterEventsLocked(appID string) []DeadLetterEvent {
 		}
 		ev := DeadLetterEvent{
 			ID:            eventID,
-			AccountID:     trigger.AccountID.String(),
-			AppID:         trigger.AppID.String(),
+			AccountID:     m.apps[appID].AccountID,
+			AppID:         appID,
 			Source:        "trigger_record",
 			SourceID:      recordID,
 			Origin:        trigger.Kind,
@@ -25371,33 +25343,29 @@ func (m *MemStore) replayDeadLetterEventLocked(accountID, appID, eventID string)
 		if !ok || inv.AccountID != accountID || inv.AppID != appID || inv.State != InvocationDeadLetter {
 			return DeadLetterEvent{}, ErrNotFound
 		}
-		inv.State = InvocationPending
-		inv.Attempts = 0
-		inv.LastError = ""
-		inv.Outcome = nil
-		inv.DueAt = now
-		inv.LeaseExpiresAt = nil
-		inv.InstanceID = ""
-		inv.LastReplayedAt = &now
-		inv.CompletedAt = nil
-		m.invocations[event.SourceID] = inv
+		if _, err := m.retryQueueDeadLetterLocked(accountID, event.SourceID, now); err != nil {
+			return DeadLetterEvent{}, err
+		}
 	case "trigger_record":
 		record, ok := m.records[event.SourceID]
-		if !ok || record.State != "dead_letter" {
+		trigger, exists := m.triggers[record.TriggerID.String()]
+		if !ok || !exists || !sameMemUUID(trigger.AccountID.String(), accountID) || !sameMemUUID(trigger.AppID.String(), appID) {
 			return DeadLetterEvent{}, ErrNotFound
 		}
-		record.State = "pending"
-		record.Attempts = 0
-		record.LastError = pgtype.Text{}
-		record.NextFireAt = pgtypeFromTime(now)
-		m.records[event.SourceID] = record
-		filtered := m.triggerDeadLetters[:0]
-		for _, dl := range m.triggerDeadLetters {
-			if dl.RecordID.String() != event.SourceID {
-				filtered = append(filtered, dl)
-			}
+		if err := m.retryTriggerReceiptLocked(event.SourceID, now); err != nil {
+			return DeadLetterEvent{}, err
 		}
-		m.triggerDeadLetters = filtered
+		r := m.records[event.SourceID]
+		t := m.triggers[r.TriggerID.String()]
+		if t.Kind != "queue" || !t.Source.Valid || t.Source.String != "queue" && t.Source.String != "delayed_task" {
+			filtered := m.triggerDeadLetters[:0]
+			for _, dl := range m.triggerDeadLetters {
+				if dl.RecordID.String() != event.SourceID {
+					filtered = append(filtered, dl)
+				}
+			}
+			m.triggerDeadLetters = filtered
+		}
 	case "webhook_delivery":
 		delivery, ok := m.appWebhookDeliveries[event.SourceID]
 		if !ok || delivery.AccountID != accountID || delivery.AppID != appID || delivery.Status != AppWebhookDeliveryDead {

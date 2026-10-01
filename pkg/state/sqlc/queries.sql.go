@@ -2484,6 +2484,17 @@ func (q *Queries) DeleteEventSubscription(ctx context.Context, db DBTX, arg Dele
 	return err
 }
 
+const deleteExternalTriggerDeadLetterAudit = `-- name: DeleteExternalTriggerDeadLetterAudit :exec
+delete from trigger_dead_letter d using trigger_records r, triggers t
+where d.record_id=$1::uuid and r.id=d.record_id and t.id=r.trigger_id
+  and not (t.kind='queue' and coalesce(t.source in ('queue','delayed_task'),false))
+`
+
+func (q *Queries) DeleteExternalTriggerDeadLetterAudit(ctx context.Context, db DBTX, recordID pgtype.UUID) error {
+	_, err := db.Exec(ctx, deleteExternalTriggerDeadLetterAudit, recordID)
+	return err
+}
+
 const deleteOIDCExchangedToken = `-- name: DeleteOIDCExchangedToken :exec
 delete from oidc_exchanged_tokens where id = $1
 `
@@ -2827,7 +2838,7 @@ INSERT INTO invocations (
   $22, $23, $24,
   $25, $26, $27,
   $28, nullif($29::text, ''), $30
-) RETURNING id, app_id, account_id, source, state, payload, headers, due_at, method, path, cron_id, scheduled_at, ack_url, result, lease_expires_at, received_at, completed_at, instance_id, attempts, last_error, created_at, org_id, outcome, deadline_at, retry_policy, result_retention_until, replayed_from_invocation_id, last_replayed_at, on_success_destination_id, on_failure_destination_id, queue_name, quota_reserved, work_policy_name, work_key_digest, work_expires_at, work_sequence, work_policy_revision, work_fairness_digest, work_fairness_limit, platform_tenant_id, failure_rules, occurrence_id, start_deadline_at, work_decision, deployment_scope, queue_binding_id
+) RETURNING id, app_id, account_id, source, state, payload, headers, due_at, method, path, cron_id, scheduled_at, ack_url, result, lease_expires_at, received_at, completed_at, instance_id, attempts, last_error, created_at, org_id, outcome, deadline_at, retry_policy, result_retention_until, replayed_from_invocation_id, last_replayed_at, on_success_destination_id, on_failure_destination_id, queue_name, quota_reserved, work_policy_name, work_key_digest, work_expires_at, work_sequence, work_policy_revision, work_fairness_digest, work_fairness_limit, platform_tenant_id, failure_rules, occurrence_id, start_deadline_at, work_decision, deployment_scope, queue_binding_id, replay_generation
 `
 
 type EnqueueInvocationRowParams struct {
@@ -2944,6 +2955,7 @@ func (q *Queries) EnqueueInvocationRow(ctx context.Context, db DBTX, arg Enqueue
 		&i.WorkDecision,
 		&i.DeploymentScope,
 		&i.QueueBindingID,
+		&i.ReplayGeneration,
 	)
 	return i, err
 }
@@ -11147,7 +11159,7 @@ func (q *Queries) ListTerminalTriggerRecordItems(ctx context.Context, db DBTX, a
 }
 
 const listTriggerDeadLetter = `-- name: ListTriggerDeadLetter :many
-select record_id, trigger_id, reason, routed_to, detail, created_at
+select record_id, trigger_id, reason, routed_to, detail, created_at, failure_history
 from trigger_dead_letter
 where trigger_id = $1
 order by created_at desc
@@ -11175,6 +11187,7 @@ func (q *Queries) ListTriggerDeadLetter(ctx context.Context, db DBTX, arg ListTr
 			&i.RoutedTo,
 			&i.Detail,
 			&i.CreatedAt,
+			&i.FailureHistory,
 		); err != nil {
 			return nil, err
 		}
@@ -15843,7 +15856,7 @@ where i.id=$2::uuid and i.app_id=$3::uuid and i.source='queue'
     and tr.item_identifier=i.id::text
     and not ((tr.state in ('pending','retry') and tr.next_fire_at<=clock_timestamp())
       or (tr.state='claimed' and tr.claim_expires_at<=clock_timestamp())))
-returning i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.deployment_scope, i.queue_binding_id
+returning i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.deployment_scope, i.queue_binding_id, i.replay_generation
 `
 
 type QueueClaimPendingInvocationParams struct {
@@ -15912,6 +15925,7 @@ func (q *Queries) QueueClaimPendingInvocation(ctx context.Context, db DBTX, arg 
 		&i.WorkDecision,
 		&i.DeploymentScope,
 		&i.QueueBindingID,
+		&i.ReplayGeneration,
 	)
 	return i, err
 }
@@ -16289,6 +16303,138 @@ func (q *Queries) QueueConsumerUpdateTrigger(ctx context.Context, db DBTX, arg Q
 	return result.RowsAffected(), nil
 }
 
+const queueFinishDeliveryClaims = `-- name: QueueFinishDeliveryClaims :many
+with targets as (
+  select unnest($1::text[]) as id, unnest($2::integer[]) as attempt,
+    unnest($3::bigint[]) as replay_generation
+), finalized as (
+  update invocations i set state=$4, outcome=$5,
+    result=$6::jsonb, completed_at=clock_timestamp(), lease_expires_at=null,
+    last_error=$7
+  from targets where i.id::text=targets.id and i.attempts=targets.attempt
+    and i.replay_generation=targets.replay_generation and i.app_id=$8::uuid
+    and i.source=$9 and i.state='dispatching'
+    and i.lease_expires_at>clock_timestamp()
+  returning i.id::text as id
+), receipts as (update trigger_records r set state=$10,
+  attempts=r.attempts+case when $10::text='dead_letter' and r.state<>'dead_letter' then 1 else 0 end,
+  last_error=case when $10::text='dead_letter' then nullif($7::text,'') else r.last_error end,
+  last_dispatched_at=clock_timestamp(), claim_expires_at=null
+from finalized where r.trigger_id=$11::uuid and r.item_identifier=finalized.id
+  and r.state<>$10::text returning r.id)
+select id from finalized
+`
+
+type QueueFinishDeliveryClaimsParams struct {
+	Ids               []string
+	Attempts          []int32
+	ReplayGenerations []int64
+	InvocationState   string
+	Outcome           pgtype.Text
+	Result            []byte
+	LastError         pgtype.Text
+	AppID             pgtype.UUID
+	Source            string
+	RecordState       string
+	TriggerID         pgtype.UUID
+}
+
+func (q *Queries) QueueFinishDeliveryClaims(ctx context.Context, db DBTX, arg QueueFinishDeliveryClaimsParams) ([]string, error) {
+	rows, err := db.Query(ctx, queueFinishDeliveryClaims,
+		arg.Ids,
+		arg.Attempts,
+		arg.ReplayGenerations,
+		arg.InvocationState,
+		arg.Outcome,
+		arg.Result,
+		arg.LastError,
+		arg.AppID,
+		arg.Source,
+		arg.RecordState,
+		arg.TriggerID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const queueInvocationForTriggerReceipt = `-- name: QueueInvocationForTriggerReceipt :one
+select i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.deployment_scope, i.queue_binding_id, i.replay_generation from trigger_records r join triggers t on t.id=r.trigger_id
+join invocations i on i.id::text=r.item_identifier and i.app_id=t.app_id and i.account_id=t.account_id
+  and i.source=t.source
+where r.id=$1::uuid and t.kind='queue' and t.source in ('queue','delayed_task')
+  and (i.queue_binding_id is null or i.queue_binding_id=t.queue_binding_id)
+  and r.state not in ('superseded','cancelled','expired')
+`
+
+func (q *Queries) QueueInvocationForTriggerReceipt(ctx context.Context, db DBTX, recordID pgtype.UUID) (Invocation, error) {
+	row := db.QueryRow(ctx, queueInvocationForTriggerReceipt, recordID)
+	var i Invocation
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.AccountID,
+		&i.Source,
+		&i.State,
+		&i.Payload,
+		&i.Headers,
+		&i.DueAt,
+		&i.Method,
+		&i.Path,
+		&i.CronID,
+		&i.ScheduledAt,
+		&i.AckUrl,
+		&i.Result,
+		&i.LeaseExpiresAt,
+		&i.ReceivedAt,
+		&i.CompletedAt,
+		&i.InstanceID,
+		&i.Attempts,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.OrgID,
+		&i.Outcome,
+		&i.DeadlineAt,
+		&i.RetryPolicy,
+		&i.ResultRetentionUntil,
+		&i.ReplayedFromInvocationID,
+		&i.LastReplayedAt,
+		&i.OnSuccessDestinationID,
+		&i.OnFailureDestinationID,
+		&i.QueueName,
+		&i.QuotaReserved,
+		&i.WorkPolicyName,
+		&i.WorkKeyDigest,
+		&i.WorkExpiresAt,
+		&i.WorkSequence,
+		&i.WorkPolicyRevision,
+		&i.WorkFairnessDigest,
+		&i.WorkFairnessLimit,
+		&i.PlatformTenantID,
+		&i.FailureRules,
+		&i.OccurrenceID,
+		&i.StartDeadlineAt,
+		&i.WorkDecision,
+		&i.DeploymentScope,
+		&i.QueueBindingID,
+		&i.ReplayGeneration,
+	)
+	return i, err
+}
+
 const queuePollCandidates = `-- name: QueuePollCandidates :many
 with consumer as (
  select coalesce(t.queue_binding_id, (select b.id from queue_bindings b
@@ -16374,22 +16520,122 @@ func (q *Queries) QueuePollCandidates(ctx context.Context, db DBTX, arg QueuePol
 	return items, nil
 }
 
+const queuePollLegacyClaims = `-- name: QueuePollLegacyClaims :many
+with claimed as (
+			select i.id
+			  from invocations i
+			  left join trigger_records tr
+			    on tr.trigger_id = $1::uuid
+			   and tr.item_identifier = i.id::text
+			 where i.app_id = $2::uuid
+			   and i.source = $3::text
+			   and i.queue_binding_id is null
+			   and (i.queue_name = $4::text or (
+				       i.queue_name = ''
+				   and not exists (
+				       select 1 from triggers other
+				        where other.app_id = $2::uuid
+				          and other.kind = 'queue'
+				          and other.enabled
+				          and other.source = $3::text
+				          and other.id <> $1::uuid
+				   )
+			       ))
+			   and i.state = 'pending'
+			   and i.work_policy_name is null
+			   and i.due_at <= now()
+			   and (tr.id is null
+			        or (tr.state in ('pending','retry') and tr.next_fire_at <= now())
+			        or (tr.state = 'claimed' and tr.claim_expires_at <= now()))
+			 order by i.created_at asc
+			 limit $5::integer
+			 for update of i skip locked
+		), updated as (
+			update invocations i
+			   set state = 'dispatching',
+			       lease_expires_at = now() + interval '10 minutes',
+			       received_at = coalesce(i.received_at, now()),
+			       attempts = i.attempts + 1
+			  from claimed c
+			 where i.id = c.id
+			returning i.id::text as id, i.payload::text as payload, i.headers::text as headers,
+			           '{}'::text as metadata, i.created_at, i.attempts, i.replay_generation
+		)
+		select id, payload, headers, metadata, created_at, attempts, replay_generation
+		  from updated
+		 order by created_at asc, id asc
+`
+
+type QueuePollLegacyClaimsParams struct {
+	TriggerID pgtype.UUID
+	AppID     pgtype.UUID
+	Source    string
+	QueueName string
+	PollLimit int32
+}
+
+type QueuePollLegacyClaimsRow struct {
+	ID               string
+	Payload          string
+	Headers          string
+	Metadata         string
+	CreatedAt        pgtype.Timestamptz
+	Attempts         int32
+	ReplayGeneration int64
+}
+
+func (q *Queries) QueuePollLegacyClaims(ctx context.Context, db DBTX, arg QueuePollLegacyClaimsParams) ([]QueuePollLegacyClaimsRow, error) {
+	rows, err := db.Query(ctx, queuePollLegacyClaims,
+		arg.TriggerID,
+		arg.AppID,
+		arg.Source,
+		arg.QueueName,
+		arg.PollLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []QueuePollLegacyClaimsRow{}
+	for rows.Next() {
+		var i QueuePollLegacyClaimsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Payload,
+			&i.Headers,
+			&i.Metadata,
+			&i.CreatedAt,
+			&i.Attempts,
+			&i.ReplayGeneration,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const queueReleasePendingBatchClaims = `-- name: QueueReleasePendingBatchClaims :exec
 with targets as (
-  select unnest($4::text[]) as id, unnest($5::integer[]) as attempt
+  select unnest($4::text[]) as id, unnest($5::integer[]) as attempt,
+    unnest($6::bigint[]) as replay_generation
 ) update invocations i set state='pending',lease_expires_at=null from targets
-where i.id::text=targets.id and i.attempts=targets.attempt
+where i.id::text=targets.id and i.attempts=targets.attempt and i.replay_generation=targets.replay_generation
   and i.app_id=$1::uuid and i.source='queue' and i.state='dispatching'
   and ($2::uuid is null or i.queue_binding_id=$2::uuid
     or (i.queue_binding_id is null and i.queue_name in ($3,'')))
 `
 
 type QueueReleasePendingBatchClaimsParams struct {
-	AppID     pgtype.UUID
-	BindingID pgtype.UUID
-	QueueName string
-	Ids       []string
-	Attempts  []int32
+	AppID             pgtype.UUID
+	BindingID         pgtype.UUID
+	QueueName         string
+	Ids               []string
+	Attempts          []int32
+	ReplayGenerations []int64
 }
 
 func (q *Queries) QueueReleasePendingBatchClaims(ctx context.Context, db DBTX, arg QueueReleasePendingBatchClaimsParams) error {
@@ -16399,6 +16645,43 @@ func (q *Queries) QueueReleasePendingBatchClaims(ctx context.Context, db DBTX, a
 		arg.QueueName,
 		arg.Ids,
 		arg.Attempts,
+		arg.ReplayGenerations,
+	)
+	return err
+}
+
+const queueRetryDeliveryClaims = `-- name: QueueRetryDeliveryClaims :exec
+with targets as (
+  select unnest($5::text[]) as id, unnest($6::integer[]) as attempt,
+    unnest($7::bigint[]) as replay_generation
+) update invocations i set state='pending', outcome=null, completed_at=null,
+  due_at=coalesce((select r.next_fire_at from trigger_records r
+    where r.trigger_id=$1::uuid and r.item_identifier=i.id::text),clock_timestamp()+interval '1 second'),
+  lease_expires_at=null,last_error=$2
+from targets where i.id::text=targets.id and i.attempts=targets.attempt
+  and i.replay_generation=targets.replay_generation and i.app_id=$3::uuid
+  and i.source=$4 and i.state='dispatching'
+`
+
+type QueueRetryDeliveryClaimsParams struct {
+	TriggerID         pgtype.UUID
+	Reason            pgtype.Text
+	AppID             pgtype.UUID
+	Source            string
+	Ids               []string
+	Attempts          []int32
+	ReplayGenerations []int64
+}
+
+func (q *Queries) QueueRetryDeliveryClaims(ctx context.Context, db DBTX, arg QueueRetryDeliveryClaimsParams) error {
+	_, err := db.Exec(ctx, queueRetryDeliveryClaims,
+		arg.TriggerID,
+		arg.Reason,
+		arg.AppID,
+		arg.Source,
+		arg.Ids,
+		arg.Attempts,
+		arg.ReplayGenerations,
 	)
 	return err
 }
@@ -17028,6 +17311,28 @@ type RenewEnvironmentGitOpsLeaseParams struct {
 
 func (q *Queries) RenewEnvironmentGitOpsLease(ctx context.Context, db DBTX, arg RenewEnvironmentGitOpsLeaseParams) (int64, error) {
 	result, err := db.Exec(ctx, renewEnvironmentGitOpsLease, arg.LeaseUntil, arg.SourceID, arg.LeaseToken)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const replayDeadLetterInvocation = `-- name: ReplayDeadLetterInvocation :execrows
+update invocations set state='pending', attempts=0, last_error=null, outcome=null,
+  due_at=clock_timestamp(),lease_expires_at=null,instance_id=null,
+  last_replayed_at=clock_timestamp(),completed_at=null,result=null
+where id=$1::uuid and account_id=$2::uuid
+  and app_id=$3::uuid and state='dead_letter'
+`
+
+type ReplayDeadLetterInvocationParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) ReplayDeadLetterInvocation(ctx context.Context, db DBTX, arg ReplayDeadLetterInvocationParams) (int64, error) {
+	result, err := db.Exec(ctx, replayDeadLetterInvocation, arg.ID, arg.AccountID, arg.AppID)
 	if err != nil {
 		return 0, err
 	}
@@ -18535,6 +18840,98 @@ func (q *Queries) ResolveStaleRegressionObservations(ctx context.Context, db DBT
 		return nil, err
 	}
 	return items, nil
+}
+
+const retryExternalTriggerRecordByOperator = `-- name: RetryExternalTriggerRecordByOperator :execrows
+update trigger_records r set state='pending', attempts=0, last_error=null,
+  next_fire_at=clock_timestamp(), claim_generation=claim_generation+1, claim_expires_at=null
+from triggers t where r.id=$1::uuid and t.id=r.trigger_id
+  and not (t.kind='queue' and coalesce(t.source in ('queue','delayed_task'),false))
+  and r.state not in ('superseded','cancelled','expired')
+  and ($2::uuid is null or t.account_id=$2::uuid)
+  and ($3::uuid is null or t.app_id=$3::uuid)
+`
+
+type RetryExternalTriggerRecordByOperatorParams struct {
+	ID                pgtype.UUID
+	ExpectedAccountID pgtype.UUID
+	ExpectedAppID     pgtype.UUID
+}
+
+func (q *Queries) RetryExternalTriggerRecordByOperator(ctx context.Context, db DBTX, arg RetryExternalTriggerRecordByOperatorParams) (int64, error) {
+	result, err := db.Exec(ctx, retryExternalTriggerRecordByOperator, arg.ID, arg.ExpectedAccountID, arg.ExpectedAppID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const retryQueueDeadLetterInvocation = `-- name: RetryQueueDeadLetterInvocation :one
+update invocations set state='pending', attempts=0, last_error=null, outcome=null,
+  due_at=clock_timestamp(), lease_expires_at=null, instance_id=null,
+  last_replayed_at=clock_timestamp(), completed_at=null, result=null
+where id=$1::uuid and account_id=$2::uuid and state='dead_letter'
+returning id, app_id, account_id, source, state, payload, headers, due_at, method, path, cron_id, scheduled_at, ack_url, result, lease_expires_at, received_at, completed_at, instance_id, attempts, last_error, created_at, org_id, outcome, deadline_at, retry_policy, result_retention_until, replayed_from_invocation_id, last_replayed_at, on_success_destination_id, on_failure_destination_id, queue_name, quota_reserved, work_policy_name, work_key_digest, work_expires_at, work_sequence, work_policy_revision, work_fairness_digest, work_fairness_limit, platform_tenant_id, failure_rules, occurrence_id, start_deadline_at, work_decision, deployment_scope, queue_binding_id, replay_generation
+`
+
+type RetryQueueDeadLetterInvocationParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) RetryQueueDeadLetterInvocation(ctx context.Context, db DBTX, arg RetryQueueDeadLetterInvocationParams) (Invocation, error) {
+	row := db.QueryRow(ctx, retryQueueDeadLetterInvocation, arg.ID, arg.AccountID)
+	var i Invocation
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.AccountID,
+		&i.Source,
+		&i.State,
+		&i.Payload,
+		&i.Headers,
+		&i.DueAt,
+		&i.Method,
+		&i.Path,
+		&i.CronID,
+		&i.ScheduledAt,
+		&i.AckUrl,
+		&i.Result,
+		&i.LeaseExpiresAt,
+		&i.ReceivedAt,
+		&i.CompletedAt,
+		&i.InstanceID,
+		&i.Attempts,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.OrgID,
+		&i.Outcome,
+		&i.DeadlineAt,
+		&i.RetryPolicy,
+		&i.ResultRetentionUntil,
+		&i.ReplayedFromInvocationID,
+		&i.LastReplayedAt,
+		&i.OnSuccessDestinationID,
+		&i.OnFailureDestinationID,
+		&i.QueueName,
+		&i.QuotaReserved,
+		&i.WorkPolicyName,
+		&i.WorkKeyDigest,
+		&i.WorkExpiresAt,
+		&i.WorkSequence,
+		&i.WorkPolicyRevision,
+		&i.WorkFairnessDigest,
+		&i.WorkFairnessLimit,
+		&i.PlatformTenantID,
+		&i.FailureRules,
+		&i.OccurrenceID,
+		&i.StartDeadlineAt,
+		&i.WorkDecision,
+		&i.DeploymentScope,
+		&i.QueueBindingID,
+		&i.ReplayGeneration,
+	)
+	return i, err
 }
 
 const reverseAccountInvoiceCreditConsumption = `-- name: ReverseAccountInvoiceCreditConsumption :execrows

@@ -113,12 +113,13 @@ const (
 // triggerDispatchRecord is one broker-delivered record the
 // dispatch tick packages for the gateway batch envelope.
 type triggerDispatchRecord struct {
-	ItemIdentifier    string            `json:"item_identifier"`
-	InvocationID      string            `json:"invocation_id,omitempty"`
-	InvocationAttempt int               `json:"invocation_attempt,omitempty"`
-	PayloadB64        string            `json:"payload_b64"`
-	Headers           map[string]string `json:"headers"`
-	Metadata          map[string]any    `json:"metadata"`
+	ItemIdentifier             string            `json:"item_identifier"`
+	InvocationID               string            `json:"invocation_id,omitempty"`
+	InvocationAttempt          int               `json:"invocation_attempt,omitempty"`
+	InvocationReplayGeneration int64             `json:"invocation_replay_generation,omitempty"`
+	PayloadB64                 string            `json:"payload_b64"`
+	Headers                    map[string]string `json:"headers"`
+	Metadata                   map[string]any    `json:"metadata"`
 }
 
 // triggerDispatchRequest is the JSON body posted to
@@ -373,6 +374,14 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	}
 	pollSpan.SetAttributes(attribute.String("gregale.trigger.outcome", "records"))
 	pollSpan.End()
+
+	// Freeze the queue's attempt and replay generation for this dispatch.
+	// A later poll may recover the same invocation while this HTTP request is
+	// still unwinding; its callback must never look up that newer handle.
+	if queue, ok := poller.(*queuePoller); ok {
+		poller = queue.deliveryPoller(res.Records)
+		defer poller.(*queuePoller).forgetClaims(batchItemIDs(res.Records))
+	}
 
 	// 3. Batch close: size / 6MB.
 	batch := closeBatch(res.Records, int(t.BatchSizeMax), int(t.PayloadMaxBytes))
@@ -1106,9 +1115,10 @@ func buildDispatchEnvelope(t sqlc.Trigger, batch []SourceRecord) triggerDispatch
 		recs = append(recs, triggerDispatchRecord{
 			ItemIdentifier: r.ItemIdentifier,
 			InvocationID:   r.InvocationID, InvocationAttempt: r.InvocationAttempt,
-			PayloadB64: base64.StdEncoding.EncodeToString(r.Payload),
-			Headers:    r.Headers,
-			Metadata:   r.Metadata,
+			InvocationReplayGeneration: r.InvocationReplayGeneration,
+			PayloadB64:                 base64.StdEncoding.EncodeToString(r.Payload),
+			Headers:                    r.Headers,
+			Metadata:                   r.Metadata,
 		})
 	}
 	return triggerDispatchRequest{
@@ -2106,6 +2116,9 @@ func ackSingle(ctx context.Context, t sqlc.Trigger, rec SourceRecord, l *Loop) e
 	}
 	if poller == nil {
 		return nil
+	}
+	if queue, ok := poller.(*queuePoller); ok {
+		poller = queue.deliveryPoller([]SourceRecord{rec})
 	}
 	return poller.Ack(ctx, t, []string{rec.ItemIdentifier})
 }

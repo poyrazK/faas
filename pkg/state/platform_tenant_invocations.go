@@ -54,6 +54,7 @@ func AdmitPlatformTenantInvocation(ctx context.Context, store interface {
 		}
 		if inv.Source == InvocationSource("esm") && ((stored.Source != InvocationQueue && stored.Source != InvocationDelayedTask) ||
 			stored.State != InvocationDispatching || inv.Attempts <= 0 || inv.Attempts != stored.Attempts ||
+			inv.ReplayGeneration != stored.ReplayGeneration ||
 			stored.LeaseExpiresAt == nil || !stored.LeaseExpiresAt.After(time.Now())) {
 			return inv, fmt.Errorf("%w: durable queue invocation claim admission", ErrConflict)
 		}

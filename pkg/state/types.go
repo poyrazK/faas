@@ -3960,6 +3960,9 @@ type Invocation struct {
 	ReceivedAt     *time.Time      `json:"received_at,omitempty"`
 	CompletedAt    *time.Time      `json:"completed_at,omitempty"`
 	Attempts       int             `json:"attempts"`
+	// ReplayGeneration fences deliveries across an operator retry-budget reset.
+	// It is ledger-owned and never accepted from customer headers or metadata.
+	ReplayGeneration int64 `json:"-"`
 	// QuotaReserved records whether ClaimInvocationWithCap acquired one
 	// account_async_quota slot for this dispatch. It is internal lifecycle
 	// state, not part of the customer invocation representation.

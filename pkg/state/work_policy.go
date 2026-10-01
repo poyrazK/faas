@@ -434,6 +434,7 @@ func (m *MemStore) EnqueueKeyedInvocation(_ context.Context, inv Invocation, pol
 	if inv.WorkSequence == 0 {
 		inv.WorkSequence = 1
 	}
+	inv.ReplayGeneration = 0
 	m.invocations[inv.ID] = inv
 	return inv, nil
 }

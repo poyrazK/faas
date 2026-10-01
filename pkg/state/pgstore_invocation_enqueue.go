@@ -98,7 +98,7 @@ func invocationFromSQL(row sqlc.Invocation) Invocation {
 		DueAt: timestamptzToTime(row.DueAt), ScheduledAt: timestamptzToTimePtr(row.ScheduledAt),
 		AckURL: row.AckUrl.String, Result: row.Result,
 		LeaseExpiresAt: timestamptzToTimePtr(row.LeaseExpiresAt), ReceivedAt: timestamptzToTimePtr(row.ReceivedAt),
-		CompletedAt: timestamptzToTimePtr(row.CompletedAt), Attempts: int(row.Attempts),
+		CompletedAt: timestamptzToTimePtr(row.CompletedAt), Attempts: int(row.Attempts), ReplayGeneration: row.ReplayGeneration,
 		QuotaReserved: row.QuotaReserved, LastError: row.LastError.String, CreatedAt: timestamptzToTime(row.CreatedAt),
 		WorkPolicyName: row.WorkPolicyName.String, WorkPolicyRevision: row.WorkPolicyRevision.Int64,
 		WorkKeyDigest: row.WorkKeyDigest, WorkFairnessDigest: row.WorkFairnessDigest,

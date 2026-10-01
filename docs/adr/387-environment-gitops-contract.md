@@ -380,6 +380,22 @@ Generic HTTP replay rejects bound queue messages with
 `queue_replay_requires_binding`; the app queue dead-letter replay endpoint
 retains the original row and work policy instead of orphaning its delivery lane.
 
+Durable queue recovery now rearms the invocation and its original consumer
+receipt in one transaction, retaining receipt UUIDs, captured scope, work policy,
+payload and failure audit. Repeated failures refresh the current dead-letter
+projection and retain earlier details in its failure history. Invocation replay, receipt retry and their unified
+failed-event surfaces all use this recovery path. The customer retry counter
+restarts at zero, while a separate ledger-owned replay generation increases;
+queue claims, partial release, acknowledgement and batch HTTP admission fence
+both values. Each dispatch captures its delivery handles so a later lease
+recovery cannot change the fence used by an unfinished callback.
+Disabled and retired parents still hold rearmed work until an authorized
+activation or recovery releases them. Historical replayed work receives a
+nonzero generation on initial upgrade so old envelopes cannot resume it. Migration
+replay preserves current generations and receipt leases. This qualifies queue
+recovery through PostgreSQL, receipt claims and HTTP dispatch; native guest
+execution and environment-scoped queue ownership remain separate gates.
+
 The additive migration captures historical ownership only from an existing
 private consumer receipt or a current name whose last binding update predates
 admission. Conflicting proofs and ambiguous history stay unassigned. Neither

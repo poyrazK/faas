@@ -75,7 +75,7 @@ func TestQueuePollerBindingIdentitySurvivesRename(t *testing.T) {
 	}
 	// A partial batch rollback made with a cached name must release its own UID
 	// claim after a rename, without releasing another dispatch attempt.
-	if err := poller.releaseNamedClaims(ctx, map[string]int{old.ID: 1}, oldTrigger); err != nil {
+	if err := poller.releaseNamedClaims(ctx, map[string]queueDeliveryClaim{old.ID: {Attempt: 1}}, oldTrigger); err != nil {
 		t.Fatal(err)
 	}
 	row, err := store.InvocationByID(ctx, old.ID)
@@ -86,7 +86,7 @@ func TestQueuePollerBindingIdentitySurvivesRename(t *testing.T) {
 	if retried.Error != nil || len(retried.Records) != 1 || retried.Records[0].InvocationAttempt != 2 {
 		t.Fatalf("released work lost attempt fence=%+v", retried)
 	}
-	if err := poller.releaseNamedClaims(ctx, map[string]int{old.ID: 1}, oldTrigger); err != nil {
+	if err := poller.releaseNamedClaims(ctx, map[string]queueDeliveryClaim{old.ID: {Attempt: 1}}, oldTrigger); err != nil {
 		t.Fatal(err)
 	}
 	if row, err := store.InvocationByID(ctx, old.ID); err != nil || row.State != state.InvocationDispatching || row.Attempts != 2 {

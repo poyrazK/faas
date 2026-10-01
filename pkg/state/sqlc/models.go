@@ -2134,6 +2134,7 @@ type Invocation struct {
 	WorkDecision             []byte
 	DeploymentScope          string
 	QueueBindingID           pgtype.UUID
+	ReplayGeneration         int64
 }
 
 type InvocationWorkCancellation struct {
@@ -4267,12 +4268,13 @@ type TriggerConsumerHealth struct {
 }
 
 type TriggerDeadLetter struct {
-	RecordID  pgtype.UUID
-	TriggerID pgtype.UUID
-	Reason    string
-	RoutedTo  string
-	Detail    []byte
-	CreatedAt pgtype.Timestamptz
+	RecordID       pgtype.UUID
+	TriggerID      pgtype.UUID
+	Reason         string
+	RoutedTo       string
+	Detail         []byte
+	CreatedAt      pgtype.Timestamptz
+	FailureHistory []byte
 }
 
 type TriggerRecord struct {

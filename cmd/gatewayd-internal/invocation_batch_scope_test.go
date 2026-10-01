@@ -41,7 +41,7 @@ func TestSynthBatchStoredScopeAndClaimAdmission(t *testing.T) {
 	calls := 0
 	adapter := &synthAdapter{store: store, invokeWithStatus: func(_ context.Context, appID string, inv state.Invocation) (state.Invocation, int, error) {
 		calls++
-		if appID != app.ID || inv.ID != row.ID || inv.DeploymentScope != "staging" || inv.Attempts != claim.Attempts ||
+		if appID != app.ID || inv.ID != row.ID || inv.DeploymentScope != "staging" || inv.Attempts != claim.Attempts || inv.ReplayGeneration != claim.ReplayGeneration ||
 			inv.Method != "POST" || inv.Path != "/_triggers/esm/test" || string(inv.Payload) != `{"job":true}` {
 			t.Errorf("batch routing contract: id=%q scope=%q attempt=%d path=%q", inv.ID, inv.DeploymentScope, inv.Attempts, inv.Path)
 		}
@@ -50,11 +50,11 @@ func TestSynthBatchStoredScopeAndClaimAdmission(t *testing.T) {
 	}}
 	server := gateway.NewSynthServer("", adapter, nil)
 	t.Cleanup(func() { _ = server.Stop(ctx) })
-	dispatch := func(appID, id string, attempt int) string {
+	dispatch := func(appID, id string, attempt int, generation int64) string {
 		t.Helper()
 		body, err := json.Marshal(map[string]any{"invocation_id": "trigger-test", "app_id": appID,
 			"source": "esm", "trigger_id": "test", "records": []map[string]any{{
-				"item_identifier": id, "invocation_id": id, "invocation_attempt": attempt,
+				"item_identifier": id, "invocation_id": id, "invocation_attempt": attempt, "invocation_replay_generation": generation,
 				"payload_b64": base64.StdEncoding.EncodeToString([]byte(`{"job":true}`)),
 			}}})
 		if err != nil {
@@ -72,13 +72,13 @@ func TestSynthBatchStoredScopeAndClaimAdmission(t *testing.T) {
 		}
 		return result.Results[0].Status
 	}
-	if status := dispatch(app.ID, row.ID, claim.Attempts); status != "succeeded" || calls != 1 {
+	if status := dispatch(app.ID, row.ID, claim.Attempts, 0); status != "succeeded" || calls != 1 {
 		t.Fatalf("valid batch: status=%q calls=%d", status, calls)
 	}
-	if status := dispatch(uuid.NewString(), row.ID, claim.Attempts); status != "retry" || calls != 1 {
+	if status := dispatch(uuid.NewString(), row.ID, claim.Attempts, 0); status != "retry" || calls != 1 {
 		t.Fatalf("foreign app reached invoke: status=%q calls=%d", status, calls)
 	}
-	if status := dispatch(app.ID, uuid.NewString(), claim.Attempts); status != "retry" || calls != 1 {
+	if status := dispatch(app.ID, uuid.NewString(), claim.Attempts, 0); status != "retry" || calls != 1 {
 		t.Fatalf("missing durable row reached invoke: status=%q calls=%d", status, calls)
 	}
 	if err := store.FailInvocation(ctx, claim.ID, "retry", time.Nanosecond, 3, state.WithClaimAttempt(claim.Attempts)); err != nil {
@@ -89,11 +89,30 @@ func TestSynthBatchStoredScopeAndClaimAdmission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status := dispatch(app.ID, row.ID, previousAttempt); status != "retry" || calls != 1 {
+	if status := dispatch(app.ID, row.ID, previousAttempt, 0); status != "retry" || calls != 1 {
 		t.Fatalf("stale claim reached invoke: status=%q calls=%d", status, calls)
 	}
-	if status := dispatch(app.ID, row.ID, claim.Attempts); status != "succeeded" || calls != 2 {
+	if status := dispatch(app.ID, row.ID, claim.Attempts, 0); status != "succeeded" || calls != 2 {
 		t.Fatalf("replacement claim delivery: status=%q calls=%d", status, calls)
+	}
+	if err := store.FailInvocation(ctx, row.ID, "exhausted", time.Nanosecond, 2, state.WithClaimAttempt(claim.Attempts)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RetryQueueDeadLetter(ctx, account.ID, row.ID); err != nil {
+		t.Fatal(err)
+	}
+	claim, err = store.ClaimInvocation(ctx, row.ID, "", 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claim.Attempts != 1 || claim.ReplayGeneration != 1 {
+		t.Fatalf("replay fence=%+v", claim)
+	}
+	if status := dispatch(app.ID, row.ID, 1, 0); status != "retry" || calls != 2 {
+		t.Fatalf("prior replay generation reached invoke: status=%q calls=%d", status, calls)
+	}
+	if status := dispatch(app.ID, row.ID, 1, 1); status != "succeeded" || calls != 3 {
+		t.Fatalf("current replay generation rejected: status=%q calls=%d", status, calls)
 	}
 }
 

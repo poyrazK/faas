@@ -1881,7 +1881,7 @@ insert into trigger_dead_letter (record_id, trigger_id, reason, routed_to, detai
 values ($1, $2, $3, $4, $5::jsonb);
 
 -- name: ListTriggerDeadLetter :many
-select record_id, trigger_id, reason, routed_to, detail, created_at
+select record_id, trigger_id, reason, routed_to, detail, created_at, failure_history
 from trigger_dead_letter
 where trigger_id = $1
 order by created_at desc
@@ -5727,9 +5727,10 @@ returning i.*;
 
 -- name: QueueReleasePendingBatchClaims :exec
 with targets as (
-  select unnest(sqlc.arg(ids)::text[]) as id, unnest(sqlc.arg(attempts)::integer[]) as attempt
+  select unnest(sqlc.arg(ids)::text[]) as id, unnest(sqlc.arg(attempts)::integer[]) as attempt,
+    unnest(sqlc.arg(replay_generations)::bigint[]) as replay_generation
 ) update invocations i set state='pending',lease_expires_at=null from targets
-where i.id::text=targets.id and i.attempts=targets.attempt
+where i.id::text=targets.id and i.attempts=targets.attempt and i.replay_generation=targets.replay_generation
   and i.app_id=sqlc.arg(app_id)::uuid and i.source='queue' and i.state='dispatching'
   and (sqlc.narg(binding_id)::uuid is null or i.queue_binding_id=sqlc.narg(binding_id)::uuid
     or (i.queue_binding_id is null and i.queue_name in (sqlc.arg(queue_name),'')));
@@ -5785,3 +5786,118 @@ select i.id::text from invocations i cross join consumer
       and not exists (select 1 from triggers other where other.app_id=sqlc.arg(app_id)::uuid
         and other.kind='queue' and other.enabled and other.source='queue' and other.id<>sqlc.arg(trigger_id)::uuid)))))
 		order by i.created_at, i.id limit sqlc.arg(candidate_limit)::integer;
+
+
+-- name: RetryQueueDeadLetterInvocation :one
+update invocations set state='pending', attempts=0, last_error=null, outcome=null,
+  due_at=clock_timestamp(), lease_expires_at=null, instance_id=null,
+  last_replayed_at=clock_timestamp(), completed_at=null, result=null
+where id=sqlc.arg(id)::uuid and account_id=sqlc.arg(account_id)::uuid and state='dead_letter'
+returning *;
+
+-- name: QueueInvocationForTriggerReceipt :one
+select i.* from trigger_records r join triggers t on t.id=r.trigger_id
+join invocations i on i.id::text=r.item_identifier and i.app_id=t.app_id and i.account_id=t.account_id
+  and i.source=t.source
+where r.id=sqlc.arg(record_id)::uuid and t.kind='queue' and t.source in ('queue','delayed_task')
+  and (i.queue_binding_id is null or i.queue_binding_id=t.queue_binding_id)
+  and r.state not in ('superseded','cancelled','expired');
+
+-- name: RetryExternalTriggerRecordByOperator :execrows
+update trigger_records r set state='pending', attempts=0, last_error=null,
+  next_fire_at=clock_timestamp(), claim_generation=claim_generation+1, claim_expires_at=null
+from triggers t where r.id=sqlc.arg(id)::uuid and t.id=r.trigger_id
+  and not (t.kind='queue' and coalesce(t.source in ('queue','delayed_task'),false))
+  and r.state not in ('superseded','cancelled','expired')
+  and (sqlc.narg(expected_account_id)::uuid is null or t.account_id=sqlc.narg(expected_account_id)::uuid)
+  and (sqlc.narg(expected_app_id)::uuid is null or t.app_id=sqlc.narg(expected_app_id)::uuid);
+
+-- name: QueueFinishDeliveryClaims :many
+with targets as (
+  select unnest(sqlc.arg(ids)::text[]) as id, unnest(sqlc.arg(attempts)::integer[]) as attempt,
+    unnest(sqlc.arg(replay_generations)::bigint[]) as replay_generation
+), finalized as (
+  update invocations i set state=sqlc.arg(invocation_state), outcome=sqlc.arg(outcome),
+    result=sqlc.arg(result)::jsonb, completed_at=clock_timestamp(), lease_expires_at=null,
+    last_error=sqlc.arg(last_error)
+  from targets where i.id::text=targets.id and i.attempts=targets.attempt
+    and i.replay_generation=targets.replay_generation and i.app_id=sqlc.arg(app_id)::uuid
+    and i.source=sqlc.arg(source) and i.state='dispatching'
+    and i.lease_expires_at>clock_timestamp()
+  returning i.id::text as id
+), receipts as (update trigger_records r set state=sqlc.arg(record_state),
+  attempts=r.attempts+case when sqlc.arg(record_state)::text='dead_letter' and r.state<>'dead_letter' then 1 else 0 end,
+  last_error=case when sqlc.arg(record_state)::text='dead_letter' then nullif(sqlc.arg(last_error)::text,'') else r.last_error end,
+  last_dispatched_at=clock_timestamp(), claim_expires_at=null
+from finalized where r.trigger_id=sqlc.arg(trigger_id)::uuid and r.item_identifier=finalized.id
+  and r.state<>sqlc.arg(record_state)::text returning r.id)
+select id from finalized;
+
+-- name: QueueRetryDeliveryClaims :exec
+with targets as (
+  select unnest(sqlc.arg(ids)::text[]) as id, unnest(sqlc.arg(attempts)::integer[]) as attempt,
+    unnest(sqlc.arg(replay_generations)::bigint[]) as replay_generation
+) update invocations i set state='pending', outcome=null, completed_at=null,
+  due_at=coalesce((select r.next_fire_at from trigger_records r
+    where r.trigger_id=sqlc.arg(trigger_id)::uuid and r.item_identifier=i.id::text),clock_timestamp()+interval '1 second'),
+  lease_expires_at=null,last_error=sqlc.arg(reason)
+from targets where i.id::text=targets.id and i.attempts=targets.attempt
+  and i.replay_generation=targets.replay_generation and i.app_id=sqlc.arg(app_id)::uuid
+  and i.source=sqlc.arg(source) and i.state='dispatching';
+
+-- name: QueuePollLegacyClaims :many
+with claimed as (
+			select i.id
+			  from invocations i
+			  left join trigger_records tr
+			    on tr.trigger_id = sqlc.arg(trigger_id)::uuid
+			   and tr.item_identifier = i.id::text
+			 where i.app_id = sqlc.arg(app_id)::uuid
+			   and i.source = sqlc.arg(source)::text
+			   and i.queue_binding_id is null
+			   and (i.queue_name = sqlc.arg(queue_name)::text or (
+				       i.queue_name = ''
+				   and not exists (
+				       select 1 from triggers other
+				        where other.app_id = sqlc.arg(app_id)::uuid
+				          and other.kind = 'queue'
+				          and other.enabled
+				          and other.source = sqlc.arg(source)::text
+				          and other.id <> sqlc.arg(trigger_id)::uuid
+				   )
+			       ))
+			   and i.state = 'pending'
+			   and i.work_policy_name is null
+			   and i.due_at <= now()
+			   and (tr.id is null
+			        or (tr.state in ('pending','retry') and tr.next_fire_at <= now())
+			        or (tr.state = 'claimed' and tr.claim_expires_at <= now()))
+			 order by i.created_at asc
+			 limit sqlc.arg(poll_limit)::integer
+			 for update of i skip locked
+		), updated as (
+			update invocations i
+			   set state = 'dispatching',
+			       lease_expires_at = now() + interval '10 minutes',
+			       received_at = coalesce(i.received_at, now()),
+			       attempts = i.attempts + 1
+			  from claimed c
+			 where i.id = c.id
+			returning i.id::text as id, i.payload::text as payload, i.headers::text as headers,
+			           '{}'::text as metadata, i.created_at, i.attempts, i.replay_generation
+		)
+		select id, payload, headers, metadata, created_at, attempts, replay_generation
+		  from updated
+		 order by created_at asc, id asc;
+
+-- name: ReplayDeadLetterInvocation :execrows
+update invocations set state='pending', attempts=0, last_error=null, outcome=null,
+  due_at=clock_timestamp(),lease_expires_at=null,instance_id=null,
+  last_replayed_at=clock_timestamp(),completed_at=null,result=null
+where id=sqlc.arg(id)::uuid and account_id=sqlc.arg(account_id)::uuid
+  and app_id=sqlc.arg(app_id)::uuid and state='dead_letter';
+
+-- name: DeleteExternalTriggerDeadLetterAudit :exec
+delete from trigger_dead_letter d using trigger_records r, triggers t
+where d.record_id=sqlc.arg(record_id)::uuid and r.id=d.record_id and t.id=r.trigger_id
+  and not (t.kind='queue' and coalesce(t.source in ('queue','delayed_task'),false));

@@ -391,7 +391,6 @@ ListTenantHostnamesForSurface
 ListTenantSurfacesForAccount
 ListTenantSurfacesForApp
 ListTenantSurfacesNearingExpiry
-ListTriggerDeadLetter
 ListTriggerRecordsForTrigger
 ListUnplacedApps
 ListVerifiedTenantHostnamesForSurface
@@ -509,7 +508,6 @@ ResolveStaleRegressionObservations
 ResolveStatusIncident
 RetireRuntimeSnapshot
 RetryDeploymentFromStage
-RetryTriggerRecordByOperator
 RevokeConsumerKey
 RevokeOrgAPIKey
 RevokeOrgInvitation

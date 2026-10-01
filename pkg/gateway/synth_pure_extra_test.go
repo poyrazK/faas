@@ -520,6 +520,9 @@ func TestHandleInvocationDispatchBatch_DurableIdentity(t *testing.T) {
 		wantAttempt  int
 	}{
 		{"durable", "esm", batchDispatchRecord{ItemIdentifier: id, InvocationID: id, InvocationAttempt: 2}, id, 2},
+		{"replayed", "esm", batchDispatchRecord{ItemIdentifier: id, InvocationID: id, InvocationAttempt: 2, InvocationReplayGeneration: 3}, id, 2},
+		{"negative generation", "esm", batchDispatchRecord{ItemIdentifier: id, InvocationID: id, InvocationAttempt: 2, InvocationReplayGeneration: -1}, "", 0},
+		{"generation without identity", "esm", batchDispatchRecord{ItemIdentifier: id, InvocationReplayGeneration: 3}, "", 0},
 		{"broker metadata", "esm", batchDispatchRecord{ItemIdentifier: "broker", Metadata: map[string]any{
 			"invocation_id": id, "invocation_attempt": 2}, Headers: map[string]string{"invocation_id": id}}, "trigger-broker", 0},
 		{"missing attempt", "esm", batchDispatchRecord{ItemIdentifier: id, InvocationID: id}, "", 0},
@@ -548,7 +551,7 @@ func TestHandleInvocationDispatchBatch_DurableIdentity(t *testing.T) {
 				}
 				return
 			}
-			if len(dispatcher.invs) != 1 || dispatcher.invs[0].ID != tc.wantID || dispatcher.invs[0].Attempts != tc.wantAttempt {
+			if len(dispatcher.invs) != 1 || dispatcher.invs[0].ID != tc.wantID || dispatcher.invs[0].Attempts != tc.wantAttempt || dispatcher.invs[0].ReplayGeneration != tc.record.InvocationReplayGeneration {
 				t.Fatalf("identity carrier did not survive dispatch: calls=%d", len(dispatcher.invs))
 			}
 			if dispatcher.invs[0].Path != "/_triggers/"+tc.source+"/test" || response.Results[0].Status != "succeeded" {
