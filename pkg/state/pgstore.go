@@ -15388,6 +15388,9 @@ func (s *PgStore) ClaimInvocation(ctx context.Context, id, instanceID string, le
 		}
 		return Invocation{}, mapErr(err)
 	}
+	if err := rejectEnvironmentQueueReceiptDB(ctx, tx, id, false); err != nil {
+		return Invocation{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Invocation{}, err
 	}
@@ -15481,6 +15484,9 @@ func (s *PgStore) completeInvocation(ctx context.Context, id string, attempt int
 		return fmt.Errorf("state: invocations complete begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := rejectEnvironmentQueueReceiptDB(ctx, tx, id, true); err != nil {
+		return err
+	}
 	var accountID string
 	var quotaReserved bool
 	if err := tx.QueryRow(ctx, `
@@ -15700,6 +15706,9 @@ func (s *PgStore) FailInvocation(ctx context.Context, id string, lastError strin
 		return fmt.Errorf("state: invocations fail begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := rejectEnvironmentQueueReceiptDB(ctx, tx, id, true); err != nil {
+		return err
+	}
 	var accountID string
 	var newState string
 	var quotaReserved bool
@@ -31588,6 +31597,10 @@ func (s *PgStore) ClaimInvocationWithCap(ctx context.Context, id, instanceID str
 			return Invocation{}, ErrNotFound
 		}
 		return Invocation{}, fmt.Errorf("state: invocations claim cap update: %w", err)
+	}
+
+	if err := rejectEnvironmentQueueReceiptDB(ctx, tx, id, false); err != nil {
+		return Invocation{}, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {

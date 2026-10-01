@@ -136,6 +136,7 @@ func (m *MemStore) deleteEnvironmentInvocationsLocked(environmentID string) {
 	for id, inv := range m.invocations {
 		if inv.EnvironmentID == environmentID {
 			delete(m.invocations, id)
+			delete(m.invocationEnvironmentQueueReceipts, id)
 			delete(m.invocationWorkEnvironmentAdmissions, id)
 			delete(m.invocationEnvironmentQueueAdmissions, id)
 		}

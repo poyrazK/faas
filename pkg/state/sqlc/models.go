@@ -79,6 +79,8 @@ type Account struct {
 	EgressAllowlistExtra   int32
 	EmailVerifiedAt        pgtype.Timestamptz
 	SuspendedReason        pgtype.Text
+	AbuseHoldAt            pgtype.Timestamptz
+	AbuseHoldReason        pgtype.Text
 }
 
 type AccountAsyncQuotum struct {
@@ -1397,6 +1399,15 @@ type InvocationEnvironmentQueueAdmission struct {
 	DefinitionHash string
 	QueueName      string
 	AdmittedAt     pgtype.Timestamptz
+}
+
+type InvocationEnvironmentQueueReceipt struct {
+	InvocationID   pgtype.UUID
+	Attempt        int32
+	TokenHash      string
+	OwnerHash      string
+	IssuedAt       pgtype.Timestamptz
+	LeaseExpiresAt pgtype.Timestamptz
 }
 
 type InvocationWorkEnvironmentAdmission struct {

@@ -1681,8 +1681,8 @@ No new plan limit is introduced.
 Worker/job delivery requires a pull consumer path: the existing request wake
 and HTTP gateway reject workloads without listeners. HTTP function push uses
 the request transport. Producer depth admission is a prerequisite for those
-class-specific stage paths; public activation, delivery receipts and full-clone
-qualification remain unavailable until the entire runtime contract is wired
+class-specific stage paths; public activation and full-clone qualification
+remain unavailable until the entire runtime contract is wired
 and verified. Preparation continues to cover all supported consumer classes.
 
 Verification: the final selected state run passed in 71.973 seconds, covering
@@ -1694,3 +1694,74 @@ cleanup, production queue boundaries and account quota contracts also passed.
 The API caller regressions passed in 1.869 seconds and scheduler queue/drain
 regressions in 24.382 seconds. Independent SQLC 1.31.1 generation and the
 whitespace check passed. Full suite and native VM/provider gates remain open.
+
+
+### Private stage queue claims and delivery receipts
+
+The private store transport now claims the next due message in one selected
+stage deployment and pinned binding. It orders by due time, creation time and
+message ID, excludes future messages and breached deadlines, and never searches
+production or another stage/deployment. The adapter must name the pinned
+transport mode. This supports the pending-message pull needed by worker/job
+consumers and the same lease primitive for push adapters; preparation still
+covers every supported consumer definition, including HTTP function push.
+This is a store contract, not evidence of native worker/job execution or an
+HTTP push runtime adapter.
+
+Claim resolves the complete owned consumer book, authenticates the message's
+private admission and selected pin, reads the current account plan/status and
+abuse hold, and enforces the existing account and logical consumer concurrency
+limits. Lease duration is positive and bounded by the account's existing async
+invocation deadline limit. PostgreSQL takes environment/app/deployment ownership
+locks first, then reserves the account counter before checking consumer
+capacity across generations and claiming the message. The invocation transition,
+reservation and receipt insert commit together. MemStore mirrors this under its
+mutation lock. Empty reads and rejected claims leave no quota, receipt or attempt
+increment.
+
+Every delivery attempt returns a fresh cryptographically random 256-bit opaque
+receipt. Only its SHA-256 digest is persisted, alongside the attempt, issue and
+expiry times and a digest of the complete admission owner. Completion and retry
+require this receipt in the same selected scope, a matching frozen consumer and
+pin, the same current attempt and lease, and a live lease/deadline. An expired,
+recovered, cancelled, wrong-scope, duplicate or previous-attempt receipt cannot
+acknowledge or retry a new delivery. Retry uses the message's pinned policy,
+clamped to the current account plan's finite attempt budget; each transition
+away from dispatching releases its reservation once. Lease recovery consumes
+that attempt budget too: the next scoped claim moves an exhausted pending
+message to stage dead-letter without reserving quota or issuing a receipt,
+and a subsequent read can consume the next message. Deployment retirement
+stops claims while allowing an existing valid lease to finish.
+
+Generic invocation discovery, claims and finish methods cannot bypass a receipt-owned
+attempt. Their PostgreSQL receipt check observes the invocation row lock before
+reading the receipt, and their mutations/counters roll back on rejection.
+Receipt ownership survives damage or loss of the admission proof: the receipt
+references the invocation directly, and production queue readers, rollups,
+queue poller selection/claim/release/retry/finish and retained failed-event
+ownership exclude receipt-owned work even when environment and pin fields are
+lost. Receipt rows cascade with invocation retention and are explicitly
+registered as operational state that resets at clone. Downgrading the receipt
+migration is rejected while receipt-owned messages remain, preserving their
+ownership and acknowledgement fence.
+
+Public stage ingress/activation, consumer access credentials, all native
+class-specific adapters and full-clone qualification remain gated. This change
+does not enable the one-command full clone or claim an independent coordinated
+PostgreSQL/object-storage checkpoint. Those runtime/provider and complete
+configuration gates remain part of this ADR's full objective.
+
+
+Verification: the state regression run passed in 161.299 seconds, covering
+existing private queue admission/preparation/depth/concurrency/cleanup,
+production queue boundaries, generic invocation completion/retry/quota, keyed
+work lifecycle and migrated schema coverage. The final focused state run passed
+in 31.768 seconds, including all five supported class/mode definitions,
+scoped FIFO selection, future/deadline exclusions, concurrent claims and
+completion, receipt rotation, retries and timeout attempt budgets, cancellation,
+lease recovery, retirement, failure rollback, lost ownership, generic drain
+filtering before page limits, migration rollback/reapplication and schema policy.
+API regressions passed in 1.434 seconds and scheduler queue/drain regressions in
+17.119 seconds. Final independent SQLC 1.31.1 regeneration matches checked-in
+output and the whitespace check passes. These are selected local tests; full
+suite, lint and native VM/provider acceptance remain open for the full feature.

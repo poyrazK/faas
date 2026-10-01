@@ -11439,3 +11439,30 @@ CREATE VIEW production_dead_letter_events AS SELECT e.* FROM dead_letter_events 
 WHERE NOT e.environment_owned AND (e.source<>'invocation' OR (NOT faas_invocation_headers_own_stage(e.app_id,e.headers)
     AND NOT EXISTS(SELECT 1 FROM invocations i WHERE i.id=e.source_id
         AND NOT EXISTS(SELECT 1 FROM production_invocation_work p WHERE p.id=i.id))));
+
+-- ADR-375: each stage delivery attempt owns a fresh opaque receipt. Only its
+-- digest is retained; receipts and messages are operational and reset at clone.
+CREATE TABLE invocation_environment_queue_receipts (
+    invocation_id uuid PRIMARY KEY REFERENCES invocations(id) ON DELETE CASCADE,
+    attempt integer NOT NULL CHECK (attempt > 0),
+    token_hash text NOT NULL CHECK (token_hash ~ '^[a-f0-9]{64}$'),
+    owner_hash text NOT NULL CHECK (owner_hash ~ '^[a-f0-9]{64}$'),
+    issued_at timestamptz NOT NULL,
+    lease_expires_at timestamptz NOT NULL CHECK (lease_expires_at > issued_at)
+);
+
+
+-- Existing ADR-361 account holds are part of runtime admission.
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS abuse_hold_at timestamptz,
+    ADD COLUMN IF NOT EXISTS abuse_hold_reason text;
+ALTER TABLE accounts ADD CONSTRAINT accounts_abuse_hold_valid CHECK (
+    (abuse_hold_at IS NULL)=(abuse_hold_reason IS NULL)
+    AND (abuse_hold_reason IS NULL OR abuse_hold_reason IN ('egress_fanout','egress_flood','operator')));
+
+CREATE OR REPLACE VIEW production_invocation_work AS
+SELECT i.* FROM invocations i
+WHERE i.environment_id IS NULL
+    AND NOT EXISTS(SELECT 1 FROM invocation_environment_queue_admissions p WHERE p.invocation_id=i.id)
+    AND NOT EXISTS(SELECT 1 FROM invocation_work_environment_admissions p WHERE p.invocation_id=i.id)
+    AND NOT faas_invocation_headers_own_stage(i.app_id,i.headers)
+    AND NOT EXISTS(SELECT 1 FROM invocation_environment_queue_receipts r WHERE r.invocation_id=i.id);

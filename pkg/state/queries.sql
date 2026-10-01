@@ -5736,6 +5736,7 @@ select i.id::text from invocations i
 		where i.app_id = sqlc.arg(app_id) and i.source = 'queue' and i.state = 'pending'
 
           and i.environment_id is null
+          and not exists (select 1 from invocation_environment_queue_receipts receipt where receipt.invocation_id=i.id)
           and not exists (select 1 from deployments stage
               where stage.app_id=i.app_id and stage.scope not in ('production','default')
                 and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
@@ -5796,6 +5797,7 @@ with targets as (
 	    and i.state = 'dispatching'
 
           and i.environment_id is null
+          and not exists (select 1 from invocation_environment_queue_receipts receipt where receipt.invocation_id=i.id)
           and not exists (select 1 from deployments stage
               where stage.app_id=i.app_id and stage.scope not in ('production','default')
                 and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
@@ -5816,6 +5818,7 @@ with claimed as (
 			 where i.app_id = sqlc.arg(app_id)
 
           and i.environment_id is null
+          and not exists (select 1 from invocation_environment_queue_receipts receipt where receipt.invocation_id=i.id)
           and not exists (select 1 from deployments stage
               where stage.app_id=i.app_id and stage.scope not in ('production','default')
                 and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
@@ -5877,6 +5880,7 @@ with targets as (
 		   and i.app_id = sqlc.arg(app_id) and i.source = sqlc.arg(source) and i.state = 'dispatching'
 
           and i.environment_id is null
+          and not exists (select 1 from invocation_environment_queue_receipts receipt where receipt.invocation_id=i.id)
           and not exists (select 1 from deployments stage
               where stage.app_id=i.app_id and stage.scope not in ('production','default')
                 and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
@@ -5920,6 +5924,7 @@ with targets as (
 		   and i.state = 'dispatching'
 
           and i.environment_id is null
+          and not exists (select 1 from invocation_environment_queue_receipts receipt where receipt.invocation_id=i.id)
           and not exists (select 1 from deployments stage
               where stage.app_id=i.app_id and stage.scope not in ('production','default')
                 and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
@@ -5934,6 +5939,7 @@ with targets as (
 select i.*
 		  from invocations i
 		 where i.state = 'pending' and i.due_at <= sqlc.arg(now_at)
+		   and not exists (select 1 from invocation_environment_queue_receipts receipt where receipt.invocation_id=i.id)
 		   and (i.source <> 'queue' or i.queue_name = '')
 		   and (i.environment_id is not null or i.work_policy_name is not null or not exists (
 		       select 1
@@ -5983,6 +5989,7 @@ select i.*
 select i.*
 		  from invocations i
 		 where i.state = 'pending' and i.due_at <= sqlc.arg(now_at)
+		   and not exists (select 1 from invocation_environment_queue_receipts receipt where receipt.invocation_id=i.id)
 		   and (i.source <> 'queue' or i.queue_name = '')
 		   and (i.environment_id is not null or i.work_policy_name is not null or not exists (
 		       select 1
@@ -6032,6 +6039,7 @@ select i.*
 -- name: ReadProductionQueueTriggerInvocation :one
 SELECT i.* FROM invocations i WHERE i.id=sqlc.arg(invocation_id) AND i.app_id=sqlc.arg(app_id) AND i.source='queue'
           and i.environment_id is null
+          and not exists (select 1 from invocation_environment_queue_receipts receipt where receipt.invocation_id=i.id)
           and not exists (select 1 from deployments stage
               where stage.app_id=i.app_id and stage.scope not in ('production','default')
                 and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
@@ -6045,6 +6053,7 @@ SELECT i.* FROM invocations i WHERE i.id=sqlc.arg(invocation_id) AND i.app_id=sq
 -- name: LockProductionQueueTriggerInvocationRow :one
 SELECT i.id FROM invocations i WHERE i.id=sqlc.arg(invocation_id) AND i.app_id=sqlc.arg(app_id) AND i.source='queue' AND i.state='pending'
           and i.environment_id is null
+          and not exists (select 1 from invocation_environment_queue_receipts receipt where receipt.invocation_id=i.id)
           and not exists (select 1 from deployments stage
               where stage.app_id=i.app_id and stage.scope not in ('production','default')
                 and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
@@ -6064,6 +6073,7 @@ select count(*) from invocations i
 			where i.app_id = sqlc.arg(app_id) and source = 'queue' and queue_name = sqlc.arg(queue_name)
 			  and state = 'dispatching' and lease_expires_at > clock_timestamp()
           and i.environment_id is null
+          and not exists (select 1 from invocation_environment_queue_receipts receipt where receipt.invocation_id=i.id)
           and not exists (select 1 from deployments stage
               where stage.app_id=i.app_id and stage.scope not in ('production','default')
                 and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
@@ -6082,6 +6092,7 @@ update invocations i set state = 'dispatching',
 		where i.id = sqlc.arg(invocation_id) and i.app_id = sqlc.arg(app_id) and i.source = 'queue'
 		  and i.state = 'pending' and i.due_at <= clock_timestamp()
           and i.environment_id is null
+          and not exists (select 1 from invocation_environment_queue_receipts receipt where receipt.invocation_id=i.id)
           and not exists (select 1 from deployments stage
               where stage.app_id=i.app_id and stage.scope not in ('production','default')
                 and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
@@ -6266,3 +6277,72 @@ WHERE i.state IN ('pending','dispatching') OR i.quota_reserved;
 
 -- name: ReadEnvironmentQueueProducerPlan :one
 SELECT plan FROM accounts WHERE id=$1;
+
+-- ADR-375: private stage transport, independent of the legacy completion inbox.
+-- name: ReadEnvironmentQueueDeliveryAccount :one
+SELECT plan,status,abuse_hold_at FROM accounts WHERE id=$1;
+
+-- name: NextEnvironmentQueueDeliveryInvocation :one
+SELECT i.* FROM invocations i JOIN invocation_environment_queue_admissions p ON p.invocation_id=i.id
+WHERE p.consumer_id=sqlc.arg(consumer_id)::uuid AND p.runtime_set_id=sqlc.arg(runtime_set_id)::uuid
+    AND i.state='pending' AND i.due_at<=now() AND (i.deadline_at IS NULL OR i.deadline_at>now())
+ORDER BY i.due_at,i.created_at,i.id LIMIT 1;
+
+-- name: EnsureEnvironmentQueueDeliveryQuota :exec
+INSERT INTO account_async_quota(account_id,max_inflight) VALUES($1,$2)
+ON CONFLICT(account_id) DO UPDATE SET updated_at=now();
+
+-- name: ReserveEnvironmentQueueDeliveryQuota :one
+UPDATE account_async_quota SET current_inflight=current_inflight+1,updated_at=now()
+WHERE account_id=$1 AND current_inflight<max_inflight RETURNING current_inflight;
+
+-- name: ReleaseEnvironmentQueueDeliveryQuota :exec
+UPDATE account_async_quota SET current_inflight=greatest(current_inflight-1,0),updated_at=now() WHERE account_id=$1;
+
+-- name: ClaimEnvironmentQueueDeliveryInvocation :one
+WITH delivery_clock AS MATERIALIZED (SELECT clock_timestamp() AS at)
+UPDATE invocations i SET state='dispatching',quota_reserved=true,received_at=delivery_clock.at,
+    lease_expires_at=delivery_clock.at+make_interval(secs => sqlc.arg(lease_seconds)::integer),attempts=i.attempts+1
+FROM invocation_environment_queue_admissions p, delivery_clock WHERE p.invocation_id=i.id AND i.id=sqlc.arg(invocation_id)::uuid
+    AND p.consumer_id=sqlc.arg(consumer_id)::uuid AND p.runtime_set_id=sqlc.arg(runtime_set_id)::uuid
+    AND i.state='pending' AND NOT i.quota_reserved AND i.due_at<=delivery_clock.at AND (i.deadline_at IS NULL OR i.deadline_at>delivery_clock.at)
+RETURNING i.*;
+
+-- name: UpsertEnvironmentQueueDeliveryReceipt :execrows
+INSERT INTO invocation_environment_queue_receipts(invocation_id,attempt,token_hash,owner_hash,issued_at,lease_expires_at)
+VALUES($1,$2,$3,$4,$5,$6)
+ON CONFLICT(invocation_id) DO UPDATE SET attempt=excluded.attempt,token_hash=excluded.token_hash,
+    issued_at=excluded.issued_at,lease_expires_at=excluded.lease_expires_at
+WHERE invocation_environment_queue_receipts.attempt<excluded.attempt
+    AND invocation_environment_queue_receipts.owner_hash=excluded.owner_hash;
+
+-- name: ReadEnvironmentQueueDeliveryReceipt :one
+SELECT * FROM invocation_environment_queue_receipts WHERE invocation_id=$1;
+
+-- name: EnvironmentQueueDeliveryReceiptExists :one
+SELECT EXISTS(SELECT 1 FROM invocation_environment_queue_receipts WHERE invocation_id=$1);
+
+-- name: LockEnvironmentQueueDeliveryInvocation :one
+SELECT i.* FROM invocations i WHERE i.id=$1 FOR UPDATE OF i;
+
+-- name: EnvironmentQueueDeliveryClock :one
+SELECT clock_timestamp()::timestamptz AS wall_time;
+
+-- name: FinishEnvironmentQueueDeliveryInvocation :execrows
+UPDATE invocations SET state=sqlc.arg(state)::text,quota_reserved=false,outcome=sqlc.narg(outcome)::text,
+    last_error=sqlc.arg(last_error)::text,completed_at=sqlc.narg(completed_at)::timestamptz,
+    due_at=sqlc.arg(due_at)::timestamptz,lease_expires_at=sqlc.narg(lease_expires_at)::timestamptz,
+    instance_id=sqlc.narg(instance_id)::uuid,result=COALESCE(sqlc.narg(result)::jsonb,result)
+WHERE id=sqlc.arg(invocation_id)::uuid AND state='dispatching' AND quota_reserved
+    AND attempts=sqlc.arg(attempt)::integer AND lease_expires_at>clock_timestamp()
+    AND (deadline_at IS NULL OR deadline_at>clock_timestamp());
+
+-- name: LockLegacyInvocationReceiptFence :one
+SELECT id FROM invocations WHERE id=$1 FOR UPDATE;
+
+-- name: ExhaustEnvironmentQueueDeliveryInvocation :execrows
+UPDATE invocations i SET state='dead_letter',outcome='dead_letter',completed_at=clock_timestamp(),
+    last_error='queue delivery attempt budget exhausted after lease recovery',lease_expires_at=NULL,instance_id=NULL
+FROM invocation_environment_queue_admissions p WHERE p.invocation_id=i.id AND i.id=sqlc.arg(invocation_id)::uuid
+    AND p.consumer_id=sqlc.arg(consumer_id)::uuid AND p.runtime_set_id=sqlc.arg(runtime_set_id)::uuid
+    AND i.state='pending' AND NOT i.quota_reserved AND i.attempts=sqlc.arg(attempt)::integer;

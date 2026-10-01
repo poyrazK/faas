@@ -506,6 +506,7 @@ type MemStore struct {
 	workCancellations   map[string]WorkCancellation
 
 	invocationEnvironmentQueueAdmissions map[string]InvocationEnvironmentQueueAdmission
+	invocationEnvironmentQueueReceipts   map[string]environmentQueueReceipt
 	invocationWorkEnvironmentAdmissions  map[string]InvocationWorkEnvironmentAdmission
 	invocationWorkEnvironmentDomains     map[string]string
 	// executions and executionPayloads mirror the ADR-171 durable intent
@@ -1205,6 +1206,7 @@ func NewMemStore() *MemStore {
 		deploymentSeq:           map[string]int64{},
 
 		invocationEnvironmentQueueAdmissions: map[string]InvocationEnvironmentQueueAdmission{},
+		invocationEnvironmentQueueReceipts:   map[string]environmentQueueReceipt{},
 		invocationWorkEnvironmentAdmissions:  map[string]InvocationWorkEnvironmentAdmission{},
 		invocationWorkEnvironmentDomains:     map[string]string{},
 		// Issue #463 / ADR-069 / PR-B — per-workload filesystem
@@ -6010,6 +6012,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	for key, v := range m.invocations {
 		if v.AppID == id {
 			delete(m.invocations, key)
+			delete(m.invocationEnvironmentQueueReceipts, key)
 		}
 	}
 	for key, task := range m.appTasks {
@@ -12137,6 +12140,9 @@ func (m *MemStore) dueInvocationsLocked(now time.Time) []Invocation {
 		if inv.State != InvocationPending {
 			continue
 		}
+		if _, receiptOwned := m.invocationEnvironmentQueueReceipts[inv.ID]; receiptOwned {
+			continue
+		}
 		// Explicitly named queue rows belong to their first-class binding,
 		// even while that binding is disabled or waiting for a consumer
 		// projection. The legacy drain only owns empty-name queue rows.
@@ -12200,6 +12206,9 @@ func (m *MemStore) ClaimInvocation(_ context.Context, id, instanceID string, lea
 	}
 	if inv.State != InvocationPending {
 		return Invocation{}, ErrNotFound
+	}
+	if _, receiptOwned := m.invocationEnvironmentQueueReceipts[id]; receiptOwned {
+		return Invocation{}, ErrConflict
 	}
 	if err := m.validateInvocationEnvironmentClaimLocked(inv); err != nil {
 		return Invocation{}, err
@@ -12283,6 +12292,9 @@ func (m *MemStore) completeInvocation(id string, attempt int, result json.RawMes
 		(inv.WorkPolicyName != "" && inv.Attempts != attempt) {
 		return ErrNotFound
 	}
+	if _, receiptOwned := m.invocationEnvironmentQueueReceipts[id]; receiptOwned {
+		return ErrConflict
+	}
 	quotaReserved := inv.QuotaReserved
 	inv.State = InvocationCompleted
 	inv.QuotaReserved = false
@@ -12363,6 +12375,9 @@ func (m *MemStore) FailInvocation(_ context.Context, id string, lastError string
 	}
 	if inv.State != InvocationPending && inv.State != InvocationDispatching {
 		return ErrNotFound
+	}
+	if _, receiptOwned := m.invocationEnvironmentQueueReceipts[id]; receiptOwned {
+		return ErrConflict
 	}
 	failOpts := ApplyFailOptions(opts)
 	if inv.WorkPolicyName != "" {
@@ -24451,6 +24466,9 @@ func (m *MemStore) ClaimInvocationWithCap(_ context.Context, id, instanceID stri
 	if !ok {
 		return Invocation{}, ErrNotFound
 	}
+	if _, receiptOwned := m.invocationEnvironmentQueueReceipts[id]; receiptOwned {
+		return Invocation{}, ErrConflict
+	}
 	if err := m.validateInvocationEnvironmentClaimLocked(inv); err != nil {
 		return Invocation{}, err
 	}
@@ -24539,6 +24557,7 @@ func (m *MemStore) DeleteInvocationsByIDs(_ context.Context, ids []string) (int,
 	for _, id := range ids {
 		if _, ok := m.invocations[id]; ok {
 			delete(m.invocations, id)
+			delete(m.invocationEnvironmentQueueReceipts, id)
 			delete(m.invocationWorkEnvironmentAdmissions, id)
 			delete(m.invocationEnvironmentQueueAdmissions, id)
 			n++

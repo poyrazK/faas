@@ -900,6 +900,76 @@ func (q *Queries) CaptureProjectEnvironmentCloneWorkPolicies(ctx context.Context
 	return i, err
 }
 
+const claimEnvironmentQueueDeliveryInvocation = `-- name: ClaimEnvironmentQueueDeliveryInvocation :one
+WITH delivery_clock AS MATERIALIZED (SELECT clock_timestamp() AS at)
+UPDATE invocations i SET state='dispatching',quota_reserved=true,received_at=delivery_clock.at,
+    lease_expires_at=delivery_clock.at+make_interval(secs => $1::integer),attempts=i.attempts+1
+FROM invocation_environment_queue_admissions p, delivery_clock WHERE p.invocation_id=i.id AND i.id=$2::uuid
+    AND p.consumer_id=$3::uuid AND p.runtime_set_id=$4::uuid
+    AND i.state='pending' AND NOT i.quota_reserved AND i.due_at<=delivery_clock.at AND (i.deadline_at IS NULL OR i.deadline_at>delivery_clock.at)
+RETURNING i.id, i.environment_id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.quota_reserved, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.queue_name, i.on_success_destination_id, i.on_failure_destination_id, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit
+`
+
+type ClaimEnvironmentQueueDeliveryInvocationParams struct {
+	LeaseSeconds int32
+	InvocationID pgtype.UUID
+	ConsumerID   pgtype.UUID
+	RuntimeSetID pgtype.UUID
+}
+
+func (q *Queries) ClaimEnvironmentQueueDeliveryInvocation(ctx context.Context, db DBTX, arg ClaimEnvironmentQueueDeliveryInvocationParams) (Invocation, error) {
+	row := db.QueryRow(ctx, claimEnvironmentQueueDeliveryInvocation,
+		arg.LeaseSeconds,
+		arg.InvocationID,
+		arg.ConsumerID,
+		arg.RuntimeSetID,
+	)
+	var i Invocation
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.AppID,
+		&i.AccountID,
+		&i.Source,
+		&i.State,
+		&i.Payload,
+		&i.Headers,
+		&i.DueAt,
+		&i.Method,
+		&i.Path,
+		&i.CronID,
+		&i.ScheduledAt,
+		&i.AckUrl,
+		&i.Result,
+		&i.LeaseExpiresAt,
+		&i.ReceivedAt,
+		&i.CompletedAt,
+		&i.InstanceID,
+		&i.Attempts,
+		&i.QuotaReserved,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.OrgID,
+		&i.Outcome,
+		&i.DeadlineAt,
+		&i.RetryPolicy,
+		&i.ResultRetentionUntil,
+		&i.ReplayedFromInvocationID,
+		&i.LastReplayedAt,
+		&i.QueueName,
+		&i.OnSuccessDestinationID,
+		&i.OnFailureDestinationID,
+		&i.WorkPolicyName,
+		&i.WorkKeyDigest,
+		&i.WorkExpiresAt,
+		&i.WorkSequence,
+		&i.WorkPolicyRevision,
+		&i.WorkFairnessDigest,
+		&i.WorkFairnessLimit,
+	)
+	return i, err
+}
+
 const claimLayerArtifactDeletion = `-- name: ClaimLayerArtifactDeletion :execrows
 UPDATE layer_artifact_retention SET state = 'deleting', deletion_id = $1::uuid
 WHERE storage_key = $2::text AND state = 'retained'
@@ -928,6 +998,7 @@ with claimed as (
 			 where i.app_id = $2
 
           and i.environment_id is null
+          and not exists (select 1 from invocation_environment_queue_receipts receipt where receipt.invocation_id=i.id)
           and not exists (select 1 from deployments stage
               where stage.app_id=i.app_id and stage.scope not in ('production','default')
                 and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
@@ -1032,6 +1103,7 @@ update invocations i set state = 'dispatching',
 		where i.id = $2 and i.app_id = $3 and i.source = 'queue'
 		  and i.state = 'pending' and i.due_at <= clock_timestamp()
           and i.environment_id is null
+          and not exists (select 1 from invocation_environment_queue_receipts receipt where receipt.invocation_id=i.id)
           and not exists (select 1 from deployments stage
               where stage.app_id=i.app_id and stage.scope not in ('production','default')
                 and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
@@ -1476,6 +1548,7 @@ select count(*) from invocations i
 			where i.app_id = $1 and source = 'queue' and queue_name = $2
 			  and state = 'dispatching' and lease_expires_at > clock_timestamp()
           and i.environment_id is null
+          and not exists (select 1 from invocation_environment_queue_receipts receipt where receipt.invocation_id=i.id)
           and not exists (select 1 from deployments stage
               where stage.app_id=i.app_id and stage.scope not in ('production','default')
                 and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
@@ -3041,6 +3114,21 @@ func (q *Queries) DomainByName(ctx context.Context, db DBTX, domain interface{})
 	return i, err
 }
 
+const ensureEnvironmentQueueDeliveryQuota = `-- name: EnsureEnvironmentQueueDeliveryQuota :exec
+INSERT INTO account_async_quota(account_id,max_inflight) VALUES($1,$2)
+ON CONFLICT(account_id) DO UPDATE SET updated_at=now()
+`
+
+type EnsureEnvironmentQueueDeliveryQuotaParams struct {
+	AccountID   pgtype.UUID
+	MaxInflight int32
+}
+
+func (q *Queries) EnsureEnvironmentQueueDeliveryQuota(ctx context.Context, db DBTX, arg EnsureEnvironmentQueueDeliveryQuotaParams) error {
+	_, err := db.Exec(ctx, ensureEnvironmentQueueDeliveryQuota, arg.AccountID, arg.MaxInflight)
+	return err
+}
+
 const environmentQueueClaimCapacity = `-- name: EnvironmentQueueClaimCapacity :one
 SELECT (SELECT count(*) FROM invocation_environment_queue_admissions other JOIN invocations i ON i.id=other.invocation_id
     WHERE other.environment_id=p.environment_id AND other.app_id=p.app_id AND other.queue_name=p.queue_name
@@ -3060,6 +3148,28 @@ func (q *Queries) EnvironmentQueueClaimCapacity(ctx context.Context, db DBTX, in
 	var i EnvironmentQueueClaimCapacityRow
 	err := row.Scan(&i.Active, &i.MaxConcurrency)
 	return i, err
+}
+
+const environmentQueueDeliveryClock = `-- name: EnvironmentQueueDeliveryClock :one
+SELECT clock_timestamp()::timestamptz AS wall_time
+`
+
+func (q *Queries) EnvironmentQueueDeliveryClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, environmentQueueDeliveryClock)
+	var wall_time pgtype.Timestamptz
+	err := row.Scan(&wall_time)
+	return wall_time, err
+}
+
+const environmentQueueDeliveryReceiptExists = `-- name: EnvironmentQueueDeliveryReceiptExists :one
+SELECT EXISTS(SELECT 1 FROM invocation_environment_queue_receipts WHERE invocation_id=$1)
+`
+
+func (q *Queries) EnvironmentQueueDeliveryReceiptExists(ctx context.Context, db DBTX, invocationID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, environmentQueueDeliveryReceiptExists, invocationID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const executionClaimNext = `-- name: ExecutionClaimNext :one
@@ -4442,6 +4552,34 @@ func (q *Queries) ExecutionUsageRecord(ctx context.Context, db DBTX, executionID
 	return err
 }
 
+const exhaustEnvironmentQueueDeliveryInvocation = `-- name: ExhaustEnvironmentQueueDeliveryInvocation :execrows
+UPDATE invocations i SET state='dead_letter',outcome='dead_letter',completed_at=clock_timestamp(),
+    last_error='queue delivery attempt budget exhausted after lease recovery',lease_expires_at=NULL,instance_id=NULL
+FROM invocation_environment_queue_admissions p WHERE p.invocation_id=i.id AND i.id=$1::uuid
+    AND p.consumer_id=$2::uuid AND p.runtime_set_id=$3::uuid
+    AND i.state='pending' AND NOT i.quota_reserved AND i.attempts=$4::integer
+`
+
+type ExhaustEnvironmentQueueDeliveryInvocationParams struct {
+	InvocationID pgtype.UUID
+	ConsumerID   pgtype.UUID
+	RuntimeSetID pgtype.UUID
+	Attempt      int32
+}
+
+func (q *Queries) ExhaustEnvironmentQueueDeliveryInvocation(ctx context.Context, db DBTX, arg ExhaustEnvironmentQueueDeliveryInvocationParams) (int64, error) {
+	result, err := db.Exec(ctx, exhaustEnvironmentQueueDeliveryInvocation,
+		arg.InvocationID,
+		arg.ConsumerID,
+		arg.RuntimeSetID,
+		arg.Attempt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const expireOrgInvitations = `-- name: ExpireOrgInvitations :execrows
 update org_invitations
 set revoked_at = now()
@@ -4516,6 +4654,48 @@ func (q *Queries) FindInvoiceIDsByProviderKey(ctx context.Context, db DBTX, arg 
 	return items, nil
 }
 
+const finishEnvironmentQueueDeliveryInvocation = `-- name: FinishEnvironmentQueueDeliveryInvocation :execrows
+UPDATE invocations SET state=$1::text,quota_reserved=false,outcome=$2::text,
+    last_error=$3::text,completed_at=$4::timestamptz,
+    due_at=$5::timestamptz,lease_expires_at=$6::timestamptz,
+    instance_id=$7::uuid,result=COALESCE($8::jsonb,result)
+WHERE id=$9::uuid AND state='dispatching' AND quota_reserved
+    AND attempts=$10::integer AND lease_expires_at>clock_timestamp()
+    AND (deadline_at IS NULL OR deadline_at>clock_timestamp())
+`
+
+type FinishEnvironmentQueueDeliveryInvocationParams struct {
+	State          string
+	Outcome        pgtype.Text
+	LastError      string
+	CompletedAt    pgtype.Timestamptz
+	DueAt          pgtype.Timestamptz
+	LeaseExpiresAt pgtype.Timestamptz
+	InstanceID     pgtype.UUID
+	Result         []byte
+	InvocationID   pgtype.UUID
+	Attempt        int32
+}
+
+func (q *Queries) FinishEnvironmentQueueDeliveryInvocation(ctx context.Context, db DBTX, arg FinishEnvironmentQueueDeliveryInvocationParams) (int64, error) {
+	result, err := db.Exec(ctx, finishEnvironmentQueueDeliveryInvocation,
+		arg.State,
+		arg.Outcome,
+		arg.LastError,
+		arg.CompletedAt,
+		arg.DueAt,
+		arg.LeaseExpiresAt,
+		arg.InstanceID,
+		arg.Result,
+		arg.InvocationID,
+		arg.Attempt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const finishProductionQueueTriggerInvocations = `-- name: FinishProductionQueueTriggerInvocations :exec
 with targets as (
 			select unnest($4::text[]) as id, unnest($5::int[]) as attempt
@@ -4532,6 +4712,7 @@ with targets as (
 		   and i.app_id = $9 and i.source = $10 and i.state = 'dispatching'
 
           and i.environment_id is null
+          and not exists (select 1 from invocation_environment_queue_receipts receipt where receipt.invocation_id=i.id)
           and not exists (select 1 from deployments stage
               where stage.app_id=i.app_id and stage.scope not in ('production','default')
                 and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
@@ -8098,6 +8279,7 @@ const listDueInvocationRows = `-- name: ListDueInvocationRows :many
 select i.id, i.environment_id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.quota_reserved, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.queue_name, i.on_success_destination_id, i.on_failure_destination_id, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit
 		  from invocations i
 		 where i.state = 'pending' and i.due_at <= $1
+		   and not exists (select 1 from invocation_environment_queue_receipts receipt where receipt.invocation_id=i.id)
 		   and (i.source <> 'queue' or i.queue_name = '')
 		   and (i.environment_id is not null or i.work_policy_name is not null or not exists (
 		       select 1
@@ -8214,6 +8396,7 @@ const listDueInvocationRowsAfter = `-- name: ListDueInvocationRowsAfter :many
 select i.id, i.environment_id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.quota_reserved, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.queue_name, i.on_success_destination_id, i.on_failure_destination_id, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit
 		  from invocations i
 		 where i.state = 'pending' and i.due_at <= $1
+		   and not exists (select 1 from invocation_environment_queue_receipts receipt where receipt.invocation_id=i.id)
 		   and (i.source <> 'queue' or i.queue_name = '')
 		   and (i.environment_id is not null or i.work_policy_name is not null or not exists (
 		       select 1
@@ -9422,6 +9605,7 @@ select i.id::text from invocations i
 		where i.app_id = $2 and i.source = 'queue' and i.state = 'pending'
 
           and i.environment_id is null
+          and not exists (select 1 from invocation_environment_queue_receipts receipt where receipt.invocation_id=i.id)
           and not exists (select 1 from deployments stage
               where stage.app_id=i.app_id and stage.scope not in ('production','default')
                 and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
@@ -10341,6 +10525,58 @@ func (q *Queries) LockEnvironmentInvocationCleanup(ctx context.Context, db DBTX,
 	return id, err
 }
 
+const lockEnvironmentQueueDeliveryInvocation = `-- name: LockEnvironmentQueueDeliveryInvocation :one
+SELECT i.id, i.environment_id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.quota_reserved, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.queue_name, i.on_success_destination_id, i.on_failure_destination_id, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit FROM invocations i WHERE i.id=$1 FOR UPDATE OF i
+`
+
+func (q *Queries) LockEnvironmentQueueDeliveryInvocation(ctx context.Context, db DBTX, id pgtype.UUID) (Invocation, error) {
+	row := db.QueryRow(ctx, lockEnvironmentQueueDeliveryInvocation, id)
+	var i Invocation
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.AppID,
+		&i.AccountID,
+		&i.Source,
+		&i.State,
+		&i.Payload,
+		&i.Headers,
+		&i.DueAt,
+		&i.Method,
+		&i.Path,
+		&i.CronID,
+		&i.ScheduledAt,
+		&i.AckUrl,
+		&i.Result,
+		&i.LeaseExpiresAt,
+		&i.ReceivedAt,
+		&i.CompletedAt,
+		&i.InstanceID,
+		&i.Attempts,
+		&i.QuotaReserved,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.OrgID,
+		&i.Outcome,
+		&i.DeadlineAt,
+		&i.RetryPolicy,
+		&i.ResultRetentionUntil,
+		&i.ReplayedFromInvocationID,
+		&i.LastReplayedAt,
+		&i.QueueName,
+		&i.OnSuccessDestinationID,
+		&i.OnFailureDestinationID,
+		&i.WorkPolicyName,
+		&i.WorkKeyDigest,
+		&i.WorkExpiresAt,
+		&i.WorkSequence,
+		&i.WorkPolicyRevision,
+		&i.WorkFairnessDigest,
+		&i.WorkFairnessLimit,
+	)
+	return i, err
+}
+
 const lockEnvironmentQueueProducer = `-- name: LockEnvironmentQueueProducer :one
 SELECT e.id FROM project_environments e JOIN apps a ON a.project_id=e.project_id AND a.account_id=e.account_id
 WHERE e.id=$1::uuid AND e.account_id=$2::uuid
@@ -10461,6 +10697,17 @@ func (q *Queries) LockLayerArtifactRetention(ctx context.Context, db DBTX, stora
 	var i LockLayerArtifactRetentionRow
 	err := row.Scan(&i.StorageKey, &i.State, &i.DeletionID)
 	return i, err
+}
+
+const lockLegacyInvocationReceiptFence = `-- name: LockLegacyInvocationReceiptFence :one
+SELECT id FROM invocations WHERE id=$1 FOR UPDATE
+`
+
+func (q *Queries) LockLegacyInvocationReceiptFence(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockLegacyInvocationReceiptFence, id)
+	var id_2 pgtype.UUID
+	err := row.Scan(&id_2)
+	return id_2, err
 }
 
 const lockManagedPostgresCustomerDatabase = `-- name: LockManagedPostgresCustomerDatabase :one
@@ -10633,6 +10880,7 @@ func (q *Queries) LockProductionQueueBindingCap(ctx context.Context, db DBTX, ar
 const lockProductionQueueTriggerInvocationRow = `-- name: LockProductionQueueTriggerInvocationRow :one
 SELECT i.id FROM invocations i WHERE i.id=$1 AND i.app_id=$2 AND i.source='queue' AND i.state='pending'
           and i.environment_id is null
+          and not exists (select 1 from invocation_environment_queue_receipts receipt where receipt.invocation_id=i.id)
           and not exists (select 1 from deployments stage
               where stage.app_id=i.app_id and stage.scope not in ('production','default')
                 and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
@@ -11452,6 +11700,66 @@ func (q *Queries) MarkUploadSessionCommitted(ctx context.Context, db DBTX, arg M
 	row := db.QueryRow(ctx, markUploadSessionCommitted, arg.ID, arg.DeploymentID)
 	var i MarkUploadSessionCommittedRow
 	err := row.Scan(&i.ID, &i.Status, &i.DeploymentID)
+	return i, err
+}
+
+const nextEnvironmentQueueDeliveryInvocation = `-- name: NextEnvironmentQueueDeliveryInvocation :one
+SELECT i.id, i.environment_id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.quota_reserved, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.queue_name, i.on_success_destination_id, i.on_failure_destination_id, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit FROM invocations i JOIN invocation_environment_queue_admissions p ON p.invocation_id=i.id
+WHERE p.consumer_id=$1::uuid AND p.runtime_set_id=$2::uuid
+    AND i.state='pending' AND i.due_at<=now() AND (i.deadline_at IS NULL OR i.deadline_at>now())
+ORDER BY i.due_at,i.created_at,i.id LIMIT 1
+`
+
+type NextEnvironmentQueueDeliveryInvocationParams struct {
+	ConsumerID   pgtype.UUID
+	RuntimeSetID pgtype.UUID
+}
+
+func (q *Queries) NextEnvironmentQueueDeliveryInvocation(ctx context.Context, db DBTX, arg NextEnvironmentQueueDeliveryInvocationParams) (Invocation, error) {
+	row := db.QueryRow(ctx, nextEnvironmentQueueDeliveryInvocation, arg.ConsumerID, arg.RuntimeSetID)
+	var i Invocation
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.AppID,
+		&i.AccountID,
+		&i.Source,
+		&i.State,
+		&i.Payload,
+		&i.Headers,
+		&i.DueAt,
+		&i.Method,
+		&i.Path,
+		&i.CronID,
+		&i.ScheduledAt,
+		&i.AckUrl,
+		&i.Result,
+		&i.LeaseExpiresAt,
+		&i.ReceivedAt,
+		&i.CompletedAt,
+		&i.InstanceID,
+		&i.Attempts,
+		&i.QuotaReserved,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.OrgID,
+		&i.Outcome,
+		&i.DeadlineAt,
+		&i.RetryPolicy,
+		&i.ResultRetentionUntil,
+		&i.ReplayedFromInvocationID,
+		&i.LastReplayedAt,
+		&i.QueueName,
+		&i.OnSuccessDestinationID,
+		&i.OnFailureDestinationID,
+		&i.WorkPolicyName,
+		&i.WorkKeyDigest,
+		&i.WorkExpiresAt,
+		&i.WorkSequence,
+		&i.WorkPolicyRevision,
+		&i.WorkFairnessDigest,
+		&i.WorkFairnessLimit,
+	)
 	return i, err
 }
 
@@ -15055,6 +15363,42 @@ func (q *Queries) ReadEnvironmentQueueAdmissionProject(ctx context.Context, db D
 	return project_id, err
 }
 
+const readEnvironmentQueueDeliveryAccount = `-- name: ReadEnvironmentQueueDeliveryAccount :one
+SELECT plan,status,abuse_hold_at FROM accounts WHERE id=$1
+`
+
+type ReadEnvironmentQueueDeliveryAccountRow struct {
+	Plan        string
+	Status      string
+	AbuseHoldAt pgtype.Timestamptz
+}
+
+// ADR-375: private stage transport, independent of the legacy completion inbox.
+func (q *Queries) ReadEnvironmentQueueDeliveryAccount(ctx context.Context, db DBTX, id pgtype.UUID) (ReadEnvironmentQueueDeliveryAccountRow, error) {
+	row := db.QueryRow(ctx, readEnvironmentQueueDeliveryAccount, id)
+	var i ReadEnvironmentQueueDeliveryAccountRow
+	err := row.Scan(&i.Plan, &i.Status, &i.AbuseHoldAt)
+	return i, err
+}
+
+const readEnvironmentQueueDeliveryReceipt = `-- name: ReadEnvironmentQueueDeliveryReceipt :one
+SELECT invocation_id, attempt, token_hash, owner_hash, issued_at, lease_expires_at FROM invocation_environment_queue_receipts WHERE invocation_id=$1
+`
+
+func (q *Queries) ReadEnvironmentQueueDeliveryReceipt(ctx context.Context, db DBTX, invocationID pgtype.UUID) (InvocationEnvironmentQueueReceipt, error) {
+	row := db.QueryRow(ctx, readEnvironmentQueueDeliveryReceipt, invocationID)
+	var i InvocationEnvironmentQueueReceipt
+	err := row.Scan(
+		&i.InvocationID,
+		&i.Attempt,
+		&i.TokenHash,
+		&i.OwnerHash,
+		&i.IssuedAt,
+		&i.LeaseExpiresAt,
+	)
+	return i, err
+}
+
 const readEnvironmentQueueInvocation = `-- name: ReadEnvironmentQueueInvocation :one
 SELECT id, environment_id, app_id, account_id, source, state, payload, headers, due_at, method, path, cron_id, scheduled_at, ack_url, result, lease_expires_at, received_at, completed_at, instance_id, attempts, quota_reserved, last_error, created_at, org_id, outcome, deadline_at, retry_policy, result_retention_until, replayed_from_invocation_id, last_replayed_at, queue_name, on_success_destination_id, on_failure_destination_id, work_policy_name, work_key_digest, work_expires_at, work_sequence, work_policy_revision, work_fairness_digest, work_fairness_limit FROM invocations WHERE id=$1
 `
@@ -15356,6 +15700,7 @@ func (q *Queries) ReadProductionQueueStateLive(ctx context.Context, db DBTX, arg
 const readProductionQueueTriggerInvocation = `-- name: ReadProductionQueueTriggerInvocation :one
 SELECT i.id, i.environment_id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.quota_reserved, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.queue_name, i.on_success_destination_id, i.on_failure_destination_id, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit FROM invocations i WHERE i.id=$1 AND i.app_id=$2 AND i.source='queue'
           and i.environment_id is null
+          and not exists (select 1 from invocation_environment_queue_receipts receipt where receipt.invocation_id=i.id)
           and not exists (select 1 from deployments stage
               where stage.app_id=i.app_id and stage.scope not in ('production','default')
                 and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
@@ -17223,6 +17568,15 @@ func (q *Queries) RegisterLayerArtifactRetention(ctx context.Context, db DBTX, s
 	return err
 }
 
+const releaseEnvironmentQueueDeliveryQuota = `-- name: ReleaseEnvironmentQueueDeliveryQuota :exec
+UPDATE account_async_quota SET current_inflight=greatest(current_inflight-1,0),updated_at=now() WHERE account_id=$1
+`
+
+func (q *Queries) ReleaseEnvironmentQueueDeliveryQuota(ctx context.Context, db DBTX, accountID pgtype.UUID) error {
+	_, err := db.Exec(ctx, releaseEnvironmentQueueDeliveryQuota, accountID)
+	return err
+}
+
 const releaseProductionNamedQueueClaims = `-- name: ReleaseProductionNamedQueueClaims :exec
 with targets as (
 		select unnest($3::text[]) as id, unnest($4::int[]) as attempt
@@ -17232,6 +17586,7 @@ with targets as (
 	    and i.state = 'dispatching'
 
           and i.environment_id is null
+          and not exists (select 1 from invocation_environment_queue_receipts receipt where receipt.invocation_id=i.id)
           and not exists (select 1 from deployments stage
               where stage.app_id=i.app_id and stage.scope not in ('production','default')
                 and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
@@ -18791,6 +19146,18 @@ func (q *Queries) ReserveAccountCreditConsumption(ctx context.Context, db DBTX, 
 	return id, err
 }
 
+const reserveEnvironmentQueueDeliveryQuota = `-- name: ReserveEnvironmentQueueDeliveryQuota :one
+UPDATE account_async_quota SET current_inflight=current_inflight+1,updated_at=now()
+WHERE account_id=$1 AND current_inflight<max_inflight RETURNING current_inflight
+`
+
+func (q *Queries) ReserveEnvironmentQueueDeliveryQuota(ctx context.Context, db DBTX, accountID pgtype.UUID) (int32, error) {
+	row := db.QueryRow(ctx, reserveEnvironmentQueueDeliveryQuota, accountID)
+	var current_inflight int32
+	err := row.Scan(&current_inflight)
+	return current_inflight, err
+}
+
 const resolveStaleRegressionObservations = `-- name: ResolveStaleRegressionObservations :many
 UPDATE debug_regression_observations
 SET state = 'resolved',
@@ -18957,6 +19324,7 @@ with targets as (
 		   and i.state = 'dispatching'
 
           and i.environment_id is null
+          and not exists (select 1 from invocation_environment_queue_receipts receipt where receipt.invocation_id=i.id)
           and not exists (select 1 from deployments stage
               where stage.app_id=i.app_id and stage.scope not in ('production','default')
                 and exists (select 1 from jsonb_each_text(case when jsonb_typeof(i.headers)='object' then i.headers else '{}'::jsonb end) pin
@@ -20479,6 +20847,39 @@ func (q *Queries) UpsertDeploymentAlias(ctx context.Context, db DBTX, arg Upsert
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const upsertEnvironmentQueueDeliveryReceipt = `-- name: UpsertEnvironmentQueueDeliveryReceipt :execrows
+INSERT INTO invocation_environment_queue_receipts(invocation_id,attempt,token_hash,owner_hash,issued_at,lease_expires_at)
+VALUES($1,$2,$3,$4,$5,$6)
+ON CONFLICT(invocation_id) DO UPDATE SET attempt=excluded.attempt,token_hash=excluded.token_hash,
+    issued_at=excluded.issued_at,lease_expires_at=excluded.lease_expires_at
+WHERE invocation_environment_queue_receipts.attempt<excluded.attempt
+    AND invocation_environment_queue_receipts.owner_hash=excluded.owner_hash
+`
+
+type UpsertEnvironmentQueueDeliveryReceiptParams struct {
+	InvocationID   pgtype.UUID
+	Attempt        int32
+	TokenHash      string
+	OwnerHash      string
+	IssuedAt       pgtype.Timestamptz
+	LeaseExpiresAt pgtype.Timestamptz
+}
+
+func (q *Queries) UpsertEnvironmentQueueDeliveryReceipt(ctx context.Context, db DBTX, arg UpsertEnvironmentQueueDeliveryReceiptParams) (int64, error) {
+	result, err := db.Exec(ctx, upsertEnvironmentQueueDeliveryReceipt,
+		arg.InvocationID,
+		arg.Attempt,
+		arg.TokenHash,
+		arg.OwnerHash,
+		arg.IssuedAt,
+		arg.LeaseExpiresAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const upsertEventSubscription = `-- name: UpsertEventSubscription :one

@@ -15,6 +15,9 @@ func (m *MemStore) productionInvocationWorkLocked(inv Invocation) bool {
 	if inv.EnvironmentID != "" {
 		return false
 	}
+	if _, ok := m.invocationEnvironmentQueueReceipts[inv.ID]; ok {
+		return false
+	}
 	if _, ok := m.invocationEnvironmentQueueAdmissions[inv.ID]; ok {
 		return false
 	}
