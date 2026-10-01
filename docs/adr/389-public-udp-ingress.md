@@ -11,6 +11,10 @@ socket creation in vmmd. UDP forwarding must preserve one datagram per message;
 the TCP byte stream bridge cannot substitute for a datagram transport.
 
 Use a bounded per-peer session keyed by endpoint identity and client address.
+Each socket route carries the durable listener ID and reserved public port.
+Target resolution checks both against current intent before selecting an instance
+or requesting a wake; deleting and recreating a named listener cannot authorize
+an old socket against the replacement row.
 Each admitted session owns a connected guest UDP socket and returns replies
 only to that peer. Teardown, endpoint reassignment, idle expiration, and instance
 loss close the session. No transparent source-address spoofing or host-network

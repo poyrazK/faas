@@ -35,7 +35,7 @@ func (r *StoreTargetResolver) ResolveTarget(ctx context.Context, route Route) (g
 	if r == nil || r.Store == nil {
 		return gateway.Target{}, errors.New("UDP resolver requires a state source")
 	}
-	if route.AppID == "" || route.AccountID == "" || route.ListenerName == "" || route.GuestPort < 1 || route.GuestPort > 65535 {
+	if route.AppID == "" || route.AccountID == "" || route.ListenerName == "" || route.ListenerID == "" || route.PublicPort < api.UDPListenerPublicPortMin || route.PublicPort > api.UDPListenerPublicPortMax || route.GuestPort < 1 || route.GuestPort > 65535 {
 		return gateway.Target{}, errors.New("invalid UDP app route")
 	}
 	app, err := r.Store.AppByID(ctx, route.AppID)
@@ -52,7 +52,7 @@ func (r *StoreTargetResolver) ResolveTarget(ctx context.Context, route Route) (g
 	if err != nil {
 		return gateway.Target{}, err
 	}
-	if !intent.Enabled || intent.Protocol != "udp" || intent.AccountID != route.AccountID || intent.GuestPort != route.GuestPort {
+	if intent.ID != route.ListenerID || intent.PublicPort != route.PublicPort || intent.AppID != route.AppID || intent.ListenerName != route.ListenerName || !intent.Enabled || intent.Protocol != "udp" || intent.AccountID != route.AccountID || intent.GuestPort != route.GuestPort {
 		return gateway.Target{}, errors.New("UDP listener is disabled or changed")
 	}
 	declared := false

@@ -17,6 +17,8 @@ import (
 
 type Route struct {
 	AppID, AccountID, ListenerName string
+	ListenerID                     string
+	PublicPort                     int
 	GuestPort                      int
 }
 type Forwarder interface {
@@ -42,7 +44,7 @@ func (s *Server) Serve(parent context.Context) error {
 	if s == nil || parent == nil || s.Socket == nil || s.Socket.RemoteAddr() != nil || s.ResolveTarget == nil || s.Forwarder == nil {
 		return errors.New("UDP server requires context, listening socket, resolver and forwarder")
 	}
-	if s.Route.AppID == "" || s.Route.AccountID == "" || s.Route.ListenerName == "" || s.Route.GuestPort < 1 || s.Route.GuestPort > 65535 {
+	if s.Route.AppID == "" || s.Route.AccountID == "" || s.Route.ListenerName == "" || s.Route.ListenerID == "" || s.Route.PublicPort < api.UDPListenerPublicPortMin || s.Route.PublicPort > api.UDPListenerPublicPortMax || s.Route.GuestPort < 1 || s.Route.GuestPort > 65535 {
 		return errors.New("UDP server requires an app-owned listener route")
 	}
 	for _, prefix := range s.AllowedSources {

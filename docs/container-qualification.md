@@ -313,3 +313,11 @@ The explanation no longer assumes every timeout concerns `/healthz` or a fixed
 raw error text into guidance. Race-enabled whycopy and scheduler regressions
 passed, including persisted deployment guidance, and changed-code lint passed.
 Native phase behavior remains subject to the qualification requirements above.
+
+UDP route admission now checks durable listener ID and public port as well as
+app/account, named guest port and enabled intent. A regression deletes and
+recreates a listener and verifies stale routes neither select running instances
+nor wake parked apps, while the replacement route remains usable. The full
+UDP package passed race testing, changed-code lint passed, and the strict UDP
+gate passed all 43 portable contracts. This covers admission against stale
+socket identity; native reassignment and cleanup acceptance remains required.

@@ -37,7 +37,7 @@ func TestServerKeepsDatagramPeersIsolated(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	metrics := NewMetrics(nil, "test")
-	server := &Server{Metrics: metrics, Socket: socket, Route: Route{AppID: "app", AccountID: "account", ListenerName: "echo", GuestPort: 5353}, AllowedSources: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}, Forwarder: echoForwarder{}, ResolveTarget: func(context.Context, Route) (gateway.Target, error) {
+	server := &Server{Metrics: metrics, Socket: socket, Route: Route{ListenerID: "listener", PublicPort: 40100, AppID: "app", AccountID: "account", ListenerName: "echo", GuestPort: 5353}, AllowedSources: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}, Forwarder: echoForwarder{}, ResolveTarget: func(context.Context, Route) (gateway.Target, error) {
 		return gateway.Target{AppID: "app", InstanceID: "guest", NodeID: "node"}, nil
 	}}
 	done := make(chan error, 1)
@@ -102,7 +102,7 @@ func TestServerEmptySourceAllowlistDoesNotAdmit(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	admitted := make(chan struct{}, 1)
-	server := &Server{Socket: socket, Route: Route{AppID: "app", AccountID: "account", ListenerName: "echo", GuestPort: 5353}, Forwarder: echoForwarder{}, ResolveTarget: func(context.Context, Route) (gateway.Target, error) {
+	server := &Server{Socket: socket, Route: Route{ListenerID: "listener", PublicPort: 40100, AppID: "app", AccountID: "account", ListenerName: "echo", GuestPort: 5353}, Forwarder: echoForwarder{}, ResolveTarget: func(context.Context, Route) (gateway.Target, error) {
 		admitted <- struct{}{}
 		return gateway.Target{}, nil
 	}}
@@ -146,7 +146,7 @@ func TestServerSeparatesResourceExhaustionFromForwardFailures(t *testing.T) {
 	defer cancel()
 	metrics := NewMetrics(nil, "test")
 	reported := make(chan error, 1)
-	server := &Server{Socket: socket, Route: Route{AppID: "app", AccountID: "account", ListenerName: "echo", GuestPort: 5353}, AllowedSources: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}, Metrics: metrics, Forwarder: resourceLimitedForwarder{}, ResolveTarget: func(context.Context, Route) (gateway.Target, error) {
+	server := &Server{Socket: socket, Route: Route{ListenerID: "listener", PublicPort: 40100, AppID: "app", AccountID: "account", ListenerName: "echo", GuestPort: 5353}, AllowedSources: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}, Metrics: metrics, Forwarder: resourceLimitedForwarder{}, ResolveTarget: func(context.Context, Route) (gateway.Target, error) {
 		return gateway.Target{AppID: "app", InstanceID: "guest", NodeID: "node"}, nil
 	}, OnError: func(err error) { reported <- err }}
 	done := make(chan error, 1)
@@ -220,7 +220,7 @@ func TestServerRejectsIncompleteAdmissionAndReleasesQuota(t *testing.T) {
 			reported := make(chan error, 1)
 			deadlineObserved := make(chan bool, 1)
 			forwarder := &countingUDPForwarder{}
-			server := &Server{Socket: socket, Route: Route{AppID: "app", AccountID: "account", ListenerName: "echo", GuestPort: 5353}, AllowedSources: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}, Pool: pool, Metrics: metrics, Forwarder: forwarder, ResolveTarget: func(admitCtx context.Context, _ Route) (gateway.Target, error) {
+			server := &Server{Socket: socket, Route: Route{ListenerID: "listener", PublicPort: 40100, AppID: "app", AccountID: "account", ListenerName: "echo", GuestPort: 5353}, AllowedSources: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}, Pool: pool, Metrics: metrics, Forwarder: forwarder, ResolveTarget: func(admitCtx context.Context, _ Route) (gateway.Target, error) {
 				deadline, ok := admitCtx.Deadline()
 				remaining := time.Until(deadline)
 				deadlineObserved <- ok && remaining > 0 && remaining <= api.UDPAdmissionTimeout
@@ -281,7 +281,7 @@ func TestServerDoesNotForwardCanceledAdmissionResult(t *testing.T) {
 	defer cancel()
 	forwarder := &countingUDPForwarder{}
 	entered := make(chan struct{})
-	server := &Server{Socket: socket, Route: Route{AppID: "app", AccountID: "account", ListenerName: "echo", GuestPort: 5353}, AllowedSources: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}, Forwarder: forwarder, ResolveTarget: func(context.Context, Route) (gateway.Target, error) {
+	server := &Server{Socket: socket, Route: Route{ListenerID: "listener", PublicPort: 40100, AppID: "app", AccountID: "account", ListenerName: "echo", GuestPort: 5353}, AllowedSources: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}, Forwarder: forwarder, ResolveTarget: func(context.Context, Route) (gateway.Target, error) {
 		close(entered)
 		cancel()
 		return gateway.Target{AppID: "app", InstanceID: "guest", NodeID: "node"}, nil

@@ -40,7 +40,7 @@ func TestUDPTargetResolverValidatesIntentBeforeWake(t *testing.T) {
 	}
 	admit := &testUDPAdmitter{}
 	resolver := &StoreTargetResolver{Store: store, Admitter: admit}
-	route := Route{AppID: app.ID, AccountID: acct.ID, ListenerName: "dns", GuestPort: 5353}
+	route := Route{ListenerID: intent.ID, PublicPort: intent.PublicPort, AppID: app.ID, AccountID: acct.ID, ListenerName: "dns", GuestPort: 5353}
 	maintenance := true
 	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{MaintenanceMode: &maintenance}); err != nil {
 		t.Fatal(err)
@@ -135,4 +135,53 @@ func TestUDPTargetResolverValidatesIntentBeforeWake(t *testing.T) {
 		t.Fatal("deleted app woke instance")
 	}
 
+}
+
+func TestUDPTargetResolverRejectsRecreatedListenerSocket(t *testing.T) {
+	for _, running := range []bool{false, true} {
+		t.Run(map[bool]string{false: "cold", true: "running"}[running], func(t *testing.T) {
+			ctx := context.Background()
+			store := state.NewMemStore()
+			acct, err := store.CreateAccount(ctx, "udp-recreated@example.com", api.PlanPro)
+			if err != nil {
+				t.Fatal(err)
+			}
+			app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "udp-recreated", Status: state.AppActive, RAMMB: 256, Manifest: state.AppManifest{Ports: []api.WorkloadPort{{Name: "dns", Port: 5353, Protocol: api.WorkloadPortUDP}}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			old, err := store.CreateUDPListener(ctx, state.UDPListener{AppID: app.ID, AccountID: acct.ID, ListenerName: "dns", GuestPort: 5353, PublicPort: 40100, Enabled: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			route := Route{AppID: app.ID, AccountID: acct.ID, ListenerName: "dns", GuestPort: 5353, ListenerID: old.ID, PublicPort: old.PublicPort}
+			if err := store.DeleteUDPListener(ctx, old.ID); err != nil {
+				t.Fatal(err)
+			}
+			replacement, err := store.CreateUDPListener(ctx, state.UDPListener{AppID: app.ID, AccountID: acct.ID, ListenerName: "dns", GuestPort: 5353, PublicPort: 40101, Enabled: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if running {
+				if _, err := store.CreateInstance(ctx, app.ID, "deployment", string(state.StateRunning), 256, "node", "wake"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			admit := &testUDPAdmitter{}
+			resolver := &StoreTargetResolver{Store: store, Admitter: admit}
+			for _, stale := range []Route{route, func() Route { r := route; r.ListenerID = replacement.ID; return r }(), func() Route { r := route; r.PublicPort = replacement.PublicPort; return r }()} {
+				if target, err := resolver.ResolveTarget(ctx, stale); err == nil || admit.calls != 0 {
+					t.Fatalf("stale socket routed: target=%+v err=%v wakes=%d", target, err, admit.calls)
+				}
+			}
+			route.ListenerID, route.PublicPort = replacement.ID, replacement.PublicPort
+			target, err := resolver.ResolveTarget(ctx, route)
+			if err != nil || target.InstanceID == "" || target.Port != 5353 {
+				t.Fatalf("replacement route: target=%+v err=%v", target, err)
+			}
+			if running && admit.calls != 0 || !running && admit.calls != 1 {
+				t.Fatalf("replacement wakes=%d running=%v", admit.calls, running)
+			}
+		})
+	}
 }

@@ -141,7 +141,7 @@ func (s *Supervisor) Serve(ctx context.Context) error {
 			child, cancel := context.WithCancel(ctx)
 			entry := &supervisedSocket{identity: row, socket: socket, cancel: cancel, done: make(chan error, 1)}
 			sockets[port] = entry
-			server := &Server{Socket: socket, Route: Route{AppID: row.AppID, AccountID: row.AccountID, ListenerName: row.ListenerName, GuestPort: row.GuestPort}, AllowedSources: s.AllowedSources, Pool: pool, Rates: rates, ResolveTarget: s.ResolveTarget, Forwarder: s.Forwarder, OnError: s.OnError, Metrics: s.Metrics}
+			server := &Server{Socket: socket, Route: Route{ListenerID: row.ID, PublicPort: row.PublicPort, AppID: row.AppID, AccountID: row.AccountID, ListenerName: row.ListenerName, GuestPort: row.GuestPort}, AllowedSources: s.AllowedSources, Pool: pool, Rates: rates, ResolveTarget: s.ResolveTarget, Forwarder: s.Forwarder, OnError: s.OnError, Metrics: s.Metrics}
 			go func() { entry.done <- server.Serve(child) }()
 		}
 		return nil
