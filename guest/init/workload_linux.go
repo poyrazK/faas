@@ -400,6 +400,19 @@ func runWorkloads(mainManifest api.AppManifest, roster workloadRoster, secrets, 
 
 	coordCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	mainLeaf := ""
+	if roster.Main.RamMB > 0 || roster.Main.CPUMillicores > 0 {
+		mainLeaf = leafDir("main", "app")
+	}
+	if err := runHealthcheckPoll(coordCtx, mainManifest, log, healthcheckPollOptions{
+		Started:    runtimes["main"].state.started,
+		CgroupLeaf: mainLeaf,
+		Environment: func() []string {
+			return stampWorkloadEndpointEnv(BuildEnvWithSecrets(os.Environ(), mainManifest, secrets, apiEnv), workloadEnv)
+		},
+	}); err != nil {
+		log.Warn("main healthcheck poll unavailable", "err", err)
+	}
 	for _, rt := range runtimes {
 		if rt.secretManifest != nil && rt.spec.runtimeSecrets != nil {
 			startRuntimeSecretReloaderForWorkload(coordCtx, *rt.secretManifest, rt.spec.runtimeSecrets, rt.sup, log,

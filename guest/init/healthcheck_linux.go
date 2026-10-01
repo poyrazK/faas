@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
 	"strconv"
 	"syscall"
@@ -603,7 +604,17 @@ func runSidecarExecProbe(ctx context.Context, argv []string, timeout time.Durati
 // AppManifest.EffectiveUser at boot); running the check as
 // root would let a hostile image read secrets.env and ship
 // them via the Output field.
-func runHealthcheckPoll(ctx context.Context, manifest api.AppManifest, log *slog.Logger) error {
+// healthcheckPollOptions carries the main workload's runtime context. The
+// environment callback is evaluated on each poll so rotated secrets are not
+// captured permanently at boot. Started gates probes while init/dependencies
+// delay main launch; CgroupLeaf is empty for host-enforced single workloads.
+type healthcheckPollOptions struct {
+	Environment func() []string
+	Started     <-chan struct{}
+	CgroupLeaf  string
+}
+
+func runHealthcheckPoll(ctx context.Context, manifest api.AppManifest, log *slog.Logger, options ...healthcheckPollOptions) error {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -622,6 +633,9 @@ func runHealthcheckPoll(ctx context.Context, manifest api.AppManifest, log *slog
 		return nil
 	}
 
+	if _, err := processCredential("", manifest.EffectiveUser()); err != nil {
+		return fmt.Errorf("healthcheck identity: %w", err)
+	}
 	interval, timeout, startPeriod, retries := healthcheckDefaults(manifest.Healthcheck)
 
 	sock, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0)
@@ -638,7 +652,7 @@ func runHealthcheckPoll(ctx context.Context, manifest api.AppManifest, log *slog
 
 	go func() {
 		defer func() { _ = unix.Close(sock) }()
-		runHealthcheckPollLoop(ctx, sock, argv, manifest, interval, timeout, startPeriod, retries, log)
+		runHealthcheckPollLoop(ctx, sock, argv, manifest, interval, timeout, startPeriod, retries, log, options...)
 	}()
 	return nil
 }
@@ -654,13 +668,33 @@ func runHealthcheckPoll(ctx context.Context, manifest api.AppManifest, log *slog
 //
 // The loop exits on ctx.Done() — the boot context the supervisor
 // Stop hook cancels.
-func runHealthcheckPollLoop(ctx context.Context, sock int, argv []string, manifest api.AppManifest, interval, timeout, startPeriod time.Duration, retries int, log *slog.Logger) {
+func runHealthcheckPollLoop(ctx context.Context, sock int, argv []string, manifest api.AppManifest, interval, timeout, startPeriod time.Duration, retries int, log *slog.Logger, options ...healthcheckPollOptions) {
+	var runtime healthcheckPollOptions
+	if len(options) > 0 {
+		runtime = options[0]
+	}
+	if runtime.Started != nil {
+		select {
+		case <-ctx.Done():
+			return
+		case <-runtime.Started:
+		}
+	}
 	credential, err := processCredential("", manifest.EffectiveUser())
 	if err != nil {
 		log.Error("healthcheck identity resolution failed", "err", err)
 		return
 	}
-	procAttr := &syscall.SysProcAttr{Credential: execProcessCredential(credential)}
+	launch := exec.Command("/unused")
+	launch.SysProcAttr = &syscall.SysProcAttr{Credential: execProcessCredential(credential)}
+	cgroupFile, err := attachWorkloadCgroup(launch, runtime.CgroupLeaf)
+	if err != nil {
+		log.Error("healthcheck cgroup placement unavailable", "err", err)
+		return
+	}
+	if cgroupFile != nil {
+		defer func() { _ = cgroupFile.Close() }()
+	}
 	var seq uint32
 	bootAt := time.Now()
 	for {
@@ -678,7 +712,14 @@ func runHealthcheckPollLoop(ctx context.Context, sock int, argv []string, manife
 		case <-time.After(nextDelay):
 		}
 
-		report := execHealthcheckWithOptions(ctx, argv, timeout, int(credential.Uid), nil, "", procAttr, log)
+		env := BuildEnvWithSecrets(os.Environ(), manifest, nil, nil)
+		if runtime.Environment != nil {
+			env = runtime.Environment()
+		}
+		env = StampOverridePortEnv(env, manifest.EffectivePort())
+		probeArgv := append([]string(nil), argv...)
+		probeArgv[0] = resolveWorkloadCommandPath("/", probeArgv[0], env)
+		report := execHealthcheckWithOptions(ctx, probeArgv, timeout, int(credential.Uid), env, manifest.EffectiveWorkingDir(), launch.SysProcAttr, log)
 		report.Seq = seq
 		report.TsUnixMs = time.Now().UnixMilli()
 		report.StartPeriodS = int(startPeriod / time.Second)
