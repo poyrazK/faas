@@ -25479,6 +25479,11 @@ func mapErr(err error) error {
 		switch pgErr.Code {
 		case pgerrcode.UniqueViolation:
 			return fmt.Errorf("%w: %s", ErrConflict, pgErr.ConstraintName)
+		case pgerrcode.ForeignKeyViolation:
+			if pgErr.ConstraintName == "invocation_platform_tenant_fk" {
+				return ErrInvalidArgument
+			}
+			return err
 		case pgerrcode.CheckViolation:
 			if pgErr.ConstraintName == "invocation_platform_tenant_active" {
 				return ErrPlatformTenantSuspended
