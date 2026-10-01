@@ -123,9 +123,31 @@ and does not follow redirects or retry. Request and response envelopes use
 `OperationWorkflowDispatchResponseMaxBytes` (two times the 1 MiB submission cap
 plus the 16 KiB report envelope) in `pkg/api/limits.go`; customer response bytes
 also obey the admitted operation value bound before buffering. These internal
-seams still need the DAG coordinator loop, fenced waits/retries, aggregate
-progress, business settlement, explicit confirmed-step recovery and native VM
-qualification before public workflow admission can be enabled.
+seams have an internal coordinator; production loop wiring, explicit
+confirmed-step recovery and native VM qualification are still required before
+public workflow admission can be enabled.
+
+The internal coordinator reads a fenced immutable DAG snapshot and serially
+advances dependency and exception routes through scheduler-only mutations.
+Timer waits retain their first start, event/callback arrivals share the parent
+run lock, and an arrival during registration/parking preserves an immediate
+wake without stealing live custody. Condition polls retain their prior result,
+interval and overall deadline; distinct polls have distinct idempotency keys.
+Explicit 5xx receipts follow the native retry policy. A missing or invalid
+handler receipt stops for reconciliation rather than clearing delivery evidence.
+The native default attempt budget (3), maximum backoff shift (8), backoff cap
+(5 minutes), and failed-wake delay (1 second) are centralized in
+`pkg/api/limits.go`. They preserve existing workflow policy.
+
+`workflow_progress` is a separate optional status projection and event, counting
+terminal DAG steps within an execution generation. It does not overwrite guest
+business progress or spend the guest-report budget. The progress event CHECK
+expansion is replay-safe and forward-only so retained cursors remain readable.
+Confirmed step receipts and their attempt history commit together. Native run
+settlement, typed operation result, terminal event, custody revocation and the
+completion outbox commit in one transaction. Failed delivery insertion leaves
+confirmed steps reusable for settlement without another handler call. Invalid
+business output preserves native execution success but requires reconciliation.
 
 Admission, idempotency receipt, operation, execution association, and initial
 event commit atomically. Keys are scoped to account, app, environment, verified

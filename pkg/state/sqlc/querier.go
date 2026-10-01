@@ -32,6 +32,8 @@ type Querier interface {
 	AccountIDByGitHubOIDCRepositoryIdentity(ctx context.Context, db DBTX, arg AccountIDByGitHubOIDCRepositoryIdentityParams) (pgtype.UUID, error)
 	AccountsByIDs(ctx context.Context, db DBTX, dollar_1 []pgtype.UUID) ([]AccountsByIDsRow, error)
 	ActivateRetainedRollbackDeployment(ctx context.Context, db DBTX, arg ActivateRetainedRollbackDeploymentParams) (int64, error)
+	AdvanceCustomerOperationWorkflowAttempt(ctx context.Context, db DBTX, arg AdvanceCustomerOperationWorkflowAttemptParams) (int64, error)
+	AdvanceCustomerOperationWorkflowStep(ctx context.Context, db DBTX, arg AdvanceCustomerOperationWorkflowStepParams) (int64, error)
 	AppByID(ctx context.Context, db DBTX, id pgtype.UUID) (AppByIDRow, error)
 	AppBySlug(ctx context.Context, db DBTX, slug string) (AppBySlugRow, error)
 	AppendAccountCreditLedgerEntry(ctx context.Context, db DBTX, arg AppendAccountCreditLedgerEntryParams) error
@@ -331,6 +333,7 @@ type Querier interface {
 	// Two matches mean an invoice ID collides with another invoice's charge ID.
 	FindInvoiceIDsByProviderKey(ctx context.Context, db DBTX, arg FindInvoiceIDsByProviderKeyParams) ([]pgtype.UUID, error)
 	FinishDevBridgeWebhookReplay(ctx context.Context, db DBTX, arg FinishDevBridgeWebhookReplayParams) (int64, error)
+	FirstCustomerOperationWorkflowEvent(ctx context.Context, db DBTX, arg FirstCustomerOperationWorkflowEventParams) (WorkflowEvent, error)
 	// Single oldest request row for one fingerprint, used by the
 	// UI's "what does this look like" preview. Returns
 	// headers_sample + redactions for the wire-side "we redacted
@@ -747,6 +750,8 @@ type Querier interface {
 	ListComputeNodeHeartbeats(ctx context.Context, db DBTX, arg ListComputeNodeHeartbeatsParams) ([]ListComputeNodeHeartbeatsRow, error)
 	ListCronsForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListCronsForAppRow, error)
 	ListCustomerOperationDefinitionsForDeployment(ctx context.Context, db DBTX, arg ListCustomerOperationDefinitionsForDeploymentParams) ([]ListCustomerOperationDefinitionsForDeploymentRow, error)
+	// The parent workflow run is locked before these snapshot and transition queries.
+	ListCustomerOperationWorkflowSteps(ctx context.Context, db DBTX, runID pgtype.UUID) ([]WorkflowStep, error)
 	// schedd's wake-side read path (PR-B/C). Returns the
 	// N most recent probe samples for one (host, region)
 	// pair, time-windowed to the meterd sliding window
@@ -1379,6 +1384,7 @@ type Querier interface {
 	// the state query keeps legacy NULL rows distinct from explicit opt-outs.
 	SetDeploymentSecretReloadSignal(ctx context.Context, db DBTX, arg SetDeploymentSecretReloadSignalParams) (int64, error)
 	SetRetainedServiceRolloutSiblingTraffic(ctx context.Context, db DBTX, arg SetRetainedServiceRolloutSiblingTrafficParams) (int64, error)
+	SettleCustomerOperationWorkflow(ctx context.Context, db DBTX, arg SettleCustomerOperationWorkflowParams) (int64, error)
 	SnapshotLocalityNodes(ctx context.Context, db DBTX, dollar_1 pgtype.UUID) ([]SnapshotLocalityNodesRow, error)
 	SnapshotStorageKeys(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]string, error)
 	SoftDeleteOrg(ctx context.Context, db DBTX, id pgtype.UUID) error
@@ -1578,6 +1584,9 @@ type Querier interface {
 	// refreshed on every pass and backs the dashboard's since filter.
 	UpsertRegressionObservation(ctx context.Context, db DBTX, arg UpsertRegressionObservationParams) error
 	UsageByMonth(ctx context.Context, db DBTX, arg UsageByMonthParams) ([]UsageByMonthRow, error)
+	// Preserve an arrival in the wait-registration/park window without releasing
+	// coordinator custody. Legacy running runs retain their existing wake policy.
+	WakeNativeWorkflowForReceivedEvent(ctx context.Context, db DBTX, runID pgtype.UUID) error
 }
 
 var _ Querier = (*Queries)(nil)
