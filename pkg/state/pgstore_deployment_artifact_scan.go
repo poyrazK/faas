@@ -30,6 +30,9 @@ func artifactScanRow(row sqlc.DeploymentArtifactScan) (DeploymentArtifactScan, e
 	if err != nil || !row.ScannedAt.Valid || !row.ExpiresAt.Valid || !clock.Equal(row.ScannedAt.Time) || in.RootfsProducerID != pgUUIDString(row.RootfsProducerID) || in.DeploymentID != pgUUIDString(row.DeploymentID) || in.WorkloadName != row.WorkloadName {
 		return DeploymentArtifactScan{}, fmt.Errorf("artifact scan stored owner/clock mismatch")
 	}
+	if in.RegistryVerificationID == "" && row.RegistryVerificationID.Valid || in.RegistryVerificationID != "" && (!row.RegistryVerificationID.Valid || pgUUIDString(row.RegistryVerificationID) != in.RegistryVerificationID) {
+		return DeploymentArtifactScan{}, fmt.Errorf("artifact scan stored approval mismatch")
+	}
 	result.ScannedAt = row.ScannedAt.Time.UTC().Format(time.RFC3339Nano)
 	value := DeploymentArtifactScan{ID: in.ID, Input: in, InputHash: row.InputHash, Result: result, ScannedAt: row.ScannedAt.Time, ExpiresAt: row.ExpiresAt.Time}
 	if err := validateDeploymentArtifactScan(value); err != nil {
@@ -40,7 +43,11 @@ func artifactScanRow(row sqlc.DeploymentArtifactScan) (DeploymentArtifactScan, e
 
 func lockArtifactScanParent(ctx context.Context, tx pgx.Tx, in DeploymentArtifactScanInput) error {
 	q := sqlc.New()
-	raw, err := q.LockDeploymentArtifactScan(ctx, tx, mustPgUUID(in.RootfsProducerID))
+	params := sqlc.LockDeploymentArtifactScanParams{ProducerID: mustPgUUID(in.RootfsProducerID)}
+	if in.RegistryVerificationID != "" {
+		params.VerificationID = mustPgUUID(in.RegistryVerificationID)
+	}
+	raw, err := q.LockDeploymentArtifactScan(ctx, tx, params)
 	if err != nil {
 		return registryVerificationError(err)
 	}
@@ -74,14 +81,25 @@ func lockArtifactScanParent(ctx context.Context, tx pgx.Tx, in DeploymentArtifac
 	if err != nil {
 		return registryVerificationError(err)
 	}
-	parent, err := registryVerificationRow(parentRow)
+	origin, err := registryVerificationRow(parentRow)
 	if err != nil {
 		return err
+	}
+	parent := origin
+	if in.RegistryVerificationID != "" {
+		parentRow, err = q.GetDeploymentRegistryVerificationByID(ctx, tx, mustPgUUID(in.RegistryVerificationID))
+		if err != nil {
+			return registryVerificationError(err)
+		}
+		parent, err = registryVerificationRow(parentRow)
+		if err != nil {
+			return err
+		}
 	}
 	if current.Now.IsZero() || current.AppID != in.AppID || current.AccountID != in.AccountID || current.OrgID != in.OrgID || current.ImageReference != in.ImageReference {
 		return ErrApplicationStandardRuntimeStale
 	}
-	if err := checkArtifactScanParent(in, root, parent, Deployment{Scope: current.Scope, Status: current.Status}, current.Now); err != nil {
+	if err := checkArtifactScanParent(in, root, origin, parent, Deployment{Scope: current.Scope, Status: current.Status}, current.Now); err != nil {
 		return err
 	}
 	if err := verifyRegistryCurrentKey(parent.Input, current.KeyDER); err != nil {

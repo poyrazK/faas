@@ -43,6 +43,20 @@ type DeploymentRegistryVerificationStore interface {
 	// This returns historical evidence even after expiry or publisher revocation.
 	// A consumer must reverify current approval and bind the resulting rootfs.
 	GetLatestDeploymentRegistryVerification(context.Context, string, string, string, string) (DeploymentRegistryVerification, error)
+	// Exact retained origin, scoped to the current owner and workload intent.
+	// Historical expiry or key revocation does not prevent retrieval.
+	GetDeploymentRegistryVerificationByID(context.Context, string, string, string, string) (DeploymentRegistryVerification, error)
+}
+
+func validateRegistryVerification(value DeploymentRegistryVerification) error {
+	in, hash, err := prepareRegistryVerification(value.Input)
+	if err != nil {
+		return err
+	}
+	if value.ID != in.ID || value.InputHash != hash || value.VerifiedAt.IsZero() || !value.ExpiresAt.After(value.VerifiedAt) || value.ExpiresAt.Sub(value.VerifiedAt) > api.ImageSignatureVerificationTTL || "sha256:"+standardReviewBytesDigest(in.Proof.Evidence.Payload) != in.Proof.PayloadDigest || "sha256:"+standardReviewBytesDigest(in.Proof.Evidence.Signature) != in.Proof.SignatureDigest {
+		return ErrApplicationStandardRuntimeStale
+	}
+	return nil
 }
 
 func prepareRegistryVerification(in DeploymentRegistryVerificationInput) (DeploymentRegistryVerificationInput, string, error) {

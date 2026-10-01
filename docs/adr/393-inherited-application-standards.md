@@ -219,15 +219,18 @@ current company publisher key, signed layer chain and any current shared-base
 binding under the existing nonwaiting owner fences. Immutable scan creation,
 current selection and the main compatibility report update are one transaction.
 Sidecar reports never replace the main report. A failed attempt selects explicit
-failed component evidence when current inputs permit publication. Revoked,
-expired or replaced producer inputs cannot publish or renew a scan; historical
-reads remain available without asserting authority. Exact retries retain the
+failed component evidence when current inputs permit publication. Revoked or
+replaced current approval inputs cannot publish a scan; historical reads remain
+available without asserting authority. Exact retries retain the
 original storage clock and cannot reactivate an older selection. Complete
 high/critical/unknown findings remain visible evidence and block enforce mode;
 a sidecar scan failure or unsafe result also uses the live quarantine path.
 
-Component scans have a storage-owned five-minute lease clamped to the producer
-expiry. The scan pass has a five-minute deadline, and vulnerability databases
+Component scans have a storage-owned five-minute lease. Legacy scan inputs clamp
+that lease to the original producer expiry. Renewed scans name a separate current
+registry verification ID and input hash and clamp their lease to that fresh
+verification's expiry. The original conversion, signature and scan clocks never
+change. The scan pass has a five-minute deadline, and vulnerability databases
 may be at most 30 days old and cannot be future-dated. Central bounds are 8 MiB
 per retained report, 16 MiB scanner stdout, 64 KiB per diagnostic stream,
 100,000 findings, 256-byte version metadata, 128 paths per finding and 4,096
@@ -254,19 +257,42 @@ its refusal sentinel. Shared-base scans use the same protected byte-copy and
 scanner bounds as deployment component scans. These platform base records do
 not establish approval by a company publisher or native consumption.
 
+For a retained registry conversion, imaged retrieves the exact original proof
+through a tenant-scoped historical getter. It cryptographically verifies the
+retained signed bytes again under the current stored publisher key, receiving a
+new immutable storage-clock verification record. A registry outage does not
+prevent that check when the original signature still matches the approved key.
+If key rotation invalidates the retained signature, imaged fetches supported
+signature attachments only for the retained immutable source/index digest. It
+never resolves the customer's mutable tag or selects a different child. Scan
+publication rechecks the current key under the owner fences and requires the
+same source/index, selected child, config and ordered layer chain as the original
+conversion. An expired original producer remains a historical conversion fact;
+only a fresh signature verification and a new actual scan provide current
+component evidence. Optional scan fields preserve older immutable hashes.
+
+A separate two-minute worker considers the private evidence for the main image,
+all declared image sidecars and any shared-base binding. Missing, failed or due
+component evidence triggers renewal; the legacy six-hour scanner cadence remains
+separate. Shared-base reuse refreshes scans aged two minutes or within two minutes
+of expiry through its existing fresh-read and scan path. A busy
+owner fence remains a retryable refusal at admission and does not manufacture
+failed findings or extend a lease; live workers retry without treating contention
+as signer revocation. Other actual verification or scan failures retain the live
+quarantine path. This scheduling mechanism does not guarantee fleet renewal
+before expiry or establish current evidence at a native consumer.
+
 These are component producer facts under the existing trusted imaged/database
 writer boundary. Portable fixtures verify real byte copies, real layer
 consumption, PostgreSQL atomicity and refusal behavior; injected mkfs and Grype
 fixtures do not establish native scanner execution or consumer ACKs. Complete
-two-drive runtime approval, immutable-source refresh after
-registry verification expiry, native capture/consumption and dedicated Linux
+two-drive runtime approval, native capture/consumption and dedicated Linux
 Grype/KVM/leakcheck acceptance remain pending. Ext4 extraction resource and
-cleanup behavior also requires native acceptance. The existing six-hour legacy
-re-scan schedule is not a renewal mechanism for the new five-minute component
-lease. Shared-base renewal currently runs when the verified base is ensured or
-an app-layer deployment is scanned. Continuous runtime renewal and native
-consumption of both drives' current evidence remain pending. Public activation
-remains disabled.
+cleanup behavior also requires native acceptance. The existing cheap live lease
+checker still reads legacy compatibility reports against the six-hour sweep
+interval; it does not enforce the private five-minute leases. Authoritative
+current-evidence reads, live/cached route revocation and native consumption of
+both drives' current evidence remain pending. Public activation remains disabled.
 
 This is a producer boundary under the existing imaged/database writer trust
 model. Source-build publisher approval, complete runtime scans and native boot

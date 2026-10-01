@@ -21,6 +21,9 @@ func (m *MemStore) RecordDeploymentRegistryVerification(ctx context.Context, inp
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return DeploymentRegistryVerification{}, err
+	}
 	app, found, dep, exists := m.registryVerificationOwnerLocked(in.AppID, in.DeploymentID)
 	if !found || !exists {
 		return DeploymentRegistryVerification{}, ErrNotFound
@@ -82,6 +85,32 @@ func (m *MemStore) GetLatestDeploymentRegistryVerification(ctx context.Context, 
 	}
 	latest.Input = cloneRegistryVerificationInput(latest.Input)
 	return latest, nil
+}
+
+func (m *MemStore) GetDeploymentRegistryVerificationByID(ctx context.Context, accountID, appID, depID, id string) (DeploymentRegistryVerification, error) {
+	if !validStandardResourceRead(accountID, appID) || !validStandardResourceRead(depID, id) {
+		return DeploymentRegistryVerification{}, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return DeploymentRegistryVerification{}, err
+	}
+	app, found, dep, exists := m.registryVerificationOwnerLocked(appID, depID)
+	value, ok := m.deploymentRegistryVerifications[canonicalStandardUUID(id)]
+	in := value.Input
+	if !found || !exists || !ok || app.Status == AppDeleted || !sameStandardUUID(app.AccountID, accountID) || !sameStandardUUID(dep.AppID, appID) || in.AccountID != canonicalStandardUUID(accountID) || in.AppID != canonicalStandardUUID(appID) || in.DeploymentID != canonicalStandardUUID(depID) || in.OrgID != registryCanonicalOrg(app.OrgID) {
+		return DeploymentRegistryVerification{}, ErrNotFound
+	}
+	ref, err := registryWorkloadReference(dep, in.WorkloadName)
+	if err != nil || ref != in.ImageReference {
+		return DeploymentRegistryVerification{}, ErrNotFound
+	}
+	if err := validateRegistryVerification(value); err != nil {
+		return DeploymentRegistryVerification{}, err
+	}
+	value.Input = cloneRegistryVerificationInput(value.Input)
+	return value, nil
 }
 
 // MemStore's legacy identities may omit UUID hyphens. Evidence hashes use the

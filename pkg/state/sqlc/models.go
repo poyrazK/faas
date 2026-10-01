@@ -1534,15 +1534,16 @@ type DeploymentAlias struct {
 }
 
 type DeploymentArtifactScan struct {
-	ID               pgtype.UUID
-	RootfsProducerID pgtype.UUID
-	DeploymentID     pgtype.UUID
-	WorkloadName     string
-	InputSnapshot    []byte
-	InputHash        string
-	ResultSnapshot   []byte
-	ScannedAt        pgtype.Timestamptz
-	ExpiresAt        pgtype.Timestamptz
+	ID                     pgtype.UUID
+	RootfsProducerID       pgtype.UUID
+	DeploymentID           pgtype.UUID
+	WorkloadName           string
+	InputSnapshot          []byte
+	InputHash              string
+	ResultSnapshot         []byte
+	ScannedAt              pgtype.Timestamptz
+	ExpiresAt              pgtype.Timestamptz
+	RegistryVerificationID pgtype.UUID
 }
 
 type DeploymentArtifactScanCurrent struct {

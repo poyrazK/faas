@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/ociref"
 	"github.com/onebox-faas/faas/pkg/rootfs"
@@ -93,6 +94,18 @@ func (h *Handler) runProducedComponentScan(ctx context.Context, app state.App, d
 	start, status := time.Now(), "failed"
 	defer func() { h.ops.ObserveDeployScanDuration(app.Slug, status, time.Since(start)) }()
 	in := artifactScanInput(app, dep, root, image)
+	approval, err := h.renewProducedSignature(ctx, app, dep, root)
+	if err != nil {
+		if producedEvidenceBusy(err) || ctx.Err() != nil {
+			return err
+		}
+		failure := "publisher_unavailable"
+		if errors.Is(err, cosign.ErrSignatureInvalid) || errors.Is(err, cosign.ErrSignatureMissing) {
+			failure = "publisher_invalid"
+		}
+		return h.publishArtifactScanFailure(ctx, app, in, failure)
+	}
+	in.RegistryVerificationID, in.RegistryInputHash = approval.ID, approval.InputHash
 	be, err := h.storageFor()
 	if err != nil {
 		return h.publishArtifactScanFailure(ctx, app, in, "artifact_read")
@@ -139,6 +152,9 @@ func (h *Handler) publishCompleteArtifactScan(ctx context.Context, app state.App
 	in.Status, in.ScannerName, in.Report = "complete", result.ScannerName, artifactScanReport(result, in)
 	value, err := store.PublishDeploymentArtifactScan(ctx, in)
 	if err != nil {
+		if producedEvidenceBusy(err) || ctx.Err() != nil {
+			return false, err
+		}
 		return false, h.publishArtifactScanFailure(ctx, app, in, "scanner_invalid")
 	}
 	h.ops.ObserveDeployScanTotal(app.Slug, "complete")

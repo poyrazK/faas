@@ -5611,6 +5611,16 @@ WHERE v.account_id=sqlc.arg(account_id)::uuid AND v.app_id=sqlc.arg(app_id)::uui
  ELSE (SELECT CASE WHEN count(*)=1 THEN min(s->>'image') END FROM jsonb_array_elements(d.sidecars) s WHERE s->>'name'=v.workload_name) END
 ORDER BY v.verified_at DESC,v.id DESC LIMIT 1;
 
+-- name: GetScopedDeploymentRegistryVerificationByID :one
+SELECT v.* FROM deployment_registry_verifications v
+JOIN deployments d ON d.id=v.deployment_id AND d.app_id=v.app_id
+JOIN apps a ON a.id=v.app_id AND a.account_id=v.account_id
+WHERE v.id=sqlc.arg(id)::uuid AND v.account_id=sqlc.arg(account_id)::uuid AND v.app_id=sqlc.arg(app_id)::uuid
+ AND v.deployment_id=sqlc.arg(deployment_id)::uuid AND a.status<>'deleted'
+ AND v.input_snapshot->>'org_id'=coalesce(a.org_id::text,'')
+ AND v.input_snapshot->>'image_reference'=CASE WHEN v.workload_name='' AND d.kind='image' THEN d.image_digest
+ ELSE (SELECT CASE WHEN count(*)=1 THEN min(s->>'image') END FROM jsonb_array_elements(d.sidecars) s WHERE s->>'name'=v.workload_name) END;
+
 -- name: LockDeploymentRegistryRootfs :one
 SELECT lock_deployment_registry_rootfs(sqlc.arg(verification_id)::uuid)::jsonb AS inputs;
 
@@ -5680,7 +5690,7 @@ SELECT p.* FROM base_image_producers p JOIN base_image_producer_current c ON c.p
 WHERE c.storage_key=sqlc.arg(storage_key);
 
 -- name: LockDeploymentArtifactScan :one
-SELECT lock_deployment_artifact_scan(sqlc.arg(producer_id)::uuid)::jsonb AS inputs;
+SELECT lock_deployment_artifact_scan_with_verification(sqlc.arg(producer_id)::uuid,sqlc.narg(verification_id)::uuid)::jsonb AS inputs;
 
 -- name: AuthorizeDeploymentArtifactScanInsert :exec
 SELECT set_config('gregale.artifact_scan_insert',sqlc.arg(id)::uuid::text,true);
@@ -5688,15 +5698,18 @@ SELECT set_config('gregale.artifact_scan_insert',sqlc.arg(id)::uuid::text,true);
 -- name: InsertDeploymentArtifactScan :one
 WITH storage_clock AS MATERIALIZED (SELECT clock_timestamp() AS now),
 inputs AS MATERIALIZED (SELECT sqlc.arg(input_snapshot)::jsonb AS value)
-INSERT INTO deployment_artifact_scans(id,rootfs_producer_id,deployment_id,workload_name,input_snapshot,input_hash,result_snapshot,scanned_at,expires_at)
+INSERT INTO deployment_artifact_scans(id,rootfs_producer_id,deployment_id,workload_name,input_snapshot,input_hash,result_snapshot,scanned_at,expires_at,registry_verification_id)
 SELECT sqlc.arg(id)::uuid,f.id,f.deployment_id,f.workload_name,inputs.value,sqlc.arg(input_hash)::text,
  (CASE WHEN inputs.value->>'status'='complete' THEN inputs.value->'report'
  ELSE jsonb_build_object('image_digest',inputs.value->>'image_reference','artifact_digest',inputs.value->>'artifact_digest',
  'vulnerabilities','[]'::jsonb,'severity_counts',jsonb_build_object('critical',0,'high',0,'medium',0,'low',0,'unknown',0),'error',inputs.value->>'failure') END)
  || jsonb_build_object('status',inputs.value->>'status','scanned_at',to_char(now AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')),
- now,least(f.expires_at,now+make_interval(secs=>sqlc.arg(ttl_seconds)::double precision))
+ now,least(CASE WHEN inputs.value ? 'registry_verification_id' THEN r.expires_at ELSE f.expires_at END,now+make_interval(secs=>sqlc.arg(ttl_seconds)::double precision)),
+ (inputs.value->>'registry_verification_id')::uuid
 FROM deployment_registry_rootfs f CROSS JOIN storage_clock CROSS JOIN inputs
-WHERE f.id=sqlc.arg(producer_id)::uuid AND f.expires_at>now
+JOIN deployment_registry_verifications r ON r.id=coalesce((inputs.value->>'registry_verification_id')::uuid,f.registry_verification_id)
+WHERE f.id=sqlc.arg(producer_id)::uuid AND r.expires_at>now AND r.verified_at<=now AND f.published_at<=now
+ AND (inputs.value ? 'registry_verification_id' OR f.expires_at>now)
  AND (inputs.value->>'status'='failed' OR
  ((inputs.value->'report'->>'scanner_db_built_at')::timestamptz<=now
  AND (inputs.value->'report'->>'scanner_db_built_at')::timestamptz>=now-make_interval(secs=>sqlc.arg(db_max_age_seconds)::double precision)))

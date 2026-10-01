@@ -141,3 +141,14 @@ func (s *PgStore) GetLatestDeploymentRegistryVerification(ctx context.Context, a
 	}
 	return registryVerificationRow(row)
 }
+
+func (s *PgStore) GetDeploymentRegistryVerificationByID(ctx context.Context, accountID, appID, depID, id string) (DeploymentRegistryVerification, error) {
+	if !validStandardResourceRead(accountID, appID) || !validStandardResourceRead(depID, id) {
+		return DeploymentRegistryVerification{}, ErrInvalidArgument
+	}
+	row, err := sqlc.New().GetScopedDeploymentRegistryVerificationByID(ctx, s.pool, sqlc.GetScopedDeploymentRegistryVerificationByIDParams{AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), DeploymentID: mustPgUUID(depID), ID: mustPgUUID(id)})
+	if err != nil {
+		return DeploymentRegistryVerification{}, registryVerificationError(err)
+	}
+	return registryVerificationRow(row)
+}

@@ -41,7 +41,7 @@ func (h *Handler) loadOrRunProducedBaseScan(ctx context.Context, be storage.Stor
 	defer cancel()
 	expected := scanArtifactTarget{StorageKey: base.Input.Artifact.StorageKey, ArtifactIdentity: rootfs.ArtifactIdentity{Digest: base.Input.Artifact.Digest, Bytes: base.Input.Artifact.Bytes}}
 	current, err := store.GetFreshBaseImageScan(ctx, base.ID, base.InputHash)
-	if err == nil && checkStoredScanArtifact(ctx, be, expected) == nil {
+	if err == nil && !producedEvidenceRenewalDue(current.ScannedAt, current.ExpiresAt, time.Now().UTC()) && checkStoredScanArtifact(ctx, be, expected) == nil {
 		current, err = store.GetFreshBaseImageScan(ctx, base.ID, base.InputHash)
 		if err == nil {
 			return current, nil
@@ -89,6 +89,9 @@ func (h *Handler) checkProducedBaseScan(ctx context.Context, app state.App, dep 
 	}
 	value, err := h.ensureProducedBaseScan(ctx, be, base, "")
 	if err != nil {
+		if producedEvidenceBusy(err) || ctx.Err() != nil {
+			return err
+		}
 		return verifiedScanFailure(app.SecurityPolicy, "shared-base scan publication refused")
 	}
 	result, err := scanResultFromAPI(value.Result)

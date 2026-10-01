@@ -380,6 +380,7 @@ type Querier interface {
 	// the app_id tenant boundary. Prefer an exact row-id match if a future trace
 	// value happens to equal another row's UUID text.
 	GetRequestTelemetryByAppAndIdentifier(ctx context.Context, db DBTX, arg GetRequestTelemetryByAppAndIdentifierParams) (GetRequestTelemetryByAppAndIdentifierRow, error)
+	GetScopedDeploymentRegistryVerificationByID(ctx context.Context, db DBTX, arg GetScopedDeploymentRegistryVerificationByIDParams) (DeploymentRegistryVerification, error)
 	// Primary-key lookup; called on every authenticated dashboard request.
 	// sql.ErrNoRows from pgx maps to state.ErrNotFound in pgstore.
 	GetSession(ctx context.Context, db DBTX, id pgtype.UUID) (GetSessionRow, error)
@@ -933,7 +934,7 @@ type Querier interface {
 	LockApplicationStandardWorkerOperation(ctx context.Context, db DBTX, arg LockApplicationStandardWorkerOperationParams) (pgtype.UUID, error)
 	// Keep the historical broad lock key, also shared with refund compensation.
 	LockCreditConsumption(ctx context.Context, db DBTX, providerInvoiceID string) error
-	LockDeploymentArtifactScan(ctx context.Context, db DBTX, producerID pgtype.UUID) ([]byte, error)
+	LockDeploymentArtifactScan(ctx context.Context, db DBTX, arg LockDeploymentArtifactScanParams) ([]byte, error)
 	LockDeploymentRegistryRootfs(ctx context.Context, db DBTX, verificationID pgtype.UUID) ([]byte, error)
 	LockDeploymentRegistryVerification(ctx context.Context, db DBTX, arg LockDeploymentRegistryVerificationParams) ([]byte, error)
 	LockDevBridgeAccount(ctx context.Context, db DBTX, id pgtype.UUID) (string, error)

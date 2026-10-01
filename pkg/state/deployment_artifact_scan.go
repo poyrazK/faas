@@ -23,22 +23,26 @@ type DeploymentArtifactScan struct {
 	Result               api.ScanResult
 }
 type DeploymentArtifactScanInput struct {
-	ID               string          `json:"-"`
-	RootfsProducerID string          `json:"rootfs_producer_id"`
-	RootfsInputHash  string          `json:"rootfs_input_hash"`
-	AccountID        string          `json:"account_id"`
-	OrgID            string          `json:"org_id"`
-	AppID            string          `json:"app_id"`
-	DeploymentID     string          `json:"deployment_id"`
-	WorkloadName     string          `json:"workload_name"`
-	Scope            string          `json:"scope"`
-	ImageReference   string          `json:"image_reference"`
-	ArtifactDigest   string          `json:"artifact_digest"`
-	ArtifactBytes    int64           `json:"artifact_bytes"`
-	Status           string          `json:"status"`
-	ScannerName      string          `json:"scanner_name,omitempty"`
-	Report           *api.ScanResult `json:"report,omitempty"`
-	Failure          string          `json:"failure,omitempty"`
+	ID               string `json:"-"`
+	RootfsProducerID string `json:"rootfs_producer_id"`
+	RootfsInputHash  string `json:"rootfs_input_hash"`
+	// A separate current signature check may approve the same historical
+	// conversion. Optional fields preserve pre-renewal immutable hashes.
+	RegistryVerificationID string          `json:"registry_verification_id,omitempty"`
+	RegistryInputHash      string          `json:"registry_input_hash,omitempty"`
+	AccountID              string          `json:"account_id"`
+	OrgID                  string          `json:"org_id"`
+	AppID                  string          `json:"app_id"`
+	DeploymentID           string          `json:"deployment_id"`
+	WorkloadName           string          `json:"workload_name"`
+	Scope                  string          `json:"scope"`
+	ImageReference         string          `json:"image_reference"`
+	ArtifactDigest         string          `json:"artifact_digest"`
+	ArtifactBytes          int64           `json:"artifact_bytes"`
+	Status                 string          `json:"status"`
+	ScannerName            string          `json:"scanner_name,omitempty"`
+	Report                 *api.ScanResult `json:"report,omitempty"`
+	Failure                string          `json:"failure,omitempty"`
 }
 type DeploymentArtifactScanStore interface {
 	PublishDeploymentArtifactScan(context.Context, DeploymentArtifactScanInput) (DeploymentArtifactScan, error)
@@ -68,6 +72,14 @@ func prepareDeploymentArtifactScan(input DeploymentArtifactScanInput) (Deploymen
 	if !validStandardResourceRead(in.ID, in.RootfsProducerID) || !validStandardResourceRead(in.AccountID, in.AppID) || !validStandardResourceRead(in.DeploymentID, in.DeploymentID) || in.OrgID != "" && !validStandardResourceRead(in.OrgID, in.OrgID) || len(in.RootfsInputHash) != 64 || api.ValidateScope(in.Scope) != nil || in.ImageReference == "" || in.ArtifactBytes <= 0 || in.ArtifactBytes > api.ApplicationStandardBaseMaxArtifactBytes || ociref.ValidateDigest(in.ArtifactDigest) != nil || in.WorkloadName != "" && !api.ValidSidecarName(in.WorkloadName) {
 		return in, "", ErrInvalidArgument
 	}
+	if in.RegistryVerificationID != "" {
+		if !validStandardResourceRead(in.RegistryVerificationID, in.RegistryVerificationID) || len(in.RegistryInputHash) != 64 {
+			return in, "", ErrInvalidArgument
+		}
+		in.RegistryVerificationID = canonicalStandardUUID(in.RegistryVerificationID)
+	} else if in.RegistryInputHash != "" {
+		return in, "", ErrInvalidArgument
+	}
 	report, err := prepareProducerScanReport(in.Status, in.ScannerName, in.Failure, in.Report, in.ImageReference, in.ArtifactDigest)
 	if err != nil {
 		return in, "", err
@@ -95,7 +107,7 @@ func prepareProducerScanReport(status, scanner, failure string, report *api.Scan
 			return nil, ErrInvalidArgument
 		}
 		switch failure {
-		case "artifact_read", "artifact_mismatch", "scanner_unavailable", "scanner_invalid":
+		case "artifact_read", "artifact_mismatch", "scanner_unavailable", "scanner_invalid", "publisher_unavailable", "publisher_invalid":
 			return nil, nil
 		default:
 			return nil, ErrInvalidArgument
@@ -173,18 +185,31 @@ func checkProducerScanFreshness(report *api.ScanResult, now time.Time) error {
 	}
 	return nil
 }
-func checkArtifactScanParent(in DeploymentArtifactScanInput, root DeploymentRegistryRootfs, parent DeploymentRegistryVerification, dep Deployment, now time.Time) error {
+func checkArtifactScanParent(in DeploymentArtifactScanInput, root DeploymentRegistryRootfs, origin, parent DeploymentRegistryVerification, dep Deployment, now time.Time) error {
 	if err := validateRegistryRootfsStored(root); err != nil {
 		return err
 	}
 	p := root.Input
-	if p.RegistryVerificationID != parent.ID || p.RegistryInputHash != parent.InputHash || root.ExpiresAt.After(parent.ExpiresAt) || root.PublishedAt.Before(parent.VerifiedAt) {
+	if err := validateRegistryVerification(origin); err != nil {
+		return err
+	}
+	if err := validateRegistryVerification(parent); err != nil {
+		return err
+	}
+	if p.RegistryVerificationID != origin.ID || p.RegistryInputHash != origin.InputHash || root.ExpiresAt.After(origin.ExpiresAt) || root.PublishedAt.Before(origin.VerifiedAt) || root.PublishedAt.After(now) {
 		return ErrApplicationStandardRuntimeStale
 	}
 	if p.AccountID != parent.Input.AccountID || p.OrgID != parent.Input.OrgID || p.AppID != parent.Input.AppID || p.DeploymentID != parent.Input.DeploymentID || p.WorkloadName != parent.Input.WorkloadName {
 		return ErrApplicationStandardRuntimeStale
 	}
-	if in.RootfsProducerID != root.ID || in.RootfsInputHash != root.InputHash || in.AccountID != p.AccountID || in.OrgID != p.OrgID || in.AppID != p.AppID || in.DeploymentID != p.DeploymentID || in.WorkloadName != p.WorkloadName || in.Scope != p.Scope || in.Scope != dep.Scope || in.ImageReference != parent.Input.ImageReference || in.ArtifactDigest != p.ArtifactDigest || in.ArtifactBytes != p.ArtifactBytes || !root.ExpiresAt.After(now) || !parent.ExpiresAt.After(now) {
+	if in.RootfsProducerID != root.ID || in.RootfsInputHash != root.InputHash || in.AccountID != p.AccountID || in.OrgID != p.OrgID || in.AppID != p.AppID || in.DeploymentID != p.DeploymentID || in.WorkloadName != p.WorkloadName || in.Scope != p.Scope || in.Scope != dep.Scope || in.ImageReference != parent.Input.ImageReference || in.ArtifactDigest != p.ArtifactDigest || in.ArtifactBytes != p.ArtifactBytes || !parent.ExpiresAt.After(now) || parent.VerifiedAt.After(now) {
+		return ErrApplicationStandardRuntimeStale
+	}
+	if in.RegistryVerificationID == "" {
+		if parent.ID != origin.ID || !root.ExpiresAt.After(now) {
+			return ErrApplicationStandardRuntimeStale
+		}
+	} else if in.RegistryVerificationID != parent.ID || in.RegistryInputHash != parent.InputHash || !sameRegistryScanSource(origin.Input, parent.Input) {
 		return ErrApplicationStandardRuntimeStale
 	}
 	if parent.Input.ImageChain == nil {
@@ -200,6 +225,24 @@ func checkArtifactScanParent(in DeploymentArtifactScanInput, root DeploymentRegi
 	default:
 		return ErrApplicationStandardRuntimeStale
 	}
+}
+
+// Signature attachments/publishers can change, but the signed subject, child,
+// config and layer chain of an existing conversion cannot change during renewal.
+func sameRegistryScanSource(a, b DeploymentRegistryVerificationInput) bool {
+	if a.AccountID != b.AccountID || a.OrgID != b.OrgID || a.AppID != b.AppID || a.DeploymentID != b.DeploymentID || a.WorkloadName != b.WorkloadName || a.ImageReference != b.ImageReference || a.SourceReference != b.SourceReference || a.SelectedReference != b.SelectedReference || a.SelectedDigest != b.SelectedDigest || a.Proof.SubjectDigest != b.Proof.SubjectDigest || a.ImageChain == nil || b.ImageChain == nil {
+		return false
+	}
+	x, err := standardReviewDigest(a.ImageChain)
+	y, otherErr := standardReviewDigest(b.ImageChain)
+	return err == nil && otherErr == nil && x == y
+}
+
+func artifactScanApprovalID(in DeploymentArtifactScanInput, root DeploymentRegistryRootfs) string {
+	if in.RegistryVerificationID != "" {
+		return in.RegistryVerificationID
+	}
+	return root.Input.RegistryVerificationID
 }
 func validateDeploymentArtifactScan(value DeploymentArtifactScan) error {
 	in, hash, err := prepareDeploymentArtifactScan(value.Input)

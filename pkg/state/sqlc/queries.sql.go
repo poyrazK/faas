@@ -4799,7 +4799,7 @@ func (q *Queries) GetCurrentBaseImageScan(ctx context.Context, db DBTX, storageK
 }
 
 const getCurrentDeploymentArtifactScan = `-- name: GetCurrentDeploymentArtifactScan :one
-SELECT s.id, s.rootfs_producer_id, s.deployment_id, s.workload_name, s.input_snapshot, s.input_hash, s.result_snapshot, s.scanned_at, s.expires_at FROM deployment_artifact_scan_current c JOIN deployment_artifact_scans s ON s.id=c.scan_id
+SELECT s.id, s.rootfs_producer_id, s.deployment_id, s.workload_name, s.input_snapshot, s.input_hash, s.result_snapshot, s.scanned_at, s.expires_at, s.registry_verification_id FROM deployment_artifact_scan_current c JOIN deployment_artifact_scans s ON s.id=c.scan_id
 JOIN deployment_registry_rootfs_current p ON p.deployment_id=c.deployment_id AND p.workload_name=c.workload_name AND p.artifact_id=s.rootfs_producer_id
 JOIN deployment_registry_rootfs f ON f.id=s.rootfs_producer_id
 JOIN deployment_registry_verifications r ON r.id=f.registry_verification_id
@@ -4841,6 +4841,7 @@ func (q *Queries) GetCurrentDeploymentArtifactScan(ctx context.Context, db DBTX,
 		&i.ResultSnapshot,
 		&i.ScannedAt,
 		&i.ExpiresAt,
+		&i.RegistryVerificationID,
 	)
 	return i, err
 }
@@ -4986,7 +4987,7 @@ func (q *Queries) GetDataUpstreamByID(ctx context.Context, db DBTX, id pgtype.UU
 }
 
 const getDeploymentArtifactScanByID = `-- name: GetDeploymentArtifactScanByID :one
-SELECT id, rootfs_producer_id, deployment_id, workload_name, input_snapshot, input_hash, result_snapshot, scanned_at, expires_at FROM deployment_artifact_scans WHERE id=$1::uuid
+SELECT id, rootfs_producer_id, deployment_id, workload_name, input_snapshot, input_hash, result_snapshot, scanned_at, expires_at, registry_verification_id FROM deployment_artifact_scans WHERE id=$1::uuid
 `
 
 func (q *Queries) GetDeploymentArtifactScanByID(ctx context.Context, db DBTX, id pgtype.UUID) (DeploymentArtifactScan, error) {
@@ -5002,6 +5003,7 @@ func (q *Queries) GetDeploymentArtifactScanByID(ctx context.Context, db DBTX, id
 		&i.ResultSnapshot,
 		&i.ScannedAt,
 		&i.ExpiresAt,
+		&i.RegistryVerificationID,
 	)
 	return i, err
 }
@@ -5689,6 +5691,48 @@ func (q *Queries) GetRequestTelemetryByAppAndIdentifier(ctx context.Context, db 
 		&i.DeploymentTag,
 		&i.DeploymentCreatedAt,
 		&i.ImageDigest,
+	)
+	return i, err
+}
+
+const getScopedDeploymentRegistryVerificationByID = `-- name: GetScopedDeploymentRegistryVerificationByID :one
+SELECT v.id, v.deployment_id, v.app_id, v.account_id, v.workload_name, v.input_snapshot, v.input_hash, v.payload, v.signature, v.verified_at, v.expires_at FROM deployment_registry_verifications v
+JOIN deployments d ON d.id=v.deployment_id AND d.app_id=v.app_id
+JOIN apps a ON a.id=v.app_id AND a.account_id=v.account_id
+WHERE v.id=$1::uuid AND v.account_id=$2::uuid AND v.app_id=$3::uuid
+ AND v.deployment_id=$4::uuid AND a.status<>'deleted'
+ AND v.input_snapshot->>'org_id'=coalesce(a.org_id::text,'')
+ AND v.input_snapshot->>'image_reference'=CASE WHEN v.workload_name='' AND d.kind='image' THEN d.image_digest
+ ELSE (SELECT CASE WHEN count(*)=1 THEN min(s->>'image') END FROM jsonb_array_elements(d.sidecars) s WHERE s->>'name'=v.workload_name) END
+`
+
+type GetScopedDeploymentRegistryVerificationByIDParams struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+}
+
+func (q *Queries) GetScopedDeploymentRegistryVerificationByID(ctx context.Context, db DBTX, arg GetScopedDeploymentRegistryVerificationByIDParams) (DeploymentRegistryVerification, error) {
+	row := db.QueryRow(ctx, getScopedDeploymentRegistryVerificationByID,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+		arg.DeploymentID,
+	)
+	var i DeploymentRegistryVerification
+	err := row.Scan(
+		&i.ID,
+		&i.DeploymentID,
+		&i.AppID,
+		&i.AccountID,
+		&i.WorkloadName,
+		&i.InputSnapshot,
+		&i.InputHash,
+		&i.Payload,
+		&i.Signature,
+		&i.VerifiedAt,
+		&i.ExpiresAt,
 	)
 	return i, err
 }
@@ -6436,19 +6480,22 @@ func (q *Queries) InsertDataUpstreamProbe(ctx context.Context, db DBTX, arg Inse
 const insertDeploymentArtifactScan = `-- name: InsertDeploymentArtifactScan :one
 WITH storage_clock AS MATERIALIZED (SELECT clock_timestamp() AS now),
 inputs AS MATERIALIZED (SELECT $6::jsonb AS value)
-INSERT INTO deployment_artifact_scans(id,rootfs_producer_id,deployment_id,workload_name,input_snapshot,input_hash,result_snapshot,scanned_at,expires_at)
+INSERT INTO deployment_artifact_scans(id,rootfs_producer_id,deployment_id,workload_name,input_snapshot,input_hash,result_snapshot,scanned_at,expires_at,registry_verification_id)
 SELECT $1::uuid,f.id,f.deployment_id,f.workload_name,inputs.value,$2::text,
  (CASE WHEN inputs.value->>'status'='complete' THEN inputs.value->'report'
  ELSE jsonb_build_object('image_digest',inputs.value->>'image_reference','artifact_digest',inputs.value->>'artifact_digest',
  'vulnerabilities','[]'::jsonb,'severity_counts',jsonb_build_object('critical',0,'high',0,'medium',0,'low',0,'unknown',0),'error',inputs.value->>'failure') END)
  || jsonb_build_object('status',inputs.value->>'status','scanned_at',to_char(now AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')),
- now,least(f.expires_at,now+make_interval(secs=>$3::double precision))
+ now,least(CASE WHEN inputs.value ? 'registry_verification_id' THEN r.expires_at ELSE f.expires_at END,now+make_interval(secs=>$3::double precision)),
+ (inputs.value->>'registry_verification_id')::uuid
 FROM deployment_registry_rootfs f CROSS JOIN storage_clock CROSS JOIN inputs
-WHERE f.id=$4::uuid AND f.expires_at>now
+JOIN deployment_registry_verifications r ON r.id=coalesce((inputs.value->>'registry_verification_id')::uuid,f.registry_verification_id)
+WHERE f.id=$4::uuid AND r.expires_at>now AND r.verified_at<=now AND f.published_at<=now
+ AND (inputs.value ? 'registry_verification_id' OR f.expires_at>now)
  AND (inputs.value->>'status'='failed' OR
  ((inputs.value->'report'->>'scanner_db_built_at')::timestamptz<=now
  AND (inputs.value->'report'->>'scanner_db_built_at')::timestamptz>=now-make_interval(secs=>$5::double precision)))
-RETURNING deployment_artifact_scans.id, deployment_artifact_scans.rootfs_producer_id, deployment_artifact_scans.deployment_id, deployment_artifact_scans.workload_name, deployment_artifact_scans.input_snapshot, deployment_artifact_scans.input_hash, deployment_artifact_scans.result_snapshot, deployment_artifact_scans.scanned_at, deployment_artifact_scans.expires_at
+RETURNING deployment_artifact_scans.id, deployment_artifact_scans.rootfs_producer_id, deployment_artifact_scans.deployment_id, deployment_artifact_scans.workload_name, deployment_artifact_scans.input_snapshot, deployment_artifact_scans.input_hash, deployment_artifact_scans.result_snapshot, deployment_artifact_scans.scanned_at, deployment_artifact_scans.expires_at, deployment_artifact_scans.registry_verification_id
 `
 
 type InsertDeploymentArtifactScanParams struct {
@@ -6480,6 +6527,7 @@ func (q *Queries) InsertDeploymentArtifactScan(ctx context.Context, db DBTX, arg
 		&i.ResultSnapshot,
 		&i.ScannedAt,
 		&i.ExpiresAt,
+		&i.RegistryVerificationID,
 	)
 	return i, err
 }
@@ -12529,11 +12577,16 @@ func (q *Queries) LockCreditConsumption(ctx context.Context, db DBTX, providerIn
 }
 
 const lockDeploymentArtifactScan = `-- name: LockDeploymentArtifactScan :one
-SELECT lock_deployment_artifact_scan($1::uuid)::jsonb AS inputs
+SELECT lock_deployment_artifact_scan_with_verification($1::uuid,$2::uuid)::jsonb AS inputs
 `
 
-func (q *Queries) LockDeploymentArtifactScan(ctx context.Context, db DBTX, producerID pgtype.UUID) ([]byte, error) {
-	row := db.QueryRow(ctx, lockDeploymentArtifactScan, producerID)
+type LockDeploymentArtifactScanParams struct {
+	ProducerID     pgtype.UUID
+	VerificationID pgtype.UUID
+}
+
+func (q *Queries) LockDeploymentArtifactScan(ctx context.Context, db DBTX, arg LockDeploymentArtifactScanParams) ([]byte, error) {
+	row := db.QueryRow(ctx, lockDeploymentArtifactScan, arg.ProducerID, arg.VerificationID)
 	var inputs []byte
 	err := row.Scan(&inputs)
 	return inputs, err

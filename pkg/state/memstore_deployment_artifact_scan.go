@@ -34,18 +34,22 @@ func (m *MemStore) PublishDeploymentArtifactScan(ctx context.Context, input Depl
 	if m.deploymentRegistryRootfsCurrent[pointer] != root.ID {
 		return DeploymentArtifactScan{}, ErrApplicationStandardRuntimeStale
 	}
-	parent, ok := m.deploymentRegistryVerifications[root.Input.RegistryVerificationID]
+	origin, ok := m.deploymentRegistryVerifications[root.Input.RegistryVerificationID]
+	if !ok {
+		return DeploymentArtifactScan{}, ErrNotFound
+	}
+	parent, ok := m.deploymentRegistryVerifications[artifactScanApprovalID(in, root)]
 	if !ok {
 		return DeploymentArtifactScan{}, ErrNotFound
 	}
 	now := time.Now().UTC()
-	if err := checkArtifactScanParent(in, root, parent, dep, now); err != nil {
+	if err := checkArtifactScanParent(in, root, origin, parent, dep, now); err != nil {
 		return DeploymentArtifactScan{}, err
 	}
 	if err := checkRegistryVerificationOwner(parent.Input, app, dep); err != nil {
 		return DeploymentArtifactScan{}, err
 	}
-	if !registryRootfsMatchesMetadata(root, dep, m.deploymentSidecarLayers[dep.ID+"\x00"+in.WorkloadName], parent) {
+	if !registryRootfsMatchesMetadata(root, dep, m.deploymentSidecarLayers[dep.ID+"\x00"+in.WorkloadName], origin) {
 		return DeploymentArtifactScan{}, ErrApplicationStandardRuntimeStale
 	}
 	signer := m.trustedSigners[trustedSignerKey{AppID: app.ID, SignerName: parent.Input.Proof.PublisherName}]
@@ -77,8 +81,12 @@ func (m *MemStore) PublishDeploymentArtifactScan(ctx context.Context, input Depl
 		return DeploymentArtifactScan{}, err
 	}
 	expires := now.Add(api.ApplicationStandardArtifactScanTTL)
-	if expires.After(root.ExpiresAt) {
-		expires = root.ExpiresAt
+	parentExpiry := parent.ExpiresAt
+	if in.RegistryVerificationID == "" {
+		parentExpiry = root.ExpiresAt
+	}
+	if expires.After(parentExpiry) {
+		expires = parentExpiry
 	}
 	value := DeploymentArtifactScan{ID: in.ID, InputHash: hash, Input: in, ScannedAt: now, ExpiresAt: expires, Result: artifactScanResult(in, now)}
 	raw, err := json.Marshal(value.Result)
