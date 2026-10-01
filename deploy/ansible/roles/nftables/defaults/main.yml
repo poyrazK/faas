@@ -85,3 +85,7 @@ faas_tcpd_allowed_cidrs: []
 faas_cloudflare_origin_only: false
 faas_cloudflare_ipv4_cidrs: []
 faas_cloudflare_ipv6_cidrs: []
+
+# UDP ingress is opt-in.
+faas_udpd_enabled: false
+faas_udpd_allowed_cidrs: []
