@@ -42,7 +42,9 @@ func TestE2E_CommitProducerDeathReachesCompletedInvocation(t *testing.T) {
 	runCommitProducerHandoff(t, f.h, f.store, f.key, f.app.ID, "orders")
 }
 
-func runCommitProducerHandoff(t *testing.T, h *e2etest.Harness, store *state.PgStore, key, appID, sourceName string) api.Invocation {
+type commitHandoffOptions struct{ SourceRecovery bool }
+
+func runCommitProducerHandoff(t *testing.T, h *e2etest.Harness, store *state.PgStore, key, appID, sourceName string, options ...commitHandoffOptions) api.Invocation {
 	t.Helper()
 	before, err := store.ListInvocationsForApp(context.Background(), appID)
 	if err != nil {
@@ -182,9 +184,42 @@ func runCommitProducerHandoff(t *testing.T, h *e2etest.Harness, store *state.PgS
 	if _, err := store.CommitReceiptByEvent(ctx, src.AccountID, src.ID, eventID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("paused source accepted before producer death: %v", err)
 	}
+	recoverSource := len(options) > 0 && options[0].SourceRecovery
+	if recoverSource {
+		if _, err := customer.Exec(ctx, `ALTER ROLE relay PASSWORD 'rotated-producer-death-fixture'`); err != nil {
+			t.Fatal(err)
+		}
+		cluster.Stop()
+	}
 	body, status := doReq(t, h, key, http.MethodPatch, "/v1/commit-sources/"+src.ID, map[string]bool{"enabled": true})
 	if status != http.StatusOK {
 		t.Fatalf("resume source: %d %s", status, body)
+	}
+	if recoverSource {
+		first := waitCommitSourceHealth(t, h, key, src.ID, "database_unavailable", time.Time{})
+		second := waitCommitSourceHealth(t, h, key, src.ID, "database_unavailable", *first.LastCheckedAt)
+		if second.PendingEvents != nil || second.BlockedEvents != nil || second.OldestPendingAt != nil {
+			t.Fatalf("source outage reported a known backlog: %+v", second)
+		}
+		if _, err := store.CommitReceiptByEvent(ctx, src.AccountID, src.ID, eventID); !errors.Is(err, state.ErrNotFound) {
+			t.Fatalf("source outage accepted unavailable work: %v", err)
+		}
+		cluster.Start()
+		customer.Reset()
+		// The old sealed password remains configured. A fresh source pass must
+		// still fail after the database recovers, rather than skipping TLS/auth.
+		waitCommitSourceHealth(t, h, key, src.ID, "database_unavailable", *second.LastCheckedAt)
+		if _, err := store.CommitReceiptByEvent(ctx, src.AccountID, src.ID, eventID); !errors.Is(err, state.ErrNotFound) {
+			t.Fatalf("retired source credential accepted work: %v", err)
+		}
+		rotated, err := commitwork.SealConnection(identity.Recipient(), src.ID, cluster.URL("relay", "rotated-producer-death-fixture"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SetCommitSourceConnection(ctx, src.AccountID, src.ID, rotated); err != nil {
+			t.Fatal(err)
+		}
+		t.Log("managed relay reported unknown backlog through repeated source-outage passes, rejected its retired credential, and received the rotated credential")
 	}
 	var receipt state.CommitReceipt
 	deadline := time.Now().Add(30 * time.Second)
@@ -265,6 +300,25 @@ func runCommitProducerHandoff(t *testing.T, h *e2etest.Harness, store *state.PgS
 		t.Fatalf("completed operation API: %d %+v %v", status, operation, err)
 	}
 	return completed
+}
+
+func waitCommitSourceHealth(t *testing.T, h *e2etest.Harness, key, source, want string, after time.Time) api.CommitSourceResponse {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		body, code := doReq(t, h, key, http.MethodGet, "/v1/commit-sources/"+source, nil)
+		var health api.CommitSourceResponse
+		if code != http.StatusOK || json.Unmarshal(body, &health) != nil {
+			t.Fatalf("source health API: %d %s", code, body)
+		}
+		if health.RelayStatus == want && health.LastCheckedAt != nil && health.LastCheckedAt.After(after) {
+			return health
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("source health did not reach fresh %q: %+v", want, health)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 func TestCommitProducerProcess(t *testing.T) {

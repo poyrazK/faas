@@ -5,7 +5,6 @@
 import type { AsyncInvokeResponse } from '../models/AsyncInvokeResponse.js';
 import type { CommitBlockedEventsResponse } from '../models/CommitBlockedEventsResponse.js';
 import type { CommitEventRequest } from '../models/CommitEventRequest.js';
-import type { CommitOperationResponse } from '../models/CommitOperationResponse.js';
 import type { CommitReceiptResponse } from '../models/CommitReceiptResponse.js';
 import type { CommitSourceResponse } from '../models/CommitSourceResponse.js';
 import type { CreateQueueBindingRequest } from '../models/CreateQueueBindingRequest.js';
@@ -474,28 +473,6 @@ export class QueuesService {
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
-      },
-    });
-  }
-  /**
-   * Read durable execution status for Commit work.
-   * @returns CommitOperationResponse Operation status retained with the Commit receipt.
-   * @throws ApiError
-   */
-  public static getCommitOperation({
-    id,
-  }: {
-    id: string,
-  }): CancelablePromise<CommitOperationResponse> {
-    return __request(OpenAPI, {
-      method: 'GET',
-      url: '/v1/operations/{id}',
-      path: {
-        'id': id,
-      },
-      errors: {
-        401: `code: unauthorized`,
-        404: `code: not_found`,
       },
     });
   }

@@ -68,6 +68,14 @@ Integration tests cover the relay's database behavior and concurrent receipt
 creation. The process and native gates below additionally verify scheduler
 delivery and Firecracker execution in an isolated qualification environment.
 
+## Revision qualification
+
+The evidence below qualifies the earlier implementation revision. The branch
+was subsequently rebased onto main commit
+`a3e1800e37962a3341ef13703b28a3d3c628191b`. The rebase includes newer VM,
+harness, Operations, and SDK behavior, so its full process and native gates must
+be recorded separately before claiming the current revision is qualified.
+
 ## GCP acceptance evidence
 
 On 2026-10-01, `sh scripts/test-commit.sh` passed on

@@ -945,18 +945,6 @@ gateway_metrics_url = %q
 	return cfgPath
 }
 
-// gatewaydConfig starts the bridge DNS resolver for real builder VMs, whose
-// DNS traffic is pinned to this endpoint by the production network policy.
-func gatewaydConfig(addr, controlAddr, apidLoopback string, guestDNS bool) string {
-	config := fmt.Sprintf("public_addr=%q\ncontrol_addr=%q\napid_loopback=%q\n", addr, controlAddr, apidLoopback)
-	if guestDNS {
-		bridge := api.DefaultHostBridgeCIDR().Addr().Next().String()
-		config += fmt.Sprintf("service_proxy_listen=%q\nnode_name=%q\n",
-			net.JoinHostPort(bridge, strconv.Itoa(netns.ServiceProxyPort)), "default-local")
-	}
-	return config
-}
-
 // startGatewayd boots gatewayd-internal (Tier A7 PR-B+) against the
 // per-test schedd + apid + PG schema. The legacy 'gatewayd' binary is
 // gone (its source moved into cmd/gatewayd-internal/ in PR-A); the

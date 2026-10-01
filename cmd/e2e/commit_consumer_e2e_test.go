@@ -113,7 +113,7 @@ func TestE2E_CommitHTTPConsumerCrashRecovery(t *testing.T) {
 		_, err = startCommitHTTPConsumer(consumerCtx, consumer.Config().ConnString(), consumer.Config().ConnConfig.Database, address, "healthy", "")
 		recovered <- err
 	}()
-	completed := runCommitProducerHandoff(t, f.h, f.store, f.key, f.app.ID, "consumer-orders")
+	completed := runCommitProducerHandoff(t, f.h, f.store, f.key, f.app.ID, "consumer-orders", commitHandoffOptions{SourceRecovery: true})
 	select {
 	case err := <-recovered:
 		if err != nil {
@@ -173,7 +173,7 @@ func TestE2E_CommitHTTPConsumerCrashRecovery(t *testing.T) {
 	if err := commitConsumerCounts(ctx, consumer, 1, 1); err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("producer death, consumer rollback, lost HTTP response, scheduler restart and concurrent duplicates preserved one business effect; attempts=%d", completed.Attempts)
+	t.Logf("producer death, source outage, credential rotation, consumer rollback, lost HTTP response, scheduler restart and concurrent duplicates preserved one business effect; attempts=%d", completed.Attempts)
 }
 
 type commitHTTPConsumerProcess struct{ exit <-chan error }
