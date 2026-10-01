@@ -14,7 +14,11 @@ func (s *PgStore) RuntimeAppValuesForDeployment(ctx context.Context, accountID, 
 	if err := validateRuntimeAppEnvIDs(accountID, appID, deploymentID); err != nil {
 		return RuntimeAppValuesSnapshot{}, err
 	}
-	row, err := sqlc.New().ReadRuntimeAppValuesForDeployment(ctx, s.pool, sqlc.ReadRuntimeAppValuesForDeploymentParams{
+	return runtimeAppValuesDB(ctx, s.pool, accountID, appID, deploymentID)
+}
+
+func runtimeAppValuesDB(ctx context.Context, db sqlc.DBTX, accountID, appID, deploymentID string) (RuntimeAppValuesSnapshot, error) {
+	row, err := sqlc.New().ReadRuntimeAppValuesForDeployment(ctx, db, sqlc.ReadRuntimeAppValuesForDeploymentParams{
 		AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), DeploymentID: mustPgUUID(deploymentID),
 	})
 	if err != nil {

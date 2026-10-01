@@ -60,7 +60,7 @@ func (m *MemStore) RollbackProjectEnvironmentClone(_ context.Context, accountID,
 	for key, secret := range m.secrets {
 		if secret.Scope == slug {
 			if app, ok := m.apps[key.AppID]; ok && app.ProjectID == projectID {
-				delete(m.secrets, key)
+				m.deleteRuntimeAppSecretLocked(key)
 			}
 		}
 	}

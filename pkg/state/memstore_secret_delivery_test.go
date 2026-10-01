@@ -1,3 +1,4 @@
+// adr: 375
 package state_test
 
 import (
@@ -77,11 +78,27 @@ func TestMemStoreAppSecretResealPreservesDeliveryVersion(t *testing.T) {
 func TestMemStoreAppSecretRuntimeReloadVersionFence(t *testing.T) {
 	store, ctx, account, app := memValueHashFixture(t)
 	const scope, key = "prod", "DATABASE_URL"
-	firstRuntime, err := store.CreateInstance(ctx, app.ID, "deployment-1", string(state.StateRunning), 256, "node-1", "")
+	deployment, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: scope, Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	readFence := func() state.RuntimeAppSecretFence {
+		t.Helper()
+		snapshot, err := store.RuntimeAppValuesForDeployment(ctx, account.ID, app.ID, deployment.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fence, err := state.NewRuntimeAppSecretFence(snapshot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fence
+	}
+	firstRuntime, err := store.CreateInstance(ctx, app.ID, deployment.ID, string(state.StateRunning), 256, "node-1", "")
 	if err != nil {
 		t.Fatalf("create first runtime: %v", err)
 	}
-	secondRuntime, err := store.CreateInstance(ctx, app.ID, "deployment-1", string(state.StateRunning), 256, "node-1", "")
+	secondRuntime, err := store.CreateInstance(ctx, app.ID, deployment.ID, string(state.StateRunning), 256, "node-1", "")
 	if err != nil {
 		t.Fatalf("create second runtime: %v", err)
 	}
@@ -89,6 +106,7 @@ func TestMemStoreAppSecretRuntimeReloadVersionFence(t *testing.T) {
 		t.Fatalf("seed secret: %v", err)
 	}
 	result := state.AppSecretRuntimeReloadResult{
+		Fence:     readFence(),
 		AccountID: account.ID, AppID: app.ID, InstanceID: firstRuntime.ID, Revision: strings.Repeat("a", 64),
 		Projection: state.SecretReloadProjectionUpdated, Signal: state.SecretReloadSignalSent,
 		AttemptedAt: time.Date(2026, 9, 23, 10, 0, 0, 0, time.UTC),
@@ -125,6 +143,7 @@ func TestMemStoreAppSecretRuntimeReloadVersionFence(t *testing.T) {
 	result.InstanceID = firstRuntime.ID
 	result.Signal = state.SecretReloadSignalSent
 	result.Candidates[0].Version = 2
+	result.Fence = readFence()
 	result.AttemptedAt = result.AttemptedAt.Add(time.Minute)
 	if updated, err := store.RecordAppSecretRuntimeReload(ctx, result); err != nil || updated != 1 {
 		t.Fatalf("record first runtime v2: updated=%d err=%v", updated, err)
@@ -134,6 +153,7 @@ func TestMemStoreAppSecretRuntimeReloadVersionFence(t *testing.T) {
 		t.Fatalf("runtime observations after rotation = %+v, %v; want current and stale versions", observations, err)
 	}
 	ack := state.AppSecretRuntimeReloadAckResult{
+		Fence:     result.Fence,
 		AccountID: account.ID, AppID: app.ID, InstanceID: firstRuntime.ID, Revision: strings.Repeat("b", 64),
 		Status: state.SecretApplicationReloadAckApplied, AttemptedAt: result.AttemptedAt.Add(time.Second),
 		Candidates: []state.AppSecretDeliveryCandidate{{Scope: scope, Key: key, Version: 2}},

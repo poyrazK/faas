@@ -14,6 +14,10 @@ func (m *MemStore) RuntimeAppValuesForDeployment(_ context.Context, accountID, a
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.runtimeAppValuesLocked(accountID, appID, deploymentID)
+}
+
+func (m *MemStore) runtimeAppValuesLocked(accountID, appID, deploymentID string) (RuntimeAppValuesSnapshot, error) {
 	owner, err := m.runtimeAppValueOwnerLocked(accountID, appID, deploymentID)
 	if err != nil {
 		return RuntimeAppValuesSnapshot{}, err
@@ -42,4 +46,15 @@ func (m *MemStore) RuntimeAppValuesForDeployment(_ context.Context, accountID, a
 	}
 	sort.Slice(result.Secrets, func(i, j int) bool { return result.Secrets[i].Key < result.Secrets[j].Key })
 	return result, nil
+}
+
+// PostgreSQL cascades observation rows when their scoped secret is deleted.
+// Every MemStore deletion must preserve that row-lifetime boundary as well.
+func (m *MemStore) deleteRuntimeAppSecretLocked(key secretKey) {
+	delete(m.secrets, key)
+	for observation := range m.secretRuntimeReloadObservations {
+		if observation.AppID == key.AppID && observation.Scope == key.Scope && observation.Key == key.Key {
+			delete(m.secretRuntimeReloadObservations, observation)
+		}
+	}
 }

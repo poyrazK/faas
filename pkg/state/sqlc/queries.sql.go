@@ -11404,6 +11404,170 @@ func (q *Queries) LockProjectEnvironmentQueuePreparationSpec(ctx context.Context
 	return i, err
 }
 
+const lockRuntimeSecretApp = `-- name: LockRuntimeSecretApp :one
+SELECT id FROM apps WHERE account_id=$1::uuid AND id=$2::uuid AND status<>'deleted'
+FOR SHARE
+`
+
+type LockRuntimeSecretAppParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) LockRuntimeSecretApp(ctx context.Context, db DBTX, arg LockRuntimeSecretAppParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockRuntimeSecretApp, arg.AccountID, arg.AppID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockRuntimeSecretConfigurationPins = `-- name: LockRuntimeSecretConfigurationPins :many
+SELECT p.spec_id FROM project_environment_workload_deployment_specs p
+JOIN project_environment_workload_specs s ON s.id=p.spec_id
+JOIN deployment_runtime_environment_owners o ON o.deployment_id=p.deployment_id
+WHERE p.deployment_id=$1::uuid
+FOR SHARE OF p,s,o
+`
+
+func (q *Queries) LockRuntimeSecretConfigurationPins(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, lockRuntimeSecretConfigurationPins, deploymentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var spec_id pgtype.UUID
+		if err := rows.Scan(&spec_id); err != nil {
+			return nil, err
+		}
+		items = append(items, spec_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockRuntimeSecretEnvironment = `-- name: LockRuntimeSecretEnvironment :one
+SELECT e.id FROM project_environments e JOIN apps a ON a.project_id=e.project_id AND a.account_id=e.account_id
+WHERE e.id=$1::uuid AND e.account_id=$2::uuid AND a.id=$3::uuid
+    AND e.slug=CASE WHEN $4::text='default' THEN 'production' ELSE $4::text END
+FOR SHARE OF e
+`
+
+type LockRuntimeSecretEnvironmentParams struct {
+	EnvironmentID pgtype.UUID
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	Scope         string
+}
+
+func (q *Queries) LockRuntimeSecretEnvironment(ctx context.Context, db DBTX, arg LockRuntimeSecretEnvironmentParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockRuntimeSecretEnvironment,
+		arg.EnvironmentID,
+		arg.AccountID,
+		arg.AppID,
+		arg.Scope,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockRuntimeSecretOwner = `-- name: LockRuntimeSecretOwner :one
+SELECT d.id AS deployment_id,COALESCE(NULLIF(d.scope,''),'default')::text AS scope,
+    (COALESCE(NULLIF(d.scope,''),'default') NOT IN ('default','production')
+        OR EXISTS(SELECT 1 FROM deployment_runtime_environment_owners o WHERE o.deployment_id=d.id)
+        OR EXISTS(SELECT 1 FROM project_environment_workload_deployment_specs p WHERE p.deployment_id=d.id))::boolean AS requires_fence
+FROM apps a JOIN deployments d ON d.app_id=a.id JOIN instances i ON i.deployment_id=d.id AND i.app_id=a.id
+WHERE a.account_id=$1::uuid AND a.id=$2::uuid AND i.id=$3::uuid AND a.status<>'deleted'
+    AND d.status IN ('pending','building','imaging','snapshotting','live','superseded')
+    AND (NOT $4::boolean OR i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm'))
+FOR SHARE OF a,d FOR KEY SHARE OF i
+`
+
+type LockRuntimeSecretOwnerParams struct {
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	InstanceID    pgtype.UUID
+	RequireActive bool
+}
+
+type LockRuntimeSecretOwnerRow struct {
+	DeploymentID  pgtype.UUID
+	Scope         string
+	RequiresFence bool
+}
+
+func (q *Queries) LockRuntimeSecretOwner(ctx context.Context, db DBTX, arg LockRuntimeSecretOwnerParams) (LockRuntimeSecretOwnerRow, error) {
+	row := db.QueryRow(ctx, lockRuntimeSecretOwner,
+		arg.AccountID,
+		arg.AppID,
+		arg.InstanceID,
+		arg.RequireActive,
+	)
+	var i LockRuntimeSecretOwnerRow
+	err := row.Scan(&i.DeploymentID, &i.Scope, &i.RequiresFence)
+	return i, err
+}
+
+const lockRuntimeSecretRows = `-- name: LockRuntimeSecretRows :many
+SELECT key FROM app_secrets WHERE account_id=$1::uuid AND app_id=$2::uuid AND scope=$3::text
+ORDER BY key FOR UPDATE
+`
+
+type LockRuntimeSecretRowsParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	Scope     string
+}
+
+func (q *Queries) LockRuntimeSecretRows(ctx context.Context, db DBTX, arg LockRuntimeSecretRowsParams) ([]string, error) {
+	rows, err := db.Query(ctx, lockRuntimeSecretRows, arg.AccountID, arg.AppID, arg.Scope)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, err
+		}
+		items = append(items, key)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockRuntimeSecretSidecarSignals = `-- name: LockRuntimeSecretSidecarSignals :many
+SELECT sidecar_name FROM deployment_sidecar_secret_reload_signals WHERE deployment_id=$1::uuid
+ORDER BY sidecar_name FOR SHARE
+`
+
+func (q *Queries) LockRuntimeSecretSidecarSignals(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]string, error) {
+	rows, err := db.Query(ctx, lockRuntimeSecretSidecarSignals, deploymentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var sidecar_name string
+		if err := rows.Scan(&sidecar_name); err != nil {
+			return nil, err
+		}
+		items = append(items, sidecar_name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const managedPostgresBindingDatabaseID = `-- name: ManagedPostgresBindingDatabaseID :one
 SELECT database_id FROM managed_postgres_bindings WHERE id=$1 AND account_id=$2
 `
@@ -17432,8 +17596,9 @@ UPDATE app_secret_revocation_targets t
  WHERE t.revocation_id = r.id
    AND r.account_id = $5::uuid
    AND r.app_id = $6::uuid
-   AND t.instance_id = $7::uuid
-   AND t.workload_name = $8::text
+   AND r.scope = $7::text
+   AND t.instance_id = $8::uuid
+   AND t.workload_name = $9::text
    AND r.created_at <= $3::timestamptz
    AND EXISTS (SELECT 1 FROM instances i WHERE i.id = t.instance_id AND i.app_id = r.app_id)
    AND NOT EXISTS (
@@ -17451,6 +17616,7 @@ type RecordAppSecretRevocationAckParams struct {
 	ErrorCode    string
 	AccountID    pgtype.UUID
 	AppID        pgtype.UUID
+	Scope        string
 	InstanceID   pgtype.UUID
 	WorkloadName string
 }
@@ -17463,8 +17629,146 @@ func (q *Queries) RecordAppSecretRevocationAck(ctx context.Context, db DBTX, arg
 		arg.ErrorCode,
 		arg.AccountID,
 		arg.AppID,
+		arg.Scope,
 		arg.InstanceID,
 		arg.WorkloadName,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const recordAppSecretRuntimeReloadApplicationAck = `-- name: RecordAppSecretRuntimeReloadApplicationAck :execrows
+UPDATE app_secret_runtime_reload_observations o
+SET application_ack_version=$1::bigint,application_ack_status=$2::text,
+    application_ack_at=$3::timestamptz,application_ack_error_code=nullif($4::text,'')
+WHERE o.app_id=$5::uuid AND o.scope=$6::text AND o.key=$7::text
+    AND o.instance_id=$8::uuid AND o.workload_name=$9::text
+    AND o.secret_version<=$1::bigint AND coalesce(o.application_ack_version,0)<=$1::bigint
+    AND EXISTS(SELECT 1 FROM app_secrets s JOIN instances i ON i.id=$8::uuid AND i.app_id=s.app_id
+        WHERE s.account_id=$10::uuid AND s.app_id=$5::uuid AND s.scope=$6::text
+            AND s.key=$7::text AND s.delivery_version=$1::bigint)
+`
+
+type RecordAppSecretRuntimeReloadApplicationAckParams struct {
+	Version      int64
+	Status       string
+	AckAt        pgtype.Timestamptz
+	ErrorCode    string
+	AppID        pgtype.UUID
+	Scope        string
+	Key          string
+	InstanceID   pgtype.UUID
+	WorkloadName string
+	AccountID    pgtype.UUID
+}
+
+func (q *Queries) RecordAppSecretRuntimeReloadApplicationAck(ctx context.Context, db DBTX, arg RecordAppSecretRuntimeReloadApplicationAckParams) (int64, error) {
+	result, err := db.Exec(ctx, recordAppSecretRuntimeReloadApplicationAck,
+		arg.Version,
+		arg.Status,
+		arg.AckAt,
+		arg.ErrorCode,
+		arg.AppID,
+		arg.Scope,
+		arg.Key,
+		arg.InstanceID,
+		arg.WorkloadName,
+		arg.AccountID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const recordAppSecretRuntimeReloadObservation = `-- name: RecordAppSecretRuntimeReloadObservation :execrows
+INSERT INTO app_secret_runtime_reload_observations(app_id,scope,key,instance_id,workload_name,secret_version,projection,signal,observed_at,error_code)
+SELECT s.app_id,s.scope,s.key,i.id,$1::text,$2::bigint,
+    $3::text,$4::text,$5::timestamptz,nullif($6::text,'')
+FROM app_secrets s JOIN instances i ON i.id=$7::uuid AND i.app_id=s.app_id
+WHERE s.account_id=$8::uuid AND s.app_id=$9::uuid AND s.scope=$10::text
+    AND s.key=$11::text AND s.delivery_version=$2::bigint
+ON CONFLICT(app_id,scope,key,instance_id,workload_name) DO UPDATE
+SET secret_version=excluded.secret_version,projection=excluded.projection,signal=excluded.signal,observed_at=excluded.observed_at,error_code=excluded.error_code,
+    application_ack_version=CASE WHEN app_secret_runtime_reload_observations.application_ack_version>=excluded.secret_version THEN app_secret_runtime_reload_observations.application_ack_version END,
+    application_ack_status=CASE WHEN app_secret_runtime_reload_observations.application_ack_version>=excluded.secret_version THEN app_secret_runtime_reload_observations.application_ack_status END,
+    application_ack_at=CASE WHEN app_secret_runtime_reload_observations.application_ack_version>=excluded.secret_version THEN app_secret_runtime_reload_observations.application_ack_at END,
+    application_ack_error_code=CASE WHEN app_secret_runtime_reload_observations.application_ack_version>=excluded.secret_version THEN app_secret_runtime_reload_observations.application_ack_error_code END
+WHERE app_secret_runtime_reload_observations.secret_version<=excluded.secret_version
+`
+
+type RecordAppSecretRuntimeReloadObservationParams struct {
+	WorkloadName string
+	Version      int64
+	Projection   string
+	Signal       string
+	ObservedAt   pgtype.Timestamptz
+	ErrorCode    string
+	InstanceID   pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	Scope        string
+	Key          string
+}
+
+func (q *Queries) RecordAppSecretRuntimeReloadObservation(ctx context.Context, db DBTX, arg RecordAppSecretRuntimeReloadObservationParams) (int64, error) {
+	result, err := db.Exec(ctx, recordAppSecretRuntimeReloadObservation,
+		arg.WorkloadName,
+		arg.Version,
+		arg.Projection,
+		arg.Signal,
+		arg.ObservedAt,
+		arg.ErrorCode,
+		arg.InstanceID,
+		arg.AccountID,
+		arg.AppID,
+		arg.Scope,
+		arg.Key,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const recordAppSecretRuntimeReloadSummary = `-- name: RecordAppSecretRuntimeReloadSummary :execrows
+UPDATE app_secrets SET last_runtime_reload_version=$1::bigint,last_runtime_reload_revision=$2::text,
+    last_runtime_reload_projection=$3::text,last_runtime_reload_signal=$4::text,
+    last_runtime_reload_at=$5::timestamptz,last_runtime_reload_error_code=nullif($6::text,''),
+    last_runtime_reload_instance_id=$7::uuid
+WHERE account_id=$8::uuid AND app_id=$9::uuid AND scope=$10::text
+    AND key=$11::text AND delivery_version=$1::bigint
+`
+
+type RecordAppSecretRuntimeReloadSummaryParams struct {
+	Version    int64
+	Revision   string
+	Projection string
+	Signal     string
+	ObservedAt pgtype.Timestamptz
+	ErrorCode  string
+	InstanceID pgtype.UUID
+	AccountID  pgtype.UUID
+	AppID      pgtype.UUID
+	Scope      string
+	Key        string
+}
+
+func (q *Queries) RecordAppSecretRuntimeReloadSummary(ctx context.Context, db DBTX, arg RecordAppSecretRuntimeReloadSummaryParams) (int64, error) {
+	result, err := db.Exec(ctx, recordAppSecretRuntimeReloadSummary,
+		arg.Version,
+		arg.Revision,
+		arg.Projection,
+		arg.Signal,
+		arg.ObservedAt,
+		arg.ErrorCode,
+		arg.InstanceID,
+		arg.AccountID,
+		arg.AppID,
+		arg.Scope,
+		arg.Key,
 	)
 	if err != nil {
 		return 0, err

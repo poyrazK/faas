@@ -23520,9 +23520,6 @@ func (s *PgStore) RecordAppSecretRuntimeReload(ctx context.Context, result AppSe
 	if !validAppSecretRuntimeReloadResult(result) {
 		return 0, ErrInvalidArgument
 	}
-	if len(result.Candidates) == 0 {
-		return 0, nil
-	}
 	attemptedAt := result.AttemptedAt.UTC()
 	if attemptedAt.IsZero() {
 		attemptedAt = time.Now().UTC()
@@ -23532,54 +23529,40 @@ func (s *PgStore) RecordAppSecretRuntimeReload(ctx context.Context, result AppSe
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	scope, err := runtimeAppSecretFenceDB(ctx, tx, result.AccountID, result.AppID, result.InstanceID, result.Fence)
+	if err != nil {
+		return 0, err
+	}
+	queries := sqlc.New()
 	updated := 0
 	for _, candidate := range result.Candidates {
+		if candidate.Scope != scope {
+			return 0, ErrConflict
+		}
 		if result.WorkloadName == "" {
-			tag, err := tx.Exec(ctx,
-				`update app_secrets
-			 set last_runtime_reload_version = $5,
-			     last_runtime_reload_revision = $6,
-			     last_runtime_reload_projection = $7,
-			     last_runtime_reload_signal = $8,
-			     last_runtime_reload_at = $9,
-			     last_runtime_reload_error_code = nullif($10, ''),
-			     last_runtime_reload_instance_id = $11
-			 where account_id = $1 and app_id = $2 and scope = $3 and key = $4
-			   and delivery_version = $5`,
-				result.AccountID, result.AppID, candidate.Scope, candidate.Key, candidate.Version,
-				result.Revision, string(result.Projection), string(result.Signal), attemptedAt, result.ErrorCode, result.InstanceID)
+			count, err := queries.RecordAppSecretRuntimeReloadSummary(ctx, tx, sqlc.RecordAppSecretRuntimeReloadSummaryParams{
+				AccountID: mustPgUUID(result.AccountID), AppID: mustPgUUID(result.AppID), InstanceID: mustPgUUID(result.InstanceID),
+				Scope: candidate.Scope, Key: candidate.Key, Version: candidate.Version, Revision: result.Revision,
+				Projection: string(result.Projection), Signal: string(result.Signal), ErrorCode: result.ErrorCode,
+				ObservedAt: pgtype.Timestamptz{Time: attemptedAt, Valid: true},
+			})
 			if err != nil {
 				return 0, mapErr(err)
 			}
-			if tag.RowsAffected() != 1 {
+			if count != 1 {
 				return 0, ErrConflict
 			}
 		}
-		observationTag, err := tx.Exec(ctx,
-			`insert into app_secret_runtime_reload_observations
-				(app_id, scope, key, instance_id, workload_name, secret_version, projection, signal, observed_at, error_code)
-			 select s.app_id, s.scope, s.key, i.id, $11, $5, $7, $8, $9, nullif($10, '')
-			 from app_secrets s
-			 join instances i on i.id = $6 and i.app_id = s.app_id
-			 where s.account_id = $1 and s.app_id = $2 and s.scope = $3 and s.key = $4
-			   and s.delivery_version = $5
-			 on conflict (app_id, scope, key, instance_id, workload_name) do update
-			 set secret_version = excluded.secret_version,
-				     projection = excluded.projection,
-				     signal = excluded.signal,
-				     observed_at = excluded.observed_at,
-				     error_code = excluded.error_code,
-				     application_ack_version = CASE WHEN app_secret_runtime_reload_observations.application_ack_version >= excluded.secret_version THEN app_secret_runtime_reload_observations.application_ack_version END,
-				     application_ack_status = CASE WHEN app_secret_runtime_reload_observations.application_ack_version >= excluded.secret_version THEN app_secret_runtime_reload_observations.application_ack_status END,
-				     application_ack_at = CASE WHEN app_secret_runtime_reload_observations.application_ack_version >= excluded.secret_version THEN app_secret_runtime_reload_observations.application_ack_at END,
-				     application_ack_error_code = CASE WHEN app_secret_runtime_reload_observations.application_ack_version >= excluded.secret_version THEN app_secret_runtime_reload_observations.application_ack_error_code END
-			 where app_secret_runtime_reload_observations.secret_version <= excluded.secret_version`,
-			result.AccountID, result.AppID, candidate.Scope, candidate.Key, candidate.Version,
-			result.InstanceID, string(result.Projection), string(result.Signal), attemptedAt, result.ErrorCode, result.WorkloadName)
+		count, err := queries.RecordAppSecretRuntimeReloadObservation(ctx, tx, sqlc.RecordAppSecretRuntimeReloadObservationParams{
+			AccountID: mustPgUUID(result.AccountID), AppID: mustPgUUID(result.AppID), InstanceID: mustPgUUID(result.InstanceID),
+			Scope: candidate.Scope, Key: candidate.Key, Version: candidate.Version, WorkloadName: result.WorkloadName,
+			Projection: string(result.Projection), Signal: string(result.Signal), ErrorCode: result.ErrorCode,
+			ObservedAt: pgtype.Timestamptz{Time: attemptedAt, Valid: true},
+		})
 		if err != nil {
 			return 0, mapErr(err)
 		}
-		if observationTag.RowsAffected() != 1 {
+		if count != 1 {
 			return 0, ErrConflict
 		}
 		updated++
@@ -23603,36 +23586,33 @@ func (s *PgStore) RecordAppSecretRuntimeReloadAck(ctx context.Context, result Ap
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	scope, err := runtimeAppSecretFenceDB(ctx, tx, result.AccountID, result.AppID, result.InstanceID, result.Fence)
+	if err != nil {
+		return 0, err
+	}
+	queries := sqlc.New()
 	updated := 0
 	for _, candidate := range result.Candidates {
-		tag, err := tx.Exec(ctx,
-			`update app_secret_runtime_reload_observations o
-			    set application_ack_version = $5,
-			        application_ack_status = $6,
-			        application_ack_at = $7,
-			        application_ack_error_code = nullif($8, '')
-			  where o.app_id = $2 and o.scope = $3 and o.key = $4 and o.instance_id = $9 and o.workload_name = $10
-			    and o.secret_version <= $5 and coalesce(o.application_ack_version, 0) <= $5
-			    and exists (
-			        select 1 from app_secrets s
-			         join instances i on i.id = $9 and i.app_id = s.app_id
-			        where s.account_id = $1 and s.app_id = $2 and s.scope = $3 and s.key = $4
-			          and s.delivery_version = $5
-			    )`,
-			result.AccountID, result.AppID, candidate.Scope, candidate.Key, candidate.Version,
-			string(result.Status), attemptedAt, result.ErrorCode, result.InstanceID, result.WorkloadName)
+		if candidate.Scope != scope {
+			return 0, ErrConflict
+		}
+		count, err := queries.RecordAppSecretRuntimeReloadApplicationAck(ctx, tx, sqlc.RecordAppSecretRuntimeReloadApplicationAckParams{
+			AccountID: mustPgUUID(result.AccountID), AppID: mustPgUUID(result.AppID), InstanceID: mustPgUUID(result.InstanceID),
+			Scope: candidate.Scope, Key: candidate.Key, Version: candidate.Version, WorkloadName: result.WorkloadName,
+			Status: string(result.Status), ErrorCode: result.ErrorCode, AckAt: pgtype.Timestamptz{Time: attemptedAt, Valid: true},
+		})
 		if err != nil {
 			return 0, mapErr(err)
 		}
-		if tag.RowsAffected() != 1 {
+		if count != 1 {
 			return 0, ErrConflict
 		}
 		updated++
 	}
-	revoked, err := sqlc.New().RecordAppSecretRevocationAck(ctx, tx, sqlc.RecordAppSecretRevocationAckParams{
+	revoked, err := queries.RecordAppSecretRevocationAck(ctx, tx, sqlc.RecordAppSecretRevocationAckParams{
 		Status: string(result.Status), AckRevision: result.Revision,
 		AckAt: pgtype.Timestamptz{Time: attemptedAt, Valid: true}, ErrorCode: result.ErrorCode,
-		AccountID: mustPgUUID(result.AccountID), AppID: mustPgUUID(result.AppID),
+		AccountID: mustPgUUID(result.AccountID), AppID: mustPgUUID(result.AppID), Scope: scope,
 		InstanceID: mustPgUUID(result.InstanceID), WorkloadName: result.WorkloadName,
 	})
 	if err != nil {

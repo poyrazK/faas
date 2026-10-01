@@ -337,6 +337,7 @@ UPDATE app_secret_revocation_targets t
  WHERE t.revocation_id = r.id
    AND r.account_id = sqlc.arg(account_id)::uuid
    AND r.app_id = sqlc.arg(app_id)::uuid
+   AND r.scope = sqlc.arg(scope)::text
    AND t.instance_id = sqlc.arg(instance_id)::uuid
    AND t.workload_name = sqlc.arg(workload_name)::text
    AND r.created_at <= sqlc.arg(ack_at)::timestamptz
@@ -6376,6 +6377,76 @@ SELECT owner.scope, owner.environment_id,
     COALESCE((SELECT jsonb_agg(jsonb_build_object('key',v.key,'value',v.value,'created_at',v.created_at,'updated_at',v.updated_at) ORDER BY v.key)
         FROM app_envs v WHERE v.account_id=owner.account_id AND v.app_id=owner.app_id AND v.scope=owner.scope),'[]'::jsonb)::jsonb AS values
 FROM owner;
+
+-- name: LockRuntimeSecretEnvironment :one
+SELECT e.id FROM project_environments e JOIN apps a ON a.project_id=e.project_id AND a.account_id=e.account_id
+WHERE e.id=sqlc.arg(environment_id)::uuid AND e.account_id=sqlc.arg(account_id)::uuid AND a.id=sqlc.arg(app_id)::uuid
+    AND e.slug=CASE WHEN sqlc.arg(scope)::text='default' THEN 'production' ELSE sqlc.arg(scope)::text END
+FOR SHARE OF e;
+
+-- name: LockRuntimeSecretOwner :one
+SELECT d.id AS deployment_id,COALESCE(NULLIF(d.scope,''),'default')::text AS scope,
+    (COALESCE(NULLIF(d.scope,''),'default') NOT IN ('default','production')
+        OR EXISTS(SELECT 1 FROM deployment_runtime_environment_owners o WHERE o.deployment_id=d.id)
+        OR EXISTS(SELECT 1 FROM project_environment_workload_deployment_specs p WHERE p.deployment_id=d.id))::boolean AS requires_fence
+FROM apps a JOIN deployments d ON d.app_id=a.id JOIN instances i ON i.deployment_id=d.id AND i.app_id=a.id
+WHERE a.account_id=sqlc.arg(account_id)::uuid AND a.id=sqlc.arg(app_id)::uuid AND i.id=sqlc.arg(instance_id)::uuid AND a.status<>'deleted'
+    AND d.status IN ('pending','building','imaging','snapshotting','live','superseded')
+    AND (NOT sqlc.arg(require_active)::boolean OR i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm'))
+FOR SHARE OF a,d FOR KEY SHARE OF i;
+
+-- name: LockRuntimeSecretApp :one
+SELECT id FROM apps WHERE account_id=sqlc.arg(account_id)::uuid AND id=sqlc.arg(app_id)::uuid AND status<>'deleted'
+FOR SHARE;
+
+-- name: LockRuntimeSecretConfigurationPins :many
+SELECT p.spec_id FROM project_environment_workload_deployment_specs p
+JOIN project_environment_workload_specs s ON s.id=p.spec_id
+JOIN deployment_runtime_environment_owners o ON o.deployment_id=p.deployment_id
+WHERE p.deployment_id=sqlc.arg(deployment_id)::uuid
+FOR SHARE OF p,s,o;
+
+-- name: LockRuntimeSecretRows :many
+SELECT key FROM app_secrets WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND scope=sqlc.arg(scope)::text
+ORDER BY key FOR UPDATE;
+
+-- name: LockRuntimeSecretSidecarSignals :many
+SELECT sidecar_name FROM deployment_sidecar_secret_reload_signals WHERE deployment_id=sqlc.arg(deployment_id)::uuid
+ORDER BY sidecar_name FOR SHARE;
+
+-- name: RecordAppSecretRuntimeReloadSummary :execrows
+UPDATE app_secrets SET last_runtime_reload_version=sqlc.arg(version)::bigint,last_runtime_reload_revision=sqlc.arg(revision)::text,
+    last_runtime_reload_projection=sqlc.arg(projection)::text,last_runtime_reload_signal=sqlc.arg(signal)::text,
+    last_runtime_reload_at=sqlc.arg(observed_at)::timestamptz,last_runtime_reload_error_code=nullif(sqlc.arg(error_code)::text,''),
+    last_runtime_reload_instance_id=sqlc.arg(instance_id)::uuid
+WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND scope=sqlc.arg(scope)::text
+    AND key=sqlc.arg(key)::text AND delivery_version=sqlc.arg(version)::bigint;
+
+-- name: RecordAppSecretRuntimeReloadObservation :execrows
+INSERT INTO app_secret_runtime_reload_observations(app_id,scope,key,instance_id,workload_name,secret_version,projection,signal,observed_at,error_code)
+SELECT s.app_id,s.scope,s.key,i.id,sqlc.arg(workload_name)::text,sqlc.arg(version)::bigint,
+    sqlc.arg(projection)::text,sqlc.arg(signal)::text,sqlc.arg(observed_at)::timestamptz,nullif(sqlc.arg(error_code)::text,'')
+FROM app_secrets s JOIN instances i ON i.id=sqlc.arg(instance_id)::uuid AND i.app_id=s.app_id
+WHERE s.account_id=sqlc.arg(account_id)::uuid AND s.app_id=sqlc.arg(app_id)::uuid AND s.scope=sqlc.arg(scope)::text
+    AND s.key=sqlc.arg(key)::text AND s.delivery_version=sqlc.arg(version)::bigint
+ON CONFLICT(app_id,scope,key,instance_id,workload_name) DO UPDATE
+SET secret_version=excluded.secret_version,projection=excluded.projection,signal=excluded.signal,observed_at=excluded.observed_at,error_code=excluded.error_code,
+    application_ack_version=CASE WHEN app_secret_runtime_reload_observations.application_ack_version>=excluded.secret_version THEN app_secret_runtime_reload_observations.application_ack_version END,
+    application_ack_status=CASE WHEN app_secret_runtime_reload_observations.application_ack_version>=excluded.secret_version THEN app_secret_runtime_reload_observations.application_ack_status END,
+    application_ack_at=CASE WHEN app_secret_runtime_reload_observations.application_ack_version>=excluded.secret_version THEN app_secret_runtime_reload_observations.application_ack_at END,
+    application_ack_error_code=CASE WHEN app_secret_runtime_reload_observations.application_ack_version>=excluded.secret_version THEN app_secret_runtime_reload_observations.application_ack_error_code END
+WHERE app_secret_runtime_reload_observations.secret_version<=excluded.secret_version;
+
+-- name: RecordAppSecretRuntimeReloadApplicationAck :execrows
+UPDATE app_secret_runtime_reload_observations o
+SET application_ack_version=sqlc.arg(version)::bigint,application_ack_status=sqlc.arg(status)::text,
+    application_ack_at=sqlc.arg(ack_at)::timestamptz,application_ack_error_code=nullif(sqlc.arg(error_code)::text,'')
+WHERE o.app_id=sqlc.arg(app_id)::uuid AND o.scope=sqlc.arg(scope)::text AND o.key=sqlc.arg(key)::text
+    AND o.instance_id=sqlc.arg(instance_id)::uuid AND o.workload_name=sqlc.arg(workload_name)::text
+    AND o.secret_version<=sqlc.arg(version)::bigint AND coalesce(o.application_ack_version,0)<=sqlc.arg(version)::bigint
+    AND EXISTS(SELECT 1 FROM app_secrets s JOIN instances i ON i.id=sqlc.arg(instance_id)::uuid AND i.app_id=s.app_id
+        WHERE s.account_id=sqlc.arg(account_id)::uuid AND s.app_id=sqlc.arg(app_id)::uuid AND s.scope=sqlc.arg(scope)::text
+            AND s.key=sqlc.arg(key)::text AND s.delivery_version=sqlc.arg(version)::bigint);
 
 -- name: ReadRuntimeAppValuesForDeployment :one
 WITH owner AS (

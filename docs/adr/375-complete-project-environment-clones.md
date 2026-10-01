@@ -1852,3 +1852,51 @@ output and the whitespace check passes. The additional Linux x86_64 test-binary
 cross-compile ran out of host disk space; this increment has no completed native
 build/VM evidence. Full suite, lint, test-metal, leakcheck and provider acceptance
 remain open for the complete feature.
+
+### Transactional secret reload and acknowledgement ownership
+
+Guest projection/signal reports and application acknowledgements now carry a
+host-generated fence from the owned runtime snapshot. The fence fingerprints
+the deployment, environment lifetime, sealed secret book and main/sidecar
+grants, excluding mutable delivery observations and plaintext values. Secret
+creation time distinguishes a deleted/recreated row even when its envelope and
+delivery version are copied back unchanged.
+
+Guest revisions use the same owned identity and the selected secret rows,
+including their creation lifetime and grant configuration. They also include
+the workload identity. A delayed guest revision cannot acquire a fresh host
+fence by matching the copied envelope of a replacement row. Changes to an
+unselected secret do not change the guest revision, while the host's complete
+book fence still detects intervening mutations during a write.
+
+Both stores revalidate the fence in the observation write transaction/critical
+section, including empty projections. PostgreSQL locks the environment before
+app/deployment ownership, retained pins, reload opt-ins and sorted secret rows.
+Main summaries, per-runtime observations and acknowledgements use SQLC queries
+and roll back together on conflict. Revocation acknowledgements are limited to
+the instance's exact scope. Historical unfenced callers are accepted only for
+unowned production/default deployments; a stage or retained ownership marker
+requires a fence even after its current pin disappears. Stopped instances cannot
+submit a new owned reload acknowledgement.
+
+MemStore secret deletion now cascades per-runtime observations everywhere,
+matching PostgreSQL's scoped secret foreign key. Stage deletion/recreation,
+managed credential cleanup and clone compensation cannot attach old
+observations to a replacement secret with the same key and version.
+
+Boot/start secret delivery summaries still require these transactional fences.
+Native stage queue adapters, scope-specific lifecycle/reconciliation, coordinated
+PostgreSQL/object data capture, complete configuration strategy coverage and
+full-clone activation/qualification remain open. This increment does not enable
+the public one-command full clone or establish native VM/provider acceptance.
+
+Verification: the expanded MemStore and real PostgreSQL gate passed in 75.250
+seconds, including owned snapshot/lifetime contracts, transactional report/ack
+fences, a PostgreSQL writer observed waiting for an environment deletion,
+empty revocation acknowledgements, per-workload observations, managed secrets,
+object credentials and clone/deletion/rollback regressions. Guest protocol
+contracts passed in 1.109 seconds; API/apid clone, queue, workload and secret
+regressions passed in 0.693/1.780 seconds. Independent SQLC 1.31.1 output matches
+the checked-in files, and the whitespace check passes. The vmmd test binary
+cross-compiles as an x86_64 Linux ELF; it was not executed on KVM. Full suite,
+lint, test-metal, leakcheck and provider acceptance remain open.

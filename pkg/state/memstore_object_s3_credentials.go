@@ -192,7 +192,7 @@ func (m *MemStore) RevokeObjectS3ComputeBinding(_ context.Context, accountID, bu
 	}
 	for key, secret := range m.secrets {
 		if secret.ManagedObjectStorageCredentialID == bindingID {
-			delete(m.secrets, key)
+			m.deleteRuntimeAppSecretLocked(key)
 			changed = true
 		}
 	}

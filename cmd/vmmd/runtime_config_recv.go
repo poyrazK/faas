@@ -190,6 +190,7 @@ func (r *runtimeConfigReceiver) handleRuntimeSecretReloadStatus(instance string,
 		candidates = append(candidates, state.AppSecretDeliveryCandidate{Scope: row.Scope, Key: row.Key, Version: row.DeliveryVersion})
 	}
 	_, err = reloadStore.RecordAppSecretRuntimeReload(requestCtx, state.AppSecretRuntimeReloadResult{
+		Fence:     selection.Fence,
 		AccountID: accountID, AppID: appID, InstanceID: instance, WorkloadName: req.WorkloadName, Revision: req.Revision,
 		Projection: state.SecretReloadProjectionStatus(req.Projection),
 		Signal:     state.SecretReloadSignalStatus(req.Signal), ErrorCode: req.ErrorCode,
@@ -230,6 +231,7 @@ func (r *runtimeConfigReceiver) handleRuntimeSecretReloadAck(instance string, re
 		candidates = append(candidates, state.AppSecretDeliveryCandidate{Scope: row.Scope, Key: row.Key, Version: row.DeliveryVersion})
 	}
 	_, err = ackStore.RecordAppSecretRuntimeReloadAck(requestCtx, state.AppSecretRuntimeReloadAckResult{
+		Fence:     selection.Fence,
 		AccountID: accountID, AppID: appID, InstanceID: instance, WorkloadName: req.WorkloadName, Revision: req.Revision,
 		Status: state.SecretApplicationReloadAckStatus(req.ApplicationAck), ErrorCode: req.ApplicationAckErrorCode,
 		AttemptedAt: time.Now().UTC(), Candidates: candidates,
@@ -280,6 +282,7 @@ func loadRuntimeSecretsForWorkloadIfChanged(ctx context.Context, store runtimeSe
 }
 
 type runtimeSecretSelection struct {
+	Fence    state.RuntimeAppSecretFence
 	Rows     []state.AppSecret
 	Entries  []fcvm.SealedEnvEntry
 	Revision string
@@ -349,8 +352,15 @@ func selectRuntimeSecretRowsForWorkload(ctx context.Context, store runtimeSecret
 			}
 		}
 	}
-	revision := runtimeSecretRevision(scope, selected)
-	return runtimeSecretSelection{Rows: selected, Entries: entries, Revision: revision}, nil
+	revision, err := runtimeSecretSelectedRevision(snapshot, workloadName, selected)
+	if err != nil {
+		return runtimeSecretSelection{}, err
+	}
+	fence, err := state.NewRuntimeAppSecretFence(snapshot)
+	if err != nil {
+		return runtimeSecretSelection{}, err
+	}
+	return runtimeSecretSelection{Rows: selected, Entries: entries, Revision: revision, Fence: fence}, nil
 }
 
 func runtimeSecretReloadEnabled(grants state.RuntimeAppSecretGrants, workloadName string) bool {
@@ -449,20 +459,17 @@ func runtimeSecretAllowlist(raw json.RawMessage) (map[string]struct{}, error) {
 	return allowed, nil
 }
 
-func runtimeSecretRevision(scope string, rows []state.AppSecret) string {
-	rows = append([]state.AppSecret(nil), rows...)
-	sort.Slice(rows, func(i, j int) bool { return rows[i].Key < rows[j].Key })
-	h := sha256.New()
-	_, _ = io.WriteString(h, scope+"\x00")
-	for _, row := range rows {
-		_, _ = fmt.Fprintf(h, "%s\x00%d\x00%d\x00", row.Key, row.DeliveryVersion, len(row.Ciphertext))
-		// DeliveryVersion is scoped to the lifetime of an app_secrets row.
-		// Including the sealed envelope also fences delete-and-recreate, where
-		// the new row can legitimately start at the same delivery version.
-		_, _ = h.Write(row.Ciphertext)
-		_, _ = h.Write([]byte{0})
+func runtimeSecretSelectedRevision(snapshot state.RuntimeAppValuesSnapshot, workloadName string, rows []state.AppSecret) (string, error) {
+	// Guest revisions include deployment/environment and selected row lifetime.
+	// An old acknowledgement cannot acquire a fresh host fence merely because
+	// a replacement row copied back the same envelope and version counter.
+	snapshot.Secrets = rows
+	fence, err := state.NewRuntimeAppSecretFence(snapshot)
+	if err != nil {
+		return "", err
 	}
-	return hex.EncodeToString(h.Sum(nil))
+	digest := sha256.Sum256([]byte(fence.Fingerprint + "\x00" + workloadName))
+	return hex.EncodeToString(digest[:]), nil
 }
 
 func loadRuntimeConfig(ctx context.Context, store runtimeConfigStore, deploymentID, appID, accountID string) (runtimeConfigResponse, error) {

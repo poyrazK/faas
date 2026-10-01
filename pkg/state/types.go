@@ -6327,6 +6327,7 @@ const (
 // signal outcome for an exact set of secret versions. It is deliberately not
 // an application acknowledgement: the process may still fail to apply them.
 type AppSecretRuntimeReloadResult struct {
+	Fence        RuntimeAppSecretFence
 	AccountID    string
 	AppID        string
 	InstanceID   string
@@ -6342,6 +6343,7 @@ type AppSecretRuntimeReloadResult struct {
 // AppSecretRuntimeReloadAckResult records an application-owned outcome for
 // the current secret revision. It attests only what the application reports.
 type AppSecretRuntimeReloadAckResult struct {
+	Fence        RuntimeAppSecretFence
 	AccountID    string
 	AppID        string
 	InstanceID   string

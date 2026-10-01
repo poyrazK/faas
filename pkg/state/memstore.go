@@ -3320,7 +3320,7 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 			continue
 		}
 		if app, ok := m.apps[key.AppID]; ok && app.ProjectID == projectID {
-			delete(m.secrets, key)
+			m.deleteRuntimeAppSecretLocked(key)
 		}
 	}
 	for domain, customDomain := range m.domains {
@@ -5998,7 +5998,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	delete(m.privateNetworkAttachments, id)
 	for key, v := range m.secrets {
 		if v.AppID == id {
-			delete(m.secrets, key)
+			m.deleteRuntimeAppSecretLocked(key)
 		}
 	}
 	for key, v := range m.registryCreds {
@@ -19016,7 +19016,7 @@ func (m *MemStore) DeleteManagedPostgresSecret(_ context.Context, credentialRef 
 	defer m.mu.Unlock()
 	for key, secret := range m.secrets {
 		if secret.ManagedCredentialRef == credentialRef {
-			delete(m.secrets, key)
+			m.deleteRuntimeAppSecretLocked(key)
 			m.markAppRuntimeConfigChangedAndSnapshotsStaleLocked(secret.AppID, time.Now().UTC())
 			return nil
 		}
@@ -19082,7 +19082,7 @@ func (m *MemStore) DeleteManagedObjectStorageSecrets(_ context.Context, credenti
 	defer m.mu.Unlock()
 	for key, secret := range m.secrets {
 		if secret.ManagedObjectStorageCredentialID == credentialID {
-			delete(m.secrets, key)
+			m.deleteRuntimeAppSecretLocked(key)
 		}
 	}
 	return nil
@@ -19150,12 +19150,7 @@ func (m *MemStore) DeleteAppSecretInScopeWithRevocation(_ context.Context, accou
 		return AppSecretRevocation{}, err
 	}
 	revocation.Targets = targets
-	delete(m.secrets, k)
-	for observationKey := range m.secretRuntimeReloadObservations {
-		if observationKey.AppID == appID && observationKey.Scope == scope && observationKey.Key == key {
-			delete(m.secretRuntimeReloadObservations, observationKey)
-		}
-	}
+	m.deleteRuntimeAppSecretLocked(k)
 	m.secretRevocations[revocation.ID] = cloneAppSecretRevocation(revocation)
 	return revocation, nil
 }
@@ -19543,22 +19538,19 @@ func (m *MemStore) RecordAppSecretRuntimeReload(_ context.Context, result AppSec
 	if !validAppSecretRuntimeReloadResult(result) {
 		return 0, ErrInvalidArgument
 	}
-	if len(result.Candidates) == 0 {
-		return 0, nil
-	}
 	at := result.AttemptedAt.UTC()
 	if at.IsZero() {
 		at = time.Now().UTC()
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	instance, ok := m.instances[result.InstanceID]
-	if !ok || instance.AppID != result.AppID {
-		return 0, ErrConflict
+	scope, err := m.runtimeAppSecretFenceLocked(result.AccountID, result.AppID, result.InstanceID, result.Fence)
+	if err != nil {
+		return 0, err
 	}
 	for _, candidate := range result.Candidates {
 		secret, ok := m.secrets[secretKey{AppID: result.AppID, Scope: candidate.Scope, Key: candidate.Key}]
-		if !ok || secret.AccountID != result.AccountID || secret.DeliveryVersion != candidate.Version {
+		if candidate.Scope != scope || !ok || secret.AccountID != result.AccountID || secret.DeliveryVersion != candidate.Version {
 			return 0, ErrConflict
 		}
 	}
@@ -19609,16 +19601,16 @@ func (m *MemStore) RecordAppSecretRuntimeReloadAck(_ context.Context, result App
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	instance, ok := m.instances[result.InstanceID]
-	if !ok || instance.AppID != result.AppID {
-		return 0, ErrConflict
+	scope, err := m.runtimeAppSecretFenceLocked(result.AccountID, result.AppID, result.InstanceID, result.Fence)
+	if err != nil {
+		return 0, err
 	}
 	for _, candidate := range result.Candidates {
 		secret, secretOK := m.secrets[secretKey{AppID: result.AppID, Scope: candidate.Scope, Key: candidate.Key}]
 		observation, observationOK := m.secretRuntimeReloadObservations[secretRuntimeReloadObservationKey{
 			AppID: result.AppID, Scope: candidate.Scope, Key: candidate.Key, InstanceID: result.InstanceID, WorkloadName: result.WorkloadName,
 		}]
-		if !secretOK || secret.AccountID != result.AccountID || secret.DeliveryVersion != candidate.Version ||
+		if candidate.Scope != scope || !secretOK || secret.AccountID != result.AccountID || secret.DeliveryVersion != candidate.Version ||
 			!observationOK || observation.Version > candidate.Version || observation.ApplicationAckVersion > candidate.Version {
 			return 0, ErrConflict
 		}
@@ -19634,7 +19626,7 @@ func (m *MemStore) RecordAppSecretRuntimeReloadAck(_ context.Context, result App
 	}
 	updated := len(result.Candidates)
 	for id, revocation := range m.secretRevocations {
-		if revocation.AccountID != result.AccountID || revocation.AppID != result.AppID || revocation.CreatedAt.After(at) {
+		if revocation.AccountID != result.AccountID || revocation.AppID != result.AppID || revocation.Scope != scope || revocation.CreatedAt.After(at) {
 			continue
 		}
 		if secret, present := m.secrets[secretKey{AppID: revocation.AppID, Scope: revocation.Scope, Key: revocation.Key}]; present && secret.AccountID == revocation.AccountID {
@@ -20309,7 +20301,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	// Drop children first so the parent's final delete is the sentinel.
 	for k := range m.secrets {
 		if m.secrets[k].AccountID == id {
-			delete(m.secrets, k)
+			m.deleteRuntimeAppSecretLocked(k)
 		}
 	}
 	for k := range m.registryCreds {

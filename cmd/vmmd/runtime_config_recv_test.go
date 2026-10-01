@@ -63,6 +63,15 @@ func (s *runtimeSecretsStoreStub) RecordAppSecretRuntimeReloadAck(_ context.Cont
 	return len(result.Candidates), nil
 }
 
+func runtimeSecretTestRevision(t *testing.T, store runtimeSecretsStoreStub, workloadName string) string {
+	t.Helper()
+	selected, err := selectRuntimeSecretRowsForWorkload(t.Context(), store, store.deployment.ID, store.deployment.AppID, "acct-1", workloadName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return selected.Revision
+}
+
 func TestRuntimeSecretReloadStatusIsVersionFenced(t *testing.T) {
 	const revisionKey = "DATABASE_URL"
 	store := &runtimeSecretsStoreStub{deployment: state.Deployment{
@@ -72,7 +81,7 @@ func TestRuntimeSecretReloadStatusIsVersionFenced(t *testing.T) {
 	}}}
 	manager := fcvm.NewManager(nil, nil, fcvm.Paths{}, "test", nil, nil).RegisterInstanceForTest("instance-1", "dep-1", "app-1", "acct-1")
 	receiver := &runtimeConfigReceiver{ctx: context.Background(), mgr: manager, store: store}
-	revision := runtimeSecretRevision("prod", store.secretRows)
+	revision := runtimeSecretTestRevision(t, *store, "")
 	request := runtimeConfigRequest{Kind: "secret_reload_status", Revision: revision, Projection: "updated", Signal: "sent"}
 	response := sendRuntimeConfigTestRequest(t, receiver, request)
 	if !response.Accepted || response.Error != "" || len(store.reloadResults) != 1 {
@@ -98,7 +107,7 @@ func TestRuntimeSecretApplicationAckIsVersionFenced(t *testing.T) {
 	}}}
 	manager := fcvm.NewManager(nil, nil, fcvm.Paths{}, "test", nil, nil).RegisterInstanceForTest("instance-1", "dep-1", "app-1", "acct-1")
 	receiver := &runtimeConfigReceiver{ctx: context.Background(), mgr: manager, store: store}
-	revision := runtimeSecretRevision("prod", store.secretRows)
+	revision := runtimeSecretTestRevision(t, *store, "")
 	request := runtimeConfigRequest{Kind: "secret_reload_ack", Revision: revision, ApplicationAck: "applied"}
 	response := sendRuntimeConfigTestRequest(t, receiver, request)
 	if !response.Accepted || response.Error != "" || len(store.ackResults) != 1 {
@@ -346,7 +355,7 @@ func TestRuntimeSecretReloadStatusAndAckKeepSidecarIdentity(t *testing.T) {
 	}}}
 	manager := fcvm.NewManager(nil, nil, fcvm.Paths{}, "test", nil, nil).RegisterInstanceForTest("instance-1", "dep-1", "app-1", "acct-1")
 	receiver := &runtimeConfigReceiver{ctx: context.Background(), mgr: manager, store: store}
-	revision := runtimeSecretRevision("prod", store.secretRows)
+	revision := runtimeSecretTestRevision(t, *store, "worker")
 	status := sendRuntimeConfigTestRequest(t, receiver, runtimeConfigRequest{
 		Kind: "secret_reload_status", WorkloadName: "worker", Revision: revision, Projection: "updated", Signal: "sent",
 	})
