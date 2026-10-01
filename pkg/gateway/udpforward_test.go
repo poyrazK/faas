@@ -1,3 +1,4 @@
+// adr: 403 — admitted peer UDP transport and cancellation contracts.
 package gateway
 
 import (
