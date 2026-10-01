@@ -46,8 +46,8 @@
 // main_linux.go::mountCgroup2, called between pivotInto and
 // the supervisor's first workload). runSidecar + runAppWithEnv
 // then mkdir a per-workload leaf, write memory.max = spec.
-// RamMB << 20, and after exec.Command.Start writes the child
-// PID into cgroup.procs. Sidecar OOM is scoped to that leaf
+// RamMB << 20, and create the child directly in that leaf
+// using clone3 CLONE_INTO_CGROUP. Sidecar OOM is scoped to that leaf
 // (cgroup v2 memory controller kills only the offending
 // leaf's processes) — the main workload keeps running.
 
@@ -907,6 +907,13 @@ func runSidecar(spec workloadSpec, apiEnv, workloadEnv map[string]string, sup *S
 	// Run the sidecar. exec.Command blocks until the sidecar
 	// exits; the supervisor's Run() loop captures the exit
 	// code via trackExit and decides whether to restart.
+	cgroupFile, err := attachWorkloadCgroup(cmd, leaf)
+	if err != nil {
+		return fmt.Errorf("attach sidecar workload cgroup: %w", err)
+	}
+	if cgroupFile != nil {
+		defer func() { _ = cgroupFile.Close() }()
+	}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("run sidecar %s: %w", spec.Name, err)
 	}
@@ -1001,14 +1008,6 @@ func runSidecar(spec workloadSpec, apiEnv, workloadEnv map[string]string, sup *S
 				}
 			}, slog.Default())
 		}()
-	}
-	// Issue #463 / ADR-069 / PR-B AC #4: place the
-	// forked child into the cgroup leaf so the OOM
-	// killer scopes to the leaf (not the workload's
-	// siblings). Race window is benign — see
-	// placeIntoLeaf's doc.
-	if leaf != "" {
-		placeIntoLeaf(leaf, cmd.Process.Pid, slog.Default())
 	}
 	runErr := cmd.Wait()
 	if readinessCancel != nil {
