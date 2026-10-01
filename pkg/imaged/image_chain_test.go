@@ -23,6 +23,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/imagechain"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/rootfs"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -127,6 +128,27 @@ func TestSignedImageChainFeedsRealConversion(t *testing.T) {
 					builder = th.bld
 				}
 				h := New(th.store, th.notif, p, builder, guest, th.appsR, silentLogger())
+				if kind == "app-layer" {
+					// Produce the shared base through the real builder and actual layer
+					// streams. The injected mkfs runner is portable byte evidence only.
+					baseH, _, baseP, _, _ := verifiedBaseFixture(t, "complete")
+					baseCfg, _ := json.Marshal(map[string]any{"os": "linux", "architecture": "amd64", "rootfs": map[string]any{"type": "layers", "diff_ids": []string{baseDiff}}})
+					baseManifest := oci.Manifest{SchemaVersion: 2, MediaType: "application/vnd.oci.image.manifest.v1+json", Config: oci.Descriptor{Digest: imagechain.Digest(baseCfg), Size: int64(len(baseCfg))}, Layers: []oci.Descriptor{{Digest: imagechain.Digest(baseLayer), Size: int64(len(baseLayer))}}}
+					baseRaw, _ := json.Marshal(baseManifest)
+					baseDigest := imagechain.Digest(baseRaw)
+					baseRef := "registry.example/base@" + baseDigest
+					baseP.resolution = oci.ImageResolution{SourceReference: baseRef, Reference: baseRef, SourceDigest: baseDigest, Digest: baseDigest, Evidence: &imagechain.Evidence{SourceManifest: baseRaw, Config: baseCfg}}
+					baseP.layers = map[string][]byte{imagechain.Digest(baseLayer): baseLayer}
+					baseH.store, baseH.guestInitPath = th.store, guest
+					be, getErr := h.storageFor()
+					if getErr != nil {
+						t.Fatal(getErr)
+					}
+					baseH.WithStorage(be)
+					if _, baseErr := baseH.EnsureBaseExt4(t.Context(), baseRef, sched.BaseKeyForArch(th.app.Runtime, oci.ImageArchitecture), "base/test.digest", "", "", ""); baseErr != nil {
+						t.Fatal(baseErr)
+					}
+				}
 				h.trustedPublishersCacheOK = true
 				h.trustedPublishersCache = map[string][]cosign.TrustedPublisher{th.app.ID: {{Name: "company", PublicKey: &key.PublicKey}}}
 				if kind == "sidecar-layer" {

@@ -21,6 +21,7 @@ type preparedContainerWorkload struct {
 	Verification state.DeploymentRegistryVerification
 	LayerStart   int
 	Layers       []imagechain.LayerConsumption
+	BaseProducer state.BaseImageProducer `json:"-"`
 }
 
 // A signed source may be an index. Every executable read must use its resolved

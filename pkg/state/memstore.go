@@ -138,6 +138,8 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	baseImageProducers                         map[string]BaseImageProducer
+	baseImageProducerCurrent                   map[string]string
 	deploymentRegistryVerifications            map[string]DeploymentRegistryVerification
 	deploymentRegistryRootfs                   map[string]DeploymentRegistryRootfs
 	deploymentRegistryRootfsCurrent            map[string]string

@@ -128,7 +128,7 @@ expiry. Native admission must require those proofs. Live revalidation must use
 the retained immutable subject rather than the customer's mutable tag. Source
 builds need scoped source/rootfs evidence from an explicitly approved build
 publisher; the platform signer is not automatically an approved company key.
-Complete two-drive lineage, current scan and native-consumer bindings remain
+Native two-drive consumption, current scan and native-consumer bindings remain
 pending, and public standard activation stays disabled.
 
 Registry verification now retains the exact signed payload and DER signature in
@@ -179,15 +179,41 @@ the immutable signed chain before atomically selecting the converted artifact.
 Optional JSON fields preserve existing record hashes; older records remain
 historical and acquire no image-chain or native authority.
 
+Shared base conversion now records the complete ext4 identity separately from
+staged content size, plus the actual injected guest-init digest and consumed
+source layers. Immutable private base producer records select a storage key
+under nonwaiting key fences. Parent-based conversion binds an exact retained
+parent producer and a separate `MaterializeVerifiedParentExt4` capability.
+vmmd hashes the same downloaded bytes copied into its root-owned temporary
+loopback source before mounting it. A receipt follows copy, unmount and bounded
+cleanup; an older server/backend refuses the capability. Child layer selection
+keeps descriptor positions, including repeated DiffIDs. The final child ext4 is
+hashed during publication and freshly checked from storage before selection.
+
+A two-drive registry app producer retains its exact base producer ID and input
+hash. Publication checks the base's uncompressed prefix against the retained
+signed app chain and rechecks current base selection under a key fence. Cached
+bases require matching retained source, layout, guest-init and parent intent,
+and fresh complete stored-byte identity; old config-digest sidecars cannot mint
+producer evidence. Exact producer retries preserve the storage clock and cannot
+reactivate an older selection. An already-published child retains its historical
+parent even if that parent's current selection changes. Shared artifact bytes
+are bounded at 16 GiB, keys at 512 bytes and materialization paths at 2,048 bytes
+in `pkg/api/limits.go`; cleanup uses the central five-second deadline. These
+platform producer records confer no company key approval or scan authority.
+
 This is a producer boundary under the existing imaged/database writer trust
-model. The signed metadata chain and consumed layer suffix do not prove the
-physical shared drive0 base, a source-build publisher, current workload scans or
-native consumption. Artifact keys remain mutable; later consumers must freshly
-validate the selected expected digest and size. Existing admission captures do
-not yet include these producer identities. Historical current-selection reads
-may return expired or revoked evidence and must not be treated as runtime
-authority or observed adoption. Public activation and the remaining acceptance
-gates stay pending.
+model. Source-build publisher approval, current workload scans and native boot
+consumption remain separate. Artifact keys remain mutable; later consumers must
+freshly validate the selected expected digest and size. Existing admission
+captures do not yet include these producer identities. Historical
+current-selection reads may return expired or revoked registry evidence and
+must not be treated as runtime authority or observed adoption. Older rootfs
+records lacking a base binding retain their immutable hashes and acquire no
+base or native authority. Portable tests use real layer application with an
+injected mkfs runner, real PostgreSQL and wire capability refusals; they do not
+establish native ext4 materialization or KVM acceptance. Public activation and
+the remaining acceptance gates stay pending.
 
 Historical record retrieval deliberately does not assert current approval or
 freshness: it retains the immutable source needed for a future refresh, including

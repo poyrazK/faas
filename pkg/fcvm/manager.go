@@ -26,6 +26,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
 	"github.com/onebox-faas/faas/pkg/frameworkready"
+	"github.com/onebox-faas/faas/pkg/imagechain"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/privatenetwork"
@@ -2718,6 +2719,10 @@ func (m *Manager) ForwardStatelessAdvisory(ctx context.Context, instance, appID 
 // EnsureBaseExt4 calls once per child restage so two concurrent
 // restages of different runtimes see distinct mountpoints.
 func (m *Manager) MountParentExt4(ctx context.Context, storageKey string) (string, error) {
+	return m.mountParentExt4(ctx, storageKey, nil)
+}
+
+func (m *Manager) mountParentExt4(ctx context.Context, storageKey string, expected *imagechain.BaseArtifact) (string, error) {
 	if m.storage == nil {
 		return "", vmmdmount.ErrNotFound
 	}
@@ -2746,11 +2751,16 @@ func (m *Manager) MountParentExt4(ctx context.Context, storageKey string) (strin
 		return "", fmt.Errorf("parent mount: create src tmp: %w", err)
 	}
 	srcPath := src.Name()
-	if err := src.Close(); err != nil {
-		_ = os.Remove(srcPath)
-		return "", fmt.Errorf("parent mount: close src tmp: %w", err)
+	if expected != nil {
+		err = writeVerifiedParentSource(ctx, src, rc, *expected)
+	} else {
+		err = src.Close()
+		if err == nil {
+			err = streamToPath(rc, srcPath)
+		}
 	}
-	if err := streamToPath(rc, srcPath); err != nil {
+	if err != nil {
+		_ = src.Close()
 		_ = os.Remove(srcPath)
 		return "", fmt.Errorf("parent mount: stream src bytes: %w", err)
 	}

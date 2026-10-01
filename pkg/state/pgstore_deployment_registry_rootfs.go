@@ -85,6 +85,9 @@ func (s *PgStore) PublishDeploymentRegistryRootfs(ctx context.Context, input Dep
 	if err != nil {
 		return DeploymentRegistryRootfs{}, err
 	}
+	if err := lockRegistryRootfsBase(ctx, tx, in, parent); err != nil {
+		return DeploymentRegistryRootfs{}, err
+	}
 	q := sqlc.New()
 	existing, err := q.GetDeploymentRegistryRootfsByID(ctx, tx, mustPgUUID(in.ID))
 	if err == nil {

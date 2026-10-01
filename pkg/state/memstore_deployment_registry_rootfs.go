@@ -41,6 +41,18 @@ func (m *MemStore) PublishDeploymentRegistryRootfs(ctx context.Context, input De
 	if err := verifyRegistryCurrentKey(parent.Input, signer.CosignPublicKey); err != nil {
 		return DeploymentRegistryRootfs{}, err
 	}
+	if in.BaseProducerID != "" {
+		base, ok := m.baseImageProducers[in.BaseProducerID]
+		if !ok {
+			return DeploymentRegistryRootfs{}, ErrNotFound
+		}
+		if m.baseImageProducerCurrent[base.Input.Artifact.StorageKey] != base.ID {
+			return DeploymentRegistryRootfs{}, ErrApplicationStandardRuntimeStale
+		}
+		if err := checkRegistryRootfsBase(in, parent, base); err != nil {
+			return DeploymentRegistryRootfs{}, err
+		}
+	}
 	pointer := in.DeploymentID + "\x00" + in.WorkloadName
 	if old, exists := m.deploymentRegistryRootfs[in.ID]; exists {
 		if old.InputHash != hash || m.deploymentRegistryRootfsCurrent[pointer] != in.ID {

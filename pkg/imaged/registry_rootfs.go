@@ -41,6 +41,7 @@ func (h *Handler) publishContainerRootfs(ctx context.Context, app state.App, dep
 		Scope: dep.Scope, Kind: kind, StorageKey: key, RootfsPath: path, ContentBytes: result.ContentBytes,
 		ArtifactDigest: result.ArtifactDigest, ArtifactBytes: result.ArtifactBytes,
 		LayerStart: prepared.LayerStart, Layers: prepared.Layers,
+		BaseProducerID: prepared.BaseProducer.ID, BaseInputHash: prepared.BaseProducer.InputHash,
 	})
 	if err != nil {
 		if errors.Is(err, cosign.ErrSignatureInvalid) {

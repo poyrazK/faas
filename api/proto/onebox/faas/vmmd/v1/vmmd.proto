@@ -397,6 +397,10 @@ service Vmmd {
   // a missing storage key is NotFound.
   rpc MaterializeParentExt4(MaterializeParentExt4Request) returns (MaterializeParentExt4Response);
 
+  // ADR-393: separate capability; old servers refuse instead of ignoring the
+  // expected complete artifact identity. Receipt follows copy and cleanup.
+  rpc MaterializeVerifiedParentExt4(MaterializeVerifiedParentExt4Request) returns (MaterializeVerifiedParentExt4Response);
+
   // UmountParentExt4 (ADR-053) releases a mount vmmd previously
   // returned from MountParentExt4ReadOnly. Idempotent on an
   // unknown mountpoint — imaged's call-on-error-defer pattern
@@ -1579,6 +1583,20 @@ message MaterializeParentExt4Request {
 
 // MaterializeParentExt4Response is the empty success envelope.
 message MaterializeParentExt4Response {}
+
+message MaterializeVerifiedParentExt4Request {
+  string storage_key = 1;
+  string target_dir = 2;
+  string artifact_digest = 3;
+  int64 artifact_bytes = 4;
+}
+
+message MaterializeVerifiedParentExt4Response {
+  string storage_key = 1;
+  string target_dir = 2;
+  string artifact_digest = 3;
+  int64 artifact_bytes = 4;
+}
 
 // UmountParentExt4Request is the input to UmountParentExt4.
 // mountpoint is the path MountParentExt4ReadOnly previously

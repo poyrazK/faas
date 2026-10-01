@@ -595,6 +595,15 @@ func (q *Queries) ApplyRegressionAction(ctx context.Context, db DBTX, arg ApplyR
 	return i, err
 }
 
+const authorizeBaseImageProducerInsert = `-- name: AuthorizeBaseImageProducerInsert :exec
+SELECT set_config('gregale.base_producer_insert',$1::text,true)
+`
+
+func (q *Queries) AuthorizeBaseImageProducerInsert(ctx context.Context, db DBTX, id string) error {
+	_, err := db.Exec(ctx, authorizeBaseImageProducerInsert, id)
+	return err
+}
+
 const authorizeDeploymentRegistryRootfsInsert = `-- name: AuthorizeDeploymentRegistryRootfsInsert :exec
 SELECT set_config('gregale.registry_rootfs_insert',$1::uuid::text,true)
 `
@@ -4680,6 +4689,43 @@ func (q *Queries) GetApplicationStandardVersion(ctx context.Context, db DBTX, ar
 	return i, err
 }
 
+const getBaseImageProducerByID = `-- name: GetBaseImageProducerByID :one
+SELECT id, storage_key, parent_producer_id, input_snapshot, input_hash, published_at FROM base_image_producers WHERE id=$1
+`
+
+func (q *Queries) GetBaseImageProducerByID(ctx context.Context, db DBTX, id pgtype.UUID) (BaseImageProducer, error) {
+	row := db.QueryRow(ctx, getBaseImageProducerByID, id)
+	var i BaseImageProducer
+	err := row.Scan(
+		&i.ID,
+		&i.StorageKey,
+		&i.ParentProducerID,
+		&i.InputSnapshot,
+		&i.InputHash,
+		&i.PublishedAt,
+	)
+	return i, err
+}
+
+const getCurrentBaseImageProducer = `-- name: GetCurrentBaseImageProducer :one
+SELECT p.id, p.storage_key, p.parent_producer_id, p.input_snapshot, p.input_hash, p.published_at FROM base_image_producers p JOIN base_image_producer_current c ON c.producer_id=p.id AND c.storage_key=p.storage_key
+WHERE c.storage_key=$1
+`
+
+func (q *Queries) GetCurrentBaseImageProducer(ctx context.Context, db DBTX, storageKey string) (BaseImageProducer, error) {
+	row := db.QueryRow(ctx, getCurrentBaseImageProducer, storageKey)
+	var i BaseImageProducer
+	err := row.Scan(
+		&i.ID,
+		&i.StorageKey,
+		&i.ParentProducerID,
+		&i.InputSnapshot,
+		&i.InputHash,
+		&i.PublishedAt,
+	)
+	return i, err
+}
+
 const getCurrentDeploymentRegistryRootfs = `-- name: GetCurrentDeploymentRegistryRootfs :one
 SELECT f.id, f.registry_verification_id, f.deployment_id, f.workload_name, f.input_snapshot, f.input_hash, f.published_at, f.expires_at FROM deployment_registry_rootfs_current c JOIN deployment_registry_rootfs f ON f.id=c.artifact_id
 JOIN deployment_registry_verifications r ON r.id=f.registry_verification_id
@@ -5948,6 +5994,38 @@ func (q *Queries) InsertApplicationStandardVersion(ctx context.Context, db DBTX,
 		arg.CreatedBy,
 	)
 	return err
+}
+
+const insertBaseImageProducer = `-- name: InsertBaseImageProducer :one
+INSERT INTO base_image_producers(id,storage_key,parent_producer_id,input_snapshot,input_hash)
+VALUES($1,$2,NULLIF($3::jsonb->>'parent_producer_id','')::uuid,$3,$4)
+RETURNING id, storage_key, parent_producer_id, input_snapshot, input_hash, published_at
+`
+
+type InsertBaseImageProducerParams struct {
+	ID            pgtype.UUID
+	StorageKey    string
+	InputSnapshot []byte
+	InputHash     string
+}
+
+func (q *Queries) InsertBaseImageProducer(ctx context.Context, db DBTX, arg InsertBaseImageProducerParams) (BaseImageProducer, error) {
+	row := db.QueryRow(ctx, insertBaseImageProducer,
+		arg.ID,
+		arg.StorageKey,
+		arg.InputSnapshot,
+		arg.InputHash,
+	)
+	var i BaseImageProducer
+	err := row.Scan(
+		&i.ID,
+		&i.StorageKey,
+		&i.ParentProducerID,
+		&i.InputSnapshot,
+		&i.InputHash,
+		&i.PublishedAt,
+	)
+	return i, err
 }
 
 const insertComputeNodeHeartbeat = `-- name: InsertComputeNodeHeartbeat :exec
@@ -18556,6 +18634,21 @@ func (q *Queries) SaveApplicationStandardControlBackup(ctx context.Context, db D
 	return err
 }
 
+const selectBaseImageProducer = `-- name: SelectBaseImageProducer :exec
+INSERT INTO base_image_producer_current(storage_key,producer_id) VALUES($1,$2)
+ON CONFLICT(storage_key) DO UPDATE SET producer_id=EXCLUDED.producer_id
+`
+
+type SelectBaseImageProducerParams struct {
+	StorageKey string
+	ProducerID pgtype.UUID
+}
+
+func (q *Queries) SelectBaseImageProducer(ctx context.Context, db DBTX, arg SelectBaseImageProducerParams) error {
+	_, err := db.Exec(ctx, selectBaseImageProducer, arg.StorageKey, arg.ProducerID)
+	return err
+}
+
 const selectDeploymentRegistryRootfs = `-- name: SelectDeploymentRegistryRootfs :exec
 INSERT INTO deployment_registry_rootfs_current(deployment_id,workload_name,artifact_id)
 VALUES($1::uuid,$2::text,$3::uuid)
@@ -19328,6 +19421,17 @@ func (q *Queries) TryLockApplicationStandardApprovalQuotas(ctx context.Context, 
 	var locked bool
 	err := row.Scan(&locked)
 	return locked, err
+}
+
+const tryLockBaseImageProducerKey = `-- name: TryLockBaseImageProducerKey :one
+SELECT pg_try_advisory_xact_lock(hashtextextended('gregale.base-producer.' || $1::text,0))
+`
+
+func (q *Queries) TryLockBaseImageProducerKey(ctx context.Context, db DBTX, storageKey string) (bool, error) {
+	row := db.QueryRow(ctx, tryLockBaseImageProducerKey, storageKey)
+	var pg_try_advisory_xact_lock bool
+	err := row.Scan(&pg_try_advisory_xact_lock)
+	return pg_try_advisory_xact_lock, err
 }
 
 const updateAccountPlan = `-- name: UpdateAccountPlan :exec

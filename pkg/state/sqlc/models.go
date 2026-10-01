@@ -997,6 +997,20 @@ type AuditLog struct {
 	Data         []byte
 }
 
+type BaseImageProducer struct {
+	ID               pgtype.UUID
+	StorageKey       string
+	ParentProducerID pgtype.UUID
+	InputSnapshot    []byte
+	InputHash        string
+	PublishedAt      pgtype.Timestamptz
+}
+
+type BaseImageProducerCurrent struct {
+	StorageKey string
+	ProducerID pgtype.UUID
+}
+
 type BillingIdentity struct {
 	AccountID      pgtype.UUID
 	Provider       string

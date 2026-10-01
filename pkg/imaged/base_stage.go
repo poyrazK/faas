@@ -12,9 +12,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/imagechain"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/rootfs"
 	"github.com/onebox-faas/faas/pkg/sched"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -34,7 +36,7 @@ import (
 // example, when OCI layers omitted the empty /proc and /sys mountpoints).
 // Keeping this in the sidecar makes upgrades self-healing even when the
 // remote image digest is unchanged and the old artifact is already cached.
-const baseLayoutVersion = "faas-base-layout-v3"
+const baseLayoutVersion = imagechain.BaseLayoutVersion
 
 const baseSourceRefPrefix = "source-ref="
 
@@ -54,6 +56,7 @@ type BaseStageResult struct {
 	StorageKey   string
 	ConfigDigest string // empty when Skip
 	Skipped      bool
+	Producer     state.BaseImageProducer `json:"-"` // private immutable evidence, never scan/admission authority
 }
 
 // EnsureBaseExt4 guarantees baseKey exists and reflects ref's current
@@ -114,6 +117,9 @@ func (h *Handler) EnsureBaseExt4(
 	guestInitDigest, err := guestInitBinaryDigest(h.guestInitPath)
 	if err != nil {
 		return BaseStageResult{}, fmt.Errorf("imaged: hash guest-init %q: %w", h.guestInitPath, err)
+	}
+	if resolver, ok := h.oci.(oci.ImageResolver); ok {
+		return h.ensureVerifiedBaseExt4(ctx, verifiedBaseRequest{ref: ref, key: baseKey, digestKey: digestKey, out: outImage, parentRef: parentRef, parentKey: parentBaseKey, guestDigest: guestInitDigest, be: be, mp: mp}, resolver)
 	}
 
 	// Production base refs are immutable manifest digests. Once a staged
@@ -562,10 +568,6 @@ func (h *Handler) ensureBaseExt4ParentRef(
 			"imaged: parent-ref layer count mismatch: manifest=%d config=%d",
 			len(manifest.Layers), len(runtimeCfg.DiffIDs))
 	}
-	blobByDiff := make(map[string]oci.Descriptor, len(manifest.Layers))
-	for i, l := range manifest.Layers {
-		blobByDiff[runtimeCfg.DiffIDs[i]] = l
-	}
 
 	// Ask vmmd to mount the parent ext4 and copy its contents into a shared
 	// ordinary-file staging tree. Mount visibility is scoped to vmmd's service
@@ -594,11 +596,8 @@ func (h *Handler) ensureBaseExt4ParentRef(
 			_ = c.Close()
 		}
 	}()
-	for _, diffID := range delta {
-		desc, ok := blobByDiff[diffID]
-		if !ok {
-			return BaseStageResult{}, fmt.Errorf("imaged: parent-ref missing blob for diff %s", diffID)
-		}
+	for i := range delta {
+		desc := manifest.Layers[len(parentCfg.DiffIDs)+i]
 		rc, err := mp.PullBlob(ctx, ociRef.Registry+"/"+ociRef.Repository, desc.Digest)
 		if err != nil {
 			return BaseStageResult{}, fmt.Errorf("imaged: parent-ref pull blob %s: %w", desc.Digest, err)
@@ -1040,6 +1039,7 @@ var DefaultRuntimeBaseRefs = []RuntimeBaseRef{
 // row. Used by the imaged-ready log line so the §12 dashboard sees a
 // per-runtime summary at startup (skip vs rebuild, observed digest).
 type EnsureBasesResult struct {
+	Producer state.BaseImageProducer `json:"-"`
 	// Runtime is the apps.runtime constant the row belongs to.
 	Runtime string
 	// Ref is the OCI ref that was actually staged (defaults from the
@@ -1160,6 +1160,7 @@ func (h *Handler) EnsureBases(ctx context.Context, arch string, refs []RuntimeBa
 			return nil, fmt.Errorf("imaged: stage runtime base %s (%s → %s): %w", row.Runtime, ref, baseKey, err)
 		}
 		out = append(out, EnsureBasesResult{
+			Producer:     res.Producer,
 			Runtime:      row.Runtime,
 			Ref:          ref,
 			ConfigDigest: res.ConfigDigest,
@@ -1198,6 +1199,7 @@ func (h *Handler) EnsureMinimalBase(ctx context.Context, arch string, envLookup 
 	result := results[0]
 	return BaseStageResult{
 		OutImage:     sched.BaseKeyForArch("", arch),
+		Producer:     result.Producer,
 		StorageKey:   sched.BaseKeyForArch("", arch),
 		ConfigDigest: result.ConfigDigest,
 		Skipped:      result.Skipped,
@@ -1257,6 +1259,7 @@ func (h *Handler) EnsureRuntimeBase(ctx context.Context, runtime, arch string, e
 	last := results[len(results)-1]
 	return BaseStageResult{
 		StorageKey:   sched.BaseKeyForArch(last.Runtime, arch),
+		Producer:     last.Producer,
 		ConfigDigest: last.ConfigDigest,
 		Skipped:      last.Skipped,
 	}, nil

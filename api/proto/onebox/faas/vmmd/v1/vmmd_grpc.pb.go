@@ -62,6 +62,7 @@ const (
 	Vmmd_ForwardTCPStream_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/ForwardTCPStream"
 	Vmmd_MountParentExt4ReadOnly_FullMethodName       = "/onebox.faas.vmmd.v1.Vmmd/MountParentExt4ReadOnly"
 	Vmmd_MaterializeParentExt4_FullMethodName         = "/onebox.faas.vmmd.v1.Vmmd/MaterializeParentExt4"
+	Vmmd_MaterializeVerifiedParentExt4_FullMethodName = "/onebox.faas.vmmd.v1.Vmmd/MaterializeVerifiedParentExt4"
 	Vmmd_UmountParentExt4_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/UmountParentExt4"
 	Vmmd_MountOverlayParent_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/MountOverlayParent"
 	Vmmd_UmountOverlayParent_FullMethodName           = "/onebox.faas.vmmd.v1.Vmmd/UmountOverlayParent"
@@ -412,6 +413,9 @@ type VmmdClient interface {
 	// canonical parent-base key.  Empty/foreign paths are InvalidArgument and
 	// a missing storage key is NotFound.
 	MaterializeParentExt4(ctx context.Context, in *MaterializeParentExt4Request, opts ...grpc.CallOption) (*MaterializeParentExt4Response, error)
+	// ADR-393: separate capability; old servers refuse instead of ignoring the
+	// expected complete artifact identity. Receipt follows copy and cleanup.
+	MaterializeVerifiedParentExt4(ctx context.Context, in *MaterializeVerifiedParentExt4Request, opts ...grpc.CallOption) (*MaterializeVerifiedParentExt4Response, error)
 	// UmountParentExt4 (ADR-053) releases a mount vmmd previously
 	// returned from MountParentExt4ReadOnly. Idempotent on an
 	// unknown mountpoint — imaged's call-on-error-defer pattern
@@ -940,6 +944,16 @@ func (c *vmmdClient) MaterializeParentExt4(ctx context.Context, in *MaterializeP
 	return out, nil
 }
 
+func (c *vmmdClient) MaterializeVerifiedParentExt4(ctx context.Context, in *MaterializeVerifiedParentExt4Request, opts ...grpc.CallOption) (*MaterializeVerifiedParentExt4Response, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MaterializeVerifiedParentExt4Response)
+	err := c.cc.Invoke(ctx, Vmmd_MaterializeVerifiedParentExt4_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) UmountParentExt4(ctx context.Context, in *UmountParentExt4Request, opts ...grpc.CallOption) (*UmountParentExt4Response, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(UmountParentExt4Response)
@@ -1351,6 +1365,9 @@ type VmmdServer interface {
 	// canonical parent-base key.  Empty/foreign paths are InvalidArgument and
 	// a missing storage key is NotFound.
 	MaterializeParentExt4(context.Context, *MaterializeParentExt4Request) (*MaterializeParentExt4Response, error)
+	// ADR-393: separate capability; old servers refuse instead of ignoring the
+	// expected complete artifact identity. Receipt follows copy and cleanup.
+	MaterializeVerifiedParentExt4(context.Context, *MaterializeVerifiedParentExt4Request) (*MaterializeVerifiedParentExt4Response, error)
 	// UmountParentExt4 (ADR-053) releases a mount vmmd previously
 	// returned from MountParentExt4ReadOnly. Idempotent on an
 	// unknown mountpoint — imaged's call-on-error-defer pattern
@@ -1562,6 +1579,9 @@ func (UnimplementedVmmdServer) MountParentExt4ReadOnly(context.Context, *MountPa
 }
 func (UnimplementedVmmdServer) MaterializeParentExt4(context.Context, *MaterializeParentExt4Request) (*MaterializeParentExt4Response, error) {
 	return nil, status.Error(codes.Unimplemented, "method MaterializeParentExt4 not implemented")
+}
+func (UnimplementedVmmdServer) MaterializeVerifiedParentExt4(context.Context, *MaterializeVerifiedParentExt4Request) (*MaterializeVerifiedParentExt4Response, error) {
+	return nil, status.Error(codes.Unimplemented, "method MaterializeVerifiedParentExt4 not implemented")
 }
 func (UnimplementedVmmdServer) UmountParentExt4(context.Context, *UmountParentExt4Request) (*UmountParentExt4Response, error) {
 	return nil, status.Error(codes.Unimplemented, "method UmountParentExt4 not implemented")
@@ -2271,6 +2291,24 @@ func _Vmmd_MaterializeParentExt4_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Vmmd_MaterializeVerifiedParentExt4_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MaterializeVerifiedParentExt4Request)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).MaterializeVerifiedParentExt4(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_MaterializeVerifiedParentExt4_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).MaterializeVerifiedParentExt4(ctx, req.(*MaterializeVerifiedParentExt4Request))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Vmmd_UmountParentExt4_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(UmountParentExt4Request)
 	if err := dec(in); err != nil {
@@ -2539,6 +2577,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "MaterializeParentExt4",
 			Handler:    _Vmmd_MaterializeParentExt4_Handler,
+		},
+		{
+			MethodName: "MaterializeVerifiedParentExt4",
+			Handler:    _Vmmd_MaterializeVerifiedParentExt4_Handler,
 		},
 		{
 			MethodName: "UmountParentExt4",

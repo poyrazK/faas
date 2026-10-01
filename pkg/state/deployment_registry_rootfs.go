@@ -39,6 +39,8 @@ type DeploymentRegistryRootfsInput struct {
 	ArtifactBytes          int64                         `json:"artifact_bytes"`
 	LayerStart             int                           `json:"layer_start,omitempty"`
 	Layers                 []imagechain.LayerConsumption `json:"layers,omitempty"`
+	BaseProducerID         string                        `json:"base_producer_id,omitempty"`
+	BaseInputHash          string                        `json:"base_input_hash,omitempty"`
 }
 type DeploymentRegistryRootfsStore interface {
 	PublishDeploymentRegistryRootfs(context.Context, DeploymentRegistryRootfsInput) (DeploymentRegistryRootfs, error)
@@ -61,6 +63,14 @@ func prepareRegistryRootfs(in DeploymentRegistryRootfsInput) (DeploymentRegistry
 		return in, "", ErrInvalidArgument
 	}
 	in.Layers = append([]imagechain.LayerConsumption(nil), in.Layers...)
+	if in.BaseProducerID != "" {
+		if in.Kind != "app-layer" || !validStandardResourceRead(in.BaseProducerID, in.BaseProducerID) || len(in.BaseInputHash) != 64 {
+			return in, "", ErrInvalidArgument
+		}
+		in.BaseProducerID = canonicalStandardUUID(in.BaseProducerID)
+	} else if in.BaseInputHash != "" {
+		return in, "", ErrInvalidArgument
+	}
 	switch in.Kind {
 	case "app-layer", "full-rootfs":
 		if in.WorkloadName != "" || in.RootfsPath == "" {

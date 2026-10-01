@@ -1,5 +1,7 @@
 package rootfs
 
+// adr: 393
+
 import (
 	"archive/tar"
 	"bytes"
@@ -86,7 +88,7 @@ func TestBuildBase_HappyPath(t *testing.T) {
 // pass OutImage and BuildBase writes directly. Kept for one release
 // per the ADR-025 deprecation window.
 func TestBuildBase_LegacyOutImage(t *testing.T) {
-	run := &fakeRunner{}
+	run := &mkfsFakeRunner{fill: []byte("BASE-ARTIFACT")}
 	b := NewBuilder(run)
 	out := filepath.Join(t.TempDir(), "builder-base.ext4")
 	res, err := b.BuildBase(context.Background(), BaseBuildInput{
@@ -427,7 +429,7 @@ func TestMkdirBaseStaging_UnitFileSetsDevShm(t *testing.T) {
 // by side-effect: layer-2 wins over layer-1 on the same path.
 func TestBuildBase_AppliesAllLayers(t *testing.T) {
 	be := newTestStorage(t)
-	run := &fakeRunner{}
+	run := &mkfsFakeRunner{fill: []byte("BASE-ARTIFACT")}
 	b := NewBuilder(run)
 	_, err := b.BuildBase(context.Background(), BaseBuildInput{
 		Layers: []io.Reader{
@@ -605,5 +607,8 @@ func (r *retryBaseMkfsRunner) Run(_ context.Context, argv []string) error {
 		r.failures--
 		return errors.New("mkfs.ext4: Could not allocate block while populating file system")
 	}
-	return nil
+	if len(argv) >= 2 {
+		return os.WriteFile(argv[len(argv)-2], []byte("RETRIED-BASE-ARTIFACT"), 0o600)
+	}
+	return errors.New("mkfs output argument missing")
 }

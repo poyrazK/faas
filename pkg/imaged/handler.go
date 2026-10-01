@@ -2354,6 +2354,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 				_ = h.markDeployFailed(ctx, dep.ID, err, "verify consumed app layers")
 				return err
 			}
+			prepared.BaseProducer = above.baseProducer
 			if err := h.publishContainerRootfs(ctx, app, dep, prepared, "", "app-layer", appsKey, result); err != nil {
 				_ = h.markDeployFailed(ctx, dep.ID, err, "stamp rootfs")
 				return fmt.Errorf("imaged: stamp rootfs: %w", err)
@@ -4122,9 +4123,10 @@ func (h *Handler) markFailedOnUnhandledError(ctx context.Context, depID string, 
 // app image. The Reader side is fed to rootfs.Builder; the Closers slice is
 // closed by the caller in a defer so streaming ReadClosers don't leak.
 type aboveBaseStream struct {
-	readers []io.Reader
-	closers []io.ReadCloser
-	start   int
+	readers      []io.Reader
+	closers      []io.ReadCloser
+	start        int
+	baseProducer state.BaseImageProducer
 }
 
 // aboveBaseLayers is the M6 two-drive seam: given the app's image ref + runtime,
@@ -4158,6 +4160,10 @@ func (h *Handler) aboveBaseLayersVerified(ctx context.Context, mp oci.ManifestPu
 	if err != nil {
 		return aboveBaseStream{}, nil, err
 	}
+	baseProducer, err := h.containerBaseProducer(ctx, prepared, runtime, baseCount)
+	if err != nil {
+		return aboveBaseStream{}, nil, err
+	}
 	closers := make([]io.ReadCloser, 0, len(descriptors))
 	for _, desc := range descriptors {
 		pullStart := time.Now()
@@ -4176,7 +4182,7 @@ func (h *Handler) aboveBaseLayersVerified(ctx context.Context, mp oci.ManifestPu
 	}
 	// Zero above-base layers is a successful resolution as well.
 	h.ops.ObserveImagedOCIPull("above_base", "ok", time.Since(start))
-	return aboveBaseStream{readers: layersAsReaders(verified), closers: closers, start: baseCount}, above, nil
+	return aboveBaseStream{readers: layersAsReaders(verified), closers: closers, start: baseCount, baseProducer: baseProducer}, above, nil
 }
 
 func (h *Handler) aboveBaseLayerSelection(ctx context.Context, mp oci.ManifestPuller, appRef, runtime string, appAuth *oci.BasicAuth) ([]oci.Descriptor, []string, int, error) {

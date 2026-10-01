@@ -5657,3 +5657,24 @@ WHERE a.account_id=sqlc.arg(account_id)::uuid AND a.id=sqlc.arg(app_id)::uuid AN
  ELSE (SELECT CASE WHEN count(*)=1 THEN min(x->>'image') END FROM jsonb_array_elements(d.sidecars) x WHERE x->>'name'=c.workload_name) END
  AND ((c.workload_name='' AND f.input_snapshot->>'storage_key'=d.rootfs_key AND f.input_snapshot->>'rootfs_path'=d.rootfs_path AND (f.input_snapshot->>'content_bytes')::bigint=d.rootfs_bytes)
  OR (c.workload_name<>'' AND f.input_snapshot->>'storage_key'=s.storage_key AND (f.input_snapshot->>'content_bytes')::bigint=s.bytes AND r.input_snapshot->>'selected_reference'=s.content_digest));
+-- name: TryLockBaseImageProducerKey :one
+SELECT pg_try_advisory_xact_lock(hashtextextended('gregale.base-producer.' || sqlc.arg(storage_key)::text,0));
+
+-- name: AuthorizeBaseImageProducerInsert :exec
+SELECT set_config('gregale.base_producer_insert',sqlc.arg(id)::text,true);
+
+-- name: InsertBaseImageProducer :one
+INSERT INTO base_image_producers(id,storage_key,parent_producer_id,input_snapshot,input_hash)
+VALUES(sqlc.arg(id),sqlc.arg(storage_key),NULLIF(sqlc.arg(input_snapshot)::jsonb->>'parent_producer_id','')::uuid,sqlc.arg(input_snapshot),sqlc.arg(input_hash))
+RETURNING *;
+
+-- name: SelectBaseImageProducer :exec
+INSERT INTO base_image_producer_current(storage_key,producer_id) VALUES(sqlc.arg(storage_key),sqlc.arg(producer_id))
+ON CONFLICT(storage_key) DO UPDATE SET producer_id=EXCLUDED.producer_id;
+
+-- name: GetBaseImageProducerByID :one
+SELECT * FROM base_image_producers WHERE id=sqlc.arg(id);
+
+-- name: GetCurrentBaseImageProducer :one
+SELECT p.* FROM base_image_producers p JOIN base_image_producer_current c ON c.producer_id=p.id AND c.storage_key=p.storage_key
+WHERE c.storage_key=sqlc.arg(storage_key);

@@ -1573,6 +1573,35 @@ $$;
 
 
 --
+-- Name: base_image_producer_current_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.base_image_producer_current_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP<>'DELETE' AND current_setting('gregale.base_producer_insert',true)=NEW.producer_id::text
+   AND (TG_OP='INSERT' OR NEW.storage_key=OLD.storage_key) THEN RETURN NEW; END IF;
+ RAISE EXCEPTION 'base producer selection is private' USING ERRCODE='23514',CONSTRAINT='base_image_producer_immutable';
+END;
+$$;
+
+
+--
+-- Name: base_image_producer_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.base_image_producer_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='INSERT' AND current_setting('gregale.base_producer_insert',true)=NEW.id::text THEN RETURN NEW; END IF;
+ RAISE EXCEPTION 'base producer evidence is immutable/private' USING ERRCODE='23514',CONSTRAINT='base_image_producer_immutable';
+END;
+$$;
+
+
+--
 -- Name: bind_job_run_image_snapshot(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -6066,6 +6095,37 @@ CREATE TABLE public.audit_log (
     actor text,
     received_at timestamp with time zone DEFAULT now() NOT NULL,
     data jsonb
+);
+
+
+--
+-- Name: base_image_producer_current; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.base_image_producer_current (
+    storage_key text NOT NULL,
+    producer_id uuid NOT NULL,
+    CONSTRAINT base_image_producer_current_storage_key_check CHECK (((storage_key ~ '^base/[^/]+[.]ext4$'::text) AND (length(storage_key) <= 512)))
+);
+
+
+--
+-- Name: base_image_producers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.base_image_producers (
+    id uuid NOT NULL,
+    storage_key text NOT NULL,
+    parent_producer_id uuid,
+    input_snapshot jsonb NOT NULL,
+    input_hash text NOT NULL,
+    published_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT base_image_producers_check CHECK ((((input_snapshot -> 'artifact'::text) ->> 'storage_key'::text) = storage_key)),
+    CONSTRAINT base_image_producers_check1 CHECK ((COALESCE((input_snapshot ->> 'parent_producer_id'::text), ''::text) = COALESCE((parent_producer_id)::text, ''::text))),
+    CONSTRAINT base_image_producers_check2 CHECK (((parent_producer_id IS NULL) OR (parent_producer_id <> id))),
+    CONSTRAINT base_image_producers_input_hash_check CHECK ((input_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT base_image_producers_input_snapshot_check CHECK ((jsonb_typeof(input_snapshot) = 'object'::text)),
+    CONSTRAINT base_image_producers_storage_key_check CHECK (((storage_key ~ '^base/[^/]+[.]ext4$'::text) AND (length(storage_key) <= 512)))
 );
 
 
@@ -13208,6 +13268,30 @@ ALTER TABLE ONLY public.audit_event_outbox
 
 ALTER TABLE ONLY public.audit_log
     ADD CONSTRAINT audit_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: base_image_producer_current base_image_producer_current_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.base_image_producer_current
+    ADD CONSTRAINT base_image_producer_current_pkey PRIMARY KEY (storage_key);
+
+
+--
+-- Name: base_image_producers base_image_producers_id_storage_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.base_image_producers
+    ADD CONSTRAINT base_image_producers_id_storage_key_key UNIQUE (id, storage_key);
+
+
+--
+-- Name: base_image_producers base_image_producers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.base_image_producers
+    ADD CONSTRAINT base_image_producers_pkey PRIMARY KEY (id);
 
 
 --
@@ -21117,6 +21201,20 @@ CREATE TRIGGER apps_visibility_notify_trg AFTER UPDATE OF visibility ON public.a
 
 
 --
+-- Name: base_image_producer_current base_producer_current_private_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER base_producer_current_private_guard BEFORE INSERT OR DELETE OR UPDATE ON public.base_image_producer_current FOR EACH ROW EXECUTE FUNCTION public.base_image_producer_current_guard();
+
+
+--
+-- Name: base_image_producers base_producer_private_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER base_producer_private_guard BEFORE INSERT OR DELETE OR UPDATE ON public.base_image_producers FOR EACH ROW EXECUTE FUNCTION public.base_image_producer_guard();
+
+
+--
 -- Name: cluster_signing_keys cluster_signing_keys_changed_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -22748,6 +22846,22 @@ ALTER TABLE ONLY public.apps
 
 ALTER TABLE ONLY public.apps
     ADD CONSTRAINT apps_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE SET NULL;
+
+
+--
+-- Name: base_image_producer_current base_image_producer_current_producer_id_storage_key_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.base_image_producer_current
+    ADD CONSTRAINT base_image_producer_current_producer_id_storage_key_fkey FOREIGN KEY (producer_id, storage_key) REFERENCES public.base_image_producers(id, storage_key);
+
+
+--
+-- Name: base_image_producers base_image_producers_parent_producer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.base_image_producers
+    ADD CONSTRAINT base_image_producers_parent_producer_id_fkey FOREIGN KEY (parent_producer_id) REFERENCES public.base_image_producers(id);
 
 
 --
