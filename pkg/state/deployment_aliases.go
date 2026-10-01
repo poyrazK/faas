@@ -82,10 +82,6 @@ func (m *MemStore) SetDeploymentAlias(ctx context.Context, appID, name, deployme
 	if !ok || deployment.AppID != appID || deployment.DeletedAt != nil || !deployment.DeploymentPreviewActive() {
 		return DeploymentAlias{}, ErrNotFound
 	}
-	before, err := m.readBoundedMemTrafficAnalysisLocked(ctx, app.AccountID)
-	if err != nil {
-		return DeploymentAlias{}, err
-	}
 	now := time.Now().UTC()
 	key := deploymentAliasKey(appID, name)
 	alias, exists := m.deploymentAliases[key]
@@ -95,19 +91,29 @@ func (m *MemStore) SetDeploymentAlias(ctx context.Context, appID, name, deployme
 	alias.DeploymentID = deploymentID
 	alias.Revision = deployment.Revision
 	alias.UpdatedAt = now
-	if err := m.checkMemTrafficPolicyChangeLocked(ctx, app.AccountID, before, memTrafficPolicyChange{Aliases: map[string]DeploymentAlias{key: alias}}); err != nil {
+	if err := appTrafficBindingError(m.checkMemTrafficBindingLocked(ctx, app.AccountID, nil, appID, memTrafficPolicyChange{Aliases: map[string]DeploymentAlias{key: alias}})); err != nil {
 		return DeploymentAlias{}, err
 	}
 	m.deploymentAliases[key] = alias
 	return alias, nil
 }
 
-func (m *MemStore) DeleteDeploymentAlias(_ context.Context, appID, name string) error {
+func (m *MemStore) DeleteDeploymentAlias(ctx context.Context, appID, name string) error {
+	if !api.ValidDeploymentAliasName(name) {
+		return ErrInvalidArgument
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	key := deploymentAliasKey(appID, name)
 	if _, ok := m.deploymentAliases[key]; !ok {
 		return ErrNotFound
+	}
+	app, found := m.apps[appID]
+	if !found {
+		return ErrNotFound
+	}
+	if err := appTrafficBindingError(m.checkMemTrafficBindingLocked(ctx, app.AccountID, nil, appID, memTrafficPolicyChange{Aliases: map[string]DeploymentAlias{key: {}}})); err != nil {
+		return err
 	}
 	delete(m.deploymentAliases, key)
 	return nil
@@ -140,4 +146,25 @@ func (m *MemStore) DeploymentAliasByHostLabel(_ context.Context, hostLabel strin
 		return DeploymentAlias{}, ErrNotFound
 	}
 	return found, nil
+}
+
+// DeploymentAliasReservationStore distinguishes a missing alias from an existing
+// alias whose owner or immutable target cannot currently serve requests.
+type DeploymentAliasReservationStore interface {
+	DeploymentAliasReserved(context.Context, string) (bool, error)
+}
+
+func (m *MemStore) DeploymentAliasReserved(ctx context.Context, label string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, alias := range m.deploymentAliases {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		candidate, ok := hostidentity.DeploymentAliasLabel(alias.AppID, alias.Name)
+		if ok && candidate == label {
+			return true, nil
+		}
+	}
+	return false, ctx.Err()
 }

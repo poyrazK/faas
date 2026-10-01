@@ -114,6 +114,13 @@ func (m *MemStore) memTrafficBindingClaimsLocked(ctx context.Context, change mem
 	if err != nil {
 		return result, err
 	}
+	result.Aliases, result.Primaries, err = m.memTrafficNamedClaimsLocked(ctx, change)
+	if err != nil {
+		return result, err
+	}
+	if err := checkMemTrafficAnalysisInputs(len(result.Domains) + len(result.Tenants) + len(result.Aliases) + len(result.Primaries)); err != nil {
+		return result, err
+	}
 	sort.Slice(result.Tenants, func(i, j int) bool { return result.Tenants[i].Host < result.Tenants[j].Host })
 	encoded, err := json.Marshal(result)
 	if err != nil {
@@ -183,7 +190,7 @@ func (m *MemStore) checkMemTrafficBindingLocked(ctx context.Context, account str
 			if err != nil {
 				return err
 			}
-			if err := checkTrafficTenantBindingOwner(bounded, prior, next, before.Domains, after.Domains, before.Tenants, after.Tenants, owner, globalBefore, globalAfter); err != nil {
+			if err := checkTrafficTenantBindingOwner(bounded, trafficPrimaryOwnerView(prior, before.Aliases), trafficPrimaryOwnerView(next, after.Aliases), before.Domains, after.Domains, before.Tenants, after.Tenants, owner, globalBefore, globalAfter); err != nil {
 				return err
 			}
 		}

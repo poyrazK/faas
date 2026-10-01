@@ -30,6 +30,7 @@ type PublicHostPolicyReader interface {
 	GetProjectEnvironmentEdgePolicy(context.Context, string, string, string) (ProjectEnvironmentEdgePolicy, error)
 	ActiveProjectReleaseSet(context.Context, string, string, string) (ProjectReleaseSet, error)
 	DeploymentAliasByHostLabel(context.Context, string) (DeploymentAlias, error)
+	DeploymentAliasReserved(context.Context, string) (bool, error)
 	DomainByName(context.Context, string) (CustomDomain, error)
 	WildcardDomainForHost(context.Context, string) (CustomDomain, error)
 	TenantSurfaceByHostname(context.Context, string) (TenantSurface, error)
@@ -280,4 +281,11 @@ func (s *publicHostPolicyReader) PublicHostOpenAPIDoc(ctx context.Context, app, 
 	key, _ := json.Marshal([]string{account, app})
 	s.record("openapi-contract:"+string(key), row.Doc, err)
 	return row.Doc, mapErr(err)
+}
+
+func (s *publicHostPolicyReader) DeploymentAliasReserved(ctx context.Context, label string) (bool, error) {
+	reserved, err := sqlc.New().ReadPublicAliasHostReserved(ctx, s.tx, label)
+	encoded, _ := json.Marshal(reserved)
+	s.record("alias-reserved:"+label, encoded, err)
+	return reserved, mapErr(err)
 }

@@ -1025,6 +1025,8 @@ type Querier interface {
 	ReadOpenAPIImportQuota(ctx context.Context, db DBTX, arg ReadOpenAPIImportQuotaParams) (ReadOpenAPIImportQuotaRow, error)
 	// A single statement reads the pointer and its complete membership together.
 	ReadProjectReleaseSet(ctx context.Context, db DBTX, arg ReadProjectReleaseSetParams) ([]byte, error)
+	// Retain the alias claim independently from current owner/target eligibility.
+	ReadPublicAliasHostReserved(ctx context.Context, db DBTX, hostLabel string) (bool, error)
 	ReadPublicHostAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]byte, error)
 	// ADR-375: public host policy reads are credential-minimal and transaction-scoped.
 	ReadPublicHostApp(ctx context.Context, db DBTX, arg ReadPublicHostAppParams) ([]byte, error)

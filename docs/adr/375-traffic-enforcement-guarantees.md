@@ -861,6 +861,31 @@ row before mutation. A changed owner refuses and rolls back; node reassignment
 does not change customer ownership. Unsupported direct SQL remains outside the
 coordinated publication API. Fleet, staging and native acceptance remain open.
 
+### Follow-up: alias reservations and legacy primary fallback
+
+A stored deployment alias reserves its exact configured apps-domain hostname,
+even when its owner or target is temporarily unavailable, failed, cancelled or
+soft-deleted. Resolution may return a routing miss, but that existing alias row
+must not become a different app's primary hostname. A genuinely absent alias
+retains the historical primary-slug fallback. Terminal pipeline outcomes can
+therefore be recorded without publishing a foreign fallback.
+
+Alias-row removal and physical app/account cascades join the shared sorted
+binding-owner guard. Bounded private discovery includes alias reservations and
+potential tag-prefixed primary slugs. Before/after owner views apply alias
+precedence before assigning a primary host's legacy allowance. A newly exposed
+foreign primary starts with zero serving allowance. Alias publication and
+retargeting retain the existing active-target, collision and incremental-repair
+contracts, with captured app ownership checked under the app row lock.
+
+Memory writers analyze proposed alias changes before publishing them. Native
+alias mutations, cascade cleanup and the verdict commit in one transaction.
+Production alias-reservation reads participate in the same public host snapshot
+and its fingerprint; an unavailable reservation read refuses resolution. These
+changes add no plan limits or customer API fields. Immutable revision URL and
+remaining writer/resolver coverage, fleet/staging and native acceptance remain
+separate requirements.
+
 ### Follow-up: bounded request decision evidence
 
 Public-handler requests and managed HTTP service calls receive a separate,

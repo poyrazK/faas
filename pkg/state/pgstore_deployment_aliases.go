@@ -43,7 +43,7 @@ func (s *PgStore) SetDeploymentAlias(ctx context.Context, appID, name, deploymen
 	if !ok {
 		return DeploymentAlias{}, ErrInvalidArgument
 	}
-	tx, err := s.beginTrafficPolicyMutation(ctx, account)
+	tx, err := s.beginAccountAppTrafficMutation(ctx, account.String(), appID)
 	if err != nil {
 		return DeploymentAlias{}, err
 	}
@@ -103,7 +103,12 @@ func (s *PgStore) DeleteDeploymentAlias(ctx context.Context, appID, name string)
 	if !api.ValidDeploymentAliasName(name) {
 		return ErrInvalidArgument
 	}
-	count, err := sqlc.New().DeleteDeploymentAlias(ctx, s.pool, sqlc.DeleteDeploymentAliasParams{
+	tx, err := s.beginAppTrafficMutation(ctx, appID)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	count, err := sqlc.New().DeleteDeploymentAlias(ctx, tx, sqlc.DeleteDeploymentAliasParams{
 		AppID: mustPgUUID(appID), Name: name,
 	})
 	if err != nil {
@@ -112,5 +117,10 @@ func (s *PgStore) DeleteDeploymentAlias(ctx context.Context, appID, name string)
 	if count == 0 {
 		return ErrNotFound
 	}
-	return nil
+	return tx.Commit(ctx)
+}
+
+func (s *PgStore) DeploymentAliasReserved(ctx context.Context, label string) (bool, error) {
+	reserved, err := sqlc.New().ReadPublicAliasHostReserved(ctx, s.pool, label)
+	return reserved, mapErr(err)
 }

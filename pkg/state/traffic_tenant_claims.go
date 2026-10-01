@@ -18,8 +18,9 @@ type trafficTenantClaim struct {
 }
 
 type trafficBindingClaims struct {
-	Domains []trafficDomainClaim
-	Tenants []trafficTenantClaim
+	Domains            []trafficDomainClaim
+	Tenants            []trafficTenantClaim
+	Aliases, Primaries []trafficNamedHostClaim
 }
 
 func (c trafficTenantClaim) eligible() bool {
@@ -47,11 +48,11 @@ func selectTrafficTenantBindings(bindings map[trafficHostDomain]*trafficHostEnvi
 	}
 }
 
-func readTrafficBindingClaims(ctx context.Context, reader sqlc.DBTX) (trafficBindingClaims, error) {
+func readTrafficBindingClaims(ctx context.Context, reader sqlc.DBTX, appsSuffix string) (trafficBindingClaims, error) {
 	bounded, cancel := context.WithTimeout(ctx, api.TrafficPolicyAnalysisSQLTimeout)
 	defer cancel()
 	row, err := sqlc.New().ReadTrafficBindingClaims(bounded, reader, sqlc.ReadTrafficBindingClaimsParams{
-		MaxInputs: api.TrafficPolicyMaxAnalysisInputs, MaxBytes: api.TrafficPolicyMaxAnalysisMetadataBytes,
+		MaxInputs: api.TrafficPolicyMaxAnalysisInputs, MaxBytes: api.TrafficPolicyMaxAnalysisMetadataBytes, AppsSuffix: appsSuffix,
 	})
 	if err != nil {
 		if ctx.Err() != nil {

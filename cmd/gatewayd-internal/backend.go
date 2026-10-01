@@ -108,6 +108,10 @@ func (r pgRouter) resolveHost(ctx context.Context, host string) (gateway.App, bo
 		if app, found, err := r.deploymentAliasByHostLabel(ctx, label); err != nil || found {
 			return app, found, err
 		}
+		reserved, err := r.deploymentAliasReserved(ctx, label)
+		if err != nil || reserved {
+			return gateway.App{}, false, err
+		}
 	}
 	if slug, ok := r.slugFor(host); ok {
 		return r.appBySlug(ctx, slug)
@@ -1462,4 +1466,15 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 		}
 		inv.ResetCorsPresets(n.Payload)
 	}
+}
+
+func (r pgRouter) deploymentAliasReserved(ctx context.Context, label string) (bool, error) {
+	store, ok := r.store.(state.DeploymentAliasReservationStore)
+	if ok {
+		return store.DeploymentAliasReserved(ctx, label)
+	}
+	if _, supportsAliases := r.store.(state.DeploymentAliasRoutingStore); supportsAliases {
+		return false, errors.New("deployment alias reservation reader is unavailable")
+	}
+	return false, nil
 }

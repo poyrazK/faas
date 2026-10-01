@@ -12744,6 +12744,19 @@ func (q *Queries) ReadProjectReleaseSet(ctx context.Context, db DBTX, arg ReadPr
 	return release, err
 }
 
+const readPublicAliasHostReserved = `-- name: ReadPublicAliasHostReserved :one
+SELECT EXISTS(SELECT 1 FROM deployment_aliases
+    WHERE 'tag-'||name||'-'||replace(app_id::text,'-','')=$1::text)::boolean AS reserved
+`
+
+// Retain the alias claim independently from current owner/target eligibility.
+func (q *Queries) ReadPublicAliasHostReserved(ctx context.Context, db DBTX, hostLabel string) (bool, error) {
+	row := db.QueryRow(ctx, readPublicAliasHostReserved, hostLabel)
+	var reserved bool
+	err := row.Scan(&reserved)
+	return reserved, err
+}
+
 const readPublicHostAccount = `-- name: ReadPublicHostAccount :one
 SELECT jsonb_build_object(
     'ID', id,
@@ -13817,21 +13830,37 @@ WITH domains AS (
     LEFT JOIN apps a ON a.id=s.app_id
     LEFT JOIN platform_tenants t ON t.id=s.platform_tenant_id
     ORDER BY h.hostname::text COLLATE "C" LIMIT ($1::integer+1)
+), aliases AS (
+    SELECT jsonb_build_object('Host','tag-'||z.name||'-'||replace(a.id::text,'-','')||$3::text,
+        'App',a.id,'Account',a.account_id) AS data
+    FROM deployment_aliases z JOIN apps a ON a.id=z.app_id
+    WHERE $3::text<>''
+    ORDER BY z.app_id,z.name LIMIT ($1::integer+1)
+), primaries AS (
+    SELECT jsonb_build_object('Host',slug||$3::text,'App',id,'Account',account_id) AS data
+    FROM apps WHERE slug LIKE 'tag-%' AND $3::text<>''
+    ORDER BY slug LIMIT ($1::integer+1)
 ), bounds AS (
-    SELECT (SELECT count(*) FROM domains)+(SELECT count(*) FROM tenants) AS inputs,
+    SELECT (SELECT count(*) FROM domains)+(SELECT count(*) FROM tenants)+
+        (SELECT count(*) FROM aliases)+(SELECT count(*) FROM primaries) AS inputs,
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM domains)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM tenants)+
-        octet_length(jsonb_build_object('Domains','[]'::jsonb,'Tenants','[]'::jsonb)::text) AS bytes
+        (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM aliases)+
+        (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM primaries)+
+        octet_length(jsonb_build_object('Domains','[]'::jsonb,'Tenants','[]'::jsonb,'Aliases','[]'::jsonb,'Primaries','[]'::jsonb)::text) AS bytes
 )
 SELECT CASE WHEN inputs<=$1::integer AND bytes<=$2::bigint
     THEN jsonb_build_object('Domains',(SELECT coalesce(jsonb_agg(data),'[]'::jsonb) FROM domains),
-        'Tenants',(SELECT coalesce(jsonb_agg(data),'[]'::jsonb) FROM tenants)) ELSE NULL::jsonb END::jsonb AS data,
+        'Tenants',(SELECT coalesce(jsonb_agg(data),'[]'::jsonb) FROM tenants),
+        'Aliases',(SELECT coalesce(jsonb_agg(data),'[]'::jsonb) FROM aliases),
+        'Primaries',(SELECT coalesce(jsonb_agg(data),'[]'::jsonb) FROM primaries)) ELSE NULL::jsonb END::jsonb AS data,
     inputs::bigint,bytes::bigint FROM bounds
 `
 
 type ReadTrafficBindingClaimsParams struct {
-	MaxInputs int32
-	MaxBytes  int64
+	MaxInputs  int32
+	MaxBytes   int64
+	AppsSuffix string
 }
 
 type ReadTrafficBindingClaimsRow struct {
@@ -13843,7 +13872,7 @@ type ReadTrafficBindingClaimsRow struct {
 // All hostname reservations, including inactive/deleted surfaces. Discovery
 // transfers only identities and routing eligibility; no challenge or cert data.
 func (q *Queries) ReadTrafficBindingClaims(ctx context.Context, db DBTX, arg ReadTrafficBindingClaimsParams) (ReadTrafficBindingClaimsRow, error) {
-	row := db.QueryRow(ctx, readTrafficBindingClaims, arg.MaxInputs, arg.MaxBytes)
+	row := db.QueryRow(ctx, readTrafficBindingClaims, arg.MaxInputs, arg.MaxBytes, arg.AppsSuffix)
 	var i ReadTrafficBindingClaimsRow
 	err := row.Scan(&i.Data, &i.Inputs, &i.Bytes)
 	return i, err

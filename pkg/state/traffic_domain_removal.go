@@ -29,6 +29,7 @@ type trafficDomainBindingTx struct {
 	pgx.Tx
 	beforeClaims  []trafficDomainClaim
 	beforeTenants []trafficTenantClaim
+	beforeAliases []trafficNamedHostClaim
 	globalBefore  trafficHostAnalysis
 	accounts      []string
 	appsSuffix    string
@@ -103,7 +104,7 @@ func (s *PgStore) beginTrafficDomainBinding(ctx context.Context, domain string, 
 func (s *PgStore) tryBeginTrafficDomainBinding(ctx context.Context, domain string, originalAccount, originalApp pgtype.UUID, requireClaim bool) (*trafficDomainBindingTx, bool, error) {
 	var accounts []string
 	err := boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
-		claims, err := readTrafficBindingClaims(bounded, s.pool)
+		claims, err := readTrafficBindingClaims(bounded, s.pool, s.trafficAppsSuffix)
 		if err != nil {
 			return err
 		}
@@ -135,11 +136,11 @@ func (s *PgStore) tryBeginTrafficDomainBinding(ctx context.Context, domain strin
 			}
 		}
 		var err error
-		claims, err := readTrafficBindingClaims(bounded, tx)
+		claims, err := readTrafficBindingClaims(bounded, tx, s.trafficAppsSuffix)
 		if err != nil {
 			return err
 		}
-		guarded.beforeClaims, guarded.beforeTenants = claims.Domains, claims.Tenants
+		guarded.beforeClaims, guarded.beforeTenants, guarded.beforeAliases = claims.Domains, claims.Tenants, claims.Aliases
 		account, err := sqlc.New().ReadAppTrafficAccount(bounded, tx, originalApp)
 		if err != nil {
 			return err
@@ -185,7 +186,7 @@ func (tx *trafficDomainBindingTx) Commit(ctx context.Context) error {
 	var globalAfter trafficHostAnalysis
 	if err := boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
 		var err error
-		claims, err = readTrafficBindingClaims(bounded, tx.Tx)
+		claims, err = readTrafficBindingClaims(bounded, tx.Tx, tx.appsSuffix)
 		return err
 	}); err != nil {
 		return err
@@ -206,7 +207,7 @@ func (tx *trafficDomainBindingTx) Commit(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			if err := checkTrafficTenantBindingOwner(bounded, view, view, tx.beforeClaims, claims.Domains, tx.beforeTenants, claims.Tenants, account, tx.globalBefore, globalAfter); err != nil {
+			if err := checkTrafficTenantBindingOwner(bounded, trafficPrimaryOwnerView(view, tx.beforeAliases), trafficPrimaryOwnerView(view, claims.Aliases), tx.beforeClaims, claims.Domains, tx.beforeTenants, claims.Tenants, account, tx.globalBefore, globalAfter); err != nil {
 				return err
 			}
 		}

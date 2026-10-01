@@ -42,6 +42,13 @@ func trafficBindingAffectedHosts(claims trafficBindingClaims, account string, re
 			hosts = append(hosts, claim.Domain)
 		}
 	}
+	for _, named := range [][]trafficNamedHostClaim{claims.Aliases, claims.Primaries} {
+		for _, claim := range named {
+			if claim.Account == account {
+				hosts = append(hosts, claim.Host)
+			}
+		}
+	}
 	for i := range hosts {
 		hosts[i] = strings.ToLower(hosts[i])
 	}
@@ -67,6 +74,14 @@ func trafficTenantOverlappingOwners(ctx context.Context, claims trafficBindingCl
 			return nil, err
 		}
 		exact[strings.ToLower(claim.Host)] = append(exact[strings.ToLower(claim.Host)], claim.Account)
+	}
+	for _, named := range [][]trafficNamedHostClaim{claims.Aliases, claims.Primaries} {
+		for _, claim := range named {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			exact[strings.ToLower(claim.Host)] = append(exact[strings.ToLower(claim.Host)], claim.Account)
+		}
 	}
 	for _, host := range hosts {
 		if err := ctx.Err(); err != nil {
@@ -151,7 +166,7 @@ func (s *PgStore) beginTrafficBinding(ctx context.Context, account string, hosts
 func (s *PgStore) tryBeginTrafficBinding(ctx context.Context, account string, requested []string, appID string) (*trafficTenantBindingTx, bool, error) {
 	var hosts, accounts []string
 	err := boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
-		claims, err := readTrafficBindingClaims(bounded, s.pool)
+		claims, err := readTrafficBindingClaims(bounded, s.pool, s.trafficAppsSuffix)
 		if err != nil {
 			return err
 		}
@@ -184,7 +199,7 @@ func (s *PgStore) tryBeginTrafficBinding(ctx context.Context, account string, re
 			}
 		}
 		var err error
-		tx.before, err = readTrafficBindingClaims(bounded, base)
+		tx.before, err = readTrafficBindingClaims(bounded, base, s.trafficAppsSuffix)
 		if err != nil {
 			return err
 		}
@@ -226,7 +241,7 @@ func (tx *trafficTenantBindingTx) validate(ctx context.Context, claims trafficBi
 		return err
 	}
 	for _, owner := range tx.accounts {
-		if err := checkTrafficTenantBindingOwner(ctx, tx.beforeViews[owner], views[owner], tx.before.Domains, claims.Domains, tx.before.Tenants, claims.Tenants, owner, tx.globalBefore, globalAfter); err != nil {
+		if err := checkTrafficTenantBindingOwner(ctx, trafficPrimaryOwnerView(tx.beforeViews[owner], tx.before.Aliases), trafficPrimaryOwnerView(views[owner], claims.Aliases), tx.before.Domains, claims.Domains, tx.before.Tenants, claims.Tenants, owner, tx.globalBefore, globalAfter); err != nil {
 			return err
 		}
 	}
@@ -235,7 +250,7 @@ func (tx *trafficTenantBindingTx) validate(ctx context.Context, claims trafficBi
 
 func (tx *trafficTenantBindingTx) Validate(ctx context.Context) error {
 	return boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
-		claims, err := readTrafficBindingClaims(bounded, tx.Tx)
+		claims, err := readTrafficBindingClaims(bounded, tx.Tx, tx.appsSuffix)
 		if err != nil {
 			return err
 		}

@@ -5550,15 +5550,30 @@ WITH domains AS (
     LEFT JOIN apps a ON a.id=s.app_id
     LEFT JOIN platform_tenants t ON t.id=s.platform_tenant_id
     ORDER BY h.hostname::text COLLATE "C" LIMIT (sqlc.arg(max_inputs)::integer+1)
+), aliases AS (
+    SELECT jsonb_build_object('Host','tag-'||z.name||'-'||replace(a.id::text,'-','')||sqlc.arg(apps_suffix)::text,
+        'App',a.id,'Account',a.account_id) AS data
+    FROM deployment_aliases z JOIN apps a ON a.id=z.app_id
+    WHERE sqlc.arg(apps_suffix)::text<>''
+    ORDER BY z.app_id,z.name LIMIT (sqlc.arg(max_inputs)::integer+1)
+), primaries AS (
+    SELECT jsonb_build_object('Host',slug||sqlc.arg(apps_suffix)::text,'App',id,'Account',account_id) AS data
+    FROM apps WHERE slug LIKE 'tag-%' AND sqlc.arg(apps_suffix)::text<>''
+    ORDER BY slug LIMIT (sqlc.arg(max_inputs)::integer+1)
 ), bounds AS (
-    SELECT (SELECT count(*) FROM domains)+(SELECT count(*) FROM tenants) AS inputs,
+    SELECT (SELECT count(*) FROM domains)+(SELECT count(*) FROM tenants)+
+        (SELECT count(*) FROM aliases)+(SELECT count(*) FROM primaries) AS inputs,
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM domains)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM tenants)+
-        octet_length(jsonb_build_object('Domains','[]'::jsonb,'Tenants','[]'::jsonb)::text) AS bytes
+        (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM aliases)+
+        (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM primaries)+
+        octet_length(jsonb_build_object('Domains','[]'::jsonb,'Tenants','[]'::jsonb,'Aliases','[]'::jsonb,'Primaries','[]'::jsonb)::text) AS bytes
 )
 SELECT CASE WHEN inputs<=sqlc.arg(max_inputs)::integer AND bytes<=sqlc.arg(max_bytes)::bigint
     THEN jsonb_build_object('Domains',(SELECT coalesce(jsonb_agg(data),'[]'::jsonb) FROM domains),
-        'Tenants',(SELECT coalesce(jsonb_agg(data),'[]'::jsonb) FROM tenants)) ELSE NULL::jsonb END::jsonb AS data,
+        'Tenants',(SELECT coalesce(jsonb_agg(data),'[]'::jsonb) FROM tenants),
+        'Aliases',(SELECT coalesce(jsonb_agg(data),'[]'::jsonb) FROM aliases),
+        'Primaries',(SELECT coalesce(jsonb_agg(data),'[]'::jsonb) FROM primaries)) ELSE NULL::jsonb END::jsonb AS data,
     inputs::bigint,bytes::bigint FROM bounds;
 
 -- name: DeleteTrafficCustomDomain :execrows
@@ -5836,3 +5851,8 @@ WITH removed AS (
 )
 UPDATE account_async_quota q SET current_inflight=greatest(q.current_inflight-r.slots,0),updated_at=now()
 FROM reservations r WHERE q.account_id=r.account_id;
+
+-- name: ReadPublicAliasHostReserved :one
+-- Retain the alias claim independently from current owner/target eligibility.
+SELECT EXISTS(SELECT 1 FROM deployment_aliases
+    WHERE 'tag-'||name||'-'||replace(app_id::text,'-','')=sqlc.arg(host_label)::text)::boolean AS reserved;

@@ -2199,3 +2199,81 @@ customer capability and staging qualification, and Linux x86_64 KVM VM/firewall/
 restore/process-death/leak acceptance remain pending. The user reports no KVM
 acceptance host available; that answer remains recorded and no host request is
 repeated.
+
+
+### 2026-10-01 — alias reservations and safe primary fallback
+
+A stored alias now reserves its configured apps-domain hostname even when its
+owner or target cannot serve. Failed, cancelled or cleared deployments and
+deleted or internal owners return a routing miss instead of falling through to
+another app's legacy primary slug. Terminal pipeline outcomes remain writable.
+Genuinely absent aliases retain primary-slug fallback.
+
+Alias removal, physical app purge and account retirement discover raw alias
+reservations and potential `tag-` primary identities within the existing bounds.
+Before/after owner analysis applies alias precedence; a newly exposed primary
+receives no legacy overload allowance. Native alias setters and removers use the
+shared binding transaction and repeat captured app ownership under the app row
+lock. Memory mutations validate proposed mappings before publication. No schema,
+migration, customer API/SDK shape or central limit value changed. SQLC gained a
+reservation query and the private binding projection gained alias/primary arrays.
+
+Public PostgreSQL resolution reads raw reservation state in its host-policy
+snapshot, fingerprints the result and refuses fallback if that read fails.
+Existing dispatch verification rejects a previously resolved alias after its
+mapping or serving eligibility changes. Safe fallback after actual removal and
+transaction release are verified. The reservation-reader failure is injected;
+this is not real fleet/store outage or recovery acceptance.
+
+Shared memory/native regressions cover direct alias deletion, app purge and
+account retirement exposing an oversized foreign header policy. The policy
+owner is not an enabled global route owner, so discovery must find the hidden
+primary owner directly. Refusal and cancellation preserve alias mapping and
+owner/cleanup intent; policy repair allows removal and preserves the foreign app.
+Runtime tests cover failed, cancelled, cleared, deleted-owner and internal-owner
+states. Native metadata tests retain unavailable reservations, omit target/error
+bodies and refuse oversized transfer through both scalar bounds. API tests check
+stable 422 problems, foreign-evidence privacy, retained mapping, activity silence
+and successful removal after repair.
+
+The final 12,471-file source freeze passed:
+
+- Full state, internal gateway, API, reconciliation, GitHub service and grace
+  unit runs: 6,944 named passes, 1,386 guarded/skipped results, 202.007 s.
+- Selected PostgreSQL-enabled traffic/domain/tenant/project/preview/alias/account
+  and reconciliation profile: 660 named passes, zero skips, 341.738 s;
+  state 482, internal gateway 120, API 52, reconciliation 6. This profile includes
+  memory-backed cases alongside real PostgreSQL fixtures.
+- Removing duplicates gives 7,469 distinct named passes: state 2,542, internal
+  gateway 836, API 3,690, reconciliation 77, GitHub service 302, grace 22.
+  There are 937 guarded results without acceptance evidence: state 914,
+  internal gateway 7, API 16.
+- SQLC 1.31.1 reproduced all four generated files. GolangCI-Lint 2.4.0 checked
+  all six packages with tests and reported zero issues in 72.753 s.
+  Runbook SQL, text encoding, shell quoting and ADR numbering checks passed.
+  Accepted gates used complete package source without overlays, exclusions or
+  weakened assertions.
+- Source PostgreSQL public schema remained empty and durability settings stayed
+  enabled. These macOS runs do not provide native VM/network, real daemon fleet,
+  deployed load or staging acceptance.
+
+The original memory baseline accepted unsafe alias deletion and account
+retirement; both refusal assertions remain. An exploratory API build reused an
+existing test-helper name; the new helper was renamed. The focused rerun passed
+before the final freeze and is retained separately from accepted aggregate counts.
+Shared disk pressure required removal of 13 older large files (11,917,501,534
+bytes) from this task's own Go cache, retaining the four newest large files.
+The first broad unit gate started before the cleanup tool closed; only that own
+gate was terminated and its entire run is excluded. The identical source, scope
+and flags passed after cleanup completed. No sibling cache or process was changed.
+Only the operations document and this tracker changed after the gate freeze.
+Evidence is under
+`/Users/poyrazk/dev/Cloud/gregale/outputs/traffic-alias-bindings-20261001/`.
+
+All six release requirements remain unchecked. Next software work includes
+immutable revision URL aggregate projection, remaining operator and alias/revision
+writer/resolver coverage, then complete runtime/preview/synthetic path agreement
+and observations. Real daemon fleet/load/restart/outage/recovery, customer
+capability and staging qualification, and Linux x86_64 KVM VM/firewall/restore/
+process-death/leak acceptance remain pending. The user reports no acceptance host
+available; no further host request is needed until availability changes.

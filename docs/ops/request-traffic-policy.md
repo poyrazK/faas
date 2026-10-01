@@ -722,7 +722,39 @@ or rollback of application side effects. Captured app guards recheck customer
 ownership under an app row lock and refuse a changed owner before mutation.
 Node reassignment changes placement and does not transfer customer ownership.
 
-Legacy alias shadowing/fallback and the remaining operator and alias/revision
-writers and resolvers require separate coverage. VM, firewall, restore,
+Immutable revision URL aggregate projection and the remaining operator and
+alias/revision writer and resolver coverage remain pending. VM, firewall, restore,
 process-death, leak, real fleet/load/recovery and staging acceptance remain
 pending. No native KVM acceptance host is currently available.
+
+
+## Alias reservations and removal
+
+A stored deployment alias reserves its hostname independently from its target's
+current ability to serve. Failed or cancelled deployments, cleared targets and
+deleted or internal owners return a routing miss while the alias mapping remains.
+Terminal pipeline status changes can still be recorded. A genuinely absent alias
+retains the legacy primary-slug fallback.
+
+Removing an alias, permanently purging its app or retiring its account can expose
+a primary hostname owned by another account. These removals use the shared binding
+guard before publication. Discovery includes raw alias reservations and potential
+`tag-` primary slugs within the existing metadata/input caps. A newly exposed
+primary has no legacy overload allowance. A refused removal retains its mapping,
+owner and cleanup intent; repair the affected policy and retry. The existing 422
+traffic-policy problem reports the cap and a proven lower bound without revealing
+another account's witness hostname, policy scope or exact count.
+
+Native alias writes repeat captured ownership under the app row lock and commit
+through the shared binding transaction. Memory writes validate the proposed
+mapping before changing it. Public resolution reads raw reservation state in the
+same PostgreSQL policy snapshot and includes that result in its fingerprint.
+Failure to read the reservation refuses fallback. Dispatch verification rejects
+an alias projection whose mapping or serving eligibility changed before dispatch.
+
+Local memory and PostgreSQL tests cover these transitions, safe primary fallback
+after removal, stale dispatch refusal, reservation-reader failure and transaction
+release. Injected reader failure does not establish real fleet/store outage or
+recovery acceptance. Immutable revision URL aggregate projection, complete path
+agreement, native VM/network/leak checks, fleet/load/recovery and staging
+qualification remain pending.
