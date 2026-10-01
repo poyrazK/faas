@@ -183,6 +183,9 @@ func (s *PgStore) EnqueueKeyedInvocation(ctx context.Context, inv Invocation, po
 		return Invocation{}, fmt.Errorf("state: keyed enqueue begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockInvocationEnvironmentDB(ctx, tx, inv.AppID, inv.AccountID, environment.environment.ID); err != nil {
+		return Invocation{}, err
+	}
 	// The lane row is both a durable sequence and the serialization lock
 	// shared with every keyed claim. Its lock order is lane then account cap.
 	if _, err := tx.Exec(ctx, `
@@ -248,6 +251,7 @@ func (s *PgStore) EnqueueKeyedInvocation(ctx context.Context, inv Invocation, po
 	}
 	if environment.environment.ID != "" {
 		out.CreatedAt = inv.CreatedAt.Truncate(time.Microsecond)
+		out.EnvironmentID = environment.environment.ID
 	}
 	if err := insertInvocationWorkEnvironmentDB(ctx, tx, environment, out); err != nil {
 		return Invocation{}, err

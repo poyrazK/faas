@@ -258,7 +258,7 @@
   {"table": "invocation_work_lanes", "kind": "operational",
     "columns": ["app_id", "key_digest", "next_sequence", "policy_name"]},
   {"table": "invocations", "kind": "operational",
-    "columns": ["account_id", "ack_url", "app_id", "attempts", "completed_at", "created_at", "cron_id", "deadline_at", "due_at", "headers", "id", "instance_id", "last_error", "last_replayed_at", "lease_expires_at", "method", "on_failure_destination_id", "on_success_destination_id", "org_id", "outcome", "path", "payload", "queue_name", "quota_reserved", "received_at", "replayed_from_invocation_id", "result", "result_retention_until", "retry_policy", "scheduled_at", "source", "state", "work_expires_at", "work_fairness_digest", "work_fairness_limit", "work_key_digest", "work_policy_name", "work_policy_revision", "work_sequence"]},
+    "columns": ["account_id", "ack_url", "app_id", "attempts", "completed_at", "created_at", "cron_id", "deadline_at", "due_at", "environment_id", "headers", "id", "instance_id", "last_error", "last_replayed_at", "lease_expires_at", "method", "on_failure_destination_id", "on_success_destination_id", "org_id", "outcome", "path", "payload", "queue_name", "quota_reserved", "received_at", "replayed_from_invocation_id", "result", "result_retention_until", "retry_policy", "scheduled_at", "source", "state", "work_expires_at", "work_fairness_digest", "work_fairness_limit", "work_key_digest", "work_policy_name", "work_policy_revision", "work_sequence"]},
   {"table": "invoice_refunds", "kind": "account_identity",
     "columns": ["amount_cents", "created_at", "id", "idempotency_key", "invoice_id", "provider_refund_id", "source", "status", "updated_at"]},
   {"table": "invoices", "kind": "account_identity",

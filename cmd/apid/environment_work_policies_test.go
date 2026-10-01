@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -173,7 +174,7 @@ func TestEnvironmentWorkPolicyAPIIsolatesConfigAndCancellation(t *testing.T) {
 	}
 }
 
-func TestEnvironmentWorkCancellationFencesDeletion(t *testing.T) {
+func TestEnvironmentWorkCancellationAllowsIdleDeletion(t *testing.T) {
 	srv, store, account, project, app := newProjectLifecycleFixture(t)
 	env, err := store.CreateProjectEnvironment(t.Context(), state.ProjectEnvironment{AccountID: account.ID, ProjectID: project.ID, Slug: "staging"})
 	if err != nil {
@@ -181,15 +182,85 @@ func TestEnvironmentWorkCancellationFencesDeletion(t *testing.T) {
 	}
 	request, response := projectRequest(http.MethodPost, "/v1/apps/"+app.Slug+"/work-policies/orders/cancel-pending?environment=staging", app.Slug, []byte(`{"key":"one"}`))
 	request.SetPathValue("name", "orders")
+	request.Header.Set("Idempotency-Key", "stage-lifecycle-receipt")
 	srv.cancelPendingWork(response, request, account)
 	if response.Code != http.StatusOK {
 		t.Fatalf("empty stage cancellation = %d %s", response.Code, response.Body.String())
 	}
+	var original api.CancelPendingWorkResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &original); err != nil {
+		t.Fatal(err)
+	}
 	request, response = projectRequest(http.MethodDelete, "/v1/projects/"+project.Slug+"/environments/staging", project.Slug, nil)
 	request.SetPathValue("environment", "staging")
 	srv.deleteProjectEnvironment(response, request, account)
-	assertProblem(t, response, http.StatusConflict, "environment_work_cleanup_unavailable")
-	if retained, err := store.ProjectEnvironmentBySlug(t.Context(), account.ID, project.ID, env.Slug); err != nil || retained.ID != env.ID {
-		t.Fatalf("refused deletion removed owned stage: %+v, %v", retained, err)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("idle stage deletion = %d %s", response.Code, response.Body.String())
+	}
+	if _, err := store.ProjectEnvironmentBySlug(t.Context(), account.ID, project.ID, env.Slug); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("deleted stage remains: %v", err)
+	}
+	recreated, err := store.CreateProjectEnvironment(t.Context(), state.ProjectEnvironment{AccountID: account.ID, ProjectID: project.ID, Slug: env.Slug})
+	if err != nil || recreated.ID == env.ID {
+		t.Fatalf("recreated environment identity: %+v, %v", recreated, err)
+	}
+	request, response = projectRequest(http.MethodPost, "/v1/apps/"+app.Slug+"/work-policies/orders/cancel-pending?environment=staging", app.Slug, []byte(`{"key":"one"}`))
+	request.SetPathValue("name", "orders")
+	request.Header.Set("Idempotency-Key", "stage-lifecycle-receipt")
+	srv.cancelPendingWork(response, request, account)
+	var fresh api.CancelPendingWorkResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &fresh); err != nil || response.Code != http.StatusOK || fresh.ID == original.ID {
+		t.Fatalf("recreated stage replayed old receipt: %d %s, %v", response.Code, response.Body.String(), err)
+	}
+}
+
+func TestEnvironmentDeletionReportsRunningWork(t *testing.T) {
+	srv, store, account, project, app := newProjectLifecycleFixture(t)
+	ctx := t.Context()
+	manifest := app.Manifest
+	manifest.RevisionPinTTLSeconds = 3600
+	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: account.ID, ProjectID: project.ID, Slug: "staging"}); err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "staging", Kind: state.DeploymentKindImage})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, dep.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PublishProjectReleaseSet(ctx, account.ID, project.ID, "staging", 1800, []state.ProjectReleaseMember{{AppID: app.ID, DeploymentID: dep.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	prepared, _, err := state.ResolveInvocationVersionForEnvironment(ctx, store,
+		state.Invocation{AppID: app.ID, AccountID: account.ID, Source: state.InvocationAsyncInvoke, Method: "POST", Path: "/work"}, "staging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, err := store.EnqueueInvocation(ctx, prepared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ClaimInvocationWithCap(ctx, row.ID, "", 30, 10); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateDeploymentStatus(ctx, dep.ID, state.DeploySuperseded, ""); err != nil {
+		t.Fatal(err)
+	}
+	remove := func() *httptest.ResponseRecorder {
+		r, w := projectRequest(http.MethodDelete, "/v1/projects/"+project.Slug+"/environments/staging", project.Slug, nil)
+		r.SetPathValue("environment", "staging")
+		srv.deleteProjectEnvironment(w, r, account)
+		return w
+	}
+	assertProblem(t, remove(), http.StatusConflict, "environment_work_busy")
+	if err := store.CompleteInvocation(ctx, row.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	if response := remove(); response.Code != http.StatusNoContent {
+		t.Fatalf("finished stage deletion = %d %s", response.Code, response.Body.String())
 	}
 }

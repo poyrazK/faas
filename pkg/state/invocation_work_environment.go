@@ -36,7 +36,7 @@ type invocationWorkEnvironment struct {
 }
 
 func invocationHasSharedWorkProducer(inv Invocation) bool {
-	if inv.QueueName != "" || (inv.CronID != nil && *inv.CronID != "") {
+	if inv.QueueName != "" || inv.CronID != nil {
 		return true
 	}
 	switch inv.Source {
@@ -98,10 +98,16 @@ func resolveKeyedInvocationEnvironment(ctx context.Context, store interface {
 	}
 	revision, release, err := invocationPinHeaders(headers)
 	if err != nil || (revision == "" && release == "") {
+		if err == nil && inv.EnvironmentID != "" {
+			err = ErrInvalidArgument
+		}
 		return inv, invocationWorkEnvironment{}, err
 	}
 	scope, err := store.ResolveInvocationPinScope(ctx, inv.AppID, revision, release)
 	if err != nil || !invocationStageScope(scope) {
+		if err == nil && inv.EnvironmentID != "" {
+			err = ErrInvalidArgument
+		}
 		return inv, invocationWorkEnvironment{}, err
 	}
 	if !stageKeyedInvocationSupported(inv) {
@@ -110,7 +116,7 @@ func resolveKeyedInvocationEnvironment(ctx context.Context, store interface {
 	// Admission authenticates policy inputs before a row/proof exists. The
 	// delivery resolver requires the persisted proof once those fields exist.
 	base := inv
-	base.ID, base.WorkPolicyName, base.WorkPolicyRevision = "", "", 0
+	base.ID, base.EnvironmentID, base.WorkPolicyName, base.WorkPolicyRevision = "", "", "", 0
 	base.WorkKeyDigest, base.WorkFairnessDigest, base.WorkFairnessLimit = nil, nil, 0
 	base.WorkSequence, base.WorkExpiresAt = 0, nil
 	prepared, version, err := ResolveInvocationVersion(ctx, store, base)
@@ -121,6 +127,9 @@ func resolveKeyedInvocationEnvironment(ctx context.Context, store interface {
 	if err != nil {
 		return inv, info, err
 	}
+	if inv.EnvironmentID != "" && inv.EnvironmentID != info.environment.ID {
+		return inv, info, ErrConflict
+	}
 	if policy.PendingUpdates == "" {
 		policy.PendingUpdates = workpolicy.PendingAll
 	}
@@ -129,6 +138,7 @@ func resolveKeyedInvocationEnvironment(ctx context.Context, store interface {
 		return inv, info, fmt.Errorf("pinned environment work policy differs from admission inputs: %w", ErrConflict)
 	}
 	inv.Headers, inv.WorkPolicyRevision = prepared.Headers, info.policy.Revision
+	inv.EnvironmentID = info.environment.ID
 	return inv, info, nil
 }
 
@@ -175,11 +185,14 @@ func workEnvironmentDomainKey(appID, policyName, kind string, digest []byte) str
 }
 
 func admissionMatchesInvocation(owner InvocationWorkEnvironmentAdmission, inv Invocation) bool {
-	return owner.InvocationID == inv.ID && owner.AppID == inv.AppID && owner.PolicyName == inv.WorkPolicyName && owner.PolicyRevision == inv.WorkPolicyRevision &&
+	return owner.InvocationID == inv.ID && owner.EnvironmentID == inv.EnvironmentID && owner.AppID == inv.AppID && owner.PolicyName == inv.WorkPolicyName && owner.PolicyRevision == inv.WorkPolicyRevision &&
 		bytes.Equal(owner.KeyDigest, inv.WorkKeyDigest) && bytes.Equal(owner.FairnessDigest, inv.WorkFairnessDigest) && owner.FairnessLimit == inv.WorkFairnessLimit
 }
 
 func validateInvocationWorkEnvironmentAdmission(ctx context.Context, store invocationAppReader, inv Invocation, version InvocationVersion) error {
+	if err := validateInvocationEnvironmentOwner(ctx, store, inv, version); err != nil {
+		return err
+	}
 	reader, available := store.(InvocationWorkEnvironmentAdmissionReader)
 	var owner InvocationWorkEnvironmentAdmission
 	var err error

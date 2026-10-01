@@ -5285,9 +5285,6 @@ func (s *PgStore) deleteProjectEnvironmentWithCleanup(
 	if slug == "production" || slug == DefaultEnvScope || protected {
 		return ProjectEnvironmentCleanupJob{}, ErrConflict
 	}
-	if err := rejectEnvironmentWorkOwnershipDB(ctx, tx, accountID, projectID, slug); err != nil {
-		return ProjectEnvironmentCleanupJob{}, err
-	}
 
 	var hasLiveRelease bool
 	if err := tx.QueryRow(ctx, `
@@ -5302,6 +5299,9 @@ func (s *PgStore) deleteProjectEnvironmentWithCleanup(
 	}
 	if hasLiveRelease {
 		return ProjectEnvironmentCleanupJob{}, ErrConflict
+	}
+	if err := cleanupEnvironmentInvocationsDB(ctx, tx, accountID, projectID, slug); err != nil {
+		return ProjectEnvironmentCleanupJob{}, err
 	}
 	var job ProjectEnvironmentCleanupJob
 	if !resources.Empty() {
@@ -15133,7 +15133,7 @@ const invocationSelectCols = `id, app_id, account_id, source, queue_name, state,
        last_replayed_at, on_success_destination_id,
        on_failure_destination_id, work_policy_name, work_key_digest,
        work_expires_at, work_sequence, work_policy_revision,
-       work_fairness_digest, work_fairness_limit`
+       work_fairness_digest, work_fairness_limit, environment_id`
 
 func (s *PgStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invocation, error) {
 	if inv.WorkPolicyName != "" {
@@ -15142,7 +15142,33 @@ func (s *PgStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invoca
 	if err := validateInvocationWorkEnvironment(ctx, s, inv, false); err != nil {
 		return Invocation{}, err
 	}
-	return enqueueInvocationRow(ctx, s.pool, inv)
+	inv, info, err := resolveInvocationEnvironmentAdmission(ctx, s, inv)
+	if err != nil {
+		return Invocation{}, err
+	}
+	if info.environment.ID == "" {
+		return enqueueInvocationRow(ctx, s.pool, inv)
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Invocation{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockInvocationEnvironmentDB(ctx, tx, inv.AppID, inv.AccountID, info.environment.ID); err != nil {
+		return Invocation{}, err
+	}
+	out, err := enqueueInvocationRow(ctx, tx, inv)
+	if err != nil {
+		return Invocation{}, err
+	}
+	if err := bindInvocationEnvironmentDB(ctx, tx, info, out); err != nil {
+		return Invocation{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Invocation{}, err
+	}
+	out.EnvironmentID = info.environment.ID
+	return out, nil
 }
 
 type invocationRowWriter interface {
@@ -15420,6 +15446,14 @@ func (s *PgStore) ListDueInvocationsAfter(ctx context.Context, now time.Time, af
 // rejects with ErrNotFound so the drain retries on the next tick
 // (matches MemStore and matches the SKIP LOCKED precedent).
 func (s *PgStore) ClaimInvocation(ctx context.Context, id, instanceID string, leaseSeconds int) (Invocation, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Invocation{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockInvocationEnvironmentClaimDB(ctx, tx, id); err != nil {
+		return Invocation{}, err
+	}
 	// pgx v5.10's text-format encoder can't carry an int through a
 	// `||` text-concat in `text || text → interval`. Local Postgres
 	// accepts the implicit form, but the Postgres 15 image on GH
@@ -15428,7 +15462,7 @@ func (s *PgStore) ClaimInvocation(ctx context.Context, id, instanceID string, le
 	// unit suffix so pgx encodes a string (no encode-plan lookup)
 	// and Postgres parses it as interval.
 	leaseText := strconv.Itoa(leaseSeconds) + " seconds"
-	row := s.pool.QueryRow(ctx, `
+	row := tx.QueryRow(ctx, `
 		update invocations
 		   set state = 'dispatching',
 		       quota_reserved = false,
@@ -15445,6 +15479,9 @@ func (s *PgStore) ClaimInvocation(ctx context.Context, id, instanceID string, le
 			return Invocation{}, ErrNotFound
 		}
 		return Invocation{}, mapErr(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Invocation{}, err
 	}
 	return inv, nil
 }
@@ -16439,6 +16476,7 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 	var workPolicyRevision *int64
 	var workFairnessDigest []byte
 	var workFairnessLimit *int
+	var environmentID *string
 	if err := scan(
 		&inv.ID, &inv.AppID, &inv.AccountID, &source, &queueName, &state, &inv.Method, &inv.Path,
 		&payload, &headers, &inv.DueAt, &scheduledAt, &cronID, &ackURL,
@@ -16447,12 +16485,15 @@ func scanInvocationCols(scan func(...any) error) (Invocation, error) {
 		&deadlineAt, &retryPolicy, &retentionUntil,
 		&lastReplayedAt, &onSuccessDestination, &onFailureDestination,
 		&workPolicyName, &workKeyDigest, &workExpiresAt, &workSequence, &workPolicyRevision,
-		&workFairnessDigest, &workFairnessLimit,
+		&workFairnessDigest, &workFairnessLimit, &environmentID,
 	); err != nil {
 		return Invocation{}, err
 	}
 	inv.Source = InvocationSource(source)
 	inv.QueueName = queueName
+	if environmentID != nil {
+		inv.EnvironmentID = *environmentID
+	}
 	if workPolicyName != nil {
 		inv.WorkPolicyName = *workPolicyName
 	}
@@ -32031,6 +32072,9 @@ func (s *PgStore) ClaimInvocationWithCap(ctx context.Context, id, instanceID str
 		return Invocation{}, fmt.Errorf("state: invocations claim cap begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockInvocationEnvironmentClaimDB(ctx, tx, id); err != nil {
+		return Invocation{}, err
+	}
 
 	// Read account_id off the row, then upsert the cap row with
 	// maxInflight from the caller. The upsert is a no-op for

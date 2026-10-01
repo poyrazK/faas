@@ -659,6 +659,45 @@ func (q *Queries) AttachProjectEnvironmentCloneDeployment(ctx context.Context, d
 	return result.RowsAffected(), nil
 }
 
+const bindInvocationEnvironment = `-- name: BindInvocationEnvironment :execrows
+UPDATE invocations i SET environment_id=e.id
+FROM project_environments e JOIN apps a ON a.project_id=e.project_id AND a.account_id=e.account_id
+JOIN deployments d ON d.app_id=a.id AND d.scope=e.slug AND d.status='live'
+WHERE i.id=$1::uuid AND i.app_id=a.id AND i.account_id=a.account_id
+    AND a.id=$2::uuid AND a.account_id=$3::uuid AND a.status<>'deleted'
+    AND e.id=$4::uuid AND e.slug NOT IN ('production','default')
+    AND d.id=$5::uuid AND (i.environment_id IS NULL OR i.environment_id=e.id)
+    AND i.source IN ('async_invoke','delayed_task') AND i.cron_id IS NULL AND i.queue_name=''
+    AND i.on_success_destination_id IS NULL AND i.on_failure_destination_id IS NULL
+    AND ((d.id::text=lower(i.headers->>'X-Gregale-Revision') AND NOT i.headers ? 'X-Gregale-Release')
+        OR (NOT i.headers ? 'X-Gregale-Revision' AND EXISTS(SELECT 1 FROM project_release_sets r
+            JOIN project_release_members m ON m.release_id=r.id AND m.app_id=a.id AND m.deployment_id=d.id
+            WHERE r.id::text=lower(i.headers->>'X-Gregale-Release') AND r.project_id=e.project_id AND r.account_id=e.account_id
+                AND r.environment_slug=e.slug AND (r.expires_at IS NULL OR r.expires_at>now()))))
+`
+
+type BindInvocationEnvironmentParams struct {
+	InvocationID  pgtype.UUID
+	AppID         pgtype.UUID
+	AccountID     pgtype.UUID
+	EnvironmentID pgtype.UUID
+	DeploymentID  pgtype.UUID
+}
+
+func (q *Queries) BindInvocationEnvironment(ctx context.Context, db DBTX, arg BindInvocationEnvironmentParams) (int64, error) {
+	result, err := db.Exec(ctx, bindInvocationEnvironment,
+		arg.InvocationID,
+		arg.AppID,
+		arg.AccountID,
+		arg.EnvironmentID,
+		arg.DeploymentID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const buildByDeployment = `-- name: BuildByDeployment :one
 select id, deployment_id, kind, source_bytes, status, failure_class, log_path, started_at, finished_at, enqueued_at, cache_status, cache_key_sha256
 from builds where deployment_id = $1 order by started_at desc nulls last limit 1
@@ -1687,7 +1726,7 @@ func (q *Queries) CreateInstance(ctx context.Context, db DBTX, arg CreateInstanc
 
 const createInvocationWorkEnvironmentAdmission = `-- name: CreateInvocationWorkEnvironmentAdmission :execrows
 WITH admitted AS (
-    UPDATE invocations SET created_at=$13::timestamptz
+    UPDATE invocations SET created_at=$13::timestamptz,environment_id=$4::uuid
     WHERE id=$1::uuid AND app_id=$2::uuid AND account_id=$3::uuid
     RETURNING id,app_id,account_id,work_policy_name,work_policy_revision,work_key_digest,work_fairness_digest,work_fairness_limit
 )
@@ -2302,6 +2341,47 @@ func (q *Queries) DeleteDeploymentAlias(ctx context.Context, db DBTX, arg Delete
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const deleteEnvironmentInvocations = `-- name: DeleteEnvironmentInvocations :execrows
+DELETE FROM invocations WHERE environment_id=$1
+`
+
+func (q *Queries) DeleteEnvironmentInvocations(ctx context.Context, db DBTX, environmentID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, deleteEnvironmentInvocations, environmentID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteEnvironmentWorkDomains = `-- name: DeleteEnvironmentWorkDomains :exec
+DELETE FROM invocation_work_environment_domains WHERE environment_id=$1
+`
+
+func (q *Queries) DeleteEnvironmentWorkDomains(ctx context.Context, db DBTX, environmentID pgtype.UUID) error {
+	_, err := db.Exec(ctx, deleteEnvironmentWorkDomains, environmentID)
+	return err
+}
+
+const deleteEnvironmentWorkFairnessLanes = `-- name: DeleteEnvironmentWorkFairnessLanes :exec
+DELETE FROM invocation_work_fairness_lanes l USING invocation_work_environment_domains d
+WHERE d.environment_id=$1 AND d.kind='fairness' AND l.app_id=d.app_id AND l.policy_name=d.policy_name AND l.fairness_digest=d.digest
+`
+
+func (q *Queries) DeleteEnvironmentWorkFairnessLanes(ctx context.Context, db DBTX, environmentID pgtype.UUID) error {
+	_, err := db.Exec(ctx, deleteEnvironmentWorkFairnessLanes, environmentID)
+	return err
+}
+
+const deleteEnvironmentWorkKeyLanes = `-- name: DeleteEnvironmentWorkKeyLanes :exec
+DELETE FROM invocation_work_lanes l USING invocation_work_environment_domains d
+WHERE d.environment_id=$1 AND d.kind='key' AND l.app_id=d.app_id AND l.policy_name=d.policy_name AND l.key_digest=d.digest
+`
+
+func (q *Queries) DeleteEnvironmentWorkKeyLanes(ctx context.Context, db DBTX, environmentID pgtype.UUID) error {
+	_, err := db.Exec(ctx, deleteEnvironmentWorkKeyLanes, environmentID)
+	return err
 }
 
 const deleteEventSubscription = `-- name: DeleteEventSubscription :exec
@@ -9167,6 +9247,43 @@ func (q *Queries) LockCreditConsumption(ctx context.Context, db DBTX, providerIn
 	return err
 }
 
+const lockEnvironmentInvocationCleanup = `-- name: LockEnvironmentInvocationCleanup :one
+SELECT id FROM project_environments WHERE account_id=$1 AND project_id=$2 AND slug=$3 FOR UPDATE
+`
+
+type LockEnvironmentInvocationCleanupParams struct {
+	AccountID pgtype.UUID
+	ProjectID pgtype.UUID
+	Slug      string
+}
+
+func (q *Queries) LockEnvironmentInvocationCleanup(ctx context.Context, db DBTX, arg LockEnvironmentInvocationCleanupParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockEnvironmentInvocationCleanup, arg.AccountID, arg.ProjectID, arg.Slug)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockInvocationEnvironmentAdmission = `-- name: LockInvocationEnvironmentAdmission :one
+SELECT e.id FROM project_environments e JOIN apps a ON a.project_id=e.project_id AND a.account_id=e.account_id
+WHERE e.id=$1::uuid AND e.slug NOT IN ('production','default')
+    AND a.id=$2::uuid AND a.account_id=$3::uuid AND a.status<>'deleted'
+FOR KEY SHARE OF e
+`
+
+type LockInvocationEnvironmentAdmissionParams struct {
+	EnvironmentID pgtype.UUID
+	AppID         pgtype.UUID
+	AccountID     pgtype.UUID
+}
+
+func (q *Queries) LockInvocationEnvironmentAdmission(ctx context.Context, db DBTX, arg LockInvocationEnvironmentAdmissionParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockInvocationEnvironmentAdmission, arg.EnvironmentID, arg.AppID, arg.AccountID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockInvoiceForRefund = `-- name: LockInvoiceForRefund :one
 SELECT account_id, provider, provider_invoice_id, amount_paid_cents,
        total_cents, amount_refunded_cents, amount_refund_pending_cents, credits_applied_cents
@@ -13411,26 +13528,6 @@ func (q *Queries) ProjectEnvironmentCloneSecretTargetExists(ctx context.Context,
 	return column_1, err
 }
 
-const projectEnvironmentHasInvocationWorkOwnership = `-- name: ProjectEnvironmentHasInvocationWorkOwnership :one
-SELECT EXISTS(SELECT 1 FROM invocation_work_environment_domains d JOIN project_environments e ON e.id=d.environment_id
-    WHERE e.account_id=$1::uuid AND e.project_id=$2::uuid AND e.slug=$3::text)
-    OR EXISTS(SELECT 1 FROM invocation_work_environment_admissions a JOIN project_environments e ON e.id=a.environment_id
-        WHERE e.account_id=$1::uuid AND e.project_id=$2::uuid AND e.slug=$3::text) AS has_ownership
-`
-
-type ProjectEnvironmentHasInvocationWorkOwnershipParams struct {
-	AccountID   pgtype.UUID
-	ProjectID   pgtype.UUID
-	Environment string
-}
-
-func (q *Queries) ProjectEnvironmentHasInvocationWorkOwnership(ctx context.Context, db DBTX, arg ProjectEnvironmentHasInvocationWorkOwnershipParams) (pgtype.Bool, error) {
-	row := db.QueryRow(ctx, projectEnvironmentHasInvocationWorkOwnership, arg.AccountID, arg.ProjectID, arg.Environment)
-	var has_ownership pgtype.Bool
-	err := row.Scan(&has_ownership)
-	return has_ownership, err
-}
-
 const pruneDataUpstreamProbesOlderThan = `-- name: PruneDataUpstreamProbesOlderThan :exec
 DELETE FROM data_upstream_probes WHERE sampled_at < $1
 `
@@ -13504,6 +13601,23 @@ func (q *Queries) ReadDeploymentLayerArtifactKeys(ctx context.Context, db DBTX, 
 		return nil, err
 	}
 	return items, nil
+}
+
+const readInvocationEnvironmentOwner = `-- name: ReadInvocationEnvironmentOwner :one
+SELECT coalesce(environment_id::text,'')::text AS environment_id,app_id,account_id FROM invocations WHERE id=$1::uuid
+`
+
+type ReadInvocationEnvironmentOwnerRow struct {
+	EnvironmentID string
+	AppID         pgtype.UUID
+	AccountID     pgtype.UUID
+}
+
+func (q *Queries) ReadInvocationEnvironmentOwner(ctx context.Context, db DBTX, invocationID pgtype.UUID) (ReadInvocationEnvironmentOwnerRow, error) {
+	row := db.QueryRow(ctx, readInvocationEnvironmentOwner, invocationID)
+	var i ReadInvocationEnvironmentOwnerRow
+	err := row.Scan(&i.EnvironmentID, &i.AppID, &i.AccountID)
+	return i, err
 }
 
 const readInvocationPinScope = `-- name: ReadInvocationPinScope :one
@@ -18708,6 +18822,75 @@ func (q *Queries) UsageByMonth(ctx context.Context, db DBTX, arg UsageByMonthPar
 	return items, nil
 }
 
+const validateEnvironmentInvocationCleanup = `-- name: ValidateEnvironmentInvocationCleanup :one
+SELECT
+    EXISTS(SELECT 1 FROM invocations i WHERE i.environment_id=e.id AND (i.state='dispatching' OR i.quota_reserved)) AS busy,
+    EXISTS(SELECT 1 FROM invocations i LEFT JOIN apps a ON a.id=i.app_id
+        WHERE i.environment_id=e.id AND (a.id IS NULL OR a.project_id<>e.project_id OR a.account_id<>e.account_id OR i.account_id<>e.account_id
+            OR i.source NOT IN ('async_invoke','delayed_task') OR i.cron_id IS NOT NULL OR i.queue_name<>''
+            OR i.on_success_destination_id IS NOT NULL OR i.on_failure_destination_id IS NOT NULL
+            OR (i.work_policy_name IS NULL AND EXISTS(SELECT 1 FROM invocation_work_environment_admissions p WHERE p.invocation_id=i.id))
+            OR (i.work_policy_name IS NOT NULL AND NOT EXISTS(
+                SELECT 1 FROM invocation_work_environment_admissions p
+                JOIN project_environment_workload_specs s ON s.id=p.workload_spec_id AND s.environment_id=p.environment_id AND s.app_id=p.app_id AND s.config_hash=p.settings_hash
+                JOIN invocation_work_environment_domains k ON k.environment_id=p.environment_id AND k.app_id=p.app_id AND k.policy_name=p.policy_name AND k.kind='key' AND k.digest=p.key_digest
+                WHERE p.invocation_id=i.id AND p.environment_id=e.id AND p.app_id=i.app_id AND p.policy_name=i.work_policy_name
+                    AND p.policy_revision=i.work_policy_revision AND p.key_digest=i.work_key_digest
+                    AND p.fairness_digest IS NOT DISTINCT FROM i.work_fairness_digest AND p.fairness_limit=coalesce(i.work_fairness_limit,0)
+                    AND (p.fairness_limit=0 OR EXISTS(SELECT 1 FROM invocation_work_environment_domains f
+                        WHERE f.environment_id=e.id AND f.app_id=p.app_id AND f.policy_name=p.policy_name AND f.kind='fairness' AND f.digest=p.fairness_digest))))))
+    OR EXISTS(SELECT 1 FROM invocation_work_environment_admissions p JOIN invocations i ON i.id=p.invocation_id
+        WHERE p.environment_id=e.id AND i.environment_id IS DISTINCT FROM e.id)
+    OR EXISTS(SELECT 1 FROM invocation_work_environment_domains d LEFT JOIN apps a ON a.id=d.app_id
+        WHERE d.environment_id=e.id AND (a.id IS NULL OR a.project_id<>e.project_id OR a.account_id<>e.account_id))
+    OR EXISTS(SELECT 1 FROM invocation_work_environment_domains d JOIN invocations i ON i.app_id=d.app_id AND i.work_policy_name=d.policy_name
+        AND ((d.kind='key' AND i.work_key_digest=d.digest) OR (d.kind='fairness' AND i.work_fairness_digest=d.digest))
+        WHERE d.environment_id=e.id AND i.environment_id IS DISTINCT FROM e.id)
+    OR EXISTS(SELECT 1 FROM invocation_work_environment_domains d JOIN triggers t ON t.app_id=d.app_id
+        JOIN trigger_records r ON r.trigger_id=t.id AND r.work_policy_name=d.policy_name
+            AND ((d.kind='key' AND r.work_key_digest=d.digest) OR (d.kind='fairness' AND r.work_fairness_digest=d.digest))
+        WHERE d.environment_id=e.id) AS invalid
+FROM project_environments e WHERE e.id=$1::uuid
+`
+
+type ValidateEnvironmentInvocationCleanupRow struct {
+	Busy    bool
+	Invalid pgtype.Bool
+}
+
+func (q *Queries) ValidateEnvironmentInvocationCleanup(ctx context.Context, db DBTX, environmentID pgtype.UUID) (ValidateEnvironmentInvocationCleanupRow, error) {
+	row := db.QueryRow(ctx, validateEnvironmentInvocationCleanup, environmentID)
+	var i ValidateEnvironmentInvocationCleanupRow
+	err := row.Scan(&i.Busy, &i.Invalid)
+	return i, err
+}
+
+const validateInvocationEnvironmentClaim = `-- name: ValidateInvocationEnvironmentClaim :one
+SELECT CASE WHEN i.environment_id IS NULL THEN
+    NOT (EXISTS(SELECT 1 FROM deployments d WHERE d.app_id=i.app_id AND d.id::text=lower(i.headers->>'X-Gregale-Revision') AND d.scope NOT IN ('production','default'))
+        OR EXISTS(SELECT 1 FROM project_release_sets r JOIN apps a ON a.project_id=r.project_id AND a.account_id=r.account_id
+            WHERE a.id=i.app_id AND r.id::text=lower(i.headers->>'X-Gregale-Release') AND r.environment_slug NOT IN ('production','default')))
+ELSE EXISTS(SELECT 1 FROM project_environments e JOIN apps a ON a.project_id=e.project_id AND a.account_id=e.account_id
+    JOIN deployments d ON d.app_id=a.id AND d.scope=e.slug AND d.status='live'
+    WHERE e.id=i.environment_id AND e.slug NOT IN ('production','default') AND a.id=i.app_id AND a.account_id=i.account_id AND a.status<>'deleted'
+        AND i.source IN ('async_invoke','delayed_task') AND i.cron_id IS NULL AND i.queue_name=''
+        AND i.on_success_destination_id IS NULL AND i.on_failure_destination_id IS NULL
+        AND ((d.id::text=lower(i.headers->>'X-Gregale-Revision') AND NOT i.headers ? 'X-Gregale-Release')
+            OR (NOT i.headers ? 'X-Gregale-Revision' AND EXISTS(SELECT 1 FROM project_release_sets r
+                JOIN project_release_members m ON m.release_id=r.id AND m.app_id=a.id AND m.deployment_id=d.id
+                WHERE r.id::text=lower(i.headers->>'X-Gregale-Release') AND r.project_id=e.project_id AND r.account_id=e.account_id
+                    AND r.environment_slug=e.slug AND (r.expires_at IS NULL OR r.expires_at>now())))))
+END::boolean AS owner_valid
+FROM invocations i WHERE i.id=$1::uuid
+`
+
+func (q *Queries) ValidateInvocationEnvironmentClaim(ctx context.Context, db DBTX, invocationID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, validateInvocationEnvironmentClaim, invocationID)
+	var owner_valid bool
+	err := row.Scan(&owner_valid)
+	return owner_valid, err
+}
+
 const validateInvocationWorkEnvironmentClaim = `-- name: ValidateInvocationWorkEnvironmentClaim :one
 SELECT
     EXISTS(SELECT 1 FROM deployments d WHERE d.app_id=i.app_id AND d.id::text=lower(i.headers->>'X-Gregale-Revision')
@@ -18722,7 +18905,7 @@ SELECT
         JOIN project_environment_workload_specs s ON s.id=p.workload_spec_id AND s.environment_id=e.id AND s.app_id=a.id AND s.config_hash=p.settings_hash
         JOIN project_environment_workload_deployment_specs ds ON ds.spec_id=s.id
         JOIN deployments d ON d.id=ds.deployment_id AND d.app_id=a.id AND d.scope=e.slug AND d.status='live'
-        WHERE p.invocation_id=i.id AND p.app_id=i.app_id AND p.policy_name=i.work_policy_name
+        WHERE p.invocation_id=i.id AND p.environment_id=i.environment_id AND p.app_id=i.app_id AND p.policy_name=i.work_policy_name
             AND p.policy_revision=i.work_policy_revision AND p.key_digest=i.work_key_digest
             AND p.fairness_digest IS NOT DISTINCT FROM i.work_fairness_digest AND p.fairness_limit=coalesce(i.work_fairness_limit,0)
             AND (p.fairness_limit=0 OR EXISTS(SELECT 1 FROM invocation_work_environment_domains f

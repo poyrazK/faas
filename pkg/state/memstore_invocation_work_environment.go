@@ -138,20 +138,6 @@ func (m *MemStore) validateWorkEnvironmentClaimLocked(inv Invocation) error {
 	return nil
 }
 
-func (m *MemStore) environmentHasWorkDomainsLocked(environmentID string) bool {
-	for _, ownerID := range m.invocationWorkEnvironmentDomains {
-		if ownerID == environmentID {
-			return true
-		}
-	}
-	for _, owner := range m.invocationWorkEnvironmentAdmissions {
-		if owner.EnvironmentID == environmentID {
-			return true
-		}
-	}
-	return false
-}
-
 func (m *MemStore) deleteAppWorkOwnershipLocked(appID string) {
 	for key := range m.invocationWorkEnvironmentDomains {
 		if strings.HasPrefix(key, appID+"\x00") {

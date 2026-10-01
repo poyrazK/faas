@@ -116,15 +116,3 @@ func validateWorkEnvironmentClaimDB(ctx context.Context, db sqlc.DBTX, id, appID
 	}
 	return nil
 }
-
-func rejectEnvironmentWorkOwnershipDB(ctx context.Context, db sqlc.DBTX, accountID, projectID, environment string) error {
-	owned, err := sqlc.New().ProjectEnvironmentHasInvocationWorkOwnership(ctx, db, sqlc.ProjectEnvironmentHasInvocationWorkOwnershipParams{
-		AccountID: mustPgUUID(accountID), ProjectID: mustPgUUID(projectID), Environment: environment})
-	if err != nil {
-		return err
-	}
-	if owned.Bool {
-		return ErrInvocationEnvironmentWorkIsolation
-	}
-	return nil
-}

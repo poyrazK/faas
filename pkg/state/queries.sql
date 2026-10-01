@@ -5526,7 +5526,7 @@ WHERE app_id=sqlc.arg(app_id)::uuid AND policy_name=sqlc.arg(policy_name)::text
 -- One server admission clock anchors the stage's debounce, expiry and created
 -- time. The legacy insert otherwise uses PostgreSQL's transaction-start clock.
 WITH admitted AS (
-    UPDATE invocations SET created_at=sqlc.arg(admitted_at)::timestamptz
+    UPDATE invocations SET created_at=sqlc.arg(admitted_at)::timestamptz,environment_id=sqlc.arg(environment_id)::uuid
     WHERE id=sqlc.arg(invocation_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND account_id=sqlc.arg(account_id)::uuid
     RETURNING id,app_id,account_id,work_policy_name,work_policy_revision,work_key_digest,work_fairness_digest,work_fairness_limit
 )
@@ -5565,7 +5565,7 @@ SELECT
         JOIN project_environment_workload_specs s ON s.id=p.workload_spec_id AND s.environment_id=e.id AND s.app_id=a.id AND s.config_hash=p.settings_hash
         JOIN project_environment_workload_deployment_specs ds ON ds.spec_id=s.id
         JOIN deployments d ON d.id=ds.deployment_id AND d.app_id=a.id AND d.scope=e.slug AND d.status='live'
-        WHERE p.invocation_id=i.id AND p.app_id=i.app_id AND p.policy_name=i.work_policy_name
+        WHERE p.invocation_id=i.id AND p.environment_id=i.environment_id AND p.app_id=i.app_id AND p.policy_name=i.work_policy_name
             AND p.policy_revision=i.work_policy_revision AND p.key_digest=i.work_key_digest
             AND p.fairness_digest IS NOT DISTINCT FROM i.work_fairness_digest AND p.fairness_limit=coalesce(i.work_fairness_limit,0)
             AND (p.fairness_limit=0 OR EXISTS(SELECT 1 FROM invocation_work_environment_domains f
@@ -5580,8 +5580,92 @@ SELECT
                         AND r.environment_slug=e.slug AND (r.expires_at IS NULL OR r.expires_at>now()))))) AS admission_valid
 FROM invocations i WHERE i.id=sqlc.arg(invocation_id)::uuid;
 
--- name: ProjectEnvironmentHasInvocationWorkOwnership :one
-SELECT EXISTS(SELECT 1 FROM invocation_work_environment_domains d JOIN project_environments e ON e.id=d.environment_id
-    WHERE e.account_id=sqlc.arg(account_id)::uuid AND e.project_id=sqlc.arg(project_id)::uuid AND e.slug=sqlc.arg(environment)::text)
-    OR EXISTS(SELECT 1 FROM invocation_work_environment_admissions a JOIN project_environments e ON e.id=a.environment_id
-        WHERE e.account_id=sqlc.arg(account_id)::uuid AND e.project_id=sqlc.arg(project_id)::uuid AND e.slug=sqlc.arg(environment)::text) AS has_ownership;
+-- name: LockInvocationEnvironmentAdmission :one
+SELECT e.id FROM project_environments e JOIN apps a ON a.project_id=e.project_id AND a.account_id=e.account_id
+WHERE e.id=sqlc.arg(environment_id)::uuid AND e.slug NOT IN ('production','default')
+    AND a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted'
+FOR KEY SHARE OF e;
+
+-- name: BindInvocationEnvironment :execrows
+UPDATE invocations i SET environment_id=e.id
+FROM project_environments e JOIN apps a ON a.project_id=e.project_id AND a.account_id=e.account_id
+JOIN deployments d ON d.app_id=a.id AND d.scope=e.slug AND d.status='live'
+WHERE i.id=sqlc.arg(invocation_id)::uuid AND i.app_id=a.id AND i.account_id=a.account_id
+    AND a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted'
+    AND e.id=sqlc.arg(environment_id)::uuid AND e.slug NOT IN ('production','default')
+    AND d.id=sqlc.arg(deployment_id)::uuid AND (i.environment_id IS NULL OR i.environment_id=e.id)
+    AND i.source IN ('async_invoke','delayed_task') AND i.cron_id IS NULL AND i.queue_name=''
+    AND i.on_success_destination_id IS NULL AND i.on_failure_destination_id IS NULL
+    AND ((d.id::text=lower(i.headers->>'X-Gregale-Revision') AND NOT i.headers ? 'X-Gregale-Release')
+        OR (NOT i.headers ? 'X-Gregale-Revision' AND EXISTS(SELECT 1 FROM project_release_sets r
+            JOIN project_release_members m ON m.release_id=r.id AND m.app_id=a.id AND m.deployment_id=d.id
+            WHERE r.id::text=lower(i.headers->>'X-Gregale-Release') AND r.project_id=e.project_id AND r.account_id=e.account_id
+                AND r.environment_slug=e.slug AND (r.expires_at IS NULL OR r.expires_at>now()))));
+
+-- name: ReadInvocationEnvironmentOwner :one
+SELECT coalesce(environment_id::text,'')::text AS environment_id,app_id,account_id FROM invocations WHERE id=sqlc.arg(invocation_id)::uuid;
+
+-- name: ValidateInvocationEnvironmentClaim :one
+SELECT CASE WHEN i.environment_id IS NULL THEN
+    NOT (EXISTS(SELECT 1 FROM deployments d WHERE d.app_id=i.app_id AND d.id::text=lower(i.headers->>'X-Gregale-Revision') AND d.scope NOT IN ('production','default'))
+        OR EXISTS(SELECT 1 FROM project_release_sets r JOIN apps a ON a.project_id=r.project_id AND a.account_id=r.account_id
+            WHERE a.id=i.app_id AND r.id::text=lower(i.headers->>'X-Gregale-Release') AND r.environment_slug NOT IN ('production','default')))
+ELSE EXISTS(SELECT 1 FROM project_environments e JOIN apps a ON a.project_id=e.project_id AND a.account_id=e.account_id
+    JOIN deployments d ON d.app_id=a.id AND d.scope=e.slug AND d.status='live'
+    WHERE e.id=i.environment_id AND e.slug NOT IN ('production','default') AND a.id=i.app_id AND a.account_id=i.account_id AND a.status<>'deleted'
+        AND i.source IN ('async_invoke','delayed_task') AND i.cron_id IS NULL AND i.queue_name=''
+        AND i.on_success_destination_id IS NULL AND i.on_failure_destination_id IS NULL
+        AND ((d.id::text=lower(i.headers->>'X-Gregale-Revision') AND NOT i.headers ? 'X-Gregale-Release')
+            OR (NOT i.headers ? 'X-Gregale-Revision' AND EXISTS(SELECT 1 FROM project_release_sets r
+                JOIN project_release_members m ON m.release_id=r.id AND m.app_id=a.id AND m.deployment_id=d.id
+                WHERE r.id::text=lower(i.headers->>'X-Gregale-Release') AND r.project_id=e.project_id AND r.account_id=e.account_id
+                    AND r.environment_slug=e.slug AND (r.expires_at IS NULL OR r.expires_at>now())))))
+END::boolean AS owner_valid
+FROM invocations i WHERE i.id=sqlc.arg(invocation_id)::uuid;
+
+-- name: LockEnvironmentInvocationCleanup :one
+SELECT id FROM project_environments WHERE account_id=$1 AND project_id=$2 AND slug=$3 FOR UPDATE;
+
+-- name: ValidateEnvironmentInvocationCleanup :one
+SELECT
+    EXISTS(SELECT 1 FROM invocations i WHERE i.environment_id=e.id AND (i.state='dispatching' OR i.quota_reserved)) AS busy,
+    EXISTS(SELECT 1 FROM invocations i LEFT JOIN apps a ON a.id=i.app_id
+        WHERE i.environment_id=e.id AND (a.id IS NULL OR a.project_id<>e.project_id OR a.account_id<>e.account_id OR i.account_id<>e.account_id
+            OR i.source NOT IN ('async_invoke','delayed_task') OR i.cron_id IS NOT NULL OR i.queue_name<>''
+            OR i.on_success_destination_id IS NOT NULL OR i.on_failure_destination_id IS NOT NULL
+            OR (i.work_policy_name IS NULL AND EXISTS(SELECT 1 FROM invocation_work_environment_admissions p WHERE p.invocation_id=i.id))
+            OR (i.work_policy_name IS NOT NULL AND NOT EXISTS(
+                SELECT 1 FROM invocation_work_environment_admissions p
+                JOIN project_environment_workload_specs s ON s.id=p.workload_spec_id AND s.environment_id=p.environment_id AND s.app_id=p.app_id AND s.config_hash=p.settings_hash
+                JOIN invocation_work_environment_domains k ON k.environment_id=p.environment_id AND k.app_id=p.app_id AND k.policy_name=p.policy_name AND k.kind='key' AND k.digest=p.key_digest
+                WHERE p.invocation_id=i.id AND p.environment_id=e.id AND p.app_id=i.app_id AND p.policy_name=i.work_policy_name
+                    AND p.policy_revision=i.work_policy_revision AND p.key_digest=i.work_key_digest
+                    AND p.fairness_digest IS NOT DISTINCT FROM i.work_fairness_digest AND p.fairness_limit=coalesce(i.work_fairness_limit,0)
+                    AND (p.fairness_limit=0 OR EXISTS(SELECT 1 FROM invocation_work_environment_domains f
+                        WHERE f.environment_id=e.id AND f.app_id=p.app_id AND f.policy_name=p.policy_name AND f.kind='fairness' AND f.digest=p.fairness_digest))))))
+    OR EXISTS(SELECT 1 FROM invocation_work_environment_admissions p JOIN invocations i ON i.id=p.invocation_id
+        WHERE p.environment_id=e.id AND i.environment_id IS DISTINCT FROM e.id)
+    OR EXISTS(SELECT 1 FROM invocation_work_environment_domains d LEFT JOIN apps a ON a.id=d.app_id
+        WHERE d.environment_id=e.id AND (a.id IS NULL OR a.project_id<>e.project_id OR a.account_id<>e.account_id))
+    OR EXISTS(SELECT 1 FROM invocation_work_environment_domains d JOIN invocations i ON i.app_id=d.app_id AND i.work_policy_name=d.policy_name
+        AND ((d.kind='key' AND i.work_key_digest=d.digest) OR (d.kind='fairness' AND i.work_fairness_digest=d.digest))
+        WHERE d.environment_id=e.id AND i.environment_id IS DISTINCT FROM e.id)
+    OR EXISTS(SELECT 1 FROM invocation_work_environment_domains d JOIN triggers t ON t.app_id=d.app_id
+        JOIN trigger_records r ON r.trigger_id=t.id AND r.work_policy_name=d.policy_name
+            AND ((d.kind='key' AND r.work_key_digest=d.digest) OR (d.kind='fairness' AND r.work_fairness_digest=d.digest))
+        WHERE d.environment_id=e.id) AS invalid
+FROM project_environments e WHERE e.id=sqlc.arg(environment_id)::uuid;
+
+-- name: DeleteEnvironmentInvocations :execrows
+DELETE FROM invocations WHERE environment_id=$1;
+
+-- name: DeleteEnvironmentWorkKeyLanes :exec
+DELETE FROM invocation_work_lanes l USING invocation_work_environment_domains d
+WHERE d.environment_id=$1 AND d.kind='key' AND l.app_id=d.app_id AND l.policy_name=d.policy_name AND l.key_digest=d.digest;
+
+-- name: DeleteEnvironmentWorkFairnessLanes :exec
+DELETE FROM invocation_work_fairness_lanes l USING invocation_work_environment_domains d
+WHERE d.environment_id=$1 AND d.kind='fairness' AND l.app_id=d.app_id AND l.policy_name=d.policy_name AND l.fairness_digest=d.digest;
+
+-- name: DeleteEnvironmentWorkDomains :exec
+DELETE FROM invocation_work_environment_domains WHERE environment_id=$1;

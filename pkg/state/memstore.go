@@ -3270,9 +3270,6 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 	if slug == "production" || slug == DefaultEnvScope || environment.Protected {
 		return ProjectEnvironmentCleanupJob{}, ErrConflict
 	}
-	if m.environmentHasWorkDomainsLocked(environmentID) {
-		return ProjectEnvironmentCleanupJob{}, ErrInvocationEnvironmentWorkIsolation
-	}
 
 	for _, app := range m.apps {
 		if app.ProjectID != projectID {
@@ -3286,6 +3283,10 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 		}
 	}
 
+	if err := m.validateEnvironmentInvocationCleanupLocked(environmentID); err != nil {
+		return ProjectEnvironmentCleanupJob{}, err
+	}
+
 	var job ProjectEnvironmentCleanupJob
 	if !resources.Empty() {
 		now := time.Now().UTC()
@@ -3295,6 +3296,8 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 			LeaseToken: leaseToken, LeaseUntil: now.Add(leaseDuration), CreatedAt: now,
 		}
 	}
+
+	m.deleteEnvironmentInvocationsLocked(environmentID)
 
 	for key, env := range m.envs {
 		if env.Scope != slug {
@@ -12035,8 +12038,15 @@ func (m *MemStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invoc
 	if err := validateInvocationWorkEnvironment(ctx, m, inv, false); err != nil {
 		return Invocation{}, err
 	}
+	inv, info, err := resolveInvocationEnvironmentAdmission(ctx, m, inv)
+	if err != nil {
+		return Invocation{}, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.validateInvocationEnvironmentLocked(inv, info); err != nil {
+		return Invocation{}, err
+	}
 	if _, ok := m.apps[inv.AppID]; !ok {
 		return Invocation{}, fmt.Errorf("state: invocation for unknown app %q", inv.AppID)
 	}
@@ -12052,7 +12062,7 @@ func (m *MemStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invoc
 	if inv.CreatedAt.IsZero() {
 		inv.CreatedAt = time.Now()
 	}
-	m.invocations[inv.ID] = inv
+	m.invocations[inv.ID] = cloneInvocationWorkEnvelope(inv)
 	return inv, nil
 }
 
@@ -12186,6 +12196,9 @@ func (m *MemStore) ClaimInvocation(_ context.Context, id, instanceID string, lea
 	}
 	if inv.State != InvocationPending {
 		return Invocation{}, ErrNotFound
+	}
+	if err := m.validateInvocationEnvironmentClaimLocked(inv); err != nil {
+		return Invocation{}, err
 	}
 	if inv.WorkPolicyName != "" {
 		return Invocation{}, ErrConflict
@@ -24430,6 +24443,9 @@ func (m *MemStore) ClaimInvocationWithCap(_ context.Context, id, instanceID stri
 	inv, ok := m.invocations[id]
 	if !ok {
 		return Invocation{}, ErrNotFound
+	}
+	if err := m.validateInvocationEnvironmentClaimLocked(inv); err != nil {
+		return Invocation{}, err
 	}
 	row, ok := m.accountAsyncQuota[inv.AccountID]
 	if !ok {

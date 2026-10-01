@@ -23,6 +23,7 @@ type invocationWorkEnvironmentTestStore interface {
 	state.EnvironmentWorkCancellationStore
 	state.WorkCancellationStore
 	RollbackProjectEnvironmentClone(context.Context, string, string, string) error
+	RequeueExpiredInvocations(context.Context, time.Time, int) (int, error)
 }
 
 type invocationWorkEnvironmentFixture struct {
@@ -288,29 +289,36 @@ func testInvocationWorkEnvironmentIsolation(t *testing.T, store invocationWorkEn
 	return f
 }
 
-func TestMemInvocationWorkEnvironmentCleanupIsFenced(t *testing.T) {
-	testInvocationWorkEnvironmentCleanupIsFenced(t, state.NewMemStore())
+func TestMemInvocationWorkEnvironmentCleanup(t *testing.T) {
+	testInvocationWorkEnvironmentCleanup(t, state.NewMemStore())
 }
 
-func testInvocationWorkEnvironmentCleanupIsFenced(t *testing.T, store invocationWorkEnvironmentTestStore) {
+func testInvocationWorkEnvironmentCleanup(t *testing.T, store invocationWorkEnvironmentTestStore) {
 	t.Helper()
 	f := seedInvocationWorkEnvironment(t, store)
 	ctx := t.Context()
-	env, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: f.account.ID, ProjectID: f.project.ID, Slug: "drain-only"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	// An empty cancellation still creates an owned lane/receipt. Until scoped
-	// cleanup drains that ledger, environment deletion must leave it intact.
-	if _, err := store.CancelPendingEnvironmentKeyedInvocations(ctx, f.account.ID, f.app.ID, env.Slug, "old-policy", "s:one", uuid.NewString()); err != nil {
-		t.Fatal(err)
-	}
-	for _, remove := range []func(context.Context, string, string, string) error{store.DeleteProjectEnvironment, store.RollbackProjectEnvironmentClone} {
-		if err := remove(ctx, f.account.ID, f.project.ID, env.Slug); !errors.Is(err, state.ErrInvocationEnvironmentWorkIsolation) {
-			t.Fatalf("cleanup erased owned work: %v", err)
-		}
-		if retained, err := store.ProjectEnvironmentBySlug(ctx, f.account.ID, f.project.ID, env.Slug); err != nil || retained.ID != env.ID {
-			t.Fatalf("refused cleanup left partial state: %+v, %v", retained, err)
-		}
+	for name, remove := range map[string]func(context.Context, string, string, string) error{
+		"delete": store.DeleteProjectEnvironment, "rollback": store.RollbackProjectEnvironmentClone,
+	} {
+		t.Run(name, func(t *testing.T) {
+			env, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: f.account.ID, ProjectID: f.project.ID, Slug: "drain-only"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			operationID := uuid.NewString()
+			if _, err := store.CancelPendingEnvironmentKeyedInvocations(ctx, f.account.ID, f.app.ID, env.Slug, "old-policy", "s:one", operationID); err != nil {
+				t.Fatal(err)
+			}
+			if err := remove(ctx, f.account.ID, f.project.ID, env.Slug); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.ProjectEnvironmentBySlug(ctx, f.account.ID, f.project.ID, env.Slug); !errors.Is(err, state.ErrNotFound) {
+				t.Fatalf("idle work stage remains: %v", err)
+			}
+			// A deleted stage receipt must still fence operation reuse in production.
+			if _, err := store.CancelPendingKeyedInvocations(ctx, f.app.ID, "old-policy", "s:one", operationID); !errors.Is(err, state.ErrConflict) {
+				t.Fatalf("receipt identity was erased: %v", err)
+			}
+		})
 	}
 }

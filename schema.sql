@@ -3208,6 +3208,7 @@ CREATE TABLE public.app_secret_revocation_targets (
 
 CREATE TABLE public.invocations (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
+    environment_id uuid,
     app_id uuid NOT NULL,
     account_id uuid NOT NULL,
     source text NOT NULL,
@@ -10959,6 +10960,10 @@ CREATE TABLE project_environment_workload_specs (
     UNIQUE (environment_id, app_id, id)
 );
 
+ALTER TABLE invocations ADD CONSTRAINT invocations_environment_id_fkey
+    FOREIGN KEY(environment_id) REFERENCES project_environments(id);
+CREATE INDEX invocations_environment_owner_idx ON invocations(environment_id) WHERE environment_id IS NOT NULL;
+
 CREATE TABLE project_environment_workload_heads (
     environment_id uuid NOT NULL,
     app_id uuid NOT NULL,
@@ -11261,6 +11266,21 @@ CREATE TABLE invocation_work_environment_domains (
     digest bytea NOT NULL CHECK (length(digest)=32),
     created_at timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (app_id,policy_name,kind,digest)
+);
+
+-- Established keyed-work lock tables (20260928180000002 / 20260928202000001).
+CREATE TABLE invocation_work_lanes (
+    app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    policy_name text NOT NULL CHECK (policy_name ~ '^[a-z][a-z0-9-]{0,62}$'),
+    key_digest bytea NOT NULL CHECK (length(key_digest)=32),
+    next_sequence bigint NOT NULL DEFAULT 1 CHECK (next_sequence>0),
+    PRIMARY KEY(app_id,policy_name,key_digest)
+);
+CREATE TABLE invocation_work_fairness_lanes (
+    app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    policy_name text NOT NULL CHECK (policy_name ~ '^[a-z][a-z0-9-]{0,62}$'),
+    fairness_digest bytea NOT NULL CHECK (length(fairness_digest)=32),
+    PRIMARY KEY(app_id,policy_name,fairness_digest)
 );
 CREATE INDEX invocation_work_environment_domains_environment_idx ON invocation_work_environment_domains(environment_id);
 

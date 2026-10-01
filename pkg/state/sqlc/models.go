@@ -1322,6 +1322,7 @@ type InstanceBillingInterval struct {
 
 type Invocation struct {
 	ID                       pgtype.UUID
+	EnvironmentID            pgtype.UUID
 	AppID                    pgtype.UUID
 	AccountID                pgtype.UUID
 	Source                   string
@@ -1383,6 +1384,19 @@ type InvocationWorkEnvironmentDomain struct {
 	Kind          string
 	Digest        []byte
 	CreatedAt     pgtype.Timestamptz
+}
+
+type InvocationWorkFairnessLane struct {
+	AppID          pgtype.UUID
+	PolicyName     string
+	FairnessDigest []byte
+}
+
+type InvocationWorkLane struct {
+	AppID        pgtype.UUID
+	PolicyName   string
+	KeyDigest    []byte
+	NextSequence int64
 }
 
 type InvocationsPendingPerApp struct {

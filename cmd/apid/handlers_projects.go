@@ -571,9 +571,12 @@ func (s *server) deleteProjectEnvironment(w http.ResponseWriter, r *http.Request
 		switch {
 		case errors.Is(err, state.ErrNotFound):
 			api.WriteProblem(w, projectEnvironmentNotFound(project.Slug, environmentSlug))
+		case errors.Is(err, state.ErrEnvironmentInvocationWorkBusy):
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, "environment_work_busy",
+				"Environment work is running", "wait for running work to finish or for expired claims to be released before deleting the environment"))
 		case errors.Is(err, state.ErrInvocationEnvironmentWorkIsolation):
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict, "environment_work_cleanup_unavailable",
-				"Environment work cleanup unavailable", "the environment still owns work lanes; isolated work cleanup is required before deletion"))
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, "environment_work_ownership_conflict",
+				"Environment work ownership conflict", "work ownership is inconsistent; the environment was not deleted"))
 		case errors.Is(err, state.ErrConflict):
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
 				"Project environment cannot be deleted",

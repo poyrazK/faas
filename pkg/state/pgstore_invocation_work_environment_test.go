@@ -15,9 +15,9 @@ func TestPgInvocationWorkEnvironmentIsolation(t *testing.T) {
 	testInvocationWorkEnvironmentIsolation(t, store)
 }
 
-func TestPgInvocationWorkEnvironmentCleanupIsFenced(t *testing.T) {
+func TestPgInvocationWorkEnvironmentCleanup(t *testing.T) {
 	store, _, _ := pgWithPool(t)
-	testInvocationWorkEnvironmentCleanupIsFenced(t, store)
+	testInvocationWorkEnvironmentCleanup(t, store)
 }
 
 func TestPgInvocationWorkEnvironmentClaimFailsClosed(t *testing.T) {

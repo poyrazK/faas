@@ -3906,11 +3906,14 @@ const (
 // meter reads it via CountInstanceInvocationsInMinute to set
 // usage_minutes.requests.
 type Invocation struct {
-	ID         string           `json:"id"`
-	AppID      string           `json:"app_id"`
-	AccountID  string           `json:"account_id"`
-	InstanceID string           `json:"instance_id,omitempty"`
-	Source     InvocationSource `json:"source"`
+	ID string `json:"id"`
+	// EnvironmentID is authenticated operational ownership, never request
+	// intent. Production remains NULL; stage admission persists the UUID.
+	EnvironmentID string           `json:"-"`
+	AppID         string           `json:"app_id"`
+	AccountID     string           `json:"account_id"`
+	InstanceID    string           `json:"instance_id,omitempty"`
+	Source        InvocationSource `json:"source"`
 	// QueueName scopes queue-source invocations to a first-class queue
 	// binding. Empty preserves the legacy single per-app queue behavior.
 	QueueName      string          `json:"queue_name,omitempty"`

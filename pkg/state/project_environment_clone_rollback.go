@@ -26,9 +26,7 @@ func (m *MemStore) RollbackProjectEnvironmentClone(_ context.Context, accountID,
 	if slug == "production" {
 		return ErrConflict
 	}
-	if m.environmentHasWorkDomainsLocked(environmentID) {
-		return ErrInvocationEnvironmentWorkIsolation
-	}
+
 	for _, app := range m.apps {
 		if app.ProjectID != projectID {
 			continue
@@ -45,6 +43,12 @@ func (m *MemStore) RollbackProjectEnvironmentClone(_ context.Context, accountID,
 			}
 		}
 	}
+
+	if err := m.validateEnvironmentInvocationCleanupLocked(environmentID); err != nil {
+		return err
+	}
+
+	m.deleteEnvironmentInvocationsLocked(environmentID)
 
 	for key, env := range m.envs {
 		if env.Scope == slug {

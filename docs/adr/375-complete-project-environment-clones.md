@@ -1319,3 +1319,57 @@ Full-copy publication and policy qualification remain closed pending complete
 producer activation, cleanup, resource/data orchestration and promotion proof.
 These local contracts do not establish provider checkpoint consistency or native
 x86_64 KVM acceptance.
+
+
+### 2026-10-01: invocation ownership and transactional stage work cleanup
+
+Every newly admitted stage asynchronous invocation now stores the environment's
+immutable UUID in `invocations.environment_id`. Production keeps the legacy NULL
+owner. The owner is operational state, excluded from invocation JSON and clone
+capture. The upgrade adopts existing keyed admission proofs and canonical,
+owned revision/release pins; foreign release membership and ambiguous dual pins
+are not adopted. The sqlc schema snapshot and clone column registry include the
+owner and established key/fairness lane tables.
+
+Admission authenticates and canonicalizes the stage pin before writing, then
+rechecks ownership and the selected deployment inside the admission transaction.
+Scoped ordinary/keyed admission, cancellation and both claim paths acquire an
+environment KEY SHARE lock before lane, invocation or quota locks. Deletion and
+clone compensation acquire the environment's exclusive lock first. A deletion
+that wins that lock prevents late admission or cancellation from committing an
+invocation, lane or receipt. Claims authenticate stored owner/pin identity before
+state transitions or quota reservation. Delivery also reads the persisted owner,
+so stripping the marker and routing headers from a passed work envelope cannot
+select production.
+
+After the existing live-deployment/protection guards, deletion validates work
+ownership and removes the environment's pending/terminal invocations, admission
+proofs, key/fairness lanes and domain ledger in its existing cleanup transaction.
+Failed-clone compensation uses the same cleanup after its deployment and managed
+secret guards. Ownership mismatches, cross-environment digest references and
+unsupported broker/producer references fail before deletion. MemStore validates
+all work before any map mutation. Cancellation receipts remain durable to fence
+operation UUID reuse after deletion; recreating the same slug gets a distinct
+HTTP receipt namespace because its environment UUID changes.
+
+Any dispatching row or unreleased quota reservation blocks deletion, including
+an expired execution lease. The normal invocation reaper must release the claim
+and capacity first, or the worker must finish. API deletion returns 409
+`environment_work_busy` for this case and
+`environment_work_ownership_conflict` for inconsistent ownership. Idle owned
+work no longer returns the earlier `environment_work_cleanup_unavailable`
+placeholder. OpenAPI and generated Node/Python clients describe these outcomes.
+
+Migrated PostgreSQL and MemStore contracts cover isolated cleanup of ordinary,
+keyed, pending, superseded and completed rows, fairness/lane removal, sibling and
+production sequence preservation, running-work recovery, retained receipts,
+recreated-stage idempotency, damaged plain/keyed claims, migration backfill and
+real PostgreSQL lock contention against deletion. Selected state, API,
+scheduler and gateway contracts pass. Independent sqlc regeneration matches;
+OpenAPI lint passes with warnings, the Node client builds, and eight selected
+Python tests pass. These are the local verification gates for this increment.
+
+Full clone publication and producer activation remain closed. Queue, cron,
+broker and completion-destination bindings still require scoped ownership;
+provider checkpoint consistency, complete resource orchestration, promotion,
+and native x86_64 KVM acceptance remain required for the full feature.

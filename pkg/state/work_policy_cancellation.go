@@ -90,6 +90,11 @@ func (s *PgStore) cancelPendingWorkDigest(ctx context.Context, appID, policyName
 		return WorkCancellation{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if info.environment.ID != "" {
+		if err := lockInvocationEnvironmentDB(ctx, tx, info.app.ID, info.app.AccountID, info.environment.ID); err != nil {
+			return WorkCancellation{}, err
+		}
+	}
 	// Use the same lane lock order as enqueue and claim. Creating a lane for a
 	// key with no current work makes cancellation of an empty lane durable too.
 	if _, err := tx.Exec(ctx, `insert into invocation_work_lanes (app_id, policy_name, key_digest)
