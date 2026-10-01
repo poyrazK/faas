@@ -5289,14 +5289,30 @@ JOIN deployments d ON d.id=rm.deployment_id AND d.app_id=a.id AND d.scope=rs.env
 WHERE rs.id=sqlc.arg(release_id)::uuid AND rs.account_id=sqlc.arg(account_id)::uuid
 ORDER BY a.id,d.id LIMIT sqlc.arg(member_limit)::integer FOR SHARE OF d;
 
--- name: PinCustomerOperationDeployment :exec
-INSERT INTO deployment_revision_pins(deployment_id,app_id,expires_at)
-VALUES(sqlc.arg(deployment_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(expires_at)::timestamptz)
-ON CONFLICT(deployment_id) DO UPDATE SET expires_at=greatest(deployment_revision_pins.expires_at,excluded.expires_at);
+-- name: PinCustomerOperationDeployment :execrows
+INSERT INTO customer_operation_code_pins(deployment_id,app_id,expires_at)
+SELECT d.id,d.app_id,sqlc.arg(expires_at)::timestamptz FROM deployments d JOIN apps a ON a.id=d.app_id
+WHERE d.id=sqlc.arg(deployment_id)::uuid AND d.app_id=sqlc.arg(app_id)::uuid AND d.scope=sqlc.arg(scope)::text
+AND a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted'
+ON CONFLICT(deployment_id) DO UPDATE SET expires_at=greatest(customer_operation_code_pins.expires_at,excluded.expires_at);
 
--- name: PinCustomerOperationRelease :exec
-UPDATE project_release_sets SET expires_at=greatest(expires_at,sqlc.arg(expires_at)::timestamptz)
-WHERE id=sqlc.arg(id)::uuid AND NOT active;
+-- name: PinCustomerOperationReleaseMembers :execrows
+INSERT INTO customer_operation_code_pins(deployment_id,app_id,expires_at)
+SELECT d.id,d.app_id,sqlc.arg(expires_at)::timestamptz FROM project_release_sets rs
+JOIN project_release_members source ON source.release_id=rs.id AND source.app_id=sqlc.arg(app_id)::uuid AND source.deployment_id=sqlc.arg(deployment_id)::uuid
+JOIN apps origin ON origin.id=source.app_id AND origin.account_id=rs.account_id AND origin.project_id=rs.project_id AND origin.status<>'deleted'
+JOIN deployments origin_dep ON origin_dep.id=source.deployment_id AND origin_dep.app_id=origin.id AND origin_dep.scope=rs.environment_slug
+JOIN project_release_members rm ON rm.release_id=rs.id
+JOIN apps a ON a.id=rm.app_id AND a.account_id=rs.account_id AND a.project_id=rs.project_id AND a.status<>'deleted'
+JOIN deployments d ON d.id=rm.deployment_id AND d.app_id=a.id AND d.scope=rs.environment_slug
+WHERE rs.id=sqlc.arg(release_id)::uuid AND rs.account_id=sqlc.arg(account_id)::uuid AND rs.environment_slug=sqlc.arg(scope)::text
+ORDER BY a.id,d.id LIMIT sqlc.arg(member_limit)::integer
+ON CONFLICT(deployment_id) DO UPDATE SET expires_at=greatest(customer_operation_code_pins.expires_at,excluded.expires_at);
+
+-- name: DeactivateProjectReleaseSets :exec
+UPDATE project_release_sets SET active=false,expires_at=now()+(ttl_seconds*interval '1 second')
+WHERE project_id=sqlc.arg(project_id)::uuid AND environment_slug=sqlc.arg(environment)::text AND active
+AND (sqlc.narg(release_id)::uuid IS NULL OR id=sqlc.narg(release_id)::uuid);
 
 -- name: RetireLiveDeploymentSiblings :execrows
 UPDATE deployments d SET status = CASE WHEN
@@ -5318,33 +5334,39 @@ UPDATE deployments d SET status = CASE WHEN sqlc.arg(traffic_percent)::integer>0
 WHERE d.id=sqlc.arg(deployment_id)::uuid;
 
 -- name: ClearServiceRolloutPredecessorPin :exec
-DELETE FROM deployment_revision_pins p WHERE p.deployment_id=sqlc.arg(deployment_id)::uuid
-AND NOT EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=p.deployment_id);
+DELETE FROM deployment_revision_pins WHERE deployment_id=sqlc.arg(deployment_id)::uuid;
 
 -- name: LockExpiredRevisionPinApps :many
-SELECT a.id FROM apps a WHERE EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.app_id=a.id AND p.expires_at<=now()
+SELECT a.id FROM apps a WHERE EXISTS(SELECT 1 FROM deployment_code_pin_deadlines p WHERE p.app_id=a.id AND p.expires_at<=now()
         AND NOT EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=p.deployment_id)
         AND NOT EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
             WHERE rm.deployment_id=p.deployment_id AND (rs.active OR rs.expires_at>now())))
 ORDER BY a.id LIMIT sqlc.arg(page_limit)::integer FOR UPDATE OF a;
 
--- Admission locks apps before deployments. This separate statement takes a
--- fresh READ COMMITTED snapshot after those app locks have been acquired, so a
--- concurrent admission that held the lock cannot disappear from the GC check.
+-- Admission locks apps before deployments. A fresh READ COMMITTED snapshot
+-- after app-lock acquisition sees references published while waiting. Both
+-- receipt kinds must have expired; one page locks at most page_limit deployments.
 -- name: ExpireRetainedDeploymentRevisionPins :execrows
 WITH locked_deployments AS MATERIALIZED (
-    SELECT d.id FROM deployments d JOIN deployment_revision_pins p ON p.deployment_id=d.id
+    SELECT d.id,
+        EXISTS(SELECT 1 FROM deployment_revision_pins public_pin WHERE public_pin.deployment_id=d.id) AS has_public,
+        EXISTS(SELECT 1 FROM customer_operation_code_pins private_pin WHERE private_pin.deployment_id=d.id) AS has_private
+    FROM deployments d JOIN deployment_code_pin_deadlines p ON p.deployment_id=d.id AND p.app_id=d.app_id
     WHERE d.app_id=ANY(sqlc.arg(app_ids)::uuid[]) AND p.expires_at<=now()
     AND NOT EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
     AND NOT EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
         WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>now()))
     ORDER BY d.app_id,d.id LIMIT sqlc.arg(page_limit)::integer FOR UPDATE OF d
-), expired AS (
+), expired_public AS (
     DELETE FROM deployment_revision_pins p USING locked_deployments d WHERE p.deployment_id=d.id AND p.expires_at<=now()
-    AND NOT EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=p.deployment_id)
-    AND NOT EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
-        WHERE rm.deployment_id=p.deployment_id AND (rs.active OR rs.expires_at>now()))
     RETURNING p.deployment_id
+), expired_private AS (
+    DELETE FROM customer_operation_code_pins p USING locked_deployments d WHERE p.deployment_id=d.id AND p.expires_at<=now()
+    RETURNING p.deployment_id
+), expired AS (
+    SELECT d.id AS deployment_id FROM locked_deployments d
+    WHERE (NOT d.has_public OR EXISTS(SELECT 1 FROM expired_public p WHERE p.deployment_id=d.id))
+    AND (NOT d.has_private OR EXISTS(SELECT 1 FROM expired_private p WHERE p.deployment_id=d.id))
 )
 UPDATE deployments d SET status='superseded',traffic_percent=0 FROM expired e
 WHERE d.id=e.deployment_id AND d.status='live' AND d.traffic_percent=0;

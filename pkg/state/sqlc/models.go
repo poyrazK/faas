@@ -1175,6 +1175,12 @@ type CustomerOperation struct {
 	ExecutionGeneration int32
 }
 
+type CustomerOperationCodePin struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	ExpiresAt    pgtype.Timestamptz
+}
+
 type CustomerOperationDefinition struct {
 	ID               pgtype.UUID
 	AccountID        pgtype.UUID
@@ -1479,6 +1485,12 @@ type DeploymentAudit struct {
 	At           pgtype.Timestamptz
 	Data         []byte
 	AlertRuleID  pgtype.UUID
+}
+
+type DeploymentCodePinDeadline struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	ExpiresAt    interface{}
 }
 
 type DeploymentLog struct {

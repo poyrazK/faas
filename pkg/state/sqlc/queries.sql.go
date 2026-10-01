@@ -979,8 +979,7 @@ func (q *Queries) ClaimTriggerRecordsByItems(ctx context.Context, db DBTX, arg C
 }
 
 const clearServiceRolloutPredecessorPin = `-- name: ClearServiceRolloutPredecessorPin :exec
-DELETE FROM deployment_revision_pins p WHERE p.deployment_id=$1::uuid
-AND NOT EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=p.deployment_id)
+DELETE FROM deployment_revision_pins WHERE deployment_id=$1::uuid
 `
 
 func (q *Queries) ClearServiceRolloutPredecessorPin(ctx context.Context, db DBTX, deploymentID pgtype.UUID) error {
@@ -2255,6 +2254,23 @@ func (q *Queries) CustomerOperationStreamMetric(ctx context.Context, db DBTX, no
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const deactivateProjectReleaseSets = `-- name: DeactivateProjectReleaseSets :exec
+UPDATE project_release_sets SET active=false,expires_at=now()+(ttl_seconds*interval '1 second')
+WHERE project_id=$1::uuid AND environment_slug=$2::text AND active
+AND ($3::uuid IS NULL OR id=$3::uuid)
+`
+
+type DeactivateProjectReleaseSetsParams struct {
+	ProjectID   pgtype.UUID
+	Environment string
+	ReleaseID   pgtype.UUID
+}
+
+func (q *Queries) DeactivateProjectReleaseSets(ctx context.Context, db DBTX, arg DeactivateProjectReleaseSetsParams) error {
+	_, err := db.Exec(ctx, deactivateProjectReleaseSets, arg.ProjectID, arg.Environment, arg.ReleaseID)
+	return err
 }
 
 const decrementInstanceTailCount = `-- name: DecrementInstanceTailCount :exec
@@ -4259,18 +4275,25 @@ func (q *Queries) ExpireOrgInvitations(ctx context.Context, db DBTX, expiresAt p
 
 const expireRetainedDeploymentRevisionPins = `-- name: ExpireRetainedDeploymentRevisionPins :execrows
 WITH locked_deployments AS MATERIALIZED (
-    SELECT d.id FROM deployments d JOIN deployment_revision_pins p ON p.deployment_id=d.id
+    SELECT d.id,
+        EXISTS(SELECT 1 FROM deployment_revision_pins public_pin WHERE public_pin.deployment_id=d.id) AS has_public,
+        EXISTS(SELECT 1 FROM customer_operation_code_pins private_pin WHERE private_pin.deployment_id=d.id) AS has_private
+    FROM deployments d JOIN deployment_code_pin_deadlines p ON p.deployment_id=d.id AND p.app_id=d.app_id
     WHERE d.app_id=ANY($1::uuid[]) AND p.expires_at<=now()
     AND NOT EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
     AND NOT EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
         WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>now()))
     ORDER BY d.app_id,d.id LIMIT $2::integer FOR UPDATE OF d
-), expired AS (
+), expired_public AS (
     DELETE FROM deployment_revision_pins p USING locked_deployments d WHERE p.deployment_id=d.id AND p.expires_at<=now()
-    AND NOT EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=p.deployment_id)
-    AND NOT EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
-        WHERE rm.deployment_id=p.deployment_id AND (rs.active OR rs.expires_at>now()))
     RETURNING p.deployment_id
+), expired_private AS (
+    DELETE FROM customer_operation_code_pins p USING locked_deployments d WHERE p.deployment_id=d.id AND p.expires_at<=now()
+    RETURNING p.deployment_id
+), expired AS (
+    SELECT d.id AS deployment_id FROM locked_deployments d
+    WHERE (NOT d.has_public OR EXISTS(SELECT 1 FROM expired_public p WHERE p.deployment_id=d.id))
+    AND (NOT d.has_private OR EXISTS(SELECT 1 FROM expired_private p WHERE p.deployment_id=d.id))
 )
 UPDATE deployments d SET status='superseded',traffic_percent=0 FROM expired e
 WHERE d.id=e.deployment_id AND d.status='live' AND d.traffic_percent=0
@@ -4281,9 +4304,9 @@ type ExpireRetainedDeploymentRevisionPinsParams struct {
 	PageLimit int32
 }
 
-// Admission locks apps before deployments. This separate statement takes a
-// fresh READ COMMITTED snapshot after those app locks have been acquired, so a
-// concurrent admission that held the lock cannot disappear from the GC check.
+// Admission locks apps before deployments. A fresh READ COMMITTED snapshot
+// after app-lock acquisition sees references published while waiting. Both
+// receipt kinds must have expired; one page locks at most page_limit deployments.
 func (q *Queries) ExpireRetainedDeploymentRevisionPins(ctx context.Context, db DBTX, arg ExpireRetainedDeploymentRevisionPinsParams) (int64, error) {
 	result, err := db.Exec(ctx, expireRetainedDeploymentRevisionPins, arg.AppIds, arg.PageLimit)
 	if err != nil {
@@ -11541,7 +11564,7 @@ func (q *Queries) LockDevBridgeReplaySession(ctx context.Context, db DBTX, arg L
 }
 
 const lockExpiredRevisionPinApps = `-- name: LockExpiredRevisionPinApps :many
-SELECT a.id FROM apps a WHERE EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.app_id=a.id AND p.expires_at<=now()
+SELECT a.id FROM apps a WHERE EXISTS(SELECT 1 FROM deployment_code_pin_deadlines p WHERE p.app_id=a.id AND p.expires_at<=now()
         AND NOT EXISTS(SELECT 1 FROM customer_operation_retained_deployment_refs retained WHERE retained.deployment_id=p.deployment_id)
         AND NOT EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
             WHERE rm.deployment_id=p.deployment_id AND (rs.active OR rs.expires_at>now())))
@@ -15168,36 +15191,74 @@ func (q *Queries) PerAccountRateLimitAggregate(ctx context.Context, db DBTX, arg
 	return items, nil
 }
 
-const pinCustomerOperationDeployment = `-- name: PinCustomerOperationDeployment :exec
-INSERT INTO deployment_revision_pins(deployment_id,app_id,expires_at)
-VALUES($1::uuid,$2::uuid,$3::timestamptz)
-ON CONFLICT(deployment_id) DO UPDATE SET expires_at=greatest(deployment_revision_pins.expires_at,excluded.expires_at)
+const pinCustomerOperationDeployment = `-- name: PinCustomerOperationDeployment :execrows
+INSERT INTO customer_operation_code_pins(deployment_id,app_id,expires_at)
+SELECT d.id,d.app_id,$1::timestamptz FROM deployments d JOIN apps a ON a.id=d.app_id
+WHERE d.id=$2::uuid AND d.app_id=$3::uuid AND d.scope=$4::text
+AND a.account_id=$5::uuid AND a.status<>'deleted'
+ON CONFLICT(deployment_id) DO UPDATE SET expires_at=greatest(customer_operation_code_pins.expires_at,excluded.expires_at)
 `
 
 type PinCustomerOperationDeploymentParams struct {
+	ExpiresAt    pgtype.Timestamptz
 	DeploymentID pgtype.UUID
 	AppID        pgtype.UUID
-	ExpiresAt    pgtype.Timestamptz
+	Scope        string
+	AccountID    pgtype.UUID
 }
 
-func (q *Queries) PinCustomerOperationDeployment(ctx context.Context, db DBTX, arg PinCustomerOperationDeploymentParams) error {
-	_, err := db.Exec(ctx, pinCustomerOperationDeployment, arg.DeploymentID, arg.AppID, arg.ExpiresAt)
-	return err
+func (q *Queries) PinCustomerOperationDeployment(ctx context.Context, db DBTX, arg PinCustomerOperationDeploymentParams) (int64, error) {
+	result, err := db.Exec(ctx, pinCustomerOperationDeployment,
+		arg.ExpiresAt,
+		arg.DeploymentID,
+		arg.AppID,
+		arg.Scope,
+		arg.AccountID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
-const pinCustomerOperationRelease = `-- name: PinCustomerOperationRelease :exec
-UPDATE project_release_sets SET expires_at=greatest(expires_at,$1::timestamptz)
-WHERE id=$2::uuid AND NOT active
+const pinCustomerOperationReleaseMembers = `-- name: PinCustomerOperationReleaseMembers :execrows
+INSERT INTO customer_operation_code_pins(deployment_id,app_id,expires_at)
+SELECT d.id,d.app_id,$1::timestamptz FROM project_release_sets rs
+JOIN project_release_members source ON source.release_id=rs.id AND source.app_id=$2::uuid AND source.deployment_id=$3::uuid
+JOIN apps origin ON origin.id=source.app_id AND origin.account_id=rs.account_id AND origin.project_id=rs.project_id AND origin.status<>'deleted'
+JOIN deployments origin_dep ON origin_dep.id=source.deployment_id AND origin_dep.app_id=origin.id AND origin_dep.scope=rs.environment_slug
+JOIN project_release_members rm ON rm.release_id=rs.id
+JOIN apps a ON a.id=rm.app_id AND a.account_id=rs.account_id AND a.project_id=rs.project_id AND a.status<>'deleted'
+JOIN deployments d ON d.id=rm.deployment_id AND d.app_id=a.id AND d.scope=rs.environment_slug
+WHERE rs.id=$4::uuid AND rs.account_id=$5::uuid AND rs.environment_slug=$6::text
+ORDER BY a.id,d.id LIMIT $7::integer
+ON CONFLICT(deployment_id) DO UPDATE SET expires_at=greatest(customer_operation_code_pins.expires_at,excluded.expires_at)
 `
 
-type PinCustomerOperationReleaseParams struct {
-	ExpiresAt pgtype.Timestamptz
-	ID        pgtype.UUID
+type PinCustomerOperationReleaseMembersParams struct {
+	ExpiresAt    pgtype.Timestamptz
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	ReleaseID    pgtype.UUID
+	AccountID    pgtype.UUID
+	Scope        string
+	MemberLimit  int32
 }
 
-func (q *Queries) PinCustomerOperationRelease(ctx context.Context, db DBTX, arg PinCustomerOperationReleaseParams) error {
-	_, err := db.Exec(ctx, pinCustomerOperationRelease, arg.ExpiresAt, arg.ID)
-	return err
+func (q *Queries) PinCustomerOperationReleaseMembers(ctx context.Context, db DBTX, arg PinCustomerOperationReleaseMembersParams) (int64, error) {
+	result, err := db.Exec(ctx, pinCustomerOperationReleaseMembers,
+		arg.ExpiresAt,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.ReleaseID,
+		arg.AccountID,
+		arg.Scope,
+		arg.MemberLimit,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const pruneAccountCustomerOperationStreams = `-- name: PruneAccountCustomerOperationStreams :exec
