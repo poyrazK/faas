@@ -96,26 +96,30 @@ func sendTCPInitError(stream grpc.BidiStreamingServer[vmmdpb.ForwardTCPRequest, 
 }
 
 func tcpBridgeSpawn(ctx context.Context, instancePID int, port uint32) (*exec.Cmd, *os.File, *os.File, *os.File, *bytes.Buffer, error) {
-	bridgePath := os.Getenv(tcpBridgePathEnv)
+	return namespaceBridgeSpawn(ctx, instancePID, port, tcpBridgePathEnv, vmmdTCPBridgePath)
+}
+
+func namespaceBridgeSpawn(ctx context.Context, instancePID int, port uint32, pathEnv, defaultPath string) (*exec.Cmd, *os.File, *os.File, *os.File, *bytes.Buffer, error) {
+	bridgePath := os.Getenv(pathEnv)
 	if bridgePath == "" {
-		bridgePath = vmmdTCPBridgePath
+		bridgePath = defaultPath
 	}
 	if !strings.HasPrefix(bridgePath, "/") {
-		return nil, nil, nil, nil, nil, status.Errorf(codes.FailedPrecondition, "%s must be an absolute path", tcpBridgePathEnv)
+		return nil, nil, nil, nil, nil, status.Errorf(codes.FailedPrecondition, "%s must be an absolute path", pathEnv)
 	}
 	if _, err := os.Stat(bridgePath); err != nil {
-		return nil, nil, nil, nil, nil, status.Errorf(codes.FailedPrecondition, "TCP bridge binary missing at %s: %v", bridgePath, err)
+		return nil, nil, nil, nil, nil, status.Errorf(codes.FailedPrecondition, "namespace bridge binary missing at %s: %v", bridgePath, err)
 	}
 
 	stdinR, stdinW, err := os.Pipe()
 	if err != nil {
-		return nil, nil, nil, nil, nil, status.Errorf(codes.Internal, "TCP bridge stdin pipe: %v", err)
+		return nil, nil, nil, nil, nil, status.Errorf(codes.Internal, "namespace bridge stdin pipe: %v", err)
 	}
 	stdoutR, stdoutW, err := os.Pipe()
 	if err != nil {
 		_ = stdinR.Close()
 		_ = stdinW.Close()
-		return nil, nil, nil, nil, nil, status.Errorf(codes.Internal, "TCP bridge stdout pipe: %v", err)
+		return nil, nil, nil, nil, nil, status.Errorf(codes.Internal, "namespace bridge stdout pipe: %v", err)
 	}
 	readyR, readyW, err := os.Pipe()
 	if err != nil {
@@ -123,7 +127,7 @@ func tcpBridgeSpawn(ctx context.Context, instancePID int, port uint32) (*exec.Cm
 		_ = stdinW.Close()
 		_ = stdoutR.Close()
 		_ = stdoutW.Close()
-		return nil, nil, nil, nil, nil, status.Errorf(codes.Internal, "TCP bridge readiness pipe: %v", err)
+		return nil, nil, nil, nil, nil, status.Errorf(codes.Internal, "namespace bridge readiness pipe: %v", err)
 	}
 
 	cmd := exec.CommandContext(ctx, "nsenter", "--target", strconv.Itoa(instancePID), "--net", "--", bridgePath, netns.GuestIP, strconv.FormatUint(uint64(port), 10))
@@ -134,7 +138,7 @@ func tcpBridgeSpawn(ctx context.Context, instancePID int, port uint32) (*exec.Cm
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
 		closeFiles(stdinR, stdinW, stdoutR, stdoutW, readyR, readyW)
-		return nil, nil, nil, nil, nil, status.Errorf(codes.Unavailable, "start TCP bridge: %v", err)
+		return nil, nil, nil, nil, nil, status.Errorf(codes.Unavailable, "start namespace bridge: %v", err)
 	}
 	_ = stdinR.Close()
 	_ = stdoutW.Close()
@@ -147,7 +151,7 @@ func tcpBridgeSpawn(ctx context.Context, instancePID int, port uint32) (*exec.Cm
 		_ = stdinW.Close()
 		_ = stdoutR.Close()
 		_ = readyR.Close()
-		return nil, nil, nil, nil, nil, status.Errorf(codes.Unavailable, "TCP bridge readiness: %v (stderr=%q)", readErr, stderr.String())
+		return nil, nil, nil, nil, nil, status.Errorf(codes.Unavailable, "namespace bridge readiness: %v (stderr=%q)", readErr, stderr.String())
 	}
 	if strings.HasPrefix(ready, "ERR ") {
 		_ = cmd.Process.Kill()
@@ -155,7 +159,7 @@ func tcpBridgeSpawn(ctx context.Context, instancePID int, port uint32) (*exec.Cm
 		_ = stdinW.Close()
 		_ = stdoutR.Close()
 		_ = readyR.Close()
-		return nil, nil, nil, nil, nil, status.Errorf(codes.Unavailable, "guest TCP dial failed: %s", strings.TrimSpace(strings.TrimPrefix(ready, "ERR ")))
+		return nil, nil, nil, nil, nil, status.Errorf(codes.Unavailable, "guest socket dial failed: %s", strings.TrimSpace(strings.TrimPrefix(ready, "ERR ")))
 	}
 	if ready != "OK\n" {
 		_ = cmd.Process.Kill()
@@ -163,7 +167,7 @@ func tcpBridgeSpawn(ctx context.Context, instancePID int, port uint32) (*exec.Cm
 		_ = stdinW.Close()
 		_ = stdoutR.Close()
 		_ = readyR.Close()
-		return nil, nil, nil, nil, nil, fmt.Errorf("unexpected TCP bridge readiness %q", ready)
+		return nil, nil, nil, nil, nil, fmt.Errorf("unexpected namespace bridge readiness %q", ready)
 	}
 	return cmd, stdinW, stdoutR, readyR, &stderr, nil
 }

@@ -1772,3 +1772,7 @@ func (s *rejectWarmEventStore) AppendEvent(context.Context, string, string, *str
 	s.t.Error("warm response attempted synchronous wake-event persistence")
 	return errors.New("wake store unavailable")
 }
+
+func (f *fakeVmmdClient) ForwardUDPStream(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.ForwardUDPRequest, vmmdpb.ForwardUDPResponse], error) {
+	return nil, status.Error(codes.Unimplemented, "ForwardUDPStream is not used by HTTP gateway tests")
+}
