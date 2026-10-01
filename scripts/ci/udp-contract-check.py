@@ -12,6 +12,7 @@ FILES = {
     "pkg/ingressroute": "*_test.go",
     "pkg/udpd": "*_test.go",
     "pkg/udpwire": "*_test.go",
+    "cmd/vmmd-udp-bridge": "main_test.go",
     "pkg/gateway": "udpforward_test.go",
     "pkg/vmmdgrpc": "forward_udp_test.go",
     "cmd/apid": "handlers_udp_listeners_test.go",

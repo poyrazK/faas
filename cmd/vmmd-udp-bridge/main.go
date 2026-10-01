@@ -9,6 +9,8 @@ import (
 	"os"
 	"strconv"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/onebox-faas/faas/pkg/udpwire"
 )
 
@@ -22,6 +24,10 @@ func main() {
 	if ip == nil || ip.To4() == nil || err != nil || port == 0 {
 		fmt.Fprintln(os.Stderr, "invalid IPv4 guest address or port")
 		os.Exit(2)
+	}
+	if !validReadyDescriptor() {
+		fmt.Fprintln(os.Stderr, "readiness descriptor must be a writable pipe")
+		os.Exit(4)
 	}
 	conn, err := net.DialUDP("udp4", nil, &net.UDPAddr{IP: ip.To4(), Port: int(port)})
 	if err != nil {
@@ -48,4 +54,15 @@ func writeReady(message string) error {
 	defer func() { _ = ready.Close() }()
 	_, err := ready.WriteString(message)
 	return err
+}
+
+// Check FD 3 before opening the UDP socket, so a missing readiness pipe
+// cannot be mistaken for a newly allocated guest socket or another file.
+func validReadyDescriptor() bool {
+	var info unix.Stat_t
+	if unix.Fstat(3, &info) != nil || info.Mode&unix.S_IFMT != unix.S_IFIFO {
+		return false
+	}
+	flags, err := unix.FcntlInt(3, unix.F_GETFL, 0)
+	return err == nil && flags&unix.O_ACCMODE != unix.O_RDONLY
 }

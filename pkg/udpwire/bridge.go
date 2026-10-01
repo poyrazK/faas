@@ -18,6 +18,12 @@ func Bridge(ctx context.Context, conn *net.UDPConn, input io.ReadCloser, output 
 	if ctx == nil || conn == nil || input == nil || output == nil {
 		return errors.New("UDP bridge requires context, socket and pipe endpoints")
 	}
+	if err := ctx.Err(); err != nil {
+		_ = conn.Close()
+		_ = input.Close()
+		_ = output.Close()
+		return err
+	}
 	done := make(chan error, 2)
 	go func() {
 		for {
