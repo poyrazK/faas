@@ -1348,3 +1348,8 @@ test-flags-metal: ## Validate Node Flags refresh after native VM restore (root, 
 .PHONY: test-issues
 test-issues: ## Real PostgreSQL and SDK process acceptance for Gregale Issues
 	@bash scripts/test-issues.sh
+
+.PHONY: udp-alert-check
+udp-alert-check: ## Verify UDP ingress alert syntax and failure/recovery behavior
+	promtool check rules deploy/ansible/roles/prometheus/files/faas.rules.yml
+	promtool test rules deploy/ansible/roles/prometheus/files/udp.rules.test.yml

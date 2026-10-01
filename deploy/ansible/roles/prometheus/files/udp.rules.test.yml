@@ -1,0 +1,89 @@
+rule_files:
+  - faas.rules.yml
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'gatewayd_public_udp_peers_completed_total{instance="edge-1",outcome="admission_error"}'
+        values: '0+30x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: FaasUDPPeerFailuresHigh
+        exp_alerts:
+          - exp_labels:
+              instance: edge-1
+              severity: warn
+              component: gatewayd-public
+              family: udp_ingress
+            exp_annotations:
+              summary: "UDP admission or forwarding failures are sustained"
+              description: "Inspect the scheduler and VMMD transport, current declared UDP ports and the deployed vmmd-udp-bridge helper. Source-policy rejection and normal idle expiry are excluded."
+  - interval: 1m
+    input_series:
+      - series: 'gatewayd_public_udp_peers_completed_total{instance="edge-1",outcome="canceled"}'
+        values: '0+1200x20'
+      - series: 'gatewayd_public_udp_peers_completed_total{instance="edge-1",outcome="idle_timeout"}'
+        values: '0+1200x20'
+      - series: 'gatewayd_public_udp_datagrams_dropped_total{instance="edge-1",reason="source_denied"}'
+        values: '0+1200x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: FaasUDPPeerFailuresHigh
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: FaasUDPResourceDropsHigh
+        exp_alerts: []
+  - interval: 1m
+    input_series:
+      - series: 'gatewayd_public_udp_datagrams_dropped_total{instance="edge-1",reason="peer_limit"}'
+        values: '0+1200x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: FaasUDPResourceDropsHigh
+        exp_alerts:
+          - exp_labels:
+              instance: edge-1
+              severity: warn
+              component: gatewayd-public
+              family: udp_ingress
+            exp_annotations:
+              summary: "UDP peer, queue or rate limits are dropping traffic"
+              description: "Inspect client retry behavior, admission latency and active peer count. The bounded UDP queues and account rate limits intentionally drop traffic under pressure; do not raise limits without checking memory and amplification behavior."
+  - interval: 1m
+    input_series:
+      - series: 'gatewayd_public_udp_peers_completed_total{instance="edge-1",outcome="resource_exhausted"}'
+        values: '0+30x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: FaasUDPPeerFailuresHigh
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: FaasUDPPeerResourceExhaustionHigh
+        exp_alerts:
+          - exp_labels:
+              instance: edge-1
+              severity: warn
+              component: gatewayd-public
+              family: udp_ingress
+            exp_annotations:
+              summary: "UDP peer resource limits are ending sessions"
+              description: "UDP peer byte/message or transport resource limits are being reached repeatedly. Inspect client traffic and configured limits; this is distinct from an admission or forwarding failure."
+  - interval: 1m
+    input_series:
+      - series: 'gatewayd_public_udp_reconciliation_errors_total{instance="edge-1"}'
+        values: '0+1x10 10+0x20'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: FaasUDPListenerReconciliationFailing
+        exp_alerts:
+          - exp_labels:
+              instance: edge-1
+              severity: warn
+              component: gatewayd-public
+              family: udp_ingress
+            exp_annotations:
+              summary: "Public UDP listener reconciliation is failing"
+              description: "Inspect gatewayd-public errors for durable-state reads, invalid endpoint identities or bind failures. Check enabled UDP intents and reserved port ownership before restarting the gateway."
+      - eval_time: 22m
+        alertname: FaasUDPListenerReconciliationFailing
+        exp_alerts: []
