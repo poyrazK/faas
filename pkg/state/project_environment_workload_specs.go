@@ -246,6 +246,7 @@ func ApplyWorkloadSettingsUpdate(settings ProjectEnvironmentWorkloadSettings, pa
 		return ProjectEnvironmentWorkloadSettings{}, err
 	}
 	updated.WorkPolicies = settings.WorkPolicies
+	updated.QueueBindings = settings.QueueBindings
 	return cloneWorkloadSettings(updated)
 }
 

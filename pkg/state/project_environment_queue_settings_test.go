@@ -5,10 +5,33 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/google/uuid"
 )
+
+func TestEnvironmentQueueSettingsSurviveOrdinaryWorkloadEdits(t *testing.T) {
+	for _, complete := range []bool{false, true} {
+		book := queueSettingsFixture()
+		if !complete {
+			book.Bindings = []ProjectEnvironmentQueueDefinition{}
+		}
+		settings, err := cloneWorkloadSettings(ProjectEnvironmentWorkloadSettings{Type: AppTypeApp, WorkloadClass: WorkloadClassWorker, RAMMB: 256, QueueBindings: &book})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ram := 512
+		updated, err := ApplyWorkloadSettingsUpdate(settings, UpdateAppParams{RAMMB: &ram})
+		if err != nil || updated.RAMMB != ram || !reflect.DeepEqual(updated.QueueBindings, settings.QueueBindings) {
+			t.Fatalf("ordinary settings edit dropped queues: %+v, %v", updated, err)
+		}
+		updated.QueueBindings.Revision++
+		if updated.QueueBindings.Revision == settings.QueueBindings.Revision {
+			t.Fatal("edited book aliases original")
+		}
+	}
+}
 
 func queueSettingsFixture() ProjectEnvironmentQueueSettings {
 	return ProjectEnvironmentQueueSettings{Revision: 1, Bindings: []ProjectEnvironmentQueueDefinition{
