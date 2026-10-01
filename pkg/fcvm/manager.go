@@ -29,6 +29,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/privatenetwork"
+	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/storage"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
@@ -416,6 +417,8 @@ type Instance struct {
 	Lease  Lease
 	Net    netns.Config
 	Method WakeMethod // how it came up; a restore that fell back reads WakeColdBoot
+
+	runtimeAdmissionReceipt runtimeadmission.Receipt
 	// ExecutionOnly marks a VM created by the dedicated disposable-execution
 	// restore/cold-boot path. ExecuteExecution refuses ordinary app instances;
 	// this prevents a caller from turning a networked long-lived app VM into a
@@ -761,6 +764,13 @@ type Manager struct {
 	appCPUPolicies       map[string]appCPUPolicy
 	appEgressPolicyLocks sync.Map                   // app ID -> cancellable read/write gate
 	appEgressPolicies    map[string]appEgressPolicy // guarded by mu
+	// Boot grants belong to this native process, not the gRPC adapter. mu
+	// protects replay consumption, process identity and cancellation flights.
+	runtimeAdmissionNodeID      string
+	runtimeAdmissionIncarnation string
+	runtimeAdmissionTokens      map[string]time.Time
+	runtimeAdmissionInstances   map[string]time.Time
+	runtimeAdmissionFlights     map[string]*runtimeAdmissionFlight
 	// jobBoots covers the artifact restore and VMM boot interval before a job
 	// enters live. Destroy/Stop must cancel and join this interval; otherwise a
 	// late boot can publish a VM after its task was already cancelled.
@@ -3124,6 +3134,8 @@ func (m *Manager) preparesWakeStateBeforeBoot() bool {
 // names changed from *Path → *Key to match the new semantics.
 type WakeRequest struct {
 	Instance string
+	// Set only by WakeAdmitted after validating and consuming its grant.
+	admission *runtimeadmission.Binding
 	// ExecutionOnly is an internal vmmd/schedd fence for the disposable
 	// one-shot path. Ordinary app wakes leave it false and can never be used by
 	// ExecuteExecution. It is not accepted from the public app wake proto.
@@ -3791,15 +3803,24 @@ func (m *Manager) WakeWithNetworkReady(ctx context.Context, req WakeRequest, hoo
 }
 
 func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNetworkReadyHook) (_ *Instance, err error) {
-	unlockPolicy, err := m.lockAppEgressPolicyForWake(ctx, req.AppID)
-	if err != nil {
-		return nil, err
+	// Admitted wakes hold the same gate in their wrapper through native
+	// receipt publication. Reacquiring it could deadlock behind a writer.
+	if req.admission == nil {
+		unlockPolicy, err := m.lockAppEgressPolicyForWake(ctx, req.AppID)
+		if err != nil {
+			return nil, err
+		}
+		defer unlockPolicy()
 	}
-	defer unlockPolicy()
 	// Keep the accepted projection stable until publication. A wake prepared
 	// before a live update must receive the node's newest complete projection.
 	m.mu.Lock()
-	if policy, ok := m.appEgressPolicies[req.AppID]; ok {
+	if req.admission != nil {
+		if err := m.checkAdmittedEgressLocked(req); err != nil {
+			m.mu.Unlock()
+			return nil, err
+		}
+	} else if policy, ok := m.appEgressPolicies[req.AppID]; ok {
 		if err := validateAppEgressPolicyPlan(req.Plan, policy); err != nil {
 			m.mu.Unlock()
 			return nil, err
@@ -5205,6 +5226,9 @@ func (m *Manager) Destroy(ctx context.Context, instance string) error {
 // Returns (false, 0, nil) when the instance is unknown to the
 // Manager — same idempotent-on-unknown contract as Destroy.
 func (m *Manager) SignalAndKill(ctx context.Context, instance string, signal syscall.Signal, grace time.Duration) (killSignalSent bool, exitCode int32, err error) {
+	if err := m.cancelRuntimeAdmissionFlight(ctx, instance); err != nil {
+		return false, 0, err
+	}
 	if err := m.cancelInFlightJobBoot(ctx, instance); err != nil {
 		return false, 0, err
 	}
@@ -5264,6 +5288,9 @@ func (m *Manager) SignalAndKill(ctx context.Context, instance string, signal sys
 }
 
 func (m *Manager) DestroyWithExport(ctx context.Context, instance, exportDir string) (int, error) {
+	if err := m.cancelRuntimeAdmissionFlight(ctx, instance); err != nil {
+		return 0, err
+	}
 	if err := m.cancelInFlightJobBoot(ctx, instance); err != nil {
 		return 0, err
 	}

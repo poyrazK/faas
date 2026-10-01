@@ -46,6 +46,16 @@ const (
 	ApplicationStandardMaxVersion               int64 = 9007199254740991
 )
 
+// Native application-standard boot grants are separate from worker leases.
+// The TTL covers the maximum 300-second startup plus restore/fallback and
+// transport; a grant never supplies consumer observation.
+const (
+	ApplicationStandardRuntimeAdmissionTTL         = 10 * time.Minute
+	ApplicationStandardRuntimeAdmissionClockSkew   = 5 * time.Second
+	ApplicationStandardRuntimeAdmissionReplayLimit = 10000
+	ApplicationStandardRuntimeCleanupTimeout       = 5 * time.Second
+)
+
 // A restore hook is on the wake critical path. Keep its customer timeout
 // below the host's five-second resume deadline, including transport overhead.
 const (

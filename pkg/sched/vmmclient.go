@@ -28,6 +28,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
 	"github.com/onebox-faas/faas/pkg/overlay"
+	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -564,6 +565,9 @@ type SnapshotBytes struct {
 // side; we keep the wire shape as a structpb.Struct here so the
 // proto side stays narrow.
 type WakeOutcome struct {
+	// Populated only by CreateAdmittedRuntime after exact receipt validation.
+	RuntimeAdmissionReceipt *runtimeadmission.Receipt
+
 	Instance              string
 	LeaseUID              int32
 	HostIP                string

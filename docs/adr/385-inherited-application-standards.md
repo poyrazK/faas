@@ -94,6 +94,45 @@ the next batch. No direct apid-to-vmmd calls and no hot-request inheritance quer
 This ADR records the complete intended feature. Individual green tests do not
 declare the feature launched or satisfy the entire checklist.
 
+### Native boot contract
+
+The private native capability uses separate `RuntimeAdmissionIdentity` and
+`CreateAdmittedRuntime` RPCs. An older server or backend refuses them before VM
+allocation; there is no fallback to a legacy wake with a manufactured receipt.
+vmmd's native manager owns a startup-bound compute-node identity and a random
+process incarnation. Restart invalidates all grants from the earlier process.
+Remote grants and identity probes require schedd's verified daemon certificate;
+the default-local Unix socket retains its existing filesystem access boundary.
+
+A grant binds a single token and instance, app/deployment/account identities,
+desired standard revision, effective/captured-input hashes, complete wire boot
+payload hash, actual egress revision and bounded issue/expiry times. Hashing
+covers the cold/restore variant, snapshot locators, paused intent, all AppSpec
+fields, sidecars and sealed environment bytes. Unknown fields at every depth
+are rejected rather than acknowledged without support. No payload bytes or
+credentials appear in the receipt. The native adapter additionally hashes its
+complete exported input projection and the manager clones it before use.
+
+The manager consumes tokens and instance identities once within a bounded
+expiry window, including failed boots. Before allocation it requires an exact
+installed egress revision and complete tuple under the per-app read gate. It
+does not replace an admitted tuple silently with newer intent. The gate remains
+held through receipt creation. Destroy and stop cancel and join admitted boot
+flights; cancelled or expired boots receive no receipt, including a late
+successful native return. Receipts come from the backend and bind the actual
+lease UID, host IP, namespace, boot method and paused state. Both wire boundaries
+validate them and clean up a successful boot with a malformed acknowledgment.
+
+This capability is preparatory. The ordinary scheduler boot paths still use
+their existing durable input-capture guards. They must switch only after the
+prepared grant and exact receipt are committed through fenced storage and
+atomic instance publication. The grant/receipt alone does not attest artifact
+content, log delivery, established-flow tightening or all live-instance egress
+convergence, and it never advances an observed standard revision. App tasks,
+migration attempt authority, warm promotion and existing gateway revocation
+remain acceptance work. Dedicated native x86_64 KVM and leakcheck evidence is
+still required.
+
 ### Enrollment evidence
 
 The storage boundary now captures admission pins at every app insert, including

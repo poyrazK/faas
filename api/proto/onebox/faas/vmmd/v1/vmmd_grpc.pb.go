@@ -22,6 +22,8 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	Vmmd_RuntimeAdmissionIdentity_FullMethodName      = "/onebox.faas.vmmd.v1.Vmmd/RuntimeAdmissionIdentity"
+	Vmmd_CreateAdmittedRuntime_FullMethodName         = "/onebox.faas.vmmd.v1.Vmmd/CreateAdmittedRuntime"
 	Vmmd_CreateFromSnapshot_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/CreateFromSnapshot"
 	Vmmd_CreateColdBoot_FullMethodName                = "/onebox.faas.vmmd.v1.Vmmd/CreateColdBoot"
 	Vmmd_JobColdBoot_FullMethodName                   = "/onebox.faas.vmmd.v1.Vmmd/JobColdBoot"
@@ -76,6 +78,9 @@ const (
 // auth model (mode 0660 group `faas`, ADR-015) is the only authentication
 // story for v1.0 — Gate-A multi-host replaces it with mTLS.
 type VmmdClient interface {
+	// Distinct methods fail closed on older nodes before allocating a VM.
+	RuntimeAdmissionIdentity(ctx context.Context, in *RuntimeAdmissionIdentityRequest, opts ...grpc.CallOption) (*RuntimeAdmissionIdentityResponse, error)
+	CreateAdmittedRuntime(ctx context.Context, in *CreateAdmittedRuntimeRequest, opts ...grpc.CallOption) (*CreateAdmittedRuntimeResponse, error)
 	// CreateFromSnapshot wakes an instance by restoring a previously-parked
 	// snapshot. Falls back to cold boot if the snapshot is stale, missing, or
 	// fails to load (ADR-005: cold boot always works).
@@ -495,6 +500,26 @@ type vmmdClient struct {
 
 func NewVmmdClient(cc grpc.ClientConnInterface) VmmdClient {
 	return &vmmdClient{cc}
+}
+
+func (c *vmmdClient) RuntimeAdmissionIdentity(ctx context.Context, in *RuntimeAdmissionIdentityRequest, opts ...grpc.CallOption) (*RuntimeAdmissionIdentityResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RuntimeAdmissionIdentityResponse)
+	err := c.cc.Invoke(ctx, Vmmd_RuntimeAdmissionIdentity_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vmmdClient) CreateAdmittedRuntime(ctx context.Context, in *CreateAdmittedRuntimeRequest, opts ...grpc.CallOption) (*CreateAdmittedRuntimeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateAdmittedRuntimeResponse)
+	err := c.cc.Invoke(ctx, Vmmd_CreateAdmittedRuntime_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *vmmdClient) CreateFromSnapshot(ctx context.Context, in *CreateFromSnapshotRequest, opts ...grpc.CallOption) (*WakeResponse, error) {
@@ -981,6 +1006,9 @@ func (c *vmmdClient) CancelLiveMigration(ctx context.Context, in *CancelLiveMigr
 // auth model (mode 0660 group `faas`, ADR-015) is the only authentication
 // story for v1.0 — Gate-A multi-host replaces it with mTLS.
 type VmmdServer interface {
+	// Distinct methods fail closed on older nodes before allocating a VM.
+	RuntimeAdmissionIdentity(context.Context, *RuntimeAdmissionIdentityRequest) (*RuntimeAdmissionIdentityResponse, error)
+	CreateAdmittedRuntime(context.Context, *CreateAdmittedRuntimeRequest) (*CreateAdmittedRuntimeResponse, error)
 	// CreateFromSnapshot wakes an instance by restoring a previously-parked
 	// snapshot. Falls back to cold boot if the snapshot is stale, missing, or
 	// fails to load (ADR-005: cold boot always works).
@@ -1402,6 +1430,12 @@ type VmmdServer interface {
 // pointer dereference when methods are called.
 type UnimplementedVmmdServer struct{}
 
+func (UnimplementedVmmdServer) RuntimeAdmissionIdentity(context.Context, *RuntimeAdmissionIdentityRequest) (*RuntimeAdmissionIdentityResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RuntimeAdmissionIdentity not implemented")
+}
+func (UnimplementedVmmdServer) CreateAdmittedRuntime(context.Context, *CreateAdmittedRuntimeRequest) (*CreateAdmittedRuntimeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateAdmittedRuntime not implemented")
+}
 func (UnimplementedVmmdServer) CreateFromSnapshot(context.Context, *CreateFromSnapshotRequest) (*WakeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateFromSnapshot not implemented")
 }
@@ -1553,6 +1587,42 @@ func RegisterVmmdServer(s grpc.ServiceRegistrar, srv VmmdServer) {
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&Vmmd_ServiceDesc, srv)
+}
+
+func _Vmmd_RuntimeAdmissionIdentity_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RuntimeAdmissionIdentityRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).RuntimeAdmissionIdentity(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_RuntimeAdmissionIdentity_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).RuntimeAdmissionIdentity(ctx, req.(*RuntimeAdmissionIdentityRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_CreateAdmittedRuntime_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateAdmittedRuntimeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).CreateAdmittedRuntime(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_CreateAdmittedRuntime_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).CreateAdmittedRuntime(ctx, req.(*CreateAdmittedRuntimeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _Vmmd_CreateFromSnapshot_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -2300,6 +2370,14 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "onebox.faas.vmmd.v1.Vmmd",
 	HandlerType: (*VmmdServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "RuntimeAdmissionIdentity",
+			Handler:    _Vmmd_RuntimeAdmissionIdentity_Handler,
+		},
+		{
+			MethodName: "CreateAdmittedRuntime",
+			Handler:    _Vmmd_CreateAdmittedRuntime_Handler,
+		},
 		{
 			MethodName: "CreateFromSnapshot",
 			Handler:    _Vmmd_CreateFromSnapshot_Handler,

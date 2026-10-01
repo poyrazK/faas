@@ -17,6 +17,9 @@ option go_package = "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1;v
 // auth model (mode 0660 group `faas`, ADR-015) is the only authentication
 // story for v1.0 — Gate-A multi-host replaces it with mTLS.
 service Vmmd {
+  // Distinct methods fail closed on older nodes before allocating a VM.
+  rpc RuntimeAdmissionIdentity(RuntimeAdmissionIdentityRequest) returns (RuntimeAdmissionIdentityResponse);
+  rpc CreateAdmittedRuntime(CreateAdmittedRuntimeRequest) returns (CreateAdmittedRuntimeResponse);
   // CreateFromSnapshot wakes an instance by restoring a previously-parked
   // snapshot. Falls back to cold boot if the snapshot is stale, missing, or
   // fails to load (ADR-005: cold boot always works).
@@ -2256,3 +2259,56 @@ message UpdateAppEgressPolicyRequest {
 }
 
 message UpdateAppEgressPolicyAck { int64 revision = 1; }
+
+// Process identity is produced by the native manager, not echoed from callers.
+message RuntimeAdmissionIdentityRequest {}
+message RuntimeAdmissionIdentityResponse {
+  uint32 protocol_version = 1;
+  string node_id = 2;
+  string incarnation = 3;
+}
+
+// Internal schedd grant. Hashes bind private captured inputs and the complete
+// delivered boot envelope; neither secrets nor logging credentials are returned.
+message RuntimeBootBinding {
+  uint32 protocol_version = 1;
+  string token = 2;
+  string instance_id = 3;
+  string app_id = 4;
+  string deployment_id = 5;
+  string account_id = 6;
+  string node_id = 7;
+  string incarnation = 8;
+  int64 desired_revision = 9;
+  string effective_hash = 10;
+  string captured_input_hash = 11;
+  string payload_hash = 12;
+  int64 egress_revision = 13;
+  int64 issued_at_unix_nano = 14;
+  int64 expires_at_unix_nano = 15;
+}
+
+message CreateAdmittedRuntimeRequest {
+  RuntimeBootBinding binding = 1;
+  oneof boot {
+    CreateColdBootRequest cold_boot = 2;
+    CreateFromSnapshotRequest restore = 3;
+  }
+}
+
+// Native boot receipt, not image, log-delivery or live-egress convergence proof.
+message RuntimeBootReceipt {
+  RuntimeBootBinding binding = 1;
+  string native_input_hash = 2;
+  string netns = 3;
+  string host_ip = 4;
+  int32 lease_uid = 5;
+  WakeMethod method = 6;
+  bool paused = 7;
+  int64 completed_at_unix_nano = 8;
+}
+
+message CreateAdmittedRuntimeResponse {
+  WakeResponse runtime = 1;
+  RuntimeBootReceipt receipt = 2;
+}

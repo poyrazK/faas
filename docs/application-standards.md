@@ -220,6 +220,16 @@ runtime proofs, exceptions and complete rollback
 operations remain acceptance work; these private paths are not a released
 application-standards feature.
 
+The private native boot protocol now binds a complete prepared request to one
+compute node and vmmd process, a captured input digest, a standard revision and
+an exact egress revision. Unsupported nodes refuse before boot; expired,
+replayed and mismatched grants refuse admission. The backend returns a receipt
+for the actual runtime identity. Cancellation joins the in-flight boot and
+cleans up a late success. This is an internal foundation: scheduler storage must
+still persist the grant and receipt atomically with instance publication before
+ordinary managed boot paths use it. It supplies no image-content or delivered-log
+proof, and does not mark the standard observed or enable public activation.
+
 ## Automatic onboarding and repair
 
 apid runs bounded repair passes every five seconds. Each pass visits reviewed
