@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -209,103 +211,97 @@ func (s *server) getRuntimePolicyStatus(w http.ResponseWriter, r *http.Request, 
 		api.WriteProblem(w, api.ErrCapacity("runtime policy status is unavailable"))
 		return
 	}
-	wait := time.Duration(0)
-	if raw := r.URL.Query().Get("wait"); raw != "" {
-		var err error
-		wait, err = time.ParseDuration(raw)
-		if err != nil || wait < 0 || wait > runtimePolicyWaitMax {
-			api.WriteProblem(w, api.ErrValidation("wait must be a duration between 0s and 10s"))
-			return
-		}
+	wait, err := parseRuntimePolicyWait(r.URL.Query().Get("wait"))
+	if err != nil {
+		api.WriteProblem(w, api.ErrValidation("wait must be a duration between 0s and 10s"))
+		return
 	}
-	deadline := time.Time{}
-	if wait > 0 {
-		deadline = time.Now().Add(wait)
-	}
+	deadline := time.Now().Add(wait)
 	for {
-		desired, err := store.LatestAppControlPlaneChangeID(r.Context(), app.ID)
+		status, err := s.readRuntimePolicyStatus(r.Context(), store, app)
 		if err != nil {
-			s.log.Warn("apid: load runtime policy revision failed", "app", app.ID, "err", err)
+			s.log.Warn("apid: load runtime policy status failed", "app", app.ID, "err", err)
 			api.WriteProblem(w, api.ErrCapacity("runtime policy status is unavailable"))
 			return
 		}
-		requestPolicyDesired, err := store.LatestAppRequestPolicyRevision(r.Context(), app.ID)
-		if err != nil {
-			s.log.Warn("apid: load gateway request policy revision failed", "app", app.ID, "err", err)
-			api.WriteProblem(w, api.ErrCapacity("runtime policy status is unavailable"))
-			return
-		}
-		edgeRulesDesired, err := store.LatestAppEdgeRuleChangeID(r.Context(), app.ID)
-		if err != nil {
-			s.log.Warn("apid: load edge-rule policy revision failed", "app", app.ID, "err", err)
-			api.WriteProblem(w, api.ErrCapacity("runtime policy status is unavailable"))
-			return
-		}
-		corsPresetsDesired, err := store.LatestAccountCorsPresetChangeID(r.Context(), app.AccountID)
-		if err != nil {
-			s.log.Warn("apid: load CORS preset policy revision failed", "account", app.AccountID, "err", err)
-			api.WriteProblem(w, api.ErrCapacity("runtime policy status is unavailable"))
-			return
-		}
-		cachePurgeDesired, err := store.LatestAppResponseCachePurgeID(r.Context(), app.ID)
-		if err != nil {
-			s.log.Warn("apid: load response-cache purge revision failed", "app", app.ID, "err", err)
-			api.WriteProblem(w, api.ErrCapacity("runtime policy status is unavailable"))
-			return
-		}
-		egressDesired, err := store.LatestAppEgressPolicyRevision(r.Context(), app.ID)
-		if err != nil {
-			s.log.Warn("apid: load app egress policy revision failed", "app", app.ID, "err", err)
-			api.WriteProblem(w, api.ErrCapacity("runtime policy status is unavailable"))
-			return
-		}
-		cpuDesired, err := store.LatestAppCPUPolicyRevision(r.Context(), app.ID)
-		if err != nil {
-			s.log.Warn("apid: load app CPU policy revision failed", "app", app.ID, "err", err)
-			api.WriteProblem(w, api.ErrCapacity("runtime policy status is unavailable"))
-			return
-		}
-		gateways, err := store.ListServingGatewayControlPlaneStates(r.Context())
-		if err != nil {
-			s.log.Warn("apid: load gateway runtime policy states failed", "app", app.ID, "err", err)
-			api.WriteProblem(w, api.ErrCapacity("runtime policy status is unavailable"))
-			return
-		}
-		appEgressNodes, err := store.ListServingAppEgressPolicyNodeStates(r.Context(), app.ID)
-		if err != nil {
-			s.log.Warn("apid: load app egress policy node states failed", "app", app.ID, "err", err)
-			api.WriteProblem(w, api.ErrCapacity("runtime policy status is unavailable"))
-			return
-		}
-		appCPUNodes, err := store.ListServingAppCPUPolicyNodeStates(r.Context(), app.ID)
-		if err != nil {
-			s.log.Warn("apid: load app CPU policy node states failed", "app", app.ID, "err", err)
-			api.WriteProblem(w, api.ErrCapacity("runtime policy status is unavailable"))
-			return
-		}
-		scaling, err := store.GetAppScalingPolicyStatus(r.Context(), app.ID)
-		if err != nil {
-			s.log.Warn("apid: load scheduler scaling policy status failed", "app", app.ID, "err", err)
-			api.WriteProblem(w, api.ErrCapacity("runtime policy status is unavailable"))
-			return
-		}
-		status := summarizeRuntimePolicyStatus(app.ID, app.NodeID, desired, requestPolicyDesired, edgeRulesDesired, corsPresetsDesired, cachePurgeDesired, egressDesired, cpuDesired, gateways, appEgressNodes, appCPUNodes, scaling, time.Now().UTC())
-		if wait == 0 || (status.State != "pending" && status.RequestPolicy.State != "pending" && status.EdgeRules.State != "pending" && status.CorsPresets.State != "pending" && status.ResponseCache.State != "pending" && status.EgressAllowlist.State != "pending" && status.CPULimit.State != "pending" && status.SchedulerScaling.State != "pending") || !time.Now().Before(deadline) {
+		if wait == 0 || !runtimePolicyStatusPending(status) || !time.Now().Before(deadline) {
 			writeJSON(w, http.StatusOK, status)
 			return
 		}
-		delay := min(runtimePolicyWaitPoll, time.Until(deadline))
-		timer := time.NewTimer(delay)
-		select {
-		case <-r.Context().Done():
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
+		if !waitRuntimePolicyPoll(r.Context(), min(runtimePolicyWaitPoll, time.Until(deadline))) {
 			return
-		case <-timer.C:
 		}
 	}
+}
+
+func parseRuntimePolicyWait(raw string) (time.Duration, error) {
+	if raw == "" {
+		return 0, nil
+	}
+	wait, err := time.ParseDuration(raw)
+	if err != nil || wait < 0 || wait > runtimePolicyWaitMax {
+		return 0, errors.New("invalid runtime policy wait")
+	}
+	return wait, nil
+}
+
+func runtimePolicyStatusPending(s api.RuntimePolicyStatusResponse) bool {
+	return s.State == "pending" || s.RequestPolicy.State == "pending" || s.EdgeRules.State == "pending" || s.CorsPresets.State == "pending" || s.ResponseCache.State == "pending" || s.EgressAllowlist.State == "pending" || s.CPULimit.State == "pending" || s.SchedulerScaling.State == "pending"
+}
+
+func waitRuntimePolicyPoll(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+func (s *server) readRuntimePolicyStatus(ctx context.Context, store runtimePolicyStatusStore, app state.App) (api.RuntimePolicyStatusResponse, error) {
+	var desired, requestPolicy, edgeRules, corsPresets, cachePurge, egress, cpu int64
+	for _, revision := range []struct {
+		name   string
+		target *int64
+		read   func(context.Context, string) (int64, error)
+		id     string
+	}{
+		{"app", &desired, store.LatestAppControlPlaneChangeID, app.ID},
+		{"request", &requestPolicy, store.LatestAppRequestPolicyRevision, app.ID},
+		{"edge rules", &edgeRules, store.LatestAppEdgeRuleChangeID, app.ID},
+		{"CORS", &corsPresets, store.LatestAccountCorsPresetChangeID, app.AccountID},
+		{"response cache", &cachePurge, store.LatestAppResponseCachePurgeID, app.ID},
+		{"egress", &egress, store.LatestAppEgressPolicyRevision, app.ID},
+		{"CPU", &cpu, store.LatestAppCPUPolicyRevision, app.ID},
+	} {
+		value, err := revision.read(ctx, revision.id)
+		if err != nil {
+			return api.RuntimePolicyStatusResponse{}, fmt.Errorf("read %s revision: %w", revision.name, err)
+		}
+		*revision.target = value
+	}
+	gateways, err := store.ListServingGatewayControlPlaneStates(ctx)
+	if err != nil {
+		return api.RuntimePolicyStatusResponse{}, fmt.Errorf("read gateway policies: %w", err)
+	}
+	egressNodes, err := store.ListServingAppEgressPolicyNodeStates(ctx, app.ID)
+	if err != nil {
+		return api.RuntimePolicyStatusResponse{}, fmt.Errorf("read egress policies: %w", err)
+	}
+	cpuNodes, err := store.ListServingAppCPUPolicyNodeStates(ctx, app.ID)
+	if err != nil {
+		return api.RuntimePolicyStatusResponse{}, fmt.Errorf("read CPU policies: %w", err)
+	}
+	scaling, err := store.GetAppScalingPolicyStatus(ctx, app.ID)
+	if err != nil {
+		return api.RuntimePolicyStatusResponse{}, fmt.Errorf("read scheduler policy: %w", err)
+	}
+	status := summarizeRuntimePolicyStatus(app.ID, app.NodeID, desired, requestPolicy, edgeRules, corsPresets, cachePurge, egress, cpu, gateways, egressNodes, cpuNodes, scaling, time.Now().UTC())
+	status.TrafficRuntime, err = s.loadTrafficRuntimeStatus(ctx, gateways)
+	if err != nil {
+		return api.RuntimePolicyStatusResponse{}, fmt.Errorf("read traffic runtime: %w", err)
+	}
+	return status, nil
 }

@@ -551,6 +551,7 @@ var cliCommands = []cliCommand{
 			{Name: "egress-allowlist", Short: "Inspect or update the outbound CIDR allowlist"},
 			{Name: "egress-ports", Short: "Inspect or update the extra outbound TCP ports (Pro/Scale)"},
 			{Name: "network", Short: "Inspect networking or manage private-network attachments"},
+			{Name: "traffic-status", Short: "Show policy convergence and fresh gateway traffic wiring"},
 			{Name: "routes", Short: "List admitted per-route labels for one app"},
 			{Name: "tcp", Short: "Manage raw TCP listeners"},
 		},

@@ -8104,6 +8104,74 @@ func (q *Queries) ListRequestTelemetryDependencySpans(ctx context.Context, db DB
 	return items, nil
 }
 
+const listServingGatewayTrafficRuntime = `-- name: ListServingGatewayTrafficRuntime :many
+SELECT n.name AS node_name, COALESCE(o.generation, 0)::bigint AS generation, o.reported_at,
+       COALESCE(o.retry_enabled, false)::boolean AS retry_enabled,
+       COALESCE(o.rate_counter_mode, 'unwired')::text AS rate_counter_mode,
+       COALESCE(o.retry_counter_mode, 'unwired')::text AS retry_counter_mode,
+       COALESCE(o.retry_backend_id, '')::text AS retry_backend_id,
+       COALESCE(o.deadline_signing, false)::boolean AS deadline_signing,
+       COALESCE(o.policy_snapshot, false)::boolean AS policy_snapshot,
+       COALESCE(o.security_revocation, false)::boolean AS security_revocation,
+       COALESCE(o.managed_http, false)::boolean AS managed_http,
+       COALESCE(o.managed_circuit, false)::boolean AS managed_circuit,
+       clock_timestamp()::timestamptz AS database_now
+FROM compute_nodes n LEFT JOIN gateway_traffic_runtime_observations o ON o.node_name = n.name
+WHERE n.active AND n.role IN ('compute-only', 'compute-node')
+  AND n.gateway_target_url IS NOT NULL AND btrim(n.gateway_target_url) <> ''
+ORDER BY n.name LIMIT $1::integer
+`
+
+type ListServingGatewayTrafficRuntimeRow struct {
+	NodeName           string
+	Generation         int64
+	ReportedAt         pgtype.Timestamptz
+	RetryEnabled       bool
+	RateCounterMode    string
+	RetryCounterMode   string
+	RetryBackendID     string
+	DeadlineSigning    bool
+	PolicySnapshot     bool
+	SecurityRevocation bool
+	ManagedHttp        bool
+	ManagedCircuit     bool
+	DatabaseNow        pgtype.Timestamptz
+}
+
+func (q *Queries) ListServingGatewayTrafficRuntime(ctx context.Context, db DBTX, rowLimit int32) ([]ListServingGatewayTrafficRuntimeRow, error) {
+	rows, err := db.Query(ctx, listServingGatewayTrafficRuntime, rowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListServingGatewayTrafficRuntimeRow{}
+	for rows.Next() {
+		var i ListServingGatewayTrafficRuntimeRow
+		if err := rows.Scan(
+			&i.NodeName,
+			&i.Generation,
+			&i.ReportedAt,
+			&i.RetryEnabled,
+			&i.RateCounterMode,
+			&i.RetryCounterMode,
+			&i.RetryBackendID,
+			&i.DeadlineSigning,
+			&i.PolicySnapshot,
+			&i.SecurityRevocation,
+			&i.ManagedHttp,
+			&i.ManagedCircuit,
+			&i.DatabaseNow,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSessions = `-- name: ListSessions :many
 select id, account_id,
        coalesce(host(issued_ip), '') as issued_ip,
@@ -12215,6 +12283,24 @@ func (q *Queries) ReadEdgeRuleTrafficAccount(ctx context.Context, db DBTX, ruleI
 	return i, err
 }
 
+const readGatewayTrafficRuntimeEpoch = `-- name: ReadGatewayTrafficRuntimeEpoch :one
+
+SELECT generation, boot_id FROM gateway_traffic_runtime_observations WHERE node_name = $1::text
+`
+
+type ReadGatewayTrafficRuntimeEpochRow struct {
+	Generation int64
+	BootID     pgtype.UUID
+}
+
+// ADR-375: generation-fenced gateway wiring observations.
+func (q *Queries) ReadGatewayTrafficRuntimeEpoch(ctx context.Context, db DBTX, nodeName string) (ReadGatewayTrafficRuntimeEpochRow, error) {
+	row := db.QueryRow(ctx, readGatewayTrafficRuntimeEpoch, nodeName)
+	var i ReadGatewayTrafficRuntimeEpochRow
+	err := row.Scan(&i.Generation, &i.BootID)
+	return i, err
+}
+
 const readOpenAPIImportQuota = `-- name: ReadOpenAPIImportQuota :one
 SELECT count(*)::bigint AS observed,
     coalesce(bool_or(app_id = $1::uuid), false)::boolean AS replacement
@@ -12906,7 +12992,6 @@ func (q *Queries) ReadServicePolicyActiveRelease(ctx context.Context, db DBTX, a
 }
 
 const readServicePolicyAppByID = `-- name: ReadServicePolicyAppByID :one
-
 SELECT id, account_id, slug, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
        jsonb_strip_nulls(jsonb_build_object(
@@ -13937,6 +14022,38 @@ func (q *Queries) RecordUploadCommitOutcome(ctx context.Context, db DBTX, arg Re
 	return i, err
 }
 
+const registerGatewayTrafficRuntimeEpoch = `-- name: RegisterGatewayTrafficRuntimeEpoch :one
+INSERT INTO gateway_traffic_runtime_observations (node_name, boot_id)
+SELECT n.name, $1::uuid
+FROM compute_nodes n
+WHERE n.name = $2::text AND n.active
+  AND n.role IN ('compute-only', 'compute-node')
+  AND n.gateway_target_url IS NOT NULL AND btrim(n.gateway_target_url) <> ''
+  AND ($3::bigint = 0 OR EXISTS (
+      SELECT 1 FROM gateway_traffic_runtime_observations old
+      WHERE old.node_name = n.name AND old.generation = $3::bigint))
+ON CONFLICT (node_name) DO UPDATE SET
+    generation = EXCLUDED.generation, boot_id = EXCLUDED.boot_id, reported_at = NULL,
+    retry_enabled = false, rate_counter_mode = 'unwired', retry_counter_mode = 'unwired', retry_backend_id = '',
+    deadline_signing = false, policy_snapshot = false, security_revocation = false, managed_http = false, managed_circuit = false
+WHERE gateway_traffic_runtime_observations.generation = $3::bigint
+  AND gateway_traffic_runtime_observations.boot_id <> EXCLUDED.boot_id
+RETURNING generation
+`
+
+type RegisterGatewayTrafficRuntimeEpochParams struct {
+	BootID             pgtype.UUID
+	NodeName           string
+	ExpectedGeneration int64
+}
+
+func (q *Queries) RegisterGatewayTrafficRuntimeEpoch(ctx context.Context, db DBTX, arg RegisterGatewayTrafficRuntimeEpochParams) (int64, error) {
+	row := db.QueryRow(ctx, registerGatewayTrafficRuntimeEpoch, arg.BootID, arg.NodeName, arg.ExpectedGeneration)
+	var generation int64
+	err := row.Scan(&generation)
+	return generation, err
+}
+
 const registerGatewayUsageEvent = `-- name: RegisterGatewayUsageEvent :one
 with inserted as (
   insert into meter_gateway_usage_events (node_id, event_id, instance_id, minute)
@@ -13964,6 +14081,56 @@ func (q *Queries) RegisterGatewayUsageEvent(ctx context.Context, db DBTX, arg Re
 	var inserted bool
 	err := row.Scan(&inserted)
 	return inserted, err
+}
+
+const reportGatewayTrafficRuntime = `-- name: ReportGatewayTrafficRuntime :execrows
+UPDATE gateway_traffic_runtime_observations SET reported_at = clock_timestamp(),
+    retry_enabled = $1::boolean,
+    rate_counter_mode = $2::text,
+    retry_counter_mode = $3::text,
+    retry_backend_id = $4::text,
+    deadline_signing = $5::boolean,
+    policy_snapshot = $6::boolean,
+    security_revocation = $7::boolean,
+    managed_http = $8::boolean,
+    managed_circuit = $9::boolean
+WHERE node_name = $10::text AND generation = $11::bigint AND boot_id = $12::uuid
+`
+
+type ReportGatewayTrafficRuntimeParams struct {
+	RetryEnabled       bool
+	RateCounterMode    string
+	RetryCounterMode   string
+	RetryBackendID     string
+	DeadlineSigning    bool
+	PolicySnapshot     bool
+	SecurityRevocation bool
+	ManagedHttp        bool
+	ManagedCircuit     bool
+	NodeName           string
+	Generation         int64
+	BootID             pgtype.UUID
+}
+
+func (q *Queries) ReportGatewayTrafficRuntime(ctx context.Context, db DBTX, arg ReportGatewayTrafficRuntimeParams) (int64, error) {
+	result, err := db.Exec(ctx, reportGatewayTrafficRuntime,
+		arg.RetryEnabled,
+		arg.RateCounterMode,
+		arg.RetryCounterMode,
+		arg.RetryBackendID,
+		arg.DeadlineSigning,
+		arg.PolicySnapshot,
+		arg.SecurityRevocation,
+		arg.ManagedHttp,
+		arg.ManagedCircuit,
+		arg.NodeName,
+		arg.Generation,
+		arg.BootID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const requestTelemetryAnalyticsByDeployment = `-- name: RequestTelemetryAnalyticsByDeployment :many
@@ -15448,6 +15615,25 @@ func (q *Queries) RestoreTrafficPolicyStatementTimeout(ctx context.Context, db D
 	var column_1 string
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const retireGatewayTrafficRuntime = `-- name: RetireGatewayTrafficRuntime :execrows
+UPDATE gateway_traffic_runtime_observations SET reported_at = NULL
+WHERE node_name = $1::text AND generation = $2::bigint AND boot_id = $3::uuid
+`
+
+type RetireGatewayTrafficRuntimeParams struct {
+	NodeName   string
+	Generation int64
+	BootID     pgtype.UUID
+}
+
+func (q *Queries) RetireGatewayTrafficRuntime(ctx context.Context, db DBTX, arg RetireGatewayTrafficRuntimeParams) (int64, error) {
+	result, err := db.Exec(ctx, retireGatewayTrafficRuntime, arg.NodeName, arg.Generation, arg.BootID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const reverseAccountInvoiceCreditConsumption = `-- name: ReverseAccountInvoiceCreditConsumption :execrows

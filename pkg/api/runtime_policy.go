@@ -51,6 +51,35 @@ type RuntimePolicyStatusResponse struct {
 	EgressAllowlist  RuntimePolicyNodeStatus      `json:"egress_allowlist"`
 	CPULimit         RuntimePolicyNodeStatus      `json:"cpu_limit"`
 	SchedulerScaling RuntimePolicySchedulerStatus `json:"scheduler_scaling"`
+	TrafficRuntime   TrafficRuntimeStatus         `json:"traffic_runtime"`
+}
+
+// TrafficRuntimeStatus reports fresh daemon wiring observations independently
+// of policy convergence. It never attests successful request enforcement.
+type TrafficRuntimeStatus struct {
+	Scope              string                      `json:"scope"`
+	State              string                      `json:"state"`              // observed, partial, or unverified
+	EnforcementStatus  string                      `json:"enforcement_status"` // unverified
+	ServingGateways    int                         `json:"serving_gateways"`
+	FreshGateways      int                         `json:"fresh_gateways"`
+	StaleGateways      int                         `json:"stale_gateways"`
+	MissingGateways    int                         `json:"missing_gateways"`
+	PublicRetry        TrafficRuntimeFeatureStatus `json:"public_retry"`
+	RateCounter        TrafficRuntimeFeatureStatus `json:"rate_counter"`
+	RetryCounter       TrafficRuntimeFeatureStatus `json:"retry_counter"`
+	DeadlineSigning    TrafficRuntimeFeatureStatus `json:"deadline_signing"`
+	PolicySnapshot     TrafficRuntimeFeatureStatus `json:"policy_snapshot"`
+	SecurityRevocation TrafficRuntimeFeatureStatus `json:"security_revocation"`
+	ManagedHTTP        TrafficRuntimeFeatureStatus `json:"managed_http"`
+	ManagedCircuit     TrafficRuntimeFeatureStatus `json:"managed_circuit"`
+}
+
+// Mode describes wiring: enabled/disabled, central/local, shared/redis/local,
+// mixed, or unwired. Missing/stale fleet members make the state unverified.
+// Retry counter endpoint disagreement is mixed even when backend types agree.
+type TrafficRuntimeFeatureStatus struct {
+	State string `json:"state"` // observed, mixed, or unverified
+	Mode  string `json:"mode"`
 }
 
 // RuntimePolicyComponentStatus reports convergence for a policy component's

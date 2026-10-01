@@ -315,6 +315,50 @@ Preview/runtime agreement and full acceptance remain required.
 
 ## Runtime evidence
 
+### Gateway wiring observations
+
+`GET /v1/apps/{slug}/policy/status` includes `traffic_runtime` for the
+authorized app owner. `gregale app <slug> traffic-status` renders the same
+response; `--json` preserves policy revisions and observation fields together.
+The existing optional API `wait` waits for policy convergence only.
+
+Named compute gateways report after handler construction and listener binding.
+The database assigns a new generation at registration; replacement clears the
+old report. Updates and shutdown retirement require that generation and process
+token. A late process cannot reclaim a replacement by retrying its old
+registration. Unnamed development gateways do not create fleet observations.
+
+Reports run every 2 seconds with a 250 ms database deadline. Database timestamps
+expire after 10 seconds; readiness failure removes the report. The reader uses
+the active compute-only/compute-node roster with a configured gateway target.
+Missing or stale members leave feature state `unverified`; partial freshness is
+visible in the counts. The reader refuses a roster beyond 4,096 members instead
+of returning a truncated fleet claim. Older daemons remain missing until upgraded.
+
+`state=observed` means every roster member has a fresh wiring report. Per-feature
+state is `observed`, `mixed`, or `unverified`. Modes show:
+
+| Field | Wiring reported |
+| --- | --- |
+| `public_retry` | Public handler retry gate enabled or disabled; an app rule must still authorize retries |
+| `rate_counter` | Central PostgreSQL or process-local account/app rate backend |
+| `retry_counter` | Shared PostgreSQL, Redis, local, or unwired; differing shared endpoint identities report mixed |
+| `deadline_signing` | A deadline signer attached to the handler |
+| `policy_snapshot` | Public routing snapshot reader attached to the handler |
+| `security_revocation` | Emergency revocation registry attached to the handler |
+| `managed_http` | Tenant managed HTTP listener constructed and bound |
+| `managed_circuit` | Adaptive endpoint breaker attached to that managed HTTP listener |
+
+Shared retry endpoint identities contain no URL or credentials and are used
+only for aggregation; the customer response contains no node names or process
+tokens. The report describes wired components. It does not prove target
+reachability, counter operations, rate backend endpoint agreement, signer key
+agreement, public-hop availability, VM admission, or outbound firewall enforcement.
+`enforcement_status` remains `unverified`. Capability maturity and release gates
+require their own request-path, recovery, native-host, and staging evidence.
+
+### Request policy fingerprints
+
 Ordinary responses expose `X-Gregale-Traffic-Policy: traffic-v1:<sha256>`.
 The gateway owns this response header at commitment; application responses,
 edge header actions, and declared or late trailers cannot overwrite it. The request span carries

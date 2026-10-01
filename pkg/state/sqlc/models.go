@@ -1216,6 +1216,22 @@ type GatewayResponseCachePurgeWatermark struct {
 	ObservedAt   pgtype.Timestamptz
 }
 
+type GatewayTrafficRuntimeObservation struct {
+	NodeName           string
+	Generation         int64
+	BootID             pgtype.UUID
+	ReportedAt         pgtype.Timestamptz
+	RetryEnabled       bool
+	RateCounterMode    string
+	RetryCounterMode   string
+	RetryBackendID     string
+	DeadlineSigning    bool
+	PolicySnapshot     bool
+	SecurityRevocation bool
+	ManagedHttp        bool
+	ManagedCircuit     bool
+}
+
 type GdprRequest struct {
 	ID           pgtype.UUID
 	AccountID    pgtype.UUID

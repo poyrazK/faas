@@ -2513,7 +2513,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// An operator can therefore enable the flag fleet-wide and roll retry out
 	// per app, rather than changing every app's behaviour at once — which is
 	// why the default policy here is inert rather than a 2-attempt default.
-	handler.WithRetryEnabled(trafficResilienceEnabled("FAAS_GATEWAY_RETRY"))
+	publicRetryEnabled := trafficResilienceEnabled("FAAS_GATEWAY_RETRY")
+	handler.WithRetryEnabled(publicRetryEnabled)
 	handler.WithRetryObserver(deps.metrics)
 	// ADR-093: arm the per-process routeMetricsEnabled kill-switch on
 	// the Handler so routeSetFor can AND the operator flag against the
@@ -3464,6 +3465,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	var guestServiceProxy http.Handler
 	var guestServiceCallerResolver gateway.ServiceProxyCallerResolver
 	var guestServiceAliasAllowed gateway.ServiceAliasAllowed
+	managedCircuitWired := false
 	if deps.pgStore != nil && serviceEndpointProvider != nil && deps.nodeCache != nil {
 		pgStore := deps.pgStore
 		guestServiceAliasAllowed = newServiceAliasAllowed(pgStore)
@@ -3509,6 +3511,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// signing key is available, so the default path is unchanged.
 			MintCallerAssertion: newServiceCallerMinter(ctx, pgStore, cfg.NodeName, log),
 		}
+		managedCircuitWired = serviceProxyConfig.Breaker != nil
 		controlMux.Handle("/v1/internal/services/", gateway.NewServiceProxy(serviceProxyConfig))
 		if strings.TrimSpace(cfg.ServiceProxyListen) != "" {
 			guestServiceCallerResolver = newServiceProxyCallerResolver(pgStore.ListAllInstances, cfg.NodeName)
@@ -3822,11 +3825,25 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// M7). Best-effort: if the socket can't bind (e.g. /run/faas
 	// doesn't exist on a dev box), log and continue — the public +
 	// control listeners are still up.
+	servingListenerReady := listenAddr != "off"
 	if deps.synth != nil {
 		if err := deps.synth.Start(); err != nil {
 			log.Warn("gatewayd synth listen failed; cron traffic will fail until restart",
 				"socket", gatewaydInternalSocket, "err", err)
+		} else {
+			servingListenerReady = true
 		}
+	}
+	if deps.pgStore != nil && servingListenerReady {
+		managedHTTP := guestServiceProxy != nil && serviceProxyAddr != ""
+		stopTrafficObserver := startTrafficRuntimeObserver(ctx, deps.pgStore, cfg.NodeName, state.GatewayTrafficFeatures{
+			RetryEnabled: publicRetryEnabled, RateCounterMode: mode,
+			RetryCounterMode: retryBudget.CounterMode(), RetryBackendID: retryBudget.BackendID(),
+			DeadlineSigning: deps.trafficDeadlines != nil, PolicySnapshot: deps.pool != nil,
+			SecurityRevocation: deps.trafficRevocations != nil,
+			ManagedHTTP:        managedHTTP, ManagedCircuit: managedHTTP && managedCircuitWired,
+		}, readyProbe.ReadyFunc(), log)
+		defer stopTrafficObserver()
 	}
 
 	notifyStop := daemonunit.NotifyReadyWhen(ctx, readyProbe.ReadyFunc())

@@ -1599,3 +1599,77 @@ synthetic-path agreement, live daemon feature observations and
 load/recovery/customer/staging acceptance remain pending. No native Linux
 x86_64 KVM acceptance host is available; native VM/firewall/process-death/leak
 acceptance remains pending.
+
+
+### Fresh gateway traffic wiring observations, 2026-10-01
+
+Named internal gateways now publish credential-free wiring observations after
+handler construction and serving-listener binding. A database sequence allocates
+process generations with compare-and-swap registration against a baseline read
+once. An ambiguous registration can recover its original process token; a late
+old writer cannot reclaim or retire a replacement. Registration clears previous
+freshness and feature values. Readiness failure and bounded shutdown retirement
+clear the report; process death or failed retirement expires after ten seconds.
+Writes run every two seconds under a 250 ms context, outside request accounting.
+
+The owned app policy-status API adds a separate `traffic_runtime` block. It uses
+active named compute gateways, database timestamps and a 4,096-member bound;
+oversized rosters refuse rather than truncate. Missing/stale members leave
+features unverified. Fresh reports expose the public retry gate, actual rate
+and retry backend types, retry endpoint disagreement, deadline signer, public
+snapshot reader, emergency revocation registry, and tenant managed HTTP/adaptive
+breaker wiring. `gregale app <slug> traffic-status` renders the same data and
+policy convergence; JSON and generated CLI documentation are updated. Older
+API responses render unverified wiring. Optional API waits retain their policy
+convergence semantics. The HTTP handler's reads and polling are extracted so
+the handler remains below the repository's 50-line limit.
+
+These are process wiring observations. They do not attest public-hop or target
+reachability, successful counter operations, rate endpoint or signer-key
+agreement, per-VM admission, outbound firewall enforcement, or request-path
+acceptance. Existing policy-revision watermarks retain their separate writer
+semantics; this change fences the new observations. Enforcement remains
+unverified and capability maturity is unchanged.
+
+Verification:
+
+- Full API, gateway, internal gateway and CLI suites pass: 1,813 / 2,223 / 740 /
+  2,906 named cases. The internal suite is repeated after the bounded-retirement
+  context fix; existing database/shell guards account for 74 remaining skips.
+- Four PostgreSQL state cases pass without skips: concurrent ownership,
+  replacement/late-writer fencing, lost-response recovery, roster membership,
+  credential-free validation and refusal of a truncated roster.
+- Seven targeted internal gateway cases pass without skips, including real
+  PostgreSQL, actual daemon handler/listener construction, a local gRPC usage
+  receiver, central/local mode and flag differences, a real HTTP response,
+  restart generation, shutdown retirement and bind-failure non-publication.
+- Forty-four selected app runtime-policy/traffic/capability cases pass without
+  skips, including app ownership, missing/stale/future observations, mode and
+  endpoint disagreement, and database-read refusal. The CLI suite includes
+  real SDK round trips, text/JSON output and older API compatibility.
+- The combined final evidence has 7,733 distinct passing named cases. Shared
+  API/state, gateway, internal gateway, CLI and apid lint all report zero issues
+  with tests enabled. SQLC 1.31.1 regeneration matches all four generated files;
+  source hashes, formatting and whitespace checks pass.
+
+A fresh private PostgreSQL database applies the complete migration set. The
+new table's seven canonical table/sequence/default/key/FK blocks are copied
+from its actual pg_dump output. Full schema regeneration also exposes older
+unrelated schema drift; that drift is preserved as a diagnostic and is outside
+this slice. No existing schema block is rewritten.
+
+Diagnostics retain the generated-column fixture correction, disk-full build
+and migration failures, missing usage-receiver fixture, and the retirement
+context lint finding. The usage compatibility gate is exercised with real
+local gRPC. Retirement preserves parent values with context.WithoutCancel and
+its own bounded deadline. Disk cleanup removes only older entries in this
+chat's owned Go cache; test/lint scopes and assertions are retained.
+
+Receipts, source hashes, compressed logs, schema and SQLC evidence are in
+`/Users/poyrazk/dev/Cloud/gregale/outputs/traffic-runtime-observations-20261001/`.
+All six release guarantees remain unchecked. Binding publication and
+tenant/alias/revision/operator reservation transitions, broader preview/full
+synthetic-path agreement, feature observations for the public hop and VM
+consumers, backend-operation evidence, load/recovery/customer/staging and
+native VM/firewall/process-death/leak acceptance remain pending. No dedicated
+Linux x86_64 KVM host is currently available.

@@ -768,6 +768,7 @@ type Querier interface {
 	// partition, then interleaved so one high-volume revision cannot crowd all
 	// prior deployments out of the bounded comparison window.
 	ListRequestTelemetryDependencySpans(ctx context.Context, db DBTX, arg ListRequestTelemetryDependencySpansParams) ([]ListRequestTelemetryDependencySpansRow, error)
+	ListServingGatewayTrafficRuntime(ctx context.Context, db DBTX, rowLimit int32) ([]ListServingGatewayTrafficRuntimeRow, error)
 	// Active rows only, newest first. Partial index keeps the scan tight.
 	ListSessions(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListSessionsRow, error)
 	// A broker may redeliver after Gregale commits a terminal receipt but before
@@ -1004,6 +1005,8 @@ type Querier interface {
 	ReadDeploymentTrafficAccount(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (pgtype.UUID, error)
 	ReadDomainTrafficVerificationOwner(ctx context.Context, db DBTX, arg ReadDomainTrafficVerificationOwnerParams) (ReadDomainTrafficVerificationOwnerRow, error)
 	ReadEdgeRuleTrafficAccount(ctx context.Context, db DBTX, ruleID pgtype.UUID) (ReadEdgeRuleTrafficAccountRow, error)
+	// ADR-375: generation-fenced gateway wiring observations.
+	ReadGatewayTrafficRuntimeEpoch(ctx context.Context, db DBTX, nodeName string) (ReadGatewayTrafficRuntimeEpochRow, error)
 	ReadOpenAPIImportQuota(ctx context.Context, db DBTX, arg ReadOpenAPIImportQuotaParams) (ReadOpenAPIImportQuotaRow, error)
 	// A single statement reads the pointer and its complete membership together.
 	ReadProjectReleaseSet(ctx context.Context, db DBTX, arg ReadProjectReleaseSetParams) ([]byte, error)
@@ -1134,7 +1137,9 @@ type Querier interface {
 	// original deployment_id. ON CONFLICT DO NOTHING (rather than
 	// DO UPDATE) is correct: the original row is canonical.
 	RecordUploadCommitOutcome(ctx context.Context, db DBTX, arg RecordUploadCommitOutcomeParams) (UploadCommitOutcome, error)
+	RegisterGatewayTrafficRuntimeEpoch(ctx context.Context, db DBTX, arg RegisterGatewayTrafficRuntimeEpochParams) (int64, error)
 	RegisterGatewayUsageEvent(ctx context.Context, db DBTX, arg RegisterGatewayUsageEventParams) (bool, error)
+	ReportGatewayTrafficRuntime(ctx context.Context, db DBTX, arg ReportGatewayTrafficRuntimeParams) (int64, error)
 	// Bounded deployment cost allocation for the customer request analytics
 	// window. Request counts are weighted by the publisher's collapsed `count`.
 	// The window total is computed before LIMIT so the handler can allocate the
@@ -1206,6 +1211,7 @@ type Querier interface {
 	// lifecycle transition without a second read.
 	ResolveStaleRegressionObservations(ctx context.Context, db DBTX, dollar_1 pgtype.Interval) ([]DebugRegressionObservation, error)
 	RestoreTrafficPolicyStatementTimeout(ctx context.Context, db DBTX, timeout string) (string, error)
+	RetireGatewayTrafficRuntime(ctx context.Context, db DBTX, arg RetireGatewayTrafficRuntimeParams) (int64, error)
 	ReverseAccountInvoiceCreditConsumption(ctx context.Context, db DBTX, arg ReverseAccountInvoiceCreditConsumptionParams) (int64, error)
 	// Revokes every active row for accountID except the supplied sid
 	// (the calling session). Returns the revoked ids for audit.

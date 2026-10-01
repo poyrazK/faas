@@ -296,6 +296,25 @@ remain required delivery work.
 
 ## Delivery and verification
 
+Named compute gateways publish a small, credential-free runtime observation
+after traffic handlers are wired and their listener is ready. A database
+generation fences each process: registration compares the previously read
+generation, resets its observation, and subsequent reports and retirement
+must match the allocated generation. Retrying an ambiguous registration may
+recover that same process token but may not reclaim a replaced generation.
+Reports use database timestamps and expire after ten seconds. Membership is
+the existing active compute gateway roster; absent and older daemons remain
+visible as unverified. An unnamed development gateway has no fleet claim.
+
+The observation describes actual wired retry enablement, rate-counter mode,
+retry-counter mode and endpoint identity, deadline signing, verified policy
+and security-fence wiring, and the managed HTTP/circuit surfaces. Customer
+status reports fresh observations and mixed/disabled/local exceptions
+separately from policy revision application. It does not promote capability
+maturity or infer a successful counter operation, public-hop enforcement,
+node admission, clock/key agreement, or native acceptance from wiring alone.
+Those observations and complete-path checks remain required for release.
+
 Read-only policy preview uses the runtime's numeric budget resolution and
 stored retry compilation. API write-time defaults remain distinct from
 compiling an existing row. Request-header selectors use the immutable ingress

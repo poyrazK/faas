@@ -247,6 +247,21 @@ func (b *RetryBudget) BackendID() string {
 	return b.backendID
 }
 
+// CounterMode reports the backend wired into this budget. It does not prove
+// backend availability or successful fleet accounting for any request.
+func (b *RetryBudget) CounterMode() string {
+	if b == nil {
+		return "unwired"
+	}
+	if b.shared != nil {
+		return "shared"
+	}
+	if b.remote != nil {
+		return "redis"
+	}
+	return "local"
+}
+
 func (b *RetryBudget) Close() error {
 	if b == nil || b.remote == nil {
 		return nil

@@ -616,6 +616,10 @@ Inspect or update the extra outbound TCP ports (Pro/Scale)
 
 Inspect networking or manage private-network attachments
 
+### app traffic-status
+
+Show policy convergence and fresh gateway traffic wiring
+
 ### app routes
 
 List admitted per-route labels for one app

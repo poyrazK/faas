@@ -11038,3 +11038,79 @@ CREATE TABLE public.project_environment_route_policies (
     CONSTRAINT project_environment_route_policies_explicit_chk CHECK (((NOT only_allow_declared_routes) OR (jsonb_array_length(declared_routes) > 0))),
     CONSTRAINT project_environment_route_policies_routes_array_chk CHECK (((jsonb_typeof(declared_routes) = 'array'::text) AND (jsonb_array_length(declared_routes) <= 50)))
 );
+
+--
+-- Name: gateway_traffic_runtime_observations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.gateway_traffic_runtime_observations (
+    node_name text NOT NULL,
+    generation bigint NOT NULL,
+    boot_id uuid NOT NULL,
+    reported_at timestamp with time zone,
+    retry_enabled boolean DEFAULT false NOT NULL,
+    rate_counter_mode text DEFAULT 'unwired'::text NOT NULL,
+    retry_counter_mode text DEFAULT 'unwired'::text NOT NULL,
+    retry_backend_id text DEFAULT ''::text NOT NULL,
+    deadline_signing boolean DEFAULT false NOT NULL,
+    policy_snapshot boolean DEFAULT false NOT NULL,
+    security_revocation boolean DEFAULT false NOT NULL,
+    managed_http boolean DEFAULT false NOT NULL,
+    managed_circuit boolean DEFAULT false NOT NULL,
+    CONSTRAINT gateway_traffic_runtime_observations_check CHECK (((NOT managed_circuit) OR managed_http)),
+    CONSTRAINT gateway_traffic_runtime_observations_check1 CHECK ((((retry_counter_mode = ANY (ARRAY['shared'::text, 'redis'::text])) AND (retry_backend_id <> ''::text)) OR ((retry_counter_mode = ANY (ARRAY['local'::text, 'unwired'::text])) AND (retry_backend_id = ''::text)))),
+    CONSTRAINT gateway_traffic_runtime_observations_generation_check CHECK ((generation > 0)),
+    CONSTRAINT gateway_traffic_runtime_observations_rate_counter_mode_check CHECK ((rate_counter_mode = ANY (ARRAY['central'::text, 'local'::text, 'unwired'::text]))),
+    CONSTRAINT gateway_traffic_runtime_observations_retry_backend_id_check CHECK (((retry_backend_id = ''::text) OR (retry_backend_id ~ '^[0-9a-f]{16}$'::text))),
+    CONSTRAINT gateway_traffic_runtime_observations_retry_counter_mode_check CHECK ((retry_counter_mode = ANY (ARRAY['shared'::text, 'redis'::text, 'local'::text, 'unwired'::text])))
+);
+
+
+--
+-- Name: gateway_traffic_runtime_observations_generation_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.gateway_traffic_runtime_observations_generation_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: gateway_traffic_runtime_observations_generation_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.gateway_traffic_runtime_observations_generation_seq OWNED BY public.gateway_traffic_runtime_observations.generation;
+
+
+--
+-- Name: gateway_traffic_runtime_observations generation; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.gateway_traffic_runtime_observations ALTER COLUMN generation SET DEFAULT nextval('public.gateway_traffic_runtime_observations_generation_seq'::regclass);
+
+
+--
+-- Name: gateway_traffic_runtime_observations gateway_traffic_runtime_observations_generation_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.gateway_traffic_runtime_observations
+    ADD CONSTRAINT gateway_traffic_runtime_observations_generation_key UNIQUE (generation);
+
+
+--
+-- Name: gateway_traffic_runtime_observations gateway_traffic_runtime_observations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.gateway_traffic_runtime_observations
+    ADD CONSTRAINT gateway_traffic_runtime_observations_pkey PRIMARY KEY (node_name);
+
+
+--
+-- Name: gateway_traffic_runtime_observations gateway_traffic_runtime_observations_node_name_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.gateway_traffic_runtime_observations
+    ADD CONSTRAINT gateway_traffic_runtime_observations_node_name_fkey FOREIGN KEY (node_name) REFERENCES public.compute_nodes(name) ON DELETE CASCADE;

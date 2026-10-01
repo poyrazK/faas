@@ -7407,6 +7407,12 @@ const (
 	TrafficSecurityMaxScopes        = 4_096
 	TrafficSecurityMaxRequestScopes = 16
 	TrafficSecurityMaxHeaderBytes   = 4096
+	// Runtime feature observations are small fleet snapshots, independent of
+	// request accounting and policy-revision convergence.
+	TrafficRuntimeObservationInterval  = 2 * time.Second
+	TrafficRuntimeObservationTimeout   = 250 * time.Millisecond
+	TrafficRuntimeObservationFreshness = 10 * time.Second
+	TrafficRuntimeObservationMaxNodes  = 4096
 	// RequestBudgetApidDefault is the apid-side default budget.
 	// apid serves dashboards + admin + sync-invoke long-polls that
 	// are already capped at 910 s upstream (fwdStream) so 5 s is

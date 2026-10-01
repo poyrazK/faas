@@ -4805,8 +4805,64 @@ SELECT e.scope_kind, e.scope_id, e.revision, e.revoked
 FROM traffic_security_epochs e JOIN requested r
     ON e.scope_kind = r.scope_kind AND e.scope_id = r.scope_id;
 
--- ADR-375: minimal credential-free projection for one read-only service-policy snapshot.
+-- ADR-375: generation-fenced gateway wiring observations.
 
+-- name: ReadGatewayTrafficRuntimeEpoch :one
+SELECT generation, boot_id FROM gateway_traffic_runtime_observations WHERE node_name = sqlc.arg(node_name)::text;
+
+-- name: RegisterGatewayTrafficRuntimeEpoch :one
+INSERT INTO gateway_traffic_runtime_observations (node_name, boot_id)
+SELECT n.name, sqlc.arg(boot_id)::uuid
+FROM compute_nodes n
+WHERE n.name = sqlc.arg(node_name)::text AND n.active
+  AND n.role IN ('compute-only', 'compute-node')
+  AND n.gateway_target_url IS NOT NULL AND btrim(n.gateway_target_url) <> ''
+  AND (sqlc.arg(expected_generation)::bigint = 0 OR EXISTS (
+      SELECT 1 FROM gateway_traffic_runtime_observations old
+      WHERE old.node_name = n.name AND old.generation = sqlc.arg(expected_generation)::bigint))
+ON CONFLICT (node_name) DO UPDATE SET
+    generation = EXCLUDED.generation, boot_id = EXCLUDED.boot_id, reported_at = NULL,
+    retry_enabled = false, rate_counter_mode = 'unwired', retry_counter_mode = 'unwired', retry_backend_id = '',
+    deadline_signing = false, policy_snapshot = false, security_revocation = false, managed_http = false, managed_circuit = false
+WHERE gateway_traffic_runtime_observations.generation = sqlc.arg(expected_generation)::bigint
+  AND gateway_traffic_runtime_observations.boot_id <> EXCLUDED.boot_id
+RETURNING generation;
+
+-- name: ReportGatewayTrafficRuntime :execrows
+UPDATE gateway_traffic_runtime_observations SET reported_at = clock_timestamp(),
+    retry_enabled = sqlc.arg(retry_enabled)::boolean,
+    rate_counter_mode = sqlc.arg(rate_counter_mode)::text,
+    retry_counter_mode = sqlc.arg(retry_counter_mode)::text,
+    retry_backend_id = sqlc.arg(retry_backend_id)::text,
+    deadline_signing = sqlc.arg(deadline_signing)::boolean,
+    policy_snapshot = sqlc.arg(policy_snapshot)::boolean,
+    security_revocation = sqlc.arg(security_revocation)::boolean,
+    managed_http = sqlc.arg(managed_http)::boolean,
+    managed_circuit = sqlc.arg(managed_circuit)::boolean
+WHERE node_name = sqlc.arg(node_name)::text AND generation = sqlc.arg(generation)::bigint AND boot_id = sqlc.arg(boot_id)::uuid;
+
+-- name: RetireGatewayTrafficRuntime :execrows
+UPDATE gateway_traffic_runtime_observations SET reported_at = NULL
+WHERE node_name = sqlc.arg(node_name)::text AND generation = sqlc.arg(generation)::bigint AND boot_id = sqlc.arg(boot_id)::uuid;
+
+-- name: ListServingGatewayTrafficRuntime :many
+SELECT n.name AS node_name, COALESCE(o.generation, 0)::bigint AS generation, o.reported_at,
+       COALESCE(o.retry_enabled, false)::boolean AS retry_enabled,
+       COALESCE(o.rate_counter_mode, 'unwired')::text AS rate_counter_mode,
+       COALESCE(o.retry_counter_mode, 'unwired')::text AS retry_counter_mode,
+       COALESCE(o.retry_backend_id, '')::text AS retry_backend_id,
+       COALESCE(o.deadline_signing, false)::boolean AS deadline_signing,
+       COALESCE(o.policy_snapshot, false)::boolean AS policy_snapshot,
+       COALESCE(o.security_revocation, false)::boolean AS security_revocation,
+       COALESCE(o.managed_http, false)::boolean AS managed_http,
+       COALESCE(o.managed_circuit, false)::boolean AS managed_circuit,
+       clock_timestamp()::timestamptz AS database_now
+FROM compute_nodes n LEFT JOIN gateway_traffic_runtime_observations o ON o.node_name = n.name
+WHERE n.active AND n.role IN ('compute-only', 'compute-node')
+  AND n.gateway_target_url IS NOT NULL AND btrim(n.gateway_target_url) <> ''
+ORDER BY n.name LIMIT sqlc.arg(row_limit)::integer;
+
+-- ADR-375: minimal credential-free projection for one read-only service-policy snapshot.
 -- name: ReadServicePolicyAppByID :one
 SELECT id, account_id, slug, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
