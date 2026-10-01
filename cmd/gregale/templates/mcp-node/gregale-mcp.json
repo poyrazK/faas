@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "endpoint": "/mcp",
+  "transport": "streamable-http",
+  "mode": "stateless",
+  "legacy": true,
+  "allowed_origins": [],
+  "auth": { "mode": "open" }
+}

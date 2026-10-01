@@ -127,7 +127,7 @@ func cliHelpGroup(command cliCommand) string {
 	switch command.Name {
 	case "account", "billing", "capabilities", "context", "dashboard", "doctor", "invitations", "invoices", "keys", "link", "login", "logout", "mfa", "open", "orgs", "overage-cap", "plan", "signup", "unlink", "upload-cache", "usage", "version", "completion", "man", "whoami":
 		return "Core"
-	case "apps", "app", "build", "connect", "cors", "deploy", "deployment", "deployments", "deploys", "dev", "domains", "edge-rules", "env", "github", "init", "invoke", "openapi", "preview", "projects", "registry", "rollback", "scan", "secrets", "tenant-surfaces", "platform-tenants", "trusted-publishers":
+	case "apps", "app", "build", "connect", "cors", "deploy", "deployment", "deployments", "deploys", "dev", "domains", "edge-rules", "env", "github", "init", "invoke", "mcp", "openapi", "preview", "projects", "registry", "rollback", "scan", "secrets", "tenant-surfaces", "platform-tenants", "trusted-publishers":
 		return "API"
 	case "add", "bindings", "crons", "delayed-task", "events", "send", "deliver", "invocations", "jobs", "operations", "run", "runs", "triggers", "webhooks", "workflows", "cache", "postgres":
 		return "Data"
@@ -256,6 +256,7 @@ var templateNames13 = []string{
 	"ai-chat",
 	"secret-reload-node",
 	"customer-platform",
+	"mcp-node",
 }
 
 // cliCommands is the manifest. One entry per top-level command in
@@ -267,6 +268,7 @@ var templateNames13 = []string{
 // catches the omission; the manifest-drift guard is the load-bearing
 // sync mechanism per ADR-083 §Decision 4.
 var cliCommands = []cliCommand{
+	mcpCLICommand(),
 	{
 		Name:    "account",
 		DocSlug: "account",

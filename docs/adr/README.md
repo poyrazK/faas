@@ -315,6 +315,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 158 | [Explicit ephemeral disk boundary](158-ephemeral-disk-boundary.md): expose the existing plan-capped writable `drive1` capacity as `ephemeral_disk_max_mb` while retaining `app_layer_max_mb` compatibility; no persistent volumes or second quota source | accepted | container runtime storage contract; no migration |
 | 144 | Zero-config workspace build context — explicit `--path` workspace members upload repository context and persist `source_root`; builderd/guest-init build from the selected nested directory | accepted | zero-config deploy follow-up; ADR-086/088/090 |
 | 422 | [Bare-metal service recovery capacity](422-bare-metal-service-recovery-capacity.md) | accepted | Durable, atomic one-host recovery headroom and operator certificate |
+| 423 | [MCP hosting contract](423-mcp-hosting-contract.md) | proposed | Stateless MCP starter, deployment verification, client OAuth and diagnostics on the app lifecycle |
 
 ADR-011 and ADR-012 are required by the UX spec (§11) before git-deploy work
 begins at M7.5; both landed on 2026-07-17 alongside the M7.5 PR open.
@@ -409,6 +410,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-148: nonblocking resume hardware entropy](148-nonblocking-resume-hardware-entropy.md)
 - [ADR-149: prepared unused network cache](149-prepared-unused-network-cache.md)
 - [ADR-150: firecracker tsc restore order canary](150-firecracker-tsc-restore-order-canary.md)
+- [ADR-423: retained cache materialization](423-retained-cache-materialization.md) — avoid the redundant copy while retaining the opened artifact through eviction
 
 ## Managed service recovery decisions
 

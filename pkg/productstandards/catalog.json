@@ -304,6 +304,40 @@
       ]
     },
     {
+      "id": "mcp-streamable-http",
+      "name": "Model Context Protocol",
+      "version": "2026-07-28; stateless 2025-11-25 compatibility",
+      "category": "api-contract",
+      "surface": "customer MCP application starter and diagnostic CLI",
+      "status": "partial",
+      "scope": "Stateless Streamable HTTP serving through the official SDK; diagnostic POST metadata and parameter headers, JSON and request-scoped SSE, tool discovery and calls, Origin rejection, and legacy stateless initialization. The starter optionally verifies external OAuth JWT access tokens and serves protected-resource metadata.",
+      "limitations": "The diagnostic client does not implement Tasks, multi round-trip input requests, subscriptions or automatic OAuth login. Stateful sessions, old HTTP+SSE and direct stdio are outside the hosting profile. Provider/client OAuth interoperability and platform-owned tool authorization need separate qualification.",
+      "docs_url": "https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http",
+      "evidence": "pkg/mcphosting; cmd/gregale/templates/mcp-node; .github/workflows/mcp-contract.yml; docs/mcp.md; docs/adr/423-mcp-hosting-contract.md",
+      "conformance": [
+        {
+          "fixture": "mcp-post-and-sse",
+          "tier": "unit",
+          "target": "pkg/mcphosting/client_test.go::TestStatelessDiscoveryAndStreaming"
+        },
+        {
+          "fixture": "mcp-cli-journey",
+          "tier": "integration",
+          "target": "cmd/gregale/commands_mcp_test.go::TestMCPCLIJourney"
+        },
+        {
+          "fixture": "mcp-legacy-stateless",
+          "tier": "unit",
+          "target": "pkg/mcphosting/client_test.go::TestLegacyStatelessHandshakeAndPagination"
+        },
+        {
+          "fixture": "mcp-oauth-resource-discovery",
+          "tier": "unit",
+          "target": "pkg/mcphosting/oauth_test.go::TestOAuthDiscoveryDoesNotForwardTokens"
+        }
+      ]
+    },
+    {
       "id": "mtls",
       "name": "Mutual TLS",
       "version": "TLS 1.3 / service identity",

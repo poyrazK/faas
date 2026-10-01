@@ -4,6 +4,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 
 | Command | What it does |
 |---|---|
+| [`mcp`](#mcp) | Scaffold, deploy and verify stateless MCP servers |
 | [`account`](#account) | Manage the local account (account export\|delete\|restore\|status\|dpa\|slo) |
 | [`add`](#add) | Provision and bind managed resources to an app |
 | [`bindings`](#bindings) | Inspect app bindings and rotation status, manage storage credentials, or verify service and PostgreSQL connections |
@@ -99,6 +100,142 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`whoami`](#whoami) | Show the authenticated account |
 | [`completion`](#completion) | Print a shell completion script (bash\|zsh\|fish\|powershell) |
 | [`man`](#man) | Print the gregale(1) man page (or gregale-&lt;command&gt;(1) with one arg) |
+
+## mcp
+
+Scaffold, deploy and verify stateless MCP servers
+
+`gregale mcp [<subcommand>]`
+
+### mcp init
+
+Create the Node MCP starter
+
+| Flag | Meaning | |
+|---|---|---|
+| `--path <DIR>` | empty destination directory | required |
+
+Examples:
+
+```sh
+gregale mcp init --path ./my-mcp
+```
+
+### mcp deploy
+
+Deploy the worktree, enable streaming and verify MCP discovery
+
+| Flag | Meaning | |
+|---|---|---|
+| `--path <DIR>` | source directory (default .) |  |
+| `--name <SLUG>` | app slug | required |
+| `--profile <NAME>` | app resource profile | one of `micro` · `small` · `medium` · `large` · `xlarge` |
+| `--token-env <ENV>` | client token for external OAuth verification |  |
+| `--secrets-file <PATH>` | sealed app secrets |  |
+| `--timeout <SECONDS>` | deployment wait timeout in seconds (default 1200) |  |
+
+Examples:
+
+```sh
+gregale mcp deploy --path ./my-mcp --name my-mcp --profile small
+```
+
+### mcp doctor
+
+Check discovery, Origin rejection, compatibility and optional streaming
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing an MCP client token |  |
+| `--legacy` | check legacy compatibility (doctor), or use protocol 2025-11-25 |  |
+| `--tool <NAME>` | tool to execute (call) |  |
+| `--stream-tool <NAME>` | explicitly execute a tool to verify live progress (doctor) |  |
+| `--arguments <JSON>` | tool arguments as a JSON object |  |
+| `--arguments-file <PATH>` | JSON file containing tool arguments |  |
+| `--name <NAME>` | connection name (config) |  |
+| `--timeout <DURATION>` | total diagnostic timeout (default 30s) |  |
+
+Examples:
+
+```sh
+gregale mcp doctor --app my-mcp --legacy --stream-tool stream_demo
+```
+
+### mcp tools
+
+Discover tool schemas without invoking tools
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing an MCP client token |  |
+| `--legacy` | check legacy compatibility (doctor), or use protocol 2025-11-25 |  |
+| `--tool <NAME>` | tool to execute (call) |  |
+| `--stream-tool <NAME>` | explicitly execute a tool to verify live progress (doctor) |  |
+| `--arguments <JSON>` | tool arguments as a JSON object |  |
+| `--arguments-file <PATH>` | JSON file containing tool arguments |  |
+| `--name <NAME>` | connection name (config) |  |
+| `--timeout <DURATION>` | total diagnostic timeout (default 30s) |  |
+
+Examples:
+
+```sh
+gregale mcp tools --app my-mcp
+```
+
+### mcp call
+
+Execute one discovered tool without automatic retries
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing an MCP client token |  |
+| `--legacy` | check legacy compatibility (doctor), or use protocol 2025-11-25 |  |
+| `--tool <NAME>` | tool to execute (call) |  |
+| `--stream-tool <NAME>` | explicitly execute a tool to verify live progress (doctor) |  |
+| `--arguments <JSON>` | tool arguments as a JSON object |  |
+| `--arguments-file <PATH>` | JSON file containing tool arguments |  |
+| `--name <NAME>` | connection name (config) |  |
+| `--timeout <DURATION>` | total diagnostic timeout (default 30s) |  |
+
+Examples:
+
+```sh
+gregale mcp call --app my-mcp --tool add --arguments '{"a":7,"b":5}'
+```
+
+### mcp config
+
+Emit remote MCP connection JSON without credentials
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | full MCP endpoint URL |  |
+| `--app <SLUG>` | resolve a Gregale app&#39;s public endpoint |  |
+| `--endpoint <PATH>` | endpoint path with --app (default /mcp) |  |
+| `--token-env <ENV>` | environment variable containing an MCP client token |  |
+| `--legacy` | check legacy compatibility (doctor), or use protocol 2025-11-25 |  |
+| `--tool <NAME>` | tool to execute (call) |  |
+| `--stream-tool <NAME>` | explicitly execute a tool to verify live progress (doctor) |  |
+| `--arguments <JSON>` | tool arguments as a JSON object |  |
+| `--arguments-file <PATH>` | JSON file containing tool arguments |  |
+| `--name <NAME>` | connection name (config) |  |
+| `--timeout <DURATION>` | total diagnostic timeout (default 30s) |  |
+
+Examples:
+
+```sh
+gregale mcp config --app my-mcp --name my-mcp
+```
+
 
 ## account
 
@@ -1573,7 +1710,7 @@ Deploy an app, function, or project
 | `--github` | emit a GitHub Actions workflow snippet for the Gregale deploy action |  |
 | `--pinned-sha <SHA>` | with --github only, pin the generated Action to this full 40-character commit SHA |  |
 | `--pin-action` | with --github only, resolve the current v0 Action tag to its commit SHA |  |
-| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` |
+| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` |
 | `--dockerfile` | build with the supplied Dockerfile inside --tarball |  |
 | `--runtime <RUNTIME>` | function runtime | one of `node22` · `python312` · `go124` · `go124-alpine` · `node24` · `python313` |
 | `--handler <HANDLER>` | function handler |  |
@@ -2430,7 +2567,7 @@ Scaffold a project from a built-in template
 
 | Flag | Meaning | |
 |---|---|---|
-| `--template <NAME>` | template name | required; one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` |
+| `--template <NAME>` | template name | required; one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` |
 | `--path <DIR>` | target directory | required |
 | `--deploy` | deploy after scaffolding |  |
 | `--name <SLUG>` | app slug used with --deploy |  |
