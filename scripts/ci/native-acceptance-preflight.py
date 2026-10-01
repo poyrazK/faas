@@ -198,6 +198,14 @@ def collect(args, host=None):
     if args.mode == "e2e":
         check("storage_backend", backend in {"local", "oci", "gcs"},
               "Use FAAS_STORAGE_BACKEND=local, oci, or gcs as supported by pkg/storage.")
+        # The persistent HTTP bridge binds here via ip netns exec; neither the
+        # bridge nor VMMD creates the parent. Missing tmpfiles provisioning
+        # otherwise turns successful restores into opaque forwarding 503s.
+        stream_root = host.path("/var/run/faas/stream")
+        check("stream_bridge_directory", stream_root.is_dir(),
+              "Provision /run/faas/stream with compute_only_service's faas.conf "
+              "tmpfiles contract (root:faas, mode 0770).",
+              {"path": "/var/run/faas/stream"})
         # The source-build harness creates drive1 under Go's temporary root,
         # even when artifacts use a remote backend. Mirror builderd's guard.
         drive_parent = os.environ.get("TMPDIR") or "/tmp"

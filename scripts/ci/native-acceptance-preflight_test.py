@@ -92,6 +92,7 @@ class PreflightTests(unittest.TestCase):
         self.digest = self.host.put("/srv/fc/base/runner-builder-amd64.ext4.digest",
             "source-ref=ghcr.io/example/builder@sha256:" + "a" * 64 + "\nlayout-v3\n")
         self.host.path("/srv/fc/snap").mkdir()
+        self.host.path("/var/run/faas/stream").mkdir(parents=True)
         self.host.put("/repo/pkg/builderd/drive.go",
             (SCRIPT.parents[2] / "pkg/builderd/drive.go").read_text())
         self.env = patch.dict(os.environ, {"FAAS_STORAGE_BACKEND": "local",
@@ -149,6 +150,26 @@ class PreflightTests(unittest.TestCase):
                 result = self.check(self.collect(), "builder_drive_capacity")
                 self.assertEqual("passed" if available >= required else "failed", result["status"])
                 self.assertEqual(required, result["detail"]["required_bytes"])
+
+    def test_stream_bridge_parent_must_exist_without_mutation(self):
+        path = self.host.path("/var/run/faas/stream")
+        path.rmdir()
+        report = self.collect()
+        self.assertEqual("blocked", report["preflight"])
+        result = self.check(report, "stream_bridge_directory")
+        self.assertEqual("failed", result["status"])
+        self.assertIn("mode 0770", result["repair"])
+        self.assertFalse(path.exists())
+        path.write_text("not a directory")
+        self.assertEqual("failed", self.check(self.collect(), "stream_bridge_directory")["status"])
+        self.assertEqual("not a directory", path.read_text())
+
+    def test_stream_bridge_parent_is_not_required_for_fcvm_metal(self):
+        self.args.mode = "metal"
+        self.host.path("/var/run/faas/stream").rmdir()
+        report = self.collect()
+        self.assertEqual("ready", report["preflight"])
+        self.assertNotIn("stream_bridge_directory", [item["name"] for item in report["checks"]])
 
     def test_unknown_builder_capacity_expression_blocks(self):
         self.host.put("/repo/pkg/builderd/drive.go", "const BuildDriveMinFreeBytes = unknown\n")
