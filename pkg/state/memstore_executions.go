@@ -86,7 +86,7 @@ func cloneExecution(row Execution) Execution {
 func (m *MemStore) CreateExecution(_ context.Context, params CreateExecutionParams) (Execution, error) {
 	normalizedIntegrationIDs, err := api.NormalizeExecutionIntegrationIDs(params.OutboundIntegrationIDs)
 	if err != nil {
-		return Execution{}, fmt.Errorf("%w: %v", ErrExecutionInvalid, err)
+		return Execution{}, fmt.Errorf("%w: %w", ErrExecutionInvalid, err)
 	}
 	params.OutboundIntegrationIDs = normalizedIntegrationIDs
 	if err := validateCreateExecution(params); err != nil {
