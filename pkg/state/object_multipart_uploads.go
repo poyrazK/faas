@@ -24,12 +24,13 @@ type ObjectMultipartMetadata struct {
 const ObjectMultipartLeaseDuration = 2 * time.Minute
 
 const (
-	ObjectMultipartInitiating = "initiating"
-	ObjectMultipartActive     = "active"
-	ObjectMultipartCompleting = "completing"
-	ObjectMultipartAborting   = "aborting"
-	ObjectMultipartCompleted  = "completed"
-	ObjectMultipartAborted    = "aborted"
+	ObjectMultipartInitiating            = "initiating"
+	ObjectMultipartActive                = "active"
+	ObjectMultipartCompleting            = "completing"
+	ObjectMultipartCompletingConditional = "completing_conditional"
+	ObjectMultipartAborting              = "aborting"
+	ObjectMultipartCompleted             = "completed"
+	ObjectMultipartAborted               = "aborted"
 )
 
 type ObjectMultipartUpload struct {
@@ -42,6 +43,8 @@ type ObjectMultipartUpload struct {
 	Metadata                        ObjectMultipartMetadata
 	ProviderUploadID                string
 	Parts                           []api.ObjectMultipartCompletedPart
+	CompletionConditions            api.ObjectWriteConditions
+	CompletionErrorCode             string
 	State                           string
 	ExpiresAt, CreatedAt, UpdatedAt time.Time
 	LeaseToken                      string
@@ -63,7 +66,7 @@ type ObjectMultipartUploadStore interface {
 }
 
 func validObjectMultipartOperation(operation string) bool {
-	return operation == ObjectMultipartInitiating || operation == ObjectMultipartCompleting || operation == ObjectMultipartAborting
+	return operation == ObjectMultipartInitiating || ObjectMultipartIsCompleting(operation) || operation == ObjectMultipartAborting
 }
 
 func validObjectMultipartRetry(code string, delay time.Duration) bool {
@@ -105,7 +108,7 @@ func validMultipartCapacityUpload(u ObjectMultipartUpload, account, bucket strin
 		return false
 	}
 	if completion {
-		return u.State == ObjectMultipartActive || u.State == ObjectMultipartCompleting
+		return u.State == ObjectMultipartActive || ObjectMultipartIsCompleting(u.State)
 	}
 	return u.State == ObjectMultipartActive && u.ExpiresAt.After(now)
 }
@@ -128,6 +131,7 @@ type ObjectMultipartTransferStore interface {
 	PrepareObjectMultipartCompletion(context.Context, ObjectMultipartUpload, string, int64, []api.ObjectMultipartCompletedPart, api.ObjectStoragePolicy) (ObjectMultipartUpload, error)
 	ObjectMultipartAbortReady(context.Context, string, string) (bool, error)
 	FinishVerifiedObjectMultipartAbort(context.Context, string, string) error
+	RejectObjectMultipartCompletion(context.Context, string, string, string) error
 }
 
 type multipartPartTransfer struct {
@@ -138,4 +142,19 @@ type multipartPartTransfer struct {
 
 func multipartTransferWindow() time.Duration {
 	return api.ObjectTransferTimeout + time.Duration(api.ObjectMultipartPartURLTTLSeconds)*time.Second + api.ObjectMultipartCleanupGrace
+}
+
+func ObjectMultipartIsCompleting(s string) bool {
+	return s == ObjectMultipartCompleting || s == ObjectMultipartCompletingConditional
+}
+
+func multipartCompletionOperation(c api.ObjectWriteConditions) string {
+	if !c.Empty() {
+		return ObjectMultipartCompletingConditional
+	}
+	return ObjectMultipartCompleting
+}
+
+func validMultipartCompletionFailure(code string) bool {
+	return code == "precondition_failed" || code == "conditional_conflict" || code == "conditional_not_found"
 }

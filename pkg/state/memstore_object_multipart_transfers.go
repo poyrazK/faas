@@ -41,17 +41,17 @@ func (m *MemStore) multipartTransfersPendingLocked(id string) bool {
 }
 
 func (m *MemStore) PrepareObjectMultipartCompletion(_ context.Context, u ObjectMultipartUpload, token string, size int64, parts []api.ObjectMultipartCompletedPart, p api.ObjectStoragePolicy) (ObjectMultipartUpload, error) {
-	if token == "" || len(token) > 128 || size < 1 || size > api.MaxObjectUploadBytes || len(parts) < 1 || len(parts) > api.MaxMultipartParts {
+	if !u.CompletionConditions.Valid() || token == "" || len(token) > 128 || size < 1 || size > api.MaxObjectUploadBytes || len(parts) < 1 || len(parts) > api.MaxMultipartParts {
 		return ObjectMultipartUpload{}, ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	current, ok := m.objectMultipartUploads[u.ID]
-	if !ok || current.PartRevision != u.PartRevision || m.multipartTransfersPendingLocked(u.ID) {
+	if !ok || current.PartRevision != u.PartRevision || m.multipartTransfersPendingLocked(u.ID) || ObjectMultipartIsCompleting(current.State) && (current.CompletionConditions != u.CompletionConditions || current.SizeBytes != size) {
 		return ObjectMultipartUpload{}, ErrConflict
 	}
 	// Validate the claim before changing the capacity ledger.
-	claimed, err := m.claimObjectMultipartLocked(u.AccountID, u.AppID, u.BucketID, u.ID, token, ObjectMultipartCompleting, parts, false)
+	claimed, err := m.claimObjectMultipartLocked(u.AccountID, u.AppID, u.BucketID, u.ID, token, multipartCompletionOperation(u.CompletionConditions), parts, false, u.CompletionConditions)
 	if err != nil {
 		return ObjectMultipartUpload{}, err
 	}
@@ -94,5 +94,20 @@ func (m *MemStore) FinishVerifiedObjectMultipartAbort(_ context.Context, id, tok
 			m.objectMultipartTransfers[id][part] = transfer
 		}
 	}
+	return nil
+}
+
+func (m *MemStore) RejectObjectMultipartCompletion(_ context.Context, id, token, code string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u := m.objectMultipartUploads[id]
+	if token == "" || u.LeaseToken != token || u.State != ObjectMultipartCompletingConditional || !validMultipartCompletionFailure(code) {
+		return ErrConflict
+	}
+	u.State, u.CompletionErrorCode = ObjectMultipartAborting, code
+	u.LeaseToken, u.LeaseUntil = "", time.Time{}
+	u.AttemptCount, u.LastErrorCode = 0, code
+	u.UpdatedAt, u.RetryAt = time.Now().UTC(), time.Now().UTC()
+	m.objectMultipartUploads[id] = u
 	return nil
 }

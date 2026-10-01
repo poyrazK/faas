@@ -263,11 +263,14 @@ func (s *gatewayMultipartStore) ClaimObjectMultipartUpload(_ context.Context, ac
 	if !ok || upload.AccountID != account || upload.AppID != app || upload.BucketID != bucket || token == "" {
 		return state.ObjectMultipartUpload{}, state.ErrConflict
 	}
-	if operation == state.ObjectMultipartInitiating && upload.State != state.ObjectMultipartInitiating || operation == state.ObjectMultipartCompleting && upload.State != state.ObjectMultipartActive || operation == state.ObjectMultipartAborting && upload.State != state.ObjectMultipartActive && upload.State != state.ObjectMultipartAborting {
+	if upload.LeaseToken != "" || upload.RetryAt.After(time.Now()) {
+		return state.ObjectMultipartUpload{}, state.ErrConflict
+	}
+	if operation == state.ObjectMultipartInitiating && upload.State != state.ObjectMultipartInitiating || state.ObjectMultipartIsCompleting(operation) && upload.State != state.ObjectMultipartActive && upload.State != operation || operation == state.ObjectMultipartAborting && upload.State != state.ObjectMultipartActive && upload.State != state.ObjectMultipartAborting {
 		return state.ObjectMultipartUpload{}, state.ErrConflict
 	}
 	upload.State, upload.LeaseToken = operation, token
-	if operation == state.ObjectMultipartCompleting {
+	if state.ObjectMultipartIsCompleting(operation) {
 		upload.Parts = append([]api.ObjectMultipartCompletedPart(nil), parts...)
 	}
 	s.uploads[id] = upload
@@ -290,7 +293,7 @@ func (s *gatewayMultipartStore) SetObjectMultipartUploadSize(_ context.Context, 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	upload, ok := s.uploads[id]
-	if !ok || upload.State != state.ObjectMultipartCompleting || upload.LeaseToken != token {
+	if !ok || !state.ObjectMultipartIsCompleting(upload.State) || upload.LeaseToken != token {
 		return state.ErrConflict
 	}
 	upload.SizeBytes = size
@@ -1150,10 +1153,18 @@ func (s *gatewayMultipartStore) PrepareObjectMultipartCompletion(ctx context.Con
 	if err := s.AdmitObjectMultipartCompletion(ctx, u.AccountID, u.BucketID, u.ID, u.Key, size, p); err != nil {
 		return state.ObjectMultipartUpload{}, err
 	}
-	claimed, err := s.ClaimObjectMultipartUpload(ctx, u.AccountID, u.AppID, u.BucketID, u.ID, token, state.ObjectMultipartCompleting, parts, false)
+	operation := state.ObjectMultipartCompleting
+	if !u.CompletionConditions.Empty() {
+		operation = state.ObjectMultipartCompletingConditional
+	}
+	claimed, err := s.ClaimObjectMultipartUpload(ctx, u.AccountID, u.AppID, u.BucketID, u.ID, token, operation, parts, false)
 	if err == nil {
 		err = s.SetObjectMultipartUploadSize(ctx, u.ID, token, size)
 		claimed.SizeBytes = size
+		claimed.CompletionConditions = u.CompletionConditions
+		s.mu.Lock()
+		s.uploads[u.ID] = claimed
+		s.mu.Unlock()
 	}
 	return claimed, err
 }
@@ -1168,4 +1179,16 @@ func (s *gatewayMultipartStore) ObjectMultipartAbortReady(_ context.Context, id,
 }
 func (s *gatewayMultipartStore) FinishVerifiedObjectMultipartAbort(ctx context.Context, id, token string) error {
 	return s.FinishObjectMultipartUpload(ctx, id, token, state.ObjectMultipartAborted)
+}
+
+func (s *gatewayMultipartStore) RejectObjectMultipartCompletion(_ context.Context, id, token, code string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u := s.uploads[id]
+	if u.State != state.ObjectMultipartCompletingConditional || u.LeaseToken != token {
+		return state.ErrConflict
+	}
+	u.State, u.CompletionErrorCode, u.LeaseToken = state.ObjectMultipartAborting, code, ""
+	s.uploads[id] = u
+	return nil
 }

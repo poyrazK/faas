@@ -3830,7 +3830,7 @@ AND object_buckets.state <> 'deleted' AND (object_buckets.lease_until IS NULL OR
 AND ($1 = 'deleting' OR object_buckets.state = 'provisioning')
 AND ($1 <> 'deleting' OR NOT EXISTS (
   SELECT 1 FROM object_storage_multipart_uploads m WHERE m.bucket_id = object_buckets.id
-  AND m.state IN ('initiating','active','completing','aborting')
+  AND m.state IN ('initiating','active','completing','completing_conditional','aborting')
 ))
 AND (NOT sqlc.arg(recovery)::boolean OR object_buckets.state = $1)
 AND (object_buckets.retry_at <= now() OR object_buckets.state <> $1) RETURNING *;
@@ -3961,7 +3961,7 @@ SELECT $2,u.bucket_id,u.observed_at,u.observed_bytes,u.observed_keys FROM object
 -- name: ObjectMultipartByKey :one
 SELECT * FROM object_storage_multipart_uploads
 WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND object_key=$4
-AND state IN ('initiating','active','completing','aborting');
+AND state IN ('initiating','active','completing','completing_conditional','aborting');
 
 -- name: ObjectMultipartLockBucket :one
 SELECT id FROM object_buckets
@@ -3969,7 +3969,7 @@ WHERE id=$1 AND account_id=$2 AND app_id=$3 AND state='ready' FOR UPDATE;
 
 -- name: ObjectMultipartCount :one
 SELECT count(*) FROM object_storage_multipart_uploads
-WHERE bucket_id=$1 AND state IN ('initiating','active','completing','aborting');
+WHERE bucket_id=$1 AND state IN ('initiating','active','completing','completing_conditional','aborting');
 
 -- name: ObjectMultipartInsert :one
 INSERT INTO object_storage_multipart_uploads
@@ -3989,7 +3989,9 @@ ORDER BY id LIMIT sqlc.arg(page_limit)::int;
 UPDATE object_storage_multipart_uploads SET
 state=sqlc.arg(operation), lease_token=sqlc.arg(token),
 lease_until=now()+(sqlc.arg(lease_seconds)::int * interval '1 second'),
-completion_parts=CASE WHEN state='active' AND sqlc.arg(operation)::text='completing'
+completion_if_match=CASE WHEN state='active' THEN sqlc.arg(completion_if_match)::text ELSE completion_if_match END,
+completion_if_none_match=CASE WHEN state='active' THEN sqlc.arg(completion_if_none_match)::text ELSE completion_if_none_match END,
+completion_parts=CASE WHEN state='active' AND sqlc.arg(operation)::text IN ('completing','completing_conditional')
   THEN sqlc.arg(completion_parts)::jsonb ELSE completion_parts END,
 attempt_count=CASE WHEN state<>sqlc.arg(operation)::text THEN 1 ELSE least(attempt_count+1,30) END,
 last_error_code=CASE WHEN state<>sqlc.arg(operation)::text THEN '' ELSE last_error_code END,
@@ -4002,7 +4004,8 @@ AND (NOT sqlc.arg(recovery)::boolean OR state=sqlc.arg(operation)::text
   OR (state='active' AND sqlc.arg(operation)::text='aborting'))
 AND (
   (sqlc.arg(operation)::text='initiating' AND state='initiating' AND provider_upload_id='') OR
-  (sqlc.arg(operation)::text='completing' AND state IN ('active','completing')
+  (sqlc.arg(operation)::text IN ('completing','completing_conditional') AND (state='active' OR state=sqlc.arg(operation)::text)
+    AND (state<>'active' OR ((sqlc.arg(operation)::text='completing') = (sqlc.arg(completion_if_match)::text='' AND sqlc.arg(completion_if_none_match)::text='')))
     AND (state<>'active' OR expires_at>now())
     AND (state<>'active' OR jsonb_array_length(sqlc.arg(completion_parts)::jsonb)>0)) OR
   (sqlc.arg(operation)::text='aborting' AND state IN ('active','aborting') AND provider_upload_id<>'')
@@ -4017,20 +4020,20 @@ WHERE id=$1 AND lease_token=$2 AND state='initiating' AND $3<>'';
 UPDATE object_storage_multipart_uploads SET state=$3,lease_token=NULL,lease_until=NULL,
 attempt_count=0,last_error_code='',retry_at=now(),updated_at=now()
 WHERE id=$1 AND lease_token=$2 AND
-((state='completing' AND $3='completed') OR (state='aborting' AND $3='aborted'));
+((state IN ('completing','completing_conditional') AND $3='completed') OR (state='aborting' AND $3='aborted'));
 
 -- name: ObjectMultipartSetSize :execrows
 UPDATE object_storage_multipart_uploads SET size_bytes=$3,updated_at=now()
-WHERE id=$1 AND lease_token=$2 AND state='completing';
+WHERE id=$1 AND lease_token=$2 AND state IN ('completing','completing_conditional');
 
 -- name: ObjectMultipartRetry :execrows
 UPDATE object_storage_multipart_uploads SET lease_token=NULL,lease_until=NULL,last_error_code=$3,
 retry_at=now()+($4::int * interval '1 second'),updated_at=now()
-WHERE id=$1 AND lease_token=$2 AND state IN ('initiating','completing','aborting');
+WHERE id=$1 AND lease_token=$2 AND state IN ('initiating','completing','completing_conditional','aborting');
 
 -- name: ObjectMultipartDue :many
 SELECT * FROM object_storage_multipart_uploads
-WHERE (((state IN ('initiating','completing','aborting')) AND retry_at<=now())
+WHERE (((state IN ('initiating','completing','completing_conditional','aborting')) AND retry_at<=now())
   OR (state='active' AND expires_at<=now()))
 AND (lease_until IS NULL OR lease_until<now())
 ORDER BY retry_at,id LIMIT sqlc.arg(batch_limit)::int;
@@ -5070,7 +5073,7 @@ SET max_bytes=greatest(object_storage_multipart_part_grants.max_bytes,EXCLUDED.m
 -- name: ObjectS3MultipartList :many
 SELECT * FROM object_storage_multipart_uploads
 WHERE account_id=sqlc.arg(account_id) AND app_id=sqlc.arg(app_id) AND bucket_id=sqlc.arg(bucket_id)
-AND part_count=0 AND state IN ('active','completing','aborting')
+AND part_count=0 AND state IN ('active','completing','completing_conditional','aborting')
 AND starts_with(object_key,sqlc.arg(prefix)::text)
 AND (sqlc.arg(key_marker)::text='' OR object_key COLLATE "C">sqlc.arg(key_marker)::text
  OR (object_key=sqlc.arg(key_marker)::text AND sqlc.arg(upload_marker)::text<>'' AND id::text>sqlc.arg(upload_marker)::text))
@@ -5108,3 +5111,8 @@ DELETE FROM object_storage_multipart_part_grants WHERE upload_id=$1 AND cleanup_
 
 -- name: ObjectMultipartClearTransfers :exec
 UPDATE object_storage_multipart_part_grants SET transfer_token=NULL,unsafe_until=NULL WHERE upload_id=$1;
+
+-- name: ObjectMultipartRejectCompletion :execrows
+UPDATE object_storage_multipart_uploads SET state='aborting',completion_error_code=$3,
+lease_token=NULL,lease_until=NULL,attempt_count=0,last_error_code=$3,retry_at=now(),updated_at=now()
+WHERE id=$1 AND lease_token=$2 AND state='completing_conditional';

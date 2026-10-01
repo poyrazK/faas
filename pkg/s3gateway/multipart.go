@@ -1,7 +1,6 @@
 package s3gateway
 
 import (
-	"bytes"
 	"context"
 	"crypto/md5" // #nosec G501 -- multipart ETag compatibility uses the S3 MD5 convention.
 	"encoding/hex"
@@ -10,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -271,106 +269,6 @@ func (h *Handler) listMultipartParts(w http.ResponseWriter, r *http.Request, req
 		items = append(items, listedMultipartPart{PartNumber: part.PartNumber, ETag: part.ETag, Size: part.SizeBytes, LastModified: part.LastModified.UTC().Format(time.RFC3339Nano)})
 	}
 	writeS3XML(w, http.StatusOK, req.requestID, listMultipartPartsResult{XMLNS: s3XMLNamespace, Bucket: req.bucket.Name, Key: upload.Key, UploadID: upload.ID, PartNumberMarker: marker, MaxParts: limit, IsTruncated: page.NextPartNumberMarker != 0, NextPartNumberMarker: page.NextPartNumberMarker, Parts: items})
-}
-
-func (h *Handler) completeMultipart(w http.ResponseWriter, r *http.Request, req requestContext, key, uploadID string) {
-	if !h.require(w, req, state.ObjectBucketPermissionWrite, r.URL.Path) {
-		return
-	}
-	upload, store, ok := h.loadPublicMultipart(w, r, req, uploadID, key)
-	if !ok {
-		return
-	}
-	bodyBytes, err := readVerifiedRequestBody(w, r, req.signature.PayloadHash, maxCompleteMultipartBodyBytes)
-	if err != nil {
-		if h.writeAWSChunkedError(w, r, req.requestID, err) {
-			return
-		}
-		h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "MalformedXML")
-		return
-	}
-	var body completeMultipartUploadRequest
-	decoder := xml.NewDecoder(bytes.NewReader(bodyBytes))
-	decoder.Strict = true
-	if err := decoder.Decode(&body); err != nil || body.XMLName.Local != "CompleteMultipartUpload" || len(body.Parts) == 0 || len(body.Parts) > api.MaxMultipartParts {
-		h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "MalformedXML")
-		return
-	}
-	var extra any
-	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "MalformedXML")
-		return
-	}
-	parts := make([]api.ObjectMultipartCompletedPart, len(body.Parts))
-	var previousPart int32
-	for i, part := range body.Parts {
-		if part.PartNumber < 1 || part.PartNumber > api.MaxMultipartParts || part.PartNumber <= previousPart || len(part.ETag) == 0 || len(part.ETag) > 256 || !objectstorage.ValidKey(strings.Trim(part.ETag, `"`)) {
-			h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "InvalidPart")
-			return
-		}
-		previousPart = part.PartNumber
-		parts[i] = api.ObjectMultipartCompletedPart{PartNumber: part.PartNumber, ETag: part.ETag}
-	}
-	if upload.State == state.ObjectMultipartCompleted {
-		if !slices.Equal(upload.Parts, parts) {
-			h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "InvalidPart")
-			return
-		}
-		writeS3XML(w, http.StatusOK, req.requestID, completeMultipartResult{XMLNS: s3XMLNamespace, Bucket: req.bucket.Name, Key: upload.Key, ETag: multipartETag(upload.Parts), UploadID: upload.ID})
-		return
-	}
-	if upload.State != state.ObjectMultipartActive && upload.State != state.ObjectMultipartCompleting {
-		h.writeMultipartError(w, r, req, state.ErrConflict, "NoSuchUpload")
-		return
-	}
-	sizes, err := h.multipartPartSizes(r, req, upload.Key, upload)
-	if err != nil {
-		h.providerError(w, r, req, err, key)
-		return
-	}
-	var total int64
-	for _, part := range parts {
-		providerPart, found := sizes[part.PartNumber]
-		if !found || strings.Trim(providerPart.ETag, `"`) != strings.Trim(part.ETag, `"`) {
-			h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "InvalidPart")
-			return
-		}
-		if providerPart.SizeBytes < 1 || total > api.MaxObjectUploadBytes-providerPart.SizeBytes {
-			h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "EntityTooLarge")
-			return
-		}
-		if len(parts) > 1 && part.PartNumber != parts[len(parts)-1].PartNumber && providerPart.SizeBytes < api.MinMultipartPartBytes {
-			h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "EntityTooSmall")
-			return
-		}
-		total += providerPart.SizeBytes
-	}
-	if total < 1 || total > h.registry.MaxUploadBytes {
-		h.writeMultipartError(w, r, req, objectstorage.ErrInvalid, "EntityTooLarge")
-		return
-	}
-	transfers, ok := h.multipartStore.(state.ObjectMultipartTransferStore)
-	if !ok {
-		h.unsupported(w, r, req.requestID)
-		return
-	}
-	token := uuid.NewString()
-	claimed, err := transfers.PrepareObjectMultipartCompletion(r.Context(), upload, token, total, parts, h.registry.Accounting)
-	if !h.writeMultipartAdmissionError(w, r, req, err) {
-		return
-	}
-	if !h.recordProviderRequest(w, r, req) {
-		return
-	}
-	if err = req.provider.CompleteMultipartUpload(r.Context(), req.bucket.PhysicalName, objectstorage.MultipartCompleteRequest{SessionID: claimed.ID, Key: claimed.Key, ProviderUploadID: claimed.ProviderUploadID, SizeBytes: total, Parts: toProviderParts(parts)}); err != nil {
-		h.providerError(w, r, req, err, key)
-		return
-	}
-	if err = store.FinishObjectMultipartUpload(r.Context(), claimed.ID, token, state.ObjectMultipartCompleted); err != nil {
-		h.writeMultipartError(w, r, req, err, "OperationAborted")
-		return
-	}
-	writeS3XML(w, http.StatusOK, req.requestID, completeMultipartResult{XMLNS: s3XMLNamespace, Bucket: req.bucket.Name, Key: claimed.Key, ETag: multipartETag(parts), UploadID: upload.ID})
 }
 
 func (h *Handler) abortMultipart(w http.ResponseWriter, r *http.Request, req requestContext, key, uploadID string) {

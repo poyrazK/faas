@@ -42,20 +42,23 @@ func (h *Handler) validateRequestSemantics(w http.ResponseWriter, r *http.Reques
 		h.unsupported(w, r, req.requestID)
 		return false
 	}
-	if r.Method != http.MethodGet && r.Method != http.MethodHead && (r.Header.Get("If-Match") != "" || r.Header.Get("If-None-Match") != "") {
-		// Completion recovery does not persist write conditions, so fail before mutation.
-		if !hasKey || r.Method != http.MethodPut || len(q) != 0 || r.Header.Get("X-Amz-Copy-Source") != "" {
-			h.unsupported(w, r, req.requestID)
-			return false
-		}
-		if _, ok := req.provider.(objectstorage.ConditionalObjectPresigner); !ok {
-			h.unsupported(w, r, req.requestID)
-			return false
-		}
-		if c := writeConditions(r); c.IfMatch != "" && c.IfNoneMatch != "" || c.IfNoneMatch != "" && c.IfNoneMatch != "*" {
+	c := writeConditions(r)
+	if r.Method != http.MethodGet && r.Method != http.MethodHead && !c.Empty() {
+		if !c.Valid() {
 			writeS3Error(w, http.StatusBadRequest, "InvalidArgument", "The conditional write headers are invalid.", r.URL.Path, req.requestID)
 			return false
 		}
+		if hasKey && r.Method == http.MethodPost && q.Get("uploadId") != "" && queryKeysOnly(q, "uploadId") {
+			if _, ok := req.provider.(objectstorage.ConditionalMultipartCompleter); ok {
+				return true
+			}
+		} else if hasKey && r.Method == http.MethodPut && len(q) == 0 && r.Header.Get("X-Amz-Copy-Source") == "" {
+			if _, ok := req.provider.(objectstorage.ConditionalObjectPresigner); ok {
+				return true
+			}
+		}
+		h.unsupported(w, r, req.requestID)
+		return false
 	}
 	return true
 }

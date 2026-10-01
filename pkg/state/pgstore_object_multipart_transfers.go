@@ -13,10 +13,11 @@ import (
 var _ ObjectMultipartTransferStore = (*PgStore)(nil)
 
 type multipartCompletionPreparation struct {
-	token    string
-	revision int64
-	parts    []api.ObjectMultipartCompletedPart
-	upload   ObjectMultipartUpload
+	token      string
+	revision   int64
+	parts      []api.ObjectMultipartCompletedPart
+	conditions api.ObjectWriteConditions
+	upload     ObjectMultipartUpload
 }
 
 func (s *PgStore) BeginObjectMultipartPart(ctx context.Context, account, bucket, id, token string, part int32, size, maxObject int64, p api.ObjectStoragePolicy) error {
@@ -38,10 +39,10 @@ func (s *PgStore) SettleObjectMultipartPart(ctx context.Context, account, id str
 }
 
 func (s *PgStore) PrepareObjectMultipartCompletion(ctx context.Context, u ObjectMultipartUpload, token string, size int64, parts []api.ObjectMultipartCompletedPart, p api.ObjectStoragePolicy) (ObjectMultipartUpload, error) {
-	if token == "" || len(token) > 128 || len(parts) > api.MaxMultipartParts || size < 1 || size > api.MaxObjectUploadBytes || len(parts) == 0 {
+	if !u.CompletionConditions.Valid() || token == "" || len(token) > 128 || len(parts) > api.MaxMultipartParts || size < 1 || size > api.MaxObjectUploadBytes || len(parts) == 0 {
 		return ObjectMultipartUpload{}, ErrConflict
 	}
-	prep := multipartCompletionPreparation{token: token, revision: u.PartRevision, parts: parts}
+	prep := multipartCompletionPreparation{token: token, revision: u.PartRevision, parts: parts, conditions: u.CompletionConditions}
 	err := s.admitMultipartCapacity(ctx, u.AccountID, u.BucketID, u.ID, u.Key, 0, size, 0, p, "", &prep)
 	return prep.upload, err
 }
@@ -106,4 +107,18 @@ func (s *PgStore) FinishVerifiedObjectMultipartAbort(ctx context.Context, id, to
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+func (s *PgStore) RejectObjectMultipartCompletion(ctx context.Context, id, token, code string) error {
+	if token == "" || !validMultipartCompletionFailure(code) {
+		return ErrConflict
+	}
+	n, err := sqlc.New().ObjectMultipartRejectCompletion(ctx, s.pool, sqlc.ObjectMultipartRejectCompletionParams{ID: mustPgUUID(id), LeaseToken: pgtype.Text{String: token, Valid: true}, CompletionErrorCode: code})
+	if err != nil {
+		return mapErr(err)
+	}
+	if n != 1 {
+		return ErrConflict
+	}
+	return nil
 }

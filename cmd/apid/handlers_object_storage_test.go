@@ -24,6 +24,7 @@ type fakeObjectProvider struct {
 	accessed             []string
 	objects              map[string][]byte
 	createErr, deleteErr error
+	multipartConditions  []api.ObjectWriteConditions
 	multipartErr         error
 	multipartParts       objectstorage.MultipartPartsPage
 	multipartCompleted   []string
@@ -520,4 +521,9 @@ func qualifyObjectAccounting(t *testing.T, e testEnv, bucket string) {
 			t.Fatal(err)
 		}
 	}
+}
+
+func (p *fakeObjectProvider) CompleteConditionalMultipartUpload(ctx context.Context, b string, r objectstorage.MultipartCompleteRequest, c api.ObjectWriteConditions) error {
+	p.multipartConditions = append(p.multipartConditions, c)
+	return p.CompleteMultipartUpload(ctx, b, r)
 }

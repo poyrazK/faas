@@ -68,6 +68,12 @@ func TestGatewayAbortWaitsForInFlightPart(t *testing.T) {
 	if part.Code != 200 {
 		t.Fatalf("part result: %d %s", part.Code, part.Body.String())
 	}
+	// Advance the durable cleanup cooldown after the part has settled.
+	sessions.mu.Lock()
+	pendingCleanup := sessions.uploads[id]
+	pendingCleanup.RetryAt = time.Now().Add(-time.Second)
+	sessions.uploads[id] = pendingCleanup
+	sessions.mu.Unlock()
 	h.enabled = func() bool { return false }
 	abort = httptest.NewRecorder()
 	h.ServeHTTP(abort, signedGatewayRequest(t, http.MethodDelete, "https://s3.gregale.dev/assets/key?uploadId="+id, nil, "UNSIGNED-PAYLOAD"))

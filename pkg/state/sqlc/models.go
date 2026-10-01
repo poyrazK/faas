@@ -2751,28 +2751,31 @@ type ObjectStorageMultipartPartGrant struct {
 }
 
 type ObjectStorageMultipartUpload struct {
-	ID               pgtype.UUID
-	AccountID        pgtype.UUID
-	AppID            pgtype.UUID
-	BucketID         pgtype.UUID
-	ObjectKey        string
-	SizeBytes        int64
-	PartSizeBytes    int64
-	PartCount        int32
-	ContentType      string
-	ProviderUploadID string
-	CompletionParts  []byte
-	State            string
-	ExpiresAt        pgtype.Timestamptz
-	LeaseToken       pgtype.Text
-	LeaseUntil       pgtype.Timestamptz
-	AttemptCount     int32
-	RetryAt          pgtype.Timestamptz
-	LastErrorCode    string
-	CreatedAt        pgtype.Timestamptz
-	UpdatedAt        pgtype.Timestamptz
-	ObjectMetadata   []byte
-	PartRevision     int64
+	ID                    pgtype.UUID
+	AccountID             pgtype.UUID
+	AppID                 pgtype.UUID
+	BucketID              pgtype.UUID
+	ObjectKey             string
+	SizeBytes             int64
+	PartSizeBytes         int64
+	PartCount             int32
+	ContentType           string
+	ProviderUploadID      string
+	CompletionParts       []byte
+	State                 string
+	ExpiresAt             pgtype.Timestamptz
+	LeaseToken            pgtype.Text
+	LeaseUntil            pgtype.Timestamptz
+	AttemptCount          int32
+	RetryAt               pgtype.Timestamptz
+	LastErrorCode         string
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+	ObjectMetadata        []byte
+	PartRevision          int64
+	CompletionIfMatch     string
+	CompletionIfNoneMatch string
+	CompletionErrorCode   string
 }
 
 type ObjectStorageRequestMetric struct {

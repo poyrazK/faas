@@ -48,15 +48,16 @@ type ObjectSignedRequest struct {
 // ObjectMultipartUpload is Gregale's durable upload session. The upstream S3
 // upload ID is intentionally never exposed.
 type ObjectMultipartUpload struct {
-	ID            string    `json:"id"`
-	Key           string    `json:"key"`
-	SizeBytes     int64     `json:"size_bytes"`
-	PartSizeBytes int64     `json:"part_size_bytes"`
-	PartCount     int32     `json:"part_count"`
-	ContentType   string    `json:"content_type"`
-	State         string    `json:"state"`
-	ExpiresAt     time.Time `json:"expires_at"`
-	CreatedAt     time.Time `json:"created_at"`
+	ID                  string    `json:"id"`
+	Key                 string    `json:"key"`
+	SizeBytes           int64     `json:"size_bytes"`
+	PartSizeBytes       int64     `json:"part_size_bytes"`
+	PartCount           int32     `json:"part_count"`
+	ContentType         string    `json:"content_type"`
+	State               string    `json:"state"`
+	CompletionErrorCode string    `json:"completion_error_code,omitempty"`
+	ExpiresAt           time.Time `json:"expires_at"`
+	CreatedAt           time.Time `json:"created_at"`
 }
 
 type ObjectMultipartUploadList struct {
@@ -224,4 +225,24 @@ type ObjectS3CredentialSecret struct {
 	Endpoint        string `json:"endpoint"`
 	Region          string `json:"region"`
 	AddressingStyle string `json:"addressing_style"`
+}
+
+// ObjectWriteConditions are atomic destination-write preconditions.
+type ObjectWriteConditions struct {
+	IfMatch     string
+	IfNoneMatch string
+}
+
+func (c ObjectWriteConditions) Empty() bool { return c.IfMatch == "" && c.IfNoneMatch == "" }
+
+func (c ObjectWriteConditions) Valid() bool {
+	if len(c.IfMatch) > MaxObjectWriteETagBytes || c.IfMatch != "" && c.IfNoneMatch != "" || c.IfNoneMatch != "" && c.IfNoneMatch != "*" {
+		return false
+	}
+	for _, b := range []byte(c.IfMatch) {
+		if b < 32 || b == 127 {
+			return false
+		}
+	}
+	return true
 }

@@ -370,10 +370,11 @@ automatically select multipart uploads.
 
 Current SDK `x-amz-checksum-mode: ENABLED` reads return provider checksum headers
 when available; Gregale does not synthesize checksums for older objects or
-providers without that capability. Ordinary conditional PUTs preserve
-`If-Match` and `If-None-Match: *` atomically on S3 backends, including 412/409
-outcomes. GCS conditional PUTs, conditional CopyObject, and conditional multipart
-completion return 501 explicitly. Multipart listing uses standard key/upload
+providers without that capability. Ordinary PUTs and multipart completion preserve
+`If-Match` and `If-None-Match: *` atomically on S3 backends. Conditions are mutually
+exclusive; If-Match is limited to 256 bytes and rejects control characters.
+GCS conditional PUTs/completion and conditional CopyObject return 501 explicitly.
+Multipart listing uses standard key/upload
 markers and excludes completed history. Unsupported listing options return 501.
 
 Branded CORS preflights accept explicit configured backend origins and SigV4,
@@ -390,6 +391,17 @@ context, 60-second internal URL, five-minute grace). Expiry alone releases no
 capacity. Completion checks the part revision and absence of in-flight writes,
 then atomically persists its size, exact part list, and final-object grant.
 
+Conditional completion also persists its immutable condition in a distinct
+`completing_conditional` state. Every retry must send the same condition and
+parts. Recovery replays that intent without listing parts or admitting capacity
+again. Reserved session metadata plus the exact object size can prove success
+after a lost response; unavailable proof keeps the intent pending. A definitive
+condition failure returns 412 `PreconditionFailed`; a conflicting write returns
+409 `ConditionalRequestConflict` and requires a new upload with new parts.
+A missing If-Match destination returns 404 `NoSuchKey`. These rejections persist
+their outcome and enter verified abort cleanup; identical retries return the same
+error even after cleanup. The management API exposes `completion_error_code`.
+
 Abort fences new parts immediately. A 204 response can mean cleanup is accepted
 while the upload remains `aborting` and its capacity remains charged. The existing
 recovery worker repeats aborts and verifies an empty provider ListParts response
@@ -404,6 +416,11 @@ upgrades. Deploy every gateway and API replica before reopening writes. Rollback
 refuses to discard unsettled transfer tokens. Keep abort and ListParts provider
 permissions available. See [ADR-388](adr/388-s3-compatibility-and-multipart-capacity.md)
 and [ADR-389](adr/389-s3-multipart-transfer-fencing-and-cleanup.md).
+For conditional completion, apply its additive migration first, upgrade every
+API replica before gateways, and retain HEAD permissions for lost-response
+proof. Older workers cannot replay a conditional intent unconditionally.
+Rollback requires conditional completion or cleanup to be terminal. See
+[ADR-390](adr/390-conditional-s3-multipart-completion.md).
 
 Conditional GET/HEAD requests forward the standard validators and preserve S3
 `304 Not Modified` and `412 Precondition Failed` outcomes without exposing a

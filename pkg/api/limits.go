@@ -126,6 +126,7 @@ const (
 	DefaultMultipartPartBytes           int64 = 64 << 20
 	MinMultipartPartBytes               int64 = 5 << 20
 	MaxMultipartParts                         = 10000
+	MaxObjectWriteETagBytes                   = 256
 	MaxActiveMultipartUploadsPerBucket        = 100
 	ObjectMultipartUploadTTL                  = 24 * time.Hour
 	// SourceArchiveMaxEntries is shared by ordinary source validation and

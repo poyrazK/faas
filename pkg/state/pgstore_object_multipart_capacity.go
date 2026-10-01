@@ -55,7 +55,7 @@ func (s *PgStore) admitMultipartCapacity(ctx context.Context, account, bucket, i
 		if e != nil {
 			return e
 		}
-		if pending || u.PartRevision != preparation.revision || u.State == ObjectMultipartCompleting && !slices.Equal(u.Parts, preparation.parts) {
+		if pending || u.PartRevision != preparation.revision || ObjectMultipartIsCompleting(u.State) && (!slices.Equal(u.Parts, preparation.parts) || u.CompletionConditions != preparation.conditions || u.SizeBytes != size) {
 			return ErrConflict
 		}
 	}
@@ -124,7 +124,7 @@ func (s *PgStore) admitMultipartCapacity(ctx context.Context, account, bucket, i
 		if e != nil {
 			return e
 		}
-		row, e := q.ObjectMultipartClaim(ctx, tx, sqlc.ObjectMultipartClaimParams{ID: mustPgUUID(id), AccountID: mustPgUUID(account), AppID: mustPgUUID(u.AppID), BucketID: mustPgUUID(bucket), Operation: ObjectMultipartCompleting, Token: pgtype.Text{String: preparation.token, Valid: true}, LeaseSeconds: int32(ObjectMultipartLeaseDuration / time.Second), CompletionParts: raw})
+		row, e := q.ObjectMultipartClaim(ctx, tx, sqlc.ObjectMultipartClaimParams{ID: mustPgUUID(id), AccountID: mustPgUUID(account), AppID: mustPgUUID(u.AppID), BucketID: mustPgUUID(bucket), Operation: multipartCompletionOperation(preparation.conditions), CompletionIfMatch: preparation.conditions.IfMatch, CompletionIfNoneMatch: preparation.conditions.IfNoneMatch, Token: pgtype.Text{String: preparation.token, Valid: true}, LeaseSeconds: int32(ObjectMultipartLeaseDuration / time.Second), CompletionParts: raw})
 		if errors.Is(e, pgx.ErrNoRows) {
 			return ErrConflict
 		}

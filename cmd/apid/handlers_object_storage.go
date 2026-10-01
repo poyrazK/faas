@@ -205,6 +205,12 @@ func bucketProblem(w http.ResponseWriter, err error) {
 		status, code, detail = 409, "object_storage_capacity_reserved", "The object storage capacity limit would be exceeded by this upload reservation."
 	case errors.Is(err, state.ErrNotFound), errors.Is(err, objectstorage.ErrNotFound):
 		status, code, detail = 404, "object_storage_not_found", "Bucket or object not found."
+	case errors.Is(err, objectstorage.ErrPreconditionFailed):
+		status, code, detail = 412, "object_storage_precondition_failed", "The completion condition was not satisfied."
+	case errors.Is(err, objectstorage.ErrConditionalConflict):
+		status, code, detail = 409, "object_storage_conditional_conflict", "Start a new multipart upload after a conflicting write."
+	case errors.Is(err, objectstorage.ErrConditionalNotFound):
+		status, code, detail = 404, "object_storage_conditional_not_found", "The conditional destination object no longer exists."
 	case errors.Is(err, objectstorage.ErrInvalid):
 		status, code, detail = 400, "object_storage_invalid", "Invalid object storage request."
 	case errors.Is(err, objectstorage.ErrUnsupported):

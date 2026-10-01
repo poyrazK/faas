@@ -52,7 +52,7 @@ func viewMultipartUpload(upload state.ObjectMultipartUpload) api.ObjectMultipart
 	return api.ObjectMultipartUpload{
 		ID: upload.ID, Key: upload.Key, SizeBytes: upload.SizeBytes, PartSizeBytes: upload.PartSizeBytes,
 		PartCount: upload.PartCount, ContentType: upload.ContentType, State: upload.State,
-		ExpiresAt: upload.ExpiresAt, CreatedAt: upload.CreatedAt,
+		ExpiresAt: upload.ExpiresAt, CreatedAt: upload.CreatedAt, CompletionErrorCode: upload.CompletionErrorCode,
 	}
 }
 
@@ -229,7 +229,7 @@ func (s *server) listObjectMultipartParts(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	if upload.State != state.ObjectMultipartActive && upload.State != state.ObjectMultipartCompleting && upload.State != state.ObjectMultipartAborting {
+	if upload.State != state.ObjectMultipartActive && !state.ObjectMultipartIsCompleting(upload.State) && upload.State != state.ObjectMultipartAborting {
 		bucketProblem(w, state.ErrConflict)
 		return
 	}
@@ -363,7 +363,7 @@ func (s *server) abortObjectMultipartUpload(w http.ResponseWriter, r *http.Reque
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	if upload.State == state.ObjectMultipartCompleted || upload.State == state.ObjectMultipartCompleting {
+	if upload.State == state.ObjectMultipartCompleted || state.ObjectMultipartIsCompleting(upload.State) {
 		bucketProblem(w, state.ErrConflict)
 		return
 	}
@@ -418,14 +418,14 @@ func (s *server) executeObjectMultipartOperation(ctx context.Context, store stat
 					return store.ActivateObjectMultipartUpload(finishCtx, upload.ID, upload.LeaseToken, providerID)
 				})
 			}
-		case state.ObjectMultipartCompleting:
+		case state.ObjectMultipartCompleting, state.ObjectMultipartCompletingConditional:
 			parts := make([]objectstorage.CompletedPart, 0, len(upload.Parts))
 			for _, part := range upload.Parts {
 				parts = append(parts, objectstorage.CompletedPart{PartNumber: part.PartNumber, ETag: part.ETag})
 			}
-			err = backend.Provider.CompleteMultipartUpload(callCtx, bucket.PhysicalName, objectstorage.MultipartCompleteRequest{
+			err = objectstorage.CompleteMultipart(callCtx, backend.Provider, bucket.PhysicalName, objectstorage.MultipartCompleteRequest{
 				SessionID: upload.ID, Key: upload.Key, ProviderUploadID: upload.ProviderUploadID, SizeBytes: upload.SizeBytes, Parts: parts,
-			})
+			}, upload.CompletionConditions)
 			if err == nil {
 				err = finishObjectMultipartOperation(ctx, func(finishCtx context.Context) error {
 					return store.FinishObjectMultipartUpload(finishCtx, upload.ID, upload.LeaseToken, state.ObjectMultipartCompleted)
@@ -437,13 +437,26 @@ func (s *server) executeObjectMultipartOperation(ctx context.Context, store stat
 			err = state.ErrConflict
 		}
 	}
+	if code := objectstorage.MultipartCompletionFailureCode(err); code != "" && upload.State == state.ObjectMultipartCompletingConditional {
+		transfers, ok := store.(state.ObjectMultipartTransferStore)
+		if !ok {
+			return objectstorage.ErrConfiguration
+		}
+		if rejectErr := finishObjectMultipartOperation(ctx, func(finishCtx context.Context) error {
+			return transfers.RejectObjectMultipartCompletion(finishCtx, upload.ID, upload.LeaseToken, code)
+		}); rejectErr != nil {
+			return rejectErr
+		}
+		s.audit.Emit(ctx, "object_storage.multipart_completion_rejected", &upload.AccountID, map[string]any{"app_id": upload.AppID, "bucket_id": upload.BucketID, "upload_id": upload.ID, "error_code": code})
+		return err
+	}
 	if err != nil && !errors.Is(err, state.ErrConflict) {
 		return s.retryObjectMultipartOperation(ctx, store, upload, err)
 	}
 	if err == nil {
 		var event string
 		switch upload.State {
-		case state.ObjectMultipartCompleting:
+		case state.ObjectMultipartCompleting, state.ObjectMultipartCompletingConditional:
 			event = "object_storage.multipart_upload_completed"
 		case state.ObjectMultipartAborting:
 			event = "object_storage.multipart_upload_aborted"

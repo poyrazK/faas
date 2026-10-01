@@ -18,13 +18,16 @@ import (
 )
 
 var (
-	ErrUnavailable   = errors.New("object storage unavailable")
-	ErrNotFound      = errors.New("object storage resource not found")
-	ErrConflict      = errors.New("object storage resource conflict")
-	ErrNotEmpty      = errors.New("bucket is not empty")
-	ErrInvalid       = errors.New("invalid object storage request")
-	ErrUnsupported   = errors.New("object storage operation is not supported")
-	ErrConfiguration = errors.New("object storage provider configuration requires attention")
+	ErrPreconditionFailed  = errors.New("object storage precondition failed")
+	ErrConditionalConflict = errors.New("object storage conditional completion requires a new upload")
+	ErrConditionalNotFound = errors.New("object storage conditional destination not found")
+	ErrUnavailable         = errors.New("object storage unavailable")
+	ErrNotFound            = errors.New("object storage resource not found")
+	ErrConflict            = errors.New("object storage resource conflict")
+	ErrNotEmpty            = errors.New("bucket is not empty")
+	ErrInvalid             = errors.New("invalid object storage request")
+	ErrUnsupported         = errors.New("object storage operation is not supported")
+	ErrConfiguration       = errors.New("object storage provider configuration requires attention")
 )
 
 // Provider owns data operations for a single immutable backend placement.
@@ -114,14 +117,45 @@ type ObjectV2Lister interface {
 	ListObjectsV2(context.Context, string, ObjectListRequest) (ObjectPage, error)
 }
 
-type ObjectWriteConditions struct {
-	IfMatch, IfNoneMatch string
-}
+type ObjectWriteConditions = api.ObjectWriteConditions
 
 // ConditionalObjectPresigner must bind the condition into the provider's
 // atomic write. A HEAD followed by an unconditional PUT is not equivalent.
 type ConditionalObjectPresigner interface {
 	PresignConditionalPut(context.Context, string, SignRequest, ObjectWriteConditions) (SignedRequest, error)
+}
+
+// ConditionalMultipartCompleter must enforce conditions in the provider's
+// atomic completion. Recovery must replay the identical conditions.
+type ConditionalMultipartCompleter interface {
+	CompleteConditionalMultipartUpload(context.Context, string, MultipartCompleteRequest, ObjectWriteConditions) error
+}
+
+func CompleteMultipart(ctx context.Context, p Provider, bucket string, r MultipartCompleteRequest, c ObjectWriteConditions) error {
+	if !c.Valid() {
+		return ErrInvalid
+	}
+	if c.Empty() {
+		return p.CompleteMultipartUpload(ctx, bucket, r)
+	}
+	completer, ok := p.(ConditionalMultipartCompleter)
+	if !ok {
+		return ErrUnsupported
+	}
+	return completer.CompleteConditionalMultipartUpload(ctx, bucket, r, c)
+}
+
+func MultipartCompletionFailureCode(err error) string {
+	switch {
+	case errors.Is(err, ErrPreconditionFailed):
+		return "precondition_failed"
+	case errors.Is(err, ErrConditionalConflict):
+		return "conditional_conflict"
+	case errors.Is(err, ErrConditionalNotFound):
+		return "conditional_not_found"
+	default:
+		return ""
+	}
 }
 
 type ObjectChecksumReadPresigner interface {

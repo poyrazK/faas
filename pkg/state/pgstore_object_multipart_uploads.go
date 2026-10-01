@@ -22,6 +22,7 @@ func objectMultipartFromSQL(row sqlc.ObjectStorageMultipartUpload) (ObjectMultip
 		ExpiresAt: row.ExpiresAt.Time, CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time,
 		LeaseToken: row.LeaseToken.String, LeaseUntil: row.LeaseUntil.Time, RetryAt: row.RetryAt.Time,
 		AttemptCount: row.AttemptCount, LastErrorCode: row.LastErrorCode,
+		CompletionConditions: api.ObjectWriteConditions{IfMatch: row.CompletionIfMatch, IfNoneMatch: row.CompletionIfNoneMatch}, CompletionErrorCode: row.CompletionErrorCode,
 	}
 	if err := json.Unmarshal(row.ObjectMetadata, &upload.Metadata); err != nil {
 		return ObjectMultipartUpload{}, err
@@ -166,7 +167,7 @@ func (s *PgStore) ClaimObjectMultipartUpload(ctx context.Context, account, app, 
 	if _, err = q.ObjectMultipartCapacityLock(ctx, tx, sqlc.ObjectMultipartCapacityLockParams{ID: mustPgUUID(id), AccountID: mustPgUUID(account), BucketID: mustPgUUID(bucket)}); err != nil {
 		return ObjectMultipartUpload{}, mapErr(err)
 	}
-	if operation == ObjectMultipartCompleting {
+	if ObjectMultipartIsCompleting(operation) {
 		pending, e := q.ObjectMultipartTransfersPending(ctx, tx, mustPgUUID(id))
 		if e != nil {
 			return ObjectMultipartUpload{}, e

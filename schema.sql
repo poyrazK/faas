@@ -1995,6 +1995,27 @@ $$;
 
 
 --
+-- Name: fence_object_multipart_completion_conditions(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fence_object_multipart_completion_conditions() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF OLD.state<>'active' AND (NEW.completion_if_match IS DISTINCT FROM OLD.completion_if_match
+        OR NEW.completion_if_none_match IS DISTINCT FROM OLD.completion_if_none_match) THEN
+        RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Multipart completion conditions are immutable';
+    END IF;
+    IF OLD.completion_error_code<>'' AND NEW.completion_error_code IS DISTINCT FROM OLD.completion_error_code THEN
+        RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Multipart completion failure is immutable';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+
+--
 -- Name: github_webhook_secrets_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7980,6 +8001,11 @@ CREATE TABLE public.object_storage_multipart_uploads (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     object_metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
     part_revision bigint DEFAULT 0 NOT NULL,
+    completion_if_match text DEFAULT ''::text NOT NULL,
+    completion_if_none_match text DEFAULT ''::text NOT NULL,
+    completion_error_code text DEFAULT ''::text NOT NULL,
+    CONSTRAINT object_multipart_completion_conditions CHECK (((octet_length(completion_if_match) <= 256) AND (completion_if_match !~ '[[:cntrl:]]'::text) AND (completion_if_none_match = ANY (ARRAY[''::text, '*'::text])) AND ((completion_if_match = ''::text) OR (completion_if_none_match = ''::text)) AND ((state <> ALL (ARRAY['initiating'::text, 'active'::text, 'completing'::text])) OR ((completion_if_match = ''::text) AND (completion_if_none_match = ''::text))) AND ((state <> 'completing_conditional'::text) OR ((part_count = 0) AND ((completion_if_match <> ''::text) OR (completion_if_none_match <> ''::text)))))),
+    CONSTRAINT object_multipart_completion_error CHECK (((completion_error_code = ANY (ARRAY[''::text, 'precondition_failed'::text, 'conditional_conflict'::text, 'conditional_not_found'::text])) AND ((completion_error_code = ''::text) OR ((state = ANY (ARRAY['aborting'::text, 'aborted'::text])) AND ((completion_if_match <> ''::text) OR (completion_if_none_match <> ''::text)))))),
     CONSTRAINT object_storage_multipart_uploads_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
     CONSTRAINT object_storage_multipart_uploads_check CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
     CONSTRAINT object_storage_multipart_uploads_check1 CHECK (((state = 'initiating'::text) OR (provider_upload_id <> ''::text))),
@@ -7995,7 +8021,7 @@ CREATE TABLE public.object_storage_multipart_uploads (
     CONSTRAINT object_storage_multipart_uploads_part_size_bytes_check CHECK (((part_size_bytes >= 0) AND (part_size_bytes <= '5368709120'::bigint))),
     CONSTRAINT object_storage_multipart_uploads_provider_upload_id_check CHECK ((length(provider_upload_id) <= 4096)),
     CONSTRAINT object_storage_multipart_uploads_size_bytes_check CHECK (((size_bytes >= 0) AND (size_bytes <= '5497558138880'::bigint))),
-    CONSTRAINT object_storage_multipart_uploads_state_check CHECK ((state = ANY (ARRAY['initiating'::text, 'active'::text, 'completing'::text, 'aborting'::text, 'completed'::text, 'aborted'::text])))
+    CONSTRAINT object_storage_multipart_uploads_state_check CHECK ((state = ANY (ARRAY['initiating'::text, 'active'::text, 'completing'::text, 'completing_conditional'::text, 'aborting'::text, 'completed'::text, 'aborted'::text])))
 );
 
 
@@ -16797,14 +16823,14 @@ CREATE INDEX object_storage_multipart_expiry_idx ON public.object_storage_multip
 -- Name: object_storage_multipart_live_key_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX object_storage_multipart_live_key_idx ON public.object_storage_multipart_uploads USING btree (bucket_id, object_key) WHERE (state = ANY (ARRAY['initiating'::text, 'active'::text, 'completing'::text, 'aborting'::text]));
+CREATE UNIQUE INDEX object_storage_multipart_live_key_idx ON public.object_storage_multipart_uploads USING btree (bucket_id, object_key) WHERE (state = ANY (ARRAY['initiating'::text, 'active'::text, 'completing'::text, 'completing_conditional'::text, 'aborting'::text]));
 
 
 --
 -- Name: object_storage_multipart_retry_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX object_storage_multipart_retry_idx ON public.object_storage_multipart_uploads USING btree (retry_at, id) WHERE (state = ANY (ARRAY['initiating'::text, 'completing'::text, 'aborting'::text]));
+CREATE INDEX object_storage_multipart_retry_idx ON public.object_storage_multipart_uploads USING btree (retry_at, id) WHERE (state = ANY (ARRAY['initiating'::text, 'completing'::text, 'completing_conditional'::text, 'aborting'::text]));
 
 
 --
@@ -19108,6 +19134,13 @@ CREATE TRIGGER mirror_rules_set_updated_at_trg BEFORE UPDATE ON public.mirror_ru
 --
 
 CREATE TRIGGER object_bucket_delete_access_grants AFTER UPDATE OF state ON public.object_buckets FOR EACH ROW WHEN (((new.state = 'deleted'::text) AND (old.state IS DISTINCT FROM new.state))) EXECUTE FUNCTION public.delete_object_storage_grants_on_bucket_delete();
+
+
+--
+-- Name: object_storage_multipart_uploads object_multipart_completion_conditions_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_multipart_completion_conditions_immutable BEFORE UPDATE ON public.object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION public.fence_object_multipart_completion_conditions();
 
 
 --
