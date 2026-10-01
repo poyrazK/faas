@@ -917,3 +917,7 @@ Draft [#3998](https://github.com/poyrazK/faas/pull/3998), commit `c5ed6963d`, st
 ### Public UDP transport review regression coverage
 
 Draft PR #3992, commit `9dd6a8910`, now includes the portable real-socket/protobuf-gRPC admission, reassignment and disable fixture. The isolated public branch passed three race-detector runs of `TestUDPIngressGRPCAdmissionAndDisable`; scoped lint reported zero issues. Logs: `/tmp/gregale-udp-public-grpc-tests.log` and `/tmp/gregale-udp-public-grpc-lint.log`. Scheduler RPC and guest namespace execution are substituted; this does not qualify native KVM lifecycle or deployed dependency recovery.
+
+### Combined UDP embedded schema drift correction
+
+Combined draft PR #3997 CI job `110258148479` failed `spec-check` because the embedded OpenAPI copy omitted the UDP contract. Schema PR #3996 commit `b9728ceba` and combined PR #3997 commit `eaf1e2898` synchronize that copy. Full local `make spec-check` passed on the corrected combined branch, including lint, AST parity, generated-document checks and drift detection; log `/tmp/gregale-udp-stack-spec-check.log`. Updated remote CI remains unverified. The integration source and embedded schemas already match.
