@@ -584,17 +584,14 @@ func resolveLinkSource(root, linkname string) (string, error) {
 // access. If staging ever becomes shared or concurrently written, this must
 // move to openat2(RESOLVE_IN_ROOT).
 func resolveWithin(root, rel string) (string, error) {
-	return resolveWithinPath(root, rel, false)
+	return resolveWithinPath(root, rel, false, nil)
 }
 
-// resolveExistingWithin uses the same image-root symlink rules as extraction,
-// but requires every component to exist. Launch checks must not accept a path
-// such as missing/../app or file/../app that the guest kernel cannot traverse.
-func resolveExistingWithin(root, rel string) (string, error) {
-	return resolveWithinPath(root, rel, true)
-}
-
-func resolveWithinPath(root, rel string, existing bool) (string, error) {
+// Launch checks require existing components, so missing/../app and file/../app
+// cannot pass. stopAt lets those read-only checks defer guest-provided mounts
+// before inspecting image contents that will be hidden at launch. Extraction
+// always passes nil and may create missing components.
+func resolveWithinPath(root, rel string, existing bool, stopAt func(string) bool) (string, error) {
 	cur := root
 	// Remaining components to consume, innermost-first.
 	todo := splitPath(rel)
@@ -614,6 +611,9 @@ func resolveWithinPath(root, rel string, existing bool) (string, error) {
 		}
 
 		next := filepath.Join(cur, comp)
+		if stopAt != nil && stopAt(next) {
+			return next, nil
+		}
 		fi, err := os.Lstat(next)
 		if err != nil {
 			if os.IsNotExist(err) && !existing {

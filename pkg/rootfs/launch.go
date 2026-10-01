@@ -61,15 +61,21 @@ func validateFullRootfsLaunch(root string, m api.AppManifest, commandPATH *strin
 }
 
 func imageExecutableProblem(root, candidate string) string {
+	if path.IsAbs(candidate) && runtimeLaunchPath(root, filepath.Join(root, strings.TrimLeft(path.Clean(candidate), "/"))) {
+		return "" // Direct mount paths do not require image-owned parent directories.
+	}
 	// Guest mounts replace these image paths before app launch. They cannot
 	// be validated from OCI layers (for example /proc/self/exe), even through
-	// an image symlink. Resolve in-root without requiring mounted files first.
-	if resolved, err := resolveWithin(root, candidate); err == nil && runtimeLaunchPath(root, resolved) {
-		return ""
-	}
-	resolved, err := resolveExistingWithin(root, candidate)
+	// an image symlink. Stop before inspecting image contents below a mount:
+	// an image-owned /proc/self link is replaced by procfs at guest launch.
+	resolved, err := resolveWithinPath(root, candidate, true, func(p string) bool {
+		return runtimeLaunchPath(root, p)
+	})
 	if err != nil {
 		return "cannot be resolved inside the image (missing path or invalid symlink)"
+	}
+	if runtimeLaunchPath(root, resolved) {
+		return ""
 	}
 	info, err := os.Lstat(resolved)
 	if err != nil {

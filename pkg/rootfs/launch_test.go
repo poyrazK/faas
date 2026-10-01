@@ -75,8 +75,18 @@ func TestFullRootfsLaunch(t *testing.T) {
 			if err := os.Mkdir(filepath.Join(root, "app/sub"), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			hostFile := filepath.Join(t.TempDir(), "host-only")
-			if err := os.WriteFile(hostFile, []byte("host"), 0o755); err != nil {
+			// These image contents disappear beneath procfs. Neither a direct
+			// command nor a symlink into /proc may be rejected based on them.
+			if err := os.Mkdir(filepath.Join(root, "proc"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("/absent-image-path", filepath.Join(root, "proc/self")); err != nil {
+				t.Fatal(err)
+			}
+			// /usr/bin/env exists on our Unix assembler hosts and is not beneath a
+			// guest mount. A t.TempDir target would be deferred on Linux /tmp.
+			hostFile := "/usr/bin/env"
+			if _, err := os.Stat(hostFile); err != nil {
 				t.Fatal(err)
 			}
 			for name, target := range map[string]string{
@@ -170,13 +180,13 @@ func TestBuildFullRootfsLaunchChecksMergedLayersBeforePublishing(t *testing.T) {
 }
 
 func TestFullRootfsLaunchNeverUsesHostPATH(t *testing.T) {
-	host := t.TempDir()
-	if err := os.WriteFile(filepath.Join(host, "host-command"), []byte("host"), 0o755); err != nil {
+	host := "/bin"
+	if _, err := os.Stat(filepath.Join(host, "sh")); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", host)
 	imagePATH := host
-	err := validateFullRootfsLaunch(t.TempDir(), api.AppManifest{Entrypoint: []string{"host-command"}}, &imagePATH)
+	err := validateFullRootfsLaunch(t.TempDir(), api.AppManifest{Entrypoint: []string{"sh"}}, &imagePATH)
 	if !errors.Is(err, oci.ErrImageManifestInvalid) || strings.Contains(err.Error(), host) {
 		t.Fatalf("host PATH influenced launch validation: %v", err)
 	}
