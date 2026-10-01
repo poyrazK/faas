@@ -137,32 +137,34 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
-	instanceApplicationStandardAdmissions map[string]InstanceApplicationStandardAdmission
-	instanceApplicationStandardBoots      map[string]instanceStandardBoot
-	instanceApplicationStandardBootTokens map[string]string
-	computeNodeRuntimeIncarnations        map[string]string
-	appEgressRevisions                    map[string]int64
-	applicationStandardVersions           map[string][]ApplicationStandardVersion
-	applicationStandardLogDestinations    map[string]ApplicationStandardLogDestination
-	applicationStandardPublishers         map[string]api.ApplicationStandardPublisher
-	applicationStandardAssignments        map[string]applicationStandardAssignmentRecord
-	applicationStandardEnrollments        map[string]ApplicationStandardEnrollment
-	applicationStandardReviewPlans        map[string]ApplicationStandardReviewPlan
-	applicationStandardOperations         map[string]ApplicationStandardOperation
-	applicationStandardWorkerClaims       map[string]ApplicationStandardWorkerClaim
-	applicationStandardEnrollmentClaims   map[string]ApplicationStandardEnrollmentClaim
-	applicationStandardControlBindings    map[string]standardControlBinding
-	applicationStandardControlBackups     map[string]standardControlBackup
-	devBridgeSessions                     map[string]devbridge.Session
-	devBridgeWebhookReplays               map[string]devbridge.WebhookReplay
-	featureFlagVersions                   map[string][]FeatureFlagVersion
-	safeReleaseWorkerLeaseUntil           time.Time
-	requestAuditEvents                    map[string]RequestAuditRecord
-	discoveredAPIRoutes                   map[string]DiscoveredAPIRoute
-	discoveryReceipts                     map[string]struct{}
-	revisionPins                          map[string]time.Time
-	deploymentActivationMu                sync.Mutex
-	deploymentActivationLocks             map[string]*deploymentActivationLock
+	instanceApplicationStandardAdmissions      map[string]InstanceApplicationStandardAdmission
+	instanceApplicationStandardBoots           map[string]instanceStandardBoot
+	instanceApplicationStandardBootTokens      map[string]string
+	instanceApplicationStandardPromotions      map[string]instanceStandardPromotion
+	instanceApplicationStandardPromotionTokens map[string]string
+	computeNodeRuntimeIncarnations             map[string]string
+	appEgressRevisions                         map[string]int64
+	applicationStandardVersions                map[string][]ApplicationStandardVersion
+	applicationStandardLogDestinations         map[string]ApplicationStandardLogDestination
+	applicationStandardPublishers              map[string]api.ApplicationStandardPublisher
+	applicationStandardAssignments             map[string]applicationStandardAssignmentRecord
+	applicationStandardEnrollments             map[string]ApplicationStandardEnrollment
+	applicationStandardReviewPlans             map[string]ApplicationStandardReviewPlan
+	applicationStandardOperations              map[string]ApplicationStandardOperation
+	applicationStandardWorkerClaims            map[string]ApplicationStandardWorkerClaim
+	applicationStandardEnrollmentClaims        map[string]ApplicationStandardEnrollmentClaim
+	applicationStandardControlBindings         map[string]standardControlBinding
+	applicationStandardControlBackups          map[string]standardControlBackup
+	devBridgeSessions                          map[string]devbridge.Session
+	devBridgeWebhookReplays                    map[string]devbridge.WebhookReplay
+	featureFlagVersions                        map[string][]FeatureFlagVersion
+	safeReleaseWorkerLeaseUntil                time.Time
+	requestAuditEvents                         map[string]RequestAuditRecord
+	discoveredAPIRoutes                        map[string]DiscoveredAPIRoute
+	discoveryReceipts                          map[string]struct{}
+	revisionPins                               map[string]time.Time
+	deploymentActivationMu                     sync.Mutex
+	deploymentActivationLocks                  map[string]*deploymentActivationLock
 	// Snapshot restore reservations are separate from mu so the coordinator
 	// can serialize only its short lease/count critical section.
 	snapshotRestorePressureMu sync.Mutex

@@ -22,6 +22,7 @@ type standardRuntimeCaptureTestStore interface {
 	ApplicationStandardEnrollmentStore
 	InstanceApplicationStandardAdmissionStore
 	InstanceApplicationStandardBootStore
+	InstanceApplicationStandardPromotionStore
 	ComputeNodeRuntimeIdentityStore
 }
 

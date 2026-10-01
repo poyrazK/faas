@@ -57,6 +57,11 @@ func TestWakeBurstSpreadsSnapshotRestoresAcrossPgEngines(t *testing.T) {
 		if err != nil {
 			t.Fatalf("CreateDeployment %d: %v", i, err)
 		}
+		// PostgreSQL creates pending deployments; the fixture must explicitly
+		// publish its live status before requesting a runtime restore.
+		if err := firstStore.UpdateDeploymentStatus(ctx, dep.ID, state.DeployLive, ""); err != nil {
+			t.Fatalf("publish live deployment %d: %v", i, err)
+		}
 		snap, err := firstStore.CreateSnapshot(ctx, state.Snapshot{
 			DeploymentID: dep.ID, Tier: state.SnapshotTierInit, FCVersion: "1.10.0",
 			MemBytes:   256 << 20,
@@ -93,16 +98,29 @@ func TestWakeBurstSpreadsSnapshotRestoresAcrossPgEngines(t *testing.T) {
 			results <- wakeResult{result: result, err: err}
 		}()
 	}
+	waitRestore := func(nodeID, message string) {
+		t.Helper()
+		select {
+		case got := <-vmm.entered:
+			if got != nodeID {
+				t.Fatalf("%s: node=%s want=%s", message, got, nodeID)
+			}
+		case got := <-results:
+			t.Fatalf("wake ended before restore RPC (%s): %+v %v", message, got.result, got.err)
+		case <-time.After(6 * time.Second):
+			t.Fatalf("timed out waiting for restore RPC: %s", message)
+		}
+	}
 
 	// Start the first two restores through independent Engines. Their local
 	// counters cannot see each other; the persisted leases must hold both
 	// placements visible until the gated vmmd calls return.
 	startWake(firstEngine, appIDs[0])
 	startWake(secondEngine, appIDs[1])
-	waitRestorePressureNode(t, vmm.entered, cachedNodeID, "first restore should use snapshot origin")
-	waitRestorePressureNode(t, vmm.entered, cachedNodeID, "second restore should use snapshot origin before watermark")
+	waitRestore(cachedNodeID, "first restore should use snapshot origin")
+	waitRestore(cachedNodeID, "second restore should use snapshot origin before watermark")
 	startWake(firstEngine, appIDs[2])
-	waitRestorePressureNode(t, vmm.entered, peerNodeID, "third restore should use peer after shared watermark")
+	waitRestore(peerNodeID, "third restore should use peer after shared watermark")
 
 	vmm.unblock()
 	for i := 0; i < wakeCount; i++ {

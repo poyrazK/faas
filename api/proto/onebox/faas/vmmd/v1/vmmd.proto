@@ -20,6 +20,7 @@ service Vmmd {
   // Distinct methods fail closed on older nodes before allocating a VM.
   rpc RuntimeAdmissionIdentity(RuntimeAdmissionIdentityRequest) returns (RuntimeAdmissionIdentityResponse);
   rpc CreateAdmittedRuntime(CreateAdmittedRuntimeRequest) returns (CreateAdmittedRuntimeResponse);
+  rpc PromoteAdmittedRuntime(PromoteAdmittedRuntimeRequest) returns (PromoteAdmittedRuntimeResponse);
   // CreateFromSnapshot wakes an instance by restoring a previously-parked
   // snapshot. Falls back to cold boot if the snapshot is stale, missing, or
   // fails to load (ADR-005: cold boot always works).
@@ -2311,4 +2312,15 @@ message RuntimeBootReceipt {
 message CreateAdmittedRuntimeResponse {
   WakeResponse runtime = 1;
   RuntimeBootReceipt receipt = 2;
+}
+
+// A fresh promotion grant binds the exact paused native lease. The historical
+// boot receipt identifies that lease; it is never fresh resume authority.
+message PromoteAdmittedRuntimeRequest {
+  RuntimeBootBinding binding = 1;
+  RuntimeBootReceipt parent = 2;
+}
+
+message PromoteAdmittedRuntimeResponse {
+  RuntimeBootReceipt receipt = 1;
 }

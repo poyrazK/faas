@@ -419,6 +419,7 @@ type Instance struct {
 	Method WakeMethod // how it came up; a restore that fell back reads WakeColdBoot
 
 	runtimeAdmissionReceipt runtimeadmission.Receipt
+	runtimeAdmissionEgress  WakeRequest
 	// ExecutionOnly marks a VM created by the dedicated disposable-execution
 	// restore/cold-boot path. ExecuteExecution refuses ordinary app instances;
 	// this prevents a caller from turning a networked long-lived app VM into a
@@ -5170,7 +5171,11 @@ func (m *Manager) ResumeVM(ctx context.Context, instance string) error {
 	}
 	m.mu.Lock()
 	inst, ok := m.live[instance]
+	managed := ok && inst.runtimeAdmissionReceipt.Binding.ProtocolVersion != 0
 	m.mu.Unlock()
+	if managed {
+		return runtimeadmission.ErrUnavailable
+	}
 	if !ok {
 		return fmt.Errorf("resume_vm %s: not live", instance)
 	}

@@ -2008,33 +2008,34 @@ type InboundWebhookEndpoint struct {
 }
 
 type Instance struct {
-	ID                           pgtype.UUID
-	AppID                        pgtype.UUID
-	DeploymentID                 pgtype.UUID
-	State                        string
-	Netns                        pgtype.Text
-	GuestUid                     pgtype.Int4
-	HostIp                       *netip.Addr
-	RamMb                        int32
-	StartedAt                    pgtype.Timestamptz
-	LastRequestAt                pgtype.Timestamptz
-	ParkedAt                     pgtype.Timestamptz
-	TerminalAt                   pgtype.Timestamptz
-	NodeID                       pgtype.UUID
-	WakeID                       pgtype.UUID
-	OrgID                        pgtype.UUID
-	MigratedFromNodeID           pgtype.UUID
-	MigratedAt                   pgtype.Timestamptz
-	LeaseToken                   pgtype.Text
-	FrameworkReadyAt             pgtype.Timestamptz
-	TailCount                    int32
-	RequestCount                 int64
-	Kind                         string
-	JobID                        pgtype.UUID
-	Mode                         string
-	MigrationStartedAt           pgtype.Timestamptz
-	StartupCpuBoostUntil         pgtype.Timestamptz
-	ApplicationStandardBootToken pgtype.UUID
+	ID                                pgtype.UUID
+	AppID                             pgtype.UUID
+	DeploymentID                      pgtype.UUID
+	State                             string
+	Netns                             pgtype.Text
+	GuestUid                          pgtype.Int4
+	HostIp                            *netip.Addr
+	RamMb                             int32
+	StartedAt                         pgtype.Timestamptz
+	LastRequestAt                     pgtype.Timestamptz
+	ParkedAt                          pgtype.Timestamptz
+	TerminalAt                        pgtype.Timestamptz
+	NodeID                            pgtype.UUID
+	WakeID                            pgtype.UUID
+	OrgID                             pgtype.UUID
+	MigratedFromNodeID                pgtype.UUID
+	MigratedAt                        pgtype.Timestamptz
+	LeaseToken                        pgtype.Text
+	FrameworkReadyAt                  pgtype.Timestamptz
+	TailCount                         int32
+	RequestCount                      int64
+	Kind                              string
+	JobID                             pgtype.UUID
+	Mode                              string
+	MigrationStartedAt                pgtype.Timestamptz
+	StartupCpuBoostUntil              pgtype.Timestamptz
+	ApplicationStandardBootToken      pgtype.UUID
+	ApplicationStandardPromotionToken pgtype.UUID
 }
 
 type InstanceApplicationStandardAdmission struct {
@@ -2055,6 +2056,16 @@ type InstanceApplicationStandardBoot struct {
 	Receipt       []byte
 	CreatedAt     pgtype.Timestamptz
 	ReceivedAt    pgtype.Timestamptz
+}
+
+type InstanceApplicationStandardPromotion struct {
+	Token       pgtype.UUID
+	InstanceID  pgtype.UUID
+	ParentToken pgtype.UUID
+	Binding     []byte
+	Receipt     []byte
+	CreatedAt   pgtype.Timestamptz
+	ReceivedAt  pgtype.Timestamptz
 }
 
 type InstanceBillingInterval struct {

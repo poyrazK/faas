@@ -129,5 +129,11 @@ func (m *MemStore) guardInstanceStandardRuntimeLocked(ins Instance, creating boo
 	if !bytes.Equal(capture.inputs, input) {
 		return ErrApplicationStandardRuntimeStale
 	}
+	if capture.Managed && (ins.State == string(StateRunning) || ins.State == string(StateWarm) || ins.State == string(StateMigrating)) {
+		old := m.instances[ins.ID]
+		if old.State != string(StateWaking) && old.State != string(StateColdBooting) && old.State != string(StateRunning) && old.State != string(StateWarm) && old.State != string(StateMigrating) {
+			return ErrApplicationStandardRuntimeStale
+		}
+	}
 	return m.guardNativeRuntimeReceiptLocked(ins, capture)
 }

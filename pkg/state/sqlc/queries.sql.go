@@ -4857,6 +4857,30 @@ func (q *Queries) GetInstanceApplicationStandardBoot(ctx context.Context, db DBT
 	return i, err
 }
 
+const getInstanceApplicationStandardPromotion = `-- name: GetInstanceApplicationStandardPromotion :one
+SELECT p.binding,p.receipt,p.received_at,b.receipt AS parent FROM instance_application_standard_promotions p
+JOIN instance_application_standard_boots b ON b.token=p.parent_token WHERE p.token=$1::uuid
+`
+
+type GetInstanceApplicationStandardPromotionRow struct {
+	Binding    []byte
+	Receipt    []byte
+	ReceivedAt pgtype.Timestamptz
+	Parent     []byte
+}
+
+func (q *Queries) GetInstanceApplicationStandardPromotion(ctx context.Context, db DBTX, token pgtype.UUID) (GetInstanceApplicationStandardPromotionRow, error) {
+	row := db.QueryRow(ctx, getInstanceApplicationStandardPromotion, token)
+	var i GetInstanceApplicationStandardPromotionRow
+	err := row.Scan(
+		&i.Binding,
+		&i.Receipt,
+		&i.ReceivedAt,
+		&i.Parent,
+	)
+	return i, err
+}
+
 const getInstanceTailCount = `-- name: GetInstanceTailCount :one
 select tail_count from instances where id = $1
 `
@@ -5921,6 +5945,28 @@ func (q *Queries) InsertInstanceApplicationStandardBoot(ctx context.Context, db 
 		arg.Token,
 		arg.InstanceID,
 		arg.ExpectedState,
+		arg.Binding,
+	)
+	return err
+}
+
+const insertInstanceApplicationStandardPromotion = `-- name: InsertInstanceApplicationStandardPromotion :exec
+INSERT INTO instance_application_standard_promotions(token,instance_id,parent_token,binding)
+VALUES($1::uuid,$2::uuid,$3::uuid,$4::jsonb)
+`
+
+type InsertInstanceApplicationStandardPromotionParams struct {
+	Token       pgtype.UUID
+	InstanceID  pgtype.UUID
+	ParentToken pgtype.UUID
+	Binding     []byte
+}
+
+func (q *Queries) InsertInstanceApplicationStandardPromotion(ctx context.Context, db DBTX, arg InsertInstanceApplicationStandardPromotionParams) error {
+	_, err := db.Exec(ctx, insertInstanceApplicationStandardPromotion,
+		arg.Token,
+		arg.InstanceID,
+		arg.ParentToken,
 		arg.Binding,
 	)
 	return err
@@ -11696,6 +11742,22 @@ func (q *Queries) LockInstanceApplicationStandardBoot(ctx context.Context, db DB
 	return inputs, err
 }
 
+const lockInstanceApplicationStandardPromotion = `-- name: LockInstanceApplicationStandardPromotion :one
+SELECT application_standard_lock_native_promotion($1::uuid,$2::boolean)::jsonb AS inputs
+`
+
+type LockInstanceApplicationStandardPromotionParams struct {
+	InstanceID   pgtype.UUID
+	AllowRunning bool
+}
+
+func (q *Queries) LockInstanceApplicationStandardPromotion(ctx context.Context, db DBTX, arg LockInstanceApplicationStandardPromotionParams) ([]byte, error) {
+	row := db.QueryRow(ctx, lockInstanceApplicationStandardPromotion, arg.InstanceID, arg.AllowRunning)
+	var inputs []byte
+	err := row.Scan(&inputs)
+	return inputs, err
+}
+
 const lockInvoiceForRefund = `-- name: LockInvoiceForRefund :one
 SELECT account_id, provider, provider_invoice_id, amount_paid_cents,
        total_cents, amount_refunded_cents, amount_refund_pending_cents, credits_applied_cents
@@ -15305,6 +15367,24 @@ func (q *Queries) PruneDevBridgeSessions(ctx context.Context, db DBTX, arg Prune
 	return err
 }
 
+const publishInstanceApplicationStandardPromotion = `-- name: PublishInstanceApplicationStandardPromotion :execrows
+UPDATE instances SET application_standard_promotion_token=$1::uuid,state='running',started_at=clock_timestamp()
+WHERE id=$2::uuid AND state='warm'
+`
+
+type PublishInstanceApplicationStandardPromotionParams struct {
+	Token      pgtype.UUID
+	InstanceID pgtype.UUID
+}
+
+func (q *Queries) PublishInstanceApplicationStandardPromotion(ctx context.Context, db DBTX, arg PublishInstanceApplicationStandardPromotionParams) (int64, error) {
+	result, err := db.Exec(ctx, publishInstanceApplicationStandardPromotion, arg.Token, arg.InstanceID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const publishInstanceApplicationStandardRuntime = `-- name: PublishInstanceApplicationStandardRuntime :execrows
 UPDATE instances SET application_standard_boot_token=$1::uuid,netns=$2::text,
  host_ip=$3::inet,guest_uid=$4::integer,state=$5::text,started_at=clock_timestamp()
@@ -15675,6 +15755,24 @@ func (q *Queries) RecordAppSecretRevocationAck(ctx context.Context, db DBTX, arg
 		arg.InstanceID,
 		arg.WorkloadName,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const recordInstanceApplicationStandardPromotionReceipt = `-- name: RecordInstanceApplicationStandardPromotionReceipt :execrows
+UPDATE instance_application_standard_promotions SET receipt=$1::jsonb,received_at=clock_timestamp()
+WHERE token=$2::uuid AND receipt IS NULL
+`
+
+type RecordInstanceApplicationStandardPromotionReceiptParams struct {
+	Receipt []byte
+	Token   pgtype.UUID
+}
+
+func (q *Queries) RecordInstanceApplicationStandardPromotionReceipt(ctx context.Context, db DBTX, arg RecordInstanceApplicationStandardPromotionReceiptParams) (int64, error) {
+	result, err := db.Exec(ctx, recordInstanceApplicationStandardPromotionReceipt, arg.Receipt, arg.Token)
 	if err != nil {
 		return 0, err
 	}

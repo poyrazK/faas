@@ -5486,3 +5486,22 @@ SELECT id,app_id,deployment_id,state,COALESCE(netns,'')::text AS netns,COALESCE(
  COALESCE(host(host_ip),'')::text AS host_ip,ram_mb,started_at,last_request_at,parked_at,node_id,wake_id,
  framework_ready_at,tail_count,mode,request_count
 FROM instances WHERE id=sqlc.arg(instance_id)::uuid;
+
+-- name: LockInstanceApplicationStandardPromotion :one
+SELECT application_standard_lock_native_promotion(sqlc.arg(instance_id)::uuid,sqlc.arg(allow_running)::boolean)::jsonb AS inputs;
+
+-- name: GetInstanceApplicationStandardPromotion :one
+SELECT p.binding,p.receipt,p.received_at,b.receipt AS parent FROM instance_application_standard_promotions p
+JOIN instance_application_standard_boots b ON b.token=p.parent_token WHERE p.token=sqlc.arg(token)::uuid;
+
+-- name: InsertInstanceApplicationStandardPromotion :exec
+INSERT INTO instance_application_standard_promotions(token,instance_id,parent_token,binding)
+VALUES(sqlc.arg(token)::uuid,sqlc.arg(instance_id)::uuid,sqlc.arg(parent_token)::uuid,sqlc.arg(binding)::jsonb);
+
+-- name: RecordInstanceApplicationStandardPromotionReceipt :execrows
+UPDATE instance_application_standard_promotions SET receipt=sqlc.arg(receipt)::jsonb,received_at=clock_timestamp()
+WHERE token=sqlc.arg(token)::uuid AND receipt IS NULL;
+
+-- name: PublishInstanceApplicationStandardPromotion :execrows
+UPDATE instances SET application_standard_promotion_token=sqlc.arg(token)::uuid,state='running',started_at=clock_timestamp()
+WHERE id=sqlc.arg(instance_id)::uuid AND state='warm';

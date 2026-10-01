@@ -138,6 +138,22 @@ initial grant; a storage retry recovers only its exact existing token. Owner
 erasure removes its private capture/grant/receipt history. No legacy history
 gains native authority.
 
+Managed warm promotion saves a distinct, single-use grant before resuming the
+same resident lease. Its payload uses a promotion-specific hash domain and binds
+the complete historical paused receipt. The parent identifies the lease after
+its initial grant expires; only the fresh promotion grant authorizes resume.
+Native validation holds the per-app policy gate through resume and receipt,
+checks the installed full egress projection and refuses legacy managed resume.
+The guest resume hook completes entropy reseeding and clock correction before
+monitors and receipt publication. A failed hook destroys the resumed VM.
+Cancellation joins the native flight and destroys a late success. Promotion
+receipt and WARM-to-RUNNING publication commit together, retaining the original
+capture and initial boot history. Publication retry accepts only the exact
+already-committed receipt, including after grant expiry, while current input and
+process fences remain valid. History cannot recreate residency after cleanup.
+These unit and storage boundaries do not establish native KVM acceptance or
+complete daemon restart recovery.
+
 A managed node requires vmmd's existing compute-node registration with database
 configuration (including a named default-local node on a single box). A legacy
 local process without registered native identity or an older native backend
@@ -147,7 +163,7 @@ not query inherited customer intent.
 This remains partial enforcement. The grant/receipt alone does not attest artifact
 content, log delivery, established-flow tightening or all live-instance egress
 convergence, and it never advances an observed standard revision. App tasks,
-migration attempt authority, warm promotion and existing gateway revocation
+migration attempt authority, restart reconciliation and existing gateway revocation
 remain acceptance work. Dedicated native x86_64 KVM and leakcheck evidence is
 still required.
 
@@ -218,8 +234,9 @@ cannot represent the complete port projection is rejected rather than silently
 truncated and acknowledged. Unit and wire tests cover these orderings and
 failures; the native network gate remains open.
 
-The revision cache is process-local. Boot/migration admission and vmmd restart
-freshness still need revision-bound evidence. Existing native CIDR patch failure
+The revision cache is process-local. Managed initial boots and warm promotions
+bind its installed revision and complete projection to the native process.
+Migration admission and vmmd restart convergence still need evidence. Existing native CIDR patch failure
 recovery, established-connection tightening and host firewall reload outcomes
 must be verified before these RPC acknowledgments can advance standard rollout
 observation. This addition does not advance any standard observed revision or
@@ -238,10 +255,10 @@ consumer evidence; these reads never fabricate observation. Tests use the real
 reviewed MemStore admission and automatic materializer, including a restored app
 that still has a running instance. Denied paths perform no VM lifecycle work.
 
-These read guards do not close the concurrent change window after a spec is
-captured. Raw instance/state-transition fences, revision-bound boot/migration
-tickets, post-boot publication checks and already-cached gateway routing remain
-required. Current image proofs and existing-runtime behavior remain part of the
+The read guards alone do not close the concurrent change window after a spec is
+captured. Initial native boot and warm promotion now add durable grants and
+matching atomic publication receipts. Migration tickets, the separate app-task
+runtime owner and already-cached gateway routing remain required. Current image proofs and existing-runtime behavior remain part of the
 runtime acceptance work before public activation is enabled.
 
 New wake instances now capture persisted standards intent, app controls,
@@ -257,11 +274,12 @@ also compare the scheduler's earlier app/account/artifact reads with the capture
 Prime now publishes runtime and RUNNING through the checked atomic CAS, destroys
 a refused VM and releases its ledger reservation before returning an error.
 
-This is a control-plane input capture, not a complete boot ticket or native
-receipt. It does not cover the separate app-task runtime table, all boot-spec
-fields, expired exceptions, vmmd incarnation/egress revision freshness, native
-enforcement, content-bound image proofs, existing cached gateway routes or
-consumer observations. A valid raw state transition still cannot attest to
-native enforcement. Native revision-bound wire admission and its receipt,
-existing-runtime convergence and the remaining acceptance gates are required
-before public activation. No capture advances an observed standard revision.
+The capture identifies control-plane inputs; separate durable grants bind the
+complete delivered boot payload and native incarnation, and initial boot or warm
+promotion publication requires the matching native receipt. Together these
+boundaries still do not cover the separate app-task runtime table, migration
+attempts, expired exceptions, content-bound image proofs, cached gateway routes,
+complete live-egress/log convergence or consumer observations. Native KVM
+acceptance, existing-runtime convergence and the remaining acceptance gates are
+required before public activation. No capture or native boot/promotion receipt
+advances an observed standard revision.

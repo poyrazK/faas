@@ -26,10 +26,11 @@ import (
 
 type admittedNativeVMM struct {
 	*fakeVMM
-	identity  runtimeadmission.Identity
-	requests  []fcvm.AdmittedWakeRequest
-	destroyed []string
-	mutate    func(*fcvm.Instance, *runtimeadmission.Receipt)
+	identity   runtimeadmission.Identity
+	requests   []fcvm.AdmittedWakeRequest
+	promotions []runtimeadmission.Promotion
+	destroyed  []string
+	mutate     func(*fcvm.Instance, *runtimeadmission.Receipt)
 }
 
 func (v *admittedNativeVMM) RuntimeAdmissionIdentity() (runtimeadmission.Identity, error) {

@@ -324,6 +324,7 @@ type Querier interface {
 	GetGithubWebhookSecret(ctx context.Context, db DBTX, installationID int64) ([]byte, error)
 	GetInstanceApplicationStandardAdmission(ctx context.Context, db DBTX, instanceID pgtype.UUID) (GetInstanceApplicationStandardAdmissionRow, error)
 	GetInstanceApplicationStandardBoot(ctx context.Context, db DBTX, token pgtype.UUID) (GetInstanceApplicationStandardBootRow, error)
+	GetInstanceApplicationStandardPromotion(ctx context.Context, db DBTX, token pgtype.UUID) (GetInstanceApplicationStandardPromotionRow, error)
 	// issue #667 / ADR-078 — read-only probe for the snapshotAndPark
 	// 5s watchdog's poll loop. Single SELECT … FROM instances WHERE
 	// id = $1; the column is on the hot path so the row is already in
@@ -470,6 +471,7 @@ type Querier interface {
 	InsertDataUpstreamProbe(ctx context.Context, db DBTX, arg InsertDataUpstreamProbeParams) error
 	InsertFeatureFlagVersion(ctx context.Context, db DBTX, arg InsertFeatureFlagVersionParams) (FeatureFlagVersion, error)
 	InsertInstanceApplicationStandardBoot(ctx context.Context, db DBTX, arg InsertInstanceApplicationStandardBootParams) error
+	InsertInstanceApplicationStandardPromotion(ctx context.Context, db DBTX, arg InsertInstanceApplicationStandardPromotionParams) error
 	// Fresh-token insert. The id is server-minted by sqlc (gen_random_uuid).
 	// Returns the full row (with created_at server-stamped).
 	InsertOIDCExchangedToken(ctx context.Context, db DBTX, arg InsertOIDCExchangedTokenParams) (InsertOIDCExchangedTokenRow, error)
@@ -907,6 +909,7 @@ type Querier interface {
 	LockDevBridgeReplaySession(ctx context.Context, db DBTX, arg LockDevBridgeReplaySessionParams) (string, error)
 	LockFeatureFlagEnvironment(ctx context.Context, db DBTX, arg LockFeatureFlagEnvironmentParams) (pgtype.UUID, error)
 	LockInstanceApplicationStandardBoot(ctx context.Context, db DBTX, arg LockInstanceApplicationStandardBootParams) ([]byte, error)
+	LockInstanceApplicationStandardPromotion(ctx context.Context, db DBTX, arg LockInstanceApplicationStandardPromotionParams) ([]byte, error)
 	LockInvoiceForRefund(ctx context.Context, db DBTX, id pgtype.UUID) (LockInvoiceForRefundRow, error)
 	MarkClaimedTriggerRecordDeadLetter(ctx context.Context, db DBTX, arg MarkClaimedTriggerRecordDeadLetterParams) (int64, error)
 	MarkClaimedTriggerRecordRetry(ctx context.Context, db DBTX, arg MarkClaimedTriggerRecordRetryParams) (int64, error)
@@ -1110,6 +1113,7 @@ type Querier interface {
 	// the current month that are older than cutoff).
 	PruneDataUpstreamProbesOlderThan(ctx context.Context, db DBTX, sampledAt pgtype.Timestamptz) error
 	PruneDevBridgeSessions(ctx context.Context, db DBTX, arg PruneDevBridgeSessionsParams) error
+	PublishInstanceApplicationStandardPromotion(ctx context.Context, db DBTX, arg PublishInstanceApplicationStandardPromotionParams) (int64, error)
 	PublishInstanceApplicationStandardRuntime(ctx context.Context, db DBTX, arg PublishInstanceApplicationStandardRuntimeParams) (int64, error)
 	// An unqualified legacy row blocks the whole key; guessing could double-debit.
 	ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg ReadAccountCreditConsumptionParams) (ReadAccountCreditConsumptionRow, error)
@@ -1157,6 +1161,7 @@ type Querier interface {
 	// migration slot 533.
 	ReapStaleUploadPartFiles(ctx context.Context, db DBTX) ([]ReapStaleUploadPartFilesRow, error)
 	RecordAppSecretRevocationAck(ctx context.Context, db DBTX, arg RecordAppSecretRevocationAckParams) (int64, error)
+	RecordInstanceApplicationStandardPromotionReceipt(ctx context.Context, db DBTX, arg RecordInstanceApplicationStandardPromotionReceiptParams) (int64, error)
 	RecordInstanceApplicationStandardReceipt(ctx context.Context, db DBTX, arg RecordInstanceApplicationStandardReceiptParams) (int64, error)
 	// ---------------------------------------------------------------------------
 	// Issue #246 acceptance item 7 — hard-bounce + complaint suppression list

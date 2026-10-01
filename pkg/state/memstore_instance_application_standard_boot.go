@@ -70,7 +70,7 @@ func memNativeCaptureHash(input []byte, nodeID string) string {
 
 func (m *MemStore) lockNativeBootInputsLocked(id, expectedState string) (Instance, InstanceApplicationStandardAdmission, error) {
 	ins, ok := m.instances[id]
-	if !ok || ins.State != expectedState || (expectedState != string(StateWaking) && expectedState != string(StateColdBooting)) {
+	if !ok || ins.State != expectedState {
 		return Instance{}, InstanceApplicationStandardAdmission{}, ErrConflict
 	}
 	capture, ok := m.instanceApplicationStandardAdmissions[id]
@@ -88,6 +88,9 @@ func (m *MemStore) lockNativeBootInputsLocked(id, expectedState string) (Instanc
 }
 
 func (m *MemStore) IssueInstanceApplicationStandardBoot(ctx context.Context, expectedState string, binding runtimeadmission.Binding) (runtimeadmission.Binding, error) {
+	if expectedState != string(StateWaking) && expectedState != string(StateColdBooting) {
+		return runtimeadmission.Binding{}, ErrInvalidArgument
+	}
 	if err := ctx.Err(); err != nil {
 		return runtimeadmission.Binding{}, err
 	}
@@ -189,6 +192,13 @@ func (m *MemStore) guardNativeRuntimeReceiptLocked(ins Instance, capture Instanc
 		return ErrApplicationStandardRuntimeStale
 	}
 	r := boot.Receipt
+	if token := m.instanceApplicationStandardPromotionTokens[ins.ID]; token != "" {
+		promotion, exists := m.instanceApplicationStandardPromotions[token]
+		if !exists || promotion.Receipt == nil || promotion.Grant.Parent != *boot.Receipt || promotion.Grant.Binding.NodeID != ins.NodeID || promotion.Grant.Binding.Incarnation != m.computeNodeRuntimeIncarnations[ins.NodeID] {
+			return ErrApplicationStandardRuntimeStale
+		}
+		r = promotion.Receipt
+	}
 	if r.Netns != ins.Netns || r.HostIP != ins.HostIP || int(r.LeaseUID) != ins.GuestUID || r.Paused != (ins.State == string(StateWarm)) {
 		return ErrApplicationStandardRuntimeStale
 	}
@@ -196,6 +206,12 @@ func (m *MemStore) guardNativeRuntimeReceiptLocked(ins Instance, capture Instanc
 }
 
 func (m *MemStore) deleteNativeInstanceInputsLocked(id string) {
+	delete(m.instanceApplicationStandardPromotionTokens, id)
+	for token, promotion := range m.instanceApplicationStandardPromotions {
+		if promotion.Grant.Binding.InstanceID == id {
+			delete(m.instanceApplicationStandardPromotions, token)
+		}
+	}
 	delete(m.instanceApplicationStandardAdmissions, id)
 	delete(m.instanceApplicationStandardBootTokens, id)
 	for token, boot := range m.instanceApplicationStandardBoots {

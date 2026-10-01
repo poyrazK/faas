@@ -24,6 +24,7 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	Vmmd_RuntimeAdmissionIdentity_FullMethodName      = "/onebox.faas.vmmd.v1.Vmmd/RuntimeAdmissionIdentity"
 	Vmmd_CreateAdmittedRuntime_FullMethodName         = "/onebox.faas.vmmd.v1.Vmmd/CreateAdmittedRuntime"
+	Vmmd_PromoteAdmittedRuntime_FullMethodName        = "/onebox.faas.vmmd.v1.Vmmd/PromoteAdmittedRuntime"
 	Vmmd_CreateFromSnapshot_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/CreateFromSnapshot"
 	Vmmd_CreateColdBoot_FullMethodName                = "/onebox.faas.vmmd.v1.Vmmd/CreateColdBoot"
 	Vmmd_JobColdBoot_FullMethodName                   = "/onebox.faas.vmmd.v1.Vmmd/JobColdBoot"
@@ -81,6 +82,7 @@ type VmmdClient interface {
 	// Distinct methods fail closed on older nodes before allocating a VM.
 	RuntimeAdmissionIdentity(ctx context.Context, in *RuntimeAdmissionIdentityRequest, opts ...grpc.CallOption) (*RuntimeAdmissionIdentityResponse, error)
 	CreateAdmittedRuntime(ctx context.Context, in *CreateAdmittedRuntimeRequest, opts ...grpc.CallOption) (*CreateAdmittedRuntimeResponse, error)
+	PromoteAdmittedRuntime(ctx context.Context, in *PromoteAdmittedRuntimeRequest, opts ...grpc.CallOption) (*PromoteAdmittedRuntimeResponse, error)
 	// CreateFromSnapshot wakes an instance by restoring a previously-parked
 	// snapshot. Falls back to cold boot if the snapshot is stale, missing, or
 	// fails to load (ADR-005: cold boot always works).
@@ -516,6 +518,16 @@ func (c *vmmdClient) CreateAdmittedRuntime(ctx context.Context, in *CreateAdmitt
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CreateAdmittedRuntimeResponse)
 	err := c.cc.Invoke(ctx, Vmmd_CreateAdmittedRuntime_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vmmdClient) PromoteAdmittedRuntime(ctx context.Context, in *PromoteAdmittedRuntimeRequest, opts ...grpc.CallOption) (*PromoteAdmittedRuntimeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PromoteAdmittedRuntimeResponse)
+	err := c.cc.Invoke(ctx, Vmmd_PromoteAdmittedRuntime_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1009,6 +1021,7 @@ type VmmdServer interface {
 	// Distinct methods fail closed on older nodes before allocating a VM.
 	RuntimeAdmissionIdentity(context.Context, *RuntimeAdmissionIdentityRequest) (*RuntimeAdmissionIdentityResponse, error)
 	CreateAdmittedRuntime(context.Context, *CreateAdmittedRuntimeRequest) (*CreateAdmittedRuntimeResponse, error)
+	PromoteAdmittedRuntime(context.Context, *PromoteAdmittedRuntimeRequest) (*PromoteAdmittedRuntimeResponse, error)
 	// CreateFromSnapshot wakes an instance by restoring a previously-parked
 	// snapshot. Falls back to cold boot if the snapshot is stale, missing, or
 	// fails to load (ADR-005: cold boot always works).
@@ -1436,6 +1449,9 @@ func (UnimplementedVmmdServer) RuntimeAdmissionIdentity(context.Context, *Runtim
 func (UnimplementedVmmdServer) CreateAdmittedRuntime(context.Context, *CreateAdmittedRuntimeRequest) (*CreateAdmittedRuntimeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateAdmittedRuntime not implemented")
 }
+func (UnimplementedVmmdServer) PromoteAdmittedRuntime(context.Context, *PromoteAdmittedRuntimeRequest) (*PromoteAdmittedRuntimeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PromoteAdmittedRuntime not implemented")
+}
 func (UnimplementedVmmdServer) CreateFromSnapshot(context.Context, *CreateFromSnapshotRequest) (*WakeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateFromSnapshot not implemented")
 }
@@ -1621,6 +1637,24 @@ func _Vmmd_CreateAdmittedRuntime_Handler(srv interface{}, ctx context.Context, d
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VmmdServer).CreateAdmittedRuntime(ctx, req.(*CreateAdmittedRuntimeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_PromoteAdmittedRuntime_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PromoteAdmittedRuntimeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).PromoteAdmittedRuntime(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_PromoteAdmittedRuntime_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).PromoteAdmittedRuntime(ctx, req.(*PromoteAdmittedRuntimeRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2377,6 +2411,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CreateAdmittedRuntime",
 			Handler:    _Vmmd_CreateAdmittedRuntime_Handler,
+		},
+		{
+			MethodName: "PromoteAdmittedRuntime",
+			Handler:    _Vmmd_PromoteAdmittedRuntime_Handler,
 		},
 		{
 			MethodName: "CreateFromSnapshot",

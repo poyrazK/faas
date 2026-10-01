@@ -225,9 +225,12 @@ compute node and vmmd process, a captured input digest, a standard revision and
 an exact egress revision. Unsupported nodes refuse before boot; expired,
 replayed and mismatched grants refuse admission. The backend returns a receipt
 for the actual runtime identity. Cancellation joins the in-flight boot and
-cleans up a late success. This is an internal foundation: scheduler storage must
-still persist the grant and receipt atomically with instance publication before
-ordinary managed boot paths use it. It supplies no image-content or delivered-log
+cleans up a late success. Managed cold boots, snapshot restores and initial paused
+warm restores save grants before native invocation and atomically publish the
+matching receipt and runtime. Warm promotion saves fresh authority tied to the
+same paused lease; an initial receipt cannot authorize resume. Exact committed
+promotion publication can be retried after a lost acknowledgment without another
+native resume. Current input and native process fences still apply. This supplies no image-content or delivered-log
 proof, and does not mark the standard observed or enable public activation.
 
 ## Automatic onboarding and repair

@@ -155,6 +155,7 @@ func (m *Manager) WakeAdmitted(ctx context.Context, request AdmittedWakeRequest,
 	}
 	receipt := runtimeadmission.Receipt{Binding: binding, NativeInputHash: hash, Netns: inst.Net.Netns, HostIP: inst.Lease.HostIP.String(), LeaseUID: int32(inst.Lease.UID), Method: method, Paused: inst.Paused, CompletedAtUnixNano: completedAt.UnixNano()}
 	inst.runtimeAdmissionReceipt = receipt
+	inst.runtimeAdmissionEgress = WakeRequest{AppID: req.AppID, Plan: req.Plan, EgressAllowlist: slices.Clone(req.EgressAllowlist), EgressPorts: slices.Clone(req.EgressPorts)}
 	m.finishRuntimeAdmissionFlightLocked(req.Instance, flight)
 	m.mu.Unlock()
 	return inst, receipt, nil

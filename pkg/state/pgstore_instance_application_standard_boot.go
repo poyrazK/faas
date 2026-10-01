@@ -62,6 +62,9 @@ func decodeStandardNativeBoot(row sqlc.GetInstanceApplicationStandardBootRow) (i
 }
 
 func (s *PgStore) IssueInstanceApplicationStandardBoot(ctx context.Context, expectedState string, binding runtimeadmission.Binding) (runtimeadmission.Binding, error) {
+	if expectedState != string(StateWaking) && expectedState != string(StateColdBooting) {
+		return runtimeadmission.Binding{}, ErrInvalidArgument
+	}
 	if binding.Validate(time.Now()) != nil {
 		return runtimeadmission.Binding{}, ErrInvalidArgument
 	}
