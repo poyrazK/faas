@@ -115,7 +115,7 @@ func testDirectOCIFullRootfs(t *testing.T, options directOCIContractOptions) {
 	if status != http.StatusAccepted {
 		t.Fatalf("create deployment: status=%d body=%s", status, body)
 	}
-	depID, _ := parseQueuedDeployment(t, body)
+	depID := parseImageDeployment(t, body)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()

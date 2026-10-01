@@ -69,7 +69,7 @@ func TestDirectOCIPort3000Metal(t *testing.T) {
 	if status != http.StatusAccepted {
 		t.Fatalf("create deployment: status=%d body=%s", status, body)
 	}
-	depID, _ := parseQueuedDeployment(t, body)
+	depID := parseImageDeployment(t, body)
 
 	deployCtx, deployCancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer deployCancel()

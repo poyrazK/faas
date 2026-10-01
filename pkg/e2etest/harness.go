@@ -77,6 +77,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/daemonunitspec"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -325,7 +326,10 @@ kernel_path = %q
 	}
 
 	if which&Gatewayd != 0 {
-		startGatewayd(t, h, bin, dbURL, extraEnv)
+		// Guest DNS is pinned to the tenant bridge, including in builder VMs.
+		// Metal source-build tests need the gateway's real bridge resolver.
+		guestDNS := which&Builderd != 0 && which&VMMD != 0 && os.Getenv("FAAS_TEST_KERNEL") != ""
+		startGatewayd(t, h, bin, dbURL, extraEnv, guestDNS)
 	}
 	if which&GatewaydPublic != 0 {
 		if which&Gatewayd == 0 {
@@ -826,7 +830,7 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 		startMeterd(t, h, bin, dbURL, extraEnv)
 	}
 	if which&Gatewayd != 0 {
-		startGatewayd(t, h, bin, dbURL, extraEnv)
+		startGatewayd(t, h, bin, dbURL, extraEnv, false)
 	}
 	if which&GatewaydPublic != 0 {
 		if which&Gatewayd == 0 {
@@ -961,7 +965,18 @@ gateway_metrics_url = %q
 //
 // extraEnv is appended last so a test can inject extra knobs (none
 // today; mirrors startMeterd's signature).
-func startGatewayd(t *testing.T, h *Harness, bin, dbURL string, extraEnv []string) {
+func gatewaydConfig(addr, controlAddr, apidLoopback string, guestDNS bool) string {
+	config := fmt.Sprintf("public_addr=%q\ncontrol_addr=%q\napid_loopback=%q\n", addr, controlAddr, apidLoopback)
+	if guestDNS {
+		// Keep the single-host acceptance bridge aligned with VMMD's default.
+		// This listener also enables the production DNS server on port 53.
+		bridge := api.DefaultHostBridgeCIDR().Addr().Next().String()
+		config += fmt.Sprintf("service_proxy_listen=%q\n", net.JoinHostPort(bridge, strconv.Itoa(netns.ServiceProxyPort)))
+	}
+	return config
+}
+
+func startGatewayd(t *testing.T, h *Harness, bin, dbURL string, extraEnv []string, guestDNS bool) {
 	t.Helper()
 	if h.SockDir == "" {
 		h.SockDir = filepath.Join(h.TmpDir, "socks")
@@ -986,10 +1001,7 @@ func startGatewayd(t *testing.T, h *Harness, bin, dbURL string, extraEnv []strin
 		apidLoopback = "http://127.0.0.1:8081"
 	}
 	gwCfg := filepath.Join(t.TempDir(), "gatewayd.toml")
-	if err := os.WriteFile(gwCfg, []byte(
-		fmt.Sprintf("public_addr=%q\ncontrol_addr=%q\napid_loopback=%q\n",
-			addr, controlAddr, apidLoopback),
-	), 0o600); err != nil {
+	if err := os.WriteFile(gwCfg, []byte(gatewaydConfig(addr, controlAddr, apidLoopback, guestDNS)), 0o600); err != nil {
 		t.Fatalf("e2etest: write gatewayd.toml: %v", err)
 	}
 	// Release the held ports only after the final config is written and just

@@ -73,7 +73,7 @@ func TestDirectOCIAutoscaleScaleToZeroMetal(t *testing.T) {
 	if status != http.StatusAccepted {
 		t.Fatalf("create deployment: status=%d body=%s", status, body)
 	}
-	depID, _ := parseQueuedDeployment(t, body)
+	depID := parseImageDeployment(t, body)
 	deployCtx, deployCancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer deployCancel()
 	dep, err := e2etest.WaitForDeploymentLive(deployCtx, t, pool, depID, 75*time.Second)
