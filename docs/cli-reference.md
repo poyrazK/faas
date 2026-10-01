@@ -6,7 +6,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 |---|---|
 | [`account`](#account) | Manage the local account (account export\|delete\|restore\|status\|dpa\|slo) |
 | [`add`](#add) | Provision and bind managed resources to an app |
-| [`bucket`](#bucket) | Reconcile reserved object-storage capacity |
+| [`bucket`](#bucket) | Inspect write receipts and reconcile reserved object-storage capacity |
 | [`bindings`](#bindings) | Inspect app bindings and rotation status, manage storage credentials, or verify service and PostgreSQL connections |
 | [`capabilities`](#capabilities) | Show feature maturity and plan availability |
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset --app &lt;slug&gt;) |
@@ -175,7 +175,7 @@ Provision or attach object storage and inject sealed S3 settings
 
 ## bucket
 
-Reconcile reserved object-storage capacity
+Inspect write receipts and reconcile reserved object-storage capacity
 
 `gregale bucket [<subcommand>]`
 
@@ -200,6 +200,39 @@ Show reconciliation progress and reclaimed capacity
 Cancel reconciliation and resume writes
 
 `gregale bucket reconcile cancel <app> <bucket-id> <job-id>`
+
+### bucket writes
+
+Inspect tracked writes and await recovery
+
+#### bucket writes list
+
+List pending writes or recent completed and failed receipts
+
+`gregale bucket writes list <app> <bucket-id> [--status <STATUS>] [--limit <N>] [--cursor <TOKEN>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--status <STATUS>` | pending (default), completed, failed or all |  |
+| `--limit <N>` | page size (default 50, maximum 100) |  |
+| `--cursor <TOKEN>` | next page cursor |  |
+
+#### bucket writes status
+
+Read a tracked write receipt
+
+`gregale bucket writes status <app> <bucket-id> <receipt-id>`
+
+#### bucket writes wait
+
+Poll until completed or failed; pending timeout retains the receipt
+
+`gregale bucket writes wait <app> <bucket-id> <receipt-id> [--timeout <DURATION>] [--poll-interval <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--timeout <DURATION>` | maximum wait (default 5m) |  |
+| `--poll-interval <DURATION>` | time between reads (default 5s, minimum 1s) |  |
 
 
 ## bindings

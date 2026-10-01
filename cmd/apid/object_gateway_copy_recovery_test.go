@@ -112,6 +112,7 @@ func TestGatewayCopyRecoveryPG(t *testing.T) {
 				if c.Status != "failed" || c.WritePhase != state.ObjectUploadSettled {
 					t.Fatal("source change not settled", c)
 				}
+				pollGatewayWriteReceipt(t, f, "destination", id, "failed", 200)
 				return
 			}
 			if c.Status != "pending" || c.WritePhase != state.ObjectUploadDispatched {
@@ -127,6 +128,8 @@ func TestGatewayCopyRecoveryPG(t *testing.T) {
 			if err = restarted.RecordObjectUsageReport(ctx, f.report); err != nil {
 				t.Fatal(err)
 			}
+			f.enabled.Store(false)
+			pollGatewayWriteReceipt(t, f, "destination", id, "pending", 200)
 			// Recovery must use only the destination proof, even after source deletion.
 			if _, err = f.client.DeleteObject(ctx, &awss3.DeleteObjectInput{Bucket: aws.String("assets"), Key: aws.String("source")}); err != nil {
 				t.Fatal(err)
@@ -142,6 +145,7 @@ func TestGatewayCopyRecoveryPG(t *testing.T) {
 			if err != nil || c.Status != "completed" || c.ETag != `"copied"` || len(operations) != 1 || operations[0] != "gateway_copy/completed" {
 				t.Fatal(c, operations, err)
 			}
+			pollGatewayWriteReceipt(t, f, "destination", id, "completed", 200)
 			object.mu.Lock()
 			copies = object.copies
 			object.mu.Unlock()
@@ -173,6 +177,10 @@ func TestGatewayCopyRecoveryPG(t *testing.T) {
 			if err != nil {
 				t.Fatal("copy capacity not reusable", err)
 			}
+			if err = restarted.RevokeObjectS3Credential(ctx, f.account.ID, f.bucket.ID, f.credential.ID); err != nil {
+				t.Fatal(err)
+			}
+			pollGatewayWriteReceipt(t, f, "destination", id, "", 403)
 		})
 	}
 }

@@ -5224,3 +5224,17 @@ SELECT * FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND app_id
 INSERT INTO object_upload_completions
  (id,account_id,app_id,bucket_id,subject_id,object_key,bytes,content_type,request_id,status,write_phase,origin,source_key,source_etag,recovery_retry_at)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending','prepared',sqlc.arg(origin)::text,sqlc.arg(source_key)::text,sqlc.arg(source_etag)::text,now()+make_interval(secs=>sqlc.arg(retry_seconds)::int)) RETURNING *;
+
+-- name: ObjectWriteReceiptGet :one
+SELECT * FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND app_id=$3 AND bucket_id=$4 AND write_phase <> 'untracked';
+
+-- name: ObjectWriteReceiptsList :many
+SELECT * FROM object_upload_completions WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND write_phase <> 'untracked'
+ AND status=sqlc.arg(status_filter)::text
+ AND (created_at,id) < (coalesce(sqlc.narg(cursor_created)::timestamptz,'infinity'::timestamptz),coalesce(sqlc.narg(cursor_id)::uuid,'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid))
+ ORDER BY created_at DESC,id DESC LIMIT sqlc.arg(page_limit)::int;
+
+-- name: ObjectWriteReceiptsListAll :many
+SELECT * FROM object_upload_completions WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND write_phase <> 'untracked'
+ AND (created_at,id) < (coalesce(sqlc.narg(cursor_created)::timestamptz,'infinity'::timestamptz),coalesce(sqlc.narg(cursor_id)::uuid,'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid))
+ ORDER BY created_at DESC,id DESC LIMIT sqlc.arg(page_limit)::int;

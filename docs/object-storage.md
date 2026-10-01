@@ -968,6 +968,53 @@ and providers without the capability remain conservative.
 Apply the additive migration before upgrading gateways and API workers.
 See [ADR-394](adr/394-recoverable-s3-gateway-copies.md).
 
+## Inspect write receipts
+
+An admitted branded S3 PUT or CopyObject returns `X-Gregale-Upload-ID`, including
+on an uncertain error response. Poll its durable receipt with a **SigV4-signed**
+GET on the original object path:
+
+```text
+GET https://s3.gregale.dev/assets/path/to/key?gregale-upload-id=<receipt-id>
+```
+
+This Gregale extension returns JSON with `pending`, `completed` or `failed`
+status, operation, key, bytes, content type, ETag, creation time and an optional
+bounded error code. Use the credential that issued the write; another credential
+or a different key receives 404. Revoked credentials cannot poll. A pending
+response includes `Retry-After: 30`; all receipts use `Cache-Control: no-store`.
+Polling remains available with storage disabled, spent budgets or unavailable
+provider placement, and makes no upstream request or new quota admission.
+
+Use the management API or CLI to inspect bucket writes, including application
+upload routes and writes whose original credential has been revoked:
+
+```sh
+gregale bucket writes list <app> <bucket-id>
+gregale bucket writes list <app> <bucket-id> --status=all --limit=50
+gregale bucket writes status <app> <bucket-id> <receipt-id>
+gregale bucket writes wait <app> <bucket-id> <receipt-id> --timeout=5m
+```
+
+The API paths are `GET /v1/apps/{slug}/buckets/{bucket}/write-receipts` and the
+same path followed by `/{receipt}`. Both require storage write scope and the
+bucket write grant under the existing MFA policy. List defaults to pending and
+accepts `status=pending|completed|failed|all`, `limit=1..100` (default 50) and
+`cursor` from the previous `next_cursor`. Results are newest first. Reuse the
+same bucket and filter for subsequent pages; pending pages may change as
+recovery settles writes. JSON CLI output uses the same public fields. `wait`
+polls every five seconds (configurable, minimum one second), exits nonzero for
+a failed write or timeout, and prints the last pending receipt on timeout.
+
+Completed proves that this attempt committed; the key may since have changed.
+Pending has no confirmed outcome: do not treat it as failure or blindly resend
+the write. Missing or overwritten provider proof can leave a receipt pending.
+These reads cannot force completion or refund capacity. Legacy/untracked writes,
+direct signed uploads and multipart sessions are outside this list; use the
+multipart status API for multipart uploads. Pending-write lists help diagnose
+`waiting/unsettled_writes` capacity jobs. Apply the listing index migration
+before rollout. See [ADR-395](adr/395-customer-object-write-receipts.md).
+
 ## Reclaim reserved capacity
 
 For buckets using tracked branded S3 PUTs/copies, S3 application upload routes or public

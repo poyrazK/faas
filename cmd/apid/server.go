@@ -1214,6 +1214,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/apps/{slug}/buckets/{bucket}/objects", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageWriteSurface...)(s.deleteBucketObject))))
 	mux.HandleFunc("POST /v1/apps/{slug}/buckets/{bucket}/signed-url", s.authLimited(s.requireMFA(s.requireScope(api.ScopeAdmin, api.ScopeStorageRead, api.ScopeStorageWrite)(s.signBucketObject))))
 	mux.HandleFunc("POST /v1/apps/{slug}/buckets/{bucket}/capacity-reconciliations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageWriteSurface...)(s.createObjectCapacityReconciliation))))
+	mux.HandleFunc("GET /v1/apps/{slug}/buckets/{bucket}/write-receipts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageWriteSurface...)(s.listObjectWriteReceipts))))
+	mux.HandleFunc("GET /v1/apps/{slug}/buckets/{bucket}/write-receipts/{receipt}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageWriteSurface...)(s.getObjectWriteReceipt))))
 	mux.HandleFunc("GET /v1/apps/{slug}/buckets/{bucket}/capacity-reconciliations/{reconciliation}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageWriteSurface...)(s.getObjectCapacityReconciliation))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/buckets/{bucket}/capacity-reconciliations/{reconciliation}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageWriteSurface...)(s.cancelObjectCapacityReconciliation))))
 	mux.HandleFunc("GET /v1/apps/{slug}/buckets/{bucket}/multipart-uploads", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageWriteSurface...)(s.listObjectMultipartUploads))))

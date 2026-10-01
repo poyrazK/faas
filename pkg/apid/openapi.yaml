@@ -1569,6 +1569,116 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/buckets/{bucket}/capacity-reconciliations:
+    parameters:
+      - { name: slug, description: App requesting a fenced bucket inventory., in: path, required: true, schema: { type: string } }
+      - { name: bucket, description: Bucket whose reserved capacity should be reconciled., in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: createObjectCapacityReconciliation
+      summary: Request safe capacity reconciliation
+      description: Requires storage write scope and the bucket write grant. Returns the existing active job on repeat requests. Pauses new bucket writes until cancellation or a terminal outcome. Pending or untracked writes cannot be force-refunded; only a complete fenced inventory can reclaim capacity. Available with storage disabled or spent budgets.
+      tags: [storage]
+      responses:
+        '202':
+          description: Durable reconciliation requested; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectCapacityReconciliation' }
+        default:
+          description: Missing bucket, live multipart sessions, or access denied
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/capacity-reconciliations/{reconciliation}:
+    parameters:
+      - { name: slug, description: App owning the reconciliation job., in: path, required: true, schema: { type: string } }
+      - { name: bucket, description: Bucket associated with the reconciliation., in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: reconciliation, description: Durable capacity reconciliation identifier., in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getObjectCapacityReconciliation
+      summary: Inspect capacity reconciliation
+      description: Returns progress, pending-write count and reclaimed capacity under storage write scope and the bucket write grant. Reads remain available with storage disabled or spent budgets. Billing and monthly authorization counts are unchanged.
+      tags: [storage]
+      responses:
+        '200':
+          description: Reconciliation status; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectCapacityReconciliation' }
+        default:
+          description: Reconciliation missing or access denied
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      operationId: cancelObjectCapacityReconciliation
+      summary: Cancel capacity reconciliation
+      description: Requires storage write scope and the bucket write grant. Immediately releases the active job's write pause without changing reserved capacity. Returns the job, including an existing terminal outcome. Cleanup remains available with storage disabled or spent budgets.
+      tags: [storage]
+      responses:
+        '200':
+          description: Cancelled or previously terminal reconciliation; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectCapacityReconciliation' }
+        default:
+          description: Reconciliation missing or cancellation denied
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/write-receipts:
+    parameters:
+      - { name: slug, description: App owning the bucket., in: path, required: true, schema: { type: string } }
+      - { name: bucket, description: Gregale bucket identifier., in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: listObjectWriteReceipts
+      summary: List tracked write receipts for a bucket
+      description: Requires storage write scope and the bucket write grant. Defaults to pending writes, newest first; pages are live views and receipts settling between reads may disappear from the pending filter. Reads remain available while storage is disabled or budgets are spent, without provider calls or quota admission. Direct signed uploads, legacy writes and multipart sessions are outside this receipt list.
+      tags: [storage]
+      parameters:
+        - { name: status, description: Receipt status to include., in: query, schema: { type: string, enum: [pending, completed, failed, all], default: pending } }
+        - { name: limit, description: Maximum receipts per page., in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+        - { name: cursor, description: Opaque next cursor from a page using the same bucket and status filter., in: query, schema: { type: string, maxLength: 512 } }
+      responses:
+        '200':
+          description: One page of tracked write receipts; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectWriteReceiptList' }
+        default:
+          description: Invalid pagination, missing bucket, or access denied
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/apps/{slug}/buckets/{bucket}/write-receipts/{receipt}:
+    parameters:
+      - { name: slug, description: App whose tracked write is being inspected., in: path, required: true, schema: { type: string } }
+      - { name: bucket, description: Bucket containing the requested write receipt., in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: receipt, description: Receipt ID returned as X-Gregale-Upload-ID., in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getObjectWriteReceipt
+      summary: Read a tracked write receipt
+      description: Requires storage write scope and the bucket write grant. Completed proves this attempt committed, not that the object still has this value. Pending has no confirmed outcome; do not assume failure or refund capacity. Reads remain available with storage disabled or spent budgets.
+      tags: [storage]
+      responses:
+        '200':
+          description: Receipt projection; Cache-Control no-store; pending responses include Retry-After
+          headers:
+            Retry-After:
+              description: Suggested delay in seconds before polling a pending receipt.
+              schema: { type: integer, minimum: 1 }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectWriteReceipt' }
+        default:
+          description: Receipt or bucket missing, or access denied
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/buckets/{bucket}/signed-url:
     parameters:
       - { name: slug, description: App authorizing the requested object capability., in: path, required: true, schema: { type: string } }
@@ -24270,6 +24380,55 @@ components:
         headers: { type: object, additionalProperties: { type: string } }
         expires_at: { type: string, format: date-time }
 
+    ObjectCapacityReconciliation:
+      type: object
+      description: Durable fenced capacity inventory and quota rebase. Failed or blocked jobs retain reservations; billing is unaffected.
+      required: [id, bucket_id, state, before_bytes, before_keys, after_bytes, after_keys, reclaimed_bytes, reclaimed_keys, pending_writes, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        bucket_id: { type: string, format: uuid }
+        state: { type: string, enum: [waiting, scanning, completed, blocked, failed, cancelled] }
+        before_bytes: { type: integer, format: int64, minimum: 0 }
+        before_keys: { type: integer, format: int64, minimum: 0 }
+        after_bytes: { type: integer, format: int64, minimum: 0 }
+        after_keys: { type: integer, format: int64, minimum: 0 }
+        reclaimed_bytes: { type: integer, format: int64, minimum: 0 }
+        reclaimed_keys: { type: integer, format: int64, minimum: 0 }
+        pending_writes: { type: integer, format: int64, minimum: 0 }
+        last_error_code: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+
+    ObjectWriteReceipt:
+      type: object
+      description: Public receipt of one tracked PUT, CopyObject or application upload. Contains no credentials, provider placement, source identity or recovery lease tokens.
+      required: [id, bucket_id, key, operation, bytes, content_type, etag, status, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        bucket_id: { type: string, format: uuid }
+        key: { type: string, minLength: 1, maxLength: 1024 }
+        operation: { type: string, enum: [put, copy, upload] }
+        bytes: { type: integer, format: int64, minimum: 0 }
+        content_type: { type: string }
+        etag: { type: string, description: Confirmed ETag; empty until completion. }
+        status: { type: string, enum: [pending, completed, failed] }
+        error_code:
+          type: string
+          enum: [preparation_expired, usage_unavailable, dispatch_failed, provider_write_rejected, provider_write_uncertain, configuration]
+        created_at: { type: string, format: date-time }
+
+    ObjectWriteReceiptList:
+      type: object
+      description: One live page of tracked bucket write receipts with an optional next-page cursor.
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/ObjectWriteReceipt' }
+        next_cursor: { type: string, maxLength: 512 }
+
     ObjectMultipartUpload:
       description: Durable provider-neutral resumable upload session. The provider upload ID is private.
       type: object
@@ -24281,7 +24440,8 @@ components:
         part_size_bytes: { type: integer, format: int64, minimum: 1, maximum: 5368709120 }
         part_count: { type: integer, minimum: 1, maximum: 10000 }
         content_type: { type: string, maxLength: 255 }
-        state: { type: string, enum: [initiating, active, completing, aborting, completed, aborted] }
+        state: { type: string, enum: [initiating, active, completing, completing_conditional, aborting, completed, aborted] }
+        completion_error_code: { type: string, description: Persisted conditional completion rejection; retries retain the outcome. }
         expires_at: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
     ObjectMultipartUploadList:

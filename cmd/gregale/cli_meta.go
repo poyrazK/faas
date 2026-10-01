@@ -314,11 +314,22 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		Name: "bucket", DocSlug: "object-storage", Short: "Reconcile reserved object-storage capacity",
+		Name: "bucket", DocSlug: "object-storage", Short: "Inspect write receipts and reconcile reserved object-storage capacity",
 		Subcommands: []cliSub{{Name: "reconcile", Short: "Start, inspect or cancel a fenced capacity inventory", Subcommands: []cliSub{
 			{Name: "start", Short: "Pause writes and request capacity reconciliation", Positionals: []string{"<app>", "<bucket-id>"}},
 			{Name: "status", Short: "Show reconciliation progress and reclaimed capacity", Positionals: []string{"<app>", "<bucket-id>", "<job-id>"}},
 			{Name: "cancel", Short: "Cancel reconciliation and resume writes", Positionals: []string{"<app>", "<bucket-id>", "<job-id>"}},
+		}}, {Name: "writes", Short: "Inspect tracked writes and await recovery", Subcommands: []cliSub{
+			{Name: "list", Short: "List pending writes or recent completed and failed receipts", Positionals: []string{"<app>", "<bucket-id>"}, Flags: []cliFlag{
+				{Name: "status", Short: "pending (default), completed, failed or all", Value: "STATUS"},
+				{Name: "limit", Short: "page size (default 50, maximum 100)", Value: "N"},
+				{Name: "cursor", Short: "next page cursor", Value: "TOKEN"},
+			}},
+			{Name: "status", Short: "Read a tracked write receipt", Positionals: []string{"<app>", "<bucket-id>", "<receipt-id>"}},
+			{Name: "wait", Short: "Poll until completed or failed; pending timeout retains the receipt", Positionals: []string{"<app>", "<bucket-id>", "<receipt-id>"}, Flags: []cliFlag{
+				{Name: "timeout", Short: "maximum wait (default 5m)", Value: "DURATION"},
+				{Name: "poll-interval", Short: "time between reads (default 5s, minimum 1s)", Value: "DURATION"},
+			}},
 		}}},
 	},
 	{

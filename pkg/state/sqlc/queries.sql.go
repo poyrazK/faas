@@ -14674,6 +14674,188 @@ func (q *Queries) ObjectWriteInsert(ctx context.Context, db DBTX, arg ObjectWrit
 	return err
 }
 
+const objectWriteReceiptGet = `-- name: ObjectWriteReceiptGet :one
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag FROM object_upload_completions WHERE id=$1 AND account_id=$2 AND app_id=$3 AND bucket_id=$4 AND write_phase <> 'untracked'
+`
+
+type ObjectWriteReceiptGetParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	BucketID  pgtype.UUID
+}
+
+func (q *Queries) ObjectWriteReceiptGet(ctx context.Context, db DBTX, arg ObjectWriteReceiptGetParams) (ObjectUploadCompletion, error) {
+	row := db.QueryRow(ctx, objectWriteReceiptGet,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+		arg.BucketID,
+	)
+	var i ObjectUploadCompletion
+	err := row.Scan(
+		&i.ID,
+		&i.RouteID,
+		&i.AccountID,
+		&i.AppID,
+		&i.BucketID,
+		&i.SubjectID,
+		&i.ObjectKey,
+		&i.Bytes,
+		&i.ContentType,
+		&i.Etag,
+		&i.Status,
+		&i.ErrorCode,
+		&i.RequestID,
+		&i.CreatedAt,
+		&i.IdempotencyKey,
+		&i.RequestFingerprint,
+		&i.WritePhase,
+		&i.RecoveryToken,
+		&i.RecoveryLeaseUntil,
+		&i.RecoveryRetryAt,
+		&i.Origin,
+		&i.SourceKey,
+		&i.SourceEtag,
+	)
+	return i, err
+}
+
+const objectWriteReceiptsList = `-- name: ObjectWriteReceiptsList :many
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag FROM object_upload_completions WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND write_phase <> 'untracked'
+ AND status=$4::text
+ AND (created_at,id) < (coalesce($5::timestamptz,'infinity'::timestamptz),coalesce($6::uuid,'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid))
+ ORDER BY created_at DESC,id DESC LIMIT $7::int
+`
+
+type ObjectWriteReceiptsListParams struct {
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	BucketID      pgtype.UUID
+	StatusFilter  string
+	CursorCreated pgtype.Timestamptz
+	CursorID      pgtype.UUID
+	PageLimit     int32
+}
+
+func (q *Queries) ObjectWriteReceiptsList(ctx context.Context, db DBTX, arg ObjectWriteReceiptsListParams) ([]ObjectUploadCompletion, error) {
+	rows, err := db.Query(ctx, objectWriteReceiptsList,
+		arg.AccountID,
+		arg.AppID,
+		arg.BucketID,
+		arg.StatusFilter,
+		arg.CursorCreated,
+		arg.CursorID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectUploadCompletion{}
+	for rows.Next() {
+		var i ObjectUploadCompletion
+		if err := rows.Scan(
+			&i.ID,
+			&i.RouteID,
+			&i.AccountID,
+			&i.AppID,
+			&i.BucketID,
+			&i.SubjectID,
+			&i.ObjectKey,
+			&i.Bytes,
+			&i.ContentType,
+			&i.Etag,
+			&i.Status,
+			&i.ErrorCode,
+			&i.RequestID,
+			&i.CreatedAt,
+			&i.IdempotencyKey,
+			&i.RequestFingerprint,
+			&i.WritePhase,
+			&i.RecoveryToken,
+			&i.RecoveryLeaseUntil,
+			&i.RecoveryRetryAt,
+			&i.Origin,
+			&i.SourceKey,
+			&i.SourceEtag,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const objectWriteReceiptsListAll = `-- name: ObjectWriteReceiptsListAll :many
+SELECT id, route_id, account_id, app_id, bucket_id, subject_id, object_key, bytes, content_type, etag, status, error_code, request_id, created_at, idempotency_key, request_fingerprint, write_phase, recovery_token, recovery_lease_until, recovery_retry_at, origin, source_key, source_etag FROM object_upload_completions WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND write_phase <> 'untracked'
+ AND (created_at,id) < (coalesce($4::timestamptz,'infinity'::timestamptz),coalesce($5::uuid,'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid))
+ ORDER BY created_at DESC,id DESC LIMIT $6::int
+`
+
+type ObjectWriteReceiptsListAllParams struct {
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	BucketID      pgtype.UUID
+	CursorCreated pgtype.Timestamptz
+	CursorID      pgtype.UUID
+	PageLimit     int32
+}
+
+func (q *Queries) ObjectWriteReceiptsListAll(ctx context.Context, db DBTX, arg ObjectWriteReceiptsListAllParams) ([]ObjectUploadCompletion, error) {
+	rows, err := db.Query(ctx, objectWriteReceiptsListAll,
+		arg.AccountID,
+		arg.AppID,
+		arg.BucketID,
+		arg.CursorCreated,
+		arg.CursorID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectUploadCompletion{}
+	for rows.Next() {
+		var i ObjectUploadCompletion
+		if err := rows.Scan(
+			&i.ID,
+			&i.RouteID,
+			&i.AccountID,
+			&i.AppID,
+			&i.BucketID,
+			&i.SubjectID,
+			&i.ObjectKey,
+			&i.Bytes,
+			&i.ContentType,
+			&i.Etag,
+			&i.Status,
+			&i.ErrorCode,
+			&i.RequestID,
+			&i.CreatedAt,
+			&i.IdempotencyKey,
+			&i.RequestFingerprint,
+			&i.WritePhase,
+			&i.RecoveryToken,
+			&i.RecoveryLeaseUntil,
+			&i.RecoveryRetryAt,
+			&i.Origin,
+			&i.SourceKey,
+			&i.SourceEtag,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const objectWriteSettle = `-- name: ObjectWriteSettle :execrows
 UPDATE object_storage_write_admissions w SET state='settled',settled_at=coalesce(settled_at,now())
 WHERE w.id=$1 AND w.bucket_id=$2 AND w.kind='proxy' AND NOT w.route_receipt

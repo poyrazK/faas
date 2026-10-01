@@ -9,6 +9,13 @@ import (
 )
 
 func cmdBucket(args []string) int {
+	if len(args) > 0 && args[0] == "writes" {
+		return cmdBucketWrites(args[1:])
+	}
+	return cmdBucketCapacity(args)
+}
+
+func cmdBucketCapacity(args []string) int {
 	if len(args) < 4 || args[0] != "reconcile" || !api.ValidAppSlug(args[2]) {
 		return bucketCapacityUsage()
 	}

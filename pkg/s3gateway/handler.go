@@ -256,6 +256,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeS3Error(w, http.StatusForbidden, "SignatureDoesNotMatch", "The request signature we calculated does not match the signature you provided.", r.URL.Path, requestID)
 		return
 	}
+	if h.routeWriteReceipt(w, r, requestContext{requestID: requestID, credential: credential, bucket: bucket, signature: parsed}) {
+		return
+	}
 	bodyLimit := h.maxPutBytes
 	if r.Method == http.MethodPut && r.URL.Query().Get("uploadId") != "" {
 		bodyLimit = h.registry.MaxPartBytes

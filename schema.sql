@@ -16891,6 +16891,18 @@ CREATE UNIQUE INDEX object_upload_completions_idempotency_idx ON public.object_u
 
 CREATE INDEX object_upload_completions_route_created_idx ON public.object_upload_completions USING btree (route_id, created_at DESC);
 
+--
+-- Name: object_upload_completions_bucket_receipts_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_upload_completions_bucket_receipts_idx ON public.object_upload_completions USING btree (bucket_id, created_at DESC, id DESC) WHERE (write_phase <> 'untracked'::text);
+
+--
+-- Name: object_upload_completions_bucket_receipt_status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_upload_completions_bucket_receipt_status_idx ON public.object_upload_completions USING btree (bucket_id, status, created_at DESC, id DESC) WHERE (write_phase <> 'untracked'::text);
+
 
 --
 -- Name: object_upload_routes_app_idx; Type: INDEX; Schema: public; Owner: -

@@ -568,6 +568,7 @@ export type { ObjectBucket } from './models/ObjectBucket.js';
 export type { ObjectBucketAccessGrant } from './models/ObjectBucketAccessGrant.js';
 export type { ObjectBucketAccessGrantList } from './models/ObjectBucketAccessGrantList.js';
 export type { ObjectBucketList } from './models/ObjectBucketList.js';
+export type { ObjectCapacityReconciliation } from './models/ObjectCapacityReconciliation.js';
 export type { ObjectMultipartCompletedPart } from './models/ObjectMultipartCompletedPart.js';
 export type { ObjectMultipartPart } from './models/ObjectMultipartPart.js';
 export type { ObjectMultipartPartList } from './models/ObjectMultipartPartList.js';
@@ -590,6 +591,8 @@ export type { ObjectStorageUsageReport } from './models/ObjectStorageUsageReport
 export type { ObjectStorageUsageResponse } from './models/ObjectStorageUsageResponse.js';
 export type { ObjectUploadRoute } from './models/ObjectUploadRoute.js';
 export type { ObjectUploadRouteList } from './models/ObjectUploadRouteList.js';
+export type { ObjectWriteReceipt } from './models/ObjectWriteReceipt.js';
+export type { ObjectWriteReceiptList } from './models/ObjectWriteReceiptList.js';
 export type { ObsHealthResponse } from './models/ObsHealthResponse.js';
 export type { ObsNodeOperationPreflight } from './models/ObsNodeOperationPreflight.js';
 export type { OIDCExchangeRequest } from './models/OIDCExchangeRequest.js';

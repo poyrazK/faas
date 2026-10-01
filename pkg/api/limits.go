@@ -131,6 +131,12 @@ const (
 	ObjectUploadRecoveryLease                 = time.Minute
 	ObjectUploadRecoveryProbeTimeout          = 10 * time.Second
 	ObjectUploadSettlementTimeout             = 5 * time.Second
+	ObjectWriteReceiptPageDefault             = 50
+	ObjectWriteReceiptPageMax                 = 100
+	ObjectWriteReceiptCursorMaxBytes          = 512
+	ObjectWriteReceiptWaitTimeout             = 5 * time.Minute
+	ObjectWriteReceiptPollInterval            = 5 * time.Second
+	ObjectWriteReceiptMinPollInterval         = time.Second
 	ObjectMultipartCleanupGrace               = 5 * time.Minute
 	ObjectMultipartCleanupRetry               = 30 * time.Second
 	ObjectMultipartPartURLTTLSeconds          = 60

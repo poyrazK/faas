@@ -12,7 +12,11 @@ export type ObjectMultipartUpload = {
   part_size_bytes: number;
   part_count: number;
   content_type: string;
-  state: 'initiating' | 'active' | 'completing' | 'aborting' | 'completed' | 'aborted';
+  state: 'initiating' | 'active' | 'completing' | 'completing_conditional' | 'aborting' | 'completed' | 'aborted';
+  /**
+   * Persisted conditional completion rejection; retries retain the outcome.
+   */
+  completion_error_code?: string;
   expires_at: string;
   created_at: string;
 };

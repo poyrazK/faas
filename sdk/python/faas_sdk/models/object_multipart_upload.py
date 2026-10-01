@@ -9,6 +9,7 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.object_multipart_upload_state import ObjectMultipartUploadState, check_object_multipart_upload_state
+from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="ObjectMultipartUpload")
 
@@ -26,6 +27,8 @@ class ObjectMultipartUpload:
     state: ObjectMultipartUploadState
     expires_at: datetime.datetime
     created_at: datetime.datetime
+    completion_error_code: str | Unset = UNSET
+    """ Persisted conditional completion rejection; retries retain the outcome. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -47,6 +50,8 @@ class ObjectMultipartUpload:
 
         created_at = self.created_at.isoformat()
 
+        completion_error_code = self.completion_error_code
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -62,6 +67,8 @@ class ObjectMultipartUpload:
                 "created_at": created_at,
             }
         )
+        if completion_error_code is not UNSET:
+            field_dict["completion_error_code"] = completion_error_code
 
         return field_dict
 
@@ -86,6 +93,8 @@ class ObjectMultipartUpload:
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
+        completion_error_code = d.pop("completion_error_code", UNSET)
+
         object_multipart_upload = cls(
             id=id,
             key=key,
@@ -96,6 +105,7 @@ class ObjectMultipartUpload:
             state=state,
             expires_at=expires_at,
             created_at=created_at,
+            completion_error_code=completion_error_code,
         )
 
         object_multipart_upload.additional_properties = d

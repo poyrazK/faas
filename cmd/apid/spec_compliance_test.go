@@ -308,6 +308,7 @@ func init() {
 // they cross the apid/CLI boundary — but they belong to non-public surfaces
 // (CLI device-code, public status page).
 var dtoExclude = map[string]bool{
+	"ObjectWriteConditions":           true, // internal S3 protocol validators, not a JSON wire DTO
 	"ApplyResponseApp":                true, // inline {slug,id} row in ApplyResponse.apis schema
 	"CliAuthCodeResponse":             true, // POST /v1/cli-auth/code (anonymous)
 	"CliAuthExchangeRequest":          true, // POST /v1/cli-auth/exchange
@@ -989,6 +990,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "issues.go"),
 		filepath.Join(root, "pkg", "api", "service_bindings.go"),
 		filepath.Join(root, "pkg", "api", "object_storage.go"),
+		filepath.Join(root, "pkg", "api", "object_write_receipts.go"),
+		filepath.Join(root, "pkg", "api", "object_capacity_reconciliation.go"),
 		filepath.Join(root, "pkg", "api", "object_storage_usage.go"),
 		filepath.Join(root, "pkg", "api", workflowFile),
 		filepath.Join(root, "pkg", "api", secretsFile),

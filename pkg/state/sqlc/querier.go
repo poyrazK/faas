@@ -1062,6 +1062,9 @@ type Querier interface {
 	ObjectUsageReportInsert(ctx context.Context, db DBTX, arg ObjectUsageReportInsertParams) error
 	ObjectUsageReports(ctx context.Context, db DBTX, arg ObjectUsageReportsParams) ([]ObjectStorageUsageReport, error)
 	ObjectWriteInsert(ctx context.Context, db DBTX, arg ObjectWriteInsertParams) error
+	ObjectWriteReceiptGet(ctx context.Context, db DBTX, arg ObjectWriteReceiptGetParams) (ObjectUploadCompletion, error)
+	ObjectWriteReceiptsList(ctx context.Context, db DBTX, arg ObjectWriteReceiptsListParams) ([]ObjectUploadCompletion, error)
+	ObjectWriteReceiptsListAll(ctx context.Context, db DBTX, arg ObjectWriteReceiptsListAllParams) ([]ObjectUploadCompletion, error)
 	ObjectWriteSettle(ctx context.Context, db DBTX, arg ObjectWriteSettleParams) (int64, error)
 	OrgByID(ctx context.Context, db DBTX, id pgtype.UUID) (OrgByIDRow, error)
 	OrgByPersonalAccount(ctx context.Context, db DBTX, personalOwnerAccountID pgtype.UUID) (OrgByPersonalAccountRow, error)

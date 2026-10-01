@@ -11,6 +11,7 @@ import type { ObjectBucket } from '../models/ObjectBucket.js';
 import type { ObjectBucketAccessGrant } from '../models/ObjectBucketAccessGrant.js';
 import type { ObjectBucketAccessGrantList } from '../models/ObjectBucketAccessGrantList.js';
 import type { ObjectBucketList } from '../models/ObjectBucketList.js';
+import type { ObjectCapacityReconciliation } from '../models/ObjectCapacityReconciliation.js';
 import type { ObjectMultipartPartList } from '../models/ObjectMultipartPartList.js';
 import type { ObjectMultipartPartSignRequest } from '../models/ObjectMultipartPartSignRequest.js';
 import type { ObjectMultipartUpload } from '../models/ObjectMultipartUpload.js';
@@ -24,6 +25,8 @@ import type { ObjectStorageComputeBindingList } from '../models/ObjectStorageCom
 import type { ObjectStorageUsageResponse } from '../models/ObjectStorageUsageResponse.js';
 import type { ObjectUploadRoute } from '../models/ObjectUploadRoute.js';
 import type { ObjectUploadRouteList } from '../models/ObjectUploadRouteList.js';
+import type { ObjectWriteReceipt } from '../models/ObjectWriteReceipt.js';
+import type { ObjectWriteReceiptList } from '../models/ObjectWriteReceiptList.js';
 import type { Problem } from '../models/Problem.js';
 import type { SetObjectBucketAccessGrantRequest } from '../models/SetObjectBucketAccessGrantRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
@@ -622,6 +625,189 @@ export class StorageService {
       },
       query: {
         'key': key,
+      },
+    });
+  }
+  /**
+   * Request safe capacity reconciliation
+   * Requires storage write scope and the bucket write grant. Returns the existing active job on repeat requests. Pauses new bucket writes until cancellation or a terminal outcome. Pending or untracked writes cannot be force-refunded; only a complete fenced inventory can reclaim capacity. Available with storage disabled or spent budgets.
+   * @returns Problem Missing bucket, live multipart sessions, or access denied
+   * @returns ObjectCapacityReconciliation Durable reconciliation requested; Cache-Control no-store
+   * @throws ApiError
+   */
+  public static createObjectCapacityReconciliation({
+    slug,
+    bucket,
+  }: {
+    /**
+     * App requesting a fenced bucket inventory.
+     */
+    slug: string,
+    /**
+     * Bucket whose reserved capacity should be reconciled.
+     */
+    bucket: string,
+  }): CancelablePromise<Problem | ObjectCapacityReconciliation> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/buckets/{bucket}/capacity-reconciliations',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+    });
+  }
+  /**
+   * Inspect capacity reconciliation
+   * Returns progress, pending-write count and reclaimed capacity under storage write scope and the bucket write grant. Reads remain available with storage disabled or spent budgets. Billing and monthly authorization counts are unchanged.
+   * @returns ObjectCapacityReconciliation Reconciliation status; Cache-Control no-store
+   * @returns Problem Reconciliation missing or access denied
+   * @throws ApiError
+   */
+  public static getObjectCapacityReconciliation({
+    slug,
+    bucket,
+    reconciliation,
+  }: {
+    /**
+     * App owning the reconciliation job.
+     */
+    slug: string,
+    /**
+     * Bucket associated with the reconciliation.
+     */
+    bucket: string,
+    /**
+     * Durable capacity reconciliation identifier.
+     */
+    reconciliation: string,
+  }): CancelablePromise<ObjectCapacityReconciliation | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/capacity-reconciliations/{reconciliation}',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+        'reconciliation': reconciliation,
+      },
+    });
+  }
+  /**
+   * Cancel capacity reconciliation
+   * Requires storage write scope and the bucket write grant. Immediately releases the active job's write pause without changing reserved capacity. Returns the job, including an existing terminal outcome. Cleanup remains available with storage disabled or spent budgets.
+   * @returns ObjectCapacityReconciliation Cancelled or previously terminal reconciliation; Cache-Control no-store
+   * @returns Problem Reconciliation missing or cancellation denied
+   * @throws ApiError
+   */
+  public static cancelObjectCapacityReconciliation({
+    slug,
+    bucket,
+    reconciliation,
+  }: {
+    /**
+     * App owning the reconciliation job.
+     */
+    slug: string,
+    /**
+     * Bucket associated with the reconciliation.
+     */
+    bucket: string,
+    /**
+     * Durable capacity reconciliation identifier.
+     */
+    reconciliation: string,
+  }): CancelablePromise<ObjectCapacityReconciliation | Problem> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/buckets/{bucket}/capacity-reconciliations/{reconciliation}',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+        'reconciliation': reconciliation,
+      },
+    });
+  }
+  /**
+   * List tracked write receipts for a bucket
+   * Requires storage write scope and the bucket write grant. Defaults to pending writes, newest first; pages are live views and receipts settling between reads may disappear from the pending filter. Reads remain available while storage is disabled or budgets are spent, without provider calls or quota admission. Direct signed uploads, legacy writes and multipart sessions are outside this receipt list.
+   * @returns ObjectWriteReceiptList One page of tracked write receipts; Cache-Control no-store
+   * @returns Problem Invalid pagination, missing bucket, or access denied
+   * @throws ApiError
+   */
+  public static listObjectWriteReceipts({
+    slug,
+    bucket,
+    status = 'pending',
+    limit = 50,
+    cursor,
+  }: {
+    /**
+     * App owning the bucket.
+     */
+    slug: string,
+    /**
+     * Gregale bucket identifier.
+     */
+    bucket: string,
+    /**
+     * Receipt status to include.
+     */
+    status?: 'pending' | 'completed' | 'failed' | 'all',
+    /**
+     * Maximum receipts per page.
+     */
+    limit?: number,
+    /**
+     * Opaque next cursor from a page using the same bucket and status filter.
+     */
+    cursor?: string,
+  }): CancelablePromise<ObjectWriteReceiptList | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/write-receipts',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      query: {
+        'status': status,
+        'limit': limit,
+        'cursor': cursor,
+      },
+    });
+  }
+  /**
+   * Read a tracked write receipt
+   * Requires storage write scope and the bucket write grant. Completed proves this attempt committed, not that the object still has this value. Pending has no confirmed outcome; do not assume failure or refund capacity. Reads remain available with storage disabled or spent budgets.
+   * @returns ObjectWriteReceipt Receipt projection; Cache-Control no-store; pending responses include Retry-After
+   * @returns Problem Receipt or bucket missing, or access denied
+   * @throws ApiError
+   */
+  public static getObjectWriteReceipt({
+    slug,
+    bucket,
+    receipt,
+  }: {
+    /**
+     * App whose tracked write is being inspected.
+     */
+    slug: string,
+    /**
+     * Bucket containing the requested write receipt.
+     */
+    bucket: string,
+    /**
+     * Receipt ID returned as X-Gregale-Upload-ID.
+     */
+    receipt: string,
+  }): CancelablePromise<ObjectWriteReceipt | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/write-receipts/{receipt}',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+        'receipt': receipt,
       },
     });
   }

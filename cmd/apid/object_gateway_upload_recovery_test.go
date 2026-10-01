@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -77,6 +78,7 @@ func (o *acceptedGatewayObject) serve(t *testing.T, w http.ResponseWriter, r *ht
 }
 
 type gatewayRecoveryFixture struct {
+	enabled    *atomic.Bool
 	pool       *pgxpool.Pool
 	st         *state.PgStore
 	account    state.Account
@@ -153,7 +155,9 @@ func newGatewayRecoveryFixture(t *testing.T, handler http.Handler, sourceBytes i
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, err := s3gateway.New(s3gateway.Config{Registry: registry, Store: st, RequestMetrics: st, Host: host.Host, Region: "us-east-1", SpoolDir: t.TempDir(), MinSpoolFreeBytes: 1, OpenSecret: func([]byte) (string, error) { return secret, nil }})
+	enabled := &atomic.Bool{}
+	enabled.Store(true)
+	h, err := s3gateway.New(s3gateway.Config{Registry: registry, Store: st, RequestMetrics: st, Enabled: enabled.Load, Host: host.Host, Region: "us-east-1", SpoolDir: t.TempDir(), MinSpoolFreeBytes: 1, OpenSecret: func([]byte) (string, error) { return secret, nil }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +165,7 @@ func newGatewayRecoveryFixture(t *testing.T, handler http.Handler, sourceBytes i
 	edge.Start()
 	t.Cleanup(edge.Close)
 	client := awss3.New(awss3.Options{Region: "us-east-1", BaseEndpoint: aws.String(edge.URL), UsePathStyle: true, Credentials: credentials.NewStaticCredentialsProvider(access, secret, ""), RetryMaxAttempts: 1, RequestChecksumCalculation: aws.RequestChecksumCalculationWhenRequired})
-	return gatewayRecoveryFixture{pool: pool, st: st, account: acct, app: app, bucket: b, credential: credential, registry: registry, policy: policy, report: report, client: client}
+	return gatewayRecoveryFixture{enabled: enabled, pool: pool, st: st, account: acct, app: app, bucket: b, credential: credential, registry: registry, policy: policy, report: report, client: client}
 }
 
 // adr: 393

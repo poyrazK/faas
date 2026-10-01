@@ -967,6 +967,7 @@ from .list_job_runs_response import ListJobRunsResponse
 from .list_job_task_attempts_response import ListJobTaskAttemptsResponse
 from .list_job_tasks_response import ListJobTasksResponse
 from .list_jobs_response import ListJobsResponse
+from .list_object_write_receipts_status import ListObjectWriteReceiptsStatus
 from .list_operator_runtime_config_response_200 import ListOperatorRuntimeConfigResponse200
 from .list_operator_runtime_config_revisions_response_200 import ListOperatorRuntimeConfigRevisionsResponse200
 from .list_org_activity_actor_type import ListOrgActivityActorType
@@ -1072,6 +1073,8 @@ from .object_bucket_access_grant_list import ObjectBucketAccessGrantList
 from .object_bucket_access_grant_permission import ObjectBucketAccessGrantPermission
 from .object_bucket_list import ObjectBucketList
 from .object_bucket_state import ObjectBucketState
+from .object_capacity_reconciliation import ObjectCapacityReconciliation
+from .object_capacity_reconciliation_state import ObjectCapacityReconciliationState
 from .object_multipart_completed_part import ObjectMultipartCompletedPart
 from .object_multipart_part import ObjectMultipartPart
 from .object_multipart_part_list import ObjectMultipartPartList
@@ -1104,6 +1107,11 @@ from .object_storage_usage_response import ObjectStorageUsageResponse
 from .object_storage_usage_response_billing_mode import ObjectStorageUsageResponseBillingMode
 from .object_upload_route import ObjectUploadRoute
 from .object_upload_route_list import ObjectUploadRouteList
+from .object_write_receipt import ObjectWriteReceipt
+from .object_write_receipt_error_code import ObjectWriteReceiptErrorCode
+from .object_write_receipt_list import ObjectWriteReceiptList
+from .object_write_receipt_operation import ObjectWriteReceiptOperation
+from .object_write_receipt_status import ObjectWriteReceiptStatus
 from .obs_health_response import ObsHealthResponse
 from .obs_health_response_operator_intent_outcome_missing_total import (
     ObsHealthResponseOperatorIntentOutcomeMissingTotal,
@@ -2901,6 +2909,7 @@ __all__ = (
     "ListJobsResponse",
     "ListJobTaskAttemptsResponse",
     "ListJobTasksResponse",
+    "ListObjectWriteReceiptsStatus",
     "ListOperatorRuntimeConfigResponse200",
     "ListOperatorRuntimeConfigRevisionsResponse200",
     "ListOrgActivityActorType",
@@ -3004,6 +3013,8 @@ __all__ = (
     "ObjectBucketAccessGrantPermission",
     "ObjectBucketList",
     "ObjectBucketState",
+    "ObjectCapacityReconciliation",
+    "ObjectCapacityReconciliationState",
     "ObjectMultipartCompletedPart",
     "ObjectMultipartPart",
     "ObjectMultipartPartList",
@@ -3036,6 +3047,11 @@ __all__ = (
     "ObjectStorageUsageResponseBillingMode",
     "ObjectUploadRoute",
     "ObjectUploadRouteList",
+    "ObjectWriteReceipt",
+    "ObjectWriteReceiptErrorCode",
+    "ObjectWriteReceiptList",
+    "ObjectWriteReceiptOperation",
+    "ObjectWriteReceiptStatus",
     "ObsHealthResponse",
     "ObsHealthResponseOperatorIntentOutcomeMissingTotal",
     "ObsHealthResponseTraceIdCompletenessRatio",
