@@ -1667,6 +1667,9 @@ from .rotate_managed_realtime_auth_response_auth_mode import RotateManagedRealti
 from .rotate_org_api_key_request import RotateOrgAPIKeyRequest
 from .rotate_org_api_key_response import RotateOrgAPIKeyResponse
 from .route_row import RouteRow
+from .runtime_config_restart_status_response import RuntimeConfigRestartStatusResponse
+from .runtime_config_restart_status_response_failure_reason import RuntimeConfigRestartStatusResponseFailureReason
+from .runtime_config_restart_status_response_status import RuntimeConfigRestartStatusResponseStatus
 from .runtime_policy_component_status import RuntimePolicyComponentStatus
 from .runtime_policy_component_status_scope import RuntimePolicyComponentStatusScope
 from .runtime_policy_component_status_state import RuntimePolicyComponentStatusState
@@ -3610,6 +3613,9 @@ __all__ = (
     "RotateOrgAPIKeyRequest",
     "RotateOrgAPIKeyResponse",
     "RouteRow",
+    "RuntimeConfigRestartStatusResponse",
+    "RuntimeConfigRestartStatusResponseFailureReason",
+    "RuntimeConfigRestartStatusResponseStatus",
     "RuntimePolicyComponentStatus",
     "RuntimePolicyComponentStatusScope",
     "RuntimePolicyComponentStatusState",

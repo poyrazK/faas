@@ -890,6 +890,7 @@ export type { RotateManagedRealtimeAuthResponse } from './models/RotateManagedRe
 export type { RotateOrgAPIKeyRequest } from './models/RotateOrgAPIKeyRequest.js';
 export type { RotateOrgAPIKeyResponse } from './models/RotateOrgAPIKeyResponse.js';
 export type { RouteRow } from './models/RouteRow.js';
+export type { RuntimeConfigRestartStatusResponse } from './models/RuntimeConfigRestartStatusResponse.js';
 export type { RuntimePolicyComponentStatus } from './models/RuntimePolicyComponentStatus.js';
 export type { RuntimePolicyNodeStatus } from './models/RuntimePolicyNodeStatus.js';
 export type { RuntimePolicySchedulerStatus } from './models/RuntimePolicySchedulerStatus.js';

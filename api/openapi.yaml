@@ -9656,6 +9656,10 @@ paths:
         `fresh=true`, destroys live instances without capturing process memory,
         invalidates cached snapshots, and cold-boots with the latest environment
         and secrets. The fresh path is durably queued.
+        For `fresh=true`, use the returned `wake_id` with
+        `GET /v1/apps/{slug}/runtime-config-restarts/{wake_id}` to inspect
+        queued, running, retrying, completed, or failed status and any safe
+        failure reason.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
         - name: fresh
@@ -9678,6 +9682,35 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
         '402': { $ref: '#/components/responses/AdmissionRefused' }
+
+  /v1/apps/{slug}/runtime-config-restarts/{wake_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: wake_id
+        in: path
+        required: true
+        description: Wake ID returned by POST /v1/apps/{slug}/restart?fresh=true.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [apps]
+      operationId: getRuntimeConfigRestartStatus
+      summary: Get the status of a fresh runtime-configuration restart.
+      description: |
+        Returns the durable scheduler handoff state for a fresh restart.
+        `completed` means the replacement operation finished successfully;
+        `failed` means the durable handoff exhausted its retry budget. A
+        failure_reason is a stable, safe category and does not expose internal
+        error details.
+      responses:
+        '200':
+          description: Current durable restart status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RuntimeConfigRestartStatusResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
   /v1/apps/{slug}/prewarm:
     parameters:
@@ -28273,6 +28306,23 @@ components:
       required: [wake_id]
       properties:
         wake_id: { type: string, format: uuid, description: "Wake id stamped on the replacement instance and wake timeline." }
+
+    RuntimeConfigRestartStatusResponse:
+      description: "Durable status for an accepted fresh runtime-configuration restart."
+      type: object
+      required: [wake_id, status, attempts, requested_at]
+      properties:
+        wake_id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [queued, running, retrying, completed, failed]
+        attempts: { type: integer, minimum: 0, description: Number of scheduler handling attempts so far. }
+        failure_reason:
+          type: string
+          enum: [telemetry_missing, requests_active, quiet_period_not_elapsed, restart_attempt_failed]
+          description: Stable safe reason from the most recent unsuccessful attempt, when available.
+        requested_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
 
     AppWakeResponse:
       description: "Correlation handle for an accepted explicit app wake."

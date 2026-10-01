@@ -950,6 +950,10 @@ type Notifier interface {
 	WaitFor(ctx context.Context, channel string, predicate func(payload string) bool, timeout time.Duration) (string, error)
 }
 
+type runtimeConfigRestartStatusReader interface {
+	RuntimeConfigRestartStatus(ctx context.Context, appID, wakeID string) (db.RuntimeConfigRestartStatus, error)
+}
+
 func newServer(store state.Store, log *slog.Logger, domain string, notif Notifier) *server {
 	return newServerWithDeps(store, log, domain, notif, "", nil, nil, nil, nil, 0, "")
 }
@@ -1983,6 +1987,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/prewarms", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listPrewarms))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/prewarms/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.cancelPrewarm))))
 	mux.HandleFunc("POST /v1/apps/{slug}/restart", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.restartApp)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/runtime-config-restarts/{wake_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getRuntimeConfigRestartStatus))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/cache", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.purgeAppCache))))
 	mux.HandleFunc("POST /v1/apps/{slug}/rename", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.renameApp)))))
 

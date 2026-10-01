@@ -1833,6 +1833,18 @@ type AppRestartResponse struct {
 	WakeID string `json:"wake_id"`
 }
 
+// RuntimeConfigRestartStatusResponse reports the durable outbox outcome for
+// an accepted fresh app restart. FailureReason is a stable actionable code,
+// not the scheduler's internal error string.
+type RuntimeConfigRestartStatusResponse struct {
+	WakeID        string     `json:"wake_id"`
+	Status        string     `json:"status"`
+	Attempts      int        `json:"attempts"`
+	FailureReason string     `json:"failure_reason,omitempty"`
+	RequestedAt   time.Time  `json:"requested_at"`
+	CompletedAt   *time.Time `json:"completed_at,omitempty"`
+}
+
 // AppWakeResponse is returned when an explicit pre-warm request has been
 // durably queued for the scheduler.
 type AppWakeResponse struct {
