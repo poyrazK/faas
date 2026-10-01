@@ -1001,3 +1001,7 @@ Public PR #3992 commit `cb4062a95` requires enabled listener socket ownership at
 ### Current database gate with enabled socket ownership
 
 Full strict `make udp-postgres-check` passed all nine required cases with race detection after the enabled-socket startup/shutdown extension. No skips were accepted. Log `/tmp/gregale-udp-postgres-gate-socket-final.log`. Owned cluster stopped. Combined PR #3997 CI snapshot reached 25 successes, one skip and one live full migration-suite job `110269229264`; no full remote completion claim is made. Native and deployed recovery remain unverified.
+
+### Harness-inclusive portable UDP gate
+
+The strict portable gate now requires `TestGatewayPublicEnvPrivateSchedulerTargets`. Full `make udp-contract-check` passed all 82 required race contracts, with skips rejected, plus deployment-policy and alert fixtures. Log `/tmp/gregale-udp-harness-inclusive-contract.log`. Database-backed startup remains in the separate strict PostgreSQL gate. Full migration CI job `110269229264` was verified live; native and deployed acceptance remain pending.

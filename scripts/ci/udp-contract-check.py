@@ -19,6 +19,7 @@ FILES = {
     "pkg/api": "client_udp_listeners_test.go",
     "cmd/gregale": "commands_app_udp_test.go",
     "cmd/gatewayd-public": "udp_ingress_test.go",
+    "pkg/e2etest": "gateway_public_env_test.go",
     "pkg/state": ["memstore_udp_listeners_test.go", "listener_app_purge_test.go"],
     "api/proto/onebox/faas/vmmd/v1": "udp_contract_test.go",
 }
