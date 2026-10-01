@@ -253,7 +253,7 @@ func (s *publicHostPolicyReader) PlatformTenantHostBinding(ctx context.Context, 
 
 func (s *publicHostPolicyReader) PublicHostReserved(ctx context.Context, slug, host string) (bool, error) {
 	reserved, err := sqlc.New().ReadPublicHostReservation(ctx, s.tx, sqlc.ReadPublicHostReservationParams{
-		Slug: slug, Host: host})
+		Slug: slug, Host: host, WildcardHost: normalizeWildcardDomainHost(host), TrimCharacters: customDomainTrimCharacters})
 	data, _ := json.Marshal(reserved)
 	key, _ := json.Marshal([]string{slug, host})
 	s.record("host-reservation:"+string(key), data, err)

@@ -3066,19 +3066,13 @@ func (s *server) deleteDomain(w http.ResponseWriter, r *http.Request, acct state
 		ResourceLabel: d.Domain, SourceType: "domain.removed", SourceID: activitySourceID(r, d.Domain),
 		Data: activityData(map[string]any{"app_id": d.AppID}),
 	}
-	var activityOutboxID int64
-	if mutationStore, ok := s.store.(state.OrgActivityDomainMutationStore); ok {
-		prepared, prepareErr := s.prepareAppActivity(r.Context(), r, acct, app, activity)
-		if prepareErr == nil {
-			activityOutboxID, err = mutationStore.DeleteCustomDomainWithActivity(r.Context(), domain, prepared)
-		} else {
-			err = s.store.DeleteCustomDomain(r.Context(), domain)
-		}
-	} else {
-		err = s.store.DeleteCustomDomain(r.Context(), domain)
-	}
+	activityOutboxID, err := s.deleteDomainIntent(r, acct, app, domain, activity)
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not delete domain"))
+		if errors.Is(err, state.ErrNotFound) {
+			s.notFound(w, "no such domain")
+		} else {
+			api.WriteProblem(w, domainRemovalWriteProblem(err))
+		}
 		return
 	}
 	if activityOutboxID > 0 {

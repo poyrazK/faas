@@ -54,7 +54,7 @@ func visitMemTrafficRows[T any](ctx context.Context, rows, proposed map[string]T
 }
 
 func (m *MemStore) readMemTrafficHostAnalysisLocked(ctx context.Context, account string, change memTrafficPolicyChange) (trafficHostAnalysis, error) {
-	var view trafficHostAnalysis
+	view := trafficHostAnalysis{GlobalRoutes: change.GlobalRoutes, AppsSuffix: m.trafficAppsSuffix}
 	groups := make(map[trafficHostGroup]trafficHostGroup)
 	addRule := func(rule EdgeRule, environment string) error {
 		if !rule.Enabled || (!change.GlobalRoutes && rule.AccountID != account) || (change.GlobalRoutes && rule.Kind != EdgeRuleKindRoute) {
@@ -222,6 +222,11 @@ func (m *MemStore) readMemTrafficHostAnalysisLocked(ctx context.Context, account
 	})
 	if err != nil {
 		return view, err
+	}
+	if change.GlobalRoutes {
+		if err := m.appendMemTrafficReservationsLocked(ctx, &view, change); err != nil {
+			return view, err
+		}
 	}
 	sort.Slice(view.Groups, func(i, j int) bool {
 		a, b := view.Groups[i], view.Groups[j]

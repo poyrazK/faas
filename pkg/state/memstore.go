@@ -11062,23 +11062,21 @@ func (m *MemStore) UpdateCustomDomainCertStatus(_ context.Context, domain string
 	return nil
 }
 
-func (m *MemStore) DeleteCustomDomain(_ context.Context, domain string) error {
+func (m *MemStore) DeleteCustomDomain(ctx context.Context, domain string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.deleteCustomDomainLocked(domain)
+	_, err := m.deleteTrafficCustomDomainLocked(ctx, domain, "", nil)
+	return err
 }
 
-func (m *MemStore) DeleteCustomDomainWithActivity(_ context.Context, domain string, entry OrgActivity) (int64, error) {
+func (m *MemStore) DeleteCustomDomainWithActivity(ctx context.Context, domain string, entry OrgActivity) (int64, error) {
 	entry, err := normalizeOrgActivity(entry, time.Now())
 	if err != nil {
 		return 0, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if err := m.deleteCustomDomainLocked(domain); err != nil {
-		return 0, err
-	}
-	return m.enqueueOrgActivityOutboxLocked(entry), nil
+	return m.deleteTrafficCustomDomainLocked(ctx, domain, "", &entry)
 }
 
 func (m *MemStore) deleteCustomDomainLocked(domain string) error {

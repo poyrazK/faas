@@ -5125,8 +5125,11 @@ SELECT (
     OR EXISTS (SELECT 1 FROM custom_domains
                WHERE nullif(sqlc.arg(host)::text, '') IS NOT NULL
                  AND (domain = sqlc.arg(host)::text::citext
-                      OR (domain LIKE '*.%' AND lower(sqlc.arg(host)) LIKE '%' || lower(substr(domain, 2))
-                          AND lower(sqlc.arg(host)) <> lower(substr(domain, 3)))))
+                      OR (left(lower(domain),2)='*.'
+                          AND length(btrim(domain,sqlc.arg(trim_characters)::text))>2
+                          AND strpos(sqlc.arg(wildcard_host)::text,'*')=0
+                          AND right(sqlc.arg(wildcard_host),length(lower(btrim(domain,sqlc.arg(trim_characters))))-1)=substr(lower(btrim(domain,sqlc.arg(trim_characters))),2)
+                          AND sqlc.arg(wildcard_host)<>substr(lower(btrim(domain,sqlc.arg(trim_characters))),3))))
     OR EXISTS (SELECT 1 FROM tenant_hostnames WHERE hostname = nullif(sqlc.arg(host)::text, ''))
 )::boolean AS reserved;
 
@@ -5377,16 +5380,29 @@ WITH environment_policies AS MATERIALIZED (
     WHERE a.account_id=sqlc.narg(account_id)::uuid AND a.status<>'deleted' AND a.visibility<>'internal'
       AND d.verified_at IS NOT NULL AND (d.environment_id IS NULL OR e.environment_id IS NOT NULL)
     ORDER BY d.domain LIMIT (sqlc.arg(max_inputs)::integer+1)
+), reservations AS (
+    SELECT data FROM (
+        SELECT jsonb_build_object('Kind','primary','Host',slug||sqlc.arg(apps_suffix)::text) AS data FROM apps
+        WHERE sqlc.narg(account_id)::uuid IS NULL AND sqlc.arg(apps_suffix)::text<>''
+        UNION ALL
+        SELECT jsonb_build_object('Kind','domain','Host',domain) FROM custom_domains
+        WHERE sqlc.narg(account_id)::uuid IS NULL
+        UNION ALL
+        SELECT jsonb_build_object('Kind','tenant','Host',hostname) FROM tenant_hostnames
+        WHERE sqlc.narg(account_id)::uuid IS NULL
+    ) claim ORDER BY data->>'Kind',data->>'Host' LIMIT (sqlc.arg(max_inputs)::integer+1)
 ), bounds AS (
-    SELECT (SELECT count(*) FROM groups)+(SELECT count(*) FROM assets)+(SELECT count(*) FROM environments)+(SELECT count(*) FROM primary_hosts)+(SELECT count(*) FROM alias_hosts)+(SELECT count(*) FROM domain_hosts) AS inputs,
+    SELECT (SELECT count(*) FROM groups)+(SELECT count(*) FROM assets)+(SELECT count(*) FROM environments)+(SELECT count(*) FROM primary_hosts)+(SELECT count(*) FROM alias_hosts)+(SELECT count(*) FROM domain_hosts)+(SELECT count(*) FROM reservations) AS inputs,
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM groups)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM assets)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM environments)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM primary_hosts)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM alias_hosts)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM domain_hosts)+
+        (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM reservations)+
         octet_length(jsonb_build_object('Groups','[]'::jsonb,'Assets','[]'::jsonb,
-            'Environments','[]'::jsonb,'PrimaryHosts','[]'::jsonb,'AliasHosts','[]'::jsonb,'Domains','[]'::jsonb)::text) AS bytes
+            'Environments','[]'::jsonb,'PrimaryHosts','[]'::jsonb,'AliasHosts','[]'::jsonb,'Domains','[]'::jsonb,
+            'Reservations','[]'::jsonb,'GlobalRoutes',false)::text) AS bytes
 )
 SELECT CASE WHEN inputs <= sqlc.arg(max_inputs)::integer AND bytes <= sqlc.arg(max_bytes)::bigint
     THEN jsonb_build_object('Groups',(SELECT coalesce(jsonb_agg(data),'[]') FROM groups),
@@ -5394,7 +5410,9 @@ SELECT CASE WHEN inputs <= sqlc.arg(max_inputs)::integer AND bytes <= sqlc.arg(m
         'Environments',(SELECT coalesce(jsonb_agg(data),'[]') FROM environments),
         'PrimaryHosts',(SELECT coalesce(jsonb_agg(data),'[]') FROM primary_hosts),
         'AliasHosts',(SELECT coalesce(jsonb_agg(data),'[]') FROM alias_hosts),
-        'Domains',(SELECT coalesce(jsonb_agg(data),'[]') FROM domain_hosts)) ELSE NULL::jsonb END::jsonb AS data,
+        'Domains',(SELECT coalesce(jsonb_agg(data),'[]') FROM domain_hosts),
+        'Reservations',(SELECT coalesce(jsonb_agg(data),'[]') FROM reservations),
+        'GlobalRoutes',sqlc.narg(account_id)::uuid IS NULL) ELSE NULL::jsonb END::jsonb AS data,
     inputs::bigint, bytes::bigint FROM bounds;
 
 -- name: ConfigureTrafficPolicyAnalysisTimeout :one
@@ -5415,6 +5433,32 @@ UPDATE custom_domains SET verified_at=now()
 WHERE domain=sqlc.arg(domain)::text::citext AND app_id=sqlc.arg(app_id)::uuid
   AND (NOT sqlc.arg(challenge_bound)::boolean OR
     (challenge_token=sqlc.arg(token)::text AND verified_at IS NULL AND verification_expires_at>clock_timestamp()));
+
+-- name: ReadTrafficDomainClaims :one
+-- Secret-free binding metadata only, bounded before transfer. Unverified and
+-- ineligible claims are retained because they block less-specific fallbacks.
+WITH claims AS (
+    SELECT jsonb_build_object('Domain',d.domain,'App',d.app_id,
+        'Environment',coalesce(d.environment_id::text,''),'Account',a.account_id,
+        'Eligible',d.verified_at IS NOT NULL AND a.status<>'deleted' AND a.visibility<>'internal'
+            AND (d.environment_id IS NULL OR EXISTS (
+                SELECT 1 FROM project_environments e WHERE e.id=d.environment_id
+                  AND e.account_id=a.account_id AND e.project_id=a.project_id))) AS data
+    FROM custom_domains d JOIN apps a ON a.id=d.app_id
+    ORDER BY d.domain::text COLLATE "C" LIMIT (sqlc.arg(max_inputs)::integer+1)
+), bounds AS (
+    SELECT count(*)::bigint AS inputs, (coalesce(sum(octet_length(data::text)+2),0)+2)::bigint AS bytes FROM claims
+)
+SELECT CASE WHEN inputs<=sqlc.arg(max_inputs)::integer AND bytes<=sqlc.arg(max_bytes)::bigint
+    THEN (SELECT coalesce(jsonb_agg(data),'[]'::jsonb) FROM claims) ELSE NULL::jsonb END::jsonb AS data,
+    inputs,bytes FROM bounds;
+
+-- name: DeleteTrafficCustomDomain :execrows
+DELETE FROM custom_domains WHERE domain=sqlc.arg(domain)::text::citext AND app_id=sqlc.arg(app_id)::uuid;
+
+-- name: ReadTrafficGlobalRouteAccounts :many
+SELECT DISTINCT account_id FROM edge_rules WHERE enabled AND kind='route'
+ORDER BY account_id LIMIT (sqlc.arg(max_inputs)::integer+1);
 
 -- name: LockCustomDomainQuotaAccount :one
 SELECT id FROM accounts WHERE id=sqlc.arg(account_id)::uuid FOR UPDATE;

@@ -81,8 +81,8 @@ func TestPgTrafficGlobalRouteConcurrentAccountsShareAllowance(t *testing.T) {
 		t.Fatalf("cross-account allowance: accepted=%d rules=%d changes=%d", accepted, rules, changes)
 	}
 	row, err := sqlc.New().ReadTrafficHostAnalysis(t.Context(), pool, sqlc.ReadTrafficHostAnalysisParams{MaxInputs: api.TrafficPolicyMaxAnalysisInputs,
-		MaxBytes: api.TrafficPolicyMaxAnalysisMetadataBytes, Defaults: mustTrafficDefaults(t)})
-	if err != nil || row.Inputs != 1 || len(row.Data) > 2048 || strings.Contains(string(row.Data), "1e130000") {
+		MaxBytes: api.TrafficPolicyMaxAnalysisMetadataBytes, Defaults: mustTrafficDefaults(t), AppsSuffix: store.trafficAppsSuffix})
+	if err != nil || row.Inputs != 3 || len(row.Data) > 2048 || strings.Contains(string(row.Data), "1e130000") {
 		t.Fatalf("global metadata body transfer: inputs=%d bytes=%d err=%v", row.Inputs, len(row.Data), err)
 	}
 }

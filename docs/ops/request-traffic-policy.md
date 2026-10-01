@@ -95,7 +95,7 @@ close to the byte ceiling before the exact compiler size reaches that ceiling.
 Each before/after analysis phase has a two-second allowance. Its SQL read uses
 a local 1,750 ms server timeout so cancellation does not depend on client
 connection cleanup; the previous statement timeout is restored on success.
-Analysis also limits inputs to 100,000 groups/assets/environment/primary/alias/domain identities, metadata to 64 MiB,
+Analysis also limits inputs to 100,000 groups/assets/environment/primary/alias/domain/reservation identities, metadata to 64 MiB,
 automaton nodes to 1,000,000, states to 100,000, retained state buffers/overhead
 to 64 MiB and transitions to 2,000,000. A proved overload returns
 `traffic_policy_too_large`/422. An exhausted analysis returns the distinct
@@ -191,9 +191,32 @@ preserve the database's case-insensitive domain identity.
 
 This initial projection includes potential legacy tag-prefixed primary URLs
 conservatively. Exact legacy alias shadowing, deletion/fallback transitions,
-immutable revision URL activation, tenant-surface publication, complete custom-domain
-shadowing/removal transitions across accounts and operator
+immutable revision URL activation, tenant-surface publication, complete positive
+custom-domain shadowing transitions across accounts and operator
 namespace changes still need the complete binding projection and acceptance.
+
+Custom-domain deletion now checks newly exposed exact/wildcard fallback owners,
+including owners in other accounts and explicitly environment-bound domains.
+Exact claims precede the most-specific literal wildcard; unverified claims
+continue to block fallback. A new domain/app/environment identity has zero
+prior allowance. Global route discovery and its potential owner's retained
+policy also need to fit on newly unclaimed hosts. Deletion takes the global
+route session lock, sorted affected account session locks and account row
+locks before its repeatable-read snapshot. Owner discovery is repeated after
+locking. Bounded claim metadata contains identities and eligibility, without
+challenge tokens, certificate intent or action bodies. Policies are checked
+one account at a time within the existing analysis allowance.
+
+The API carries the authorized app identity into the locked deletion and
+repeats that predicate in SQL, so a name reclaimed while waiting cannot detach
+the new owner's claim. Native stores commit domain/default deletion and its
+activity together. Refusal preserves that intent and emits no removal audit
+or notification. Aggregate or analysis refusal retains the existing 422 codes
+and reports a proven lower bound instead of foreign counts or a hostname
+witness. Repair the exposed policy, then retry; an operator may need to help
+when the policy belongs to another account. This check conservatively includes
+the potential fallback with tenant surfaces disabled, even when an active
+tenant binding currently shadows it. Tenant transitions need separate guards.
 
 Route creates/updates also check enabled route-only discovery across accounts
 using the same per-host language and resource ceilings. Disjoint hosts retain
@@ -204,9 +227,14 @@ legacy overload. Global refusals use `global_route_` scopes and the same
 structured 422 codes. Unsupported legacy route shapes refuse global route
 writes until replaced, disabled or deleted; non-route writes in other accounts
 retain their owned scope. No action bodies are transferred for this analysis.
-This initial guard includes the full selector language conservatively. Actual
-claimed/reserved-host exclusions and newly unclaimed scope transitions still
-need integration with hostname binding projection.
+Global analysis now subtracts stored app slugs in the one-label apps namespace,
+tenant hostname claims, exact/literal-wildcard custom-domain reservations and
+the syntactically reserved tag/environment/revision namespaces. The apps
+namespace takes precedence over custom/tenant reservations. Wildcard percent
+and underscore characters are literal, matching the public reservation read.
+UUID encoding and revision ordinal bounds follow the shared hostname parsers.
+Newly unclaimed scopes start with zero serving allowance. Complete transitions
+for every reservation writer and operator namespace changes remain pending.
 
 Individual CORS preset creates/replacements, environment overlay replacements,
 scoped route replacements and imported documents validate the complete runtime
@@ -254,8 +282,8 @@ compiler bytes measure actual Go JSON and distinct referenced presets. Compact
 RawMessage numbers are not expanded for the Go compiler. Rejected changes
 preserve related project, cron, preview-set and activity intent.
 
-MemStore also checks route-only global aggregates under that mutex.
-Complete alias/domain binding transitions and namespace changes, global binding/synthetic
+MemStore also checks route-only global aggregates and domain removal under that mutex.
+Complete alias/positive-domain/tenant binding transitions and namespace changes, global binding/synthetic
 path agreement and recovery acceptance remain rollout requirements. These
 write checks do not establish release acceptance.
 

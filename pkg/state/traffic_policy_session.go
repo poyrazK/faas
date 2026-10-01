@@ -18,13 +18,17 @@ const globalTrafficRoutesLock = "gregale.traffic.global-routes.v1"
 // Lock outside the transaction so its snapshot cannot predate the previous
 // holder's commit. Waiters release all locks and the connection before retrying.
 func (s *PgStore) tryAcquireTrafficPolicySession(ctx context.Context, account pgtype.UUID, global bool) (*pgxpool.Conn, func(context.Context), bool, error) {
-	conn, err := db.DirectPool(s.pool).Acquire(ctx)
-	if err != nil {
-		return nil, nil, false, fmt.Errorf("state: acquire traffic policy connection: %w", err)
-	}
 	keys := []string{"gregale.traffic.account.v1:" + account.String()}
 	if global {
 		keys = append([]string{globalTrafficRoutesLock}, keys...)
+	}
+	return s.tryAcquireTrafficPolicySessionKeys(ctx, keys)
+}
+
+func (s *PgStore) tryAcquireTrafficPolicySessionKeys(ctx context.Context, keys []string) (*pgxpool.Conn, func(context.Context), bool, error) {
+	conn, err := db.DirectPool(s.pool).Acquire(ctx)
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("state: acquire traffic policy connection: %w", err)
 	}
 	locked := make([]string, 0, len(keys))
 	for _, key := range keys {

@@ -620,6 +620,51 @@ ties, including unverified reservations. HTTP routing and cached-domain
 validation reject asterisk-bearing request hosts; domain management can still
 read wildcard claims by name.
 
+### Follow-up: custom-domain removal and newly exposed policies
+
+Removing an exact or wildcard custom-domain claim must validate the policies
+it exposes before publishing the deletion or its activity. Domain selection
+uses exact claims before the most-specific literal wildcard, including
+unverified claims that block fallback. A newly exposed domain/app/environment
+binding has zero prior serving allowance. Platform URL parsers take precedence
+over custom domains. This negative transition includes fallback owners in
+other accounts, without transferring action bodies between owners.
+
+The removal transaction first acquires the global route session lock and
+affected account session locks in sorted order, then account row locks, before
+its repeatable-read snapshot. Bounded, secret-free domain metadata discovers
+the affected owners; discovery and the original app owner are repeated after
+locking. Contenders release all locks and the connection before waiting.
+Existing owner policy is read one account at a time; before/after domain
+bindings are reconstructed from the two claim projections to bound memory.
+An owner-bound removal seam carries the API's authorized app identity into
+both ordinary and activity writes. Authoritative API adapters without that
+seam refuse removal; compatibility adapters retain their existing optional
+activity path. Refusal preserves the domain, default
+selection and outbox, and emits no deletion notification or audit event.
+
+Global route analysis subtracts the public resolver's reservation language:
+stored app slugs in the one-label apps namespace, tenant hostname claims,
+exact/literal-wildcard custom-domain claims, and the syntactically reserved
+tag, environment and immutable revision namespaces. In the apps namespace,
+slug reservations take precedence over custom/tenant claims. A newly unclaimed
+hostname has zero global serving allowance. The namespace automata must agree
+with the shared hostname parsers, including UUID encoding and ordinal bounds.
+Reservation metadata uses the existing input, byte, SQL and automaton budgets.
+Potential global-route owners join the affected account lock set, and their
+retained policy must fit a newly unclaimed scope even when the discovery rule
+itself fits. The complete owner-check loop shares one analysis allowance.
+
+Removal errors presented through the API expose no foreign policy witness or
+exact foreign counts; limit refusals report a lower bound for the observed
+value. Repair followed by deletion retry remains available. Tenant-surface
+activation/removal, namespace reconfiguration and other binding writers still
+need their own complete transition guards. Custom-domain fallback validation
+covers its potential serving state with tenant surfaces disabled as well as
+when enabled; an active tenant shadow may therefore cause a conservative
+refusal until the exposed policy fits. This does not establish the complete
+tenant-binding projection or its release acceptance.
+
 The implementation tracker is `docs/traffic_platform_implementation.md`.
 Each guarantee needs configuration-to-runtime tests, cancellation/recovery
 tests and customer documentation. VM lifecycle changes require native x86_64

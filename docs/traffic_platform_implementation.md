@@ -1397,3 +1397,80 @@ customer/staging release acceptance remain pending. The user reports no native
 Linux x86_64 KVM acceptance host available; VM/restore, nft connection/source-IP,
 process-death and leak checks remain pending. All six release guarantees remain
 unchecked.
+
+### Custom-domain removal and newly unclaimed policy guard, 2026-10-01
+
+Native PostgreSQL and in-memory domain removal now validate the policies
+exposed by deleting an exact or wildcard claim before publishing deletion.
+Actual exact/most-specific wildcard selection retains unverified blockers;
+new domain/app/environment bindings have zero prior serving allowance.
+Checks include cross-account and environment-scoped fallbacks, newly unclaimed
+global discovery and each potential route owner's retained policy. An active
+tenant shadow can still cause a conservative refusal because the potential
+fallback with tenant surfaces disabled is checked; complete tenant transition
+guards remain pending. ADR-375 and the request-policy operations guide record
+the scope and repair behavior.
+
+Global aggregate analysis now subtracts app, tenant and exact/literal-wildcard
+domain reservations, plus the syntactically reserved tag/environment/revision
+namespaces. Parser property checks cover canonical UUID padding, integer
+ordinals, namespace precedence and punctuation lookalikes. The public wildcard
+reservation read uses literal SQL suffix comparisons; percent and underscore
+characters cannot widen a legacy claim as SQL LIKE operators.
+
+The PostgreSQL deletion acquires the global route session lock and sorted
+affected account session locks before account row locks and its repeatable-read
+snapshot. Secret-free bounded claim metadata discovers owners twice. Each
+owner policy is read separately and the whole owner-check loop shares the
+existing analysis allowance. No action bodies cross owners and no limit,
+deadline, schema or migration changes. The API carries the authorized app ID
+through the lock wait and native SQL repeats the app predicate. Reclaimed names
+and cancellation preserve domain/default/activity intent. An authoritative API
+adapter without the owner-bound seam refuses deletion. Limit errors expose a
+proven lower bound, without foreign counts or a hostname witness. Refusal emits
+no removal audit or notification; repair followed by retry succeeds.
+
+Final checks use full source sets without Go overlays on Darwin arm64,
+Go 1.25.13 and PostgreSQL 16.15. Go uses CGO_ENABLED=0, serialized packages,
+vet disabled, inlining/DWARF disabled and stripped links. PostgreSQL uses the
+owned local cluster and private migrated test templates; its source database
+remains unmigrated, with fsync, synchronous_commit and full_page_writes enabled.
+
+- Selected PostgreSQL state traffic/domain/deployment/promotion regression:
+  535 named cases pass, no failures or skips, 131.439 s. Includes all four
+  deletion forms, legacy overload refusal/repair, exact/wildcard/scoped/global
+  fallbacks, retained shadows, reservation parity, metadata bounds, original
+  owner reclaim during a verified lock wait, cancellation/connection cleanup
+  and a fallback policy committed by the previous account-lock holder.
+- Public PostgreSQL binding/route-source/edge-policy regression: 63 named cases
+  pass, no failures or skips, 23.213 s. New HTTP/1 and HTTP/2 peers preserve the
+  original owner after refusal and select another account's wildcard fallback
+  after repair/removal without notifications. Old dispatch refuses; its admitted
+  policy remains immutable. These are in-process listeners with fake scheduling
+  and forwarding, not real daemon or native acceptance.
+- Full `pkg/state -tags no_pg`: 1,991 named cases pass, no failures,
+  772 existing guarded database skips, 5.625 s.
+- Full `cmd/apid`: 3,634 named cases pass, no failures,
+  16 existing guarded database skips, 42.559 s. Includes refusal privacy,
+  unchanged audit/default/notification intent and missing owner-bound seam.
+  An earlier run failed the unchanged password timing test; three consecutive
+  rechecks and the full rerun pass without changing authentication or its
+  assertion. The earlier fixture-only metadata mismatch is also corrected.
+- Production state/SQLC/API/gateway lint and API/internal-gateway lint with tests
+  pass, zero issues and successful exits. Production lint uses tests=false and
+  disables the existing test-only unused helper. SQLC v1.31.1 regeneration
+  exactly matches all four generated files. Formatting and whitespace pass.
+
+Compressed passing logs, diagnostic runs, command/profile metadata and changed
+file hashes are preserved in
+`/Users/poyrazk/dev/Cloud/gregale/outputs/traffic-domain-removal-evidence-20261001/`.
+Diagnostic runs are excluded from passing gate counts.
+
+Positive binding publication/shadowing across accounts, complete alias and
+tenant transitions, immutable revision activation, operator namespace changes
+and other reservation writers still need their full guards and acceptance.
+Bounded decision evidence, preview/runtime/full synthetic-path agreement,
+real daemon/load/recovery and customer/staging release acceptance remain
+pending. No native Linux x86_64 KVM acceptance host is available; VM/restore,
+nft connection/source-IP, process-death and leak checks remain pending.
+All six release guarantees remain unchecked.

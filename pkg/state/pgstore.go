@@ -12370,14 +12370,8 @@ func (s *PgStore) UpdateCustomDomainCertStatus(ctx context.Context, domain strin
 }
 
 func (s *PgStore) DeleteCustomDomain(ctx context.Context, domain string) error {
-	tag, err := s.pool.Exec(ctx, `delete from custom_domains where domain = $1`, domain)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+	_, err := s.deleteTrafficCustomDomain(ctx, domain, "", nil)
+	return err
 }
 
 // --- domain_doctor_observations (ADR-120) ----------------------

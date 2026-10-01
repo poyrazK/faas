@@ -54,12 +54,18 @@ type trafficHostAsset struct {
 }
 
 type trafficHostAnalysis struct {
-	Groups       []trafficHostGroup
-	Assets       []trafficHostAsset
-	Environments []trafficHostEnvironment
-	PrimaryHosts []string
-	AliasHosts   []string
-	Domains      []trafficHostDomain
+	Groups            []trafficHostGroup
+	Assets            []trafficHostAsset
+	Environments      []trafficHostEnvironment
+	PrimaryHosts      []string
+	AliasHosts        []string
+	Domains           []trafficHostDomain
+	Reservations      []trafficHostReservation
+	GlobalRoutes      bool
+	AppsSuffix        string               `json:"-"`
+	SelectDomains     bool                 `json:"-"`
+	AllowGlobalRoutes bool                 `json:"-"`
+	DomainClaims      []trafficDomainClaim `json:"-"`
 }
 
 // Binding identity gives a new publication no legacy selector allowance.
@@ -110,6 +116,7 @@ func readTrafficHostAnalysis(ctx context.Context, tx pgx.Tx, account pgtype.UUID
 		return result, fmt.Errorf("state: decode traffic host analysis: %w", err)
 	}
 	result.PrimaryHosts = servingTrafficPrimaryHosts(appsSuffix, result.PrimaryHosts)
+	result.AppsSuffix = appsSuffix
 	return result, prepareTrafficEnvironmentHosts(&result)
 }
 
@@ -176,19 +183,23 @@ func (v trafficHostTotals) exceeds() bool {
 }
 
 type hostAnalysisRef struct {
-	side, group int
-	ordinary    bool
-	domain      bool
+	side, group                                                 int
+	ordinary                                                    bool
+	domain                                                      bool
+	claim, reservation, primaryReservation, platform, syntactic bool
 }
 
 type hostAnalysisNode struct {
-	literal      map[rune]int
-	any          int
-	star         int
-	repeat       bool
-	domainStar   int
-	domainRepeat bool
-	accepted     []hostAnalysisRef
+	literal             map[rune]int
+	any                 int
+	star                int
+	repeat              bool
+	domainStar          int
+	domainRepeat        bool
+	labelStar, labelAny int
+	labelRepeat         bool
+	epsilon             []int
+	accepted            []hostAnalysisRef
 }
 
 type hostAnalysisMachine struct {
@@ -207,7 +218,7 @@ func trafficHostAnalysisBudgets() hostAnalysisBudgets {
 }
 
 func newHostAnalysisNode() hostAnalysisNode {
-	return hostAnalysisNode{literal: make(map[rune]int), any: -1, star: -1, domainStar: -1}
+	return hostAnalysisNode{literal: make(map[rune]int), any: -1, star: -1, domainStar: -1, labelStar: -1, labelAny: -1}
 }
 
 func (m *hostAnalysisMachine) child(parent int, token rune) (int, error) {
@@ -220,6 +231,10 @@ func (m *hostAnalysisMachine) child(parent int, token rune) (int, error) {
 		next = node.any
 	case -3:
 		next = node.domainStar
+	case -4:
+		next = node.labelStar
+	case -5:
+		next = node.labelAny
 	default:
 		if child, exists := node.literal[token]; exists {
 			next = child
@@ -239,12 +254,17 @@ func (m *hostAnalysisMachine) child(parent int, token rune) (int, error) {
 		node.any = next
 	case -3:
 		node.domainStar = next
+	case -4:
+		node.labelStar = next
+	case -5:
+		node.labelAny = next
 	default:
 		node.literal[token] = next
 	}
 	child := newHostAnalysisNode()
 	child.repeat = token == -1
 	child.domainRepeat = token == -3
+	child.labelRepeat = token == -4
 	m.nodes = append(m.nodes, child)
 	return next, nil
 }
@@ -308,10 +328,14 @@ func (m *hostAnalysisMachine) closure(positions []int) []int {
 			continue
 		}
 		seen[position] = true
+		positions = append(positions, m.nodes[position].epsilon...)
 		if star := m.nodes[position].star; star >= 0 {
 			positions = append(positions, star)
 		}
 		if star := m.nodes[position].domainStar; star >= 0 {
+			positions = append(positions, star)
+		}
+		if star := m.nodes[position].labelStar; star >= 0 {
 			positions = append(positions, star)
 		}
 	}
@@ -327,11 +351,14 @@ func (m *hostAnalysisMachine) step(positions []int, character rune) []int {
 	next := make([]int, 0, len(positions))
 	for _, position := range positions {
 		node := m.nodes[position]
-		if node.repeat || node.domainRepeat && character != '*' {
+		if node.repeat || node.domainRepeat && character != '*' || node.labelRepeat && character != '.' {
 			next = append(next, position)
 		}
 		if node.any >= 0 {
 			next = append(next, node.any)
+		}
+		if node.labelAny >= 0 && character != '.' {
+			next = append(next, node.labelAny)
 		}
 		if child, exists := node.literal[character]; exists {
 			next = append(next, child)
@@ -353,6 +380,9 @@ func (m *hostAnalysisMachine) alphabet(positions []int) []rune {
 	for _, position := range positions {
 		if m.nodes[position].domainRepeat {
 			literals['*'] = true // This character has a distinct transition.
+		}
+		if m.nodes[position].labelRepeat || m.nodes[position].labelAny >= 0 {
+			literals['.'] = true
 		}
 		for literal := range m.nodes[position].literal {
 			literals[literal] = true
@@ -499,6 +529,9 @@ func checkTrafficHostAnalysisWithBudgets(ctx context.Context, before, after traf
 	}
 	machine := hostAnalysisMachine{nodes: []hostAnalysisNode{newHostAnalysisNode()}, maxNodes: budgets.nodes}
 	for side, view := range views {
+		if err := machine.addTrafficBindingLanguages(ctx, side, view); err != nil {
+			return err
+		}
 		for i, group := range view.Groups {
 			if err := ctx.Err(); err != nil {
 				return err
@@ -550,22 +583,47 @@ func checkTrafficHostAnalysisWithBudgets(ctx context.Context, before, after traf
 		positions := states[index].positions
 		accepted := [2]map[int]bool{make(map[int]bool), make(map[int]bool)}
 		bindings := [2]map[trafficHostDomain]*trafficHostEnvironment{make(map[trafficHostDomain]*trafficHostEnvironment), make(map[trafficHostDomain]*trafficHostEnvironment)}
+		var claims [2]*trafficDomainClaim
+		var reserved, primaryReserved, platform, syntactic [2]bool
 		for _, position := range positions {
 			for _, ref := range machine.nodes[position].accepted {
-				if ref.domain {
+				switch {
+				case ref.claim:
+					claim := &views[ref.side].DomainClaims[ref.group]
+					if claims[ref.side] == nil || trafficDomainClaimPrecedes(*claim, *claims[ref.side]) {
+						claims[ref.side] = claim
+					}
+				case ref.reservation:
+					reserved[ref.side] = true
+				case ref.primaryReservation:
+					primaryReserved[ref.side] = true
+				case ref.platform:
+					platform[ref.side] = true
+				case ref.syntactic:
+					syntactic[ref.side] = true
+				case ref.domain:
 					domain := views[ref.side].Domains[ref.group]
 					bindings[ref.side][domain] = scopes[ref.side].environments[trafficHostDomain{App: domain.App, Environment: domain.Environment}]
-				} else if ref.ordinary {
+				case ref.ordinary:
 					bindings[ref.side][trafficHostDomain{}] = nil
-				} else if ref.group < 0 {
+				case ref.group < 0:
 					environment := &views[ref.side].Environments[-1-ref.group]
 					bindings[ref.side][trafficHostDomain{App: environment.App, Environment: environment.ID}] = environment
-				} else {
+				default:
 					accepted[ref.side][ref.group] = true
 				}
 			}
 		}
-		if err := checkTrafficHostBindings(ctx, views, scopes, accepted, bindings); err != nil {
+		for side, view := range views {
+			if view.SelectDomains {
+				selectTrafficDomainBindings(bindings[side], claims[side], platform[side] || syntactic[side])
+			}
+			reserved[side] = syntactic[side] || platform[side] && primaryReserved[side] || !platform[side] && reserved[side]
+			if view.AllowGlobalRoutes && !reserved[side] && trafficAcceptedRoute(view, accepted[side]) {
+				bindings[side][trafficHostDomain{App: "@global-route"}] = nil
+			}
+		}
+		if err := checkTrafficBoundHost(ctx, views, scopes, accepted, bindings, reserved); err != nil {
 			var aggregate *TrafficPolicyAggregateError
 			if !errors.As(err, &aggregate) {
 				return err

@@ -2153,6 +2153,23 @@ func (q *Queries) DeleteOIDCExchangedToken(ctx context.Context, db DBTX, id pgty
 	return err
 }
 
+const deleteTrafficCustomDomain = `-- name: DeleteTrafficCustomDomain :execrows
+DELETE FROM custom_domains WHERE domain=$1::text::citext AND app_id=$2::uuid
+`
+
+type DeleteTrafficCustomDomainParams struct {
+	Domain string
+	AppID  pgtype.UUID
+}
+
+func (q *Queries) DeleteTrafficCustomDomain(ctx context.Context, db DBTX, arg DeleteTrafficCustomDomainParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteTrafficCustomDomain, arg.Domain, arg.AppID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteTrigger = `-- name: DeleteTrigger :exec
 delete from triggers where id = $1 and app_id = $2
 `
@@ -12590,22 +12607,32 @@ SELECT (
     OR EXISTS (SELECT 1 FROM custom_domains
                WHERE nullif($2::text, '') IS NOT NULL
                  AND (domain = $2::text::citext
-                      OR (domain LIKE '*.%' AND lower($2) LIKE '%' || lower(substr(domain, 2))
-                          AND lower($2) <> lower(substr(domain, 3)))))
+                      OR (left(lower(domain),2)='*.'
+                          AND length(btrim(domain,$3::text))>2
+                          AND strpos($4::text,'*')=0
+                          AND right($4,length(lower(btrim(domain,$3)))-1)=substr(lower(btrim(domain,$3)),2)
+                          AND $4<>substr(lower(btrim(domain,$3)),3))))
     OR EXISTS (SELECT 1 FROM tenant_hostnames WHERE hostname = nullif($2::text, ''))
 )::boolean AS reserved
 `
 
 type ReadPublicHostReservationParams struct {
-	Slug string
-	Host string
+	Slug           string
+	Host           string
+	TrimCharacters string
+	WildcardHost   string
 }
 
 // A routing miss is not a free hostname while customer intent still reserves
 // it. App tombstones retain their namespace; alias hosts use the reserved
 // tag- namespace and are excluded by the resolver before this query.
 func (q *Queries) ReadPublicHostReservation(ctx context.Context, db DBTX, arg ReadPublicHostReservationParams) (bool, error) {
-	row := db.QueryRow(ctx, readPublicHostReservation, arg.Slug, arg.Host)
+	row := db.QueryRow(ctx, readPublicHostReservation,
+		arg.Slug,
+		arg.Host,
+		arg.TrimCharacters,
+		arg.WildcardHost,
+	)
 	var reserved bool
 	err := row.Scan(&reserved)
 	return reserved, err
@@ -13267,6 +13294,69 @@ func (q *Queries) ReadTrafficDeploymentStatus(ctx context.Context, db DBTX, depl
 	return status, err
 }
 
+const readTrafficDomainClaims = `-- name: ReadTrafficDomainClaims :one
+WITH claims AS (
+    SELECT jsonb_build_object('Domain',d.domain,'App',d.app_id,
+        'Environment',coalesce(d.environment_id::text,''),'Account',a.account_id,
+        'Eligible',d.verified_at IS NOT NULL AND a.status<>'deleted' AND a.visibility<>'internal'
+            AND (d.environment_id IS NULL OR EXISTS (
+                SELECT 1 FROM project_environments e WHERE e.id=d.environment_id
+                  AND e.account_id=a.account_id AND e.project_id=a.project_id))) AS data
+    FROM custom_domains d JOIN apps a ON a.id=d.app_id
+    ORDER BY d.domain::text COLLATE "C" LIMIT ($1::integer+1)
+), bounds AS (
+    SELECT count(*)::bigint AS inputs, (coalesce(sum(octet_length(data::text)+2),0)+2)::bigint AS bytes FROM claims
+)
+SELECT CASE WHEN inputs<=$1::integer AND bytes<=$2::bigint
+    THEN (SELECT coalesce(jsonb_agg(data),'[]'::jsonb) FROM claims) ELSE NULL::jsonb END::jsonb AS data,
+    inputs,bytes FROM bounds
+`
+
+type ReadTrafficDomainClaimsParams struct {
+	MaxInputs int32
+	MaxBytes  int64
+}
+
+type ReadTrafficDomainClaimsRow struct {
+	Data   []byte
+	Inputs int64
+	Bytes  int64
+}
+
+// Secret-free binding metadata only, bounded before transfer. Unverified and
+// ineligible claims are retained because they block less-specific fallbacks.
+func (q *Queries) ReadTrafficDomainClaims(ctx context.Context, db DBTX, arg ReadTrafficDomainClaimsParams) (ReadTrafficDomainClaimsRow, error) {
+	row := db.QueryRow(ctx, readTrafficDomainClaims, arg.MaxInputs, arg.MaxBytes)
+	var i ReadTrafficDomainClaimsRow
+	err := row.Scan(&i.Data, &i.Inputs, &i.Bytes)
+	return i, err
+}
+
+const readTrafficGlobalRouteAccounts = `-- name: ReadTrafficGlobalRouteAccounts :many
+SELECT DISTINCT account_id FROM edge_rules WHERE enabled AND kind='route'
+ORDER BY account_id LIMIT ($1::integer+1)
+`
+
+func (q *Queries) ReadTrafficGlobalRouteAccounts(ctx context.Context, db DBTX, maxInputs int32) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, readTrafficGlobalRouteAccounts, maxInputs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var account_id pgtype.UUID
+		if err := rows.Scan(&account_id); err != nil {
+			return nil, err
+		}
+		items = append(items, account_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const readTrafficHostAnalysis = `-- name: ReadTrafficHostAnalysis :one
 WITH environment_policies AS MATERIALIZED (
     SELECT e.id AS environment_id, a.id AS app_id, e.slug,
@@ -13403,16 +13493,29 @@ WITH environment_policies AS MATERIALIZED (
     WHERE a.account_id=$3::uuid AND a.status<>'deleted' AND a.visibility<>'internal'
       AND d.verified_at IS NOT NULL AND (d.environment_id IS NULL OR e.environment_id IS NOT NULL)
     ORDER BY d.domain LIMIT ($1::integer+1)
+), reservations AS (
+    SELECT data FROM (
+        SELECT jsonb_build_object('Kind','primary','Host',slug||$6::text) AS data FROM apps
+        WHERE $3::uuid IS NULL AND $6::text<>''
+        UNION ALL
+        SELECT jsonb_build_object('Kind','domain','Host',domain) FROM custom_domains
+        WHERE $3::uuid IS NULL
+        UNION ALL
+        SELECT jsonb_build_object('Kind','tenant','Host',hostname) FROM tenant_hostnames
+        WHERE $3::uuid IS NULL
+    ) claim ORDER BY data->>'Kind',data->>'Host' LIMIT ($1::integer+1)
 ), bounds AS (
-    SELECT (SELECT count(*) FROM groups)+(SELECT count(*) FROM assets)+(SELECT count(*) FROM environments)+(SELECT count(*) FROM primary_hosts)+(SELECT count(*) FROM alias_hosts)+(SELECT count(*) FROM domain_hosts) AS inputs,
+    SELECT (SELECT count(*) FROM groups)+(SELECT count(*) FROM assets)+(SELECT count(*) FROM environments)+(SELECT count(*) FROM primary_hosts)+(SELECT count(*) FROM alias_hosts)+(SELECT count(*) FROM domain_hosts)+(SELECT count(*) FROM reservations) AS inputs,
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM groups)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM assets)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM environments)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM primary_hosts)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM alias_hosts)+
         (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM domain_hosts)+
+        (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM reservations)+
         octet_length(jsonb_build_object('Groups','[]'::jsonb,'Assets','[]'::jsonb,
-            'Environments','[]'::jsonb,'PrimaryHosts','[]'::jsonb,'AliasHosts','[]'::jsonb,'Domains','[]'::jsonb)::text) AS bytes
+            'Environments','[]'::jsonb,'PrimaryHosts','[]'::jsonb,'AliasHosts','[]'::jsonb,'Domains','[]'::jsonb,
+            'Reservations','[]'::jsonb,'GlobalRoutes',false)::text) AS bytes
 )
 SELECT CASE WHEN inputs <= $1::integer AND bytes <= $2::bigint
     THEN jsonb_build_object('Groups',(SELECT coalesce(jsonb_agg(data),'[]') FROM groups),
@@ -13420,7 +13523,9 @@ SELECT CASE WHEN inputs <= $1::integer AND bytes <= $2::bigint
         'Environments',(SELECT coalesce(jsonb_agg(data),'[]') FROM environments),
         'PrimaryHosts',(SELECT coalesce(jsonb_agg(data),'[]') FROM primary_hosts),
         'AliasHosts',(SELECT coalesce(jsonb_agg(data),'[]') FROM alias_hosts),
-        'Domains',(SELECT coalesce(jsonb_agg(data),'[]') FROM domain_hosts)) ELSE NULL::jsonb END::jsonb AS data,
+        'Domains',(SELECT coalesce(jsonb_agg(data),'[]') FROM domain_hosts),
+        'Reservations',(SELECT coalesce(jsonb_agg(data),'[]') FROM reservations),
+        'GlobalRoutes',$3::uuid IS NULL) ELSE NULL::jsonb END::jsonb AS data,
     inputs::bigint, bytes::bigint FROM bounds
 `
 
