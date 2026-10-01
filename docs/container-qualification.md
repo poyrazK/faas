@@ -368,3 +368,17 @@ UDP/TLS alert tests; local render/alert checks passed. Workflow structure
 validation passed. Full actionlint retains the same nine pre-existing ShellCheck
 findings as the unmodified workflow, with no new findings. No remote CI execution
 or native rollout qualification is claimed.
+
+## Review delivery
+
+The standalone startup-diagnostics change is published as draft
+[PR #3950](https://github.com/poyrazK/faas/pull/3950), head `cd20da7a8`,
+based on upstream `f2893f798`. It contains only the explanation catalog and
+its whycopy/scheduler regressions. Local race checks and changed-code lint
+passed against that base. GitHub CI completed successfully, including unit and
+PostgreSQL shards, E2E, lint/build, SDK checks and Go/Actions CodeQL. Conditional
+image-build jobs were skipped because this PR does not change runtime images.
+These remote results qualify this diagnostics PR; they do not validate the
+remaining container runtime, UDP, TLS or deployment-routing changes on this
+work branch. Native image, lifecycle, performance, recovery and leak evidence
+remains outstanding.
