@@ -56,6 +56,18 @@ const (
 	ApplicationStandardRuntimeCleanupTimeout       = 5 * time.Second
 )
 
+// Source-build OCI verification bounds the intermediate image, including its
+// builder base. Final app layers still obey the creating account's plan limit.
+const (
+	LocalOCIMaxIndexBytes             int64 = 1 << 20
+	LocalOCIMaxManifestBytes          int64 = 8 << 20
+	LocalOCIMaxConfigBytes            int64 = 16 << 20
+	LocalOCIMaxArchiveBytes           int64 = (16 << 30) + (32 << 20)
+	LocalOCIMaxCompressedLayerBytes   int64 = 16 << 30
+	LocalOCIMaxUncompressedLayerBytes int64 = 64 << 30
+	LocalOCIMaxLayers                       = 1024
+)
+
 // A restore hook is on the wake critical path. Keep its customer timeout
 // below the host's five-second resume deadline, including transport overhead.
 const (

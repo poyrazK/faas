@@ -2854,7 +2854,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 	var cleanupBuiltLayers func()
 	if (runtime == RuntimeGo124 || runtime == RuntimeGo124Alpine) &&
 		dep.RootfsPath != "" && dep.RootfsPath != dep.SourcePath && dep.Kind != state.DeploymentKindImage {
-		_, layers, cleanup, loadErr := loadLocalOCIArchive(dep.RootfsPath)
+		_, layers, cleanup, loadErr := loadLocalOCIArchiveContext(ctx, dep.RootfsPath)
 		if loadErr != nil {
 			_ = h.markDeployFailed(ctx, dep.ID, loadErr, "load source build artifact")
 			return fmt.Errorf("imaged: load source build artifact: %w", loadErr)

@@ -167,6 +167,32 @@ migration attempt authority, restart reconciliation and existing gateway revocat
 remain acceptance work. Dedicated native x86_64 KVM and leakcheck evidence is
 still required.
 
+### Source-build content verification
+
+imaged now verifies builderd's local OCI export before container conversion,
+function layer selection or Go executable normalization. One opened archive
+supplies the index, manifest, config and layers. Manifest/config/compressed layer
+bytes must match their descriptor digests and sizes; the full decompressed gzip
+stream must match each config DiffID. This prevents a false base-layer prefix
+from dropping different runtime content. Duplicate index, manifest, config or
+layer entries and nonregular target entries are refused. Repeated layer
+descriptors remain supported with independent readers. All production readers
+use the imaging context for cancellation.
+
+The intermediate export is bounded independently of billing: index 1 MiB,
+manifest 8 MiB, config 16 MiB, archive 16 GiB plus 32 MiB of metadata allowance,
+1,024 layer descriptors, aggregate compressed layers 16 GiB and aggregate
+uncompressed layers 64 GiB. These safeguards live in `pkg/api/limits.go`.
+Final app-layer limits still come from the creating account's plan.
+
+These checks follow the [OCI descriptor contract](https://github.com/opencontainers/image-spec/blob/main/descriptor.md)
+and [uncompressed DiffID definition](https://github.com/opencontainers/image-spec/blob/main/config.md#layer-diffid).
+They establish internal content integrity, not an approved publisher or a
+durable runtime artifact proof. Company publisher verification of source-build
+output, the actual rootfs/sidecar binding, current-key revocation and scan expiry
+remain required before public activation. No artifact check advances an observed
+standard revision.
+
 ### Enrollment evidence
 
 The storage boundary now captures admission pins at every app insert, including

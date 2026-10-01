@@ -259,3 +259,11 @@ Installation advances the persisted revision, leaving observation at zero.
 These checks do not prove image verification, delivered logs or live network
 convergence. Restore/wake admission, runtime acknowledgments and native acceptance
 remain necessary before public activation is enabled.
+
+Source-build conversion now verifies the local OCI manifest, config and layer
+bytes against their declared digests and sizes, including each uncompressed
+layer's DiffID. Duplicate entries and corrupt gzip streams refuse conversion;
+valid source builds keep using the existing container and function paths. This
+content check does not prove an approved company publisher. Durable proofs bound
+to the rootfs and sidecars that actually run, current publisher keys and scan
+expiry remain part of the image-policy acceptance work.
