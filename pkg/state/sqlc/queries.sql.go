@@ -10508,7 +10508,7 @@ WHERE a.status <> 'deleted'
            SELECT 1 FROM deployments d
            JOIN project_environment_workload_deployment_specs p ON p.deployment_id = d.id
            JOIN project_environment_workload_specs s ON s.id = p.spec_id AND s.app_id = d.app_id
-           WHERE d.app_id = a.id AND d.status = 'live' AND d.scope IN ('default', 'production')
+           WHERE d.app_id = a.id AND d.status = 'live'
              AND (s.settings -> 'warm_pool_size')::jsonb > '0'::jsonb
        ))
 ORDER BY a.id
@@ -15579,10 +15579,10 @@ func (q *Queries) PruneDataUpstreamProbesOlderThan(ctx context.Context, db DBTX,
 
 const publishOwnedInstanceRuntime = `-- name: PublishOwnedInstanceRuntime :one
 UPDATE instances SET netns=$1::text, host_ip=$2::inet,
-    guest_uid=$3::integer, started_at=clock_timestamp(), state='running'
-WHERE id=$4::uuid AND app_id=$5::uuid
-    AND deployment_id=$6::uuid AND node_id=$7::uuid
-    AND wake_id=$8::uuid AND state=$9::text
+    guest_uid=$3::integer, started_at=clock_timestamp(), state=$4::text
+WHERE id=$5::uuid AND app_id=$6::uuid
+    AND deployment_id=$7::uuid AND node_id=$8::uuid
+    AND wake_id=$9::uuid AND state=$10::text
 RETURNING id::text AS id, app_id::text AS app_id, deployment_id::text AS deployment_id,
     state, coalesce(netns,'')::text AS netns, coalesce(guest_uid,0)::integer AS guest_uid,
     coalesce(host(host_ip),'')::text AS host_ip, ram_mb, started_at, last_request_at, parked_at,
@@ -15593,6 +15593,7 @@ type PublishOwnedInstanceRuntimeParams struct {
 	Netns         string
 	HostIp        netip.Addr
 	GuestUid      int32
+	TargetState   string
 	InstanceID    pgtype.UUID
 	AppID         pgtype.UUID
 	DeploymentID  pgtype.UUID
@@ -15626,6 +15627,7 @@ func (q *Queries) PublishOwnedInstanceRuntime(ctx context.Context, db DBTX, arg 
 		arg.Netns,
 		arg.HostIp,
 		arg.GuestUid,
+		arg.TargetState,
 		arg.InstanceID,
 		arg.AppID,
 		arg.DeploymentID,
@@ -21602,6 +21604,27 @@ type UpdateInstanceStateParams struct {
 func (q *Queries) UpdateInstanceState(ctx context.Context, db DBTX, arg UpdateInstanceStateParams) error {
 	_, err := db.Exec(ctx, updateInstanceState, arg.ID, arg.State)
 	return err
+}
+
+const updateInstanceStateIf = `-- name: UpdateInstanceStateIf :execrows
+UPDATE instances SET state=$1::text,
+    parked_at=CASE WHEN $1::text='parked' THEN now() ELSE parked_at END,
+    terminal_at=CASE WHEN $1::text IN ('stopped','failed') THEN clock_timestamp() ELSE terminal_at END
+WHERE id=$2::uuid AND state=$3::text
+`
+
+type UpdateInstanceStateIfParams struct {
+	NextState     string
+	InstanceID    pgtype.UUID
+	ExpectedState string
+}
+
+func (q *Queries) UpdateInstanceStateIf(ctx context.Context, db DBTX, arg UpdateInstanceStateIfParams) (int64, error) {
+	result, err := db.Exec(ctx, updateInstanceStateIf, arg.NextState, arg.InstanceID, arg.ExpectedState)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const updateOrgPlan = `-- name: UpdateOrgPlan :exec

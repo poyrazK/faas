@@ -2299,3 +2299,58 @@ and resource strategies, coordinated PostgreSQL/object-data capture and
 full-clone activation/qualification remain open. The public complete-clone
 command remains unavailable; repository-wide tests/lint, native test-metal,
 leakcheck and provider acceptance remain unverified.
+
+### Warm pools reconcile deployed stages and publish their original ownership
+
+Scoped warm-pool reconciliation now selects an environment's active release
+graph before traffic-bearing direct deployments. An unscoped call retains
+production selection, including its legacy default lane. Dark direct rows
+and desired workload heads cannot select a pool. Each selected deployment
+supplies its immutable settings and original environment lifetime; sibling
+paused rows cannot satisfy its target or enter its cleanup set. A proven lost
+owner is retired through its physical instance, while an unavailable owner
+read fails closed. Recreating a stage does not adopt its former paused VMs.
+
+The notification and periodic paths discover every live environment plus
+retained paused rows. Bulk candidate selection includes positive stage pins,
+even when the shared App or the current desired head requests zero. All
+environment fills in an app pass share the existing four-restore budget and
+the physical node ledger. Paused capacity reserves RAM/vCPU/CPU without
+consuming serving concurrency. A failed environment policy read does not
+prevent another environment's recovery. Snapshot-less targets remain pending;
+warm-pool filling does not cold boot.
+
+Owned runtime publication now supports WAKING to WARM and WARM to RUNNING,
+alongside ordinary wake and prime. It requires the captured deployment and
+original environment fence, node, wake ID and expected state. Runtime identity
+and lifecycle state are committed by the same SQLC CAS or MemStore mutex
+operation. Restore and resume use this boundary; changed sealed inputs or a
+lost environment detected at publication reject the transition. Cleanup uses
+the expected provisional state and preserves another state writer. Conditional
+terminal writes now stamp their retention anchor in that same SQLC update.
+
+Verification: the focused scheduler pool gate passed in 2.175 seconds. Final
+MemStore and real PostgreSQL contracts passed in 23.852 seconds, covering
+stage/direct/dark graph selection, positive deployed pins after desired edits,
+owned paused publication, replay and identity rejection, original-environment
+deletion locks, sealed-input changes and conditional terminal retention.
+The full scheduler tree passed: scheduler 56.466 seconds and all eight child
+packages. Schedd daemon tests passed in 56.415 seconds. Contracts cover pinned
+shape and scoped values, shared fill budgets,
+periodic recovery, disable cleanup, recreated lifetimes, temporary ownership
+failures, changes after the restore read and changes during warm resume.
+Independent SQLC generation matches and whitespace checks pass. VM calls use
+macOS fakes; this is not native KVM or provider acceptance.
+
+Plaintext values are still reread before warm publication rather than fenced
+atomically with their writers. A paused VM lacks a durable captured-config
+fingerprint for detecting later edits before resume. Complete input fencing,
+including insertion races and workload settings, remains required. Ordinary
+scoped wake selection still has its earlier direct-deployment fallback and
+needs alignment with graph selection where applicable. Producer load/prewarm
+feeds, floor aggregation, billing/audit/resource cleanup, remaining adapters,
+all configuration/resource clone strategies, coordinated isolated PostgreSQL
+and object-data capture, durable one-command orchestration and qualified
+promotion/rollback remain open. Public complete cloning stays unavailable.
+Repository-wide tests/lint, native x86_64 KVM test-metal, leakcheck and provider
+acceptance remain unverified.

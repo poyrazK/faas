@@ -13,10 +13,14 @@ type stagePoolPausedVMM struct {
 	*fakeVMM
 	pausedCalls int
 	pausedHook  func()
+	specs       []AppSpec
+	snapshots   []SnapshotRef
 }
 
-func (v *stagePoolPausedVMM) CreatePausedFromSnapshot(_ context.Context, _, instance string, _ AppSpec, _ SnapshotRef) (*WakeOutcome, error) {
+func (v *stagePoolPausedVMM) CreatePausedFromSnapshot(_ context.Context, _, instance string, spec AppSpec, snap SnapshotRef) (*WakeOutcome, error) {
 	v.pausedCalls++
+	v.specs = append(v.specs, spec)
+	v.snapshots = append(v.snapshots, snap)
 	if v.pausedHook != nil {
 		v.pausedHook()
 	}
@@ -25,7 +29,11 @@ func (v *stagePoolPausedVMM) CreatePausedFromSnapshot(_ context.Context, _, inst
 
 func stagePoolInstance(t *testing.T, f stageSnapshotFixture, dep state.Deployment) state.Instance {
 	t.Helper()
-	instance, err := f.store.CreateInstanceWithMode(t.Context(), f.app.ID, dep.ID, string(state.StateWarm), 256, state.DefaultLocalNodeName, "", string(state.InstanceModeNormal))
+	node, err := f.store.ComputeNodeByName(t.Context(), state.DefaultLocalNodeName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance, err := f.store.CreateInstanceWithMode(t.Context(), f.app.ID, dep.ID, string(state.StateWarm), 256, node.ID, "", string(state.InstanceModeNormal))
 	if err != nil {
 		t.Fatal(err)
 	}

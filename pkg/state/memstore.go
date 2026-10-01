@@ -13646,6 +13646,10 @@ func (m *MemStore) UpdateInstanceStateIf(_ context.Context, id, expectedState, n
 	if State(nextState) == StateParked {
 		ins.ParkedAt = time.Now().UTC()
 	}
+	if State(nextState) == StateStopped || State(nextState) == StateFailed {
+		stamp := time.Now().UTC()
+		ins.TerminalAt = &stamp
+	}
 	m.instances[id] = ins
 	return nil
 }

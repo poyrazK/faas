@@ -7,11 +7,12 @@ import (
 	"github.com/google/uuid"
 )
 
-// RuntimeInstancePublication is authored by schedd from the admitted boot.
+// RuntimeInstancePublication is authored by schedd from the admitted boot or
+// paused resume. The target is RUNNING by default; paused restores publish WARM.
 // Even an empty secret set has an original deployment/environment fence.
 type RuntimeInstancePublication struct {
 	AccountID, AppID, InstanceID, NodeID, WakeID string
-	ExpectedState, Netns, HostIP                 string
+	ExpectedState, TargetState, Netns, HostIP    string
 	GuestUID                                     int
 	Fence                                        RuntimeAppSecretFence
 }
@@ -22,7 +23,7 @@ type RuntimeInstancePublicationStore interface {
 
 func validateRuntimeInstancePublication(p RuntimeInstancePublication) error {
 	if p.Fence.empty() || !validRuntimeAppSecretFence(p.Fence) || p.Netns == "" || p.GuestUID <= 0 ||
-		(p.ExpectedState != string(StateColdBooting) && p.ExpectedState != string(StateWaking)) {
+		!validRuntimePublicationTransition(p.ExpectedState, p.targetState()) {
 		return ErrInvalidArgument
 	}
 	for _, value := range []string{p.AccountID, p.AppID, p.InstanceID, p.NodeID, p.WakeID} {
@@ -34,4 +35,19 @@ func validateRuntimeInstancePublication(p RuntimeInstancePublication) error {
 		return ErrInvalidArgument
 	}
 	return nil
+}
+
+// Empty target preserves the RUNNING publication contract for wake and prime.
+func (p RuntimeInstancePublication) targetState() string {
+	if p.TargetState == "" {
+		return string(StateRunning)
+	}
+	return p.TargetState
+}
+
+func validRuntimePublicationTransition(from, to string) bool {
+	if to == string(StateWarm) {
+		return from == string(StateWaking)
+	}
+	return to == string(StateRunning) && (from == string(StateColdBooting) || from == string(StateWaking) || from == string(StateWarm))
 }

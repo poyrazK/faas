@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -77,7 +78,11 @@ func TestWakePromotesWarmRowRecordsResumePhase(t *testing.T) {
 	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{WarmPoolSize: &target, SetWarmPoolSize: true}); err != nil {
 		t.Fatalf("UpdateApp warm_pool_size: %v", err)
 	}
-	warm, err := store.CreateInstanceWithMode(ctx, app.ID, dep.ID, string(state.StateWarm), app.RAMMB, state.DefaultLocalNodeName, "warm-wake", string(state.InstanceModeNormal))
+	node, err := store.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	warm, err := store.CreateInstanceWithMode(ctx, app.ID, dep.ID, string(state.StateWarm), app.RAMMB, node.ID, uuid.NewString(), string(state.InstanceModeNormal))
 	if err != nil {
 		t.Fatalf("Create warm instance: %v", err)
 	}
@@ -90,7 +95,7 @@ func TestWakePromotesWarmRowRecordsResumePhase(t *testing.T) {
 	if err := e.Ledger().Admit(Request{
 		Instance: warm.ID, AppID: app.ID, DeploymentID: dep.ID, Plan: api.PlanPro,
 		RAMMB: app.RAMMB, VCPU: limits.VCPU, MaxConcurrency: app.MaxConcurrency,
-		NodeID: state.DefaultLocalNodeName, Kind: KindWarmPool,
+		NodeID: node.ID, Kind: KindWarmPool,
 	}); err != nil {
 		t.Fatalf("Admit warm reservation: %v", err)
 	}

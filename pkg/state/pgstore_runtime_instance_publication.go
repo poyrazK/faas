@@ -9,7 +9,7 @@ import (
 
 // The original environment, app, deployment, instance and retained pins stay
 // locked through the runtime/state CAS. Deletion cannot slip between the
-// ownership check and publishing a routable instance.
+// ownership check and publishing a paused or routable instance.
 func (s *PgStore) PublishOwnedInstanceRuntime(ctx context.Context, p RuntimeInstancePublication) (Instance, error) {
 	if err := validateRuntimeInstancePublication(p); err != nil {
 		return Instance{}, err
@@ -25,7 +25,7 @@ func (s *PgStore) PublishOwnedInstanceRuntime(ctx context.Context, p RuntimeInst
 	address, _ := netip.ParseAddr(p.HostIP) // validated before opening the transaction
 	row, err := sqlc.New().PublishOwnedInstanceRuntime(ctx, tx, sqlc.PublishOwnedInstanceRuntimeParams{
 		InstanceID: mustPgUUID(p.InstanceID), AppID: mustPgUUID(p.AppID), DeploymentID: mustPgUUID(p.Fence.DeploymentID),
-		NodeID: mustPgUUID(p.NodeID), WakeID: mustPgUUID(p.WakeID), ExpectedState: p.ExpectedState,
+		NodeID: mustPgUUID(p.NodeID), WakeID: mustPgUUID(p.WakeID), ExpectedState: p.ExpectedState, TargetState: p.targetState(),
 		Netns: p.Netns, HostIp: address, GuestUid: int32(p.GuestUID),
 	})
 	if err != nil {

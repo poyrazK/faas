@@ -19,7 +19,7 @@ func (m *MemStore) PublishOwnedInstanceRuntime(_ context.Context, p RuntimeInsta
 		return Instance{}, ErrConflict
 	}
 	instance.Netns, instance.HostIP, instance.GuestUID = p.Netns, p.HostIP, p.GuestUID
-	instance.StartedAt, instance.State = time.Now().UTC(), string(StateRunning)
+	instance.StartedAt, instance.State = time.Now().UTC(), p.targetState()
 	m.instances[p.InstanceID] = instance
 	return instance, nil
 }

@@ -72,6 +72,15 @@ func testWarmPoolReconciliationCandidates(t *testing.T, store warmPoolCandidateS
 	}
 	stageOnly := createApp("stage-pool", 0)
 	stageDep := pin(stageOnly, "stage", 2)
+	stageHead, err := store.ProjectEnvironmentWorkloadSpec(ctx, account.ID, project.ID, "stage", stageOnly.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stageSettings := stageHead.Settings
+	stageSettings.WarmPoolSize = 0
+	if _, err := store.PutProjectEnvironmentWorkloadSpec(ctx, account.ID, project.ID, "stage", stageOnly.ID, stageHead.Revision, stageSettings); err != nil {
+		t.Fatal(err)
+	}
 	cold := createApp("cold-pool", 0)
 	deleted := createApp("deleted-pool", 1)
 	if err := store.DeleteApp(ctx, deleted.ID); err != nil {
@@ -94,8 +103,12 @@ func testWarmPoolReconciliationCandidates(t *testing.T, store warmPoolCandidateS
 			}
 		}
 	}
-	assertCandidates("", []state.App{raw, pinned}, []state.App{stageOnly, cold, deleted})
+	assertCandidates("", []state.App{raw, pinned, stageOnly}, []state.App{cold, deleted})
 	assertCandidates(uuid.NewString(), nil, []state.App{raw, pinned, stageOnly, cold, deleted})
+	if err := store.MarkDeploymentSuperseded(ctx, stageDep.ID); err != nil {
+		t.Fatal(err)
+	}
+	assertCandidates("", []state.App{raw, pinned}, []state.App{stageOnly, cold, deleted})
 	warm, err := store.CreateInstanceWithMode(ctx, stageOnly.ID, stageDep.ID, string(state.StateWarm), 256, nodeID, uuid.NewString(), string(state.InstanceModeNormal))
 	if err != nil {
 		t.Fatal(err)

@@ -16788,16 +16788,13 @@ func (s *PgStore) UpdateInstanceState(ctx context.Context, id, state string) err
 // A missing row and a predicate miss intentionally share ErrConflict: both
 // are benign race losers to a reconciliation caller.
 func (s *PgStore) UpdateInstanceStateIf(ctx context.Context, id, expectedState, nextState string) error {
-	tag, err := s.pool.Exec(ctx,
-		`update instances
-		    set state = $3,
-		        parked_at = case when $3 = 'parked' then now() else parked_at end
-		  where id = $1
-		    and state = $2`, id, expectedState, nextState)
+	count, err := sqlc.New().UpdateInstanceStateIf(ctx, s.pool, sqlc.UpdateInstanceStateIfParams{
+		InstanceID: mustPgUUID(id), ExpectedState: expectedState, NextState: nextState,
+	})
 	if err != nil {
 		return mapErr(err)
 	}
-	if tag.RowsAffected() == 0 {
+	if count == 0 {
 		return ErrConflict
 	}
 	return nil

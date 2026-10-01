@@ -21,10 +21,30 @@ func TestPgRuntimeInstancePublicationLifetime(t *testing.T) {
 	testRuntimeInstancePublicationLifetime(t, store)
 }
 
+func TestPgWarmInstancePublicationOwnership(t *testing.T) {
+	store, _, _ := pgWithPool(t)
+	testWarmInstancePublicationOwnership(t, store)
+}
+
 func TestPgRuntimeInstancePublicationWaitsForOriginalDeletion(t *testing.T) {
+	testPgRuntimeInstancePublicationWaitsForOriginalDeletion(t, false)
+}
+
+func TestPgWarmInstancePublicationWaitsForOriginalDeletion(t *testing.T) {
+	testPgRuntimeInstancePublicationWaitsForOriginalDeletion(t, true)
+}
+
+func testPgRuntimeInstancePublicationWaitsForOriginalDeletion(t *testing.T, paused bool) {
+	t.Helper()
 	store, ctx, pool := pgWithPool(t)
 	f := seedRuntimeAppEnv(t, store)
 	p := seedRuntimeInstancePublication(t, store, f, f.deployments["stage"], runtimeSecretNodeForTest(t, store))
+	if paused {
+		if err := store.UpdateInstanceState(ctx, p.InstanceID, string(state.StateWaking)); err != nil {
+			t.Fatal(err)
+		}
+		p.ExpectedState, p.TargetState = string(state.StateWaking), string(state.StateWarm)
+	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)

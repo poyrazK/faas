@@ -2118,7 +2118,7 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 				// and acknowledge its durable revision; periodic observation
 				// repairs missed notifications after reconnects or restarts.
 				l.observeAppScalingPolicy(reconcileCtx, appID)
-				if err := l.engine.ReconcileWarmPool(reconcileCtx, appID); err != nil {
+				if err := l.engine.ReconcileEnvironmentWarmPools(reconcileCtx, appID); err != nil {
 					l.log.Warn("sched: warm pool reconcile", "app", appID, "err", err)
 				}
 			})
@@ -2166,7 +2166,7 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 				l.engine.ReconcileServiceDeployment(reconcileCtx, id)
 				l.engine.ReconcileWorkerDeployment(reconcileCtx, id)
 				if appID != "" {
-					if err := l.engine.ReconcileWarmPool(reconcileCtx, appID); err != nil {
+					if err := l.engine.ReconcileEnvironmentWarmPools(reconcileCtx, appID); err != nil {
 						l.log.Warn("sched: warm pool reconcile after deployment", "app", appID, "deployment", id, "err", err)
 					}
 				}
@@ -2326,7 +2326,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 	}
 	// Warm-pool capacity is a durable desired count, so a missed app_changed
 	// notification must not leave an app below its configured resident pool.
-	// The bulk candidate read includes pinned production targets and retained
+	// The bulk candidate read includes pinned environment targets and retained
 	// paused rows. Shared App settings alone cannot decide whether to retry a
 	// pool fill or cleanup. An unavailable candidate read retries all owned apps.
 	var warmPoolApps map[string]struct{}
@@ -2347,7 +2347,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 				continue
 			}
 		}
-		if err := l.engine.ReconcileWarmPool(ctx, app.ID); err != nil {
+		if err := l.engine.ReconcileEnvironmentWarmPools(ctx, app.ID); err != nil {
 			l.log.Warn("reaper: warm pool reconcile", "app", app.ID, "err", err)
 		}
 	}

@@ -17,8 +17,7 @@ func (m *MemStore) WarmPoolReconciliationAppIDs(_ context.Context, nodeID string
 	for deploymentID, specID := range m.projectEnvironmentWorkloadDeploymentSpecs {
 		deployment, found := m.deployments[deploymentID]
 		spec, pinned := m.projectEnvironmentWorkloadSpecs[specID]
-		if found && pinned && deployment.Status == DeployLive && spec.AppID == deployment.AppID &&
-			(deployment.Scope == "" || deployment.Scope == DefaultEnvScope || deployment.Scope == "production") && spec.Settings.WarmPoolSize > 0 {
+		if found && pinned && deployment.Status == DeployLive && spec.AppID == deployment.AppID && spec.Settings.WarmPoolSize > 0 {
 			candidates[deployment.AppID] = true
 		}
 	}

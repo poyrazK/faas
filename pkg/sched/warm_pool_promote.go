@@ -133,7 +133,11 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 			continue
 		}
 
-		fresh, publishErr := e.store.PublishInstanceRuntime(ctx, warm.ID, string(state.StateWarm), warm.Netns, warm.HostIP, warm.GuestUID)
+		fresh, publishErr := e.store.PublishOwnedInstanceRuntime(ctx, state.RuntimeInstancePublication{
+			AccountID: acct.ID, AppID: app.ID, InstanceID: warm.ID, NodeID: warm.NodeID, WakeID: warm.WakeID,
+			ExpectedState: string(state.StateWarm), Fence: values.MainSecrets.Fence,
+			Netns: warm.Netns, HostIP: warm.HostIP, GuestUID: warm.GuestUID,
+		})
 		if publishErr != nil {
 			e.ledger.Release(warm.ID)
 			if !errors.Is(publishErr, state.ErrConflict) {
