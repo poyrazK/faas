@@ -949,3 +949,7 @@ Combined draft PR #3997 commit `5a61ae755` now includes the read-stall recovery 
 ### Required PostgreSQL UDP CI qualification
 
 The PostgreSQL state matrix shard now invokes `make udp-postgres-check` with race detection and retains its output as an artifact even on failure. The gate rejects skips and requires all seven source-selected database contracts. Workflow syntax validation and standalone gate shellcheck passed. Full workflow shellcheck still reports existing findings outside the added steps; no blanket lint-clean claim is made. Remote execution of the new wiring remains unverified.
+
+### Published combined database acceptance wiring
+
+Combined PR #3997 now includes retirement fix `5f59d97b8` and the strict PostgreSQL gate/CI wiring. All seven PostgreSQL contracts passed with race detection and no skips on the candidate; the memory retirement fixture passed three race-detector runs. Workflow syntax and standalone shellcheck passed. Logs `/tmp/gregale-udp-stack-postgres-gate.log` and `/tmp/gregale-udp-stack-retirement-tests.log`. The owned cluster was stopped. Remote CI for this updated candidate remains pending.
