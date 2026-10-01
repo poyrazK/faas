@@ -17,6 +17,15 @@ source-local schemas into immutable revisions. Admission pins the definition and
 deployment/release. Active work retains required artifacts and never silently
 changes release. Identity is derived from authenticated ingress, never payloads.
 
+A definition selects exactly one target: an ordinary HTTP method/path or a
+named workflow from its owner-scoped deployment. Workflow targets specify a
+result step and declared aggregate progress stage. The platform validates and
+retains a bounded private DAG snapshot; its content participates in the
+immutable operation revision. Customers cannot inject the snapshot. Native
+DAG validation preserves waits, dependencies, and exception-route contracts.
+Declaring this target does not enable execution: admission stays unavailable
+until the controlled workflow dispatcher and recovery contract are qualified.
+
 Admission, idempotency receipt, operation, execution association, and initial
 event commit atomically. Keys are scoped to account, app, environment, verified
 owner, and operation name. Equivalent JSON inputs replay the original receipt;
