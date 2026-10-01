@@ -100,6 +100,16 @@ func TestDevBridgeAPIToLaptopAndDurableRevocation(t *testing.T) {
 	if err != nil || response.StatusCode != 200 || string(body) != "local payments" {
 		t.Fatalf("local response: status=%d err=%v", response.StatusCode, err)
 	}
+	// adr: 379 — prove account control reads observe the actual proxied
+	// laptop upgrade and request, without needing an attachment credential.
+	activity, err := client.GetDevBridgeActivity(ctx, session.Session.ID)
+	if err != nil || activity.ConnectionState != "connected" || len(activity.Requests) != 1 || !activity.Requests[0].Complete || activity.Requests[0].Path != "/charge" {
+		t.Fatalf("activity did not observe live traffic: %+v err=%v", activity, err)
+	}
+	inventory, err := client.ListDevBridges(ctx)
+	if err != nil || len(inventory.Sessions) != 1 || inventory.Sessions[0].ConnectionState != "connected" {
+		t.Fatalf("inventory did not observe connection: %+v err=%v", inventory, err)
+	}
 	// Response headers must arrive before the upload ends across both HTTP/1
 	// proxy hops, the WebSocket/HTTP2 tunnel and the local HTTP/1 process.
 	streamCtx, streamCancel := context.WithTimeout(ctx, 5*time.Second)

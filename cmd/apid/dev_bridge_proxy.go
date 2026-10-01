@@ -21,6 +21,7 @@ func (s *server) proxyDevBridge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.Transport = s.observeDevBridgeProxy(http.DefaultTransport, r)
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		api.WriteProblem(w, api.NewProblem(503, "dev_bridge_disconnected", "Dev Bridge unavailable", "the relay is disconnected"))
 	}

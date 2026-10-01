@@ -3733,35 +3733,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			log.Warn("gatewayd guest service proxy disabled; dependencies are unavailable", "addr", serviceProxyAddr)
 		} else {
-			srv := deps.newSrv(serviceProxyAddr, guestServiceProxy)
-			srv.Addr = serviceProxyAddr
-			// ADR-197: the guest listener must accept H2C prior-knowledge so
-			// a workload's gRPC client can reach a same-account service. The
-			// server factory builds the control listener's HTTP/1.1-only
-			// posture, which silently downgrades every internal gRPC call.
-			srv.Protocols = new(http.Protocols)
-			srv.Protocols.SetHTTP1(true)
-			srv.Protocols.SetUnencryptedHTTP2(true)
-			// Those same control-listener defaults carry a 30 s write
-			// deadline. http.Server starts WriteTimeout before the handler
-			// runs, so it bounds the whole exchange: it would cut a streaming
-			// gRPC response, a long-lived upgrade session, and any call held
-			// through a snapshot restore (ADR-196). Widen both to the
-			// customer request envelope the public listener uses.
-			srv.ReadTimeout = readTimeoutOrDefault(deps.readTimeout)
-			srv.WriteTimeout = writeTimeoutOrDefault(deps.writeTimeout)
-			addSrv(srv)
-			l, lerr := deps.listen("tcp", serviceProxyAddr)
-			if lerr != nil {
-				log.Error("gatewayd guest service proxy listen failed", "addr", serviceProxyAddr, "err", lerr)
-				return lerr
+			if err := startGuestServiceHTTPListeners(deps, serviceProxyAddr, guestServiceProxy, addSrv, errc, log); err != nil {
+				return err
 			}
-			go func() {
-				log.Info("gatewayd guest service proxy listening", "addr", serviceProxyAddr)
-				if err := srv.Serve(l); err != nil && err != http.ErrServerClosed {
-					errc <- err
-				}
-			}()
 			if serviceProxyTLS != nil {
 				httpsAddr := strings.TrimSpace(cfg.ServiceProxyHTTPSListen)
 				httpsSrv := deps.newSrv(httpsAddr, serviceProxyHTTPSHandler(guestServiceProxy))
@@ -3813,8 +3787,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			log.Info("gatewayd: guest DNS blocklist loaded", "domains", blocklist.Len())
 			// ADR-373 DNS-gated egress: report every guest answer to this
 			// node's vmmd before replying, so the guest may connect to it.
-			if deps.nodeCache != nil && cfg.NodeName != "" {
-				dnsHandler.WithResolvedEgressHook(newResolvedEgressHook(deps.nodeCache.cache, cfg.NodeName))
+			if deps.nodeCache != nil && deps.pgStore != nil && cfg.NodeName != "" {
+				dnsHandler.WithResolvedEgressHook(newResolvedEgressHook(deps.nodeCache.cache, newLocalNodeID(deps.pgStore, cfg.NodeName)))
 			}
 			dnsAddr := net.JoinHostPort(bridgeIP.String(), strconv.Itoa(gateway.ServiceDiscoveryDNSPort))
 			listenPacket := deps.listenPacket
@@ -4048,14 +4022,47 @@ func assertLoopbackBind(addr string) error {
 	return fmt.Errorf("control listener %q is not loopback; bind 127.0.0.1:9090 (or ::1) only", addr)
 }
 
+// startGuestServiceHTTPListeners serves both canonical and persisted URLs
+// through the same authorization handler and transport policy (ADR-384).
+func startGuestServiceHTTPListeners(deps runDeps, addr string, handler http.Handler, addSrv func(*http.Server), errc chan<- error, log *slog.Logger) error {
+	if err := validateServiceProxyListen(addr); err != nil {
+		return err
+	}
+	host, _, _ := net.SplitHostPort(addr) // validated above
+	for _, port := range []int{serviceProxyPort, serviceProxyLegacyPort} {
+		httpAddr := net.JoinHostPort(host, strconv.Itoa(port))
+		srv := deps.newSrv(httpAddr, handler)
+		srv.Addr = httpAddr
+		// ADR-197: preserve H1/H2C and the customer request envelope on
+		// both ports; the control server's tighter defaults cut streams.
+		srv.Protocols = new(http.Protocols)
+		srv.Protocols.SetHTTP1(true)
+		srv.Protocols.SetUnencryptedHTTP2(true)
+		srv.ReadTimeout = readTimeoutOrDefault(deps.readTimeout)
+		srv.WriteTimeout = writeTimeoutOrDefault(deps.writeTimeout)
+		addSrv(srv)
+		listener, err := deps.listen("tcp", httpAddr)
+		if err != nil {
+			return fmt.Errorf("gatewayd: guest service proxy listen %s: %w", httpAddr, err)
+		}
+		go func() {
+			log.Info("gatewayd guest service proxy listening", "addr", httpAddr)
+			if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
+				errc <- err
+			}
+		}()
+	}
+	return nil
+}
+
 func validateServiceProxyListen(addr string) error {
 	host, portText, err := net.SplitHostPort(addr)
 	if err != nil {
 		return fmt.Errorf("gatewayd: service_proxy_listen must be host:port: %w", err)
 	}
 	port, err := strconv.Atoi(portText)
-	if err != nil || port != serviceProxyPort {
-		return fmt.Errorf("gatewayd: service_proxy_listen must use reserved port %d", serviceProxyPort)
+	if err != nil || (port != serviceProxyPort && port != serviceProxyLegacyPort) {
+		return fmt.Errorf("gatewayd: service_proxy_listen must use reserved port %d or %d", serviceProxyPort, serviceProxyLegacyPort)
 	}
 	ip, err := netip.ParseAddr(host)
 	if err != nil || !ip.Is4() || !ip.IsPrivate() || ip.IsLoopback() || ip.IsUnspecified() {

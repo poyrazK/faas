@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { PlatformTenantStatementLineResponse } from './PlatformTenantStatementLineResponse.js';
 /**
- * One immutable initial or additive adjustment revision for a cross-app customer period.
+ * One immutable initial or additive adjustment revision for a cross-app customer period, with compact invoice lines and private minute-level adjustment coverage.
  */
 export type PlatformTenantStatementResponse = {
   id: string;

@@ -36,6 +36,7 @@ type executionUsageLedgerRow struct {
 
 func cloneExecution(row Execution) Execution {
 	row.Result = append([]byte(nil), row.Result...)
+	row.Artifacts = api.CloneExecutionArtifacts(row.Artifacts)
 	if row.LeaseToken != nil {
 		value := *row.LeaseToken
 		row.LeaseToken = &value
@@ -102,6 +103,7 @@ func (m *MemStore) CreateExecution(_ context.Context, params CreateExecutionPara
 		return Execution{}, &ExecutionQuotaError{Limit: planLimits.MaxConcurrent, Observed: active + 1}
 	}
 	row := Execution{
+		Profile:     params.Request.Profile.Normalized(),
 		ID:          uuid.NewString(),
 		AccountID:   params.AccountID,
 		Runtime:     params.Request.Runtime,
@@ -298,6 +300,9 @@ func (m *MemStore) MarkExecutionRunning(_ context.Context, executionID, leaseTok
 		return Execution{}, ErrExecutionLeaseLost
 	}
 	startedAt = startedAt.UTC()
+	if row.Profile.Normalized() != api.ExecutionProfileStandard && row.RuntimeImageDigest == "" {
+		return Execution{}, ErrExecutionRuntimeUnpinned
+	}
 	row.Status = api.ExecutionStatusRunning
 	row.StartedAt = &startedAt
 	row.UpdatedAt = startedAt
@@ -365,6 +370,7 @@ func (m *MemStore) CompleteExecution(_ context.Context, params CompleteExecution
 	row.LeaseOwner = nil
 	row.LeaseExpiresAt = nil
 	row.Result = append([]byte(nil), params.Result...)
+	row.Artifacts = api.CloneExecutionArtifacts(params.Artifacts)
 	row.Stdout = params.Stdout
 	row.Stderr = params.Stderr
 	row.OutputTruncated = params.OutputTruncated
@@ -403,7 +409,7 @@ func (m *MemStore) recordExecutionUsageLocked(row Execution) {
 		WallTimeMS:   row.Usage.WallTimeMS,
 		CPUTimeMS:    row.Usage.CPUTimeMS,
 		PeakMemoryMB: int64(row.Usage.PeakMemoryMB),
-		OutputBytes:  int64(len(row.Result) + len(row.Stdout) + len(row.Stderr)),
+		OutputBytes:  int64(len(row.Result) + len(row.Stdout) + len(row.Stderr) + api.ExecutionArtifactsOutputBytes(row.Artifacts)),
 		StartedAt:    startedAt,
 		FinishedAt:   derefTime(row.FinishedAt),
 		CreatedAt:    row.CreatedAt,

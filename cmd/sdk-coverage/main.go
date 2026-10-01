@@ -273,6 +273,17 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
+	"POST /v1/apps/{slug}/issue-events":                     "IngestIssueEvent",
+	"POST /v1/apps/{slug}/issue-events/otlp/{signal}":       "IngestIssueOTLP",
+	"GET /v1/apps/{slug}/issues":                            "ListIssues",
+	"GET /v1/apps/{slug}/issues/{issue_id}":                 "GetIssue",
+	"POST /v1/apps/{slug}/issues/{issue_id}/actions":        "ActOnIssue",
+	"POST /v1/apps/{slug}/issue-ingest-tokens":              "CreateIssueIngestToken",
+	"GET /v1/apps/{slug}/issue-ingest-tokens":               "ListIssueIngestTokens",
+	"DELETE /v1/apps/{slug}/issue-ingest-tokens/{token_id}": "RevokeIssueIngestToken",
+
+	"GET /v1/dev/bridges":                                                     "ListDevBridges",
+	"GET /v1/dev/bridges/{id}/activity":                                       "GetDevBridgeActivity",
 	"POST /v1/dev/bridges":                                                    "CreateDevBridge",
 	"GET /v1/dev/bridges/{id}":                                                "GetDevBridge",
 	"DELETE /v1/dev/bridges/{id}":                                             "RevokeDevBridge",
@@ -284,6 +295,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/projects/{slug}/environments/{environment}/flags/rollback":      "RollbackProjectFlags",
 	"POST /v1/projects/{slug}/environments/{environment}/flags/{key}/inspect": "InspectProjectFlag",
 	"GET /v1/projects/{slug}/environments/{environment}/flags/{key}/requests": "ProjectFlagRequests",
+	"GET /v1/projects/{slug}/environments/{environment}/flags/{key}/outcomes": "ProjectFlagOutcomes",
 	"GET /v1/runtime/flags":                                                   "RuntimeFlags",
 
 	"GET /v1/apps/{slug}/work-policies":                          "ListAppWorkPolicies",
@@ -407,6 +419,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/tasks/{id}":             "GetAppTask",
 	"DELETE /v1/apps/{slug}/tasks/{id}":          "CancelAppTask",
 	"POST /v1/account/restore":                   "RestoreAccount",
+	"GET /v1/account/overage-cap":                "GetOverageCap",   // saved monthly spend cap
 	"POST /v1/account/overage-cap":               "RaiseOverageCap", // issue #561 spend cap
 	"POST /v1/account/mfa/disable-email":         "PostAccountMfaDisableEmail",
 	"POST /v1/account/mfa/disable-email/confirm": "PostAccountMfaDisableEmailConfirm",

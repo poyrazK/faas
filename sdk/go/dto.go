@@ -127,10 +127,12 @@ type (
 	// Disposable agent executions. Source and input are accepted only by
 	// CreateExecutionRequest and are never returned in execution receipts.
 	ExecutionRuntime         = api.ExecutionRuntime
+	ExecutionProfile         = api.ExecutionProfile
 	ExecutionNetworkMode     = api.ExecutionNetworkMode
 	ExecutionNetworkPolicy   = api.ExecutionNetworkPolicy
 	ExecutionLimitRequest    = api.ExecutionLimitRequest
 	ExecutionFile            = api.ExecutionFile
+	ExecutionArtifact        = api.ExecutionArtifact
 	CreateExecutionRequest   = api.CreateExecutionRequest
 	ResolvedExecutionLimits  = api.ResolvedExecutionLimits
 	ExecutionUsage           = api.ExecutionUsage
@@ -256,11 +258,13 @@ const (
 	ConsumerAuthModeOptional = api.ConsumerAuthModeOptional
 	ConsumerAuthModeRequired = api.ConsumerAuthModeRequired
 
-	ExecutionRuntimeNode22    = api.ExecutionRuntimeNode22
-	ExecutionRuntimeNode24    = api.ExecutionRuntimeNode24
-	ExecutionRuntimePython312 = api.ExecutionRuntimePython312
-	ExecutionRuntimePython313 = api.ExecutionRuntimePython313
-	ExecutionNetworkNone      = api.ExecutionNetworkNone
+	ExecutionRuntimeNode22       = api.ExecutionRuntimeNode22
+	ExecutionRuntimeNode24       = api.ExecutionRuntimeNode24
+	ExecutionRuntimePython312    = api.ExecutionRuntimePython312
+	ExecutionRuntimePython313    = api.ExecutionRuntimePython313
+	ExecutionProfileStandard     = api.ExecutionProfileStandard
+	ExecutionProfilePythonDataV1 = api.ExecutionProfilePythonDataV1
+	ExecutionNetworkNone         = api.ExecutionNetworkNone
 
 	ExecutionStatusQueued      = api.ExecutionStatusQueued
 	ExecutionStatusRestoring   = api.ExecutionStatusRestoring
@@ -276,4 +280,21 @@ const (
 	ExecutionEventStderr   = api.ExecutionEventStderr
 	ExecutionEventTerminal = api.ExecutionEventTerminal
 	ExecutionEventError    = api.ExecutionEventError
+)
+
+// Issue reporting and lifecycle.
+type (
+	IssueEvent                    = api.IssueEvent
+	IssueFrame                    = api.IssueFrame
+	Issue                         = api.Issue
+	IssueOccurrence               = api.IssueOccurrence
+	IssueRelease                  = api.IssueRelease
+	IssueActivity                 = api.IssueActivity
+	IssueImpact                   = api.IssueImpact
+	IssueDetail                   = api.IssueDetail
+	ListIssuesResponse            = api.ListIssuesResponse
+	IssueEventResponse            = api.IssueEventResponse
+	IssueActionRequest            = api.IssueActionRequest
+	CreateIssueIngestTokenRequest = api.CreateIssueIngestTokenRequest
+	IssueIngestToken              = api.IssueIngestToken
 )

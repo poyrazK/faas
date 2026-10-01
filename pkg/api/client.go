@@ -2014,6 +2014,14 @@ func (c *Client) ChangePlan(ctx context.Context, plan string) (AccountResponse, 
 		map[string]string{"plan": plan}, &out)
 }
 
+// GetOverageCap reads the account's saved monthly overage cap.
+// A nil cap means no ceiling; zero means no overage is allowed.
+func (c *Client) GetOverageCap(ctx context.Context) (AccountOverageCapResponse, error) {
+	var out AccountOverageCapResponse
+	err := c.do(ctx, "GET", "/v1/account/overage-cap", nil, &out)
+	return out, err
+}
+
 // RaiseOverageCap sets the account's monthly overage cap (issue #561).
 // Pass a non-negative int64 to set the cap (0 = "no overage allowed");
 // pass nil to clear the cap (NULL round-trip). The server returns the

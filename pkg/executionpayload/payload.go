@@ -40,20 +40,24 @@ var (
 // deliberately together so the scheduler opens one authenticated object and
 // never has to reconcile independently sealed fields.
 type Envelope struct {
-	Version    uint16              `json:"version"`
-	Source     string              `json:"source,omitempty"`
-	Entrypoint string              `json:"entrypoint,omitempty"`
-	Files      []api.ExecutionFile `json:"files,omitempty"`
-	Input      json.RawMessage     `json:"input"`
+	Profile     api.ExecutionProfile `json:"profile,omitempty"`
+	Version     uint16               `json:"version"`
+	Source      string               `json:"source,omitempty"`
+	Entrypoint  string               `json:"entrypoint,omitempty"`
+	Files       []api.ExecutionFile  `json:"files,omitempty"`
+	OutputFiles []string             `json:"output_files,omitempty"`
+	Input       json.RawMessage      `json:"input"`
 }
 
 // DecodedPayload is the authenticated plaintext handed to the scheduler
 // immediately before guest dispatch. Callers must discard it after use.
 type DecodedPayload struct {
-	Source     string
-	Entrypoint string
-	Files      []api.ExecutionFile
-	Input      json.RawMessage
+	Profile     api.ExecutionProfile
+	Source      string
+	Entrypoint  string
+	Files       []api.ExecutionFile
+	OutputFiles []string
+	Input       json.RawMessage
 }
 
 // Validate enforces the same hard limits as the guest protocol before any
@@ -61,6 +65,9 @@ type DecodedPayload struct {
 // checked by apid; these bounds prevent a malformed ciphertext from bypassing
 // the host/guest protocol's allocation guard.
 func (e Envelope) Validate() error {
+	if !e.Profile.Valid() {
+		return fmt.Errorf("%w: unknown profile", ErrInvalid)
+	}
 	if e.Version != CurrentVersion {
 		return fmt.Errorf("%w: unsupported version %d", ErrInvalid, e.Version)
 	}
@@ -70,6 +77,9 @@ func (e Envelope) Validate() error {
 		}
 	} else if err := api.ValidateExecutionBundle(e.Entrypoint, e.Files, api.ExecutionPlaintextFieldMaxBytes); err != nil {
 		return fmt.Errorf("%w: bundle is invalid: %w", ErrInvalid, err)
+	}
+	if err := api.ValidateExecutionOutputFiles(e.OutputFiles); err != nil {
+		return fmt.Errorf("%w: output files invalid", ErrInvalid)
 	}
 	if len(e.Input) == 0 || len(e.Input) > api.ExecutionPlaintextFieldMaxBytes || !json.Valid(e.Input) {
 		return fmt.Errorf("%w: input is missing, too large, or invalid JSON", ErrInvalid)
@@ -94,11 +104,16 @@ func SealRequest(recipient *age.X25519Recipient, request api.ResolvedExecutionRe
 		input = json.RawMessage("null")
 	}
 	envelope := Envelope{
-		Version:    CurrentVersion,
-		Source:     request.Source,
-		Entrypoint: request.Entrypoint,
-		Files:      cloneFiles(request.Files),
-		Input:      append(json.RawMessage(nil), input...),
+		Profile:     request.Profile,
+		Version:     CurrentVersion,
+		Source:      request.Source,
+		Entrypoint:  request.Entrypoint,
+		Files:       cloneFiles(request.Files),
+		OutputFiles: append([]string(nil), request.OutputFiles...),
+		Input:       append(json.RawMessage(nil), input...),
+	}
+	if envelope.Profile.Normalized() == api.ExecutionProfileStandard {
+		envelope.Profile = ""
 	}
 	if err := envelope.Validate(); err != nil {
 		return nil, err
@@ -159,8 +174,9 @@ func DecodeRequest(ctx context.Context, identities []*age.X25519Identity, sealed
 		return DecodedPayload{}, err
 	}
 	return DecodedPayload{
-		Source: envelope.Source, Entrypoint: envelope.Entrypoint,
-		Files: cloneFiles(envelope.Files), Input: append(json.RawMessage(nil), envelope.Input...),
+		Profile: envelope.Profile.Normalized(),
+		Source:  envelope.Source, Entrypoint: envelope.Entrypoint,
+		Files: cloneFiles(envelope.Files), OutputFiles: append([]string(nil), envelope.OutputFiles...), Input: append(json.RawMessage(nil), envelope.Input...),
 	}, nil
 }
 

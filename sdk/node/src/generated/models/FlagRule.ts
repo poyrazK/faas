@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Ordered customer targeting rule; supplied constraints combine with AND.
+ * Ordered customer targeting rule; supplied constraints combine with AND. Boolean flags require a boolean value; variant flags may omit value to use weighted assignment.
  */
 export type FlagRule = {
   id: string;
@@ -16,6 +16,6 @@ export type FlagRule = {
    * Basis points of eligible customers; omitted means all eligible customers.
    */
   rollout?: number;
-  value: boolean;
+  value?: (boolean | string);
 };
 

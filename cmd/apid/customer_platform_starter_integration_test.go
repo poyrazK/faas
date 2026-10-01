@@ -16,9 +16,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // make test-customer-platform installs the embedded starter outside the repo
@@ -142,6 +144,137 @@ func TestCustomerPlatformStarterTwoCustomerAcceptance(t *testing.T) {
 	}
 	request("DELETE", path, aliceV2, "", nil, http.StatusOK)
 	testCustomerPlatformQueuedWork(t, e, backend, address, alice, bob, aliceV2, bobKey)
+	testCustomerPlatformMonthlyBilling(t, e, tools, alice, bob)
+}
+
+// Exercise the local billing tools against the real PostgreSQL-backed owner
+// API. The large full-minute month is covered by the Node billing test; here
+// each daily window is seeded to prove server pricing, revisions and handoff.
+func testCustomerPlatformMonthlyBilling(t *testing.T, e pgHandlerEnv, tools starterOperator, alice, bob api.ApplyPlatformTenantResponse) {
+	t.Helper()
+	ctx := context.Background()
+	store := e.store.(*state.PgStore)
+	end := time.Now().UTC()
+	end = time.Date(end.Year(), end.Month(), 1, 0, 0, 0, 0, time.UTC)
+	start := end.AddDate(0, -1, 0)
+	appID := alice.Consumers[0].AppID
+	if _, err := store.CreateAPIConsumerRateCard(ctx, e.acct.ID, appID, "EUR", 10, start); err != nil {
+		t.Fatal(err)
+	}
+	for at := start; at.Before(end); at = at.Add(24 * time.Hour) {
+		for _, customer := range []struct {
+			tenant api.ApplyPlatformTenantResponse
+			units  int64
+		}{{alice, 3}, {bob, 5}} {
+			if _, err := store.RecordAPIConsumerUsage(ctx, state.APIConsumerUsageEvent{
+				EventID: uuid.NewString(), AccountID: e.acct.ID, AppID: appID,
+				ConsumerKey: customer.tenant.Consumers[0].ID, PlatformTenantID: customer.tenant.TenantID,
+				WindowStart: at, RequestCount: customer.units, BillableUnits: customer.units,
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	type monthlyReview struct {
+		TenantID   string `json:"tenant_id"`
+		Units      string `json:"billable_units"`
+		Amount     string `json:"amount_millicents"`
+		Statements []struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+			Units  string `json:"billable_units"`
+		} `json:"statements"`
+	}
+	var review, replay, bobReview monthlyReview
+	month := start.Format("2006-01")
+	tools.run(&review, "billing-month", alice.TenantID, month)
+	tools.run(&replay, "billing-month", alice.TenantID, month)
+	tools.run(&bobReview, "billing-month", bob.TenantID, month)
+	days := int(end.Sub(start) / (24 * time.Hour))
+	if review.TenantID != alice.TenantID || review.Units != fmt.Sprint(days*3) || review.Amount != fmt.Sprint(days*30) ||
+		len(review.Statements) != days || len(replay.Statements) != days || replay.Statements[0].ID != review.Statements[0].ID ||
+		bobReview.TenantID != bob.TenantID || bobReview.Units != fmt.Sprint(days*5) {
+		t.Fatal("monthly billing lost tenant boundaries, stable periods, pricing or replay identity")
+	}
+	for i, statement := range review.Statements {
+		if replay.Statements[i].ID != statement.ID || replay.Statements[i].Units != statement.Units {
+			t.Fatal("monthly billing retry changed a daily statement")
+		}
+		if statement.Status != "draft" {
+			t.Fatal("monthly review implicitly finalized a statement")
+		}
+		tools.run(nil, "statement-finalize", alice.TenantID, statement.ID)
+		invoiceRef := "customer-platform/" + statement.ID
+		tools.run(nil, "statement-handoff", alice.TenantID, statement.ID, invoiceRef)
+		tools.run(nil, "statement-handoff", alice.TenantID, statement.ID, invoiceRef)
+	}
+	if _, err := store.RecordAPIConsumerUsage(ctx, state.APIConsumerUsageEvent{
+		EventID: uuid.NewString(), AccountID: e.acct.ID, AppID: appID,
+		ConsumerKey: alice.Consumers[0].ID, PlatformTenantID: alice.TenantID,
+		WindowStart: start, RequestCount: 2, BillableUnits: 2,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	tools.run(&replay, "billing-month", alice.TenantID, month)
+	var lateRetry monthlyReview
+	tools.run(&lateRetry, "billing-month", alice.TenantID, month)
+	if replay.Units != fmt.Sprint(days*3+2) || replay.Amount != fmt.Sprint(days*30+20) ||
+		len(replay.Statements) != days+1 || lateRetry.Units != replay.Units ||
+		lateRetry.Amount != replay.Amount || len(lateRetry.Statements) != len(replay.Statements) {
+		t.Fatal("monthly review failed to retain finalized coverage and add late usage")
+	}
+	var adjustmentID string
+	adjustmentCount := 0
+	for _, statement := range replay.Statements {
+		if statement.Status == "draft" && statement.Units == "2" {
+			adjustmentID = statement.ID
+			adjustmentCount++
+		}
+	}
+	if adjustmentID == "" || adjustmentCount != 1 {
+		t.Fatal("late usage did not produce a separate two-unit adjustment")
+	}
+	lateRetryAdjustmentCount := 0
+	for _, statement := range lateRetry.Statements {
+		if statement.Status == "draft" && statement.Units == "2" {
+			if statement.ID != adjustmentID {
+				t.Fatal("retry changed the late-usage adjustment identity")
+			}
+			lateRetryAdjustmentCount++
+		}
+	}
+	if lateRetryAdjustmentCount != 1 {
+		t.Fatal("late-usage retry created zero or multiple adjustment statements")
+	}
+	tools.run(nil, "statement-finalize", alice.TenantID, adjustmentID)
+	tools.run(nil, "statement-handoff", alice.TenantID, adjustmentID, "customer-platform/"+adjustmentID)
+	tools.run(nil, "statement-handoff", alice.TenantID, adjustmentID, "customer-platform/"+adjustmentID)
+
+	var settled, bobAfterLate monthlyReview
+	tools.run(&settled, "billing-month", alice.TenantID, month)
+	tools.run(&bobAfterLate, "billing-month", bob.TenantID, month)
+	settledAdjustmentCount := 0
+	for _, statement := range settled.Statements {
+		if statement.ID == adjustmentID && statement.Status == "finalized" && statement.Units == "2" {
+			settledAdjustmentCount++
+		}
+		if statement.Status == "draft" {
+			t.Fatal("monthly review recreated billable usage after adjustment finalization")
+		}
+	}
+	if settled.TenantID != alice.TenantID || settled.Units != fmt.Sprint(days*3+2) ||
+		settled.Amount != fmt.Sprint(days*30+20) || len(settled.Statements) != days+1 || settledAdjustmentCount != 1 {
+		t.Fatal("finalized late usage was not retained exactly once")
+	}
+	if bobAfterLate.TenantID != bob.TenantID || bobAfterLate.Units != bobReview.Units ||
+		len(bobAfterLate.Statements) != len(bobReview.Statements) {
+		t.Fatal("Alice's late usage changed Bob's monthly billing")
+	}
+	for i := range bobReview.Statements {
+		if bobAfterLate.Statements[i].ID != bobReview.Statements[i].ID || bobAfterLate.Statements[i].Units != bobReview.Statements[i].Units {
+			t.Fatal("Alice's late usage leaked into Bob's monthly statements")
+		}
+	}
 }
 
 type starterOperator struct {

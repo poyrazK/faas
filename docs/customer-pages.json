@@ -35,6 +35,7 @@
     {"path": "faas_openapi_spec", "source": "docs/faas_openapi_spec.md"},
     {"path": "functions", "source": "docs/functions.md"},
     {"path": "gdpr", "source": "docs/account.md"},
+    {"path": "issues", "source": "docs/issues.md"},
     {"path": "jobs", "source": "docs/jobs.md"},
     {"path": "managed-postgres", "source": "docs/managed-postgres.md"},
     {"path": "networking", "source": "docs/networking.md"},

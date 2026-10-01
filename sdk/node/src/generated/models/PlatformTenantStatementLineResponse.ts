@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Immutable tenant-attributed UTC minute priced with either an app rate-card version or a tenant-wide rate-card version. Exactly one of consumer_id, surface_id, or jwt_authorization_rule_id is present.
+ * Compact immutable invoice line grouped by app, tenant-attributed consumer, surface, or JWT rule, and effective price source. window_start is the earliest included UTC minute; window_end is the exclusive end after the latest included minute and may span gaps. Exact minute coverage remains internal for additive revisions. Exactly one of consumer_id, surface_id, or jwt_authorization_rule_id is present.
  */
 export type PlatformTenantStatementLineResponse = {
   app_id: string;
@@ -11,6 +11,10 @@ export type PlatformTenantStatementLineResponse = {
   surface_id?: string;
   jwt_authorization_rule_id?: string;
   window_start: string;
+  /**
+   * Exclusive end after the latest included UTC minute; gaps inside the interval may have no usage.
+   */
+  window_end: string;
   billable_units: number;
   rate_card_id?: string;
   /**

@@ -1,4 +1,5 @@
 import { apiClient, onboard, prepareCredential, retryCredential, id } from "./client.js";
+import { draftMonth, finalizeStatement, handoffStatement } from "./billing.js";
 
 const usage = `Usage (run locally, never in the guest):
   node tools/customer.js onboard <app-slug> <external-ref> <customer-name>
@@ -6,6 +7,9 @@ const usage = `Usage (run locally, never in the guest):
   node tools/customer.js rotate <tenant-id> <consumer-id> <key-name> <old-key-id> <new-private-journal>
   node tools/customer.js retry <private-journal>
   node tools/customer.js usage <tenant-id> <since-ISO8601> <until-ISO8601>
+  node tools/customer.js billing-month <tenant-id> <YYYY-MM>
+  node tools/customer.js statement-finalize <tenant-id> <statement-id>
+  node tools/customer.js statement-handoff <tenant-id> <statement-id> <external-invoice-reference>
   node tools/customer.js suspend <tenant-id>
   node tools/customer.js resume <tenant-id>`;
 
@@ -23,6 +27,15 @@ async function run(command, args) {
       break;
     case "retry":
       if (args.length === 1) return retryCredential(api, args[0]);
+      break;
+    case "billing-month":
+      if (args.length === 2) return draftMonth(api, ...args);
+      break;
+    case "statement-finalize":
+      if (args.length === 2) return finalizeStatement(api, ...args);
+      break;
+    case "statement-handoff":
+      if (args.length === 3) return handoffStatement(api, ...args);
       break;
     case "usage":
       if (args.length === 3) {

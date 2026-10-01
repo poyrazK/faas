@@ -85,6 +85,8 @@ const (
 // /dashboard/account/set-password into the public spec — the
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/actions": true, // scoped HTML/CSRF adapter for the public issue action API
+
 	"GET /v1/dev/bridges/{id}/connect":           true, // ADR-378 scoped WebSocket transport, described in docs/dev-bridge.md
 	"GET /v1/dev/bridges/{id}/status":            true, // attachment-authenticated CLI readiness protocol
 	"GET /v1/account/dpa":                        true, // public markdown (no auth)
@@ -167,6 +169,9 @@ var routeExclude = map[string]bool{
 	"GET /oauth/callback":                                        true, // GitHub App install callback
 	"GET /oauth/code-callback":                                   true, // GitHub App user-to-server OAuth callback (PR-C)
 	"POST /dashboard/install/connect":                            true, // GitHub App "Connect GitHub" button (PR-C)
+	"GET /dashboard/dev-bridges":                                 true, // ADR-379 HTML session inventory
+	"GET /dashboard/dev-bridges/{id}":                            true, // ADR-379 HTML activity projection
+	"POST /dashboard/dev-bridges/{id}/revoke":                    true, // ADR-379 cookie + CSRF form
 	"POST /dashboard/apps/new":                                   true, // dashboard-only create + GitHub bind form adapter
 	"POST /dashboard/apps/{slug}/github/sync":                    true, // GitHub connection repair form; session-cookie + CSRF-only
 	"POST /dashboard/apps/{slug}/github/disconnect":              true, // GitHub connection disconnect form; session-cookie + CSRF-only
@@ -523,6 +528,8 @@ var schemaSpecOnly = map[string]bool{
 	"ApplicationStandardExtraPortRule":      true, // Field-typed appstandards.Rule checked by TestApplicationStandardSpecContracts.
 	"DevBridgeScope":                        true, // wire types live in pkg/devbridge; digests never cross the wire
 	"DevBridgeSession":                      true,
+	"DevBridgeActivity":                     true, // ADR-379 wire observer types live in pkg/devbridge
+	"DevBridgeRequestRecord":                true,
 	"DevBridgeCredentials":                  true,
 	"DevBridgeWebhookReplay":                true,
 	// ADR-377: evaluator contracts live in pkg/flags; publication metadata
@@ -530,11 +537,12 @@ var schemaSpecOnly = map[string]bool{
 	// DTOs in handlers_feature_flags.go and handlers_feature_flag_evidence.go.
 	// TestFeatureFlagsSpecContracts checks these actual encoded shapes,
 	// including their flattened embedded fields, against the OpenAPI schemas.
-	"FlagRule": true, "FeatureFlag": true, "FlagsConfig": true,
+	"FlagRule": true, "FlagVariant": true, "FeatureFlag": true, "FlagsConfig": true,
 	"FlagsBundle": true, "FeatureFlagVersion": true,
 	"FlagDecision": true, "FlagEvidence": true,
 	"UpdateFeatureFlagsRequest": true, "RollbackFeatureFlagsRequest": true,
 	"InspectFeatureFlagRequest": true, "FlagRequestEvidence": true, "FlagEvidencePage": true,
+	"FlagOutcome": true, "FlagOutcomesResponse": true,
 	// Migration preflight verdict level is a typed string, not a struct, so
 	// the DTO scanner does not surface it. Same pattern as TriggerKind and
 	// ResourceProfile below.
@@ -800,6 +808,7 @@ func testRoutesParity(t *testing.T, root string, spec *specDoc) {
 	// daemons share today.
 	sources := []string{
 		filepath.Join(root, "cmd/apid", serverSrcPath),
+		filepath.Join(root, "cmd/apid", "handlers_issues.go"),
 		filepath.Join(root, "cmd/gatewayd-internal", "run.go"),
 	}
 	var codeRoutes []string
@@ -976,6 +985,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 
 	files := []string{
 		filepath.Join(root, "pkg", "api", dtoFile),
+		filepath.Join(root, "pkg", "api", "issues.go"),
 		filepath.Join(root, "pkg", "api", "service_bindings.go"),
 		filepath.Join(root, "pkg", "api", "object_storage.go"),
 		filepath.Join(root, "pkg", "api", "object_storage_usage.go"),

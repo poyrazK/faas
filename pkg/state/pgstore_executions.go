@@ -83,12 +83,19 @@ func executionNullableTime(value interface{}) (*time.Time, error) {
 }
 
 func executionFromSQL(row sqlc.Execution) Execution {
+	var artifacts []api.ExecutionArtifact
+	if len(row.Artifacts) != 0 {
+		_ = json.Unmarshal(row.Artifacts, &artifacts)
+	}
 	return Execution{
-		ID:          pgUUIDString(row.ID),
-		AccountID:   pgUUIDString(row.AccountID),
-		Runtime:     api.ExecutionRuntime(row.Runtime),
-		Status:      api.ExecutionStatus(row.Status),
-		NetworkMode: api.ExecutionNetworkMode(row.NetworkMode),
+		Profile:            api.ExecutionProfile(row.Profile),
+		RuntimeImageDigest: row.RuntimeImageDigest.String,
+		Artifacts:          artifacts,
+		ID:                 pgUUIDString(row.ID),
+		AccountID:          pgUUIDString(row.AccountID),
+		Runtime:            api.ExecutionRuntime(row.Runtime),
+		Status:             api.ExecutionStatus(row.Status),
+		NetworkMode:        api.ExecutionNetworkMode(row.NetworkMode),
 		Limits: api.ResolvedExecutionLimits{
 			TimeoutMS:       int(row.TimeoutMs),
 			MemoryMB:        int(row.MemoryMb),
@@ -172,6 +179,7 @@ func (s *PgStore) CreateExecution(ctx context.Context, params CreateExecutionPar
 	row, err := q.ExecutionInsert(ctx, tx, sqlc.ExecutionInsertParams{
 		AccountID:       accountID,
 		Runtime:         string(params.Request.Runtime),
+		Profile:         string(params.Request.Profile.Normalized()),
 		NetworkMode:     string(params.Request.Network.Mode),
 		TimeoutMs:       int32(params.Request.Limits.TimeoutMS),
 		MemoryMb:        int32(params.Request.Limits.MemoryMB),
@@ -445,8 +453,12 @@ func (s *PgStore) CompleteExecution(ctx context.Context, params CompleteExecutio
 	if params.FailureMessage != nil {
 		failureMessage = *params.FailureMessage
 	}
+	artifacts := []byte{}
+	if len(params.Artifacts) != 0 {
+		artifacts, _ = json.Marshal(params.Artifacts)
+	}
 	row, err := q.ExecutionMarkTerminal(ctx, tx, sqlc.ExecutionMarkTerminalParams{
-		TerminalStatus: string(params.Status), ResultJson: string(params.Result), ResultBytes: int32(len(params.Result)),
+		Artifacts: artifacts, TerminalStatus: string(params.Status), ResultJson: string(params.Result), ResultBytes: int32(len(params.Result)),
 		Stdout: params.Stdout, Stderr: params.Stderr, OutputTruncated: params.OutputTruncated,
 		ExitCode: exitCode, FailureCode: failureCode, FailureMessage: failureMessage,
 		WallTimeMs: params.Usage.WallTimeMS, CpuTimeMs: params.Usage.CPUTimeMS,

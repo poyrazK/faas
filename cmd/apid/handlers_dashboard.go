@@ -201,6 +201,10 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			}
 			// G3 / issue #1397 — grouped application errors with
 			// fingerprint drill-down and the oldest redacted sample.
+			if islug, ok := parseAppIssuesPath(slug); ok {
+				s.renderAppIssues(w, r, log, acct, islug)
+				return
+			}
 			if eslug, ok := parseAppErrorsPath(slug); ok {
 				s.renderAppErrors(w, r, log, acct, eslug)
 				return

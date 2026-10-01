@@ -62,7 +62,7 @@ const (
 // queue forever.
 func (l *Loop) drainPendingFireNowRequests(ctx context.Context) {
 	for {
-		req, err := l.engine.Store().ClaimPendingFireNowRequest(ctx)
+		req, err := l.engine.Store().ClaimPendingFireNowRequestForNode(ctx, l.engine.nodeForRoute(l.engine.OwnerNodeID()))
 		if errors.Is(err, state.ErrFireNowRequestNotFound) {
 			return // empty queue — caller exits cleanly
 		}
@@ -82,12 +82,18 @@ func (l *Loop) drainPendingFireNowRequests(ctx context.Context) {
 // ErrNoCapacity → failed; anything else → failed with the err.Error()
 // text capped at 1 KB.
 func (l *Loop) processFireNowRequest(ctx context.Context, req state.FireNowRequest) {
+	if l.requeueFireNowOnOwnerChange(ctx, req) {
+		return
+	}
 	if cron, err := l.engine.Store().CronByID(ctx, req.CronID); err == nil && len(cron.Command) > 0 {
 		l.processCommandCronFireNow(ctx, req, cron)
 		return
 	}
 
 	run, err := l.RunCronNow(ctx, req.CronID, req.AccountID)
+	if err == nil && !run.Success && run.InvocationID == "" && l.requeueFireNowOnOwnerChange(ctx, req) {
+		return
+	}
 
 	// fireNowDispatchDuration: issue #791 PR-D / ADR-090 §"Sub-decision
 	// 7". One observation per terminal row, sized in seconds since
@@ -165,6 +171,23 @@ func (l *Loop) processFireNowRequest(ctx context.Context, req state.FireNowReque
 	if obs := l.ops.CronFireNowDispatchDuration(resultLabel); obs != nil {
 		obs.Observe(elapsed)
 	}
+}
+
+// Ownership can move after the atomic claim. Do not turn that handoff into a
+// customer-visible failed fire; leave the durable request for the new owner.
+func (l *Loop) requeueFireNowOnOwnerChange(ctx context.Context, req state.FireNowRequest) bool {
+	cron, err := l.engine.Store().CronByID(ctx, req.CronID)
+	if err != nil {
+		return false
+	}
+	app, err := l.engine.Store().AppByID(ctx, cron.AppID)
+	if err != nil || l.engine.ownsApp(app) {
+		return false
+	}
+	if err := l.engine.Store().RequeueFireNowRequest(ctx, req.ID); err != nil {
+		l.log.Warn("sched: fire_now: requeue owner change failed", "request_id", req.ID, "err", err)
+	}
+	return true
 }
 
 // processCommandCronFireNow queues a deployment-attached task for a manual

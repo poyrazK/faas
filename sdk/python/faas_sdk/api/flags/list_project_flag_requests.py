@@ -19,6 +19,7 @@ def _get_kwargs(
     *,
     customer_id: UUID | Unset = UNSET,
     value: bool | Unset = UNSET,
+    variant: str | Unset = UNSET,
     used: bool | Unset = UNSET,
     since: str | Unset = "24h",
     cursor: str | Unset = UNSET,
@@ -32,6 +33,8 @@ def _get_kwargs(
     params["customer_id"] = json_customer_id
 
     params["value"] = value
+
+    params["variant"] = variant
 
     params["used"] = used
 
@@ -112,6 +115,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     customer_id: UUID | Unset = UNSET,
     value: bool | Unset = UNSET,
+    variant: str | Unset = UNSET,
     used: bool | Unset = UNSET,
     since: str | Unset = "24h",
     cursor: str | Unset = UNSET,
@@ -128,6 +132,7 @@ def sync_detailed(
         key (str):
         customer_id (UUID | Unset):
         value (bool | Unset):
+        variant (str | Unset):
         used (bool | Unset):
         since (str | Unset):  Default: '24h'.
         cursor (str | Unset):
@@ -146,6 +151,7 @@ def sync_detailed(
         key=key,
         customer_id=customer_id,
         value=value,
+        variant=variant,
         used=used,
         since=since,
         cursor=cursor,
@@ -166,6 +172,7 @@ def sync(
     client: AuthenticatedClient | Client,
     customer_id: UUID | Unset = UNSET,
     value: bool | Unset = UNSET,
+    variant: str | Unset = UNSET,
     used: bool | Unset = UNSET,
     since: str | Unset = "24h",
     cursor: str | Unset = UNSET,
@@ -182,6 +189,7 @@ def sync(
         key (str):
         customer_id (UUID | Unset):
         value (bool | Unset):
+        variant (str | Unset):
         used (bool | Unset):
         since (str | Unset):  Default: '24h'.
         cursor (str | Unset):
@@ -201,6 +209,7 @@ def sync(
         client=client,
         customer_id=customer_id,
         value=value,
+        variant=variant,
         used=used,
         since=since,
         cursor=cursor,
@@ -215,6 +224,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     customer_id: UUID | Unset = UNSET,
     value: bool | Unset = UNSET,
+    variant: str | Unset = UNSET,
     used: bool | Unset = UNSET,
     since: str | Unset = "24h",
     cursor: str | Unset = UNSET,
@@ -231,6 +241,7 @@ async def asyncio_detailed(
         key (str):
         customer_id (UUID | Unset):
         value (bool | Unset):
+        variant (str | Unset):
         used (bool | Unset):
         since (str | Unset):  Default: '24h'.
         cursor (str | Unset):
@@ -249,6 +260,7 @@ async def asyncio_detailed(
         key=key,
         customer_id=customer_id,
         value=value,
+        variant=variant,
         used=used,
         since=since,
         cursor=cursor,
@@ -267,6 +279,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     customer_id: UUID | Unset = UNSET,
     value: bool | Unset = UNSET,
+    variant: str | Unset = UNSET,
     used: bool | Unset = UNSET,
     since: str | Unset = "24h",
     cursor: str | Unset = UNSET,
@@ -283,6 +296,7 @@ async def asyncio(
         key (str):
         customer_id (UUID | Unset):
         value (bool | Unset):
+        variant (str | Unset):
         used (bool | Unset):
         since (str | Unset):  Default: '24h'.
         cursor (str | Unset):
@@ -303,6 +317,7 @@ async def asyncio(
             client=client,
             customer_id=customer_id,
             value=value,
+            variant=variant,
             used=used,
             since=since,
             cursor=cursor,

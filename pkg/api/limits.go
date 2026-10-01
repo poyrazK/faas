@@ -62,6 +62,10 @@ const (
 	DevBridgeMaxHeaderBytes        = 32 << 10
 	DevBridgeInspectionRecords     = 100
 	DevBridgeInspectionPathBytes   = 1024
+	DevBridgeInventoryLimit        = 100
+	DevBridgeObservedSessions      = 512
+	DevBridgeLocalReadyTimeout     = 30 * time.Second
+	DevBridgeLocalStopTimeout      = 5 * time.Second
 	DevBridgeMaxWebhookReplays     = 100
 	DevBridgeReplayKeyBytes        = 64
 	DevBridgeMetadataRetention     = 7 * 24 * time.Hour
@@ -74,6 +78,7 @@ const (
 	FlagsMaxPerEnvironment     = 100
 	FlagsMaxGroups             = 100
 	FlagsMaxRules              = 32
+	FlagsMaxVariants           = 16
 	FlagsMaxCustomers          = 1000
 	FlagsMaxCustomerIDBytes    = 128
 	FlagsMaxBundleBytes        = 256 << 10
@@ -85,6 +90,7 @@ const (
 	FlagsMaxActorBytes         = 256
 	FlagsMaxHistoryPage        = 100
 	FlagsMaxRequestPage        = 100
+	FlagsMaxOutcomeGroups      = 100
 	FlagsMaxCursorBytes        = 2048
 	FlagsMaxConfigVersion      = int64(9007199254740991)
 )
@@ -5036,6 +5042,9 @@ const (
 	ExecutionOutputDefaultBytes     = 256 << 10
 	ExecutionOutputMinBytes         = 1 << 10
 	ExecutionOutputHardMaxBytes     = 16 << 20
+	// Artifact metadata and base64 content share the existing output budget.
+	ExecutionArtifactMaxFiles       = 8
+	ExecutionArtifactMaxPathBytes   = 256
 	ExecutionPlaintextFieldMaxBytes = 1 << 20
 	ExecutionPIDsMax                = 64
 	// ExecutionSealedPayloadMaxBytes is the storage-layer ceiling for the
@@ -7723,3 +7732,43 @@ func TenantEgressForbiddenPort(port int) (reason string, forbidden bool) {
 	reason, forbidden = tenantEgressForbiddenPorts[port]
 	return reason, forbidden
 }
+
+// Issues limits bound ingestion and storage independently of trace sampling.
+const (
+	IssueEventMaxBytes    = 64 << 10
+	IssueMessageMaxBytes  = 2048
+	IssueStackMaxBytes    = 16 << 10
+	IssueMaxFrames        = 32
+	IssueMaxFrameBytes    = 512
+	IssueMaxTypeBytes     = 256
+	IssuePageSize         = 50
+	IssueCursorMaxBytes   = 512
+	IssueMaxTokenLifetime = 90 * 24 * time.Hour
+	IssueMaxClockSkew     = 5 * time.Minute
+)
+
+type IssueLimits struct {
+	Enabled         bool
+	IssuesPerApp    int
+	EventsPerApp    int
+	EventsPerMinute int
+	RetentionDays   int
+	TokensPerApp    int
+}
+
+func (p Plan) IssueLimits() IssueLimits {
+	switch p {
+	case PlanHobby:
+		return IssueLimits{true, 200, 10000, 120, 7, 20}
+	case PlanPro:
+		return IssueLimits{true, 1000, 50000, 600, 30, 100}
+	case PlanScale:
+		return IssueLimits{true, 5000, 200000, 2400, 90, 200}
+	default:
+		return IssueLimits{}
+	}
+}
+
+const IssueMaintenanceBatch = 1000
+const IssueMaintenanceInterval = time.Minute
+const IssueMaxBatchEvents = 32

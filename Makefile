@@ -46,6 +46,11 @@ ANSIBLE_PLAYBOOK = ANSIBLE_CONFIG="$(ANSIBLE_CONFIG)" ansible-playbook
 test-customer-platform: ## Run the two-customer starter acceptance with disposable PostgreSQL databases (no KVM)
 	@GO="$(GO)" sh scripts/test-customer-platform.sh
 
+.PHONY: bench-platform-tenant-coverage
+bench-platform-tenant-coverage: ## Measure 90-day, two-app statement coverage reads/writes on disposable PostgreSQL
+	@test -n "$$DATABASE_URL" || (echo "DATABASE_URL not set — set it to a disposable PostgreSQL database"; exit 1)
+	@GO="$(GO)" sh scripts/bench-platform-tenant-coverage.sh
+
 .PHONY: help
 help: ## List targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -535,6 +540,10 @@ metal-lima: ## Run metal tests locally on an M3+ Mac via Lima nested KVM (see de
 	limactl shell --workdir "$(CURDIR)" faas-metal sudo ./deploy/lima/run-metal.sh
 
 .PHONY: native-m9-acceptance
+.PHONY: native-dev-bridge-acceptance
+native-dev-bridge-acceptance: ## Verify Dev Bridge against designated native split-box fixtures and public TLS
+	@bash scripts/ci/run-native-dev-bridge-acceptance.sh
+
 native-m9-acceptance: ## M9: run the guarded two-node failure-safe drill on the native x86 split-box pair
 	@bash scripts/ci/run-native-m9-acceptance.sh
 
@@ -1315,7 +1324,7 @@ sdk-smoke-python: ## Build fakeapid fixture + run Python SDK smoke + unit tests
 
 .PHONY: sdk-unit-python
 sdk-unit-python: ## Run Python SDK unit tests (no fixture required)
-	@cd sdk/python && .venv/bin/python -m pytest tests/test_client.py tests/test_sse.py
+	@cd sdk/python && .venv/bin/python -m pytest tests/test_client.py tests/test_sse.py tests/test_dev_bridge.py
 
 .PHONY: test-flags
 test-flags: ## Validate customer-aware flag release, SDK and request evidence against disposable Postgres
@@ -1335,3 +1344,7 @@ test-flags-metal: ## Validate Node Flags refresh after native VM restore (root, 
 	@test -r "$$FAAS_BUILDER_BASE_PATH" || (echo "FAAS_BUILDER_BASE_PATH must name a readable builder base" >&2; exit 1)
 	@cd sdk/node && npm ci --ignore-scripts --no-audit --no-fund && npm run build
 	@RUN_REGEX='^TestFeatureFlagsNativeParkRestoreMetal$$' $(MAKE) test-metal PKGS=./cmd/e2e/...
+
+.PHONY: test-issues
+test-issues: ## Real PostgreSQL and SDK process acceptance for Gregale Issues
+	@bash scripts/test-issues.sh

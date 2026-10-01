@@ -59,6 +59,43 @@ type DevBridgeDependency struct {
 	EnvironmentURL string `json:"environment_url"`
 }
 
+type DevBridgeSessionSummary struct {
+	Session         DevBridgeSession `json:"session"`
+	ConnectionState string           `json:"connection_state"`
+}
+type ListDevBridgesResponse struct {
+	Sessions []DevBridgeSessionSummary `json:"sessions"`
+}
+type DevBridgeRequestRecord struct {
+	ID            uint64    `json:"id"`
+	StartedAt     time.Time `json:"started_at"`
+	Method        string    `json:"method"`
+	Path          string    `json:"path"`
+	Status        int       `json:"status"`
+	DurationMS    int64     `json:"duration_ms"`
+	ResponseBytes int64     `json:"response_bytes"`
+	Complete      bool      `json:"complete"`
+	Error         string    `json:"error,omitempty"`
+}
+type DevBridgeActivity struct {
+	ConnectionState string                   `json:"connection_state"`
+	ConnectedAt     *time.Time               `json:"connected_at,omitempty"`
+	DisconnectedAt  *time.Time               `json:"disconnected_at,omitempty"`
+	Requests        []DevBridgeRequestRecord `json:"requests"`
+}
+
+func (c *Client) ListDevBridges(ctx context.Context) (ListDevBridgesResponse, error) {
+	var out ListDevBridgesResponse
+	err := c.do(ctx, "GET", "/v1/dev/bridges", nil, &out)
+	return out, err
+}
+
+func (c *Client) GetDevBridgeActivity(ctx context.Context, id string) (DevBridgeActivity, error) {
+	var out DevBridgeActivity
+	err := c.do(ctx, "GET", "/v1/dev/bridges/"+url.PathEscape(id)+"/activity", nil, &out)
+	return out, err
+}
+
 func (c *Client) CreateDevBridge(ctx context.Context, request CreateDevBridgeRequest) (CreateDevBridgeResponse, error) {
 	var out CreateDevBridgeResponse
 	err := c.do(ctx, "POST", "/v1/dev/bridges", request, &out)

@@ -49,6 +49,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 | [`run`](#run) | Run untrusted code in an isolated disposable microVM |
 | [`runs`](#runs) | Inspect or cancel isolated disposable runs |
 | [`invocations`](#invocations) | Per-account invocation ledger (invocations list\|get\|wait &lt;id&gt;) |
+| [`issues`](#issues) | Group failures and track ownership and release-aware resolution |
 | [`debug`](#debug) | Inspect production requests and regressions |
 | [`trace`](#trace) | Look up a W3C trace through the account trace index |
 | [`invitations`](#invitations) | Standalone invitation actions (invitations peek &lt;token&gt;\|accept &lt;token&gt;) |
@@ -1647,6 +1648,38 @@ run an HTTP service locally in a remote development environment
 | `--entrypoint <APP>` | remote frontend for the session URL |  |
 | `--inspect` | inspect recent requests in a local browser |  |
 | `--replay-webhook <INVOCATION>` | copy one provider-verified webhook receipt locally |  |
+| `--ready-path <PATH>` | check a local HTTP readiness path before attaching |  |
+| `--bind-env <BINDING>` | map ENV_KEY=dependency to its local proxy URL; repeatable |  |
+
+#### dev bridge list
+
+list active account development bridges
+
+`gregale dev bridge list`
+
+#### dev bridge status
+
+inspect a session and recent request activity
+
+`gregale dev bridge status SESSION`
+
+#### dev bridge revoke
+
+revoke a session and disconnect its laptop
+
+`gregale dev bridge revoke SESSION`
+
+#### dev bridge doctor
+
+check admission, relay and local listener using a temporary session
+
+`gregale dev bridge doctor APP [--environment <ENV>] [--local-port <PORT>] [--entrypoint <APP>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--environment <ENV>` | named development environment |  |
+| `--local-port <PORT>` | local HTTP service port |  |
+| `--entrypoint <APP>` | remote frontend |  |
 
 ### dev history
 
@@ -1727,7 +1760,7 @@ gregale test import --from collection.json --project my-api
 gregale test --validate
 gregale test --suite smoke --engine local --fail-fast --junit test-results.xml
 gregale test --suite smoke --engine local --report test-results.json --junit test-results.xml --html test-results.html
-gregale test compare baseline.json current.json --html comparison.html
+gregale test compare baseline.json current.json --budget test-budget.yaml --html comparison.html
 gregale test --suite regression --validate
 gregale test --scenario customer-export --preflight
 gregale test --scenario customer-export --profile restored --repeat 3 --max-workload-minutes 135 --report test-results.json --junit test-results.xml
@@ -1759,19 +1792,56 @@ gregale test init --from openapi.yaml --project my-api --source .
 
 ### test compare
 
-Compare two saved JSON run reports without rerunning scenarios
+Compare saved JSON run reports, enforce budgets, and write summaries
 
-`gregale test compare <before.json> <after.json> [--html <PATH>]`
+`gregale test compare <before.json> <after.json> [--budget <PATH>] [--html <PATH>] [--markdown <PATH>] [--github-summary]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--budget <PATH>` | apply comparison budgets from a YAML file; fail if a check fails or is inconclusive |  |
 | `--html <PATH>` | write a standalone HTML comparison report |  |
+| `--markdown <PATH>` | write a Markdown comparison summary |  |
+| `--github-summary` | append a Markdown summary to GITHUB_STEP_SUMMARY |  |
 
 Examples:
 
 ```sh
 gregale test compare baseline.json current.json
-gregale test compare baseline.json current.json --html comparison.html
+gregale test compare baseline.json current.json --budget test-budget.yaml --markdown comparison.md
+gregale test compare baseline.json current.json --budget test-budget.yaml --github-summary
+```
+
+### test ci
+
+Set up GitHub Actions for scenario tests
+
+#### test ci init
+
+Generate GitHub Actions for local, simulated, or real-VM scenario tests
+
+`gregale test ci init [--manifest <PATH>] [--suite <NAME>] [--engine <ENGINE>] [--load] [--repeat <N>] [--profiles <LIST>] [--max-workload-minutes <N>] [--environment <NAME>] [--branch <NAME>] [--baseline-max-age-days <N>] [--workflow <PATH>] [--budget <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--manifest <PATH>` | scenario manifest path |  |
+| `--suite <NAME>` | suite from the manifest (inferred when exactly one exists) |  |
+| `--engine <ENGINE>` | override suite engine for CI | one of `local` · `simulated` · `real-vm` |
+| `--load` | include local HTTP load execution |  |
+| `--repeat <N>` | runs per scenario (default 1; default 3 with --load) |  |
+| `--profiles <LIST>` | real-VM lifecycle profiles (all or comma-separated) |  |
+| `--max-workload-minutes <N>` | required real-VM workload-minute limit per profile job |  |
+| `--environment <NAME>` | GitHub environment containing real-VM credentials |  |
+| `--branch <NAME>` | baseline branch for local and simulated workflows |  |
+| `--baseline-max-age-days <N>` | maximum baseline artifact age (default 30; 0 disables age check) |  |
+| `--workflow <PATH>` | new GitHub Actions workflow path |  |
+| `--budget <PATH>` | comparison budget path for local and simulated workflows |  |
+
+Examples:
+
+```sh
+gregale test ci init --manifest gregale-test.yaml --suite smoke
+gregale test ci init --manifest gregale-test.yaml --suite smoke --baseline-max-age-days 14
+gregale test ci init --manifest tests/scenario-acceptance/gregale-test.yaml --suite real-vm --engine real-vm --profiles warm,cold,restored --max-workload-minutes 135
 ```
 
 ### test import
@@ -2309,10 +2379,11 @@ Functional smoke test (invoke [--async] &lt;slug&gt; [--payload J|@file|-]; slug
 
 Run untrusted code in an isolated disposable microVM
 
-`gregale run [--runtime <R>] [--source <CODE>] [--file <PATH>] [--input <J|@file|->] [--timeout-ms <N>] [--memory-mb <N>] [--cpu-millicores <N>] [--ephemeral-disk-mb <N>] [--max-output-bytes <N>] [--wait] [--watch] [--poll-interval <D>] [--wait-timeout <D>]`
+`gregale run [--profile <P>] [--runtime <R>] [--source <CODE>] [--file <PATH>] [--input <J|@file|->] [--timeout-ms <N>] [--memory-mb <N>] [--cpu-millicores <N>] [--ephemeral-disk-mb <N>] [--max-output-bytes <N>] [--output-file <PATH>] [--output-dir <DIR>] [--wait] [--watch] [--poll-interval <D>] [--wait-timeout <D>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--profile <P>` | preinstalled dependencies (data requires python313) | one of `standard` · `python-data-v1` |
 | `--runtime <R>` | runtime (node22\|node24\|python312\|python313) | one of `node22` · `node24` · `python312` · `python313` |
 | `--source <CODE>` | inline source code |  |
 | `--file <PATH>` | source file (regular file only) |  |
@@ -2322,6 +2393,8 @@ Run untrusted code in an isolated disposable microVM
 | `--cpu-millicores <N>` | CPU limit |  |
 | `--ephemeral-disk-mb <N>` | ephemeral scratch size |  |
 | `--max-output-bytes <N>` | combined output cap |  |
+| `--output-file <PATH>` | output file below context.output_dir to export (repeatable) |  |
+| `--output-dir <DIR>` | save artifacts locally; implies --wait |  |
 | `--wait` | wait for terminal result |  |
 | `--watch` | stream live output while waiting |  |
 | `--poll-interval <D>` | status polling interval with --wait |  |
@@ -2343,6 +2416,16 @@ List runs
 | `--limit <N>` | maximum number of runs (1..200) |  |
 | `--offset <N>` | number of matching runs to skip |  |
 | `--status <STATUS>` | filter by lifecycle status | one of `queued` · `restoring` · `running` · `succeeded` · `failed` · `timed_out` · `out_of_memory` · `cancelled` |
+
+### runs artifacts
+
+Save output artifacts from a successful run
+
+`gregale runs artifacts <id> [--output-dir <DIR>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--output-dir <DIR>` | local destination (required) |  |
 
 ### runs get
 
@@ -2379,6 +2462,72 @@ Wait for one invocation to finish
 |---|---|---|
 | `--timeout <D>` | stop waiting after this duration (0 waits indefinitely) |  |
 | `--interval <D>` | time between status checks (default 1s) |  |
+
+
+## issues
+
+Group failures and track ownership and release-aware resolution
+
+`gregale issues [<subcommand>] [--app <SLUG>] [--deployment <UUID>] [--state <STATE>] [--environment <ENV>] [--cursor <CURSOR>] [--release-cursor <CURSOR>] [--activity-cursor <CURSOR>] [--assignee <UUID>] [--since <RFC3339>] [--until <RFC3339>] [--name <NAME>] [--expires-in <D>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | application slug |  |
+| `--deployment <UUID>` | fixed or token-bound deployment |  |
+| `--state <STATE>` | filter issue state |  |
+| `--environment <ENV>` | environment filter |  |
+| `--cursor <CURSOR>` | issue-list or occurrence cursor |  |
+| `--release-cursor <CURSOR>` | release history cursor |  |
+| `--activity-cursor <CURSOR>` | activity history cursor |  |
+| `--assignee <UUID>` | owner account |  |
+| `--since <RFC3339>` | impact window start |  |
+| `--until <RFC3339>` | ignore until |  |
+| `--name <NAME>` | credential name |  |
+| `--expires-in <D>` | credential lifetime |  |
+
+Examples:
+
+```sh
+gregale issues list --app my-api
+gregale issues get ISSUE_ID --app my-api
+gregale issues resolve ISSUE_ID --app my-api --deployment DEPLOYMENT_ID
+```
+
+### issues list
+
+List grouped issues
+
+### issues get
+
+Read evidence and release history
+
+### issues assign
+
+Assign an issue to an account
+
+### issues resolve
+
+Resolve in a deployment
+
+### issues reopen
+
+Reopen an issue
+
+### issues ignore
+
+Ignore until a timestamp
+
+### issues tokens
+
+List ingest credentials
+
+### issues create-token
+
+Create a deployment-bound ingest credential
+
+### issues revoke-token
+
+Revoke an ingest credential
 
 
 ## debug

@@ -63,7 +63,7 @@ means Gregale has observed a successful RTT within the last 15 minutes; it is
 not a new connectivity test.
 
 Same-account apps can call one another as
-`http://APP_SLUG.svc.gregale:10080`. For external VPC resources, Pro and Scale
+`http://APP_SLUG.svc.gregale:10081`. For external VPC resources, Pro and Scale
 customers can record a provider-neutral attachment intent with `network attach`.
 The API accepts non-overlapping RFC1918 IPv4 ranges (up to 16 on Pro and 64 on
 Scale), returns `pending`, and keeps traffic blocked until a provider connector
@@ -171,12 +171,18 @@ public-api  ──►  auth
             └─►  recommendation
 ```
 
+New HTTP bindings use port **10081**, which works with standard Node `fetch`.
+Port 10080 remains available for previously deployed callers; redeploying a
+caller refreshes its generated binding URLs. Both ports use the same caller
+identity, account, binding, and target authorization checks. HTTPS bindings
+remain an explicit transport choice.
+
 Each dependency is an ordinary app. From `public-api`, call them as:
 
 ```text
-http://auth.svc.gregale:10080
-http://billing.svc.gregale:10080
-http://recommendation.svc.gregale:10080
+http://auth.svc.gregale:10081
+http://billing.svc.gregale:10081
+http://recommendation.svc.gregale:10081
 ```
 
 The name is the project workload name (or the app slug for a standalone app).
@@ -339,7 +345,7 @@ Project-managed and preview apps reject changes to these fields on PATCH; edit t
 project source instead. Binding declarations do not expose services publicly.
 
 Bound services can also be called through the short private alias
-`http://billing.internal:10080`. Gregale's node-local DNS answers that name
+`http://billing.internal:10081`. Gregale's node-local DNS answers that name
 only for a VM whose app declares a `billing` binding. A direct request to the
 service proxy with `Host: billing.internal` is checked against the same binding
 inventory, so bypassing DNS cannot grant access. The existing same-account,
@@ -809,7 +815,7 @@ gregale app APP_ID --visibility public
 
 Internal apps do not receive a public platform-subdomain or verified custom
 domain route. Service discovery continues to resolve them through
-`APP_SLUG.svc.gregale:10080`, where the service proxy enforces caller identity
+`APP_SLUG.svc.gregale:10081`, where the service proxy enforces caller identity
 and same-account authorization. Visibility changes are audited and invalidate
 the gateway route cache.
 
@@ -832,7 +838,7 @@ timeline with trigger `service.mesh`, distinct from public `gateway` traffic.
 Internal calls honour the target's wire protocol (ADR-197). An app configured
 `app_protocol: grpc` or `http2` is reached over the H2C guest bridge, and the
 node-local listener accepts H2C prior knowledge, so a workload can use an
-ordinary gRPC client against `http://APP_SLUG.svc.gregale:10080`. Response
+ordinary gRPC client against `http://APP_SLUG.svc.gregale:10081`. Response
 trailers — including `grpc-status` — are preserved across the hop.
 `Connection: Upgrade` requests (WebSocket and friends) take the verbatim-bytes
 bridge and are neither buffered nor retried; they require the target app to

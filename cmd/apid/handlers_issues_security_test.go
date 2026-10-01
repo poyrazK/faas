@@ -1,0 +1,300 @@
+//go:build !no_pg
+
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/issues"
+	"github.com/onebox-faas/faas/pkg/state"
+)
+
+func TestIssueOTLPThroughProductionRouter(t *testing.T) {
+	e := setupPGHandler(t, api.PlanHobby)
+	app := seedPGApp(t, e, "issue-otlp")
+	token := issueCreateToken(t, e, app.Slug, issueSeedDeployment(t, e, app, 1))
+	body := map[string]any{"resourceLogs": []any{map[string]any{"scopeLogs": []any{map[string]any{"logRecords": []any{map[string]any{"timeUnixNano": fmt.Sprint(time.Now().UnixNano()), "attributes": []any{map[string]any{"key": "exception.type", "value": map[string]string{"stringValue": "DateError"}}, map[string]any{"key": "exception.message", "value": map[string]string{"stringValue": "invalid format"}}}}}}}}}}
+	path := "/v1/apps/" + app.Slug + "/issue-events/otlp/logs"
+	for range 2 {
+		if w := e.do(t, "POST", path, body, map[string]string{"Authorization": "Bearer " + token.Token}); w.Code != 200 {
+			t.Fatalf("export %d %s", w.Code, w.Body.String())
+		}
+	}
+	list := issueDecode[api.ListIssuesResponse](t, e.do(t, "GET", "/v1/apps/"+app.Slug+"/issues", nil, nil), 200)
+	if len(list.Items) != 1 || list.Items[0].EventCount != 1 {
+		t.Fatalf("export retry not idempotent: %+v", list)
+	}
+	if w := e.do(t, "POST", path, map[string]any{"resourceLogs": "invalid"}, map[string]string{"Authorization": "Bearer " + token.Token}); w.Code != 400 {
+		t.Fatal("invalid OTLP export accepted")
+	}
+}
+
+func TestIssueCredentialContextAndQuotaBoundaries(t *testing.T) {
+	e := setupPGHandler(t, api.PlanHobby)
+	app := seedPGApp(t, e, "issue-boundary")
+	dep := issueSeedDeployment(t, e, app, 1)
+	token := issueCreateToken(t, e, app.Slug, dep)
+	now := time.Now().UTC()
+	event := api.IssueEvent{EventID: uuid.NewString(), OccurredAt: now, ExceptionType: "Error", Message: "failed"}
+	for _, field := range []string{"account_id", "deployment_id", "customer_id", "tenant_id", "locals"} {
+		raw, _ := json.Marshal(event)
+		var body map[string]any
+		_ = json.Unmarshal(raw, &body)
+		body[field] = uuid.NewString()
+		if w := e.do(t, "POST", "/v1/apps/"+app.Slug+"/issue-events", body, map[string]string{"Authorization": "Bearer " + token.Token}); w.Code != 400 {
+			t.Fatalf("accepted forged %s: %d", field, w.Code)
+		}
+	}
+	other := seedPGApp(t, e, "issue-worker-other")
+	inv, err := e.store.EnqueueInvocation(t.Context(), state.Invocation{AppID: other.ID, AccountID: e.acct.ID, Source: state.InvocationAsyncInvoke, State: state.InvocationPending, Method: "POST", Path: "/", Payload: json.RawMessage(`{}`), Headers: json.RawMessage(`{}`), DueAt: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	event.InvocationID = inv.ID
+	if w := issueSend(t, e, app.Slug, token, event); w.Code != 404 {
+		t.Fatalf("foreign worker accepted %d %s", w.Code, w.Body.String())
+	}
+	event.InvocationID = ""
+	lim := e.acct.Plan.IssueLimits()
+	lim.EventsPerApp = 1
+	normalized, fp, title, err := issues.Normalize(event, now, lim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := state.RecordIssueParams{Credential: state.IssueCredential{AccountID: e.acct.ID, AppID: app.ID, DeploymentID: dep.ID, Environment: "application"}, Event: normalized, Fingerprint: fp, Title: title, PayloadHash: issues.PayloadDigest(event), GroupingVersion: issues.GroupingVersion, Limits: lim, Now: now}
+	st := e.store.(state.IssueStore)
+	if _, err = st.RecordIssue(t.Context(), in); err != nil {
+		t.Fatal(err)
+	}
+	in.Event.EventID = uuid.NewString()
+	in.PayloadHash = issues.PayloadDigest(in.Event)
+	_, err = st.RecordIssue(t.Context(), in)
+	var limit *state.IssueLimitError
+	if !errors.As(err, &limit) || limit.Limit != 1 || limit.Observed != 2 {
+		t.Fatalf("quota error lacks evidence: %v", err)
+	}
+	if _, err = st.FindIssueToken(t.Context(), []byte("wrong"), now); !errors.Is(err, state.ErrNotFound) {
+		t.Fatal("unknown credential found")
+	}
+}
+
+func TestIssueDashboardEscapingAndCSRF(t *testing.T) {
+	e := setupPGHandler(t, api.PlanHobby)
+	app := seedPGApp(t, e, "issue-dashboard")
+	dep := issueSeedDeployment(t, e, app, 1)
+	token := issueCreateToken(t, e, app.Slug, dep)
+	event := api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "Error", Message: `<script>alert("x")</script>`}
+	result := issueDecode[api.IssueEventResponse](t, issueSend(t, e, app.Slug, token, event), 202)
+	page := "/dashboard/apps/" + app.Slug + "/issues?issue=" + result.IssueID
+	r := httptest.NewRequest("GET", page, nil)
+	e.addAdminSession(t, r)
+	w := httptest.NewRecorder()
+	e.h.ServeHTTP(w, r)
+	if w.Code != 200 {
+		t.Fatalf("dashboard %d %s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), `<script>alert`) || !strings.Contains(w.Body.String(), "&lt;script&gt;") {
+		t.Fatal("exception HTML not escaped")
+	}
+	var csrf *http.Cookie
+	for _, c := range w.Result().Cookies() {
+		if c.Name == dashboardIssueCookie {
+			csrf = c
+		}
+	}
+	if csrf == nil {
+		t.Fatal("no scoped CSRF credential")
+	}
+	action := "/dashboard/apps/" + app.Slug + "/issues/" + result.IssueID + "/actions"
+	for _, valid := range []bool{false, true} {
+		form := url.Values{"action": {"resolve"}, "fixed_deployment_id": {dep.ID}}
+		if valid {
+			form.Set("csrf_token", csrf.Value)
+		}
+		req := httptest.NewRequest("POST", action, strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		for _, c := range r.Cookies() {
+			req.AddCookie(c)
+		}
+		req.AddCookie(csrf)
+		rec := httptest.NewRecorder()
+		e.h.ServeHTTP(rec, req)
+		if valid && rec.Code != 303 {
+			t.Fatalf("valid form %d %s", rec.Code, rec.Body.String())
+		}
+		if !valid && rec.Code < 400 {
+			t.Fatal("CSRF bypass")
+		}
+	}
+}
+
+func TestIssueAutomaticHTTPSource(t *testing.T) {
+	e := setupPGHandler(t, api.PlanHobby)
+	app := seedPGApp(t, e, "issue-http")
+	dep := issueSeedDeployment(t, e, app, 1)
+	req := &apidpb.IncrementAppErrorRequest{AccountId: e.acct.ID, AppId: app.ID, DeploymentId: dep.ID, RequestId: uuid.NewString(), ReceivedAtUnixMs: time.Now().UnixMilli(), HttpStatus: 500, ErrorClass: "HTTPError", Fingerprint: strings.Repeat("a", 64), RouteTemplate: "/exports"}
+	if err := recordHTTPIssue(t.Context(), e.store, req); err != nil {
+		t.Fatal(err)
+	}
+	if err := recordHTTPIssue(t.Context(), e.store, req); err != nil {
+		t.Fatal(err)
+	}
+	list := issueDecode[api.ListIssuesResponse](t, e.do(t, "GET", "/v1/apps/"+app.Slug+"/issues", nil, nil), 200)
+	if len(list.Items) != 1 || list.Items[0].EventCount != 1 {
+		t.Fatal("HTTP observation retry inflated issues")
+	}
+}
+
+func TestIssueLaterReleaseAndRetention(t *testing.T) {
+	e := setupPGHandler(t, api.PlanHobby)
+	app := seedPGApp(t, e, "issue-maintain")
+	fixed := issueSeedDeployment(t, e, app, 1)
+	later := issueSeedDeployment(t, e, app, 2)
+	token := issueCreateToken(t, e, app.Slug, fixed)
+	otherToken := issueCreateToken(t, e, app.Slug, later)
+	event := api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "Error", Message: "failed"}
+	out := issueDecode[api.IssueEventResponse](t, issueSend(t, e, app.Slug, token, event), 202)
+	base := "/v1/apps/" + app.Slug + "/issues/" + out.IssueID
+	issueDecode[api.Issue](t, e.do(t, "POST", base+"/actions", api.IssueActionRequest{Action: "resolve", FixedDeploymentID: fixed.ID}, nil), 200)
+	event.EventID = uuid.NewString()
+	event.OccurredAt = time.Now().UTC()
+	if result := issueDecode[api.IssueEventResponse](t, issueSend(t, e, app.Slug, otherToken, event), 202); !result.Regressed {
+		t.Fatal("newer release did not reopen")
+	}
+	until := time.Now().Add(time.Minute)
+	issueDecode[api.Issue](t, e.do(t, "POST", base+"/actions", api.IssueActionRequest{Action: "ignore", IgnoredUntil: &until}, nil), 200)
+	maintenance := e.store.(interface {
+		MaintainIssues(ctx context.Context, now time.Time) error
+	})
+	if err := maintenance.MaintainIssues(t.Context(), time.Now().Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	detail := issueDecode[api.IssueDetail](t, e.do(t, "GET", base, nil, nil), 200)
+	if detail.Issue.State != "open" {
+		t.Fatal("ignore expiry did not reopen")
+	}
+	if err := maintenance.MaintainIssues(t.Context(), time.Now().AddDate(0, 0, 8)); err != nil {
+		t.Fatal(err)
+	}
+	detail = issueDecode[api.IssueDetail](t, e.do(t, "GET", base, nil, nil), 200)
+	if len(detail.Events) != 0 || detail.Issue.EventCount != 2 || len(detail.Releases) != 2 {
+		t.Fatal("retention removed durable history or retained occurrences")
+	}
+}
+
+func TestIssueLateAttributionAndHistoryPagination(t *testing.T) {
+	e := setupPGHandler(t, api.PlanHobby)
+	app := seedPGApp(t, e, "issue-late")
+	dep := issueSeedDeployment(t, e, app, 1)
+	token := issueCreateToken(t, e, app.Slug, dep)
+	request, tenant, consumer := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	event := api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "DateError", Message: "invalid format", RequestID: request}
+	out := issueDecode[api.IssueEventResponse](t, issueSend(t, e, app.Slug, token, event), 202)
+	base := "/v1/apps/" + app.Slug + "/issues/" + out.IssueID
+	if detail := issueDecode[api.IssueDetail](t, e.do(t, "GET", base, nil, nil), 200); detail.Impact.UnattributedEvents != 1 {
+		t.Fatal("invented early attribution")
+	}
+	if _, err := e.pool.Exec(t.Context(), `INSERT INTO platform_tenants(id,account_id,external_ref,name) VALUES($1,$2,'late','late')`, tenant, e.acct.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.pool.Exec(t.Context(), `INSERT INTO api_consumers(id,account_id,app_id,external_ref,name,platform_tenant_id) VALUES($1,$2,$3,'late','late',$4)`, consumer, e.acct.ID, app.ID, tenant); err != nil {
+		t.Fatal(err)
+	}
+	auditEvent := uuid.NewString()
+	if _, err := e.pool.Exec(t.Context(), `INSERT INTO api_consumer_usage_events(event_id,account_id,app_id,consumer_key,window_start,request_count,error_count,billable_units,platform_tenant_id) VALUES($1,$2,$3,$4,date_trunc('minute',now()),1,1,0,$5)`, auditEvent, e.acct.ID, app.ID, consumer, tenant); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.pool.Exec(t.Context(), `INSERT INTO request_audit_events(event_id,account_id,app_id,consumer_key,platform_tenant_id,route_template,method,http_status,latency_ms,deployment_id,occurred_at,request_id) VALUES($1,$2,$3,$4,$5,'/exports','POST',500,10,$6,now(),$7)`, auditEvent, e.acct.ID, app.ID, consumer, tenant, dep.ID, request); err != nil {
+		t.Fatal(err)
+	}
+	maintenance := e.store.(interface {
+		MaintainIssues(context.Context, time.Time) error
+	})
+	if err := maintenance.MaintainIssues(t.Context(), time.Now().Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	detail := issueDecode[api.IssueDetail](t, e.do(t, "GET", base, nil, nil), 200)
+	if detail.Impact.IdentifiedCustomers != 1 || detail.Events[0].VerifiedPlatformTenantID != tenant {
+		t.Fatal("late verified attribution missing")
+	}
+	for i := 0; i < 51; i++ {
+		event.EventID = uuid.NewString()
+		issueDecode[api.IssueEventResponse](t, issueSend(t, e, app.Slug, token, event), 202)
+		assignee := ""
+		if i%2 == 0 {
+			assignee = e.acct.ID
+		}
+		issueDecode[api.Issue](t, e.do(t, "POST", base+"/actions", api.IssueActionRequest{Action: "assign", AssigneeAccountID: assignee}, nil), 200)
+	}
+	detail = issueDecode[api.IssueDetail](t, e.do(t, "GET", base, nil, nil), 200)
+	if len(detail.Events) != 50 || detail.NextEventCursor == "" || len(detail.Activity) != 50 || detail.NextActivityCursor == "" {
+		t.Fatal("history truncated without cursors")
+	}
+	page := issueDecode[api.IssueDetail](t, e.do(t, "GET", base+"?event_cursor="+url.QueryEscape(detail.NextEventCursor)+"&activity_cursor="+url.QueryEscape(detail.NextActivityCursor), nil, nil), 200)
+	if len(page.Events) != 2 || len(page.Activity) != 2 {
+		t.Fatalf("history pagination skipped rows: %d events %d activities", len(page.Events), len(page.Activity))
+	}
+	seen := map[string]bool{}
+	for _, e := range detail.Events {
+		seen[e.ID] = true
+	}
+	for _, e := range page.Events {
+		if seen[e.ID] {
+			t.Fatal("duplicate cursor occurrence")
+		}
+	}
+}
+
+type unavailableIssueCredentialStore struct {
+	state.Store
+	state.IssueStore
+}
+
+func (unavailableIssueCredentialStore) FindIssueToken(context.Context, []byte, time.Time) (state.IssueCredential, error) {
+	return state.IssueCredential{}, errors.New("temporary database failure")
+}
+
+func TestIssueCredentialOutageIsRetryable(t *testing.T) {
+	e := setupPGHandler(t, api.PlanHobby)
+	e.s.store = unavailableIssueCredentialStore{e.store, e.store.(state.IssueStore)}
+	event := api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "Error"}
+	w := e.do(t, "POST", "/v1/apps/any-app/issue-events", event, map[string]string{"Authorization": "Bearer g_issue_test"})
+	if w.Code != 503 {
+		t.Fatalf("credential lookup outage would drop SDK events: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestIssueClockSkewPagination(t *testing.T) {
+	e := setupPGHandler(t, api.PlanHobby)
+	app := seedPGApp(t, e, "issue-clock")
+	token := issueCreateToken(t, e, app.Slug, issueSeedDeployment(t, e, app, 1))
+	for i := 0; i <= api.IssuePageSize; i++ {
+		event := api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC().Add(api.IssueMaxClockSkew - time.Minute), ExceptionType: fmt.Sprintf("ClockError%d", i)}
+		issueDecode[api.IssueEventResponse](t, issueSend(t, e, app.Slug, token, event), 202)
+	}
+	path := "/v1/apps/" + app.Slug + "/issues"
+	first := issueDecode[api.ListIssuesResponse](t, e.do(t, "GET", path, nil, nil), 200)
+	if len(first.Items) != api.IssuePageSize || first.NextCursor == "" {
+		t.Fatal("no issue continuation cursor")
+	}
+	second := issueDecode[api.ListIssuesResponse](t, e.do(t, "GET", path+"?cursor="+url.QueryEscape(first.NextCursor), nil, nil), 200)
+	if len(second.Items) != 1 {
+		t.Fatal("accepted clock skew cannot be paginated")
+	}
+	invalid := state.EncodeIssueCursor(state.IssueCursor{Time: time.Now().Add(api.IssueMaxClockSkew + time.Minute), ID: uuid.NewString()})
+	if w := e.do(t, "GET", path+"?cursor="+url.QueryEscape(invalid), nil, nil); w.Code != 400 {
+		t.Fatal("unbounded future cursor accepted")
+	}
+}

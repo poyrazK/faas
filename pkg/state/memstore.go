@@ -11526,6 +11526,14 @@ func (m *MemStore) InsertFireNowRequest(_ context.Context, cronID, accountID str
 }
 
 func (m *MemStore) ClaimPendingFireNowRequest(_ context.Context) (FireNowRequest, error) {
+	return m.claimPendingFireNowRequest(nil)
+}
+
+func (m *MemStore) ClaimPendingFireNowRequestForNode(_ context.Context, nodeID string) (FireNowRequest, error) {
+	return m.claimPendingFireNowRequest(&nodeID)
+}
+
+func (m *MemStore) claimPendingFireNowRequest(nodeID *string) (FireNowRequest, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var oldestID string
@@ -11534,7 +11542,17 @@ func (m *MemStore) ClaimPendingFireNowRequest(_ context.Context) (FireNowRequest
 		if r.Status != FireNowStatusPending {
 			continue
 		}
-		if oldestID == "" || r.RequestedAt.Before(oldestAt) {
+		if nodeID != nil {
+			cron, ok := m.crons[r.CronID]
+			if !ok {
+				continue
+			}
+			app, ok := m.apps[cron.AppID]
+			if !ok || (app.NodeID != "" && app.NodeID != *nodeID) {
+				continue
+			}
+		}
+		if oldestID == "" || r.RequestedAt.Before(oldestAt) || (r.RequestedAt.Equal(oldestAt) && id < oldestID) {
 			oldestID = id
 			oldestAt = r.RequestedAt
 		}
@@ -11546,6 +11564,18 @@ func (m *MemStore) ClaimPendingFireNowRequest(_ context.Context) (FireNowRequest
 	r.Status = FireNowStatusRunning
 	m.fireNowRequests[oldestID] = r
 	return r, nil
+}
+
+func (m *MemStore) RequeueFireNowRequest(_ context.Context, requestID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.fireNowRequests[requestID]
+	if !ok || r.Status != FireNowStatusRunning {
+		return ErrFireNowRequestNotFound
+	}
+	r.Status = FireNowStatusPending
+	m.fireNowRequests[requestID] = r
+	return nil
 }
 
 func (m *MemStore) MarkFireNowRequestSucceeded(_ context.Context, requestID, invocationID string) error {

@@ -21,9 +21,9 @@ func TestServiceEnvForWorkload(t *testing.T) {
 	)
 	want := map[string]string{
 		"APP_MODE":                        "prod",
-		"GREGALE_SERVICE_DB_URL":          "http://db.svc.gregale:10080",
+		"GREGALE_SERVICE_DB_URL":          "http://db.svc.gregale:10081",
 		"GREGALE_SERVICE_DB_HTTPS_URL":    "https://db.internal",
-		"GREGALE_SERVICE_CACHE_URL":       "http://cache.svc.gregale:10080",
+		"GREGALE_SERVICE_CACHE_URL":       "http://cache.svc.gregale:10081",
 		"GREGALE_SERVICE_CACHE_HTTPS_URL": "https://cache.internal",
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -94,7 +94,7 @@ func TestDiffFieldsChangedBackfillsServiceBindingReadModel(t *testing.T) {
 		WorkloadName:  "api",
 		WorkloadClass: state.WorkloadClassHTTP,
 		Manifest: state.AppManifest{Env: map[string]string{
-			"GREGALE_SERVICE_DB_URL": "http://db.svc.gregale:10080",
+			"GREGALE_SERVICE_DB_URL": "http://db.svc.gregale:10081",
 		}},
 	}
 	got := diffFieldsChanged(app, workload, "", map[string]struct{}{"api": {}, "db": {}})
@@ -145,7 +145,7 @@ func TestDiffFieldsChangedDetectsHTTPSFirstTransportAndPreservesOmittedMode(t *t
 			ServiceBindings:      []api.AppServiceBinding{{Binding: "GREGALE_SERVICE_DB_URL", Service: "db"}},
 			ServiceBindingPolicy: api.ServiceBindingPolicyDeclared,
 			Env: map[string]string{
-				"GREGALE_SERVICE_DB_URL":       "http://db.svc.gregale:10080",
+				"GREGALE_SERVICE_DB_URL":       "http://db.svc.gregale:10081",
 				"GREGALE_SERVICE_DB_HTTPS_URL": "https://db.internal",
 			},
 		},

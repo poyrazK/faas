@@ -90,6 +90,12 @@ func renderTestHTML(path, source string, data any) error {
 			}
 			return "—"
 		},
+		"comparisonValue": func(value *float64, unit string) string {
+			if value == nil {
+				return "—"
+			}
+			return formatTestMetricValue(*value, unit)
+		},
 		"platformEvidence": func(receipt testRunReceipt) any {
 			return struct {
 				Evidence    any  `json:"evidence,omitempty"`

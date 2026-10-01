@@ -130,6 +130,70 @@ Resumption restores active credentials; revoked keys remain revoked. Usage comes
 from Gregale's attributed request counters and may lag while its outbox drains;
 this starter does not invent counters or turn them into invoices.
 
+## Review a completed billing month
+
+Configure an app or tenant request rate card through the Gregale owner API
+before billing. Missing rates remain explicitly unpriced; the server refuses
+to finalize them. The price is what your customer pays for request units,
+not the platform's infrastructure cost.
+
+```sh
+node tools/customer.js billing-month <tenant-id> 2026-08 > ../billing-review.json
+```
+
+This command creates or refreshes **drafts** for stable UTC-day periods within
+a completed UTC calendar month. It skips days with no usage and no prior
+statement. It never finalizes a statement or records an invoice handoff.
+Gregale's statement response groups invoice lines by app, consumer/surface/JWT
+identity, and effective price source while retaining exact minute coverage
+privately for adjustments. The JSON review groups those lines across the month.
+Quantities and millicent totals are decimal strings to keep aggregate arithmetic
+exact. Values beyond JavaScript's safe integer range in server responses are
+rejected instead of silently rounded.
+
+Daily periods let a customer active every minute across two apps review a full
+31-day month (89,280 usage-minute coverage records) as two compact invoice lines
+per day. The API line spans bound the contributing minutes and may include gaps;
+they are not a minute-by-minute usage export. Exact minute coverage remains
+stored for later adjustments, so its storage still grows with attributed usage.
+Keep the daily periods stable for this customer's billing; do not mix monthly,
+daily, and app-local handoffs for overlapping usage.
+
+Inspect the rates, unpriced units, daily statement IDs and totals. Then finalize
+each reviewed draft explicitly:
+
+```sh
+node tools/customer.js statement-finalize <tenant-id> <reviewed-statement-id>
+```
+
+Create the corresponding invoice line in your billing system using its own
+idempotency mechanism, keyed by Gregale statement ID. Only after that system
+confirms the line, record its unique reference:
+
+```sh
+node tools/customer.js statement-handoff <tenant-id> <statement-id> <unique-external-invoice-line-reference>
+```
+
+One external invoice reference cannot identify multiple Gregale statements.
+Your billing system must support a distinct reference for each daily statement
+and adjustment. Finalize and handoff calls safely replay the same statement and
+reference after a lost response. Gregale records a handoff; it does not create
+an external invoice or collect money. Owner scopes and MFA requirements apply.
+
+Repeating `billing-month` refreshes open drafts and discovers late-usage
+adjustments without editing finalized revisions. Its cumulative total includes
+all finalized revisions plus current drafts; **do not charge that total again**.
+The separate draft/finalized totals and per-statement statuses support review;
+use the handoff API to check whether a finalized statement was already invoiced.
+Each new adjustment needs its own statement ID and external reference.
+
+A mid-run failure may leave some daily drafts created. Repeat the same command
+to recover; it does not silently finalize partial work. The review reads each
+day independently and is not an atomic month-wide snapshot. Wait for accounting
+backlogs to drain before approval. Gateway exit-time metering can still miss a
+served request on a crash before fsync; this workflow does not strengthen that
+financial completeness guarantee.
+
 ## Isolation contract and extension points
 
 The app trusts `X-Faas-Platform-Tenant-Id` only on Gregale's private guest listener.
@@ -177,3 +241,10 @@ starter behind the actual gateway and PostgreSQL-backed owner API: two customers
 forged tenant headers, denied cross-customer reads/writes, atomic rotation,
 suspension, resumption, and usage lookup. It requires disposable `DATABASE_URL`
 and `CUSTOMER_DATABASE_URL` databases; no KVM is needed.
+
+The gate also exercises monthly draft review, explicit finalization, replayable
+invoice handoff, and late-usage adjustments through the real owner API and
+PostgreSQL. Dependency-free billing tests cover a full-minute 31-day/two-app
+month against a simulated accounting service; that volume test is not a
+production metering benchmark. Native VM qualification is tracked in
+`docs/reference-platform-qualification.md` in the Gregale repository.
