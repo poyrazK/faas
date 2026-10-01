@@ -1,3 +1,4 @@
+// adr: 387
 package gateway_test
 
 // ADR-387: the gateway forwarding fake implements the expanded generated
