@@ -55,6 +55,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/region"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -105,7 +106,8 @@ type DiskDrift struct {
 	// a backend.List("snap/") enumeration. The byte-comparison path
 	// stays in place for local backends; remote backends (OCI)
 	// degrade the comparison to a presence check. ADR-054 §3.
-	storage storage.LocalArtifactLister
+	storage         storage.LocalArtifactLister
+	artifactBackend storage.StorageBackend
 }
 
 // WithSnapDir sets the on-disk snapshot root used by this sweep. It is
@@ -213,10 +215,12 @@ func (d *DiskDrift) WithClock(now func() time.Time) *DiskDrift {
 func (d *DiskDrift) WithStorage(b storage.StorageBackend) *DiskDrift {
 	if b == nil {
 		d.storage = nil
+		d.artifactBackend = nil
 		return d
 	}
 	if lister, ok := b.(storage.LocalArtifactLister); ok {
 		d.storage = lister
+		d.artifactBackend = b
 		if d.timeout == DefaultDiskDriftTickTimeout {
 			d.timeout = DefaultRemoteDiskDriftTickTimeout
 		}
@@ -480,20 +484,25 @@ func parseSnapshotDirectory(directory string) (objectID string, terminal, valid 
 // valuable — a missing snapshot mem or vmstate is drift regardless
 // of where it lives.
 func (d *DiskDrift) tickWithStorage(ctx context.Context, expected map[string]state.SnapshotForGC, rows []state.SnapshotForGC) (int, error) {
-	keys, err := d.storage.List(ctx, "snap/")
+	keys, err := d.listSnapshotArtifacts(ctx)
 	if errors.Is(err, storage.ErrIncompleteEnumeration) {
 		// Repositories written before the durable OCI snapshot index can be
 		// discovered from the authoritative DB rows without a registry catalog.
 		// Exact lists seed the backend index, after which the global retry also
 		// recovers orphan detection for future sweeps.
-		for depID := range expected {
-			if _, seedErr := d.storage.List(ctx, "snap/"+depID+"/"); seedErr != nil {
-				err = fmt.Errorf("seed snapshot repository %s: %w", depID, seedErr)
+		for _, row := range expected {
+			id, _, splitErr := region.SplitArtifactKey(row.StorageKey)
+			if splitErr != nil {
+				return 0, splitErr
+			}
+			prefix := region.ArtifactKey(id, "snap/"+row.DeploymentID+"/")
+			if _, seedErr := d.storage.List(ctx, prefix); seedErr != nil {
+				err = fmt.Errorf("seed snapshot repository %s: %w", row.DeploymentID, seedErr)
 				break
 			}
 		}
 		if err != nil && errors.Is(err, storage.ErrIncompleteEnumeration) {
-			keys, err = d.storage.List(ctx, "snap/")
+			keys, err = d.listSnapshotArtifacts(ctx)
 		}
 	}
 	if err != nil {
@@ -565,7 +574,16 @@ func (d *DiskDrift) tickWithStorage(ctx context.Context, expected map[string]sta
 // strict UUIDs so a malformed directory is surfaced as drift instead of being
 // mistaken for a deployment namespace.
 func parseSnapKey(key string) (objectID, part string, ok bool) {
-	parts := strings.Split(key, "/")
+	id, relative, err := region.SplitArtifactKey(key)
+	if err != nil {
+		return "", "", false
+	}
+	defer func() {
+		if ok && id != "" {
+			objectID = region.ArtifactKey(id, "snap/"+objectID)
+		}
+	}()
+	parts := strings.Split(relative, "/")
 	if len(parts) < 3 || parts[0] != "snap" || parts[1] == "" {
 		return "", "", false
 	}
@@ -612,4 +630,11 @@ func (d *DiskDrift) recordDrift(reason, path string) int {
 		c.Inc()
 	}
 	return 1
+}
+
+func (d *DiskDrift) listSnapshotArtifacts(ctx context.Context) ([]string, error) {
+	if d.artifactBackend != nil {
+		return storage.ListArtifactKeys(ctx, d.artifactBackend, "snap/")
+	}
+	return d.storage.List(ctx, "snap/")
 }

@@ -120,7 +120,23 @@ func BackendFromEnvContext(ctx context.Context) (StorageBackend, error) {
 	if err != nil {
 		return nil, err
 	}
-	return wrapWithCache(be, kind)
+	routes, err := regionalRoutesFromEnv(ctx)
+	if err != nil {
+		return nil, err
+	}
+	regional, err := NewRegionRouter(routes, be)
+	if err != nil {
+		return nil, err
+	}
+	cacheKind := kind
+	if len(routes) > 0 && !IsRemoteBackendKind(kind) {
+		cacheKind = "oci"
+	}
+	regional.backend, err = wrapWithCache(regional.backend, cacheKind)
+	if err != nil {
+		return nil, err
+	}
+	return regional, nil
 }
 
 // DefaultRemoteCacheDir is the canonical cache directory when a shared remote
@@ -497,6 +513,9 @@ func AsCacheBackend(root StorageBackend) *LocalCacheBackend {
 	if c, ok := root.(*LocalCacheBackend); ok {
 		return c
 	}
+	if r, ok := root.(*RegionRouter); ok {
+		return AsCacheBackend(r.backend)
+	}
 	if r, ok := root.(*PrefixRouter); ok {
 		for _, child := range r.routes {
 			if c := AsCacheBackend(child); c != nil {
@@ -516,6 +535,12 @@ func AsCacheBackend(root StorageBackend) *LocalCacheBackend {
 func CacheBackendForKey(root StorageBackend, key string) (*LocalCacheBackend, string, error) {
 	if root == nil {
 		return nil, "", nil
+	}
+	if r, ok := root.(*RegionRouter); ok {
+		if err := r.validate(key); err != nil {
+			return nil, "", err
+		}
+		return CacheBackendForKey(r.backend, key)
 	}
 	if c, ok := root.(*LocalCacheBackend); ok {
 		if err := validateKey(key); err != nil {

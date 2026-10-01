@@ -59,6 +59,7 @@ func TestSigKeyFor_WireShape(t *testing.T) {
 		layerKey, want string
 	}{
 		{"apps/test/dep.ext4", "sigs/apps/test/dep.ext4.sig"},
+		{"regions/eu-fsn/apps/test/dep.ext4", "regions/eu-fsn/sigs/apps/test/dep.ext4.sig"},
 		{"base/x86_64/bionic", "sigs/base/x86_64/bionic.sig"},
 		{"apps/foo", "sigs/apps/foo.sig"},
 	}

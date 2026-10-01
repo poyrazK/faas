@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/region"
 
 	"github.com/onebox-faas/faas/pkg/abusescan"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -692,6 +693,15 @@ func (h *Handler) replicateLayer(ctx context.Context, layerKey string) error {
 	if h.replicator == nil {
 		return nil
 	}
+	id, _, err := region.SplitArtifactKey(layerKey)
+	if err != nil {
+		return err
+	}
+	if id != "" {
+		// Regional routes publish directly to shared remote storage. The
+		// legacy local split-box transfer helper has no regional contract.
+		return nil
+	}
 	if layerKey == "" {
 		return errors.New("imaged: artifact replication: empty layer key")
 	}
@@ -913,7 +923,7 @@ func (h *Handler) stageScanExt4(ctx context.Context, be storage.StorageBackend, 
 	// Local backend short-circuit. The legacy appsRootPath stays
 	// because SetDeploymentRootfs (handler.go:1334+1380+1697)
 	// stamps it onto the deployment row as a diagnostic column.
-	if _, isLocal := be.(*storage.LocalStorageBackend); isLocal {
+	if _, isLocal := be.(*storage.LocalStorageBackend); isLocal && app.ComputeRegion == "" {
 		p := h.appsRootPath(app.Slug, dep.ID)
 		if p == "" {
 			return "", func() {}, errors.New("slug/path-traversal guard rejected")
@@ -925,7 +935,7 @@ func (h *Handler) stageScanExt4(ctx context.Context, be storage.StorageBackend, 
 	// the ext4 bytes to a local tempdir so grype dir:<path> can
 	// scan a filesystem path regardless of where the canonical
 	// bytes live.
-	appsKey := sched.AppLayerKey(app.Slug, dep.ID)
+	appsKey := deploymentLayerStorageKey(app, dep)
 	rc, err := be.Get(ctx, appsKey)
 	if err != nil {
 		return "", func() {}, fmt.Errorf("imaged: scan stage backend.Get(%q): %w", appsKey, err)
@@ -1568,8 +1578,8 @@ func (h *Handler) deleteJobArtifact(ctx context.Context, jobID string) error {
 	if err := be.Delete(ctx, sched.JobLayerKey(jobID)); err != nil && !storage.IsNotFound(err) {
 		return err
 	}
-	if lister, ok := be.(storage.LocalArtifactLister); ok {
-		keys, err := lister.List(ctx, "jobs/")
+	if _, ok := be.(storage.LocalArtifactLister); ok {
+		keys, err := storage.ListArtifactKeys(ctx, be, "jobs/")
 		if err != nil {
 			return err
 		}
@@ -1594,11 +1604,11 @@ func (h *Handler) cleanupSupersededJobArtifacts(ctx context.Context, jobID, keep
 	if err != nil {
 		return err
 	}
-	lister, ok := be.(storage.LocalArtifactLister)
+	_, ok := be.(storage.LocalArtifactLister)
 	if !ok {
 		return nil
 	}
-	keys, err := lister.List(ctx, "jobs/")
+	keys, err := storage.ListArtifactKeys(ctx, be, "jobs/")
 	if err != nil {
 		return err
 	}
@@ -1630,11 +1640,11 @@ func (h *Handler) ReconcileDeletedJobArtifacts(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	lister, ok := be.(storage.LocalArtifactLister)
+	_, ok := be.(storage.LocalArtifactLister)
 	if !ok {
 		return nil
 	}
-	keys, err := lister.List(ctx, "jobs/")
+	keys, err := storage.ListArtifactKeys(ctx, be, "jobs/")
 	if err != nil {
 		return err
 	}
@@ -1664,6 +1674,11 @@ func (h *Handler) ReconcileDeletedJobArtifacts(ctx context.Context) error {
 }
 
 func jobArtifactJobID(key string) (string, bool) {
+	_, relative, err := region.SplitArtifactKey(key)
+	if err != nil {
+		return "", false
+	}
+	key = relative
 	const prefix = "jobs/"
 	const suffix = ".ext4"
 	if !strings.HasPrefix(key, prefix) || !strings.HasSuffix(key, suffix) {
@@ -2285,7 +2300,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 	// economics (CLAUDE.md "load-bearing — DO NOT fix"). The M5 fallback
 	// below streams all layers via oci.PullLayers for fakes that don't
 	// implement ManifestPuller.
-	appsKey := sched.AppLayerKey(app.Slug, dep.ID)
+	appsKey := region.ArtifactKey(app.ComputeRegion, sched.AppLayerKey(app.Slug, dep.ID))
 	be, err := h.storageFor()
 	if err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "imaged: storageFor")
@@ -2532,7 +2547,7 @@ func (h *Handler) buildSidecarLayers(ctx context.Context, app state.App, dep sta
 			_ = h.transitionFailure(ctx, dep.ID, msg)
 			return findings, fmt.Errorf("imaged: %s", msg)
 		}
-		layerKey := sched.AppSidecarLayerKey(app.Slug, dep.ID, sc.Name)
+		layerKey := region.ArtifactKey(app.ComputeRegion, sched.AppSidecarLayerKey(app.Slug, dep.ID, sc.Name))
 		// Per-sidecar pull path. We use the same h.oci
 		// ManifestPuller as the main image; per-sidecar
 		// auth may differ (a sidecar image can sit on a
@@ -2864,7 +2879,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		defer cleanupBuiltLayers()
 	}
 
-	appsKey := sched.AppLayerKey(app.Slug, dep.ID)
+	appsKey := region.ArtifactKey(app.ComputeRegion, sched.AppLayerKey(app.Slug, dep.ID))
 	be, err := h.storageFor()
 	if err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "storageFor")
@@ -4367,7 +4382,7 @@ func (h *Handler) cleanupDeploymentFiles(ctx context.Context, deploymentID strin
 		h.log.Warn("imaged: cleanup storageFor", "deployment", dep.ID, "err", err)
 		return err
 	}
-	appsKey := sched.AppLayerKey(app.Slug, dep.ID)
+	appsKey := deploymentLayerStorageKey(app, dep)
 	if err := be.Delete(ctx, appsKey); err != nil {
 		h.log.Warn("imaged: cleanup ext4", "key", appsKey, "err", err)
 	}
@@ -4414,7 +4429,7 @@ func (h *Handler) cleanupAppFiles(ctx context.Context, appID string) error {
 		return fmt.Errorf("imaged: app cleanup storageFor: %w", err)
 	}
 	for _, d := range deps {
-		appsKey := sched.AppLayerKey(app.Slug, d.ID)
+		appsKey := deploymentLayerStorageKey(app, d)
 		if err := be.Delete(ctx, appsKey); err != nil {
 			h.log.Warn("imaged: app cleanup ext4", "key", appsKey, "err", err)
 		}
@@ -4828,7 +4843,7 @@ func (h *Handler) buildFullRootfsLayer(
 	if err != nil {
 		return fmt.Errorf("imaged: full-rootfs storage backend: %w", err)
 	}
-	appsKey := sched.AppLayerKey(app.Slug, dep.ID)
+	appsKey := region.ArtifactKey(app.ComputeRegion, sched.AppLayerKey(app.Slug, dep.ID))
 	sbomKey := h.sbomStorageKeyForDeployment(ctx, dep.ID)
 	sbomRun := h.syftRun
 	// Direct OCI deployments have no source build row and therefore no
@@ -4874,4 +4889,13 @@ func (h *Handler) buildFullRootfsLayer(
 		"plan", string(acct.Plan),
 	)
 	return nil
+}
+
+// deploymentLayerStorageKey prefers the committed reference. Older deployments
+// remain readable and deletable after region routing is enabled.
+func deploymentLayerStorageKey(app state.App, dep state.Deployment) string {
+	if dep.RootfsKey != "" {
+		return dep.RootfsKey
+	}
+	return region.ArtifactKey(app.ComputeRegion, sched.AppLayerKey(app.Slug, dep.ID))
 }

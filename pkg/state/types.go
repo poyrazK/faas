@@ -6064,6 +6064,7 @@ type SnapshotForGC struct {
 	// violation — call sites should log + skip, never silently fall
 	// back to a slow path.
 	AppSlug          string
+	RootfsKey        string // Persisted layer reference, including its regional namespace.
 	AppStatus        AppStatus
 	DeploymentStatus DeploymentStatus
 	FCVersion        string

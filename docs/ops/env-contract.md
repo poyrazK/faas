@@ -410,6 +410,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_STORAGE_CACHE_SERVE_STALE` | shared | `envfile` |  |  | `` |  |
 | `FAAS_STORAGE_FALLBACK_BACKEND` | imaged, vmmd, shared | `envfile` |  |  | `` | optional `oci` read/delete fallback during GCS migration; writes remain GCS-only |
 | `FAAS_STORAGE_LOCAL_PREFIXES` | shared | `envfile` |  |  | `` |  |
+| `FAAS_STORAGE_REGIONS_FILE` | shared | `default` |  |  | `` | optional JSON routing file for regional tenant artifacts; provision consistently on apid, builderd, imaged, schedd, and vmmd (ADR-429) |
 | `FAAS_STORAGE_ROLLUP_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_STORAGE_ROOT` | builderd, imaged, vmmd, shared | `default` |  |  | `` |  |
 | `FAAS_STORAGE_SNAPSHOT_COMPRESSION` | shared | `envfile` |  |  | `` | remote snapshot-memory encoding; default none; enable zstd only after every compute node runs a compatible reader (ADR-165) |

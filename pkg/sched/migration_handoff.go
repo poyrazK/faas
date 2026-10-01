@@ -76,6 +76,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/region"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -329,11 +330,11 @@ func (h *MigrationHarness) MigrateOne(ctx context.Context, instanceID, fromNodeI
 	// deployment. This is the immutable namespace accepted by both local and
 	// OCI storage backends; a fresh capture ID prevents a retry from
 	// overwriting a complete or partially-published migration snapshot.
-	snapshotKey := state.SnapshotCaptureMemKey(
+	snapshotKey := region.ArtifactKey(appSpec.ComputeRegion, state.SnapshotCaptureMemKey(
 		appSpec.DeploymentID,
 		state.SnapshotTierWarm,
 		uuid.NewString(),
-	)
+	))
 	prepared, err := h.vmm.PrepareLiveMigration(leaseCtx, fromNodeID, instanceID, snapshotKey)
 	if err != nil {
 		// Phase 1 failure: no state has changed on the dying

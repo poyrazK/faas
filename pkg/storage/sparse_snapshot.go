@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/region"
 )
 
 // copyArtifactContext preserves zero-filled regions in large sparse artifacts
@@ -72,6 +74,11 @@ func copyArtifactContext(ctx context.Context, dst *os.File, src io.Reader, key s
 }
 
 func isSparseArtifactKey(key string) bool {
+	_, relative, err := region.SplitArtifactKey(key)
+	if err != nil {
+		return false
+	}
+	key = relative
 	return (strings.HasPrefix(key, "snap/") && (strings.HasSuffix(key, "/mem") || strings.HasSuffix(key, "/drive"))) ||
 		(strings.HasPrefix(key, "apps/") && strings.HasSuffix(key, ".ext4"))
 }

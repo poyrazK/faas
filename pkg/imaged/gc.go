@@ -29,6 +29,7 @@ import (
 // init-tier targets delete SnapMemKey + SnapVMStateKey. The shared per-app
 // ext4 is deleted only after the deployment has no remaining snapshot tier.
 type deleteTarget struct {
+	RootfsKey        string
 	StorageKey       string
 	ID               string
 	DeploymentID     string
@@ -214,6 +215,7 @@ func targetForSnapshot(r state.SnapshotForGC) deleteTarget {
 		AppID:            r.AppID,
 		AccountID:        r.AccountID,
 		StorageKey:       r.StorageKey,
+		RootfsKey:        r.RootfsKey,
 		AppSlug:          r.AppSlug,
 		DeploymentStatus: r.DeploymentStatus,
 		Tier:             r.Tier,
@@ -328,13 +330,9 @@ func evictOldestFromHeaviestAccount(rows []state.SnapshotForGC) []deleteTarget {
 	}
 	// B1.1: AppSlug is on SnapshotForGC (issue #195); no lookup
 	// against the input rows required.
-	return []deleteTarget{{
-		ID:           oldest.ID,
-		DeploymentID: oldest.DeploymentID,
-		StorageKey:   oldest.StorageKey,
-		AppSlug:      oldest.AppSlug,
-		Tier:         oldestTier,
-	}}
+	target := targetForSnapshot(*oldest)
+	target.Tier = oldestTier
+	return []deleteTarget{target}
 }
 
 // perAppRollbackEvictionCandidates returns snapshots that are outside the

@@ -76,11 +76,11 @@ func TestHandler_OCIBackendEnv_Handoff(t *testing.T) {
 		t.Fatalf("BackendFromEnv: %v", err)
 	}
 
-	// The OCI fork produces a *PrefixRouter (cache disabled). The
+	// The OCI fork is guarded by a *RegionRouter (cache disabled). The
 	// type-assert is the load-bearing env pin: the BackendFromEnv
 	// contract must produce a router when in OCI mode.
-	if _, ok := be.(*storage.PrefixRouter); !ok {
-		t.Fatalf("BackendFromEnv returned %T; want *PrefixRouter (OCI mode, cache disabled)", be)
+	if _, ok := be.(*storage.RegionRouter); !ok {
+		t.Fatalf("BackendFromEnv returned %T; want *RegionRouter (OCI mode, cache disabled)", be)
 	}
 
 	// Wire imaged's Handler with the env-derived backend. New()

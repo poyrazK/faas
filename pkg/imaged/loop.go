@@ -880,7 +880,7 @@ func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) e
 		// an empty AppSlug here is an invariant violation (the projection
 		// JOIN broke) — log loudly and skip the ext4 delete rather than
 		// silently paying 2 SQL round-trips per row to re-resolve it.
-		if t.AppSlug == "" {
+		if t.AppSlug == "" && t.RootfsKey == "" {
 			l.log.Warn("imaged: gc evict without slug, skipping ext4 delete",
 				"snapshot", t.ID, "deployment", deploymentID)
 			continue
@@ -895,7 +895,11 @@ func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) e
 				"deployment", deploymentID, "layer", sched.AppLayerKey(t.AppSlug, deploymentID))
 			continue
 		}
-		if err := be.Delete(ctx, sched.AppLayerKey(t.AppSlug, deploymentID)); err != nil {
+		layerKey := t.RootfsKey
+		if layerKey == "" {
+			layerKey = sched.AppLayerKey(t.AppSlug, deploymentID)
+		}
+		if err := be.Delete(ctx, layerKey); err != nil {
 			l.log.Warn("imaged: gc remove ext4", "deployment", deploymentID, "err", err)
 		}
 	}

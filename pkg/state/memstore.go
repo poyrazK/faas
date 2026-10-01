@@ -14734,6 +14734,7 @@ func (m *MemStore) ListSnapshotsForGC(_ context.Context) ([]SnapshotForGC, error
 			// B1.1: forward the slug so imaged's GC doesn't have to
 			// re-resolve it per eviction (was O(2N) extra SQL).
 			AppSlug:          app.Slug,
+			RootfsKey:        dep.RootfsKey,
 			AppStatus:        app.Status,
 			DeploymentStatus: dep.Status,
 			FCVersion:        s.FCVersion,
@@ -14794,7 +14795,7 @@ func (m *MemStore) ListSnapshotsStaleOlderThan(_ context.Context, retention time
 		}
 		out = append(out, SnapshotForGC{
 			ID: s.ID, DeploymentID: s.DeploymentID, AppID: app.ID,
-			AccountID: app.AccountID, AppSlug: app.Slug, AppStatus: app.Status,
+			AccountID: app.AccountID, AppSlug: app.Slug, RootfsKey: dep.RootfsKey, AppStatus: app.Status,
 			DeploymentStatus: dep.Status, FCVersion: s.FCVersion,
 			MemBytes: s.MemBytes, DiskBytes: s.DiskBytes, Tier: s.Tier,
 			StorageKey: s.StorageKey, Stale: true, DeletePending: s.DeletePending, CreatedAt: s.CreatedAt,

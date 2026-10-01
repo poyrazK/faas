@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/oci"
+	"github.com/onebox-faas/faas/pkg/region"
 	"github.com/onebox-faas/faas/pkg/rootfs"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -552,7 +553,7 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 	if err != nil {
 		return fmt.Errorf("imaged: local OCI storageFor: %w", err)
 	}
-	appsKey := sched.AppLayerKey(app.Slug, dep.ID)
+	appsKey := region.ArtifactKey(app.ComputeRegion, sched.AppLayerKey(app.Slug, dep.ID))
 	result, err := h.builder.Build(ctx, rootfs.BuildInput{
 		Layers:         layersAsReaders(layers),
 		Manifest:       manifest,

@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/region"
 	"github.com/onebox-faas/faas/pkg/storage"
 )
 
@@ -743,7 +744,7 @@ func (b *Builder) publishExt4FullRootfs(ctx context.Context, in BuildFullRootfsI
 		return fmt.Errorf("rootfs: publish full-rootfs %q: %w", in.StorageKey, err)
 	}
 	if b.signer != nil {
-		sigKey := "sigs/" + in.StorageKey + ".sig"
+		sigKey := region.SignatureKey(in.StorageKey)
 		if err := b.signer.Sign(ctx, in.StorageKey, sigKey); err != nil {
 			return fmt.Errorf("rootfs: sign full-rootfs %q: %w", in.StorageKey, err)
 		}
@@ -874,7 +875,7 @@ func (b *Builder) publishBaseExt4(ctx context.Context, in BaseBuildInput, stagin
 	// exists (see pkg/imaged/base_stage.go); app layers re-sign on
 	// the next deploy.
 	if b.signer != nil {
-		sigKey := "sigs/" + in.StorageKey + ".sig"
+		sigKey := region.SignatureKey(in.StorageKey)
 		if err := b.signer.Sign(ctx, in.StorageKey, sigKey); err != nil {
 			return fmt.Errorf("rootfs: sign base %q: %w", in.StorageKey, err)
 		}

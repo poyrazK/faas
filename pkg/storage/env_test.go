@@ -147,7 +147,7 @@ func TestBackendFromEnv_LocalIgnoresLocalPrefixes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BackendFromEnv: %v", err)
 	}
-	router, ok := be.(*PrefixRouter)
+	router, ok := legacyRegionBackendForTest(be).(*PrefixRouter)
 	if !ok {
 		t.Fatalf("backend type = %T, want *PrefixRouter", be)
 	}
@@ -198,7 +198,7 @@ func TestBackendFromEnv_LocalDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BackendFromEnv: %v", err)
 	}
-	if _, ok := be.(*PrefixRouter); !ok {
+	if _, ok := legacyRegionBackendForTest(be).(*PrefixRouter); !ok {
 		t.Errorf("backend type = %T, want *PrefixRouter (default split)", be)
 	}
 }
@@ -215,7 +215,7 @@ func TestBackendFromEnv_LocalSplit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BackendFromEnv: %v", err)
 	}
-	if _, ok := be.(*PrefixRouter); !ok {
+	if _, ok := legacyRegionBackendForTest(be).(*PrefixRouter); !ok {
 		t.Errorf("backend type = %T, want *PrefixRouter (split layout)", be)
 	}
 }
@@ -231,7 +231,7 @@ func TestBackendFromEnv_LocalCoalesced(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BackendFromEnv: %v", err)
 	}
-	if _, ok := be.(*LocalStorageBackend); !ok {
+	if _, ok := legacyRegionBackendForTest(be).(*LocalStorageBackend); !ok {
 		t.Errorf("backend type = %T, want *LocalStorageBackend (coalesced)", be)
 	}
 }
@@ -295,7 +295,7 @@ func TestOCIBackendFromEnvSnapshotCompression(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ociBackendFromEnv: %v", err)
 	}
-	router, ok := be.(*PrefixRouter)
+	router, ok := legacyRegionBackendForTest(be).(*PrefixRouter)
 	if !ok {
 		t.Fatalf("ociBackendFromEnv = %T, want *PrefixRouter", be)
 	}
@@ -389,7 +389,7 @@ func TestBackendFromEnv_SharedArtifactsAcceptsExplicitRemoteOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BackendFromEnv(remote-only): %v", err)
 	}
-	router, ok := be.(*PrefixRouter)
+	router, ok := legacyRegionBackendForTest(be).(*PrefixRouter)
 	if !ok {
 		t.Fatalf("BackendFromEnv(remote-only) = %T, want *PrefixRouter", be)
 	}
@@ -501,7 +501,8 @@ func TestBackendFromEnv_OCIDefaultsCacheDirHermetic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BackendFromEnv: %v", err)
 	}
-	cache, ok := be.(*LocalCacheBackend)
+	cache := AsCacheBackend(be)
+	ok := cache != nil
 	if !ok {
 		t.Fatalf("backend = %T, want *LocalCacheBackend", be)
 	}
@@ -521,7 +522,7 @@ func TestBackendFromEnv_OCIDoesNotWrapWhenExplicitlyDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BackendFromEnv: %v", err)
 	}
-	if _, ok := be.(*LocalCacheBackend); ok {
+	if AsCacheBackend(be) != nil {
 		t.Errorf("backend wrapped as *LocalCacheBackend; want no wrap (explicit disable)")
 	}
 }
@@ -538,7 +539,7 @@ func TestBackendFromEnv_LocalDoesNotDefaultCacheDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BackendFromEnv: %v", err)
 	}
-	if _, ok := be.(*LocalCacheBackend); ok {
+	if AsCacheBackend(be) != nil {
 		t.Errorf("backend wrapped as *LocalCacheBackend; local mode stays opt-in")
 	}
 }
@@ -642,3 +643,10 @@ func (*cacheEnvTestBackend) Get(_ context.Context, _ string) (io.ReadCloser, err
 	return nil, ErrNotFound
 }
 func (*cacheEnvTestBackend) Delete(_ context.Context, _ string) error { return nil }
+
+func legacyRegionBackendForTest(backend StorageBackend) StorageBackend {
+	if r, ok := backend.(*RegionRouter); ok {
+		return r.legacy
+	}
+	return backend
+}

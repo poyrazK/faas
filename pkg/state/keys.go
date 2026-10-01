@@ -1,6 +1,10 @@
 package state
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/onebox-faas/faas/pkg/region"
+)
 
 // StorageBackend key shape for snapshot mem blobs (issue #96, ADR-025
 // axis 2). Lives in pkg/state because state owns the snapshots table's
@@ -102,7 +106,8 @@ func SnapshotCaptureMemKey(deploymentID, tier, captureID string) string {
 // SnapshotVMStateKey derives the paired device state from the memory key.
 // Legacy rows with noncanonical keys retain the deployment/tier fallback.
 func SnapshotVMStateKey(s Snapshot) string {
-	if strings.HasPrefix(s.StorageKey, "snap/") && strings.HasSuffix(s.StorageKey, "/mem") {
+	_, relative, err := region.SplitArtifactKey(s.StorageKey)
+	if err == nil && strings.HasPrefix(relative, "snap/") && strings.HasSuffix(relative, "/mem") {
 		return strings.TrimSuffix(s.StorageKey, "/mem") + "/vmstate"
 	}
 	if s.Tier == SnapshotTierWarm {
@@ -131,7 +136,11 @@ func IsSnapshotCaptureKey(key string) bool {
 }
 
 func snapshotCaptureParts(key string) []string {
-	parts := strings.Split(key, "/")
+	_, relative, err := region.SplitArtifactKey(key)
+	if err != nil {
+		return nil
+	}
+	parts := strings.Split(relative, "/")
 	if len(parts) == 6 && parts[2] == "warm" {
 		parts = append(parts[:2:2], parts[3:]...)
 	}

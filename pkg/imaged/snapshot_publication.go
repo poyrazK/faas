@@ -2,6 +2,7 @@ package imaged
 
 import (
 	"context"
+	"github.com/onebox-faas/faas/pkg/region"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"strings"
@@ -36,12 +37,12 @@ func (h *Handler) cleanupSnapshotCaptures(ctx context.Context, be storage.Storag
 			}
 		}
 	}
-	lister, ok := be.(storage.LocalArtifactLister)
+	_, ok := be.(storage.LocalArtifactLister)
 	if !ok {
 		return
 	}
 	prefix := "snap/" + depID + "/"
-	keys, err := lister.List(ctx, prefix)
+	keys, err := storage.ListArtifactKeys(ctx, be, prefix)
 	if err != nil {
 		h.log.Warn("imaged: list snapshot captures", "deployment", depID, "err", err)
 		return
@@ -56,7 +57,8 @@ func (h *Handler) cleanupSnapshotCaptures(ctx context.Context, be storage.Storag
 				break
 			}
 		}
-		if !strings.HasPrefix(key, prefix) || !state.IsSnapshotCaptureKey(memKey) {
+		_, relative, splitErr := region.SplitArtifactKey(key)
+		if splitErr != nil || !strings.HasPrefix(relative, prefix) || !state.IsSnapshotCaptureKey(memKey) {
 			continue
 		}
 		if err := be.Delete(ctx, key); err != nil {

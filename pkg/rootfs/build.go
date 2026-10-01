@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/region"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/tarball"
 )
@@ -551,7 +552,7 @@ func (b *Builder) publishExt4(ctx context.Context, in BuildInput, staging string
 	// "no signature written" to "schedd accepted the unsigned
 	// layer" is the compromise path the sig is meant to close.
 	if b.signer != nil {
-		sigKey := "sigs/" + in.StorageKey + ".sig"
+		sigKey := region.SignatureKey(in.StorageKey)
 		if err := b.signer.Sign(ctx, in.StorageKey, sigKey); err != nil {
 			return 0, fmt.Errorf("rootfs: sign %q: %w", in.StorageKey, err)
 		}

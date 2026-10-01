@@ -19,6 +19,8 @@ func TestSnapshotPrefetchFamily(t *testing.T) {
 	for _, tc := range []struct{ key, want string }{
 		{"snap/dep-1/captures/cap-a/v2/mem", "snap/dep-1"},
 		{"snap/dep-1/captures/cap-b/v2/mem", "snap/dep-1"},
+		{"regions/eu-fsn/snap/dep-1/captures/cap-a/v2/mem", "regions/eu-fsn/snap/dep-1"},
+		{"regions/us-east/snap/dep-1/captures/cap-a/v2/mem", "regions/us-east/snap/dep-1"},
 		{"snap/restore-bench/mem", "snap/restore-bench/mem"},
 		{"/srv/fc/snap/legacy/mem", "/srv/fc/snap/legacy/mem"},
 		{"", ""},

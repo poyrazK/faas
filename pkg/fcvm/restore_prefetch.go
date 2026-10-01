@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/onebox-faas/faas/pkg/region"
 )
 
 // Restore working-set prefetch (ADR-225).
@@ -96,7 +98,8 @@ func (s *restorePrefetchStore) put(family string, set restorePrefetchSet) {
 // capture's working set is a good prefetch for a new one. Legacy keys are
 // their own family.
 func snapshotPrefetchFamily(storageKey string) string {
-	if i := strings.Index(storageKey, "/captures/"); i > 0 && strings.HasPrefix(storageKey, "snap/") {
+	_, relative, err := region.SplitArtifactKey(storageKey)
+	if i := strings.Index(storageKey, "/captures/"); err == nil && i > 0 && strings.HasPrefix(relative, "snap/") {
 		return storageKey[:i]
 	}
 	return storageKey

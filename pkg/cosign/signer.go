@@ -42,6 +42,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/onebox-faas/faas/pkg/region"
 	"github.com/onebox-faas/faas/pkg/storage"
 )
 
@@ -73,8 +74,9 @@ type Verifier interface {
 // base sigs at "sigs/base/<arch>/<name>.sig". The exact shape is
 // up to the caller — this package only requires the keys be
 // non-empty and pass storage.validateKey.
+// Regional artifacts keep their regions/<id>/ namespace around this shape.
 func SigKeyFor(layerKey string) string {
-	return "sigs/" + layerKey + ".sig"
+	return region.SignatureKey(layerKey)
 }
 
 // signRaw returns the ECDSA P-256 (r || s) signature over the SHA-256

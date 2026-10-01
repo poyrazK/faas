@@ -17700,66 +17700,14 @@ func (s *PgStore) AppRuntimeConfigChangedAt(ctx context.Context, appID string) (
 // per-row AppByID round-trip. Same
 // denormalisation pattern as AppSlug.
 func (s *PgStore) ListSnapshotsForGC(ctx context.Context) ([]SnapshotForGC, error) {
-	rows, err := s.pool.Query(ctx,
-		`select s.id, s.deployment_id::text, d.app_id::text, a.account_id::text, a.slug,
-		        a.status, d.status, s.fc_version, s.mem_bytes, s.disk_bytes, s.storage_key, s.stale, s.delete_pending, s.created_at, s.tier,
-		        a.warm_snapshot_enabled
-		   from snapshots s
-		   join deployments d on d.id = s.deployment_id
-		   join apps a       on a.id = d.app_id
-		  where s.stale = false
-		     or a.status = 'deleted'
-		     or d.status in ('failed', 'cancelled')
-		  order by s.created_at desc
-		  limit 10000`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []SnapshotForGC
-	for rows.Next() {
-		var r SnapshotForGC
-		if err := rows.Scan(&r.ID, &r.DeploymentID, &r.AppID, &r.AccountID, &r.AppSlug,
-			&r.AppStatus, &r.DeploymentStatus, &r.FCVersion, &r.MemBytes, &r.DiskBytes, &r.StorageKey, &r.Stale, &r.DeletePending, &r.CreatedAt, &r.Tier,
-			&r.AppWarmSnapshotEnabled); err != nil {
-			return nil, err
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
+	return s.listSnapshotArtifactsForGC(ctx, "active", 0)
 }
 
 // ListSnapshotsStaleOlderThan returns expired stale rows with the same join
 // metadata as ListSnapshotsForGC. The caller removes storage artifacts before
 // the row metadata is lost.
 func (s *PgStore) ListSnapshotsStaleOlderThan(ctx context.Context, retention time.Duration) ([]SnapshotForGC, error) {
-	rows, err := s.pool.Query(ctx,
-		`select s.id, s.deployment_id::text, d.app_id::text, a.account_id::text, a.slug,
-		        a.status, d.status, s.fc_version, s.mem_bytes, s.disk_bytes, s.storage_key, s.stale, s.delete_pending, s.created_at, s.tier,
-		        a.warm_snapshot_enabled
-		   from snapshots s
-		   join deployments d on d.id = s.deployment_id
-		   join apps a       on a.id = d.app_id
-		  where s.stale = true
-		    and s.created_at < now() - $1::interval
-		  order by s.created_at
-		  limit 10000`,
-		fmt.Sprintf("%d seconds", int64(retention.Seconds())))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []SnapshotForGC
-	for rows.Next() {
-		var r SnapshotForGC
-		if err := rows.Scan(&r.ID, &r.DeploymentID, &r.AppID, &r.AccountID, &r.AppSlug,
-			&r.AppStatus, &r.DeploymentStatus, &r.FCVersion, &r.MemBytes, &r.DiskBytes, &r.StorageKey, &r.Stale, &r.DeletePending, &r.CreatedAt, &r.Tier,
-			&r.AppWarmSnapshotEnabled); err != nil {
-			return nil, err
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
+	return s.listSnapshotArtifactsForGC(ctx, "stale", int64(retention.Seconds()))
 }
 
 // ListSnapshotsPendingDelete returns only rows for which imaged already made
@@ -17767,31 +17715,7 @@ func (s *PgStore) ListSnapshotsStaleOlderThan(ctx context.Context, retention tim
 // from stale retention: version-invalid snapshots remain rollback evidence
 // until SnapshotStaleRetention elapses.
 func (s *PgStore) ListSnapshotsPendingDelete(ctx context.Context) ([]SnapshotForGC, error) {
-	rows, err := s.pool.Query(ctx,
-		`select s.id, s.deployment_id::text, d.app_id::text, a.account_id::text, a.slug,
-		        a.status, d.status, s.fc_version, s.mem_bytes, s.disk_bytes, s.storage_key, s.stale, s.delete_pending, s.created_at, s.tier,
-		        a.warm_snapshot_enabled
-		   from snapshots s
-		   join deployments d on d.id = s.deployment_id
-		   join apps a       on a.id = d.app_id
-		  where s.delete_pending = true
-		  order by s.created_at
-		  limit 10000`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []SnapshotForGC
-	for rows.Next() {
-		var r SnapshotForGC
-		if err := rows.Scan(&r.ID, &r.DeploymentID, &r.AppID, &r.AccountID, &r.AppSlug,
-			&r.AppStatus, &r.DeploymentStatus, &r.FCVersion, &r.MemBytes, &r.DiskBytes, &r.StorageKey, &r.Stale, &r.DeletePending, &r.CreatedAt, &r.Tier,
-			&r.AppWarmSnapshotEnabled); err != nil {
-			return nil, err
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
+	return s.listSnapshotArtifactsForGC(ctx, "pending", 0)
 }
 
 // ListSnapshotDeploymentIDs returns every deployment referenced by a snapshot
@@ -32446,4 +32370,23 @@ func egressPortsFromDB(ports []int32) []int {
 		out[i] = int(p)
 	}
 	return out
+}
+
+func (s *PgStore) listSnapshotArtifactsForGC(ctx context.Context, selection string, retentionSeconds int64) ([]SnapshotForGC, error) {
+	rows, err := sqlc.New().ListSnapshotArtifactsForGC(ctx, s.pool, sqlc.ListSnapshotArtifactsForGCParams{Selection: selection, RetentionSeconds: retentionSeconds})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]SnapshotForGC, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, SnapshotForGC{
+			ID: r.ID, DeploymentID: r.DeploymentID, AppID: r.AppID, AccountID: r.AccountID,
+			AppSlug: r.AppSlug, RootfsKey: r.RootfsKey, AppStatus: AppStatus(r.AppStatus),
+			DeploymentStatus: DeploymentStatus(r.DeploymentStatus), FCVersion: r.FcVersion,
+			MemBytes: r.MemBytes, DiskBytes: r.DiskBytes, StorageKey: r.StorageKey,
+			Stale: r.Stale, DeletePending: r.DeletePending, CreatedAt: r.CreatedAt.Time,
+			Tier: r.Tier, AppWarmSnapshotEnabled: r.WarmSnapshotEnabled,
+		})
+	}
+	return out, nil
 }

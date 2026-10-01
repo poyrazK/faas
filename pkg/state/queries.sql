@@ -5555,3 +5555,21 @@ SELECT * FROM compute_regions WHERE id = $1;
 -- name: CreateProjectWithComputeRegion :one
 INSERT INTO projects (account_id, slug, repo_full_name, production_branch, install_id, scan_source, compute_region)
 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *;
+-- name: ListSnapshotArtifactsForGC :many
+SELECT s.id::text AS id, s.deployment_id::text AS deployment_id,
+       d.app_id::text AS app_id, a.account_id::text AS account_id, a.slug AS app_slug,
+       a.status AS app_status, d.status AS deployment_status,
+       coalesce(d.rootfs_key, '')::text AS rootfs_key,
+       s.fc_version, s.mem_bytes, s.disk_bytes, s.storage_key, s.stale,
+       s.delete_pending, s.created_at, s.tier, a.warm_snapshot_enabled
+FROM snapshots s
+JOIN deployments d ON d.id = s.deployment_id
+JOIN apps a ON a.id = d.app_id
+WHERE (sqlc.arg(selection)::text = 'active' AND
+       (s.stale = false OR a.status = 'deleted' OR d.status IN ('failed', 'cancelled')))
+   OR (sqlc.arg(selection)::text = 'stale' AND s.stale = true AND
+       s.created_at < now() - sqlc.arg(retention_seconds)::bigint * interval '1 second')
+   OR (sqlc.arg(selection)::text = 'pending' AND s.delete_pending = true)
+ORDER BY CASE WHEN sqlc.arg(selection)::text = 'active' THEN s.created_at END DESC,
+         s.created_at ASC
+LIMIT 10000;

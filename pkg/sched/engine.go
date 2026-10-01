@@ -32,6 +32,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/pkg/region"
 	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -3507,7 +3508,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// path) and surface the same Problem to the caller — the
 	// gateway renders it as 503.
 	if e.verifier != nil {
-		if err := e.verifier.Verify(ctx, spec.LayerKey, "sigs/"+spec.LayerKey+".sig"); err != nil {
+		if err := e.verifier.Verify(ctx, spec.LayerKey, region.SignatureKey(spec.LayerKey)); err != nil {
 			var p *api.Problem
 			if errors.As(err, &p) && p.Code == api.CodeSigInvalid {
 				e.log.Warn("wake: rejecting tampered layer",
@@ -5692,7 +5693,7 @@ func (e *Engine) verifyPrimeLayer(ctx context.Context, appID, layer string) erro
 	if e.verifier == nil {
 		return nil
 	}
-	if err := e.verifier.Verify(ctx, layer, "sigs/"+layer+".sig"); err != nil {
+	if err := e.verifier.Verify(ctx, layer, region.SignatureKey(layer)); err != nil {
 		var p *api.Problem
 		if errors.As(err, &p) && p.Code == api.CodeSigInvalid {
 			e.log.Warn("prime: rejecting tampered layer", "app", appID, "layer", layer, "err", err)
@@ -7225,7 +7226,7 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 		return nil
 	}
 
-	storageKey := state.SnapshotCaptureMemKey(ins.DeploymentID, state.SnapshotTierInit, uuid.NewString())
+	storageKey := region.ArtifactKey(app.ComputeRegion, state.SnapshotCaptureMemKey(ins.DeploymentID, state.SnapshotTierInit, uuid.NewString()))
 	vmstateKey := state.SnapshotVMStateKey(state.Snapshot{StorageKey: storageKey})
 	vmstate := filepath.Join(SnapDir(), strings.TrimPrefix(vmstateKey, "snap/"))
 	vmstateStorageKey := vmstateKey
@@ -7518,7 +7519,7 @@ func (e *Engine) captureWarmSnapshotLocked(ctx context.Context, ins state.Instan
 	if _, ok := e.reusableSnapshot(ctx, ins.DeploymentID, state.SnapshotTierWarm); ok {
 		return SnapshotBytes{}, nil
 	}
-	warmMemKey := state.SnapshotCaptureMemKey(ins.DeploymentID, state.SnapshotTierWarm, uuid.NewString())
+	warmMemKey := region.ArtifactKey(app.ComputeRegion, state.SnapshotCaptureMemKey(ins.DeploymentID, state.SnapshotTierWarm, uuid.NewString()))
 	warmVMStateStorageKey := state.SnapshotVMStateKey(state.Snapshot{StorageKey: warmMemKey})
 
 	warmCtx, warmCancel := context.WithTimeout(ctx, SnapshotBudgetFor(ins.RAMMB))

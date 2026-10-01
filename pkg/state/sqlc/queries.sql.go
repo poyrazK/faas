@@ -11309,6 +11309,89 @@ func (q *Queries) ListSessions(ctx context.Context, db DBTX, accountID pgtype.UU
 	return items, nil
 }
 
+const listSnapshotArtifactsForGC = `-- name: ListSnapshotArtifactsForGC :many
+SELECT s.id::text AS id, s.deployment_id::text AS deployment_id,
+       d.app_id::text AS app_id, a.account_id::text AS account_id, a.slug AS app_slug,
+       a.status AS app_status, d.status AS deployment_status,
+       coalesce(d.rootfs_key, '')::text AS rootfs_key,
+       s.fc_version, s.mem_bytes, s.disk_bytes, s.storage_key, s.stale,
+       s.delete_pending, s.created_at, s.tier, a.warm_snapshot_enabled
+FROM snapshots s
+JOIN deployments d ON d.id = s.deployment_id
+JOIN apps a ON a.id = d.app_id
+WHERE ($1::text = 'active' AND
+       (s.stale = false OR a.status = 'deleted' OR d.status IN ('failed', 'cancelled')))
+   OR ($1::text = 'stale' AND s.stale = true AND
+       s.created_at < now() - $2::bigint * interval '1 second')
+   OR ($1::text = 'pending' AND s.delete_pending = true)
+ORDER BY CASE WHEN $1::text = 'active' THEN s.created_at END DESC,
+         s.created_at ASC
+LIMIT 10000
+`
+
+type ListSnapshotArtifactsForGCParams struct {
+	Selection        string
+	RetentionSeconds int64
+}
+
+type ListSnapshotArtifactsForGCRow struct {
+	ID                  string
+	DeploymentID        string
+	AppID               string
+	AccountID           string
+	AppSlug             string
+	AppStatus           string
+	DeploymentStatus    string
+	RootfsKey           string
+	FcVersion           string
+	MemBytes            int64
+	DiskBytes           int64
+	StorageKey          string
+	Stale               bool
+	DeletePending       bool
+	CreatedAt           pgtype.Timestamptz
+	Tier                string
+	WarmSnapshotEnabled bool
+}
+
+func (q *Queries) ListSnapshotArtifactsForGC(ctx context.Context, db DBTX, arg ListSnapshotArtifactsForGCParams) ([]ListSnapshotArtifactsForGCRow, error) {
+	rows, err := db.Query(ctx, listSnapshotArtifactsForGC, arg.Selection, arg.RetentionSeconds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSnapshotArtifactsForGCRow{}
+	for rows.Next() {
+		var i ListSnapshotArtifactsForGCRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.DeploymentID,
+			&i.AppID,
+			&i.AccountID,
+			&i.AppSlug,
+			&i.AppStatus,
+			&i.DeploymentStatus,
+			&i.RootfsKey,
+			&i.FcVersion,
+			&i.MemBytes,
+			&i.DiskBytes,
+			&i.StorageKey,
+			&i.Stale,
+			&i.DeletePending,
+			&i.CreatedAt,
+			&i.Tier,
+			&i.WarmSnapshotEnabled,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTCPListenerTLSObservations = `-- name: ListTCPListenerTLSObservations :many
 SELECT listener_id, edge_id, hostname, intent_updated_at, observed_at, ready, not_after
 FROM app_tcp_listener_tls_observations
