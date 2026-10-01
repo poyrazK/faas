@@ -189,6 +189,17 @@ its private bridge socket directory, removes only confirmed dead sockets and
 refuses startup when an old socket still accepts connections. These process
 and restart fences require native Linux acceptance and leak evidence.
 
+Local process qualification also covers the production public routing handler
+and managed service proxy through their real forwarders, vmmd gRPC admission
+owner and reusable bridge. Mixed exchanges before and after response headers
+share the trusted cap across two gateway processes and replacement. Forged
+customer cap/plan/instance headers cannot raise it. Structured full/untrusted
+refusals do not execute the guest, evict placement or produce an extra observed
+forwarding RPC; cancellation cleanup permits subsequent work. App policy,
+caller identity, authorization, placement, namespace and VM startup remain
+fixtures in this test. Configured daemon, native lifecycle and deployed
+acceptance retain their separate requirements.
+
 ## Effective request policy
 
 The public routing handler pins the entire compiled host policy before route

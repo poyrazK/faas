@@ -3,6 +3,63 @@
 Objective: implement the six delivery steps in the 2026-09-29 gap-closure plan.
 Base: `56618879c`; branch: `codex/traffic-platform-gaps`; decision: ADR-375.
 
+## Node admission through public and managed handlers — 2026-10-02
+
+The existing process test used the forwarding proxy directly. The added case
+runs production public `Handler` and managed `ServiceProxy` in two OS processes
+and a replacement, using real HTTP/raw forwarders, vmmd gRPC, fcvm admission
+ownership and the reusable bridge binary. The original proxy case retains its
+assertions and shares the extracted fixture setup. This change adds acceptance
+coverage; it does not change production admission behavior.
+
+Four mixed public/managed requests fill a trusted Free VM's cap, including two
+response bodies held open after headers. A fixture Scale app and forged instance,
+plan and cap headers cannot raise that cap. Each process exercises both handlers'
+HTTP and Upgrade full/untrusted refusals. The tests verify structured 429/503,
+retry hints, the full refusal's limit 4/observed 5, one RPC per refusal, no guest
+execution and no placement eviction. Replacement retains the cap; cancellation
+is followed through actual bridge cleanup before both handlers serve new work.
+
+App policy, source/caller identity, authorization, warm placement, namespace and
+VM startup remain fixtures. This case does not run configured gateway daemons,
+stored declared policies, cross-host authentication or native guest networking.
+It qualifies the observed single-endpoint paths; separate retry unit coverage
+retains the explicit refusal checks against endpoint repicking and eviction.
+
+Verification against the final 12,516-file source freeze:
+
+- All 12 complete unit packages pass in 159.582 s. The raw log contains 10,884
+  named passes and 1,447 skips. Excluding 46 passed parents whose children are
+  entirely guarded leaves 10,838 accepted results and 1,493 guarded results.
+  The prior nine packages retain their accepted counts; fcvm adds 851, vmmdgrpc
+  397 and vmmd-stream-bridge 89. Seven vmmdgrpc results are guarded locally.
+- The selected Postgres profile passes 171 named results with no skips in
+  64.756 s: 39 under the same 22 actual Postgres fixture roots and 132 memory/
+  transport checks. It retains the previous profile and adds the two process
+  admission cases and all fcvm HTTP admission tests. The added cases do not
+  claim Postgres or native KVM acceptance.
+- Across both profiles, 10,876 distinct named results are accepted; 1,469
+  guarded results remain without acceptance. Pinned lint 2.4.0 checks all 12
+  complete packages with tests and reports zero issues in 8.167 s. SQLC 1.31.1
+  reproduces all four generated files exactly. Runbook SQL, text encoding,
+  shell quoting and ADR uniqueness pass in 15.129 s, retaining 71 pre-existing
+  duplicate groups. Only this tracker changes after the source freeze.
+- Accepted heavy gates run serially with CGO disabled, GOMAXPROCS=2, GOGC=50,
+  one package/analysis worker, disabled inlining/DWARF and stripped test binaries.
+  All terminal receipts precede documentation edits and staging. No new lint
+  suppressions, source exclusions, overlays or weakened assertions were added.
+  The disposable source database remains unmigrated with durability enabled.
+
+The earlier focused process pass preceded the structured cap assertion and is
+retained as preliminary evidence, along with the expanded preliminary lint pass.
+Final accepted gates include that assertion. No cache cleanup was needed.
+Evidence: `outputs/traffic-node-surfaces-20261002/` relative to the checkout's parent.
+
+All six release requirements remain open. No native Linux x86_64 KVM host is
+available; VM lifecycle, process fences, namespace/NAT/firewall/DNS-gated egress,
+leaks, complete path qualification, deployed load/recovery and staging remain
+pending.
+
 ## Fresh guest DNS identity and distinct source owners — 2026-10-02
 
 The original DNS caller wiring reproduced a declared `.internal` alias being

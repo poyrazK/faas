@@ -44,3 +44,18 @@ Upgrade refusal occurred before tunnelling. Guest networking and VM lifecycle
 were fixtures. The full local fcvm and vmmdgrpc suites passed. Linux-only
 parent-death/compatibility-child tests, actual KVM park/restore/migration,
 daemon restart, production load and leak evidence remain required.
+
+A further process test runs the production public `Handler` and managed
+`ServiceProxy`, their HTTP/raw forwarders, the vmmd gRPC service, fcvm admission
+owner and reusable bridge. Four mixed public/managed requests, including bodies
+streaming after response headers, fill the trusted Free cap. The fixture app
+advertises Scale and requests forge instance, plan and cap headers; capacity
+remains four. Both gateway processes and a replacement preserve structured
+429/503 refusals before guest execution, with one forwarding RPC per refusal,
+no placement eviction and no observed replay. Upgrade refusals use the same
+gate. Cancellation is followed through bridge cleanup before fresh public and
+managed work succeeds.
+
+This test supplies app policy, caller identity, authorization, warm placement,
+namespace and VM startup fixtures. It does not run configured gateway daemons,
+stored declared policies, native guest networking or deployed load acceptance.
