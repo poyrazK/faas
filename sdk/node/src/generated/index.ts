@@ -479,6 +479,7 @@ export type { IssueEvent } from './models/IssueEvent.js';
 export type { IssueEventResponse } from './models/IssueEventResponse.js';
 export type { IssueFrame } from './models/IssueFrame.js';
 export type { IssueImpact } from './models/IssueImpact.js';
+export type { IssueImpactSummary } from './models/IssueImpactSummary.js';
 export type { IssueIngestToken } from './models/IssueIngestToken.js';
 export type { IssueOccurrence } from './models/IssueOccurrence.js';
 export type { IssueRelease } from './models/IssueRelease.js';

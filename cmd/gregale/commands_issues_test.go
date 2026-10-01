@@ -25,6 +25,7 @@ func TestIssuesListAssigneeFilterAndTriageColumns(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(api.ListIssuesResponse{Items: []api.Issue{{
 			ID: "issue-1", State: "open", AssigneeAccountID: ownerID, EventCount: 7,
 			RegressionCount: 2, LastSeenAt: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC), Title: "Export failed",
+			Impact24h: &api.IssueImpactSummary{IdentifiedCustomers: 3, ObservedEvents: 5, UnattributedEvents: 1},
 		}}})
 	}))
 	defer server.Close()
@@ -41,7 +42,7 @@ func TestIssuesListAssigneeFilterAndTriageColumns(t *testing.T) {
 	if got := query.Get("assignee"); got != "me" {
 		t.Fatalf("request assignee filter = %q, want me", got)
 	}
-	for _, want := range []string{"OWNER", "EVENTS", "RECURRENCES", ownerID, "7", "2", "Export failed"} {
+	for _, want := range []string{"OWNER", "VERIFIED CUSTOMERS (24H)", "EVENTS (24H)", "UNATTRIBUTED (24H)", "EVENTS", "RECURRENCES", ownerID, "3", "5", "1", "7", "2", "Export failed"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("CLI output missing %q: %s", want, out.String())
 		}

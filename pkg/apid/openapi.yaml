@@ -45053,10 +45053,20 @@ components:
         last_seen_at: { type: string, format: date-time }
         event_count: { type: integer }
         regression_count: { type: integer }
+        impact_24h: { $ref: '#/components/schemas/IssueImpactSummary' }
         resolved_at: { type: string, format: date-time }
         fixed_deployment_id: { type: string, format: uuid }
         fixed_deployment_created_at: { type: string, format: date-time }
         ignored_until: { type: string, format: date-time }
+
+    IssueImpactSummary:
+      description: "Observed retained occurrences, verified distinct customers, and unattributed events from the previous 24 hours."
+      type: object
+      required: [identified_customers, observed_events, unattributed_events]
+      properties:
+        identified_customers: { type: integer }
+        observed_events: { type: integer }
+        unattributed_events: { type: integer }
 
     IssueOccurrence:
       description: "Retained sanitized occurrence with verified platform attribution and optional debugger correlation."

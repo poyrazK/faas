@@ -304,6 +304,33 @@ func (s *PgStore) ListIssues(ctx context.Context, app string, filter IssueListFi
 		last := out.Items[len(out.Items)-1]
 		out.NextCursor = EncodeIssueCursor(IssueCursor{last.LastSeenAt, last.ID})
 	}
+	if len(out.Items) == 0 {
+		return out, nil
+	}
+	issueIDs := make([]pgtype.UUID, 0, len(out.Items))
+	for _, item := range out.Items {
+		issueIDs = append(issueIDs, issueUUID(item.ID))
+	}
+	windowEnd := time.Now().UTC()
+	windowStart := windowEnd.Add(-api.IssueImpactSummaryWindow)
+	impactRows, err := sqlc.New().IssueImpactSummaries(ctx, s.pool, sqlc.IssueImpactSummariesParams{
+		IssueIds: issueIDs, Since: issueTime(windowStart), Until: issueTime(windowEnd),
+	})
+	if err != nil {
+		return api.ListIssuesResponse{}, err
+	}
+	impacts := make(map[string]api.IssueImpactSummary, len(impactRows))
+	for _, row := range impactRows {
+		impacts[issueID(row.IssueID)] = api.IssueImpactSummary{
+			IdentifiedCustomers: row.IdentifiedCustomers,
+			ObservedEvents:      row.ObservedEvents,
+			UnattributedEvents:  row.UnattributedEvents,
+		}
+	}
+	for i := range out.Items {
+		impact := impacts[out.Items[i].ID]
+		out.Items[i].Impact24h = &impact
+	}
 	return out, nil
 }
 

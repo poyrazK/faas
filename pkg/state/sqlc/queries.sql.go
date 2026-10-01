@@ -6706,6 +6706,56 @@ func (q *Queries) IssueImpact(ctx context.Context, db DBTX, arg IssueImpactParam
 	return i, err
 }
 
+const issueImpactSummaries = `-- name: IssueImpactSummaries :many
+SELECT issue_id,
+       count(*) AS observed_events,
+       count(DISTINCT COALESCE(verified_platform_tenant_id,verified_consumer_id)) AS identified_customers,
+       count(*) FILTER(WHERE verified_platform_tenant_id IS NULL AND verified_consumer_id IS NULL) AS unattributed_events
+FROM issue_events
+WHERE issue_id = ANY($1::uuid[])
+  AND occurred_at >= $2::timestamptz
+  AND occurred_at <= $3::timestamptz
+GROUP BY issue_id
+`
+
+type IssueImpactSummariesParams struct {
+	IssueIds []pgtype.UUID
+	Since    pgtype.Timestamptz
+	Until    pgtype.Timestamptz
+}
+
+type IssueImpactSummariesRow struct {
+	IssueID             pgtype.UUID
+	ObservedEvents      int64
+	IdentifiedCustomers int64
+	UnattributedEvents  int64
+}
+
+func (q *Queries) IssueImpactSummaries(ctx context.Context, db DBTX, arg IssueImpactSummariesParams) ([]IssueImpactSummariesRow, error) {
+	rows, err := db.Query(ctx, issueImpactSummaries, arg.IssueIds, arg.Since, arg.Until)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []IssueImpactSummariesRow{}
+	for rows.Next() {
+		var i IssueImpactSummariesRow
+		if err := rows.Scan(
+			&i.IssueID,
+			&i.ObservedEvents,
+			&i.IdentifiedCustomers,
+			&i.UnattributedEvents,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const issueInsertEvent = `-- name: IssueInsertEvent :exec
 INSERT INTO issue_events(app_id,deployment_id,event_id,issue_id,payload_hash,payload,occurred_at,received_at,verified_consumer_id,verified_platform_tenant_id)
 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)

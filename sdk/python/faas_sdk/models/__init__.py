@@ -939,6 +939,7 @@ from .issue_event import IssueEvent
 from .issue_event_response import IssueEventResponse
 from .issue_frame import IssueFrame
 from .issue_impact import IssueImpact
+from .issue_impact_summary import IssueImpactSummary
 from .issue_ingest_token import IssueIngestToken
 from .issue_occurrence import IssueOccurrence
 from .issue_release import IssueRelease
@@ -2928,6 +2929,7 @@ __all__ = (
     "IssueEventResponse",
     "IssueFrame",
     "IssueImpact",
+    "IssueImpactSummary",
     "IssueIngestToken",
     "IssueOccurrence",
     "IssueRelease",

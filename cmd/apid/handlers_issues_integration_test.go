@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -202,6 +203,13 @@ func TestIssueVerifiedCustomerImpactAndWebhookRecovery(t *testing.T) {
 	detail := issueDecode[api.IssueDetail](t, e.do(t, "GET", "/v1/apps/"+app.Slug+"/issues/"+issueID, nil, nil), 200)
 	if detail.Impact.IdentifiedCustomers != 2 || detail.Impact.UnattributedEvents != 1 {
 		t.Fatalf("impact = %+v", detail.Impact)
+	}
+	list := issueDecode[api.ListIssuesResponse](t, e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/issues", nil, nil), http.StatusOK)
+	if len(list.Items) != 1 || list.Items[0].Impact24h == nil {
+		t.Fatalf("issue inbox impact summary = %+v", list.Items)
+	}
+	if got := list.Items[0].Impact24h; got.IdentifiedCustomers != 2 || got.ObservedEvents != 3 || got.UnattributedEvents != 1 {
+		t.Fatalf("issue inbox impact summary = %+v", got)
 	}
 	relay := e.store.(state.AppWebhookEventOutboxStore)
 	if n, err := relay.DrainAppWebhookEventOutbox(t.Context(), 10); err != nil || n != 1 {

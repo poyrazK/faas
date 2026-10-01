@@ -61,7 +61,7 @@ func cmdIssues(args []string) int {
 			return jsonOut(writeJSON(out))
 		}
 		w := tabwriter.NewWriter(osStdout, 0, 4, 2, ' ', 0)
-		if _, err := fmt.Fprintln(w, "ID\tSTATE\tOWNER\tEVENTS\tRECURRENCES\tLAST SEEN\tTITLE"); err != nil {
+		if _, err := fmt.Fprintln(w, "ID\tSTATE\tOWNER\tVERIFIED CUSTOMERS (24H)\tEVENTS (24H)\tUNATTRIBUTED (24H)\tEVENTS\tRECURRENCES\tLAST SEEN\tTITLE"); err != nil {
 			return printErr("Could not write issues", err)
 		}
 		for _, i := range out.Items {
@@ -69,7 +69,13 @@ func cmdIssues(args []string) int {
 			if owner == "" {
 				owner = "unassigned"
 			}
-			if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\t%s\t%s\n", i.ID, i.State, owner, i.EventCount, i.RegressionCount, i.LastSeenAt.Format(time.RFC3339), i.Title); err != nil {
+			identified, observed, unattributed := "—", "—", "—"
+			if i.Impact24h != nil {
+				identified = fmt.Sprint(i.Impact24h.IdentifiedCustomers)
+				observed = fmt.Sprint(i.Impact24h.ObservedEvents)
+				unattributed = fmt.Sprint(i.Impact24h.UnattributedEvents)
+			}
+			if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\t%s\n", i.ID, i.State, owner, identified, observed, unattributed, i.EventCount, i.RegressionCount, i.LastSeenAt.Format(time.RFC3339), i.Title); err != nil {
 				return printErr("Could not write issues", err)
 			}
 		}

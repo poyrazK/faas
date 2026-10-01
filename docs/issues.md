@@ -141,6 +141,11 @@ Use `--assignee me`, `--assignee unassigned`, or an account UUID to narrow
 the CLI list. The dashboard provides Mine and Unassigned owner views and shows
 each issue's owner and recurrence count.
 
+The inbox also reports retained events, verified distinct customers, and
+unattributed events from the previous 24 hours. These counts are an observed,
+bounded view of instrumented failures and do not estimate customer impact
+outside retained and attributable events.
+
 Issue identity survives deployments. Grouping removes line numbers and known
 container/build roots but preserves source directories and function names.
 Use an explicit fingerprint for unsupported or unstable stack representations.
