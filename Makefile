@@ -1361,7 +1361,8 @@ test-environment-gitops-core: ## Strict contract, planner, worker, and real Post
 
 .PHONY: test-environment-gitops-controls
 test-environment-gitops-controls: test-environment-gitops-core ## API/CLI/dashboard review workflows and SDK contracts; does not replace native runtime acceptance.
-	@$(GO) test -p 1 ./cmd/apid ./cmd/gregale ./pkg/dashboard -run '^(TestEnvironmentGit(Ops.*|Source(Polling|Metrics).*)|TestSpecCompliance)$$' -count=1
+	@$(GO) test -p 1 ./cmd/apid ./cmd/gregale ./pkg/dashboard -run '^(TestEnvironmentGit(Ops.*|Source(Polling|Metrics).*)|TestStubGithubdProtectedBranchEvidenceCannotQualify|TestSpecCompliance)$$' -count=1
+	@$(GO) test -p 1 ./pkg/githubd ./pkg/githubdgrpc -run '^Test(HTTPProtectedBranchEvidence.*|ProtectedBranchEvidence.*|ServerSplitBoxListenerPreservesLocalSocketAndRestrictsRemoteMethods)$$' -count=1
 	@$(GO) test -p 1 ./pkg/promqlrules -run '^TestEnvironmentGitSourceAlertsStayInternal$$' -count=1
 	@promtool check rules deploy/ansible/roles/prometheus/files/faas.rules.yml
 	@promtool test rules pkg/promqlrules/testdata/environment_git_sources.test.yml

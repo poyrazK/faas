@@ -163,6 +163,11 @@ service Githubd {
   // imaged uses this immediately before promoting branch-backed deployments.
   rpc GetBranchHead(GetBranchHeadRequest) returns (GetBranchHeadResponse);
 
+  // Read-only qualification of a classic review protection policy for an
+  // exact repository ID and current branch head. This is not approval of a
+  // merge or environment revision. Served on the local control-plane socket.
+  rpc GetProtectedBranchEvidence(GetProtectedBranchEvidenceRequest) returns (GetProtectedBranchEvidenceResponse);
+
   // ListRecoveryQueueItems returns operator-safe projections of the durable
   // webhook-delivery inbox and Check Run outbox. Payloads are deliberately
   // excluded because they can contain customer repository metadata.
@@ -580,4 +585,26 @@ message GetBranchHeadRequest {
 
 message GetBranchHeadResponse {
   string commit_sha = 1;
+}
+
+message GetProtectedBranchEvidenceRequest {
+  string account_id = 1;
+  int64 installation_id = 2;
+  int64 repository_id = 3;
+  string repo_full_name = 4;
+  string branch = 5;
+  string commit_sha = 6;
+}
+
+message GetProtectedBranchEvidenceResponse {
+  bool qualified = 1;
+  string reason = 2;
+  string profile = 3;
+  int64 installation_id = 4;
+  int64 repository_id = 5;
+  string repo_full_name = 6;
+  string branch = 7;
+  string commit_sha = 8;
+  string policy_digest = 9;
+  string checked_at_rfc3339 = 10;
 }

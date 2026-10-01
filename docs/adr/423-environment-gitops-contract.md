@@ -111,6 +111,26 @@ preserve the same distinction. Polling defaults on and can be disabled with
 `FAAS_ENVIRONMENT_GIT_SOURCE_POLLING_ENABLED=false`; successful checks recur
 every five minutes and source failures retry after thirty seconds.
 
+The local githubd bridge now provides read-only protected-branch policy
+evidence for an exact installation, repository ID, branch and commit SHA.
+Its initial profile requires classic branch protection with approving reviews,
+stale-review dismissal, last-push approval, administrator enforcement, no review
+bypass allowances, and no force pushes or branch deletion. Repository identity
+comes from the authenticated installation's API access. Head and complete policy
+digest are read twice within a bounded observation; changes reject qualification.
+Missing permissions, unavailable providers, incomplete responses and ruleset-only
+protection cannot qualify. A receipt records its policy profile, identity, SHA,
+digest and verification time; receivers reject mismatched, future or expired
+receipts. The remote imaged-only listener cannot serve this method.
+
+This evidence describes current policy and does not prove the review history of
+a merge. Automatic approval remains unavailable until verified merge/review
+provenance and these receipts are durably bound to the immutable definition and
+source generation in the approval transaction. The initial evidence read needs
+GitHub App Administration read permission, as specified by the
+[GitHub branch protection API](https://docs.github.com/en/rest/branches/branch-protection).
+Existing manual approval and candidate discovery remain independently usable.
+
 Source operational health is read as one bounded, consistent fleet aggregate
 on each apid Prometheus scrape. Closed-set conditions separate unchecked and
 unverified sources, stale checks, stale successful verification, availability

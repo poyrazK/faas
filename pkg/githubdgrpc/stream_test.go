@@ -35,12 +35,15 @@ type streamSvc struct {
 	streamTotal int64
 	streamErr   error
 
-	mintToken   string
-	mintExpires time.Time
-	mintErr     error
-	branchSHA   string
-	branchFound bool
-	branchErr   error
+	mintToken         string
+	mintExpires       time.Time
+	mintErr           error
+	branchSHA         string
+	branchFound       bool
+	branchErr         error
+	protectedEvidence githubdgrpc.ProtectedBranchEvidence
+	protectedErr      error
+	protectedRequest  chan *githubdpb.GetProtectedBranchEvidenceRequest
 }
 
 func (s *streamSvc) MintInstallationToken(accountID string, installationID int64) (string, time.Time, error) {
@@ -59,6 +62,14 @@ func (s *streamSvc) StreamSourceRef(_ context.Context, _ string, _ int64, _, _ s
 
 func (s *streamSvc) GetBranchHead(context.Context, string, int64, string, string) (string, bool, error) {
 	return s.branchSHA, s.branchFound, s.branchErr
+}
+
+func (s *streamSvc) GetProtectedBranchEvidence(_ context.Context, accountID string, installationID, repositoryID int64, repository, branch, commitSHA string) (githubdgrpc.ProtectedBranchEvidence, error) {
+	if s.protectedRequest != nil {
+		s.protectedRequest <- &githubdpb.GetProtectedBranchEvidenceRequest{AccountId: accountID, InstallationId: installationID,
+			RepositoryId: repositoryID, RepoFullName: repository, Branch: branch, CommitSha: commitSHA}
+	}
+	return s.protectedEvidence, s.protectedErr
 }
 
 // newStreamServer wires streamSvc into a bufconn listener and returns

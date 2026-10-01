@@ -32,24 +32,25 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Githubd_GetInstallState_FullMethodName          = "/onebox.faas.githubd.v1.Githubd/GetInstallState"
-	Githubd_ExchangeOAuthCode_FullMethodName        = "/onebox.faas.githubd.v1.Githubd/ExchangeOAuthCode"
-	Githubd_ListInstallableRepos_FullMethodName     = "/onebox.faas.githubd.v1.Githubd/ListInstallableRepos"
-	Githubd_BindAppRepo_FullMethodName              = "/onebox.faas.githubd.v1.Githubd/BindAppRepo"
-	Githubd_UnbindAppRepo_FullMethodName            = "/onebox.faas.githubd.v1.Githubd/UnbindAppRepo"
-	Githubd_GetAppBinding_FullMethodName            = "/onebox.faas.githubd.v1.Githubd/GetAppBinding"
-	Githubd_GetAppActivity_FullMethodName           = "/onebox.faas.githubd.v1.Githubd/GetAppActivity"
-	Githubd_CreateDeploymentFromPush_FullMethodName = "/onebox.faas.githubd.v1.Githubd/CreateDeploymentFromPush"
-	Githubd_EnqueueBuild_FullMethodName             = "/onebox.faas.githubd.v1.Githubd/EnqueueBuild"
-	Githubd_WriteCheck_FullMethodName               = "/onebox.faas.githubd.v1.Githubd/WriteCheck"
-	Githubd_VerifyInstallation_FullMethodName       = "/onebox.faas.githubd.v1.Githubd/VerifyInstallation"
-	Githubd_MintInstallationToken_FullMethodName    = "/onebox.faas.githubd.v1.Githubd/MintInstallationToken"
-	Githubd_StreamSourceRef_FullMethodName          = "/onebox.faas.githubd.v1.Githubd/StreamSourceRef"
-	Githubd_GetBranchHead_FullMethodName            = "/onebox.faas.githubd.v1.Githubd/GetBranchHead"
-	Githubd_ListRecoveryQueueItems_FullMethodName   = "/onebox.faas.githubd.v1.Githubd/ListRecoveryQueueItems"
-	Githubd_RetryWebhookDelivery_FullMethodName     = "/onebox.faas.githubd.v1.Githubd/RetryWebhookDelivery"
-	Githubd_RetryCheckUpdate_FullMethodName         = "/onebox.faas.githubd.v1.Githubd/RetryCheckUpdate"
-	Githubd_RetryAppActivity_FullMethodName         = "/onebox.faas.githubd.v1.Githubd/RetryAppActivity"
+	Githubd_GetInstallState_FullMethodName            = "/onebox.faas.githubd.v1.Githubd/GetInstallState"
+	Githubd_ExchangeOAuthCode_FullMethodName          = "/onebox.faas.githubd.v1.Githubd/ExchangeOAuthCode"
+	Githubd_ListInstallableRepos_FullMethodName       = "/onebox.faas.githubd.v1.Githubd/ListInstallableRepos"
+	Githubd_BindAppRepo_FullMethodName                = "/onebox.faas.githubd.v1.Githubd/BindAppRepo"
+	Githubd_UnbindAppRepo_FullMethodName              = "/onebox.faas.githubd.v1.Githubd/UnbindAppRepo"
+	Githubd_GetAppBinding_FullMethodName              = "/onebox.faas.githubd.v1.Githubd/GetAppBinding"
+	Githubd_GetAppActivity_FullMethodName             = "/onebox.faas.githubd.v1.Githubd/GetAppActivity"
+	Githubd_CreateDeploymentFromPush_FullMethodName   = "/onebox.faas.githubd.v1.Githubd/CreateDeploymentFromPush"
+	Githubd_EnqueueBuild_FullMethodName               = "/onebox.faas.githubd.v1.Githubd/EnqueueBuild"
+	Githubd_WriteCheck_FullMethodName                 = "/onebox.faas.githubd.v1.Githubd/WriteCheck"
+	Githubd_VerifyInstallation_FullMethodName         = "/onebox.faas.githubd.v1.Githubd/VerifyInstallation"
+	Githubd_MintInstallationToken_FullMethodName      = "/onebox.faas.githubd.v1.Githubd/MintInstallationToken"
+	Githubd_StreamSourceRef_FullMethodName            = "/onebox.faas.githubd.v1.Githubd/StreamSourceRef"
+	Githubd_GetBranchHead_FullMethodName              = "/onebox.faas.githubd.v1.Githubd/GetBranchHead"
+	Githubd_GetProtectedBranchEvidence_FullMethodName = "/onebox.faas.githubd.v1.Githubd/GetProtectedBranchEvidence"
+	Githubd_ListRecoveryQueueItems_FullMethodName     = "/onebox.faas.githubd.v1.Githubd/ListRecoveryQueueItems"
+	Githubd_RetryWebhookDelivery_FullMethodName       = "/onebox.faas.githubd.v1.Githubd/RetryWebhookDelivery"
+	Githubd_RetryCheckUpdate_FullMethodName           = "/onebox.faas.githubd.v1.Githubd/RetryCheckUpdate"
+	Githubd_RetryAppActivity_FullMethodName           = "/onebox.faas.githubd.v1.Githubd/RetryAppActivity"
 )
 
 // GithubdClient is the client API for Githubd service.
@@ -186,6 +187,10 @@ type GithubdClient interface {
 	// requested ref is not a branch (source-ref also accepts tags and SHAs).
 	// imaged uses this immediately before promoting branch-backed deployments.
 	GetBranchHead(ctx context.Context, in *GetBranchHeadRequest, opts ...grpc.CallOption) (*GetBranchHeadResponse, error)
+	// Read-only qualification of a classic review protection policy for an
+	// exact repository ID and current branch head. This is not approval of a
+	// merge or environment revision. Served on the local control-plane socket.
+	GetProtectedBranchEvidence(ctx context.Context, in *GetProtectedBranchEvidenceRequest, opts ...grpc.CallOption) (*GetProtectedBranchEvidenceResponse, error)
 	// ListRecoveryQueueItems returns operator-safe projections of the durable
 	// webhook-delivery inbox and Check Run outbox. Payloads are deliberately
 	// excluded because they can contain customer repository metadata.
@@ -352,6 +357,16 @@ func (c *githubdClient) GetBranchHead(ctx context.Context, in *GetBranchHeadRequ
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetBranchHeadResponse)
 	err := c.cc.Invoke(ctx, Githubd_GetBranchHead_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *githubdClient) GetProtectedBranchEvidence(ctx context.Context, in *GetProtectedBranchEvidenceRequest, opts ...grpc.CallOption) (*GetProtectedBranchEvidenceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetProtectedBranchEvidenceResponse)
+	err := c.cc.Invoke(ctx, Githubd_GetProtectedBranchEvidence_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -532,6 +547,10 @@ type GithubdServer interface {
 	// requested ref is not a branch (source-ref also accepts tags and SHAs).
 	// imaged uses this immediately before promoting branch-backed deployments.
 	GetBranchHead(context.Context, *GetBranchHeadRequest) (*GetBranchHeadResponse, error)
+	// Read-only qualification of a classic review protection policy for an
+	// exact repository ID and current branch head. This is not approval of a
+	// merge or environment revision. Served on the local control-plane socket.
+	GetProtectedBranchEvidence(context.Context, *GetProtectedBranchEvidenceRequest) (*GetProtectedBranchEvidenceResponse, error)
 	// ListRecoveryQueueItems returns operator-safe projections of the durable
 	// webhook-delivery inbox and Check Run outbox. Payloads are deliberately
 	// excluded because they can contain customer repository metadata.
@@ -596,6 +615,9 @@ func (UnimplementedGithubdServer) StreamSourceRef(*StreamSourceRefRequest, grpc.
 }
 func (UnimplementedGithubdServer) GetBranchHead(context.Context, *GetBranchHeadRequest) (*GetBranchHeadResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetBranchHead not implemented")
+}
+func (UnimplementedGithubdServer) GetProtectedBranchEvidence(context.Context, *GetProtectedBranchEvidenceRequest) (*GetProtectedBranchEvidenceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetProtectedBranchEvidence not implemented")
 }
 func (UnimplementedGithubdServer) ListRecoveryQueueItems(context.Context, *ListRecoveryQueueItemsRequest) (*ListRecoveryQueueItemsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListRecoveryQueueItems not implemented")
@@ -875,6 +897,24 @@ func _Githubd_GetBranchHead_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Githubd_GetProtectedBranchEvidence_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetProtectedBranchEvidenceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GithubdServer).GetProtectedBranchEvidence(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Githubd_GetProtectedBranchEvidence_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GithubdServer).GetProtectedBranchEvidence(ctx, req.(*GetProtectedBranchEvidenceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Githubd_ListRecoveryQueueItems_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListRecoveryQueueItemsRequest)
 	if err := dec(in); err != nil {
@@ -1005,6 +1045,10 @@ var Githubd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetBranchHead",
 			Handler:    _Githubd_GetBranchHead_Handler,
+		},
+		{
+			MethodName: "GetProtectedBranchEvidence",
+			Handler:    _Githubd_GetProtectedBranchEvidence_Handler,
 		},
 		{
 			MethodName: "ListRecoveryQueueItems",

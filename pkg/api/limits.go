@@ -35,6 +35,10 @@ const EnvironmentGitOpsMaxOverrideReasonBytes = 1024
 const EnvironmentGitOpsMaxExpandedArchiveBytes int64 = 512 << 20
 const EnvironmentGitOpsMaxPolicies = 20
 
+// EnvironmentGitProtectedBranchEvidenceMaxAge bounds use of policy observations;
+// automatic approval still requires separately verified merge/review evidence.
+const EnvironmentGitProtectedBranchEvidenceMaxAge = time.Minute
+
 // Runtime refresh requests use the durable scheduler outbox. Rate-limit replay
 // production independently from the reconciler's observation polling interval.
 const EnvironmentGitOpsRuntimeRefreshRetry = 30 * time.Second
