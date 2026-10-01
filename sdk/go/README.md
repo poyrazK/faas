@@ -68,6 +68,44 @@ func main() {
 }
 ```
 
+## Gregale Issues exception reporting
+
+Create a deployment-bound issue ingest token with `gregale issues create-token`
+and store it as `GREGALE_ISSUE_TOKEN`. The reporter queues bounded exception
+evidence and sends it independently of trace sampling:
+
+```go
+// Also import context, os, time, and faas "github.com/poyrazK/faas/sdk/go".
+issues, err := faas.NewIssueReporter(faas.IssueReporterOptions{
+    BaseURL: os.Getenv("GREGALE_API_URL"),
+    App:     "exports",
+    Token:   os.Getenv("GREGALE_ISSUE_TOKEN"),
+})
+if err != nil {
+    return err
+}
+shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+defer cancel()
+defer issues.Close(shutdownCtx)
+
+if err := generateExport(); err != nil {
+    issues.CaptureException(err, faas.IssueContext{
+        RequestID: requestID,
+        TraceID:   traceID,
+        Route:     "/exports",
+    })
+    return err
+}
+```
+
+Use `defer issues.RecoverAndRepanic(faas.IssueContext{SourceKind: "worker", InvocationID: invocationID})`
+for a worker boundary that should report a panic while preserving normal panic behavior. Standard Go errors do
+not retain creation-time stacks; capture records the current goroutine stack.
+Call `Flush(ctx)` or `Close(ctx)` during graceful shutdown, and inspect
+`Stats()` for queued, accepted, and dropped events. Delivery is best effort and
+an ungraceful process exit can lose queued events. See
+[`docs/issues.md`](../../docs/issues.md) for the full privacy and token guidance.
+
 ## Disposable agent executions
 
 Runs execute in an isolated, networkless microVM with only ephemeral guest
