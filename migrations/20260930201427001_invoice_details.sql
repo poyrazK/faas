@@ -1,6 +1,7 @@
 -- +goose Up
 ALTER TABLE invoices ADD COLUMN IF NOT EXISTS details jsonb NOT NULL DEFAULT '{}'::jsonb;
 
+-- +goose StatementBegin
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -24,6 +25,7 @@ BEGIN
       );
   END IF;
 END $$;
+-- +goose StatementEnd
 
 -- +goose Down
 ALTER TABLE invoices DROP COLUMN details;
