@@ -6,10 +6,10 @@ their publishing identity. Publishing creates a candidate; it does not activate
 the version or change applications.
 
 The implementation is in progress. Candidate version and resource management,
-plus the durable automatic enrollment boundary and private persisted review
-store, are implemented. Reviewed
-assignment activation, control materialization, runtime enforcement and controlled rollout
-must pass the acceptance checklist in [ADR-379](adr/379-inherited-application-standards.md)
+plus automatic enrollment repair and private reviewed control installation,
+are implemented. Public
+assignment activation, runtime enforcement and controlled rollout
+must pass the acceptance checklist in [ADR-385](adr/385-inherited-application-standards.md)
 before this feature is declared available.
 
 ## Enrollment boundary
@@ -24,9 +24,9 @@ project rechecks inheritance and preserves its original values and local intent.
 Enrollment keeps desired, persisted and observed revisions separate. Pending,
 applying or blocked enrollment rejects deployment creation with HTTP 409 and
 `application_standards_pending`. Persisting configuration will not count as
-runtime observation. The public assignment activation and enrollment worker are
-still being implemented; assignment fixtures currently exercise this boundary
-in tests.
+runtime observation. apid's repair worker discovers durable pending enrollment,
+including after restart, and installs the captured versions into the existing
+control tables. Public assignment activation remains under development.
 
 Legacy projects have account ownership rather than a dedicated organization
 column. Assigning a project verifies the creator's organization membership and
@@ -83,7 +83,7 @@ existing pins until their approved removal. Saving an operation does not mark
 any service persisted or observed.
 
 These methods are internal storage interfaces. Public review/approval endpoints,
-projection workers, consumer verification, exceptions, and rollback are still
+consumer verification, exceptions, and rollback are still
 being implemented. A successful read-only freshness check does not authorize an
 unlocked mutation; writes must use the atomic approval path.
 
@@ -215,7 +215,34 @@ controls reject legacy patches that change the resolved projection. The shared
 intent path for permitted overrides is still pending.
 
 Saved settings produce a `persisted` target, with no observed revision. The next
-wave waits for actual consumer verification. Public activation, automatic
-onboarding repair, worker wiring, runtime proofs, exceptions and complete rollback
+wave waits for actual consumer verification. Public activation,
+runtime proofs, exceptions and complete rollback
 operations remain acceptance work; these private paths are not a released
 application-standards feature.
+
+## Automatic onboarding and repair
+
+apid runs bounded repair passes every five seconds. Each pass visits reviewed
+operations first, then pending enrollment. A queued reviewed target takes
+precedence even if an automatic worker claimed the service before approval.
+Claims carry a generation, desired revision and a storage-owned expiry; restoring
+or reenrolling a service revokes earlier authority. A transaction that outlives
+its lease rolls back its intent and controls together.
+
+New services receive actual log drains, publisher keys, signature posture and
+outbound settings without manual enrollment. Automatic repair uses their captured
+adoption versions; a later publication or admission update cannot move them
+silently. Current creating-account entitlements and aggregate drain quotas still
+apply. A blocked service keeps its original controls and a stable error code;
+durable retry reevaluates it after thirty seconds.
+
+Enrollment retains which fields were last installed separately from desired
+ownership. Leaving a project restores original values and private legacy control
+backups even when no assignment remains. An inherited default does not become a
+local override during restore. Previously managed controls remain protected
+while that repair is pending.
+
+Installation advances the persisted revision, leaving observation at zero.
+These checks do not prove image verification, delivered logs or live network
+convergence. Restore/wake admission, runtime acknowledgments and native acceptance
+remain necessary before public activation is enabled.

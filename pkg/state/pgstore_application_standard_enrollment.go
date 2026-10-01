@@ -17,14 +17,18 @@ func (s *PgStore) GetApplicationStandardEnrollment(ctx context.Context, orgID, a
 	if !validStandardResourceRead(orgID, appID) {
 		return ApplicationStandardEnrollment{}, ErrInvalidArgument
 	}
-	row, err := sqlc.New().GetApplicationStandardEnrollment(ctx, s.pool, sqlc.GetApplicationStandardEnrollmentParams{OrgID: mustPgUUID(orgID), AppID: mustPgUUID(appID)})
+	return readStandardEnrollment(ctx, s.pool, orgID, appID)
+}
+
+func readStandardEnrollment(ctx context.Context, db sqlc.DBTX, orgID, appID string) (ApplicationStandardEnrollment, error) {
+	row, err := sqlc.New().GetApplicationStandardEnrollment(ctx, db, sqlc.GetApplicationStandardEnrollmentParams{OrgID: mustPgUUID(orgID), AppID: mustPgUUID(appID)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ApplicationStandardEnrollment{}, ErrNotFound
 	}
 	if err != nil {
 		return ApplicationStandardEnrollment{}, fmt.Errorf("read standard enrollment: %w", err)
 	}
-	value := ApplicationStandardEnrollment{AppID: row.AppID, OrgID: row.OrgID, ProjectID: row.ProjectID, AdditionalLogDestinations: row.AdditionalLogDestinations, EffectiveHash: row.EffectiveHash, DesiredRevision: row.DesiredRevision, PersistedRevision: row.PersistedRevision, ObservedRevision: row.ObservedRevision, State: row.State, ErrorCode: row.ErrorCode, UpdatedAt: row.UpdatedAt.Time}
+	value := ApplicationStandardEnrollment{AppID: row.AppID, OrgID: row.OrgID, ProjectID: row.ProjectID, AdditionalLogDestinations: row.AdditionalLogDestinations, EffectiveHash: row.EffectiveHash, DesiredRevision: row.DesiredRevision, PersistedRevision: row.PersistedRevision, ObservedRevision: row.ObservedRevision, State: row.State, ErrorCode: row.ErrorCode, MaterializedFields: standardFields(row.MaterializedFields), UpdatedAt: row.UpdatedAt.Time}
 	for _, decode := range []struct {
 		raw    []byte
 		target any

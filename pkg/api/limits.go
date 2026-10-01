@@ -34,6 +34,11 @@ const (
 	ApplicationStandardMaxRolloutBatch                = 100
 	ApplicationStandardReviewTTL                      = 30 * time.Minute
 	ApplicationStandardWorkerLease                    = 30 * time.Second
+	ApplicationStandardWorkerInterval                 = 5 * time.Second
+	ApplicationStandardWorkerPassTimeout              = 10 * time.Second
+	ApplicationStandardWorkerReleaseTimeout           = 2 * time.Second
+	ApplicationStandardWorkerPassLimit                = 16
+	ApplicationStandardBlockedRetry                   = 30 * time.Second
 	ApplicationStandardMaxWorkerOwnerBytes            = 128
 	ApplicationStandardApprovalLockAttempts           = 6
 	ApplicationStandardApprovalLockRetry              = 20 * time.Millisecond

@@ -126,12 +126,13 @@ SELECT jsonb_build_object(
         'app_id', a.id::text, 'org_id', a.org_id::text, 'project_id', coalesce(a.project_id::text, ''),
         'account_id', a.account_id::text, 'slug', a.slug, 'status', a.status, 'type', a.type,
         'workload_class', a.workload_class, 'account_plan', acct.plan, 'account_status', acct.status,
+        'account_egress_allowlist_extra', acct.egress_allowlist_extra,
         'account_drain_count', (SELECT count(*) FROM app_log_drains d JOIN apps owner ON owner.id = d.app_id
             WHERE owner.account_id = a.account_id AND owner.status <> 'deleted'),
         'settings', jsonb_build_object('require_signed', a.require_signed, 'security_policy', a.security_policy,
             'egress_cidrs', coalesce(to_jsonb(a.egress_allowlist::text[]), '[]'::jsonb), 'egress_extra_ports', coalesce(to_jsonb(a.egress_ports), '[]'::jsonb)),
         'has_enrollment', e.app_id IS NOT NULL,
-        'enrollment', jsonb_build_object('org_id', e.org_id::text, 'project_id', coalesce(e.project_id::text, ''), 'base_settings', e.base_settings, 'local_settings', e.local_settings,
+        'enrollment', jsonb_build_object('materialized_fields',to_jsonb(e.materialized_fields),'org_id', e.org_id::text, 'project_id', coalesce(e.project_id::text, ''), 'base_settings', e.base_settings, 'local_settings', e.local_settings,
             'additional_log_destinations', to_jsonb(e.additional_log_destinations::text[]), 'adoptions', e.adoptions,
             'desired_revision', e.desired_revision, 'effective', e.effective, 'effective_hash', e.effective_hash),
         'archived_resources', coalesce((SELECT jsonb_agg(jsonb_build_object('field', b.field, 'id', b.logical_id::text, 'config_hash', b.config_hash) ORDER BY b.field,b.logical_id) FROM application_standard_control_backups b WHERE b.app_id = a.id), '[]'::jsonb),
@@ -182,7 +183,7 @@ WHERE org_id = sqlc.arg(org_id)::uuid AND id = sqlc.arg(plan_id)::uuid FOR UPDAT
 SELECT app_id::text, org_id::text, coalesce(project_id::text, '')::text AS project_id,
        base_settings, local_settings, additional_log_destinations::text[] AS additional_log_destinations,
        adoptions, effective, effective_hash, desired_revision, persisted_revision, observed_revision,
-       state, error_code, updated_at
+       state, error_code, materialized_fields, updated_at
 FROM app_application_standards WHERE org_id = sqlc.arg(org_id)::uuid AND app_id = sqlc.arg(app_id)::uuid;
 
 -- name: ListApplicationStandardAssignments :many
@@ -5153,6 +5154,7 @@ VALUES (sqlc.arg(app_id)::uuid,sqlc.arg(field)::text,sqlc.arg(resource_id)::uuid
 UPDATE app_application_standards SET base_settings = sqlc.arg(base_settings)::jsonb,
  local_settings = sqlc.arg(local_settings)::jsonb, additional_log_destinations = sqlc.arg(additional)::uuid[],
  adoptions = sqlc.arg(adoptions)::jsonb, effective = sqlc.arg(effective)::jsonb, effective_hash = sqlc.arg(effective_hash)::text,
+ materialized_fields = sqlc.arg(materialized_fields)::text[],
  desired_revision = desired_revision + 1, observed_revision = 0, state = 'applying',error_code = '',updated_at = clock_timestamp()
 WHERE app_id = sqlc.arg(app_id)::uuid AND org_id = sqlc.arg(org_id)::uuid AND desired_revision = sqlc.arg(expected_revision)::bigint;
 
@@ -5185,3 +5187,57 @@ ON CONFLICT (app_id,signer_name) DO UPDATE SET cosign_public_key=excluded.cosign
 
 -- name: NotifyApplicationStandardControlsChanged :exec
 SELECT pg_notify('trusted_signer_changed',json_build_object('app_id',sqlc.arg(app_id)::text,'action','standard_projection')::text);
+
+-- name: ClaimApplicationStandardEnrollment :one
+WITH candidate AS (
+ SELECT e.app_id FROM app_application_standards e JOIN apps a ON a.id=e.app_id
+ WHERE a.status <> 'deleted' AND (e.state='pending' OR (e.state='blocked' AND e.updated_at <= clock_timestamp()-make_interval(secs=>sqlc.arg(retry_seconds)::double precision)))
+  AND (e.lease_until IS NULL OR e.lease_until <= clock_timestamp())
+  AND NOT EXISTS (SELECT 1 FROM application_standard_operation_targets t JOIN application_standard_operations o ON o.id=t.operation_id
+    WHERE t.app_id=e.app_id AND t.state IN ('queued','applying') AND o.state IN ('queued','running','waiting','paused'))
+ ORDER BY e.updated_at,e.app_id FOR UPDATE OF e SKIP LOCKED LIMIT 1
+)
+UPDATE app_application_standards e SET lease_owner=sqlc.arg(owner)::text,lease_generation=e.lease_generation+1,
+ lease_until=clock_timestamp()+make_interval(secs=>sqlc.arg(lease_seconds)::double precision)
+FROM candidate c WHERE e.app_id=c.app_id
+RETURNING e.app_id,e.org_id,e.lease_owner,e.lease_generation,e.lease_until,e.desired_revision;
+
+-- name: LockApplicationStandardEnrollmentWorker :one
+SELECT lease_until FROM app_application_standards
+WHERE app_id=sqlc.arg(app_id)::uuid AND org_id=sqlc.arg(org_id)::uuid
+ AND lease_owner=sqlc.arg(owner)::text AND lease_generation=sqlc.arg(generation)::bigint
+ AND desired_revision=sqlc.arg(desired_revision)::bigint AND lease_until>clock_timestamp() AND state IN ('pending','blocked')
+FOR UPDATE NOWAIT;
+
+-- name: HasApplicationStandardQueuedTarget :one
+SELECT EXISTS (SELECT 1 FROM application_standard_operation_targets t JOIN application_standard_operations o ON o.id=t.operation_id
+ WHERE t.app_id=sqlc.arg(app_id)::uuid AND t.state IN ('queued','applying') AND o.state IN ('queued','running','waiting','paused'))::boolean;
+
+-- name: ReleaseApplicationStandardEnrollmentWorker :execrows
+UPDATE app_application_standards SET lease_owner='',lease_until=NULL
+WHERE app_id=sqlc.arg(app_id)::uuid AND org_id=sqlc.arg(org_id)::uuid
+ AND lease_owner=sqlc.arg(owner)::text AND lease_generation=sqlc.arg(generation)::bigint;
+
+-- name: BlockApplicationStandardEnrollmentWorker :execrows
+UPDATE app_application_standards SET state='blocked',error_code=sqlc.arg(error_code)::text,updated_at=clock_timestamp(),lease_owner='',lease_until=NULL
+WHERE app_id=sqlc.arg(app_id)::uuid AND org_id=sqlc.arg(org_id)::uuid
+ AND lease_owner=sqlc.arg(owner)::text AND lease_generation=sqlc.arg(generation)::bigint AND lease_until>clock_timestamp();
+
+-- name: InstallAutomaticApplicationStandardIntent :execrows
+UPDATE app_application_standards SET base_settings=sqlc.arg(base_settings)::jsonb,local_settings=sqlc.arg(local_settings)::jsonb,
+ additional_log_destinations=sqlc.arg(additional)::uuid[],adoptions=sqlc.arg(adoptions)::jsonb,
+ effective=sqlc.arg(effective)::jsonb,effective_hash=sqlc.arg(effective_hash)::text,materialized_fields=sqlc.arg(materialized_fields)::text[],
+ observed_revision=0,state='applying',error_code='',updated_at=clock_timestamp(),lease_owner='',lease_until=NULL,lease_generation=lease_generation+1
+WHERE app_id=sqlc.arg(app_id)::uuid AND org_id=sqlc.arg(org_id)::uuid AND desired_revision=sqlc.arg(desired_revision)::bigint
+ AND lease_owner=sqlc.arg(owner)::text AND lease_generation=sqlc.arg(generation)::bigint AND lease_until>clock_timestamp();
+
+-- name: VerifyAutomaticApplicationStandardInstallation :one
+SELECT EXISTS (SELECT 1 FROM app_application_standards WHERE app_id=sqlc.arg(app_id)::uuid AND org_id=sqlc.arg(org_id)::uuid
+ AND desired_revision=sqlc.arg(desired_revision)::bigint AND persisted_revision=desired_revision AND state='persisted'
+ AND lease_generation=sqlc.arg(generation)::bigint+1 AND lease_owner='' AND lease_until IS NULL
+ AND clock_timestamp()<sqlc.arg(claim_until)::timestamptz)::boolean;
+
+-- name: ReleaseApplicationStandardOperationWorker :execrows
+UPDATE application_standard_operations SET lease_owner='',lease_until=NULL
+WHERE id=sqlc.arg(operation_id)::uuid AND org_id=sqlc.arg(org_id)::uuid
+ AND lease_owner=sqlc.arg(owner)::text AND lease_generation=sqlc.arg(generation)::bigint;

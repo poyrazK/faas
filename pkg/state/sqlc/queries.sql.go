@@ -595,6 +595,34 @@ func (q *Queries) ApplyRegressionAction(ctx context.Context, db DBTX, arg ApplyR
 	return i, err
 }
 
+const blockApplicationStandardEnrollmentWorker = `-- name: BlockApplicationStandardEnrollmentWorker :execrows
+UPDATE app_application_standards SET state='blocked',error_code=$1::text,updated_at=clock_timestamp(),lease_owner='',lease_until=NULL
+WHERE app_id=$2::uuid AND org_id=$3::uuid
+ AND lease_owner=$4::text AND lease_generation=$5::bigint AND lease_until>clock_timestamp()
+`
+
+type BlockApplicationStandardEnrollmentWorkerParams struct {
+	ErrorCode  string
+	AppID      pgtype.UUID
+	OrgID      pgtype.UUID
+	Owner      string
+	Generation int64
+}
+
+func (q *Queries) BlockApplicationStandardEnrollmentWorker(ctx context.Context, db DBTX, arg BlockApplicationStandardEnrollmentWorkerParams) (int64, error) {
+	result, err := db.Exec(ctx, blockApplicationStandardEnrollmentWorker,
+		arg.ErrorCode,
+		arg.AppID,
+		arg.OrgID,
+		arg.Owner,
+		arg.Generation,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const buildByDeployment = `-- name: BuildByDeployment :one
 select id, deployment_id, kind, source_bytes, status, failure_class, log_path, started_at, finished_at, enqueued_at, cache_status, cache_key_sha256
 from builds where deployment_id = $1 order by started_at desc nulls last limit 1
@@ -781,6 +809,50 @@ func (q *Queries) CheckpointApplicationStandardWorkerOperation(ctx context.Conte
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const claimApplicationStandardEnrollment = `-- name: ClaimApplicationStandardEnrollment :one
+WITH candidate AS (
+ SELECT e.app_id FROM app_application_standards e JOIN apps a ON a.id=e.app_id
+ WHERE a.status <> 'deleted' AND (e.state='pending' OR (e.state='blocked' AND e.updated_at <= clock_timestamp()-make_interval(secs=>$3::double precision)))
+  AND (e.lease_until IS NULL OR e.lease_until <= clock_timestamp())
+  AND NOT EXISTS (SELECT 1 FROM application_standard_operation_targets t JOIN application_standard_operations o ON o.id=t.operation_id
+    WHERE t.app_id=e.app_id AND t.state IN ('queued','applying') AND o.state IN ('queued','running','waiting','paused'))
+ ORDER BY e.updated_at,e.app_id FOR UPDATE OF e SKIP LOCKED LIMIT 1
+)
+UPDATE app_application_standards e SET lease_owner=$1::text,lease_generation=e.lease_generation+1,
+ lease_until=clock_timestamp()+make_interval(secs=>$2::double precision)
+FROM candidate c WHERE e.app_id=c.app_id
+RETURNING e.app_id,e.org_id,e.lease_owner,e.lease_generation,e.lease_until,e.desired_revision
+`
+
+type ClaimApplicationStandardEnrollmentParams struct {
+	Owner        string
+	LeaseSeconds float64
+	RetrySeconds float64
+}
+
+type ClaimApplicationStandardEnrollmentRow struct {
+	AppID           pgtype.UUID
+	OrgID           pgtype.UUID
+	LeaseOwner      string
+	LeaseGeneration int64
+	LeaseUntil      pgtype.Timestamptz
+	DesiredRevision int64
+}
+
+func (q *Queries) ClaimApplicationStandardEnrollment(ctx context.Context, db DBTX, arg ClaimApplicationStandardEnrollmentParams) (ClaimApplicationStandardEnrollmentRow, error) {
+	row := db.QueryRow(ctx, claimApplicationStandardEnrollment, arg.Owner, arg.LeaseSeconds, arg.RetrySeconds)
+	var i ClaimApplicationStandardEnrollmentRow
+	err := row.Scan(
+		&i.AppID,
+		&i.OrgID,
+		&i.LeaseOwner,
+		&i.LeaseGeneration,
+		&i.LeaseUntil,
+		&i.DesiredRevision,
+	)
+	return i, err
 }
 
 const claimApplicationStandardOperation = `-- name: ClaimApplicationStandardOperation :one
@@ -4193,7 +4265,7 @@ const getApplicationStandardEnrollment = `-- name: GetApplicationStandardEnrollm
 SELECT app_id::text, org_id::text, coalesce(project_id::text, '')::text AS project_id,
        base_settings, local_settings, additional_log_destinations::text[] AS additional_log_destinations,
        adoptions, effective, effective_hash, desired_revision, persisted_revision, observed_revision,
-       state, error_code, updated_at
+       state, error_code, materialized_fields, updated_at
 FROM app_application_standards WHERE org_id = $1::uuid AND app_id = $2::uuid
 `
 
@@ -4217,6 +4289,7 @@ type GetApplicationStandardEnrollmentRow struct {
 	ObservedRevision          int64
 	State                     string
 	ErrorCode                 string
+	MaterializedFields        []string
 	UpdatedAt                 pgtype.Timestamptz
 }
 
@@ -4238,6 +4311,7 @@ func (q *Queries) GetApplicationStandardEnrollment(ctx context.Context, db DBTX,
 		&i.ObservedRevision,
 		&i.State,
 		&i.ErrorCode,
+		&i.MaterializedFields,
 		&i.UpdatedAt,
 	)
 	return i, err
@@ -4922,6 +4996,18 @@ func (q *Queries) HasApplicationStandardActiveOperation(ctx context.Context, db 
 	var active bool
 	err := row.Scan(&active)
 	return active, err
+}
+
+const hasApplicationStandardQueuedTarget = `-- name: HasApplicationStandardQueuedTarget :one
+SELECT EXISTS (SELECT 1 FROM application_standard_operation_targets t JOIN application_standard_operations o ON o.id=t.operation_id
+ WHERE t.app_id=$1::uuid AND t.state IN ('queued','applying') AND o.state IN ('queued','running','waiting','paused'))::boolean
+`
+
+func (q *Queries) HasApplicationStandardQueuedTarget(ctx context.Context, db DBTX, appID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, hasApplicationStandardQueuedTarget, appID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const incrementAppError = `-- name: IncrementAppError :one
@@ -5814,20 +5900,22 @@ const installApplicationStandardEnrollmentIntent = `-- name: InstallApplicationS
 UPDATE app_application_standards SET base_settings = $1::jsonb,
  local_settings = $2::jsonb, additional_log_destinations = $3::uuid[],
  adoptions = $4::jsonb, effective = $5::jsonb, effective_hash = $6::text,
+ materialized_fields = $7::text[],
  desired_revision = desired_revision + 1, observed_revision = 0, state = 'applying',error_code = '',updated_at = clock_timestamp()
-WHERE app_id = $7::uuid AND org_id = $8::uuid AND desired_revision = $9::bigint
+WHERE app_id = $8::uuid AND org_id = $9::uuid AND desired_revision = $10::bigint
 `
 
 type InstallApplicationStandardEnrollmentIntentParams struct {
-	BaseSettings     []byte
-	LocalSettings    []byte
-	Additional       []pgtype.UUID
-	Adoptions        []byte
-	Effective        []byte
-	EffectiveHash    string
-	AppID            pgtype.UUID
-	OrgID            pgtype.UUID
-	ExpectedRevision int64
+	BaseSettings       []byte
+	LocalSettings      []byte
+	Additional         []pgtype.UUID
+	Adoptions          []byte
+	Effective          []byte
+	EffectiveHash      string
+	MaterializedFields []string
+	AppID              pgtype.UUID
+	OrgID              pgtype.UUID
+	ExpectedRevision   int64
 }
 
 func (q *Queries) InstallApplicationStandardEnrollmentIntent(ctx context.Context, db DBTX, arg InstallApplicationStandardEnrollmentIntentParams) (int64, error) {
@@ -5838,6 +5926,7 @@ func (q *Queries) InstallApplicationStandardEnrollmentIntent(ctx context.Context
 		arg.Adoptions,
 		arg.Effective,
 		arg.EffectiveHash,
+		arg.MaterializedFields,
 		arg.AppID,
 		arg.OrgID,
 		arg.ExpectedRevision,
@@ -5898,6 +5987,51 @@ func (q *Queries) InstallApplicationStandardSigner(ctx context.Context, db DBTX,
 		arg.AddedBy,
 	)
 	return err
+}
+
+const installAutomaticApplicationStandardIntent = `-- name: InstallAutomaticApplicationStandardIntent :execrows
+UPDATE app_application_standards SET base_settings=$1::jsonb,local_settings=$2::jsonb,
+ additional_log_destinations=$3::uuid[],adoptions=$4::jsonb,
+ effective=$5::jsonb,effective_hash=$6::text,materialized_fields=$7::text[],
+ observed_revision=0,state='applying',error_code='',updated_at=clock_timestamp(),lease_owner='',lease_until=NULL,lease_generation=lease_generation+1
+WHERE app_id=$8::uuid AND org_id=$9::uuid AND desired_revision=$10::bigint
+ AND lease_owner=$11::text AND lease_generation=$12::bigint AND lease_until>clock_timestamp()
+`
+
+type InstallAutomaticApplicationStandardIntentParams struct {
+	BaseSettings       []byte
+	LocalSettings      []byte
+	Additional         []pgtype.UUID
+	Adoptions          []byte
+	Effective          []byte
+	EffectiveHash      string
+	MaterializedFields []string
+	AppID              pgtype.UUID
+	OrgID              pgtype.UUID
+	DesiredRevision    int64
+	Owner              string
+	Generation         int64
+}
+
+func (q *Queries) InstallAutomaticApplicationStandardIntent(ctx context.Context, db DBTX, arg InstallAutomaticApplicationStandardIntentParams) (int64, error) {
+	result, err := db.Exec(ctx, installAutomaticApplicationStandardIntent,
+		arg.BaseSettings,
+		arg.LocalSettings,
+		arg.Additional,
+		arg.Adoptions,
+		arg.Effective,
+		arg.EffectiveHash,
+		arg.MaterializedFields,
+		arg.AppID,
+		arg.OrgID,
+		arg.DesiredRevision,
+		arg.Owner,
+		arg.Generation,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const instanceByID = `-- name: InstanceByID :one
@@ -9732,6 +9866,35 @@ func (q *Queries) LockApplicationStandardDrainRows(ctx context.Context, db DBTX,
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockApplicationStandardEnrollmentWorker = `-- name: LockApplicationStandardEnrollmentWorker :one
+SELECT lease_until FROM app_application_standards
+WHERE app_id=$1::uuid AND org_id=$2::uuid
+ AND lease_owner=$3::text AND lease_generation=$4::bigint
+ AND desired_revision=$5::bigint AND lease_until>clock_timestamp() AND state IN ('pending','blocked')
+FOR UPDATE NOWAIT
+`
+
+type LockApplicationStandardEnrollmentWorkerParams struct {
+	AppID           pgtype.UUID
+	OrgID           pgtype.UUID
+	Owner           string
+	Generation      int64
+	DesiredRevision int64
+}
+
+func (q *Queries) LockApplicationStandardEnrollmentWorker(ctx context.Context, db DBTX, arg LockApplicationStandardEnrollmentWorkerParams) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, lockApplicationStandardEnrollmentWorker,
+		arg.AppID,
+		arg.OrgID,
+		arg.Owner,
+		arg.Generation,
+		arg.DesiredRevision,
+	)
+	var lease_until pgtype.Timestamptz
+	err := row.Scan(&lease_until)
+	return lease_until, err
 }
 
 const lockApplicationStandardOrg = `-- name: LockApplicationStandardOrg :one
@@ -13600,12 +13763,13 @@ SELECT jsonb_build_object(
         'app_id', a.id::text, 'org_id', a.org_id::text, 'project_id', coalesce(a.project_id::text, ''),
         'account_id', a.account_id::text, 'slug', a.slug, 'status', a.status, 'type', a.type,
         'workload_class', a.workload_class, 'account_plan', acct.plan, 'account_status', acct.status,
+        'account_egress_allowlist_extra', acct.egress_allowlist_extra,
         'account_drain_count', (SELECT count(*) FROM app_log_drains d JOIN apps owner ON owner.id = d.app_id
             WHERE owner.account_id = a.account_id AND owner.status <> 'deleted'),
         'settings', jsonb_build_object('require_signed', a.require_signed, 'security_policy', a.security_policy,
             'egress_cidrs', coalesce(to_jsonb(a.egress_allowlist::text[]), '[]'::jsonb), 'egress_extra_ports', coalesce(to_jsonb(a.egress_ports), '[]'::jsonb)),
         'has_enrollment', e.app_id IS NOT NULL,
-        'enrollment', jsonb_build_object('org_id', e.org_id::text, 'project_id', coalesce(e.project_id::text, ''), 'base_settings', e.base_settings, 'local_settings', e.local_settings,
+        'enrollment', jsonb_build_object('materialized_fields',to_jsonb(e.materialized_fields),'org_id', e.org_id::text, 'project_id', coalesce(e.project_id::text, ''), 'base_settings', e.base_settings, 'local_settings', e.local_settings,
             'additional_log_destinations', to_jsonb(e.additional_log_destinations::text[]), 'adoptions', e.adoptions,
             'desired_revision', e.desired_revision, 'effective', e.effective, 'effective_hash', e.effective_hash),
         'archived_resources', coalesce((SELECT jsonb_agg(jsonb_build_object('field', b.field, 'id', b.logical_id::text, 'config_hash', b.config_hash) ORDER BY b.field,b.logical_id) FROM application_standard_control_backups b WHERE b.app_id = a.id), '[]'::jsonb),
@@ -14022,6 +14186,58 @@ func (q *Queries) RegisterGatewayUsageEvent(ctx context.Context, db DBTX, arg Re
 	var inserted bool
 	err := row.Scan(&inserted)
 	return inserted, err
+}
+
+const releaseApplicationStandardEnrollmentWorker = `-- name: ReleaseApplicationStandardEnrollmentWorker :execrows
+UPDATE app_application_standards SET lease_owner='',lease_until=NULL
+WHERE app_id=$1::uuid AND org_id=$2::uuid
+ AND lease_owner=$3::text AND lease_generation=$4::bigint
+`
+
+type ReleaseApplicationStandardEnrollmentWorkerParams struct {
+	AppID      pgtype.UUID
+	OrgID      pgtype.UUID
+	Owner      string
+	Generation int64
+}
+
+func (q *Queries) ReleaseApplicationStandardEnrollmentWorker(ctx context.Context, db DBTX, arg ReleaseApplicationStandardEnrollmentWorkerParams) (int64, error) {
+	result, err := db.Exec(ctx, releaseApplicationStandardEnrollmentWorker,
+		arg.AppID,
+		arg.OrgID,
+		arg.Owner,
+		arg.Generation,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const releaseApplicationStandardOperationWorker = `-- name: ReleaseApplicationStandardOperationWorker :execrows
+UPDATE application_standard_operations SET lease_owner='',lease_until=NULL
+WHERE id=$1::uuid AND org_id=$2::uuid
+ AND lease_owner=$3::text AND lease_generation=$4::bigint
+`
+
+type ReleaseApplicationStandardOperationWorkerParams struct {
+	OperationID pgtype.UUID
+	OrgID       pgtype.UUID
+	Owner       string
+	Generation  int64
+}
+
+func (q *Queries) ReleaseApplicationStandardOperationWorker(ctx context.Context, db DBTX, arg ReleaseApplicationStandardOperationWorkerParams) (int64, error) {
+	result, err := db.Exec(ctx, releaseApplicationStandardOperationWorker,
+		arg.OperationID,
+		arg.OrgID,
+		arg.Owner,
+		arg.Generation,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const removeApplicationStandardUnselectedDrains = `-- name: RemoveApplicationStandardUnselectedDrains :exec
@@ -17414,4 +17630,32 @@ func (q *Queries) ValidateApplicationStandardResourceRefs(ctx context.Context, d
 	var valid pgtype.Bool
 	err := row.Scan(&valid)
 	return valid, err
+}
+
+const verifyAutomaticApplicationStandardInstallation = `-- name: VerifyAutomaticApplicationStandardInstallation :one
+SELECT EXISTS (SELECT 1 FROM app_application_standards WHERE app_id=$1::uuid AND org_id=$2::uuid
+ AND desired_revision=$3::bigint AND persisted_revision=desired_revision AND state='persisted'
+ AND lease_generation=$4::bigint+1 AND lease_owner='' AND lease_until IS NULL
+ AND clock_timestamp()<$5::timestamptz)::boolean
+`
+
+type VerifyAutomaticApplicationStandardInstallationParams struct {
+	AppID           pgtype.UUID
+	OrgID           pgtype.UUID
+	DesiredRevision int64
+	Generation      int64
+	ClaimUntil      pgtype.Timestamptz
+}
+
+func (q *Queries) VerifyAutomaticApplicationStandardInstallation(ctx context.Context, db DBTX, arg VerifyAutomaticApplicationStandardInstallationParams) (bool, error) {
+	row := db.QueryRow(ctx, verifyAutomaticApplicationStandardInstallation,
+		arg.AppID,
+		arg.OrgID,
+		arg.DesiredRevision,
+		arg.Generation,
+		arg.ClaimUntil,
+	)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
 }

@@ -115,24 +115,25 @@ type standardReviewResource struct {
 	Fingerprint string `json:"fingerprint,omitempty"`
 }
 type standardReviewAppSnapshot struct {
-	AppID             string                           `json:"app_id"`
-	OrgID             string                           `json:"org_id"`
-	ProjectID         string                           `json:"project_id"`
-	AccountID         string                           `json:"account_id"`
-	Slug              string                           `json:"slug"`
-	Status            string                           `json:"status"`
-	Type              string                           `json:"type"`
-	WorkloadClass     string                           `json:"workload_class"`
-	AccountPlan       api.Plan                         `json:"account_plan"`
-	AccountStatus     string                           `json:"account_status"`
-	AccountDrainCount int                              `json:"account_drain_count"`
-	Settings          appstandards.Settings            `json:"settings"`
-	HasEnrollment     bool                             `json:"has_enrollment"`
-	Enrollment        standardReviewEnrollment         `json:"enrollment"`
-	Drains            []standardReviewDrain            `json:"drains"`
-	Signers           []standardReviewSigner           `json:"signers"`
-	Artifacts         []standardReviewArtifact         `json:"artifacts"`
-	ArchivedResources []standardReviewArchivedResource `json:"archived_resources"`
+	AppID                       string                           `json:"app_id"`
+	OrgID                       string                           `json:"org_id"`
+	ProjectID                   string                           `json:"project_id"`
+	AccountID                   string                           `json:"account_id"`
+	Slug                        string                           `json:"slug"`
+	Status                      string                           `json:"status"`
+	Type                        string                           `json:"type"`
+	WorkloadClass               string                           `json:"workload_class"`
+	AccountPlan                 api.Plan                         `json:"account_plan"`
+	AccountStatus               string                           `json:"account_status"`
+	AccountEgressAllowlistExtra int                              `json:"account_egress_allowlist_extra,omitempty"`
+	AccountDrainCount           int                              `json:"account_drain_count"`
+	Settings                    appstandards.Settings            `json:"settings"`
+	HasEnrollment               bool                             `json:"has_enrollment"`
+	Enrollment                  standardReviewEnrollment         `json:"enrollment"`
+	Drains                      []standardReviewDrain            `json:"drains"`
+	Signers                     []standardReviewSigner           `json:"signers"`
+	Artifacts                   []standardReviewArtifact         `json:"artifacts"`
+	ArchivedResources           []standardReviewArchivedResource `json:"archived_resources"`
 }
 type standardReviewArchivedResource struct {
 	Field      appstandards.Field `json:"field"`
@@ -140,6 +141,7 @@ type standardReviewArchivedResource struct {
 	ConfigHash string             `json:"config_hash"`
 }
 type standardReviewEnrollment struct {
+	MaterializedFields        []appstandards.Field    `json:"materialized_fields,omitempty"`
 	OrgID                     string                  `json:"org_id"`
 	ProjectID                 string                  `json:"project_id"`
 	BaseSettings              appstandards.Settings   `json:"base_settings"`
@@ -350,22 +352,15 @@ func standardReviewAssignments(s standardReviewSnapshot, target appstandards.Ass
 }
 
 func standardReviewVersions(s standardReviewSnapshot, target appstandards.Assignment) (map[appstandards.VersionKey]appstandards.PublishedVersion, appstandards.Definition, error) {
-	versions := map[appstandards.VersionKey]appstandards.PublishedVersion{}
-	var candidate appstandards.Definition
-	for _, v := range s.Versions {
-		definition, hash, err := appstandards.Parse(v.Definition, api.ApplicationStandardResolverLimits())
-		if err != nil || hash != v.DefinitionHash {
-			return nil, nil, fmt.Errorf("reviewed standard version is invalid")
-		}
-		key := appstandards.VersionKey{StandardID: v.StandardID, Version: v.Version}
-		if _, exists := versions[key]; exists {
-			return nil, nil, fmt.Errorf("duplicate reviewed standard version")
-		}
-		versions[key] = appstandards.PublishedVersion{OrgID: s.OrgID, Definition: definition, DefinitionHash: hash}
-		if key.StandardID == target.StandardID && key.Version == target.AdmissionVersion {
-			candidate = definition
-		}
+	versions, err := standardSnapshotVersions(s)
+	if err != nil {
+		return nil, nil, err
 	}
+	var candidate appstandards.Definition
+	if selected, exists := versions[appstandards.VersionKey{StandardID: target.StandardID, Version: target.AdmissionVersion}]; exists {
+		candidate = selected.Definition
+	}
+
 	if candidate == nil {
 		return nil, nil, ErrNotFound
 	}
@@ -579,12 +574,10 @@ func resolveStandardReviewedApp(app standardReviewAppSnapshot, prior, next appst
 	current[appstandards.TrustedPublishers], _ = json.Marshal(signerIDs)
 	base, local := cloneStandardSettings(current), cloneStandardSettings(app.Enrollment.LocalSettings)
 	managed := map[appstandards.Field]bool{}
-	for _, layer := range prior.Layers {
-		for field := range layer.Definition {
-			managed[field] = true
-			if original, exists := app.Enrollment.BaseSettings[field]; exists {
-				base[field] = append(json.RawMessage{}, original...)
-			}
+	for _, field := range app.Enrollment.MaterializedFields {
+		managed[field] = true
+		if original, exists := app.Enrollment.BaseSettings[field]; exists {
+			base[field] = append(json.RawMessage{}, original...)
 		}
 	}
 	defaults := applicationStandardBaseSettings(App{})
@@ -676,7 +669,7 @@ func standardReviewAppBlockers(app standardReviewAppSnapshot, reviewed Applicati
 	if len(ranges) > 0 && !limits.EgressAllowlistAllowed {
 		add(appstandards.EgressCIDRs, "plan_egress_allowlist_not_allowed")
 	}
-	if len(ranges) > limits.EgressAllowlistMaxSize {
+	if len(ranges) > limits.EgressAllowlistMaxSize+app.AccountEgressAllowlistExtra {
 		add(appstandards.EgressCIDRs, "plan_egress_allowlist_limit")
 	}
 	var ports []int
@@ -763,6 +756,11 @@ func normalizeStandardReviewSnapshot(s standardReviewSnapshot) (standardReviewSn
 	}
 	for i := range s.Applications {
 		a := &s.Applications[i]
+		if !standardMaterializedFieldsValid(a.Enrollment.MaterializedFields) {
+			return s, fmt.Errorf("invalid materialized field context")
+		}
+		slices.Sort(a.Enrollment.MaterializedFields)
+		a.Enrollment.MaterializedFields = slices.Compact(a.Enrollment.MaterializedFields)
 		for j := range a.Enrollment.Adoptions {
 			pin := &a.Enrollment.Adoptions[j]
 			if !validStandardResourceRead(s.OrgID, pin.AssignmentID) {

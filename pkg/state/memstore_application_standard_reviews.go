@@ -181,6 +181,7 @@ func (m *MemStore) standardReviewSnapshotLocked(orgID, actorID string, r Applica
 		for _, account := range m.accounts {
 			if sameStandardUUID(account.ID, app.AccountID) {
 				a.AccountPlan, a.AccountStatus = account.Plan, string(account.Status)
+				a.AccountEgressAllowlistExtra = account.EgressAllowlistExtra
 			}
 		}
 		for _, enrollment := range m.applicationStandardEnrollments {
@@ -190,7 +191,7 @@ func (m *MemStore) standardReviewSnapshotLocked(orgID, actorID string, r Applica
 				if enrollment.ProjectID != "" {
 					projectID = canonicalStandardUUID(enrollment.ProjectID)
 				}
-				a.Enrollment = standardReviewEnrollment{OrgID: canonicalStandardUUID(enrollment.OrgID), ProjectID: projectID, BaseSettings: cloneStandardSettings(enrollment.BaseSettings), LocalSettings: cloneStandardSettings(enrollment.LocalSettings), AdditionalLogDestinations: append([]string{}, enrollment.AdditionalLogDestinations...), Adoptions: append([]appstandards.Adoption{}, enrollment.Adoptions...), DesiredRevision: enrollment.DesiredRevision, Effective: enrollment.Effective, EffectiveHash: enrollment.EffectiveHash}
+				a.Enrollment = standardReviewEnrollment{MaterializedFields: append([]appstandards.Field{}, enrollment.MaterializedFields...), OrgID: canonicalStandardUUID(enrollment.OrgID), ProjectID: projectID, BaseSettings: cloneStandardSettings(enrollment.BaseSettings), LocalSettings: cloneStandardSettings(enrollment.LocalSettings), AdditionalLogDestinations: append([]string{}, enrollment.AdditionalLogDestinations...), Adoptions: append([]appstandards.Adoption{}, enrollment.Adoptions...), DesiredRevision: enrollment.DesiredRevision, Effective: enrollment.Effective, EffectiveHash: enrollment.EffectiveHash}
 			}
 		}
 		for _, d := range m.appLogDrains {

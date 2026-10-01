@@ -450,6 +450,9 @@ func TestApplicationStandardReviewKeepsOnlyExplicitLogExtras(t *testing.T) {
 		t.Fatalf("first adoption removed permitted extra: %+v", first)
 	}
 	input.Enrollment.BaseSettings, input.Enrollment.LocalSettings, input.Enrollment.AdditionalLogDestinations = first.BaseSettings, first.LocalSettings, first.AdditionalLogDestinations
+	// The first projection was installed. Admission pins alone do not prove
+	// which fields currently belong to the company rather than local intent.
+	input.Enrollment.MaterializedFields = standardEffectiveFields(first.Effective)
 	input.Drains = append(input.Drains, standardReviewDrain{ID: oldCompanyID})
 	next, err := resolveStandardReviewedApp(input, layer(1, oldCompanyID), layer(2, newCompanyID), time.Now())
 	if err != nil {

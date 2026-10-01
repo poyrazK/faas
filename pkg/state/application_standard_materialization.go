@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -308,11 +309,36 @@ func buildStandardControlProjection(app standardReviewAppSnapshot, target Applic
 }
 
 func standardInstalledEnrollment(app standardReviewAppSnapshot, t ApplicationStandardOperationTarget, now time.Time) ApplicationStandardEnrollment {
-	e := ApplicationStandardEnrollment{AppID: app.AppID, OrgID: app.OrgID, ProjectID: app.ProjectID, BaseSettings: cloneStandardSettings(t.ApprovedApp.BaseSettings), LocalSettings: cloneStandardSettings(t.ApprovedApp.LocalSettings), AdditionalLogDestinations: append([]string{}, t.ApprovedApp.AdditionalLogDestinations...), Adoptions: append([]appstandards.Adoption{}, t.ApprovedApp.AfterAdoptions...), Effective: t.ApprovedApp.Effective, EffectiveHash: t.approvalInput.EffectiveHash, DesiredRevision: app.Enrollment.DesiredRevision + 1, State: "persisted", UpdatedAt: now}
+	e := ApplicationStandardEnrollment{AppID: app.AppID, OrgID: app.OrgID, ProjectID: app.ProjectID, BaseSettings: cloneStandardSettings(t.ApprovedApp.BaseSettings), LocalSettings: cloneStandardSettings(t.ApprovedApp.LocalSettings), AdditionalLogDestinations: append([]string{}, t.ApprovedApp.AdditionalLogDestinations...), Adoptions: append([]appstandards.Adoption{}, t.ApprovedApp.AfterAdoptions...), Effective: t.ApprovedApp.Effective, EffectiveHash: t.approvalInput.EffectiveHash, DesiredRevision: app.Enrollment.DesiredRevision + 1, MaterializedFields: standardEffectiveFields(t.ApprovedApp.Effective), State: "persisted", UpdatedAt: now}
 	e.PersistedRevision = e.DesiredRevision
 	return e
 }
 
 func standardManagedField(e ApplicationStandardEnrollment, field appstandards.Field) bool {
-	return len(e.Effective.Sources[field]) != 0
+	return len(e.Effective.Sources[field]) != 0 || (e.State == "pending" || e.State == "blocked") && slices.Contains(e.MaterializedFields, field)
+}
+
+func standardFields(fields []string) []appstandards.Field {
+	out := make([]appstandards.Field, len(fields))
+	for i, f := range fields {
+		out[i] = appstandards.Field(f)
+	}
+	return out
+}
+func standardFieldStrings(fields []appstandards.Field) []string {
+	out := make([]string, len(fields))
+	for i, f := range fields {
+		out[i] = string(f)
+	}
+	return out
+}
+func standardEffectiveFields(e appstandards.Effective) []appstandards.Field {
+	out := []appstandards.Field{}
+	for f, sources := range e.Sources {
+		if len(sources) > 0 {
+			out = append(out, f)
+		}
+	}
+	slices.Sort(out)
+	return out
 }

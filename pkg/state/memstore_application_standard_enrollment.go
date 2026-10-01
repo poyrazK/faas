@@ -93,13 +93,18 @@ func (m *MemStore) initializeApplicationStandardEnrollmentLocked(app App) error 
 		m.applicationStandardEnrollments = map[string]ApplicationStandardEnrollment{}
 	}
 	before, exists := m.applicationStandardEnrollments[app.ID]
-	value := ApplicationStandardEnrollment{AppID: app.ID, OrgID: app.OrgID, ProjectID: app.ProjectID, BaseSettings: applicationStandardBaseSettings(app), LocalSettings: appstandards.Settings{}, AdditionalLogDestinations: []string{}, Adoptions: pins, DesiredRevision: 1, State: "unmanaged", UpdatedAt: time.Now().UTC()}
+	value := ApplicationStandardEnrollment{AppID: app.ID, OrgID: app.OrgID, ProjectID: app.ProjectID, BaseSettings: applicationStandardBaseSettings(app), LocalSettings: appstandards.Settings{}, AdditionalLogDestinations: []string{}, MaterializedFields: []appstandards.Field{}, Adoptions: pins, DesiredRevision: 1, State: "unmanaged", UpdatedAt: time.Now().UTC()}
 	if len(pins) > 0 {
 		value.State = "pending"
 	}
 	if exists {
 		value.BaseSettings, value.LocalSettings, value.AdditionalLogDestinations = before.BaseSettings, before.LocalSettings, before.AdditionalLogDestinations
+		value.MaterializedFields = append([]appstandards.Field{}, before.MaterializedFields...)
+		if len(value.MaterializedFields) > 0 {
+			value.State = "pending"
+		}
 		value.DesiredRevision = before.DesiredRevision + 1
+		m.revokeStandardEnrollmentClaimLocked(app.ID)
 	}
 	m.applicationStandardEnrollments[app.ID] = cloneApplicationStandardEnrollment(value)
 	return nil

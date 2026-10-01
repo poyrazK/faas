@@ -22,6 +22,7 @@ type ApplicationStandardEnrollment struct {
 	AdditionalLogDestinations []string                `json:"additional_log_destinations"`
 	Adoptions                 []appstandards.Adoption `json:"adoptions"`
 	Effective                 appstandards.Effective  `json:"effective"`
+	MaterializedFields        []appstandards.Field    `json:"materialized_fields"`
 	EffectiveHash             string                  `json:"effective_hash"`
 	DesiredRevision           int64                   `json:"desired_revision"`
 	PersistedRevision         int64                   `json:"persisted_revision"`

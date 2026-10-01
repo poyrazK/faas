@@ -212,6 +212,10 @@ func readStandardControlProjection(ctx context.Context, tx pgx.Tx, app standardR
 }
 
 func installStandardControlProjection(ctx context.Context, tx pgx.Tx, e ApplicationStandardEnrollment, p standardControlProjection) error {
+	return installStandardControlProjectionWithClaim(ctx, tx, e, p, nil)
+}
+
+func installStandardControlProjectionWithClaim(ctx context.Context, tx pgx.Tx, e ApplicationStandardEnrollment, p standardControlProjection, c *ApplicationStandardEnrollmentClaim) error {
 	q := sqlc.New()
 	appID, orgID := mustPgUUID(e.AppID), mustPgUUID(e.OrgID)
 	for _, b := range p.Backups {
@@ -231,11 +235,20 @@ func installStandardControlProjection(ctx context.Context, tx pgx.Tx, e Applicat
 	local, _ := json.Marshal(e.LocalSettings)
 	pins, _ := json.Marshal(e.Adoptions)
 	effective, _ := json.Marshal(e.Effective)
-	count, err := q.InstallApplicationStandardEnrollmentIntent(ctx, tx, sqlc.InstallApplicationStandardEnrollmentIntentParams{AppID: appID, OrgID: orgID, BaseSettings: base, LocalSettings: local, Additional: standardPgUUIDs(e.AdditionalLogDestinations), Adoptions: pins, Effective: effective, EffectiveHash: e.EffectiveHash, ExpectedRevision: e.DesiredRevision - 1})
+	var count int64
+	var err error
+	if c == nil {
+		count, err = q.InstallApplicationStandardEnrollmentIntent(ctx, tx, sqlc.InstallApplicationStandardEnrollmentIntentParams{AppID: appID, OrgID: orgID, BaseSettings: base, LocalSettings: local, Additional: standardPgUUIDs(e.AdditionalLogDestinations), Adoptions: pins, Effective: effective, EffectiveHash: e.EffectiveHash, MaterializedFields: standardFieldStrings(e.MaterializedFields), ExpectedRevision: e.DesiredRevision - 1})
+	} else {
+		count, err = q.InstallAutomaticApplicationStandardIntent(ctx, tx, sqlc.InstallAutomaticApplicationStandardIntentParams{AppID: appID, OrgID: orgID, BaseSettings: base, LocalSettings: local, Additional: standardPgUUIDs(e.AdditionalLogDestinations), Adoptions: pins, Effective: effective, EffectiveHash: e.EffectiveHash, MaterializedFields: standardFieldStrings(e.MaterializedFields), DesiredRevision: c.DesiredRevision, Owner: c.Owner, Generation: c.Generation})
+	}
 	if err != nil {
 		return err
 	}
 	if count != 1 {
+		if c != nil {
+			return ErrApplicationStandardLeaseLost
+		}
 		return ErrApplicationStandardReviewStale
 	}
 	if err := q.InstallApplicationStandardScalarControls(ctx, tx, sqlc.InstallApplicationStandardScalarControlsParams{AppID: appID, RequireSigned: p.RequireSigned, SecurityPolicy: string(p.SecurityPolicy), Cidrs: p.CIDRs, Ports: standardInt32s(p.Ports)}); err != nil {

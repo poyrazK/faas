@@ -403,6 +403,7 @@ type AppApplicationStandard struct {
 	LeaseOwner                string
 	LeaseGeneration           int64
 	LeaseUntil                pgtype.Timestamptz
+	MaterializedFields        []string
 }
 
 type AppCpuPolicyNodeStatus struct {

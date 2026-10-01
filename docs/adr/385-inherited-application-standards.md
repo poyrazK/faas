@@ -1,4 +1,4 @@
-# ADR-379 · Versioned inherited application standards
+# ADR-385 · Versioned inherited application standards
 
 - **Status:** implementation in progress; acceptance required before release
 - **Date:** 2026-09-30
@@ -137,8 +137,19 @@ observation; no consumer acknowledgment is fabricated. Tests cover all six
 controls, sealed baseline restoration, stale inputs, lease replacement, restart
 wave gates, raw SQL protection, child-row contention and transaction rollback.
 
-Public review/activation, background worker wiring, automatic enrollment repair,
-permitted local intent mutations and consumer observation are still pending.
+apid now runs bounded repair passes over durable reviewed operations and automatic
+enrollments. Automatic installation resolves captured adoption pins, checks
+current creating-account entitlements and fences authority by generation, desired
+revision and storage-owned expiry. Reviewed queued targets take precedence.
+Reenrollment retains last-installed field context, so project removal restores
+original controls and restore cannot turn an inherited default into local intent.
+Tests exercise PostgreSQL/MemStore onboarding, detach, restore, blocked recovery,
+review precedence and worker replacement; PostgreSQL expiry after physical writes
+rolls the entire installation back. Persisted installation does not acknowledge
+any runtime consumer.
+
+Public review/activation, permitted local intent mutations, exceptions and
+consumer observation are still pending.
 The enrollment gate currently covers deployment admission;
 restore/wake and existing-runtime behavior remain part of the runtime acceptance
 work before public activation is enabled.

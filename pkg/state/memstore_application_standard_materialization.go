@@ -34,6 +34,9 @@ func (m *MemStore) ClaimApplicationStandardOperation(ctx context.Context, owner 
 	}
 	sort.Slice(ids, func(i, j int) bool {
 		a, b := m.applicationStandardOperations[ids[i]], m.applicationStandardOperations[ids[j]]
+		if !a.UpdatedAt.Equal(b.UpdatedAt) {
+			return a.UpdatedAt.Before(b.UpdatedAt)
+		}
 		if a.CreatedAt.Equal(b.CreatedAt) {
 			return a.ID < b.ID
 		}
@@ -49,6 +52,9 @@ func (m *MemStore) ClaimApplicationStandardOperation(ctx context.Context, owner 
 		m.applicationStandardWorkerClaims = map[string]ApplicationStandardWorkerClaim{}
 	}
 	m.applicationStandardWorkerClaims[id] = c
+	o := m.applicationStandardOperations[id]
+	o.UpdatedAt = now
+	m.applicationStandardOperations[id] = o
 	return c, nil
 }
 
@@ -123,79 +129,9 @@ func (m *MemStore) MaterializeNextApplicationStandardTarget(ctx context.Context,
 	if err := ctx.Err(); err != nil {
 		return ApplicationStandardOperation{}, err
 	}
-	// All validation precedes mutations; this critical section is the MemStore
-	// equivalent of the PostgreSQL installation/checkpoint transaction.
-	if m.applicationStandardControlBackups == nil {
-		m.applicationStandardControlBackups = map[string]standardControlBackup{}
-	}
-	for _, b := range projection.Backups {
-		m.applicationStandardControlBackups[standardBindingKey(b.AppID, b.Field, b.ID)] = b
-	}
-	if m.applicationStandardControlBindings == nil {
-		m.applicationStandardControlBindings = map[string]standardControlBinding{}
-	}
-	for key, b := range m.applicationStandardControlBindings {
-		if sameStandardUUID(b.AppID, t.AppID) {
-			delete(m.applicationStandardControlBindings, key)
-		}
-	}
-	for _, b := range projection.Bindings {
-		m.applicationStandardControlBindings[standardBindingKey(b.AppID, b.Field, b.ResourceID)] = b
-	}
-	physicalAppID, physicalAccountID := app.AppID, app.AccountID
-	for _, actual := range m.apps {
-		if sameStandardUUID(actual.ID, app.AppID) {
-			physicalAppID, physicalAccountID = actual.ID, actual.AccountID
-			break
-		}
-	}
-	for i := range projection.Drains {
-		projection.Drains[i].AppID, projection.Drains[i].AccountID = physicalAppID, physicalAccountID
-	}
-	for i := range projection.Signers {
-		projection.Signers[i].AppID, projection.Signers[i].AccountID = physicalAppID, physicalAccountID
-	}
-	selectedDrains := map[string]bool{}
-	for _, d := range projection.Drains {
-		selectedDrains[d.ID] = true
-		m.appLogDrains[d.ID] = cloneAppLogDrain(d)
-	}
-	for _, d := range drains {
-		if !selectedDrains[d.ID] {
-			delete(m.appLogDrains, d.ID)
-			delete(m.appLogDrainHealth, d.ID)
-			for key, sample := range m.appLogDrainAnalytics {
-				if sample.DrainID == d.ID {
-					delete(m.appLogDrainAnalytics, key)
-				}
-			}
-		}
-	}
-	for key, signer := range m.trustedSigners {
-		if sameStandardUUID(signer.AppID, t.AppID) {
-			delete(m.trustedSigners, key)
-		}
-	}
-	for _, signer := range projection.Signers {
-		m.trustedSigners[trustedSignerKey{AppID: signer.AppID, SignerName: signer.SignerName}] = signer
-	}
-	for key, actual := range m.apps {
-		if !sameStandardUUID(actual.ID, t.AppID) {
-			continue
-		}
-		actual.RequireSigned, actual.SecurityPolicy = projection.RequireSigned, projection.SecurityPolicy
-		actual.EgressAllowlist, actual.EgressPorts = projection.CIDRs, projection.Ports
-		m.apps[key] = actual
-	}
 	enrollment := standardInstalledEnrollment(app, *t, now)
-	enrollmentKey := t.AppID
-	for key, existing := range m.applicationStandardEnrollments {
-		if sameStandardUUID(existing.AppID, t.AppID) {
-			enrollmentKey = key
-			break
-		}
-	}
-	m.applicationStandardEnrollments[enrollmentKey] = cloneApplicationStandardEnrollment(enrollment)
+	m.installStandardProjectionLocked(app, projection, enrollment)
+
 	t.State, t.DesiredRevision, t.ErrorCode, t.UpdatedAt = "persisted", enrollment.DesiredRevision, "", now
 	return m.standardMaterializationCheckpointLocked(c, o, now), nil
 }
@@ -222,6 +158,7 @@ func (m *MemStore) standardManagedControlLocked(appID string, field appstandards
 
 // Match the app foreign-key cascades for private restoration material.
 func (m *MemStore) deleteStandardMaterializationControlsLocked(appID string) {
+	delete(m.applicationStandardEnrollmentClaims, canonicalStandardUUID(appID))
 	for key, b := range m.applicationStandardControlBindings {
 		if sameStandardUUID(b.AppID, appID) {
 			delete(m.applicationStandardControlBindings, key)
@@ -232,4 +169,91 @@ func (m *MemStore) deleteStandardMaterializationControlsLocked(appID string) {
 			delete(m.applicationStandardControlBackups, key)
 		}
 	}
+}
+
+func (m *MemStore) installStandardProjectionLocked(app standardReviewAppSnapshot, projection standardControlProjection, enrollment ApplicationStandardEnrollment) {
+	// All validation precedes mutations; this critical section is the MemStore
+	// equivalent of the PostgreSQL installation/checkpoint transaction.
+	if m.applicationStandardControlBackups == nil {
+		m.applicationStandardControlBackups = map[string]standardControlBackup{}
+	}
+	for _, b := range projection.Backups {
+		m.applicationStandardControlBackups[standardBindingKey(b.AppID, b.Field, b.ID)] = b
+	}
+	if m.applicationStandardControlBindings == nil {
+		m.applicationStandardControlBindings = map[string]standardControlBinding{}
+	}
+	for key, b := range m.applicationStandardControlBindings {
+		if sameStandardUUID(b.AppID, app.AppID) {
+			delete(m.applicationStandardControlBindings, key)
+		}
+	}
+	for _, b := range projection.Bindings {
+		m.applicationStandardControlBindings[standardBindingKey(b.AppID, b.Field, b.ResourceID)] = b
+	}
+	physicalAppID, physicalAccountID := app.AppID, app.AccountID
+	for _, actual := range m.apps {
+		if sameStandardUUID(actual.ID, app.AppID) {
+			physicalAppID, physicalAccountID = actual.ID, actual.AccountID
+			break
+		}
+	}
+	for i := range projection.Drains {
+		projection.Drains[i].AppID, projection.Drains[i].AccountID = physicalAppID, physicalAccountID
+	}
+	for i := range projection.Signers {
+		projection.Signers[i].AppID, projection.Signers[i].AccountID = physicalAppID, physicalAccountID
+	}
+	selectedDrains := map[string]bool{}
+	for _, d := range projection.Drains {
+		selectedDrains[d.ID] = true
+		m.appLogDrains[d.ID] = cloneAppLogDrain(d)
+	}
+	for _, d := range m.appLogDrains {
+		if sameStandardUUID(d.AppID, app.AppID) && !selectedDrains[d.ID] {
+			delete(m.appLogDrains, d.ID)
+			delete(m.appLogDrainHealth, d.ID)
+			for key, sample := range m.appLogDrainAnalytics {
+				if sample.DrainID == d.ID {
+					delete(m.appLogDrainAnalytics, key)
+				}
+			}
+		}
+	}
+	for key, signer := range m.trustedSigners {
+		if sameStandardUUID(signer.AppID, app.AppID) {
+			delete(m.trustedSigners, key)
+		}
+	}
+	for _, signer := range projection.Signers {
+		m.trustedSigners[trustedSignerKey{AppID: signer.AppID, SignerName: signer.SignerName}] = signer
+	}
+	for key, actual := range m.apps {
+		if !sameStandardUUID(actual.ID, app.AppID) {
+			continue
+		}
+		actual.RequireSigned, actual.SecurityPolicy = projection.RequireSigned, projection.SecurityPolicy
+		actual.EgressAllowlist, actual.EgressPorts = projection.CIDRs, projection.Ports
+		m.apps[key] = actual
+	}
+	enrollmentKey := app.AppID
+	for key, existing := range m.applicationStandardEnrollments {
+		if sameStandardUUID(existing.AppID, app.AppID) {
+			enrollmentKey = key
+			break
+		}
+	}
+	m.applicationStandardEnrollments[enrollmentKey] = cloneApplicationStandardEnrollment(enrollment)
+	m.revokeStandardEnrollmentClaimLocked(app.AppID)
+}
+
+func (m *MemStore) revokeStandardEnrollmentClaimLocked(appID string) {
+	if m.applicationStandardEnrollmentClaims == nil {
+		m.applicationStandardEnrollmentClaims = map[string]ApplicationStandardEnrollmentClaim{}
+	}
+	id := canonicalStandardUUID(appID)
+	c := m.applicationStandardEnrollmentClaims[id]
+	c.Generation++
+	c.Owner, c.Until = "", time.Time{}
+	m.applicationStandardEnrollmentClaims[id] = c
 }
