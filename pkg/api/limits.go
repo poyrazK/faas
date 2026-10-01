@@ -7783,5 +7783,6 @@ const UDPRateLimitIdleTTL = 2 * time.Minute
 const UDPReplyQueueDepth = 64
 const UDPWriteTimeout = time.Second
 const UDPAdmissionTimeout = 30 * time.Second
+// UDP listener ports reserve an independent UDP namespace at the public edge.
 const UDPListenerPublicPortMin = 40000
 const UDPListenerPublicPortMax = 49999

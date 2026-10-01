@@ -5048,3 +5048,44 @@ LIMIT 1;
 UPDATE cron_fire_now_requests
 SET status = 'pending'
 WHERE id = sqlc.arg(id)::uuid AND status = 'running';
+
+-- name: LockUDPListenerAppOwner :one
+SELECT account_id::text AS account_id FROM apps
+WHERE id = sqlc.arg(app_id)::text::uuid AND status <> 'deleted'
+FOR UPDATE;
+
+-- name: CreateUDPListener :one
+INSERT INTO app_udp_listeners
+(id, app_id, account_id, listener_name, guest_port, public_port, protocol, enabled)
+VALUES (sqlc.arg(id)::text::uuid, sqlc.arg(app_id)::text::uuid,
+        sqlc.arg(account_id)::text::uuid, sqlc.arg(listener_name),
+        sqlc.arg(guest_port), sqlc.arg(public_port), sqlc.arg(protocol), sqlc.arg(enabled))
+RETURNING *;
+
+-- name: UDPListenerByID :one
+SELECT * FROM app_udp_listeners WHERE id = sqlc.arg(id)::text::uuid;
+
+-- name: UDPListenerByAppAndName :one
+SELECT * FROM app_udp_listeners
+WHERE app_id = sqlc.arg(app_id)::text::uuid AND listener_name = sqlc.arg(listener_name);
+
+-- name: UDPListenerByPublicPort :one
+SELECT * FROM app_udp_listeners l
+WHERE public_port = sqlc.arg(public_port) AND enabled
+AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted');
+
+-- name: ListUDPListenersForApp :many
+SELECT * FROM app_udp_listeners
+WHERE app_id = sqlc.arg(app_id)::text::uuid ORDER BY created_at DESC, id DESC;
+
+-- name: ListEnabledUDPListeners :many
+SELECT * FROM app_udp_listeners l
+WHERE enabled AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted')
+ORDER BY public_port ASC;
+
+-- name: SetUDPListenerEnabled :one
+UPDATE app_udp_listeners SET enabled = sqlc.arg(enabled), updated_at = now()
+WHERE id = sqlc.arg(id)::text::uuid RETURNING *;
+
+-- name: DeleteUDPListener :execrows
+DELETE FROM app_udp_listeners WHERE id = sqlc.arg(id)::text::uuid;
