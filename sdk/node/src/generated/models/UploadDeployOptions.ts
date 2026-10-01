@@ -10,7 +10,7 @@ import type { WorkflowSpec } from './WorkflowSpec.js';
  */
 export type UploadDeployOptions = {
   /**
-   * Explicit startup readiness probe. Exactly one HTTP path or standard gRPC health selector; omitted preserves source inference.
+   * Startup readiness for this resumable upload. Select exactly one HTTP path or standard gRPC health probe; omitted preserves source inference.
    */
   healthcheck?: DeploymentHealthcheck;
   runtime?: string;

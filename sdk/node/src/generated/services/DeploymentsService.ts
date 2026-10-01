@@ -369,7 +369,7 @@ export class DeploymentsService {
       runtime?: 'node22' | 'python312' | 'go124' | 'go124-alpine' | 'node24' | 'python313';
       handler?: string;
       /**
-       * JSON startup readiness probe: exactly one HTTP path or standard gRPC health selector.
+       * Startup readiness for this developer-source deployment, encoded as JSON with one HTTP path or standard gRPC health selector.
        */
       healthcheck?: string;
       source_root?: string;

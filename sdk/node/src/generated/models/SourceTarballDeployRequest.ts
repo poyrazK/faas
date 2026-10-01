@@ -9,7 +9,7 @@ import type { DeploymentHealthcheck } from './DeploymentHealthcheck.js';
  */
 export type SourceTarballDeployRequest = {
   /**
-   * Explicit startup readiness probe. Exactly one HTTP path or standard gRPC health selector; omitted preserves source inference.
+   * Startup readiness for this source-tarball deployment. Select exactly one HTTP path or standard gRPC health probe; omitted preserves source inference.
    */
   healthcheck?: DeploymentHealthcheck;
   /**

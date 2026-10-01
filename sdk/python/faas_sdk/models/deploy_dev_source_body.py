@@ -28,7 +28,8 @@ class DeployDevSourceBody:
     runtime: DeployDevSourceBodyRuntime | Unset = UNSET
     handler: str | Unset = UNSET
     healthcheck: str | Unset = UNSET
-    """JSON startup readiness probe: exactly one HTTP path or standard gRPC health selector."""
+    """Startup readiness for this developer-source deployment, encoded as JSON with one HTTP path or standard gRPC
+    health selector."""
     source_root: str | Unset = UNSET
     scope: str | Unset = UNSET
     """Named environment scope read by the deployment; omitted uses default."""
