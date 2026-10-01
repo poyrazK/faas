@@ -985,3 +985,7 @@ Public ingress draft PR #3992 commit `e47b267f2` includes the private scheduler 
 ### Published database-backed public UDP startup
 
 Public ingress draft PR #3992 commit `c8c5e3e17` includes the database-backed startup and idempotent shutdown fixture. Three race-detector runs passed without skips on the isolated branch, log `/tmp/gregale-udp-public-isolated-pg-startup.log`. Cluster stopped. Updated public CI, scheduler reachability, traffic and native recovery remain unverified.
+
+### Integrated public startup database gate
+
+The strict PostgreSQL UDP gate now requires `cmd/gatewayd-public/udp_ingress_pg_test.go` and runs that package in addition to state and migrations. All nine required contracts passed with race detection against the owned PostgreSQL cluster, with skips rejected; log `/tmp/gregale-udp-postgres-gate-nine.log`. Standalone shellcheck passed and the cluster was stopped afterward. This extends the prior eight-case gate with production startup readiness/shutdown coverage; live scheduler, guest and native/deployed recovery acceptance remain pending.

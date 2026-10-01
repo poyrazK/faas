@@ -18,6 +18,7 @@ import sys
 root = pathlib.Path(sys.argv[1])
 expected = set()
 for package, filename in [
+    ('github.com/onebox-faas/faas/cmd/gatewayd-public', 'cmd/gatewayd-public/udp_ingress_pg_test.go'),
     ('github.com/onebox-faas/faas/pkg/state', 'pkg/state/pgstore_udp_listeners_test.go'),
     ('github.com/onebox-faas/faas/pkg/state', 'pkg/state/pgstore_udp_recovery_test.go'),
     ('github.com/onebox-faas/faas/pkg/state', 'pkg/state/pgstore_listener_app_purge_test.go'),
@@ -31,7 +32,7 @@ pattern = '^(' + '|'.join(sorted({name for _, name in expected})) + ')$'
 passed = set()
 failed = False
 process = subprocess.Popen(['go', 'test', '-json', '-p', '1', '-count=1', '-run', pattern,
-    './pkg/state', './migrations'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    './pkg/state', './migrations', './cmd/gatewayd-public'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 for line in process.stdout:
     try:
         event = json.loads(line)
