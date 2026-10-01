@@ -488,3 +488,26 @@ binary cross-compiles. Evidence: `/tmp/gregale-memory-isolated-race.log`,
 `/tmp/gregale-memory-isolated-compile.log`. Native OOM, VM park/restore and leak
 acceptance remain pending; remote checks are pending and the PR is unmerged.
 The early-fence regression is also retained in this implementation branch.
+
+### Linux CI guest execution and doctor timing closure — 2026-10-01
+
+Completed pure-Go light shard logs confirm ordinary Linux guest package tests
+passed on corrected PR #3954, stacked #3955 and #3956 (guest durations 11.371s,
+11.374s and 11.521s respectively). Evidence is retained in
+`/tmp/gregale-pr-3954-linux-light.log`, `/tmp/gregale-pr-3955-linux-light.log`,
+`/tmp/gregale-pr-3956-linux-light.log`. Package success does not prove every
+root-gated test ran, nor does it run metal-tagged delegated cgroup acceptance.
+No native VM/OOM/restore/leak qualification is inferred from this evidence.
+
+Timing PR #3957 now includes commit `8bed7065a`: image-doctor JSON retains exact
+image timing, text renders subsecond durations and startup cadence, and invalid
+image timing receives metadata guidance. The doctor race regressions pass and
+scoped CLI lint reports zero issues; logs `/tmp/gregale-health-timing-cli.log`
+and `/tmp/gregale-health-timing-cli-lint.log`. These changes were already in the
+large implementation branch but were absent from the initial isolated timing
+PR; they are now included in its review and trigger fresh remote checks.
+
+At last observation #3955 had only its builder image job outstanding. #3954
+still had builder image, lint/build, CodeQL Go and migration jobs running, with
+no reported failure. Existing image CI builds multiple architecture artifacts;
+this work adds no ARM64 container-service support or qualification scope.
