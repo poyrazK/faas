@@ -129,7 +129,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "Core"
 	case "apps", "app", "build", "connect", "cors", "deploy", "deployment", "deployments", "deploys", "dev", "domains", "edge-rules", "env", "github", "init", "invoke", "openapi", "preview", "projects", "registry", "rollback", "scan", "secrets", "tenant-surfaces", "platform-tenants", "trusted-publishers":
 		return "API"
-	case "add", "bindings", "crons", "delayed-task", "events", "send", "deliver", "invocations", "jobs", "run", "runs", "triggers", "webhooks", "workflows", "cache", "postgres":
+	case "add", "bindings", "crons", "delayed-task", "events", "send", "deliver", "invocations", "jobs", "operations", "run", "runs", "triggers", "webhooks", "workflows", "cache", "postgres":
 		return "Data"
 	case "canary", "mirror", "park", "ps", "queue", "dlq", "traffic", "wake", "wake-timeline", "workers":
 		return "Delivery"
@@ -541,6 +541,10 @@ var cliCommands = []cliCommand{
 				{Name: "detach", Short: "return after the task is queued"},
 				{Name: "timeout-seconds", Short: "server-side command timeout", Value: "N"},
 				{Name: "max-output-bytes", Short: "combined stdout/stderr tail cap", Value: "N"},
+				{Name: "operation-policy", Short: "route through a managed exclusive-operation policy", Value: "NAME"},
+				{Name: "operation-key", Short: "JSON scalar business coordination key", Value: "JSON"},
+				{Name: "equivalence-key", Short: "equivalent request identity for join_existing policies", Value: "KEY"},
+				{Name: "idempotency-key", Short: "stable retry identity for this submission", Value: "KEY"},
 				{Name: "poll-interval", Short: "status polling interval while attached", Value: "D"},
 				{Name: "wait-timeout", Short: "maximum attached wait", Value: "D"},
 			}},
@@ -1654,6 +1658,47 @@ var cliCommands = []cliCommand{
 		{Name: "list", Short: "List grouped issues"}, {Name: "get", Short: "Read evidence and release history"}, {Name: "assign", Short: "Assign an issue to an account"}, {Name: "resolve", Short: "Resolve in a deployment"}, {Name: "reopen", Short: "Reopen an issue"}, {Name: "ignore", Short: "Ignore until a timestamp"}, {Name: "tokens", Short: "List ingest credentials"}, {Name: "create-token", Short: "Create a deployment-bound ingest credential"}, {Name: "revoke-token", Short: "Revoke an ingest credential"},
 	}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "application slug"}, {Name: "deployment", Value: "UUID", Short: "fixed or token-bound deployment"}, {Name: "state", Value: "STATE", Short: "filter issue state"}, {Name: "environment", Value: "ENV", Short: "environment filter"}, {Name: "cursor", Value: "CURSOR", Short: "issue-list or occurrence cursor"}, {Name: "release-cursor", Value: "CURSOR", Short: "release history cursor"}, {Name: "activity-cursor", Value: "CURSOR", Short: "activity history cursor"}, {Name: "assignee", Value: "UUID", Short: "owner account"}, {Name: "since", Value: "RFC3339", Short: "impact window start"}, {Name: "until", Value: "RFC3339", Short: "ignore until"}, {Name: "name", Value: "NAME", Short: "credential name"}, {Name: "expires-in", Value: "D", Short: "credential lifetime"}}},
 
+	{
+		Name:    "operations",
+		DocSlug: "operations",
+		Short:   "Coordinate named work with leases, explicit contention policy, and fenced ownership",
+		Subcommands: []cliSub{
+			{Name: "policy", Short: "List or configure account operation policies", Subcommands: []cliSub{
+				{Name: "list", Short: "List operation policies"},
+				{Name: "upsert", Short: "Create or revise a policy from JSON", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "file", Value: "POLICY.json", Short: "policy JSON file", Req: true}}},
+			}},
+			{Name: "bind-trigger", Short: "Route an account-owned cron, inbound webhook, broker trigger, or Job schedule through a policy", Positionals: []string{"<cron|inbound_webhook|broker|job_schedule>", "<trigger-id>"}, Flags: []cliFlag{
+				{Name: "policy", Value: "NAME", Short: "managed operation policy", Req: true},
+				{Name: "key", Value: "JSON", Short: "JSON scalar business coordination key", Req: true},
+				{Name: "tenant", Value: "ID", Short: "account-authorized platform customer tenant"},
+				{Name: "equivalence-key", Value: "KEY", Short: "equivalent request identity for join_existing"},
+			}},
+			{Name: "unbind-trigger", Short: "Remove a trigger's managed operation policy binding", Positionals: []string{"<cron|inbound_webhook|broker|job_schedule>", "<trigger-id>"}},
+			{Name: "reconcile", Short: "Apply policies and trigger bindings declared in the project manifest", Flags: []cliFlag{{Name: "dir", Value: "PROJECT_DIR", Short: "project directory containing gregale.yaml or gregale.toml"}}},
+			{Name: "start", Short: "Submit work through a named coordination key", Positionals: []string{"<app-slug>"}, Flags: []cliFlag{
+				{Name: "policy", Value: "NAME", Short: "managed operation policy", Req: true},
+				{Name: "key", Value: "JSON", Short: "JSON scalar concurrency key", Req: true},
+				{Name: "tenant", Value: "ID", Short: "authorized platform customer tenant"},
+				{Name: "self", Short: "derive tenant identity from a platform-customer credential"},
+				{Name: "equivalence-key", Value: "KEY", Short: "equivalent request identity for join_existing"},
+				{Name: "idempotency-key", Value: "KEY", Short: "stable retry identity for this submission"},
+				{Name: "payload", Value: "JSON", Short: "request body delivered to the app"},
+				{Name: "method", Value: "METHOD", Short: "HTTP method delivered to the app"},
+				{Name: "path", Value: "PATH", Short: "app route delivered to the app"},
+			}, Examples: []string{"gregale operations start --policy crm-sync --key '\"customer:acme:crm-sync\"' --tenant TENANT_ID my-api"}},
+			{Name: "start-job", Short: "Submit a Job run through a named coordination key", Positionals: []string{"<job-name>"}, Flags: []cliFlag{
+				{Name: "policy", Value: "NAME", Short: "managed operation policy", Req: true},
+				{Name: "key", Value: "JSON", Short: "JSON scalar business coordination key", Req: true},
+				{Name: "equivalence-key", Value: "KEY", Short: "equivalent request identity for join_existing"},
+				{Name: "idempotency-key", Value: "KEY", Short: "stable retry identity for this submission"},
+				{Name: "tasks", Value: "N", Short: "number of Job tasks (default 1; omit with --run-file)"},
+				{Name: "run-file", Value: "FILE", Short: "JSON CreateJobRunRequest"},
+			}, Examples: []string{"gregale operations start-job --policy imports --key '\"customer:acme:import\"' nightly-import"}},
+			{Name: "get", Short: "Inspect operation state and committed result", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "self", Short: "use the authenticated platform-customer scope"}}},
+			{Name: "wait", Short: "Wait for a terminal operation state", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "self", Short: "use the authenticated platform-customer scope"}, {Name: "timeout", Value: "DURATION", Short: "stop waiting after this duration"}, {Name: "interval", Value: "DURATION", Short: "time between status checks"}}},
+			{Name: "cancel", Short: "Request cancellation of pending or active work", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "self", Short: "use the authenticated platform-customer scope"}}},
+		},
+	},
 	{
 		Name:    "debug",
 		DocSlug: "debug",

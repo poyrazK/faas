@@ -1355,6 +1355,47 @@ func (s *server) createJobRun(w http.ResponseWriter, r *http.Request, acct state
 		api.WriteProblem(w, prob)
 		return
 	}
+	// Store the fully resolved request so the scheduler never has to fetch an
+	// input manifest again after the operation has been durably accepted.
+	req.ExecutionClass = executionClass
+	req.FailurePolicy = failurePolicy
+	req.EligibleAt = eligibleAt
+	req.LatestStartAt = latestStartAt
+	if submission, managed := r.Context().Value(exclusiveJobSubmissionKey{}).(exclusiveJobSubmission); managed {
+		limits, _ := api.LimitsFor(acct.Plan)
+		if !limits.AsyncInvokeAllowed {
+			api.WriteProblem(w, api.ErrPlanFeatureGated("exclusive_operations", acct.Plan))
+			return
+		}
+		owners, ok := s.store.(state.ExclusiveWorkStore)
+		if !ok {
+			api.WriteProblem(w, api.ErrCapacity("managed operation store unavailable"))
+			return
+		}
+		work, err := json.Marshal(struct {
+			Kind string                  `json:"kind"`
+			Run  api.CreateJobRunRequest `json:"run"`
+		}{Kind: "job_run", Run: req})
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("encode managed Job run"))
+			return
+		}
+		op, joined, err := owners.AdmitExclusiveOperation(r.Context(), state.ExclusiveAdmission{
+			AccountID: acct.ID, JobID: j.ID, PolicyName: submission.policy,
+			Key: submission.key, Request: work, EquivalenceKey: submission.equivalenceKey,
+			IdempotencyKey: r.Header.Get("Idempotency-Key"),
+		})
+		s.observeExclusiveAdmission("manual_job", err, joined, op.Replayed)
+		if err != nil {
+			writeExclusiveError(w, err)
+			return
+		}
+		s.audit.Emit(r.Context(), "job.operation.accepted", &acct.ID, map[string]any{
+			"job_id": j.ID, "operation_id": op.ID, "joined": joined,
+		})
+		writeJSON(w, http.StatusAccepted, api.ExclusiveOperationAccepted{ID: op.ID, Joined: joined, StatusURL: "/v1/operations/" + op.ID})
+		return
+	}
 	run, _, err := s.store.JobRunCreate(r.Context(), j.ID, acct.ID, "manual",
 		req.Parallelism, req.RetryMax, req.TaskTimeoutSec, envOverrides, req.Tasks,
 		state.JobRunOptions{FailureRules: req.FailureRules, CommandArgs: req.Arguments, Inputs: inputs,

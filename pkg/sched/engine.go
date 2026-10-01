@@ -7237,6 +7237,18 @@ func (e *Engine) snapshotAndParkPrime(ctx context.Context, ins state.Instance) e
 }
 
 func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, allowReuse bool) error {
+	if barrier, ok := e.store.(state.ExclusiveSnapshotStore); ok {
+		if err := barrier.BeginExclusiveSnapshot(ctx, ins.ID); err != nil {
+			return fmt.Errorf("sched: park: exclusive operation owns or is capturing this instance: %w", err)
+		}
+		defer func() {
+			endCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			if err := barrier.EndExclusiveSnapshot(endCtx, ins.ID); err != nil {
+				e.log.Error("sched: park: release exclusive snapshot barrier", "instance", ins.ID, "err", err)
+			}
+		}()
+	}
 	// Issue #667 / ADR-078 — waitUntil drain watchdog. If the instance
 	// has active waitUntil tasks (ins.TailCount > 0), the runner is
 	// still draining them in-process after the response was flushed.
@@ -7446,7 +7458,7 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 	// above keeps the resumed guest routable and is canceled by activity.
 	now := time.Now()
 	if err := e.store.UpdateInstanceStateWithTimestamp(ctx, ins.ID, string(state.StateSnapshotting), now); err != nil {
-		e.log.Warn("snapshotAndPark: stamp parked_at", "instance", ins.ID, "err", err)
+		return fmt.Errorf("snapshotAndPark: enter snapshotting: %w", err)
 	}
 	e.emitInstanceChanged(ctx, ins.ID, ins.AppID, state.StateSnapshotting, ins.WakeID)
 	if e.events != nil {

@@ -5124,3 +5124,145 @@ LIMIT 1;
 UPDATE cron_fire_now_requests
 SET status = 'pending'
 WHERE id = sqlc.arg(id)::uuid AND status = 'running';
+
+-- name: LockExclusiveWorkAccount :one
+SELECT id::text,plan FROM accounts WHERE id=sqlc.arg(account_id)::text::uuid
+AND status='active' FOR UPDATE;
+
+-- name: ExclusiveWorkAppScope :one
+SELECT id::text, coalesce(project_id::text,'')::text AS project_id
+FROM apps WHERE id=sqlc.arg(app_id)::text::uuid
+AND account_id=sqlc.arg(account_id)::text::uuid AND status<>'deleted' FOR SHARE;
+
+-- name: ExclusiveWorkTenantScope :one
+SELECT id::text, status FROM platform_tenants
+WHERE id=sqlc.arg(tenant_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid
+FOR SHARE;
+
+-- name: ExclusiveWorkEnvironmentScope :one
+SELECT id::text FROM project_environments
+WHERE id=sqlc.arg(environment_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid
+AND project_id=sqlc.arg(project_id)::text::uuid FOR SHARE;
+
+-- name: ReadExclusiveWorkPolicy :one
+SELECT * FROM exclusive_work_policies
+WHERE account_id=sqlc.arg(account_id)::text::uuid AND name=sqlc.arg(name)::text;
+
+-- name: ListExclusiveWorkPolicies :many
+SELECT * FROM exclusive_work_policies
+WHERE account_id=sqlc.arg(account_id)::text::uuid ORDER BY name;
+
+-- name: SaveExclusiveWorkPolicy :one
+INSERT INTO exclusive_work_policies(id,account_id,name,configuration)
+VALUES(sqlc.arg(id)::text::uuid,sqlc.arg(account_id)::text::uuid,sqlc.arg(name)::text,sqlc.arg(configuration)::jsonb)
+ON CONFLICT(account_id,name) DO UPDATE SET configuration=excluded.configuration,
+revision=exclusive_work_policies.revision+1,updated_at=clock_timestamp()
+RETURNING *;
+
+-- name: EnsureExclusiveWorkKey :one
+INSERT INTO exclusive_work_keys(id,account_id,policy_id,scope_id,environment_id,key_digest)
+VALUES(sqlc.arg(id)::text::uuid,sqlc.arg(account_id)::text::uuid,sqlc.arg(policy_id)::text::uuid,
+sqlc.arg(scope_id)::text::uuid,sqlc.arg(environment_id)::text,sqlc.arg(key_digest)::bytea)
+ON CONFLICT(policy_id,scope_id,environment_id,key_digest) DO UPDATE SET id=exclusive_work_keys.id
+RETURNING *;
+
+-- name: ReadExclusiveWorkKey :one
+SELECT * FROM exclusive_work_keys
+WHERE id=sqlc.arg(id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid FOR UPDATE;
+
+-- name: SaveExclusiveWorkKey :exec
+UPDATE exclusive_work_keys SET generation=sqlc.arg(generation)::bigint,
+next_sequence=sqlc.arg(next_sequence)::bigint WHERE id=sqlc.arg(id)::text::uuid;
+
+-- name: ReadExclusiveWorkOperation :one
+SELECT * FROM exclusive_work_operations
+WHERE id=sqlc.arg(id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
+
+-- name: ReadExclusiveWorkReplay :one
+SELECT o.* FROM exclusive_work_operations o JOIN exclusive_work_submissions s ON s.operation_id=o.id
+WHERE s.key_id=sqlc.arg(key_id)::text::uuid AND s.idempotency_digest=sqlc.arg(digest)::bytea;
+
+-- name: ListExclusiveWorkActive :many
+SELECT * FROM exclusive_work_operations
+WHERE key_id=sqlc.arg(key_id)::text::uuid AND state IN ('pending','running') ORDER BY sequence;
+
+-- name: CountExclusiveWorkPending :one
+SELECT count(*) FROM exclusive_work_operations
+WHERE account_id=sqlc.arg(account_id)::text::uuid AND state IN ('pending','running');
+
+-- name: InsertExclusiveWorkOperation :one
+INSERT INTO exclusive_work_operations(id,account_id,key_id,app_id,job_id,platform_tenant_id,sequence,
+policy_revision,configuration,request,request_digest,equivalence_digest,idempotency_digest)
+VALUES(sqlc.arg(id)::text::uuid,sqlc.arg(account_id)::text::uuid,sqlc.arg(key_id)::text::uuid,
+sqlc.narg(app_id)::text::uuid,sqlc.narg(job_id)::text::uuid,nullif(sqlc.arg(tenant_id)::text,'')::uuid,
+sqlc.arg(sequence)::bigint,sqlc.arg(policy_revision)::bigint,sqlc.arg(configuration)::jsonb,
+sqlc.arg(request)::jsonb,sqlc.arg(request_digest)::bytea,sqlc.narg(equivalence_digest)::bytea,
+sqlc.narg(idempotency_digest)::bytea) RETURNING *;
+
+-- name: SaveExclusiveWorkOperation :exec
+UPDATE exclusive_work_operations SET state=sqlc.arg(state)::text,generation=sqlc.arg(generation)::bigint,
+claim_token=nullif(sqlc.arg(claim_token)::text,'')::uuid,incarnation_id=sqlc.arg(incarnation_id)::text,
+lease_expires_at=sqlc.narg(lease_expires_at)::timestamptz,
+attempt_deadline=sqlc.narg(attempt_deadline)::timestamptz,result=sqlc.narg(result)::jsonb,
+last_error=sqlc.arg(last_error)::text,completed_at=sqlc.narg(completed_at)::timestamptz,
+due_at=sqlc.arg(due_at)::timestamptz,attempts=sqlc.arg(attempts)::integer,
+quota_reserved=sqlc.arg(quota_reserved)::boolean
+WHERE id=sqlc.arg(id)::text::uuid;
+
+-- name: InsertExclusiveWorkEffect :exec
+INSERT INTO exclusive_work_effects(id,operation_id,generation,name,payload)
+VALUES(sqlc.arg(id)::text::uuid,sqlc.arg(operation_id)::text::uuid,
+sqlc.arg(generation)::bigint,sqlc.arg(name)::text,sqlc.arg(payload)::jsonb);
+
+-- name: ExclusiveWorkClock :one
+SELECT clock_timestamp()::timestamptz AS now;
+
+-- name: BindExclusiveWorkSubmission :exec
+INSERT INTO exclusive_work_submissions(key_id,idempotency_digest,operation_id)
+VALUES(sqlc.arg(key_id)::text::uuid,sqlc.arg(digest)::bytea,sqlc.arg(operation_id)::text::uuid);
+
+-- name: CheckExclusiveWorkRuntime :one
+SELECT i.id::text FROM instances i JOIN apps a ON a.id=i.app_id
+WHERE i.id=sqlc.arg(instance_id)::text::uuid AND i.wake_id=sqlc.arg(wake_id)::text::uuid
+AND i.node_id=sqlc.arg(node_id)::text::uuid AND i.app_id=sqlc.arg(app_id)::text::uuid
+AND a.account_id=sqlc.arg(account_id)::text::uuid AND i.state='running' AND NOT i.exclusive_capture_blocked
+FOR SHARE OF i;
+
+-- name: ListDueExclusiveWork :many
+WITH heads AS (
+ SELECT DISTINCT ON (o.key_id) o.* FROM exclusive_work_operations o
+ JOIN accounts a ON a.id=o.account_id AND a.status='active'
+ LEFT JOIN platform_tenants t ON t.id=o.platform_tenant_id
+ WHERE o.state IN ('pending','running') AND (t.id IS NULL OR t.status='active')
+ ORDER BY o.key_id,o.sequence
+), ranked AS (
+ SELECT id,row_number() OVER (PARTITION BY account_id ORDER BY due_at,id) AS account_rank,due_at
+ FROM heads WHERE (state='pending' AND due_at<=clock_timestamp())
+ OR (state='running' AND lease_expires_at<=clock_timestamp())
+)
+SELECT o.* FROM exclusive_work_operations o JOIN ranked r ON r.id=o.id
+ORDER BY r.account_rank,r.due_at,o.id LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: EnsureExclusiveWorkQuota :exec
+INSERT INTO account_async_quota(account_id,max_inflight)
+VALUES(sqlc.arg(account_id)::text::uuid,sqlc.arg(max_inflight)::integer)
+ON CONFLICT(account_id) DO UPDATE SET max_inflight=excluded.max_inflight;
+
+-- name: ReserveExclusiveWorkQuota :one
+UPDATE account_async_quota SET current_inflight=current_inflight+1,updated_at=clock_timestamp()
+WHERE account_id=sqlc.arg(account_id)::text::uuid AND current_inflight<max_inflight
+RETURNING current_inflight;
+
+-- name: LockExclusiveSnapshotInstance :one
+SELECT id::text,exclusive_capture_blocked FROM instances
+WHERE id=sqlc.arg(instance_id)::text::uuid FOR UPDATE;
+
+-- name: HasExclusiveSnapshotOwner :one
+SELECT EXISTS(SELECT 1 FROM exclusive_work_operations o JOIN instances i
+ON o.incarnation_id=i.id::text||'/'||i.wake_id::text||'/'||i.node_id::text
+WHERE i.id=sqlc.arg(instance_id)::text::uuid AND o.state='running'
+AND o.lease_expires_at>clock_timestamp() AND o.attempt_deadline>clock_timestamp());
+
+-- name: SetExclusiveCaptureBarrier :exec
+UPDATE instances SET exclusive_capture_blocked=sqlc.arg(blocked)::boolean
+WHERE id=sqlc.arg(instance_id)::text::uuid;

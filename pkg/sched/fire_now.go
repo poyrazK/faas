@@ -90,7 +90,7 @@ func (l *Loop) processFireNowRequest(ctx context.Context, req state.FireNowReque
 		return
 	}
 
-	run, err := l.RunCronNow(ctx, req.CronID, req.AccountID)
+	run, err := l.runCronNowWithRequestID(ctx, req.CronID, req.AccountID, req.ID)
 	if err == nil && !run.Success && run.InvocationID == "" && l.requeueFireNowOnOwnerChange(ctx, req) {
 		return
 	}
@@ -113,7 +113,7 @@ func (l *Loop) processFireNowRequest(ctx context.Context, req state.FireNowReque
 		// still mark succeeded because the fire was accepted — the
 		// invocation_id, when present, lets the customer correlate
 		// the audit row with /v1/invocations/{id}.
-		if err := l.engine.Store().MarkFireNowRequestSucceeded(ctx, req.ID, run.InvocationID); err != nil {
+		if err := l.engine.Store().MarkFireNowRequestSucceeded(ctx, req.ID, run.InvocationID, run.ExclusiveOperationID); err != nil {
 			l.log.Warn("sched: fire_now: mark succeeded failed",
 				"request_id", req.ID, "err", err)
 		}

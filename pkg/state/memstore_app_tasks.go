@@ -18,6 +18,19 @@ func (m *MemStore) ensureAppTasksLocked() {
 	}
 }
 
+func (m *MemStore) appTaskExclusiveCurrentLocked(task AppTask, at time.Time) bool {
+	if task.ExclusiveOperationID == "" {
+		return task.ExclusiveGeneration == 0
+	}
+	operation, ok := m.exclusiveOperations[task.ExclusiveOperationID]
+	if !ok || operation.AccountID != task.AccountID || operation.AppID != task.AppID ||
+		operation.State != "running" || operation.Generation != task.ExclusiveGeneration ||
+		operation.LeaseExpiresAt == nil || operation.AttemptDeadline == nil {
+		return false
+	}
+	return operation.LeaseExpiresAt.After(at) && operation.AttemptDeadline.After(at)
+}
+
 func (m *MemStore) CreateAppTask(_ context.Context, params CreateAppTaskParams) (AppTask, error) {
 	resolved, err := resolveCreateAppTask(params)
 	if err != nil {
@@ -35,6 +48,13 @@ func (m *MemStore) CreateAppTask(_ context.Context, params CreateAppTaskParams) 
 	if !ok || !validAppTaskDeployment(deployment, app.ID) {
 		return AppTask{}, ErrAppTaskDeploymentUnavailable
 	}
+	if resolved.ExclusiveOperationID != "" {
+		probe := AppTask{ID: "", AccountID: resolved.AccountID, AppID: resolved.AppID,
+			ExclusiveOperationID: resolved.ExclusiveOperationID, ExclusiveGeneration: resolved.ExclusiveGeneration}
+		if !m.appTaskExclusiveCurrentLocked(probe, resolved.CreatedAt) {
+			return AppTask{}, ErrNotFound
+		}
+	}
 	if resolved.Kind == AppTaskKindRelease {
 		for _, task := range m.appTasks {
 			if task.DeploymentID == resolved.DeploymentID && task.Kind == AppTaskKindRelease {
@@ -45,31 +65,51 @@ func (m *MemStore) CreateAppTask(_ context.Context, params CreateAppTaskParams) 
 
 	now := resolved.CreatedAt
 	task := AppTask{
-		FailureRules:        workpolicy.Clone(resolved.FailureRules),
-		OccurrenceID:        resolved.OccurrenceID,
-		StartDeadlineAt:     cloneAppTaskTimePtr(resolved.StartDeadlineAt),
-		ID:                  uuid.NewString(),
-		AccountID:           resolved.AccountID,
-		AppID:               resolved.AppID,
-		DeploymentID:        resolved.DeploymentID,
-		CronID:              resolved.CronID,
-		ScheduledFor:        cloneAppTaskTimePtr(resolved.ScheduledFor),
-		Kind:                resolved.Kind,
-		Command:             append([]string(nil), resolved.Command...),
-		CommandShell:        resolved.CommandShell,
-		DeploymentScope:     normalizedDeploymentScope(deployment.Scope),
-		ArtifactKey:         deployment.RootfsKey,
-		ImageDigest:         deployment.ImageDigest,
-		Status:              AppTaskQueued,
-		TimeoutSeconds:      resolved.TimeoutSeconds,
-		MaxOutputBytes:      resolved.MaxOutputBytes,
-		RetryMax:            resolved.RetryMax,
-		RetryBackoffSeconds: resolved.RetryBackoffSeconds,
-		CreatedAt:           now,
-		UpdatedAt:           now,
+		FailureRules:         workpolicy.Clone(resolved.FailureRules),
+		OccurrenceID:         resolved.OccurrenceID,
+		StartDeadlineAt:      cloneAppTaskTimePtr(resolved.StartDeadlineAt),
+		ID:                   uuid.NewString(),
+		AccountID:            resolved.AccountID,
+		AppID:                resolved.AppID,
+		ExclusiveOperationID: resolved.ExclusiveOperationID,
+		ExclusiveGeneration:  resolved.ExclusiveGeneration,
+		DeploymentID:         resolved.DeploymentID,
+		CronID:               resolved.CronID,
+		ScheduledFor:         cloneAppTaskTimePtr(resolved.ScheduledFor),
+		Kind:                 resolved.Kind,
+		Command:              append([]string(nil), resolved.Command...),
+		CommandShell:         resolved.CommandShell,
+		DeploymentScope:      normalizedDeploymentScope(deployment.Scope),
+		ArtifactKey:          deployment.RootfsKey,
+		ImageDigest:          deployment.ImageDigest,
+		Status:               AppTaskQueued,
+		TimeoutSeconds:       resolved.TimeoutSeconds,
+		MaxOutputBytes:       resolved.MaxOutputBytes,
+		RetryMax:             resolved.RetryMax,
+		RetryBackoffSeconds:  resolved.RetryBackoffSeconds,
+		CreatedAt:            now,
+		UpdatedAt:            now,
 	}
 	m.appTasks[task.ID] = task
 	return cloneAppTask(task), nil
+}
+
+func (m *MemStore) ListAppTasksByExclusiveOperation(_ context.Context, accountID, operationID string) ([]AppTask, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rows := make([]AppTask, 0)
+	for _, task := range m.appTasks {
+		if task.AccountID == accountID && task.ExclusiveOperationID == operationID {
+			rows = append(rows, cloneAppTask(task))
+		}
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].ExclusiveGeneration == rows[j].ExclusiveGeneration {
+			return rows[i].CreatedAt.Before(rows[j].CreatedAt)
+		}
+		return rows[i].ExclusiveGeneration < rows[j].ExclusiveGeneration
+	})
+	return rows, nil
 }
 
 func (m *MemStore) CreateScheduledCronAppTask(_ context.Context, cronID string, expectedLastFiredAt *time.Time, firedAt time.Time) (AppTask, bool, error) {
@@ -424,7 +464,8 @@ func (m *MemStore) ClaimNextAppTask(_ context.Context, owner string, claimedAt t
 	var selectedPriority time.Time
 	for id, candidate := range m.appTasks {
 		if candidate.Status != AppTaskQueued || candidate.CancelRequested != nil || candidate.CreatedAt.After(claimedAt) ||
-			(candidate.RetryAt != nil && candidate.RetryAt.After(claimedAt)) {
+			(candidate.RetryAt != nil && candidate.RetryAt.After(claimedAt)) ||
+			!m.appTaskExclusiveCurrentLocked(candidate, claimedAt) {
 			continue
 		}
 		if workpolicy.DeadlineMissed(candidate.StartDeadlineAt, claimedAt) && !m.appTaskOccurrenceStartedLocked(candidate) {
@@ -481,7 +522,8 @@ func (m *MemStore) MarkAppTaskRunning(_ context.Context, taskID, leaseToken stri
 	defer m.mu.Unlock()
 	task, ok := m.appTasks[taskID]
 	if !ok || task.Status != AppTaskRestoring || task.LeaseToken == nil ||
-		*task.LeaseToken != leaseToken || task.CancelRequested != nil || task.LeaseExpiresAt == nil || !task.LeaseExpiresAt.After(startedAt) {
+		*task.LeaseToken != leaseToken || task.CancelRequested != nil || task.LeaseExpiresAt == nil || !task.LeaseExpiresAt.After(startedAt) ||
+		!m.appTaskExclusiveCurrentLocked(task, startedAt) {
 		return AppTask{}, ErrAppTaskLeaseLost
 	}
 	if startedAt.Before(task.CreatedAt) {
@@ -525,7 +567,8 @@ func (m *MemStore) RenewAppTaskLease(_ context.Context, taskID, leaseToken strin
 	task, ok := m.appTasks[taskID]
 	if !ok || (task.Status != AppTaskRestoring && task.Status != AppTaskRunning) ||
 		task.LeaseToken == nil || *task.LeaseToken != leaseToken || task.CancelRequested != nil ||
-		task.LeaseExpiresAt == nil || !task.LeaseExpiresAt.After(renewedAt) {
+		task.LeaseExpiresAt == nil || !task.LeaseExpiresAt.After(renewedAt) ||
+		!m.appTaskExclusiveCurrentLocked(task, renewedAt) {
 		return ErrAppTaskLeaseLost
 	}
 	expiresAt := renewedAt.Add(leaseDuration).UTC()
@@ -574,7 +617,8 @@ func (m *MemStore) CompleteAppTask(_ context.Context, params CompleteAppTaskPara
 	task, ok := m.appTasks[params.ID]
 	if !ok || (task.Status != AppTaskRestoring && task.Status != AppTaskRunning) ||
 		task.LeaseToken == nil || *task.LeaseToken != params.LeaseToken ||
-		task.LeaseExpiresAt == nil || !task.LeaseExpiresAt.After(params.FinishedAt) {
+		task.LeaseExpiresAt == nil || !task.LeaseExpiresAt.After(params.FinishedAt) ||
+		!m.appTaskExclusiveCurrentLocked(task, params.FinishedAt) {
 		return AppTask{}, ErrAppTaskLeaseLost
 	}
 	if err := validateCompleteAppTask(params, task.MaxOutputBytes); err != nil {

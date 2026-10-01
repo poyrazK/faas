@@ -1038,6 +1038,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "platform_tenant_invocations.go"),
 		filepath.Join(root, "pkg", "api", "tcp_listeners.go"),
 		filepath.Join(root, "pkg", "api", "preflight.go"),
+		filepath.Join(root, "pkg", "api", "exclusive_operations.go"),
 	}
 	dtos, err := scanDTOs(files)
 	if err != nil {

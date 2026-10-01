@@ -1956,6 +1956,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if synthTarget == "" {
 		synthTarget = "unix://" + cfg.GatewaySynthSocket
 	}
+	var internalSvcModeLookup sched.PublicAuthModeLookupFunc
+	var internalSvcTokenMinter sched.InternalSvcMintFunc
 	if synthTarget != "" {
 		synth, dialErr := sched.DialGatewaySynthTarget(synthTarget, nil, log)
 		if dialErr != nil {
@@ -1981,6 +1983,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					"err", mErr.Error())
 			} else {
 				modeLookup := sched.PublicAuthModeFromStore(store.AppByID)
+				internalSvcModeLookup = modeLookup
+				internalSvcTokenMinter = minter.AsFunc()
 				sched.ConfigureInternalSvcAuth(synth, modeLookup, minter.AsFunc())
 				// The trigger batch path (postBatch) does NOT
 				// route through httpGatewaySynth — it uses
@@ -2246,43 +2250,40 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		drainDispatchConcurrency = n
 	}
 
-	// Move 1 drain: a second goroutine inside schedd that drains the
-	// unified invocations table on a 1s safety tick + invocation_due
-	// pg_notify channel. Shares the engine + store with the cron
-	// loop; the synth client is the same one the cron loop uses so
-	// the wake path is one consistent admission gate.
+	// Move 1 drain: the same scheduler loop also owns durable exclusive
+	// Job/AppTask operations. Without a gateway synth it still services those
+	// adapters while ordinary invocation delivery remains idle.
+	var drainGateway sched.GatewaySynth
 	if synthTarget != "" {
 		synth, dialErr := sched.DialGatewaySynthTarget(synthTarget, nil, log)
 		if dialErr != nil {
-			// A failed dial disables the entire drain — async /
-			// queue / delayed-task rows would still arrive via the
-			// 1s safety ticker (no notify) but every dispatch
-			// would 502. Surface loud so the operator notices
-			// before customers start timing out.
-			log.Error("drain: synth dial failed; event-shaped dispatch is disabled",
-				"target", synthTarget, "err", dialErr)
+			log.Error("drain: synth dial failed; invocation delivery is disabled", "target", synthTarget, "err", dialErr)
 		} else {
-			drain := sched.NewDrain(engine.Store(), engine,
-				sched.WithDrainGatewaySynth(synth),
-				sched.WithDrainNotifier(engine.Notifier()),
-				sched.WithDrainLogger(log),
-				sched.WithDrainAudit(schedulerAuditor),
-				sched.WithDrainOpsMetrics(ops),
-				sched.WithDrainDispatchConcurrency(drainDispatchConcurrency))
-			notifC, subErr := db.SubscribeWithReconnect(ctx, pool,
-				[]string{db.NotifyInvocationDue}, log)
-			if subErr != nil {
-				log.Error("drain: subscribe invocation_due failed; safety ticker still runs",
-					"err", subErr)
-			} else {
-				go func() {
-					if err := drain.Run(ctx, notifC); err != nil && !errors.Is(err, context.Canceled) {
-						log.Warn("drain", "err", err)
-					}
-				}()
-			}
+			// The durable invocation drain uses its own gateway client.
+			// Keep the same short-lived service-token auth as the cron
+			// client above so exclusive operations can cross the gateway's
+			// authenticated dispatch boundary.
+			sched.ConfigureInternalSvcAuth(synth, internalSvcModeLookup, internalSvcTokenMinter)
+			drainGateway = synth
 		}
 	}
+	drain := sched.NewDrain(engine.Store(), engine,
+		sched.WithDrainGatewaySynth(drainGateway),
+		sched.WithDrainAppTaskCoordinator(appTaskCoordinator),
+		sched.WithDrainNotifier(engine.Notifier()),
+		sched.WithDrainLogger(log),
+		sched.WithDrainAudit(schedulerAuditor),
+		sched.WithDrainOpsMetrics(ops),
+		sched.WithDrainDispatchConcurrency(drainDispatchConcurrency))
+	notifC, subErr := db.SubscribeWithReconnect(ctx, pool, []string{db.NotifyInvocationDue}, log)
+	if subErr != nil {
+		log.Error("drain: subscribe invocation_due failed; safety ticker still runs", "err", subErr)
+	}
+	go func() {
+		if err := drain.Run(ctx, notifC); err != nil && !errors.Is(err, context.Canceled) {
+			log.Warn("drain", "err", err)
+		}
+	}()
 
 	// Issue #476 / ADR-076: outbound webhook delivery dispatcher.
 	// Drains app_webhook_deliveries on a 5s tick with FOR UPDATE SKIP

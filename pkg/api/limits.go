@@ -164,6 +164,24 @@ const (
 	InvoiceHistoryTimeout = 2 * time.Minute
 	// Keep artifacts below the Go SDK's 4 MiB response-body bound.
 	MaxFOCUSExportBytes = 3 << 20
+	// Managed operations bound durable configuration, queue growth, and leases.
+	MaxExclusivePoliciesPerAccount = 64
+	MaxExclusivePendingPerAccount  = 10000
+	MinExclusiveLeaseSeconds       = 5
+	MaxExclusiveLeaseSeconds       = 300
+	DefaultExclusiveLeaseSeconds   = 30
+	MaxExclusiveAttemptSeconds     = 86400
+	MaxExclusiveMembers            = 100
+	MaxExclusiveIdentityBytes      = 128
+	MaxExclusiveEffectsPerCommit   = 32
+	DefaultExclusiveAttempts       = 5
+	MaxExclusiveAttempts           = 100
+	DefaultExclusiveRetrySeconds   = 5
+	MaxExclusiveRetrySeconds       = 3600
+	MaxExclusiveResultBytes        = 1 << 20
+	MaxExclusiveRequestBytes       = 2 << 20
+	MaxExclusiveErrorBytes         = 1024
+	MaxExclusiveInspectionRows     = 100
 )
 
 // App CPU is expressed as sustained millicores enforced by cgroup v2 cpu.max.

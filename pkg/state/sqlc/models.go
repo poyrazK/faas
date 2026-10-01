@@ -689,39 +689,41 @@ type AppSecretRuntimeReloadObservation struct {
 }
 
 type AppTask struct {
-	ID                  pgtype.UUID
-	AccountID           pgtype.UUID
-	AppID               pgtype.UUID
-	DeploymentID        pgtype.UUID
-	Kind                string
-	Command             []string
-	CommandShell        bool
-	DeploymentScope     string
-	ArtifactKey         string
-	ImageDigest         string
-	Status              string
-	TimeoutSeconds      int32
-	MaxOutputBytes      int32
-	LeaseToken          pgtype.UUID
-	LeaseOwner          pgtype.Text
-	LeaseExpiresAt      pgtype.Timestamptz
-	CancelRequestedAt   pgtype.Timestamptz
-	StdoutTail          string
-	StderrTail          string
-	OutputTruncated     bool
-	ExitCode            pgtype.Int4
-	FailureCode         pgtype.Text
-	FailureMessage      pgtype.Text
-	StartedAt           pgtype.Timestamptz
-	FinishedAt          pgtype.Timestamptz
-	CreatedAt           pgtype.Timestamptz
-	UpdatedAt           pgtype.Timestamptz
-	CronID              pgtype.UUID
-	ScheduledFor        pgtype.Timestamptz
-	RetryMax            int32
-	RetryBackoffSeconds int32
-	AttemptCount        int32
-	RetryAt             pgtype.Timestamptz
+	ID                   pgtype.UUID
+	AccountID            pgtype.UUID
+	AppID                pgtype.UUID
+	DeploymentID         pgtype.UUID
+	Kind                 string
+	Command              []string
+	CommandShell         bool
+	DeploymentScope      string
+	ArtifactKey          string
+	ImageDigest          string
+	Status               string
+	TimeoutSeconds       int32
+	MaxOutputBytes       int32
+	LeaseToken           pgtype.UUID
+	LeaseOwner           pgtype.Text
+	LeaseExpiresAt       pgtype.Timestamptz
+	CancelRequestedAt    pgtype.Timestamptz
+	StdoutTail           string
+	StderrTail           string
+	OutputTruncated      bool
+	ExitCode             pgtype.Int4
+	FailureCode          pgtype.Text
+	FailureMessage       pgtype.Text
+	StartedAt            pgtype.Timestamptz
+	FinishedAt           pgtype.Timestamptz
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+	CronID               pgtype.UUID
+	ScheduledFor         pgtype.Timestamptz
+	RetryMax             int32
+	RetryBackoffSeconds  int32
+	AttemptCount         int32
+	RetryAt              pgtype.Timestamptz
+	ExclusiveOperationID pgtype.UUID
+	ExclusiveGeneration  pgtype.Int8
 }
 
 type AppTcpListener struct {
@@ -1138,6 +1140,7 @@ type CronFireNowRequest struct {
 	Error        pgtype.Text
 	FinishedAt   pgtype.Timestamptz
 	TaskID       pgtype.UUID
+	OperationID  pgtype.UUID
 }
 
 type CustomDomain struct {
@@ -1626,6 +1629,87 @@ type EventSubscriptionWorkBinding struct {
 	FairnessKeySelector string
 }
 
+type ExclusiveWorkEffect struct {
+	ID          pgtype.UUID
+	OperationID pgtype.UUID
+	Generation  int64
+	Name        string
+	Payload     []byte
+	CreatedAt   pgtype.Timestamptz
+}
+
+type ExclusiveWorkKey struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	PolicyID      pgtype.UUID
+	ScopeID       pgtype.UUID
+	EnvironmentID string
+	KeyDigest     []byte
+	Generation    int64
+	NextSequence  int64
+}
+
+type ExclusiveWorkOperation struct {
+	ID                pgtype.UUID
+	AccountID         pgtype.UUID
+	KeyID             pgtype.UUID
+	AppID             pgtype.UUID
+	JobID             pgtype.UUID
+	PlatformTenantID  pgtype.UUID
+	Sequence          int64
+	State             string
+	PolicyRevision    int64
+	Configuration     []byte
+	Request           []byte
+	RequestDigest     []byte
+	EquivalenceDigest []byte
+	IdempotencyDigest []byte
+	Generation        int64
+	ClaimToken        pgtype.UUID
+	IncarnationID     string
+	LeaseExpiresAt    pgtype.Timestamptz
+	AttemptDeadline   pgtype.Timestamptz
+	Result            []byte
+	LastError         string
+	CreatedAt         pgtype.Timestamptz
+	CompletedAt       pgtype.Timestamptz
+	DueAt             pgtype.Timestamptz
+	Attempts          int32
+	QuotaReserved     bool
+}
+
+type ExclusiveWorkPolicy struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	Name          string
+	Revision      int64
+	Configuration []byte
+	Retired       bool
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
+type ExclusiveWorkSubmission struct {
+	KeyID             pgtype.UUID
+	IdempotencyDigest []byte
+	OperationID       pgtype.UUID
+}
+
+type ExclusiveWorkTriggerBinding struct {
+	Source           string
+	TriggerID        pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	JobID            pgtype.UUID
+	PolicyID         pgtype.UUID
+	PolicyName       string
+	PlatformTenantID pgtype.UUID
+	BusinessKey      []byte
+	EquivalenceKey   string
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
 type Execution struct {
 	ID                 pgtype.UUID
 	AccountID          pgtype.UUID
@@ -1874,32 +1958,33 @@ type InboundWebhookEndpoint struct {
 }
 
 type Instance struct {
-	ID                   pgtype.UUID
-	AppID                pgtype.UUID
-	DeploymentID         pgtype.UUID
-	State                string
-	Netns                pgtype.Text
-	GuestUid             pgtype.Int4
-	HostIp               *netip.Addr
-	RamMb                int32
-	StartedAt            pgtype.Timestamptz
-	LastRequestAt        pgtype.Timestamptz
-	ParkedAt             pgtype.Timestamptz
-	TerminalAt           pgtype.Timestamptz
-	NodeID               pgtype.UUID
-	WakeID               pgtype.UUID
-	OrgID                pgtype.UUID
-	MigratedFromNodeID   pgtype.UUID
-	MigratedAt           pgtype.Timestamptz
-	LeaseToken           pgtype.Text
-	FrameworkReadyAt     pgtype.Timestamptz
-	TailCount            int32
-	RequestCount         int64
-	Kind                 string
-	JobID                pgtype.UUID
-	Mode                 string
-	MigrationStartedAt   pgtype.Timestamptz
-	StartupCpuBoostUntil pgtype.Timestamptz
+	ID                      pgtype.UUID
+	AppID                   pgtype.UUID
+	DeploymentID            pgtype.UUID
+	State                   string
+	Netns                   pgtype.Text
+	GuestUid                pgtype.Int4
+	HostIp                  *netip.Addr
+	RamMb                   int32
+	StartedAt               pgtype.Timestamptz
+	LastRequestAt           pgtype.Timestamptz
+	ParkedAt                pgtype.Timestamptz
+	TerminalAt              pgtype.Timestamptz
+	NodeID                  pgtype.UUID
+	WakeID                  pgtype.UUID
+	OrgID                   pgtype.UUID
+	MigratedFromNodeID      pgtype.UUID
+	MigratedAt              pgtype.Timestamptz
+	LeaseToken              pgtype.Text
+	FrameworkReadyAt        pgtype.Timestamptz
+	TailCount               int32
+	RequestCount            int64
+	Kind                    string
+	JobID                   pgtype.UUID
+	Mode                    string
+	MigrationStartedAt      pgtype.Timestamptz
+	StartupCpuBoostUntil    pgtype.Timestamptz
+	ExclusiveCaptureBlocked bool
 }
 
 type InstanceBillingInterval struct {
@@ -2151,6 +2236,8 @@ type JobRun struct {
 	SourceRunID                 pgtype.UUID
 	InputManifestUri            pgtype.Text
 	InputManifestSha256         pgtype.Text
+	ExclusiveOperationID        pgtype.UUID
+	ExclusiveGeneration         pgtype.Int8
 }
 
 type JobTask struct {

@@ -236,6 +236,16 @@
       "acceptance_test": "cmd/apid/handlers_issues_integration_test.go::TestIssueEndToEndPostgres"
     },
     {
+      "id": "managed-exclusive-operations",
+      "name": "Managed exclusive operations",
+      "category": "async",
+      "description": "Coordinate selected app and Job work under durable named keys, with explicit contention behavior, recurring Job and trigger admission, renewable ownership, and generation-fenced results.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/exclusive-operations",
+      "acceptance_test": "pkg/sched/scheduled_jobs_test.go::TestRunScheduledJobsTickAdmitsManagedJobAndSharesLaneWithAppWork"
+    },
+    {
       "id": "managed-postgres",
       "name": "Managed PostgreSQL",
       "category": "data",
