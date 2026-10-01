@@ -60,6 +60,20 @@ event records the pause reason without adding a new business state. These
 custody controls still require fenced step execution and instance-bound guest
 authority before public workflow admission can be enabled.
 
+The scheduler step mutation seam requires current custody and exact consecutive
+native attempts. Resolved input is frozen on the first dispatch and reused for
+an already persisted retry. Attempt history and compact step results commit
+together; identical terminal receipts preserve their first finished time,
+while conflicting receipts are rejected. A released or expired coordinator
+cannot change step history. Suspension denies fresh step starts while allowing
+a still-owned in-flight step to record its confirmed result. Resolved inputs
+and outputs obey the admitted operation value bound; step attempt counters use
+`OperationWorkflowStepAttemptsMax` (2,147,483,647), and retained error text uses
+`OperationWorkflowStepErrorMaxBytes` (4 KiB), both in `pkg/api/limits.go`.
+The coordinator remains responsible for native DAG readiness and recovery
+classification. This internal write seam does not itself dispatch handlers,
+grant guest authority, settle business outcomes or enable workflow admission.
+
 Admission, idempotency receipt, operation, execution association, and initial
 event commit atomically. Keys are scoped to account, app, environment, verified
 owner, and operation name. Equivalent JSON inputs replay the original receipt;
