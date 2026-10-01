@@ -48,15 +48,16 @@ type Bundle struct {
 	Config
 }
 type Decision struct {
-	Flag          string `json:"flag"`
-	Value         any    `json:"value"`
-	Type          string `json:"type,omitempty"`
-	ConfigVersion int64  `json:"config_version"`
-	RuleID        string `json:"rule_id,omitempty"`
-	Reason        string `json:"reason"`
-	Bucket        *int   `json:"bucket,omitempty"`
-	RolloutBucket *int   `json:"rollout_bucket,omitempty"`
-	Source        string `json:"source"`
+	Flag          string          `json:"flag"`
+	Value         any             `json:"value"`
+	Type          string          `json:"type,omitempty"`
+	ConfigVersion int64           `json:"config_version"`
+	RuleID        string          `json:"rule_id,omitempty"`
+	Reason        string          `json:"reason"`
+	Bucket        *int            `json:"bucket,omitempty"`
+	RolloutBucket *int            `json:"rollout_bucket,omitempty"`
+	Source        string          `json:"source"`
+	InheritedFrom *EvidenceOrigin `json:"inherited_from,omitempty"`
 }
 
 var keyPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)

@@ -806,6 +806,7 @@ from .fire_cron_request_response_status import FireCronRequestResponseStatus
 from .fire_cron_response import FireCronResponse
 from .fire_cron_response_status import FireCronResponseStatus
 from .flag_decision import FlagDecision
+from .flag_decision_inherited_from import FlagDecisionInheritedFrom
 from .flag_decision_reason import FlagDecisionReason
 from .flag_decision_source import FlagDecisionSource
 from .flag_decision_type import FlagDecisionType
@@ -2770,6 +2771,7 @@ __all__ = (
     "FireCronResponse",
     "FireCronResponseStatus",
     "FlagDecision",
+    "FlagDecisionInheritedFrom",
     "FlagDecisionReason",
     "FlagDecisionSource",
     "FlagDecisionType",
