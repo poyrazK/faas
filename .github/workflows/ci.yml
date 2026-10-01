@@ -244,6 +244,9 @@ jobs:
       - name: npm package staging
         run: bash scripts/build-npm-packages_test.sh
 
+      - name: npm publication readiness and tag isolation
+        run: bash scripts/publish-npm-packages_test.sh
+
       # Cloudflare Free can replace origin 502/504 bodies. Keep the optional
       # public-timeout Worker contract executable in CI so its marker-based
       # rewrite never drifts from the gateway response headers.

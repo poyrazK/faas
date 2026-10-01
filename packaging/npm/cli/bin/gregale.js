@@ -45,10 +45,11 @@ function resolveBinary() {
 	try {
 		return require.resolve(`${pkg}/bin/gregale`);
 	} catch {
+		const version = require("../package.json").version;
 		fail(
 			`the platform package ${pkg} is missing.\n` +
-				`This usually means npm skipped optional dependencies. Reinstall with:\n` +
-				`  npm install --include=optional gregale\n` +
+				`npm may have skipped optional dependencies, or this platform version is not yet public. Reinstall with:\n` +
+				`  npm install -g --include=optional gregale@${version}\n` +
 				`or install directly:  curl -fsSL https://get.gregale.dev | sh`,
 		);
 	}
