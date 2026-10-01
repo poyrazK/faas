@@ -35,6 +35,8 @@ const (
 	OperationDefinitionBodyMaxBytes   = 140000
 	// Monotonic workflow coordinator fences use a PostgreSQL integer counter.
 	OperationWorkflowClaimsMaxPerRun           = 1<<31 - 1
+	OperationWorkflowStepAttemptsMax           = 1<<31 - 1
+	OperationWorkflowStepErrorMaxBytes         = 4096
 	OperationReportBodyMaxBytes                = 16384
 	OperationRecoveryBodyOverheadBytes         = 8192
 	OperationSubmissionMaxBytes                = 1 << 20

@@ -5244,6 +5244,36 @@ UPDATE workflow_runs SET status='failed',last_error='workflow coordinator lease 
 -- name: RevokeCustomerOperationWorkflowCustody :exec
 UPDATE customer_operation_workflow_claims SET lease_until=now() WHERE workflow_run_id=sqlc.arg(run_id)::uuid;
 
+-- name: GetCustomerOperationWorkflowStep :one
+SELECT * FROM workflow_steps WHERE run_id=sqlc.arg(run_id)::uuid AND step_name=sqlc.arg(step_name)::text;
+
+-- name: GetCustomerOperationWorkflowStepAttempt :one
+SELECT * FROM workflow_step_attempts WHERE run_id=sqlc.arg(run_id)::uuid AND step_name=sqlc.arg(step_name)::text AND attempt=sqlc.arg(attempt)::integer;
+
+-- name: StartCustomerOperationWorkflowStep :one
+UPDATE workflow_steps SET status='running',attempt=sqlc.arg(attempt)::integer,input=sqlc.arg(input)::jsonb,error=NULL,
+ started_at=coalesce(started_at,now()),next_retry_at=NULL,finished_at=NULL
+WHERE run_id=sqlc.arg(run_id)::uuid AND step_name=sqlc.arg(step_name)::text
+AND status IN ('pending','awaiting_event') AND attempt=sqlc.arg(attempt)::integer-1
+RETURNING input;
+
+-- name: InsertCustomerOperationWorkflowStepAttempt :exec
+INSERT INTO workflow_step_attempts(run_id,step_name,attempt,status)
+VALUES(sqlc.arg(run_id)::uuid,sqlc.arg(step_name)::text,sqlc.arg(attempt)::integer,'running');
+
+-- name: TouchCustomerOperationWorkflowStep :exec
+UPDATE workflow_runs SET current_step=sqlc.arg(step_name)::text,updated_at=now() WHERE id=sqlc.arg(run_id)::uuid;
+
+-- name: CompleteCustomerOperationWorkflowStep :execrows
+UPDATE workflow_steps SET status=sqlc.arg(status)::text,output=sqlc.narg(output)::jsonb,error=sqlc.narg(error)::text,
+ next_retry_at=NULL,finished_at=now()
+WHERE run_id=sqlc.arg(run_id)::uuid AND step_name=sqlc.arg(step_name)::text AND status='running' AND attempt=sqlc.arg(attempt)::integer;
+
+-- name: CompleteCustomerOperationWorkflowStepAttempt :execrows
+UPDATE workflow_step_attempts SET status=sqlc.arg(status)::text,http_status=sqlc.narg(http_status)::integer,
+ error=sqlc.narg(error)::text,finished_at=now(),next_attempt_at=NULL
+WHERE run_id=sqlc.arg(run_id)::uuid AND step_name=sqlc.arg(step_name)::text AND attempt=sqlc.arg(attempt)::integer AND status='running';
+
 -- name: SetCustomerOperationJobIdentity :execrows
 UPDATE job_runs j SET operation_id=o.id FROM customer_operations o
 WHERE j.id=sqlc.arg(run_id)::uuid AND o.id=sqlc.arg(operation_id)::uuid AND j.account_id=o.account_id AND o.execution_kind='job'
