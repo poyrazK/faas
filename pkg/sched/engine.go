@@ -2879,20 +2879,18 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 
 	usesSnapshots := instanceModeUsesSnapshots(mode)
 
-	// Snapshot policy is derived from the current secret set, not only from
-	// the snapshot row's stale bit. The API normally marks snapshots stale
-	// when a secret changes, but this scheduler-side fence also covers missed
-	// invalidations and races: an ephemeral secret must never be restored from
-	// an older persistent capture. If the policy lookup fails, fail closed and
-	// cold-boot; restoring is the unsafe option.
-	ephemeralSecret, secretPolicyErr := e.hasEphemeralSecretForDeployment(ctx, app.AccountID, app.ID, dep.Scope)
-	secretPolicyBlocksSnapshots := ephemeralSecret || secretPolicyErr != nil
+	// The snapshot policy and boot payload use the same owned value snapshot.
+	// A separate secret-policy read could allow restore and subsequently load
+	// an ephemeral secret into an older persistent capture.
+	runtimeValues, err := e.loadRuntimeDeploymentValues(ctx, acct.ID, dep)
+	if err != nil {
+		release()
+		return WakeResult{}, fmt.Errorf("sched: wake: load runtime values: %w", err)
+	}
+	ephemeralSecret := runtimeValuesHaveEphemeralSecrets(runtimeValues.Snapshot)
+	secretPolicyBlocksSnapshots := ephemeralSecret
 	secretPolicyColdReason := ColdReasonEphemeralSecret
-	if secretPolicyErr != nil {
-		secretPolicyColdReason = ColdReasonSecretPolicyUnavailable
-		e.log.Warn("wake: secret retention policy lookup failed; bypassing snapshots",
-			"app_id", app.ID, "deployment_id", dep.ID, "err", secretPolicyErr)
-	} else if ephemeralSecret {
+	if ephemeralSecret {
 		e.log.Info("wake: ephemeral secret disables snapshot restore",
 			"app_id", app.ID, "deployment_id", dep.ID)
 	}
@@ -3252,13 +3250,8 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		})
 	}
 
-	sealedEnv, err := e.loadSealedEnvDeliveryFor(ctx, acct.ID, appID, dep.Scope, envSecretsFromDep(dep))
-	if err != nil {
-		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "wake_sealed_env_invalid")
-		release()
-		return WakeResult{}, fmt.Errorf("sched: wake: load sealed env: %w", err)
-	}
-	sidecars, sidecarSecretCandidates, err := e.sidecarsForDeployment(ctx, dep, acct.ID)
+	sealedEnv := runtimeValues.MainSecrets
+	sidecars, sidecarSecretCandidates, err := e.sidecarsForDeploymentWithValues(ctx, dep, acct.ID, &runtimeValues.Snapshot)
 	if err != nil {
 		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "wake_sidecars_invalid")
 		release()
@@ -3297,7 +3290,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		// config. Precedence at the guest layer is "secrets >
 		// api_env > manifest_env > os.environ".
 		APIEnv: appendPlatformIdentity(
-			e.loadAPIEnv(ctx, acct.ID, appID, dep.Scope),
+			runtimeValues.APIEnv,
 			app, dep, acct, placement.NodeID, ins.ID, placement.Region,
 		),
 		// ADR-031: surface the per-app egress allowlist on the
@@ -5218,11 +5211,12 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 	// ships only the requested env_keys. A missing-required
 	// key fails loud (the legacy "stage everything" path is
 	// preserved when OverrideEnvSecrets is nil).
-	sealedEnv, err := e.loadSealedEnvDeliveryFor(ctx, app.AccountID, app.ID, dep.Scope, envSecretsFromDep(dep))
+	runtimeValues, err := e.loadRuntimeDeploymentValues(ctx, app.AccountID, dep)
 	if err != nil {
 		return AppSpec{}, fmt.Errorf("sched: build app spec: sealed env: %w", err)
 	}
-	sidecars, sidecarCandidates, err := e.sidecarsForDeployment(ctx, dep, app.AccountID)
+	sealedEnv := runtimeValues.MainSecrets
+	sidecars, sidecarCandidates, err := e.sidecarsForDeploymentWithValues(ctx, dep, app.AccountID, &runtimeValues.Snapshot)
 	if err != nil {
 		return AppSpec{}, fmt.Errorf("sched: build app spec: sidecars: %w", err)
 	}
@@ -5254,15 +5248,10 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 		SealedEnv:              sealedEnv.Entries,
 		Sidecars:               sidecars,
 		MainDependsOn:          mainDependencies,
-		// ADR-045: api_env plaintext layer; the loadAPIEnv
-		// helper already fail-softs on a lookup error and logs
-		// Warn (engine.go:2382-2396). A hiccup here ships an
-		// empty api_env block, NOT a failed migration — the
-		// overlayfs upper layers carry the same precedence
-		// rules as Wake time and the customer's runtime config
-		// (most of it) lives in sealedEnv + manifest_env.
+		// ADR-375: plaintext and sealed inputs share one owned snapshot.
+		// A lookup failure aborts migration before booting incomplete config.
 		APIEnv: appendPlatformIdentity(
-			e.loadAPIEnv(ctx, app.AccountID, app.ID, dep.Scope),
+			runtimeValues.APIEnv,
 			app, dep, acct, ins.NodeID, ins.ID, func() string {
 				if node, err := e.store.ComputeNodeByID(ctx, ins.NodeID); err == nil {
 					return stringValue(node.Region)
@@ -5960,12 +5949,13 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	// filtering — see Wake builder for the full contract. ColdBoot /
 	// Prime shares the wake path; the dep row is the same one Wake
 	// loaded (so no extra DB read).
-	sealedEnv, err := e.loadSealedEnvDeliveryFor(ctx, acct.ID, appID, dep.Scope, envSecretsFromDep(dep))
+	runtimeValues, err := e.loadRuntimeDeploymentValues(ctx, acct.ID, dep)
 	if err != nil {
 		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "prime_sealed_env_invalid")
 		return fmt.Errorf("sched: prime: load sealed env: %w", err)
 	}
-	sidecars, sidecarSecretCandidates, err := e.sidecarsForDeployment(ctx, dep, acct.ID)
+	sealedEnv := runtimeValues.MainSecrets
+	sidecars, sidecarSecretCandidates, err := e.sidecarsForDeploymentWithValues(ctx, dep, acct.ID, &runtimeValues.Snapshot)
 	if err != nil {
 		e.rollbackAdmittedInstance(ctx, ins.ID, appID, "prime_sidecars_invalid")
 		return fmt.Errorf("sched: prime: load sidecars: %w", err)
@@ -6001,7 +5991,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		// config. Precedence at the guest layer is "secrets >
 		// api_env > manifest_env > os.environ".
 		APIEnv: appendPlatformIdentity(
-			e.loadAPIEnv(ctx, acct.ID, appID, dep.Scope),
+			runtimeValues.APIEnv,
 			app, dep, acct, placement.NodeID, ins.ID, placement.Region,
 		),
 		// ADR-031: see the Wake builder above. Prime is the
@@ -7830,6 +7820,17 @@ func (e *Engine) loadSealedEnvDeliveryFor(ctx context.Context, accountID, appID,
 	rows, err := e.store.ListAppSecretsInScope(ctx, accountID, appID, scope)
 	if err != nil {
 		return sealedEnvDelivery{}, fmt.Errorf("load sealed env (account=%s app=%s scope=%s): %w", accountID, appID, scope, err)
+	}
+	return sealedEnvDeliveryFromRows(rows, accountID, appID, scope, overrideEnvSecrets)
+}
+
+func sealedEnvDeliveryFromRows(rows []state.AppSecret, accountID, appID, scope string, overrideEnvSecrets map[string]string) (sealedEnvDelivery, error) {
+	seen := map[string]bool{}
+	for _, row := range rows {
+		if row.AccountID != accountID || row.AppID != appID || row.Scope != scope || api.ValidateEnvKey(row.Key) != nil || seen[row.Key] {
+			return sealedEnvDelivery{}, fmt.Errorf("invalid runtime secret projection: %w", state.ErrConflict)
+		}
+		seen[row.Key] = true
 	}
 	if len(overrideEnvSecrets) == 0 {
 		// Legacy path: stage everything for the app at the deployment's

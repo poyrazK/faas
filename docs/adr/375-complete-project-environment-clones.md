@@ -1809,3 +1809,46 @@ regeneration matches checked-in output, and the whitespace check passes. The
 vmmd test binary cross-compiles for native Linux x86_64; it was not executed on
 a KVM host. Full suite, lint, test-metal, leakcheck and VM/provider acceptance
 remain open for the complete feature.
+
+### Owned runtime values for boot and live secret reads
+
+The runtime value reader now captures plaintext values, sealed secret inputs,
+main/sidecar secret grants and reload opt-ins together with the deployment's
+environment owner. PostgreSQL uses one statement snapshot; MemStore uses one
+critical section and copies mutable byte slices and maps. It retains the
+deployment/environment lifetime checks described above. Production, legacy
+default and stage values remain distinct, including empty scopes.
+
+Wake, snapshot priming, migration and app-task runtime preparation use this
+snapshot for plaintext and main/sidecar secret selection. A failed or mismatched
+read prevents boot rather than silently omitting configuration. Wake reads the
+snapshot before reserving an instance, and derives its ephemeral-secret restore
+policy from that same secret set. This removes the separate policy/payload
+reads that could otherwise permit restore while supplying an ephemeral secret.
+Sidecar declarations retain their immutable layer ordering and positive grants.
+
+Live guest secret reads use the trusted instance's deployment/app/account tuple
+to obtain the same owned snapshot. An old VM cannot adopt secrets from a deleted
+and recreated stage with the same slug. Main and sidecar reload opt-ins are read
+with the secret grant and sealed rows, preserving revocation behavior.
+
+Secret delivery/reload observation writes still need transactional deployment,
+environment-lifetime and sealed-envelope fences. Scope-specific park/reaper
+policy, native stage queue adapters, the coordinated database/object-data
+checkpoint and all full-clone activation gates remain open. This increment does
+not enable public full-clone activation or establish native VM acceptance.
+
+Verification: owned value/environment MemStore and real PostgreSQL contracts
+passed in 69.309 seconds, including scope/grant isolation, defensive copies,
+MVCC visibility, deletion/recreation, lost pins and retained lifetime owners.
+The scheduler gate passed in 5.970 seconds, covering wake/prime, migration,
+app-task runtime preparation, coherent main/sidecar values under rotation,
+ephemeral-secret restore policy, failed-read lock release/retry and real
+PostgreSQL restore-pressure selection. Guest runtime environment/secret protocol
+contracts passed in 0.846 seconds, including an actual MemStore stage
+deletion/recreation. API clone/queue/workload regressions passed (API 0.550
+seconds, apid 1.246 seconds). Independent SQLC regeneration matches checked-in
+output and the whitespace check passes. The additional Linux x86_64 test-binary
+cross-compile ran out of host disk space; this increment has no completed native
+build/VM evidence. Full suite, lint, test-metal, leakcheck and provider acceptance
+remain open for the complete feature.

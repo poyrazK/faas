@@ -57,6 +57,11 @@ func TestWakeBurstSpreadsSnapshotRestoresAcrossPgEngines(t *testing.T) {
 		if err != nil {
 			t.Fatalf("CreateDeployment %d: %v", i, err)
 		}
+		// PgStore creates pending deployment intent; publish it before an
+		// unscoped wake asks for the production serving deployment.
+		if err := firstStore.MarkDeploymentLive(ctx, dep.ID); err != nil {
+			t.Fatalf("MarkDeploymentLive %d: %v", i, err)
+		}
 		snap, err := firstStore.CreateSnapshot(ctx, state.Snapshot{
 			DeploymentID: dep.ID, Tier: state.SnapshotTierInit, FCVersion: "1.10.0",
 			MemBytes:   256 << 20,

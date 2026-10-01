@@ -53,12 +53,7 @@ type runtimeConfigStore interface {
 }
 
 type runtimeSecretsStore interface {
-	DeploymentByID(context.Context, string) (state.Deployment, error)
-	ListAppSecretsInScope(context.Context, string, string, string) ([]state.AppSecret, error)
-}
-
-type runtimeSidecarSecretReloadSignalStore interface {
-	DeploymentSidecarSecretReloadSignal(context.Context, string, string) (string, error)
+	state.RuntimeAppValuesStore
 }
 
 type runtimeSecretReloadStore interface {
@@ -297,28 +292,22 @@ func selectRuntimeSecretRowsForWorkload(ctx context.Context, store runtimeSecret
 	if !state.ValidSecretRuntimeWorkloadName(workloadName) {
 		return runtimeSecretSelection{}, errors.New("invalid runtime secret workload name")
 	}
-	deployment, err := store.DeploymentByID(ctx, deploymentID)
+	snapshot, err := store.RuntimeAppValuesForDeployment(ctx, accountID, appID, deploymentID)
 	if err != nil {
-		return runtimeSecretSelection{}, fmt.Errorf("load deployment: %w", err)
+		return runtimeSecretSelection{}, fmt.Errorf("load deployment runtime values: %w", err)
 	}
-	if deployment.ID != deploymentID || deployment.AppID != appID {
-		return runtimeSecretSelection{}, errors.New("live instance and deployment identity mismatch")
+	if snapshot.DeploymentID != deploymentID || snapshot.AppID != appID || snapshot.AccountID != accountID || api.ValidateScope(snapshot.Scope) != nil {
+		return runtimeSecretSelection{}, errors.New("live instance and runtime value owner mismatch")
 	}
+	deployment := state.Deployment{ID: deploymentID, AppID: appID, Scope: snapshot.Scope,
+		OverrideEnvSecrets: snapshot.SecretGrants.OverrideEnvSecrets, Sidecars: snapshot.SecretGrants.Sidecars,
+		SecretReloadSignal: snapshot.SecretGrants.ReloadSignal}
 	allowedKeys, err := runtimeSecretWorkloadAllowlist(deployment, workloadName)
 	if err != nil {
 		return runtimeSecretSelection{}, err
 	}
-	scope := deployment.Scope
-	if scope == "" {
-		scope = api.DefaultEnvScope
-	}
-	if api.ValidateScope(scope) != nil {
-		return runtimeSecretSelection{}, errors.New("deployment has invalid secret scope")
-	}
-	rows, err := store.ListAppSecretsInScope(ctx, accountID, appID, scope)
-	if err != nil {
-		return runtimeSecretSelection{}, fmt.Errorf("list app secrets: %w", err)
-	}
+	scope := snapshot.Scope
+	rows := snapshot.Secrets
 	selected := make([]state.AppSecret, 0, len(rows))
 	entries := make([]fcvm.SealedEnvEntry, 0, len(rows))
 	foundKeys := make(map[string]struct{}, len(rows))
@@ -328,6 +317,9 @@ func selectRuntimeSecretRowsForWorkload(ctx context.Context, store runtimeSecret
 		}
 		if api.ValidateEnvKey(row.Key) != nil {
 			return runtimeSecretSelection{}, errors.New("secret store returned an invalid key")
+		}
+		if _, duplicate := foundKeys[row.Key]; duplicate {
+			return runtimeSecretSelection{}, errors.New("secret store returned a duplicate key")
 		}
 		if allowedKeys != nil {
 			if _, ok := allowedKeys[row.Key]; !ok {
@@ -351,10 +343,7 @@ func selectRuntimeSecretRowsForWorkload(ctx context.Context, store runtimeSecret
 		}
 		if len(missing) > 0 {
 			sort.Strings(missing)
-			enabled, signalErr := runtimeSecretReloadEnabled(ctx, store, deployment, workloadName)
-			if signalErr != nil {
-				return runtimeSecretSelection{}, fmt.Errorf("load runtime secret reload opt-in: %w", signalErr)
-			}
+			enabled := runtimeSecretReloadEnabled(snapshot.SecretGrants, workloadName)
 			if !enabled {
 				return runtimeSecretSelection{}, fmt.Errorf("deployment references missing secrets: %s", strings.Join(missing, ", "))
 			}
@@ -364,22 +353,11 @@ func selectRuntimeSecretRowsForWorkload(ctx context.Context, store runtimeSecret
 	return runtimeSecretSelection{Rows: selected, Entries: entries, Revision: revision}, nil
 }
 
-func runtimeSecretReloadEnabled(ctx context.Context, store runtimeSecretsStore, deployment state.Deployment, workloadName string) (bool, error) {
+func runtimeSecretReloadEnabled(grants state.RuntimeAppSecretGrants, workloadName string) bool {
 	if workloadName == "" {
-		return deployment.SecretReloadSignal != "", nil
+		return grants.ReloadSignal != ""
 	}
-	signalStore, ok := store.(runtimeSidecarSecretReloadSignalStore)
-	if !ok {
-		return false, nil
-	}
-	signal, err := signalStore.DeploymentSidecarSecretReloadSignal(ctx, deployment.ID, workloadName)
-	if errors.Is(err, state.ErrNotFound) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return signal != "", nil
+	return grants.SidecarReloadSignals[workloadName] != ""
 }
 
 func runtimeSecretWorkloadAllowlist(deployment state.Deployment, workloadName string) (map[string]struct{}, error) {

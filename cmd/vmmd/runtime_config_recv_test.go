@@ -37,26 +37,20 @@ type runtimeSecretsStoreStub struct {
 	ackResults           []state.AppSecretRuntimeReloadAckResult
 }
 
-func (s runtimeSecretsStoreStub) DeploymentByID(_ context.Context, id string) (state.Deployment, error) {
-	if id != s.deployment.ID {
-		return state.Deployment{}, state.ErrNotFound
+func (s runtimeSecretsStoreStub) RuntimeAppValuesForDeployment(_ context.Context, accountID, appID, id string) (state.RuntimeAppValuesSnapshot, error) {
+	if id != s.deployment.ID || appID != s.deployment.AppID {
+		return state.RuntimeAppValuesSnapshot{}, state.ErrNotFound
 	}
-	return s.deployment, nil
-}
-
-func (s runtimeSecretsStoreStub) ListAppSecretsInScope(context.Context, string, string, string) ([]state.AppSecret, error) {
-	return s.secretRows, nil
-}
-
-func (s runtimeSecretsStoreStub) DeploymentSidecarSecretReloadSignal(_ context.Context, deploymentID, sidecarName string) (string, error) {
-	if deploymentID != s.deployment.ID {
-		return "", state.ErrNotFound
+	scope := s.deployment.Scope
+	if scope == "" {
+		scope = "default"
 	}
-	signal, ok := s.sidecarReloadSignals[sidecarName]
-	if !ok {
-		return "", state.ErrNotFound
-	}
-	return signal, nil
+	return state.RuntimeAppValuesSnapshot{RuntimeAppEnvSnapshot: state.RuntimeAppEnvSnapshot{
+		AccountID: accountID, AppID: appID, DeploymentID: id, Scope: scope, EnvironmentID: "environment-" + scope,
+	}, Secrets: s.secretRows, SecretGrants: state.RuntimeAppSecretGrants{
+		OverrideEnvSecrets: s.deployment.OverrideEnvSecrets, Sidecars: s.deployment.Sidecars,
+		ReloadSignal: s.deployment.SecretReloadSignal, SidecarReloadSignals: s.sidecarReloadSignals,
+	}}, nil
 }
 
 func (s *runtimeSecretsStoreStub) RecordAppSecretRuntimeReload(_ context.Context, result state.AppSecretRuntimeReloadResult) (int, error) {

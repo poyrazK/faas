@@ -1,0 +1,63 @@
+package state
+
+import (
+	"context"
+	"encoding/json"
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
+)
+
+var _ RuntimeAppValuesStore = (*PgStore)(nil)
+
+func (s *PgStore) RuntimeAppValuesForDeployment(ctx context.Context, accountID, appID, deploymentID string) (RuntimeAppValuesSnapshot, error) {
+	if err := validateRuntimeAppEnvIDs(accountID, appID, deploymentID); err != nil {
+		return RuntimeAppValuesSnapshot{}, err
+	}
+	row, err := sqlc.New().ReadRuntimeAppValuesForDeployment(ctx, s.pool, sqlc.ReadRuntimeAppValuesForDeploymentParams{
+		AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), DeploymentID: mustPgUUID(deploymentID),
+	})
+	if err != nil {
+		return RuntimeAppValuesSnapshot{}, mapErr(err)
+	}
+	owner, err := decodeRuntimeAppEnvSnapshot(accountID, appID, deploymentID, row.Scope, row.EnvironmentID, row.Values)
+	if err != nil {
+		return RuntimeAppValuesSnapshot{}, err
+	}
+	result := RuntimeAppValuesSnapshot{RuntimeAppEnvSnapshot: owner, Secrets: []AppSecret{}, SecretGrants: RuntimeAppSecretGrants{
+		OverrideEnvSecrets: row.OverrideEnvSecrets, Sidecars: row.Sidecars, ReloadSignal: row.ReloadSignal,
+		SidecarReloadSignals: map[string]string{},
+	}}
+	if err := json.Unmarshal(row.ReloadSignals, &result.SecretGrants.SidecarReloadSignals); err != nil {
+		return RuntimeAppValuesSnapshot{}, ErrConflict
+	}
+	var secrets []runtimeAppSealedSecretRow
+	if err := json.Unmarshal(row.Secrets, &secrets); err != nil {
+		return RuntimeAppValuesSnapshot{}, ErrConflict
+	}
+	for _, value := range secrets {
+		result.Secrets = append(result.Secrets, AppSecret{AccountID: accountID, AppID: appID, Scope: owner.Scope, Key: value.Key,
+			Ciphertext: value.Ciphertext, SecretClass: value.SecretClass, Kid: value.Kid, ValueHash: value.ValueHash,
+			SecretVersion: value.SecretVersion, DeliveryVersion: value.DeliveryVersion, CreatedAt: value.CreatedAt, UpdatedAt: value.UpdatedAt,
+			ManagedPostgresBindingID: value.ManagedPostgresBindingID, ManagedCredentialRef: value.ManagedCredentialRef,
+			ManagedCredentialGeneration: value.ManagedCredentialGeneration, ManagedObjectStorageCredentialID: value.ManagedObjectStorageCredentialID,
+		})
+	}
+	return result, nil
+}
+
+type runtimeAppSealedSecretRow struct {
+	Key                              string    `json:"key"`
+	Ciphertext                       []byte    `json:"ciphertext"`
+	SecretClass                      string    `json:"secret_class"`
+	Kid                              string    `json:"kid"`
+	ValueHash                        string    `json:"value_hash"`
+	SecretVersion                    int64     `json:"secret_version"`
+	DeliveryVersion                  int64     `json:"delivery_version"`
+	CreatedAt                        time.Time `json:"created_at"`
+	UpdatedAt                        time.Time `json:"updated_at"`
+	ManagedPostgresBindingID         string    `json:"managed_postgres_binding_id"`
+	ManagedCredentialRef             string    `json:"managed_credential_ref"`
+	ManagedCredentialGeneration      int64     `json:"managed_credential_generation"`
+	ManagedObjectStorageCredentialID string    `json:"managed_object_storage_credential_id"`
+}

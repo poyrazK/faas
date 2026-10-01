@@ -963,6 +963,8 @@ type DeploymentActivationLocker interface {
 // narrow keeps the ownership rules enforceable — apid only touches
 // customer-intent tables through the methods it is given.
 type Store interface {
+	// Boot and restore read one owned configuration/secret snapshot.
+	RuntimeAppValuesStore
 	LayerArtifactRetentionStore
 	// Ping tests store/database connectivity.
 	Ping(ctx context.Context) error

@@ -15,6 +15,15 @@ func (m *MemStore) RuntimeAppEnvForDeployment(_ context.Context, accountID, appI
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	owner, err := m.runtimeAppValueOwnerLocked(accountID, appID, deploymentID)
+	if err != nil {
+		return RuntimeAppEnvSnapshot{}, err
+	}
+	owner.Values = m.runtimeAppEnvRowsLocked(owner)
+	return owner, nil
+}
+
+func (m *MemStore) runtimeAppValueOwnerLocked(accountID, appID, deploymentID string) (RuntimeAppEnvSnapshot, error) {
 	app, appOK := m.apps[appID]
 	d, deploymentOK := m.deployments[deploymentID]
 	if !appOK || !deploymentOK || app.AccountID != accountID || app.Status == AppDeleted || d.AppID != appID || !d.DeploymentAliasActive() {
@@ -52,12 +61,16 @@ func (m *MemStore) RuntimeAppEnvForDeployment(_ context.Context, accountID, appI
 			ownerID = env.ID
 		}
 	}
-	result := RuntimeAppEnvSnapshot{AccountID: accountID, AppID: appID, DeploymentID: deploymentID, Scope: scope, EnvironmentID: ownerID, Values: []AppEnv{}}
+	return RuntimeAppEnvSnapshot{AccountID: accountID, AppID: appID, DeploymentID: deploymentID, Scope: scope, EnvironmentID: ownerID}, nil
+}
+
+func (m *MemStore) runtimeAppEnvRowsLocked(owner RuntimeAppEnvSnapshot) []AppEnv {
+	values := []AppEnv{}
 	for _, value := range m.envs {
-		if value.AccountID == accountID && value.AppID == appID && value.Scope == scope {
-			result.Values = append(result.Values, value)
+		if value.AccountID == owner.AccountID && value.AppID == owner.AppID && value.Scope == owner.Scope {
+			values = append(values, value)
 		}
 	}
-	sort.Slice(result.Values, func(i, j int) bool { return result.Values[i].Key < result.Values[j].Key })
-	return result, nil
+	sort.Slice(values, func(i, j int) bool { return values[i].Key < values[j].Key })
+	return values
 }

@@ -79,7 +79,7 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	if err := e.verifyPrimeLayer(ctx, app.ID, request.ArtifactKey); err != nil {
 		return ResolvedAppTaskRuntime{}, fmt.Errorf("sched: resolve app task artifact: %w", err)
 	}
-	sealedEnv, err := e.loadSealedEnvFor(ctx, app.AccountID, app.ID, dep.Scope, envSecretsFromDep(dep))
+	runtimeValues, err := e.loadRuntimeDeploymentValues(ctx, app.AccountID, dep)
 	if err != nil {
 		return ResolvedAppTaskRuntime{}, fmt.Errorf("sched: resolve app task sealed env: %w", err)
 	}
@@ -91,8 +91,8 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 		CPUMillicores: int32(effectiveAppCPUMillicores(app)), EgressMbit: int32(limits.EgressMbit),
 		StartupDeadlineS: startupDeadlineForApp(app, acct.Plan), ExecutionMode: executionModeForApp(app),
 		Plan: acct.Plan, AccountID: acct.ID, AppID: app.ID, DeploymentID: dep.ID,
-		SealedEnv: sealedEnv,
-		APIEnv: appendPlatformIdentity(e.loadAPIEnv(ctx, app.AccountID, app.ID, dep.Scope),
+		SealedEnv: runtimeValues.MainSecrets.Entries,
+		APIEnv: appendPlatformIdentity(runtimeValues.APIEnv,
 			app, dep, acct, placement.NodeID, request.ID, placement.Region),
 		EgressAllowlist:     prefixesToCIDRStrings(app.EgressAllowlist),
 		EgressPorts:         app.EgressPorts,

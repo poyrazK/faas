@@ -16,11 +16,11 @@ type admissionSpecFailureStore struct {
 	sidecarErr error
 }
 
-func (s *admissionSpecFailureStore) ListAppSecretsInScope(ctx context.Context, accountID, appID, scope string) ([]state.AppSecret, error) {
+func (s *admissionSpecFailureStore) RuntimeAppValuesForDeployment(ctx context.Context, accountID, appID, deploymentID string) (state.RuntimeAppValuesSnapshot, error) {
 	if s.secretErr != nil {
-		return nil, s.secretErr
+		return state.RuntimeAppValuesSnapshot{}, s.secretErr
 	}
-	return s.Store.ListAppSecretsInScope(ctx, accountID, appID, scope)
+	return s.Store.RuntimeAppValuesForDeployment(ctx, accountID, appID, deploymentID)
 }
 
 func (s *admissionSpecFailureStore) ListDeploymentSidecarLayers(ctx context.Context, deploymentID string) ([]state.DeploymentSidecarLayer, error) {
@@ -80,7 +80,10 @@ func TestAdmissionSpecFailureReleasesAppLockAndAllowsRetry(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if len(rows) != 1 || rows[0].State != string(state.StateFailed) {
+				if failure == "secrets" && len(rows) != 0 {
+					t.Fatalf("failed runtime value read created an instance: %+v", rows)
+				}
+				if failure == "sidecars" && (len(rows) != 1 || rows[0].State != string(state.StateFailed)) {
 					t.Fatalf("failed admission rows = %+v", rows)
 				}
 				if vmm.coldBoots != 0 || vmm.restores != 0 {
