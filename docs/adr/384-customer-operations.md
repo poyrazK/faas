@@ -100,6 +100,21 @@ work is stopped, ordinary projection/tombstone retention can release capacity.
 Adapters must also preserve usable deployment/release pins across long waits;
 an unlimited timestamp pin is not a substitute for checking active ownership.
 
+Code retention derives from an owned operation and its immutable definition.
+Accepted/running work retains its deployment and all verified release members
+past timestamp expiry; stopped work retains them only through its result/recovery
+window. Cutover and rollback remove weighted traffic while preserving this code.
+These references do not bypass public revision-header timestamp validation. Pin cleanup
+locks apps before deployments, then rechecks references in a fresh transaction
+statement after app-lock acquisition. A page removes at most
+`RevisionPinCleanupPageMax` (500) pins, excluding retained references before
+paging. Expiry, owner deletion, and inconsistent admission metadata release the
+private reference without an unlimited pin or renewal heartbeat.
+Fresh admission and safe retry lock the owned release's apps in ID order before
+its deployments, then revalidate every member and release usability. A release
+selected by the definition receives the same checks as an explicit request;
+locking only the originating app cannot protect another graph member from GC.
+
 All bounds live in pkg/api/limits.go. Qualification covers concurrent admission,
 input conflicts, cross-tenant denial, pinned revisions, stale reports, durable
 stream replay, retention, artifact authorization, delivery outages, uncertainty,
