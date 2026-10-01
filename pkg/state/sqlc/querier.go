@@ -168,7 +168,7 @@ type Querier interface {
 	// tracker 'job-task pull'): concurrent schedd replicas each claim
 	// disjoint row sets with no advisory-lock plumbing.
 	CreateTrigger(ctx context.Context, db DBTX, arg CreateTriggerParams) (CreateTriggerRow, error)
-	// =====================================================================
+	// ==============================================================
 	// Inserts a fresh upload_sessions row. The handler pre-validates
 	// total_size against limits.SourceTarballMaxMB (pkg/api/limits.go)
 	// and the per-account open-session cap (5 per (account_id, app_slug))
@@ -277,6 +277,7 @@ type Querier interface {
 	ExecutionPayloadDeleteTerminal(ctx context.Context, db DBTX, batchLimit int32) (int64, error)
 	ExecutionPayloadForLease(ctx context.Context, db DBTX, arg ExecutionPayloadForLeaseParams) (ExecutionPayload, error)
 	ExecutionPayloadInsert(ctx context.Context, db DBTX, arg ExecutionPayloadInsertParams) error
+	ExecutionPinRuntime(ctx context.Context, db DBTX, arg ExecutionPinRuntimeParams) (Execution, error)
 	ExecutionQueueAccounts(ctx context.Context, db DBTX, arg ExecutionQueueAccountsParams) ([]ExecutionQueueAccountsRow, error)
 	ExecutionQueueStats(ctx context.Context, db DBTX, at pgtype.Timestamptz) (ExecutionQueueStatsRow, error)
 	ExecutionRenewLease(ctx context.Context, db DBTX, arg ExecutionRenewLeaseParams) (int64, error)
@@ -1120,7 +1121,7 @@ type Querier interface {
 	QueueConsumerDeleteTrigger(ctx context.Context, db DBTX, arg QueueConsumerDeleteTriggerParams) (int64, error)
 	QueueConsumerInsertBinding(ctx context.Context, db DBTX, arg QueueConsumerInsertBindingParams) (QueueBinding, error)
 	QueueConsumerLockAccount(ctx context.Context, db DBTX, id pgtype.UUID) (QueueConsumerLockAccountRow, error)
-	// Queue binding/consumer publication (ADR-382). Parent locks also serialize
+	// Queue binding/consumer publication (ADR-385). Parent locks also serialize
 	// trigger admission, so quota checks and the projection share the same commit.
 	QueueConsumerLockApp(ctx context.Context, db DBTX, arg QueueConsumerLockAppParams) (QueueConsumerLockAppRow, error)
 	QueueConsumerNotify(ctx context.Context, db DBTX, payload string) error
@@ -1288,6 +1289,7 @@ type Querier interface {
 	// for requests dropped before persistence, so the API must not invent a
 	// capture percentage.
 	RequestTelemetryCoverage(ctx context.Context, db DBTX, arg RequestTelemetryCoverageParams) (RequestTelemetryCoverageRow, error)
+	RequeueFireNowRequest(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
 	ReserveAccountCreditConsumption(ctx context.Context, db DBTX, arg ReserveAccountCreditConsumptionParams) (pgtype.UUID, error)
 	// A detector pass that no longer sees a regression resolves the previous
 	// observation. Returning rows lets apid publish one account-scoped event per
@@ -1316,6 +1318,8 @@ type Querier interface {
 	RuntimeSnapshotRetire(ctx context.Context, db DBTX, arg RuntimeSnapshotRetireParams) (int64, error)
 	SafeReleaseWorkerLeaseReady(ctx context.Context, db DBTX) (bool, error)
 	SaveEnvironmentGitOpsProgress(ctx context.Context, db DBTX, arg SaveEnvironmentGitOpsProgressParams) (int64, error)
+	// Hold placement stable while the caller changes the claimed request status.
+	SelectPendingFireNowRequestForNode(ctx context.Context, db DBTX, nodeID pgtype.Text) (SelectPendingFireNowRequestForNodeRow, error)
 	SetAppManifest(ctx context.Context, db DBTX, arg SetAppManifestParams) error
 	// ADR-021 (G1, image digest enforcement hardening): durable
 	// carrier for the RFC 7807 failure code that imaged writes when a

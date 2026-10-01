@@ -67,6 +67,8 @@ func validDebugFSPath(path string) bool {
 
 func requiredBaseArtifactPaths(baseKey string) []string {
 	switch {
+	case strings.Contains(baseKey, "runner-python-data-v1"):
+		return []string{"/sbin/init", "/usr/local/bin/python3", "/etc/passwd", "/etc/faas/execution.json", "/usr/share/faas/execution-profile.json"}
 	case strings.Contains(baseKey, "runner-builder"):
 		return []string{"/sbin/init", "/usr/local/bin/faas-guest-init", "/usr/local/bin/railpack", "/usr/local/bin/buildctl", "/usr/local/bin/runc", "/bin/bash"}
 	case strings.Contains(baseKey, "runner-node"):

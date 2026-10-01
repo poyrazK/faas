@@ -409,6 +409,7 @@ export type { EventPreviewSubscription } from './models/EventPreviewSubscription
 export type { EventSchema } from './models/EventSchema.js';
 export type { EventSubscriptionListResponse } from './models/EventSubscriptionListResponse.js';
 export type { EventSubscriptionResponse } from './models/EventSubscriptionResponse.js';
+export type { ExecutionArtifact } from './models/ExecutionArtifact.js';
 export type { ExecutionFailure } from './models/ExecutionFailure.js';
 export type { ExecutionFile } from './models/ExecutionFile.js';
 export type { ExecutionID } from './models/ExecutionID.js';

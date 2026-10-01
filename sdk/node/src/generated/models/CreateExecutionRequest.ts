@@ -14,6 +14,10 @@ import type { ExecutionNetworkPolicy } from './ExecutionNetworkPolicy.js';
  *
  */
 export type CreateExecutionRequest = {
+  /**
+   * Immutable preinstalled dependency profile. python-data-v1 requires python313; standard preserves standard-library-only execution.
+   */
+  profile?: 'standard' | 'python-data-v1';
   runtime: 'node22' | 'node24' | 'python312' | 'python313';
   /**
    * Single-file source code; never returned by execution reads.
@@ -27,6 +31,10 @@ export type CreateExecutionRequest = {
    * Regular files staged into the guest's ephemeral scratch filesystem.
    */
   files?: Array<ExecutionFile>;
+  /**
+   * Explicit normalized relative paths below context.output_dir to export on success. No globs. Missing, symlink, and special files fail the run.
+   */
+  output_files?: Array<string>;
   /**
    * One complete JSON value delivered to the guest as input.
    */

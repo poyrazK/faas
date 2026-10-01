@@ -35,11 +35,18 @@ func TestDecideMode_InvalidExecutionMarkerFailsClosed(t *testing.T) {
 		[]byte(`{"kind":"app","version":1}`),
 		[]byte(`{"kind":"execution","version":1} {}`),
 		[]byte(`not-json`),
+		[]byte(`{"kind":"execution","version":1,"profile":"pip-anything"}`),
 	} {
 		fsys := fstest.MapFS{"etc/faas/execution.json": &fstest.MapFile{Data: data}}
 		if _, _, err := decideMode(fsys); err == nil {
 			t.Fatalf("decideMode accepted invalid marker %q", data)
 		}
+	}
+}
+
+func TestValidateExecutionManifestAcceptsDataProfile(t *testing.T) {
+	if err := validateExecutionManifest([]byte(`{"kind":"execution","version":1,"profile":"python-data-v1"}`)); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -787,6 +787,7 @@ from .event_subscription_list_response import EventSubscriptionListResponse
 from .event_subscription_response import EventSubscriptionResponse
 from .event_subscription_response_filter import EventSubscriptionResponseFilter
 from .event_subscription_response_work_action import EventSubscriptionResponseWorkAction
+from .execution_artifact import ExecutionArtifact
 from .execution_failure import ExecutionFailure
 from .execution_file import ExecutionFile
 from .execution_limit_request import ExecutionLimitRequest
@@ -797,6 +798,8 @@ from .execution_list_response import ExecutionListResponse
 from .execution_network_policy import ExecutionNetworkPolicy
 from .execution_network_policy_mode import ExecutionNetworkPolicyMode
 from .execution_response import ExecutionResponse
+from .execution_response_packages import ExecutionResponsePackages
+from .execution_response_profile import ExecutionResponseProfile
 from .execution_response_runtime import ExecutionResponseRuntime
 from .execution_response_status import ExecutionResponseStatus
 from .execution_usage import ExecutionUsage
@@ -2762,6 +2765,7 @@ __all__ = (
     "EventSubscriptionResponse",
     "EventSubscriptionResponseFilter",
     "EventSubscriptionResponseWorkAction",
+    "ExecutionArtifact",
     "ExecutionFailure",
     "ExecutionFile",
     "ExecutionLimitRequest",
@@ -2772,6 +2776,8 @@ __all__ = (
     "ExecutionNetworkPolicy",
     "ExecutionNetworkPolicyMode",
     "ExecutionResponse",
+    "ExecutionResponsePackages",
+    "ExecutionResponseProfile",
     "ExecutionResponseRuntime",
     "ExecutionResponseStatus",
     "ExecutionUsage",

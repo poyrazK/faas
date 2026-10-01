@@ -107,7 +107,8 @@ func TestSealDecodeBundleRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	req := api.ResolvedExecutionRequest{
-		Entrypoint: "src/main.mjs",
+		Entrypoint:  "src/main.mjs",
+		OutputFiles: []string{"report.txt", "data/result.bin"},
 		Files: []api.ExecutionFile{
 			{Path: "src/main.mjs", Content: []byte("export default () => 42")},
 			{Path: "src/lib.mjs", Content: []byte("export const value = 41")},
@@ -125,9 +126,36 @@ func TestSealDecodeBundleRoundTrip(t *testing.T) {
 	if decoded.Source != "" || decoded.Entrypoint != req.Entrypoint || string(decoded.Input) != string(req.Input) || len(decoded.Files) != 2 {
 		t.Fatalf("decoded = %#v", decoded)
 	}
+	if strings.Join(decoded.OutputFiles, ",") != strings.Join(req.OutputFiles, ",") {
+		t.Fatalf("output selection lost: %v", decoded.OutputFiles)
+	}
+	req.OutputFiles[0] = "../invalid"
+	if _, err := SealRequest(identity.Recipient(), req); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("invalid output selection = %v", err)
+	}
 	req.Files[0].Content[0] = 'X'
 	if decoded.Files[0].Content[0] == 'X' {
 		t.Fatal("decoded bundle aliases request")
+	}
+}
+
+func TestSealDecodeProfileBinding(t *testing.T) {
+	identity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, profile := range []api.ExecutionProfile{"", api.ExecutionProfileStandard, api.ExecutionProfilePythonDataV1} {
+		sealed, err := SealRequest(identity.Recipient(), api.ResolvedExecutionRequest{Profile: profile, Source: "def main(input, context): return input"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		decoded, err := DecodeRequest(context.Background(), []*age.X25519Identity{identity}, sealed, identity.Recipient().String())
+		if err != nil || decoded.Profile != profile.Normalized() {
+			t.Fatalf("profile=%q decoded=%q, %v", profile, decoded.Profile, err)
+		}
+	}
+	if _, err := SealRequest(identity.Recipient(), api.ResolvedExecutionRequest{Profile: "pip-anything", Source: "def main(input, context): return input"}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("unknown profile accepted: %v", err)
 	}
 }
 

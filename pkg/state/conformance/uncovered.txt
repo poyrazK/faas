@@ -415,7 +415,6 @@ MarkBuildCancelled
 MarkComputeNodeInactive
 MarkDeploymentStageFailed
 MarkDomainVerified
-MarkFireNowRequestFailed
 MarkFireNowRequestSucceeded
 MarkMFAEnrolled
 MarkOperatorIntentFailed
@@ -478,7 +477,6 @@ ReadMFASecret
 ReapExpiredUploadSessions
 ReapStalePaddleOverageClaims
 ReapStaleUploadPartFiles
-ReassignAppOwner
 RecentErrorRate
 RecentInvocations
 RecentP95LatencyMs
@@ -529,7 +527,6 @@ SetAccountPassword
 SetAlertRuleLastEvaluated
 SetAlertRuleState
 SetAppMinInstances
-SetAppNodeID
 SetAppWorkloadClass
 SetComputeNodeActive
 SetComputeNodeRole

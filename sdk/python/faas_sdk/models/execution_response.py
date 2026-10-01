@@ -8,12 +8,15 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.execution_response_profile import ExecutionResponseProfile, check_execution_response_profile
 from ..models.execution_response_runtime import ExecutionResponseRuntime, check_execution_response_runtime
 from ..models.execution_response_status import ExecutionResponseStatus, check_execution_response_status
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.execution_artifact import ExecutionArtifact
     from ..models.execution_failure import ExecutionFailure
+    from ..models.execution_response_packages import ExecutionResponsePackages
     from ..models.execution_usage import ExecutionUsage
     from ..models.resolved_execution_limits import ResolvedExecutionLimits
 
@@ -36,6 +39,13 @@ class ExecutionResponse:
     """Immutable limits admitted and enforced for one execution."""
     output_truncated: bool
     created_at: datetime.datetime
+    profile: ExecutionResponseProfile | Unset = UNSET
+    runtime_image_digest: str | Unset = UNSET
+    """Scheduler-pinned base image digest, recorded before dispatch of a dependency profile."""
+    packages: ExecutionResponsePackages | Unset = UNSET
+    """Immutable versions declared by the selected profile and verified by its guest before caller code runs."""
+    artifacts: list[ExecutionArtifact] | Unset = UNSET
+    """Selected output files, present only after successful execution and VM teardown."""
     result: Any | Unset = UNSET
     """Terminal JSON result"""
     stdout: str | Unset = UNSET
@@ -62,6 +72,23 @@ class ExecutionResponse:
         output_truncated = self.output_truncated
 
         created_at = self.created_at.isoformat()
+
+        profile: str | Unset = UNSET
+        if not isinstance(self.profile, Unset):
+            profile = self.profile
+
+        runtime_image_digest = self.runtime_image_digest
+
+        packages: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.packages, Unset):
+            packages = self.packages.to_dict()
+
+        artifacts: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.artifacts, Unset):
+            artifacts = []
+            for artifacts_item_data in self.artifacts:
+                artifacts_item = artifacts_item_data.to_dict()
+                artifacts.append(artifacts_item)
 
         result = self.result
 
@@ -119,6 +146,14 @@ class ExecutionResponse:
                 "created_at": created_at,
             }
         )
+        if profile is not UNSET:
+            field_dict["profile"] = profile
+        if runtime_image_digest is not UNSET:
+            field_dict["runtime_image_digest"] = runtime_image_digest
+        if packages is not UNSET:
+            field_dict["packages"] = packages
+        if artifacts is not UNSET:
+            field_dict["artifacts"] = artifacts
         if result is not UNSET:
             field_dict["result"] = result
         if stdout is not UNSET:
@@ -140,7 +175,9 @@ class ExecutionResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.execution_artifact import ExecutionArtifact
         from ..models.execution_failure import ExecutionFailure
+        from ..models.execution_response_packages import ExecutionResponsePackages
         from ..models.execution_usage import ExecutionUsage
         from ..models.resolved_execution_limits import ResolvedExecutionLimits
 
@@ -156,6 +193,31 @@ class ExecutionResponse:
         output_truncated = d.pop("output_truncated")
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
+        _profile = d.pop("profile", UNSET)
+        profile: ExecutionResponseProfile | Unset
+        if isinstance(_profile, Unset):
+            profile = UNSET
+        else:
+            profile = check_execution_response_profile(_profile)
+
+        runtime_image_digest = d.pop("runtime_image_digest", UNSET)
+
+        _packages = d.pop("packages", UNSET)
+        packages: ExecutionResponsePackages | Unset
+        if isinstance(_packages, Unset):
+            packages = UNSET
+        else:
+            packages = ExecutionResponsePackages.from_dict(_packages)
+
+        _artifacts = d.pop("artifacts", UNSET)
+        artifacts: list[ExecutionArtifact] | Unset = UNSET
+        if _artifacts is not UNSET:
+            artifacts = []
+            for artifacts_item_data in _artifacts:
+                artifacts_item = ExecutionArtifact.from_dict(artifacts_item_data)
+
+                artifacts.append(artifacts_item)
 
         result = d.pop("result", UNSET)
 
@@ -247,6 +309,10 @@ class ExecutionResponse:
             limits=limits,
             output_truncated=output_truncated,
             created_at=created_at,
+            profile=profile,
+            runtime_image_digest=runtime_image_digest,
+            packages=packages,
+            artifacts=artifacts,
             result=result,
             stdout=stdout,
             stderr=stderr,

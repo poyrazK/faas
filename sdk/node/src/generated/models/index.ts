@@ -403,6 +403,7 @@ export type { EventPreviewSubscription } from './EventPreviewSubscription.js';
 export type { EventSchema } from './EventSchema.js';
 export type { EventSubscriptionListResponse } from './EventSubscriptionListResponse.js';
 export type { EventSubscriptionResponse } from './EventSubscriptionResponse.js';
+export type { ExecutionArtifact } from './ExecutionArtifact.js';
 export type { ExecutionFailure } from './ExecutionFailure.js';
 export type { ExecutionFile } from './ExecutionFile.js';
 export type { ExecutionID } from './ExecutionID.js';

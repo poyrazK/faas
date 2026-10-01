@@ -54,6 +54,10 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 385 | [Git-owned environment intent and continuous reconciliation](385-environment-gitops-contract.md) | implementation in progress | Reviewed definitions, field ownership, durable effects, and scoped runtime convergence |
+| 384 | [Fetch-compatible internal service port](384-fetch-compatible-internal-service-port.md) | accepted | Canonical HTTP bindings use 10081 with the existing authorization path; legacy 10080 remains available |
+| 383 | [Curated dependency profiles for stateless executions](383-curated-stateless-execution-profiles.md) | accepted | Preinstalled immutable package sets, separate snapshots, and lease-pinned image provenance |
+| 382 | [Bounded inline output artifacts for stateless executions](382-stateless-execution-output-artifacts.md) | accepted | Explicit file exports within the existing receipt output budget; disposable scratch and VM teardown |
 | 381 | [Compact platform-tenant statement lines](381-compact-platform-tenant-statement-lines.md) | accepted | Separate compact invoice rows from exact private minute coverage; remove the public 20,000-line ceiling |
 | 380 | [Gregale Issues](380-gregale-issues.md) | accepted for preview implementation | Account/app-scoped issue reporting, grouping, triage, occurrence retention, customer impact, OTLP and webhook recovery |
 | 379 | [Complete the local development bridge workflow](379-development-bridge-workflow.md) | accepted for internal HTTP use | Supervised execution, framework propagation, session activity, dashboard controls and native acceptance |
@@ -395,5 +399,3 @@ concurrently). The log above already contains several such pairs (157, 158, 167,
 - [ADR-150: firecracker tsc restore order canary](150-firecracker-tsc-restore-order-canary.md)
 
 ## Environment intent decisions
-
-- [ADR-382: Git-owned environment intent and continuous reconciliation](382-environment-gitops-contract.md) — reviewed definitions, field ownership, durable effects, and scoped runtime convergence

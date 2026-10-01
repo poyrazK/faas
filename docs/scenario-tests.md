@@ -1010,7 +1010,7 @@ This lets the CLI record the first request's `X-Faas-Wake` and
 `X-Faas-Wake-ID` without changing the application's request or response.
 The setup and cleanup commands receive the same variables. Commands are
 argument arrays, not shell strings. Additional services receive logical names
-such as `http://worker.svc.gregale:10080` inside the platform. Local commands receive
+such as `http://worker.svc.gregale:10081` inside the platform. Local commands receive
 `GREGALE_TEST_SERVICE_WORKER_URL` and
 `GREGALE_TEST_SERVICE_WORKER_APP_SLUG`. Each service has its own source directory
 and developer session. The base project plus service name must fit in 40

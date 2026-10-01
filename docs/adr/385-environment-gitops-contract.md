@@ -1,4 +1,4 @@
-# ADR-382 · Git-owned environment intent and continuous reconciliation
+# ADR-385 · Git-owned environment intent and continuous reconciliation
 
 - **Status:** implementation in progress
 - **Date:** 2026-09-30

@@ -24,6 +24,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -34,6 +35,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -286,17 +288,14 @@ func TestStartConnectGitHub_RedirectsToInstallationWhenNeeded(t *testing.T) {
 	t.Setenv("FAAS_GITHUB_APP_CLIENT_ID", "client-123")
 	t.Setenv("FAAS_GITHUB_APP_INSTALL_URL", "https://github.com/apps/test-app/installations/new")
 	gh := &oauthCodeCallbackFake{installState: InstallStateNotInstalled}
-	srv, mgr, accountID, sessionCookie := newOAuthCodeCallbackServer(t, gh)
-	connectToken, err := middleware.IssueForAuthenticatedNamed(mgr, githubConnectAction, accountID, githubConnectCSRFCookie)
-	if err != nil {
-		t.Fatalf("issue connect csrf: %v", err)
-	}
+	srv, _, _, sessionCookie := newOAuthCodeCallbackServer(t, gh)
+	connectToken, connectCookie := browserConnectCSRF(t, srv, sessionCookie)
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/dashboard/install/connect", strings.NewReader("csrf_token="+url.QueryEscape(connectToken)))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	r.AddCookie(sessionCookie)
-	r.AddCookie(&http.Cookie{Name: githubConnectCSRFCookie, Value: connectToken})
+	r.AddCookie(connectCookie)
 	srv.ServeHTTP(rec, r)
 
 	if rec.Code != http.StatusFound {
@@ -323,17 +322,14 @@ func TestStartConnectGitHub_AuthorizesInstalledApp(t *testing.T) {
 	t.Setenv("FAAS_GITHUB_APP_REDIRECT_URI", "https://gregale.dev/oauth/code-callback")
 	t.Setenv("FAAS_GITHUB_APP_INSTALL_URL", "https://github.com/apps/test-app/installations/new")
 	gh := &oauthCodeCallbackFake{installState: InstallStateInstalled}
-	srv, mgr, accountID, sessionCookie := newOAuthCodeCallbackServer(t, gh)
-	connectToken, err := middleware.IssueForAuthenticatedNamed(mgr, githubConnectAction, accountID, githubConnectCSRFCookie)
-	if err != nil {
-		t.Fatalf("issue connect csrf: %v", err)
-	}
+	srv, _, _, sessionCookie := newOAuthCodeCallbackServer(t, gh)
+	connectToken, connectCookie := browserConnectCSRF(t, srv, sessionCookie)
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/dashboard/install/connect", strings.NewReader("csrf_token="+url.QueryEscape(connectToken)))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	r.AddCookie(sessionCookie)
-	r.AddCookie(&http.Cookie{Name: githubConnectCSRFCookie, Value: connectToken})
+	r.AddCookie(connectCookie)
 	srv.ServeHTTP(rec, r)
 
 	if rec.Code != http.StatusFound {
@@ -425,5 +421,66 @@ func TestRenderOAuthCodeCallback_CSRFComparisonIsConstantTime(t *testing.T) {
 	// package's test scope.
 	if subtle.ConstantTimeCompare([]byte("a"), []byte("a")) != 1 {
 		t.Fatal("crypto/subtle import broken or zero")
+	}
+}
+
+// Exercise the public browser API rather than minting a proof inside the test.
+func browserConnectCSRF(t *testing.T, srv http.Handler, sessionCookie *http.Cookie) (string, *http.Cookie) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/v1/auth/csrf?action=connect_github", nil)
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("issue connect csrf: status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var payload api.CSRFTokenResponse
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode connect csrf: %v", err)
+	}
+	cookie := findCookie(rec.Result().Cookies(), githubConnectCSRFCookie)
+	if cookie == nil || !cookie.HttpOnly || cookie.Value != payload.CSRFToken || payload.CSRFToken == "" {
+		t.Fatalf("connect csrf cookie must be HttpOnly and match the response: %#v", cookie)
+	}
+	if findCookie(rec.Result().Cookies(), middleware.CookieNameAuthenticated) != nil {
+		t.Fatal("connect issuance must not overwrite the generic mutation cookie")
+	}
+	return payload.CSRFToken, cookie
+}
+
+func TestStartConnectGitHub_RejectsInvalidBrowserProof(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		body     bool
+		cookie   bool
+		mismatch bool
+	}{
+		{name: "missing proof"},
+		{name: "missing body", cookie: true},
+		{name: "missing cookie", body: true},
+		{name: "mismatched proof", body: true, cookie: true, mismatch: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, _, _, sessionCookie := newOAuthCodeCallbackServer(t, &oauthCodeCallbackFake{})
+			token, cookie := browserConnectCSRF(t, srv, sessionCookie)
+			body := url.Values{}
+			if tc.body {
+				if tc.mismatch {
+					token += "invalid"
+				}
+				body.Set("csrf_token", token)
+			}
+			req := httptest.NewRequest(http.MethodPost, "/dashboard/install/connect", strings.NewReader(body.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.AddCookie(sessionCookie)
+			if tc.cookie {
+				req.AddCookie(cookie)
+			}
+			rec := httptest.NewRecorder()
+			srv.ServeHTTP(rec, req)
+			if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/dashboard/account?github=connect-forbidden" {
+				t.Fatalf("invalid proof: status = %d, location = %q", rec.Code, rec.Header().Get("Location"))
+			}
+		})
 	}
 }

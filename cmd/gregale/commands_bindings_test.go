@@ -367,7 +367,7 @@ func TestCmdBindingsJSONCombinesAndSanitizesExistingBindings(t *testing.T) {
 			{Type: bindingTypeQueue, Name: "email", Binding: "email-worker", Scope: "app", Access: "push", State: "active"},
 			{
 				Type: bindingTypeService, Name: "billing", Binding: "GREGALE_SERVICE_BILLING_URL",
-				HTTPURL: "http://billing.svc.gregale:10080", HTTPSEnv: "GREGALE_SERVICE_BILLING_HTTPS_URL",
+				HTTPURL: "http://billing.svc.gregale:10081", HTTPSEnv: "GREGALE_SERVICE_BILLING_HTTPS_URL",
 				HTTPSURL: "https://billing.internal", Transport: "https", Scope: "app", Access: "invoke", State: "enforced",
 			},
 		},
@@ -507,7 +507,7 @@ func TestRenderAppBindingInventory(t *testing.T) {
 			{Type: bindingTypeQueue, Name: "jobs", Binding: "worker", Scope: "app", Access: "push", State: "active"},
 			{
 				Type: bindingTypeService, Name: "billing", Binding: "GREGALE_SERVICE_BILLING_URL",
-				HTTPURL: "http://billing.svc.gregale:10080", HTTPSEnv: "GREGALE_SERVICE_BILLING_HTTPS_URL",
+				HTTPURL: "http://billing.svc.gregale:10081", HTTPSEnv: "GREGALE_SERVICE_BILLING_HTTPS_URL",
 				HTTPSURL: "https://billing.internal", Transport: "http", Scope: "app", Access: "invoke", State: "enforced",
 			},
 		},
@@ -517,7 +517,7 @@ func TestRenderAppBindingInventory(t *testing.T) {
 	for _, want := range []string{
 		"TYPE", "NAME", "BINDING ENV", "TRANSPORT", "HTTP URL", "HTTPS ENV", "HTTPS URL", "SCOPE", "ACCESS", "STATE", "CREDENTIAL GENERATION", "ROTATION PENDING",
 		"postgres", "DATABASE_URL", "queue", "worker", "GREGALE_SERVICE_BILLING_URL", "2", "true", "false",
-		"http", "http://billing.svc.gregale:10080", "GREGALE_SERVICE_BILLING_HTTPS_URL", "https://billing.internal",
+		"http", "http://billing.svc.gregale:10081", "GREGALE_SERVICE_BILLING_HTTPS_URL", "https://billing.internal",
 		"Warning: " + managedPostgresBindingsWarning,
 	} {
 		if !strings.Contains(out.String(), want) {
