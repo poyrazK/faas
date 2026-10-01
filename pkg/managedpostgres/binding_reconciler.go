@@ -45,6 +45,14 @@ type BindingReconciler struct {
 	logger              *slog.Logger
 }
 
+// CutoverService shares the same provider registry, gate and recovery worker.
+func (r *BindingReconciler) CutoverService() *CutoverService {
+	if r == nil {
+		return nil
+	}
+	return r.cutovers
+}
+
 func NewBindingReconciler(service *BindingService, options BindingReconcilerOptions) (*BindingReconciler, error) {
 	if service == nil || service.bindings == nil {
 		return nil, ErrInvalid

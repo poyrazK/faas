@@ -1875,6 +1875,12 @@ var cliCommands = []cliCommand{
 				{Name: "name", Short: "name for the restored database", Req: true, Value: "NAME"},
 				{Name: "point-in-time", Short: "RFC3339 restore timestamp", Req: true, Value: "TIMESTAMP"},
 			}},
+			{Name: "cutover", Short: "Stage and verify a restore target without moving workloads", Subcommands: []cliSub{
+				{Name: "prepare", Short: "Stage all source bindings for one app and scope", Positionals: []string{"<source>", "<target>", "<app>"}, Flags: []cliFlag{{Name: "scope", Short: "environment scope", Value: "SCOPE"}}},
+				{Name: "get", Short: "Read cutover progress and SQL evidence", Positionals: []string{"<id>"}},
+				{Name: "verify", Short: "Queue control-plane SQL verification", Positionals: []string{"<id>"}},
+				{Name: "cancel", Short: "Revoke staged credentials and release pins", Positionals: []string{"<id>"}},
+			}},
 			{Name: "bindings", Short: "Manage app database bindings", Subcommands: []cliSub{
 				{Name: "rotate", Short: "Rotate a binding and optionally wait for the previous credential to retire", Positionals: []string{"<id>"}, Flags: []cliFlag{
 					{Name: "wait", Short: "wait for the previous credential to retire"},

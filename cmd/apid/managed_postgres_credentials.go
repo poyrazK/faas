@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"net"
@@ -32,9 +33,11 @@ type managedPostgresSecretStore interface {
 // seal one connection URL; the app-secret store receives ciphertext plus
 // non-secret ownership metadata.
 type appSecretCredentialSink struct {
-	store     managedPostgresSecretStore
-	recipient func() *age.X25519Recipient
-	hmacKey   func() []byte
+	store      managedPostgresSecretStore
+	recipient  func() *age.X25519Recipient
+	hmacKey    func() []byte
+	identities func() []*age.X25519Identity
+	probe      func(context.Context, string, managedpostgres.CredentialAccess, int) error
 }
 
 func newAppSecretCredentialSink(store managedPostgresSecretStore, recipient func() *age.X25519Recipient, hmacKey func() []byte) (*appSecretCredentialSink, error) {
@@ -219,4 +222,35 @@ func normalizeCredentialSinkError(err error) error {
 	default:
 		return managedpostgres.ErrUnavailable
 	}
+}
+
+// VerifyCredential decrypts the exact staged envelope; it never publishes or
+// requests replacement credentials. Errors contain no connection strings.
+func (s *appSecretCredentialSink) VerifyCredential(ctx context.Context, binding managedpostgres.Binding, sealed managedpostgres.SealedCredential, target managedpostgres.Database) error {
+	ref, err := managedPostgresCredentialRef(binding)
+	if err != nil || ref != sealed.Ref || binding.DatabaseID != target.ID || s.identities == nil || s.probe == nil {
+		return managedpostgres.ErrUnavailable
+	}
+	var identities []*age.X25519Identity
+	for _, identity := range s.identities() {
+		if identity != nil && identity.Recipient().String() == sealed.Kid {
+			identities = append(identities, identity)
+		}
+	}
+	if len(identities) == 0 {
+		return managedpostgres.ErrUnavailable
+	}
+	envelope, err := secretbox.OpenMulti(identities, sealed.Ciphertext)
+	if err != nil || len(envelope) != 1 {
+		return managedpostgres.ErrUnavailable
+	}
+	value, ok := envelope[binding.EnvironmentKey]
+	if !ok || len(value) == 0 || len(value) > managedPostgresCredentialMaxBytes {
+		return managedpostgres.ErrUnavailable
+	}
+	fingerprint, err := secretbox.ValueFingerprint([]byte(value), s.hmacKey())
+	if err != nil || subtle.ConstantTimeCompare([]byte(fingerprint), []byte(sealed.ValueHash)) != 1 {
+		return managedpostgres.ErrUnavailable
+	}
+	return s.probe(ctx, value, binding.Access, target.Spec.PostgresMajor)
 }

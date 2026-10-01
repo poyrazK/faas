@@ -447,6 +447,10 @@ var methodRouteMap = map[string]string{
 	"GET /v1/postgres/bindings/{id}":                          "GetManagedPostgresBinding",
 	"DELETE /v1/postgres/bindings/{id}":                       "DeleteManagedPostgresBinding",
 	"POST /v1/postgres/bindings/{id}/rotate":                  "RotateManagedPostgresBinding",
+	"POST /v1/postgres/cutovers":                              "PrepareManagedPostgresCutover",
+	"GET /v1/postgres/cutovers/{id}":                          "GetManagedPostgresCutover",
+	"POST /v1/postgres/cutovers/{id}/verify":                  "VerifyManagedPostgresCutover",
+	"POST /v1/postgres/cutovers/{id}/cancel":                  "CancelManagedPostgresCutover",
 	"GET /v1/apps/{slug}/logs":                                "StreamAppLogs",
 	"GET /v1/deployments/{id}/logs":                           "StreamDeploymentLogs",
 	"GET /v1/deployments/{id}/scan":                           "GetDeploymentScan",              // issue #464 / ADR-055; per-deploy grype CVE drill-down

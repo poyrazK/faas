@@ -2350,6 +2350,7 @@ type ManagedPostgresCutover struct {
 	RetryAt                  pgtype.Timestamptz
 	CreatedAt                pgtype.Timestamptz
 	UpdatedAt                pgtype.Timestamptz
+	VerifiedAt               pgtype.Timestamptz
 }
 
 type ManagedPostgresCutoverCredential struct {
@@ -2365,6 +2366,7 @@ type ManagedPostgresCutoverCredential struct {
 	Ciphertext                 []byte
 	Kid                        pgtype.Text
 	ValueHash                  pgtype.Text
+	VerifiedAt                 pgtype.Timestamptz
 }
 
 type ManagedPostgresDatabase struct {

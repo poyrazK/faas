@@ -18,7 +18,7 @@ func cutoverFromRow(r sqlc.ManagedPostgresCutover) Cutover {
 	return Cutover{ID: cutoverUUID(r.ID), AccountID: cutoverUUID(r.AccountID), AppID: cutoverUUID(r.AppID), Scope: r.Scope,
 		Source: Database{ID: cutoverUUID(r.SourceDatabaseID), AccountID: cutoverUUID(r.AccountID), BackendID: r.SourceBackendID, BackendFingerprint: r.SourceBackendFingerprint, ProviderResourceID: r.SourceResourceID, DesiredGeneration: r.SourceGeneration},
 		Target: Database{ID: cutoverUUID(r.TargetDatabaseID), AccountID: cutoverUUID(r.AccountID), BackendID: r.TargetBackendID, BackendFingerprint: r.TargetBackendFingerprint, ProviderResourceID: r.TargetResourceID, DesiredGeneration: r.TargetGeneration},
-		State:  CutoverState(r.State), LastErrorCode: r.LastErrorCode.String, LeaseToken: r.LeaseToken.String, LeaseUntil: bindingDeliveryTime(r.LeaseUntil), AttemptCount: r.AttemptCount, RetryAt: r.RetryAt.Time, CreatedAt: r.CreatedAt.Time, UpdatedAt: r.UpdatedAt.Time}
+		State:  CutoverState(r.State), LastErrorCode: r.LastErrorCode.String, LeaseToken: r.LeaseToken.String, LeaseUntil: bindingDeliveryTime(r.LeaseUntil), AttemptCount: r.AttemptCount, RetryAt: r.RetryAt.Time, CreatedAt: r.CreatedAt.Time, UpdatedAt: r.UpdatedAt.Time, VerifiedAt: bindingDeliveryTime(r.VerifiedAt)}
 }
 func loadCutoverCredentials(ctx context.Context, db sqlc.DBTX, c Cutover) (Cutover, error) {
 	rows, err := sqlc.New().ListManagedPostgresCutoverCredentials(ctx, db, c.ID)
@@ -26,7 +26,7 @@ func loadCutoverCredentials(ctx context.Context, db sqlc.DBTX, c Cutover) (Cutov
 		return Cutover{}, mapPostgresError(err)
 	}
 	for _, r := range rows {
-		c.Credentials = append(c.Credentials, CutoverCredential{ID: cutoverUUID(r.ID), SourceBindingID: cutoverUUID(r.SourceBindingID), SourceCredentialGeneration: r.SourceCredentialGeneration, EnvironmentKey: r.EnvironmentKey, Access: CredentialAccess(r.Access), State: r.State, Sealed: SealedCredential{ProviderIdentityID: r.ProviderIdentityID.String, Ref: r.CredentialRef.String, Ciphertext: r.Ciphertext, Kid: r.Kid.String, ValueHash: r.ValueHash.String}})
+		c.Credentials = append(c.Credentials, CutoverCredential{ID: cutoverUUID(r.ID), SourceBindingID: cutoverUUID(r.SourceBindingID), SourceCredentialGeneration: r.SourceCredentialGeneration, EnvironmentKey: r.EnvironmentKey, Access: CredentialAccess(r.Access), State: r.State, VerifiedAt: bindingDeliveryTime(r.VerifiedAt), Sealed: SealedCredential{ProviderIdentityID: r.ProviderIdentityID.String, Ref: r.CredentialRef.String, Ciphertext: r.Ciphertext, Kid: r.Kid.String, ValueHash: r.ValueHash.String}})
 	}
 	return c, nil
 }
@@ -253,11 +253,108 @@ func (s *PostgresStore) ReleaseCutover(ctx context.Context, c Cutover, code stri
 	return nil
 }
 func (s *PostgresStore) CancelCutover(ctx context.Context, account, id string, now time.Time) (Cutover, error) {
+	if now.IsZero() {
+		return Cutover{}, ErrInvalid
+	}
 	r, err := sqlc.New().CancelManagedPostgresCutover(ctx, s.pool, sqlc.CancelManagedPostgresCutoverParams{AccountID: account, ID: id, Now: healthTimestamp(now)})
 	if err != nil {
 		return Cutover{}, mapPostgresError(err)
 	}
 	return loadCutoverCredentials(ctx, s.pool, cutoverFromRow(r))
+}
+
+func (s *PostgresStore) RequestCutoverVerification(ctx context.Context, account, id string, now time.Time) (Cutover, error) {
+	if now.IsZero() {
+		return Cutover{}, ErrInvalid
+	}
+	q := sqlc.New()
+	initial, err := q.GetManagedPostgresCutover(ctx, s.pool, sqlc.GetManagedPostgresCutoverParams{AccountID: account, ID: id})
+	if err != nil {
+		return Cutover{}, mapPostgresError(err)
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Cutover{}, err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	owner, err := q.LockManagedPostgresCutoverAccount(ctx, tx, account)
+	if err != nil {
+		return Cutover{}, mapPostgresError(err)
+	}
+	app, err := q.LockManagedPostgresCutoverApp(ctx, tx, cutoverUUID(initial.AppID))
+	if err != nil {
+		return Cutover{}, mapPostgresError(err)
+	}
+	if owner == "deleted_pending" || app.Status == "deleted" || app.AccountID != account {
+		return Cutover{}, ErrConflict
+	}
+	r, err := q.LockManagedPostgresCutoverForVerification(ctx, tx, sqlc.LockManagedPostgresCutoverForVerificationParams{AccountID: account, ID: id})
+	if err != nil {
+		return Cutover{}, mapPostgresError(err)
+	}
+	c, err := loadCutoverCredentials(ctx, tx, cutoverFromRow(r))
+	if err != nil {
+		return Cutover{}, err
+	}
+	if c.State != CutoverVerifying {
+		if (c.State != CutoverPrepared && c.State != CutoverVerified) || c.LeaseUntil.After(now) || len(c.Credentials) == 0 {
+			return Cutover{}, ErrConflict
+		}
+		for _, m := range c.Credentials {
+			if m.State != "sealed" {
+				return Cutover{}, ErrConflict
+			}
+		}
+		if err := q.RequestManagedPostgresCutoverVerification(ctx, tx, sqlc.RequestManagedPostgresCutoverVerificationParams{ID: id, Now: healthTimestamp(now)}); err != nil {
+			return Cutover{}, mapPostgresError(err)
+		}
+		if err := q.ResetManagedPostgresCutoverVerification(ctx, tx, id); err != nil {
+			return Cutover{}, mapPostgresError(err)
+		}
+		r, err = q.GetManagedPostgresCutover(ctx, tx, sqlc.GetManagedPostgresCutoverParams{AccountID: account, ID: id})
+		if err != nil {
+			return Cutover{}, mapPostgresError(err)
+		}
+		c, err = loadCutoverCredentials(ctx, tx, cutoverFromRow(r))
+		if err != nil {
+			return Cutover{}, err
+		}
+	}
+	return c, mapPostgresError(tx.Commit(ctx))
+}
+
+func (s *PostgresStore) SaveCutoverVerification(ctx context.Context, c Cutover, member CutoverCredential, now time.Time) error {
+	if now.IsZero() || member.State != "sealed" || !validSealedCredential(member.Sealed) {
+		return ErrInvalid
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	q := sqlc.New()
+	r, err := q.LockManagedPostgresCutoverLease(ctx, tx, sqlc.LockManagedPostgresCutoverLeaseParams{AccountID: c.AccountID, ID: c.ID, Token: c.LeaseToken, Now: healthTimestamp(now)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrConflict
+	}
+	if err != nil {
+		return mapPostgresError(err)
+	}
+	if CutoverState(r.State) != CutoverVerifying {
+		return ErrConflict
+	}
+	sealed := member.Sealed
+	n, err := q.SaveManagedPostgresCutoverVerification(ctx, tx, sqlc.SaveManagedPostgresCutoverVerificationParams{Token: c.LeaseToken, CutoverID: c.ID, ID: member.ID, Now: healthTimestamp(now), ProviderIdentity: sealed.ProviderIdentityID, Ref: sealed.Ref, Ciphertext: sealed.Ciphertext, Kid: sealed.Kid, ValueHash: sealed.ValueHash})
+	if err != nil {
+		return mapPostgresError(err)
+	}
+	if n != 1 {
+		return ErrConflict
+	}
+	if err := q.FinishManagedPostgresCutoverVerification(ctx, tx, sqlc.FinishManagedPostgresCutoverVerificationParams{ID: c.ID, Now: healthTimestamp(now), Cutoff: healthTimestamp(now.Add(-CutoverVerificationMaxAge))}); err != nil {
+		return mapPostgresError(err)
+	}
+	return mapPostgresError(tx.Commit(ctx))
 }
 func (s *PostgresStore) DueCutovers(ctx context.Context, include bool, limit int, now time.Time) ([]Cutover, error) {
 	if limit < 1 || limit > 100 || now.IsZero() {

@@ -5279,7 +5279,7 @@ SELECT sqlc.arg(id)::text::uuid,cutover_id,id,credential_generation,environment_
 UPDATE managed_postgres_cutovers SET lease_token=sqlc.arg(token)::text,lease_until=sqlc.arg(until)::timestamptz,
 attempt_count=least(attempt_count+1,30),updated_at=sqlc.arg(now)::timestamptz
 WHERE id=sqlc.arg(id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid
-AND state IN ('preparing','cancelling') AND retry_at<=sqlc.arg(now) AND (lease_until IS NULL OR lease_until<=sqlc.arg(now)) RETURNING *;
+AND state IN ('preparing','verifying','cancelling') AND retry_at<=sqlc.arg(now) AND (lease_until IS NULL OR lease_until<=sqlc.arg(now)) RETURNING *;
 
 -- name: LockManagedPostgresCutoverLease :one
 SELECT * FROM managed_postgres_cutovers WHERE id=sqlc.arg(id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid
@@ -5291,7 +5291,7 @@ credential_ref=sqlc.arg(ref)::text,ciphertext=sqlc.arg(ciphertext)::bytea,kid=sq
 WHERE id=sqlc.arg(id)::text::uuid AND cutover_id=sqlc.arg(cutover_id)::text::uuid AND state='pending';
 
 -- name: RevokeManagedPostgresCutoverCredential :execrows
-UPDATE managed_postgres_cutover_credentials SET state='revoked',provider_identity_id=NULL,credential_ref=NULL,ciphertext=NULL,kid=NULL,value_hash=NULL
+UPDATE managed_postgres_cutover_credentials SET state='revoked',provider_identity_id=NULL,credential_ref=NULL,ciphertext=NULL,kid=NULL,value_hash=NULL,verified_at=NULL
 WHERE id=sqlc.arg(id)::text::uuid AND cutover_id=sqlc.arg(cutover_id)::text::uuid AND state<>'revoked';
 
 -- name: FinishManagedPostgresCutoverStep :exec
@@ -5314,19 +5314,81 @@ WHERE id=sqlc.arg(id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uui
 AND lease_token=sqlc.arg(token)::text AND lease_until>sqlc.arg(now);
 
 -- name: CancelManagedPostgresCutover :one
-UPDATE managed_postgres_cutovers SET state=CASE WHEN state='cancelled' THEN state ELSE 'cancelling' END,
+UPDATE managed_postgres_cutovers SET state=CASE WHEN state='cancelled' THEN state ELSE 'cancelling' END,verified_at=NULL,
 retry_at=sqlc.arg(now)::timestamptz,updated_at=sqlc.arg(now)
 WHERE id=sqlc.arg(id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid RETURNING *;
 
 -- name: CancelDeletedOwnerManagedPostgresCutovers :exec
-UPDATE managed_postgres_cutovers c SET state='cancelling',retry_at=sqlc.arg(now)::timestamptz,updated_at=sqlc.arg(now)
+UPDATE managed_postgres_cutovers c SET state='cancelling',verified_at=NULL,retry_at=sqlc.arg(now)::timestamptz,updated_at=sqlc.arg(now)
 FROM accounts a, apps app WHERE a.id=c.account_id AND app.id=c.app_id
-AND (a.status='deleted_pending' OR app.status='deleted') AND c.state IN ('preparing','prepared');
+AND (a.status='deleted_pending' OR app.status='deleted') AND c.state IN ('preparing','prepared','verifying','verified');
 
 -- name: ListDueManagedPostgresCutovers :many
-SELECT * FROM managed_postgres_cutovers WHERE (state='cancelling' OR (state='preparing' AND sqlc.arg(include_preparing)::boolean))
+SELECT * FROM managed_postgres_cutovers WHERE (state='cancelling' OR (state IN ('preparing','verifying') AND sqlc.arg(include_preparing)::boolean))
 AND retry_at<=sqlc.arg(now)::timestamptz AND (lease_until IS NULL OR lease_until<=sqlc.arg(now))
 ORDER BY retry_at,id LIMIT sqlc.arg(batch_size)::int;
 
 -- name: CountManagedPostgresCutoverTargetBindings :one
 SELECT count(*) FROM managed_postgres_bindings WHERE database_id=sqlc.arg(id)::text::uuid AND state<>'deleted';
+
+-- name: LockManagedPostgresCutoverForVerification :one
+SELECT * FROM managed_postgres_cutovers WHERE account_id=sqlc.arg(account_id)::text::uuid
+AND id=sqlc.arg(id)::text::uuid FOR UPDATE;
+
+-- name: RequestManagedPostgresCutoverVerification :exec
+UPDATE managed_postgres_cutovers SET state='verifying',verified_at=NULL,lease_token=NULL,lease_until=NULL,
+attempt_count=0,last_error_code=NULL,retry_at=sqlc.arg(now)::timestamptz,updated_at=sqlc.arg(now)
+WHERE id=sqlc.arg(id)::text::uuid;
+
+-- name: ResetManagedPostgresCutoverVerification :exec
+UPDATE managed_postgres_cutover_credentials SET verified_at=NULL WHERE cutover_id=sqlc.arg(id)::text::uuid;
+
+-- name: SaveManagedPostgresCutoverVerification :execrows
+UPDATE managed_postgres_cutover_credentials SET verified_at=sqlc.arg(now)::timestamptz
+WHERE cutover_id=sqlc.arg(cutover_id)::text::uuid AND id=sqlc.arg(id)::text::uuid AND state='sealed'
+AND provider_identity_id=sqlc.arg(provider_identity)::text AND credential_ref=sqlc.arg(ref)::text
+AND ciphertext=sqlc.arg(ciphertext)::bytea AND kid=sqlc.arg(kid)::text AND value_hash=sqlc.arg(value_hash)::text
+AND EXISTS (SELECT 1 FROM managed_postgres_cutovers c WHERE c.id=sqlc.arg(cutover_id)::text::uuid
+ AND c.state='verifying' AND c.lease_token=sqlc.arg(token)::text
+ AND c.lease_until>sqlc.arg(now)::timestamptz AND c.lease_until>clock_timestamp());
+
+-- name: FinishManagedPostgresCutoverVerification :exec
+WITH evidence AS (SELECT count(*)>0 AND bool_and(state='sealed' AND verified_at IS NOT NULL
+ AND verified_at>=sqlc.arg(cutoff)::timestamptz AND verified_at<=sqlc.arg(now)::timestamptz) AS complete
+ FROM managed_postgres_cutover_credentials WHERE cutover_id=sqlc.arg(id)::text::uuid)
+UPDATE managed_postgres_cutovers SET state=CASE WHEN evidence.complete THEN 'verified' ELSE state END,
+verified_at=CASE WHEN evidence.complete THEN sqlc.arg(now) ELSE NULL END,
+lease_token=CASE WHEN evidence.complete THEN NULL ELSE lease_token END,
+lease_until=CASE WHEN evidence.complete THEN NULL ELSE lease_until END,
+attempt_count=CASE WHEN evidence.complete THEN 0 ELSE attempt_count END,
+last_error_code=NULL,updated_at=sqlc.arg(now),retry_at=sqlc.arg(now)
+FROM evidence WHERE id=sqlc.arg(id)::text::uuid;
+
+-- name: ProbeManagedPostgresCredential :one
+SELECT session_user::text AS login, current_user::text AS effective_user,
+ current_database()::text AS database_name, current_setting('server_version_num')::integer AS version_num,
+ current_setting('transaction_read_only')::boolean AS read_only,
+ current_setting('row_security')='on' AS row_security,
+ has_schema_privilege(current_user,'public','USAGE') AS schema_usage,
+ has_schema_privilege(current_user,'public','CREATE') AS schema_create,
+ (r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication OR r.rolbypassrls OR r.rolinherit
+ OR e.rolsuper OR e.rolcreatedb OR e.rolcreaterole OR e.rolreplication OR e.rolbypassrls OR e.rolinherit) AS unsafe_role,
+ (has_database_privilege(current_user,current_database(),'CREATE')
+ OR has_database_privilege(current_user,current_database(),'TEMPORARY')
+ OR EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members WHERE member=r.oid
+ AND (sqlc.arg(access)::text<>'migration' OR roleid<>e.oid))
+ OR EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members WHERE member=e.oid AND e.oid<>r.oid)) AS elevated_runtime,
+ NOT EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+ WHERE n.nspname='public' AND ((c.relkind IN ('r','p','v','m','f') AND NOT
+ (has_table_privilege(current_user,c.oid,'SELECT') AND
+ ((sqlc.arg(access)::text='read_only' AND NOT (has_table_privilege(current_user,c.oid,'INSERT')
+ OR has_table_privilege(current_user,c.oid,'UPDATE') OR has_table_privilege(current_user,c.oid,'DELETE')))
+ OR (sqlc.arg(access)::text<>'read_only' AND has_table_privilege(current_user,c.oid,'INSERT')
+ AND has_table_privilege(current_user,c.oid,'UPDATE') AND has_table_privilege(current_user,c.oid,'DELETE')))
+ AND (sqlc.arg(access)::text='migration' OR
+ (c.relowner<>e.oid AND NOT has_table_privilege(current_user,c.oid,'TRUNCATE')))))
+ OR (c.relkind='S' AND NOT (has_sequence_privilege(current_user,c.oid,'SELECT') AND
+ ((sqlc.arg(access)::text='read_only' AND NOT (has_sequence_privilege(current_user,c.oid,'USAGE')
+ OR has_sequence_privilege(current_user,c.oid,'UPDATE'))) OR (sqlc.arg(access)::text<>'read_only'
+ AND has_sequence_privilege(current_user,c.oid,'USAGE'))))))) AS data_access
+FROM pg_catalog.pg_roles r JOIN pg_catalog.pg_roles e ON e.rolname=current_user WHERE r.rolname=session_user;

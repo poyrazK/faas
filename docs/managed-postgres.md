@@ -433,6 +433,34 @@ restore descendant exists, and deleting a restore target removes only its
 branch. Cutover remains an explicit binding operation; restore never silently
 rewires an app.
 
+## Restore cutover preparation and verification
+
+After restoring to a ready target, stage every runtime and migration binding
+for one app and scope, then request SQL verification:
+
+```sh
+gregale postgres cutover prepare orders orders-copy api --scope production
+gregale postgres cutover get CUTOVER_ID
+gregale postgres cutover verify CUTOVER_ID
+gregale postgres cutover get CUTOVER_ID
+```
+
+Preparation and verification are asynchronous. `prepared` means target
+credentials are privately sealed. `verified` means the control plane successfully
+authenticated each staged credential and checked database identity, PostgreSQL
+version, and role ACLs in a read-only transaction. `verification_fresh` requires
+every member's evidence to be no older than five minutes. Request `verify` again
+to refresh it. These checks do not prove application VM reachability, data
+correctness, or application compatibility.
+
+Workloads keep using the source throughout this workflow. The current API has
+no activation operation; scheduler writer draining and atomic publication remain
+pending. Both databases and the selected source bindings stay pinned until
+`gregale postgres cutover cancel CUTOVER_ID` finishes revoking every staged role.
+Cancellation and status remain available when provisioning is disabled. Required
+host age/HMAC keys must remain available while envelopes are staged; cancel and
+reprepare before retiring those keys. See [ADR-391](adr/391-managed-postgres-cutover-verification.md).
+
 ## Customer usability
 
 The `gregale postgres` command is the supported customer entry point for the

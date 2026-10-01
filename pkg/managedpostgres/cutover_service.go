@@ -11,13 +11,15 @@ type CutoverService struct {
 	bindings *BindingService
 	store    CutoverStore
 	sealer   CredentialSealer
+	verifier CredentialVerifier
 }
 
 func NewCutoverService(bindings *BindingService, store CutoverStore, sealer CredentialSealer) (*CutoverService, error) {
 	if bindings == nil || store == nil || sealer == nil {
 		return nil, ErrInvalid
 	}
-	return &CutoverService{bindings: bindings, store: store, sealer: sealer}, nil
+	verifier, _ := sealer.(CredentialVerifier)
+	return &CutoverService{bindings: bindings, store: store, sealer: sealer, verifier: verifier}, nil
 }
 func (s *CutoverService) Prepare(ctx context.Context, r PrepareCutoverRequest) (Cutover, error) {
 	if !s.bindings.provisioningEnabled() || !s.bindings.provisioningAllowed(ctx, r.AccountID) {
@@ -61,15 +63,23 @@ func (s *CutoverService) Get(ctx context.Context, account, id string) (Cutover, 
 func (s *CutoverService) Cancel(ctx context.Context, account, id string) (Cutover, error) {
 	return s.store.CancelCutover(ctx, account, id, s.bindings.now())
 }
+
+// Verify queues durable, read-only verification of every staged credential.
+func (s *CutoverService) Verify(ctx context.Context, account, id string) (Cutover, error) {
+	if s.verifier == nil || !s.bindings.provisioningEnabled() || !s.bindings.provisioningAllowed(ctx, account) {
+		return Cutover{}, ErrUnavailable
+	}
+	return s.store.RequestCutoverVerification(ctx, account, id, s.bindings.now())
+}
 func (s *CutoverService) Reconcile(ctx context.Context, account, id string) (Cutover, error) {
 	c, err := s.store.GetCutover(ctx, account, id)
 	if err != nil {
 		return Cutover{}, err
 	}
-	if c.State == CutoverPrepared || c.State == CutoverCancelled {
+	if c.State == CutoverPrepared || c.State == CutoverVerified || c.State == CutoverCancelled {
 		return c, nil
 	}
-	if c.State == CutoverPreparing && (!s.bindings.provisioningEnabled() || !s.bindings.provisioningAllowed(ctx, account)) {
+	if c.State != CutoverCancelling && (!s.bindings.provisioningEnabled() || !s.bindings.provisioningAllowed(ctx, account)) {
 		return c, ErrUnavailable
 	}
 	now := s.bindings.now()
@@ -80,6 +90,9 @@ func (s *CutoverService) Reconcile(ctx context.Context, account, id string) (Cut
 	backend, err := s.bindings.registry.Resolve(c.Target.BackendID, c.Target.BackendFingerprint)
 	if err != nil {
 		return c, s.release(ctx, c, "backend_unavailable", ErrUnavailable)
+	}
+	if c.State == CutoverVerifying {
+		return s.verifyClaim(ctx, c)
 	}
 	for _, member := range c.Credentials {
 		if c.State == CutoverPreparing && member.State != "pending" {
@@ -133,6 +146,45 @@ func (s *CutoverService) Reconcile(ctx context.Context, account, id string) (Cut
 	}
 	return c, ErrConflict
 }
+
+func (s *CutoverService) verifyClaim(ctx context.Context, c Cutover) (Cutover, error) {
+	if s.verifier == nil {
+		return c, s.release(ctx, c, "credential_verifier_unavailable", ErrUnavailable)
+	}
+	target, err := s.bindings.databases.Get(ctx, c.AccountID, c.Target.ID)
+	if err != nil {
+		return c, s.release(ctx, c, "verification_target_unavailable", err)
+	}
+	if target.State != StateReady || target.BackendID != c.Target.BackendID || target.BackendFingerprint != c.Target.BackendFingerprint || target.ProviderResourceID != c.Target.ProviderResourceID || target.DesiredGeneration != c.Target.DesiredGeneration {
+		return c, s.release(ctx, c, "verification_target_changed", ErrConflict)
+	}
+	// Bound the whole batch below the lease, including decrypt and connection I/O.
+	probe, cancel := context.WithTimeout(ctx, min(s.bindings.providerTimeout, s.bindings.leaseDuration/2))
+	defer cancel()
+	for _, m := range c.Credentials {
+		if !m.VerifiedAt.IsZero() && !m.VerifiedAt.After(s.bindings.now()) && s.bindings.now().Sub(m.VerifiedAt) <= CutoverVerificationMaxAge {
+			continue
+		}
+		err := s.verifier.VerifyCredential(probe, cutoverBinding(c, m), m.Sealed, target)
+		if err == nil {
+			err = probe.Err()
+		}
+		if err != nil {
+			return c, s.release(ctx, c, "credential_verification_failed", err)
+		}
+		if ctx.Err() != nil {
+			return c, ctx.Err()
+		}
+		if err := s.store.SaveCutoverVerification(ctx, c, m, s.bindings.now()); err != nil {
+			return c, err
+		}
+		current, err := s.store.GetCutover(ctx, c.AccountID, c.ID)
+		if err != nil || current.State == CutoverVerified {
+			return current, err
+		}
+	}
+	return c, s.release(ctx, c, "verification_evidence_expired", ErrConflict)
+}
 func (s *CutoverService) release(ctx context.Context, c Cutover, code string, cause error) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
@@ -147,8 +199,8 @@ func (s *CutoverService) release(ctx context.Context, c Cutover, code string, ca
 	return normalized
 }
 
-// Sweep prepares at most one member per intent, and always discovers cleanup
-// even with provisioning disabled. It performs no workload or secret publication.
+// Sweep stages one member or verifies a bounded batch per intent. Cleanup is
+// always discovered, even with provisioning disabled. No secrets are published.
 func (s *CutoverService) Sweep(ctx context.Context, limit int) error {
 	rows, err := s.store.DueCutovers(ctx, s.bindings.provisioningEnabled(), limit, s.bindings.now())
 	if err != nil {

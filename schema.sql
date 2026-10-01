@@ -7315,11 +7315,13 @@ CREATE TABLE public.managed_postgres_cutover_credentials (
     ciphertext bytea,
     kid text,
     value_hash text,
+    verified_at timestamp with time zone,
     CONSTRAINT managed_postgres_cutover_cre_source_credential_generation_check CHECK ((source_credential_generation > 0)),
     CONSTRAINT managed_postgres_cutover_credentials_access_check CHECK ((access = ANY (ARRAY['read_write'::text, 'read_only'::text, 'migration'::text]))),
     CONSTRAINT managed_postgres_cutover_credentials_check CHECK ((((state = 'sealed'::text) AND (num_nonnulls(provider_identity_id, credential_ref, ciphertext, kid, value_hash) = 5) AND (length(provider_identity_id) > 0) AND (length(credential_ref) > 0) AND (length(ciphertext) > 0) AND (length(kid) > 0) AND (length(value_hash) > 0)) OR ((state = ANY (ARRAY['pending'::text, 'revoked'::text])) AND (provider_identity_id IS NULL) AND (credential_ref IS NULL) AND (ciphertext IS NULL) AND (kid IS NULL) AND (value_hash IS NULL)))),
     CONSTRAINT managed_postgres_cutover_credentials_environment_key_check CHECK ((environment_key ~ '^[A-Z_][A-Z0-9_]{0,126}$'::text)),
-    CONSTRAINT managed_postgres_cutover_credentials_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'sealed'::text, 'revoked'::text])))
+    CONSTRAINT managed_postgres_cutover_credentials_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'sealed'::text, 'revoked'::text]))),
+    CONSTRAINT managed_postgres_cutover_credentials_verified_at_check CHECK (((verified_at IS NULL) OR (state = 'sealed'::text)))
 );
 
 
@@ -7350,6 +7352,7 @@ CREATE TABLE public.managed_postgres_cutovers (
     retry_at timestamp with time zone NOT NULL,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
+    verified_at timestamp with time zone,
     CONSTRAINT managed_postgres_cutovers_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
     CONSTRAINT managed_postgres_cutovers_check CHECK ((source_database_id <> target_database_id)),
     CONSTRAINT managed_postgres_cutovers_check1 CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
@@ -7358,10 +7361,11 @@ CREATE TABLE public.managed_postgres_cutovers (
     CONSTRAINT managed_postgres_cutovers_source_backend_fingerprint_check CHECK ((length(source_backend_fingerprint) = 64)),
     CONSTRAINT managed_postgres_cutovers_source_generation_check CHECK ((source_generation > 0)),
     CONSTRAINT managed_postgres_cutovers_source_resource_id_check CHECK ((length(source_resource_id) > 0)),
-    CONSTRAINT managed_postgres_cutovers_state_check CHECK ((state = ANY (ARRAY['preparing'::text, 'prepared'::text, 'cancelling'::text, 'cancelled'::text]))),
+    CONSTRAINT managed_postgres_cutovers_state_check CHECK ((state = ANY (ARRAY['preparing'::text, 'prepared'::text, 'verifying'::text, 'verified'::text, 'cancelling'::text, 'cancelled'::text]))),
     CONSTRAINT managed_postgres_cutovers_target_backend_fingerprint_check CHECK ((length(target_backend_fingerprint) = 64)),
     CONSTRAINT managed_postgres_cutovers_target_generation_check CHECK ((target_generation > 0)),
-    CONSTRAINT managed_postgres_cutovers_target_resource_id_check CHECK ((length(target_resource_id) > 0))
+    CONSTRAINT managed_postgres_cutovers_target_resource_id_check CHECK ((length(target_resource_id) > 0)),
+    CONSTRAINT managed_postgres_cutovers_verified_at_check CHECK (((state = 'verified'::text) = (verified_at IS NOT NULL)))
 );
 
 
@@ -16737,7 +16741,7 @@ CREATE UNIQUE INDEX managed_postgres_cutovers_active_app_scope_idx ON public.man
 -- Name: managed_postgres_cutovers_due_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX managed_postgres_cutovers_due_idx ON public.managed_postgres_cutovers USING btree (retry_at, id) WHERE (state = ANY (ARRAY['preparing'::text, 'cancelling'::text]));
+CREATE INDEX managed_postgres_cutovers_due_idx ON public.managed_postgres_cutovers USING btree (retry_at, id) WHERE (state = ANY (ARRAY['preparing'::text, 'verifying'::text, 'cancelling'::text]));
 
 
 --

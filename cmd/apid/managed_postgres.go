@@ -136,6 +136,20 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, err
 	}
+	secretSink.identities = func() []*age.X25519Identity {
+		if mfaIdentities != nil {
+			if ids := mfaIdentities(); len(ids) > 0 {
+				return ids
+			}
+		}
+		if mfaIdentity != nil {
+			if id := mfaIdentity(); id != nil {
+				return []*age.X25519Identity{id}
+			}
+		}
+		return nil
+	}
+	secretSink.probe = managedpostgres.VerifyCredentialSQL
 	bindingService, err := managedpostgres.NewBindingService(registry, store, store, secretSink, managedpostgres.BindingServiceOptions{
 		ProvisioningEnabled: provisioningGate,
 		ProvisioningAllowed: provisioningAllowed,
@@ -195,6 +209,7 @@ func (s *server) WithManagedPostgres(service *managedpostgres.Service, reconcile
 	s.managedPostgresReconciler = reconciler
 	s.managedPostgresBindings = bindingService
 	s.managedPostgresBindingReconciler = bindingReconciler
+	s.managedPostgresCutovers = bindingReconciler.CutoverService()
 	s.managedPostgresUsageCollector = usageCollector
 	s.managedPostgresHealthCollector = healthCollector
 	return s

@@ -1001,6 +1001,11 @@ from .managed_postgres_binding import ManagedPostgresBinding
 from .managed_postgres_binding_access import ManagedPostgresBindingAccess
 from .managed_postgres_binding_list import ManagedPostgresBindingList
 from .managed_postgres_binding_state import ManagedPostgresBindingState
+from .managed_postgres_cutover import ManagedPostgresCutover
+from .managed_postgres_cutover_member import ManagedPostgresCutoverMember
+from .managed_postgres_cutover_member_access import ManagedPostgresCutoverMemberAccess
+from .managed_postgres_cutover_member_state import ManagedPostgresCutoverMemberState
+from .managed_postgres_cutover_state import ManagedPostgresCutoverState
 from .managed_postgres_database import ManagedPostgresDatabase
 from .managed_postgres_database_availability import ManagedPostgresDatabaseAvailability
 from .managed_postgres_database_list import ManagedPostgresDatabaseList
@@ -1341,6 +1346,7 @@ from .preflight_profile import PreflightProfile
 from .preflight_report import PreflightReport
 from .preflight_source import PreflightSource
 from .preflight_verdict import PreflightVerdict
+from .prepare_managed_postgres_cutover_request import PrepareManagedPostgresCutoverRequest
 from .preview_artifact_response import PreviewArtifactResponse
 from .preview_created_webhook_payload import PreviewCreatedWebhookPayload
 from .preview_environment_member_response import PreviewEnvironmentMemberResponse
@@ -2955,6 +2961,11 @@ __all__ = (
     "ManagedPostgresBindingAccess",
     "ManagedPostgresBindingList",
     "ManagedPostgresBindingState",
+    "ManagedPostgresCutover",
+    "ManagedPostgresCutoverMember",
+    "ManagedPostgresCutoverMemberAccess",
+    "ManagedPostgresCutoverMemberState",
+    "ManagedPostgresCutoverState",
     "ManagedPostgresDatabase",
     "ManagedPostgresDatabaseAvailability",
     "ManagedPostgresDatabaseList",
@@ -3273,6 +3284,7 @@ __all__ = (
     "PreflightReport",
     "PreflightSource",
     "PreflightVerdict",
+    "PrepareManagedPostgresCutoverRequest",
     "PreviewArtifactResponse",
     "PreviewCreatedWebhookPayload",
     "PreviewEnvironmentMemberResponse",

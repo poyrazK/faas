@@ -61,6 +61,7 @@ type server struct {
 	managedPostgres                  *managedpostgres.Service
 	managedPostgresReconciler        *managedpostgres.Reconciler
 	managedPostgresBindings          *managedpostgres.BindingService
+	managedPostgresCutovers          *managedpostgres.CutoverService
 	managedPostgresBindingReconciler *managedpostgres.BindingReconciler
 	managedPostgresUsageCollector    *managedpostgres.UsageCollector
 	managedPostgresHealthCollector   *managedpostgres.HealthCollector
@@ -1234,6 +1235,10 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/postgres/bindings/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresBinding))))
 	mux.HandleFunc("DELETE /v1/postgres/bindings/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.idempotent(s.deleteManagedPostgresBinding)))))
 	mux.HandleFunc("POST /v1/postgres/bindings/{id}/rotate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.rotateManagedPostgresBinding))))))
+	mux.HandleFunc("POST /v1/postgres/cutovers", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.cutoverMutation(s.prepareManagedPostgresCutover))))))
+	mux.HandleFunc("GET /v1/postgres/cutovers/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresCutover))))
+	mux.HandleFunc("POST /v1/postgres/cutovers/{id}/verify", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.cutoverMutation(s.verifyManagedPostgresCutover))))))
+	mux.HandleFunc("POST /v1/postgres/cutovers/{id}/cancel", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.cutoverMutation(s.cancelManagedPostgresCutover)))))
 	// Account. The /v1/account/plan change is destructive across the
 	// whole account, so it requires the admin scope; the read-only
 	// /v1/account carries the method default (read or admin).

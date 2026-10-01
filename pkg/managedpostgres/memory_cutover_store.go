@@ -101,7 +101,7 @@ func (s *MemoryStore) ClaimCutover(_ context.Context, account, id, token string,
 	if !ok || c.AccountID != account {
 		return Cutover{}, ErrNotFound
 	}
-	if (c.State != CutoverPreparing && c.State != CutoverCancelling) || c.LeaseUntil.After(now) || c.RetryAt.After(now) {
+	if (c.State != CutoverPreparing && c.State != CutoverVerifying && c.State != CutoverCancelling) || c.LeaseUntil.After(now) || c.RetryAt.After(now) {
 		return Cutover{}, ErrConflict
 	}
 	c.LeaseToken = token
@@ -144,6 +144,7 @@ func (s *MemoryStore) finishCutoverStep(claim Cutover, member CutoverCredential,
 		m.State = "sealed"
 		if revoke {
 			m.State = "revoked"
+			m.VerifiedAt = time.Time{}
 		}
 		c.Credentials[i] = m
 		matched = true
@@ -193,6 +194,9 @@ func (s *MemoryStore) ReleaseCutover(_ context.Context, claim Cutover, code stri
 	return nil
 }
 func (s *MemoryStore) CancelCutover(_ context.Context, account, id string, now time.Time) (Cutover, error) {
+	if now.IsZero() {
+		return Cutover{}, ErrInvalid
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c, ok := s.cutovers[id]
@@ -203,6 +207,7 @@ func (s *MemoryStore) CancelCutover(_ context.Context, account, id string, now t
 		c.State = CutoverCancelling
 	}
 	c.RetryAt = now
+	c.VerifiedAt = time.Time{}
 	c.UpdatedAt = now
 	s.cutovers[id] = c
 	return cloneCutover(c), nil
@@ -215,7 +220,7 @@ func (s *MemoryStore) DueCutovers(_ context.Context, include bool, limit int, no
 	defer s.mu.Unlock()
 	out := []Cutover{}
 	for _, c := range s.cutovers {
-		if (c.State == CutoverCancelling || (include && c.State == CutoverPreparing)) && !c.RetryAt.After(now) && !c.LeaseUntil.After(now) {
+		if (c.State == CutoverCancelling || (include && (c.State == CutoverPreparing || c.State == CutoverVerifying))) && !c.RetryAt.After(now) && !c.LeaseUntil.After(now) {
 			out = append(out, cloneCutover(c))
 		}
 	}
@@ -229,4 +234,71 @@ func (s *MemoryStore) DueCutovers(_ context.Context, include bool, limit int, no
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+func (s *MemoryStore) RequestCutoverVerification(_ context.Context, account, id string, now time.Time) (Cutover, error) {
+	if now.IsZero() {
+		return Cutover{}, ErrInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.cutovers[id]
+	if !ok || c.AccountID != account {
+		return Cutover{}, ErrNotFound
+	}
+	if c.State == CutoverVerifying {
+		return cloneCutover(c), nil
+	}
+	if (c.State != CutoverPrepared && c.State != CutoverVerified) || c.LeaseUntil.After(now) || len(c.Credentials) == 0 {
+		return Cutover{}, ErrConflict
+	}
+	c = cloneCutover(c)
+	for i, m := range c.Credentials {
+		if m.State != "sealed" {
+			return Cutover{}, ErrConflict
+		}
+		c.Credentials[i].VerifiedAt = time.Time{}
+	}
+	c.State, c.VerifiedAt = CutoverVerifying, time.Time{}
+	c.LeaseToken, c.LeaseUntil = "", time.Time{}
+	c.LastErrorCode, c.AttemptCount = "", 0
+	c.RetryAt, c.UpdatedAt = now, now
+	s.cutovers[id] = c
+	return cloneCutover(c), nil
+}
+
+func (s *MemoryStore) SaveCutoverVerification(_ context.Context, claim Cutover, member CutoverCredential, now time.Time) error {
+	if now.IsZero() || member.State != "sealed" || !validSealedCredential(member.Sealed) {
+		return ErrInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.cutovers[claim.ID]
+	if !ok || c.AccountID != claim.AccountID || c.State != CutoverVerifying || claim.LeaseToken == "" || c.LeaseToken != claim.LeaseToken || !c.LeaseUntil.After(now) {
+		return ErrConflict
+	}
+	matched := false
+	for i, m := range c.Credentials {
+		if m.ID == member.ID {
+			if m.State != "sealed" || !sameSealedCredential(m.Sealed, member.Sealed) {
+				return ErrConflict
+			}
+			c.Credentials[i].VerifiedAt = now
+			matched = true
+		}
+	}
+	if !matched {
+		return ErrConflict
+	}
+	c.State, c.VerifiedAt = CutoverVerified, now
+	if c.VerificationFresh(now) {
+		c.LeaseToken, c.LeaseUntil = "", time.Time{}
+		c.AttemptCount = 0
+	} else {
+		c.State, c.VerifiedAt = CutoverVerifying, time.Time{}
+	}
+	c.LastErrorCode = ""
+	c.RetryAt, c.UpdatedAt = now, now
+	s.cutovers[c.ID] = c
+	return nil
 }

@@ -1,6 +1,7 @@
 package managedpostgres
 
 import (
+	"bytes"
 	"context"
 	"time"
 )
@@ -10,6 +11,8 @@ type CutoverState string
 const (
 	CutoverPreparing  CutoverState = "preparing"
 	CutoverPrepared   CutoverState = "prepared"
+	CutoverVerifying  CutoverState = "verifying"
+	CutoverVerified   CutoverState = "verified"
 	CutoverCancelling CutoverState = "cancelling"
 	CutoverCancelled  CutoverState = "cancelled"
 )
@@ -25,6 +28,7 @@ type Cutover struct {
 	LeaseUntil                    time.Time `json:"-"`
 	AttemptCount                  int32
 	RetryAt, CreatedAt, UpdatedAt time.Time
+	VerifiedAt                    time.Time
 	Credentials                   []CutoverCredential `json:"-"`
 }
 type CutoverCredential struct {
@@ -32,6 +36,7 @@ type CutoverCredential struct {
 	SourceCredentialGeneration          int64
 	Access                              CredentialAccess
 	State                               string
+	VerifiedAt                          time.Time
 	Sealed                              SealedCredential `json:"-"`
 }
 
@@ -47,6 +52,28 @@ type SealedCredential struct {
 type CredentialSealer interface {
 	SealCredential(context.Context, Binding, CredentialMaterial) (SealedCredential, error)
 }
+
+// CredentialVerifier checks the exact staged envelope without publishing it.
+type CredentialVerifier interface {
+	VerifyCredential(context.Context, Binding, SealedCredential, Database) error
+}
+
+const CutoverVerificationMaxAge = 5 * time.Minute
+
+// VerificationFresh describes control-plane SQL evidence, not application
+// reachability, data correctness, or permission to activate a cutover.
+func (c Cutover) VerificationFresh(now time.Time) bool {
+	if c.State != CutoverVerified || c.VerifiedAt.IsZero() || len(c.Credentials) == 0 || c.VerifiedAt.After(now) {
+		return false
+	}
+	for _, m := range c.Credentials {
+		if m.State != "sealed" || m.VerifiedAt.IsZero() || m.VerifiedAt.After(now) || now.Sub(m.VerifiedAt) > CutoverVerificationMaxAge {
+			return false
+		}
+	}
+	return true
+}
+
 type PrepareCutoverRequest struct{ ID, AccountID, AppID, Scope, SourceDatabaseID, TargetDatabaseID string }
 
 type CutoverStore interface {
@@ -54,6 +81,8 @@ type CutoverStore interface {
 	GetCutover(context.Context, string, string) (Cutover, error)
 	ClaimCutover(context.Context, string, string, string, time.Time, time.Time) (Cutover, error)
 	SaveCutoverCredential(context.Context, Cutover, CutoverCredential, SealedCredential, time.Time) error
+	RequestCutoverVerification(context.Context, string, string, time.Time) (Cutover, error)
+	SaveCutoverVerification(context.Context, Cutover, CutoverCredential, time.Time) error
 	RevokeCutoverCredential(context.Context, Cutover, CutoverCredential, time.Time) error
 	ReleaseCutover(context.Context, Cutover, string, time.Time, time.Time) error
 	CancelCutover(context.Context, string, string, time.Time) (Cutover, error)
@@ -72,4 +101,8 @@ func sameCutoverRequest(c Cutover, r PrepareCutoverRequest) bool {
 }
 func validSealedCredential(c SealedCredential) bool {
 	return validOpaqueID(c.ProviderIdentityID) && validOpaqueID(c.Ref) && len(c.Ciphertext) > 0 && c.Kid != "" && c.ValueHash != ""
+}
+
+func sameSealedCredential(a, b SealedCredential) bool {
+	return a.ProviderIdentityID == b.ProviderIdentityID && a.Ref == b.Ref && a.Kid == b.Kid && a.ValueHash == b.ValueHash && bytes.Equal(a.Ciphertext, b.Ciphertext)
 }

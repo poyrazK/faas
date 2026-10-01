@@ -1,7 +1,8 @@
-// adr: 390 — native preparation, lease fencing, cancellation, and rollback.
+// adr: 391 — native preparation, lease fencing, cancellation, and rollback.
 package managedpostgres
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"sync"
@@ -139,6 +140,7 @@ func TestPostgresCutoverPinsStageAndCancel(t *testing.T) {
 	if _, err = store.GetCutover(ctx, uuid.NewString(), c.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatal("cross-account cutover leaked")
 	}
+	now = testPostgresCutoverVerification(t, store, c, now)
 	var published int
 	if err = pool.QueryRow(ctx, `SELECT count(*) FROM app_secrets WHERE managed_postgres_binding_id=ANY($1::uuid[])`, []string{c.Credentials[0].ID, c.Credentials[1].ID}).Scan(&published); err != nil || published != 0 {
 		t.Fatal("staged envelope reached app_secrets")
@@ -255,5 +257,113 @@ func TestPostgresCutoverPinsStageAndCancel(t *testing.T) {
 	up := strings.Split(strings.Split(parts[0], "-- +goose StatementBegin")[1], "-- +goose StatementEnd")[0]
 	if _, err = pool.Exec(ctx, up); err != nil {
 		t.Fatalf("reapply migration: %v", err)
+	}
+}
+
+func testPostgresCutoverVerification(t *testing.T, store *PostgresStore, c Cutover, now time.Time) time.Time {
+	t.Helper()
+	ctx := context.Background()
+	verifying, err := store.RequestCutoverVerification(ctx, c.AccountID, c.ID, now)
+	if err != nil || verifying.State != CutoverVerifying {
+		t.Fatal("verification request", err)
+	}
+	migration, err := migrations.FS.ReadFile("20261001155101225_managed_postgres_cutover_verification.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(string(migration), "-- +goose Down")
+	down := strings.Split(strings.Split(parts[1], "-- +goose StatementBegin")[1], "-- +goose StatementEnd")[0]
+	up := strings.Split(strings.Split(parts[0], "-- +goose StatementBegin")[1], "-- +goose StatementEnd")[0]
+	if _, err = store.pool.Exec(ctx, down); err == nil {
+		t.Fatal("rollback accepted verifying intent")
+	}
+	claim, err := store.ClaimCutover(ctx, c.AccountID, c.ID, "probe", now, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := claim.Credentials[0]
+	changed.Sealed.Ciphertext = []byte("replaced")
+	if err = store.SaveCutoverVerification(ctx, claim, changed, now); !errors.Is(err, ErrConflict) {
+		t.Fatal("envelope mismatch", err)
+	}
+	if err = store.SaveCutoverVerification(ctx, claim, claim.Credentials[0], now); err != nil {
+		t.Fatal(err)
+	}
+	repeat, err := store.RequestCutoverVerification(ctx, c.AccountID, c.ID, now)
+	if err != nil || repeat.LeaseToken != "probe" || repeat.Credentials[0].VerifiedAt.IsZero() {
+		t.Fatal("verification idempotency", err)
+	}
+	if err = store.SaveCutoverVerification(ctx, claim, claim.Credentials[1], now); err != nil {
+		t.Fatal(err)
+	}
+	verified, err := store.GetCutover(ctx, c.AccountID, c.ID)
+	if err != nil || !verified.VerificationFresh(now) {
+		t.Fatal("verification completion", err)
+	}
+	if _, err = store.pool.Exec(ctx, down); err == nil {
+		t.Fatal("rollback accepted verified intent")
+	}
+	if _, err = store.RequestCutoverVerification(ctx, uuid.NewString(), c.ID, now); !errors.Is(err, ErrNotFound) {
+		t.Fatal("verification tenant isolation", err)
+	}
+	testPostgresCutoverVerificationLockWait(t, store, c)
+	_, err = store.RequestCutoverVerification(ctx, c.AccountID, c.ID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err = store.ClaimCutover(ctx, c.AccountID, c.ID, "cancelled-probe", now, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancelled, err := store.CancelCutover(ctx, c.AccountID, c.ID, now)
+	if err != nil || !cancelled.VerifiedAt.IsZero() {
+		t.Fatal("cancel timestamp constraint", err)
+	}
+	if err = store.SaveCutoverVerification(ctx, claim, claim.Credentials[0], now); !errors.Is(err, ErrConflict) {
+		t.Fatal("cancelled probe saved", err)
+	}
+	if _, err = store.pool.Exec(ctx, down); err != nil {
+		t.Fatal("rollback after cancel", err)
+	}
+	if _, err = store.pool.Exec(ctx, up); err != nil {
+		t.Fatal("reapply verification", err)
+	}
+	return now.Add(time.Minute + time.Second)
+}
+
+// A caller's pre-lock timestamp cannot keep a SQL lease alive across a wait.
+func testPostgresCutoverVerificationLockWait(t *testing.T, store *PostgresStore, c Cutover) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	now := time.Now().UTC()
+	if _, err := store.RequestCutoverVerification(ctx, c.AccountID, c.ID, now); err != nil {
+		t.Fatal(err)
+	}
+	until := now.Add(100 * time.Millisecond)
+	claim, err := store.ClaimCutover(ctx, c.AccountID, c.ID, "blocked-probe", now, until)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := store.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	if _, err = tx.Exec(ctx, "SELECT id FROM managed_postgres_cutovers WHERE id=$1 FOR UPDATE", c.ID); err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan error, 1)
+	go func() { result <- store.SaveCutoverVerification(ctx, claim, claim.Credentials[0], now) }()
+	time.Sleep(max(time.Until(until)+20*time.Millisecond, 0))
+	if err = tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err = <-result; !errors.Is(err, ErrConflict) {
+		t.Fatal("lock wait extended expired lease", err)
+	}
+	current, err := store.GetCutover(ctx, c.AccountID, c.ID)
+	if err != nil || !current.Credentials[0].VerifiedAt.IsZero() {
+		t.Fatal("late evidence persisted", err)
 	}
 }

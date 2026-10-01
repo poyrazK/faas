@@ -976,6 +976,99 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/postgres/cutovers:
+    post:
+      operationId: prepareManagedPostgresCutover
+      summary: Stage a managed PostgreSQL restore cutover
+      description: |
+        Requires managed PostgreSQL manage scope and a verified email. Stages all
+        source bindings for one app and scope on a ready restore target. Pins both
+        databases and the source bindings. Credentials remain unpublished;
+        workloads continue using the source. No activation is performed.
+      tags: [managed_postgres]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PrepareManagedPostgresCutoverRequest' }
+      responses:
+        '202':
+          description: Durable preparation status; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresCutover' }
+        default:
+          description: Authentication, invalid restore target, conflict, or provider unavailable
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/postgres/cutovers/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresCutoverID'
+    get:
+      operationId: getManagedPostgresCutover
+      summary: Read managed PostgreSQL cutover status
+      description: Requires managed PostgreSQL read scope. Verification freshness expires after five minutes and does not authorize activation.
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: Safe cutover metadata; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresCutover' }
+        default:
+          description: Authentication or cutover status error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/postgres/cutovers/{id}/verify:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresCutoverID'
+    post:
+      operationId: verifyManagedPostgresCutover
+      summary: Verify a managed PostgreSQL cutover
+      description: Requires managed PostgreSQL manage scope. Queue read-only SQL authentication and ACL checks from the control plane against each staged target credential. Repeating after verification starts a fresh batch. This does not test application VM reachability or change bindings.
+      tags: [managed_postgres]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Durable verify status; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresCutover' }
+        default:
+          description: Authentication, state conflict, or cutover error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/postgres/cutovers/{id}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresCutoverID'
+    post:
+      operationId: cancelManagedPostgresCutover
+      summary: Cancel a managed PostgreSQL cutover
+      description: Requires managed PostgreSQL manage scope. Queue revocation of all staged target credentials. Cleanup remains available with provisioning disabled. Source bindings and app secrets remain unchanged.
+      tags: [managed_postgres]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Durable cancel status; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresCutover' }
+        default:
+          description: Authentication, unknown cutover, or cancellation conflict
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/account/managed-postgres-usage:
     get:
       operationId: getManagedPostgresUsage
@@ -22988,6 +23081,12 @@ components:
       required: true
       schema: { type: string, minLength: 1, maxLength: 128 }
       description: Opaque Gregale managed PostgreSQL resource identifier.
+    ManagedPostgresCutoverID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+      description: Gregale managed PostgreSQL cutover UUID.
     SecretKey:
       name: key
       in: path
@@ -24022,6 +24121,45 @@ components:
         scope: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
         environment_key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$' }
         access: { type: string, enum: [read_write, read_only, migration], description: Portable credential mode. Unsupported modes are rejected before a binding is reserved. }
+
+    PrepareManagedPostgresCutoverRequest:
+      description: Stage source bindings for one app and scope on a ready database restored from that source.
+      type: object
+      additionalProperties: false
+      required: [source_database_id, target_database_id, app_id, scope]
+      properties:
+        source_database_id: { type: string, format: uuid }
+        target_database_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        scope: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+    ManagedPostgresCutover:
+      description: Staged cutover metadata. Verified means control-plane SQL evidence; workloads still use the source. Provider identities and sealed credentials are never returned.
+      type: object
+      required: [id, source_database_id, target_database_id, app_id, scope, state, verification_fresh, verification_max_age_seconds, members, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        source_database_id: { type: string, format: uuid }
+        target_database_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        scope: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        state: { type: string, enum: [preparing, prepared, verifying, verified, cancelling, cancelled] }
+        verification_fresh: { type: boolean, description: All staged members have SQL evidence no older than verification_max_age_seconds. }
+        verification_max_age_seconds: { type: integer, format: int64, minimum: 1 }
+        verified_at: { type: string, format: date-time }
+        last_error_code: { type: string }
+        members: { type: array, items: { $ref: '#/components/schemas/ManagedPostgresCutoverMember' } }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ManagedPostgresCutoverMember:
+      description: Safe staging and SQL verification evidence for a source binding.
+      type: object
+      required: [source_binding_id, environment_key, access, state]
+      properties:
+        source_binding_id: { type: string, format: uuid }
+        environment_key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$' }
+        access: { type: string, enum: [read_write, read_only, migration] }
+        state: { type: string, enum: [pending, sealed, revoked] }
+        verified_at: { type: string, format: date-time }
 
     ObjectBucket:
       description: Logical bucket metadata without upstream credentials or placement details.
