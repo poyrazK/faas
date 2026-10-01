@@ -21,7 +21,6 @@ func (s *PgStore) AdmitExclusiveCommandCronFireNow(ctx context.Context, requestI
 	if requestID == "" || firedAt.IsZero() {
 		return ExclusiveOperation{}, false, ErrAppTaskInvalid
 	}
-	firedAt = firedAt.UTC()
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return ExclusiveOperation{}, false, fmt.Errorf("state: begin exclusive command fire-now admission: %w", err)
