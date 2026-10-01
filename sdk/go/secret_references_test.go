@@ -38,7 +38,7 @@ func TestSecretReferenceNamesAndEnvironmentTransport(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(faas.AppSecretReferenceResponse{EnvironmentID: "env", Environment: "production", Key: "DATABASE_URL", Reference: body.Reference})
 		case http.MethodGet:
-			_ = json.NewEncoder(w).Encode(faas.AppSecretReferenceListResponse{EnvironmentID: "env", Environment: "production", References: map[string]string{"DATABASE_URL": "secret:DATABASE"}, Count: 1, Quota: 20})
+			_ = json.NewEncoder(w).Encode(faas.AppSecretReferenceListResponse{EnvironmentID: "env", Environment: "production", References: map[string]string{"DATABASE_URL": "secret:DATABASE"}, SuppressedKeys: []string{"REMOVED"}, Count: 1, Quota: 20})
 		case http.MethodDelete:
 			w.WriteHeader(http.StatusNoContent)
 		}
@@ -54,7 +54,7 @@ func TestSecretReferenceNamesAndEnvironmentTransport(t *testing.T) {
 		t.Fatalf("set: %+v %v", set, err)
 	}
 	list, err := client.ListAppSecretReferences(ctx, "my app", "production")
-	if err != nil || list.References["DATABASE_URL"] != "secret:DATABASE" || list.Count != 1 {
+	if err != nil || list.References["DATABASE_URL"] != "secret:DATABASE" || list.Count != 1 || len(list.SuppressedKeys) != 1 || list.SuppressedKeys[0] != "REMOVED" {
 		t.Fatalf("list: %+v %v", list, err)
 	}
 	if err := client.DeleteAppSecretReference(ctx, "my app", "production", "DATABASE_URL"); err != nil {

@@ -196,6 +196,10 @@ func checkProjectEnvironmentCloneQuota(ctx context.Context, tx pgx.Tx, clone Pro
 		if limits.EnvVarsMax > 0 && envCount+sourceEnv > limits.EnvVarsMax {
 			return &ProjectEnvironmentCloneQuotaError{WorkloadSlug: row.Slug, Resource: "variables", Limit: limits.EnvVarsMax, Observed: envCount + sourceEnv}
 		}
+		observedSuppressions := int(row.SuppressionCount + row.SourceSuppressions)
+		if observedSuppressions > api.EnvironmentSecretReferenceSuppressionsMaxPerApp {
+			return &ProjectEnvironmentCloneQuotaError{WorkloadSlug: row.Slug, Resource: "secret_reference_suppressions", Limit: api.EnvironmentSecretReferenceSuppressionsMaxPerApp, Observed: observedSuppressions}
+		}
 	}
 	return nil
 }
@@ -231,6 +235,9 @@ func copyProjectEnvironmentRows(ctx context.Context, tx pgx.Tx, clone ProjectEnv
 		return result, mapErr(err)
 	}
 	result.SecretReferencesCopied = int(refsCopied)
+	if err := sqlc.New().CopyProjectEnvironmentSecretSuppressions(ctx, tx, sqlc.CopyProjectEnvironmentSecretSuppressionsParams{AccountID: mustPgUUID(clone.AccountID), ProjectID: mustPgUUID(clone.ProjectID), SourceSlug: clone.SourceSlug, TargetSlug: clone.TargetSlug}); err != nil {
+		return result, mapErr(err)
+	}
 	if err := tx.QueryRow(ctx, `
 		with copied as (
 			insert into project_environment_route_policies

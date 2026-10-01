@@ -7766,13 +7766,13 @@ func (e *Engine) resolveSealedEnvDeliveryFor(ctx context.Context, accountID, app
 			refs[key] = ref
 		}
 	}
-	if scoped, ok := e.store.(state.AppEnvironmentSecretReferenceReader); ok && environmentIntent {
-		managed, err := scoped.AppEnvironmentSecretReferences(ctx, accountID, appID, scope)
+	if scoped, ok := e.store.(state.AppEnvironmentSecretIntentReader); ok && environmentIntent {
+		intent, err := scoped.AppEnvironmentSecretIntent(ctx, accountID, appID, scope)
 		if err != nil {
 			return sealedEnvDelivery{}, fmt.Errorf("load scoped secret references: %w", err)
 		}
-		for key, ref := range managed {
-			refs[key] = ref
+		refs = intent.EffectiveReferences(refs)
+		for key := range intent.References {
 			intentSources[key] = true
 		}
 	}
@@ -7859,15 +7859,9 @@ func (e *Engine) recordAppSecretDelivery(ctx context.Context, boot bootInput, st
 // envSecretsFromDep preserves legacy empty references and rejects corrupt
 // persisted intent. A decode failure must not broaden delivery to all secrets.
 func envSecretsFromDep(dep state.Deployment) (map[string]string, error) {
-	if len(dep.OverrideEnvSecrets) == 0 {
-		return nil, nil
-	}
-	var refs map[string]string
-	if json.Unmarshal(dep.OverrideEnvSecrets, &refs) != nil {
-		return nil, fmt.Errorf("invalid persisted deployment secret references")
-	}
-	if len(refs) == 0 {
-		return nil, nil
+	refs, err := state.DeploymentSecretReferences(dep.OverrideEnvSecrets)
+	if err != nil {
+		return nil, fmt.Errorf("invalid persisted deployment secret references: %w", err)
 	}
 	return refs, nil
 }

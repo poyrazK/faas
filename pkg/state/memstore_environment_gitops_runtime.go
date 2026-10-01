@@ -18,7 +18,7 @@ func (m *MemStore) gitOpsRuntimeTargetsLocked(memory *environmentGitOpsMemory) [
 		if appID == "" {
 			continue
 		}
-		needed := false
+		needed := len(m.environmentSecretSuppressionsLocked(appID, memory.source.EnvironmentSlug)) > 0
 		required := time.Unix(0, 0).UTC()
 		if at, _ := m.environmentRuntimeChangedAtLocked(appID, memory.source.EnvironmentSlug); at.After(required) {
 			required = at

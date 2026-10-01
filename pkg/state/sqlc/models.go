@@ -438,6 +438,16 @@ type AppEnvironmentSecretRef struct {
 	UpdatedAt     pgtype.Timestamptz
 }
 
+type AppEnvironmentSecretRefSuppression struct {
+	AccountID     pgtype.UUID
+	ProjectID     pgtype.UUID
+	EnvironmentID pgtype.UUID
+	AppID         pgtype.UUID
+	Scope         string
+	Key           string
+	UpdatedAt     pgtype.Timestamptz
+}
+
 type AppError struct {
 	ID                      pgtype.UUID
 	AccountID               pgtype.UUID
@@ -4206,10 +4216,12 @@ type SafeReleaseWorkerLease struct {
 }
 
 type ScenarioTestMember struct {
-	AccountID    pgtype.UUID
-	RunID        string
-	WorkloadName string
-	AppID        pgtype.UUID
+	AccountID      pgtype.UUID
+	RunID          string
+	WorkloadName   string
+	AppID          pgtype.UUID
+	ChaosRules     []byte
+	ChaosExpiresAt pgtype.Timestamptz
 }
 
 type ScheduleOccurrence struct {
@@ -4233,6 +4245,7 @@ type ScheduleOccurrence struct {
 	UpdatedAt            pgtype.Timestamptz
 	OutcomeCode          string
 	WorkDecision         []byte
+	ExclusiveOperationID pgtype.UUID
 }
 
 type ServiceCallerKey struct {

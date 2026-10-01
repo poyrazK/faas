@@ -452,6 +452,7 @@ type EnvSecretsData struct {
 
 type SecretReferenceItem struct {
 	Environment, Key, Reference string
+	Suppressed                  bool
 }
 
 // EnvItem is one editable, non-sensitive app environment variable.

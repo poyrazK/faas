@@ -334,6 +334,11 @@ func TestEnvironmentGitOpsSecretReferencePruneReusesQuotaAndKeepsValues(t *testi
 		}
 		assertSecretRef(t, store, source, app, "production", "DATABASE_URL", "")
 		assertSecretRef(t, store, source, app, "production", "NEW_DATABASE_URL", "secret:DATABASE_B")
+		intent, err := basic.(state.AppEnvironmentSecretIntentReader).AppEnvironmentSecretIntent(t.Context(), source.AccountID, app.ID, "production")
+		if err != nil || intent.EffectiveReferences(map[string]string{"DATABASE_URL": "secret:DATABASE_A"})["DATABASE_URL"] != "" {
+			t.Fatalf("pruned legacy mapping reappeared: %+v %v", intent, err)
+		}
+
 		rows, err := store.ListAppSecretsInScope(t.Context(), source.AccountID, app.ID, "production")
 		if err != nil || len(rows) != 2 {
 			t.Fatalf("prune removed sealed values: %+v %v", rows, err)

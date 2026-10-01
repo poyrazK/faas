@@ -82,6 +82,17 @@ func TestSecretReferenceHTTPNamesOnlyAndSourcePreservation(t *testing.T) {
 			t.Fatalf("delete: %d %s", removed.Code, removed.Body.String())
 		}
 	}
+	list = e.do(t, http.MethodGet, path+"?environment=production", nil, nil)
+	response = api.AppSecretReferenceListResponse{}
+	if err := json.Unmarshal(list.Body.Bytes(), &response); err != nil || len(response.References) != 0 || len(response.SuppressedKeys) != 1 || response.SuppressedKeys[0] != "DATABASE_URL" || response.Count != 0 {
+		t.Fatalf("removed key absent from public suppression list: %+v %v", response, err)
+	}
+	set = e.do(t, http.MethodPut, path+"/DATABASE_URL?environment=production", api.PutAppSecretReferenceRequest{Reference: "secret:DATABASE"}, nil)
+	list = e.do(t, http.MethodGet, path+"?environment=production", nil, nil)
+	response = api.AppSecretReferenceListResponse{}
+	if err := json.Unmarshal(list.Body.Bytes(), &response); err != nil || set.Code != http.StatusOK || len(response.SuppressedKeys) != 0 || response.References["DATABASE_URL"] != "secret:DATABASE" {
+		t.Fatalf("public reenable: %+v %v", response, err)
+	}
 	secret, err := e.store.GetAppSecretInScope(t.Context(), e.acct.ID, app.ID, "production", "DATABASE")
 	if err != nil || !bytes.Equal(secret.Ciphertext, []byte("sealed-production")) {
 		t.Fatalf("delete changed source: %+v %v", secret, err)

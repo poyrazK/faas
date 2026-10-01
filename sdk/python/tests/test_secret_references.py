@@ -21,7 +21,14 @@ def test_secret_reference_names_and_explicit_environment() -> None:
         if request.method == "PUT":
             body.update({"key": "DATABASE_URL", "reference": "secret:DATABASE"})
         else:
-            body.update({"references": {"DATABASE_URL": "secret:DATABASE"}, "count": 1, "quota": 20})
+            body.update(
+                {
+                    "references": {"DATABASE_URL": "secret:DATABASE"},
+                    "suppressed_keys": ["REMOVED"],
+                    "count": 1,
+                    "quota": 20,
+                }
+            )
         return httpx.Response(200, json=body)
 
     client = FaaSClient(
@@ -42,6 +49,7 @@ def test_secret_reference_names_and_explicit_environment() -> None:
         assert isinstance(listed, AppSecretReferenceListResponse)
         assert listed.to_dict()["references"] == {"DATABASE_URL": "secret:DATABASE"}
         assert listed.count == 1
+        assert listed.suppressed_keys == ["REMOVED"]
         removed = delete_app_secret_reference.sync_detailed(
             "my app",
             "DATABASE_URL",

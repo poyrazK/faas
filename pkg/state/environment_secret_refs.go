@@ -3,6 +3,8 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"maps"
+	"sort"
 	"strings"
 	"time"
 
@@ -23,6 +25,29 @@ type AppEnvironmentSecretReferenceStore interface {
 	DeleteAppEnvironmentSecretReference(context.Context, string, string, string, string) error
 }
 
+// Read positive and negative intent together; independent reads could combine
+// the two sides of a replacement across transactions.
+type AppEnvironmentSecretIntentReader interface {
+	AppEnvironmentSecretIntent(context.Context, string, string, string) (AppEnvironmentSecretIntent, error)
+}
+
+type AppEnvironmentSecretIntent struct {
+	References     map[string]string `json:"references"`
+	SuppressedKeys []string          `json:"suppressed_keys"`
+}
+
+func (intent AppEnvironmentSecretIntent) EffectiveReferences(baseline map[string]string) map[string]string {
+	refs := maps.Clone(baseline)
+	if refs == nil {
+		refs = map[string]string{}
+	}
+	for _, key := range intent.SuppressedKeys {
+		delete(refs, key)
+	}
+	maps.Copy(refs, intent.References)
+	return refs
+}
+
 var (
 	_ AppEnvironmentSecretReferenceStore = (*MemStore)(nil)
 	_ AppEnvironmentSecretReferenceStore = (*PgStore)(nil)
@@ -35,15 +60,109 @@ type environmentSecretRef struct {
 }
 
 func (m *MemStore) deleteEnvironmentSecretRefsLocked(appID, environmentID string) {
+	changed := map[string]bool{}
 	for key := range m.appEnvironmentSecretRefs {
 		if appID != "" && key.AppID == appID || environmentID != "" && key.EnvironmentID == environmentID {
 			delete(m.appEnvironmentSecretRefs, key)
+			if environmentID != "" {
+				changed[key.AppID] = true
+			}
 		}
+	}
+	for key := range m.appEnvironmentSecretSuppressions {
+		if appID != "" && key.AppID == appID || environmentID != "" && key.EnvironmentID == environmentID {
+			delete(m.appEnvironmentSecretSuppressions, key)
+			if environmentID != "" {
+				changed[key.AppID] = true
+			}
+		}
+	}
+	for id := range changed {
+		m.markEnvironmentRuntimeChangedAndSnapshotsLocked(id, m.projectEnvironments[environmentID].Slug, time.Now().UTC())
 	}
 }
 
 func ValidSecretReference(ref string) bool {
 	return strings.HasPrefix(ref, api.SecretRefPrefix) && api.ValidateEnvKey(strings.TrimPrefix(ref, api.SecretRefPrefix)) == nil
+}
+
+// DeploymentSecretReferences keeps the legacy empty stage-all contract but
+// fails closed on corrupt persisted intent before any scoped overlay.
+func DeploymentSecretReferences(raw json.RawMessage) (map[string]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var refs map[string]string
+	if json.Unmarshal(raw, &refs) != nil {
+		return nil, ErrInvalidArgument
+	}
+	for key, ref := range refs {
+		if api.ValidateEnvKey(key) != nil || !ValidSecretReference(ref) {
+			return nil, ErrInvalidArgument
+		}
+	}
+	return refs, nil
+}
+
+func (m *MemStore) environmentSecretSuppressionsLocked(appID, scope string) []string {
+	keys := []string{}
+	env, err := m.projectEnvironmentBySlugLocked(m.apps[appID].ProjectID, scope)
+	if err != nil {
+		return keys
+	}
+	for key := range m.appEnvironmentSecretSuppressions {
+		if key.AppID == appID && key.EnvironmentID == env.ID {
+			keys = append(keys, key.Key)
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func (m *MemStore) AppEnvironmentSecretIntent(_ context.Context, accountID, appID, scope string) (AppEnvironmentSecretIntent, error) {
+	if api.ValidateScope(scope) != nil {
+		return AppEnvironmentSecretIntent{}, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	app, ok := m.apps[appID]
+	if !ok || app.AccountID != accountID || app.Status == AppDeleted {
+		return AppEnvironmentSecretIntent{}, ErrNotFound
+	}
+	return AppEnvironmentSecretIntent{References: m.environmentSecretRefsLocked(appID, scope), SuppressedKeys: m.environmentSecretSuppressionsLocked(appID, scope)}, nil
+}
+
+func (s *PgStore) AppEnvironmentSecretIntent(ctx context.Context, accountID, appID, scope string) (AppEnvironmentSecretIntent, error) {
+	if api.ValidateScope(scope) != nil {
+		return AppEnvironmentSecretIntent{}, ErrInvalidArgument
+	}
+	raw, err := sqlc.New().GetAppEnvironmentSecretIntent(ctx, s.pool, sqlc.GetAppEnvironmentSecretIntentParams{AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), Scope: scope})
+	if err != nil {
+		return AppEnvironmentSecretIntent{}, mapErr(err)
+	}
+	var intent AppEnvironmentSecretIntent
+	if json.Unmarshal(raw, &intent) != nil {
+		return intent, ErrInvalidArgument
+	}
+	return intent, nil
+}
+
+func (m *MemStore) suppressEnvironmentSecretReferenceLocked(key environmentSecretRefKey, now time.Time) {
+	delete(m.appEnvironmentSecretRefs, key)
+	if m.appEnvironmentSecretSuppressions == nil {
+		m.appEnvironmentSecretSuppressions = map[environmentSecretRefKey]time.Time{}
+	}
+	m.appEnvironmentSecretSuppressions[key] = now
+}
+
+func (m *MemStore) environmentSecretSuppressionCountLocked(appID string) int {
+	count := 0
+	for key := range m.appEnvironmentSecretSuppressions {
+		if key.AppID == appID {
+			count++
+		}
+	}
+	return count
 }
 
 func (m *MemStore) environmentSecretRefsLocked(appID, scope string) map[string]string {
@@ -133,6 +252,7 @@ func (m *MemStore) putAppEnvironmentSecretReference(_ context.Context, accountID
 		m.appEnvironmentSecretRefs = map[environmentSecretRefKey]environmentSecretRef{}
 	}
 	m.appEnvironmentSecretRefs[environmentSecretRefKey{appID, env.ID, key}] = environmentSecretRef{ref, time.Now().UTC()}
+	delete(m.appEnvironmentSecretSuppressions, environmentSecretRefKey{appID, env.ID, key})
 	m.markEnvironmentRuntimeChangedAndSnapshotsLocked(appID, scope, time.Now().UTC())
 	touchGitOpsMemoryIntent(source)
 	return nil
@@ -164,10 +284,13 @@ func (m *MemStore) deleteAppEnvironmentSecretReference(_ context.Context, accoun
 		return err
 	}
 	refKey := environmentSecretRefKey{appID, env.ID, key}
-	if _, exists := m.appEnvironmentSecretRefs[refKey]; !exists {
+	if _, exists := m.appEnvironmentSecretSuppressions[refKey]; exists {
 		return nil
 	}
-	delete(m.appEnvironmentSecretRefs, refKey)
+	if m.environmentSecretSuppressionCountLocked(appID) >= api.EnvironmentSecretReferenceSuppressionsMaxPerApp {
+		return &EnvironmentSecretReferenceSuppressionQuotaError{}
+	}
+	m.suppressEnvironmentSecretReferenceLocked(refKey, time.Now().UTC())
 	m.markEnvironmentRuntimeChangedAndSnapshotsLocked(appID, scope, time.Now().UTC())
 	touchGitOpsMemoryIntent(source)
 	return nil
@@ -217,7 +340,7 @@ func (s *PgStore) writeAppEnvironmentSecretReference(ctx context.Context, accoun
 	if expectedEnvironmentID != "" && pgUUIDString(env.ID) != expectedEnvironmentID {
 		return ErrConflict
 	}
-	if expectedEnvironmentID != "" {
+	{
 		owned, err := q.EnvironmentSecretReferenceWriteOwned(ctx, tx, sqlc.EnvironmentSecretReferenceWriteOwnedParams{
 			AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), EnvironmentID: env.ID, Key: key,
 		})
@@ -261,8 +384,14 @@ func (s *PgStore) writeAppEnvironmentSecretReference(ctx context.Context, accoun
 	}
 	if remove {
 		err = q.DeleteEnvironmentGitOpsSecretReference(ctx, tx, sqlc.DeleteEnvironmentGitOpsSecretReferenceParams{AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), EnvironmentID: env.ID, Key: key})
+		if err == nil {
+			err = q.PutEnvironmentSecretReferenceSuppression(ctx, tx, sqlc.PutEnvironmentSecretReferenceSuppressionParams{AccountID: mustPgUUID(accountID), ProjectID: env.ProjectID, AppID: mustPgUUID(appID), EnvironmentID: env.ID, Scope: scope, Key: key})
+		}
 	} else {
-		err = q.PutEnvironmentGitOpsSecretReference(ctx, tx, sqlc.PutEnvironmentGitOpsSecretReferenceParams{AccountID: mustPgUUID(accountID), ProjectID: env.ProjectID, AppID: mustPgUUID(appID), EnvironmentID: env.ID, Scope: scope, Key: key, SecretName: strings.TrimPrefix(ref, api.SecretRefPrefix)})
+		err = q.DeleteEnvironmentSecretReferenceSuppression(ctx, tx, sqlc.DeleteEnvironmentSecretReferenceSuppressionParams{AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), EnvironmentID: env.ID, Key: key})
+		if err == nil {
+			err = q.PutEnvironmentGitOpsSecretReference(ctx, tx, sqlc.PutEnvironmentGitOpsSecretReferenceParams{AccountID: mustPgUUID(accountID), ProjectID: env.ProjectID, AppID: mustPgUUID(appID), EnvironmentID: env.ID, Scope: scope, Key: key, SecretName: strings.TrimPrefix(ref, api.SecretRefPrefix)})
+		}
 	}
 	if err != nil {
 		return mapErr(err)

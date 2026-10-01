@@ -597,9 +597,9 @@ serving convergence fences. Scheduler transport fixtures cover aliases, legacy
 inputs, sidecar isolation, wake, prime and migration evidence. Populated replay
 preserves references, ownership, receipts and active controller leases across the
 complete additive migration set. These checks qualify the internal reference
-contract; native guest delivery and lifecycle acceptance remain required. Explicit
-adoption of legacy deployment reference configuration remains part of the complete
-adapter gate.
+contract; native guest delivery and lifecycle acceptance remain required. Legacy
+deployment reference adoption is described below; native runtime evidence remains
+part of the complete adapter gate.
 
 Environment clones now copy the current destination-to-source references under
 the new catalog environment UUID alongside their scoped sealed sources. They
@@ -642,11 +642,59 @@ matches the committed query output. The repository-wide OpenAPI lint still has
 These controls currently accept environment names of 3–33 characters, matching
 the intersection of the catalog and sealed-secret scope contracts. Catalog names
 of one or two characters remain an integration gate; the dashboard identifies
-those unavailable names without hiding supported environments. Removing an
-ordinary reference removes only its overlay and preserves its sealed source. A
-legacy deployment mapping or automatic secret delivery can supply that key on a
-future wake. Explicit adoption and owned-reference pruning must resolve that
-baseline before the complete GitOps executor is enabled.
+those unavailable names without hiding supported environments.
+
+Legacy reference adoption now observes every live deployment in the exact scope,
+including the automatic same-name delivery baseline. It compares effective maps
+only after validating each persisted deployment definition and applying scoped
+intent. Conflicting live canary maps block the complete plan until the rollout
+finishes or is aborted. The reviewed hash includes the sorted live deployment
+identities; a replacement with identical names still requires a new review.
+Adoption materializes only the selected current names into scoped intent before
+transferring ownership. It preserves the existing source mapping rather than
+applying the approved replacement. Imported references spend the same shared
+variable quota as ordinary scoped references. Existing suppression is observed
+as a `null` reference value and also requires reviewed adoption; adoption preserves
+that absence until reconciliation applies the approved mapping later. Live
+baseline mutations serialize with adoption and enqueue durable checks; writers
+that acquired legacy locks first may be aborted by PostgreSQL's deadlock detector
+and must retry.
+
+Ordinary reference removal and reviewed Git pruning now retain durable destination
+suppression under the environment UUID. Suppression removes a key from the primary
+workload's original deployment map and automatic delivery without deleting the
+sealed source. Sidecar selections remain separate. Setting an explicit reference
+clears suppression atomically. Removed Git fields release ownership under the
+existing pruning contract; the retained suppression remains current environment
+intent until an explicit reference re-enables it. Suppressions do not consume
+variable slots, but their retained names are bounded to 1024 per application across
+environments by the API limits registry. Clone preflight includes this separate
+bound and copies current suppressions to the new catalog identity; rollback and
+catalog deletion remove them. PostgreSQL guards mutually exclusive positive and
+negative intent, immutable identity and the existing ownership/override contract.
+
+Scheduler reads combine references and suppressions at one statement snapshot.
+Runtime receipts must omit every suppressed destination and, in a scope with
+suppression, contain exactly the source versions selected by the reported mapping.
+An older stage-all receipt containing only current versions cannot prove removal.
+Suppressed intent continues to require runtime receipts and serving observation
+after a pruning effect completes. API/CLI/dashboard and typed clients expose only
+the retained names through optional `suppressed_keys` metadata. These changes apply
+to future cold wakes; ordinary controls do not promise immediate resident refresh.
+Native guest delivery, full graph release activation and the executor's remaining
+adapter gates are still required before enablement.
+
+The suppression checkpoint covers shared memory/PostgreSQL adoption, pruning,
+runtime proof, the retained-key bound, clone rollback and catalog recreation.
+Deleting catalog intent advances the surviving application's scoped boundary and
+invalidates captured snapshots, including when no sealed values remain. Populated
+migration replay preserves both positive and negative intent, ownership, receipts
+and an active lease. Routed HTTP/dashboard, CLI, scheduler wake/sidecar and
+Go/Node/Python SDK checks pass. SQLC regeneration matches the query output and the
+main and embedded OpenAPI documents match. These are focused unit and PostgreSQL
+checks; native guest/lifecycle acceptance is still outstanding. The schema dump
+also includes the already merged scenario chaos and exclusive schedule columns
+that the preceding snapshot omitted.
 
 The integration checkpoint includes main through `72893dc28`. After combining
 its protocol, SQL and client sources, regeneration and focused GitOps/store,
@@ -656,7 +704,7 @@ evidence; native guest delivery and lifecycle acceptance remain outstanding.
 
 The remaining full feature gates include native qualification of protected-branch
 approval with the complete serving flow; environment-scoped workload creation, source/runtime,
-legacy secret-reference adoption/pruning, short catalog-name scope support and
+short catalog-name scope support and
 service-binding adapters; reviewed queue pruning/recovery
 and projection repair; staged graph qualification
 and release activation; native serving-fleet and guest runtime evidence;

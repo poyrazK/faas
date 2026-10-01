@@ -776,8 +776,9 @@ type MemStore struct {
 	registryCreds map[registryCredKey]AppRegistryCredential
 	// envs is the plaintext app_envs mirror (issue #395 / ADR-045).
 	// Same composite-key shape as secrets; same ownership semantics.
-	envs                     map[envKey]AppEnv
-	appEnvironmentSecretRefs map[environmentSecretRefKey]environmentSecretRef
+	envs                             map[envKey]AppEnv
+	appEnvironmentSecretRefs         map[environmentSecretRefKey]environmentSecretRef
+	appEnvironmentSecretSuppressions map[environmentSecretRefKey]time.Time
 	// trustedSigners is the in-memory mirror of app_trusted_signers
 	// (issue #472 / ADR-054). Populated by the admin CRUD handlers in
 	// cmd/apid/handlers_trusted_signers.go; not exposed to schedd.

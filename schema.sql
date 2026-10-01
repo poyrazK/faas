@@ -2015,19 +2015,24 @@ CREATE FUNCTION public.environment_runtime_inputs_fresh(target_app uuid, target_
     LANGUAGE sql STABLE
     AS $$
  WITH managed AS (SELECT environment_scoped_secret_refs(target_app,target_scope) AS refs),
+ suppressed AS (SELECT environment_scoped_secret_suppressions(target_app,target_scope) AS keys),
  baseline AS (SELECT coalesce(jsonb_object_agg(s.key,'secret:'||s.key),'{}'::jsonb) AS refs
   FROM app_secrets s WHERE s.app_id=target_app AND s.scope=target_scope)
  SELECT environment_runtime_base_inputs_fresh(target_app,target_scope,boundary,observed_variables,observed_secrets,false)
   AND managed.refs <@ observed_secret_refs
+  AND NOT observed_secret_refs ?| suppressed.keys
+  AND (cardinality(suppressed.keys)=0 OR observed_secrets=coalesce((SELECT jsonb_object_agg(s.scope||'/'||s.key,s.delivery_version)
+   FROM app_secrets s WHERE s.app_id=target_app AND s.scope=target_scope AND EXISTS(
+    SELECT 1 FROM jsonb_each_text(observed_secret_refs) r WHERE r.value='secret:'||s.key)),'{}'::jsonb))
   AND NOT EXISTS(SELECT 1 FROM jsonb_each(managed.refs) r WHERE observed_variables ? r.key)
   AND NOT EXISTS (SELECT 1 FROM jsonb_each_text(observed_secret_refs) r WHERE
    NOT EXISTS (SELECT 1 FROM app_secrets s WHERE s.app_id=target_app AND s.scope=target_scope
     AND r.value='secret:'||s.key AND observed_secrets->>(target_scope||'/'||s.key)=s.delivery_version::text))
   AND (NOT observed_all_secrets OR
-   CASE WHEN observed_secret_refs='{}'::jsonb AND managed.refs='{}'::jsonb
+   CASE WHEN observed_secret_refs='{}'::jsonb AND managed.refs='{}'::jsonb AND cardinality(suppressed.keys)=0
     THEN environment_runtime_base_inputs_fresh(target_app,target_scope,boundary,observed_variables,observed_secrets,true)
-    ELSE observed_secret_refs=(baseline.refs||managed.refs) END)
- FROM managed,baseline;
+    ELSE observed_secret_refs=((baseline.refs - suppressed.keys)||managed.refs) END)
+ FROM managed,baseline,suppressed;
 $$;
 
 
@@ -2038,7 +2043,8 @@ $$;
 CREATE FUNCTION public.environment_runtime_receipt_required(target_app uuid, target_scope text) RETURNS boolean
     LANGUAGE sql STABLE
     AS $$
- SELECT environment_scoped_secret_refs(target_app,target_scope)<>'{}'::jsonb OR EXISTS (
+ SELECT environment_scoped_secret_refs(target_app,target_scope)<>'{}'::jsonb
+  OR cardinality(environment_scoped_secret_suppressions(target_app,target_scope))>0 OR EXISTS (
   SELECT 1 FROM environment_git_sources s JOIN project_environments e ON e.id=s.environment_id
   JOIN environment_gitops_resources r ON r.source_id=s.id WHERE r.app_id=target_app AND e.slug=target_scope
   AND (EXISTS (SELECT 1 FROM environment_managed_fields f WHERE f.source_id=s.id AND f.resource=r.logical_name
@@ -2056,6 +2062,20 @@ CREATE FUNCTION public.environment_scoped_secret_refs(target_app uuid, target_sc
     AS $$
  SELECT coalesce(jsonb_object_agg(r.key,'secret:'||r.secret_name),'{}'::jsonb)
  FROM app_environment_secret_refs r JOIN project_environments e ON e.id=r.environment_id
+ JOIN apps a ON a.id=r.app_id AND a.account_id=r.account_id AND a.project_id=r.project_id
+ WHERE r.app_id=target_app AND e.slug=target_scope AND e.account_id=r.account_id AND e.project_id=r.project_id;
+$$;
+
+
+--
+-- Name: environment_scoped_secret_suppressions(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_scoped_secret_suppressions(target_app uuid, target_scope text) RETURNS text[]
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT coalesce(array_agg(r.key ORDER BY r.key),ARRAY[]::text[])
+ FROM app_environment_secret_ref_suppressions r JOIN project_environments e ON e.id=r.environment_id
  JOIN apps a ON a.id=r.app_id AND a.account_id=r.account_id AND a.project_id=r.project_id
  WHERE r.app_id=target_app AND e.slug=target_scope AND e.account_id=r.account_id AND e.project_id=r.project_id;
 $$;
@@ -2679,7 +2699,7 @@ $$;
 CREATE FUNCTION public.guard_environment_secret_ref_intent() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-DECLARE row_value app_environment_secret_refs%ROWTYPE; src environment_git_sources%ROWTYPE;
+DECLARE row_value record; src environment_git_sources%ROWTYPE;
  resource_name text; controller boolean; stamp timestamptz;
 BEGIN
  IF TG_OP='DELETE' THEN row_value:=OLD; ELSE row_value:=NEW; END IF;
@@ -2688,6 +2708,15 @@ BEGIN
  IF TG_OP='DELETE' AND NOT EXISTS (SELECT 1 FROM apps a JOIN project_environments e ON e.id=row_value.environment_id
   WHERE a.id=row_value.app_id AND a.account_id=row_value.account_id AND a.project_id=row_value.project_id
    AND e.project_id=a.project_id AND e.account_id=a.account_id AND e.slug=row_value.scope) THEN
+  -- Removing catalog intent also invalidates caches captured under its UUID.
+  -- The surviving app can retain deployments/sealed provider credentials.
+  IF EXISTS(SELECT 1 FROM apps WHERE id=row_value.app_id FOR UPDATE) THEN
+   stamp:=clock_timestamp();
+   INSERT INTO app_runtime_config_scope_changes(app_id,scope,changed_at) VALUES(row_value.app_id,row_value.scope,stamp)
+    ON CONFLICT(app_id,scope) DO UPDATE SET changed_at=greatest(app_runtime_config_scope_changes.changed_at,excluded.changed_at);
+   UPDATE snapshots p SET stale=true FROM deployments d WHERE p.deployment_id=d.id AND d.app_id=row_value.app_id
+    AND d.scope=row_value.scope AND NOT p.stale;
+  END IF;
   RETURN OLD;
  END IF;
  IF TG_OP='UPDATE' AND (NEW.account_id IS DISTINCT FROM OLD.account_id OR NEW.project_id IS DISTINCT FROM OLD.project_id
@@ -2729,7 +2758,53 @@ BEGIN
   UPDATE snapshots p SET stale=true FROM deployments d WHERE p.deployment_id=d.id AND d.app_id=row_value.app_id
    AND d.scope=row_value.scope AND NOT p.stale;
  END IF;
+ -- Both kinds of intent share the same app lock. Direct SQL cannot retain
+ -- a positive reference and a suppression for the same destination.
+ IF TG_OP<>'DELETE' THEN
+  IF (TG_TABLE_NAME='app_environment_secret_refs' AND EXISTS(SELECT 1 FROM app_environment_secret_ref_suppressions
+    WHERE app_id=row_value.app_id AND environment_id=row_value.environment_id AND key=row_value.key))
+   OR (TG_TABLE_NAME='app_environment_secret_ref_suppressions' AND EXISTS(SELECT 1 FROM app_environment_secret_refs
+    WHERE app_id=row_value.app_id AND environment_id=row_value.environment_id AND key=row_value.key)) THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='environment_secret_ref_exclusive',MESSAGE='reference and suppression are mutually exclusive';
+  END IF;
+  -- Mirrored by api.EnvironmentSecretReferenceSuppressionsMaxPerApp.
+  IF TG_TABLE_NAME='app_environment_secret_ref_suppressions' AND TG_OP='INSERT'
+   AND NOT EXISTS(SELECT 1 FROM app_environment_secret_ref_suppressions WHERE app_id=row_value.app_id AND environment_id=row_value.environment_id AND key=row_value.key)
+   AND (SELECT count(*) FROM app_environment_secret_ref_suppressions WHERE app_id=row_value.app_id)>=1024 THEN
+   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='environment_secret_ref_suppression_quota',MESSAGE='secret reference suppression limit reached';
+  END IF;
+ END IF;
  IF TG_OP='DELETE' THEN RETURN OLD; ELSE NEW.updated_at:=stamp; RETURN NEW; END IF;
+END;
+$$;
+
+
+--
+-- Name: guard_environment_secret_reference_baseline(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_secret_reference_baseline() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE old_app uuid; new_app uuid; old_scope text; new_scope text; src environment_git_sources%ROWTYPE;
+BEGIN
+ IF TG_OP<>'INSERT' AND OLD.status='live' THEN old_app:=OLD.app_id; old_scope:=OLD.scope; END IF;
+ IF TG_OP<>'DELETE' AND NEW.status='live' THEN new_app:=NEW.app_id; new_scope:=NEW.scope; END IF;
+ IF old_app IS NULL AND new_app IS NULL THEN
+  IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+ END IF;
+ FOR src IN SELECT s.* FROM environment_git_sources s JOIN project_environments e ON e.id=s.environment_id
+  JOIN apps a ON a.project_id=s.project_id AND a.account_id=s.account_id
+  WHERE (a.id=old_app AND e.slug=old_scope) OR (a.id=new_app AND e.slug=new_scope)
+  ORDER BY s.id FOR UPDATE OF s LOOP
+  PERFORM 1 FROM apps a WHERE (a.id=old_app OR a.id=new_app) AND a.project_id=src.project_id ORDER BY a.id FOR UPDATE;
+  UPDATE environment_git_sources SET intent_version=intent_version+1,updated_at=now() WHERE id=src.id;
+  IF src.generation>0 THEN
+   INSERT INTO environment_gitops_jobs(source_id,desired_generation,next_attempt_at) VALUES(src.id,src.generation,now())
+   ON CONFLICT(source_id) DO UPDATE SET next_attempt_at=least(environment_gitops_jobs.next_attempt_at,excluded.next_attempt_at);
+  END IF;
+ END LOOP;
+ IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
 END;
 $$;
 
@@ -3806,6 +3881,29 @@ BEGIN
        AND NEW.lifecycle_state = OLD.lifecycle_state THEN
         NEW.lifecycle_state := CASE WHEN NEW.kind = 'maintenance' THEN 'completed' ELSE 'resolved' END;
         NEW.updated_at := NEW.resolved_at;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: preserve_api_key_runs_principal(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.preserve_api_key_runs_principal() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    predecessor_principal uuid;
+BEGIN
+    IF NEW.rotated_from_id IS NOT NULL THEN
+        SELECT runs_principal_id INTO predecessor_principal
+          FROM api_keys
+         WHERE id = NEW.rotated_from_id;
+        IF FOUND THEN
+            NEW.runs_principal_id := predecessor_principal;
+        END IF;
     END IF;
     RETURN NEW;
 END;
@@ -5115,6 +5213,23 @@ CREATE TABLE public.app_egress_policy_node_status (
     CONSTRAINT app_egress_policy_node_status_applied_revision_check CHECK ((applied_revision >= 0)),
     CONSTRAINT app_egress_policy_node_status_attempted_revision_check CHECK ((attempted_revision >= 0)),
     CONSTRAINT app_egress_policy_node_status_check CHECK ((attempted_revision >= applied_revision))
+);
+
+
+--
+-- Name: app_environment_secret_ref_suppressions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_environment_secret_ref_suppressions (
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    key text NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT app_environment_secret_ref_suppressions_key_check CHECK (((key ~ '^[A-Z][A-Z0-9_]*$'::text) AND (octet_length(key) <= 128))),
+    CONSTRAINT app_environment_secret_ref_suppressions_scope_check CHECK ((scope ~ '^[a-z][a-z0-9-]{0,62}$'::text))
 );
 
 
@@ -7843,7 +7958,7 @@ CREATE VIEW public.environment_gitops_runtime_targets AS
              JOIN public.project_environments e ON ((e.id = s.environment_id)))
              JOIN public.environment_gitops_resources r ON ((r.source_id = s.id)))
              JOIN public.apps a ON (((a.id = r.app_id) AND (a.account_id = s.account_id) AND (a.project_id = s.project_id))))
-          WHERE ((EXISTS ( SELECT 1
+          WHERE ((cardinality(public.environment_scoped_secret_suppressions(r.app_id, e.slug)) > 0) OR (EXISTS ( SELECT 1
                    FROM public.environment_managed_fields f
                   WHERE ((f.source_id = s.id) AND (f.resource = r.logical_name) AND ((f.field_path ~~ 'variables/%'::text) OR (f.field_path ~~ 'secret_refs/%'::text))))) OR (EXISTS ( SELECT 1
                    FROM public.environment_gitops_runtime_effects x
@@ -8213,6 +8328,29 @@ CREATE TABLE public.exclusive_work_trigger_bindings (
 
 
 --
+-- Name: execution_artifact_grants; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.execution_artifact_grants (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    source_execution_id uuid NOT NULL,
+    artifact_name text NOT NULL,
+    creator_principal_id uuid,
+    token_hash bytea NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    redeemed_at timestamp with time zone,
+    redeemed_execution_id uuid,
+    revoked_at timestamp with time zone,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT execution_artifact_grants_artifact_name_check CHECK (((length(artifact_name) >= 1) AND (length(artifact_name) <= 256))),
+    CONSTRAINT execution_artifact_grants_expiry_check CHECK ((expires_at > created_at)),
+    CONSTRAINT execution_artifact_grants_redeemed_pair_check CHECK (((redeemed_at IS NULL) = (redeemed_execution_id IS NULL))),
+    CONSTRAINT execution_artifact_grants_token_hash_check CHECK ((octet_length(token_hash) = 32))
+);
+
+
+--
 -- Name: execution_events; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -8225,16 +8363,6 @@ CREATE TABLE public.execution_events (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT execution_events_payload_check CHECK (((octet_length((payload)::text) >= 2) AND (octet_length((payload)::text) <= 65536))),
     CONSTRAINT execution_events_type_check CHECK ((event_type = ANY (ARRAY['status'::text, 'stdout'::text, 'stderr'::text, 'terminal'::text])))
-);
-
-
---
--- Name: execution_outbound_integrations; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.execution_outbound_integrations (
-    execution_id uuid NOT NULL,
-    integration_id uuid NOT NULL
 );
 
 
@@ -8258,6 +8386,16 @@ ALTER SEQUENCE public.execution_events_id_seq OWNED BY public.execution_events.i
 
 
 --
+-- Name: execution_outbound_integrations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.execution_outbound_integrations (
+    execution_id uuid NOT NULL,
+    integration_id uuid NOT NULL
+);
+
+
+--
 -- Name: execution_payloads; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -8268,29 +8406,6 @@ CREATE TABLE public.execution_payloads (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT execution_payloads_kid_check CHECK (((length(kid) >= 1) AND (length(kid) <= 255))),
     CONSTRAINT execution_payloads_sealed_payload_check CHECK (((octet_length(sealed_payload) >= 1) AND (octet_length(sealed_payload) <= 3145728)))
-);
-
-
---
--- Name: execution_artifact_grants; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.execution_artifact_grants (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    account_id uuid NOT NULL,
-    source_execution_id uuid NOT NULL,
-    artifact_name text NOT NULL,
-    creator_principal_id uuid,
-    token_hash bytea NOT NULL,
-    expires_at timestamp with time zone NOT NULL,
-    redeemed_at timestamp with time zone,
-    redeemed_execution_id uuid,
-    revoked_at timestamp with time zone,
-    created_at timestamp with time zone NOT NULL,
-    CONSTRAINT execution_artifact_grants_artifact_name_check CHECK (((length(artifact_name) >= 1) AND (length(artifact_name) <= 256))),
-    CONSTRAINT execution_artifact_grants_expiry_check CHECK ((expires_at > created_at)),
-    CONSTRAINT execution_artifact_grants_redeemed_pair_check CHECK (((redeemed_at IS NULL) = (redeemed_execution_id IS NULL))),
-    CONSTRAINT execution_artifact_grants_token_hash_check CHECK ((octet_length(token_hash) = 32))
 );
 
 
@@ -8388,12 +8503,12 @@ CREATE TABLE public.executions (
     CONSTRAINT executions_runtime_image_digest_check CHECK (((runtime_image_digest IS NULL) OR (runtime_image_digest ~ '^sha256:[a-f0-9]{64}$'::text))),
     CONSTRAINT executions_source_bytes_check CHECK (((source_bytes >= 1) AND (source_bytes <= 1048576))),
     CONSTRAINT executions_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'restoring'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'timed_out'::text, 'out_of_memory'::text, 'cancelled'::text]))),
+    CONSTRAINT executions_step_label_check CHECK (((step_label IS NULL) OR ((workflow_id IS NOT NULL) AND ((octet_length(step_label) >= 1) AND (octet_length(step_label) <= 128)) AND (length(btrim(step_label)) = length(step_label)) AND (step_label !~ '[[:cntrl:]]'::text)))),
     CONSTRAINT executions_timeout_ms_check CHECK (((timeout_ms >= 100) AND (timeout_ms <= 30000))),
     CONSTRAINT executions_timestamps_check CHECK ((((status = 'queued'::text) AND (started_at IS NULL) AND (finished_at IS NULL)) OR ((status = 'restoring'::text) AND (started_at IS NULL) AND (finished_at IS NULL)) OR ((status = 'running'::text) AND (started_at IS NOT NULL) AND (finished_at IS NULL)) OR ((status = ANY (ARRAY['succeeded'::text, 'failed'::text, 'timed_out'::text, 'out_of_memory'::text, 'cancelled'::text])) AND (finished_at IS NOT NULL)))),
     CONSTRAINT executions_updated_at_check CHECK ((updated_at >= created_at)),
     CONSTRAINT executions_usage_check CHECK (((wall_time_ms >= 0) AND (cpu_time_ms >= 0) AND (peak_memory_mb >= 0))),
-    CONSTRAINT executions_workflow_id_check CHECK (workflow_id IS NULL OR workflow_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$'),
-    CONSTRAINT executions_step_label_check CHECK (step_label IS NULL OR (workflow_id IS NOT NULL AND octet_length(step_label) BETWEEN 1 AND 128 AND length(btrim(step_label)) = length(step_label) AND step_label !~ '[[:cntrl:]]'))
+    CONSTRAINT executions_workflow_id_check CHECK (((workflow_id IS NULL) OR (workflow_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$'::text)))
 );
 
 
@@ -12096,6 +12211,9 @@ CREATE TABLE public.scenario_test_members (
     run_id text NOT NULL,
     workload_name text NOT NULL,
     app_id uuid NOT NULL,
+    chaos_rules jsonb DEFAULT '[]'::jsonb NOT NULL,
+    chaos_expires_at timestamp with time zone,
+    CONSTRAINT scenario_test_members_chaos_rules_array_check CHECK ((jsonb_typeof(chaos_rules) = 'array'::text)),
     CONSTRAINT scenario_test_members_run_id_check CHECK ((run_id ~ '^[0-9a-f]{32}$'::text)),
     CONSTRAINT scenario_test_members_workload_name_check CHECK ((workload_name ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text))
 );
@@ -12126,6 +12244,7 @@ CREATE TABLE public.schedule_occurrences (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     outcome_code text DEFAULT ''::text NOT NULL,
     work_decision jsonb,
+    exclusive_operation_id uuid,
     CONSTRAINT schedule_occurrences_check CHECK (((((cron_id IS NOT NULL))::integer + ((job_id IS NOT NULL))::integer) = 1)),
     CONSTRAINT schedule_occurrences_check1 CHECK (((start_deadline_at IS NULL) OR (start_deadline_at >= scheduled_for))),
     CONSTRAINT schedule_occurrences_outcome_code_check CHECK ((octet_length(outcome_code) <= 64)),
@@ -13306,6 +13425,14 @@ ALTER TABLE ONLY public.app_egress_policy_node_status
 
 
 --
+-- Name: app_environment_secret_ref_suppressions app_environment_secret_ref_suppressions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_environment_secret_ref_suppressions
+    ADD CONSTRAINT app_environment_secret_ref_suppressions_pkey PRIMARY KEY (app_id, environment_id, key);
+
+
+--
 -- Name: app_environment_secret_refs app_environment_secret_refs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -14458,6 +14585,22 @@ ALTER TABLE ONLY public.exclusive_work_trigger_bindings
 
 
 --
+-- Name: execution_artifact_grants execution_artifact_grants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.execution_artifact_grants
+    ADD CONSTRAINT execution_artifact_grants_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: execution_artifact_grants execution_artifact_grants_token_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.execution_artifact_grants
+    ADD CONSTRAINT execution_artifact_grants_token_hash_key UNIQUE (token_hash);
+
+
+--
 -- Name: execution_events execution_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -14479,20 +14622,6 @@ ALTER TABLE ONLY public.execution_outbound_integrations
 
 ALTER TABLE ONLY public.execution_payloads
     ADD CONSTRAINT execution_payloads_pkey PRIMARY KEY (execution_id);
-
---
--- Name: execution_artifact_grants execution_artifact_grants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.execution_artifact_grants
-    ADD CONSTRAINT execution_artifact_grants_pkey PRIMARY KEY (id);
-
---
--- Name: execution_artifact_grants execution_artifact_grants_token_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.execution_artifact_grants
-    ADD CONSTRAINT execution_artifact_grants_token_hash_key UNIQUE (token_hash);
 
 
 --
@@ -16731,13 +16860,6 @@ CREATE UNIQUE INDEX app_errors_dedupe_uniq ON public.app_errors USING btree (acc
 
 
 --
--- Name: app_issue_impact_alert_policies_pkey; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX app_issue_impact_alert_policies_pkey ON public.app_issue_impact_alert_policies USING btree (app_id);
-
-
---
 -- Name: app_issues_assignee_list_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -18362,6 +18484,13 @@ CREATE INDEX exclusive_work_trigger_bindings_policy_idx ON public.exclusive_work
 
 
 --
+-- Name: execution_artifact_grants_account_source_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX execution_artifact_grants_account_source_idx ON public.execution_artifact_grants USING btree (account_id, source_execution_id, created_at DESC);
+
+
+--
 -- Name: execution_events_account_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -18381,12 +18510,6 @@ CREATE INDEX execution_events_created_at_idx ON public.execution_events USING bt
 
 CREATE INDEX execution_events_execution_id_idx ON public.execution_events USING btree (execution_id, id);
 
---
--- Name: execution_artifact_grants_account_source_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX execution_artifact_grants_account_source_idx ON public.execution_artifact_grants USING btree (account_id, source_execution_id, created_at DESC);
-
 
 --
 -- Name: execution_usage_ledger_account_finished_idx; Type: INDEX; Schema: public; Owner: -
@@ -18403,22 +18526,31 @@ CREATE INDEX executions_account_active_idx ON public.executions USING btree (acc
 
 
 --
+-- Name: executions_account_agent_workflow_step_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX executions_account_agent_workflow_step_uniq ON public.executions USING btree (account_id, runs_principal_id, workflow_id, step_label) WHERE ((runs_principal_id IS NOT NULL) AND (workflow_id IS NOT NULL) AND (step_label ~~ 'gwf:%'::text));
+
+
+--
 -- Name: executions_account_created_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX executions_account_created_idx ON public.executions USING btree (account_id, created_at DESC, id DESC);
 
+
+--
 -- Name: executions_account_principal_created_idx; Type: INDEX; Schema: public; Owner: -
 --
+
 CREATE INDEX executions_account_principal_created_idx ON public.executions USING btree (account_id, runs_principal_id, created_at DESC, id DESC) WHERE (runs_principal_id IS NOT NULL);
 
+
+--
 -- Name: executions_account_workflow_principal_created_idx; Type: INDEX; Schema: public; Owner: -
 --
-CREATE INDEX executions_account_workflow_principal_created_idx ON public.executions USING btree (account_id, workflow_id, runs_principal_id, created_at DESC, id DESC) WHERE (workflow_id IS NOT NULL);
 
--- Name: executions_account_agent_workflow_step_uniq; Type: INDEX; Schema: public; Owner: -
---
-CREATE UNIQUE INDEX executions_account_agent_workflow_step_uniq ON public.executions USING btree (account_id, runs_principal_id, workflow_id, step_label) WHERE ((runs_principal_id IS NOT NULL) AND (workflow_id IS NOT NULL) AND (step_label ~~ 'gwf:%'::text));
+CREATE INDEX executions_account_workflow_principal_created_idx ON public.executions USING btree (account_id, workflow_id, runs_principal_id, created_at DESC, id DESC) WHERE (workflow_id IS NOT NULL);
 
 
 --
@@ -20578,6 +20710,13 @@ CREATE UNIQUE INDEX schedule_occurrences_cron_identity ON public.schedule_occurr
 
 
 --
+-- Name: schedule_occurrences_exclusive_operation_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX schedule_occurrences_exclusive_operation_idx ON public.schedule_occurrences USING btree (exclusive_operation_id) WHERE (exclusive_operation_id IS NOT NULL);
+
+
+--
 -- Name: schedule_occurrences_job_history; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -21516,6 +21655,13 @@ CREATE TRIGGER api_key_rotation_copy_object_storage_grants AFTER INSERT ON publi
 
 
 --
+-- Name: api_keys api_keys_preserve_runs_principal; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER api_keys_preserve_runs_principal BEFORE INSERT ON public.api_keys FOR EACH ROW EXECUTE FUNCTION public.preserve_api_key_runs_principal();
+
+
+--
 -- Name: apps app_managed_postgres_bindings_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -21978,10 +22124,24 @@ CREATE TRIGGER environment_protected_revision_guard BEFORE DELETE OR UPDATE ON p
 
 
 --
+-- Name: app_environment_secret_ref_suppressions environment_secret_ref_intent; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_secret_ref_intent BEFORE INSERT OR DELETE OR UPDATE ON public.app_environment_secret_ref_suppressions FOR EACH ROW EXECUTE FUNCTION public.guard_environment_secret_ref_intent();
+
+
+--
 -- Name: app_environment_secret_refs environment_secret_ref_intent; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER environment_secret_ref_intent BEFORE INSERT OR DELETE OR UPDATE ON public.app_environment_secret_refs FOR EACH ROW EXECUTE FUNCTION public.guard_environment_secret_ref_intent();
+
+
+--
+-- Name: deployments environment_secret_reference_baseline; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_secret_reference_baseline BEFORE INSERT OR DELETE OR UPDATE OF status, scope, app_id, override_env_secrets ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_environment_secret_reference_baseline();
 
 
 --
@@ -23043,6 +23203,38 @@ ALTER TABLE ONLY public.app_egress_policy_node_status
 
 ALTER TABLE ONLY public.app_egress_policy_node_status
     ADD CONSTRAINT app_egress_policy_node_status_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_environment_secret_ref_suppressions app_environment_secret_ref_suppressions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_environment_secret_ref_suppressions
+    ADD CONSTRAINT app_environment_secret_ref_suppressions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_environment_secret_ref_suppressions app_environment_secret_ref_suppressions_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_environment_secret_ref_suppressions
+    ADD CONSTRAINT app_environment_secret_ref_suppressions_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_environment_secret_ref_suppressions app_environment_secret_ref_suppressions_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_environment_secret_ref_suppressions
+    ADD CONSTRAINT app_environment_secret_ref_suppressions_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_environment_secret_ref_suppressions app_environment_secret_ref_suppressions_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_environment_secret_ref_suppressions
+    ADD CONSTRAINT app_environment_secret_ref_suppressions_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
 
 
 --
@@ -24550,6 +24742,22 @@ ALTER TABLE ONLY public.exclusive_work_trigger_bindings
 
 
 --
+-- Name: execution_artifact_grants execution_artifact_grants_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.execution_artifact_grants
+    ADD CONSTRAINT execution_artifact_grants_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: execution_artifact_grants execution_artifact_grants_source_execution_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.execution_artifact_grants
+    ADD CONSTRAINT execution_artifact_grants_source_execution_id_fkey FOREIGN KEY (source_execution_id) REFERENCES public.executions(id) ON DELETE CASCADE;
+
+
+--
 -- Name: execution_events execution_events_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -24564,26 +24772,13 @@ ALTER TABLE ONLY public.execution_events
 ALTER TABLE ONLY public.execution_events
     ADD CONSTRAINT execution_events_execution_id_fkey FOREIGN KEY (execution_id) REFERENCES public.executions(id) ON DELETE CASCADE;
 
+
 --
 -- Name: execution_outbound_integrations execution_outbound_integrations_execution_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.execution_outbound_integrations
     ADD CONSTRAINT execution_outbound_integrations_execution_id_fkey FOREIGN KEY (execution_id) REFERENCES public.executions(id) ON DELETE CASCADE;
-
---
--- Name: execution_artifact_grants execution_artifact_grants_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.execution_artifact_grants
-    ADD CONSTRAINT execution_artifact_grants_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
-
---
--- Name: execution_artifact_grants execution_artifact_grants_source_execution_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.execution_artifact_grants
-    ADD CONSTRAINT execution_artifact_grants_source_execution_id_fkey FOREIGN KEY (source_execution_id) REFERENCES public.executions(id) ON DELETE CASCADE;
 
 
 --
@@ -26435,6 +26630,14 @@ ALTER TABLE ONLY public.schedule_occurrences
 
 
 --
+-- Name: schedule_occurrences schedule_occurrences_exclusive_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.schedule_occurrences
+    ADD CONSTRAINT schedule_occurrences_exclusive_operation_id_fkey FOREIGN KEY (exclusive_operation_id) REFERENCES public.exclusive_work_operations(id) ON DELETE SET NULL;
+
+
+--
 -- Name: schedule_occurrences schedule_occurrences_invocation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -26752,31 +26955,6 @@ ALTER TABLE ONLY public.workflow_step_attempts
 
 ALTER TABLE ONLY public.workflow_steps
     ADD CONSTRAINT workflow_steps_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.workflow_runs(id) ON DELETE CASCADE;
-
-
--- Keep this trigger alongside migrations/20261001110000001_runs_execution_principals.sql.
-CREATE FUNCTION public.preserve_api_key_runs_principal() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-DECLARE
-  predecessor_principal uuid;
-BEGIN
-  IF NEW.rotated_from_id IS NOT NULL THEN
-    SELECT runs_principal_id INTO predecessor_principal
-      FROM api_keys
-     WHERE id = NEW.rotated_from_id;
-    IF NOT FOUND THEN
-      RAISE EXCEPTION 'rotated API key predecessor % does not exist', NEW.rotated_from_id;
-    END IF;
-    NEW.runs_principal_id := predecessor_principal;
-  END IF;
-  RETURN NEW;
-END;
-$$;
-
-CREATE TRIGGER api_keys_preserve_runs_principal
-    BEFORE INSERT ON public.api_keys
-    FOR EACH ROW EXECUTE FUNCTION public.preserve_api_key_runs_principal();
 
 
 --

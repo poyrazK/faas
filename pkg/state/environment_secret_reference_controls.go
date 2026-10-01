@@ -16,6 +16,13 @@ type EnvironmentSecretReferenceQuotaError struct{ Observed int }
 func (e *EnvironmentSecretReferenceQuotaError) Error() string { return ErrQuotaExceeded.Error() }
 func (e *EnvironmentSecretReferenceQuotaError) Unwrap() error { return ErrQuotaExceeded }
 
+type EnvironmentSecretReferenceSuppressionQuotaError struct{}
+
+func (e *EnvironmentSecretReferenceSuppressionQuotaError) Error() string {
+	return "secret reference suppression limit reached"
+}
+func (e *EnvironmentSecretReferenceSuppressionQuotaError) Unwrap() error { return ErrQuotaExceeded }
+
 // Controls retain the catalog identity observed before a customer mutation.
 // A replacement with the same slug cannot receive that mutation.
 type AppEnvironmentSecretReferenceTarget struct {
@@ -23,9 +30,10 @@ type AppEnvironmentSecretReferenceTarget struct {
 }
 
 type AppEnvironmentSecretReferenceSnapshot struct {
-	Target     AppEnvironmentSecretReferenceTarget
-	References map[string]string
-	Count      int
+	Target         AppEnvironmentSecretReferenceTarget
+	References     map[string]string
+	SuppressedKeys []string
+	Count          int
 }
 
 type AppEnvironmentSecretReferenceControlStore interface {
@@ -65,7 +73,7 @@ func (m *MemStore) ReadAppEnvironmentSecretReferences(_ context.Context, account
 		}
 	}
 	return AppEnvironmentSecretReferenceSnapshot{Target: AppEnvironmentSecretReferenceTarget{accountID, appID, env.ID, scope},
-		References: m.environmentSecretRefsLocked(appID, scope), Count: count}, nil
+		References: m.environmentSecretRefsLocked(appID, scope), SuppressedKeys: m.environmentSecretSuppressionsLocked(appID, scope), Count: count}, nil
 }
 
 func (s *PgStore) ReadAppEnvironmentSecretReferences(ctx context.Context, accountID, appID, scope string) (AppEnvironmentSecretReferenceSnapshot, error) {
@@ -83,7 +91,7 @@ func (s *PgStore) ReadAppEnvironmentSecretReferences(ctx context.Context, accoun
 		return AppEnvironmentSecretReferenceSnapshot{}, ErrInvalidArgument
 	}
 	return AppEnvironmentSecretReferenceSnapshot{Target: AppEnvironmentSecretReferenceTarget{accountID, appID, pgUUIDString(row.EnvironmentID), scope},
-		References: refs, Count: int(row.Count)}, nil
+		References: refs, SuppressedKeys: row.SuppressedKeys, Count: int(row.Count)}, nil
 }
 
 func (m *MemStore) SetAppEnvironmentSecretReference(ctx context.Context, target AppEnvironmentSecretReferenceTarget, key, ref string) error {

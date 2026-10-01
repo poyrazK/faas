@@ -92,12 +92,15 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     environment: str,
 ) -> Response[Any | Problem]:
-    """Remove scoped reference intent while preserving the sealed source.
+    """Suppress a primary workload secret destination while preserving the sealed source.
 
      Requires secrets write permission and the same MFA posture as sealed secret writes. Uses the
-    observed catalog identity and the same Git ownership/override contract as PUT. An absent unowned
-    reference is an idempotent success. Removing this overlay preserves the sealed value and can reveal
-    an original deployment reference or automatic secret delivery on future wakes.
+    observed catalog identity and the same Git ownership/override contract as PUT. An already suppressed
+    unowned destination is an idempotent success. Removing a reference preserves the sealed value and
+    records durable suppression of this destination on future cold wakes, including original deployment
+    references and automatic delivery. PUT clears that suppression. Suppressed destinations have a
+    separate bound of 1024 keys per application across environments and do not consume the variable
+    quota.
 
     Args:
         slug (str):
@@ -132,12 +135,15 @@ def sync(
     client: AuthenticatedClient | Client,
     environment: str,
 ) -> Any | Problem | None:
-    """Remove scoped reference intent while preserving the sealed source.
+    """Suppress a primary workload secret destination while preserving the sealed source.
 
      Requires secrets write permission and the same MFA posture as sealed secret writes. Uses the
-    observed catalog identity and the same Git ownership/override contract as PUT. An absent unowned
-    reference is an idempotent success. Removing this overlay preserves the sealed value and can reveal
-    an original deployment reference or automatic secret delivery on future wakes.
+    observed catalog identity and the same Git ownership/override contract as PUT. An already suppressed
+    unowned destination is an idempotent success. Removing a reference preserves the sealed value and
+    records durable suppression of this destination on future cold wakes, including original deployment
+    references and automatic delivery. PUT clears that suppression. Suppressed destinations have a
+    separate bound of 1024 keys per application across environments and do not consume the variable
+    quota.
 
     Args:
         slug (str):
@@ -167,12 +173,15 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     environment: str,
 ) -> Response[Any | Problem]:
-    """Remove scoped reference intent while preserving the sealed source.
+    """Suppress a primary workload secret destination while preserving the sealed source.
 
      Requires secrets write permission and the same MFA posture as sealed secret writes. Uses the
-    observed catalog identity and the same Git ownership/override contract as PUT. An absent unowned
-    reference is an idempotent success. Removing this overlay preserves the sealed value and can reveal
-    an original deployment reference or automatic secret delivery on future wakes.
+    observed catalog identity and the same Git ownership/override contract as PUT. An already suppressed
+    unowned destination is an idempotent success. Removing a reference preserves the sealed value and
+    records durable suppression of this destination on future cold wakes, including original deployment
+    references and automatic delivery. PUT clears that suppression. Suppressed destinations have a
+    separate bound of 1024 keys per application across environments and do not consume the variable
+    quota.
 
     Args:
         slug (str):
@@ -205,12 +214,15 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     environment: str,
 ) -> Any | Problem | None:
-    """Remove scoped reference intent while preserving the sealed source.
+    """Suppress a primary workload secret destination while preserving the sealed source.
 
      Requires secrets write permission and the same MFA posture as sealed secret writes. Uses the
-    observed catalog identity and the same Git ownership/override contract as PUT. An absent unowned
-    reference is an idempotent success. Removing this overlay preserves the sealed value and can reveal
-    an original deployment reference or automatic secret delivery on future wakes.
+    observed catalog identity and the same Git ownership/override contract as PUT. An already suppressed
+    unowned destination is an idempotent success. Removing a reference preserves the sealed value and
+    records durable suppression of this destination on future cold wakes, including original deployment
+    references and automatic delivery. PUT clears that suppression. Suppressed destinations have a
+    separate bound of 1024 keys per application across environments and do not consume the variable
+    quota.
 
     Args:
         slug (str):

@@ -62,7 +62,7 @@ func cmdSecretReferences(args []string) int {
 		if jsonOutput {
 			return jsonOut(writeJSON(map[string]string{"environment": *environment, "key": key}))
 		}
-		_, _ = fmt.Fprintf(osStdout, "%s/%s: reference %s removed\n", *app, *environment, key)
+		_, _ = fmt.Fprintf(osStdout, "%s/%s: key %s suppressed on future cold wakes\n", *app, *environment, key)
 	}
 	return 0
 }
@@ -103,6 +103,10 @@ func renderSecretReferences(app string, response api.AppSecretReferenceListRespo
 	sort.Strings(keys)
 	for _, key := range keys {
 		_, _ = fmt.Fprintf(osStdout, "  %s -> %s\n", key, response.References[key])
+	}
+	sort.Strings(response.SuppressedKeys)
+	for _, key := range response.SuppressedKeys {
+		_, _ = fmt.Fprintf(osStdout, "  %s (suppressed)\n", key)
 	}
 	return 0
 }

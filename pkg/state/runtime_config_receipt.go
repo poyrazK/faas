@@ -99,7 +99,7 @@ func (m *MemStore) runtimeConfigReceiptRequiredLocked(appID, scope string) bool 
 			}
 		}
 	}
-	return len(m.environmentSecretRefsLocked(appID, scope)) > 0
+	return len(m.environmentSecretRefsLocked(appID, scope)) > 0 || len(m.environmentSecretSuppressionsLocked(appID, scope)) > 0
 }
 
 func (m *MemStore) RuntimeConfigReceiptRequired(_ context.Context, appID, scope string) (bool, error) {
@@ -129,6 +129,12 @@ func (m *MemStore) runtimeConfigInputsFreshLocked(appID string, inputs RuntimeCo
 		}
 	}
 	managed := m.environmentSecretRefsLocked(appID, inputs.Scope)
+	suppressed := m.environmentSecretSuppressionsLocked(appID, inputs.Scope)
+	for _, key := range suppressed {
+		if _, delivered := inputs.SecretRefs[key]; delivered {
+			return false
+		}
+	}
 	for key, ref := range managed {
 		if _, shadowed := variables[key]; shadowed {
 			return false
@@ -137,15 +143,20 @@ func (m *MemStore) runtimeConfigInputsFreshLocked(appID string, inputs RuntimeCo
 			return false
 		}
 	}
+	selected := map[string]int64{}
 	for _, ref := range inputs.SecretRefs {
 		name := strings.TrimPrefix(ref, api.SecretRefPrefix)
 		version, exists := current[inputs.Scope+"/"+name]
 		if !exists || inputs.SecretVersions[inputs.Scope+"/"+name] != version {
 			return false
 		}
+		selected[inputs.Scope+"/"+name] = version
+	}
+	if len(suppressed) > 0 && !maps.Equal(inputs.SecretVersions, selected) {
+		return false
 	}
 	if inputs.AllSecrets {
-		if len(inputs.SecretRefs) == 0 && len(managed) == 0 {
+		if len(inputs.SecretRefs) == 0 && len(managed) == 0 && len(suppressed) == 0 {
 			if !maps.Equal(inputs.SecretVersions, current) {
 				return false
 			}
@@ -154,6 +165,9 @@ func (m *MemStore) runtimeConfigInputsFreshLocked(appID string, inputs RuntimeCo
 			for ref := range current {
 				_, name, _ := strings.Cut(ref, "/")
 				refs[name] = api.SecretRefPrefix + name
+			}
+			for _, key := range suppressed {
+				delete(refs, key)
 			}
 			maps.Copy(refs, managed)
 			if !maps.Equal(inputs.SecretRefs, refs) {

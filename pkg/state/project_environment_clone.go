@@ -159,6 +159,7 @@ func (m *MemStore) CloneProjectEnvironment(_ context.Context, clone ProjectEnvir
 	result.VariablesCopied = m.copyProjectEnvironmentVariablesLocked(apps, clone.SourceSlug, clone.TargetSlug, created.CreatedAt)
 	result.SecretsCopied = m.copyProjectEnvironmentSecretsLocked(apps, clone.SourceSlug, clone.TargetSlug, created.CreatedAt)
 	result.SecretReferencesCopied = m.copyProjectEnvironmentSecretReferencesLocked(apps, sourceEnvironment.ID, created, now)
+	m.copyProjectEnvironmentSecretSuppressionsLocked(apps, sourceEnvironment.ID, created, now)
 	for appID := range apps {
 		app := m.apps[appID]
 		policy, ok := m.projectEnvironmentRoutePolicies[projectEnvironmentRoutePolicyKey(appID, clone.SourceSlug)]
@@ -258,6 +259,10 @@ func (m *MemStore) checkProjectCloneQuotaLocked(apps map[string]string, source s
 		if limits.EnvVarsMax > 0 && envCount+sourceEnv > limits.EnvVarsMax {
 			return &ProjectEnvironmentCloneQuotaError{WorkloadSlug: slug, Resource: "variables", Limit: limits.EnvVarsMax, Observed: envCount + sourceEnv}
 		}
+		observedSuppressions := m.environmentSecretSuppressionCountLocked(appID) + len(m.environmentSecretSuppressionsLocked(appID, source))
+		if observedSuppressions > api.EnvironmentSecretReferenceSuppressionsMaxPerApp {
+			return &ProjectEnvironmentCloneQuotaError{WorkloadSlug: slug, Resource: "secret_reference_suppressions", Limit: api.EnvironmentSecretReferenceSuppressionsMaxPerApp, Observed: observedSuppressions}
+		}
 	}
 	return nil
 }
@@ -276,6 +281,19 @@ func (m *MemStore) copyProjectEnvironmentSecretReferencesLocked(apps map[string]
 		m.markEnvironmentRuntimeChangedAndSnapshotsLocked(key.AppID, target.Slug, now)
 	}
 	return len(rows)
+}
+
+func (m *MemStore) copyProjectEnvironmentSecretSuppressionsLocked(apps map[string]string, sourceID string, target ProjectEnvironment, now time.Time) {
+	rows := map[environmentSecretRefKey]time.Time{}
+	for key := range m.appEnvironmentSecretSuppressions {
+		if _, ok := apps[key.AppID]; ok && key.EnvironmentID == sourceID {
+			rows[environmentSecretRefKey{key.AppID, target.ID, key.Key}] = now
+		}
+	}
+	for key := range rows {
+		m.appEnvironmentSecretSuppressions[key] = now
+		m.markEnvironmentRuntimeChangedAndSnapshotsLocked(key.AppID, target.Slug, now)
+	}
 }
 
 func (m *MemStore) copyProjectEnvironmentConfigLocked(clone ProjectEnvironmentClone, now time.Time) ProjectEnvironmentCloneResult {

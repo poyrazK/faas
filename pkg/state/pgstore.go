@@ -25297,6 +25297,12 @@ func mapErr(err error) error {
 			if pgErr.ConstraintName == "environment_gitops_field_owned" {
 				return ErrEnvironmentGitManaged
 			}
+			if pgErr.ConstraintName == "environment_secret_ref_exclusive" {
+				return ErrConflict
+			}
+			if pgErr.ConstraintName == "environment_secret_ref_suppression_quota" {
+				return &EnvironmentSecretReferenceSuppressionQuotaError{}
+			}
 			if pgErr.ConstraintName == "service_capacity_protection" {
 				return &ServiceCapacityError{}
 			}

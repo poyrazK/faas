@@ -1374,6 +1374,33 @@ func (q *Queries) CopyProjectEnvironmentSecretReferences(ctx context.Context, db
 	return count, err
 }
 
+const copyProjectEnvironmentSecretSuppressions = `-- name: CopyProjectEnvironmentSecretSuppressions :exec
+INSERT INTO app_environment_secret_ref_suppressions(account_id,project_id,environment_id,app_id,scope,key)
+SELECT r.account_id,r.project_id,target.id,r.app_id,target.slug,r.key
+FROM app_environment_secret_ref_suppressions r JOIN apps a ON a.id=r.app_id
+JOIN project_environments source ON source.id=r.environment_id
+JOIN project_environments target ON target.project_id=r.project_id AND target.account_id=r.account_id AND target.slug=$1::text
+WHERE r.account_id=$2::uuid AND r.project_id=$3::uuid
+ AND source.slug=$4::text AND a.status<>'deleted'
+`
+
+type CopyProjectEnvironmentSecretSuppressionsParams struct {
+	TargetSlug string
+	AccountID  pgtype.UUID
+	ProjectID  pgtype.UUID
+	SourceSlug string
+}
+
+func (q *Queries) CopyProjectEnvironmentSecretSuppressions(ctx context.Context, db DBTX, arg CopyProjectEnvironmentSecretSuppressionsParams) error {
+	_, err := db.Exec(ctx, copyProjectEnvironmentSecretSuppressions,
+		arg.TargetSlug,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.SourceSlug,
+	)
+	return err
+}
+
 const countAppEnvironmentIntent = `-- name: CountAppEnvironmentIntent :one
 SELECT ((SELECT count(*) FROM app_envs WHERE account_id=$1::uuid AND app_id=$2::uuid)
  + (SELECT count(*) FROM app_environment_secret_refs WHERE account_id=$1::uuid AND app_id=$2::uuid))::bigint AS count
@@ -2805,6 +2832,28 @@ func (q *Queries) DeleteEnvironmentGitOpsVariable(ctx context.Context, db DBTX, 
 		arg.AccountID,
 		arg.AppID,
 		arg.Scope,
+		arg.Key,
+	)
+	return err
+}
+
+const deleteEnvironmentSecretReferenceSuppression = `-- name: DeleteEnvironmentSecretReferenceSuppression :exec
+DELETE FROM app_environment_secret_ref_suppressions WHERE account_id=$1::uuid AND app_id=$2::uuid
+ AND environment_id=$3::uuid AND key=$4::text
+`
+
+type DeleteEnvironmentSecretReferenceSuppressionParams struct {
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	EnvironmentID pgtype.UUID
+	Key           string
+}
+
+func (q *Queries) DeleteEnvironmentSecretReferenceSuppression(ctx context.Context, db DBTX, arg DeleteEnvironmentSecretReferenceSuppressionParams) error {
+	_, err := db.Exec(ctx, deleteEnvironmentSecretReferenceSuppression,
+		arg.AccountID,
+		arg.AppID,
+		arg.EnvironmentID,
 		arg.Key,
 	)
 	return err
@@ -5787,6 +5836,26 @@ func (q *Queries) FinishEnvironmentGitSourcePoll(ctx context.Context, db DBTX, a
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const getAppEnvironmentSecretIntent = `-- name: GetAppEnvironmentSecretIntent :one
+SELECT jsonb_build_object('references',environment_scoped_secret_refs(a.id,$1::text),
+ 'suppressed_keys',environment_scoped_secret_suppressions(a.id,$1::text))::jsonb AS intent
+FROM apps a WHERE a.id=$2::uuid AND a.account_id=$3::uuid AND a.status<>'deleted'
+`
+
+type GetAppEnvironmentSecretIntentParams struct {
+	Scope     string
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+// Read both sides of the intent at one statement snapshot.
+func (q *Queries) GetAppEnvironmentSecretIntent(ctx context.Context, db DBTX, arg GetAppEnvironmentSecretIntentParams) ([]byte, error) {
+	row := db.QueryRow(ctx, getAppEnvironmentSecretIntent, arg.Scope, arg.AppID, arg.AccountID)
+	var intent []byte
+	err := row.Scan(&intent)
+	return intent, err
 }
 
 const getAppEnvironmentSecretReferences = `-- name: GetAppEnvironmentSecretReferences :one
@@ -17411,6 +17480,10 @@ SELECT jsonb_build_object(
                 'max_attempts', t.max_attempts, 'payload_max', t.payload_max_bytes, 'broker_poison_strategy', t.broker_poison_strategy, 'filter_criteria', t.filter_criteria)) FROM triggers t WHERE t.queue_binding_id=b.id), '[]'::jsonb)))
             FROM queue_bindings b WHERE b.app_id=a.id AND b.account_id=s.account_id AND b.environment_id=s.environment_id), '[]'::jsonb), 'variable_count', (SELECT count(*) FROM app_envs v WHERE v.app_id = a.id AND v.account_id = s.account_id),
         'secret_refs', environment_scoped_secret_refs(a.id,e.slug),
+        'suppressed_keys', environment_scoped_secret_suppressions(a.id,e.slug),
+        'suppression_count', (SELECT count(*) FROM app_environment_secret_ref_suppressions r WHERE r.app_id=a.id AND r.account_id=s.account_id),
+        'live_deployments', coalesce((SELECT jsonb_agg(jsonb_build_object('id',d.id,'secret_refs',d.override_env_secrets) ORDER BY d.id)
+            FROM deployments d WHERE d.app_id=a.id AND d.scope=e.slug AND d.status='live'),'[]'::jsonb),
         'secret_ref_count', (SELECT count(*) FROM app_environment_secret_refs r WHERE r.app_id=a.id AND r.account_id=s.account_id),
         'secret_names', coalesce((SELECT jsonb_agg(v.key) FROM app_secrets v WHERE v.app_id=a.id AND v.account_id=s.account_id AND v.scope=e.slug),'[]'::jsonb),
         'variables', coalesce((SELECT jsonb_object_agg(v.key, v.value) FROM app_envs v
@@ -17901,7 +17974,10 @@ SELECT a.slug,
   +(SELECT count(*) FROM app_environment_secret_refs r WHERE r.app_id=a.id))::bigint AS env_count,
  ((SELECT count(*) FROM app_envs v WHERE v.app_id=a.id AND v.scope=$1::text)
   +(SELECT count(*) FROM app_environment_secret_refs r JOIN project_environments e ON e.id=r.environment_id
-    WHERE r.app_id=a.id AND e.slug=$1::text))::bigint AS source_env
+    WHERE r.app_id=a.id AND e.slug=$1::text))::bigint AS source_env,
+ (SELECT count(*) FROM app_environment_secret_ref_suppressions r WHERE r.app_id=a.id)::bigint AS suppression_count,
+ (SELECT count(*) FROM app_environment_secret_ref_suppressions r JOIN project_environments e ON e.id=r.environment_id
+    WHERE r.app_id=a.id AND e.slug=$1::text)::bigint AS source_suppressions
 FROM apps a WHERE a.account_id=$2::uuid AND a.project_id=$3::uuid AND a.status<>'deleted'
 ORDER BY a.slug
 `
@@ -17913,12 +17989,14 @@ type ProjectEnvironmentCloneQuotaParams struct {
 }
 
 type ProjectEnvironmentCloneQuotaRow struct {
-	Slug          string
-	SecretCount   int64
-	SourceSecrets int64
-	SourceManaged int64
-	EnvCount      int64
-	SourceEnv     int64
+	Slug               string
+	SecretCount        int64
+	SourceSecrets      int64
+	SourceManaged      int64
+	EnvCount           int64
+	SourceEnv          int64
+	SuppressionCount   int64
+	SourceSuppressions int64
 }
 
 // Counts include reference intent in the shared environment-key quota.
@@ -17938,6 +18016,8 @@ func (q *Queries) ProjectEnvironmentCloneQuota(ctx context.Context, db DBTX, arg
 			&i.SourceManaged,
 			&i.EnvCount,
 			&i.SourceEnv,
+			&i.SuppressionCount,
+			&i.SourceSuppressions,
 		); err != nil {
 			return nil, err
 		}
@@ -18262,6 +18342,36 @@ func (q *Queries) PutEnvironmentGitOpsVariable(ctx context.Context, db DBTX, arg
 		arg.Scope,
 		arg.Key,
 		arg.Value,
+	)
+	return err
+}
+
+const putEnvironmentSecretReferenceSuppression = `-- name: PutEnvironmentSecretReferenceSuppression :exec
+INSERT INTO app_environment_secret_ref_suppressions(account_id,project_id,environment_id,app_id,scope,key)
+SELECT $1::uuid,$2::uuid,$3::uuid,$4::uuid,
+ $5::text,$6::text
+WHERE NOT EXISTS(SELECT 1 FROM app_environment_secret_ref_suppressions
+ WHERE app_id=$4::uuid AND environment_id=$3::uuid AND key=$6::text)
+ON CONFLICT(app_id,environment_id,key) DO NOTHING
+`
+
+type PutEnvironmentSecretReferenceSuppressionParams struct {
+	AccountID     pgtype.UUID
+	ProjectID     pgtype.UUID
+	EnvironmentID pgtype.UUID
+	AppID         pgtype.UUID
+	Scope         string
+	Key           string
+}
+
+func (q *Queries) PutEnvironmentSecretReferenceSuppression(ctx context.Context, db DBTX, arg PutEnvironmentSecretReferenceSuppressionParams) error {
+	_, err := db.Exec(ctx, putEnvironmentSecretReferenceSuppression,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.AppID,
+		arg.Scope,
+		arg.Key,
 	)
 	return err
 }
@@ -19451,6 +19561,7 @@ func (q *Queries) ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg
 
 const readAppEnvironmentSecretReferenceSnapshot = `-- name: ReadAppEnvironmentSecretReferenceSnapshot :one
 SELECT e.id AS environment_id,environment_scoped_secret_refs(a.id,e.slug)::jsonb AS refs,
+ environment_scoped_secret_suppressions(a.id,e.slug)::text[] AS suppressed_keys,
  ((SELECT count(*) FROM app_envs v WHERE v.app_id=a.id)
  +(SELECT count(*) FROM app_environment_secret_refs r WHERE r.app_id=a.id))::bigint AS count
 FROM apps a JOIN project_environments e ON e.project_id=a.project_id AND e.account_id=a.account_id
@@ -19465,16 +19576,22 @@ type ReadAppEnvironmentSecretReferenceSnapshotParams struct {
 }
 
 type ReadAppEnvironmentSecretReferenceSnapshotRow struct {
-	EnvironmentID pgtype.UUID
-	Refs          []byte
-	Count         int64
+	EnvironmentID  pgtype.UUID
+	Refs           []byte
+	SuppressedKeys []string
+	Count          int64
 }
 
 // A customer projection includes only names and one catalog/intent snapshot.
 func (q *Queries) ReadAppEnvironmentSecretReferenceSnapshot(ctx context.Context, db DBTX, arg ReadAppEnvironmentSecretReferenceSnapshotParams) (ReadAppEnvironmentSecretReferenceSnapshotRow, error) {
 	row := db.QueryRow(ctx, readAppEnvironmentSecretReferenceSnapshot, arg.AppID, arg.AccountID, arg.Scope)
 	var i ReadAppEnvironmentSecretReferenceSnapshotRow
-	err := row.Scan(&i.EnvironmentID, &i.Refs, &i.Count)
+	err := row.Scan(
+		&i.EnvironmentID,
+		&i.Refs,
+		&i.SuppressedKeys,
+		&i.Count,
+	)
 	return i, err
 }
 

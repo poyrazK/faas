@@ -5367,6 +5367,10 @@ SELECT jsonb_build_object(
                 'max_attempts', t.max_attempts, 'payload_max', t.payload_max_bytes, 'broker_poison_strategy', t.broker_poison_strategy, 'filter_criteria', t.filter_criteria)) FROM triggers t WHERE t.queue_binding_id=b.id), '[]'::jsonb)))
             FROM queue_bindings b WHERE b.app_id=a.id AND b.account_id=s.account_id AND b.environment_id=s.environment_id), '[]'::jsonb), 'variable_count', (SELECT count(*) FROM app_envs v WHERE v.app_id = a.id AND v.account_id = s.account_id),
         'secret_refs', environment_scoped_secret_refs(a.id,e.slug),
+        'suppressed_keys', environment_scoped_secret_suppressions(a.id,e.slug),
+        'suppression_count', (SELECT count(*) FROM app_environment_secret_ref_suppressions r WHERE r.app_id=a.id AND r.account_id=s.account_id),
+        'live_deployments', coalesce((SELECT jsonb_agg(jsonb_build_object('id',d.id,'secret_refs',d.override_env_secrets) ORDER BY d.id)
+            FROM deployments d WHERE d.app_id=a.id AND d.scope=e.slug AND d.status='live'),'[]'::jsonb),
         'secret_ref_count', (SELECT count(*) FROM app_environment_secret_refs r WHERE r.app_id=a.id AND r.account_id=s.account_id),
         'secret_names', coalesce((SELECT jsonb_agg(v.key) FROM app_secrets v WHERE v.app_id=a.id AND v.account_id=s.account_id AND v.scope=e.slug),'[]'::jsonb),
         'variables', coalesce((SELECT jsonb_object_agg(v.key, v.value) FROM app_envs v
@@ -6555,7 +6559,10 @@ SELECT a.slug,
   +(SELECT count(*) FROM app_environment_secret_refs r WHERE r.app_id=a.id))::bigint AS env_count,
  ((SELECT count(*) FROM app_envs v WHERE v.app_id=a.id AND v.scope=sqlc.arg(source_slug)::text)
   +(SELECT count(*) FROM app_environment_secret_refs r JOIN project_environments e ON e.id=r.environment_id
-    WHERE r.app_id=a.id AND e.slug=sqlc.arg(source_slug)::text))::bigint AS source_env
+    WHERE r.app_id=a.id AND e.slug=sqlc.arg(source_slug)::text))::bigint AS source_env,
+ (SELECT count(*) FROM app_environment_secret_ref_suppressions r WHERE r.app_id=a.id)::bigint AS suppression_count,
+ (SELECT count(*) FROM app_environment_secret_ref_suppressions r JOIN project_environments e ON e.id=r.environment_id
+    WHERE r.app_id=a.id AND e.slug=sqlc.arg(source_slug)::text)::bigint AS source_suppressions
 FROM apps a WHERE a.account_id=sqlc.arg(account_id)::uuid AND a.project_id=sqlc.arg(project_id)::uuid AND a.status<>'deleted'
 ORDER BY a.slug;
 
@@ -6577,6 +6584,7 @@ SELECT count(*) FROM copied;
 -- A customer projection includes only names and one catalog/intent snapshot.
 -- name: ReadAppEnvironmentSecretReferenceSnapshot :one
 SELECT e.id AS environment_id,environment_scoped_secret_refs(a.id,e.slug)::jsonb AS refs,
+ environment_scoped_secret_suppressions(a.id,e.slug)::text[] AS suppressed_keys,
  ((SELECT count(*) FROM app_envs v WHERE v.app_id=a.id)
  +(SELECT count(*) FROM app_environment_secret_refs r WHERE r.app_id=a.id))::bigint AS count
 FROM apps a JOIN project_environments e ON e.project_id=a.project_id AND e.account_id=a.account_id
@@ -6596,3 +6604,30 @@ SELECT EXISTS(SELECT 1 FROM environment_git_sources s JOIN environment_gitops_re
  AND r.app_id=sqlc.arg(app_id)::uuid AND s.mode='enforce' AND f.field_path='secret_refs/'||sqlc.arg(key)::text
  AND NOT EXISTS(SELECT 1 FROM environment_management_overrides o WHERE o.environment_id=f.environment_id
   AND o.resource=f.resource AND o.field_path=f.field_path AND o.expires_at>clock_timestamp())) AS owned;
+
+-- Read both sides of the intent at one statement snapshot.
+-- name: GetAppEnvironmentSecretIntent :one
+SELECT jsonb_build_object('references',environment_scoped_secret_refs(a.id,sqlc.arg(scope)::text),
+ 'suppressed_keys',environment_scoped_secret_suppressions(a.id,sqlc.arg(scope)::text))::jsonb AS intent
+FROM apps a WHERE a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted';
+
+-- name: PutEnvironmentSecretReferenceSuppression :exec
+INSERT INTO app_environment_secret_ref_suppressions(account_id,project_id,environment_id,app_id,scope,key)
+SELECT sqlc.arg(account_id)::uuid,sqlc.arg(project_id)::uuid,sqlc.arg(environment_id)::uuid,sqlc.arg(app_id)::uuid,
+ sqlc.arg(scope)::text,sqlc.arg(key)::text
+WHERE NOT EXISTS(SELECT 1 FROM app_environment_secret_ref_suppressions
+ WHERE app_id=sqlc.arg(app_id)::uuid AND environment_id=sqlc.arg(environment_id)::uuid AND key=sqlc.arg(key)::text)
+ON CONFLICT(app_id,environment_id,key) DO NOTHING;
+
+-- name: DeleteEnvironmentSecretReferenceSuppression :exec
+DELETE FROM app_environment_secret_ref_suppressions WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+ AND environment_id=sqlc.arg(environment_id)::uuid AND key=sqlc.arg(key)::text;
+
+-- name: CopyProjectEnvironmentSecretSuppressions :exec
+INSERT INTO app_environment_secret_ref_suppressions(account_id,project_id,environment_id,app_id,scope,key)
+SELECT r.account_id,r.project_id,target.id,r.app_id,target.slug,r.key
+FROM app_environment_secret_ref_suppressions r JOIN apps a ON a.id=r.app_id
+JOIN project_environments source ON source.id=r.environment_id
+JOIN project_environments target ON target.project_id=r.project_id AND target.account_id=r.account_id AND target.slug=sqlc.arg(target_slug)::text
+WHERE r.account_id=sqlc.arg(account_id)::uuid AND r.project_id=sqlc.arg(project_id)::uuid
+ AND source.slug=sqlc.arg(source_slug)::text AND a.status<>'deleted';

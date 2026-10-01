@@ -39,7 +39,7 @@ func (s *server) listAppSecretReferences(w http.ResponseWriter, r *http.Request,
 	}
 	writeJSON(w, http.StatusOK, api.AppSecretReferenceListResponse{
 		EnvironmentID: snapshot.Target.EnvironmentID, Environment: snapshot.Target.Scope,
-		References: snapshot.References, Count: snapshot.Count, Quota: api.MustLimitsFor(acct.Plan).EnvVarsMax,
+		References: snapshot.References, SuppressedKeys: snapshot.SuppressedKeys, Count: snapshot.Count, Quota: api.MustLimitsFor(acct.Plan).EnvVarsMax,
 	})
 }
 
@@ -106,6 +106,11 @@ func writeSecretReferenceProblem(w http.ResponseWriter, acct state.Account, err 
 	case errors.Is(err, state.ErrNotFound):
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Environment not found", "The application or its registered project environment was not found."))
 	case errors.Is(err, state.ErrQuotaExceeded):
+		var suppressionQuota *state.EnvironmentSecretReferenceSuppressionQuotaError
+		if errors.As(err, &suppressionQuota) {
+			api.WriteProblem(w, api.ErrSecretReferenceSuppressionLimit())
+			return
+		}
 		limits := api.MustLimitsFor(acct.Plan)
 		observed := limits.EnvVarsMax + 1
 		var quota *state.EnvironmentSecretReferenceQuotaError

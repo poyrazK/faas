@@ -45,6 +45,9 @@ func (s *server) populateDashboardSecretReferences(ctx context.Context, log *slo
 		for key, reference := range snapshot.References {
 			data.SecretReferences = append(data.SecretReferences, dashboard.SecretReferenceItem{Environment: environment.Slug, Key: key, Reference: reference})
 		}
+		for _, key := range snapshot.SuppressedKeys {
+			data.SecretReferences = append(data.SecretReferences, dashboard.SecretReferenceItem{Environment: environment.Slug, Key: key, Suppressed: true})
+		}
 	}
 	sort.Strings(data.ScopeOptions)
 	sort.Strings(data.SecretReferenceEnvironments)

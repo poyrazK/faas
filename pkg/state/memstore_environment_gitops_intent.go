@@ -114,6 +114,13 @@ func (m *MemStore) gitOpsSnapshotLocked(memory *environmentGitOpsMemory) gitOpsI
 		}
 		row := gitOpsIntentApp{ID: app.ID, Slug: app.Slug, Type: app.Type, WorkloadClass: app.WorkloadClass, Variables: map[string]string{}}
 		row.SecretRefs = m.environmentSecretRefsLocked(app.ID, source.EnvironmentSlug)
+		row.SuppressedKeys = m.environmentSecretSuppressionsLocked(app.ID, source.EnvironmentSlug)
+		row.SuppressionCount = m.environmentSecretSuppressionCountLocked(app.ID)
+		for _, deployment := range m.deployments {
+			if deployment.AppID == app.ID && normalizedDeploymentScope(deployment.Scope) == source.EnvironmentSlug && deployment.Status == DeployLive {
+				row.LiveDeployments = append(row.LiveDeployments, gitOpsSecretBaseline{ID: deployment.ID, SecretRefs: append(json.RawMessage(nil), deployment.OverrideEnvSecrets...)})
+			}
+		}
 		for key := range m.appEnvironmentSecretRefs {
 			if key.AppID == app.ID {
 				row.SecretRefCount++
@@ -212,6 +219,17 @@ func (m *MemStore) AdoptEnvironmentGitOps(_ context.Context, accountID, sourceID
 	if !plan.CanApply() || plan.Hash != reviewedHash {
 		return ErrConflict
 	}
+	// Validate every preserved reference before transferring any ownership.
+	refs := map[string]string{}
+	for _, change := range plan.Changes {
+		if change.Action == "adopt" && strings.HasPrefix(change.Path, "secret_refs/") && !bytes.Equal(change.Before, json.RawMessage("null")) {
+			var ref string
+			if json.Unmarshal(change.Before, &ref) != nil || !ValidSecretReference(ref) {
+				return ErrInvalidArgument
+			}
+			refs[change.Resource+"#"+change.Path] = ref
+		}
+	}
 	if memory.resources == nil {
 		memory.resources = map[string]string{}
 	}
@@ -230,6 +248,15 @@ func (m *MemStore) AdoptEnvironmentGitOps(_ context.Context, accountID, sourceID
 				memory.queues = map[string]string{}
 			}
 			memory.queues[(environmentsync.Field{Resource: change.Resource, Path: change.Path}).Key()] = observed.State.ResourceIDs[gitOpsQueueResource(change.Resource, change.Path)]
+		}
+		if strings.HasPrefix(change.Path, "secret_refs/") && !bytes.Equal(change.Before, json.RawMessage("null")) {
+			key := environmentSecretRefKey{observed.State.ResourceIDs[change.Resource], memory.source.EnvironmentID, strings.TrimPrefix(change.Path, "secret_refs/")}
+			if m.appEnvironmentSecretRefs == nil {
+				m.appEnvironmentSecretRefs = map[environmentSecretRefKey]environmentSecretRef{}
+			}
+			m.appEnvironmentSecretRefs[key] = environmentSecretRef{refs[change.Resource+"#"+change.Path], time.Now().UTC()}
+			delete(m.appEnvironmentSecretSuppressions, key)
+			m.markEnvironmentRuntimeChangedAndSnapshotsLocked(key.AppID, memory.source.EnvironmentSlug, time.Now().UTC())
 		}
 		field := environmentsync.Field{Resource: change.Resource, Path: change.Path, Value: append(json.RawMessage(nil), change.After...)}
 		memory.owners[field.Key()] = environmentsync.Ownership{Field: field, Manager: sourceID}
@@ -382,9 +409,10 @@ func (m *MemStore) applyEnvironmentGitOps(_ context.Context, lease EnvironmentGi
 				m.appEnvironmentSecretRefs = map[environmentSecretRefKey]environmentSecretRef{}
 			}
 			if change.Action == "remove" {
-				delete(m.appEnvironmentSecretRefs, refKey)
+				m.suppressEnvironmentSecretReferenceLocked(refKey, now)
 			} else {
 				m.appEnvironmentSecretRefs[refKey] = environmentSecretRef{secretRefs[change.Resource+"#"+change.Path], now}
+				delete(m.appEnvironmentSecretSuppressions, refKey)
 			}
 			m.markEnvironmentRuntimeChangedAndSnapshotsLocked(appID, source.EnvironmentSlug, now)
 

@@ -10912,10 +10912,10 @@ paths:
     delete:
       tags: [secrets]
       operationId: deleteAppSecretReference
-      summary: Remove scoped reference intent while preserving the sealed source.
-      description: Requires secrets write permission and the same MFA posture as sealed secret writes. Uses the observed catalog identity and the same Git ownership/override contract as PUT. An absent unowned reference is an idempotent success. Removing this overlay preserves the sealed value and can reveal an original deployment reference or automatic secret delivery on future wakes.
+      summary: Suppress a primary workload secret destination while preserving the sealed source.
+      description: Requires secrets write permission and the same MFA posture as sealed secret writes. Uses the observed catalog identity and the same Git ownership/override contract as PUT. An already suppressed unowned destination is an idempotent success. Removing a reference preserves the sealed value and records durable suppression of this destination on future cold wakes, including original deployment references and automatic delivery. PUT clears that suppression. Suppressed destinations have a separate bound of 1024 keys per application across environments and do not consume the variable quota.
       responses:
-        '204': { description: Reference removed; the sealed source value is retained. }
+        '204': { description: Destination suppressed on future cold wakes; the sealed source value is retained. }
         '400': { $ref: '#/components/responses/ValidationError' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -35600,7 +35600,7 @@ components:
           example: 'secret:DATABASE_PRIMARY'
 
     AppSecretReferenceListResponse:
-      description: Current environment identity, destination-to-source names and shared variable/reference quota usage.
+      description: Current environment identity, destination-to-source names, suppressed destination keys and shared variable/reference quota usage.
       type: object
       required: [environment_id, environment, references, count, quota]
       properties:
@@ -35609,6 +35609,10 @@ components:
         references:
           type: object
           additionalProperties: { type: string, pattern: '^secret:[A-Z][A-Z0-9_]*$' }
+        suppressed_keys:
+          type: array
+          description: Destinations excluded from primary workload secret delivery until an explicit PUT reference re-enables them. Omitted by older servers; consumes no variable slots.
+          items: { type: string }
         count: { type: integer, minimum: 0, description: Shared variable/reference quota usage across all environments. }
         quota: { type: integer, minimum: 0 }
 

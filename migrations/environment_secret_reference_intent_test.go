@@ -3,8 +3,10 @@
 package migrations_test
 
 import (
+	"encoding/json"
 	"errors"
 	"maps"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -24,7 +26,7 @@ func environmentGitOpsReplayVersions() []int64 {
 		20261001010000001, 20261001020000001, 20261001020000002, 20261001030000001, 20261001040000001, 20261001050000001,
 		20261001060000001, 20261001070000001, 20261001070000002, 20261001080000001, 20261001080000002, 20261001080000003, 20261001081007501,
 		20261001094704872, 20261001110831601, 20261001120000001, 20261001142049282, 20261001143949543,
-		20261001150000001, 20261001160000001, 20261001164005579, 20261001181539580,
+		20261001150000001, 20261001160000001, 20261001164005579, 20261001181539580, 20261001214705000,
 	}
 }
 
@@ -95,12 +97,18 @@ func TestEnvironmentSecretReferenceIntentGuardsAndPopulatedReplay(t *testing.T) 
 	if _, err := store.ApplyEnvironmentGitOpsWithEffects(ctx, lease, plan, nil); err != nil {
 		t.Fatal(err)
 	}
+	if err := store.DeleteAppEnvironmentSecretReference(ctx, account.ID, app.ID, "production", "REMOVED"); err != nil {
+		t.Fatal(err)
+	}
 	for _, statement := range []string{
 		`update app_environment_secret_refs set secret_name='DATABASE_A' where app_id=$1 and scope='production'`,
 		`delete from app_environment_secret_refs where app_id=$1 and scope='production'`,
 		`update app_environment_secret_refs set key='ANOTHER' where app_id=$1 and scope='staging'`,
 		`update app_environment_secret_refs set scope='production' where app_id=$1 and scope='staging'`,
 		`insert into app_envs(account_id,app_id,scope,key,value) select account_id,id,'production','DATABASE_URL','shadow' from apps where id=$1`,
+		`insert into app_environment_secret_ref_suppressions(account_id,project_id,environment_id,app_id,scope,key) select r.account_id,r.project_id,r.environment_id,r.app_id,r.scope,r.key from app_environment_secret_refs r where r.app_id=$1 and r.scope='production'`,
+		`insert into app_environment_secret_ref_suppressions(account_id,project_id,environment_id,app_id,scope,key) select r.account_id,r.project_id,r.environment_id,r.app_id,r.scope,r.key from app_environment_secret_refs r where r.app_id=$1 and r.scope='staging'`,
+		`update app_environment_secret_ref_suppressions set key='MOVED' where app_id=$1 and scope='production'`,
 	} {
 		if _, err := pool.Exec(ctx, statement, app.ID); err == nil {
 			t.Fatalf("raw SQL bypassed reference guard: %s", statement)
@@ -113,7 +121,7 @@ func TestEnvironmentSecretReferenceIntentGuardsAndPopulatedReplay(t *testing.T) 
 	if _, err := pool.Exec(ctx, `insert into app_environment_secret_refs(account_id,project_id,environment_id,app_id,scope,key,secret_name) values($1,$2,$3,$4,'staging','CROSS_ACCOUNT','DATABASE_B')`, other.ID, project.ID, staging.ID, app.ID); err == nil {
 		t.Fatal("cross-account reference tuple accepted")
 	}
-	deployment, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:" + strings.Repeat("b", 64), Status: state.DeployLive, Scope: "production"})
+	deployment, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:" + strings.Repeat("b", 64), Status: state.DeployLive, Scope: "production", OverrideEnvSecrets: json.RawMessage(`{"DATABASE_URL":"secret:DATABASE_B"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +139,9 @@ func TestEnvironmentSecretReferenceIntentGuardsAndPopulatedReplay(t *testing.T) 
 	}
 	versions := map[string]int64{}
 	for _, row := range rows {
-		versions["production/"+row.Key] = row.DeliveryVersion
+		if row.Key == "DATABASE_B" {
+			versions["production/"+row.Key] = row.DeliveryVersion
+		}
 	}
 	inputs := state.RuntimeConfigInputs{Scope: "production", Boundary: time.Now().UTC(), Variables: map[string]string{}, SecretVersions: versions, SecretRefs: map[string]string{"DATABASE_URL": "secret:DATABASE_B"}}
 	if err := store.RecordInstanceRuntimeConfigReceipt(ctx, instance.ID, instance.WakeID, inputs); err != nil {
@@ -152,6 +162,10 @@ func TestEnvironmentSecretReferenceIntentGuardsAndPopulatedReplay(t *testing.T) 
 	refs, err := store.AppEnvironmentSecretReferences(ctx, account.ID, app.ID, "production")
 	if err != nil || !maps.Equal(refs, inputs.SecretRefs) {
 		t.Fatalf("replay changed reference intent: %+v %v", refs, err)
+	}
+	intent, err := store.AppEnvironmentSecretIntent(ctx, account.ID, app.ID, "production")
+	if err != nil || !slices.Equal(intent.SuppressedKeys, []string{"REMOVED"}) {
+		t.Fatalf("replay erased suppression: %+v %v", intent, err)
 	}
 	for _, read := range []func() (state.RuntimeConfigInputs, bool, error){
 		func() (state.RuntimeConfigInputs, bool, error) {

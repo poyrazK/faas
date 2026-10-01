@@ -187,3 +187,51 @@ func TestEnvironmentSecretReferencesBindSameNameSources(t *testing.T) {
 	}
 	t.Fatal("same-name destination missing")
 }
+
+func TestEnvironmentSecretReferencesSuppressionSurvivesWakeAndKeepsSidecars(t *testing.T) {
+	store, account, app, dep := scopedSecretRuntimeFixture(t)
+	for _, key := range []string{"DATABASE_URL", "DATABASE_A", "LEGACY"} {
+		if err := store.DeleteAppEnvironmentSecretReference(t.Context(), account.ID, app.ID, "production", key); err != nil {
+			t.Fatal(err)
+		}
+	}
+	engine := &Engine{store: store, log: testLog()}
+	loaded, err := engine.loadDeploymentSealedEnvDelivery(t.Context(), account.ID, app.ID, dep)
+	if err != nil || len(loaded.Entries) != 1 || loaded.References["DATABASE_URL"] != "" || loaded.References["SECOND_ALIAS"] != "secret:DATABASE_B" {
+		t.Fatalf("legacy alias reappeared: %+v %v", loaded, err)
+	}
+	automatic, err := engine.loadSealedEnvDeliveryFor(t.Context(), account.ID, app.ID, "production", nil)
+	if err != nil || !automatic.AllSecrets || !maps.Equal(automatic.References, map[string]string{"DATABASE_B": "secret:DATABASE_B"}) {
+		t.Fatalf("automatic keys reappeared: %+v %v", automatic, err)
+	}
+	sidecar, err := engine.resolveSealedEnvDeliveryFor(t.Context(), account.ID, app.ID, "production", map[string]string{"LEGACY": "secret:LEGACY"}, false)
+	if err != nil || len(sidecar.Entries) != 1 || sidecar.References["LEGACY"] != "secret:LEGACY" {
+		t.Fatalf("primary suppression changed sidecar: %+v %v", sidecar, err)
+	}
+	vmm := &fakeVMM{}
+	wakeEngine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	wake, err := wakeEngine.Wake(t.Context(), app.ID, dep.ID, "production", TriggerAppWake)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputs, exists, err := store.InstanceRuntimeConfigReceipt(t.Context(), wake.InstanceID)
+	if err != nil || !exists || !maps.Equal(inputs.SecretRefs, loaded.References) {
+		t.Fatalf("wake lost suppression evidence: %+v %v %v", inputs, exists, err)
+	}
+	if fresh, err := store.RuntimeConfigInputsFresh(t.Context(), app.ID, inputs); err != nil || !fresh {
+		t.Fatalf("suppressed wake proof: %v %v", fresh, err)
+	}
+	if len(vmm.lastColdBootSpec.SealedEnv) != 1 || vmm.lastColdBootSpec.SealedEnv[0].Key != "SECOND_ALIAS" {
+		t.Fatal("wake staged suppressed key")
+	}
+	if err := store.PutAppEnvironmentSecretReference(t.Context(), account.ID, app.ID, "production", "DATABASE_URL", "secret:DATABASE_A"); err != nil {
+		t.Fatal(err)
+	}
+	if fresh, err := store.RuntimeConfigInputsFresh(t.Context(), app.ID, inputs); err != nil || fresh {
+		t.Fatalf("reenable did not invalidate old boot: %v %v", fresh, err)
+	}
+	loaded, err = wakeEngine.loadDeploymentSealedEnvDelivery(t.Context(), account.ID, app.ID, dep)
+	if err != nil || loaded.References["DATABASE_URL"] != "secret:DATABASE_A" {
+		t.Fatalf("explicit mapping could not re-enable key: %+v %v", loaded, err)
+	}
+}

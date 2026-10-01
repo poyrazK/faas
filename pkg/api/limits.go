@@ -35,6 +35,10 @@ const EnvironmentGitOpsMaxOverrideReasonBytes = 1024
 const EnvironmentGitOpsMaxExpandedArchiveBytes int64 = 512 << 20
 const EnvironmentGitOpsMaxPolicies = 20
 
+// Negative reference intent survives pruning without spending a variable slot.
+// Bound retained keys across all environments of one application.
+const EnvironmentSecretReferenceSuppressionsMaxPerApp = 1024
+
 // EnvironmentGitProtectedBranchEvidenceMaxAge bounds use of policy observations;
 // automatic approval still requires separately verified merge/review evidence.
 const EnvironmentGitProtectedBranchEvidenceMaxAge = time.Minute

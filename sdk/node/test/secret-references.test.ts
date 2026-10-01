@@ -13,7 +13,7 @@ test('secret references carry explicit environments and names through the public
       if (init?.method === 'DELETE') return new Response(null, { status: 204 });
       return Response.json(init?.method === 'PUT'
         ? { environment_id: 'env', environment: 'production', key: 'DATABASE_URL', reference: 'secret:DATABASE' }
-        : { environment_id: 'env', environment: 'production', references: { DATABASE_URL: 'secret:DATABASE' }, count: 1, quota: 20 });
+        : { environment_id: 'env', environment: 'production', references: { DATABASE_URL: 'secret:DATABASE' }, suppressed_keys: ['REMOVED'], count: 1, quota: 20 });
     },
   });
   try {
@@ -24,6 +24,7 @@ test('secret references carry explicit environments and names through the public
     const listed = await SecretsService.listAppSecretReferences({ slug: 'my app', environment: 'production' });
     assert.deepEqual(listed.references, { DATABASE_URL: 'secret:DATABASE' });
     assert.equal(listed.count, 1);
+    assert.deepEqual(listed.suppressed_keys, ['REMOVED']);
     await SecretsService.deleteAppSecretReference({ slug: 'my app', environment: 'production', key: 'DATABASE_URL' });
     assert.deepEqual(calls.map(c => c.method), ['PUT', 'GET', 'DELETE']);
     assert.deepEqual(calls[0]?.body, { reference: 'secret:DATABASE' });
