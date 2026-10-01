@@ -88,9 +88,11 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: UpdateTCPListenerRequest,
 ) -> Response[Problem | TCPListenerResponse]:
-    """Enable or disable an app TCP listener.
+    """Change serving state or TLS policy of an app TCP listener.
 
-     Disabling a listener fail-closes new connections without releasing its stable public port.
+     Supply exactly one of enabled or tls. TLS policy changes atomically disable the endpoint and cancel
+    existing sessions; provision the selected certificate policy before explicitly re-enabling.
+    Disabling retains the stable public port.
 
     Args:
         slug (str):
@@ -126,9 +128,11 @@ def sync(
     client: AuthenticatedClient | Client,
     body: UpdateTCPListenerRequest,
 ) -> Problem | TCPListenerResponse | None:
-    """Enable or disable an app TCP listener.
+    """Change serving state or TLS policy of an app TCP listener.
 
-     Disabling a listener fail-closes new connections without releasing its stable public port.
+     Supply exactly one of enabled or tls. TLS policy changes atomically disable the endpoint and cancel
+    existing sessions; provision the selected certificate policy before explicitly re-enabling.
+    Disabling retains the stable public port.
 
     Args:
         slug (str):
@@ -159,9 +163,11 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: UpdateTCPListenerRequest,
 ) -> Response[Problem | TCPListenerResponse]:
-    """Enable or disable an app TCP listener.
+    """Change serving state or TLS policy of an app TCP listener.
 
-     Disabling a listener fail-closes new connections without releasing its stable public port.
+     Supply exactly one of enabled or tls. TLS policy changes atomically disable the endpoint and cancel
+    existing sessions; provision the selected certificate policy before explicitly re-enabling.
+    Disabling retains the stable public port.
 
     Args:
         slug (str):
@@ -195,9 +201,11 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: UpdateTCPListenerRequest,
 ) -> Problem | TCPListenerResponse | None:
-    """Enable or disable an app TCP listener.
+    """Change serving state or TLS policy of an app TCP listener.
 
-     Disabling a listener fail-closes new connections without releasing its stable public port.
+     Supply exactly one of enabled or tls. TLS policy changes atomically disable the endpoint and cancel
+    existing sessions; provision the selected certificate policy before explicitly re-enabling.
+    Disabling retains the stable public port.
 
     Args:
         slug (str):

@@ -24,6 +24,7 @@ func TestListenerStoreResolverUsesEnabledDurableRoute(t *testing.T) {
 	listener, err := store.CreateTCPListener(ctx, state.TCPListener{
 		AccountID: account.ID, AppID: app.ID, ListenerName: "postgres",
 		GuestPort: 5432, PublicPort: 40127, Enabled: true,
+		TLSMode: api.TCPListenerTLSTerminate, TLSHostname: "echo.example",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -36,6 +37,9 @@ func TestListenerStoreResolverUsesEnabledDurableRoute(t *testing.T) {
 	}
 	if route.ListenerID != listener.ID || route.AppID != app.ID || route.AccountID != account.ID || route.ListenerName != "postgres" || route.GuestPort != 5432 || route.Protocol != "tcp" {
 		t.Fatalf("route = %#v", route)
+	}
+	if route.TLSHostname != "echo.example" {
+		t.Fatalf("TLS intent dropped from route: %+v", route)
 	}
 	if _, ok, err := resolver.Resolve(ctx, 40128); err != nil || ok {
 		t.Fatalf("missing route = ok:%v err:%v, want false,nil", ok, err)

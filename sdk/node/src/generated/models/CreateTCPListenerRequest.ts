@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { TCPListenerTLSConfig } from './TCPListenerTLSConfig.js';
 /**
- * Request to expose one workload TCP port. TLS termination listeners start disabled and require a verified app-owned hostname.
+ * Request to expose one workload TCP port.
  */
 export type CreateTCPListenerRequest = {
   name: string;

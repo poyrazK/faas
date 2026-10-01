@@ -3922,6 +3922,31 @@ groups:
           description: "The p99 delay between a requested execution time and the first scheduler claim has exceeded 60 seconds for ten minutes. Check schedd health, invocation backlog, account concurrency pressure, and database latency."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDelayedTaskDispatchLag.md"
 
+  - name: faas_tcp_tls
+    interval: 30s
+    rules:
+      - alert: FaasTCPTLSCertificateUnavailable
+        expr: gatewayd_public_tcp_tls_listeners_not_ready > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: tcp_ingress
+        annotations:
+          summary: "Enabled TCP TLS listeners lack valid certificates"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTCPIngress.md"
+          description: "Inspect the configured certificate directory, bundle permissions, hostname and validity. Provision complete bundles atomically or disable affected listeners. Socket readiness does not establish certificate readiness."
+      - alert: FaasTCPTLSCertificateExpiring
+        expr: (gatewayd_public_tcp_tls_certificate_expiry_seconds < 604800) and (gatewayd_public_tcp_tls_listeners_ready > 0)
+        for: 10m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: tcp_ingress
+        annotations:
+          summary: "TCP TLS certificate expires within seven days"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTCPIngress.md"
+          description: "Renew the earliest-expiring enabled listener certificate and replace its complete PEM bundle atomically. Existing sessions retain their negotiated certificate; new handshakes use the replacement."
   - name: faas_tcp_ingress
     interval: 30s
     rules:
@@ -4048,3 +4073,50 @@ groups:
           summary: "Service dependency errors are high from {{ $labels.caller_app }} to {{ $labels.target_app }}"
           description: "This trusted caller-to-target edge has exceeded a 10% final error rate with at least five errors across twenty calls in the last ten minutes for five minutes. The alert labels contain app UUIDs; use the runbook to identify the apps and inspect the edge."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasServiceDependencyErrorsHigh.md"
+
+  - name: faas_udp_ingress
+    rules:
+      - alert: FaasUDPListenerReconciliationFailing
+        expr: increase(gatewayd_public_udp_reconciliation_errors_total[10m]) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: udp_ingress
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasUDPIngress.md"
+          summary: "Public UDP listener reconciliation is failing"
+          description: "Inspect gatewayd-public errors for durable-state reads, invalid endpoint identities or bind failures. Check enabled UDP intents and reserved port ownership before restarting the gateway."
+      - alert: FaasUDPPeerFailuresHigh
+        expr: sum by (instance) (rate(gatewayd_public_udp_peers_completed_total{outcome=~"admission_error|forward_error"}[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: udp_ingress
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasUDPIngress.md"
+          summary: "UDP admission or forwarding failures are sustained"
+          description: "Inspect the scheduler and VMMD transport, current declared UDP ports and the deployed vmmd-udp-bridge helper. Source-policy rejection and normal idle expiry are excluded."
+      - alert: FaasUDPResourceDropsHigh
+        expr: sum by (instance) (rate(gatewayd_public_udp_datagrams_dropped_total{reason=~"peer_limit|queue_full|inbound_rate|outbound_rate"}[5m])) > 10
+        for: 5m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: udp_ingress
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasUDPIngress.md"
+          summary: "UDP peer, queue or rate limits are dropping traffic"
+          description: "Inspect client retry behavior, admission latency and active peer count. The bounded UDP queues and account rate limits intentionally drop traffic under pressure; do not raise limits without checking memory and amplification behavior."
+      - alert: FaasUDPPeerResourceExhaustionHigh
+        expr: sum by (instance) (rate(gatewayd_public_udp_peers_completed_total{outcome="resource_exhausted"}[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: udp_ingress
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasUDPIngress.md"
+          summary: "UDP peer resource limits are ending sessions"
+          description: "UDP peer byte/message or transport resource limits are being reached repeatedly. Inspect client traffic and configured limits; this is distinct from an admission or forwarding failure."

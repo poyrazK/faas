@@ -149,6 +149,8 @@ func startTCPIngress(ctx context.Context, log *slog.Logger, store *state.PgStore
 		MaxConnectionsPerAccount: maxConnectionsPerAccount,
 		Metrics:                  metrics,
 		Certificates:             certificates,
+		Observations:             store,
+		EdgeID:                   envOr("FAAS_NODE_NAME", "legacy-singlebox"),
 		OnReady:                  func() { close(serveReady) },
 		OnError: func(err error) {
 			log.Error("gatewayd-public: tcpd runtime error", "err", err)

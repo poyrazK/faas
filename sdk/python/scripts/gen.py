@@ -553,8 +553,6 @@ def _patch_generator_bugs(sdk_root: Path) -> None:
     # ways that drop the macro's padding space from the captured
     # group. Per-line processing is simpler and matches the macro's
     # output shape exactly.
-    DQ = '"""'
-
     for path in sdk_root.rglob("*.py"):
         text = path.read_text()
         original = text

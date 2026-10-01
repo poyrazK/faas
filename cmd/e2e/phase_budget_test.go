@@ -152,7 +152,7 @@ func TestJobTimeoutCoversEveryPhaseCap(t *testing.T) {
 	// A lane never runs in the same job as the phases (the steps are gated on
 	// inputs.lane either way), so it must not be added to their sum — but it
 	// must fit on its own.
-	lanes := map[string]bool{"smoke": true}
+	lanes := map[string]bool{"smoke": true, "containers": true}
 	var sum, laneMax time.Duration
 	for phase, d := range phaseOuterBudgets(t) {
 		if lanes[phase] {
@@ -191,7 +191,7 @@ func TestSmokeLaneAndFullPhasesAreExclusive(t *testing.T) {
 	if !strings.Contains(wf, "default: smoke") {
 		t.Error("the lane input does not default to smoke; a bare dispatch would run the hour-long matrix")
 	}
-	full := strings.Count(wf, "&& inputs.lane != 'smoke' && inputs.lane != 'jobs-only'")
+	full := strings.Count(wf, "&& inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers'")
 	if strings.Count(wf, "lane == 'jobs-only'") != 1 {
 		t.Error("expected exactly one Jobs-only step gated on lane == 'jobs-only'")
 	}
@@ -200,6 +200,12 @@ func TestSmokeLaneAndFullPhasesAreExclusive(t *testing.T) {
 	}
 	if full != 9 {
 		t.Errorf("%d full-phase steps are gated off for smoke and jobs-only, want 9 (one per phase)", full)
+	}
+	if strings.Count(wf, "&& inputs.lane == 'containers'") != 1 {
+		t.Error("expected exactly one step gated on lane == containers")
+	}
+	if !strings.Contains(wf, "containers=${{ steps.phase_containers.outcome }}") {
+		t.Error("the Verdict does not see the container lane's outcome")
 	}
 	if strings.Count(wf, "&& inputs.lane == 'smoke'") != 1 {
 		t.Error("expected exactly one step gated on lane == smoke")

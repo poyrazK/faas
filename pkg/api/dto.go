@@ -2446,6 +2446,10 @@ func (o *CreateDeploymentOverrides) Validate(limits Limits) *Problem {
 				"Invalid override",
 				fmt.Sprintf("healthcheck.grpc.service must be at most %d characters.", GRPCHealthcheckServiceMaxLength))
 		}
+		if o.Healthcheck.StartPeriodS < 0 || int64(o.Healthcheck.StartPeriodS) > OCIHealthcheckDurationMaxSeconds {
+			return NewProblem(http.StatusBadRequest, CodeValidation, "Invalid healthcheck",
+				fmt.Sprintf("healthcheck.start_period_s must be between 0 and %d.", OCIHealthcheckDurationMaxSeconds))
+		}
 		if o.Healthcheck.IntervalS < 0 {
 			return NewProblem(http.StatusBadRequest, CodeValidation,
 				"Invalid override",
@@ -7442,6 +7446,9 @@ func validateSidecarProbe(name, field string, probe *SidecarProbe) *Problem {
 		return NewProblem(http.StatusBadRequest, CodeValidation,
 			"Invalid sidecar probe",
 			fmt.Sprintf("sidecar[%q].%s %s", name, field, detail))
+	}
+	if probe.ImageTiming != nil {
+		return invalid("image_timing is reserved for image metadata; use second-based probe timing overrides.")
 	}
 	actions := 0
 	if len(probe.Test) > 0 {

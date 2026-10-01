@@ -3839,7 +3839,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	if lease.IsBuilder && lease.BuildTimeoutSec <= 0 {
 		lease.BuildTimeoutSec = api.BuildTimeoutSeconds
 	}
-	lease.MemoryMaxMiB = req.MemSizeMiB
+	lease.MemoryMaxMiB = wakeGuestMemoryMiB(req)
 	lease.CPUMillicores = req.CPUMillicores
 	lease.DisableStartupCPUBoost = req.DisableStartupCPUBoost
 	m.mu.Lock()
@@ -4265,7 +4265,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		if lease.IsBuilder {
 			err = writeBuildCgroup(req.Instance, req.MemSizeMiB)
 		} else {
-			err = writeAppCgroup(req.Instance, req.Plan, req.MemSizeMiB, req.CPUMillicores)
+			err = writeAppCgroup(req.Instance, req.Plan, wakeGuestMemoryMiB(req), req.CPUMillicores)
 		}
 		if err != nil {
 			// Cgroup setup is a mandatory isolation boundary. The VM is already
@@ -4563,7 +4563,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 	if scanErr != nil {
 		return WakeColdBoot, scanErr
 	}
-	if PlanWake(req.Snapshot, m.fcVersion) == WakeRestore {
+	if PlanWake(req.Snapshot, m.fcVersion) == WakeRestore && companionSnapshotMemoryMatches(req) {
 		rs := RestoreSpec{
 			VMStatePath: req.Snapshot.VMStatePath,
 			// #96 / ADR-025 axis 2: thread the canonical storage key the
@@ -4691,7 +4691,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 		// guard against double-spec'ing the main workload.
 		LayerKey:   layerKeyForColdBoot(req),
 		VcpuCount:  req.VcpuCount,
-		MemSizeMiB: req.MemSizeMiB,
+		MemSizeMiB: wakeGuestMemoryMiB(req),
 		Tap:        nc.Tap,
 		// Per-deployment readiness action. The HTTP path and gRPC
 		// mode/service are forwarded together; both target :8080.
@@ -7359,4 +7359,24 @@ func (m *Manager) UpdateEgressPorts(ctx context.Context, appID string, extra []u
 		m.mu.Unlock()
 	}
 	return errors.Join(errs...)
+}
+
+// wakeGuestMemoryMiB matches scheduler admission and billing: main RAM plus
+// explicitly allocated companion RAM. The host adds its overhead separately.
+func wakeGuestMemoryMiB(req WakeRequest) int {
+	companionRAM := make([]int, len(req.Sidecars))
+	for i, workload := range req.Sidecars {
+		companionRAM[i] = workload.RamMB
+	}
+	return api.BillableRAMMBWithSidecars(req.MemSizeMiB, companionRAM) - api.PerVMOverheadMB
+}
+
+// Older companion snapshots contain only the main app's physical RAM.
+// A snapshot cannot grow RAM on restore; unknown or different logical memory
+// lengths must use the cold fallback. Single-workload compatibility is retained.
+func companionSnapshotMemoryMatches(req WakeRequest) bool {
+	if len(req.Sidecars) == 0 {
+		return true
+	}
+	return req.Snapshot != nil && req.Snapshot.MemBytes == int64(wakeGuestMemoryMiB(req))<<20
 }

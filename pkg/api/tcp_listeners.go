@@ -33,3 +33,20 @@ type UpdateTCPListenerRequest struct {
 	Enabled *bool                 `json:"enabled"`
 	TLS     *TCPListenerTLSConfig `json:"tls,omitempty"`
 }
+
+// TCPListenerTLSStatusResponse describes certificate evidence from observed
+// edges only. It does not assert fleet coverage or workload/public reachability.
+type TCPListenerTLSStatusResponse struct {
+	Name         string                            `json:"name"`
+	TLS          TCPListenerTLSConfig              `json:"tls"`
+	Enabled      bool                              `json:"enabled"`
+	Scope        string                            `json:"scope"`
+	Observations []TCPListenerTLSCertificateStatus `json:"observations"`
+}
+
+type TCPListenerTLSCertificateStatus struct {
+	EdgeID     string     `json:"edge_id"`
+	Status     string     `json:"status"`
+	ObservedAt time.Time  `json:"observed_at"`
+	NotAfter   *time.Time `json:"not_after,omitempty"`
+}

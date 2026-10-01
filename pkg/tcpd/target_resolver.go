@@ -7,7 +7,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/ingressroute"
 	"math/rand/v2"
-	"sync"
+	"sync/atomic"
 
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -16,9 +16,9 @@ import (
 // InstanceSource is the authoritative instance projection needed by the raw
 // TCP edge. Keeping it narrow lets tcpd use either PgStore or MemStore.
 type InstanceSource interface {
-	DomainByName(context.Context, string) (state.CustomDomain, error)
-	AppByID(context.Context, string) (state.App, error)
-	TCPListenerByAppAndName(context.Context, string, string) (state.TCPListener, error)
+	AppByID(ctx context.Context, appID string) (state.App, error)
+	TCPListenerByAppAndName(ctx context.Context, appID, listenerName string) (state.TCPListener, error)
+	DomainByName(ctx context.Context, domain string) (state.CustomDomain, error)
 	LiveDeployments(context.Context, string) ([]state.Deployment, error)
 	ListInstancesForApp(ctx context.Context, appID string) ([]state.Instance, error)
 }
@@ -39,8 +39,7 @@ type StoreTargetResolver struct {
 	Instances InstanceSource
 	Admitter  Admitter
 
-	mu      sync.Mutex
-	cursors map[string]uint64
+	cursor atomic.Uint64
 }
 
 // ResolveTarget implements TargetResolver.
@@ -85,7 +84,7 @@ func (r *StoreTargetResolver) ResolveTarget(ctx context.Context, route Route) (g
 			return gateway.Target{}, err
 		}
 	}
-	selectedDeploymentID, err := ingressroute.Deployment(ctx, r.Instances, route.AppID, rand.Uint64())
+	deploymentID, err := ingressroute.Deployment(ctx, r.Instances, route.AppID, rand.Uint64())
 	if err != nil {
 		return gateway.Target{}, fmt.Errorf("select raw ingress deployment: %w", err)
 	}
@@ -95,18 +94,12 @@ func (r *StoreTargetResolver) ResolveTarget(ctx context.Context, route Route) (g
 	}
 	var running []state.Instance
 	for _, instance := range instances {
-		if instance.AppID == route.AppID && instance.DeploymentID == selectedDeploymentID && instance.State == string(state.StateRunning) && instance.Mode != string(state.InstanceModeMirror) && instance.ID != "" && instance.NodeID != "" {
+		if instance.AppID == route.AppID && instance.DeploymentID == deploymentID && instance.State == string(state.StateRunning) && instance.Mode != string(state.InstanceModeMirror) && instance.ID != "" && instance.NodeID != "" {
 			running = append(running, instance)
 		}
 	}
 	if len(running) > 0 {
-		r.mu.Lock()
-		if r.cursors == nil {
-			r.cursors = make(map[string]uint64)
-		}
-		idx := r.cursors[route.AppID] % uint64(len(running))
-		r.cursors[route.AppID]++
-		r.mu.Unlock()
+		idx := (r.cursor.Add(1) - 1) % uint64(len(running))
 		instance := running[idx]
 		return gateway.Target{
 			AppID:        route.AppID,
@@ -121,7 +114,8 @@ func (r *StoreTargetResolver) ResolveTarget(ctx context.Context, route Route) (g
 	if r.Admitter == nil {
 		return gateway.Target{}, fmt.Errorf("app %q has no running instance and TCP admission is unavailable", route.AppID)
 	}
-	instanceID, nodeID, deploymentID, wakeID, _, atCapacity, _, err := r.Admitter.AdmitInstance(ctx, route.AppID, selectedDeploymentID, "", "gateway")
+	selectedDeploymentID := deploymentID
+	instanceID, nodeID, deploymentID, wakeID, _, atCapacity, _, err := r.Admitter.AdmitInstance(ctx, route.AppID, deploymentID, "", "gateway")
 	if err != nil {
 		return gateway.Target{}, fmt.Errorf("admit app %q for TCP listener: %w", route.AppID, err)
 	}

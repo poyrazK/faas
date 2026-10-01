@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // ErrInvalidTCPListener identifies a listener that cannot be exposed by the
@@ -160,19 +161,21 @@ func (s *PgStore) TCPListenerByAppAndName(ctx context.Context, appID, listenerNa
 	return listener, nil
 }
 
+func tcpListenerFromSQL(row sqlc.AppTcpListener) TCPListener {
+	return TCPListener{ID: pgUUIDString(row.ID), AccountID: pgUUIDString(row.AccountID), AppID: pgUUIDString(row.AppID), ListenerName: row.ListenerName, GuestPort: int(row.GuestPort), PublicPort: int(row.PublicPort), Protocol: row.Protocol, Enabled: row.Enabled, CreatedAt: timeFromPgtype(row.CreatedAt), UpdatedAt: timeFromPgtype(row.UpdatedAt), TLSMode: api.TCPListenerTLSMode(row.TlsMode), TLSHostname: row.TlsHostname}
+}
 func (s *PgStore) TCPListenerByPublicPort(ctx context.Context, publicPort int) (TCPListener, error) {
-	row := s.pool.QueryRow(ctx, `
-		select `+tcpListenerColumns+` from app_tcp_listeners
-		 where public_port = $1 and enabled
-	`, publicPort)
-	listener, err := scanTCPListener(row)
+	if publicPort < TCPListenerPublicPortMin || publicPort > TCPListenerPublicPortMax {
+		return TCPListener{}, ErrNotFound
+	}
+	row, err := sqlc.New().ActiveTCPListenerByPublicPort(ctx, s.pool, int32(publicPort))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return TCPListener{}, ErrNotFound
 	}
 	if err != nil {
-		return TCPListener{}, fmt.Errorf("state: read TCP listener by public port: %w", err)
+		return TCPListener{}, fmt.Errorf("state: read active TCP listener by public port: %w", err)
 	}
-	return listener, nil
+	return tcpListenerFromSQL(row), nil
 }
 
 func (s *PgStore) ListTCPListenersForApp(ctx context.Context, appID string) ([]TCPListener, error) {
@@ -203,24 +206,13 @@ func (s *PgStore) ListTCPListenersForApp(ctx context.Context, appID string) ([]T
 // TCPListenerStore so existing narrow store adapters do not need to grow a
 // fleet-wide listing method just to adopt tcpd.
 func (s *PgStore) ListEnabledTCPListeners(ctx context.Context) ([]TCPListener, error) {
-	rows, err := s.pool.Query(ctx, `
-		select `+tcpListenerColumns+` from app_tcp_listeners
-		 where enabled order by public_port asc
-	`)
+	rows, err := sqlc.New().ListActiveTCPListeners(ctx, s.pool)
 	if err != nil {
-		return nil, fmt.Errorf("state: list enabled TCP listeners: %w", err)
+		return nil, fmt.Errorf("state: list active TCP listeners: %w", err)
 	}
-	defer rows.Close()
-	listeners := make([]TCPListener, 0)
-	for rows.Next() {
-		listener, err := scanTCPListener(rows)
-		if err != nil {
-			return nil, fmt.Errorf("state: scan enabled TCP listener: %w", err)
-		}
-		listeners = append(listeners, listener)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("state: iterate enabled TCP listeners: %w", err)
+	listeners := make([]TCPListener, 0, len(rows))
+	for _, row := range rows {
+		listeners = append(listeners, tcpListenerFromSQL(row))
 	}
 	return listeners, nil
 }

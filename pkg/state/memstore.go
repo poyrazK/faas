@@ -5672,6 +5672,9 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 	if p.MaxConcurrency != nil {
 		a.MaxConcurrency = *p.MaxConcurrency
 	}
+	if p.MaintenanceMode != nil {
+		a.MaintenanceMode = *p.MaintenanceMode
+	}
 	if p.Status != nil {
 		a.Status = *p.Status
 		if *p.Status != AppEvictedCold {
@@ -6355,6 +6358,19 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	for key := range m.discoveredAPIRoutes {
 		if strings.HasPrefix(key, a.AccountID+"\x00"+id+"\x00") {
 			delete(m.discoveredAPIRoutes, key)
+		}
+	}
+	// Match PostgreSQL's ON DELETE CASCADE after the restore window ends.
+	// Tombstoning retains intent; only final purge releases public ports.
+	for listenerID, listener := range m.tcpListeners {
+		if listener.AppID == id {
+			delete(m.tcpListeners, listenerID)
+			delete(m.tcpTLSObservations, listenerID)
+		}
+	}
+	for listenerID, listener := range m.udpListeners {
+		if listener.AppID == id {
+			delete(m.udpListeners, listenerID)
 		}
 	}
 	delete(m.apps, id)

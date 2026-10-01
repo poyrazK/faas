@@ -16,10 +16,7 @@ T = TypeVar("T", bound="CreateTCPListenerRequest")
 
 @_attrs_define
 class CreateTCPListenerRequest:
-    """Request to expose one workload TCP port. TLS termination listeners start disabled and require a verified app-owned
-    hostname.
-
-    """
+    """Request to expose one workload TCP port."""
 
     name: str
     guest_port: int

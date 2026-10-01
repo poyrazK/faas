@@ -15,6 +15,15 @@ import (
 // raw UDP edge. The migration repeats these checks at the database boundary.
 var ErrInvalidUDPListener = errors.New("state: invalid UDP listener")
 
+var ErrUDPListenerLimit = errors.New("state: UDP listener reservation limit")
+
+type UDPListenerLimitError struct{ Limit, Observed int }
+
+func (e *UDPListenerLimitError) Error() string {
+	return fmt.Sprintf("%s: observed %d, maximum %d", ErrUDPListenerLimit, e.Observed, e.Limit)
+}
+func (e *UDPListenerLimitError) Unwrap() error { return ErrUDPListenerLimit }
+
 const (
 	UDPListenerPublicPortMin = api.UDPListenerPublicPortMin
 	UDPListenerPublicPortMax = api.UDPListenerPublicPortMax
@@ -91,6 +100,20 @@ func (s *PgStore) CreateUDPListener(ctx context.Context, in UDPListener) (UDPLis
 	}
 	if accountID != in.AccountID {
 		return UDPListener{}, ErrNotFound
+	}
+	// The app row remains locked through insertion, serializing count and
+	// create even across concurrent apid processes. Disabled rows count too.
+	if _, err := q.UDPListenerByAppAndName(ctx, tx, sqlc.UDPListenerByAppAndNameParams{AppID: in.AppID, ListenerName: in.ListenerName}); err == nil {
+		return UDPListener{}, ErrConflict
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return UDPListener{}, fmt.Errorf("state: check UDP listener name: %w", err)
+	}
+	count, err := q.CountUDPListenersForApp(ctx, tx, in.AppID)
+	if err != nil {
+		return UDPListener{}, fmt.Errorf("state: count UDP listener reservations: %w", err)
+	}
+	if count >= int64(api.UDPListenerReservationsPerAppMax) {
+		return UDPListener{}, &UDPListenerLimitError{Limit: api.UDPListenerReservationsPerAppMax, Observed: int(count) + 1}
 	}
 	if in.ID == "" {
 		in.ID = newID()

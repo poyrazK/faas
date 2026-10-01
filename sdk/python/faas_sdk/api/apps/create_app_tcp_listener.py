@@ -96,7 +96,10 @@ def sync_detailed(
 ) -> Response[Problem | TCPListenerResponse]:
     """Expose one app port over raw TCP.
 
-     Creates an enabled TCP listener. `public_port` is optional; when it
+     Creates a TCP listener. Passthrough is enabled immediately; TLS
+    termination starts disabled and requires a verified app-owned domain
+    and an explicitly provisioned edge certificate before enabling.
+    `public_port` is optional; when it
     is omitted Gregale allocates a free port from the reserved
     40000–49999 range. Public ports remain stable across instance wake,
     migration, and redeployments. `name` and `guest_port` must match an
@@ -106,8 +109,7 @@ def sync_detailed(
     Args:
         slug (str):
         idempotency_key (str | Unset):
-        body (CreateTCPListenerRequest): Request to expose one workload TCP port. TLS termination
-            listeners start disabled and require a verified app-owned hostname.
+        body (CreateTCPListenerRequest): Request to expose one workload TCP port.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -139,7 +141,10 @@ def sync(
 ) -> Problem | TCPListenerResponse | None:
     """Expose one app port over raw TCP.
 
-     Creates an enabled TCP listener. `public_port` is optional; when it
+     Creates a TCP listener. Passthrough is enabled immediately; TLS
+    termination starts disabled and requires a verified app-owned domain
+    and an explicitly provisioned edge certificate before enabling.
+    `public_port` is optional; when it
     is omitted Gregale allocates a free port from the reserved
     40000–49999 range. Public ports remain stable across instance wake,
     migration, and redeployments. `name` and `guest_port` must match an
@@ -149,8 +154,7 @@ def sync(
     Args:
         slug (str):
         idempotency_key (str | Unset):
-        body (CreateTCPListenerRequest): Request to expose one workload TCP port. TLS termination
-            listeners start disabled and require a verified app-owned hostname.
+        body (CreateTCPListenerRequest): Request to expose one workload TCP port.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -177,7 +181,10 @@ async def asyncio_detailed(
 ) -> Response[Problem | TCPListenerResponse]:
     """Expose one app port over raw TCP.
 
-     Creates an enabled TCP listener. `public_port` is optional; when it
+     Creates a TCP listener. Passthrough is enabled immediately; TLS
+    termination starts disabled and requires a verified app-owned domain
+    and an explicitly provisioned edge certificate before enabling.
+    `public_port` is optional; when it
     is omitted Gregale allocates a free port from the reserved
     40000–49999 range. Public ports remain stable across instance wake,
     migration, and redeployments. `name` and `guest_port` must match an
@@ -187,8 +194,7 @@ async def asyncio_detailed(
     Args:
         slug (str):
         idempotency_key (str | Unset):
-        body (CreateTCPListenerRequest): Request to expose one workload TCP port. TLS termination
-            listeners start disabled and require a verified app-owned hostname.
+        body (CreateTCPListenerRequest): Request to expose one workload TCP port.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -218,7 +224,10 @@ async def asyncio(
 ) -> Problem | TCPListenerResponse | None:
     """Expose one app port over raw TCP.
 
-     Creates an enabled TCP listener. `public_port` is optional; when it
+     Creates a TCP listener. Passthrough is enabled immediately; TLS
+    termination starts disabled and requires a verified app-owned domain
+    and an explicitly provisioned edge certificate before enabling.
+    `public_port` is optional; when it
     is omitted Gregale allocates a free port from the reserved
     40000–49999 range. Public ports remain stable across instance wake,
     migration, and redeployments. `name` and `guest_port` must match an
@@ -228,8 +237,7 @@ async def asyncio(
     Args:
         slug (str):
         idempotency_key (str | Unset):
-        body (CreateTCPListenerRequest): Request to expose one workload TCP port. TLS termination
-            listeners start disabled and require a verified app-owned hostname.
+        body (CreateTCPListenerRequest): Request to expose one workload TCP port.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

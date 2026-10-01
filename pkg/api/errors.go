@@ -6382,3 +6382,12 @@ func ErrPlanCustomMetricsNotAllowed(plan Plan) *Problem {
 			"Scale on a platform-measured signal (rps, cpu, concurrent_requests, "+
 			"queue_depth, queue_lag) or upgrade.", plan))
 }
+
+const CodeUDPListenerLimit = "udp_listener_limit"
+
+// ErrUDPListenerLimit includes disabled reservations: delete one to free a slot.
+func ErrUDPListenerLimit(limit, observed int) *Problem {
+	return NewProblem(http.StatusConflict, CodeUDPListenerLimit,
+		"UDP listener reservation limit reached", "Delete an existing UDP listener before reserving another public port. Disabled listeners still reserve their ports.").
+		WithLimit(int64(limit), int64(observed)).WithDocs(docsBase + "/containers#udp-listeners")
+}

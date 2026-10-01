@@ -46,6 +46,60 @@ Use `await client.arun_execution(...)` with an async callback in an async
 application. Source/files are staged only in the guest's ephemeral scratch
 filesystem; no customer storage disk is attached.
 
+## Container listeners
+
+The generated clients expose UDP listener operations and TCP TLS policy/status.
+UDP ingress requires operator source-CIDR/firewall rollout and a declared guest
+UDP port. Creation reserves a disabled endpoint; enable it explicitly after the
+deployment and edge are configured:
+
+```python
+from faas_sdk import FaaSClient
+from faas_sdk.api.apps import create_app_udp_listener, update_app_udp_listener
+from faas_sdk.models import CreateUDPListenerRequest, UpdateUDPListenerRequest
+
+with FaaSClient(base_url="https://api.example.com", token="...") as client:
+    udp = create_app_udp_listener.sync(
+        "app", client=client.inner,
+        body=CreateUDPListenerRequest(name="dns", guest_port=5353),
+    )
+    if udp is not None:
+        update_app_udp_listener.sync(
+            "app", udp.name, client=client.inner,
+            body=UpdateUDPListenerRequest(enabled=True),
+        )
+```
+
+For an existing TCP listener, TLS termination requires a verified app-owned
+hostname and a certificate bundle provisioned by the edge operator. Changing TLS
+policy disables the listener; enable it separately after provisioning:
+
+```python
+from faas_sdk.api.apps import app_tcp_listener_tls_status, update_app_tcp_listener
+from faas_sdk.models import TCPListenerTLSConfig, UpdateTCPListenerRequest
+
+with FaaSClient(base_url="https://api.example.com", token="...") as client:
+    update_app_tcp_listener.sync(
+        "app", "echo", client=client.inner,
+        body=UpdateTCPListenerRequest(
+            tls=TCPListenerTLSConfig(mode="terminate", hostname="echo.example.com"),
+        ),
+    )
+    update_app_tcp_listener.sync(
+        "app", "echo", client=client.inner,
+        body=UpdateTCPListenerRequest(enabled=True),
+    )
+    status = app_tcp_listener_tls_status.sync("app", "echo", client=client.inner)
+    if status is not None:
+        print(status.observations)
+```
+
+Supply exactly one of `enabled` or `tls` in each TCP update. Certificate status
+covers observed edges only; empty observations and `unknown` do not establish
+readiness. It does not prove fleet coverage, client trust or guest availability.
+Native listener qualification remains pending; see the
+[qualification procedure](../../docs/container-qualification.md).
+
 ## Usage
 First, create a client:
 

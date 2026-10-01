@@ -215,6 +215,13 @@ if [[ "${passed}" -eq 0 ]]; then
   echo "native metal smoke: no metal test executed; the fixtures or the build tag are wrong" >&2
   metal_rc=1
 fi
+# Companion qualification cannot silently pass with missing fixtures or skips.
+source "${repo_root}/scripts/ci/native-e2e-verdict.sh"
+companion_names="$(native_container_companion_tests "${repo_root}")"
+companion_tests=()
+while IFS= read -r test_name; do companion_tests+=("${test_name}"); done <<<"${companion_names}"
+native_e2e_lane_verdict "${metal_log}" companion-memory-isolation "${companion_tests[@]}" || metal_rc=1
+
 # Second pass: the six tests that need private mount + network namespaces.
 #
 # They gate on FAAS_TEST_NETWORK_BATCH and skipped in the pass above because
