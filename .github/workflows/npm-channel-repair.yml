@@ -57,12 +57,12 @@ jobs:
           for (const name of names) {
             const url = `https://registry.npmjs.org/-/package/${encodeURIComponent(name)}/dist-tags`;
             const tags = await fetch(url, { signal: AbortSignal.timeout(10000) }).then(r => r.json());
-            if (tags.rc !== version) throw new Error(`Refusing diagnostic write: ${name} rc differs from ${version}`);
+            if (typeof tags.rc !== 'string') throw new Error(`Refusing diagnostic write: ${name} has no rc`);
             // Idempotent PUT of the already-public rc value; no version upload.
             const response = await fetch(`${url}/rc`, {
               method: 'PUT', headers: { 'content-type': 'application/json',
                 authorization: `Bearer ${process.env.NODE_AUTH_TOKEN}` },
-              body: JSON.stringify(version), signal: AbortSignal.timeout(10000),
+              body: JSON.stringify(tags.rc), signal: AbortSignal.timeout(10000),
             });
             const body = (await response.text()).replaceAll(process.env.NODE_AUTH_TOKEN, '[REDACTED]');
             console.log(`${name}: unchanged rc PUT HTTP ${response.status}: ${body.slice(0, 500)}`);
