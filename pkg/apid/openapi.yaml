@@ -30689,6 +30689,7 @@ components:
         datacontenttype: { type: string, enum: [application/json], default: application/json }
         data_content_type: { type: string, enum: [application/json], deprecated: true }
         data: { description: Any valid JSON value delivered inside the CloudEvents envelope. }
+        flag_context: { type: string, maxLength: 12288, description: "Optional bounded Gregale Flags context. The platform validates the envelope, binds it to its active customer, and restores it on the queued request." }
         queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
         retry_policy: { $ref: '#/components/schemas/RetryPolicyDTO' }
         work:
@@ -40448,6 +40449,7 @@ components:
       type: object
       properties:
         payload: { type: object, additionalProperties: true }
+        flag_context: { type: string, maxLength: 12288, description: "Optional bounded Gregale Flags context produced by the Node SDK from decisions marked used. The platform validates the envelope, binds it to its active customer, and restores it on the queued request." }
         queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Optional logical queue name. Required when an app has multiple enabled queue consumers." }
         retry_policy:
           allOf:
