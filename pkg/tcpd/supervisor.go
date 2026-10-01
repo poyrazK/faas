@@ -200,6 +200,7 @@ func (s *Supervisor) Serve(ctx context.Context) error {
 			childCtx, cancel := context.WithCancel(serveCtx)
 			server := &Server{
 				Listener:        listener,
+				BoundRoute:      &route,
 				Routes:          s.Routes,
 				Targets:         s.Targets,
 				Forwarder:       s.Forwarder,

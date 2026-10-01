@@ -20,6 +20,8 @@ type Forwarder interface {
 // Server accepts public TCP connections, resolves their local listener port,
 // and forwards them to a selected workload instance.
 type Server struct {
+	// BoundRoute identifies the intent for which a supervised socket was bound.
+	BoundRoute   *Route
 	Listener     net.Listener
 	Routes       RouteResolver
 	Targets      TargetResolver
@@ -158,6 +160,10 @@ func (s *Server) handle(ctx context.Context, conn net.Conn, session *tcpmetrics.
 		accountID = route.AppID
 	}
 	session.Bind(accountID)
+	if s.BoundRoute != nil && route != *s.BoundRoute {
+		session.Reject("route_changed")
+		return errors.New("TCP accepting socket belongs to an obsolete route")
+	}
 	if s.Limiter != nil {
 		key := route.AccountID
 		if key == "" {

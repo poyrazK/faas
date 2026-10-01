@@ -580,3 +580,27 @@ whitespace checks pass. Evidence `/tmp/gregale-tcp-rollout-race.log`,
 `/tmp/gregale-tcp-rollout-e2e.log`, `/tmp/gregale-tcp-rollout-lint.log`.
 Remote checks on #3962 are pending. Native canary/rollback, node loss, cold wakes
 and leak acceptance are not established by substituted guest execution.
+
+### Bound TCP socket identity and health runtime CI completion — 2026-10-01
+
+Stacked draft [PR #3963](https://github.com/poyrazK/faas/pull/3963), head
+`c973dd091`, based on weighted routing #3962, carries durable listener identity
+through projections, target intent revalidation and supervisor replacement.
+It additionally closes a newly identified gap: a socket bound for an old row
+must not resolve a replacement row before refresh. `Server.BoundRoute` rejects
+that mismatch before target selection; supervisor replacement cancels sessions.
+The new socket-binding fix and regressions are also integrated here.
+
+Full TCP/public-gateway race suites and portable ingress/session-guard E2Es
+pass (70.461s). Stale warm/cold intent, bound-socket refusal, projection and
+supervisor recreation pass five race repetitions. Scoped lint, formatting and
+whitespace checks pass. The implementation branch's full TCP race suite,
+including TLS cases, also passes. Evidence:
+`/tmp/gregale-tcp-identity-race.log`, `/tmp/gregale-tcp-identity-recreation.log`,
+`/tmp/gregale-tcp-identity-e2e.log`, `/tmp/gregale-tcp-identity-lint.log`,
+`/tmp/gregale-tcp-bound-integration-race.log`. Remote #3963 checks are pending.
+
+Corrected health-runtime PR #3956 now has 25 successful checks and one
+conditional skip, with no pending or failed checks. Timing #3957 still has
+one running check, 25 successes and one conditional skip. These are CI scopes,
+not native VM or leak evidence. All PRs remain drafts and unmerged.

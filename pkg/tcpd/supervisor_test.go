@@ -224,7 +224,7 @@ func TestSupervisorReassignmentCancelsPreviousOwnerSessions(t *testing.T) {
 	ready := make(chan string, 4)
 	var address string
 	routes := NewRouteTable()
-	if err := routes.Upsert(Route{PublicPort: port, AppID: owner, ListenerName: "echo", GuestPort: 8080, Protocol: "tcp"}); err != nil {
+	if err := routes.Upsert(Route{PublicPort: port, AppID: owner, AccountID: "acct", ListenerName: "echo", GuestPort: 8080, Protocol: "tcp"}); err != nil {
 		t.Fatal(err)
 	}
 	supervisor := &Supervisor{
@@ -281,6 +281,83 @@ func TestSupervisorReassignmentCancelsPreviousOwnerSessions(t *testing.T) {
 	case <-ready:
 	case <-time.After(2 * time.Second):
 		t.Fatal("new owner listener was not rebound")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("supervisor did not stop")
+	}
+}
+
+func TestSupervisorRecreationCancelsPreviousIdentitySessions(t *testing.T) {
+	const port = 40125
+	var mu sync.Mutex
+	owner := "app-old"
+	entered, canceled := make(chan struct{}), make(chan struct{})
+	ready := make(chan string, 4)
+	var address string
+	routes := NewRouteTable()
+	if err := routes.Upsert(Route{ListenerID: owner, AccountID: "acct", PublicPort: port, AppID: "app", ListenerName: "echo", GuestPort: 8080, Protocol: "tcp"}); err != nil {
+		t.Fatal(err)
+	}
+	supervisor := &Supervisor{
+		Source: supervisorSourceFunc(func(context.Context) ([]state.TCPListener, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			return []state.TCPListener{{ID: owner, AppID: "app", AccountID: "acct", ListenerName: "echo", GuestPort: 8080, PublicPort: port, Protocol: "tcp", Enabled: true}}, nil
+		}), Routes: routes,
+		Targets: targetResolverFunc(func(context.Context, Route) (gateway.Target, error) { return gateway.Target{}, nil }),
+		Forwarder: forwarderFunc(func(ctx context.Context, _ net.Conn, _ gateway.Target) error {
+			close(entered)
+			<-ctx.Done()
+			close(canceled)
+			return ctx.Err()
+		}),
+		RefreshInterval: 5 * time.Millisecond,
+		Listen: func(_, _ string) (net.Listener, error) {
+			base, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				return nil, err
+			}
+			ready <- base.Addr().String()
+			return &aliasedTCPListener{Listener: base, port: port}, nil
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- supervisor.Serve(ctx) }()
+	select {
+	case address = <-ready:
+	case <-time.After(2 * time.Second):
+		t.Fatal("initial bind missing")
+	}
+	conn, err := net.Dial("tcp", address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("session did not enter forwarding")
+	}
+	mu.Lock()
+	owner = "app-new"
+	mu.Unlock()
+	select {
+	case <-canceled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("previous identity session survived listener recreation")
+	}
+	select {
+	case <-ready:
+	case <-time.After(2 * time.Second):
+		t.Fatal("replacement listener was not rebound")
 	}
 	cancel()
 	select {
