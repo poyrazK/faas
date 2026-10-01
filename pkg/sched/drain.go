@@ -15,6 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/dispatch"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/trafficrevocation"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -122,7 +123,8 @@ type Drain struct {
 	// check (Move 2). One entry per account; the 5s TTL collapses the
 	// 64-row batch's per-row AccountByID into ≤0.2 RPS at Meta's
 	// "everyone suspends at once" worst case.
-	accts *acctCache
+	accts              *acctCache
+	trafficRevocations *trafficrevocation.Registry
 }
 
 // DefaultDrainDispatchConcurrency is deliberately small: it removes the
@@ -515,14 +517,16 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	// every due task forever, so the backlog could never fall below the
 	// limit that is blocking it.
 	//
-	// 2. Account Active gate. The cron path has this (loop.go:580);
+	// 2. Legacy/mirror account gate. Production normal delivery enrolls fresh
+	// security generations after claim instead of trusting this cache.
+	// The cron path has this (loop.go:580);
 	// the drain needs it too because rows queued while the account was
 	// Active may sit in 'pending' across a suspension (Free goes past
 	// due → suspended). Cap+Activeness = the complete per-app gate.
 	// 5-minute backoff is short enough that a reactivation lands within
 	// a SLO; long enough that we don't churn cycles on a suspended
 	// account.
-	if !d.isAccountActive(ctx, inv.AppID) {
+	if (d.trafficRevocations == nil || isDebugMirrorReplay(inv)) && !d.isAccountActive(ctx, inv.AppID) {
 		// budget=0: account-suspended deferral does not consume the row's
 		// delivery budget because no app delivery was attempted.
 		_ = d.store.FailInvocation(ctx, inv.ID, "account suspended", 5*time.Minute, 0)
@@ -599,7 +603,9 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	}
 
 	var version state.InvocationVersion
-	inv, version, err = state.ResolveInvocationVersion(ctx, d.store, inv)
+	var traffic *invocationTraffic
+	var deliveryCtx context.Context
+	deliveryCtx, inv, version, traffic, err = d.prepareInvocationTraffic(ctx, inv)
 	if err != nil {
 		retryAfter := d.invocationRetryDelay(inv)
 		if errors.Is(err, state.ErrNotFound) || errors.Is(err, state.ErrInvalidArgument) || errors.Is(err, state.ErrConflict) {
@@ -611,18 +617,19 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		}
 		return
 	}
+	defer traffic.close()
 	// 3. EnsureWake coalesces same-app wake attempts while the bounded
 	// dispatch pool lets different apps progress concurrently. Returns
 	// the live instance handle on success; the drain stamps it onto the
 	// row so the meter's per-instance count is non-zero for this minute.
 	var wakeRes WakeResult
 	if version.DeploymentID != "" {
-		wakeRes, err = d.engine.Wake(ctx, inv.AppID, version.DeploymentID, version.Scope, TriggerMeterd)
+		wakeRes, err = d.engine.Wake(deliveryCtx, inv.AppID, version.DeploymentID, version.Scope, TriggerMeterd)
 		if err == nil && (wakeRes.AtCapacity || wakeRes.InstanceID == "" || wakeRes.DeploymentID != version.DeploymentID) {
 			err = fmt.Errorf("%w: selected deployment is no longer wakeable", ErrPermanentWake)
 		}
 	} else {
-		coord, wakeErr := d.engine.EnsureWake(ctx, inv.AppID, TriggerMeterd)
+		coord, wakeErr := d.awaitInvocationWake(deliveryCtx, inv.AppID)
 		err = wakeErr
 		if err == nil && coord.Err != nil {
 			err = coord.Err
@@ -634,6 +641,15 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 			wakeRes = WakeResult{InstanceID: coord.Instance.InstanceID, NodeID: coord.Instance.NodeID,
 				DeploymentID: coord.Instance.DeploymentID, WakeID: coord.Instance.WakeID, Port: int(coord.Instance.Port)}
 		}
+	}
+	if cause := context.Cause(deliveryCtx); cause != nil {
+		err = cause
+	}
+	if err == nil {
+		inv, err = d.verifyInvocationWake(deliveryCtx, inv, wakeRes, traffic)
+	}
+	if err == nil && traffic != nil {
+		deliveryCtx, err = traffic.handoff(deliveryCtx)
 	}
 	if err != nil {
 		retryAfter := d.invocationRetryDelay(inv)
@@ -662,7 +678,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		d.log.Warn("drain: stamp instance", "inv", inv.ID, "inst", wakeRes.InstanceID, "err", err)
 	}
 	// 5. Invoke (deliver envelope).
-	if d.gateway == nil {
+	if d.gateway == nil && traffic == nil {
 		// No gateway (test seam): the drain still completes the
 		// row so the meter gets its tick.
 		if err := completeClaimedInvocation(ctx, d.store, inv, nil); err == nil {
@@ -672,10 +688,18 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		return
 	}
 	var dispatched state.Invocation
-	if prewoken, ok := d.gateway.(prewokenGatewaySynth); ok {
-		dispatched, err = prewoken.InvokeWithWake(ctx, inv.AppID, inv, wakeRes)
+	if d.gateway == nil {
+		err = fmt.Errorf("%w: invocation gateway is not configured", trafficrevocation.ErrUnavailable)
+	} else if prewoken, ok := d.gateway.(prewokenGatewaySynth); ok {
+		dispatched, err = prewoken.InvokeWithWake(deliveryCtx, inv.AppID, inv, wakeRes)
 	} else {
-		dispatched, err = d.gateway.Invoke(ctx, inv.AppID, inv)
+		dispatched, err = d.gateway.Invoke(deliveryCtx, inv.AppID, inv)
+	}
+	if cause := context.Cause(deliveryCtx); cause != nil {
+		err = cause
+	}
+	if err == nil {
+		err = traffic.verify()
 	}
 	if err != nil {
 		// Permanent invoke errors (4xx) terminal-fail; transient

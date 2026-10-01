@@ -4,12 +4,14 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -27,6 +29,72 @@ type syntheticSecurityStore struct {
 	mu     sync.Mutex
 	states map[trafficrevocation.Scope]trafficrevocation.State
 	err    error
+}
+
+func TestSyntheticSecurityHandoffMustMatchAdmittedOwnerAndGeneration(t *testing.T) {
+	for _, kind := range []string{"valid", "legacy", "stale generation", "foreign account", "foreign app", "foreign deployment", "missing owner"} {
+		t.Run(kind, func(t *testing.T) {
+			store, app, dep, target := invocationDeliveryFixture(t)
+			canonical := func(id string) string {
+				parsed, err := uuid.Parse(id)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return parsed.String()
+			}
+			rows := []struct {
+				Kind     string `json:"kind"`
+				ID       string `json:"id"`
+				Revision int64  `json:"revision"`
+			}{
+				{Kind: "account", ID: canonical(app.AccountID)}, {Kind: "app", ID: canonical(app.ID)}, {Kind: "deployment", ID: canonical(dep.ID)},
+			}
+			security := &syntheticSecurityStore{}
+			switch kind {
+			case "stale generation":
+				security.change(trafficrevocation.Scope{Kind: "account", ID: app.AccountID}, 2, false, nil)
+			case "foreign account":
+				rows[0].ID = uuid.NewString()
+			case "foreign app":
+				rows[1].ID = uuid.NewString()
+			case "foreign deployment":
+				rows[2].ID = uuid.NewString()
+			case "missing owner":
+				rows = rows[1:]
+			}
+			sort.Slice(rows, func(i, j int) bool { return rows[i].Kind < rows[j].Kind })
+			data, err := json.Marshal(rows)
+			if err != nil {
+				t.Fatal(err)
+			}
+			baseline := "v1." + base64.RawURLEncoding.EncodeToString(data)
+			if kind == "legacy" {
+				baseline = ""
+			}
+			registry := trafficrevocation.New(security)
+			defer registry.Close()
+			forwards := 0
+			adapter := &synthAdapter{store: store, trafficRevocations: registry, forward: func(gateway.Target) http.Handler {
+				forwards++
+				return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{"ok":true}`)) })
+			}}
+			body, err := json.Marshal(map[string]any{"invocation_id": uuid.NewString(), "app_id": app.ID, "account_id": app.AccountID, "source": state.InvocationAsyncInvoke,
+				"instance_id": target.InstanceID, "node_id": target.NodeID, "deployment_id": target.DeploymentID, "security_snapshot": baseline})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec := httptest.NewRecorder()
+			gateway.NewSynthServer("", adapter, nil).Mux().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/invocations:dispatch", bytes.NewReader(body)))
+			if kind == "valid" || kind == "legacy" {
+				if rec.Code != http.StatusOK || forwards != 1 {
+					t.Fatalf("valid baseline refused: %d forwards=%d %s", rec.Code, forwards, rec.Body)
+				}
+			} else if rec.Code != http.StatusBadGateway || forwards != 0 {
+				t.Fatalf("unsafe handoff: %d forwards=%d %s", rec.Code, forwards, rec.Body)
+			}
+			assertSyntheticSecurityReleased(t, registry)
+		})
+	}
 }
 
 type syntheticForwardServer struct {
@@ -342,6 +410,47 @@ func TestSyntheticTriggerBatchCarriesSavedAccountToEveryRecord(t *testing.T) {
 			}
 			if wakes != count || forwards != count {
 				t.Fatalf("wake/forward = %d/%d, want %d", wakes, forwards, count)
+			}
+			assertSyntheticSecurityReleased(t, registry)
+		})
+	}
+}
+
+func TestSyntheticSecurityHandoffRequiresVerifiedOwnerAndRegistry(t *testing.T) {
+	for _, kind := range []string{"missing registry", "missing owner store", "invalid metadata"} {
+		t.Run(kind, func(t *testing.T) {
+			store, app, dep, target := invocationDeliveryFixture(t)
+			states := map[trafficrevocation.Scope]trafficrevocation.State{{Kind: "account", ID: app.AccountID}: {}, {Kind: "app", ID: app.ID}: {}, {Kind: "deployment", ID: dep.ID}: {}}
+			value, err := trafficrevocation.EncodeAdmittedSnapshot(states)
+			if err != nil {
+				t.Fatal(err)
+			}
+			registry := trafficrevocation.New(&syntheticSecurityStore{})
+			defer registry.Close()
+			forwards := 0
+			adapter := &synthAdapter{store: store, trafficRevocations: registry, forward: func(gateway.Target) http.Handler {
+				forwards++
+				return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{"ok":true}`)) })
+			}}
+			expected := http.StatusBadGateway
+			if kind == "missing registry" {
+				adapter.trafficRevocations = nil
+			}
+			if kind == "missing owner store" {
+				adapter.store = nil
+			}
+			if kind == "invalid metadata" {
+				value = "v1.invalid"
+				expected = http.StatusServiceUnavailable
+			}
+			body, err := json.Marshal(map[string]any{"app_id": app.ID, "account_id": app.AccountID, "invocation_id": uuid.NewString(), "security_snapshot": value, "instance_id": target.InstanceID, "node_id": target.NodeID, "deployment_id": target.DeploymentID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec := httptest.NewRecorder()
+			gateway.NewSynthServer("", adapter, nil).Mux().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/invocations:dispatch", bytes.NewReader(body)))
+			if rec.Code != expected || forwards != 0 {
+				t.Fatalf("unverifiable handoff admitted: %d forwards=%d %s", rec.Code, forwards, rec.Body)
 			}
 			assertSyntheticSecurityReleased(t, registry)
 		})

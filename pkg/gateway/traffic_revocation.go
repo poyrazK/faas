@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"sync"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/trafficrevocation"
@@ -33,6 +34,9 @@ type trafficEnrollment struct {
 func AdmitSyntheticTraffic(ctx context.Context, registry *trafficrevocation.Registry, scopes ...trafficrevocation.Scope) (context.Context, func(), error) {
 	noop := func() {}
 	if registry == nil { // Optional only for legacy in-process fixtures.
+		if _, exists := trafficrevocation.HandoffSnapshot(ctx); exists {
+			return ctx, noop, trafficrevocation.ErrUnavailable
+		}
 		return ctx, noop, nil
 	}
 	if err := context.Cause(ctx); err != nil {
@@ -49,7 +53,13 @@ func AdmitSyntheticTraffic(ctx context.Context, registry *trafficrevocation.Regi
 	} else if enrollment.registry != registry {
 		return ctx, noop, trafficrevocation.ErrUnavailable
 	}
-	if err := enrollment.add(ctx, scopes); err != nil {
+	var err error
+	if baseline, exists := trafficrevocation.HandoffSnapshot(ctx); exists {
+		err = enrollment.addBaseline(ctx, scopes, baseline)
+	} else {
+		err = enrollment.add(ctx, scopes)
+	}
+	if err != nil {
 		enrollment.cancel(err)
 		cleanup()
 		return ctx, noop, context.Cause(ctx)
@@ -59,6 +69,39 @@ func AdmitSyntheticTraffic(ctx context.Context, registry *trafficrevocation.Regi
 		return ctx, noop, err
 	}
 	return ctx, cleanup, nil
+}
+
+func (e *trafficEnrollment) addBaseline(ctx context.Context, scopes []trafficrevocation.Scope, baseline map[trafficrevocation.Scope]trafficrevocation.State) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.closed || len(scopes) != len(baseline) || len(scopes) > api.TrafficSecurityMaxRequestScopes {
+		return trafficrevocation.ErrUnavailable
+	}
+	expected := make(map[trafficrevocation.Scope]trafficrevocation.State, len(scopes))
+	for _, scope := range scopes {
+		id, err := uuid.Parse(scope.ID)
+		if err != nil {
+			return trafficrevocation.ErrUnavailable
+		}
+		state, exists := baseline[trafficrevocation.Scope{Kind: scope.Kind, ID: id.String()}]
+		if !exists {
+			return trafficrevocation.ErrUnavailable
+		}
+		expected[scope] = state
+	}
+	if len(expected) != len(baseline) {
+		return trafficrevocation.ErrUnavailable
+	}
+	if len(e.scopes) != 0 && !maps.Equal(e.scopes, expected) {
+		return trafficrevocation.ErrUnavailable
+	}
+	release, err := e.registry.AdmitAt(ctx, expected, e.cancel)
+	if err != nil {
+		return err
+	}
+	e.scopes = expected
+	e.releases = append(e.releases, release)
+	return nil
 }
 
 func (h *Handler) WithTrafficRevocations(registry *trafficrevocation.Registry) *Handler {

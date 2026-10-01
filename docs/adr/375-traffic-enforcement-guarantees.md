@@ -1009,6 +1009,32 @@ change does not advertise public edge rules or public rate accounting for durabl
 background work. Node admission still applies to the synthetic HTTP forwarding
 RPC. Complete path, fleet, staging and native VM/network evidence remain required.
 
+### Follow-up: scheduler invocation wake and security handoff
+
+The durable invocation drain enrolls owner account/app scopes before waiting on
+wake, then verifies and enrolls the returned deployment before delivery. Its
+request lifetime covers gateway dispatch and result handling, while the existing
+shared wake leader retains its separate bounded lifecycle. Cancellation withdraws
+this invocation's waiter; it does not cancel another caller's wake or promise
+rollback of guest effects. Original scheduler context owns claim outcome writes,
+so security cancellation cannot strand a writable claim until lease expiry.
+
+Production schedd verifies the existing security store at startup and runs the
+bounded periodic registry repair. A warm cached account allow is not security
+admission. Target verification retains the invocation's version and owner view.
+The drain rechecks its exact admitted generations after wake and before success.
+Refused/unverifiable delivery uses the existing finite retry contract; a future
+attempt receives a fresh security lifetime. Debug mirror replay remains excluded.
+
+The trusted single-dispatch body carries a bounded canonical security baseline,
+without guest headers or persisted customer configuration. The synthetic gateway
+verifies that its scopes exactly match the resolved owner/app/target and admits
+those exact generations before execution. A missed revoke/release during handoff
+refuses instead of substituting the released generation. Optional absence keeps
+older trusted callers compatible; updated gateway consumers must precede updated
+schedd producers in a drained, matched-version rollout. Older consumers ignore
+the new body field and cannot provide this contract.
+
 The implementation tracker is `docs/traffic_platform_implementation.md`.
 Each guarantee needs configuration-to-runtime tests, cancellation/recovery
 tests and customer documentation. VM lifecycle changes require native x86_64

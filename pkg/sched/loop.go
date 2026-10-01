@@ -44,6 +44,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/sched/targets"
 	"github.com/onebox-faas/faas/pkg/state"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
+	"github.com/onebox-faas/faas/pkg/trafficrevocation"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -3488,6 +3489,9 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 		dispatch["deployment_id"] = wake.DeploymentID
 		dispatch["wake_id"] = wake.WakeID
 		dispatch["port"] = wake.Port
+	}
+	if snapshot := trafficrevocation.HandoffValue(ctx); snapshot != "" {
+		dispatch["security_snapshot"] = snapshot
 	}
 	body, err := json.Marshal(dispatch)
 	if err != nil {

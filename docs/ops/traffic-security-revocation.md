@@ -29,9 +29,26 @@ and app enroll before gateway-owned wake, and the deployment before forwarding.
 A nested delivery shares that lifetime through cleanup. Trigger batches carry
 the trigger's saved account to every record. Older trusted account-free envelopes
 keep compatibility; the verified app supplies the security account scope.
-Pre-woken delivery enrolls after the scheduler returns its target. The scheduler
-wake lifetime still needs separate complete-path acceptance. Debug mirror replay
-retains its separate mirror target owner. This does not apply public edge rules
+Production schedd verifies this store before lifecycle startup, then runs bounded
+periodic repair. Its durable invocation drain enrolls account/app before wake
+and a selected pinned deployment before its wake. Unpinned delivery adds the
+verified returned deployment. The drain rechecks the exact admitted generations
+after wake and before recording success. A cached account allow cannot bypass
+these checks. Cancellation stops the delivery's wait; the existing coordinated
+wake leader retains its independent bounded lifecycle for other callers. Pinned
+wake uses the delivery context. Claim failure/retry writes use the original
+scheduler context so a canceled delivery does not strand a writable claim.
+Registrations remain owned through gateway result handling and cleanup.
+
+The trusted single-dispatch JSON body carries `security_snapshot`, using the same
+canonical `v1.` codec and 4 KiB/16-scope bounds as public response handoff. The
+receiving gateway requires the exact resolved account/app/target scope set and
+checks the sender's generations before forwarding. A missed revoke/release pair
+refuses the old delivery even if the account is active again. Guest headers cannot
+author this field; it is not persisted as customer configuration. Malformed
+metadata, missing owner storage or an unwired registry refuse enforcement.
+Absence keeps older trusted callers compatible. Debug mirror replay
+retains its separate mirror target owner and legacy scheduler account gate. This does not apply public edge rules
 or public request rate accounting to background work.
 
 An independent lifetime fence survives successful streaming/gRPC/Upgrade
@@ -87,13 +104,21 @@ A released generation allows a fresh request. Cached old account hold/status
 flags cannot override a verified release. Existing app security-quarantine
 admission still refuses before wake, and notifications refresh its route facts.
 Deleted identity tombstones and released generations survive gateway replacement.
-Individual credentials, managed realtime, detached work and arbitrary guest
-sockets remain outside this initial account/app/deployment fence.
+Individual credentials, managed realtime, other detached work and arbitrary guest
+sockets remain outside this initial account/app/deployment fence. Durable normal
+invocation delivery is covered as described above; guest effects already performed
+are not rolled back by cancellation. Refused or unverifiable attempts use the
+existing finite invocation retry budget. A later attempt enrolls a fresh lifetime.
 
 ## Rollout and local evidence
 
 Apply `20260929230709001_traffic_security_epochs.sql` before rolling internal
-gateways. A missing migration or unreadable store refuses new gateway startup.
+gateways or schedd. A missing migration or unreadable store refuses their startup.
+Roll updated synthetic consumers before schedd producers, drain invocation dispatch
+during the cutover and resume on matched versions. Older consumers ignore the
+optional JSON field and cannot enforce the sender's baseline. Older producers
+leave scheduler-owned wake outside this fence. This is an operator rollout contract;
+it does not claim automatic mixed-version capability negotiation.
 Update every participating internal gateway and both its public-request and
 service-proxy listeners before advertising fleet coverage. The public proxy
 response/session/security metadata rollout remains compute-first, as described in
@@ -110,6 +135,16 @@ and real gRPC cancellation after successful handshake-budget detachment.
 Synthetic endpoint tests verify every target claim, before-wake refusal,
 account/app/deployment cancellation, missed revoke/release pairs, store failure,
 late-success rejection and registration ownership through forwarding cleanup.
+Scheduler drain tests also cover initial warm/cold refusal, cancelable pinned
+wake, canceled waiters with an independently finishing shared leader, retained
+registrations through forwarding cleanup, exact checks after wake and before
+success, late-result refusal, and durable retry outcome writes. The real schedd
+factory, PostgreSQL store and HTTP producer emit the admitted baseline and persist
+a valid completion. Its VMM and receiving gateway are fixtures. Startup tests
+refuse a missing migration or closed pool before lifecycle work. A separate actual
+synthetic HTTP endpoint with independent PostgreSQL sender/receiver registries
+refuses a stale handoff after an unobserved suspension/release pair and accepts a
+fresh baseline; registrations and database connections release after delivery.
 Two synthetic HTTP endpoints with independent PostgreSQL pools/registries verify
 missed suspension/release without notifications, fresh recovery and a one-pool
 outage while the peer continues. They share a test process and fixture forwarding;

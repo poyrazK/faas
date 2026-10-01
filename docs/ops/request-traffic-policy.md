@@ -24,10 +24,13 @@ the same snapshot, including unpinned targets. Invalid targets never enter the
 shared placement cache. Expired or disabled pins refuse instead of selecting
 newer code. Unpinned standalone invocations retain their scheduler selection
 semantics. These checks establish version selection and owner validation. Full
-public edge policy, public rate accounting, scheduler wake fencing and request
-decision observations still need separate synthetic-path acceptance evidence.
-Normal synthetic HTTP now joins the account/app/deployment revocation lifetime
-through gateway-owned wake and forwarding cleanup; see
+public edge policy, public rate accounting and request decision observations
+still need separate synthetic-path acceptance evidence. Normal synthetic HTTP
+joins the account/app/deployment revocation lifetime through scheduler-owned or
+gateway-owned wake and forwarding cleanup. Scheduler dispatch transfers its exact
+admitted security generations; the gateway checks them against the verified owner
+and target, and the scheduler rechecks before success. Deployed complete-path
+acceptance remains pending; see
 `traffic-security-revocation.md` for coverage and exclusions.
 
 ## Public request policy

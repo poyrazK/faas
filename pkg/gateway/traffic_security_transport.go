@@ -3,15 +3,10 @@ package gateway
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"net/http"
-	"sort"
 	"strings"
 
-	"github.com/google/uuid"
-	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/trafficrevocation"
@@ -22,66 +17,12 @@ const (
 	trafficSecurityRealtime = "v1;managed-realtime"
 )
 
-type securityScopeWire struct {
-	Kind     string `json:"kind"`
-	ID       string `json:"id"`
-	Revision int64  `json:"revision"`
-}
-
-// Only the protected compute hop may author this canonical, bounded snapshot.
-// It carries no credentials and grants no access without an authoritative read.
 func encodeTrafficSecurity(states map[trafficrevocation.Scope]trafficrevocation.State) (string, error) {
-	if len(states) == 0 || len(states) > api.TrafficSecurityMaxRequestScopes {
-		return "", trafficrevocation.ErrUnavailable
-	}
-	rows := make([]securityScopeWire, 0, len(states))
-	for scope, state := range states {
-		id, err := uuid.Parse(scope.ID)
-		if err != nil || id == uuid.Nil || scope.ID != id.String() || state.Revision < 0 || state.Revoked ||
-			(scope.Kind != "account" && scope.Kind != "app" && scope.Kind != "deployment") {
-			return "", trafficrevocation.ErrUnavailable
-		}
-		rows = append(rows, securityScopeWire{scope.Kind, scope.ID, state.Revision})
-	}
-	sort.Slice(rows, func(i, j int) bool {
-		return rows[i].Kind < rows[j].Kind || rows[i].Kind == rows[j].Kind && rows[i].ID < rows[j].ID
-	})
-	data, err := json.Marshal(rows)
-	if err != nil {
-		return "", err
-	}
-	value := "v1." + base64.RawURLEncoding.EncodeToString(data)
-	if len(value) > api.TrafficSecurityMaxHeaderBytes {
-		return "", trafficrevocation.ErrUnavailable
-	}
-	return value, nil
+	return trafficrevocation.EncodeSnapshot(states)
 }
 
 func decodeTrafficSecurity(value string) (map[trafficrevocation.Scope]trafficrevocation.State, error) {
-	if len(value) > api.TrafficSecurityMaxHeaderBytes || !strings.HasPrefix(value, "v1.") {
-		return nil, trafficrevocation.ErrUnavailable
-	}
-	data, err := base64.RawURLEncoding.Strict().DecodeString(strings.TrimPrefix(value, "v1."))
-	if err != nil {
-		return nil, trafficrevocation.ErrUnavailable
-	}
-	var rows []securityScopeWire
-	if err := json.Unmarshal(data, &rows); err != nil || len(rows) == 0 || len(rows) > api.TrafficSecurityMaxRequestScopes {
-		return nil, trafficrevocation.ErrUnavailable
-	}
-	states := make(map[trafficrevocation.Scope]trafficrevocation.State, len(rows))
-	for _, row := range rows {
-		scope := trafficrevocation.Scope{Kind: row.Kind, ID: row.ID}
-		if _, duplicate := states[scope]; duplicate {
-			return nil, trafficrevocation.ErrUnavailable
-		}
-		states[scope] = trafficrevocation.State{Revision: row.Revision}
-	}
-	canonical, err := encodeTrafficSecurity(states)
-	if err != nil || canonical != value {
-		return nil, trafficrevocation.ErrUnavailable
-	}
-	return states, nil
+	return trafficrevocation.DecodeSnapshot(value)
 }
 
 func stampTrafficSecurity(ctx context.Context, header http.Header) {

@@ -24,6 +24,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/trafficrevocation"
 )
 
 // batchDispatchStatus values are the per-record terminal states the
@@ -442,13 +443,14 @@ func (s *SynthServer) handleSynthesize(w http.ResponseWriter, r *http.Request) {
 // function can branch on shape without re-parsing the dispatch
 // response.
 type invocationDispatchRequest struct {
-	InvocationID string            `json:"invocation_id"`
-	AppID        string            `json:"app_id"`
-	AccountID    string            `json:"account_id,omitempty"`
-	Source       string            `json:"source"` // async_invoke|queue|delayed_task|cron
-	Method       string            `json:"method"`
-	Path         string            `json:"path"`
-	Headers      map[string]string `json:"headers,omitempty"`
+	InvocationID     string            `json:"invocation_id"`
+	AppID            string            `json:"app_id"`
+	AccountID        string            `json:"account_id,omitempty"`
+	SecuritySnapshot string            `json:"security_snapshot,omitempty"`
+	Source           string            `json:"source"` // async_invoke|queue|delayed_task|cron
+	Method           string            `json:"method"`
+	Path             string            `json:"path"`
+	Headers          map[string]string `json:"headers,omitempty"`
 	// BodyB64 is base64-encoded so JSON encoding stays trivial and
 	// the cron path (no body) ships an empty string by default.
 	BodyB64 string `json:"body_b64,omitempty"`
@@ -475,6 +477,14 @@ func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Re
 	if req.AppID == "" || req.InvocationID == "" {
 		http.Error(w, "app_id + invocation_id required", http.StatusBadRequest)
 		return
+	}
+	if req.SecuritySnapshot != "" {
+		ctx, err := trafficrevocation.WithHandoffSnapshot(r.Context(), req.SecuritySnapshot)
+		if err != nil {
+			writeTrafficRevocationError(w, r, err)
+			return
+		}
+		r = r.WithContext(ctx)
 	}
 	if req.Source == "workflow" {
 		if s.applyWorkflowAdmission(w, r, req.AppID, req.Headers) {

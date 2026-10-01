@@ -172,3 +172,127 @@ func TestSyntheticTrafficSecurityPostgresMissedReleaseAndOutage(t *testing.T) {
 	}
 	assertSyntheticSecurityReleased(t, registries[1])
 }
+
+// The sender deliberately misses the suspension/release notifications. The
+// receiving registry must compare the sender's exact baseline, not merely admit
+// the now-active account at a new generation.
+func TestSyntheticTrafficSecurityPostgresSchedulerHandoff(t *testing.T) {
+	ctx := t.Context()
+	firstPool := pgtest.OpenMigrated(t)
+	if err := db.MigrateUp(ctx, firstPool); err != nil {
+		t.Fatal(err)
+	}
+	secondPool, err := pgxpool.NewWithConfig(ctx, firstPool.Config())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondPool.Close()
+	store := state.NewPgStore(secondPool)
+	account, err := store.CreateAccount(ctx, "synth-security-"+uuid.NewString()+"@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "synth-security-" + uuid.NewString()[:8], Type: state.AppTypeApp, RAMMB: 128})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "default", Kind: state.DeploymentKindImage, ImageDigest: "sha256:synthetic-security", Status: state.DeployPending})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, dep.ID); err != nil {
+		t.Fatal(err)
+	}
+	node, err := store.CreateComputeNode(ctx, state.ComputeNode{Name: "synth-security-" + uuid.NewString(), TargetURL: "unix:///run/vmmd.sock", VPCPUs: 1, MemMB: 1024, MaxConcurrency: 1, AdmissionCeilingMB: 512, VCPUBudget: 1, Active: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance, err := store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateRunning), 128, node.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sender := trafficrevocation.New(state.NewPGTrafficSecurityBackend(firstPool))
+	defer sender.Close()
+	receiver := trafficrevocation.New(state.NewPGTrafficSecurityBackend(secondPool))
+	defer receiver.Close()
+	scopes := []trafficrevocation.Scope{{Kind: "account", ID: account.ID}, {Kind: "app", ID: app.ID}, {Kind: "deployment", ID: dep.ID}}
+	senderCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	before, release, err := sender.AdmitSnapshot(senderCtx, scopes, cancel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	old, err := trafficrevocation.EncodeAdmittedSnapshot(before)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forwards := 0
+	adapter := &synthAdapter{store: store, trafficRevocations: receiver, forward: func(gateway.Target) http.Handler {
+		forwards++
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{"ok":true}`)) })
+	}}
+	srv := httptest.NewServer(gateway.NewSynthServer("", adapter, nil).Mux())
+	defer srv.Close()
+	call := func(value string) int {
+		t.Helper()
+		body, err := json.Marshal(map[string]any{"invocation_id": uuid.NewString(), "app_id": app.ID, "account_id": account.ID, "source": state.InvocationAsyncInvoke,
+			"instance_id": instance.ID, "node_id": node.ID, "deployment_id": dep.ID, "security_snapshot": value})
+		if err != nil {
+			t.Fatal(err)
+		}
+		callCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+		req, err := http.NewRequestWithContext(callCtx, http.MethodPost, srv.URL+"/v1/invocations:dispatch", bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+			t.Fatal(err)
+		}
+		return resp.StatusCode
+	}
+	if err := store.UpdateAccountStatus(ctx, account.ID, state.AccountSuspended); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateAccountStatus(ctx, account.ID, state.AccountActive); err != nil {
+		t.Fatal(err)
+	}
+	if senderCtx.Err() != nil {
+		t.Fatal("sender unexpectedly observed omitted notifications")
+	}
+	if status := call(old); status != http.StatusBadGateway || forwards != 0 {
+		t.Fatalf("stale scheduler handoff accepted: %d forwards=%d", status, forwards)
+	}
+	assertSyntheticSecurityReleased(t, receiver)
+	freshCtx, freshCancel := context.WithCancelCause(ctx)
+	defer freshCancel(nil)
+	current, currentRelease, err := sender.AdmitSnapshot(freshCtx, scopes, freshCancel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer currentRelease()
+	fresh, err := trafficrevocation.EncodeAdmittedSnapshot(current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if old == fresh || !errors.Is(context.Cause(senderCtx), trafficrevocation.ErrRevoked) {
+		t.Fatal("fresh admission rebased or failed to cancel old owner")
+	}
+	if status := call(fresh); status != http.StatusOK || forwards != 1 {
+		t.Fatalf("fresh scheduler handoff refused: %d forwards=%d", status, forwards)
+	}
+	assertSyntheticSecurityReleased(t, receiver)
+	release()
+	currentRelease()
+	assertSyntheticSecurityReleased(t, sender)
+	if firstPool.Stat().AcquiredConns() != 0 || secondPool.Stat().AcquiredConns() != 0 {
+		t.Fatal("handoff retained a database connection")
+	}
+}

@@ -385,6 +385,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := deps.migrate(ctx, pool); err != nil {
 		return err
 	}
+	invocationTrafficRegistry, err := newInvocationTrafficRegistry(ctx, pool)
+	if err != nil {
+		return err
+	}
+	defer runInvocationTrafficRegistry(ctx, invocationTrafficRegistry)()
 
 	// ADR-056: handshake-layer NodeVerifier. Gated on cfg.NodeName
 	// (the multi-box gate, mirroring vmmd's cfg.ComputeNode.NodeName
@@ -2268,6 +2273,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		} else {
 			drain := sched.NewDrain(engine.Store(), engine,
 				sched.WithDrainGatewaySynth(synth),
+				sched.WithDrainTrafficRevocations(invocationTrafficRegistry),
 				sched.WithDrainNotifier(engine.Notifier()),
 				sched.WithDrainLogger(log),
 				sched.WithDrainAudit(schedulerAuditor),

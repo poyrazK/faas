@@ -758,7 +758,7 @@ func (a *synthAdapter) forwardInvocationWithStatus(ctx context.Context, target g
 func (a *synthAdapter) prepareInvocation(ctx context.Context, inv state.Invocation, target *state.InvocationTarget) (context.Context, state.Invocation, state.InvocationVersion, func(), error) {
 	noop := func() {}
 	if a.store == nil { // Legacy in-process adapters have no durable state.
-		if a.trafficRevocations != nil {
+		if a.trafficRevocations != nil || trafficrevocation.HandoffValue(ctx) != "" {
 			return ctx, inv, state.InvocationVersion{}, noop, trafficrevocation.ErrUnavailable
 		}
 		return ctx, inv, state.InvocationVersion{}, noop, nil

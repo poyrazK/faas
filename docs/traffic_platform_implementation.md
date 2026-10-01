@@ -2529,3 +2529,93 @@ public control contracts and node admission evidence, decision observations,
 preview/runtime agreement, deployed daemon fleet/load/restart/outage/recovery,
 customer/staging qualification and native Linux x86_64 KVM VM/firewall/restore/
 process-death/leak acceptance remain pending. The user has no KVM host available.
+
+## Scheduler invocation wake and security handoff — 2026-10-01
+
+Production schedd now verifies the existing security store before lifecycle
+startup and runs its bounded registry repair worker. Normal durable invocation
+delivery enrolls the verified account/app before waiting for wake. A pinned
+version also enrolls its selected deployment before wake; an unpinned version
+adds the verified returned deployment. The drain rechecks the exact admitted
+generations after wake and before recording success. Cached account allows cannot
+substitute for admission. Original scheduler context owns durable claim failure,
+retry and completion writes; security cancellation does not strand a writable
+claim until lease expiry. Existing finite attempt budgets remain in force.
+
+Delivery can withdraw its wait even when it initiated a shared wake. The existing
+coordinator owns the independent bounded leader, which other callers can still
+join. Pinned wake receives the delivery context. Security registrations remain
+owned until gateway result handling and forwarding cleanup return. A canceled
+exchange cannot publish a late success. Guest effects already performed are not
+rolled back. A missing gateway refuses secured delivery instead of completing it
+through the legacy in-process seam. Debug mirror replay retains its separate
+owner and legacy scheduler account gate.
+
+The trusted single-dispatch body transfers the exact admitted baseline in
+`security_snapshot`. The shared canonical v1 codec retains the public response
+wire format and its existing 4 KiB/16-scope bounds. Trusted memory-store IDs are
+normalized for transport without changing registry ownership keys. The receiving
+gateway requires the exact verified owner/app/target scope set and checks the
+sender's generations. It cannot replace an old baseline with a newer released
+generation. Missing owner storage, missing registry or malformed metadata refuse
+forwarding. Legacy absence remains compatible. Roll updated consumers before
+producers, drain dispatch during the cutover and resume on matched versions;
+older consumers ignore the optional field. No mixed-version capability negotiation
+is claimed. Operations documentation was frozen with the code.
+
+Verification against the final 12,488-file source freeze:
+
+- Complete state, internal gateway, scheduler, gateway, trafficrevocation, schedd
+  and public gateway unit scope: 7,167 named passes and 1,426 guarded/skipped
+  results in 145.267 s. Package passes are 2,156, 795, 1,778, 2,226, 33, 86 and
+  93 respectively. Guards are not native acceptance.
+- Selected PostgreSQL profile: 33 named passes, no skips, 23.000 s. Eight real
+  PostgreSQL fixture roots account for 21 named results; 12 memory/transport cases
+  share the profile. Actual schedd startup refuses an unavailable/unmigrated store
+  before lifecycle work. Its real drain, PostgreSQL store and HTTP producer emit
+  the owner baseline and persist completion. VMM and receiving gateway are fixtures.
+- Independent PostgreSQL sender/receiver registries and an actual synthetic HTTP
+  endpoint refuse an old baseline after an unobserved suspension/release pair,
+  accept a fresh baseline and release registrations/connections. Existing two-peer
+  missed-release/outage, target snapshot and daemon startup/shutdown checks pass.
+  These are local fixture processes, not deployed fleet or native VM/network proof.
+- Scheduler fixtures cover initial warm/cold account/app/pinned-deployment refusal,
+  canceled pinned wake, canceled waiters with independently finishing shared wake,
+  account/app/deployment withdrawal and outage through forwarding cleanup,
+  post-wake and pre-completion exact checks, missed pairs without notifications,
+  late-success refusal and durable retry writes. Shared codec tests check canonical
+  bounds, ambiguity, trusted identity aliases and immutable context snapshots.
+- Deduplicated acceptance: 7,187 named passes, with 1,417 guarded results without
+  acceptance. SQLC v1.31.1 reproduces all four generated files. Lint v2.4.0 checks
+  all seven complete packages with tests and reports zero issues in 59.151 s.
+  Repository SQL, encoding, quoting and ADR-number gates pass in 24.613 s.
+  PostgreSQL's source public schema stays unmigrated with fsync,
+  synchronous_commit and full_page_writes enabled. No schema, quota, test overlay,
+  source exclusion or weakening of an existing assertion.
+
+The original baseline reproduced five unsafe synthetic handoffs (stale generation,
+foreign account/app/deployment and missing owner). An early compile found an unused
+import after codec extraction. New pinned fixtures initially omitted the existing
+revision-retention configuration; enabling it exercises security admission rather
+than version refusal. A new PostgreSQL result check initially compared JSONB bytes
+instead of their semantic object. Lint required explicit inherited context returns
+through admission and handoff. Entire failed and preliminary source iterations are
+retained as diagnostics and excluded from accepted counts.
+
+Shared disk pressure caused a full gate to fail compilation/linking with no space
+left on device. Only this task's Go/test processes were stopped; the entire run is
+excluded. After owned runs closed, two cleanups removed four older large cache
+files (3,899,251,826 bytes), then three (3,563,524,842 bytes), retaining the two
+newest large files each time. No sibling cache, process or PostgreSQL cluster was
+changed. Final gates ran against the final unchanged source freeze. Only this
+tracker changed afterward. Evidence and exact staged/committed source receipts
+are under
+`/Users/poyrazk/dev/Cloud/gregale/outputs/traffic-scheduler-security-20261001/`.
+
+All six release requirements remain unchecked. Remaining operator/alias/revision
+writer/resolver coverage, complete synthetic/trigger/public control contracts and
+node admission evidence, decision observations and preview/runtime agreement,
+deployed daemon fleet/load/restart/outage/recovery, customer/staging qualification,
+and Linux x86_64 KVM VM/firewall/restore/process-death/leak acceptance remain pending.
+The user has no available KVM host; another host request is unnecessary until
+availability changes.
