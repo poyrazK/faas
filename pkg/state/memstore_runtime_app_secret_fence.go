@@ -1,6 +1,6 @@
 package state
 
-func (m *MemStore) runtimeAppSecretFenceLocked(accountID, appID, instanceID string, fence RuntimeAppSecretFence) (string, error) {
+func (m *MemStore) runtimeAppSecretFenceLocked(accountID, appID, instanceID string, fence RuntimeAppSecretFence, requireActive bool) (string, error) {
 	instance, ok := m.instances[instanceID]
 	app, appOK := m.apps[appID]
 	dep, depOK := m.deployments[instance.DeploymentID]
@@ -14,7 +14,7 @@ func (m *MemStore) runtimeAppSecretFenceLocked(accountID, appID, instanceID stri
 		}
 		return scope, nil
 	}
-	if fence.DeploymentID != instance.DeploymentID || fence.Scope != scope || !State(instance.State).CountsForRAM() {
+	if fence.DeploymentID != instance.DeploymentID || fence.Scope != scope || (requireActive && !State(instance.State).CountsForRAM()) {
 		return "", ErrConflict
 	}
 	snapshot, err := m.runtimeAppValuesLocked(accountID, appID, instance.DeploymentID)

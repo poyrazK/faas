@@ -1900,3 +1900,46 @@ regressions passed in 0.693/1.780 seconds. Independent SQLC 1.31.1 output matche
 the checked-in files, and the whitespace check passes. The vmmd test binary
 cross-compiles as an x86_64 Linux ELF; it was not executed on KVM. Full suite,
 lint, test-metal, leakcheck and provider acceptance remain open.
+
+### Owned boot secret delivery summaries
+
+Wake and snapshot priming now carry the host-generated sealed configuration
+fence from their single owned runtime snapshot through the unlocked VM start
+window. Main and sidecar delivery candidates share that same complete-book
+fence. Completion does not acquire a newer snapshot to authorize an older
+payload. The store requires this fence for every boot delivery write.
+
+Both stores validate the deployment, original environment lifetime, sealed
+envelopes and grant configuration again in the write transaction/critical
+section. They also require the exact instance's current wake ID. PostgreSQL
+locks the instance attempt, and the entire candidate batch is checked before
+any summary is changed. Rotation, resealing, identical-envelope recreation,
+stage recreation or a changed wake attempt rejects the old completion without
+attributing it to replacement inputs.
+
+A successful delivery requires an instance that still holds runtime resources.
+Failure summaries also accept the same attempt after its instance becomes
+FAILED; STOPPED instances cannot write a new boot summary. A later failure
+cannot downgrade an already delivered version. Failure reasons use the closed
+`runtime_start_failed` code. Delivery writes use SQLC; its schema snapshot now
+includes the existing delivery columns from migration 20260922174018492,
+without adding a new database migration.
+
+This increment covers delivery observations, not authorization to activate the
+complete-clone feature. Native stage queue adapters, scope-specific lifecycle
+and reconciliation, coordinated PostgreSQL/object capture, remaining resource
+strategies, complete activation and qualification, and native VM/provider
+acceptance remain open.
+
+Verification: the final expanded MemStore/real PostgreSQL gate passed in
+122.873 seconds, covering boot and reload fences, same-envelope recreation,
+version-preserving reseals, rejected partial batches, current failed attempts,
+stopped attempts, exact wake IDs, deletion/recreation, a boot writer observed
+waiting for an environment deletion, managed secrets, object credentials and
+clone/deletion/rollback regressions. Scheduler wake/prime, main/sidecar delivery,
+migration and app-task regressions passed in 1.179 seconds; API secret and clone
+regressions passed in 1.634 seconds; guest runtime protocols passed in 0.803
+seconds. Independent SQLC 1.31.1 generation matches the checked-in output and
+the whitespace check passes. Scheduler and vmmd test binaries cross-compile
+as Linux x86_64 ELF files; neither was executed on KVM. Full suite, lint,
+test-metal, leakcheck and provider acceptance remain open.

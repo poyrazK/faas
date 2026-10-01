@@ -11449,6 +11449,36 @@ func (q *Queries) LockRuntimeSecretConfigurationPins(ctx context.Context, db DBT
 	return items, nil
 }
 
+const lockRuntimeSecretDeliveryAttempt = `-- name: LockRuntimeSecretDeliveryAttempt :one
+SELECT id FROM instances
+WHERE id=$1::uuid AND app_id=$2::uuid
+    AND deployment_id=$3::uuid AND wake_id=$4::uuid
+    AND (state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+        OR (NOT $5::boolean AND state='failed'))
+FOR SHARE
+`
+
+type LockRuntimeSecretDeliveryAttemptParams struct {
+	InstanceID    pgtype.UUID
+	AppID         pgtype.UUID
+	DeploymentID  pgtype.UUID
+	WakeID        pgtype.UUID
+	RequireActive bool
+}
+
+func (q *Queries) LockRuntimeSecretDeliveryAttempt(ctx context.Context, db DBTX, arg LockRuntimeSecretDeliveryAttemptParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockRuntimeSecretDeliveryAttempt,
+		arg.InstanceID,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.WakeID,
+		arg.RequireActive,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockRuntimeSecretEnvironment = `-- name: LockRuntimeSecretEnvironment :one
 SELECT e.id FROM project_environments e JOIN apps a ON a.project_id=e.project_id AND a.account_id=e.account_id
 WHERE e.id=$1::uuid AND e.account_id=$2::uuid AND a.id=$3::uuid
@@ -16660,7 +16690,7 @@ func (q *Queries) ReadProjectEnvironmentClonePostgresBindingLedger(ctx context.C
 }
 
 const readProjectEnvironmentClonePostgresBindingSecrets = `-- name: ReadProjectEnvironmentClonePostgresBindingSecrets :many
-SELECT account_id, app_id, key, ciphertext, created_at, updated_at, org_id, kid, scope, value_hash, secret_version, secret_class, managed_object_storage_credential_id, managed_postgres_binding_id, managed_credential_ref, managed_credential_generation FROM app_secrets WHERE managed_postgres_binding_id=$1 ORDER BY app_id,scope,key FOR UPDATE
+SELECT account_id, app_id, key, ciphertext, created_at, updated_at, org_id, kid, scope, value_hash, secret_version, secret_class, delivery_version, delivered_version, delivery_status, last_delivery_attempt_at, last_delivered_at, last_delivery_error_code, last_delivered_wake_id, last_delivered_instance_id, managed_object_storage_credential_id, managed_postgres_binding_id, managed_credential_ref, managed_credential_generation FROM app_secrets WHERE managed_postgres_binding_id=$1 ORDER BY app_id,scope,key FOR UPDATE
 `
 
 func (q *Queries) ReadProjectEnvironmentClonePostgresBindingSecrets(ctx context.Context, db DBTX, managedPostgresBindingID pgtype.UUID) ([]AppSecret, error) {
@@ -16685,6 +16715,14 @@ func (q *Queries) ReadProjectEnvironmentClonePostgresBindingSecrets(ctx context.
 			&i.ValueHash,
 			&i.SecretVersion,
 			&i.SecretClass,
+			&i.DeliveryVersion,
+			&i.DeliveredVersion,
+			&i.DeliveryStatus,
+			&i.LastDeliveryAttemptAt,
+			&i.LastDeliveredAt,
+			&i.LastDeliveryErrorCode,
+			&i.LastDeliveredWakeID,
+			&i.LastDeliveredInstanceID,
 			&i.ManagedObjectStorageCredentialID,
 			&i.ManagedPostgresBindingID,
 			&i.ManagedCredentialRef,
@@ -17480,6 +17518,43 @@ func (q *Queries) ReadRuntimeAppValuesForDeployment(ctx context.Context, db DBTX
 	return i, err
 }
 
+const readRuntimeSecretDeliveryVersions = `-- name: ReadRuntimeSecretDeliveryVersions :many
+SELECT key,delivery_version FROM app_secrets
+WHERE account_id=$1::uuid AND app_id=$2::uuid AND scope=$3::text
+ORDER BY key
+`
+
+type ReadRuntimeSecretDeliveryVersionsParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	Scope     string
+}
+
+type ReadRuntimeSecretDeliveryVersionsRow struct {
+	Key             string
+	DeliveryVersion int64
+}
+
+func (q *Queries) ReadRuntimeSecretDeliveryVersions(ctx context.Context, db DBTX, arg ReadRuntimeSecretDeliveryVersionsParams) ([]ReadRuntimeSecretDeliveryVersionsRow, error) {
+	rows, err := db.Query(ctx, readRuntimeSecretDeliveryVersions, arg.AccountID, arg.AppID, arg.Scope)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadRuntimeSecretDeliveryVersionsRow{}
+	for rows.Next() {
+		var i ReadRuntimeSecretDeliveryVersionsRow
+		if err := rows.Scan(&i.Key, &i.DeliveryVersion); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const reapExpiredUploadSessions = `-- name: ReapExpiredUploadSessions :many
 SELECT id, part_path
 FROM upload_sessions
@@ -17584,6 +17659,76 @@ func (q *Queries) ReapStaleUploadPartFiles(ctx context.Context, db DBTX) ([]Reap
 		return nil, err
 	}
 	return items, nil
+}
+
+const recordAppSecretDeliveryFailure = `-- name: RecordAppSecretDeliveryFailure :execrows
+UPDATE app_secrets SET delivery_status='failed',last_delivery_attempt_at=$1::timestamptz,
+    last_delivery_error_code=$2::text
+WHERE account_id=$3::uuid AND app_id=$4::uuid AND scope=$5::text
+    AND key=$6::text AND delivery_version=$7::bigint
+    AND COALESCE(delivered_version,0)<delivery_version
+`
+
+type RecordAppSecretDeliveryFailureParams struct {
+	AttemptedAt pgtype.Timestamptz
+	ErrorCode   string
+	AccountID   pgtype.UUID
+	AppID       pgtype.UUID
+	Scope       string
+	Key         string
+	Version     int64
+}
+
+func (q *Queries) RecordAppSecretDeliveryFailure(ctx context.Context, db DBTX, arg RecordAppSecretDeliveryFailureParams) (int64, error) {
+	result, err := db.Exec(ctx, recordAppSecretDeliveryFailure,
+		arg.AttemptedAt,
+		arg.ErrorCode,
+		arg.AccountID,
+		arg.AppID,
+		arg.Scope,
+		arg.Key,
+		arg.Version,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const recordAppSecretDeliverySuccess = `-- name: RecordAppSecretDeliverySuccess :execrows
+UPDATE app_secrets SET delivered_version=delivery_version,delivery_status='delivered',
+    last_delivery_attempt_at=$1::timestamptz,last_delivered_at=$1::timestamptz,
+    last_delivery_error_code=NULL,last_delivered_wake_id=$2::text,last_delivered_instance_id=$3::text
+WHERE account_id=$4::uuid AND app_id=$5::uuid AND scope=$6::text
+    AND key=$7::text AND delivery_version=$8::bigint
+`
+
+type RecordAppSecretDeliverySuccessParams struct {
+	AttemptedAt pgtype.Timestamptz
+	WakeID      string
+	InstanceID  string
+	AccountID   pgtype.UUID
+	AppID       pgtype.UUID
+	Scope       string
+	Key         string
+	Version     int64
+}
+
+func (q *Queries) RecordAppSecretDeliverySuccess(ctx context.Context, db DBTX, arg RecordAppSecretDeliverySuccessParams) (int64, error) {
+	result, err := db.Exec(ctx, recordAppSecretDeliverySuccess,
+		arg.AttemptedAt,
+		arg.WakeID,
+		arg.InstanceID,
+		arg.AccountID,
+		arg.AppID,
+		arg.Scope,
+		arg.Key,
+		arg.Version,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const recordAppSecretRevocationAck = `-- name: RecordAppSecretRevocationAck :execrows

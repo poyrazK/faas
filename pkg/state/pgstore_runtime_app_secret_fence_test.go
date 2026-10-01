@@ -22,7 +22,20 @@ func TestPgRuntimeAppSecretEmptyRevocationFence(t *testing.T) {
 	testRuntimeAppSecretEmptyRevocationFence(t, store)
 }
 
+func TestPgRuntimeAppSecretBootDeliveryFence(t *testing.T) {
+	store, _, _ := pgWithPool(t)
+	testRuntimeAppSecretBootDeliveryFence(t, store)
+}
+
 func TestPgRuntimeAppSecretFenceWaitsForEnvironmentDeletion(t *testing.T) {
+	testRuntimeAppSecretFenceWaitsForEnvironmentDeletion(t, false)
+}
+
+func TestPgRuntimeAppSecretBootDeliveryWaitsForEnvironmentDeletion(t *testing.T) {
+	testRuntimeAppSecretFenceWaitsForEnvironmentDeletion(t, true)
+}
+
+func testRuntimeAppSecretFenceWaitsForEnvironmentDeletion(t *testing.T, boot bool) {
 	store, ctx, pool := pgWithPool(t)
 	f := seedRuntimeAppEnv(t, store)
 	dep := f.deployments["stage"]
@@ -61,7 +74,14 @@ func TestPgRuntimeAppSecretFenceWaitsForEnvironmentDeletion(t *testing.T) {
 	}
 	done := make(chan outcome, 1)
 	go func() {
-		count, err := store.RecordAppSecretRuntimeReload(ctx, result)
+		var count int
+		var err error
+		if boot {
+			count, err = store.RecordAppSecretDelivery(ctx, state.AppSecretDeliveryResult{AccountID: result.AccountID, AppID: result.AppID,
+				InstanceID: result.InstanceID, WakeID: instance.WakeID, Fence: result.Fence, Status: state.SecretDeliveryDelivered, Candidates: result.Candidates})
+		} else {
+			count, err = store.RecordAppSecretRuntimeReload(ctx, result)
+		}
 		done <- outcome{count, err}
 	}()
 	// Observe this writer blocked by this transaction, rather than inferring
@@ -99,7 +119,7 @@ func TestPgRuntimeAppSecretFenceWaitsForEnvironmentDeletion(t *testing.T) {
 		t.Fatal("writer did not resume after deletion committed")
 	}
 	row, err := store.GetAppSecretInScope(ctx, f.account.ID, f.app.ID, "stage", "TOKEN")
-	if err != nil || row.LastRuntimeReloadVersion != 0 || string(row.Ciphertext) != "replacement" {
+	if err != nil || row.LastRuntimeReloadVersion != 0 || row.DeliveredVersion != 0 || string(row.Ciphertext) != "replacement" {
 		t.Fatalf("stale observation modified replacement: %+v %v", row, err)
 	}
 }

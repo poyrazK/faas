@@ -19488,13 +19488,7 @@ func (m *MemStore) CountAppSecrets(_ context.Context, accountID, appID string) (
 }
 
 func (m *MemStore) RecordAppSecretDelivery(_ context.Context, result AppSecretDeliveryResult) (int, error) {
-	if result.AccountID == "" || result.AppID == "" || result.WakeID == "" || result.InstanceID == "" {
-		return 0, ErrInvalidArgument
-	}
-	if result.Status != SecretDeliveryDelivered && result.Status != SecretDeliveryFailed {
-		return 0, ErrInvalidArgument
-	}
-	if result.Status == SecretDeliveryFailed && result.ErrorCode == "" {
+	if !validAppSecretDeliveryResult(result) {
 		return 0, ErrInvalidArgument
 	}
 	attemptedAt := result.AttemptedAt.UTC()
@@ -19503,11 +19497,22 @@ func (m *MemStore) RecordAppSecretDelivery(_ context.Context, result AppSecretDe
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	scope, err := m.runtimeAppSecretFenceLocked(result.AccountID, result.AppID, result.InstanceID, result.Fence, result.Status == SecretDeliveryDelivered)
+	if err != nil {
+		return 0, err
+	}
+	instance := m.instances[result.InstanceID]
+	if instance.WakeID != result.WakeID || (!State(instance.State).CountsForRAM() && instance.State != string(StateFailed)) {
+		return 0, ErrConflict
+	}
+	for _, candidate := range result.Candidates {
+		secret, ok := m.secrets[secretKey{AppID: result.AppID, Scope: candidate.Scope, Key: candidate.Key}]
+		if candidate.Scope != scope || !ok || secret.AccountID != result.AccountID || secret.DeliveryVersion != candidate.Version {
+			return 0, ErrConflict
+		}
+	}
 	updated := 0
 	for _, candidate := range result.Candidates {
-		if candidate.Scope == "" || candidate.Key == "" || candidate.Version < 1 {
-			return 0, ErrInvalidArgument
-		}
 		k := secretKey{AppID: result.AppID, Scope: candidate.Scope, Key: candidate.Key}
 		secret, ok := m.secrets[k]
 		if !ok || secret.AccountID != result.AccountID || secret.DeliveryVersion != candidate.Version {
@@ -19544,7 +19549,7 @@ func (m *MemStore) RecordAppSecretRuntimeReload(_ context.Context, result AppSec
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	scope, err := m.runtimeAppSecretFenceLocked(result.AccountID, result.AppID, result.InstanceID, result.Fence)
+	scope, err := m.runtimeAppSecretFenceLocked(result.AccountID, result.AppID, result.InstanceID, result.Fence, true)
 	if err != nil {
 		return 0, err
 	}
@@ -19601,7 +19606,7 @@ func (m *MemStore) RecordAppSecretRuntimeReloadAck(_ context.Context, result App
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	scope, err := m.runtimeAppSecretFenceLocked(result.AccountID, result.AppID, result.InstanceID, result.Fence)
+	scope, err := m.runtimeAppSecretFenceLocked(result.AccountID, result.AppID, result.InstanceID, result.Fence, true)
 	if err != nil {
 		return 0, err
 	}

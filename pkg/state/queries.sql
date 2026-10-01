@@ -6422,6 +6422,33 @@ UPDATE app_secrets SET last_runtime_reload_version=sqlc.arg(version)::bigint,las
 WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND scope=sqlc.arg(scope)::text
     AND key=sqlc.arg(key)::text AND delivery_version=sqlc.arg(version)::bigint;
 
+-- name: LockRuntimeSecretDeliveryAttempt :one
+SELECT id FROM instances
+WHERE id=sqlc.arg(instance_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+    AND deployment_id=sqlc.arg(deployment_id)::uuid AND wake_id=sqlc.arg(wake_id)::uuid
+    AND (state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+        OR (NOT sqlc.arg(require_active)::boolean AND state='failed'))
+FOR SHARE;
+
+-- name: ReadRuntimeSecretDeliveryVersions :many
+SELECT key,delivery_version FROM app_secrets
+WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND scope=sqlc.arg(scope)::text
+ORDER BY key;
+
+-- name: RecordAppSecretDeliverySuccess :execrows
+UPDATE app_secrets SET delivered_version=delivery_version,delivery_status='delivered',
+    last_delivery_attempt_at=sqlc.arg(attempted_at)::timestamptz,last_delivered_at=sqlc.arg(attempted_at)::timestamptz,
+    last_delivery_error_code=NULL,last_delivered_wake_id=sqlc.arg(wake_id)::text,last_delivered_instance_id=sqlc.arg(instance_id)::text
+WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND scope=sqlc.arg(scope)::text
+    AND key=sqlc.arg(key)::text AND delivery_version=sqlc.arg(version)::bigint;
+
+-- name: RecordAppSecretDeliveryFailure :execrows
+UPDATE app_secrets SET delivery_status='failed',last_delivery_attempt_at=sqlc.arg(attempted_at)::timestamptz,
+    last_delivery_error_code=sqlc.arg(error_code)::text
+WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND scope=sqlc.arg(scope)::text
+    AND key=sqlc.arg(key)::text AND delivery_version=sqlc.arg(version)::bigint
+    AND COALESCE(delivered_version,0)<delivery_version;
+
 -- name: RecordAppSecretRuntimeReloadObservation :execrows
 INSERT INTO app_secret_runtime_reload_observations(app_id,scope,key,instance_id,workload_name,secret_version,projection,signal,observed_at,error_code)
 SELECT s.app_id,s.scope,s.key,i.id,sqlc.arg(workload_name)::text,sqlc.arg(version)::bigint,

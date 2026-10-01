@@ -7,7 +7,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-func runtimeAppSecretFenceDB(ctx context.Context, db sqlc.DBTX, accountID, appID, instanceID string, fence RuntimeAppSecretFence) (string, error) {
+func runtimeAppSecretFenceDB(ctx context.Context, db sqlc.DBTX, accountID, appID, instanceID string, fence RuntimeAppSecretFence, requireActive bool) (string, error) {
 	queries := sqlc.New()
 	// Match environment deletion and deployment publication lock order.
 	if fence.EnvironmentID != "" {
@@ -21,7 +21,7 @@ func runtimeAppSecretFenceDB(ctx context.Context, db sqlc.DBTX, accountID, appID
 		return "", runtimeSecretFenceError(err)
 	}
 	owner, err := queries.LockRuntimeSecretOwner(ctx, db, sqlc.LockRuntimeSecretOwnerParams{
-		AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), InstanceID: mustPgUUID(instanceID), RequireActive: !fence.empty(),
+		AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), InstanceID: mustPgUUID(instanceID), RequireActive: !fence.empty() && requireActive,
 	})
 	if err != nil {
 		return "", runtimeSecretFenceError(err)

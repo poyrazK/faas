@@ -6287,8 +6287,10 @@ type AppSecretDeliveryCandidate struct {
 
 // AppSecretDeliveryResult records one runtime-start attempt for the staged
 // candidates. ErrorCode is a closed, non-sensitive reason; secret values and
-// ciphertext are intentionally absent.
+// ciphertext are intentionally absent. Fence captures the host's owned input
+// snapshot; InstanceID/WakeID identify the exact current boot attempt.
 type AppSecretDeliveryResult struct {
+	Fence       RuntimeAppSecretFence
 	AccountID   string
 	AppID       string
 	WakeID      string

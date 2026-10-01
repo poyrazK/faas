@@ -1455,6 +1455,15 @@ CREATE TABLE public.app_secrets (
 	-- Existing migration 20260925020000001; included for generated clone writes.
     secret_version bigint,
     secret_class text DEFAULT 'persistent'::text NOT NULL,
+    -- Existing migration 20260922174018492; boot delivery queries use these columns.
+    delivery_version bigint DEFAULT 1 NOT NULL,
+    delivered_version bigint,
+    delivery_status text DEFAULT 'pending'::text NOT NULL,
+    last_delivery_attempt_at timestamp with time zone,
+    last_delivered_at timestamp with time zone,
+    last_delivery_error_code text,
+    last_delivered_wake_id text,
+    last_delivered_instance_id text,
     managed_object_storage_credential_id uuid,
     CONSTRAINT app_secrets_key_shape CHECK (((key ~ '^[A-Z][A-Z0-9_]*$'::text) AND (length(key) <= 128))),
     CONSTRAINT app_secrets_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),

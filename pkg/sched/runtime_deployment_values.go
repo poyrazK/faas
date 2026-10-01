@@ -62,6 +62,10 @@ func (e *Engine) loadRuntimeDeploymentValues(ctx context.Context, accountID stri
 	if err != nil {
 		return runtimeDeploymentValues{}, err
 	}
+	result.MainSecrets.Fence, err = state.NewRuntimeAppSecretFence(snapshot)
+	if err != nil {
+		return runtimeDeploymentValues{}, fmt.Errorf("capture runtime secret delivery owner: %w", err)
+	}
 	return result, nil
 }
 

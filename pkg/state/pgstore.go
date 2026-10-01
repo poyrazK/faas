@@ -23448,21 +23448,11 @@ func (s *PgStore) CountAppSecrets(ctx context.Context, accountID, appID string) 
 	return n, err
 }
 
-// RecordAppSecretDelivery updates only rows whose delivery_version still
-// matches the version schedd staged. This compare-and-set is the race fence
-// between an in-flight boot and a concurrent rotation.
+// RecordAppSecretDelivery revalidates the owned sealed configuration and the
+// current wake attempt before writing any delivery summary.
 func (s *PgStore) RecordAppSecretDelivery(ctx context.Context, result AppSecretDeliveryResult) (int, error) {
-	if result.AccountID == "" || result.AppID == "" || result.WakeID == "" || result.InstanceID == "" {
+	if !validAppSecretDeliveryResult(result) {
 		return 0, ErrInvalidArgument
-	}
-	if result.Status != SecretDeliveryDelivered && result.Status != SecretDeliveryFailed {
-		return 0, ErrInvalidArgument
-	}
-	if result.Status == SecretDeliveryFailed && result.ErrorCode == "" {
-		return 0, ErrInvalidArgument
-	}
-	if len(result.Candidates) == 0 {
-		return 0, nil
 	}
 	attemptedAt := result.AttemptedAt.UTC()
 	if attemptedAt.IsZero() {
@@ -23473,42 +23463,52 @@ func (s *PgStore) RecordAppSecretDelivery(ctx context.Context, result AppSecretD
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	requireActive := result.Status == SecretDeliveryDelivered
+	scope, err := runtimeAppSecretFenceDB(ctx, tx, result.AccountID, result.AppID, result.InstanceID, result.Fence, requireActive)
+	if err != nil {
+		return 0, err
+	}
+	queries := sqlc.New()
+	if _, err := queries.LockRuntimeSecretDeliveryAttempt(ctx, tx, sqlc.LockRuntimeSecretDeliveryAttemptParams{
+		InstanceID: mustPgUUID(result.InstanceID), AppID: mustPgUUID(result.AppID), DeploymentID: mustPgUUID(result.Fence.DeploymentID),
+		WakeID: mustPgUUID(result.WakeID), RequireActive: requireActive,
+	}); err != nil {
+		return 0, runtimeSecretFenceError(err)
+	}
+	rows, err := queries.ReadRuntimeSecretDeliveryVersions(ctx, tx, sqlc.ReadRuntimeSecretDeliveryVersionsParams{
+		AccountID: mustPgUUID(result.AccountID), AppID: mustPgUUID(result.AppID), Scope: scope,
+	})
+	if err != nil {
+		return 0, mapErr(err)
+	}
+	versions := make(map[string]int64, len(rows))
+	for _, row := range rows {
+		versions[row.Key] = row.DeliveryVersion
+	}
+	for _, candidate := range result.Candidates {
+		if candidate.Scope != scope || versions[candidate.Key] != candidate.Version {
+			return 0, ErrConflict
+		}
+	}
+	at := pgtype.Timestamptz{Time: attemptedAt, Valid: true}
 	updated := 0
 	for _, candidate := range result.Candidates {
-		if candidate.Scope == "" || candidate.Key == "" || candidate.Version < 1 {
-			return 0, ErrInvalidArgument
-		}
-		var tag pgconn.CommandTag
-		if result.Status == SecretDeliveryDelivered {
-			tag, err = tx.Exec(ctx,
-				`update app_secrets
-				 set delivered_version = delivery_version,
-				     delivery_status = 'delivered',
-				     last_delivery_attempt_at = $7,
-				     last_delivered_at = $7,
-				     last_delivery_error_code = null,
-				     last_delivered_wake_id = $5,
-				     last_delivered_instance_id = $6
-				 where account_id = $1 and app_id = $2 and scope = $3 and key = $4
-				   and delivery_version = $8`,
-				result.AccountID, result.AppID, candidate.Scope, candidate.Key,
-				result.WakeID, result.InstanceID, attemptedAt, candidate.Version)
+		var count int64
+		if requireActive {
+			count, err = queries.RecordAppSecretDeliverySuccess(ctx, tx, sqlc.RecordAppSecretDeliverySuccessParams{
+				AccountID: mustPgUUID(result.AccountID), AppID: mustPgUUID(result.AppID), Scope: scope, Key: candidate.Key,
+				Version: candidate.Version, WakeID: result.WakeID, InstanceID: result.InstanceID, AttemptedAt: at,
+			})
 		} else {
-			tag, err = tx.Exec(ctx,
-				`update app_secrets
-				 set delivery_status = 'failed',
-				     last_delivery_attempt_at = $5,
-				     last_delivery_error_code = $7
-				 where account_id = $1 and app_id = $2 and scope = $3 and key = $4
-				   and delivery_version = $6
-				   and coalesce(delivered_version, 0) < delivery_version`,
-				result.AccountID, result.AppID, candidate.Scope, candidate.Key,
-				attemptedAt, candidate.Version, result.ErrorCode)
+			count, err = queries.RecordAppSecretDeliveryFailure(ctx, tx, sqlc.RecordAppSecretDeliveryFailureParams{
+				AccountID: mustPgUUID(result.AccountID), AppID: mustPgUUID(result.AppID), Scope: scope, Key: candidate.Key,
+				Version: candidate.Version, ErrorCode: result.ErrorCode, AttemptedAt: at,
+			})
 		}
 		if err != nil {
 			return 0, mapErr(err)
 		}
-		updated += int(tag.RowsAffected())
+		updated += int(count)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, mapErr(err)
@@ -23529,7 +23529,7 @@ func (s *PgStore) RecordAppSecretRuntimeReload(ctx context.Context, result AppSe
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	scope, err := runtimeAppSecretFenceDB(ctx, tx, result.AccountID, result.AppID, result.InstanceID, result.Fence)
+	scope, err := runtimeAppSecretFenceDB(ctx, tx, result.AccountID, result.AppID, result.InstanceID, result.Fence, true)
 	if err != nil {
 		return 0, err
 	}
@@ -23586,7 +23586,7 @@ func (s *PgStore) RecordAppSecretRuntimeReloadAck(ctx context.Context, result Ap
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	scope, err := runtimeAppSecretFenceDB(ctx, tx, result.AccountID, result.AppID, result.InstanceID, result.Fence)
+	scope, err := runtimeAppSecretFenceDB(ctx, tx, result.AccountID, result.AppID, result.InstanceID, result.Fence, true)
 	if err != nil {
 		return 0, err
 	}

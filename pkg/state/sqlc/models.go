@@ -469,6 +469,14 @@ type AppSecret struct {
 	ValueHash                        pgtype.Text
 	SecretVersion                    pgtype.Int8
 	SecretClass                      string
+	DeliveryVersion                  int64
+	DeliveredVersion                 pgtype.Int8
+	DeliveryStatus                   string
+	LastDeliveryAttemptAt            pgtype.Timestamptz
+	LastDeliveredAt                  pgtype.Timestamptz
+	LastDeliveryErrorCode            pgtype.Text
+	LastDeliveredWakeID              pgtype.Text
+	LastDeliveredInstanceID          pgtype.Text
 	ManagedObjectStorageCredentialID pgtype.UUID
 	ManagedPostgresBindingID         pgtype.UUID
 	ManagedCredentialRef             pgtype.Text

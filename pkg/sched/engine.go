@@ -3374,6 +3374,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		identity:         platformIdentity(app, dep, acct, placement.NodeID, ins.ID, placement.Region),
 		spec:             spec,
 		secretDeliveries: sealedEnv.Candidates,
+		secretFence:      sealedEnv.Fence,
 		accountID:        acct.ID,
 		// wakeID is the per-wake-attempt correlation handle (gaps
 		// analysis 2026-07-23). Carried across the unlocked Phase 3
@@ -3970,6 +3971,7 @@ type bootInput struct {
 	identity         api.PlatformIdentity
 	spec             AppSpec
 	secretDeliveries []state.AppSecretDeliveryCandidate
+	secretFence      state.RuntimeAppSecretFence
 	// wakeID is the per-wake-attempt correlation handle (gaps analysis
 	// 2026-07-23). UUIDv7 minted at Phase 2 under the lock, persisted
 	// on the instances row in CreateInstance, and carried across the
@@ -6033,6 +6035,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	primeDelivery := bootInput{
 		insID: ins.ID, appID: appID, accountID: acct.ID, wakeID: primeWakeID,
 		secretDeliveries: sealedEnv.Candidates,
+		secretFence:      sealedEnv.Fence,
 	}
 	deliveryFinalized := false
 	defer func() {
@@ -7800,6 +7803,7 @@ func (e *Engine) resolveAppForDeploy(ctx context.Context, appID string) (state.A
 // We carry AccountID explicitly so a cross-account (accountID, appID) pair
 // returns ErrNotFound (consistent with apid's 404 contract).
 type sealedEnvDelivery struct {
+	Fence      state.RuntimeAppSecretFence
 	Entries    []fcvm.SealedEnvEntry
 	Candidates []state.AppSecretDeliveryCandidate
 }
@@ -7895,6 +7899,7 @@ func (e *Engine) recordAppSecretDelivery(ctx context.Context, boot bootInput, st
 	defer cancel()
 	attemptedAt := time.Now().UTC()
 	updated, err := e.store.RecordAppSecretDelivery(recordCtx, state.AppSecretDeliveryResult{
+		Fence:     boot.secretFence,
 		AccountID: boot.accountID, AppID: boot.appID, WakeID: boot.wakeID, InstanceID: boot.insID,
 		Status: status, ErrorCode: errorCode, AttemptedAt: attemptedAt, Candidates: boot.secretDeliveries,
 	})
