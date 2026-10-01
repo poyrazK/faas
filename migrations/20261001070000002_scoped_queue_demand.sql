@@ -9,4 +9,5 @@ INCLUDE (state, lease_expires_at, created_at)
 WHERE source='queue' AND state IN ('pending','dispatching','dead_letter');
 
 -- +goose Down
-DROP INDEX IF EXISTS invocations_scoped_queue_demand_idx;
+-- Preserve durable ownership, accepted work and runtime evidence on rollback.
+SELECT 1;

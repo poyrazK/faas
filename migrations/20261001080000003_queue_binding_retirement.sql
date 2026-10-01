@@ -53,7 +53,9 @@ BEGIN
   IF NEW.source='queue' AND (TG_OP='INSERT' OR
     (NEW.state='dispatching' AND OLD.state IS DISTINCT FROM 'dispatching')) THEN
     SELECT b.retired_at INTO binding_retired_at FROM queue_bindings b
-      WHERE b.app_id=NEW.app_id AND b.queue_name=NEW.queue_name FOR SHARE;
+      WHERE b.app_id=NEW.app_id AND b.account_id=NEW.account_id AND
+        (b.id=(to_jsonb(NEW)->>'queue_binding_id')::uuid OR
+          (to_jsonb(NEW)->>'queue_binding_id' IS NULL AND b.queue_name=NEW.queue_name)) FOR SHARE;
     IF binding_retired_at IS NOT NULL THEN
       RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='queue_binding_retired',
         MESSAGE='queue binding is retired';
@@ -110,6 +112,5 @@ CREATE TRIGGER trigger_durable_queue_consumer_guard BEFORE DELETE ON triggers
 FOR EACH ROW EXECUTE FUNCTION guard_durable_queue_consumer_deletion();
 
 -- +goose Down
--- Keep retirement and its hold on rollback. Releasing retained backlog or
--- reusing its name requires reviewed recovery, not a schema downgrade.
+-- Preserve durable ownership, accepted work and runtime evidence on rollback.
 SELECT 1;

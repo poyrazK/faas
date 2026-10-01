@@ -1,6 +1,9 @@
 -- +goose Up
 -- +goose StatementBegin
-CREATE FUNCTION environment_gitops_guard_app_presence() RETURNS trigger LANGUAGE plpgsql AS $$
+DO $replay$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+    WHERE p.proname='environment_gitops_guard_app_presence' AND n.nspname=current_schema()) THEN
+    EXECUTE $function$CREATE FUNCTION environment_gitops_guard_app_presence() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE src environment_git_sources%ROWTYPE;
 BEGIN
     IF pg_trigger_depth() > 1 THEN
@@ -29,13 +32,19 @@ BEGIN
         END IF;
     END LOOP;
     IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
-END $$;
+END $$;$function$;
+  END IF;
+END $replay$;
+DROP TRIGGER IF EXISTS environment_gitops_guard_app_presence ON apps;
 CREATE TRIGGER environment_gitops_guard_app_presence BEFORE UPDATE OF status OR DELETE ON apps
 FOR EACH ROW EXECUTE FUNCTION environment_gitops_guard_app_presence();
 
 -- Configuration versions are append-only while managed. Deleting the parent
 -- environment/project still cascades normally through its existing cleanup.
-CREATE FUNCTION environment_gitops_guard_config_history() RETURNS trigger LANGUAGE plpgsql AS $$
+DO $replay$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+    WHERE p.proname='environment_gitops_guard_config_history' AND n.nspname=current_schema()) THEN
+    EXECUTE $function$CREATE FUNCTION environment_gitops_guard_config_history() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF pg_trigger_depth() <= 1 AND EXISTS (
         SELECT 1 FROM environment_git_sources s JOIN project_environments e ON e.id = s.environment_id
@@ -44,13 +53,14 @@ BEGIN
             USING ERRCODE = '23514', CONSTRAINT = 'environment_gitops_field_owned';
     END IF;
     IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
-END $$;
+END $$;$function$;
+  END IF;
+END $replay$;
+DROP TRIGGER IF EXISTS environment_gitops_guard_config_history ON project_environment_config_versions;
 CREATE TRIGGER environment_gitops_guard_config_history BEFORE UPDATE OR DELETE ON project_environment_config_versions
 FOR EACH ROW EXECUTE FUNCTION environment_gitops_guard_config_history();
 -- +goose StatementEnd
 
 -- +goose Down
-DROP TRIGGER environment_gitops_guard_config_history ON project_environment_config_versions;
-DROP FUNCTION environment_gitops_guard_config_history();
-DROP TRIGGER environment_gitops_guard_app_presence ON apps;
-DROP FUNCTION environment_gitops_guard_app_presence();
+-- Preserve durable ownership, accepted work and runtime evidence on rollback.
+SELECT 1;

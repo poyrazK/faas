@@ -1,6 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
-CREATE TABLE environment_gitops_runtime_effects (
+CREATE TABLE IF NOT EXISTS environment_gitops_runtime_effects (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     source_id uuid NOT NULL REFERENCES environment_git_sources(id) ON DELETE CASCADE,
     revision_id uuid NOT NULL,
@@ -18,12 +18,15 @@ CREATE TABLE environment_gitops_runtime_effects (
     FOREIGN KEY (source_id, revision_id) REFERENCES environment_desired_revisions(source_id, id),
     UNIQUE (source_id, generation, plan_hash, app_id)
 );
-CREATE INDEX environment_gitops_runtime_effects_pending_idx ON environment_gitops_runtime_effects(source_id, app_id) WHERE completed_at IS NULL;
+CREATE INDEX IF NOT EXISTS environment_gitops_runtime_effects_pending_idx ON environment_gitops_runtime_effects(source_id, app_id) WHERE completed_at IS NULL;
 
 -- One statement snapshot of managed runtime boundaries and scoped residency.
 -- Pending effects retain removed variable fields until their runtime work is
 -- complete. A request acknowledgement alone is deliberately not a proof here.
-CREATE VIEW environment_gitops_runtime_targets AS
+DO $replay$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+    WHERE c.relname='environment_gitops_runtime_targets' AND n.nspname=current_schema()) THEN
+    EXECUTE $view$CREATE VIEW environment_gitops_runtime_targets AS
 WITH targets AS (
     SELECT s.id AS source_id, s.account_id, r.app_id, r.logical_name AS resource, e.slug AS environment_slug
     FROM environment_git_sources s
@@ -55,11 +58,11 @@ SELECT b.*,
     (SELECT count(*) FROM snapshots p JOIN deployments d ON d.id = p.deployment_id
         WHERE d.app_id = b.app_id AND d.scope = b.environment_slug
         AND NOT p.stale AND NOT p.delete_pending AND p.created_at <= b.required_at) AS stale_snapshots
-FROM boundaries b;
+FROM boundaries b;$view$;
+  END IF;
+END $replay$;
 -- +goose StatementEnd
 
 -- +goose Down
--- +goose StatementBegin
-DROP VIEW environment_gitops_runtime_targets;
-DROP TABLE environment_gitops_runtime_effects;
--- +goose StatementEnd
+-- Preserve durable ownership, accepted work and runtime evidence on rollback.
+SELECT 1;

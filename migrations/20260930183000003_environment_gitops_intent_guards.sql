@@ -3,7 +3,10 @@
 -- Every scoped writer (API, Terraform, clone/promotion, or SQL tooling) enters
 -- the same ownership gate. Report mode permits changes and schedules a check.
 -- Enforce mode requires a current controller lease or an unexpired override.
-CREATE FUNCTION environment_gitops_guard_intent() RETURNS trigger LANGUAGE plpgsql AS $$
+DO $replay$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+    WHERE p.proname='environment_gitops_guard_intent' AND n.nspname=current_schema()) THEN
+    EXECUTE $function$CREATE FUNCTION environment_gitops_guard_intent() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
     row_value jsonb;
     src environment_git_sources%ROWTYPE;
@@ -61,21 +64,24 @@ BEGIN
         END IF;
     END IF;
     IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
-END $$;
+END $$;$function$;
+  END IF;
+END $replay$;
 
+DROP TRIGGER IF EXISTS environment_gitops_guard_env ON app_envs;
 CREATE TRIGGER environment_gitops_guard_env BEFORE INSERT OR UPDATE OR DELETE ON app_envs
 FOR EACH ROW EXECUTE FUNCTION environment_gitops_guard_intent();
+DROP TRIGGER IF EXISTS environment_gitops_guard_routes ON project_environment_route_policies;
 CREATE TRIGGER environment_gitops_guard_routes BEFORE INSERT OR UPDATE OR DELETE ON project_environment_route_policies
 FOR EACH ROW EXECUTE FUNCTION environment_gitops_guard_intent();
+DROP TRIGGER IF EXISTS environment_gitops_guard_policies ON project_environment_edge_policies;
 CREATE TRIGGER environment_gitops_guard_policies BEFORE INSERT OR UPDATE OR DELETE ON project_environment_edge_policies
 FOR EACH ROW EXECUTE FUNCTION environment_gitops_guard_intent();
+DROP TRIGGER IF EXISTS environment_gitops_guard_config ON project_environment_config_versions;
 CREATE TRIGGER environment_gitops_guard_config BEFORE INSERT ON project_environment_config_versions
 FOR EACH ROW EXECUTE FUNCTION environment_gitops_guard_intent();
 -- +goose StatementEnd
 
 -- +goose Down
-DROP TRIGGER environment_gitops_guard_config ON project_environment_config_versions;
-DROP TRIGGER environment_gitops_guard_policies ON project_environment_edge_policies;
-DROP TRIGGER environment_gitops_guard_routes ON project_environment_route_policies;
-DROP TRIGGER environment_gitops_guard_env ON app_envs;
-DROP FUNCTION environment_gitops_guard_intent();
+-- Preserve durable ownership, accepted work and runtime evidence on rollback.
+SELECT 1;

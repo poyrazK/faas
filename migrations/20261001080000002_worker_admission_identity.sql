@@ -27,5 +27,5 @@ BEFORE UPDATE OF state, mode ON instances
 FOR EACH ROW EXECUTE FUNCTION guard_worker_admission_identity();
 
 -- +goose Down
-DROP TRIGGER IF EXISTS instances_worker_admission_identity ON instances;
-DROP FUNCTION IF EXISTS guard_worker_admission_identity();
+-- Preserve durable ownership, accepted work and runtime evidence on rollback.
+SELECT 1;

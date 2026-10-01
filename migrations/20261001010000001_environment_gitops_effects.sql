@@ -3,7 +3,7 @@
 -- Intent and its required serving-fleet effects commit together. The worker
 -- may replay an older effect under a newer lease: invalidation loads current
 -- intent, while the unique gateway generation releases only its own fence.
-CREATE TABLE environment_gitops_effects (
+CREATE TABLE IF NOT EXISTS environment_gitops_effects (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     source_id uuid NOT NULL REFERENCES environment_git_sources(id) ON DELETE CASCADE,
     revision_id uuid NOT NULL,
@@ -23,8 +23,9 @@ CREATE TABLE environment_gitops_effects (
     CHECK (completed_at IS NULL OR expected_nodes <@ acknowledged_nodes),
     UNIQUE (source_id, generation, plan_hash, app_id, kind)
 );
-CREATE INDEX environment_gitops_effects_pending_idx ON environment_gitops_effects(source_id, gateway_generation) WHERE completed_at IS NULL;
+CREATE INDEX IF NOT EXISTS environment_gitops_effects_pending_idx ON environment_gitops_effects(source_id, gateway_generation) WHERE completed_at IS NULL;
 -- +goose StatementEnd
 
 -- +goose Down
-DROP TABLE environment_gitops_effects;
+-- Preserve durable ownership, accepted work and runtime evidence on rollback.
+SELECT 1;

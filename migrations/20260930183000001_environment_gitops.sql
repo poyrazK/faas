@@ -1,9 +1,13 @@
 -- +goose Up
 -- +goose StatementBegin
-ALTER TABLE project_environments ADD CONSTRAINT project_environments_gitops_scope_uniq
+DO $replay$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='project_environments'::regclass AND conname='project_environments_gitops_scope_uniq') THEN
+    ALTER TABLE project_environments ADD CONSTRAINT project_environments_gitops_scope_uniq
     UNIQUE (account_id, project_id, id);
+  END IF;
+END $replay$;
 
-CREATE TABLE environment_git_sources (
+CREATE TABLE IF NOT EXISTS environment_git_sources (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     account_id uuid NOT NULL,
     project_id uuid NOT NULL,
@@ -30,7 +34,7 @@ CREATE TABLE environment_git_sources (
     UNIQUE (id, environment_id)
 );
 
-CREATE TABLE environment_desired_revisions (
+CREATE TABLE IF NOT EXISTS environment_desired_revisions (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     source_id uuid NOT NULL REFERENCES environment_git_sources(id) ON DELETE CASCADE,
     commit_sha text NOT NULL CHECK (commit_sha ~ '^([a-f0-9]{40}|[a-f0-9]{64})$'),
@@ -42,12 +46,20 @@ CREATE TABLE environment_desired_revisions (
     UNIQUE (source_id, id)
 );
 
-ALTER TABLE environment_git_sources ADD CONSTRAINT environment_git_sources_approved_revision_fk
+DO $replay$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='environment_git_sources'::regclass AND conname='environment_git_sources_approved_revision_fk') THEN
+    ALTER TABLE environment_git_sources ADD CONSTRAINT environment_git_sources_approved_revision_fk
     FOREIGN KEY (id, approved_revision_id) REFERENCES environment_desired_revisions(source_id, id) DEFERRABLE INITIALLY DEFERRED;
-ALTER TABLE environment_git_sources ADD CONSTRAINT environment_git_sources_applied_revision_fk
+  END IF;
+END $replay$;
+DO $replay$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='environment_git_sources'::regclass AND conname='environment_git_sources_applied_revision_fk') THEN
+    ALTER TABLE environment_git_sources ADD CONSTRAINT environment_git_sources_applied_revision_fk
     FOREIGN KEY (id, applied_revision_id) REFERENCES environment_desired_revisions(source_id, id) DEFERRABLE INITIALLY DEFERRED;
+  END IF;
+END $replay$;
 
-CREATE TABLE environment_gitops_resources (
+CREATE TABLE IF NOT EXISTS environment_gitops_resources (
     source_id uuid NOT NULL REFERENCES environment_git_sources(id) ON DELETE CASCADE,
     logical_name text NOT NULL CHECK (logical_name ~ '^workload/[a-z0-9][a-z0-9-]*$'),
     app_id uuid REFERENCES apps(id) ON DELETE SET NULL,
@@ -57,7 +69,7 @@ CREATE TABLE environment_gitops_resources (
     UNIQUE (source_id, app_id)
 );
 
-CREATE TABLE environment_managed_fields (
+CREATE TABLE IF NOT EXISTS environment_managed_fields (
     environment_id uuid NOT NULL REFERENCES project_environments(id) ON DELETE CASCADE,
     resource text NOT NULL CHECK (resource = 'environment' OR resource ~ '^workload/[a-z0-9][a-z0-9-]*$'),
     field_path text NOT NULL CHECK (field_path <> '' AND position('#' in field_path) = 0),
@@ -72,7 +84,7 @@ CREATE TABLE environment_managed_fields (
         OR (manager_kind <> 'git' AND source_id IS NULL))
 );
 
-CREATE TABLE environment_management_overrides (
+CREATE TABLE IF NOT EXISTS environment_management_overrides (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     environment_id uuid NOT NULL,
     resource text NOT NULL,
@@ -89,7 +101,7 @@ CREATE TABLE environment_management_overrides (
 
 -- One durable work item per source. Updating desired_generation immediately
 -- fences a superseded lease; claims and every mutation validate both values.
-CREATE TABLE environment_gitops_jobs (
+CREATE TABLE IF NOT EXISTS environment_gitops_jobs (
     source_id uuid PRIMARY KEY REFERENCES environment_git_sources(id) ON DELETE CASCADE,
     desired_generation bigint NOT NULL CHECK (desired_generation > 0),
     claimed_generation bigint NOT NULL DEFAULT 0 CHECK (claimed_generation >= 0),
@@ -99,9 +111,9 @@ CREATE TABLE environment_gitops_jobs (
     attempt_count integer NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
     CHECK ((lease_token = '' AND lease_until IS NULL) OR (lease_token <> '' AND lease_until IS NOT NULL))
 );
-CREATE INDEX environment_gitops_jobs_due_idx ON environment_gitops_jobs(next_attempt_at);
+CREATE INDEX IF NOT EXISTS environment_gitops_jobs_due_idx ON environment_gitops_jobs(next_attempt_at);
 
-CREATE TABLE environment_gitops_runs (
+CREATE TABLE IF NOT EXISTS environment_gitops_runs (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     source_id uuid NOT NULL REFERENCES environment_git_sources(id) ON DELETE CASCADE,
     revision_id uuid NOT NULL,
@@ -115,19 +127,9 @@ CREATE TABLE environment_gitops_runs (
     completed_at timestamptz,
     FOREIGN KEY (source_id, revision_id) REFERENCES environment_desired_revisions(source_id, id)
 );
-CREATE INDEX environment_gitops_runs_source_history_idx ON environment_gitops_runs(source_id, started_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS environment_gitops_runs_source_history_idx ON environment_gitops_runs(source_id, started_at DESC, id DESC);
 -- +goose StatementEnd
 
 -- +goose Down
--- +goose StatementBegin
-DROP TABLE environment_gitops_runs;
-DROP TABLE environment_gitops_jobs;
-DROP TABLE environment_management_overrides;
-DROP TABLE environment_managed_fields;
-DROP TABLE environment_gitops_resources;
-ALTER TABLE environment_git_sources DROP CONSTRAINT environment_git_sources_approved_revision_fk;
-ALTER TABLE environment_git_sources DROP CONSTRAINT environment_git_sources_applied_revision_fk;
-DROP TABLE environment_desired_revisions;
-DROP TABLE environment_git_sources;
-ALTER TABLE project_environments DROP CONSTRAINT project_environments_gitops_scope_uniq;
--- +goose StatementEnd
+-- Preserve durable ownership, accepted work and runtime evidence on rollback.
+SELECT 1;

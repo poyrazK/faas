@@ -389,6 +389,13 @@ a future environment-scoped consumer must require reviewed adoption instead of
 using that fallback. These IDs do not grant GitOps field ownership or release
 retirement; the scoped source-of-truth contract and explicit recovery remain open.
 
+The branch's unreleased migrations are replay-safe as a complete set. Their
+rollback retains management intent, ownership, captured work and runtime
+receipts. Historical capture runs only during initial installation; replay
+cannot reinterpret an invocation's environment or adopt a later consumer
+marker, and polling backfill preserves existing claims and schedules. A
+populated-database recovery check verifies these identities through full replay.
+
 The remaining full feature gates include protected-branch
 approval evidence; environment-scoped workload creation, source/runtime,
 secret-reference and queue/service-binding adapters; staged graph qualification

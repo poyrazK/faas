@@ -2827,7 +2827,7 @@ INSERT INTO invocations (
   $22, $23, $24,
   $25, $26, $27,
   $28, nullif($29::text, ''), $30
-) RETURNING id, app_id, account_id, source, state, payload, headers, due_at, method, path, cron_id, scheduled_at, ack_url, result, lease_expires_at, received_at, completed_at, instance_id, attempts, last_error, created_at, org_id, outcome, deadline_at, retry_policy, result_retention_until, replayed_from_invocation_id, last_replayed_at, on_success_destination_id, on_failure_destination_id, queue_name, quota_reserved, work_policy_name, work_key_digest, work_expires_at, work_sequence, work_policy_revision, work_fairness_digest, work_fairness_limit, platform_tenant_id, deployment_scope, queue_binding_id, failure_rules, occurrence_id, start_deadline_at, work_decision
+) RETURNING id, app_id, account_id, source, state, payload, headers, due_at, method, path, cron_id, scheduled_at, ack_url, result, lease_expires_at, received_at, completed_at, instance_id, attempts, last_error, created_at, org_id, outcome, deadline_at, retry_policy, result_retention_until, replayed_from_invocation_id, last_replayed_at, on_success_destination_id, on_failure_destination_id, queue_name, quota_reserved, work_policy_name, work_key_digest, work_expires_at, work_sequence, work_policy_revision, work_fairness_digest, work_fairness_limit, platform_tenant_id, failure_rules, occurrence_id, start_deadline_at, work_decision, deployment_scope, queue_binding_id
 `
 
 type EnqueueInvocationRowParams struct {
@@ -2938,12 +2938,12 @@ func (q *Queries) EnqueueInvocationRow(ctx context.Context, db DBTX, arg Enqueue
 		&i.WorkFairnessDigest,
 		&i.WorkFairnessLimit,
 		&i.PlatformTenantID,
-		&i.DeploymentScope,
-		&i.QueueBindingID,
 		&i.FailureRules,
 		&i.OccurrenceID,
 		&i.StartDeadlineAt,
 		&i.WorkDecision,
+		&i.DeploymentScope,
+		&i.QueueBindingID,
 	)
 	return i, err
 }
@@ -15843,7 +15843,7 @@ where i.id=$2::uuid and i.app_id=$3::uuid and i.source='queue'
     and tr.item_identifier=i.id::text
     and not ((tr.state in ('pending','retry') and tr.next_fire_at<=clock_timestamp())
       or (tr.state='claimed' and tr.claim_expires_at<=clock_timestamp())))
-returning i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.deployment_scope, i.queue_binding_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision
+returning i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.deployment_scope, i.queue_binding_id
 `
 
 type QueueClaimPendingInvocationParams struct {
@@ -15906,12 +15906,12 @@ func (q *Queries) QueueClaimPendingInvocation(ctx context.Context, db DBTX, arg 
 		&i.WorkFairnessDigest,
 		&i.WorkFairnessLimit,
 		&i.PlatformTenantID,
-		&i.DeploymentScope,
-		&i.QueueBindingID,
 		&i.FailureRules,
 		&i.OccurrenceID,
 		&i.StartDeadlineAt,
 		&i.WorkDecision,
+		&i.DeploymentScope,
+		&i.QueueBindingID,
 	)
 	return i, err
 }

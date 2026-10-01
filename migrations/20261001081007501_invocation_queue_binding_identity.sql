@@ -109,5 +109,5 @@ CREATE TRIGGER invocation_queue_binding_guard BEFORE INSERT OR UPDATE ON invocat
 FOR EACH ROW EXECUTE FUNCTION guard_invocation_queue_binding();
 
 -- +goose Down
--- Retained routing identity cannot be removed by rollback.
+-- Preserve durable ownership, accepted work and runtime evidence on rollback.
 SELECT 1;

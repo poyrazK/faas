@@ -34,5 +34,5 @@ END $$;
 -- +goose StatementEnd
 
 -- +goose Down
--- Keep the corrected presence guard when rolling back this semantics fix.
+-- Preserve durable ownership, accepted work and runtime evidence on rollback.
 SELECT 1;
