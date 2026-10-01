@@ -23,6 +23,10 @@ const (
 	OperationIDHeader                              = "X-Gregale-Operation-Id"
 	OperationAttemptHeader                         = "X-Gregale-Operation-Attempt"
 	OperationCapabilityHeader                      = "X-Gregale-Operation-Capability"
+	OperationExecutionKindHeader                   = "X-Gregale-Operation-Execution-Kind"
+	OperationExecutionIDHeader                     = "X-Gregale-Operation-Execution-Id"
+	OperationStepHeader                            = "X-Gregale-Operation-Step"
+	OperationStepAttemptHeader                     = "X-Gregale-Operation-Step-Attempt"
 )
 
 func (s OperationState) Terminal() bool {
