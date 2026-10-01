@@ -925,3 +925,7 @@ Combined draft PR #3997 CI job `110258148479` failed `spec-check` because the em
 ### UDP live socket failure recovery
 
 Supervisor draft PR #3988 commit `eb8a761c0` adds a real-loopback-socket recovery fixture. Five isolated race-detector runs passed: closing a live listener cancels its existing peer, reconciliation rebinds the same public address, and the same client receives replies from a fresh peer without daemon restart. Log `/tmp/gregale-udp-socket-recovery-tests.log`. This covers portable supervisor recovery, not native VM or PostgreSQL/scheduler dependency recovery.
+
+### UDP listener source outage recovery
+
+Supervisor PR #3988 commit `667ad5c30` tests an explicit listener-source error, including error identity preservation, retention of the existing real UDP socket, and retirement after a successful deletion refresh. Both malformed-intent and source-outage scenarios passed five race-detector runs on the isolated branch; scoped lint reported zero issues. Logs `/tmp/gregale-udp-source-outage-tests.log` and `/tmp/gregale-udp-source-outage-lint.log`. The source error is injected, so actual PostgreSQL outage and reconnection remain unqualified.
