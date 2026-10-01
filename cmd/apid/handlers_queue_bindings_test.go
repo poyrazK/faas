@@ -6,10 +6,67 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+func TestQueueBindingHTTPRetirementRetainsEvidenceAndRejectsNewWork(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	ctx := context.Background()
+	app, err := e.store.CreateApp(ctx, state.App{AccountID: e.acct.ID, Slug: "queue-http-retire", Type: state.AppTypeApp, WorkloadClass: state.WorkloadClassWorker})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := api.CreateQueueBindingRequest{Name: "orders", QueueName: "orders", Mode: "push", WorkloadClass: "worker", MaxConcurrency: 2}
+	base := "/v1/apps/queue-http-retire/queue-bindings"
+	rec := e.do(t, http.MethodPost, base, request, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+	}
+	var binding api.QueueBindingResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &binding); err != nil {
+		t.Fatal(err)
+	}
+	triggerID, err := queueBindingTriggerID(ctx, e.store, app.ID, binding.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiptID, err := e.store.InsertTriggerRecord(ctx, triggerID, "receipt", []byte(`{}`), []byte(`{}`), []byte(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv, err := e.store.EnqueueInvocation(ctx, state.Invocation{AccountID: e.acct.ID, AppID: app.ID, Source: state.InvocationQueue, QueueName: "orders", DueAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec = e.do(t, http.MethodGet, base+"/"+binding.ID, nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("active binding read: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = e.do(t, http.MethodDelete, base+"/"+binding.ID, nil, nil)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("retire: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = e.do(t, http.MethodGet, base+"/"+binding.ID, nil, nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("retired binding remained active: %d %s", rec.Code, rec.Body.String())
+	}
+	if row, err := e.store.InvocationByID(ctx, inv.ID); err != nil || row.State != state.InvocationPending || row.Attempts != 0 {
+		t.Fatalf("retirement changed backlog: %+v %v", row, err)
+	}
+	if trigger, err := e.store.TriggerByID(ctx, triggerID); err != nil || trigger.Enabled {
+		t.Fatalf("retired consumer lost or enabled: %v %v", trigger.Enabled, err)
+	}
+	if id, err := e.store.TriggerRecordIDByItemIdentifier(ctx, triggerID, "receipt"); err != nil || id != receiptID {
+		t.Fatalf("retirement lost receipt: %q %v", id, err)
+	}
+	rec = e.do(t, http.MethodPost, "/v1/apps/queue-http-retire/queues/send", map[string]any{"queue_name": "orders", "payload": map[string]any{"new": "work"}}, nil)
+	assertProblem(t, rec, http.StatusConflict, "queue_binding_retired")
+	rec = e.do(t, http.MethodPost, base, request, nil)
+	assertProblem(t, rec, http.StatusConflict, api.CodeValidation)
+}
 
 // adr: 231 — an HTTP function can consume push deliveries, but an HTTP app
 // or pull binding cannot borrow the function-only trigger contract.
@@ -106,8 +163,8 @@ func TestQueueBindingConsumerLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(triggers) != 0 {
-		t.Fatalf("triggers after pull transition = %d, want 0", len(triggers))
+	if len(triggers) != 1 || triggers[0].Enabled {
+		t.Fatalf("pull transition must retain a disabled consumer: %+v", triggers)
 	}
 }
 

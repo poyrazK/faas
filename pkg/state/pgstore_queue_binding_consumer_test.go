@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func TestPgQueueConsumerDeleteFailureRestoresConsumerAndReceipts(t *testing.T) {
+func TestPgQueueConsumerRetirementFailureRestoresConsumerAndReceipts(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.OpenMigrated(t)
 	if err := db.MigrateUp(ctx, pool); err != nil {
@@ -37,11 +37,11 @@ func TestPgQueueConsumerDeleteFailureRestoresConsumerAndReceipts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The mutation deletes the consumer before this injected binding-delete
-	// failure. PostgreSQL must restore that row and its cascaded receipt.
+	// Consumer disable happens before this injected retirement failure.
+	// PostgreSQL must restore enabled intent and keep the receipt.
 	if _, err := pool.Exec(ctx, `create function reject_queue_binding_delete() returns trigger language plpgsql as $$
 	begin raise exception 'injected binding deletion failure'; end $$;
-	create trigger reject_queue_binding_delete before delete on queue_bindings
+	create trigger reject_queue_binding_delete before update of retired_at on queue_bindings
 	for each row execute function reject_queue_binding_delete()`); err != nil {
 		t.Fatal(err)
 	}
@@ -51,8 +51,8 @@ func TestPgQueueConsumerDeleteFailureRestoresConsumerAndReceipts(t *testing.T) {
 	if _, err := store.QueueBindingByID(ctx, account.ID, app.ID, created.Binding.ID); err != nil {
 		t.Fatalf("failed deletion lost binding: %v", err)
 	}
-	if _, err := store.TriggerByID(ctx, triggerID); err != nil {
-		t.Fatalf("failed deletion lost consumer: %v", err)
+	if trigger, err := store.TriggerByID(ctx, triggerID); err != nil || !trigger.Enabled {
+		t.Fatalf("failed retirement changed consumer: enabled=%t err=%v", trigger.Enabled, err)
 	}
 	if got, err := store.TriggerRecordIDByItemIdentifier(ctx, triggerID, "receipt"); err != nil || got != recordID {
 		t.Fatalf("failed deletion lost receipt: id=%q err=%v", got, err)

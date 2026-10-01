@@ -399,6 +399,9 @@ func (m *MemStore) EnqueueKeyedInvocation(_ context.Context, inv Invocation, pol
 		}
 		return existing, nil
 	}
+	if m.queueBindingRetiredLocked(inv) {
+		return Invocation{}, ErrQueueBindingRetired
+	}
 	now := time.Now().UTC()
 	inv.WorkPolicyName = policy.Name
 	inv.WorkKeyDigest = digest[:]

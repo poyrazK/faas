@@ -3651,6 +3651,7 @@ type QueueBinding struct {
 	RetryPolicy    []byte
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
+	RetiredAt      pgtype.Timestamptz
 }
 
 type RecentBuildClaim struct {

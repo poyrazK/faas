@@ -1733,12 +1733,16 @@ select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id,
 from triggers where enabled = true;
 
 -- name: CountTriggersByApp :one
-select count(*) from triggers where app_id = $1;
+select count(*) from triggers t where t.app_id = $1
+and (t.queue_binding_id is null or exists (
+  select 1 from queue_bindings b where b.id=t.queue_binding_id and b.retired_at is null and b.mode='push'));
 
 -- name: CountTriggersByAccount :one
 select count(*) from triggers t
 join apps a on a.id = t.app_id
-where a.account_id = $1 and a.status <> 'deleted';
+where a.account_id = $1 and a.status <> 'deleted'
+and (t.queue_binding_id is null or exists (
+  select 1 from queue_bindings b where b.id=t.queue_binding_id and b.retired_at is null and b.mode='push'));
 
 -- name: ClaimTriggerRecords :many
 -- Persist ownership before returning. SKIP LOCKED alone would release the
@@ -5555,7 +5559,15 @@ select id, plan from accounts where id=$1 for update;
 
 -- name: QueueConsumerBindingForUpdate :one
 select * from queue_bindings where id=sqlc.arg(id)
-and app_id=sqlc.arg(app_id) and account_id=sqlc.arg(account_id) for update;
+and app_id=sqlc.arg(app_id) and account_id=sqlc.arg(account_id) and retired_at is null for update;
+
+-- name: QueueBindingHistoryByID :one
+select * from queue_bindings where id=sqlc.arg(id)
+and app_id=sqlc.arg(app_id) and account_id=sqlc.arg(account_id);
+
+-- name: ListQueueBindingHistoryForApp :many
+select * from queue_bindings where app_id=sqlc.arg(app_id) and account_id=sqlc.arg(account_id)
+order by created_at, id;
 
 -- name: QueueConsumerInsertBinding :one
 insert into queue_bindings (id,account_id,app_id,name,queue_name,mode,workload_class,enabled,max_concurrency,retry_policy)
@@ -5565,10 +5577,11 @@ sqlc.arg(mode),sqlc.arg(workload_class),sqlc.arg(enabled),sqlc.arg(max_concurren
 -- name: QueueConsumerUpdateBinding :one
 update queue_bindings set queue_name=sqlc.arg(queue_name),mode=sqlc.arg(mode),workload_class=sqlc.arg(workload_class),
 enabled=sqlc.arg(enabled),max_concurrency=sqlc.arg(max_concurrency),retry_policy=sqlc.arg(retry_policy)::jsonb,updated_at=now()
-where id=sqlc.arg(id) and app_id=sqlc.arg(app_id) and account_id=sqlc.arg(account_id) returning *;
+where id=sqlc.arg(id) and app_id=sqlc.arg(app_id) and account_id=sqlc.arg(account_id) and retired_at is null returning *;
 
--- name: QueueConsumerDeleteBinding :execrows
-delete from queue_bindings where id=sqlc.arg(id) and app_id=sqlc.arg(app_id) and account_id=sqlc.arg(account_id);
+-- name: QueueConsumerRetireBinding :one
+update queue_bindings set retired_at=now(), enabled=false, updated_at=now()
+where id=sqlc.arg(id) and app_id=sqlc.arg(app_id) and account_id=sqlc.arg(account_id) and retired_at is null returning *;
 
 -- name: QueueConsumerOwnedTriggers :many
 select id, queue_binding_id from triggers where app_id=sqlc.arg(app_id) and kind='queue' and source='queue'
@@ -5589,8 +5602,8 @@ values (sqlc.arg(account_id),sqlc.arg(app_id),sqlc.arg(binding_id)::uuid,'queue'
 sqlc.arg(enabled),sqlc.arg(config)::jsonb,sqlc.arg(batch_size_max),sqlc.arg(batch_window_ms),
 sqlc.arg(max_attempts),sqlc.arg(payload_max_bytes),'commit') returning *;
 
--- name: QueueConsumerDeleteTrigger :execrows
-delete from triggers where id=sqlc.arg(id) and app_id=sqlc.arg(app_id)
+-- name: QueueConsumerDisableTrigger :execrows
+update triggers set enabled=false, updated_at=now() where id=sqlc.arg(id) and app_id=sqlc.arg(app_id)
 and queue_binding_id=sqlc.arg(binding_id)::uuid;
 
 -- name: PublicPatchTrigger :one
@@ -5614,11 +5627,11 @@ where id=sqlc.arg(id) and app_id=sqlc.arg(app_id) and kind='queue' and source='q
 
 -- name: QueueClaimLockBinding :one
 select max_concurrency from queue_bindings where id=sqlc.arg(id) and app_id=sqlc.arg(app_id)
-and queue_name=sqlc.arg(queue_name) and mode='push' and enabled for update;
+and queue_name=sqlc.arg(queue_name) and mode='push' and enabled and retired_at is null for update;
 
 -- name: QueueClaimLegacyBindingCap :one
 select max_concurrency from queue_bindings where app_id=sqlc.arg(app_id)
-and queue_name=sqlc.arg(queue_name) and enabled for update;
+and queue_name=sqlc.arg(queue_name) and enabled and retired_at is null for update;
 
 -- name: QueueClaimLockLiveConsumer :one
 select id from triggers where id=sqlc.arg(id) and app_id=sqlc.arg(app_id)

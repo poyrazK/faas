@@ -63,6 +63,9 @@ func (s *server) enqueueVersionedInvocation(ctx context.Context, requestHeaders 
 	} else {
 		created, err = s.store.EnqueueInvocation(ctx, inv)
 	}
+	if errors.Is(err, state.ErrQueueBindingRetired) {
+		return state.Invocation{}, api.NewProblem(http.StatusConflict, "queue_binding_retired", "Queue binding retired", "this queue is held for explicit recovery")
+	}
 	if err != nil {
 		return state.Invocation{}, api.ErrCapacity(capacityDetail)
 	}

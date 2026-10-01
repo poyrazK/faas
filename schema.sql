@@ -2264,6 +2264,44 @@ $$;
 
 
 --
+-- Name: guard_durable_queue_consumer_deletion(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_durable_queue_consumer_deletion() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF OLD.queue_binding_id IS NOT NULL AND EXISTS (SELECT 1 FROM apps WHERE id=OLD.app_id) THEN
+    RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='queue_consumer_durable_identity',
+      MESSAGE='private queue consumer identity requires explicit recovery';
+  END IF;
+  RETURN OLD;
+END;
+$$;
+
+
+--
+-- Name: guard_held_queue_consumer_receipt(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_held_queue_consumer_receipt() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE can_claim boolean;
+BEGIN
+  IF NEW.state='claimed' AND (OLD.state IS DISTINCT FROM 'claimed'
+    OR NEW.claim_generation IS DISTINCT FROM OLD.claim_generation) THEN
+    SELECT b.enabled AND b.mode='push' AND b.retired_at IS NULL INTO can_claim
+      FROM queue_bindings b JOIN triggers t ON t.queue_binding_id=b.id
+      WHERE t.id=NEW.trigger_id FOR SHARE OF b;
+    IF can_claim IS FALSE THEN RETURN NULL; END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_invocation_deployment_scope(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2507,6 +2545,41 @@ $$;
 
 
 --
+-- Name: guard_queue_binding_retirement(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_queue_binding_retirement() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF TG_OP='DELETE' THEN
+    IF OLD.retired_at IS NOT NULL AND EXISTS (SELECT 1 FROM apps WHERE id=OLD.app_id) THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='queue_binding_retirement_identity',
+        MESSAGE='retired queue identity requires explicit recovery';
+    END IF;
+    RETURN OLD;
+  END IF;
+  IF OLD.retired_at IS NOT NULL AND
+    (NEW.retired_at IS DISTINCT FROM OLD.retired_at
+      OR NEW.id IS DISTINCT FROM OLD.id
+      OR NEW.account_id IS DISTINCT FROM OLD.account_id
+      OR NEW.app_id IS DISTINCT FROM OLD.app_id
+      OR NEW.name IS DISTINCT FROM OLD.name
+      OR NEW.queue_name IS DISTINCT FROM OLD.queue_name
+      OR NEW.mode IS DISTINCT FROM OLD.mode
+      OR NEW.workload_class IS DISTINCT FROM OLD.workload_class
+      OR NEW.enabled IS DISTINCT FROM OLD.enabled
+      OR NEW.max_concurrency IS DISTINCT FROM OLD.max_concurrency
+      OR NEW.retry_policy IS DISTINCT FROM OLD.retry_policy) THEN
+    RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='queue_binding_retirement_identity',
+      MESSAGE='retired queue binding requires explicit recovery';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_queue_consumer_binding_identity(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2520,6 +2593,29 @@ BEGIN
       OR NEW.account_id IS DISTINCT FROM OLD.account_id) THEN
     RAISE EXCEPTION 'queue consumer binding identity is immutable'
       USING ERRCODE = '23514', CONSTRAINT = 'queue_consumer_binding_identity';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: guard_retired_queue_invocation(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_retired_queue_invocation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE binding_retired_at timestamptz;
+BEGIN
+  IF NEW.source='queue' AND (TG_OP='INSERT' OR
+    (NEW.state='dispatching' AND OLD.state IS DISTINCT FROM 'dispatching')) THEN
+    SELECT b.retired_at INTO binding_retired_at FROM queue_bindings b
+      WHERE b.app_id=NEW.app_id AND b.queue_name=NEW.queue_name FOR SHARE;
+    IF binding_retired_at IS NOT NULL THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='queue_binding_retired',
+        MESSAGE='queue binding is retired';
+    END IF;
   END IF;
   RETURN NEW;
 END;
@@ -9923,10 +10019,12 @@ CREATE TABLE public.queue_bindings (
     retry_policy jsonb DEFAULT '{}'::jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    retired_at timestamp with time zone,
     CONSTRAINT queue_bindings_max_concurrency_chk CHECK (((max_concurrency >= 1) AND (max_concurrency <= 10000))),
     CONSTRAINT queue_bindings_mode_chk CHECK ((mode = ANY (ARRAY['pull'::text, 'push'::text]))),
     CONSTRAINT queue_bindings_name_shape CHECK ((name ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
     CONSTRAINT queue_bindings_queue_name_shape CHECK ((queue_name ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
+    CONSTRAINT queue_bindings_retired_disabled CHECK (((retired_at IS NULL) OR (NOT enabled))),
     CONSTRAINT queue_bindings_retry_policy_object_chk CHECK ((jsonb_typeof(retry_policy) = 'object'::text)),
     CONSTRAINT queue_bindings_workload_class_chk CHECK (((workload_class = ANY (ARRAY['worker'::text, 'job'::text])) OR ((workload_class = 'http'::text) AND (mode = 'push'::text))))
 );
@@ -19959,6 +20057,13 @@ CREATE TRIGGER invocation_platform_tenant_guard BEFORE INSERT OR UPDATE ON publi
 
 
 --
+-- Name: invocations invocation_retired_queue_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER invocation_retired_queue_guard BEFORE INSERT OR UPDATE OF state ON public.invocations FOR EACH ROW EXECUTE FUNCTION public.guard_retired_queue_invocation();
+
+
+--
 -- Name: invocations invocations_capture_dead_letter_event; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -20211,6 +20316,13 @@ CREATE TRIGGER prune_pr_preview_set_on_root_delete AFTER UPDATE OF status ON pub
 
 
 --
+-- Name: queue_bindings queue_binding_retirement_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER queue_binding_retirement_guard BEFORE DELETE OR UPDATE ON public.queue_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_queue_binding_retirement();
+
+
+--
 -- Name: triggers queue_consumer_binding_identity_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -20365,10 +20477,24 @@ CREATE TRIGGER trigger_dead_letter_capture_event AFTER INSERT ON public.trigger_
 
 
 --
+-- Name: triggers trigger_durable_queue_consumer_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trigger_durable_queue_consumer_guard BEFORE DELETE ON public.triggers FOR EACH ROW EXECUTE FUNCTION public.guard_durable_queue_consumer_deletion();
+
+
+--
 -- Name: trigger_records trigger_ready_notify; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trigger_ready_notify AFTER INSERT ON public.trigger_records FOR EACH ROW EXECUTE FUNCTION public.trg_notify_trigger_ready();
+
+
+--
+-- Name: trigger_records trigger_record_held_queue_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trigger_record_held_queue_guard BEFORE UPDATE OF state, claim_generation ON public.trigger_records FOR EACH ROW EXECUTE FUNCTION public.guard_held_queue_consumer_receipt();
 
 
 --

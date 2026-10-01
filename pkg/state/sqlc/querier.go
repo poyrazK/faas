@@ -837,6 +837,7 @@ type Querier interface {
 	ListOrgsForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListOrgsForAccountRow, error)
 	// Retired and expired graphs remain visible for diagnosis. UUID breaks ties.
 	ListProjectReleaseSetsBefore(ctx context.Context, db DBTX, arg ListProjectReleaseSetsBeforeParams) ([][]byte, error)
+	ListQueueBindingHistoryForApp(ctx context.Context, db DBTX, arg ListQueueBindingHistoryForAppParams) ([]QueueBinding, error)
 	// ADR-091 §3.7 / PR #3 — per-account events drill-down. Backed by
 	// the partial index events_actor_account_idx on
 	// (actor_account_id) WHERE actor_account_id IS NOT NULL
@@ -1111,14 +1112,14 @@ type Querier interface {
 	PutEnvironmentGitOpsPolicies(ctx context.Context, db DBTX, arg PutEnvironmentGitOpsPoliciesParams) error
 	PutEnvironmentGitOpsRoutes(ctx context.Context, db DBTX, arg PutEnvironmentGitOpsRoutesParams) error
 	PutEnvironmentGitOpsVariable(ctx context.Context, db DBTX, arg PutEnvironmentGitOpsVariableParams) error
+	QueueBindingHistoryByID(ctx context.Context, db DBTX, arg QueueBindingHistoryByIDParams) (QueueBinding, error)
 	QueueClaimConsumerIdentity(ctx context.Context, db DBTX, arg QueueClaimConsumerIdentityParams) (QueueClaimConsumerIdentityRow, error)
 	QueueClaimLegacyBindingCap(ctx context.Context, db DBTX, arg QueueClaimLegacyBindingCapParams) (int32, error)
 	QueueClaimLockBinding(ctx context.Context, db DBTX, arg QueueClaimLockBindingParams) (int32, error)
 	QueueClaimLockLiveConsumer(ctx context.Context, db DBTX, arg QueueClaimLockLiveConsumerParams) (pgtype.UUID, error)
 	QueueConsumerBindingForUpdate(ctx context.Context, db DBTX, arg QueueConsumerBindingForUpdateParams) (QueueBinding, error)
 	QueueConsumerCreateTrigger(ctx context.Context, db DBTX, arg QueueConsumerCreateTriggerParams) (Trigger, error)
-	QueueConsumerDeleteBinding(ctx context.Context, db DBTX, arg QueueConsumerDeleteBindingParams) (int64, error)
-	QueueConsumerDeleteTrigger(ctx context.Context, db DBTX, arg QueueConsumerDeleteTriggerParams) (int64, error)
+	QueueConsumerDisableTrigger(ctx context.Context, db DBTX, arg QueueConsumerDisableTriggerParams) (int64, error)
 	QueueConsumerInsertBinding(ctx context.Context, db DBTX, arg QueueConsumerInsertBindingParams) (QueueBinding, error)
 	QueueConsumerLockAccount(ctx context.Context, db DBTX, id pgtype.UUID) (QueueConsumerLockAccountRow, error)
 	// Queue binding/consumer publication (ADR-385). Parent locks also serialize
@@ -1126,6 +1127,7 @@ type Querier interface {
 	QueueConsumerLockApp(ctx context.Context, db DBTX, arg QueueConsumerLockAppParams) (QueueConsumerLockAppRow, error)
 	QueueConsumerNotify(ctx context.Context, db DBTX, payload string) error
 	QueueConsumerOwnedTriggers(ctx context.Context, db DBTX, arg QueueConsumerOwnedTriggersParams) ([]QueueConsumerOwnedTriggersRow, error)
+	QueueConsumerRetireBinding(ctx context.Context, db DBTX, arg QueueConsumerRetireBindingParams) (QueueBinding, error)
 	QueueConsumerUpdateBinding(ctx context.Context, db DBTX, arg QueueConsumerUpdateBindingParams) (QueueBinding, error)
 	QueueConsumerUpdateTrigger(ctx context.Context, db DBTX, arg QueueConsumerUpdateTriggerParams) (int64, error)
 	// One snapshot includes active work and dead letters. A NULL queue selects

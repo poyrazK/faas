@@ -11890,7 +11890,12 @@ func (m *MemStore) CreateTriggerIfUnderQuota(_ context.Context, appID, kind, slu
 	canonicalAppID := canonicalMemUUID(appID)
 	for _, t := range m.triggers {
 		if t.AppID.String() == canonicalAppID {
-			perApp++
+			if t.Slug == slug {
+				return sqlc.Trigger{}, ErrConflict
+			}
+			if m.triggerConsumesQuotaLocked(t) {
+				perApp++
+			}
 		}
 		if kind == "queue" && enabled && source != "" && t.Kind == "queue" && t.Enabled &&
 			t.AppID.String() == canonicalAppID && t.Source.Valid && t.Source.String == source {
@@ -11902,6 +11907,9 @@ func (m *MemStore) CreateTriggerIfUnderQuota(_ context.Context, appID, kind, slu
 	}
 	for _, trigger := range m.triggers {
 		app, knownApp := m.apps[appID]
+		if !m.triggerConsumesQuotaLocked(trigger) {
+			continue
+		}
 		if !knownApp {
 			// Preserve legacy lightweight fixtures without an app row.
 			perAccount++
@@ -12086,6 +12094,9 @@ func (m *MemStore) ClaimTriggerRecordsByItems(_ context.Context, triggerID strin
 }
 
 func (m *MemStore) claimTriggerRecordsLocked(triggerID string, limit int, allowed map[string]bool) []sqlc.TriggerRecord {
+	if !m.queueConsumerCanClaimLocked(triggerID) {
+		return nil
+	}
 	var out []sqlc.TriggerRecord
 	now := time.Now().UTC()
 	for id, r := range m.records {
@@ -12306,6 +12317,9 @@ func (m *MemStore) EnqueueInvocation(_ context.Context, inv Invocation) (Invocat
 	if err := m.platformTenantInvocationAllowedLocked(inv); err != nil {
 		return Invocation{}, err
 	}
+	if m.queueBindingRetiredLocked(inv) {
+		return Invocation{}, ErrQueueBindingRetired
+	}
 	if inv.ID == "" {
 		inv.ID = newID()
 	}
@@ -12398,6 +12412,9 @@ func (m *MemStore) dueInvocationsLocked(now time.Time) []Invocation {
 		if inv.DueAt.After(now) {
 			continue
 		}
+		if m.queueBindingRetiredLocked(inv) {
+			continue
+		}
 		if inv.WorkPolicyName != "" {
 			blocked := false
 			for _, older := range m.invocations {
@@ -12458,6 +12475,9 @@ func (m *MemStore) ClaimInvocation(_ context.Context, id, instanceID string, lea
 	}
 	if err := m.platformTenantInvocationAllowedLocked(inv); err != nil {
 		return Invocation{}, ErrNotFound
+	}
+	if m.queueBindingRetiredLocked(inv) {
+		return Invocation{}, ErrQueueBindingRetired
 	}
 	now := time.Now()
 	exp := now.Add(time.Duration(leaseSeconds) * time.Second)
@@ -24703,6 +24723,9 @@ func (m *MemStore) ClaimInvocationWithCap(_ context.Context, id, instanceID stri
 	}
 	if err := m.platformTenantInvocationAllowedLocked(inv); err != nil {
 		return Invocation{}, ErrNotFound
+	}
+	if m.queueBindingRetiredLocked(inv) {
+		return Invocation{}, ErrQueueBindingRetired
 	}
 	row, ok := m.accountAsyncQuota[inv.AccountID]
 	if !ok {

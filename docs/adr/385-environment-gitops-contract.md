@@ -339,9 +339,34 @@ app/source. Before enabling the queue adapter, binding and consumer identity
 must include the environment. The scoped demand path does not scope the
 application-shared runtime/scaling policy or transfer queue ownership.
 Renaming or pruning a binding also needs an explicit disposition for queued
-work and existing trigger receipts; the current public delete/pull transition
-removes the consumer and its PostgreSQL receipts. GitOps pruning must preserve
-that evidence under a reviewed retention policy before it can be enabled.
+work and existing trigger receipts. Public binding deletion now retires its
+intent and disables its private consumer in one transaction, retaining the
+binding ID, pending work, dead letters and delivery receipts. Switching from
+push to pull retains the same disabled consumer; switching back to push must
+recheck quotas and reuses its receipt namespace. Disabled active push consumers
+still consume quota, while retained pull and retired consumers do not.
+
+Retirement holds new queue admission and dispatch under a binding row lock,
+including cached queue pollers, direct claims and keyed claims. Existing
+in-flight deliveries can finish; retries and dead-letter replay keep their
+stored identities and wait for recovery. New receipt claims also take that
+parent lock and cannot acquire another generation while the binding is held.
+Queue diagnostics continue to show retained backlog, while worker demand
+excludes retired bindings even after the last active binding is removed.
+An environment with a live delivery lease from a retired binding keeps its
+current worker pool until the lease finishes or expires. That hold cannot
+admit another worker, alter a neighboring environment or replace a generation.
+
+Queue names remain reserved by retained binding rows. Storage guards reject
+physical deletion of retained bindings and independent deletion of private
+consumers, including through older write paths; permitted parent-app cascades
+retain their existing invocation retention requirements. Ordinary PATCH and
+recreation cannot silently release a retirement hold or give another consumer
+the old backlog. Tenant-scoped internal history reads expose retained identity
+to the future adapter; an explicit reviewed recovery/adoption operation,
+message-to-binding identity across renames, environment-scoped producers and
+consumers, and a reviewed retention policy remain gates before enabling GitOps
+queue pruning. Binding retirement alone does not grant GitOps ownership.
 
 The remaining full feature gates include protected-branch
 approval evidence; environment-scoped workload creation, source/runtime,

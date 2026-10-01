@@ -29,8 +29,10 @@ func TestMigrationQueueConsumerBindingIdentityAdoptionAndGuards(t *testing.T) {
 	}
 	binding := func(name string) state.QueueBinding {
 		t.Helper()
-		row, err := store.CreateQueueBinding(ctx, state.QueueBinding{AccountID: account.ID, AppID: app.ID,
-			Name: name, QueueName: name, Mode: "push", WorkloadClass: state.WorkloadClassWorker, Enabled: true, MaxConcurrency: 1})
+		// Seed the historical schema before retirement exists.
+		row := state.QueueBinding{}
+		err := pool.QueryRow(ctx, `insert into queue_bindings(account_id,app_id,name,queue_name,mode,workload_class,enabled,max_concurrency)
+        values($1,$2,$3,$3,'push','worker',true,1) returning id`, account.ID, app.ID, name).Scan(&row.ID)
 		if err != nil {
 			t.Fatal(err)
 		}

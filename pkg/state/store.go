@@ -4240,6 +4240,7 @@ type Store interface {
 	// Queue bindings are the durable app-scoped mapping between a logical queue
 	// and a worker/job workload. They are the configuration seam consumed by
 	// push workers and queue-depth autoscaling.
+	QueueBindingHistoryStore
 	CreateQueueBinding(ctx context.Context, binding QueueBinding) (QueueBinding, error)
 	QueueBindingByID(ctx context.Context, accountID, appID, id string) (QueueBinding, error)
 	ListQueueBindingsForApp(ctx context.Context, accountID, appID string) ([]QueueBinding, error)

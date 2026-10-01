@@ -346,6 +346,65 @@ func TestWorkerScopedDemandKeepsBindingCapsIndependent(t *testing.T) {
 	}
 }
 
+func TestWorkerScopedDemandRetirementHoldsBacklogWithoutAdmittingWorkers(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct, app, deps := seedWorkerScopes(t, store, api.PlanPro)
+	for _, dep := range deps {
+		seedScopedWorker(t, store, app, dep)
+	}
+	binding, err := store.CreateQueueBindingWithConsumer(ctx, state.QueueBinding{AccountID: acct.ID, AppID: app.ID,
+		Name: "orders", QueueName: "orders", Mode: "pull", WorkloadClass: state.WorkloadClassWorker, Enabled: true, MaxConcurrency: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var leased state.Invocation
+	for _, scope := range []string{"default", "staging"} {
+		rows := enqueueScopedDemand(t, store, acct, app, scope, "orders", 50)
+		if scope == "default" {
+			leased, err = store.ClaimInvocationWithCap(ctx, rows[0].ID, "", 60, 10)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if _, err := store.DeleteQueueBindingWithConsumer(ctx, acct.ID, app.ID, binding.Binding.ID); err != nil {
+		t.Fatal(err)
+	}
+	vmm := &recordingStopVMM{fakeVMM: &fakeVMM{}}
+	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	if err := engine.SeedLedger(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
+		t.Fatal(err)
+	}
+	counts := scopedWorkerCounts(t, store, app.ID)
+	if counts["default"] != 1 || counts["staging"] != 0 || vmm.stopInstanceOnNodeN != 1 || vmm.coldBoots != 0 {
+		t.Fatalf("retirement changed leased scope or admitted workers: counts=%v stops=%d boots=%d", counts, vmm.stopInstanceOnNodeN, vmm.coldBoots)
+	}
+	if err := store.CompleteInvocation(ctx, leased.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ReconcileWorkerPools(ctx, app.ID, TriggerWorkerPool); err != nil {
+		t.Fatal(err)
+	}
+	counts = scopedWorkerCounts(t, store, app.ID)
+	if counts["default"] != 0 || counts["staging"] != 0 || vmm.stopInstanceOnNodeN != 2 || vmm.coldBoots != 0 {
+		t.Fatalf("completed lease did not release retirement hold: counts=%v stops=%d boots=%d", counts, vmm.stopInstanceOnNodeN, vmm.coldBoots)
+	}
+	for _, scope := range []string{"default", "staging"} {
+		stats, err := store.QueueStateForQueueInScope(ctx, app.ID, "orders", scope)
+		wantDepth := 50
+		if scope == "default" {
+			wantDepth--
+		}
+		if err != nil || stats.Depth != wantDepth {
+			t.Fatalf("retirement hid or removed backlog: scope=%s depth=%d err=%v", scope, stats.Depth, err)
+		}
+	}
+}
+
 type workerDemandFailureStore struct {
 	state.Store
 	failScope string

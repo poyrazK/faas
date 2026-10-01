@@ -15040,6 +15040,9 @@ func (s *PgStore) ListDueInvocations(ctx context.Context, now time.Time, limit i
 		select `+invocationSelectCols+`
 		  from invocations i
 		 where i.state = 'pending' and i.due_at <= $1
+           and not exists (select 1 from queue_bindings b
+               where i.source='queue' and b.app_id=i.app_id
+                 and b.queue_name=i.queue_name and b.retired_at is not null)
 		   and (i.source <> 'queue' or i.queue_name = '')
 		   and (i.work_policy_name is not null or not exists (
 		       select 1
@@ -15131,6 +15134,9 @@ func (s *PgStore) ListDueInvocationsAfter(ctx context.Context, now time.Time, af
 		select `+invocationSelectCols+`
 		  from invocations i
 		 where i.state = 'pending' and i.due_at <= $1
+           and not exists (select 1 from queue_bindings b
+               where i.source='queue' and b.app_id=i.app_id
+                 and b.queue_name=i.queue_name and b.retired_at is not null)
 		   and (i.source <> 'queue' or i.queue_name = '')
 		   and (i.work_policy_name is not null or not exists (
 		       select 1
@@ -25362,6 +25368,12 @@ func mapErr(err error) error {
 		case pgerrcode.UniqueViolation:
 			return fmt.Errorf("%w: %s", ErrConflict, pgErr.ConstraintName)
 		case pgerrcode.CheckViolation:
+			if pgErr.ConstraintName == "queue_binding_retired" {
+				return ErrQueueBindingRetired
+			}
+			if pgErr.ConstraintName == "queue_binding_retirement_identity" || pgErr.ConstraintName == "queue_consumer_durable_identity" {
+				return ErrConflict
+			}
 			if pgErr.ConstraintName == "environment_gitops_field_owned" {
 				return ErrEnvironmentGitManaged
 			}
@@ -29470,17 +29482,15 @@ func (s *PgStore) CreateTriggerIfUnderQuota(ctx context.Context, appID, kind, sl
 	}
 
 	// 2. Per-app count, authoritative under the lock.
-	var appCount int
-	if err := tx.QueryRow(ctx,
-		`select count(*) from triggers where app_id = $1`, appID,
-	).Scan(&appCount); err != nil {
+	appCount, err := sqlc.New().CountTriggersByApp(ctx, tx, mustPgUUID(appID))
+	if err != nil {
 		return sqlc.Trigger{}, fmt.Errorf("state: count triggers for app %s: %w", appID, err)
 	}
-	if appCount >= limits.TriggerLimitPerApp {
+	if appCount >= int64(limits.TriggerLimitPerApp) {
 		return sqlc.Trigger{}, &TriggerQuotaError{
 			Scope:    TriggerQuotaScopeApp,
 			Limit:    limits.TriggerLimitPerApp,
-			Observed: appCount,
+			Observed: int(appCount),
 		}
 	}
 
@@ -29498,20 +29508,15 @@ func (s *PgStore) CreateTriggerIfUnderQuota(ctx context.Context, appID, kind, sl
 	if _, err := sqlc.New().QueueConsumerLockAccount(ctx, tx, accountID); err != nil {
 		return sqlc.Trigger{}, fmt.Errorf("state: lock trigger account: %w", err)
 	}
-	var accountCount int
-	if err := tx.QueryRow(ctx,
-		`select count(*) from triggers t
-		 join apps a on a.id = t.app_id
-		 where a.account_id = $1 and a.status <> 'deleted'`,
-		accountID,
-	).Scan(&accountCount); err != nil {
+	accountCount, err := sqlc.New().CountTriggersByAccount(ctx, tx, accountID)
+	if err != nil {
 		return sqlc.Trigger{}, fmt.Errorf("state: count triggers for account %s: %w", accountID, err)
 	}
-	if accountCount >= limits.TriggerLimitPerAccount {
+	if accountCount >= int64(limits.TriggerLimitPerAccount) {
 		return sqlc.Trigger{}, &TriggerQuotaError{
 			Scope:    TriggerQuotaScopeAccount,
 			Limit:    limits.TriggerLimitPerAccount,
-			Observed: accountCount,
+			Observed: int(accountCount),
 		}
 	}
 
@@ -31920,7 +31925,7 @@ func (s *PgStore) ClaimInvocationWithCap(ctx context.Context, id, instanceID str
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Invocation{}, ErrNotFound
 		}
-		return Invocation{}, fmt.Errorf("state: invocations claim cap update: %w", err)
+		return Invocation{}, fmt.Errorf("state: invocations claim cap update: %w", mapErr(err))
 	}
 
 	if err := tx.Commit(ctx); err != nil {

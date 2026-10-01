@@ -56,6 +56,7 @@ func (s *PgStore) mutateQueueBindingConsumer(ctx context.Context, accountID, app
 	}
 	limits, _ := api.LimitsFor(api.Plan(account.Plan))
 	var binding QueueBinding
+	wasPush := false
 	if create != nil {
 		binding = applyQueueBindingPatch(*create, UpdateQueueBindingParams{})
 		binding.ID, binding.AccountID, binding.AppID = id, accountID, appID
@@ -65,6 +66,7 @@ func (s *PgStore) mutateQueueBindingConsumer(ctx context.Context, accountID, app
 			return QueueBindingConsumerResult{}, mapErr(err)
 		}
 		binding = queueConsumerBindingFromSQL(row)
+		wasPush = binding.Mode == "push"
 		if patch != nil {
 			binding = applyQueueBindingPatch(binding, *patch)
 		}
@@ -87,7 +89,7 @@ func (s *PgStore) mutateQueueBindingConsumer(ctx context.Context, accountID, app
 		if err != nil {
 			return QueueBindingConsumerResult{}, err
 		}
-		if len(owned) == 0 {
+		if len(owned) == 0 || !wasPush {
 			if err := queueConsumerCheckQuota(ctx, q, tx, appUUID, accountUUID, limits); err != nil {
 				return QueueBindingConsumerResult{}, err
 			}
@@ -113,14 +115,14 @@ func (s *PgStore) mutateQueueBindingConsumer(ctx context.Context, accountID, app
 	result := QueueBindingConsumerResult{Binding: binding}
 	if remove || binding.Mode != "push" {
 		if len(owned) == 1 {
-			deleted, err := q.QueueConsumerDeleteTrigger(ctx, tx, sqlc.QueueConsumerDeleteTriggerParams{ID: owned[0].ID, AppID: appUUID, BindingID: bindingUUID})
+			changed, err := q.QueueConsumerDisableTrigger(ctx, tx, sqlc.QueueConsumerDisableTriggerParams{ID: owned[0].ID, AppID: appUUID, BindingID: bindingUUID})
 			if err != nil {
 				return QueueBindingConsumerResult{}, err
 			}
-			if deleted != 1 {
+			if changed != 1 {
 				return QueueBindingConsumerResult{}, ErrConflict
 			}
-			result.Changes = append(result.Changes, QueueConsumerChange{Kind: "deleted", AppID: appID, TriggerID: owned[0].ID.String()})
+			result.Changes = append(result.Changes, QueueConsumerChange{Kind: "updated", AppID: appID, TriggerID: owned[0].ID.String()})
 		}
 	} else if len(owned) == 1 {
 		changed, err := q.QueueConsumerUpdateTrigger(ctx, tx, sqlc.QueueConsumerUpdateTriggerParams{ID: owned[0].ID, AppID: appUUID, BindingID: bindingUUID,
@@ -143,13 +145,11 @@ func (s *PgStore) mutateQueueBindingConsumer(ctx context.Context, accountID, app
 		result.Changes = append(result.Changes, QueueConsumerChange{Kind: "created", AppID: appID, TriggerID: row.ID.String()})
 	}
 	if remove {
-		deleted, err := q.QueueConsumerDeleteBinding(ctx, tx, sqlc.QueueConsumerDeleteBindingParams{ID: bindingUUID, AppID: appUUID, AccountID: accountUUID})
+		row, err := q.QueueConsumerRetireBinding(ctx, tx, sqlc.QueueConsumerRetireBindingParams{ID: bindingUUID, AppID: appUUID, AccountID: accountUUID})
 		if err != nil {
-			return QueueBindingConsumerResult{}, err
+			return QueueBindingConsumerResult{}, mapErr(err)
 		}
-		if deleted != 1 {
-			return QueueBindingConsumerResult{}, ErrConflict
-		}
+		result.Binding = queueConsumerBindingFromSQL(row)
 	}
 	for _, change := range result.Changes {
 		payload, err := json.Marshal(change)
@@ -188,6 +188,7 @@ func queueConsumerCheckQuota(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, ap
 func queueConsumerBindingFromSQL(row sqlc.QueueBinding) QueueBinding {
 	return QueueBinding{ID: row.ID.String(), AccountID: row.AccountID.String(), AppID: row.AppID.String(), Name: row.Name, QueueName: row.QueueName,
 		Mode: row.Mode, WorkloadClass: WorkloadClass(row.WorkloadClass), Enabled: row.Enabled, MaxConcurrency: int(row.MaxConcurrency),
+		RetiredAt:       timestamptzToTimePtr(row.RetiredAt),
 		RetryPolicyJSON: append([]byte(nil), row.RetryPolicy...), CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time}
 }
 

@@ -28,12 +28,13 @@ func (e *Engine) ReconcileWorkerPoolForScope(ctx context.Context, appID, scope s
 }
 
 type workerScopePlan struct {
-	scope    string
-	target   string
-	desired  int
-	signal   string
-	cooldown bool
-	workers  []state.Instance
+	scope     string
+	target    string
+	desired   int
+	signal    string
+	cooldown  bool
+	queueHold bool
+	workers   []state.Instance
 }
 
 func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope string, override *int, trigger string) error {
@@ -107,6 +108,10 @@ func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope str
 	}
 	scopes := make([]string, 0, len(plans))
 	for scope, plan := range plans {
+		plan.queueHold, err = e.retiredQueueHasInFlightWork(ctx, app, scope)
+		if err != nil {
+			return fmt.Errorf("retired queue delivery for %s: %w", scope, err)
+		}
 		if plan.target != "" {
 			plan.desired, plan.signal, err = e.workerReplicaTargetForScope(ctx, app, scope, override)
 			if err != nil {
@@ -127,11 +132,37 @@ func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope str
 	// not be mistaken for an empty queue and collapse a healthy fleet.
 	for _, scope := range scopes {
 		plan := plans[scope]
+		// Retirement blocks new queue claims. Keep this environment's current
+		// residents until previously admitted delivery leases have finished;
+		// the hold itself never authorizes another worker or a new generation.
+		if plan.queueHold {
+			continue
+		}
 		if err := e.applyWorkerScopePlan(ctx, app, plan, trigger); err != nil {
 			return fmt.Errorf("reconcile worker environment %s: %w", scope, err)
 		}
 	}
 	return nil
+}
+
+func (e *Engine) retiredQueueHasInFlightWork(ctx context.Context, app state.App, scope string) (bool, error) {
+	bindings, err := e.store.ListQueueBindingHistoryForApp(ctx, app.AccountID, app.ID)
+	if err != nil {
+		return false, err
+	}
+	for _, binding := range bindings {
+		if binding.RetiredAt == nil {
+			continue
+		}
+		stats, err := e.store.QueueStateForQueueInScope(ctx, app.ID, binding.QueueName, scope)
+		if err != nil {
+			return false, err
+		}
+		if stats.InFlight > 0 {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (e *Engine) applyWorkerScopePlan(ctx context.Context, app state.App, plan *workerScopePlan, trigger string) (resultErr error) {
@@ -317,7 +348,7 @@ func (e *Engine) workerReplicaTargetForScope(ctx context.Context, app state.App,
 }
 
 func (e *Engine) workerQueueDemandForScope(ctx context.Context, app state.App, scope string, target float64) (int, error) {
-	bindings, err := e.store.ListQueueBindingsForApp(ctx, app.AccountID, app.ID)
+	bindings, err := e.store.ListQueueBindingHistoryForApp(ctx, app.AccountID, app.ID)
 	if err != nil {
 		return 0, err
 	}
@@ -327,7 +358,7 @@ func (e *Engine) workerQueueDemandForScope(ctx context.Context, app state.App, s
 	}
 	desired := 0
 	for _, binding := range bindings {
-		if !binding.Enabled {
+		if !binding.Enabled || binding.RetiredAt != nil {
 			continue
 		}
 		stats, err := e.store.QueueStateForQueueInScope(ctx, app.ID, binding.QueueName, scope)

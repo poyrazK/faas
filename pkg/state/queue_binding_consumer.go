@@ -3,10 +3,14 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"regexp"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
+
+// ErrQueueBindingRetired rejects new work or claims for a retained queue.
+var ErrQueueBindingRetired = fmt.Errorf("%w: queue binding is retired", ErrConflict)
 
 // QueueBindingConsumerStore publishes binding intent and its private consumer
 // in one commit. A failed projection leaves both previous intents intact.
@@ -14,6 +18,13 @@ type QueueBindingConsumerStore interface {
 	CreateQueueBindingWithConsumer(context.Context, QueueBinding) (QueueBindingConsumerResult, error)
 	UpdateQueueBindingWithConsumer(context.Context, string, string, string, UpdateQueueBindingParams) (QueueBindingConsumerResult, error)
 	DeleteQueueBindingWithConsumer(context.Context, string, string, string) (QueueBindingConsumerResult, error)
+}
+
+// QueueBindingHistoryStore exposes retained identity to reconciliation and
+// recovery. Customer CRUD reads return only active bindings.
+type QueueBindingHistoryStore interface {
+	QueueBindingHistoryByID(context.Context, string, string, string) (QueueBinding, error)
+	ListQueueBindingHistoryForApp(context.Context, string, string) ([]QueueBinding, error)
 }
 
 type QueueBindingConsumerResult struct {
@@ -56,6 +67,9 @@ func applyQueueBindingPatch(row QueueBinding, p UpdateQueueBindingParams) QueueB
 }
 
 func validateQueueBindingConsumer(row QueueBinding, appType AppType, appClass WorkloadClass) error {
+	if row.RetiredAt != nil {
+		return ErrInvalidArgument
+	}
 	if !queueBindingNameRE.MatchString(row.Name) || !queueBindingNameRE.MatchString(row.QueueName) ||
 		(row.Mode != "push" && row.Mode != "pull") || row.MaxConcurrency < 1 || row.MaxConcurrency > 10000 {
 		return ErrInvalidArgument

@@ -1200,6 +1200,8 @@ const countTriggersByAccount = `-- name: CountTriggersByAccount :one
 select count(*) from triggers t
 join apps a on a.id = t.app_id
 where a.account_id = $1 and a.status <> 'deleted'
+and (t.queue_binding_id is null or exists (
+  select 1 from queue_bindings b where b.id=t.queue_binding_id and b.retired_at is null and b.mode='push'))
 `
 
 func (q *Queries) CountTriggersByAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
@@ -1210,7 +1212,9 @@ func (q *Queries) CountTriggersByAccount(ctx context.Context, db DBTX, accountID
 }
 
 const countTriggersByApp = `-- name: CountTriggersByApp :one
-select count(*) from triggers where app_id = $1
+select count(*) from triggers t where t.app_id = $1
+and (t.queue_binding_id is null or exists (
+  select 1 from queue_bindings b where b.id=t.queue_binding_id and b.retired_at is null and b.mode='push'))
 `
 
 func (q *Queries) CountTriggersByApp(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error) {
@@ -10586,6 +10590,50 @@ func (q *Queries) ListProjectReleaseSetsBefore(ctx context.Context, db DBTX, arg
 	return items, nil
 }
 
+const listQueueBindingHistoryForApp = `-- name: ListQueueBindingHistoryForApp :many
+select id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at, retired_at from queue_bindings where app_id=$1 and account_id=$2
+order by created_at, id
+`
+
+type ListQueueBindingHistoryForAppParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) ListQueueBindingHistoryForApp(ctx context.Context, db DBTX, arg ListQueueBindingHistoryForAppParams) ([]QueueBinding, error) {
+	rows, err := db.Query(ctx, listQueueBindingHistoryForApp, arg.AppID, arg.AccountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []QueueBinding{}
+	for rows.Next() {
+		var i QueueBinding
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.QueueName,
+			&i.Mode,
+			&i.WorkloadClass,
+			&i.Enabled,
+			&i.MaxConcurrency,
+			&i.RetryPolicy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.RetiredAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRecentEventsForAccount = `-- name: ListRecentEventsForAccount :many
 select id, at, actor, kind, subject, data
 from events
@@ -15623,6 +15671,38 @@ func (q *Queries) PutEnvironmentGitOpsVariable(ctx context.Context, db DBTX, arg
 	return err
 }
 
+const queueBindingHistoryByID = `-- name: QueueBindingHistoryByID :one
+select id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at, retired_at from queue_bindings where id=$1
+and app_id=$2 and account_id=$3
+`
+
+type QueueBindingHistoryByIDParams struct {
+	ID        pgtype.UUID
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) QueueBindingHistoryByID(ctx context.Context, db DBTX, arg QueueBindingHistoryByIDParams) (QueueBinding, error) {
+	row := db.QueryRow(ctx, queueBindingHistoryByID, arg.ID, arg.AppID, arg.AccountID)
+	var i QueueBinding
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.QueueName,
+		&i.Mode,
+		&i.WorkloadClass,
+		&i.Enabled,
+		&i.MaxConcurrency,
+		&i.RetryPolicy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RetiredAt,
+	)
+	return i, err
+}
+
 const queueClaimConsumerIdentity = `-- name: QueueClaimConsumerIdentity :one
 select queue_binding_id, (config ? 'queue_binding_id')::boolean as has_marker from triggers
 where id=$1 and app_id=$2 and kind='queue' and source='queue'
@@ -15647,7 +15727,7 @@ func (q *Queries) QueueClaimConsumerIdentity(ctx context.Context, db DBTX, arg Q
 
 const queueClaimLegacyBindingCap = `-- name: QueueClaimLegacyBindingCap :one
 select max_concurrency from queue_bindings where app_id=$1
-and queue_name=$2 and enabled for update
+and queue_name=$2 and enabled and retired_at is null for update
 `
 
 type QueueClaimLegacyBindingCapParams struct {
@@ -15664,7 +15744,7 @@ func (q *Queries) QueueClaimLegacyBindingCap(ctx context.Context, db DBTX, arg Q
 
 const queueClaimLockBinding = `-- name: QueueClaimLockBinding :one
 select max_concurrency from queue_bindings where id=$1 and app_id=$2
-and queue_name=$3 and mode='push' and enabled for update
+and queue_name=$3 and mode='push' and enabled and retired_at is null for update
 `
 
 type QueueClaimLockBindingParams struct {
@@ -15706,8 +15786,8 @@ func (q *Queries) QueueClaimLockLiveConsumer(ctx context.Context, db DBTX, arg Q
 }
 
 const queueConsumerBindingForUpdate = `-- name: QueueConsumerBindingForUpdate :one
-select id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at from queue_bindings where id=$1
-and app_id=$2 and account_id=$3 for update
+select id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at, retired_at from queue_bindings where id=$1
+and app_id=$2 and account_id=$3 and retired_at is null for update
 `
 
 type QueueConsumerBindingForUpdateParams struct {
@@ -15732,6 +15812,7 @@ func (q *Queries) QueueConsumerBindingForUpdate(ctx context.Context, db DBTX, ar
 		&i.RetryPolicy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RetiredAt,
 	)
 	return i, err
 }
@@ -15794,37 +15875,19 @@ func (q *Queries) QueueConsumerCreateTrigger(ctx context.Context, db DBTX, arg Q
 	return i, err
 }
 
-const queueConsumerDeleteBinding = `-- name: QueueConsumerDeleteBinding :execrows
-delete from queue_bindings where id=$1 and app_id=$2 and account_id=$3
-`
-
-type QueueConsumerDeleteBindingParams struct {
-	ID        pgtype.UUID
-	AppID     pgtype.UUID
-	AccountID pgtype.UUID
-}
-
-func (q *Queries) QueueConsumerDeleteBinding(ctx context.Context, db DBTX, arg QueueConsumerDeleteBindingParams) (int64, error) {
-	result, err := db.Exec(ctx, queueConsumerDeleteBinding, arg.ID, arg.AppID, arg.AccountID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
-const queueConsumerDeleteTrigger = `-- name: QueueConsumerDeleteTrigger :execrows
-delete from triggers where id=$1 and app_id=$2
+const queueConsumerDisableTrigger = `-- name: QueueConsumerDisableTrigger :execrows
+update triggers set enabled=false, updated_at=now() where id=$1 and app_id=$2
 and queue_binding_id=$3::uuid
 `
 
-type QueueConsumerDeleteTriggerParams struct {
+type QueueConsumerDisableTriggerParams struct {
 	ID        pgtype.UUID
 	AppID     pgtype.UUID
 	BindingID pgtype.UUID
 }
 
-func (q *Queries) QueueConsumerDeleteTrigger(ctx context.Context, db DBTX, arg QueueConsumerDeleteTriggerParams) (int64, error) {
-	result, err := db.Exec(ctx, queueConsumerDeleteTrigger, arg.ID, arg.AppID, arg.BindingID)
+func (q *Queries) QueueConsumerDisableTrigger(ctx context.Context, db DBTX, arg QueueConsumerDisableTriggerParams) (int64, error) {
+	result, err := db.Exec(ctx, queueConsumerDisableTrigger, arg.ID, arg.AppID, arg.BindingID)
 	if err != nil {
 		return 0, err
 	}
@@ -15834,7 +15897,7 @@ func (q *Queries) QueueConsumerDeleteTrigger(ctx context.Context, db DBTX, arg Q
 const queueConsumerInsertBinding = `-- name: QueueConsumerInsertBinding :one
 insert into queue_bindings (id,account_id,app_id,name,queue_name,mode,workload_class,enabled,max_concurrency,retry_policy)
 values ($1,$2,$3,$4,$5,
-$6,$7,$8,$9,$10::jsonb) returning id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at
+$6,$7,$8,$9,$10::jsonb) returning id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at, retired_at
 `
 
 type QueueConsumerInsertBindingParams struct {
@@ -15877,6 +15940,7 @@ func (q *Queries) QueueConsumerInsertBinding(ctx context.Context, db DBTX, arg Q
 		&i.RetryPolicy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RetiredAt,
 	)
 	return i, err
 }
@@ -15973,10 +16037,42 @@ func (q *Queries) QueueConsumerOwnedTriggers(ctx context.Context, db DBTX, arg Q
 	return items, nil
 }
 
+const queueConsumerRetireBinding = `-- name: QueueConsumerRetireBinding :one
+update queue_bindings set retired_at=now(), enabled=false, updated_at=now()
+where id=$1 and app_id=$2 and account_id=$3 and retired_at is null returning id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at, retired_at
+`
+
+type QueueConsumerRetireBindingParams struct {
+	ID        pgtype.UUID
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) QueueConsumerRetireBinding(ctx context.Context, db DBTX, arg QueueConsumerRetireBindingParams) (QueueBinding, error) {
+	row := db.QueryRow(ctx, queueConsumerRetireBinding, arg.ID, arg.AppID, arg.AccountID)
+	var i QueueBinding
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.QueueName,
+		&i.Mode,
+		&i.WorkloadClass,
+		&i.Enabled,
+		&i.MaxConcurrency,
+		&i.RetryPolicy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RetiredAt,
+	)
+	return i, err
+}
+
 const queueConsumerUpdateBinding = `-- name: QueueConsumerUpdateBinding :one
 update queue_bindings set queue_name=$1,mode=$2,workload_class=$3,
 enabled=$4,max_concurrency=$5,retry_policy=$6::jsonb,updated_at=now()
-where id=$7 and app_id=$8 and account_id=$9 returning id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at
+where id=$7 and app_id=$8 and account_id=$9 and retired_at is null returning id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at, retired_at
 `
 
 type QueueConsumerUpdateBindingParams struct {
@@ -16017,6 +16113,7 @@ func (q *Queries) QueueConsumerUpdateBinding(ctx context.Context, db DBTX, arg Q
 		&i.RetryPolicy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RetiredAt,
 	)
 	return i, err
 }

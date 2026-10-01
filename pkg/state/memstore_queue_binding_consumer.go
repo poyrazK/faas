@@ -43,6 +43,7 @@ func (m *MemStore) mutateQueueBindingConsumer(accountID, appID, id string, creat
 	}
 	limits, _ := api.LimitsFor(account.Plan)
 	var binding QueueBinding
+	wasPush := false
 	if create != nil {
 		if _, exists := m.queueBindings[id]; exists {
 			return QueueBindingConsumerResult{}, ErrConflict
@@ -51,9 +52,10 @@ func (m *MemStore) mutateQueueBindingConsumer(accountID, appID, id string, creat
 		binding.CreatedAt = time.Now().UTC()
 	} else {
 		binding, ok = m.queueBindings[id]
-		if !ok || binding.AppID != appID || binding.AccountID != accountID {
+		if !ok || binding.AppID != appID || binding.AccountID != accountID || binding.RetiredAt != nil {
 			return QueueBindingConsumerResult{}, ErrNotFound
 		}
+		wasPush = binding.Mode == "push"
 		if patch != nil {
 			binding = applyQueueBindingPatch(binding, *patch)
 		}
@@ -87,25 +89,29 @@ func (m *MemStore) mutateQueueBindingConsumer(accountID, appID, id string, creat
 		appCount, accountCount := 0, 0
 		for triggerID, trigger := range m.triggers {
 			if trigger.AppID.String() == canonicalMemUUID(appID) {
-				appCount++
+				if m.triggerConsumesQuotaLocked(trigger) {
+					appCount++
+				}
 				if triggerID != owned.ID.String() && (trigger.Slug == binding.QueueName ||
 					(binding.Enabled && trigger.Kind == "queue" && trigger.Enabled && trigger.Source.Valid && trigger.Source.String == "queue")) {
 					return QueueBindingConsumerResult{}, ErrConflict
 				}
 			}
-			if otherApp, ok := m.triggerAppLocked(trigger); ok && otherApp.AccountID == accountID && otherApp.Status != AppDeleted {
+			if otherApp, ok := m.triggerAppLocked(trigger); ok && otherApp.AccountID == accountID && otherApp.Status != AppDeleted && m.triggerConsumesQuotaLocked(trigger) {
 				accountCount++
 			}
 		}
 		kind := "updated"
 		projected = owned
-		if !owned.ID.Valid {
+		if !owned.ID.Valid || !wasPush {
 			if appCount >= limits.TriggerLimitPerApp {
 				return QueueBindingConsumerResult{}, &TriggerQuotaError{Scope: TriggerQuotaScopeApp, Limit: limits.TriggerLimitPerApp, Observed: appCount}
 			}
 			if accountCount >= limits.TriggerLimitPerAccount {
 				return QueueBindingConsumerResult{}, &TriggerQuotaError{Scope: TriggerQuotaScopeAccount, Limit: limits.TriggerLimitPerAccount, Observed: accountCount}
 			}
+		}
+		if !owned.ID.Valid {
 			kind = "created"
 			projected = sqlc.Trigger{ID: pgtype.UUID{Bytes: memNewUUID(), Valid: true}, AccountID: pgtype.UUID{Bytes: parseMemUUIDString(accountID), Valid: true},
 				AppID: pgtype.UUID{Bytes: parseMemUUIDString(appID), Valid: true}, QueueBindingID: pgtype.UUID{Bytes: parseMemUUIDString(id), Valid: true}, Kind: "queue", Source: nullableTriggerSource("queue"), BrokerPoisonStrategy: "commit",
@@ -116,26 +122,26 @@ func (m *MemStore) mutateQueueBindingConsumer(accountID, appID, id string, creat
 		projected.UpdatedAt = pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}
 		result.Changes = append(result.Changes, QueueConsumerChange{Kind: kind, AppID: appID, TriggerID: projected.ID.String()})
 	} else if owned.ID.Valid {
-		result.Changes = append(result.Changes, QueueConsumerChange{Kind: "deleted", AppID: appID, TriggerID: owned.ID.String()})
+		projected = owned
+		projected.Enabled = false
+		projected.UpdatedAt = pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}
+		result.Changes = append(result.Changes, QueueConsumerChange{Kind: "updated", AppID: appID, TriggerID: owned.ID.String()})
 	}
 	// Publish only after every validation and quota check. No error path below
 	// can leave a binding without its corresponding projection.
+	binding.UpdatedAt = time.Now().UTC()
 	if remove {
-		delete(m.queueBindings, id)
-	} else {
-		binding.UpdatedAt = time.Now().UTC()
-		binding.RetryPolicyJSON = append([]byte(nil), binding.RetryPolicyJSON...)
-		m.queueBindings[id] = binding
-		result.Binding = binding
+		binding.RetiredAt = &binding.UpdatedAt
+		binding.Enabled = false
 	}
+	binding.RetryPolicyJSON = append([]byte(nil), binding.RetryPolicyJSON...)
+	m.queueBindings[id] = cloneQueueBinding(binding)
+	result.Binding = cloneQueueBinding(binding)
 	if projected.ID.Valid {
 		if m.triggers == nil {
 			m.triggers = make(map[string]sqlc.Trigger)
 		}
 		m.triggers[projected.ID.String()] = projected
-	} else if owned.ID.Valid {
-		delete(m.triggers, owned.ID.String())
-		delete(m.triggerWorkBindings, owned.ID.String())
 	}
 	result.Binding.RetryPolicyJSON = append([]byte(nil), result.Binding.RetryPolicyJSON...)
 	return result, nil

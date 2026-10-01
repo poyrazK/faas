@@ -4288,6 +4288,10 @@ type QueueBinding struct {
 	RetryPolicyJSON json.RawMessage
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
+	// RetiredAt removes the binding from active intent while preserving its
+	// queue name, private consumer identity, backlog and delivery evidence.
+	// Retirement cannot be undone by an ordinary PATCH or a new binding.
+	RetiredAt *time.Time
 }
 
 // UpdateQueueBindingParams uses pointer fields so PATCH can distinguish an

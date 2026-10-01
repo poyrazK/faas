@@ -148,8 +148,11 @@ func testQueueBindingConsumerPublication(t *testing.T, fx *Fixture) {
 	if _, err := fx.Store.QueueBindingByID(fx.Ctx, fx.Account.ID, app.ID, created.Binding.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("binding remained after deletion: %v", err)
 	}
-	if _, err := fx.Store.TriggerByID(fx.Ctx, triggerID); !errors.Is(err, state.ErrNotFound) {
-		t.Fatalf("consumer remained after deletion: %v", err)
+	if consumer, err := fx.Store.TriggerByID(fx.Ctx, triggerID); err != nil || consumer.Enabled {
+		t.Fatalf("retired consumer was lost or enabled: enabled=%t err=%v", consumer.Enabled, err)
+	}
+	if id, err := fx.Store.TriggerRecordIDByItemIdentifier(fx.Ctx, triggerID, "receipt"); err != nil || id != recordID {
+		t.Fatalf("retirement lost receipt: id=%q err=%v", id, err)
 	}
 }
 

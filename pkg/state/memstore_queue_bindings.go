@@ -4,11 +4,16 @@ import (
 	"context"
 	"sort"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func (m *MemStore) CreateQueueBinding(_ context.Context, in QueueBinding) (QueueBinding, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if in.RetiredAt != nil {
+		return QueueBinding{}, ErrInvalidArgument
+	}
 	app, ok := m.apps[in.AppID]
 	if !ok || app.Status == AppDeleted || app.AccountID != in.AccountID {
 		return QueueBinding{}, ErrNotFound
@@ -20,6 +25,9 @@ func (m *MemStore) CreateQueueBinding(_ context.Context, in QueueBinding) (Queue
 	}
 	if in.ID == "" {
 		in.ID = newID()
+	}
+	if _, exists := m.queueBindings[in.ID]; exists {
+		return QueueBinding{}, ErrConflict
 	}
 	if in.CreatedAt.IsZero() {
 		in.CreatedAt = time.Now().UTC()
@@ -33,25 +41,45 @@ func (m *MemStore) CreateQueueBinding(_ context.Context, in QueueBinding) (Queue
 	return in, nil
 }
 
-func (m *MemStore) QueueBindingByID(_ context.Context, accountID, appID, id string) (QueueBinding, error) {
+func (m *MemStore) QueueBindingByID(ctx context.Context, accountID, appID, id string) (QueueBinding, error) {
+	row, err := m.QueueBindingHistoryByID(ctx, accountID, appID, id)
+	if err == nil && row.RetiredAt != nil {
+		return QueueBinding{}, ErrNotFound
+	}
+	return row, err
+}
+
+func (m *MemStore) QueueBindingHistoryByID(_ context.Context, accountID, appID, id string) (QueueBinding, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	b, ok := m.queueBindings[id]
 	if !ok || b.AccountID != accountID || b.AppID != appID {
 		return QueueBinding{}, ErrNotFound
 	}
-	b.RetryPolicyJSON = append([]byte(nil), b.RetryPolicyJSON...)
-	return b, nil
+	return cloneQueueBinding(b), nil
 }
 
-func (m *MemStore) ListQueueBindingsForApp(_ context.Context, accountID, appID string) ([]QueueBinding, error) {
+func (m *MemStore) ListQueueBindingsForApp(ctx context.Context, accountID, appID string) ([]QueueBinding, error) {
+	rows, err := m.ListQueueBindingHistoryForApp(ctx, accountID, appID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]QueueBinding, 0, len(rows))
+	for _, row := range rows {
+		if row.RetiredAt == nil {
+			out = append(out, row)
+		}
+	}
+	return out, nil
+}
+
+func (m *MemStore) ListQueueBindingHistoryForApp(_ context.Context, accountID, appID string) ([]QueueBinding, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out []QueueBinding
 	for _, b := range m.queueBindings {
 		if b.AccountID == accountID && b.AppID == appID {
-			b.RetryPolicyJSON = append([]byte(nil), b.RetryPolicyJSON...)
-			out = append(out, b)
+			out = append(out, cloneQueueBinding(b))
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -67,8 +95,14 @@ func (m *MemStore) UpdateQueueBinding(_ context.Context, accountID, appID, id st
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	b, ok := m.queueBindings[id]
-	if !ok || b.AccountID != accountID || b.AppID != appID {
+	if !ok || b.AccountID != accountID || b.AppID != appID || b.RetiredAt != nil {
 		return QueueBinding{}, ErrNotFound
+	}
+	for _, trigger := range m.triggers {
+		if trigger.AppID.String() == canonicalMemUUID(appID) &&
+			(trigger.QueueBindingID.Valid && trigger.QueueBindingID.String() == canonicalMemUUID(id) || queueConsumerBindingID(trigger.Config) == id) {
+			return QueueBinding{}, ErrConflict
+		}
 	}
 	if p.QueueName != nil {
 		b.QueueName = *p.QueueName
@@ -102,13 +136,56 @@ func (m *MemStore) UpdateQueueBinding(_ context.Context, accountID, appID, id st
 	return b, nil
 }
 
-func (m *MemStore) DeleteQueueBinding(_ context.Context, accountID, appID, id string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	b, ok := m.queueBindings[id]
-	if !ok || b.AccountID != accountID || b.AppID != appID {
-		return ErrNotFound
+func (m *MemStore) DeleteQueueBinding(ctx context.Context, accountID, appID, id string) error {
+	_, err := m.DeleteQueueBindingWithConsumer(ctx, accountID, appID, id)
+	return err
+}
+
+func cloneQueueBinding(row QueueBinding) QueueBinding {
+	row.RetryPolicyJSON = append([]byte(nil), row.RetryPolicyJSON...)
+	if row.RetiredAt != nil {
+		retired := *row.RetiredAt
+		row.RetiredAt = &retired
 	}
-	delete(m.queueBindings, id)
-	return nil
+	return row
+}
+
+func (m *MemStore) triggerConsumesQuotaLocked(trigger sqlc.Trigger) bool {
+	if !trigger.QueueBindingID.Valid {
+		return true
+	}
+	for _, binding := range m.queueBindings {
+		if canonicalMemUUID(binding.ID) == trigger.QueueBindingID.String() {
+			return binding.RetiredAt == nil && binding.Mode == "push"
+		}
+	}
+	// Corrupt or missing ownership must never free an admission slot.
+	return true
+}
+
+func (m *MemStore) queueBindingRetiredLocked(inv Invocation) bool {
+	if inv.Source != InvocationQueue {
+		return false
+	}
+	for _, binding := range m.queueBindings {
+		if binding.AppID == inv.AppID && binding.QueueName == inv.QueueName && binding.RetiredAt != nil {
+			return true
+		}
+	}
+	return false
+}
+
+var _ QueueBindingHistoryStore = (*MemStore)(nil)
+
+func (m *MemStore) queueConsumerCanClaimLocked(triggerID string) bool {
+	trigger, ok := m.triggers[triggerID]
+	if !ok || !trigger.QueueBindingID.Valid {
+		return true
+	}
+	for _, binding := range m.queueBindings {
+		if canonicalMemUUID(binding.ID) == trigger.QueueBindingID.String() {
+			return binding.Enabled && binding.RetiredAt == nil && binding.Mode == "push"
+		}
+	}
+	return false
 }
