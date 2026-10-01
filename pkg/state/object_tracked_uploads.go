@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -94,4 +95,8 @@ func validTrackedUploadRetry(code string) bool {
 	default:
 		return false
 	}
+}
+
+func validTrackedUploadCursor(c ObjectUploadCompletion) bool {
+	return len(c.RecoveryCursor) <= api.ObjectUploadHistoryCursorMaxBytes && utf8.ValidString(c.RecoveryCursor) && !strings.ContainsRune(c.RecoveryCursor, 0)
 }

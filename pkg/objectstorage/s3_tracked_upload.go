@@ -48,7 +48,7 @@ func (p *S3) ConfirmTrackedObject(ctx context.Context, bucket, key, receipt stri
 	if out == nil || out.ContentLength == nil || *out.ContentLength != size || out.Metadata[ReservedUploadReceiptMetadataKey] != receipt || !validUploadETag(aws.ToString(out.ETag)) {
 		return UploadResult{}, ErrConflict
 	}
-	return UploadResult{ETag: aws.ToString(out.ETag)}, nil
+	return UploadResult{ETag: aws.ToString(out.ETag), ProviderVersionID: aws.ToString(out.VersionId)}, nil
 }
 
 func invalidS3Write(receipt string) error {

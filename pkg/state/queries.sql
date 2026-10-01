@@ -5140,7 +5140,8 @@ SELECT
   WHERE w.bucket_id=$1 AND ((w.kind='proxy' AND w.state='pending') OR (w.kind='multipart' AND m.state NOT IN ('completed','aborted'))))::bigint AS pending,
  EXISTS (SELECT 1 FROM object_storage_key_grants WHERE bucket_id=$1 AND NOT reclaimable) AS unsafe,
  EXISTS (SELECT 1 FROM object_storage_multipart_uploads m WHERE m.bucket_id=$1 AND
-  (m.state NOT IN ('completed','aborted') OR (m.state<>'completed' AND EXISTS (SELECT 1 FROM object_storage_multipart_part_grants p WHERE p.upload_id=m.id)))) AS multipart;
+  (m.state NOT IN ('completed','aborted') OR (m.state<>'completed' AND EXISTS (SELECT 1 FROM object_storage_multipart_part_grants p WHERE p.upload_id=m.id)))) AS multipart,
+ EXISTS (SELECT 1 FROM object_upload_completions WHERE bucket_id=$1 AND recovery_versions_observed) AS versions;
 
 -- name: ObjectCapacityActive :one
 SELECT * FROM object_storage_capacity_reconciliations WHERE bucket_id=$1 AND state IN ('waiting','scanning');
@@ -5198,7 +5199,8 @@ UPDATE object_upload_completions SET write_phase='dispatched', recovery_retry_at
  WHERE id=$1 AND account_id=$2 AND bucket_id=$3 AND write_phase='prepared' RETURNING *;
 
 -- name: ObjectTrackedUploadFinish :one
-UPDATE object_upload_completions SET status=$2,etag=$3,error_code=$4,write_phase='settled',recovery_token='',recovery_lease_until=NULL
+UPDATE object_upload_completions SET status=$2,etag=$3,error_code=$4,write_phase='settled',recovery_token='',recovery_lease_until=NULL,recovery_cursor='',
+ recovery_versions_observed=recovery_versions_observed OR sqlc.arg(recovery_versions_observed)::boolean
  WHERE id=$1 RETURNING *;
 
 -- name: ObjectRouteWriteSettle :execrows
@@ -5214,7 +5216,8 @@ UPDATE object_upload_completions SET recovery_token=$2,recovery_lease_until=now(
 
 -- name: ObjectTrackedUploadRetry :exec
 UPDATE object_upload_completions SET recovery_token='',recovery_lease_until=NULL,
- recovery_retry_at=now()+make_interval(secs=>sqlc.arg(retry_seconds)::int),error_code=$2 WHERE id=$1;
+ recovery_retry_at=now()+make_interval(secs=>sqlc.arg(retry_seconds)::int),error_code=$2, recovery_cursor=sqlc.arg(recovery_cursor)::text,
+ recovery_versions_observed=recovery_versions_observed OR sqlc.arg(recovery_versions_observed)::boolean WHERE id=$1;
 
 
 -- name: ObjectUploadReceiptGet :one

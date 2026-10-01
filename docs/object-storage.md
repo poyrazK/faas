@@ -1058,7 +1058,12 @@ a failed write or timeout, and prints the last pending receipt on timeout.
 
 Completed proves that this attempt committed; the key may since have changed.
 Pending has no confirmed outcome: do not treat it as failure or blindly resend
-the write. Missing or overwritten provider proof can leave a receipt pending.
+the write. When native S3 history retains the private receipt, recovery can
+confirm an older version after overwrite or a delete marker. Each probe lists
+at most ten entries, inspects exact versions and persists pagination progress
+across worker restarts. Missing history still leaves the receipt pending.
+This read-only recovery does not enable bucket versioning or retain proof on
+unversioned backends. See [ADR-397](adr/397-historical-s3-write-receipt-recovery.md).
 These reads cannot force completion or refund capacity. Legacy/untracked writes,
 direct signed uploads and multipart sessions are outside this list; use the
 multipart status API for multipart uploads. Pending-write lists help diagnose
@@ -1098,5 +1103,9 @@ no confirmed outcome. An expired URL or elapsed deadline cannot settle an
 uncertain write. Those cases retain capacity; this release does not offer a force
 refund. Use dedicated managed buckets with versioning disabled, ordered complete
 listings, and no independent provider writers or replication introducing objects.
+`blocked/version_accounting_required` means recovery or an acknowledged tracked
+write detected retained native versions. Current-object inventory cannot count
+their storage, so reclamation stays blocked even after the receipt completes.
+Public versioning and accounting across all retained versions remain pending.
 See [ADR-391](adr/391-safe-object-capacity-reconciliation.md) for recovery and
 rolling-upgrade guarantees.

@@ -54,6 +54,8 @@ func (s *server) confirmObjectUpload(ctx context.Context, st state.ObjectTracked
 	probeCtx, cancel := context.WithTimeout(ctx, api.ObjectUploadRecoveryProbeTimeout)
 	result, err := s.probeObjectUpload(probeCtx, c)
 	cancel()
+	c.RecoveryCursor = result.Cursor
+	c.RecoveryVersionsObserved = c.RecoveryVersionsObserved || result.VersionsObserved
 	finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), api.ObjectUploadSettlementTimeout)
 	defer finishCancel()
 	if err == nil {
@@ -76,30 +78,54 @@ func (s *server) confirmObjectUpload(ctx context.Context, st state.ObjectTracked
 	}
 	return "deferred", retryErr
 }
-func (s *server) probeObjectUpload(ctx context.Context, c state.ObjectUploadCompletion) (objectstorage.UploadResult, error) {
+func (s *server) probeObjectUpload(ctx context.Context, c state.ObjectUploadCompletion) (objectstorage.ObjectHistoryProofPage, error) {
+	page := objectstorage.ObjectHistoryProofPage{Cursor: c.RecoveryCursor}
 	if s.objectStorage == nil {
-		return objectstorage.UploadResult{}, objectstorage.ErrConfiguration
+		return page, objectstorage.ErrConfiguration
 	}
 	buckets, ok := s.store.(state.ObjectBucketStore)
 	if !ok {
-		return objectstorage.UploadResult{}, objectstorage.ErrConfiguration
+		return page, objectstorage.ErrConfiguration
 	}
 	b, err := buckets.GetObjectBucket(ctx, c.AccountID, c.AppID, c.BucketID)
 	if err != nil {
-		return objectstorage.UploadResult{}, err
+		return page, err
 	}
 	backend, err := s.objectStorage.Resolve(b.BackendID, b.BackendFingerprint)
 	if err != nil {
-		return objectstorage.UploadResult{}, objectstorage.ErrConfiguration
+		return page, objectstorage.ErrConfiguration
 	}
 	writer, ok := backend.Provider.(objectstorage.ObjectWriteConfirmer)
 	if !ok {
-		return objectstorage.UploadResult{}, objectstorage.ErrUnsupported
+		return page, objectstorage.ErrUnsupported
 	}
-	if metrics, ok := s.store.(state.ObjectStorageProviderUsageStore); ok {
-		if err = metrics.RecordObjectStorageProviderRequest(ctx, c.BucketID, time.Now().UTC()); err != nil {
-			return objectstorage.UploadResult{}, err
+	before := func(ctx context.Context) error {
+		metrics, ok := s.store.(state.ObjectStorageProviderUsageStore)
+		if !ok {
+			return objectstorage.ErrConfiguration
 		}
+		return metrics.RecordObjectStorageProviderRequest(ctx, c.BucketID, time.Now().UTC())
 	}
-	return writer.ConfirmTrackedObject(ctx, b.PhysicalName, c.Key, c.ID, c.Bytes)
+	if err = before(ctx); err != nil {
+		return page, err
+	}
+	proof, err := writer.ConfirmTrackedObject(ctx, b.PhysicalName, c.Key, c.ID, c.Bytes)
+	if err == nil {
+		page.UploadResult = proof
+		page.Cursor = ""
+		page.VersionsObserved = proof.ProviderVersionID != "" && proof.ProviderVersionID != "null"
+		return page, nil
+	}
+	if !errors.Is(err, objectstorage.ErrNotFound) && !errors.Is(err, objectstorage.ErrConflict) {
+		return page, err
+	}
+	history, ok := backend.Provider.(objectstorage.HistoricalObjectWriteConfirmer)
+	if !ok {
+		return page, err
+	}
+	historical, historyErr := history.ConfirmTrackedObjectHistory(ctx, b.PhysicalName, objectstorage.ObjectHistoryProofRequest{Key: c.Key, Receipt: c.ID, SizeBytes: c.Bytes, Cursor: c.RecoveryCursor, BeforeRequest: before})
+	if errors.Is(historyErr, objectstorage.ErrUnsupported) {
+		return page, err
+	}
+	return historical, historyErr
 }

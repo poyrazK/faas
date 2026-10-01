@@ -13,7 +13,7 @@ import (
 var _ ObjectTrackedUploadStore = (*PgStore)(nil)
 
 func objectTrackedUploadFromSQL(r sqlc.ObjectUploadCompletion) ObjectUploadCompletion {
-	return ObjectUploadCompletion{ID: pgUUIDString(r.ID), RouteID: pgUUIDString(r.RouteID), AccountID: pgUUIDString(r.AccountID), AppID: pgUUIDString(r.AppID), BucketID: pgUUIDString(r.BucketID), SubjectID: r.SubjectID, Key: r.ObjectKey, Bytes: r.Bytes, ContentType: r.ContentType, ETag: r.Etag, Status: r.Status, ErrorCode: r.ErrorCode, RequestID: r.RequestID, IdempotencyKey: r.IdempotencyKey, RequestFingerprint: r.RequestFingerprint, CreatedAt: r.CreatedAt.Time, Origin: r.Origin, SourceKey: r.SourceKey, SourceETag: r.SourceEtag, WritePhase: r.WritePhase, RecoveryToken: r.RecoveryToken, RecoveryLeaseUntil: r.RecoveryLeaseUntil.Time, RecoveryRetryAt: r.RecoveryRetryAt.Time}
+	return ObjectUploadCompletion{ID: pgUUIDString(r.ID), RouteID: pgUUIDString(r.RouteID), AccountID: pgUUIDString(r.AccountID), AppID: pgUUIDString(r.AppID), BucketID: pgUUIDString(r.BucketID), SubjectID: r.SubjectID, Key: r.ObjectKey, Bytes: r.Bytes, ContentType: r.ContentType, ETag: r.Etag, Status: r.Status, ErrorCode: r.ErrorCode, RequestID: r.RequestID, IdempotencyKey: r.IdempotencyKey, RequestFingerprint: r.RequestFingerprint, CreatedAt: r.CreatedAt.Time, Origin: r.Origin, SourceKey: r.SourceKey, SourceETag: r.SourceEtag, WritePhase: r.WritePhase, RecoveryToken: r.RecoveryToken, RecoveryLeaseUntil: r.RecoveryLeaseUntil.Time, RecoveryRetryAt: r.RecoveryRetryAt.Time, RecoveryCursor: r.RecoveryCursor, RecoveryVersionsObserved: r.RecoveryVersionsObserved}
 }
 func (s *PgStore) BeginTrackedObjectUpload(ctx context.Context, c ObjectUploadCompletion, p api.ObjectStoragePolicy) (ObjectUploadCompletion, bool, error) {
 	if !validTrackedObjectUpload(c) {
@@ -96,7 +96,7 @@ func finishTrackedUploadSQL(ctx context.Context, tx pgx.Tx, old, c ObjectUploadC
 	if n != 1 {
 		return old, ErrConflict
 	}
-	r, err := sqlc.New().ObjectTrackedUploadFinish(ctx, tx, sqlc.ObjectTrackedUploadFinishParams{ID: mustPgUUID(old.ID), Status: c.Status, Etag: c.ETag, ErrorCode: c.ErrorCode})
+	r, err := sqlc.New().ObjectTrackedUploadFinish(ctx, tx, sqlc.ObjectTrackedUploadFinishParams{ID: mustPgUUID(old.ID), Status: c.Status, Etag: c.ETag, ErrorCode: c.ErrorCode, RecoveryVersionsObserved: c.RecoveryVersionsObserved})
 	return objectTrackedUploadFromSQL(r), mapErr(err)
 }
 func (s *PgStore) FinishTrackedObjectUpload(ctx context.Context, c ObjectUploadCompletion) (ObjectUploadCompletion, error) {
@@ -106,7 +106,7 @@ func (s *PgStore) FinishTrackedObjectUploadRecovery(ctx context.Context, c Objec
 	return s.finishTrackedObjectUpload(ctx, c, true)
 }
 func (s *PgStore) finishTrackedObjectUpload(ctx context.Context, c ObjectUploadCompletion, recovery bool) (ObjectUploadCompletion, error) {
-	if !validTrackedUploadFinish(c) {
+	if !validTrackedUploadFinish(c) || !validTrackedUploadCursor(c) {
 		return c, ErrConflict
 	}
 	tx, old, err := s.lockTrackedObjectUpload(ctx, c)
@@ -164,7 +164,7 @@ func (s *PgStore) ClaimTrackedObjectUploadRecovery(ctx context.Context, account,
 	return objectTrackedUploadFromSQL(r), tx.Commit(ctx)
 }
 func (s *PgStore) RetryTrackedObjectUploadRecovery(ctx context.Context, c ObjectUploadCompletion, code string) error {
-	if !validTrackedUploadRetry(code) {
+	if !validTrackedUploadRetry(code) || !validTrackedUploadCursor(c) {
 		return ErrConflict
 	}
 	tx, old, err := s.lockTrackedObjectUpload(ctx, c)
@@ -175,7 +175,7 @@ func (s *PgStore) RetryTrackedObjectUploadRecovery(ctx context.Context, c Object
 	if !validTrackedUploadRecovery(old, time.Now()) || old.RecoveryToken != c.RecoveryToken {
 		return ErrConflict
 	}
-	err = sqlc.New().ObjectTrackedUploadRetry(ctx, tx, sqlc.ObjectTrackedUploadRetryParams{ID: mustPgUUID(c.ID), ErrorCode: code, RetrySeconds: int32(api.ObjectUploadRecoveryRetry / time.Second)})
+	err = sqlc.New().ObjectTrackedUploadRetry(ctx, tx, sqlc.ObjectTrackedUploadRetryParams{ID: mustPgUUID(c.ID), ErrorCode: code, RecoveryCursor: c.RecoveryCursor, RecoveryVersionsObserved: c.RecoveryVersionsObserved, RetrySeconds: int32(api.ObjectUploadRecoveryRetry / time.Second)})
 	if err != nil {
 		return err
 	}

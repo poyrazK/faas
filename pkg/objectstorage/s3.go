@@ -226,7 +226,7 @@ func copyObjectResult(out *s3.CopyObjectOutput) (CopyObjectResult, error) {
 	if out == nil || out.CopyObjectResult == nil || !validUploadETag(aws.ToString(out.CopyObjectResult.ETag)) {
 		return CopyObjectResult{}, ErrUnavailable
 	}
-	return CopyObjectResult{ETag: aws.ToString(out.CopyObjectResult.ETag), LastModified: aws.ToTime(out.CopyObjectResult.LastModified)}, nil
+	return CopyObjectResult{ETag: aws.ToString(out.CopyObjectResult.ETag), LastModified: aws.ToTime(out.CopyObjectResult.LastModified), ProviderVersionID: aws.ToString(out.VersionId)}, nil
 }
 
 func stringPtrOrNil(value string) *string {
@@ -307,7 +307,7 @@ func (p *S3) writeObject(ctx context.Context, bucket, key string, body io.Reader
 	if out == nil || !validUploadETag(aws.ToString(out.ETag)) {
 		return UploadResult{}, ErrUnavailable
 	}
-	return UploadResult{ETag: aws.ToString(out.ETag)}, nil
+	return UploadResult{ETag: aws.ToString(out.ETag), ProviderVersionID: aws.ToString(out.VersionId)}, nil
 }
 
 func (p *S3) ObjectSize(ctx context.Context, bucket, key string) (int64, error) {

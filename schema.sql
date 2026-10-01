@@ -8145,10 +8145,13 @@ CREATE TABLE public.object_upload_completions (
     origin text DEFAULT 'route'::text NOT NULL,
     source_key text DEFAULT ''::text NOT NULL,
     source_etag text DEFAULT ''::text NOT NULL,
+    recovery_cursor text DEFAULT ''::text NOT NULL,
+    recovery_versions_observed boolean DEFAULT false NOT NULL,
     CONSTRAINT object_upload_completions_bytes_check CHECK ((bytes >= 0)),
     CONSTRAINT object_upload_completions_idempotency_key_check CHECK ((length(idempotency_key) <= 128)),
     CONSTRAINT object_upload_completions_object_key_check CHECK (((length(object_key) >= 1) AND (length(object_key) <= 1024))),
     CONSTRAINT object_upload_completions_origin_check CHECK ((origin = ANY (ARRAY['route'::text, 'gateway'::text, 'gateway_copy'::text]))),
+    CONSTRAINT object_upload_completions_recovery_cursor_check CHECK ((octet_length(recovery_cursor) <= 8192)),
     CONSTRAINT object_upload_completions_request_fingerprint_check CHECK ((length(request_fingerprint) <= 64)),
     CONSTRAINT object_upload_completions_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'completed'::text, 'rejected'::text, 'failed'::text]))),
     CONSTRAINT object_upload_completions_subject_id_check CHECK (((length(subject_id) >= 1) AND (length(subject_id) <= 128))),
@@ -23005,7 +23008,7 @@ CREATE TABLE public.object_storage_capacity_reconciliations (
     CONSTRAINT object_storage_capacity_reconciliations_check CHECK (((lease_token = ''::text) = (lease_until IS NULL))),
     CONSTRAINT object_storage_capacity_reconciliations_check1 CHECK (((state = 'scanning'::text) = (lease_until IS NOT NULL))),
     CONSTRAINT object_storage_capacity_reconciliations_check2 CHECK (((state = ANY (ARRAY['completed'::text, 'cancelled'::text, 'blocked'::text, 'failed'::text])) = (finished_at IS NOT NULL))),
-    CONSTRAINT object_storage_capacity_reconciliations_last_error_code_check CHECK ((last_error_code = ANY (ARRAY[''::text, 'untracked_writes'::text, 'unsettled_writes'::text, 'multipart_active'::text, 'deadline'::text, 'inventory_failed'::text]))),
+    CONSTRAINT object_storage_capacity_reconciliations_last_error_code_check CHECK ((last_error_code = ANY (ARRAY[''::text, 'untracked_writes'::text, 'unsettled_writes'::text, 'multipart_active'::text, 'deadline'::text, 'inventory_failed'::text, 'version_accounting_required'::text]))),
     CONSTRAINT object_storage_capacity_reconciliations_pending_writes_check CHECK ((pending_writes >= 0)),
     CONSTRAINT object_storage_capacity_reconciliations_reclaimed_bytes_check CHECK ((reclaimed_bytes >= 0)),
     CONSTRAINT object_storage_capacity_reconciliations_reclaimed_keys_check CHECK ((reclaimed_keys >= 0)),
@@ -23126,3 +23129,29 @@ ALTER TABLE ONLY public.object_storage_write_admissions
     ADD CONSTRAINT object_storage_write_admissions_multipart_upload_id_fkey FOREIGN KEY (multipart_upload_id) REFERENCES public.object_storage_multipart_uploads(id) ON DELETE CASCADE;
 
 CREATE INDEX object_upload_recovery_due_idx ON public.object_upload_completions USING btree (recovery_retry_at, id) WHERE (write_phase = ANY (ARRAY['prepared'::text, 'dispatched'::text]));
+
+-- Historical provider proof recovery (ADR-397).
+CREATE INDEX object_upload_version_history_bucket_idx ON public.object_upload_completions(bucket_id) WHERE recovery_versions_observed;
+
+CREATE FUNCTION public.fence_object_version_reclamation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF EXISTS (SELECT 1 FROM object_upload_completions WHERE bucket_id=NEW.bucket_id AND recovery_versions_observed)
+  AND EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations WHERE bucket_id=NEW.bucket_id AND state='scanning') THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_version_reclamation_fenced',MESSAGE='Retained versions require version-aware accounting';
+ END IF;
+ RETURN NEW;
+END $$;
+
+CREATE FUNCTION public.retain_object_version_history_latch() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF OLD.recovery_versions_observed THEN NEW.recovery_versions_observed:=true; END IF;
+ RETURN NEW;
+END $$;
+
+CREATE TRIGGER object_version_reclamation_fence BEFORE UPDATE OF baseline_bytes, baseline_keys, granted_bytes, granted_keys ON public.object_storage_bucket_usage FOR EACH ROW EXECUTE FUNCTION public.fence_object_version_reclamation();
+
+CREATE TRIGGER object_version_history_latch BEFORE UPDATE OF recovery_versions_observed ON public.object_upload_completions FOR EACH ROW EXECUTE FUNCTION public.retain_object_version_history_latch();

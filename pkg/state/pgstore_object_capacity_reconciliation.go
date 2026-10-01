@@ -203,7 +203,7 @@ func (s *PgStore) ClaimObjectCapacityReconciliation(ctx context.Context, id, tok
 	}
 	j.BeforeBytes, j.BeforeKeys = objectCapacityTotals(snap, j.BucketID)
 	j.AfterBytes, j.AfterKeys = j.BeforeBytes, j.BeforeKeys
-	j = prepareObjectCapacityClaim(j, token, ready.Pending, ready.Unsafe, ready.Multipart, now)
+	j = prepareObjectCapacityClaim(j, token, ready.Pending, ready.Unsafe, ready.Multipart, ready.Versions, now)
 	if err = saveObjectCapacityJob(ctx, tx, j); err != nil {
 		return j, err
 	}
@@ -224,7 +224,7 @@ func (s *PgStore) FinishObjectCapacityReconciliation(ctx context.Context, id, to
 	if err != nil {
 		return j, err
 	}
-	if ready.Pending > 0 || ready.Unsafe || ready.Multipart {
+	if ready.Pending > 0 || ready.Unsafe || ready.Multipart || ready.Versions {
 		return j, ErrConflict
 	}
 	n, err := q.ObjectCapacityRebase(ctx, tx, sqlc.ObjectCapacityRebaseParams{ID: mustPgUUID(j.BucketID), Bytes: bytes, Keys: keys})

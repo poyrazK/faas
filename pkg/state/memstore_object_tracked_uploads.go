@@ -51,6 +51,8 @@ func (m *MemStore) beginTrackedUploadLocked(c ObjectUploadCompletion, p api.Obje
 	c.ETag = ""
 	c.ErrorCode = ""
 	c.RecoveryToken = ""
+	c.RecoveryCursor = ""
+	c.RecoveryVersionsObserved = false
 	c.RecoveryLeaseUntil = time.Time{}
 	c.CreatedAt = time.Now().UTC()
 	c.WritePhase = ObjectUploadPrepared
@@ -86,6 +88,8 @@ func (m *MemStore) finishTrackedObjectUploadLocked(old, c ObjectUploadCompletion
 	}
 	w.Settled = true
 	m.objectWriteAdmissions[old.ID] = w
+	old.RecoveryCursor = ""
+	old.RecoveryVersionsObserved = old.RecoveryVersionsObserved || c.RecoveryVersionsObserved
 	old.ETag = c.ETag
 	old.Status = c.Status
 	old.ErrorCode = c.ErrorCode
@@ -102,7 +106,7 @@ func (m *MemStore) FinishTrackedObjectUploadRecovery(_ context.Context, c Object
 	return m.finishTrackedObjectUpload(c, true)
 }
 func (m *MemStore) finishTrackedObjectUpload(c ObjectUploadCompletion, recovery bool) (ObjectUploadCompletion, error) {
-	if !validTrackedUploadFinish(c) {
+	if !validTrackedUploadFinish(c) || !validTrackedUploadCursor(c) {
 		return c, ErrConflict
 	}
 	m.mu.Lock()
@@ -157,7 +161,7 @@ func (m *MemStore) ClaimTrackedObjectUploadRecovery(_ context.Context, account, 
 	return c, nil
 }
 func (m *MemStore) RetryTrackedObjectUploadRecovery(_ context.Context, c ObjectUploadCompletion, code string) error {
-	if !validTrackedUploadRetry(code) {
+	if !validTrackedUploadRetry(code) || !validTrackedUploadCursor(c) {
 		return ErrConflict
 	}
 	m.mu.Lock()
@@ -173,6 +177,8 @@ func (m *MemStore) RetryTrackedObjectUploadRecovery(_ context.Context, c ObjectU
 	old.RecoveryLeaseUntil = time.Time{}
 	old.RecoveryRetryAt = time.Now().Add(api.ObjectUploadRecoveryRetry)
 	old.ErrorCode = code
+	old.RecoveryCursor = c.RecoveryCursor
+	old.RecoveryVersionsObserved = old.RecoveryVersionsObserved || c.RecoveryVersionsObserved
 	m.objectUploadCompletions[old.ID] = old
 	return nil
 }

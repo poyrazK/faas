@@ -74,6 +74,8 @@ func (h *Handler) completeGatewayPut(w http.ResponseWriter, r *http.Request, req
 		return
 	}
 	c.Status = "completed"
+	version := response.Header.Get("X-Amz-Version-Id")
+	c.RecoveryVersionsObserved = version != "" && version != "null"
 	done, err := h.finishGatewayPut(r.Context(), st, c)
 	if err != nil {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, c.Key)

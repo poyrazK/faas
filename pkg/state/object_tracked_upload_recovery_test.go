@@ -3,10 +3,12 @@ package state
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestTrackedObjectUploadRecoveryMem(t *testing.T) {
@@ -44,16 +46,30 @@ func TestTrackedObjectUploadRecoveryMem(t *testing.T) {
 	if _, err = m.FinishTrackedObjectUploadRecovery(ctx, stale); !errors.Is(err, ErrConflict) {
 		t.Fatal("stale confirmation", err)
 	}
+	claimed.RecoveryCursor = "private-cursor"
+	claimed.RecoveryVersionsObserved = true
+	oversized := claimed
+	oversized.RecoveryCursor = strings.Repeat("x", api.ObjectUploadHistoryCursorMaxBytes+1)
+	if err = m.RetryTrackedObjectUploadRecovery(ctx, oversized, "provider_write_uncertain"); !errors.Is(err, ErrConflict) {
+		t.Fatal("unbounded cursor", err)
+	}
 	if err = m.RetryTrackedObjectUploadRecovery(ctx, claimed, "provider_write_uncertain"); err != nil {
 		t.Fatal(err)
 	}
 	if m.objectWriteAdmissions[c.ID].Settled {
 		t.Fatal("absence settled an uncertain write")
 	}
+	claimed.RecoveryCursor = "stale-worker-cursor"
+	if err = m.RetryTrackedObjectUploadRecovery(ctx, claimed, "provider_write_uncertain"); !errors.Is(err, ErrConflict) {
+		t.Fatal("stale cursor advance", err)
+	}
 	if _, err = m.FinishTrackedObjectUploadRecovery(ctx, stale); !errors.Is(err, ErrConflict) {
 		t.Fatal("released lease committed", err)
 	}
 	pending := m.objectUploadCompletions[c.ID]
+	if pending.RecoveryCursor != "private-cursor" || !pending.RecoveryVersionsObserved {
+		t.Fatal("lost history progress", pending)
+	}
 	pending.RecoveryRetryAt = time.Now().Add(-time.Second)
 	m.objectUploadCompletions[c.ID] = pending
 	claimed, err = m.ClaimTrackedObjectUploadRecovery(ctx, c.AccountID, c.BucketID, c.ID, "second")
@@ -63,8 +79,25 @@ func TestTrackedObjectUploadRecoveryMem(t *testing.T) {
 	claimed.Status = "completed"
 	claimed.ETag = "etag"
 	claimed.ErrorCode = ""
+	claimed.RecoveryVersionsObserved = false
 	if _, err = m.FinishTrackedObjectUploadRecovery(ctx, claimed); err != nil || !m.objectWriteAdmissions[c.ID].Settled {
 		t.Fatal(err)
+	}
+	done := m.objectUploadCompletions[c.ID]
+	if done.RecoveryCursor != "" || !done.RecoveryVersionsObserved {
+		t.Fatal("history latch lost", done)
+	}
+	if m.objectBuckets == nil {
+		m.objectBuckets = map[string]ObjectBucket{}
+	}
+	m.objectBuckets[c.BucketID] = ObjectBucket{ID: c.BucketID, AccountID: c.AccountID, State: "ready"}
+	j, err := m.RequestObjectCapacityReconciliation(ctx, c.AccountID, "", c.BucketID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, err = m.ClaimObjectCapacityReconciliation(ctx, j.ID, "capacity-worker")
+	if err != nil || j.State != "blocked" || j.LastErrorCode != "version_accounting_required" {
+		t.Fatal("current inventory could refund versions", j, err)
 	}
 	// A late transport failure cannot rewrite a recovered completion.
 	c.Status = "failed"

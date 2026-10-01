@@ -13,6 +13,11 @@ import (
 
 func pollGatewayWriteReceipt(t *testing.T, f gatewayRecoveryFixture, key, id, status string, code int) {
 	t.Helper()
+	pollGatewayOperationReceipt(t, f, key, id, status, "copy", code)
+}
+
+func pollGatewayOperationReceipt(t *testing.T, f gatewayRecoveryFixture, key, id, status, operation string, code int) {
+	t.Helper()
 	ctx := t.Context()
 	endpoint := *f.client.Options().BaseEndpoint
 	r, err := http.NewRequestWithContext(ctx, "GET", endpoint+"/assets/"+key+"?"+url.Values{"gregale-upload-id": {id}}.Encode(), nil)
@@ -39,7 +44,7 @@ func pollGatewayWriteReceipt(t *testing.T, f gatewayRecoveryFixture, key, id, st
 		return
 	}
 	var receipt api.ObjectWriteReceipt
-	if err = json.NewDecoder(response.Body).Decode(&receipt); err != nil || receipt.ID != id || receipt.Status != status || receipt.Key != key || receipt.Operation != "copy" || response.Header.Get("Cache-Control") != "no-store" {
+	if err = json.NewDecoder(response.Body).Decode(&receipt); err != nil || receipt.ID != id || receipt.Status != status || receipt.Key != key || receipt.Operation != operation || response.Header.Get("Cache-Control") != "no-store" {
 		t.Fatal(receipt, err)
 	}
 }

@@ -27,6 +27,7 @@ func TestS3TrackedUploadSingleAttemptAndReceipt(t *testing.T) {
 			receipt := uuid.NewString()
 			var puts atomic.Int32
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("X-Amz-Version-Id", "native-proof")
 				if r.Method == http.MethodPut {
 					puts.Add(1)
 					if r.Header.Get("X-Amz-Meta-"+ReservedUploadReceiptMetadataKey) != receipt || r.ContentLength != 3 {
@@ -58,7 +59,7 @@ func TestS3TrackedUploadSingleAttemptAndReceipt(t *testing.T) {
 			writer := provider.(TrackedObjectWriter)
 			result, e := writer.WriteTrackedObject(context.Background(), "bucket", "key", receipt, io.LimitReader(strings.NewReader("abcdef"), 3), 3, ObjectMetadata{ContentType: "image/png"})
 			if tc.status == 200 && tc.etag != "" {
-				if e != nil || result.ETag != tc.etag {
+				if e != nil || result.ETag != tc.etag || result.ProviderVersionID != "native-proof" {
 					t.Fatal(result, e)
 				}
 			} else if e == nil {
@@ -71,7 +72,7 @@ func TestS3TrackedUploadSingleAttemptAndReceipt(t *testing.T) {
 				t.Fatal("provider write attempts", puts.Load(), e)
 			}
 			result, e = writer.ConfirmTrackedObject(context.Background(), "bucket", "key", receipt, 3)
-			if e != nil || result.ETag != `"etag"` {
+			if e != nil || result.ETag != `"etag"` || result.ProviderVersionID != "native-proof" {
 				t.Fatal("receipt recovery", result, e)
 			}
 		})

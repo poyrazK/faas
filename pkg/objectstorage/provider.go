@@ -89,6 +89,28 @@ type ObjectWriteConfirmer interface {
 	ConfirmTrackedObject(context.Context, string, string, string, int64) (UploadResult, error)
 }
 
+// HistoricalObjectWriteConfirmer probes one bounded page of retained native
+// versions after current-object proof is absent. BeforeRequest must durably
+// record each provider attempt before dispatch. Only an exact positive proof
+// returns nil error; a completed sweep never proves failure.
+type HistoricalObjectWriteConfirmer interface {
+	ConfirmTrackedObjectHistory(context.Context, string, ObjectHistoryProofRequest) (ObjectHistoryProofPage, error)
+}
+
+type ObjectHistoryProofRequest struct {
+	Key, Receipt, Cursor string
+	SizeBytes            int64
+	BeforeRequest        func(context.Context) error
+}
+
+// Cursor and native identities are private recovery data, never customer IDs.
+// On a failed page Cursor remains unchanged; after a complete sweep it resets.
+type ObjectHistoryProofPage struct {
+	UploadResult
+	Cursor           string `json:"-"`
+	VersionsObserved bool   `json:"-"`
+}
+
 // TrackedObjectPresigner binds a private receipt to a gateway-owned PUT. The
 // signed capability must stay inside Gregale and be used for one attempt only.
 type TrackedObjectPresigner interface {
@@ -107,7 +129,8 @@ type TrackedObjectWriter interface {
 }
 
 type UploadResult struct {
-	ETag string
+	ETag              string
+	ProviderVersionID string `json:"-"`
 }
 
 type Object struct {
@@ -208,8 +231,9 @@ type CopyObjectRequest struct {
 }
 
 type CopyObjectResult struct {
-	ETag         string
-	LastModified time.Time
+	ProviderVersionID string `json:"-"`
+	ETag              string
+	LastModified      time.Time
 }
 
 // ObjectCopier is an optional provider capability for the branded S3

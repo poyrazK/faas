@@ -87,6 +87,7 @@ func (h *Handler) completeGatewayCopy(w http.ResponseWriter, r *http.Request, re
 		return
 	}
 	c.Status, c.ETag = "completed", result.ETag
+	c.RecoveryVersionsObserved = result.ProviderVersionID != "" && result.ProviderVersionID != "null"
 	if _, err = h.finishGatewayPut(r.Context(), st, c); err != nil {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, c.Key)
 		return

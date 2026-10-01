@@ -41,7 +41,7 @@ func objectCapacityTotals(s ObjectUsageSnapshot, bucket string) (int64, int64) {
 	}
 	return 0, 0
 }
-func prepareObjectCapacityClaim(j ObjectCapacityReconciliation, token string, pending int64, unsafe, multipart bool, now time.Time) ObjectCapacityReconciliation {
+func prepareObjectCapacityClaim(j ObjectCapacityReconciliation, token string, pending int64, unsafe, multipart, versions bool, now time.Time) ObjectCapacityReconciliation {
 	j.UpdatedAt = now
 	j.PendingWrites = pending
 	j.Token = ""
@@ -53,6 +53,9 @@ func prepareObjectCapacityClaim(j ObjectCapacityReconciliation, token string, pe
 	case !j.DeadlineAt.After(now):
 		j.State = "failed"
 		j.LastErrorCode = "deadline"
+	case versions:
+		j.State = "blocked"
+		j.LastErrorCode = "version_accounting_required"
 	case unsafe:
 		j.State = "blocked"
 		j.LastErrorCode = "untracked_writes"

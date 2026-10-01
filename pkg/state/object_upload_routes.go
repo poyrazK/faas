@@ -46,13 +46,15 @@ type ObjectUploadCompletion struct {
 	RequestFingerprint string
 	CreatedAt          time.Time
 	// Provider dispatch and recovery fields are internal; uploadResponse projects only the receipt.
-	Origin             string
-	SourceKey          string
-	SourceETag         string
-	WritePhase         string
-	RecoveryToken      string
-	RecoveryLeaseUntil time.Time
-	RecoveryRetryAt    time.Time
+	Origin                   string
+	SourceKey                string
+	SourceETag               string
+	WritePhase               string
+	RecoveryToken            string
+	RecoveryLeaseUntil       time.Time
+	RecoveryRetryAt          time.Time
+	RecoveryCursor           string `json:"-"`
+	RecoveryVersionsObserved bool   `json:"-"`
 }
 
 type ObjectUploadRouteStore interface {

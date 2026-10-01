@@ -2862,29 +2862,31 @@ type ObjectStorageWriteAdmission struct {
 }
 
 type ObjectUploadCompletion struct {
-	ID                 pgtype.UUID
-	RouteID            pgtype.UUID
-	AccountID          pgtype.UUID
-	AppID              pgtype.UUID
-	BucketID           pgtype.UUID
-	SubjectID          string
-	ObjectKey          string
-	Bytes              int64
-	ContentType        string
-	Etag               string
-	Status             string
-	ErrorCode          string
-	RequestID          string
-	CreatedAt          pgtype.Timestamptz
-	IdempotencyKey     string
-	RequestFingerprint string
-	WritePhase         string
-	RecoveryToken      string
-	RecoveryLeaseUntil pgtype.Timestamptz
-	RecoveryRetryAt    pgtype.Timestamptz
-	Origin             string
-	SourceKey          string
-	SourceEtag         string
+	ID                       pgtype.UUID
+	RouteID                  pgtype.UUID
+	AccountID                pgtype.UUID
+	AppID                    pgtype.UUID
+	BucketID                 pgtype.UUID
+	SubjectID                string
+	ObjectKey                string
+	Bytes                    int64
+	ContentType              string
+	Etag                     string
+	Status                   string
+	ErrorCode                string
+	RequestID                string
+	CreatedAt                pgtype.Timestamptz
+	IdempotencyKey           string
+	RequestFingerprint       string
+	WritePhase               string
+	RecoveryToken            string
+	RecoveryLeaseUntil       pgtype.Timestamptz
+	RecoveryRetryAt          pgtype.Timestamptz
+	Origin                   string
+	SourceKey                string
+	SourceEtag               string
+	RecoveryCursor           string
+	RecoveryVersionsObserved bool
 }
 
 type ObjectUploadRoute struct {

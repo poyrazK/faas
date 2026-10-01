@@ -57,7 +57,10 @@ func (m *MemStore) SettleObjectWrite(_ context.Context, account, bucket, token s
 	m.objectWriteAdmissions[token] = w
 	return nil
 }
-func (m *MemStore) capacityReadinessLocked(bucket string) (pending int64, unsafe, multipart bool) {
+func (m *MemStore) capacityReadinessLocked(bucket string) (pending int64, unsafe, multipart, versions bool) {
+	for _, c := range m.objectUploadCompletions {
+		versions = versions || c.BucketID == bucket && c.RecoveryVersionsObserved
+	}
 	for hash := range m.objectGrants[bucket] {
 		if !m.objectTrackedGrants[bucket][hash] {
 			unsafe = true
@@ -167,10 +170,10 @@ func (m *MemStore) ClaimObjectCapacityReconciliation(_ context.Context, id, toke
 	if token == "" || !objectCapacityActive(j.State) || j.LeaseUntil.After(now) || j.RetryAt.After(now) {
 		return j, ErrConflict
 	}
-	pending, unsafe, multipart := m.capacityReadinessLocked(j.BucketID)
+	pending, unsafe, multipart, versions := m.capacityReadinessLocked(j.BucketID)
 	j.BeforeBytes, j.BeforeKeys = objectCapacityTotals(m.objectUsageLocked(j.AccountID, now), j.BucketID)
 	j.AfterBytes, j.AfterKeys = j.BeforeBytes, j.BeforeKeys
-	j = prepareObjectCapacityClaim(j, token, pending, unsafe, multipart, now)
+	j = prepareObjectCapacityClaim(j, token, pending, unsafe, multipart, versions, now)
 	m.objectCapacityJobs[id] = j
 	return cloneObjectCapacityJob(j), nil
 }
@@ -185,8 +188,8 @@ func (m *MemStore) FinishObjectCapacityReconciliation(_ context.Context, id, tok
 	if !validObjectCapacityFinish(j, token, bytes, keys, now) {
 		return j, ErrConflict
 	}
-	pending, unsafe, multipart := m.capacityReadinessLocked(j.BucketID)
-	if pending > 0 || unsafe || multipart || m.objectBuckets[j.BucketID].State != "ready" {
+	pending, unsafe, multipart, versions := m.capacityReadinessLocked(j.BucketID)
+	if pending > 0 || unsafe || multipart || versions || m.objectBuckets[j.BucketID].State != "ready" {
 		return j, ErrConflict
 	}
 	u := m.objectUsage[j.BucketID]

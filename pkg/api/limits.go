@@ -130,6 +130,9 @@ const (
 	ObjectUploadRecoveryRetry                 = 30 * time.Second
 	ObjectUploadRecoveryLease                 = time.Minute
 	ObjectUploadRecoveryProbeTimeout          = 10 * time.Second
+	ObjectUploadHistoryPageSize               = 10
+	ObjectUploadHistoryCursorMaxBytes         = 8192
+	ObjectProviderVersionIDMaxBytes           = 1024
 	ObjectUploadSettlementTimeout             = 5 * time.Second
 	ObjectWriteReceiptPageDefault             = 50
 	ObjectWriteReceiptPageMax                 = 100
