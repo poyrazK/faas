@@ -19,6 +19,8 @@ type IssueStore interface {
 	ListIssues(context.Context, string, IssueListFilter, IssueCursor) (api.ListIssuesResponse, error)
 	GetIssueDetail(context.Context, string, string, time.Time, time.Time, IssueDetailCursors) (api.IssueDetail, error)
 	ActOnIssue(context.Context, string, string, string, api.IssueActionRequest, time.Time) (api.Issue, error)
+	GetIssueImpactAlertPolicy(context.Context, string) (api.IssueImpactAlertPolicy, error)
+	SetIssueImpactAlertPolicy(context.Context, string, string, int64, time.Time) (api.IssueImpactAlertPolicy, error)
 }
 
 type IssueCredential struct {
@@ -37,6 +39,13 @@ type RecordIssueParams struct {
 type IssueCursor struct {
 	Time time.Time
 	ID   string
+
+	// Impact fields are present only on list cursors whose query ranks or
+	// filters by the fixed 24-hour customer-impact window.
+	Sort            string     `json:"sort,omitempty"`
+	MinCustomers    int64      `json:"min_customers,omitempty"`
+	ImpactCustomers int64      `json:"impact_customers,omitempty"`
+	ImpactWindowEnd *time.Time `json:"impact_window_end,omitempty"`
 }
 
 // IssueListFilter scopes an issue inbox without changing its pagination shape.
@@ -45,6 +54,8 @@ type IssueListFilter struct {
 	Environment       string
 	AssigneeAccountID string
 	Unassigned        bool
+	Sort              string
+	MinCustomers      int64
 }
 
 var ErrIssueEventConflict = errors.New("issue event ID reused with another payload")

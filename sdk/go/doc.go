@@ -104,6 +104,16 @@
 // The reporter captures the current goroutine stack and never captures locals,
 // request bodies, or arbitrary context values.
 //
+// # Runtime feature flags
+//
+// NewGregaleFlags evaluates immutable customer-scoped flag configuration in a
+// managed workload. Apply its Middleware to Gregale ingress handlers, then call
+// Boolean or Variant with the request context and mark the selected behavior
+// with Used. The middleware adds bounded response evidence. Use
+// GregaleFlagsTransport or PropagationHeader to carry used decisions into
+// managed services and queued work. Only trust Gregale's customer and flag
+// context headers on listeners where the Gregale gateway replaces them.
+//
 // # Concurrency
 //
 // A Client is safe for concurrent use. The HTTP transport is shared;

@@ -93,6 +93,17 @@ done
 # And it must stay SMALL: the lane is the answer to the hour-long matrix.
 n="$(printf '%s\n' "${smoke_tests}" | grep -c .)"
 [[ "${n}" -le 12 ]] || fail "smoke lane has ${n} tests; it is growing back into the full matrix"
+
+exclusive_tests="$(native_e2e_lane_tests exclusive-operations-only "${repo_root}")"
+[[ "${exclusive_tests}" == "TestExclusiveOperationFencesRestoredKVMOwnerMetal" ]] ||
+  fail "exclusive-operations-only must select exactly the stale-owner KVM test"
+[[ "$(native_e2e_lane_regex exclusive-operations-only "${repo_root}")" == \
+  '^(TestExclusiveOperationFencesRestoredKVMOwnerMetal)$' ]] ||
+  fail "exclusive-operations-only does not build an anchored test filter"
+printf '%s\n' "$(native_e2e_phase_tests wake "${repo_root}")" | grep -qx \
+  'TestExclusiveOperationFencesRestoredKVMOwnerMetal' ||
+  fail "exclusive-owner KVM test is no longer included in the wake phase"
+native_e2e_is_lane exclusive-operations-only || fail "exclusive-operations-only is not recognised as a lane"
 # The assert must actually bite: a bogus name fails it.
 ( NATIVE_E2E_SMOKE_TESTS+=(TestDoesNotExistAnywhere); native_e2e_assert_lanes "${repo_root}" ) 2>/dev/null &&
   fail "native_e2e_assert_lanes accepted a lane naming a nonexistent test"
@@ -128,11 +139,13 @@ printf '\nfunc TestContainerAddedProbe(t *testing.T) {}\n' >> "${container_probe
 native_e2e_lane_tests containers "${container_probe}" | grep -qx TestContainerAddedProbe || fail "new container test was omitted"
 
 # 10. The stale-jail reaper removes app-instance chroots as well as build ones,
-#     and nothing outside firecracker-v*/. Two app chroots that survived a node
+#     and nothing outside firecracker/ or firecracker-v*/. Two app chroots that survived a node
 #     reboot blocked smoke run 35206846279 before a single test ran.
 jail_tmp="$(mktemp -d)"
 mkdir -p "${jail_tmp}/firecracker-v1.7.0-x86_64/645b161d-79ef-4a24-adcb-8c96a48e57b1/root" \
          "${jail_tmp}/firecracker-v1.7.0-x86_64/build-01a0ac83/root" \
+         "${jail_tmp}/firecracker/app-unversioned/root" \
+         "${jail_tmp}/firecracker/build-unversioned/root" \
          "${jail_tmp}/keep-me"
 # shellcheck source=scripts/ci/native-e2e-reap.sh
 source "${repo_root}/scripts/ci/native-e2e-reap.sh"
@@ -140,7 +153,9 @@ reap_stale_jails "${jail_tmp}"
 [[ ! -e "${jail_tmp}/firecracker-v1.7.0-x86_64/645b161d-79ef-4a24-adcb-8c96a48e57b1" ]] ||
   fail "reap_stale_jails left an app-instance chroot; the next run's pre-flight leakcheck would refuse to start"
 [[ ! -e "${jail_tmp}/firecracker-v1.7.0-x86_64/build-01a0ac83" ]] || fail "reap_stale_jails left a build chroot"
-[[ -d "${jail_tmp}/keep-me" ]] || fail "reap_stale_jails removed something outside firecracker-v*/"
+[[ ! -e "${jail_tmp}/firecracker/app-unversioned" ]] || fail "reap_stale_jails left an unversioned app chroot"
+[[ ! -e "${jail_tmp}/firecracker/build-unversioned" ]] || fail "reap_stale_jails left an unversioned build chroot"
+[[ -d "${jail_tmp}/keep-me" ]] || fail "reap_stale_jails removed something outside the Firecracker jail parents"
 rm -rf "${jail_tmp}"
 grep -qE '^reap_test_microvms$' "${repo_root}/scripts/ci/run-native-e2e.sh" ||
   fail "run-native-e2e.sh does not reap before the pre-flight leakcheck; a previous run's leftovers block this one"
@@ -164,4 +179,48 @@ set -e
 [[ "${reap_rc}" -eq 0 ]] ||
   fail "reap_test_microvms exits ${reap_rc} under set -e when there is nothing to reap; the pre-flight would abort silently"
 
-echo "native e2e phase contracts OK (${#NATIVE_E2E_PHASES[@]} phases, ${#NATIVE_E2E_LANES[@]} lane)"
+# Exercise the process selectors and the real mount parser without touching
+# host resources. The unversioned layout is what jailer creates on the node.
+reap_probe="${probe}/reap"
+mkdir -p "${reap_probe}/jail/firecracker/app/root" "${reap_probe}/jail/firecracker-v1.7.0/build/root"
+printf 'bind %s none rw 0 0\n' \
+  "${reap_probe}/jail/firecracker/app/root/snap-in-mem" \
+  "${reap_probe}/jail/firecracker-v1.7.0/build/root/drive" \
+  "${reap_probe}/other/firecracker/app/root/keep" > "${reap_probe}/mounts"
+bash -e -c '
+  source "$1"
+  export FAAS_E2E_JAIL_ROOT="$2/jail"
+  calls="$2/calls"
+  mount_fixture="$2/mounts"
+  pgrep() {
+    [[ "$1" == -x ]] || exit 2
+    for name in firecracker firecracker-v1.7.0-x86_64 inspection-firecracker vmmd; do
+      if printf "%s\n" "$name" | grep -Eq "^($2)$"; then
+        printf "%s\n" "$name" >> "$calls"
+        printf "12345\n"
+      fi
+    done
+  }
+  pkill() {
+    [[ "$1 $2" == "-KILL -x" ]] && [[ "$3" == "firecracker(-v[0-9].*)?" ]] || exit 2
+    printf "kill-fallback\n" >> "$calls"
+  }
+  kill() { :; }; sleep() { :; }; ip() { return 1; }; rmdir() { return 1; }
+  umount() { printf "mount %s\n" "$2" >> "$calls"; }
+  awk() {
+    if [[ "${!#}" == /proc/mounts ]]; then
+      command awk "${@:1:$#-1}" "$mount_fixture"
+    else
+      command awk "$@"
+    fi
+  }
+  reap_test_microvms
+' _ "${repo_root}/scripts/ci/native-e2e-reap.sh" "${reap_probe}" >/dev/null
+grep -qx firecracker "${reap_probe}/calls" || fail "reaper misses unversioned Firecracker processes"
+grep -qx firecracker-v1.7.0-x86_64 "${reap_probe}/calls" || fail "reaper misses versioned Firecracker processes"
+grep -qx kill-fallback "${reap_probe}/calls" || fail "reaper has no exact-name kill fallback"
+[[ "$(grep -c '^mount ' "${reap_probe}/calls")" -eq 2 ]] || fail "reaper missed a jail mount or touched an unrelated mount"
+grep -qx "mount ${reap_probe}/jail/firecracker/app/root/snap-in-mem" "${reap_probe}/calls" || fail "reaper misses unversioned jail mounts"
+! grep -qE 'inspection|vmmd|/other/' "${reap_probe}/calls" || fail "reaper selected unrelated resources"
+
+echo "native e2e phase contracts OK (${#NATIVE_E2E_PHASES[@]} phases, ${#NATIVE_E2E_LANES[@]} lanes)"

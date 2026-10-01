@@ -692,6 +692,30 @@ type ScenarioTestWorkload struct {
 	AppSlug  string `json:"app_slug"`
 }
 
+// InjectScenarioTestChaosRequest installs bounded request faults on service
+// calls within one registered scenario run. The server supplies the expiry;
+// callers cannot choose an absolute timestamp or target an unregistered app.
+type InjectScenarioTestChaosRequest struct {
+	DurationMS int64                   `json:"duration_ms"`
+	Rules      []ScenarioTestChaosRule `json:"rules"`
+}
+
+// ScenarioTestChaosRule describes one bounded fault for scenario service calls.
+type ScenarioTestChaosRule struct {
+	From       string `json:"from,omitempty"`
+	To         string `json:"to"`
+	Kind       string `json:"kind"`
+	Percent    int    `json:"percent"`
+	LatencyMS  int64  `json:"latency_ms,omitempty"`
+	StatusCode int    `json:"status_code,omitempty"`
+	Seed       uint64 `json:"seed"`
+}
+
+type InjectScenarioTestChaosResponse struct {
+	ExpiresAt      time.Time `json:"expires_at"`
+	RulesInstalled int       `json:"rules_installed"`
+}
+
 // UpdateAppRequest is the partial-update payload for PATCH /v1/apps/{slug}.
 // All fields are pointers so the wire form can distinguish "not set" from
 // "set to zero".
@@ -1831,6 +1855,18 @@ type AppResponse struct {
 // instance and wake timeline.
 type AppRestartResponse struct {
 	WakeID string `json:"wake_id"`
+}
+
+// RuntimeConfigRestartStatusResponse reports the durable outbox outcome for
+// an accepted fresh app restart. FailureReason is a stable actionable code,
+// not the scheduler's internal error string.
+type RuntimeConfigRestartStatusResponse struct {
+	WakeID        string     `json:"wake_id"`
+	Status        string     `json:"status"`
+	Attempts      int        `json:"attempts"`
+	FailureReason string     `json:"failure_reason,omitempty"`
+	RequestedAt   time.Time  `json:"requested_at"`
+	CompletedAt   *time.Time `json:"completed_at,omitempty"`
 }
 
 // AppWakeResponse is returned when an explicit pre-warm request has been

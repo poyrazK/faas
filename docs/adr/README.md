@@ -55,6 +55,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | ADR | Title | Status | Source |
 |---|---|---|---|
 | 423 | [Managed outbound integrations for stateless Runs](423-run-scoped-managed-outbound-integrations.md) | proposed | Explicit account grants and a bounded vsock broker; the execution VM remains networkless |
+| 423 | [Scenario-scoped chaos testing](423-scenario-scoped-chaos-testing.md) | accepted | Bounded request faults on registered test-run service calls, with deterministic selection, expiry, and lifecycle-profile execution |
 | 392 | [Event and trace wire conformance](392-event-and-trace-wire-conformance.md) | accepted | OTLP/HTTP encodings and standard responses, CloudEvents attributes, and pinned official AsyncAPI validation |
 | 391 | [Provider invoice history discovery and backfill](391-provider-invoice-history-backfill.md) | accepted | Authenticated provider history discovery with bounded, customer-scoped imports |
 | 390 | [Authenticated provider invoice refresh](390-provider-invoice-refresh.md) | accepted | Authenticated provider facts, bounded reads, and atomic enrichment |
@@ -392,8 +393,8 @@ note instead of the banner.
 
 Note: two ADRs carry the number 190 (`190-production-buildkit-cache.md` merged
 first; `190-daemon-durability-primitives.md` picked the same number
-concurrently). The log above already contains several such pairs (157, 158, 167,
-168). A renumber plus a CI uniqueness gate is worth its own PR.
+concurrently). The log above also has duplicate pairs 157, 158, 167, 168, and
+423. A renumber plus a CI uniqueness gate is worth its own PR.
 
 ## Object-storage binding decisions
 

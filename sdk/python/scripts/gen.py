@@ -150,7 +150,8 @@ def regen(overwrite: bool = True) -> None:
     # `_transport.py`, `idempotency.py`, `release_context.py`, `webhook.py`,
     # `pre_auth_target.py`) lives INSIDE `faas_sdk/`
     # because it imports the generated service classes, but the
-    # regen deletes the whole tree. We copy them to a temp dir,
+    # regen deletes the whole tree. This includes the runtime flags client;
+    # copy every hand-written wrapper to a temp dir,
     # rmtree, run the generator, then copy them back so the
     # wrapper imports keep working.
     import tempfile
@@ -169,6 +170,7 @@ def regen(overwrite: bool = True) -> None:
             "webhook.py",
             "pre_auth_target.py",
             "issues.py",
+            "flags.py",
         ]
         target = OUT / "faas_sdk"
         if target.exists():
@@ -345,7 +347,7 @@ def regen(overwrite: bool = True) -> None:
                     "--quiet",
                     str(sdk_root),
                     "--exclude",
-                    "_wrapper.py,_rfc7807.py,_sse.py,_transport.py,idempotency.py,executions.py,release_context.py,dev_bridge.py,webhook.py,__init__.py",
+                    "_wrapper.py,_rfc7807.py,_sse.py,_transport.py,idempotency.py,executions.py,release_context.py,dev_bridge.py,webhook.py,flags.py,__init__.py",
                 ],
                 check=False,
                 capture_output=True,
@@ -637,6 +639,7 @@ Public surface:
   and return the stable delivery ID for receiver-side deduplication.
 * `pre_auth_target_digest` - opaque login-target signal for selected failed
   responses on opt-in pre-auth routes.
+* Runtime flags client, ASGI middleware and HTTPX transport for Python apps.
 """
 
 from ._rfc7807 import (
@@ -654,6 +657,22 @@ from ._rfc7807 import (
 )
 from ._sse import SseEvent, aiter_sse, iter_sse
 from .executions import ExecutionEvent, ExecutionID, awatch_execution, decode_execution_artifact, watch_execution
+from .flags import (
+    GREGALE_FLAG_CONTEXT_HEADER,
+    GREGALE_FLAG_EVIDENCE_HEADER,
+    GREGALE_FLAG_PROPAGATION_HEADER,
+    AsyncGregaleFlagsTransport,
+    FlagDecision,
+    GregaleFlags,
+    GregaleFlagsMiddleware,
+    evaluate_flag,
+    evaluate_variant,
+    flag_bucket,
+    flag_subject_bucket,
+    flag_subject_variant_bucket,
+    flag_variant_bucket,
+    validate_bundle,
+)
 from .dev_bridge import (
     DEV_BRIDGE_CONTEXT_HEADER,
     AsyncDevBridgeTransport,
@@ -709,6 +728,20 @@ __all__ = (
     "current_idempotency_key",
     "GREGALE_RELEASE_HEADER",
     "GREGALE_REVISION_HEADER",
+    "GREGALE_FLAG_CONTEXT_HEADER",
+    "GREGALE_FLAG_EVIDENCE_HEADER",
+    "GREGALE_FLAG_PROPAGATION_HEADER",
+    "GregaleFlags",
+    "GregaleFlagsMiddleware",
+    "AsyncGregaleFlagsTransport",
+    "FlagDecision",
+    "evaluate_flag",
+    "evaluate_variant",
+    "flag_bucket",
+    "flag_subject_bucket",
+    "flag_subject_variant_bucket",
+    "flag_variant_bucket",
+    "validate_bundle",
     "GregaleReleaseMiddleware",
     "GregaleReleaseTransport",
     "AsyncGregaleReleaseTransport",
@@ -758,7 +791,7 @@ def _rewrite_init_py(init_path: Path) -> None:
     barrel. The generated stub only re-exports `Client` and
     `AuthenticatedClient`; the wrapper adds the chain
     (`FaaSClient`), the four sentinels, idempotency helpers, SSE,
-    release context, and webhook verification.
+    release context, runtime flags, and webhook verification.
     """
     init_path.write_text(_INIT_PY_TEMPLATE)
 

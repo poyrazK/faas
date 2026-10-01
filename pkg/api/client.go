@@ -898,6 +898,12 @@ func (c *Client) RegisterScenarioTest(ctx context.Context, runID string, req Reg
 	return c.do(ctx, "PUT", "/v1/dev/test-runs/"+runID, req, nil)
 }
 
+// InjectScenarioTestChaos installs bounded request faults for one isolated run.
+func (c *Client) InjectScenarioTestChaos(ctx context.Context, runID string, req InjectScenarioTestChaosRequest) (InjectScenarioTestChaosResponse, error) {
+	var out InjectScenarioTestChaosResponse
+	return out, c.do(ctx, "PUT", "/v1/dev/test-runs/"+runID+"/chaos", req, &out)
+}
+
 func (c *Client) DeleteScenarioTest(ctx context.Context, runID string) error {
 	return c.do(ctx, "DELETE", "/v1/dev/test-runs/"+runID, nil, nil)
 }
@@ -2277,6 +2283,13 @@ func (c *Client) RestartApp(ctx context.Context, slug string) (AppRestartRespons
 func (c *Client) RestartAppFresh(ctx context.Context, slug string) (AppRestartResponse, error) {
 	var out AppRestartResponse
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/restart?fresh=true", nil, &out)
+}
+
+// GetRuntimeConfigRestartStatus returns the durable status of an accepted
+// fresh restart, including retry progress and its stable failure category.
+func (c *Client) GetRuntimeConfigRestartStatus(ctx context.Context, slug, wakeID string) (RuntimeConfigRestartStatusResponse, error) {
+	var out RuntimeConfigRestartStatusResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/runtime-config-restarts/"+wakeID, nil, &out)
 }
 
 // PurgeAppCache asks the gateways to evict cached responses for an app. An

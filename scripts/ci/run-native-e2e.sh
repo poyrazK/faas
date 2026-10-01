@@ -435,6 +435,8 @@ if [[ -n "${phase}" ]]; then
     # One real build plus one image deploy; the beta path, not the matrix.
     smoke) phase_timeout=20m ;;
     containers) phase_timeout=75m ;;
+    # One real guest/snapshot restore lifecycle, with a bounded test deadline.
+    exclusive-operations-only) phase_timeout=20m ;;
     twonode) phase_timeout=25m ;;
     *) phase_timeout=15m ;;
   esac

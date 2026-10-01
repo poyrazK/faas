@@ -494,6 +494,12 @@ type AppIssue struct {
 	IgnoredUntil             pgtype.Timestamptz
 }
 
+type AppIssueImpactAlertPolicy struct {
+	AppID            pgtype.UUID
+	MinimumCustomers int32
+	UpdatedAt        pgtype.Timestamptz
+}
+
 type AppLogDrain struct {
 	ID               pgtype.UUID
 	AppID            pgtype.UUID

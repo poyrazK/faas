@@ -831,6 +831,7 @@ from .flag_rollout_promotion_reason import FlagRolloutPromotionReason
 from .flag_rollout_promotion_request import FlagRolloutPromotionRequest
 from .flag_rollout_promotion_status import FlagRolloutPromotionStatus
 from .flag_rule import FlagRule
+from .flag_rule_rollout_unit import FlagRuleRolloutUnit
 from .flag_variant import FlagVariant
 from .flags_bundle import FlagsBundle
 from .flags_config import FlagsConfig
@@ -899,6 +900,8 @@ from .inbound_webhook_receipt_response_status import InboundWebhookReceiptRespon
 from .ingest_issue_otlp_body import IngestIssueOTLPBody
 from .ingest_issue_otlp_response_200 import IngestIssueOTLPResponse200
 from .ingest_issue_otlp_signal import IngestIssueOTLPSignal
+from .inject_scenario_test_chaos_request import InjectScenarioTestChaosRequest
+from .inject_scenario_test_chaos_response import InjectScenarioTestChaosResponse
 from .inject_workflow_event_request import InjectWorkflowEventRequest
 from .inject_workflow_event_response import InjectWorkflowEventResponse
 from .inject_workflow_event_response_status import InjectWorkflowEventResponseStatus
@@ -956,6 +959,7 @@ from .issue_event import IssueEvent
 from .issue_event_response import IssueEventResponse
 from .issue_frame import IssueFrame
 from .issue_impact import IssueImpact
+from .issue_impact_alert_policy import IssueImpactAlertPolicy
 from .issue_impact_summary import IssueImpactSummary
 from .issue_ingest_token import IssueIngestToken
 from .issue_occurrence import IssueOccurrence
@@ -1015,6 +1019,7 @@ from .list_instances_response import ListInstancesResponse
 from .list_invocations_response import ListInvocationsResponse
 from .list_issue_ingest_tokens_response import ListIssueIngestTokensResponse
 from .list_issues_response import ListIssuesResponse
+from .list_issues_sort import ListIssuesSort
 from .list_job_runs_response import ListJobRunsResponse
 from .list_job_task_attempts_response import ListJobTaskAttemptsResponse
 from .list_job_tasks_response import ListJobTasksResponse
@@ -1687,6 +1692,9 @@ from .rotate_managed_realtime_auth_response_auth_mode import RotateManagedRealti
 from .rotate_org_api_key_request import RotateOrgAPIKeyRequest
 from .rotate_org_api_key_response import RotateOrgAPIKeyResponse
 from .route_row import RouteRow
+from .runtime_config_restart_status_response import RuntimeConfigRestartStatusResponse
+from .runtime_config_restart_status_response_failure_reason import RuntimeConfigRestartStatusResponseFailureReason
+from .runtime_config_restart_status_response_status import RuntimeConfigRestartStatusResponseStatus
 from .runtime_policy_component_status import RuntimePolicyComponentStatus
 from .runtime_policy_component_status_scope import RuntimePolicyComponentStatusScope
 from .runtime_policy_component_status_state import RuntimePolicyComponentStatusState
@@ -1705,6 +1713,8 @@ from .scaling_target import ScalingTarget
 from .scaling_target_metric import ScalingTargetMetric
 from .scan_result import ScanResult
 from .scan_result_status import ScanResultStatus
+from .scenario_test_chaos_rule import ScenarioTestChaosRule
+from .scenario_test_chaos_rule_kind import ScenarioTestChaosRuleKind
 from .scenario_test_workload import ScenarioTestWorkload
 from .schedule_occurrence_response import ScheduleOccurrenceResponse
 from .schedule_occurrence_response_status import ScheduleOccurrenceResponseStatus
@@ -1923,6 +1933,7 @@ from .update_edge_rule_request_match_headers import UpdateEdgeRuleRequestMatchHe
 from .update_edge_rule_request_validate_mode import UpdateEdgeRuleRequestValidateMode
 from .update_feature_flags_request import UpdateFeatureFlagsRequest
 from .update_inbound_webhook_endpoint_request import UpdateInboundWebhookEndpointRequest
+from .update_issue_impact_alert_policy_request import UpdateIssueImpactAlertPolicyRequest
 from .update_job_request import UpdateJobRequest
 from .update_job_request_env_overrides import UpdateJobRequestEnvOverrides
 from .update_job_request_status import UpdateJobRequestStatus
@@ -2838,6 +2849,7 @@ __all__ = (
     "FlagRolloutPromotionRequest",
     "FlagRolloutPromotionStatus",
     "FlagRule",
+    "FlagRuleRolloutUnit",
     "FlagsBundle",
     "FlagsConfig",
     "FlagsConfigGroups",
@@ -2906,6 +2918,8 @@ __all__ = (
     "IngestIssueOTLPBody",
     "IngestIssueOTLPResponse200",
     "IngestIssueOTLPSignal",
+    "InjectScenarioTestChaosRequest",
+    "InjectScenarioTestChaosResponse",
     "InjectWorkflowEventRequest",
     "InjectWorkflowEventResponse",
     "InjectWorkflowEventResponseStatus",
@@ -2963,6 +2977,7 @@ __all__ = (
     "IssueEventResponse",
     "IssueFrame",
     "IssueImpact",
+    "IssueImpactAlertPolicy",
     "IssueImpactSummary",
     "IssueIngestToken",
     "IssueOccurrence",
@@ -3022,6 +3037,7 @@ __all__ = (
     "ListInvocationsResponse",
     "ListIssueIngestTokensResponse",
     "ListIssuesResponse",
+    "ListIssuesSort",
     "ListJobRunsResponse",
     "ListJobsResponse",
     "ListJobTaskAttemptsResponse",
@@ -3648,6 +3664,9 @@ __all__ = (
     "RotateOrgAPIKeyRequest",
     "RotateOrgAPIKeyResponse",
     "RouteRow",
+    "RuntimeConfigRestartStatusResponse",
+    "RuntimeConfigRestartStatusResponseFailureReason",
+    "RuntimeConfigRestartStatusResponseStatus",
     "RuntimePolicyComponentStatus",
     "RuntimePolicyComponentStatusScope",
     "RuntimePolicyComponentStatusState",
@@ -3666,6 +3685,8 @@ __all__ = (
     "ScalingTargetMetric",
     "ScanResult",
     "ScanResultStatus",
+    "ScenarioTestChaosRule",
+    "ScenarioTestChaosRuleKind",
     "ScenarioTestWorkload",
     "ScheduleOccurrenceResponse",
     "ScheduleOccurrenceResponseStatus",
@@ -3874,6 +3895,7 @@ __all__ = (
     "UpdateEdgeRuleRequestValidateMode",
     "UpdateFeatureFlagsRequest",
     "UpdateInboundWebhookEndpointRequest",
+    "UpdateIssueImpactAlertPolicyRequest",
     "UpdateJobRequest",
     "UpdateJobRequestEnvOverrides",
     "UpdateJobRequestStatus",

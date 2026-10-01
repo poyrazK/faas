@@ -1342,12 +1342,13 @@ sdk-smoke-python: ## Build fakeapid fixture + run Python SDK smoke + unit tests
 
 .PHONY: sdk-unit-python
 sdk-unit-python: ## Run Python SDK unit tests (no fixture required)
-	@cd sdk/python && .venv/bin/python -m pytest tests/test_client.py tests/test_sse.py tests/test_dev_bridge.py
+	@cd sdk/python && .venv/bin/python -m pytest tests/test_client.py tests/test_sse.py tests/test_dev_bridge.py tests/test_flags.py
 
 .PHONY: test-flags
 test-flags: ## Validate customer-aware flag release, SDK and request evidence against disposable Postgres
 	@test -n "$(DATABASE_URL)" || (echo "DATABASE_URL is required for Flags acceptance"; exit 1)
 	@cd sdk/node && npm ci --ignore-scripts --no-audit --no-fund && npm run build && npm run test:build && node --test dist-test/test/flags.test.js
+	@cd sdk/go && $(GO) test -count=1 ./...
 	@$(GO) test -p 1 ./pkg/flags ./pkg/workloadidentity
 	@DATABASE_URL="$(DATABASE_URL)" $(GO) test -p 1 ./pkg/flagsintegration
 	@$(GO) test -p 1 ./pkg/gateway -run 'TestFeatureFlag|TestFlagEvidence' -count=1

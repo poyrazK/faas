@@ -14,6 +14,7 @@ func TestCmdFlagsLifecycle(t *testing.T) {
 	var requests []string
 	var update map[string]any
 	var promote map[string]any
+	var inspected map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.Method+" "+r.URL.Path)
 		if r.Method == "PUT" {
@@ -23,6 +24,11 @@ func TestCmdFlagsLifecycle(t *testing.T) {
 		}
 		if r.URL.Path == "/v1/projects/exports/environments/production/flags/export/rollout/promote" {
 			if err := json.NewDecoder(r.Body).Decode(&promote); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if r.URL.Path == "/v1/projects/exports/environments/production/flags/export/inspect" {
+			if err := json.NewDecoder(r.Body).Decode(&inspected); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -54,14 +60,14 @@ func TestCmdFlagsLifecycle(t *testing.T) {
 	if err := os.WriteFile(file, []byte(`{"expected_version":0,"config":{"flags":[],"groups":{}}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	for _, args := range [][]string{{"get"}, {"apply", "--file", file}, {"history", "--before-version", "5"}, {"inspect", "--key", "export", "--customer-id", "customer", "--fallback-variant", "legacy"}, {"rollback", "--version", "1", "--expected-version", "2"}, {"requests", "--key", "export", "--value", "true", "--used", "true"}, {"requests", "--key", "checkout", "--variant", "new", "--used", "true"}, {"outcomes", "--key", "export", "--since", "6h", "--customer-id", "11111111-1111-4111-8111-111111111111"}, {"outcomes", "--key", "export", "--rule-id", "selected", "--config-version", "3"}, {"promote", "--key", "export", "--rule-id", "selected", "--expected-version", "4"}} {
+	for _, args := range [][]string{{"get"}, {"apply", "--file", file}, {"history", "--before-version", "5"}, {"inspect", "--key", "export", "--customer-id", "11111111-1111-4111-8111-111111111111", "--subject-id", "user-17", "--fallback-variant", "legacy"}, {"rollback", "--version", "1", "--expected-version", "2"}, {"requests", "--key", "export", "--value", "true", "--used", "true"}, {"requests", "--key", "checkout", "--variant", "new", "--used", "true"}, {"outcomes", "--key", "export", "--since", "6h", "--customer-id", "11111111-1111-4111-8111-111111111111"}, {"outcomes", "--key", "export", "--rule-id", "selected", "--config-version", "3"}, {"promote", "--key", "export", "--rule-id", "selected", "--expected-version", "4"}} {
 		args = append(args, "--project", "exports")
 		if code := cmdFlags(args); code != 0 {
 			t.Fatalf("%v: %d", args, code)
 		}
 	}
-	if len(requests) != 10 || requests[1] != "PUT /v1/projects/exports/environments/production/flags" || requests[7] != "GET /v1/projects/exports/environments/production/flags/export/outcomes" || requests[9] != "POST /v1/projects/exports/environments/production/flags/export/rollout/promote" || update["expected_version"] != float64(0) || promote["expected_version"] != float64(4) || promote["rule_id"] != "selected" {
-		t.Fatalf("requests=%v update=%v promote=%v", requests, update, promote)
+	if len(requests) != 10 || requests[1] != "PUT /v1/projects/exports/environments/production/flags" || requests[7] != "GET /v1/projects/exports/environments/production/flags/export/outcomes" || requests[9] != "POST /v1/projects/exports/environments/production/flags/export/rollout/promote" || update["expected_version"] != float64(0) || promote["expected_version"] != float64(4) || promote["rule_id"] != "selected" || inspected["subject_id"] != "user-17" {
+		t.Fatalf("requests=%v update=%v promote=%v inspect=%v", requests, update, promote, inspected)
 	}
 	if code := cmdFlags([]string{"rollback", "--project", "exports", "--version", "1"}); code == 0 {
 		t.Fatal("rollback accepted missing current version")
@@ -71,5 +77,8 @@ func TestCmdFlagsLifecycle(t *testing.T) {
 	}
 	if code := cmdFlags([]string{"promote", "--project", "exports", "--key", "export", "--rule-id", "selected"}); code == 0 {
 		t.Fatal("promotion accepted missing expected version")
+	}
+	if code := cmdFlags([]string{"inspect", "--project", "exports", "--key", "export", "--subject-id", "user-17"}); code == 0 {
+		t.Fatal("subject inspector accepted a missing customer scope")
 	}
 }

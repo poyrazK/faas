@@ -118,7 +118,7 @@ func TestIssueDashboardEscapingAndCSRF(t *testing.T) {
 	if strings.Contains(w.Body.String(), `<script>alert`) || !strings.Contains(w.Body.String(), "&lt;script&gt;") {
 		t.Fatal("exception HTML not escaped")
 	}
-	for _, want := range []string{"<th>Owner</th>", "<th>Verified customers (24h)</th>", "<th>Events (24h)</th>", "<th>Unattributed events (24h)</th>", "<th>Recurrences</th>", "Unassigned", `value="unassigned" selected`} {
+	for _, want := range []string{"<th>Owner</th>", "<th>Verified customers (24h)</th>", "<th>Events (24h)</th>", "<th>Unattributed events (24h)</th>", "<th>Recurrences</th>", "Most recently seen", "Most verified customers (24h)", "Minimum verified customers (24h)", "issue.impact_threshold_reached", "Customer-impact webhook alert", "Unassigned", `value="unassigned" selected`} {
 		if !strings.Contains(w.Body.String(), want) {
 			t.Fatalf("issues inbox missing %q", want)
 		}
@@ -152,6 +152,22 @@ func TestIssueDashboardEscapingAndCSRF(t *testing.T) {
 		if !valid && rec.Code < 400 {
 			t.Fatal("CSRF bypass")
 		}
+	}
+	form := url.Values{"csrf_token": {csrf.Value}, "minimum_customers": {"3"}}
+	policyRequest := httptest.NewRequest("POST", "/dashboard/apps/"+app.Slug+"/issues/impact-alert-policy", strings.NewReader(form.Encode()))
+	policyRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for _, c := range r.Cookies() {
+		policyRequest.AddCookie(c)
+	}
+	policyRequest.AddCookie(csrf)
+	policyResponse := httptest.NewRecorder()
+	e.h.ServeHTTP(policyResponse, policyRequest)
+	if policyResponse.Code != http.StatusSeeOther {
+		t.Fatalf("policy form %d %s", policyResponse.Code, policyResponse.Body.String())
+	}
+	policy := issueDecode[api.IssueImpactAlertPolicy](t, e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/issue-impact-alert-policy", nil, nil), http.StatusOK)
+	if !policy.Enabled || policy.MinimumCustomers != 3 {
+		t.Fatalf("dashboard did not persist impact policy: %+v", policy)
 	}
 }
 

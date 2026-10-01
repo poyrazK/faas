@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const issuesCmdUsage = "usage: gregale issues <list|get|assign|resolve|reopen|ignore|tokens|create-token|revoke-token> --app <slug> [<issue-id>] [flags]"
+const issuesCmdUsage = "usage: gregale issues <list|get|assign|resolve|reopen|ignore|impact-alert|tokens|create-token|revoke-token> --app <slug> [<issue-id>] [--sort recent|impact] [--min-customers N] [flags]"
 
 func cmdIssues(args []string) int {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
@@ -32,10 +32,12 @@ func cmdIssues(args []string) int {
 	since := fs.String("since", "", "impact window start (RFC3339)")
 	deployment := fs.String("deployment", "", "fixed or token-bound deployment UUID")
 	assignee := fs.String("assignee", "", "list filter: me, unassigned, or account UUID; assignment owner UUID (empty unassigns)")
+	sortBy := fs.String("sort", "", "list order: recent (default) or impact by verified customers in 24h")
+	minCustomers := fs.Int64("min-customers", 0, "list filter: minimum verified customers affected in 24h")
 	until := fs.String("until", "", "ignore until (RFC3339)")
 	name := fs.String("name", "issues", "ingest token name")
 	expires := fs.Duration("expires-in", 24*time.Hour, "ingest token lifetime (max 90 days)")
-	flags, positionals := normalizeDebugFlagArgs(args[1:], map[string]bool{"app": true, "state": true, "environment": true, "cursor": true, "release-cursor": true, "activity-cursor": true, "since": true, "deployment": true, "assignee": true, "until": true, "name": true, "expires-in": true})
+	flags, positionals := normalizeDebugFlagArgs(args[1:], map[string]bool{"app": true, "state": true, "environment": true, "cursor": true, "release-cursor": true, "activity-cursor": true, "since": true, "deployment": true, "assignee": true, "sort": true, "min-customers": true, "until": true, "name": true, "expires-in": true})
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
@@ -43,6 +45,12 @@ func cmdIssues(args []string) int {
 		PrintUsage(os.Stderr, issuesCmdUsage, "issues")
 		return 1
 	}
+	impactThresholdSpecified := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "min-customers" {
+			impactThresholdSpecified = true
+		}
+	})
 	c, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -53,7 +61,16 @@ func cmdIssues(args []string) int {
 		if len(positionals) != 0 {
 			return issueCLIUsage()
 		}
-		out, err := c.ListIssuesFiltered(ctx, *app, *stateFilter, *environment, *assignee, *cursor)
+		if *sortBy != "" && *sortBy != "recent" && *sortBy != "impact" {
+			return printErr("Invalid issue sort", fmt.Errorf("sort must be recent or impact"))
+		}
+		if *minCustomers < 0 {
+			return printErr("Invalid customer threshold", fmt.Errorf("min-customers must be non-negative"))
+		}
+		out, err := c.ListIssuesWithOptions(ctx, *app, api.IssueListOptions{
+			State: *stateFilter, Environment: *environment, Assignee: *assignee,
+			Sort: *sortBy, MinCustomers: *minCustomers, Cursor: *cursor,
+		})
 		if err != nil {
 			return printErr("Could not list issues", err)
 		}
@@ -97,6 +114,31 @@ func cmdIssues(args []string) int {
 			return printErr("Could not read issue", err)
 		}
 		return jsonOut(writeJSON(out))
+	case "impact-alert":
+		if len(positionals) != 0 {
+			return issueCLIUsage()
+		}
+		var policy api.IssueImpactAlertPolicy
+		if impactThresholdSpecified {
+			if *minCustomers < 0 || *minCustomers > api.IssueImpactAlertMaxCustomers {
+				return printErr("Invalid customer threshold", fmt.Errorf("min-customers must be between 0 and %d", api.IssueImpactAlertMaxCustomers))
+			}
+			policy, err = c.SetIssueImpactAlertPolicy(ctx, *app, api.UpdateIssueImpactAlertPolicyRequest{MinimumCustomers: *minCustomers})
+		} else {
+			policy, err = c.GetIssueImpactAlertPolicy(ctx, *app)
+		}
+		if err != nil {
+			return printErr("Could not read impact alert policy", err)
+		}
+		if jsonOutput {
+			return jsonOut(writeJSON(policy))
+		}
+		if !policy.Enabled {
+			PrintOK(osStdout, "Customer-impact alerts are disabled.")
+			return 0
+		}
+		PrintOK(osStdout, "Customer-impact alerts fire at %d verified customers within 24 hours.", policy.MinimumCustomers)
+		return 0
 	case "assign", "resolve", "reopen", "ignore":
 		if len(positionals) != 1 {
 			return issueCLIUsage()

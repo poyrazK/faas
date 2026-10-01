@@ -43,6 +43,7 @@ import type { IssueActionRequest } from '../models/IssueActionRequest.js';
 import type { IssueDetail } from '../models/IssueDetail.js';
 import type { IssueEvent } from '../models/IssueEvent.js';
 import type { IssueEventResponse } from '../models/IssueEventResponse.js';
+import type { IssueImpactAlertPolicy } from '../models/IssueImpactAlertPolicy.js';
 import type { IssueIngestToken } from '../models/IssueIngestToken.js';
 import type { ListDeployTokensResponse } from '../models/ListDeployTokensResponse.js';
 import type { ListIssueIngestTokensResponse } from '../models/ListIssueIngestTokensResponse.js';
@@ -56,12 +57,14 @@ import type { RequestAnalyticsTimeseriesResponse } from '../models/RequestAnalyt
 import type { RequestAuditListResponse } from '../models/RequestAuditListResponse.js';
 import type { RotateDeployTokenRequest } from '../models/RotateDeployTokenRequest.js';
 import type { RotateDeployTokenResponse } from '../models/RotateDeployTokenResponse.js';
+import type { RuntimeConfigRestartStatusResponse } from '../models/RuntimeConfigRestartStatusResponse.js';
 import type { RuntimePolicyStatusResponse } from '../models/RuntimePolicyStatusResponse.js';
 import type { SidecarTimelineResponse } from '../models/SidecarTimelineResponse.js';
 import type { TCPListenerResponse } from '../models/TCPListenerResponse.js';
 import type { TCPListenerTLSStatusResponse } from '../models/TCPListenerTLSStatusResponse.js';
 import type { UDPListenerResponse } from '../models/UDPListenerResponse.js';
 import type { UpdateAppRequest } from '../models/UpdateAppRequest.js';
+import type { UpdateIssueImpactAlertPolicyRequest } from '../models/UpdateIssueImpactAlertPolicyRequest.js';
 import type { UpdateTCPListenerRequest } from '../models/UpdateTCPListenerRequest.js';
 import type { UpdateUDPListenerRequest } from '../models/UpdateUDPListenerRequest.js';
 import type { WakeTimelineResponse } from '../models/WakeTimelineResponse.js';
@@ -1688,6 +1691,75 @@ export class AppsService {
     });
   }
   /**
+   * Read the app's customer-impact alert policy.
+   * Returns the threshold for verified distinct customers in a rolling 24-hour window. A zero threshold disables the policy.
+   * @returns IssueImpactAlertPolicy The current policy; disabled apps report minimum_customers as zero.
+   * @throws ApiError
+   */
+  public static getIssueImpactAlertPolicy({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<IssueImpactAlertPolicy> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/issue-impact-alert-policy',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Configure or disable customer-impact alerts for an app.
+   * Setting minimum_customers to zero disables the policy. Policy changes apply prospectively; they do not backfill alerts for issues already above the threshold.
+   * @returns IssueImpactAlertPolicy The updated policy.
+   * @throws ApiError
+   */
+  public static setIssueImpactAlertPolicy({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: UpdateIssueImpactAlertPolicyRequest,
+  }): CancelablePromise<IssueImpactAlertPolicy> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/issue-impact-alert-policy',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
    * List durable grouped application issues.
    * @returns ListIssuesResponse A bounded page of issues for this application.
    * @throws ApiError
@@ -1697,6 +1769,8 @@ export class AppsService {
     state,
     environment,
     assignee,
+    sort = 'recent',
+    minCustomers,
     cursor,
   }: {
     /**
@@ -1716,6 +1790,14 @@ export class AppsService {
      */
     assignee?: string,
     /**
+     * Issue ordering; impact ranks by verified distinct customers in the fixed 24-hour window.
+     */
+    sort?: 'recent' | 'impact',
+    /**
+     * Return issues affecting at least this many verified distinct customers in the fixed 24-hour window.
+     */
+    minCustomers?: number,
+    /**
      * Opaque next_cursor from the previous issue page.
      */
     cursor?: string,
@@ -1730,6 +1812,8 @@ export class AppsService {
         'state': state,
         'environment': environment,
         'assignee': assignee,
+        'sort': sort,
+        'min_customers': minCustomers,
         'cursor': cursor,
       },
       errors: {
@@ -2908,6 +2992,10 @@ export class AppsService {
    * `fresh=true`, destroys live instances without capturing process memory,
    * invalidates cached snapshots, and cold-boots with the latest environment
    * and secrets. The fresh path is durably queued.
+   * For `fresh=true`, use the returned `wake_id` with
+   * `GET /v1/apps/{slug}/runtime-config-restarts/{wake_id}` to inspect
+   * queued, running, retrying, completed, or failed status and any safe
+   * failure reason.
    *
    * @returns AppRestartResponse Restart accepted.
    * @throws ApiError
@@ -2954,6 +3042,48 @@ export class AppsService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
         `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Get the status of a fresh runtime-configuration restart.
+   * Returns the durable scheduler handoff state for a fresh restart.
+   * `completed` means the replacement operation finished successfully;
+   * `failed` means the durable handoff exhausted its retry budget. A
+   * failure_reason is a stable, safe category and does not expose internal
+   * error details.
+   *
+   * @returns RuntimeConfigRestartStatusResponse Current durable restart status.
+   * @throws ApiError
+   */
+  public static getRuntimeConfigRestartStatus({
+    slug,
+    wakeId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Wake ID returned by POST /v1/apps/{slug}/restart?fresh=true.
+     */
+    wakeId: string,
+  }): CancelablePromise<RuntimeConfigRestartStatusResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/runtime-config-restarts/{wake_id}',
+      path: {
+        'slug': slug,
+        'wake_id': wakeId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
         when enabled bare-metal service protection needs more recovery headroom.

@@ -328,17 +328,19 @@ const (
 
 // Issue reporting and lifecycle.
 type (
-	IssueEvent                    = api.IssueEvent
-	IssueFrame                    = api.IssueFrame
-	Issue                         = api.Issue
-	IssueOccurrence               = api.IssueOccurrence
-	IssueRelease                  = api.IssueRelease
-	IssueActivity                 = api.IssueActivity
-	IssueImpact                   = api.IssueImpact
-	IssueDetail                   = api.IssueDetail
-	ListIssuesResponse            = api.ListIssuesResponse
-	IssueEventResponse            = api.IssueEventResponse
-	IssueActionRequest            = api.IssueActionRequest
-	CreateIssueIngestTokenRequest = api.CreateIssueIngestTokenRequest
-	IssueIngestToken              = api.IssueIngestToken
+	IssueEvent                          = api.IssueEvent
+	IssueFrame                          = api.IssueFrame
+	Issue                               = api.Issue
+	IssueOccurrence                     = api.IssueOccurrence
+	IssueRelease                        = api.IssueRelease
+	IssueActivity                       = api.IssueActivity
+	IssueImpact                         = api.IssueImpact
+	IssueImpactAlertPolicy              = api.IssueImpactAlertPolicy
+	UpdateIssueImpactAlertPolicyRequest = api.UpdateIssueImpactAlertPolicyRequest
+	IssueDetail                         = api.IssueDetail
+	ListIssuesResponse                  = api.ListIssuesResponse
+	IssueEventResponse                  = api.IssueEventResponse
+	IssueActionRequest                  = api.IssueActionRequest
+	CreateIssueIngestTokenRequest       = api.CreateIssueIngestTokenRequest
+	IssueIngestToken                    = api.IssueIngestToken
 )

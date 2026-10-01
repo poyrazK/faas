@@ -63,6 +63,8 @@ const (
 	FlagsMaxVariants           = 16
 	FlagsMaxCustomers          = 1000
 	FlagsMaxCustomerIDBytes    = 128
+	FlagsMaxSubjects           = 1000
+	FlagsMaxSubjectIDBytes     = 128
 	FlagsMaxBundleBytes        = 256 << 10
 	FlagsMaxEvidencePerRequest = 32
 	FlagsMaxEvidenceBytes      = 16 << 10
@@ -7856,6 +7858,9 @@ type IssueLimits struct {
 	RetentionDays   int
 	TokensPerApp    int
 }
+
+// IssueImpactAlertMaxCustomers bounds the configurable customer-impact alert threshold.
+const IssueImpactAlertMaxCustomers = 10000
 
 func (p Plan) IssueLimits() IssueLimits {
 	switch p {

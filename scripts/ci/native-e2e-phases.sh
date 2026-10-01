@@ -171,7 +171,11 @@ native_e2e_assert_phase_partition() {
 # an afternoon. The full run had 16 real builds per pass; nine of them are
 # variants of the same fixture, and none of that tells you sooner whether the
 # beta path works.
-NATIVE_E2E_LANES=(smoke containers)
+# exclusive-operations-only — the stale-owner snapshot/restore fence on
+# dedicated KVM, without waiting for the platform-wide matrix. The final
+# verdict requires its selected test to PASS; the runner still performs the
+# normal preflight, service restoration, and leakcheck.
+NATIVE_E2E_LANES=(smoke containers exclusive-operations-only)
 
 # NATIVE_E2E_SMOKE_TESTS lists the smoke lane by NAME. Hand-picked on purpose
 # (see above); native_e2e_assert_lanes below fails if any name is not a real
@@ -181,6 +185,10 @@ NATIVE_E2E_SMOKE_TESTS=(
   TestDeployWakeMetal
   TestSec11_MemoryMaxFenceEnforced_CrossProcess
   TestSec11_SeccompFilterEnforced_CrossProcess
+)
+
+NATIVE_E2E_EXCLUSIVE_OPERATIONS_TESTS=(
+  TestExclusiveOperationFencesRestoredKVMOwnerMetal
 )
 
 # native_e2e_lane_tests echoes a lane's tests, one per line. smoke is the
@@ -204,6 +212,9 @@ native_e2e_lane_tests() {
         sec11_memory_max_e2e_test.go sec11_seccomp_e2e_test.go; do
         grep -hoE '^func Test[A-Za-z0-9_]+\(' "${root}/cmd/e2e/${file}" || return 1
       done | sed -E 's/^func //; s/\($//' | sort -u
+      ;;
+    exclusive-operations-only)
+      printf '%s\n' "${NATIVE_E2E_EXCLUSIVE_OPERATIONS_TESTS[@]}"
       ;;
     *) echo "native-e2e-phases: unknown lane: ${lane}" >&2; return 1 ;;
   esac
