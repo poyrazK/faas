@@ -7746,3 +7746,6 @@ func (p Plan) IssueLimits() IssueLimits {
 const IssueMaintenanceBatch = 1000
 const IssueMaintenanceInterval = time.Minute
 const IssueMaxBatchEvents = 32
+
+// UDPDatagramMaxBytes bounds IPv4 payloads after the minimum IP and UDP headers.
+const UDPDatagramMaxBytes = 65507
