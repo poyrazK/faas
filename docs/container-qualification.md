@@ -382,3 +382,21 @@ These remote results qualify this diagnostics PR; they do not validate the
 remaining container runtime, UDP, TLS or deployment-routing changes on this
 work branch. Native image, lifecycle, performance, recovery and leak evidence
 remains outstanding.
+
+### Isolated OCI primary-identity review — 2026-10-01
+
+Draft [PR #3954](https://github.com/poyrazK/faas/pull/3954) isolates OCI
+user/group preservation and image-local primary credential resolution from
+cgroup placement and health timing. Base `f2893f798736f803a842bcdd8f3e7a0d3d3e7d45`,
+head `2a296d74381722c87c53abc06432c58ee132fc9b`; clean review worktree
+`/tmp/gregale-container-identity-20261001`. The isolated decision is ADR-385
+because latest main already uses ADR-384 for internal service ports.
+
+Portable OCI/identity race suites pass; the Linux/amd64 guest test binary
+cross-compiles; portable and Linux guest scoped lint both report zero issues.
+Logs: `/tmp/gregale-identity-portable.log`, `/tmp/gregale-identity-compile.log`,
+`/tmp/gregale-identity-lint.log`, `/tmp/gregale-identity-guest-lint.log`.
+Remote checks have started and are pending; no remote green claim is made.
+Native process execution, preparation/restore and leak qualification remain
+unexecuted without a designated Linux/amd64 KVM host. No persistent disks or
+ARM64 support are included, and neither review PR has been merged.
