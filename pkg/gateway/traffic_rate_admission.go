@@ -27,6 +27,7 @@ func writeRateAdmissionUnavailable(w http.ResponseWriter, r *http.Request) bool 
 		return true
 	}
 	if unavailable, ok := r.Context().Value(rateAdmissionKey{}).(*atomic.Bool); ok && unavailable.Load() {
+		recordTrafficRefusal(r.Context(), "rate_limit_unavailable")
 		w.Header().Set("Retry-After", "1")
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable,
 			"rate_limit_unavailable", "Request admission unavailable", "the shared rate allowance could not be verified"))
@@ -40,6 +41,7 @@ func writeRateAdmissionUnavailable(w http.ResponseWriter, r *http.Request) bool 
 // Platform health, CORS preflight and earlier fixed edge responses retain their
 // own controls; deployment verification does not consume customer allowance.
 func (h *Handler) enforceTrafficRates(w http.ResponseWriter, r *http.Request, rec *statusRecorder, app App, smoke bool) bool {
+	markTrafficPhase(r.Context(), trafficRates)
 	if smoke {
 		return true
 	}
@@ -60,6 +62,8 @@ func (h *Handler) enforceTrafficRates(w http.ResponseWriter, r *http.Request, re
 }
 
 func (h *Handler) rejectTrafficRate(w http.ResponseWriter, r *http.Request, app App, scope string) {
+	recordTrafficLimiter(r.Context(), scope)
+	recordTrafficRefusal(r.Context(), "rate_limited")
 	w.Header().Set("x-faas-rate-limit-scope", scope)
 	if writeRateAdmissionUnavailable(w, r) {
 		return

@@ -112,6 +112,7 @@ func (h *Handler) pinPublicRoutingPolicy(w http.ResponseWriter, r *http.Request,
 	if h.publicRoutingPolicy == nil || !inputs.Valid {
 		return false
 	}
+	defer measureTrafficPhase(r.Context(), trafficPolicy)()
 	bounded, cancel := context.WithTimeout(r.Context(), api.TrafficPublicRoutingReadTimeout)
 	defer cancel()
 	source, err := h.publicRoutingPolicy(bounded, app, inputs)
@@ -125,23 +126,23 @@ func (h *Handler) pinPublicRoutingPolicy(w http.ResponseWriter, r *http.Request,
 		if handleForwardRequestCancellation(w, r, true) {
 			return true
 		}
-		h.writeTrafficPolicyUnavailable(w)
+		h.writeTrafficPolicyUnavailable(w, r)
 		return true
 	}
 	encoded, err := json.Marshal(source)
 	if err != nil {
-		h.writeTrafficPolicyUnavailable(w)
+		h.writeTrafficPolicyUnavailable(w, r)
 		return true
 	}
 	var frozen PublicRoutingSnapshot
 	if err := json.Unmarshal(encoded, &frozen); err != nil {
-		h.writeTrafficPolicyUnavailable(w)
+		h.writeTrafficPolicyUnavailable(w, r)
 		return true
 	}
 	h.selectPublicRoutingDeployment(r, app, inputs, &frozen)
 	if frozen.SelectedDeploymentID == "" && !inputs.Async && frozen.ReleaseVerdict != "gone" && frozen.ReleaseVerdict != "conflict" &&
 		(!frozen.RevisionChecked || frozen.RevisionAllowed) {
-		h.writeTrafficPolicyUnavailable(w)
+		h.writeTrafficPolicyUnavailable(w, r)
 		return true
 	}
 	proof, err := json.Marshal(struct {
@@ -149,7 +150,7 @@ func (h *Handler) pinPublicRoutingPolicy(w http.ResponseWriter, r *http.Request,
 		Routing json.RawMessage
 	}{TrafficPolicyRevision(r.Context()), encoded})
 	if err != nil {
-		h.writeTrafficPolicyUnavailable(w)
+		h.writeTrafficPolicyUnavailable(w, r)
 		return true
 	}
 	ctx := context.WithValue(r.Context(), publicRoutingSnapshotKey{}, frozen)

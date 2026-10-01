@@ -52,6 +52,7 @@ func admitRequestBody(w http.ResponseWriter, r *http.Request, app App) bool {
 }
 
 func admitRequestBodyWithin(w http.ResponseWriter, r *http.Request, limit int64, allowance time.Duration) bool {
+	defer measureTrafficPhase(r.Context(), trafficBody)()
 	if r.Body == nil || r.Body == http.NoBody || isUpgradeRequest(r) {
 		return false
 	}

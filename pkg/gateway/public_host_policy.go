@@ -70,6 +70,7 @@ type HostPolicyBackend interface {
 type hostPolicyLookupFailureKey struct{}
 
 func (h *Handler) lookupAppPolicy(r *http.Request, host string) (App, bool, error) {
+	defer measureTrafficPhase(r.Context(), trafficPolicy)()
 	if failure, ok := r.Context().Value(hostPolicyLookupFailureKey{}).(error); ok {
 		return App{}, false, failure
 	}

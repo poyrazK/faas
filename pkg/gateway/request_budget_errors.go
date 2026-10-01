@@ -34,6 +34,9 @@ func requestBudgetExpired(ctx context.Context) bool {
 // body: a Cloudflare Worker can preserve/reconstruct the body while
 // distinguishing this platform-owned timeout from a genuine CDN failure.
 func writeRequestBudgetExceededForRequest(w http.ResponseWriter, r *http.Request) {
+	if r != nil {
+		recordTrafficRefusal(r.Context(), "deadline")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), api.RequestBudgetErrorWriteTimeout)
 	defer cancel()
 	defer guardResponseWrites(ctx, w)() //nolint:contextcheck // best-effort error delivery has its own bounded allowance after the request has expired.
@@ -89,6 +92,7 @@ func handleForwardRequestCancellation(w http.ResponseWriter, r *http.Request, ca
 		return true
 	}
 	if requestBudgetExpired(ctx) {
+		recordTrafficRefusal(ctx, "deadline")
 		if canWrite {
 			writeRequestBudgetExceededForRequest(w, r)
 		}

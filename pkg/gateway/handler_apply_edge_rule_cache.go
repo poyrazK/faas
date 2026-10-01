@@ -46,6 +46,7 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 	if h == nil || h.responseCache == nil || h.edgeRules == nil {
 		return false, nil
 	}
+	markTrafficPhase(r.Context(), trafficCache)
 	// Deployment-preview URLs promise the exact immutable artifact named by
 	// the hostname. The response cache is currently populated before target
 	// selection and its v1 key is app-scoped, so consulting it here could replay
@@ -81,6 +82,7 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 	// the closed cacheable-method vocab before consulting the
 	// cache.
 	if rule.Methods != nil && !rule.Methods[method] {
+		recordTrafficCache(r.Context(), "bypass_uncacheable")
 		h.metricsIncCacheOutcome(app.ID, "bypass_uncacheable")
 		return false, nil
 	}
@@ -91,6 +93,7 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 	// property (authed requests are NEVER cached) is enforced
 	// by the absence of a storage path here, not by the counter.
 	if r.Header.Get("Authorization") != "" || hasSessionCookie(r) {
+		recordTrafficCache(r.Context(), "bypass_authed")
 		h.metricsIncCacheOutcome(app.ID, "bypass_authed")
 		return false, nil
 	}
@@ -118,6 +121,7 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 		// response correctly without the platform emitting
 		// Vary. Operators that need Vary on cached responses
 		// can add it via kind=headers.
+		recordTrafficCache(r.Context(), "hit")
 		h.metricsIncCacheOutcome(app.ID, "hit")
 		w.Header().Del(wire.WakeHeader)
 		for k, vs := range entry.header {
@@ -159,6 +163,7 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 		// Serve stale immediately and refresh the same cache key in the
 		// background. The refresh is singleflight-coalesced so concurrent
 		// callers do not stampede the origin.
+		recordTrafficCache(r.Context(), "stale_while_revalidate_served")
 		h.metricsIncCacheOutcome(app.ID, "stale_while_revalidate_served")
 		w.Header().Del(wire.WakeHeader)
 		for k, vs := range entry.header {
@@ -192,13 +197,16 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 		// responsibility of commit 13's
 		// applyEdgeRuleCacheStaleOnError wrapper (called
 		// from the gate-failure branch).
+		recordTrafficCache(r.Context(), "miss")
 		h.metricsIncCacheOutcome(app.ID, "miss")
 		return false, rule
 	case "":
 		// Miss. Fall through to the wake gate.
+		recordTrafficCache(r.Context(), "miss")
 		h.metricsIncCacheOutcome(app.ID, "miss")
 		return false, rule
 	}
+	recordTrafficCache(r.Context(), "miss")
 	h.metricsIncCacheOutcome(app.ID, "miss")
 	return false, rule
 }

@@ -217,6 +217,9 @@ func runWithRetry(
 	}
 	retryable, skipReason := policy.retryable(r)
 	if !policy.Enabled || policy.MaxAttempts < 2 || !retryable {
+		if policy.Enabled && !retryable {
+			recordTrafficRetryStop(r.Context(), skipReason)
+		}
 		if policy.Enabled && obs != nil && !retryable {
 			obs.IncRetryExhausted(skipReason)
 		}
@@ -228,6 +231,7 @@ func runWithRetry(
 	// body. Bodyless requests need no rewind and are always replayable.
 	hasBody := r.Body != nil && r.Body != http.NoBody
 	if hasBody && r.GetBody == nil {
+		recordTrafficRetryStop(r.Context(), RetrySkipBodyNotReplay)
 		if obs != nil {
 			obs.IncRetryExhausted(RetrySkipBodyNotReplay)
 		}
@@ -242,6 +246,7 @@ func runWithRetry(
 		defer func() { _ = owner.Close() }()
 	}
 	if !admission.budget.ObserveOriginal(r.Context(), admission.scope) {
+		recordTrafficRetryStop(r.Context(), RetrySkipAggregate)
 		if obs != nil {
 			obs.IncRetryExhausted(RetrySkipAggregate)
 		}
@@ -266,18 +271,22 @@ func runAttempts(
 ) {
 	for i := 0; i < policy.MaxAttempts; i++ {
 		if i > 0 && policy.Backoff > 0 {
+			stopBackoff := measureTrafficPhase(r.Context(), trafficBackoff)
 			timer := time.NewTimer(policy.Backoff)
 			select {
 			case <-timer.C:
 			case <-r.Context().Done():
 				timer.Stop()
+				stopBackoff()
 				handleForwardRequestCancellation(w, r, true)
 				return
 			}
 			timer.Stop()
+			stopBackoff()
 		}
 		req, err := replayRequest(r)
 		if err != nil {
+			recordTrafficRetryStop(r.Context(), RetrySkipBodyNotReplay)
 			if obs != nil {
 				obs.IncRetryExhausted(RetrySkipBodyNotReplay)
 			}
@@ -296,6 +305,9 @@ func runAttempts(
 
 		reason, ok := nextAttemptAllowed(req, buf, signal, policy, i)
 		if !ok {
+			if reason != "" {
+				recordTrafficRetryStop(r.Context(), reason)
+			}
 			if obs != nil && reason != "" {
 				obs.IncRetryExhausted(reason)
 			}
@@ -304,6 +316,7 @@ func runAttempts(
 		}
 		next, found := repick()
 		if !found {
+			recordTrafficRetryStop(r.Context(), RetrySkipNoTarget)
 			if obs != nil {
 				obs.IncRetryExhausted(RetrySkipNoTarget)
 			}
@@ -319,6 +332,7 @@ func runAttempts(
 			minRetries = api.EdgeRuleRetryDefaultBudgetMin
 		}
 		if admission.budget != nil && !admission.budget.AllowRetry(r.Context(), admission.scope, percent, minRetries) {
+			recordTrafficRetryStop(r.Context(), RetrySkipAggregate)
 			if obs != nil {
 				obs.IncRetryExhausted(RetrySkipAggregate)
 			}
@@ -474,6 +488,7 @@ func (h *Handler) proxyAttempt(
 		if enrollTrafficScopes(dst, req, h.trafficRevocations, trafficrevocation.Scope{Kind: "deployment", ID: selected.DeploymentID}) {
 			return
 		}
+		recordTrafficAttempt(req.Context())
 		unguarded(dst, req, selected)
 	}
 	if isStreaming {

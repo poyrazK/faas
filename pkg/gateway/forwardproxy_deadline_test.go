@@ -122,9 +122,11 @@ func TestForwarderDeadlineThroughRealGRPC(t *testing.T) {
 			fixture := &deadlineForwardServer{status: tc.status, finished: make(chan error, 1)}
 			nodes := singleClientLookup{cli: newDeadlineForwardClient(t, fixture)}
 			log := slog.New(slog.NewTextHandler(io.Discard, nil))
+			decisions := make(chan trafficDecisionSnapshot, 1)
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				ctx, cancel, _ := reqbudget.WithStarted(r.Context(), time.Now(), 150*time.Millisecond, api.RequestBudgetMax, "forward", "GET:/slow")
+				ctx, cancel, _ := reqbudget.WithStarted(withTrafficDecision(r.Context(), false), time.Now(), 150*time.Millisecond, api.RequestBudgetMax, "forward", "GET:/slow")
 				defer cancel()
+				defer func() { decisions <- trafficDecisionEvidence(ctx, tc.status, true) }()
 				r = r.WithContext(ctx)
 				r.Header.Set("x-faas-protocol", tc.protocol)
 				if tc.streaming {
@@ -147,6 +149,18 @@ func TestForwarderDeadlineThroughRealGRPC(t *testing.T) {
 				}
 			} else if readErr == nil || string(body) != "partial" {
 				t.Fatalf("body=%q error=%v; want visible truncation on total expiry", body, readErr)
+			}
+			select {
+			case evidence := <-decisions:
+				want := "deadline"
+				if tc.wantComplete {
+					want = "edge_response" // Direct transport fixture has no proxy-attempt owner.
+				}
+				if evidence.streamDetached != tc.wantComplete || evidence.outcome != want {
+					t.Fatalf("wire detachment evidence=%+v, want outcome=%s", evidence, want)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("forwarder retained its decision after response cleanup")
 			}
 			select {
 			case serverErr := <-fixture.finished:
@@ -175,7 +189,7 @@ func TestRawForwarderDeadlineThroughRealGRPC(t *testing.T) {
 			fixture := &deadlineForwardServer{status: tc.status, headerDelay: tc.headerDelay, finished: make(chan error, 1)}
 			client := newDeadlineForwardClient(t, fixture)
 			r := httptest.NewRequest(http.MethodGet, "http://app.test/socket", nil)
-			ctx, cancel, _ := reqbudget.WithStarted(r.Context(), time.Now(), 150*time.Millisecond, api.RequestBudgetMax, "forward", "GET:/socket")
+			ctx, cancel, _ := reqbudget.WithStarted(withTrafficDecision(r.Context(), false), time.Now(), 150*time.Millisecond, api.RequestBudgetMax, "forward", "GET:/socket")
 			defer cancel()
 			r = r.WithContext(ctx)
 			r.Header.Set("Connection", "Upgrade")
@@ -205,6 +219,14 @@ func TestRawForwarderDeadlineThroughRealGRPC(t *testing.T) {
 				}
 			} else if rec.Code != http.StatusSwitchingProtocols || rec.Body.String() != "partial-complete" {
 				t.Fatalf("upgrade status=%d body=%q; want established session after handshake deadline", rec.Code, rec.Body.String())
+			}
+			evidence := trafficDecisionEvidence(ctx, rec.Code, true)
+			want := "deadline"
+			if tc.status == http.StatusSwitchingProtocols && tc.headerDelay == 0 {
+				want = "edge_response"
+			}
+			if evidence.outcome != want || evidence.streamDetached != (want == "edge_response") {
+				t.Fatalf("raw detachment evidence=%+v, want outcome=%s", evidence, want)
 			}
 			select {
 			case <-fixture.finished:

@@ -214,11 +214,13 @@ func TestTrafficRevocationCancelsDetachedRealGRPCResponse(t *testing.T) {
 				nodes := singleClientLookup{cli: newDeadlineForwardClient(t, fixture)}
 				log := slog.New(slog.NewTextHandler(io.Discard, nil))
 				done := make(chan struct{})
+				decisions := make(chan trafficDecisionSnapshot, 1)
 				server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					defer close(done)
 					defer func() { cancelStampedRequestBudget(r.Context()) }() //nolint:contextcheck // cleanup reads the final rebound request context.
-					ctx, cancel, _ := reqbudget.WithStarted(r.Context(), time.Now(), 100*time.Millisecond, api.RequestBudgetMax, "forward", "stream")
+					ctx, cancel, _ := reqbudget.WithStarted(withTrafficDecision(r.Context(), false), time.Now(), 100*time.Millisecond, api.RequestBudgetMax, "forward", "stream")
 					defer cancel()
+					defer func() { decisions <- trafficDecisionEvidence(r.Context(), http.StatusOK, true) }() //nolint:contextcheck // observe the final request after enrollment attaches its lifetime fence.
 					r = r.WithContext(ctx)
 					if enrollTrafficScopes(w, r, registry, trafficrevocation.Scope{Kind: "deployment", ID: "dep-1"}) {
 						return
@@ -273,6 +275,10 @@ func TestTrafficRevocationCancelsDetachedRealGRPCResponse(t *testing.T) {
 				}
 				if exchanges, scopes := registry.Tracked(); exchanges != 0 || scopes != 0 {
 					t.Fatalf("long response leaked registrations: %d/%d", exchanges, scopes)
+				}
+				evidence := <-decisions // Handler completion above guarantees publication.
+				if !evidence.streamDetached || evidence.outcome != "refused" || evidence.refusal != "security_revoked" {
+					t.Fatalf("revoked wire response lost its lifetime reason: %+v", evidence)
 				}
 			})
 		}

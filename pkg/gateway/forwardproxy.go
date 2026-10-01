@@ -568,6 +568,9 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			if init.GetStatus() >= http.StatusOK && init.GetStatus() < http.StatusBadRequest {
 				detachBudget()
 				budgetDetached = isLongLivedForward(r)
+				if budgetDetached {
+					recordTrafficStreamDetached(r.Context())
+				}
 			}
 			touch()
 			// issue #517 / PR-C / ADR-064 — emit
@@ -948,6 +951,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				// request budget; the raw session remains bounded by activity,
 				// the 24-hour ceiling, and client cancellation.
 				detachBudget()
+				recordTrafficStreamDetached(r.Context())
 				upgradeEstablished = true
 			}
 			touch()

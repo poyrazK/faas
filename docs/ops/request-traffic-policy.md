@@ -329,6 +329,59 @@ changes can change the fingerprint. Credentials and raw policy are never
 included in response or log evidence. Live counter, picker, cache, and breaker
 state are decisions made against the snapshot, not frozen counter values.
 
+### Request decisions
+
+The public routing handler's `gateway.request` span and each managed service
+dependency span include a fixed `gregale.traffic.*` decision record. Public
+request logs include the same fields in `traffic_decision`, subject to the
+existing log level (hot 2xx requests use debug). Existing policy revision and
+selected deployment attributes remain separate routing evidence.
+Logs take a copy at the existing observation point; the span seals the record
+at handler completion. A later lifetime cancellation can change the final span
+outcome after the request was logged.
+
+| Fields after `gregale.traffic.` | Meaning |
+| --- | --- |
+| `decision_version`, `path` | `v1`; `public_http` or `managed_service` |
+| `phase`, `outcome`, `rejection_reason` | Last handler phase, final outcome and a bounded platform reason |
+| `forward_attempts`, `replays` | Proxy dispatches; replays are attempts after the first |
+| `retry_stop`, `limiter_scope` | First retry refusal; rejecting account/app/tenant/surface/consumer/rule allowance |
+| `cache_outcome`, `circuit_verdict` | Cache serving decision; endpoint admission or refusal when consulted |
+| `measured_phases` | Comma-separated policy/body/wake/capacity/backoff phases actually measured |
+| `policy_read_ms`, `body_admission_ms`, `wake_admission_ms`, `capacity_wait_ms`, `retry_backoff_ms` | Local durations rounded down to milliseconds |
+
+`surface` identifies pre-auth source guards; `consumer` identifies a dimensional
+edge-rule allowance. These names describe the rejecting bucket family without
+exporting the customer selector, consumer ID, source IP or rule content.
+An empty limiter or retry reason means none was recorded. Cache starts at
+`not_consulted`; circuit starts at `not_observed`. Public forwarding does not
+invent a managed-service circuit verdict. Durations can overlap across phases;
+overlapping work in the same phase is counted once. A zero duration alone does
+not prove that a phase ran; consult `measured_phases`.
+
+Outcomes are `edge_response`, `upstream_response`, `refused`, `deadline` and
+`canceled`. `upstream_response` identifies the dispatched path and includes
+errors emitted by a forwarding bridge. A guest HTTP 401/429/503 does not imply
+a platform authentication/rate/capacity refusal. Cached origin errors and
+configured fixed preview replies remain `edge_response`, including 404/410.
+Before dispatch, a response
+without a specific platform reason reports `<phase>_response`. Explicit deadline,
+policy, rate-store and security reasons remain distinct. A successful stream
+handshake can detach its admission deadline; a later expired handshake timer
+does not relabel its outcome. Security revocation after headers still records
+the lifetime reason even when a new error body cannot be sent.
+
+The record contains 17 fixed scalar attributes, with closed vocabularies and
+saturating counters, and seals at completion. Each service child owns its own
+record; detached cache refreshes cannot revise the parent. No credential,
+request content or error text enters these new fields. A dispatch count does
+not establish guest execution, rollback or nested application work. These
+local durations do not establish a latency SLA. Sampling and log levels still
+apply, and customer-authored telemetry is not protected platform proof.
+Managed realtime, TCP tunnels, detached jobs and direct bridge calls have their
+separate owners; malformed service URLs rejected before dependency trace entry
+do not receive this record. Complete-path and deployed acceptance remain pending.
+
 ## Failure and update behavior
 
 A fresh production request requires authoritative reads even with a warm
@@ -393,7 +446,7 @@ Expired release/revision pins retain 410; an incomplete public release retains
 
 These routing reads verify the resolved host's app and pinned deployment.
 Cross-process exact-wake coalescing, complete synthetic admission/security
-ownership, bounded decision evidence and preview agreement remain pending.
+ownership and preview agreement remain pending.
 
 ## Managed service calls
 

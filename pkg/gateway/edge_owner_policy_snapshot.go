@@ -14,20 +14,20 @@ func (h *Handler) pinResolvedOwnerPolicies(w http.ResponseWriter, r *http.Reques
 	}
 	prior, _ := r.Context().Value(pinnedEdgePoliciesKey{}).(map[string]*edgePolicySnapshot)
 	if app.PublicPolicySource == nil || app.PublicPolicySource.Revision == "" || len(prior) == 0 || len(app.PublicCompiledPolicies) != len(prior) {
-		h.writeTrafficPolicyUnavailable(w)
+		h.writeTrafficPolicyUnavailable(w, r)
 		return true
 	}
 	ctx := r.Context()
 	for host := range prior {
 		entry := app.PublicCompiledPolicies[host]
 		if entry == nil || entry.Host != host || entry.PublicSourceRevision == "" {
-			h.writeTrafficPolicyUnavailable(w)
+			h.writeTrafficPolicyUnavailable(w, r)
 			return true
 		}
 		var err error
 		ctx, err = WithPinnedHostPolicy(ctx, host, entry)
 		if err != nil {
-			h.writeTrafficPolicyUnavailable(w)
+			h.writeTrafficPolicyUnavailable(w, r)
 			return true
 		}
 	}

@@ -4452,9 +4452,14 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 		)
 	}
 	if !allowed {
+		recordTrafficLimiter(r.Context(), "rule")
+		if dimensional {
+			recordTrafficLimiter(r.Context(), "consumer")
+		}
 		if writeRateAdmissionUnavailable(w, r) {
 			return true
 		}
+		recordTrafficRefusal(r.Context(), "rate_limited")
 		w.Header().Set("Retry-After", "1")
 		// `route` is a new scope value alongside `account` + `app`
 		// (established by per-account / per-app 429 paths
@@ -5619,11 +5624,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// so request telemetry, the guest hop, and service-proxy dependencies share
 	// the public trace ID.
 	parentCtx := propagation.TraceContext{}.Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+	parentCtx = withTrafficDecision(parentCtx, false)
 	requestCtx, requestSpan := pkgtrace.StartSpan(parentCtx, "gateway.request",
 		attribute.String("http.method", r.Method))
 	requestCtx = WithEdgeRuleRequestHeaders(requestCtx, r.Header)
 	r = r.WithContext(requestCtx)
-	defer func() {
+	defer func() { //nolint:contextcheck // inspect the final rebound request context, including later admission and lifetime fences.
+		requestSpan.SetAttributes(trafficDecisionEvidence(r.Context(), rec.status, true).attributes()...)
 		requestSpan.SetAttributes(attribute.Int("http.status_code", rec.status))
 		requestSpan.End()
 	}()
@@ -5735,12 +5742,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	lookedApp, ok, lookupErr = h.lookupAppPolicy(r, appHost)
 	if lookupErr != nil {
 		if !handleForwardRequestCancellation(w, r, true) {
-			h.writeTrafficPolicyUnavailable(w)
+			h.writeTrafficPolicyUnavailable(w, r)
 		}
 		h.observe(r, rec.status, "", "", false, Target{})
 		return
 	}
 	if !ok {
+		markTrafficPhase(r.Context(), trafficOwnership)
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
 			"No such app", fmt.Sprintf("no app is routed to %q", appHost)))
 		h.observe(r, rec.status, "", "", false, Target{})
@@ -5866,6 +5874,7 @@ haveApp:
 	// lookup work. This keeps invalid credentials from
 	// consuming downstream resources and makes the same stable consumer ID
 	// available to later rate-limit and metering stages.
+	markTrafficPhase(r.Context(), trafficAuthentication)
 	if !h.enforceConsumerAuth(w, r, rec, app) {
 		return
 	}
@@ -6005,6 +6014,7 @@ haveApp:
 	// Only-allow-declared-routes gate. This is intentionally before JWT/IP/
 	// auth/rate-limit and, critically, before the wake gate below. A request to
 	// an undeclared path is answered by the gateway and cannot create app work.
+	markTrafficPhase(r.Context(), trafficValidation)
 	if h.enforceDeclaredRoute(w, r, app, declaredPath, declaredMethod) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
@@ -6016,6 +6026,7 @@ haveApp:
 	// per-deployment auth chain — saves the bearer lookup on
 	// already-rejected traffic). Each helper writes the deny
 	// response + audit + metric on its own; caller MUST `return`.
+	markTrafficPhase(r.Context(), trafficAuthentication)
 	if h.applyEdgeRuleJWT(w, r, app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
@@ -6082,6 +6093,7 @@ haveApp:
 	// (the rule's 413 fires before the global reader wraps
 	// r.Body). Same posture as validate: short-circuit on deny,
 	// caller MUST `return`.
+	markTrafficPhase(r.Context(), trafficBody)
 	if h.applyEdgeRuleLimit(w, r, streamingFor(h, r, app), app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
@@ -6106,6 +6118,7 @@ haveApp:
 	// hot-path step short of the path-glob match itself. See
 	// applyEdgeRuleThrottle's doc for the rationale + the
 	// cross-account audit/metric posture.
+	markTrafficPhase(r.Context(), trafficRates)
 	if h.applyEdgeRuleThrottle(w, r, app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
@@ -6119,6 +6132,7 @@ haveApp:
 	// applier buffers r.Body, restores it for the proxy leg, and
 	// returns 422 + RFC 7807 problem+json on schema mismatch.
 	//
+	markTrafficPhase(r.Context(), trafficValidation)
 	if h.applyEdgeRuleValidate(w, r, app, rec) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
@@ -6134,6 +6148,7 @@ haveApp:
 	// invalid bearer). nil-safe: a nil requireAuthnAuthn
 	// (tests + dev boxes that don't wire the chain) is a
 	// pass-through, so the pre-issue behaviour is preserved.
+	markTrafficPhase(r.Context(), trafficAuthentication)
 	if !h.enforceRequireAuthn(w, r, rec, app) {
 		return
 	}
@@ -7239,6 +7254,7 @@ haveApp:
 	// the WS handshake in an infinite loop. A deterministic 501
 	// names the cause and the WS client can back off cleanly.
 	if isUpgradeRequest(r) {
+		markTrafficPhase(r.Context(), trafficValidation)
 		// Issue #676 / ADR-080 follow-up, PR-B: stamp
 		// (plan, metrics) onto the request context so the
 		// raw forwarder can label its gateway_ws_*
@@ -7271,6 +7287,7 @@ haveApp:
 		// without re-deriving from Connection/Upgrade.
 		r.Header.Set("x-faas-upgrade", "true")
 		platformWakeTrace.markProxyStarted(time.Now())
+		recordTrafficAttempt(r.Context())
 		h.rawByNode(target).ServeHTTP(w, r)
 		// Per-request accounting still fires for the raw path
 		// (issue #676 / ADR-080): the upgrade request is one
@@ -7545,6 +7562,9 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// the time.Since(startTime(r)) call here would yield the same result
 	// but recomputes; `elapsed` was already measured above.
 	requestLog := h.log
+	if decision := trafficDecisionEvidence(r.Context(), status, false); decision.path != "" && requestLog != nil {
+		requestLog = requestLog.With(decision.logAttribute())
+	}
 	if revision := TrafficPolicyRevision(r.Context()); revision != "" && requestLog != nil {
 		requestLog = requestLog.With("traffic_policy_revision", revision)
 	}
@@ -8530,6 +8550,7 @@ func (s *statusRecorder) finalFlush() {
 // service proxy passes sched.TriggerServiceMesh so internal fan-out is
 // distinguishable from customer traffic in the wake timeline.
 func (h *Handler) ensureCapacity(ctx context.Context, appID, accountID, scope string, maxConcurrency int, plan api.Plan, autoscaleTargetRPS int, trigger string, configs ...concurrencyAdmissionConfig) (cold bool, wakeID string, method WakeMethod, err error) {
+	defer measureTrafficPhase(ctx, trafficWake)()
 	// HealthyCount is intentionally process-local for the hot path, but an
 	// empty process-local cache is not authoritative in a multi-node fleet.
 	// The empty-cache reconciliation now runs inside coldStart's WakeGate

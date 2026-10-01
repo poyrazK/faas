@@ -125,6 +125,7 @@ func (h *Handler) serveStaleWhileWaking(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 	w.Header().Set("x-faas-cache", "stale-while-waking")
+	recordTrafficCache(r.Context(), "stale_while_waking")
 	w.Header().Add("Warning", `110 - "Response is Stale"`)
 	w.Header().Set("X-From-Cache", "stale")
 	w.Header().Set("Content-Length", strconvItoa(len(entry.body)))
@@ -166,7 +167,7 @@ func (h *Handler) startCacheRefresh(r *http.Request, app App, rule *EdgeRuleCach
 	if h == nil || h.backend == nil || h.responseCache == nil || rule == nil || r == nil {
 		return
 	}
-	detached := context.WithoutCancel(r.Context())
+	detached := withoutTrafficDecision(context.WithoutCancel(r.Context()))
 	request := r.Clone(detached)
 	request.Body = http.NoBody
 	go func(ctx context.Context) {
@@ -352,6 +353,7 @@ func (h *Handler) tryServeStaleOnWakeError(w http.ResponseWriter, r *http.Reques
 	// when their cache is being relied on as a fallback
 	// rather than as a primary serve path.
 	h.metricsIncCacheOutcome(app.ID, "stale_if_error_served")
+	recordTrafficCache(r.Context(), "stale_if_error_served")
 	h.observe(r, entry.statusCode, app.ID, string(app.Plan), false, Target{})
 	return true, "stale_if_error_served"
 }

@@ -1474,3 +1474,65 @@ real daemon/load/recovery and customer/staging release acceptance remain
 pending. No native Linux x86_64 KVM acceptance host is available; VM/restore,
 nft connection/source-IP, process-death and leak checks remain pending.
 All six release guarantees remain unchecked.
+
+### 2026-10-01: bounded public and managed-service decisions
+
+ADR-375 records the design before runtime changes. Public routing requests and
+managed HTTP service calls now own a fixed decision record. Seventeen scalar
+span attributes report path, last phase, final outcome, actual proxy dispatches
+and replays, first retry refusal, rejecting limiter family, cache outcome,
+managed endpoint circuit verdict and measured policy/body/wake/capacity/backoff
+durations. Public logs take a copy at their existing observation point. Spans
+seal the final record; a later lifetime cancellation can differ from the log.
+
+Vocabularies and counters are bounded. Unknown labels cannot retain credentials,
+request content or error text. A child owns a new record, while detached cache
+refresh clears the parent's carrier. Concurrent and nested measurements share
+fixed state, coalesce each phase's overlapping work and saturate without overflow.
+Successful stream and raw-upgrade handshakes record detachment at the transport
+owner. Their expired admission timer cannot masquerade as a final deadline;
+security revocation remains visible after headers. Cached 404/410 and fixed
+preview replies remain edge answers. Guest errors and bridge-generated errors
+after dispatch do not become inferred platform authentication/rate refusals.
+Dispatch counts do not prove guest execution or rollback.
+
+Final checks use full source sets without Go overlays, source exclusions or
+weakened limits/timeouts on Darwin arm64 with Go 1.25.13. The existing serialized,
+CGO-disabled, inlining/DWARF-disabled, stripped-link test profile is retained.
+The owned PostgreSQL 16.15 cluster uses private migrated templates; its source
+database remains unmigrated, with normal durability settings enabled.
+
+- Full `pkg/gateway`: 2,179 named cases pass, no failures or skips, 62.813 s.
+  Includes 60 focused decision/real-gRPC cases: every limiter family, store
+  outage, cache/fixed response, guest 401, retry safety and amplification denial,
+  raw public/service dispatch, upload/wake/capacity cancellation, request-owned
+  state, bounded labels/counters, sealed records and detached refresh isolation.
+  Existing real gRPC tests verify ordinary versus detached HTTP/gRPC/raw lifetime
+  behavior and HTTP/1/HTTP/2 security revocation after headers with cleanup.
+- Full `cmd/gatewayd-internal`: 724 named cases pass, no failures,
+  72 existing guarded database skips, 4.860 s.
+- Selected public binding/route-source/domain/edge-policy PostgreSQL regression:
+  63 named cases pass, no failures or skips, 56.110 s.
+- Gateway and internal-gateway lint with tests pass, zero issues. Formatting
+  and whitespace pass. No SQL, schema, customer API contract or platform limit
+  changes; earlier state/API/SQLC evidence remains recorded separately.
+
+Diagnostic runs caught fixture omissions, the first service retry refusal being
+overwritten, and context-checker warnings. Fixtures now provide the admitted
+deployment roster, existing typed timeout, debug-level hot-success logger and
+mandatory ordinary upgrade forwarder. The upgrade test verifies that the ordinary
+forwarder is not dispatched. The first retry refusal is retained. Narrow context
+annotations preserve the final rebound request and its lifetime fences; global
+lint rules remain enabled. Passing counts exclude diagnostic runs.
+
+Commands, compressed logs, diagnostics, profiles and changed-file hashes are in
+`/Users/poyrazk/dev/Cloud/gregale/outputs/traffic-decision-evidence-20261001/`.
+The request-policy operations guide defines the fields and their limits. These
+local checks establish the bounded record on these handler/transport paths;
+they do not establish a latency SLA, real daemon or deployed acceptance.
+
+All six release guarantees remain unchecked. Complete binding publication and
+tenant/alias/revision/operator reservation transitions, preview/runtime and full
+synthetic-path agreement, real daemon/load/recovery/customer/staging acceptance
+remain pending. No native Linux x86_64 KVM acceptance host is available; native
+VM/firewall/process-death/leak acceptance remains pending.

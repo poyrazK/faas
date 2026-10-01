@@ -665,6 +665,44 @@ when enabled; an active tenant shadow may therefore cause a conservative
 refusal until the exposed policy fits. This does not establish the complete
 tenant-binding projection or its release acceptance.
 
+### Follow-up: bounded request decision evidence
+
+Public-handler requests and managed HTTP service calls receive a separate,
+request-owned decision record at entry. Fixed fields report the traffic path,
+last phase, final outcome, forwarding attempts/replays, retry stop reason,
+rejecting limiter scope, cache serving outcome, endpoint circuit verdict and
+local policy/body/wake/capacity/backoff durations. The record joins the existing
+request/dependency span and public request log; the existing policy fingerprint
+and verified deployment attributes remain the revision and routing evidence.
+
+Fields use closed vocabularies and bounded integers, with no event list,
+customer selectors, URLs, header values, bodies, credentials or error text.
+Forwarding attempts count proxy dispatches, not guest side effects or scheduler
+wakes. The first retry refusal is retained if it reduced the attempt ceiling.
+A retry cannot allocate another record. A child service request owns a
+new record; detached cache refreshes cannot change the parent's evidence.
+Span finalization seals the record before exporting so late asynchronous work
+cannot revise a completed decision. Public logs take a copy at their existing
+observation point; a later lifetime cancellation may still change the final
+span outcome. Telemetry remains observational and cannot change
+admission, retry, cancellation or cleanup behavior.
+
+Explicit platform reasons take precedence. Otherwise a refused pre-forward
+response reports its last phase and status, rather than inferring a specific
+cause from a guest response. A dispatched HTTP error remains an upstream
+response; cached origin errors and configured fixed replies remain edge
+responses. Forwarding does not prove application execution or rollback.
+Durations measure this handler's work, coalesce overlapping measurements of
+the same phase, may overlap across phases and do not establish a latency SLA.
+A measured-phase list distinguishes unobserved
+phases from measured waits rounded down to zero milliseconds. Successful stream
+handshake detachment is recorded at its transport owner: an expired handshake
+timer cannot relabel a completed stream, while lifetime cancellation and
+security revocation remain observable. Policy revisions remain independently
+protected response evidence; ordinary customer-authored spans are not platform proof.
+Managed realtime, raw TCP and detached execution retain their separate owners.
+Runtime/preview agreement and real daemon/native acceptance remain required.
+
 The implementation tracker is `docs/traffic_platform_implementation.md`.
 Each guarantee needs configuration-to-runtime tests, cancellation/recovery
 tests and customer documentation. VM lifecycle changes require native x86_64

@@ -131,6 +131,7 @@ func (h *Handler) pinHostTrafficPolicy(w http.ResponseWriter, r *http.Request, h
 	if !ok {
 		return false
 	}
+	defer measureTrafficPhase(r.Context(), trafficPolicy)()
 	ctx := r.Context()
 	for _, host := range hosts {
 		if _, pinned := PinnedHostPolicy(ctx, host); pinned {
@@ -139,7 +140,7 @@ func (h *Handler) pinHostTrafficPolicy(w http.ResponseWriter, r *http.Request, h
 		var err error
 		ctx, err = loader.PinHostPolicy(ctx, host)
 		if err != nil {
-			h.writeTrafficPolicyUnavailable(w)
+			h.writeTrafficPolicyUnavailable(w, r)
 			return true
 		}
 	}
@@ -180,11 +181,12 @@ func (h *Handler) pinAppTrafficPolicy(w http.ResponseWriter, r *http.Request, ap
 	if _, productionSnapshot := h.edgeRules.(EdgePolicySnapshotter); !productionSnapshot && h.publicRoutingPolicy == nil {
 		return false
 	}
+	defer measureTrafficPhase(r.Context(), trafficPolicy)()
 	if h.pinResolvedOwnerPolicies(w, r, *app) {
 		return true
 	}
 	if err := ValidatePinnedHostPolicies(r.Context(), app.AccountID); err != nil {
-		h.writeTrafficPolicyUnavailable(w)
+		h.writeTrafficPolicyUnavailable(w, r)
 		return true
 	}
 	*r = *r.WithContext(WithEdgeRuleOwner(r.Context(), app.AccountID))
@@ -198,7 +200,7 @@ func (h *Handler) pinAppTrafficPolicy(w http.ResponseWriter, r *http.Request, ap
 				writeRequestBudgetExceededForRequest(w, r)
 				return true
 			}
-			h.writeTrafficPolicyUnavailable(w)
+			h.writeTrafficPolicyUnavailable(w, r)
 			return true
 		}
 		*app = resolved
@@ -206,7 +208,7 @@ func (h *Handler) pinAppTrafficPolicy(w http.ResponseWriter, r *http.Request, ap
 	}
 	frozen, revision, err := freezeTrafficApp(r.Context(), *app)
 	if err != nil {
-		h.writeTrafficPolicyUnavailable(w)
+		h.writeTrafficPolicyUnavailable(w, r)
 		return true
 	}
 	*app = frozen
@@ -215,7 +217,8 @@ func (h *Handler) pinAppTrafficPolicy(w http.ResponseWriter, r *http.Request, ap
 	return false
 }
 
-func (h *Handler) writeTrafficPolicyUnavailable(w http.ResponseWriter) {
+func (h *Handler) writeTrafficPolicyUnavailable(w http.ResponseWriter, r *http.Request) {
+	recordTrafficRefusal(r.Context(), "policy_unavailable")
 	w.Header().Set("Retry-After", "1")
 	api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeTrafficPolicyUnavailable,
 		"Traffic policy unavailable", "Gregale could not verify this route's traffic policy. Retry shortly."))

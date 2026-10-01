@@ -157,6 +157,7 @@ func trafficRevocationCause(ctx context.Context) error {
 }
 
 func writeTrafficRevocationError(w http.ResponseWriter, r *http.Request, err error) {
+	recordTrafficRefusal(r.Context(), trafficSecurityDecision(err))
 	// The lifetime is canceled; error delivery gets a separate short allowance.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), api.RequestBudgetErrorWriteTimeout)
 	defer cancel()

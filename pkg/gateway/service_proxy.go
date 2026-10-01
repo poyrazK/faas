@@ -429,6 +429,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// its inbound traceparent joins the original request instead of always
 	// starting a new service-call trace.
 	parentCtx := propagation.TraceContext{}.Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+	parentCtx = withTrafficDecision(parentCtx, true)
 	dependencyCtx, dependencySpan := dependencytrace.StartClientSpan(parentCtx, serviceProxySpanName(service), //nolint:contextcheck // extracted W3C trace context inherits r.Context() through propagation.Extract.
 		attribute.String("gregale.dependency.type", "managed_binding"),
 		attribute.String("gregale.dependency.kind", "service_proxy"),
@@ -492,6 +493,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+		dependencySpan.SetAttributes(trafficDecisionEvidence(r.Context(), status, true).attributes()...) //nolint:contextcheck // final rebound context includes lifetime fences added after span entry.
 		dependencySpan.End()
 	}()
 	r = r.WithContext(dependencyCtx)
@@ -556,6 +558,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		dependencySpan.SetAttributes(attribute.String("gregale.traffic.policy_revision", traceWriter.policyRevision))
 	}
 	if alias {
+		markTrafficPhase(r.Context(), trafficAuthentication)
 		if p.allowAlias == nil && p.policy == nil {
 			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service alias authorizer is not wired")
 			return
@@ -575,6 +578,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	setProbeStage("discovery")
+	markTrafficPhase(r.Context(), trafficOwnership)
 	target, err := p.resolveTarget(dependencyCtx, caller, service)
 	if err != nil {
 		if handleForwardRequestCancellation(dispatchWriter, r, true) {
@@ -590,6 +594,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	dependencyHealthTarget = target
 	setProbeStage("authorization")
+	markTrafficPhase(r.Context(), trafficAuthentication)
 	if p.authorize == nil && p.policy == nil {
 		serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service proxy authorizer is not wired")
 		return
@@ -1113,6 +1118,7 @@ func (p *ServiceProxy) pruneIdle(now time.Time) {
 // itself and reports served=false when nothing is routable, so ServeHTTP
 // stays within the handler-length convention.
 func (p *ServiceProxy) routableEndpoints(w http.ResponseWriter, r *http.Request, appID, deploymentID string) (_ []ServiceEndpoint, woken, served bool) {
+	markTrafficPhase(r.Context(), trafficCapacity)
 	if handleForwardRequestCancellation(w, r, true) {
 		return nil, false, false
 	}
@@ -1175,6 +1181,7 @@ func (p *ServiceProxy) writeWakeFailure(w http.ResponseWriter, appID string, err
 // A nil waker returns no endpoints and no error, so the caller falls through
 // to the pre-ADR-196 "no healthy replicas" response.
 func (p *ServiceProxy) wakeAndRefresh(ctx context.Context, appID, deploymentID string) ([]ServiceEndpoint, error) {
+	defer measureTrafficPhase(ctx, trafficWake)()
 	if deploymentID != "" && p.wakeDeployment != nil {
 		start := p.now()
 		if err := p.wakeDeployment(ctx, appID, deploymentID); err != nil {
@@ -1341,7 +1348,13 @@ func (p *ServiceProxy) attachCallerAssertion(request *http.Request, target Servi
 // stale-target signal cannot be acted on after bytes have flowed.
 func (p *ServiceProxy) forwardUpgrade(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, endpoints []ServiceEndpoint) {
 	endpoint, ok := p.pick(target.AppID, endpoints)
+	if len(endpoints) > 0 {
+		recordTrafficCircuit(r.Context(), ok)
+	}
 	if !ok {
+		if len(endpoints) > 0 {
+			recordTrafficRefusal(r.Context(), "circuit")
+		}
 		serviceProxyProblem(w, http.StatusServiceUnavailable, "service has no healthy replicas")
 		return
 	}
@@ -1356,11 +1369,12 @@ func (p *ServiceProxy) forwardUpgrade(w http.ResponseWriter, r *http.Request, ta
 	request.Header.Set("x-faas-upgrade", "true")
 	key := serviceProxyEndpointKey(target.AppID, endpoint.InstanceID)
 	signal := &staleTargetSignal{onStale: func() { p.quarantine(target.AppID, endpoint.InstanceID) }}
-	request = request.WithContext(withStaleTargetSignal(request.Context(), signal))
+	request = request.WithContext(withStaleTargetSignal(request.Context(), signal)) //nolint:contextcheck // request-local stale-target state inherits the prepared inbound context.
 	probeWriter := &serviceProxyUpgradeProbeWriter{
 		ResponseWriter: w,
 		onHandshake:    func() { p.healthy(target.AppID, endpoint.InstanceID) },
 	}
+	recordTrafficAttempt(r.Context())
 	p.rawForward(serviceEndpointTarget(target.AppID, endpoint)).ServeHTTP(probeWriter, request)
 	if signal.stale.Load() || probeWriter.handshake {
 		return
@@ -1440,23 +1454,33 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 		maxAttempts = policy.MaxAttempts
 	}
 	if policy.Enabled && !retryable {
+		recordTrafficRetryStop(request.Context(), skipReason)
 		p.metrics.IncRetryExhausted(skipReason)
 	}
 	hasBody := request.Body != nil && request.Body != http.NoBody
 	if maxAttempts > 1 && hasBody && request.GetBody == nil {
 		maxAttempts = 1
+		recordTrafficRetryStop(request.Context(), RetrySkipBodyNotReplay)
 		p.metrics.IncRetryExhausted(RetrySkipBodyNotReplay)
 	}
 	if maxAttempts > 1 {
 		if !p.retryBudget.ObserveOriginal(request.Context(), appID) {
 			maxAttempts = 1
+			recordTrafficRetryStop(request.Context(), RetrySkipAggregate)
 			p.metrics.IncRetryExhausted(RetrySkipAggregate)
 		}
 	}
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		endpoint, ok := p.pick(appID, endpoints)
+		if len(endpoints) > 0 {
+			recordTrafficCircuit(request.Context(), ok)
+		}
 		if !ok {
+			if len(endpoints) > 0 {
+				recordTrafficRefusal(request.Context(), "circuit")
+			}
 			if attempt > 0 {
+				recordTrafficRetryStop(request.Context(), RetrySkipNoTarget)
 				p.metrics.IncRetryExhausted(RetrySkipNoTarget)
 			}
 			serviceProxyProblem(w, http.StatusServiceUnavailable, "service has no healthy replicas")
@@ -1467,6 +1491,7 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 			var err error
 			forwardReq, err = replayRequest(request)
 			if err != nil {
+				recordTrafficRetryStop(request.Context(), RetrySkipBodyNotReplay)
 				p.metrics.IncRetryExhausted(RetrySkipBodyNotReplay)
 				return
 			}
@@ -1480,6 +1505,7 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 		// withStaleTargetSignal intentionally inherits the inbound request
 		// context so the bridge can report a stale target to this retry loop.
 		forwardReq = forwardReq.WithContext(withStaleTargetSignal(forwardReq.Context(), signal)) //nolint:contextcheck // request context is deliberately wrapped with request-local stale-target state.
+		recordTrafficAttempt(forwardReq.Context())
 		p.forward(serviceEndpointTarget(appID, endpoint)).ServeHTTP(buffer, forwardReq)
 		if attempt > 0 && forwardReq.Body != nil {
 			_ = forwardReq.Body.Close()
@@ -1500,11 +1526,13 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 			return
 		}
 		if buffer.committed {
+			recordTrafficRetryStop(request.Context(), RetrySkipCommitted)
 			p.metrics.IncRetryExhausted(RetrySkipCommitted)
 			buffer.commitTrailers()
 			return
 		}
 		if attempt+1 >= maxAttempts {
+			recordTrafficRetryStop(request.Context(), RetrySkipAttempts)
 			p.metrics.IncRetryExhausted(RetrySkipAttempts)
 			buffer.commit()
 			buffer.commitTrailers()
@@ -1517,23 +1545,27 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 			remaining = deadline.Sub(p.now())
 		}
 		if remaining < policy.MinRemaining {
+			recordTrafficRetryStop(request.Context(), RetrySkipBudget)
 			p.metrics.IncRetryExhausted(RetrySkipBudget)
 			buffer.commit()
 			buffer.commitTrailers()
 			return
 		}
 		if !p.retryBudget.AllowRetry(request.Context(), appID, policy.BudgetPercent, policy.BudgetMinRetries) {
+			recordTrafficRetryStop(request.Context(), RetrySkipAggregate)
 			p.metrics.IncRetryExhausted(RetrySkipAggregate)
 			buffer.commit()
 			buffer.commitTrailers()
 			return
 		}
 		if policy.Backoff > 0 {
+			stopBackoff := measureTrafficPhase(request.Context(), trafficBackoff)
 			timer := time.NewTimer(policy.Backoff)
 			select {
 			case <-timer.C:
 			case <-request.Context().Done():
 				timer.Stop()
+				stopBackoff()
 				if handleForwardRequestCancellation(w, request, !buffer.committed) {
 					return
 				}
@@ -1542,6 +1574,7 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 				return
 			}
 			timer.Stop()
+			stopBackoff()
 		}
 	}
 }

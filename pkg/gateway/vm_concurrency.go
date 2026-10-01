@@ -418,6 +418,7 @@ func (m *vmConcurrencyManager) acquire(ctx context.Context, instanceID, plan str
 // picks again so a request queued behind the first restored VM can move to a
 // sibling as soon as that sibling becomes ready.
 func (h *Handler) acquireVMTarget(ctx context.Context, app App, pick PickResult, perVM int, deploymentID, versionKey string) (PickResult, func(), bool, error) {
+	defer measureTrafficPhase(ctx, trafficCapacity)()
 	if h == nil || h.backend == nil || h.vmConcurrency == nil || perVM <= 0 || !pick.OK || pick.Target.InstanceID == "" {
 		return pick, func() {}, false, nil
 	}

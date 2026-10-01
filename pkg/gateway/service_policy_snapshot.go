@@ -35,6 +35,7 @@ func (p *ServiceProxy) pinServicePolicy(w http.ResponseWriter, r *http.Request, 
 	if p.policy == nil {
 		return false
 	}
+	defer measureTrafficPhase(r.Context(), trafficPolicy)()
 	ctx, cancel := context.WithTimeout(r.Context(), api.TrafficServicePolicyReadTimeout)
 	snapshot, err := p.policy(ctx, caller, service, alias)
 	if err == nil {
@@ -48,6 +49,7 @@ func (p *ServiceProxy) pinServicePolicy(w http.ResponseWriter, r *http.Request, 
 		selectServiceSnapshotDeployment(r.Context(), &snapshot)
 	}
 	if err != nil {
+		recordTrafficRefusal(r.Context(), "policy_unavailable")
 		if handleForwardRequestCancellation(w, r, true) {
 			return true
 		}
@@ -63,6 +65,7 @@ func (p *ServiceProxy) pinServicePolicy(w http.ResponseWriter, r *http.Request, 
 		Retry           RetryPolicy
 	}{caller, service, alias, snapshot, p.retryPolicy})
 	if err != nil {
+		recordTrafficRefusal(r.Context(), "policy_unavailable")
 		serviceProxyProblem(w, http.StatusServiceUnavailable, "service policy snapshot is unavailable")
 		return true
 	}

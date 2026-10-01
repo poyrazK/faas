@@ -30,6 +30,7 @@ func (h *Handler) publicRoutingWakeMaximum(app App, routing PublicRoutingSnapsho
 // waits for that generation, then starts its own only if still cold. The outer
 // allowance covers all generations; joining another cohort never resets it.
 func (h *Handler) wakePublicDeployment(ctx context.Context, app App, deployment, scope, trigger string, maximum int) (string, WakeMethod, bool, error) {
+	defer measureTrafficPhase(ctx, trafficWake)()
 	policy := WakeAdmissionPolicyForAppWithWakeLimits(app.Plan, app.ConcurrencyOverflow, app.MaxQueueWaitMS, app.WakeMaxQueueDepth, app.WakeMaxQueueWaitSeconds)
 	waitCtx, cancel := context.WithTimeout(ctx, policy.MaxWait)
 	defer cancel()
