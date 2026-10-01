@@ -286,7 +286,7 @@ func (b *Builder) BuildFullRootfs(ctx context.Context, in BuildFullRootfsInput) 
 		if err != nil {
 			return BuildResult{}, fmt.Errorf("rootfs: open layer 0: %w", err)
 		}
-		err = ApplyLayerGzWithResolver(staging, f, nil)
+		err = ApplyLayerGzWithResolver(staging, forwardLayerVerification(f, in.Layers[0]), nil)
 		_ = f.Close()
 		if err != nil {
 			return BuildResult{}, fmt.Errorf("rootfs: apply layer 0 (pre-parse): %w", err)
@@ -303,7 +303,7 @@ func (b *Builder) BuildFullRootfs(ctx context.Context, in BuildFullRootfsInput) 
 		if err != nil {
 			return BuildResult{}, fmt.Errorf("rootfs: reopen layer 0: %w", err)
 		}
-		err = ApplyLayerGzWithResolver(staging, f, resolver)
+		err = ApplyLayerGzWithResolver(staging, forwardLayerVerification(f, in.Layers[0]), resolver)
 		_ = f.Close()
 		if err != nil {
 			return BuildResult{}, fmt.Errorf("rootfs: apply layer 0 (resolved): %w", err)

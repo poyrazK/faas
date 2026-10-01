@@ -123,8 +123,8 @@ expiry. Native admission must require those proofs. Live revalidation must use
 the retained immutable subject rather than the customer's mutable tag. Source
 builds need scoped source/rootfs evidence from an explicitly approved build
 publisher; the platform signer is not automatically an approved company key.
-Complete converted-rootfs lineage, current scan and native-consumer bindings
-remain pending, and public standard activation stays disabled.
+Complete two-drive lineage, current scan and native-consumer bindings remain
+pending, and public standard activation stays disabled.
 
 Registry verification now retains the exact signed payload and DER signature in
 private immutable deployment/workload records. The store rechecks cryptography
@@ -150,24 +150,49 @@ metadata. The producer expiry cannot extend its parent verification. Exact ID
 retries preserve the original evidence and cannot reactivate an older selection.
 Failed transactions publish neither producer selection nor deployment metadata.
 
+Registry resolution now retains the exact signed source/index, selected child
+and config bytes in private immutable verification records. Storage recomputes
+their SHA-256 and descriptor sizes, independently selects the compatible child,
+and validates the ordered layer descriptors and config DiffIDs. Direct manifests
+retain a single source buffer. Raw image config may contain image environment
+values; preflight JSON excludes retained evidence, and these private records must
+not be exposed by public responses or logs. Registry limits are 8 MiB per
+manifest, 1 MiB per config, 1,024 layers, 16 GiB per compressed layer and 64 GiB
+per uncompressed layer, centralized in `pkg/api/limits.go`. Config readers reject
+overflow and trailing JSON rather than accepting a prefix. Converted app layers
+still obey their creating account's plan limit.
+
+Conversion wraps the actual registry layer streams with compressed SHA-256/size
+and uncompressed DiffID verification. Tar end-of-archive alone cannot produce
+evidence: layer application drains through gzip CRC/footer and both byte-stream
+ends before mkfs. The full-rootfs first-layer spool preserves the verifier during
+its resolver replay. Main two-drive conversions retain the exact above-base
+suffix and its original positions, including repeated DiffIDs; full-rootfs and
+sidecar conversions retain all layers. A builder that skips consumption cannot
+publish a verified producer. Storage matches each ordered consumption fact to
+the immutable signed chain before atomically selecting the converted artifact.
+Optional JSON fields preserve existing record hashes; older records remain
+historical and acquire no image-chain or native authority.
+
 This is a producer boundary under the existing imaged/database writer trust
-model. It does not independently prove the signed index-to-child/config/layer
-descriptor chain, uncompressed DiffIDs, the shared drive0 base, a source-build
-publisher, current workload scans or native consumption. Artifact keys remain
-mutable; later consumers must freshly validate the selected expected digest and
-size. Existing admission captures do not yet include these producer identities.
-Historical current-selection reads may return expired or revoked evidence and
-must not be treated as runtime authority or observed adoption. Public activation
-and the remaining acceptance gates stay pending.
+model. The signed metadata chain and consumed layer suffix do not prove the
+physical shared drive0 base, a source-build publisher, current workload scans or
+native consumption. Artifact keys remain mutable; later consumers must freshly
+validate the selected expected digest and size. Existing admission captures do
+not yet include these producer identities. Historical current-selection reads
+may return expired or revoked evidence and must not be treated as runtime
+authority or observed adoption. Public activation and the remaining acceptance
+gates stay pending.
 
 Historical record retrieval deliberately does not assert current approval or
 freshness: it retains the immutable source needed for a future refresh, including
-after key revocation or expiry. These records do not independently authenticate
-the index-to-child mapping, converted ext4 bytes, source-build publisher or scan.
-Those require the next artifact binding and native-admission work. Raw inserts
-and mutations are guarded against accidental alternate writers; the trusted
-imaged/database writer boundary is not a cryptographic database attestation.
-Parent erasure cascades delete the retained evidence.
+after key revocation or expiry. Retained metadata can authenticate the
+index-to-child mapping, but historical reads do not freshly check mutable stored
+ext4 bytes, current publisher approval or scans. Those require consumer binding
+and native-admission work. Raw inserts and mutations are guarded against
+accidental alternate writers; the trusted imaged/database writer boundary is
+not a cryptographic database attestation. Parent erasure cascades delete the
+retained evidence.
 
 ## Acceptance checklist
 

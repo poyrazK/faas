@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/imagechain"
 	"github.com/onebox-faas/faas/pkg/imagepublisher"
 	"github.com/onebox-faas/faas/pkg/ociref"
 )
@@ -34,6 +35,7 @@ type DeploymentRegistryVerificationInput struct {
 	SelectedReference string                             `json:"selected_reference"`
 	SelectedDigest    string                             `json:"selected_digest"`
 	Proof             imagepublisher.ImageSignatureProof `json:"proof"`
+	ImageChain        *imagechain.Evidence               `json:"image_chain,omitempty"`
 }
 
 type DeploymentRegistryVerificationStore interface {
@@ -72,11 +74,17 @@ func prepareRegistryVerification(in DeploymentRegistryVerificationInput) (Deploy
 		in.OrgID = canonicalStandardUUID(in.OrgID)
 	}
 	in = cloneRegistryVerificationInput(in)
+	if in.ImageChain != nil {
+		if _, err := imagechain.Validate(in.ImageChain, in.Proof.SubjectDigest, in.SelectedDigest); err != nil {
+			return in, "", ErrInvalidArgument
+		}
+	}
 	hash, err := standardReviewDigest(in)
 	return in, hash, err
 }
 
 func cloneRegistryVerificationInput(in DeploymentRegistryVerificationInput) DeploymentRegistryVerificationInput {
+	in.ImageChain = in.ImageChain.Clone()
 	if in.Proof.Evidence != nil {
 		in.Proof.Evidence = &imagepublisher.ImageSignatureEvidence{Payload: append([]byte(nil), in.Proof.Evidence.Payload...), Signature: append([]byte(nil), in.Proof.Evidence.Signature...)}
 	}

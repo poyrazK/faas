@@ -190,8 +190,15 @@ func (r *rawConfig) validate() error {
 // consumer-facing struct (oci.Config or oci.ImageConfig).
 func decodeRaw(r io.Reader) (*rawConfig, error) {
 	var raw rawConfig
-	if err := json.NewDecoder(r).Decode(&raw); err != nil {
+	decoder := json.NewDecoder(r)
+	if err := decoder.Decode(&raw); err != nil {
 		return nil, fmt.Errorf("oci: parse config: %w", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err == nil {
+		return nil, fmt.Errorf("oci: config contains trailing JSON or data")
+	} else if err != io.EOF {
+		return nil, fmt.Errorf("oci: finish config read: %w", err)
 	}
 	return &raw, nil
 }

@@ -557,7 +557,14 @@ func (c *RegistryClient) fetchBlobWithAuth(ctx context.Context, r Reference, dig
 		return nil, err
 	}
 	defer func() { _ = rc.Close() }()
-	return io.ReadAll(io.LimitReader(rc, 1<<20)) // 1 MiB cap — config blobs are tiny
+	body, err := io.ReadAll(io.LimitReader(rc, api.OCIConfigMaxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > api.OCIConfigMaxBytes {
+		return nil, fmt.Errorf("%w: config exceeds size limit", ErrImageManifestInvalid)
+	}
+	return body, nil
 }
 
 // fetchBlobStream opens a blob as a streaming ReadCloser. The caller is

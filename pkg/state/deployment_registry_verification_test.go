@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/imagechain"
 	"github.com/onebox-faas/faas/pkg/imagepublisher"
 )
 
@@ -37,6 +38,9 @@ func (p registryEvidencePuller) FetchSignatureAttachments(context.Context, strin
 }
 
 func registryVerificationFixture(t *testing.T, s registryVerificationTestStore, sidecar bool) (DeploymentRegistryVerificationInput, App, Deployment) {
+	return registryVerificationFixtureWithChain(t, s, sidecar, nil)
+}
+func registryVerificationFixtureWithChain(t *testing.T, s registryVerificationTestStore, sidecar bool, chain *imagechain.Evidence) (DeploymentRegistryVerificationInput, App, Deployment) {
 	t.Helper()
 	owner, err := s.CreateAccountWithPersonalOrg(t.Context(), CreateAccountWithPersonalOrgParams{Email: uuid.NewString() + "@example.com", Plan: api.PlanPro})
 	if err != nil {
@@ -72,6 +76,14 @@ func registryVerificationFixture(t *testing.T, s registryVerificationTestStore, 
 	// A caller cannot alter a current stored key through its upload buffer.
 	der[0] ^= 1
 	subject := "sha256:" + strings.Repeat("a", 64)
+	selected := "sha256:" + strings.Repeat("b", 64)
+	if chain != nil {
+		subject = imagechain.Digest(chain.SourceManifest)
+		selected = subject
+		if len(chain.SelectedManifest) > 0 {
+			selected = imagechain.Digest(chain.SelectedManifest)
+		}
+	}
 	payload := []byte(fmt.Sprintf(`{"critical":{"identity":{"docker-reference":"registry.example/team/service"},"image":{"docker-manifest-digest":%q},"type":"cosign container image signature"}}`, subject))
 	sum := sha256.Sum256(payload)
 	signature, err := ecdsa.SignASN1(rand.Reader, key, sum[:])
@@ -86,7 +98,7 @@ func registryVerificationFixture(t *testing.T, s registryVerificationTestStore, 
 	}
 	repo := strings.TrimSuffix(image, ":latest")
 	return DeploymentRegistryVerificationInput{ID: uuid.NewString(), AccountID: app.AccountID, OrgID: app.OrgID, AppID: app.ID, DeploymentID: dep.ID,
-		WorkloadName: workload, ImageReference: image, SourceReference: repo + "@" + subject, SelectedReference: repo + "@sha256:" + strings.Repeat("b", 64), SelectedDigest: "sha256:" + strings.Repeat("b", 64), Proof: proof}, app, dep
+		WorkloadName: workload, ImageReference: image, SourceReference: repo + "@" + subject, SelectedReference: repo + "@" + selected, SelectedDigest: selected, Proof: proof, ImageChain: chain}, app, dep
 }
 
 func registryVerificationLifecycle(t *testing.T, s registryVerificationTestStore) {

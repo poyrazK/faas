@@ -50,7 +50,7 @@ func (m *MemStore) PublishDeploymentRegistryRootfs(ctx context.Context, input De
 		if !registryRootfsMatchesMetadata(old, dep, layer, parent) {
 			return DeploymentRegistryRootfs{}, ErrApplicationStandardRuntimeStale
 		}
-		return old, nil
+		return cloneRegistryRootfs(old), nil
 	}
 	value := DeploymentRegistryRootfs{ID: in.ID, Input: in, InputHash: hash, PublishedAt: now, ExpiresAt: parent.ExpiresAt}
 	if m.deploymentRegistryRootfs == nil {
@@ -73,7 +73,7 @@ func (m *MemStore) PublishDeploymentRegistryRootfs(ctx context.Context, input De
 	}
 	m.deploymentRegistryRootfs[in.ID] = value
 	m.deploymentRegistryRootfsCurrent[pointer] = in.ID
-	return value, nil
+	return cloneRegistryRootfs(value), nil
 }
 
 func (m *MemStore) GetCurrentDeploymentRegistryRootfs(ctx context.Context, accountID, appID, depID, workload string) (DeploymentRegistryRootfs, error) {
@@ -106,5 +106,5 @@ func (m *MemStore) GetCurrentDeploymentRegistryRootfs(ctx context.Context, accou
 	if err := validateRegistryRootfsStored(value); err != nil {
 		return DeploymentRegistryRootfs{}, err
 	}
-	return value, nil
+	return cloneRegistryRootfs(value), nil
 }

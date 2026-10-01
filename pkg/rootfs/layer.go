@@ -229,7 +229,37 @@ func applyLayerGz(dst string, r io.Reader, opts layerApplyOptions) error {
 		return fmt.Errorf("rootfs: gzip: %w", err)
 	}
 	defer func() { _ = zr.Close() }()
-	return applyLayer(dst, tar.NewReader(zr), opts)
+	var uncompressed io.Reader = zr
+	if verifier, ok := r.(layerUncompressedVerifier); ok {
+		uncompressed = verifier.VerifyingUncompressedReader(zr)
+	}
+	if err := applyLayer(dst, tar.NewReader(uncompressed), opts); err != nil {
+		return err
+	}
+	// Tar EOF can precede gzip CRC/footer and the compressed blob's EOF.
+	// Finish both before allowing mkfs or returning verified consumption.
+	if _, err := io.Copy(io.Discard, uncompressed); err != nil {
+		return fmt.Errorf("rootfs: complete gzip layer: %w", err)
+	}
+	if _, err := io.Copy(io.Discard, r); err != nil {
+		return fmt.Errorf("rootfs: complete compressed layer: %w", err)
+	}
+	return nil
+}
+
+type layerUncompressedVerifier interface {
+	VerifyingUncompressedReader(io.Reader) io.Reader
+}
+type forwardedLayerVerifier struct {
+	io.Reader
+	layerUncompressedVerifier
+}
+
+func forwardLayerVerification(reader, source io.Reader) io.Reader {
+	if verifier, ok := source.(layerUncompressedVerifier); ok {
+		return forwardedLayerVerifier{reader, verifier}
+	}
+	return reader
 }
 
 const (

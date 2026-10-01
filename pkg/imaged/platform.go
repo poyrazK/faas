@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/cosign"
+	"github.com/onebox-faas/faas/pkg/imagechain"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -18,6 +19,8 @@ import (
 type preparedContainerWorkload struct {
 	oci.ImageResolution
 	Verification state.DeploymentRegistryVerification
+	LayerStart   int
+	Layers       []imagechain.LayerConsumption
 }
 
 // A signed source may be an index. Every executable read must use its resolved
@@ -80,6 +83,7 @@ func (h *Handler) recordContainerWorkloadSignature(ctx context.Context, app stat
 		ID: uuid.NewString(), AccountID: app.AccountID, OrgID: app.OrgID, AppID: app.ID, DeploymentID: dep.ID,
 		WorkloadName: workload, ImageReference: ref, SourceReference: selected.SourceReference,
 		SelectedReference: selected.Reference, SelectedDigest: selected.Digest, Proof: proof,
+		ImageChain: selected.Evidence,
 	})
 	if err != nil {
 		if errors.Is(err, cosign.ErrSignatureInvalid) {

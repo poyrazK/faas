@@ -35,8 +35,8 @@ func platformIndex(t *testing.T, mediaType string, entries ...platformDescriptor
 
 func platformImage(t *testing.T, arch string) (platformDescriptor, []byte, []byte, []byte) {
 	t.Helper()
-	config := []byte(fmt.Sprintf(`{"os":"linux","architecture":%q,"config":{"Cmd":["./app"]}}`, arch))
 	layer := []byte("layer-" + arch)
+	config := []byte(fmt.Sprintf(`{"os":"linux","architecture":%q,"rootfs":{"type":"layers","diff_ids":[%q]},"config":{"Cmd":["./app"]}}`, arch, imageContentDigest(layer)))
 	body, err := json.Marshal(Manifest{SchemaVersion: 2, MediaType: testImageMediaType,
 		Config: Descriptor{Digest: imageContentDigest(config), Size: int64(len(config))},
 		Layers: []Descriptor{{Digest: imageContentDigest(layer), Size: int64(len(layer))}}})

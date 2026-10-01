@@ -6,6 +6,7 @@
 package imaged
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -2278,7 +2279,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		// ghcr.io/onebox-faas/...). Production RegistryClient
 		// satisfies AuthManifestPuller so both paths carry the
 		// correct auth shape.
-		above, diffs, err := h.aboveBaseLayers(ctx, mp, ref, app.Runtime, manifest, appAuth)
+		above, diffs, err := h.aboveBaseLayersVerified(ctx, mp, ref, app.Runtime, manifest, appAuth, prepared)
 		fullRootfsDispatched := false
 		if err != nil {
 			// ADR-141 §Decision 3 + §Decision 2: when the app image is
@@ -2348,6 +2349,11 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 			// is logged at WARN and the build still succeeds (the SBOM
 			// is observational metadata, schema §4.2).
 			h.updateBuildProvenanceSBOM(ctx, dep.ID, result.SBOMKey)
+			prepared, err = consumedContainerLayers(prepared, above.readers, above.start)
+			if err != nil {
+				_ = h.markDeployFailed(ctx, dep.ID, err, "verify consumed app layers")
+				return err
+			}
 			if err := h.publishContainerRootfs(ctx, app, dep, prepared, "", "app-layer", appsKey, result); err != nil {
 				_ = h.markDeployFailed(ctx, dep.ID, err, "stamp rootfs")
 				return fmt.Errorf("imaged: stamp rootfs: %w", err)
@@ -2377,11 +2383,17 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		// Issue #461 / ADR-062: mark credential used after a
 		// successful M5 fallback layer pull.
 		h.markRegistryCredentialUsed(ctx, app, refHost, appAuth)
+		layerClosers := pulled.Layers
 		defer func() {
-			for _, r := range pulled.Layers {
+			for _, r := range layerClosers {
 				_ = r.Close()
 			}
 		}()
+		pulled.Layers, err = wrapContainerLayerReaders(ctx, prepared, pulled.Layers, 0)
+		if err != nil {
+			_ = h.markDeployFailed(ctx, dep.ID, err, "verify app image chain")
+			return err
+		}
 		result, err := h.builder.Build(ctx, rootfs.BuildInput{
 			Layers:        layersAsReaders(pulled.Layers),
 			Manifest:      manifest,
@@ -2399,6 +2411,11 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 			return fmt.Errorf("imaged: build app layer: %w", err)
 		}
 		h.updateBuildProvenanceSBOM(ctx, dep.ID, result.SBOMKey)
+		prepared, err = consumedContainerLayers(prepared, layersAsReaders(pulled.Layers), 0)
+		if err != nil {
+			_ = h.markDeployFailed(ctx, dep.ID, err, "verify consumed app layers")
+			return err
+		}
 		if err := h.publishContainerRootfs(ctx, app, dep, prepared, "", "app-layer", appsKey, result); err != nil {
 			_ = h.markDeployFailed(ctx, dep.ID, err, "stamp rootfs")
 			return fmt.Errorf("imaged: stamp rootfs: %w", err)
@@ -2549,11 +2566,17 @@ func (h *Handler) buildSidecarLayers(ctx context.Context, app state.App, dep sta
 			_ = h.markDeployFailed(ctx, dep.ID, err, fmt.Sprintf("sidecar %q pull", sc.Name))
 			return findings, fmt.Errorf("imaged: sidecar %q pull: %w", sc.Name, err)
 		}
+		layerClosers := pulled.Layers
 		defer func() {
-			for _, r := range pulled.Layers {
+			for _, r := range layerClosers {
 				_ = r.Close()
 			}
 		}()
+		pulled.Layers, err = wrapContainerLayerReaders(ctx, selected, pulled.Layers, 0)
+		if err != nil {
+			_ = h.markDeployFailed(ctx, dep.ID, err, "verify sidecar image chain")
+			return findings, err
+		}
 		be, err := h.storageFor()
 		if err != nil {
 			_ = h.markDeployFailed(ctx, dep.ID, err, "sidecar storage init")
@@ -2582,6 +2605,11 @@ func (h *Handler) buildSidecarLayers(ctx context.Context, app state.App, dep sta
 		if err != nil {
 			_ = h.markDeployFailed(ctx, dep.ID, err, fmt.Sprintf("sidecar %q build", sc.Name))
 			return findings, fmt.Errorf("imaged: sidecar %q build: %w", sc.Name, err)
+		}
+		selected, err = consumedContainerLayers(selected, layersAsReaders(pulled.Layers), 0)
+		if err != nil {
+			_ = h.markDeployFailed(ctx, dep.ID, err, "verify consumed sidecar layers")
+			return findings, err
 		}
 		if err := h.publishContainerRootfs(ctx, app, dep, selected, sc.Name, "sidecar-layer", layerKey, result); err != nil {
 			_ = h.markDeployFailed(ctx, dep.ID, err, fmt.Sprintf("sidecar %q stamp", sc.Name))
@@ -4095,7 +4123,8 @@ func (h *Handler) markFailedOnUnhandledError(ctx context.Context, depID string, 
 // closed by the caller in a defer so streaming ReadClosers don't leak.
 type aboveBaseStream struct {
 	readers []io.Reader
-	closers []io.Closer
+	closers []io.ReadCloser
+	start   int
 }
 
 // aboveBaseLayers is the M6 two-drive seam: given the app's image ref + runtime,
@@ -4120,101 +4149,85 @@ type aboveBaseStream struct {
 // ignored).
 func (h *Handler) aboveBaseLayers(ctx context.Context, mp oci.ManifestPuller,
 	appRef, runtime string, _ api.AppManifest, appAuth *oci.BasicAuth) (aboveBaseStream, []string, error) {
-	appRepo := repoWithHost(appRef)
-	if appRepo == "" {
-		return aboveBaseStream{}, nil, fmt.Errorf("imaged: cannot derive repo from %q", appRef)
-	}
+	return h.aboveBaseLayersVerified(ctx, mp, appRef, runtime, api.AppManifest{}, appAuth, preparedContainerWorkload{})
+}
+func (h *Handler) aboveBaseLayersVerified(ctx context.Context, mp oci.ManifestPuller,
+	appRef, runtime string, _ api.AppManifest, appAuth *oci.BasicAuth, prepared preparedContainerWorkload) (aboveBaseStream, []string, error) {
 	start := time.Now()
-	appManifest, err := pullManifestWithAuth(ctx, mp, appRef, appAuth)
-	h.ops.ObserveImagedOCIPull("manifest", pullResult(err), time.Since(start))
+	descriptors, above, baseCount, err := h.aboveBaseLayerSelection(ctx, mp, appRef, runtime, appAuth)
 	if err != nil {
-		return aboveBaseStream{}, nil, fmt.Errorf("manifest: %w", err)
+		return aboveBaseStream{}, nil, err
 	}
-	appCfg, err := h.pullConfig(ctx, mp, appRepo, appManifest.Config.Digest, appAuth)
-	if err != nil {
-		return aboveBaseStream{}, nil, fmt.Errorf("app config: %w", err)
-	}
-	baseRef := h.deployBaseRefOverride
-	if baseRef == "" {
-		// Per-runtime env var (FAAS_DEPLOY_BASE_REF_<RUNTIME>) is the
-		// production contract. The retired single-string global
-		// FAAS_DEPLOY_BASE_REF is rejected by cmd/imaged/main.go.
-		// Matches the posture of EnsureBases (startup auto-stage).
-		// Unknown runtimes
-		// fall through to baseRefFor's default (BaseRefMinimal for
-		// the "" / customer-uploaded-image case). Same
-		// digest-pin validation as the row-level override gate.
-		resolved, err := resolveDeployBaseRef(runtime, os.Getenv)
+	closers := make([]io.ReadCloser, 0, len(descriptors))
+	for _, desc := range descriptors {
+		pullStart := time.Now()
+		rc, err := pullBlobWithAuth(ctx, mp, repoWithHost(appRef), desc.Digest, appAuth)
+		h.ops.ObserveImagedOCIPull("blob", pullResult(err), time.Since(pullStart))
 		if err != nil {
-			return aboveBaseStream{}, nil, err
-		}
-		baseRef = resolved
-	}
-	baseRepo := repoWithHost(baseRef)
-	if baseRepo == "" {
-		return aboveBaseStream{}, nil, fmt.Errorf("imaged: cannot derive repo from base %q", baseRef)
-	}
-	start = time.Now()
-	// Base manifest stays anonymous — the base is always public
-	// (ghcr.io/onebox-faas/...). Mismatched auth on a public
-	// base pull would break the build path (the base has no
-	// realm challenge, so the realm endpoint would 401).
-	baseManifest, err := pullManifestWithAuth(ctx, mp, baseRef, nil)
-	h.ops.ObserveImagedOCIPull("manifest", pullResult(err), time.Since(start))
-	if err != nil {
-		return aboveBaseStream{}, nil, fmt.Errorf("base manifest: %w", err)
-	}
-	baseCfg, err := h.pullConfig(ctx, mp, baseRepo, baseManifest.Config.Digest, nil)
-	if err != nil {
-		return aboveBaseStream{}, nil, fmt.Errorf("base config: %w", err)
-	}
-	above, err := oci.LayersAboveBase(baseCfg.DiffIDs, appCfg.DiffIDs)
-	if err != nil {
-		return aboveBaseStream{}, nil, fmt.Errorf("layers above base: %w", err)
-	}
-
-	// Map diff_ids → compressed-blob digest. The manifest's `layers[]` lists
-	// compressed blobs in the same bottom-to-top order as config.diff_ids.
-	if len(appManifest.Layers) != len(appCfg.DiffIDs) {
-		return aboveBaseStream{}, nil, fmt.Errorf("layer count mismatch: manifest=%d config=%d",
-			len(appManifest.Layers), len(appCfg.DiffIDs))
-	}
-	blobByDiff := make(map[string]oci.Descriptor, len(appManifest.Layers))
-	for i, l := range appManifest.Layers {
-		blobByDiff[appCfg.DiffIDs[i]] = l
-	}
-
-	readers := make([]io.Reader, 0, len(above))
-	closers := make([]io.Closer, 0, len(above))
-	for _, diffID := range above {
-		desc, ok := blobByDiff[diffID]
-		if !ok {
-			// Roll back any readers we already opened.
-			for _, c := range closers {
-				_ = c.Close()
-			}
-			return aboveBaseStream{}, nil, fmt.Errorf("imaged: missing blob for diff %s", diffID)
-		}
-		start = time.Now()
-		rc, err := pullBlobWithAuth(ctx, mp, appRepo, desc.Digest, appAuth)
-		h.ops.ObserveImagedOCIPull("blob", pullResult(err), time.Since(start))
-		if err != nil {
-			for _, c := range closers {
-				_ = c.Close()
-			}
+			closeContainerLayers(closers)
 			return aboveBaseStream{}, nil, fmt.Errorf("pull blob %s: %w", desc.Digest, err)
 		}
 		closers = append(closers, rc)
-		readers = append(readers, rc)
 	}
-	// One observation per above-base resolution completing — feeds the
-	// "above_base" bucket of the histogram (the §12 dashboard's
-	// "above-base resolved" panel). Result is "ok" when at least one
-	// layer was streamed; an empty above (zero new layers) still counts
-	// as "ok" — that's the steady-state case where the deploy matches
-	// the base exactly.
+	verified, err := wrapContainerLayerReaders(ctx, prepared, closers, baseCount)
+	if err != nil {
+		closeContainerLayers(closers)
+		return aboveBaseStream{}, nil, err
+	}
+	// Zero above-base layers is a successful resolution as well.
 	h.ops.ObserveImagedOCIPull("above_base", "ok", time.Since(start))
-	return aboveBaseStream{readers: readers, closers: closers}, above, nil
+	return aboveBaseStream{readers: layersAsReaders(verified), closers: closers, start: baseCount}, above, nil
+}
+
+func (h *Handler) aboveBaseLayerSelection(ctx context.Context, mp oci.ManifestPuller, appRef, runtime string, appAuth *oci.BasicAuth) ([]oci.Descriptor, []string, int, error) {
+	appRepo := repoWithHost(appRef)
+	if appRepo == "" {
+		return nil, nil, 0, fmt.Errorf("imaged: cannot derive repo from %q", appRef)
+	}
+	appManifest, appCfg, err := h.pullManifestConfig(ctx, mp, appRef, appRepo, "app", appAuth)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	baseRef := h.deployBaseRefOverride
+	if baseRef == "" {
+		baseRef, err = resolveDeployBaseRef(runtime, os.Getenv)
+		if err != nil {
+			return nil, nil, 0, err
+		}
+	}
+	baseRepo := repoWithHost(baseRef)
+	if baseRepo == "" {
+		return nil, nil, 0, fmt.Errorf("imaged: cannot derive repo from base %q", baseRef)
+	}
+	// Public platform-base reads never receive customer registry credentials.
+	_, baseCfg, err := h.pullManifestConfig(ctx, mp, baseRef, baseRepo, "base", nil)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	above, err := oci.LayersAboveBase(baseCfg.DiffIDs, appCfg.DiffIDs)
+	if err != nil {
+		return nil, nil, 0, fmt.Errorf("layers above base: %w", err)
+	}
+	// Preserve manifest/config positions, including repeated DiffIDs.
+	if len(appManifest.Layers) != len(appCfg.DiffIDs) {
+		return nil, nil, 0, fmt.Errorf("layer count mismatch: manifest=%d config=%d",
+			len(appManifest.Layers), len(appCfg.DiffIDs))
+	}
+	return appManifest.Layers[len(baseCfg.DiffIDs):], above, len(baseCfg.DiffIDs), nil
+}
+
+func (h *Handler) pullManifestConfig(ctx context.Context, mp oci.ManifestPuller, ref, repo, label string, auth *oci.BasicAuth) (oci.Manifest, oci.Config, error) {
+	start := time.Now()
+	manifest, err := pullManifestWithAuth(ctx, mp, ref, auth)
+	h.ops.ObserveImagedOCIPull("manifest", pullResult(err), time.Since(start))
+	if err != nil {
+		return oci.Manifest{}, oci.Config{}, fmt.Errorf("%s manifest: %w", label, err)
+	}
+	config, err := h.pullConfig(ctx, mp, repo, manifest.Config.Digest, auth)
+	if err != nil {
+		return manifest, config, fmt.Errorf("%s config: %w", label, err)
+	}
+	return manifest, config, nil
 }
 
 // pullResult maps a non-nil error to "err"; nil to "ok". The histogram
@@ -4242,7 +4255,14 @@ func (h *Handler) pullConfig(ctx context.Context, mp oci.ManifestPuller, repo, d
 		return oci.Config{}, err
 	}
 	defer func() { _ = r.Close() }()
-	cfg, perr := oci.ParseConfig(r)
+	body, perr := io.ReadAll(io.LimitReader(r, api.OCIConfigMaxBytes+1))
+	if perr == nil && int64(len(body)) > api.OCIConfigMaxBytes {
+		perr = fmt.Errorf("%w: config exceeds size limit", oci.ErrImageManifestInvalid)
+	}
+	var cfg oci.Config
+	if perr == nil {
+		cfg, perr = oci.ParseConfig(bytes.NewReader(body))
+	}
 	res := pullResult(perr)
 	h.ops.ObserveImagedOCIPull("config", res, time.Since(start))
 	return cfg, perr
@@ -4792,7 +4812,7 @@ func (h *Handler) buildFullRootfsLayer(
 		return fmt.Errorf("imaged: full-rootfs image has zero layers")
 	}
 	readers := make([]io.Reader, 0, len(appManifest.Layers))
-	closers := make([]io.Closer, 0, len(appManifest.Layers))
+	closers := make([]io.ReadCloser, 0, len(appManifest.Layers))
 	for _, l := range appManifest.Layers {
 		start := time.Now()
 		rc, err := pullBlobWithAuth(ctx, mp, appRepo, l.Digest, appAuth)
@@ -4812,6 +4832,11 @@ func (h *Handler) buildFullRootfsLayer(
 		}
 	}()
 
+	verified, err := wrapContainerLayerReaders(ctx, prepared, closers, 0)
+	if err != nil {
+		return err
+	}
+	readers = layersAsReaders(verified)
 	be, err := h.storageFor()
 	if err != nil {
 		return fmt.Errorf("imaged: full-rootfs storage backend: %w", err)
@@ -4845,6 +4870,11 @@ func (h *Handler) buildFullRootfsLayer(
 		return fmt.Errorf("imaged: build full-rootfs: %w", err)
 	}
 	h.updateBuildProvenanceSBOM(ctx, dep.ID, res.SBOMKey)
+	prepared, err = consumedContainerLayers(prepared, readers, 0)
+	if err != nil {
+		_ = h.markDeployFailed(ctx, dep.ID, err, "verify consumed full-rootfs layers")
+		return err
+	}
 	if err := h.publishContainerRootfs(ctx, app, dep, prepared, "", "full-rootfs", appsKey, res); err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "stamp full-rootfs")
 		return fmt.Errorf("imaged: stamp full-rootfs: %w", err)

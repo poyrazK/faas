@@ -8,33 +8,37 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/imagechain"
 	"github.com/onebox-faas/faas/pkg/ociref"
 )
 
 // DeploymentRegistryRootfs binds a conversion's complete ext4 byte identity
 // to one exact storage-issued publisher verification. It is a producer record;
-// it does not establish a scan, descriptor/DiffID chain or native observation.
+// retained metadata and consumed layer suffixes establish image lineage when
+// present. The shared base, current scans and native observation remain separate.
 type DeploymentRegistryRootfs struct {
 	ID, InputHash          string
 	Input                  DeploymentRegistryRootfsInput
 	PublishedAt, ExpiresAt time.Time
 }
 type DeploymentRegistryRootfsInput struct {
-	ID                     string `json:"-"`
-	RegistryVerificationID string `json:"registry_verification_id"`
-	RegistryInputHash      string `json:"registry_input_hash"`
-	AccountID              string `json:"account_id"`
-	OrgID                  string `json:"org_id"`
-	AppID                  string `json:"app_id"`
-	DeploymentID           string `json:"deployment_id"`
-	WorkloadName           string `json:"workload_name"`
-	Scope                  string `json:"scope"`
-	Kind                   string `json:"kind"`
-	StorageKey             string `json:"storage_key"`
-	RootfsPath             string `json:"rootfs_path"`
-	ContentBytes           int64  `json:"content_bytes"`
-	ArtifactDigest         string `json:"artifact_digest"`
-	ArtifactBytes          int64  `json:"artifact_bytes"`
+	ID                     string                        `json:"-"`
+	RegistryVerificationID string                        `json:"registry_verification_id"`
+	RegistryInputHash      string                        `json:"registry_input_hash"`
+	AccountID              string                        `json:"account_id"`
+	OrgID                  string                        `json:"org_id"`
+	AppID                  string                        `json:"app_id"`
+	DeploymentID           string                        `json:"deployment_id"`
+	WorkloadName           string                        `json:"workload_name"`
+	Scope                  string                        `json:"scope"`
+	Kind                   string                        `json:"kind"`
+	StorageKey             string                        `json:"storage_key"`
+	RootfsPath             string                        `json:"rootfs_path"`
+	ContentBytes           int64                         `json:"content_bytes"`
+	ArtifactDigest         string                        `json:"artifact_digest"`
+	ArtifactBytes          int64                         `json:"artifact_bytes"`
+	LayerStart             int                           `json:"layer_start,omitempty"`
+	Layers                 []imagechain.LayerConsumption `json:"layers,omitempty"`
 }
 type DeploymentRegistryRootfsStore interface {
 	PublishDeploymentRegistryRootfs(context.Context, DeploymentRegistryRootfsInput) (DeploymentRegistryRootfs, error)
@@ -53,6 +57,10 @@ func prepareRegistryRootfs(in DeploymentRegistryRootfsInput) (DeploymentRegistry
 	if err := ociref.ValidateDigest(in.ArtifactDigest); err != nil {
 		return in, "", ErrInvalidArgument
 	}
+	if in.LayerStart < 0 || in.LayerStart > api.OCIImageMaxLayers || len(in.Layers) > api.OCIImageMaxLayers {
+		return in, "", ErrInvalidArgument
+	}
+	in.Layers = append([]imagechain.LayerConsumption(nil), in.Layers...)
 	switch in.Kind {
 	case "app-layer", "full-rootfs":
 		if in.WorkloadName != "" || in.RootfsPath == "" {
@@ -76,12 +84,24 @@ func checkRegistryRootfsParent(in DeploymentRegistryRootfsInput, parent Deployme
 		in.AppID != p.AppID || in.DeploymentID != p.DeploymentID || in.WorkloadName != p.WorkloadName || dep.Scope != in.Scope || !parent.ExpiresAt.After(now) {
 		return ErrApplicationStandardRuntimeStale
 	}
+	if p.ImageChain != nil {
+		image, err := imagechain.Validate(p.ImageChain, p.Proof.SubjectDigest, p.SelectedDigest)
+		if err != nil || in.Kind != "app-layer" && in.LayerStart != 0 || imagechain.ValidateConsumption(image, in.LayerStart, in.Layers) != nil {
+			return ErrApplicationStandardRuntimeStale
+		}
+	} else if in.LayerStart != 0 || len(in.Layers) != 0 {
+		return ErrInvalidArgument
+	}
 	switch dep.Status {
 	case DeployPending, DeployBuilding, DeployImaging, DeploySnapshotting:
 		return nil
 	default:
 		return ErrApplicationStandardRuntimeStale
 	}
+}
+func cloneRegistryRootfs(value DeploymentRegistryRootfs) DeploymentRegistryRootfs {
+	value.Input.Layers = append([]imagechain.LayerConsumption(nil), value.Input.Layers...)
+	return value
 }
 func registryRootfsMatchesMetadata(value DeploymentRegistryRootfs, dep Deployment, sidecar DeploymentSidecarLayer, parent DeploymentRegistryVerification) bool {
 	in := value.Input

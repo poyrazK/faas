@@ -68,16 +68,21 @@ const (
 	LocalOCIMaxLayers                       = 1024
 )
 
-// Publisher signature attachments are read before filesystem layers. These
-// bounds cover the supported keyed simple-signing format, not image quotas.
+// Registry image verification bounds both retained metadata and consumed layers.
+// Signature attachment bounds cover the supported keyed simple-signing format.
+// Final converted app layers remain subject to the creating account's plan.
 const (
-	OCIManifestMaxBytes            int64 = 8 << 20
-	ImageSignatureMaxManifestBytes int64 = 1 << 20
-	ImageSignatureMaxPayloadBytes  int64 = 64 << 10
-	ImageSignatureMaxEntries             = 64
-	ImageSignatureMaxDERBytes            = 80
-	ImageSignatureMaxJSONDepth           = 32
-	ImageSignatureVerificationTTL        = 24 * time.Hour
+	OCIManifestMaxBytes               int64 = 8 << 20
+	OCIConfigMaxBytes                 int64 = 1 << 20
+	OCIImageMaxLayers                       = 1024
+	OCIImageMaxCompressedLayerBytes   int64 = 16 << 30
+	OCIImageMaxUncompressedLayerBytes int64 = 64 << 30
+	ImageSignatureMaxManifestBytes    int64 = 1 << 20
+	ImageSignatureMaxPayloadBytes     int64 = 64 << 10
+	ImageSignatureMaxEntries                = 64
+	ImageSignatureMaxDERBytes               = 80
+	ImageSignatureMaxJSONDepth              = 32
+	ImageSignatureVerificationTTL           = 24 * time.Hour
 )
 
 // A restore hook is on the wake critical path. Keep its customer timeout
