@@ -13,20 +13,22 @@ Run on any supported development machine:
 make test-container-contract
 ```
 
-This runs image parsing/resolution, image preflight diagnostics, and deployment
-manifest override tests. It uses test fixtures rather than customer registry
+This runs image parsing/resolution, image preflight diagnostics, deployment
+manifest override tests, raw-ingress deployment selection and TCP/TLS socket
+lifecycle tests. It uses test fixtures rather than customer registry
 credentials. It verifies contract behavior, not native Firecracker execution.
 The gate derives required cases from Go's selected test sources, runs with race
 detection, and rejects any skipped test/subtest or missing required pass even
 when the test process exits successfully. New image-preflight tests are included
-automatically. Its latest local run passed all 148 selected portable contracts.
+automatically. Its latest local run passed all 187 selected portable contracts.
 The command first runs verifier regressions covering test-signature discovery,
 external test files, discovery failure, missing passes, skipped subtests, package
 failures and nonzero process exits. Test discovery accepts alternative parameter
 names and multiline signatures so formatting does not silently drop coverage.
 The main CI workflow runs this command in the dedicated
 `portable container contracts (strict)` job on its normal pull-request, push and
-merge-queue triggers, and retains `container-contract.log` even after failure.
+merge-queue triggers. It also runs the strict portable UDP verifier and retains
+`container-contract.log` and `udp-contract.log` even after failure.
 Workflow wiring is locally validated; no remote CI result is claimed until the
 changed branch runs there.
 
@@ -353,3 +355,16 @@ lint passed. The strict UDP gate passed 48 portable contracts, including the
 shared deployment selector. The native E2E suite cross-compiled for Linux/amd64.
 Native weighted canary/rollback, cold-bucket wake and recovery runs remain
 outstanding; portable evidence does not qualify them.
+
+Portable rollout socket coverage now switches durable traffic from a warm stable
+deployment to a cold candidate and back. It verifies exactly one cold admission,
+no additional warm/rollback admission, and continued deployment pinning for
+connections established before each traffic change. Five race-enabled runs
+passed. The strict container gate now discovers all TCP/TLS tests plus shared
+deployment selection tests and passed 187 required portable contracts; the
+strict UDP gate passed 48. Both run in the portable container CI job with
+retained logs. The checks job now renders the UDP deployment contract and runs
+UDP/TLS alert tests; local render/alert checks passed. Workflow structure
+validation passed. Full actionlint retains the same nine pre-existing ShellCheck
+findings as the unmodified workflow, with no new findings. No remote CI execution
+or native rollout qualification is claimed.

@@ -47,7 +47,7 @@ test-customer-platform: ## Run the two-customer starter acceptance with disposab
 	@GO="$(GO)" sh scripts/test-customer-platform.sh
 
 .PHONY: test-container-contract
-test-container-contract: ## Offline OCI resolution, container preflight, and deployment override contract checks (no KVM)
+test-container-contract: ## Portable OCI, container preflight, TCP/TLS lifecycle and deployment routing contracts (no KVM)
 	@python3 scripts/ci/container-contract-check_test.py
 	@GO="$(GO)" python3 scripts/ci/container-contract-check.py
 

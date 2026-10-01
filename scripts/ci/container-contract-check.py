@@ -9,6 +9,8 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 PACKAGES = {
+    "pkg/ingressroute": r"Test\w+",
+    "pkg/tcpd": r"Test\w+",
     "pkg/oci": r"Test\w+",
     "pkg/ociidentity": r"Test\w+",
     "pkg/e2etest": r"Test(?:Hello|ImageVariants|Portable|FakeRegistry)\w*",
