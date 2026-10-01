@@ -13,6 +13,8 @@ faas_tcpd_schedd_target: ''
 faas_tcpd_schedd_tls_ca_path: ''
 faas_tcpd_schedd_tls_cert_path: ''
 faas_tcpd_schedd_tls_key_path: ''
+# Operator-provisioned PEM bundles; empty keeps termination unconfigured.
+faas_tcpd_tls_cert_dir: ''
 faas_tcpd_vmmd_tls_ca_path: ''
 faas_tcpd_vmmd_tls_cert_path: ''
 faas_tcpd_vmmd_tls_key_path: ''

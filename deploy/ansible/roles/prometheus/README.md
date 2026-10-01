@@ -56,3 +56,7 @@ customer-workload path on app hostnames.
 The systemd unit is rendered as a template. This is required because its
 storage path, retention, and listen address are Jinja variables; copying the
 file verbatim leaves literal `{{ ... }}` arguments and causes a restart loop.
+
+## Raw TCP TLS certificate alerts
+
+The `faas_tcp_tls` group warns on unavailable enabled-listener certificates after five minutes and ready certificates within seven days of expiry after ten minutes. Expiry requires a positive ready-listener count. Metrics are aggregate per edge, without hostname labels, and report certificate material rather than public or workload availability. Both alerts link to the TCP ingress runbook. `make tcp-tls-alert-check` verifies failure, expiry, and normal scenarios.
