@@ -85,8 +85,9 @@ func (l *Loop) rescanLiveDeployment(ctx context.Context, app state.App, dep stat
 // reconcileSecurityLeases is the cheap safety net between full scanner runs.
 // A complete scan is evidence about one exact live deployment, not a permanent
 // allow-list. Once that evidence expires, or its digest/metadata no longer
-// matches the deployment row, enforce-mode traffic is parked before the next
-// request can use the stale app route. The scanner sweep remains responsible
+// matches the deployment row, the worker requests durable quarantine. Cached
+// routes and in-flight requests still require consumer revocation evidence.
+// The scanner sweep remains responsible
 // for refreshing otherwise-valid evidence and for discovering newly published
 // vulnerabilities.
 func (l *Loop) reconcileSecurityLeases(ctx context.Context, now time.Time, scanEvery time.Duration) {
@@ -113,19 +114,29 @@ func (l *Loop) reconcileSecurityLeases(ctx context.Context, now time.Time, scanE
 		if app.Status != state.AppActive || app.SecurityPolicy != api.AppSecurityPolicyEnforce {
 			continue
 		}
-		reason := securityScanLeaseFailure(dep, now.UTC(), scanEvery)
-		if reason == "" {
-			continue
+		l.reconcileDeploymentSecurityLease(ctx, app, dep, now.UTC(), scanEvery)
+		if ctx.Err() != nil {
+			return
 		}
-		if dep.ParkedReason == string(state.ParkReasonSecurityScanRegressed) {
-			continue
-		}
-		if auditErr := l.appendSecurityScanLeaseAudit(ctx, app, dep, reason, now.UTC()); auditErr != nil {
-			l.log.Warn("imaged: append security evidence lease audit", "deployment", dep.ID, "err", auditErr)
-		}
-		if quarantineErr := l.quarantineSecurity(ctx, app, dep, reason); quarantineErr != nil {
-			l.log.Warn("imaged: quarantine expired security evidence", "deployment", dep.ID, "app", app.ID, "reason", reason, "err", quarantineErr)
-		}
+	}
+}
+
+func (l *Loop) reconcileDeploymentSecurityLease(ctx context.Context, app state.App, dep state.Deployment, now time.Time, scanEvery time.Duration) {
+	private, reason, readErr := l.privateSecurityLeaseFailure(ctx, app, dep)
+	if ctx.Err() != nil || producedEvidenceBusy(readErr) {
+		return
+	}
+	if !private {
+		reason = securityScanLeaseFailure(dep, now, scanEvery)
+	}
+	if reason == "" || dep.ParkedReason == string(state.ParkReasonSecurityScanRegressed) {
+		return
+	}
+	if auditErr := l.appendSecurityScanLeaseAudit(ctx, app, dep, reason, now); auditErr != nil {
+		l.log.Warn("imaged: append security evidence lease audit", "deployment", dep.ID, "err", auditErr)
+	}
+	if quarantineErr := l.quarantineSecurity(ctx, app, dep, reason); quarantineErr != nil {
+		l.log.Warn("imaged: quarantine expired security evidence", "deployment", dep.ID, "app", app.ID, "reason", reason, "err", quarantineErr)
 	}
 }
 

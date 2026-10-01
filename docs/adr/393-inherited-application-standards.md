@@ -288,11 +288,40 @@ consumption, PostgreSQL atomicity and refusal behavior; injected mkfs and Grype
 fixtures do not establish native scanner execution or consumer ACKs. Complete
 two-drive runtime approval, native capture/consumption and dedicated Linux
 Grype/KVM/leakcheck acceptance remain pending. Ext4 extraction resource and
-cleanup behavior also requires native acceptance. The existing cheap live lease
-checker still reads legacy compatibility reports against the six-hour sweep
-interval; it does not enforce the private five-minute leases. Authoritative
-current-evidence reads, live/cached route revocation and native consumption of
-both drives' current evidence remain pending. Public activation remains disabled.
+cleanup behavior also requires native acceptance.
+
+Separate fresh component reads now revalidate selected producer identities,
+current company publisher cryptography, signature and scan leases, and scanner
+database age using the storage clock. A coherent deployment read holds the
+owner, control, artifact and bound-base publication fences through the complete
+set: main image, every declared image sidecar, and each distinct shared base.
+It checks all leases again at its final storage clock and returns their minimum
+expiry. A deployment index supports the retained-lineage lookup. Historical
+retrieval remains separate; neither path rewrites evidence
+clocks. PostgreSQL lock contention returns a bounded retryable refusal. Unsafe
+complete findings remain visible for the enforcing consumer to reject.
+
+The periodic live lease checker uses this private complete set when retained
+producer lineage exists. A missing sidecar, failed or replaced base, expired
+lease, metadata drift or revoked publisher cannot fall back to the clean main
+compatibility report. It parks enforce-mode applications through the existing
+durable quarantine path. Legacy compatibility checking remains available only
+for unmanaged applications without retained private lineage. Managed enrollment
+without private evidence refuses that fallback. Busy reads defer to the next
+worker pass without renewing evidence or manufacturing findings.
+
+These reads authenticate stored producer facts, not the mutable artifact bytes
+consumed by vmmd or a scan of the actual guest overlay. A periodic quarantine
+worker also does not prove immediate in-flight or cached-route revocation.
+Native capture/consumption, complete two-drive runtime approval and live/cached
+gateway revocation remain pending. Public activation remains disabled.
+
+Three early application-standard migration IDs had invalid timestamp seconds
+and were already committed and applied. Their ledger identities and SQL remain
+immutable. The namespace test freezes only those exact filenames and SHA-256
+contents; changed bytes, renamed files and new invalid timestamps fail. Future
+migrations continue to use the generator and strict UTC validation. This is a
+closed compatibility set for issued ledger entries, not a new naming convention.
 
 This is a producer boundary under the existing imaged/database writer trust
 model. Source-build publisher approval, complete runtime scans and native boot
@@ -435,6 +464,13 @@ remain required before public activation. No artifact check advances an observed
 standard revision.
 
 ### Enrollment evidence
+
+A wider PostgreSQL migration-fixture run found an open legacy compatibility gap:
+raw app inserts without an organization try to create an enrollment with a null
+`org_id`, violating its required owner. MemStore preserves unowned legacy apps.
+This boundary needs an explicit compatible policy and regression coverage while
+retaining company ownership and assignment enforcement. The wider migration
+fixture suite is not green, and these failures remain acceptance blockers.
 
 The storage boundary now captures admission pins at every app insert, including
 raw project/reconcile/preview inserts, and revalidates restore and scope changes.

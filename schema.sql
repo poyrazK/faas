@@ -17432,6 +17432,13 @@ CREATE INDEX deployment_openapi_snapshots_app_scope_idx ON public.deployment_ope
 
 
 --
+-- Name: deployment_registry_rootfs_deployment_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_registry_rootfs_deployment_idx ON public.deployment_registry_rootfs USING btree (deployment_id);
+
+
+--
 -- Name: deployment_registry_verifications_latest; Type: INDEX; Schema: public; Owner: -
 --
 

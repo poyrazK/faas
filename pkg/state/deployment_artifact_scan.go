@@ -5,6 +5,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -48,6 +49,93 @@ type DeploymentArtifactScanStore interface {
 	PublishDeploymentArtifactScan(context.Context, DeploymentArtifactScanInput) (DeploymentArtifactScan, error)
 	// Historical retrieval does not assert current key/expiry/storage bytes.
 	GetCurrentDeploymentArtifactScan(context.Context, string, string, string, string) (DeploymentArtifactScan, error)
+}
+
+// These reads recheck current selections, publisher cryptography and leases.
+// They do not read mutable artifact bytes, scan an overlaid runtime, or confer
+// native admission/observed adoption. High-risk findings remain visible facts.
+// A covered publication fence returns ErrApplicationStandardRuntimeBusy rather
+// than waiting for its writer; evidence clocks are never renewed by a read.
+type DeploymentArtifactScanEvidenceStore interface {
+	GetFreshDeploymentArtifactScan(context.Context, string, string, string, string) (DeploymentArtifactScan, error)
+	GetFreshDeploymentArtifactScanEvidence(context.Context, string, string, string) (DeploymentArtifactScanEvidence, error)
+}
+
+// Only an owned deployment with no retained producer lineage returns absent.
+// Stale/missing selections in a deployment with lineage never become legacy.
+var ErrDeploymentArtifactScanEvidenceAbsent = errors.New("state: deployment has no private artifact producer lineage")
+
+type DeploymentArtifactScanEvidence struct {
+	Components           []DeploymentArtifactScan
+	Bases                []BaseImageScan
+	CheckedAt, ExpiresAt time.Time
+}
+
+type artifactScanParents struct {
+	Rootfs     DeploymentRegistryRootfs
+	Approval   DeploymentRegistryVerification
+	Deployment Deployment
+}
+
+func validArtifactScanEvidenceRead(accountID, appID, depID, workload string) bool {
+	return validStandardResourceRead(accountID, appID) && validStandardResourceRead(depID, depID) && (workload == "" || api.ValidSidecarName(workload))
+}
+
+func checkDeploymentArtifactScanLease(value DeploymentArtifactScan, parents artifactScanParents, now time.Time) error {
+	if err := validateDeploymentArtifactScan(value); err != nil {
+		return err
+	}
+	limit := parents.Approval.ExpiresAt
+	if value.Input.RegistryVerificationID == "" {
+		limit = parents.Rootfs.ExpiresAt
+	}
+	if value.Input.Status != "complete" || value.ScannedAt.Before(parents.Rootfs.PublishedAt) || value.ScannedAt.Before(parents.Approval.VerifiedAt) || value.ScannedAt.After(now) || !value.ExpiresAt.After(now) || value.ExpiresAt.After(limit) {
+		return ErrApplicationStandardRuntimeStale
+	}
+	return checkArtifactScanFreshness(value.Input, now)
+}
+
+func artifactScanWorkloads(raw []byte) ([]string, error) {
+	var sidecars api.Sidecars
+	if len(raw) != 0 && json.Unmarshal(raw, &sidecars) != nil || len(sidecars) > api.SidecarCapMax {
+		return nil, ErrApplicationStandardRuntimeStale
+	}
+	names := []string{""}
+	seen := map[string]bool{"": true}
+	for _, sidecar := range sidecars {
+		if !api.ValidSidecarName(sidecar.Name) || seen[sidecar.Name] {
+			return nil, ErrApplicationStandardRuntimeStale
+		}
+		seen[sidecar.Name] = true
+		if sidecar.Image != "" {
+			names = append(names, sidecar.Name)
+		}
+	}
+	return names, nil
+}
+
+func finishArtifactScanEvidence(value *DeploymentArtifactScanEvidence, now time.Time) error {
+	value.CheckedAt = now
+	for _, scan := range value.Components {
+		if scan.ScannedAt.After(now) || !scan.ExpiresAt.After(now) || checkArtifactScanFreshness(scan.Input, now) != nil {
+			return ErrApplicationStandardRuntimeStale
+		}
+		if value.ExpiresAt.IsZero() || scan.ExpiresAt.Before(value.ExpiresAt) {
+			value.ExpiresAt = scan.ExpiresAt
+		}
+	}
+	for _, scan := range value.Bases {
+		if scan.ScannedAt.After(now) || !scan.ExpiresAt.After(now) || checkProducerScanFreshness(scan.Input.Report, now) != nil {
+			return ErrApplicationStandardRuntimeStale
+		}
+		if value.ExpiresAt.IsZero() || scan.ExpiresAt.Before(value.ExpiresAt) {
+			value.ExpiresAt = scan.ExpiresAt
+		}
+	}
+	if len(value.Components) == 0 || !value.ExpiresAt.After(now) {
+		return ErrApplicationStandardRuntimeStale
+	}
+	return nil
 }
 
 func cloneArtifactScanResult(in api.ScanResult) api.ScanResult {

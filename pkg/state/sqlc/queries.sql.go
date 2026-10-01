@@ -595,6 +595,17 @@ func (q *Queries) ApplyRegressionAction(ctx context.Context, db DBTX, arg ApplyR
 	return i, err
 }
 
+const artifactEvidenceStorageTime = `-- name: ArtifactEvidenceStorageTime :one
+SELECT clock_timestamp()::timestamptz
+`
+
+func (q *Queries) ArtifactEvidenceStorageTime(ctx context.Context, db DBTX) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, artifactEvidenceStorageTime)
+	var column_1 pgtype.Timestamptz
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const authorizeBaseImageProducerInsert = `-- name: AuthorizeBaseImageProducerInsert :exec
 SELECT set_config('gregale.base_producer_insert',$1::text,true)
 `
@@ -5022,6 +5033,31 @@ func (q *Queries) GetDeploymentArtifactScanPointer(ctx context.Context, db DBTX,
 	var scan_id pgtype.UUID
 	err := row.Scan(&scan_id)
 	return scan_id, err
+}
+
+const getDeploymentArtifactWorkloads = `-- name: GetDeploymentArtifactWorkloads :one
+SELECT d.sidecars, EXISTS(SELECT 1 FROM deployment_registry_rootfs f WHERE f.deployment_id=d.id)::boolean AS has_registry_producers
+FROM deployments d JOIN apps a ON a.id=d.app_id
+WHERE d.id=$1::uuid AND a.id=$2::uuid
+ AND a.account_id=$3::uuid AND a.status<>'deleted'
+`
+
+type GetDeploymentArtifactWorkloadsParams struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+}
+
+type GetDeploymentArtifactWorkloadsRow struct {
+	Sidecars             []byte
+	HasRegistryProducers bool
+}
+
+func (q *Queries) GetDeploymentArtifactWorkloads(ctx context.Context, db DBTX, arg GetDeploymentArtifactWorkloadsParams) (GetDeploymentArtifactWorkloadsRow, error) {
+	row := db.QueryRow(ctx, getDeploymentArtifactWorkloads, arg.DeploymentID, arg.AppID, arg.AccountID)
+	var i GetDeploymentArtifactWorkloadsRow
+	err := row.Scan(&i.Sidecars, &i.HasRegistryProducers)
+	return i, err
 }
 
 const getDeploymentRegistryRootfsByID = `-- name: GetDeploymentRegistryRootfsByID :one

@@ -41,7 +41,7 @@ func artifactScanRow(row sqlc.DeploymentArtifactScan) (DeploymentArtifactScan, e
 	return value, nil
 }
 
-func lockArtifactScanParent(ctx context.Context, tx pgx.Tx, in DeploymentArtifactScanInput) error {
+func lockArtifactScanParent(ctx context.Context, tx pgx.Tx, in DeploymentArtifactScanInput) (artifactScanParents, error) {
 	q := sqlc.New()
 	params := sqlc.LockDeploymentArtifactScanParams{ProducerID: mustPgUUID(in.RootfsProducerID)}
 	if in.RegistryVerificationID != "" {
@@ -49,7 +49,7 @@ func lockArtifactScanParent(ctx context.Context, tx pgx.Tx, in DeploymentArtifac
 	}
 	raw, err := q.LockDeploymentArtifactScan(ctx, tx, params)
 	if err != nil {
-		return registryVerificationError(err)
+		return artifactScanParents{}, registryVerificationError(err)
 	}
 	var current struct {
 		AppID          string `json:"app_id"`
@@ -62,50 +62,53 @@ func lockArtifactScanParent(ctx context.Context, tx pgx.Tx, in DeploymentArtifac
 		Now            time.Time `json:"storage_now"`
 	}
 	if err := json.Unmarshal(raw, &current); err != nil {
-		return err
+		return artifactScanParents{}, err
 	}
 	row, err := q.GetCurrentDeploymentRegistryRootfs(ctx, tx, sqlc.GetCurrentDeploymentRegistryRootfsParams{
 		AccountID: mustPgUUID(in.AccountID), AppID: mustPgUUID(in.AppID), DeploymentID: mustPgUUID(in.DeploymentID), WorkloadName: in.WorkloadName,
 	})
 	if errors.Is(err, pgx.ErrNoRows) || err == nil && pgUUIDString(row.ID) != in.RootfsProducerID {
-		return ErrApplicationStandardRuntimeStale
+		return artifactScanParents{}, ErrApplicationStandardRuntimeStale
 	}
 	if err != nil {
-		return registryVerificationError(err)
+		return artifactScanParents{}, registryVerificationError(err)
 	}
 	root, err := registryRootfsRow(row)
 	if err != nil {
-		return err
+		return artifactScanParents{}, err
 	}
 	parentRow, err := q.GetDeploymentRegistryVerificationByID(ctx, tx, row.RegistryVerificationID)
 	if err != nil {
-		return registryVerificationError(err)
+		return artifactScanParents{}, registryVerificationError(err)
 	}
 	origin, err := registryVerificationRow(parentRow)
 	if err != nil {
-		return err
+		return artifactScanParents{}, err
 	}
 	parent := origin
 	if in.RegistryVerificationID != "" {
 		parentRow, err = q.GetDeploymentRegistryVerificationByID(ctx, tx, mustPgUUID(in.RegistryVerificationID))
 		if err != nil {
-			return registryVerificationError(err)
+			return artifactScanParents{}, registryVerificationError(err)
 		}
 		parent, err = registryVerificationRow(parentRow)
 		if err != nil {
-			return err
+			return artifactScanParents{}, err
 		}
 	}
 	if current.Now.IsZero() || current.AppID != in.AppID || current.AccountID != in.AccountID || current.OrgID != in.OrgID || current.ImageReference != in.ImageReference {
-		return ErrApplicationStandardRuntimeStale
+		return artifactScanParents{}, ErrApplicationStandardRuntimeStale
 	}
 	if err := checkArtifactScanParent(in, root, origin, parent, Deployment{Scope: current.Scope, Status: current.Status}, current.Now); err != nil {
-		return err
+		return artifactScanParents{}, err
 	}
 	if err := verifyRegistryCurrentKey(parent.Input, current.KeyDER); err != nil {
-		return err
+		return artifactScanParents{}, err
 	}
-	return lockRegistryRootfsBase(ctx, tx, root.Input, parent)
+	if err := lockRegistryRootfsBase(ctx, tx, root.Input, parent); err != nil {
+		return artifactScanParents{}, err
+	}
+	return artifactScanParents{Rootfs: root, Approval: parent}, nil
 }
 
 func (s *PgStore) PublishDeploymentArtifactScan(ctx context.Context, input DeploymentArtifactScanInput) (DeploymentArtifactScan, error) {
@@ -118,7 +121,7 @@ func (s *PgStore) PublishDeploymentArtifactScan(ctx context.Context, input Deplo
 		return DeploymentArtifactScan{}, err
 	}
 	defer tx.Rollback(ctx)
-	if err := lockArtifactScanParent(ctx, tx, in); err != nil {
+	if _, err := lockArtifactScanParent(ctx, tx, in); err != nil {
 		return DeploymentArtifactScan{}, err
 	}
 	q := sqlc.New()

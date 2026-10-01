@@ -88,6 +88,10 @@ func (m *MemStore) GetFreshBaseImageScan(ctx context.Context, id, hash string) (
 	if err := ctx.Err(); err != nil {
 		return BaseImageScan{}, err
 	}
+	return m.freshBaseImageScanLocked(id, hash, time.Now().UTC())
+}
+
+func (m *MemStore) freshBaseImageScanLocked(id, hash string, now time.Time) (BaseImageScan, error) {
 	base, ok := m.baseImageProducers[canonicalStandardUUID(id)]
 	if !ok || base.InputHash != hash || m.baseImageProducerCurrent[base.Input.Artifact.StorageKey] != base.ID {
 		return BaseImageScan{}, ErrApplicationStandardRuntimeStale
@@ -96,7 +100,7 @@ func (m *MemStore) GetFreshBaseImageScan(ctx context.Context, id, hash string) (
 	if !ok {
 		return BaseImageScan{}, ErrApplicationStandardRuntimeStale
 	}
-	if err := checkBaseImageScanLease(value, base, time.Now().UTC()); err != nil {
+	if err := checkBaseImageScanLease(value, base, now); err != nil {
 		return BaseImageScan{}, err
 	}
 	return cloneBaseImageScan(value), nil

@@ -75,6 +75,7 @@ type Querier interface {
 	// non-active observation starts a new detection lifecycle so the transition
 	// webhook gets its own stable id.
 	ApplyRegressionAction(ctx context.Context, db DBTX, arg ApplyRegressionActionParams) (DebugRegressionObservation, error)
+	ArtifactEvidenceStorageTime(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	AuthorizeBaseImageProducerInsert(ctx context.Context, db DBTX, id string) error
 	AuthorizeBaseImageScanInsert(ctx context.Context, db DBTX, id pgtype.UUID) error
 	AuthorizeDeploymentArtifactScanInsert(ctx context.Context, db DBTX, id pgtype.UUID) error
@@ -330,6 +331,7 @@ type Querier interface {
 	GetDataUpstreamByID(ctx context.Context, db DBTX, id pgtype.UUID) (GetDataUpstreamByIDRow, error)
 	GetDeploymentArtifactScanByID(ctx context.Context, db DBTX, id pgtype.UUID) (DeploymentArtifactScan, error)
 	GetDeploymentArtifactScanPointer(ctx context.Context, db DBTX, arg GetDeploymentArtifactScanPointerParams) (pgtype.UUID, error)
+	GetDeploymentArtifactWorkloads(ctx context.Context, db DBTX, arg GetDeploymentArtifactWorkloadsParams) (GetDeploymentArtifactWorkloadsRow, error)
 	GetDeploymentRegistryRootfsByID(ctx context.Context, db DBTX, id pgtype.UUID) (DeploymentRegistryRootf, error)
 	GetDeploymentRegistryRootfsPointer(ctx context.Context, db DBTX, arg GetDeploymentRegistryRootfsPointerParams) (pgtype.UUID, error)
 	GetDeploymentRegistryVerificationByID(ctx context.Context, db DBTX, id pgtype.UUID) (DeploymentRegistryVerification, error)

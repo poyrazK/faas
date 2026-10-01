@@ -17,7 +17,8 @@ type artifactScanBaseTestStore interface {
 	BaseImageProducerStore
 }
 
-func artifactScanBaseBinding(t *testing.T, s artifactScanBaseTestStore) {
+func artifactScanBaseFixture(t *testing.T, s artifactScanBaseTestStore) (DeploymentArtifactScanInput, BaseImageProducer, App, Deployment) {
+	t.Helper()
 	baseInput := baseProducerFixture(t, "base/scan-parent.ext4", "parent")
 	base, err := s.PublishBaseImageProducer(t.Context(), baseInput)
 	if err != nil {
@@ -37,10 +38,16 @@ func artifactScanBaseBinding(t *testing.T, s artifactScanBaseTestStore) {
 	}
 	report := &api.ScanResult{ImageDigest: dep.ImageDigest, ArtifactDigest: digest, ScannerVersion: "0.116.0", ScannerDBStatus: "valid", ScannerDBVersion: "v6.0.2", ScannerDBBuiltAt: time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano), Vulnerabilities: []api.Vulnerability{}}
 	in := DeploymentArtifactScanInput{ID: uuid.NewString(), RootfsProducerID: root.ID, RootfsInputHash: root.InputHash, AccountID: app.AccountID, OrgID: app.OrgID, AppID: app.ID, DeploymentID: dep.ID, Scope: dep.Scope, ImageReference: dep.ImageDigest, ArtifactDigest: digest, ArtifactBytes: 10, Status: "complete", ScannerName: "grype", Report: report}
+	return in, base, app, dep
+}
+
+func artifactScanBaseBinding(t *testing.T, s artifactScanBaseTestStore) {
+	in, base, app, dep := artifactScanBaseFixture(t, s)
 	value, err := s.PublishDeploymentArtifactScan(t.Context(), in)
 	if err != nil {
 		t.Fatalf("bound two-drive component scan refused: %v", err)
 	}
+	baseInput := base.Input
 	baseInput.ID = uuid.NewString()
 	if _, err := s.PublishBaseImageProducer(t.Context(), baseInput); err != nil {
 		t.Fatal(err)

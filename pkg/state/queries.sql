@@ -5747,6 +5747,15 @@ WHERE a.account_id=sqlc.arg(account_id)::uuid AND a.id=sqlc.arg(app_id)::uuid AN
  AND ((c.workload_name='' AND f.input_snapshot->>'storage_key'=d.rootfs_key AND f.input_snapshot->>'rootfs_path'=d.rootfs_path AND (f.input_snapshot->>'content_bytes')::bigint=d.rootfs_bytes)
  OR (c.workload_name<>'' AND f.input_snapshot->>'storage_key'=l.storage_key AND (f.input_snapshot->>'content_bytes')::bigint=l.bytes AND r.input_snapshot->>'selected_reference'=l.content_digest));
 
+-- name: ArtifactEvidenceStorageTime :one
+SELECT clock_timestamp()::timestamptz;
+
+-- name: GetDeploymentArtifactWorkloads :one
+SELECT d.sidecars, EXISTS(SELECT 1 FROM deployment_registry_rootfs f WHERE f.deployment_id=d.id)::boolean AS has_registry_producers
+FROM deployments d JOIN apps a ON a.id=d.app_id
+WHERE d.id=sqlc.arg(deployment_id)::uuid AND a.id=sqlc.arg(app_id)::uuid
+ AND a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted';
+
 -- name: AuthorizeBaseImageScanInsert :exec
 SELECT set_config('gregale.base_scan_insert',sqlc.arg(id)::uuid::text,true);
 

@@ -22,52 +22,13 @@ func (m *MemStore) PublishDeploymentArtifactScan(ctx context.Context, input Depl
 	if err := ctx.Err(); err != nil {
 		return DeploymentArtifactScan{}, err
 	}
-	app, found, dep, exists := m.registryVerificationOwnerLocked(in.AppID, in.DeploymentID)
-	if !found || !exists {
-		return DeploymentArtifactScan{}, ErrNotFound
-	}
-	root, ok := m.deploymentRegistryRootfs[in.RootfsProducerID]
-	if !ok {
-		return DeploymentArtifactScan{}, ErrNotFound
-	}
-	pointer := in.DeploymentID + "\x00" + in.WorkloadName
-	if m.deploymentRegistryRootfsCurrent[pointer] != root.ID {
-		return DeploymentArtifactScan{}, ErrApplicationStandardRuntimeStale
-	}
-	origin, ok := m.deploymentRegistryVerifications[root.Input.RegistryVerificationID]
-	if !ok {
-		return DeploymentArtifactScan{}, ErrNotFound
-	}
-	parent, ok := m.deploymentRegistryVerifications[artifactScanApprovalID(in, root)]
-	if !ok {
-		return DeploymentArtifactScan{}, ErrNotFound
-	}
 	now := time.Now().UTC()
-	if err := checkArtifactScanParent(in, root, origin, parent, dep, now); err != nil {
+	parents, err := m.artifactScanParentsLocked(in, now)
+	if err != nil {
 		return DeploymentArtifactScan{}, err
 	}
-	if err := checkRegistryVerificationOwner(parent.Input, app, dep); err != nil {
-		return DeploymentArtifactScan{}, err
-	}
-	if !registryRootfsMatchesMetadata(root, dep, m.deploymentSidecarLayers[dep.ID+"\x00"+in.WorkloadName], origin) {
-		return DeploymentArtifactScan{}, ErrApplicationStandardRuntimeStale
-	}
-	signer := m.trustedSigners[trustedSignerKey{AppID: app.ID, SignerName: parent.Input.Proof.PublisherName}]
-	if !sameStandardUUID(signer.AccountID, in.AccountID) {
-		signer.CosignPublicKey = nil
-	}
-	if err := verifyRegistryCurrentKey(parent.Input, signer.CosignPublicKey); err != nil {
-		return DeploymentArtifactScan{}, err
-	}
-	if root.Input.BaseProducerID != "" {
-		base, ok := m.baseImageProducers[root.Input.BaseProducerID]
-		if !ok || m.baseImageProducerCurrent[base.Input.Artifact.StorageKey] != base.ID {
-			return DeploymentArtifactScan{}, ErrApplicationStandardRuntimeStale
-		}
-		if err := checkRegistryRootfsBase(root.Input, parent, base); err != nil {
-			return DeploymentArtifactScan{}, err
-		}
-	}
+	root, parent, dep := parents.Rootfs, parents.Approval, parents.Deployment
+	pointer := in.DeploymentID + "\x00" + in.WorkloadName
 	if old, exists := m.deploymentArtifactScans[in.ID]; exists {
 		if old.InputHash != hash || m.deploymentArtifactScanCurrent[pointer] != old.ID {
 			return DeploymentArtifactScan{}, ErrConflict
@@ -116,6 +77,64 @@ func (m *MemStore) GetCurrentDeploymentArtifactScan(ctx context.Context, account
 	if err := ctx.Err(); err != nil {
 		return DeploymentArtifactScan{}, err
 	}
+	return m.currentDeploymentArtifactScanLocked(accountID, appID, depID, workload)
+}
+
+func (m *MemStore) artifactScanParentsLocked(in DeploymentArtifactScanInput, now time.Time) (artifactScanParents, error) {
+	app, found, dep, exists := m.registryVerificationOwnerLocked(in.AppID, in.DeploymentID)
+	if !found || !exists {
+		return artifactScanParents{}, ErrNotFound
+	}
+	root, ok := m.deploymentRegistryRootfs[in.RootfsProducerID]
+	if !ok {
+		return artifactScanParents{}, ErrNotFound
+	}
+	pointer := in.DeploymentID + "\x00" + in.WorkloadName
+	if m.deploymentRegistryRootfsCurrent[pointer] != root.ID {
+		return artifactScanParents{}, ErrApplicationStandardRuntimeStale
+	}
+	origin, ok := m.deploymentRegistryVerifications[root.Input.RegistryVerificationID]
+	if !ok {
+		return artifactScanParents{}, ErrNotFound
+	}
+	parent, ok := m.deploymentRegistryVerifications[artifactScanApprovalID(in, root)]
+	if !ok {
+		return artifactScanParents{}, ErrNotFound
+	}
+	if err := checkArtifactScanParent(in, root, origin, parent, dep, now); err != nil {
+		return artifactScanParents{}, err
+	}
+	if err := checkRegistryVerificationOwner(parent.Input, app, dep); err != nil {
+		return artifactScanParents{}, err
+	}
+	if !registryRootfsMatchesMetadata(root, dep, m.deploymentSidecarLayers[dep.ID+"\x00"+in.WorkloadName], origin) {
+		return artifactScanParents{}, ErrApplicationStandardRuntimeStale
+	}
+	signer := m.trustedSigners[trustedSignerKey{AppID: app.ID, SignerName: parent.Input.Proof.PublisherName}]
+	if !sameStandardUUID(signer.AccountID, in.AccountID) {
+		signer.CosignPublicKey = nil
+	}
+	if err := verifyRegistryCurrentKey(parent.Input, signer.CosignPublicKey); err != nil {
+		return artifactScanParents{}, err
+	}
+	if err := m.checkArtifactScanBaseLocked(root, parent); err != nil {
+		return artifactScanParents{}, err
+	}
+	return artifactScanParents{Rootfs: root, Approval: parent, Deployment: dep}, nil
+}
+
+func (m *MemStore) checkArtifactScanBaseLocked(root DeploymentRegistryRootfs, parent DeploymentRegistryVerification) error {
+	if root.Input.BaseProducerID == "" {
+		return nil
+	}
+	base, ok := m.baseImageProducers[root.Input.BaseProducerID]
+	if !ok || m.baseImageProducerCurrent[base.Input.Artifact.StorageKey] != base.ID {
+		return ErrApplicationStandardRuntimeStale
+	}
+	return checkRegistryRootfsBase(root.Input, parent, base)
+}
+
+func (m *MemStore) currentDeploymentArtifactScanLocked(accountID, appID, depID, workload string) (DeploymentArtifactScan, error) {
 	app, found, dep, exists := m.registryVerificationOwnerLocked(appID, depID)
 	if !found || !exists || app.Status == AppDeleted || !sameStandardUUID(app.AccountID, accountID) || !sameStandardUUID(dep.AppID, appID) {
 		return DeploymentArtifactScan{}, ErrNotFound
