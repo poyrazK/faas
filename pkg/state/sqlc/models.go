@@ -1985,6 +1985,9 @@ type Instance struct {
 	MigrationStartedAt      pgtype.Timestamptz
 	StartupCpuBoostUntil    pgtype.Timestamptz
 	ExclusiveCaptureBlocked bool
+	CapacityRamMb           int64
+	CapacityCpuMillicores   int64
+	CapacityVcpu            int32
 }
 
 type InstanceBillingInterval struct {
@@ -3936,6 +3939,27 @@ type ServiceCallerKeyHistory struct {
 	NodeID       string
 	PublicKeyPem string
 	RetireAfter  pgtype.Timestamptz
+}
+
+type ServiceCapacityPolicy struct {
+	Singleton        bool
+	Enabled          bool
+	OverheadMb       int32
+	CpuOvercommit    int32
+	StartupCpu       int32
+	HeartbeatSeconds int32
+	PlanVcpus        []byte
+}
+
+type ServiceRecovery struct {
+	AppID         pgtype.UUID
+	Revision      string
+	ClaimToken    pgtype.UUID
+	LeaseUntil    pgtype.Timestamptz
+	Status        string
+	Failures      int32
+	NextAttemptAt pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
 }
 
 type Session struct {

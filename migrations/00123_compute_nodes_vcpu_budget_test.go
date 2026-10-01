@@ -23,8 +23,8 @@
 //	   needed for the legacy single-box path).
 //	6. Replay-safety: a second MigrateUp() returns nil — the
 //	   ADD COLUMN IF NOT EXISTS makes the migration idempotent.
-//	7. Down path: MigrateDown to 00080 drops vcpu_budget, then
-//	   MigrateUp re-creates it.
+//	7. Down path: at the 00123 schema boundary, dropping and
+//	   re-creating vcpu_budget preserves its round-trip behavior.
 //
 // Build tag mirrors apply_walk_test.go:4 and the other
 // 0007x migration tests — set FAAS_SKIP_PG_TESTS=1 to skip.
@@ -239,7 +239,9 @@ func TestMigration_00123_6_ReplaySafe(t *testing.T) {
 // MigrateUp), so we drive goose directly via a SQL probe: read
 // the migration's own -- +goose Down body and verify the column
 // drops cleanly. A non-symmetric down would leave a broken
-// schema on a release that needs to roll back 00123 in isolation.
+// schema on a release that needs to roll back 00123. Newer migrations
+// must not be present when a historical column is dropped: their triggers
+// and indexes may legitimately depend on it.
 //
 // On skip: this test only runs on a Postgres-backed test
 // (FAAS_SKIP_PG_TESTS=1 to opt out).
@@ -248,14 +250,23 @@ func TestMigration_00123_7_DownSymmetry(t *testing.T) {
 	pool := pgtest.Open(t)
 	defer pool.Close()
 
-	if err := db.MigrateUp(ctx, pool); err != nil {
-		t.Fatalf("MigrateUp: %v", err)
-	}
+	migrateUpTo(t, ctx, pool, 123)
 	// Drop the column directly (the down block runs ALTER TABLE
 	// ... DROP COLUMN vcpu_budget). This isn't the canonical goose
 	// path, but it validates the SQL the down block carries.
 	if _, err := pool.Exec(ctx, `alter table compute_nodes drop column vcpu_budget`); err != nil {
 		t.Fatalf("down SQL: %v", err)
+	}
+	var remaining int
+	if err := pool.QueryRow(ctx, `
+		select count(*) from information_schema.columns
+		 where table_schema=current_schema() and table_name='compute_nodes'
+		   and column_name='vcpu_budget'
+	`).Scan(&remaining); err != nil {
+		t.Fatalf("probe vcpu_budget absence: %v", err)
+	}
+	if remaining != 0 {
+		t.Fatalf("vcpu_budget remained after down SQL")
 	}
 	// Re-create it via the migration body (up path).
 	if _, err := pool.Exec(ctx, `
@@ -268,7 +279,7 @@ func TestMigration_00123_7_DownSymmetry(t *testing.T) {
 	// Probe: round-trip a value through the re-created column.
 	var nodeID = uuid.NewString()
 	if _, err := pool.Exec(ctx, `
-		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, lifecycle, vcpu_budget) values ($1, $2, 'tcp://test:50051', 160, 56000, 200, 47600, 'active'::compute_node_lifecycle, 240)
+		insert into compute_nodes (id, name, target_url, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, vcpu_budget) values ($1, $2, 'tcp://test:50051', 160, 56000, 200, 47600, 240)
 	`, nodeID, "rsym-"+nodeID[:8]); err != nil {
 		t.Fatalf("insert after re-create: %v", err)
 	}

@@ -964,6 +964,14 @@ type DeploymentActivationLocker interface {
 // narrow keeps the ownership rules enforceable — apid only touches
 // customer-intent tables through the methods it is given.
 type Store interface {
+	// ADR-420: fenced durable retries for continuously managed services.
+	// Discovery leaves saturated candidates due. Claims honor failure cooldown
+	// unless desired revision changes; completion requires the current token.
+	ListServiceRecoveryApps(ctx context.Context, ownerNodeID string, sampledAt time.Time, limit int) ([]string, error)
+	ClaimServiceRecovery(ctx context.Context, appID, revision, token string, sampledAt, leaseUntil time.Time) (ServiceRecovery, bool, error)
+	CompleteServiceRecovery(ctx context.Context, token string, recovery ServiceRecovery) error
+	ServiceRecoveryByApp(ctx context.Context, appID string) (ServiceRecovery, error)
+
 	// Ping tests store/database connectivity.
 	Ping(ctx context.Context) error
 
@@ -1791,6 +1799,12 @@ type Store interface {
 	ClaimCliAuthCode(ctx context.Context, tokenHash []byte, accountID string) error
 	ConsumeCliAuthCode(ctx context.Context, tokenHash []byte) (api.CliAuthStatus, string, error)
 
+	// ServiceCapacityProtection reports the bare-metal recovery certificate.
+	ServiceCapacityProtection(ctx context.Context) (api.ServiceCapacityProtection, error)
+	// ServiceCapacityPlacement is the scheduler's internal slot projection.
+	ServiceCapacityPlacement(ctx context.Context) (ServiceCapacityPlacement, error)
+	// SetServiceCapacityProtection enables only when current demand is protected.
+	SetServiceCapacityProtection(ctx context.Context, enabled bool) (api.ServiceCapacityProtection, error)
 	// Apps (apid is the only writer, spec §Component ownership).
 	CreateApp(ctx context.Context, app App) (App, error)
 	// CreateAppIfUnderQuota inserts app iff the account currently holds
@@ -2050,20 +2064,18 @@ type Store interface {
 	// empty-uuid CHECK on apps.node_id reject bad values via the
 	// existing 23503 / 23514 paths.
 	SetAppNodeID(ctx context.Context, appID, nodeID string) error
-	// ListOrphanedApps returns every active/evicted_cold app whose
-	// node_id points at a compute_node with active=false — the input
-	// set for
-	// schedd's rebalancer (pkg/sched/rebalancer.go, Tier A4 migration
-	// 00092). Used by both the live compute_node_changed watcher (which
-	// filters by deadNodeID in memory) and the cold-start sweep (which
-	// scans every dead node at schedd boot — pg_notify is fire-and-
-	// forget; a schedd down while a drain event landed recovers via
-	// this path). Cooldown + per-tick cap are bound as parameters so
-	// the live watcher and cold-start sweep can use different cadences
-	// if needed; the rebalancer's caller passes
-	// api.RebalanceCooldownSeconds and api.RebalanceMaxPerTickPerNode
-	// (constants in pkg/api/limits.go).
+	// ListOrphanedApps is the legacy cooldown-ordered ownership scan (ADR-064).
+	// Production continuous recovery uses ListOrphanedAppsPage (ADR-421) so
+	// refused early candidates cannot starve later apps.
 	ListOrphanedApps(ctx context.Context, cooldownSeconds, maxPerTick int) ([]App, error)
+	// ListOrphanedAppsPage is the bounded, ID-ordered ownership recovery scan
+	// (ADR-421). afterAppID is an exclusive cursor; empty starts a new pass.
+	// deadNodeID optionally scopes the source before applying the limit.
+	ListOrphanedAppsPage(ctx context.Context, cooldownSeconds, limit int, afterAppID, deadNodeID string) ([]OrphanedAppCandidate, error)
+	// ReassignOrphanedAppOwner rechecks ownership, cooldown, source inactivity
+	// and destination health atomically. Node lifecycle writers cannot race
+	// the transfer. ErrConflict means the candidate is no longer eligible.
+	ReassignOrphanedAppOwner(ctx context.Context, appID, fromNodeID, toNodeID string, cooldownSeconds int) error
 	// ReassignAppOwner atomically transfers app ownership from
 	// fromNodeID to toNodeID. Tier A4 / migration 00092 — the
 	// conditional UPDATE that closes the Phase-2 follow-up "apps

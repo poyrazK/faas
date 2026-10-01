@@ -1407,17 +1407,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		cfg.DeadNodeReconcilerIntervalSeconds = n
 	}
 
-	// Tier A4 / ADR-064: rebalancer subscriber. Watches
-	// compute_node_changed for active=false events and hands
-	// the dead node id to Engine.RebalanceOrphanedApps.
-	if deps.subscribeRebalancer != nil && ownerNodeID != "" {
-		reb := sched.NewRebalancer(
-			func(ctx context.Context, deadNodeID string) error {
-				return engine.RebalanceOrphanedApps(ctx, deadNodeID)
-			},
-			log,
-		)
-		go subscribeWithReconnect(ctx, "rebalancer", log, deps.subscribeRebalancer, pool, reb.Run)
+	// ADR-421: periodic ownership recovery is authoritative. Notifications
+	// accelerate a batch, but recovery does not depend on their connection.
+	if ownerNodeID != "" {
+		reb := sched.NewRebalancer(engine.RebalanceOrphanedApps, log)
+		go func() {
+			if err := reb.RunSweep(ctx); err != nil && ctx.Err() == nil {
+				log.Warn("schedd: ownership recovery stopped", "err", err)
+			}
+		}()
+		if deps.subscribeRebalancer != nil {
+			go subscribeWithReconnect(ctx, "rebalancer", log, deps.subscribeRebalancer, pool, reb.Run)
+		}
 	}
 
 	// Tier A9 / ADR-087: pressure-rebalancer watcher. Polls
@@ -1485,26 +1486,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			log.Info("schedd: cold-start sweep: reconciled unplaced apps", "count", len(apps))
 		}
 	}()
-
-	// Tier A4 / ADR-064: rebalance cold-start sweep. Same
-	// fire-and-forget-notify reasoning as the unplaced
-	// sweep above — a schedd that was down while a drain
-	// event landed missed the compute_node_changed active=
-	// false notify. RebalanceOrphanedApps with
-	// deadNodeID="" reconciles every orphaned app
-	// regardless of which dead node owned it. Runs once.
-	// Errors are logged and dropped; the next notify (or
-	// the next schedd restart) is the next opportunity.
-	if ownerNodeID != "" {
-		go func() {
-			if err := engine.RebalanceOrphanedApps(ctx, ""); err != nil {
-				if ctx.Err() != nil {
-					return
-				}
-				log.Warn("schedd: cold-start sweep: rebalance orphans", "err", err)
-			}
-		}()
-	}
 
 	// PR #114 / ADR-025 axis 3: per-node liveness sweep. Every
 	// `HeartbeatInterval` (default 30s) the heartbeat goroutine

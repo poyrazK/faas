@@ -45292,7 +45292,10 @@ components:
           schema: { $ref: '#/components/schemas/Problem' }
 
     CapacityUnavailable:
-      description: 'code: capacity_unavailable — no host headroom (alerting; should be near-impossible).'
+      description: |
+        code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

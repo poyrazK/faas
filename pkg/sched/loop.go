@@ -217,6 +217,9 @@ func NewLoop(pool *pgxpool.Pool, engine *Engine, log *slog.Logger) *Loop {
 	}
 	if engine != nil {
 		engine.SetBrokerLagReader(l)
+		engine.mu.Lock()
+		engine.serviceReconcileSubmit = l.submitServiceRecovery
+		engine.mu.Unlock()
 	}
 	return l
 }
@@ -1098,6 +1101,9 @@ func (l *Loop) Run(ctx context.Context) error {
 	eventFanoutT := time.NewTicker(5 * time.Second)
 	defer eventFanoutT.Stop()
 	l.dispatchEventFanoutSweep(ctx)
+	serviceRecoveryT := time.NewTicker(time.Duration(api.ServiceRecoveryPollIntervalSeconds) * time.Second)
+	defer serviceRecoveryT.Stop()
+	l.dispatchServiceRecovery(ctx)
 	serviceRolloutRecoveryT := time.NewTicker(time.Duration(api.ServiceRolloutRecoveryIntervalSeconds) * time.Second)
 	defer serviceRolloutRecoveryT.Stop()
 	primeRecoveryT := time.NewTicker(primeRecoveryInterval)
@@ -1247,6 +1253,8 @@ func (l *Loop) Run(ctx context.Context) error {
 			l.dispatchTriggerTick(ctx)
 		case <-eventFanoutT.C:
 			l.dispatchEventFanoutSweep(ctx)
+		case <-serviceRecoveryT.C:
+			l.dispatchServiceRecovery(ctx)
 		case <-serviceRolloutRecoveryT.C:
 			l.runServiceRolloutRecovery(ctx)
 		case <-primeRecoveryT.C:

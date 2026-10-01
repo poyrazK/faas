@@ -4437,11 +4437,15 @@ const (
 	//
 	// RebalanceMaxPerTickPerNode caps the per-drain-event batch so
 	// a 5,000-app orphaned node doesn't monopolise the schedd
-	// worker pool. Excess apps stay pinned; the next
-	// compute_node_changed event retries (heartbeat-staleness also
-	// re-fires). Tunable via FAAS_REBALANCE_MAX_PER_TICK.
+	// worker pool. The ADR-421 periodic sweep retries excess apps.
+	// Tunable via FAAS_REBALANCE_MAX_PER_TICK.
 	RebalanceCooldownSeconds   = 60
 	RebalanceMaxPerTickPerNode = 50
+	// Ownership recovery runs independently of best-effort node notifications.
+	// Each sweep is bounded even when Postgres is slow; later pages remain due.
+	OwnershipRecoveryIntervalSeconds     = 5
+	OwnershipRecoveryTimeoutSeconds      = 30
+	OwnershipRecoveryStoreTimeoutSeconds = 5
 
 	// Tier A5 (cross-node live-instance migration, ADR-070
 	// follow-up to ADR-064): pacing + lease window on
@@ -7784,6 +7788,21 @@ func (p Plan) IssueLimits() IssueLimits {
 const IssueMaintenanceBatch = 1000
 const IssueMaintenanceInterval = time.Minute
 const IssueMaxBatchEvents = 32
+
+// ADR-420: service recovery is bounded independently of notification volume.
+const (
+	ServiceRecoveryPollIntervalSeconds    = 5
+	ServiceRecoveryHealthyIntervalSeconds = 30
+	ServiceRecoveryRetryBaseSeconds       = 5
+	ServiceRecoveryRetryMaxSeconds        = 300
+	ServiceRecoveryAttemptTimeoutSeconds  = 600
+	ServiceRecoveryFailureCountMax        = 32
+	ServiceRecoveryConcurrentApps         = 8
+	ServiceRecoveryBatchSize              = 32
+)
+
+// ServiceCapacityMinimumHosts is the minimum fleet for one-host compute recovery (ADR-422).
+const ServiceCapacityMinimumHosts = 2
 
 // Versioned work-policy wire bounds; plan retry/task/concurrency limits still
 // apply independently to every execution admitted under one of these policies.
