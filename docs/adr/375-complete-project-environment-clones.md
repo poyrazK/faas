@@ -2073,3 +2073,46 @@ full-clone activation/qualification and production-shaped acceptance remain
 open. The public one-command complete clone is still unavailable. Full-suite
 and lint gates plus native x86_64 KVM test-metal, leakcheck and provider
 acceptance have not been completed.
+
+
+### Idle reaping uses pinned environment policy
+
+The native scheduler reaper resolves workload settings and original environment
+ownership once per deployment on each tick. Running replicas contribute only
+to their own environment lifetime's minimum floor; retained deployment
+overrides are folded into that lifetime's floor. Default/production normalize
+for legacy rows. Paused pools remain tied to the exact deployment payload.
+Idle timeout, worker exemption, warm-pool target, scale-in cooldown duration
+and eviction priority now come from the deployed pin rather than the mutable
+shared App projection. Missing policy or deleted/recreated ownership cannot
+authorize idle or aggressive scale-in. Every instance's app/account is checked
+even when its deployment policy is cached.
+
+Production prewarm windows apply against the pinned runtime floor, including
+when the desired App floor is larger, and never protect sibling stage rows.
+A stage-only idle park does not write the production scale-in timestamp or
+emit a production floor-release audit. The existing production load signal
+cannot authorize aggressive stage scale-in. The pure selector accepts an
+explicit environment load key; a native scoped stage load feed remains to be
+implemented before the full clone contract can support that behavior.
+
+Verification: the final full scheduler package passed in 42.061 seconds on
+macOS; the focused reaper/ownership/warm-pool gate passed in 1.070 seconds.
+New native loop tests wake pinned production and stage generations, mutate
+desired/shared settings, and verify independent minimum floors and idle
+timeouts, stage-only scale-in stamp isolation, and production prewarm against
+a retained pin. Pure and store-backed policy tests cover recreated lifetimes,
+transient read failure, explicit stage load selection, worker/priority policy
+and cached ownership checks. Existing conntrack, active-request, tail-task,
+minimum-floor, cooldown, warm-pool and lifecycle regressions pass. VM calls
+use the scheduler test fakes; this is not KVM or provider acceptance.
+
+The idle floor and runtime policy selection are isolated, but admission caps,
+minimum replica fills, billing, load/prewarm feeds, shared scale-out/cooldown
+telemetry, debugger/audit aggregation and stage lifecycle/resource cleanup
+still require environment ownership. Captured configuration and warm
+publication fences, remaining configuration/resource strategies and native
+adapters, coordinated customer-data capture and full-clone activation and
+qualification also remain open. The public complete-clone command remains
+unavailable. Repository-wide tests/lint and native test-metal, leakcheck and
+provider acceptance remain unverified.

@@ -2392,22 +2392,8 @@ func (l *Loop) runReaper(ctx context.Context) {
 	// `now := l.now()` (vs `time.Now()`) was lifted here: the
 	// integration tests pin all selectors to the same instant.
 	var snapshot []InstanceInfo
-	// appDeploymentFloor (issue #557 closure / ADR-072): per-app
-	// max deployment floor across the app's instances. The reaper
-	// stamps InstanceInfo.MinInstances with this max so it agrees
-	// with pkg/meter/sampler.go:470-485 (the biller). Without this
-	// mirror, an app with app.min_instances=0 and
-	// deployment.min_instances=3 is billed for 3 warm instances
-	// but reaped to 0 — a paid warm/park flap on every tick.
-	// Reading the instance.DeploymentID carrier means we don't
-	// need a separate ListDeploymentsByApp query; the snapshot
-	// walk already pulls every instance. A deployment lookup
-	// that errors (e.g. stale instance row pointing at a deleted
-	// deployment) is treated as floor=0 — the biller does the
-	// same and the customer sees a transient bill drop, never
-	// a false floor that keeps garbage resident.
-	appDeploymentFloor := map[string]int{}
-	appConfiguredFloor := map[string]int{}
+	// Legacy values initialize the carriers; immutable deployment policies
+	// replace them before any selector runs. Prewarm remains production-only.
 	appPrewarmFloor := map[string]int{}
 	// A fired prewarm is a temporary residency floor. Without this overlay,
 	// an early restore could be immediately parked by the idle reaper before
@@ -2418,22 +2404,13 @@ func (l *Loop) runReaper(ctx context.Context) {
 		prewarmStore = candidate
 	}
 	for _, a := range apps {
-		configuredFloor := a.EffectiveMinInstances()
-		floor := configuredFloor
-		appConfiguredFloor[a.ID] = configuredFloor
 		if prewarmStore != nil {
 			if temporary, floorErr := prewarmStore.ActivePrewarmFloor(ctx, a.ID, now); floorErr != nil {
 				l.log.Warn("reaper: prewarm floor lookup", "app", a.ID, "err", floorErr)
-			} else if temporary > floor {
-				floor = temporary
-				appPrewarmFloor[a.ID] = temporary
+			} else {
+				appPrewarmFloor[a.ID] = max(temporary, 0)
 			}
 		}
-		// Floor pushed by per-deployment overrides. We don't have
-		// the instance list yet — stash a placeholder (app floor)
-		// and re-walk after the snapshot is built so we can read
-		// each instance's DeploymentID carrier.
-		appDeploymentFloor[a.ID] = floor
 	}
 	for _, a := range apps {
 		plan := api.Plan("")
@@ -2444,7 +2421,6 @@ func (l *Loop) runReaper(ctx context.Context) {
 		if err != nil {
 			continue
 		}
-		warmTargets := map[string]int{}
 		for _, ins := range instances {
 			// ListInstancesForApp is also used by dashboard and audit
 			// surfaces, so it intentionally returns terminal rows. The
@@ -2455,27 +2431,6 @@ func (l *Loop) runReaper(ctx context.Context) {
 			// snapshot_prime notifications.
 			if !reaperInstanceState(state.State(ins.State)) {
 				continue
-			}
-			warmPoolSize := a.WarmPoolSize
-			if state.State(ins.State) == state.StateWarm && ins.DeploymentID != "" {
-				var cached bool
-				warmPoolSize, cached = warmTargets[ins.DeploymentID]
-				if !cached {
-					deployment, policyErr := store.DeploymentByID(ctx, ins.DeploymentID)
-					var settings state.App
-					if policyErr == nil {
-						settings, policyErr = state.ResolveAppForDeployment(ctx, store, a, deployment)
-					}
-					if policyErr != nil {
-						// Keep a transient read failure from authorizing retirement.
-						// Park still verifies lifetime ownership before capturing.
-						warmPoolSize = len(instances)
-						l.log.Warn("reaper: paused workload settings", "app", a.ID, "deployment", ins.DeploymentID, "err", policyErr)
-					} else {
-						warmPoolSize = settings.WarmPoolSize
-					}
-					warmTargets[ins.DeploymentID] = warmPoolSize
-				}
 			}
 			lastRequest := ins.LastRequestAt
 			var inflightRequests int64
@@ -2523,41 +2478,18 @@ func (l *Loop) runReaper(ctx context.Context) {
 				Started:      ins.StartedAt,
 				IdleTimeoutS: a.IdleTimeoutS,
 				NodeID:       ins.NodeID,
-				// ux_spec §6.5: per-app floor the reaper honors
-				// when parking idle instances. Plan-tier-gated
-				// upstream (apid updateApp handler), so the
-				// value is always >= 0 here. ADR-071: read via
-				// EffectiveMinInstances so the reaper agrees
-				// with the engine gate and the meterd sampler
-				// (closes the column/jsonb revenue gap).
-				// ADR-072: the carrier is the app-wide max
-				// (`max(app.EffectiveMinInstances(),
-				// max(dep.EffectiveMinInstances() across the
-				// app's instances)`) so the reaper agrees with
-				// pkg/meter/sampler.go:470-485 (the biller).
-				// Without this mirror, a customer with
-				// app.min_instances=0 + deployment.min_instances=3
-				// is billed for 3 warm instances but reaped to 0
-				// — a paid warm/park flap on every tick.
-				MinInstances:           appDeploymentFloor[a.ID],
-				WarmPoolSize:           warmPoolSize,
-				ConfiguredMinInstances: appConfiguredFloor[a.ID],
+				// Filled with the pinned environment policy below.
+				MinInstances:           a.EffectiveMinInstances(),
+				WarmPoolSize:           a.WarmPoolSize,
+				ConfiguredMinInstances: a.EffectiveMinInstances(),
 				PrewarmMinInstances:    appPrewarmFloor[a.ID],
 				OpenConns:              open,
 				InflightRequests:       inflightRequests,
 				FlowSummaries:          flowSummaries,
 				FlowSummaryDegraded:    flowSummaryDegraded,
 				FlowCountDegraded:      flowCountDegraded,
-				// Issue #667 / ADR-078: in-flight waitUntil task count.
-				// Sourced from instances.tail_count (PR #671 schema);
-				// the reaper gate keeps RUNNING instances alive while
-				// the runner's tail host drains them.
-				TailCount: ins.TailCount,
-				// ADR-051 PR-D: workload class drives the
-				// reaper-exempt carve-out. Workers skip
-				// ReapIdle + ReapAggressive; RAM pressure
-				// (SelectEvictions) still wins.
-				WorkloadClass: a.WorkloadClass,
+				TailCount:              ins.TailCount,
+				WorkloadClass:          a.WorkloadClass,
 				// PR-C (issue #462): per-app scale-in cooldown
 				// carrier fields. Same value across all rows of
 				// one app — sourced from apps.last_scale_in_at,
@@ -2587,52 +2519,9 @@ func (l *Loop) runReaper(ctx context.Context) {
 			})
 		}
 	}
-	// ADR-072 floor-mirror enrichment (post-snapshot): walk each
-	// instance's DeploymentID carrier, look up the deployment's
-	// floor, and push appDeploymentFloor to max(app, deployment)
-	// for the app-wide max. Then re-stamp every snapshot row's
-	// MinInstances with the (now-final) app-wide max so
-	// ReapIdle / ReapAggressive consult the same number the biller
-	// charges for. A deployment lookup that errors (stale
-	// instance row pointing at a deleted deployment) is treated as
-	// floor=0 — the biller does the same at sampler.go:478-480.
-	//
-	// depCache (code review #725 finding F4): cache distinct
-	// deployments per tick. An app with N instances all on
-	// deployment D1 produced N store.DeploymentByID(ctx, D1)
-	// round-trips pre-F4 — on PgStore that's N queries fetching
-	// the same row. The cache collapses it to 1 query per
-	// distinct deployment per tick. Scope is per-tick; the
-	// loop is rebuilt every reaper tick so cache lifetime
-	// never spans a stale deployment row.
-	depCache := map[string]int{}
-	for _, ins := range snapshot {
-		if ins.DeploymentID == "" {
-			continue
-		}
-		dFloor, cached := depCache[ins.DeploymentID]
-		if !cached {
-			dep, derr := store.DeploymentByID(ctx, ins.DeploymentID)
-			if derr != nil {
-				// Treat as floor=0 (matches the biller at
-				// sampler.go:478-480) and remember the
-				// miss so a later snapshot row on the same
-				// deployment doesn't re-query.
-				depCache[ins.DeploymentID] = 0
-				continue
-			}
-			dFloor = dep.EffectiveMinInstances()
-			depCache[ins.DeploymentID] = dFloor
-		}
-		if dFloor > appDeploymentFloor[ins.AppID] {
-			appDeploymentFloor[ins.AppID] = dFloor
-		}
-	}
-	for i := range snapshot {
-		if snapshot[i].MinInstances < appDeploymentFloor[snapshot[i].AppID] {
-			snapshot[i].MinInstances = appDeploymentFloor[snapshot[i].AppID]
-		}
-	}
+	// Select immutable workload settings and original lifetime once per
+	// deployment. Floors are shared within that lifetime, never across stages.
+	appDeploymentFloor := l.enrichReaperEnvironmentPolicies(ctx, apps, snapshot, appPrewarmFloor)
 	// Capture the causal snapshot before any park/eviction mutates the
 	// instance set. The observation is best-effort and never changes the
 	// lifecycle decision if the audit write is unavailable.
@@ -2644,8 +2533,10 @@ func (l *Loop) runReaper(ctx context.Context) {
 	// snapshot) and the aggressive branch built the same map
 	// locally — hoisting here is O(N+M) for the whole reaper.
 	instanceToApp := make(map[string]string, len(snapshot))
+	instanceIsProduction := make(map[string]bool, len(snapshot))
 	for _, s := range snapshot {
 		instanceToApp[s.Instance] = s.AppID
+		instanceIsProduction[s.Instance] = reaperProductionScope(s.Scope) && !s.PolicyUnavailable
 	}
 	// PR-C (issue #462): per-app stamp after a successful park. We
 	// group the idle park list by app so we stamp ONCE per app per
@@ -2685,7 +2576,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 			}
 		}
 		// O(1) lookup via the hoisted instance→app map.
-		if appID, ok := instanceToApp[id]; ok {
+		if appID, ok := instanceToApp[id]; ok && instanceIsProduction[id] {
 			idleParkByApp[appID] = struct{}{}
 		}
 	}
@@ -2906,6 +2797,16 @@ func resolveTenantTier(snapshot []InstanceInfo, instanceID string) (string, bool
 // behaviour is unit-testable without a clock / DB round-trip on
 // the full reaper body.
 func (l *Loop) runReaperAggressive(ctx context.Context, apps []state.App, snapshot []InstanceInfo, instanceToApp map[string]string, cooldownHeldByApp map[string]struct{}, now time.Time) {
+	// The existing load feed is app-wide production telemetry. A stage needs
+	// an explicit environment load signal before aggressive scale-in can use
+	// it; idle reaping still uses the stage's own floor and pinned policy.
+	productionSnapshot := make([]InstanceInfo, 0, len(snapshot))
+	for _, row := range snapshot {
+		if reaperProductionScope(row.Scope) && !row.PolicyUnavailable {
+			productionSnapshot = append(productionSnapshot, row)
+		}
+	}
+	snapshot = productionSnapshot
 	// PR-C review fix: instanceToApp is built once in runReaper
 	// (O(N)) and threaded through here. Previously this function
 	// built its own copy — cheap but a second O(N) walk on every

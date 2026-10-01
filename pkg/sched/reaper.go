@@ -99,7 +99,7 @@ type InstanceInfo struct {
 	// in snapshotAndPark is the safety valve). Populated from
 	// state.Instance.TailCount in loop.go's runReaper.
 	TailCount int
-	// MinInstances is the per-app cold-wake floor (ux_spec §6.5). Zero
+	// MinInstances is the environment cold-wake floor (ux_spec §6.5). Zero
 	// keeps today's scale-to-zero behaviour; >0 means the reaper must
 	// keep at least this many RUNNING instances alive regardless of
 	// idle timeout. Honored by ReapIdle, intentionally NOT honored by
@@ -108,18 +108,9 @@ type InstanceInfo struct {
 	// budget). Pro/Scale only — the apid gate rejects Free/Hobby so
 	// the value is always sane when it lands here.
 	//
-	// Carrier semantics: every row of the same app carries the SAME
-	// value (sourced from app.MinInstances in runReaper). The reaper
-	// groups by AppID and reads the floor from the first row it sees.
-	// Don't try to set MinInstances per-instance — it's a per-app
-	// concept reflected redundantly on each row.
-	//
-	// Issue #557 closure / ADR-072: the value stamped here is the
-	// app-wide max (`max(app.EffectiveMinInstances(),
-	// max(d.EffectiveMinInstances() across this app's instances)`) so
-	// the reaper agrees with pkg/meter/sampler.go:470-485. The
-	// snapshot walk in loop.go first stamps the app-floor value, then
-	// post-enriches after seeing each instance's DeploymentID.
+	// Carrier semantics: rows share the maximum floor only within their
+	// original environment lifetime. Deployment overrides participate in that
+	// floor; sibling stages never supply its running replica count.
 	MinInstances int
 	// WarmPoolSize is the desired paused warm-pool size. Unlike
 	// MinInstances, this applies only to WARM rows and is independent of
@@ -133,14 +124,12 @@ type InstanceInfo struct {
 	// PrewarmMinInstances is the temporary demand-window floor, when active.
 	// MinInstances remains the effective floor consulted by the selectors.
 	PrewarmMinInstances int
-	// DeploymentID (issue #557 closure / ADR-072) is the
-	// per-instance deployment id carrier — empty on legacy rows
-	// that pre-date the migration. The snapshot walk reads this
-	// to enrich appDeploymentFloor in runReaper. Not consulted by
-	// the selectors (ReapIdle / ReapAggressive / SelectEvictions);
-	// purely a carrier so the post-snapshot enrichment pass has
-	// the value at hand without re-Querying the store.
-	DeploymentID string
+	// DeploymentID carries the immutable runtime policy selection.
+	DeploymentID  string
+	Scope         string
+	EnvironmentID string
+	// Unavailable policy or original ownership never authorizes scale-in.
+	PolicyUnavailable bool
 	// WorkloadClass is the apps-row workload class
 	// (ADR-051 PR-D). Workers (background jobs / cron workers /
 	// long-running consumers) are reaper-exempt: they have no
@@ -240,10 +229,10 @@ func scaleInCooldownAnchor(in InstanceInfo) *time.Time {
 // otherwise park them. The conntrack reader that fills OpenConns lives
 // outside schedd (privilege boundary; see plan-file §PR-A).
 //
-// Per-app floor (ux_spec §6.5): when an app's MinInstances > 0, the
+// Environment floor (ux_spec §6.5): when its MinInstances > 0, the
 // reaper keeps at least that many RUNNING instances alive regardless
 // of idle timeout. We enforce this by limiting the park count to
-// (RUNNING_for_app − floor). Direction: when the candidate pool is
+// (RUNNING_for_environment − floor). Direction: when the candidate pool is
 // bigger than that allowed count, we drop the freshest candidates —
 // the freshly-woken one just served a user, parking it defeats the
 // floor's purpose. RAM-pressure eviction (SelectEvictions) intentionally
@@ -309,6 +298,9 @@ func ReapIdle(now time.Time, instances []InstanceInfo, metrics *wire.OpsMetrics,
 		if in.State != state.StateRunning && in.State != state.StateWarm {
 			continue
 		}
+		if in.PolicyUnavailable {
+			continue
+		}
 		if state.InstanceMode(in.Mode) == state.InstanceModeMirror {
 			if !in.Started.IsZero() && now.Sub(in.Started) > mirrorOrphanAfter &&
 				in.InflightRequests == 0 && in.OpenConns == 0 && in.TailCount == 0 {
@@ -316,7 +308,7 @@ func ReapIdle(now time.Time, instances []InstanceInfo, metrics *wire.OpsMetrics,
 			}
 			continue
 		}
-		groupKey := in.AppID
+		groupKey := reaperEnvironmentKey(in)
 		if in.State == state.StateWarm {
 			// A paused pool belongs to the exact deployment whose payload it
 			// contains. Sibling stages cannot satisfy or consume its target.
@@ -537,7 +529,7 @@ func ReapIdle(now time.Time, instances []InstanceInfo, metrics *wire.OpsMetrics,
 // parks the surplus above the autoscale-derived target, and
 // ReapIdle's timeout handles the rest.
 //
-// Per-app policy:
+// Per-environment policy (legacy app keys select production):
 //   - desired = ceil(windowed_rps / autoscale_target_rps); computed
 //     by the caller and passed in via desiredByApp. Apps absent from
 //     the map (no autoscale configured, no target, or no signal yet)
@@ -584,7 +576,14 @@ func ReapAggressive(now time.Time, snapshot []InstanceInfo, desiredByApp map[str
 		if in.State != state.StateRunning {
 			continue
 		}
-		desired, ok := desiredByApp[in.AppID]
+		if in.PolicyUnavailable {
+			continue
+		}
+		groupKey := reaperEnvironmentKey(in)
+		desired, ok := desiredByApp[groupKey]
+		if !ok && reaperProductionScope(in.Scope) {
+			desired, ok = desiredByApp[in.AppID]
+		}
 		if !ok {
 			continue // no autoscale target — defer to ReapIdle
 		}
@@ -612,7 +611,7 @@ func ReapAggressive(now time.Time, snapshot []InstanceInfo, desiredByApp map[str
 		case state.InstanceModeWorker, state.InstanceModeService, state.InstanceModeJob:
 			continue
 		}
-		g, ok := byApp[in.AppID]
+		g, ok := byApp[groupKey]
 		if !ok {
 			g = &appGroup{
 				floor:           in.MinInstances,
@@ -620,7 +619,7 @@ func ReapAggressive(now time.Time, snapshot []InstanceInfo, desiredByApp map[str
 				cooldownAnchor:  scaleInCooldownAnchor(in),
 				scaleInCooldown: time.Duration(in.ScaleInCooldownS) * time.Second,
 			}
-			byApp[in.AppID] = g
+			byApp[groupKey] = g
 		}
 		// PR-C (issue #462): per-app scale-in cooldown consult (mirror
 		// ReapIdle). Skip the entire app when within the cooldown window.
