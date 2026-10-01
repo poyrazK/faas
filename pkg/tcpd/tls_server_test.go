@@ -135,12 +135,7 @@ func TestServerTLSStalledHandshakeShutdownReleasesCredits(t *testing.T) {
 	// Send no ClientHello. Wait until the server owns the account credit,
 	// proving shutdown occurs during the handshake rather than before accept.
 	deadline := time.Now().Add(time.Second)
-	for {
-		release, available := limiter.Acquire("account")
-		if !available {
-			break
-		}
-		release()
+	for limiter.Current("account") == 0 {
 		if time.Now().After(deadline) {
 			t.Fatal("stalled connection never entered TLS handshake")
 		}
