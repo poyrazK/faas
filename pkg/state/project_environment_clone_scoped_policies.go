@@ -69,7 +69,7 @@ func validateCloneScopedPolicyPublication(record projectCloneWorkloadRecord, act
 	// A matching policy list alone cannot prove scoped admission, independent
 	// producer identities or runtime lanes. Keep this guard until those durable
 	// proofs exist, including for an explicitly empty captured collection.
-	if record.snapshot.Policies.Work != nil {
+	if record.snapshot.Policies.Work != nil || record.snapshot.Settings.WorkPolicies != nil {
 		return fmt.Errorf("clone workload %q work policies: %w", record.WorkloadSlug, ErrProjectEnvironmentCloneWorkPolicyIsolationUnavailable)
 	}
 	actualHash, err := cloneScopedPoliciesHash(actual)

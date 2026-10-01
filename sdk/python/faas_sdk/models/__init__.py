@@ -438,6 +438,9 @@ from .create_project_environment_qualification_request import CreateProjectEnvir
 from .create_project_environment_qualification_request_secret_revision_hashes import (
     CreateProjectEnvironmentQualificationRequestSecretRevisionHashes,
 )
+from .create_project_environment_qualification_request_workload_config_hashes import (
+    CreateProjectEnvironmentQualificationRequestWorkloadConfigHashes,
+)
 from .create_project_environment_request import CreateProjectEnvironmentRequest
 from .create_queue_binding_request import CreateQueueBindingRequest
 from .create_queue_binding_request_mode import CreateQueueBindingRequestMode
@@ -699,6 +702,8 @@ from .edge_rule_validate_action_schema import EdgeRuleValidateActionSchema
 from .edge_rule_validate_action_validate_mode import EdgeRuleValidateActionValidateMode
 from .egress_circuit_breaker_policy import EgressCircuitBreakerPolicy
 from .egress_circuit_breaker_policy_state import EgressCircuitBreakerPolicyState
+from .egress_flow_log_entry import EgressFlowLogEntry
+from .egress_flow_log_response import EgressFlowLogResponse
 from .enable_alert_preset_request import EnableAlertPresetRequest
 from .enable_alert_preset_request_action import EnableAlertPresetRequestAction
 from .env_diff_cell import EnvDiffCell
@@ -1317,6 +1322,10 @@ from .project_environment_binding_change_response_change import ProjectEnvironme
 from .project_environment_binding_change_response_kind import ProjectEnvironmentBindingChangeResponseKind
 from .project_environment_binding_response import ProjectEnvironmentBindingResponse
 from .project_environment_binding_response_kind import ProjectEnvironmentBindingResponseKind
+from .project_environment_clone_operation_response import ProjectEnvironmentCloneOperationResponse
+from .project_environment_clone_operation_response_status import ProjectEnvironmentCloneOperationResponseStatus
+from .project_environment_clone_resource_response import ProjectEnvironmentCloneResourceResponse
+from .project_environment_clone_resource_response_status import ProjectEnvironmentCloneResourceResponseStatus
 from .project_environment_clone_response import ProjectEnvironmentCloneResponse
 from .project_environment_clone_response_shared_resources_item import ProjectEnvironmentCloneResponseSharedResourcesItem
 from .project_environment_config_change import ProjectEnvironmentConfigChange
@@ -1384,6 +1393,9 @@ from .project_environment_qualification_response_secret_revision_hashes import (
     ProjectEnvironmentQualificationResponseSecretRevisionHashes,
 )
 from .project_environment_qualification_response_status import ProjectEnvironmentQualificationResponseStatus
+from .project_environment_qualification_response_workload_config_hashes import (
+    ProjectEnvironmentQualificationResponseWorkloadConfigHashes,
+)
 from .project_environment_qualification_result import ProjectEnvironmentQualificationResult
 from .project_environment_qualification_result_error_code import ProjectEnvironmentQualificationResultErrorCode
 from .project_environment_qualification_result_status import ProjectEnvironmentQualificationResultStatus
@@ -2311,6 +2323,7 @@ __all__ = (
     "CreateProjectEnvironmentApprovalRequest",
     "CreateProjectEnvironmentQualificationRequest",
     "CreateProjectEnvironmentQualificationRequestSecretRevisionHashes",
+    "CreateProjectEnvironmentQualificationRequestWorkloadConfigHashes",
     "CreateProjectEnvironmentRequest",
     "CreateQueueBindingRequest",
     "CreateQueueBindingRequestMode",
@@ -2568,6 +2581,8 @@ __all__ = (
     "EdgeRuleValidateActionValidateMode",
     "EgressCircuitBreakerPolicy",
     "EgressCircuitBreakerPolicyState",
+    "EgressFlowLogEntry",
+    "EgressFlowLogResponse",
     "EnableAlertPresetRequest",
     "EnableAlertPresetRequestAction",
     "EnvDiffCell",
@@ -3162,6 +3177,10 @@ __all__ = (
     "ProjectEnvironmentBindingChangeResponseKind",
     "ProjectEnvironmentBindingResponse",
     "ProjectEnvironmentBindingResponseKind",
+    "ProjectEnvironmentCloneOperationResponse",
+    "ProjectEnvironmentCloneOperationResponseStatus",
+    "ProjectEnvironmentCloneResourceResponse",
+    "ProjectEnvironmentCloneResourceResponseStatus",
     "ProjectEnvironmentCloneResponse",
     "ProjectEnvironmentCloneResponseSharedResourcesItem",
     "ProjectEnvironmentConfigChange",
@@ -3209,6 +3228,7 @@ __all__ = (
     "ProjectEnvironmentQualificationResponse",
     "ProjectEnvironmentQualificationResponseSecretRevisionHashes",
     "ProjectEnvironmentQualificationResponseStatus",
+    "ProjectEnvironmentQualificationResponseWorkloadConfigHashes",
     "ProjectEnvironmentQualificationResult",
     "ProjectEnvironmentQualificationResultErrorCode",
     "ProjectEnvironmentQualificationResultStatus",

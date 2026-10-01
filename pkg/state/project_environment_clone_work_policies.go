@@ -65,20 +65,15 @@ func normalizeCloneWorkPolicyDefinitions(definitions ProjectEnvironmentCloneWork
 	if definitions.Version != 1 || !validCloneCredentialSourceID(definitions.AppID) || api.ValidateScope(definitions.SourceScope) != nil {
 		return definitions, ErrConflict
 	}
-	definitions.Policies = append([]ProjectEnvironmentCloneWorkPolicy{}, definitions.Policies...)
+	var err error
+	definitions.Policies, err = normalizeWorkPolicyDefinitions(definitions.Policies)
+	if err != nil {
+		return definitions, err
+	}
 	definitions.EventBindings = append([]ProjectEnvironmentCloneEventWorkPolicyBinding{}, definitions.EventBindings...)
 	definitions.TriggerBindings = append([]ProjectEnvironmentCloneTriggerWorkPolicyBinding{}, definitions.TriggerBindings...)
 	policies := map[string]bool{}
 	for _, policy := range definitions.Policies {
-		if policy.Revision < 1 || policies[policy.Name] || policy.PendingUpdates == "" || policy.DebounceMS < 0 || policy.ExpiresAfterMS < 0 ||
-			policy.DebounceMS > int64(workpolicy.MaxDebounce/time.Millisecond) || policy.ExpiresAfterMS > int64(workpolicy.MaxExpiresAfter/time.Millisecond) {
-			return definitions, ErrConflict
-		}
-		value := workpolicy.Policy{Name: policy.Name, MaxRunningPerKey: policy.MaxRunningPerKey, MaxRunningPerFairnessKey: policy.MaxRunningPerFairnessKey,
-			PendingUpdates: workpolicy.PendingUpdates(policy.PendingUpdates), Debounce: time.Duration(policy.DebounceMS) * time.Millisecond, ExpiresAfter: time.Duration(policy.ExpiresAfterMS) * time.Millisecond}
-		if value.Validate() != nil {
-			return definitions, ErrConflict
-		}
 		policies[policy.Name] = true
 	}
 	events, triggers := map[string]bool{}, map[string]bool{}
@@ -95,7 +90,6 @@ func normalizeCloneWorkPolicyDefinitions(definitions ProjectEnvironmentCloneWork
 		}
 		triggers[binding.TriggerID] = true
 	}
-	sort.Slice(definitions.Policies, func(i, j int) bool { return definitions.Policies[i].Name < definitions.Policies[j].Name })
 	sort.Slice(definitions.EventBindings, func(i, j int) bool {
 		return definitions.EventBindings[i].SubscriptionID < definitions.EventBindings[j].SubscriptionID
 	})
@@ -103,6 +97,25 @@ func normalizeCloneWorkPolicyDefinitions(definitions ProjectEnvironmentCloneWork
 		return definitions.TriggerBindings[i].TriggerID < definitions.TriggerBindings[j].TriggerID
 	})
 	return definitions, nil
+}
+
+func normalizeWorkPolicyDefinitions(policies []ProjectEnvironmentCloneWorkPolicy) ([]ProjectEnvironmentCloneWorkPolicy, error) {
+	policies = append([]ProjectEnvironmentCloneWorkPolicy{}, policies...)
+	seen := map[string]bool{}
+	for _, policy := range policies {
+		if policy.Revision < 1 || seen[policy.Name] || policy.PendingUpdates == "" || policy.DebounceMS < 0 || policy.ExpiresAfterMS < 0 ||
+			policy.DebounceMS > int64(workpolicy.MaxDebounce/time.Millisecond) || policy.ExpiresAfterMS > int64(workpolicy.MaxExpiresAfter/time.Millisecond) {
+			return nil, ErrConflict
+		}
+		value := workpolicy.Policy{Name: policy.Name, MaxRunningPerKey: policy.MaxRunningPerKey, MaxRunningPerFairnessKey: policy.MaxRunningPerFairnessKey,
+			PendingUpdates: workpolicy.PendingUpdates(policy.PendingUpdates), Debounce: time.Duration(policy.DebounceMS) * time.Millisecond, ExpiresAfter: time.Duration(policy.ExpiresAfterMS) * time.Millisecond}
+		if value.Validate() != nil {
+			return nil, ErrConflict
+		}
+		seen[policy.Name] = true
+	}
+	sort.Slice(policies, func(i, j int) bool { return policies[i].Name < policies[j].Name })
+	return policies, nil
 }
 
 func validCloneWorkSelectors(key, fairness string) bool {

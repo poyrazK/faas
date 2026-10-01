@@ -7,28 +7,21 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.problem import Problem
-from ...models.work_policy_list_response import WorkPolicyListResponse
-from ...types import UNSET, Response, Unset
+from ...models.project_environment_clone_operation_response import ProjectEnvironmentCloneOperationResponse
+from ...types import Response
 
 
 def _get_kwargs(
     slug: str,
-    *,
-    environment: str | Unset = UNSET,
+    clone: str,
 ) -> dict[str, Any]:
-
-    params: dict[str, Any] = {}
-
-    params["environment"] = environment
-
-    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
         "method": "get",
-        "url": "/v1/apps/{slug}/work-policies".format(
+        "url": "/v1/projects/{slug}/environment-clones/{clone}".format(
             slug=quote(str(slug), safe=""),
+            clone=quote(str(clone), safe=""),
         ),
-        "params": params,
     }
 
     return _kwargs
@@ -36,16 +29,11 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Problem | WorkPolicyListResponse | None:
+) -> Problem | ProjectEnvironmentCloneOperationResponse | None:
     if response.status_code == 200:
-        response_200 = WorkPolicyListResponse.from_dict(response.json())
+        response_200 = ProjectEnvironmentCloneOperationResponse.from_dict(response.json())
 
         return response_200
-
-    if response.status_code == 400:
-        response_400 = Problem.from_dict(response.json())
-
-        return response_400
 
     if response.status_code == 401:
         response_401 = Problem.from_dict(response.json())
@@ -57,10 +45,10 @@ def _parse_response(
 
         return response_404
 
-    if response.status_code == 409:
-        response_409 = Problem.from_dict(response.json())
+    if response.status_code == 429:
+        response_429 = Problem.from_dict(response.json())
 
-        return response_409
+        return response_429
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -70,7 +58,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Problem | WorkPolicyListResponse]:
+) -> Response[Problem | ProjectEnvironmentCloneOperationResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -81,31 +69,30 @@ def _build_response(
 
 def sync_detailed(
     slug: str,
+    clone: str,
     *,
     client: AuthenticatedClient | Client,
-    environment: str | Unset = UNSET,
-) -> Response[Problem | WorkPolicyListResponse]:
-    """List named work policies for an app.
+) -> Response[Problem | ProjectEnvironmentCloneOperationResponse]:
+    """Read account- and project-scoped durable clone progress.
 
-     Stage reads return the complete desired policy collection from immutable workload settings. An
-    uninitialized stage collection returns 409 and never inherits production policies. Stage policy
-    execution remains unavailable until work lanes and producers are isolated.
+     Status is available before the target environment is registered. Private captures, values and worker
+    lease tokens are excluded.
 
     Args:
         slug (str):
-        environment (str | Unset):
+        clone (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Problem | WorkPolicyListResponse]
+        Response[Problem | ProjectEnvironmentCloneOperationResponse]
     """
 
     kwargs = _get_kwargs(
         slug=slug,
-        environment=environment,
+        clone=clone,
     )
 
     response = client.get_httpx_client().request(
@@ -117,62 +104,60 @@ def sync_detailed(
 
 def sync(
     slug: str,
+    clone: str,
     *,
     client: AuthenticatedClient | Client,
-    environment: str | Unset = UNSET,
-) -> Problem | WorkPolicyListResponse | None:
-    """List named work policies for an app.
+) -> Problem | ProjectEnvironmentCloneOperationResponse | None:
+    """Read account- and project-scoped durable clone progress.
 
-     Stage reads return the complete desired policy collection from immutable workload settings. An
-    uninitialized stage collection returns 409 and never inherits production policies. Stage policy
-    execution remains unavailable until work lanes and producers are isolated.
+     Status is available before the target environment is registered. Private captures, values and worker
+    lease tokens are excluded.
 
     Args:
         slug (str):
-        environment (str | Unset):
+        clone (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Problem | WorkPolicyListResponse
+        Problem | ProjectEnvironmentCloneOperationResponse
     """
 
     return sync_detailed(
         slug=slug,
+        clone=clone,
         client=client,
-        environment=environment,
     ).parsed
 
 
 async def asyncio_detailed(
     slug: str,
+    clone: str,
     *,
     client: AuthenticatedClient | Client,
-    environment: str | Unset = UNSET,
-) -> Response[Problem | WorkPolicyListResponse]:
-    """List named work policies for an app.
+) -> Response[Problem | ProjectEnvironmentCloneOperationResponse]:
+    """Read account- and project-scoped durable clone progress.
 
-     Stage reads return the complete desired policy collection from immutable workload settings. An
-    uninitialized stage collection returns 409 and never inherits production policies. Stage policy
-    execution remains unavailable until work lanes and producers are isolated.
+     Status is available before the target environment is registered. Private captures, values and worker
+    lease tokens are excluded.
 
     Args:
         slug (str):
-        environment (str | Unset):
+        clone (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Problem | WorkPolicyListResponse]
+        Response[Problem | ProjectEnvironmentCloneOperationResponse]
     """
 
     kwargs = _get_kwargs(
         slug=slug,
-        environment=environment,
+        clone=clone,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -182,32 +167,31 @@ async def asyncio_detailed(
 
 async def asyncio(
     slug: str,
+    clone: str,
     *,
     client: AuthenticatedClient | Client,
-    environment: str | Unset = UNSET,
-) -> Problem | WorkPolicyListResponse | None:
-    """List named work policies for an app.
+) -> Problem | ProjectEnvironmentCloneOperationResponse | None:
+    """Read account- and project-scoped durable clone progress.
 
-     Stage reads return the complete desired policy collection from immutable workload settings. An
-    uninitialized stage collection returns 409 and never inherits production policies. Stage policy
-    execution remains unavailable until work lanes and producers are isolated.
+     Status is available before the target environment is registered. Private captures, values and worker
+    lease tokens are excluded.
 
     Args:
         slug (str):
-        environment (str | Unset):
+        clone (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Problem | WorkPolicyListResponse
+        Problem | ProjectEnvironmentCloneOperationResponse
     """
 
     return (
         await asyncio_detailed(
             slug=slug,
+            clone=clone,
             client=client,
-            environment=environment,
         )
     ).parsed

@@ -6,35 +6,23 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.app_response import AppResponse
+from ...models.create_project_environment_request import CreateProjectEnvironmentRequest
 from ...models.problem import Problem
-from ...models.update_app_request import UpdateAppRequest
-from ...types import UNSET, Response, Unset
+from ...types import Response
 
 
 def _get_kwargs(
     slug: str,
     *,
-    body: UpdateAppRequest,
-    environment: str | Unset = UNSET,
-    if_workload_revision: int | Unset = UNSET,
+    body: CreateProjectEnvironmentRequest,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
-    if not isinstance(if_workload_revision, Unset):
-        headers["If-Workload-Revision"] = str(if_workload_revision)
-
-    params: dict[str, Any] = {}
-
-    params["environment"] = environment
-
-    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
-        "method": "patch",
-        "url": "/v1/apps/{slug}".format(
+        "method": "post",
+        "url": "/v1/projects/{slug}/environment-clones".format(
             slug=quote(str(slug), safe=""),
         ),
-        "params": params,
     }
 
     _kwargs["json"] = body.to_dict()
@@ -45,12 +33,7 @@ def _get_kwargs(
     return _kwargs
 
 
-def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> AppResponse | Problem | None:
-    if response.status_code == 200:
-        response_200 = AppResponse.from_dict(response.json())
-
-        return response_200
-
+def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Problem | None:
     if response.status_code == 400:
         response_400 = Problem.from_dict(response.json())
 
@@ -61,11 +44,6 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 
         return response_401
 
-    if response.status_code == 403:
-        response_403 = Problem.from_dict(response.json())
-
-        return response_403
-
     if response.status_code == 404:
         response_404 = Problem.from_dict(response.json())
 
@@ -75,11 +53,6 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
         response_409 = Problem.from_dict(response.json())
 
         return response_409
-
-    if response.status_code == 422:
-        response_422 = Problem.from_dict(response.json())
-
-        return response_422
 
     if response.status_code == 429:
         response_429 = Problem.from_dict(response.json())
@@ -92,9 +65,7 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
         return None
 
 
-def _build_response(
-    *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[AppResponse | Problem]:
+def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Response[Problem]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -107,32 +78,30 @@ def sync_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
-    body: UpdateAppRequest,
-    environment: str | Unset = UNSET,
-    if_workload_revision: int | Unset = UNSET,
-) -> Response[AppResponse | Problem]:
-    """Partial-update an app.
+    body: CreateProjectEnvironmentRequest,
+) -> Response[Problem]:
+    """Request a complete isolated environment clone.
+
+     This dedicated route never falls back to partial cloning. Full admission
+    currently returns environment_full_clone_unavailable with named blockers
+    until complete coverage and coordinated data-copy proofs are available.
 
     Args:
         slug (str):
-        environment (str | Unset):
-        if_workload_revision (int | Unset):
-        body (UpdateAppRequest): Partial update — every field is optional; omitted fields are
-            unchanged.
+        body (CreateProjectEnvironmentRequest): Request to register or clone a named project
+            environment.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[AppResponse | Problem]
+        Response[Problem]
     """
 
     kwargs = _get_kwargs(
         slug=slug,
         body=body,
-        environment=environment,
-        if_workload_revision=if_workload_revision,
     )
 
     response = client.get_httpx_client().request(
@@ -146,33 +115,31 @@ def sync(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
-    body: UpdateAppRequest,
-    environment: str | Unset = UNSET,
-    if_workload_revision: int | Unset = UNSET,
-) -> AppResponse | Problem | None:
-    """Partial-update an app.
+    body: CreateProjectEnvironmentRequest,
+) -> Problem | None:
+    """Request a complete isolated environment clone.
+
+     This dedicated route never falls back to partial cloning. Full admission
+    currently returns environment_full_clone_unavailable with named blockers
+    until complete coverage and coordinated data-copy proofs are available.
 
     Args:
         slug (str):
-        environment (str | Unset):
-        if_workload_revision (int | Unset):
-        body (UpdateAppRequest): Partial update — every field is optional; omitted fields are
-            unchanged.
+        body (CreateProjectEnvironmentRequest): Request to register or clone a named project
+            environment.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        AppResponse | Problem
+        Problem
     """
 
     return sync_detailed(
         slug=slug,
         client=client,
         body=body,
-        environment=environment,
-        if_workload_revision=if_workload_revision,
     ).parsed
 
 
@@ -180,32 +147,30 @@ async def asyncio_detailed(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
-    body: UpdateAppRequest,
-    environment: str | Unset = UNSET,
-    if_workload_revision: int | Unset = UNSET,
-) -> Response[AppResponse | Problem]:
-    """Partial-update an app.
+    body: CreateProjectEnvironmentRequest,
+) -> Response[Problem]:
+    """Request a complete isolated environment clone.
+
+     This dedicated route never falls back to partial cloning. Full admission
+    currently returns environment_full_clone_unavailable with named blockers
+    until complete coverage and coordinated data-copy proofs are available.
 
     Args:
         slug (str):
-        environment (str | Unset):
-        if_workload_revision (int | Unset):
-        body (UpdateAppRequest): Partial update — every field is optional; omitted fields are
-            unchanged.
+        body (CreateProjectEnvironmentRequest): Request to register or clone a named project
+            environment.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[AppResponse | Problem]
+        Response[Problem]
     """
 
     kwargs = _get_kwargs(
         slug=slug,
         body=body,
-        environment=environment,
-        if_workload_revision=if_workload_revision,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -217,25 +182,25 @@ async def asyncio(
     slug: str,
     *,
     client: AuthenticatedClient | Client,
-    body: UpdateAppRequest,
-    environment: str | Unset = UNSET,
-    if_workload_revision: int | Unset = UNSET,
-) -> AppResponse | Problem | None:
-    """Partial-update an app.
+    body: CreateProjectEnvironmentRequest,
+) -> Problem | None:
+    """Request a complete isolated environment clone.
+
+     This dedicated route never falls back to partial cloning. Full admission
+    currently returns environment_full_clone_unavailable with named blockers
+    until complete coverage and coordinated data-copy proofs are available.
 
     Args:
         slug (str):
-        environment (str | Unset):
-        if_workload_revision (int | Unset):
-        body (UpdateAppRequest): Partial update — every field is optional; omitted fields are
-            unchanged.
+        body (CreateProjectEnvironmentRequest): Request to register or clone a named project
+            environment.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        AppResponse | Problem
+        Problem
     """
 
     return (
@@ -243,7 +208,5 @@ async def asyncio(
             slug=slug,
             client=client,
             body=body,
-            environment=environment,
-            if_workload_revision=if_workload_revision,
         )
     ).parsed

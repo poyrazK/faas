@@ -41,6 +41,14 @@ func TestWorkloadAppFieldPoliciesCoverEveryAppField(t *testing.T) {
 			t.Errorf("App.%s has unknown policy %q", field.Name, policy)
 		}
 	}
+	for i := 0; i < settingsType.NumField(); i++ {
+		field := settingsType.Field(i)
+		if _, belongsToApp := appType.FieldByName(field.Name); !belongsToApp {
+			if field.Name != "WorkPolicies" || field.Type != reflect.TypeOf((*state.ProjectEnvironmentWorkPolicySettings)(nil)) {
+				t.Errorf("Settings.%s needs an explicit environment configuration ownership decision", field.Name)
+			}
+		}
+	}
 }
 
 type workloadSpecTestStore interface {

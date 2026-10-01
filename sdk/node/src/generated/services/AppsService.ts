@@ -122,11 +122,16 @@ export class AppsService {
    */
   public static getApp({
     slug,
+    environment,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * Read or edit desired settings in this project environment. New deployments pin the revision; existing deployments keep their settings. Omit for legacy app settings.
+     */
+    environment?: string,
   }): CancelablePromise<AppResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -134,7 +139,11 @@ export class AppsService {
       path: {
         'slug': slug,
       },
+      query: {
+        'environment': environment,
+      },
       errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
@@ -152,6 +161,8 @@ export class AppsService {
   public static updateApp({
     slug,
     requestBody,
+    environment,
+    ifWorkloadRevision,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -161,12 +172,26 @@ export class AppsService {
      * Patch payload — every field is optional; omitted fields are unchanged. See UpdateAppRequest.
      */
     requestBody: UpdateAppRequest,
+    /**
+     * Edit desired workload settings in a registered project environment; deploy again to test the revision. Omit to update legacy app settings.
+     */
+    environment?: string,
+    /**
+     * Optional expected desired revision when editing an environment; zero means no revision exists. Protected environments require an approved plan or promotion.
+     */
+    ifWorkloadRevision?: number,
   }): CancelablePromise<AppResponse> {
     return __request(OpenAPI, {
       method: 'PATCH',
       url: '/v1/apps/{slug}',
       path: {
         'slug': slug,
+      },
+      headers: {
+        'If-Workload-Revision': ifWorkloadRevision,
+      },
+      query: {
+        'environment': environment,
       },
       body: requestBody,
       mediaType: 'application/json',
@@ -175,6 +200,7 @@ export class AppsService {
         401: `code: unauthorized`,
         403: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied`,
         404: `code: not_found`,
+        409: `code: conflict`,
         422: `code: invalid_min_instances — must be in [0, plan max_concurrency].`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable

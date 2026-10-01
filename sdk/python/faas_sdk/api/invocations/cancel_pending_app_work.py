@@ -17,11 +17,18 @@ def _get_kwargs(
     name: str,
     *,
     body: CancelPendingWorkRequest,
+    environment: str | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     if not isinstance(idempotency_key, Unset):
         headers["Idempotency-Key"] = idempotency_key
+
+    params: dict[str, Any] = {}
+
+    params["environment"] = environment
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -29,6 +36,7 @@ def _get_kwargs(
             slug=quote(str(slug), safe=""),
             name=quote(str(name), safe=""),
         ),
+        "params": params,
     }
 
     _kwargs["json"] = body.to_dict()
@@ -47,6 +55,11 @@ def _parse_response(
 
         return response_200
 
+    if response.status_code == 400:
+        response_400 = Problem.from_dict(response.json())
+
+        return response_400
+
     if response.status_code == 401:
         response_401 = Problem.from_dict(response.json())
 
@@ -56,6 +69,11 @@ def _parse_response(
         response_404 = Problem.from_dict(response.json())
 
         return response_404
+
+    if response.status_code == 409:
+        response_409 = Problem.from_dict(response.json())
+
+        return response_409
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -80,16 +98,19 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: CancelPendingWorkRequest,
+    environment: str | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[CancelPendingWorkResponse | Problem]:
     """Cancel pending work for one policy and application key.
 
      Running work continues. A repeated Idempotency-Key returns the original receipt and does not cancel
-    newer work.
+    newer work. A stage selection returns invocation_environment_work_isolation_unavailable (409) before
+    touching production lanes or cancellation receipts.
 
     Args:
         slug (str):
         name (str):
+        environment (str | Unset):
         idempotency_key (str | Unset):
         body (CancelPendingWorkRequest): Typed application key identifying pending work in one
             policy lane.
@@ -106,6 +127,7 @@ def sync_detailed(
         slug=slug,
         name=name,
         body=body,
+        environment=environment,
         idempotency_key=idempotency_key,
     )
 
@@ -122,16 +144,19 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: CancelPendingWorkRequest,
+    environment: str | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
 ) -> CancelPendingWorkResponse | Problem | None:
     """Cancel pending work for one policy and application key.
 
      Running work continues. A repeated Idempotency-Key returns the original receipt and does not cancel
-    newer work.
+    newer work. A stage selection returns invocation_environment_work_isolation_unavailable (409) before
+    touching production lanes or cancellation receipts.
 
     Args:
         slug (str):
         name (str):
+        environment (str | Unset):
         idempotency_key (str | Unset):
         body (CancelPendingWorkRequest): Typed application key identifying pending work in one
             policy lane.
@@ -149,6 +174,7 @@ def sync(
         name=name,
         client=client,
         body=body,
+        environment=environment,
         idempotency_key=idempotency_key,
     ).parsed
 
@@ -159,16 +185,19 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: CancelPendingWorkRequest,
+    environment: str | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[CancelPendingWorkResponse | Problem]:
     """Cancel pending work for one policy and application key.
 
      Running work continues. A repeated Idempotency-Key returns the original receipt and does not cancel
-    newer work.
+    newer work. A stage selection returns invocation_environment_work_isolation_unavailable (409) before
+    touching production lanes or cancellation receipts.
 
     Args:
         slug (str):
         name (str):
+        environment (str | Unset):
         idempotency_key (str | Unset):
         body (CancelPendingWorkRequest): Typed application key identifying pending work in one
             policy lane.
@@ -185,6 +214,7 @@ async def asyncio_detailed(
         slug=slug,
         name=name,
         body=body,
+        environment=environment,
         idempotency_key=idempotency_key,
     )
 
@@ -199,16 +229,19 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: CancelPendingWorkRequest,
+    environment: str | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
 ) -> CancelPendingWorkResponse | Problem | None:
     """Cancel pending work for one policy and application key.
 
      Running work continues. A repeated Idempotency-Key returns the original receipt and does not cancel
-    newer work.
+    newer work. A stage selection returns invocation_environment_work_isolation_unavailable (409) before
+    touching production lanes or cancellation receipts.
 
     Args:
         slug (str):
         name (str):
+        environment (str | Unset):
         idempotency_key (str | Unset):
         body (CancelPendingWorkRequest): Typed application key identifying pending work in one
             policy lane.
@@ -227,6 +260,7 @@ async def asyncio(
             name=name,
             client=client,
             body=body,
+            environment=environment,
             idempotency_key=idempotency_key,
         )
     ).parsed

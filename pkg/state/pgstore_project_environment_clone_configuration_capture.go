@@ -166,6 +166,26 @@ func captureCloneConfigurationWorkloadsTx(ctx context.Context, tx pgx.Tx, op Pro
 		if snapshot.Policies == nil {
 			return nil, ErrProjectEnvironmentClonePolicyCaptureUnavailable
 		}
+		if snapshot.Settings.WorkPolicies != nil {
+			work.Policies = snapshot.Settings.WorkPolicies.Policies
+			work, err = normalizeCloneWorkPolicyDefinitions(work)
+			if err != nil {
+				return nil, fmt.Errorf("clone workload %q producer bindings have no scoped policy definition: %w", snapshot.WorkloadSlug, ErrProjectEnvironmentCloneWorkPolicyIsolationUnavailable)
+			}
+		}
+		policies, err := normalizeEnvironmentWorkPolicies(work.Policies)
+		if err != nil {
+			return nil, err
+		}
+		if snapshot.Settings.WorkPolicies == nil {
+			clock := int64(1)
+			for _, policy := range policies {
+				if policy.Revision > clock {
+					clock = policy.Revision
+				}
+			}
+			snapshot.Settings.WorkPolicies = &ProjectEnvironmentWorkPolicySettings{Revision: clock, Policies: policies}
+		}
 		snapshot.Policies.Work = &work
 		raw, hash, err := encodeCloneWorkloadSnapshot(snapshot)
 		if err != nil {

@@ -1189,3 +1189,72 @@ ownership, work lanes, complete runtime configuration/binding isolation or
 qualification/promotion/rollback coverage. Full-copy admission and the captured
 work-policy publication guard remain closed while those requirements and the
 previously listed resource/provider and native acceptance requirements remain.
+
+### Environment-owned desired work policy collections (2026-10-01)
+
+Work policy definitions now have a complete optional collection within the
+existing immutable workload settings. This reuses desired-head compare-and-swap,
+environment protection, deployment pinning and configuration hashes. It adds no
+table or independently mutable pointer. Nil identifies legacy material; an
+explicit empty collection persists through deleting the last policy and never
+inherits later application-wide production definitions.
+
+State edits preserve unrelated settings and use a collection revision clock.
+New or changed definitions receive the next clock value; unchanged definitions
+keep their revisions. Deletion advances the retained clock, so recreating a name
+cannot reuse its earlier revision. Caller-supplied definition revisions are not
+authority. A no-op preserves the settings ID and hash while still checking CAS
+and protection transactionally. Clock overflow, malformed definitions, duplicate
+names, invalid duration ranges and policy quota overflow fail before mutation.
+Reads authenticate account/project/app/environment identity and the settings
+hash. Generic app settings edits preserve the extra collection defensively.
+
+Policy CRUD accepts `?environment=<registered-stage>` and the optional
+`If-Workload-Revision` header. Responses expose the containing workload revision
+and configuration hash. An uninitialized stage collection is unavailable rather
+than a production lookup. Stage responses use the containing immutable settings
+creation time for their configuration metadata timestamps. Legacy unqualified
+production requests continue using their existing collection. Protected scoped
+edits are refused, including no-ops. Direct production collection activation
+through the new state edit helpers remains unavailable.
+
+Atomic source capture freezes the deployed policy collection into workload
+settings. For legacy deployments it captures the complete production roster,
+including unbound definitions and explicit emptiness. A deployment already
+pinned to an environment-owned collection uses that collection, independent of
+later production policies or desired-head edits. The private producer catalogue
+and settings book must agree. Application-wide producer bindings without a
+definition in the scoped collection produce the named isolation conflict and
+leave no partial operation. Committed operation replay retains its old root and
+does not recapture live source policies. Legacy nil-book serialized hashes remain
+unchanged.
+
+This establishes editable desired policy ownership and immutable capture, not
+runtime activation. Work lanes, cancellation receipts and producer ownership
+still need isolated environments. Stage cancellation is rejected before the
+legacy idempotency lookup, which otherwise could replay a production receipt for
+the same path and key. Production receipt replay remains usable without
+cancelling newer work. Qualification refuses any desired or pinned policy book,
+including an empty one, with a named activation-proof conflict. Clone publication
+also refuses a settings book even when a legacy capture has no producer catalogue.
+Neither byte equality nor a settings revision proves isolated execution.
+
+MemStore and PostgreSQL contracts cover explicit emptiness, production/sibling
+stage isolation, frozen deployment reads, stale and protected edits, no-op
+identity, deletion/recreation clocks, defensive copies and qualification refusal.
+PostgreSQL capture contracts cover stage-to-stage pinning, unchanged roots after
+global production edits, empty capture, replay and unsupported producer rollback.
+API contracts cover scoped CRUD, invalid/ambiguous selectors, protection and
+cancellation before receipt replay. The OpenAPI embed and generated Node/Python
+clients are synchronized, including previously added stage APIs. These checks
+do not establish native KVM, provider data consistency or complete clone acceptance.
+
+Selected state and APId regressions pass, including clone and qualification
+contracts and legacy idempotency cases. OpenAPI lint passes with existing
+warnings, the Node SDK builds, and the selected Python client/post-processing
+tests pass (35 cases). No new SQL was added in this step.
+
+Full-copy admission and policy publication remain closed. Next requirements are
+durable environment ownership of keyed lanes and producer bindings, runtime
+selection of pinned policy definitions, their activation/publication proof, and
+the remaining resource/provider, promotion and acceptance work listed above.

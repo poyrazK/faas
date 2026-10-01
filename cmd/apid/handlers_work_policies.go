@@ -28,23 +28,17 @@ func (s *server) upsertWorkPolicy(w http.ResponseWriter, r *http.Request, acct s
 	if !ok {
 		return
 	}
-	var req api.UpsertWorkPolicyRequest
-	if !decodeJSONLimit(w, r, &req, 4096) {
+	environment, problem := s.workPolicyEnvironment(r, acct, app, true)
+	if problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
-	policy := workpolicy.Policy{Name: r.PathValue("name"),
-		MaxRunningPerKey:         req.MaxRunningPerKey,
-		MaxRunningPerFairnessKey: req.MaxRunningPerFairnessKey,
-		PendingUpdates:           workpolicy.PendingUpdates(req.PendingUpdates),
-		Debounce:                 time.Duration(req.DebounceMS) * time.Millisecond,
-		ExpiresAfter:             time.Duration(req.ExpiresAfterMS) * time.Millisecond}
-	if req.DebounceMS < 0 || req.DebounceMS > int64(workpolicy.MaxDebounce/time.Millisecond) ||
-		req.ExpiresAfterMS < 0 || req.ExpiresAfterMS > int64(workpolicy.MaxExpiresAfter/time.Millisecond) {
-		api.WriteProblem(w, api.ErrValidation("work policy duration is out of range"))
+	policy, ok := decodeWorkPolicy(w, r)
+	if !ok {
 		return
 	}
-	if err := policy.Validate(); err != nil {
-		api.WriteProblem(w, api.ErrValidation(err.Error()))
+	if environment != "" {
+		s.upsertEnvironmentWorkPolicy(w, r, acct, app, environment, policy)
 		return
 	}
 	store, ok := s.store.(state.AppWorkPolicyStore)
@@ -53,16 +47,8 @@ func (s *server) upsertWorkPolicy(w http.ResponseWriter, r *http.Request, acct s
 		return
 	}
 	record, err := store.UpsertAppWorkPolicy(r.Context(), acct.ID, app.ID, policy)
-	if errors.Is(err, state.ErrNotFound) {
-		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "App not found", "the app is unavailable"))
-		return
-	}
-	if errors.Is(err, state.ErrQuotaExceeded) {
-		api.WriteProblem(w, api.ErrValidation("maximum work policies per app reached"))
-		return
-	}
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("save work policy"))
+		writeWorkPolicyProblem(w, err, "save work policy")
 		return
 	}
 	writeJSON(w, http.StatusOK, workPolicyResponse(record))
@@ -71,6 +57,15 @@ func (s *server) upsertWorkPolicy(w http.ResponseWriter, r *http.Request, acct s
 func (s *server) listWorkPolicies(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
+		return
+	}
+	environment, problem := s.workPolicyEnvironment(r, acct, app, false)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	if environment != "" {
+		s.listEnvironmentWorkPolicies(w, r, app, environment)
 		return
 	}
 	store, ok := s.store.(state.AppWorkPolicyStore)
@@ -93,6 +88,15 @@ func (s *server) listWorkPolicies(w http.ResponseWriter, r *http.Request, acct s
 func (s *server) deleteWorkPolicy(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
+		return
+	}
+	environment, problem := s.workPolicyEnvironment(r, acct, app, true)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	if environment != "" {
+		s.deleteEnvironmentWorkPolicy(w, r, acct, app, environment)
 		return
 	}
 	store, ok := s.store.(state.AppWorkPolicyStore)
@@ -121,6 +125,23 @@ func (s *server) cancelPendingWork(w http.ResponseWriter, r *http.Request, acct 
 	if !ok {
 		return
 	}
+	environment, problem := s.workPolicyEnvironment(r, acct, app, false)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	if environment != "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "invocation_environment_work_isolation_unavailable", "Stage work isolation unavailable", "stage cancellation requires isolated work lanes"))
+		return
+	}
+	// Validate the selected environment before the legacy path-only receipt
+	// lookup can replay a production cancellation as a successful stage action.
+	s.idempotent(func(w http.ResponseWriter, r *http.Request, _ state.Account) {
+		s.cancelAppPendingWork(w, r, app)
+	})(w, r, acct)
+}
+
+func (s *server) cancelAppPendingWork(w http.ResponseWriter, r *http.Request, app state.App) {
 	var req api.CancelPendingWorkRequest
 	if !decodeJSONLimit(w, r, &req, 1024) {
 		return
@@ -154,4 +175,24 @@ func (s *server) cancelPendingWork(w http.ResponseWriter, r *http.Request, acct 
 		return
 	}
 	writeJSON(w, http.StatusOK, api.CancelPendingWorkResponse{ID: receipt.ID, CancelledCount: receipt.CancelledCount})
+}
+
+func decodeWorkPolicy(w http.ResponseWriter, r *http.Request) (workpolicy.Policy, bool) {
+	var req api.UpsertWorkPolicyRequest
+	if !decodeJSONLimit(w, r, &req, 4096) {
+		return workpolicy.Policy{}, false
+	}
+	if req.DebounceMS < 0 || req.DebounceMS > int64(workpolicy.MaxDebounce/time.Millisecond) ||
+		req.ExpiresAfterMS < 0 || req.ExpiresAfterMS > int64(workpolicy.MaxExpiresAfter/time.Millisecond) {
+		api.WriteProblem(w, api.ErrValidation("work policy duration is out of range"))
+		return workpolicy.Policy{}, false
+	}
+	policy := workpolicy.Policy{Name: r.PathValue("name"), MaxRunningPerKey: req.MaxRunningPerKey,
+		MaxRunningPerFairnessKey: req.MaxRunningPerFairnessKey, PendingUpdates: workpolicy.PendingUpdates(req.PendingUpdates),
+		Debounce: time.Duration(req.DebounceMS) * time.Millisecond, ExpiresAfter: time.Duration(req.ExpiresAfterMS) * time.Millisecond}
+	if err := policy.Validate(); err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return workpolicy.Policy{}, false
+	}
+	return policy, true
 }

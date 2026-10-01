@@ -59,6 +59,10 @@ type ProjectEnvironmentWorkloadSettings struct {
 	EvictionPriority        string                `json:"eviction_priority"`
 	CORSDefaultEnabled      *bool                 `json:"cors_default_enabled"`
 	CORSDefaultOrigins      []string              `json:"cors_default_origins"`
+
+	// WorkPolicies is a complete environment-owned collection. Nil denotes a
+	// legacy deployment; an empty collection must never inherit later policies.
+	WorkPolicies *ProjectEnvironmentWorkPolicySettings `json:"work_policies,omitempty"`
 }
 
 // WorkloadSettingsFromApp materializes effective values so future source edits
@@ -163,6 +167,13 @@ func (settings ProjectEnvironmentWorkloadSettings) ApplyTo(app App) (App, error)
 }
 
 func cloneWorkloadSettings(settings ProjectEnvironmentWorkloadSettings) (ProjectEnvironmentWorkloadSettings, error) {
+	if settings.WorkPolicies != nil {
+		policies, err := normalizeEnvironmentWorkPolicySettings(*settings.WorkPolicies)
+		if err != nil {
+			return ProjectEnvironmentWorkloadSettings{}, err
+		}
+		settings.WorkPolicies = &policies
+	}
 	raw, err := json.Marshal(settings)
 	if err != nil {
 		return ProjectEnvironmentWorkloadSettings{}, ErrInvalidArgument
@@ -175,6 +186,13 @@ func cloneWorkloadSettings(settings ProjectEnvironmentWorkloadSettings) (Project
 }
 
 func WorkloadSettingsHash(settings ProjectEnvironmentWorkloadSettings) (string, error) {
+	if settings.WorkPolicies != nil {
+		policies, err := normalizeEnvironmentWorkPolicySettings(*settings.WorkPolicies)
+		if err != nil {
+			return "", err
+		}
+		settings.WorkPolicies = &policies
+	}
 	raw, err := json.Marshal(settings)
 	if err != nil {
 		return "", ErrInvalidArgument
@@ -213,7 +231,12 @@ func ApplyWorkloadSettingsUpdate(settings ProjectEnvironmentWorkloadSettings, pa
 	if err != nil {
 		return ProjectEnvironmentWorkloadSettings{}, err
 	}
-	return WorkloadSettingsFromApp(applyAppConfigurationParams(app, params))
+	updated, err := WorkloadSettingsFromApp(applyAppConfigurationParams(app, params))
+	if err != nil {
+		return ProjectEnvironmentWorkloadSettings{}, err
+	}
+	updated.WorkPolicies = settings.WorkPolicies
+	return cloneWorkloadSettings(updated)
 }
 
 // UpdateEnvironmentWorkloadSettings edits the desired revision; the next

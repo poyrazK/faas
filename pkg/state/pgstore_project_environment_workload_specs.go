@@ -97,6 +97,13 @@ func (s *PgStore) putProjectEnvironmentWorkloadSpec(ctx context.Context, account
 }
 
 func putWorkloadSpecTx(ctx context.Context, tx pgx.Tx, environmentID, appID string, expectedRevision int64, settings ProjectEnvironmentWorkloadSettings) (ProjectEnvironmentWorkloadSpec, error) {
+	if settings.WorkPolicies != nil {
+		policies, err := normalizeEnvironmentWorkPolicySettings(*settings.WorkPolicies)
+		if err != nil {
+			return ProjectEnvironmentWorkloadSpec{}, err
+		}
+		settings.WorkPolicies = &policies
+	}
 	hash, err := WorkloadSettingsHash(settings)
 	if err != nil {
 		return ProjectEnvironmentWorkloadSpec{}, err

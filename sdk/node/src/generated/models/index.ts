@@ -684,6 +684,8 @@ export type { ProjectEnvironmentApprovalResponse } from './ProjectEnvironmentApp
 export type { ProjectEnvironmentApprovalStatusResponse } from './ProjectEnvironmentApprovalStatusResponse.js';
 export type { ProjectEnvironmentBindingChangeResponse } from './ProjectEnvironmentBindingChangeResponse.js';
 export type { ProjectEnvironmentBindingResponse } from './ProjectEnvironmentBindingResponse.js';
+export type { ProjectEnvironmentCloneOperationResponse } from './ProjectEnvironmentCloneOperationResponse.js';
+export type { ProjectEnvironmentCloneResourceResponse } from './ProjectEnvironmentCloneResourceResponse.js';
 export type { ProjectEnvironmentCloneResponse } from './ProjectEnvironmentCloneResponse.js';
 export type { ProjectEnvironmentConfigChange } from './ProjectEnvironmentConfigChange.js';
 export type { ProjectEnvironmentConfigDiffResponse } from './ProjectEnvironmentConfigDiffResponse.js';

@@ -690,6 +690,8 @@ export type { ProjectEnvironmentApprovalResponse } from './models/ProjectEnviron
 export type { ProjectEnvironmentApprovalStatusResponse } from './models/ProjectEnvironmentApprovalStatusResponse.js';
 export type { ProjectEnvironmentBindingChangeResponse } from './models/ProjectEnvironmentBindingChangeResponse.js';
 export type { ProjectEnvironmentBindingResponse } from './models/ProjectEnvironmentBindingResponse.js';
+export type { ProjectEnvironmentCloneOperationResponse } from './models/ProjectEnvironmentCloneOperationResponse.js';
+export type { ProjectEnvironmentCloneResourceResponse } from './models/ProjectEnvironmentCloneResourceResponse.js';
 export type { ProjectEnvironmentCloneResponse } from './models/ProjectEnvironmentCloneResponse.js';
 export type { ProjectEnvironmentConfigChange } from './models/ProjectEnvironmentConfigChange.js';
 export type { ProjectEnvironmentConfigDiffResponse } from './models/ProjectEnvironmentConfigDiffResponse.js';

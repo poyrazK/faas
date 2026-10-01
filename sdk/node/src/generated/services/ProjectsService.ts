@@ -11,6 +11,7 @@ import type { ProjectApplyRequest } from '../models/ProjectApplyRequest.js';
 import type { ProjectDeletePreviewResponse } from '../models/ProjectDeletePreviewResponse.js';
 import type { ProjectEnvironmentApprovalResponse } from '../models/ProjectEnvironmentApprovalResponse.js';
 import type { ProjectEnvironmentApprovalStatusResponse } from '../models/ProjectEnvironmentApprovalStatusResponse.js';
+import type { ProjectEnvironmentCloneOperationResponse } from '../models/ProjectEnvironmentCloneOperationResponse.js';
 import type { ProjectEnvironmentConfigDiffResponse } from '../models/ProjectEnvironmentConfigDiffResponse.js';
 import type { ProjectEnvironmentConfigResponse } from '../models/ProjectEnvironmentConfigResponse.js';
 import type { ProjectEnvironmentDiffResponse } from '../models/ProjectEnvironmentDiffResponse.js';
@@ -276,6 +277,81 @@ export class ProjectsService {
       url: '/v1/projects/{slug}',
       path: {
         'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Request a complete isolated environment clone.
+   * This dedicated route never falls back to partial cloning. Full admission
+   * currently returns environment_full_clone_unavailable with named blockers
+   * until complete coverage and coordinated data-copy proofs are available.
+   *
+   * @returns void
+   * @throws ApiError
+   */
+  public static createFullProjectEnvironmentClone({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * Project whose production or stage environment will be cloned.
+     */
+    slug: string,
+    requestBody: CreateProjectEnvironmentRequest,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environment-clones',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `Full-copy capability unavailable; no partial target is created.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read account- and project-scoped durable clone progress.
+   * Status is available before the target environment is registered. Private captures, values and worker lease tokens are excluded.
+   * @returns ProjectEnvironmentCloneOperationResponse Non-secret clone operation receipt.
+   * @throws ApiError
+   */
+  public static getProjectEnvironmentCloneOperation({
+    slug,
+    clone,
+  }: {
+    /**
+     * Project owning the durable environment clone operation.
+     */
+    slug: string,
+    /**
+     * Durable clone operation identifier returned when capture begins.
+     */
+    clone: string,
+  }): CancelablePromise<ProjectEnvironmentCloneOperationResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environment-clones/{clone}',
+      path: {
+        'slug': slug,
+        'clone': clone,
       },
       errors: {
         401: `code: unauthorized`,

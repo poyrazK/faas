@@ -1,9 +1,10 @@
 from typing import Literal
 
-AccountAbuseHoldReason = Literal["egress_fanout", "operator"]
+AccountAbuseHoldReason = Literal["egress_fanout", "egress_flood", "operator"]
 
 ACCOUNT_ABUSE_HOLD_REASON_VALUES: set[AccountAbuseHoldReason] = {
     "egress_fanout",
+    "egress_flood",
     "operator",
 }
 

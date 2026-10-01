@@ -14502,6 +14502,7 @@ paths:
       - name: slug
         in: path
         required: true
+        description: Project whose production or stage environment will be cloned.
         schema: { type: string }
     post:
       tags: [projects]
@@ -14531,10 +14532,12 @@ paths:
       - name: slug
         in: path
         required: true
+        description: Project owning the durable environment clone operation.
         schema: { type: string }
       - name: clone
         in: path
         required: true
+        description: Durable clone operation identifier returned when capture begins.
         schema: { type: string }
     get:
       tags: [projects]
@@ -18064,20 +18067,40 @@ paths:
       tags: [invocations]
       operationId: listAppWorkPolicies
       summary: List named work policies for an app.
+      description: Stage reads return the complete desired policy collection from immutable workload settings. An uninitialized stage collection returns 409 and never inherits production policies. Stage policy execution remains unavailable until work lanes and producers are isolated.
       parameters:
         - $ref: '#/components/parameters/Slug'
+        - name: environment
+          in: query
+          required: false
+          description: Registered project environment. Omit for legacy production policies. An explicit production selection uses the legacy collection.
+          schema: { type: string }
       responses:
         '200':
           description: App work policies.
+          headers:
+            X-Gregale-Workload-Revision:
+              description: Desired workload configuration revision for a stage.
+              schema: { type: integer, format: int64, minimum: 1 }
+            X-Gregale-Workload-Config-Hash:
+              description: SHA-256 of the stage's immutable desired configuration.
+              schema: { type: string }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/WorkPolicyListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /v1/apps/{slug}/work-policies/{name}:
     parameters:
       - $ref: '#/components/parameters/Slug'
+      - name: environment
+        in: query
+        required: false
+        description: Edit the complete desired collection in a registered stage. Omit for legacy production policies. Protected environments reject direct edits.
+        schema: { type: string }
       - in: path
         name: name
         required: true
@@ -18087,7 +18110,13 @@ paths:
       tags: [invocations]
       operationId: upsertAppWorkPolicy
       summary: Create or update a named app work policy.
-      description: Policy changes affect new work only. Existing invocations retain their admission settings and policy revision.
+      description: Legacy production changes affect new work only. Stage edits create immutable desired workload configuration and subsequent deployments pin it; existing deployments keep their policies. Stage policy execution and qualification remain unavailable until work lanes and producers are isolated.
+      parameters:
+        - name: If-Workload-Revision
+          in: header
+          required: false
+          description: Expected complete desired workload revision for a stage edit. Zero means no revision exists; concurrent edits return 409.
+          schema: { type: integer, format: int64, minimum: 0 }
       requestBody:
         required: true
         content:
@@ -18096,29 +18125,60 @@ paths:
       responses:
         '200':
           description: Saved policy.
+          headers:
+            X-Gregale-Workload-Revision:
+              description: Desired complete workload configuration revision for a stage.
+              schema: { type: integer, format: int64, minimum: 1 }
+            X-Gregale-Workload-Config-Hash:
+              description: Configuration hash containing the saved stage policy definition.
+              schema: { type: string }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/WorkPolicyResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
     delete:
       tags: [invocations]
       operationId: deleteAppWorkPolicy
       summary: Delete a policy after removing event subscription bindings.
+      description: A stage deletion preserves an explicit empty collection and its collection revision clock after the last policy is removed. Production producer bindings retain their existing deletion checks.
+      parameters:
+        - name: If-Workload-Revision
+          in: header
+          required: false
+          description: Expected complete desired workload revision for a stage edit.
+          schema: { type: integer, format: int64, minimum: 0 }
       responses:
-        '204': { description: Policy deleted. }
+        '204':
+          description: Policy deleted.
+          headers:
+            X-Gregale-Workload-Revision:
+              description: Desired workload revision after removing the stage policy.
+              schema: { type: integer, format: int64, minimum: 1 }
+            X-Gregale-Workload-Config-Hash:
+              description: Configuration hash containing the remaining stage policy collection.
+              schema: { type: string }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /v1/apps/{slug}/work-policies/{name}/cancel-pending:
     post:
       tags: [invocations]
       operationId: cancelPendingAppWork
       summary: Cancel pending work for one policy and application key.
-      description: Running work continues. A repeated Idempotency-Key returns the original receipt and does not cancel newer work.
+      description: Running work continues. A repeated Idempotency-Key returns the original receipt and does not cancel newer work. A stage selection returns invocation_environment_work_isolation_unavailable (409) before touching production lanes or cancellation receipts.
       parameters:
         - $ref: '#/components/parameters/Slug'
         - $ref: '#/components/parameters/IdempotencyKey'
+        - name: environment
+          in: query
+          required: false
+          description: Registered project environment. Stage cancellation is unavailable until work lanes are isolated.
+          schema: { type: string }
         - in: path
           name: name
           required: true
@@ -18135,8 +18195,10 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CancelPendingWorkResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /v1/apps/{slug}/queues/send:
     post:
@@ -32678,6 +32740,7 @@ components:
         expires_at: { type: string, format: date-time }
 
     ProjectEnvironmentCloneOperationResponse:
+      description: Durable clone progress within one account and project, excluding private source configuration and worker credentials.
       type: object
       required: [operation_id, project_slug, source_environment, target_environment, source_revision_hash, status, revision, resources, created_at, updated_at]
       properties:
@@ -32697,6 +32760,7 @@ components:
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
     ProjectEnvironmentCloneResourceResponse:
+      description: Progress and named blockers for an individual resource in a complete environment clone.
       type: object
       required: [kind, name, status]
       properties:
@@ -39310,7 +39374,7 @@ components:
         expires_after_ms: { type: integer, minimum: 0, maximum: 2592000000, default: 0 }
 
     WorkPolicyResponse:
-      description: Saved app policy and revision used for subsequent work admissions.
+      description: Saved policy definition and revision. For stage desired settings, created_at and updated_at identify the containing immutable workload configuration revision; stage execution remains gated.
       type: object
       additionalProperties: false
       required: [name, revision, max_running_per_key, max_running_per_fairness_key, pending_updates, debounce_ms, expires_after_ms, created_at, updated_at]
