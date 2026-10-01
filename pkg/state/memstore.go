@@ -30,6 +30,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/publicstatus"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // builderVMCleanupErrorMaxBytes bounds the recorded cleanup failure for a
@@ -311,6 +312,7 @@ type MemStore struct {
 	jobRuns                  map[string]JobRun
 	jobTasks                 map[string]map[int]JobTask // run_id → task_index → task
 	jobTaskAttempts          map[string]map[int]map[int]JobTaskAttempt
+	scheduleOccurrences      map[string]ScheduleOccurrence
 	jobMaterializationClaims map[string]jobMaterializationClaim
 	jobRegistryCredentials   map[jobRegistryCredentialKey]JobRegistryCredential
 	// migrationLeases mirrors the durable source-side migration lease table.
@@ -1092,6 +1094,7 @@ func NewMemStore() *MemStore {
 		jobRuns:                         map[string]JobRun{},
 		jobTasks:                        map[string]map[int]JobTask{},
 		jobTaskAttempts:                 map[string]map[int]map[int]JobTaskAttempt{},
+		scheduleOccurrences:             map[string]ScheduleOccurrence{},
 		jobMaterializationClaims:        map[string]jobMaterializationClaim{},
 		jobRegistryCredentials:          map[jobRegistryCredentialKey]JobRegistryCredential{},
 		migrationLeases:                 map[string]MigrationLease{},
@@ -11208,6 +11211,12 @@ func (m *MemStore) CreateCronWithOptions(_ context.Context, appID, schedule, pat
 		return Cron{}, fmt.Errorf("state: cron for unknown app %q", appID)
 	}
 	opts = normalizeCronOptions(opts)
+	if err := validateCronPolicyKind(opts, len(opts.Command) > 0); err != nil {
+		return Cron{}, err
+	}
+	if err := validateCronWorkPolicies(opts); err != nil {
+		return Cron{}, err
+	}
 	if err := validateCronCreateRetryOptions(opts); err != nil {
 		return Cron{}, err
 	}
@@ -11215,7 +11224,8 @@ func (m *MemStore) CreateCronWithOptions(_ context.Context, appID, schedule, pat
 		Command: append([]string(nil), opts.Command...), CommandShell: opts.CommandShell,
 		CommandTimeoutSeconds: opts.CommandTimeoutSeconds, CommandMaxOutputBytes: opts.CommandMaxOutputBytes,
 		RetryMax: opts.RetryMax, RetryBackoffSeconds: opts.RetryBackoffSeconds,
-		Enabled: enabled, Timezone: opts.Timezone, SkipIfRunning: opts.SkipIfRunning, CreatedAt: time.Now()}
+		SchedulePolicy: workpolicy.Clone(opts.SchedulePolicy), FailureRules: workpolicy.Clone(opts.FailureRules),
+		ScheduleRevision: 1, Enabled: enabled, Timezone: opts.Timezone, SkipIfRunning: opts.SkipIfRunning, CreatedAt: time.Now()}
 	m.crons[c.ID] = c
 	return c, nil
 }
@@ -11244,7 +11254,13 @@ func (m *MemStore) CreateCronIfUnderQuotaWithOptions(_ context.Context, appID, s
 		return Cron{}, ErrNotFound
 	}
 	opts = normalizeCronOptions(opts)
+	if err := validateCronPolicyKind(opts, len(opts.Command) > 0); err != nil {
+		return Cron{}, err
+	}
 	if err := validateCronCreateRetryOptions(opts); err != nil {
+		return Cron{}, err
+	}
+	if err := validateCronWorkPolicies(opts); err != nil {
 		return Cron{}, err
 	}
 	// Match PgStore: an identical retry returns the durable row before quota
@@ -11254,7 +11270,8 @@ func (m *MemStore) CreateCronIfUnderQuotaWithOptions(_ context.Context, appID, s
 			c.Enabled == enabled && c.Timezone == opts.Timezone && c.SkipIfRunning == opts.SkipIfRunning &&
 			c.CommandShell == opts.CommandShell && c.CommandTimeoutSeconds == opts.CommandTimeoutSeconds &&
 			c.CommandMaxOutputBytes == opts.CommandMaxOutputBytes && c.RetryMax == opts.RetryMax &&
-			c.RetryBackoffSeconds == opts.RetryBackoffSeconds {
+			c.RetryBackoffSeconds == opts.RetryBackoffSeconds &&
+			sameWorkPolicy(c.SchedulePolicy, opts.SchedulePolicy) && sameWorkPolicy(c.FailureRules, opts.FailureRules) {
 			return c, nil
 		}
 	}
@@ -11303,6 +11320,9 @@ func (m *MemStore) CreateCronIfUnderQuotaWithOptions(_ context.Context, appID, s
 		CommandMaxOutputBytes: opts.CommandMaxOutputBytes,
 		RetryMax:              opts.RetryMax,
 		RetryBackoffSeconds:   opts.RetryBackoffSeconds,
+		SchedulePolicy:        workpolicy.Clone(opts.SchedulePolicy),
+		FailureRules:          workpolicy.Clone(opts.FailureRules),
+		ScheduleRevision:      1,
 		Enabled:               enabled,
 		Timezone:              opts.Timezone,
 		SkipIfRunning:         opts.SkipIfRunning,
@@ -11336,6 +11356,8 @@ func (m *MemStore) UpdateCronWithOptions(_ context.Context, id string, schedule,
 	if !ok {
 		return Cron{}, ErrNotFound
 	}
+	scheduleChanged := schedule != nil && c.Schedule != *schedule
+	timezoneChanged := timezone != nil && c.Timezone != *timezone
 	if schedule != nil {
 		c.Schedule = *schedule
 	}
@@ -11359,6 +11381,12 @@ func (m *MemStore) UpdateCronWithOptions(_ context.Context, id string, schedule,
 	}
 	if len(retryOptions) > 0 {
 		opts := normalizeCronOptions(retryOptions[0])
+		if err := validateCronPolicyKind(opts, len(c.Command) > 0); err != nil {
+			return Cron{}, err
+		}
+		if err := validateCronWorkPolicies(opts); err != nil {
+			return Cron{}, err
+		}
 		if err := validateCronRetryOptions(opts); err != nil {
 			return Cron{}, err
 		}
@@ -11367,6 +11395,16 @@ func (m *MemStore) UpdateCronWithOptions(_ context.Context, id string, schedule,
 		}
 		c.RetryMax = opts.RetryMax
 		c.RetryBackoffSeconds = opts.RetryBackoffSeconds
+		if opts.SchedulePolicy != nil && !sameWorkPolicy(c.SchedulePolicy, opts.SchedulePolicy) {
+			c.SchedulePolicy = workpolicy.Clone(opts.SchedulePolicy)
+			scheduleChanged = true
+		}
+		if opts.FailureRules != nil {
+			c.FailureRules = workpolicy.Clone(opts.FailureRules)
+		}
+	}
+	if scheduleChanged || timezoneChanged {
+		c.ScheduleRevision++
 	}
 	m.crons[id] = c
 	return c, nil

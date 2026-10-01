@@ -11,6 +11,7 @@ package gateway
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -26,10 +27,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/circuit"
 	"github.com/onebox-faas/faas/pkg/dependencytrace"
 	"github.com/onebox-faas/faas/pkg/devbridge"
+	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
+	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -418,6 +421,9 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		serviceProxyProblem(w, http.StatusNotFound, "service request must use /v1/internal/services/<name>[/<path>], <name>.svc.gregale, or a bound <name>.internal")
 		return
 	}
+	// A service call uses the same bounded guest-evidence sink as public
+	// requests so target flag decisions can be attached to this dependency span.
+	r = withGuestExecutionEvidence(r)
 	// The guest-facing service-proxy listener is a standalone http.Server, not
 	// wrapped by otelhttp. Extract W3C context here so a caller that forwards
 	// its inbound traceparent joins the original request instead of always
@@ -485,6 +491,9 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					p.metrics.ObserveServiceDependencyCall(dependencyHealthCaller.AppID, dependencyHealthCaller.DeploymentID, failed)
 				}
 			}
+		}
+		if evidence, ok := guestExecutionEvidenceFromContext(r.Context()); ok { //nolint:contextcheck // the deferred read observes the shared evidence sink through the dependency request context.
+			addServiceFlagEvidenceEvents(dependencySpan, evidence.FlagEvidenceJSON)
 		}
 		dependencySpan.End()
 	}()
@@ -1181,6 +1190,7 @@ func (p *ServiceProxy) guestRequest(r *http.Request, targetPath string, target S
 	request.URL.RawPath = ""
 	request.RequestURI = ""
 	request.Header = r.Header.Clone()
+	request.Header.Del(api.FlagContextHeader)
 	request.Header.Del(ServiceProxyCallerAppHeader)
 	// An override applies only to this resolved binding. Forwarding it would
 	// unintentionally pin a later service hop to this app's deployment ID.
@@ -1201,6 +1211,13 @@ func (p *ServiceProxy) guestRequest(r *http.Request, targetPath string, target S
 	request.Header.Del(ServiceCallerAssertionHeader)
 	requestID := request.Header.Get(api.RequestIDHeader)
 	api.PlatformIdentity{RequestID: requestID, AppID: target.AppID}.ApplyGuestHeaders(request.Header)
+	if values := r.Header.Values(api.FlagContextHeader); len(values) == 1 {
+		if inherited, err := flags.DecodePropagationHeader(values[0]); err == nil {
+			inheritedCtx := context.WithValue(r.Context(), serviceFlagPropagationContextKey{}, inherited)
+			request = request.WithContext(inheritedCtx)
+			addServiceFlagPropagationEvents(inheritedCtx, inherited)
+		}
+	}
 	request.Header.Set("x-faas-protocol", serviceGuestProtocol(target))
 	// Preview identity is always propagated, including an isolated
 	// preview-to-preview hop. The resolver tells us whether the chosen target
@@ -1469,7 +1486,89 @@ func applyServiceEndpointIdentity(request *http.Request, target ServiceTarget, e
 		DeploymentCreatedAt: endpoint.DeploymentCreatedAt,
 		ImageDigest:         endpoint.ImageDigest,
 	}
+	if inherited, ok := request.Context().Value(serviceFlagPropagationContextKey{}).(flags.PropagationContext); ok {
+		identity.PlatformTenantID = inherited.CustomerID
+	}
 	identity.ApplyGuestHeaders(request.Header)
+	if inherited, ok := request.Context().Value(serviceFlagPropagationContextKey{}).(flags.PropagationContext); ok {
+		if encoded, err := flags.EncodePropagationHeader(inherited); err == nil {
+			request.Header.Set(api.FlagContextHeader, encoded)
+		}
+	}
+}
+
+type serviceFlagPropagationContextKey struct{}
+
+func addServiceFlagPropagationEvents(ctx context.Context, inherited flags.PropagationContext) {
+	span := oteltrace.SpanFromContext(ctx)
+	if !span.IsRecording() {
+		return
+	}
+	for _, propagated := range inherited.Decisions {
+		decision := propagated.Decision
+		attrs := []attribute.KeyValue{
+			attribute.String("gregale.flag.key", decision.Flag),
+			attribute.String("gregale.flag.value", serviceFlagDecisionValue(decision.Value)),
+			attribute.Int64("gregale.flag.config_version", decision.ConfigVersion),
+			attribute.String("gregale.flag.reason", decision.Reason),
+			attribute.String("gregale.flag.source", decision.Source),
+			attribute.Bool("gregale.flag.used", true),
+			attribute.String("gregale.flag.origin_app_id", propagated.Origin.AppID),
+			attribute.String("gregale.flag.origin_environment_id", propagated.Origin.EnvironmentID),
+		}
+		if decision.Type != "" {
+			attrs = append(attrs, attribute.String("gregale.flag.type", decision.Type))
+		}
+		if decision.RuleID != "" {
+			attrs = append(attrs, attribute.String("gregale.flag.rule_id", decision.RuleID))
+		}
+		span.AddEvent("gregale.flag.propagated", oteltrace.WithAttributes(attrs...))
+	}
+}
+
+func addServiceFlagEvidenceEvents(span oteltrace.Span, raw string) {
+	if raw == "" || !span.IsRecording() {
+		return
+	}
+	var decisions []flags.Evidence
+	if err := json.Unmarshal([]byte(raw), &decisions); err != nil {
+		return
+	}
+	for _, evidence := range decisions {
+		decision := evidence.Decision
+		attrs := []attribute.KeyValue{
+			attribute.String("gregale.flag.key", decision.Flag),
+			attribute.String("gregale.flag.value", serviceFlagDecisionValue(decision.Value)),
+			attribute.Int64("gregale.flag.config_version", decision.ConfigVersion),
+			attribute.String("gregale.flag.reason", decision.Reason),
+			attribute.String("gregale.flag.source", decision.Source),
+			attribute.Bool("gregale.flag.used", evidence.Used),
+		}
+		if decision.Type != "" {
+			attrs = append(attrs, attribute.String("gregale.flag.type", decision.Type))
+		}
+		if decision.RuleID != "" {
+			attrs = append(attrs, attribute.String("gregale.flag.rule_id", decision.RuleID))
+		}
+		if decision.InheritedFrom != nil {
+			attrs = append(attrs,
+				attribute.String("gregale.flag.origin_app_id", decision.InheritedFrom.AppID),
+				attribute.String("gregale.flag.origin_environment_id", decision.InheritedFrom.EnvironmentID),
+			)
+		}
+		span.AddEvent("gregale.flag.decision", oteltrace.WithAttributes(attrs...))
+	}
+}
+
+func serviceFlagDecisionValue(value any) string {
+	switch value := value.(type) {
+	case bool:
+		return strconv.FormatBool(value)
+	case string:
+		return value
+	default:
+		return ""
+	}
 }
 
 func serviceEndpointTarget(appID string, endpoint ServiceEndpoint) Target {

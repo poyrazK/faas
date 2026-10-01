@@ -1189,6 +1189,11 @@ jobs:
         run: |
           set -euo pipefail
           govulncheck -mode=source -show=verbose ./...
+      - name: terraform provider vulnerability scan
+        working-directory: terraform-provider-gregale
+        # A nested module is absent from the root ./... traversal. Scan the
+        # provider's selected dependencies, including its plugin RPC server.
+        run: govulncheck -mode=source -show=verbose ./...
       # ---- moved from `lint + build`: Prometheus rule + ansible gates ----
       # These need pip (ansible-core, ansible-lint), a pinned promtool and
       # ~90 s of wall time, none of which the Go lint/build critical path

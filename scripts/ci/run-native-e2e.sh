@@ -477,7 +477,7 @@ set -e
 # of grepping this file for its own strings.
 #
 # The required-test contract is a WHOLE-SUITE claim: no single phase contains
-# all eight required tests, so applying it per phase would fail every phase for
+# all nine required tests, so applying it per phase would fail every phase for
 # tests it was never meant to run. In phase mode report the phase's own tally
 # and let the workflow's final verdict step own the contract.
 if [[ -n "${phase}" ]]; then

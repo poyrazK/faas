@@ -45,6 +45,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 // invocationFailureDetailMaxBytes bounds the failure detail copied from a
@@ -3640,11 +3641,74 @@ func (l *Loop) runScheduledJobsTick(ctx context.Context) {
 		if job.LastScheduledAt != nil {
 			boundary = *job.LastScheduledAt
 		}
-		if schedule.NextFireAt(boundary).After(now) {
+		firstDue := schedule.NextFireAt(boundary)
+		if firstDue.After(now) {
 			continue
 		}
-		run, created, err := store.JobRunCreateScheduled(ctx, job.ID, job.CronSchedule,
-			job.CronTimezone, job.LastScheduledAt, now)
+		scheduledFor := now
+		cursor := job.LastScheduledAt
+		if job.SchedulePolicy != nil {
+			recordingFailed := false
+			due := make([]time.Time, 0, 4)
+			for next := firstDue; !next.After(now) && len(due) < 10000; next = schedule.NextFireAt(next) {
+				due = append(due, next)
+			}
+			occurrenceStore, hasOccurrenceStore := l.engine.Store().(state.JobScheduleOccurrenceStore)
+			if hasOccurrenceStore && job.SchedulePolicy.MissedRuns == "coalesce_latest" {
+				for _, missed := range due[:len(due)-1] {
+					_, _, err := occurrenceStore.JobRunCreateScheduledOccurrence(ctx, job.ID, job.CronSchedule,
+						job.CronTimezone, cursor, now, state.JobScheduledOccurrenceOptions{
+							ScheduledFor: missed, ScheduleRevision: job.ScheduleRevision,
+							Disposition: "coalesced", Reason: "an older missed occurrence was coalesced into the latest due occurrence",
+						})
+					if err != nil {
+						l.log.Warn("schedd: record coalesced occurrence failed", "job_id", job.ID, "err", err)
+						recordingFailed = true
+						break
+					}
+					cursor = scheduledTimePointer(missed)
+				}
+			}
+			if hasOccurrenceStore && job.SchedulePolicy.MissedRuns == "skip" {
+				for _, missed := range due {
+					if now.Sub(missed) <= time.Minute {
+						continue
+					}
+					_, _, err := occurrenceStore.JobRunCreateScheduledOccurrence(ctx, job.ID, job.CronSchedule,
+						job.CronTimezone, cursor, now, state.JobScheduledOccurrenceOptions{
+							ScheduledFor: missed, ScheduleRevision: job.ScheduleRevision,
+							Disposition: "missed_deadline", Reason: "occurrence passed while the scheduler was unavailable under missed_runs=skip",
+						})
+					if err != nil {
+						l.log.Warn("schedd: record missed occurrence failed", "job_id", job.ID, "err", err)
+						recordingFailed = true
+						break
+					}
+					cursor = scheduledTimePointer(missed)
+				}
+			}
+			if recordingFailed {
+				continue
+			}
+			scheduledFor = due[len(due)-1]
+		}
+		if job.SchedulePolicy != nil && job.SchedulePolicy.Overlap == "replace" {
+			if err := l.stopPriorScheduledRuns(ctx, job); err != nil {
+				l.log.Warn("schedd: replacement waits for prior run to stop", "job_id", job.ID, "err", err)
+				continue
+			}
+		}
+		var run state.JobRun
+		var created bool
+		if occurrenceStore, ok := l.engine.Store().(state.JobScheduleOccurrenceStore); ok {
+			run, created, err = occurrenceStore.JobRunCreateScheduledOccurrence(ctx, job.ID, job.CronSchedule,
+				job.CronTimezone, cursor, now, state.JobScheduledOccurrenceOptions{
+					ScheduledFor: scheduledFor, ScheduleRevision: job.ScheduleRevision,
+				})
+		} else {
+			run, created, err = store.JobRunCreateScheduled(ctx, job.ID, job.CronSchedule,
+				job.CronTimezone, job.LastScheduledAt, now)
+		}
 		if err != nil {
 			l.log.Warn("schedd: create scheduled job run failed", "job_id", job.ID, "err", err)
 			continue
@@ -3663,6 +3727,30 @@ func (l *Loop) runScheduledJobsTick(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func scheduledTimePointer(at time.Time) *time.Time { return &at }
+
+// stopPriorScheduledRuns implements overlap=replace. A replacement is only
+// admitted after every earlier scheduled run has a terminal receipt and its
+// VM stop has been confirmed by vmmd.
+func (l *Loop) stopPriorScheduledRuns(ctx context.Context, job state.Job) error {
+	runs, err := l.engine.Store().JobRunListByJob(ctx, job.ID, 1000, 0)
+	if err != nil {
+		return fmt.Errorf("list scheduled runs: %w", err)
+	}
+	for _, run := range runs {
+		if run.TriggerKind != "scheduled" || (run.AggregateStatus != "queued" && run.AggregateStatus != "running") {
+			continue
+		}
+		if _, err := l.engine.CancelJob(ctx, job.AccountID, run.ID); err != nil {
+			return fmt.Errorf("cancel prior run %s: %w", run.ID, err)
+		}
+		if err := l.engine.ReconcileCancelledJobRun(ctx, run.ID); err != nil {
+			return fmt.Errorf("confirm prior run %s stopped: %w", run.ID, err)
+		}
+	}
+	return nil
 }
 
 // runJobsReaperTick is one iteration of the stuck-job reaper.
@@ -3810,48 +3898,106 @@ func (l *Loop) dispatchOneCron(ctx context.Context, c state.Cron, now time.Time)
 	} else {
 		boundary = c.LastFiredAt
 	}
-	if sched.NextFireAt(boundary).After(now) {
+	scheduledFor := sched.NextFireAt(boundary)
+	if scheduledFor.After(now) {
 		// Already fired in the current window.
 		return
 	}
-	if c.SkipIfRunning {
-		active, err := l.engine.Store().CountActiveCronInvocations(ctx, c.ID)
-		if len(c.Command) > 0 {
-			if commandStore, ok := l.engine.Store().(state.AppTaskStore); ok {
-				active, err = commandStore.CountActiveCronAppTasks(ctx, c.ID)
-			} else {
-				err = errors.New("app task store is unavailable")
+	if len(c.Command) > 0 {
+		due := make([]time.Time, 0, 4)
+		for next := scheduledFor; !next.After(now) && len(due) < 10000; next = sched.NextFireAt(next) {
+			due = append(due, next)
+		}
+		if c.SchedulePolicy != nil && c.SchedulePolicy.Overlap == "replace" {
+			if err := l.stopPriorScheduledCronTasks(ctx, c, now); err != nil {
+				l.log.Debug("cron command: replacement waits for prior task to stop", "cron_id", c.ID, "err", err)
+				return
 			}
 		}
+		l.dispatchScheduledCommandCron(ctx, c, due, now)
+		return
+	}
+	if c.SkipIfRunning || (c.SchedulePolicy != nil && c.SchedulePolicy.Overlap != "allow") {
+		active, err := l.engine.Store().CountActiveCronInvocations(ctx, c.ID)
 		if err != nil {
 			l.log.Warn("cron: count active invocations", "cron_id", c.ID, "err", err)
 			return
 		}
 		if active > 0 {
-			// Consume this scheduled occurrence. Otherwise every tick until
-			// the old invocation finishes would dispatch the same boundary.
+			// Legacy HTTP Cron overlap and policy skip consume the nominal
+			// occurrence so a later tick cannot dispatch it again.
 			l.log.Debug("cron: skipping overlapping invocation", "cron_id", c.ID, "active", active)
-			if err := l.engine.Store().MarkCronFired(ctx, c.ID, now); err != nil {
+			consumedAt := now
+			if c.SchedulePolicy != nil {
+				consumedAt = scheduledFor
+			}
+			if err := l.engine.Store().MarkCronFired(ctx, c.ID, consumedAt); err != nil {
 				l.log.Warn("cron: mark skipped fire", "cron_id", c.ID, "err", err)
 			}
 			return
 		}
 	}
-	if len(c.Command) > 0 {
-		l.dispatchScheduledCommandCron(ctx, c, now)
+	if c.SchedulePolicy != nil && workpolicy.DeadlineMissed(c.SchedulePolicy.Deadline(scheduledFor), now) {
+		l.log.Info("cron: scheduled occurrence missed its start deadline", "cron_id", c.ID, "scheduled_for", scheduledFor)
+		if err := l.engine.Store().MarkCronFired(ctx, c.ID, scheduledFor); err != nil {
+			l.log.Warn("cron: mark missed occurrence", "cron_id", c.ID, "err", err)
+		}
 		return
 	}
-	res, ok := l.dispatchCronLocked(ctx, c, now, TriggerSchedule)
+	firedBoundary := now
+	if c.SchedulePolicy != nil {
+		firedBoundary = scheduledFor
+	}
+	res, ok := l.dispatchCronLocked(ctx, c, now, TriggerSchedule, firedBoundary)
 	_ = res
 	if !ok {
 		return
 	}
-	if err := l.engine.Store().MarkCronFired(ctx, c.ID, now); err != nil {
+	if err := l.engine.Store().MarkCronFired(ctx, c.ID, firedBoundary); err != nil {
 		l.log.Warn("cron: mark fired", "cron_id", c.ID, "err", err)
 	}
 }
 
-func (l *Loop) dispatchScheduledCommandCron(ctx context.Context, c state.Cron, now time.Time) {
+func (l *Loop) stopPriorScheduledCronTasks(ctx context.Context, c state.Cron, at time.Time) error {
+	store := l.engine.Store()
+	tasks, ok := store.(state.AppTaskStore)
+	if !ok {
+		return errors.New("app task store is unavailable")
+	}
+	active, err := tasks.CountActiveCronAppTasks(ctx, c.ID)
+	if err != nil || active == 0 {
+		return err
+	}
+	before := ""
+	for {
+		rows, err := tasks.ListCronAppTaskRuns(ctx, c.ID, 200, before)
+		if err != nil {
+			return err
+		}
+		for _, row := range rows {
+			if row.Status.Terminal() {
+				continue
+			}
+			if _, err := tasks.RequestAppTaskCancellation(ctx, row.AccountID, row.AppID, row.ID, at); err != nil {
+				return fmt.Errorf("request cancellation for prior task %s: %w", row.ID, err)
+			}
+		}
+		if len(rows) < 200 {
+			break
+		}
+		before = rows[len(rows)-1].ID
+	}
+	active, err = tasks.CountActiveCronAppTasks(ctx, c.ID)
+	if err != nil {
+		return err
+	}
+	if active > 0 {
+		return fmt.Errorf("%w: %d prior task(s) still active for cron %s", state.ErrAppTaskCancellationPending, active, c.ID)
+	}
+	return nil
+}
+
+func (l *Loop) dispatchScheduledCommandCron(ctx context.Context, c state.Cron, due []time.Time, now time.Time) {
 	store := l.engine.Store()
 	app, err := store.AppByID(ctx, c.AppID)
 	if err != nil {
@@ -3871,8 +4017,74 @@ func (l *Loop) dispatchScheduledCommandCron(ctx context.Context, c state.Cron, n
 		l.log.Warn("cron command: app task store is unavailable", "cron_id", c.ID)
 		return
 	}
+	if len(due) == 0 {
+		return
+	}
 	expectedLastFiredAt := nonZeroSchedTimePtr(c.LastFiredAt)
-	task, created, err := commandStore.CreateScheduledCronAppTask(ctx, c.ID, expectedLastFiredAt, now)
+	if occurrenceStore, ok := store.(state.ScheduledCronOccurrenceStore); ok {
+		missedRuns := "skip"
+		if c.SchedulePolicy != nil {
+			missedRuns = c.SchedulePolicy.MissedRuns
+		}
+		for _, missed := range due[:len(due)-1] {
+			disposition, reason := "missed_deadline", "older due occurrence skipped under missed_runs=skip"
+			if missedRuns == "coalesce_latest" {
+				disposition, reason = "coalesced", "older due occurrence coalesced into the latest due occurrence"
+			}
+			_, occurrence, _, recordErr := occurrenceStore.CreateScheduledCronAppTaskOccurrence(ctx, c.ID, expectedLastFiredAt, now,
+				state.CronScheduledOccurrenceOptions{ScheduledFor: missed, ScheduleRevision: c.ScheduleRevision, Disposition: disposition, Reason: reason})
+			if recordErr != nil {
+				l.log.Warn("cron command: record missed occurrence", "cron_id", c.ID, "scheduled_for", missed, "err", recordErr)
+				return
+			}
+			if occurrence.ID == "" {
+				return
+			}
+			expectedLastFiredAt = &missed
+		}
+		scheduledFor := due[len(due)-1]
+		task, occurrence, created, createErr := occurrenceStore.CreateScheduledCronAppTaskOccurrence(ctx, c.ID, expectedLastFiredAt, now,
+			state.CronScheduledOccurrenceOptions{ScheduledFor: scheduledFor, ScheduleRevision: c.ScheduleRevision})
+		if errors.Is(createErr, state.ErrAppTaskDeploymentUnavailable) {
+			l.suspendCommandCronWithoutDeployment(ctx, c)
+			return
+		}
+		if createErr != nil {
+			l.log.Warn("cron command: create scheduled occurrence", "cron_id", c.ID, "err", createErr)
+			return
+		}
+		if occurrence.ID == "" {
+			return
+		}
+		if !created {
+			l.log.Info("cron command: scheduled occurrence recorded", "cron_id", c.ID, "occurrence_id", occurrence.ID, "status", occurrence.Status)
+			l.emitCommandCronFired(ctx, c, account.ID, now, occurrence.Status, "", TriggerSchedule)
+			return
+		}
+		l.log.Info("cron command: scheduled task queued", "cron_id", c.ID, "occurrence_id", occurrence.ID, "task_id", task.ID, "deployment_id", task.DeploymentID)
+		l.emitCommandCronFired(ctx, c, account.ID, now, "ok", task.ID, TriggerSchedule)
+		return
+	}
+	if c.SchedulePolicy != nil && workpolicy.DeadlineMissed(c.SchedulePolicy.Deadline(due[len(due)-1]), now) {
+		if err := store.MarkCronFired(ctx, c.ID, due[len(due)-1]); err != nil {
+			l.log.Warn("cron command: mark missed occurrence", "cron_id", c.ID, "err", err)
+		}
+		return
+	}
+	if c.SkipIfRunning || (c.SchedulePolicy != nil && c.SchedulePolicy.Overlap == "skip") {
+		active, err := commandStore.CountActiveCronAppTasks(ctx, c.ID)
+		if err != nil {
+			l.log.Warn("cron command: count active tasks", "cron_id", c.ID, "err", err)
+			return
+		}
+		if active > 0 {
+			if err := store.MarkCronFired(ctx, c.ID, due[len(due)-1]); err != nil {
+				l.log.Warn("cron command: mark overlap skip", "cron_id", c.ID, "err", err)
+			}
+			return
+		}
+	}
+	task, created, err := commandStore.CreateScheduledCronAppTask(ctx, c.ID, expectedLastFiredAt, due[len(due)-1])
 	if errors.Is(err, state.ErrAppTaskDeploymentUnavailable) {
 		if suspender, ok := store.(state.CronSuspensionStore); ok {
 			count, suspendErr := suspender.SuspendCronsForApp(ctx, c.AppID, state.CronSuspendedNoLiveDeployment)
@@ -3886,7 +4098,7 @@ func (l *Loop) dispatchScheduledCommandCron(ctx context.Context, c state.Cron, n
 	}
 	if err != nil {
 		l.log.Warn("cron command: create scheduled task", "cron_id", c.ID, "err", err)
-		if markErr := store.MarkCronFired(ctx, c.ID, now); markErr != nil {
+		if markErr := store.MarkCronFired(ctx, c.ID, due[len(due)-1]); markErr != nil {
 			l.log.Warn("cron command: consume failed fire", "cron_id", c.ID, "err", markErr)
 		}
 		l.emitCommandCronFired(ctx, c, account.ID, now, "err", "", TriggerSchedule)
@@ -3897,6 +4109,17 @@ func (l *Loop) dispatchScheduledCommandCron(ctx context.Context, c state.Cron, n
 	}
 	l.log.Info("cron command: scheduled task queued", "cron_id", c.ID, "task_id", task.ID, "deployment_id", task.DeploymentID)
 	l.emitCommandCronFired(ctx, c, account.ID, now, "ok", task.ID, TriggerSchedule)
+}
+
+func (l *Loop) suspendCommandCronWithoutDeployment(ctx context.Context, c state.Cron) {
+	if suspender, ok := l.engine.Store().(state.CronSuspensionStore); ok {
+		count, err := suspender.SuspendCronsForApp(ctx, c.AppID, state.CronSuspendedNoLiveDeployment)
+		if err != nil {
+			l.log.Warn("cron command: suspend after missing live deployment", "cron_id", c.ID, "err", err)
+		} else if count > 0 {
+			l.log.Info("cron command: suspended until app redeploy", "app_id", c.AppID, "count", count)
+		}
+	}
 }
 
 func (l *Loop) emitCommandCronFired(ctx context.Context, c state.Cron, accountID string, firedAt time.Time, outcome, taskID string, trigger CronDispatchTrigger) {
@@ -3933,7 +4156,11 @@ func nonZeroSchedTimePtr(value time.Time) *time.Time {
 // success — the second value is true when the audit row was emitted.
 // Returns (CronRun{}, false) when the suspended-account guard rejects
 // the fire (no audit row, per spec §11 abuse guard).
-func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Time, trigger CronDispatchTrigger) (CronRun, bool) {
+func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Time, trigger CronDispatchTrigger, scheduledFor ...time.Time) (CronRun, bool) {
+	dueAt := now
+	if len(scheduledFor) > 0 && !scheduledFor[0].IsZero() {
+		dueAt = scheduledFor[0].UTC()
+	}
 	// issue #517: mint a fresh request_id at the cron dispatch
 	// boundary so the synthetic request that flows throughgatewayd-internal
 	// carries the same correlation id the rest of the wake
@@ -4078,7 +4305,7 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 		Path:      c.Path,
 		CronID:    &cronID,
 		Headers:   cronHeaders,
-		DueAt:     now,
+		DueAt:     dueAt,
 	}
 	enq, err := l.engine.Store().EnqueueInvocation(ctx, inv)
 	if err != nil {

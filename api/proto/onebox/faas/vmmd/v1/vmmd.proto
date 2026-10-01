@@ -2223,6 +2223,7 @@ message ExecuteAppTaskResponse {
   string failure_message = 6;
   bytes stdout = 7;
   bytes stderr = 8;
+  string outcome_code = 9;
 }
 
 message ExecuteAppTaskEvent {

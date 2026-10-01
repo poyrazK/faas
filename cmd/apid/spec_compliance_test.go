@@ -187,6 +187,7 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/raise-overage-cap":                          true, // HTML form (issue #561)
 	"POST /dashboard/upgrade":                                    true, // HTML form (hosted-checkout hand-off)
 	"POST /dashboard/apps/{slug}/crons/{id}/fire-now":            true, // HTML form, cron fire-now (issue #791 PR-E / ADR-090)
+	"POST /dashboard/apps/{slug}/crons/{id}/policy":              true, // HTML form, scheduled-work policy editor (ADR-385)
 	"POST /dashboard/apps/{slug}/env":                            true, // HTML form, env editor (issue #1397 G2)
 	"POST /dashboard/apps/{slug}/env/{key}/delete":               true, // HTML form, env editor (issue #1397 G2)
 	"POST /dashboard/apps/{slug}/secrets":                        true, // HTML form, write-only secrets editor (issue #1397 G2)
@@ -199,6 +200,8 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/edge-rules/{id}/delete":         true, // HTML form, edge-rule delete (issue #1397 G4)
 	"POST /dashboard/apps/{slug}/edge-rules/security-headers":    true, // HTML form, security-headers preset (issue #1397 G4)
 	"POST /dashboard/apps/{slug}/queues/dead_letter/{id}/replay": true, // HTML form, queue DLQ replay (issue #1397 G7)
+	"POST /dashboard/jobs/{name}/policy":                         true, // HTML form, scheduled-work policy editor (ADR-385)
+	"POST /dashboard/jobs/{name}/runs/{id}/replay-failed":        true, // HTML form, failed job partition replay (ADR-385)
 	"POST /dashboard/apps/{slug}/rollback":                       true, // HTML form, app rollback (issue #248)
 	"POST /dashboard/apps/{slug}/deployments/{id}/retry":         true, // HTML form, per-stage retry (ADR-117 §Production-ready follow-on C4); CSRF sealed envelope, no SDK twin
 	"POST /dashboard/apps/{slug}/alert-presets/{name}/enable":    true, // ADR-123 — dashboard form post; programatic enable is /v1 with SDK wrapper EnableAlertPreset
@@ -583,6 +586,13 @@ var schemaSpecOnly = map[string]bool{
 	"ServiceReliabilityPolicies": true, // Named map schema for the per-binding policy object.
 	"PreviewServiceCallsPolicy":  true, // Typed-string enum in pkg/api/preview_service_calls.go; the schema is still part of the wire contract.
 	"ServiceCallerScopes":        true, // Named map DTO; its additionalProperties shape is documented directly in OpenAPI.
+	// Scheduled-work policy structs live in pkg/workpolicy and are embedded
+	// in the pkg/api request/response DTOs. This scanner only indexes structs
+	// declared directly in pkg/api; request field parity still checks them.
+	"SchedulePolicy": true,
+	"FailureRule":    true,
+	"FailureRules":   true,
+	"WorkDecision":   true,
 }
 
 // findRepoRoot walks up from the working directory until it finds a go.mod.

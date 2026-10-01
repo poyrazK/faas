@@ -7841,3 +7841,11 @@ const WorkloadPortCapMax = 16
 // UDPListenerReservationsPerAppMax bounds all durable reservations, including
 // disabled ones and reservations retained across manifest changes.
 const UDPListenerReservationsPerAppMax = WorkloadPortCapMax
+
+// Versioned work-policy wire bounds; plan retry/task/concurrency limits still
+// apply independently to every execution admitted under one of these policies.
+const (
+	WorkPolicyMaxBytes                = 16384
+	WorkPolicyMaxRules                = 64
+	WorkPolicyMaxStartDeadlineSeconds = 30 * 24 * 60 * 60
+)

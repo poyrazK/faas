@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 	"math"
 	"net"
 	"net/http"
@@ -3907,52 +3908,58 @@ type AddTenantHostnameRequest struct {
 // deployment-attached command. Timezone and SkipIfRunning expose scheduling
 // controls; LastFiredAt is the most recent fire stamp written by schedd.
 type CronResponse struct {
-	ID                  string   `json:"id"`
-	AppID               string   `json:"app_id"`
-	Kind                string   `json:"kind"`
-	Schedule            string   `json:"schedule"`
-	Path                string   `json:"path,omitempty"`
-	Command             []string `json:"command,omitempty"`
-	CommandShell        bool     `json:"command_shell,omitempty"`
-	TimeoutSeconds      int      `json:"timeout_seconds,omitempty"`
-	MaxOutputBytes      int      `json:"max_output_bytes,omitempty"`
-	RetryMax            int      `json:"retry_max,omitempty"`
-	RetryBackoffSeconds int      `json:"retry_backoff_seconds,omitempty"`
-	Enabled             bool     `json:"enabled"`
-	SuspendedReason     string   `json:"suspended_reason,omitempty"`
-	Timezone            string   `json:"timezone"`
-	SkipIfRunning       bool     `json:"skip_if_running"`
-	CreatedAt           string   `json:"created_at"`
-	LastFiredAt         string   `json:"last_fired_at,omitempty"`
+	SchedulePolicy      *workpolicy.SchedulePolicy `json:"schedule_policy,omitempty"`
+	FailureRules        *workpolicy.FailureRules   `json:"failure_rules,omitempty"`
+	ID                  string                     `json:"id"`
+	AppID               string                     `json:"app_id"`
+	Kind                string                     `json:"kind"`
+	Schedule            string                     `json:"schedule"`
+	Path                string                     `json:"path,omitempty"`
+	Command             []string                   `json:"command,omitempty"`
+	CommandShell        bool                       `json:"command_shell,omitempty"`
+	TimeoutSeconds      int                        `json:"timeout_seconds,omitempty"`
+	MaxOutputBytes      int                        `json:"max_output_bytes,omitempty"`
+	RetryMax            int                        `json:"retry_max,omitempty"`
+	RetryBackoffSeconds int                        `json:"retry_backoff_seconds,omitempty"`
+	Enabled             bool                       `json:"enabled"`
+	SuspendedReason     string                     `json:"suspended_reason,omitempty"`
+	Timezone            string                     `json:"timezone"`
+	SkipIfRunning       bool                       `json:"skip_if_running"`
+	CreatedAt           string                     `json:"created_at"`
+	LastFiredAt         string                     `json:"last_fired_at,omitempty"`
 }
 
 // CreateCronRequest creates either a scheduled HTTP request or a
 // deployment-attached command schedule. Command and Path are mutually
 // exclusive; omitting both keeps the HTTP default path of "/".
 type CreateCronRequest struct {
-	AppID               string   `json:"app_id"`
-	Schedule            string   `json:"schedule"`
-	Path                string   `json:"path,omitempty"`
-	Command             []string `json:"command,omitempty"`
-	CommandShell        bool     `json:"command_shell,omitempty"`
-	TimeoutSeconds      int      `json:"timeout_seconds,omitempty"`
-	MaxOutputBytes      int      `json:"max_output_bytes,omitempty"`
-	RetryMax            int      `json:"retry_max,omitempty"`
-	RetryBackoffSeconds int      `json:"retry_backoff_seconds,omitempty"`
-	Enabled             *bool    `json:"enabled,omitempty"`
-	Timezone            string   `json:"timezone,omitempty"`
-	SkipIfRunning       *bool    `json:"skip_if_running,omitempty"`
+	SchedulePolicy      *workpolicy.SchedulePolicy `json:"schedule_policy,omitempty"`
+	FailureRules        *workpolicy.FailureRules   `json:"failure_rules,omitempty"`
+	AppID               string                     `json:"app_id"`
+	Schedule            string                     `json:"schedule"`
+	Path                string                     `json:"path,omitempty"`
+	Command             []string                   `json:"command,omitempty"`
+	CommandShell        bool                       `json:"command_shell,omitempty"`
+	TimeoutSeconds      int                        `json:"timeout_seconds,omitempty"`
+	MaxOutputBytes      int                        `json:"max_output_bytes,omitempty"`
+	RetryMax            int                        `json:"retry_max,omitempty"`
+	RetryBackoffSeconds int                        `json:"retry_backoff_seconds,omitempty"`
+	Enabled             *bool                      `json:"enabled,omitempty"`
+	Timezone            string                     `json:"timezone,omitempty"`
+	SkipIfRunning       *bool                      `json:"skip_if_running,omitempty"`
 }
 
 // UpdateCronRequest is a partial update.
 type UpdateCronRequest struct {
-	Schedule            *string `json:"schedule,omitempty"`
-	Path                *string `json:"path,omitempty"`
-	Enabled             *bool   `json:"enabled,omitempty"`
-	Timezone            *string `json:"timezone,omitempty"`
-	SkipIfRunning       *bool   `json:"skip_if_running,omitempty"`
-	RetryMax            *int    `json:"retry_max,omitempty"`
-	RetryBackoffSeconds *int    `json:"retry_backoff_seconds,omitempty"`
+	SchedulePolicy      *workpolicy.SchedulePolicy `json:"schedule_policy,omitempty"`
+	FailureRules        *workpolicy.FailureRules   `json:"failure_rules,omitempty"`
+	Schedule            *string                    `json:"schedule,omitempty"`
+	Path                *string                    `json:"path,omitempty"`
+	Enabled             *bool                      `json:"enabled,omitempty"`
+	Timezone            *string                    `json:"timezone,omitempty"`
+	SkipIfRunning       *bool                      `json:"skip_if_running,omitempty"`
+	RetryMax            *int                       `json:"retry_max,omitempty"`
+	RetryBackoffSeconds *int                       `json:"retry_backoff_seconds,omitempty"`
 }
 
 // InstanceResponse is the read-only instance view (spec §4.2 / §6).
@@ -11077,6 +11084,8 @@ type RolloutTransitionResponse struct {
 
 // CreateJobRequest is the POST /v1/jobs body.
 type CreateJobRequest struct {
+	SchedulePolicy *workpolicy.SchedulePolicy `json:"schedule_policy,omitempty"`
+	FailureRules   *workpolicy.FailureRules   `json:"failure_rules,omitempty"`
 	// Name is the customer slug (jobs.name UNIQUE per
 	// account_id). 3-40 chars, lowercase letters / digits /
 	// hyphens. Validated by the handler against validSlug.
@@ -11130,13 +11139,15 @@ type CreateJobRequest struct {
 // pointers leave the column untouched (mirrors the app PATCH
 // convention; see api.UpdateAppRequest).
 type UpdateJobRequest struct {
-	ImageRef       *string           `json:"image_ref,omitempty"`
-	Command        []string          `json:"command,omitempty"`
-	EnvOverrides   map[string]string `json:"env_overrides,omitempty"`
-	RAMMB          *int              `json:"ram_mb,omitempty"`
-	TaskTimeoutSec *int              `json:"task_timeout_sec,omitempty"`
-	MaxParallelism *int              `json:"max_parallelism,omitempty"`
-	RetryMax       *int              `json:"retry_max,omitempty"`
+	SchedulePolicy *workpolicy.SchedulePolicy `json:"schedule_policy,omitempty"`
+	FailureRules   *workpolicy.FailureRules   `json:"failure_rules,omitempty"`
+	ImageRef       *string                    `json:"image_ref,omitempty"`
+	Command        []string                   `json:"command,omitempty"`
+	EnvOverrides   map[string]string          `json:"env_overrides,omitempty"`
+	RAMMB          *int                       `json:"ram_mb,omitempty"`
+	TaskTimeoutSec *int                       `json:"task_timeout_sec,omitempty"`
+	MaxParallelism *int                       `json:"max_parallelism,omitempty"`
+	RetryMax       *int                       `json:"retry_max,omitempty"`
 	// Status is the open-set {active, paused}. Setting
 	// status='paused' halts future dispatches without
 	// killing live tasks (the dispatch tick skips paused
@@ -11156,6 +11167,7 @@ type UpdateJobRequest struct {
 // Tasks count against Plan.JobMaxTasksPerRun (Hobby=100,
 // Pro=1000, Scale=5000) before the store call.
 type CreateJobRunRequest struct {
+	FailureRules *workpolicy.FailureRules `json:"failure_rules,omitempty"`
 	// Tasks is the number of tasks to fan out. Each
 	// task has its own (run_id, task_index) — task_index
 	// runs 0..Tasks-1. Tasks=1 is the "single-shot job"
@@ -11201,14 +11213,16 @@ type JobRunInput struct {
 // single type. CreatedAt / UpdatedAt are RFC 3339 strings
 // (matches the AppResponse convention).
 type JobResponse struct {
-	ID              string `json:"id"`
-	AccountID       string `json:"account_id"`
-	Name            string `json:"name"`
-	Kind            string `json:"kind"`
-	Schedule        string `json:"schedule,omitempty"`
-	Timezone        string `json:"timezone,omitempty"`
-	LastScheduledAt string `json:"last_scheduled_at,omitempty"`
-	ImageRef        string `json:"image_ref"`
+	SchedulePolicy  *workpolicy.SchedulePolicy `json:"schedule_policy,omitempty"`
+	FailureRules    *workpolicy.FailureRules   `json:"failure_rules,omitempty"`
+	ID              string                     `json:"id"`
+	AccountID       string                     `json:"account_id"`
+	Name            string                     `json:"name"`
+	Kind            string                     `json:"kind"`
+	Schedule        string                     `json:"schedule,omitempty"`
+	Timezone        string                     `json:"timezone,omitempty"`
+	LastScheduledAt string                     `json:"last_scheduled_at,omitempty"`
+	ImageRef        string                     `json:"image_ref"`
 	// ImageResolvedDigest is the immutable manifest selected from image_ref
 	// by imaged. It is empty while the image is pending materialization.
 	ImageResolvedDigest string `json:"image_resolved_digest,omitempty"`
@@ -11236,38 +11250,41 @@ type JobResponse struct {
 // retry-exhaustion counter — a run is "dead letter" when
 // dead_letter_count > 0 AND aggregate_status='dead_letter'.
 type JobRunResponse struct {
-	ID                          string            `json:"id"`
-	JobID                       string            `json:"job_id"`
-	AccountID                   string            `json:"account_id"`
-	TriggerKind                 string            `json:"trigger_kind"`
-	EnvOverrides                map[string]string `json:"env_overrides,omitempty"`
-	Tasks                       int               `json:"tasks"`
-	InputManifestVersion        int               `json:"input_manifest_version"`
-	InputDigest                 string            `json:"input_digest,omitempty"`
-	InputManifestURI            string            `json:"input_manifest_uri,omitempty"`
-	InputManifestSHA256         string            `json:"input_manifest_sha256,omitempty"`
-	Parallelism                 int               `json:"parallelism"`
-	ExecutionClass              string            `json:"execution_class"`
-	FailurePolicy               string            `json:"failure_policy"`
-	EligibleAt                  string            `json:"eligible_at,omitempty"`
-	LatestStartAt               string            `json:"latest_start_at,omitempty"`
-	RetryMax                    int               `json:"retry_max"`
-	TaskTimeoutSec              int               `json:"task_timeout_sec"`
-	Command                     []string          `json:"command,omitempty"`
-	ImageRefSnapshot            string            `json:"image_ref_snapshot,omitempty"`
-	ImageResolvedDigestSnapshot string            `json:"image_resolved_digest_snapshot,omitempty"`
-	RAMMBSnapshot               int               `json:"ram_mb_snapshot,omitempty"`
-	EffectiveEnvSnapshot        map[string]string `json:"effective_env_snapshot,omitempty"`
-	SourceRunID                 string            `json:"source_run_id,omitempty"`
-	AggregateStatus             string            `json:"aggregate_status"`
-	TasksSucceeded              int               `json:"tasks_succeeded"`
-	TasksFailed                 int               `json:"tasks_failed"`
-	TasksCancelled              int               `json:"tasks_cancelled"`
-	TasksRunning                int               `json:"tasks_running"`
-	DeadLetterCount             int               `json:"dead_letter_count"`
-	StartedAt                   string            `json:"started_at,omitempty"`
-	FinishedAt                  string            `json:"finished_at,omitempty"`
-	CreatedAt                   string            `json:"created_at"`
+	OccurrenceID                string                   `json:"occurrence_id,omitempty"`
+	StartDeadlineAt             *time.Time               `json:"start_deadline_at,omitempty"`
+	FailureRules                *workpolicy.FailureRules `json:"failure_rules,omitempty"`
+	ID                          string                   `json:"id"`
+	JobID                       string                   `json:"job_id"`
+	AccountID                   string                   `json:"account_id"`
+	TriggerKind                 string                   `json:"trigger_kind"`
+	EnvOverrides                map[string]string        `json:"env_overrides,omitempty"`
+	Tasks                       int                      `json:"tasks"`
+	InputManifestVersion        int                      `json:"input_manifest_version"`
+	InputDigest                 string                   `json:"input_digest,omitempty"`
+	InputManifestURI            string                   `json:"input_manifest_uri,omitempty"`
+	InputManifestSHA256         string                   `json:"input_manifest_sha256,omitempty"`
+	Parallelism                 int                      `json:"parallelism"`
+	ExecutionClass              string                   `json:"execution_class"`
+	FailurePolicy               string                   `json:"failure_policy"`
+	EligibleAt                  string                   `json:"eligible_at,omitempty"`
+	LatestStartAt               string                   `json:"latest_start_at,omitempty"`
+	RetryMax                    int                      `json:"retry_max"`
+	TaskTimeoutSec              int                      `json:"task_timeout_sec"`
+	Command                     []string                 `json:"command,omitempty"`
+	ImageRefSnapshot            string                   `json:"image_ref_snapshot,omitempty"`
+	ImageResolvedDigestSnapshot string                   `json:"image_resolved_digest_snapshot,omitempty"`
+	RAMMBSnapshot               int                      `json:"ram_mb_snapshot,omitempty"`
+	EffectiveEnvSnapshot        map[string]string        `json:"effective_env_snapshot,omitempty"`
+	SourceRunID                 string                   `json:"source_run_id,omitempty"`
+	AggregateStatus             string                   `json:"aggregate_status"`
+	TasksSucceeded              int                      `json:"tasks_succeeded"`
+	TasksFailed                 int                      `json:"tasks_failed"`
+	TasksCancelled              int                      `json:"tasks_cancelled"`
+	TasksRunning                int                      `json:"tasks_running"`
+	DeadLetterCount             int                      `json:"dead_letter_count"`
+	StartedAt                   string                   `json:"started_at,omitempty"`
+	FinishedAt                  string                   `json:"finished_at,omitempty"`
+	CreatedAt                   string                   `json:"created_at"`
 }
 
 // JobTaskResponse is the wire projection of state.JobTask.
@@ -11276,42 +11293,46 @@ type JobRunResponse struct {
 // LeaseToken is omitted (internal dispatch primitive, not a
 // customer-facing field).
 type JobTaskResponse struct {
-	RunID           string          `json:"run_id"`
-	TaskIndex       int             `json:"task_index"`
-	InputID         string          `json:"input_id,omitempty"`
-	InputRef        string          `json:"input_ref,omitempty"`
-	SourceTaskIndex *int            `json:"source_task_index,omitempty"`
-	OutputManifest  json.RawMessage `json:"output_manifest,omitempty"`
-	Status          string          `json:"status"`
-	Attempt         int             `json:"attempt"`
-	InstanceID      string          `json:"instance_id,omitempty"`
-	ErrorClass      string          `json:"error_class,omitempty"`
-	ErrorMessage    string          `json:"error_message,omitempty"`
-	ExitCode        int             `json:"exit_code,omitempty"`
-	StartedAt       string          `json:"started_at,omitempty"`
-	FinishedAt      string          `json:"finished_at,omitempty"`
-	CreatedAt       string          `json:"created_at"`
+	WorkDecision    *workpolicy.Decision `json:"work_decision,omitempty"`
+	OutcomeCode     string               `json:"outcome_code,omitempty"`
+	RunID           string               `json:"run_id"`
+	TaskIndex       int                  `json:"task_index"`
+	InputID         string               `json:"input_id,omitempty"`
+	InputRef        string               `json:"input_ref,omitempty"`
+	SourceTaskIndex *int                 `json:"source_task_index,omitempty"`
+	OutputManifest  json.RawMessage      `json:"output_manifest,omitempty"`
+	Status          string               `json:"status"`
+	Attempt         int                  `json:"attempt"`
+	InstanceID      string               `json:"instance_id,omitempty"`
+	ErrorClass      string               `json:"error_class,omitempty"`
+	ErrorMessage    string               `json:"error_message,omitempty"`
+	ExitCode        int                  `json:"exit_code,omitempty"`
+	StartedAt       string               `json:"started_at,omitempty"`
+	FinishedAt      string               `json:"finished_at,omitempty"`
+	CreatedAt       string               `json:"created_at"`
 }
 
 // JobTaskAttemptResponse is one immutable terminal attempt, retained when a
 // failed task is retried. It carries the output and captured log for that
 // attempt rather than the current task projection.
 type JobTaskAttemptResponse struct {
-	RunID          string          `json:"run_id"`
-	TaskIndex      int             `json:"task_index"`
-	Attempt        int             `json:"attempt"`
-	InputID        string          `json:"input_id,omitempty"`
-	InputRef       string          `json:"input_ref,omitempty"`
-	Status         string          `json:"status"`
-	InstanceID     string          `json:"instance_id,omitempty"`
-	ErrorClass     string          `json:"error_class,omitempty"`
-	ErrorMessage   string          `json:"error_message,omitempty"`
-	ExitCode       *int            `json:"exit_code,omitempty"`
-	StartedAt      string          `json:"started_at,omitempty"`
-	FinishedAt     string          `json:"finished_at"`
-	LogContent     string          `json:"log_content"`
-	LogTruncated   bool            `json:"log_truncated"`
-	OutputManifest json.RawMessage `json:"output_manifest,omitempty"`
+	WorkDecision   *workpolicy.Decision `json:"work_decision,omitempty"`
+	OutcomeCode    string               `json:"outcome_code,omitempty"`
+	RunID          string               `json:"run_id"`
+	TaskIndex      int                  `json:"task_index"`
+	Attempt        int                  `json:"attempt"`
+	InputID        string               `json:"input_id,omitempty"`
+	InputRef       string               `json:"input_ref,omitempty"`
+	Status         string               `json:"status"`
+	InstanceID     string               `json:"instance_id,omitempty"`
+	ErrorClass     string               `json:"error_class,omitempty"`
+	ErrorMessage   string               `json:"error_message,omitempty"`
+	ExitCode       *int                 `json:"exit_code,omitempty"`
+	StartedAt      string               `json:"started_at,omitempty"`
+	FinishedAt     string               `json:"finished_at"`
+	LogContent     string               `json:"log_content"`
+	LogTruncated   bool                 `json:"log_truncated"`
+	OutputManifest json.RawMessage      `json:"output_manifest,omitempty"`
 }
 
 type ListJobTaskAttemptsResponse struct {
@@ -11375,6 +11396,35 @@ type ListJobRunsResponse struct {
 	Offset     int              `json:"offset"`
 	NextOffset int              `json:"next_offset"`
 	Total      int              `json:"total"`
+}
+
+// ScheduleOccurrenceResponse is the durable, policy-pinned outcome for one
+// nominal scheduled time. Status and reason distinguish a run from a skipped,
+// coalesced, late, or replaced occurrence.
+type ScheduleOccurrenceResponse struct {
+	SchedulePolicy       *workpolicy.SchedulePolicy `json:"schedule_policy"`
+	ID                   string                     `json:"id"`
+	ScheduleRevision     int64                      `json:"schedule_revision"`
+	ScheduledFor         time.Time                  `json:"scheduled_for"`
+	StartDeadlineAt      *time.Time                 `json:"start_deadline_at,omitempty"`
+	Status               string                     `json:"status"`
+	Reason               string                     `json:"reason,omitempty"`
+	BlockingOccurrenceID string                     `json:"blocking_occurrence_id,omitempty"`
+	JobRunID             string                     `json:"job_run_id,omitempty"`
+	InvocationID         string                     `json:"invocation_id,omitempty"`
+	AppTaskID            string                     `json:"app_task_id,omitempty"`
+	StartedAt            *time.Time                 `json:"started_at,omitempty"`
+	FinishedAt           *time.Time                 `json:"finished_at,omitempty"`
+	CreatedAt            time.Time                  `json:"created_at"`
+}
+
+// ListScheduleOccurrencesResponse returns a cursor page in newest-first
+// order. Pass next_before back as ?before= to inspect older outcomes.
+type ListScheduleOccurrencesResponse struct {
+	Occurrences []ScheduleOccurrenceResponse `json:"occurrences"`
+	Limit       int                          `json:"limit"`
+	Before      string                       `json:"before,omitempty"`
+	NextBefore  string                       `json:"next_before,omitempty"`
 }
 
 // ListJobTasksResponse is the body of GET /v1/jobs/{name}/runs/

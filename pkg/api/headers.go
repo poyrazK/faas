@@ -13,6 +13,9 @@ const (
 	RequestIDHeader = "X-Faas-Request-Id"
 	// FlagEvidenceHeader is consumed from app responses and never exposed to clients.
 	FlagEvidenceHeader = "X-Faas-Flag-Evidence"
+	// FlagContextHeader carries bounded, SDK-generated decisions across an
+	// authorized Gregale service call. Public ingress always clears it.
+	FlagContextHeader = "X-Faas-Flag-Context"
 	// TraceIDHeader carries the canonical W3C trace id for a request. Unlike
 	// RequestIDHeader, this value is always the 32-character lowercase OTel
 	// trace id when tracing is active.
@@ -162,7 +165,7 @@ func IsGuestIdentityHeader(name string) bool {
 	case "x-faas-request-id", "x-faas-app-id", "x-faas-deployment-id",
 		"x-faas-tenant-id", "x-faas-platform-tenant-id", "x-faas-instance-id", "x-faas-node-id",
 		"x-faas-region", "x-faas-commit-sha", "x-faas-deployment-tag",
-		"x-faas-deployment-created-at", "x-faas-image-digest":
+		"x-faas-deployment-created-at", "x-faas-image-digest", "x-faas-flag-context":
 		return true
 	default:
 		return false

@@ -4626,7 +4626,7 @@ func cmdDomains(args []string) int {
 func cmdCrons(args []string) int {
 	parent, _ := lookupCliCommand("crons")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale crons <list|add|info|update|rm|run|fire-now|runs|cancel> [args]", "crons")
+		PrintUsage(os.Stderr, "usage: gregale crons <list|add|info|update|rm|run|fire-now|runs|occurrences|cancel> [args]", "crons")
 		return 1
 	}
 	switch args[0] {
@@ -4683,6 +4683,8 @@ func cmdCrons(args []string) int {
 		maxOutputBytes := fs.Int("max-output-bytes", 0, "maximum captured output bytes (default: 1048576; command crons only)")
 		timezone := fs.String("timezone", "", "IANA timezone (defaults to UTC)")
 		skipIfRunning := fs.Bool("skip-if-running", false, "skip a scheduled fire while the previous cron run is active")
+		schedulePolicyJSON := fs.String("schedule-policy", "", "versioned schedule policy as JSON")
+		failureRulesJSON := fs.String("failure-rules", "", "versioned retry/failure rules as JSON")
 		retryMax := fs.Int("retry-max", 0, "additional command attempts after failure or timeout (0 disables retries; max 5)")
 		retryBackoff := fs.Int("retry-backoff-seconds", 60, "base retry delay in seconds; doubles per attempt (1..3600)")
 		if err := fs.Parse(args[1:]); err != nil {
@@ -4733,6 +4735,20 @@ func cmdCrons(args []string) int {
 			AppID: *slug, Schedule: *schedule, Enabled: boolPtr(true),
 			Timezone: *timezone, SkipIfRunning: boolPtr(*skipIfRunning),
 		}
+		if *schedulePolicyJSON != "" {
+			policy, err := parseSchedulePolicyJSON(*schedulePolicyJSON)
+			if err != nil {
+				return printErr("Invalid schedule policy", err)
+			}
+			req.SchedulePolicy = policy
+		}
+		if *failureRulesJSON != "" {
+			rules, err := parseFailureRulesJSON(*failureRulesJSON)
+			if err != nil {
+				return printErr("Invalid failure rules", err)
+			}
+			req.FailureRules = rules
+		}
 		if *command == "" {
 			req.Path = *path
 			if req.Path == "" {
@@ -4765,6 +4781,8 @@ func cmdCrons(args []string) int {
 		return cmdCronsInfo(args[1:])
 	case subRuns:
 		return cmdCronsRuns(args[1:])
+	case "occurrences":
+		return cmdCronsOccurrences(args[1:])
 	case "cancel":
 		return cmdCronsCancel(args[1:])
 	case subRm:
@@ -4878,6 +4896,8 @@ func cmdCronsUpdate(args []string) int {
 	allowOverlap := fs.Bool("allow-overlap", false, "allow scheduled fires to overlap")
 	retryMax := fs.Int("retry-max", 0, "additional command attempts after failure or timeout (0 disables retries; max 5)")
 	retryBackoff := fs.Int("retry-backoff-seconds", 60, "base retry delay in seconds; doubles per attempt (1..3600)")
+	schedulePolicyJSON := fs.String("schedule-policy", "", "replace versioned schedule policy JSON")
+	failureRulesJSON := fs.String("failure-rules", "", "replace versioned retry/failure rules JSON")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 1
 	}
@@ -4898,7 +4918,7 @@ func cmdCronsUpdate(args []string) int {
 	// catch at the CLI before a pointless network round-trip.
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
-	if !explicit["schedule"] && !explicit["path"] && !explicit["timezone"] && !explicit["enable"] && !explicit["disable"] && !explicit["skip-if-running"] && !explicit["allow-overlap"] && !explicit["retry-max"] && !explicit["retry-backoff-seconds"] {
+	if !explicit["schedule"] && !explicit["path"] && !explicit["timezone"] && !explicit["enable"] && !explicit["disable"] && !explicit["skip-if-running"] && !explicit["allow-overlap"] && !explicit["retry-max"] && !explicit["retry-backoff-seconds"] && !explicit["schedule-policy"] && !explicit["failure-rules"] {
 		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--retry-max N] [--retry-backoff-seconds N] [--enable|--disable]", "crons")
 		return 1
 	}
@@ -4957,6 +4977,20 @@ func cmdCronsUpdate(args []string) int {
 	if explicit["retry-backoff-seconds"] {
 		v := *retryBackoff
 		req.RetryBackoffSeconds = &v
+	}
+	if explicit["schedule-policy"] {
+		policy, err := parseSchedulePolicyJSON(*schedulePolicyJSON)
+		if err != nil {
+			return printErr("Invalid schedule policy", err)
+		}
+		req.SchedulePolicy = policy
+	}
+	if explicit["failure-rules"] {
+		rules, err := parseFailureRulesJSON(*failureRulesJSON)
+		if err != nil {
+			return printErr("Invalid failure rules", err)
+		}
+		req.FailureRules = rules
 	}
 	updated, err := client.UpdateCron(context.Background(), id, req)
 	if err != nil {

@@ -77,11 +77,12 @@ func TestClearGuestIdentityHeadersRemovesCanonicalAndLegacy(t *testing.T) {
 	h.Set("X-Faas-Instance", "instance")
 	h.Set("X-Faas-Node", "node")
 	h.Set("X-Faas-Invocation-Id", "invoke")
+	h.Set(FlagContextHeader, "customer-authored")
 	h.Set(TargetDeploymentHeader, "dep")
 
 	ClearGuestIdentityHeaders(h)
 
-	for _, name := range []string{RequestIDHeader, DeploymentIDHeader, "X-Faas-App", "X-Faas-Instance", "X-Faas-Node", TargetDeploymentHeader} {
+	for _, name := range []string{RequestIDHeader, DeploymentIDHeader, "X-Faas-App", "X-Faas-Instance", "X-Faas-Node", TargetDeploymentHeader, FlagContextHeader} {
 		if got := h.Get(name); got != "" {
 			t.Errorf("%s survived clear: %q", name, got)
 		}
@@ -97,5 +98,8 @@ func TestPlatformIdentityEnvKeyIncludesImageDigest(t *testing.T) {
 	}
 	if !IsGuestIdentityHeader(ImageDigestHeader) {
 		t.Fatal("image digest header is not guest-allowlisted")
+	}
+	if !IsGuestIdentityHeader(FlagContextHeader) {
+		t.Fatal("flag context header is not reserved at the guest boundary")
 	}
 }

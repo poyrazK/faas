@@ -2,6 +2,8 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { FailureRules } from './FailureRules.js';
+import type { SchedulePolicy } from './SchedulePolicy.js';
 /**
  * Partial job update. nil pointer fields leave the column untouched.
  */
@@ -22,5 +24,7 @@ export type UpdateJobRequest = {
    * Replace the schedule IANA timezone.
    */
   timezone?: string;
+  schedule_policy?: SchedulePolicy;
+  failure_rules?: FailureRules;
 };
 
