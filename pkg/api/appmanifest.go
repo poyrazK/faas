@@ -438,10 +438,6 @@ type WorkloadPortProtocol string
 const (
 	WorkloadPortTCP WorkloadPortProtocol = "tcp"
 	WorkloadPortUDP WorkloadPortProtocol = "udp"
-	// WorkloadPortCapMax bounds image metadata and the guest endpoint
-	// environment. It is deliberately small because listeners are a local
-	// contract, not an unbounded service registry.
-	WorkloadPortCapMax = 16
 )
 
 // WorkloadPort is one protocol-aware listener declared by an image or

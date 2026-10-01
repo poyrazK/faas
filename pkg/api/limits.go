@@ -7750,3 +7750,11 @@ const IssueMaxBatchEvents = 32
 // UDP listener ports reserve an independent UDP namespace at the public edge.
 const UDPListenerPublicPortMin = 40000
 const UDPListenerPublicPortMax = 49999
+
+// WorkloadPortCapMax bounds image metadata and the guest endpoint environment.
+// Listeners are a local workload contract, not an unbounded service registry.
+const WorkloadPortCapMax = 16
+
+// UDPListenerReservationsPerAppMax bounds all durable reservations, including
+// disabled ones and reservations retained across manifest changes.
+const UDPListenerReservationsPerAppMax = WorkloadPortCapMax
