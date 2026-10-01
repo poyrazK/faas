@@ -976,7 +976,10 @@ func gatewaydConfig(addr, controlAddr, apidLoopback string, guestDNS bool) strin
 		// Keep the single-host acceptance bridge aligned with VMMD's default.
 		// This listener also enables the production DNS server on port 53.
 		bridge := api.DefaultHostBridgeCIDR().Addr().Next().String()
-		config += fmt.Sprintf("service_proxy_listen=%q\n", net.JoinHostPort(bridge, strconv.Itoa(netns.ServiceProxyPort)))
+		// DNS-gated egress needs the answer hook to dial this schema's VMMD.
+		// setDefaultLocalScheddTarget keeps the seeded node's endpoint current.
+		config += fmt.Sprintf("service_proxy_listen=%q\nnode_name=%q\n",
+			net.JoinHostPort(bridge, strconv.Itoa(netns.ServiceProxyPort)), "default-local")
 	}
 	return config
 }
