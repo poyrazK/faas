@@ -1,4 +1,4 @@
-// adr: 385 — additive native boot capability; never manufacture a receipt.
+// adr: 386 — additive native boot capability; never manufacture a receipt.
 package vmmdgrpc
 
 import (

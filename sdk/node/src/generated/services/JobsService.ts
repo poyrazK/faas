@@ -16,6 +16,7 @@ import type { ListJobRunsResponse } from '../models/ListJobRunsResponse.js';
 import type { ListJobsResponse } from '../models/ListJobsResponse.js';
 import type { ListJobTaskAttemptsResponse } from '../models/ListJobTaskAttemptsResponse.js';
 import type { ListJobTasksResponse } from '../models/ListJobTasksResponse.js';
+import type { ListScheduleOccurrencesResponse } from '../models/ListScheduleOccurrencesResponse.js';
 import type { PutJobRegistryCredentialRequest } from '../models/PutJobRegistryCredentialRequest.js';
 import type { UpdateJobRequest } from '../models/UpdateJobRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
@@ -410,6 +411,50 @@ export class JobsService {
         403: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied`,
         404: `code: not_found`,
         409: `Job is paused.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List durable scheduled occurrence decisions for a job.
+   * Shows whether each nominal run started, was skipped, missed its start deadline, or was coalesced.
+   * @returns ListScheduleOccurrencesResponse A newest-first page of job occurrence outcomes.
+   * @throws ApiError
+   */
+  public static listJobScheduleOccurrences({
+    name,
+    limit = 50,
+    before,
+  }: {
+    /**
+     * Customer-visible name of the recurring job.
+     */
+    name: string,
+    /**
+     * Maximum number of job occurrence records to return.
+     */
+    limit?: number,
+    /**
+     * Job occurrence id that starts the next older page.
+     */
+    before?: string,
+  }): CancelablePromise<ListScheduleOccurrencesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/jobs/{name}/occurrences',
+      path: {
+        'name': name,
+      },
+      query: {
+        'limit': limit,
+        'before': before,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.

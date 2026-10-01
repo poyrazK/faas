@@ -72,7 +72,7 @@ const (
 	platformTenantsFile              = "platform_tenants.go"            // ADR-226 account-level platform customers
 	platformTenantCredentialsFile    = "platform_tenant_credentials.go" // ADR-236 account-level customer credentials
 	runtimePolicyFile                = "runtime_policy.go"              // app and traffic control-plane convergence status
-	applicationStandardsFile         = "application_standards.go"       // ADR-385 immutable application standards
+	applicationStandardsFile         = "application_standards.go"       // ADR-386 immutable application standards
 	applicationStandardResourcesFile = "application_standard_resources.go"
 )
 
@@ -592,6 +592,13 @@ var schemaSpecOnly = map[string]bool{
 	"ServiceReliabilityPolicies": true, // Named map schema for the per-binding policy object.
 	"PreviewServiceCallsPolicy":  true, // Typed-string enum in pkg/api/preview_service_calls.go; the schema is still part of the wire contract.
 	"ServiceCallerScopes":        true, // Named map DTO; its additionalProperties shape is documented directly in OpenAPI.
+	// Scheduled-work policy structs live in pkg/workpolicy and are embedded
+	// in the pkg/api request/response DTOs. This scanner only indexes structs
+	// declared directly in pkg/api; request field parity still checks them.
+	"SchedulePolicy": true,
+	"FailureRule":    true,
+	"FailureRules":   true,
+	"WorkDecision":   true,
 }
 
 // findRepoRoot walks up from the working directory until it finds a go.mod.

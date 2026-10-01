@@ -1,4 +1,4 @@
-# ADR-385 · Versioned inherited application standards
+# ADR-386 · Versioned inherited application standards
 
 - **Status:** implementation in progress; acceptance required before release
 - **Date:** 2026-09-30

@@ -663,11 +663,12 @@ func readJobExitEnvelope(conn io.Reader) (JobExitPayload, error) {
 
 func validateJobExitPayload(payload JobExitPayload) error {
 	if len(payload.OutputManifest) > 0 {
-		if payload.ErrorClass != "succeeded" {
-			return fmt.Errorf("output manifest requires successful exit")
-		}
-		if _, err := jobresult.Validate(payload.OutputManifest); err != nil {
+		manifest, err := jobresult.Validate(payload.OutputManifest)
+		if err != nil {
 			return err
+		}
+		if payload.ErrorClass != "succeeded" && len(manifest.Artifacts) > 0 {
+			return fmt.Errorf("failed job result cannot declare artifacts")
 		}
 	}
 	if payload.ExitCode < 0 || payload.ExitCode > 255 {

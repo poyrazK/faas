@@ -1,4 +1,4 @@
-// adr: 385 — missing runtime capability cannot satisfy durable convergence.
+// adr: 386 — missing runtime capability cannot satisfy durable convergence.
 package sched
 
 import (

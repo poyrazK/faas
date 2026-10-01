@@ -1,0 +1,61 @@
+package state
+
+import (
+	"context"
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/workpolicy"
+)
+
+// ScheduleOccurrence is the durable decision record for one scheduled time.
+// Its policy snapshot and reason make a skipped, late, or replaced occurrence
+// explainable after the schedule itself has changed.
+type ScheduleOccurrence struct {
+	ID                   string
+	AccountID            string
+	CronID               string
+	JobID                string
+	ScheduleRevision     int64
+	ScheduledFor         time.Time
+	StartDeadlineAt      *time.Time
+	SchedulePolicy       workpolicy.SchedulePolicy
+	Status               string
+	Reason               string
+	BlockingOccurrenceID string
+	InvocationID         string
+	AppTaskID            string
+	JobRunID             string
+	StartedAt            *time.Time
+	FinishedAt           *time.Time
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+}
+
+// JobScheduledOccurrenceOptions pins the nominal occurrence time and the
+// candidate revision observed by the scheduler. The store rereads all policy
+// fields under lock before committing any outcome.
+type JobScheduledOccurrenceOptions struct {
+	ScheduledFor     time.Time
+	ScheduleRevision int64
+	Disposition      string
+	Reason           string
+}
+
+// CronScheduledOccurrenceOptions pins the nominal cron boundary, candidate
+// schedule revision, and any scheduler-side missed-run disposition. Empty
+// Disposition asks the store to evaluate deadline and overlap policy.
+type CronScheduledOccurrenceOptions struct {
+	ScheduledFor     time.Time
+	ScheduleRevision int64
+	Disposition      string
+	Reason           string
+}
+
+type JobScheduleOccurrenceStore interface {
+	JobRunCreateScheduledOccurrence(ctx context.Context, jobID, schedule, timezone string, expectedLastScheduledAt *time.Time, firedAt time.Time, options JobScheduledOccurrenceOptions) (JobRun, bool, error)
+}
+
+type ScheduleOccurrenceHistoryStore interface {
+	ScheduleOccurrenceListByJob(ctx context.Context, jobID string, limit int, before string) ([]ScheduleOccurrence, error)
+	ScheduleOccurrenceListByCron(ctx context.Context, cronID string, limit int, before string) ([]ScheduleOccurrence, error)
+}

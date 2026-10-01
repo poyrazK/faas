@@ -78,6 +78,13 @@ if [[ -n "$status_url" ]]; then
   sample baseline status "$status_url" 1 "$status_log" 3
 fi
 
+if [[ "${ROLLOUT_REQUIRE_API_BASELINE:-false}" == true ]] && (( baseline_sample_count > 0 )); then
+  if ! awk -F '\t' 'BEGIN { healthy=1 } $5 < 200 || $5 >= 300 || $9 != 0 { healthy=0 } END { exit !(NR > 0 && healthy) }' "$primary_log"; then
+    echo "API readiness baseline failed; activation was not started" >&2
+    exit 1
+  fi
+fi
+
 "$@" &
 command_pid=$!
 secondary_pids=()

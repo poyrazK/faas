@@ -243,9 +243,25 @@ up to five additional attempts after a command fails or times out; retries use
 exponential backoff from `--retry-backoff-seconds` (default 60 seconds, capped
 at 24 hours). A cron run remains one logical history row while it waits for a
 retry, and its task receipt reports the attempt count and next retry time.
+Failure rules can classify an exit code or a structured `outcome_code` written
+to `GREGALE_OUTPUT_MANIFEST_PATH`; a mapped code can turn exit 0 into a
+permanent failure or a retry. Unmapped successful outcomes remain successful.
 Retries are at-least-once: a command may have produced side effects before it
 failed, so make retryable commands idempotent. A worker lease lost after
 dispatch is not automatically replayed because completion is uncertain.
+
+To report a business outcome independently of the process exit status, write
+a version-1 result manifest atomically before the command exits:
+
+```bash
+printf '%s\n' '{"version":1,"artifacts":[],"outcome_code":"invalid_record"}' \
+  > "$GREGALE_OUTPUT_MANIFEST_PATH.tmp"
+mv "$GREGALE_OUTPUT_MANIFEST_PATH.tmp" "$GREGALE_OUTPUT_MANIFEST_PATH"
+```
+
+Configure that code explicitly with `--failure-rules`; Gregale does not infer
+retry safety from an error message. The command receipt retains the code and
+classifier decision for inspection.
 
 Inspect outcomes with `gregale crons runs CRON_ID`. The history includes a run
 id; for a command cron, inspect its captured stdout/stderr, exit status, and

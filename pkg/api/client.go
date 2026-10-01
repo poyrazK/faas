@@ -2623,6 +2623,52 @@ func (c *Client) ListJobRuns(ctx context.Context, name string) (ListJobRunsRespo
 	return out, c.do(ctx, "GET", "/v1/jobs/"+name+"/runs", nil, &out)
 }
 
+// ListJobScheduleOccurrences returns the durable decision history for each
+// nominal scheduled time. before is the previous page's next_before cursor.
+func (c *Client) ListJobScheduleOccurrences(ctx context.Context, name string, limit int, before string) (ListScheduleOccurrencesResponse, error) {
+	var out ListScheduleOccurrencesResponse
+	q := url.Values{}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if before != "" {
+		q.Set("before", before)
+	}
+	path := "/v1/jobs/" + name + "/occurrences"
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// ListCronScheduleOccurrences returns the durable decision history for each
+// nominal cron fire. before is the previous page's next_before cursor.
+func (c *Client) ListCronScheduleOccurrences(ctx context.Context, id string, limit int, before string) (ListScheduleOccurrencesResponse, error) {
+	var out ListScheduleOccurrencesResponse
+	q := url.Values{}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if before != "" {
+		q.Set("before", before)
+	}
+	path := "/v1/crons/" + id + "/occurrences"
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetCronsIdOccurrences is the typed OpenAPI route method for cron history.
+func (c *Client) GetCronsIdOccurrences(ctx context.Context, id string, limit int, before string) (ListScheduleOccurrencesResponse, error) {
+	return c.ListCronScheduleOccurrences(ctx, id, limit, before)
+}
+
+// GetJobsNameOccurrences is the typed OpenAPI route method for job history.
+func (c *Client) GetJobsNameOccurrences(ctx context.Context, name string, limit int, before string) (ListScheduleOccurrencesResponse, error) {
+	return c.ListJobScheduleOccurrences(ctx, name, limit, before)
+}
+
 // GetJobRun returns one run by id (uuid). Backs `gregale jobs run
 // <name> <id>`. Wire shape matches JobRunResponse.
 func (c *Client) GetJobRun(ctx context.Context, name, runID string) (JobRunResponse, error) {

@@ -8011,6 +8011,7 @@ type ExecuteAppTaskResponse struct {
 	FailureMessage  string                 `protobuf:"bytes,6,opt,name=failure_message,json=failureMessage,proto3" json:"failure_message,omitempty"`
 	Stdout          []byte                 `protobuf:"bytes,7,opt,name=stdout,proto3" json:"stdout,omitempty"`
 	Stderr          []byte                 `protobuf:"bytes,8,opt,name=stderr,proto3" json:"stderr,omitempty"`
+	OutcomeCode     string                 `protobuf:"bytes,9,opt,name=outcome_code,json=outcomeCode,proto3" json:"outcome_code,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -8099,6 +8100,13 @@ func (x *ExecuteAppTaskResponse) GetStderr() []byte {
 		return x.Stderr
 	}
 	return nil
+}
+
+func (x *ExecuteAppTaskResponse) GetOutcomeCode() string {
+	if x != nil {
+		return x.OutcomeCode
+	}
+	return ""
 }
 
 type ExecuteAppTaskEvent struct {
@@ -9645,7 +9653,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\acommand\x18\x04 \x03(\tR\acommand\x12#\n" +
 	"\rcommand_shell\x18\x05 \x01(\bR\fcommandShell\x12'\n" +
 	"\x0ftimeout_seconds\x18\x06 \x01(\x05R\x0etimeoutSeconds\x12(\n" +
-	"\x10max_output_bytes\x18\a \x01(\x05R\x0emaxOutputBytes\"\xaa\x02\n" +
+	"\x10max_output_bytes\x18\a \x01(\x05R\x0emaxOutputBytes\"\xcd\x02\n" +
 	"\x16ExecuteAppTaskResponse\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\tR\x06status\x12)\n" +
@@ -9654,7 +9662,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\ffailure_code\x18\x05 \x01(\tR\vfailureCode\x12'\n" +
 	"\x0ffailure_message\x18\x06 \x01(\tR\x0efailureMessage\x12\x16\n" +
 	"\x06stdout\x18\a \x01(\fR\x06stdout\x12\x16\n" +
-	"\x06stderr\x18\b \x01(\fR\x06stderr\"\xb3\x01\n" +
+	"\x06stderr\x18\b \x01(\fR\x06stderr\x12!\n" +
+	"\foutcome_code\x18\t \x01(\tR\voutcomeCode\"\xb3\x01\n" +
 	"\x13ExecuteAppTaskEvent\x12H\n" +
 	"\x06output\x18\x01 \x01(\v2..onebox.faas.vmmd.v1.ExecuteAppTaskOutputChunkH\x00R\x06output\x12I\n" +
 	"\bterminal\x18\x02 \x01(\v2+.onebox.faas.vmmd.v1.ExecuteAppTaskResponseH\x00R\bterminalB\a\n" +

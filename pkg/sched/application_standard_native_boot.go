@@ -1,4 +1,4 @@
-// adr: 385 — persist exact grants before native boot; publish only its receipt.
+// adr: 386 — persist exact grants before native boot; publish only its receipt.
 package sched
 
 import (
