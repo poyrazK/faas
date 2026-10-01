@@ -116,3 +116,42 @@ func startsBuilder(expr ast.Expr) bool {
 	}
 	return false
 }
+
+// Keep the metal fixture's seeded plan aligned with the real autoscale gate.
+func TestContainerAutoscaleFixturePlanAllowed(t *testing.T) {
+	file, err := parser.ParseFile(token.NewFileSet(), "direct_oci_autoscale_metal_test.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plans := map[string]api.Plan{
+		"PlanFree": api.PlanFree, "PlanHobby": api.PlanHobby,
+		"PlanPro": api.PlanPro, "PlanScale": api.PlanScale,
+	}
+	calls := 0
+	ast.Inspect(file, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		selector, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || selector.Sel.Name != "SeedAccount" {
+			return true
+		}
+		calls++
+		if len(call.Args) < 2 {
+			t.Fatal("autoscale fixture seed has no plan")
+		}
+		plan, ok := call.Args[1].(*ast.SelectorExpr)
+		if !ok {
+			t.Fatal("autoscale fixture plan is not an explicit API plan")
+		}
+		pkg, ok := plan.X.(*ast.Ident)
+		if !ok || pkg.Name != "api" || !plans[plan.Sel.Name].ScaleUpTargetRPSAllowed() {
+			t.Fatalf("autoscale fixture plan %s does not allow its RPS target", plan.Sel.Name)
+		}
+		return true
+	})
+	if calls != 1 {
+		t.Fatalf("checked %d seeded plans; want one autoscale fixture", calls)
+	}
+}

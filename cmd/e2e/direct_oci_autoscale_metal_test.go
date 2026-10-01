@@ -57,7 +57,7 @@ func TestDirectOCIAutoscaleScaleToZeroMetal(t *testing.T) {
 			h.DumpLogs(t)
 		}
 	})
-	key := h.SeedAccount(context.Background(), api.PlanHobby)
+	key := h.SeedAccount(context.Background(), api.PlanPro)
 	falsy := false
 	if got := postOK(t, h, key, "/v1/apps", api.CreateAppRequest{
 		Slug: "oci-autoscale", Type: "app", MaxConcurrency: 2, RequireAuthn: &falsy,
