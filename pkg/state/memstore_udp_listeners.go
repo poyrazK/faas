@@ -9,13 +9,19 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-func (m *MemStore) CreateUDPListener(_ context.Context, in UDPListener) (UDPListener, error) {
+func (m *MemStore) CreateUDPListener(ctx context.Context, in UDPListener) (UDPListener, error) {
 	in, err := normalizeUDPListener(in)
 	if err != nil {
 		return UDPListener{}, err
 	}
+	if err := ctx.Err(); err != nil {
+		return UDPListener{}, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return UDPListener{}, err
+	}
 	app, ok := m.apps[in.AppID]
 	if !ok || app.Status == AppDeleted || app.AccountID != in.AccountID {
 		return UDPListener{}, ErrNotFound
@@ -122,9 +128,15 @@ func (m *MemStore) ListEnabledUDPListeners(_ context.Context) ([]UDPListener, er
 	return listeners, nil
 }
 
-func (m *MemStore) SetUDPListenerEnabled(_ context.Context, id string, enabled bool) (UDPListener, error) {
+func (m *MemStore) SetUDPListenerEnabled(ctx context.Context, id string, enabled bool) (UDPListener, error) {
+	if err := ctx.Err(); err != nil {
+		return UDPListener{}, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return UDPListener{}, err
+	}
 	listener, ok := m.udpListeners[id]
 	if !ok {
 		return UDPListener{}, ErrNotFound
@@ -135,9 +147,15 @@ func (m *MemStore) SetUDPListenerEnabled(_ context.Context, id string, enabled b
 	return listener, nil
 }
 
-func (m *MemStore) DeleteUDPListener(_ context.Context, id string) error {
+func (m *MemStore) DeleteUDPListener(ctx context.Context, id string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if _, ok := m.udpListeners[id]; !ok {
 		return ErrNotFound
 	}
