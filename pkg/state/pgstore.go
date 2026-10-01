@@ -16491,7 +16491,7 @@ func scanCreatedInstance(row pgx.Row, wakeID, appID string) (Instance, error) {
 				ErrConcurrentWake, wakeID, appID,
 			)
 		}
-		return Instance{}, fmt.Errorf("state: create instance %q (app=%s): %w", wakeID, appID, err)
+		return Instance{}, fmt.Errorf("state: create instance %q (app=%s): %w", wakeID, appID, mapErr(err))
 	}
 	return inst, nil
 }
@@ -16818,7 +16818,7 @@ func (s *PgStore) ListLatestInstancePerApp(ctx context.Context, accountID string
 func (s *PgStore) UpdateInstanceState(ctx context.Context, id, state string) error {
 	tag, err := s.pool.Exec(ctx, `update instances set state = $2 where id = $1`, id, state)
 	if err != nil {
-		return err
+		return mapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -16840,7 +16840,7 @@ func (s *PgStore) UpdateInstanceStateIf(ctx context.Context, id, expectedState, 
 		  where id = $1
 		    and state = $2`, id, expectedState, nextState)
 	if err != nil {
-		return err
+		return mapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrConflict
@@ -16858,7 +16858,7 @@ func (s *PgStore) UpdateInstanceStateWithTimestamp(ctx context.Context, id, stat
 		`update instances set state = $2, parked_at = $3 where id = $1`,
 		id, state, parkedAt)
 	if err != nil {
-		return err
+		return mapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -16877,7 +16877,7 @@ func (s *PgStore) UpdateInstanceStateToTerminal(ctx context.Context, id, state s
 		`update instances set state = $2, terminal_at = $3 where id = $1`,
 		id, state, terminalAt)
 	if err != nil {
-		return err
+		return mapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -17273,7 +17273,7 @@ func (s *PgStore) SetInstanceRuntime(ctx context.Context, id, netns, hostIP stri
 		`update instances set netns = $2, host_ip = $3::inet, guest_uid = $4, started_at = now()
 		 where id = $1`, id, netns, hostIP, guestUID)
 	if err != nil {
-		return err
+		return mapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -25422,6 +25422,17 @@ var checkViolationMappedToInvalid = map[string]struct{}{
 }
 
 func mapErr(err error) error {
+	var admission *pgconn.PgError
+	if errors.As(err, &admission) {
+		switch admission.ConstraintName {
+		case "application_standard_runtime_stale":
+			return ErrApplicationStandardRuntimeStale
+		case "application_standard_runtime_busy":
+			return ErrApplicationStandardRuntimeBusy
+		case "application_standard_runtime_identity":
+			return ErrInvalidArgument
+		}
+	}
 	var managed *pgconn.PgError
 	if errors.As(err, &managed) && managed.ConstraintName == "application_standard_managed_control" {
 		return ErrApplicationStandardManagedControl

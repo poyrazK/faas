@@ -2035,6 +2035,14 @@ type Instance struct {
 	StartupCpuBoostUntil pgtype.Timestamptz
 }
 
+type InstanceApplicationStandardAdmission struct {
+	InstanceID    pgtype.UUID
+	AppID         pgtype.UUID
+	DeploymentID  pgtype.UUID
+	InputSnapshot []byte
+	CapturedAt    pgtype.Timestamptz
+}
+
 type InstanceBillingInterval struct {
 	ID         int64
 	InstanceID pgtype.UUID

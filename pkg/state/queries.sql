@@ -1,3 +1,7 @@
+-- name: GetInstanceApplicationStandardAdmission :one
+SELECT input_snapshot, captured_at FROM instance_application_standard_admissions
+WHERE instance_id = sqlc.arg(instance_id)::uuid;
+
 -- Older writers acquire their parent locks in differing orders. Approval
 -- aborts/retries the whole attempt instead of waiting while holding an org.
 -- name: LockApplicationStandardApprovalOrg :one

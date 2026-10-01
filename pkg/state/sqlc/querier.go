@@ -322,6 +322,7 @@ type Querier interface {
 	// webhook is rejected rather than falling back to the platform-
 	// wide FAAS_GITHUB_WEBHOOK_SECRET).
 	GetGithubWebhookSecret(ctx context.Context, db DBTX, installationID int64) ([]byte, error)
+	GetInstanceApplicationStandardAdmission(ctx context.Context, db DBTX, instanceID pgtype.UUID) (GetInstanceApplicationStandardAdmissionRow, error)
 	// issue #667 / ADR-078 — read-only probe for the snapshotAndPark
 	// 5s watchdog's poll loop. Single SELECT … FROM instances WHERE
 	// id = $1; the column is on the hot path so the row is already in

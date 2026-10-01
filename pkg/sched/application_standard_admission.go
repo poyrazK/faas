@@ -39,3 +39,25 @@ func (e *Engine) checkApplicationStandardAdmissionByID(ctx context.Context, appI
 	}
 	return e.checkApplicationStandardAdmission(ctx, app)
 }
+
+func (e *Engine) checkCapturedApplicationStandardAdmission(ctx context.Context, id string, app state.App, account state.Account, deployment state.Deployment) error {
+	if app.OrgID == "" {
+		return nil
+	}
+	store, ok := e.store.(state.InstanceApplicationStandardAdmissionStore)
+	if !ok {
+		return fmt.Errorf("sched: runtime standards capture reader unavailable")
+	}
+	if err := state.CheckInstanceApplicationStandardAdmission(ctx, store, id, app, account, deployment); err != nil {
+		return fmt.Errorf("sched: validate captured runtime inputs: %w", applicationStandardRuntimeProblem(err))
+	}
+	return nil
+}
+
+func applicationStandardRuntimeProblem(err error) error {
+	if !errors.Is(err, state.ErrApplicationStandardsPending) && !errors.Is(err, state.ErrApplicationStandardRuntimeStale) && !errors.Is(err, state.ErrApplicationStandardRuntimeBusy) {
+		return err
+	}
+	return errors.Join(err, api.NewProblem(http.StatusConflict, api.CodeApplicationStandardsPending,
+		"Application standards pending", "Application standards changed during startup. Retry the request once the policy update has finished."))
+}

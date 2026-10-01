@@ -3136,9 +3136,14 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		if capErr := e.nodeCapacityProblem(err); errors.Is(err, state.ErrNodeCapacity) {
 			return WakeResult{}, capErr
 		}
-		return WakeResult{}, fmt.Errorf("sched: wake: create instance: %w", err)
+		return WakeResult{}, fmt.Errorf("sched: wake: create instance: %w", applicationStandardRuntimeProblem(err))
 	}
 	var provisionalCPUBoostUntil time.Time
+	if err := e.checkCapturedApplicationStandardAdmission(ctx, ins.ID, app, acct, dep); err != nil {
+		_ = e.store.DeleteInstance(context.WithoutCancel(ctx), ins.ID)
+		release()
+		return WakeResult{}, err
+	}
 	if startupCPU > configuredCPU {
 		startupDeadline := time.Duration(startupDeadlineForApp(app, acct.Plan)) * time.Second
 		if startupDeadline <= 0 {
@@ -3833,7 +3838,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 			e.ops.WakeFailure("", bootInput.appID, "record_runtime_failed").Inc()
 		}
 		e.transitionWithKind(ctx, bootInput.insID, bootInput.appID, state.StateFailed, "wake_boot_error", "record_runtime_failed")
-		return WakeResult{}, fmt.Errorf("sched: wake: record runtime: %w", publishErr)
+		return WakeResult{}, fmt.Errorf("sched: wake: record runtime: %w", applicationStandardRuntimeProblem(publishErr))
 	}
 
 	// ADR-051 Phase 4 / PR-D: persist the workload class the
@@ -5275,6 +5280,9 @@ func (e *Engine) BuildAppSpecForMigration(ctx context.Context, instanceID string
 	if err != nil {
 		return AppSpec{}, fmt.Errorf("sched: build app spec: account by id: %w", err)
 	}
+	if err := e.checkCapturedApplicationStandardAdmission(ctx, ins.ID, app, acct, dep); err != nil {
+		return AppSpec{}, err
+	}
 	limits := api.MustLimitsFor(acct.Plan)
 	// Sealed env is filtered through dep.OverrideEnvSecrets
 	// (jsonb) when present, mirroring the Wake path at
@@ -5981,9 +5989,13 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		if capErr := e.nodeCapacityProblem(err); errors.Is(err, state.ErrNodeCapacity) {
 			return capErr
 		}
-		return fmt.Errorf("sched: prime: create instance: %w", err)
+		return fmt.Errorf("sched: prime: create instance: %w", applicationStandardRuntimeProblem(err))
 	}
 	var provisionalPrimeCPUBoostUntil time.Time
+	if err := e.checkCapturedApplicationStandardAdmission(ctx, ins.ID, app, acct, dep); err != nil {
+		_ = e.store.DeleteInstance(context.WithoutCancel(ctx), ins.ID)
+		return err
+	}
 	if primeStartupCPU > primeConfiguredCPU {
 		startupDeadline := time.Duration(startupDeadlineForApp(app, acct.Plan)) * time.Second
 		if startupDeadline <= 0 {
@@ -6151,7 +6163,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		}
 		e.ledger.SetCPUStartupBoostUntil(ins.ID, boostUntil)
 	}
-	if err := e.store.SetInstanceRuntime(ctx, ins.ID, out.Netns, out.HostIP, int(out.LeaseUID)); err != nil {
+	if _, err := e.store.PublishInstanceRuntime(ctx, ins.ID, string(state.StateColdBooting), out.Netns, out.HostIP, int(out.LeaseUID)); err != nil {
 		// Best-effort destroy; same rationale as Wake above. Uses a
 		// detached context so a cancelled caller ctx doesn't make the
 		// destroy fire-and-forget (it would still need its own
@@ -6159,9 +6171,9 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		e.bestEffortDestroy(ctx, placement.NodeID, ins.ID)
 		e.ledger.Release(ins.ID)
 		e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "prime_record_runtime_failed")
-		return fmt.Errorf("sched: prime: record runtime: %w", err)
+		return fmt.Errorf("sched: prime: record runtime: %w", applicationStandardRuntimeProblem(err))
 	}
-	e.transition(ctx, ins.ID, appID, state.StateRunning)
+	e.recordCommittedInstanceTransition(ctx, ins, state.StateColdBooting, state.StateRunning, appID, "state_transition", "")
 	e.recordAppSecretDelivery(ctx, primeDelivery, state.SecretDeliveryDelivered, "")
 	deliveryFinalized = true
 

@@ -412,7 +412,10 @@ func TestPgApplicationStandardArtifactWriterFences(t *testing.T) {
 	}{
 		{"artifact metadata", `UPDATE deployments SET rootfs_key='new/rootfs',rootfs_bytes=100 WHERE id=$1`, dep.ID},
 		{"sidecar metadata", `UPDATE deployment_sidecar_layers SET bytes=200 WHERE deployment_id=$1`, dep.ID},
-		{"instance state", `UPDATE instances SET state='running' WHERE id=$1`, instanceID},
+		// Cleanup must retain the legacy nonwaiting child-fence behaviour.
+		// Entry into RUNNING is now admission, with its own fail-fast parent
+		// fence covered by TestPgInstanceApplicationStandardCaptureInputContention.
+		{"instance cleanup", `UPDATE instances SET state='parked' WHERE id=$1`, instanceID},
 	} {
 		t.Run(change.name, func(t *testing.T) {
 			// Legacy app-first transactions may later acquire a child row.

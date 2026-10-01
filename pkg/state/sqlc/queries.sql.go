@@ -4810,6 +4810,23 @@ func (q *Queries) GetGithubWebhookSecret(ctx context.Context, db DBTX, installat
 	return secret_value, err
 }
 
+const getInstanceApplicationStandardAdmission = `-- name: GetInstanceApplicationStandardAdmission :one
+SELECT input_snapshot, captured_at FROM instance_application_standard_admissions
+WHERE instance_id = $1::uuid
+`
+
+type GetInstanceApplicationStandardAdmissionRow struct {
+	InputSnapshot []byte
+	CapturedAt    pgtype.Timestamptz
+}
+
+func (q *Queries) GetInstanceApplicationStandardAdmission(ctx context.Context, db DBTX, instanceID pgtype.UUID) (GetInstanceApplicationStandardAdmissionRow, error) {
+	row := db.QueryRow(ctx, getInstanceApplicationStandardAdmission, instanceID)
+	var i GetInstanceApplicationStandardAdmissionRow
+	err := row.Scan(&i.InputSnapshot, &i.CapturedAt)
+	return i, err
+}
+
 const getInstanceTailCount = `-- name: GetInstanceTailCount :one
 select tail_count from instances where id = $1
 `

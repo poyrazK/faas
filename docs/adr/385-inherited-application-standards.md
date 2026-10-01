@@ -186,3 +186,25 @@ captured. Raw instance/state-transition fences, revision-bound boot/migration
 tickets, post-boot publication checks and already-cached gateway routing remain
 required. Current image proofs and existing-runtime behavior remain part of the
 runtime acceptance work before public activation is enabled.
+
+New wake instances now capture persisted standards intent, app controls,
+account entitlements, log destination/auth hashes, signer fingerprints and
+deployment/sidecar-layer identities in the same transaction as their admission.
+Nonwaiting parent and advisory fences retain that input cut through commit.
+PostgreSQL raw state/runtime writes and the MemStore refuse publishing a capture
+whose covered inputs changed. Captures are immutable and erased with their
+instance; managed legacy instances cannot obtain invented historical captures.
+Cleanup remains possible while intent is pending, and billing grace retains
+serving eligibility. Wake, prime, warm preparation and migration-spec construction
+also compare the scheduler's earlier app/account/artifact reads with the capture.
+Prime now publishes runtime and RUNNING through the checked atomic CAS, destroys
+a refused VM and releases its ledger reservation before returning an error.
+
+This is a control-plane input capture, not a complete boot ticket or native
+receipt. It does not cover the separate app-task runtime table, all boot-spec
+fields, expired exceptions, vmmd incarnation/egress revision freshness, native
+enforcement, content-bound image proofs, existing cached gateway routes or
+consumer observations. A valid raw state transition still cannot attest to
+native enforcement. Native revision-bound wire admission and its receipt,
+existing-runtime convergence and the remaining acceptance gates are required
+before public activation. No capture advances an observed standard revision.

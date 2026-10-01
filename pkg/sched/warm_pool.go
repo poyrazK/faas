@@ -238,6 +238,10 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 		}
 		e.transitionWithKind(context.WithoutCancel(ctx), ins.ID, app.ID, state.StateStopped, "warm_pool_restore_failed", reason)
 	}
+	if err := e.checkCapturedApplicationStandardAdmission(ctx, ins.ID, app, acct, dep); err != nil {
+		_ = e.store.DeleteInstance(context.WithoutCancel(ctx), ins.ID)
+		return err
+	}
 	if err := e.acquireHostPortLeases(ctx, placement.NodeID, ins.ID, hostPortRequestsForManifest(app.Manifest)); err != nil {
 		_ = e.store.DeleteInstance(ctx, ins.ID)
 		return fmt.Errorf("acquire host ports: %w", err)

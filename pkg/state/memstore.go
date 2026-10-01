@@ -137,27 +137,28 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
-	applicationStandardVersions         map[string][]ApplicationStandardVersion
-	applicationStandardLogDestinations  map[string]ApplicationStandardLogDestination
-	applicationStandardPublishers       map[string]api.ApplicationStandardPublisher
-	applicationStandardAssignments      map[string]applicationStandardAssignmentRecord
-	applicationStandardEnrollments      map[string]ApplicationStandardEnrollment
-	applicationStandardReviewPlans      map[string]ApplicationStandardReviewPlan
-	applicationStandardOperations       map[string]ApplicationStandardOperation
-	applicationStandardWorkerClaims     map[string]ApplicationStandardWorkerClaim
-	applicationStandardEnrollmentClaims map[string]ApplicationStandardEnrollmentClaim
-	applicationStandardControlBindings  map[string]standardControlBinding
-	applicationStandardControlBackups   map[string]standardControlBackup
-	devBridgeSessions                   map[string]devbridge.Session
-	devBridgeWebhookReplays             map[string]devbridge.WebhookReplay
-	featureFlagVersions                 map[string][]FeatureFlagVersion
-	safeReleaseWorkerLeaseUntil         time.Time
-	requestAuditEvents                  map[string]RequestAuditRecord
-	discoveredAPIRoutes                 map[string]DiscoveredAPIRoute
-	discoveryReceipts                   map[string]struct{}
-	revisionPins                        map[string]time.Time
-	deploymentActivationMu              sync.Mutex
-	deploymentActivationLocks           map[string]*deploymentActivationLock
+	instanceApplicationStandardAdmissions map[string]InstanceApplicationStandardAdmission
+	applicationStandardVersions           map[string][]ApplicationStandardVersion
+	applicationStandardLogDestinations    map[string]ApplicationStandardLogDestination
+	applicationStandardPublishers         map[string]api.ApplicationStandardPublisher
+	applicationStandardAssignments        map[string]applicationStandardAssignmentRecord
+	applicationStandardEnrollments        map[string]ApplicationStandardEnrollment
+	applicationStandardReviewPlans        map[string]ApplicationStandardReviewPlan
+	applicationStandardOperations         map[string]ApplicationStandardOperation
+	applicationStandardWorkerClaims       map[string]ApplicationStandardWorkerClaim
+	applicationStandardEnrollmentClaims   map[string]ApplicationStandardEnrollmentClaim
+	applicationStandardControlBindings    map[string]standardControlBinding
+	applicationStandardControlBackups     map[string]standardControlBackup
+	devBridgeSessions                     map[string]devbridge.Session
+	devBridgeWebhookReplays               map[string]devbridge.WebhookReplay
+	featureFlagVersions                   map[string][]FeatureFlagVersion
+	safeReleaseWorkerLeaseUntil           time.Time
+	requestAuditEvents                    map[string]RequestAuditRecord
+	discoveredAPIRoutes                   map[string]DiscoveredAPIRoute
+	discoveryReceipts                     map[string]struct{}
+	revisionPins                          map[string]time.Time
+	deploymentActivationMu                sync.Mutex
+	deploymentActivationLocks             map[string]*deploymentActivationLock
 	// Snapshot restore reservations are separate from mu so the coordinator
 	// can serialize only its short lease/count critical section.
 	snapshotRestorePressureMu sync.Mutex
@@ -5287,6 +5288,9 @@ func (m *MemStore) MarkInstanceMigrating(_ context.Context, instanceID, currentN
 	ins.LeaseToken = leaseToken
 	now := time.Now().UTC()
 	ins.MigrationStartedAt = &now
+	if err := m.guardInstanceStandardRuntimeLocked(ins, false); err != nil {
+		return err
+	}
 	m.instances[instanceID] = ins
 	return nil
 }
@@ -5328,6 +5332,9 @@ func (m *MemStore) MigrateInstanceOwner(_ context.Context, instanceID, fromNodeI
 	ins.LeaseToken = leaseToken
 	ins.MigrationStartedAt = nil
 	ins.State = string(StateRunning)
+	if err := m.guardInstanceStandardRuntimeLocked(ins, false); err != nil {
+		return err
+	}
 	m.instances[instanceID] = ins
 	// Stamp apps.migrated_at to match the SQL transaction's
 	// second UPDATE.
@@ -5437,6 +5444,9 @@ func (m *MemStore) ReinviteMigratingInstance(_ context.Context, instanceID, leas
 	ins.MigratedAt = &now
 	ins.LeaseToken = ""
 	ins.MigrationStartedAt = nil
+	if err := m.guardInstanceStandardRuntimeLocked(ins, false); err != nil {
+		return err
+	}
 	m.instances[instanceID] = ins
 	return nil
 }
@@ -6384,6 +6394,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	for key, v := range m.instances {
 		if v.AppID == id {
 			delete(m.instances, key)
+			delete(m.instanceApplicationStandardAdmissions, key)
 		}
 	}
 	depIDs := make(map[string]struct{})
@@ -13371,6 +13382,9 @@ func (m *MemStore) CreateInstance(_ context.Context, appID, deploymentID, state 
 		// a non-empty, parseable value.
 		ins.WakeID = uuid.NewString()
 	}
+	if err := m.guardInstanceStandardRuntimeLocked(ins, true); err != nil {
+		return Instance{}, err
+	}
 	m.instances[ins.ID] = ins
 	return ins, nil
 }
@@ -13413,6 +13427,9 @@ func (m *MemStore) CreateInstanceWithMode(_ context.Context, appID, deploymentID
 		ins.WakeID = wakeID
 	} else {
 		ins.WakeID = uuid.NewString()
+	}
+	if err := m.guardInstanceStandardRuntimeLocked(ins, true); err != nil {
+		return Instance{}, err
 	}
 	m.instances[ins.ID] = ins
 	return ins, nil
@@ -13873,6 +13890,9 @@ func (m *MemStore) UpdateInstanceState(_ context.Context, id, state string) erro
 		return ErrNotFound
 	}
 	ins.State = state
+	if err := m.guardInstanceStandardRuntimeLocked(ins, false); err != nil {
+		return err
+	}
 	m.instances[id] = ins
 	return nil
 }
@@ -13894,6 +13914,9 @@ func (m *MemStore) UpdateInstanceStateIf(_ context.Context, id, expectedState, n
 	ins.State = nextState
 	if State(nextState) == StateParked {
 		ins.ParkedAt = time.Now().UTC()
+	}
+	if err := m.guardInstanceStandardRuntimeLocked(ins, false); err != nil {
+		return err
 	}
 	m.instances[id] = ins
 	return nil
@@ -13933,6 +13956,9 @@ func (m *MemStore) UpdateInstanceStateWithTimestamp(_ context.Context, id, state
 	}
 	ins.State = state
 	ins.ParkedAt = parkedAt
+	if err := m.guardInstanceStandardRuntimeLocked(ins, false); err != nil {
+		return err
+	}
 	m.instances[id] = ins
 	return nil
 }
@@ -13954,6 +13980,9 @@ func (m *MemStore) UpdateInstanceStateToTerminal(_ context.Context, id, state st
 	ins.State = state
 	ts := terminalAt
 	ins.TerminalAt = &ts
+	if err := m.guardInstanceStandardRuntimeLocked(ins, false); err != nil {
+		return err
+	}
 	m.instances[id] = ins
 	return nil
 }
@@ -14142,6 +14171,7 @@ func (m *MemStore) DeleteParkedInstancesOlderThan(_ context.Context, threshold t
 	}
 	for _, row := range candidates {
 		delete(m.instances, row.id)
+		delete(m.instanceApplicationStandardAdmissions, row.id)
 	}
 	return int64(len(candidates)), nil
 }
@@ -14157,6 +14187,7 @@ func (m *MemStore) DeleteInstance(_ context.Context, id string) error {
 		return ErrNotFound
 	}
 	delete(m.instances, id)
+	delete(m.instanceApplicationStandardAdmissions, id)
 	return nil
 }
 
@@ -14199,6 +14230,9 @@ func (m *MemStore) SetInstanceRuntime(_ context.Context, id, netns, hostIP strin
 	if !ok {
 		return ErrNotFound
 	}
+	if err := m.guardInstanceStandardRuntimeLocked(ins, false); err != nil {
+		return err
+	}
 	ins.Netns = netns
 	ins.HostIP = hostIP
 	ins.GuestUID = guestUID
@@ -14213,6 +14247,10 @@ func (m *MemStore) PublishInstanceRuntime(_ context.Context, id, expectedState, 
 	ins, ok := m.instances[id]
 	if !ok || ins.State != expectedState {
 		return Instance{}, ErrConflict
+	}
+	ins.State = string(StateRunning)
+	if err := m.guardInstanceStandardRuntimeLocked(ins, false); err != nil {
+		return Instance{}, err
 	}
 	ins.Netns = netns
 	ins.HostIP = hostIP
@@ -20585,6 +20623,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for iid, ins := range m.instances {
 		if app, ok := m.apps[ins.AppID]; ok && app.AccountID == id {
 			delete(m.instances, iid)
+			delete(m.instanceApplicationStandardAdmissions, iid)
 		}
 	}
 	for taskID, task := range m.appTasks {
