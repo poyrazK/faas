@@ -1323,6 +1323,8 @@ func vmmdEnv(dbURL, cfgPath, scheddSock string) []string {
 		"FAAS_VMMD_CONFIG="+cfgPath,
 	)
 	if currentHarness != nil {
+		env = append(env, "FAAS_VMMD_STREAM_BRIDGE_PATH="+filepath.Join(currentHarness.BinDir, "vmmd-stream-bridge"))
+		env = append(env, "FAAS_VMMD_RAW_BRIDGE_PATH="+filepath.Join(currentHarness.BinDir, "vmmd-raw-bridge"))
 		env = append(env, "FAAS_VMMD_TCP_BRIDGE_PATH="+filepath.Join(currentHarness.BinDir, "vmmd-tcp-bridge"))
 		env = append(env, "FAAS_VMMD_UDP_BRIDGE_PATH="+filepath.Join(currentHarness.BinDir, "vmmd-udp-bridge"))
 	}
@@ -1702,7 +1704,7 @@ func (h *Harness) RestartAPID() error {
 // Tier A7 (ADR-070) PR-A: the legacy 'gatewayd' binary is gone (its source
 // moved into cmd/gatewayd-internal/). gatewayd-public and the TCP bridge are
 // included so the raw-TCP metal acceptance can boot the production path.
-var DaemonBinaries = []string{"apid", "schedd", "vmmd", "imaged", "gatewayd-internal", "gatewayd-public", "meterd", "builderd", "vmmd-tcp-bridge", "vmmd-udp-bridge"}
+var DaemonBinaries = []string{"apid", "schedd", "vmmd", "imaged", "gatewayd-internal", "gatewayd-public", "meterd", "builderd", "vmmd-stream-bridge", "vmmd-raw-bridge", "vmmd-tcp-bridge", "vmmd-udp-bridge"}
 
 // StaticHelperBinaries are built alongside the daemons but with CGO_ENABLED=0,
 // because they execute inside a jailer chroot that contains no dynamic loader

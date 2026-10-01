@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -73,7 +74,15 @@ func testDirectOCIFullRootfs(t *testing.T, options directOCIContractOptions) {
 	e2etest.OverrideBuilderBase(t, builderBaseRef)
 	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
 
-	h := e2etest.Start(t, pool, e2etest.DeployWake)
+	var extraEnv []string
+	if options.Companion {
+		// Exercise the production seal/unseal path with a test-owned identity.
+		keyDir := t.TempDir()
+		keyPath, pubPath := filepath.Join(keyDir, "host.age"), filepath.Join(keyDir, "host.age.pub")
+		preSeedHostKey(t, keyPath, pubPath)
+		extraEnv = []string{"FAAS_HOST_KEY_PATH=" + keyPath, "FAAS_HOST_AGE_RECIPIENT_PATH=" + pubPath}
+	}
+	h := e2etest.Start(t, pool, e2etest.DeployWake, extraEnv...)
 	t.Cleanup(func() {
 		if t.Failed() {
 			h.DumpLogs(t)
