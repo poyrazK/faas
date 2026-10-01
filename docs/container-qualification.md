@@ -1005,3 +1005,7 @@ Full strict `make udp-postgres-check` passed all nine required cases with race d
 ### Harness-inclusive portable UDP gate
 
 The strict portable gate now requires `TestGatewayPublicEnvPrivateSchedulerTargets`. Full `make udp-contract-check` passed all 82 required race contracts, with skips rejected, plus deployment-policy and alert fixtures. Log `/tmp/gregale-udp-harness-inclusive-contract.log`. Database-backed startup remains in the separate strict PostgreSQL gate. Full migration CI job `110269229264` was verified live; native and deployed acceptance remain pending.
+
+### Firewall boolean renderer CI correction
+
+Monitoring/public CI exposed plain-Jinja2 E2E rendering failure from the Ansible-only `bool` filter. Deployment PR #3991 commit `7f9227ec6` uses standard string/lower membership for the supported true values, retaining false-by-default and string-false behavior. All seven UDP deployment tests now pass without a custom firewall bool filter, and all seven Go/Jinja2 egress matrix rows pass in integration and isolated deployment trees. Logs `/tmp/gregale-udp-jinja-{deployment,egress-matrix,isolated-deployment,isolated-egress}.log`. Downstream review branches still need this prerequisite correction; no live firewall rules were applied.
