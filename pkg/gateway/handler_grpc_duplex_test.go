@@ -1,7 +1,7 @@
 package gateway
 
 // adr: 126 — a gRPC client receives replies before closing its request stream.
-// adr: 426 — native gRPC admission must not wait for request EOF.
+// adr: 428 — native gRPC admission must not wait for request EOF.
 
 import (
 	"context"

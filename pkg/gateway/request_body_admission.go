@@ -50,7 +50,7 @@ func admitRequestBody(w http.ResponseWriter, r *http.Request, app App) bool {
 		(mediaType == "application/grpc" || strings.HasPrefix(mediaType, "application/grpc+")) {
 		// Native gRPC exchanges messages before request EOF. Existing plan and
 		// edge readers enforce size limits incrementally; this body cannot be
-		// spooled or made replayable before dispatch. ADR-426.
+		// spooled or made replayable before dispatch. ADR-428.
 		_ = http.NewResponseController(w).EnableFullDuplex()
 		return false
 	}

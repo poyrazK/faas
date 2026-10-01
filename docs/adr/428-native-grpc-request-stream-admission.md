@@ -1,4 +1,4 @@
-# ADR-426 · Native gRPC request stream admission
+# ADR-428 · Native gRPC request stream admission
 
 - **Status:** accepted
 - **Date:** 2026-10-02
