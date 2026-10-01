@@ -284,6 +284,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/issue-ingest-tokens":              "CreateIssueIngestToken",
 	"GET /v1/apps/{slug}/issue-ingest-tokens":               "ListIssueIngestTokens",
 	"DELETE /v1/apps/{slug}/issue-ingest-tokens/{token_id}": "RevokeIssueIngestToken",
+	"GET /v1/apps/{slug}/runtime-config-restarts/{wake_id}": "GetRuntimeConfigRestartStatus",
 
 	"GET /v1/dev/bridges":                                                             "ListDevBridges",
 	"GET /v1/dev/bridges/{id}/activity":                                               "GetDevBridgeActivity",

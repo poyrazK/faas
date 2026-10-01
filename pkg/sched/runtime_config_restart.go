@@ -442,7 +442,7 @@ func (e *Engine) waitForRuntimeConfigInstanceDrain(ctx context.Context, appID, i
 		zeroSince        time.Time
 		lastZeroObserved time.Time
 		lastNodeID       string
-		lastReason       = runtimeConfigDrainReasonTelemetryMissing
+		lastReason       runtimeConfigDrainReason
 		lastInflight     int64
 		lastStatsErr     error
 	)

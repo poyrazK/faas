@@ -2279,6 +2279,13 @@ func (c *Client) RestartAppFresh(ctx context.Context, slug string) (AppRestartRe
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/restart?fresh=true", nil, &out)
 }
 
+// GetRuntimeConfigRestartStatus returns the durable status of an accepted
+// fresh restart, including retry progress and its stable failure category.
+func (c *Client) GetRuntimeConfigRestartStatus(ctx context.Context, slug, wakeID string) (RuntimeConfigRestartStatusResponse, error) {
+	var out RuntimeConfigRestartStatusResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/runtime-config-restarts/"+wakeID, nil, &out)
+}
+
 // PurgeAppCache asks the gateways to evict cached responses for an app. An
 // empty pathGlob purges the complete app cache; otherwise it is sent as the
 // optional path glob accepted by the API.
