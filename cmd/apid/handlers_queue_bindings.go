@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -97,6 +99,10 @@ func marshalQueueBindingRetryPolicy(policy *api.RetryPolicyDTO) ([]byte, *api.Pr
 }
 
 func queueBindingTriggerID(ctx context.Context, store state.Store, appID, bindingID string) (string, error) {
+	bindingUUID, err := uuid.Parse(bindingID)
+	if err != nil {
+		return "", state.ErrInvalidArgument
+	}
 	triggers, err := store.ListTriggersForApp(ctx, appID)
 	if err != nil {
 		return "", err
@@ -105,10 +111,7 @@ func queueBindingTriggerID(ctx context.Context, store state.Store, appID, bindin
 		if trigger.Kind != string(api.TriggerKindQueue) || !trigger.Source.Valid || trigger.Source.String != string(state.InvocationQueue) {
 			continue
 		}
-		var marker struct {
-			BindingID string `json:"queue_binding_id"`
-		}
-		if json.Unmarshal(trigger.Config, &marker) == nil && marker.BindingID == bindingID {
+		if trigger.QueueBindingID.Valid && trigger.QueueBindingID.Bytes == bindingUUID {
 			return trigger.ID.String(), nil
 		}
 	}

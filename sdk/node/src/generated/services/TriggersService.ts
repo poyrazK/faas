@@ -179,6 +179,9 @@ export class TriggersService {
   }
   /**
    * Partial-update a trigger.
+   * Queue binding consumers are managed through the queue-binding API.
+   * Direct mutations of those private projections return 409.
+   *
    * @returns Trigger The updated trigger.
    * @throws ApiError
    */
@@ -204,6 +207,7 @@ export class TriggersService {
         400: `code: trigger_invalid_kind | trigger_invalid_config — kind does not exist, or per-kind validation failed (missing brokers, empty topic, malformed URL, etc.).`,
         401: `code: unauthorized`,
         404: `code: not_found`,
+        409: `code: conflict`,
         422: `code: trigger_immutable_field — kind and (for cron) trigger_id are immutable after create; changing them requires delete + recreate.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
@@ -215,6 +219,9 @@ export class TriggersService {
   }
   /**
    * Delete a trigger.
+   * Queue binding consumers are managed through the queue-binding API.
+   * Direct mutations of those private projections return 409.
+   *
    * @returns void
    * @throws ApiError
    */
@@ -235,6 +242,7 @@ export class TriggersService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
+        409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
@@ -340,8 +348,10 @@ export class TriggersService {
    * Sets `enabled=false` and pg_notify's `trigger_changed`. Schedd
    * stops the broker poller on the next tick; in-flight records
    * drain normally.
+   * Queue binding consumers are managed through the queue-binding API;
+   * direct pause/resume of those private projections returns 409.
    *
-   * @returns void
+   * @returns Trigger The updated trigger.
    * @throws ApiError
    */
   public static pauseTrigger({
@@ -351,7 +361,7 @@ export class TriggersService {
      * 32-hex-char opaque ID (NOT canonical UUID).
      */
     id: string,
-  }): CancelablePromise<void> {
+  }): CancelablePromise<Trigger> {
     return __request(OpenAPI, {
       method: 'POST',
       url: '/v1/triggers/{id}/pause',
@@ -361,6 +371,7 @@ export class TriggersService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
+        409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.
@@ -372,8 +383,10 @@ export class TriggersService {
    * Re-enable a paused trigger.
    * Sets `enabled=true` and pg_notify's `trigger_changed`.
    * Schedd restarts the broker poller on the next tick.
+   * Queue binding consumers are managed through the queue-binding API;
+   * direct pause/resume of those private projections returns 409.
    *
-   * @returns void
+   * @returns Trigger The updated trigger.
    * @throws ApiError
    */
   public static resumeTrigger({
@@ -383,7 +396,7 @@ export class TriggersService {
      * 32-hex-char opaque ID (NOT canonical UUID).
      */
     id: string,
-  }): CancelablePromise<void> {
+  }): CancelablePromise<Trigger> {
     return __request(OpenAPI, {
       method: 'POST',
       url: '/v1/triggers/{id}/resume',
@@ -393,6 +406,7 @@ export class TriggersService {
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
+        409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\` and \`quota_exhausted\`.

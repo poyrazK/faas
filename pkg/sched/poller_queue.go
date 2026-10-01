@@ -78,6 +78,12 @@ func newQueuePoller(pool *pgxpool.Pool, t sqlc.Trigger, ops *wire.OpsMetrics) (t
 	if t.Source.String != "queue" && t.Source.String != "delayed_task" {
 		return nil, fmt.Errorf("poller_queue: unsupported source %q", t.Source.String)
 	}
+	var config map[string]json.RawMessage
+	if json.Unmarshal(t.Config, &config) == nil {
+		if _, marked := config["queue_binding_id"]; marked && !t.QueueBindingID.Valid {
+			return nil, fmt.Errorf("poller_queue: queue consumer binding identity requires review")
+		}
+	}
 	q := &queuePoller{
 		pool:          pool,
 		source:        t.Source.String,

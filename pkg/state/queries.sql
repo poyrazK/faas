@@ -1681,7 +1681,7 @@ update triggers set
   payload_max_bytes = coalesce($7, payload_max_bytes),
   broker_poison_strategy = coalesce($8, broker_poison_strategy),
   filter_criteria = coalesce($9::jsonb, filter_criteria)
-where id = $1
+where id = $1 and queue_binding_id is null
 returning id, account_id, app_id, kind, slug, enabled, config,
           batch_size_max, batch_window_ms, max_attempts,
           cron_id, source, payload_max_bytes, broker_poison_strategy,
@@ -1689,7 +1689,7 @@ returning id, account_id, app_id, kind, slug, enabled, config,
           created_at, updated_at;
 
 -- name: DeleteTrigger :exec
-delete from triggers where id = $1 and app_id = $2;
+delete from triggers where id = $1 and app_id = $2 and queue_binding_id is null;
 
 -- name: TriggerByID :one
 -- ADR-118 / commit 6 of the issue #757 mega-PR: filter_criteria
@@ -1698,7 +1698,7 @@ delete from triggers where id = $1 and app_id = $2;
 -- the same Go struct; projections that omit a column produce a
 -- distinct Row type that breaks the existing pgstore return
 -- type).
-select id, account_id, app_id, kind, slug, enabled, config,
+select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
        filter_criteria,
@@ -1709,7 +1709,7 @@ from triggers where id = $1;
 -- Same rationale as TriggerByID — full Trigger projection so
 -- sqlc's generated Row type matches the existing pgstore return
 -- type. (commit 6 of the issue #757 mega-PR.)
-select id, account_id, app_id, kind, slug, enabled, config,
+select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
        filter_criteria,
@@ -1725,7 +1725,7 @@ from triggers where app_id = $1 order by created_at desc;
 -- ADR-118 / issue #757: filter_criteria is included so the dispatch
 -- tick can evaluate per-record predicates without a second round-trip
 -- (the column is JSONB; empty/null means "no filter").
-select id, account_id, app_id, kind, slug, enabled, config,
+select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
        filter_criteria,
@@ -5560,14 +5560,56 @@ where id=sqlc.arg(id) and app_id=sqlc.arg(app_id) and account_id=sqlc.arg(accoun
 delete from queue_bindings where id=sqlc.arg(id) and app_id=sqlc.arg(app_id) and account_id=sqlc.arg(account_id);
 
 -- name: QueueConsumerOwnedTriggers :many
-select id from triggers where app_id=sqlc.arg(app_id) and kind='queue' and source='queue'
-and config->>'queue_binding_id'=sqlc.arg(binding_id)::text for update;
+select id, queue_binding_id from triggers where app_id=sqlc.arg(app_id) and kind='queue' and source='queue'
+and (queue_binding_id=sqlc.arg(binding_id)::uuid
+or (queue_binding_id is null and config->>'queue_binding_id'=sqlc.arg(binding_id)::uuid::text)) for update;
 
 -- name: QueueConsumerUpdateTrigger :execrows
 update triggers set slug=sqlc.arg(slug), enabled=sqlc.arg(enabled),config=sqlc.arg(config)::jsonb,
 batch_size_max=sqlc.arg(batch_size_max),batch_window_ms=sqlc.arg(batch_window_ms),max_attempts=sqlc.arg(max_attempts),
 payload_max_bytes=sqlc.arg(payload_max_bytes),updated_at=now()
-where id=sqlc.arg(id) and app_id=sqlc.arg(app_id) and kind='queue' and source='queue';
+where id=sqlc.arg(id) and app_id=sqlc.arg(app_id) and queue_binding_id=sqlc.arg(binding_id)::uuid
+and kind='queue' and source='queue';
+
+-- name: QueueConsumerCreateTrigger :one
+insert into triggers (account_id,app_id,queue_binding_id,kind,source,slug,enabled,config,
+batch_size_max,batch_window_ms,max_attempts,payload_max_bytes,broker_poison_strategy)
+values (sqlc.arg(account_id),sqlc.arg(app_id),sqlc.arg(binding_id)::uuid,'queue','queue',sqlc.arg(slug),
+sqlc.arg(enabled),sqlc.arg(config)::jsonb,sqlc.arg(batch_size_max),sqlc.arg(batch_window_ms),
+sqlc.arg(max_attempts),sqlc.arg(payload_max_bytes),'commit') returning *;
+
+-- name: QueueConsumerDeleteTrigger :execrows
+delete from triggers where id=sqlc.arg(id) and app_id=sqlc.arg(app_id)
+and queue_binding_id=sqlc.arg(binding_id)::uuid;
+
+-- name: PublicPatchTrigger :one
+update triggers set enabled=coalesce(sqlc.narg(enabled)::boolean,enabled),
+config=coalesce(sqlc.narg(config)::jsonb,config),
+batch_size_max=coalesce(sqlc.narg(batch_size_max)::integer,batch_size_max),
+batch_window_ms=coalesce(sqlc.narg(batch_window_ms)::integer,batch_window_ms),
+max_attempts=coalesce(sqlc.narg(max_attempts)::integer,max_attempts),
+payload_max_bytes=coalesce(sqlc.narg(payload_max_bytes)::integer,payload_max_bytes),
+broker_poison_strategy=coalesce(sqlc.narg(broker_poison_strategy)::text,broker_poison_strategy),
+filter_criteria=coalesce(sqlc.narg(filter_criteria)::jsonb,filter_criteria),
+source=coalesce(sqlc.narg(source)::text,source)
+where id=sqlc.arg(id) and queue_binding_id is null returning *;
 
 -- name: QueueConsumerNotify :exec
 select pg_notify('trigger_changed',sqlc.arg(payload)::text);
+
+-- name: QueueClaimConsumerIdentity :one
+select queue_binding_id, (config ? 'queue_binding_id')::boolean as has_marker from triggers
+where id=sqlc.arg(id) and app_id=sqlc.arg(app_id) and kind='queue' and source='queue';
+
+-- name: QueueClaimLockBinding :one
+select max_concurrency from queue_bindings where id=sqlc.arg(id) and app_id=sqlc.arg(app_id)
+and queue_name=sqlc.arg(queue_name) and mode='push' and enabled for update;
+
+-- name: QueueClaimLegacyBindingCap :one
+select max_concurrency from queue_bindings where app_id=sqlc.arg(app_id)
+and queue_name=sqlc.arg(queue_name) and enabled for update;
+
+-- name: QueueClaimLockLiveConsumer :one
+select id from triggers where id=sqlc.arg(id) and app_id=sqlc.arg(app_id)
+and kind='queue' and source='queue' and slug=sqlc.arg(queue_name) and enabled
+and queue_binding_id is not distinct from sqlc.narg(binding_id)::uuid for share;

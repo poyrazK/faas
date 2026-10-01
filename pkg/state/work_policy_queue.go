@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // ClaimQueueTriggerInvocation is the named queue poller's claim path. It
@@ -16,6 +19,19 @@ import (
 func (s *PgStore) ClaimQueueTriggerInvocation(ctx context.Context, id, triggerID, appID, queueName string, leaseSeconds int) (Invocation, error) {
 	if queueName == "" || leaseSeconds <= 0 {
 		return Invocation{}, ErrInvalidArgument
+	}
+	var appUUID, triggerUUID pgtype.UUID
+	for _, item := range []struct {
+		value string
+		out   *pgtype.UUID
+	}{{id, nil}, {appID, &appUUID}, {triggerID, &triggerUUID}} {
+		parsed, err := uuid.Parse(item.value)
+		if err != nil {
+			return Invocation{}, ErrInvalidArgument
+		}
+		if item.out != nil {
+			*item.out = pgtype.UUID{Bytes: parsed, Valid: true}
+		}
 	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -58,13 +74,11 @@ func (s *PgStore) ClaimQueueTriggerInvocation(ctx context.Context, id, triggerID
 	if err != nil {
 		return Invocation{}, fmt.Errorf("state: queue trigger row lock: %w", err)
 	}
-	var maxConcurrency int
-	err = tx.QueryRow(ctx, `select max_concurrency from queue_bindings
-		where app_id = $1 and queue_name = $2 and enabled for update`, appID, queueName).Scan(&maxConcurrency)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return Invocation{}, fmt.Errorf("state: queue trigger binding cap: %w", err)
+	maxConcurrency, err := queueConsumerClaimCapTx(ctx, tx, appUUID, triggerUUID, queueName)
+	if err != nil {
+		return Invocation{}, err
 	}
-	if err == nil {
+	if maxConcurrency > 0 {
 		var active int
 		if err := tx.QueryRow(ctx, `select count(*) from invocations
 			where app_id = $1 and source = 'queue' and queue_name = $2
@@ -104,4 +118,36 @@ func (s *PgStore) ClaimQueueTriggerInvocation(ctx context.Context, id, triggerID
 		return Invocation{}, fmt.Errorf("state: queue trigger claim commit: %w", err)
 	}
 	return claimed, nil
+}
+
+func queueConsumerClaimCapTx(ctx context.Context, tx pgx.Tx, appID, triggerID pgtype.UUID, queueName string) (int, error) {
+	q := sqlc.New()
+	identity, err := q.QueueClaimConsumerIdentity(ctx, tx, sqlc.QueueClaimConsumerIdentityParams{ID: triggerID, AppID: appID})
+	if err != nil {
+		return 0, mapErr(err)
+	}
+	var cap int32
+	if identity.QueueBindingID.Valid {
+		cap, err = q.QueueClaimLockBinding(ctx, tx, sqlc.QueueClaimLockBindingParams{ID: identity.QueueBindingID, AppID: appID, QueueName: queueName})
+		if err != nil {
+			return 0, mapErr(err)
+		}
+	} else {
+		if identity.HasMarker {
+			return 0, ErrConflict
+		}
+		cap, err = q.QueueClaimLegacyBindingCap(ctx, tx, sqlc.QueueClaimLegacyBindingCapParams{AppID: appID, QueueName: queueName})
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return 0, err
+		}
+	}
+	// Match mutation lock order: binding before trigger. Recheck the live
+	// trigger under a share lock after obtaining the binding cap; a cached
+	// trigger cannot claim after disable, rename, deletion, or adoption.
+	_, err = q.QueueClaimLockLiveConsumer(ctx, tx, sqlc.QueueClaimLockLiveConsumerParams{ID: triggerID, AppID: appID,
+		QueueName: queueName, BindingID: identity.QueueBindingID})
+	if err != nil {
+		return 0, mapErr(err)
+	}
+	return int(cap), nil
 }

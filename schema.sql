@@ -2485,6 +2485,26 @@ $$;
 
 
 --
+-- Name: guard_queue_consumer_binding_identity(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_queue_consumer_binding_identity() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF OLD.queue_binding_id IS NOT NULL
+    AND (NEW.queue_binding_id IS DISTINCT FROM OLD.queue_binding_id
+      OR NEW.app_id IS DISTINCT FROM OLD.app_id
+      OR NEW.account_id IS DISTINCT FROM OLD.account_id) THEN
+    RAISE EXCEPTION 'queue consumer binding identity is immutable'
+      USING ERRCODE = '23514', CONSTRAINT = 'queue_consumer_binding_identity';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: instance_readiness_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3384,6 +3404,8 @@ BEGIN
 END;
 $$;
 
+
+SET default_tablespace = '';
 
 SET default_table_access_method = heap;
 
@@ -10897,6 +10919,7 @@ CREATE TABLE public.triggers (
     payload_max_bytes integer DEFAULT 6291456 NOT NULL,
     broker_poison_strategy text DEFAULT 'commit'::text NOT NULL,
     filter_criteria jsonb,
+    queue_binding_id uuid,
     CONSTRAINT triggers_batch_size_max_check CHECK (((batch_size_max >= 1) AND (batch_size_max <= 5000))),
     CONSTRAINT triggers_batch_window_ms_check CHECK (((batch_window_ms >= 10) AND (batch_window_ms <= 600000))),
     CONSTRAINT triggers_broker_poison_strategy_check CHECK ((broker_poison_strategy = ANY (ARRAY['commit'::text, 'seek-to-offset'::text]))),
@@ -10904,6 +10927,7 @@ CREATE TABLE public.triggers (
     CONSTRAINT triggers_kind_check CHECK ((kind = ANY (ARRAY['cron'::text, 'kafka'::text, 'nats'::text, 'redis_streams'::text, 'sqs_compat'::text, 'queue'::text]))),
     CONSTRAINT triggers_max_attempts_check CHECK (((max_attempts >= 1) AND (max_attempts <= 25))),
     CONSTRAINT triggers_payload_max_bytes_check CHECK (((payload_max_bytes >= 1024) AND (payload_max_bytes <= 67108864))),
+    CONSTRAINT triggers_queue_binding_projection_check CHECK (((queue_binding_id IS NULL) OR ((kind = 'queue'::text) AND (NOT (source IS DISTINCT FROM 'queue'::text)) AND (NOT ((config ->> 'mode'::text) IS DISTINCT FROM 'queue'::text)) AND (NOT ((config ->> 'queue_binding_id'::text) IS DISTINCT FROM (queue_binding_id)::text))))),
     CONSTRAINT triggers_source_check CHECK (((source IS NULL) OR (source = ANY (ARRAY['queue'::text, 'delayed_task'::text]))))
 );
 
@@ -14012,6 +14036,14 @@ ALTER TABLE ONLY public.projects
 
 ALTER TABLE ONLY public.provisioned_static_egress_ips
     ADD CONSTRAINT provisioned_static_egress_ips_pkey PRIMARY KEY (account_id, customer_ip);
+
+
+--
+-- Name: queue_bindings queue_bindings_consumer_identity_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.queue_bindings
+    ADD CONSTRAINT queue_bindings_consumer_identity_unique UNIQUE (id, app_id, account_id);
 
 
 --
@@ -18800,6 +18832,13 @@ CREATE UNIQUE INDEX triggers_one_enabled_queue_source ON public.triggers USING b
 
 
 --
+-- Name: triggers_queue_binding_identity_unique; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX triggers_queue_binding_identity_unique ON public.triggers USING btree (queue_binding_id) WHERE (queue_binding_id IS NOT NULL);
+
+
+--
 -- Name: upload_sessions_account_open_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -20092,6 +20131,13 @@ CREATE TRIGGER private_network_set_updated_at_trg BEFORE UPDATE ON public.privat
 --
 
 CREATE TRIGGER prune_pr_preview_set_on_root_delete AFTER UPDATE OF status ON public.apps FOR EACH ROW WHEN (((old.status IS DISTINCT FROM 'deleted'::text) AND (new.status = 'deleted'::text))) EXECUTE FUNCTION public.prune_pr_preview_set_on_root_delete();
+
+
+--
+-- Name: triggers queue_consumer_binding_identity_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER queue_consumer_binding_identity_guard BEFORE UPDATE ON public.triggers FOR EACH ROW EXECUTE FUNCTION public.guard_queue_consumer_binding_identity();
 
 
 --
@@ -23831,6 +23877,14 @@ ALTER TABLE ONLY public.triggers
 
 
 --
+-- Name: triggers triggers_queue_binding_identity_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.triggers
+    ADD CONSTRAINT triggers_queue_binding_identity_fk FOREIGN KEY (queue_binding_id, app_id, account_id) REFERENCES public.queue_bindings(id, app_id, account_id) DEFERRABLE INITIALLY DEFERRED;
+
+
+--
 -- Name: upload_commit_outcomes upload_commit_outcomes_upload_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -23911,4 +23965,5 @@ ALTER TABLE ONLY public.workflow_steps
 
 
 --
+-- PostgreSQL database dump complete
 --

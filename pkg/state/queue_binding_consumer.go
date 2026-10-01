@@ -128,3 +128,12 @@ func queueConsumerBindingID(config []byte) string {
 	}
 	return marker.ID
 }
+
+func queueConsumerMarkerPresent(config []byte) bool {
+	var object map[string]json.RawMessage
+	if json.Unmarshal(config, &object) != nil {
+		return false
+	}
+	_, present := object["queue_binding_id"]
+	return present
+}

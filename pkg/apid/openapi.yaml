@@ -14416,6 +14416,9 @@ paths:
       tags: [triggers]
       operationId: updateTrigger
       summary: Partial-update a trigger.
+      description: |
+        Queue binding consumers are managed through the queue-binding API.
+        Direct mutations of those private projections return 409.
       requestBody:
         required: true
         content:
@@ -14430,6 +14433,7 @@ paths:
         '400': { $ref: '#/components/responses/TriggerInvalid' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/TriggerImmutable' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/TriggerSecretUnavailable' }
@@ -14437,10 +14441,14 @@ paths:
       tags: [triggers]
       operationId: deleteTrigger
       summary: Delete a trigger.
+      description: |
+        Queue binding consumers are managed through the queue-binding API.
+        Direct mutations of those private projections return 409.
       responses:
         '204': { description: No body. The trigger was removed. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/triggers/{id}/work-binding:
@@ -14501,10 +14509,17 @@ paths:
         Sets `enabled=false` and pg_notify's `trigger_changed`. Schedd
         stops the broker poller on the next tick; in-flight records
         drain normally.
+        Queue binding consumers are managed through the queue-binding API;
+        direct pause/resume of those private projections returns 409.
       responses:
-        '204': { description: No body. }
+        '200':
+          description: The updated trigger.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Trigger' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/triggers/{id}/resume:
@@ -14517,10 +14532,17 @@ paths:
       description: |
         Sets `enabled=true` and pg_notify's `trigger_changed`.
         Schedd restarts the broker poller on the next tick.
+        Queue binding consumers are managed through the queue-binding API;
+        direct pause/resume of those private projections returns 409.
       responses:
-        '204': { description: 'Trigger resumed (no body).' }
+        '200':
+          description: The updated trigger.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Trigger' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/triggers/{id}/records:

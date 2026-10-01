@@ -182,3 +182,41 @@ func TestQueueBindingHTTPQuotaFailureLeavesNoBinding(t *testing.T) {
 		t.Fatalf("quota failure changed trigger count=%d err=%v", len(triggers), err)
 	}
 }
+
+func TestQueueBindingConsumerRejectsDirectTriggerMutation(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	ctx := context.Background()
+	app, err := e.store.CreateApp(ctx, state.App{AccountID: e.acct.ID, Slug: "queue-private-consumer", WorkloadClass: state.WorkloadClassWorker})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := e.store.CreateQueueBindingWithConsumer(ctx, state.QueueBinding{AccountID: e.acct.ID, AppID: app.ID,
+		Name: "jobs", QueueName: "jobs", Mode: "push", WorkloadClass: state.WorkloadClassWorker, Enabled: true, MaxConcurrency: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := result.Changes[0].TriggerID
+	enabled := false
+	for _, tc := range []struct {
+		name, method, suffix string
+		body                 any
+	}{
+		{"patch", http.MethodPatch, "", api.UpdateTriggerRequest{Enabled: &enabled}},
+		{"delete", http.MethodDelete, "", nil},
+		{"pause", http.MethodPost, "/pause", nil},
+		{"resume", http.MethodPost, "/resume", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := e.do(t, tc.method, "/v1/triggers/"+id+tc.suffix, tc.body, nil)
+			assertProblem(t, rec, http.StatusConflict, api.CodeValidation)
+		})
+	}
+	trigger, err := e.store.TriggerByID(ctx, id)
+	if err != nil || !trigger.Enabled || !trigger.QueueBindingID.Valid {
+		t.Fatalf("private consumer changed: enabled=%v err=%v", trigger.Enabled, err)
+	}
+	// The ordinary trigger endpoint cannot impersonate an owned projection.
+	rec := e.do(t, http.MethodPost, "/v1/triggers", api.CreateTriggerRequest{AppID: app.ID,
+		Kind: api.TriggerKindQueue, Slug: "forged", Config: json.RawMessage(`{"mode":"queue","queue_binding_id":null}`)}, nil)
+	assertProblem(t, rec, http.StatusUnprocessableEntity, "trigger_invalid_config")
+}

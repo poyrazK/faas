@@ -11850,6 +11850,9 @@ func (m *MemStore) reactivateCronsForAppLocked(appID string) int {
 // are stubbed here so tests can run without a live Postgres.
 
 func (m *MemStore) CreateTriggerIfUnderQuota(_ context.Context, appID, kind, slug string, enabled bool, config []byte, source string, batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes int32, brokerPoisonStrategy string, limits api.Limits) (sqlc.Trigger, error) {
+	if queueConsumerMarkerPresent(config) {
+		return sqlc.Trigger{}, ErrInvalidArgument
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	perApp := 0
@@ -11926,6 +11929,12 @@ func (m *MemStore) UpdateTrigger(_ context.Context, id string, enabled *bool, co
 	if !ok {
 		return sqlc.Trigger{}, ErrNotFound
 	}
+	if t.QueueBindingID.Valid {
+		return sqlc.Trigger{}, ErrConflict
+	}
+	if queueConsumerMarkerPresent(config) {
+		return sqlc.Trigger{}, ErrInvalidArgument
+	}
 	if enabled != nil {
 		t.Enabled = *enabled
 	}
@@ -11969,9 +11978,17 @@ func (m *MemStore) UpdateTrigger(_ context.Context, id string, enabled *bool, co
 	return t, nil
 }
 
-func (m *MemStore) DeleteTrigger(_ context.Context, id, _ string) error {
+func (m *MemStore) DeleteTrigger(_ context.Context, id, appID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if trigger, ok := m.triggers[id]; ok {
+		if trigger.AppID.String() != canonicalMemUUID(appID) {
+			return nil
+		}
+		if trigger.QueueBindingID.Valid {
+			return ErrConflict
+		}
+	}
 	delete(m.triggerWorkBindings, id)
 	delete(m.triggers, id)
 	return nil

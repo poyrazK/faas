@@ -4203,6 +4203,7 @@ type Trigger struct {
 	PayloadMaxBytes      int32
 	BrokerPoisonStrategy string
 	FilterCriteria       []byte
+	QueueBindingID       pgtype.UUID
 }
 
 type TriggerConsumerHealth struct {

@@ -41,6 +41,36 @@ func testQueueBindingConsumerPublication(t *testing.T, fx *Fixture) {
 	if err != nil || trigger.Slug != "jobs" || trigger.BatchSizeMax != int32(limits.TriggerBatchSizeMax) || trigger.MaxAttempts != int32(limits.TriggerMaxAttemptsMax) {
 		t.Fatalf("consumer delivery caps: slug=%q batch=%d attempts=%d err=%v", trigger.Slug, trigger.BatchSizeMax, trigger.MaxAttempts, err)
 	}
+	if !trigger.QueueBindingID.Valid || trigger.QueueBindingID.Bytes != uuid.MustParse(created.Binding.ID) {
+		t.Fatal("consumer lacks authoritative binding identity")
+	}
+	enabledTriggers, err := fx.Store.ListEnabledTriggers(fx.Ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundConsumer := false
+	for _, enabled := range enabledTriggers {
+		if enabled.ID == trigger.ID {
+			foundConsumer = true
+			if enabled.QueueBindingID != trigger.QueueBindingID {
+				t.Fatal("scheduler projection lost binding identity")
+			}
+		}
+	}
+	if !foundConsumer {
+		t.Fatal("enabled consumer missing from scheduler projection")
+	}
+	disabled := false
+	if _, err := fx.Store.UpdateTrigger(fx.Ctx, triggerID, &disabled, nil, nil, nil, nil, nil, nil, nil, nil); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("direct consumer update admitted: %v", err)
+	}
+	if err := fx.Store.DeleteTrigger(fx.Ctx, triggerID, app.ID); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("direct consumer delete admitted: %v", err)
+	}
+	if _, err := fx.Store.CreateTriggerIfUnderQuota(fx.Ctx, app.ID, "queue", "forged", false,
+		[]byte(`{"mode":"queue","queue_binding_id":null}`), "queue", 1, 1000, 3, 1024, "commit", limits); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatalf("public trigger accepted reserved ownership marker: %v", err)
+	}
 	var config struct {
 		BindingID string             `json:"queue_binding_id"`
 		Policy    api.RetryPolicyDTO `json:"retry_policy"`

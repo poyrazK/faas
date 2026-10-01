@@ -2495,7 +2495,7 @@ func (q *Queries) DeleteOIDCExchangedToken(ctx context.Context, db DBTX, id pgty
 }
 
 const deleteTrigger = `-- name: DeleteTrigger :exec
-delete from triggers where id = $1 and app_id = $2
+delete from triggers where id = $1 and app_id = $2 and queue_binding_id is null
 `
 
 type DeleteTriggerParams struct {
@@ -9470,7 +9470,7 @@ func (q *Queries) ListEnabledEventSubscriptionsForAccount(ctx context.Context, d
 }
 
 const listEnabledTriggers = `-- name: ListEnabledTriggers :many
-select id, account_id, app_id, kind, slug, enabled, config,
+select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
        filter_criteria,
@@ -9486,6 +9486,7 @@ type ListEnabledTriggersRow struct {
 	Slug                 string
 	Enabled              bool
 	Config               []byte
+	QueueBindingID       pgtype.UUID
 	BatchSizeMax         int32
 	BatchWindowMs        int32
 	MaxAttempts          int32
@@ -9523,6 +9524,7 @@ func (q *Queries) ListEnabledTriggers(ctx context.Context, db DBTX) ([]ListEnabl
 			&i.Slug,
 			&i.Enabled,
 			&i.Config,
+			&i.QueueBindingID,
 			&i.BatchSizeMax,
 			&i.BatchWindowMs,
 			&i.MaxAttempts,
@@ -11078,7 +11080,7 @@ func (q *Queries) ListTriggerRecordsForTrigger(ctx context.Context, db DBTX, arg
 }
 
 const listTriggersForApp = `-- name: ListTriggersForApp :many
-select id, account_id, app_id, kind, slug, enabled, config,
+select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
        filter_criteria,
@@ -11094,6 +11096,7 @@ type ListTriggersForAppRow struct {
 	Slug                 string
 	Enabled              bool
 	Config               []byte
+	QueueBindingID       pgtype.UUID
 	BatchSizeMax         int32
 	BatchWindowMs        int32
 	MaxAttempts          int32
@@ -11126,6 +11129,7 @@ func (q *Queries) ListTriggersForApp(ctx context.Context, db DBTX, appID pgtype.
 			&i.Slug,
 			&i.Enabled,
 			&i.Config,
+			&i.QueueBindingID,
 			&i.BatchSizeMax,
 			&i.BatchWindowMs,
 			&i.MaxAttempts,
@@ -15267,6 +15271,69 @@ func (q *Queries) PruneDevBridgeSessions(ctx context.Context, db DBTX, arg Prune
 	return err
 }
 
+const publicPatchTrigger = `-- name: PublicPatchTrigger :one
+update triggers set enabled=coalesce($1::boolean,enabled),
+config=coalesce($2::jsonb,config),
+batch_size_max=coalesce($3::integer,batch_size_max),
+batch_window_ms=coalesce($4::integer,batch_window_ms),
+max_attempts=coalesce($5::integer,max_attempts),
+payload_max_bytes=coalesce($6::integer,payload_max_bytes),
+broker_poison_strategy=coalesce($7::text,broker_poison_strategy),
+filter_criteria=coalesce($8::jsonb,filter_criteria),
+source=coalesce($9::text,source)
+where id=$10 and queue_binding_id is null returning id, account_id, app_id, kind, slug, enabled, config, batch_size_max, batch_window_ms, max_attempts, cron_id, source, created_at, updated_at, payload_max_bytes, broker_poison_strategy, filter_criteria, queue_binding_id
+`
+
+type PublicPatchTriggerParams struct {
+	Enabled              pgtype.Bool
+	Config               []byte
+	BatchSizeMax         pgtype.Int4
+	BatchWindowMs        pgtype.Int4
+	MaxAttempts          pgtype.Int4
+	PayloadMaxBytes      pgtype.Int4
+	BrokerPoisonStrategy pgtype.Text
+	FilterCriteria       []byte
+	Source               pgtype.Text
+	ID                   pgtype.UUID
+}
+
+func (q *Queries) PublicPatchTrigger(ctx context.Context, db DBTX, arg PublicPatchTriggerParams) (Trigger, error) {
+	row := db.QueryRow(ctx, publicPatchTrigger,
+		arg.Enabled,
+		arg.Config,
+		arg.BatchSizeMax,
+		arg.BatchWindowMs,
+		arg.MaxAttempts,
+		arg.PayloadMaxBytes,
+		arg.BrokerPoisonStrategy,
+		arg.FilterCriteria,
+		arg.Source,
+		arg.ID,
+	)
+	var i Trigger
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Kind,
+		&i.Slug,
+		&i.Enabled,
+		&i.Config,
+		&i.BatchSizeMax,
+		&i.BatchWindowMs,
+		&i.MaxAttempts,
+		&i.CronID,
+		&i.Source,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.PayloadMaxBytes,
+		&i.BrokerPoisonStrategy,
+		&i.FilterCriteria,
+		&i.QueueBindingID,
+	)
+	return i, err
+}
+
 const publishInstanceRuntimeConfig = `-- name: PublishInstanceRuntimeConfig :one
 UPDATE instances i SET netns = $1, host_ip = $2::text::inet,
     guest_uid = $3, started_at = clock_timestamp(), state = 'running'
@@ -15439,6 +15506,88 @@ func (q *Queries) PutEnvironmentGitOpsVariable(ctx context.Context, db DBTX, arg
 	return err
 }
 
+const queueClaimConsumerIdentity = `-- name: QueueClaimConsumerIdentity :one
+select queue_binding_id, (config ? 'queue_binding_id')::boolean as has_marker from triggers
+where id=$1 and app_id=$2 and kind='queue' and source='queue'
+`
+
+type QueueClaimConsumerIdentityParams struct {
+	ID    pgtype.UUID
+	AppID pgtype.UUID
+}
+
+type QueueClaimConsumerIdentityRow struct {
+	QueueBindingID pgtype.UUID
+	HasMarker      bool
+}
+
+func (q *Queries) QueueClaimConsumerIdentity(ctx context.Context, db DBTX, arg QueueClaimConsumerIdentityParams) (QueueClaimConsumerIdentityRow, error) {
+	row := db.QueryRow(ctx, queueClaimConsumerIdentity, arg.ID, arg.AppID)
+	var i QueueClaimConsumerIdentityRow
+	err := row.Scan(&i.QueueBindingID, &i.HasMarker)
+	return i, err
+}
+
+const queueClaimLegacyBindingCap = `-- name: QueueClaimLegacyBindingCap :one
+select max_concurrency from queue_bindings where app_id=$1
+and queue_name=$2 and enabled for update
+`
+
+type QueueClaimLegacyBindingCapParams struct {
+	AppID     pgtype.UUID
+	QueueName string
+}
+
+func (q *Queries) QueueClaimLegacyBindingCap(ctx context.Context, db DBTX, arg QueueClaimLegacyBindingCapParams) (int32, error) {
+	row := db.QueryRow(ctx, queueClaimLegacyBindingCap, arg.AppID, arg.QueueName)
+	var max_concurrency int32
+	err := row.Scan(&max_concurrency)
+	return max_concurrency, err
+}
+
+const queueClaimLockBinding = `-- name: QueueClaimLockBinding :one
+select max_concurrency from queue_bindings where id=$1 and app_id=$2
+and queue_name=$3 and mode='push' and enabled for update
+`
+
+type QueueClaimLockBindingParams struct {
+	ID        pgtype.UUID
+	AppID     pgtype.UUID
+	QueueName string
+}
+
+func (q *Queries) QueueClaimLockBinding(ctx context.Context, db DBTX, arg QueueClaimLockBindingParams) (int32, error) {
+	row := db.QueryRow(ctx, queueClaimLockBinding, arg.ID, arg.AppID, arg.QueueName)
+	var max_concurrency int32
+	err := row.Scan(&max_concurrency)
+	return max_concurrency, err
+}
+
+const queueClaimLockLiveConsumer = `-- name: QueueClaimLockLiveConsumer :one
+select id from triggers where id=$1 and app_id=$2
+and kind='queue' and source='queue' and slug=$3 and enabled
+and queue_binding_id is not distinct from $4::uuid for share
+`
+
+type QueueClaimLockLiveConsumerParams struct {
+	ID        pgtype.UUID
+	AppID     pgtype.UUID
+	QueueName string
+	BindingID pgtype.UUID
+}
+
+func (q *Queries) QueueClaimLockLiveConsumer(ctx context.Context, db DBTX, arg QueueClaimLockLiveConsumerParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, queueClaimLockLiveConsumer,
+		arg.ID,
+		arg.AppID,
+		arg.QueueName,
+		arg.BindingID,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const queueConsumerBindingForUpdate = `-- name: QueueConsumerBindingForUpdate :one
 select id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at from queue_bindings where id=$1
 and app_id=$2 and account_id=$3 for update
@@ -15470,6 +15619,64 @@ func (q *Queries) QueueConsumerBindingForUpdate(ctx context.Context, db DBTX, ar
 	return i, err
 }
 
+const queueConsumerCreateTrigger = `-- name: QueueConsumerCreateTrigger :one
+insert into triggers (account_id,app_id,queue_binding_id,kind,source,slug,enabled,config,
+batch_size_max,batch_window_ms,max_attempts,payload_max_bytes,broker_poison_strategy)
+values ($1,$2,$3::uuid,'queue','queue',$4,
+$5,$6::jsonb,$7,$8,
+$9,$10,'commit') returning id, account_id, app_id, kind, slug, enabled, config, batch_size_max, batch_window_ms, max_attempts, cron_id, source, created_at, updated_at, payload_max_bytes, broker_poison_strategy, filter_criteria, queue_binding_id
+`
+
+type QueueConsumerCreateTriggerParams struct {
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	BindingID       pgtype.UUID
+	Slug            string
+	Enabled         bool
+	Config          []byte
+	BatchSizeMax    int32
+	BatchWindowMs   int32
+	MaxAttempts     int32
+	PayloadMaxBytes int32
+}
+
+func (q *Queries) QueueConsumerCreateTrigger(ctx context.Context, db DBTX, arg QueueConsumerCreateTriggerParams) (Trigger, error) {
+	row := db.QueryRow(ctx, queueConsumerCreateTrigger,
+		arg.AccountID,
+		arg.AppID,
+		arg.BindingID,
+		arg.Slug,
+		arg.Enabled,
+		arg.Config,
+		arg.BatchSizeMax,
+		arg.BatchWindowMs,
+		arg.MaxAttempts,
+		arg.PayloadMaxBytes,
+	)
+	var i Trigger
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Kind,
+		&i.Slug,
+		&i.Enabled,
+		&i.Config,
+		&i.BatchSizeMax,
+		&i.BatchWindowMs,
+		&i.MaxAttempts,
+		&i.CronID,
+		&i.Source,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.PayloadMaxBytes,
+		&i.BrokerPoisonStrategy,
+		&i.FilterCriteria,
+		&i.QueueBindingID,
+	)
+	return i, err
+}
+
 const queueConsumerDeleteBinding = `-- name: QueueConsumerDeleteBinding :execrows
 delete from queue_bindings where id=$1 and app_id=$2 and account_id=$3
 `
@@ -15482,6 +15689,25 @@ type QueueConsumerDeleteBindingParams struct {
 
 func (q *Queries) QueueConsumerDeleteBinding(ctx context.Context, db DBTX, arg QueueConsumerDeleteBindingParams) (int64, error) {
 	result, err := db.Exec(ctx, queueConsumerDeleteBinding, arg.ID, arg.AppID, arg.AccountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const queueConsumerDeleteTrigger = `-- name: QueueConsumerDeleteTrigger :execrows
+delete from triggers where id=$1 and app_id=$2
+and queue_binding_id=$3::uuid
+`
+
+type QueueConsumerDeleteTriggerParams struct {
+	ID        pgtype.UUID
+	AppID     pgtype.UUID
+	BindingID pgtype.UUID
+}
+
+func (q *Queries) QueueConsumerDeleteTrigger(ctx context.Context, db DBTX, arg QueueConsumerDeleteTriggerParams) (int64, error) {
+	result, err := db.Exec(ctx, queueConsumerDeleteTrigger, arg.ID, arg.AppID, arg.BindingID)
 	if err != nil {
 		return 0, err
 	}
@@ -15595,28 +15821,34 @@ func (q *Queries) QueueConsumerNotify(ctx context.Context, db DBTX, payload stri
 }
 
 const queueConsumerOwnedTriggers = `-- name: QueueConsumerOwnedTriggers :many
-select id from triggers where app_id=$1 and kind='queue' and source='queue'
-and config->>'queue_binding_id'=$2::text for update
+select id, queue_binding_id from triggers where app_id=$1 and kind='queue' and source='queue'
+and (queue_binding_id=$2::uuid
+or (queue_binding_id is null and config->>'queue_binding_id'=$2::uuid::text)) for update
 `
 
 type QueueConsumerOwnedTriggersParams struct {
 	AppID     pgtype.UUID
-	BindingID string
+	BindingID pgtype.UUID
 }
 
-func (q *Queries) QueueConsumerOwnedTriggers(ctx context.Context, db DBTX, arg QueueConsumerOwnedTriggersParams) ([]pgtype.UUID, error) {
+type QueueConsumerOwnedTriggersRow struct {
+	ID             pgtype.UUID
+	QueueBindingID pgtype.UUID
+}
+
+func (q *Queries) QueueConsumerOwnedTriggers(ctx context.Context, db DBTX, arg QueueConsumerOwnedTriggersParams) ([]QueueConsumerOwnedTriggersRow, error) {
 	rows, err := db.Query(ctx, queueConsumerOwnedTriggers, arg.AppID, arg.BindingID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []pgtype.UUID{}
+	items := []QueueConsumerOwnedTriggersRow{}
 	for rows.Next() {
-		var id pgtype.UUID
-		if err := rows.Scan(&id); err != nil {
+		var i QueueConsumerOwnedTriggersRow
+		if err := rows.Scan(&i.ID, &i.QueueBindingID); err != nil {
 			return nil, err
 		}
-		items = append(items, id)
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -15676,7 +15908,8 @@ const queueConsumerUpdateTrigger = `-- name: QueueConsumerUpdateTrigger :execrow
 update triggers set slug=$1, enabled=$2,config=$3::jsonb,
 batch_size_max=$4,batch_window_ms=$5,max_attempts=$6,
 payload_max_bytes=$7,updated_at=now()
-where id=$8 and app_id=$9 and kind='queue' and source='queue'
+where id=$8 and app_id=$9 and queue_binding_id=$10::uuid
+and kind='queue' and source='queue'
 `
 
 type QueueConsumerUpdateTriggerParams struct {
@@ -15689,6 +15922,7 @@ type QueueConsumerUpdateTriggerParams struct {
 	PayloadMaxBytes int32
 	ID              pgtype.UUID
 	AppID           pgtype.UUID
+	BindingID       pgtype.UUID
 }
 
 func (q *Queries) QueueConsumerUpdateTrigger(ctx context.Context, db DBTX, arg QueueConsumerUpdateTriggerParams) (int64, error) {
@@ -15702,6 +15936,7 @@ func (q *Queries) QueueConsumerUpdateTrigger(ctx context.Context, db DBTX, arg Q
 		arg.PayloadMaxBytes,
 		arg.ID,
 		arg.AppID,
+		arg.BindingID,
 	)
 	if err != nil {
 		return 0, err
@@ -18834,7 +19069,7 @@ func (q *Queries) TrafficAnomalyAggregateByNode(ctx context.Context, db DBTX, ar
 }
 
 const triggerByID = `-- name: TriggerByID :one
-select id, account_id, app_id, kind, slug, enabled, config,
+select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
        filter_criteria,
@@ -18850,6 +19085,7 @@ type TriggerByIDRow struct {
 	Slug                 string
 	Enabled              bool
 	Config               []byte
+	QueueBindingID       pgtype.UUID
 	BatchSizeMax         int32
 	BatchWindowMs        int32
 	MaxAttempts          int32
@@ -18879,6 +19115,7 @@ func (q *Queries) TriggerByID(ctx context.Context, db DBTX, id pgtype.UUID) (Tri
 		&i.Slug,
 		&i.Enabled,
 		&i.Config,
+		&i.QueueBindingID,
 		&i.BatchSizeMax,
 		&i.BatchWindowMs,
 		&i.MaxAttempts,
@@ -19346,7 +19583,7 @@ update triggers set
   payload_max_bytes = coalesce($7, payload_max_bytes),
   broker_poison_strategy = coalesce($8, broker_poison_strategy),
   filter_criteria = coalesce($9::jsonb, filter_criteria)
-where id = $1
+where id = $1 and queue_binding_id is null
 returning id, account_id, app_id, kind, slug, enabled, config,
           batch_size_max, batch_window_ms, max_attempts,
           cron_id, source, payload_max_bytes, broker_poison_strategy,

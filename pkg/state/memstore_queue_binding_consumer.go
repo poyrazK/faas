@@ -70,8 +70,8 @@ func (m *MemStore) mutateQueueBindingConsumer(accountID, appID, id string, creat
 	}
 	var owned sqlc.Trigger
 	for _, trigger := range m.triggers {
-		if trigger.AppID.String() == canonicalMemUUID(appID) && trigger.Kind == "queue" && trigger.Source.Valid && trigger.Source.String == "queue" && queueConsumerBindingID(trigger.Config) == id {
-			if owned.ID.Valid {
+		if trigger.AppID.String() == canonicalMemUUID(appID) && trigger.Kind == "queue" && trigger.Source.Valid && trigger.Source.String == "queue" && ((trigger.QueueBindingID.Valid && trigger.QueueBindingID.Bytes == parseMemUUIDString(id)) || queueConsumerBindingID(trigger.Config) == id) {
+			if owned.ID.Valid || !trigger.QueueBindingID.Valid {
 				return QueueBindingConsumerResult{}, ErrConflict
 			}
 			owned = trigger
@@ -108,7 +108,7 @@ func (m *MemStore) mutateQueueBindingConsumer(accountID, appID, id string, creat
 			}
 			kind = "created"
 			projected = sqlc.Trigger{ID: pgtype.UUID{Bytes: memNewUUID(), Valid: true}, AccountID: pgtype.UUID{Bytes: parseMemUUIDString(accountID), Valid: true},
-				AppID: pgtype.UUID{Bytes: parseMemUUIDString(appID), Valid: true}, Kind: "queue", Source: nullableTriggerSource("queue"), BrokerPoisonStrategy: "commit",
+				AppID: pgtype.UUID{Bytes: parseMemUUIDString(appID), Valid: true}, QueueBindingID: pgtype.UUID{Bytes: parseMemUUIDString(id), Valid: true}, Kind: "queue", Source: nullableTriggerSource("queue"), BrokerPoisonStrategy: "commit",
 				CreatedAt: pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}}
 		}
 		projected.Slug, projected.Enabled, projected.Config = binding.QueueName, binding.Enabled, definition.Config

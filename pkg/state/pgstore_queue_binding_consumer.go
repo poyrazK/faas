@@ -74,11 +74,11 @@ func (s *PgStore) mutateQueueBindingConsumer(ctx context.Context, accountID, app
 			return QueueBindingConsumerResult{}, err
 		}
 	}
-	owned, err := q.QueueConsumerOwnedTriggers(ctx, tx, sqlc.QueueConsumerOwnedTriggersParams{AppID: appUUID, BindingID: id})
+	owned, err := q.QueueConsumerOwnedTriggers(ctx, tx, sqlc.QueueConsumerOwnedTriggersParams{AppID: appUUID, BindingID: bindingUUID})
 	if err != nil {
 		return QueueBindingConsumerResult{}, err
 	}
-	if len(owned) > 1 {
+	if len(owned) > 1 || (len(owned) == 1 && owned[0].QueueBindingID != bindingUUID) {
 		return QueueBindingConsumerResult{}, fmt.Errorf("%w: duplicate queue consumer projection", ErrConflict)
 	}
 	var definition queueConsumerDefinition
@@ -113,13 +113,17 @@ func (s *PgStore) mutateQueueBindingConsumer(ctx context.Context, accountID, app
 	result := QueueBindingConsumerResult{Binding: binding}
 	if remove || binding.Mode != "push" {
 		if len(owned) == 1 {
-			if err := q.DeleteTrigger(ctx, tx, sqlc.DeleteTriggerParams{ID: owned[0], AppID: appUUID}); err != nil {
+			deleted, err := q.QueueConsumerDeleteTrigger(ctx, tx, sqlc.QueueConsumerDeleteTriggerParams{ID: owned[0].ID, AppID: appUUID, BindingID: bindingUUID})
+			if err != nil {
 				return QueueBindingConsumerResult{}, err
 			}
-			result.Changes = append(result.Changes, QueueConsumerChange{Kind: "deleted", AppID: appID, TriggerID: owned[0].String()})
+			if deleted != 1 {
+				return QueueBindingConsumerResult{}, ErrConflict
+			}
+			result.Changes = append(result.Changes, QueueConsumerChange{Kind: "deleted", AppID: appID, TriggerID: owned[0].ID.String()})
 		}
 	} else if len(owned) == 1 {
-		changed, err := q.QueueConsumerUpdateTrigger(ctx, tx, sqlc.QueueConsumerUpdateTriggerParams{ID: owned[0], AppID: appUUID,
+		changed, err := q.QueueConsumerUpdateTrigger(ctx, tx, sqlc.QueueConsumerUpdateTriggerParams{ID: owned[0].ID, AppID: appUUID, BindingID: bindingUUID,
 			Slug: binding.QueueName, Enabled: binding.Enabled, Config: definition.Config, BatchSizeMax: definition.BatchSize,
 			BatchWindowMs: definition.BatchWindow, MaxAttempts: definition.MaxAttempts, PayloadMaxBytes: definition.PayloadMax})
 		if err != nil {
@@ -128,11 +132,11 @@ func (s *PgStore) mutateQueueBindingConsumer(ctx context.Context, accountID, app
 		if changed != 1 {
 			return QueueBindingConsumerResult{}, ErrConflict
 		}
-		result.Changes = append(result.Changes, QueueConsumerChange{Kind: "updated", AppID: appID, TriggerID: owned[0].String()})
+		result.Changes = append(result.Changes, QueueConsumerChange{Kind: "updated", AppID: appID, TriggerID: owned[0].ID.String()})
 	} else {
-		row, err := q.CreateTrigger(ctx, tx, sqlc.CreateTriggerParams{AccountID: accountUUID, AppID: appUUID, Kind: "queue", Slug: binding.QueueName,
-			Enabled: binding.Enabled, Column6: definition.Config, BatchSizeMax: definition.BatchSize, BatchWindowMs: definition.BatchWindow,
-			MaxAttempts: definition.MaxAttempts, PayloadMaxBytes: definition.PayloadMax, Source: nullableTriggerSource("queue"), BrokerPoisonStrategy: "commit"})
+		row, err := q.QueueConsumerCreateTrigger(ctx, tx, sqlc.QueueConsumerCreateTriggerParams{AccountID: accountUUID, AppID: appUUID, BindingID: bindingUUID, Slug: binding.QueueName,
+			Enabled: binding.Enabled, Config: definition.Config, BatchSizeMax: definition.BatchSize, BatchWindowMs: definition.BatchWindow,
+			MaxAttempts: definition.MaxAttempts, PayloadMaxBytes: definition.PayloadMax})
 		if err != nil {
 			return QueueBindingConsumerResult{}, mapErr(err)
 		}

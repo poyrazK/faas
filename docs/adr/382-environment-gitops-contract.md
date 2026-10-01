@@ -272,6 +272,20 @@ MemStore/PostgreSQL cases cover conflicts, quota denial, receipt preservation,
 and concurrent account admission; a PostgreSQL fault test covers rollback after
 consumer deletion. The profile's scaling policy remains a separate mutation.
 
+Private consumers now carry a typed, immutable binding UUID with a composite
+tenant/app foreign key and a unique projection per binding. Public trigger
+create/update cannot supply the reserved ownership marker; direct update,
+pause, resume, and delete of an owned consumer must go through the binding API.
+The migration adopts only a single historical projection with matching tenant
+identity and mode. Ambiguous markers retain their rows and receipts for review,
+and the scheduler reports an unowned marker instead of consuming through it.
+Claims lock and recheck the live binding and trigger in mutation lock order;
+disabled, renamed, or removed consumers cannot claim through a cached trigger.
+An already admitted request remains at least once.
+OpenAPI and the generated Node/Python clients expose the ownership conflict.
+Their pause/resume success contract now reflects the server's existing 200
+response containing the updated trigger.
+
 The existing queue consumer index still allows one enabled trigger per
 app/source. Before enabling the queue adapter, binding and consumer identity
 must include the environment, and queue demand must select only the

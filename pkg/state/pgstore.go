@@ -29443,6 +29443,9 @@ func (s *PgStore) PruneDataUpstreamProbesOlderThan(ctx context.Context, cutoff t
 // CreateCronIfUnderQuota path because cron needs the crons row + the
 // schedule+path cron-specific schema.
 func (s *PgStore) CreateTriggerIfUnderQuota(ctx context.Context, appID, kind, slug string, enabled bool, config []byte, source string, batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes int32, brokerPoisonStrategy string, limits api.Limits) (sqlc.Trigger, error) {
+	if queueConsumerMarkerPresent(config) {
+		return sqlc.Trigger{}, ErrInvalidArgument
+	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return sqlc.Trigger{}, fmt.Errorf("state: begin tx: %w", err)
@@ -29572,83 +29575,44 @@ func (s *PgStore) TriggerByID(ctx context.Context, id string) (sqlc.Trigger, err
 // trigger_immutable_field. The cron_id linkage is set at creation
 // only (kind='cron' is created via the legacy CreateCron path).
 //
-// We bypass the sqlc.UpdateTrigger generated stub because sqlc
-// generated the coalesce() UPDATE with non-nullable parameter
-// types (Enabled bool, Column3 []byte, etc.) which collapses the
-// "absent" / "explicit" distinction the apid handler needs (the
-// cron UpdateCron precedent handles this same coalesce-via-pool
-// pattern at line 5523+). Bypassing sqlc here keeps the PATCH
-// semantics correct at the cost of losing auto-generated type
-// safety — net-positive because the alternative would force the
-// handler to send "current values" for unset fields and break the
-// JSON `omitempty` round-trip.
-//
-// filter_criteria is REVIEW-FIX MED-1 (issue #757 closure PR
-// #993): it was added to the sqlc.Trigger struct in commit 6 of
-// the mega-PR but omitted from this inline UPDATE — meaning a
-// PATCH that flipped filter_criteria was silently dropped on the
-// floor. The pointer is nullable: nil = "leave unchanged",
-// non-nil []byte = "replace the JSONB column" (json.RawMessage
-// shape mirrors the FilterCriteria wire DTO; nil-element means
-// "clear filter to no-op").
+// Nullable sqlc parameters preserve PATCH omission semantics. The public
+// mutation predicate excludes binding-owned projections even if ownership is
+// established between the identity lookup and the update.
 func (s *PgStore) UpdateTrigger(ctx context.Context, id string, enabled *bool, config []byte, batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes *int32, brokerPoisonStrategy *string, filterCriteria *[]byte, source *string) (sqlc.Trigger, error) {
-	var enabledArg, configArg, batchSizeArg, batchWindowArg, maxAttemptsArg, payloadMaxArg, brokerPoisonArg, filterCriteriaArg, sourceArg any
+	if queueConsumerMarkerPresent(config) {
+		return sqlc.Trigger{}, ErrInvalidArgument
+	}
+	current, err := s.TriggerByID(ctx, id)
+	if err != nil {
+		return sqlc.Trigger{}, err
+	}
+	if current.QueueBindingID.Valid {
+		return sqlc.Trigger{}, ErrConflict
+	}
+	intArg := func(value *int32) pgtype.Int4 {
+		if value == nil {
+			return pgtype.Int4{}
+		}
+		return pgtype.Int4{Int32: *value, Valid: true}
+	}
+	textArg := func(value *string) pgtype.Text {
+		if value == nil {
+			return pgtype.Text{}
+		}
+		return pgtype.Text{String: *value, Valid: true}
+	}
+	params := sqlc.PublicPatchTriggerParams{ID: mustPgUUID(id), Config: config,
+		BatchSizeMax: intArg(batchSizeMax), BatchWindowMs: intArg(batchWindowMs),
+		MaxAttempts: intArg(maxAttempts), PayloadMaxBytes: intArg(payloadMaxBytes),
+		BrokerPoisonStrategy: textArg(brokerPoisonStrategy), Source: textArg(source)}
 	if enabled != nil {
-		enabledArg = *enabled
-	}
-	if config != nil {
-		configArg = config
-	}
-	if batchSizeMax != nil {
-		batchSizeArg = *batchSizeMax
-	}
-	if batchWindowMs != nil {
-		batchWindowArg = *batchWindowMs
-	}
-	if maxAttempts != nil {
-		maxAttemptsArg = *maxAttempts
-	}
-	if payloadMaxBytes != nil {
-		payloadMaxArg = *payloadMaxBytes
-	}
-	if brokerPoisonStrategy != nil {
-		brokerPoisonArg = *brokerPoisonStrategy
+		params.Enabled = pgtype.Bool{Bool: *enabled, Valid: true}
 	}
 	if filterCriteria != nil {
-		filterCriteriaArg = *filterCriteria
+		params.FilterCriteria = *filterCriteria
 	}
-	if source != nil {
-		sourceArg = *source
-	}
-	row := s.pool.QueryRow(ctx,
-		`update triggers set
-		   enabled = coalesce($2, enabled),
-		   config = coalesce($3::jsonb, config),
-		   batch_size_max = coalesce($4, batch_size_max),
-		   batch_window_ms = coalesce($5, batch_window_ms),
-		   max_attempts = coalesce($6, max_attempts),
-		   payload_max_bytes = coalesce($7, payload_max_bytes),
-		   broker_poison_strategy = coalesce($8, broker_poison_strategy),
-		   filter_criteria = coalesce($9::jsonb, filter_criteria),
-		   source = coalesce($10, source)
-		 where id = $1
-		 returning id, account_id, app_id, kind, slug, enabled, config,
-		           batch_size_max, batch_window_ms, max_attempts,
-		           cron_id, source, payload_max_bytes, broker_poison_strategy,
-		           filter_criteria,
-		           created_at, updated_at`,
-		id, enabledArg, configArg, batchSizeArg, batchWindowArg, maxAttemptsArg, payloadMaxArg, brokerPoisonArg, filterCriteriaArg, sourceArg)
-	t := sqlc.Trigger{}
-	if err := row.Scan(
-		&t.ID, &t.AccountID, &t.AppID, &t.Kind, &t.Slug, &t.Enabled,
-		&t.Config, &t.BatchSizeMax, &t.BatchWindowMs, &t.MaxAttempts,
-		&t.CronID, &t.Source, &t.PayloadMaxBytes, &t.BrokerPoisonStrategy,
-		&t.FilterCriteria,
-		&t.CreatedAt, &t.UpdatedAt,
-	); err != nil {
-		return sqlc.Trigger{}, mapErr(err)
-	}
-	return t, nil
+	row, err := sqlc.New().PublicPatchTrigger(ctx, s.pool, params)
+	return row, mapErr(err)
 }
 
 // DeleteTrigger removes a trigger + cascades to trigger_records +
@@ -29658,7 +29622,15 @@ func (s *PgStore) UpdateTrigger(ctx context.Context, id string, enabled *bool, c
 // delete a trigger that doesn't belong to the requested app
 // (cross-app tenant bypass defence).
 func (s *PgStore) DeleteTrigger(ctx context.Context, id, appID string) error {
-	return s.triggerQueries().DeleteTrigger(ctx, s.pool, sqlc.DeleteTriggerParams{ID: mustPgUUID(id), AppID: mustPgUUID(appID)})
+	if err := s.triggerQueries().DeleteTrigger(ctx, s.pool, sqlc.DeleteTriggerParams{ID: mustPgUUID(id), AppID: mustPgUUID(appID)}); err != nil {
+		return err
+	}
+	// Public deletion never removes a private projection. Read after the
+	// guarded DELETE to report ownership even during concurrent adoption.
+	if row, err := s.TriggerByID(ctx, id); err == nil && row.AppID == mustPgUUID(appID) && row.QueueBindingID.Valid {
+		return ErrConflict
+	}
+	return nil
 }
 
 // ListTriggersForApp is the dashboard read-back (GET /v1/triggers).
@@ -29919,6 +29891,7 @@ func (s *PgStore) triggerQueries() *sqlc.Queries { return sqlc.New() }
 func triggerRowToTrigger(r sqlc.TriggerByIDRow) sqlc.Trigger {
 	return sqlc.Trigger{
 		ID:                   r.ID,
+		QueueBindingID:       r.QueueBindingID,
 		AccountID:            r.AccountID,
 		AppID:                r.AppID,
 		Kind:                 r.Kind,
@@ -29945,6 +29918,7 @@ func triggerRowToTrigger(r sqlc.TriggerByIDRow) sqlc.Trigger {
 func triggerListRowToTrigger(r sqlc.ListTriggersForAppRow) sqlc.Trigger {
 	return sqlc.Trigger{
 		ID:                   r.ID,
+		QueueBindingID:       r.QueueBindingID,
 		AccountID:            r.AccountID,
 		AppID:                r.AppID,
 		Kind:                 r.Kind,
@@ -29969,6 +29943,7 @@ func triggerListRowToTrigger(r sqlc.ListTriggersForAppRow) sqlc.Trigger {
 func triggerEnabledRowToTrigger(r sqlc.ListEnabledTriggersRow) sqlc.Trigger {
 	return sqlc.Trigger{
 		ID:                   r.ID,
+		QueueBindingID:       r.QueueBindingID,
 		AccountID:            r.AccountID,
 		AppID:                r.AppID,
 		Kind:                 r.Kind,

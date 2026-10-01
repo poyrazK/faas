@@ -30,18 +30,22 @@ func TestQueueBatchDispatchPreservesCapturedScopes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "batch-scopes", Type: state.AppTypeApp, RAMMB: 256})
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "batch-scopes", Type: state.AppTypeApp,
+		WorkloadClass: state.WorkloadClassWorker, RAMMB: 256})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateQueueBinding(ctx, state.QueueBinding{AccountID: account.ID, AppID: app.ID,
-		Name: "jobs", QueueName: "jobs", Mode: "push", WorkloadClass: state.WorkloadClassWorker, Enabled: true, MaxConcurrency: 2}); err != nil {
-		t.Fatal(err)
-	}
-	trigger, err := store.CreateTriggerIfUnderQuota(ctx, app.ID, "queue", "jobs", true,
-		[]byte(`{"mode":"queue"}`), "queue", 10, 20, 3, 1<<20, "commit", api.MustLimitsFor(api.PlanPro))
+	consumer, err := store.CreateQueueBindingWithConsumer(ctx, state.QueueBinding{AccountID: account.ID, AppID: app.ID,
+		Name: "jobs", QueueName: "jobs", Mode: "push", WorkloadClass: state.WorkloadClassWorker, Enabled: true, MaxConcurrency: 2})
 	if err != nil {
 		t.Fatal(err)
+	}
+	trigger, err := store.TriggerByID(ctx, consumer.Changes[0].TriggerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !trigger.QueueBindingID.Valid {
+		t.Fatal("queue consumer lacks binding identity")
 	}
 	rows := map[string]state.Invocation{}
 	for _, scope := range []string{"default", "staging"} {

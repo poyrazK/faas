@@ -167,7 +167,6 @@ DeleteQueueBinding
 DeleteSnapshotsStaleOlderThan
 DeleteTenantHostname
 DeleteTenantSurface
-DeleteTrigger
 DeleteTriggerRecordsByIDs
 DeploymentClearSnapshotBackoff
 DeploymentRecordSnapshotMiss
@@ -341,7 +340,6 @@ ListEdgeRulesForApp
 ListEgressCircuitCandidates
 ListEnabledAlertRules
 ListEnabledAppLogDrains
-ListEnabledTriggers
 ListEventsBySidecar
 ListEventsByTraceID
 ListEventsByWakeID
@@ -600,7 +598,6 @@ UpdateSessionBinding
 UpdateSpansSummary
 UpdateTenantSurfaceCert
 UpdateTenantSurfaceStatus
-UpdateTrigger
 UpsertAccountSpendSnapshot
 UpsertAppEnv
 UpsertAppLogDrainHealth
