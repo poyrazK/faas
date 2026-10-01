@@ -26,6 +26,19 @@ DAG validation preserves waits, dependencies, and exception-route contracts.
 Declaring this target does not enable execution: admission stays unavailable
 until the controlled workflow dispatcher and recovery contract are qualified.
 
+The controlled workflow admission seam commits a real native run, immutable run
+input/DAG, initial step rows, operation projection, backend binding, acceptance
+event, scoped submission receipt and private code receipts in one transaction.
+It creates no HTTP invocation. Native and operation admission share the app's
+workflow active-run quota and advisory lock; that lock precedes code app locks
+so native insertion can acquire its app foreign-key lock without a lock cycle.
+Public ingress continues to reject this target until the dispatcher is ready.
+Native workflow claims exclude the permanent operation marker, and direct
+legacy advancement, recovery and cancellation reject it, including after
+operation projection GC. Native run retention skips operation-bound history
+while recovery can still need its confirmed step results. These admission and
+isolation controls do not substitute for the controlled execution adapter.
+
 Admission, idempotency receipt, operation, execution association, and initial
 event commit atomically. Keys are scoped to account, app, environment, verified
 owner, and operation name. Equivalent JSON inputs replay the original receipt;

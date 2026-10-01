@@ -5135,6 +5135,58 @@ SELECT o.id,sqlc.arg(generation)::integer,w.id FROM customer_operations o
 JOIN workflow_runs w ON w.id=sqlc.arg(run_id)::uuid AND w.app_id=o.app_id AND w.operation_id=o.id
 WHERE o.id=sqlc.arg(operation_id)::uuid AND o.execution_kind='workflow';
 
+-- The same advisory key as CreateWorkflowRunAdmitted, taken before app locks.
+-- name: LockNativeWorkflowAdmission :exec
+SELECT pg_advisory_xact_lock(hashtextextended(sqlc.arg(app_id)::text,0));
+
+-- name: CountActiveNativeWorkflowRuns :one
+SELECT count(*)::bigint FROM workflow_runs WHERE app_id=sqlc.arg(app_id)::uuid
+AND status IN ('pending','running','awaiting_event');
+
+-- name: InsertCustomerOperationWorkflowRun :exec
+INSERT INTO workflow_runs(id,app_id,operation_id,workflow_name,status,input,definition_snapshot,scheduled_for,created_at,updated_at)
+VALUES(sqlc.arg(id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(operation_id)::uuid,sqlc.arg(workflow_name)::text,
+ 'pending',sqlc.arg(input)::jsonb,sqlc.arg(definition_snapshot)::jsonb,sqlc.arg(created_at)::timestamptz,
+ sqlc.arg(created_at)::timestamptz,sqlc.arg(created_at)::timestamptz);
+
+-- name: InsertCustomerOperationWorkflowStep :exec
+INSERT INTO workflow_steps(run_id,step_name,status,attempt,input,created_at)
+VALUES(sqlc.arg(run_id)::uuid,sqlc.arg(step_name)::text,'pending',0,sqlc.arg(input)::jsonb,sqlc.arg(created_at)::timestamptz);
+
+-- name: GetNativeWorkflowRun :one
+SELECT * FROM workflow_runs WHERE id=sqlc.arg(id)::uuid;
+
+-- name: LockNativeWorkflowOwnership :one
+SELECT coalesce(operation_id::text,'')::text AS operation_id FROM workflow_runs WHERE id=sqlc.arg(id)::uuid FOR UPDATE;
+
+-- name: ClaimLegacyPendingWorkflowRun :one
+UPDATE workflow_runs SET status='running',started_at=coalesce(started_at,now()),updated_at=now(),lease_until=now()+interval '5 minutes'
+WHERE id=(SELECT id FROM workflow_runs WHERE operation_id IS NULL AND status='pending' AND scheduled_for<=now()
+ ORDER BY scheduled_for,id FOR UPDATE SKIP LOCKED LIMIT 1) AND operation_id IS NULL RETURNING *;
+
+-- name: NextDueLegacyWorkflowRun :one
+SELECT id,status FROM workflow_runs WHERE operation_id IS NULL AND
+ ((status IN ('pending','awaiting_event') AND scheduled_for<=now())
+ OR (status='running' AND coalesce(lease_until,updated_at+(sqlc.arg(stale_ms)::bigint*interval '1 millisecond'))<=now()))
+ORDER BY CASE WHEN status='running' THEN coalesce(lease_until,updated_at+(sqlc.arg(stale_ms)::bigint*interval '1 millisecond')) ELSE scheduled_for END,id
+FOR UPDATE SKIP LOCKED LIMIT 1;
+
+-- name: ClaimDueLegacyWorkflowRun :one
+UPDATE workflow_runs SET status='running',started_at=coalesce(started_at,now()),updated_at=now(),lease_until=now()+interval '5 minutes'
+WHERE id=sqlc.arg(id)::uuid AND operation_id IS NULL RETURNING *;
+
+-- name: RecoverLegacyWorkflowSteps :exec
+UPDATE workflow_steps s SET status='pending',attempt=greatest(s.attempt-1,0),finished_at=NULL,error=NULL,next_retry_at=NULL
+FROM workflow_runs w WHERE w.id=s.run_id AND w.id=sqlc.arg(run_id)::uuid AND w.operation_id IS NULL AND s.status='running';
+
+-- name: RecoverLegacyWorkflowRun :exec
+UPDATE workflow_runs SET status='pending',scheduled_for=now(),updated_at=now()
+WHERE id=sqlc.arg(id)::uuid AND operation_id IS NULL AND status NOT IN ('succeeded','failed','dead');
+
+-- name: SweepUnboundNativeWorkflowRuns :execrows
+DELETE FROM workflow_runs w WHERE w.finished_at<now()-(sqlc.arg(age_ms)::bigint*interval '1 millisecond')
+AND NOT EXISTS(SELECT 1 FROM customer_operation_executions e WHERE e.workflow_run_id=w.id);
+
 -- name: SetCustomerOperationJobIdentity :execrows
 UPDATE job_runs j SET operation_id=o.id FROM customer_operations o
 WHERE j.id=sqlc.arg(run_id)::uuid AND o.id=sqlc.arg(operation_id)::uuid AND j.account_id=o.account_id AND o.execution_kind='job'

@@ -97,6 +97,8 @@ type Querier interface {
 	// upload_session_already_cancelled.
 	CancelUploadSession(ctx context.Context, db DBTX, arg CancelUploadSessionParams) error
 	ClaimCustomerOperationBlobCleanup(ctx context.Context, db DBTX, arg ClaimCustomerOperationBlobCleanupParams) (CustomerOperationResultBlob, error)
+	ClaimDueLegacyWorkflowRun(ctx context.Context, db DBTX, id pgtype.UUID) (WorkflowRun, error)
+	ClaimLegacyPendingWorkflowRun(ctx context.Context, db DBTX) (WorkflowRun, error)
 	// Persist ownership before returning. SKIP LOCKED alone would release the
 	// claim at statement end and let another scheduler deliver the same row.
 	// A lost dispatcher becomes eligible again after the ten-minute lease.
@@ -110,6 +112,7 @@ type Querier interface {
 	// an open session that a concurrent PATCH still needs.
 	ClearUploadSessionPartPath(ctx context.Context, db DBTX, id string) error
 	CompleteCustomerOperationBlobCleanup(ctx context.Context, db DBTX, arg CompleteCustomerOperationBlobCleanupParams) (int64, error)
+	CountActiveNativeWorkflowRuns(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	CountCustomerOperationDefinitionNames(ctx context.Context, db DBTX, arg CountCustomerOperationDefinitionNamesParams) (int64, error)
 	CountCustomerOperationStreams(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	CountDeployedApps(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
@@ -351,6 +354,7 @@ type Querier interface {
 	// shared_buffers under normal load. Returns ErrNotFound when the
 	// instance row is missing.
 	GetInstanceTailCount(ctx context.Context, db DBTX, id pgtype.UUID) (int32, error)
+	GetNativeWorkflowRun(ctx context.Context, db DBTX, id pgtype.UUID) (WorkflowRun, error)
 	// Bearer hot-path lookup. Filters past-TTL rows out at the SQL
 	// layer so the pg contract is "WHERE expires_at > NOW()". The
 	// MemStore mirror in pkg/state/memstore.go lazy-deletes instead.
@@ -452,6 +456,8 @@ type Querier interface {
 	InsertCustomerOperationReport(ctx context.Context, db DBTX, arg InsertCustomerOperationReportParams) error
 	InsertCustomerOperationStream(ctx context.Context, db DBTX, arg InsertCustomerOperationStreamParams) error
 	InsertCustomerOperationWorkflowExecution(ctx context.Context, db DBTX, arg InsertCustomerOperationWorkflowExecutionParams) (int64, error)
+	InsertCustomerOperationWorkflowRun(ctx context.Context, db DBTX, arg InsertCustomerOperationWorkflowRunParams) error
+	InsertCustomerOperationWorkflowStep(ctx context.Context, db DBTX, arg InsertCustomerOperationWorkflowStepParams) error
 	// ---------------------------------------------------------------------------
 	// ADR-098 connection-aware execution (§9.A). Tables live in
 	// migrations/00226_data_upstreams.sql. apid is the only writer to
@@ -920,6 +926,9 @@ type Querier interface {
 	LockExpiredRevisionPinApps(ctx context.Context, db DBTX, pageLimit int32) ([]pgtype.UUID, error)
 	LockFeatureFlagEnvironment(ctx context.Context, db DBTX, arg LockFeatureFlagEnvironmentParams) (pgtype.UUID, error)
 	LockInvoiceForRefund(ctx context.Context, db DBTX, id pgtype.UUID) (LockInvoiceForRefundRow, error)
+	// The same advisory key as CreateWorkflowRunAdmitted, taken before app locks.
+	LockNativeWorkflowAdmission(ctx context.Context, db DBTX, appID string) error
+	LockNativeWorkflowOwnership(ctx context.Context, db DBTX, id pgtype.UUID) (string, error)
 	LockRetainedRollbackDeployment(ctx context.Context, db DBTX, arg LockRetainedRollbackDeploymentParams) (pgtype.UUID, error)
 	MarkClaimedTriggerRecordDeadLetter(ctx context.Context, db DBTX, arg MarkClaimedTriggerRecordDeadLetterParams) (int64, error)
 	MarkClaimedTriggerRecordRetry(ctx context.Context, db DBTX, arg MarkClaimedTriggerRecordRetryParams) (int64, error)
@@ -943,6 +952,7 @@ type Querier interface {
 	// itself hits 0 rows and the handler reads upload_commit_outcomes
 	// to return the original deployment_id.
 	MarkUploadSessionCommitted(ctx context.Context, db DBTX, arg MarkUploadSessionCommittedParams) (MarkUploadSessionCommittedRow, error)
+	NextDueLegacyWorkflowRun(ctx context.Context, db DBTX, staleMs int64) (NextDueLegacyWorkflowRunRow, error)
 	// ----------------------------------------------------------------------
 	// NodeLifecycleStore (Workstream B, issue #1184)
 	//
@@ -1216,6 +1226,8 @@ type Querier interface {
 	// DO UPDATE) is correct: the original row is canonical.
 	RecordUploadCommitOutcome(ctx context.Context, db DBTX, arg RecordUploadCommitOutcomeParams) (UploadCommitOutcome, error)
 	RecoverExpiredCustomerOperationExecution(ctx context.Context, db DBTX, arg RecoverExpiredCustomerOperationExecutionParams) error
+	RecoverLegacyWorkflowRun(ctx context.Context, db DBTX, id pgtype.UUID) error
+	RecoverLegacyWorkflowSteps(ctx context.Context, db DBTX, runID pgtype.UUID) error
 	RegisterGatewayUsageEvent(ctx context.Context, db DBTX, arg RegisterGatewayUsageEventParams) (bool, error)
 	RenewCustomerOperationExecution(ctx context.Context, db DBTX, arg RenewCustomerOperationExecutionParams) (int64, error)
 	RenewCustomerOperationStream(ctx context.Context, db DBTX, arg RenewCustomerOperationStreamParams) (int64, error)
@@ -1353,6 +1365,7 @@ type Querier interface {
 	// (account_id) predicate; the SUM is over the partial index.
 	SumOpenUploadSessionBytesByAccount(ctx context.Context, db DBTX, dollar_1 pgtype.UUID) (int64, error)
 	SweepCountedMirrorResults(ctx context.Context, db DBTX, cutoff pgtype.Timestamptz) (int64, error)
+	SweepUnboundNativeWorkflowRuns(ctx context.Context, db DBTX, ageMs int64) (int64, error)
 	TouchKeyLastUsed(ctx context.Context, db DBTX, id pgtype.UUID) error
 	// Best-effort, fire-and-forget. Allowed on revoked rows (observability
 	// signal only; not authorization). pgx interface returns nothing.
