@@ -10,6 +10,8 @@ const REGISTRY = "https://registry.npmjs.org/";
 const NAMES = ["@gregale/cli-darwin-amd64", "@gregale/cli-darwin-arm64",
   "@gregale/cli-linux-amd64", "@gregale/cli-linux-arm64", "gregale"];
 class Pending extends Error {}
+const isHolding = data => data?.versions?.["0.0.0-stage"] &&
+  Object.keys(data.versions).every(version => version === "0.0.0-stage");
 
 export function loadPackages(directory) {
   const packages = NAMES.map(name => {
@@ -69,7 +71,7 @@ export async function publishPackages(packages, {
     const name = pkg.manifest.name;
     const data = await metadata(name);
     const published = data?.versions?.[version];
-    if (!published) throw new Pending(`${name}@${version} is not public${data?.versions?.["0.0.0-stage"] ? " (holding placeholder)" : ""}`);
+    if (!published) throw new Pending(`${name}@${version} is not public${isHolding(data) ? " (holding placeholder)" : ""}`);
     for (const key of ["name", "version", "os", "cpu", "optionalDependencies"]) {
       if (!isDeepStrictEqual(published[key], pkg.manifest[key])) {
         throw new Error(`${name}@${version}: public ${key} differs from staged manifest`);
@@ -121,7 +123,7 @@ export async function publishPackages(packages, {
     const name = pkg.manifest.name;
     const data = await metadata(name);
     if (data?.versions?.[version]) { log(`${name}@${version} already public; no upload`); return; }
-    if (repairOnly || data?.versions?.["0.0.0-stage"]) {
+    if (repairOnly || isHolding(data)) {
       log(`${name}@${version}: waiting for accepted upload; no repeat upload`);
       return;
     }

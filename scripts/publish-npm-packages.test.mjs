@@ -135,6 +135,21 @@ test("repair-only never uploads a version missing from the registry", async t =>
   assert.equal(f.state.calls.filter(c => c[0] === "publish").length, 0);
 });
 
+test("historical holding placeholders do not prevent subsequent releases", async t => {
+  const f = fixture(t);
+  const originalFetch = f.options.fetchPublic;
+  f.options.fetchPublic = async (...args) => {
+    const response = await originalFetch(...args);
+    if (args[1].method === "HEAD") return response;
+    const data = await response.json();
+    data.versions["0.0.0-stage"] = { version: "0.0.0-stage" };
+    data.versions["1.2.3-rc.3"] = { version: "1.2.3-rc.3" };
+    return { ...response, json: async () => data };
+  };
+  await publishPackages(f.packages, f.options);
+  assert.equal(f.state.calls.filter(c => c[0] === "publish").length, 5);
+});
+
 test("prerelease publishing preserves a previous stable latest", async t => {
   const f = fixture(t);
   names.forEach(name => f.state.tags.set(name, { latest: "1.2.2" }));
