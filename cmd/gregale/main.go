@@ -217,6 +217,8 @@ func run(args []string) (status int) {
 		return cmdProjects(args[1:])
 	case "init":
 		return cmdInit(args[1:])
+	case "mcp":
+		return cmdMCP(args[1:])
 	case "connect":
 		return cmdConnect(args[1:])
 	case "github":
@@ -362,6 +364,8 @@ func run(args []string) (status int) {
 		return cmdWake(args[1:])
 	case "test":
 		return cmdTest(args[1:])
+	case "chaos":
+		return cmdChaos(args[1:])
 	case "traffic":
 		return cmdTraffic(args[1:])
 	case "mirror":

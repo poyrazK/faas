@@ -6,6 +6,7 @@ from uuid import UUID
 
 from attrs import define as _attrs_define
 
+from ..models.flag_rule_rollout_unit import FlagRuleRolloutUnit, check_flag_rule_rollout_unit
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -17,8 +18,10 @@ T = TypeVar("T", bound="FlagRule")
 
 @_attrs_define
 class FlagRule:
-    """Ordered customer targeting rule; supplied constraints combine with AND. Boolean flags require a boolean value;
-    variant flags may omit value to use weighted assignment. Progressive rollout is limited to boolean true rules.
+    """Ordered targeting rule; customer/group and subject constraints combine with AND. Subject rules require a customer or
+    group constraint. Subject IDs are opaque application IDs and are evaluated only after application authentication.
+    Boolean flags require a boolean value; variant flags may omit value to use weighted assignment. Progressive rollout
+    is limited to boolean true rules.
 
     """
 
@@ -26,8 +29,15 @@ class FlagRule:
     customers: list[UUID] | Unset = UNSET
     group: str | Unset = UNSET
     """Owner-managed customer group key."""
+    subjects: list[str] | Unset = UNSET
+    """Opaque application subject IDs, matched inside the selected customers/group. Use stable internal IDs, not
+    emails or display names."""
     rollout: int | Unset = UNSET
-    """Basis points of eligible customers; omitted means all eligible customers."""
+    """Basis points of eligible customers by default, or eligible subjects when rollout_unit is subject; omitted
+    means all eligible targets."""
+    rollout_unit: FlagRuleRolloutUnit | Unset = UNSET
+    """Allocation unit for rollout percentages. Omitted preserves customer-level allocation. Subject rollout
+    requires a customer or group constraint and an authenticated subject context."""
     progression: ProgressiveRollout | Unset = UNSET
     """Health-gated stages for a boolean true rule. Promotion is manual by default; auto_advance opts into server-
     managed promotion after a full healthy evidence window. The rule rollout must equal stages[current_stage];
@@ -46,7 +56,15 @@ class FlagRule:
 
         group = self.group
 
+        subjects: list[str] | Unset = UNSET
+        if not isinstance(self.subjects, Unset):
+            subjects = self.subjects
+
         rollout = self.rollout
+
+        rollout_unit: str | Unset = UNSET
+        if not isinstance(self.rollout_unit, Unset):
+            rollout_unit = self.rollout_unit
 
         progression: dict[str, Any] | Unset = UNSET
         if not isinstance(self.progression, Unset):
@@ -69,8 +87,12 @@ class FlagRule:
             field_dict["customers"] = customers
         if group is not UNSET:
             field_dict["group"] = group
+        if subjects is not UNSET:
+            field_dict["subjects"] = subjects
         if rollout is not UNSET:
             field_dict["rollout"] = rollout
+        if rollout_unit is not UNSET:
+            field_dict["rollout_unit"] = rollout_unit
         if progression is not UNSET:
             field_dict["progression"] = progression
         if value is not UNSET:
@@ -96,7 +118,16 @@ class FlagRule:
 
         group = d.pop("group", UNSET)
 
+        subjects = cast(list[str], d.pop("subjects", UNSET))
+
         rollout = d.pop("rollout", UNSET)
+
+        _rollout_unit = d.pop("rollout_unit", UNSET)
+        rollout_unit: FlagRuleRolloutUnit | Unset
+        if isinstance(_rollout_unit, Unset):
+            rollout_unit = UNSET
+        else:
+            rollout_unit = check_flag_rule_rollout_unit(_rollout_unit)
 
         _progression = d.pop("progression", UNSET)
         progression: ProgressiveRollout | Unset
@@ -116,7 +147,9 @@ class FlagRule:
             id=id,
             customers=customers,
             group=group,
+            subjects=subjects,
             rollout=rollout,
+            rollout_unit=rollout_unit,
             progression=progression,
             value=value,
         )

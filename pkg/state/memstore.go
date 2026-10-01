@@ -24,6 +24,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/chaos"
 	"github.com/onebox-faas/faas/pkg/cursor"
 	"github.com/onebox-faas/faas/pkg/devbridge"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
@@ -204,6 +205,7 @@ type MemStore struct {
 	deployTokenByHash         map[string]DeployToken
 	apps                      map[string]App
 	scenarioTestMembers       map[string]ScenarioTestMember
+	scenarioTestChaosPlans    map[string]chaos.Lease
 	previewSets               map[string]PRPreviewSet
 	privateNetworkAttachments map[string]AppPrivateNetworkAttachment
 
@@ -530,8 +532,10 @@ type MemStore struct {
 	// executions and executionPayloads mirror the ADR-171 durable intent
 	// split. Customer reads only touch executions; a payload is exposed solely
 	// by ClaimExecution after the in-memory lease CAS succeeds.
-	executions        map[string]Execution
-	executionPayloads map[string]executionPayload
+	executions                      map[string]Execution
+	executionPayloads               map[string]executionPayload
+	executionArtifactGrants         map[string]ExecutionArtifactGrant
+	executionOutboundIntegrationIDs map[string][]string
 	// executionUsageLedger mirrors execution_usage_ledger. It is keyed by
 	// execution ID so terminalization and recovery can be replayed without
 	// double-counting usage.
@@ -1192,29 +1196,31 @@ func NewMemStore() *MemStore {
 		oidcTrustPolicies:   map[string]OIDCTrustPolicy{},
 		oidcExchangedTokens: map[string]OIDCExchangedToken{},
 		// ADR-100 / tenant surfaces — see memstore_tenant_surface.go.
-		tenantSurfaces:          map[string]TenantSurface{},
-		tenantHostnames:         map[string]TenantHostname{},
-		invocations:             map[string]Invocation{},
-		workPolicies:            map[string]AppWorkPolicy{},
-		eventWorkBindings:       map[string]EventWorkBinding{},
-		triggerWorkBindings:     map[string]TriggerWorkBinding{},
-		workCancellations:       map[string]WorkCancellation{},
-		executions:              map[string]Execution{},
-		executionPayloads:       map[string]executionPayload{},
-		executionUsageLedger:    map[string]executionUsageLedgerRow{},
-		executionEvents:         map[string][]ExecutionEvent{},
-		runtimeSnapshots:        map[string]RuntimeSnapshotRecord{},
-		accountAsyncQuota:       map[string]accountAsyncQuotaRow{},
-		instances:               map[string]Instance{},
-		hostPorts:               hostport.NewDefaultAllocator(),
-		loginTokens:             map[string]LoginToken{},
-		emailVerificationTokens: map[string]EmailVerificationToken{},
-		mfaDisableRequests:      map[string]MFADisableRequest{},
-		cliAuthCodes:            map[string]CliAuthCode{},
-		accountPasswords:        map[string]AccountPassword{},
-		oauthLinks:              map[string]OAuthLink{},
-		deploymentLogs:          map[string][]LogEntry{},
-		deploymentSeq:           map[string]int64{},
+		tenantSurfaces:                  map[string]TenantSurface{},
+		tenantHostnames:                 map[string]TenantHostname{},
+		invocations:                     map[string]Invocation{},
+		workPolicies:                    map[string]AppWorkPolicy{},
+		eventWorkBindings:               map[string]EventWorkBinding{},
+		triggerWorkBindings:             map[string]TriggerWorkBinding{},
+		workCancellations:               map[string]WorkCancellation{},
+		executions:                      map[string]Execution{},
+		executionPayloads:               map[string]executionPayload{},
+		executionArtifactGrants:         map[string]ExecutionArtifactGrant{},
+		executionOutboundIntegrationIDs: map[string][]string{},
+		executionUsageLedger:            map[string]executionUsageLedgerRow{},
+		executionEvents:                 map[string][]ExecutionEvent{},
+		runtimeSnapshots:                map[string]RuntimeSnapshotRecord{},
+		accountAsyncQuota:               map[string]accountAsyncQuotaRow{},
+		instances:                       map[string]Instance{},
+		hostPorts:                       hostport.NewDefaultAllocator(),
+		loginTokens:                     map[string]LoginToken{},
+		emailVerificationTokens:         map[string]EmailVerificationToken{},
+		mfaDisableRequests:              map[string]MFADisableRequest{},
+		cliAuthCodes:                    map[string]CliAuthCode{},
+		accountPasswords:                map[string]AccountPassword{},
+		oauthLinks:                      map[string]OAuthLink{},
+		deploymentLogs:                  map[string][]LogEntry{},
+		deploymentSeq:                   map[string]int64{},
 		// Issue #463 / ADR-069 / PR-B — per-workload filesystem
 		// handles (mirrors migration 00119's PK + ON CONFLICT
 		// semantics).
@@ -2330,13 +2336,14 @@ func (m *MemStore) CreateAPIKey(_ context.Context, accountID string, hash []byte
 		return APIKey{}, err
 	}
 	k := APIKey{
-		ID:        newID(),
-		AccountID: accountID,
-		Hash:      hash,
-		Label:     label,
-		Scopes:    scopes,
-		CreatedAt: time.Now(),
-		Status:    string(APIKeyStatusActive),
+		ID:              newID(),
+		AccountID:       accountID,
+		RunsPrincipalID: newID(),
+		Hash:            hash,
+		Label:           label,
+		Scopes:          scopes,
+		CreatedAt:       time.Now(),
+		Status:          string(APIKeyStatusActive),
 	}
 	m.keys[k.ID] = k
 	m.keyByHash[h] = k
@@ -2361,18 +2368,19 @@ func (m *MemStore) CreateOrgAPIKeyWithProvenance(_ context.Context, orgID, accou
 		return APIKey{}, err
 	}
 	k := APIKey{
-		ID:          newID(),
-		AccountID:   accountID,
-		OrgID:       orgIDField,
-		Hash:        hash,
-		Label:       label,
-		Scopes:      scopes,
-		CreatedAt:   time.Now(),
-		Status:      string(APIKeyStatusActive),
-		ExpiresAt:   expiresAt,
-		CreatedIP:   createdIP,
-		CreatedUA:   createdUA,
-		ParentKeyID: parent,
+		ID:              newID(),
+		AccountID:       accountID,
+		OrgID:           orgIDField,
+		RunsPrincipalID: newID(),
+		Hash:            hash,
+		Label:           label,
+		Scopes:          scopes,
+		CreatedAt:       time.Now(),
+		Status:          string(APIKeyStatusActive),
+		ExpiresAt:       expiresAt,
+		CreatedIP:       createdIP,
+		CreatedUA:       createdUA,
+		ParentKeyID:     parent,
 	}
 	m.keys[k.ID] = k
 	m.keyByHash[h] = k
@@ -2400,18 +2408,19 @@ func (m *MemStore) RotateOrgAPIKeyWithProvenance(_ context.Context, orgID, oldKe
 	}
 	rotatedFrom := old.ID
 	newKey := APIKey{
-		ID:            newID(),
-		AccountID:     old.AccountID,
-		OrgID:         old.OrgID,
-		Hash:          newHash,
-		Label:         newLabel,
-		Scopes:        old.Scopes,
-		CreatedAt:     time.Now(),
-		Status:        string(APIKeyStatusActive),
-		RotatedFromID: &rotatedFrom,
-		CreatedIP:     createdIP,
-		CreatedUA:     createdUA,
-		ParentKeyID:   parent,
+		ID:              newID(),
+		AccountID:       old.AccountID,
+		OrgID:           old.OrgID,
+		RunsPrincipalID: old.RunsPrincipalID,
+		Hash:            newHash,
+		Label:           newLabel,
+		Scopes:          old.Scopes,
+		CreatedAt:       time.Now(),
+		Status:          string(APIKeyStatusActive),
+		RotatedFromID:   &rotatedFrom,
+		CreatedIP:       createdIP,
+		CreatedUA:       createdUA,
+		ParentKeyID:     parent,
 	}
 	m.keys[newKey.ID] = newKey
 	m.keyByHash[hex.EncodeToString(newKey.Hash)] = newKey
@@ -2528,14 +2537,15 @@ func (m *MemStore) CreateAPIKeyWithExpiry(_ context.Context, accountID string, h
 		return APIKey{}, err
 	}
 	k := APIKey{
-		ID:        newID(),
-		AccountID: accountID,
-		Hash:      hash,
-		Label:     label,
-		Scopes:    scopes,
-		CreatedAt: time.Now(),
-		Status:    string(APIKeyStatusActive),
-		ExpiresAt: expiresAt,
+		ID:              newID(),
+		AccountID:       accountID,
+		RunsPrincipalID: newID(),
+		Hash:            hash,
+		Label:           label,
+		Scopes:          scopes,
+		CreatedAt:       time.Now(),
+		Status:          string(APIKeyStatusActive),
+		ExpiresAt:       expiresAt,
 	}
 	m.keys[k.ID] = k
 	m.keyByHash[h] = k
@@ -2556,17 +2566,18 @@ func (m *MemStore) CreateAPIKeyWithExpiryAndProvenance(_ context.Context, accoun
 		return APIKey{}, err
 	}
 	k := APIKey{
-		ID:          newID(),
-		AccountID:   accountID,
-		Hash:        hash,
-		Label:       label,
-		Scopes:      scopes,
-		CreatedAt:   time.Now(),
-		Status:      string(APIKeyStatusActive),
-		ExpiresAt:   expiresAt,
-		CreatedIP:   createdIP,
-		CreatedUA:   createdUA,
-		ParentKeyID: parent,
+		ID:              newID(),
+		AccountID:       accountID,
+		RunsPrincipalID: newID(),
+		Hash:            hash,
+		Label:           label,
+		Scopes:          scopes,
+		CreatedAt:       time.Now(),
+		Status:          string(APIKeyStatusActive),
+		ExpiresAt:       expiresAt,
+		CreatedIP:       createdIP,
+		CreatedUA:       createdUA,
+		ParentKeyID:     parent,
 	}
 	m.keys[k.ID] = k
 	m.keyByHash[h] = k
@@ -2631,14 +2642,15 @@ func (m *MemStore) RotateAPIKey(_ context.Context, accountID, oldKeyID string, n
 	}
 	rotatedFrom := old.ID
 	newKey := APIKey{
-		ID:            newID(),
-		AccountID:     accountID,
-		Hash:          newHash,
-		Label:         newLabel,
-		Scopes:        old.Scopes,
-		CreatedAt:     time.Now(),
-		Status:        string(APIKeyStatusActive),
-		RotatedFromID: &rotatedFrom,
+		ID:              newID(),
+		AccountID:       accountID,
+		RunsPrincipalID: old.RunsPrincipalID,
+		Hash:            newHash,
+		Label:           newLabel,
+		Scopes:          old.Scopes,
+		CreatedAt:       time.Now(),
+		Status:          string(APIKeyStatusActive),
+		RotatedFromID:   &rotatedFrom,
 	}
 	m.keys[newKey.ID] = newKey
 	m.keyByHash[hex.EncodeToString(newKey.Hash)] = newKey
@@ -2745,15 +2757,16 @@ func (m *MemStore) CreateOrgAPIKey(_ context.Context, orgID, accountID string, h
 		return APIKey{}, err
 	}
 	k := APIKey{
-		ID:        newID(),
-		AccountID: accountID,
-		OrgID:     orgID,
-		Hash:      hash,
-		Label:     label,
-		Scopes:    scopes,
-		CreatedAt: time.Now(),
-		Status:    string(APIKeyStatusActive),
-		ExpiresAt: expiresAt,
+		ID:              newID(),
+		AccountID:       accountID,
+		OrgID:           orgID,
+		RunsPrincipalID: newID(),
+		Hash:            hash,
+		Label:           label,
+		Scopes:          scopes,
+		CreatedAt:       time.Now(),
+		Status:          string(APIKeyStatusActive),
+		ExpiresAt:       expiresAt,
 	}
 	m.keys[k.ID] = k
 	m.keyByHash[h] = k
@@ -2824,15 +2837,16 @@ func (m *MemStore) RotateOrgAPIKey(_ context.Context, orgID, oldKeyID string, ne
 	}
 	rotatedFrom := old.ID
 	newKey := APIKey{
-		ID:            newID(),
-		AccountID:     old.AccountID,
-		OrgID:         old.OrgID,
-		Hash:          newHash,
-		Label:         newLabel,
-		Scopes:        old.Scopes,
-		CreatedAt:     time.Now(),
-		Status:        string(APIKeyStatusActive),
-		RotatedFromID: &rotatedFrom,
+		ID:              newID(),
+		AccountID:       old.AccountID,
+		OrgID:           old.OrgID,
+		RunsPrincipalID: old.RunsPrincipalID,
+		Hash:            newHash,
+		Label:           newLabel,
+		Scopes:          old.Scopes,
+		CreatedAt:       time.Now(),
+		Status:          string(APIKeyStatusActive),
+		RotatedFromID:   &rotatedFrom,
 	}
 	m.keys[newKey.ID] = newKey
 	m.keyByHash[hex.EncodeToString(newKey.Hash)] = newKey

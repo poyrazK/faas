@@ -27,7 +27,7 @@ Host-specific release validation remains:
 - [ ] Native KVM stale-snapshot acceptance
       (`TestExclusiveOperationFencesRestoredKVMOwnerMetal`), metal checks, and leakcheck.
 
-Progress note: manual app, Job, and AppTask submissions, HTTP cron/fire-now,
+Progress note: manual app, Job, and AppTask submissions, HTTP and command cron/fire-now,
 recurring Job schedules, signature-verified Stripe webhooks, and in-platform
 queue plus external broker triggers share the operation admission and worker
 path. Job schedule occurrences use stable retry identity before the schedule
@@ -41,6 +41,8 @@ VMMD delivery path. The full `pkg/sched` suite currently has a separate failure 
 wake returns `no live deployment to wake`, including when run alone. YAML/TOML
 declarations reconcile account-owned policies and trigger bindings through
 the CLI. The native test `TestExclusiveOperationFencesRestoredKVMOwnerMetal`
-is assigned to the `wake` phase. Its real guest/snapshot assertions remain
-unverified until the designated KVM gate runs; metal checks and leakcheck are
-still open because this host has no `/dev/kvm`.
+is assigned to the `wake` phase and has a focused
+`exclusive-operations-only` qualification lane in the native KVM workflow. Its
+real guest/snapshot assertions remain unverified until that lane passes on the
+designated host; this checkout cannot run metal checks or leakcheck because it
+has no `/dev/kvm`.

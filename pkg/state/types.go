@@ -953,6 +953,10 @@ func (k ConsumerKey) Active(now time.Time) bool {
 type APIKey struct {
 	ID        string
 	AccountID string
+	// RunsPrincipalID is a stable, internal key-family identity used to
+	// partition disposable execution receipts between narrow Runs agents.
+	// It is preserved across key rotation and never returned in API DTOs.
+	RunsPrincipalID string `json:"-"`
 	// PlatformTenantID is set only on the synthetic APIKey projection for a
 	// tenant-bound self-service bearer. Persisted account keys leave it empty.
 	PlatformTenantID string
@@ -3464,6 +3468,7 @@ const (
 	AppWebhookEventIssueReopened                    AppWebhookEvent = "issue.reopened"
 	AppWebhookEventIssueIgnored                     AppWebhookEvent = "issue.ignored"
 	AppWebhookEventIssueRegressed                   AppWebhookEvent = "issue.regressed"
+	AppWebhookEventIssueImpactThresholdReached      AppWebhookEvent = "issue.impact_threshold_reached"
 )
 
 // AllAppWebhookEvents is the canonical closed vocabulary shared by
@@ -3498,6 +3503,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventIssueReopened,
 	AppWebhookEventIssueIgnored,
 	AppWebhookEventIssueRegressed,
+	AppWebhookEventIssueImpactThresholdReached,
 }
 
 // ValidAppWebhookEvent reports whether event is in the closed

@@ -695,6 +695,30 @@ type ScenarioTestWorkload struct {
 	AppSlug  string `json:"app_slug"`
 }
 
+// InjectScenarioTestChaosRequest installs bounded request faults on service
+// calls within one registered scenario run. The server supplies the expiry;
+// callers cannot choose an absolute timestamp or target an unregistered app.
+type InjectScenarioTestChaosRequest struct {
+	DurationMS int64                   `json:"duration_ms"`
+	Rules      []ScenarioTestChaosRule `json:"rules"`
+}
+
+// ScenarioTestChaosRule describes one bounded fault for scenario service calls.
+type ScenarioTestChaosRule struct {
+	From       string `json:"from,omitempty"`
+	To         string `json:"to"`
+	Kind       string `json:"kind"`
+	Percent    int    `json:"percent"`
+	LatencyMS  int64  `json:"latency_ms,omitempty"`
+	StatusCode int    `json:"status_code,omitempty"`
+	Seed       uint64 `json:"seed"`
+}
+
+type InjectScenarioTestChaosResponse struct {
+	ExpiresAt      time.Time `json:"expires_at"`
+	RulesInstalled int       `json:"rules_installed"`
+}
+
 // UpdateAppRequest is the partial-update payload for PATCH /v1/apps/{slug}.
 // All fields are pointers so the wire form can distinguish "not set" from
 // "set to zero".
@@ -5440,7 +5464,8 @@ type ListCronRunsResponse struct {
 // poll the row's status (future GET /v1/cron-fire-now-requests/{id})
 // or to correlate the audit-event stream (`cron.fired.manually`)
 // back to their request. Status starts at "pending" — terminal
-// values are "succeeded" or "failed".
+// values are "succeeded" or "failed". Managed exclusive command crons set
+// OperationID on acceptance and TaskID once their owned AppTask is created.
 type FireCronResponse struct {
 	RequestID string `json:"request_id"`
 	CronID    string `json:"cron_id"`
@@ -5456,7 +5481,7 @@ type FireCronResponse struct {
 // Polling contract: clients should poll until Status is one of the
 // terminal values {succeeded, failed, cancelled}. The schedd fire-now
 // consumer populates FinishedAt + Error and either InvocationID (legacy HTTP
-// crons), OperationID (managed exclusive HTTP crons), or TaskID.
+// crons), OperationID (managed exclusive HTTP or command crons), or TaskID.
 type FireCronRequestResponse struct {
 	RequestID    string  `json:"request_id"`
 	CronID       string  `json:"cron_id"`
@@ -11446,6 +11471,7 @@ type ScheduleOccurrenceResponse struct {
 	Status               string                     `json:"status"`
 	Reason               string                     `json:"reason,omitempty"`
 	BlockingOccurrenceID string                     `json:"blocking_occurrence_id,omitempty"`
+	ExclusiveOperationID string                     `json:"exclusive_operation_id,omitempty"`
 	JobRunID             string                     `json:"job_run_id,omitempty"`
 	InvocationID         string                     `json:"invocation_id,omitempty"`
 	AppTaskID            string                     `json:"app_task_id,omitempty"`

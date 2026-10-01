@@ -64,6 +64,8 @@ from .flags import (
     evaluate_flag,
     evaluate_variant,
     flag_bucket,
+    flag_subject_bucket,
+    flag_subject_variant_bucket,
     flag_variant_bucket,
     validate_bundle,
 )
@@ -121,6 +123,8 @@ __all__ = (
     "evaluate_flag",
     "evaluate_variant",
     "flag_bucket",
+    "flag_subject_bucket",
+    "flag_subject_variant_bucket",
     "flag_variant_bucket",
     "validate_bundle",
     "GregaleReleaseMiddleware",

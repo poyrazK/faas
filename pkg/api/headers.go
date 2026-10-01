@@ -17,6 +17,11 @@ const (
 	// authorized Gregale service call or a customer-bound durable invocation.
 	// Public ingress always clears it.
 	FlagContextHeader = "X-Faas-Flag-Context"
+	// FlagSDKCapabilitiesHeader identifies optional runtime evaluation features
+	// understood by an SDK. The runtime endpoint gates unsupported bundles.
+	FlagSDKCapabilitiesHeader = "X-Faas-Flags-Capabilities"
+	// FlagSDKSubjectTargetingCapability advertises safe per-subject evaluation.
+	FlagSDKSubjectTargetingCapability = "subject-targeting-v1"
 	// TraceIDHeader carries the canonical W3C trace id for a request. Unlike
 	// RequestIDHeader, this value is always the 32-character lowercase OTel
 	// trace id when tracing is active.

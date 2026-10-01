@@ -418,6 +418,9 @@ func (f *fakeVmmdClient) ExecuteExecution(context.Context, *vmmdpb.ExecuteExecut
 func (f *fakeVmmdClient) ExecuteExecutionStream(context.Context, *vmmdpb.ExecuteExecutionRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[vmmdpb.ExecuteExecutionEvent], error) {
 	panic("ExecuteExecutionStream: not stubbed")
 }
+func (f *fakeVmmdClient) ExecuteExecutionBrokerStream(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.ExecuteExecutionBrokerRequest, vmmdpb.ExecuteExecutionBrokerEvent], error) {
+	return nil, status.Error(codes.Unimplemented, "execution broker stream is not used by gateway tests")
+}
 func (f *fakeVmmdClient) RestoreExecution(context.Context, *vmmdpb.RestoreExecutionRequest, ...grpc.CallOption) (*vmmdpb.RestoreExecutionResponse, error) {
 	panic("RestoreExecution: not stubbed")
 }

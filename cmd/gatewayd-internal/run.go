@@ -59,6 +59,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/audit"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
+	"github.com/onebox-faas/faas/pkg/chaos"
 	"github.com/onebox-faas/faas/pkg/circuit"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -578,11 +579,10 @@ func (a *synthAdapter) replayMirror(ctx context.Context, appID string, inv state
 		out.Result = encoded
 	}
 	if a.store != nil {
-		var storedMirrorBodyHash, storedSourceBodyHash []byte
-		if rule.IncludeBody {
-			storedMirrorBodyHash = mirrorBodyHash
-			storedSourceBodyHash = sourceBodyHash
-		}
+		// This replay API compares exact body hashes supplied by its caller,
+		// unlike live mirror comparisons which use keyed per-request HMACs.
+		// Retain only the resulting bodyDiff bit; raw SHA-256 fingerprints of
+		// response bodies may be low-entropy and are not written to the ledger.
 		if storeErr := a.store.InsertMirrorResult(ctx, state.MirrorInvocationResult{
 			MirrorRuleID:         rule.ID,
 			AccountID:            rule.AccountID,
@@ -594,8 +594,6 @@ func (a *synthAdapter) replayMirror(ctx context.Context, appID string, inv state
 			SourceStatusCode:     sourceStatus,
 			LatencyMs:            latencyMs,
 			SourceLatencyMs:      sourceLatency,
-			BodyHash:             storedMirrorBodyHash,
-			SourceBodyHash:       storedSourceBodyHash,
 			StatusDiff:           statusDiff,
 			SchemaDiff:           false,
 			BodyDiff:             bodyDiff,
@@ -3552,6 +3550,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			Resolve:    newServiceProxyResolver(pgStore),
 			Authorize:  newServiceProxyAuthorizer(pgStore),
 			AllowAlias: guestServiceAliasAllowed,
+			ResolveChaos: func(ctx context.Context, runID, callerAppID, targetWorkload string) (chaos.Lease, error) {
+				return pgStore.ScenarioTestChaosForCall(ctx, runID, callerAppID, targetWorkload)
+			},
 			Forward:    deps.nodeCache.Forwarding(),
 			RawForward: deps.nodeCache.RawForwarding(),
 			// ADR-196: a call to a parked internal service must hold and

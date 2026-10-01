@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -73,7 +74,15 @@ func testDirectOCIFullRootfs(t *testing.T, options directOCIContractOptions) {
 	e2etest.OverrideBuilderBase(t, builderBaseRef)
 	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
 
-	h := e2etest.Start(t, pool, e2etest.DeployWake)
+	var extraEnv []string
+	if options.Companion {
+		// Exercise the production seal/unseal path with a test-owned identity.
+		keyDir := t.TempDir()
+		keyPath, pubPath := filepath.Join(keyDir, "host.age"), filepath.Join(keyDir, "host.age.pub")
+		preSeedHostKey(t, keyPath, pubPath)
+		extraEnv = []string{"FAAS_HOST_KEY_PATH=" + keyPath, "FAAS_HOST_AGE_RECIPIENT_PATH=" + pubPath}
+	}
+	h := e2etest.Start(t, pool, e2etest.DeployWake, extraEnv...)
 	t.Cleanup(func() {
 		if t.Failed() {
 			h.DumpLogs(t)
@@ -115,7 +124,7 @@ func testDirectOCIFullRootfs(t *testing.T, options directOCIContractOptions) {
 	if status != http.StatusAccepted {
 		t.Fatalf("create deployment: status=%d body=%s", status, body)
 	}
-	depID, _ := parseQueuedDeployment(t, body)
+	depID := parseImageDeployment(t, body)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
@@ -194,7 +203,7 @@ func testDirectOCIFullRootfs(t *testing.T, options directOCIContractOptions) {
 
 	parkCtx, parkCancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer parkCancel()
-	if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/oci-fullrootfs/park", nil); status != http.StatusAccepted {
+	if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/oci-fullrootfs/park", nil); status != http.StatusNoContent {
 		t.Fatalf("park: status=%d", status)
 	}
 	if _, err := e2etest.WaitForInstanceState(parkCtx, t, pool, appID, state.StateParked, 45*time.Second); err != nil {
@@ -226,7 +235,7 @@ func testDirectOCIFullRootfs(t *testing.T, options directOCIContractOptions) {
 
 	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cleanupCancel()
-	if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/oci-fullrootfs/park", nil); status != http.StatusAccepted {
+	if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/oci-fullrootfs/park", nil); status != http.StatusNoContent {
 		t.Fatalf("cleanup park: status=%d", status)
 	}
 	if _, err := e2etest.WaitForInstanceState(cleanupCtx, t, pool, appID, state.StateParked, 45*time.Second); err != nil {

@@ -1,9 +1,9 @@
-# ADR-423 · Git-owned environment intent and continuous reconciliation
+# ADR-425 · Git-owned environment intent and continuous reconciliation
 
 - **Status:** implementation in progress
 - **Date:** 2026-09-30
 - **Migration reference:** Earlier unreleased GitOps migration comments using
-  ADR-387 and this branch's earlier ADR-393 document refer to this contract.
+  ADR-387 and this branch's earlier ADR-393 and ADR-423 documents refer to this contract.
   Published ADR-387 covers FOCUS invoices; ADR-393 covers exclusive operations.
 - **Decision:** A registered project environment may bind one approved,
   immutable Git definition to a durable management source. The contract owns
@@ -647,6 +647,12 @@ ordinary reference removes only its overlay and preserves its sealed source. A
 legacy deployment mapping or automatic secret delivery can supply that key on a
 future wake. Explicit adoption and owned-reference pruning must resolve that
 baseline before the complete GitOps executor is enabled.
+
+The integration checkpoint includes main through `72893dc28`. After combining
+its protocol, SQL and client sources, regeneration and focused GitOps/store,
+HTTP/dashboard, CLI, scheduler alias and Go/Node/Python SDK checks pass. The
+complete `vmmdgrpc` and `fcvm` unit suites also pass. This is unit and PostgreSQL
+evidence; native guest delivery and lifecycle acceptance remain outstanding.
 
 The remaining full feature gates include native qualification of protected-branch
 approval with the complete serving flow; environment-scoped workload creation, source/runtime,

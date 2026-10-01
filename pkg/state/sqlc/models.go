@@ -268,21 +268,22 @@ type ApiConsumerUsageStatementHandoff struct {
 }
 
 type ApiKey struct {
-	ID            pgtype.UUID
-	AccountID     pgtype.UUID
-	KeySha256     []byte
-	Label         pgtype.Text
-	LastUsedAt    pgtype.Timestamptz
-	CreatedAt     pgtype.Timestamptz
-	Scopes        []string
-	OrgID         pgtype.UUID
-	ExpiresAt     pgtype.Timestamptz
-	Status        string
-	RevokedAt     pgtype.Timestamptz
-	RotatedFromID pgtype.UUID
-	CreatedIp     *netip.Addr
-	CreatedUa     pgtype.Text
-	ParentKeyID   pgtype.UUID
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	KeySha256       []byte
+	Label           pgtype.Text
+	LastUsedAt      pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+	Scopes          []string
+	OrgID           pgtype.UUID
+	ExpiresAt       pgtype.Timestamptz
+	Status          string
+	RevokedAt       pgtype.Timestamptz
+	RotatedFromID   pgtype.UUID
+	CreatedIp       *netip.Addr
+	CreatedUa       pgtype.Text
+	ParentKeyID     pgtype.UUID
+	RunsPrincipalID pgtype.UUID
 }
 
 type App struct {
@@ -502,6 +503,12 @@ type AppIssue struct {
 	FixedDeploymentID        pgtype.UUID
 	FixedDeploymentCreatedAt pgtype.Timestamptz
 	IgnoredUntil             pgtype.Timestamptz
+}
+
+type AppIssueImpactAlertPolicy struct {
+	AppID            pgtype.UUID
+	MinimumCustomers int32
+	UpdatedAt        pgtype.Timestamptz
 }
 
 type AppLogDrain struct {
@@ -1968,6 +1975,23 @@ type Execution struct {
 	Artifacts          []byte
 	Profile            string
 	RuntimeImageDigest pgtype.Text
+	RunsPrincipalID    pgtype.UUID
+	WorkflowID         pgtype.Text
+	StepLabel          pgtype.Text
+}
+
+type ExecutionArtifactGrant struct {
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	SourceExecutionID   pgtype.UUID
+	ArtifactName        string
+	CreatorPrincipalID  pgtype.UUID
+	TokenHash           []byte
+	ExpiresAt           pgtype.Timestamptz
+	RedeemedAt          pgtype.Timestamptz
+	RedeemedExecutionID pgtype.UUID
+	RevokedAt           pgtype.Timestamptz
+	CreatedAt           pgtype.Timestamptz
 }
 
 type ExecutionEvent struct {
@@ -1977,6 +2001,11 @@ type ExecutionEvent struct {
 	EventType   string
 	Payload     []byte
 	CreatedAt   pgtype.Timestamptz
+}
+
+type ExecutionOutboundIntegration struct {
+	ExecutionID   pgtype.UUID
+	IntegrationID pgtype.UUID
 }
 
 type ExecutionPayload struct {
@@ -3374,6 +3403,7 @@ type OutboundIntegration struct {
 	CircuitBreakerOpenSeconds      int32
 	RetryBudgetPerMinute           int32
 	ResponseCacheTtlSeconds        int32
+	RunsEnabled                    bool
 }
 
 type OutboundIntegrationApp struct {

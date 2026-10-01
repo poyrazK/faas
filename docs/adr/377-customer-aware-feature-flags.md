@@ -13,7 +13,14 @@
   a new publication. Server-generated seeds are stable for an environment/key,
   including removal and recreation. Ordered rules use first-match precedence;
   customer lists, group membership, and eligible-customer percentage constraints
-  combine with AND. Anonymous requests do not match customer rules.
+  combine with AND. Anonymous requests do not match customer rules. Subject-specific
+  rules accept opaque stable application user IDs only alongside a customer or
+  group constraint. Subject percentage and variant allocation hashes include both
+  verified tenant and subject identity. Runtime clients negotiate the
+  `subject-targeting-v1` capability; older clients receive HTTP 426 when a bundle
+  uses subject targeting. Subject IDs are not included in evidence or propagated
+  decisions; applications can propagate a selected, used decision through the
+  existing bounded context envelope.
 
 The capability is internal until operational and native restore qualification;
 `FAAS_FLAGS_ENABLED=1` enables owner access for operator qualification. The
@@ -31,7 +38,10 @@ apps are excluded until their independent configuration scope is defined.
 Operators install public JWKS on apid; no remote key discovery occurs on the
 request path. The Python SDK exposes the same runtime contract through an async
 client, ASGI request middleware, and an HTTPX transport. Its evaluator and bounded
-evidence/context envelopes use the same cross-language allocation vectors.
+evidence/context envelopes use the same cross-language allocation vectors. The
+Go SDK exposes the contract through a standard-library client, `net/http`
+middleware, and a `RoundTripper`; it uses the shared allocation vectors and wire
+envelopes as Node and Python.
 
 Each request uses one immutable snapshot. A resumed process detects elapsed or
 regressed wall time before evaluation; if configuration is older than its bounded

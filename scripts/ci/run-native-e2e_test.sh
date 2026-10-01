@@ -164,6 +164,19 @@ if native_e2e_verdict "${work}/jobs-only.log" >"${work}/jobs-only-full.out" 2>&1
   fail "the whole-suite verdict unexpectedly accepted a Jobs-only log"
 fi
 
+exclusive_tests=()
+while IFS= read -r selected_test; do
+  exclusive_tests+=("${selected_test}")
+done < <(native_e2e_lane_tests exclusive-operations-only "${repo_root}")
+[[ "${#exclusive_tests[@]}" -eq 1 && \
+   "${exclusive_tests[0]}" == "TestExclusiveOperationFencesRestoredKVMOwnerMetal" ]] ||
+  fail "exclusive-operations-only does not select exactly the stale-owner KVM test"
+lane_pass_log "${work}/exclusive-operations-only.log" "${exclusive_tests[@]}"
+native_e2e_lane_verdict "${work}/exclusive-operations-only.log" \
+  "exclusive operations KVM lane" "${exclusive_tests[@]}" \
+  >"${work}/exclusive-operations-only.out" 2>&1 ||
+  fail "a passing stale-owner KVM test was rejected: $(cat "${work}/exclusive-operations-only.out")"
+
 lane_pass_log "${work}/lane-skip.log" "${lane_tests[@]}"
 grep -v -- "--- PASS: ${lane_tests[0]} " "${work}/lane-skip.log" > "${work}/lane-skip.tmp"
 printf -- '--- SKIP: %s (0.00s)\n' "${lane_tests[0]}" >> "${work}/lane-skip.tmp"
@@ -220,12 +233,21 @@ grep -Fq 'SKIPPED subtests' "${work}/lane-subskip.out" || fail "missing subtest 
 # shellcheck disable=SC2016 # Match workflow code literally.
 grep -Fq 'native_e2e_lane_tests containers "$GITHUB_WORKSPACE"' "${workflow}" || fail "container workflow has no exact verdict"
 
-# Keep dispatch routing explicit: smoke and jobs-only validate their derived
+# Keep dispatch routing explicit: bounded lanes validate their derived
 # selection, while full/qualify continue to use the platform-wide contract.
 grep -Fq 'native_e2e_lane_tests smoke "$GITHUB_WORKSPACE"' "${workflow}" ||
   fail "the smoke lane does not derive its selected tests for its verdict"
 grep -Fq 'native_e2e_phase_tests jobs "$GITHUB_WORKSPACE"' "${workflow}" ||
   fail "the Jobs-only lane does not derive its selected tests for its verdict"
+grep -Fq 'native_e2e_lane_tests exclusive-operations-only "$GITHUB_WORKSPACE"' "${workflow}" ||
+  fail "the exclusive-operations lane does not derive its selected test for its verdict"
+grep -Fq "inputs.lane == 'exclusive-operations-only'" "${workflow}" ||
+  fail "the native workflow has no exclusive-operations-only dispatch route"
+grep -Fq 'exclusive_operations_only=${{ steps.phase_exclusive_operations_only.outcome }}' "${workflow}" ||
+  fail "the exclusive-operations lane outcome is absent from the native verdict"
+exclusive_exclusions="$(grep -Fc "inputs.lane != 'exclusive-operations-only'" "${workflow}" || true)"
+[[ "${exclusive_exclusions}" -eq 9 ]] ||
+  fail "exclusive-operations-only must skip all nine platform phases (found ${exclusive_exclusions} exclusions)"
 grep -Fq 'native_e2e_verdict "$log" || rc=1' "${workflow}" ||
   fail "full native e2e dispatches no longer apply the platform-wide verdict"
 

@@ -898,6 +898,12 @@ func (c *Client) RegisterScenarioTest(ctx context.Context, runID string, req Reg
 	return c.do(ctx, "PUT", "/v1/dev/test-runs/"+runID, req, nil)
 }
 
+// InjectScenarioTestChaos installs bounded request faults for one isolated run.
+func (c *Client) InjectScenarioTestChaos(ctx context.Context, runID string, req InjectScenarioTestChaosRequest) (InjectScenarioTestChaosResponse, error) {
+	var out InjectScenarioTestChaosResponse
+	return out, c.do(ctx, "PUT", "/v1/dev/test-runs/"+runID+"/chaos", req, &out)
+}
+
 func (c *Client) DeleteScenarioTest(ctx context.Context, runID string) error {
 	return c.do(ctx, "DELETE", "/v1/dev/test-runs/"+runID, nil, nil)
 }

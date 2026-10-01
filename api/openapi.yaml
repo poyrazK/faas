@@ -445,6 +445,31 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/outbound/integrations/{integration}/runs:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the account-owned integration whose Runs access is changing.
+        schema: { type: string, format: uuid }
+    put:
+      tags: [outbound]
+      operationId: setOutboundIntegrationRunsBinding
+      summary: Grant or revoke use of a managed integration by stateless Runs.
+      description: Requires MFA and deploy-write scope. Grants are separate from app bindings and require an enabled integration with a configured managed credential and at least one allowed route. Run tool calls are available only after the Runs broker is enabled for the deployment.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutOutboundRunsBindingRequest' }
+      responses:
+        '204': { description: Runs integration grant updated; no body returned. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Integration is missing a managed credential or allowed route. }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/outbound/integrations/{integration}/usage:
     parameters:
       - name: integration
@@ -2156,16 +2181,40 @@ paths:
                 type: array
                 items: { $ref: '#/components/schemas/EventSchema' }
 
+  /v1/executions/capabilities:
+    get:
+      tags: [runs]
+      operationId: getExecutionCapabilities
+      summary: Get Runs capabilities and account limits.
+      description: |
+        Returns the authenticated account's Runs admission state, accepted
+        runtimes and profiles, and plan-specific request limits. This describes
+        the control-plane admission contract only; it does not guarantee that
+        a scheduler dispatcher or a profile image is currently available.
+        Requires `apps:read`, `runs:read`, `runs:write`, or `admin`.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Runs admission contract and limits for the authenticated account.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExecutionCapabilitiesResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   /v1/executions:
     get:
       tags: [runs]
       operationId: listExecutions
       summary: List disposable executions.
       description: |
-        Returns the caller's newest disposable execution receipts. Results are
-        account-scoped and ordered by creation time descending. Use `status`
+        Returns the caller's newest disposable execution receipts, ordered by
+        creation time descending. Runs-only API keys see runs created by their
+        own key family; `admin`, `apps:read`, and `deploy:write` credentials
+        retain account-wide access. Use `status`
         to narrow the page before applying offset pagination; source and input
-        are never returned.
+        are never returned. Requires `apps:read`, `runs:read`, `runs:write`, or
+        `admin`.
       security: [{ bearerAuth: [] }]
       parameters:
         - name: limit
@@ -2185,9 +2234,18 @@ paths:
             type: string
             enum: [queued, restoring, running, succeeded, failed, timed_out, out_of_memory, cancelled]
           description: Return only executions in this lifecycle state.
+        - name: workflow_id
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 96
+            pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$'
+          description: Return only executions carrying this workflow identifier, within the caller's visible key family or account scope.
       responses:
         '200':
-          description: Account-scoped execution page.
+          description: Execution page visible to the authenticated principal.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ExecutionListResponse' }
@@ -2205,7 +2263,12 @@ paths:
         loopback-only networking and an internal ephemeral scratch filesystem.
         The VM is always destroyed before a terminal result is persisted.
         This endpoint is an explicit opt-in on the control plane and may return
-        501 while the host isolation gate is disabled.
+        501 while the host isolation gate is disabled. Requires `deploy:write`,
+        `runs:write`, or `admin`. A Runs-only key owns the resulting receipt
+        under its stable key-family identity, which is preserved during key
+        rotation. Agent workflow step labels beginning with `gwf:` are unique
+        within the same workflow and key family; retry clients should reload
+        the existing workflow receipt after a 409.
       security: [{ bearerAuth: [] }]
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -2222,9 +2285,45 @@ paths:
               schema: { $ref: '#/components/schemas/ExecutionResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: An agent workflow step with this workflow ID and step label already has a Run receipt. }
         '413': { $ref: '#/components/responses/PayloadTooLarge' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/execution-workflows/{workflow_id}:
+    get:
+      tags: [runs]
+      operationId: getExecutionWorkflow
+      summary: Get workflow status and usage totals.
+      description: |
+        Aggregates run counts by lifecycle state and host-measured usage for
+        one caller-generated workflow identifier. Runs-only keys see only
+        runs created by their own stable key family; broad credentials retain
+        account-wide visibility. Importing an artifact from another key family
+        does not grant access to that family's run metadata. Requires
+        `apps:read`, `runs:read`, `runs:write`, or `admin`.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: workflow_id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 96
+            pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$'
+          description: Caller-generated identifier shared by runs in one workflow.
+      responses:
+        '200':
+          description: Workflow counts and terminal-run usage visible to the authenticated principal.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExecutionWorkflowResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '501': { $ref: '#/components/responses/NotImplemented' }
 
   /v1/executions/{id}:
@@ -2234,6 +2333,7 @@ paths:
       tags: [runs]
       operationId: getExecution
       summary: Get one disposable execution.
+      description: Runs-only keys can read receipts created by their own key family. `admin` and broad legacy scopes retain account-wide access. Requires `apps:read`, `runs:read`, `runs:write`, or `admin`.
       security: [{ bearerAuth: [] }]
       responses:
         '200':
@@ -2248,7 +2348,7 @@ paths:
       tags: [runs]
       operationId: cancelExecution
       summary: Cancel one disposable execution.
-      description: Cancellation is idempotent and destroys a claimed VM during teardown.
+      description: Cancellation is idempotent and destroys a claimed VM during teardown. Runs-only keys can cancel only receipts created by their own key family. Requires `deploy:write`, `runs:write`, or `admin`.
       security: [{ bearerAuth: [] }]
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -2275,6 +2375,8 @@ paths:
         `after` or `Last-Event-ID`. The stream emits bounded status, stdout,
         stderr, and terminal events and closes after the terminal event.
         Source, input, host paths, and VM internals are never included.
+        Runs-only keys can stream only receipts created by their own key family.
+        Requires `apps:read`, `runs:read`, `runs:write`, or `admin`.
       security: [{ bearerAuth: [] }]
       parameters:
         - name: after
@@ -2303,6 +2405,66 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/executions/{id}/artifact-grants:
+    parameters:
+      - $ref: '#/components/parameters/ExecutionID'
+    post:
+      tags: [runs]
+      operationId: createExecutionArtifactGrant
+      summary: Share one output artifact with another agent.
+      description: |
+        Creates a single-use, short-lived capability for one named artifact on
+        a successful execution. The creating Runs key must own the source run;
+        account-wide principals may grant any account run. The bearer token is
+        returned once and only its hash is stored. The recipient can stage only
+        these bytes using `artifact_inputs.grant_token`; this does not grant
+        access to the source receipt, events, cancellation, or other artifacts.
+        Requires `runs:write`, `deploy:write`, or `admin`.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateExecutionArtifactGrantRequest' }
+      responses:
+        '201':
+          description: Capability created. Store the token securely; it is shown only once.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExecutionArtifactGrantResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/execution-artifact-grants/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ExecutionArtifactGrantID'
+    delete:
+      tags: [runs]
+      operationId: revokeExecutionArtifactGrant
+      summary: Revoke an unredeemed artifact grant.
+      description: |
+        Revokes future use of one artifact capability. A Runs-only key may
+        revoke grants it created; account-wide principals may revoke any
+        account grant. A grant already redeemed cannot be undone, but the
+        recipient's new run retains its own encrypted copy. Revocation remains
+        available when new Runs admission is disabled.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Grant revoked or was already revoked.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RevokeExecutionArtifactGrantResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /v1/apps/{slug}/tasks:
     parameters:
@@ -6657,7 +6819,7 @@ paths:
       - name: run_id
         in: path
         required: true
-        description: Random lowercase hexadecimal identity shared by the run's developer sessions.
+        description: Lowercase hexadecimal ID shared only by sessions in this test run.
         schema: { type: string, pattern: '^[a-f0-9]{32}$' }
     put:
       tags: [dev]
@@ -6684,6 +6846,33 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/dev/test-runs/{run_id}/chaos:
+    parameters:
+      - name: run_id
+        in: path
+        required: true
+        description: Random lowercase hexadecimal identity shared by the run's developer sessions.
+        schema: { type: string, pattern: '^[a-f0-9]{32}$' }
+    put:
+      tags: [dev]
+      operationId: injectScenarioTestChaos
+      summary: Install a bounded request-level fault plan for an isolated scenario run.
+      description: Rules apply only to authenticated internal service calls between registered members, expire automatically, and cannot affect production or public traffic.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InjectScenarioTestChaosRequest' }
+      responses:
+        '200':
+          description: Fault plan installed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InjectScenarioTestChaosResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /v1/dev/sessions/{project}/syncs:
     parameters:
@@ -7556,6 +7745,50 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
+  /v1/apps/{slug}/issue-impact-alert-policy:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getIssueImpactAlertPolicy
+      summary: Read the app's customer-impact alert policy.
+      description: Returns the threshold for verified distinct customers in a rolling 24-hour window. A zero threshold disables the policy.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The current policy; disabled apps report minimum_customers as zero.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueImpactAlertPolicy' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    put:
+      tags: [apps]
+      operationId: setIssueImpactAlertPolicy
+      summary: Configure or disable customer-impact alerts for an app.
+      description: Setting minimum_customers to zero disables the policy. Policy changes apply prospectively; they do not backfill alerts for issues already above the threshold.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateIssueImpactAlertPolicyRequest' }
+      responses:
+        '200':
+          description: The updated policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueImpactAlertPolicy' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/issues:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -7577,6 +7810,14 @@ paths:
           description: Filter by me, unassigned, or an owner account UUID.
           in: query
           schema: { type: string }
+        - name: sort
+          description: Issue ordering; impact ranks by verified distinct customers in the fixed 24-hour window.
+          in: query
+          schema: { type: string, enum: [recent, impact], default: recent }
+        - name: min_customers
+          description: Return issues affecting at least this many verified distinct customers in the fixed 24-hour window.
+          in: query
+          schema: { type: integer, format: int64, minimum: 0 }
         - name: cursor
           description: Opaque next_cursor from the previous issue page.
           in: query
@@ -23677,7 +23918,13 @@ paths:
       tags: [flags]
       operationId: getRuntimeFlags
       summary: Read the live workload’s project-environment flag bundle.
-      description: Requires an RS256 workload identity token with audience gregale:flags from an active app instance. Project and environment are derived from the deployment; query parameters cannot select another scope.
+      description: Requires an RS256 workload identity token with audience gregale:flags from an active app instance. Project and environment are derived from the deployment; query parameters cannot select another scope. Clients advertise runtime evaluation capabilities; a bundle using a capability is withheld from older clients that do not advertise it.
+      parameters:
+        - name: X-Faas-Flags-Capabilities
+          in: header
+          required: false
+          description: Comma-separated optional runtime SDK capabilities. Subject-aware SDKs advertise subject-targeting-v1.
+          schema: { type: string, maxLength: 256 }
       security:
         - flagsWorkloadIdentity: []
       responses:
@@ -23688,6 +23935,7 @@ paths:
               schema: { $ref: '#/components/schemas/FlagsBundle' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '426': { description: Runtime SDK does not support a capability used by the current flag bundle. }
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -24168,6 +24416,12 @@ components:
       required: true
       schema: { type: string, format: uuid }
       description: Canonical UUID for a disposable execution.
+    ExecutionArtifactGrantID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+      description: Canonical UUID for an execution artifact grant.
     AppTaskID:
       name: id
       in: path
@@ -25069,7 +25323,7 @@ components:
         created_at: { type: string, format: date-time }
         completed_at: { type: [string, 'null'], format: date-time }
     FlagRule:
-      description: Ordered customer targeting rule; supplied constraints combine with AND. Boolean flags require a boolean value; variant flags may omit value to use weighted assignment. Progressive rollout is limited to boolean true rules.
+      description: Ordered targeting rule; customer/group and subject constraints combine with AND. Subject rules require a customer or group constraint. Subject IDs are opaque application IDs and are evaluated only after application authentication. Boolean flags require a boolean value; variant flags may omit value to use weighted assignment. Progressive rollout is limited to boolean true rules.
       type: object
       additionalProperties: false
       required: [id]
@@ -25077,7 +25331,9 @@ components:
         id: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
         customers: { type: array, maxItems: 1000, uniqueItems: true, items: { type: string, format: uuid } }
         group: { type: string, description: Owner-managed customer group key. }
-        rollout: { type: integer, minimum: 0, maximum: 10000, description: Basis points of eligible customers; omitted means all eligible customers. }
+        subjects: { type: array, minItems: 1, maxItems: 1000, uniqueItems: true, items: { type: string, pattern: '^[!-~]{1,128}$' }, description: "Opaque application subject IDs, matched inside the selected customers/group. Use stable internal IDs, not emails or display names." }
+        rollout: { type: integer, minimum: 0, maximum: 10000, description: "Basis points of eligible customers by default, or eligible subjects when rollout_unit is subject; omitted means all eligible targets." }
+        rollout_unit: { type: string, enum: [customer, subject], description: Allocation unit for rollout percentages. Omitted preserves customer-level allocation. Subject rollout requires a customer or group constraint and an authenticated subject context. }
         progression: { $ref: '#/components/schemas/ProgressiveRollout' }
         value:
           oneOf:
@@ -25207,6 +25463,7 @@ components:
       additionalProperties: false
       properties:
         customer_id: { type: string, format: uuid, description: Omit for anonymous evaluation. }
+        subject_id: { type: string, pattern: '^[!-~]{1,128}$', description: Opaque application subject ID after authentication; requires customer_id and does not record the ID in evidence. }
         version: { type: integer, format: int64, minimum: 0, description: Zero or omitted selects current configuration. }
         fallback: { type: boolean, default: false }
         fallback_variant: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$', description: Fallback variant for an absent flag; configured variant flags use their own default. }
@@ -25223,7 +25480,7 @@ components:
         type: { type: string, enum: [boolean, variant], description: Present as variant for named-variant decisions; omitted for legacy boolean decisions. }
         config_version: { type: integer, format: int64, minimum: 0 }
         rule_id: { type: string }
-        reason: { type: string, enum: [flag_missing, default, disabled, customer_missing, rule_match, configuration_stale, type_mismatch] }
+        reason: { type: string, enum: [flag_missing, default, disabled, customer_missing, subject_missing, rule_match, configuration_stale, type_mismatch] }
         bucket: { type: integer, minimum: 0, maximum: 9999, description: Boolean rollout bucket or weighted variant assignment bucket. }
         rollout_bucket: { type: integer, minimum: 0, maximum: 9999, description: Eligibility bucket for rollout-gated variant rules. }
         source: { type: string, enum: [configuration, fallback, inherited] }
@@ -25294,7 +25551,7 @@ components:
     OutboundIntegrationOffer:
       type: object
       description: Account-owned managed integration metadata; never contains a provider key or gateway token.
-      required: [id, name, origin, allowed_methods, allowed_path_prefixes, enabled, credential_source, credential_configured, owner_kind, daily_request_limit, request_policy]
+      required: [id, name, origin, allowed_methods, allowed_path_prefixes, enabled, runs_enabled, credential_source, credential_configured, owner_kind, daily_request_limit, request_policy]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
@@ -25306,6 +25563,7 @@ components:
           type: array
           items: { type: string }
         enabled: { type: boolean }
+        runs_enabled: { type: boolean, description: Whether account policy grants use by stateless Runs. }
         credential_source:
           type: string
           enum: [operator_env, customer_sealed]
@@ -25396,6 +25654,14 @@ components:
       required: [request_policy]
       properties:
         request_policy: { $ref: '#/components/schemas/OutboundRequestPolicy' }
+
+    PutOutboundRunsBindingRequest:
+      type: object
+      description: Explicit account decision to allow or deny stateless Runs access to an integration.
+      additionalProperties: false
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
     PutOutboundDailyRequestBudgetRequest:
       type: object
       description: Set a lower per-integration daily request limit or clear it with null.
@@ -27528,7 +27794,7 @@ components:
         label: { type: [string, "null"] , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, github:manage] }
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, project_environments:read, project_environments:qualify, github:manage] }
           description: "Permission set attached to the exported key. github:manage controls customer GitHub connection automation; object-storage data scopes additionally require an explicit per-bucket grant; admin remains full access."
           example: [admin]
         created_at: { type: string, format: date-time }
@@ -30009,6 +30275,39 @@ components:
       properties:
         workload: { type: string, minLength: 3, maxLength: 40 }
         app_slug: { type: string, minLength: 3, maxLength: 40 }
+
+    InjectScenarioTestChaosRequest:
+      description: Bounded fault plan applied only to service calls within one scenario test namespace.
+      type: object
+      required: [duration_ms, rules]
+      properties:
+        duration_ms: { type: integer, minimum: 1000, maximum: 300000 }
+        rules:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items: { $ref: '#/components/schemas/ScenarioTestChaosRule' }
+
+    ScenarioTestChaosRule:
+      description: One bounded latency or synthetic server-error fault for matching internal service calls.
+      type: object
+      required: [to, kind, percent, seed]
+      properties:
+        from: { type: string, minLength: 3, maxLength: 40 }
+        to: { type: string, minLength: 3, maxLength: 40 }
+        kind: { type: string, enum: [latency, http_status] }
+        percent: { type: integer, minimum: 1, maximum: 100 }
+        latency_ms: { type: integer, minimum: 1, maximum: 30000 }
+        status_code: { type: integer, minimum: 500, maximum: 599 }
+        seed: { type: integer, minimum: 0 }
+
+    InjectScenarioTestChaosResponse:
+      description: Receipt confirming the number of rules installed and the automatic expiry time.
+      type: object
+      required: [expires_at, rules_installed]
+      properties:
+        expires_at: { type: string, format: date-time }
+        rules_installed: { type: integer, minimum: 1, maximum: 16 }
 
     DevPostgresRequest:
       description: Opts the developer environment into an isolated managed PostgreSQL database.
@@ -34189,6 +34488,7 @@ components:
         work_decision: { $ref: '#/components/schemas/WorkDecision' }
         outcome_code: { type: string, maxLength: 64, pattern: '^[a-z0-9_.-]*$' }
         blocking_occurrence_id: { type: string, format: uuid }
+        exclusive_operation_id: { type: string, format: uuid }
         job_run_id: { type: string, format: uuid }
         invocation_id: { type: string, format: uuid }
         app_task_id: { type: string, format: uuid }
@@ -38809,7 +39109,7 @@ components:
         label: { type: [string, "null"] , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, github:manage] }
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, project_environments:read, project_environments:qualify, github:manage] }
           description: "Closed permission set attached to the key. github:manage controls customer GitHub connection automation; storage:manage controls bucket lifecycle/grants; storage:read and storage:write also require a matching per-bucket grant; admin remains full access."
           example: [admin]
         last_used_at: { type: [string, "null"], format: date-time }
@@ -38890,7 +39190,7 @@ components:
         label: { type: string, maxLength: 100 , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, github:manage] }
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, project_environments:read, project_environments:qualify, github:manage] }
           description: "Requested permission set. The server rejects unknown scopes. github:manage controls customer GitHub connection automation. Object-storage read/write scopes do not expose data until a storage manager grants the key access to a logical bucket."
           example: [apps:read, deploy:write]
 
@@ -38917,7 +39217,7 @@ components:
         label: { type: string, maxLength: 100 , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, github:manage] }
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, project_environments:read, project_environments:qualify, github:manage] }
           description: "Requested permission set for the org-scoped key. Unknown scopes are rejected; github:manage controls customer GitHub connection automation; object-storage data scopes also require an explicit logical-bucket grant. The legacy and org-scoped key vocabularies remain identical."
           example: [apps:read, deploy:write]
 
@@ -42169,20 +42469,114 @@ components:
           items: { $ref: '#/components/schemas/DelayedTaskResponse' }
         next_before: { type: string, pattern: '^[a-f0-9]{32}$' }
 
+    ExecutionCapabilitiesResponse:
+      description: |
+        Supported Runs admission contract for the authenticated account.
+        admission_available reports plan entitlement and the control-plane
+        API gate only. It does not report scheduler dispatcher or profile image
+        readiness.
+      type: object
+      required: [plan, admission_available, plan_entitled, control_plane_enabled, runtimes, profiles, network_modes]
+      properties:
+        plan: { type: string, description: Account plan identifier. }
+        admission_available: { type: boolean, description: True when the account is entitled and the control-plane admission gate is enabled. }
+        plan_entitled: { type: boolean, description: Whether the account plan allows Runs. }
+        control_plane_enabled: { type: boolean, description: Whether the apid Runs admission gate is enabled. }
+        unavailable_reasons:
+          type: array
+          items: { type: string, enum: [plan_not_entitled, control_plane_disabled] }
+        runtimes:
+          type: array
+          items: { type: string, enum: [node22, node24, python312, python313] }
+        profiles:
+          type: array
+          items: { $ref: '#/components/schemas/ExecutionProfileCapability' }
+        network_modes:
+          type: array
+          items: { type: string, enum: [none] }
+        limits: { $ref: '#/components/schemas/ExecutionCapabilityLimits' }
+
+    ExecutionProfileCapability:
+      description: One dependency profile and its accepted runtime versions.
+      type: object
+      required: [profile, runtimes]
+      properties:
+        profile: { type: string, enum: [standard, python-data-v1] }
+        runtimes:
+          type: array
+          items: { type: string, enum: [node22, node24, python312, python313] }
+        packages:
+          type: object
+          additionalProperties: { type: string }
+          description: Immutable preinstalled package versions, when the profile includes packages.
+
+    ExecutionCapabilityLimits:
+      description: Plan limits and fixed request-shape caps for Runs.
+      type: object
+      required: [max_concurrent_runs, max_source_bytes, max_input_bytes, default_output_bytes, max_output_bytes, default_timeout_ms, max_timeout_ms, default_memory_mb, max_memory_mb, default_cpu_millicores, max_cpu_millicores, default_ephemeral_disk_mb, max_ephemeral_disk_mb, pids_max, max_bundle_files, max_artifact_inputs, max_output_files, max_artifact_path_bytes]
+      properties:
+        max_concurrent_runs: { type: integer, minimum: 0 }
+        max_source_bytes: { type: integer, minimum: 0 }
+        max_input_bytes: { type: integer, minimum: 0 }
+        default_output_bytes: { type: integer, minimum: 0 }
+        max_output_bytes: { type: integer, minimum: 0 }
+        default_timeout_ms: { type: integer, minimum: 0 }
+        max_timeout_ms: { type: integer, minimum: 0 }
+        default_memory_mb: { type: integer, minimum: 0 }
+        max_memory_mb: { type: integer, minimum: 0 }
+        default_cpu_millicores: { type: integer, minimum: 0 }
+        max_cpu_millicores: { type: integer, minimum: 0 }
+        default_ephemeral_disk_mb: { type: integer, minimum: 0 }
+        max_ephemeral_disk_mb: { type: integer, minimum: 0 }
+        pids_max: { type: integer, minimum: 0 }
+        max_bundle_files: { type: integer, minimum: 0 }
+        max_artifact_inputs: { type: integer, minimum: 0 }
+        max_output_files: { type: integer, minimum: 0 }
+        max_artifact_path_bytes: { type: integer, minimum: 0 }
+
     CreateExecutionRequest:
       description: |
         Source and JSON input for one disposable execution. Send either the
         legacy `source` string or an ephemeral `files` bundle with an
-        `entrypoint`. v1 supports only the listed interpreter runtimes and
+        `entrypoint`. `artifact_inputs` may add files from successful runs in
+        the same key family for Runs-only credentials, or from the same account
+        for broad credentials; they are copied into the new
+        encrypted request and staged only in its ephemeral guest filesystem.
+        Optional `workflow_id` and `step_label` values group run receipts in
+        control-plane metadata; the guest does not receive them.
+        Optional `integration_ids` explicitly select managed integrations
+        granted for this Run; the IDs remain control-plane metadata and are
+        not delivered to the guest payload.
+        v1 supports only the listed interpreter runtimes and
         `network.mode=none`; dependencies, secrets, environment injection, and
         persistent disks are not part of this contract.
       type: object
       required: [runtime]
       oneOf:
         - required: [source]
-        - required: [entrypoint, files]
+        - required: [entrypoint]
+          anyOf:
+            - required: [files]
+            - required: [artifact_inputs]
       additionalProperties: false
       properties:
+        workflow_id:
+          type: string
+          minLength: 1
+          maxLength: 96
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$'
+          description: Optional caller-generated grouping id; control-plane metadata only.
+        step_label:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: "Optional bounded label for this run within its workflow; requires workflow_id. Agent workflow labels beginning with gwf: are unique per workflow and API-key family."
+        integration_ids:
+          type: array
+          maxItems: 25
+          uniqueItems: true
+          items: { type: string, format: uuid }
+          description: Optional account integration IDs explicitly granted for this Run; control-plane metadata only.
         profile:
           type: string
           enum: [standard, python-data-v1]
@@ -42205,6 +42599,11 @@ components:
           maxItems: 256
           items: { $ref: '#/components/schemas/ExecutionFile' }
           description: Regular files staged into the guest's ephemeral scratch filesystem.
+        artifact_inputs:
+          type: array
+          maxItems: 8
+          items: { $ref: '#/components/schemas/ExecutionArtifactInput' }
+          description: Artifacts from successful executions visible to this credential, copied to paths in the ephemeral files bundle before sealing.
         output_files:
           type: array
           maxItems: 8
@@ -42233,6 +42632,79 @@ components:
           type: string
           format: byte
           description: File bytes, base64-encoded by JSON clients.
+
+    ExecutionArtifactInput:
+      description: One same-family artifact reference or a one-time cross-agent grant, staged at a normalized path in the next run's ephemeral bundle.
+      type: object
+      required: [path]
+      additionalProperties: false
+      properties:
+        execution_id:
+          type: string
+          format: uuid
+          description: ID of a successful execution owned by this key family (omit when using grant_token).
+        name:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Exact artifact name from the source execution receipt (omit when using grant_token).
+        grant_token:
+          type: string
+          minLength: 47
+          maxLength: 47
+          pattern: '^rag_[A-Za-z0-9_-]{43}$'
+          writeOnly: true
+          description: Single-use token created for one artifact by another Runs key family.
+        path:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Normalized relative destination path in the new execution bundle.
+
+    CreateExecutionArtifactGrantRequest:
+      description: Request to create a short-lived, one-time capability for one output artifact.
+      type: object
+      required: [artifact_name]
+      additionalProperties: false
+      properties:
+        artifact_name:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Exact output artifact to grant.
+        expires_in_seconds:
+          type: integer
+          minimum: 30
+          maximum: 3600
+          default: 300
+          description: Grant lifetime. Defaults to five minutes.
+
+    ExecutionArtifactGrantResponse:
+      description: One-time artifact bearer capability. The token is returned once; the server stores only its hash.
+      type: object
+      required: [id, source_execution_id, artifact_name, token, expires_at]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        source_execution_id: { type: string, format: uuid }
+        artifact_name: { type: string, minLength: 1, maxLength: 256 }
+        token:
+          type: string
+          minLength: 47
+          maxLength: 47
+          pattern: '^rag_[A-Za-z0-9_-]{43}$'
+          readOnly: true
+          description: Bearer capability returned once; the server stores only its hash.
+        expires_at: { type: string, format: date-time }
+
+    RevokeExecutionArtifactGrantResponse:
+      description: Confirmation that an artifact grant is revoked.
+      type: object
+      required: [id, revoked_at]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        revoked_at: { type: string, format: date-time }
 
     ExecutionArtifact:
       description: An explicitly exported file. Its compact JSON metadata and base64 contents share the execution output budget.
@@ -42295,9 +42767,11 @@ components:
 
     ExecutionResponse:
       description: |
-        Account-scoped disposable execution receipt. Source and input are
-        intentionally omitted. A terminal response is written only after the
-        execution VM has been destroyed.
+        Disposable execution receipt. Runs-only keys can read only receipts
+        created by their key family; broad credentials retain account-wide
+        access. Source and input are intentionally omitted. A terminal response is written only after the
+        execution VM has been destroyed. Optional workflow metadata is echoed
+        as a grouping aid and remains subject to the same ownership boundary.
       type: object
       required: [id, status, runtime, limits, output_truncated, created_at]
       properties:
@@ -42308,6 +42782,8 @@ components:
           additionalProperties: { type: string }
           description: Immutable versions declared by the selected profile and verified by its guest before caller code runs.
         id: { type: string, format: uuid }
+        workflow_id: { type: string, maxLength: 96, description: Caller-generated workflow grouping id, when assigned. }
+        step_label: { type: string, maxLength: 128, description: Optional step label, when assigned. }
         status: { type: string, enum: [queued, restoring, running, succeeded, failed, timed_out, out_of_memory, cancelled] }
         runtime: { type: string, enum: [node22, node24, python312, python313] }
         limits: { $ref: '#/components/schemas/ResolvedExecutionLimits' }
@@ -42327,9 +42803,43 @@ components:
         started_at: { type: [string, "null"], format: date-time }
         finished_at: { type: [string, "null"], format: date-time }
 
+    ExecutionWorkflowStatusCounts:
+      description: Number of runs in each lifecycle state.
+      type: object
+      required: [queued, restoring, running, succeeded, failed, timed_out, out_of_memory, cancelled]
+      properties:
+        queued: { type: integer, format: int64, minimum: 0 }
+        restoring: { type: integer, format: int64, minimum: 0 }
+        running: { type: integer, format: int64, minimum: 0 }
+        succeeded: { type: integer, format: int64, minimum: 0 }
+        failed: { type: integer, format: int64, minimum: 0 }
+        timed_out: { type: integer, format: int64, minimum: 0 }
+        out_of_memory: { type: integer, format: int64, minimum: 0 }
+        cancelled: { type: integer, format: int64, minimum: 0 }
+
+    ExecutionWorkflowUsage:
+      description: Host-measured usage summed over terminal runs; peak memory is the maximum individual run peak.
+      type: object
+      required: [wall_time_ms, cpu_time_ms, peak_memory_mb, output_bytes]
+      properties:
+        wall_time_ms: { type: integer, format: int64, minimum: 0 }
+        cpu_time_ms: { type: integer, format: int64, minimum: 0 }
+        peak_memory_mb: { type: integer, minimum: 0 }
+        output_bytes: { type: integer, format: int64, minimum: 0 }
+
+    ExecutionWorkflowResponse:
+      description: Workflow lifecycle and usage aggregate visible to the authenticated principal.
+      type: object
+      required: [workflow_id, run_count, status_counts, usage]
+      properties:
+        workflow_id: { type: string, maxLength: 96 }
+        run_count: { type: integer, format: int64, minimum: 1 }
+        status_counts: { $ref: '#/components/schemas/ExecutionWorkflowStatusCounts' }
+        usage: { $ref: '#/components/schemas/ExecutionWorkflowUsage' }
+
     ExecutionListResponse:
       description: |
-        Account-scoped page of disposable execution receipts. `next_offset`
+        Page of disposable execution receipts visible to the caller. `next_offset`
         is -1 when there is no following page; otherwise pass it as `offset`.
       type: object
       required: [executions, limit, offset, next_offset]
@@ -44671,7 +45181,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "debug.regression.detected", "debug.regression.resolved"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
@@ -45154,7 +45664,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "debug.regression.detected", "debug.regression.resolved"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "debug.regression.detected", "debug.regression.resolved"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format:
@@ -45235,7 +45745,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed"]
+            enum: ["app.parked", "app.woken", "deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized", "issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached"]
           maxItems: 32
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format:
@@ -46381,6 +46891,23 @@ components:
         observed_events: { type: integer }
         unattributed_events: { type: integer }
         coverage: { type: string }
+
+    IssueImpactAlertPolicy:
+      description: "App-level customer-impact threshold measured using verified distinct customers in a rolling 24-hour window."
+      type: object
+      required: [enabled, minimum_customers, window_seconds]
+      properties:
+        enabled: { type: boolean }
+        minimum_customers: { type: integer, minimum: 0, maximum: 10000 }
+        window_seconds: { type: integer, const: 86400 }
+
+    UpdateIssueImpactAlertPolicyRequest:
+      description: "Set the minimum verified distinct customer count; zero disables the policy."
+      type: object
+      required: [minimum_customers]
+      additionalProperties: false
+      properties:
+        minimum_customers: { type: integer, minimum: 0, maximum: 10000 }
 
     IssueDetail:
       description: "Issue metadata and independently paginated occurrence, release, and activity collections."

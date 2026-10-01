@@ -409,9 +409,10 @@ func (s *PgStore) APIKeyByHash(ctx context.Context, hash []byte) (APIKey, error)
 		`select id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
 		        last_used_at,
 		        expires_at, status, revoked_at, rotated_from_id,
-		        coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id
+		        coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id,
+		        runs_principal_id
 		 from api_keys where key_sha256 = $1`, hash)
-	return scanAPIKey(row)
+	return scanAPIKeyWithRunsPrincipal(row)
 }
 
 // AuthenticateKey resolves a bearer token to its account + key. It is
@@ -763,17 +764,30 @@ func (s *PgStore) AuthenticateKey(ctx context.Context, hash []byte) (Account, AP
 // PR 6 org_id: every SELECT/RETURNING reads the full twelve
 // columns.
 func scanAPIKey(row pgx.Row) (APIKey, error) {
+	return scanAPIKeyProjection(row, false)
+}
+
+func scanAPIKeyWithRunsPrincipal(row pgx.Row) (APIKey, error) {
+	return scanAPIKeyProjection(row, true)
+}
+
+func scanAPIKeyProjection(row pgx.Row, withRunsPrincipal bool) (APIKey, error) {
 	var (
-		k         APIKey
-		hashBytes []byte
-		expiresAt pgtype.Timestamptz
-		revokedAt pgtype.Timestamptz
-		rotated   *string
-		createdIP *string
-		parent    *string
+		k             APIKey
+		hashBytes     []byte
+		expiresAt     pgtype.Timestamptz
+		revokedAt     pgtype.Timestamptz
+		rotated       *string
+		createdIP     *string
+		parent        *string
+		runsPrincipal pgtype.UUID
 	)
-	if err := row.Scan(&k.ID, &k.AccountID, &k.OrgID, &hashBytes, &k.Label, &k.Scopes, &k.CreatedAt, &k.LastUsedAt,
-		&expiresAt, &k.Status, &revokedAt, &rotated, &createdIP, &k.CreatedUA, &parent); err != nil {
+	dest := []any{&k.ID, &k.AccountID, &k.OrgID, &hashBytes, &k.Label, &k.Scopes, &k.CreatedAt, &k.LastUsedAt,
+		&expiresAt, &k.Status, &revokedAt, &rotated, &createdIP, &k.CreatedUA, &parent}
+	if withRunsPrincipal {
+		dest = append(dest, &runsPrincipal)
+	}
+	if err := row.Scan(dest...); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return APIKey{}, ErrNotFound
 		}
@@ -793,6 +807,9 @@ func scanAPIKey(row pgx.Row) (APIKey, error) {
 		k.CreatedIP = *createdIP
 	}
 	k.ParentKeyID = parent
+	if withRunsPrincipal {
+		k.RunsPrincipalID = pgUUIDString(runsPrincipal)
+	}
 	return k, nil
 }
 

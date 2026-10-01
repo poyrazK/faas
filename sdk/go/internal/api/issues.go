@@ -85,6 +85,16 @@ type IssueImpact struct {
 	Coverage            string    `json:"coverage"`
 }
 
+type IssueImpactAlertPolicy struct {
+	Enabled          bool  `json:"enabled"`
+	MinimumCustomers int64 `json:"minimum_customers"`
+	WindowSeconds    int64 `json:"window_seconds"`
+}
+
+type UpdateIssueImpactAlertPolicyRequest struct {
+	MinimumCustomers int64 `json:"minimum_customers"`
+}
+
 type IssueDetail struct {
 	Issue              Issue             `json:"issue"`
 	Events             []IssueOccurrence `json:"events"`

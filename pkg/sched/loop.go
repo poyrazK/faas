@@ -4002,12 +4002,6 @@ func (l *Loop) dispatchOneCron(ctx context.Context, c state.Cron, now time.Time)
 		for next := scheduledFor; !next.After(now) && len(due) < 10000; next = sched.NextFireAt(next) {
 			due = append(due, next)
 		}
-		if c.SchedulePolicy != nil && c.SchedulePolicy.Overlap == "replace" {
-			if err := l.stopPriorScheduledCronTasks(ctx, c, now); err != nil {
-				l.log.Debug("cron command: replacement waits for prior task to stop", "cron_id", c.ID, "err", err)
-				return
-			}
-		}
 		l.dispatchScheduledCommandCron(ctx, c, due, now)
 		return
 	}
@@ -4229,6 +4223,17 @@ func (l *Loop) dispatchScheduledCommandCron(ctx context.Context, c state.Cron, d
 	if !account.Active() {
 		return
 	}
+	binding, bound, bindingErr := l.exclusiveCronBinding(ctx, c, account.ID)
+	if bindingErr != nil {
+		l.log.Warn("cron command: load exclusive operation binding", "cron_id", c.ID, "err", bindingErr)
+		return
+	}
+	if !bound && c.SchedulePolicy != nil && c.SchedulePolicy.Overlap == "replace" {
+		if err := l.stopPriorScheduledCronTasks(ctx, c, now); err != nil {
+			l.log.Debug("cron command: replacement waits for prior task to stop", "cron_id", c.ID, "err", err)
+			return
+		}
+	}
 	commandStore, ok := store.(state.AppTaskStore)
 	if !ok {
 		l.log.Warn("cron command: app task store is unavailable", "cron_id", c.ID)
@@ -4260,8 +4265,33 @@ func (l *Loop) dispatchScheduledCommandCron(ctx context.Context, c state.Cron, d
 			expectedLastFiredAt = &missed
 		}
 		scheduledFor := due[len(due)-1]
+		options := state.CronScheduledOccurrenceOptions{ScheduledFor: scheduledFor, ScheduleRevision: c.ScheduleRevision}
+		if bound {
+			if _, ok := store.(state.ExclusiveWorkStore); !ok {
+				l.log.Warn("cron command: exclusive operation store is unavailable", "cron_id", c.ID)
+				return
+			}
+			admission, admissionErr := exclusiveCommandCronAdmission(binding, c, account.ID, exclusiveCommandCronScheduleIdempotencyKey(c.ID, scheduledFor))
+			if admissionErr != nil {
+				l.log.Warn("cron command: encode exclusive operation request", "cron_id", c.ID, "err", admissionErr)
+				return
+			}
+			options.ExclusiveAdmission = &admission
+		}
 		task, occurrence, created, createErr := occurrenceStore.CreateScheduledCronAppTaskOccurrence(ctx, c.ID, expectedLastFiredAt, now,
-			state.CronScheduledOccurrenceOptions{ScheduledFor: scheduledFor, ScheduleRevision: c.ScheduleRevision})
+			options)
+		if bound && l.ops != nil {
+			outcome := "accepted"
+			switch {
+			case createErr != nil:
+				outcome = exclusiveAdmissionOutcome(createErr, false, false)
+			case occurrence.Status == "coalesced":
+				outcome = "joined"
+			case occurrence.Status == "skipped_overlap":
+				outcome = "rejected"
+			}
+			l.ops.ObserveExclusiveOperationAdmission("cron", outcome)
+		}
 		if errors.Is(createErr, state.ErrAppTaskDeploymentUnavailable) {
 			l.suspendCommandCronWithoutDeployment(ctx, c)
 			return
@@ -4275,7 +4305,13 @@ func (l *Loop) dispatchScheduledCommandCron(ctx context.Context, c state.Cron, d
 		}
 		if !created {
 			l.log.Info("cron command: scheduled occurrence recorded", "cron_id", c.ID, "occurrence_id", occurrence.ID, "status", occurrence.Status)
-			l.emitCommandCronFired(ctx, c, account.ID, now, occurrence.Status, "", TriggerSchedule)
+			l.emitCommandCronFired(ctx, c, account.ID, now, occurrence.Status, "", TriggerSchedule, occurrence.ExclusiveOperationID)
+			return
+		}
+		if occurrence.ExclusiveOperationID != "" {
+			l.log.Info("cron command: managed operation admitted", "cron_id", c.ID,
+				"occurrence_id", occurrence.ID, "operation_id", occurrence.ExclusiveOperationID)
+			l.emitCommandCronFired(ctx, c, account.ID, now, "ok", "", TriggerSchedule, occurrence.ExclusiveOperationID)
 			return
 		}
 		l.log.Info("cron command: scheduled task queued", "cron_id", c.ID, "occurrence_id", occurrence.ID, "task_id", task.ID, "deployment_id", task.DeploymentID)
@@ -4339,7 +4375,7 @@ func (l *Loop) suspendCommandCronWithoutDeployment(ctx context.Context, c state.
 	}
 }
 
-func (l *Loop) emitCommandCronFired(ctx context.Context, c state.Cron, accountID string, firedAt time.Time, outcome, taskID string, trigger CronDispatchTrigger) {
+func (l *Loop) emitCommandCronFired(ctx context.Context, c state.Cron, accountID string, firedAt time.Time, outcome, taskID string, trigger CronDispatchTrigger, operationIDs ...string) {
 	if l.audit == nil {
 		return
 	}
@@ -4347,12 +4383,16 @@ func (l *Loop) emitCommandCronFired(ctx context.Context, c state.Cron, accountID
 	if trigger == TriggerManual {
 		eventName = AuditEventCronFiredManually
 	}
-	l.audit.Emit(ctx, eventName, &accountID, map[string]any{
+	payload := map[string]any{
 		"cron_id": c.ID, "app_id": c.AppID, "schedule": c.Schedule,
 		"task_id": taskID, "invocation_id": "", "instance_id": "",
 		"fired_at": firedAt.UTC().Format(time.RFC3339Nano), "status": outcome,
 		"trigger": string(trigger),
-	})
+	}
+	if len(operationIDs) > 0 && operationIDs[0] != "" {
+		payload["exclusive_operation_id"] = operationIDs[0]
+	}
+	l.audit.Emit(ctx, eventName, &accountID, payload)
 }
 
 func nonZeroSchedTimePtr(value time.Time) *time.Time {

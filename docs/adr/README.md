@@ -13,9 +13,11 @@ and whichever merges second keeps it. The renumber trail through the table
 below ("renumbered 066→067→068→069", "through 6 hops") is what that costs.
 
 `make adr-number-uniqueness-check` (also part of `make lint` and CI) fails on
-any **newly** duplicated number. The 71 numbers already duplicated on `main` are
+any **newly** duplicated number. The 72 numbers already duplicated on `main` are
 frozen in [`DUPLICATE_NUMBERS_BASELINE.txt`](DUPLICATE_NUMBERS_BASELINE.txt);
-the gate holds that set and stops it growing. Never add a line to that file.
+the gate holds that set and stops it growing. Do not add a line for a collision
+introduced by this PR; refresh the baseline from `main` when `main` independently
+gains duplicate ADR numbers.
 
 Before claiming a number, check both the directory **and** open PRs — a PR can
 claim a number between your check and your merge:
@@ -54,7 +56,9 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
-| 423 | [Git-owned environment intent and continuous reconciliation](423-environment-gitops-contract.md) | implementation in progress | Reviewed definitions, field ownership, durable effects, and scoped runtime convergence |
+| 425 | [Git-owned environment intent and continuous reconciliation](425-environment-gitops-contract.md) | implementation in progress | Reviewed definitions, field ownership, durable effects, and scoped runtime convergence |
+| 424 | [Managed outbound integrations for stateless Runs](424-run-scoped-managed-outbound-integrations.md) | proposed | Explicit account grants and a bounded vsock broker; the execution VM remains networkless |
+| 423 | [Scenario-scoped chaos testing](423-scenario-scoped-chaos-testing.md) | accepted | Bounded request faults on registered test-run service calls, with deterministic selection, expiry, and lifecycle-profile execution |
 | 392 | [Event and trace wire conformance](392-event-and-trace-wire-conformance.md) | accepted | OTLP/HTTP encodings and standard responses, CloudEvents attributes, and pinned official AsyncAPI validation |
 | 391 | [Provider invoice history discovery and backfill](391-provider-invoice-history-backfill.md) | accepted | Authenticated provider history discovery with bounded, customer-scoped imports |
 | 390 | [Authenticated provider invoice refresh](390-provider-invoice-refresh.md) | accepted | Authenticated provider facts, bounded reads, and atomic enrichment |
@@ -314,6 +318,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 158 | [Explicit ephemeral disk boundary](158-ephemeral-disk-boundary.md): expose the existing plan-capped writable `drive1` capacity as `ephemeral_disk_max_mb` while retaining `app_layer_max_mb` compatibility; no persistent volumes or second quota source | accepted | container runtime storage contract; no migration |
 | 144 | Zero-config workspace build context — explicit `--path` workspace members upload repository context and persist `source_root`; builderd/guest-init build from the selected nested directory | accepted | zero-config deploy follow-up; ADR-086/088/090 |
 | 422 | [Bare-metal service recovery capacity](422-bare-metal-service-recovery-capacity.md) | accepted | Durable, atomic one-host recovery headroom and operator certificate |
+| 423 | [MCP hosting contract](423-mcp-hosting-contract.md) | proposed | Stateless MCP starter, deployment verification, client OAuth and diagnostics on the app lifecycle |
 
 ADR-011 and ADR-012 are required by the UX spec (§11) before git-deploy work
 begins at M7.5; both landed on 2026-07-17 alongside the M7.5 PR open.
@@ -392,8 +397,8 @@ note instead of the banner.
 
 Note: two ADRs carry the number 190 (`190-production-buildkit-cache.md` merged
 first; `190-daemon-durability-primitives.md` picked the same number
-concurrently). The log above already contains several such pairs (157, 158, 167,
-168). A renumber plus a CI uniqueness gate is worth its own PR.
+concurrently). The log above also has duplicate pairs 157, 158, 167, and 168.
+A renumber plus a CI uniqueness gate is worth its own PR.
 
 ## Object-storage binding decisions
 
@@ -408,10 +413,11 @@ concurrently). The log above already contains several such pairs (157, 158, 167,
 - [ADR-148: nonblocking resume hardware entropy](148-nonblocking-resume-hardware-entropy.md)
 - [ADR-149: prepared unused network cache](149-prepared-unused-network-cache.md)
 - [ADR-150: firecracker tsc restore order canary](150-firecracker-tsc-restore-order-canary.md)
+- [ADR-423: retained cache materialization](423-retained-cache-materialization.md) — avoid the redundant copy while retaining the opened artifact through eviction
 
 ## Environment intent decisions
 
-- [ADR-423: Git-owned environment intent](423-environment-gitops-contract.md) — explicit field ownership, reviewed adoption and continuous reconciliation
+- [ADR-425: Git-owned environment intent](425-environment-gitops-contract.md) — explicit field ownership, reviewed adoption and continuous reconciliation
 
 ## Managed service recovery decisions
 

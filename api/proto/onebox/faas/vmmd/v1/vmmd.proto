@@ -42,6 +42,13 @@ service Vmmd {
   // terminal response. The unary RPC remains available for older schedulers.
   rpc ExecuteExecutionStream(ExecuteExecutionRequest) returns (stream ExecuteExecutionEvent);
 
+  // ExecuteExecutionBrokerStream adds the Runs outbound capability broker to
+  // the one-shot execution exchange. The first client frame must be start;
+  // subsequent client frames carry responses to host-authorized outbound
+  // calls. Signed identity assertions are emitted only to schedd, never to the
+  // guest.
+  rpc ExecuteExecutionBrokerStream(stream ExecuteExecutionBrokerRequest) returns (stream ExecuteExecutionBrokerEvent);
+
   // RestoreExecution creates a fresh, networkless disposable execution VM.
   // The envelope contains only immutable machine/artifact metadata; caller
   // source and input cross the boundary later through ExecuteExecution.
@@ -2011,6 +2018,10 @@ message ExecuteExecutionRequest {
   repeated ExecutionSourceFile files = 11;
   repeated string output_files = 12;
   string profile = 13;
+  // outbound_enabled exposes only the in-guest helper endpoint. It carries no
+  // integration IDs or identity material; vmmd still authorizes each call
+  // from the live restore grant.
+  bool outbound_enabled = 14;
 }
 
 message ExecutionSourceFile {
@@ -2060,6 +2071,46 @@ message ExecuteExecutionOutputChunk {
   bytes chunk = 2;
 }
 
+// ExecuteExecutionBrokerRequest is a client frame on the full-duplex Runs
+// execution stream. Start occurs exactly once and before any response frame.
+message ExecuteExecutionBrokerRequest {
+  oneof frame {
+    ExecuteExecutionRequest start = 1;
+    ExecuteExecutionOutboundResponse outbound_response = 2;
+  }
+}
+
+// ExecuteExecutionBrokerEvent is a server frame on the full-duplex Runs
+// execution stream.
+message ExecuteExecutionBrokerEvent {
+  oneof frame {
+    ExecuteExecutionOutputChunk output = 1;
+    ExecuteExecutionOutboundCall outbound_call = 2;
+    ExecuteExecutionResponse terminal = 3;
+  }
+}
+
+// ExecuteExecutionOutboundCall carries a bounded guest request and the
+// execution-scoped assertion schedd presents to outboundd. The assertion is
+// host-only and must never be copied into the guest response.
+message ExecuteExecutionOutboundCall {
+  uint64 id = 1;
+  string integration_id = 2;
+  string method = 3;
+  string path = 4;
+  bytes body = 5;
+  string execution_identity = 6;
+}
+
+// ExecuteExecutionOutboundResponse is the bounded safe subset of an outbound
+// provider response returned by schedd to the live guest broker.
+message ExecuteExecutionOutboundResponse {
+  uint64 id = 1;
+  int32 status = 2;
+  map<string, string> headers = 3;
+  bytes body = 4;
+}
+
 // RestoreExecutionRequest is the payload-free machine envelope for one
 // disposable execution. All fields are resolved by schedd from the runtime
 // snapshot catalog; source and input are intentionally absent.
@@ -2075,6 +2126,10 @@ message RestoreExecutionRequest {
   int32 vcpu_count = 9;
   int32 mem_size_mib = 10;
   int32 cpu_millicores = 11;
+  // Host-only broker metadata for the current scheduler lease. These fields
+  // are never included in the guest manifest or execution payload.
+  string lease_token = 12;
+  repeated string outbound_integration_ids = 13;
 }
 
 // RestoreExecutionResponse confirms the dedicated VM identity. Network
