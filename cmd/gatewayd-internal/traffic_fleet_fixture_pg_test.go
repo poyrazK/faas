@@ -22,6 +22,7 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -34,6 +35,7 @@ type fleetDaemonVMFixture struct {
 	badInstance  string
 	mu           sync.Mutex
 	requests     map[string][]string
+	correlation  map[string][]wire.CorrelationFields
 	origins      map[string]int
 	guestHeaders map[string][]http.Header
 }
@@ -50,6 +52,12 @@ func (v *fleetDaemonVMFixture) guestCalls(path string) int {
 	return v.origins[path]
 }
 
+func (v *fleetDaemonVMFixture) correlations(path string) []wire.CorrelationFields {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return append([]wire.CorrelationFields(nil), v.correlation[path]...)
+}
+
 func (v *fleetDaemonVMFixture) ForwardHTTPStream(stream grpc.BidiStreamingServer[vmmdpb.ForwardHTTPStreamRequest, vmmdpb.ForwardHTTPStreamResponse]) error {
 	frame, err := stream.Recv()
 	if err != nil {
@@ -61,6 +69,8 @@ func (v *fleetDaemonVMFixture) ForwardHTTPStream(stream grpc.BidiStreamingServer
 	}
 	v.mu.Lock()
 	v.requests[init.RequestUri] = append(v.requests[init.RequestUri], init.Instance)
+	fields, _ := wire.CorrelationFromIncoming(stream.Context())
+	v.correlation[init.RequestUri] = append(v.correlation[init.RequestUri], fields)
 	v.mu.Unlock()
 	if init.RequestUri == "/retry" && init.Instance == v.badInstance {
 		return status.Error(codes.Unavailable, "fixture transport failure before guest execution")
@@ -153,7 +163,8 @@ func (r *fleetDaemonTelemetryFixture) RecordRequestIDJournal(ctx context.Context
 func newFleetDaemonFixture(t *testing.T) fleetDaemonFixture {
 	t.Helper()
 	f := fleetDaemonFixture{publicRoutingPGFixture: newPublicRoutingPGFixture(t)}
-	f.vm = &fleetDaemonVMFixture{requests: make(map[string][]string), origins: make(map[string]int), guestHeaders: make(map[string][]http.Header)}
+	f.vm = &fleetDaemonVMFixture{requests: make(map[string][]string), correlation: make(map[string][]wire.CorrelationFields),
+		origins: make(map[string]int), guestHeaders: make(map[string][]http.Header)}
 	guest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.vm.mu.Lock()
 		f.vm.origins[r.URL.RequestURI()]++

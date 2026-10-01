@@ -1136,6 +1136,31 @@ verify service-manager stop settings and forced-termination behavior separately.
 These context budgets do not bound every unrelated deferred resource close or
 guarantee evidence from producers that outlive an exhausted HTTP drain.
 
+### Follow-up: managed attempt identity and forwarding correlation
+
+Every managed HTTP attempt owns a cloned request and header map, including
+bodyless replays. The selected endpoint and verified account replace the prior
+hop's identity in both guest headers and correlation context. Original causal
+wake/invocation fields remain linked to the request. Upgrade uses the same
+identity preparation and retains its existing single-dispatch semantics.
+The logical managed-call span records the last endpoint actually forwarded;
+an endpoint refused before dispatch cannot replace that owner. Empty endpoint
+provenance clears earlier attempt values.
+
+Both HTTP and raw forwarding RPCs explicitly publish the canonical request
+correlation context. Publishing replaces the bounded reserved correlation keys,
+including removal of stale empty fields, while retaining unrelated transport
+metadata. Repeated preparation cannot grow duplicate identity values. Legacy
+forwarding without a canonical context retains its existing transport metadata.
+This correlation envelope is observation metadata, not a service authorization
+credential. Managed authorization, pinned release selection, deadlines, security
+fences and node admission retain their owners.
+
+Actual configured gateway-process checks must verify managed caller authorization,
+RPC/guest identity, shared retry debt and replacement behavior. Guest source
+address and VM endpoints remain explicit local fixtures; native networking,
+node lifecycle, fleet/load and staging acceptance remain separate requirements.
+
 The implementation tracker is `docs/traffic_platform_implementation.md`.
 Each guarantee needs configuration-to-runtime tests, cancellation/recovery
 tests and customer documentation. VM lifecycle changes require native x86_64

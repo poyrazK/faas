@@ -31,10 +31,12 @@ type fleetDaemonApp struct {
 type fleetDaemonSpec struct {
 	Database, SearchPath, ConfigPath, NodeID string
 	Apps                                     []fleetDaemonApp
+	Managed                                  bool
 }
 
 type fleetDaemonReady struct {
-	Endpoint string
+	Endpoint        string
+	ServiceEndpoint string
 	state.ServingGatewayTrafficRuntime
 }
 
@@ -94,7 +96,19 @@ func TestTrafficFleetDaemonProcess(t *testing.T) {
 	deps.backend, deps.metrics, deps.edgeRulesMatcher, deps.responseCache = backend, metrics, matcher, cache
 	deps.nodeCache = newNodeCache(store, nil, log, metrics)
 	deps.capCheck = func() error { return nil }
-	deps.listen = func(string, string) (net.Listener, error) { return listener, nil }
+	serviceEndpoint := make(chan string, 1)
+	deps.listen = func(network, address string) (net.Listener, error) {
+		if address == "127.0.0.1:0" {
+			return listener, nil
+		}
+		local, err := net.Listen(network, "127.0.0.1:0")
+		if err == nil && address == config.ServiceProxyListen {
+			serviceEndpoint <- "http://" + local.Addr().String()
+			return fleetManagedSourceListener{Listener: local}, nil
+		}
+		return local, err
+	}
+	deps.listenPacket = func(network, _ string) (net.PacketConn, error) { return net.ListenPacket(network, "127.0.0.1:0") }
 	deps.controlAddr = "127.0.0.1:0"
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -123,7 +137,15 @@ func TestTrafficFleetDaemonProcess(t *testing.T) {
 	if observed.Generation == 0 {
 		t.Fatal("daemon did not publish actual serving wiring")
 	}
-	if err := json.NewEncoder(os.Stdout).Encode(fleetDaemonReady{"http://" + listener.Addr().String(), observed}); err != nil {
+	ready := fleetDaemonReady{Endpoint: "http://" + listener.Addr().String(), ServingGatewayTrafficRuntime: observed}
+	if spec.Managed {
+		select {
+		case ready.ServiceEndpoint = <-serviceEndpoint:
+		default:
+			t.Fatal("configured managed listener was not constructed")
+		}
+	}
+	if err := json.NewEncoder(os.Stdout).Encode(ready); err != nil {
 		t.Fatal(err)
 	}
 	_, _ = io.Copy(io.Discard, os.Stdin)
@@ -166,14 +188,24 @@ func (p *fleetDaemonProcess) stop(t *testing.T) {
 
 func startFleetDaemon(t *testing.T, pool *pgxpool.Pool, apps []fleetDaemonApp, nodeID, nodeName, usageSocket string) *fleetDaemonProcess {
 	t.Helper()
+	return startFleetDaemonMode(t, pool, apps, nodeID, nodeName, usageSocket, false)
+}
+
+func startFleetDaemonMode(t *testing.T, pool *pgxpool.Pool, apps []fleetDaemonApp, nodeID, nodeName, usageSocket string, managed bool) *fleetDaemonProcess {
+	t.Helper()
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "gatewayd.toml")
 	// Omit ratelimit.mode deliberately: LoadConfig's production default must
 	// select shared counters. Policy stays in Postgres rather than this TOML.
-	if err := os.WriteFile(configPath, []byte("node_name = \""+nodeName+"\"\n"), 0o600); err != nil {
+	configuration := "node_name = \"" + nodeName + "\"\n"
+	if managed {
+		configuration += "service_proxy_listen = \"10.100.0.1:10080\"\n"
+	}
+	if err := os.WriteFile(configPath, []byte(configuration), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	spec := fleetDaemonSpec{pool.Config().ConnConfig.Database, pool.Config().ConnConfig.RuntimeParams["search_path"], configPath, nodeID, apps}
+	spec := fleetDaemonSpec{Database: pool.Config().ConnConfig.Database, SearchPath: pool.Config().ConnConfig.RuntimeParams["search_path"],
+		ConfigPath: configPath, NodeID: nodeID, Apps: apps, Managed: managed}
 	encoded, err := json.Marshal(spec)
 	if err != nil {
 		t.Fatal(err)
@@ -224,7 +256,7 @@ func startFleetDaemon(t *testing.T, pool *pgxpool.Pool, apps []fleetDaemonApp, n
 		t.Fatal("fleet daemon readiness timed out")
 	}
 	if p.ready.RateCounterMode != "central" || p.ready.RetryCounterMode != "shared" || !p.ready.RetryEnabled ||
-		!p.ready.PolicySnapshot || !p.ready.SecurityRevocation || p.ready.RetryBackendID == "" {
+		!p.ready.PolicySnapshot || !p.ready.SecurityRevocation || p.ready.RetryBackendID == "" || p.ready.ManagedHTTP != managed {
 		t.Fatalf("actual default daemon wiring = %+v", p.ready)
 	}
 	return p

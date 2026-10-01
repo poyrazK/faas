@@ -348,7 +348,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			"app_protocol", protocol)
 	}
 
-	stream, err := cli.ForwardHTTPStream(ctx)
+	stream, err := cli.ForwardHTTPStream(wire.WithRequestCorrelationOutgoing(ctx))
 	if err != nil {
 		if handleForwardRequestCancellation(w, r, true) {
 			return
@@ -734,7 +734,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		metrics.ObserveWSSessionDuration(string(plan), wsOutcome, time.Since(sessionStart))
 	}()
 
-	stream, err := cli.ForwardRawStream(ctx)
+	stream, err := cli.ForwardRawStream(wire.WithRequestCorrelationOutgoing(ctx))
 	if err != nil {
 		if handleForwardRequestCancellation(w, r, true) {
 			return

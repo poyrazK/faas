@@ -31,6 +31,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
+	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -1257,18 +1258,17 @@ func validServiceEndpoints(in []ServiceEndpoint) []ServiceEndpoint {
 	return out
 }
 
-// guestRequest builds the outbound request for the guest hop: the caller
+// prepareGuestRequest prepares an owned request clone for the guest hop: the caller
 // header is stripped, inbound identity claims are cleared before the target
 // identity this hop actually knows is applied, and the target's wire protocol
 // is stamped so vmmd selects the H1 or H2C guest bridge (ADR-197).
 //
 // The request id is preserved so an internal hop stays correlated end to end.
-func (p *ServiceProxy) guestRequest(r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller) *http.Request {
-	request := r.Clone(r.Context())
+// The returned context retains the inherited lifetime and any minted assertion.
+func (p *ServiceProxy) prepareGuestRequest(ctx context.Context, request *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller) context.Context {
 	request.URL.Path = targetPath
 	request.URL.RawPath = ""
 	request.RequestURI = ""
-	request.Header = r.Header.Clone()
 	request.Header.Del("x-faas-stream")
 	request.Header.Del(trafficdeadline.Header)
 	request.Header.Del(ServiceProxyCallerAppHeader)
@@ -1279,7 +1279,7 @@ func (p *ServiceProxy) guestRequest(r *http.Request, targetPath string, target S
 	// release can cross a managed service hop.
 	request.Header.Del(api.RevisionHeader)
 	request.Header.Del(api.ReleaseHeader)
-	if releaseID, ok := r.Context().Value(serviceReleaseContextKey{}).(string); ok && releaseID != "" {
+	if releaseID, ok := ctx.Value(serviceReleaseContextKey{}).(string); ok && releaseID != "" {
 		request.Header.Set(api.ReleaseHeader, releaseID)
 	}
 	// Both caller-environment headers are platform-owned. Strip whatever the
@@ -1308,9 +1308,9 @@ func (p *ServiceProxy) guestRequest(r *http.Request, targetPath string, target S
 		}
 	}
 	if p.attachCallerAssertion(request, target, caller, callerEnv) {
-		request = withTrustedServiceCallerAssertion(request)
+		ctx = context.WithValue(ctx, trustedServiceCallerAssertionContextKey{}, true)
 	}
-	return request
+	return ctx
 }
 
 // attachCallerAssertion adds the ADR-206 statement of who called. A mint
@@ -1358,8 +1358,11 @@ func (p *ServiceProxy) forwardUpgrade(w http.ResponseWriter, r *http.Request, ta
 		serviceProxyProblem(w, http.StatusServiceUnavailable, "service has no healthy replicas")
 		return
 	}
-	request := p.guestRequest(r, targetPath, target, caller)
-	applyServiceEndpointIdentity(request, target, endpoint, caller)
+	ctx := r.Context()
+	request := r.Clone(ctx)
+	ctx = p.prepareGuestRequest(ctx, request, targetPath, target, caller)
+	request = request.WithContext(ctx)
+	request = requestForServiceEndpoint(ctx, request, target, endpoint, caller)
 	if enrollTrafficScopes(w, request, p.trafficRevocations, trafficrevocation.Scope{Kind: "deployment", ID: endpoint.DeploymentID}) {
 		return
 	}
@@ -1374,8 +1377,10 @@ func (p *ServiceProxy) forwardUpgrade(w http.ResponseWriter, r *http.Request, ta
 		ResponseWriter: w,
 		onHandshake:    func() { p.healthy(target.AppID, endpoint.InstanceID) },
 	}
-	recordTrafficAttempt(r.Context())
-	p.rawForward(serviceEndpointTarget(target.AppID, endpoint)).ServeHTTP(probeWriter, request)
+	recordTrafficAttempt(ctx)
+	forwardTarget := serviceEndpointTarget(target.AppID, endpoint)
+	oteltrace.SpanFromContext(ctx).SetAttributes(completionTargetAttributes(forwardTarget)...)
+	p.rawForward(forwardTarget).ServeHTTP(probeWriter, request)
 	if signal.stale.Load() || probeWriter.handshake {
 		return
 	}
@@ -1428,7 +1433,10 @@ func (w *serviceProxyUpgradeProbeWriter) Unwrap() http.ResponseWriter { return w
 
 func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, endpoints []ServiceEndpoint) {
 	appID := target.AppID
-	request := p.guestRequest(r, targetPath, target, caller)
+	ctx := r.Context()
+	request := r.Clone(ctx)
+	ctx = p.prepareGuestRequest(ctx, request, targetPath, target, caller)
+	request = request.WithContext(ctx)
 	if serviceGuestProtocol(target) != "grpc" && stampManagedDeadline(w, request, p.trafficDeadlines, target.AppID, caller.AccountID) {
 		return
 	}
@@ -1454,33 +1462,33 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 		maxAttempts = policy.MaxAttempts
 	}
 	if policy.Enabled && !retryable {
-		recordTrafficRetryStop(request.Context(), skipReason)
+		recordTrafficRetryStop(ctx, skipReason)
 		p.metrics.IncRetryExhausted(skipReason)
 	}
 	hasBody := request.Body != nil && request.Body != http.NoBody
 	if maxAttempts > 1 && hasBody && request.GetBody == nil {
 		maxAttempts = 1
-		recordTrafficRetryStop(request.Context(), RetrySkipBodyNotReplay)
+		recordTrafficRetryStop(ctx, RetrySkipBodyNotReplay)
 		p.metrics.IncRetryExhausted(RetrySkipBodyNotReplay)
 	}
 	if maxAttempts > 1 {
-		if !p.retryBudget.ObserveOriginal(request.Context(), appID) {
+		if !p.retryBudget.ObserveOriginal(ctx, appID) {
 			maxAttempts = 1
-			recordTrafficRetryStop(request.Context(), RetrySkipAggregate)
+			recordTrafficRetryStop(ctx, RetrySkipAggregate)
 			p.metrics.IncRetryExhausted(RetrySkipAggregate)
 		}
 	}
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		endpoint, ok := p.pick(appID, endpoints)
 		if len(endpoints) > 0 {
-			recordTrafficCircuit(request.Context(), ok)
+			recordTrafficCircuit(ctx, ok)
 		}
 		if !ok {
 			if len(endpoints) > 0 {
-				recordTrafficRefusal(request.Context(), "circuit")
+				recordTrafficRefusal(ctx, "circuit")
 			}
 			if attempt > 0 {
-				recordTrafficRetryStop(request.Context(), RetrySkipNoTarget)
+				recordTrafficRetryStop(ctx, RetrySkipNoTarget)
 				p.metrics.IncRetryExhausted(RetrySkipNoTarget)
 			}
 			serviceProxyProblem(w, http.StatusServiceUnavailable, "service has no healthy replicas")
@@ -1491,12 +1499,12 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 			var err error
 			forwardReq, err = replayRequest(request)
 			if err != nil {
-				recordTrafficRetryStop(request.Context(), RetrySkipBodyNotReplay)
+				recordTrafficRetryStop(ctx, RetrySkipBodyNotReplay)
 				p.metrics.IncRetryExhausted(RetrySkipBodyNotReplay)
 				return
 			}
 		}
-		applyServiceEndpointIdentity(forwardReq, target, endpoint, caller)
+		forwardReq = requestForServiceEndpoint(ctx, forwardReq, target, endpoint, caller)
 		if enrollTrafficScopes(w, forwardReq, p.trafficRevocations, trafficrevocation.Scope{Kind: "deployment", ID: endpoint.DeploymentID}) {
 			return
 		}
@@ -1505,8 +1513,10 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 		// withStaleTargetSignal intentionally inherits the inbound request
 		// context so the bridge can report a stale target to this retry loop.
 		forwardReq = forwardReq.WithContext(withStaleTargetSignal(forwardReq.Context(), signal)) //nolint:contextcheck // request context is deliberately wrapped with request-local stale-target state.
-		recordTrafficAttempt(forwardReq.Context())
-		p.forward(serviceEndpointTarget(appID, endpoint)).ServeHTTP(buffer, forwardReq)
+		recordTrafficAttempt(ctx)
+		forwardTarget := serviceEndpointTarget(appID, endpoint)
+		oteltrace.SpanFromContext(ctx).SetAttributes(completionTargetAttributes(forwardTarget)...)
+		p.forward(forwardTarget).ServeHTTP(buffer, forwardReq)
 		if attempt > 0 && forwardReq.Body != nil {
 			_ = forwardReq.Body.Close()
 		}
@@ -1526,44 +1536,44 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 			return
 		}
 		if buffer.committed {
-			recordTrafficRetryStop(request.Context(), RetrySkipCommitted)
+			recordTrafficRetryStop(ctx, RetrySkipCommitted)
 			p.metrics.IncRetryExhausted(RetrySkipCommitted)
 			buffer.commitTrailers()
 			return
 		}
 		if attempt+1 >= maxAttempts {
-			recordTrafficRetryStop(request.Context(), RetrySkipAttempts)
+			recordTrafficRetryStop(ctx, RetrySkipAttempts)
 			p.metrics.IncRetryExhausted(RetrySkipAttempts)
 			buffer.commit()
 			buffer.commitTrailers()
 			return
 		}
 		remaining := time.Duration(1<<63 - 1)
-		if budget, ok := reqbudget.FromContext(request.Context()); ok {
+		if budget, ok := reqbudget.FromContext(ctx); ok {
 			remaining = budget.Remaining(p.now())
-		} else if deadline, ok := request.Context().Deadline(); ok {
+		} else if deadline, ok := ctx.Deadline(); ok {
 			remaining = deadline.Sub(p.now())
 		}
 		if remaining < policy.MinRemaining {
-			recordTrafficRetryStop(request.Context(), RetrySkipBudget)
+			recordTrafficRetryStop(ctx, RetrySkipBudget)
 			p.metrics.IncRetryExhausted(RetrySkipBudget)
 			buffer.commit()
 			buffer.commitTrailers()
 			return
 		}
-		if !p.retryBudget.AllowRetry(request.Context(), appID, policy.BudgetPercent, policy.BudgetMinRetries) {
-			recordTrafficRetryStop(request.Context(), RetrySkipAggregate)
+		if !p.retryBudget.AllowRetry(ctx, appID, policy.BudgetPercent, policy.BudgetMinRetries) {
+			recordTrafficRetryStop(ctx, RetrySkipAggregate)
 			p.metrics.IncRetryExhausted(RetrySkipAggregate)
 			buffer.commit()
 			buffer.commitTrailers()
 			return
 		}
 		if policy.Backoff > 0 {
-			stopBackoff := measureTrafficPhase(request.Context(), trafficBackoff)
+			stopBackoff := measureTrafficPhase(ctx, trafficBackoff)
 			timer := time.NewTimer(policy.Backoff)
 			select {
 			case <-timer.C:
-			case <-request.Context().Done():
+			case <-ctx.Done():
 				timer.Stop()
 				stopBackoff()
 				if handleForwardRequestCancellation(w, request, !buffer.committed) {
@@ -1577,30 +1587,6 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 			stopBackoff()
 		}
 	}
-}
-
-// applyServiceEndpointIdentity replaces guest-controlled identity claims with
-// the authoritative target replica and the account already checked by the
-// service authorizer. The same helper is used by HTTP and Upgrade paths so a
-// raw-bytes bridge cannot silently lose deployment provenance.
-func applyServiceEndpointIdentity(request *http.Request, target ServiceTarget, endpoint ServiceEndpoint, caller ServiceCaller) {
-	if request == nil {
-		return
-	}
-	identity := api.PlatformIdentity{
-		RequestID:           request.Header.Get(api.RequestIDHeader),
-		AppID:               target.AppID,
-		DeploymentID:        endpoint.DeploymentID,
-		TenantID:            caller.AccountID,
-		InstanceID:          endpoint.InstanceID,
-		NodeID:              endpoint.NodeID,
-		Region:              endpoint.Region,
-		CommitSHA:           endpoint.CommitSHA,
-		DeploymentTag:       endpoint.DeploymentTag,
-		DeploymentCreatedAt: endpoint.DeploymentCreatedAt,
-		ImageDigest:         endpoint.ImageDigest,
-	}
-	identity.ApplyGuestHeaders(request.Header)
 }
 
 func serviceEndpointTarget(appID string, endpoint ServiceEndpoint) Target {

@@ -106,6 +106,26 @@ checks two logical records for three forwarding attempts. The receiver captures
 the emitted records as a fixture; this does not establish production telemetry
 persistence or shutdown delivery.
 
+Managed attempts also own a cloned request and header map, including bodyless
+replays. Verified account and selected endpoint identity replace prior-hop
+values in guest headers and correlation context. The logical managed-call span
+names the last endpoint actually forwarded; a policy-refused sibling cannot
+replace it. Empty provenance clears earlier values. HTTP and raw forwarding
+RPCs publish that current context, replacing reserved correlation metadata
+while retaining unrelated transport metadata. Repeated publication remains
+bounded. This envelope is diagnostic data, not an authorization credential.
+
+`TestTrafficFleetDaemonManagedRetryIdentityAndReplacement` enables the configured
+private service listener in two actual daemon processes. A namespace source
+address fixture feeds the production fresh Postgres caller lookup; stored
+declared bindings and reliability policy drive the call. Four eligible originals
+spend one shared retry across replicas and replacement in one live database
+window. Five RPC attempts produce two guest executions, and RPC correlation
+matches the served guest identity. A spoofed caller is refused before forwarding.
+These internal calls leave public app/account rate counters untouched. Listener
+binds and guest source addresses are local fixtures; this is not native network,
+DNS, VM, node-admission or cross-host acceptance.
+
 Run `go test ./cmd/gatewayd-internal -run '^TestTrafficFleetDaemon'` with an
 unmigrated disposable `DATABASE_URL` and `FAAS_PGTEST_TEMPLATE_DATABASE=1`.
 The test helper itself is guarded when invoked without its subprocess spec.

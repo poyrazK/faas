@@ -3,6 +3,81 @@
 Objective: implement the six delivery steps in the 2026-09-29 gap-closure plan.
 Base: `56618879c`; branch: `codex/traffic-platform-gaps`; decision: ADR-375.
 
+## Managed attempt identity and forwarding correlation — 2026-10-01
+
+The unchanged-runtime baseline reproduced managed retries retaining the caller's
+correlation identity, mutating earlier bodyless attempt headers and omitting
+endpoint ownership from the logical completion span. Real HTTP and raw RPCs
+received prior-hop metadata instead of the canonical selected target envelope.
+
+Each managed dispatch now clones the request and headers, stamps verified account
+and endpoint identity into headers and context, and updates completion span
+ownership immediately before forwarding. Causal wake/invocation identity is
+preserved. Empty endpoint provenance clears stale values. A sibling refused by
+policy does not replace the last actually forwarded owner. Upgrades use the same
+identity preparation and keep single-dispatch semantics. HTTP and raw forwarding
+explicitly publish the canonical context, replace reserved metadata and retain
+unrelated transport values. Repeated publication does not accumulate duplicates;
+legacy forwarding without a canonical context is unchanged. Correlation remains
+diagnostic data rather than an authorization credential.
+
+Focused cases cover nil/NoBody requests, replayable bodies, application errors,
+disabled retry, missing provenance, a policy-refused sibling, Upgrade identity,
+actual forwarding RPC metadata, 64 repeated hops, causal fields and cancellation.
+The configured private service listener is also exercised in two real gateway
+processes against Postgres. Fresh caller lookup, stored declared bindings and
+reliability policy, production node dialing and forwarding verify four originals,
+one shared retry, five RPCs and two guest executions across replacement within
+one live database window. Spoofed caller identity never forwards; internal calls
+do not create public rate debits. Source addresses, listener binds, placement,
+VM forwarding and telemetry receivers remain explicit local fixtures.
+
+Verification against the final 12,513-file source freeze:
+
+- All nine complete unit packages pass in 164.065 s. The log contains 9,547
+  named pass events and 1,438 skips. A further 46 passed parents whose children
+  are entirely guarded are excluded from acceptance: 9,501 named results are
+  accepted and 1,484 are guarded. Accepted package counts are state 2,124,
+  internal gateway 789, scheduler 1,778, gateway 2,321, trafficrevocation 33,
+  schedd 85, public gateway 93, API 1,813 and wire 465.
+- The selected Postgres profile passes 149 named results with no skips in
+  66.850 s: 35 results under 20 actual Postgres fixture roots and 114 memory/
+  transport checks. The configured managed-listener case again verifies one
+  live retry window across replacement and agreement between RPC and guest
+  identity. Parent-only passes from guarded unit subtests are not Postgres
+  acceptance.
+- Across both profiles, 9,536 distinct named results are accepted; 1,462
+  guarded results remain without acceptance. Pinned lint 2.4.0 reports zero
+  issues for all nine complete packages with tests in 36.507 s. SQLC 1.31.1
+  reproduces all four generated files exactly. Runbook SQL, text encoding,
+  shell quoting and ADR uniqueness gates pass in 45.015 s, retaining the
+  71 pre-existing duplicate groups.
+- Go and lint run serially with CGO disabled, GOMAXPROCS=2, GOGC=50, one
+  package/analysis worker, disabled inlining/DWARF and stripped test binaries.
+  Lint uses its task-owned cache, permits unrelated checkout runners and
+  emits all diagnostics. No new suppressions, source exclusions, overlays or
+  weakened assertions were added. Only this tracker changes after the final
+  source freeze. The disposable source database remains unmigrated, with
+  fsync, synchronous_commit and full_page_writes enabled.
+
+Focused results and the corrected fixture's production-slug diagnostic remain
+outside accepted final counts. Raw Go events, guarded parents and accepted
+results are retained separately in the receipts.
+Two intentionally interrupted runs have no terminal result and are retained.
+The earlier temporary build cache and Postgres cluster were absent on resume;
+a fresh task-owned cluster uses port 55491, leaving sibling clusters intact.
+The global lint lock wait, cache-load timeout and context-inheritance diagnostics
+are retained. Preparation now returns its inherited context explicitly for retry
+and trace operations, including the minted assertion marker. Complete-package
+preliminary lint passes without new suppressions. Task-owned heavy runs remain
+serial; lint uses a separate cache and permits unrelated checkout runners, with
+one compiler/analysis worker and all diagnostics visible.
+
+Evidence: `outputs/traffic-managed-retry-20261001/` relative to this checkout's
+parent. All six release requirements remain open. No native Linux x86_64 KVM
+acceptance host is available; native network/lifecycle/leak checks, complete
+path qualification, deployed load, recovery and staging remain pending.
+
 ## Bounded request evidence shutdown — 2026-10-01
 
 The unchanged-runtime baseline reproduced lost shutdown evidence: the publisher
