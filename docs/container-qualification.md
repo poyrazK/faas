@@ -993,3 +993,7 @@ The strict PostgreSQL UDP gate now requires `cmd/gatewayd-public/udp_ingress_pg_
 ### Database-backed startup owns and releases live UDP socket
 
 The public startup fixture now also creates enabled listener intent, requires the ready supervisor to own its real loopback UDP socket, and proves shutdown releases it by acquiring a fresh kernel bind. Three race-detector runs passed against PostgreSQL; scoped lint reported zero issues. Logs `/tmp/gregale-udp-startup-socket-tests.log` and `/tmp/gregale-udp-startup-socket-lint.log`. Cluster stopped. This extends startup coverage but does not exercise scheduler admission or native guest traffic. The prior full nine-case database gate predates this fixture extension.
+
+### Published database-backed socket ownership acceptance
+
+Public PR #3992 commit `cb4062a95` requires enabled listener socket ownership at readiness and releases the endpoint on shutdown. Three race-detector runs passed on the isolated public branch, log `/tmp/gregale-udp-public-socket-startup-review.log`; the owned cluster was stopped. Combined #3997 CI snapshot had 23 successes, one skip and two live jobs (migration application and builder-base); no full CI pass is claimed. Public updated-head CI and native/deployed acceptance remain pending.
