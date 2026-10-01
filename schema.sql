@@ -5117,6 +5117,18 @@ CREATE TABLE public.custom_domains (
 
 
 --
+-- Name: customer_operation_code_pins; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_operation_code_pins (
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT customer_operation_code_pins_expires_at_check CHECK (isfinite(expires_at))
+);
+
+
+--
 -- Name: customer_operation_definitions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -5716,6 +5728,38 @@ ALTER TABLE public.deployment_audit ALTER COLUMN id ADD GENERATED ALWAYS AS IDEN
 
 
 --
+-- Name: deployment_revision_pins; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_revision_pins (
+    deployment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: deployment_code_pin_deadlines; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.deployment_code_pin_deadlines AS
+ SELECT deployment_id,
+    app_id,
+    max(expires_at) AS expires_at
+   FROM ( SELECT deployment_revision_pins.deployment_id,
+            deployment_revision_pins.app_id,
+            deployment_revision_pins.expires_at
+           FROM public.deployment_revision_pins
+        UNION ALL
+         SELECT customer_operation_code_pins.deployment_id,
+            customer_operation_code_pins.app_id,
+            customer_operation_code_pins.expires_at
+           FROM public.customer_operation_code_pins) receipts
+  GROUP BY deployment_id, app_id;
+
+
+--
 -- Name: deployment_logs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -5784,18 +5828,6 @@ CREATE TABLE public.deployment_openapi_snapshots (
     CONSTRAINT deployment_openapi_snapshots_schema_version_positive CHECK ((schema_version >= 1)),
     CONSTRAINT deployment_openapi_snapshots_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
     CONSTRAINT deployment_openapi_snapshots_sha256_shape CHECK ((sha256 ~ '^[0-9a-f]{64}$'::text))
-);
-
-
---
--- Name: deployment_revision_pins; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.deployment_revision_pins (
-    deployment_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    expires_at timestamp with time zone NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -11752,6 +11784,14 @@ ALTER TABLE ONLY public.custom_domains
 
 
 --
+-- Name: customer_operation_code_pins customer_operation_code_pins_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_code_pins
+    ADD CONSTRAINT customer_operation_code_pins_pkey PRIMARY KEY (deployment_id);
+
+
+--
 -- Name: customer_operation_definitions customer_operation_definition_app_id_scope_name_deployment__key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -15258,6 +15298,20 @@ CREATE INDEX custom_domains_verification_due_idx ON public.custom_domains USING 
 
 
 --
+-- Name: customer_operation_code_pins_app_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operation_code_pins_app_expiry_idx ON public.customer_operation_code_pins USING btree (app_id, expires_at);
+
+
+--
+-- Name: customer_operation_code_pins_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_operation_code_pins_expiry_idx ON public.customer_operation_code_pins USING btree (expires_at);
+
+
+--
 -- Name: customer_operation_definitions_route_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -15640,6 +15694,13 @@ CREATE INDEX deployments_failed_error_code_idx ON public.deployments USING btree
 --
 
 CREATE INDEX deployments_live_traffic_idx ON public.deployments USING btree (app_id) INCLUDE (traffic_percent, id) WHERE (status = 'live'::text);
+
+
+--
+-- Name: deployments_operation_code_pin_owner_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX deployments_operation_code_pin_owner_idx ON public.deployments USING btree (id, app_id);
 
 
 --
@@ -20808,6 +20869,22 @@ ALTER TABLE ONLY public.custom_domains
 
 ALTER TABLE ONLY public.custom_domains
     ADD CONSTRAINT custom_domains_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: customer_operation_code_pins customer_operation_code_pins_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_code_pins
+    ADD CONSTRAINT customer_operation_code_pins_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_operation_code_pins customer_operation_code_pins_owner_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_code_pins
+    ADD CONSTRAINT customer_operation_code_pins_owner_fk FOREIGN KEY (deployment_id, app_id) REFERENCES public.deployments(id, app_id) ON DELETE CASCADE;
 
 
 --

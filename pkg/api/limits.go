@@ -144,7 +144,8 @@ const (
 	// remain addressable by clients after a stable cutover.
 	RevisionPinMaxTTLSeconds = 7 * 24 * 60 * 60
 	// RevisionPinCleanupPageMax bounds one expiry transaction's app locks and
-	// pin removals. Active operation references are excluded before paging.
+	// deployment IDs (each has at most one public and one private receipt).
+	// Active operation references are excluded before paging.
 	RevisionPinCleanupPageMax    = 500
 	ProjectReleaseSetMaxMembers  = 100
 	ProjectReleaseSetPageDefault = 50
