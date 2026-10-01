@@ -13845,6 +13845,19 @@ func (q *Queries) ReadServicePolicyTestMember(ctx context.Context, db DBTX, appI
 	return i, err
 }
 
+const readSyntheticIngressAuthMode = `-- name: ReadSyntheticIngressAuthMode :one
+SELECT public_auth_mode FROM apps
+WHERE id = $1::uuid AND status <> 'deleted' AND deleted_at IS NULL
+`
+
+// ADR-375: fresh synthetic ingress mode without environment or credentials.
+func (q *Queries) ReadSyntheticIngressAuthMode(ctx context.Context, db DBTX, id pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, readSyntheticIngressAuthMode, id)
+	var public_auth_mode string
+	err := row.Scan(&public_auth_mode)
+	return public_auth_mode, err
+}
+
 const readTenantHostnameTrafficOwner = `-- name: ReadTenantHostnameTrafficOwner :one
 SELECT h.id,s.account_id,h.surface_id
 FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id=h.surface_id

@@ -48,12 +48,9 @@ func (s *SynthServer) WithInternalSvcVerifier(v InternalSvcVerifier) {
 // the per-service public-key allowlist. On failure: 403.
 // On pass-through: returns false.
 //
-// The mode lookup reads from the per-app cache (populated by
-// the same hydration path that feeds Handler.PublicAuthConfig).
-// A cache miss returns "" which is treated as "open" (no gate).
-// The cache is consulted on every /v1/synthesize,
-// /v1/invocations:dispatch, and /v1/invocations:dispatch_batch
-// request.
+// applySynthIngressPolicy verifies a fresh declared mode before calling this
+// token gate on each of the three synthetic routes. Failed or unknown policy
+// reads refuse before reaching this helper.
 //
 // The `from` argument tags the audit payload so dashboards
 // can split the three call surfaces. The three current values:

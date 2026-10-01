@@ -1035,6 +1035,31 @@ older trusted callers compatible; updated gateway consumers must precede updated
 schedd producers in a drained, matched-version rollout. Older consumers ignore
 the new body field and cannot provide this contract.
 
+### Follow-up: verified synthetic ingress auth policy
+
+The three synthetic HTTP routes verify a fresh app ingress mode before wake or
+dispatch, including pre-woken single invocations and empty batches. Production
+wires the actual startup store before listeners serve. The SQLC projection reads
+only `public_auth_mode` for an existing, non-deleted app; environment, credentials
+and unrelated manifest data are excluded. The existing 250 ms service-policy read
+bound applies within the inbound request's context, including pool acquisition.
+
+A read error, expired context, empty mode or unknown mode refuses with the stable
+`traffic_policy_unavailable` 503 and `Retry-After: 1`. Raw lookup errors are private.
+A later attempt reads current state without caching either a refusal or an allow.
+The declared modes remain `open`, `bearer`, `basic`, `ip_allowlist` and
+`internal_only`. Only the last invokes the existing internal-service token gate;
+this preserves the established trusted background-delivery authentication scope.
+Workflow authorization retains its earlier admission order. Existing in-process
+fixtures may omit the lookup; production always supplies the verified lookup.
+The legacy string callback stays source-compatible but empty/unknown results
+now refuse. Its absence is not a production outage fallback.
+
+This is ingress authentication at the start of a synthetic envelope. Emergency
+revocation retains its separate exchange lifetime. Public edge/rate/deadline
+equivalence, per-record batch policy changes and full daemon/fleet/customer/staging
+and native VM/network acceptance remain separate requirements.
+
 The implementation tracker is `docs/traffic_platform_implementation.md`.
 Each guarantee needs configuration-to-runtime tests, cancellation/recovery
 tests and customer documentation. VM lifecycle changes require native x86_64

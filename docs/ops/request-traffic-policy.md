@@ -33,6 +33,33 @@ and target, and the scheduler rechecks before success. Deployed complete-path
 acceptance remains pending; see
 `traffic-security-revocation.md` for coverage and exclusions.
 
+## Synthetic ingress authentication
+
+Each POST to `/v1/synthesize`, `/v1/invocations:dispatch` and
+`/v1/invocations:dispatch_batch` verifies the current app `public_auth_mode` before
+wake or dispatch. Pre-woken invocations and empty batches use the same gate.
+Production attaches its startup Postgres store before serving. Its SQLC query
+reads only the mode of an existing, non-deleted app, with a 250 ms deadline inside
+the inbound context. It loads no environment, credential or manifest body.
+
+A failed read, expired context, missing app, empty mode or unknown mode returns
+503 `traffic_policy_unavailable` with `Retry-After: 1`. The response contains no
+raw store error. No wake or dispatch occurs. Retry after restoring store access;
+a fresh attempt rereads current policy, without a cached allow or refusal.
+`internal_only` requires the existing Gregale internal-service token verifier.
+The other declared modes retain the established trusted background-delivery
+scope; they do not add public bearer/basic/allowlist checks to synthetic work.
+Workflow authorization still runs first. A mode read is fixed for this envelope;
+ordinary mode changes do not withdraw a running wake, invocation or batch.
+Emergency withdrawal uses the separate security-generation lifetime described
+in `traffic-security-revocation.md`.
+
+The legacy in-process string callback remains available, with empty/unknown
+results now refusing. Omitting a callback is supported only by fixtures without
+a policy store. Production supplies the verified read; omission is not a store
+outage fallback. This ingress check does not establish full public/synthetic
+policy, deadline, rate or decision-evidence agreement.
+
 ## Public request policy
 
 ADR-375 resolves hostname ownership and pins the corresponding route-only

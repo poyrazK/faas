@@ -40,6 +40,15 @@ wake uses the delivery context. Claim failure/retry writes use the original
 scheduler context so a canceled delivery does not strand a writable claim.
 Registrations remain owned through gateway result handling and cleanup.
 
+All three synthetic ingress routes also verify a fresh minimal app auth-mode
+projection before wake or dispatch. Lookup errors, missing/deleted apps, unknown
+modes and expired reads refuse with 503 `traffic_policy_unavailable` and
+`Retry-After: 1`; they cannot substitute an open mode. The read is bounded to
+250 ms and uses the actual startup store. `internal_only` then applies its
+existing daemon-token gate. This initial auth read has no allow cache and does
+not replace the revocation lifetime. Ordinary mode changes are seen by the next
+envelope; emergency withdrawal still requires a security-generation change.
+
 The trusted single-dispatch JSON body carries `security_snapshot`, using the same
 canonical `v1.` codec and 4 KiB/16-scope bounds as public response handoff. The
 receiving gateway requires the exact resolved account/app/target scope set and

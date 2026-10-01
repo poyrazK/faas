@@ -2619,3 +2619,83 @@ deployed daemon fleet/load/restart/outage/recovery, customer/staging qualificati
 and Linux x86_64 KVM VM/firewall/restore/process-death/leak acceptance remain pending.
 The user has no available KVM host; another host request is unnecessary until
 availability changes.
+
+## Verified synthetic ingress authentication — 2026-10-01
+
+The three synthetic HTTP routes now verify a fresh app ingress mode before wake
+or dispatch, including pre-woken single invocations and empty batches. Production
+attaches its actual startup store before serving. The SQLC query reads only
+`public_auth_mode` for an existing, non-deleted app; it loads no environment,
+credentials or manifest body. The shared gate applies the existing 250 ms policy
+read deadline inside the inbound context, checks cancellation before and after
+the read, and rejects an adapter's late success after expiry.
+
+Read errors, missing/deleted apps, expired reads and empty/unknown modes return
+503 `traffic_policy_unavailable` with `Retry-After: 1`. Raw store errors are never
+returned. These refusals cause no wake or dispatch. Each later attempt rereads
+current policy without caching either a refusal or an allow. `internal_only`
+retains its existing internal-service token gate; other declared modes retain
+the established trusted background-delivery scope. Workflow authorization still
+runs first. Legacy in-process string callbacks remain available, with empty and
+unknown results now refusing. Nil lookup compatibility is limited to fixtures;
+production supplies the verified read. An ordinary mode change is observed by
+the next envelope. Emergency withdrawal retains the separate security registry
+lifetime; per-record batch policy changes and public control equivalence are not
+established by this initial ingress check.
+
+Verification against the final 12,494-file source freeze:
+
+- Complete state, internal gateway, scheduler, gateway, trafficrevocation, schedd
+  and public gateway unit scope: 7,223 named passes and 1,428 guarded/skipped
+  results in 151.042 s. Package passes are 2,159, 795, 1,778, 2,279, 33, 86 and
+  93 respectively. Guarded results are not native acceptance.
+- Selected PostgreSQL profile: 82 named passes, no skips, 33.758 s. Eleven real
+  PostgreSQL fixture roots account for 26 named results; the remaining 56 are
+  memory/transport checks. The new state fixtures verify fresh updates, missing
+  and independently deleted app forms, cancellation, a locked-query timeout,
+  recovery and connection release. Existing target/security/handoff and scheduler
+  lifecycle regressions also pass.
+- The actual daemon startup fixture serves all three synthetic routes under both
+  local and central counter modes. Its real Postgres mode reader observes changes,
+  refuses missing apps and table-lock timeouts before dispatch, retains the token
+  requirement after recovery, and accepts a fresh open-mode request. Guest
+  execution is a counting dispatcher and token verification is a fixture. This
+  proves startup ingress wiring and refusal/recovery, not guest execution or
+  deployed fleet acceptance.
+- Gateway route fixtures cover empty/unknown modes, read failure and redaction,
+  fresh recovery and mode changes, all five declared modes, missing/invalid/valid
+  internal tokens, unwired verifier, inbound context propagation, parent/read
+  deadlines, late-success refusal, pre-woken claims, empty batches and workflow
+  authorization order. Existing nil-lookup synthetic fixtures retain compatibility.
+- Deduplicated acceptance is 7,248 named passes, with 1,416 guarded results without
+  acceptance. SQLC v1.31.1 reproduces all four generated files. Lint v2.4.0 checks
+  all seven complete packages with tests and reports zero issues in 104.571 s.
+  Repository SQL, encoding, quoting and ADR-number gates pass in 53.989 s.
+  Postgres's source public schema remains unmigrated, with fsync,
+  synchronous_commit and full_page_writes enabled. No schema, quota, test overlay,
+  source exclusion or weakening of an existing assertion.
+
+The baseline reproduced six unsafe accepts: empty and unknown modes reached
+wake/single/batch dispatch. One focused build exhausted disk, and another found
+an incomplete new fixture verifier interface. The full preliminary unit run hit
+existing two-second analyzer bounds while repository gates ran concurrently and
+disk space dropped; only that run's Go/compiler processes were stopped. These
+whole failed/preliminary runs, plus the passing focused iteration, are retained
+as diagnostics and excluded from accepted counts. Final unit and PostgreSQL runs
+then ran serially against unchanged source. SQLC and repository gates had already
+passed against that same source. Only this tracker changed after the freeze.
+
+Three cleanups occurred after owned handles became terminal. They removed only
+older entries from this task's cache: 15 files (3,393,101,526 bytes), 99 files
+(6,492,166,434 bytes), then 760 files (3,331,013,996 bytes). Recent artifacts were
+retained. No sibling cache, process or Postgres cluster changed. Exact source,
+staged/committed content and gate receipts are under
+`/Users/poyrazk/dev/Cloud/gregale/outputs/traffic-synthetic-ingress-auth-20261001/`.
+
+All six release requirements remain unchecked. Remaining operator/alias/revision
+writer/resolver coverage, complete synthetic/trigger/public policy, rate, deadline
+and node-admission contracts, decision observations and preview/runtime agreement,
+deployed daemon fleet/load/restart/outage/recovery, customer/staging qualification,
+and native Linux x86_64 KVM VM/firewall/restore/process-death/leak acceptance remain
+pending. The user has no available KVM host; acceptance remains pending until
+availability changes.

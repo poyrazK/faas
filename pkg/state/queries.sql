@@ -4880,6 +4880,11 @@ SELECT EXISTS (
       AND d.scope = sqlc.arg(scope)::text AND d.status = 'live' AND d.deleted_at IS NULL
 )::boolean AS allowed;
 
+-- ADR-375: fresh synthetic ingress mode without environment or credentials.
+-- name: ReadSyntheticIngressAuthMode :one
+SELECT public_auth_mode FROM apps
+WHERE id = sqlc.arg(id)::uuid AND status <> 'deleted' AND deleted_at IS NULL;
+
 -- ADR-375: minimal credential-free projection for one read-only service-policy snapshot.
 -- name: ReadServicePolicyAppByID :one
 SELECT id, account_id, slug, status, project_id, preview_of_slug,

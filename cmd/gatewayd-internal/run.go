@@ -1778,31 +1778,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// Restoring the off-the-brace call keeps both sides readable.
 	deps.synth = gateway.NewSynthServer(gatewaydInternalSocket, synth, log)
 	deps.syntheticDispatcher = synth
-	// ADR-119 — wire the synth-side metrics, audit emitter, and app-mode
-	// lookup here. The verifier itself is loaded later from the cluster key or
-	// environment fallback and is attached after that load completes.
-	// appPublicAuthMode is consulted via the per-app cache
-	// populated by the same hydration path Handler.PublicAuthConfig
-	// reads; nil-safe (nil lookup = every app treated as "open").
-	deps.synth.WithMetrics(deps.metrics).
-		WithAudit(deps.requireAuthnAudit.Emit).
-		WithAppModeLookup(func(ctx context.Context, appID string) string {
-			// ADR-119 — per-app mode lookup for the synth-side
-			// gate. Reads from the per-app cache hydrated by
-			// the same path Handler.PublicAuthConfig reads.
-			// A cache miss returns "" which the gate treats
-			// as "open" (no JWT required). Returns "" on error
-			// so a transient pg failure doesn't 500 every
-			// internal_only cron fire. Round-3 golangci-lint
-			// contextcheck: now uses the inbound request's ctx
-			// (with timeout / cancel chain) instead of a
-			// fresh context.Background().
-			app, err := pgStore.AppByID(ctx, appID)
-			if err != nil {
-				return ""
-			}
-			return app.PublicAuthMode
-		})
+	// ADR-119 — wire synth-side metrics and audit. The verifier is loaded
+	// later. runWithDeps attaches the actual startup store's verified mode
+	// projection before serving, preserving lookup errors rather than an allow.
+	deps.synth.WithMetrics(deps.metrics).WithAudit(deps.requireAuthnAudit.Emit)
 	deps.synth.WithWorkflowAdmission(func(ctx context.Context, appID, runID, stepName string, attempt int) error {
 		run, err := pgStore.GetWorkflowRun(ctx, runID)
 		if err != nil {
@@ -2460,6 +2439,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if deps.syntheticDispatcher != nil {
 			deps.syntheticDispatcher.trafficRevocations = deps.trafficRevocations
 		}
+	}
+	if deps.synth != nil && deps.pgStore != nil {
+		deps.synth.WithVerifiedAppModeLookup(deps.pgStore.ReadSyntheticIngressAuthMode)
 	}
 	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log).WithRetryBudget(retryBudget).
 		WithTrafficDeadlines(deps.trafficDeadlines).WithTrafficRevocations(deps.trafficRevocations)

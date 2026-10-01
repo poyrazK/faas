@@ -18,6 +18,7 @@ import (
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/trafficdeadline"
 	"google.golang.org/grpc"
@@ -71,6 +72,9 @@ func TestRunWithDepsPublishesActualTrafficWiringAndRetires(t *testing.T) {
 			deps.config = &Config{NodeName: node.Name, RateLimit: TOMLRateLimitConfig{Mode: tc.mode}}
 			deps.pool, deps.pgStore = pool, store
 			deps.syntheticDispatcher = &synthAdapter{store: store}
+			policyDispatcher := &daemonIngressPolicyDispatcher{}
+			deps.synth = gateway.NewSynthServer(filepath.Join(dir, "synth.sock"), policyDispatcher, discardLogger())
+			deps.synth.WithInternalSvcVerifier(daemonIngressPolicyVerifier{})
 			deps.capCheck = func() error { return nil }
 			deps.backend = &fixedBackend{}
 			deps.edgeRulesMatcher = newGatewaydEdgeRules(&fakeEdgeRuleStore{}, nil, nil, nil)
@@ -130,6 +134,7 @@ func TestRunWithDepsPublishesActualTrafficWiringAndRetires(t *testing.T) {
 			if response.StatusCode != http.StatusNotFound {
 				t.Fatalf("wired listener response = %d", response.StatusCode)
 			}
+			assertDaemonSyntheticIngressPolicy(t, "http://"+listener.Addr().String(), pool, store, policyDispatcher)
 			cancel()
 			select {
 			case err := <-done:
