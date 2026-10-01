@@ -357,7 +357,7 @@ migrations-check: ## Static legacy-contiguity + timestamp-ID checks (no Postgres
 .PHONY: migration-new
 migration-new: ## Create timestamped migration: make migration-new NAME=add_job_priority
 	@test -n "$(NAME)" || (echo "NAME is required, e.g. make migration-new NAME=add_job_priority"; exit 1)
-	@$(GO) run ./cmd/migration-new -name "$(NAME)"
+	@$(GO) run ./cmd/migration-new -name "$(NAME)" $(if $(AFTER),-after "$(AFTER)")
 
 .PHONY: grafana-jq-check
 grafana-jq-check: ## Validate every Grafana dashboard JSON parses cleanly (jq -e .). PR #837 (ADR-091 Amendment 1, issue #561) wired this into `test`.
