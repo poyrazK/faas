@@ -396,45 +396,62 @@ func (h *Handler) snapshotTrustedPublishers(appID string) []cosign.TrustedPublis
 	return out
 }
 
-// checkImageSignature performs a non-mutating provenance check against the
-// current in-memory trust list. It is shared by the deploy gate and the live
-// signer-revocation reconciler; callers decide whether a failure should fail
-// a deployment or quarantine an already-live app.
+// checkImageSignature revalidates against the current mirrored publisher keys.
+// Live revalidation resolves the app's repository-scoped credentials separately
+// from the deploy gate, which already holds them for image resolution.
 func (h *Handler) checkImageSignature(ctx context.Context, app state.App, ref string) (string, error) {
-	pubs := h.snapshotTrustedPublishers(app.ID)
-	if len(pubs) == 0 {
-		// Defence-in-depth: apid's pre-flight already gated this
-		// case, but if imaged is called outside the apid pipeline
-		// (a future admin CLI, a live revalidation), refuse the
-		// signature check rather than verify against an empty
-		// allowlist.
-		return "", fmt.Errorf("%w: require_signed=true but no trusted publishers configured", cosign.ErrSignatureInvalid)
+	if _, err := h.imageSignaturePublishers(app); err != nil {
+		return "", err
 	}
-	if h == nil || h.oci == nil {
-		return "", errors.New("imaged: image signature verifier unavailable")
+	r, err := oci.ParseReference(ref)
+	if err != nil {
+		return "", err
 	}
-	signer, _, err := cosign.VerifyImageSignature(ctx, &ociImageSignaturePuller{oci: h.oci}, ref, pubs)
-	return signer, err
+	auth, err := h.resolveRegistryAuth(ctx, app, r.Registry)
+	if err != nil {
+		return "", err
+	}
+	if auth != nil {
+		defer func() { auth.Password = "" }()
+	}
+	proof, err := h.checkImageSignatureProof(ctx, app, ref, auth)
+	return proof.PublisherName, err
 }
 
-// verifyImageSignature is the deploy-time verify hook (issue #472 /
-// ADR-054). Branches on apps.require_signed; if true, calls
-// pkg/cosign.VerifyImageSignature against the in-memory trust list
-// and marks the deployment FAILED with the typed failure reason on
-// either ErrSignatureMissing or ErrSignatureInvalid. Returns nil on
-// success so buildImageLayer proceeds to PullDigest.
-//
-// The signatureMissing / signatureInvalid audit events are emitted
-// here (not by apid) because imaged is the surface that observes the
-// verify outcome — apid already emitted app.signed_image_accepted
-// at accept-time (the "request passed the gate" event). The pair
-// answers "request accepted but verify failed in imaged" without
-// re-deriving from deployment status.
-func (h *Handler) verifyImageSignature(ctx context.Context, app state.App, dep state.Deployment, ref string) error {
-	signer, err := h.checkImageSignature(ctx, app, ref)
+func (h *Handler) checkImageSignatureProof(ctx context.Context, app state.App, ref string, auth *oci.BasicAuth) (cosign.ImageSignatureProof, error) {
+	pubs, err := h.imageSignaturePublishers(app)
+	if err != nil {
+		return cosign.ImageSignatureProof{}, err
+	}
+	return cosign.VerifyImageSignatureAttachments(ctx, &ociImageSignaturePuller{oci: h.oci, auth: auth}, ref, pubs)
+}
+
+func (h *Handler) imageSignaturePublishers(app state.App) ([]cosign.TrustedPublisher, error) {
+	if h == nil {
+		return nil, errors.New("imaged: image signature verifier unavailable")
+	}
+	pubs := h.snapshotTrustedPublishers(app.ID)
+	if len(pubs) == 0 {
+		return nil, fmt.Errorf("%w: require_signed=true but no trusted publishers configured", cosign.ErrSignatureInvalid)
+	}
+	if h.oci == nil {
+		return nil, errors.New("imaged: image signature verifier unavailable")
+	}
+	return pubs, nil
+}
+
+// verifyImageSignature authenticates the exact resolved source before build
+// reads. Only a missing attachment is classified as missing; registry failures
+// remain failures. The signed source may be an index whose verified child is
+// selected by the resolver (ADR-386).
+func (h *Handler) verifyImageSignature(ctx context.Context, app state.App, dep state.Deployment, ref, expectedDigest string, auth *oci.BasicAuth) (cosign.ImageSignatureProof, error) {
+	proof, err := h.checkImageSignatureProof(ctx, app, ref, auth)
+	if err == nil && proof.SubjectDigest != expectedDigest {
+		err = fmt.Errorf("%w: verified subject differs from selected source", cosign.ErrSignatureInvalid)
+	}
 	if err == nil {
-		h.log.Info("image signature verified", "app", app.Slug, "deployment", dep.ID, "signer", signer, "ref", ref)
-		return nil
+		h.log.Info("image signature verified", "app", app.Slug, "deployment", dep.ID, "signer", proof.PublisherName, "publisher_key_sha256", proof.PublisherKeySHA256, "subject_digest", proof.SubjectDigest)
+		return proof, nil
 	}
 	switch {
 	case errors.Is(err, cosign.ErrSignatureMissing):
@@ -447,7 +464,7 @@ func (h *Handler) verifyImageSignature(ctx context.Context, app state.App, dep s
 		_ = h.markDeployFailed(ctx, dep.ID, err, "signature_verify: registry error")
 		h.emitSignatureAudit(ctx, "app.signature_invalid", app, dep, ref, "")
 	}
-	return err
+	return cosign.ImageSignatureProof{}, err
 }
 
 // emitSignatureAudit fires the audit row for verify failures. Mirrors
@@ -522,44 +539,6 @@ func (h *Handler) emitSignatureAudit(ctx context.Context, kind string, app state
 	if h.notif != nil {
 		_ = h.notif.Notify(ctx, "audit_event", string(data))
 	}
-}
-
-// ociImageSignaturePuller adapts oci.Puller to the minimal
-// cosign.ImageSignaturePuller surface. PullDigest / FetchSignature
-// are the two methods VerifyImageSignature needs; FetchSignature
-// type-asserts to oci.ManifestPuller (which production's
-// RegistryClient satisfies — the DefaultPuller used by unit tests
-// does NOT) and falls back to ErrSignatureMissing when the
-// assertion fails. This keeps the test surface green without
-// importing a network into pkg/imaged unit tests.
-type ociImageSignaturePuller struct {
-	oci oci.Puller
-}
-
-func (p *ociImageSignaturePuller) ResolveDigest(ctx context.Context, ref string) (string, error) {
-	return p.oci.PullDigest(ctx, ref)
-}
-
-func (p *ociImageSignaturePuller) FetchSignature(ctx context.Context, ref, digest string) ([]byte, error) {
-	mp, ok := p.oci.(oci.ManifestPuller)
-	if !ok {
-		// DefaultPuller / offline fakes can't fetch cosign sigs.
-		// Return ErrSignatureMissing so the verify hook reports
-		// the customer-facing "no signature" reason rather than a
-		// generic error.
-		return nil, cosign.ErrSignatureMissing
-	}
-	// Cosign v2 signature location: the digest identifies the
-	// well-known sha256-<hex>.sig tag in the same repo as ref.
-	// We pass digest through PullBlob's (repo, digest) signature
-	// unchanged — PullBlob will hit the registry's blob endpoint
-	// for the same content-addressed blob.
-	rc, err := mp.PullBlob(ctx, ref, digest)
-	if err != nil {
-		return nil, errors.Join(cosign.ErrSignatureMissing, err)
-	}
-	defer func() { _ = rc.Close() }()
-	return io.ReadAll(rc)
 }
 
 func (h *Handler) WithFunctionRunnerNode22(p string) *Handler {

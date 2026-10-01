@@ -1,14 +1,17 @@
 package imaged
 
+// ADR-386: publisher verification binds the immutable resolved source and
+// preserves repository-scoped credentials before executable build reads.
+
 import (
-	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"encoding/hex"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
-	"io"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -24,7 +27,8 @@ type resolvingTestPuller struct {
 	resolveErr    error
 	input         string
 	auth          *oci.BasicAuth
-	signature     []byte
+	attachments   []oci.ImageSignatureAttachment
+	signatureAuth *oci.BasicAuth
 	signatureRefs []string
 	configRefs    []string
 	manifestRefs  []string
@@ -35,17 +39,22 @@ func (p *resolvingTestPuller) ResolveImage(_ context.Context, ref string, auth *
 	return p.resolution, p.resolveErr
 }
 func (p *resolvingTestPuller) PullDigest(_ context.Context, ref string) (string, error) {
-	p.signatureRefs = append(p.signatureRefs, ref)
 	if ref != p.resolution.SourceReference {
 		return "", errors.New("signature lookup used mutable tag or child")
 	}
 	return p.resolution.SourceDigest, nil
 }
-func (p *resolvingTestPuller) PullBlob(ctx context.Context, repo, digest string) (io.ReadCloser, error) {
-	if digest == p.resolution.SourceDigest {
-		return io.NopCloser(bytes.NewReader(p.signature)), nil
+func (p *resolvingTestPuller) PullDigestWithAuth(ctx context.Context, ref string, auth *oci.BasicAuth) (string, error) {
+	p.signatureAuth = auth
+	return p.PullDigest(ctx, ref)
+}
+func (p *resolvingTestPuller) PullImageSignatureAttachments(_ context.Context, ref, digest string, auth *oci.BasicAuth) ([]oci.ImageSignatureAttachment, error) {
+	p.signatureRefs = append(p.signatureRefs, ref)
+	p.signatureAuth = auth
+	if ref != p.resolution.SourceReference || digest != p.resolution.SourceDigest {
+		return nil, errors.New("signature attachment used mutable tag or child")
 	}
-	return p.fakeManifestPuller.PullBlob(ctx, repo, digest)
+	return p.attachments, nil
 }
 func (p *resolvingTestPuller) PullImageConfig(ctx context.Context, ref string) (oci.ImageConfig, error) {
 	p.configRefs = append(p.configRefs, ref)
@@ -81,14 +90,20 @@ func TestPrepareContainerImageSignatureBindsSource(t *testing.T) {
 			if mode == "signed child only" {
 				signedDigest = child
 			}
-			raw, _ := hex.DecodeString(strings.TrimPrefix(signedDigest, "sha256:"))
-			r, s, err := ecdsa.Sign(rand.Reader, key, raw)
+			payload, err := json.Marshal(map[string]any{"critical": map[string]any{
+				"identity": map[string]string{"docker-reference": "example.com/org/service"},
+				"image":    map[string]string{"docker-manifest-digest": signedDigest},
+				"type":     "cosign container image signature"}})
 			if err != nil {
 				t.Fatal(err)
 			}
-			p.signature = make([]byte, 64)
-			r.FillBytes(p.signature[:32])
-			s.FillBytes(p.signature[32:])
+			payloadHash := sha256.Sum256(payload)
+			signature, err := ecdsa.SignASN1(rand.Reader, key, payloadHash[:])
+			if err != nil {
+				t.Fatal(err)
+			}
+			p.attachments = []oci.ImageSignatureAttachment{{ManifestDigest: "sha256:" + strings.Repeat("c", 64),
+				PayloadDigest: fmt.Sprintf("sha256:%x", payloadHash), Payload: payload, Signature: signature}}
 			if mode == "resolution failure" {
 				p.resolveErr = &oci.PlatformSelectionError{Reason: "no compatible image"}
 			}
@@ -115,6 +130,9 @@ func TestPrepareContainerImageSignatureBindsSource(t *testing.T) {
 			}
 			if mode == "resolution failure" && len(p.signatureRefs) != 0 {
 				t.Fatal("signature read after resolution failure")
+			}
+			if mode != "resolution failure" && p.signatureAuth != auth {
+				t.Fatal("signature verification lost repository credentials")
 			}
 			if mode != "resolution failure" && (len(p.signatureRefs) != 1 || p.signatureRefs[0] != p.resolution.SourceReference) {
 				t.Fatalf("wrong signature subject: %v", p.signatureRefs)

@@ -76,6 +76,55 @@ consumer acknowledgment is pending, never fabricated success. Durable change
 records repair missed notifications. Partial convergence is visible and pauses
 the next batch. No direct apid-to-vmmd calls and no hot-request inheritance query.
 
+## Registry publisher signature transport
+
+This decision supersedes ADR-058's registry raw-signature transport. The OCI
+blob endpoint must serve bytes matching the requested digest; an image
+manifest's digest cannot address a separate signature. The implementation uses
+the keyed Cosign simple-signing attachment format documented by the
+[Cosign signature specification](https://github.com/sigstore/cosign/blob/main/specs/SIGNATURE_SPEC.md)
+and the [OCI distribution specification](https://github.com/opencontainers/distribution-spec/blob/main/spec.md).
+It does not infer trust from certificates or attachment-provided keys.
+Attachment limits are 1 MiB per manifest, 64 payloads, 64 KiB per payload,
+80 bytes per decoded DER signature and 32 JSON nesting levels, centralized
+in `pkg/api/limits.go`. The shared registry JSON manifest reader retains its 8 MiB
+limit and now refuse overflow rather than parsing silently truncated bytes.
+
+A single `sha256-<subject-hex>.sig` manifest read supplies bounded payload
+layers of type `application/vnd.dev.cosign.simplesigning.v1+json`. Each payload
+is fetched by its own descriptor digest and checked against its size and actual
+SHA-256. The `dev.cosignproject.cosign/signature` annotation holds a base64
+ASN.1 ECDSA P256 signature over SHA-256 of those exact payload bytes. The
+case-sensitive critical claim vocabulary must identify a container image
+signature and name the exact resolved subject digest. Unknown critical fields,
+duplicate members, excessive nesting and trailing JSON refuse. Optional
+annotations do not grant authority. This supports explicitly approved P256 keys;
+keyless identities, Rekor trust, DSSE and alternate bundle/referrer formats are
+not implemented. Signing tooling must emit this supported attachment format.
+
+The immutable signed subject may be an index. Platform resolution verifies the
+selected linux/amd64 child descriptor, child content and config before publisher
+verification; subsequent executable reads use that child reference. Signature
+lookups retain the same repository-scoped registry credentials. A missing
+attachment manifest is distinct from an authentication, transport, payload or
+format failure. No signature is fetched from the image's own digest blob URL.
+
+Successful verification returns the subject digest, publisher label, canonical
+SPKI DER SHA-256 fingerprint, actual attachment manifest digest, payload digest
+and signature digest. Labels and PEM spelling are not key identity. Publisher
+approval currently constrains keys, not repository names: copying the same
+approved digest to another repository does not create different content.
+ADR-038's platform ext4 raw digest signer/verifier remains unchanged.
+
+This transport implementation is only one artifact evidence boundary. Durable
+proof storage must bind the selected image/config/layers to the converted
+rootfs and sidecars, current approved keys, current scan evidence and storage-owned
+expiry. Native admission must require those proofs. Live revalidation must use
+the retained immutable subject rather than the customer's mutable tag. Source
+builds need scoped source/rootfs evidence from an explicitly approved build
+publisher; the platform signer is not automatically an approved company key.
+These requirements remain pending and public standard activation stays disabled.
+
 ## Acceptance checklist
 
 - [x] PostgreSQL and MemStore versioning, tenancy, immutable hashes and parity.

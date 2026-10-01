@@ -68,6 +68,17 @@ const (
 	LocalOCIMaxLayers                       = 1024
 )
 
+// Publisher signature attachments are read before filesystem layers. These
+// bounds cover the supported keyed simple-signing format, not image quotas.
+const (
+	OCIManifestMaxBytes            int64 = 8 << 20
+	ImageSignatureMaxManifestBytes int64 = 1 << 20
+	ImageSignatureMaxPayloadBytes  int64 = 64 << 10
+	ImageSignatureMaxEntries             = 64
+	ImageSignatureMaxDERBytes            = 80
+	ImageSignatureMaxJSONDepth           = 32
+)
+
 // A restore hook is on the wake critical path. Keep its customer timeout
 // below the host's five-second resume deadline, including transport overhead.
 const (

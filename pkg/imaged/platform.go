@@ -24,22 +24,28 @@ func (h *Handler) prepareContainerImage(ctx context.Context, app state.App, dep 
 			return "", "", fmt.Errorf("imaged: resolve container image: %w", resolveErr)
 		}
 		if requiresSignature {
-			if err := h.verifyImageSignature(ctx, app, dep, resolved.SourceReference); err != nil {
+			if _, err := h.verifyImageSignature(ctx, app, dep, resolved.SourceReference, resolved.SourceDigest, auth); err != nil {
 				return "", "", err
 			}
 		}
 		h.log.Info("imaged: image platform resolved", "deployment", dep.ID, "input_ref", ref, "source_ref", resolved.SourceReference, "image_ref", resolved.Reference, "image_digest", resolved.Digest)
 		return resolved.Reference, resolved.Digest, nil
 	}
-	if requiresSignature {
-		if err := h.verifyImageSignature(ctx, app, dep, ref); err != nil {
-			return "", "", err
-		}
-	}
 	digest, err = pullDigestWithAuth(ctx, h.oci, ref, auth)
 	if err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "oci pull failed")
 		return "", "", fmt.Errorf("imaged: oci pull: %w", err)
+	}
+	if requiresSignature {
+		parsed, parseErr := oci.ParseReference(ref)
+		if parseErr != nil {
+			return "", "", parseErr
+		}
+		parsed.Tag, parsed.Digest = "", digest
+		ref = parsed.String()
+		if _, err := h.verifyImageSignature(ctx, app, dep, ref, digest, auth); err != nil {
+			return "", "", err
+		}
 	}
 	return ref, digest, nil
 }
