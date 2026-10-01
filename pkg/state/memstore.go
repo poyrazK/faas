@@ -139,6 +139,8 @@ type jobRegistryCredentialKey struct {
 
 type MemStore struct {
 	deploymentRegistryVerifications            map[string]DeploymentRegistryVerification
+	deploymentRegistryRootfs                   map[string]DeploymentRegistryRootfs
+	deploymentRegistryRootfsCurrent            map[string]string
 	instanceApplicationStandardAdmissions      map[string]InstanceApplicationStandardAdmission
 	instanceApplicationStandardBoots           map[string]instanceStandardBoot
 	instanceApplicationStandardBootTokens      map[string]string
@@ -6361,6 +6363,13 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 		}
 	}
 	delete(m.appDeletionClaims, id)
+
+	for key, proof := range m.deploymentRegistryRootfs {
+		if sameStandardUUID(proof.Input.AppID, id) {
+			delete(m.deploymentRegistryRootfs, key)
+			delete(m.deploymentRegistryRootfsCurrent, proof.Input.DeploymentID+"\x00"+proof.Input.WorkloadName)
+		}
+	}
 	for key, proof := range m.deploymentRegistryVerifications {
 		if sameStandardUUID(proof.Input.AppID, id) {
 			delete(m.deploymentRegistryVerifications, key)

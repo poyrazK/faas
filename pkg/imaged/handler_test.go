@@ -2,6 +2,7 @@ package imaged
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -140,9 +141,11 @@ func (b *fakeBuilder) Build(ctx context.Context, in rootfs.BuildInput) (rootfs.B
 			b.buildHook()
 		}
 		return rootfs.BuildResult{
-			ImageKey:     in.StorageKey,
-			ContentBytes: b.bytesOut,
-			RunnerDigest: runnerDigest,
+			ImageKey:       in.StorageKey,
+			ContentBytes:   b.bytesOut,
+			RunnerDigest:   runnerDigest,
+			ArtifactDigest: fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("fake ext4"))),
+			ArtifactBytes:  int64(len("fake ext4")),
 		}, nil
 	}
 	if in.OutImage != "" {
@@ -153,9 +156,11 @@ func (b *fakeBuilder) Build(ctx context.Context, in rootfs.BuildInput) (rootfs.B
 			b.buildHook()
 		}
 		return rootfs.BuildResult{
-			ImagePath:    in.OutImage,
-			ContentBytes: b.bytesOut,
-			RunnerDigest: runnerDigest,
+			ImagePath:      in.OutImage,
+			ContentBytes:   b.bytesOut,
+			RunnerDigest:   runnerDigest,
+			ArtifactDigest: fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("fake ext4"))),
+			ArtifactBytes:  int64(len("fake ext4")),
 		}, nil
 	}
 	return rootfs.BuildResult{ContentBytes: b.bytesOut, RunnerDigest: runnerDigest}, nil
@@ -214,7 +219,8 @@ func (b *fakeBuilder) BuildFullRootfs(ctx context.Context, in rootfs.BuildFullRo
 		if err := in.Storage.Put(ctx, in.StorageKey, strings.NewReader("fake ext4 full-rootfs")); err != nil {
 			return rootfs.BuildResult{}, err
 		}
-		return rootfs.BuildResult{ImageKey: in.StorageKey, ContentBytes: b.bytesOut}, nil
+		return rootfs.BuildResult{ImageKey: in.StorageKey, ContentBytes: b.bytesOut,
+			ArtifactDigest: fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("fake ext4 full-rootfs"))), ArtifactBytes: int64(len("fake ext4 full-rootfs"))}, nil
 	}
 	return rootfs.BuildResult{ContentBytes: b.bytesOut}, nil
 }

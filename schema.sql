@@ -1824,6 +1824,37 @@ $$;
 
 
 --
+-- Name: deployment_registry_rootfs_current_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.deployment_registry_rootfs_current_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='DELETE' AND NOT EXISTS(SELECT 1 FROM deployments WHERE id=OLD.deployment_id) THEN RETURN OLD; END IF;
+ IF TG_OP <> 'DELETE' AND current_setting('gregale.registry_rootfs_insert',true)=NEW.artifact_id::text
+   AND (TG_OP='INSERT' OR (NEW.deployment_id=OLD.deployment_id AND NEW.workload_name=OLD.workload_name)) THEN RETURN NEW; END IF;
+ RAISE EXCEPTION 'registry rootfs selection must use private publication' USING ERRCODE='23514',CONSTRAINT='deployment_registry_verification_immutable';
+END;
+$$;
+
+
+--
+-- Name: deployment_registry_rootfs_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.deployment_registry_rootfs_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='INSERT' AND current_setting('gregale.registry_rootfs_insert',true)=NEW.id::text THEN RETURN NEW; END IF;
+ IF TG_OP='DELETE' AND NOT EXISTS(SELECT 1 FROM deployments WHERE id=OLD.deployment_id) THEN RETURN OLD; END IF;
+ RAISE EXCEPTION 'registry rootfs evidence is immutable/private' USING ERRCODE='23514',CONSTRAINT='deployment_registry_verification_immutable';
+END;
+$$;
+
+
+--
 -- Name: deployment_registry_verification_guard(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3462,6 +3493,31 @@ BEGIN
 
     PERFORM pg_notify(channel, payload::text);
     RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: lock_deployment_registry_rootfs(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.lock_deployment_registry_rootfs(verification_id uuid) RETURNS jsonb
+    LANGUAGE plpgsql
+    AS $$
+DECLARE r deployment_registry_verifications%ROWTYPE; d deployments%ROWTYPE; owner_inputs jsonb;
+BEGIN
+ SELECT * INTO r FROM deployment_registry_verifications WHERE id=verification_id;
+ IF NOT FOUND THEN
+  RAISE EXCEPTION 'registry verification missing' USING ERRCODE='23514',CONSTRAINT='deployment_registry_verification_missing';
+ END IF;
+ SELECT * INTO d FROM deployments WHERE id=r.deployment_id FOR UPDATE NOWAIT;
+ IF NOT FOUND OR d.status NOT IN ('pending','building','imaging','snapshotting') THEN
+  RAISE EXCEPTION 'registry conversion is no longer active' USING ERRCODE='23514',CONSTRAINT='deployment_registry_verification_stale';
+ END IF;
+ owner_inputs:=lock_deployment_registry_verification(r.app_id,r.deployment_id,r.account_id,r.workload_name,r.input_snapshot->'proof'->>'PublisherName');
+ RETURN owner_inputs || jsonb_build_object('scope',d.scope,'status',d.status,'storage_now',clock_timestamp());
+EXCEPTION WHEN lock_not_available THEN
+ RAISE EXCEPTION 'registry rootfs inputs busy' USING ERRCODE='55P03',CONSTRAINT='deployment_registry_verification_busy';
 END;
 $$;
 
@@ -6871,6 +6927,39 @@ CREATE TABLE public.deployment_openapi_snapshots (
     CONSTRAINT deployment_openapi_snapshots_schema_version_positive CHECK ((schema_version >= 1)),
     CONSTRAINT deployment_openapi_snapshots_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
     CONSTRAINT deployment_openapi_snapshots_sha256_shape CHECK ((sha256 ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: deployment_registry_rootfs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_registry_rootfs (
+    id uuid NOT NULL,
+    registry_verification_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    workload_name text NOT NULL,
+    input_snapshot jsonb NOT NULL,
+    input_hash text NOT NULL,
+    published_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT deployment_registry_rootfs_check CHECK (((expires_at > published_at) AND (expires_at <= (published_at + '24:00:00'::interval)))),
+    CONSTRAINT deployment_registry_rootfs_check1 CHECK ((((input_snapshot ->> 'deployment_id'::text) = (deployment_id)::text) AND ((input_snapshot ->> 'workload_name'::text) = workload_name) AND ((input_snapshot ->> 'registry_verification_id'::text) = (registry_verification_id)::text))),
+    CONSTRAINT deployment_registry_rootfs_input_hash_check CHECK ((input_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT deployment_registry_rootfs_input_snapshot_check CHECK ((jsonb_typeof(input_snapshot) = 'object'::text)),
+    CONSTRAINT deployment_registry_rootfs_workload_name_check CHECK (((workload_name = ''::text) OR ((workload_name <> 'main'::text) AND (workload_name ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text))))
+);
+
+
+--
+-- Name: deployment_registry_rootfs_current; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_registry_rootfs_current (
+    deployment_id uuid NOT NULL,
+    workload_name text NOT NULL,
+    artifact_id uuid NOT NULL,
+    CONSTRAINT deployment_registry_rootfs_current_workload_name_check CHECK (((workload_name = ''::text) OR ((workload_name <> 'main'::text) AND (workload_name ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text))))
 );
 
 
@@ -13431,6 +13520,30 @@ ALTER TABLE ONLY public.deployment_openapi_docs
 
 ALTER TABLE ONLY public.deployment_openapi_snapshots
     ADD CONSTRAINT deployment_openapi_snapshots_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: deployment_registry_rootfs_current deployment_registry_rootfs_current_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_registry_rootfs_current
+    ADD CONSTRAINT deployment_registry_rootfs_current_pkey PRIMARY KEY (deployment_id, workload_name);
+
+
+--
+-- Name: deployment_registry_rootfs deployment_registry_rootfs_id_deployment_id_workload_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_registry_rootfs
+    ADD CONSTRAINT deployment_registry_rootfs_id_deployment_id_workload_name_key UNIQUE (id, deployment_id, workload_name);
+
+
+--
+-- Name: deployment_registry_rootfs deployment_registry_rootfs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_registry_rootfs
+    ADD CONSTRAINT deployment_registry_rootfs_pkey PRIMARY KEY (id);
 
 
 --
@@ -20771,6 +20884,20 @@ CREATE TRIGGER application_standard_registry_artifact_input_guard BEFORE INSERT 
 
 
 --
+-- Name: deployment_registry_rootfs application_standard_registry_rootfs_child_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_registry_rootfs_child_guard BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_registry_rootfs FOR EACH ROW EXECUTE FUNCTION public.application_standard_artifact_child_guard();
+
+
+--
+-- Name: deployment_registry_rootfs_current application_standard_registry_rootfs_current_child_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_registry_rootfs_current_child_guard BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_registry_rootfs_current FOR EACH ROW EXECUTE FUNCTION public.application_standard_artifact_child_guard();
+
+
+--
 -- Name: application_standard_review_plans application_standard_review_immutable; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -21503,6 +21630,20 @@ CREATE TRIGGER prune_pr_preview_set_on_root_delete AFTER UPDATE OF status ON pub
 --
 
 CREATE TRIGGER queue_work_receipt_reconciliation AFTER UPDATE OF state ON public.invocations FOR EACH ROW WHEN (((old.state = 'pending'::text) AND (new.source = 'queue'::text) AND (new.state = ANY (ARRAY['superseded'::text, 'cancelled'::text, 'expired'::text])))) EXECUTE FUNCTION public.reconcile_queue_work_receipt();
+
+
+--
+-- Name: deployment_registry_rootfs_current registry_rootfs_current_private_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER registry_rootfs_current_private_guard BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_registry_rootfs_current FOR EACH ROW EXECUTE FUNCTION public.deployment_registry_rootfs_current_guard();
+
+
+--
+-- Name: deployment_registry_rootfs registry_rootfs_private_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER registry_rootfs_private_guard BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_registry_rootfs FOR EACH ROW EXECUTE FUNCTION public.deployment_registry_rootfs_guard();
 
 
 --
@@ -22951,6 +23092,38 @@ ALTER TABLE ONLY public.deployment_openapi_snapshots
 
 ALTER TABLE ONLY public.deployment_openapi_snapshots
     ADD CONSTRAINT deployment_openapi_snapshots_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_registry_rootfs_current deployment_registry_rootfs_cu_artifact_id_deployment_id_wo_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_registry_rootfs_current
+    ADD CONSTRAINT deployment_registry_rootfs_cu_artifact_id_deployment_id_wo_fkey FOREIGN KEY (artifact_id, deployment_id, workload_name) REFERENCES public.deployment_registry_rootfs(id, deployment_id, workload_name) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_registry_rootfs_current deployment_registry_rootfs_current_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_registry_rootfs_current
+    ADD CONSTRAINT deployment_registry_rootfs_current_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_registry_rootfs deployment_registry_rootfs_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_registry_rootfs
+    ADD CONSTRAINT deployment_registry_rootfs_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_registry_rootfs deployment_registry_rootfs_registry_verification_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_registry_rootfs
+    ADD CONSTRAINT deployment_registry_rootfs_registry_verification_id_fkey FOREIGN KEY (registry_verification_id) REFERENCES public.deployment_registry_verifications(id) ON DELETE CASCADE;
 
 
 --

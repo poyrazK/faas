@@ -437,15 +437,18 @@ func (b *Builder) BuildFullRootfs(ctx context.Context, in BuildFullRootfsInput) 
 	// Full-rootfs: stageAppUpper is NOT applied (the full rootfs
 	// is the produced drive — drive0+vda, not drive1). The guest
 	// sees drive0 as root directly; no overlayfs assembly.
-	if err := b.publishExt4FullRootfs(ctx, in, staging, sizeMB); err != nil {
+	identity, err := b.publishExt4FullRootfs(ctx, in, staging, sizeMB)
+	if err != nil {
 		return BuildResult{}, err
 	}
 
 	res := BuildResult{
-		SizeMB:       sizeMB,
-		ContentBytes: stats.ContentBytes,
-		SBOMKey:      sbomKey,
-		RunnerDigest: runnerDigest,
+		SizeMB:         sizeMB,
+		ContentBytes:   stats.ContentBytes,
+		ArtifactDigest: identity.Digest,
+		ArtifactBytes:  identity.Bytes,
+		SBOMKey:        sbomKey,
+		RunnerDigest:   runnerDigest,
 	}
 	if in.OutImage != "" {
 		res.ImagePath = in.OutImage
@@ -706,49 +709,50 @@ func (b *Builder) emitFullRootfsSBOM(ctx context.Context, in BuildFullRootfsInpu
 // publishExt4FullRootfs is the full-rootfs sibling of publishExt4.
 // Same mkfs.ext4 + Storage.Put pipeline; no drive1 wrapper, no
 // overlayfs staging.
-func (b *Builder) publishExt4FullRootfs(ctx context.Context, in BuildFullRootfsInput, staging string, sizeMB int) error {
+func (b *Builder) publishExt4FullRootfs(ctx context.Context, in BuildFullRootfsInput, staging string, sizeMB int) (ArtifactIdentity, error) {
 	if in.OutImage != "" {
 		if err := os.MkdirAll(filepath.Dir(in.OutImage), 0o755); err != nil {
-			return fmt.Errorf("rootfs: mkdir full-rootfs out dir: %w", err)
+			return ArtifactIdentity{}, fmt.Errorf("rootfs: mkdir full-rootfs out dir: %w", err)
 		}
 		if err := b.run.Run(ctx, MkfsCommand(staging, in.OutImage, sizeMB)); err != nil {
-			return fmt.Errorf("rootfs: full-rootfs mkfs: %w", err)
+			return ArtifactIdentity{}, fmt.Errorf("rootfs: full-rootfs mkfs: %w", err)
 		}
-		return nil
+		return artifactIdentityFromPath(ctx, in.OutImage)
 	}
 	// Keep the mkfs output beside the staging directory. This avoids
 	// copying a growing ext4 file into the staging tree when mkfs.ext4
 	// walks -d, and mirrors publishExt4's atomic Storage.Put flow.
 	tmp, err := os.CreateTemp(filepath.Dir(staging), "faas-fullrootfs-mkfs-*.ext4")
 	if err != nil {
-		return fmt.Errorf("rootfs: create full-rootfs tmp ext4: %w", err)
+		return ArtifactIdentity{}, fmt.Errorf("rootfs: create full-rootfs tmp ext4: %w", err)
 	}
 	tmpPath := tmp.Name()
 	if err := tmp.Close(); err != nil {
 		_ = os.Remove(tmpPath)
-		return fmt.Errorf("rootfs: close full-rootfs tmp ext4: %w", err)
+		return ArtifactIdentity{}, fmt.Errorf("rootfs: close full-rootfs tmp ext4: %w", err)
 	}
 	defer func() { _ = os.Remove(tmpPath) }()
 	if err := b.run.Run(ctx, MkfsCommand(staging, tmpPath, sizeMB)); err != nil {
-		return fmt.Errorf("rootfs: full-rootfs mkfs: %w", err)
+		return ArtifactIdentity{}, fmt.Errorf("rootfs: full-rootfs mkfs: %w", err)
 	}
 	// tmpPath was created in the builder-owned temporary directory above;
 	// it is not a customer-controlled path.
 	f, err := os.Open(tmpPath) //nolint:forbidigo
 	if err != nil {
-		return fmt.Errorf("rootfs: open full-rootfs mkfs output: %w", err)
+		return ArtifactIdentity{}, fmt.Errorf("rootfs: open full-rootfs mkfs output: %w", err)
 	}
 	defer func() { _ = f.Close() }()
-	if err := in.Storage.Put(ctx, in.StorageKey, f); err != nil {
-		return fmt.Errorf("rootfs: publish full-rootfs %q: %w", in.StorageKey, err)
+	identity, err := publishArtifactIdentity(ctx, in.Storage, in.StorageKey, f)
+	if err != nil {
+		return ArtifactIdentity{}, fmt.Errorf("rootfs: publish full-rootfs %q: %w", in.StorageKey, err)
 	}
 	if b.signer != nil {
 		sigKey := "sigs/" + in.StorageKey + ".sig"
 		if err := b.signer.Sign(ctx, in.StorageKey, sigKey); err != nil {
-			return fmt.Errorf("rootfs: sign full-rootfs %q: %w", in.StorageKey, err)
+			return ArtifactIdentity{}, fmt.Errorf("rootfs: sign full-rootfs %q: %w", in.StorageKey, err)
 		}
 	}
-	return nil
+	return identity, nil
 }
 
 // validateFullRootfsOutputTarget mirrors validateOutputTarget for

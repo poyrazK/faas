@@ -2178,11 +2178,11 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 	// Resolve before verification so a tag names the same immutable source
 	// throughout verification and platform selection. Offline pullers retain
 	// the existing verification/pull sequence.
-	selectedRef, digest, err := h.prepareContainerImage(ctx, app, dep, appAuth)
+	prepared, err := h.prepareContainerWorkloadImage(ctx, app, dep, "", dep.ImageDigest, appAuth)
 	if err != nil {
 		return err
 	}
-	ref = selectedRef
+	ref, digest := prepared.Reference, prepared.Digest
 	// Issue #461 / ADR-062: best-effort mark credential used on
 	// successful authenticated pull. Best-effort so a transient
 	// mark-used failure cannot abort an otherwise-successful
@@ -2292,9 +2292,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 			if errors.Is(err, oci.ErrLayersNotAboveBase) {
 				// Conversion must use the already resolved child. Keep the
 				// stored customer reference for intent and scan attribution.
-				conversion := dep
-				conversion.ImageDigest = ref
-				fullErr := h.dispatchFullRootfs(ctx, app, conversion, acct, manifest, appAuth)
+				fullErr := h.dispatchFullRootfs(ctx, app, dep, acct, manifest, appAuth, prepared)
 				if fullErr != nil {
 					_ = h.markDeployFailed(ctx, dep.ID, fullErr, "imaged: full-rootfs dispatch")
 					return fullErr
@@ -2350,7 +2348,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 			// is logged at WARN and the build still succeeds (the SBOM
 			// is observational metadata, schema §4.2).
 			h.updateBuildProvenanceSBOM(ctx, dep.ID, result.SBOMKey)
-			if err := h.setDeploymentRootfs(ctx, dep.ID, h.appsRootPath(app.Slug, dep.ID), appsKey, result.ContentBytes); err != nil {
+			if err := h.publishContainerRootfs(ctx, app, dep, prepared, "", "app-layer", appsKey, result); err != nil {
 				_ = h.markDeployFailed(ctx, dep.ID, err, "stamp rootfs")
 				return fmt.Errorf("imaged: stamp rootfs: %w", err)
 			}
@@ -2401,7 +2399,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 			return fmt.Errorf("imaged: build app layer: %w", err)
 		}
 		h.updateBuildProvenanceSBOM(ctx, dep.ID, result.SBOMKey)
-		if err := h.setDeploymentRootfs(ctx, dep.ID, h.appsRootPath(app.Slug, dep.ID), appsKey, result.ContentBytes); err != nil {
+		if err := h.publishContainerRootfs(ctx, app, dep, prepared, "", "app-layer", appsKey, result); err != nil {
 			_ = h.markDeployFailed(ctx, dep.ID, err, "stamp rootfs")
 			return fmt.Errorf("imaged: stamp rootfs: %w", err)
 		}
@@ -2585,13 +2583,7 @@ func (h *Handler) buildSidecarLayers(ctx context.Context, app state.App, dep sta
 			_ = h.markDeployFailed(ctx, dep.ID, err, fmt.Sprintf("sidecar %q build", sc.Name))
 			return findings, fmt.Errorf("imaged: sidecar %q build: %w", sc.Name, err)
 		}
-		if _, err := h.store.SetDeploymentSidecarLayer(ctx, state.DeploymentSidecarLayer{
-			DeploymentID:  dep.ID,
-			SidecarName:   sc.Name,
-			StorageKey:    layerKey,
-			Bytes:         result.ContentBytes,
-			ContentDigest: selected.Reference,
-		}); err != nil {
+		if err := h.publishContainerRootfs(ctx, app, dep, selected, sc.Name, "sidecar-layer", layerKey, result); err != nil {
 			_ = h.markDeployFailed(ctx, dep.ID, err, fmt.Sprintf("sidecar %q stamp", sc.Name))
 			return findings, fmt.Errorf("imaged: sidecar %q stamp: %w", sc.Name, err)
 		}
@@ -4731,6 +4723,7 @@ func (h *Handler) dispatchFullRootfs(
 	acct state.Account,
 	manifest api.AppManifest,
 	appAuth *oci.BasicAuth,
+	prepared preparedContainerWorkload,
 ) error {
 	if dep.FullRootfsOverride != nil && !*dep.FullRootfsOverride {
 		// Force-off: surface today-equivalent failure so pkg/api
@@ -4739,12 +4732,12 @@ func (h *Handler) dispatchFullRootfs(
 	}
 	if dep.FullRootfsOverride != nil && *dep.FullRootfsOverride {
 		// Force-on: honor regardless of plan / AllowAuto.
-		return h.buildFullRootfsLayer(ctx, app, dep, acct, manifest, appAuth)
+		return h.buildFullRootfsLayer(ctx, app, dep, acct, manifest, appAuth, prepared)
 	}
 	if dep.FullRootfsAllowAuto && api.PlanMeetsFullRootfs(acct.Plan) {
 		// Auto-dispatch: paid plans opt-in by default. Free plans
 		// must explicitly opt in via FullRootfsOverride=&true.
-		return h.buildFullRootfsLayer(ctx, app, dep, acct, manifest, appAuth)
+		return h.buildFullRootfsLayer(ctx, app, dep, acct, manifest, appAuth, prepared)
 	}
 	// Default: today-equivalent failure on Free without override
 	// (and on any future plan whose AllowAuto=false without
@@ -4768,17 +4761,19 @@ func (h *Handler) buildFullRootfsLayer(
 	acct state.Account,
 	manifest api.AppManifest,
 	appAuth *oci.BasicAuth,
+	prepared preparedContainerWorkload,
 ) error {
 	mp, ok := h.oci.(oci.ManifestPuller)
 	if !ok {
 		return fmt.Errorf("imaged: full-rootfs requires oci.ManifestPuller; got %T", h.oci)
 	}
-	appRepo := repoWithHost(dep.ImageDigest)
+	ref := prepared.Reference
+	appRepo := repoWithHost(ref)
 	if appRepo == "" {
 		return fmt.Errorf("imaged: cannot derive repo from %q", dep.ImageDigest)
 	}
 	start := time.Now()
-	appManifest, err := pullManifestWithAuth(ctx, mp, dep.ImageDigest, appAuth)
+	appManifest, err := pullManifestWithAuth(ctx, mp, ref, appAuth)
 	h.ops.ObserveImagedOCIPull("manifest", pullResult(err), time.Since(start))
 	if err != nil {
 		return fmt.Errorf("imaged: full-rootfs manifest: %w", err)
@@ -4788,7 +4783,7 @@ func (h *Handler) buildFullRootfsLayer(
 	// every authenticated pull above this line was either app
 	// manifest, app config, or app blob.
 	refHost := ""
-	if parsedRef, parseErr := oci.ParseReference(dep.ImageDigest); parseErr == nil {
+	if parsedRef, parseErr := oci.ParseReference(ref); parseErr == nil {
 		refHost = parsedRef.APIHost()
 	}
 	h.markRegistryCredentialUsed(ctx, app, refHost, appAuth)
@@ -4850,7 +4845,7 @@ func (h *Handler) buildFullRootfsLayer(
 		return fmt.Errorf("imaged: build full-rootfs: %w", err)
 	}
 	h.updateBuildProvenanceSBOM(ctx, dep.ID, res.SBOMKey)
-	if err := h.setDeploymentRootfs(ctx, dep.ID, h.appsRootPath(app.Slug, dep.ID), appsKey, res.ContentBytes); err != nil {
+	if err := h.publishContainerRootfs(ctx, app, dep, prepared, "", "full-rootfs", appsKey, res); err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "stamp full-rootfs")
 		return fmt.Errorf("imaged: stamp full-rootfs: %w", err)
 	}

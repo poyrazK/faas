@@ -1545,6 +1545,23 @@ type DeploymentOpenapiSnapshot struct {
 	CapturedAt    pgtype.Timestamptz
 }
 
+type DeploymentRegistryRootf struct {
+	ID                     pgtype.UUID
+	RegistryVerificationID pgtype.UUID
+	DeploymentID           pgtype.UUID
+	WorkloadName           string
+	InputSnapshot          []byte
+	InputHash              string
+	PublishedAt            pgtype.Timestamptz
+	ExpiresAt              pgtype.Timestamptz
+}
+
+type DeploymentRegistryRootfsCurrent struct {
+	DeploymentID pgtype.UUID
+	WorkloadName string
+	ArtifactID   pgtype.UUID
+}
+
 type DeploymentRegistryVerification struct {
 	ID            pgtype.UUID
 	DeploymentID  pgtype.UUID

@@ -20,6 +20,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/oci"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -49,7 +50,7 @@ func TestSignedSidecarUsesSelectedChildAndCurrentStoredPublisher(t *testing.T) {
 	source := "sha256:" + strings.Repeat("a", 64)
 	child := "sha256:" + strings.Repeat("b", 64)
 	ref := "registry.example/team/metrics:latest"
-	for _, mode := range []string{"approved index", "missing signature", "signed child only", "removed publisher", "rotated publisher"} {
+	for _, mode := range []string{"approved index", "missing signature", "signed child only", "removed publisher", "rotated publisher", "artifact replaced during build", "publisher revoked during build"} {
 		t.Run(mode, func(t *testing.T) {
 			th := newTestHarness(t, state.DeploymentKindImage, api.PlanPro, "")
 			th.app.RequireSigned = true
@@ -93,11 +94,45 @@ func TestSignedSidecarUsesSelectedChildAndCurrentStoredPublisher(t *testing.T) {
 			h := New(th.store, th.notif, p, th.bld, "./init", th.appsR, silentLogger())
 			h.trustedPublishersCacheOK = true
 			h.trustedPublishersCache = map[string][]cosign.TrustedPublisher{th.app.ID: {{Name: "company", PublicKey: &key.PublicKey}}}
+			if mode == "artifact replaced during build" {
+				th.bld.buildHook = func() {
+					be, e := h.storageFor()
+					if e != nil {
+						t.Fatal(e)
+					}
+					// Same-sized replacement defeats a length-only check.
+					if e := be.Put(t.Context(), sched.AppSidecarLayerKey(th.app.Slug, th.dep.ID, "metrics"), strings.NewReader("evil ext4")); e != nil {
+						t.Fatal(e)
+					}
+				}
+			}
+			if mode == "publisher revoked during build" {
+				th.bld.buildHook = func() {
+					if e := th.store.DeleteAppTrustedSigner(t.Context(), th.app.AccountID, th.app.ID, "company"); e != nil {
+						t.Fatal(e)
+					}
+				}
+			}
 			_, err = h.buildSidecarLayers(t.Context(), th.app, th.dep, th.acct)
 			if p.input != ref {
 				t.Fatalf("sidecar resolution used %q", p.input)
 			}
 			if mode != "approved index" {
+				if strings.HasSuffix(mode, "during build") {
+					if err == nil || len(p.layerRefs) != 1 || len(th.bld.calls) != 1 {
+						t.Fatalf("post-conversion refusal was bypassed: %v", err)
+					}
+					if layers, e := th.store.ListDeploymentSidecarLayers(t.Context(), th.dep.ID); e != nil || len(layers) != 0 {
+						t.Fatalf("refused artifact published metadata: %+v %v", layers, e)
+					}
+					if _, e := th.store.GetCurrentDeploymentRegistryRootfs(t.Context(), th.app.AccountID, th.app.ID, th.dep.ID, "metrics"); !errors.Is(e, state.ErrNotFound) {
+						t.Fatalf("refused artifact published producer: %v", e)
+					}
+					if mode == "publisher revoked during build" && findNotify(th.notif, "audit_event") == nil {
+						t.Fatal("publisher refusal lacked audit")
+					}
+					return
+				}
 				if err == nil || len(p.layerRefs) != 0 || len(th.bld.calls) != 0 {
 					t.Fatalf("unapproved sidecar reached conversion: %v refs=%v builds=%d", err, p.layerRefs, len(th.bld.calls))
 				}
@@ -123,6 +158,11 @@ func TestSignedSidecarUsesSelectedChildAndCurrentStoredPublisher(t *testing.T) {
 			}
 			if record.Input.SourceReference != p.resolution.SourceReference || record.Input.SelectedReference != p.resolution.Reference {
 				t.Fatalf("stored different source/child: %+v", record)
+			}
+			root, err := th.store.GetCurrentDeploymentRegistryRootfs(t.Context(), th.app.AccountID, th.app.ID, th.dep.ID, "metrics")
+			if err != nil || root.Input.RegistryVerificationID != record.ID || root.Input.RegistryInputHash != record.InputHash ||
+				root.Input.ArtifactBytes != int64(len("fake ext4")) || root.Input.ArtifactDigest != fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("fake ext4"))) {
+				t.Fatalf("sidecar conversion lost exact verification/produced identity: %+v %v", root, err)
 			}
 			layers, err := th.store.ListDeploymentSidecarLayers(t.Context(), th.dep.ID)
 			if err != nil || len(layers) != 1 || layers[0].ContentDigest != p.resolution.Reference {

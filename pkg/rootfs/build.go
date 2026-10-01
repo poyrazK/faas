@@ -178,9 +178,11 @@ type BuildResult struct {
 	ImageKey string
 	// ImagePath is the on-disk path the ext4 was written to, when
 	// OutImage was used. Empty when Storage published the file.
-	ImagePath    string
-	SizeMB       int
-	ContentBytes int64
+	ImagePath      string
+	SizeMB         int
+	ContentBytes   int64
+	ArtifactDigest string
+	ArtifactBytes  int64
 	// SBOMKey is the storage key the CycloneDX SBOM was published
 	// under (issue #299 / ADR-038 Phase 3). Empty when the build
 	// did not configure SBOMRun + SBOMStorageKey, or when the
@@ -385,16 +387,18 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 		return BuildResult{}, err
 	}
 
-	sizeMB, err = b.publishExt4(ctx, in, staging, sizeMB, limits)
+	sizeMB, identity, err := b.publishExt4(ctx, in, staging, sizeMB, limits)
 	if err != nil {
 		return BuildResult{}, err
 	}
 
 	res := BuildResult{
-		SizeMB:       sizeMB,
-		ContentBytes: stats.ContentBytes,
-		SBOMKey:      sbomKey,
-		RunnerDigest: runnerDigest,
+		SizeMB:         sizeMB,
+		ContentBytes:   stats.ContentBytes,
+		ArtifactDigest: identity.Digest,
+		ArtifactBytes:  identity.Bytes,
+		SBOMKey:        sbomKey,
+		RunnerDigest:   runnerDigest,
 	}
 	if in.OutImage != "" {
 		res.ImagePath = in.OutImage
@@ -498,22 +502,27 @@ func ensureRuntimeDirectory(staging, rel string) error {
 //
 // The temp file is removed before returning; the caller sees no scratch
 // left behind even on error.
-func (b *Builder) publishExt4(ctx context.Context, in BuildInput, staging string, sizeMB int, limits api.Limits) (int, error) {
+func (b *Builder) publishExt4(ctx context.Context, in BuildInput, staging string, sizeMB int, limits api.Limits) (int, ArtifactIdentity, error) {
 	if in.OutImage != "" {
 		// Legacy path. Mkfs writes directly to OutImage; the caller's
 		// filesystem already provides atomicity (or it doesn't, and we
 		// honour that — pre-#96 production). Kept for the integration
 		// test.
 		if err := os.MkdirAll(filepath.Dir(in.OutImage), 0o755); err != nil {
-			return 0, fmt.Errorf("rootfs: mkdir out dir: %w", err)
+			return 0, ArtifactIdentity{}, fmt.Errorf("rootfs: mkdir out dir: %w", err)
 		}
-		return b.runAppMkfs(ctx, staging, in.OutImage, sizeMB, limits)
+		sizeMB, err := b.runAppMkfs(ctx, staging, in.OutImage, sizeMB, limits)
+		if err != nil {
+			return 0, ArtifactIdentity{}, err
+		}
+		identity, err := artifactIdentityFromPath(ctx, in.OutImage)
+		return sizeMB, identity, err
 	}
 	// Storage path. Mkfs into a sibling temp file, then Put the bytes
 	// under StorageKey and remove the temp.
 	tmp, err := os.CreateTemp(filepath.Dir(staging), "faas-mkfs-*.ext4")
 	if err != nil {
-		return 0, fmt.Errorf("rootfs: create tmp ext4: %w", err)
+		return 0, ArtifactIdentity{}, fmt.Errorf("rootfs: create tmp ext4: %w", err)
 	}
 	tmpPath := tmp.Name()
 	closed := false
@@ -524,23 +533,24 @@ func (b *Builder) publishExt4(ctx context.Context, in BuildInput, staging string
 		_ = os.Remove(tmpPath)
 	}()
 	if err := tmp.Close(); err != nil {
-		return 0, fmt.Errorf("rootfs: close tmp ext4: %w", err)
+		return 0, ArtifactIdentity{}, fmt.Errorf("rootfs: close tmp ext4: %w", err)
 	}
 	sizeMB, err = b.runAppMkfs(ctx, staging, tmpPath, sizeMB, limits)
 	if err != nil {
-		return 0, err
+		return 0, ArtifactIdentity{}, err
 	}
 	// nolint:forbidigo // tmpPath is from os.MkdirTemp at the top of
 	// this function — a daemon-internal scratch file the builder just
 	// wrote via MkfsCommand. Not a customer path.
 	f, err := os.Open(tmpPath)
 	if err != nil {
-		return 0, fmt.Errorf("rootfs: open mkfs output: %w", err)
+		return 0, ArtifactIdentity{}, fmt.Errorf("rootfs: open mkfs output: %w", err)
 	}
 	closed = true // release the open file before Put; storage Put closes the file via defer elsewhere
 	defer func() { _ = f.Close() }()
-	if err := in.Storage.Put(ctx, in.StorageKey, f); err != nil {
-		return 0, fmt.Errorf("rootfs: publish %q: %w", in.StorageKey, err)
+	identity, err := publishArtifactIdentity(ctx, in.Storage, in.StorageKey, f)
+	if err != nil {
+		return 0, ArtifactIdentity{}, fmt.Errorf("rootfs: publish %q: %w", in.StorageKey, err)
 	}
 	// ADR-038: sign the published ext4 so schedd's cold-boot verify
 	// (pkg/cosign.LocalVerifier) can detect tampering. Signing
@@ -553,10 +563,10 @@ func (b *Builder) publishExt4(ctx context.Context, in BuildInput, staging string
 	if b.signer != nil {
 		sigKey := "sigs/" + in.StorageKey + ".sig"
 		if err := b.signer.Sign(ctx, in.StorageKey, sigKey); err != nil {
-			return 0, fmt.Errorf("rootfs: sign %q: %w", in.StorageKey, err)
+			return 0, ArtifactIdentity{}, fmt.Errorf("rootfs: sign %q: %w", in.StorageKey, err)
 		}
 	}
-	return sizeMB, nil
+	return sizeMB, identity, nil
 }
 
 // emitSBOM runs the injected SBOM subprocess against the staging

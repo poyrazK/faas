@@ -5534,3 +5534,50 @@ WHERE v.account_id=sqlc.arg(account_id)::uuid AND v.app_id=sqlc.arg(app_id)::uui
  AND v.input_snapshot->>'image_reference'=CASE WHEN v.workload_name='' AND d.kind='image' THEN d.image_digest
  ELSE (SELECT CASE WHEN count(*)=1 THEN min(s->>'image') END FROM jsonb_array_elements(d.sidecars) s WHERE s->>'name'=v.workload_name) END
 ORDER BY v.verified_at DESC,v.id DESC LIMIT 1;
+
+-- name: LockDeploymentRegistryRootfs :one
+SELECT lock_deployment_registry_rootfs(sqlc.arg(verification_id)::uuid)::jsonb AS inputs;
+
+-- name: AuthorizeDeploymentRegistryRootfsInsert :exec
+SELECT set_config('gregale.registry_rootfs_insert',sqlc.arg(id)::uuid::text,true);
+
+-- name: InsertDeploymentRegistryRootfs :one
+WITH storage_clock AS MATERIALIZED (SELECT clock_timestamp() AS now)
+INSERT INTO deployment_registry_rootfs(id,registry_verification_id,deployment_id,workload_name,input_snapshot,input_hash,published_at,expires_at)
+SELECT sqlc.arg(id)::uuid,r.id,r.deployment_id,r.workload_name,sqlc.arg(input_snapshot)::jsonb,sqlc.arg(input_hash)::text,now,r.expires_at
+FROM deployment_registry_verifications r CROSS JOIN storage_clock
+WHERE r.id=sqlc.arg(verification_id)::uuid AND r.expires_at>now RETURNING deployment_registry_rootfs.*;
+
+-- name: GetDeploymentRegistryRootfsByID :one
+SELECT * FROM deployment_registry_rootfs WHERE id=sqlc.arg(id)::uuid;
+
+-- name: GetDeploymentRegistryRootfsPointer :one
+SELECT artifact_id FROM deployment_registry_rootfs_current WHERE deployment_id=sqlc.arg(deployment_id)::uuid AND workload_name=sqlc.arg(workload_name)::text;
+
+-- name: SelectDeploymentRegistryRootfs :exec
+INSERT INTO deployment_registry_rootfs_current(deployment_id,workload_name,artifact_id)
+VALUES(sqlc.arg(deployment_id)::uuid,sqlc.arg(workload_name)::text,sqlc.arg(id)::uuid)
+ON CONFLICT(deployment_id,workload_name) DO UPDATE SET artifact_id=EXCLUDED.artifact_id;
+
+-- name: PublishDeploymentRegistryMainRootfs :execrows
+UPDATE deployments SET rootfs_path=sqlc.arg(rootfs_path)::text,rootfs_key=sqlc.arg(storage_key)::text,rootfs_bytes=sqlc.arg(content_bytes)::bigint
+WHERE id=sqlc.arg(deployment_id)::uuid AND status IN ('pending','building','imaging','snapshotting');
+
+-- name: PublishDeploymentRegistrySidecarRootfs :exec
+INSERT INTO deployment_sidecar_layers(deployment_id,sidecar_name,storage_key,bytes,content_digest)
+VALUES(sqlc.arg(deployment_id)::uuid,sqlc.arg(workload_name)::text,sqlc.arg(storage_key)::text,sqlc.arg(content_bytes)::bigint,sqlc.arg(selected_reference)::text)
+ON CONFLICT(deployment_id,sidecar_name) DO UPDATE SET storage_key=EXCLUDED.storage_key,bytes=EXCLUDED.bytes,content_digest=EXCLUDED.content_digest,updated_at=clock_timestamp();
+
+-- name: GetCurrentDeploymentRegistryRootfs :one
+SELECT f.* FROM deployment_registry_rootfs_current c JOIN deployment_registry_rootfs f ON f.id=c.artifact_id
+JOIN deployment_registry_verifications r ON r.id=f.registry_verification_id
+JOIN deployments d ON d.id=c.deployment_id AND d.app_id=r.app_id
+JOIN apps a ON a.id=d.app_id AND a.account_id=r.account_id
+LEFT JOIN deployment_sidecar_layers s ON s.deployment_id=d.id AND s.sidecar_name=c.workload_name
+WHERE a.account_id=sqlc.arg(account_id)::uuid AND a.id=sqlc.arg(app_id)::uuid AND d.id=sqlc.arg(deployment_id)::uuid
+ AND c.workload_name=sqlc.arg(workload_name)::text AND a.status <> 'deleted'
+ AND f.input_snapshot->>'org_id'=coalesce(a.org_id::text,'') AND f.input_snapshot->>'scope'=d.scope
+ AND r.input_snapshot->>'image_reference'=CASE WHEN c.workload_name='' AND d.kind='image' THEN d.image_digest
+ ELSE (SELECT CASE WHEN count(*)=1 THEN min(x->>'image') END FROM jsonb_array_elements(d.sidecars) x WHERE x->>'name'=c.workload_name) END
+ AND ((c.workload_name='' AND f.input_snapshot->>'storage_key'=d.rootfs_key AND f.input_snapshot->>'rootfs_path'=d.rootfs_path AND (f.input_snapshot->>'content_bytes')::bigint=d.rootfs_bytes)
+ OR (c.workload_name<>'' AND f.input_snapshot->>'storage_key'=s.storage_key AND (f.input_snapshot->>'content_bytes')::bigint=s.bytes AND r.input_snapshot->>'selected_reference'=s.content_digest));

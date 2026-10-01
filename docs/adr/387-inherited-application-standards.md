@@ -123,8 +123,8 @@ expiry. Native admission must require those proofs. Live revalidation must use
 the retained immutable subject rather than the customer's mutable tag. Source
 builds need scoped source/rootfs evidence from an explicitly approved build
 publisher; the platform signer is not automatically an approved company key.
-Converted-rootfs, current scan and native-consumer bindings remain pending,
-and public standard activation stays disabled.
+Complete converted-rootfs lineage, current scan and native-consumer bindings
+remain pending, and public standard activation stays disabled.
 
 Registry verification now retains the exact signed payload and DER signature in
 private immutable deployment/workload records. The store rechecks cryptography
@@ -137,6 +137,28 @@ ID retries preserve the original clock and binding, and changed inputs conflict.
 Main and sidecar images share this gate; the full-rootfs fallback consumes the
 resolved child rather than resolving the customer tag again. Sidecar compatibility
 metadata retains that immutable child reference.
+
+Conversions now retain their exact storage-issued registry verification ID and
+input hash. Rootfs builders hash the complete ext4 stream actually sent to
+storage, including metadata and unused capacity, and return that digest and byte
+count separately from staged content size. Signed main, full-rootfs and sidecar
+publication freshly hashes the stored object against that produced identity.
+The private store rechecks current ownership, original workload reference,
+publisher key, conversion status and storage-clock expiry before atomically
+recording immutable producer evidence, selecting it and updating compatibility
+metadata. The producer expiry cannot extend its parent verification. Exact ID
+retries preserve the original evidence and cannot reactivate an older selection.
+Failed transactions publish neither producer selection nor deployment metadata.
+
+This is a producer boundary under the existing imaged/database writer trust
+model. It does not independently prove the signed index-to-child/config/layer
+descriptor chain, uncompressed DiffIDs, the shared drive0 base, a source-build
+publisher, current workload scans or native consumption. Artifact keys remain
+mutable; later consumers must freshly validate the selected expected digest and
+size. Existing admission captures do not yet include these producer identities.
+Historical current-selection reads may return expired or revoked evidence and
+must not be treated as runtime authority or observed adoption. Public activation
+and the remaining acceptance gates stay pending.
 
 Historical record retrieval deliberately does not assert current approval or
 freshness: it retains the immutable source needed for a future refresh, including

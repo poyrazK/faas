@@ -489,7 +489,7 @@ func TestBuildInjectsManifestAndInit(t *testing.T) {
 		} else if !bytes.Contains(passwdTable, []byte("nonroot")) {
 			t.Errorf("optimized app_passwd missing nonroot entry: %x", passwdTable)
 		}
-		return nil
+		return os.WriteFile(argv[len(argv)-2], []byte("FAKE-EXT4"), 0o644)
 	})
 
 	b := NewBuilder(capture)

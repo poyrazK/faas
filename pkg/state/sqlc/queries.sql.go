@@ -595,6 +595,15 @@ func (q *Queries) ApplyRegressionAction(ctx context.Context, db DBTX, arg ApplyR
 	return i, err
 }
 
+const authorizeDeploymentRegistryRootfsInsert = `-- name: AuthorizeDeploymentRegistryRootfsInsert :exec
+SELECT set_config('gregale.registry_rootfs_insert',$1::uuid::text,true)
+`
+
+func (q *Queries) AuthorizeDeploymentRegistryRootfsInsert(ctx context.Context, db DBTX, id pgtype.UUID) error {
+	_, err := db.Exec(ctx, authorizeDeploymentRegistryRootfsInsert, id)
+	return err
+}
+
 const authorizeDeploymentRegistryVerificationInsert = `-- name: AuthorizeDeploymentRegistryVerificationInsert :exec
 SELECT set_config('gregale.registry_verification_insert',$1::uuid::text,true)
 `
@@ -4671,6 +4680,49 @@ func (q *Queries) GetApplicationStandardVersion(ctx context.Context, db DBTX, ar
 	return i, err
 }
 
+const getCurrentDeploymentRegistryRootfs = `-- name: GetCurrentDeploymentRegistryRootfs :one
+SELECT f.id, f.registry_verification_id, f.deployment_id, f.workload_name, f.input_snapshot, f.input_hash, f.published_at, f.expires_at FROM deployment_registry_rootfs_current c JOIN deployment_registry_rootfs f ON f.id=c.artifact_id
+JOIN deployment_registry_verifications r ON r.id=f.registry_verification_id
+JOIN deployments d ON d.id=c.deployment_id AND d.app_id=r.app_id
+JOIN apps a ON a.id=d.app_id AND a.account_id=r.account_id
+LEFT JOIN deployment_sidecar_layers s ON s.deployment_id=d.id AND s.sidecar_name=c.workload_name
+WHERE a.account_id=$1::uuid AND a.id=$2::uuid AND d.id=$3::uuid
+ AND c.workload_name=$4::text AND a.status <> 'deleted'
+ AND f.input_snapshot->>'org_id'=coalesce(a.org_id::text,'') AND f.input_snapshot->>'scope'=d.scope
+ AND r.input_snapshot->>'image_reference'=CASE WHEN c.workload_name='' AND d.kind='image' THEN d.image_digest
+ ELSE (SELECT CASE WHEN count(*)=1 THEN min(x->>'image') END FROM jsonb_array_elements(d.sidecars) x WHERE x->>'name'=c.workload_name) END
+ AND ((c.workload_name='' AND f.input_snapshot->>'storage_key'=d.rootfs_key AND f.input_snapshot->>'rootfs_path'=d.rootfs_path AND (f.input_snapshot->>'content_bytes')::bigint=d.rootfs_bytes)
+ OR (c.workload_name<>'' AND f.input_snapshot->>'storage_key'=s.storage_key AND (f.input_snapshot->>'content_bytes')::bigint=s.bytes AND r.input_snapshot->>'selected_reference'=s.content_digest))
+`
+
+type GetCurrentDeploymentRegistryRootfsParams struct {
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	WorkloadName string
+}
+
+func (q *Queries) GetCurrentDeploymentRegistryRootfs(ctx context.Context, db DBTX, arg GetCurrentDeploymentRegistryRootfsParams) (DeploymentRegistryRootf, error) {
+	row := db.QueryRow(ctx, getCurrentDeploymentRegistryRootfs,
+		arg.AccountID,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.WorkloadName,
+	)
+	var i DeploymentRegistryRootf
+	err := row.Scan(
+		&i.ID,
+		&i.RegistryVerificationID,
+		&i.DeploymentID,
+		&i.WorkloadName,
+		&i.InputSnapshot,
+		&i.InputHash,
+		&i.PublishedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
 const getCustomerAppSecretForDeletion = `-- name: GetCustomerAppSecretForDeletion :one
 SELECT EXISTS (
            SELECT 1 FROM app_secrets
@@ -4766,6 +4818,42 @@ func (q *Queries) GetDataUpstreamByID(ctx context.Context, db DBTX, id pgtype.UU
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const getDeploymentRegistryRootfsByID = `-- name: GetDeploymentRegistryRootfsByID :one
+SELECT id, registry_verification_id, deployment_id, workload_name, input_snapshot, input_hash, published_at, expires_at FROM deployment_registry_rootfs WHERE id=$1::uuid
+`
+
+func (q *Queries) GetDeploymentRegistryRootfsByID(ctx context.Context, db DBTX, id pgtype.UUID) (DeploymentRegistryRootf, error) {
+	row := db.QueryRow(ctx, getDeploymentRegistryRootfsByID, id)
+	var i DeploymentRegistryRootf
+	err := row.Scan(
+		&i.ID,
+		&i.RegistryVerificationID,
+		&i.DeploymentID,
+		&i.WorkloadName,
+		&i.InputSnapshot,
+		&i.InputHash,
+		&i.PublishedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
+const getDeploymentRegistryRootfsPointer = `-- name: GetDeploymentRegistryRootfsPointer :one
+SELECT artifact_id FROM deployment_registry_rootfs_current WHERE deployment_id=$1::uuid AND workload_name=$2::text
+`
+
+type GetDeploymentRegistryRootfsPointerParams struct {
+	DeploymentID pgtype.UUID
+	WorkloadName string
+}
+
+func (q *Queries) GetDeploymentRegistryRootfsPointer(ctx context.Context, db DBTX, arg GetDeploymentRegistryRootfsPointerParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, getDeploymentRegistryRootfsPointer, arg.DeploymentID, arg.WorkloadName)
+	var artifact_id pgtype.UUID
+	err := row.Scan(&artifact_id)
+	return artifact_id, err
 }
 
 const getDeploymentRegistryVerificationByID = `-- name: GetDeploymentRegistryVerificationByID :one
@@ -5962,6 +6050,42 @@ func (q *Queries) InsertDataUpstreamProbe(ctx context.Context, db DBTX, arg Inse
 		arg.ProbeNode,
 	)
 	return err
+}
+
+const insertDeploymentRegistryRootfs = `-- name: InsertDeploymentRegistryRootfs :one
+WITH storage_clock AS MATERIALIZED (SELECT clock_timestamp() AS now)
+INSERT INTO deployment_registry_rootfs(id,registry_verification_id,deployment_id,workload_name,input_snapshot,input_hash,published_at,expires_at)
+SELECT $1::uuid,r.id,r.deployment_id,r.workload_name,$2::jsonb,$3::text,now,r.expires_at
+FROM deployment_registry_verifications r CROSS JOIN storage_clock
+WHERE r.id=$4::uuid AND r.expires_at>now RETURNING deployment_registry_rootfs.id, deployment_registry_rootfs.registry_verification_id, deployment_registry_rootfs.deployment_id, deployment_registry_rootfs.workload_name, deployment_registry_rootfs.input_snapshot, deployment_registry_rootfs.input_hash, deployment_registry_rootfs.published_at, deployment_registry_rootfs.expires_at
+`
+
+type InsertDeploymentRegistryRootfsParams struct {
+	ID             pgtype.UUID
+	InputSnapshot  []byte
+	InputHash      string
+	VerificationID pgtype.UUID
+}
+
+func (q *Queries) InsertDeploymentRegistryRootfs(ctx context.Context, db DBTX, arg InsertDeploymentRegistryRootfsParams) (DeploymentRegistryRootf, error) {
+	row := db.QueryRow(ctx, insertDeploymentRegistryRootfs,
+		arg.ID,
+		arg.InputSnapshot,
+		arg.InputHash,
+		arg.VerificationID,
+	)
+	var i DeploymentRegistryRootf
+	err := row.Scan(
+		&i.ID,
+		&i.RegistryVerificationID,
+		&i.DeploymentID,
+		&i.WorkloadName,
+		&i.InputSnapshot,
+		&i.InputHash,
+		&i.PublishedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
 }
 
 const insertDeploymentRegistryVerification = `-- name: InsertDeploymentRegistryVerification :one
@@ -11804,6 +11928,17 @@ func (q *Queries) LockCreditConsumption(ctx context.Context, db DBTX, providerIn
 	return err
 }
 
+const lockDeploymentRegistryRootfs = `-- name: LockDeploymentRegistryRootfs :one
+SELECT lock_deployment_registry_rootfs($1::uuid)::jsonb AS inputs
+`
+
+func (q *Queries) LockDeploymentRegistryRootfs(ctx context.Context, db DBTX, verificationID pgtype.UUID) ([]byte, error) {
+	row := db.QueryRow(ctx, lockDeploymentRegistryRootfs, verificationID)
+	var inputs []byte
+	err := row.Scan(&inputs)
+	return inputs, err
+}
+
 const lockDeploymentRegistryVerification = `-- name: LockDeploymentRegistryVerification :one
 SELECT lock_deployment_registry_verification($1::uuid,$2::uuid,
  $3::uuid,$4::text,$5::text)::jsonb AS inputs
@@ -15520,6 +15655,56 @@ func (q *Queries) PruneDevBridgeSessions(ctx context.Context, db DBTX, arg Prune
 	return err
 }
 
+const publishDeploymentRegistryMainRootfs = `-- name: PublishDeploymentRegistryMainRootfs :execrows
+UPDATE deployments SET rootfs_path=$1::text,rootfs_key=$2::text,rootfs_bytes=$3::bigint
+WHERE id=$4::uuid AND status IN ('pending','building','imaging','snapshotting')
+`
+
+type PublishDeploymentRegistryMainRootfsParams struct {
+	RootfsPath   string
+	StorageKey   string
+	ContentBytes int64
+	DeploymentID pgtype.UUID
+}
+
+func (q *Queries) PublishDeploymentRegistryMainRootfs(ctx context.Context, db DBTX, arg PublishDeploymentRegistryMainRootfsParams) (int64, error) {
+	result, err := db.Exec(ctx, publishDeploymentRegistryMainRootfs,
+		arg.RootfsPath,
+		arg.StorageKey,
+		arg.ContentBytes,
+		arg.DeploymentID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const publishDeploymentRegistrySidecarRootfs = `-- name: PublishDeploymentRegistrySidecarRootfs :exec
+INSERT INTO deployment_sidecar_layers(deployment_id,sidecar_name,storage_key,bytes,content_digest)
+VALUES($1::uuid,$2::text,$3::text,$4::bigint,$5::text)
+ON CONFLICT(deployment_id,sidecar_name) DO UPDATE SET storage_key=EXCLUDED.storage_key,bytes=EXCLUDED.bytes,content_digest=EXCLUDED.content_digest,updated_at=clock_timestamp()
+`
+
+type PublishDeploymentRegistrySidecarRootfsParams struct {
+	DeploymentID      pgtype.UUID
+	WorkloadName      string
+	StorageKey        string
+	ContentBytes      int64
+	SelectedReference string
+}
+
+func (q *Queries) PublishDeploymentRegistrySidecarRootfs(ctx context.Context, db DBTX, arg PublishDeploymentRegistrySidecarRootfsParams) error {
+	_, err := db.Exec(ctx, publishDeploymentRegistrySidecarRootfs,
+		arg.DeploymentID,
+		arg.WorkloadName,
+		arg.StorageKey,
+		arg.ContentBytes,
+		arg.SelectedReference,
+	)
+	return err
+}
+
 const publishInstanceApplicationStandardPromotion = `-- name: PublishInstanceApplicationStandardPromotion :execrows
 UPDATE instances SET application_standard_promotion_token=$1::uuid,state='running',started_at=clock_timestamp()
 WHERE id=$2::uuid AND state='warm'
@@ -18067,6 +18252,23 @@ func (q *Queries) SaveApplicationStandardControlBackup(ctx context.Context, db D
 		arg.Body,
 		arg.ConfigHash,
 	)
+	return err
+}
+
+const selectDeploymentRegistryRootfs = `-- name: SelectDeploymentRegistryRootfs :exec
+INSERT INTO deployment_registry_rootfs_current(deployment_id,workload_name,artifact_id)
+VALUES($1::uuid,$2::text,$3::uuid)
+ON CONFLICT(deployment_id,workload_name) DO UPDATE SET artifact_id=EXCLUDED.artifact_id
+`
+
+type SelectDeploymentRegistryRootfsParams struct {
+	DeploymentID pgtype.UUID
+	WorkloadName string
+	ID           pgtype.UUID
+}
+
+func (q *Queries) SelectDeploymentRegistryRootfs(ctx context.Context, db DBTX, arg SelectDeploymentRegistryRootfsParams) error {
+	_, err := db.Exec(ctx, selectDeploymentRegistryRootfs, arg.DeploymentID, arg.WorkloadName, arg.ID)
 	return err
 }
 

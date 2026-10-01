@@ -13,6 +13,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// preparedContainerWorkload retains the exact storage-issued verification
+// identity belonging to this conversion, rather than selecting a later record.
+type preparedContainerWorkload struct {
+	oci.ImageResolution
+	Verification state.DeploymentRegistryVerification
+}
+
 // A signed source may be an index. Every executable read must use its resolved
 // child, while the persisted deployment keeps the customer's original intent.
 func (h *Handler) prepareContainerImage(ctx context.Context, app state.App, dep state.Deployment, auth *oci.BasicAuth) (string, string, error) {
@@ -20,18 +27,19 @@ func (h *Handler) prepareContainerImage(ctx context.Context, app state.App, dep 
 	return selected.Reference, selected.Digest, err
 }
 
-func (h *Handler) prepareContainerWorkloadImage(ctx context.Context, app state.App, dep state.Deployment, workload, ref string, auth *oci.BasicAuth) (oci.ImageResolution, error) {
+func (h *Handler) prepareContainerWorkloadImage(ctx context.Context, app state.App, dep state.Deployment, workload, ref string, auth *oci.BasicAuth) (preparedContainerWorkload, error) {
 	resolved, err := h.resolveContainerWorkloadImage(ctx, ref, auth)
+	prepared := preparedContainerWorkload{ImageResolution: resolved}
 	if err == nil && (app.RequireSigned || app.SecurityPolicy.RequiresSignedImage()) {
-		err = h.recordContainerWorkloadSignature(ctx, app, dep, workload, ref, resolved, auth)
+		prepared.Verification, err = h.recordContainerWorkloadSignature(ctx, app, dep, workload, ref, resolved, auth)
 	}
 	if err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "container image admission")
-		return oci.ImageResolution{}, err
+		return preparedContainerWorkload{}, err
 	}
 	h.log.Info("imaged: image platform resolved", "deployment", dep.ID, "workload", workload, "input_ref", ref,
 		"source_ref", resolved.SourceReference, "image_ref", resolved.Reference, "image_digest", resolved.Digest)
-	return resolved, nil
+	return prepared, nil
 }
 
 func (h *Handler) resolveContainerWorkloadImage(ctx context.Context, ref string, auth *oci.BasicAuth) (oci.ImageResolution, error) {
@@ -59,14 +67,14 @@ func (h *Handler) resolveContainerWorkloadImage(ctx context.Context, ref string,
 	return oci.ImageResolution{SourceReference: pinned, SourceDigest: digest, Reference: pinned, Digest: digest}, nil
 }
 
-func (h *Handler) recordContainerWorkloadSignature(ctx context.Context, app state.App, dep state.Deployment, workload, ref string, selected oci.ImageResolution, auth *oci.BasicAuth) error {
+func (h *Handler) recordContainerWorkloadSignature(ctx context.Context, app state.App, dep state.Deployment, workload, ref string, selected oci.ImageResolution, auth *oci.BasicAuth) (state.DeploymentRegistryVerification, error) {
 	proof, err := h.verifyImageSignature(ctx, app, dep, selected.SourceReference, selected.SourceDigest, auth)
 	if err != nil {
-		return err
+		return state.DeploymentRegistryVerification{}, err
 	}
 	store, ok := h.store.(state.DeploymentRegistryVerificationStore)
 	if !ok {
-		return fmt.Errorf("imaged: durable registry verification store unavailable")
+		return state.DeploymentRegistryVerification{}, fmt.Errorf("imaged: durable registry verification store unavailable")
 	}
 	stored, err := store.RecordDeploymentRegistryVerification(ctx, state.DeploymentRegistryVerificationInput{
 		ID: uuid.NewString(), AccountID: app.AccountID, OrgID: app.OrgID, AppID: app.ID, DeploymentID: dep.ID,
@@ -77,10 +85,10 @@ func (h *Handler) recordContainerWorkloadSignature(ctx context.Context, app stat
 		if errors.Is(err, cosign.ErrSignatureInvalid) {
 			h.emitSignatureAudit(ctx, "app.signature_invalid", app, dep, selected.SourceReference, "")
 		}
-		return fmt.Errorf("imaged: persist current publisher verification: %w", err)
+		return state.DeploymentRegistryVerification{}, fmt.Errorf("imaged: persist current publisher verification: %w", err)
 	}
 	h.log.Info("image publisher verification stored", "app", app.Slug, "deployment", dep.ID, "workload", workload,
 		"verification", stored.ID, "signer", proof.PublisherName, "publisher_key_sha256", proof.PublisherKeySHA256,
 		"subject_digest", proof.SubjectDigest, "expires_at", stored.ExpiresAt)
-	return nil
+	return stored, nil
 }
