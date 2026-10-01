@@ -4,7 +4,7 @@ Operations defines an application contract for customer work: typed input and
 output, verified ownership, progress, result references, and completion delivery.
 This contract foundation is **internal and not launched**. HTTP admission,
 execution integration, customer endpoints, and SDKs are being qualified in
-separate changes. See [ADR-384](adr/384-customer-operations.md).
+separate changes. See [ADR-385](adr/385-customer-operations.md).
 
 An operation identifies the customer's logical request. Execution attempts
 retain their own identities and recovery semantics. Business outcome and

@@ -211,6 +211,10 @@ const (
 	OperationExecutionRenewTimeout = 5 * time.Second
 	// Preserve the native workflow handler default for controlled dispatch.
 	OperationWorkflowHandlerDefaultTimeout = 30 * time.Second
+	// Typed workflow dispatch carries credentials only; the retained ledger
+	// supplies the handler body. Responses include base64 JSON envelope overhead.
+	OperationWorkflowDispatchBodyMaxBytes     int64 = 16 << 10
+	OperationWorkflowDispatchResponseMaxBytes int64 = 2*OperationSubmissionMaxBytes + OperationReportBodyMaxBytes
 )
 
 // App CPU is expressed as sustained millicores enforced by cgroup v2 cpu.max.

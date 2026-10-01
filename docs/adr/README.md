@@ -396,4 +396,4 @@ concurrently). The log above already contains several such pairs (157, 158, 167,
 
 ## Customer operation decisions
 
-- [ADR-384: customer operations above execution ledgers](384-customer-operations.md) — typed application contracts, customer ownership, separate business and delivery outcomes, and controlled recovery
+- [ADR-385: customer operations above execution ledgers](385-customer-operations.md) — typed application contracts, customer ownership, separate business and delivery outcomes, and controlled recovery
