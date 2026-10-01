@@ -892,3 +892,39 @@ separate tenant IAM adapter; never hand out the operator-wide credential.
 Deferred: the S3 compatibility gaps listed above, production edge/service
 activation, lifecycle/version management, general object-capacity rebasing,
 historical untracked multipart reclamation, and automatic migrations.
+
+## Reclaim reserved capacity
+
+For buckets using tracked branded S3 PUTs or public multipart completion, request
+an inventory and capacity reconciliation after deleting or shrinking objects:
+
+```sh
+gregale bucket reconcile start <app> <bucket-id>
+gregale bucket reconcile status <app> <bucket-id> <job-id>
+gregale bucket reconcile cancel <app> <bucket-id> <job-id>
+```
+
+The API equivalents are `POST /v1/apps/{slug}/buckets/{bucket}/capacity-reconciliations`
+and `GET`/`DELETE` on that path followed by `/{reconciliation}`. All require
+storage write scope and the bucket's write grant. POST returns 202; GET and
+cancellation return the job with reserved/reclaimed bytes and keys, pending-write
+count, state, timestamps and a bounded error code. Repeated POST returns the
+active job. Finish or abort live multipart sessions before starting a job.
+
+An active job pauses new uploads for its bucket. Reads and object cleanup remain
+available. A complete inventory under a fenced lease atomically rebases quota;
+partial scans, cancelled jobs and stale workers cannot refund capacity. Billing
+usage and monthly authorization counts stay intact. Cleanup works with storage
+disabled or a spent budget. The worker processes up to 10 due jobs per sweep,
+uses a two-minute lease, scans for up to 45 seconds and 1,000 pages, retries after
+30 seconds, and stops waiting after one hour. Cancellation releases the write
+pause immediately without changing reservations.
+
+`blocked/untracked_writes` means legacy, native/direct signed uploads or copies
+have conservative grants. `waiting/unsettled_writes` means a tracked request has
+no confirmed outcome. An expired URL or elapsed deadline cannot settle an
+uncertain write. Those cases retain capacity; this release does not offer a force
+refund. Use dedicated managed buckets with versioning disabled, ordered complete
+listings, and no independent provider writers or replication introducing objects.
+See [ADR-391](adr/391-safe-object-capacity-reconciliation.md) for recovery and
+rolling-upgrade guarantees.

@@ -6,6 +6,7 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 |---|---|
 | [`account`](#account) | Manage the local account (account export\|delete\|restore\|status\|dpa\|slo) |
 | [`add`](#add) | Provision and bind managed resources to an app |
+| [`bucket`](#bucket) | Reconcile reserved object-storage capacity |
 | [`bindings`](#bindings) | Inspect app bindings and rotation status, manage storage credentials, or verify service and PostgreSQL connections |
 | [`capabilities`](#capabilities) | Show feature maturity and plan availability |
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset --app &lt;slug&gt;) |
@@ -170,6 +171,35 @@ Provision or attach object storage and inject sealed S3 settings
 | `--label <LABEL>` | bucket-scoped compute credential label |  |
 | `--prefix <PREFIX>` | injected storage secret prefix |  |
 | `--wait-timeout <DURATION>` | readiness timeout |  |
+
+
+## bucket
+
+Reconcile reserved object-storage capacity
+
+`gregale bucket [<subcommand>]`
+
+### bucket reconcile
+
+Start, inspect or cancel a fenced capacity inventory
+
+#### bucket reconcile start
+
+Pause writes and request capacity reconciliation
+
+`gregale bucket reconcile start <app> <bucket-id>`
+
+#### bucket reconcile status
+
+Show reconciliation progress and reclaimed capacity
+
+`gregale bucket reconcile status <app> <bucket-id> <job-id>`
+
+#### bucket reconcile cancel
+
+Cancel reconciliation and resume writes
+
+`gregale bucket reconcile cancel <app> <bucket-id> <job-id>`
 
 
 ## bindings

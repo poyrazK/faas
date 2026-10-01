@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -55,7 +56,7 @@ func (m *MemStore) PrepareObjectMultipartCompletion(_ context.Context, u ObjectM
 	if err != nil {
 		return ObjectMultipartUpload{}, err
 	}
-	if err = m.admitMultipartCompletionLocked(u.AccountID, u.BucketID, u.ID, u.Key, size, p); err != nil {
+	if err = m.admitMultipartCompletionLocked(u.AccountID, u.BucketID, u.ID, u.Key, size, p, uuid.NewString()); err != nil {
 		m.objectMultipartUploads[u.ID] = current
 		return ObjectMultipartUpload{}, err
 	}

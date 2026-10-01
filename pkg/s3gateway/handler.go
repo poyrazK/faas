@@ -597,12 +597,22 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, req requestCont
 		writeS3Error(w, http.StatusBadRequest, "BadDigest", "The checksum you specified did not match what Gregale received.", r.URL.Path, req.requestID)
 		return
 	}
-	if _, err = file.Seek(0, io.SeekStart); err != nil || !h.admit(w, r, req, key, r.ContentLength, true) {
-		if err != nil {
-			writeS3Error(w, http.StatusServiceUnavailable, "ServiceUnavailable", "Gregale could not stage this upload.", r.URL.Path, req.requestID)
-		}
+	if _, err = file.Seek(0, io.SeekStart); err != nil {
+		writeS3Error(w, http.StatusServiceUnavailable, "ServiceUnavailable", "Gregale could not stage this upload.", r.URL.Path, req.requestID)
 		return
 	}
+	settle, admitted := h.beginTrackedWrite(w, r, req, key, r.ContentLength)
+	if !admitted {
+		return
+	}
+	dispatched := false
+	defer func(parent context.Context) {
+		if !dispatched {
+			settle(parent)
+		}
+	}(r.Context())
+	transferCtx, cancel := context.WithTimeout(r.Context(), api.ObjectTransferTimeout)
+	defer cancel()
 	contentType := r.Header.Get("Content-Type")
 	signed, err := presignConditionalPut(r.Context(), req.provider, req.bucket.PhysicalName, objectstorage.SignRequest{
 		Method: http.MethodPut, Key: key, SizeBytes: &r.ContentLength, ContentType: contentType, ExpiresIn: 60,
@@ -614,7 +624,7 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, req requestCont
 		h.providerError(w, r, req, err, key)
 		return
 	}
-	upstream, err := http.NewRequestWithContext(r.Context(), http.MethodPut, signed.URL, file)
+	upstream, err := http.NewRequestWithContext(transferCtx, http.MethodPut, signed.URL, file)
 	if err != nil {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
 		return
@@ -626,6 +636,7 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, req requestCont
 	if !h.recordProviderRequest(w, r, req) {
 		return
 	}
+	dispatched = true
 	response, err := h.client.Do(upstream)
 	if err != nil {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
@@ -633,10 +644,14 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, req requestCont
 	}
 	defer h.closeResponseBody(response.Body, req.requestID)
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		if response.StatusCode >= 400 && response.StatusCode < 500 {
+			settle(r.Context())
+		}
 		h.providerHTTPError(w, r, req, response.StatusCode, key)
 		return
 	}
 	if etag := response.Header.Get("ETag"); etag != "" {
+		settle(r.Context())
 		w.Header().Set("ETag", etag)
 	}
 	w.WriteHeader(http.StatusOK)

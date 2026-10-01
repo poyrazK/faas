@@ -62,6 +62,9 @@ func objectReportFromSQL(r sqlc.ObjectStorageUsageReport) api.ObjectStorageUsage
 }
 
 func (s *PgStore) AdmitObjectURL(ctx context.Context, account, bucket, key string, size int64, put bool, p api.ObjectStoragePolicy) error {
+	return s.admitObjectURL(ctx, account, bucket, key, size, put, p, "")
+}
+func (s *PgStore) admitObjectURL(ctx context.Context, account, bucket, key string, size int64, put bool, p api.ObjectStoragePolicy, token string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -86,8 +89,23 @@ func (s *PgStore) AdmitObjectURL(ctx context.Context, account, bucket, key strin
 		return err
 	}
 	if put {
-		if err = q.ObjectUsageGrantUpsert(ctx, tx, sqlc.ObjectUsageGrantUpsertParams{BucketID: mustPgUUID(bucket), KeyHash: objectKeyHash(key), MaxBytes: size}); err != nil {
-			return err
+		fenced, e := q.ObjectCapacityFenced(ctx, tx, mustPgUUID(bucket))
+		if e != nil {
+			return e
+		}
+		if fenced {
+			return ErrConflict
+		}
+		if token != "" {
+			if err = q.ObjectWriteInsert(ctx, tx, sqlc.ObjectWriteInsertParams{ID: mustPgUUID(token), BucketID: mustPgUUID(bucket), KeyHash: objectKeyHash(key), Kind: "proxy"}); err != nil {
+				return mapErr(err)
+			}
+			err = q.ObjectTrackedGrantUpsert(ctx, tx, sqlc.ObjectTrackedGrantUpsertParams{BucketID: mustPgUUID(bucket), KeyHash: objectKeyHash(key), MaxBytes: size, LastWriteID: mustPgUUID(token)})
+		} else {
+			err = q.ObjectUsageGrantUpsert(ctx, tx, sqlc.ObjectUsageGrantUpsertParams{BucketID: mustPgUUID(bucket), KeyHash: objectKeyHash(key), MaxBytes: size})
+		}
+		if err != nil {
+			return mapErr(err)
 		}
 		if err = q.ObjectUsageGrantIncrement(ctx, tx, sqlc.ObjectUsageGrantIncrementParams{BucketID: mustPgUUID(bucket), GrantedBytes: delta, GrantedKeys: keys}); err != nil {
 			return err

@@ -137,7 +137,14 @@ func objectStorageBillingDeliveryKey(provider, billingRecordID string) string {
 func (m *MemStore) AdmitObjectURL(_ context.Context, account, bucket, key string, size int64, put bool, p api.ObjectStoragePolicy) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.admitObjectURLLocked(account, bucket, key, size, put, p, "")
+}
+
+func (m *MemStore) admitObjectURLLocked(account, bucket, key string, size int64, put bool, p api.ObjectStoragePolicy, token string) error {
 	now := time.Now().UTC()
+	if put && m.objectCapacityFencedLocked(bucket) {
+		return ErrConflict
+	}
 	s := m.objectUsageLocked(account, now)
 	hash := objectKeyHash(key)
 	old, exists := m.objectGrants[bucket][hash]
@@ -153,6 +160,7 @@ func (m *MemStore) AdmitObjectURL(_ context.Context, account, bucket, key string
 			m.objectGrants[bucket] = map[string]int64{}
 		}
 		m.objectGrants[bucket][hash] = max(old, size)
+		m.trackObjectGrantLocked(bucket, hash, token, !exists)
 		u := m.objectUsage[bucket]
 		u.GrantedBytes += delta
 		u.GrantedKeys += keys
@@ -197,7 +205,7 @@ func (m *MemStore) DueObjectInventories(_ context.Context, limit int32) ([]Objec
 	out := []ObjectBucket{}
 	for _, b := range m.objectBuckets {
 		u := m.objectUsage[b.ID]
-		if b.State == "ready" && (u.AttemptAt.IsZero() || now.Sub(u.AttemptAt) > 5*time.Minute) && !u.LeaseUntil.After(now) {
+		if !m.objectCapacityFencedLocked(b.ID) && b.State == "ready" && (u.AttemptAt.IsZero() || now.Sub(u.AttemptAt) > 5*time.Minute) && !u.LeaseUntil.After(now) {
 			out = append(out, b)
 		}
 	}
@@ -215,7 +223,7 @@ func (m *MemStore) ClaimObjectInventory(_ context.Context, bucket, token string)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	u := m.objectUsage[bucket]
-	if token == "" || m.objectBuckets[bucket].State != "ready" || u.LeaseUntil.After(time.Now()) {
+	if m.objectCapacityFencedLocked(bucket) || token == "" || m.objectBuckets[bucket].State != "ready" || u.LeaseUntil.After(time.Now()) {
 		return ErrConflict
 	}
 	u.Token = token
@@ -232,7 +240,7 @@ func (m *MemStore) FinishObjectInventory(_ context.Context, bucket, token string
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	u := m.objectUsage[bucket]
-	if token == "" || u.Token != token || !u.LeaseUntil.After(time.Now()) || m.objectBuckets[bucket].State != "ready" || bytes < 0 || objects < 0 || bytes > api.MaxObjectStoragePolicyValue || objects > api.MaxObjectStoragePolicyValue {
+	if m.objectCapacityFencedLocked(bucket) || token == "" || u.Token != token || !u.LeaseUntil.After(time.Now()) || m.objectBuckets[bucket].State != "ready" || bytes < 0 || objects < 0 || bytes > api.MaxObjectStoragePolicyValue || objects > api.MaxObjectStoragePolicyValue {
 		return ErrConflict
 	}
 	if u.ObservedAt.IsZero() {

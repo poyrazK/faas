@@ -2711,6 +2711,27 @@ type ObjectStorageBucketUsage struct {
 	Token         string
 }
 
+type ObjectStorageCapacityReconciliation struct {
+	ID             pgtype.UUID
+	BucketID       pgtype.UUID
+	State          string
+	LeaseToken     string
+	LeaseUntil     pgtype.Timestamptz
+	RetryAt        pgtype.Timestamptz
+	DeadlineAt     pgtype.Timestamptz
+	BeforeBytes    int64
+	BeforeKeys     int64
+	AfterBytes     int64
+	AfterKeys      int64
+	ReclaimedBytes int64
+	ReclaimedKeys  int64
+	PendingWrites  int64
+	LastErrorCode  string
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	FinishedAt     pgtype.Timestamptz
+}
+
 type ObjectStorageCustomerUsageReportsV2 struct {
 	AccountID          pgtype.UUID
 	BackendID          string
@@ -2736,9 +2757,11 @@ type ObjectStorageInventorySample struct {
 }
 
 type ObjectStorageKeyGrant struct {
-	BucketID pgtype.UUID
-	KeyHash  string
-	MaxBytes int64
+	BucketID    pgtype.UUID
+	KeyHash     string
+	MaxBytes    int64
+	Reclaimable bool
+	LastWriteID pgtype.UUID
 }
 
 type ObjectStorageMultipartPartGrant struct {
@@ -2824,6 +2847,17 @@ type ObjectStorageUsageReport struct {
 	RequestCount       int64
 	EgressBytes        int64
 	CostMillicents     int64
+}
+
+type ObjectStorageWriteAdmission struct {
+	ID                pgtype.UUID
+	BucketID          pgtype.UUID
+	KeyHash           string
+	Kind              string
+	State             string
+	MultipartUploadID pgtype.UUID
+	CreatedAt         pgtype.Timestamptz
+	SettledAt         pgtype.Timestamptz
 }
 
 type ObjectUploadCompletion struct {

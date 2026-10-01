@@ -78,10 +78,10 @@ func (m *MemStore) authorizeMultipartLocked(account string, now time.Time) {
 func (m *MemStore) AdmitObjectMultipartCompletion(_ context.Context, account, bucket, id, key string, size int64, p api.ObjectStoragePolicy) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.admitMultipartCompletionLocked(account, bucket, id, key, size, p)
+	return m.admitMultipartCompletionLocked(account, bucket, id, key, size, p, "")
 }
 
-func (m *MemStore) admitMultipartCompletionLocked(account, bucket, id, key string, size int64, p api.ObjectStoragePolicy) error {
+func (m *MemStore) admitMultipartCompletionLocked(account, bucket, id, key string, size int64, p api.ObjectStoragePolicy, writeID string) error {
 	now := time.Now().UTC()
 	upload := m.objectMultipartUploads[id]
 	if !validMultipartCapacityUpload(upload, account, bucket, true, now) || upload.Key != key || size < 1 || size > api.MaxObjectUploadBytes {
@@ -105,6 +105,13 @@ func (m *MemStore) admitMultipartCompletionLocked(account, bucket, id, key strin
 		m.objectGrants[bucket] = map[string]int64{}
 	}
 	m.objectGrants[bucket][hash] = max(old, size)
+	m.trackObjectGrantLocked(bucket, hash, writeID, !exists)
+	if writeID != "" {
+		if m.objectWriteAdmissions == nil {
+			m.objectWriteAdmissions = map[string]objectWriteAdmission{}
+		}
+		m.objectWriteAdmissions[writeID] = objectWriteAdmission{BucketID: bucket, KeyHash: hash, MultipartID: id}
+	}
 	u := m.objectUsage[bucket]
 	u.GrantedBytes += delta
 	u.GrantedKeys += keys

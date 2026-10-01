@@ -6,6 +6,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -86,8 +87,17 @@ func (s *PgStore) admitMultipartCapacity(ctx context.Context, account, bucket, i
 		if e != nil {
 			return e
 		}
-		if err = q.ObjectUsageGrantUpsert(ctx, tx, sqlc.ObjectUsageGrantUpsertParams{BucketID: mustPgUUID(bucket), KeyHash: objectKeyHash(key), MaxBytes: size}); err != nil {
-			return err
+		if preparation != nil {
+			writeID := mustPgUUID(uuid.NewString())
+			if err = q.ObjectWriteInsert(ctx, tx, sqlc.ObjectWriteInsertParams{ID: writeID, BucketID: mustPgUUID(bucket), KeyHash: objectKeyHash(key), Kind: "multipart", MultipartUploadID: mustPgUUID(id)}); err != nil {
+				return err
+			}
+			err = q.ObjectTrackedGrantUpsert(ctx, tx, sqlc.ObjectTrackedGrantUpsertParams{BucketID: mustPgUUID(bucket), KeyHash: objectKeyHash(key), MaxBytes: size, LastWriteID: writeID})
+		} else {
+			err = q.ObjectUsageGrantUpsert(ctx, tx, sqlc.ObjectUsageGrantUpsertParams{BucketID: mustPgUUID(bucket), KeyHash: objectKeyHash(key), MaxBytes: size})
+		}
+		if err != nil {
+			return mapErr(err)
 		}
 		if err = q.ObjectUsageGrantIncrement(ctx, tx, sqlc.ObjectUsageGrantIncrementParams{BucketID: mustPgUUID(bucket), GrantedBytes: delta, GrantedKeys: keys}); err != nil {
 			return err

@@ -7969,6 +7969,9 @@ CREATE TABLE public.object_storage_key_grants (
     bucket_id uuid NOT NULL,
     key_hash text NOT NULL,
     max_bytes bigint NOT NULL,
+    reclaimable boolean DEFAULT false NOT NULL,
+    last_write_id uuid,
+    CONSTRAINT object_grant_tracked CHECK (((NOT reclaimable) OR (last_write_id IS NOT NULL))),
     CONSTRAINT object_storage_key_grants_key_hash_check CHECK ((length(key_hash) = 64)),
     CONSTRAINT object_storage_key_grants_max_bytes_check CHECK (((max_bytes >= 0) AND (max_bytes <= '5497558138880'::bigint)))
 );
@@ -22914,3 +22917,182 @@ ALTER TABLE ONLY public.object_storage_multipart_part_grants
 
 ALTER TABLE ONLY public.object_storage_multipart_part_grants
     ADD CONSTRAINT object_storage_multipart_part_grants_upload_id_fkey FOREIGN KEY (upload_id) REFERENCES public.object_storage_multipart_uploads(id) ON DELETE CASCADE;
+
+--
+-- Name: fence_object_capacity_write(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fence_object_capacity_write() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE bid uuid;
+BEGIN
+ IF TG_TABLE_NAME='object_buckets' THEN
+  IF NEW.state<>'deleting' OR OLD.state='deleting' THEN RETURN NEW; END IF;
+  bid:=NEW.id;
+ ELSE bid:=NEW.bucket_id;
+ END IF;
+ IF EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations WHERE bucket_id=bid AND state IN ('waiting','scanning')) THEN
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_capacity_write_fenced',MESSAGE='Object capacity reconciliation fences new writes';
+ END IF;
+ IF TG_TABLE_NAME='object_storage_key_grants' THEN
+  IF NEW.last_write_id IS NULL OR (TG_OP='UPDATE' AND NEW.last_write_id IS NOT DISTINCT FROM OLD.last_write_id) THEN
+   NEW.reclaimable:=false; NEW.last_write_id:=NULL;
+  ELSE
+   IF NOT EXISTS (SELECT 1 FROM object_storage_write_admissions WHERE id=NEW.last_write_id AND bucket_id=bid AND key_hash=NEW.key_hash AND state='pending') THEN
+    RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Object grant lacks matching write admission';
+   END IF;
+   IF TG_OP='UPDATE' THEN NEW.reclaimable:=OLD.reclaimable AND NEW.reclaimable; END IF;
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: object_storage_capacity_reconciliations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_storage_capacity_reconciliations (
+    id uuid NOT NULL,
+    bucket_id uuid NOT NULL,
+    state text DEFAULT 'waiting'::text NOT NULL,
+    lease_token text DEFAULT ''::text NOT NULL,
+    lease_until timestamp with time zone,
+    retry_at timestamp with time zone DEFAULT now() NOT NULL,
+    deadline_at timestamp with time zone NOT NULL,
+    before_bytes bigint DEFAULT 0 NOT NULL,
+    before_keys bigint DEFAULT 0 NOT NULL,
+    after_bytes bigint DEFAULT 0 NOT NULL,
+    after_keys bigint DEFAULT 0 NOT NULL,
+    reclaimed_bytes bigint DEFAULT 0 NOT NULL,
+    reclaimed_keys bigint DEFAULT 0 NOT NULL,
+    pending_writes bigint DEFAULT 0 NOT NULL,
+    last_error_code text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    finished_at timestamp with time zone,
+    CONSTRAINT object_storage_capacity_reconciliations_after_bytes_check CHECK ((after_bytes >= 0)),
+    CONSTRAINT object_storage_capacity_reconciliations_after_keys_check CHECK ((after_keys >= 0)),
+    CONSTRAINT object_storage_capacity_reconciliations_before_bytes_check CHECK ((before_bytes >= 0)),
+    CONSTRAINT object_storage_capacity_reconciliations_before_keys_check CHECK ((before_keys >= 0)),
+    CONSTRAINT object_storage_capacity_reconciliations_check CHECK (((lease_token = ''::text) = (lease_until IS NULL))),
+    CONSTRAINT object_storage_capacity_reconciliations_check1 CHECK (((state = 'scanning'::text) = (lease_until IS NOT NULL))),
+    CONSTRAINT object_storage_capacity_reconciliations_check2 CHECK (((state = ANY (ARRAY['completed'::text, 'cancelled'::text, 'blocked'::text, 'failed'::text])) = (finished_at IS NOT NULL))),
+    CONSTRAINT object_storage_capacity_reconciliations_last_error_code_check CHECK ((last_error_code = ANY (ARRAY[''::text, 'untracked_writes'::text, 'unsettled_writes'::text, 'multipart_active'::text, 'deadline'::text, 'inventory_failed'::text]))),
+    CONSTRAINT object_storage_capacity_reconciliations_pending_writes_check CHECK ((pending_writes >= 0)),
+    CONSTRAINT object_storage_capacity_reconciliations_reclaimed_bytes_check CHECK ((reclaimed_bytes >= 0)),
+    CONSTRAINT object_storage_capacity_reconciliations_reclaimed_keys_check CHECK ((reclaimed_keys >= 0)),
+    CONSTRAINT object_storage_capacity_reconciliations_state_check CHECK ((state = ANY (ARRAY['waiting'::text, 'scanning'::text, 'completed'::text, 'cancelled'::text, 'blocked'::text, 'failed'::text])))
+);
+
+
+--
+-- Name: object_storage_write_admissions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_storage_write_admissions (
+    id uuid NOT NULL,
+    bucket_id uuid NOT NULL,
+    key_hash text NOT NULL,
+    kind text NOT NULL,
+    state text DEFAULT 'pending'::text NOT NULL,
+    multipart_upload_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    settled_at timestamp with time zone,
+    CONSTRAINT object_storage_write_admissions_check CHECK (((kind = 'multipart'::text) = (multipart_upload_id IS NOT NULL))),
+    CONSTRAINT object_storage_write_admissions_check1 CHECK (((state = 'settled'::text) = (settled_at IS NOT NULL))),
+    CONSTRAINT object_storage_write_admissions_key_hash_check CHECK ((length(key_hash) = 64)),
+    CONSTRAINT object_storage_write_admissions_kind_check CHECK ((kind = ANY (ARRAY['proxy'::text, 'multipart'::text]))),
+    CONSTRAINT object_storage_write_admissions_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'settled'::text])))
+);
+
+
+--
+-- Name: object_storage_capacity_reconciliations object_storage_capacity_reconciliations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_capacity_reconciliations
+    ADD CONSTRAINT object_storage_capacity_reconciliations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: object_storage_write_admissions object_storage_write_admissions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_write_admissions
+    ADD CONSTRAINT object_storage_write_admissions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: object_capacity_active_bucket_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX object_capacity_active_bucket_idx ON public.object_storage_capacity_reconciliations USING btree (bucket_id) WHERE (state = ANY (ARRAY['waiting'::text, 'scanning'::text]));
+
+
+--
+-- Name: object_capacity_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_capacity_due_idx ON public.object_storage_capacity_reconciliations USING btree (retry_at, id) WHERE (state = ANY (ARRAY['waiting'::text, 'scanning'::text]));
+
+
+--
+-- Name: object_write_admissions_bucket_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_write_admissions_bucket_idx ON public.object_storage_write_admissions USING btree (bucket_id);
+
+
+--
+-- Name: object_buckets object_bucket_capacity_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_bucket_capacity_fence BEFORE UPDATE ON public.object_buckets FOR EACH ROW EXECUTE FUNCTION public.fence_object_capacity_write();
+
+
+--
+-- Name: object_storage_key_grants object_grant_capacity_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_grant_capacity_fence BEFORE INSERT OR UPDATE ON public.object_storage_key_grants FOR EACH ROW EXECUTE FUNCTION public.fence_object_capacity_write();
+
+
+--
+-- Name: object_storage_multipart_uploads object_multipart_capacity_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_multipart_capacity_fence BEFORE INSERT ON public.object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION public.fence_object_capacity_write();
+
+
+--
+-- Name: object_storage_capacity_reconciliations object_storage_capacity_reconciliations_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_capacity_reconciliations
+    ADD CONSTRAINT object_storage_capacity_reconciliations_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_storage_key_grants object_storage_key_grants_last_write_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_key_grants
+    ADD CONSTRAINT object_storage_key_grants_last_write_id_fkey FOREIGN KEY (last_write_id) REFERENCES public.object_storage_write_admissions(id);
+
+
+--
+-- Name: object_storage_write_admissions object_storage_write_admissions_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_write_admissions
+    ADD CONSTRAINT object_storage_write_admissions_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_storage_write_admissions object_storage_write_admissions_multipart_upload_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_write_admissions
+    ADD CONSTRAINT object_storage_write_admissions_multipart_upload_id_fkey FOREIGN KEY (multipart_upload_id) REFERENCES public.object_storage_multipart_uploads(id) ON DELETE CASCADE;

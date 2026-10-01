@@ -11586,9 +11586,367 @@ func (q *Queries) ObjectBucketsDue(ctx context.Context, db DBTX, arg ObjectBucke
 	return items, nil
 }
 
+const objectCapacityActive = `-- name: ObjectCapacityActive :one
+SELECT id, bucket_id, state, lease_token, lease_until, retry_at, deadline_at, before_bytes, before_keys, after_bytes, after_keys, reclaimed_bytes, reclaimed_keys, pending_writes, last_error_code, created_at, updated_at, finished_at FROM object_storage_capacity_reconciliations WHERE bucket_id=$1 AND state IN ('waiting','scanning')
+`
+
+func (q *Queries) ObjectCapacityActive(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectStorageCapacityReconciliation, error) {
+	row := db.QueryRow(ctx, objectCapacityActive, bucketID)
+	var i ObjectStorageCapacityReconciliation
+	err := row.Scan(
+		&i.ID,
+		&i.BucketID,
+		&i.State,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.RetryAt,
+		&i.DeadlineAt,
+		&i.BeforeBytes,
+		&i.BeforeKeys,
+		&i.AfterBytes,
+		&i.AfterKeys,
+		&i.ReclaimedBytes,
+		&i.ReclaimedKeys,
+		&i.PendingWrites,
+		&i.LastErrorCode,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FinishedAt,
+	)
+	return i, err
+}
+
+const objectCapacityDeleteGrants = `-- name: ObjectCapacityDeleteGrants :exec
+DELETE FROM object_storage_key_grants WHERE bucket_id=$1
+`
+
+func (q *Queries) ObjectCapacityDeleteGrants(ctx context.Context, db DBTX, bucketID pgtype.UUID) error {
+	_, err := db.Exec(ctx, objectCapacityDeleteGrants, bucketID)
+	return err
+}
+
+const objectCapacityDeleteWrites = `-- name: ObjectCapacityDeleteWrites :exec
+DELETE FROM object_storage_write_admissions WHERE bucket_id=$1
+`
+
+func (q *Queries) ObjectCapacityDeleteWrites(ctx context.Context, db DBTX, bucketID pgtype.UUID) error {
+	_, err := db.Exec(ctx, objectCapacityDeleteWrites, bucketID)
+	return err
+}
+
+const objectCapacityDue = `-- name: ObjectCapacityDue :many
+SELECT id, bucket_id, state, lease_token, lease_until, retry_at, deadline_at, before_bytes, before_keys, after_bytes, after_keys, reclaimed_bytes, reclaimed_keys, pending_writes, last_error_code, created_at, updated_at, finished_at FROM object_storage_capacity_reconciliations WHERE state IN ('waiting','scanning') AND retry_at<=now() AND (lease_until IS NULL OR lease_until<=now()) ORDER BY retry_at,id LIMIT $1
+`
+
+func (q *Queries) ObjectCapacityDue(ctx context.Context, db DBTX, limit int32) ([]ObjectStorageCapacityReconciliation, error) {
+	rows, err := db.Query(ctx, objectCapacityDue, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectStorageCapacityReconciliation{}
+	for rows.Next() {
+		var i ObjectStorageCapacityReconciliation
+		if err := rows.Scan(
+			&i.ID,
+			&i.BucketID,
+			&i.State,
+			&i.LeaseToken,
+			&i.LeaseUntil,
+			&i.RetryAt,
+			&i.DeadlineAt,
+			&i.BeforeBytes,
+			&i.BeforeKeys,
+			&i.AfterBytes,
+			&i.AfterKeys,
+			&i.ReclaimedBytes,
+			&i.ReclaimedKeys,
+			&i.PendingWrites,
+			&i.LastErrorCode,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.FinishedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const objectCapacityFenced = `-- name: ObjectCapacityFenced :one
+SELECT EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations WHERE bucket_id=$1 AND state IN ('waiting','scanning'))
+`
+
+func (q *Queries) ObjectCapacityFenced(ctx context.Context, db DBTX, bucketID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, objectCapacityFenced, bucketID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const objectCapacityGet = `-- name: ObjectCapacityGet :one
+SELECT c.id, c.bucket_id, c.state, c.lease_token, c.lease_until, c.retry_at, c.deadline_at, c.before_bytes, c.before_keys, c.after_bytes, c.after_keys, c.reclaimed_bytes, c.reclaimed_keys, c.pending_writes, c.last_error_code, c.created_at, c.updated_at, c.finished_at,b.account_id,b.app_id FROM object_storage_capacity_reconciliations c JOIN object_buckets b ON b.id=c.bucket_id WHERE c.id=$1
+`
+
+type ObjectCapacityGetRow struct {
+	ID             pgtype.UUID
+	BucketID       pgtype.UUID
+	State          string
+	LeaseToken     string
+	LeaseUntil     pgtype.Timestamptz
+	RetryAt        pgtype.Timestamptz
+	DeadlineAt     pgtype.Timestamptz
+	BeforeBytes    int64
+	BeforeKeys     int64
+	AfterBytes     int64
+	AfterKeys      int64
+	ReclaimedBytes int64
+	ReclaimedKeys  int64
+	PendingWrites  int64
+	LastErrorCode  string
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	FinishedAt     pgtype.Timestamptz
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+}
+
+func (q *Queries) ObjectCapacityGet(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectCapacityGetRow, error) {
+	row := db.QueryRow(ctx, objectCapacityGet, id)
+	var i ObjectCapacityGetRow
+	err := row.Scan(
+		&i.ID,
+		&i.BucketID,
+		&i.State,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.RetryAt,
+		&i.DeadlineAt,
+		&i.BeforeBytes,
+		&i.BeforeKeys,
+		&i.AfterBytes,
+		&i.AfterKeys,
+		&i.ReclaimedBytes,
+		&i.ReclaimedKeys,
+		&i.PendingWrites,
+		&i.LastErrorCode,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FinishedAt,
+		&i.AccountID,
+		&i.AppID,
+	)
+	return i, err
+}
+
+const objectCapacityInsert = `-- name: ObjectCapacityInsert :one
+INSERT INTO object_storage_capacity_reconciliations(id,bucket_id,deadline_at,before_bytes,before_keys,after_bytes,after_keys)
+VALUES($1,$2,now()+make_interval(secs=>$5::int),$3,$4,$3,$4) RETURNING id, bucket_id, state, lease_token, lease_until, retry_at, deadline_at, before_bytes, before_keys, after_bytes, after_keys, reclaimed_bytes, reclaimed_keys, pending_writes, last_error_code, created_at, updated_at, finished_at
+`
+
+type ObjectCapacityInsertParams struct {
+	ID              pgtype.UUID
+	BucketID        pgtype.UUID
+	BeforeBytes     int64
+	BeforeKeys      int64
+	DeadlineSeconds int32
+}
+
+func (q *Queries) ObjectCapacityInsert(ctx context.Context, db DBTX, arg ObjectCapacityInsertParams) (ObjectStorageCapacityReconciliation, error) {
+	row := db.QueryRow(ctx, objectCapacityInsert,
+		arg.ID,
+		arg.BucketID,
+		arg.BeforeBytes,
+		arg.BeforeKeys,
+		arg.DeadlineSeconds,
+	)
+	var i ObjectStorageCapacityReconciliation
+	err := row.Scan(
+		&i.ID,
+		&i.BucketID,
+		&i.State,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.RetryAt,
+		&i.DeadlineAt,
+		&i.BeforeBytes,
+		&i.BeforeKeys,
+		&i.AfterBytes,
+		&i.AfterKeys,
+		&i.ReclaimedBytes,
+		&i.ReclaimedKeys,
+		&i.PendingWrites,
+		&i.LastErrorCode,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FinishedAt,
+	)
+	return i, err
+}
+
+const objectCapacityLock = `-- name: ObjectCapacityLock :one
+SELECT id, bucket_id, state, lease_token, lease_until, retry_at, deadline_at, before_bytes, before_keys, after_bytes, after_keys, reclaimed_bytes, reclaimed_keys, pending_writes, last_error_code, created_at, updated_at, finished_at FROM object_storage_capacity_reconciliations WHERE id=$1 FOR UPDATE
+`
+
+func (q *Queries) ObjectCapacityLock(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectStorageCapacityReconciliation, error) {
+	row := db.QueryRow(ctx, objectCapacityLock, id)
+	var i ObjectStorageCapacityReconciliation
+	err := row.Scan(
+		&i.ID,
+		&i.BucketID,
+		&i.State,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.RetryAt,
+		&i.DeadlineAt,
+		&i.BeforeBytes,
+		&i.BeforeKeys,
+		&i.AfterBytes,
+		&i.AfterKeys,
+		&i.ReclaimedBytes,
+		&i.ReclaimedKeys,
+		&i.PendingWrites,
+		&i.LastErrorCode,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FinishedAt,
+	)
+	return i, err
+}
+
+const objectCapacityLockBucket = `-- name: ObjectCapacityLockBucket :one
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id FROM object_buckets WHERE id=$1 AND account_id=$2 AND app_id=$3 AND state='ready' FOR NO KEY UPDATE
+`
+
+type ObjectCapacityLockBucketParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) ObjectCapacityLockBucket(ctx context.Context, db DBTX, arg ObjectCapacityLockBucketParams) (ObjectBucket, error) {
+	row := db.QueryRow(ctx, objectCapacityLockBucket, arg.ID, arg.AccountID, arg.AppID)
+	var i ObjectBucket
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.Scope,
+		&i.Region,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.PhysicalName,
+		&i.State,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.LastErrorCode,
+		&i.PublicRead,
+		&i.ServeAt,
+		&i.EnvironmentCloneSourceBucketID,
+	)
+	return i, err
+}
+
+const objectCapacityReadiness = `-- name: ObjectCapacityReadiness :one
+SELECT
+ (SELECT count(*) FROM object_storage_write_admissions w LEFT JOIN object_storage_multipart_uploads m ON m.id=w.multipart_upload_id
+  WHERE w.bucket_id=$1 AND ((w.kind='proxy' AND w.state='pending') OR (w.kind='multipart' AND m.state NOT IN ('completed','aborted'))))::bigint AS pending,
+ EXISTS (SELECT 1 FROM object_storage_key_grants WHERE bucket_id=$1 AND NOT reclaimable) AS unsafe,
+ EXISTS (SELECT 1 FROM object_storage_multipart_uploads m WHERE m.bucket_id=$1 AND
+  (m.state NOT IN ('completed','aborted') OR (m.state<>'completed' AND EXISTS (SELECT 1 FROM object_storage_multipart_part_grants p WHERE p.upload_id=m.id)))) AS multipart
+`
+
+type ObjectCapacityReadinessRow struct {
+	Pending   int64
+	Unsafe    bool
+	Multipart bool
+}
+
+func (q *Queries) ObjectCapacityReadiness(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectCapacityReadinessRow, error) {
+	row := db.QueryRow(ctx, objectCapacityReadiness, bucketID)
+	var i ObjectCapacityReadinessRow
+	err := row.Scan(&i.Pending, &i.Unsafe, &i.Multipart)
+	return i, err
+}
+
+const objectCapacityRebase = `-- name: ObjectCapacityRebase :execrows
+INSERT INTO object_storage_bucket_usage(bucket_id,baseline_bytes,baseline_keys,observed_bytes,observed_keys,observed_at,attempt_at)
+SELECT b.id,$2::bigint,$3::bigint,$2,$3,now(),now() FROM object_buckets b WHERE b.id=$1 AND b.state='ready'
+ON CONFLICT(bucket_id) DO UPDATE SET baseline_bytes=EXCLUDED.baseline_bytes,baseline_keys=EXCLUDED.baseline_keys,granted_bytes=0,granted_keys=0,
+ observed_bytes=EXCLUDED.observed_bytes,observed_keys=EXCLUDED.observed_keys,observed_at=now(),attempt_at=now(),token='',lease_until=NULL
+`
+
+type ObjectCapacityRebaseParams struct {
+	ID    pgtype.UUID
+	Bytes int64
+	Keys  int64
+}
+
+func (q *Queries) ObjectCapacityRebase(ctx context.Context, db DBTX, arg ObjectCapacityRebaseParams) (int64, error) {
+	result, err := db.Exec(ctx, objectCapacityRebase, arg.ID, arg.Bytes, arg.Keys)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectCapacitySave = `-- name: ObjectCapacitySave :exec
+UPDATE object_storage_capacity_reconciliations SET state=$2,lease_token=$3,lease_until=$4,retry_at=$5,
+ before_bytes=$6,before_keys=$7,after_bytes=$8,after_keys=$9,reclaimed_bytes=$10,reclaimed_keys=$11,
+ pending_writes=$12,last_error_code=$13,updated_at=$14,finished_at=$15 WHERE id=$1
+`
+
+type ObjectCapacitySaveParams struct {
+	ID             pgtype.UUID
+	State          string
+	LeaseToken     string
+	LeaseUntil     pgtype.Timestamptz
+	RetryAt        pgtype.Timestamptz
+	BeforeBytes    int64
+	BeforeKeys     int64
+	AfterBytes     int64
+	AfterKeys      int64
+	ReclaimedBytes int64
+	ReclaimedKeys  int64
+	PendingWrites  int64
+	LastErrorCode  string
+	UpdatedAt      pgtype.Timestamptz
+	FinishedAt     pgtype.Timestamptz
+}
+
+func (q *Queries) ObjectCapacitySave(ctx context.Context, db DBTX, arg ObjectCapacitySaveParams) error {
+	_, err := db.Exec(ctx, objectCapacitySave,
+		arg.ID,
+		arg.State,
+		arg.LeaseToken,
+		arg.LeaseUntil,
+		arg.RetryAt,
+		arg.BeforeBytes,
+		arg.BeforeKeys,
+		arg.AfterBytes,
+		arg.AfterKeys,
+		arg.ReclaimedBytes,
+		arg.ReclaimedKeys,
+		arg.PendingWrites,
+		arg.LastErrorCode,
+		arg.UpdatedAt,
+		arg.FinishedAt,
+	)
+	return err
+}
+
 const objectInventoriesDue = `-- name: ObjectInventoriesDue :many
 SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code, b.public_read, b.serve_at, b.environment_clone_source_bucket_id FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=b.id
-WHERE b.state='ready' AND (u.attempt_at IS NULL OR u.attempt_at < now() - interval '5 minutes')
+WHERE b.state='ready' AND NOT EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=b.id AND c.state IN ('waiting','scanning')) AND (u.attempt_at IS NULL OR u.attempt_at < now() - interval '5 minutes')
 AND (u.lease_until IS NULL OR u.lease_until < now())
 ORDER BY u.attempt_at NULLS FIRST, b.id LIMIT $1
 `
@@ -11636,7 +11994,7 @@ func (q *Queries) ObjectInventoriesDue(ctx context.Context, db DBTX, limit int32
 
 const objectInventoryClaim = `-- name: ObjectInventoryClaim :execrows
 INSERT INTO object_storage_bucket_usage (bucket_id, attempt_at, lease_until, token)
-SELECT id, now(), now()+interval '2 minutes', $2::text FROM object_buckets WHERE id=$1 AND state='ready'
+SELECT b.id, now(), now()+interval '2 minutes', $2::text FROM object_buckets b WHERE b.id=$1 AND b.state='ready' AND NOT EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=$1 AND c.state IN ('waiting','scanning'))
 ON CONFLICT (bucket_id) DO UPDATE SET attempt_at=now(),lease_until=now()+interval '2 minutes',token=EXCLUDED.token
 WHERE object_storage_bucket_usage.lease_until IS NULL OR object_storage_bucket_usage.lease_until < now()
 `
@@ -11655,11 +12013,12 @@ func (q *Queries) ObjectInventoryClaim(ctx context.Context, db DBTX, arg ObjectI
 }
 
 const objectInventoryFinish = `-- name: ObjectInventoryFinish :execrows
-UPDATE object_storage_bucket_usage SET baseline_bytes = CASE WHEN observed_at IS NULL THEN $3::bigint ELSE baseline_bytes END,
+UPDATE object_storage_bucket_usage u SET baseline_bytes = CASE WHEN observed_at IS NULL THEN $3::bigint ELSE baseline_bytes END,
 baseline_keys = CASE WHEN observed_at IS NULL THEN $4::bigint ELSE baseline_keys END,
 observed_bytes=$3,observed_keys=$4,observed_at=attempt_at,lease_until=NULL,token=''
-WHERE bucket_id=$1 AND token=$2 AND lease_until > now()
+WHERE u.bucket_id=$1 AND u.token=$2 AND u.lease_until > now()
 AND EXISTS (SELECT 1 FROM object_buckets WHERE id=$1 AND state='ready')
+AND NOT EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=$1 AND c.state IN ('waiting','scanning'))
 `
 
 type ObjectInventoryFinishParams struct {
@@ -13411,6 +13770,28 @@ func (q *Queries) ObjectStorageProviderRequestMetrics(ctx context.Context, db DB
 	return items, nil
 }
 
+const objectTrackedGrantUpsert = `-- name: ObjectTrackedGrantUpsert :exec
+INSERT INTO object_storage_key_grants(bucket_id,key_hash,max_bytes,reclaimable,last_write_id) VALUES($1,$2,$3,true,$4)
+ON CONFLICT(bucket_id,key_hash) DO UPDATE SET max_bytes=greatest(object_storage_key_grants.max_bytes,EXCLUDED.max_bytes),last_write_id=EXCLUDED.last_write_id,reclaimable=object_storage_key_grants.reclaimable
+`
+
+type ObjectTrackedGrantUpsertParams struct {
+	BucketID    pgtype.UUID
+	KeyHash     string
+	MaxBytes    int64
+	LastWriteID pgtype.UUID
+}
+
+func (q *Queries) ObjectTrackedGrantUpsert(ctx context.Context, db DBTX, arg ObjectTrackedGrantUpsertParams) error {
+	_, err := db.Exec(ctx, objectTrackedGrantUpsert,
+		arg.BucketID,
+		arg.KeyHash,
+		arg.MaxBytes,
+		arg.LastWriteID,
+	)
+	return err
+}
+
 const objectUsageAuthorizationCount = `-- name: ObjectUsageAuthorizationCount :one
 SELECT count FROM object_storage_authorizations WHERE account_id=$1 AND period_start=$2
 `
@@ -13737,6 +14118,50 @@ func (q *Queries) ObjectUsageReports(ctx context.Context, db DBTX, arg ObjectUsa
 		return nil, err
 	}
 	return items, nil
+}
+
+const objectWriteInsert = `-- name: ObjectWriteInsert :exec
+INSERT INTO object_storage_write_admissions(id,bucket_id,key_hash,kind,multipart_upload_id)
+VALUES($1,$2,$3,$4,$5)
+`
+
+type ObjectWriteInsertParams struct {
+	ID                pgtype.UUID
+	BucketID          pgtype.UUID
+	KeyHash           string
+	Kind              string
+	MultipartUploadID pgtype.UUID
+}
+
+func (q *Queries) ObjectWriteInsert(ctx context.Context, db DBTX, arg ObjectWriteInsertParams) error {
+	_, err := db.Exec(ctx, objectWriteInsert,
+		arg.ID,
+		arg.BucketID,
+		arg.KeyHash,
+		arg.Kind,
+		arg.MultipartUploadID,
+	)
+	return err
+}
+
+const objectWriteSettle = `-- name: ObjectWriteSettle :execrows
+UPDATE object_storage_write_admissions w SET state='settled',settled_at=coalesce(settled_at,now())
+WHERE w.id=$1 AND w.bucket_id=$2 AND w.kind='proxy'
+AND EXISTS (SELECT 1 FROM object_buckets b WHERE b.id=w.bucket_id AND b.account_id=$3)
+`
+
+type ObjectWriteSettleParams struct {
+	ID        pgtype.UUID
+	BucketID  pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) ObjectWriteSettle(ctx context.Context, db DBTX, arg ObjectWriteSettleParams) (int64, error) {
+	result, err := db.Exec(ctx, objectWriteSettle, arg.ID, arg.BucketID, arg.AccountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const orgByID = `-- name: OrgByID :one

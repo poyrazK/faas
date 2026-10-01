@@ -112,6 +112,11 @@ const (
 	MaxObjectStorageReportAgeSeconds    int64 = 86400
 	ObjectStorageInventoryMaxAgeSeconds int64 = 900
 	ObjectStorageInventoryMaxPages            = 1000
+	ObjectCapacityReconciliationLease         = 2 * time.Minute
+	ObjectCapacityReconciliationTimeout       = time.Hour
+	ObjectCapacityReconciliationRetry         = 30 * time.Second
+	ObjectCapacityInventoryTimeout            = 45 * time.Second
+	ObjectCapacityReconciliationBatch         = 10
 	DefaultObjectBucketsPerApp                = 10
 	MaxObjectBucketsPerApp                    = 100
 	DefaultObjectUploadBytes            int64 = 100 << 20

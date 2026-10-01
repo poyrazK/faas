@@ -22,7 +22,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
-
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/cursor"
 	"github.com/onebox-faas/faas/pkg/devbridge"
@@ -165,6 +164,9 @@ type MemStore struct {
 	objectBuckets             map[string]ObjectBucket
 	objectUsage               map[string]ObjectBucketUsage
 	objectGrants              map[string]map[string]int64
+	objectTrackedGrants       map[string]map[string]bool
+	objectWriteAdmissions     map[string]objectWriteAdmission
+	objectCapacityJobs        map[string]ObjectCapacityReconciliation
 	objectReports             []api.ObjectStorageUsageReport
 	objectCustomerReportsV2   []api.ObjectStorageCustomerUsageReportV2
 	objectAuthorizations      map[string]int64
@@ -173,7 +175,7 @@ type MemStore struct {
 	objectS3Credentials       map[string]ObjectS3Credential
 	objectMultipartUploads    map[string]ObjectMultipartUpload
 	objectMultipartPartGrants map[string]map[int32]int64
-	objectMultipartTransfers map[string]map[int32]multipartPartTransfer
+	objectMultipartTransfers  map[string]map[int32]multipartPartTransfer
 	objectUploadRoutes        map[string]ObjectUploadRoute
 	objectUploadCompletions   map[string]ObjectUploadCompletion
 	outboundIntegrationOffers map[string]OutboundIntegrationOffer
@@ -20448,6 +20450,17 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			delete(m.objectBuckets, bucketID)
 			delete(m.objectUsage, bucketID)
 			delete(m.objectGrants, bucketID)
+			delete(m.objectTrackedGrants, bucketID)
+			for writeID, w := range m.objectWriteAdmissions {
+				if w.BucketID == bucketID {
+					delete(m.objectWriteAdmissions, writeID)
+				}
+			}
+		}
+	}
+	for jobID, j := range m.objectCapacityJobs {
+		if j.AccountID == id {
+			delete(m.objectCapacityJobs, jobID)
 		}
 	}
 	for grantKey, grant := range m.objectAccessGrants {
