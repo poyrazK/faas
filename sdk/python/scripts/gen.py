@@ -112,8 +112,18 @@ def pre_normalize_spec(spec: Path) -> Path:
         return node
 
     fixed = fix_flow_scalars(safe_data)
-    tmp = Path(tempfile.mkstemp(suffix=".json", prefix="openapi-")[1])
-    with tmp.open("w") as fh:
+    # The pinned generator discards object properties when a oneOf contains
+    # only required-field constraints, producing body: Any instead of the
+    # existing typed request model. Keep its wire shape in generated clients;
+    # apid and the canonical spec still enforce exactly one mutation.
+    update = fixed["components"]["schemas"]["UpdateTCPListenerRequest"]
+    constraints = update.get("oneOf")
+    if constraints is not None:
+        if constraints != [{"required": ["enabled"]}, {"required": ["tls"]}]:
+            raise ValueError("UpdateTCPListenerRequest generator adaptation needs review")
+        del update["oneOf"]
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", prefix="openapi-", delete=False) as fh:
+        tmp = Path(fh.name)
         json.dump(fixed, fh, indent=2, sort_keys=False, default=str)
     return tmp
 

@@ -28936,7 +28936,7 @@ components:
       description: "One app-owned raw TCP listener with a stable public endpoint."
       type: object
       additionalProperties: false
-      required: [id, name, guest_port, public_port, protocol, enabled, created_at, updated_at]
+      required: [id, name, guest_port, public_port, protocol, enabled, created_at, updated_at, tls]
       properties:
         id: { type: string, description: "Stable listener identifier." }
         name:
@@ -28960,9 +28960,10 @@ components:
           description: "Whether the edge accepts new TCP connections."
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        tls: { $ref: '#/components/schemas/TCPListenerTLSConfig' }
 
     CreateTCPListenerRequest:
-      description: "Request to expose one workload TCP port."
+      description: "Request to expose one workload TCP port. TLS termination listeners start disabled and require a verified app-owned hostname."
       type: object
       additionalProperties: false
       required: [name, guest_port]
@@ -28979,14 +28980,33 @@ components:
           minimum: 40000
           maximum: 49999
           description: "Optional stable public port; Gregale allocates one when omitted."
+        tls: { $ref: '#/components/schemas/TCPListenerTLSConfig' }
 
     UpdateTCPListenerRequest:
-      description: "Request to change whether an app TCP listener accepts connections."
+      description: "Supply exactly one serving-state or TLS-policy mutation. TLS changes disable the listener."
       type: object
       additionalProperties: false
-      required: [enabled]
+      oneOf:
+        - required: [enabled]
+        - required: [tls]
       properties:
         enabled: { type: boolean }
+        tls: { $ref: '#/components/schemas/TCPListenerTLSConfig' }
+
+    TCPListenerTLSConfig:
+      description: "Listener TLS intent. Termination requires a verified app-owned ASCII DNS hostname; passthrough forbids a hostname."
+      type: object
+      additionalProperties: false
+      required: [mode]
+      properties:
+        mode:
+          type: string
+          enum: [passthrough, terminate]
+          default: passthrough
+        hostname:
+          type: string
+          maxLength: 253
+          description: "Normalized DNS hostname for termination. IP-shaped names and wildcards are forbidden."
 
     AppManifestHealthcheck:
       description: "AppManifest-level healthcheck shape: OCI HEALTHCHECK fields plus typed deployment probe overrides. Durations are integer seconds at the JSON boundary to match OCI/Docker conventions."
