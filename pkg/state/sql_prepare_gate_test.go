@@ -59,6 +59,7 @@ func TestSQLLiteralsPrepareAgainstMigratedSchema(t *testing.T) {
 		"42601": true, // syntax_error
 		"42702": true, // ambiguous_column
 		"42P10": true, // invalid_column_reference
+		"42P08": true, // ambiguous_parameter / inconsistent parameter types
 	}
 	for i, s := range stmts {
 		name := fmt.Sprintf("sql_gate_%d", i)
