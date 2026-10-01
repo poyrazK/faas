@@ -869,3 +869,7 @@ The UDP add command now applies the shared workload-port validator and public re
 ### Isolated UDP CLI review (2026-10-01)
 
 Draft [#3995](https://github.com/poyrazK/faas/pull/3995), commit `c9d7607f8`, stacks on Go client #3994 and isolates app/apps UDP listener command dispatch, create/list/enable/disable/delete, text/JSON output and local shared port validation. The isolated real-HTTP CLI fixture passed three race repetitions without skips and scoped lint found zero issues (`/tmp/gregale-udp-cli-isolated-{tests,lint}.log`). All launched handles are terminal. Schema/other SDK publication and native/deployed acceptance remain pending; no rollout or merge occurred.
+
+### UDP OpenAPI response/allocation alignment (2026-10-01)
+
+UDP list/create/update/delete operations now document HTTP403 scope/MFA rejection and HTTP503 capacity/store-unavailable failures returned by their existing wrappers/handlers. Create public_port accepts zero as automatic allocation as well as the explicit 40000..49999 range, matching the implementation's zero sentinel; omission remains allowed. Vacuum schema lint completed successfully with its repository-wide 1,620 warnings and 108 informs (`/tmp/gregale-udp-schema-lint.log`); this is not claimed as warning-free lint. Whitespace checking passed. SDK regeneration/schema isolated publication and native/deployed acceptance remain pending.
