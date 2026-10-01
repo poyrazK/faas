@@ -923,7 +923,7 @@ func TestPostgresExecutionAuthorizerRechecksLeaseAndRunsGrant(t *testing.T) {
 		Runtime: api.ExecutionRuntimePython313,
 		Source:  "def main(input, context):\n    return input",
 		Input:   []byte(`{"value":1}`),
-		Limits:  &api.ExecutionLimitRequest{TimeoutMS: 60_000},
+		Limits:  &api.ExecutionLimitRequest{TimeoutMS: 30_000},
 	}
 	resolved, problem := request.Resolve(api.PlanPro)
 	if problem != nil {
