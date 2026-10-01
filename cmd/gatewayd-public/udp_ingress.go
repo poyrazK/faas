@@ -33,6 +33,10 @@ func startUDPIngress(ctx context.Context, log *slog.Logger, store *state.PgStore
 		return nil, errors.New("gatewayd-public: udpd requires a state store")
 	}
 
+	bindHost, err := udpBindHost(envOr("FAAS_UDPD_BIND_HOST", "0.0.0.0"))
+	if err != nil {
+		return nil, err
+	}
 	sources, err := udpSourcePrefixes(os.Getenv("FAAS_UDPD_ALLOWED_SOURCE_CIDRS"))
 	if err != nil {
 		return nil, err
@@ -88,7 +92,7 @@ func startUDPIngress(ctx context.Context, log *slog.Logger, store *state.PgStore
 	done := make(chan struct{})
 	result := make(chan error, 1)
 	supervisor := &udpd.Supervisor{
-		BindHost: envOr("FAAS_UDPD_BIND_HOST", "0.0.0.0"), Source: store,
+		BindHost: bindHost, Source: store,
 		AllowedSources: sources, ResolveTarget: resolver.ResolveTarget, Metrics: metrics,
 		Forwarder: gateway.UDPForwarder{Nodes: nodes},
 		OnReady:   func() { close(ready) },
@@ -144,4 +148,13 @@ func udpSourcePrefixes(raw string) ([]netip.Prefix, error) {
 		prefixes = append(prefixes, prefix.Masked())
 	}
 	return prefixes, nil
+}
+
+// The public UDP listener is IPv4-only; do not perform DNS during reconciliation.
+func udpBindHost(raw string) (string, error) {
+	address, err := netip.ParseAddr(strings.TrimSpace(raw))
+	if err != nil || !address.Is4() {
+		return "", errors.New("FAAS_UDPD_BIND_HOST must be an IPv4 address")
+	}
+	return address.String(), nil
 }

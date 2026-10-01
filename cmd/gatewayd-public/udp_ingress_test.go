@@ -36,3 +36,16 @@ func TestUDPIngressOptIn(t *testing.T) {
 		t.Fatal("enabled ingress accepted missing store")
 	}
 }
+
+func TestUDPBindHost(t *testing.T) {
+	for _, raw := range []string{"", "localhost", "example.com", "::", "::ffff:127.0.0.1", "127.0.0.1:40100", "127.0.0.1/8", "999.0.0.1"} {
+		if _, err := udpBindHost(raw); err == nil {
+			t.Errorf("accepted %q", raw)
+		}
+	}
+	for _, raw := range []string{"0.0.0.0", "127.0.0.1", " 192.0.2.10 "} {
+		if _, err := udpBindHost(raw); err != nil {
+			t.Errorf("rejected %q: %v", raw, err)
+		}
+	}
+}

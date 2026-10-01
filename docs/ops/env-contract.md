@@ -459,7 +459,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_TWO_NODE_REMOTE` | shared | `dev-only` |  |  | `` | native two-node acceptance fixture; must never be set on a production daemon |
 | `FAAS_TWO_NODE_SSH_` | shared | `dev-only` |  |  | `` | native two-node acceptance fixture; must never be set on a production daemon |
 | `FAAS_UDPD_ALLOWED_SOURCE_CIDRS` | gatewayd-public | `default` |  |  | `` | opt-in UDP ingress; delivered by udpd.env |
-| `FAAS_UDPD_BIND_HOST` | gatewayd-public | `default` |  |  | `` | opt-in UDP ingress; delivered by udpd.env |
+| `FAAS_UDPD_BIND_HOST` | gatewayd-public | `default` |  |  | `` | IPv4 literal (default 0.0.0.0); hostnames and IPv6 rejected before dependency dialing; delivered by udpd.env |
 | `FAAS_UDPD_ENABLED` | gatewayd-public | `default` |  |  | `` | opt-in UDP ingress; delivered by udpd.env |
 | `FAAS_UDPD_SCHEDD_TARGET` | gatewayd-public | `default` |  |  | `` | opt-in UDP ingress; delivered by udpd.env |
 | `FAAS_UDPD_SCHEDD_TLS_CA_PATH` | gatewayd-public | `default` |  |  | `` | opt-in UDP ingress; delivered by udpd.env |
