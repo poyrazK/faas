@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/gitapproval"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -26,11 +27,15 @@ type environmentGitSourcePollingCall struct {
 
 type environmentGitSourcePollingClient struct {
 	stubGithubdClient
-	repositories []Repo
-	archive      []byte
-	stats        StreamSourceRefStats
-	err          error
-	calls        chan environmentGitSourcePollingCall
+	evidence      gitapproval.MergeEvidence
+	evidenceErr   error
+	evidenceCalls chan environmentGitSourcePollingCall
+	repositories  []Repo
+	headArchive   []byte
+	archive       []byte
+	stats         StreamSourceRefStats
+	err           error
+	calls         chan environmentGitSourcePollingCall
 }
 
 func (c *environmentGitSourcePollingClient) ListInstallableRepos(context.Context, string, int64) ([]Repo, error) {
@@ -45,10 +50,21 @@ func (c *environmentGitSourcePollingClient) StreamSourceRef(_ context.Context, a
 		return nil, c.err
 	}
 	stats := c.stats
-	return &StreamSourceRefResult{Body: io.NopCloser(bytes.NewReader(c.archive)), Stats: &stats}, nil
+	if len(ref) == 40 {
+		stats.ResolvedCommitSHA = ref
+	}
+	archive := c.archive
+	if ref == c.evidence.HeadSHA && c.headArchive != nil {
+		archive = c.headArchive
+	}
+	return &StreamSourceRefResult{Body: io.NopCloser(bytes.NewReader(archive)), Stats: &stats}, nil
 }
 
 func environmentGitSourcePollingFixture(t *testing.T) (*server, *state.MemStore, state.EnvironmentGitSource, *environmentGitSourcePollingClient) {
+	return environmentGitSourcePollingFixturePolicy(t, "manual")
+}
+
+func environmentGitSourcePollingFixturePolicy(t *testing.T, policy string) (*server, *state.MemStore, state.EnvironmentGitSource, *environmentGitSourcePollingClient) {
 	t.Helper()
 	srv, store, account, project, _ := newProjectLifecycleFixture(t)
 	if _, err := store.UpdateProjectBinding(t.Context(), account.ID, project.ID, "example/shop", "main", 42); err != nil {
@@ -57,7 +73,7 @@ func environmentGitSourcePollingFixture(t *testing.T) (*server, *state.MemStore,
 	client := &environmentGitSourcePollingClient{repositories: []Repo{{ID: 123, FullName: "example/shop"}},
 		archive: environmentGitOpsArchive(t), stats: StreamSourceRefStats{ResolvedCommitSHA: strings.Repeat("a", 40)}}
 	srv.githubd = client
-	rec := gitOpsHandlerRequest(t, srv, account, http.MethodPost, "source", map[string]string{"manifest_path": "environments/production.yaml"}, srv.createEnvironmentGitSource)
+	rec := gitOpsHandlerRequest(t, srv, account, http.MethodPost, "source", map[string]string{"manifest_path": "environments/production.yaml", "approval_policy": policy}, srv.createEnvironmentGitSource)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("source binding: %d %s", rec.Code, rec.Body.String())
 	}
@@ -212,5 +228,103 @@ func TestEnvironmentGitSourcePollingDashboardSeparatesOutageFromApproval(t *test
 		response.Source.SourceVerifiedAt == nil || response.Source.SourceCommitSHA != client.stats.ResolvedCommitSHA ||
 		response.Source.SourceErrorCode != "environment_git_source_unavailable" || response.Source.ApprovedRevisionID != "" {
 		t.Fatalf("status omitted source availability: %d %s", status.Code, status.Body.String())
+	}
+}
+
+func (c *environmentGitSourcePollingClient) GetReviewedMergeEvidence(_ context.Context, accountID string, installID, repoID int64, repo, branch, sha string) (gitapproval.MergeEvidence, error) {
+	if c.evidenceCalls != nil {
+		c.evidenceCalls <- environmentGitSourcePollingCall{AccountID: accountID, InstallationID: installID, Repository: repo, Ref: branch, Limit: repoID}
+	}
+	return c.evidence, c.evidenceErr
+}
+
+func apidReviewedMergeFixture(source state.EnvironmentGitSource) gitapproval.MergeEvidence {
+	now := time.Now().UTC()
+	head := strings.Repeat("b", 40)
+	return gitapproval.MergeEvidence{Qualified: true, Profile: gitapproval.ReviewedMergeProfile, Policy: gitapproval.PolicyEvidence{
+		Qualified: true, Profile: gitapproval.ProtectedBranchProfile, InstallationID: 42, RepositoryID: 123, Repository: "example/shop", Branch: "main",
+		CommitSHA: strings.Repeat("a", 40), PolicyDigest: strings.Repeat("c", 64), RequiredReviewCount: 1, CheckedAt: now},
+		PullRequestID: 1234, PullRequestNumber: 7, AuthorID: 10, HeadSHA: head, MergedAt: now.Add(-time.Hour), CheckedAt: now,
+		Reviews: []gitapproval.ReviewEvidence{{ID: 1, ReviewerID: 11, Reviewer: "reviewer", HeadSHA: head, SubmittedAt: now.Add(-2 * time.Hour)}}}
+}
+
+func TestEnvironmentGitSourcePollingStartupApprovesReviewedMergeAndExposesProof(t *testing.T) {
+	srv, store, source, client := environmentGitSourcePollingFixturePolicy(t, "protected_branch")
+	client.evidence = apidReviewedMergeFixture(source)
+	client.evidenceCalls = make(chan environmentGitSourcePollingCall, 1)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	srv.startEnvironmentGitSourcePolling(ctx, func(string) string { return "" })
+	select {
+	case call := <-client.evidenceCalls:
+		if call.AccountID != source.AccountID || call.InstallationID != 42 || call.Repository != "example/shop" || call.Ref != "main" || call.Limit != 123 {
+			t.Fatalf("review scope: %+v", call)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("startup did not verify reviewed merge")
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		current, err := store.EnvironmentGitSource(t.Context(), source.AccountID, source.ProjectID, source.EnvironmentSlug)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if current.ApprovedRevisionID != "" {
+			account, err := store.AccountByID(t.Context(), source.AccountID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec := gitOpsHandlerRequest(t, srv, account, http.MethodGet, "", nil, srv.getEnvironmentGitOps)
+			var status api.EnvironmentGitOpsStatusResponse
+			if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &status) != nil || status.Approval == nil || status.Approval.RevisionID != current.ApprovedRevisionID || status.Approval.DefinitionDigest != current.SourceDefinitionDigest || status.Approval.Evidence.PullRequestID != 1234 {
+				t.Fatalf("proof status: %d %s", rec.Code, rec.Body.String())
+			}
+			job, err := store.ClaimEnvironmentGitOps(t.Context(), uuid.NewString(), time.Now(), time.Minute)
+			if err != nil || job.Revision.ID != current.ApprovedRevisionID {
+				t.Fatalf("reviewed merge not queued: %+v %v", job, err)
+			}
+			manual := gitOpsHandlerRequest(t, srv, account, http.MethodPost, "revisions/approve", api.ApproveEnvironmentGitRevisionRequest{CommitSHA: client.stats.ResolvedCommitSHA, DefinitionDigest: current.SourceDefinitionDigest, ExpectedGeneration: current.Generation}, srv.approveEnvironmentGitRevision)
+			if manual.Code != http.StatusBadRequest {
+				t.Fatalf("manual bypass: %d %s", manual.Code, manual.Body.String())
+			}
+			cookie := &http.Cookie{Name: sessionCookie, Value: issueDashboardTestCookie(t, store, srv.sessions, account.ID)}
+			page := dashboardGet(srv.handler(), "/dashboard/projects/shop/environments/production/gitops", cookie)
+			if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "PR #7") || !strings.Contains(page.Body.String(), "Qualified reviewed merges are approved automatically") {
+				t.Fatalf("dashboard omitted approval provenance: %d %s", page.Code, page.Body.String())
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("reviewed merge not committed")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestEnvironmentGitSourcePollingProtectedEvidenceFailsClosed(t *testing.T) {
+	for _, tc := range []struct {
+		name, code string
+		modify     func(*environmentGitSourcePollingClient)
+	}{
+		{"unreviewed merge definition", "environment_git_approval_not_qualified", func(c *environmentGitSourcePollingClient) {
+			c.headArchive = environmentGitOpsArchiveDefinition(t, "api_version: gregale.dev/environment/v1\nproject: shop\nenvironment: production\nworkloads:\n  api:\n    app: shop-api\n    variables:\n      MODE: reviewed\n")
+		}},
+		{"unavailable reviewed definition", "environment_git_approval_unavailable", func(c *environmentGitSourcePollingClient) { c.headArchive = []byte("invalid archive") }},
+		{"unqualified", "environment_git_approval_not_qualified", func(c *environmentGitSourcePollingClient) { c.evidence.Qualified = false }},
+		{"wrong SHA", "environment_git_approval_not_qualified", func(c *environmentGitSourcePollingClient) { c.evidence.Policy.CommitSHA = strings.Repeat("d", 40) }},
+		{"older provider", "environment_git_approval_unavailable", func(c *environmentGitSourcePollingClient) { c.evidenceErr = errGithubdNotReady }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, store, source, client := environmentGitSourcePollingFixturePolicy(t, "protected_branch")
+			client.evidence = apidReviewedMergeFixture(source)
+			tc.modify(client)
+			result, err := (&environmentGitSourceReader{server: srv}).ReadEnvironmentGitSource(t.Context(), source)
+			if err != nil || result.ErrorCode != tc.code || result.Approval != nil || result.CommitSHA != "" {
+				t.Fatalf("unsafe candidate: %+v %v", result, err)
+			}
+			if _, err := store.ClaimEnvironmentGitOps(t.Context(), uuid.NewString(), time.Now(), time.Minute); !errors.Is(err, state.ErrNotFound) {
+				t.Fatalf("unqualified candidate became executable: %v", err)
+			}
+		})
 	}
 }

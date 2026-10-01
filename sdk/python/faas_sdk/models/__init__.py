@@ -748,6 +748,10 @@ from .environment_git_ops_run import EnvironmentGitOpsRun
 from .environment_git_ops_run_status import EnvironmentGitOpsRunStatus
 from .environment_git_ops_run_steps_type_0_item import EnvironmentGitOpsRunStepsType0Item
 from .environment_git_ops_status_response import EnvironmentGitOpsStatusResponse
+from .environment_git_protected_branch_evidence import EnvironmentGitProtectedBranchEvidence
+from .environment_git_review_evidence import EnvironmentGitReviewEvidence
+from .environment_git_reviewed_merge_evidence import EnvironmentGitReviewedMergeEvidence
+from .environment_git_revision_approval import EnvironmentGitRevisionApproval
 from .environment_git_source import EnvironmentGitSource
 from .environment_git_source_spec import EnvironmentGitSourceSpec
 from .environment_git_source_spec_approval_policy import EnvironmentGitSourceSpecApprovalPolicy
@@ -2770,6 +2774,10 @@ __all__ = (
     "EnvironmentGitOpsRunStatus",
     "EnvironmentGitOpsRunStepsType0Item",
     "EnvironmentGitOpsStatusResponse",
+    "EnvironmentGitProtectedBranchEvidence",
+    "EnvironmentGitReviewedMergeEvidence",
+    "EnvironmentGitReviewEvidence",
+    "EnvironmentGitRevisionApproval",
     "EnvironmentGitSource",
     "EnvironmentGitSourceSpec",
     "EnvironmentGitSourceSpecApprovalPolicy",

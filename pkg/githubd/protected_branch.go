@@ -161,6 +161,7 @@ func (c *httpProtectedBranches) ProtectedBranchEvidence(ctx context.Context, ins
 	}
 	endpoint += "/branches/" + url.PathEscape(branch)
 	digest := ""
+	reviewCount := 0
 	for pass := 0; pass < 2; pass++ {
 		var head protectedBranchHead
 		found, err := c.get(ctx, token, endpoint, &head)
@@ -202,10 +203,11 @@ func (c *httpProtectedBranches) ProtectedBranchEvidence(ctx context.Context, ins
 			return reject("branch_protection_changed")
 		}
 		digest = next
+		reviewCount = policy.RequiredReviews.Count
 	}
 	if ctx.Err() != nil {
 		return githubdgrpc.ProtectedBranchEvidence{}, ErrProtectedBranchEvidenceUnavailable
 	}
 	return githubdgrpc.ProtectedBranchEvidence{Qualified: true, Profile: githubdgrpc.ProtectedBranchProfile, InstallationID: installationID,
-		RepositoryID: repositoryID, Repository: repository, Branch: branch, CommitSHA: commitSHA, PolicyDigest: digest, CheckedAt: time.Now().UTC()}, nil
+		RepositoryID: repositoryID, Repository: repository, Branch: branch, CommitSHA: commitSHA, PolicyDigest: digest, RequiredReviewCount: reviewCount, CheckedAt: time.Now().UTC()}, nil
 }

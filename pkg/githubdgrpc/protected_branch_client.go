@@ -16,7 +16,7 @@ func (c *Client) GetProtectedBranchEvidence(ctx context.Context, accountID strin
 	}
 	result := ProtectedBranchEvidence{Qualified: response.GetQualified(), Reason: response.GetReason(), Profile: response.GetProfile(),
 		InstallationID: response.GetInstallationId(), RepositoryID: response.GetRepositoryId(), Repository: response.GetRepoFullName(),
-		Branch: response.GetBranch(), CommitSHA: response.GetCommitSha(), PolicyDigest: response.GetPolicyDigest()}
+		Branch: response.GetBranch(), CommitSHA: response.GetCommitSha(), PolicyDigest: response.GetPolicyDigest(), RequiredReviewCount: int(response.GetRequiredReviewCount())}
 	if response.GetCheckedAtRfc3339() != "" {
 		result.CheckedAt, err = time.Parse(time.RFC3339Nano, response.GetCheckedAtRfc3339())
 	}

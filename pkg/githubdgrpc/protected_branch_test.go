@@ -41,7 +41,7 @@ func TestProtectedBranchEvidenceRoundTripAndReceiptValidation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			evidence := githubdgrpc.ProtectedBranchEvidence{Qualified: true, Profile: githubdgrpc.ProtectedBranchProfile,
 				InstallationID: 42, RepositoryID: 123, Repository: "octo/api", Branch: "main", CommitSHA: sha,
-				PolicyDigest: strings.Repeat("c", 64), CheckedAt: time.Now().UTC()}
+				PolicyDigest: strings.Repeat("c", 64), RequiredReviewCount: 1, CheckedAt: time.Now().UTC()}
 			if tc.mutate != nil {
 				tc.mutate(&evidence)
 			}

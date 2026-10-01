@@ -940,6 +940,8 @@ WITH candidate AS (
     SELECT j.source_id FROM environment_gitops_jobs j
     JOIN environment_git_sources s ON s.id = j.source_id
     WHERE NOT s.suspended AND s.approved_revision_id IS NOT NULL
+      AND (s.approval_policy = 'manual' OR EXISTS (SELECT 1 FROM environment_git_revision_approvals a
+        WHERE a.source_id=s.id AND a.revision_id=s.approved_revision_id AND a.approved_generation<=s.generation))
       AND s.generation = j.desired_generation AND j.next_attempt_at <= $3::timestamptz
       AND (j.lease_until IS NULL OR j.lease_until <= $3::timestamptz
            OR j.claimed_generation <> j.desired_generation)
@@ -5118,7 +5120,7 @@ func (q *Queries) FinishEnvironmentGitOpsRun(ctx context.Context, db DBTX, arg F
 
 const finishEnvironmentGitSourcePoll = `-- name: FinishEnvironmentGitSourcePoll :execrows
 UPDATE environment_git_source_polls SET lease_token = NULL, lease_until = NULL, next_poll_at = $1::timestamptz
-WHERE source_id = $2::uuid AND lease_token = $3::uuid AND lease_until > $4::timestamptz
+WHERE source_id = $2::uuid AND lease_token = $3::uuid AND lease_until > greatest($4::timestamptz, clock_timestamp())
 `
 
 type FinishEnvironmentGitSourcePollParams struct {
@@ -5386,6 +5388,35 @@ func (q *Queries) GetEnvironmentGitOpsScope(ctx context.Context, db DBTX, source
 	row := db.QueryRow(ctx, getEnvironmentGitOpsScope, sourceID)
 	var i GetEnvironmentGitOpsScopeRow
 	err := row.Scan(&i.ProjectSlug, &i.EnvironmentSlug)
+	return i, err
+}
+
+const getEnvironmentGitRevisionApproval = `-- name: GetEnvironmentGitRevisionApproval :one
+SELECT a.id, a.source_id, a.revision_id, a.approved_generation, a.definition_digest, a.evidence, a.poll_lease_token, a.recorded_at FROM environment_git_revision_approvals a
+JOIN environment_git_sources s ON s.id=a.source_id
+WHERE s.account_id=$1::uuid AND s.id=$2::uuid AND a.revision_id=$3::uuid
+ORDER BY a.approved_generation DESC LIMIT 1
+`
+
+type GetEnvironmentGitRevisionApprovalParams struct {
+	AccountID  pgtype.UUID
+	SourceID   pgtype.UUID
+	RevisionID pgtype.UUID
+}
+
+func (q *Queries) GetEnvironmentGitRevisionApproval(ctx context.Context, db DBTX, arg GetEnvironmentGitRevisionApprovalParams) (EnvironmentGitRevisionApproval, error) {
+	row := db.QueryRow(ctx, getEnvironmentGitRevisionApproval, arg.AccountID, arg.SourceID, arg.RevisionID)
+	var i EnvironmentGitRevisionApproval
+	err := row.Scan(
+		&i.ID,
+		&i.SourceID,
+		&i.RevisionID,
+		&i.ApprovedGeneration,
+		&i.DefinitionDigest,
+		&i.Evidence,
+		&i.PollLeaseToken,
+		&i.RecordedAt,
+	)
 	return i, err
 }
 
@@ -6541,6 +6572,34 @@ func (q *Queries) InsertEnvironmentGitOpsRuntimeEffect(ctx context.Context, db D
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const insertEnvironmentGitRevisionApproval = `-- name: InsertEnvironmentGitRevisionApproval :exec
+INSERT INTO environment_git_revision_approvals(source_id,revision_id,approved_generation,definition_digest,evidence,poll_lease_token)
+VALUES($1::uuid,$2::uuid,$3::bigint,
+  $4::text,$5::jsonb,$6::uuid)
+ON CONFLICT(source_id,revision_id,approved_generation) DO NOTHING
+`
+
+type InsertEnvironmentGitRevisionApprovalParams struct {
+	SourceID           pgtype.UUID
+	RevisionID         pgtype.UUID
+	ApprovedGeneration int64
+	DefinitionDigest   string
+	Evidence           []byte
+	PollLeaseToken     pgtype.UUID
+}
+
+func (q *Queries) InsertEnvironmentGitRevisionApproval(ctx context.Context, db DBTX, arg InsertEnvironmentGitRevisionApprovalParams) error {
+	_, err := db.Exec(ctx, insertEnvironmentGitRevisionApproval,
+		arg.SourceID,
+		arg.RevisionID,
+		arg.ApprovedGeneration,
+		arg.DefinitionDigest,
+		arg.Evidence,
+		arg.PollLeaseToken,
+	)
+	return err
 }
 
 const insertExclusiveWorkEffect = `-- name: InsertExclusiveWorkEffect :exec
@@ -12458,6 +12517,25 @@ func (q *Queries) LockEnvironmentGitSourceForScope(ctx context.Context, db DBTX,
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockEnvironmentGitSourcePoll = `-- name: LockEnvironmentGitSourcePoll :one
+SELECT source_id FROM environment_git_source_polls
+WHERE source_id=$1::uuid AND lease_token=$2::uuid
+  AND lease_until > greatest($3::timestamptz,clock_timestamp()) FOR UPDATE
+`
+
+type LockEnvironmentGitSourcePollParams struct {
+	SourceID   pgtype.UUID
+	LeaseToken pgtype.UUID
+	NowAt      pgtype.Timestamptz
+}
+
+func (q *Queries) LockEnvironmentGitSourcePoll(ctx context.Context, db DBTX, arg LockEnvironmentGitSourcePollParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockEnvironmentGitSourcePoll, arg.SourceID, arg.LeaseToken, arg.NowAt)
+	var source_id pgtype.UUID
+	err := row.Scan(&source_id)
+	return source_id, err
 }
 
 const lockExclusiveSnapshotInstance = `-- name: LockExclusiveSnapshotInstance :one
@@ -21056,6 +21134,15 @@ func (q *Queries) SetEnvironmentApprovedRevision(ctx context.Context, db DBTX, a
 		&i.SourceVerifiedAt,
 	)
 	return i, err
+}
+
+const setEnvironmentGitApprovalContext = `-- name: SetEnvironmentGitApprovalContext :exec
+SELECT set_config('faas.environment_git_approval_id',$1::text,true)
+`
+
+func (q *Queries) SetEnvironmentGitApprovalContext(ctx context.Context, db DBTX, approvalID string) error {
+	_, err := db.Exec(ctx, setEnvironmentGitApprovalContext, approvalID)
+	return err
 }
 
 const setEnvironmentGitOpsLeaseContext = `-- name: SetEnvironmentGitOpsLeaseContext :one

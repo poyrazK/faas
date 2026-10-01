@@ -370,6 +370,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					WithStreamer(newSourceRefStreamer(installsAdapter, &tokenCacheAdapter{cache: tokens}, nil, log))
 				realSvc.BranchHeads = githubd.NewHTTPBranchHeads(tokens, deps.httpClient())
 				realSvc.ProtectedBranches = githubd.NewHTTPProtectedBranches(tokens, deps.httpClient())
+				realSvc.ReviewedMerges = githubd.NewHTTPReviewedMerges(tokens, deps.httpClient())
 				if identities != nil {
 					realSvc.Identities = identities
 				}

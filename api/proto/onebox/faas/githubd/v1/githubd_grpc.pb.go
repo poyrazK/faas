@@ -47,6 +47,7 @@ const (
 	Githubd_StreamSourceRef_FullMethodName            = "/onebox.faas.githubd.v1.Githubd/StreamSourceRef"
 	Githubd_GetBranchHead_FullMethodName              = "/onebox.faas.githubd.v1.Githubd/GetBranchHead"
 	Githubd_GetProtectedBranchEvidence_FullMethodName = "/onebox.faas.githubd.v1.Githubd/GetProtectedBranchEvidence"
+	Githubd_GetReviewedMergeEvidence_FullMethodName   = "/onebox.faas.githubd.v1.Githubd/GetReviewedMergeEvidence"
 	Githubd_ListRecoveryQueueItems_FullMethodName     = "/onebox.faas.githubd.v1.Githubd/ListRecoveryQueueItems"
 	Githubd_RetryWebhookDelivery_FullMethodName       = "/onebox.faas.githubd.v1.Githubd/RetryWebhookDelivery"
 	Githubd_RetryCheckUpdate_FullMethodName           = "/onebox.faas.githubd.v1.Githubd/RetryCheckUpdate"
@@ -191,6 +192,9 @@ type GithubdClient interface {
 	// exact repository ID and current branch head. This is not approval of a
 	// merge or environment revision. Served on the local control-plane socket.
 	GetProtectedBranchEvidence(ctx context.Context, in *GetProtectedBranchEvidenceRequest, opts ...grpc.CallOption) (*GetProtectedBranchEvidenceResponse, error)
+	// Proves the exact commit is a merged PR with sufficient eligible human
+	// approvals of its final head, before merge. Includes current policy evidence.
+	GetReviewedMergeEvidence(ctx context.Context, in *GetProtectedBranchEvidenceRequest, opts ...grpc.CallOption) (*GetReviewedMergeEvidenceResponse, error)
 	// ListRecoveryQueueItems returns operator-safe projections of the durable
 	// webhook-delivery inbox and Check Run outbox. Payloads are deliberately
 	// excluded because they can contain customer repository metadata.
@@ -367,6 +371,16 @@ func (c *githubdClient) GetProtectedBranchEvidence(ctx context.Context, in *GetP
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetProtectedBranchEvidenceResponse)
 	err := c.cc.Invoke(ctx, Githubd_GetProtectedBranchEvidence_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *githubdClient) GetReviewedMergeEvidence(ctx context.Context, in *GetProtectedBranchEvidenceRequest, opts ...grpc.CallOption) (*GetReviewedMergeEvidenceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetReviewedMergeEvidenceResponse)
+	err := c.cc.Invoke(ctx, Githubd_GetReviewedMergeEvidence_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -551,6 +565,9 @@ type GithubdServer interface {
 	// exact repository ID and current branch head. This is not approval of a
 	// merge or environment revision. Served on the local control-plane socket.
 	GetProtectedBranchEvidence(context.Context, *GetProtectedBranchEvidenceRequest) (*GetProtectedBranchEvidenceResponse, error)
+	// Proves the exact commit is a merged PR with sufficient eligible human
+	// approvals of its final head, before merge. Includes current policy evidence.
+	GetReviewedMergeEvidence(context.Context, *GetProtectedBranchEvidenceRequest) (*GetReviewedMergeEvidenceResponse, error)
 	// ListRecoveryQueueItems returns operator-safe projections of the durable
 	// webhook-delivery inbox and Check Run outbox. Payloads are deliberately
 	// excluded because they can contain customer repository metadata.
@@ -618,6 +635,9 @@ func (UnimplementedGithubdServer) GetBranchHead(context.Context, *GetBranchHeadR
 }
 func (UnimplementedGithubdServer) GetProtectedBranchEvidence(context.Context, *GetProtectedBranchEvidenceRequest) (*GetProtectedBranchEvidenceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetProtectedBranchEvidence not implemented")
+}
+func (UnimplementedGithubdServer) GetReviewedMergeEvidence(context.Context, *GetProtectedBranchEvidenceRequest) (*GetReviewedMergeEvidenceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetReviewedMergeEvidence not implemented")
 }
 func (UnimplementedGithubdServer) ListRecoveryQueueItems(context.Context, *ListRecoveryQueueItemsRequest) (*ListRecoveryQueueItemsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListRecoveryQueueItems not implemented")
@@ -915,6 +935,24 @@ func _Githubd_GetProtectedBranchEvidence_Handler(srv interface{}, ctx context.Co
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Githubd_GetReviewedMergeEvidence_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetProtectedBranchEvidenceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GithubdServer).GetReviewedMergeEvidence(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Githubd_GetReviewedMergeEvidence_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GithubdServer).GetReviewedMergeEvidence(ctx, req.(*GetProtectedBranchEvidenceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Githubd_ListRecoveryQueueItems_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListRecoveryQueueItemsRequest)
 	if err := dec(in); err != nil {
@@ -1049,6 +1087,10 @@ var Githubd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetProtectedBranchEvidence",
 			Handler:    _Githubd_GetProtectedBranchEvidence_Handler,
+		},
+		{
+			MethodName: "GetReviewedMergeEvidence",
+			Handler:    _Githubd_GetReviewedMergeEvidence_Handler,
 		},
 		{
 			MethodName: "ListRecoveryQueueItems",

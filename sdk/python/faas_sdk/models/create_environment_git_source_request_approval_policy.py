@@ -1,9 +1,10 @@
 from typing import Literal
 
-CreateEnvironmentGitSourceRequestApprovalPolicy = Literal["manual"]
+CreateEnvironmentGitSourceRequestApprovalPolicy = Literal["manual", "protected_branch"]
 
 CREATE_ENVIRONMENT_GIT_SOURCE_REQUEST_APPROVAL_POLICY_VALUES: set[CreateEnvironmentGitSourceRequestApprovalPolicy] = {
     "manual",
+    "protected_branch",
 }
 
 

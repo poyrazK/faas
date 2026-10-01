@@ -2400,6 +2400,94 @@ $$;
 
 
 --
+-- Name: guard_environment_git_revision_approval(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_git_revision_approval() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE
+  src environment_git_sources%ROWTYPE;
+  rev environment_desired_revisions%ROWTYPE;
+  proof jsonb;
+  policy jsonb;
+  checked timestamptz;
+  policy_checked timestamptz;
+  merged timestamptz;
+  observed timestamptz := clock_timestamp();
+  required_reviews integer;
+  review jsonb;
+  review_ids bigint[] := '{}';
+  reviewer_ids bigint[] := '{}';
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    IF EXISTS (SELECT 1 FROM environment_git_sources WHERE id=OLD.source_id) THEN
+      RAISE EXCEPTION 'Git approval provenance is immutable' USING ERRCODE='23514';
+    END IF;
+    RETURN OLD;
+  END IF;
+  IF TG_OP = 'UPDATE' THEN
+    RAISE EXCEPTION 'Git approval provenance is immutable' USING ERRCODE='23514';
+  END IF;
+  SELECT * INTO STRICT src FROM environment_git_sources WHERE id=NEW.source_id FOR UPDATE;
+  SELECT * INTO STRICT rev FROM environment_desired_revisions WHERE source_id=src.id AND id=NEW.revision_id;
+  proof := NEW.evidence;
+  policy := proof->'policy';
+  checked := (proof->>'checked_at')::timestamptz;
+  policy_checked := (policy->>'checked_at')::timestamptz;
+  merged := (proof->>'merged_at')::timestamptz;
+  required_reviews := (policy->>'required_review_count')::integer;
+  IF src.approval_policy <> 'protected_branch' OR src.suspended
+    OR proof->>'reviewed_definition_digest' IS DISTINCT FROM NEW.definition_digest
+    OR NEW.definition_digest <> rev.definition_digest OR rev.commit_sha !~ '^[a-f0-9]{40}$'
+    OR NEW.approved_generation NOT IN (src.generation, src.generation+1)
+    OR proof->>'qualified' IS DISTINCT FROM 'true' OR coalesce(proof->>'reason','') <> ''
+    OR proof->>'profile' IS DISTINCT FROM 'reviewed_merge/v1'
+    OR policy->>'qualified' IS DISTINCT FROM 'true' OR coalesce(policy->>'reason','') <> ''
+    OR policy->>'profile' IS DISTINCT FROM 'classic_reviewed_branch/v1'
+    OR policy->>'installation_id' IS DISTINCT FROM src.installation_id::text
+    OR policy->>'repository_id' IS DISTINCT FROM src.repository_id::text
+    OR policy->>'repository' IS DISTINCT FROM src.repository
+    OR src.source_ref NOT LIKE 'refs/heads/%'
+    OR policy->>'branch' IS DISTINCT FROM substring(src.source_ref FROM 12)
+    OR policy->>'commit_sha' IS DISTINCT FROM rev.commit_sha
+    OR coalesce(policy->>'policy_digest','') !~ '^[a-f0-9]{64}$'
+    OR coalesce(proof->>'head_sha','') !~ '^[a-f0-9]{40}$'
+    OR coalesce((proof->>'pull_request_id')::bigint,0) <= 0
+    OR coalesce((proof->>'pull_request_number')::bigint,0) <= 0
+    OR coalesce((proof->>'author_id')::bigint,0) <= 0
+    OR checked IS NULL OR policy_checked IS NULL OR merged IS NULL
+    OR checked > observed OR policy_checked > checked OR merged > checked
+    OR policy_checked < observed-interval '1 minute'
+    OR coalesce(required_reviews,0) <= 0
+    OR jsonb_typeof(proof->'reviews') IS DISTINCT FROM 'array'
+    OR NOT EXISTS (SELECT 1 FROM environment_git_source_polls WHERE source_id=src.id
+      AND lease_token=NEW.poll_lease_token AND lease_until > observed)
+  THEN
+    RAISE EXCEPTION 'Git approval evidence does not qualify for this source' USING ERRCODE='23514';
+  END IF;
+  FOR review IN SELECT value FROM jsonb_array_elements(proof->'reviews') LOOP
+    IF coalesce((review->>'id')::bigint,0) <= 0 OR coalesce((review->>'reviewer_id')::bigint,0) <= 0
+      OR (review->>'reviewer_id')::bigint = (proof->>'author_id')::bigint
+      OR coalesce(review->>'reviewer','') = '' OR review->>'head_sha' IS DISTINCT FROM proof->>'head_sha'
+      OR (review->>'submitted_at')::timestamptz IS NULL OR (review->>'submitted_at')::timestamptz >= merged
+      OR (review->>'id')::bigint = ANY(review_ids) OR (review->>'reviewer_id')::bigint = ANY(reviewer_ids)
+    THEN
+      RAISE EXCEPTION 'Git approval review does not qualify' USING ERRCODE='23514';
+    END IF;
+    review_ids := array_append(review_ids,(review->>'id')::bigint);
+    reviewer_ids := array_append(reviewer_ids,(review->>'reviewer_id')::bigint);
+  END LOOP;
+  IF cardinality(review_ids) < required_reviews THEN
+    RAISE EXCEPTION 'Git approval reviews are insufficient' USING ERRCODE='23514';
+  END IF;
+  NEW.recorded_at := observed;
+  RETURN NEW;
+END;
+$_$;
+
+
+--
 -- Name: guard_environment_gitops_queue_identity(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2482,6 +2570,58 @@ BEGIN
   END IF;
  END IF;
  IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+END;
+$$;
+
+
+--
+-- Name: guard_environment_protected_approval(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_protected_approval() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF (OLD.approval_policy='protected_branch' OR NEW.approval_policy='protected_branch') AND
+    (NEW.account_id,NEW.project_id,NEW.environment_id,NEW.repository_id,NEW.installation_id,NEW.repository,NEW.source_ref,NEW.manifest_path,NEW.approval_policy)
+    IS DISTINCT FROM
+    (OLD.account_id,OLD.project_id,OLD.environment_id,OLD.repository_id,OLD.installation_id,OLD.repository,OLD.source_ref,OLD.manifest_path,OLD.approval_policy)
+  THEN
+    RAISE EXCEPTION 'Protected Git source identity is immutable' USING ERRCODE='23514';
+  END IF;
+  IF NEW.approval_policy='protected_branch' AND NEW.generation < OLD.generation THEN
+    RAISE EXCEPTION 'Protected Git generations cannot move backwards' USING ERRCODE='23514';
+  END IF;
+  IF NEW.approval_policy='protected_branch' AND NEW.approved_revision_id IS DISTINCT FROM OLD.approved_revision_id THEN
+    IF NEW.generation <> OLD.generation+1 OR NOT EXISTS (
+      SELECT 1 FROM environment_git_revision_approvals a
+      WHERE a.source_id=NEW.id AND a.revision_id=NEW.approved_revision_id AND a.approved_generation=NEW.generation
+        AND a.id::text=current_setting('faas.environment_git_approval_id',true)
+        AND a.recorded_at >= clock_timestamp()-interval '1 minute')
+    THEN
+      RAISE EXCEPTION 'Protected Git approval requires verified merge provenance' USING ERRCODE='23514';
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: guard_environment_protected_revision(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_protected_revision() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM environment_git_sources WHERE id=OLD.source_id AND approval_policy='protected_branch') THEN
+    IF TG_OP='DELETE' OR NEW IS DISTINCT FROM OLD THEN
+      RAISE EXCEPTION 'Protected Git definition is immutable' USING ERRCODE='23514';
+    END IF;
+  END IF;
+  IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+  RETURN NEW;
 END;
 $$;
 
@@ -4372,6 +4512,8 @@ BEGIN
 END;
 $$;
 
+
+SET default_tablespace = '';
 
 SET default_table_access_method = heap;
 
@@ -7082,6 +7224,25 @@ CREATE TABLE public.environment_desired_revisions (
 
 
 --
+-- Name: environment_git_revision_approvals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_git_revision_approvals (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    source_id uuid NOT NULL,
+    revision_id uuid NOT NULL,
+    approved_generation bigint NOT NULL,
+    definition_digest text NOT NULL,
+    evidence jsonb NOT NULL,
+    poll_lease_token uuid NOT NULL,
+    recorded_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT environment_git_revision_approvals_approved_generation_check CHECK ((approved_generation > 0)),
+    CONSTRAINT environment_git_revision_approvals_definition_digest_check CHECK ((definition_digest ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT environment_git_revision_approvals_evidence_check CHECK (((jsonb_typeof(evidence) = 'object'::text) AND (octet_length((evidence)::text) <= 65536)))
+);
+
+
+--
 -- Name: environment_git_source_polls; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -7124,7 +7285,7 @@ CREATE TABLE public.environment_git_sources (
     source_definition_digest text DEFAULT ''::text NOT NULL,
     source_verified_at timestamp with time zone,
     CONSTRAINT environment_git_source_candidate_complete CHECK ((((source_commit_sha = ''::text) AND (source_definition_digest = ''::text) AND (source_verified_at IS NULL)) OR ((source_commit_sha <> ''::text) AND (source_definition_digest <> ''::text) AND (source_verified_at IS NOT NULL)))),
-    CONSTRAINT environment_git_source_poll_error_code CHECK ((source_error_code = ANY (ARRAY[''::text, 'environment_git_source_unavailable'::text, 'environment_git_definition_invalid'::text, 'environment_git_scope_mismatch'::text, 'environment_git_repository_unavailable'::text]))),
+    CONSTRAINT environment_git_source_poll_error_code CHECK ((source_error_code = ANY (ARRAY[''::text, 'environment_git_source_unavailable'::text, 'environment_git_definition_invalid'::text, 'environment_git_scope_mismatch'::text, 'environment_git_repository_unavailable'::text, 'environment_git_approval_unavailable'::text, 'environment_git_approval_not_qualified'::text]))),
     CONSTRAINT environment_git_sources_approval_policy_check CHECK ((approval_policy = ANY (ARRAY['manual'::text, 'protected_branch'::text]))),
     CONSTRAINT environment_git_sources_generation_check CHECK ((generation >= 0)),
     CONSTRAINT environment_git_sources_installation_id_check CHECK ((installation_id > 0)),
@@ -13665,6 +13826,22 @@ ALTER TABLE ONLY public.environment_desired_revisions
 
 ALTER TABLE ONLY public.environment_desired_revisions
     ADD CONSTRAINT environment_desired_revisions_source_id_id_key UNIQUE (source_id, id);
+
+
+--
+-- Name: environment_git_revision_approvals environment_git_revision_appr_source_id_revision_id_approve_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_git_revision_approvals
+    ADD CONSTRAINT environment_git_revision_appr_source_id_revision_id_approve_key UNIQUE (source_id, revision_id, approved_generation);
+
+
+--
+-- Name: environment_git_revision_approvals environment_git_revision_approvals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_git_revision_approvals
+    ADD CONSTRAINT environment_git_revision_approvals_pkey PRIMARY KEY (id);
 
 
 --
@@ -21306,6 +21483,13 @@ CREATE TRIGGER egress_policy_changed_trg AFTER INSERT OR UPDATE ON public.egress
 
 
 --
+-- Name: environment_git_revision_approvals environment_git_revision_approval_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_git_revision_approval_guard BEFORE INSERT OR DELETE OR UPDATE ON public.environment_git_revision_approvals FOR EACH ROW EXECUTE FUNCTION public.guard_environment_git_revision_approval();
+
+
+--
 -- Name: environment_git_sources environment_git_source_poll_created; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -21380,6 +21564,20 @@ CREATE TRIGGER environment_gitops_guard_routes BEFORE INSERT OR DELETE OR UPDATE
 --
 
 CREATE TRIGGER environment_gitops_queue_identity BEFORE INSERT OR UPDATE ON public.environment_gitops_queue_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_environment_gitops_queue_identity();
+
+
+--
+-- Name: environment_git_sources environment_protected_approval_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_protected_approval_guard BEFORE UPDATE ON public.environment_git_sources FOR EACH ROW EXECUTE FUNCTION public.guard_environment_protected_approval();
+
+
+--
+-- Name: environment_desired_revisions environment_protected_revision_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_protected_revision_guard BEFORE DELETE OR UPDATE ON public.environment_desired_revisions FOR EACH ROW EXECUTE FUNCTION public.guard_environment_protected_revision();
 
 
 --
@@ -23490,6 +23688,22 @@ ALTER TABLE ONLY public.email_verification_tokens
 
 ALTER TABLE ONLY public.environment_desired_revisions
     ADD CONSTRAINT environment_desired_revisions_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.environment_git_sources(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_git_revision_approvals environment_git_revision_approvals_source_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_git_revision_approvals
+    ADD CONSTRAINT environment_git_revision_approvals_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.environment_git_sources(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_git_revision_approvals environment_git_revision_approvals_source_id_revision_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_git_revision_approvals
+    ADD CONSTRAINT environment_git_revision_approvals_source_id_revision_id_fkey FOREIGN KEY (source_id, revision_id) REFERENCES public.environment_desired_revisions(source_id, id) ON DELETE CASCADE;
 
 
 --
@@ -26045,5 +26259,4 @@ ALTER TABLE ONLY public.workflow_steps
 
 
 --
--- PostgreSQL database dump complete
 --

@@ -50,6 +50,10 @@ func (s *server) environmentGitOpsDashboardData(r *http.Request, acct state.Acco
 		return data, err
 	}
 	data.Status = &api.EnvironmentGitOpsStatusResponse{Source: source, Runs: runs}
+	data.Status.Approval, err = s.environmentGitApprovalForSource(r.Context(), source)
+	if err != nil {
+		return data, err
+	}
 	setEnvironmentGitOpsDashboardFreshness(&data, time.Now().UTC())
 	for _, run := range runs {
 		view := dashboard.EnvironmentGitOpsRunView{Run: run}
@@ -160,7 +164,7 @@ func (s *server) dashboardEnvironmentGitOpsMutation(w http.ResponseWriter, r *ht
 func (s *server) environmentGitOpsDashboardRequest(r *http.Request) (any, dashboardJSONHandler, string, error) {
 	action := r.PathValue("action")
 	if action == "bind" {
-		return api.CreateEnvironmentGitSourceRequest{Ref: r.FormValue("ref"), ManifestPath: r.FormValue("manifest_path"), Mode: "report", ApprovalPolicy: "manual"}, s.createEnvironmentGitSource, http.MethodPost, nil
+		return api.CreateEnvironmentGitSourceRequest{Ref: r.FormValue("ref"), ManifestPath: r.FormValue("manifest_path"), Mode: "report", ApprovalPolicy: r.FormValue("approval_policy")}, s.createEnvironmentGitSource, http.MethodPost, nil
 	}
 	if action == "review" {
 		return api.PreviewEnvironmentGitRevisionRequest{CommitSHA: r.FormValue("commit_sha")}, s.previewEnvironmentGitRevision, http.MethodPost, nil

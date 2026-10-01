@@ -187,6 +187,9 @@ func TestServerSplitBoxListenerPreservesLocalSocketAndRestrictsRemoteMethods(t *
 	if _, err := remoteClient.GetProtectedBranchEvidence(callCtx, &githubdpb.GetProtectedBranchEvidenceRequest{AccountId: "acct"}); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("remote policy evidence status = %v, want PermissionDenied", status.Code(err))
 	}
+	if _, err := remoteClient.GetReviewedMergeEvidence(callCtx, &githubdpb.GetProtectedBranchEvidenceRequest{AccountId: "acct"}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("remote merge evidence status = %v, want PermissionDenied", status.Code(err))
+	}
 }
 
 // newServerUnderTest wraps the loopback handler in an httptest.Server

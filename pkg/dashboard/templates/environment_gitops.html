@@ -34,12 +34,15 @@
           <dl>
             <dt>Repository and ref</dt><dd><code>{{$source.Spec.Repository}} · {{$source.Spec.Ref}}</code></dd>
             <dt>Definition</dt><dd><code>{{$source.Spec.ManifestPath}}</code></dd>
+            <dt>Approval policy</dt><dd>{{$source.Spec.ApprovalPolicy}}</dd>
             <dt>Mode</dt><dd>{{$source.Spec.Mode}}{{if $source.Suspended}} · suspended{{end}}</dd>
             <dt>Approved revision</dt><dd>{{if $source.ApprovedRevisionID}}<code>{{$source.ApprovedRevisionID}}</code>{{else}}No approved revision{{end}}</dd>
             <dt>Fully applied revision</dt><dd>{{if $source.AppliedRevisionID}}<code>{{$source.AppliedRevisionID}}</code>{{else}}No fully applied revision{{end}}</dd>
-            <dt>Git availability</dt><dd>{{if $source.Suspended}}Git checks are suspended. The last approved definition remains authoritative.{{else if .SourcePollStale}}Git checks are stale. The last approved definition remains authoritative.{{else if $source.SourceErrorCode}}The Git definition could not be verified. The last approved definition remains authoritative.{{else if .SourceVerificationStale}}Git verification is stale. The last approved definition remains authoritative.{{else if $source.SourceVerifiedAt}}Git definition verified.{{else}}Waiting for the first successful Git check.{{end}}{{if $source.SourceCheckedAt}} Last checked {{$source.SourceCheckedAt.Format "2006-01-02 15:04:05 MST"}}.{{end}}</dd>
-            {{if $source.SourceCommitSHA}}<dt>Last verified candidate</dt><dd><code>{{$source.SourceCommitSHA}}</code>{{if $source.SourceVerifiedAt}} · {{$source.SourceVerifiedAt.Format "2006-01-02 15:04:05 MST"}}{{end}}. Review this commit before approval.</dd>{{end}}
+            <dt>Git availability</dt><dd>{{if $source.Suspended}}Git checks are suspended. The last approved definition remains authoritative.{{else if .SourcePollStale}}Git checks are stale. The last approved definition remains authoritative.{{else if eq $source.SourceErrorCode "environment_git_approval_not_qualified"}}The candidate does not meet the reviewed merge requirements. The last approved definition remains authoritative.{{else if eq $source.SourceErrorCode "environment_git_approval_unavailable"}}Merge review evidence could not be checked. The last approved definition remains authoritative.{{else if $source.SourceErrorCode}}The Git definition could not be verified. The last approved definition remains authoritative.{{else if .SourceVerificationStale}}Git verification is stale. The last approved definition remains authoritative.{{else if $source.SourceVerifiedAt}}Git definition verified.{{else}}Waiting for the first successful Git check.{{end}}{{if $source.SourceCheckedAt}} Last checked {{$source.SourceCheckedAt.Format "2006-01-02 15:04:05 MST"}}.{{end}}</dd>
+            {{if $source.SourceCommitSHA}}<dt>Last verified candidate</dt><dd><code>{{$source.SourceCommitSHA}}</code>{{if $source.SourceVerifiedAt}} · {{$source.SourceVerifiedAt.Format "2006-01-02 15:04:05 MST"}}{{end}}.{{if eq $source.Spec.ApprovalPolicy "manual"}} Review this commit before approval.{{end}}</dd>{{end}}
+            {{with .Status.Approval}}<dt>Reviewed merge approval</dt><dd>PR #{{.Evidence.PullRequestNumber}} · {{len .Evidence.Reviews}} approving reviews · generation {{.Generation}}<br>Definition <code>{{.DefinitionDigest}}</code> · recorded {{.RecordedAt.Format "2006-01-02 15:04:05 MST"}}</dd>{{end}}
           </dl>
+          {{if eq $source.Spec.ApprovalPolicy "protected_branch"}}<p>Qualified reviewed merges are approved automatically. Existing fields still require an adoption plan before enforcement.</p>{{end}}
           <form method="POST" action="{{$target}}/review">
             <input type="hidden" name="csrf_token" value="{{$csrf}}">
             <label>Commit to review <input type="text" name="commit_sha" pattern="[a-f0-9]{40}" minlength="40" maxlength="40" required placeholder="Full immutable commit SHA" value="{{$source.SourceCommitSHA}}"></label>
@@ -53,13 +56,13 @@
             <p>Commit <code>{{$review.CommitSHA}}</code></p>
             <pre>{{.Definition}}</pre>
             <p class="muted">Approval pins these bytes. Unsupported fields and ownership conflicts will block reconciliation.</p>
-            <form method="POST" action="{{$target}}/approve">
+            {{if eq $source.Spec.ApprovalPolicy "manual"}}<form method="POST" action="{{$target}}/approve">
               <input type="hidden" name="csrf_token" value="{{$csrf}}">
               <input type="hidden" name="commit_sha" value="{{$review.CommitSHA}}">
               <input type="hidden" name="definition_digest" value="{{$review.DefinitionDigest}}">
               <input type="hidden" name="expected_generation" value="{{$review.Generation}}">
               <button type="submit">Approve this definition</button>
-            </form>
+            </form>{{end}}
           </section>
         {{end}}
         {{with .Adoption}}
@@ -129,6 +132,7 @@
             <input type="hidden" name="csrf_token" value="{{$csrf}}">
             <label>Definition path in Git <input type="text" name="manifest_path" placeholder="environments/{{.Environment}}.yaml" required></label>
             <label>Git ref <input type="text" name="ref" placeholder="Defaults to the project production branch"></label>
+            <label>Approval policy <select name="approval_policy"><option value="manual">Manual review in Gregale</option><option value="protected_branch">Verified reviewed merges on a protected branch</option></select></label>
             <button type="submit">Connect in report mode</button>
           </form>
         </section>

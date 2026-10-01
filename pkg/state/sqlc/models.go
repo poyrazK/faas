@@ -1576,6 +1576,17 @@ type EnvironmentDesiredRevision struct {
 	ApprovedAt       pgtype.Timestamptz
 }
 
+type EnvironmentGitRevisionApproval struct {
+	ID                 pgtype.UUID
+	SourceID           pgtype.UUID
+	RevisionID         pgtype.UUID
+	ApprovedGeneration int64
+	DefinitionDigest   string
+	Evidence           []byte
+	PollLeaseToken     pgtype.UUID
+	RecordedAt         pgtype.Timestamptz
+}
+
 type EnvironmentGitSource struct {
 	ID                     pgtype.UUID
 	AccountID              pgtype.UUID

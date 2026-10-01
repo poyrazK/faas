@@ -38,6 +38,11 @@ const EnvironmentGitOpsMaxPolicies = 20
 // EnvironmentGitProtectedBranchEvidenceMaxAge bounds use of policy observations;
 // automatic approval still requires separately verified merge/review evidence.
 const EnvironmentGitProtectedBranchEvidenceMaxAge = time.Minute
+const EnvironmentGitReviewedMergeReadTimeout = 30 * time.Second
+const EnvironmentGitApprovalEvidenceMaxBytes = 64 << 10
+const EnvironmentGitApprovalMaxReviews = 1000
+const EnvironmentGitApprovalPageSize = 100
+const EnvironmentGitApprovalMaxAssociatedPRs = 100
 
 // Runtime refresh requests use the durable scheduler outbox. Rate-limit replay
 // production independently from the reconciler's observation polling interval.

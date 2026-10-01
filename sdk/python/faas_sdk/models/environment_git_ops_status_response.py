@@ -6,8 +6,11 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.environment_git_ops_run import EnvironmentGitOpsRun
+    from ..models.environment_git_revision_approval import EnvironmentGitRevisionApproval
     from ..models.environment_git_source import EnvironmentGitSource
 
 
@@ -21,6 +24,8 @@ class EnvironmentGitOpsStatusResponse:
     source: EnvironmentGitSource
     """Durable environment authority with separate approved and fully applied revision pointers."""
     runs: list[EnvironmentGitOpsRun]
+    approval: EnvironmentGitRevisionApproval | Unset = UNSET
+    """Immutable reviewed-merge evidence bound to the approved definition and source generation."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -31,6 +36,10 @@ class EnvironmentGitOpsStatusResponse:
             runs_item = runs_item_data.to_dict()
             runs.append(runs_item)
 
+        approval: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.approval, Unset):
+            approval = self.approval.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -39,12 +48,15 @@ class EnvironmentGitOpsStatusResponse:
                 "runs": runs,
             }
         )
+        if approval is not UNSET:
+            field_dict["approval"] = approval
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.environment_git_ops_run import EnvironmentGitOpsRun
+        from ..models.environment_git_revision_approval import EnvironmentGitRevisionApproval
         from ..models.environment_git_source import EnvironmentGitSource
 
         d = dict(src_dict)
@@ -57,9 +69,17 @@ class EnvironmentGitOpsStatusResponse:
 
             runs.append(runs_item)
 
+        _approval = d.pop("approval", UNSET)
+        approval: EnvironmentGitRevisionApproval | Unset
+        if isinstance(_approval, Unset):
+            approval = UNSET
+        else:
+            approval = EnvironmentGitRevisionApproval.from_dict(_approval)
+
         environment_git_ops_status_response = cls(
             source=source,
             runs=runs,
+            approval=approval,
         )
 
         environment_git_ops_status_response.additional_properties = d

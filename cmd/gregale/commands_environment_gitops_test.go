@@ -76,3 +76,18 @@ func TestEnvironmentGitOpsCLIRejectsBlockedAdoption(t *testing.T) {
 		t.Fatal("blocked ownership plan sent to adoption API")
 	}
 }
+
+func TestEnvironmentGitOpsCLIProtectedBinding(t *testing.T) {
+	resetJSONOut(t)
+	f := authedFakeAPI(t, `{}`, http.StatusCreated)
+	if code := cmdProjectsEnvironmentGitOps([]string{"bind", "shop", "production", "--manifest-path", "environments/production.yaml", "--approval-policy", "protected_branch"}); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	var req map[string]any
+	if err := json.Unmarshal(f.sawBody, &req); err != nil {
+		t.Fatal(err)
+	}
+	if req["approval_policy"] != "protected_branch" || req["mode"] != "report" {
+		t.Fatalf("binding: %+v", req)
+	}
+}

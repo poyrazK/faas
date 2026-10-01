@@ -168,6 +168,10 @@ service Githubd {
   // merge or environment revision. Served on the local control-plane socket.
   rpc GetProtectedBranchEvidence(GetProtectedBranchEvidenceRequest) returns (GetProtectedBranchEvidenceResponse);
 
+  // Proves the exact commit is a merged PR with sufficient eligible human
+  // approvals of its final head, before merge. Includes current policy evidence.
+  rpc GetReviewedMergeEvidence(GetProtectedBranchEvidenceRequest) returns (GetReviewedMergeEvidenceResponse);
+
   // ListRecoveryQueueItems returns operator-safe projections of the durable
   // webhook-delivery inbox and Check Run outbox. Payloads are deliberately
   // excluded because they can contain customer repository metadata.
@@ -607,4 +611,10 @@ message GetProtectedBranchEvidenceResponse {
   string commit_sha = 8;
   string policy_digest = 9;
   string checked_at_rfc3339 = 10;
+  int64 required_review_count = 11;
+}
+
+message GetReviewedMergeEvidenceResponse {
+  // Credential-free gitapproval.MergeEvidence. Bounded and validated at both ends.
+  bytes evidence_json = 1;
 }

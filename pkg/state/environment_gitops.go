@@ -22,6 +22,12 @@ type EnvironmentGitSource = api.EnvironmentGitSource
 
 type EnvironmentDesiredRevision = api.EnvironmentDesiredRevision
 
+type EnvironmentGitRevisionApproval = api.EnvironmentGitRevisionApproval
+
+type EnvironmentGitApprovalStore interface {
+	EnvironmentGitRevisionApproval(context.Context, string, string, string) (EnvironmentGitRevisionApproval, error)
+}
+
 type ApproveEnvironmentRevision struct {
 	AccountID          string
 	SourceID           string

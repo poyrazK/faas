@@ -6,6 +6,8 @@ import (
 	"path"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/gitapproval"
 )
 
 // CreateEnvironmentGitSourceRequest selects a definition in the project's
@@ -42,8 +44,19 @@ type ApproveEnvironmentGitRevisionResponse struct {
 }
 
 type EnvironmentGitOpsStatusResponse struct {
-	Source EnvironmentGitSource   `json:"source"`
-	Runs   []EnvironmentGitOpsRun `json:"runs"`
+	Source   EnvironmentGitSource            `json:"source"`
+	Runs     []EnvironmentGitOpsRun          `json:"runs"`
+	Approval *EnvironmentGitRevisionApproval `json:"approval,omitempty"`
+}
+
+type EnvironmentGitRevisionApproval struct {
+	ID               string                    `json:"id"`
+	SourceID         string                    `json:"source_id"`
+	RevisionID       string                    `json:"revision_id"`
+	Generation       int64                     `json:"generation"`
+	DefinitionDigest string                    `json:"definition_digest"`
+	Evidence         gitapproval.MergeEvidence `json:"evidence"`
+	RecordedAt       time.Time                 `json:"recorded_at"`
 }
 
 type AdoptEnvironmentGitOpsRequest struct {

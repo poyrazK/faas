@@ -121,6 +121,9 @@ func (s *PgStore) ApproveEnvironmentDesiredRevision(ctx context.Context, input A
 	if source.Generation != input.ExpectedGeneration || source.Suspended {
 		return EnvironmentGitSource{}, EnvironmentDesiredRevision{}, ErrConflict
 	}
+	if source.ApprovalPolicy != "manual" {
+		return EnvironmentGitSource{}, EnvironmentDesiredRevision{}, ErrInvalidArgument
+	}
 	scope, err := q.GetEnvironmentGitOpsScope(ctx, tx, source.ID)
 	if err != nil {
 		return EnvironmentGitSource{}, EnvironmentDesiredRevision{}, mapErr(err)

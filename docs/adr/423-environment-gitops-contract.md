@@ -102,8 +102,9 @@ reader verifies installation/repository identity, resolves the bound branch or
 tag to an immutable archive, validates the complete stream, and checks the
 definition's project/environment. Candidate commit, digest, and last successful
 verification time are separate from the last check and its stable error code.
-Failures retain candidate evidence and the approved definition. Discovery does
-not change approval, generation, ownership, or reconcile work. PostgreSQL tests
+Failures retain candidate evidence and the approved definition. Manual discovery does
+not change approval, generation, ownership, or reconcile work. Protected sources
+require qualified merge evidence before verification and approval, as described below. PostgreSQL tests
 cover competing replicas, stale claims, suspension, and approved-definition
 recovery during a source outage; startup and dashboard tests cover the real
 apid poller path through a Git transport fixture. CLI and typed SDK status
@@ -123,13 +124,51 @@ protection cannot qualify. A receipt records its policy profile, identity, SHA,
 digest and verification time; receivers reject mismatched, future or expired
 receipts. The remote imaged-only listener cannot serve this method.
 
-This evidence describes current policy and does not prove the review history of
-a merge. Automatic approval remains unavailable until verified merge/review
-provenance and these receipts are durably bound to the immutable definition and
-source generation in the approval transaction. The initial evidence read needs
-GitHub App Administration read permission, as specified by the
-[GitHub branch protection API](https://docs.github.com/en/rest/branches/branch-protection).
-Existing manual approval and candidate discovery remain independently usable.
+Current policy evidence is now combined with a merged pull request for the exact
+candidate SHA and base repository/branch. The initial profile accepts only PR
+heads in that same repository; fork heads remain unqualified. The `reviewed_merge/v1` profile requires
+distinct human reviewers with current repository write/admin permission, final-PR-head
+approvals strictly before merge, and no outstanding eligible changes request. It
+rejects author reviews, bots, stale-head approvals, dismissals, direct pushes,
+ambiguous associations, incomplete or oversized history, and policy/head changes
+during the check. Equal review/merge timestamps are conservatively rejected.
+GitHub attests the association between the merged PR and commit; this profile does
+not independently compare their Git trees or prove historic permissions/protection.
+The profile supports classic protection; ruleset-only sources remain unqualified.
+GitHub App Administration read and Pull requests read access are needed for these
+reads; repository metadata access supplies the current reviewer permission lookup.
+
+For an explicit `approval_policy=protected_branch` binding, apid reads the complete
+immutable archive before asking githubd for this proof. It then reads the exact
+reviewed PR head archive and requires the same canonical definition digest.
+Merge resolutions that change the definition are unqualified; the receipt
+records this reviewed-definition digest. The source generation,
+poll token, actual lease expiry, scope, canonical definition digest, and fresh proof
+are checked again under the source lock. Candidate verification, immutable revision,
+append-only provenance, approved pointer/generation, and durable reconciliation job
+commit together. The provenance stores source/revision identities, definition digest,
+approved generation, policy receipt, PR/head/merge and approving review receipts.
+A retry of the current revision preserves its original receipt and running worker.
+Manual approval cannot bypass a protected source; PostgreSQL also guards the pointer,
+source identity, revision bytes and evidence history. Existing protected approvals
+without provenance cannot be claimed, and migration replay grants no new trust.
+
+The API, CLI, dashboard and generated Node/Python contracts expose the original
+approval evidence independently from current Git availability and applied revision.
+Protected binding is opt-in; manual remains the default. Failures use closed codes
+`environment_git_approval_unavailable` and `environment_git_approval_not_qualified`,
+retain the last verified/approved definition, and retry. For protected sources,
+verification includes the declared approval requirements. These codes distinguish
+review qualification from archive/transport errors. They do not change ownership or
+claim serving convergence. A GitHub outage does not prevent recovery of approved work.
+The local bridge provides this proof; the remote imaged-only listener denies it.
+
+The merged-evidence read is bounded to thirty seconds, one hundred associated PRs
+and one thousand reviews with one hundred entries per page. Approval receipts are
+bounded to 64 KiB and one minute of freshness, including the locked write transaction.
+These bounds live in the API limits registry. Core memory/PostgreSQL checks cover
+proof rejection, atomic approval/work, unchanged retries, tenant-scoped evidence,
+lease replacement and outage retention. Native runtime gates remain separate.
 
 Source operational health is read as one bounded, consistent fleet aggregate
 on each apid Prometheus scrape. Closed-set conditions separate unchecked and
@@ -451,7 +490,7 @@ out-of-order replay replaces older admission/retirement functions. Shared
 memory/PostgreSQL cases cover deletion/recreation and tenant/scope isolation;
 real PostgreSQL scheduler checks cover separate caps, rename, replay and receipt
 retention. A populated-database migration check exercises the older-function
-interval and all twenty-two unreleased migrations, preserving captured identities
+interval and all twenty-three unreleased migrations, preserving captured identities
 and current leases. These checks qualify the internal scope contract. They do not establish
 GitOps queue ownership/recovery or complete environment graph support.
 
@@ -519,8 +558,8 @@ cannot reinterpret an invocation's environment or adopt a later consumer
 marker, and polling backfill preserves existing claims and schedules. A
 populated-database recovery check verifies these identities through full replay.
 
-The remaining full feature gates include protected-branch
-approval evidence; environment-scoped workload creation, source/runtime,
+The remaining full feature gates include native qualification of protected-branch
+approval with the complete serving flow; environment-scoped workload creation, source/runtime,
 secret-reference and service-binding adapters; reviewed queue pruning/recovery
 and projection repair; staged graph qualification
 and release activation; native serving-fleet and guest runtime evidence;
@@ -536,6 +575,17 @@ prune candidates as any other removal, preserves unmanaged resources and
 other managers, and remains blocked by the workload pruning adapter gate.
 
 ## Review and control workflow
+
+An environment can instead opt into reviewed merge approval at binding:
+
+```sh
+gregale projects environments gitops bind shop production --manifest-path environments/production.yaml --ref refs/heads/main --approval-policy protected_branch
+gregale projects environments gitops status shop production
+```
+
+Start in report mode and review the adoption plan before reserving existing fields.
+Status records the exact reviewed-definition digest and PR/review evidence separately
+from fully applied intent. A protected source cannot use the manual approval action.
 
 The current manual-approval interface uses an exact GitHub commit SHA. The
 repository identity comes from the project's verified installation binding.

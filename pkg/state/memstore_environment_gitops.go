@@ -24,6 +24,7 @@ type environmentGitOpsMemory struct {
 	effects   map[string]EnvironmentGitOpsEffect
 	runtime   map[string]EnvironmentGitOpsRuntimeEffect
 	poll      environmentGitSourcePoll
+	approvals map[string]EnvironmentGitRevisionApproval
 }
 
 var _ EnvironmentGitOpsStore = (*MemStore)(nil)
@@ -104,6 +105,9 @@ func (m *MemStore) ApproveEnvironmentDesiredRevision(_ context.Context, input Ap
 	if source.Generation != input.ExpectedGeneration || source.Suspended {
 		return EnvironmentGitSource{}, EnvironmentDesiredRevision{}, ErrConflict
 	}
+	if source.Spec.ApprovalPolicy != "manual" {
+		return EnvironmentGitSource{}, EnvironmentDesiredRevision{}, ErrInvalidArgument
+	}
 	project, exists := m.projects[source.ProjectID]
 	if !exists {
 		return EnvironmentGitSource{}, EnvironmentDesiredRevision{}, ErrNotFound
@@ -147,6 +151,11 @@ func (m *MemStore) ClaimEnvironmentGitOps(_ context.Context, token string, now t
 		source := memory.source
 		if source.Suspended || source.ApprovedRevisionID == "" || memory.next.After(now) || memory.lease != nil && memory.lease.Source.Generation == source.Generation && memory.lease.LeaseUntil.After(now) {
 			continue
+		}
+		if source.Spec.ApprovalPolicy == "protected_branch" {
+			if _, ok := memory.approvalForRevision(source.ApprovedRevisionID); !ok {
+				continue
+			}
 		}
 		if _, err := m.projectEnvironmentBySlugLocked(source.ProjectID, source.EnvironmentSlug); err != nil {
 			continue

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/environmentgitops"
@@ -43,7 +44,32 @@ func (reader *environmentGitSourceReader) ReadEnvironmentGitSource(ctx context.C
 	if err := s.verifyEnvironmentGitDefinitionScope(ctx, source, desired); err != nil {
 		return state.EnvironmentGitSourcePollResult{ErrorCode: "environment_git_scope_mismatch"}, nil
 	}
-	return state.EnvironmentGitSourcePollResult{CommitSHA: stream.Stats.ResolvedCommitSHA, Digest: desired.Digest}, nil
+	result := state.EnvironmentGitSourcePollResult{CommitSHA: stream.Stats.ResolvedCommitSHA, Digest: desired.Digest}
+	if source.Spec.ApprovalPolicy == "protected_branch" {
+		client, ok := s.githubd.(githubdReviewedMergeClient)
+		if !ok {
+			return state.EnvironmentGitSourcePollResult{ErrorCode: "environment_git_approval_unavailable"}, nil
+		}
+		evidence, err := client.GetReviewedMergeEvidence(ctx, source.AccountID, source.Spec.InstallationID, source.Spec.RepositoryID,
+			source.Spec.Repository, strings.TrimPrefix(source.Spec.Ref, "refs/heads/"), result.CommitSHA)
+		if err != nil {
+			return state.EnvironmentGitSourcePollResult{ErrorCode: "environment_git_approval_unavailable"}, nil
+		}
+		if !evidence.ValidFor(source.Spec.InstallationID, source.Spec.RepositoryID, source.Spec.Repository,
+			strings.TrimPrefix(source.Spec.Ref, "refs/heads/"), result.CommitSHA, time.Now(), api.EnvironmentGitProtectedBranchEvidenceMaxAge) {
+			return state.EnvironmentGitSourcePollResult{ErrorCode: "environment_git_approval_not_qualified"}, nil
+		}
+		reviewed, problem := s.readEnvironmentGitRevision(ctx, account, source, evidence.HeadSHA)
+		if problem != nil {
+			return state.EnvironmentGitSourcePollResult{ErrorCode: "environment_git_approval_unavailable"}, nil
+		}
+		if reviewed.Digest != desired.Digest {
+			return state.EnvironmentGitSourcePollResult{ErrorCode: "environment_git_approval_not_qualified"}, nil
+		}
+		evidence.ReviewedDefinitionDigest = reviewed.Digest
+		result.Desired, result.Approval = &desired, &evidence
+	}
+	return result, nil
 }
 
 func (s *server) verifyEnvironmentGitDefinitionScope(ctx context.Context, source state.EnvironmentGitSource, desired environmentsync.DesiredState) error {
@@ -58,7 +84,7 @@ func (s *server) verifyEnvironmentGitDefinitionScope(ctx context.Context, source
 }
 
 // Discovery is safe to start independently from the full graph executor. It
-// writes source availability/candidates only, and never grants approval.
+// verifies candidates and atomically approves qualified protected-branch merges.
 func (s *server) startEnvironmentGitSourcePolling(ctx context.Context, getenv func(string) string) {
 	enabled := !strings.EqualFold(getenv("FAAS_ENVIRONMENT_GIT_SOURCE_POLLING_ENABLED"), "false")
 	s.environmentGitSourcePollingEnabled.Store(enabled)

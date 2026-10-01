@@ -12,7 +12,7 @@ export type CreateEnvironmentGitSourceRequest = {
   ref?: string;
   manifest_path: string;
   mode?: 'report' | 'enforce';
-  approval_policy?: 'manual';
+  approval_policy?: 'manual' | 'protected_branch';
   prune?: boolean;
 };
 

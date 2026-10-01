@@ -76,9 +76,10 @@ func cmdEnvironmentGitOpsBind(args []string) int {
 	manifest := fs.String("manifest-path", "", "Git path to the environment definition")
 	ref := fs.String("ref", "", "Git ref (defaults to the project production branch)")
 	mode := fs.String("mode", "report", "report or enforce")
+	approval := fs.String("approval-policy", "manual", "manual or protected_branch")
 	prune := fs.Bool("prune", false, "allow removal of previously owned fields")
-	if fs.Parse(flags) != nil || len(positional) != 2 || !validEnvironmentGitOpsTarget(positional) || *manifest == "" || (*mode != "report" && *mode != "enforce") {
-		PrintUsage(os.Stderr, environmentGitOpsUsage+" --manifest-path PATH [--ref REF] [--mode report|enforce] [--prune]", "projects environments")
+	if fs.Parse(flags) != nil || len(positional) != 2 || !validEnvironmentGitOpsTarget(positional) || *manifest == "" || (*mode != "report" && *mode != "enforce") || (*approval != "manual" && *approval != "protected_branch") {
+		PrintUsage(os.Stderr, environmentGitOpsUsage+" --manifest-path PATH [--ref REF] [--mode report|enforce] [--approval-policy manual|protected_branch] [--prune]", "projects environments")
 		return 1
 	}
 	client, err := authedClient()
@@ -86,7 +87,7 @@ func cmdEnvironmentGitOpsBind(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	source, err := client.CreateEnvironmentGitSource(context.Background(), positional[0], positional[1], api.CreateEnvironmentGitSourceRequest{
-		Ref: *ref, ManifestPath: *manifest, Mode: *mode, ApprovalPolicy: "manual", Prune: *prune,
+		Ref: *ref, ManifestPath: *manifest, Mode: *mode, ApprovalPolicy: *approval, Prune: *prune,
 	})
 	return environmentGitOpsOutput(source, err)
 }

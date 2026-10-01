@@ -38,7 +38,11 @@ func (c *environmentGitOpsClient) StreamSourceRef(_ context.Context, _ string, _
 
 func environmentGitOpsArchive(t *testing.T) []byte {
 	t.Helper()
-	definition := "api_version: gregale.dev/environment/v1\nproject: shop\nenvironment: production\nworkloads:\n  api:\n    app: shop-api\n    variables:\n      MODE: production\n"
+	return environmentGitOpsArchiveDefinition(t, "api_version: gregale.dev/environment/v1\nproject: shop\nenvironment: production\nworkloads:\n  api:\n    app: shop-api\n    variables:\n      MODE: production\n")
+}
+
+func environmentGitOpsArchiveDefinition(t *testing.T, definition string) []byte {
+	t.Helper()
 	var out bytes.Buffer
 	gz := gzip.NewWriter(&out)
 	archive := tar.NewWriter(gz)

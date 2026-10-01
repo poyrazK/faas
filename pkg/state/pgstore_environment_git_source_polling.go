@@ -58,6 +58,17 @@ func (s *PgStore) FinishEnvironmentGitSourcePoll(ctx context.Context, lease Envi
 	if source.Generation != lease.Source.Generation || source.Suspended {
 		return ErrConflict
 	}
+	if _, err := q.LockEnvironmentGitSourcePoll(ctx, tx, sqlc.LockEnvironmentGitSourcePollParams{SourceID: source.ID, LeaseToken: mustPgUUID(lease.LeaseToken), NowAt: gitOpsTime(now)}); err != nil {
+		return ErrConflict
+	}
+	if err := validateEnvironmentPollApproval(environmentGitSourceFromSQL(source, lease.Source.EnvironmentSlug), result); err != nil {
+		return err
+	}
+	if result.Approval != nil {
+		if err := approveEnvironmentGitPoll(ctx, tx, source, lease, result); err != nil {
+			return err
+		}
+	}
 	count, err := q.FinishEnvironmentGitSourcePoll(ctx, tx, sqlc.FinishEnvironmentGitSourcePollParams{
 		SourceID: source.ID, LeaseToken: mustPgUUID(lease.LeaseToken), NowAt: gitOpsTime(now), NextPollAt: gitOpsTime(next),
 	})

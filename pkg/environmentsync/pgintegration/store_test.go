@@ -55,6 +55,10 @@ func seed(t *testing.T, store gitOpsTestStore) (state.EnvironmentGitSource, envi
 }
 
 func seedMode(t *testing.T, store gitOpsTestStore, mode string) (state.EnvironmentGitSource, environmentsync.DesiredState) {
+	return seedModePolicy(t, store, mode, "manual")
+}
+
+func seedModePolicy(t *testing.T, store gitOpsTestStore, mode, policy string) (state.EnvironmentGitSource, environmentsync.DesiredState) {
 	t.Helper()
 	ctx := context.Background()
 	account, err := store.CreateAccount(ctx, "gitops@example.test", api.PlanPro)
@@ -65,7 +69,7 @@ func seedMode(t *testing.T, store gitOpsTestStore, mode string) (state.Environme
 	if err != nil {
 		t.Fatal(err)
 	}
-	source, err := store.CreateEnvironmentGitSource(ctx, account.ID, project.ID, "production", state.EnvironmentGitSourceSpec{RepositoryID: 123, InstallationID: 42, Repository: "example/shop", Ref: "refs/heads/main", ManifestPath: "environments/production.yaml", Mode: mode, ApprovalPolicy: "manual"})
+	source, err := store.CreateEnvironmentGitSource(ctx, account.ID, project.ID, "production", state.EnvironmentGitSourceSpec{RepositoryID: 123, InstallationID: 42, Repository: "example/shop", Ref: "refs/heads/main", ManifestPath: "environments/production.yaml", Mode: mode, ApprovalPolicy: policy})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -31,5 +31,5 @@ func (s *Server) GetProtectedBranchEvidence(ctx context.Context, req *githubdpb.
 	}
 	return &githubdpb.GetProtectedBranchEvidenceResponse{Qualified: evidence.Qualified, Reason: evidence.Reason, Profile: evidence.Profile,
 		InstallationId: evidence.InstallationID, RepositoryId: evidence.RepositoryID, RepoFullName: evidence.Repository,
-		Branch: evidence.Branch, CommitSha: evidence.CommitSHA, PolicyDigest: evidence.PolicyDigest, CheckedAtRfc3339: checkedAt}, nil
+		Branch: evidence.Branch, CommitSha: evidence.CommitSHA, PolicyDigest: evidence.PolicyDigest, CheckedAtRfc3339: checkedAt, RequiredReviewCount: int64(evidence.RequiredReviewCount)}, nil
 }

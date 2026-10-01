@@ -84,12 +84,6 @@ func (s *server) createEnvironmentGitSource(w http.ResponseWriter, r *http.Reque
 	if request.Ref == "" {
 		request.Ref = "refs/heads/" + project.ProductionBranch
 	}
-	// Automatic approvals need the protected-branch evidence bridge before
-	// this policy can be enabled. Manual approval still pins reviewed Git bytes.
-	if request.ApprovalPolicy != "manual" {
-		api.WriteProblem(w, api.ErrValidation("Automatic protected-branch approval is not available yet."))
-		return
-	}
 	repositoryID, err := s.verifyEnvironmentGitRepository(r.Context(), acct.ID, project.InstallID, project.RepoFullName, 0)
 	if err != nil {
 		writeEnvironmentGitOpsError(w, err)
@@ -172,6 +166,10 @@ func (s *server) approveEnvironmentGitRevision(w http.ResponseWriter, r *http.Re
 		api.WriteProblem(w, problem)
 		return
 	}
+	if source.Spec.ApprovalPolicy != "manual" {
+		api.WriteProblem(w, api.ErrValidation("This source requires verified protected-branch merge approval."))
+		return
+	}
 	var request api.ApproveEnvironmentGitRevisionRequest
 	if err := decodeJSON(r, &request); err != nil {
 		api.WriteProblem(w, api.ErrValidation("Invalid revision approval."))
@@ -212,7 +210,13 @@ func (s *server) getEnvironmentGitOps(w http.ResponseWriter, r *http.Request, ac
 	if runs == nil {
 		runs = []state.EnvironmentGitOpsRun{}
 	}
-	writeJSON(w, http.StatusOK, api.EnvironmentGitOpsStatusResponse{Source: source, Runs: runs})
+	response := api.EnvironmentGitOpsStatusResponse{Source: source, Runs: runs}
+	response.Approval, err = s.environmentGitApprovalForSource(r.Context(), source)
+	if err != nil {
+		writeEnvironmentGitOpsError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *server) previewEnvironmentGitOpsAdoption(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -325,4 +329,22 @@ func (s *server) removeEnvironmentGitOpsOverride(w http.ResponseWriter, r *http.
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) environmentGitApprovalForSource(ctx context.Context, source state.EnvironmentGitSource) (*api.EnvironmentGitRevisionApproval, error) {
+	if source.ApprovedRevisionID == "" || source.Spec.ApprovalPolicy != "protected_branch" {
+		return nil, nil
+	}
+	store, ok := s.store.(state.EnvironmentGitApprovalStore)
+	if !ok {
+		return nil, errors.New("approval storage unavailable")
+	}
+	record, err := store.EnvironmentGitRevisionApproval(ctx, source.AccountID, source.ID, source.ApprovedRevisionID)
+	if errors.Is(err, state.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &record, nil
 }

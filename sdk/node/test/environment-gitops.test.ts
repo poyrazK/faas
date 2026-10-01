@@ -18,7 +18,14 @@ test('GitOps services preserve reviewed authority and override identity', async 
       if (url.endsWith('/gitops')) return Response.json({ source: {
         approved_revision_id: 'approved', source_commit_sha: sha, source_definition_digest: digest,
         source_verified_at: '2026-10-01T00:00:00Z', source_error_code: 'environment_git_source_unavailable',
-      }, runs: [] });
+      }, runs: [], approval: {
+        id: 'receipt', source_id: 'source', revision_id: 'approved', generation: 8, definition_digest: digest, recorded_at: '2026-10-01T00:00:00Z',
+        evidence: { reviewed_definition_digest: digest, qualified: true, profile: 'reviewed_merge/v1', pull_request_id: 1234, pull_request_number: 7, author_id: 10,
+          head_sha: 'c'.repeat(40), merged_at: '2026-09-30T23:00:00Z', checked_at: '2026-10-01T00:00:00Z',
+          policy: { qualified: true, profile: 'classic_reviewed_branch/v1', installation_id: 42, repository_id: 123, repository: 'example/shop', branch: 'main', commit_sha: sha, policy_digest: 'd'.repeat(64), required_review_count: 1, checked_at: '2026-10-01T00:00:00Z' },
+          reviews: [{ id: 1, reviewer_id: 11, reviewer: 'reviewer', head_sha: 'c'.repeat(40), submitted_at: '2026-09-30T22:00:00Z' }],
+        },
+      } });
       return new Response(null, { status: 204 });
     },
   });
@@ -34,6 +41,10 @@ test('GitOps services preserve reviewed authority and override identity', async 
     assert.equal(status.source.source_verified_at, '2026-10-01T00:00:00Z');
     assert.equal(status.source.source_error_code, 'environment_git_source_unavailable');
     assert.equal(status.source.approved_revision_id, 'approved');
+    assert.equal(status.approval?.definition_digest, digest);
+    assert.equal(status.approval?.evidence.pull_request_id, 1234);
+    assert.equal(status.approval?.evidence.policy.repository_id, 123);
+    assert.equal(status.approval?.evidence.reviews[0]?.reviewer_id, 11);
     assert.equal(calls.length, 4);
     assert.ok(calls[0]?.url.includes('/projects/my%20project/environments/production/gitops/revisions/preview'));
     assert.deepEqual(calls[1]?.body, { commit_sha: sha, definition_digest: digest, expected_generation: 7 });

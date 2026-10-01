@@ -5122,6 +5122,8 @@ WITH candidate AS (
     SELECT j.source_id FROM environment_gitops_jobs j
     JOIN environment_git_sources s ON s.id = j.source_id
     WHERE NOT s.suspended AND s.approved_revision_id IS NOT NULL
+      AND (s.approval_policy = 'manual' OR EXISTS (SELECT 1 FROM environment_git_revision_approvals a
+        WHERE a.source_id=s.id AND a.revision_id=s.approved_revision_id AND a.approved_generation<=s.generation))
       AND s.generation = j.desired_generation AND j.next_attempt_at <= sqlc.arg(now_at)::timestamptz
       AND (j.lease_until IS NULL OR j.lease_until <= sqlc.arg(now_at)::timestamptz
            OR j.claimed_generation <> j.desired_generation)
@@ -5522,7 +5524,7 @@ FROM candidate WHERE p.source_id = candidate.source_id RETURNING p.*;
 
 -- name: FinishEnvironmentGitSourcePoll :execrows
 UPDATE environment_git_source_polls SET lease_token = NULL, lease_until = NULL, next_poll_at = sqlc.arg(next_poll_at)::timestamptz
-WHERE source_id = sqlc.arg(source_id)::uuid AND lease_token = sqlc.arg(lease_token)::uuid AND lease_until > sqlc.arg(now_at)::timestamptz;
+WHERE source_id = sqlc.arg(source_id)::uuid AND lease_token = sqlc.arg(lease_token)::uuid AND lease_until > greatest(sqlc.arg(now_at)::timestamptz, clock_timestamp());
 
 -- name: RecordEnvironmentGitSourcePoll :exec
 UPDATE environment_git_sources SET source_checked_at = sqlc.arg(checked_at)::timestamptz,
@@ -6255,3 +6257,23 @@ AND s.environment_id=coalesce(sqlc.narg(environment_id)::uuid,
     (SELECT b.environment_id FROM queue_bindings b WHERE b.id=sqlc.narg(binding_id)::uuid AND b.app_id=a.id AND b.account_id=a.account_id),
     (SELECT e.id FROM project_environments e WHERE e.project_id=a.project_id AND e.account_id=a.account_id AND e.slug=sqlc.arg(environment)::text))
 ORDER BY s.id FOR UPDATE OF s;
+
+-- name: InsertEnvironmentGitRevisionApproval :exec
+INSERT INTO environment_git_revision_approvals(source_id,revision_id,approved_generation,definition_digest,evidence,poll_lease_token)
+VALUES(sqlc.arg(source_id)::uuid,sqlc.arg(revision_id)::uuid,sqlc.arg(approved_generation)::bigint,
+  sqlc.arg(definition_digest)::text,sqlc.arg(evidence)::jsonb,sqlc.arg(poll_lease_token)::uuid)
+ON CONFLICT(source_id,revision_id,approved_generation) DO NOTHING;
+
+-- name: GetEnvironmentGitRevisionApproval :one
+SELECT a.* FROM environment_git_revision_approvals a
+JOIN environment_git_sources s ON s.id=a.source_id
+WHERE s.account_id=sqlc.arg(account_id)::uuid AND s.id=sqlc.arg(source_id)::uuid AND a.revision_id=sqlc.arg(revision_id)::uuid
+ORDER BY a.approved_generation DESC LIMIT 1;
+
+-- name: SetEnvironmentGitApprovalContext :exec
+SELECT set_config('faas.environment_git_approval_id',sqlc.arg(approval_id)::text,true);
+
+-- name: LockEnvironmentGitSourcePoll :one
+SELECT source_id FROM environment_git_source_polls
+WHERE source_id=sqlc.arg(source_id)::uuid AND lease_token=sqlc.arg(lease_token)::uuid
+  AND lease_until > greatest(sqlc.arg(now_at)::timestamptz,clock_timestamp()) FOR UPDATE;
