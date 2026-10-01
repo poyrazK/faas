@@ -158,7 +158,7 @@
       "maturity": "internal",
       "plans": [],
       "docs_url": "/docs/flags",
-      "acceptance_test": "cmd/apid/feature_flags_acceptance_test.go::TestFeatureFlagsThreeCustomerAcceptance",
+      "acceptance_test": "cmd/e2e/feature_flags_native_restore_metal_test.go::TestFeatureFlagsNativeParkRestoreMetal",
       "operator_flag": "FAAS_FLAGS_ENABLED"
     },
     {
