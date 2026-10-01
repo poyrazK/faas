@@ -277,10 +277,8 @@ func ClassifyResultWithHashes(srcStatus int, srcBody []byte, mirrorStatus int, m
 		statusDiff = true
 	}
 	// codeql[go/weak-sensitive-data-hashing] -- Exact response equality digest, not a credential verifier.
-
 	srcHash := sha256.Sum256(srcBody)
 	// codeql[go/weak-sensitive-data-hashing] -- Exact response equality digest; only bodyDiff is persisted.
-
 	mirrorHash := sha256.Sum256(mirrorBody)
 	if srcHash != mirrorHash {
 		schemaDiff = true
