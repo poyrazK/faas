@@ -882,6 +882,8 @@ from .inbound_webhook_receipt_response_status import InboundWebhookReceiptRespon
 from .ingest_issue_otlp_body import IngestIssueOTLPBody
 from .ingest_issue_otlp_response_200 import IngestIssueOTLPResponse200
 from .ingest_issue_otlp_signal import IngestIssueOTLPSignal
+from .inject_scenario_test_chaos_request import InjectScenarioTestChaosRequest
+from .inject_scenario_test_chaos_response import InjectScenarioTestChaosResponse
 from .inject_workflow_event_request import InjectWorkflowEventRequest
 from .inject_workflow_event_response import InjectWorkflowEventResponse
 from .inject_workflow_event_response_status import InjectWorkflowEventResponseStatus
@@ -1686,6 +1688,8 @@ from .scaling_target import ScalingTarget
 from .scaling_target_metric import ScalingTargetMetric
 from .scan_result import ScanResult
 from .scan_result_status import ScanResultStatus
+from .scenario_test_chaos_rule import ScenarioTestChaosRule
+from .scenario_test_chaos_rule_kind import ScenarioTestChaosRuleKind
 from .scenario_test_workload import ScenarioTestWorkload
 from .schedule_occurrence_response import ScheduleOccurrenceResponse
 from .schedule_occurrence_response_status import ScheduleOccurrenceResponseStatus
@@ -2872,6 +2876,8 @@ __all__ = (
     "IngestIssueOTLPBody",
     "IngestIssueOTLPResponse200",
     "IngestIssueOTLPSignal",
+    "InjectScenarioTestChaosRequest",
+    "InjectScenarioTestChaosResponse",
     "InjectWorkflowEventRequest",
     "InjectWorkflowEventResponse",
     "InjectWorkflowEventResponseStatus",
@@ -3630,6 +3636,8 @@ __all__ = (
     "ScalingTargetMetric",
     "ScanResult",
     "ScanResultStatus",
+    "ScenarioTestChaosRule",
+    "ScenarioTestChaosRuleKind",
     "ScenarioTestWorkload",
     "ScheduleOccurrenceResponse",
     "ScheduleOccurrenceResponseStatus",
