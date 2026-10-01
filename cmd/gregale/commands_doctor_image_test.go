@@ -7,7 +7,9 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/oci"
 )
 
@@ -163,5 +165,37 @@ func TestDoctorImagePlatformResolutionReport(t *testing.T) {
 	finding := doctorImageAccessError(&oci.PlatformSelectionError{Reason: "no compatible image", Available: []string{"linux/arm64"}})
 	if finding.Status != "error" || !strings.Contains(finding.Hint, "linux/arm64") || !strings.Contains(finding.Fix, "Linux/amd64") {
 		t.Fatalf("missing actionable platform diagnostic: %+v", finding)
+	}
+}
+
+func TestDoctorImageExactHealthcheckTiming(t *testing.T) {
+	report := runDoctorImageChecks(context.Background(), "fixture", nil, doctorInspectorFunc(func(context.Context, string, *oci.BasicAuth) (oci.ImageInspection, error) {
+		return oci.ImageInspection{Reference: "fixture", Digest: "sha256:fixture", Config: oci.ImageConfig{
+			OS: "linux", Architecture: "amd64", Entrypoint: []string{"/server"},
+			Healthcheck: &oci.ImageHealthcheck{Test: []string{"CMD", "/probe"}, Retries: 2,
+				ImageTiming: &api.OCIHealthcheckTiming{IntervalNS: int64(250 * time.Millisecond), TimeoutNS: int64(1500 * time.Millisecond), StartIntervalNS: int64(100 * time.Millisecond)}},
+		}}, nil
+	}))
+	encoded, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded doctorReport
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Image == nil || decoded.Image.Healthcheck == nil || decoded.Image.Healthcheck.ImageTiming == nil {
+		t.Fatalf("JSON report dropped exact timing: %s", encoded)
+	}
+	var out bytes.Buffer
+	renderDoctorImage(&out, decoded.Image)
+	for _, want := range []string{"interval: 250ms", "timeout: 1.5s", "startup grace: 0s", "startup interval: 100ms", "retries: 2"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("missing %q in %s", want, out.String())
+		}
+	}
+	invalid := doctorImageHealthcheck(&oci.ImageHealthcheck{Test: []string{"CMD", "/probe"}, ImageTiming: &api.OCIHealthcheckTiming{TimeoutNS: 3}})
+	if invalid.Status != "warn" {
+		t.Fatalf("invalid exact timing accepted: %+v", invalid)
 	}
 }

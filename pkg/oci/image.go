@@ -69,6 +69,7 @@ type Config struct {
 //
 // ADR-136 §Decision 3 records the rationale for surfacing these.
 type ImageHealthcheck struct {
+	ImageTiming  *api.OCIHealthcheckTiming
 	Test         []string
 	IntervalS    int
 	TimeoutS     int
@@ -274,6 +275,7 @@ func ManifestFromConfig(cfg Config) (api.AppManifest, error) {
 	if cfg.Healthcheck != nil {
 		m.Healthcheck = &api.AppManifestHealthcheck{
 			Test:         append([]string(nil), cfg.Healthcheck.Test...),
+			ImageTiming:  cfg.Healthcheck.ImageTiming,
 			IntervalS:    cfg.Healthcheck.IntervalS,
 			TimeoutS:     cfg.Healthcheck.TimeoutS,
 			Retries:      cfg.Healthcheck.Retries,
@@ -332,11 +334,22 @@ func healthcheckFromRaw(r *rawHealthcheck) *ImageHealthcheck {
 	}
 	return &ImageHealthcheck{
 		Test:         append([]string(nil), r.Test...),
-		IntervalS:    r.IntervalS,
-		TimeoutS:     r.TimeoutS,
+		IntervalS:    durationSeconds(r.Interval),
+		TimeoutS:     durationSeconds(r.Timeout),
 		Retries:      r.Retries,
-		StartPeriodS: r.StartPeriodS,
+		StartPeriodS: durationSeconds(r.StartPeriod),
+		ImageTiming:  r.timing(),
 	}
+}
+
+// durationSeconds rounds up only the compatibility view. Exact image
+// timing is retained separately for guest execution.
+func durationSeconds(value time.Duration) int {
+	seconds := value / time.Second
+	if value%time.Second > 0 {
+		seconds++
+	}
+	return int(seconds)
 }
 
 // stopGraceFromRaw reads the OCI-spec StopGracePeriodSeconds value.

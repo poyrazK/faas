@@ -20,6 +20,14 @@ import (
 	"time"
 )
 
+// OCI healthcheck image durations are nanoseconds. Docker permits zero for
+// inheritance and otherwise requires at least one millisecond.
+const (
+	OCIHealthcheckMinimumDuration      = time.Millisecond
+	OCIHealthcheckDefaultStartInterval = 5 * time.Second
+	OCIHealthcheckDurationMaxSeconds   = int64((1<<63 - 1) / time.Second)
+)
+
 // A restore hook is on the wake critical path. Keep its customer timeout
 // below the host's five-second resume deadline, including transport overhead.
 const (

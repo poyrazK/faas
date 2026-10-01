@@ -589,6 +589,7 @@ export type { ObjectUploadRoute } from './models/ObjectUploadRoute.js';
 export type { ObjectUploadRouteList } from './models/ObjectUploadRouteList.js';
 export type { ObsHealthResponse } from './models/ObsHealthResponse.js';
 export type { ObsNodeOperationPreflight } from './models/ObsNodeOperationPreflight.js';
+export type { OCIHealthcheckTiming } from './models/OCIHealthcheckTiming.js';
 export type { OIDCExchangeRequest } from './models/OIDCExchangeRequest.js';
 export type { OIDCExchangeResponse } from './models/OIDCExchangeResponse.js';
 export type { OpenAPIContractAddition } from './models/OpenAPIContractAddition.js';
