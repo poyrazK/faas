@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -241,6 +242,10 @@ func (s *server) listIssues(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, api.ErrValidation("invalid issue cursor"))
 		return
 	}
+	if err := state.ValidateIssueListCursor(filter, cur); err != nil {
+		api.WriteProblem(w, api.ErrValidation("issue cursor does not match the selected sort and customer filter"))
+		return
+	}
 	out, err := st.ListIssues(r.Context(), app.ID, filter, cur)
 	if err != nil {
 		writeIssueError(w, err)
@@ -267,6 +272,21 @@ func parseIssueListFilter(r *http.Request, accountID string) (state.IssueListFil
 			return state.IssueListFilter{}, errors.New("assignee must be me, unassigned, or an account UUID")
 		}
 		filter.AssigneeAccountID = id.String()
+	}
+	switch sortBy := strings.TrimSpace(q.Get("sort")); sortBy {
+	case "", "recent":
+		filter.Sort = "recent"
+	case "impact":
+		filter.Sort = "impact"
+	default:
+		return state.IssueListFilter{}, errors.New("sort must be recent or impact")
+	}
+	if raw := strings.TrimSpace(q.Get("min_customers")); raw != "" {
+		minimum, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || minimum < 0 {
+			return state.IssueListFilter{}, errors.New("min_customers must be a non-negative integer")
+		}
+		filter.MinCustomers = minimum
 	}
 	return filter, nil
 }

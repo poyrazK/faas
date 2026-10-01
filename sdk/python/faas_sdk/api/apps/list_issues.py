@@ -7,6 +7,7 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.list_issues_response import ListIssuesResponse
+from ...models.list_issues_sort import ListIssuesSort
 from ...models.problem import Problem
 from ...types import UNSET, Response, Unset
 
@@ -17,6 +18,8 @@ def _get_kwargs(
     state: str | Unset = UNSET,
     environment: str | Unset = UNSET,
     assignee: str | Unset = UNSET,
+    sort: ListIssuesSort | Unset = "recent",
+    min_customers: int | Unset = UNSET,
     cursor: str | Unset = UNSET,
 ) -> dict[str, Any]:
 
@@ -27,6 +30,14 @@ def _get_kwargs(
     params["environment"] = environment
 
     params["assignee"] = assignee
+
+    json_sort: str | Unset = UNSET
+    if not isinstance(sort, Unset):
+        json_sort = sort
+
+    params["sort"] = json_sort
+
+    params["min_customers"] = min_customers
 
     params["cursor"] = cursor
 
@@ -115,6 +126,8 @@ def sync_detailed(
     state: str | Unset = UNSET,
     environment: str | Unset = UNSET,
     assignee: str | Unset = UNSET,
+    sort: ListIssuesSort | Unset = "recent",
+    min_customers: int | Unset = UNSET,
     cursor: str | Unset = UNSET,
 ) -> Response[ListIssuesResponse | Problem]:
     """List durable grouped application issues.
@@ -124,6 +137,8 @@ def sync_detailed(
         state (str | Unset):
         environment (str | Unset):
         assignee (str | Unset):
+        sort (ListIssuesSort | Unset):  Default: 'recent'.
+        min_customers (int | Unset):
         cursor (str | Unset):
 
     Raises:
@@ -139,6 +154,8 @@ def sync_detailed(
         state=state,
         environment=environment,
         assignee=assignee,
+        sort=sort,
+        min_customers=min_customers,
         cursor=cursor,
     )
 
@@ -156,6 +173,8 @@ def sync(
     state: str | Unset = UNSET,
     environment: str | Unset = UNSET,
     assignee: str | Unset = UNSET,
+    sort: ListIssuesSort | Unset = "recent",
+    min_customers: int | Unset = UNSET,
     cursor: str | Unset = UNSET,
 ) -> ListIssuesResponse | Problem | None:
     """List durable grouped application issues.
@@ -165,6 +184,8 @@ def sync(
         state (str | Unset):
         environment (str | Unset):
         assignee (str | Unset):
+        sort (ListIssuesSort | Unset):  Default: 'recent'.
+        min_customers (int | Unset):
         cursor (str | Unset):
 
     Raises:
@@ -181,6 +202,8 @@ def sync(
         state=state,
         environment=environment,
         assignee=assignee,
+        sort=sort,
+        min_customers=min_customers,
         cursor=cursor,
     ).parsed
 
@@ -192,6 +215,8 @@ async def asyncio_detailed(
     state: str | Unset = UNSET,
     environment: str | Unset = UNSET,
     assignee: str | Unset = UNSET,
+    sort: ListIssuesSort | Unset = "recent",
+    min_customers: int | Unset = UNSET,
     cursor: str | Unset = UNSET,
 ) -> Response[ListIssuesResponse | Problem]:
     """List durable grouped application issues.
@@ -201,6 +226,8 @@ async def asyncio_detailed(
         state (str | Unset):
         environment (str | Unset):
         assignee (str | Unset):
+        sort (ListIssuesSort | Unset):  Default: 'recent'.
+        min_customers (int | Unset):
         cursor (str | Unset):
 
     Raises:
@@ -216,6 +243,8 @@ async def asyncio_detailed(
         state=state,
         environment=environment,
         assignee=assignee,
+        sort=sort,
+        min_customers=min_customers,
         cursor=cursor,
     )
 
@@ -231,6 +260,8 @@ async def asyncio(
     state: str | Unset = UNSET,
     environment: str | Unset = UNSET,
     assignee: str | Unset = UNSET,
+    sort: ListIssuesSort | Unset = "recent",
+    min_customers: int | Unset = UNSET,
     cursor: str | Unset = UNSET,
 ) -> ListIssuesResponse | Problem | None:
     """List durable grouped application issues.
@@ -240,6 +271,8 @@ async def asyncio(
         state (str | Unset):
         environment (str | Unset):
         assignee (str | Unset):
+        sort (ListIssuesSort | Unset):  Default: 'recent'.
+        min_customers (int | Unset):
         cursor (str | Unset):
 
     Raises:
@@ -257,6 +290,8 @@ async def asyncio(
             state=state,
             environment=environment,
             assignee=assignee,
+            sort=sort,
+            min_customers=min_customers,
             cursor=cursor,
         )
     ).parsed

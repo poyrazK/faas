@@ -7577,6 +7577,14 @@ paths:
           description: Filter by me, unassigned, or an owner account UUID.
           in: query
           schema: { type: string }
+        - name: sort
+          description: Issue ordering; impact ranks by verified distinct customers in the fixed 24-hour window.
+          in: query
+          schema: { type: string, enum: [recent, impact], default: recent }
+        - name: min_customers
+          description: Return issues affecting at least this many verified distinct customers in the fixed 24-hour window.
+          in: query
+          schema: { type: integer, format: int64, minimum: 0 }
         - name: cursor
           description: Opaque next_cursor from the previous issue page.
           in: query

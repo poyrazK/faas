@@ -118,7 +118,7 @@ func TestIssueDashboardEscapingAndCSRF(t *testing.T) {
 	if strings.Contains(w.Body.String(), `<script>alert`) || !strings.Contains(w.Body.String(), "&lt;script&gt;") {
 		t.Fatal("exception HTML not escaped")
 	}
-	for _, want := range []string{"<th>Owner</th>", "<th>Verified customers (24h)</th>", "<th>Events (24h)</th>", "<th>Unattributed events (24h)</th>", "<th>Recurrences</th>", "Unassigned", `value="unassigned" selected`} {
+	for _, want := range []string{"<th>Owner</th>", "<th>Verified customers (24h)</th>", "<th>Events (24h)</th>", "<th>Unattributed events (24h)</th>", "<th>Recurrences</th>", "Most recently seen", "Most verified customers (24h)", "Minimum verified customers (24h)", "Unassigned", `value="unassigned" selected`} {
 		if !strings.Contains(w.Body.String(), want) {
 			t.Fatalf("issues inbox missing %q", want)
 		}

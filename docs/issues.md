@@ -130,6 +130,8 @@ Open an app's **Issues** page, or use:
 gregale issues list --app exports --state open
 gregale issues list --app exports --assignee me
 gregale issues list --app exports --assignee unassigned
+gregale issues list --app exports --sort impact
+gregale issues list --app exports --sort impact --min-customers 3
 gregale issues get ISSUE_ID --app exports
 gregale issues assign ISSUE_ID --app exports --assignee ACCOUNT_ID
 gregale issues resolve ISSUE_ID --app exports --deployment FIXED_DEPLOYMENT_ID
@@ -140,6 +142,15 @@ gregale issues ignore ISSUE_ID --app exports --until 2026-10-02T12:00:00Z
 Use `--assignee me`, `--assignee unassigned`, or an account UUID to narrow
 the CLI list. The dashboard provides Mine and Unassigned owner views and shows
 each issue's owner and recurrence count.
+
+By default, issue lists are ordered by most recently seen. Use `--sort impact`
+to rank by verified distinct customers with observed failures in the previous
+24 hours, or `--min-customers N` to hide issues below a customer threshold.
+The dashboard has matching sort and threshold controls. Impact ranking and
+thresholds use accepted, retained, attributable events; they do not estimate
+customers whose failures were not instrumented or retained. Pagination cursors
+preserve the selected ordering, threshold, and 24-hour window, so keep those
+filters unchanged when requesting the next page.
 
 The inbox also reports retained events, verified distinct customers, and
 unattributed events from the previous 24 hours. These counts are an observed,

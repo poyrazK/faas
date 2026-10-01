@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/url"
+	"strconv"
 )
 
 func issueAppPath(slug string) string { return "/v1/apps/" + url.PathEscape(slug) }
@@ -10,16 +11,32 @@ func (c *Client) ListIssues(ctx context.Context, slug, state, environment, curso
 	return c.ListIssuesFiltered(ctx, slug, state, environment, "", cursor)
 }
 
+type IssueListOptions struct {
+	State, Environment, Assignee, Sort, Cursor string
+	MinCustomers                               int64
+}
+
 // ListIssuesFiltered lists issues with optional state, environment, and owner filters.
 // Assignee accepts "me", "unassigned", or an account UUID.
 func (c *Client) ListIssuesFiltered(ctx context.Context, slug, state, environment, assignee, cursor string) (ListIssuesResponse, error) {
+	return c.ListIssuesWithOptions(ctx, slug, IssueListOptions{State: state, Environment: environment, Assignee: assignee, Cursor: cursor})
+}
+
+// ListIssuesWithOptions lists grouped issues with ownership and impact ordering filters.
+func (c *Client) ListIssuesWithOptions(ctx context.Context, slug string, options IssueListOptions) (ListIssuesResponse, error) {
 	q := url.Values{}
-	q.Set("state", state)
-	q.Set("environment", environment)
-	if assignee != "" {
-		q.Set("assignee", assignee)
+	q.Set("state", options.State)
+	q.Set("environment", options.Environment)
+	if options.Assignee != "" {
+		q.Set("assignee", options.Assignee)
 	}
-	q.Set("cursor", cursor)
+	if options.Sort != "" {
+		q.Set("sort", options.Sort)
+	}
+	if options.MinCustomers > 0 {
+		q.Set("min_customers", strconv.FormatInt(options.MinCustomers, 10))
+	}
+	q.Set("cursor", options.Cursor)
 	var out ListIssuesResponse
 	err := c.do(ctx, "GET", issueAppPath(slug)+"/issues?"+q.Encode(), nil, &out)
 	return out, err

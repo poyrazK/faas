@@ -998,6 +998,7 @@ from .list_instances_response import ListInstancesResponse
 from .list_invocations_response import ListInvocationsResponse
 from .list_issue_ingest_tokens_response import ListIssueIngestTokensResponse
 from .list_issues_response import ListIssuesResponse
+from .list_issues_sort import ListIssuesSort
 from .list_job_runs_response import ListJobRunsResponse
 from .list_job_task_attempts_response import ListJobTaskAttemptsResponse
 from .list_job_tasks_response import ListJobTasksResponse
@@ -2988,6 +2989,7 @@ __all__ = (
     "ListInvocationsResponse",
     "ListIssueIngestTokensResponse",
     "ListIssuesResponse",
+    "ListIssuesSort",
     "ListJobRunsResponse",
     "ListJobsResponse",
     "ListJobTaskAttemptsResponse",

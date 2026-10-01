@@ -4888,6 +4888,45 @@ AND (sqlc.narg(assignee_account_id)::uuid IS NULL OR assignee_account_id = sqlc.
 AND (NOT sqlc.arg(unassigned)::bool OR assignee_account_id IS NULL)
 AND (sqlc.narg(cursor_time)::timestamptz IS NULL OR (last_seen_at,id) < (sqlc.narg(cursor_time),sqlc.narg(cursor_id)::uuid))
 ORDER BY last_seen_at DESC,id DESC LIMIT sqlc.arg(page_limit);
+-- name: IssueListByImpact :many
+WITH candidate_issues AS MATERIALIZED (
+    SELECT i.* FROM app_issues i
+    WHERE i.app_id = sqlc.arg(app_id)
+      AND (sqlc.arg(state)::text = '' OR i.state = sqlc.arg(state))
+      AND (sqlc.arg(environment)::text = '' OR i.environment = sqlc.arg(environment))
+      AND (sqlc.narg(assignee_account_id)::uuid IS NULL OR i.assignee_account_id = sqlc.narg(assignee_account_id))
+      AND (NOT sqlc.arg(unassigned)::bool OR i.assignee_account_id IS NULL)
+), issue_impact AS (
+    SELECT e.issue_id,
+           count(DISTINCT COALESCE(e.verified_platform_tenant_id,e.verified_consumer_id)) AS identified_customers,
+           count(*) AS observed_events,
+           count(*) FILTER(WHERE e.verified_platform_tenant_id IS NULL AND e.verified_consumer_id IS NULL) AS unattributed_events
+      FROM candidate_issues i
+      JOIN issue_events e ON e.issue_id = i.id
+     WHERE e.occurred_at >= sqlc.arg(since)::timestamptz
+       AND e.occurred_at <= sqlc.arg(until)::timestamptz
+     GROUP BY e.issue_id
+)
+SELECT i.*,
+       COALESCE(impact.identified_customers,0)::bigint AS identified_customers,
+       COALESCE(impact.observed_events,0)::bigint AS observed_events,
+       COALESCE(impact.unattributed_events,0)::bigint AS unattributed_events
+  FROM candidate_issues i
+  LEFT JOIN issue_impact impact ON impact.issue_id = i.id
+ WHERE COALESCE(impact.identified_customers,0) >= sqlc.arg(min_customers)::bigint
+   AND (
+       (NOT sqlc.arg(sort_by_impact)::bool AND
+        (sqlc.narg(cursor_time)::timestamptz IS NULL OR (i.last_seen_at,i.id) < (sqlc.narg(cursor_time),sqlc.narg(cursor_id)::uuid)))
+       OR
+       (sqlc.arg(sort_by_impact)::bool AND
+        (sqlc.narg(cursor_customers)::bigint IS NULL OR
+         COALESCE(impact.identified_customers,0) < sqlc.narg(cursor_customers) OR
+         (COALESCE(impact.identified_customers,0) = sqlc.narg(cursor_customers) AND
+          (i.last_seen_at,i.id) < (sqlc.narg(cursor_time),sqlc.narg(cursor_id)::uuid))))
+   )
+ ORDER BY CASE WHEN sqlc.arg(sort_by_impact)::bool THEN COALESCE(impact.identified_customers,0) END DESC,
+          i.last_seen_at DESC,i.id DESC
+ LIMIT sqlc.arg(page_limit);
 -- name: IssueImpactSummaries :many
 SELECT issue_id,
        count(*) AS observed_events,

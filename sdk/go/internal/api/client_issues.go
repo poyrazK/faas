@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/url"
+	"strconv"
 )
 
 func issueAppPath(slug string) string { return "/v1/apps/" + url.PathEscape(slug) }
@@ -11,11 +12,21 @@ func (c *Client) ListIssues(ctx context.Context, slug, state, environment, curso
 }
 
 func (c *Client) ListIssuesFiltered(ctx context.Context, slug, state, environment, assignee, cursor string) (ListIssuesResponse, error) {
+	return c.ListIssuesWithOptions(ctx, slug, state, environment, assignee, "", 0, cursor)
+}
+
+func (c *Client) ListIssuesWithOptions(ctx context.Context, slug, state, environment, assignee, sortBy string, minCustomers int64, cursor string) (ListIssuesResponse, error) {
 	q := url.Values{}
 	q.Set("state", state)
 	q.Set("environment", environment)
 	if assignee != "" {
 		q.Set("assignee", assignee)
+	}
+	if sortBy != "" {
+		q.Set("sort", sortBy)
+	}
+	if minCustomers > 0 {
+		q.Set("min_customers", strconv.FormatInt(minCustomers, 10))
 	}
 	q.Set("cursor", cursor)
 	var out ListIssuesResponse

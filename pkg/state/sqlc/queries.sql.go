@@ -6964,6 +6964,141 @@ func (q *Queries) IssueListActivity(ctx context.Context, db DBTX, arg IssueListA
 	return items, nil
 }
 
+const issueListByImpact = `-- name: IssueListByImpact :many
+WITH candidate_issues AS MATERIALIZED (
+    SELECT i.id, i.account_id, i.app_id, i.environment, i.fingerprint, i.grouping_version, i.title, i.state, i.assignee_account_id, i.first_seen_at, i.last_seen_at, i.event_count, i.regression_count, i.resolved_at, i.fixed_deployment_id, i.fixed_deployment_created_at, i.ignored_until FROM app_issues i
+    WHERE i.app_id = $7
+      AND ($8::text = '' OR i.state = $8)
+      AND ($9::text = '' OR i.environment = $9)
+      AND ($10::uuid IS NULL OR i.assignee_account_id = $10)
+      AND (NOT $11::bool OR i.assignee_account_id IS NULL)
+), issue_impact AS (
+    SELECT e.issue_id,
+           count(DISTINCT COALESCE(e.verified_platform_tenant_id,e.verified_consumer_id)) AS identified_customers,
+           count(*) AS observed_events,
+           count(*) FILTER(WHERE e.verified_platform_tenant_id IS NULL AND e.verified_consumer_id IS NULL) AS unattributed_events
+      FROM candidate_issues i
+      JOIN issue_events e ON e.issue_id = i.id
+     WHERE e.occurred_at >= $12::timestamptz
+       AND e.occurred_at <= $13::timestamptz
+     GROUP BY e.issue_id
+)
+SELECT i.id, i.account_id, i.app_id, i.environment, i.fingerprint, i.grouping_version, i.title, i.state, i.assignee_account_id, i.first_seen_at, i.last_seen_at, i.event_count, i.regression_count, i.resolved_at, i.fixed_deployment_id, i.fixed_deployment_created_at, i.ignored_until,
+       COALESCE(impact.identified_customers,0)::bigint AS identified_customers,
+       COALESCE(impact.observed_events,0)::bigint AS observed_events,
+       COALESCE(impact.unattributed_events,0)::bigint AS unattributed_events
+  FROM candidate_issues i
+  LEFT JOIN issue_impact impact ON impact.issue_id = i.id
+ WHERE COALESCE(impact.identified_customers,0) >= $1::bigint
+   AND (
+       (NOT $2::bool AND
+        ($3::timestamptz IS NULL OR (i.last_seen_at,i.id) < ($3,$4::uuid)))
+       OR
+       ($2::bool AND
+        ($5::bigint IS NULL OR
+         COALESCE(impact.identified_customers,0) < $5 OR
+         (COALESCE(impact.identified_customers,0) = $5 AND
+          (i.last_seen_at,i.id) < ($3,$4::uuid))))
+   )
+ ORDER BY CASE WHEN $2::bool THEN COALESCE(impact.identified_customers,0) END DESC,
+          i.last_seen_at DESC,i.id DESC
+ LIMIT $6
+`
+
+type IssueListByImpactParams struct {
+	MinCustomers      int64
+	SortByImpact      bool
+	CursorTime        pgtype.Timestamptz
+	CursorID          pgtype.UUID
+	CursorCustomers   pgtype.Int8
+	PageLimit         int32
+	AppID             pgtype.UUID
+	State             string
+	Environment       string
+	AssigneeAccountID pgtype.UUID
+	Unassigned        bool
+	Since             pgtype.Timestamptz
+	Until             pgtype.Timestamptz
+}
+
+type IssueListByImpactRow struct {
+	ID                       pgtype.UUID
+	AccountID                pgtype.UUID
+	AppID                    pgtype.UUID
+	Environment              string
+	Fingerprint              string
+	GroupingVersion          int32
+	Title                    string
+	State                    string
+	AssigneeAccountID        pgtype.UUID
+	FirstSeenAt              pgtype.Timestamptz
+	LastSeenAt               pgtype.Timestamptz
+	EventCount               int64
+	RegressionCount          int64
+	ResolvedAt               pgtype.Timestamptz
+	FixedDeploymentID        pgtype.UUID
+	FixedDeploymentCreatedAt pgtype.Timestamptz
+	IgnoredUntil             pgtype.Timestamptz
+	IdentifiedCustomers      int64
+	ObservedEvents           int64
+	UnattributedEvents       int64
+}
+
+func (q *Queries) IssueListByImpact(ctx context.Context, db DBTX, arg IssueListByImpactParams) ([]IssueListByImpactRow, error) {
+	rows, err := db.Query(ctx, issueListByImpact,
+		arg.MinCustomers,
+		arg.SortByImpact,
+		arg.CursorTime,
+		arg.CursorID,
+		arg.CursorCustomers,
+		arg.PageLimit,
+		arg.AppID,
+		arg.State,
+		arg.Environment,
+		arg.AssigneeAccountID,
+		arg.Unassigned,
+		arg.Since,
+		arg.Until,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []IssueListByImpactRow{}
+	for rows.Next() {
+		var i IssueListByImpactRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Environment,
+			&i.Fingerprint,
+			&i.GroupingVersion,
+			&i.Title,
+			&i.State,
+			&i.AssigneeAccountID,
+			&i.FirstSeenAt,
+			&i.LastSeenAt,
+			&i.EventCount,
+			&i.RegressionCount,
+			&i.ResolvedAt,
+			&i.FixedDeploymentID,
+			&i.FixedDeploymentCreatedAt,
+			&i.IgnoredUntil,
+			&i.IdentifiedCustomers,
+			&i.ObservedEvents,
+			&i.UnattributedEvents,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const issueListEvents = `-- name: IssueListEvents :many
 SELECT id, app_id, deployment_id, event_id, issue_id, payload_hash, payload, occurred_at, received_at, attribution_checked_at, verified_consumer_id, verified_platform_tenant_id FROM issue_events WHERE issue_id=$1 AND occurred_at >= $2 AND occurred_at <= $3
 AND ($4::timestamptz IS NULL OR (occurred_at,id) < ($4,$5::uuid))
