@@ -162,9 +162,9 @@ fi
 for service in "${services[@]}"; do
   if systemctl is-active --quiet "${service}"; then
     printf '%s\n' "${service}" >> "${active_services}"
+    systemctl stop "${service}"
   fi
 done
-systemctl stop "${services[@]}"
 
 PATH="$(dirname "${FAAS_METAL_GO}"):/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 export PATH
