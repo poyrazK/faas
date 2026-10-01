@@ -15,3 +15,5 @@ FAAS_UDPD_BIND_HOST must be an IPv4 address literal. Keep 0.0.0.0 as its default
 ## Consequences
 
 Operators supply a concrete local IPv4 address or the wildcard. No DNS lookup is needed to interpret the production bind setting. Portable configuration tests establish accepted/rejected values; deployed binding, firewall policy, failure recovery and native KVM qualification remain pending. Linux/amd64 and stateless guest storage remain the scope.
+
+Deployment validates the enabled bind literal and each source CIDR before rendering the UDP environment. Strict decimal IPv4 octets and prefix lengths 0..32 prevent malformed or injected nftables source entries. UDP environment values are JSON-quoted so whitespace, quotes and newlines cannot introduce extra assignments. This does not replace runtime source-policy validation.

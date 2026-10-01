@@ -803,3 +803,9 @@ The initial isolated compile lacked the picker traffic-weight constant; adding i
 ### Public UDP bind configuration validation (2026-10-01)
 
 ADR-410 requires the production UDP bind setting to be an IPv4 literal and validates it before scheduler/VMMD dependency setup, avoiding DNS resolution during intent reconciliation. The default stays 0.0.0.0; source CIDRs remain separately required. The environment contract records the restriction. All public gateway UDP configuration tests passed three race repetitions without skips, and scoped lint reported zero issues (`/tmp/gregale-udp-public-bind-{tests,lint}.log`). All handles launched here are terminal. This is configuration-boundary evidence rather than deployed lifecycle/firewall or native KVM acceptance; isolated public wiring review and those remaining qualifications are pending.
+
+### UDP deployment source and environment boundaries (2026-10-01)
+
+Enabled UDP deployment now validates the bind IPv4 literal and every IPv4 CIDR before rendering configuration; octets must be decimal 0..255 and prefixes 0..32. This closes the previous colon-only source check that could accept malformed or injected firewall entries. The UDP environment template JSON-quotes bind, sources and optional dependency/TLS settings, preventing embedded newlines from creating extra environment assignments. ADR-410 records the deployment boundary.
+
+All five deployment-render contracts passed, including matching runtime/firewall source sets, default-off behavior, identical systemd units, quoted newline/space/quote preservation, and malformed/firewall-injection CIDR rejection. Ansible syntax checking of the actual gateway-public task file passed, and git diff --check passed. No playbook was applied, firewall loaded or service restarted; deployed behavior remains unqualified. Native KVM/load/leak acceptance remains pending; guest storage remains stateless and Linux/amd64 is the target.

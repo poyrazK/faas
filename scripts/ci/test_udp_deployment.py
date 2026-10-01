@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Render UDP deployment contracts; never apply a firewall or start a service."""
+import json
+import re
 import pathlib
 import unittest
 
@@ -15,10 +17,12 @@ class UDPDeploymentTest(unittest.TestCase):
         values = yaml.safe_load((ROLE / 'defaults/main.yml').read_text())
         values.update(changes)
         env = jinja2.Environment()
+        env.filters['to_json'] = json.dumps
         env.filters['bool'] = bool
         env.filters['ternary'] = lambda value, yes, no: yes if value else no
         text = env.from_string((ROLE / 'templates/udpd.env.j2').read_text()).render(**values)
-        return dict(line.split('=', 1) for line in text.splitlines() if line and not line.startswith('#'))
+        values = dict(line.split('=', 1) for line in text.splitlines() if line and not line.startswith('#'))
+        return {key: json.loads(value) if value.startswith(chr(34)) else value for key, value in values.items()}
 
     def firewall(self, enabled, sources):
         text = (ROOT / 'deploy/ansible/roles/nftables/templates/policy_nftables.conf.j2').read_text()
@@ -40,6 +44,21 @@ class UDPDeploymentTest(unittest.TestCase):
         self.assertEqual(values['FAAS_UDPD_VMMD_TLS_CA_PATH'], '/etc/faas/pki/ca.pem')
         rules = [line.strip() for line in self.firewall(True, sources).splitlines() if 'UDP app listeners' in line]
         self.assertEqual(rules, [f'ip saddr {cidr} udp dport 40000-49999 accept comment "UDP app listeners"' for cidr in sources])
+
+    def test_environment_values_cannot_inject_new_assignments(self):
+        path = '/etc/faas/pki/key with spaces"\nFAAS_UDPD_ENABLED=1'
+        values = self.render_env(faas_udpd_vmmd_tls_key_path=path)
+        self.assertEqual(values['FAAS_UDPD_ENABLED'], '0')
+        self.assertEqual(values['FAAS_UDPD_VMMD_TLS_KEY_PATH'], path)
+
+    def test_source_validation_rejects_firewall_injection(self):
+        tasks = yaml.safe_load((ROLE / 'tasks/main.yml').read_text())
+        task = next(t for t in tasks if 'validate each UDP source CIDR' in t.get('name', ''))
+        pattern = task['vars']['udp_cidr_pattern']
+        for value in ['192.0.2.1/32', '0.0.0.0/0', '255.255.255.255/32']:
+            self.assertIsNotNone(re.fullmatch(pattern, value))
+        for value in ['999.0.0.1/8', '192.0.2.0/33', '::/0', '192.0.2.0/24\naccept', '192.0.2.0/24; accept', '01.2.3.4/8']:
+            self.assertIsNone(re.fullmatch(pattern, value))
 
     def test_systemd_units_load_same_environment(self):
         installed = (ROLE / 'files/faas-gatewayd-public.service').read_text()
