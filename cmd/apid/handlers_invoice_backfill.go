@@ -64,7 +64,7 @@ func (s *server) backfillInvoiceHistory(ctx context.Context, acct state.Account,
 	provider := providerName(s.billingProvider)
 	var reader billing.InvoiceHistoryReader
 	if s.billingProvider == nil && s.billingProviderName == "stripe" {
-		provider, reader = "stripe", nil
+		provider = "stripe"
 		reader, _ = s.legacyStripeInvoiceReader.(billing.InvoiceHistoryReader)
 	} else if s.billingProvider != nil {
 		reader, _ = s.billingProvider.(billing.InvoiceHistoryReader)
