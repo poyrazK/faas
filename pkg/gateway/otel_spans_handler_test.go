@@ -1,4 +1,5 @@
 // Unit tests for the gatewayd-public OTelSpansHandler (ADR-127 PR-D).
+// adr: 392
 //
 // Coverage:
 //   - Happy path: valid OTLP body + valid bearer → 200 + accumulator
