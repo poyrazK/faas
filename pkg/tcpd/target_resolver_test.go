@@ -121,3 +121,28 @@ func TestTCPResolverRejectsStaleListenerBeforeWake(t *testing.T) {
 		})
 	}
 }
+
+func TestTCPResolverNeverSelectsMirrorInstances(t *testing.T) {
+	for _, mode := range []string{"", string(state.InstanceModeNormal), string(state.InstanceModeService), string(state.InstanceModeWorker)} {
+		t.Run("customer-mode-"+mode, func(t *testing.T) {
+			source := &targetSourceFixture{app: state.App{ID: "app", AccountID: "account", Status: state.AppActive}, intent: state.TCPListener{ID: "listener", AppID: "app", AccountID: "account", PublicPort: 40100, GuestPort: 9000, Protocol: "tcp", Enabled: true}, instances: []state.Instance{
+				{ID: "mirror", AppID: "app", NodeID: "node", State: string(state.StateRunning), Mode: string(state.InstanceModeMirror)},
+				{ID: "customer", AppID: "app", NodeID: "node", State: string(state.StateRunning), Mode: mode},
+			}}
+			admit := &targetAdmitterFixture{}
+			resolver := &StoreTargetResolver{Instances: source, Admitter: admit}
+			route := Route{ListenerID: "listener", AppID: "app", AccountID: "account", ListenerName: "echo", GuestPort: 9000, PublicPort: 40100, Protocol: "tcp"}
+			for range 8 {
+				target, err := resolver.ResolveTarget(context.Background(), route)
+				if err != nil || target.InstanceID != "customer" || admit.calls != 0 {
+					t.Fatalf("target=%+v err=%v admissions=%d", target, err, admit.calls)
+				}
+			}
+			source.instances = source.instances[:1]
+			target, err := resolver.ResolveTarget(context.Background(), route)
+			if err != nil || target.InstanceID != "new" || admit.calls != 1 {
+				t.Fatalf("mirror-only route: target=%+v err=%v admissions=%d", target, err, admit.calls)
+			}
+		})
+	}
+}

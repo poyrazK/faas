@@ -87,7 +87,7 @@ func (r *StoreTargetResolver) ResolveTarget(ctx context.Context, route Route) (g
 	}
 	var running []state.Instance
 	for _, instance := range instances {
-		if instance.AppID == route.AppID && instance.State == string(state.StateRunning) && instance.ID != "" && instance.NodeID != "" {
+		if instance.AppID == route.AppID && instance.State == string(state.StateRunning) && instance.Mode != string(state.InstanceModeMirror) && instance.ID != "" && instance.NodeID != "" {
 			running = append(running, instance)
 		}
 	}

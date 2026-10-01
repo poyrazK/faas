@@ -185,3 +185,41 @@ func TestUDPTargetResolverRejectsRecreatedListenerSocket(t *testing.T) {
 		})
 	}
 }
+
+func TestUDPTargetResolverNeverSelectsMirrorInstances(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct, err := store.CreateAccount(ctx, "udp-mirror-routing@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "udp-mirror-routing", Status: state.AppActive, RAMMB: 256, Manifest: state.AppManifest{Ports: []api.WorkloadPort{{Name: "dns", Port: 5353, Protocol: api.WorkloadPortUDP}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent, err := store.CreateUDPListener(ctx, state.UDPListener{AppID: app.ID, AccountID: acct.ID, ListenerName: "dns", GuestPort: 5353, PublicPort: 40100, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mirror, err := store.CreateInstanceWithMode(ctx, app.ID, "shadow-deployment", string(state.StateRunning), 256, "node", "shadow-wake", string(state.InstanceModeMirror))
+	if err != nil {
+		t.Fatal(err)
+	}
+	admit := &testUDPAdmitter{}
+	resolver := &StoreTargetResolver{Store: store, Admitter: admit}
+	route := Route{AppID: app.ID, AccountID: acct.ID, ListenerName: "dns", GuestPort: 5353, ListenerID: intent.ID, PublicPort: intent.PublicPort}
+	target, err := resolver.ResolveTarget(ctx, route)
+	if err != nil || target.InstanceID == mirror.ID || target.InstanceID != "woken" || admit.calls != 1 {
+		t.Fatalf("mirror-only route: target=%+v err=%v admissions=%d", target, err, admit.calls)
+	}
+	customer, err := store.CreateInstanceWithMode(ctx, app.ID, "customer-deployment", string(state.StateRunning), 256, "node", "customer-wake", string(state.InstanceModeNormal))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 8 {
+		target, err := resolver.ResolveTarget(ctx, route)
+		if err != nil || target.InstanceID != customer.ID || admit.calls != 1 {
+			t.Fatalf("target=%+v err=%v admissions=%d", target, err, admit.calls)
+		}
+	}
+}

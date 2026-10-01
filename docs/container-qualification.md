@@ -330,3 +330,12 @@ and a fresh trusted TLS connection to the replacement succeeds. Five
 race-enabled repetitions passed, the full TCP/public-gateway package race tests
 passed, and changed-code lint passed after correcting the test's wrapped-error
 timeout check. Native listener replacement qualification remains outstanding.
+
+Raw TCP and UDP customer-session selection now excludes running mirror-mode
+instances. These instances remain reserved for shadow traffic with its separate
+metering and lifecycle contract. Resolver regressions cover mixed customer and
+mirror pools and mirror-only pools, where normal scheduler admission is used.
+TCP, UDP and public-gateway race tests passed, changed-code lint passed, and
+the strict UDP gate passed all 44 portable contracts. Deployment traffic-weight
+alignment and native rollout/recovery qualification still require review and
+evidence before claiming complete raw-ingress release qualification.
