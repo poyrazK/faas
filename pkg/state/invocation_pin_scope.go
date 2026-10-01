@@ -13,7 +13,7 @@ import (
 // Run before queue insertion or keyed lane mutation. A delivery-time rejection
 // alone would be too late: keep_latest could already supersede production work.
 func validateInvocationWorkEnvironment(ctx context.Context, store invocationPinScopeStore, inv Invocation, keyed bool) error {
-	if !keyed && inv.Source != InvocationQueue && inv.WorkPolicyName == "" && len(inv.WorkKeyDigest) == 0 &&
+	if !keyed && !invocationHasSharedWorkProducer(inv) && inv.WorkPolicyName == "" && len(inv.WorkKeyDigest) == 0 &&
 		inv.OnSuccessDestinationID == "" && inv.OnFailureDestinationID == "" {
 		return nil
 	}

@@ -1258,3 +1258,64 @@ Full-copy admission and policy publication remain closed. Next requirements are
 durable environment ownership of keyed lanes and producer bindings, runtime
 selection of pinned policy definitions, their activation/publication proof, and
 the remaining resource/provider, promotion and acceptance work listed above.
+
+### Environment-owned keyed admission and cancellation (2026-10-01)
+
+Keyed state admission now resolves an owned stage pin and selects the work
+policy from that deployment's immutable workload settings. Caller policy fields
+and revisions must match the deployed definition before any lane mutation. An
+uninitialized or explicit empty collection cannot inherit production policies.
+Desired edits or deletions do not change already deployed or admitted work.
+
+Stage key and fairness digests include the immutable environment UUID in
+separate namespaces. Existing production digests remain unchanged. Identical
+application keys in production and two stages have independent sequences,
+keep-latest replacement, running reservations, fairness limits and cancellation.
+Account capacity remains shared. Raw application/fairness keys are not persisted.
+
+Two operational ledgers record domain ownership and admission identity. Admission
+includes the owning environment, pinned workload specification and settings hash,
+policy revision, key/fairness digests and fairness limit. It commits with the
+invocation and lane mutations. These ledgers are registered as operational state
+and are never copied into a clone. PostgreSQL admission anchors creation, debounce
+and expiry to one server clock rather than mixing server and transaction-start
+timestamps. The sqlc schema snapshot now includes the established invocation work
+columns used by these queries; all new SQL is generated through sqlc.
+
+Claims reject missing or mismatched domain/admission records and scoped pins
+that lack ownership. Delivery authenticates the admission against the selected
+deployment's policy book and checks timing and scheduling metadata. Removing a
+stage pin or work fields from an owned invocation cannot select production.
+In-memory admission records and work envelopes are copied defensively. Retention
+deletion removes the admission with its invocation, matching PostgreSQL cascade;
+permanent app deletion removes its operational ownership.
+
+`cancel-pending?environment=staging` now cancels only the stage namespace. It can
+drain previously admitted work after deleting a desired policy, without looking
+up a production policy. Running work continues. HTTP receipt keys include the
+environment's immutable identity, and the state operation rechecks that selected
+identity. Production's existing receipt identity and replay behavior remain
+unchanged. Reusing an operation UUID for another state namespace conflicts, and
+receipt replay never cancels subsequently admitted work. API documentation and
+the generated Node/Python clients describe the scoped cancellation behavior.
+
+Environment deletion and failed-clone compensation refuse owned work ledgers
+until an isolated drain/cleanup transaction is implemented. API deletion reports
+`environment_work_cleanup_unavailable` and retains the environment. Queue-source
+work, event/broker producers and completion destinations remain blocked for
+stages until their own bindings, consumers and counters have isolated ownership.
+The public invocation APIs still select production; this step enables the pinned
+keyed state path and scoped cancellation, not every stage producer.
+
+MemStore and migrated PostgreSQL contracts cover production/sibling isolation,
+policy mismatch before mutation, independent claims/fairness, pinned policy edits
+and deletion, scoped cancellation/replay, defensive copies, malformed operational
+ownership and cleanup fences. The scheduler fake dispatches keyed stage work to
+its pinned stage deployment after desired policy deletion. Selected state, API,
+scheduler and gateway regressions pass. Independent sqlc regeneration matches;
+OpenAPI lint, Node build and 35 selected Python tests pass.
+
+Full-copy publication and policy qualification remain closed pending complete
+producer activation, cleanup, resource/data orchestration and promotion proof.
+These local contracts do not establish provider checkpoint consistency or native
+x86_64 KVM acceptance.

@@ -131,13 +131,43 @@ func (s *server) cancelPendingWork(w http.ResponseWriter, r *http.Request, acct 
 		return
 	}
 	if environment != "" {
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "invocation_environment_work_isolation_unavailable", "Stage work isolation unavailable", "stage cancellation requires isolated work lanes"))
+		s.cancelEnvironmentPendingWork(w, r, acct, app, environment)
 		return
 	}
 	// Validate the selected environment before the legacy path-only receipt
 	// lookup can replay a production cancellation as a successful stage action.
 	s.idempotent(func(w http.ResponseWriter, r *http.Request, _ state.Account) {
 		s.cancelAppPendingWork(w, r, app)
+	})(w, r, acct)
+}
+
+func (s *server) cancelEnvironmentPendingWork(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, environment string) {
+	env, err := s.store.ProjectEnvironmentBySlug(r.Context(), acct.ID, app.ProjectID, environment)
+	if err != nil {
+		writeWorkPolicyProblem(w, err, "load cancellation environment")
+		return
+	}
+	s.idempotentInEnvironment(env.ID, func(w http.ResponseWriter, r *http.Request, _ state.Account) {
+		var req api.CancelPendingWorkRequest
+		if !decodeJSONLimit(w, r, &req, 1024) {
+			return
+		}
+		key, err := workpolicy.CanonicalScalar(req.Key)
+		if err != nil {
+			api.WriteProblem(w, api.ErrValidation("work key must be a bounded string, number, or boolean"))
+			return
+		}
+		store, ok := s.store.(state.EnvironmentWorkCancellationStore)
+		if !ok {
+			api.WriteProblem(w, api.ErrCapacity("environment cancellation store unavailable"))
+			return
+		}
+		receipt, err := store.CancelPendingEnvironmentKeyedInvocations(r.Context(), acct.ID, app.ID, environment, r.PathValue("name"), key, uuid.NewString(), env.ID)
+		if err != nil {
+			writeWorkPolicyProblem(w, err, "cancel environment pending work")
+			return
+		}
+		writeJSON(w, http.StatusOK, api.CancelPendingWorkResponse{ID: receipt.ID, CancelledCount: receipt.CancelledCount})
 	})(w, r, acct)
 }
 

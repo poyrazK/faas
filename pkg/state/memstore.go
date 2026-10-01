@@ -504,6 +504,9 @@ type MemStore struct {
 	eventWorkBindings   map[string]EventWorkBinding
 	triggerWorkBindings map[string]TriggerWorkBinding
 	workCancellations   map[string]WorkCancellation
+
+	invocationWorkEnvironmentAdmissions map[string]InvocationWorkEnvironmentAdmission
+	invocationWorkEnvironmentDomains    map[string]string
 	// executions and executionPayloads mirror the ADR-171 durable intent
 	// split. Customer reads only touch executions; a payload is exposed solely
 	// by ClaimExecution after the in-memory lease CAS succeeds.
@@ -1198,6 +1201,9 @@ func NewMemStore() *MemStore {
 		oauthLinks:              map[string]OAuthLink{},
 		deploymentLogs:          map[string][]LogEntry{},
 		deploymentSeq:           map[string]int64{},
+
+		invocationWorkEnvironmentAdmissions: map[string]InvocationWorkEnvironmentAdmission{},
+		invocationWorkEnvironmentDomains:    map[string]string{},
 		// Issue #463 / ADR-069 / PR-B — per-workload filesystem
 		// handles (mirrors migration 00119's PK + ON CONFLICT
 		// semantics).
@@ -3263,6 +3269,9 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 	}
 	if slug == "production" || slug == DefaultEnvScope || environment.Protected {
 		return ProjectEnvironmentCleanupJob{}, ErrConflict
+	}
+	if m.environmentHasWorkDomainsLocked(environmentID) {
+		return ProjectEnvironmentCleanupJob{}, ErrInvocationEnvironmentWorkIsolation
 	}
 
 	for _, app := range m.apps {
@@ -5969,6 +5978,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 		}
 	}
 	delete(m.appDeletionClaims, id)
+	m.deleteAppWorkOwnershipLocked(id)
 	for key, v := range m.envs {
 		if v.AppID == id {
 			delete(m.envs, key)
@@ -12053,7 +12063,7 @@ func (m *MemStore) InvocationByID(_ context.Context, id string) (Invocation, err
 	if !ok {
 		return Invocation{}, ErrNotFound
 	}
-	return inv, nil
+	return cloneInvocationWorkEnvelope(inv), nil
 }
 
 // ListDueInvocations returns pending rows whose due_at <= now, ordered
@@ -24451,7 +24461,7 @@ func (m *MemStore) ClaimInvocationWithCap(_ context.Context, id, instanceID stri
 	m.invocations[id] = inv
 	row.CurrentInflight++
 	m.accountAsyncQuota[inv.AccountID] = row
-	return inv, nil
+	return cloneInvocationWorkEnvelope(inv), nil
 }
 
 // DecrementAccountAsyncInflight drops the counter by 1, clamped
@@ -24503,6 +24513,7 @@ func (m *MemStore) DeleteInvocationsByIDs(_ context.Context, ids []string) (int,
 	for _, id := range ids {
 		if _, ok := m.invocations[id]; ok {
 			delete(m.invocations, id)
+			delete(m.invocationWorkEnvironmentAdmissions, id)
 			n++
 		}
 	}

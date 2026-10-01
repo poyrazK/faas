@@ -18170,14 +18170,14 @@ paths:
       tags: [invocations]
       operationId: cancelPendingAppWork
       summary: Cancel pending work for one policy and application key.
-      description: Running work continues. A repeated Idempotency-Key returns the original receipt and does not cancel newer work. A stage selection returns invocation_environment_work_isolation_unavailable (409) before touching production lanes or cancellation receipts.
+      description: Running work continues. A repeated Idempotency-Key returns the original receipt and does not cancel newer work. A stage selection cancels only its isolated environment lane, including work admitted under a policy that has since been deleted from desired settings. Cancellation receipts are independent per environment. Omitting environment preserves the production API.
       parameters:
         - $ref: '#/components/parameters/Slug'
         - $ref: '#/components/parameters/IdempotencyKey'
         - name: environment
           in: query
           required: false
-          description: Registered project environment. Stage cancellation is unavailable until work lanes are isolated.
+          description: Registered project environment whose pending work should be cancelled. Stage lanes and receipts are isolated by the environment's immutable identity.
           schema: { type: string }
         - in: path
           name: name

@@ -5285,6 +5285,9 @@ func (s *PgStore) deleteProjectEnvironmentWithCleanup(
 	if slug == "production" || slug == DefaultEnvScope || protected {
 		return ProjectEnvironmentCleanupJob{}, ErrConflict
 	}
+	if err := rejectEnvironmentWorkOwnershipDB(ctx, tx, accountID, projectID, slug); err != nil {
+		return ProjectEnvironmentCleanupJob{}, err
+	}
 
 	var hasLiveRelease bool
 	if err := tx.QueryRow(ctx, `

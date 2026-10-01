@@ -3236,6 +3236,24 @@ CREATE TABLE public.invocations (
     result_retention_until timestamp with time zone,
     replayed_from_invocation_id uuid,
     last_replayed_at timestamp with time zone,
+    -- Established invocation columns used by ADR-375 admission queries.
+    queue_name text NOT NULL DEFAULT '' CHECK (queue_name='' OR queue_name ~ '^[a-z][a-z0-9-]{0,62}$'),
+    on_success_destination_id uuid REFERENCES app_webhooks(id) ON DELETE SET NULL,
+    on_failure_destination_id uuid REFERENCES app_webhooks(id) ON DELETE SET NULL,
+    work_policy_name text,
+    work_key_digest bytea,
+    work_expires_at timestamp with time zone,
+    work_sequence bigint,
+    work_policy_revision bigint CHECK (work_policy_revision IS NULL OR work_policy_revision>0),
+    work_fairness_digest bytea,
+    work_fairness_limit integer,
+    CONSTRAINT invocations_work_lane_check CHECK (
+        (work_policy_name IS NULL AND work_key_digest IS NULL AND work_expires_at IS NULL AND work_sequence IS NULL)
+        OR (work_policy_name ~ '^[a-z][a-z0-9-]{0,62}$' AND work_key_digest IS NOT NULL AND length(work_key_digest)=32 AND work_sequence>0)),
+    CONSTRAINT invocations_work_fairness_check CHECK (
+        (work_fairness_digest IS NULL AND work_fairness_limit IS NULL)
+        OR (work_policy_name IS NOT NULL AND work_fairness_digest IS NOT NULL AND work_fairness_limit IS NOT NULL
+            AND length(work_fairness_digest)=32 AND work_fairness_limit BETWEEN 1 AND 1000)),
     CONSTRAINT invocations_outcome_check CHECK (((outcome IS NULL) OR (outcome = ANY (ARRAY['success'::text, 'failed'::text, 'timeout'::text, 'dead_letter'::text])))),
     CONSTRAINT invocations_source_check CHECK ((source = ANY (ARRAY['async_invoke'::text, 'inbound_webhook'::text, 'queue'::text, 'delayed_task'::text, 'cron'::text, 'replay'::text, 'esm'::text]))),
     CONSTRAINT invocations_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'dispatching'::text, 'completed'::text, 'failed'::text, 'cancelled'::text, 'dead_letter'::text])))
@@ -11234,3 +11252,30 @@ CREATE TABLE trigger_work_bindings (
     FOREIGN KEY (trigger_id,app_id) REFERENCES triggers(id,app_id) ON DELETE CASCADE,
     FOREIGN KEY (app_id,policy_name) REFERENCES app_work_policies(app_id,name)
 );
+
+CREATE TABLE invocation_work_environment_domains (
+    app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    environment_id uuid NOT NULL REFERENCES project_environments(id),
+    policy_name text NOT NULL CHECK (policy_name ~ '^[a-z][a-z0-9-]{0,62}$'),
+    kind text NOT NULL CHECK (kind IN ('key','fairness')),
+    digest bytea NOT NULL CHECK (length(digest)=32),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (app_id,policy_name,kind,digest)
+);
+CREATE INDEX invocation_work_environment_domains_environment_idx ON invocation_work_environment_domains(environment_id);
+
+CREATE TABLE invocation_work_environment_admissions (
+    invocation_id uuid PRIMARY KEY REFERENCES invocations(id) ON DELETE CASCADE,
+    environment_id uuid NOT NULL REFERENCES project_environments(id),
+    workload_spec_id uuid NOT NULL REFERENCES project_environment_workload_specs(id),
+    settings_hash text NOT NULL CHECK (settings_hash ~ '^[a-f0-9]{64}$'),
+    app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    policy_name text NOT NULL CHECK (policy_name ~ '^[a-z][a-z0-9-]{0,62}$'),
+    policy_revision bigint NOT NULL CHECK (policy_revision>=1),
+    key_digest bytea NOT NULL CHECK (length(key_digest)=32),
+    fairness_digest bytea,
+    fairness_limit integer NOT NULL CHECK (fairness_limit BETWEEN 0 AND 1000),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    CHECK ((fairness_limit=0 AND fairness_digest IS NULL) OR (fairness_limit>0 AND fairness_digest IS NOT NULL AND length(fairness_digest)=32))
+);
+CREATE INDEX invocation_work_environment_admissions_environment_idx ON invocation_work_environment_admissions(environment_id);

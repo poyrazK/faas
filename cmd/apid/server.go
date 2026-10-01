@@ -3904,6 +3904,12 @@ func (s *server) domainCreateLimited(next http.Handler) http.Handler {
 }
 
 func (s *server) idempotent(next accountHandler) accountHandler {
+	return s.idempotentInEnvironment("", next)
+}
+
+// The legacy method/path identity is preserved for production. An owned
+// environment ID separates stage receipts, including after slug recreation.
+func (s *server) idempotentInEnvironment(environmentID string, next accountHandler) accountHandler {
 	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
 		key := r.Header.Get("Idempotency-Key")
 		if key == "" {
@@ -3914,6 +3920,9 @@ func (s *server) idempotent(next accountHandler) accountHandler {
 		// reusing a key on another endpoint runs that request instead of
 		// replaying an unrelated cached response.
 		key = r.Method + " " + r.URL.Path + "\n" + key
+		if environmentID != "" {
+			key = "environment " + environmentID + "\n" + key
+		}
 		if reserver, ok := s.store.(idempotencyReserver); ok {
 			s.idempotentReserved(w, r, acct, reserver, key, next)
 			return

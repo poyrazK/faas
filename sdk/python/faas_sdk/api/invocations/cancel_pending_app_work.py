@@ -104,8 +104,9 @@ def sync_detailed(
     """Cancel pending work for one policy and application key.
 
      Running work continues. A repeated Idempotency-Key returns the original receipt and does not cancel
-    newer work. A stage selection returns invocation_environment_work_isolation_unavailable (409) before
-    touching production lanes or cancellation receipts.
+    newer work. A stage selection cancels only its isolated environment lane, including work admitted
+    under a policy that has since been deleted from desired settings. Cancellation receipts are
+    independent per environment. Omitting environment preserves the production API.
 
     Args:
         slug (str):
@@ -150,8 +151,9 @@ def sync(
     """Cancel pending work for one policy and application key.
 
      Running work continues. A repeated Idempotency-Key returns the original receipt and does not cancel
-    newer work. A stage selection returns invocation_environment_work_isolation_unavailable (409) before
-    touching production lanes or cancellation receipts.
+    newer work. A stage selection cancels only its isolated environment lane, including work admitted
+    under a policy that has since been deleted from desired settings. Cancellation receipts are
+    independent per environment. Omitting environment preserves the production API.
 
     Args:
         slug (str):
@@ -191,8 +193,9 @@ async def asyncio_detailed(
     """Cancel pending work for one policy and application key.
 
      Running work continues. A repeated Idempotency-Key returns the original receipt and does not cancel
-    newer work. A stage selection returns invocation_environment_work_isolation_unavailable (409) before
-    touching production lanes or cancellation receipts.
+    newer work. A stage selection cancels only its isolated environment lane, including work admitted
+    under a policy that has since been deleted from desired settings. Cancellation receipts are
+    independent per environment. Omitting environment preserves the production API.
 
     Args:
         slug (str):
@@ -235,8 +238,9 @@ async def asyncio(
     """Cancel pending work for one policy and application key.
 
      Running work continues. A repeated Idempotency-Key returns the original receipt and does not cancel
-    newer work. A stage selection returns invocation_environment_work_isolation_unavailable (409) before
-    touching production lanes or cancellation receipts.
+    newer work. A stage selection cancels only its isolated environment lane, including work admitted
+    under a policy that has since been deleted from desired settings. Cancellation receipts are
+    independent per environment. Omitting environment preserves the production API.
 
     Args:
         slug (str):

@@ -8,9 +8,19 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 func TestDrain_StageInvocationWakesPinnedStageDeployment(t *testing.T) {
+	testDrainStageInvocation(t, false)
+}
+
+func TestDrain_StageKeyedInvocationWakesPinnedStageDeployment(t *testing.T) {
+	testDrainStageInvocation(t, true)
+}
+
+func testDrainStageInvocation(t *testing.T, keyed bool) {
+	t.Helper()
 	ctx := t.Context()
 	store := state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "stage-drain@example.test", api.PlanPro)
@@ -28,6 +38,13 @@ func TestDrain_StageInvocationWakesPinnedStageDeployment(t *testing.T) {
 		RAMMB: 256, MaxConcurrency: 4, Manifest: state.AppManifest{RevisionPinTTLSeconds: 3600}})
 	if err != nil {
 		t.Fatal(err)
+	}
+	policy := workpolicy.Policy{Name: "stage-work", MaxRunningPerKey: 1, PendingUpdates: workpolicy.PendingKeepLatest,
+		MaxRunningPerFairnessKey: 1, ExpiresAfter: time.Hour}
+	if keyed {
+		if _, _, err := state.UpsertEnvironmentWorkPolicy(ctx, store, app, "staging", nil, policy); err != nil {
+			t.Fatal(err)
+		}
 	}
 	var stage state.Deployment
 	for _, scope := range []string{"production", "staging"} {
@@ -50,9 +67,19 @@ func TestDrain_StageInvocationWakesPinnedStageDeployment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	inv, err := store.EnqueueInvocation(ctx, prepared)
+	var inv state.Invocation
+	if keyed {
+		inv, err = store.EnqueueKeyedInvocation(ctx, prepared, policy, "s:one", "s:customer")
+	} else {
+		inv, err = store.EnqueueInvocation(ctx, prepared)
+	}
 	if err != nil {
 		t.Fatal(err)
+	}
+	if keyed {
+		if _, err := state.DeleteEnvironmentWorkPolicy(ctx, store, app, "staging", policy.Name, nil); err != nil {
+			t.Fatal(err)
+		}
 	}
 	vmm, notifier, synth := &fakeVMM{}, &fakeNotifier{}, &drainSynth{}
 	engine := newEngine(t, store, vmm, notifier, "1.10.0")

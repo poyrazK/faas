@@ -134,6 +134,9 @@ type Querier interface {
 	CreateCustomDomain(ctx context.Context, db DBTX, arg CreateCustomDomainParams) (CreateCustomDomainRow, error)
 	CreateDeployment(ctx context.Context, db DBTX, arg CreateDeploymentParams) (CreateDeploymentRow, error)
 	CreateInstance(ctx context.Context, db DBTX, arg CreateInstanceParams) (CreateInstanceRow, error)
+	// One server admission clock anchors the stage's debounce, expiry and created
+	// time. The legacy insert otherwise uses PostgreSQL's transaction-start clock.
+	CreateInvocationWorkEnvironmentAdmission(ctx context.Context, db DBTX, arg CreateInvocationWorkEnvironmentAdmissionParams) (int64, error)
 	// --- Organizations (ADR-061, IAM-6, PR 2) -------------------------------
 	//
 	// PR 2's sqlc queries cover the deterministic reads + simple writes. The
@@ -1042,6 +1045,7 @@ type Querier interface {
 	// after the index scan.
 	PerAccountRateLimitAggregate(ctx context.Context, db DBTX, arg PerAccountRateLimitAggregateParams) ([]PerAccountRateLimitAggregateRow, error)
 	ProjectEnvironmentCloneSecretTargetExists(ctx context.Context, db DBTX, arg ProjectEnvironmentCloneSecretTargetExistsParams) (bool, error)
+	ProjectEnvironmentHasInvocationWorkOwnership(ctx context.Context, db DBTX, arg ProjectEnvironmentHasInvocationWorkOwnershipParams) (pgtype.Bool, error)
 	// Retention purge. The meterd cron calls this
 	// hourly with `cutoff = now() - interval '30 days'`
 	// (matches the §12 prom_retention_days:15 floor +
@@ -1057,6 +1061,8 @@ type Querier interface {
 	ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg ReadAccountCreditConsumptionParams) (ReadAccountCreditConsumptionRow, error)
 	ReadDeploymentLayerArtifactKeys(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]string, error)
 	ReadInvocationPinScope(ctx context.Context, db DBTX, arg ReadInvocationPinScopeParams) (string, error)
+	ReadInvocationWorkEnvironmentAdmission(ctx context.Context, db DBTX, invocationID pgtype.UUID) (InvocationWorkEnvironmentAdmission, error)
+	ReadInvocationWorkEnvironmentDomain(ctx context.Context, db DBTX, arg ReadInvocationWorkEnvironmentDomainParams) (pgtype.UUID, error)
 	ReadProjectEnvironmentCloneConfigurationCaptureIdentity(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneConfigurationCaptureIdentityParams) (ReadProjectEnvironmentCloneConfigurationCaptureIdentityRow, error)
 	// Include all application-schema tables. Several configuration tables have
 	// neither tenant identity columns nor foreign keys, so ownership heuristics
@@ -1184,6 +1190,7 @@ type Querier interface {
 	// DO UPDATE) is correct: the original row is canonical.
 	RecordUploadCommitOutcome(ctx context.Context, db DBTX, arg RecordUploadCommitOutcomeParams) (UploadCommitOutcome, error)
 	RegisterGatewayUsageEvent(ctx context.Context, db DBTX, arg RegisterGatewayUsageEventParams) (bool, error)
+	RegisterInvocationWorkEnvironmentDomain(ctx context.Context, db DBTX, arg RegisterInvocationWorkEnvironmentDomainParams) (pgtype.UUID, error)
 	RegisterLayerArtifactRetention(ctx context.Context, db DBTX, storageKey string) error
 	ReleaseProjectEnvironmentCloneWorkerLease(ctx context.Context, db DBTX, arg ReleaseProjectEnvironmentCloneWorkerLeaseParams) (int64, error)
 	RenewProjectEnvironmentCloneWorkerLease(ctx context.Context, db DBTX, arg RenewProjectEnvironmentCloneWorkerLeaseParams) (RenewProjectEnvironmentCloneWorkerLeaseRow, error)
@@ -1489,6 +1496,7 @@ type Querier interface {
 	// refreshed on every pass and backs the dashboard's since filter.
 	UpsertRegressionObservation(ctx context.Context, db DBTX, arg UpsertRegressionObservationParams) error
 	UsageByMonth(ctx context.Context, db DBTX, arg UsageByMonthParams) ([]UsageByMonthRow, error)
+	ValidateInvocationWorkEnvironmentClaim(ctx context.Context, db DBTX, invocationID pgtype.UUID) (ValidateInvocationWorkEnvironmentClaimRow, error)
 }
 
 var _ Querier = (*Queries)(nil)

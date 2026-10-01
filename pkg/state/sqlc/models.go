@@ -1350,6 +1350,39 @@ type Invocation struct {
 	ResultRetentionUntil     pgtype.Timestamptz
 	ReplayedFromInvocationID pgtype.UUID
 	LastReplayedAt           pgtype.Timestamptz
+	QueueName                string
+	OnSuccessDestinationID   pgtype.UUID
+	OnFailureDestinationID   pgtype.UUID
+	WorkPolicyName           pgtype.Text
+	WorkKeyDigest            []byte
+	WorkExpiresAt            pgtype.Timestamptz
+	WorkSequence             pgtype.Int8
+	WorkPolicyRevision       pgtype.Int8
+	WorkFairnessDigest       []byte
+	WorkFairnessLimit        pgtype.Int4
+}
+
+type InvocationWorkEnvironmentAdmission struct {
+	InvocationID   pgtype.UUID
+	EnvironmentID  pgtype.UUID
+	WorkloadSpecID pgtype.UUID
+	SettingsHash   string
+	AppID          pgtype.UUID
+	PolicyName     string
+	PolicyRevision int64
+	KeyDigest      []byte
+	FairnessDigest []byte
+	FairnessLimit  int32
+	CreatedAt      pgtype.Timestamptz
+}
+
+type InvocationWorkEnvironmentDomain struct {
+	AppID         pgtype.UUID
+	EnvironmentID pgtype.UUID
+	PolicyName    string
+	Kind          string
+	Digest        []byte
+	CreatedAt     pgtype.Timestamptz
 }
 
 type InvocationsPendingPerApp struct {

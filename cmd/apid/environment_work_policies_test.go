@@ -17,6 +17,13 @@ import (
 func TestEnvironmentWorkPolicyAPIIsolatesConfigAndCancellation(t *testing.T) {
 	srv, store, account, project, app := newProjectLifecycleFixture(t)
 	ctx := context.Background()
+	manifest := app.Manifest
+	manifest.RevisionPinTTLSeconds = 3600
+	var err error
+	app, err = store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: &manifest})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: account.ID, ProjectID: project.ID, Slug: "staging"}); err != nil {
 		t.Fatal(err)
 	}
@@ -66,13 +73,41 @@ func TestEnvironmentWorkPolicyAPIIsolatesConfigAndCancellation(t *testing.T) {
 	if noop.Code != http.StatusOK || noop.Header().Get("X-Gregale-Workload-Revision") != "1" {
 		t.Fatalf("no-op advanced desired head: %d %s", noop.Code, noop.Body.String())
 	}
+	dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "staging", Kind: state.DeploymentKindImage})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, dep.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PublishProjectReleaseSet(ctx, account.ID, project.ID, "staging", 1800, []state.ProjectReleaseMember{{AppID: app.ID, DeploymentID: dep.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	stageRequest, _, err := state.ResolveInvocationVersionForEnvironment(ctx, store,
+		state.Invocation{AppID: app.ID, AccountID: account.ID, Source: state.InvocationAsyncInvoke, Payload: json.RawMessage(`{}`)}, "staging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stagePolicy := policy
+	stagePolicy.Debounce = 3 * time.Second
+	stageRow, err := store.EnqueueKeyedInvocation(ctx, stageRequest, stagePolicy, "s:one")
+	if err != nil {
+		t.Fatal(err)
+	}
 	// A stage cancellation cannot touch an already admitted production lane.
 	row, err := store.EnqueueKeyedInvocation(ctx, state.Invocation{AppID: app.ID, AccountID: account.ID, Source: state.InvocationAsyncInvoke,
 		Payload: json.RawMessage(`{}`), WorkPolicyRevision: 1}, policy, "s:one")
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertProblem(t, call(http.MethodPost, "/orders/cancel-pending?environment=staging", `{"key":"one"}`, ""), http.StatusConflict, "invocation_environment_work_isolation_unavailable")
+	stageCancel := call(http.MethodPost, "/orders/cancel-pending?environment=staging", `{"key":"one"}`, "")
+	var stageReceipt api.CancelPendingWorkResponse
+	if err := json.Unmarshal(stageCancel.Body.Bytes(), &stageReceipt); stageCancel.Code != http.StatusOK || err != nil || stageReceipt.CancelledCount != 1 {
+		t.Fatalf("stage cancellation = %d %s, %v", stageCancel.Code, stageCancel.Body.String(), err)
+	}
+	if after, err := store.InvocationByID(ctx, stageRow.ID); err != nil || after.State != state.InvocationCancelled {
+		t.Fatalf("stage cancellation missed own row: %+v, %v", after, err)
+	}
 	if after, err := store.InvocationByID(ctx, row.ID); err != nil || after.State != state.InvocationPending {
 		t.Fatalf("stage cancellation changed production row: %+v, %v", after, err)
 	}
@@ -80,12 +115,25 @@ func TestEnvironmentWorkPolicyAPIIsolatesConfigAndCancellation(t *testing.T) {
 	if productionCancel.Code != http.StatusOK {
 		t.Fatalf("stage guard poisoned production receipt: %d %s", productionCancel.Code, productionCancel.Body.String())
 	}
+	var productionReceipt api.CancelPendingWorkResponse
+	if err := json.Unmarshal(productionCancel.Body.Bytes(), &productionReceipt); err != nil || productionReceipt.CancelledCount != 1 || productionReceipt.ID == stageReceipt.ID {
+		t.Fatalf("production reused stage receipt: %+v, %v", productionReceipt, err)
+	}
 	newRow, err := store.EnqueueKeyedInvocation(ctx, state.Invocation{AppID: app.ID, AccountID: account.ID, Source: state.InvocationAsyncInvoke,
 		Payload: json.RawMessage(`{}`), WorkPolicyRevision: 1}, policy, "s:one")
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertProblem(t, call(http.MethodPost, "/orders/cancel-pending?environment=staging", `{"key":"one"}`, ""), http.StatusConflict, "invocation_environment_work_isolation_unavailable")
+	newStageRow, err := store.EnqueueKeyedInvocation(ctx, stageRequest, stagePolicy, "s:one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replay := call(http.MethodPost, "/orders/cancel-pending?environment=staging", `{"key":"one"}`, ""); replay.Code != http.StatusOK || replay.Header().Get("Idempotent-Replayed") != "true" || replay.Body.String() != stageCancel.Body.String() {
+		t.Fatalf("stage receipt did not replay independently: %d %s", replay.Code, replay.Body.String())
+	}
+	if after, err := store.InvocationByID(ctx, newStageRow.ID); err != nil || after.State != state.InvocationPending {
+		t.Fatalf("stage replay cancelled newer work: %+v, %v", after, err)
+	}
 	if replay := call(http.MethodPost, "/orders/cancel-pending", `{"key":"one"}`, ""); replay.Code != http.StatusOK || replay.Header().Get("Idempotent-Replayed") != "true" {
 		t.Fatalf("legacy receipt stopped replaying: %d %s", replay.Code, replay.Body.String())
 	}
@@ -122,5 +170,26 @@ func TestEnvironmentWorkPolicyAPIIsolatesConfigAndCancellation(t *testing.T) {
 	assertProblem(t, call(http.MethodDelete, "/orders?environment=staging", "", "3"), http.StatusConflict, api.CodeConflict)
 	if list := call(http.MethodGet, "", "", ""); list.Code != http.StatusOK {
 		t.Fatalf("legacy production list = %d %s", list.Code, list.Body.String())
+	}
+}
+
+func TestEnvironmentWorkCancellationFencesDeletion(t *testing.T) {
+	srv, store, account, project, app := newProjectLifecycleFixture(t)
+	env, err := store.CreateProjectEnvironment(t.Context(), state.ProjectEnvironment{AccountID: account.ID, ProjectID: project.ID, Slug: "staging"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, response := projectRequest(http.MethodPost, "/v1/apps/"+app.Slug+"/work-policies/orders/cancel-pending?environment=staging", app.Slug, []byte(`{"key":"one"}`))
+	request.SetPathValue("name", "orders")
+	srv.cancelPendingWork(response, request, account)
+	if response.Code != http.StatusOK {
+		t.Fatalf("empty stage cancellation = %d %s", response.Code, response.Body.String())
+	}
+	request, response = projectRequest(http.MethodDelete, "/v1/projects/"+project.Slug+"/environments/staging", project.Slug, nil)
+	request.SetPathValue("environment", "staging")
+	srv.deleteProjectEnvironment(response, request, account)
+	assertProblem(t, response, http.StatusConflict, "environment_work_cleanup_unavailable")
+	if retained, err := store.ProjectEnvironmentBySlug(t.Context(), account.ID, project.ID, env.Slug); err != nil || retained.ID != env.ID {
+		t.Fatalf("refused deletion removed owned stage: %+v, %v", retained, err)
 	}
 }

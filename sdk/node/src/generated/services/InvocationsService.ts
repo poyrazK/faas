@@ -273,7 +273,7 @@ export class InvocationsService {
   }
   /**
    * Cancel pending work for one policy and application key.
-   * Running work continues. A repeated Idempotency-Key returns the original receipt and does not cancel newer work. A stage selection returns invocation_environment_work_isolation_unavailable (409) before touching production lanes or cancellation receipts.
+   * Running work continues. A repeated Idempotency-Key returns the original receipt and does not cancel newer work. A stage selection cancels only its isolated environment lane, including work admitted under a policy that has since been deleted from desired settings. Cancellation receipts are independent per environment. Omitting environment preserves the production API.
    * @returns CancelPendingWorkResponse Durable cancellation receipt.
    * @throws ApiError
    */
@@ -300,7 +300,7 @@ export class InvocationsService {
      */
     idempotencyKey?: string,
     /**
-     * Registered project environment. Stage cancellation is unavailable until work lanes are isolated.
+     * Registered project environment whose pending work should be cancelled. Stage lanes and receipts are isolated by the environment's immutable identity.
      */
     environment?: string,
   }): CancelablePromise<CancelPendingWorkResponse> {

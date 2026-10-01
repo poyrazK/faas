@@ -37,8 +37,8 @@ type invocationEnvironmentStore interface {
 	DeploymentByID(context.Context, string) (Deployment, error)
 }
 
-// Shared work lanes, queue consumers and completion destinations do not yet
-// have environment ownership. Reject their use in a stage before mutation.
+// A stage requires owned work admission. Queue consumers and completion
+// destinations remain unavailable until their environment ownership exists.
 var ErrInvocationEnvironmentWorkIsolation = fmt.Errorf("%w: invocation environment work isolation is unavailable", ErrConflict)
 
 // ResolveInvocationVersion validates untrusted pin headers at delivery time.
@@ -129,13 +129,16 @@ func resolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 		if env.AccountID != app.AccountID || env.ProjectID != app.ProjectID || env.Slug != scope {
 			return inv, InvocationVersion{}, ErrConflict
 		}
-		if inv.Source == InvocationQueue || inv.WorkPolicyName != "" || len(inv.WorkKeyDigest) != 0 ||
+		if invocationHasSharedWorkProducer(inv) ||
 			inv.OnSuccessDestinationID != "" || inv.OnFailureDestinationID != "" {
 			return inv, InvocationVersion{}, ErrInvocationEnvironmentWorkIsolation
 		}
 	}
 	version := InvocationVersion{Scope: scope}
 	if revision == "" && !projectApp {
+		if err := validateInvocationWorkEnvironmentAdmission(ctx, store, inv, version); err != nil {
+			return inv, InvocationVersion{}, err
+		}
 		return inv, version, nil
 	}
 	resolver, ok := store.(invocationVersionStore)
@@ -153,6 +156,9 @@ func resolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 		if err != nil {
 			return inv, InvocationVersion{}, err
 		}
+	}
+	if err := validateInvocationWorkEnvironmentAdmission(ctx, store, inv, version); err != nil {
+		return inv, InvocationVersion{}, err
 	}
 	if version.DeploymentID == "" {
 		if invocationStageScope(scope) {

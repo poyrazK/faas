@@ -32,6 +32,9 @@ func (s *PgStore) RollbackProjectEnvironmentClone(ctx context.Context, accountID
 	if slug == "production" {
 		return ErrConflict
 	}
+	if err := rejectEnvironmentWorkOwnershipDB(ctx, tx, accountID, projectID, slug); err != nil {
+		return err
+	}
 	var hasDeployments, hasManagedSecrets bool
 	if err := tx.QueryRow(ctx, `
 		select exists (

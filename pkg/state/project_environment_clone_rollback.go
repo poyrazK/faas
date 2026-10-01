@@ -26,6 +26,9 @@ func (m *MemStore) RollbackProjectEnvironmentClone(_ context.Context, accountID,
 	if slug == "production" {
 		return ErrConflict
 	}
+	if m.environmentHasWorkDomainsLocked(environmentID) {
+		return ErrInvocationEnvironmentWorkIsolation
+	}
 	for _, app := range m.apps {
 		if app.ProjectID != projectID {
 			continue
