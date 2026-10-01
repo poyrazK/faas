@@ -20,11 +20,16 @@ export type EnvironmentGitSource = {
   applied_revision_id?: string;
   source_checked_at?: string;
   source_error_code?: string;
-  /** Last verified candidate at the bound ref; discovery does not grant approval. */
+  /**
+   * Last verified candidate at the bound ref; discovery does not grant approval.
+   */
   source_commit_sha?: string;
   source_definition_digest?: string;
-  /** Last successful candidate verification, preserved when a later poll fails. */
+  /**
+   * Last successful candidate verification, preserved when a later poll fails.
+   */
   source_verified_at?: string;
   created_at: string;
   updated_at: string;
 };
+

@@ -58,6 +58,10 @@ import (
 // item_identifier) guarantee from migrations/00267_triggers.sql.
 type SourceRecord struct {
 	ItemIdentifier string `json:"item_identifier"`
+	// InvocationID and InvocationAttempt are set only by the durable queue
+	// poller. Broker metadata and headers cannot select an invocation identity.
+	InvocationID      string `json:"-"`
+	InvocationAttempt int    `json:"-"`
 	// StableIdentifier identifies the broker message across deliveries. The
 	// dispatcher uses it for a configured work policy while Ack/Nack keep the
 	// current ItemIdentifier as the broker delivery handle.

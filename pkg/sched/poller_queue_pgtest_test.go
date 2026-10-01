@@ -87,6 +87,9 @@ func TestQueuePollerLinksTriggerAndInvocationOutcomes(t *testing.T) {
 			if result.Error != nil || len(result.Records) != 1 {
 				t.Fatalf("Poll success records=%d err=%v", len(result.Records), result.Error)
 			}
+			if record := result.Records[0]; record.InvocationID != invocation.ID || record.InvocationAttempt != 1 {
+				t.Fatalf("durable queue carrier: id=%q attempt=%d", record.InvocationID, record.InvocationAttempt)
+			}
 			var blocked state.Invocation
 			if tc.source == state.InvocationQueue {
 				blocked, err = store.EnqueueInvocation(ctx, state.Invocation{
@@ -317,6 +320,11 @@ func TestNamedQueuePollerSharesWorkReservationsAndFencesAcknowledgement(t *testi
 		initial.Records[0].ItemIdentifier != first.ID || initial.Records[1].ItemIdentifier != fourth.ID {
 		t.Fatalf("initial work reservation = %+v", initial)
 	}
+	for _, record := range initial.Records {
+		if record.InvocationID != record.ItemIdentifier || record.InvocationAttempt != 1 {
+			t.Fatalf("named queue carrier: id=%q attempt=%d", record.InvocationID, record.InvocationAttempt)
+		}
+	}
 	if due, err := store.ListDueInvocationsAfter(ctx, time.Now(), state.InvocationDueCursor{}, 64); err != nil || len(due) != 0 {
 		t.Fatalf("named queue leaked to generic drain: %+v, err=%v", due, err)
 	}
@@ -358,14 +366,16 @@ func TestNamedQueuePollerSharesWorkReservationsAndFencesAcknowledgement(t *testi
 	}
 	stale := add("s:doc-4", "s:tenant-c")
 	oldPoller := newPoller()
-	if result := oldPoller.Poll(ctx, trigger); result.Error != nil || len(result.Records) != 1 {
+	if result := oldPoller.Poll(ctx, trigger); result.Error != nil || len(result.Records) != 1 ||
+		result.Records[0].InvocationID != stale.ID || result.Records[0].InvocationAttempt != 1 {
 		t.Fatalf("first claim for fencing = %+v", result)
 	}
 	if _, err := pool.Exec(ctx, `update invocations set state='pending', lease_expires_at=null where id=$1`, stale.ID); err != nil {
 		t.Fatal(err)
 	}
 	newOwner := newPoller()
-	if result := newOwner.Poll(ctx, trigger); result.Error != nil || len(result.Records) != 1 {
+	if result := newOwner.Poll(ctx, trigger); result.Error != nil || len(result.Records) != 1 ||
+		result.Records[0].InvocationID != stale.ID || result.Records[0].InvocationAttempt != 2 {
 		t.Fatalf("replacement claim for fencing = %+v", result)
 	}
 	if err := oldPoller.Ack(ctx, trigger, []string{stale.ID}); err != nil {

@@ -14660,21 +14660,27 @@ paths:
       summary: "Internal — schedd posts a batch envelope to the gateway."
       description: |
         Internal-only route. Schedd invokes this once per closed
-        batch (size / window / 6MB cap). The function under the
-        trigger responds with `{"batchItemFailures":[{"itemIdentifier":"..."}]}`.
-        Empty / missing response ⇒ full success. Mirrors AWS Lambda's
-        `ReportBatchItemFailures` contract verbatim.
+        batch. The gateway delivers records sequentially and returns one
+        result per item. Each function response may include
+        `{"batchItemFailures":[{"itemIdentifier":"..."}]}`.
+        Durable queue records include an invocation ID and current claim
+        attempt; source must be esm for these records.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [trigger_id, records]
+              required: [invocation_id, app_id, trigger_id, records]
               properties:
+                invocation_id:
+                  type: string
+                  description: Synthetic batch identity, typically trigger- followed by the trigger UUID.
                 trigger_id: { type: string, format: uuid }
                 app_id:     { type: string, format: uuid }
-                kind:       { $ref: '#/components/schemas/TriggerKind' }
+                source:
+                  type: string
+                  description: Internal dispatch source; esm for trigger and durable queue batches.
                 records:
                   type: array
                   items:
@@ -14682,6 +14688,14 @@ paths:
                     required: [item_identifier, payload_b64]
                     properties:
                       item_identifier: { type: string }
+                      invocation_id:
+                        type: string
+                        format: uuid
+                        description: Internal durable queue invocation ID; must equal item_identifier and have a current claimed lease.
+                      invocation_attempt:
+                        type: integer
+                        minimum: 1
+                        description: Required with invocation_id; fences delivery to the current durable queue claim attempt.
                       payload_b64:     { type: string }
                       headers:         { type: object, additionalProperties: { type: string } }
                       metadata:        { type: object, additionalProperties: true }
@@ -14692,16 +14706,18 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [results]
                 properties:
-                  succeeded:
+                  results:
                     type: array
-                    items: { type: string, description: "item_identifier." }
-                  retry:
-                    type: array
-                    items: { type: string }
-                  dead_letter:
-                    type: array
-                    items: { type: string }
+                    items:
+                      type: object
+                      required: [item_identifier, status]
+                      properties:
+                        item_identifier: { type: string }
+                        status: { type: string, enum: [succeeded, retry, dead_letter] }
+                        error: { type: string }
+                        code: { type: string }
 
   # ─── Projects (ADR-050 / Phase 3) ───────────────────────────────────
   # Two endpoints:

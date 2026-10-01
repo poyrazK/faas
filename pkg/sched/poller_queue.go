@@ -213,6 +213,7 @@ func (q *queuePoller) pollNamedQueue(ctx context.Context, t sqlc.Trigger) PollRe
 		}
 		out = append(out, SourceRecord{
 			ItemIdentifier: claimed.ID, Payload: claimed.Payload,
+			InvocationID: claimed.ID, InvocationAttempt: claimed.Attempts,
 			Headers:  parseJSONHeaders(string(claimed.Headers)),
 			Metadata: map[string]any{}, ReceivedAt: claimed.CreatedAt,
 		})
@@ -327,10 +328,11 @@ func (q *queuePoller) pollLegacyQueue(ctx context.Context, t sqlc.Trigger) PollR
 		}
 		out = append(out, SourceRecord{
 			ItemIdentifier: idStr,
-			Payload:        []byte(payload),
-			Headers:        parseJSONHeaders(headers),
-			Metadata:       parseJSONMetadata(metadata),
-			ReceivedAt:     createdAt.Time,
+			InvocationID:   idStr, InvocationAttempt: attempts,
+			Payload:    []byte(payload),
+			Headers:    parseJSONHeaders(headers),
+			Metadata:   parseJSONMetadata(metadata),
+			ReceivedAt: createdAt.Time,
 		})
 		claimedAttempts[idStr] = attempts
 	}

@@ -1357,18 +1357,20 @@ test-environment-gitops-controls: test-environment-gitops-core ## API/CLI/dashbo
 	@promtool check rules deploy/ansible/roles/prometheus/files/faas.rules.yml
 	@promtool test rules pkg/promqlrules/testdata/environment_git_sources.test.yml
 	@$(GO) test -p 1 ./pkg/state -run '^TestPgStoreEdgeRule(Batch|MutationLock)' -count=1
-	@$(GO) test -p 1 ./pkg/state -run '^Test(Mem|Pg)StoreConformance$$/^(runtime_input_receipt.*|scoped_runtime_changes.*|snapshot_publication_fences_runtime_config_changes|invocation_environment.*|keyed_invocation_environment.*)$$' -count=1
+	@$(GO) test -p 1 ./pkg/state -run '^Test(Mem|Pg)StoreConformance$$/^(runtime_input_receipt.*|scoped_runtime_changes.*|snapshot_publication_fences_runtime_config_changes|invocation_environment.*|keyed_invocation_environment.*|queue_batch_admission.*)$$' -count=1
 	@$(GO) test -p 1 ./migrations -run '^TestMigrationInvocationDeploymentScope.*$$' -count=1
 	@$(GO) test -p 1 ./pkg/state -run '^(TestPg_InvocationScope.*|TestResolveInvocationVersionUsesCapturedProjectScope)$$' -count=1
 	@$(GO) test -p 1 ./pkg/sched -run '^(TestDrain_StoredScope.*|TestWakeCoord_Scope.*|TestEnsureWake_SeparateScopes.*|TestLedgerRolloutScope.*|TestEngineSeedLedgerPreservesDeploymentScope)$$' -count=1
-	@$(GO) test -p 1 ./cmd/gatewayd-internal -run '^(TestSynthAdapterStoredScope.*|TestSynthAdapterPlatformTenant.*)$$' -count=1
+	@$(GO) test -p 1 ./pkg/sched -run '^(TestQueuePollerLinksTriggerAndInvocationOutcomes|TestNamedQueuePollerSharesWorkReservationsAndFencesAcknowledgement|TestBuildDispatchEnvelope_DurableIdentityIsTyped|TestQueueBatchDispatchPreservesCapturedScopes)$$' -count=1
+	@$(GO) test -p 1 ./pkg/gateway -run '^TestHandleInvocationDispatchBatch_DurableIdentity$$' -count=1
+	@$(GO) test -p 1 ./cmd/gatewayd-internal -run '^(TestSynthAdapterStoredScope.*|TestSynthAdapterPlatformTenant.*|TestSynthBatch.*)$$' -count=1
 	@$(GO) test -p 1 ./cmd/apid -run '^TestReplayInvocation_PreservesCapturedEnvironment$$' -count=1
 	@$(GO) test -p 1 ./pkg/state/conformance -run '^TestConformanceCoverage$$' -count=1
 	@$(GO) test -p 1 ./pkg/sched -run '^(TestRefreshRuntimeConfig.*|TestRuntimeConfig.*)$$' -count=1
 	@$(GO) test -p 1 ./pkg/vmmdgrpc -run '^TestMigrationAdoptionAcknowledges.*$$' -count=1
 	@cd sdk/go && $(GO) test -p 1 ./... -run '^TestEnvironmentGitOps' -count=1
-	@cd sdk/node && npm run test:build && node --test --test-concurrency=1 dist-test/test/environment-gitops.test.js
-	@cd sdk/python && python3 -m pytest tests/test_environment_gitops.py -q
+	@cd sdk/node && npm run test:build && node --test --test-concurrency=1 dist-test/test/environment-gitops.test.js dist-test/test/queue-batch-identity.test.js
+	@cd sdk/python && python3 -m pytest tests/test_environment_gitops.py tests/test_queue_batch_identity.py -q
 .PHONY: test-issues
 test-issues: ## Real PostgreSQL and SDK process acceptance for Gregale Issues
 	@bash scripts/test-issues.sh

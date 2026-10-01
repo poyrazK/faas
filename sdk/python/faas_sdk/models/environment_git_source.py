@@ -37,8 +37,10 @@ class EnvironmentGitSource:
     source_checked_at: datetime.datetime | Unset = UNSET
     source_error_code: str | Unset = UNSET
     source_commit_sha: str | Unset = UNSET
+    """Last verified candidate at the bound ref; discovery does not grant approval."""
     source_definition_digest: str | Unset = UNSET
     source_verified_at: datetime.datetime | Unset = UNSET
+    """Last successful candidate verification, preserved when a later poll fails."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -73,8 +75,11 @@ class EnvironmentGitSource:
             source_checked_at = self.source_checked_at.isoformat()
 
         source_error_code = self.source_error_code
+
         source_commit_sha = self.source_commit_sha
+
         source_definition_digest = self.source_definition_digest
+
         source_verified_at: str | Unset = UNSET
         if not isinstance(self.source_verified_at, Unset):
             source_verified_at = self.source_verified_at.isoformat()
@@ -152,8 +157,11 @@ class EnvironmentGitSource:
             source_checked_at = datetime.datetime.fromisoformat(_source_checked_at)
 
         source_error_code = d.pop("source_error_code", UNSET)
+
         source_commit_sha = d.pop("source_commit_sha", UNSET)
+
         source_definition_digest = d.pop("source_definition_digest", UNSET)
+
         _source_verified_at = d.pop("source_verified_at", UNSET)
         source_verified_at: datetime.datetime | Unset
         if isinstance(_source_verified_at, Unset):

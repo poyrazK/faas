@@ -674,6 +674,10 @@ from .dispatch_invocation_batch_body_records_item import DispatchInvocationBatch
 from .dispatch_invocation_batch_body_records_item_headers import DispatchInvocationBatchBodyRecordsItemHeaders
 from .dispatch_invocation_batch_body_records_item_metadata import DispatchInvocationBatchBodyRecordsItemMetadata
 from .dispatch_invocation_batch_response_200 import DispatchInvocationBatchResponse200
+from .dispatch_invocation_batch_response_200_results_item import DispatchInvocationBatchResponse200ResultsItem
+from .dispatch_invocation_batch_response_200_results_item_status import (
+    DispatchInvocationBatchResponse200ResultsItemStatus,
+)
 from .domain_doctor_check import DomainDoctorCheck
 from .domain_doctor_check_name import DomainDoctorCheckName
 from .domain_doctor_check_status import DomainDoctorCheckStatus
@@ -2647,6 +2651,8 @@ __all__ = (
     "DispatchInvocationBatchBodyRecordsItemHeaders",
     "DispatchInvocationBatchBodyRecordsItemMetadata",
     "DispatchInvocationBatchResponse200",
+    "DispatchInvocationBatchResponse200ResultsItem",
+    "DispatchInvocationBatchResponse200ResultsItemStatus",
     "DomainDoctorCheck",
     "DomainDoctorCheckName",
     "DomainDoctorCheckStatus",

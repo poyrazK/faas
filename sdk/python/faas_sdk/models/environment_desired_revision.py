@@ -23,7 +23,8 @@ class EnvironmentDesiredRevision:
     commit_sha: str
     definition_digest: str
     definition: EnvironmentDefinition
-    """Versioned Git intent; omitted fields are unmanaged and removal requires explicit pruning."""
+    """Versioned Git intent; omitted settings are unmanaged and removal requires explicit pruning. The workloads
+    map is required; an explicit empty map represents an empty environment."""
     approved_by: str
     approved_at: datetime.datetime
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

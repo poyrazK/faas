@@ -113,10 +113,12 @@ const (
 // triggerDispatchRecord is one broker-delivered record the
 // dispatch tick packages for the gateway batch envelope.
 type triggerDispatchRecord struct {
-	ItemIdentifier string            `json:"item_identifier"`
-	PayloadB64     string            `json:"payload_b64"`
-	Headers        map[string]string `json:"headers"`
-	Metadata       map[string]any    `json:"metadata"`
+	ItemIdentifier    string            `json:"item_identifier"`
+	InvocationID      string            `json:"invocation_id,omitempty"`
+	InvocationAttempt int               `json:"invocation_attempt,omitempty"`
+	PayloadB64        string            `json:"payload_b64"`
+	Headers           map[string]string `json:"headers"`
+	Metadata          map[string]any    `json:"metadata"`
 }
 
 // triggerDispatchRequest is the JSON body posted to
@@ -1103,9 +1105,10 @@ func buildDispatchEnvelope(t sqlc.Trigger, batch []SourceRecord) triggerDispatch
 	for _, r := range batch {
 		recs = append(recs, triggerDispatchRecord{
 			ItemIdentifier: r.ItemIdentifier,
-			PayloadB64:     base64.StdEncoding.EncodeToString(r.Payload),
-			Headers:        r.Headers,
-			Metadata:       r.Metadata,
+			InvocationID:   r.InvocationID, InvocationAttempt: r.InvocationAttempt,
+			PayloadB64: base64.StdEncoding.EncodeToString(r.Payload),
+			Headers:    r.Headers,
+			Metadata:   r.Metadata,
 		})
 	}
 	return triggerDispatchRequest{

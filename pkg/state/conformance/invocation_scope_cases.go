@@ -118,3 +118,89 @@ func testKeyedInvocationDeploymentScope(t *testing.T, fx *Fixture) {
 		t.Fatalf("idempotent scope replacement accepted: %v", err)
 	}
 }
+
+func testQueueBatchClaimAdmission(t *testing.T, fx *Fixture) {
+	_, app := invocationScopeApp(t, fx)
+	enqueue := func(source state.InvocationSource) state.Invocation {
+		t.Helper()
+		row, err := fx.Store.EnqueueInvocation(fx.Ctx, state.Invocation{AppID: app.ID, AccountID: fx.Account.ID,
+			DeploymentScope: "staging", Source: source, Method: "POST", Path: "/stored", DueAt: time.Now()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return row
+	}
+	wire := func(row state.Invocation) state.Invocation {
+		return state.Invocation{ID: row.ID, AppID: app.ID, Source: "esm", Attempts: row.Attempts,
+			Method: "POST", Path: "/_triggers/esm/test", Payload: []byte(`{"job":"work"}`)}
+	}
+	for _, source := range []state.InvocationSource{state.InvocationQueue, state.InvocationDelayedTask} {
+		t.Run(string(source), func(t *testing.T) {
+			pending := enqueue(source)
+			if _, err := state.AdmitPlatformTenantInvocation(fx.Ctx, fx.Store, app.ID, wire(pending)); !errors.Is(err, state.ErrConflict) {
+				t.Fatalf("pending invocation admitted: %v", err)
+			}
+			first, err := fx.Store.ClaimInvocation(fx.Ctx, pending.ID, "", 30)
+			if err != nil {
+				t.Fatal(err)
+			}
+			envelope := wire(first)
+			admitted, err := state.AdmitPlatformTenantInvocation(fx.Ctx, fx.Store, app.ID, envelope)
+			if err != nil || admitted.DeploymentScope != "staging" || admitted.Path != envelope.Path || admitted.Source != "esm" {
+				t.Fatalf("batch admission: scope=%q path=%q source=%q err=%v", admitted.DeploymentScope, admitted.Path, admitted.Source, err)
+			}
+			for _, tc := range []struct {
+				name, appID, scope string
+				attempt            int
+			}{
+				{"missing attempt", app.ID, "", 0},
+				{"future attempt", app.ID, "", first.Attempts + 1},
+				{"foreign app", uuid.NewString(), "", first.Attempts},
+				{"foreign scope", app.ID, "production", first.Attempts},
+			} {
+				bad := envelope
+				bad.Attempts, bad.DeploymentScope = tc.attempt, tc.scope
+				if _, err := state.AdmitPlatformTenantInvocation(fx.Ctx, fx.Store, tc.appID, bad); !errors.Is(err, state.ErrConflict) {
+					t.Fatalf("%s admitted: %v", tc.name, err)
+				}
+			}
+			if err := fx.Store.FailInvocation(fx.Ctx, first.ID, "retry", time.Nanosecond, 3, state.WithClaimAttempt(first.Attempts)); err != nil {
+				t.Fatal(err)
+			}
+			second, err := fx.Store.ClaimInvocation(fx.Ctx, first.ID, "", 30)
+			if err != nil || second.Attempts != first.Attempts+1 {
+				t.Fatalf("replacement claim: attempt=%d err=%v", second.Attempts, err)
+			}
+			if _, err := state.AdmitPlatformTenantInvocation(fx.Ctx, fx.Store, app.ID, envelope); !errors.Is(err, state.ErrConflict) {
+				t.Fatalf("stale attempt admitted: %v", err)
+			}
+			if _, err := state.AdmitPlatformTenantInvocation(fx.Ctx, fx.Store, app.ID, wire(second)); err != nil {
+				t.Fatalf("current attempt refused: %v", err)
+			}
+			if err := fx.Store.CompleteInvocation(fx.Ctx, second.ID, nil); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := state.AdmitPlatformTenantInvocation(fx.Ctx, fx.Store, app.ID, wire(second)); !errors.Is(err, state.ErrConflict) {
+				t.Fatalf("completed invocation admitted: %v", err)
+			}
+			expired, err := fx.Store.ClaimInvocation(fx.Ctx, enqueue(source).ID, "", 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := state.AdmitPlatformTenantInvocation(fx.Ctx, fx.Store, app.ID, wire(expired)); !errors.Is(err, state.ErrConflict) {
+				t.Fatalf("expired lease admitted: %v", err)
+			}
+		})
+	}
+	async, err := fx.Store.ClaimInvocation(fx.Ctx, enqueue(state.InvocationAsyncInvoke).ID, "", 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.AdmitPlatformTenantInvocation(fx.Ctx, fx.Store, app.ID, wire(async)); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("non-queue invocation admitted as queue work: %v", err)
+	}
+	missing := state.Invocation{ID: uuid.NewString(), AppID: app.ID, Source: "esm", Attempts: 1}
+	if _, err := state.AdmitPlatformTenantInvocation(fx.Ctx, fx.Store, app.ID, missing); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("missing durable invocation admitted: %v", err)
+	}
+}

@@ -21,7 +21,10 @@ T = TypeVar("T", bound="EnvironmentDefinition")
 
 @_attrs_define
 class EnvironmentDefinition:
-    """Versioned Git intent; omitted fields are unmanaged and removal requires explicit pruning."""
+    """Versioned Git intent; omitted settings are unmanaged and removal requires explicit pruning. The workloads map is
+    required; an explicit empty map represents an empty environment.
+
+    """
 
     api_version: EnvironmentDefinitionApiVersion
     project: str

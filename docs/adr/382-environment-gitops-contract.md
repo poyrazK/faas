@@ -251,12 +251,16 @@ App deletion still releases every scope, and app/account admission limits
 remain shared. Automatic rollout overlap requires a counted predecessor
 revision in the same scope. Ledger admission, warm promotion, and restart
 reconstruction retain that scope without adding database reads to the wake
-hot path. The single-invocation gateway recovers the internal scope from durable admission
-after the HTTP hop and verifies the target deployment, instance, and wake
-before forwarding. Queue bindings and trigger/scaler projections remain
-app-scoped, and queue-batch delivery still needs its durable invocation identity
-carried across the batch transport. This routing prerequisite does not enable
-their GitOps adapter.
+hot path. The gateway recovers the internal scope from durable admission after
+the HTTP hop and verifies the target deployment, instance, and wake before
+forwarding. Queue batches carry the durable invocation UUID and claim attempt
+in explicit internal fields, independently of broker headers and metadata.
+Admission requires a queue or delayed-task row in dispatching state, the current
+attempt, a live lease, and the matching app. Legacy broker records retain their
+synthetic identities. Retries remain at least once; checking the claim at
+admission does not cancel a guest request already in flight when a lease ends.
+Queue bindings and trigger/scaler projections remain app-scoped. These routing
+prerequisites do not enable their GitOps adapter.
 
 The remaining full feature gates include protected-branch
 approval evidence; environment-scoped workload creation, source/runtime,
