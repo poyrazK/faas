@@ -294,3 +294,89 @@ func TestSupervisorInitialReadHasDeadline(t *testing.T) {
 	}
 	assertMetric(t, metrics, "test_udp_reconciliation_errors_total", nil, 1)
 }
+
+func TestSupervisorInvalidRefreshPreservesSocketThenRecovers(t *testing.T) {
+	source := &udpIntentSource{}
+	row := udpIntent("listener", "app", "account", api.UDPListenerPublicPortMin)
+	source.set(row)
+	bound := make(chan *net.UDPConn, 2)
+	reported := make(chan error, 20)
+	supervisor := &Supervisor{Source: source, RefreshInterval: 5 * time.Millisecond,
+		Forwarder: echoForwarder{}, AllowedSources: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")},
+		ResolveTarget: func(context.Context, Route) (gateway.Target, error) {
+			return gateway.Target{AppID: "app", InstanceID: "guest", NodeID: "node"}, nil
+		},
+		OnError: func(err error) {
+			select {
+			case reported <- err:
+			default:
+			}
+		},
+		Listen: func(string, *net.UDPAddr) (*net.UDPConn, error) {
+			socket, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+			if err == nil {
+				bound <- socket
+			}
+			return socket, err
+		}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- supervisor.Serve(ctx) }()
+	var socket *net.UDPConn
+	select {
+	case socket = <-bound:
+	case <-time.After(time.Second):
+		t.Fatal("no initial bind")
+	}
+	client, err := net.DialUDP("udp4", nil, socket.LocalAddr().(*net.UDPAddr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	invalid := row
+	invalid.GuestPort = 0
+	source.set(invalid)
+	select {
+	case <-reported:
+	case <-time.After(time.Second):
+		t.Fatal("invalid refresh not reported")
+	}
+	if _, err := client.Write([]byte("retained")); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 20)
+	n, err := client.Read(buf)
+	if err != nil || string(buf[:n]) != "retained" {
+		t.Fatalf("old socket lost: %q, %v", buf[:n], err)
+	}
+	source.set()
+	deadline := time.Now().Add(time.Second)
+	for {
+		_, err := socket.WriteToUDP(nil, client.LocalAddr().(*net.UDPAddr))
+		if err != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("recovered refresh did not retire socket")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	select {
+	case <-bound:
+		t.Fatal("invalid refresh rebound socket")
+	default:
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("shutdown hung")
+	}
+}
