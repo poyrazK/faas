@@ -262,6 +262,15 @@ admission does not cancel a guest request already in flight when a lease ends.
 Queue bindings and trigger/scaler projections remain app-scoped. These routing
 prerequisites do not enable their GitOps adapter.
 
+The existing queue consumer index allows one enabled trigger per app/source,
+and API binding mutations publish the private trigger projection in a separate
+transaction. Before enabling the queue adapter, binding and consumer identity
+must include the environment, publication must commit both intents atomically,
+and queue demand must select only the corresponding environment fleet while
+preserving app/account capacity limits. Renaming or pruning a binding also
+needs an explicit disposition for queued work and existing trigger receipts;
+deleting a projection must not silently remove that evidence.
+
 The remaining full feature gates include protected-branch
 approval evidence; environment-scoped workload creation, source/runtime,
 secret-reference and queue/service-binding adapters; staged graph qualification

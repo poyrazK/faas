@@ -1,7 +1,7 @@
 from uuid import UUID
 
-from faas_sdk.models.dispatch_invocation_batch_body_records_item import DispatchInvocationBatchBodyRecordsItem
 from faas_sdk.models.dispatch_invocation_batch_body import DispatchInvocationBatchBody
+from faas_sdk.models.dispatch_invocation_batch_body_records_item import DispatchInvocationBatchBodyRecordsItem
 from faas_sdk.models.dispatch_invocation_batch_response_200 import DispatchInvocationBatchResponse200
 
 
