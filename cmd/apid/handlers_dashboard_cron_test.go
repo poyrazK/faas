@@ -36,7 +36,63 @@ import (
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
+
+func TestDashboardCommandCronPolicyUpdateAndHistoryPanel(t *testing.T) {
+	h, cookie, store, sessions := newAuthedDashboardServerFullFull(t, "hobby", "alice@example.com")
+	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
+	if err != nil {
+		t.Fatalf("AccountByEmail: %v", err)
+	}
+	app, err := store.CreateApp(t.Context(), state.App{Slug: "policycron", AccountID: acct.ID})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	cron, err := store.CreateCronWithOptions(t.Context(), app.ID, "*/5 * * * *", "", true, state.CronOptions{
+		Command: []string{"/app/bin/sync"}, SchedulePolicy: &workpolicy.SchedulePolicy{Version: workpolicy.Version, Overlap: "allow", MissedRuns: "skip"},
+	})
+	if err != nil {
+		t.Fatalf("CreateCronWithOptions: %v", err)
+	}
+	cronPolicyCookie := dashboardCronSchedulePolicyCookie(app.Slug)
+	token, err := middleware.IssueForAuthenticatedNamed(sessions, dashboardCronSchedulePolicyAction(app.Slug), acct.ID, cronPolicyCookie)
+	if err != nil {
+		t.Fatalf("IssueForAuthenticatedNamed: %v", err)
+	}
+	form := map[string]string{
+		middleware.FormFieldName: token, "overlap": "replace", "start_deadline_seconds": "120", "missed_runs": "coalesce_latest",
+		"failure_rules_json": `{"version":1,"rules":[{"outcome_codes":["invalid_record"],"action":"fail_partition"}],"unmatched_failure":"retry","uncertain_outcome":"hold"}`,
+	}
+	response := dashboardPOST(t, h, cookie, "/dashboard/apps/policycron/crons/"+cron.ID+"/policy", form,
+		&http.Cookie{Name: cronPolicyCookie, Value: token})
+	if response.Code != http.StatusSeeOther || !strings.Contains(response.Header().Get("Location"), "scheduled_work=updated") || !strings.Contains(response.Header().Get("Location"), "#cron-"+cron.ID) {
+		t.Fatalf("POST cron policy = %d, location %q, body=%s", response.Code, response.Header().Get("Location"), response.Body.String())
+	}
+	updated, err := store.CronByID(t.Context(), cron.ID)
+	if err != nil {
+		t.Fatalf("CronByID after update: %v", err)
+	}
+	if updated.SchedulePolicy == nil || updated.SchedulePolicy.Overlap != "replace" || updated.SchedulePolicy.StartDeadlineSeconds != 120 || updated.SchedulePolicy.MissedRuns != "coalesce_latest" {
+		t.Fatalf("updated cron policy = %+v", updated.SchedulePolicy)
+	}
+	if updated.FailureRules == nil || len(updated.FailureRules.Rules) != 1 || updated.FailureRules.Rules[0].OutcomeCodes[0] != "invalid_record" {
+		t.Fatalf("updated cron failure rules = %+v", updated.FailureRules)
+	}
+
+	page := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/dashboard/apps/policycron?scheduled_work=updated", nil)
+	request.AddCookie(cookie)
+	h.ServeHTTP(page, request)
+	if page.Code != http.StatusOK {
+		t.Fatalf("GET app detail = %d: %s", page.Code, page.Body.String())
+	}
+	for _, want := range []string{"Scheduled-work policy saved", "Schedule policy: replace", "120 seconds", "outcome_codes", "Last 0 scheduled occurrences", "No scheduled occurrences recorded."} {
+		if !strings.Contains(page.Body.String(), want) {
+			t.Errorf("command Cron panel missing %q", want)
+		}
+	}
+}
 
 // seedCronFixture wires the dashboard fixture for the panel +
 // flash + cross-account tests. Returns two harness halves — A

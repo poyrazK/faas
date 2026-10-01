@@ -3256,6 +3256,7 @@ func (s *server) handler() http.Handler {
 	// (Go 1.22+ mux needs concrete segment counts; the
 	// /crons/{id}/fire-now suffix is the path tail).
 	mux.Handle("POST /dashboard/apps/{slug}/crons/{id}/fire-now", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardFireCron))))
+	mux.Handle("POST /dashboard/apps/{slug}/crons/{id}/policy", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardUpdateCronSchedulePolicy))))
 	// G2 / issue #1397 — the combined env + secrets editor uses
 	// form-encoded POST adapters because browsers cannot submit PUT or
 	// DELETE forms. Each adapter verifies its own named CSRF envelope and
@@ -3314,6 +3315,8 @@ func (s *server) handler() http.Handler {
 	// the dashboard's named CSRF envelope before delegating to the same
 	// account-scoped store transition as the JSON API endpoint.
 	mux.Handle("POST /dashboard/apps/{slug}/queues/dead_letter/{id}/replay", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardQueueDeadLetterReplay))))
+	mux.Handle("POST /dashboard/jobs/{name}/policy", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardUpdateJobSchedulePolicy))))
+	mux.Handle("POST /dashboard/jobs/{name}/runs/{id}/replay-failed", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardReplayFailedJobRun))))
 	// Unified customer failure inbox. These actions use the same named CSRF
 	// envelope and source transition as the app-scoped JSON DLQ endpoints.
 	mux.Handle("POST /dashboard/failed-events/replay-all", s.dashboardChain(s.sessionAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

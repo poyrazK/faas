@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -10,6 +10,10 @@ from ..models.flag_decision_reason import FlagDecisionReason, check_flag_decisio
 from ..models.flag_decision_source import FlagDecisionSource, check_flag_decision_source
 from ..models.flag_decision_type import FlagDecisionType, check_flag_decision_type
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.flag_decision_inherited_from import FlagDecisionInheritedFrom
+
 
 T = TypeVar("T", bound="FlagDecision")
 
@@ -30,6 +34,7 @@ class FlagDecision:
     """Boolean rollout bucket or weighted variant assignment bucket."""
     rollout_bucket: int | Unset = UNSET
     """Eligibility bucket for rollout-gated variant rules."""
+    inherited_from: FlagDecisionInheritedFrom | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -54,6 +59,10 @@ class FlagDecision:
 
         rollout_bucket = self.rollout_bucket
 
+        inherited_from: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.inherited_from, Unset):
+            inherited_from = self.inherited_from.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -73,11 +82,15 @@ class FlagDecision:
             field_dict["bucket"] = bucket
         if rollout_bucket is not UNSET:
             field_dict["rollout_bucket"] = rollout_bucket
+        if inherited_from is not UNSET:
+            field_dict["inherited_from"] = inherited_from
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.flag_decision_inherited_from import FlagDecisionInheritedFrom
+
         d = dict(src_dict)
         flag = d.pop("flag")
 
@@ -105,6 +118,13 @@ class FlagDecision:
 
         rollout_bucket = d.pop("rollout_bucket", UNSET)
 
+        _inherited_from = d.pop("inherited_from", UNSET)
+        inherited_from: FlagDecisionInheritedFrom | Unset
+        if isinstance(_inherited_from, Unset):
+            inherited_from = UNSET
+        else:
+            inherited_from = FlagDecisionInheritedFrom.from_dict(_inherited_from)
+
         flag_decision = cls(
             flag=flag,
             value=value,
@@ -115,6 +135,7 @@ class FlagDecision:
             rule_id=rule_id,
             bucket=bucket,
             rollout_bucket=rollout_bucket,
+            inherited_from=inherited_from,
         )
 
         flag_decision.additional_properties = d
