@@ -8,8 +8,10 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/asn1"
+	"errors"
 	"math/big"
 	"net"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -159,5 +161,49 @@ func TestInspectTLSCertificateUsability(t *testing.T) {
 				t.Fatalf("expiry=%v err=%v expected success=%v", expiry, err, scenario.succeeds)
 			}
 		})
+	}
+}
+
+func TestListenerTLSDeadlineClosesStalledConnection(t *testing.T) {
+	server, client := net.Pipe()
+	defer client.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { _, err := TerminateTLS(ctx, server, "echo.example", &testCertificateProvider{}); done <- err }()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("handshake error = %v, want deadline", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("stalled handshake exceeded parent deadline")
+	}
+	_ = client.SetWriteDeadline(time.Now().Add(time.Second))
+	if _, err := client.Write([]byte{1}); err == nil {
+		t.Fatal("deadline left connection open")
+	}
+}
+
+type failingCertificateProvider struct{}
+
+func (failingCertificateProvider) Certificate(context.Context, string) (*tls.Certificate, error) {
+	return nil, errors.New("private-key-material /secret/certificate.pem")
+}
+
+func TestListenerTLSProviderErrorIsSanitized(t *testing.T) {
+	server, client := net.Pipe()
+	defer client.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { _, err := TerminateTLS(ctx, server, "echo.example", failingCertificateProvider{}); done <- err }()
+	secure := tls.Client(client, &tls.Config{ServerName: "echo.example", MinVersion: tls.VersionTLS12})
+	if err := secure.HandshakeContext(ctx); err == nil {
+		t.Fatal("unavailable certificate succeeded")
+	}
+	err := <-done
+	if err == nil || !strings.Contains(err.Error(), "TLS certificate unavailable") || strings.Contains(err.Error(), "private-key-material") || strings.Contains(err.Error(), "/secret/") {
+		t.Fatalf("unsafe provider error: %v", err)
 	}
 }

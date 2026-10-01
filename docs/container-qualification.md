@@ -627,3 +627,9 @@ CI with 26 successes and one conditional skip. Customer-routing #3960 head
 conditional skips. No pending/failing checks were observed on those heads;
 actual scratch mount execution still requires a designated Linux host.
 All PRs remain drafts and unmerged.
+
+### TLS handshake review and host scope (2026-10-01)
+
+The user confirmed Linux/amd64 remains the container host target, persistent disks are excluded for economic reasons, and no native KVM acceptance host is currently available. Draft PR [#3965](https://github.com/poyrazK/faas/pull/3965), commit `a78b25da2`, isolates the TLS handshake primitive and configuration normalization atop TCP capacity PR #3964. Its full TCP/API race suites passed, five handshake-boundary repetitions passed, and scoped lint found zero issues. The new deadline/connection-closure and certificate-provider error-sanitization regressions are retained here. The primitive alone does not enable listener TLS, domain ownership, certificate storage, or API routes.
+
+Listener identity PR #3963 has an unresolved HTTP runtime-policy E2E failure in CI run `36802514043`, job `110179770203`: the 25% candidate was not observed during a ten-second polling interval. The HTTP picker uses a contiguous 100-request cycle, and the helper sleeps 100ms between requests; insufficient sampling under CI load is a hypothesis, not an established cause. Local reproduction with a disposable PostgreSQL database initially skipped due to incorrect credentials, then failed during daemon startup because Darwin lacks `/proc/self/status` required by the capability declaration check. Neither run validates HTTP routing. No CI rerun or test relaxation was used to conceal the failure.
